@@ -1200,37 +1200,64 @@ fn gen_gc (gh: gen_heap_t)
   returns res: (U64.t & bool)
 ```
 
-Its precondition first describes the pre-minor heap, then describes the major
-collector state obtained by darkening the post-minor roots onto the supplied
-initial gray stack:
+Its precondition first describes the pre-minor heap, then describes the state the
+major collector will start from:
 
 ```fstar
 let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
 GenInv.collection_heap_shape minor_st 's 'fp /\
-Seq.length 'st <= stack_capacity st /\
 gen_gc_major_precondition minor_st 's 'fp 'rs 'st (stack_capacity st) /\
 ...
 ```
 
-The key helper is part of the public interface:
+`gen_gc_major_precondition` is deliberately stated on the state the caller can
+actually see — the post-minor heap together with the gray stack it hands in —
+and never mentions the root-darkening pass:
+
+```fstar
+let gen_gc_major_precondition minor major fp roots st cap =
+  let result = CheneySpec.cheney_collect_spec minor major fp roots in
+  MBP.darken_precondition result.mc_major st result.mc_roots result.mc_fp cap
+```
+
+where `GC.Impl.MarkBoundedPrecondition.darken_precondition g st roots fp cap`
+bundles the ordinary mark-and-sweep shape facts about `g` (bounded mark
+invariant, free-list validity, no black objects, no pointer to blue, the no-scan
+invariant, all gray objects on `st`), the capacity budget
+`Seq.length st + Seq.length roots <= cap`, and `root_valid_for_darkening` for
+each root — i.e. that each root is a genuine, non-blue major object.
+
+What `GC.Impl.collect_with_roots` actually demands lives on the *post*-darkening
+state, and callers used to have to derive it themselves.  That derivation is now
+done once, inside the library:
+
+```fstar
+val gen_gc_major_precondition_elim minor major fp roots st cap
+  : Lemma (requires gen_gc_major_precondition minor major fp roots st cap)
+          (ensures
+            MajorGC.gc_precondition_with_roots
+              (fst prepared) (snd prepared) (snd prepared) result.mc_fp cap /\
+            roots_match_stack result.mc_roots (snd prepared))
+```
+
+`gen_gc_prepared_state` is still exported, because the postcondition talks about
+the darkened heap:
 
 ```fstar
 let gen_gc_prepared_state minor major fp roots st cap =
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
   MarkBoundedImpl.darken_roots_bounded_spec result.mc_major st result.mc_roots cap
-
-let gen_gc_major_precondition minor major fp roots st cap =
-  let result = CheneySpec.cheney_collect_spec minor major fp roots in
-  let prepared = gen_gc_prepared_state minor major fp roots st cap in
-  MajorGC.gc_precondition_with_roots
-    (fst prepared) (snd prepared) (snd prepared) result.mc_fp cap /\
-  roots_match_stack result.mc_roots (snd prepared)
 ```
 
-So callers do not have to pre-color roots or pre-seed the mark stack. They supply
-a stack with enough capacity and prove that, after the verified root-darkening
-step, the major collector precondition holds. The OCaml bridge uses the simplest
-case: an initially empty gray stack.
+So callers do not have to pre-color roots, pre-seed the mark stack, or reason
+about `darken_roots_bounded_spec` at all.  The OCaml bridge uses the simplest
+case: an initially empty gray stack, for which `gray_objects_on_stack` reduces
+to "the post-minor major heap has no gray objects".
+
+Note also that `Seq.length 'st <= stack_capacity st` is no longer restated in the
+precondition: it is already part of the `bounded_mark_inv` inside
+`darken_precondition`, and is in any case recoverable from `is_gray_stack` via
+`GC.Impl.Stack.stack_facts`.
 
 The postcondition exports four named bundles:
 

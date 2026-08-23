@@ -34,6 +34,7 @@ module CheneySpec = GC.Gen.Cheney
 module ML = FStar.Math.Lemmas
 module MajorGC = GC.Impl
 module MarkBoundedImpl = GC.Impl.MarkBounded
+module MBP = GC.Impl.MarkBoundedPrecondition
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
 module Sweep = GC.Spec.Sweep
@@ -48,6 +49,15 @@ module RBridge = GC.Gen.ReachabilityBridge
 module CheneyBFS = GC.Gen.CheneyBFS
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module Cheney = GC.Gen.Impl.Cheney
+
+/// The caller-facing `gen_gc_major_precondition` is stated on the post-minor
+/// heap and the *pre*-darkening stack.  Turning it into the obligation that
+/// `GC.Impl.collect_with_roots` actually demands -- which lives on the
+/// post-darkening state -- is done once, here.
+let gen_gc_major_precondition_elim minor major fp roots st cap
+  = let result = CheneySpec.cheney_collect_spec minor major fp roots in
+    MBP.darken_establishes_precondition result.mc_major st result.mc_roots result.mc_fp cap;
+    MBP.darken_roots_match_stack result.mc_major st result.mc_roots result.mc_fp cap
 
 /// ---------------------------------------------------------------------------
 /// Allocation
@@ -1040,7 +1050,6 @@ fn gen_gc (gh: gen_heap_t)
              pure (
                let minor_st : minor_state = { data = 'd; bump = 'b } in
                GenInv.collection_heap_shape minor_st 's 'fp /\
-               Seq.length 'st <= stack_capacity st /\
                gen_gc_major_precondition
                  minor_st 's 'fp 'rs 'st (stack_capacity st) /\
                SZ.v nroots == Seq.length 'rs /\
@@ -1128,8 +1137,8 @@ fn gen_gc (gh: gen_heap_t)
   assert (pure ((prepared_major, prepared_st) ==
     gen_gc_prepared_state
       ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)));
-  assert (pure (gen_gc_major_precondition
-    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)));
+  gen_gc_major_precondition_elim
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st);
   assert (pure (MajorGC.gc_precondition_with_roots
     prepared_major prepared_st prepared_st fp_val (stack_capacity st)));
   assert (pure (roots_match_stack rs_mid prepared_st));

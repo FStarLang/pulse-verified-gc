@@ -948,6 +948,32 @@ let darken_roots_bounded_spec_preserves_no_scan_invariant
   =
   darken_roots_bounded_prefix_preserves_no_scan_invariant
     g st roots (Seq.length roots) cap
+
+let darken_roots_bounded_spec_preserves_fp_valid
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (cap: nat) (fp: U64.t)
+  : Lemma
+      (requires SweepInv.fp_valid fp g)
+      (ensures SweepInv.fp_valid fp (fst (darken_roots_bounded_spec g st roots cap)))
+  = darken_roots_bounded_spec_preserves_objects g st roots cap;
+    let g' = fst (darken_roots_bounded_spec g st roots cap) in
+    if HeapGraph.is_pointer_field fp
+    then begin
+      // `obj_in_objects` is abstract, so the equality of the two `objects`
+      // sequences has to be routed through elim/intro rather than left to SMT.
+      SweepInv.fp_valid_elim fp g;
+      SweepInv.obj_in_objects_intro fp g';
+      SweepInv.fp_valid_from_obj fp g'
+    end
+    else SweepInv.fp_valid_not_pointer fp g'
+
+let darken_roots_bounded_spec_preserves_fp_in_heap
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (cap: nat) (fp: U64.t)
+  : Lemma
+      (requires GC.Spec.Sweep.fp_in_heap fp g)
+      (ensures GC.Spec.Sweep.fp_in_heap fp (fst (darken_roots_bounded_spec g st roots cap)))
+  = darken_roots_bounded_spec_preserves_objects g st roots cap
 #pop-options
 
 /// Step decomposition: push_children_bounded unfolds to check-and-darken + rest

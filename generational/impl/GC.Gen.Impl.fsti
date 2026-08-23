@@ -32,6 +32,7 @@ module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module PromoteSpec = GC.Gen.Promote
 module MajorGC = GC.Impl
 module MarkBoundedImpl = GC.Impl.MarkBounded
+module MBP = GC.Impl.MarkBoundedPrecondition
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
 module Cheney = GC.Gen.Impl.Cheney
@@ -96,14 +97,27 @@ let gen_gc_prepared_roots
   (st: Seq.seq obj_addr) (cap: nat) : GTot (Seq.seq obj_addr) =
   snd (gen_gc_prepared_state minor major fp roots st cap)
 
+/// What the caller owes the major phase.  Every conjunct is a statement about
+/// the heap and stack that exist *before* root darkening, so a caller never has
+/// to unfold `darken_roots_bounded_spec`; `gen_gc_major_precondition_elim`
+/// discharges the actual `GC.Impl.collect_with_roots` obligation internally.
 let gen_gc_major_precondition
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
   (st: Seq.seq obj_addr) (cap: nat) : prop =
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
-  let prepared = gen_gc_prepared_state minor major fp roots st cap in
-  MajorGC.gc_precondition_with_roots
-    (fst prepared) (snd prepared) (snd prepared) result.mc_fp cap /\
-  roots_match_stack result.mc_roots (snd prepared)
+  MBP.darken_precondition result.mc_major st result.mc_roots result.mc_fp cap
+
+val gen_gc_major_precondition_elim
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  (st: Seq.seq obj_addr) (cap: nat)
+  : Lemma
+      (requires gen_gc_major_precondition minor major fp roots st cap)
+      (ensures
+        (let result = CheneySpec.cheney_collect_spec minor major fp roots in
+         let prepared = gen_gc_prepared_state minor major fp roots st cap in
+         MajorGC.gc_precondition_with_roots
+           (fst prepared) (snd prepared) (snd prepared) result.mc_fp cap /\
+         roots_match_stack result.mc_roots (snd prepared)))
 
 /// The roots array contains exactly the post-minor roots used by the following
 /// major collection.
@@ -289,7 +303,8 @@ fn gen_gc (gh: gen_heap_t)
               // Pre-minor shape plus the internally prepared post-minor root
               // stack used by mark/sweep.
               GenInv.collection_heap_shape minor_st 's 'fp /\
-              Seq.length 'st <= stack_capacity st /\
+              // `Seq.length 'st <= stack_capacity st` is not restated here: it
+              // is part of the `bounded_mark_inv` inside the next conjunct.
               gen_gc_major_precondition
                 minor_st 's 'fp 'rs 'st (stack_capacity st) /\
 

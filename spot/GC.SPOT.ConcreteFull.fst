@@ -198,6 +198,7 @@ let root_heap_reachable_from_major_gc_pre
   let prepared_roots = GenImpl.gen_gc_prepared_roots minor major fp roots st cap in
   let graph = HeapModel.create_graph prepared_major in
   let roots' = HeapGraph.coerce_to_vertex_list prepared_roots in
+  GenImpl.gen_gc_major_precondition_elim minor major fp roots st cap;
   assert (MajorGC.gc_precondition_with_roots
     prepared_major prepared_roots prepared_roots
     (Cheney.cheney_collect_spec minor major fp roots).mc_fp cap);
@@ -536,6 +537,11 @@ let prepared_roots_preserve_c_field1
   assert (SpecObj.wosize_of_object c prepared_major ==
           SpecObj.wosize_of_object c result.mc_major);
   assert (U64.v (SpecObj.wosize_of_object c prepared_major) >= 2);
+  GenImpl.gen_gc_major_precondition_elim
+    ConcreteMinor.spot_minor2
+    (ConcreteMajor.spot_major_heap r)
+    (ConcreteMajor.spot_major_fp r)
+    roots st cap;
   assert (MajorGC.gc_precondition_with_roots
     prepared_major prepared_roots prepared_roots result.mc_fp cap);
   assert (SpecMarkBoundedInv.bounded_mark_inv prepared_major prepared_roots cap);

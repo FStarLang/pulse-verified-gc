@@ -40,6 +40,7 @@ module SpecSweep = GC.Spec.Sweep
 module SpecHeapModel = GC.Spec.HeapModel
 module SpecHeapGraph = GC.Spec.HeapGraph
 module SpecGraph = GC.Spec.Graph
+module MBP = GC.Impl.MarkBoundedPrecondition
 
 let spot_fwd_array : seq U64.t =
   Seq.create UpdatePtrs.fwd_array_size 0UL
@@ -69,95 +70,6 @@ let nat_lt_two_cases (i: nat)
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-let fp_in_heap_transfer (fp: U64.t) (g1 g2: heap)
-  : Lemma
-      (requires
-        SpecSweep.fp_in_heap fp g1 /\
-        SpecFields.objects zero_addr g2 == SpecFields.objects zero_addr g1)
-      (ensures SpecSweep.fp_in_heap fp g2)
-  =
-  if fp = 0UL then ()
-  else begin
-    SpecSweep.fp_in_heap_elim fp g1;
-    assert (Seq.mem (fp <: obj_addr) (SpecFields.objects zero_addr g1));
-    assert (Seq.mem (fp <: obj_addr) (SpecFields.objects zero_addr g2))
-  end
-
-let root_points_to_object_from_mem (g: heap) (obj: obj_addr)
-  : Lemma
-      (requires
-        U64.v obj >= U64.v zero_addr + U64.v mword /\
-        Seq.mem obj (SpecFields.objects zero_addr g))
-      (ensures MarkBoundedImpl.root_points_to_object g (obj <: U64.t))
-  =
-  let h = U64.sub (obj <: U64.t) mword in
-  SpecHeap.hd_address_spec obj;
-  assert (U64.v h == U64.v (SpecHeap.hd_address obj));
-  U64.v_inj h (SpecHeap.hd_address obj);
-  assert (h == SpecHeap.hd_address obj);
-  SpecHeap.f_hd_roundtrip obj;
-  assert (SpecHeap.f_address h == obj)
-
-let bounded_stack_props_root_props (g: heap) (st: seq obj_addr)
-  : Lemma
-      (requires SpecMarkBounded.bounded_stack_props g st)
-      (ensures SpecMark.root_props g st)
-  =
-  let aux (r: obj_addr)
-    : Lemma
-        (requires Seq.mem r st)
-        (ensures
-          Seq.mem r (SpecFields.objects zero_addr g) /\
-          (SpecObj.is_gray r g \/ SpecObj.is_black r g))
-    =
-    SpecMark.sev_mem_objects g st r;
-    assert (SpecMark.stack_points_to_gray g st);
-    assert (SpecObj.is_gray r g)
-  in
-  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-
-#push-options "--fuel 1 --ifuel 0"
-let rec stack_no_dups_coerce_is_vertex_set (st: seq obj_addr)
-  : Lemma
-      (requires SpecMark.stack_no_dups st)
-      (ensures SpecGraph.is_vertex_set (SpecHeapGraph.coerce_to_vertex_list st))
-      (decreases Seq.length st)
-  =
-  if Seq.length st = 0 then ()
-  else begin
-    let hd = Seq.head st in
-    let tl = Seq.tail st in
-    Seq.cons_head_tail st;
-    assert (st == Seq.cons hd tl);
-    assert (SpecMark.stack_no_dups (Seq.cons hd tl));
-    assert (~(Seq.mem hd tl));
-    assert (SpecMark.stack_no_dups tl);
-    stack_no_dups_coerce_is_vertex_set tl;
-    SpecHeapGraph.coerce_cons_lemma hd tl;
-    SpecHeapGraph.coerce_mem_lemma tl hd;
-    assert (~(Seq.mem hd (SpecHeapGraph.coerce_to_vertex_list tl)));
-    SpecGraph.is_vertex_set_cons hd (SpecHeapGraph.coerce_to_vertex_list tl)
-  end
-#pop-options
-
-let bounded_mark_inv_graph_facts (g: heap) (st: seq obj_addr) (cap: nat)
-  : Lemma
-      (requires
-        SpecMarkBoundedInv.bounded_mark_inv g st cap /\
-        SpecMark.root_props g st)
-      (ensures (
-        let graph = SpecHeapModel.create_graph g in
-        let roots' = SpecHeapGraph.coerce_to_vertex_list st in
-        SpecGraph.graph_wf graph /\
-        SpecGraph.is_vertex_set roots' /\
-        SpecGraph.subset_vertices roots' graph.vertices))
-  =
-  SpecMarkBoundedInv.bounded_mark_inv_elim_wfh g st cap;
-  SpecMarkBoundedInv.bounded_mark_inv_elim_bsp g st cap;
-  assert (SpecMark.stack_no_dups st);
-  stack_no_dups_coerce_is_vertex_set st;
-  SpecMark.root_graph_precondition g st
-
 let cheney_gray_black_stack_to_gray_stack (g: heap) (st: seq obj_addr)
   : Lemma
       (requires CheneyPres.gray_black_objects_on_stack g st)
@@ -175,27 +87,6 @@ let cheney_gray_black_stack_to_gray_stack (g: heap) (st: seq obj_addr)
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
-let gray_objects_no_black_to_gray_black_stack (g: heap) (st: seq obj_addr)
-  : Lemma
-      (requires SpecMark.gray_objects_on_stack g st /\
-                SpecMark.no_black_objects g)
-      (ensures GenInv.gray_black_objects_on_stack g st)
-  =
-  let aux (obj: obj_addr)
-    : Lemma
-        (requires
-          Seq.mem obj (SpecFields.objects zero_addr g) /\
-          (SpecObj.is_gray obj g \/ SpecObj.is_black obj g))
-        (ensures Seq.mem obj st)
-    =
-    if SpecObj.is_gray obj g then
-      assert (Seq.mem obj st)
-    else begin
-      assert (SpecObj.is_black obj g);
-      assert False
-    end
-  in
-  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
@@ -681,62 +572,6 @@ let spot_post_minor_roots_shape (r: unit{ConcreteMajor.spot_major_room})
           prom.fwd_map Layout.a_minor);
   assert (Seq.index result.mc_roots 1 == prom.fwd_map Layout.a_minor)
 
-let spot_post_minor_roots_point_to_objects
-  (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma
-      (ensures (
-        let result = Cheney.cheney_collect_spec
-          ConcreteMinor.spot_minor2
-          (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
-          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
-        forall (i:nat). i < Seq.length result.mc_roots ==>
-          MarkBoundedImpl.root_points_to_object result.mc_major
-            (Seq.index result.mc_roots i)))
-  =
-  let minor = ConcreteMinor.spot_minor2 in
-  let major = ConcreteMajor.spot_major_heap r in
-  let fp = ConcreteMajor.spot_major_fp r in
-  let c = ConcreteMajor.spot_c r in
-  let free = ConcreteMajor.spot_free_obj r in
-  let roots = ThreeObjects.spot_roots c in
-  let prom = Cheney.cheney_promote minor major fp roots in
-  let result = Cheney.cheney_collect_spec minor major fp roots in
-  spot_collection_heap_shape r;
-  GenInv.collection_heap_shape_elim minor major fp;
-  GenInv.major_heap_shape_elim major fp;
-  ConcreteMajor.spot_major_objects r;
-  ConcreteMajor.spot_major_c_mem r;
-  ConcreteMajor.spot_major_free_mem r;
-  CheneyCorr.cheney_collect_preserves_objects minor major fp roots;
-  assert (Seq.mem c (SpecFields.objects zero_addr result.mc_major));
-  assert (Seq.mem free (SpecFields.objects zero_addr result.mc_major));
-  spot_post_minor_roots_shape r;
-  ConcreteForwarding.spot_concrete_a_forwarding_free_obj r;
-  assert (prom.fwd_map Layout.a_minor == (free <: U64.t));
-  ConcreteMajor.spot_major_layout_facts r;
-  let aux (i:nat)
-    : Lemma
-        (ensures
-          i < Seq.length result.mc_roots ==>
-            MarkBoundedImpl.root_points_to_object result.mc_major
-              (Seq.index result.mc_roots i))
-    =
-    if i < Seq.length result.mc_roots then
-      match i with
-      | 0 ->
-        assert (Seq.index result.mc_roots i == (c <: U64.t));
-        root_points_to_object_from_mem result.mc_major c
-      | 1 ->
-        assert (Seq.index result.mc_roots i == (free <: U64.t));
-        root_points_to_object_from_mem result.mc_major free
-      | _ ->
-        assert (Seq.length result.mc_roots == 2);
-        nat_lt_two_cases i;
-        assert False
-  in
-  FStar.Classical.forall_intro aux
-
 let spot_post_minor_roots_mem_cases
   (r: unit{ConcreteMajor.spot_major_room}) (v: U64.t)
   : Lemma
@@ -930,8 +765,10 @@ let empty_stack_roots_subset (roots: seq U64.t)
   in
   FStar.Classical.forall_intro aux
 
-let spot_post_minor_roots_match_prepared_empty_stack
-  (r: unit{ConcreteMajor.spot_major_room}) (cap: nat{cap >= 2})
+/// The two post-minor roots (`c`, and `a`'s promoted image `free`) are genuine
+/// non-blue major objects, which is all the generic darkening machinery needs.
+let spot_post_minor_roots_valid_for_darkening
+  (r: unit{ConcreteMajor.spot_major_room})
   : Lemma
       (requires (
         let result = Cheney.cheney_collect_spec
@@ -939,8 +776,6 @@ let spot_post_minor_roots_match_prepared_empty_stack
           (ConcreteMajor.spot_major_heap r)
           (ConcreteMajor.spot_major_fp r)
           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
-        SpecMark.gray_objects_on_stack result.mc_major (Seq.empty #obj_addr) /\
-        SpecMark.no_black_objects result.mc_major /\
         SpecMark.no_pointer_to_blue result.mc_major))
       (ensures (
         let result = Cheney.cheney_collect_spec
@@ -948,9 +783,8 @@ let spot_post_minor_roots_match_prepared_empty_stack
           (ConcreteMajor.spot_major_heap r)
           (ConcreteMajor.spot_major_fp r)
           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
-        GenImpl.roots_match_stack result.mc_roots
-          (snd (MarkBoundedImpl.darken_roots_bounded_spec
-            result.mc_major (Seq.empty #obj_addr) result.mc_roots cap))))
+        forall (i: nat). i < Seq.length result.mc_roots ==>
+          MBP.root_valid_for_darkening result.mc_major (Seq.index result.mc_roots i)))
   =
   let minor = ConcreteMinor.spot_minor2 in
   let major = ConcreteMajor.spot_major_heap r in
@@ -960,139 +794,32 @@ let spot_post_minor_roots_match_prepared_empty_stack
   let roots = ThreeObjects.spot_roots c in
   let result = Cheney.cheney_collect_spec minor major fp roots in
   let roots2 = result.mc_roots in
-  let st0 = Seq.empty #obj_addr in
   spot_post_minor_roots_shape r;
-  spot_post_minor_roots_point_to_objects r;
-  spot_post_minor_c_header_context r;
-  spot_post_minor_c_points_to_free r;
   spot_post_minor_free_not_blue r;
   spot_collection_heap_shape r;
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
-  ConcreteForwarding.spot_concrete_a_forwarding_free_obj r;
-  assert (Seq.length roots2 == 2);
-  let p0 = MarkBoundedImpl.darken_roots_bounded_prefix_spec
-    result.mc_major st0 roots2 0 cap in
-  MarkBoundedRootLemmas.darken_roots_bounded_prefix_base
-    result.mc_major st0 roots2 cap;
-  assert (p0 == (result.mc_major, st0));
-  let g0 = fst p0 in
-  let s0 = snd p0 in
-  let r0 = Seq.index roots2 0 in
-  assert (g0 == result.mc_major);
-  assert (s0 == st0);
-  assert (r0 == (c <: U64.t));
-  assert (Seq.mem r0 roots2);
-  assert (GC.Spec.Base.is_val_addr r0);
-  ConcreteMajor.spot_major_layout_facts r;
-  assert (U64.v c == U64.v zero_addr + U64.v mword);
-  assert (U64.v c >= U64.v zero_addr + U64.v mword);
-  assert (U64.v c < heap_size);
-  assert (U64.v c % U64.v mword == 0);
-  assert (MarkBoundedImpl.root_points_to_object result.mc_major r0);
-  assert (~(SpecObj.is_black c result.mc_major));
-  assert (~(SpecObj.is_blue c result.mc_major));
-  MarkBoundedRootLemmas.check_and_darken_bounded_spec_pushes_valid_nonblack_nonblue_root
-    result.mc_major st0 c cap;
-  let p1 = MarkBoundedImpl.darken_roots_bounded_prefix_spec
-    result.mc_major st0 roots2 1 cap in
-  MarkBoundedImpl.darken_roots_bounded_prefix_step
-    result.mc_major st0 roots2 0 cap;
-  assert (p1 == MarkBoundedImpl.check_and_darken_bounded_spec
-    result.mc_major st0 c cap);
-  let g1 = fst p1 in
-  let s1 = snd p1 in
-  assert (Seq.mem c s1);
-  MarkBoundedRootLemmas.check_and_darken_bounded_spec_preserves_gray_objects_on_stack
-    result.mc_major st0 c cap;
-  assert (SpecMark.gray_objects_on_stack g1 s1);
-  MarkBoundedImpl.check_and_darken_bounded_spec_preserves_objects
-    result.mc_major st0 c cap;
-  MarkBoundedRootLemmas.check_and_darken_bounded_spec_length_increases_at_most_one
-    result.mc_major st0 c cap;
-  assert (Seq.length s1 <= 1);
-  assert (Seq.length s1 < cap);
-  let r1 = Seq.index roots2 1 in
-  assert (r1 == (free <: U64.t));
-  assert (Seq.mem r1 roots2);
-  assert (GC.Spec.Base.is_val_addr r1);
-  assert (U64.v free == U64.v zero_addr + 32);
-  assert (U64.v free >= U64.v zero_addr + U64.v mword);
-  assert (U64.v free < heap_size);
-  assert (U64.v free % U64.v mword == 0);
-  assert (MarkBoundedImpl.root_points_to_object result.mc_major r1);
-  assert (MarkBoundedImpl.root_points_to_object g1 r1);
+  ConcreteMajor.spot_major_objects r;
+  ConcreteMajor.spot_major_c_mem r;
   ConcreteMajor.spot_major_free_mem r;
   CheneyCorr.cheney_collect_preserves_objects minor major fp roots;
-  assert (Seq.mem free (SpecFields.objects zero_addr result.mc_major));
-  assert (~(SpecObj.is_black free result.mc_major));
-  assert (~(SpecObj.is_blue free result.mc_major));
-  MarkBoundedRootLemmas.check_and_darken_bounded_spec_preserves_not_black
-    result.mc_major st0 c cap free;
-  MarkBoundedRootLemmas.check_and_darken_bounded_spec_preserves_not_blue
-    result.mc_major st0 c cap free;
-  assert (~(SpecObj.is_black free g1));
-  assert (~(SpecObj.is_blue free g1));
-  MarkBoundedRootLemmas.check_and_darken_bounded_spec_pushes_valid_nonblack_nonblue_root
-    g1 s1 free cap;
-  let p2 = MarkBoundedImpl.darken_roots_bounded_prefix_spec
-    result.mc_major st0 roots2 2 cap in
-  MarkBoundedImpl.darken_roots_bounded_prefix_step
-    result.mc_major st0 roots2 1 cap;
-  assert (p2 == MarkBoundedImpl.check_and_darken_bounded_spec g1 s1 free cap);
-  let g2 = fst p2 in
-  let s2 = snd p2 in
-  assert (Seq.mem free s2);
-  MarkBoundedRootLemmas.check_and_darken_bounded_spec_preserves_stack_mem
-    g1 s1 free cap c;
-  assert (Seq.mem c s2);
-  empty_stack_roots_subset roots2;
-  FStar.Seq.Properties.seq_mem_k roots2 0;
-  FStar.Seq.Properties.seq_mem_k roots2 1;
-  MarkBoundedRootLemmas.check_and_darken_bounded_spec_preserves_stack_roots
-    result.mc_major st0 roots2 c cap;
-  assert (forall (x: obj_addr). Seq.mem x s1 ==> Seq.mem (x <: U64.t) roots2);
-  MarkBoundedRootLemmas.check_and_darken_bounded_spec_preserves_stack_roots
-    g1 s1 roots2 free cap;
-  assert (forall (x: obj_addr). Seq.mem x s2 ==> Seq.mem (x <: U64.t) roots2);
-  assert (MarkBoundedImpl.darken_roots_bounded_spec
-    result.mc_major st0 roots2 cap == p2);
-  let prepared_st = snd (MarkBoundedImpl.darken_roots_bounded_spec
-    result.mc_major st0 roots2 cap) in
-  assert (prepared_st == s2);
-  let roots_val (rv: U64.t)
-    : Lemma (ensures Seq.mem rv roots2 ==> GC.Spec.Base.is_val_addr rv)
+  ConcreteMajor.spot_major_layout_facts r;
+  ConcreteForwarding.spot_concrete_a_forwarding_free_obj r;
+  spot_post_minor_c_header_context r;
+  spot_post_minor_c_points_to_free r;
+  let aux (i: nat)
+    : Lemma
+        (ensures i < Seq.length roots2 ==>
+          MBP.root_valid_for_darkening result.mc_major (Seq.index roots2 i))
     =
-    if Seq.mem rv roots2 then begin
-      spot_post_minor_roots_mem_cases r rv;
-      if rv == (c <: U64.t) then
-        assert (GC.Spec.Base.is_val_addr rv)
-      else begin
-        assert (rv == (free <: U64.t));
-        assert (GC.Spec.Base.is_val_addr rv)
-      end
-    end
+    if i < Seq.length roots2 then
+      match i with
+      | 0 -> assert (Seq.index roots2 i == (c <: U64.t))
+      | 1 -> assert (Seq.index roots2 i == (free <: U64.t))
+      | _ -> nat_lt_two_cases i; assert False
   in
-  let roots_in_stack (x: obj_addr)
-    : Lemma (ensures Seq.mem (x <: U64.t) roots2 ==> Seq.mem x prepared_st)
-    =
-    if Seq.mem (x <: U64.t) roots2 then begin
-      spot_post_minor_roots_mem_cases r (x <: U64.t);
-      if (x <: U64.t) == (c <: U64.t) then begin
-        U64.v_inj x c;
-        assert (x == c);
-        assert (Seq.mem x prepared_st)
-      end else begin
-        assert ((x <: U64.t) == (free <: U64.t));
-        U64.v_inj x free;
-        assert (x == free);
-        assert (Seq.mem x prepared_st)
-      end
-    end
-  in
-  FStar.Classical.forall_intro roots_val;
-  FStar.Classical.forall_intro roots_in_stack;
-  assert (GenImpl.roots_match_stack roots2 prepared_st)
+  FStar.Classical.forall_intro aux
+
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_concrete_gen_gc_major_pre_empty_stack
@@ -1155,41 +882,9 @@ let spot_concrete_gen_gc_major_pre_empty_stack
   assert (Seq.length (Seq.empty #obj_addr) <= cap);
   SpecMarkBoundedInv.bounded_mark_inv_intro result.mc_major Seq.empty cap;
   assert (SpecMarkBoundedInv.bounded_mark_inv result.mc_major Seq.empty cap);
-  spot_post_minor_roots_point_to_objects r;
-  assert (prepared == MarkBoundedImpl.darken_roots_bounded_spec result.mc_major Seq.empty result.mc_roots cap);
-  assert (prepared_major == fst (MarkBoundedImpl.darken_roots_bounded_spec result.mc_major Seq.empty result.mc_roots cap));
-  assert (prepared_st == snd (MarkBoundedImpl.darken_roots_bounded_spec result.mc_major Seq.empty result.mc_roots cap));
-  spot_post_minor_roots_match_prepared_empty_stack r cap;
-  MarkBoundedImpl.darken_roots_bounded_spec_preserves_bounded_mark_inv
-    result.mc_major Seq.empty result.mc_roots cap;
-  MarkBoundedImpl.darken_roots_bounded_spec_preserves_no_black
-    result.mc_major Seq.empty result.mc_roots cap;
-  MarkBoundedImpl.darken_roots_bounded_spec_preserves_no_pointer_to_blue
-    result.mc_major Seq.empty result.mc_roots cap;
-  MarkBoundedImpl.darken_roots_bounded_spec_preserves_no_scan_invariant
-    result.mc_major Seq.empty result.mc_roots cap;
-  MarkBoundedImpl.darken_roots_bounded_spec_preserves_objects
-    result.mc_major Seq.empty result.mc_roots cap;
-  MarkBoundedRootLemmas.darken_roots_bounded_spec_preserves_gray_objects_on_stack
-    result.mc_major Seq.empty result.mc_roots cap;
-  assert (SpecFields.objects zero_addr prepared_major ==
-          SpecFields.objects zero_addr result.mc_major);
-  assert (SpecMarkBoundedInv.bounded_mark_inv prepared_major prepared_st cap);
-  GC.Spec.SweepInv.fp_valid_transfer result.mc_fp result.mc_major prepared_major;
-  assert (GC.Spec.SweepInv.fp_valid result.mc_fp prepared_major);
-  fp_in_heap_transfer result.mc_fp result.mc_major prepared_major;
-  SpecMarkBoundedInv.bounded_mark_inv_elim_bsp prepared_major prepared_st cap;
-  bounded_stack_props_root_props prepared_major prepared_st;
-  assert (SpecMark.root_props prepared_major prepared_st);
-  assert (GC.Spec.Sweep.fp_in_heap result.mc_fp prepared_major);
-  assert (SpecMark.no_black_objects prepared_major);
-  assert (SpecMark.no_pointer_to_blue prepared_major);
-  assert (SpecFields.no_scan_invariant prepared_major);
-  gray_objects_no_black_to_gray_black_stack prepared_major prepared_st;
-  assert (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr prepared_major) /\
-    (SpecObj.is_gray x prepared_major \/ SpecObj.is_black x prepared_major) ==> Seq.mem x prepared_st);
-  bounded_mark_inv_graph_facts prepared_major prepared_st cap;
-  assert (GenImpl.roots_match_stack result.mc_roots prepared_st);
+  spot_post_minor_roots_valid_for_darkening r;
+  empty_stack_roots_subset result.mc_roots;
+  assert (MBP.darken_precondition result.mc_major Seq.empty result.mc_roots result.mc_fp cap);
   assert (GenImpl.gen_gc_major_precondition minor major fp roots Seq.empty cap)
 #pop-options
 

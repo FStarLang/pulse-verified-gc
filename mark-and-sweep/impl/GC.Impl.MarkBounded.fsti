@@ -240,6 +240,23 @@ val darken_roots_bounded_spec_preserves_no_scan_invariant
         SpecFields.no_scan_invariant
           (fst (darken_roots_bounded_spec g st roots cap)))
 
+/// Darkening only recolours white objects, so it changes neither the set of
+/// allocated objects nor the free-list head.  Both free-list facts therefore
+/// come for free from `darken_roots_bounded_spec_preserves_objects`.
+val darken_roots_bounded_spec_preserves_fp_valid
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (cap: nat) (fp: U64.t)
+  : Lemma
+      (requires SweepInv.fp_valid fp g)
+      (ensures SweepInv.fp_valid fp (fst (darken_roots_bounded_spec g st roots cap)))
+
+val darken_roots_bounded_spec_preserves_fp_in_heap
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (cap: nat) (fp: U64.t)
+  : Lemma
+      (requires GC.Spec.Sweep.fp_in_heap fp g)
+      (ensures GC.Spec.Sweep.fp_in_heap fp (fst (darken_roots_bounded_spec g st roots cap)))
+
 /// Bounded mark loop: process gray objects with overflow handling.
 /// The outer loop alternates between draining the stack and rescanning
 /// the heap for remaining gray objects until none remain.
