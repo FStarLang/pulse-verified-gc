@@ -91,3 +91,42 @@ val major_result_post_transfer
            MCFH.result_post_reachable h1 rts w1 /\
            MCFH.result_post_reachable h1 rts w2 ==>
            (MCFH.result_post_edge h1 w1 w2 <==> MCFH.result_post_edge h2 w1 w2)))
+
+/// ---------------------------------------------------------------------------
+/// The composed, end-to-end isomorphism
+/// ---------------------------------------------------------------------------
+
+module CG = GC.Gen.CombinedGraph
+module MinorFwd = GC.Gen.MinorCollectForwarding
+
+/// One isomorphism, from the reachable subgraph of the heap `gen_gc` was
+/// handed to the reachable subgraph of the heap it returns.  The morphism is
+/// the minor collector's forwarding map: the major collection does not move
+/// anything, so it contributes the identity.
+let end_to_end_isomorphism
+  (minor: GC.Gen.MinorHeap.minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  (final_major: heap) (final_roots: Seq.seq U64.t) : prop =
+  CG.reachable_subgraph_isomorphism
+    (MinorFwd.normal_src_reachable minor major fp roots)
+    (MCFH.result_post_reachable final_major final_roots)
+    (MinorFwd.normal_src_edge minor major fp roots)
+    (MCFH.result_post_edge final_major)
+    (GC.Gen.Cheney.cheney_promote minor major fp roots).fwd_map
+
+/// Compose the minor collector's isomorphism with the major collection.
+/// `darkened` is the heap the major collection actually starts from -- the
+/// post-minor heap with the roots greyed -- which is why the caller only has
+/// to know that darkening leaves the object graph alone.
+val end_to_end_isomorphism_intro
+  (minor: GC.Gen.MinorHeap.minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  (post_major: heap) (post_roots: Seq.seq U64.t)
+  (darkened: heap) (droots: Seq.seq obj_addr) (final_major: heap)
+  : Lemma
+      (requires
+        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+          minor major fp roots post_major post_roots /\
+        HM.create_graph darkened == HM.create_graph post_major /\
+        major_transfer_hyp darkened final_major droots /\
+        (forall (r: U64.t). Seq.mem r post_roots ==>
+           is_val_addr r /\ Seq.mem (r <: obj_addr) droots))
+      (ensures end_to_end_isomorphism minor major fp roots final_major post_roots)

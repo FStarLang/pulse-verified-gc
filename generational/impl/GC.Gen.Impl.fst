@@ -51,6 +51,8 @@ module RBridge = GC.Gen.ReachabilityBridge
 module CheneyBFS = GC.Gen.CheneyBFS
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module Cheney = GC.Gen.Impl.Cheney
+module SpecHeapModel = GC.Spec.HeapModel
+module MRT = GC.Gen.MajorReachabilityTransfer
 
 /// Two transports in one: `GC.Gen.MajorPrecondition` carries the pre-minor facts
 /// across the minor collection to `darken_precondition`, and
@@ -63,7 +65,9 @@ let gen_gc_major_precondition_elim minor major fp roots st cap
     assert (Seq.equal st (Seq.empty #obj_addr));
     GMP.darken_precondition_after_minor minor major fp roots cap;
     MBP.darken_establishes_precondition result.mc_major st result.mc_roots result.mc_fp cap;
-    MBP.darken_roots_match_stack result.mc_major st result.mc_roots result.mc_fp cap
+    MBP.darken_roots_match_stack result.mc_major st result.mc_roots result.mc_fp cap;
+    GC.Gen.CheneyPreservation.cheney_collect_preserves_wfh_from_shape minor major fp roots;
+    MBP.darken_preserves_create_graph result.mc_major st result.mc_roots result.mc_fp cap
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -1186,6 +1190,15 @@ fn gen_gc (gh: gen_heap_t)
       s_final
       (snd (gen_gc_prepared_state
         ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)))));
+
+    // Chain the two halves into a single isomorphism from the heap we were
+    // handed to the heap we return, so that no caller has to do it.
+    SpecGCPost.gc_postcondition_elim s_final;
+    Mark.create_graph_wf_from_heap s_final;
+    assert (pure (MRT.major_transfer_hyp prepared_major s_final prepared_st));
+    MRT.end_to_end_isomorphism_intro
+      ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs
+      ms_updated rs_mid prepared_major prepared_st s_final;
 
     // Phase 6: Update free-list pointer and re-fold gen heap
     R.op_Colon_Equals gh.fp_ref final_fp;

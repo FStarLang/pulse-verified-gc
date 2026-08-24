@@ -42,6 +42,8 @@ module GenInv = GC.Gen.HeapInvariant
 module MinorFwd = GC.Gen.MinorCollectForwarding
 module RBridge = GC.Gen.ReachabilityBridge
 module CheneyBFS = GC.Gen.CheneyBFS
+module SpecHeapModel = GC.Spec.HeapModel
+module MRT = GC.Gen.MajorReachabilityTransfer
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -140,7 +142,9 @@ val gen_gc_major_precondition_elim
          let prepared = gen_gc_prepared_state minor major fp roots st cap in
          MajorGC.gc_precondition_with_roots
            (fst prepared) (snd prepared) (snd prepared) result.mc_fp cap /\
-         roots_match_stack result.mc_roots (snd prepared)))
+         roots_match_stack result.mc_roots (snd prepared) /\
+         SpecHeapModel.create_graph (fst prepared) ==
+           SpecHeapModel.create_graph result.mc_major))
 
 /// The roots array contains exactly the post-minor roots used by the following
 /// major collection.
@@ -164,9 +168,22 @@ let gen_gc_heap_shape_post
   U64.v minor_bump == 0 /\
   SpecGCPost.gc_postcondition final_major
 
-/// Reachable subgraph correctness.  On successful promotion, minor collection
-/// maps the original combined reachable subgraph into the post-minor major heap;
-/// major GC then preserves that live subgraph without moving objects.
+/// Reachable subgraph correctness.
+///
+/// The headline conjunct is a *single* isomorphism between the reachable
+/// subgraph of the heap `gen_gc` was handed and the reachable subgraph of the
+/// heap it returns, with the minor collector's forwarding map as the morphism.
+/// Earlier versions exposed only the two halves -- minor collection into the
+/// post-minor heap, then major collection out of the post-darkening heap --
+/// and left the caller to chain them.  That was not something a caller could
+/// actually do: the halves are stated in different vocabularies, root darkening
+/// sits between them, and transferring reachability backwards out of the final
+/// heap needs the major collector's successor-preservation clause.  All of that
+/// is now discharged once, inside `GC.Gen.MajorReachabilityTransfer`.
+///
+/// The two intermediate facts are kept because they say things the composition
+/// cannot: the minor step says *where* each surviving object went, and the
+/// major step says the survivors did not move again and are white.
 let gen_gc_reachable_subgraph_isomorphism_post
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
   (ok: bool) (final_major: heap) (roots_out: Seq.seq U64.t)
@@ -174,6 +191,7 @@ let gen_gc_reachable_subgraph_isomorphism_post
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
   let prepared = gen_gc_prepared_state minor major fp roots st cap in
   (ok ==>
+   MRT.end_to_end_isomorphism minor major fp roots final_major roots_out /\
    MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
      minor major fp roots result.mc_major roots_out /\
    MinorFwd.normal_result_non_pointer_fields_preserved_prop

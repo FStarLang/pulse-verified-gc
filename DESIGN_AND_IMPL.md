@@ -1096,6 +1096,70 @@ collapses back to the original non-moving story. For minor collection, the same
 statement allows minor addresses to disappear and be replaced by major
 addresses.
 
+### One isomorphism, end to end
+
+`gen_gc` runs a minor collection followed by a major one, and each phase proves
+its own isomorphism. For a while the top-level postcondition simply exposed
+both halves and left the caller to chain them:
+
+* minor collection, from the combined pre-collection graph into the *post-minor*
+  major heap, with `prom.fwd_map` as the morphism; and
+* major collection, from the *post-darkening* heap into the final one, with the
+  identity as the morphism.
+
+That is not a chain a caller can actually close, for three reasons.
+
+1. **Different vocabularies.** The minor half speaks
+   `result_post_reachable` / `result_post_edge` (`∃ root. reachable`, raw
+   `U64.t` addresses); the major half speaks `heap_reachable` / `heap_edge`
+   (membership in the DFS `reachable_set`, with `graph_wf`, `is_vertex_set` and
+   `subset_vertices` side conditions, over `obj_addr`).
+2. **A third heap in the middle.** Root darkening runs between the two phases,
+   so the heap the major collector starts from is not the heap the minor
+   collector produced.
+3. **A missing lemma.** Surjectivity of the composed morphism needs
+   reachability transferred *backwards*: reachable in the final heap implies
+   reachable in the post-minor heap. `major_gc_live_subgraph_isomorphism`'s
+   edge clause is guarded on **both** endpoints already being live, so the
+   obvious path induction is circular — the induction keeps meeting successors
+   that are not yet known to be live.
+
+All three are now handled inside the collector.
+
+* `major_gc_live_subgraph_isomorphism` gained a **successor clause**: live
+  objects have identical successor *lists* in the two heaps. That is strictly
+  stronger than the guarded edge clause and breaks the circularity. The fact was
+  already established inside `major_gc_live_subgraph_isomorphism_gen`'s proof
+  and simply discarded.
+* `GC.Impl.MarkBoundedRootLemmas` proves that root darkening preserves
+  `create_graph` — it only recolours headers — by induction over the darkening
+  prefix on top of `color_preserves_create_graph`.
+* `GC.Gen.MajorReachabilityTransfer` proves the generic graph lemma by
+  structural induction on the `reach` witness:
+
+  > two graphs that agree on the successor lists of a successor-closed vertex
+  > set have the same reachability and the same internal edges,
+
+  instantiates it at the major collection, and composes the halves.
+
+The result is a single conjunct in `gen_gc`'s postcondition:
+
+```fstar
+let end_to_end_isomorphism
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (final_major: heap) (final_roots: seq U64.t) : prop =
+  CG.reachable_subgraph_isomorphism
+    (MinorFwd.normal_src_reachable minor major fp roots)
+    (MCFH.result_post_reachable final_major final_roots)
+    (MinorFwd.normal_src_edge minor major fp roots)
+    (MCFH.result_post_edge final_major)
+    (cheney_promote minor major fp roots).fwd_map
+```
+
+The two intermediate isomorphisms are still exported, because they say things
+the composition cannot: the minor step says *where* each survivor went, and the
+major step says the survivors did not move again and are white.
+
 ## Generational GC
 
 The top-level generational implementation is

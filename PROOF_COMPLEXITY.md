@@ -923,6 +923,33 @@ contract pushes onto its callers.
 Rounds one to three are `prop`-level and leave the extracted C byte-identical;
 round four adds the fifteen-line out-of-memory branch and nothing else.
 
+**Round five: don't make the caller compose.** The last leak in the contract was
+on the *output* side. `gen_gc` runs two collections and exposed one isomorphism
+per phase — minor collection into the post-minor heap, major collection out of
+the post-darkening heap — leaving the caller to chain them into the statement it
+actually wants, "the live graph I handed in is isomorphic to the live graph I got
+back". That chain could not be closed from outside: the halves use different
+reachability vocabularies (`∃ root. reachable` over raw addresses versus DFS
+`reachable_set` membership over `obj_addr` with three side conditions), root
+darkening sits between them as a third heap, and — the real obstacle — the
+composed morphism's surjectivity needs reachability transferred *backwards* out
+of the final heap, which `major_gc_live_subgraph_isomorphism`'s edge clause
+cannot give, because it is guarded on both endpoints already being live and so
+makes the path induction circular.
+
+The fix was three small pieces rather than one big one. The major collector's
+isomorphism gained a successor-*list* equality clause — already proved inside
+`major_gc_live_subgraph_isomorphism_gen` and thrown away — which breaks the
+circularity. Root darkening was shown to preserve `create_graph`, by induction
+over the darkening prefix on top of the existing `color_preserves_create_graph`.
+And a new module proves the generic graph lemma ("two graphs that agree on the
+successor lists of a successor-closed vertex set have the same reachability and
+the same internal edges") by structural induction on the `reach` witness, then
+instantiates and composes. About 300 lines total, no admits, no rlimit above 40,
+and the extracted C is byte-identical: every one of the three pieces was already
+implicit in proofs the development had, just never stated where a caller could
+reach it.
+
 ---
 
 ## 7. Summary

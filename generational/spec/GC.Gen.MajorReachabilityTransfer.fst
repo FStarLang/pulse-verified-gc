@@ -195,3 +195,43 @@ let major_result_post_transfer h1 h2 droots rts =
   FStar.Classical.forall_intro_2 edges
 
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// The composed, end-to-end isomorphism
+/// ---------------------------------------------------------------------------
+
+module CG = GC.Gen.CombinedGraph
+module MinorFwd = GC.Gen.MinorCollectForwarding
+
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 40"
+
+/// Replacing the destination side of an isomorphism by an equivalent one.
+let iso_dst_swap
+  (src_reachable: CG.combined_vertex -> prop)
+  (dst1 dst2: U64.t -> prop)
+  (src_edge: CG.combined_vertex -> CG.combined_vertex -> prop)
+  (dst_edge1 dst_edge2: U64.t -> U64.t -> prop)
+  (fwd: GC.Gen.Promote.forwarding_map)
+  : Lemma
+      (requires
+        CG.reachable_subgraph_isomorphism src_reachable dst1 src_edge dst_edge1 fwd /\
+        (forall (w: U64.t). dst1 w <==> dst2 w) /\
+        (forall (w1 w2: U64.t). dst1 w1 /\ dst1 w2 ==>
+           (dst_edge1 w1 w2 <==> dst_edge2 w1 w2)))
+      (ensures
+        CG.reachable_subgraph_isomorphism src_reachable dst2 src_edge dst_edge2 fwd)
+  = ()
+
+let end_to_end_isomorphism_intro
+  minor major fp roots post_major post_roots darkened droots final_major
+  = major_result_post_transfer darkened final_major droots post_roots;
+    iso_dst_swap
+      (MinorFwd.normal_src_reachable minor major fp roots)
+      (MCFH.result_post_reachable post_major post_roots)
+      (MCFH.result_post_reachable final_major post_roots)
+      (MinorFwd.normal_src_edge minor major fp roots)
+      (MCFH.result_post_edge post_major)
+      (MCFH.result_post_edge final_major)
+      (GC.Gen.Cheney.cheney_promote minor major fp roots).fwd_map
+
+#pop-options
