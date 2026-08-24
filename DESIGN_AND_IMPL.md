@@ -1275,6 +1275,52 @@ need guarding: `major_heap_shape` records both `no_black_objects` and
 satisfies `gc_postcondition` on its own
 (`GC.Gen.MajorPrecondition.major_heap_shape_gc_postcondition`).
 
+### What failure means
+
+Reporting failure through a boolean is only honest if the boolean means
+something.  `gen_gc` therefore also carries a postcondition on the failure side:
+
+```fstar
+not ok ==> CheneyBFS.cheney_oom minor_st 's 'fp 'rs
+```
+
+`cheney_oom` is a *witness*, not a shrug.  Unfolded, it says: there is a state
+`cs` that this collection passes through, and an address the collector was about
+to forward there, whose promotion `promote_object` could not place because the
+free list of `cs.cs_major` had no block big enough.  Two ingredients make it
+meaningful:
+
+- **The object.** `promote_fails_at minor cs addr` requires `addr` to be an
+  allocated minor object of positive size that `cs` has not forwarded yet, and
+  `(promote_object minor cs.cs_major addr cs.cs_fp wz).new_addr == 0UL`.  For an
+  interior (infix) pointer it is the enclosing closure that did not fit, which is
+  what `cheney_forward_one` actually tries to promote; that is the second
+  disjunct of `promote_fails_for`.
+- **The point in the run.** `cheney_attempts minor cs final addr` ties `cs` to
+  this collection by the residual equation "finishing the collection from `cs`
+  yields `final`", and pins `addr` as the *next* address the collector forwards
+  there.  Its two disjuncts are the two loops that call `cheney_forward_one`:
+  the root loop, about to forward `roots[ridx]`, and the field loop, about to
+  forward field `fld` of the object being scanned.  Those residual equations are
+  exactly what the loops already carry as invariants, so the witness costs one
+  extra conjunct per loop and no new proof.
+
+Note that `cheney_oom` is not the literal negation of `cheney_no_oom`, and is not
+claimed to be.  `cheney_no_oom` is a property of the collection's *final*
+forwarding map; deriving its negation from a single failed promotion would need a
+monotonicity theorem about the first-fit free-list allocator — that an object the
+allocator once refused is never accepted later.  The witness above says something
+more direct, and more useful to a caller deciding what to do next: here is the
+object that did not fit, and here is where it did not fit.
+
+Both witness predicates (`cheney_oom_reaching`, `cheney_oom_fields`) are
+`opaque_to_smt` and come with intro/elim lemmas, because they are carried through
+four nested Pulse loop invariants where unfolding their existentials only slows
+Z3 down.  The field loop carries the smaller, local `cheney_oom_fields` — phrased
+in terms of the object being scanned — and converts it to the run-level witness
+once, on the way out, where the enclosing scan step's residual equation is in
+scope.  All of it is ghost: the extracted C is unchanged.
+
 ### Transporting the rest across the minor collection
 
 Everything else the major phase needs is derived internally.

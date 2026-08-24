@@ -948,6 +948,7 @@ fn minor_collect_full (gh: gen_heap_t)
       // Strong correctness: the result equals cheney_collect_spec.mc_major.
       s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major /\
       GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
+      (not ok ==> CheneyBFS.cheney_oom minor_st 's 'fp 'rs) /\
       (ok ==>
        CheneyBFS.cheney_no_oom minor_st 's 'fp 'rs /\
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
@@ -1080,6 +1081,9 @@ fn gen_gc (gh: gen_heap_t)
       let minor_st : minor_state = { data = 'd; bump = 'b } in
       let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
       let ok = snd res in
+      // Failure is reported only for a concrete out-of-memory event: an object
+      // the major free list had no room for, at a point of this collection.
+      (not ok ==> CheneyBFS.cheney_oom minor_st 's 'fp 'rs) /\
       gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok 'st (stack_capacity st) /\
       gen_gc_heap_shape_post d2 b2 s2 /\
       gen_gc_reachable_subgraph_isomorphism_post

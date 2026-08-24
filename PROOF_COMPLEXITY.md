@@ -900,6 +900,19 @@ This is the one round in the series that changes the extracted C — a single
 bridge already treated `!ok` as fatal, so its behaviour is unchanged; it now
 aborts without having first run an unsound collection.
 
+Once `ok` carries proof weight, the failure side has to mean something too, so
+`gen_gc` also ensures `not ok ==> cheney_oom minor 's 'fp 'rs`: a *witness* that
+some object the collector was about to forward, at an identified point of this
+run, could not be placed by the free list.  The tie to the run is the residual
+equation the BFS loops already carry as an invariant ("finishing from here yields
+this run's outcome"), so the witness costs one extra conjunct per loop and no new
+proof.  The two witness predicates are `opaque_to_smt` with intro/elim lemmas —
+without that, unfolding their existentials inside four nested Pulse loop
+invariants pushed the field loop past its rlimit.  It is deliberately *not* the
+negation of `cheney_no_oom`: that would require proving the allocator never
+accepts an object it once refused, a monotonicity theorem about first-fit
+free-list allocation that nothing else in the development needs.
+
 The payoff is visible in the concrete client.  SPOT's discharge of the entry
 condition went from ~50 lines citing eight preservation lemmas, to ~25 citing
 two, to two lines; and pruning the lemmas that existed only to serve the old

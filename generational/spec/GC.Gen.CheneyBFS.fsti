@@ -319,3 +319,139 @@ val cheney_promotes_all_reachable
                       Seq.mem x (minor_reachable minor roots) /\
                       minor_wosize minor x > 0 ==>
                       prom.fwd_map x <> 0UL))
+
+/// ---------------------------------------------------------------------------
+/// Out-of-memory witness
+/// ---------------------------------------------------------------------------
+///
+/// `cheney_no_oom` is what the collector guarantees when it reports success.
+/// The predicates below are what it guarantees when it reports *failure*: not
+/// merely "something went wrong", but a concrete out-of-memory event -- a
+/// specific object, at a specific point of this collection, that the major
+/// free list had no room for.
+///
+/// Note these are not literal duals of `cheney_no_oom`.  `cheney_no_oom` is a
+/// property of the collection's final forwarding map; deriving the negation of
+/// it from a failed promotion would require proving that an object the
+/// allocator once refused is never accepted later, i.e. a monotonicity theorem
+/// about the first-fit free-list allocator.  The witness below says something
+/// more direct and more useful to a caller: *here is the object that did not
+/// fit, and here is the point in the collection at which it did not fit.*
+
+/// A failed promotion: `addr` is an allocated minor object of positive size
+/// that state `cs` has not forwarded yet, and `promote_object` cannot place it
+/// -- the free list of `cs.cs_major` has no block big enough.  This is exactly
+/// the hypothesis of `GC.Gen.Cheney.cheney_forward_normal_noop_oom`.
+let promote_fails_at (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t) : prop =
+  Seq.mem addr (minor_objects minor) /\
+  cs.CheneySpec.cs_fwd addr == 0UL /\
+  minor_wosize minor addr > 0 /\
+  (promote_object minor cs.CheneySpec.cs_major addr cs.CheneySpec.cs_fp
+     (minor_wosize minor addr)).new_addr == 0UL
+
+/// Forwarding `addr` from `cs` fails for lack of room.  For an ordinary
+/// address that is a failed promotion of `addr` itself; for an interior
+/// (infix) pointer it is a failed promotion of the enclosing object, which is
+/// what `cheney_forward_one` actually tries to promote.
+let promote_fails_for (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t) : prop =
+  promote_fails_at minor cs addr \/
+  (is_infix_in_minor minor addr /\
+   promote_fails_at minor cs (infix_parent minor addr))
+
+/// `cs` is a state this collection passes through on its way to `final`, and
+/// the very next thing the collector does there is to try to forward `addr`.
+///
+/// The two disjuncts are the two loops that call `cheney_forward_one`: the
+/// root loop (about to forward `roots[ridx]`) and the field loop (about to
+/// forward field `fld` of `parent`).  In both cases the tie to the run is the
+/// residual equation "finishing the collection from here yields `final`",
+/// which is precisely the invariant those loops already carry.
+let cheney_attempts (minor: minor_state) (cs: CheneySpec.cheney_state)
+                    (final: CheneySpec.cheney_state) (addr: U64.t) : prop =
+  (exists (roots: seq U64.t) (ridx: nat) (fuel: nat).
+     ridx < Seq.length roots /\ Seq.index roots ridx == addr /\
+     CheneySpec.cheney_scan minor
+       (CheneySpec.cheney_forward_roots minor cs roots ridx) 0 fuel == final) \/
+  (exists (parent: U64.t) (fld: nat) (wz: nat) (scan: nat) (fuel: nat).
+     fld < wz /\ to_minor_offset (minor_read_field minor parent fld) == addr /\
+     CheneySpec.cheney_scan minor
+       (CheneySpec.cheney_forward_fields minor cs parent fld wz) scan fuel == final)
+
+/// The collection whose BFS ends in `final` ran out of major-heap room.
+///
+/// Opaque to SMT: this and `cheney_oom_fields` are carried by the collector's
+/// loop invariants, where unfolding their existentials only slows Z3 down.
+/// Use the intro/elim lemmas below.
+[@@"opaque_to_smt"]
+let cheney_oom_reaching (minor: minor_state) (final: CheneySpec.cheney_state) : prop =
+  exists (cs: CheneySpec.cheney_state) (addr: U64.t).
+    cheney_attempts minor cs final addr /\ promote_fails_for minor cs addr
+
+/// The state `cheney_promote` ends in (its result is this state's projection).
+let cheney_promote_state (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : GTot CheneySpec.cheney_state
+  = let cs0 : CheneySpec.cheney_state =
+      { CheneySpec.cs_major = major; CheneySpec.cs_fp = fp;
+        CheneySpec.cs_fwd = empty_forwarding; CheneySpec.cs_queue = Seq.empty } in
+    CheneySpec.cheney_scan minor
+      (CheneySpec.cheney_forward_roots minor cs0 roots 0) 0 (CheneySpec.cheney_fuel minor)
+
+/// `cheney_promote minor major fp roots` ran out of major-heap room.
+let cheney_oom (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  cheney_oom_reaching minor (cheney_promote_state minor major fp roots)
+
+/// Introduction from the root loop: the collector was about to forward
+/// `roots[ridx]` and the out-of-memory flag went up while it did so.
+///
+/// Stated in the flag-transition style of `root_prefix_step_oom` so that the
+/// caller can invoke it unconditionally, without branching on a runtime flag.
+val cheney_oom_intro_root
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (final: CheneySpec.cheney_state)
+  (roots: seq U64.t) (ridx: nat) (fuel: nat) (oom_before oom_after: bool)
+  : Lemma (requires ridx < Seq.length roots /\
+                    ((not oom_before /\ oom_after) ==>
+                     promote_fails_for minor cs (Seq.index roots ridx)) /\
+                    CheneySpec.cheney_scan minor
+                      (CheneySpec.cheney_forward_roots minor cs roots ridx) 0 fuel == final)
+          (ensures (not oom_before /\ oom_after) ==> cheney_oom_reaching minor final)
+
+/// The same witness, local to one pass of the field loop: scanning `parent`'s
+/// fields from `cs` hit a promotion that did not fit.
+///
+/// The field loop carries this rather than `cheney_oom_reaching` because it
+/// mentions only what that loop already has in its invariant -- the object
+/// being scanned and the state the scan of it started from.  It is converted
+/// to the run-level witness once, on the way out, where the enclosing scan
+/// step's residual equation is in scope.
+[@@"opaque_to_smt"]
+let cheney_oom_fields (minor: minor_state) (cs: CheneySpec.cheney_state)
+                      (parent: U64.t) (wz: nat) : prop =
+  exists (cs': CheneySpec.cheney_state) (fld: nat).
+    fld < wz /\
+    CheneySpec.cheney_forward_fields minor cs' parent fld wz ==
+      CheneySpec.cheney_forward_fields minor cs parent 0 wz /\
+    promote_fails_for minor cs' (to_minor_offset (minor_read_field minor parent fld))
+
+/// Introduction from the field loop: the collector was about to forward field
+/// `fld` of `parent` and the out-of-memory flag went up while it did so.
+val cheney_oom_intro_field
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (cs': CheneySpec.cheney_state)
+  (parent: U64.t) (fld: nat) (wz: nat) (oom_before oom_after: bool)
+  : Lemma (requires fld < wz /\
+                    ((not oom_before /\ oom_after) ==>
+                     promote_fails_for minor cs'
+                       (to_minor_offset (minor_read_field minor parent fld))) /\
+                    CheneySpec.cheney_forward_fields minor cs' parent fld wz ==
+                      CheneySpec.cheney_forward_fields minor cs parent 0 wz)
+          (ensures (not oom_before /\ oom_after) ==> cheney_oom_fields minor cs parent wz)
+
+/// Elimination: a field-loop failure is a failure of the whole run, once the
+/// scan step that owns this field loop is tied to the run's outcome.
+val cheney_oom_fields_elim
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (final: CheneySpec.cheney_state)
+  (parent: U64.t) (wz: nat) (scan: nat) (fuel: nat) (oom_before oom_after: bool)
+  : Lemma (requires ((not oom_before /\ oom_after) ==> cheney_oom_fields minor cs parent wz) /\
+                    CheneySpec.cheney_scan minor
+                      (CheneySpec.cheney_forward_fields minor cs parent 0 wz)
+                      scan fuel == final)
+          (ensures (not oom_before /\ oom_after) ==> cheney_oom_reaching minor final)
