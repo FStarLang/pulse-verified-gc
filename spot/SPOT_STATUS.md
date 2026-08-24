@@ -50,6 +50,35 @@ order. Each active SPOT interface and implementation is checked with
 `--z3rlimit 10 --retry 3`, using the same include paths as the
 generational development and treating upstream `GC.*` modules as already cached.
 
+## Where to Start
+
+The top-level SPOT is **`GC.SPOT.ConcreteCallFull.call_concrete_gen_gc_spot`**.
+It takes nothing but the generational heap holding the A/B/C fixture, allocates
+the roots array, forwarding array, Cheney queue, remembered-slot table and a
+two-slot gray stack itself, calls the real `gen_gc`, frees everything, and
+returns the concrete conclusions: `C` survives, `A` has a promoted image `A'`
+that survives, `C.field1` still points to `A'`, and `B` was never promoted.
+
+`GC.SPOT.ConcreteCallMinor.call_concrete_minor_collect_full_spot` is the same
+thing one phase earlier, stopping after `minor_collect_full`.
+
+Reading order, each layer using only the ones above it:
+
+| Layer | Modules |
+| --- | --- |
+| fixture | `Layout`, `ConcreteMinor` (A, B), `ConcreteMajor` (C, free block) |
+| contract packaging | `Preconditions`, `Postconditions` |
+| scenario | `ThreeObjects` (roots `[C; A]`, slot table `[C.field1]`) |
+| pure obligations | `ConcreteForwarding`, `ConcreteScenarios`, `ConcreteFull` |
+| resource setup | `ConcreteSetup` |
+| generic wrappers | `CallMinor`, `CallFull` |
+| concrete wrappers | `ConcreteCallMinor`, **`ConcreteCallFull`** |
+
+Both concrete wrappers also come in a `_borrowed` variant that takes the
+arrays, queue, slot table and gray stack as parameters instead of allocating
+them, for readers who want to see the resource obligations rather than the
+allocation.
+
 ## Active Module Structure
 
 - `GC.SPOT.Layout`: names the intended three-object layout. `A` and `B` are
@@ -79,15 +108,18 @@ generational development and treating upstream `GC.*` modules as already cached.
 - `GC.SPOT.ConcreteFull`: connects the post-minor result to the final `gen_gc`
   postcondition. It proves C survives, A' survives, and C.field1 still points
   to A' in the final major heap.
+- `GC.SPOT.ConcreteSetup`: the sequence lemmas that identify freshly allocated
+  arrays with the concrete root, forwarding and slot sequences, so the
+  concrete wrappers can allocate their own resources.
 - `GC.SPOT.CallMinor`: a Pulse wrapper that calls the real
-  `minor_collect_full`.
+  `minor_collect_full`, taking the packaged precondition and returning the
+  packaged postcondition.
 - `GC.SPOT.ConcreteCallMinor`: the concrete Pulse minor-collection SPOT. From
   the concrete A/B/C heap resources, root array, forwarding array, Cheney queue,
   and remembered slot table, it derives the real `minor_collect_full`
-  precondition, calls `minor_collect_full`, packages its postcondition, and
-  immediately proves the useful concrete consequences: A has a promoted image,
-  C.field1 contains that image in the post-minor heap, and B has no promoted
-  image.
+  precondition, calls it through `GC.SPOT.CallMinor`, and immediately proves
+  the useful concrete consequences: A has a promoted image, C.field1 contains
+  that image in the post-minor heap, and B has no promoted image.
 - `GC.SPOT.CallFull`: a Pulse wrapper that calls the real `gen_gc`.
 - `GC.SPOT.ConcreteCallFull`: the concrete Pulse full-GC SPOT. It derives the
   real `gen_gc` precondition from the concrete heap/resources plus the supplied

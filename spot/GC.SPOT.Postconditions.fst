@@ -48,6 +48,11 @@ let minor_collect_full_post_intro
   (ok: bool) (post_major: heap) (post_roots: seq U64.t)
   = ()
 
+let minor_collect_full_post_elim
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (ok: bool) (post_major: heap) (post_roots: seq U64.t)
+  = ()
+
 let promoted_image_from_forwarding
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (old img: U64.t)
