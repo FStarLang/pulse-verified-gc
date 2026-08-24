@@ -52,19 +52,19 @@ module CheneyBFS = GC.Gen.CheneyBFS
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module Cheney = GC.Gen.Impl.Cheney
 
-/// The Cheney transport lives in `GC.Gen.MajorPrecondition`; this is the thin
-/// re-export that names it at the top-level interface.
-let gen_gc_major_precondition_intro minor major fp roots st cap
-  = GMP.darken_precondition_after_minor minor major fp roots st cap
-
-/// The caller-facing `gen_gc_major_precondition` is stated on the post-minor
-/// heap and the *pre*-darkening stack.  Turning it into the obligation that
-/// `GC.Impl.collect_with_roots` actually demands -- which lives on the
-/// post-darkening state -- is done once, here.
+/// Two transports in one: `GC.Gen.MajorPrecondition` carries the pre-minor facts
+/// across the minor collection to `darken_precondition`, and
+/// `MarkBoundedPrecondition` carries that across root darkening to the
+/// obligation `GC.Impl.collect_with_roots` actually demands.  Neither step is
+/// the caller's business.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let gen_gc_major_precondition_elim minor major fp roots st cap
   = let result = CheneySpec.cheney_collect_spec minor major fp roots in
+    assert (Seq.equal st (Seq.empty #obj_addr));
+    GMP.darken_precondition_after_minor minor major fp roots cap;
     MBP.darken_establishes_precondition result.mc_major st result.mc_roots result.mc_fp cap;
     MBP.darken_roots_match_stack result.mc_major st result.mc_roots result.mc_fp cap
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// Allocation

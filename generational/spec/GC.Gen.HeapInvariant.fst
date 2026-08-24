@@ -38,6 +38,7 @@ let major_heap_shape (major: heap) (fp: U64.t) : prop =
   SweepInv.fp_valid fp major /\
   Sweep.fp_in_heap fp major /\
   Mark.no_black_objects major /\
+  SweepInv.no_gray_objects major /\
   Mark.no_pointer_to_blue major /\
   no_scan_invariant major
 

@@ -99,38 +99,38 @@ let gen_gc_prepared_roots
   (st: Seq.seq obj_addr) (cap: nat) : GTot (Seq.seq obj_addr) =
   snd (gen_gc_prepared_state minor major fp roots st cap)
 
-/// What the caller owes the major phase.  Every conjunct is a statement about
-/// the heap and stack that exist *before* root darkening, so a caller never has
-/// to unfold `darken_roots_bounded_spec`; `gen_gc_major_precondition_elim`
-/// discharges the actual `GC.Impl.collect_with_roots` obligation internally.
+/// What the caller owes the major phase.
+///
+/// Every conjunct is a statement about the state that exists *before* the minor
+/// collection; nothing here mentions the post-minor heap or the rewritten root
+/// set.  All the transport -- the seven heap-shape conjuncts of
+/// `darken_precondition`, the colour-stack conjunct, and the fact that every
+/// post-minor root is a darkenable major object -- is done internally by
+/// `GC.Gen.MajorPrecondition`.
+///
+///  * `cheney_no_oom` says the nursery's live set fits in the free list.  It was
+///    always implicitly required: the old contract demanded that every post-minor
+///    root be a major object, and an unforwarded minor root is not one.
+///  * `Seq.length st == 0` says the gray stack starts empty.  It is collector
+///    scratch space; both real clients pass an empty stack.
+///  * `Seq.length roots <= cap` is the sizing obligation: darkening pushes every
+///    root, so the stack has to hold them.
 let gen_gc_major_precondition
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
   (st: Seq.seq obj_addr) (cap: nat) : prop =
-  let result = CheneySpec.cheney_collect_spec minor major fp roots in
-  MBP.darken_precondition result.mc_major st result.mc_roots result.mc_fp cap
-
-/// Introduction, so that a caller never has to transport the major-GC entry
-/// condition across the minor collection by hand.  Seven of `darken_precondition`'s
-/// ten conjuncts are pure heap-shape transport that `GC.Gen.CheneyPreservation`
-/// already proves; only the three in `post_minor_root_obligations` -- the ones
-/// relating the caller's own stack and capacity budget to the *post-minor* root
-/// set -- are genuinely the caller's to discharge.
-val gen_gc_major_precondition_intro
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
-  (st: Seq.seq obj_addr) (cap: nat)
-  : Lemma
-      (requires
-        GenInv.collection_heap_shape minor major fp /\
-        MarkBoundedInv.bounded_mark_inv major st cap /\
-        Mark.gray_objects_on_stack major st /\
-        GMP.post_minor_root_obligations minor major fp roots st cap)
-      (ensures gen_gc_major_precondition minor major fp roots st cap)
+  CheneyBFS.cheney_no_oom minor major fp roots /\
+  Seq.length st == 0 /\
+  Seq.length roots <= cap /\
+  cap > 0
 
 val gen_gc_major_precondition_elim
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
   (st: Seq.seq obj_addr) (cap: nat)
   : Lemma
-      (requires gen_gc_major_precondition minor major fp roots st cap)
+      (requires
+        GenInv.collection_heap_shape minor major fp /\
+        MinorFwd.roots_valid_for_minor_collection minor major roots /\
+        gen_gc_major_precondition minor major fp roots st cap)
       (ensures
         (let result = CheneySpec.cheney_collect_spec minor major fp roots in
          let prepared = gen_gc_prepared_state minor major fp roots st cap in

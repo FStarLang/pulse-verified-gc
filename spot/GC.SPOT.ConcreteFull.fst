@@ -186,6 +186,8 @@ let root_heap_reachable_from_major_gc_pre
   (roots: seq U64.t) (st: seq obj_addr) (cap: nat) (r: obj_addr)
   : Lemma
       (requires
+        GenInv.collection_heap_shape minor major fp /\
+        MinorFwd.roots_valid_for_minor_collection minor major roots /\
         GenImpl.gen_gc_major_precondition minor major fp roots st cap /\
         Seq.mem r (GenImpl.gen_gc_prepared_roots minor major fp roots st cap))
       (ensures
@@ -207,6 +209,44 @@ let root_heap_reachable_from_major_gc_pre
   assert (SpecGraph.mem_graph_vertex graph r);
   assert (Seq.mem r (SpecDFS.reachable_set graph roots'));
   assert (SpecCorrectness.heap_reachable prepared_major prepared_roots r)
+
+/// The concrete instance, so that the scenario proofs do not have to re-supply
+/// the pre-minor shape facts at every use.
+let spot_root_heap_reachable_from_major_gc_pre
+  (r: unit{ConcreteMajor.spot_major_room})
+  (st: seq obj_addr) (cap: nat) (v: obj_addr)
+  : Lemma
+      (requires (
+        let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
+        GenImpl.gen_gc_major_precondition
+          ConcreteMinor.spot_minor2
+          (ConcreteMajor.spot_major_heap r)
+          (ConcreteMajor.spot_major_fp r) roots st cap /\
+        Seq.mem v (GenImpl.gen_gc_prepared_roots
+          ConcreteMinor.spot_minor2
+          (ConcreteMajor.spot_major_heap r)
+          (ConcreteMajor.spot_major_fp r) roots st cap)))
+      (ensures (
+        let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
+        SpecCorrectness.heap_reachable
+          (GenImpl.gen_gc_prepared_major
+            ConcreteMinor.spot_minor2
+            (ConcreteMajor.spot_major_heap r)
+            (ConcreteMajor.spot_major_fp r) roots st cap)
+          (GenImpl.gen_gc_prepared_roots
+            ConcreteMinor.spot_minor2
+            (ConcreteMajor.spot_major_heap r)
+            (ConcreteMajor.spot_major_fp r) roots st cap)
+          v))
+  =
+  ConcreteScenarios.spot_collection_heap_shape r;
+  ConcreteScenarios.spot_roots_valid_for_minor_collection r;
+  root_heap_reachable_from_major_gc_pre
+    ConcreteMinor.spot_minor2
+    (ConcreteMajor.spot_major_heap r)
+    (ConcreteMajor.spot_major_fp r)
+    (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
+    st cap v
 
 let spot_concrete_c_final_survives
   (r: unit{ConcreteMajor.spot_major_room})
@@ -236,12 +276,7 @@ let spot_concrete_c_final_survives
     (ConcreteMajor.spot_major_fp r)
     (ThreeObjects.spot_roots c)
     st cap);
-  root_heap_reachable_from_major_gc_pre
-    ConcreteMinor.spot_minor2
-    (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
-    (ThreeObjects.spot_roots c)
-    st cap c;
+  spot_root_heap_reachable_from_major_gc_pre r st cap c;
   ThreeObjects.spot_final_survives_from_gen_gc_post
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
@@ -284,12 +319,7 @@ let spot_concrete_a_prime_final_survives
     (ConcreteMajor.spot_major_fp r)
     (ThreeObjects.spot_roots c)
     st cap);
-  root_heap_reachable_from_major_gc_pre
-    ConcreteMinor.spot_minor2
-    (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
-    (ThreeObjects.spot_roots c)
-    st cap a_prime;
+  spot_root_heap_reachable_from_major_gc_pre r st cap a_prime;
   ThreeObjects.spot_final_survives_from_gen_gc_post
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
@@ -537,6 +567,8 @@ let prepared_roots_preserve_c_field1
   assert (SpecObj.wosize_of_object c prepared_major ==
           SpecObj.wosize_of_object c result.mc_major);
   assert (U64.v (SpecObj.wosize_of_object c prepared_major) >= 2);
+  ConcreteScenarios.spot_collection_heap_shape r;
+  ConcreteScenarios.spot_roots_valid_for_minor_collection r;
   GenImpl.gen_gc_major_precondition_elim
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
@@ -645,18 +677,8 @@ let spot_concrete_c_field_final_points_to_a_prime
     (ConcreteMajor.spot_major_fp r)
     (ThreeObjects.spot_roots c)
     st cap);
-  root_heap_reachable_from_major_gc_pre
-    ConcreteMinor.spot_minor2
-    (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
-    (ThreeObjects.spot_roots c)
-    st cap c;
-  root_heap_reachable_from_major_gc_pre
-    ConcreteMinor.spot_minor2
-    (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
-    (ThreeObjects.spot_roots c)
-    st cap a_prime;
+  spot_root_heap_reachable_from_major_gc_pre r st cap c;
+  spot_root_heap_reachable_from_major_gc_pre r st cap a_prime;
   assert (SpecCorrectness.major_gc_live_subgraph_isomorphism
     prepared_major final_major prepared_roots);
   prepared_roots_preserve_c_field1 r roots_out st cap;

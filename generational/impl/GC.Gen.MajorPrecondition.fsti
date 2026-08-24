@@ -9,16 +9,16 @@
 /// caller has to transport all ten of its conjuncts across
 /// `cheney_collect_spec` by hand.
 ///
-/// Seven of those ten are pure heap-shape transport: they mention only the
-/// major heap and the caller's own gray stack, and `GC.Gen.CheneyPreservation`
-/// already proves each of them.  Re-citing that family at every call site is
-/// exactly the kind of leak `MarkBoundedPrecondition` was written to close, one
-/// phase earlier.  This module closes it.
+/// None of that is really the caller's business.  Seven conjuncts are pure
+/// heap-shape transport that `GC.Gen.CheneyPreservation` already proves; two
+/// more become trivial once the gray stack starts empty, which is the only way
+/// any caller ever calls the collector; and the last -- that every *post-minor*
+/// root is a darkenable major object -- follows from the roots being valid for
+/// the minor collection in the first place, plus the nursery fitting in the
+/// free list.
 ///
-/// `darken_precondition_after_minor` takes facts about the state the caller
-/// *does* observe -- the pre-minor heap and stack -- plus the three residual
-/// obligations that genuinely mention the post-minor root set, and produces the
-/// full `darken_precondition` on the post-minor state.
+/// So this module states the entry condition entirely in terms of the pre-minor
+/// state the caller actually observes, and proves the transport once.
 
 module GC.Gen.MajorPrecondition
 
@@ -38,77 +38,50 @@ module GenInv = GC.Gen.HeapInvariant
 module Promote = GC.Gen.Promote
 module Cheney = GC.Gen.Cheney
 module CheneyPres = GC.Gen.CheneyPreservation
+module CheneyBFS = GC.Gen.CheneyBFS
+module MinorFwd = GC.Gen.MinorCollectForwarding.Helpers
 module MBP = GC.Impl.MarkBoundedPrecondition
 
-/// The conjuncts of `darken_precondition` that genuinely belong to the caller,
-/// because they relate the caller's gray stack and capacity budget to the
-/// *post-minor* root set.  Unlike the other seven they are not preserved by
-/// anything: the minor collection rewrites the roots, so only the caller knows
-/// how the resulting set relates to the stack it supplied.
-let post_minor_root_obligations
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (st: seq obj_addr) (cap: nat) : prop =
-  let result = Cheney.cheney_collect_spec minor major fp roots in
-  (forall (x: obj_addr). Seq.mem x st ==> Seq.mem (x <: U64.t) result.mc_roots) /\
-  Seq.length st + Seq.length result.mc_roots <= cap /\
-  (forall (i: nat). i < Seq.length result.mc_roots ==>
-     MBP.root_valid_for_darkening result.mc_major (Seq.index result.mc_roots i))
-
-/// `post_minor_root_obligations` is not as innocent as it looks: its third
-/// conjunct already implies that every live minor root was forwarded.
+/// Every post-minor root is a genuine, non-blue major object.
 ///
-/// `rewrite_root` leaves an unforwarded minor root unchanged, so such a root
-/// would still be a minor pointer after the collection -- and the nursery lies
-/// strictly below the major heap (`minor_heap_size = 2048`, and the
-/// `zero_addr_above_minor` configuration axiom puts `zero_addr` at or above
-/// `minor_heap_size`), so it could never satisfy `root_valid_for_darkening`.
-///
-/// In other words `gen_gc`'s precondition silently rules out the only kind of
-/// promotion failure that can affect a root, even though `gen_gc` reports
-/// out-of-memory through its `ok` result rather than demanding `cheney_no_oom`
-/// up front.  Recorded here so the tension is visible rather than latent.
-val post_minor_root_obligations_implies_roots_forwarded
+/// This is the one conjunct of `darken_precondition` that mentions the rewritten
+/// root set, and it used to be an obligation on `gen_gc`'s caller -- who has no
+/// way to discharge it without unfolding the whole Cheney simulation.  It is
+/// really a theorem about minor collection, and the two cases are quite
+/// different.  A non-minor root survives `rewrite_root` untouched, so it only
+/// has to stay a non-blue object, which Cheney's frame lemmas give.  A minor
+/// root is forwarded (BFS coverage, from `cheney_no_oom`), and its target is an
+/// ordinary object rather than an interior pointer because the source was a
+/// `minor_objects` member and therefore not an infix sub-object.
+val post_minor_roots_valid_for_darkening
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (st: seq obj_addr) (cap: nat)
-  : Lemma
-    (requires post_minor_root_obligations minor major fp roots st cap)
-    (ensures (
-      let prom = Cheney.cheney_promote minor major fp roots in
-      forall (i: nat). i < Seq.length roots ==>
-        Promote.is_minor_pointer (Seq.index roots i) ==>
-        prom.fwd_map (Seq.index roots i) <> 0UL))
-
-/// `CheneyPreservation` states the color-stack condition in its gray-or-black
-/// form because that is what promotion preserves; the major GC wants the
-/// gray-only form.  Under `no_black_objects` -- which `major_heap_shape`
-/// supplies -- the two coincide, but the implication holds outright.
-val gray_black_objects_on_stack_weaken (g: heap) (st: seq obj_addr)
-  : Lemma (requires CheneyPres.gray_black_objects_on_stack g st)
-          (ensures SpecMark.gray_objects_on_stack g st)
-
-/// The converse under `no_black_objects`, which is how a caller holding only
-/// the gray-only form feeds the preservation lemma.
-val gray_objects_on_stack_strengthen (g: heap) (st: seq obj_addr)
-  : Lemma (requires SpecMark.gray_objects_on_stack g st /\
-                    SpecMark.no_black_objects g)
-          (ensures CheneyPres.gray_black_objects_on_stack g st)
-
-/// The main result: a well-formed pre-minor state, a gray stack that is already
-/// good for the *pre-minor* heap, and the three residual root obligations are
-/// enough to enter the major collector after a minor collection.
-///
-/// Note what is *not* required: nothing here unfolds `cheney_collect_spec`, and
-/// the only post-minor state the caller mentions is the root set, via
-/// `post_minor_root_obligations`.
-val darken_precondition_after_minor
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (st: seq obj_addr) (cap: nat)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      MarkBoundedInv.bounded_mark_inv major st cap /\
-      SpecMark.gray_objects_on_stack major st /\
-      post_minor_root_obligations minor major fp roots st cap)
+      MinorFwd.roots_valid_for_minor_collection minor major roots /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
       let result = Cheney.cheney_collect_spec minor major fp roots in
-      MBP.darken_precondition result.mc_major st result.mc_roots result.mc_fp cap))
+      forall (i: nat). i < Seq.length result.mc_roots ==>
+        MBP.root_valid_for_darkening result.mc_major (Seq.index result.mc_roots i)))
+
+/// The main result: the major collector can be entered after a minor collection
+/// on the strength of pre-minor facts alone.
+///
+/// `Seq.length roots <= cap` is the only sizing obligation, and it is the
+/// obvious one: darkening pushes every root, so the gray stack has to be able
+/// to hold them.  The stack itself starts empty -- it is collector scratch
+/// space, and both real clients (SPOT and the OCaml runtime bridge) pass an
+/// empty one.
+val darken_precondition_after_minor
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (cap: nat)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      MinorFwd.roots_valid_for_minor_collection minor major roots /\
+      CheneyBFS.cheney_no_oom minor major fp roots /\
+      Seq.length roots <= cap /\ cap > 0)
+    (ensures (
+      let result = Cheney.cheney_collect_spec minor major fp roots in
+      MBP.darken_precondition
+        result.mc_major Seq.empty result.mc_roots result.mc_fp cap))

@@ -10,6 +10,7 @@ open GC.Gen.Base
 module Cheney = GC.Gen.Cheney
 module GenImpl = GC.Gen.Impl
 module GenInv = GC.Gen.HeapInvariant
+module MinorFwd = GC.Gen.MinorCollectForwarding
 module Preconditions = GC.SPOT.Preconditions
 module ThreeObjects = GC.SPOT.ThreeObjects
 module ConcreteMajor = GC.SPOT.ConcreteMajor
@@ -26,6 +27,22 @@ val spot_c_slot_is_field1
     Lemma (ensures
       ThreeObjects.spot_c_to_a_slot (ConcreteMajor.spot_c r) ==
       ConcreteMajor.spot_c_field1 r)
+
+/// The concrete scenario's pre-minor shape and root validity, which the
+/// `gen_gc` entry contract is stated against.
+val spot_collection_heap_shape
+  : r:unit{ConcreteMajor.spot_major_room} ->
+    Lemma (GenInv.collection_heap_shape
+             ConcreteMinor.spot_minor2
+             (ConcreteMajor.spot_major_heap r)
+             (ConcreteMajor.spot_major_fp r))
+
+val spot_roots_valid_for_minor_collection
+  : r:unit{ConcreteMajor.spot_major_room} ->
+    Lemma (MinorFwd.roots_valid_for_minor_collection
+             ConcreteMinor.spot_minor2
+             (ConcreteMajor.spot_major_heap r)
+             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)))
 
 val spot_concrete_minor_collect_full_pre
   : r:unit{ConcreteMajor.spot_major_room} ->
@@ -139,29 +156,3 @@ val spot_concrete_b_not_promoted
         (ConcreteMajor.spot_major_fp r)
         (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
         GC.SPOT.Layout.b_minor)
-
-/// The concrete witness for `GC.Gen.MajorPrecondition`'s observation that
-/// `gen_gc`'s entry contract already excludes root-level out-of-memory.
-///
-/// `a` is a live nursery root of this scenario.  This derives that it must have
-/// been promoted *from the precondition alone* -- note the absence of any
-/// appeal to `ConcreteForwarding.spot_concrete_no_oom`, which is how every
-/// other `a`-promotion result in this module is obtained.
-val spot_a_forwarded_from_gen_gc_precondition
-  : r:unit{ConcreteMajor.spot_major_room} ->
-    cap:nat ->
-    Lemma
-      (requires
-        GenImpl.gen_gc_major_precondition
-          ConcreteMinor.spot_minor2
-          (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
-          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-          Seq.empty cap)
-      (ensures (
-        let prom = Cheney.cheney_promote
-          ConcreteMinor.spot_minor2
-          (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
-          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
-        prom.fwd_map GC.SPOT.Layout.a_minor <> 0UL))

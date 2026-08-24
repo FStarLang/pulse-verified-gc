@@ -1746,6 +1746,38 @@ private let update_major_pointers_preserves_chain_objects_blue
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
+/// With no gray and no black objects, the empty stack trivially carries every
+/// gray-or-black object -- and conversely.
+private let no_gray_and_no_black_is_empty_stack (g: heap)
+  : Lemma (requires SweepInv.no_gray_objects g /\ Mark.no_black_objects g)
+          (ensures gray_black_objects_on_stack g Seq.empty)
+  =
+  let aux (obj: obj_addr)
+    : Lemma (requires Seq.mem obj (objects zero_addr g) /\
+                      (is_gray obj g \/ is_black obj g))
+            (ensures Seq.mem obj (Seq.empty #obj_addr))
+    = SweepInv.no_gray_elim obj g
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
+private let no_empty_stack_implies_no_gray (g: heap)
+  : Lemma (requires gray_black_objects_on_stack g Seq.empty)
+          (ensures SweepInv.no_gray_objects g)
+  =
+  let aux (obj: obj_addr)
+    : Lemma (ensures Seq.mem obj (objects zero_addr g) ==> ~(is_gray obj g))
+    = if Seq.mem obj (objects zero_addr g) && is_gray obj g
+      then begin
+        assert (Seq.mem obj (Seq.empty #obj_addr));
+        let i = Seq.index_mem obj (Seq.empty #obj_addr) in
+        assert_norm (Seq.length (Seq.empty #obj_addr) == 0);
+        assert (i < Seq.length (Seq.empty #obj_addr));
+        assert False
+      end
+  in
+  FStar.Classical.forall_intro aux;
+  SweepInv.no_gray_intro g
+
 let cheney_collect_preserves_collection_heap_shape
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
@@ -1789,6 +1821,12 @@ let cheney_collect_preserves_collection_heap_shape
   assert (SweepInv.fp_valid res.mc_fp res.mc_major);
   assert (Sweep.fp_in_heap res.mc_fp res.mc_major);
   assert (Mark.no_black_objects res.mc_major);
+  // No gray objects: the pre-minor heap has none (`major_heap_shape`) and none
+  // are black either, so the empty stack already satisfies the gray-or-black
+  // stack condition, which promotion preserves.
+  no_gray_and_no_black_is_empty_stack major;
+  cheney_collect_preserves_gray_black_objects_on_stack minor major fp roots Seq.empty;
+  no_empty_stack_implies_no_gray res.mc_major;
   assert (Mark.no_pointer_to_blue res.mc_major);
   assert (no_scan_invariant res.mc_major);
   GenInv.major_heap_shape_intro res.mc_major res.mc_fp;

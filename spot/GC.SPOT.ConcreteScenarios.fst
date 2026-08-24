@@ -822,7 +822,9 @@ let spot_post_minor_roots_valid_for_darkening
   FStar.Classical.forall_intro aux
 
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+/// With the entry contract stated on the pre-minor state, all the concrete
+/// client owes is that the nursery fits in the free list and that the gray
+/// stack can hold the two roots.
 let spot_concrete_gen_gc_major_pre_empty_stack
   (r: unit{ConcreteMajor.spot_major_room}) (cap: nat{cap >= 2})
   : Lemma
@@ -834,32 +836,9 @@ let spot_concrete_gen_gc_major_pre_empty_stack
           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
           Seq.empty cap)
   =
-  let minor = ConcreteMinor.spot_minor2 in
-  let major = ConcreteMajor.spot_major_heap r in
-  let fp = ConcreteMajor.spot_major_fp r in
-  let c = ConcreteMajor.spot_c r in
-  let roots = ThreeObjects.spot_roots c in
-  let result = Cheney.cheney_collect_spec minor major fp roots in
-  spot_collection_heap_shape r;
-  GenInv.collection_heap_shape_elim minor major fp;
-  GenInv.major_heap_shape_elim major fp;
-  // The pre-minor stack is empty, so `bounded_mark_inv` and the color-stack
-  // condition hold on the *pre*-minor heap for free.
-  SpecMarkBounded.empty_bounded_stack_props major;
-  GC.Spec.SweepInv.heap_objects_dense_intro major;
-  SpecMarkBoundedInv.bounded_mark_inv_intro major Seq.empty cap;
-  spot_major_gray_black_empty r;
-  cheney_gray_black_stack_to_gray_stack major (Seq.empty #obj_addr);
-  // The three residual obligations, which do mention the post-minor roots.
-  spot_post_minor_roots_shape r;
-  empty_stack_roots_subset result.mc_roots;
-  CheneyPres.cheney_collect_preserves_wfh_from_shape minor major fp roots;
-  CheneyPres.cheney_collect_preserves_no_pointer_to_blue minor major fp roots;
-  spot_post_minor_roots_valid_for_darkening r;
-  assert (GMP.post_minor_root_obligations minor major fp roots Seq.empty cap);
-  // Everything else is transported by the library.
-  GenImpl.gen_gc_major_precondition_intro minor major fp roots Seq.empty cap
-#pop-options
+  ConcreteForwarding.spot_concrete_no_oom r;
+  ThreeObjects.spot_roots_len (ConcreteMajor.spot_c r);
+  assert_norm (Seq.length (Seq.empty #obj_addr) == 0)
 
 let spot_concrete_gen_gc_pre_empty_stack
   (r: unit{ConcreteMajor.spot_major_room}) (cap: nat{cap >= 2})
@@ -897,17 +876,3 @@ let spot_concrete_b_not_promoted (r: unit{ConcreteMajor.spot_major_room})
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)
     (ConcreteMajor.spot_c r)
-
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let spot_a_forwarded_from_gen_gc_precondition (r: unit{ConcreteMajor.spot_major_room}) (cap: nat)
-  =
-  let minor = ConcreteMinor.spot_minor2 in
-  let major = ConcreteMajor.spot_major_heap r in
-  let fp = ConcreteMajor.spot_major_fp r in
-  let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
-  ThreeObjects.spot_roots_len (ConcreteMajor.spot_c r);
-  ThreeObjects.spot_roots_index_a (ConcreteMajor.spot_c r);
-  Layout.a_minor_is_minor_pointer ();
-  assert (GMP.post_minor_root_obligations minor major fp roots Seq.empty cap);
-  GMP.post_minor_root_obligations_implies_roots_forwarded minor major fp roots Seq.empty cap
-#pop-options
