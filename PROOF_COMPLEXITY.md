@@ -790,7 +790,7 @@ by spec and implementation alike, and would have to be re-justified against a C 
 target that is a raw pointer with a fixed layout. That is precisely why the current design
 avoids it. Recorded as the largest lever, at prohibitive cost.
 
-### 6.9 Entry-contract hygiene — **done, with one residue**
+### 6.9 Entry-contract hygiene — **done**
 
 **What was wrong.** `GC.Gen.Impl.fsti`'s `gen_gc` contract leaked four internal facts to
 its callers:
@@ -824,24 +824,59 @@ All four are `prop`-level; the extracted C is byte-identical.
 
 A follow-up review asked the obvious next question: `gen_gc_major_precondition`
 is still *stated* on the post-minor state, so why is that acceptable?  It was
-not.  `GC.Gen.MajorPrecondition.darken_precondition_after_minor` now transports
-seven of the ten conjuncts across `cheney_collect_spec` inside the library,
-using the `CheneyPreservation` family, and needs no hypothesis `gen_gc` did not
-already demand.  The three that remain — `st` is a subset of the post-minor
-roots, the capacity budget covers them, and each is a real non-blue major object
-— genuinely mention the rewritten root set and belong to the caller.  `spot`'s
-discharge dropped from ~50 lines citing eight preservation lemmas to ~25 citing
-two.  A by-product, `post_minor_root_obligations_implies_roots_forwarded`,
-records a latent tension: the third residual conjunct already implies that every
-live minor root was promoted, so the entry contract silently excludes root-level
-out-of-memory even though `gen_gc` reports OOM through its `ok` result.
+not.  Two further rounds removed the post-minor state from the contract
+altogether.
 
-**Residue.** `major_heap_shape` (`GC.Gen.HeapInvariant.fst:29`) still has no
-`no_gray_objects` conjunct, which is why `gray_objects_on_stack` survives as a caller
-obligation even though every caller discharges it trivially (empty stack, no gray
-objects). Adding the conjunct would remove the last non-derivable clause from the
-major-GC entry contract. It touches an opaque predicate used throughout the generational
-tree, so it is recorded here rather than done opportunistically.
+**Round two** moved the heap-shape transport inside the library.
+`GC.Gen.MajorPrecondition.darken_precondition_after_minor` carries seven of
+`darken_precondition`'s ten conjuncts across `cheney_collect_spec` using the
+`CheneyPreservation` family, on hypotheses `gen_gc` already demanded.  Three
+conjuncts survived, all mentioning the rewritten root set: the caller's stack is
+a subset of it, the capacity budget covers it, and each of its members is a real
+non-blue major object.
+
+**Round three** removed those three as well, by asking why each was there:
+
+- *Why can the caller supply a non-empty gray stack?*  It never does — the stack
+  is collector scratch space, and both real clients pass `Seq.empty`.  Requiring
+  `Seq.length st == 0` makes the subset conjunct vacuous and reduces the capacity
+  conjunct to `Seq.length roots <= cap`.  It also reduces `gray_objects_on_stack`
+  to "the major heap has no gray objects".
+- *Why must the caller prove `root_valid_for_darkening` on post-minor roots?*  It
+  has no way to, short of unfolding the Cheney simulation.  It is a theorem about
+  minor collection, and is now proved as one:
+  `post_minor_roots_valid_for_darkening`.  The non-minor case is Cheney frame
+  reasoning; the minor case needs BFS coverage (`cheney_no_oom`) to know the root
+  was forwarded, and `minor_objects_not_infix` to know the forwarding target is a
+  whole object rather than an interior pointer — a step that turns on
+  `well_formed_heap_part4` of the promoted heap, which is the only lemma in the
+  tree that *concludes* non-infix-ness.
+- *What constraint on `cap` makes the budget hold?*  Exactly `Seq.length roots <=
+  cap`: darkening pushes every root, so the gray stack must be able to hold them,
+  and nothing more.
+
+The resulting contract is four conjuncts, all about the pre-minor state:
+`cheney_no_oom`, `Seq.length st == 0`, `Seq.length roots <= cap`, `cap > 0`.
+`gen_gc_major_precondition_intro` no longer exists — there is nothing left to
+introduce.  Making `cheney_no_oom` explicit is a restatement rather than a
+strengthening: the previous round had already proved
+(`post_minor_root_obligations_implies_roots_forwarded`) that the old contract
+silently implied every live minor root was promoted, since `rewrite_root` leaves
+an unforwarded minor root as a nursery address and `zero_addr_above_minor` puts
+the nursery below every major object.
+
+The cost was one genuine invariant strengthening: `no_gray_objects` joined
+`GC.Gen.HeapInvariant.major_heap_shape`, which required two new empty-stack
+helpers in `GC.Gen.CheneyPreservation` to re-establish after a minor collection.
+
+The payoff is visible in the concrete client.  SPOT's discharge of the entry
+condition went from ~50 lines citing eight preservation lemmas, to ~25 citing
+two, to three lines; and pruning the lemmas that existed only to serve the old
+contract deleted 452 lines, 374 of them from SPOT.  That figure is the best
+available measure of how much collector-internal reasoning a badly placed entry
+contract pushes onto its callers.
+
+All of it is `prop`-level; the extracted C is byte-identical throughout.
 
 ---
 

@@ -1200,40 +1200,115 @@ fn gen_gc (gh: gen_heap_t)
   returns res: (U64.t & bool)
 ```
 
-Its precondition first describes the pre-minor heap, then describes the state the
-major collector will start from:
+Its precondition speaks only about the state the caller can observe on entry --
+the pre-minor heap, the nursery, and the arrays being passed in:
 
 ```fstar
-let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
 GenInv.collection_heap_shape minor_st 's 'fp /\
+MinorFwd.roots_valid_for_minor_collection minor_st 's 'rs /\
 gen_gc_major_precondition minor_st 's 'fp 'rs 'st (stack_capacity st) /\
 ...
 ```
 
-`gen_gc_major_precondition` is deliberately stated on the state the caller can
-actually see — the post-minor heap together with the gray stack it hands in —
-and never mentions the root-darkening pass:
+`gen_gc_major_precondition` is stated entirely on the state that exists
+**before** the minor collection.  Nothing in it mentions the post-minor heap or
+the rewritten root set:
 
 ```fstar
 let gen_gc_major_precondition minor major fp roots st cap =
-  let result = CheneySpec.cheney_collect_spec minor major fp roots in
-  MBP.darken_precondition result.mc_major st result.mc_roots result.mc_fp cap
+  CheneyBFS.cheney_no_oom minor major fp roots /\
+  Seq.length st == 0 /\
+  Seq.length roots <= cap /\
+  cap > 0
 ```
 
-where `GC.Impl.MarkBoundedPrecondition.darken_precondition g st roots fp cap`
-bundles the ordinary mark-and-sweep shape facts about `g` (bounded mark
-invariant, free-list validity, no black objects, no pointer to blue, the no-scan
-invariant, all gray objects on `st`), the capacity budget
-`Seq.length st + Seq.length roots <= cap`, and `root_valid_for_darkening` for
-each root — i.e. that each root is a genuine, non-blue major object.
+That is the whole caller-facing obligation for the major phase.  Reading it
+conjunct by conjunct:
 
-What `GC.Impl.collect_with_roots` actually demands lives on the *post*-darkening
-state, and callers used to have to derive it themselves.  That derivation is now
-done once, inside the library:
+  * `cheney_no_oom` — the nursery's live set fits in the major free list.  This
+    was always implicitly required.  The older contract asked the caller to show
+    that every post-minor root was a real major object, and `rewrite_root`
+    leaves an *unforwarded* minor root unchanged, so such a root would still be a
+    nursery address; the `zero_addr_above_minor` configuration axiom places the
+    whole nursery strictly below the first major object.  Making the hypothesis
+    explicit is therefore a restatement, not a strengthening.  It does not force
+    `ok = true`: `gen_gc`'s postcondition relates `ok` to `cheney_no_oom` in the
+    other direction only.
+  * `Seq.length st == 0` — the gray stack starts empty.  It is collector scratch
+    space, not caller state, and both real clients (SPOT and the OCaml runtime
+    bridge) already passed an empty one.  Pinning it collapses two conjuncts of
+    `darken_precondition` (the stack is a subset of the roots; the stack has no
+    duplicates and points only to gray objects) to nothing.
+  * `Seq.length roots <= cap /\ cap > 0` — the sizing obligation, in the form a
+    caller can actually check.  Darkening pushes every root onto the gray stack,
+    so the stack must be able to hold them; `cap > 0` rules out the degenerate
+    zero-capacity stack.
+
+Everything else is transported internally.  `GC.Gen.MajorPrecondition` does the
+work in two exported lemmas.  The first is the one that used to be the caller's
+hardest obligation — conjunct 10 of `darken_precondition`, that every
+**post-minor** root is a genuine non-blue major object:
+
+```fstar
+val post_minor_roots_valid_for_darkening minor major fp roots
+  : Lemma (requires
+             GenInv.collection_heap_shape minor major fp /\
+             MinorFwd.roots_valid_for_minor_collection minor major roots /\
+             CheneyBFS.cheney_no_oom minor major fp roots)
+          (ensures
+             let result = Cheney.cheney_collect_spec minor major fp roots in
+             forall (i: nat). i < Seq.length result.mc_roots ==>
+               MBP.root_valid_for_darkening result.mc_major
+                 (Seq.index result.mc_roots i))
+```
+
+This is really a theorem about minor collection, and its two cases are quite
+different.  A **non-minor** root survives `rewrite_root` untouched, so it only
+has to remain a non-blue object of the major heap, which Cheney's frame lemmas
+give directly.  A **minor** root is forwarded — BFS coverage from `cheney_no_oom`
+plus `minor_wosize > 0` (part of `roots_valid_for_minor_collection`) gives
+`fwd r <> 0` — and its target is an ordinary object rather than an interior
+pointer, because the source was a `minor_objects` member and therefore not an
+infix sub-object.  Both cases then transport across `update_major_pointers`,
+which preserves the object list and every header.
+
+The second lemma assembles the whole entry condition:
+
+```fstar
+val darken_precondition_after_minor minor major fp roots cap
+  : Lemma (requires
+             GenInv.collection_heap_shape minor major fp /\
+             MinorFwd.roots_valid_for_minor_collection minor major roots /\
+             CheneyBFS.cheney_no_oom minor major fp roots /\
+             Seq.length roots <= cap /\ cap > 0)
+          (ensures
+             let result = Cheney.cheney_collect_spec minor major fp roots in
+             MBP.darken_precondition
+               result.mc_major Seq.empty result.mc_roots result.mc_fp cap)
+```
+
+Note where the hypotheses live: the first two are already `gen_gc` preconditions
+for entirely independent reasons, and the remaining two are exactly the
+non-trivial content of `gen_gc_major_precondition`.  There is no `..._intro`
+counterpart any more — there is nothing left for a caller to introduce.
+
+One conjunct deserves a note.  With an empty stack, `gray_objects_on_stack`
+reduces to "the major heap has no gray objects", which is a property of the
+pre-minor heap that `gen_gc` should not have to ask about separately.  It is
+therefore folded into `GC.Gen.HeapInvariant.major_heap_shape` (as
+`SweepInv.no_gray_objects`), where the rest of the major heap's well-formedness
+already lives, and `GC.Gen.CheneyPreservation` re-establishes it after the
+minor collection.
+
+`GC.Impl.collect_with_roots` demands its precondition on the *post*-darkening
+state.  That last step is also done inside the library:
 
 ```fstar
 val gen_gc_major_precondition_elim minor major fp roots st cap
-  : Lemma (requires gen_gc_major_precondition minor major fp roots st cap)
+  : Lemma (requires
+             GenInv.collection_heap_shape minor major fp /\
+             MinorFwd.roots_valid_for_minor_collection minor major roots /\
+             gen_gc_major_precondition minor major fp roots st cap)
           (ensures
             MajorGC.gc_precondition_with_roots
               (fst prepared) (snd prepared) (snd prepared) result.mc_fp cap /\
@@ -1252,49 +1327,12 @@ let gen_gc_prepared_state minor major fp roots st cap =
 So callers do not have to pre-color roots, pre-seed the mark stack, or reason
 about `darken_roots_bounded_spec` at all.
 
-The same is true one phase earlier, for the minor collection.  Seven of
-`darken_precondition`'s ten conjuncts mention only the major heap and the
-caller's own gray stack, and `GC.Gen.CheneyPreservation` already proves that
-each survives `cheney_collect_spec`.  `GC.Gen.MajorPrecondition` does that
-transport once:
+The effect on the concrete client is the honest measure of how much of the
+collector's internal reasoning the old contract leaked: SPOT's hand-proof of the
+entry condition went from ~374 lines of concrete case analysis over its three
+objects to a three-line lemma invocation.
 
-```fstar
-val darken_precondition_after_minor minor major fp roots st cap
-  : Lemma (requires
-             GenInv.collection_heap_shape minor major fp /\
-             MarkBoundedInv.bounded_mark_inv major st cap /\
-             SpecMark.gray_objects_on_stack major st /\
-             post_minor_root_obligations minor major fp roots st cap)
-          (ensures
-             let result = Cheney.cheney_collect_spec minor major fp roots in
-             MBP.darken_precondition result.mc_major st result.mc_roots result.mc_fp cap)
-```
-
-re-exported at the top level as `gen_gc_major_precondition_intro`.  Note where
-the hypotheses live: `collection_heap_shape` is already a `gen_gc` precondition,
-and the other two are asked for on the **pre**-minor heap.  The only residue is
-`post_minor_root_obligations`, the three conjuncts that genuinely mention the
-post-minor root set — the caller's stack is a subset of it, the capacity budget
-covers it, and each of its members is a real non-blue major object.  Those
-cannot be internalised: the minor collection rewrites the roots, so only the
-caller knows how the result relates to the stack it supplied.
-
-One consequence is worth stating explicitly, because it is easy to miss.  The
-third residual conjunct already implies that **every live minor root was
-forwarded**.  `rewrite_root` leaves an unforwarded minor root unchanged, so such
-a root would still be a nursery address after the collection, and the
-`zero_addr_above_minor` configuration axiom places the whole nursery strictly
-below the first major object address.  `gen_gc`'s precondition therefore rules
-out the only kind of promotion failure that can affect a root, even though
-`gen_gc` reports out-of-memory through its `ok` result rather than requiring
-`cheney_no_oom` up front.  This is proved, not asserted, by
-`post_minor_root_obligations_implies_roots_forwarded`.
-
-The OCaml bridge uses the simplest case: an initially empty gray stack, for
-which `gray_objects_on_stack` reduces to "the major heap has no gray objects"
-and the first two residual conjuncts hold vacuously.
-
-Note also that `Seq.length 'st <= stack_capacity st` is no longer restated in the
+Note also that `Seq.length 'st <= stack_capacity st` is not restated in the
 precondition: it is already part of the `bounded_mark_inv` inside
 `darken_precondition`, and is in any case recoverable from `is_gray_stack` via
 `GC.Impl.Stack.stack_facts`.

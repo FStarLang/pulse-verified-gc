@@ -319,11 +319,12 @@ fn gen_gc (gh: gen_heap_t)
            is_gray_stack st 'st **
            pure (
               let minor_st : minor_state = { data = 'd; bump = 'b } in
-              // Pre-minor shape plus the internally prepared post-minor root
-              // stack used by mark/sweep.
+              // Shape of the heap the caller hands in.  Everything the major
+              // phase needs about the *post*-minor heap is derived from this
+              // internally, by `GC.Gen.MajorPrecondition`.
               GenInv.collection_heap_shape minor_st 's 'fp /\
               // `Seq.length 'st <= stack_capacity st` is not restated here: it
-              // is part of the `bounded_mark_inv` inside the next conjunct.
+              // is recoverable from `is_gray_stack` via `Stack.stack_facts`.
               gen_gc_major_precondition
                 minor_st 's 'fp 'rs 'st (stack_capacity st) /\
 
