@@ -689,11 +689,13 @@ let color_change_preserves_other_color (obj1: hp_addr{U64.v obj1 >= U64.v mword}
 /// ---------------------------------------------------------------------------
 
 /// Raw computation: parent closure address from infix object.
-/// The infix header's wosize = offset (in words) from parent's obj_addr to infix header.
-///   infix_hdr = hd_address(infix_obj) = infix_obj - 8
-///   parent_obj_addr = infix_hdr - offset * 8 = infix_obj - 8 - wosize * 8
+/// The infix header's wosize = offset (in words) from the parent closure's
+/// obj_addr to the infix object's obj_addr, matching the OCaml runtime
+/// (`v -= Infix_offset_val(v)`, with `Infix_offset_hd = Bosize_hd`) and
+/// `GC.Gen.MinorHeap.infix_parent`:
+///   parent_obj_addr = infix_obj - wosize * 8
 let parent_closure_addr_nat (infix_obj: obj_addr) (g: heap) : GTot int =
-  U64.v infix_obj - 8 - (U64.v (wosize_of_object infix_obj g) * 8)
+  U64.v infix_obj - (U64.v (wosize_of_object infix_obj g) * 8)
 
 let parent_closure_addr_nat_spec (infix_obj: obj_addr) (g: heap)
   = ()

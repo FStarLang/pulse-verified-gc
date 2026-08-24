@@ -372,16 +372,20 @@ val color_change_preserves_other_color : (obj1: obj_addr) -> (obj2: obj_addr) ->
 
 /// Raw computation of parent closure address from infix object.
 /// For an infix object at obj_addr `a` with wosize (offset) `w`:
-///   infix_hdr = a - 8 (hd_address a)
-///   parent_obj_addr = infix_hdr - w * 8
-/// The offset in the infix header's wosize field is from the parent closure's
-/// first-field address to the infix header.
+///   parent_obj_addr = a - w * 8
+///
+/// The wosize field of an infix header stores the offset in words from the
+/// parent closure's first-field address (its `obj_addr`) to the infix object's
+/// own first-field address.  This matches the OCaml runtime, which recovers the
+/// enclosing closure with `v -= Infix_offset_val(v)` where
+/// `Infix_offset_hd(hd) = Bosize_hd(hd) = Wosize_hd(hd) * sizeof(value)`, and it
+/// matches `GC.Gen.MinorHeap.infix_parent` on the minor side.
 val parent_closure_addr_nat (infix_obj: obj_addr) (g: heap) : GTot int
 
 /// parent_closure_addr_nat specification: depends only on wosize_of_object
 val parent_closure_addr_nat_spec : (infix_obj: obj_addr) -> (g: heap) ->
   Lemma (parent_closure_addr_nat infix_obj g ==
-         U64.v infix_obj - 8 - (U64.v (wosize_of_object infix_obj g) * 8))
+         U64.v infix_obj - (U64.v (wosize_of_object infix_obj g) * 8))
 
 /// Resolve an address: if infix, return parent closure; otherwise return self.
 /// Defensive: if the computed parent address is invalid, returns the input unchanged.
