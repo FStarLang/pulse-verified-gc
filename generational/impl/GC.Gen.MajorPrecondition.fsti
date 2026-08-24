@@ -41,6 +41,7 @@ module CheneyPres = GC.Gen.CheneyPreservation
 module CheneyBFS = GC.Gen.CheneyBFS
 module MinorFwd = GC.Gen.MinorCollectForwarding.Helpers
 module MBP = GC.Impl.MarkBoundedPrecondition
+module SpecGCPost = GC.Spec.Correctness
 
 /// Every post-minor root is a genuine, non-blue major object.
 ///
@@ -85,3 +86,15 @@ val darken_precondition_after_minor
       let result = Cheney.cheney_collect_spec minor major fp roots in
       MBP.darken_precondition
         result.mc_major Seq.empty result.mc_roots result.mc_fp cap))
+
+/// A heap between collections already satisfies the major-GC postcondition.
+///
+/// `major_heap_shape` records both `no_black_objects` and `no_gray_objects`, and
+/// colours are exhaustive, so every object is white or blue -- which together
+/// with well-formedness is exactly `gc_postcondition`.  `gen_gc` needs this on
+/// the path where the minor collection ran out of memory and the major phase is
+/// therefore skipped: the heap it returns is the post-minor heap, and the shape
+/// invariant alone certifies it.
+val major_heap_shape_gc_postcondition (major: heap) (fp: U64.t)
+  : Lemma (requires GenInv.major_heap_shape major fp)
+          (ensures SpecGCPost.gc_postcondition major)

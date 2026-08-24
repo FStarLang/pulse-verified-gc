@@ -29,6 +29,7 @@ module PromUpdAux = GC.Gen.PromoteUpdate.Aux
 module MinorFwd = GC.Gen.MinorCollectForwarding.Helpers
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module MBP = GC.Impl.MarkBoundedPrecondition
+module SpecGCPost = GC.Spec.Correctness
 
 /// ---------------------------------------------------------------------------
 /// The empty gray stack
@@ -218,4 +219,17 @@ let darken_precondition_after_minor minor major fp roots cap
   Promote.rewrite_roots_length roots (Cheney.cheney_promote minor major fp roots).fwd_map;
   // Conjunct 10.
   post_minor_roots_valid_for_darkening minor major fp roots
+#pop-options
+
+#push-options "--fuel 0 --ifuel 0"
+let major_heap_shape_gc_postcondition major fp =
+  GenInv.major_heap_shape_elim major fp;
+  let aux (x: obj_addr)
+    : Lemma (requires Seq.mem x (SpecFields.objects zero_addr major))
+            (ensures SpecObj.is_white x major \/ SpecObj.is_blue x major)
+    = SweepInv.no_gray_elim x major;
+      SpecFields.colors_exhaustive_and_exclusive x major
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+  SpecGCPost.gc_postcondition_intro major
 #pop-options

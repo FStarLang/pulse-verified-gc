@@ -1206,34 +1206,20 @@ the pre-minor heap, the nursery, and the arrays being passed in:
 ```fstar
 GenInv.collection_heap_shape minor_st 's 'fp /\
 MinorFwd.roots_valid_for_minor_collection minor_st 's 'rs /\
-gen_gc_major_precondition minor_st 's 'fp 'rs 'st (stack_capacity st) /\
+gen_gc_stack_budget 'rs 'st (stack_capacity st) /\
 ...
 ```
 
-`gen_gc_major_precondition` is stated entirely on the state that exists
-**before** the minor collection.  Nothing in it mentions the post-minor heap or
-the rewritten root set:
+`gen_gc_stack_budget` is the whole of what the caller owes the major phase.  It
+mentions no heap at all:
 
 ```fstar
-let gen_gc_major_precondition minor major fp roots st cap =
-  CheneyBFS.cheney_no_oom minor major fp roots /\
+let gen_gc_stack_budget roots st cap =
   Seq.length st == 0 /\
   Seq.length roots <= cap /\
   cap > 0
 ```
 
-That is the whole caller-facing obligation for the major phase.  Reading it
-conjunct by conjunct:
-
-  * `cheney_no_oom` — the nursery's live set fits in the major free list.  This
-    was always implicitly required.  The older contract asked the caller to show
-    that every post-minor root was a real major object, and `rewrite_root`
-    leaves an *unforwarded* minor root unchanged, so such a root would still be a
-    nursery address; the `zero_addr_above_minor` configuration axiom places the
-    whole nursery strictly below the first major object.  Making the hypothesis
-    explicit is therefore a restatement, not a strengthening.  It does not force
-    `ok = true`: `gen_gc`'s postcondition relates `ok` to `cheney_no_oom` in the
-    other direction only.
   * `Seq.length st == 0` — the gray stack starts empty.  It is collector scratch
     space, not caller state, and both real clients (SPOT and the OCaml runtime
     bridge) already passed an empty one.  Pinning it collapses two conjuncts of
@@ -1244,10 +1230,58 @@ conjunct by conjunct:
     so the stack must be able to hold them; `cap > 0` rules out the degenerate
     zero-capacity stack.
 
-Everything else is transported internally.  `GC.Gen.MajorPrecondition` does the
-work in two exported lemmas.  The first is the one that used to be the caller's
-hardest obligation — conjunct 10 of `darken_precondition`, that every
-**post-minor** root is a genuine non-blue major object:
+Both are decidable by inspection of the arguments being passed.  There is
+deliberately nothing else.
+
+### Out-of-memory is a runtime fact, not a proof obligation
+
+An intermediate version of this contract also required `cheney_no_oom` — "the
+nursery's live set fits in the major free list".  That was indefensible.
+`cheney_no_oom` is a statement about the outcome of the entire Cheney BFS; no
+caller can discharge it without simulating the collector, and `gen_gc` already
+reports promotion failure through the `ok` component of its result.  Demanding
+it up front made `gen_gc` un-callable in exactly the situation its own return
+type exists to describe.
+
+The fix is to consume the flag instead of the predicate.  `GC.Gen.Impl.Cheney`
+already proves `ok ==> cheney_no_oom` about its BFS loop; `minor_collect_full`
+now re-exports that, and `gen_gc` branches on it:
+
+```pulse
+  let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots;
+  ...
+  if ok {
+    darken_roots_bounded gh.major st roots nroots (stack_capacity st);
+    let final_fp = MajorGC.collect_with_roots gh.major st prepared_st fp_val;
+    ...
+  } else {
+    // hand back the post-minor heap untouched
+  }
+```
+
+Skipping the major phase on the out-of-memory path is not merely convenient, it
+is the only correct thing to do: when promotion fails, `rewrite_root` leaves the
+unforwarded minor roots as nursery addresses, so the rewritten root set no longer
+points into the major heap and mark-and-sweep has nothing meaningful to traverse.
+The extracted C gains a single `if (ok) { ... } else { ... }` around the major
+phase.  The OCaml bridge already treated `!ok` as fatal, so its behaviour is
+unchanged; it now simply aborts without having run an unsound collection first.
+
+Two postconditions moved under the `ok` guard as a result — `roots_match_stack`
+(half of `gen_gc_roots_post`) and `gen_gc_unreachable_final_blue_post`, since only
+the sweep makes unreachable objects blue.  `gen_gc_heap_shape_post` did *not*
+need guarding: `major_heap_shape` records both `no_black_objects` and
+`no_gray_objects`, so the post-minor heap is white-or-blue everywhere and
+satisfies `gc_postcondition` on its own
+(`GC.Gen.MajorPrecondition.major_heap_shape_gc_postcondition`).
+
+### Transporting the rest across the minor collection
+
+Everything else the major phase needs is derived internally.
+`GC.Gen.MajorPrecondition` does the work in two exported lemmas.  The first is
+the one that used to be the caller's hardest obligation — conjunct 10 of
+`darken_precondition`, that every **post-minor** root is a genuine non-blue major
+object:
 
 ```fstar
 val post_minor_roots_valid_for_darkening minor major fp roots
@@ -1272,7 +1306,7 @@ pointer, because the source was a `minor_objects` member and therefore not an
 infix sub-object.  Both cases then transport across `update_major_pointers`,
 which preserves the object list and every header.
 
-The second lemma assembles the whole entry condition:
+The second lemma assembles the whole entry condition:The second lemma assembles the whole entry condition:
 
 ```fstar
 val darken_precondition_after_minor minor major fp roots cap
@@ -1288,9 +1322,9 @@ val darken_precondition_after_minor minor major fp roots cap
 ```
 
 Note where the hypotheses live: the first two are already `gen_gc` preconditions
-for entirely independent reasons, and the remaining two are exactly the
-non-trivial content of `gen_gc_major_precondition`.  There is no `..._intro`
-counterpart any more — there is nothing left for a caller to introduce.
+for entirely independent reasons, the third is the runtime success flag, and the
+last is `gen_gc_stack_budget`.  There is no `..._intro` counterpart any more —
+there is nothing left for a caller to introduce.
 
 One conjunct deserves a note.  With an empty stack, `gray_objects_on_stack`
 reduces to "the major heap has no gray objects", which is a property of the
@@ -1308,7 +1342,8 @@ val gen_gc_major_precondition_elim minor major fp roots st cap
   : Lemma (requires
              GenInv.collection_heap_shape minor major fp /\
              MinorFwd.roots_valid_for_minor_collection minor major roots /\
-             gen_gc_major_precondition minor major fp roots st cap)
+             CheneyBFS.cheney_no_oom minor major fp roots /\
+             gen_gc_stack_budget roots st cap)
           (ensures
             MajorGC.gc_precondition_with_roots
               (fst prepared) (snd prepared) (snd prepared) result.mc_fp cap /\
@@ -1330,21 +1365,20 @@ about `darken_roots_bounded_spec` at all.
 The effect on the concrete client is the honest measure of how much of the
 collector's internal reasoning the old contract leaked: SPOT's hand-proof of the
 entry condition went from ~374 lines of concrete case analysis over its three
-objects to a three-line lemma invocation.
+objects to a two-line lemma invocation.
 
 Note also that `Seq.length 'st <= stack_capacity st` is not restated in the
-precondition: it is already part of the `bounded_mark_inv` inside
-`darken_precondition`, and is in any case recoverable from `is_gray_stack` via
+precondition: it is recoverable from `is_gray_stack` via
 `GC.Impl.Stack.stack_facts`.
 
 The postcondition exports four named bundles:
 
 ```fstar
-gen_gc_roots_post minor_st 's 'fp 'rs rs2 'st (stack_capacity st) /\
+gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok 'st (stack_capacity st) /\
 gen_gc_heap_shape_post d2 b2 s2 /\
 gen_gc_reachable_subgraph_isomorphism_post
   minor_st 's 'fp 'rs ok s2 rs2 'st (stack_capacity st) /\
-gen_gc_unreachable_final_blue_post minor_st 's 'fp 'rs s2
+gen_gc_unreachable_final_blue_post minor_st 's 'fp 'rs ok s2
   'st (stack_capacity st)
 ```
 

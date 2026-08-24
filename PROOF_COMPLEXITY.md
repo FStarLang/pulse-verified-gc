@@ -855,28 +855,60 @@ non-blue major object.
   cap`: darkening pushes every root, so the gray stack must be able to hold them,
   and nothing more.
 
-The resulting contract is four conjuncts, all about the pre-minor state:
-`cheney_no_oom`, `Seq.length st == 0`, `Seq.length roots <= cap`, `cap > 0`.
+That left four conjuncts, all about the pre-minor state: `cheney_no_oom`,
+`Seq.length st == 0`, `Seq.length roots <= cap`, `cap > 0`.
 `gen_gc_major_precondition_intro` no longer exists — there is nothing left to
-introduce.  Making `cheney_no_oom` explicit is a restatement rather than a
-strengthening: the previous round had already proved
-(`post_minor_root_obligations_implies_roots_forwarded`) that the old contract
-silently implied every live minor root was promoted, since `rewrite_root` leaves
-an unforwarded minor root as a nursery address and `zero_addr_above_minor` puts
-the nursery below every major object.
+introduce.  The cost was one genuine invariant strengthening: `no_gray_objects`
+joined `GC.Gen.HeapInvariant.major_heap_shape`, which required two new
+empty-stack helpers in `GC.Gen.CheneyPreservation` to re-establish after a minor
+collection.
 
-The cost was one genuine invariant strengthening: `no_gray_objects` joined
-`GC.Gen.HeapInvariant.major_heap_shape`, which required two new empty-stack
-helpers in `GC.Gen.CheneyPreservation` to re-establish after a minor collection.
+**Round four** removed `cheney_no_oom`, which was the last conjunct a caller
+could not actually check.  The review question was blunt and correct: *how is a
+caller supposed to prove `cheney_no_oom`, and since `gen_gc` returns `ok` to
+report exactly that failure, why is it a precondition at all?*
+
+It should not have been.  `cheney_no_oom` is a statement about the outcome of the
+whole Cheney BFS; discharging it means simulating the collector.  Requiring it
+made `gen_gc` un-callable in precisely the situation its return type exists to
+describe, and it had crept in only because round three needed *some* hypothesis
+strong enough to prove that post-minor roots are major objects.
+
+The right source for that hypothesis is the runtime, not the caller.
+`GC.Gen.Impl.Cheney` already proved `ok ==> cheney_no_oom` about its BFS loop;
+`minor_collect_full` was dropping it on the floor.  Re-exporting it and branching
+`gen_gc` on `ok` moves the fact from the contract into the code:
+
+- The caller-facing predicate is now `gen_gc_stack_budget roots st cap` —
+  `Seq.length st == 0 /\ Seq.length roots <= cap /\ cap > 0`, with **no heap in
+  it at all**.  Both conjuncts are decidable by inspecting the arguments.
+- `gen_gc_major_precondition_elim` takes `cheney_no_oom` as a hypothesis, and
+  `gen_gc` supplies it from the flag inside the `if ok` branch.
+- Skipping the major phase on out-of-memory is also the only *correct* behaviour:
+  when promotion fails, `rewrite_root` leaves unforwarded minor roots as nursery
+  addresses, so the rewritten root set no longer points into the major heap.
+
+Two postconditions moved under the `ok` guard (`roots_match_stack` and
+`gen_gc_unreachable_final_blue_post` — only the sweep makes unreachable objects
+blue).  `gen_gc_heap_shape_post` did not need guarding, because round three's
+`no_gray_objects` strengthening pays off here: a heap between collections is
+white-or-blue everywhere, so the post-minor heap satisfies `gc_postcondition` on
+its own.
+
+This is the one round in the series that changes the extracted C — a single
+`if (ok) { ... } else { ... }` around the major phase, fifteen lines.  The OCaml
+bridge already treated `!ok` as fatal, so its behaviour is unchanged; it now
+aborts without having first run an unsound collection.
 
 The payoff is visible in the concrete client.  SPOT's discharge of the entry
 condition went from ~50 lines citing eight preservation lemmas, to ~25 citing
-two, to three lines; and pruning the lemmas that existed only to serve the old
+two, to two lines; and pruning the lemmas that existed only to serve the old
 contract deleted 452 lines, 374 of them from SPOT.  That figure is the best
 available measure of how much collector-internal reasoning a badly placed entry
 contract pushes onto its callers.
 
-All of it is `prop`-level; the extracted C is byte-identical throughout.
+Rounds one to three are `prop`-level and leave the extracted C byte-identical;
+round four adds the fifteen-line out-of-memory branch and nothing else.
 
 ---
 

@@ -455,14 +455,10 @@ let spot_concrete_gen_gc_major_pre_empty_stack
   (r: unit{ConcreteMajor.spot_major_room}) (cap: nat{cap >= 2})
   : Lemma
       (ensures
-        GenImpl.gen_gc_major_precondition
-          ConcreteMinor.spot_minor2
-          (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
+        GenImpl.gen_gc_stack_budget
           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
           Seq.empty cap)
   =
-  ConcreteForwarding.spot_concrete_no_oom r;
   ThreeObjects.spot_roots_len (ConcreteMajor.spot_c r);
   assert_norm (Seq.length (Seq.empty #obj_addr) == 0)
 

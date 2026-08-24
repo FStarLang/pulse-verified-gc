@@ -35,7 +35,7 @@ let gen_gc_pre
   (st: seq obj_addr) (cap: nat) : prop =
   minor_collect_full_pre minor major fp roots farr slots nslots /\
   Seq.length st <= cap /\
-  GenImpl.gen_gc_major_precondition minor major fp roots st cap
+  GenImpl.gen_gc_stack_budget roots st cap
 
 let zero_forwarding_array_elim (farr: seq U64.t)
   = ()

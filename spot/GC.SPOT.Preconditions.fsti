@@ -71,7 +71,7 @@ val gen_gc_pre_elim
           (ensures
             minor_collect_full_pre minor major fp roots farr slots nslots /\
             Seq.length st <= cap /\
-            GC.Gen.Impl.gen_gc_major_precondition minor major fp roots st cap)
+            GC.Gen.Impl.gen_gc_stack_budget roots st cap)
 
 val gen_gc_pre_intro
   : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
@@ -81,5 +81,5 @@ val gen_gc_pre_intro
       (requires
         minor_collect_full_pre minor major fp roots farr slots nslots /\
         Seq.length st <= cap /\
-        GC.Gen.Impl.gen_gc_major_precondition minor major fp roots st cap)
+        GC.Gen.Impl.gen_gc_stack_budget roots st cap)
       (ensures gen_gc_pre minor major fp roots farr slots nslots st cap)
