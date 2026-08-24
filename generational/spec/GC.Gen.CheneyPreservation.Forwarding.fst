@@ -1391,7 +1391,7 @@ let rec cheney_scan_preserves_fwd_noninfix_targets_valid
 let cheney_promote_fwd_valid_or_infix
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
@@ -1413,7 +1413,7 @@ let cheney_promote_fwd_valid_or_infix
 let cheney_promote_fwd_noninfix_targets_valid
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in

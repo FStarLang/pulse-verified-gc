@@ -33,7 +33,7 @@ let cheney_promote_preserves_no_pointer_to_blue_from_shape
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
   GenInv.minor_heap_shape_elim minor;
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   cheney_promote_preserves_wfh_part1 minor major fp roots;
   cheney_promote_preserves_wfh_part4 minor major fp roots;
   Injectivity.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots;
@@ -153,7 +153,7 @@ let update_major_pointers_preserves_no_pointer_to_blue
   (major: heap) (fwd: forwarding_map)
   =
   let updated = update_major_pointers major fwd in
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   update_major_pointers_preserves_objects major fwd;
   update_major_pointers_preserves_wfh_part1 major fwd;
   let field_no_blue (src dst: obj_addr) (j: nat)

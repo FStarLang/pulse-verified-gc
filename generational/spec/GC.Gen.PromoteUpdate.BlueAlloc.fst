@@ -117,7 +117,8 @@ let wfh_part2_implies_blue_fields_closed (g: heap)
             assert (U64.v (U64.add_mod src (U64.mul_mod k mword)) % 8 == 0);
             assert (is_pointer_to v (v <: obj_addr));
             field_read_implies_exists_pointing g src wz k (v <: obj_addr);
-            assert (exists_field_pointing_to_unchecked g src wz (v <: obj_addr))
+            assert (exists_field_pointing_to_unchecked g src wz (v <: obj_addr));
+            wfh_part2_elim g src (v <: obj_addr)
           end else ()
         end else ()
     in

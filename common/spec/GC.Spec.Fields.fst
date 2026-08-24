@@ -504,6 +504,17 @@ let well_formed_heap_part1 (g: heap) : prop =
     (let wz = wosize_of_object h g in
      U64.v (hd_address h) + 8 + (U64.v wz * 8) <= Seq.length g))
 
+/// Part 2 --- the field-closure clause --- is `opaque_to_smt`, and deliberately
+/// so.  It is the clause that decides which heaps the collector is willing to
+/// accept, and it is the one that has to change to admit infix pointers.
+/// Sealing it means the *only* file that can see its body is this one, so a
+/// change to its shape breaks a handful of accessor lemmas here rather than
+/// silently reshaping proof obligations across a hundred client modules.
+///
+/// Cross the boundary with `wfh_part2_elim` / `well_formed_heap_part2_intro`,
+/// or with the derived accessors further down (`wf_field_target_in_objects`
+/// and friends).
+[@@"opaque_to_smt"]
 let well_formed_heap_part2 (g: heap) : prop =
   (forall (src dst: obj_addr). 
     (Seq.mem src (objects zero_addr g) /\ 
@@ -512,8 +523,52 @@ let well_formed_heap_part2 (g: heap) : prop =
       exists_field_pointing_to_unchecked g src wz dst)) ==> 
     Seq.mem dst (objects zero_addr g))
 
+/// Eliminate part 2 at a single (src, dst) pair.
+let wfh_part2_elim (g: heap) (src dst: obj_addr) : Lemma
+  (requires well_formed_heap_part2 g /\ Seq.mem src (objects zero_addr g) /\
+            (let wz = wosize_of_object src g in
+             U64.v wz < pow2 54 /\
+             exists_field_pointing_to_unchecked g src wz dst))
+  (ensures Seq.mem dst (objects zero_addr g))
+  = reveal_opaque (`%well_formed_heap_part2) well_formed_heap_part2
+
+/// Introduce part 2 from the pointwise obligation.
+let well_formed_heap_part2_intro (g: heap)
+    (pf: (src: obj_addr) -> (dst: obj_addr) ->
+      Lemma (requires Seq.mem src (objects zero_addr g) /\
+                      (let wz = wosize_of_object src g in
+                       U64.v wz < pow2 54 /\
+                       exists_field_pointing_to_unchecked g src wz dst))
+            (ensures Seq.mem dst (objects zero_addr g)))
+  : Lemma (well_formed_heap_part2 g)
+  = reveal_opaque (`%well_formed_heap_part2) well_formed_heap_part2;
+    let aux (src: obj_addr) : Lemma
+      (forall (dst: obj_addr).
+        (Seq.mem src (objects zero_addr g) /\
+         (let wz = wosize_of_object src g in
+          U64.v wz < pow2 54 /\
+          exists_field_pointing_to_unchecked g src wz dst)) ==>
+        Seq.mem dst (objects zero_addr g))
+      = FStar.Classical.forall_intro (FStar.Classical.move_requires (pf src))
+    in
+    FStar.Classical.forall_intro aux
+
+/// Part 3 --- infix well-formedness --- is sealed for the same reason as part 2:
+/// it is currently vacuous (part 4 empties its domain) and giving it content is
+/// the other half of admitting infix pointers.
+[@@"opaque_to_smt"]
 let well_formed_heap_part3 (g: heap) : prop =
   GC.Spec.Object.infix_wf g (objects zero_addr g)
+
+let wfh_part3_elim (g: heap) : Lemma
+  (requires well_formed_heap_part3 g)
+  (ensures GC.Spec.Object.infix_wf g (objects zero_addr g))
+  = reveal_opaque (`%well_formed_heap_part3) well_formed_heap_part3
+
+let wfh_part3_intro (g: heap) : Lemma
+  (requires GC.Spec.Object.infix_wf g (objects zero_addr g))
+  (ensures well_formed_heap_part3 g)
+  = reveal_opaque (`%well_formed_heap_part3) well_formed_heap_part3
 
 let well_formed_heap_part4 (g: heap) : prop =
   (forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(GC.Spec.Object.is_infix obj g))
@@ -524,6 +579,24 @@ let well_formed_heap (g: heap) : prop =
   well_formed_heap_part2 g /\
   well_formed_heap_part3 g /\
   well_formed_heap_part4 g
+
+/// The single sanctioned way to cross the `well_formed_heap` abstraction
+/// boundary.  `well_formed_heap` is `opaque_to_smt`, so clients that need to
+/// see its four conjuncts must unfold it; doing that with a bare
+/// `reveal_opaque` scatters the unfolding across the development and makes it
+/// impossible to tell which clients actually depend on which part.
+///
+/// Use this lemma instead of `reveal_opaque (`%well_formed_heap)
+/// well_formed_heap`.  It is a biconditional, so it serves both directions:
+/// decomposing a hypothesis and assembling a goal.
+let wf_parts (_: unit) : Lemma
+  (ensures forall (g: heap).
+             well_formed_heap g <==>
+             (well_formed_heap_part1 g /\
+              well_formed_heap_part2 g /\
+              well_formed_heap_part3 g /\
+              well_formed_heap_part4 g))
+  = reveal_opaque (`%well_formed_heap) well_formed_heap
 
 /// ---------------------------------------------------------------------------
 /// No-Scan Invariant
@@ -627,7 +700,8 @@ let wf_resolve_identity (g: heap) (x: obj_addr) : Lemma
 let wf_infix_wf (g: heap) : Lemma
   (requires well_formed_heap g)
   (ensures GC.Spec.Object.infix_wf g (objects zero_addr g))
-  = reveal_opaque (`%well_formed_heap) well_formed_heap
+  = reveal_opaque (`%well_formed_heap) well_formed_heap;
+    wfh_part3_elim g
 
 /// In a well-formed heap, pointer field targets of objects are themselves in objects.
 /// This directly instantiates well_formed_heap part 2.
@@ -637,7 +711,8 @@ let wf_field_target_in_objects (g: heap) (src: obj_addr) (dst: obj_addr) : Lemma
              U64.v wz < pow2 54 /\
              exists_field_pointing_to_unchecked g src wz dst))
   (ensures Seq.mem dst (objects zero_addr g))
-  = reveal_opaque (`%well_formed_heap) well_formed_heap
+  = reveal_opaque (`%well_formed_heap) well_formed_heap;
+    wfh_part2_elim g src dst
 
 /// Combined: field read + pointer target → target ∈ objects.
 /// Internalizes wf_object_size_bound + field_read_implies_exists_pointing + wf_field_target_in_objects.
@@ -731,11 +806,9 @@ let well_formed_heap_part2_from_field_closure (g: heap)
                 (let wz = wosize_of_object src g in
                  U64.v wz < pow2 54 /\ exists_field_pointing_to_unchecked g src wz dst))
       (ensures Seq.mem dst (objects zero_addr g))
-      [SMTPat (Seq.mem src (objects zero_addr g));
-       SMTPat (exists_field_pointing_to_unchecked g src (wosize_of_object src g) dst)]
       = aux src dst
     in
-    assert (well_formed_heap_part2 g)
+    well_formed_heap_part2_intro g aux_wrapped
 #pop-options
 
 /// When objects start g is nonempty, the first object fits in heap:
@@ -1403,7 +1476,8 @@ private let rec write_word_field_pointing_self_implies (g: heap) (obj: obj_addr)
             let full_wz = wosize_of_object_as_wosize obj g in
             wosize_of_object_spec obj g;
             assert (U64.v idx < U64.v full_wz);
-            field_read_implies_exists_pointing g obj full_wz idx dst
+            field_read_implies_exists_pointing g obj full_wz idx dst;
+            wf_field_target_in_objects g obj dst
           end
         end else begin
           // Case (2): This field doesn't match, so recursive call must return true
@@ -1424,6 +1498,7 @@ private let field_write_preserves_infix_wf
                     U64.v addr % 8 = 0)
           (ensures GC.Spec.Object.infix_wf (write_word g addr v) (objects zero_addr (write_word g addr v)))
   = reveal_opaque (`%well_formed_heap) well_formed_heap;
+    wfh_part3_elim g;
     let g' = write_word g addr v in
     write_word_preserves_objects g obj addr v;
     let objs = objects zero_addr g in
@@ -1548,9 +1623,10 @@ let field_write_preserves_wf g obj addr v =
       if src = obj then begin
         write_word_field_pointing_self_implies g obj addr v (wosize_of_object src g') dst
       end else begin
-        write_word_preserves_field_pointing_other g obj addr v src (wosize_of_object src g') dst
+        write_word_preserves_field_pointing_other g obj addr v src (wosize_of_object src g') dst;
         // This shows exists_field_pointing_to_unchecked g src wz dst
         // From well_formed_heap g, dst in objects g = objects g'
+        wf_field_target_in_objects g src dst
       end
   in
   let aux2_flat (src: obj_addr) (dst: obj_addr) : Lemma
@@ -1560,16 +1636,10 @@ let field_write_preserves_wf g obj addr v =
     (ensures Seq.mem dst (objects zero_addr g'))
   = aux2 src dst
   in
-  let aux2_imp (src: obj_addr) (dst: obj_addr) : Lemma
-    ((Seq.mem src (objects zero_addr g') /\
-      U64.v (wosize_of_object src g') < pow2 54 /\
-      exists_field_pointing_to_unchecked g' src (wosize_of_object src g') dst) ==> 
-     Seq.mem dst (objects zero_addr g'))
-  = FStar.Classical.move_requires (aux2_flat src) dst
-  in
-  FStar.Classical.forall_intro_2 aux2_imp;
+  well_formed_heap_part2_intro g' aux2_flat;
   // Part 3: infix_wf preserved
   field_write_preserves_infix_wf g obj addr v;
+  wfh_part3_intro g';
   // Part 4: non-infix preserved (is_infix reads header, write_word is to body)
   let aux4 (h: obj_addr) : Lemma
     (requires Seq.mem h (objects zero_addr g'))

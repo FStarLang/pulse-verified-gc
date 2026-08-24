@@ -106,7 +106,7 @@ let rec sev_mem_objects (g: heap) (st: seq obj_addr) (x: obj_addr)
 
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
 let color_change_preserves_wf g obj c =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let g' = set_object_color obj g c in
   color_change_preserves_objects g obj c;
   set_object_color_length obj g c;
@@ -142,7 +142,8 @@ let color_change_preserves_wf g obj c =
       hd_address_injective src obj;
       set_object_color_read_word obj (GC.Spec.Heap.hd_address src) g c;
       color_change_preserves_field_pointing_other g obj c src (wosize_of_object src g) dst
-    end
+    end;
+    wf_field_target_in_objects g src dst
   in
   // Part 2: lift aux2 to a universal statement via a wrapper without let-binding
   let aux2_flat (src: obj_addr) (dst: obj_addr) : Lemma
@@ -152,16 +153,11 @@ let color_change_preserves_wf g obj c =
     (ensures Seq.mem dst (objects zero_addr g'))
   = aux2 src dst
   in
-  let aux2_imp (src: obj_addr) (dst: obj_addr) : Lemma
-    ((Seq.mem src (objects zero_addr g') /\
-      U64.v (wosize_of_object src g') < pow2 54 /\
-      exists_field_pointing_to_unchecked g' src (wosize_of_object src g') dst) ==> 
-     Seq.mem dst (objects zero_addr g'))
-  = FStar.Classical.move_requires (aux2_flat src) dst
-  in
-  FStar.Classical.forall_intro_2 aux2_imp;
+  well_formed_heap_part2_intro g' aux2_flat;
   // Part 3: infix_wf preserved by color change
+  wfh_part3_elim g;
   color_change_preserves_infix_wf obj g c (objects zero_addr g);
+  wfh_part3_intro g';
   // Part 4: non-infix preserved by color change
   let aux4 (h: obj_addr) : Lemma
     (requires Seq.mem h (objects zero_addr g'))

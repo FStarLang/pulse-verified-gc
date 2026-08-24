@@ -416,7 +416,7 @@ private let rec cheney_scan_preserves_no_black
 let cheney_promote_preserves_no_black
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
@@ -837,7 +837,7 @@ let cheney_promote_preserves_gray_black_objects_on_stack
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (st: seq obj_addr)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
@@ -1037,7 +1037,7 @@ private let rec cheney_scan_preserves_no_scan_invariant
 let cheney_promote_preserves_no_scan_invariant
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
@@ -1175,7 +1175,7 @@ private let rec cheney_scan_preserves_blue_fields_closed
 let cheney_promote_preserves_blue_fields_closed
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   BlueAlloc.wfh_part2_implies_blue_fields_closed major;
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
@@ -1597,7 +1597,7 @@ let cheney_collect_preserves_wfh_from_shape
   update_major_pointers_preserves_wfh_part3 prom.major_final prom.fwd_map;
   update_major_pointers_preserves_wfh_part2_from_field_targets
     prom.major_final prom.fwd_map;
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   assert (well_formed_heap updated);
   assert ((cheney_collect_spec minor major fp roots).mc_major == updated)
 #pop-options

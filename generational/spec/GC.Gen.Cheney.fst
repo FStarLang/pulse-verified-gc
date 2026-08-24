@@ -374,7 +374,7 @@ let rec cheney_scan_preserves_wfh_part1
 let cheney_promote_preserves_wfh_part1
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
@@ -511,7 +511,7 @@ private let rec cheney_scan_preserves_cob
 let cheney_promote_preserves_cob
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
@@ -651,7 +651,7 @@ private let rec cheney_scan_preserves_free_list_shape
 let cheney_promote_preserves_free_list_shape
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
-    reveal_opaque (`%well_formed_heap) well_formed_heap;
+    wf_parts ();
     let cs0 : cheney_state =
       { cs_major = major; cs_fp = fp;
         cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
@@ -830,7 +830,7 @@ private let rec cheney_scan_preserves_both
 let cheney_promote_preserves_objects
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
@@ -1106,7 +1106,7 @@ private let rec cheney_scan_preserves_dense
 let cheney_promote_preserves_dense
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
@@ -1300,7 +1300,7 @@ private let rec cheney_scan_preserves_fwd_bounded
 let cheney_promote_fwd_bounded
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   // empty_forwarding maps everything to 0UL, so fwd_bounded trivially holds
   assert (fwd_bounded empty_forwarding);
   let cs0 : cheney_state =
@@ -1473,7 +1473,7 @@ private let rec cheney_scan_preserves_fwd_above_zero
 let cheney_promote_fwd_above_zero_addr
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   assert (fwd_above_zero_addr empty_forwarding);
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
@@ -1627,7 +1627,7 @@ private let rec cheney_scan_preserves_wfh_part4
 let cheney_promote_preserves_wfh_part4
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in

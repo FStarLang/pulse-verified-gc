@@ -26,7 +26,7 @@ let cheney_collect_preserves_objects
   =
   cheney_promote_preserves_objects minor major fp roots;
   let prom = cheney_promote minor major fp roots in
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   cheney_promote_preserves_wfh_part1 minor major fp roots;
   update_major_pointers_preserves_objects prom.major_final prom.fwd_map
 

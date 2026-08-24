@@ -2570,7 +2570,7 @@ let coalesce_preserves_wf g =
     = part4_aux h
   in
   GC.Spec.Object.infix_wf_intro g' (objects zero_addr g') part3_pf;
-  assert (well_formed_heap_part3 g');
+  wfh_part3_intro g';
 
   // --- Part 1: size bounds ---
   let part1_aux (h: obj_addr)
@@ -2633,18 +2633,10 @@ let coalesce_preserves_wf g =
       (ensures Seq.mem dst (objects zero_addr g'))
     = part2_aux src dst
   in
-  let part2_imp (src dst: obj_addr)
-    : Lemma ((Seq.mem src (objects zero_addr g') /\
-              U64.v (wosize_of_object src g') < pow2 54 /\
-              exists_field_pointing_to_unchecked g' src (wosize_of_object src g') dst) ==>
-             Seq.mem dst (objects zero_addr g'))
-    = FStar.Classical.move_requires (part2_flat src) dst
-  in
-  FStar.Classical.forall_intro_2 part2_imp;
-  assert (well_formed_heap_part2 g');
+  well_formed_heap_part2_intro g' part2_flat;
 
   // --- Combine all parts ---
-  reveal_opaque (`%well_formed_heap) well_formed_heap
+  wf_parts ()
 #pop-options
 
 /// ---------------------------------------------------------------------------

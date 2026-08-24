@@ -234,7 +234,8 @@ let update_major_pointers_preserves_wfh_part3 (major: heap) (fwd: forwarding_map
     assert (well_formed_heap_part4 mc);
     assert (Seq.mem h (objects zero_addr mc) ==> ~(GC.Spec.Object.is_infix h mc))
   in
-  GC.Spec.Object.infix_wf_intro mc (objects zero_addr mc) pf
+  GC.Spec.Object.infix_wf_intro mc (objects zero_addr mc) pf;
+  wfh_part3_intro mc
 #pop-options
 
 /// ---------------------------------------------------------------------------
