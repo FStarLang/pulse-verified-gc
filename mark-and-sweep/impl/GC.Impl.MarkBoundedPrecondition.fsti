@@ -79,3 +79,13 @@ val darken_establishes_precondition
         (let g' = fst (MB.darken_roots_bounded_spec g st roots cap) in
          let st' = snd (MB.darken_roots_bounded_spec g st roots cap) in
          MajorGC.gc_precondition_with_roots g' st' st' fp cap))
+
+/// Darkening recolours headers only, so the caller may freely move statements
+/// about the object graph across it.
+val darken_preserves_create_graph
+  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t) (fp: U64.t) (cap: nat)
+  : Lemma
+      (requires darken_precondition g st roots fp cap /\ SpecFields.well_formed_heap g)
+      (ensures
+        GC.Spec.HeapModel.create_graph (fst (MB.darken_roots_bounded_spec g st roots cap)) ==
+        GC.Spec.HeapModel.create_graph g)

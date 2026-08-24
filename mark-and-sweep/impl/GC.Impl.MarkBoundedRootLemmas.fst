@@ -351,3 +351,44 @@ let darken_roots_bounded_spec_preserves_gray_objects_on_stack
   darken_roots_bounded_prefix_preserves_gray_objects_on_stack
     g st roots (Seq.length roots) cap
 #pop-options
+
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+let check_and_darken_bounded_spec_preserves_create_graph
+  (g: heap) (st: Seq.seq obj_addr) (v: U64.t) (cap: nat)
+  =
+  if U64.v v >= U64.v zero_addr + U64.v mword &&
+     U64.v v < heap_size &&
+     U64.v v % U64.v mword = 0
+  then begin
+    let h_addr = U64.sub v mword in
+    if U64.v h_addr + U64.v mword < heap_size then begin
+      let obj = SpecHeap.f_address h_addr in
+      if SpecObject.is_white obj g then begin
+        SpecObject.makeGray_eq obj g;
+        SpecMark.color_change_preserves_wf g obj Header.Gray;
+        SpecMark.color_preserves_create_graph obj g Header.Gray
+      end
+    end
+  end
+
+let rec darken_roots_bounded_prefix_preserves_create_graph
+  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (idx: nat{idx <= Seq.length roots}) (cap: nat)
+  =
+  if idx = 0 then darken_roots_bounded_prefix_base g st roots cap
+  else begin
+    let idx0 = idx - 1 in
+    darken_roots_bounded_prefix_preserves_create_graph g st roots idx0 cap;
+    let (g0, st0) = MarkBounded.darken_roots_bounded_prefix_spec g st roots idx0 cap in
+    MarkBounded.darken_roots_bounded_prefix_preserves_objects g st roots idx0 cap;
+    assert (SpecFields.objects zero_addr g0 == SpecFields.objects zero_addr g);
+    assert (MarkBounded.root_points_to_object g0 (Seq.index roots idx0));
+    MarkBounded.darken_roots_bounded_prefix_step g st roots idx0 cap;
+    check_and_darken_bounded_spec_preserves_create_graph g0 st0 (Seq.index roots idx0) cap
+  end
+
+let darken_roots_bounded_spec_preserves_create_graph
+  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t) (cap: nat)
+  =
+  darken_roots_bounded_prefix_preserves_create_graph g st roots (Seq.length roots) cap
+#pop-options

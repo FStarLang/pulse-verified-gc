@@ -274,3 +274,14 @@ let darken_establishes_precondition g st roots fp cap
     stack_no_dups_is_vertex_set st';
     SpecMark.root_props_subset_create_graph g' st'
 #pop-options
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let darken_preserves_create_graph g st roots fp cap
+  = let points_to (i: nat) : Lemma
+      (i < Seq.length roots ==> MB.root_points_to_object g (Seq.index roots i))
+    = if i < Seq.length roots
+      then root_valid_for_darkening_points_to_object g (Seq.index roots i)
+    in
+    FStar.Classical.forall_intro points_to;
+    RL.darken_roots_bounded_spec_preserves_create_graph g st roots cap
+#pop-options

@@ -1270,6 +1270,23 @@ let major_gc_live_subgraph_isomorphism_gen h_init h_mark roots fp =
     end
   in
   FStar.Classical.forall_intro_2 field_preserved
+  ;
+  let successors_preserved (x: obj_addr) : Lemma
+    (heap_reachable h_init roots x ==>
+     mem_graph_vertex g_coal x /\ successors g_init x == successors g_coal x)
+  = if heap_reachable h_init roots x then begin
+      graph_vertices_mem h_init x;
+      assert (Seq.mem x (objects zero_addr h_init));
+      assert (is_black x h_mark);
+      assert (Seq.mem x (objects zero_addr h_mark));
+      assert (Seq.mem x (objects zero_addr h_sweep) /\ is_white x h_sweep);
+      Coalesce.coalesce_survivors_in_objects h_sweep x;
+      graph_vertices_mem h_coal x;
+      assert (Seq.mem x g_coal.vertices);
+      assert (successors g_init x == successors g_coal x)
+    end
+  in
+  FStar.Classical.forall_intro successors_preserved
 #pop-options
 
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
