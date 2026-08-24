@@ -31,3 +31,6 @@ _scratch_cache*/
 
 # Dependence-graph viewer output (`make depgraph`)
 _depgraph/
+
+# Review artifacts dropped in the worktree (e.g. finding-*.pdf); keep out of git
+*.pdf
