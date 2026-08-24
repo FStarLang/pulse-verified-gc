@@ -47,8 +47,6 @@ val minor_collect_full_pre_elim
             UpdatePtrs.ref_table_covers_minor_ptrs major slots nslots /\
             UpdatePtrs.slots_pairwise_distinct slots nslots /\
             GC.Gen.MinorCollectForwarding.remembered_targets_in_roots major roots slots nslots /\
-            GC.Gen.ReachabilityBridge.major_field_zero_no_minor minor major /\
-            GC.Gen.ReachabilityBridge.roots_valid_nonblue roots major /\
             GC.Gen.MinorCollectForwarding.roots_valid_for_minor_collection minor major roots)
 
 val minor_collect_full_pre_intro
@@ -62,8 +60,6 @@ val minor_collect_full_pre_intro
         UpdatePtrs.ref_table_covers_minor_ptrs major slots nslots /\
         UpdatePtrs.slots_pairwise_distinct slots nslots /\
         GC.Gen.MinorCollectForwarding.remembered_targets_in_roots major roots slots nslots /\
-        GC.Gen.ReachabilityBridge.major_field_zero_no_minor minor major /\
-        GC.Gen.ReachabilityBridge.roots_valid_nonblue roots major /\
         GC.Gen.MinorCollectForwarding.roots_valid_for_minor_collection minor major roots)
       (ensures minor_collect_full_pre minor major fp roots farr slots nslots)
 
@@ -75,7 +71,7 @@ val gen_gc_pre_elim
           (ensures
             minor_collect_full_pre minor major fp roots farr slots nslots /\
             Seq.length st <= cap /\
-            GC.Gen.Impl.gen_gc_major_precondition minor major fp roots st cap)
+            GC.Gen.Impl.gen_gc_stack_budget roots st cap)
 
 val gen_gc_pre_intro
   : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
@@ -85,5 +81,5 @@ val gen_gc_pre_intro
       (requires
         minor_collect_full_pre minor major fp roots farr slots nslots /\
         Seq.length st <= cap /\
-        GC.Gen.Impl.gen_gc_major_precondition minor major fp roots st cap)
+        GC.Gen.Impl.gen_gc_stack_budget roots st cap)
       (ensures gen_gc_pre minor major fp roots farr slots nslots st cap)

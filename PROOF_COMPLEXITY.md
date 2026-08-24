@@ -790,6 +790,166 @@ by spec and implementation alike, and would have to be re-justified against a C 
 target that is a raw pointer with a fixed layout. That is precisely why the current design
 avoids it. Recorded as the largest lever, at prohibitive cost.
 
+### 6.9 Entry-contract hygiene — **done**
+
+**What was wrong.** `GC.Gen.Impl.fsti`'s `gen_gc` contract leaked four internal facts to
+its callers:
+
+1. `is_gray_stack`'s abstraction hid two of its own conjuncts — `Seq.length s <=
+   stack_capacity st` and `stack_capacity st > 0` — so roughly a dozen sites restated
+   them as preconditions.
+2. `roots_valid_nonblue` was a strict consequence of the neighbouring
+   `roots_valid_for_minor_collection`.
+3. `gen_gc_major_precondition` was stated about the *post-darkening* state, forcing every
+   caller to simulate `darken_roots_bounded_spec` before it could call the collector.
+4. `major_field_zero_no_minor` demanded that no major object hold a minor pointer in
+   field 0 — a hypothesis no real heap satisfies, since field 0 is a legitimate pointer
+   slot; it was an artifact of the *generic* reachability bridge, not of write-back.
+
+**What was done.**
+
+- `GC.Impl.Stack.fsti` now exports a ghost `stack_facts` that recovers (1) from ownership
+  of `is_gray_stack`, so the clauses can simply be dropped from client preconditions.
+- `roots_valid_for_minor_collection_nonblue` derives (2) once; the conjunct was removed
+  from eight contracts.
+- `GC.Impl.MarkBoundedPrecondition` states the major-GC entry condition on the
+  *pre-darkening* state (`darken_precondition`) and proves the transport lemma
+  (`darken_establishes_precondition`) once, inside the library. `gen_gc`'s precondition is
+  now a single application of it, discharged by `gen_gc_major_precondition_elim`.
+- `major_field_zero_covered` replaces (4) with the satisfiable statement — field-0 minor
+  pointers are permitted provided they are covered by the root set — and
+  `reachability_bridge` was reproved against it.
+
+All four are `prop`-level; the extracted C is byte-identical.
+
+A follow-up review asked the obvious next question: `gen_gc_major_precondition`
+is still *stated* on the post-minor state, so why is that acceptable?  It was
+not.  Two further rounds removed the post-minor state from the contract
+altogether.
+
+**Round two** moved the heap-shape transport inside the library.
+`GC.Gen.MajorPrecondition.darken_precondition_after_minor` carries seven of
+`darken_precondition`'s ten conjuncts across `cheney_collect_spec` using the
+`CheneyPreservation` family, on hypotheses `gen_gc` already demanded.  Three
+conjuncts survived, all mentioning the rewritten root set: the caller's stack is
+a subset of it, the capacity budget covers it, and each of its members is a real
+non-blue major object.
+
+**Round three** removed those three as well, by asking why each was there:
+
+- *Why can the caller supply a non-empty gray stack?*  It never does — the stack
+  is collector scratch space, and both real clients pass `Seq.empty`.  Requiring
+  `Seq.length st == 0` makes the subset conjunct vacuous and reduces the capacity
+  conjunct to `Seq.length roots <= cap`.  It also reduces `gray_objects_on_stack`
+  to "the major heap has no gray objects".
+- *Why must the caller prove `root_valid_for_darkening` on post-minor roots?*  It
+  has no way to, short of unfolding the Cheney simulation.  It is a theorem about
+  minor collection, and is now proved as one:
+  `post_minor_roots_valid_for_darkening`.  The non-minor case is Cheney frame
+  reasoning; the minor case needs BFS coverage (`cheney_no_oom`) to know the root
+  was forwarded, and `minor_objects_not_infix` to know the forwarding target is a
+  whole object rather than an interior pointer — a step that turns on
+  `well_formed_heap_part4` of the promoted heap, which is the only lemma in the
+  tree that *concludes* non-infix-ness.
+- *What constraint on `cap` makes the budget hold?*  Exactly `Seq.length roots <=
+  cap`: darkening pushes every root, so the gray stack must be able to hold them,
+  and nothing more.
+
+That left four conjuncts, all about the pre-minor state: `cheney_no_oom`,
+`Seq.length st == 0`, `Seq.length roots <= cap`, `cap > 0`.
+`gen_gc_major_precondition_intro` no longer exists — there is nothing left to
+introduce.  The cost was one genuine invariant strengthening: `no_gray_objects`
+joined `GC.Gen.HeapInvariant.major_heap_shape`, which required two new
+empty-stack helpers in `GC.Gen.CheneyPreservation` to re-establish after a minor
+collection.
+
+**Round four** removed `cheney_no_oom`, which was the last conjunct a caller
+could not actually check.  The review question was blunt and correct: *how is a
+caller supposed to prove `cheney_no_oom`, and since `gen_gc` returns `ok` to
+report exactly that failure, why is it a precondition at all?*
+
+It should not have been.  `cheney_no_oom` is a statement about the outcome of the
+whole Cheney BFS; discharging it means simulating the collector.  Requiring it
+made `gen_gc` un-callable in precisely the situation its return type exists to
+describe, and it had crept in only because round three needed *some* hypothesis
+strong enough to prove that post-minor roots are major objects.
+
+The right source for that hypothesis is the runtime, not the caller.
+`GC.Gen.Impl.Cheney` already proved `ok ==> cheney_no_oom` about its BFS loop;
+`minor_collect_full` was dropping it on the floor.  Re-exporting it and branching
+`gen_gc` on `ok` moves the fact from the contract into the code:
+
+- The caller-facing predicate is now `gen_gc_stack_budget roots st cap` —
+  `Seq.length st == 0 /\ Seq.length roots <= cap /\ cap > 0`, with **no heap in
+  it at all**.  Both conjuncts are decidable by inspecting the arguments.
+- `gen_gc_major_precondition_elim` takes `cheney_no_oom` as a hypothesis, and
+  `gen_gc` supplies it from the flag inside the `if ok` branch.
+- Skipping the major phase on out-of-memory is also the only *correct* behaviour:
+  when promotion fails, `rewrite_root` leaves unforwarded minor roots as nursery
+  addresses, so the rewritten root set no longer points into the major heap.
+
+Two postconditions moved under the `ok` guard (`roots_match_stack` and
+`gen_gc_unreachable_final_blue_post` — only the sweep makes unreachable objects
+blue).  `gen_gc_heap_shape_post` did not need guarding, because round three's
+`no_gray_objects` strengthening pays off here: a heap between collections is
+white-or-blue everywhere, so the post-minor heap satisfies `gc_postcondition` on
+its own.
+
+This is the one round in the series that changes the extracted C — a single
+`if (ok) { ... } else { ... }` around the major phase, fifteen lines.  The OCaml
+bridge already treated `!ok` as fatal, so its behaviour is unchanged; it now
+aborts without having first run an unsound collection.
+
+Once `ok` carries proof weight, the failure side has to mean something too, so
+`gen_gc` also ensures `not ok ==> cheney_oom minor 's 'fp 'rs`: a *witness* that
+some object the collector was about to forward, at an identified point of this
+run, could not be placed by the free list.  The tie to the run is the residual
+equation the BFS loops already carry as an invariant ("finishing from here yields
+this run's outcome"), so the witness costs one extra conjunct per loop and no new
+proof.  The two witness predicates are `opaque_to_smt` with intro/elim lemmas —
+without that, unfolding their existentials inside four nested Pulse loop
+invariants pushed the field loop past its rlimit.  It is deliberately *not* the
+negation of `cheney_no_oom`: that would require proving the allocator never
+accepts an object it once refused, a monotonicity theorem about first-fit
+free-list allocation that nothing else in the development needs.
+
+The payoff is visible in the concrete client.  SPOT's discharge of the entry
+condition went from ~50 lines citing eight preservation lemmas, to ~25 citing
+two, to two lines; and pruning the lemmas that existed only to serve the old
+contract deleted 452 lines, 374 of them from SPOT.  That figure is the best
+available measure of how much collector-internal reasoning a badly placed entry
+contract pushes onto its callers.
+
+Rounds one to three are `prop`-level and leave the extracted C byte-identical;
+round four adds the fifteen-line out-of-memory branch and nothing else.
+
+**Round five: don't make the caller compose.** The last leak in the contract was
+on the *output* side. `gen_gc` runs two collections and exposed one isomorphism
+per phase — minor collection into the post-minor heap, major collection out of
+the post-darkening heap — leaving the caller to chain them into the statement it
+actually wants, "the live graph I handed in is isomorphic to the live graph I got
+back". That chain could not be closed from outside: the halves use different
+reachability vocabularies (`∃ root. reachable` over raw addresses versus DFS
+`reachable_set` membership over `obj_addr` with three side conditions), root
+darkening sits between them as a third heap, and — the real obstacle — the
+composed morphism's surjectivity needs reachability transferred *backwards* out
+of the final heap, which `major_gc_live_subgraph_isomorphism`'s edge clause
+cannot give, because it is guarded on both endpoints already being live and so
+makes the path induction circular.
+
+The fix was three small pieces rather than one big one. The major collector's
+isomorphism gained a successor-*list* equality clause — already proved inside
+`major_gc_live_subgraph_isomorphism_gen` and thrown away — which breaks the
+circularity. Root darkening was shown to preserve `create_graph`, by induction
+over the darkening prefix on top of the existing `color_preserves_create_graph`.
+And a new module proves the generic graph lemma ("two graphs that agree on the
+successor lists of a successor-closed vertex set have the same reachability and
+the same internal edges") by structural induction on the `reach` witness, then
+instantiates and composes. About 300 lines total, no admits, no rlimit above 40,
+and the extracted C is byte-identical: every one of the three pieces was already
+implicit in proofs the development had, just never stated where a caller could
+reach it.
+
 ---
 
 ## 7. Summary

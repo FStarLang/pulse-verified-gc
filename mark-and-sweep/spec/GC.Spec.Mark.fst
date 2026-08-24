@@ -3362,13 +3362,6 @@ let root_props_subset_create_graph (g: heap) (roots: seq obj_addr)
   FStar.Classical.forall_intro (FStar.Classical.move_requires root_ok)
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-let root_graph_precondition (g: heap) (roots: seq obj_addr)
-  =
-  create_graph_wf_from_heap g;
-  root_props_subset_create_graph g roots
-#pop-options
-
 /// Actual proof: every object reachable from roots is black after mark
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 50"
 let mark_reachable_is_black g st roots =

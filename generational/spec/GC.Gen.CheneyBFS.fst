@@ -455,3 +455,35 @@ let cheney_promotes_all_reachable
   =
   let prom = CheneySpec.cheney_promote minor major fp roots in
   fwd_well_formed_covers_reachable minor prom.fwd_map roots
+
+/// ---------------------------------------------------------------------------
+/// Out-of-memory witness
+/// ---------------------------------------------------------------------------
+
+let cheney_oom_intro_root
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (final: CheneySpec.cheney_state)
+  (roots: seq U64.t) (ridx: nat) (fuel: nat) (oom_before oom_after: bool)
+  = reveal_opaque (`%cheney_oom_reaching) cheney_oom_reaching;
+    let addr = Seq.index roots ridx in
+    assert (cheney_attempts minor cs final addr)
+
+let cheney_oom_intro_field
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (cs': CheneySpec.cheney_state)
+  (parent: U64.t) (fld: nat) (wz: nat) (oom_before oom_after: bool)
+  = reveal_opaque (`%cheney_oom_fields) cheney_oom_fields
+
+let cheney_oom_fields_elim
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (final: CheneySpec.cheney_state)
+  (parent: U64.t) (wz: nat) (scan: nat) (fuel: nat) (oom_before oom_after: bool)
+  = reveal_opaque (`%cheney_oom_fields) cheney_oom_fields;
+    reveal_opaque (`%cheney_oom_reaching) cheney_oom_reaching;
+    if not oom_before && oom_after then begin
+      eliminate exists (cs': CheneySpec.cheney_state) (fld: nat).
+        fld < wz /\
+        CheneySpec.cheney_forward_fields minor cs' parent fld wz ==
+          CheneySpec.cheney_forward_fields minor cs parent 0 wz /\
+        promote_fails_for minor cs' (to_minor_offset (minor_read_field minor parent fld))
+      with (let addr = to_minor_offset (minor_read_field minor parent fld) in
+            assert (cheney_attempts minor cs' final addr);
+            assert (cheney_oom_reaching minor final))
+    end

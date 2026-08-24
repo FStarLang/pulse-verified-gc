@@ -61,13 +61,6 @@ val major_minor_fields_no_infix_targets (minor: minor_state) (major: heap) : pro
 /// major object bodies.
 [@@"opaque_to_smt"]
 val minor_heap_shape (minor: minor_state) : prop
-
-/// Named form of the gray/black stack condition, centralized here so clients do
-/// not have to rediscover the color-stack conjunct of the major GC precondition.
-let gray_black_objects_on_stack (major: heap) (st: seq obj_addr) : prop =
-  forall (obj: obj_addr).
-    Seq.mem obj (objects zero_addr major) /\
-    (is_gray obj major \/ is_black obj major) ==> Seq.mem obj st
 /// Non-stack combined heap shape used by minor collection.
 [@@"opaque_to_smt"]
 val collection_heap_shape (minor: minor_state) (major: heap) (fp: U64.t) : prop
@@ -83,6 +76,7 @@ val major_heap_shape_intro (major: heap) (fp: U64.t)
                     SweepInv.fp_valid fp major /\
                     Sweep.fp_in_heap fp major /\
                     Mark.no_black_objects major /\
+                    SweepInv.no_gray_objects major /\
                     Mark.no_pointer_to_blue major /\
                     no_scan_invariant major)
           (ensures major_heap_shape major fp)
@@ -100,6 +94,7 @@ val major_heap_shape_elim (major: heap) (fp: U64.t)
                    SweepInv.fp_valid fp major /\
                    Sweep.fp_in_heap fp major /\
                    Mark.no_black_objects major /\
+                   SweepInv.no_gray_objects major /\
                    Mark.no_pointer_to_blue major /\
                    no_scan_invariant major)
 

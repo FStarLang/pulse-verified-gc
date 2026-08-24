@@ -34,6 +34,9 @@ module CheneySpec = GC.Gen.Cheney
 module ML = FStar.Math.Lemmas
 module MajorGC = GC.Impl
 module MarkBoundedImpl = GC.Impl.MarkBounded
+module MBP = GC.Impl.MarkBoundedPrecondition
+module GMP = GC.Gen.MajorPrecondition
+module MarkBoundedInv = GC.Spec.MarkBoundedInv
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
 module Sweep = GC.Spec.Sweep
@@ -43,10 +46,29 @@ module TwoPass = GC.Gen.TwoPassEquiv
 module GenInv = GC.Gen.HeapInvariant
 module FreeListShape = GC.Gen.FreeListShape
 module MinorFwd = GC.Gen.MinorCollectForwarding
+module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RBridge = GC.Gen.ReachabilityBridge
 module CheneyBFS = GC.Gen.CheneyBFS
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module Cheney = GC.Gen.Impl.Cheney
+module SpecHeapModel = GC.Spec.HeapModel
+module MRT = GC.Gen.MajorReachabilityTransfer
+
+/// Two transports in one: `GC.Gen.MajorPrecondition` carries the pre-minor facts
+/// across the minor collection to `darken_precondition`, and
+/// `MarkBoundedPrecondition` carries that across root darkening to the
+/// obligation `GC.Impl.collect_with_roots` actually demands.  Neither step is
+/// the caller's business.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let gen_gc_major_precondition_elim minor major fp roots st cap
+  = let result = CheneySpec.cheney_collect_spec minor major fp roots in
+    assert (Seq.equal st (Seq.empty #obj_addr));
+    GMP.darken_precondition_after_minor minor major fp roots cap;
+    MBP.darken_establishes_precondition result.mc_major st result.mc_roots result.mc_fp cap;
+    MBP.darken_roots_match_stack result.mc_major st result.mc_roots result.mc_fp cap;
+    GC.Gen.CheneyPreservation.cheney_collect_preserves_wfh_from_shape minor major fp roots;
+    MBP.darken_preserves_create_graph result.mc_major st result.mc_roots result.mc_fp cap
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// Allocation
@@ -842,8 +864,6 @@ let minor_collect_full_isomorphism_post
       post_roots == PromoteSpec.rewrite_roots roots
         (CheneySpec.cheney_promote minor major fp roots).fwd_map /\
       MinorFwd.remembered_targets_in_roots major roots slots n /\
-      RBridge.major_field_zero_no_minor minor major /\
-      RBridge.roots_valid_nonblue roots major /\
       MinorFwd.roots_valid_for_minor_collection minor major roots /\
       (ok ==> CheneyBFS.cheney_no_oom minor major fp roots))
     (ensures
@@ -855,6 +875,8 @@ let minor_collect_full_isomorphism_post
   =
     if ok
     then begin
+      MCFH.roots_valid_for_minor_collection_nonblue minor major roots;
+      MCFH.major_field_zero_covered_from_slots minor major roots slots n;
       GenInv.collection_heap_shape_elim minor major fp;
       GenInv.major_heap_shape_elim major fp;
       RBridge.minor_no_pointer_to_blue_from_collection_shape minor major fp;
@@ -898,9 +920,6 @@ fn minor_collect_full (gh: gen_heap_t)
                   ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
                   slots_pairwise_distinct 'sl (SZ.v nslots) /\
                   MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
-                  RBridge.major_field_zero_no_minor
-                    ({ data = 'd; bump = 'b } <: minor_state) 's /\
-                  RBridge.roots_valid_nonblue 'rs 's /\
                   MinorFwd.roots_valid_for_minor_collection
                     ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns ok: bool
@@ -933,13 +952,17 @@ fn minor_collect_full (gh: gen_heap_t)
       // Strong correctness: the result equals cheney_collect_spec.mc_major.
       s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major /\
       GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
+      (not ok ==> CheneyBFS.cheney_oom minor_st 's 'fp 'rs) /\
       (ok ==>
+       CheneyBFS.cheney_no_oom minor_st 's 'fp 'rs /\
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
          minor_st 's 'fp 'rs s2 rs2 /\
         MinorFwd.normal_result_non_pointer_fields_preserved_prop
          minor_st 's 'fp 'rs s2))
 {
   unfold is_gen_heap;
+  MCFH.major_field_zero_covered_from_slots
+    ({data = 'd; bump = 'b} <: minor_state) 's 'rs 'sl (SZ.v nslots);
   GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
   GenInv.major_heap_shape_elim 's 'fp;
   GenInv.minor_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state);
@@ -1040,9 +1063,7 @@ fn gen_gc (gh: gen_heap_t)
              pure (
                let minor_st : minor_state = { data = 'd; bump = 'b } in
                GenInv.collection_heap_shape minor_st 's 'fp /\
-               Seq.length 'st <= stack_capacity st /\
-               gen_gc_major_precondition
-                 minor_st 's 'fp 'rs 'st (stack_capacity st) /\
+               gen_gc_stack_budget 'rs 'st (stack_capacity st) /\
                SZ.v nroots == Seq.length 'rs /\
                Seq.length 'farr == fwd_array_size /\
                (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
@@ -1050,9 +1071,6 @@ fn gen_gc (gh: gen_heap_t)
                ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
                slots_pairwise_distinct 'sl (SZ.v nslots) /\
                MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
-               RBridge.major_field_zero_no_minor
-                 ({ data = 'd; bump = 'b } <: minor_state) 's /\
-               RBridge.roots_valid_nonblue 'rs 's /\
                MinorFwd.roots_valid_for_minor_collection
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns res: (U64.t & bool)
@@ -1067,12 +1085,15 @@ fn gen_gc (gh: gen_heap_t)
       let minor_st : minor_state = { data = 'd; bump = 'b } in
       let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
       let ok = snd res in
-      gen_gc_roots_post minor_st 's 'fp 'rs rs2 'st (stack_capacity st) /\
+      // Failure is reported only for a concrete out-of-memory event: an object
+      // the major free list had no room for, at a point of this collection.
+      (not ok ==> CheneyBFS.cheney_oom minor_st 's 'fp 'rs) /\
+      gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok 'st (stack_capacity st) /\
       gen_gc_heap_shape_post d2 b2 s2 /\
       gen_gc_reachable_subgraph_isomorphism_post
         minor_st 's 'fp 'rs ok s2 rs2 'st (stack_capacity st) /\
       gen_gc_unreachable_final_blue_post
-        minor_st 's 'fp 'rs s2 'st (stack_capacity st))
+        minor_st 's 'fp 'rs ok s2 'st (stack_capacity st))
 {
   GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
   GenInv.major_heap_shape_elim 's 'fp;
@@ -1122,50 +1143,76 @@ fn gen_gc (gh: gen_heap_t)
   assert (pure (SpecFields.well_formed_heap_part1 ms_updated));
   assert (pure (SpecFields.well_formed_heap_part1
     (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major));
-  MarkBoundedImpl.darken_roots_bounded gh.major st roots nroots (stack_capacity st);
-  with prepared_major prepared_st roots_after. assert (
-    is_heap gh.major prepared_major **
-    is_gray_stack st prepared_st **
-    pts_to roots roots_after);
-  assert (pure (roots_after == rs_mid));
-  assert (pure ((prepared_major, prepared_st) ==
-    gen_gc_prepared_state
-      ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)));
-  assert (pure (gen_gc_major_precondition
-    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)));
-  assert (pure (MajorGC.gc_precondition_with_roots
-    prepared_major prepared_st prepared_st fp_val (stack_capacity st)));
-  assert (pure (roots_match_stack rs_mid prepared_st));
-  // Phase 2: Major collection (mark + sweep + coalesce)
-  let final_fp = MajorGC.collect_with_roots gh.major st prepared_st fp_val;
+  // Phase 2: Major collection, but only if the minor collection succeeded.
+  //
+  // On the out-of-memory path some live nursery objects were never promoted, so
+  // the rewritten root set still contains nursery addresses and there is nothing
+  // sensible for mark-and-sweep to do with it.  `minor_collect_full` reports
+  // that through `ok`, which also witnesses `cheney_no_oom` -- the fact the
+  // major phase's entry condition is derived from.  This is why `gen_gc`'s
+  // caller does not have to establish `cheney_no_oom` itself.
+  if ok {
+    MarkBoundedImpl.darken_roots_bounded gh.major st roots nroots (stack_capacity st);
+    with prepared_major prepared_st roots_after. assert (
+      is_heap gh.major prepared_major **
+      is_gray_stack st prepared_st **
+      pts_to roots roots_after);
+    assert (pure (roots_after == rs_mid));
+    assert (pure ((prepared_major, prepared_st) ==
+      gen_gc_prepared_state
+        ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)));
+    gen_gc_major_precondition_elim
+      ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st);
+    assert (pure (MajorGC.gc_precondition_with_roots
+      prepared_major prepared_st prepared_st fp_val (stack_capacity st)));
+    assert (pure (roots_match_stack rs_mid prepared_st));
+    // Phase 2: Major collection (mark + sweep + coalesce)
+    let final_fp = MajorGC.collect_with_roots gh.major st prepared_st fp_val;
 
-  with s_final st_final. assert (
-    is_heap gh.major s_final **
-    is_gray_stack st st_final);
-  assert (pure (SpecGCPost.gc_postcondition s_final));
-  assert (pure (SpecGCPost.full_gc_correctness prepared_major s_final prepared_st));
-  assert (pure (SpecGCPost.major_gc_live_subgraph_isomorphism
-    prepared_major s_final prepared_st));
-  assert (pure (SpecGCPost.major_gc_unreachable_final_blue
-    prepared_major s_final prepared_st));
-  assert (pure (SpecGCPost.major_gc_live_subgraph_isomorphism
-    (fst (gen_gc_prepared_state
-      ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)))
-    s_final
-    (snd (gen_gc_prepared_state
-      ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)))));
-  assert (pure (SpecGCPost.major_gc_unreachable_final_blue
-    (fst (gen_gc_prepared_state
-      ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)))
-    s_final
-    (snd (gen_gc_prepared_state
-      ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)))));
+    with s_final st_final. assert (
+      is_heap gh.major s_final **
+      is_gray_stack st st_final);
+    assert (pure (SpecGCPost.gc_postcondition s_final));
+    assert (pure (SpecGCPost.full_gc_correctness prepared_major s_final prepared_st));
+    assert (pure (SpecGCPost.major_gc_live_subgraph_isomorphism
+      prepared_major s_final prepared_st));
+    assert (pure (SpecGCPost.major_gc_unreachable_final_blue
+      prepared_major s_final prepared_st));
+    assert (pure (SpecGCPost.major_gc_live_subgraph_isomorphism
+      (fst (gen_gc_prepared_state
+        ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)))
+      s_final
+      (snd (gen_gc_prepared_state
+        ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)))));
+    assert (pure (SpecGCPost.major_gc_unreachable_final_blue
+      (fst (gen_gc_prepared_state
+        ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)))
+      s_final
+      (snd (gen_gc_prepared_state
+        ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)))));
 
-  // Phase 6: Update free-list pointer and re-fold gen heap
-  R.op_Colon_Equals gh.fp_ref final_fp;
+    // Chain the two halves into a single isomorphism from the heap we were
+    // handed to the heap we return, so that no caller has to do it.
+    SpecGCPost.gc_postcondition_elim s_final;
+    Mark.create_graph_wf_from_heap s_final;
+    assert (pure (MRT.major_transfer_hyp prepared_major s_final prepared_st));
+    MRT.end_to_end_isomorphism_intro
+      ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs
+      ms_updated rs_mid prepared_major prepared_st s_final;
 
-  fold (is_gen_heap gh d_mid b_mid s_final final_fp);
+    // Phase 6: Update free-list pointer and re-fold gen heap
+    R.op_Colon_Equals gh.fp_ref final_fp;
 
-  (final_fp, ok)
+    fold (is_gen_heap gh d_mid b_mid s_final final_fp);    (final_fp, ok)
+  } else {
+    // Nothing ran after the minor collection, so the heap we hand back is the
+    // post-minor one.  It is already white/blue everywhere -- `major_heap_shape`
+    // records both `no_black_objects` and `no_gray_objects` -- so it satisfies
+    // the major-GC postcondition on its own, and every `ok`-guarded conjunct is
+    // vacuous.
+    GMP.major_heap_shape_gc_postcondition ms_updated fp_val;
+    fold (is_gen_heap gh d_mid b_mid ms_updated fp_val);
+    (fp_val, ok)
+  }
 }
 #pop-options

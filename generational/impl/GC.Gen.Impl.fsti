@@ -32,6 +32,9 @@ module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module PromoteSpec = GC.Gen.Promote
 module MajorGC = GC.Impl
 module MarkBoundedImpl = GC.Impl.MarkBounded
+module MBP = GC.Impl.MarkBoundedPrecondition
+module GMP = GC.Gen.MajorPrecondition
+module MarkBoundedInv = GC.Spec.MarkBoundedInv
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
 module Cheney = GC.Gen.Impl.Cheney
@@ -39,6 +42,8 @@ module GenInv = GC.Gen.HeapInvariant
 module MinorFwd = GC.Gen.MinorCollectForwarding
 module RBridge = GC.Gen.ReachabilityBridge
 module CheneyBFS = GC.Gen.CheneyBFS
+module SpecHeapModel = GC.Spec.HeapModel
+module MRT = GC.Gen.MajorReachabilityTransfer
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -96,23 +101,63 @@ let gen_gc_prepared_roots
   (st: Seq.seq obj_addr) (cap: nat) : GTot (Seq.seq obj_addr) =
   snd (gen_gc_prepared_state minor major fp roots st cap)
 
-let gen_gc_major_precondition
+/// What the caller owes the collector about the gray stack it supplies.
+///
+/// This is the whole of it.  There is no heap in the statement: the major
+/// phase's entry condition is derived internally by `GC.Gen.MajorPrecondition`
+/// from `collection_heap_shape`, `roots_valid_for_minor_collection` and the
+/// *runtime* success flag of the minor collection.
+///
+///  * `Seq.length st == 0` -- the gray stack starts empty.  It is collector
+///    scratch space, not caller state, and both real clients pass an empty one.
+///  * `Seq.length roots <= cap` -- darkening pushes every root, so the stack has
+///    to be able to hold them.  This is the only sizing obligation.
+///  * `cap > 0` rules out a zero-capacity stack.
+///
+/// In particular the caller does *not* have to establish `cheney_no_oom`.  An
+/// earlier version did require it, which was indefensible: it is a statement
+/// about the outcome of the entire Cheney BFS, no caller can discharge it, and
+/// `gen_gc` reports promotion failure through its `ok` result anyway.  `gen_gc`
+/// now consumes the runtime flag instead and simply skips the major phase when
+/// the minor collection ran out of memory.
+let gen_gc_stack_budget
+  (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) (cap: nat) : prop =
+  Seq.length st == 0 /\
+  Seq.length roots <= cap /\
+  cap > 0
+
+/// Everything the major phase needs, from pre-minor shape facts plus the
+/// minor collection's own success flag.
+val gen_gc_major_precondition_elim
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
-  (st: Seq.seq obj_addr) (cap: nat) : prop =
-  let result = CheneySpec.cheney_collect_spec minor major fp roots in
-  let prepared = gen_gc_prepared_state minor major fp roots st cap in
-  MajorGC.gc_precondition_with_roots
-    (fst prepared) (snd prepared) (snd prepared) result.mc_fp cap /\
-  roots_match_stack result.mc_roots (snd prepared)
+  (st: Seq.seq obj_addr) (cap: nat)
+  : Lemma
+      (requires
+        GenInv.collection_heap_shape minor major fp /\
+        MinorFwd.roots_valid_for_minor_collection minor major roots /\
+        CheneyBFS.cheney_no_oom minor major fp roots /\
+        gen_gc_stack_budget roots st cap)
+      (ensures
+        (let result = CheneySpec.cheney_collect_spec minor major fp roots in
+         let prepared = gen_gc_prepared_state minor major fp roots st cap in
+         MajorGC.gc_precondition_with_roots
+           (fst prepared) (snd prepared) (snd prepared) result.mc_fp cap /\
+         roots_match_stack result.mc_roots (snd prepared) /\
+         SpecHeapModel.create_graph (fst prepared) ==
+           SpecHeapModel.create_graph result.mc_major))
 
 /// The roots array contains exactly the post-minor roots used by the following
 /// major collection.
+/// The array is rewritten by the minor collection unconditionally; the match
+/// with the darkened mark stack only holds on the path where the major phase
+/// actually ran.
 let gen_gc_roots_post
   (minor: minor_state) (major: heap) (fp: U64.t) (roots roots_out: Seq.seq U64.t)
-  (st: Seq.seq obj_addr) (cap: nat) : prop =
+  (ok: bool) (st: Seq.seq obj_addr) (cap: nat) : prop =
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
   roots_out == result.mc_roots /\
-  roots_match_stack roots_out (gen_gc_prepared_roots minor major fp roots st cap)
+  (ok ==>
+   roots_match_stack roots_out (gen_gc_prepared_roots minor major fp roots st cap))
 
 /// Shape facts exposed by the abstract `gen_gc` contract: the nursery is reset,
 /// the final major heap satisfies the major GC postcondition, and the post-minor
@@ -123,17 +168,30 @@ let gen_gc_heap_shape_post
   U64.v minor_bump == 0 /\
   SpecGCPost.gc_postcondition final_major
 
-/// Reachable subgraph correctness.  On successful promotion, minor collection
-/// maps the original combined reachable subgraph into the post-minor major heap;
-/// major GC then preserves that live subgraph without moving objects.
+/// Reachable subgraph correctness.
+///
+/// The headline conjunct is a *single* isomorphism between the reachable
+/// subgraph of the heap `gen_gc` was handed and the reachable subgraph of the
+/// heap it returns, with the minor collector's forwarding map as the morphism.
+/// Earlier versions exposed only the two halves -- minor collection into the
+/// post-minor heap, then major collection out of the post-darkening heap --
+/// and left the caller to chain them.  That was not something a caller could
+/// actually do: the halves are stated in different vocabularies, root darkening
+/// sits between them, and transferring reachability backwards out of the final
+/// heap needs the major collector's successor-preservation clause.  All of that
+/// is now discharged once, inside `GC.Gen.MajorReachabilityTransfer`.
+///
+/// The two intermediate facts are kept because they say things the composition
+/// cannot: the minor step says *where* each surviving object went, and the
+/// major step says the survivors did not move again and are white.
 let gen_gc_reachable_subgraph_isomorphism_post
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
   (ok: bool) (final_major: heap) (roots_out: Seq.seq U64.t)
   (st: Seq.seq obj_addr) (cap: nat) : prop =
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
   let prepared = gen_gc_prepared_state minor major fp roots st cap in
-  gen_gc_major_precondition minor major fp roots st cap /\
   (ok ==>
+   MRT.end_to_end_isomorphism minor major fp roots final_major roots_out /\
    MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
      minor major fp roots result.mc_major roots_out /\
    MinorFwd.normal_result_non_pointer_fields_preserved_prop
@@ -143,10 +201,13 @@ let gen_gc_reachable_subgraph_isomorphism_post
 
 /// Collection completeness: every object that remains in the final major heap
 /// but is not reachable from the final roots is blue.
+/// Only the sweep makes unreachable objects blue, so this is guarded on `ok`:
+/// on the out-of-memory path the returned heap is the (unswept) post-minor heap.
 let gen_gc_unreachable_final_blue_post
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
-  (final_major: heap) (st: Seq.seq obj_addr) (cap: nat) : prop =
+  (ok: bool) (final_major: heap) (st: Seq.seq obj_addr) (cap: nat) : prop =
   let prepared = gen_gc_prepared_state minor major fp roots st cap in
+  ok ==>
   SpecGCPost.major_gc_unreachable_final_blue (fst prepared) final_major (snd prepared)
 
 [@@"opaque_to_smt"]
@@ -215,9 +276,6 @@ fn minor_collect_full (gh: gen_heap_t)
                   UpdatePtrs.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
                   UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots) /\
                   MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
-                  RBridge.major_field_zero_no_minor
-                    ({ data = 'd; bump = 'b } <: minor_state) 's /\
-                  RBridge.roots_valid_nonblue 'rs 's /\
                   MinorFwd.roots_valid_for_minor_collection
                     ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns ok: bool
@@ -253,7 +311,9 @@ fn minor_collect_full (gh: gen_heap_t)
       GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
       // If promotion succeeds, minor collection is a concrete reachable
       // subgraph isomorphism over the actual post-minor heap graph.
+      (not ok ==> CheneyBFS.cheney_oom minor_st 's 'fp 'rs) /\
       (ok ==>
+       CheneyBFS.cheney_no_oom minor_st 's 'fp 'rs /\
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
          minor_st 's 'fp 'rs s2 rs2 /\
         MinorFwd.normal_result_non_pointer_fields_preserved_prop
@@ -289,12 +349,13 @@ fn gen_gc (gh: gen_heap_t)
            is_gray_stack st 'st **
            pure (
               let minor_st : minor_state = { data = 'd; bump = 'b } in
-              // Pre-minor shape plus the internally prepared post-minor root
-              // stack used by mark/sweep.
+              // Shape of the heap the caller hands in.  Everything the major
+              // phase needs about the *post*-minor heap is derived from this
+              // internally, by `GC.Gen.MajorPrecondition`.
               GenInv.collection_heap_shape minor_st 's 'fp /\
-              Seq.length 'st <= stack_capacity st /\
-              gen_gc_major_precondition
-                minor_st 's 'fp 'rs 'st (stack_capacity st) /\
+              // `Seq.length 'st <= stack_capacity st` is not restated here: it
+              // is recoverable from `is_gray_stack` via `Stack.stack_facts`.
+              gen_gc_stack_budget 'rs 'st (stack_capacity st) /\
 
                // Operational array preconditions.
                SZ.v nroots == Seq.length 'rs /\
@@ -304,9 +365,6 @@ fn gen_gc (gh: gen_heap_t)
                UpdatePtrs.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
                UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots) /\
                MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
-               RBridge.major_field_zero_no_minor
-                 ({ data = 'd; bump = 'b } <: minor_state) 's /\
-               RBridge.roots_valid_nonblue 'rs 's /\
                MinorFwd.roots_valid_for_minor_collection
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns res: (U64.t & bool)
@@ -321,9 +379,12 @@ fn gen_gc (gh: gen_heap_t)
       let minor_st : minor_state = { data = 'd; bump = 'b } in
       let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
       let ok = snd res in
-      gen_gc_roots_post minor_st 's 'fp 'rs rs2 'st (stack_capacity st) /\
+      // Failure is reported only for a concrete out-of-memory event: an object
+      // the major free list had no room for, at a point of this collection.
+      (not ok ==> CheneyBFS.cheney_oom minor_st 's 'fp 'rs) /\
+      gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok 'st (stack_capacity st) /\
       gen_gc_heap_shape_post d2 b2 s2 /\
       gen_gc_reachable_subgraph_isomorphism_post
         minor_st 's 'fp 'rs ok s2 rs2 'st (stack_capacity st) /\
       gen_gc_unreachable_final_blue_post
-        minor_st 's 'fp 'rs s2 'st (stack_capacity st))
+        minor_st 's 'fp 'rs ok s2 'st (stack_capacity st))

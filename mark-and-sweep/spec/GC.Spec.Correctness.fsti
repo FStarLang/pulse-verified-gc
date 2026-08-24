@@ -409,7 +409,16 @@ let major_gc_live_subgraph_isomorphism
     heap_reachable h_init roots x /\
     U64.v i >= 1 /\
     U64.v i <= U64.v (wosize_of_object x h_init) ==>
-    HeapGraph.get_field h_init x i == HeapGraph.get_field h_final x i)
+    HeapGraph.get_field h_init x i == HeapGraph.get_field h_final x i) /\
+  /// Successor *lists* agree on live objects.  This is strictly stronger than
+  /// the edge clause above, which is guarded on both endpoints already being
+  /// live; without it, transferring reachability backwards (final ⇒ initial)
+  /// would be circular, since the induction meets successors that are not yet
+  /// known to be live.  See `GC.Gen.MajorReachabilityTransfer`.
+  (forall (x: obj_addr).
+    heap_reachable h_init roots x ==>
+    mem_graph_vertex (create_graph h_final) x /\
+    successors (create_graph h_init) x == successors (create_graph h_final) x)
 
 let major_gc_unreachable_final_blue
   (h_init h_final: heap) (roots: seq obj_addr) : prop =

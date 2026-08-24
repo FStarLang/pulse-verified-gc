@@ -343,15 +343,3 @@ val cheney_collect_preserves_collection_heap_shape
             (cheney_collect_spec minor major fp roots).mc_minor
             (cheney_collect_spec minor major fp roots).mc_major
             (cheney_collect_spec minor major fp roots).mc_fp)
-
-val cheney_collect_preserves_bounded_stack_props
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (st: seq obj_addr)
-  : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp /\
-                    minor_infix_wf minor /\
-                    MarkBounded.bounded_stack_props major st)
-          (ensures MarkBounded.bounded_stack_props
-            (cheney_collect_spec minor major fp roots).mc_major st)

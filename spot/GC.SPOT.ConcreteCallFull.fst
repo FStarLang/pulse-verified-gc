@@ -47,20 +47,22 @@ let spot_gen_gc_success_post_from_gen_gc_post
             (ConcreteMajor.spot_major_heap r)
             (ConcreteMajor.spot_major_fp r)
             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
-        ok ==>
+        GenImpl.gen_gc_stack_budget
+          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) st cap /\
+        (ok ==>
           GenImpl.gen_gc_roots_post
             ConcreteMinor.spot_minor2
             (ConcreteMajor.spot_major_heap r)
             (ConcreteMajor.spot_major_fp r)
             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-            roots_out st cap /\
+            roots_out ok st cap /\
           GenImpl.gen_gc_heap_shape_post d2 b2 final_major /\
           GenImpl.gen_gc_reachable_subgraph_isomorphism_post
            ConcreteMinor.spot_minor2
            (ConcreteMajor.spot_major_heap r)
            (ConcreteMajor.spot_major_fp r)
            (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-           ok final_major roots_out st cap))
+           ok final_major roots_out st cap)))
       (ensures spot_gen_gc_success_post r ok final_major)
   =
   if ok then begin
@@ -109,7 +111,7 @@ fn call_concrete_gen_gc_spot_borrowed
         (ConcreteMajor.spot_major_heap r)
         (ConcreteMajor.spot_major_fp r)
         (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-        roots_out Seq.empty (stack_capacity st) /\
+        roots_out ok Seq.empty (stack_capacity st) /\
       GenImpl.gen_gc_heap_shape_post d2 b2 final_major /\
       GenImpl.gen_gc_reachable_subgraph_isomorphism_post
         ConcreteMinor.spot_minor2
@@ -122,7 +124,7 @@ fn call_concrete_gen_gc_spot_borrowed
         (ConcreteMajor.spot_major_heap r)
         (ConcreteMajor.spot_major_fp r)
         (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-        final_major Seq.empty (stack_capacity st) /\
+        ok final_major Seq.empty (stack_capacity st) /\
       Postconditions.minor_not_promoted
         ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
@@ -151,6 +153,7 @@ fn call_concrete_gen_gc_spot_borrowed
     (ConcreteMajor.spot_major_fp r)
     (ThreeObjects.spot_roots c)
     Layout.b_minor));
+  ConcreteScenarios.spot_concrete_gen_gc_major_pre_empty_stack r (stack_capacity st);
   spot_gen_gc_success_post_from_gen_gc_post
     r d2 b2 roots_out ok final_major Seq.empty (stack_capacity st);
   res

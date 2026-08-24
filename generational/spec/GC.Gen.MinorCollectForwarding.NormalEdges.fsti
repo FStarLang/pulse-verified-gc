@@ -79,7 +79,7 @@ val combined_reachable_edge_forwarded_normal
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\

@@ -60,6 +60,17 @@ let is_gray_stack (st: gray_stack) (s: Seq.seq obj_addr) : slprop =
         (Seq.index s i <: U64.t) == Seq.index contents (SZ.v t + i))
     )
 
+ghost
+fn stack_facts (st: gray_stack)
+  requires is_gray_stack st 's
+  ensures is_gray_stack st 's **
+          pure (Seq.length 's <= stack_capacity st /\ stack_capacity st > 0)
+{
+  unfold is_gray_stack;
+  with t contents. _;
+  fold (is_gray_stack st 's);
+}
+
 /// ---------------------------------------------------------------------------
 /// Helper Lemmas (pure F*)
 /// ---------------------------------------------------------------------------

@@ -112,11 +112,12 @@ The cleaned campaign now validates the collector proof surface directly:
 2. The root set includes `C` pre-minor, so the post-minor major GC has a root
    path that keeps both C and the promoted A' live.
 3. The remembered slot layout is explicit: the single remembered slot is C's
-   field 1, which contains a minor pointer to A. Field 0 is intentionally not
-   the minor pointer slot, because the generational invariant
-   `major_field_zero_no_minor` rules out minor pointers in field 0 of scannable
-   major objects. The postcondition proof uses the exported forwarding theorem
-   to show that field 1 is rewritten to A's promoted image.
+   field 1, which contains a minor pointer to A. Field 0 happens to be empty in
+   this fixture, but nothing requires that: field 0 is covered by the slot
+   table like any other field, and the bridge hypothesis
+   `major_field_zero_covered` is discharged from the slot-table preconditions
+   rather than assumed. The postcondition proof uses the exported forwarding
+   theorem to show that field 1 is rewritten to A's promoted image.
 4. B's collection fact is isolated to the exact Cheney execution fact that
    `(cheney_promote ...).fwd_map b_minor == 0UL`, which is now proved for the
    concrete heap and then lifted to "B was not promoted."

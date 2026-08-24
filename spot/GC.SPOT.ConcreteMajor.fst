@@ -778,6 +778,23 @@ let spot_major_no_black_objects (r: unit{spot_major_room})
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires proof)
 
+let spot_major_no_gray_objects (r: unit{spot_major_room})
+  : Lemma (ensures SweepInv.no_gray_objects (spot_major_heap r))
+  =
+  let major = spot_major_heap r in
+  let proof (obj: obj_addr)
+    : Lemma (ensures Seq.mem obj (SpecFields.objects zero_addr major) ==>
+                     ~(SpecObj.is_gray obj major))
+    =
+    if Seq.mem obj (SpecFields.objects zero_addr major) then begin
+      spot_major_object_cases r obj;
+      spot_major_c_reads r;
+      spot_major_free_reads r
+    end
+  in
+  FStar.Classical.forall_intro proof;
+  SweepInv.no_gray_intro major
+
 let spot_major_no_pointer_to_blue (r: unit{spot_major_room})
   : Lemma (ensures SpecMark.no_pointer_to_blue (spot_major_heap r))
   =
@@ -828,6 +845,7 @@ let spot_major_heap_shape (r: unit{spot_major_room})
   spot_major_fp_valid r;
   spot_major_fp_in_heap r;
   spot_major_no_black_objects r;
+  spot_major_no_gray_objects r;
   spot_major_no_pointer_to_blue r;
   spot_major_no_scan_invariant r;
   GenInv.major_heap_shape_intro major fp

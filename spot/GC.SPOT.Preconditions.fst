@@ -27,8 +27,6 @@ let minor_collect_full_pre
   UpdatePtrs.ref_table_covers_minor_ptrs major slots nslots /\
   UpdatePtrs.slots_pairwise_distinct slots nslots /\
   MinorFwd.remembered_targets_in_roots major roots slots nslots /\
-  RBridge.major_field_zero_no_minor minor major /\
-  RBridge.roots_valid_nonblue roots major /\
   MinorFwd.roots_valid_for_minor_collection minor major roots
 
 let gen_gc_pre
@@ -37,7 +35,7 @@ let gen_gc_pre
   (st: seq obj_addr) (cap: nat) : prop =
   minor_collect_full_pre minor major fp roots farr slots nslots /\
   Seq.length st <= cap /\
-  GenImpl.gen_gc_major_precondition minor major fp roots st cap
+  GenImpl.gen_gc_stack_budget roots st cap
 
 let zero_forwarding_array_elim (farr: seq U64.t)
   = ()

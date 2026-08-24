@@ -22,6 +22,7 @@ module CheneyBFS = GC.Gen.CheneyBFS
 module CG = GC.Gen.CombinedGraph
 module MinorFwd = GC.Gen.MinorCollectForwarding
 module RBridge = GC.Gen.ReachabilityBridge
+module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 
 let spot_roots (c: obj_addr) : seq U64.t =
@@ -151,11 +152,14 @@ let expose_spot_collection_facts
         RBridge.minor_no_pointer_to_blue minor major /\
         UpdatePtrs.ref_table_covers_minor_ptrs major (spot_slots c) 1 /\
         MinorFwd.remembered_targets_in_roots major (spot_roots c) (spot_slots c) 1 /\
-        RBridge.major_field_zero_no_minor minor major /\
-        RBridge.roots_valid_nonblue (spot_roots c) major)
+        RBridge.roots_valid_nonblue (spot_roots c) major /\
+        RBridge.major_field_zero_covered minor major (spot_roots c))
   =
   Preconditions.minor_collect_full_pre_elim
     minor major fp (spot_roots c) farr (spot_slots c) 1;
+  MCFH.roots_valid_for_minor_collection_nonblue minor major (spot_roots c);
+  MCFH.major_field_zero_covered_from_slots
+    minor major (spot_roots c) (spot_slots c) 1;
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
   GenInv.minor_heap_shape_elim minor;

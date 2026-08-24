@@ -37,6 +37,17 @@ val stack_capacity (st: gray_stack) : GTot nat
 /// Gray stack predicate: stack logically contains a sequence of object addresses.
 val is_gray_stack (st: gray_stack) (s: Seq.seq obj_addr) : slprop
 
+/// Expose the two well-formedness facts that are conjuncts of the concrete
+/// `is_gray_stack` but that abstraction would otherwise hide from clients: the
+/// contents never exceed the backing store, and the capacity is positive.
+/// Owning `is_gray_stack` already entails both, so this costs nothing at
+/// runtime and lets callers drop them from their own preconditions.
+ghost
+fn stack_facts (st: gray_stack)
+  requires is_gray_stack st 's
+  ensures is_gray_stack st 's **
+          pure (Seq.length 's <= stack_capacity st /\ stack_capacity st > 0)
+
 /// ---------------------------------------------------------------------------
 /// Stack Operations
 /// ---------------------------------------------------------------------------

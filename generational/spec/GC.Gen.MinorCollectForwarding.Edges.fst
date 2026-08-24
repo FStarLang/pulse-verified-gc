@@ -76,7 +76,7 @@ private let combined_reachable_images_valid_or_infix_major
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       RBridge.remembered_roots_in_roots major roots /\
       Mark.no_pointer_to_blue major /\
       RBridge.minor_no_pointer_to_blue minor major /\
@@ -113,7 +113,7 @@ private let combined_reachable_images_valid_or_infix_minor
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       RBridge.remembered_roots_in_roots major roots /\
       Mark.no_pointer_to_blue major /\
       RBridge.minor_no_pointer_to_blue minor major /\

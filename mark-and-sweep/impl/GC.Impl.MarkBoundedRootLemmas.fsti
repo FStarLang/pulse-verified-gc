@@ -4,6 +4,8 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module SpecMark = GC.Spec.Mark
 module SpecObject = GC.Spec.Object
+module SpecFields = GC.Spec.Fields
+module HeapModel = GC.Spec.HeapModel
 module MarkBounded = GC.Impl.MarkBounded
 
 open GC.Spec.Base
@@ -110,3 +112,48 @@ val darken_roots_bounded_spec_preserves_gray_objects_on_stack
         SpecMark.gray_objects_on_stack
           (fst (MarkBounded.darken_roots_bounded_spec g st roots cap))
           (snd (MarkBounded.darken_roots_bounded_spec g st roots cap)))
+
+/// ---------------------------------------------------------------------------
+/// Root darkening does not change the object graph
+/// ---------------------------------------------------------------------------
+///
+/// Darkening only recolours headers, so the vertex and edge sets are untouched.
+/// This is what lets a caller compose a statement about the pre-darkening heap
+/// (e.g. the minor collector's reachable-subgraph isomorphism) with one about
+/// the post-darkening heap (the major collector's).
+
+val check_and_darken_bounded_spec_preserves_create_graph
+  (g: heap) (st: Seq.seq obj_addr) (v: U64.t) (cap: nat)
+  : Lemma
+      (requires
+        SpecFields.well_formed_heap g /\
+        MarkBounded.root_points_to_object g v)
+      (ensures
+        (let g' = fst (MarkBounded.check_and_darken_bounded_spec g st v cap) in
+         SpecFields.well_formed_heap g' /\
+         HeapModel.create_graph g' == HeapModel.create_graph g))
+
+val darken_roots_bounded_prefix_preserves_create_graph
+  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (idx: nat{idx <= Seq.length roots}) (cap: nat)
+  : Lemma
+      (requires
+        SpecFields.well_formed_heap g /\
+        (forall (i: nat). i < idx ==>
+           MarkBounded.root_points_to_object g (Seq.index roots i)))
+      (ensures
+        (let g' = fst (MarkBounded.darken_roots_bounded_prefix_spec g st roots idx cap) in
+         SpecFields.well_formed_heap g' /\
+         HeapModel.create_graph g' == HeapModel.create_graph g))
+
+val darken_roots_bounded_spec_preserves_create_graph
+  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t) (cap: nat)
+  : Lemma
+      (requires
+        SpecFields.well_formed_heap g /\
+        (forall (i: nat). i < Seq.length roots ==>
+           MarkBounded.root_points_to_object g (Seq.index roots i)))
+      (ensures
+        (let g' = fst (MarkBounded.darken_roots_bounded_spec g st roots cap) in
+         SpecFields.well_formed_heap g' /\
+         HeapModel.create_graph g' == HeapModel.create_graph g))

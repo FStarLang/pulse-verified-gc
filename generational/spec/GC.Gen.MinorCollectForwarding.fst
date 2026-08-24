@@ -299,7 +299,7 @@ private let post_rewritten_root_is_normal_image
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -405,7 +405,7 @@ private let post_edge_from_major_image_reflects_mem_ce
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -577,7 +577,7 @@ private let post_edge_from_major_image_reflects_target
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -709,7 +709,7 @@ private let post_edge_from_minor_image_reflects_mem_ce
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -735,7 +735,7 @@ private let post_edge_from_minor_image_reflects_target
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -856,7 +856,7 @@ private let post_successor_of_normal_image_reflects
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -902,7 +902,7 @@ private let rec post_reach_witness_is_normal_image
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -1067,7 +1067,7 @@ let rec ready_src_reach_image_post_reachable
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -1136,7 +1136,7 @@ private let edge_source_normal_vertex_ready
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\

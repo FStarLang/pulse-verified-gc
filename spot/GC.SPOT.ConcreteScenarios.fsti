@@ -10,6 +10,7 @@ open GC.Gen.Base
 module Cheney = GC.Gen.Cheney
 module GenImpl = GC.Gen.Impl
 module GenInv = GC.Gen.HeapInvariant
+module MinorFwd = GC.Gen.MinorCollectForwarding
 module Preconditions = GC.SPOT.Preconditions
 module ThreeObjects = GC.SPOT.ThreeObjects
 module ConcreteMajor = GC.SPOT.ConcreteMajor
@@ -26,6 +27,22 @@ val spot_c_slot_is_field1
     Lemma (ensures
       ThreeObjects.spot_c_to_a_slot (ConcreteMajor.spot_c r) ==
       ConcreteMajor.spot_c_field1 r)
+
+/// The concrete scenario's pre-minor shape and root validity, which the
+/// `gen_gc` entry contract is stated against.
+val spot_collection_heap_shape
+  : r:unit{ConcreteMajor.spot_major_room} ->
+    Lemma (GenInv.collection_heap_shape
+             ConcreteMinor.spot_minor2
+             (ConcreteMajor.spot_major_heap r)
+             (ConcreteMajor.spot_major_fp r))
+
+val spot_roots_valid_for_minor_collection
+  : r:unit{ConcreteMajor.spot_major_room} ->
+    Lemma (MinorFwd.roots_valid_for_minor_collection
+             ConcreteMinor.spot_minor2
+             (ConcreteMajor.spot_major_heap r)
+             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)))
 
 val spot_concrete_minor_collect_full_pre
   : r:unit{ConcreteMajor.spot_major_room} ->
@@ -56,10 +73,7 @@ val spot_concrete_gen_gc_pre_from_stack
     Lemma
       (requires
         Seq.length st <= cap /\
-        GenImpl.gen_gc_major_precondition
-          ConcreteMinor.spot_minor2
-          (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
+        GenImpl.gen_gc_stack_budget
           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
           st cap)
       (ensures
@@ -71,6 +85,16 @@ val spot_concrete_gen_gc_pre_from_stack
           spot_fwd_array
           (ThreeObjects.spot_slots (ConcreteMajor.spot_c r))
           1 st cap)
+
+/// The gray-stack budget for the concrete scenario: two roots, an empty stack,
+/// and a capacity of at least two.
+val spot_concrete_gen_gc_major_pre_empty_stack
+  : r:unit{ConcreteMajor.spot_major_room} -> cap:nat{cap >= 2} ->
+    Lemma
+      (ensures
+        GenImpl.gen_gc_stack_budget
+          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
+          Seq.empty cap)
 
 val spot_concrete_gen_gc_pre_empty_stack
   : r:unit{ConcreteMajor.spot_major_room} ->

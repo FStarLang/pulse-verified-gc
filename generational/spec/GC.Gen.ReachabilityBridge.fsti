@@ -105,14 +105,26 @@ val reachable_major_valid
         U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
         Seq.mem (v <: obj_addr) (objects zero_addr major)))
 
-/// Field 0 is not scanned by the remembered-set model, so callers must rule out
-/// minor pointers there when using the generic bridge.
-let major_field_zero_no_minor (ms: minor_state) (major: heap) : prop =
+/// Field 0 is not scanned by the remembered-set model (`scan_object_fields`
+/// starts at field index 1), so the generic bridge needs a separate hypothesis
+/// covering the word at `obj + 0`.
+///
+/// `major_field_zero_covered` is the right one: it requires only that a
+/// live-minor pointer stored in a scannable non-blue object's first field
+/// already appears in the Cheney root sequence.  That is exactly what the
+/// slot-table preconditions of `minor_collect_full` supply, since
+/// `ref_table_covers_minor_ptrs` quantifies over `j < wosize` and so does
+/// cover `j = 0` (see `major_field_zero_covered_from_slots`).
+let major_field_zero_covered
+  (ms: minor_state) (major: heap) (roots: seq U64.t) : prop =
   forall (src: obj_addr).
-    Seq.mem src (objects zero_addr major) /\ ~(is_no_scan src major) /\
+    Seq.mem src (objects zero_addr major) /\
+    ~(is_blue src major) /\ ~(is_no_scan src major) /\
+    0 < U64.v (wosize_of_object src major) /\
     U64.v src + 8 <= heap_size ==>
     (let v = to_minor_offset (read_word major (U64.uint_to_t (U64.v src))) in
-     ~(is_minor_pointer v /\ Seq.mem v (minor_objects ms)))
+     is_minor_pointer v /\ Seq.mem v (minor_objects ms) ==> Seq.mem v roots)
+
 
 /// The scan-derived remembered roots are already included in the Cheney root
 /// sequence.  This is the pure scan analogue of the slot-table coverage
@@ -142,7 +154,7 @@ val reachability_bridge
       Mark.no_pointer_to_blue major /\
       minor_no_pointer_to_blue minor major /\
       roots_valid_nonblue roots major /\
-      major_field_zero_no_minor minor major)
+      major_field_zero_covered minor major roots)
     (ensures (
       let cg = build_combined_graph minor major in
       let combined_roots = classify_roots roots in
@@ -161,7 +173,7 @@ val combined_minor_reachable_in_minor_reachable
       Mark.no_pointer_to_blue major /\
       minor_no_pointer_to_blue minor major /\
       roots_valid_nonblue roots major /\
-      major_field_zero_no_minor minor major /\
+      major_field_zero_covered minor major roots /\
       remembered_roots_in_roots major roots)
     (ensures (
       let cg = build_combined_graph minor major in
