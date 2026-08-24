@@ -289,6 +289,55 @@ The four parts say:
 4. The enumerated object list excludes infix sub-objects as independent roots of
    the object traversal.
 
+#### Known limitation: no major field may point to an infix object
+
+Parts 2 and 4 have a consequence worth stating explicitly, because it is not
+apparent from either clause on its own.
+
+Part 2 is stated on the *raw* field value: `exists_field_pointing_to_unchecked`
+and `is_pointer_to` compare `hd_address fv` against `hd_address dst` without
+ever calling `resolve_object`. So the `dst` that part 2 requires to be in
+`objects zero_addr g` is the literal word stored in the field. Part 4 says no
+member of `objects zero_addr g` is infix. Together they say: **a major-heap
+field may never contain a pointer to a major-heap infix object.**
+
+Real OCaml heaps have such fields — mutually recursive closures are exactly
+this. So the major-heap correctness theorem does not apply to any heap that
+contains one. The proof is sound; the precondition is simply unsatisfiable for
+that class of heaps.
+
+Two further consequences follow:
+
+- `well_formed_heap_part3` (`infix_wf g (objects zero_addr g)`) is **vacuous**.
+  It quantifies over `Seq.mem h objs /\ is_infix h g`, and part 4 says that
+  conjunction is never satisfiable. The parent-closure machinery it guards
+  (`parent_closure_addr_nat`, `infix_wf_elim`, `infix_wf_intro`) therefore does
+  no work inside `well_formed_heap`.
+- `resolve_object` is **provably the identity** wherever the mark phase calls
+  it. `GC.Spec.Mark` invokes it at around sixty sites, and three of those are
+  immediately followed by `wf_resolve_identity`, which discharges
+  `child == child_raw` from part 4. `GC.Spec.HeapGraph` never calls it at all —
+  `get_pointer_fields_aux` builds edge targets from the raw field value. Mark
+  and the graph model agree only because part 2 rules out the case where they
+  would differ.
+
+The restriction is not confined to the major heap. The generational layer
+forbids the other three source/target combinations by explicitly named
+preconditions — `minor_fields_no_infix_targets` and
+`major_minor_fields_no_infix_targets`, both described under *Heap shape
+invariants* below. Infix addresses survive only as **roots** and inside
+Cheney's promotion machinery, which is what `find_infix_parents` and
+`synthesize_infix_forwarding` operate on in the extracted C. The C code
+implements the general case; the specification covers a subset of it.
+
+Closing the gap means resolving interior pointers in part 2, in
+`get_pointer_fields_aux`, and correspondingly in the mark-phase proofs — the
+Low\* specification of the same collector does this by branching on the target's
+tag in `fields_points_to_blocks_condition`, computing the parent closure address
+when the tag is `infix_tag` and requiring the parent to be an allocated block.
+That is an architectural change to the heap model, not a local repair, and it
+has not been attempted.
+
 The same module also states the no-scan invariant:
 
 ```fstar
