@@ -871,7 +871,7 @@ let walk_pre (g0 g: heap) (start: hp_addr) (objs all_objs: seq obj_addr)
 /// Helper: objects walk is non-empty when start is a valid walk position
 /// with a valid header producing a bounded next.
 #push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
-private let objects_nonempty_at (start: hp_addr) (g g0: heap)
+let objects_nonempty_at (start: hp_addr) (g g0: heap)
   : Lemma
     (requires
       Seq.length g == Seq.length g0 /\
@@ -885,7 +885,7 @@ private let objects_nonempty_at (start: hp_addr) (g g0: heap)
 /// Helper: derive run_words bound from walk_pre constraints.
 /// When run_words > 0 and walk_pre holds, run_words < pow2 54.
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
-private let run_words_bound
+let run_words_bound
   (fb: U64.t) (run_words: pos) (start: hp_addr)
   : Lemma
     (requires
@@ -909,7 +909,7 @@ private let run_words_bound
 
 /// Same bound, for a run that ends exactly at the end of the heap.
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
-private let run_words_bound_le
+let run_words_bound_le
   (fb: U64.t) (run_words: pos) (run_end: U64.t)
   : Lemma
     (requires
@@ -932,7 +932,7 @@ private let run_words_bound_le
 /// - fb is in that list
 /// - any x in objects start g' is also in that list
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
-private let merged_block_step
+let merged_block_step
   (g': heap) (fb: obj_addr) (run_words: pos) (start: hp_addr) (x: obj_addr)
   : Lemma
     (requires
@@ -1197,7 +1197,7 @@ let rec coalesce_aux_survivors_in_walk g0 g start objs first_blue run_words fp a
 /// header.  Unlike `merged_block_step` this says nothing about what follows it,
 /// so it also applies when the merged block runs to the very end of the heap.
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
-private let merged_block_head (g': heap) (fb: obj_addr) (run_words: pos)
+let merged_block_head (g': heap) (fb: obj_addr) (run_words: pos)
   : Lemma
     (requires
       Seq.length g' == heap_size /\
