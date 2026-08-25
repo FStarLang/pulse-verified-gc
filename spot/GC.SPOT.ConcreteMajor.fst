@@ -839,4 +839,5 @@ let spot_major_heap_shape (r: unit{spot_major_room})
   spot_major_no_gray_objects r;
   spot_major_no_pointer_to_blue r;
   spot_major_no_scan_invariant r;
+  SpecFields.no_infix_field_targets_weaken major;
   GenInv.major_heap_shape_intro major fp

@@ -214,7 +214,6 @@ val heap_field_points_to_graph_edge
   : Lemma
     (requires
       well_formed_heap g /\
-      no_infix_field_targets g /\
       Seq.mem src (objects zero_addr g) /\
       ~(is_no_scan src g) /\
       j < U64.v (wosize_of_object src g) /\
@@ -222,13 +221,14 @@ val heap_field_points_to_graph_edge
       (U64.v src + j * 8) % 8 == 0 /\
       read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst /\
       HeapGraph.is_pointer_field dst)
-    (ensures mem_graph_edge (HeapModel.create_graph g) src dst)
+    (ensures mem_graph_edge (HeapModel.create_graph g) src
+               (HeapGraph.resolve_field g dst))
 
 val heap_graph_edge_to_pointer_field
   (g: heap) (src dst: obj_addr)
   : Lemma
     (requires mem_graph_edge (HeapModel.create_graph g) src dst /\
-              well_formed_heap g /\ no_infix_field_targets g)
+              well_formed_heap g)
     (ensures
       Seq.mem src (objects zero_addr g) /\
       HeapGraph.object_fits_in_heap src g /\
@@ -236,13 +236,14 @@ val heap_graph_edge_to_pointer_field
       HeapGraph.is_pointer_field dst /\
       (exists (j: U64.t{U64.v j >= 1}).
         U64.v j <= U64.v (wosize_of_object src g) /\
-        HeapGraph.get_field g src j == dst))
+        HeapGraph.is_pointer_field (HeapGraph.get_field g src j) /\
+        HeapGraph.resolve_field g (HeapGraph.get_field g src j) == dst))
 
 val heap_graph_edge_to_field_read
   (g: heap) (src dst: obj_addr)
   : Lemma
     (requires mem_graph_edge (HeapModel.create_graph g) src dst /\
-              well_formed_heap g /\ no_infix_field_targets g)
+              well_formed_heap g)
     (ensures
       Seq.mem src (objects zero_addr g) /\
       is_no_scan src g = false /\
@@ -251,7 +252,10 @@ val heap_graph_edge_to_field_read
         j < U64.v (wosize_of_object src g) /\
         U64.v src + j * 8 + 8 <= heap_size /\
         (U64.v src + j * 8) % 8 == 0 /\
-        read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst))
+        HeapGraph.is_pointer_field
+          (read_word g (U64.uint_to_t (U64.v src + j * 8))) /\
+        HeapGraph.resolve_field g
+          (read_word g (U64.uint_to_t (U64.v src + j * 8))) == dst))
 
 /// Internal helper exposed to later forwarding proof slices.
 val mem_graph_vertex_at_is_obj_addr

@@ -990,54 +990,71 @@ debt: nothing fails, so nothing tells you.
   resolving the root-darkening subsystem, which kept that whole subsystem raw.
   The conjunct is free wherever `well_formed_heap` is in scope.
 
-**What was retained.**  The generational (Cheney) collector still forbids
-interior pointers in major fields, now via an explicit opaque predicate
-`GC.Spec.Fields.no_infix_field_targets`, added as a conjunct of
-`GC.Gen.HeapInvariant.major_heap_shape` — *not* of `well_formed_heap`.
+**What was retained.**  The generational (Cheney) collector retains one narrow
+residual restriction: a **blue** (free-list) cell may not hold an interior
+pointer.  This is the explicit opaque predicate
+`GC.Spec.Fields.blue_fields_non_infix`, a conjunct of
+`GC.Gen.HeapInvariant.major_heap_shape` — *not* of `well_formed_heap`.  Live
+white/gray/black objects, the ones a mutator writes, are unrestricted.
 
-It is worth being exact about what that costs, because the clause reads like a
-regression and is easy to misread as one.  It is not new.  Given part 4,
+The route there went through an intermediate stage worth recording, because the
+stronger clause it used reads like a regression and is easy to misread as one.
+That clause, `no_infix_field_targets`, forbade interior field targets out of
+*every* object; it was not new — given part 4,
 
     OLD well_formed_heap  ==  NEW well_formed_heap  /\  no_infix_field_targets
 
-so `major_heap_shape` admits *precisely* the heaps it admitted before.  The
-generational collector gained nothing here; the restriction merely moved from
-being an unstated consequence of parts 2 and 4 to a named predicate, and out of
-`well_formed_heap`, so that mark-and-sweep is no longer subject to it.
+so `major_heap_shape` admitted precisely the heaps it admitted before.  The
+restriction had merely moved from being an unstated consequence of parts 2 and 4
+to a named predicate, and out of `well_formed_heap`, so that mark-and-sweep was
+no longer subject to it.  It has since been narrowed to blue objects only, so
+`major_heap_shape` now admits strictly more heaps than the original
+`well_formed_heap` did.
 
-The first obstruction to deleting it was the graph model, and that one is now
-gone.  `GC.Gen.CombinedGraph.classify_major_field` used to return `MajorV v` on
-the *raw* field value, guarded by `Seq.mem v (objects zero_addr major)`.  An
-interior `v` is not in `objects` (part 4), so classification returned `None` and
-the edge was **silently dropped**: the combined graph would under-approximate the
-object graph while `create_graph`, now resolution-aware, does not, and `gen_gc`'s
-reachability theorem would have been stated over the wrong graph.  That is
-unsound, not merely unprovable.  The classifier now resolves —
+Two obstructions had to be removed.
+
+*The graph model.*  `GC.Gen.CombinedGraph.classify_major_field` used to return
+`MajorV v` on the *raw* field value, guarded by
+`Seq.mem v (objects zero_addr major)`.  An interior `v` is not in `objects`
+(part 4), so classification returned `None` and the edge was **silently
+dropped**: the combined graph would under-approximate the object graph while
+`create_graph`, now resolution-aware, does not, and `gen_gc`'s reachability
+theorem would have been stated over the wrong graph.  That is unsound, not merely
+unprovable.  The classifier now resolves —
 `MajorV (resolve_object v major)` whenever the resolved value is enumerated —
 `GC.Gen.ReachabilityBridge.major_edge_points_to` exposes the raw field value
-alongside `dst == resolve_object raw major`, and the clause has been dropped from
-all three `ReachabilityBridge` lemmas and from
+alongside `dst == resolve_object raw major`, and the clause is gone from all
+three `ReachabilityBridge` lemmas and from
 `combined_reachable_major_edge_forwarded`.
 
-What still holds the clause in place is the allocator, not the graph.
-`GC.Gen.Promote.blue_fields_closed` is stated on the raw field value of a
-**blue** (free-list) object and is derived from part 2 by
-`wfh_part2_implies_blue_fields_closed`, which needs `no_infix_field_targets` for
-exactly that step.  Restating it in resolved form was tried and measured: it
-breaks only three sites, two of them mechanical.  The third,
-`promote_object_preserves_bfc_close`, must transport a resolution across
-`copy_fields` on a block just carved off the free list — whose fields still hold
-stale garbage — and nothing today rules out a *different* blue object pointing
-strictly inside it at a word that happens to look like an infix header.  Closing
-that needs a new invariant (roughly: no blue object points into the interior of
-another blue object), established at allocator boundaries and preserved across
-the whole minor collection.  That is a scope increase, so step 3b is parked
-rather than half-landed; `docs/infix-support-plan.md` §5 records the measurement
-in full.  The clause sits alongside the pre-existing
-`minor_fields_no_infix_targets` and `major_minor_fields_no_infix_targets`, which
-impose the same restriction on nursery-directed pointers, and it is preserved
-across minor collection for free by
-`well_formed_heap_part2_from_field_closure`.
+*The allocator.*  `GC.Gen.Promote.blue_fields_closed` is stated on the raw field
+value of a **blue** cell and is derived from part 2 by
+`wfh_part2_implies_blue_fields_closed`, which needs a non-infix hypothesis for
+exactly that step.  The instinctive fix — restate `blue_fields_closed` in
+resolved form — was tried and measured, and it breaks
+`promote_object_preserves_bfc_close`: that lemma would have to transport a
+resolution across `copy_fields` on a block just carved off the free list, whose
+fields still hold stale garbage, and nothing rules out a *different* blue object
+pointing strictly inside it at a word that happens to look like an infix header.
+The resolution came from going the other way: keep `blue_fields_closed` **raw**
+(so `promote_object_preserves_bfc_close` never sees a resolution at all) and
+weaken the hypothesis feeding it from all-objects to blue-only.  Since the
+derivation quantifies only over blue sources, `blue_fields_non_infix` is exactly
+strong enough, and re-establishing it after a collection is free — the Cheney
+machinery already proves raw part 2 for blue objects, and
+`blue_fields_closed_implies_blue_fields_non_infix` converts.
+
+Landing that required restating the whole Cheney/forwarding layer in resolved
+form: `CheneyPreservation.{Frame,NoBlue}`, `CheneyPreservation` itself, and
+`MinorCollectForwarding.{Helpers,Edges,Reflection}`.  One structural trick was
+needed: `update_major_pointers_preserves_no_pointer_to_blue` takes a
+*proof-function parameter* `target_shape` supplying, per field, the fwd-target
+membership and the resolved/`infix_addr_wf` shape, which breaks the module
+layering cycle with `field_old_pointer_targets_in_objects` without moving code.
+`docs/infix-support-plan.md` §5 records the measurement in full.  The residual
+clause sits alongside the pre-existing `minor_fields_no_infix_targets` and
+`major_minor_fields_no_infix_targets`, which impose the same restriction on
+nursery-directed pointers.
 
 **Cost.** About 1,100 lines touched across `common/`, all of `mark-and-sweep/`,
 `generational/spec/` and `spot/`; no new admits or assumes; no rlimit increases
@@ -1053,11 +1070,10 @@ equality of the post-collection heap shape.  Rebuilt against the pre-fix
 uncomfortable observation above -- that a vacuous precondition reports nothing --
 and it is the reason the fix is not only proved but also observed.
 
-The heaps it builds violate `no_infix_field_targets`, so they sit outside
-`major_heap_shape` and the composed `gen_gc` theorem does not cover them.  What
-the test demonstrates is that the extracted C is correct on them and that the
-mark-and-sweep proofs apply; the generational gap is exactly the open item
-above.
+The heaps it builds hold interior pointers in major fields.  With the clause
+narrowed to `blue_fields_non_infix` they satisfy `major_heap_shape`, so the
+composed `gen_gc` theorem covers them: the test exercises exactly the heaps the
+generational proof now admits.
 
 ---
 

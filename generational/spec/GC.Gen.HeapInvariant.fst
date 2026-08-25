@@ -41,7 +41,7 @@ let major_heap_shape (major: heap) (fp: U64.t) : prop =
   SweepInv.no_gray_objects major /\
   Mark.no_pointer_to_blue major /\
   no_scan_invariant major /\
-  no_infix_field_targets major
+  blue_fields_non_infix major
 
 [@@"opaque_to_smt"]
 let minor_major_fields_no_blue (minor: minor_state) (major: heap) : prop =

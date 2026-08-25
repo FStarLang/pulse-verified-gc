@@ -68,14 +68,13 @@ let cheney_promote_preserves_no_pointer_to_blue_from_shape
       Frame.cheney_promote_frame_old_fields minor major fp roots src j;
       assert (read_word major field_addr == field_val);
       assert (is_pointer_to (read_word major field_addr) dst);
-      NoBlueUtil.field_pointer_target_in_objects_nat_raw major src dst j;
-      NoBlueUtil.field_pointer_no_blue_raw major src dst j;
-      Frame.cheney_promote_frame_old_header minor major fp roots dst;
-      color_of_header_eq dst major prom.major_final;
-      assert (~(is_blue dst prom.major_final));
-      assert (well_formed_heap_part4 prom.major_final);
-      assert (~(is_infix dst prom.major_final));
-      resolve_non_infix dst prom.major_final
+      NoBlueUtil.field_pointer_target_in_objects_nat major src dst j;
+      NoBlueUtil.field_pointer_no_blue_from_no_pointer_to_blue major src dst j;
+      // the target may be interior: frame the header of its *resolution*
+      let tgt = resolve_object dst major in
+      Frame.cheney_promote_frame_target_header minor major fp roots dst;
+      Frame.cheney_promote_frame_old_header minor major fp roots tgt;
+      color_of_header_eq tgt major prom.major_final
     end else begin
       assert (~(Seq.mem src (objects zero_addr major) /\
                 is_blue src major = false));
@@ -158,7 +157,7 @@ private let header_eq_preserves_infix
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let update_major_pointers_preserves_no_pointer_to_blue
-  (major: heap) (fwd: forwarding_map)
+  (major: heap) (fwd: forwarding_map) target_shape
   =
   let updated = update_major_pointers major fwd in
   wf_parts ();
@@ -184,10 +183,6 @@ let update_major_pointers_preserves_no_pointer_to_blue
     assert (~(is_blue src major));
     assert (j < U64.v (wosize_of_object src major));
     assert ((U64.v src + j * 8) % 8 == 0);
-    NoBlueUtil.field_pointer_target_in_objects_nat_raw updated src dst j;
-    assert (Seq.mem dst (objects zero_addr updated));
-    assert (Seq.mem dst (objects zero_addr major));
-    update_major_pointers_preserves_header major fwd dst;
     if is_no_scan src major then begin
       assert (is_no_scan src updated);
       no_scan_invariant_elim updated src j;
@@ -196,6 +191,7 @@ let update_major_pointers_preserves_no_pointer_to_blue
       assert False
     end else begin
       update_major_pointers_field_effect major fwd src j;
+      target_shape src j;
       let field_addr = U64.uint_to_t (U64.v src + j * 8) in
       let old_raw = read_word major field_addr in
       let old_val = to_minor_offset old_raw in
@@ -212,6 +208,9 @@ let update_major_pointers_preserves_no_pointer_to_blue
           assert False
         end;
         assert (fwd old_val == dst);
+        assert (Seq.mem dst (objects zero_addr updated));
+        assert (Seq.mem dst (objects zero_addr major));
+        update_major_pointers_preserves_header major fwd dst;
         wf_objects_non_infix updated dst;
         header_eq_preserves_infix major updated dst;
         assert (is_infix dst major = false);
@@ -224,14 +223,34 @@ let update_major_pointers_preserves_no_pointer_to_blue
       end else begin
         assert (new_val == old_raw);
         assert (is_pointer_to old_raw dst);
-        wf_objects_non_infix updated dst;
-        header_eq_preserves_infix major updated dst;
-        assert (is_infix dst major = false);
+        let old_obj : obj_addr = old_raw in
+        if old_obj <> dst then begin
+          hd_address_injective old_obj dst;
+          assert False
+        end;
+        assert (old_raw == dst);
+        assert (Seq.mem (resolve_object dst major) (objects zero_addr major));
+        assert (infix_addr_wf major (objects zero_addr major) dst);
         NoBlueUtil.field_pointer_no_blue_from_no_pointer_to_blue major src dst j;
-        resolve_non_infix dst major;
-        color_of_header_eq dst major updated;
-        assert (~(is_blue dst updated));
-        resolve_non_infix dst updated
+        // the target's header --- possibly inside a closure --- survives the
+        // update pass, so its resolution and the parent's colour carry over
+        if is_infix dst major then begin
+          infix_addr_wf_elim major (objects zero_addr major) dst;
+          parent_closure_addr_nat_spec dst major;
+          resolve_infix_spec dst major;
+          let w = U64.v (wosize_of_object dst major) in
+          let pa : obj_addr = U64.uint_to_t (U64.v dst - w * 8) in
+          assert (resolve_object dst major == pa);
+          update_major_pointers_preserves_header major fwd pa;
+          color_of_header_eq pa major updated
+        end
+        else begin
+          resolve_non_infix dst major;
+          update_major_pointers_preserves_header major fwd dst;
+          color_of_header_eq dst major updated
+        end;
+        Frame.update_major_pointers_frame_target_header major fwd dst;
+        resolve_object_locality dst major updated
       end
     end
   in

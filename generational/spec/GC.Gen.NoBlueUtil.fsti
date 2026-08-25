@@ -62,36 +62,3 @@ val field_pointer_target_in_objects_nat
     (ensures Seq.mem (resolve_object dst g) (objects zero_addr g) /\
              infix_addr_wf g (objects zero_addr g) dst)
 
-/// Raw variants, available when the heap additionally satisfies
-/// `no_infix_field_targets` (see `GC.Spec.Fields`).  Under that restriction
-/// `resolve_object` is the identity at every field target, so the pre-infix
-/// statements are recovered verbatim.
-val field_pointer_target_in_objects_nat_raw
-  (g: heap) (src dst: obj_addr) (j: nat)
-  : Lemma
-    (requires well_formed_heap g /\
-              no_infix_field_targets g /\
-              Seq.mem src (objects zero_addr g) /\
-              j < U64.v (wosize_of_object src g) /\
-              U64.v src + j * U64.v mword + U64.v mword <= heap_size /\
-              (U64.v src + j * U64.v mword) % U64.v mword == 0 /\
-              is_pointer_to
-                (read_word g (U64.uint_to_t (U64.v src + j * U64.v mword)))
-                dst)
-    (ensures ~(is_infix dst g) /\ Seq.mem dst (objects zero_addr g))
-
-val field_pointer_no_blue_raw
-  (g: heap) (src dst: obj_addr) (j: nat)
-  : Lemma
-    (requires well_formed_heap_part1 g /\
-              Mark.no_pointer_to_blue g /\
-              no_infix_field_targets g /\
-              Seq.mem src (objects zero_addr g) /\
-              ~(is_blue src g) /\
-              j < U64.v (wosize_of_object src g) /\
-              U64.v src + j * U64.v mword + U64.v mword <= heap_size /\
-              (U64.v src + j * U64.v mword) % U64.v mword == 0 /\
-              is_pointer_to
-                (read_word g (U64.uint_to_t (U64.v src + j * U64.v mword)))
-                dst)
-    (ensures ~(is_blue dst g))

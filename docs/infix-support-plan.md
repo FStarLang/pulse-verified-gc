@@ -309,65 +309,75 @@ and from `combined_reachable_major_edge_forwarded`.  This removes the *graph*
 obstruction: the combined graph no longer under-approximates the object graph in
 the presence of interior pointers.
 
-**Step 3b — not landed.**  `no_infix_field_targets major` is still a conjunct of
-`GC.Gen.HeapInvariant.major_heap_shape`.  What remains is not graph reasoning
-but the Cheney/allocator layer, and it splits into two parts.
+**Step 3b — done** (commit *"narrow the infix restriction to free-list cells"*).
+`no_infix_field_targets major` is no longer a conjunct of
+`GC.Gen.HeapInvariant.major_heap_shape`.  In its place the invariant carries the
+strictly weaker
 
-*The tractable part.*  `GC.Gen.CheneyPreservation.fst:1479` and
-`GC.Gen.CheneyPreservation.NoBlue.fst:71,72,187` consume the raw helpers
-`GC.Gen.NoBlueUtil.field_pointer_target_in_objects_nat_raw` and
-`field_pointer_no_blue_raw`.  Their goals are *already* resolved
-(`~(is_blue (resolve_object dst h) h)`), so switching to the resolved
-`NoBlueUtil` variants is the right move; what is then missing is header
-stability for a possibly-interior `dst` across `cheney_promote` and
-`update_major_pointers`.  That is exactly the job of the three private helpers
-added to `GC.Gen.MinorCollectForwarding.Edges.fst` in step 3a
-(`cheney_promote_frame_target_header`, `update_major_pointers_frame_target_header`,
-`cheney_collect_frame_target_header`); they would have to be relocated into a
-module upstream of `CheneyPreservation`.  Mechanical, but slow to iterate
-(`GC.Gen.CheneyPreservation.fst` takes ~8 min per verify).
+```fstar
+let blue_fields_non_infix (g: heap) : prop =
+  forall (src dst: obj_addr).
+    Seq.mem src (objects zero_addr g) /\ is_blue src g /\
+    (exists j. j < wosize_of_object src g /\ field j of src is_pointer_to dst) ==>
+    ~(is_infix dst g)
+```
 
-*The blocking part.*  `blue_fields_closed` (`GC.Gen.Promote.fsti:584`) is stated
-raw — every pointer-looking field of a **blue** (free-list) object targets an
-enumerated object — and is derived from `well_formed_heap_part2` by
+i.e. only **blue (free-list) cells** are forbidden from holding interior
+pointers.  Live white/gray/black objects — the ones a mutator actually writes —
+may point strictly inside other objects.  `infix_closures.ml`'s heaps are
+therefore inside `major_heap_shape` and the composed `gen_gc` theorem covers
+them.
+
+Why the narrowed clause suffices.  The single load-bearing use of the old
+all-objects clause was
 `GC.Gen.PromoteUpdate.BlueAlloc.wfh_part2_implies_blue_fields_closed`, which
-needs `no_infix_field_targets` for precisely that step.  Restating
-`blue_fields_closed` in resolved form was tried and measured: it costs only
-three broken sites (`PromoteUpdate.Header.fsti:52`, `BlueAlloc.fst:88`,
-`BlueProm.fst:263`), the first two mechanical.  The third,
-`promote_object_preserves_bfc_close`, does not go through.  It must transport
+derives the **raw** `blue_fields_closed` (`GC.Gen.Promote.fsti:584`) from the
+resolved `well_formed_heap_part2`.  That step only ever quantifies over blue
+sources, so `blue_fields_non_infix` is exactly what it needs.  Crucially
+`blue_fields_closed` itself stays **raw**, which sidesteps the case-2 obstruction
+recorded below: in `promote_object_preserves_bfc_close` one gets
+`v ∈ objects new_major` directly and part 4 gives `resolve_object v g' == v`, so
+no header framing across `copy_fields` is required.
+
+Re-establishing the narrowed clause after a collection is free: the Cheney
+machinery already proves *raw* part 2 for blue objects, and
+`blue_fields_closed_implies_blue_fields_non_infix` converts.
+
+Everything else in the Cheney/allocator layer was restated in resolved form:
+
+* `GC.Gen.CheneyPreservation.Frame` (new home for the header-framing helpers
+  `cheney_promote_frame_target_header`, `update_major_pointers_frame_target_header`,
+  relocated out of `MinorCollectForwarding.Edges` so they sit upstream of
+  `CheneyPreservation`).
+* `GC.Gen.CheneyPreservation.NoBlue` — both `no_pointer_to_blue` preservation
+  lemmas.  `update_major_pointers_preserves_no_pointer_to_blue` gained a
+  *proof-function parameter* `target_shape` supplying, per field, the fwd-target
+  membership together with the resolved/`infix_addr_wf` shape; this breaks the
+  module-layering cycle with `field_old_pointer_targets_in_objects` without
+  moving code.
+* `GC.Gen.CheneyPreservation.field_old_pointer_targets_in_objects` and
+  `update_major_pointers_preserves_wfh_part2_from_field_targets` (the latter now
+  also concludes part 3 and `blue_fields_non_infix`).
+* `GC.Gen.MinorCollectForwarding.{Helpers,Edges,Reflection}` and
+  `GC.Gen.MinorCollectForwarding` itself — the heap-graph ↔ concrete-field
+  bridge now relates a raw pointer field to the edge into
+  `resolve_field g raw`, and the two major-source reflection lemmas produce
+  `CG.MajorV (resolve_object raw major)`.
+* `GC.Gen.NoBlueUtil.field_pointer_target_in_objects_nat_raw` and
+  `field_pointer_no_blue_raw` had no callers left and were deleted.
+
+**Historical note — why the earlier attempt stalled.**  Restating
+`blue_fields_closed` in *resolved* form (rather than narrowing the clause that
+feeds it) breaks `promote_object_preserves_bfc_close`: it must transport
 `Seq.mem (resolve_object v new_major) (objects new_major)` to
 `Seq.mem (resolve_object v g') (objects g')`, where `g'` is `new_major` after
 `copy_fields`, `zero_promote_padding` and `set_promoted_tag` on the freshly
-carved block `dst_obj`.  Two cases arise that the raw statement did not have:
-
-1. `v == dst_obj`.  Dischargeable: add `minor_tag minor obj <> infix_tag` to the
-   requires, which callers already have — it is a precondition of the sibling
-   `promote_object_preserves_wfh_part4` (`GC.Gen.Promote.fsti:526`).
-2. `resolve_object v new_major == dst_obj` with `v` strictly interior to
-   `dst_obj`.  **Not dischargeable today.**  `dst_obj` is a block just carved off
-   the free list, so in `new_major` its fields still hold stale garbage; nothing
-   rules out a *different* blue object holding a pointer into the middle of it,
-   with the word at `hd_address v` happening to look like an infix header.
-   `copy_fields` overwrites that word, so the resolution of `v` can change.
-
-Closing case 2 needs a genuine new invariant — something like *no blue object's
-field points strictly inside another blue object* — which must then be
-established at allocator boundaries and preserved across the whole minor
-collection.  That is a scope increase comparable to phase 1, not a clean-up, and
-it is why step 3b is parked rather than half-landed.
-
-Narrowing `no_infix_field_targets` to blue objects only was also considered and
-rejected: `CheneyPreservation.NoBlue.fst:71` needs the clause for a **non-blue**
-`src`, so the narrowed form is not strong enough, and preserving it across
-`cheney_collect` is itself a fresh obligation of similar difficulty.
-
-**Consequence.**  The heaps built by
-`generational/ocaml-integration/tests/infix_closures.ml` run correctly under the
-verified generational runtime, but they violate `no_infix_field_targets` and so
-fall outside `major_heap_shape`; the composed `gen_gc` theorem does not yet
-cover them.  The major-heap (mark-and-sweep) model *is* infix-correct after
-phases 1–2.
+carved block `dst_obj`.  The case `resolve_object v new_major == dst_obj` with
+`v` strictly interior to `dst_obj` is not dischargeable: `dst_obj`'s fields still
+hold stale garbage in `new_major`, so a different blue object could point into
+its middle at a word that happens to look like an infix header, and `copy_fields`
+then changes the resolution of `v`.  Keeping `blue_fields_closed` raw makes the
+whole case disappear.
 
 ### Phase 4 — implementation and extraction
 

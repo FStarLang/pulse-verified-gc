@@ -333,53 +333,50 @@ Two consequences of the resolved formulation:
   `infix_tag`, darkens `v - wosize * 8` (the parent closure) instead. This is a
   real change in the extracted C, not a proof-only artefact.
 
-##### Restriction retained by the generational collector
+##### Residual restriction: free-list cells only
 
-The generational (Cheney) collector still requires that no *major* field hold an
-interior pointer. This is expressed by an explicit, opaque, **optional**
-predicate
+Both collectors handle interior pointers out of *live* objects in full
+generality.  The generational (Cheney) collector retains one narrow residual
+restriction: a **blue** (free-list) cell may not hold an interior pointer.  This
+is expressed by an explicit, opaque, **optional** predicate
 
 ```fstar
-let no_infix_field_targets (g: heap) : prop =
+let blue_fields_non_infix (g: heap) : prop =
   forall (src dst: obj_addr).
-    Seq.mem src (objects zero_addr g) /\
+    Seq.mem src (objects zero_addr g) /\ GC.Spec.Object.is_blue src g /\
     exists_field_pointing_to_unchecked g src (wosize_of_object src g) dst ==>
     ~(is_infix dst g)
 ```
 
 which appears as a conjunct of `GC.Gen.HeapInvariant.major_heap_shape` and
-nowhere in `well_formed_heap`. The reason is the copying pass: Cheney's
-forwarding map is keyed by whole objects, so when it rewrites a field it
-identifies the field's value with the object being moved. It sits alongside the
-pre-existing `minor_fields_no_infix_targets` and
+nowhere in `well_formed_heap`.  It is not a mutator-visible constraint: free-list
+cells are owned by the allocator, their fields hold link words and stale data,
+and no OCaml program can arrange for one to point into the interior of another.
+It sits alongside the pre-existing `minor_fields_no_infix_targets` and
 `major_minor_fields_no_infix_targets` clauses, which impose the same restriction
-on nursery-directed pointers, and it is preserved across minor collection for
-free by `well_formed_heap_part2_from_field_closure`.
+on *nursery*-directed pointers, and it is preserved across minor collection for
+free: the Cheney machinery already proves raw `well_formed_heap_part2` for blue
+objects, which `blue_fields_closed_implies_blue_fields_non_infix` converts.
 
-The mark-and-sweep collector does **not** need it: it handles interior pointers
-in major fields in full generality. Infix addresses also survive as **roots** for
-both collectors, and inside Cheney's promotion machinery, which is what
-`find_infix_parents` and `synthesize_infix_forwarding` operate on in the
-extracted C.
+Infix addresses survive as **roots** for both collectors, and inside Cheney's
+promotion machinery, which is what `find_infix_parents` and
+`synthesize_infix_forwarding` operate on in the extracted C.
 
-Lifting the generational restriction had two obstructions. The first was the
-graph model, and it has been removed: `GC.Gen.CombinedGraph.classify_major_field`
-now resolves, returning `MajorV (resolve_object v major)` whenever the resolved
-value is enumerated, so an interior-pointer edge is no longer silently dropped;
+Getting here removed two obstructions.  The first was the graph model:
+`GC.Gen.CombinedGraph.classify_major_field` now resolves, returning
+`MajorV (resolve_object v major)` whenever the resolved value is enumerated, so
+an interior-pointer edge is no longer silently dropped;
 `GC.Gen.ReachabilityBridge.major_edge_points_to` exposes the raw field value
-alongside `dst == resolve_object raw major`, and the clause is gone from all
-three `ReachabilityBridge` lemmas.
+alongside `dst == resolve_object raw major`.
 
-The second obstruction is the allocator, and it remains.
-`GC.Gen.Promote.blue_fields_closed` is stated on the raw field value of a
-free-list (blue) object, and is derived from part 2 by a lemma that needs this
-clause for exactly that step. Restating it in resolved form breaks
-`promote_object_preserves_bfc_close`, which must then transport a resolution
-across `copy_fields` on a block just carved off the free list; nothing today
-rules out a *different* blue object pointing strictly inside that block at a word
-that happens to look like an infix header. Closing it needs a new invariant —
-roughly, that no blue object points into the interior of another — established at
-allocator boundaries and preserved across the whole minor collection.
+The second was the allocator.  `GC.Gen.Promote.blue_fields_closed` is stated on
+the *raw* field value of a free-list cell and is derived from part 2 by
+`wfh_part2_implies_blue_fields_closed`, which needs a non-infix hypothesis for
+exactly that step — but only over blue sources, which is what
+`blue_fields_non_infix` supplies.  Deliberately keeping `blue_fields_closed`
+raw is what makes this work: restating it in resolved form instead breaks
+`promote_object_preserves_bfc_close`, which would then have to transport a
+resolution across `copy_fields` on a block just carved off the free list.
 `docs/infix-support-plan.md` §5 records the measurement.
 
 ##### End-to-end test
@@ -395,14 +392,11 @@ survives mark and sweep with an unchanged heap shape. It runs as part of
 and stock OCaml. Rebuilt against the pre-fix `check_and_darken_bounded` it fails
 and then segfaults, so it is a genuine regression test and not a smoke test.
 
-Note what the test does *not* establish. The heaps it builds hold interior
-pointers in major fields, so they violate `no_infix_field_targets` and therefore
-fall outside `GC.Gen.HeapInvariant.major_heap_shape` — the composed `gen_gc`
-theorem does not apply to them. The marking and sweeping behaviour the test
-stresses is covered by the mark-and-sweep proofs, which do handle interior
-pointers; the generational reachability argument is not. The test shows the
-extracted C behaves correctly on such heaps, and it is precisely the case the
-generational proof still owes.
+The heaps it builds hold interior pointers in major fields.  Since
+`no_infix_field_targets` was narrowed to `blue_fields_non_infix`, they are inside
+`GC.Gen.HeapInvariant.major_heap_shape` and the composed `gen_gc` theorem applies
+to them: the generational reachability argument, not just the mark-and-sweep
+proofs, covers what the test stresses.
 
 The same module also states the no-scan invariant:
 

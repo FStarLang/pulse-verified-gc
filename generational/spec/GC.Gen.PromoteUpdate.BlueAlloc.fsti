@@ -21,8 +21,17 @@ module FreeListShape = GC.Gen.FreeListShape
 /// well_formed_heap_part2 implies blue_fields_closed
 val wfh_part2_implies_blue_fields_closed (g: heap)
   : Lemma (requires well_formed_heap_part1 g /\ well_formed_heap_part2 g /\
-                    no_infix_field_targets g)
+                    blue_fields_non_infix g)
           (ensures blue_fields_closed g)
+
+/// The converse: `blue_fields_closed` (raw) plus part 4 gives back the clause
+/// `major_heap_shape` carries.  This is what makes `blue_fields_non_infix` free
+/// to re-establish after a collection --- the Cheney machinery already proves
+/// `blue_fields_closed` for the result.
+val blue_fields_closed_implies_blue_fields_non_infix (g: heap)
+  : Lemma (requires well_formed_heap_part1 g /\ well_formed_heap_part4 g /\
+                    blue_fields_closed g)
+          (ensures blue_fields_non_infix g)
 
 /// alloc_spec preserves blue_fields_closed
 val alloc_spec_preserves_blue_fields_closed

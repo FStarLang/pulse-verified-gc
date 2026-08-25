@@ -34,39 +34,30 @@ module FreeListShape = GC.Gen.FreeListShape
 /// object layout/infix well-formedness, free-list validity, color invariants,
 /// and the no-scan/no-pointer-to-blue safety conditions.
 ///
-/// It also includes `no_infix_field_targets`: no major object field holds an
-/// interior (infix) pointer.  This *forbids* interior pointers; it does not
-/// enable them.  It is not, however, a new restriction.  Modulo
-/// `well_formed_heap_part4` (no member of `objects` is infix), and because
-/// `resolve_object` is the identity on non-infix addresses,
+/// Interior (infix) pointers in *live* major fields are allowed.  A white, gray
+/// or black object may hold a pointer into the middle of a closure, which is how
+/// OCaml represents mutually recursive functions; parts 2 and 3 of
+/// `well_formed_heap` are stated on the resolved target and
+/// `GC.Gen.CombinedGraph.classify_major_field` resolves, so such an edge is
+/// carried by the combined graph rather than silently dropped.
 ///
-///   old well_formed_heap  <==>  well_formed_heap /\ no_infix_field_targets
+/// The one place interior pointers are still ruled out is `blue_fields_non_infix`:
+/// a *free-list cell* may not hold one.  That is not a statement about the
+/// mutator's data; it is what makes `GC.Gen.Promote.blue_fields_closed` --- which
+/// is stated on the raw field value --- derivable from the resolved part 2, via
+/// `GC.Gen.PromoteUpdate.BlueAlloc.wfh_part2_implies_blue_fields_closed`.  It is
+/// re-established for free after every collection: the Cheney machinery proves
+/// raw part 2 for blue objects, which `blue_fields_non_infix_from_raw` turns
+/// straight back into this clause.
 ///
-/// where "old" is the pre-resolution version whose part 2 required the *raw*
-/// field value to be in `objects`.  So `major_heap_shape` admits exactly the
-/// heaps it always admitted; the restriction merely moved out of
-/// `well_formed_heap` --- freeing mark-and-sweep, which does handle interior
-/// pointers --- and into an explicit, greppable clause here.
+/// Free cells are already idealised by the surrounding model --- part 2 requires
+/// every pointer-shaped word in them to resolve to an enumerated object, garbage
+/// or not --- so this adds nothing to what a heap must already satisfy there.
 ///
-/// The first obstruction to dropping it was the graph model, and that is now
-/// gone: `GC.Gen.CombinedGraph.classify_major_field` resolves, returning
-/// `MajorV (resolve_object v major)` whenever the resolved value is enumerated,
-/// so interior-pointer edges are no longer silently dropped.
-///
-/// What still holds the clause in place is the allocator.
-/// `GC.Gen.Promote.blue_fields_closed` is raw, and
-/// `GC.Gen.PromoteUpdate.BlueAlloc.wfh_part2_implies_blue_fields_closed` needs
-/// this clause to derive it from the (resolved) part 2.  Restating
-/// `blue_fields_closed` in resolved form breaks
-/// `promote_object_preserves_bfc_close`, which would have to transport a
-/// resolution across `copy_fields` on a block just carved off the free list —
-/// and nothing rules out another blue object pointing strictly inside it at a
-/// word that looks like an infix header.  See `docs/infix-support-plan.md` §5,
-/// "Phase 3 status", for the full measurement.
-///
-/// This clause is the major-heap counterpart of the pre-existing
-/// `minor_fields_no_infix_targets` and `major_minor_fields_no_infix_targets`,
-/// which impose exactly the same restriction on nursery-directed pointers.
+/// The nursery side keeps its own restrictions (`minor_fields_no_infix_targets`,
+/// `major_minor_fields_no_infix_targets`): a pointer *into the nursery* may not
+/// be interior.  Cheney's forwarding map is keyed by whole minor objects, so
+/// lifting that is a separate change.
 [@@"opaque_to_smt"]
 val major_heap_shape (major: heap) (fp: U64.t) : prop
 
@@ -113,7 +104,7 @@ val major_heap_shape_intro (major: heap) (fp: U64.t)
                     SweepInv.no_gray_objects major /\
                     Mark.no_pointer_to_blue major /\
                     no_scan_invariant major /\
-                    no_infix_field_targets major)
+                    blue_fields_non_infix major)
           (ensures major_heap_shape major fp)
 
 val major_heap_shape_elim (major: heap) (fp: U64.t)
@@ -132,7 +123,7 @@ val major_heap_shape_elim (major: heap) (fp: U64.t)
                    SweepInv.no_gray_objects major /\
                    Mark.no_pointer_to_blue major /\
                    no_scan_invariant major /\
-                   no_infix_field_targets major)
+                   blue_fields_non_infix major)
 
 val minor_heap_shape_elim (minor: minor_state)
   : Lemma (requires minor_heap_shape minor)

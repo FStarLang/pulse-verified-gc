@@ -311,11 +311,7 @@ let heap_field_points_to_graph_edge
     HeapGraph.get_field_addr_eq g src field_index;
     assert (HeapGraph.get_field g src field_index == dst);
     HeapGraph.pointer_field_is_graph_edge g (objects zero_addr g) src field_index;
-    HeapGraph.is_pointer_field_is_obj_addr dst;
-    wf_parts ();
-    NoBlueUtil.field_pointer_points_to_nat g src (dst <: obj_addr) j;
-    no_infix_points_to_target g src (dst <: obj_addr);
-    resolve_non_infix (dst <: obj_addr) g
+    HeapGraph.is_pointer_field_is_obj_addr dst
 #pop-options
 
 #push-options "--z3rlimit 15 --fuel 1 --ifuel 1"
@@ -443,7 +439,8 @@ let heap_graph_edge_to_pointer_field
       let goal =
         exists (j: U64.t{U64.v j >= 1}).
           U64.v j <= U64.v (wosize_of_object src g) /\
-          HeapGraph.get_field g src j == dst in
+          HeapGraph.is_pointer_field (HeapGraph.get_field g src j) /\
+          HeapGraph.resolve_field g (HeapGraph.get_field g src j) == dst in
       let proof (j: U64.t{U64.v j >= 1}) : Lemma
         (requires U64.v j >= 1 /\
                   U64.v j <= U64.v ws /\
@@ -451,8 +448,8 @@ let heap_graph_edge_to_pointer_field
                   HeapGraph.resolve_field g (HeapGraph.get_field g src j) == dst)
         (ensures goal /\ HeapGraph.is_pointer_field dst)
       =
-        // Under `no_infix_field_targets`, resolution is the identity here, so
-        // the resolved graph successor is the raw field value.
+        // The graph successor is the *resolved* field value; the target may be
+        // an interior pointer, in which case `dst` is its enclosing closure.
         let v = HeapGraph.get_field g src j in
         HeapGraph.is_pointer_field_is_obj_addr v;
         wosize_of_object_bound src g;
@@ -464,15 +461,16 @@ let heap_graph_edge_to_pointer_field
         assert (U64.v src + jn * U64.v mword + U64.v mword <= heap_size);
         assert ((U64.v src + jn * U64.v mword) % U64.v mword == 0);
         assert (read_word g (U64.uint_to_t (U64.v src + jn * U64.v mword)) == v);
-        NoBlueUtil.field_pointer_points_to_nat g src (v <: obj_addr) jn;
-        no_infix_points_to_target g src (v <: obj_addr);
-        resolve_non_infix (v <: obj_addr) g;
-        assert (HeapGraph.get_field g src j == dst);
+        NoBlueUtil.field_pointer_target_in_objects_nat g src (v <: obj_addr) jn;
+        assert (dst == resolve_object (v <: obj_addr) g);
+        assert (Seq.mem dst (objects zero_addr g));
+        objects_addresses_gt_start zero_addr g dst;
         assert (HeapGraph.is_pointer_field dst);
         FStar.Classical.exists_intro
           (fun (k: U64.t{U64.v k >= 1}) ->
             U64.v k <= U64.v (wosize_of_object src g) /\
-            HeapGraph.get_field g src k == dst)
+            HeapGraph.is_pointer_field (HeapGraph.get_field g src k) /\
+            HeapGraph.resolve_field g (HeapGraph.get_field g src k) == dst)
           j
       in
       FStar.Classical.exists_elim
@@ -501,10 +499,14 @@ let heap_graph_edge_to_field_read
         j < U64.v ws /\
         U64.v src + j * 8 + 8 <= heap_size /\
         (U64.v src + j * 8) % 8 == 0 /\
-        read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst in
+        HeapGraph.is_pointer_field
+          (read_word g (U64.uint_to_t (U64.v src + j * 8))) /\
+        HeapGraph.resolve_field g
+          (read_word g (U64.uint_to_t (U64.v src + j * 8))) == dst in
     let proof (j1: U64.t{U64.v j1 >= 1}) : Lemma
       (requires U64.v j1 <= U64.v ws /\
-                HeapGraph.get_field g src j1 == dst)
+                HeapGraph.is_pointer_field (HeapGraph.get_field g src j1) /\
+                HeapGraph.resolve_field g (HeapGraph.get_field g src j1) == dst)
       (ensures goal)
     =
       let j = U64.v j1 - 1 in
@@ -518,19 +520,24 @@ let heap_graph_edge_to_field_read
       HeapGraph.get_field_addr_eq g src j1;
       assert (U64.v src + j * 8 + 8 <= heap_size);
       assert ((U64.v src + j * 8) % 8 == 0);
-      assert (read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst);
+      assert (read_word g (U64.uint_to_t (U64.v src + j * 8)) ==
+              HeapGraph.get_field g src j1);
       FStar.Classical.exists_intro
         (fun (k:nat) ->
           k < U64.v ws /\
           U64.v src + k * 8 + 8 <= heap_size /\
           (U64.v src + k * 8) % 8 == 0 /\
-          read_word g (U64.uint_to_t (U64.v src + k * 8)) == dst)
+          HeapGraph.is_pointer_field
+            (read_word g (U64.uint_to_t (U64.v src + k * 8))) /\
+          HeapGraph.resolve_field g
+            (read_word g (U64.uint_to_t (U64.v src + k * 8))) == dst)
         j
     in
     FStar.Classical.exists_elim goal #_
       #(fun (j1: U64.t{U64.v j1 >= 1}) ->
         U64.v j1 <= U64.v ws /\
-        HeapGraph.get_field g src j1 == dst)
+        HeapGraph.is_pointer_field (HeapGraph.get_field g src j1) /\
+        HeapGraph.resolve_field g (HeapGraph.get_field g src j1) == dst)
       ()
     (fun j1 -> FStar.Classical.move_requires proof j1);
     assert (goal);
