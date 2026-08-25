@@ -408,6 +408,9 @@ let rec chain_avoids (g: heap) (fp excl: U64.t) (steps: nat) : Tot bool (decreas
 let chain_avoids_null (g: heap) (excl: U64.t) (steps: nat)
   = ()
 
+let chain_avoids_zero (g: heap) (fp excl: U64.t)
+  = ()
+
 /// chain_avoids_unfold_step: one-step unfolding of chain_avoids.
 /// When fp is a valid non-terminal node, fp ≠ excl, and steps > 0,
 /// chain_avoids reduces to the recursive call on the successor.

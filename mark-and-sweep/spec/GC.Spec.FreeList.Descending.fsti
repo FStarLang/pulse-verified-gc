@@ -31,6 +31,7 @@ open GC.Spec.Fields
 
 module U64 = FStar.UInt64
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module AllocChain = GC.Spec.Allocator.Lemmas.Chain
 
 /// A cell of a well-formed free list: a blue heap object with room for a link
 /// word.  `is_blue` is what distinguishes the cells from live objects, whose
@@ -157,3 +158,14 @@ val fl_desc_chain_gives_valid
                 Seq.mem (fp <: obj_addr) (objects zero_addr g))))
     (ensures AllocLemmas.fl_valid g fp heap_words /\
              AllocLemmas.fl_chain_terminates g fp heap_words)
+
+/// **A descending chain avoids everything that is not blue.**
+///
+/// Every cell of the chain is blue, so a non-blue object cannot be on it.  This
+/// is `GC.Gen.Promote.chain_objects_blue` in chain-local form.
+val fl_desc_chain_avoids
+  (g: heap) (fp: U64.t) (excl: obj_addr) (bound: nat) (steps: nat)
+  : Lemma (requires fl_desc_chain g fp bound /\ bound <= heap_size /\
+                    ~(is_blue excl g))
+          (ensures AllocChain.chain_avoids g fp excl steps = true)
+          (decreases bound)

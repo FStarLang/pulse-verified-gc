@@ -8,6 +8,7 @@ open GC.Spec.Fields
 
 module U64 = FStar.UInt64
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module AllocChain = GC.Spec.Allocator.Lemmas.Chain
 module AllocCommon = GC.Spec.Allocator.Lemmas.Common
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 30"
@@ -205,3 +206,20 @@ private let rec chain_walk
 
 let fl_desc_chain_gives_valid g fp mem_step =
   chain_walk g fp heap_size heap_words mem_step
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 40"
+let rec fl_desc_chain_avoids g fp excl bound steps =
+  if fp = 0UL then AllocChain.chain_avoids_null g excl steps
+  else if steps = 0 then AllocChain.chain_avoids_zero g fp excl
+  else begin
+    let o : obj_addr = fp in
+    let hdv = U64.v fp - U64.v mword in
+    hd_address_spec o;
+    assert (is_blue o g);
+    assert (fp <> (excl <: U64.t));
+    AllocChain.chain_avoids_unfold_step g fp excl steps;
+    let n = read_word g o in
+    fl_desc_chain_below g n hdv;
+    fl_desc_chain_avoids g n excl hdv (steps - 1)
+  end
+#pop-options
