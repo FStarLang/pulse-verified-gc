@@ -368,6 +368,19 @@ value — and threading resolution through the Cheney simulation. That is an
 architectural change to the generational graph model, not a local repair, and it
 has not been attempted.
 
+##### End-to-end test
+
+`generational/ocaml-integration/tests/infix_closures.ml` exercises all of this
+against real OCaml code rather than a hand-built heap. It allocates mutually
+recursive closures, confirms with `Obj` that a heap field genuinely holds an
+interior pointer, checks every clause of `infix_addr_conds` numerically
+(including `parent == h - wosize*8`), forces real collections by allocating,
+and then verifies that a block reachable only through an interior pointer
+survives mark and sweep with an unchanged heap shape. It runs as part of
+`make -C generational/ocaml-integration test`, under both the verified runtime
+and stock OCaml. Rebuilt against the pre-fix `check_and_darken_bounded` it fails
+and then segfaults, so it is a genuine regression test and not a smoke test.
+
 The same module also states the no-scan invariant:
 
 ```fstar

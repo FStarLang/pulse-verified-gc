@@ -1008,6 +1008,15 @@ model resolution-aware remains open.
 beyond one `--fuel 0 --ifuel 0 --z3rlimit 30` on
 `GC.Impl.MarkBoundedPrecondition.prefix_pushes_roots`.
 
+**Regression test.**  `generational/ocaml-integration/tests/infix_closures.ml`
+runs the fixed collector against real OCaml closures: 678 assertions covering
+the representation, every clause of `infix_addr_conds` checked numerically on a
+live heap, survival of a block reachable only through an interior pointer, and
+equality of the post-collection heap shape.  Rebuilt against the pre-fix
+`check_and_darken_bounded` it fails and segfaults.  This is the answer to the
+uncomfortable observation above -- that a vacuous precondition reports nothing --
+and it is the reason the fix is not only proved but also observed.
+
 ---
 
 ## 7. Summary
