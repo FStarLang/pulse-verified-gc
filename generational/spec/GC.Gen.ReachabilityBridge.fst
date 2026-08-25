@@ -30,7 +30,7 @@ private let combined_vertex_cases (v: combined_vertex)
     | MinorV _ -> ()
     | MajorV _ -> ()
 
-private let aligned_gt_ge_plus_mword (x z: nat)
+let aligned_gt_ge_plus_mword (x z: nat)
   : Lemma (requires x > z /\ x % U64.v mword == 0 /\ z % U64.v mword == 0)
           (ensures x >= z + U64.v mword)
   =
@@ -85,15 +85,18 @@ let major_edge_points_to
   = let far = U64.uint_to_t (U64.v src + i * 8) in
     let fv = read_word major (far <: hp_addr) in
     classify_major_field_inv_major minor major fv dst;
+    is_val_addr_spec fv;
     objects_addresses_gt_start zero_addr major (dst <: obj_addr);
     assert (is_pointer_field fv);
-    assert (is_pointer_to fv (dst <: obj_addr));
+    // `points_to` is established for the *raw* field value; `dst` is its
+    // resolution, which the caller recovers from the equation above.
+    assert (is_pointer_to fv (fv <: obj_addr));
     let k = U64.uint_to_t i in
     let wz = wosize_of_object src major in
     wf_object_size_bound major src;
     wosize_of_object_bound src major;
     FStar.Math.Lemmas.pow2_lt_compat 61 54;
-    field_read_implies_exists_pointing major src wz k (dst <: obj_addr)
+    field_read_implies_exists_pointing major src wz k (fv <: obj_addr)
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
@@ -148,13 +151,17 @@ let reachable_major_valid_nonblue
                       (U64.v src + i * 8) % 8 == 0 /\
                       classify_major_field minor major
                         (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (MajorV dst))
-            (ensures points_to major src dst /\
-                     Seq.mem (dst <: obj_addr) (objects zero_addr major) /\
+            (ensures Seq.mem (dst <: obj_addr) (objects zero_addr major) /\
                      ~(is_blue (dst <: obj_addr) major))
-          = major_edge_points_to minor major src dst i;
-            no_infix_points_to_target major src (dst <: obj_addr);
-            resolve_non_infix (dst <: obj_addr) major;
-            points_to_target_in_objects_raw major src (dst <: obj_addr)
+          = // `major_edge_points_to` gives `points_to` for the *raw* field value
+            // together with `dst == resolve_object raw major`.  `no_pointer_to_blue`
+            // is already stated about the resolved target, so it fires directly
+            // and yields `~(is_blue dst major)` even when the field holds an
+            // interior pointer into a closure.
+            major_edge_points_to minor major src dst i;
+            let raw = read_word major (U64.uint_to_t (U64.v src + i * 8)) in
+            points_to_target_in_objects major src (raw <: obj_addr);
+            classify_major_field_inv_major minor major raw dst
           in
           Classical.forall_intro (Classical.move_requires pts_aux)
         | MinorV src ->

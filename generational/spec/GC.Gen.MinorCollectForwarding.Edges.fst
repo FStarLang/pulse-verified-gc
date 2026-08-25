@@ -170,6 +170,147 @@ let combined_reachable_images_valid_or_infix_from_slots
     combined_reachable_images_valid_or_infix minor major fp roots
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+/// Promotion frames the header word of any *field target* of a live major
+/// object, whether or not that target is an interior (infix) pointer.
+///
+/// For a non-infix target this is `cheney_promote_frame_old_header` directly.
+/// For an infix target `h` with `w = wosize(h)`, the infix model puts the header
+/// at `p + (w-1)*8` inside the enclosing closure `p = resolve_object h major`,
+/// with `w < wosize(p)`, so the *field* framing lemma applies at index `w-1`.
+/// Framing the header is what keeps `resolve_object h` stable across promotion,
+/// which is in turn what lets the post-collection graph carry the same edge.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
+private let cheney_promote_frame_target_header
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (h: obj_addr)
+  : Lemma
+    (requires well_formed_heap major /\
+              AllocLemmas.fl_valid major fp heap_words /\
+              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              chain_objects_blue major fp /\
+              minor_infix_wf minor /\
+              GC.Spec.Object.infix_addr_wf major (objects zero_addr major) h /\
+              Seq.mem (GC.Spec.Object.resolve_object h major) (objects zero_addr major) /\
+              is_blue (GC.Spec.Object.resolve_object h major) major = false)
+    (ensures (let res = cheney_promote minor major fp roots in
+              read_word res.major_final (hd_address h) == read_word major (hd_address h)))
+  = hd_address_spec h;
+    if GC.Spec.Object.is_infix h major then begin
+      GC.Spec.Object.infix_addr_wf_elim major (objects zero_addr major) h;
+      GC.Spec.Object.parent_closure_addr_nat_spec h major;
+      GC.Spec.Object.resolve_infix_spec h major;
+      let w = U64.v (wosize_of_object h major) in
+      let pa : obj_addr = U64.uint_to_t (U64.v h - w * 8) in
+      assert (GC.Spec.Object.resolve_object h major == pa);
+      assert (w >= 2);
+      assert (U64.v h < U64.v pa + U64.v (wosize_of_object pa major) * 8);
+      assert (w < U64.v (wosize_of_object pa major));
+      assert (U64.v pa + (w - 1) * 8 == U64.v (hd_address h));
+      CheneyPres.cheney_promote_frame_old_fields minor major fp roots pa (w - 1)
+    end
+    else begin
+      GC.Spec.Object.resolve_non_infix h major;
+      CheneyPres.cheney_promote_frame_old_header minor major fp roots h
+    end
+#pop-options
+
+/// The same framing fact for the pointer-update pass, stated with the enclosing
+/// closure supplied explicitly so it can be discharged in the *post-promotion*
+/// heap, where `infix_addr_wf` is not yet available.
+///
+/// An infix header sits at a *field* offset of its enclosing closure, so
+/// `update_major_pointers` could in principle overwrite it.  It never does: the
+/// infix tag is 249, so the header word is congruent to 1 mod 8 and can never
+/// look like a minor pointer, which is the only thing the pass rewrites.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
+private let update_major_pointers_frame_target_header
+  (g: heap) (fwd: forwarding_map) (h: obj_addr)
+  : Lemma
+    (requires
+      well_formed_heap_part1 g /\
+      (~(GC.Spec.Object.is_infix h g) ==> Seq.mem h (objects zero_addr g)) /\
+      (GC.Spec.Object.is_infix h g ==>
+        (let w = U64.v (wosize_of_object h g) in
+         let p = U64.v h - w * 8 in
+         w >= 2 /\ p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
+         Seq.mem (U64.uint_to_t p <: obj_addr) (objects zero_addr g) /\
+         ~(is_blue (U64.uint_to_t p <: obj_addr) g) /\
+         w < U64.v (wosize_of_object (U64.uint_to_t p) g))))
+    (ensures read_word (update_major_pointers g fwd) (hd_address h) ==
+             read_word g (hd_address h))
+  = hd_address_spec h;
+    if GC.Spec.Object.is_infix h g then begin
+      let w = U64.v (wosize_of_object h g) in
+      let pa : obj_addr = U64.uint_to_t (U64.v h - w * 8) in
+      assert (U64.v pa + (w - 1) * 8 == U64.v (hd_address h));
+      let hdr = read_word g (hd_address h) in
+      GC.Spec.Object.infix_header_misaligned h g;
+      assert (U64.v hdr % 8 == 1);
+      assert (~(is_minor_pointer (to_minor_offset hdr)));
+      if is_no_scan pa g then
+        // a no-scan parent is never rewritten at all
+        PromUpdate.update_major_pointers_preserves_no_scan_field g fwd pa (w - 1)
+      else
+        // otherwise the field is rewritten only if it looks like a minor
+        // pointer, and an infix header never does
+        PromUpdate.update_major_pointers_field_effect g fwd pa (w - 1)
+    end
+    else
+      PromUpdate.update_major_pointers_preserves_header g fwd h
+#pop-options
+
+/// Composite: a live major object's field target keeps its header word --- and
+/// therefore its resolution --- across a whole minor collection.
+///
+/// This is the fact that lets a `MajorV src -> MajorV dst` combined-graph edge
+/// survive into the post-collection heap graph when the field holds an interior
+/// pointer: the raw value is untouched (it is not a minor pointer), and its
+/// header is untouched, so it still resolves to `dst`.
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
+private let cheney_collect_frame_target_header
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (h: obj_addr)
+  : Lemma
+    (requires well_formed_heap major /\
+              AllocLemmas.fl_valid major fp heap_words /\
+              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              chain_objects_blue major fp /\
+              minor_infix_wf minor /\
+              GC.Spec.Object.infix_addr_wf major (objects zero_addr major) h /\
+              Seq.mem (GC.Spec.Object.resolve_object h major) (objects zero_addr major) /\
+              is_blue (GC.Spec.Object.resolve_object h major) major = false)
+    (ensures (let res = cheney_collect_spec minor major fp roots in
+              read_word res.mc_major (hd_address h) == read_word major (hd_address h) /\
+              GC.Spec.Object.resolve_object h res.mc_major ==
+                GC.Spec.Object.resolve_object h major))
+  = let prom = cheney_promote minor major fp roots in
+    let res = cheney_collect_spec minor major fp roots in
+    let pf = prom.major_final in
+    cheney_promote_frame_target_header minor major fp roots h;
+    assert (read_word pf (hd_address h) == read_word major (hd_address h));
+    GC.Spec.Object.resolve_object_locality h major pf;
+    Cheney.cheney_promote_preserves_objects minor major fp roots;
+    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    // transport the infix-shape obligations from `major` to `pf`
+    if GC.Spec.Object.is_infix h major then begin
+      GC.Spec.Object.infix_addr_wf_elim major (objects zero_addr major) h;
+      GC.Spec.Object.parent_closure_addr_nat_spec h major;
+      GC.Spec.Object.resolve_infix_spec h major;
+      let w = U64.v (wosize_of_object h major) in
+      let pa : obj_addr = U64.uint_to_t (U64.v h - w * 8) in
+      assert (GC.Spec.Object.resolve_object h major == pa);
+      CheneyPres.cheney_promote_frame_old_header minor major fp roots pa;
+      color_of_header_eq pa major pf;
+      wosize_of_object_spec pa major;
+      wosize_of_object_spec pa pf
+    end
+    else
+      GC.Spec.Object.resolve_non_infix h major;
+    update_major_pointers_frame_target_header pf prom.fwd_map h;
+    assert (res.mc_major == update_major_pointers pf prom.fwd_map);
+    GC.Spec.Object.resolve_object_locality h major res.mc_major
+#pop-options
+
 let combined_reachable_major_edge_forwarded
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src dst: obj_addr)
@@ -199,13 +340,27 @@ let combined_reachable_major_edge_forwarded
     let field_addr = U64.uint_to_t (U64.v src + i * 8) in
     let old_raw = read_word major field_addr in
     CG.classify_major_field_inv_major minor major old_raw dst;
-    assert (old_raw == dst);
+    // `dst` is the *resolution* of the raw field value.  The two coincide unless
+    // the field holds an interior (infix) pointer, in which case `dst` is the
+    // enclosing closure --- which is the vertex the combined graph carries and
+    // the vertex the post-collection heap graph must carry too.
+    assert (dst == GC.Spec.Object.resolve_object old_raw major);
+    assert (is_pointer_field old_raw);
+    SpecBase.is_val_addr_spec old_raw;
     RBridge.major_edge_points_to minor major src dst i;
+    assert (points_to major src (old_raw <: obj_addr));
     assert (~(is_blue src major));
-    GC.Spec.Fields.no_infix_points_to_target major src dst;
-    GC.Spec.Object.resolve_non_infix dst major;
+    // `Mark.no_pointer_to_blue` concludes about the *resolved* target, so it
+    // discharges `~(is_blue dst major)` with no no-infix side condition.
     assert (~(is_blue dst major));
-    RBridge.major_object_not_minor_pointer major dst;
+    GC.Spec.Fields.points_to_target_infix_wf major src (old_raw <: obj_addr);
+    GC.Spec.Fields.points_to_target_in_objects major src (old_raw <: obj_addr);
+    // The raw value lies above the nursery, so the pointer-update pass never
+    // mistakes it for a minor pointer and leaves the field alone.
+    zero_addr_above_minor ();
+    assert (U64.v old_raw >= U64.v zero_addr + U64.v mword);
+    to_minor_offset_stable_above_minor old_raw;
+    assert (to_minor_offset old_raw == old_raw);
     Cheney.cheney_promote_preserves_objects minor major fp roots;
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
     CheneyPres.cheney_promote_frame_old_header minor major fp roots src;
@@ -223,15 +378,13 @@ let combined_reachable_major_edge_forwarded
     wosize_of_object_spec src major;
     wosize_of_object_spec src prom.major_final;
     assert (wosize_of_object src prom.major_final == wosize_of_object src major);
-    assert (read_word prom.major_final field_addr == dst);
+    assert (read_word prom.major_final field_addr == old_raw);
     assert (well_formed_heap_part1 prom.major_final);
     PromUpdate.update_major_pointers_field_effect prom.major_final prom.fwd_map src i;
     assert (updated == update_major_pointers prom.major_final prom.fwd_map);
-    let new_val = read_word updated field_addr in
-    assert (to_minor_offset (read_word prom.major_final field_addr) == dst);
     assert (~(is_minor_pointer (to_minor_offset (read_word prom.major_final field_addr)) /\
               prom.fwd_map (to_minor_offset (read_word prom.major_final field_addr)) <> 0UL));
-    assert (new_val == dst);
+    assert (read_word updated field_addr == old_raw);
     PromUpdate.update_major_pointers_preserves_header prom.major_final prom.fwd_map src;
     assert (read_word updated (hd_address src) == read_word prom.major_final (hd_address src));
     wosize_of_object_spec src updated;
@@ -246,14 +399,9 @@ let combined_reachable_major_edge_forwarded
     wf_object_bound updated src;
     HeapGraph.object_fits_from_bound src updated;
     HeapModel.objects_is_vertex_set updated;
-    assert (is_val_addr dst);
-    SpecBase.is_val_addr_spec dst;
-    assert (U64.v dst >= U64.v mword);
-    assert (U64.v dst < heap_size);
-    assert (U64.v dst % U64.v mword == 0);
-    objects_addresses_gt_start zero_addr updated dst;
-    assert (U64.v dst >= U64.v zero_addr + U64.v mword);
-    assert (HeapGraph.is_pointer_field dst);
+    assert (U64.v old_raw < heap_size);
+    assert (U64.v old_raw % U64.v mword == 0);
+    assert (HeapGraph.is_pointer_field old_raw);
     assert (i + 1 < pow2 64);
     let j = U64.uint_to_t (i + 1) in
     assert (U64.v j == i + 1);
@@ -263,15 +411,12 @@ let combined_reachable_major_edge_forwarded
     hd_address_spec src;
     assert (U64.v (hd_address src) + U64.v mword * U64.v j + U64.v mword <= heap_size);
     HeapGraph.get_field_addr_eq updated src j;
-    assert (HeapGraph.get_field updated src j == dst);
-    assert (HeapGraph.is_pointer_field (HeapGraph.get_field updated src j));
-    GC.Spec.Fields.points_to_target_in_objects_raw major src dst;
-    CheneyPres.cheney_promote_frame_old_header minor major fp roots dst;
-    PromUpdate.update_major_pointers_preserves_header prom.major_final prom.fwd_map dst;
-    assert (read_word updated (hd_address dst) == read_word major (hd_address dst));
-    GC.Spec.Object.resolve_object_locality dst major updated;
-    GC.Spec.Object.resolve_non_infix dst updated;
-    assert (GC.Spec.Object.resolve_object dst updated == dst);
+    assert (HeapGraph.get_field updated src j == old_raw);
+    // The target's header --- and hence its resolution --- survives collection,
+    // so the post-collection graph carries the edge `src -> dst` even though the
+    // stored word is the interior pointer `old_raw`.
+    cheney_collect_frame_target_header minor major fp roots (old_raw <: obj_addr);
+    assert (GC.Spec.Object.resolve_object (old_raw <: obj_addr) updated == dst);
     HeapGraph.pointer_field_is_graph_edge updated (objects zero_addr updated) src j
 #pop-options
 
@@ -401,6 +546,8 @@ let promoted_minor_major_edge_forwarded
     PromUpdate.update_major_pointers_preserves_objects prom.major_final prom.fwd_map;
     assert (Seq.mem (dst <: obj_addr) (objects zero_addr res.mc_major));
     objects_addresses_gt_start zero_addr res.mc_major (dst <: obj_addr);
+    SpecBase.is_val_addr_spec dst;
+    RBridge.aligned_gt_ge_plus_mword (U64.v dst) (U64.v zero_addr);
     assert (HeapGraph.is_pointer_field dst);
     heap_field_points_to_graph_edge res.mc_major fwd_src_obj dst j;
     let dst_hp : hp_addr = dst in

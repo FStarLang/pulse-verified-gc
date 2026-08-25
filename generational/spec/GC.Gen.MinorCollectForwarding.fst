@@ -555,6 +555,12 @@ private let post_edge_from_major_image_reflects_mem_ce
         assert (is_val_addr old_raw);
         assert (to_minor_offset (read_word major field_addr) == old_val);
         assert (~(is_minor_pointer old_val /\ Seq.mem old_val (minor_objects minor)));
+        // The raw target is enumerated, hence not interior (part 4), so
+        // resolution is the identity and classification returns it unchanged.
+        GC.Spec.Fields.wf_resolve_identity major (old_raw <: obj_addr);
+        objects_addresses_gt_start zero_addr major (old_raw <: obj_addr);
+        RBridge.aligned_gt_ge_plus_mword (U64.v old_raw) (U64.v zero_addr);
+        assert (is_pointer_field old_raw);
         CG.classify_major_field_major minor major (read_word major field_addr);
         assert (CG.classify_major_field minor major (read_word major field_addr) ==
           Some (CG.MajorV old_raw));
@@ -691,6 +697,12 @@ private let post_edge_from_major_image_reflects_target
         assert (is_val_addr old_raw);
         assert (to_minor_offset (read_word major field_addr) == old_val);
         assert (~(is_minor_pointer old_val /\ Seq.mem old_val (minor_objects minor)));
+        // The raw target is enumerated, hence not interior (part 4), so
+        // resolution is the identity and classification returns it unchanged.
+        GC.Spec.Fields.wf_resolve_identity major (old_raw <: obj_addr);
+        objects_addresses_gt_start zero_addr major (old_raw <: obj_addr);
+        RBridge.aligned_gt_ge_plus_mword (U64.v old_raw) (U64.v zero_addr);
+        assert (is_pointer_field old_raw);
         CG.classify_major_field_major minor major (read_word major field_addr);
         assert (CG.classify_major_field minor major (read_word major field_addr) ==
           Some (CG.MajorV old_raw));
