@@ -907,6 +907,24 @@ private let run_words_bound
     ()
 #pop-options
 
+/// Same bound, for a run that ends exactly at the end of the heap.
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
+private let run_words_bound_le
+  (fb: U64.t) (run_words: pos) (run_end: U64.t)
+  : Lemma
+    (requires
+      U64.v fb >= U64.v mword /\
+      U64.v run_end <= heap_size /\
+      U64.v fb - U64.v mword + run_words * U64.v mword == U64.v run_end)
+    (ensures run_words - 1 < pow2 54)
+  = assert (run_words * U64.v mword <= U64.v run_end);
+    assert (heap_size <= pow2 57);
+    FStar.Math.Lemmas.lemma_div_le (run_words * U64.v mword) (pow2 57) (U64.v mword);
+    assert_norm (pow2 57 = pow2 54 * 8);
+    FStar.Math.Lemmas.cancel_mul_div run_words (U64.v mword);
+    assert_norm ((pow2 54 * 8) / 8 == pow2 54)
+#pop-options
+
 /// Helper: stepping over a merged blue block.
 /// If the merged header at hd_address fb has wosize = run_words - 1,
 /// and the next from there equals start, then:
@@ -1166,6 +1184,233 @@ let rec coalesce_aux_survivors_in_walk g0 g start objs first_blue run_words fp a
         else begin
           assert (~(Seq.mem x (Seq.tail objs)))
         end
+      end
+    end
+  end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Property A': the free-list head produced by the walk is a walk object
+/// ---------------------------------------------------------------------------
+
+/// A merged blue block is the head of the object walk that starts at its own
+/// header.  Unlike `merged_block_step` this says nothing about what follows it,
+/// so it also applies when the merged block runs to the very end of the heap.
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+private let merged_block_head (g': heap) (fb: obj_addr) (run_words: pos)
+  : Lemma
+    (requires
+      Seq.length g' == heap_size /\
+      run_words - 1 < pow2 54 /\
+      U64.v (hd_address fb) + run_words * U64.v mword <= heap_size /\
+      read_word g' (hd_address fb) == makeHeader (U64.uint_to_t (run_words - 1)) Blue 0UL)
+    (ensures Seq.mem fb (objects (hd_address fb) g'))
+  = hd_address_spec fb;
+    let sync = hd_address fb in
+    let wz_u64 : wosize = U64.uint_to_t (run_words - 1) in
+    makeHeader_getWosize wz_u64 Blue 0UL;
+    f_address_spec sync;
+    if U64.v sync + (run_words) * U64.v mword >= heap_size then
+      mem_cons_lemma fb fb Seq.empty
+    else
+      mem_cons_lemma fb fb
+        (objects (U64.uint_to_t (U64.v sync + run_words * U64.v mword) <: hp_addr) g')
+#pop-options
+
+/// Helper for the flush at the end of a run: the head the flush returns is
+/// either the head it was given or the merged block it just wrote, and the
+/// merged block is an object of the walk that begins at the run's start.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+private let flush_blue_head_in_walk
+  (g: heap) (first_blue: U64.t) (run_words: nat) (fp: U64.t) (run_end: U64.t)
+  : Lemma
+    (requires
+      Seq.length g == heap_size /\
+      U64.v run_end <= heap_size /\
+      (run_words > 0 ==>
+        U64.v first_blue >= U64.v mword /\ U64.v first_blue < heap_size /\
+        U64.v first_blue % U64.v mword == 0 /\
+        U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v run_end))
+    (ensures (
+      let r = flush_blue g first_blue run_words fp in
+      snd r == fp \/
+      (run_words > 0 /\ snd r == first_blue /\
+       U64.v first_blue >= U64.v mword /\ U64.v first_blue < heap_size /\
+       U64.v first_blue % U64.v mword == 0 /\
+       Seq.mem (first_blue <: obj_addr) (objects (hd_address (first_blue <: obj_addr)) (fst r)))))
+  = if run_words = 0 then ()
+    else begin
+      let fb : obj_addr = first_blue in
+      hd_address_spec fb;
+      run_words_bound_le first_blue run_words run_end;
+      flush_blue_preserves_length g first_blue run_words fp;
+      flush_blue_header_spec g fb run_words fp;
+      let r = flush_blue g first_blue run_words fp in
+      if snd r = fp then () else merged_block_head (fst r) fb run_words
+    end
+#pop-options
+
+/// **The walk's free-list head is a walk object.**
+///
+/// `coalesce` rebuilds the free list from scratch, so its head is either the
+/// null head it started from or one of the merged blocks it wrote -- and every
+/// merged block is an object of the coalesced walk.  This is the one fact the
+/// descending-chain argument in `GC.Spec.Coalesce.Descending` cannot supply,
+/// because `fl_desc_chain` deliberately avoids reading the object walk.
+val coalesce_aux_head_in_walk
+  (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
+  (first_blue: U64.t) (run_words: nat) (fp: U64.t) (all_objs: seq obj_addr)
+  : Lemma
+    (requires walk_pre g0 g start objs all_objs first_blue run_words)
+    (ensures (
+      let r = coalesce_aux g0 g objs first_blue run_words fp in
+      let sync : hp_addr =
+        if run_words > 0 then hd_address (first_blue <: obj_addr) else start in
+      snd r == fp \/
+      (U64.v (snd r) >= U64.v mword /\ U64.v (snd r) < heap_size /\
+       U64.v (snd r) % U64.v mword == 0 /\
+       Seq.mem (snd r <: obj_addr)
+         (objects sync (coalesce_heap g0 g objs first_blue run_words fp)))))
+    (decreases Seq.length objs)
+
+#push-options "--z3rlimit 150 --fuel 2 --ifuel 1"
+let rec coalesce_aux_head_in_walk g0 g start objs first_blue run_words fp all_objs =
+  let sync : hp_addr =
+    if run_words > 0 then hd_address (first_blue <: obj_addr) else start in
+  if Seq.length objs = 0 then begin
+    coalesce_heap_empty g0 g first_blue run_words fp;
+    flush_blue_head_in_walk g first_blue run_words fp start
+  end
+  else begin
+    objects_nonempty_next start g0;
+    let header = read_word g0 start in
+    let wz = getWosize header in
+    let obj = f_address start in
+    f_address_spec start;
+    hd_address_spec obj;
+    let rest_start_nat = U64.v start + (U64.v wz + 1) * U64.v mword in
+    assert (obj == Seq.head objs);
+    Seq.cons_head_tail objs;
+    wosize_of_object_spec obj g0;
+    let ws = U64.v (wosize_of_object obj g0) in
+
+    let tail_sub (o: obj_addr)
+      : Lemma (Seq.mem o (Seq.tail objs) ==> Seq.mem o all_objs)
+      = mem_cons_lemma o obj (Seq.tail objs)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires tail_sub);
+
+    if is_blue obj g0 then begin
+      let new_first : U64.t = if run_words = 0 then obj else first_blue in
+      let new_rw = run_words + ws + 1 in
+      // The run's floor -- and hence the walk position the merged block will be
+      // reported against -- does not move when the run grows.
+      assert (hd_address (new_first <: obj_addr) == sync);
+
+      let tail_white_inv (o: obj_addr)
+        : Lemma (Seq.mem o (Seq.tail objs) /\ is_white o g0 ==>
+                 read_word g (hd_address o) == read_word g0 (hd_address o))
+        = mem_cons_lemma o obj (Seq.tail objs)
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires tail_white_inv);
+
+      coalesce_heap_blue_step g0 g objs first_blue run_words fp;
+
+      assert (coalesce_aux g0 g objs first_blue run_words fp ==
+              coalesce_aux g0 g (Seq.tail objs) new_first new_rw fp);
+      if rest_start_nat < heap_size then begin
+        let next : hp_addr = U64.uint_to_t rest_start_nat in
+        Seq.lemma_tl obj (objects next g0);
+        coalesce_aux_head_in_walk g0 g next (Seq.tail objs) new_first new_rw fp all_objs
+      end
+      else begin
+        objects_tail_empty_when_done start g0;
+        flush_blue_head_in_walk g new_first new_rw fp (U64.uint_to_t rest_start_nat);
+        coalesce_heap_empty g0 g new_first new_rw fp
+      end
+    end
+    else begin
+      mem_cons_lemma obj obj (Seq.tail objs);
+      is_blue_iff obj g0; is_white_iff obj g0;
+      assert (is_white obj g0);
+
+      let (g_flush, fp_flush) = flush_blue g first_blue run_words fp in
+      flush_blue_preserves_length g first_blue run_words fp;
+      flush_blue_head_in_walk g first_blue run_words fp start;
+
+      coalesce_heap_white_step g0 g objs first_blue run_words fp g_flush fp_flush;
+      let g_result = coalesce_heap g0 g_flush (Seq.tail objs) 0UL 0 fp_flush in
+      coalesce_heap_preserves_length g0 g_flush (Seq.tail objs) 0UL 0 fp_flush;
+
+      // Wherever the merged block of the just-flushed run ends up being
+      // reported, its header survives the rest of the walk: the walk only
+      // writes at or above `start`, and the block lies strictly below it.
+      let merged_survives () : Lemma
+        (requires run_words > 0 /\ fp_flush == first_blue)
+        (ensures Seq.mem (first_blue <: obj_addr) (objects sync g_result))
+        = hd_address_spec (first_blue <: obj_addr);
+          run_words_bound first_blue run_words start;
+          flush_blue_header_spec g (first_blue <: obj_addr) run_words fp;
+          if rest_start_nat < heap_size then begin
+            let next : hp_addr = U64.uint_to_t rest_start_nat in
+            Seq.lemma_tl obj (objects next g0);
+            assert (U64.v first_blue <= U64.v next);
+            coalesce_heap_preserves_before_run_start g0 g_flush next (Seq.tail objs)
+              0UL 0 fp_flush (hd_address (first_blue <: obj_addr))
+          end
+          else begin
+            objects_tail_empty_when_done start g0;
+            coalesce_heap_empty g0 g_flush 0UL 0 fp_flush
+          end;
+          merged_block_head g_result (first_blue <: obj_addr) run_words
+      in
+
+      if rest_start_nat < heap_size then begin
+        let next : hp_addr = U64.uint_to_t rest_start_nat in
+        Seq.lemma_tl obj (objects next g0);
+
+        let flush_white_hdr_inv (o: obj_addr)
+          : Lemma
+            (requires Seq.mem o (Seq.tail objs) /\ is_white o g0)
+            (ensures read_word g_flush (hd_address o) == read_word g0 (hd_address o))
+          = mem_cons_lemma o obj (Seq.tail objs);
+            objects_addresses_gt_start next g0 o;
+            hd_address_spec o;
+            flush_blue_preserves_outside g first_blue run_words fp (hd_address o)
+        in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires flush_white_hdr_inv);
+
+        white_addr_outside_all_blue g0 obj start;
+        flush_blue_preserves_outside g first_blue run_words fp start;
+        coalesce_heap_preserves_outside g0 g_flush next (Seq.tail objs)
+          0UL 0 fp_flush all_objs start;
+        objects_nonempty_at start g_result g0;
+        objects_nonempty_next start g_result;
+
+        coalesce_aux_head_in_walk g0 g_flush next (Seq.tail objs) 0UL 0 fp_flush all_objs;
+        let res = snd (coalesce_aux g0 g_flush (Seq.tail objs) 0UL 0 fp_flush) in
+        assert (snd (coalesce_aux g0 g objs first_blue run_words fp) == res);
+        if res = fp_flush then begin
+          if run_words > 0 && fp_flush <> fp then merged_survives ()
+        end
+        else begin
+          objects_later_subset start g_result (res <: obj_addr);
+          if run_words > 0 then begin
+            hd_address_spec (first_blue <: obj_addr);
+            run_words_bound first_blue run_words start;
+            flush_blue_header_spec g (first_blue <: obj_addr) run_words fp;
+            coalesce_heap_preserves_before_run_start g0 g_flush next (Seq.tail objs)
+              0UL 0 fp_flush (hd_address (first_blue <: obj_addr));
+            merged_block_step g_result (first_blue <: obj_addr) run_words start
+              (res <: obj_addr)
+          end
+        end
+      end
+      else begin
+        objects_tail_empty_when_done start g0;
+        coalesce_heap_empty g0 g_flush 0UL 0 fp_flush;
+        assert (snd (coalesce_aux g0 g objs first_blue run_words fp) == fp_flush);
+        if run_words > 0 && fp_flush <> fp then merged_survives ()
       end
     end
   end
@@ -1712,7 +1957,9 @@ private let flush_blue_field_zero
     zero_fields_read_within g2 zero_start (wz - 1) addr
 
 /// flush_blue field 1 value: after flush with run_words >= 2, field 1 = fp
-private let flush_blue_field1_spec
+/// Exported: `GC.Spec.Coalesce.Descending` needs the link word of a merged
+/// block to establish that the rebuilt free list runs downhill.
+let flush_blue_field1_spec
   (g: heap) (first_blue: obj_addr) (run_words: nat) (fp: U64.t)
   : Lemma
     (requires
@@ -2765,6 +3012,25 @@ val coalesce_aux_objects_subset
 
 let coalesce_aux_objects_subset g0 g start objs first_blue run_words fp all_objs y =
   coalesce_aux_walk_all_wb_tag g0 g start objs first_blue run_words fp all_objs y
+
+/// **The coalescer's free-list head is a heap object (or null).**
+///
+/// Top-level instance of `coalesce_aux_head_in_walk`.  The walk starts from a
+/// null head, so the "head unchanged" disjunct degenerates to `0UL`.
+val coalesce_head_in_walk (g: heap)
+  : Lemma
+    (requires post_sweep g)
+    (ensures (let r = coalesce g in
+              snd r == 0UL \/
+              (U64.v (snd r) >= U64.v mword /\ U64.v (snd r) < heap_size /\
+               U64.v (snd r) % U64.v mword == 0 /\
+               Seq.mem (snd r <: obj_addr) (objects zero_addr (fst r)))))
+
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
+let coalesce_head_in_walk g =
+  coalesce_heap_unfold g g (objects zero_addr g) 0UL 0 0UL;
+  coalesce_aux_head_in_walk g g zero_addr (objects zero_addr g) 0UL 0 0UL (objects zero_addr g)
+#pop-options
 
 val coalesce_objects_subset (g: heap) (y: obj_addr)
   : Lemma
