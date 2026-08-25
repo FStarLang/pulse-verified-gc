@@ -1001,6 +1001,40 @@ let wf_field_target_in_objects_raw (g: heap) (src: obj_addr) (dst: obj_addr) : L
   = wf_field_target_in_objects g src dst;
     GC.Spec.Object.resolve_non_infix dst g
 
+/// The converse of `wf_field_target_in_objects_raw`, and together with it the
+/// precise statement of what `no_infix_field_targets` costs.
+///
+/// Before interior pointers were supported, part 2 required the *raw* field
+/// value to be in `objects`; `raw` below is exactly that hypothesis.  This
+/// lemma shows it entails `no_infix_field_targets`, while
+/// `wf_field_target_in_objects_raw` shows the reverse.  Hence, modulo part 4,
+///
+///   old well_formed_heap  <==>  well_formed_heap /\ no_infix_field_targets
+///
+/// so a collector that assumes `no_infix_field_targets` (as the generational one
+/// does, in `GC.Gen.HeapInvariant.major_heap_shape`) accepts precisely the heaps
+/// it accepted before the resolved formulation --- no more, and no fewer.  The
+/// clause is a relocation of an existing restriction, not a new one, and the
+/// heaps it excludes are exactly those that motivated the change.
+let no_infix_field_targets_from_raw (g: heap)
+    (raw: (src: obj_addr) -> (dst: obj_addr) ->
+      Lemma (requires Seq.mem src (objects zero_addr g) /\
+                      (let wz = wosize_of_object src g in
+                       U64.v wz < pow2 54 /\
+                       exists_field_pointing_to_unchecked g src wz dst))
+            (ensures Seq.mem dst (objects zero_addr g)))
+  : Lemma (requires well_formed_heap_part4 g)
+          (ensures no_infix_field_targets g)
+  = let pf (src: obj_addr) (dst: obj_addr) : Lemma
+      (requires Seq.mem src (objects zero_addr g) /\
+                (let wz = wosize_of_object src g in
+                 U64.v wz < pow2 54 /\
+                 exists_field_pointing_to_unchecked g src wz dst))
+      (ensures ~(GC.Spec.Object.is_infix dst g))
+      = raw src dst
+    in
+    no_infix_field_targets_intro g pf
+
 /// Combined: field read + pointer target → target ∈ objects.
 /// Internalizes wf_object_size_bound + field_read_implies_exists_pointing + wf_field_target_in_objects.
 let field_pointer_target_in_objects (g: heap) (h: obj_addr)

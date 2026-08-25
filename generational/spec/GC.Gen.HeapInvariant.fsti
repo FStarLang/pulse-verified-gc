@@ -35,11 +35,30 @@ module FreeListShape = GC.Gen.FreeListShape
 /// and the no-scan/no-pointer-to-blue safety conditions.
 ///
 /// It also includes `no_infix_field_targets`: no major object field holds an
-/// interior (infix) pointer.  `well_formed_heap` itself permits such fields ---
-/// that is how OCaml represents mutually recursive closures, and the
-/// mark-and-sweep collector handles them --- but the Cheney copying pass of
-/// minor collection does not: forwarding identifies a field value with a whole
-/// object.  This clause is the major-heap counterpart of the pre-existing
+/// interior (infix) pointer.  This *forbids* interior pointers; it does not
+/// enable them.  It is not, however, a new restriction.  Modulo
+/// `well_formed_heap_part4` (no member of `objects` is infix), and because
+/// `resolve_object` is the identity on non-infix addresses,
+///
+///   old well_formed_heap  <==>  well_formed_heap /\ no_infix_field_targets
+///
+/// where "old" is the pre-resolution version whose part 2 required the *raw*
+/// field value to be in `objects`.  So `major_heap_shape` admits exactly the
+/// heaps it always admitted; the restriction merely moved out of
+/// `well_formed_heap` --- freeing mark-and-sweep, which does handle interior
+/// pointers --- and into an explicit, greppable clause here.
+///
+/// The generational layer cannot drop it, because
+/// `GC.Gen.CombinedGraph.classify_major_field` classifies the *raw* field value
+/// and returns `MajorV v` only when `Seq.mem v (objects zero_addr major)`.  An
+/// interior `v` fails that test, so the field is classified `None` and the edge
+/// is silently dropped: the combined graph would under-approximate the object
+/// graph, while `create_graph` (now resolution-aware) does not, and the minor
+/// collector's reachability results would be about the wrong graph.  Removing
+/// this clause therefore requires making the combined graph resolution-aware
+/// too, not just deleting the conjunct.
+///
+/// This clause is the major-heap counterpart of the pre-existing
 /// `minor_fields_no_infix_targets` and `major_minor_fields_no_infix_targets`,
 /// which impose exactly the same restriction on nursery-directed pointers.
 [@@"opaque_to_smt"]

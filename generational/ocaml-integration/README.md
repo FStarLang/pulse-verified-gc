@@ -114,6 +114,13 @@ runtimes must reach the same verdict. Compaction is disabled at startup
 (`max_overhead = 1000000`) so that the address-stability assertions are
 meaningful under stock OCaml too — the verified major collector is non-moving.
 
+**Scope.** The heaps this test builds hold interior pointers in major fields, so
+they violate `no_infix_field_targets` and fall outside the *generational*
+collector's `major_heap_shape` invariant. The marking and sweeping it stresses is
+covered by the mark-and-sweep proofs, which do handle interior pointers; the
+generational reachability argument is not. The test shows the extracted C is
+correct on such heaps, and marks exactly the case the generational proof owes.
+
 **The test is sensitive.** Rebuilding the runtime with the pre-fix
 `check_and_darken_bounded` — the version that darkened the raw field value
 instead of resolving `infix_tag` targets to `v - wosize*8` — makes group 5 fail

@@ -993,10 +993,25 @@ debt: nothing fails, so nothing tells you.
 **What was retained.**  The generational (Cheney) collector still forbids
 interior pointers in major fields, now via an explicit opaque predicate
 `GC.Spec.Fields.no_infix_field_targets`, added as a conjunct of
-`GC.Gen.HeapInvariant.major_heap_shape` — *not* of `well_formed_heap`.  The
-reason is structural: Cheney's forwarding map is keyed by whole objects, and
-`GC.Gen.CombinedGraph.classify_major_field` classifies the raw field value, so
-the copying pass genuinely identifies a field value with an object.  The clause
+`GC.Gen.HeapInvariant.major_heap_shape` — *not* of `well_formed_heap`.
+
+It is worth being exact about what that costs, because the clause reads like a
+regression and is easy to misread as one.  It is not new.  Given part 4,
+
+    OLD well_formed_heap  ==  NEW well_formed_heap  /\  no_infix_field_targets
+
+so `major_heap_shape` admits *precisely* the heaps it admitted before.  The
+generational collector gained nothing here; the restriction merely moved from
+being an unstated consequence of parts 2 and 4 to a named predicate, and out of
+`well_formed_heap`, so that mark-and-sweep is no longer subject to it.
+
+It cannot simply be deleted, because `GC.Gen.CombinedGraph.classify_major_field`
+returns `MajorV v` on the *raw* field value, guarded by
+`Seq.mem v (objects zero_addr major)`.  An interior `v` is not in `objects`
+(part 4), so classification returns `None` and the edge is **silently dropped**:
+the combined graph would under-approximate the object graph while `create_graph`,
+now resolution-aware, does not, and `gen_gc`'s reachability theorem would be
+stated over the wrong graph.  That is unsound, not merely unprovable.  The clause
 sits alongside the pre-existing `minor_fields_no_infix_targets` and
 `major_minor_fields_no_infix_targets`, which impose the same restriction on
 nursery-directed pointers, and it is preserved across minor collection for free
@@ -1016,6 +1031,12 @@ equality of the post-collection heap shape.  Rebuilt against the pre-fix
 `check_and_darken_bounded` it fails and segfaults.  This is the answer to the
 uncomfortable observation above -- that a vacuous precondition reports nothing --
 and it is the reason the fix is not only proved but also observed.
+
+The heaps it builds violate `no_infix_field_targets`, so they sit outside
+`major_heap_shape` and the composed `gen_gc` theorem does not cover them.  What
+the test demonstrates is that the extracted C is correct on them and that the
+mark-and-sweep proofs apply; the generational gap is exactly the open item
+above.
 
 ---
 

@@ -381,6 +381,15 @@ survives mark and sweep with an unchanged heap shape. It runs as part of
 and stock OCaml. Rebuilt against the pre-fix `check_and_darken_bounded` it fails
 and then segfaults, so it is a genuine regression test and not a smoke test.
 
+Note what the test does *not* establish. The heaps it builds hold interior
+pointers in major fields, so they violate `no_infix_field_targets` and therefore
+fall outside `GC.Gen.HeapInvariant.major_heap_shape` — the composed `gen_gc`
+theorem does not apply to them. The marking and sweeping behaviour the test
+stresses is covered by the mark-and-sweep proofs, which do handle interior
+pointers; the generational reachability argument is not. The test shows the
+extracted C behaves correctly on such heaps, and it is precisely the case the
+generational proof still owes.
+
 The same module also states the no-scan invariant:
 
 ```fstar
