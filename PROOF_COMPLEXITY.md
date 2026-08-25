@@ -1103,6 +1103,89 @@ generational proof now admits.
 
 ---
 
+### 6.11 Closing the invariant: `gen_gc` restores `collection_heap_shape` — **done**
+
+The entry-contract work of §6.9 made `gen_gc`'s precondition callable.  It did
+not make it *re-*callable.  `gen_gc` demanded
+`GC.Gen.HeapInvariant.collection_heap_shape` on entry and said nothing about it
+on exit, so a runtime driving a second collection was back where it started.  An
+invariant that only ever appears as a hypothesis is an assumption with a nice
+name.
+
+Closing it is a proof of fifteen conjuncts, and the interesting thing is how
+unevenly the work distributes.
+
+**Free (1 conjunct).**  The minor half.  `minor_collect_full` already calls
+`minor_heap_reset`, which clears the nursery bytes as well as the bump pointer,
+so the state it returns is `GC.Gen.MinorHeap.minor_reset` and
+`collection_heap_shape_after_minor_reset` discharges every minor-side and
+cross-generation clause at once.  The only change needed was to *state* the
+equality in `minor_collect_full`'s contract; it had always been true.  Had the
+nursery not been zeroed, `major_minor_fields_no_infix_targets` would have needed
+a field-preservation theorem across the whole major collection — the single
+largest piece of work avoided here, and entirely by accident of the
+implementation.
+
+**Cheap (7 conjuncts).**  Everything that transfers.  Coalescing leaves
+survivors' headers and bodies alone and only turns already-blue blocks into
+bigger blue blocks, so `no_scan_invariant`, `no_pointer_to_blue`,
+`no_black_objects`, `no_gray_objects`, `blue_link_fields_valid`,
+`chain_objects_blue` and `fp_pointer_or_zero` follow from two walk-transfer
+lemmas (`coalesce_blue_transfer`, `coalesce_survivor_transfer`) in
+`GC.Spec.Coalesce.Shape`, about 250 lines in total.  `fp_valid` and `fp_in_heap`
+are corollaries of `fl_valid` with no new content.
+
+**The two that were not cheap.**
+
+*The free list.*  `fl_valid` and `fl_chain_terminates` look like the hardest
+clauses — they are statements about an unbounded pointer chain — and they turned
+out to be the second-easiest, once the right observation was made: the coalescer
+does not thread the sweep's list through.  It starts from a null head and pushes
+each merged block onto the front as the walk moves *upwards*, so every link
+points backwards and the list is **descending**.  A descending list is acyclic
+and bounded by the number of distinct 8-aligned addresses, which is exactly what
+the allocator's two entry conditions ask for.  `GC.Spec.FreeList.Descending`
+states the property (~200 lines) and `GC.Spec.Coalesce.Descending` proves the
+walk maintains it (~250 lines).  Nothing about the *input* free list is needed,
+which is why the final theorem's only hypothesis is `mark_post`.
+
+*Density.*  This was the real cost.  `heap_objects_dense` is the one conjunct
+that cannot transfer: `heap_objects_dense_transfer` requires equal wosizes
+everywhere, and merging a free run is by definition a change of wosize at the
+run's head.  Nor can it be proved pointwise, because the pre- and post-coalesce
+walks do not visit the same addresses — there is no correspondence to induct on.
+
+The fix was to reformulate the predicate.  `objects start g` is empty exactly
+when the walk has run out of room (`start + 8 >= heap_size`) or the block at
+`start` overruns, so density is equivalent to a **single scalar**:
+
+```fstar
+walk_end g zero_addr + 8 >= heap_size
+```
+
+where `walk_end` (new module `GC.Spec.WalkEnd`, ~230 lines) follows the same
+steps `objects` does and returns the address it stops at.  With the quantifier
+gone, the coalescing induction becomes tractable: the hypothesis is
+`walk_end g0 start + 8 >= heap_size` and the conclusion is
+`walk_end g' sync == walk_end g0 start`.  `GC.Spec.Coalesce.Dense` (~200 lines)
+runs the walk in the `walk_pre` shape already used by
+`coalesce_aux_head_in_walk` and proves exactly that.
+
+The reformulation pays twice.  The scalar invariant also *supplies* the
+"objects empty implies no room left" fact that a direct proof would have had to
+assume, which is what made the empty-walk base case go through at all.  This is
+the same lesson as §6.2 in a different key: when an induction over a walk will
+not close, look for a scalar the walk preserves rather than a relation between
+two walks.
+
+**Cost.**  Four new spec modules (`GC.Spec.FreeList.Descending`,
+`GC.Spec.Coalesce.Descending`, `GC.Spec.Coalesce.Shape`, `GC.Spec.WalkEnd`,
+`GC.Spec.Coalesce.Dense`) plus `GC.Gen.PostCollectionShape`, roughly 1,300 lines;
+no new admits or assumes; no change to the extracted C.  One latent bug was
+found on the way: `GC.Spec.Correctness.gc_coalesce_source` had `\/` where it
+meant `/\`, which made the predicate vacuously true and the postcondition it
+appears in worthless.
+
 ## 7. Summary
 
 | | |

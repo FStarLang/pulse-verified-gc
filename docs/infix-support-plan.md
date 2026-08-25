@@ -382,7 +382,16 @@ This is now proved and threaded to the top level:
   `GC.Gen.MajorPrecondition.major_heap_shape_gc_postcondition`.
 
 The invariant is therefore closed across collections: what `major_heap_shape`
-requires on entry, `gen_gc` re-establishes on exit.
+requires on entry, `gen_gc` re-establishes on exit.  That claim was originally
+about `blue_fields_non_infix` alone; it now holds of the *whole* shape
+invariant.  `gen_gc`'s postcondition includes `gen_gc_shape_restored_post`, i.e.
+`GC.Gen.HeapInvariant.collection_heap_shape` of the state it hands back, proved
+by `GC.Gen.PostCollectionShape.major_gc_restores_major_heap_shape` (all fifteen
+conjuncts of `major_heap_shape` for the collector's output) composed with
+`collection_heap_shape_after_minor_reset` (the nursery is zeroed, so the
+minor-side and cross-generation conjuncts are vacuous).  See
+`PROOF_COMPLEXITY.md` §6.11 and `DESIGN_AND_IMPL.md`, "The invariant is
+inductive".
 
 Everything else in the Cheney/allocator layer was restated in resolved form:
 

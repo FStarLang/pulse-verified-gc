@@ -1516,6 +1516,99 @@ in terms of the object being scanned — and converts it to the run-level witnes
 once, on the way out, where the enclosing scan step's residual equation is in
 scope.  All of it is ghost: the extracted C is unchanged.
 
+### The invariant is inductive: `gen_gc` restores its own precondition
+
+`gen_gc` demands `GC.Gen.HeapInvariant.collection_heap_shape` of the heap it is
+handed.  For a long time it promised nothing of the heap it returned, which made
+that predicate an *assumption* rather than an invariant: a runtime driving a
+second collection had no way to satisfy the precondition again.  It is now a
+postcondition, `gen_gc_shape_restored_post`:
+
+```fstar
+let gen_gc_shape_restored_post
+  (minor_data: minor_heap) (minor_bump: U64.t)
+  (final_major: heap) (final_fp: U64.t) : prop =
+  GenInv.collection_heap_shape
+    ({ data = minor_data; bump = minor_bump } <: minor_state) final_major final_fp
+```
+
+The minor half is vacuous.  `minor_collect_full` finishes by calling
+`minor_heap_reset`, which clears the nursery *bytes* as well as the bump pointer,
+so the state it hands back is literally `GC.Gen.MinorHeap.minor_reset` — a fact
+the implementation always had and simply never stated.  With it,
+`collection_heap_shape_after_minor_reset` collapses the minor-side and
+cross-generation conjuncts and reduces the whole obligation to
+`major_heap_shape` of the major heap and free-list head.
+
+That is fifteen conjuncts, and it is where the work is.
+`GC.Gen.PostCollectionShape.major_gc_restores_major_heap_shape` proves them for
+`coalesce (sweep h_mark fp)` under nothing more than
+`GC.Spec.Correctness.mark_post`:
+
+| conjunct | supplied by |
+| --- | --- |
+| `well_formed_heap` | `GC.Spec.Coalesce.coalesce_preserves_wf` |
+| `fl_valid` | `GC.Spec.Coalesce.Descending.coalesce_fl_entry` |
+| `fl_chain_terminates` | `GC.Spec.Coalesce.Descending.coalesce_fl_entry` |
+| `fp_pointer_or_zero` | `GC.Spec.Coalesce.Shape.coalesce_fp_pointer_or_zero` |
+| `blue_link_fields_valid` | `GC.Spec.Coalesce.Shape.coalesce_blue_link_fields_valid` |
+| `heap_objects_dense` | `GC.Spec.Coalesce.Dense.coalesce_dense` |
+| `chain_objects_blue` | `GC.Spec.Coalesce.Shape.coalesce_chain_objects_blue` |
+| `objects` non-empty | `GC.Spec.Coalesce.Dense.coalesce_dense` |
+| `fp_valid` | `GC.Gen.FreeListShape`, from `fl_valid` |
+| `fp_in_heap` | `GC.Gen.FreeListShape`, from `fp_valid` |
+| `no_black_objects` | `GC.Spec.Coalesce.coalesce_all_white_or_blue` |
+| `no_gray_objects` | `GC.Spec.Coalesce.coalesce_all_white_or_blue` |
+| `no_pointer_to_blue` | `GC.Spec.Coalesce.Shape.coalesce_no_pointer_to_blue` |
+| `no_scan_invariant` | `GC.Spec.Coalesce.Shape.coalesce_no_scan_invariant` |
+| `blue_fields_non_infix` | `GC.Spec.Correctness.gc_blue_fields_non_infix_gen` |
+
+Two of these deserve comment.
+
+**The free list is earned, not inherited.**  Nothing about the *input* free list
+is required, which at first looks too good.  The reason is that the coalescer
+does not thread the sweep's list through at all: `coalesce` starts from a null
+head and rebuilds the list from scratch, pushing each merged block onto the front
+as the upward walk passes it.  Every link it writes therefore points back at a
+block the walk has already left behind, so the list is *descending*, and a
+descending list is trivially acyclic and bounded by the number of distinct
+8-aligned heap addresses.  `GC.Spec.FreeList.Descending` states that property and
+`GC.Spec.Coalesce.Descending` proves the coalescer maintains it, which discharges
+the allocator's two entry conditions outright.
+
+**Density needed a reformulation.**  `heap_objects_dense` — "the object walk
+tiles the heap, never stopping because a block overruns" — is the one conjunct
+that cannot transfer, because `heap_objects_dense_transfer` requires equal
+wosizes everywhere and merging a free run is precisely a change of wosize.
+Proving it directly founders on the fact that the pre- and post-coalesce walks
+do not visit the same addresses, so a pointwise correspondence does not exist.
+`GC.Spec.WalkEnd` removes the quantifier instead: `objects start g` is empty
+exactly when the walk has run out of room or the block at `start` overruns, so
+density is equivalent to the single scalar statement
+
+```fstar
+walk_end g zero_addr + 8 >= heap_size
+```
+
+where `walk_end` follows the same steps `objects` does and returns the address it
+stops at.  `GC.Spec.Coalesce.Dense` then runs the coalescing walk once more and
+shows the coalescer leaves that address alone — a merged block covers exactly the
+addresses its constituents covered, and a survivor keeps its header, so the last
+block still ends where it did.  The scalar invariant has the pleasant side effect
+of *supplying* the "objects empty implies no room left" fact that a direct proof
+would have had to assume.
+
+The Pulse entry point `GC.Impl.collect_with_roots` does not expose the marked
+heap, so it exposes `GC.Spec.Correctness.gc_coalesce_source` instead — "some
+marked heap satisfying `mark_post` produced this result".
+`major_gc_restores_major_heap_shape_of_source` discharges that existential, which
+is what `gen_gc` actually calls.  On the out-of-memory path nothing runs after
+the minor collection, so the invariant is the post-minor one, which
+`GC.Gen.CheneyPreservation.cheney_collect_preserves_collection_heap_shape`
+already provides.
+
+All of it is ghost: the extracted C is byte-identical.
+
 ### Transporting the rest across the minor collection
 
 Everything else the major phase needs is derived internally.
