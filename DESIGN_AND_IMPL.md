@@ -362,11 +362,25 @@ both collectors, and inside Cheney's promotion machinery, which is what
 `find_infix_parents` and `synthesize_infix_forwarding` operate on in the
 extracted C.
 
-Lifting the generational restriction means making `GC.Gen.CombinedGraph`
-resolution-aware — `classify_major_field` currently classifies the raw field
-value — and threading resolution through the Cheney simulation. That is an
-architectural change to the generational graph model, not a local repair, and it
-has not been attempted.
+Lifting the generational restriction had two obstructions. The first was the
+graph model, and it has been removed: `GC.Gen.CombinedGraph.classify_major_field`
+now resolves, returning `MajorV (resolve_object v major)` whenever the resolved
+value is enumerated, so an interior-pointer edge is no longer silently dropped;
+`GC.Gen.ReachabilityBridge.major_edge_points_to` exposes the raw field value
+alongside `dst == resolve_object raw major`, and the clause is gone from all
+three `ReachabilityBridge` lemmas.
+
+The second obstruction is the allocator, and it remains.
+`GC.Gen.Promote.blue_fields_closed` is stated on the raw field value of a
+free-list (blue) object, and is derived from part 2 by a lemma that needs this
+clause for exactly that step. Restating it in resolved form breaks
+`promote_object_preserves_bfc_close`, which must then transport a resolution
+across `copy_fields` on a block just carved off the free list; nothing today
+rules out a *different* blue object pointing strictly inside that block at a word
+that happens to look like an infix header. Closing it needs a new invariant —
+roughly, that no blue object points into the interior of another — established at
+allocator boundaries and preserved across the whole minor collection.
+`docs/infix-support-plan.md` §5 records the measurement.
 
 ##### End-to-end test
 

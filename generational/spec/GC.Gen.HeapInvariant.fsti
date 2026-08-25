@@ -48,15 +48,21 @@ module FreeListShape = GC.Gen.FreeListShape
 /// `well_formed_heap` --- freeing mark-and-sweep, which does handle interior
 /// pointers --- and into an explicit, greppable clause here.
 ///
-/// The generational layer cannot drop it, because
-/// `GC.Gen.CombinedGraph.classify_major_field` classifies the *raw* field value
-/// and returns `MajorV v` only when `Seq.mem v (objects zero_addr major)`.  An
-/// interior `v` fails that test, so the field is classified `None` and the edge
-/// is silently dropped: the combined graph would under-approximate the object
-/// graph, while `create_graph` (now resolution-aware) does not, and the minor
-/// collector's reachability results would be about the wrong graph.  Removing
-/// this clause therefore requires making the combined graph resolution-aware
-/// too, not just deleting the conjunct.
+/// The first obstruction to dropping it was the graph model, and that is now
+/// gone: `GC.Gen.CombinedGraph.classify_major_field` resolves, returning
+/// `MajorV (resolve_object v major)` whenever the resolved value is enumerated,
+/// so interior-pointer edges are no longer silently dropped.
+///
+/// What still holds the clause in place is the allocator.
+/// `GC.Gen.Promote.blue_fields_closed` is raw, and
+/// `GC.Gen.PromoteUpdate.BlueAlloc.wfh_part2_implies_blue_fields_closed` needs
+/// this clause to derive it from the (resolved) part 2.  Restating
+/// `blue_fields_closed` in resolved form breaks
+/// `promote_object_preserves_bfc_close`, which would have to transport a
+/// resolution across `copy_fields` on a block just carved off the free list —
+/// and nothing rules out another blue object pointing strictly inside it at a
+/// word that looks like an infix header.  See `docs/infix-support-plan.md` §5,
+/// "Phase 3 status", for the full measurement.
 ///
 /// This clause is the major-heap counterpart of the pre-existing
 /// `minor_fields_no_infix_targets` and `major_minor_fields_no_infix_targets`,

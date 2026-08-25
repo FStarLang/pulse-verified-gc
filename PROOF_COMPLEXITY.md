@@ -1005,18 +1005,39 @@ generational collector gained nothing here; the restriction merely moved from
 being an unstated consequence of parts 2 and 4 to a named predicate, and out of
 `well_formed_heap`, so that mark-and-sweep is no longer subject to it.
 
-It cannot simply be deleted, because `GC.Gen.CombinedGraph.classify_major_field`
-returns `MajorV v` on the *raw* field value, guarded by
-`Seq.mem v (objects zero_addr major)`.  An interior `v` is not in `objects`
-(part 4), so classification returns `None` and the edge is **silently dropped**:
-the combined graph would under-approximate the object graph while `create_graph`,
-now resolution-aware, does not, and `gen_gc`'s reachability theorem would be
-stated over the wrong graph.  That is unsound, not merely unprovable.  The clause
-sits alongside the pre-existing `minor_fields_no_infix_targets` and
-`major_minor_fields_no_infix_targets`, which impose the same restriction on
-nursery-directed pointers, and it is preserved across minor collection for free
-by `well_formed_heap_part2_from_field_closure`.  Making the generational graph
-model resolution-aware remains open.
+The first obstruction to deleting it was the graph model, and that one is now
+gone.  `GC.Gen.CombinedGraph.classify_major_field` used to return `MajorV v` on
+the *raw* field value, guarded by `Seq.mem v (objects zero_addr major)`.  An
+interior `v` is not in `objects` (part 4), so classification returned `None` and
+the edge was **silently dropped**: the combined graph would under-approximate the
+object graph while `create_graph`, now resolution-aware, does not, and `gen_gc`'s
+reachability theorem would have been stated over the wrong graph.  That is
+unsound, not merely unprovable.  The classifier now resolves —
+`MajorV (resolve_object v major)` whenever the resolved value is enumerated —
+`GC.Gen.ReachabilityBridge.major_edge_points_to` exposes the raw field value
+alongside `dst == resolve_object raw major`, and the clause has been dropped from
+all three `ReachabilityBridge` lemmas and from
+`combined_reachable_major_edge_forwarded`.
+
+What still holds the clause in place is the allocator, not the graph.
+`GC.Gen.Promote.blue_fields_closed` is stated on the raw field value of a
+**blue** (free-list) object and is derived from part 2 by
+`wfh_part2_implies_blue_fields_closed`, which needs `no_infix_field_targets` for
+exactly that step.  Restating it in resolved form was tried and measured: it
+breaks only three sites, two of them mechanical.  The third,
+`promote_object_preserves_bfc_close`, must transport a resolution across
+`copy_fields` on a block just carved off the free list — whose fields still hold
+stale garbage — and nothing today rules out a *different* blue object pointing
+strictly inside it at a word that happens to look like an infix header.  Closing
+that needs a new invariant (roughly: no blue object points into the interior of
+another blue object), established at allocator boundaries and preserved across
+the whole minor collection.  That is a scope increase, so step 3b is parked
+rather than half-landed; `docs/infix-support-plan.md` §5 records the measurement
+in full.  The clause sits alongside the pre-existing
+`minor_fields_no_infix_targets` and `major_minor_fields_no_infix_targets`, which
+impose the same restriction on nursery-directed pointers, and it is preserved
+across minor collection for free by
+`well_formed_heap_part2_from_field_closure`.
 
 **Cost.** About 1,100 lines touched across `common/`, all of `mark-and-sweep/`,
 `generational/spec/` and `spot/`; no new admits or assumes; no rlimit increases
