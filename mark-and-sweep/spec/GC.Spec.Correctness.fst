@@ -1532,3 +1532,9 @@ let gc_postcondition_gen h_init h_mark roots fp =
   Coalesce.coalesce_all_white_or_blue (fst (sweep h_mark fp));
   gc_postcondition_intro (fst (Coalesce.coalesce (fst (sweep h_mark fp))))
 #pop-options
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let gc_blue_fields_non_infix_gen h_init h_mark roots fp =
+  sweep_post_sweep_strong_gen h_init h_mark roots fp;
+  Coalesce.coalesce_blue_fields_non_infix (fst (sweep h_mark fp))
+#pop-options

@@ -498,3 +498,18 @@ val gc_postcondition_gen :
   Lemma
     (requires mark_post h_init h_mark roots fp)
     (ensures gc_postcondition (fst (Coalesce.coalesce (fst (sweep h_mark fp)))))
+
+/// Free-list cells hold no interior pointers after a full collection.
+///
+/// Kept separate from `gc_postcondition` on purpose: the *post-sweep* heap does
+/// **not** satisfy this.  A dying object may hold interior pointers and
+/// `GC.Spec.Sweep.sweep_object` rewrites only its link word, so the corpse still
+/// points into the middle of other blocks.  It is the coalescing pass that makes
+/// the property true, by zeroing every field of a merged free block above the
+/// link (`GC.Spec.Coalesce.flush_blue`).  This is the establishment half of the
+/// `blue_fields_non_infix` conjunct of `GC.Gen.HeapInvariant.major_heap_shape`.
+val gc_blue_fields_non_infix_gen :
+  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma
+    (requires mark_post h_init h_mark roots fp)
+    (ensures blue_fields_non_infix (fst (Coalesce.coalesce (fst (sweep h_mark fp)))))

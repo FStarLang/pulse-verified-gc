@@ -166,7 +166,8 @@ let gen_gc_heap_shape_post
   (minor_data: minor_heap) (minor_bump: U64.t)
   (final_major: heap) : prop =
   U64.v minor_bump == 0 /\
-  SpecGCPost.gc_postcondition final_major
+  SpecGCPost.gc_postcondition final_major /\
+  SpecFields.blue_fields_non_infix final_major
 
 /// Reachable subgraph correctness.
 ///

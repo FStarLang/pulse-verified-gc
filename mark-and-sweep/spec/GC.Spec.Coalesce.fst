@@ -1541,6 +1541,24 @@ val coalesce_preserves_wf (g: heap)
     (requires post_sweep_strong g)
     (ensures well_formed_heap (fst (coalesce g)))
 
+/// Free-list cells hold no interior pointers after coalescing.
+///
+/// This is the *establishment* half of `GC.Spec.Fields.blue_fields_non_infix`,
+/// which `GC.Gen.HeapInvariant.major_heap_shape` carries.  It is true for a
+/// concrete, operational reason rather than by luck: `flush_blue` zeroes every
+/// field of a merged free block above the link word (see `Alloc.zero_fields` in
+/// its definition, extracted as `zero_fields_loop`), so a blue cell's only
+/// pointer-shaped field is its free-list link -- an object address, never an
+/// interior one.
+///
+/// Without the zeroing this would be *false*: a dying object may hold interior
+/// pointers, and sweep alone (`GC.Spec.Sweep.sweep_object`) rewrites only the
+/// link word, leaving the rest of the corpse intact.
+val coalesce_blue_fields_non_infix (g: heap)
+  : Lemma
+    (requires post_sweep_strong g)
+    (ensures blue_fields_non_infix (fst (coalesce g)))
+
 /// ---------------------------------------------------------------------------
 /// coalesce_preserves_wf proof helpers
 /// ---------------------------------------------------------------------------
@@ -2757,4 +2775,21 @@ val coalesce_objects_subset (g: heap) (y: obj_addr)
 let coalesce_objects_subset g y =
   coalesce_heap_unfold g g (objects zero_addr g) 0UL 0 0UL;
   coalesce_aux_objects_subset g g zero_addr (objects zero_addr g) 0UL 0 0UL (objects zero_addr g) y
+#pop-options
+
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
+let coalesce_blue_fields_non_infix g =
+  let g' = fst (coalesce g) in
+  coalesce_preserves_wf g;
+  wf_parts ();
+  let raw (src dst: obj_addr) : Lemma
+    (requires Seq.mem src (objects zero_addr g') /\
+              is_blue src g' /\
+              (let wz = wosize_of_object src g' in
+               U64.v wz < pow2 54 /\
+               exists_field_pointing_to_unchecked g' src wz dst))
+    (ensures Seq.mem dst (objects zero_addr g'))
+    = coalesce_blue_field_closure g src dst
+  in
+  blue_fields_non_infix_from_raw g' raw
 #pop-options

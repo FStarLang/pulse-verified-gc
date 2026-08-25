@@ -1040,9 +1040,35 @@ The resolution came from going the other way: keep `blue_fields_closed` **raw**
 (so `promote_object_preserves_bfc_close` never sees a resolution at all) and
 weaken the hypothesis feeding it from all-objects to blue-only.  Since the
 derivation quantifies only over blue sources, `blue_fields_non_infix` is exactly
-strong enough, and re-establishing it after a collection is free — the Cheney
+strong enough.
+
+*Establishing it.*  Across a minor collection this is free — the Cheney
 machinery already proves raw part 2 for blue objects, and
-`blue_fields_closed_implies_blue_fields_non_infix` converts.
+`blue_fields_closed_implies_blue_fields_non_infix` converts.  Across a **major**
+collection it is not, and the reason it holds at all is worth stating, because
+the obvious guess is wrong.  Sweep does not clear a dead object: it rewrites the
+link word and leaves the rest of the corpse — interior pointers included —
+exactly as the mutator left it.  If free-list cells were built that way the
+clause would be false, and the design above would be unsound.
+
+What rescues it is the **coalescing pass**.  `GC.Spec.Coalesce.flush_blue`
+writes the merged blue header, sets the free-list link, and then zeroes every
+remaining field of the block (`Alloc.zero_fields`, extracted as
+`zero_fields_loop`).  A blue cell thus has exactly one pointer-shaped field —
+its link — which is an object address, never an interior one.  The module
+comment on `GC.Spec.Coalesce` has said "Fields 2+: zeroed (to maintain
+well_formed_heap_part2)" since the coalescer was written; the interior-pointer
+work simply gave that zeroing a second job.
+
+Three lemmas now carry the fact to the top, so the invariant is visibly closed
+across collections rather than argued informally:
+`GC.Spec.Coalesce.coalesce_blue_fields_non_infix`,
+`GC.Spec.Correctness.gc_blue_fields_non_infix_gen`, and the strengthened
+postconditions of `GC.Impl.collect_with_roots` and `GC.Gen.Impl.gen_gc`
+(`gen_gc_heap_shape_post`, on both the normal and the out-of-memory path).  It is
+deliberately *not* folded into `gc_postcondition`: that predicate is also
+asserted of the post-sweep, pre-coalesce heap, which does not satisfy the clause,
+and merging them would have silently forced the weaker reading.
 
 Landing that required restating the whole Cheney/forwarding layer in resolved
 form: `CheneyPreservation.{Frame,NoBlue}`, `CheneyPreservation` itself, and

@@ -354,9 +354,31 @@ cells are owned by the allocator, their fields hold link words and stale data,
 and no OCaml program can arrange for one to point into the interior of another.
 It sits alongside the pre-existing `minor_fields_no_infix_targets` and
 `major_minor_fields_no_infix_targets` clauses, which impose the same restriction
-on *nursery*-directed pointers, and it is preserved across minor collection for
-free: the Cheney machinery already proves raw `well_formed_heap_part2` for blue
-objects, which `blue_fields_closed_implies_blue_fields_non_infix` converts.
+on *nursery*-directed pointers.
+
+It is preserved across *minor* collection for free: the Cheney machinery already
+proves raw `well_formed_heap_part2` for blue objects, which
+`blue_fields_closed_implies_blue_fields_non_infix` converts.
+
+Across a *major* collection it is not free, and it is worth being precise about
+why it holds, because it would be false if the collector simply threaded dead
+blocks onto the free list.  A dying object may hold interior pointers, and sweep
+alone (`GC.Spec.Sweep.sweep_object`) rewrites only its link word -- the rest of
+the corpse survives untouched.  What makes the clause true is the **coalescing
+pass**: `GC.Spec.Coalesce.flush_blue` writes the blue header, sets the free-list
+link, and then calls `Alloc.zero_fields` over every remaining field of the merged
+block (extracted as `flush_blue_impl` / `zero_fields_loop`).  A blue cell
+therefore has exactly one pointer-shaped field, its link, which is an object
+address and never an interior one.
+
+That is proved by `GC.Spec.Coalesce.coalesce_blue_fields_non_infix`, lifted by
+`GC.Spec.Correctness.gc_blue_fields_non_infix_gen`, and carried through the
+postconditions of `GC.Impl.collect_with_roots` and `GC.Gen.Impl.gen_gc`
+(`gen_gc_heap_shape_post`).  The invariant is closed: what `major_heap_shape`
+demands on entry, `gen_gc` re-establishes on exit, on both the normal and the
+out-of-memory path.  Note it is kept out of `gc_postcondition` on purpose --
+that predicate is also asserted of the post-sweep, pre-coalesce heap, which does
+not satisfy the clause.
 
 Infix addresses survive as **roots** for both collectors, and inside Cheney's
 promotion machinery, which is what `find_infix_parents` and

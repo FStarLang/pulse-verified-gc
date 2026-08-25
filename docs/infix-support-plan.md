@@ -343,6 +343,47 @@ Re-establishing the narrowed clause after a collection is free: the Cheney
 machinery already proves *raw* part 2 for blue objects, and
 `blue_fields_closed_implies_blue_fields_non_infix` converts.
 
+**How the clause is established (step 3c).**  This deserves its own note,
+because the answer is not "for free" and the invariant would be *false* if the
+collector merely threaded dead blocks onto the free list.  A dying object may
+hold interior pointers, and sweep alone (`GC.Spec.Sweep.sweep_object`) rewrites
+only its link word -- the rest of the corpse, interior pointers included, stays
+exactly as the mutator left it.
+
+What makes the clause true is the **coalescing pass**, which zeroes every field
+of a merged free block above the link word:
+
+```fstar
+let flush_blue g first_blue run_words fp = ...
+  let g1 = write_word g hd (makeHeader wz_u64 Blue 0UL) in
+  let g2 = HeapGraph.set_field g1 fb 1UL fp in          // free-list link
+  let g3 = Alloc.zero_fields g2 (fb + mword) (wz - 1) in // <-- everything else
+```
+
+extracted as `flush_blue_impl` / `zero_fields_loop` in
+`generational/snapshot/GC_Gen_Impl.c`.  A blue cell therefore has exactly one
+pointer-shaped field -- its free-list link, an object address, never an interior
+one.
+
+This is now proved and threaded to the top level:
+
+* `GC.Spec.Coalesce.coalesce_blue_fields_non_infix` -- `post_sweep_strong g ==>
+  blue_fields_non_infix (fst (coalesce g))`, built from the pre-existing
+  (private) `coalesce_blue_field_closure`, which is the raw closure fact the
+  zeroing buys.
+* `GC.Spec.Correctness.gc_blue_fields_non_infix_gen` -- the same statement at
+  the `mark_post` level.  Deliberately kept *out* of `gc_postcondition`, because
+  `gc_postcondition` is also claimed of the post-sweep, pre-coalesce heap, which
+  does **not** satisfy the clause.
+* `GC.Impl.collect_with_roots` / `GC.Impl.collect` postconditions.
+* `GC.Gen.Impl.gen_gc_heap_shape_post`, so `gen_gc` returns a heap satisfying the
+  clause on both paths -- the major-GC path via the above, and the OOM path
+  (where the major phase is skipped) via
+  `GC.Gen.MajorPrecondition.major_heap_shape_gc_postcondition`.
+
+The invariant is therefore closed across collections: what `major_heap_shape`
+requires on entry, `gen_gc` re-establishes on exit.
+
 Everything else in the Cheney/allocator layer was restated in resolved form:
 
 * `GC.Gen.CheneyPreservation.Frame` (new home for the header-framing helpers

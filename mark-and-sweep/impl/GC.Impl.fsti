@@ -60,6 +60,7 @@ fn collect_with_roots
   returns final_fp: U64.t
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecGCPost.gc_postcondition s2 /\
+                SpecFields.blue_fields_non_infix s2 /\
                 SpecGCPost.full_gc_correctness 's s2 roots /\
                 SpecGCPost.major_gc_live_subgraph_isomorphism 's s2 roots /\
                 SpecGCPost.major_gc_unreachable_final_blue 's s2 roots)
@@ -74,6 +75,7 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   returns final_fp: U64.t
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecGCPost.gc_postcondition s2 /\
+                SpecFields.blue_fields_non_infix s2 /\
                 SpecGCPost.full_gc_correctness 's s2 'st /\
                 SpecGCPost.major_gc_live_subgraph_isomorphism 's s2 'st /\
                 SpecGCPost.major_gc_unreachable_final_blue 's s2 'st)
