@@ -1090,6 +1090,7 @@ fn gen_gc (gh: gen_heap_t)
     is_gray_stack st st2 **
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
+      let minor_st_out : minor_state = { data = d2; bump = b2 } in
       let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
       let ok = snd res in
       // Failure is reported only for a concrete out-of-memory event: an object
@@ -1097,7 +1098,18 @@ fn gen_gc (gh: gen_heap_t)
       (not ok ==> CheneyBFS.cheney_oom minor_st 's 'fp 'rs) /\
       gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok 'st (stack_capacity st) /\
       gen_gc_heap_shape_post d2 b2 s2 /\
-      gen_gc_shape_restored_post d2 b2 s2 (fst res) /\
+      // **The collector restores its own precondition**: literally the same
+      // predicate `gen_gc` demands of the state it is handed, now asserted of
+      // the state it hands back.  A runtime driving an unbounded sequence of
+      // collections therefore establishes the invariant once, at start-up, and
+      // never again.
+      //
+      // The minor half is vacuous -- the nursery returned is
+      // `GC.Gen.MinorHeap.minor_reset`, i.e. zeroed -- so the content of the
+      // claim is `GC.Gen.HeapInvariant.major_heap_shape` of the major heap and
+      // free-list head, all fifteen conjuncts of it, supplied by
+      // `GC.Gen.PostCollectionShape.major_gc_restores_major_heap_shape`.
+      GenInv.collection_heap_shape minor_st_out s2 (fst res) /\
       gen_gc_reachable_subgraph_isomorphism_post
         minor_st 's 'fp 'rs ok s2 rs2 'st (stack_capacity st) /\
       gen_gc_unreachable_final_blue_post

@@ -1522,14 +1522,18 @@ scope.  All of it is ghost: the extracted C is unchanged.
 handed.  For a long time it promised nothing of the heap it returned, which made
 that predicate an *assumption* rather than an invariant: a runtime driving a
 second collection had no way to satisfy the precondition again.  It is now a
-postcondition, `gen_gc_shape_restored_post`:
+postcondition, and deliberately not behind a named wrapper — the `ensures`
+names the very predicate the `requires` names, so the two can be read against
+each other:
 
 ```fstar
-let gen_gc_shape_restored_post
-  (minor_data: minor_heap) (minor_bump: U64.t)
-  (final_major: heap) (final_fp: U64.t) : prop =
-  GenInv.collection_heap_shape
-    ({ data = minor_data; bump = minor_bump } <: minor_state) final_major final_fp
+  requires ... pure (
+    let minor_st : minor_state = { data = 'd; bump = 'b } in
+    GenInv.collection_heap_shape minor_st 's 'fp /\ ... )
+  ensures exists* d2 b2 s2 ... pure (
+    let minor_st_out : minor_state = { data = d2; bump = b2 } in
+    ...
+    GenInv.collection_heap_shape minor_st_out s2 (fst res) /\ ... )
 ```
 
 The minor half is vacuous.  `minor_collect_full` finishes by calling
