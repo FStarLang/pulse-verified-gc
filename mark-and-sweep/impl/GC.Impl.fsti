@@ -63,7 +63,8 @@ fn collect_with_roots
                 SpecFields.blue_fields_non_infix s2 /\
                 SpecGCPost.full_gc_correctness 's s2 roots /\
                 SpecGCPost.major_gc_live_subgraph_isomorphism 's s2 roots /\
-                SpecGCPost.major_gc_unreachable_final_blue 's s2 roots)
+                SpecGCPost.major_gc_unreachable_final_blue 's s2 roots /\
+                SpecGCPost.gc_coalesce_source 's s2 roots fp final_fp)
 
 /// Main garbage collection entry point
 /// 1. Mark: bounded-stack mark with overflow handling
@@ -78,4 +79,5 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
                 SpecFields.blue_fields_non_infix s2 /\
                 SpecGCPost.full_gc_correctness 's s2 'st /\
                 SpecGCPost.major_gc_live_subgraph_isomorphism 's s2 'st /\
-                SpecGCPost.major_gc_unreachable_final_blue 's s2 'st)
+                SpecGCPost.major_gc_unreachable_final_blue 's s2 'st /\
+                SpecGCPost.gc_coalesce_source 's s2 'st fp final_fp)

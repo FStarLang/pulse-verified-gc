@@ -1522,6 +1522,8 @@ let major_gc_unreachable_final_blue_gen h_init h_mark roots fp =
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+let gc_coalesce_source_intro h_init h_mark roots fp = ()
+
 let gc_postcondition_gen h_init h_mark roots fp =
   mark_post_elim_wfh h_init h_mark roots fp;
   mark_post_elim_fp h_init h_mark roots fp;
