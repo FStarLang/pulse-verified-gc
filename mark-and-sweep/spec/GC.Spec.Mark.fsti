@@ -218,11 +218,16 @@ let noGreyObjects (g: heap) : prop =
 /// No black objects initially
 let no_black_objects (g: heap) : prop =
   forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_black obj g)
-/// No non-blue object points to a blue object
+/// No non-blue object points *into* a blue object.
+///
+/// The target is resolved first: a field may hold an interior pointer to an
+/// infix object embedded in a closure, and what must not be free is the
+/// enclosing closure.  `resolve_object` is the identity on ordinary pointers, so
+/// on those this is exactly "no non-blue object points to a blue object".
 let no_pointer_to_blue (g: heap) : prop =
   forall (src dst: obj_addr).
     Seq.mem src (objects zero_addr g) /\ ~(is_blue src g) /\ points_to g src dst ==>
-    ~(is_blue dst g)
+    ~(is_blue (GC.Spec.Object.resolve_object dst g) g)
 
 /// Introduce `no_pointer_to_blue` from a field-local proof.
 ///
@@ -239,7 +244,7 @@ val no_pointer_to_blue_intro_from_fields
               is_pointer_to
                 (read_word g (U64.uint_to_t (U64.v src + j * 8)))
                 dst)
-    (ensures ~(is_blue dst g))))
+    (ensures ~(is_blue (GC.Spec.Object.resolve_object dst g) g))))
   : Lemma (requires well_formed_heap_part1 g)
           (ensures no_pointer_to_blue g)
 
@@ -564,21 +569,11 @@ val check_and_darken_field_preserves_wf :
                   U64.v i <= U64.v wz /\
                   HeapGraph.is_pointer_field (HeapGraph.get_field g obj i))
         (ensures (let v = HeapGraph.get_field g obj i in
-                  let target : obj_addr = v in
+                  let raw : obj_addr = v in
+                  let target : obj_addr = resolve_object raw g in
                   Seq.mem target (objects zero_addr g) /\
                   (is_white target g ==>
                     (well_formed_heap (set_object_color target g Header.Gray) /\
                      Seq.mem obj (objects zero_addr (set_object_color target g Header.Gray)) /\
                      U64.v wz <= U64.v (wosize_of_object obj (set_object_color target g Header.Gray)) /\
                      U64.v (wosize_of_object obj (set_object_color target g Header.Gray)) < pow2 54))))
-
-/// pointer field values resolve to themselves in well-formed heaps
-val pointer_field_resolve_identity :
-  (g: heap) -> (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> (wz: U64.t) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
-                  U64.v wz <= U64.v (wosize_of_object obj g) /\
-                  U64.v (wosize_of_object obj g) < pow2 54 /\
-                  Seq.length g == heap_size /\
-                  U64.v i <= U64.v wz /\
-                  HeapGraph.is_pointer_field (HeapGraph.get_field g obj i))
-        (ensures resolve_object (HeapGraph.get_field g obj i) g == HeapGraph.get_field g obj i)

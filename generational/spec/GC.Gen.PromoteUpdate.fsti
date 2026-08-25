@@ -186,10 +186,6 @@ val update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map
   : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
     (ensures well_formed_heap_part4 (update_major_pointers major fwd))
 
-/// update_major_pointers preserves well_formed_heap_part3 (infix well-formedness)
-val update_major_pointers_preserves_wfh_part3 (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
-    (ensures well_formed_heap_part3 (update_major_pointers major fwd))
 /// Specifies the effect of update_major_pointers on a single field:
 /// After the update, field j of object obj is either:
 ///   - fwd(old_value) if the old value was a minor pointer with valid forwarding

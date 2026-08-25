@@ -216,27 +216,6 @@ let update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-/// update_major_pointers preserves well_formed_heap_part3 (infix well-formedness).
-/// Since part4 holds (no objects are infix), infix_wf is vacuously true.
-#push-options "--z3rlimit 10"
-let update_major_pointers_preserves_wfh_part3 (major: heap) (fwd: forwarding_map)
-    =
-  update_major_pointers_preserves_wfh_part4 major fwd;
-  update_major_pointers_preserves_objects major fwd;
-  let mc = update_major_pointers major fwd in
-  let pf (h: obj_addr) : Lemma
-    (requires Seq.mem h (objects zero_addr mc) /\ GC.Spec.Object.is_infix h mc)
-    (ensures (let p = GC.Spec.Object.parent_closure_addr_nat h mc in
-              p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
-              Seq.mem (U64.uint_to_t p) (objects zero_addr mc) /\
-              GC.Spec.Object.is_closure (U64.uint_to_t p) mc))
-  = // part4 says ~(is_infix h mc), contradiction
-    assert (well_formed_heap_part4 mc);
-    assert (Seq.mem h (objects zero_addr mc) ==> ~(GC.Spec.Object.is_infix h mc))
-  in
-  GC.Spec.Object.infix_wf_intro mc (objects zero_addr mc) pf;
-  wfh_part3_intro mc
-#pop-options
 
 /// ---------------------------------------------------------------------------
 /// Promoted objects land in the final major heap's objects list

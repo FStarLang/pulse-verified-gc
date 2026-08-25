@@ -33,6 +33,15 @@ module FreeListShape = GC.Gen.FreeListShape
 /// Major-heap shape needed by both minor collection and the following major GC:
 /// object layout/infix well-formedness, free-list validity, color invariants,
 /// and the no-scan/no-pointer-to-blue safety conditions.
+///
+/// It also includes `no_infix_field_targets`: no major object field holds an
+/// interior (infix) pointer.  `well_formed_heap` itself permits such fields ---
+/// that is how OCaml represents mutually recursive closures, and the
+/// mark-and-sweep collector handles them --- but the Cheney copying pass of
+/// minor collection does not: forwarding identifies a field value with a whole
+/// object.  This clause is the major-heap counterpart of the pre-existing
+/// `minor_fields_no_infix_targets` and `major_minor_fields_no_infix_targets`,
+/// which impose exactly the same restriction on nursery-directed pointers.
 [@@"opaque_to_smt"]
 val major_heap_shape (major: heap) (fp: U64.t) : prop
 
@@ -78,7 +87,8 @@ val major_heap_shape_intro (major: heap) (fp: U64.t)
                     Mark.no_black_objects major /\
                     SweepInv.no_gray_objects major /\
                     Mark.no_pointer_to_blue major /\
-                    no_scan_invariant major)
+                    no_scan_invariant major /\
+                    no_infix_field_targets major)
           (ensures major_heap_shape major fp)
 
 val major_heap_shape_elim (major: heap) (fp: U64.t)
@@ -96,7 +106,8 @@ val major_heap_shape_elim (major: heap) (fp: U64.t)
                    Mark.no_black_objects major /\
                    SweepInv.no_gray_objects major /\
                    Mark.no_pointer_to_blue major /\
-                   no_scan_invariant major)
+                   no_scan_invariant major /\
+                   no_infix_field_targets major)
 
 val minor_heap_shape_elim (minor: minor_state)
   : Lemma (requires minor_heap_shape minor)

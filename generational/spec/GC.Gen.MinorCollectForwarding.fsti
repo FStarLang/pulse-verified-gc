@@ -116,7 +116,8 @@ val remembered_roots_in_roots_from_slots
 val heap_graph_edge_to_field_read
   (g: heap) (src dst: obj_addr)
   : Lemma
-    (requires mem_graph_edge (HeapModel.create_graph g) src dst)
+    (requires mem_graph_edge (HeapModel.create_graph g) src dst /\
+              well_formed_heap g /\ no_infix_field_targets g)
     (ensures
       Seq.mem src (objects zero_addr g) /\
       is_no_scan src g = false /\
@@ -158,6 +159,7 @@ val combined_reachable_minor_has_fwd
       RBridge.major_field_zero_covered minor major roots /\
       RBridge.remembered_roots_in_roots major roots /\
       well_formed_heap major /\
+      no_infix_field_targets major /\
       minor_wf minor /\
       Mark.no_pointer_to_blue major /\
       RBridge.minor_no_pointer_to_blue minor major /\
@@ -181,6 +183,7 @@ val combined_reachable_minor_has_fwd_from_slots
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       well_formed_heap major /\
+      no_infix_field_targets major /\
       minor_wf minor /\
       Mark.no_pointer_to_blue major /\
       RBridge.minor_no_pointer_to_blue minor major /\

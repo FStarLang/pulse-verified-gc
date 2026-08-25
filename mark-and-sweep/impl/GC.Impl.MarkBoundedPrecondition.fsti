@@ -36,7 +36,7 @@ let root_valid_for_darkening (g: heap) (r: U64.t) : prop =
   ~(SpecObject.is_blue (r <: obj_addr) g)
 
 val root_valid_for_darkening_points_to_object (g: heap) (r: U64.t)
-  : Lemma (requires root_valid_for_darkening g r)
+  : Lemma (requires SpecFields.well_formed_heap g /\ root_valid_for_darkening g r)
           (ensures MB.root_points_to_object g r)
 
 /// The obligations a caller must meet on the heap and stack *before* root

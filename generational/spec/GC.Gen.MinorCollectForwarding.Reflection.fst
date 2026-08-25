@@ -89,7 +89,8 @@ let field_read_at (g: heap) (src: obj_addr) (dst: U64.t) (j: nat) : prop =
 #push-options "--fuel 0 --ifuel 2 --z3rlimit 10"
 private let field_read_exists (g: heap) (src dst: obj_addr)
   : Lemma
-    (requires mem_graph_edge (HeapModel.create_graph g) src dst)
+    (requires mem_graph_edge (HeapModel.create_graph g) src dst /\
+              well_formed_heap g /\ no_infix_field_targets g)
     (ensures exists (j: nat). field_read_at g src dst j)
   =
   MCFH.heap_graph_edge_to_field_read g src dst
@@ -184,6 +185,7 @@ let post_edge_from_minor_image_reflects_mem_ce
     normal_src_image_is_val_addr minor major fp roots v;
     assert (is_val_addr target_img);
     post_minor_edge_to_mem_graph_edge minor major fp roots fwd_src target_img;
+    CheneyPres.cheney_collect_preserves_wfh_from_shape minor major fp roots;
     MCFH.heap_graph_edge_to_field_read updated fwd_src_obj (target_img <: obj_addr);
     heap_size_facts ();
     field_read_exists updated fwd_src_obj (target_img <: obj_addr);
@@ -364,6 +366,7 @@ let post_edge_from_minor_image_reflects_target
     MCFH.mem_graph_vertex_at_is_obj_addr updated y;
     assert (is_val_addr y);
     post_minor_edge_to_mem_graph_edge minor major fp roots fwd_src y;
+    CheneyPres.cheney_collect_preserves_wfh_from_shape minor major fp roots;
     MCFH.heap_graph_edge_to_field_read updated fwd_src_obj (y <: obj_addr);
     heap_size_facts ();
     field_read_exists updated fwd_src_obj (y <: obj_addr);

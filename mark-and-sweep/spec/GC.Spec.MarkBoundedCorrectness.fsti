@@ -74,6 +74,12 @@ val mark_step_bounded_preserves_wosize
           (ensures wosize_of_object x (fst (mark_step_bounded g st cap)) ==
                    wosize_of_object x g)
 
+val mark_step_bounded_preserves_resolve
+  (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat) (x: obj_addr)
+  : Lemma (requires well_formed_heap g /\ bounded_stack_props g st)
+          (ensures resolve_object x (fst (mark_step_bounded g st cap)) ==
+                   resolve_object x g)
+
 val mark_step_bounded_preserves_get_field
   (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
   (x: obj_addr) (j: U64.t)

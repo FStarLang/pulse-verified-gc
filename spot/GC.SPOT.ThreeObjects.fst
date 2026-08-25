@@ -147,6 +147,7 @@ let expose_spot_collection_facts
       (ensures
         GC.Gen.HeapInvariant.collection_heap_shape minor major fp /\
         SpecFields.well_formed_heap major /\
+        SpecFields.no_infix_field_targets major /\
         minor_wf minor /\
         SpecMark.no_pointer_to_blue major /\
         RBridge.minor_no_pointer_to_blue minor major /\

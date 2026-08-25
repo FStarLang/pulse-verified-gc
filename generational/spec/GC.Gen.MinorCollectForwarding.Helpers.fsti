@@ -214,6 +214,7 @@ val heap_field_points_to_graph_edge
   : Lemma
     (requires
       well_formed_heap g /\
+      no_infix_field_targets g /\
       Seq.mem src (objects zero_addr g) /\
       ~(is_no_scan src g) /\
       j < U64.v (wosize_of_object src g) /\
@@ -226,7 +227,8 @@ val heap_field_points_to_graph_edge
 val heap_graph_edge_to_pointer_field
   (g: heap) (src dst: obj_addr)
   : Lemma
-    (requires mem_graph_edge (HeapModel.create_graph g) src dst)
+    (requires mem_graph_edge (HeapModel.create_graph g) src dst /\
+              well_formed_heap g /\ no_infix_field_targets g)
     (ensures
       Seq.mem src (objects zero_addr g) /\
       HeapGraph.object_fits_in_heap src g /\
@@ -239,7 +241,8 @@ val heap_graph_edge_to_pointer_field
 val heap_graph_edge_to_field_read
   (g: heap) (src dst: obj_addr)
   : Lemma
-    (requires mem_graph_edge (HeapModel.create_graph g) src dst)
+    (requires mem_graph_edge (HeapModel.create_graph g) src dst /\
+              well_formed_heap g /\ no_infix_field_targets g)
     (ensures
       Seq.mem src (objects zero_addr g) /\
       is_no_scan src g = false /\

@@ -117,6 +117,7 @@ private let old_major_field_pointer_target_nonblue
   : Lemma
     (requires
       well_formed_heap major /\
+      no_infix_field_targets major /\
       Mark.no_pointer_to_blue major /\
       Seq.mem src (objects zero_addr major) /\
       ~(is_blue src major) /\
@@ -146,6 +147,8 @@ private let old_major_field_pointer_target_nonblue
     field_pointer_target_in_objects major src k target;
     field_read_implies_exists_pointing major src (wosize_of_object src major) k target;
     assert (points_to major src target);
+    no_infix_points_to_target major src target;
+    resolve_non_infix target major;
     assert (~(is_blue target major))
 #pop-options
 
@@ -439,6 +442,7 @@ private let post_edge_from_major_image_reflects_mem_ce
     normal_src_image_is_val_addr minor major fp roots v;
     assert (is_val_addr target_img);
     post_minor_edge_to_mem_graph_edge minor major fp roots src target_img;
+    CheneyPres.cheney_collect_preserves_wfh_from_shape minor major fp roots;
     heap_graph_edge_to_field_read updated src_obj (target_img <: obj_addr);
     let j = FStar.IndefiniteDescription.indefinite_description_ghost nat
       (fun j ->
@@ -609,6 +613,7 @@ private let post_edge_from_major_image_reflects_target
     mem_graph_vertex_at_is_obj_addr updated y;
     assert (is_val_addr y);
     post_minor_edge_to_mem_graph_edge minor major fp roots src y;
+    CheneyPres.cheney_collect_preserves_wfh_from_shape minor major fp roots;
     heap_graph_edge_to_field_read updated src_obj (y <: obj_addr);
     let j = FStar.IndefiniteDescription.indefinite_description_ghost nat
       (fun j ->

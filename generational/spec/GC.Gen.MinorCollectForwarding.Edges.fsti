@@ -59,6 +59,7 @@ val combined_reachable_minor_has_fwd
       RBridge.major_field_zero_covered minor major roots /\
       RBridge.remembered_roots_in_roots major roots /\
       well_formed_heap major /\
+      no_infix_field_targets major /\
       minor_wf minor /\
       Mark.no_pointer_to_blue major /\
       RBridge.minor_no_pointer_to_blue minor major /\
@@ -82,6 +83,7 @@ val combined_reachable_minor_has_fwd_from_slots
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       well_formed_heap major /\
+      no_infix_field_targets major /\
       minor_wf minor /\
       Mark.no_pointer_to_blue major /\
       RBridge.minor_no_pointer_to_blue minor major /\

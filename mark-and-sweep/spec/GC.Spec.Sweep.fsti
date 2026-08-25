@@ -264,9 +264,23 @@ val sweep_preserves_tag_black : (g: heap) -> (fp: U64.t) -> (x: obj_addr) ->
 val get_pointer_fields_aux_preserved :
   (g: heap) -> (g': heap) -> (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
   Lemma (requires (forall (j: U64.t). U64.v j >= U64.v i /\ U64.v j <= U64.v ws ==>
-                                       HeapGraph.get_field g obj j == HeapGraph.get_field g' obj j))
+                                       HeapGraph.get_field g obj j == HeapGraph.get_field g' obj j /\
+                                       HeapGraph.resolve_field g (HeapGraph.get_field g obj j) ==
+                                       HeapGraph.resolve_field g' (HeapGraph.get_field g obj j)))
         (ensures HeapGraph.get_pointer_fields_aux g obj i ws == 
                  HeapGraph.get_pointer_fields_aux g' obj i ws)
+
+/// Sweeping preserves how a field of an enumerated object resolves: it only
+/// rewrites object headers, and headers carry the tag and size that resolution
+/// depends on.
+val sweep_preserves_resolve_field :
+  (g: heap) -> (fp: U64.t) -> (x: obj_addr) -> (j: U64.t{U64.v j >= 1}) ->
+  Lemma (requires well_formed_heap g /\ fp_in_heap fp g /\
+                  Seq.mem x (objects zero_addr g) /\
+                  U64.v j <= U64.v (wosize_of_object x g))
+        (ensures (let v = HeapGraph.get_field g x j in
+                  HeapGraph.resolve_field g v ==
+                  HeapGraph.resolve_field (fst (sweep g fp)) v))
 
 val sweep_preserves_edges : (g: heap) -> (fp: U64.t) -> (x: obj_addr) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\ is_black x g /\

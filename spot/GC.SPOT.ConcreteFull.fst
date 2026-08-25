@@ -36,6 +36,9 @@ module MinorFwd = GC.Gen.MinorCollectForwarding
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module MajorGC = GC.Impl
 module MarkBoundedImpl = GC.Impl.MarkBounded
+module MBP = GC.Impl.MarkBoundedPrecondition
+module MajorPre = GC.Gen.MajorPrecondition
+module CheneyPres = GC.Gen.CheneyPreservation
 
 let roots_match_u64_mem_in_stack
   (roots: seq U64.t) (st: seq obj_addr) (r: U64.t)
@@ -614,6 +617,25 @@ let prepared_roots_preserve_c_field1
     end
   in
   FStar.Classical.forall_intro no_root_header;
+  // Every post-minor root is a genuine, non-infix major object -- a theorem
+  // about minor collection, not something the caller has to supply.
+  CheneyPres.cheney_collect_preserves_wfh_from_shape
+    ConcreteMinor.spot_minor2
+    (ConcreteMajor.spot_major_heap r)
+    (ConcreteMajor.spot_major_fp r)
+    roots;
+  MajorPre.post_minor_roots_valid_for_darkening
+    ConcreteMinor.spot_minor2
+    (ConcreteMajor.spot_major_heap r)
+    (ConcreteMajor.spot_major_fp r)
+    roots;
+  FStar.Classical.forall_intro (fun (i: nat) ->
+    (if i < Seq.length roots_out then
+       MBP.root_valid_for_darkening_points_to_object
+         result.mc_major (Seq.index roots_out i))
+    <: Lemma (i < Seq.length roots_out ==>
+              MarkBoundedImpl.root_points_to_object
+                result.mc_major (Seq.index roots_out i)));
   MarkBoundedImpl.darken_roots_bounded_spec_preserves_read_word
     result.mc_major st roots_out cap slot
 #pop-options

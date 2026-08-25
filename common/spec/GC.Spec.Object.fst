@@ -393,6 +393,21 @@ let is_no_scan_spec (h_addr: obj_addr) (g: heap)
   : Lemma (is_no_scan h_addr g == U64.gte (tag_of_object h_addr g) no_scan_tag) = 
   ()
 
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let header_low_bits_are_tag_low_bits (hdr: U64.t)
+  : Lemma (U64.v hdr % 8 == U64.v (getTag hdr) % 8)
+  = getTag_spec hdr;
+    FStar.UInt.logand_mask #64 (U64.v hdr) 8;
+    assert (U64.v (getTag hdr) == U64.v hdr % 256);
+    FStar.Math.Lemmas.modulo_modulo_lemma (U64.v hdr) 8 32
+#pop-options
+
+let infix_header_misaligned (h: obj_addr) (g: heap)
+  : Lemma (requires is_infix h g)
+          (ensures U64.v (read_word g (hd_address h)) % 8 == 1)
+  = tag_of_object_spec h g;
+    header_low_bits_are_tag_low_bits (read_word g (hd_address h))
+
 /// ---------------------------------------------------------------------------
 /// Color Mutation Operations
 /// ---------------------------------------------------------------------------
@@ -715,7 +730,64 @@ let resolve_non_infix (addr: obj_addr) (g: heap)
 let resolve_infix_spec (addr: obj_addr) (g: heap)
           = ()
 
-/// Infix well-formedness: every infix object has a valid parent closure in the objects list
+let resolve_infix_invalid_parent (addr: obj_addr) (g: heap)
+          = ()
+
+/// Pointwise infix well-formedness (see the interface for the rationale).
+let infix_addr_wf (g: heap) (objs: seq obj_addr) (h: obj_addr) : prop =
+  is_infix h g ==> infix_addr_conds g objs h
+
+let infix_addr_wf_elim (g: heap) (objs: seq obj_addr) (h: obj_addr)
+  = ()
+
+let infix_addr_wf_intro (g: heap) (objs: seq obj_addr) (h: obj_addr)
+  = ()
+
+let infix_addr_wf_non_infix (g: heap) (objs: seq obj_addr) (h: obj_addr)
+  = ()
+
+let infix_addr_wf_resolve (g: heap) (objs: seq obj_addr) (h: obj_addr)
+  = if is_infix h g then resolve_infix_spec h g
+    else resolve_non_infix h g
+
+let resolve_object_locality (h: obj_addr) (g1: heap) (g2: heap)
+  = tag_of_object_spec h g1;
+    tag_of_object_spec h g2;
+    wosize_of_object_spec h g1;
+    wosize_of_object_spec h g2
+
+let infix_addr_wf_locality (g1: heap) (g2: heap) (objs: seq obj_addr) (h: obj_addr)
+  = resolve_object_locality h g1 g2;
+    if is_infix h g1 then begin
+      let p = parent_closure_addr_nat h g1 in
+      assert (Seq.mem (U64.uint_to_t p <: obj_addr) objs);
+      resolve_object_locality (U64.uint_to_t p <: obj_addr) g1 g2
+    end else ();
+    infix_addr_wf_intro g2 objs h
+
+/// Infix well-formedness: every infix object has a valid parent closure in the
+/// objects list.  Note that this is *not* `infix_addr_wf` lifted over `objs`:
+/// it predates the pointwise version and carries only the parent conditions,
+/// which is all its clients need.
+let infix_addr_wf_congr (g1: heap) (g2: heap) (objs: seq obj_addr) (h: obj_addr)
+  = if is_infix h g1 then begin
+      infix_addr_wf_elim g1 objs h;
+      let w = U64.v (wosize_of_object h g1) in
+      let pn = U64.v h - w * 8 in
+      assert (Seq.mem (U64.uint_to_t pn <: obj_addr) objs)
+    end else ();
+    infix_addr_wf_intro g2 objs h
+
+let infix_addr_wf_transfer (g1: heap) (g2: heap) (objs1: seq obj_addr) (objs2: seq obj_addr)
+    (h: obj_addr)
+  = if is_infix h g1 then begin
+      infix_addr_wf_elim g1 objs1 h;
+      let w = U64.v (wosize_of_object h g1) in
+      let pn = U64.v h - w * 8 in
+      assert (Seq.mem (U64.uint_to_t pn <: obj_addr) objs2)
+    end else ();
+    infix_addr_wf_intro g2 objs2 h
+
 let infix_wf (g: heap) (objs: seq obj_addr) : prop =
   forall (h: obj_addr). Seq.mem h objs /\ is_infix h g ==>
     (let p = parent_closure_addr_nat h g in
@@ -783,6 +855,16 @@ private let wosize_preserved_parent_preserved (obj h: obj_addr) (g: heap) (c: co
   = ()
 
 /// Color change preserves infix_wf
+let color_change_preserves_wosize_any (obj: obj_addr) (addr: obj_addr) (g: heap) (c: color)
+  = let g' = set_object_color obj g c in
+    wosize_of_object_spec addr g;
+    wosize_of_object_spec addr g';
+    if addr = obj then set_object_color_preserves_getWosize_at_hd obj g c
+    else begin
+      hd_address_injective addr obj;
+      set_object_color_read_word obj (GC.Spec.Heap.hd_address addr) g c
+    end
+
 let color_change_preserves_infix_wf (obj: obj_addr) (g: heap) (c: color) (objs: seq obj_addr)
   = let g' = set_object_color obj g c in
     let aux (h: obj_addr)

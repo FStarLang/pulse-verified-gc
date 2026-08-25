@@ -1533,7 +1533,8 @@ let post_sweep_strong (g: heap) : prop =
      U64.v field_val < U64.v zero_addr + U64.v mword \/
      U64.v field_val >= heap_size \/
      U64.v field_val % U64.v mword <> 0 \/
-     ~(Seq.mem (field_val <: obj_addr) (objects zero_addr g) /\ is_blue (field_val <: obj_addr) g)))
+     ~(Seq.mem (GC.Spec.Object.resolve_object (field_val <: obj_addr) g) (objects zero_addr g) /\
+       is_blue (GC.Spec.Object.resolve_object (field_val <: obj_addr) g) g)))
 
 val coalesce_preserves_wf (g: heap)
   : Lemma
@@ -2397,7 +2398,8 @@ private let rec coalesce_white_field_not_blue
       Seq.mem src (objects zero_addr g) /\ is_white src g /\
       U64.v wz <= U64.v (wosize_of_object src g) /\
       exists_field_pointing_to_unchecked g src wz dst /\
-      Seq.mem dst (objects zero_addr g) /\ is_blue dst g)
+      Seq.mem (GC.Spec.Object.resolve_object dst g) (objects zero_addr g) /\
+      is_blue (GC.Spec.Object.resolve_object dst g) g)
     (ensures False)
     (decreases U64.v wz)
   = if wz = 0UL then ()
@@ -2435,7 +2437,8 @@ private let rec coalesce_white_field_not_blue
         let i : nat = U64.v wz in
         assert (i >= 1 /\ i <= U64.v (wosize_of_object src g) /\ i < pow2 64);
         assert (U64.uint_to_t i == wz);
-        assert (Seq.mem (fv <: obj_addr) (objects zero_addr g) /\ is_blue (fv <: obj_addr) g)
+        assert (Seq.mem (GC.Spec.Object.resolve_object (fv <: obj_addr) g) (objects zero_addr g) /\
+                is_blue (GC.Spec.Object.resolve_object (fv <: obj_addr) g) g)
       end
       else begin
         coalesce_white_field_not_blue g src idx dst
@@ -2487,7 +2490,69 @@ private let rec white_src_efptu_transfer
     end
 #pop-options
 
-/// For a white source in g', if efptu g' src wz dst, then dst in objects zero_addr g'.
+/// Shared core: for a field target `dst` of a *white survivor* `src` in the
+/// pre-coalesce heap, coalescing leaves the target's resolution alone and keeps
+/// the resolved object enumerated.
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+private let white_target_resolve_stable (g: heap) (src dst: obj_addr)
+  : Lemma
+    (requires
+      post_sweep_strong g /\
+      Seq.mem src (objects zero_addr g) /\ is_white src g /\
+      (let wz = wosize_of_object src g in
+       U64.v wz < pow2 54 /\
+       exists_field_pointing_to_unchecked g src wz dst))
+    (ensures (let g' = fst (coalesce g) in
+              GC.Spec.Object.resolve_object dst g' == GC.Spec.Object.resolve_object dst g /\
+              Seq.mem (GC.Spec.Object.resolve_object dst g') (objects zero_addr g') /\
+              GC.Spec.Object.infix_addr_wf g' (objects zero_addr g') dst))
+  = let g' = fst (coalesce g) in
+    let wz = wosize_of_object src g in
+    wosize_of_object_bound src g;
+    // In g, well-formedness gives the resolved target in objects and part 3 at dst
+    wf_field_target_in_objects g src dst;
+    wf_field_target_infix_wf g src dst;
+    let p : obj_addr = GC.Spec.Object.resolve_object dst g in
+    assert (Seq.mem p (objects zero_addr g));
+    // The enclosing object of the target cannot be a free block ...
+    if is_blue p g then coalesce_white_field_not_blue g src wz dst;
+    assert (~(is_blue p g));
+    // ... hence it is a white survivor, whose header word coalesce leaves alone.
+    assert (is_white p g);
+    coalesce_survivors_in_objects g p;
+    coalesce_preserves_survivor_header g p;
+    GC.Spec.Object.resolve_object_locality p g g';
+    // dst's own header is p's header when dst is not infix, and otherwise sits
+    // at field index `wosize_of_object dst g` of the surviving closure p.
+    if GC.Spec.Object.is_infix dst g then begin
+      GC.Spec.Object.infix_addr_wf_elim g (objects zero_addr g) dst;
+      GC.Spec.Object.resolve_infix_spec dst g;
+      let w = wosize_of_object dst g in
+      wosize_of_object_bound dst g;
+      let pn = GC.Spec.Object.parent_closure_addr_nat dst g in
+      GC.Spec.Object.parent_closure_addr_nat_spec dst g;
+      assert (pn == U64.v dst - U64.v w * 8);
+      assert (pn >= 8 /\ pn < heap_size);
+      FStar.Math.Lemmas.pow2_lt_compat 64 61;
+      assert (U64.v (U64.uint_to_t pn) == pn);
+      assert (p == U64.uint_to_t pn);
+      assert (U64.v p == U64.v dst - U64.v w * 8);
+      assert (U64.v w < U64.v (wosize_of_object p g));
+      hd_address_spec p;
+      hd_address_spec dst;
+      wf_object_size_bound g p;
+      HeapGraph.get_field_addr_eq g p w;
+      coalesce_preserves_survivor_field g p w;
+      assert (HeapGraph.get_field g p w == read_word g (hd_address dst));
+      assert (HeapGraph.get_field g' p w == read_word g' (hd_address dst))
+    end else
+      GC.Spec.Object.resolve_non_infix dst g;
+    GC.Spec.Object.resolve_object_locality dst g g';
+    GC.Spec.Object.infix_addr_wf_transfer g g' (objects zero_addr g) (objects zero_addr g') dst
+#pop-options
+
+/// For a white source in g', if efptu g' src wz dst, then dst's resolved target
+/// is in objects zero_addr g'.
 #push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 private let white_src_field_closure (g: heap) (src dst: obj_addr)
   : Lemma
@@ -2499,7 +2564,9 @@ private let white_src_field_closure (g: heap) (src dst: obj_addr)
        let wz = wosize_of_object src g' in
        U64.v wz < pow2 54 /\
        exists_field_pointing_to_unchecked g' src wz dst))
-    (ensures Seq.mem dst (objects zero_addr (fst (coalesce g))))
+    (ensures (let g' = fst (coalesce g) in
+              Seq.mem (GC.Spec.Object.resolve_object dst g') (objects zero_addr g') /\
+              GC.Spec.Object.infix_addr_wf g' (objects zero_addr g') dst))
   = let g' = fst (coalesce g) in
     coalesce_preserves_survivor_header g src;
     wosize_of_object_spec src g;
@@ -2509,15 +2576,36 @@ private let white_src_field_closure (g: heap) (src dst: obj_addr)
     wosize_of_object_bound src g;
     // Transfer efptu from g' to g
     white_src_efptu_transfer g src wz dst;
-    // In g, wf gives dst in objects zero_addr g
-    wf_field_target_in_objects g src dst;
-    assert (Seq.mem dst (objects zero_addr g));
-    // If blue: contradiction from post_sweep_strong
-    // If white: coalesce_survivors_in_objects gives dst in objects g'
-    if is_blue dst g then
-      coalesce_white_field_not_blue g src wz dst
-    else
-      coalesce_survivors_in_objects g dst
+    white_target_resolve_stable g src dst
+#pop-options
+
+/// Coalescing preserves how a white survivor's field resolves.
+val coalesce_preserves_survivor_field_resolve
+  (g: heap) (x: obj_addr) (j: U64.t{U64.v j >= 1})
+  : Lemma
+    (requires post_sweep_strong g /\
+              Seq.mem x (objects zero_addr g) /\ is_white x g /\
+              U64.v j <= U64.v (wosize_of_object x g))
+    (ensures (let v = HeapGraph.get_field g x j in
+              HeapGraph.resolve_field g v ==
+              HeapGraph.resolve_field (fst (coalesce g)) v))
+
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
+let coalesce_preserves_survivor_field_resolve g x j
+  = let g' = fst (coalesce g) in
+    let v = HeapGraph.get_field g x j in
+    if HeapGraph.is_pointer_field v then begin
+      HeapGraph.is_pointer_field_is_obj_addr v;
+      let vo : obj_addr = v in
+      let wz = wosize_of_object x g in
+      wosize_of_object_bound x g;
+      hd_address_spec x;
+      FStar.Math.Lemmas.pow2_lt_compat 61 54;
+      HeapGraph.get_field_addr_eq g x j;
+      wf_object_size_bound g x;
+      field_read_implies_exists_pointing g x wz (U64.sub j 1UL) vo;
+      white_target_resolve_stable g x vo
+    end
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -2559,19 +2647,6 @@ let coalesce_preserves_wf g =
   FStar.Classical.forall_intro part4_imp;
   assert (well_formed_heap_part4 g');
 
-  // --- Part 3: infix_wf (vacuously true from Part 4) ---
-  let part3_pf (h: obj_addr)
-    : Lemma
-      (requires Seq.mem h (objects zero_addr g') /\ is_infix h g')
-      (ensures (let p = GC.Spec.Object.parent_closure_addr_nat h g' in
-                p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
-                Seq.mem (U64.uint_to_t p) (objects zero_addr g') /\
-                GC.Spec.Object.is_closure (U64.uint_to_t p) g'))
-    = part4_aux h
-  in
-  GC.Spec.Object.infix_wf_intro g' (objects zero_addr g') part3_pf;
-  wfh_part3_intro g';
-
   // --- Part 1: size bounds ---
   let part1_aux (h: obj_addr)
     : Lemma
@@ -2603,7 +2678,7 @@ let coalesce_preserves_wf g =
   FStar.Classical.forall_intro part1_imp;
   assert (well_formed_heap_part1 g');
 
-  // --- Part 2: field pointer closure ---
+  // --- Parts 2 and 3: field pointer closure (up to interior-pointer resolution) ---
   let part2_aux (src dst: obj_addr)
     : Lemma
       (requires
@@ -2611,11 +2686,15 @@ let coalesce_preserves_wf g =
         (let wz = wosize_of_object src g' in
          U64.v wz < pow2 54 /\
          exists_field_pointing_to_unchecked g' src wz dst))
-      (ensures Seq.mem dst (objects zero_addr g'))
+      (ensures Seq.mem (GC.Spec.Object.resolve_object dst g') (objects zero_addr g') /\
+               GC.Spec.Object.infix_addr_wf g' (objects zero_addr g') dst)
     = coalesce_all_white_or_blue g;
-      if is_blue src g' then
-        coalesce_blue_field_closure g src dst
-      else begin
+      if is_blue src g' then begin
+        coalesce_blue_field_closure g src dst;
+        part4_aux dst;
+        GC.Spec.Object.resolve_non_infix dst g';
+        GC.Spec.Object.infix_addr_wf_intro g' (objects zero_addr g') dst
+      end else begin
         assert (g' == coalesce_heap g g (objects zero_addr g) 0UL 0 0UL);
         coalesce_aux_walk_all_wb g g zero_addr (objects zero_addr g) 0UL 0 0UL (objects zero_addr g) src;
         is_white_iff src g';
@@ -2630,10 +2709,12 @@ let coalesce_preserves_wf g =
         Seq.mem src (objects zero_addr g') /\
         U64.v (wosize_of_object src g') < pow2 54 /\
         exists_field_pointing_to_unchecked g' src (wosize_of_object src g') dst)
-      (ensures Seq.mem dst (objects zero_addr g'))
+      (ensures Seq.mem (GC.Spec.Object.resolve_object dst g') (objects zero_addr g') /\
+               GC.Spec.Object.infix_addr_wf g' (objects zero_addr g') dst)
     = part2_aux src dst
   in
   well_formed_heap_part2_intro g' part2_flat;
+  well_formed_heap_part3_intro g' part2_flat;
 
   // --- Combine all parts ---
   wf_parts ()

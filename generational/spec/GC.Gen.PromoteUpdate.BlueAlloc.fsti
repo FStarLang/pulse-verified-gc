@@ -20,7 +20,8 @@ module FreeListShape = GC.Gen.FreeListShape
 
 /// well_formed_heap_part2 implies blue_fields_closed
 val wfh_part2_implies_blue_fields_closed (g: heap)
-  : Lemma (requires well_formed_heap_part1 g /\ well_formed_heap_part2 g)
+  : Lemma (requires well_formed_heap_part1 g /\ well_formed_heap_part2 g /\
+                    no_infix_field_targets g)
           (ensures blue_fields_closed g)
 
 /// alloc_spec preserves blue_fields_closed

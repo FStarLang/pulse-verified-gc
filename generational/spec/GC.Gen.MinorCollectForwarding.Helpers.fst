@@ -31,6 +31,7 @@ module CheneyInj = GC.Gen.CheneyPreservation.Injectivity
 module Forwarding = GC.Gen.CheneyPreservation.Forwarding
 module CG = GC.Gen.CombinedGraph
 module RBridge = GC.Gen.ReachabilityBridge
+module NoBlueUtil = GC.Gen.NoBlueUtil
 module GenInv = GC.Gen.HeapInvariant
 module SpecBase = GC.Spec.Base
 module HeapGraph = GC.Spec.HeapGraph
@@ -309,7 +310,12 @@ let heap_field_points_to_graph_edge
     assert (U64.v (hd_address src) + U64.v mword * U64.v field_index + U64.v mword <= heap_size);
     HeapGraph.get_field_addr_eq g src field_index;
     assert (HeapGraph.get_field g src field_index == dst);
-    HeapGraph.pointer_field_is_graph_edge g (objects zero_addr g) src field_index
+    HeapGraph.pointer_field_is_graph_edge g (objects zero_addr g) src field_index;
+    HeapGraph.is_pointer_field_is_obj_addr dst;
+    wf_parts ();
+    NoBlueUtil.field_pointer_points_to_nat g src (dst <: obj_addr) j;
+    no_infix_points_to_target g src (dst <: obj_addr);
+    resolve_non_infix (dst <: obj_addr) g
 #pop-options
 
 #push-options "--z3rlimit 15 --fuel 1 --ifuel 1"
@@ -381,7 +387,7 @@ private let rec get_pointer_fields_aux_mem_inv
         U64.v j >= U64.v i /\
         U64.v j <= U64.v ws /\
         HeapGraph.is_pointer_field (HeapGraph.get_field g obj j) /\
-        HeapGraph.get_field g obj j == dst)
+        HeapGraph.resolve_field g (HeapGraph.get_field g obj j) == dst)
     (decreases (if U64.v i <= U64.v ws then U64.v ws - U64.v i + 1 else 0))
   =
     if U64.v i > U64.v ws then ()
@@ -392,15 +398,16 @@ private let rec get_pointer_fields_aux_mem_inv
           HeapGraph.get_pointer_fields_aux g obj (U64.add i 1UL) ws
         else Seq.empty in
       if HeapGraph.is_pointer_field v then begin
-        Seq.mem_cons v rest;
-        if dst = v then begin
-          assert (HeapGraph.get_field g obj i == dst);
+        let rv = HeapGraph.resolve_field g v in
+        Seq.mem_cons rv rest;
+        if dst = rv then begin
+          assert (HeapGraph.resolve_field g (HeapGraph.get_field g obj i) == dst);
           FStar.Classical.exists_intro
             (fun (j: U64.t{U64.v j >= 1}) ->
               U64.v j >= U64.v i /\
               U64.v j <= U64.v ws /\
               HeapGraph.is_pointer_field (HeapGraph.get_field g obj j) /\
-              HeapGraph.get_field g obj j == dst)
+              HeapGraph.resolve_field g (HeapGraph.get_field g obj j) == dst)
             i
         end else begin
           assert (Seq.mem dst rest);
@@ -441,9 +448,26 @@ let heap_graph_edge_to_pointer_field
         (requires U64.v j >= 1 /\
                   U64.v j <= U64.v ws /\
                   HeapGraph.is_pointer_field (HeapGraph.get_field g src j) /\
-                  HeapGraph.get_field g src j == dst)
+                  HeapGraph.resolve_field g (HeapGraph.get_field g src j) == dst)
         (ensures goal /\ HeapGraph.is_pointer_field dst)
       =
+        // Under `no_infix_field_targets`, resolution is the identity here, so
+        // the resolved graph successor is the raw field value.
+        let v = HeapGraph.get_field g src j in
+        HeapGraph.is_pointer_field_is_obj_addr v;
+        wosize_of_object_bound src g;
+        wf_parts ();
+        wfh_part1_obj_bound g src;
+        hd_address_spec src;
+        HeapGraph.get_field_addr_eq g src j;
+        let jn : nat = U64.v j - 1 in
+        assert (U64.v src + jn * U64.v mword + U64.v mword <= heap_size);
+        assert ((U64.v src + jn * U64.v mword) % U64.v mword == 0);
+        assert (read_word g (U64.uint_to_t (U64.v src + jn * U64.v mword)) == v);
+        NoBlueUtil.field_pointer_points_to_nat g src (v <: obj_addr) jn;
+        no_infix_points_to_target g src (v <: obj_addr);
+        resolve_non_infix (v <: obj_addr) g;
+        assert (HeapGraph.get_field g src j == dst);
         assert (HeapGraph.is_pointer_field dst);
         FStar.Classical.exists_intro
           (fun (k: U64.t{U64.v k >= 1}) ->
@@ -457,7 +481,7 @@ let heap_graph_edge_to_pointer_field
         #(fun j -> U64.v j >= 1 /\
                   U64.v j <= U64.v ws /\
                   HeapGraph.is_pointer_field (HeapGraph.get_field g src j) /\
-                  HeapGraph.get_field g src j == dst)
+                  HeapGraph.resolve_field g (HeapGraph.get_field g src j) == dst)
         ()
         (fun j -> FStar.Classical.move_requires proof j)
     end

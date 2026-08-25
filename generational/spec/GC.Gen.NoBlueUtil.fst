@@ -53,5 +53,25 @@ let field_pointer_target_in_objects_nat
   =
   wf_parts ();
   field_pointer_points_to_nat g src dst j;
-  points_to_target_in_objects g src dst
+  points_to_target_in_objects g src dst;
+  points_to_target_infix_wf g src dst
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let field_pointer_target_in_objects_nat_raw
+  (g: heap) (src dst: obj_addr) (j: nat)
+  =
+  wf_parts ();
+  field_pointer_points_to_nat g src dst j;
+  no_infix_points_to_target g src dst;
+  field_pointer_target_in_objects_nat g src dst j;
+  resolve_non_infix dst g
+
+let field_pointer_no_blue_raw
+  (g: heap) (src dst: obj_addr) (j: nat)
+  =
+  field_pointer_points_to_nat g src dst j;
+  no_infix_points_to_target g src dst;
+  field_pointer_no_blue_from_no_pointer_to_blue g src dst j;
+  resolve_non_infix dst g
 #pop-options

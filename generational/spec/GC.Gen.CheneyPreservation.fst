@@ -1476,7 +1476,7 @@ private let cheney_promote_field_old_targets_in_objects_from_shape
           assert (v == read_word major field_addr);
           let dst : obj_addr = v in
           assert (is_pointer_to (read_word major field_addr) dst);
-          NoBlueUtil.field_pointer_target_in_objects_nat major src dst j;
+          NoBlueUtil.field_pointer_target_in_objects_nat_raw major src dst j;
           cheney_promote_preserves_objects minor major fp roots;
           assert (Seq.mem dst (objects zero_addr prom.major_final))
         end else begin
@@ -1525,15 +1525,18 @@ private let cheney_promote_field_old_targets_in_objects_from_shape
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 private let update_major_pointers_preserves_wfh_part2_from_field_targets
   (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major /\
+  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
                     field_old_pointer_targets_in_objects major fwd /\
                     field_fwd_targets_in_objects major fwd /\
                     blue_fields_closed major /\
                     no_scan_invariant major)
-          (ensures well_formed_heap_part2 (update_major_pointers major fwd))
+          (ensures well_formed_heap_part2 (update_major_pointers major fwd) /\
+                   well_formed_heap_part3 (update_major_pointers major fwd) /\
+                   no_infix_field_targets (update_major_pointers major fwd))
   =
   let updated = update_major_pointers major fwd in
   update_major_pointers_preserves_objects major fwd;
+  update_major_pointers_preserves_wfh_part4 major fwd;
   let field_closure (src: obj_addr) (j: nat)
     : Lemma (requires Seq.mem src (objects zero_addr updated) /\
                       j < U64.v (wosize_of_object src updated) /\
@@ -1594,7 +1597,6 @@ let cheney_collect_preserves_wfh_from_shape
   cheney_promote_field_fwd_targets_in_objects_from_shape minor major fp roots;
   update_major_pointers_preserves_wfh_part1 prom.major_final prom.fwd_map;
   update_major_pointers_preserves_wfh_part4 prom.major_final prom.fwd_map;
-  update_major_pointers_preserves_wfh_part3 prom.major_final prom.fwd_map;
   update_major_pointers_preserves_wfh_part2_from_field_targets
     prom.major_final prom.fwd_map;
   wf_parts ();
@@ -1617,6 +1619,7 @@ let cheney_collect_preserves_no_pointer_to_blue
   let prom = cheney_promote minor major fp roots in
   assert ((cheney_collect_spec minor major fp roots).mc_major ==
           update_major_pointers prom.major_final prom.fwd_map);
+  cheney_collect_preserves_wfh_from_shape minor major fp roots;
   NoBlue.update_major_pointers_preserves_no_pointer_to_blue
     prom.major_final prom.fwd_map
 #pop-options

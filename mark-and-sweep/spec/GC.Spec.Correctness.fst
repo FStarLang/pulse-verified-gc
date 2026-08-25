@@ -441,19 +441,30 @@ private let sweep_field_black_successor_not_blue
       i >= 1 /\ i <= U64.v (wosize_of_object x h_mark) /\ i < pow2 64 /\
       (let iu = U64.uint_to_t i in
        let field_val = HeapGraph.get_field h_mark x iu in
-       HeapGraph.is_pointer_field field_val /\
-       Seq.mem (field_val <: obj_addr) (objects zero_addr h_sweep)))
+       HeapGraph.is_pointer_field field_val))
     (ensures
       (let iu = U64.uint_to_t i in
        let field_val = HeapGraph.get_field h_mark x iu in
-       ~(is_blue (field_val <: obj_addr) h_sweep)))
+       HeapGraph.is_pointer_field_is_obj_addr field_val;
+       let target : obj_addr = resolve_object (field_val <: obj_addr) h_mark in
+       Seq.mem target (objects zero_addr h_sweep) /\ ~(is_blue target h_sweep)))
   = let iu = U64.uint_to_t i in
     let field_val = HeapGraph.get_field h_mark x iu in
+    HeapGraph.is_pointer_field_is_obj_addr field_val;
+    let target : obj_addr = resolve_object (field_val <: obj_addr) h_mark in
     wf_implies_object_fits h_mark x;
+    let wz_x = wosize_of_object x h_mark in
+    wosize_of_object_bound x h_mark;
+    hd_address_spec x;
+    FStar.Math.Lemmas.pow2_lt_compat 61 54;
+    HeapGraph.get_field_addr_eq h_mark x iu;
+    wf_object_size_bound h_mark x;
+    field_read_implies_exists_pointing h_mark x wz_x (U64.sub iu 1UL) (field_val <: obj_addr);
+    wf_field_target_in_objects h_mark x (field_val <: obj_addr);
     HeapGraph.pointer_field_is_graph_edge h_mark (objects zero_addr h_mark) x iu;
-    black_successor_is_black h_mark x (field_val <: obj_addr);
+    black_successor_is_black h_mark x target;
     sweep_black_survives h_mark fp;
-    colors_exclusive (field_val <: obj_addr) h_sweep
+    colors_exclusive target h_sweep
 #pop-options
 
 /// Combined: prove white object's field property after sweep
@@ -480,8 +491,9 @@ private let sweep_post_field_property
        U64.v field_val < U64.v zero_addr + U64.v mword \/
        U64.v field_val >= heap_size \/
        U64.v field_val % U64.v mword <> 0 \/
-       ~(Seq.mem (field_val <: obj_addr) (objects zero_addr h_sweep) /\
-         is_blue (field_val <: obj_addr) h_sweep)))
+       ~(Seq.mem (GC.Spec.Object.resolve_object (field_val <: obj_addr) h_sweep)
+                 (objects zero_addr h_sweep) /\
+         is_blue (GC.Spec.Object.resolve_object (field_val <: obj_addr) h_sweep) h_sweep)))
   = // x is white after sweep; determine x's color in h_mark
     assert (Seq.mem x (objects zero_addr h_mark));
     color_exhaustive x h_mark;
@@ -503,9 +515,11 @@ private let sweep_post_field_property
       assert (HeapGraph.is_pointer_field field_val);
       if is_no_scan x h_mark then
         sweep_field_no_scan_contradiction h_mark h_sweep x i fp
-      else if Seq.mem (field_val <: obj_addr) (objects zero_addr h_sweep) then
-        sweep_field_black_successor_not_blue h_mark h_sweep x i fp
-      else ()
+      else begin
+        sweep_field_black_successor_not_blue h_mark h_sweep x i fp;
+        // resolution is stable across sweep (headers keep tag and size)
+        sweep_preserves_resolve_field h_mark fp x iu
+      end
     end
 #pop-options
 
@@ -548,8 +562,8 @@ let sweep_post_sweep_strong h_init st fp =
        U64.v field_val < U64.v zero_addr + U64.v mword \/
        U64.v field_val >= heap_size \/
        U64.v field_val % U64.v mword <> 0 \/
-       ~(Seq.mem (field_val <: obj_addr) (objects zero_addr h_sweep) /\
-         is_blue (field_val <: obj_addr) h_sweep)))
+       ~(Seq.mem (resolve_object (field_val <: obj_addr) h_sweep) (objects zero_addr h_sweep) /\
+         is_blue (resolve_object (field_val <: obj_addr) h_sweep) h_sweep)))
   = if i < 1 || i > U64.v (wosize_of_object x h_sweep) || i >= pow2 64 then ()
     else sweep_post_field_property h_mark h_sweep x i fp
   in
@@ -562,8 +576,8 @@ let sweep_post_sweep_strong h_init st fp =
        U64.v field_val < U64.v zero_addr + U64.v mword \/
        U64.v field_val >= heap_size \/
        U64.v field_val % U64.v mword <> 0 \/
-       ~(Seq.mem (field_val <: obj_addr) (objects zero_addr h_sweep) /\
-         is_blue (field_val <: obj_addr) h_sweep)))
+       ~(Seq.mem (resolve_object (field_val <: obj_addr) h_sweep) (objects zero_addr h_sweep) /\
+         is_blue (resolve_object (field_val <: obj_addr) h_sweep) h_sweep)))
   = FStar.Classical.forall_intro (FStar.Classical.move_requires (aux x))
   in
   FStar.Classical.forall_intro wrap
@@ -763,6 +777,14 @@ private let coalesce_preserves_edges
         = Coalesce.coalesce_preserves_survivor_field h_sweep x j
       in
       FStar.Classical.forall_intro (FStar.Classical.move_requires field_eq);
+      let resolve_eq (j: U64.t{U64.v j >= 1})
+        : Lemma
+          (requires U64.v j <= U64.v ws)
+          (ensures (let v = HeapGraph.get_field h_sweep x j in
+                    HeapGraph.resolve_field h_sweep v == HeapGraph.resolve_field g' v))
+        = Coalesce.coalesce_preserves_survivor_field_resolve h_sweep x j
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires resolve_eq);
       get_pointer_fields_aux_preserved h_sweep g' x 1UL ws
     end
 #pop-options
@@ -1027,8 +1049,8 @@ let sweep_post_sweep_strong_gen h_init h_mark roots fp =
        U64.v field_val < U64.v zero_addr + U64.v mword \/
        U64.v field_val >= heap_size \/
        U64.v field_val % U64.v mword <> 0 \/
-       ~(Seq.mem (field_val <: obj_addr) (objects zero_addr h_sweep) /\
-         is_blue (field_val <: obj_addr) h_sweep)))
+       ~(Seq.mem (resolve_object (field_val <: obj_addr) h_sweep) (objects zero_addr h_sweep) /\
+         is_blue (resolve_object (field_val <: obj_addr) h_sweep) h_sweep)))
   = if i < 1 || i > U64.v (wosize_of_object x h_sweep) || i >= pow2 64 then ()
     else sweep_post_field_property h_mark h_sweep x i fp
   in
@@ -1041,8 +1063,8 @@ let sweep_post_sweep_strong_gen h_init h_mark roots fp =
        U64.v field_val < U64.v zero_addr + U64.v mword \/
        U64.v field_val >= heap_size \/
        U64.v field_val % U64.v mword <> 0 \/
-       ~(Seq.mem (field_val <: obj_addr) (objects zero_addr h_sweep) /\
-         is_blue (field_val <: obj_addr) h_sweep)))
+       ~(Seq.mem (resolve_object (field_val <: obj_addr) h_sweep) (objects zero_addr h_sweep) /\
+         is_blue (resolve_object (field_val <: obj_addr) h_sweep) h_sweep)))
   = FStar.Classical.forall_intro (FStar.Classical.move_requires (aux x))
   in
   FStar.Classical.forall_intro wrap

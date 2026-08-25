@@ -148,8 +148,13 @@ let reachable_major_valid_nonblue
                       (U64.v src + i * 8) % 8 == 0 /\
                       classify_major_field minor major
                         (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (MajorV dst))
-            (ensures points_to major src dst)
-          = major_edge_points_to minor major src dst i
+            (ensures points_to major src dst /\
+                     Seq.mem (dst <: obj_addr) (objects zero_addr major) /\
+                     ~(is_blue (dst <: obj_addr) major))
+          = major_edge_points_to minor major src dst i;
+            no_infix_points_to_target major src (dst <: obj_addr);
+            resolve_non_infix (dst <: obj_addr) major;
+            points_to_target_in_objects_raw major src (dst <: obj_addr)
           in
           Classical.forall_intro (Classical.move_requires pts_aux)
         | MinorV src ->

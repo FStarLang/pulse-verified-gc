@@ -202,6 +202,8 @@ let combined_reachable_major_edge_forwarded
     assert (old_raw == dst);
     RBridge.major_edge_points_to minor major src dst i;
     assert (~(is_blue src major));
+    GC.Spec.Fields.no_infix_points_to_target major src dst;
+    GC.Spec.Object.resolve_non_infix dst major;
     assert (~(is_blue dst major));
     RBridge.major_object_not_minor_pointer major dst;
     Cheney.cheney_promote_preserves_objects minor major fp roots;
@@ -263,6 +265,13 @@ let combined_reachable_major_edge_forwarded
     HeapGraph.get_field_addr_eq updated src j;
     assert (HeapGraph.get_field updated src j == dst);
     assert (HeapGraph.is_pointer_field (HeapGraph.get_field updated src j));
+    GC.Spec.Fields.points_to_target_in_objects_raw major src dst;
+    CheneyPres.cheney_promote_frame_old_header minor major fp roots dst;
+    PromUpdate.update_major_pointers_preserves_header prom.major_final prom.fwd_map dst;
+    assert (read_word updated (hd_address dst) == read_word major (hd_address dst));
+    GC.Spec.Object.resolve_object_locality dst major updated;
+    GC.Spec.Object.resolve_non_infix dst updated;
+    assert (GC.Spec.Object.resolve_object dst updated == dst);
     HeapGraph.pointer_field_is_graph_edge updated (objects zero_addr updated) src j
 #pop-options
 

@@ -78,6 +78,7 @@ val reachable_major_valid_nonblue
   : Lemma
     (requires
       well_formed_heap major /\
+      no_infix_field_targets major /\
       minor_wf minor /\
       Mark.no_pointer_to_blue major /\
       minor_no_pointer_to_blue minor major /\
@@ -150,6 +151,7 @@ val reachability_bridge
   : Lemma
     (requires
       well_formed_heap major /\
+      no_infix_field_targets major /\
       minor_wf minor /\
       Mark.no_pointer_to_blue major /\
       minor_no_pointer_to_blue minor major /\
@@ -169,6 +171,7 @@ val combined_minor_reachable_in_minor_reachable
   : Lemma
     (requires
       well_formed_heap major /\
+      no_infix_field_targets major /\
       minor_wf minor /\
       Mark.no_pointer_to_blue major /\
       minor_no_pointer_to_blue minor major /\

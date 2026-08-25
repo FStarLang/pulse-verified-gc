@@ -21,7 +21,8 @@ open GC.Spec.Base
 
 let root_valid_for_darkening_points_to_object g r
   = SpecHeap.hd_address_spec (r <: obj_addr);
-    SpecHeap.f_hd_roundtrip (r <: obj_addr)
+    SpecHeap.f_hd_roundtrip (r <: obj_addr);
+    SpecFields.wf_objects_non_infix g (r <: obj_addr)
 
 /// ---------------------------------------------------------------------------
 /// Lifting the single-root lemmas over the prefix recursion
@@ -61,26 +62,6 @@ let rec prefix_preserves_not_black
         g0 st0 (Seq.index roots (idx - 1)) cap x
     end
 
-/// Darkening only ever pushes elements of `roots`, so the stack stays a subset.
-let rec prefix_preserves_stack_roots
-  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
-  (idx: nat{idx <= Seq.length roots}) (cap: nat)
-  : Lemma
-      (requires forall (x: obj_addr). Seq.mem x st ==> Seq.mem (x <: U64.t) roots)
-      (ensures
-        (forall (x: obj_addr).
-          Seq.mem x (snd (MB.darken_roots_bounded_prefix_spec g st roots idx cap)) ==>
-          Seq.mem (x <: U64.t) roots))
-      (decreases idx)
-  = if idx = 0 then ()
-    else begin
-      prefix_preserves_stack_roots g st roots (idx - 1) cap;
-      let (g0, st0) = MB.darken_roots_bounded_prefix_spec g st roots (idx - 1) cap in
-      Seq.contains_intro roots (idx - 1) (Seq.index roots (idx - 1));
-      RL.check_and_darken_bounded_spec_preserves_stack_roots
-        g0 st0 roots (Seq.index roots (idx - 1)) cap
-    end
-
 /// The root-set facts of `darken_precondition` transported to the state
 /// reached after darkening the first `idx` roots.
 #push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
@@ -102,10 +83,43 @@ let prefix_root_facts
   = let r = Seq.index roots i in
     root_valid_for_darkening_points_to_object g r;
     MB.darken_roots_bounded_prefix_preserves_objects g st roots idx cap;
+    (let g0 = fst (MB.darken_roots_bounded_prefix_spec g st roots idx cap) in
+     FStar.Classical.forall_intro (fun (x: obj_addr) ->
+       MB.darken_roots_bounded_prefix_preserves_is_infix g st roots idx cap x
+       <: Lemma (SpecObject.is_infix x g0 == SpecObject.is_infix x g));
+     MB.root_points_to_object_transfer g g0 r);
     prefix_preserves_not_blue g st roots idx cap (r <: obj_addr);
     // `no_black_objects` plus membership in `objects` gives the pre-state fact.
     assert (Seq.mem (r <: obj_addr) (SpecFields.objects zero_addr g));
     prefix_preserves_not_black g st roots idx cap (r <: obj_addr)
+#pop-options
+
+/// Darkening only ever pushes elements of `roots`, so the stack stays a subset.
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+let rec prefix_preserves_stack_roots
+  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (idx: nat{idx <= Seq.length roots}) (cap: nat)
+  : Lemma
+      (requires
+        MarkBoundedInv.bounded_mark_inv g st cap /\
+        SpecMark.no_black_objects g /\
+        (forall (j: nat). j < Seq.length roots ==>
+           root_valid_for_darkening g (Seq.index roots j)) /\
+        (forall (x: obj_addr). Seq.mem x st ==> Seq.mem (x <: U64.t) roots))
+      (ensures
+        (forall (x: obj_addr).
+          Seq.mem x (snd (MB.darken_roots_bounded_prefix_spec g st roots idx cap)) ==>
+          Seq.mem (x <: U64.t) roots))
+      (decreases idx)
+  = if idx = 0 then ()
+    else begin
+      prefix_preserves_stack_roots g st roots (idx - 1) cap;
+      let (g0, st0) = MB.darken_roots_bounded_prefix_spec g st roots (idx - 1) cap in
+      Seq.contains_intro roots (idx - 1) (Seq.index roots (idx - 1));
+      prefix_root_facts g st roots (idx - 1) cap (idx - 1);
+      RL.check_and_darken_bounded_spec_preserves_stack_roots
+        g0 st0 roots (Seq.index roots (idx - 1)) cap
+    end
 #pop-options
 
 /// Shared hypotheses of the two darkening step lemmas below.
@@ -168,7 +182,7 @@ let prefix_step_keeps_earlier
 #pop-options
 
 /// Every root darkened so far is on the stack.
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 let rec prefix_pushes_roots
   (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
   (idx: nat{idx <= Seq.length roots}) (cap: nat)
@@ -183,7 +197,19 @@ let rec prefix_pushes_roots
     else begin
       prefix_pushes_roots g st roots (idx - 1) cap;
       prefix_step_pushes_last g st roots idx cap;
-      prefix_step_keeps_earlier g st roots idx cap
+      prefix_step_keeps_earlier g st roots idx cap;
+      let (g0, st0) = MB.darken_roots_bounded_prefix_spec g st roots (idx - 1) cap in
+      let v = Seq.index roots (idx - 1) in
+      MB.darken_roots_bounded_prefix_step g st roots (idx - 1) cap;
+      assert (snd (MB.darken_roots_bounded_prefix_spec g st roots idx cap) ==
+              snd (MB.check_and_darken_bounded_spec g0 st0 v cap));
+      introduce forall (i: nat). i < idx ==>
+        Seq.mem ((Seq.index roots i) <: obj_addr)
+                (snd (MB.darken_roots_bounded_prefix_spec g st roots idx cap))
+      with introduce _ ==> _
+      with (if i = idx - 1
+            then prefix_step_pushes_last g st roots idx cap
+            else prefix_step_keeps_earlier g st roots idx cap)
     end
 #pop-options
 

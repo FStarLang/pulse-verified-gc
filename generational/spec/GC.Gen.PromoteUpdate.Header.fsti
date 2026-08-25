@@ -48,10 +48,6 @@ val update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map
   : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
     (ensures well_formed_heap_part4 (update_major_pointers major fwd))
 
-val update_major_pointers_preserves_wfh_part3 (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
-    (ensures well_formed_heap_part3 (update_major_pointers major fwd))
-
 /// Instantiate the blue_fields_closed opaque predicate for a specific object and field
 val blue_fields_closed_inst (major: heap) (src: obj_addr) (j: nat)
   : Lemma (requires blue_fields_closed major /\

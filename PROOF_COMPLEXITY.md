@@ -76,13 +76,16 @@ because none of it is given by the representation:
 3. **Well-formedness.** `well_formed_heap` (`Fields.fst:502-526`), a four-part
    conjunction, marked `[@@"opaque_to_smt"]`:
    - **part1** — every object's body fits inside the heap;
-   - **part2** — pointer closure: every pointer field targets an enumerated object;
+   - **part2** — pointer closure: the *resolved* target of every pointer field is an
+     enumerated object;
    - **part3** — `infix_wf`: interior closure pointers resolve to real parents;
    - **part4** — no enumerated object is itself an infix sub-object.
 
    Parts 3 and 4 exist only because OCaml closures (`Infix_tag = 249`) contain interior
    words that *look like* valid headers. They are not an abstraction; they are a
-   faithfulness requirement.
+   faithfulness requirement. Part 2 is stated on `resolve_object dst g` precisely so
+   that a field may point *into* a closure, which is how mutually recursive OCaml
+   functions are represented; see §6.10.
 
 ### 2.2 Heap becomes graph
 
@@ -949,6 +952,61 @@ instantiates and composes. About 300 lines total, no admits, no rlimit above 40,
 and the extracted C is byte-identical: every one of the three pieces was already
 implicit in proofs the development had, just never stated where a caller could
 reach it.
+
+### 6.10 Interior (infix) pointers in major fields — **done**
+
+**What was wrong.** `well_formed_heap_part2` was stated on the *raw* field value:
+it required the literal word stored in a pointer field to be a member of
+`objects zero_addr g`.  Part 4 says no member of `objects zero_addr g` is infix.
+Together those two clauses said *no major field may hold an interior pointer* —
+and OCaml represents mutually recursive closures with exactly such pointers.
+`well_formed_heap` was therefore **unsatisfiable** for that class of heaps, the
+major-heap correctness theorem was vacuous on them, and part 3 (`infix_wf`) was
+itself vacuous because part 4 emptied its domain.  A specification that is sound
+but empty on the inputs it is supposed to describe is the worst kind of proof
+debt: nothing fails, so nothing tells you.
+
+**What was done.**
+
+- **Parts 2 and 3 restated on the resolved target.**  Part 2 now requires
+  `Seq.mem (resolve_object dst g) (objects zero_addr g)`; part 3 becomes
+  load-bearing, since `resolve_object` is no longer provably the identity.
+- **The infix model was strengthened** so resolution is total and well behaved.
+  `infix_addr_conds` now also demands `wosize (infix) >= 2` and that the infix
+  header lie strictly inside its parent's body; `infix_addr_wf_congr`,
+  `infix_addr_wf_transfer` and `resolve_object_locality` give the transport
+  lemmas.  `resolve_object h g` depends only on `read_word g (hd_address h)`,
+  which makes every frame proof in the development a one-liner.
+- **The graph model resolves.**  `GC.Spec.HeapGraph.get_pointer_fields_aux` emits
+  `resolve_field g v`, so `create_graph` is a graph over whole objects.  Every
+  lemma that recovered a *raw* field value from graph membership had to be
+  restated — about 40 sites across `Sweep`, `Mark`, `Coalesce`, `Correctness`
+  and `GC.Impl.MarkBounded`.
+- **The mark implementation resolves before darkening.**  `check_and_darken_bounded`
+  reads the target header and, when the tag is `infix_tag`, darkens
+  `v - wosize * 8`.  This is the only place in the development where fixing a
+  specification defect changed the extracted C.
+- **`root_points_to_object` was given a `~is_infix` conjunct** rather than
+  resolving the root-darkening subsystem, which kept that whole subsystem raw.
+  The conjunct is free wherever `well_formed_heap` is in scope.
+
+**What was retained.**  The generational (Cheney) collector still forbids
+interior pointers in major fields, now via an explicit opaque predicate
+`GC.Spec.Fields.no_infix_field_targets`, added as a conjunct of
+`GC.Gen.HeapInvariant.major_heap_shape` — *not* of `well_formed_heap`.  The
+reason is structural: Cheney's forwarding map is keyed by whole objects, and
+`GC.Gen.CombinedGraph.classify_major_field` classifies the raw field value, so
+the copying pass genuinely identifies a field value with an object.  The clause
+sits alongside the pre-existing `minor_fields_no_infix_targets` and
+`major_minor_fields_no_infix_targets`, which impose the same restriction on
+nursery-directed pointers, and it is preserved across minor collection for free
+by `well_formed_heap_part2_from_field_closure`.  Making the generational graph
+model resolution-aware remains open.
+
+**Cost.** About 1,100 lines touched across `common/`, all of `mark-and-sweep/`,
+`generational/spec/` and `spot/`; no new admits or assumes; no rlimit increases
+beyond one `--fuel 0 --ifuel 0 --z3rlimit 30` on
+`GC.Impl.MarkBoundedPrecondition.prefix_pushes_roots`.
 
 ---
 

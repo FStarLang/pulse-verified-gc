@@ -25,6 +25,7 @@ module Fields = GC.Gen.CheneyPreservation.Fields
 module NonBlueOrigin = GC.Gen.CheneyPreservation.NonBlueOrigin
 module NoBlueUtil = GC.Gen.NoBlueUtil
 module GenInv = GC.Gen.HeapInvariant
+module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let cheney_promote_preserves_no_pointer_to_blue_from_shape
@@ -36,6 +37,7 @@ let cheney_promote_preserves_no_pointer_to_blue_from_shape
   wf_parts ();
   cheney_promote_preserves_wfh_part1 minor major fp roots;
   cheney_promote_preserves_wfh_part4 minor major fp roots;
+  cheney_promote_preserves_objects minor major fp roots;
   Injectivity.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots;
   let prom = cheney_promote minor major fp roots in
   let field_no_blue (src dst: obj_addr) (j: nat)
@@ -47,7 +49,7 @@ let cheney_promote_preserves_no_pointer_to_blue_from_shape
                 is_pointer_to
                   (read_word prom.major_final (U64.uint_to_t (U64.v src + j * 8)))
                   dst)
-      (ensures ~(is_blue dst prom.major_final))
+      (ensures ~(is_blue (resolve_object dst prom.major_final) prom.major_final))
     =
     assert ((U64.v src + j * 8) % 8 == 0);
     let field_addr : hp_addr = U64.uint_to_t (U64.v src + j * 8) in
@@ -66,16 +68,19 @@ let cheney_promote_preserves_no_pointer_to_blue_from_shape
       Frame.cheney_promote_frame_old_fields minor major fp roots src j;
       assert (read_word major field_addr == field_val);
       assert (is_pointer_to (read_word major field_addr) dst);
-      NoBlueUtil.field_pointer_target_in_objects_nat major src dst j;
-      NoBlueUtil.field_pointer_no_blue_from_no_pointer_to_blue major src dst j;
+      NoBlueUtil.field_pointer_target_in_objects_nat_raw major src dst j;
+      NoBlueUtil.field_pointer_no_blue_raw major src dst j;
       Frame.cheney_promote_frame_old_header minor major fp roots dst;
       color_of_header_eq dst major prom.major_final;
-      assert (~(is_blue dst prom.major_final))
+      assert (~(is_blue dst prom.major_final));
+      assert (well_formed_heap_part4 prom.major_final);
+      assert (~(is_infix dst prom.major_final));
+      resolve_non_infix dst prom.major_final
     end else begin
       assert (~(Seq.mem src (objects zero_addr major) /\
                 is_blue src major = false));
       NonBlueOrigin.cheney_promote_nonblue_origin minor major fp roots src;
-      let goal = ~(is_blue dst prom.major_final) in
+      let goal = ~(is_blue (resolve_object dst prom.major_final) prom.major_final) in
       let proof (x: U64.t)
         : Lemma
           (requires prom.fwd_map x == src /\ is_minor_pointer x)
@@ -108,7 +113,10 @@ let cheney_promote_preserves_no_pointer_to_blue_from_shape
           assert (old_dst == dst);
           Frame.cheney_promote_frame_old_header minor major fp roots old_dst;
           color_of_header_eq old_dst major prom.major_final;
-          assert (~(is_blue dst prom.major_final))
+          assert (~(is_blue dst prom.major_final));
+          assert (well_formed_heap_part4 prom.major_final);
+          assert (~(is_infix dst prom.major_final));
+          resolve_non_infix dst prom.major_final
         end else begin
           Fields.cheney_promote_fwd_target_extra_field_not_pointer minor major fp roots x j;
           assert (~(is_pointer_field field_val));
@@ -165,7 +173,7 @@ let update_major_pointers_preserves_no_pointer_to_blue
                 is_pointer_to
                   (read_word updated (U64.uint_to_t (U64.v src + j * 8)))
                   dst)
-      (ensures ~(is_blue dst updated))
+      (ensures ~(is_blue (resolve_object dst updated) updated))
     =
     assert (Seq.mem src (objects zero_addr major));
     update_major_pointers_preserves_header major fwd src;
@@ -176,7 +184,7 @@ let update_major_pointers_preserves_no_pointer_to_blue
     assert (~(is_blue src major));
     assert (j < U64.v (wosize_of_object src major));
     assert ((U64.v src + j * 8) % 8 == 0);
-    NoBlueUtil.field_pointer_target_in_objects_nat updated src dst j;
+    NoBlueUtil.field_pointer_target_in_objects_nat_raw updated src dst j;
     assert (Seq.mem dst (objects zero_addr updated));
     assert (Seq.mem dst (objects zero_addr major));
     update_major_pointers_preserves_header major fwd dst;
@@ -211,13 +219,19 @@ let update_major_pointers_preserves_no_pointer_to_blue
         assert (is_val_addr (fwd old_val));
         assert (is_blue ((fwd old_val) <: obj_addr) major = false);
         color_of_header_eq dst major updated;
-        assert (~(is_blue dst updated))
+        assert (~(is_blue dst updated));
+        resolve_non_infix dst updated
       end else begin
         assert (new_val == old_raw);
         assert (is_pointer_to old_raw dst);
+        wf_objects_non_infix updated dst;
+        header_eq_preserves_infix major updated dst;
+        assert (is_infix dst major = false);
         NoBlueUtil.field_pointer_no_blue_from_no_pointer_to_blue major src dst j;
+        resolve_non_infix dst major;
         color_of_header_eq dst major updated;
-        assert (~(is_blue dst updated))
+        assert (~(is_blue dst updated));
+        resolve_non_infix dst updated
       end
     end
   in
