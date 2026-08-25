@@ -169,6 +169,24 @@ let gen_gc_heap_shape_post
   SpecGCPost.gc_postcondition final_major /\
   SpecFields.blue_fields_non_infix final_major
 
+/// **The collector restores its own precondition.**
+///
+/// `gen_gc` demands `GenInv.collection_heap_shape` of the heap it is handed.
+/// This says it hands back a heap satisfying the same predicate, so a runtime
+/// driving an unbounded sequence of collections establishes the invariant once,
+/// at start-up, and never again.
+///
+/// The minor half is vacuous -- the nursery `gen_gc` returns is
+/// `GC.Gen.MinorHeap.minor_reset`, i.e. zeroed -- so the content of the claim is
+/// `GC.Gen.HeapInvariant.major_heap_shape` of the major heap and free-list head,
+/// all fifteen conjuncts of it, which is what
+/// `GC.Gen.PostCollectionShape.major_gc_restores_major_heap_shape` supplies.
+let gen_gc_shape_restored_post
+  (minor_data: minor_heap) (minor_bump: U64.t)
+  (final_major: heap) (final_fp: U64.t) : prop =
+  GenInv.collection_heap_shape
+    ({ data = minor_data; bump = minor_bump } <: minor_state) final_major final_fp
+
 /// Reachable subgraph correctness.
 ///
 /// The headline conjunct is a *single* isomorphism between the reachable
@@ -297,8 +315,14 @@ fn minor_collect_full (gh: gen_heap_t)
       fp2 == prom.fp_final /\
       // Roots rewritten via forwarding map
       rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
-      // Minor heap fully reset
+      // Minor heap fully reset: the nursery bytes are cleared as well as the
+      // bump pointer, so the state handed back is literally
+      // `GC.Gen.MinorHeap.minor_reset`.  That is what makes every minor-side
+      // and cross-generation conjunct of `collection_heap_shape` vacuous for
+      // the collector's output.
       U64.v b2 == 0 /\
+      ({ data = d2; bump = b2 } <: minor_state) ==
+        minor_reset ({ data = 'd; bump = 'b } <: minor_state) /\
       // Forwarding array represents the spec-level forwarding map
       UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
       // Forwarding entries are valid
@@ -385,6 +409,7 @@ fn gen_gc (gh: gen_heap_t)
       (not ok ==> CheneyBFS.cheney_oom minor_st 's 'fp 'rs) /\
       gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok 'st (stack_capacity st) /\
       gen_gc_heap_shape_post d2 b2 s2 /\
+      gen_gc_shape_restored_post d2 b2 s2 (fst res) /\
       gen_gc_reachable_subgraph_isomorphism_post
         minor_st 's 'fp 'rs ok s2 rs2 'st (stack_capacity st) /\
       gen_gc_unreachable_final_blue_post

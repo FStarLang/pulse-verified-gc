@@ -39,7 +39,18 @@ module GenInv = GC.Gen.HeapInvariant
 val major_gc_restores_major_heap_shape
   (major: heap) (h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
   : Lemma
-    (requires GenInv.major_heap_shape major fp /\
-              Corr.mark_post major h_mark roots fp)
+    (requires Corr.mark_post major h_mark roots fp)
     (ensures (let r = Coalesce.coalesce (fst (Sweep.sweep h_mark fp)) in
               GenInv.major_heap_shape (fst r) (snd r)))
+
+/// The same statement against the collector's Pulse postcondition.
+///
+/// `GC.Impl.collect_with_roots` does not expose the marked heap -- it exposes
+/// `Corr.gc_coalesce_source`, which says only that *some* marked heap produced
+/// the result.  This lemma discharges that existential so callers of the Pulse
+/// entry point can use the theorem directly.
+val major_gc_restores_major_heap_shape_of_source
+  (h_init: heap) (s2: heap) (roots: seq obj_addr) (fp: U64.t) (final_fp: U64.t)
+  : Lemma
+    (requires Corr.gc_coalesce_source h_init s2 roots fp final_fp)
+    (ensures GenInv.major_heap_shape s2 final_fp)

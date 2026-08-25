@@ -503,7 +503,7 @@ val major_gc_unreachable_final_blue_gen :
 /// be carried across a Pulse postcondition.
 let gc_coalesce_source (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) : prop =
   exists (h_mark: heap).
-    mark_post h_init h_mark roots fp \/
+    mark_post h_init h_mark roots fp /\
     (s2, final_fp) == Coalesce.coalesce (fst (sweep h_mark fp))
 
 val gc_coalesce_source_intro :
