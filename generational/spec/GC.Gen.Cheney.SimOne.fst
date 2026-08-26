@@ -9,12 +9,14 @@ open FStar.Seq
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
+open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
 open GC.Gen.Impl.UpdatePtrs
 
 module CheneySpec = GC.Gen.Cheney
+module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 /// Definition of queue_valid (hidden from outside by the val in .fsti)
 let queue_valid (minor: minor_state) (q: seq U64.t) : prop =
@@ -179,8 +181,18 @@ private let fwd_infix_closed_extend
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
+/// A forwarded nursery object's copy has room for the object's whole body.
+/// The predicate mentions no heap: `minor_wosize` reads the nursery, which is
+/// immutable during collection, so the claim survives every major-heap
+/// mutation and preservation reduces to the single newly written entry.
+let fwd_has_room (minor: minor_state) (cs: CheneySpec.cheney_state) : prop =
+  forall (x: U64.t).
+    Seq.mem x (minor_objects minor) /\ cs.cs_fwd x <> 0UL ==>
+    U64.v (cs.cs_fwd x) + minor_wosize minor x * 8 <= heap_size
+
 let cheney_bfs_inv (minor: minor_state) (cs: CheneySpec.cheney_state) : prop =
   fwd_infix_closed minor cs.cs_fwd /\
+  fwd_has_room minor cs /\
   queue_valid minor cs.cs_queue /\
   (forall (j:nat). j < Seq.length cs.cs_queue ==>
     cs.cs_fwd (Seq.index cs.cs_queue j) <> 0UL) /\
@@ -215,6 +227,10 @@ let cheney_bfs_inv_valid (minor: minor_state) (cs: CheneySpec.cheney_state)
 let cheney_bfs_inv_infix_closed (minor: minor_state) (cs: CheneySpec.cheney_state)
   = ()
 
+let cheney_bfs_inv_has_room (minor: minor_state) (cs: CheneySpec.cheney_state)
+                            (x: U64.t)
+  = ()
+
 /// ---------------------------------------------------------------------------
 /// Forward_one preserves BFS invariant
 /// ---------------------------------------------------------------------------
@@ -227,12 +243,16 @@ private let fwd_one_bfs_inv_success
                     Seq.mem addr (minor_objects minor) /\
                     cs.cs_fwd addr = 0UL /\
                     minor_wosize minor addr > 0 /\
+                    well_formed_heap_part1 cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     (promote_object minor cs.cs_major addr cs.cs_fp
                        (minor_wosize minor addr)).new_addr <> 0UL)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_normal minor cs addr))
   =
   let wz = minor_wosize minor addr in
   let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+  promote_object_new_addr_body_bound minor cs.cs_major addr cs.cs_fp wz;
   minor_objects_not_infix minor addr;
   fwd_infix_closed_extend minor cs.cs_fwd addr res.new_addr;
   CheneySpec.cheney_forward_normal_success minor cs addr;
@@ -286,7 +306,10 @@ private let fwd_one_bfs_inv_success
 
 private let fwd_normal_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_wf minor)
+  : Lemma (requires cheney_bfs_inv minor cs /\ minor_wf minor /\
+                    well_formed_heap_part1 cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_normal minor cs addr))
   =
   if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL then
@@ -310,7 +333,7 @@ private let fwd_normal_preserves_bfs_inv
 /// For the infix case: forward parent preserves bfs_inv, then extending
 /// fwd for the infix addr (which is NOT in minor_objects) doesn't change
 /// the queue or count_unforwarded.
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
 
 let fwd_one_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
@@ -371,6 +394,19 @@ let fwd_one_preserves_bfs_inv
       assert (r.cs_queue == cs'.cs_queue)
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_complete);
+    // Room carries over unchanged: the interior entry is the only new one, and
+    // an interior address is never a member of `minor_objects`.
+    let aux_room (x: U64.t) : Lemma
+      (requires Seq.mem x objs /\ r.cs_fwd x <> 0UL)
+      (ensures U64.v (r.cs_fwd x) + minor_wosize minor x * 8 <= heap_size)
+    =
+      let k = Seq.index_mem x objs in
+      aux_ext k;
+      assert (r.cs_fwd x == cs'.cs_fwd x);
+      assert (fwd_has_room minor cs')
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux_room);
+    assert (fwd_has_room minor r);
     count_unforwarded_ext objs r.cs_fwd cs'.cs_fwd 0;
     // queue_valid is same since queues are equal
     assert (queue_valid minor r.cs_queue);

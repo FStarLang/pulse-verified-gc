@@ -558,6 +558,14 @@ private let set_promoted_tag_preserves_wfh_part4
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
+
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+let promote_object_new_addr_body_bound
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
+  = AllocProps.alloc_spec_obj_body_within_heap major fp wosize;
+    AllocProps.alloc_spec_obj_wosize_part1 major fp wosize
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Promote all live objects
 /// ---------------------------------------------------------------------------

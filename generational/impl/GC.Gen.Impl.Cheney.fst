@@ -106,23 +106,6 @@ let promote_new_addr_bound (ms: minor_state) (major: heap) (obj: U64.t) (fp: U64
                     res.new_addr <> 0UL ==> U64.v res.new_addr < heap_size))
   = AllocProps.alloc_spec_obj_valid major fp wz
 
-/// The promoted copy has room for the whole object, not merely its header.
-///
-/// Forwarding an interior pointer lands at `new_addr + delta`, where `delta` is
-/// the interior object's offset inside its enclosing closure and so is smaller
-/// than `wz * 8`.  This bound is therefore what rules out the failure arm of
-/// the bounded guard in `cheney_forward_one`'s interior branch: after a
-/// successful promotion the sum is always below `heap_size`.
-let promote_new_addr_body_bound
-  (ms: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
-  : Lemma (requires SF.well_formed_heap_part1 major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = PromoteSpec.promote_object ms major obj fp wz in
-                    res.new_addr <> 0UL ==> U64.v res.new_addr + wz * 8 <= heap_size))
-  = AllocProps.alloc_spec_obj_body_within_heap major fp wz;
-    AllocProps.alloc_spec_obj_wosize_part1 major fp wz
-
 /// ---------------------------------------------------------------------------
 /// forward_if_minor: forward a single potential minor pointer
 /// ---------------------------------------------------------------------------
@@ -226,12 +209,14 @@ fn forward_if_minor_infix
     CheneySpec.cheney_forward_one_infix ({data='md; bump='mb} <: minor_state) cs_pre addr;
     SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr;
     CheneyBFS.addr_covered_infix_step ({data='md; bump='mb} <: minor_state) cs_pre addr;
+    // The parent was forwarded earlier in the traversal, so its room bound
+    // comes from the BFS invariant rather than from a fresh allocation.
+    SimOne.cheney_bfs_inv_has_room ({data='md; bump='mb} <: minor_state) cs_pre parent;
     // Compute infix forwarding: parent_fwd + delta
     let delta = U64.sub addr parent;
     if U64.gte parent_fwd_val heap_size_u64 {
-      // Guard fails: parent_fwd >= heap_size
-      CheneySpec.cheney_forward_one_infix_guard_fail ({data='md; bump='mb} <: minor_state) cs_pre addr;
-      ()
+      // Unreachable: the parent's copy has room for the whole closure.
+      assert (pure False)
     } else {
       infix_fwd_no_overflow (U64.v parent_fwd_val) (U64.v delta);
       let sum = U64.add parent_fwd_val delta;
@@ -241,9 +226,8 @@ fn forward_if_minor_infix
         fwd_arr.(idx) <- sum;
         Sim.represents_fwd_update 'farr (cs_pre.CheneySpec.cs_fwd) addr sum
       } else {
-        // Guard failed: sum >= heap_size
-        CheneySpec.cheney_forward_one_infix_guard_fail ({data='md; bump='mb} <: minor_state) cs_pre addr;
-        ()
+        // Unreachable: the interior offset stays inside the parent's body.
+        assert (pure False)
       }
     }
   } else {
@@ -263,7 +247,8 @@ fn forward_if_minor_infix
       // Parent promoted successfully
       promote_new_addr_bound ({data='md; bump='mb} <: minor_state) 'ms parent 'fp
         (minor_wosize ({data='md; bump='mb} <: minor_state) parent);
-      promote_new_addr_body_bound ({data='md; bump='mb} <: minor_state) 'ms parent 'fp
+      PromoteSpec.promote_object_new_addr_body_bound
+        ({data='md; bump='mb} <: minor_state) 'ms parent 'fp
         (minor_wosize ({data='md; bump='mb} <: minor_state) parent);
       CheneySpec.cheney_forward_normal_success ({data='md; bump='mb} <: minor_state) cs_pre parent;
       // Record parent forwarding in fwd_arr
@@ -296,7 +281,7 @@ fn forward_if_minor_infix
           fwd_arr.(idx) <- sum
         } else {
           // Unreachable: the promoted copy has room for the whole closure
-          // (`promote_new_addr_body_bound`) and the interior offset stays
+          // (`promote_object_new_addr_body_bound`) and the interior offset stays
           // inside it (`infix_parent_in_minor_objects`), so the sum is below
           // `heap_size`.
           assert (pure False)

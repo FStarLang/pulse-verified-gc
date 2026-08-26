@@ -8,11 +8,13 @@ open FStar.Seq
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
+open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
 
 module CheneySpec = GC.Gen.Cheney
+module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 /// Abstract predicate: all queue entries are minor objects.
 /// Abstract (val, not let) to prevent quantifier nesting in WP encodings.
@@ -75,10 +77,30 @@ val cheney_bfs_inv_infix_closed (minor: minor_state) (cs: CheneySpec.cheney_stat
             is_infix_in_minor minor x /\ cs.CheneySpec.cs_fwd x <> 0UL ==>
             cs.CheneySpec.cs_fwd (infix_parent minor x) <> 0UL)
 
+/// Extract the room bound from the invariant: a forwarded nursery object's
+/// copy in the major heap has room for the object's whole body.
+///
+/// This is what makes the bounded guard in `cheney_forward_one`'s interior
+/// branch unreachable.  Interior forwarding lands at `fwd parent + delta`, and
+/// `minor_infix_wf` bounds `delta` by `minor_wosize minor parent * 8`, so the
+/// target stays below `heap_size`.  Stating it as an invariant rather than
+/// re-deriving it is forced by the *already forwarded* branch, where the entry
+/// comes from an earlier traversal step rather than a fresh allocation.
+val cheney_bfs_inv_has_room (minor: minor_state) (cs: CheneySpec.cheney_state)
+                            (x: U64.t)
+  : Lemma (requires cheney_bfs_inv minor cs /\
+                    Seq.mem x (minor_objects minor) /\
+                    cs.CheneySpec.cs_fwd x <> 0UL)
+          (ensures U64.v (cs.CheneySpec.cs_fwd x) + minor_wosize minor x * 8 <= heap_size)
+
 /// Forward_one preserves the BFS invariant
 val fwd_one_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor)
+  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor /\
+                    well_formed_heap_part1 cs.CheneySpec.cs_major /\
+                    AllocLemmas.fl_valid cs.CheneySpec.cs_major cs.CheneySpec.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.CheneySpec.cs_major
+                      cs.CheneySpec.cs_fp heap_words)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_one minor cs addr))
 /// When the BFS invariant holds and addr is an unforwarded minor object,
 /// there is strict room in the queue: |queue| < |minor_objects|.

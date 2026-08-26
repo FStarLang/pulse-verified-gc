@@ -264,6 +264,24 @@ val promote_object_preserves_alloc_invariants
                     AllocLemmas.fl_valid res.major_out res.fp_out heap_words /\
                     AllocLemmas.fl_chain_terminates res.major_out res.fp_out heap_words))
 
+/// The promoted copy has room for the whole object, not merely its header.
+///
+/// `alloc_spec_obj_valid` bounds only the object address.  A caller that has to
+/// address a byte *inside* the copy --- forwarding an interior pointer lands at
+/// `new_addr + delta` for some `delta` below `wosize * 8` --- needs the body to
+/// fit as well.  It does: the block is an object of the resulting heap, and
+/// part 1 of well-formedness is exactly the statement that an object's body
+/// lies within the heap.
+val promote_object_new_addr_body_bound
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
+  : Lemma (requires
+             well_formed_heap_part1 major /\
+             AllocLemmas.fl_valid major fp heap_words /\
+             AllocLemmas.fl_chain_terminates major fp heap_words)
+          (ensures (let res = promote_object minor major obj fp wosize in
+                    res.new_addr <> 0UL ==>
+                    U64.v res.new_addr + wosize * 8 <= heap_size))
+
 /// ---------------------------------------------------------------------------
 /// Promote All Live Objects
 /// ---------------------------------------------------------------------------
