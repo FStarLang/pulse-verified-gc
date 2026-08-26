@@ -376,7 +376,7 @@ This is now proved and threaded to the top level:
   `gc_postcondition` is also claimed of the post-sweep, pre-coalesce heap, which
   does **not** satisfy the clause.
 * `GC.Impl.collect_with_roots` / `GC.Impl.collect` postconditions.
-* `GC.Gen.Impl.gen_gc_heap_shape_post`, so `gen_gc` returns a heap satisfying the
+* `GC.Gen.Impl.gen_gc`'s postcondition, so `gen_gc` returns a heap satisfying the
   clause on both paths -- the major-GC path via the above, and the OOM path
   (where the major phase is skipped) via
   `GC.Gen.MajorPrecondition.major_heap_shape_gc_postcondition`.

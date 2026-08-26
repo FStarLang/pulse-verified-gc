@@ -71,6 +71,18 @@ let gen_gc_major_precondition_elim minor major fp roots st cap
     MBP.darken_preserves_create_graph result.mc_major st result.mc_roots result.mc_fp cap
 #pop-options
 
+/// The heap-shape projection is a consequence of the invariant, not an extra
+/// promise: `major_heap_shape_gc_postcondition` derives "every object is white
+/// or blue" from `no_black_objects` + `no_gray_objects` by colour exhaustiveness,
+/// and hands back `blue_fields_non_infix` unchanged, it being one of
+/// `major_heap_shape`'s own conjuncts.
+#push-options "--fuel 0 --ifuel 0"
+let gen_gc_heap_shape_post_intro minor_data minor_bump final_major final_fp
+  = GenInv.collection_heap_shape_elim
+      ({ data = minor_data; bump = minor_bump } <: minor_state) final_major final_fp;
+    GMP.major_heap_shape_gc_postcondition final_major final_fp
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Allocation
 /// ---------------------------------------------------------------------------
@@ -1091,13 +1103,17 @@ fn gen_gc (gh: gen_heap_t)
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
       let minor_st_out : minor_state = { data = d2; bump = b2 } in
-      let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
       let ok = snd res in
       // Failure is reported only for a concrete out-of-memory event: an object
       // the major free list had no room for, at a point of this collection.
       (not ok ==> CheneyBFS.cheney_oom minor_st 's 'fp 'rs) /\
       gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok 'st (stack_capacity st) /\
-      gen_gc_heap_shape_post d2 b2 s2 /\
+      // The nursery handed back is the zeroed one, `GC.Gen.MinorHeap.minor_reset`.
+      // This is the only heap-shape fact in the postcondition that does *not*
+      // follow from the invariant below; everything else about the returned
+      // state, including `gen_gc_heap_shape_post`, is derived from it (see
+      // `gen_gc_heap_shape_post_intro`).
+      minor_st_out == minor_reset minor_st /\
       // **The collector restores its own precondition**: literally the same
       // predicate `gen_gc` demands of the state it is handed, now asserted of
       // the state it hands back.  A runtime driving an unbounded sequence of

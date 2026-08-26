@@ -893,7 +893,7 @@ The right source for that hypothesis is the runtime, not the caller.
 
 Two postconditions moved under the `ok` guard (`roots_match_stack` and
 `gen_gc_unreachable_final_blue_post` — only the sweep makes unreachable objects
-blue).  `gen_gc_heap_shape_post` did not need guarding, because round three's
+blue).  The heap-shape postcondition did not need guarding, because round three's
 `no_gray_objects` strengthening pays off here: a heap between collections is
 white-or-blue everywhere, so the post-minor heap satisfies `gc_postcondition` on
 its own.
@@ -1064,8 +1064,8 @@ Three lemmas now carry the fact to the top, so the invariant is visibly closed
 across collections rather than argued informally:
 `GC.Spec.Coalesce.coalesce_blue_fields_non_infix`,
 `GC.Spec.Correctness.gc_blue_fields_non_infix_gen`, and the strengthened
-postconditions of `GC.Impl.collect_with_roots` and `GC.Gen.Impl.gen_gc`
-(`gen_gc_heap_shape_post`, on both the normal and the out-of-memory path).  It is
+postconditions of `GC.Impl.collect_with_roots` and `GC.Gen.Impl.gen_gc` (on both
+the normal and the out-of-memory path).  It is
 deliberately *not* folded into `gc_postcondition`: that predicate is also
 asserted of the post-sweep, pre-coalesce heap, which does not satisfy the clause,
 and merging them would have silently forced the weaker reading.
@@ -1177,6 +1177,22 @@ assume, which is what made the empty-walk base case go through at all.  This is
 the same lesson as §6.2 in a different key: when an induction over a walk will
 not close, look for a scalar the walk preserves rather than a relation between
 two walks.
+
+**And then the contract got smaller.**  Once the invariant is a postcondition,
+most of what `gen_gc` used to promise separately is a corollary of it.
+`gen_gc_heap_shape_post` -- "bump is zero, `gc_postcondition`,
+`blue_fields_non_infix`" -- overlapped it twice over: `blue_fields_non_infix` is
+verbatim one of `major_heap_shape`'s fifteen conjuncts, and `gc_postcondition`
+follows from three more of them by colour exhaustiveness, which
+`GC.Gen.MajorPrecondition.major_heap_shape_gc_postcondition` had already been
+proving for a different reason.  Only the nursery fact was independent.  So the
+bundle came out of the `ensures` and became a derived corollary
+(`gen_gc_heap_shape_post_intro`), kept as a *definition* because it mentions no
+free-list head and SPOT wants to state colour facts without threading one.  In
+its place the contract now says `minor_st_out == minor_reset minor_st`, which is
+strictly stronger than `bump == 0` and is what the proof needed anyway.  A
+redundant conjunct is not free: it is an extra obligation inside `gen_gc` and
+extra SMT context at every call site.
 
 **Cost.**  Four new spec modules (`GC.Spec.FreeList.Descending`,
 `GC.Spec.Coalesce.Descending`, `GC.Spec.Coalesce.Shape`, `GC.Spec.WalkEnd`,

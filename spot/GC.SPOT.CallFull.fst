@@ -67,5 +67,10 @@ fn call_gen_gc_spot
   Preconditions.minor_collect_full_pre_elim
     ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots);
-  gen_gc gh roots nroots fwd_arr queue slots nslots st
+  let res = gen_gc gh roots nroots fwd_arr queue slots nslots st;
+  // `gen_gc` promises the invariant itself; the colour-only projection this
+  // wrapper advertises is derived from it here rather than restated there.
+  with d2 b2 s2. assert (is_gen_heap gh d2 b2 s2 (fst res));
+  gen_gc_heap_shape_post_intro d2 b2 s2 (fst res);
+  res
 }

@@ -373,10 +373,9 @@ address and never an interior one.
 
 That is proved by `GC.Spec.Coalesce.coalesce_blue_fields_non_infix`, lifted by
 `GC.Spec.Correctness.gc_blue_fields_non_infix_gen`, and carried through the
-postconditions of `GC.Impl.collect_with_roots` and `GC.Gen.Impl.gen_gc`
-(`gen_gc_heap_shape_post`).  The invariant is closed: what `major_heap_shape`
-demands on entry, `gen_gc` re-establishes on exit, on both the normal and the
-out-of-memory path.  Note it is kept out of `gc_postcondition` on purpose --
+postconditions of `GC.Impl.collect_with_roots` and `GC.Gen.Impl.gen_gc`.  The
+invariant is closed: what `major_heap_shape` demands on entry, `gen_gc`
+re-establishes on exit, on both the normal and the out-of-memory path.  Note it is kept out of `gc_postcondition` on purpose --
 that predicate is also asserted of the post-sweep, pre-coalesce heap, which does
 not satisfy the clause.
 
@@ -1464,7 +1463,7 @@ unchanged; it now simply aborts without having run an unsound collection first.
 
 Two postconditions moved under the `ok` guard as a result — `roots_match_stack`
 (half of `gen_gc_roots_post`) and `gen_gc_unreachable_final_blue_post`, since only
-the sweep makes unreachable objects blue.  `gen_gc_heap_shape_post` did *not*
+the sweep makes unreachable objects blue.  The heap-shape postcondition did *not*
 need guarding: `major_heap_shape` records both `no_black_objects` and
 `no_gray_objects`, so the post-minor heap is white-or-blue everywhere and
 satisfies `gc_postcondition` on its own
@@ -1709,11 +1708,13 @@ Note also that `Seq.length 'st <= stack_capacity st` is not restated in the
 precondition: it is recoverable from `is_gray_stack` via
 `GC.Impl.Stack.stack_facts`.
 
-The postcondition exports four named bundles:
+The postcondition is two facts about the returned state plus three named
+bundles:
 
 ```fstar
+minor_st_out == minor_reset minor_st /\
+GenInv.collection_heap_shape minor_st_out s2 (fst res) /\
 gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok 'st (stack_capacity st) /\
-gen_gc_heap_shape_post d2 b2 s2 /\
 gen_gc_reachable_subgraph_isomorphism_post
   minor_st 's 'fp 'rs ok s2 rs2 'st (stack_capacity st) /\
 gen_gc_unreachable_final_blue_post minor_st 's 'fp 'rs ok s2
@@ -1722,11 +1723,21 @@ gen_gc_unreachable_final_blue_post minor_st 's 'fp 'rs ok s2
 
 In prose, after a successful full generational collection:
 
+- the nursery is reset -- not merely emptied, but zeroed;
+- the whole shape invariant holds again, verbatim the predicate the
+  precondition demands;
 - roots have been rewritten consistently with minor forwarding;
-- the minor heap is reset;
-- the final major heap satisfies the major GC postcondition;
 - the post-minor reachable graph is preserved by the major collector;
 - unreachable final major objects are blue/free.
+
+There is deliberately no `gc_postcondition` conjunct here even though clients
+want one.  It is a *consequence* of the shape invariant -- `well_formed_heap`
+plus `no_black_objects` plus `no_gray_objects` gives "every object is white or
+blue" by colour exhaustiveness -- so restating it would be redundant, and a
+redundant conjunct is both an extra obligation inside `gen_gc` and extra SMT
+context at every call site.  `gen_gc_heap_shape_post` packages that consequence
+for clients who want it without threading a free-list head, and
+`gen_gc_heap_shape_post_intro` is the one-line derivation.
 
 The final isomorphism story is compositional. Minor collection maps the original
 combined minor+major reachable subgraph into the post-minor major heap. Major
