@@ -396,6 +396,33 @@ otherwise.  Surfacing it means:
    well-formed interior pointer of the final major heap) and Phase C's already
    resolved `field_fwd_targets_in_objects`.
 
+Step 1 rests on one further obligation, which is where the chain bottoms out.
+`cheney_forward_one`'s interior branch (`GC.Gen.Cheney.fst:100`) installs the
+entry only when a bounded guard passes:
+
+```fstar
+if cs'.cs_fwd parent <> 0UL &&
+   U64.v addr >= U64.v parent &&
+   U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < heap_size
+```
+
+and when it fails the state is returned with no entry and *no* OOM report --
+`GC.Gen.Impl.Cheney.forward_if_minor_infix` mirrors this in its
+`U64.lt sum heap_size_u64` test.  So coverage is not merely unproved in that
+path, it is false.
+
+The guard is nevertheless never taken, and the argument is short: `delta` is the
+interior object's offset inside its enclosing closure, so `minor_infix_wf` bounds
+it by `minor_wosize parent * 8`; the promoted copy occupies
+`[fwd parent, fwd parent + minor_wosize parent * 8)` in a `well_formed_heap`
+major heap, so `is_fields_within_limit` puts that whole span below `heap_size`.
+Making it a proof means strengthening `promote_new_addr_bound`
+(`GC.Gen.Impl.Cheney.fst:104`), which today concludes only
+`U64.v res.new_addr < heap_size` from `alloc_spec_obj_valid`, to carry the body
+bound as well -- the route is `alloc_spec_obj_in_objects_part1` plus the target
+heap's well-formedness.  The `else` branches in the implementation then become
+`assert (pure False)`, leaving the generated C unchanged.
+
 ### Phase F — audit
 
 A minor-heap analogue of `spot/GC.SPOT.InfixMajor`: a concrete nursery holding
