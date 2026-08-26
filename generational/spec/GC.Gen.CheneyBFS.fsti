@@ -143,20 +143,27 @@ val addr_covered_intro_infix
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
   : Lemma (requires minor_wf minor /\
                     is_infix_in_minor minor addr /\
+                    cs.cs_fwd addr <> 0UL /\
                     cs.cs_fwd (infix_parent minor addr) <> 0UL)
           (ensures addr_covered minor cs addr)
 
 /// Coverage of an interior pointer after one forwarding step: forwarding the
 /// interior address goes through its enclosing closure, so the closure's entry
 /// after the step is all the caller has to exhibit.
+/// The room bound below is what makes the interior branch's arithmetic guard
+/// pass, so the step really does install an entry at the interior address --
+/// coverage now asserts that entry, not just the closure's.
 val addr_covered_infix_step
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
   : Lemma (requires minor_wf minor /\
+                    minor_infix_wf minor /\
                     is_infix_in_minor minor addr /\
                     cs.cs_fwd addr = 0UL /\
                     infix_parent minor addr <> addr /\
-                    (CheneySpec.cheney_forward_normal minor cs
-                       (infix_parent minor addr)).cs_fwd (infix_parent minor addr) <> 0UL)
+                    (let parent = infix_parent minor addr in
+                     let cs' = CheneySpec.cheney_forward_normal minor cs parent in
+                     cs'.cs_fwd parent <> 0UL /\
+                     U64.v (cs'.cs_fwd parent) + minor_wosize minor parent * 8 <= heap_size))
           (ensures addr_covered minor (CheneySpec.cheney_forward_one minor cs addr) addr)
 
 val addr_covered_elim
@@ -172,6 +179,14 @@ val addr_covered_elim_resolved
                     Seq.mem (resolve_minor minor addr) (minor_objects minor) /\
                     minor_wosize minor (resolve_minor minor addr) > 0)
           (ensures cs.cs_fwd (resolve_minor minor addr) <> 0UL)
+
+/// Coverage of an interior pointer names the interior address itself, which is
+/// where the field rewrite reads the forwarding map.
+val addr_covered_elim_infix
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
+  : Lemma (requires addr_covered minor cs addr /\
+                    is_infix_in_minor minor addr)
+          (ensures cs.cs_fwd addr <> 0UL)
 
 val forward_one_preserves_addr_covered
   (minor: minor_state) (cs: CheneySpec.cheney_state) (step_addr x: U64.t)

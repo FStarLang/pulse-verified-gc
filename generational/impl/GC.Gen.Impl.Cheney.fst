@@ -208,10 +208,10 @@ fn forward_if_minor_infix
     CheneySpec.cheney_forward_normal_noop ({data='md; bump='mb} <: minor_state) cs_pre parent;
     CheneySpec.cheney_forward_one_infix ({data='md; bump='mb} <: minor_state) cs_pre addr;
     SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr;
-    CheneyBFS.addr_covered_infix_step ({data='md; bump='mb} <: minor_state) cs_pre addr;
     // The parent was forwarded earlier in the traversal, so its room bound
     // comes from the BFS invariant rather than from a fresh allocation.
     SimOne.cheney_bfs_inv_has_room ({data='md; bump='mb} <: minor_state) cs_pre parent;
+    CheneyBFS.addr_covered_infix_step ({data='md; bump='mb} <: minor_state) cs_pre addr;
     // Compute infix forwarding: parent_fwd + delta
     let delta = U64.sub addr parent;
     if U64.gte parent_fwd_val heap_size_u64 {

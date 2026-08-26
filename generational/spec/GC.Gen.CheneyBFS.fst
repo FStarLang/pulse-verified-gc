@@ -222,7 +222,11 @@ let addr_covered (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t
    cs.cs_fwd addr <> 0UL) /\
   (let a = resolve_minor minor addr in
    Seq.mem a (minor_objects minor) /\ minor_wosize minor a > 0 ==>
-   cs.cs_fwd a <> 0UL)
+   cs.cs_fwd a <> 0UL) /\
+  // An interior pointer gets an entry of its own, not just its closure's: the
+  // rewrite reads `fwd` at the interior address, so the enclosing closure's
+  // entry alone would leave the field dangling.
+  (is_infix_in_minor minor addr ==> cs.cs_fwd addr <> 0UL)
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let addr_covered_intro
@@ -249,6 +253,13 @@ let addr_covered_intro_infix
 let addr_covered_infix_step
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
   = let parent = infix_parent minor addr in
+    let cs' = CheneySpec.cheney_forward_normal minor cs parent in
+    // `minor_infix_wf` places the interior address inside the parent's body,
+    // and the room bound says the parent's copy has that much space, so the
+    // arithmetic guard in `cheney_forward_one`'s interior branch passes.
+    infix_parent_in_minor_objects minor addr;
+    assert (U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < heap_size);
+    CheneySpec.cheney_forward_one_infix_guard_pass minor cs addr;
     CheneySpec.cheney_forward_one_infix_fwd minor cs addr parent;
     addr_covered_intro_infix minor (CheneySpec.cheney_forward_one minor cs addr) addr
 
@@ -257,6 +268,10 @@ let addr_covered_elim
   = reveal_opaque (`%addr_covered) (addr_covered minor cs addr)
 
 let addr_covered_elim_resolved
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
+  = reveal_opaque (`%addr_covered) (addr_covered minor cs addr)
+
+let addr_covered_elim_infix
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
   = reveal_opaque (`%addr_covered) (addr_covered minor cs addr)
 
@@ -270,7 +285,9 @@ let forward_one_preserves_addr_covered
       forward_one_fwd_monotone minor cs step_addr x;
     let r = resolve_minor minor x in
     if Seq.mem r (minor_objects minor) && minor_wosize minor r > 0 then
-      forward_one_fwd_monotone minor cs step_addr r
+      forward_one_fwd_monotone minor cs step_addr r;
+    if is_infix_in_minor minor x then
+      forward_one_fwd_monotone minor cs step_addr x
 #pop-options
 
 [@@"opaque_to_smt"]
