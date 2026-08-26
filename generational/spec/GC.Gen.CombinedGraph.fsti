@@ -70,30 +70,42 @@ let combined_graph_wf (g: combined_graph) : prop =
 /// ---------------------------------------------------------------------------
 
 /// Classify a field value read from a minor-heap object.
-/// Minor targets are normalized with `to_minor_offset`; major targets use the
-/// raw value.
+/// Minor targets are normalized with `to_minor_offset` and then resolved;
+/// major targets use the raw value.
 val classify_minor_field (ms: minor_state) (major: heap) (v: U64.t)
   : GTot (option combined_vertex)
 
-/// Characterization: classify_minor_field returns `MinorV (to_minor_offset v)`
-/// when the normalized value is a minor object.
+/// Characterization: classify_minor_field returns
+/// `MinorV (resolve_minor ms (to_minor_offset v))` when the resolved value is
+/// a minor object.
 val classify_minor_field_minor (ms: minor_state) (major: heap) (v: U64.t)
   : Lemma (requires (
+             let vr = resolve_minor ms (to_minor_offset v) in
+             is_minor_addr vr /\ Seq.mem vr (minor_objects ms)))
+          (ensures classify_minor_field ms major v
+                     == Some (MinorV (resolve_minor ms (to_minor_offset v))))
+
+/// Characterization specialized to non-interior nursery targets, where
+/// resolution is the identity.
+val classify_minor_field_minor_raw (ms: minor_state) (major: heap) (v: U64.t)
+  : Lemma (requires (
              let vo = to_minor_offset v in
+             ~(is_infix_in_minor ms vo) /\
              is_minor_addr vo /\ Seq.mem vo (minor_objects ms)))
           (ensures classify_minor_field ms major v == Some (MinorV (to_minor_offset v)))
 
 /// Characterization: classify_minor_field returns MajorV v when v is a major object
 /// and not a minor object (used by edge backward proofs).
 ///
-/// Unlike `classify_major_field`, this classifier is still raw: a *minor*
-/// object's field holding an interior pointer into a major closure is ruled out
-/// by `GC.Gen.HeapInvariant.minor_major_fields_no_blue`, which requires every
-/// pointer-valued minor field to name an enumerated major object outright.
+/// Unlike `classify_major_field`, the *major* branch of this classifier is still
+/// raw: a minor object's field holding an interior pointer into a major closure
+/// is ruled out by `GC.Gen.HeapInvariant.minor_major_fields_no_blue`, which
+/// requires every pointer-valued minor field to name an enumerated major object
+/// outright.
 val classify_minor_field_major (ms: minor_state) (major: heap) (v: U64.t)
   : Lemma (requires is_val_addr v /\ Seq.mem v (objects zero_addr major) /\
-                    (let vo = to_minor_offset v in
-                     ~(is_minor_addr vo /\ Seq.mem vo (minor_objects ms))))
+                    (let vr = resolve_minor ms (to_minor_offset v) in
+                     ~(is_minor_addr vr /\ Seq.mem vr (minor_objects ms))))
           (ensures classify_minor_field ms major v == Some (MajorV v))
 
 /// Classify a field value read from a major-heap object.
@@ -107,16 +119,29 @@ val classify_major_field (ms: minor_state) (major: heap) (v: U64.t)
 val classify_major_field_major (ms: minor_state) (major: heap) (v: U64.t)
   : Lemma (requires is_val_addr v /\ is_pointer_field v /\
                     Seq.mem (resolve_object v major) (objects zero_addr major) /\
-                    (let vo = to_minor_offset v in
-                     ~(is_minor_pointer vo /\ Seq.mem vo (minor_objects ms))))
+                    (let vr = resolve_minor ms (to_minor_offset v) in
+                     ~(is_minor_pointer (to_minor_offset v) /\ Seq.mem vr (minor_objects ms))))
           (ensures classify_major_field ms major v
                      == Some (MajorV (resolve_object v major)))
 
-/// Characterization: classify_major_field returns MinorV (to_minor_offset v)
-/// when the normalized value is a minor pointer in the minor objects set.
+/// Characterization: classify_major_field returns
+/// `MinorV (resolve_minor ms (to_minor_offset v))` when the resolved value is a
+/// minor object.  A major-heap field may hold an interior pointer into a
+/// nursery closure: `caml_modify` (`runtime/memory.c:617`) files any young
+/// block pointer in the remembered set without an infix special case, and
+/// `caml_oldify_one` (`runtime/minor_gc.c:231`) then resolves it.
 val classify_major_field_is_minor (ms: minor_state) (major: heap) (v: U64.t)
   : Lemma (requires (
+             let vr = resolve_minor ms (to_minor_offset v) in
+             is_minor_pointer (to_minor_offset v) /\ Seq.mem vr (minor_objects ms)))
+          (ensures classify_major_field ms major v
+                     == Some (MinorV (resolve_minor ms (to_minor_offset v))))
+
+/// Characterization specialized to non-interior nursery targets.
+val classify_major_field_is_minor_raw (ms: minor_state) (major: heap) (v: U64.t)
+  : Lemma (requires (
              let vo = to_minor_offset v in
+             ~(is_infix_in_minor ms vo) /\
              is_minor_pointer vo /\ Seq.mem vo (minor_objects ms)))
           (ensures classify_major_field ms major v == Some (MinorV (to_minor_offset v)))
 
@@ -124,23 +149,41 @@ val classify_major_field_is_minor (ms: minor_state) (major: heap) (v: U64.t)
 /// Classification Inversion Lemmas
 /// ---------------------------------------------------------------------------
 
-/// Inversion: classify_minor_field == Some (MinorV x) implies the normalized
-/// value is x and x is minor.
+/// Inversion: classify_minor_field == Some (MinorV x) implies x is the resolved
+/// form of the normalized value, and x is minor.  Note `to_minor_offset v == x`
+/// only when the target is not interior; use `classify_minor_field_inv_minor_raw`
+/// when that is known.
 val classify_minor_field_inv_minor (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
   : Lemma (requires classify_minor_field ms major v == Some (MinorV x))
+          (ensures resolve_minor ms (to_minor_offset v) == x /\
+                   is_minor_addr x /\ Seq.mem x (minor_objects ms))
+
+/// Inversion specialized to non-interior targets, where resolution is the
+/// identity and the pre-resolution conclusion is recovered verbatim.
+val classify_minor_field_inv_minor_raw (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
+  : Lemma (requires classify_minor_field ms major v == Some (MinorV x) /\
+                    ~(is_infix_in_minor ms (to_minor_offset v)))
           (ensures to_minor_offset v == x /\ is_minor_addr x /\ Seq.mem x (minor_objects ms))
 
 /// Inversion: classify_minor_field == Some (MajorV x) implies v == x and v is major
 val classify_minor_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
   : Lemma (requires classify_minor_field ms major v == Some (MajorV x))
           (ensures v == x /\ is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) /\
-                   (let vo = to_minor_offset v in
-                    ~(is_minor_addr vo /\ Seq.mem vo (minor_objects ms))))
+                   (let vr = resolve_minor ms (to_minor_offset v) in
+                    ~(is_minor_addr vr /\ Seq.mem vr (minor_objects ms))))
 
-/// Inversion: classify_major_field == Some (MinorV x) implies the normalized
-/// field value is x and x is minor.
+/// Inversion: classify_major_field == Some (MinorV x) implies x is the resolved
+/// form of the normalized field value, and x is minor.
 val classify_major_field_inv_minor (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
   : Lemma (requires classify_major_field ms major v == Some (MinorV x))
+          (ensures resolve_minor ms (to_minor_offset v) == x /\
+                   is_minor_pointer (to_minor_offset v) /\
+                   is_minor_pointer x /\ Seq.mem x (minor_objects ms))
+
+/// Inversion specialized to non-interior targets.
+val classify_major_field_inv_minor_raw (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
+  : Lemma (requires classify_major_field ms major v == Some (MinorV x) /\
+                    ~(is_infix_in_minor ms (to_minor_offset v)))
           (ensures to_minor_offset v == x /\ is_minor_pointer x /\ Seq.mem x (minor_objects ms))
 
 /// Inversion: classify_major_field == Some (MajorV x) implies x is the resolved
@@ -150,8 +193,8 @@ val classify_major_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x
   : Lemma (requires classify_major_field ms major v == Some (MajorV x))
           (ensures is_val_addr v /\ is_pointer_field v /\ x == resolve_object v major /\
                    Seq.mem (x <: obj_addr) (objects zero_addr major) /\
-                   (let vo = to_minor_offset v in
-                    ~(is_minor_pointer vo /\ Seq.mem vo (minor_objects ms))))
+                   (let vr = resolve_minor ms (to_minor_offset v) in
+                    ~(is_minor_pointer (to_minor_offset v) /\ Seq.mem vr (minor_objects ms))))
 
 /// Inversion specialized to non-interior targets, where resolution is the
 /// identity and the pre-resolution conclusion `v == x` is recovered verbatim.
@@ -159,8 +202,8 @@ val classify_major_field_inv_major_raw (ms: minor_state) (major: heap) (v: U64.t
   : Lemma (requires classify_major_field ms major v == Some (MajorV x) /\
                     is_val_addr v /\ ~(is_infix (v <: obj_addr) major))
           (ensures v == x /\ Seq.mem (v <: obj_addr) (objects zero_addr major) /\
-                   (let vo = to_minor_offset v in
-                    ~(is_minor_pointer vo /\ Seq.mem vo (minor_objects ms))))
+                   (let vr = resolve_minor ms (to_minor_offset v) in
+                    ~(is_minor_pointer (to_minor_offset v) /\ Seq.mem vr (minor_objects ms))))
 
 /// ---------------------------------------------------------------------------
 /// Graph Construction
@@ -320,7 +363,19 @@ val combined_reachable_ind_with_reach
 /// Root Classification
 /// ---------------------------------------------------------------------------
 
-/// Classify a program root as a combined vertex
+/// Classify a program root as a combined vertex.
+///
+/// This is deliberately *raw*: an interior root yields `MinorV <interior>`,
+/// which is not a vertex of the combined graph, so the closure it points into
+/// is outside the reachable subgraph the isomorphism theorem talks about.  The
+/// post side omits it symmetrically -- `rewrite_root` maps such a root to
+/// `fwd parent + delta`, which is likewise not a vertex of the post-collection
+/// graph -- so the theorem stays sound; it simply says nothing about a closure
+/// kept alive *only* by an interior root.  Covering that case needs
+/// `MinorCollectForwarding.Helpers.post_minor_reachable` to resolve its root as
+/// well, and a lemma that a promoted infix target resolves to its promoted
+/// parent.  Field-level interior pointers are fully covered: `Reachability`
+/// and the Cheney forwarding map both resolve.
 let classify_root (r: U64.t) : GTot combined_vertex =
   if is_minor_pointer r then MinorV r else MajorV r
 

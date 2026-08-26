@@ -61,6 +61,20 @@ val cheney_bfs_inv_valid (minor: minor_state) (cs: CheneySpec.cheney_state)
   : Lemma (requires cheney_bfs_inv minor cs)
           (ensures queue_valid minor cs.CheneySpec.cs_queue)
 
+/// Extract infix closure from the invariant: once an interior nursery pointer
+/// has been forwarded, the closure that contains it has been forwarded too.
+///
+/// `cheney_forward_one` establishes this because its infix branch forwards the
+/// parent first and only then records the interior entry; the point of stating
+/// it as an invariant is the *already forwarded* branch, which returns the
+/// state untouched and therefore has to inherit the parent's entry from
+/// earlier in the traversal.
+val cheney_bfs_inv_infix_closed (minor: minor_state) (cs: CheneySpec.cheney_state)
+  : Lemma (requires cheney_bfs_inv minor cs)
+          (ensures forall (x: U64.t).
+            is_infix_in_minor minor x /\ cs.CheneySpec.cs_fwd x <> 0UL ==>
+            cs.CheneySpec.cs_fwd (infix_parent minor x) <> 0UL)
+
 /// Forward_one preserves the BFS invariant
 val fwd_one_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)

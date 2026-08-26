@@ -57,6 +57,24 @@ let combined_reachable_edge_forwarded_normal = MCFNE.combined_reachable_edge_for
 let fwd_disjoint_reachable_major_intro = MCFNE.fwd_disjoint_reachable_major_intro
 let normal_edge_forward_ready_intro = MCFNE.normal_edge_forward_ready_intro
 
+/// `major_minor_fields_no_infix_targets_elim` is guarded by `is_minor_pointer`,
+/// which is not known in the major-target branch.  Interiority implies it, so
+/// the guard can be discharged by contradiction.
+private let major_field_target_non_infix
+  (minor: minor_state) (major: heap) (obj: obj_addr) (j: nat)
+  : Lemma (requires GenInv.major_minor_fields_no_infix_targets minor major /\
+                    Seq.mem obj (objects zero_addr major) /\
+                    ~(is_blue obj major) /\ ~(is_no_scan obj major) /\
+                    j < U64.v (wosize_of_object obj major) /\
+                    U64.v obj + j * 8 + 8 <= heap_size /\
+                    (U64.v obj + j * 8) % 8 == 0)
+          (ensures ~(is_infix_in_minor minor
+                      (to_minor_offset
+                        (read_word major (U64.uint_to_t (U64.v obj + j * 8))))))
+  = if is_infix_in_minor minor
+       (to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + j * 8))))
+    then GenInv.major_minor_fields_no_infix_targets_elim minor major obj j
+
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 private let normal_src_image_is_val_addr
   (minor: minor_state) (major: heap) (fp: U64.t)
@@ -554,7 +572,8 @@ private let post_edge_from_major_image_reflects_mem_ce
       assert (read_word updated field_addr == old_raw);
       if is_minor_pointer old_val && Seq.mem old_val (minor_objects minor) then begin
         assert (to_minor_offset (read_word major field_addr) == old_val);
-        CG.classify_major_field_is_minor minor major (read_word major field_addr);
+        GenInv.major_minor_fields_no_infix_targets_elim minor major src_obj j;
+        CG.classify_major_field_is_minor_raw minor major (read_word major field_addr);
         assert (CG.classify_major_field minor major (read_word major field_addr) ==
           Some (CG.MinorV old_val));
         CG.major_field_edge_intro minor major src_obj j (CG.MinorV old_val);
@@ -581,6 +600,8 @@ private let post_edge_from_major_image_reflects_mem_ce
         objects_addresses_gt_start zero_addr major res_tgt;
         RBridge.aligned_gt_ge_plus_mword (U64.v old_raw) (U64.v zero_addr);
         assert (is_pointer_field old_raw);
+        major_field_target_non_infix minor major src_obj j;
+        resolve_minor_non_infix minor old_val;
         CG.classify_major_field_major minor major (read_word major field_addr);
         assert (CG.classify_major_field minor major (read_word major field_addr) ==
           Some (CG.MajorV res_tgt));
@@ -713,7 +734,8 @@ private let post_edge_from_major_image_reflects_target
       assert (read_word updated field_addr == old_raw);
       if is_minor_pointer old_val && Seq.mem old_val (minor_objects minor) then begin
         assert (to_minor_offset (read_word major field_addr) == old_val);
-        CG.classify_major_field_is_minor minor major (read_word major field_addr);
+        GenInv.major_minor_fields_no_infix_targets_elim minor major src_obj j;
+        CG.classify_major_field_is_minor_raw minor major (read_word major field_addr);
         CG.major_field_edge_intro minor major src_obj j (CG.MinorV old_val);
         CG.combined_reachable_step cg combined_roots (CG.MajorV src) (CG.MinorV old_val);
         minor_objects_body_bound minor old_val;
@@ -736,6 +758,8 @@ private let post_edge_from_major_image_reflects_target
         objects_addresses_gt_start zero_addr major res_tgt;
         RBridge.aligned_gt_ge_plus_mword (U64.v old_raw) (U64.v zero_addr);
         assert (is_pointer_field old_raw);
+        major_field_target_non_infix minor major src_obj j;
+        resolve_minor_non_infix minor old_val;
         CG.classify_major_field_major minor major (read_word major field_addr);
         assert (CG.classify_major_field minor major (read_word major field_addr) ==
           Some (CG.MajorV res_tgt));

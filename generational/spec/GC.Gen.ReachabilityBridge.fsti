@@ -130,7 +130,9 @@ val reachable_major_valid
 ///
 /// `major_field_zero_covered` is the right one: it requires only that a
 /// live-minor pointer stored in a scannable non-blue object's first field
-/// already appears in the Cheney root sequence.  That is exactly what the
+/// already appears in the Cheney root sequence.  The liveness test is applied
+/// to the *resolution* of the stored word, so an interior pointer into a live
+/// nursery closure counts as live and must be covered.  That is exactly what the
 /// slot-table preconditions of `minor_collect_full` supply, since
 /// `ref_table_covers_minor_ptrs` quantifies over `j < wosize` and so does
 /// cover `j = 0` (see `major_field_zero_covered_from_slots`).
@@ -142,7 +144,8 @@ let major_field_zero_covered
     0 < U64.v (wosize_of_object src major) /\
     U64.v src + 8 <= heap_size ==>
     (let v = to_minor_offset (read_word major (U64.uint_to_t (U64.v src))) in
-     is_minor_pointer v /\ Seq.mem v (minor_objects ms) ==> Seq.mem v roots)
+     is_minor_pointer v /\ Seq.mem (resolve_minor ms v) (minor_objects ms) ==>
+     Seq.mem v roots)
 
 
 /// The scan-derived remembered roots are already included in the Cheney root

@@ -588,6 +588,11 @@ private let rec minor_objects_aux_no_infix
   end
 #pop-options
 
+let resolve_minor_non_infix (ms: minor_state) (v: U64.t) = ()
+
+let resolve_minor_in_objects (ms: minor_state) (v: U64.t) =
+  infix_parent_in_minor_objects ms v
+
 let minor_objects_not_infix (ms: minor_state) (addr: U64.t)
           =
   if U64.v ms.bump > minor_heap_size || U64.v ms.bump % 8 <> 0 then ()

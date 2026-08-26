@@ -112,6 +112,10 @@ let spot_minor_scenario_pre_intro_from_c_to_a
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
   (farr: seq U64.t)
   =
+  Preconditions.minor_collect_full_pre_elim minor major fp (spot_roots c) farr
+    (spot_slots c) 1;
+  GenInv.collection_heap_shape_elim minor major fp;
+  GenInv.minor_heap_shape_elim minor;
   let slot_v = SpecHeap.read_word major (spot_c_to_a_slot c) in
   assert (slot_v == Layout.a_minor);
   Layout.a_minor_is_minor_pointer ();
@@ -122,7 +126,8 @@ let spot_minor_scenario_pre_intro_from_c_to_a
   assert (to_minor_offset slot_v == Layout.a_minor);
   assert (Promote.is_minor_pointer (to_minor_offset slot_v));
   assert (Seq.mem (to_minor_offset slot_v) (minor_objects minor));
-  CG.classify_major_field_is_minor minor major slot_v;
+  minor_objects_not_infix minor (to_minor_offset slot_v);
+  CG.classify_major_field_is_minor_raw minor major slot_v;
   assert (CG.classify_major_field minor major slot_v ==
           Some (CG.MinorV (to_minor_offset slot_v)));
   assert (Some (CG.MinorV (to_minor_offset slot_v)) ==

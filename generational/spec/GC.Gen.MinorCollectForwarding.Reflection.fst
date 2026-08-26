@@ -44,6 +44,19 @@ let normal_src_reachable = MCFNE.normal_src_reachable
 let post_minor_edge = MCFH.post_minor_edge
 let mem_graph_vertex_at = MCFH.mem_graph_vertex_at
 
+/// `minor_fields_no_infix_targets_elim` is guarded by `is_minor_pointer`, which
+/// is not known in the major-target branch.  It is implied by interiority, so
+/// the guard can be discharged by contradiction.
+private let minor_field_target_non_infix
+  (minor: minor_state) (src: U64.t) (j: nat)
+  : Lemma (requires GenInv.minor_fields_no_infix_targets minor /\
+                    Seq.mem src (minor_objects minor) /\
+                    j < minor_wosize minor src)
+          (ensures ~(is_infix_in_minor minor
+                      (to_minor_offset (minor_read_field minor src j))))
+  = if is_infix_in_minor minor (to_minor_offset (minor_read_field minor src j))
+    then GenInv.minor_fields_no_infix_targets_elim minor src j
+
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 /// Basic size facts, discharged in an empty context and brought into scope by
 /// explicit calls: under the large reflection contexts even these diverge.
@@ -320,7 +333,8 @@ let post_edge_from_minor_image_reflects_mem_ce
           minor_objects_valid minor old_val;
           is_minor_addr_from_bounds old_val;
           assert (is_minor_addr old_val);
-          CG.classify_minor_field_minor minor major (minor_read_field minor src j);
+          GenInv.minor_fields_no_infix_targets_elim minor src j;
+          CG.classify_minor_field_minor_raw minor major (minor_read_field minor src j);
           assert (CG.classify_minor_field minor major (minor_read_field minor src j) ==
             Some (CG.MinorV old_val));
           CG.minor_field_edge_intro minor major src j (CG.MinorV old_val);
@@ -357,6 +371,8 @@ let post_edge_from_minor_image_reflects_mem_ce
             assert False
           end;
           assert (~(is_minor_addr old_val /\ Seq.mem old_val (minor_objects minor)));
+          minor_field_target_non_infix minor src j;
+          resolve_minor_non_infix minor old_val;
           CG.classify_minor_field_major minor major (minor_read_field minor src j);
           assert (CG.classify_minor_field minor major (minor_read_field minor src j) ==
             Some (CG.MajorV old_raw));
@@ -504,7 +520,8 @@ let post_edge_from_minor_image_reflects_target
           minor_objects_valid minor old_val;
           is_minor_addr_from_bounds old_val;
           assert (is_minor_addr old_val);
-          CG.classify_minor_field_minor minor major (minor_read_field minor src j);
+          minor_field_target_non_infix minor src j;
+          CG.classify_minor_field_minor_raw minor major (minor_read_field minor src j);
           CG.minor_field_edge_intro minor major src j (CG.MinorV old_val);
           CG.combined_reachable_step cg combined_roots (CG.MinorV src) (CG.MinorV old_val);
           minor_objects_body_bound minor old_val;
@@ -539,6 +556,8 @@ let post_edge_from_minor_image_reflects_target
             assert False
           end;
           assert (~(is_minor_addr old_val /\ Seq.mem old_val (minor_objects minor)));
+          minor_field_target_non_infix minor src j;
+          resolve_minor_non_infix minor old_val;
           CG.classify_minor_field_major minor major (minor_read_field minor src j);
           assert (CG.classify_minor_field minor major (minor_read_field minor src j) ==
             Some (CG.MajorV old_raw));

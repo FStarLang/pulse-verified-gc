@@ -321,6 +321,31 @@ val infix_parent_in_minor_objects (ms: minor_state) (addr: U64.t)
                     minor_tag ms parent == 247 /\
                     U64.v addr - U64.v parent < minor_wosize ms parent * 8))
 
+/// Resolve a nursery address: an infix sub-object resolves to its enclosing
+/// closure, exactly as `GC.Spec.Object.resolve_object` does in the major heap.
+///
+/// Stock OCaml creates such pointers on every path that builds a mutually
+/// recursive closure small enough for the nursery (`runtime/interp.c:575`,
+/// `asmcomp/cmm_helpers.ml:797`, with `Max_young_wosize = 256`), so anything
+/// that walks nursery pointers --- the reachability relation, the combined
+/// graph, the Cheney forwarding map --- has to name the closure an interior
+/// pointer keeps alive rather than dropping it.
+let resolve_minor (ms: minor_state) (v: U64.t) : GTot U64.t =
+  if is_infix_in_minor ms v then infix_parent ms v else v
+
+/// A non-interior nursery address resolves to itself.
+val resolve_minor_non_infix (ms: minor_state) (v: U64.t)
+  : Lemma (requires ~(is_infix_in_minor ms v))
+          (ensures resolve_minor ms v == v)
+
+/// The resolution of a nursery address is a valid minor object whenever the
+/// address is a well-formed infix; for non-infix addresses it is the identity.
+val resolve_minor_in_objects (ms: minor_state) (v: U64.t)
+  : Lemma (requires is_infix_in_minor ms v /\ minor_infix_wf ms)
+          (ensures Seq.mem (resolve_minor ms v) (minor_objects ms) /\
+                   U64.v (resolve_minor ms v) >= 8 /\
+                   U64.v (resolve_minor ms v) % 8 == 0)
+
 val minor_objects_not_infix (ms: minor_state) (addr: U64.t)
   : Lemma (requires minor_wf ms /\ Seq.mem addr (minor_objects ms))
           (ensures minor_tag ms addr <> 249)

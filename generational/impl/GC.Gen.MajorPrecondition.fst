@@ -107,6 +107,10 @@ let post_minor_minor_root_valid
   let prom = Cheney.cheney_promote minor major fp roots in
   let result = Cheney.cheney_collect_spec minor major fp roots in
   // The root is a live nursery object, hence reachable, hence forwarded.
+  // `minor_reachable_roots` speaks about the resolution of a root; an
+  // enumerated nursery object is its own resolution.
+  minor_objects_not_infix minor r;
+  resolve_minor_non_infix minor r;
   Reach.minor_reachable_roots minor roots;
   CheneyCorr.cheney_promotes_all_reachable minor major fp roots;
   assert (prom.fwd_map r <> 0UL);

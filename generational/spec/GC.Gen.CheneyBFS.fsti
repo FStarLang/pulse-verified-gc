@@ -29,13 +29,15 @@ module CheneySpec = GC.Gen.Cheney
 /// Predicates: well-formedness of the forwarding map
 /// ---------------------------------------------------------------------------
 
-/// The forwarding map covers all roots that are minor objects with wosize > 0
+/// The forwarding map covers every root that resolves to a minor object with
+/// wosize > 0.  Resolution matters because a root may point into the interior
+/// of a nursery closure; what has to be copied is the closure it points into.
 let fwd_covers_roots (minor: minor_state) (fwd: forwarding_map) (roots: seq U64.t) : prop =
   forall (r: U64.t).
     Seq.mem r roots /\
-    Seq.mem r (minor_objects minor) /\
-    minor_wosize minor r > 0 ==>
-    fwd r <> 0UL
+    Seq.mem (resolve_minor minor r) (minor_objects minor) /\
+    minor_wosize minor (resolve_minor minor r) > 0 ==>
+    fwd (resolve_minor minor r) <> 0UL
 
 /// The forwarding map is closed under minor_successors:
 /// if x is forwarded and y is a successor with wosize > 0, then y is forwarded too
@@ -114,17 +116,62 @@ val forward_fields_queue_prefix
 [@@"opaque_to_smt"]
 val addr_covered (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t) : prop
 
+/// Introduce coverage for an address that is not an interior pointer, so that
+/// the address is its own resolution.
 val addr_covered_intro
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires (Seq.mem addr (minor_objects minor) /\
+  : Lemma (requires ~(is_infix_in_minor minor addr) /\
+                    (Seq.mem addr (minor_objects minor) /\
                      minor_wosize minor addr > 0 ==> cs.cs_fwd addr <> 0UL))
           (ensures addr_covered minor cs addr)
+
+/// Introduce coverage for an address that already has a forwarding entry.  The
+/// BFS invariant supplies the enclosing closure's entry when the address is an
+/// interior pointer, which is what the *already forwarded* branch of
+/// `cheney_forward_one` needs: it returns the state untouched.
+val addr_covered_intro_forwarded
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
+  : Lemma (requires GC.Gen.Cheney.SimOne.cheney_bfs_inv minor cs /\
+                    minor_wf minor /\
+                    cs.cs_fwd addr <> 0UL)
+          (ensures addr_covered minor cs addr)
+
+/// Introduce coverage for an interior pointer whose enclosing closure has been
+/// forwarded.  The interior address is itself never a minor object, so the
+/// closure's entry is all that coverage asks for.
+val addr_covered_intro_infix
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
+  : Lemma (requires minor_wf minor /\
+                    is_infix_in_minor minor addr /\
+                    cs.cs_fwd (infix_parent minor addr) <> 0UL)
+          (ensures addr_covered minor cs addr)
+
+/// Coverage of an interior pointer after one forwarding step: forwarding the
+/// interior address goes through its enclosing closure, so the closure's entry
+/// after the step is all the caller has to exhibit.
+val addr_covered_infix_step
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
+  : Lemma (requires minor_wf minor /\
+                    is_infix_in_minor minor addr /\
+                    cs.cs_fwd addr = 0UL /\
+                    infix_parent minor addr <> addr /\
+                    (CheneySpec.cheney_forward_normal minor cs
+                       (infix_parent minor addr)).cs_fwd (infix_parent minor addr) <> 0UL)
+          (ensures addr_covered minor (CheneySpec.cheney_forward_one minor cs addr) addr)
 
 val addr_covered_elim
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
   : Lemma (requires addr_covered minor cs addr /\
                     Seq.mem addr (minor_objects minor) /\ minor_wosize minor addr > 0)
           (ensures cs.cs_fwd addr <> 0UL)
+
+/// Coverage also names the object an interior pointer keeps alive.
+val addr_covered_elim_resolved
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
+  : Lemma (requires addr_covered minor cs addr /\
+                    Seq.mem (resolve_minor minor addr) (minor_objects minor) /\
+                    minor_wosize minor (resolve_minor minor addr) > 0)
+          (ensures cs.cs_fwd (resolve_minor minor addr) <> 0UL)
 
 val forward_one_preserves_addr_covered
   (minor: minor_state) (cs: CheneySpec.cheney_state) (step_addr x: U64.t)

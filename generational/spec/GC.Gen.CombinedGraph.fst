@@ -33,9 +33,9 @@ let cv_eqtype : squash (hasEq combined_vertex) = ()
 /// From a minor object's field: normalize potential minor pointers first,
 /// matching Cheney scanning and pointer updates.
 let classify_minor_field (ms: minor_state) (major: heap) (v: U64.t)
-  = let vo = to_minor_offset v in
-    if is_minor_addr vo && Seq.mem vo (minor_objects ms) then
-      Some (MinorV vo)
+  = let vr = resolve_minor ms (to_minor_offset v) in
+    if is_minor_addr vr && Seq.mem vr (minor_objects ms) then
+      Some (MinorV vr)
     else if is_val_addr v && Seq.mem v (objects zero_addr major) then
       Some (MajorV v)
     else
@@ -44,6 +44,9 @@ let classify_minor_field (ms: minor_state) (major: heap) (v: U64.t)
 let classify_minor_field_minor (ms: minor_state) (major: heap) (v: U64.t)
   = ()
 
+let classify_minor_field_minor_raw (ms: minor_state) (major: heap) (v: U64.t)
+  = classify_minor_field_minor ms major v
+
 let classify_minor_field_major (ms: minor_state) (major: heap) (v: U64.t)
   = ()
 
@@ -51,8 +54,9 @@ let classify_minor_field_major (ms: minor_state) (major: heap) (v: U64.t)
 /// matching remembered-set scanning and pointer updates.
 let classify_major_field (ms: minor_state) (major: heap) (v: U64.t)
   = let vo = to_minor_offset v in
-    if is_minor_pointer vo && Seq.mem vo (minor_objects ms) then
-      Some (MinorV vo)
+    let vr = resolve_minor ms vo in
+    if is_minor_pointer vo && Seq.mem vr (minor_objects ms) then
+      Some (MinorV vr)
     else if is_val_addr v && is_pointer_field v &&
             Seq.mem (resolve_object v major) (objects zero_addr major) then
       Some (MajorV (resolve_object v major))
@@ -65,6 +69,9 @@ let classify_major_field_major (ms: minor_state) (major: heap) (v: U64.t)
 let classify_major_field_is_minor (ms: minor_state) (major: heap) (v: U64.t)
   = ()
 
+let classify_major_field_is_minor_raw (ms: minor_state) (major: heap) (v: U64.t)
+  = classify_major_field_is_minor ms major v
+
 /// ---------------------------------------------------------------------------
 /// Classification Inversion Lemmas
 /// ---------------------------------------------------------------------------
@@ -72,13 +79,19 @@ let classify_major_field_is_minor (ms: minor_state) (major: heap) (v: U64.t)
 let classify_minor_field_inv_minor (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
   = ()
 
+let classify_minor_field_inv_minor_raw (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
+  = classify_minor_field_inv_minor ms major v x
+
 #push-options "--z3rlimit 10"
 let classify_minor_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
   = is_val_addr_spec v
 #pop-options
 
 let classify_major_field_inv_minor (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
-  = ()
+  = minor_objects_valid ms x
+
+let classify_major_field_inv_minor_raw (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
+  = classify_major_field_inv_minor ms major v x
 
 #push-options "--z3rlimit 10"
 let classify_major_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
@@ -313,12 +326,12 @@ private let classify_minor_in_graph (ms: minor_state) (major: heap) (v: U64.t)
       match classify_minor_field ms major v with
       | Some cv -> mem_cv cv g
       | None -> True))
-  = let vo = to_minor_offset v in
+  = let vr = resolve_minor ms (to_minor_offset v) in
     let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
-    if is_minor_addr vo && Seq.mem vo minor_objs then begin
-      Classical.move_requires (Seq.mem_index vo) minor_objs;
-      tag_minor_mem minor_objs 0 vo;
+    if is_minor_addr vr && Seq.mem vr minor_objs then begin
+      Classical.move_requires (Seq.mem_index vr) minor_objs;
+      tag_minor_mem minor_objs 0 vr;
       Seq.lemma_mem_append (tag_minor minor_objs 0) (tag_major major_objs 0)
     end
     else if is_val_addr v && Seq.mem v major_objs then begin
@@ -342,9 +355,10 @@ private let classify_major_in_graph (ms: minor_state) (major: heap) (v: U64.t)
   = let vo = to_minor_offset v in
     let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
-    if is_minor_pointer vo && Seq.mem vo minor_objs then begin
-      Classical.move_requires (Seq.mem_index vo) minor_objs;
-      tag_minor_mem minor_objs 0 vo;
+    if is_minor_pointer vo && Seq.mem (resolve_minor ms vo) minor_objs then begin
+      let vr = resolve_minor ms vo in
+      Classical.move_requires (Seq.mem_index vr) minor_objs;
+      tag_minor_mem minor_objs 0 vr;
       Seq.lemma_mem_append (tag_minor minor_objs 0) (tag_major major_objs 0)
     end
     else if is_val_addr v && is_pointer_field v &&
@@ -1085,6 +1099,7 @@ let rec classify_roots_minor_mem (roots: seq U64.t) (r: U64.t)
         classify_roots_minor_mem tl r
       end
     end
+
 #pop-options
 
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"

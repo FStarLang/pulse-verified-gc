@@ -319,6 +319,42 @@ is not.
 raw→resolved swap. Expect these to be mechanical once Phase C settles the
 pattern.
 
+### Phase D2 — interior *roots* in the combined-graph isomorphism
+
+Phase D covers interior pointers stored in *fields*.  Interior pointers held
+directly in a **root** are a separate, larger piece of work and are currently
+outside the reachable subgraph the isomorphism theorem talks about.
+
+`GC.Gen.CombinedGraph.classify_root` is raw, so an interior root `r` yields
+`MinorV r`, which is not a vertex of the combined graph.  The post side omits it
+symmetrically: `Promote.rewrite_root` maps such a root to `fwd parent + delta`,
+which is likewise not a vertex of the post-collection graph, and
+`MinorCollectForwarding.Helpers.post_minor_reachable` demands `r == rr` with `rr`
+a graph vertex.  The theorem is therefore *sound* -- both sides consistently
+exclude a closure kept alive only by an interior root -- but *incomplete*: it
+says nothing about such a closure, in either direction.
+
+The collector itself is unaffected.  `Cheney.cheney_forward_one` forwards an
+interior root through its parent and installs `fwd r = fwd parent + delta`, and
+`CheneyBFS.fwd_covers_roots` / `Reachability.minor_reachable` both resolve their
+roots, so an interior root does keep its closure alive at run time.
+
+Closing the gap needs, in order:
+
+1. `classify_root` (and `classify_roots`, ~60 call sites) to take a
+   `minor_state` and resolve, with `classify_roots_inv_minor` restated
+   existentially (`exists r. Seq.mem r roots /\ resolve_minor ms r == v`).
+2. `post_minor_reachable` to admit a resolved root:
+   `r == rr \/ r == HeapGraph.resolve_field res.mc_major rr`.
+3. A new lemma that a promoted infix forwarding target resolves to its promoted
+   parent -- `resolve_object (fwd x) res.mc_major == fwd (infix_parent minor x)`
+   -- carried through `update_major_pointers`.  Phase B's
+   `fwd_infix_targets_wf` and `fwd_infix_delta` supply the raw material
+   (`fwd x = fwd parent + delta` and `infix_addr_wf` of the target) but do not
+   state the identity.
+4. `normal_classified_root_image_in_rewrite_roots` weakened to the resolved
+   form, and its consumers in `GC.Gen.MinorCollectForwarding` adapted.
+
 ### Phase E — delete the restrictions
 
 Remove `minor_fields_no_infix_targets` and

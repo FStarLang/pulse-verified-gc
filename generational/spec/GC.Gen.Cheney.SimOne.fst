@@ -146,7 +146,41 @@ private let rec count_unforwarded_ext
 /// Compound BFS invariant definition and lemmas
 /// ---------------------------------------------------------------------------
 
+/// Once an interior nursery pointer has an entry in the forwarding map, so
+/// does the closure it points into.  Stock OCaml stores such pointers in
+/// ordinary fields of nursery blocks (`runtime/interp.c:575` builds mutually
+/// recursive closures with `Alloc_small`), so the same interior address can be
+/// reached twice; the second visit takes the *already forwarded* branch of
+/// `cheney_forward_one` and returns the state untouched, which is only enough
+/// to keep the parent alive because of this invariant.
+let fwd_infix_closed (minor: minor_state) (fwd: forwarding_map) : prop =
+  forall (x: U64.t). is_infix_in_minor minor x /\ fwd x <> 0UL ==>
+                     fwd (infix_parent minor x) <> 0UL
+
+/// Extending the forwarding map with a non-zero image preserves infix closure,
+/// provided an interior key brings its parent's entry along.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+private let fwd_infix_closed_extend
+  (minor: minor_state) (fwd: forwarding_map) (a v: U64.t)
+  : Lemma (requires fwd_infix_closed minor fwd /\ v <> 0UL /\
+                    (is_infix_in_minor minor a ==>
+                       infix_parent minor a <> a /\ fwd (infix_parent minor a) <> 0UL))
+          (ensures fwd_infix_closed minor (extend_forwarding fwd a v))
+  = let fwd' = extend_forwarding fwd a v in
+    let aux (x: U64.t) : Lemma
+      (requires is_infix_in_minor minor x /\ fwd' x <> 0UL)
+      (ensures fwd' (infix_parent minor x) <> 0UL)
+      = if x = a then ()
+        else begin
+          assert (fwd' x == fwd x);
+          assert (fwd (infix_parent minor x) <> 0UL)
+        end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
 let cheney_bfs_inv (minor: minor_state) (cs: CheneySpec.cheney_state) : prop =
+  fwd_infix_closed minor cs.cs_fwd /\
   queue_valid minor cs.cs_queue /\
   (forall (j:nat). j < Seq.length cs.cs_queue ==>
     cs.cs_fwd (Seq.index cs.cs_queue j) <> 0UL) /\
@@ -178,6 +212,9 @@ let cheney_bfs_inv_bound (minor: minor_state) (cs: CheneySpec.cheney_state)
 let cheney_bfs_inv_valid (minor: minor_state) (cs: CheneySpec.cheney_state)
   = ()
 
+let cheney_bfs_inv_infix_closed (minor: minor_state) (cs: CheneySpec.cheney_state)
+  = ()
+
 /// ---------------------------------------------------------------------------
 /// Forward_one preserves BFS invariant
 /// ---------------------------------------------------------------------------
@@ -186,7 +223,7 @@ let cheney_bfs_inv_valid (minor: minor_state) (cs: CheneySpec.cheney_state)
 
 private let fwd_one_bfs_inv_success
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires cheney_bfs_inv minor cs /\
+  : Lemma (requires cheney_bfs_inv minor cs /\ minor_wf minor /\
                     Seq.mem addr (minor_objects minor) /\
                     cs.cs_fwd addr = 0UL /\
                     minor_wosize minor addr > 0 /\
@@ -196,6 +233,8 @@ private let fwd_one_bfs_inv_success
   =
   let wz = minor_wosize minor addr in
   let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+  minor_objects_not_infix minor addr;
+  fwd_infix_closed_extend minor cs.cs_fwd addr res.new_addr;
   CheneySpec.cheney_forward_normal_success minor cs addr;
   let cs' = CheneySpec.cheney_forward_normal minor cs addr in
   let fwd' = extend_forwarding cs.cs_fwd addr res.new_addr in
@@ -247,7 +286,7 @@ private let fwd_one_bfs_inv_success
 
 private let fwd_normal_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires cheney_bfs_inv minor cs)
+  : Lemma (requires cheney_bfs_inv minor cs /\ minor_wf minor)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_normal minor cs addr))
   =
   if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL then
@@ -334,7 +373,19 @@ let fwd_one_preserves_bfs_inv
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_complete);
     count_unforwarded_ext objs r.cs_fwd cs'.cs_fwd 0;
     // queue_valid is same since queues are equal
-    assert (queue_valid minor r.cs_queue)
+    assert (queue_valid minor r.cs_queue);
+    // Infix closure: the parent's entry is installed before the interior one.
+    if cs'.cs_fwd parent <> 0UL &&
+       U64.v addr >= U64.v parent &&
+       U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < heap_size
+    then begin
+      CheneySpec.cheney_forward_one_infix_guard_pass minor cs addr;
+      let sum = U64.uint_to_t (U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent)) in
+      assert (U64.v (cs'.cs_fwd parent) > 0);
+      assert (U64.v sum > 0);
+      fwd_infix_closed_extend minor cs'.cs_fwd addr sum
+    end
+    else CheneySpec.cheney_forward_one_infix_guard_fail minor cs addr
   end
   else begin
     CheneySpec.cheney_forward_one_normal minor cs addr;

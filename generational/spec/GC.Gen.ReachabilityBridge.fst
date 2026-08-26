@@ -224,6 +224,23 @@ let reachable_major_valid
     Classical.forall_intro (Classical.move_requires aux)
 #pop-options
 
+/// The remembered-set scan records the *raw* stored word, so the bridge needs
+/// `is_minor_object_addr` of that word rather than of its resolution.  An
+/// interior pointer satisfies the address-range test by construction; a
+/// non-interior one is its own resolution and so inherits the test from
+/// `minor_objects_valid`.
+private let raw_is_minor_object_addr
+  (ms: minor_state) (raw: U64.t) (v: U64.t)
+  : Lemma
+    (requires resolve_minor ms raw == v /\ Seq.mem v (minor_objects ms) /\
+              U64.v raw < minor_heap_size /\ U64.v raw % 8 == 0)
+    (ensures is_minor_object_addr raw)
+  = if is_infix_in_minor ms raw then ()
+    else begin
+      resolve_minor_non_infix ms raw;
+      minor_objects_valid ms v
+    end
+
 private let minor_succ_in_live_set
   (minor: minor_state) (major: heap) (roots: seq U64.t) (u v: U64.t)
   : Lemma
@@ -240,15 +257,12 @@ let live_set_in_minor_reachable
     let full_roots = Seq.append roots remembered in
     let p (x: U64.t) : prop = Seq.mem x (minor_reachable minor roots) in
     let base (r: U64.t) : Lemma
-      (requires Seq.mem r full_roots /\ Seq.mem r (minor_objects minor))
-      (ensures p r)
+      (requires Seq.mem r full_roots /\
+                Seq.mem (resolve_minor minor r) (minor_objects minor))
+      (ensures p (resolve_minor minor r))
     = Seq.lemma_mem_append roots remembered;
-      if Seq.mem r roots then
-        minor_reachable_roots minor roots
-      else begin
-        assert (Seq.mem r remembered);
-        minor_reachable_roots minor roots
-      end
+      assert (Seq.mem r roots);
+      minor_reachable_roots minor roots
     in
     let edge (a b: U64.t) : Lemma
       (requires p a /\ Seq.mem b (minor_successors minor a))
@@ -284,6 +298,10 @@ let reachability_bridge
       | MinorV v ->
         classify_roots_inv_minor roots v;
         minor_vertex_char minor major v;
+        // A minor vertex is an enumerated nursery object, hence not interior,
+        // so it is its own resolution and `minor_reachable_roots` applies.
+        minor_objects_not_infix minor v;
+        resolve_minor_non_infix minor v;
         Seq.lemma_mem_append roots (minor_roots_from_major major);
         minor_reachable_roots minor full_roots
       | MajorV v ->
@@ -302,7 +320,8 @@ let reachability_bridge
           let aux (i:nat) : Lemma
             (requires i < minor_wosize minor src /\
                       classify_minor_field minor major (minor_read_field minor src i) == Some (MinorV v))
-            (ensures to_minor_offset (minor_read_field minor src i) == v /\
+            (ensures resolve_minor minor
+                       (to_minor_offset (minor_read_field minor src i)) == v /\
                      is_minor_addr v /\ Seq.mem v (minor_objects minor))
           = classify_minor_field_inv_minor minor major (minor_read_field minor src i) v
           in
@@ -321,12 +340,12 @@ let reachability_bridge
                       (U64.v src + i * 8) % 8 == 0 /\
                       classify_major_field minor major
                         (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (MinorV v))
-            (ensures Seq.mem v full_roots /\ Seq.mem v (minor_objects minor))
+            (ensures (exists (raw: U64.t). Seq.mem raw full_roots /\
+                                      resolve_minor minor raw == v) /\
+                     Seq.mem v (minor_objects minor))
           = let fv = read_word major (U64.uint_to_t (U64.v src + i * 8)) in
+            let raw = to_minor_offset fv in
             classify_major_field_inv_minor minor major fv v;
-            assert (to_minor_offset fv == v);
-            assert (is_minor_pointer v);
-            assert (Seq.mem v (minor_objects minor));
             Seq.lemma_mem_append roots (minor_roots_from_major major);
             if i = 0 then begin
               // Field 0 is outside the remembered-set scan window, so the
@@ -335,11 +354,13 @@ let reachability_bridge
               // which is the other half of `full_roots`.
               assert (U64.uint_to_t (U64.v src + i * 8) == src);
               assert (U64.v src + 8 <= heap_size);
-              assert (Seq.mem v roots)
+              assert (Seq.mem raw roots)
             end else begin
               assert (i >= 1);
-              assert (is_minor_object_addr v);
-              assert (is_minor_object_addr (to_minor_offset fv));
+              // `is_minor_object_addr` is purely an address-range test, so it
+              // holds of an interior pointer just as it does of a base one:
+              // the remembered-set scan records the raw stored word.
+              raw_is_minor_object_addr minor raw v;
               scan_complete major src i
             end
           in

@@ -187,8 +187,6 @@ fn forward_if_minor_infix
           (not oom_out ==> CheneyBFS.addr_covered minor_st cs_post addr))
 {
   minor_tag_infix_not_minor_object ({data='md; bump='mb} <: minor_state) addr;
-  CheneyBFS.addr_covered_intro ({data='md; bump='mb} <: minor_state)
-    (CheneySpec.cheney_forward_one ({data='md; bump='mb} <: minor_state) (Ghost.reveal cs_pre) addr) addr;
   // Establish is_infix_in_minor and extract parent info from minor_infix_wf
   infix_parent_in_minor_objects ({data='md; bump='mb} <: minor_state) addr;
   infix_parent_value ({data='md; bump='mb} <: minor_state) addr;
@@ -210,6 +208,7 @@ fn forward_if_minor_infix
     CheneySpec.cheney_forward_normal_noop ({data='md; bump='mb} <: minor_state) cs_pre parent;
     CheneySpec.cheney_forward_one_infix ({data='md; bump='mb} <: minor_state) cs_pre addr;
     SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr;
+    CheneyBFS.addr_covered_infix_step ({data='md; bump='mb} <: minor_state) cs_pre addr;
     // Compute infix forwarding: parent_fwd + delta
     let delta = U64.sub addr parent;
     if U64.gte parent_fwd_val heap_size_u64 {
@@ -262,6 +261,7 @@ fn forward_if_minor_infix
         // impl_matches_spec now holds against cs' = cheney_forward_normal minor cs_pre parent
         CheneySpec.cheney_forward_one_infix ({data='md; bump='mb} <: minor_state) cs_pre addr;
         SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr;
+        CheneyBFS.addr_covered_infix_step ({data='md; bump='mb} <: minor_state) cs_pre addr;
         // Compute infix fwd
         let delta = U64.sub addr parent;
         infix_fwd_no_overflow (U64.v new_parent_addr) (U64.v delta);
@@ -370,10 +370,13 @@ fn forward_if_minor
     let idx = SZ.uint64_to_sizet (U64.div addr 8UL);
     let fwd_val = fwd_arr.(idx);
     if not (U64.eq fwd_val 0UL) {
-      // Already forwarded: fwd_arr[addr/8] ≠ 0 → cs_fwd addr ≠ 0 → noop
+      // Already forwarded: fwd_arr[addr/8] ≠ 0 → cs_fwd addr ≠ 0 → noop.
+      // The address may be an interior pointer whose closure was forwarded on
+      // an earlier visit, so coverage comes from the BFS invariant rather than
+      // from anything this step does.
       Sim.represents_fwd_read 'farr (cs_pre.CheneySpec.cs_fwd) addr;
       CheneySpec.cheney_forward_one_noop ({data='md; bump='mb} <: minor_state) cs_pre addr;
-      CheneyBFS.addr_covered_intro ({data='md; bump='mb} <: minor_state)
+      CheneyBFS.addr_covered_intro_forwarded ({data='md; bump='mb} <: minor_state)
         (CheneySpec.cheney_forward_one ({data='md; bump='mb} <: minor_state) (Ghost.reveal cs_pre) addr) addr;
       SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr
     } else {

@@ -266,16 +266,26 @@ let forward_roots_cover_concrete_roots (r: unit{ConcreteMajor.spot_major_room})
   forward_roots_a_nonzero r;
   let aux (root: U64.t)
     : Lemma (requires Seq.mem root roots /\
-                      Seq.mem root (minor_objects ConcreteMinor.spot_minor2) /\
-                      minor_wosize ConcreteMinor.spot_minor2 root > 0)
-            (ensures cs1.Cheney.cs_fwd root <> 0UL)
+                      Seq.mem (resolve_minor ConcreteMinor.spot_minor2 root)
+                        (minor_objects ConcreteMinor.spot_minor2) /\
+                      minor_wosize ConcreteMinor.spot_minor2
+                        (resolve_minor ConcreteMinor.spot_minor2 root) > 0)
+            (ensures cs1.Cheney.cs_fwd
+                       (resolve_minor ConcreteMinor.spot_minor2 root) <> 0UL)
     =
     ThreeObjects.spot_roots_cases c root;
+    ConcreteMinor.spot_minor_two_object_layout ();
+    // Neither concrete root is an interior pointer, so each is its own
+    // resolution: `c` is a major address and `a_minor` is an enumerated
+    // nursery object.
     if root = (c <: U64.t) then begin
       c_not_minor_or_infix r;
+      resolve_minor_non_infix ConcreteMinor.spot_minor2 root;
       assert False
     end else begin
       assert (root == Layout.a_minor);
+      minor_objects_not_infix ConcreteMinor.spot_minor2 Layout.a_minor;
+      resolve_minor_non_infix ConcreteMinor.spot_minor2 root;
       assert (cs1.Cheney.cs_fwd Layout.a_minor <> 0UL)
     end
   in
@@ -289,8 +299,9 @@ let spot_minor2_successor_impossible (obj y: U64.t)
   =
   let no_witness (i: nat)
     : Lemma (requires i < minor_wosize ConcreteMinor.spot_minor2 obj /\
-                      to_minor_offset
-                        (minor_read_field ConcreteMinor.spot_minor2 obj i) == y /\
+                      resolve_minor ConcreteMinor.spot_minor2
+                        (to_minor_offset
+                          (minor_read_field ConcreteMinor.spot_minor2 obj i)) == y /\
                       is_minor_addr y /\
                       Seq.mem y (minor_objects ConcreteMinor.spot_minor2))
             (ensures False)
@@ -299,6 +310,9 @@ let spot_minor2_successor_impossible (obj y: U64.t)
     to_minor_offset_in_minor_range 0UL;
     assert (to_minor_offset
       (minor_read_field ConcreteMinor.spot_minor2 obj i) == 0UL);
+    // The null word is below the first nursery object, so it is not interior
+    // and is its own resolution.
+    resolve_minor_non_infix ConcreteMinor.spot_minor2 0UL;
     assert (y == 0UL);
     zero_not_in_minor_objects ();
     assert False
@@ -307,7 +321,8 @@ let spot_minor2_successor_impossible (obj y: U64.t)
   Reachability.minor_successors_char ConcreteMinor.spot_minor2 obj y;
   assert (~(exists (i: nat).
     i < minor_wosize ConcreteMinor.spot_minor2 obj /\
-    to_minor_offset (minor_read_field ConcreteMinor.spot_minor2 obj i) == y /\
+    resolve_minor ConcreteMinor.spot_minor2
+      (to_minor_offset (minor_read_field ConcreteMinor.spot_minor2 obj i)) == y /\
     is_minor_addr y /\
     Seq.mem y (minor_objects ConcreteMinor.spot_minor2)));
   assert False

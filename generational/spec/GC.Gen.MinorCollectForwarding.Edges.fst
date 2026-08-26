@@ -359,6 +359,8 @@ let combined_major_minor_field_forwarded
     RBridge.reachable_major_valid_nonblue minor major roots;
     assert (~(is_blue src major));
     CG.classify_major_field_inv_minor minor major (read_word major field_addr) dst;
+    GenInv.major_minor_fields_no_infix_targets_elim minor major src i;
+    CG.classify_major_field_inv_minor_raw minor major (read_word major field_addr) dst;
     let old_raw = read_word major field_addr in
     assert (to_minor_offset old_raw == dst);
     assert (is_minor_pointer dst);
@@ -508,6 +510,8 @@ let promoted_minor_minor_field_forwarded
     GenInv.major_heap_shape_elim major fp;
     GenInv.minor_heap_shape_elim minor;
     CG.classify_minor_field_inv_minor minor major (minor_read_field minor src j) dst;
+    GenInv.minor_fields_no_infix_targets_elim minor src j;
+    CG.classify_minor_field_inv_minor_raw minor major (minor_read_field minor src j) dst;
     assert (to_minor_offset (minor_read_field minor src j) == dst);
     assert (is_minor_addr dst);
     assert (Seq.mem dst (minor_objects minor));
