@@ -398,6 +398,64 @@ a local edit later: the chain no longer depends on
 `roots_valid_for_minor_collection` (which mentions the recursive `minor_objects`
 and `objects zero_addr`) diverged outright.
 
+#### What is left, precisely
+
+The restriction is *only* in the specification.  The extracted collector already
+handles an interior root: `GC.Gen.Impl.Cheney`'s root loop (`:596`) calls the
+same `forward_if_minor` as the field scan (`:850`), which dispatches to
+`forward_if_minor_infix` on tag 249; `CheneyBFS.fwd_covers_infix_roots` and
+`scan_preserves_fwd_covers_infix_roots` were added in Phase A/B for exactly this
+case.  So step 5 is spec plumbing, not new collector code.
+
+Step 5 itself is small.  `MCFH.roots_valid_for_minor_collection` has only three
+consumers --- `roots_valid_for_minor_collection_nonblue` (major branch only, so
+unaffected), `post_rewritten_root_is_normal_image` and
+`post_reach_witness_is_normal_image` --- and the minor branch becomes
+
+```fstar
+is_minor_pointer r ==>
+  Seq.mem (resolve_minor minor r) (minor_objects minor) /\
+  minor_wosize minor (resolve_minor minor r) > 0
+```
+
+But step 5 *forces* step 2: once an interior root is admissible,
+`roots_valid_not_infix` is no longer provable, the reachability chain loses its
+supplier of `roots_not_infix_in_minor`, and the resolution must be carried in
+`post_minor_reachable` after all.  Doing them together leaves three proofs to
+repair.  All three were located; two have known fixes.
+
+1. `normal_src_edge_preserves_post_minor_reachable` --- its four nested
+   `FStar.Classical.exists_elim` motives spell the old `r == rr` shape out
+   literally.  **Fix known:** replace `r == rr` by the disjunction in all six
+   places (three `requires`, three `#(fun ... -> ...)` motives) and in the
+   innermost `finish_d` assertion.  Verified working during this attempt.
+
+2. `post_minor_reachable_is_normal_image_reachable_all` (`:1416`) --- the
+   backward direction destructures `post_minor_reachable` with
+   `indefinite_description_ghost` and hands `rr r x` to
+   `post_reach_witness_is_normal_image`, which requires `r == rr`.  **New work:**
+   a companion `post_resolved_root_is_normal_image` for the case
+   `r == resolve_field res.mc_major rr`, mirroring
+   `post_rewritten_root_is_normal_image` but going through
+   `MCFH.fwd_image_resolves` and `classify_roots_minor_mem` (the resolving
+   variant) instead of `classify_roots_minor_mem_raw`.
+
+3. `MajorReachabilityTransfer.result_post_reachable_swap` (`:133`) --- moves a
+   `result_post_reachable` fact between two heaps that
+   `graphs_agree_on ... live` relates.  Its hypothesis
+   `forall (r: vertex_id). Seq.mem r rts ==> live r` quantifies over *vertices*,
+   and an interior `rr` is not one, so nothing lets `resolve_field ha rr` move to
+   `resolve_field hb rr`.  **New work:** add
+   `forall (rr: U64.t). Seq.mem rr rts ==> HG.resolve_field ha rr == HG.resolve_field hb rr`
+   to the `requires` and discharge it in `major_result_post_transfer` from the
+   field-data-preservation pillar of `GC.Spec.Correctness` (an interior root's
+   header sits in the body of a live object, which a major collection preserves).
+
+Finally, the SPOT preconditions (`GC.SPOT.Preconditions`,
+`GC.SPOT.ThreeObjects`, `GC.SPOT.ConcreteScenarios`, `GC.SPOT.ConcreteFull`,
+`GC.SPOT.InfixPre`) *establish* `roots_valid_for_minor_collection`, so weakening
+it can only make them easier.
+
 ### Phase E — delete the restrictions  ✅ **done**
 
 *Implemented.*  Both predicates are gone from `GC.Gen.HeapInvariant` (`.fsti` and
