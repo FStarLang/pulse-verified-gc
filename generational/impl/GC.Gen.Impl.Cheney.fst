@@ -106,6 +106,23 @@ let promote_new_addr_bound (ms: minor_state) (major: heap) (obj: U64.t) (fp: U64
                     res.new_addr <> 0UL ==> U64.v res.new_addr < heap_size))
   = AllocProps.alloc_spec_obj_valid major fp wz
 
+/// The promoted copy has room for the whole object, not merely its header.
+///
+/// Forwarding an interior pointer lands at `new_addr + delta`, where `delta` is
+/// the interior object's offset inside its enclosing closure and so is smaller
+/// than `wz * 8`.  This bound is therefore what rules out the failure arm of
+/// the bounded guard in `cheney_forward_one`'s interior branch: after a
+/// successful promotion the sum is always below `heap_size`.
+let promote_new_addr_body_bound
+  (ms: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  : Lemma (requires SF.well_formed_heap_part1 major /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words)
+          (ensures (let res = PromoteSpec.promote_object ms major obj fp wz in
+                    res.new_addr <> 0UL ==> U64.v res.new_addr + wz * 8 <= heap_size))
+  = AllocProps.alloc_spec_obj_body_within_heap major fp wz;
+    AllocProps.alloc_spec_obj_wosize_part1 major fp wz
+
 /// ---------------------------------------------------------------------------
 /// forward_if_minor: forward a single potential minor pointer
 /// ---------------------------------------------------------------------------
@@ -246,6 +263,8 @@ fn forward_if_minor_infix
       // Parent promoted successfully
       promote_new_addr_bound ({data='md; bump='mb} <: minor_state) 'ms parent 'fp
         (minor_wosize ({data='md; bump='mb} <: minor_state) parent);
+      promote_new_addr_body_bound ({data='md; bump='mb} <: minor_state) 'ms parent 'fp
+        (minor_wosize ({data='md; bump='mb} <: minor_state) parent);
       CheneySpec.cheney_forward_normal_success ({data='md; bump='mb} <: minor_state) cs_pre parent;
       // Record parent forwarding in fwd_arr
       fwd_arr.(parent_idx) <- new_parent_addr;
@@ -276,9 +295,11 @@ fn forward_if_minor_infix
             (reveal cs'_fwd) addr sum;
           fwd_arr.(idx) <- sum
         } else {
-          // Guard failed
-          CheneySpec.cheney_forward_one_infix_guard_fail ({data='md; bump='mb} <: minor_state) cs_pre addr;
-          ()
+          // Unreachable: the promoted copy has room for the whole closure
+          // (`promote_new_addr_body_bound`) and the interior offset stays
+          // inside it (`infix_parent_in_minor_objects`), so the sum is below
+          // `heap_size`.
+          assert (pure False)
         }
       } else {
         // Queue full — prove unreachable via BFS invariant

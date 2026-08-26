@@ -295,6 +295,39 @@ let alloc_spec_obj_in_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
   // alloc preserves objects (part1 version)
   AllocLemmas.alloc_spec_preserves_objects_part1 g fp requested_wz
 
+/// The allocated block's *body* lies within the heap, not just its header.
+///
+/// `alloc_spec_obj_valid` bounds only the object address.  Forwarding an
+/// interior pointer needs the stronger statement: the promoted copy of an
+/// enclosing closure has to have room for every byte of the closure, because
+/// the interior address is `obj_out + offset` for some offset inside the body.
+/// Membership in `objects zero_addr r.heap_out` plus part 1 of the target
+/// heap's well-formedness says exactly that.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+let alloc_spec_obj_body_within_heap (g: heap) (fp: U64.t) (requested_wz: nat)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    AllocLemmas.fl_valid g fp heap_words /\
+                    AllocLemmas.fl_chain_terminates g fp heap_words)
+          (ensures (let r = alloc_spec g fp requested_wz in
+                    r.obj_out <> 0UL ==>
+                    (U64.v r.obj_out >= U64.v mword /\
+                     U64.v r.obj_out < heap_size /\
+                     U64.v r.obj_out % U64.v mword == 0 /\
+                     (let obj_out : obj_addr = r.obj_out in
+                      U64.v obj_out +
+                        U64.v (wosize_of_object obj_out r.heap_out) * 8 <= heap_size))))
+  =
+  alloc_spec_obj_in_objects_part1 g fp requested_wz;
+  AllocLemmas.alloc_spec_preserves_wfh_part1 g fp requested_wz;
+  let r = alloc_spec g fp requested_wz in
+  if r.obj_out <> 0UL then begin
+    let obj_out : obj_addr = r.obj_out in
+    hd_address_spec obj_out;
+    assert (U64.v (hd_address obj_out) + 8 +
+              (U64.v (wosize_of_object obj_out r.heap_out) * 8) <= Seq.length r.heap_out)
+  end
+#pop-options
+
 /// wosize of obj_out is within [wz, wz+1] (no wfh — only fl_valid needed).
 /// Both bounds ride the same induction; the wrappers below project each one.
 #push-options "--z3rlimit 12 --fuel 4 --ifuel 1"
