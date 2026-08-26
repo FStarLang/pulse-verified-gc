@@ -660,6 +660,17 @@ let rec cheney_forward_roots_preserves_wfh_part1
   end
 #pop-options
 
+/// Z3 4.15.3 loses `a - infix_parent ms a == minor_wosize ms a * 8` inside the
+/// large `cfn_success_pre` context, even though it is immediate from
+/// `infix_parent_value`.  Restating it as a top-level lemma proved in an empty
+/// context discharges it reliably.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+private let infix_delta_is_wosize (ms: minor_state) (a: U64.t)
+  : Lemma (requires is_infix_in_minor ms a /\ minor_infix_wf ms)
+          (ensures U64.v a - U64.v (infix_parent ms a) == minor_wosize ms a * 8)
+  = infix_parent_value ms a
+#pop-options
+
 let cfn_success_pre (minor: minor_state) (cs: cheney_state) (addr: U64.t) : prop =
   infix_fwd_ready minor cs /\
   fwd_classified cs /\
@@ -710,6 +721,7 @@ let cheney_forward_normal_infix_ready_one
     is_blue_iff (res.new_addr <: obj_addr) res.major_out;
     assert (is_blue (res.new_addr <: obj_addr) res.major_out = false);
     let wz_infix = minor_wosize minor a in
+    infix_delta_is_wosize minor a;
     assert (d == wz_infix * 8);
     FStar.Math.Lemmas.multiple_modulo_lemma wz_infix 8;
     FStar.Math.Lemmas.lemma_mod_plus (U64.v res.new_addr) wz_infix 8;
@@ -804,6 +816,7 @@ let cheney_forward_normal_infix_ready_one
     assert (parent_fwd == fwd_parent);
     assert (U64.v parent_fwd + d < heap_size);
     let wz_infix_b = minor_wosize minor a in
+    infix_delta_is_wosize minor a;
     assert (d == wz_infix_b * 8);
     FStar.Math.Lemmas.multiple_modulo_lemma wz_infix_b 8;
     FStar.Math.Lemmas.lemma_mod_plus (U64.v parent_fwd) wz_infix_b 8;

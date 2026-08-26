@@ -307,16 +307,12 @@ let spot_minor_infix_wf ()
   : Lemma (ensures minor_infix_wf spot_minor2)
   =
   reveal_opaque (`%minor_infix_wf) (minor_infix_wf spot_minor2);
+  // Every tag in `spot_minor2` is 0, so no address is an infix sub-object and
+  // the obligation is vacuous.  Deriving `False` rather than restating the
+  // body of `minor_infix_wf` keeps this proof independent of that definition.
   let aux (addr: U64.t)
     : Lemma (requires is_infix_in_minor spot_minor2 addr)
-            (ensures (let wz = minor_wosize spot_minor2 addr in
-                     let parent = infix_parent spot_minor2 addr in
-                     wz > 0 /\
-                     wz * 8 <= U64.v addr - 8 /\
-                     U64.v parent >= 8 /\
-                     U64.v parent % 8 == 0 /\
-                     Seq.mem parent (minor_objects spot_minor2) /\
-                     U64.v addr - U64.v parent < minor_wosize spot_minor2 parent * 8))
+            (ensures False)
     =
     assert (U64.v addr >= 8);
     assert (U64.v addr < minor_heap_size);

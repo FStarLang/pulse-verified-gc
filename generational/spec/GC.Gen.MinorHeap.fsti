@@ -267,19 +267,34 @@ let minor_guards_complete (ms: minor_state) : prop =
 /// ---------------------------------------------------------------------------
 
 /// When an infix sub-object exists in the minor heap, its encoded parent
-/// must be a valid minor object (a closure). This guarantees that the
-/// infix-aware BFS can safely forward the parent and derive infix forwarding.
+/// must be a valid minor object carrying `Closure_tag`. This guarantees that
+/// the infix-aware BFS can safely forward the parent and derive infix
+/// forwarding, and — crucially — that the *promoted* infix target satisfies
+/// `GC.Spec.Object.infix_addr_conds` in the major heap.
+///
+/// The conjuncts mirror `infix_addr_conds` one for one.  Two of them are
+/// trust assumptions on the mutator that stock OCaml discharges by
+/// construction (citations to `ocaml-4.14-unchanged`):
+///
+///   * `wz >= 2` — `CLOSUREREC` emits `Make_header (i * 3, Infix_tag, _)`
+///     for `i >= 1` (`runtime/interp.c:604`), so the smallest encoded offset
+///     is three words.  Two words is all the proof needs; it is what makes it
+///     impossible for field 0 of an object to be an infix header.
+///   * `minor_tag ms parent == 247` — *"infix headers can only occur in blocks
+///     with tag Closure_tag"* (`runtime/caml/mlvalues.h:225`).
 [@@"opaque_to_smt"]
 let minor_infix_wf (ms: minor_state) : prop =
   forall (addr: U64.t).
     is_infix_in_minor ms addr ==>
     (let wz = minor_wosize ms addr in
      let parent = infix_parent ms addr in
-     wz > 0 /\
+     wz >= 2 /\
      wz * 8 <= U64.v addr - 8 /\
      U64.v parent >= 8 /\
      U64.v parent % 8 == 0 /\
      Seq.mem parent (minor_objects ms) /\
+     // Infix headers occur only inside closures:
+     minor_tag ms parent == 247 /\
      // The infix lies within the parent's body:
      U64.v addr - U64.v parent < minor_wosize ms parent * 8)
 
@@ -302,6 +317,8 @@ val infix_parent_in_minor_objects (ms: minor_state) (addr: U64.t)
                     Seq.mem parent (minor_objects ms) /\
                     U64.v parent >= 8 /\
                     U64.v parent % 8 == 0 /\
+                    minor_wosize ms addr >= 2 /\
+                    minor_tag ms parent == 247 /\
                     U64.v addr - U64.v parent < minor_wosize ms parent * 8))
 
 val minor_objects_not_infix (ms: minor_state) (addr: U64.t)
