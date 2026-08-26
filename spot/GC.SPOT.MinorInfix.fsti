@@ -76,7 +76,7 @@ let minor_infix_scenario
   ~(SpecObj.is_no_scan c major) /\
   i < U64.v (SpecObj.wosize_of_object c major) /\
   (let cg = CG.build_combined_graph minor major in
-   let combined_roots = CG.classify_roots roots in
+   let combined_roots = CG.classify_roots minor roots in
    CG.combined_reachable cg combined_roots (CG.MajorV c) /\
    CG.combined_reachable cg combined_roots
      (CG.MinorV (infix_parent minor (stored_target major c i)))) /\

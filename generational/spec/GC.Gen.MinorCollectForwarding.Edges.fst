@@ -61,7 +61,7 @@ private let header_eq_preserves_infix (g1 g2: heap) (obj: obj_addr)
 let combined_reachable_minor_has_fwd
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   = let cg = CG.build_combined_graph minor major in
-    let combined_roots = CG.classify_roots roots in
+    let combined_roots = CG.classify_roots minor roots in
     RBridge.combined_minor_reachable_in_minor_reachable minor major roots;
     CheneyCorr.cheney_promotes_all_reachable minor major fp roots;
     let aux (v: U64.t) : Lemma
@@ -94,14 +94,14 @@ private let combined_reachable_images_valid_or_infix_major
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
       let cg = CG.build_combined_graph minor major in
-      let combined_roots = CG.classify_roots roots in
+      let combined_roots = CG.classify_roots minor roots in
       let res = cheney_collect_spec minor major fp roots in
       forall (v: U64.t).
         CG.combined_reachable cg combined_roots (CG.MajorV v) ==>
         U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
         Seq.mem (v <: obj_addr) (objects zero_addr res.mc_major)))
   = let cg = CG.build_combined_graph minor major in
-    let combined_roots = CG.classify_roots roots in
+    let combined_roots = CG.classify_roots minor roots in
     let res = cheney_collect_spec minor major fp roots in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
@@ -131,7 +131,7 @@ private let combined_reachable_images_valid_or_infix_minor
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
       let cg = CG.build_combined_graph minor major in
-      let combined_roots = CG.classify_roots roots in
+      let combined_roots = CG.classify_roots minor roots in
       let prom = cheney_promote minor major fp roots in
       let fwd = prom.fwd_map in
       forall (v: U64.t).
@@ -144,7 +144,7 @@ private let combined_reachable_images_valid_or_infix_minor
         (Seq.mem ((fwd v) <: obj_addr) (objects zero_addr prom.major_final) \/
          is_infix (fwd v) prom.major_final)))
   = let cg = CG.build_combined_graph minor major in
-    let combined_roots = CG.classify_roots roots in
+    let combined_roots = CG.classify_roots minor roots in
     let prom = cheney_promote minor major fp roots in
     let fwd = prom.fwd_map in
     GenInv.collection_heap_shape_elim minor major fp;
@@ -237,7 +237,7 @@ let combined_reachable_major_edge_forwarded
   (src dst: obj_addr)
   =
     let cg = CG.build_combined_graph minor major in
-    let combined_roots = CG.classify_roots roots in
+    let combined_roots = CG.classify_roots minor roots in
     let prom = cheney_promote minor major fp roots in
     let res = cheney_collect_spec minor major fp roots in
     let updated = res.mc_major in
@@ -348,7 +348,7 @@ let combined_major_minor_field_forwarded
   (src: obj_addr) (dst: U64.t) (i: nat)
   =
     let cg = CG.build_combined_graph minor major in
-    let combined_roots = CG.classify_roots roots in
+    let combined_roots = CG.classify_roots minor roots in
     let prom = cheney_promote minor major fp roots in
     let res = cheney_collect_spec minor major fp roots in
     let updated = res.mc_major in

@@ -103,7 +103,7 @@ val reachable_major_valid_nonblue
       roots_valid_nonblue roots major)
     (ensures (
       let cg = build_combined_graph minor major in
-      let combined_roots = classify_roots roots in
+      let combined_roots = classify_roots minor roots in
       forall (v: U64.t).
         combined_reachable cg combined_roots (MajorV v) ==>
         U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
@@ -118,7 +118,7 @@ val reachable_major_valid
     (requires well_formed_heap major /\ minor_wf minor)
     (ensures (
       let cg = build_combined_graph minor major in
-      let combined_roots = classify_roots roots in
+      let combined_roots = classify_roots minor roots in
       forall (v: U64.t).
         combined_reachable cg combined_roots (MajorV v) ==>
         U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
@@ -179,7 +179,7 @@ val reachability_bridge
       major_field_zero_covered minor major roots)
     (ensures (
       let cg = build_combined_graph minor major in
-      let combined_roots = classify_roots roots in
+      let combined_roots = classify_roots minor roots in
       forall (v: U64.t).
         combined_reachable cg combined_roots (MinorV v) ==>
         Seq.mem v (live_set_of minor major roots)))
@@ -199,7 +199,7 @@ val combined_minor_reachable_in_minor_reachable
       remembered_roots_in_roots major roots)
     (ensures (
       let cg = build_combined_graph minor major in
-      let combined_roots = classify_roots roots in
+      let combined_roots = classify_roots minor roots in
       forall (v: U64.t).
         combined_reachable cg combined_roots (MinorV v) ==>
         Seq.mem v (minor_reachable minor roots)))

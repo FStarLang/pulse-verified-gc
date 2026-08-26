@@ -66,7 +66,7 @@ val combined_reachable_minor_has_fwd
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
       let cg = CG.build_combined_graph minor major in
-      let combined_roots = CG.classify_roots roots in
+      let combined_roots = CG.classify_roots minor roots in
       let fwd = (cheney_promote minor major fp roots).fwd_map in
       forall (v: U64.t).
         CG.combined_reachable cg combined_roots (CG.MinorV v) /\
@@ -89,7 +89,7 @@ val combined_reachable_minor_has_fwd_from_slots
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
       let cg = CG.build_combined_graph minor major in
-      let combined_roots = CG.classify_roots roots in
+      let combined_roots = CG.classify_roots minor roots in
       let fwd = (cheney_promote minor major fp roots).fwd_map in
       forall (v: U64.t).
         CG.combined_reachable cg combined_roots (CG.MinorV v) /\
@@ -98,7 +98,7 @@ val combined_reachable_minor_has_fwd_from_slots
 let combined_reachable_images_valid_or_infix_prop
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
   let cg = CG.build_combined_graph minor major in
-  let combined_roots = CG.classify_roots roots in
+  let combined_roots = CG.classify_roots minor roots in
   let prom = cheney_promote minor major fp roots in
   let res = cheney_collect_spec minor major fp roots in
   let fwd = prom.fwd_map in
@@ -184,7 +184,7 @@ val combined_reachable_major_edge_forwarded
       RBridge.minor_no_pointer_to_blue minor major /\
       RBridge.roots_valid_nonblue roots major /\
       (let cg = CG.build_combined_graph minor major in
-       let combined_roots = CG.classify_roots roots in
+       let combined_roots = CG.classify_roots minor roots in
        CG.combined_reachable cg combined_roots (CG.MajorV src) /\
        CG.mem_ce (CG.MajorV src, CG.MajorV dst) cg))
     (ensures
@@ -209,7 +209,7 @@ val combined_major_minor_field_forwarded
       RBridge.roots_valid_nonblue roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
       (let cg = CG.build_combined_graph minor major in
-       let combined_roots = CG.classify_roots roots in
+       let combined_roots = CG.classify_roots minor roots in
        CG.combined_reachable cg combined_roots (CG.MajorV src) /\
        CG.combined_reachable cg combined_roots (CG.MinorV dst)) /\
       ~(is_no_scan src major) /\
@@ -245,7 +245,7 @@ val combined_major_minor_edge_forwarded
       (let prom = cheney_promote minor major fp roots in
        HeapGraph.is_pointer_field (prom.fwd_map dst)) /\
       (let cg = CG.build_combined_graph minor major in
-       let combined_roots = CG.classify_roots roots in
+       let combined_roots = CG.classify_roots minor roots in
        CG.combined_reachable cg combined_roots (CG.MajorV src) /\
        CG.combined_reachable cg combined_roots (CG.MinorV dst)) /\
       ~(is_no_scan src major) /\

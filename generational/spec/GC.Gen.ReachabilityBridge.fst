@@ -113,7 +113,7 @@ let major_object_not_minor_pointer
 let reachable_major_valid_nonblue
   (minor: minor_state) (major: heap) (roots: seq U64.t)
   = let cg = build_combined_graph minor major in
-    let combined_roots = classify_roots roots in
+    let combined_roots = classify_roots minor roots in
     let p (cv: combined_vertex) : prop =
       match cv with
       | MajorV v ->
@@ -130,7 +130,7 @@ let reachable_major_valid_nonblue
       | MinorV _ -> ()
       | MajorV v ->
         major_vertex_valid minor major v;
-        classify_roots_inv_major roots v
+        classify_roots_inv_major minor roots v
       | _ -> combined_vertex_cases r; assert False
     in
     let edge (u w: combined_vertex) : Lemma
@@ -189,7 +189,7 @@ let reachable_major_valid_nonblue
 let reachable_major_valid
   (minor: minor_state) (major: heap) (roots: seq U64.t)
   = let cg = build_combined_graph minor major in
-    let combined_roots = classify_roots roots in
+    let combined_roots = classify_roots minor roots in
     let p (cv: combined_vertex) : prop =
       match cv with
       | MajorV v ->
@@ -283,7 +283,7 @@ let live_set_in_minor_reachable
 let reachability_bridge
   (minor: minor_state) (major: heap) (roots: seq U64.t)
   = let cg = build_combined_graph minor major in
-    let combined_roots = classify_roots roots in
+    let combined_roots = classify_roots minor roots in
     let full_roots = Seq.append roots (minor_roots_from_major major) in
     let p (cv: combined_vertex) : prop =
       match cv with
@@ -296,12 +296,12 @@ let reachability_bridge
       (ensures p r)
     = match r with
       | MinorV v ->
-        classify_roots_inv_minor roots v;
+        // The root need not be `v` itself: an interior root resolves to the
+        // closure it points into, and `classify_root` records that closure.
+        // `minor_reachable_roots` is stated over the resolution, so the
+        // witness feeds it directly.
+        classify_roots_inv_minor minor roots v;
         minor_vertex_char minor major v;
-        // A minor vertex is an enumerated nursery object, hence not interior,
-        // so it is its own resolution and `minor_reachable_roots` applies.
-        minor_objects_not_infix minor v;
-        resolve_minor_non_infix minor v;
         Seq.lemma_mem_append roots (minor_roots_from_major major);
         minor_reachable_roots minor full_roots
       | MajorV v ->
@@ -384,7 +384,7 @@ let reachability_bridge
 let combined_minor_reachable_in_minor_reachable
   (minor: minor_state) (major: heap) (roots: seq U64.t)
   = let cg = build_combined_graph minor major in
-    let combined_roots = classify_roots roots in
+    let combined_roots = classify_roots minor roots in
     reachability_bridge minor major roots;
     live_set_in_minor_reachable minor major roots;
     let aux (v: U64.t) : Lemma

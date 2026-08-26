@@ -44,7 +44,7 @@ let combined_reachable_edge_forwarded_normal
   (u v: CG.combined_vertex)
   =
     let cg = CG.build_combined_graph minor major in
-    let combined_roots = CG.classify_roots roots in
+    let combined_roots = CG.classify_roots minor roots in
     let prom = cheney_promote minor major fp roots in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
@@ -129,7 +129,7 @@ private let fwd_disjoint_reachable_major_at
       RBridge.minor_no_pointer_to_blue minor major /\
       RBridge.roots_valid_nonblue roots major /\
       (let cg = CG.build_combined_graph minor major in
-       let combined_roots = CG.classify_roots roots in
+       let combined_roots = CG.classify_roots minor roots in
        let prom = cheney_promote minor major fp roots in
        CG.combined_reachable cg combined_roots (CG.MinorV x) /\
        CG.combined_reachable cg combined_roots (CG.MajorV y) /\
@@ -142,7 +142,7 @@ private let fwd_disjoint_reachable_major_at
   =
     let prom = cheney_promote minor major fp roots in
     let cg = CG.build_combined_graph minor major in
-    let combined_roots = CG.classify_roots roots in
+    let combined_roots = CG.classify_roots minor roots in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
     GenInv.minor_heap_shape_elim minor;
@@ -165,7 +165,7 @@ let fwd_disjoint_reachable_major_intro
     let aux (x y: U64.t) : Lemma
       (requires
         (let cg = CG.build_combined_graph minor major in
-         let combined_roots = CG.classify_roots roots in
+         let combined_roots = CG.classify_roots minor roots in
          let prom = cheney_promote minor major fp roots in
          CG.combined_reachable cg combined_roots (CG.MinorV x) /\
          CG.combined_reachable cg combined_roots (CG.MajorV y) /\
@@ -234,7 +234,7 @@ let combined_reachable_normal_injective
     let aux (u v: CG.combined_vertex) : Lemma
       (requires
         (let cg = CG.build_combined_graph minor major in
-         let combined_roots = CG.classify_roots roots in
+         let combined_roots = CG.classify_roots minor roots in
          CG.combined_reachable cg combined_roots u /\
          CG.combined_reachable cg combined_roots v /\
          (match u with
@@ -253,7 +253,7 @@ let combined_reachable_normal_injective
       (ensures u == v)
     =
       let cg = CG.build_combined_graph minor major in
-      let combined_roots = CG.classify_roots roots in
+      let combined_roots = CG.classify_roots minor roots in
       match u, v with
       | CG.MajorV x, CG.MajorV y -> ()
       | CG.MinorV x, CG.MinorV y ->

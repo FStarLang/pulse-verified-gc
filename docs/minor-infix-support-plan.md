@@ -319,7 +319,7 @@ is not.
 raw→resolved swap. Expect these to be mechanical once Phase C settles the
 pattern.
 
-### Phase D2 — interior *roots* in the combined-graph isomorphism
+### Phase D2 — interior *roots* in the combined-graph isomorphism  ⚠️ **partial**
 
 Phase D covers interior pointers stored in *fields*.  Interior pointers held
 directly in a **root** are a separate, larger piece of work and are currently
@@ -348,12 +348,55 @@ Closing the gap needs, in order:
    `r == rr \/ r == HeapGraph.resolve_field res.mc_major rr`.
 3. A new lemma that a promoted infix forwarding target resolves to its promoted
    parent -- `resolve_object (fwd x) res.mc_major == fwd (infix_parent minor x)`
-   -- carried through `update_major_pointers`.  Phase B's
-   `fwd_infix_targets_wf` and `fwd_infix_delta` supply the raw material
-   (`fwd x = fwd parent + delta` and `infix_addr_wf` of the target) but do not
-   state the identity.
+   -- carried through `update_major_pointers`.
 4. `normal_classified_root_image_in_rewrite_roots` weakened to the resolved
    form, and its consumers in `GC.Gen.MinorCollectForwarding` adapted.
+5. `roots_valid_for_minor_collection` relaxed to admit an interior nursery
+   root, and the relaxation propagated to everything that consumes it.
+
+**Step 1 is done; step 3 is supplied by `MCFH.fwd_image_resolves` (Phase F).
+Steps 2, 4 and 5 are open, and step 5 is the one that makes the others worth
+doing.**
+
+`classify_root` now resolves, matching `Reachability.minor_reachable_roots`,
+which Phase D had already made resolution-aware; the two root notions agreed
+only by accident before.  `classify_roots_inv_minor` is correspondingly
+existential, and `classify_roots_minor_mem_raw` recovers the old pre-resolution
+conclusion for a non-interior root.
+
+Step 2 was attempted and **deliberately backed out**.  The reason is that step 5
+is the load-bearing one: `roots_valid_for_minor_collection` still places every
+nursery root in `minor_objects minor`, and nursery objects are never infix, so
+under the hypotheses the isomorphism theorem actually carries, an interior root
+*cannot occur*.  Weakening `post_minor_reachable` therefore buys nothing today
+while weakening the theorem's forward direction (`image_valid`) for every
+client, and it costs a disjunct that must be destructured at every use --- two
+proofs (`normal_src_edge_preserves_post_minor_reachable`,
+`MajorReachabilityTransfer.result_post_reachable_swap`) diverged on it.
+
+What landed instead is the non-vacuous half: the resolution `classify_root`
+performs is discharged locally, in
+`normal_classified_root_image_in_rewrite_roots`, from a new hypothesis
+
+```fstar
+[@@"opaque_to_smt"]
+let roots_not_infix_in_minor (minor: minor_state) (roots: seq U64.t) : prop =
+  forall (r: U64.t).
+    Seq.mem r roots /\ is_minor_pointer r ==> ~(is_infix_in_minor minor r)
+```
+
+threaded through the four lemmas of the reachability-transfer chain and derived
+once, at `normal_post_reachable_subgraph_isomorphism`, by
+`roots_valid_not_infix`.  Naming the assumption on its own is what makes step 5
+a local edit later: the chain no longer depends on
+`roots_valid_for_minor_collection` at all, only on this one consequence of it.
+
+`opaque_to_smt` is not decoration.  The chain's contexts already carry many
+`Seq.mem _ roots` facts, and letting Z3 instantiate this quantifier there pushed
+`ready_src_reach_image_post_reachable` past the 300 s cap; behind
+`roots_not_infix_in_minor_elim` it costs nothing.  Threading the full
+`roots_valid_for_minor_collection` (which mentions the recursive `minor_objects`
+and `objects zero_addr`) diverged outright.
 
 ### Phase E — delete the restrictions  ✅ **done**
 

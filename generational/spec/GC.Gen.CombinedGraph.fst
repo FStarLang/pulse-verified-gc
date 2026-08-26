@@ -1084,74 +1084,86 @@ let combined_reachable_ind_with_reach
 /// ---------------------------------------------------------------------------
 
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
-let rec classify_roots_minor_mem (roots: seq U64.t) (r: U64.t)
+let rec classify_roots_minor_mem (ms: minor_state) (roots: seq U64.t) (r: U64.t)
   : Lemma (requires Seq.mem r roots /\ is_minor_pointer r)
-          (ensures Seq.mem (MinorV r) (classify_roots roots))
+          (ensures Seq.mem (MinorV (resolve_minor ms r)) (classify_roots ms roots))
           (decreases Seq.length roots)
   = if Seq.length roots = 0 then ()
     else begin
       let hd = Seq.head roots in
       let tl = Seq.tail roots in
-      Seq.mem_cons (classify_root hd) (classify_roots tl);
+      Seq.mem_cons (classify_root ms hd) (classify_roots ms tl);
       if hd = r then ()
       else begin
         Seq.lemma_mem_append (Seq.create 1 hd) tl;
-        classify_roots_minor_mem tl r
+        classify_roots_minor_mem ms tl r
       end
     end
 
 #pop-options
 
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
-let rec classify_roots_major_mem (roots: seq U64.t) (r: U64.t)
+let classify_roots_minor_mem_raw (ms: minor_state) (roots: seq U64.t) (r: U64.t)
+  : Lemma (requires Seq.mem r roots /\ is_minor_pointer r /\ ~(is_infix_in_minor ms r))
+          (ensures Seq.mem (MinorV r) (classify_roots ms roots))
+  = resolve_minor_non_infix ms r;
+    classify_roots_minor_mem ms roots r
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+let rec classify_roots_major_mem (ms: minor_state) (roots: seq U64.t) (r: U64.t)
   : Lemma (requires Seq.mem r roots /\ ~(is_minor_pointer r))
-          (ensures Seq.mem (MajorV r) (classify_roots roots))
+          (ensures Seq.mem (MajorV r) (classify_roots ms roots))
           (decreases Seq.length roots)
   = if Seq.length roots = 0 then ()
     else begin
       let hd = Seq.head roots in
       let tl = Seq.tail roots in
-      Seq.mem_cons (classify_root hd) (classify_roots tl);
+      Seq.mem_cons (classify_root ms hd) (classify_roots ms tl);
       if hd = r then ()
       else begin
         Seq.lemma_mem_append (Seq.create 1 hd) tl;
-        classify_roots_major_mem tl r
+        classify_roots_major_mem ms tl r
       end
     end
 #pop-options
 
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
-let rec classify_roots_inv_minor (roots: seq U64.t) (v: U64.t)
-  : Lemma (requires Seq.mem (MinorV v) (classify_roots roots))
-          (ensures Seq.mem v roots /\ is_minor_pointer v)
+let rec classify_roots_inv_minor (ms: minor_state) (roots: seq U64.t) (v: U64.t)
+  : Lemma (requires Seq.mem (MinorV v) (classify_roots ms roots))
+          (ensures exists (r: U64.t).
+                     Seq.mem r roots /\ is_minor_pointer r /\ resolve_minor ms r == v)
           (decreases Seq.length roots)
   = if Seq.length roots = 0 then ()
     else begin
       let hd = Seq.head roots in
       let tl = Seq.tail roots in
-      Seq.mem_cons (classify_root hd) (classify_roots tl);
-      if classify_root hd = MinorV v then ()
+      Seq.mem_cons (classify_root ms hd) (classify_roots ms tl);
+      if classify_root ms hd = MinorV v then
+        // `hd` is the witness: it is minor (else the classification would be a
+        // MajorV) and it resolves to `v`.
+        assert (Seq.mem hd roots /\ is_minor_pointer hd /\ resolve_minor ms hd == v)
       else begin
         Seq.lemma_mem_append (Seq.create 1 hd) tl;
-        classify_roots_inv_minor tl v
+        classify_roots_inv_minor ms tl v
       end
     end
 #pop-options
 
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
-let rec classify_roots_inv_major (roots: seq U64.t) (v: U64.t)
-  : Lemma (requires Seq.mem (MajorV v) (classify_roots roots))
+let rec classify_roots_inv_major (ms: minor_state) (roots: seq U64.t) (v: U64.t)
+  : Lemma (requires Seq.mem (MajorV v) (classify_roots ms roots))
           (ensures Seq.mem v roots /\ ~(is_minor_pointer v))
           (decreases Seq.length roots)
   = if Seq.length roots = 0 then ()
     else begin
       let hd = Seq.head roots in
       let tl = Seq.tail roots in
-      Seq.mem_cons (classify_root hd) (classify_roots tl);
-      if classify_root hd = MajorV v then ()
+      Seq.mem_cons (classify_root ms hd) (classify_roots ms tl);
+      if classify_root ms hd = MajorV v then ()
       else begin
         Seq.lemma_mem_append (Seq.create 1 hd) tl;
-        classify_roots_inv_major tl v
+        classify_roots_inv_major ms tl v
       end
     end
 #pop-options

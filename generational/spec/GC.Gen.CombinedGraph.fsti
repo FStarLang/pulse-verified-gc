@@ -365,46 +365,70 @@ val combined_reachable_ind_with_reach
 
 /// Classify a program root as a combined vertex.
 ///
-/// This is deliberately *raw*: an interior root yields `MinorV <interior>`,
-/// which is not a vertex of the combined graph, so the closure it points into
-/// is outside the reachable subgraph the isomorphism theorem talks about.  The
-/// post side omits it symmetrically -- `rewrite_root` maps such a root to
-/// `fwd parent + delta`, which is likewise not a vertex of the post-collection
-/// graph -- so the theorem stays sound; it simply says nothing about a closure
-/// kept alive *only* by an interior root.  Covering that case needs
-/// `MinorCollectForwarding.Helpers.post_minor_reachable` to resolve its root as
-/// well, and a lemma that a promoted infix target resolves to its promoted
-/// parent.  Field-level interior pointers are fully covered: `Reachability`
-/// and the Cheney forwarding map both resolve.
-let classify_root (r: U64.t) : GTot combined_vertex =
-  if is_minor_pointer r then MinorV r else MajorV r
+/// Nursery roots are *resolved*, exactly as the field classifiers are.  A root
+/// may be an interior (infix) pointer: OCaml pushes the entry point of a
+/// non-first function of a mutually recursive group directly
+/// (`runtime/interp.c:601`), and the byte-code root scanner walks such stack
+/// slots verbatim (`runtime/roots_byt.c:39`).  Since the group is allocated in
+/// the nursery, that is an interior pointer into a young block.
+///
+/// Resolving here puts the *enclosing closure* --- a genuine vertex of the
+/// combined graph --- into the root set.  Leaving it raw would yield
+/// `MinorV <interior>`, which is not a vertex at all.  It also makes this
+/// agree with `Reachability.minor_reachable_roots`, which resolves; the two
+/// root notions previously coincided only because interior roots were
+/// excluded outright.
+///
+/// Note the *hypotheses* of the reachability theorems have not caught up:
+/// `MinorCollectForwarding.roots_valid_for_minor_collection` still places
+/// every nursery root in `minor_objects`, so an interior root cannot occur
+/// under them and the resolution is provably the identity there
+/// (`roots_not_infix_in_minor`).  Relaxing that predicate is Phase D2 step 5
+/// of `docs/minor-infix-support-plan.md`.
+///
+/// The major branch is still raw, mirroring `classify_minor_field`: a root
+/// pointing into the middle of a *major* closure is excluded by
+/// `roots_valid_nonblue`, which requires every root to name an enumerated
+/// major object outright.
+let classify_root (ms: minor_state) (r: U64.t) : GTot combined_vertex =
+  if is_minor_pointer r then MinorV (resolve_minor ms r) else MajorV r
 
 /// Classify a sequence of roots
-let rec classify_roots (roots: seq U64.t)
+let rec classify_roots (ms: minor_state) (roots: seq U64.t)
   : GTot (seq combined_vertex) (decreases Seq.length roots) =
   if Seq.length roots = 0 then Seq.empty
-  else Seq.cons (classify_root (Seq.head roots)) (classify_roots (Seq.tail roots))
+  else Seq.cons (classify_root ms (Seq.head roots)) (classify_roots ms (Seq.tail roots))
 
 /// Membership in classify_roots: if r is in roots and is_minor_pointer r,
-/// then MinorV r is in classify_roots roots.
-val classify_roots_minor_mem (roots: seq U64.t) (r: U64.t)
+/// then MinorV (resolve_minor ms r) is in classify_roots ms roots.
+val classify_roots_minor_mem (ms: minor_state) (roots: seq U64.t) (r: U64.t)
   : Lemma (requires Seq.mem r roots /\ is_minor_pointer r)
-          (ensures Seq.mem (MinorV r) (classify_roots roots))
+          (ensures Seq.mem (MinorV (resolve_minor ms r)) (classify_roots ms roots))
+
+/// Specialization to non-interior roots, where resolution is the identity and
+/// the pre-resolution conclusion is recovered verbatim.
+val classify_roots_minor_mem_raw (ms: minor_state) (roots: seq U64.t) (r: U64.t)
+  : Lemma (requires Seq.mem r roots /\ is_minor_pointer r /\ ~(is_infix_in_minor ms r))
+          (ensures Seq.mem (MinorV r) (classify_roots ms roots))
 
 /// Membership in classify_roots: if r is in roots and not (is_minor_pointer r),
-/// then MajorV r is in classify_roots roots.
-val classify_roots_major_mem (roots: seq U64.t) (r: U64.t)
+/// then MajorV r is in classify_roots ms roots.
+val classify_roots_major_mem (ms: minor_state) (roots: seq U64.t) (r: U64.t)
   : Lemma (requires Seq.mem r roots /\ ~(is_minor_pointer r))
-          (ensures Seq.mem (MajorV r) (classify_roots roots))
+          (ensures Seq.mem (MajorV r) (classify_roots ms roots))
 
-/// Inversion: if MinorV v is in classify_roots roots, then v is in roots and is_minor_pointer v.
-val classify_roots_inv_minor (roots: seq U64.t) (v: U64.t)
-  : Lemma (requires Seq.mem (MinorV v) (classify_roots roots))
-          (ensures Seq.mem v roots /\ is_minor_pointer v)
+/// Inversion: if MinorV v is in classify_roots ms roots, then *some* root
+/// resolves to v.  The root itself need not equal v --- it may be an interior
+/// pointer into the closure v names.
+val classify_roots_inv_minor (ms: minor_state) (roots: seq U64.t) (v: U64.t)
+  : Lemma (requires Seq.mem (MinorV v) (classify_roots ms roots))
+          (ensures exists (r: U64.t).
+                     Seq.mem r roots /\ is_minor_pointer r /\ resolve_minor ms r == v)
 
-/// Inversion: if MajorV v is in classify_roots roots, then v is in roots and not (is_minor_pointer v).
-val classify_roots_inv_major (roots: seq U64.t) (v: U64.t)
-  : Lemma (requires Seq.mem (MajorV v) (classify_roots roots))
+/// Inversion: if MajorV v is in classify_roots ms roots, then v is in roots and
+/// not (is_minor_pointer v).
+val classify_roots_inv_major (ms: minor_state) (roots: seq U64.t) (v: U64.t)
+  : Lemma (requires Seq.mem (MajorV v) (classify_roots ms roots))
           (ensures Seq.mem v roots /\ ~(is_minor_pointer v))
 
 /// The raw-address morphism used by the post-minor heap graph: minor vertices

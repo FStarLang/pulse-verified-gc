@@ -85,7 +85,7 @@ val major_minor_field_rewritten
         GC.Gen.ReachabilityBridge.roots_valid_nonblue roots major /\
         GC.Gen.CheneyBFS.cheney_no_oom minor major fp roots /\
         (let cg = GC.Gen.CombinedGraph.build_combined_graph minor major in
-         let combined_roots = GC.Gen.CombinedGraph.classify_roots roots in
+         let combined_roots = GC.Gen.CombinedGraph.classify_roots minor roots in
          GC.Gen.CombinedGraph.combined_reachable cg combined_roots
            (GC.Gen.CombinedGraph.MajorV src) /\
          GC.Gen.CombinedGraph.combined_reachable cg combined_roots
