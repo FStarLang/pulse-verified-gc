@@ -401,16 +401,24 @@ and `objects zero_addr`) diverged outright.
 #### What is left, precisely
 
 The restriction is *only* in the specification.  The extracted collector already
-handles an interior root: `GC.Gen.Impl.Cheney`'s root loop (`:596`) calls the
-same `forward_if_minor` as the field scan (`:850`), which dispatches to
-`forward_if_minor_infix` on tag 249; `CheneyBFS.fwd_covers_infix_roots` and
-`scan_preserves_fwd_covers_infix_roots` were added in Phase A/B for exactly this
-case.  So step 5 is spec plumbing, not new collector code.
+handles an interior root, on both sides of the collection:
 
-Step 5 itself is small.  `MCFH.roots_valid_for_minor_collection` has only three
-consumers --- `roots_valid_for_minor_collection_nonblue` (major branch only, so
-unaffected), `post_rewritten_root_is_normal_image` and
-`post_reach_witness_is_normal_image` --- and the minor branch becomes
+* **Nursery.**  `GC.Gen.Impl.Cheney`'s root loop (`:596`) calls the same
+  `forward_if_minor` as the field scan (`:850`), which dispatches to
+  `forward_if_minor_infix` on tag 249; `CheneyBFS.fwd_covers_infix_roots` and
+  `scan_preserves_fwd_covers_infix_roots` were added in Phase A/B for exactly
+  this case.
+* **Major heap.**  `GC.Impl.MarkBounded.check_and_darken_bounded_spec` applies
+  `SpecObject.resolve_object` to every root *before* darkening, so an interior
+  root greys its enclosing closure.  The extracted C does the same.
+
+So no collector code is missing.  What is missing is that four specifications
+still describe a root as its own object rather than as something that resolves
+to one.
+
+##### The minor-side chain (as previously scoped)
+
+`MCFH.roots_valid_for_minor_collection`'s minor branch becomes
 
 ```fstar
 is_minor_pointer r ==>
@@ -418,27 +426,28 @@ is_minor_pointer r ==>
   minor_wosize minor (resolve_minor minor r) > 0
 ```
 
-But step 5 *forces* step 2: once an interior root is admissible,
+and that *forces* step 2: once an interior root is admissible,
 `roots_valid_not_infix` is no longer provable, the reachability chain loses its
 supplier of `roots_not_infix_in_minor`, and the resolution must be carried in
-`post_minor_reachable` after all.  Doing them together leaves three proofs to
-repair.  All three were located; two have known fixes.
+`post_minor_reachable` after all.  Three proofs then need repair, all located
+and two of them repaired during the attempt:
 
 1. `normal_src_edge_preserves_post_minor_reachable` --- its four nested
    `FStar.Classical.exists_elim` motives spell the old `r == rr` shape out
-   literally.  **Fix known:** replace `r == rr` by the disjunction in all six
-   places (three `requires`, three `#(fun ... -> ...)` motives) and in the
-   innermost `finish_d` assertion.  Verified working during this attempt.
+   literally.  **Fix known and verified:** replace `r == rr` by the disjunction
+   in all six places (three `requires`, three `#(fun ... -> ...)` motives) and in
+   the innermost `finish_d` assertion.
 
-2. `post_minor_reachable_is_normal_image_reachable_all` (`:1416`) --- the
-   backward direction destructures `post_minor_reachable` with
-   `indefinite_description_ghost` and hands `rr r x` to
-   `post_reach_witness_is_normal_image`, which requires `r == rr`.  **New work:**
-   a companion `post_resolved_root_is_normal_image` for the case
-   `r == resolve_field res.mc_major rr`, mirroring
-   `post_rewritten_root_is_normal_image` but going through
-   `MCFH.fwd_image_resolves` and `classify_roots_minor_mem` (the resolving
-   variant) instead of `classify_roots_minor_mem_raw`.
+2. `post_reach_witness_is_normal_image` / `post_rewritten_root_is_normal_image`
+   --- the backward direction destructures `post_minor_reachable` with
+   `indefinite_description_ghost` and requires `r == rr`.  **Fix known and
+   verified:** merge the two into one `post_root_image_is_normal_image` taking
+   the vertex `r` and the disjunction, branching on `is_minor_pointer r0` for
+   the underlying root.  The wrong disjunct is discharged in each branch by
+   `well_formed_heap_part4 res.mc_major` (from
+   `CheneyPres.cheney_collect_preserves_wfh_from_shape`): a *vertex* is never
+   interior, while `fwd r0` for an interior `r0` is, by
+   `MCFH.fwd_image_resolves`.
 
 3. `MajorReachabilityTransfer.result_post_reachable_swap` (`:133`) --- moves a
    `result_post_reachable` fact between two heaps that
@@ -451,10 +460,87 @@ repair.  All three were located; two have known fixes.
    field-data-preservation pillar of `GC.Spec.Correctness` (an interior root's
    header sits in the body of a live object, which a major collection preserves).
 
-Finally, the SPOT preconditions (`GC.SPOT.Preconditions`,
-`GC.SPOT.ThreeObjects`, `GC.SPOT.ConcreteScenarios`, `GC.SPOT.ConcreteFull`,
-`GC.SPOT.InfixPre`) *establish* `roots_valid_for_minor_collection`, so weakening
-it can only make them easier.
+##### The major-side chain --- the part the earlier scoping missed
+
+Relaxing `roots_valid_for_minor_collection` immediately breaks
+`GC.Gen.MajorPrecondition.post_minor_minor_root_valid`, whose conclusion is
+
+```fstar
+MBP.root_valid_for_darkening result.mc_major (Promote.rewrite_root r prom.fwd_map)
+```
+
+and `rewrite_root` deliberately does **not** resolve, so for an interior nursery
+root the rewritten root is an interior pointer into the promoted closure.
+`GC.Impl.MarkBoundedPrecondition.root_valid_for_darkening` demands
+`Seq.mem (r <: obj_addr) (objects zero_addr g)`, which such an address does not
+satisfy.  That predicate, and `GC.Impl.MarkBounded.root_points_to_object` behind
+it, must be restated over `SpecObject.resolve_object r g`.
+
+This was measured, not guessed.  Relaxing `root_points_to_object` alone to
+
+```fstar
+Seq.mem (SpecObject.resolve_object (SpecHeap.f_address h) g)
+        (SpecFields.objects zero_addr g)
+```
+
+and running `make -C mark-and-sweep -k -j128` fails exactly three modules:
+
+| Module | Failure | Fix |
+|---|---|---|
+| `GC.Impl.MarkBoundedPrecondition.fst:23` | `root_valid_for_darkening_points_to_object` | add `SpecObject.resolve_non_infix` --- one line |
+| `GC.Impl.MarkBounded.fst:418` | `root_points_to_object_transfer` | hypothesis must become `resolve_object` agreement rather than `is_infix` agreement; both callers are colour changes, so `GC.Spec.Object.color_preserves_resolve_object` supplies it |
+| `GC.Impl.MarkBoundedRootLemmas.fst:250` | `check_and_darken_bounded_spec_pushes_valid_nonblack_nonblue_root` | its conclusion `Seq.mem (v <: obj_addr) st'` must become `Seq.mem (resolve_object (v <: obj_addr) g) st'`, and its colour hypotheses must likewise be about the resolved object |
+
+The third of those is not local.  It propagates to
+`GC.Impl.MarkBoundedRootLemmas.check_and_darken_bounded_spec_preserves_stack_roots`
+(`forall x ∈ st'. Seq.mem x roots` becomes
+`forall x ∈ st'. exists q ∈ roots. resolve_object q g == x`), hence to
+`GC.Impl.MarkBoundedPrecondition.darken_roots_match_stack`, hence to
+
+```fstar
+let roots_match_stack (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) : prop
+```
+
+in `GC.Gen.Impl.fsti:69`, which must gain a `heap` parameter and read
+
+```fstar
+let roots_match_stack (g: heap) (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) : prop =
+  (forall (r: U64.t). Seq.mem r roots ==> is_val_addr r) /\
+  (forall (r: obj_addr). Seq.mem (r <: U64.t) roots ==>
+     Seq.mem (SpecObject.resolve_object r g) st) /\
+  (forall (r: obj_addr). Seq.mem r st ==>
+     (exists (q: obj_addr). Seq.mem (q <: U64.t) roots /\
+                            SpecObject.resolve_object q g == r))
+```
+
+`roots_match_stack` is part of `gen_gc`'s **user-visible postcondition**
+(`gen_gc_roots_post`), so this is an interface change, and it reaches
+`GC.SPOT.InfixPost`, `GC.SPOT.ConcreteFull` and their helpers.
+
+##### What does *not* need to change
+
+`GC.Spec.Mark.root_props` and the five pillars of `GC.Spec.Correctness` are
+untouched.  The major collector never sees the raw root array: `GC.Gen.Impl`
+hands it the *darkened mark stack* (`gc_precondition_with_roots g' st' st'`),
+and `st'` already holds resolved, enumerated objects.  The interior-root notion
+stops at the darkening boundary.
+
+##### Status and recommendation
+
+This is Phase H, and it is a project of its own --- roughly ten modules across
+`mark-and-sweep/impl`, `generational/spec`, `generational/impl` and `spot`, one
+of them (`GC.Gen.Impl`) a large Pulse module, plus a change to `gen_gc`'s
+published postcondition.  It is **not** a tail of Phase D2, and it was
+deliberately not attempted piecemeal: a half-applied version leaves the
+repository unverified, and the intermediate states are not independently
+meaningful.
+
+What is committed instead is everything that is non-vacuous today:
+`classify_root` resolves (so the combined graph and
+`Reachability.minor_reachable_roots` finally agree by construction), the
+consequence the chain actually needs is named and isolated
+(`roots_not_infix_in_minor`), and the two repairs above are recorded in enough
+detail to be replayed.
 
 ### Phase E — delete the restrictions  ✅ **done**
 
@@ -708,7 +794,9 @@ now inside it in both generations.
 
 A → B → C → D → E, each verified and committed separately; F and G afterwards.
 Phase A is independently useful and low-risk, so it can land first regardless
-of how B lands.
+of how B lands.  Phase D2 sits between D and E; **Phase H --- interior pointers
+held directly in a root --- is separate and open** (see "What is left,
+precisely" under Phase D2).
 
 **Status.** Phases A, B, C and D are done: each landed as its own fully verified
 commit, with the extracted C byte-identical throughout.  What that buys, today:
@@ -723,11 +811,20 @@ commit, with the extracted C byte-identical throughout.  What that buys, today:
 * the forwarding map's root coverage is stated in resolved form, matching what
   the implementation actually establishes.
 
-What is still restricted: `collection_heap_shape` continues to forbid interior
-pointers in nursery fields and in major-to-nursery fields, so `gen_gc` cannot
-yet be *called* on such a heap.  Removing that is Phase E, whose newly
-identified prerequisite is described above.  Interior pointers held directly in
-a root are covered by Phase D2.
+**Status (final).**  Phases A through G are done and committed, each fully
+verified with the extracted C byte-identical throughout.  `gen_gc` accepts, and
+correctly collects, a heap whose nursery *and* major fields hold interior
+pointers; `spot/GC.SPOT.MinorInfix` audits that on a concrete heap and
+`generational/ocaml-integration/tests/infix_closures.ml` exercises it against
+real OCaml closures.
+
+What remains restricted is exactly one thing: a **root** may not itself be an
+interior pointer.  `MCFH.roots_valid_for_minor_collection` still places every
+nursery root in `minor_objects minor`, and
+`GC.Impl.MarkBoundedPrecondition.root_valid_for_darkening` still requires a
+major root to be an enumerated object.  Both implementations already resolve
+such a root; only the specifications are conservative.  Lifting the restriction
+is Phase H, scoped and measured above.
 
 ## 7. Recommendation
 
@@ -736,3 +833,9 @@ routinely (§1.1), while the implementation and the extracted C already handle
 it correctly (§2.1) and the spec-level forwarding function already models it
 (§2.2). The remaining work is confined to the preservation proofs, and follows
 a pattern already executed once for the major heap.
+
+*Done for fields.*  For roots (Phase H) the same recommendation holds and for
+the same reason --- both collectors already resolve roots at run time --- but
+the work is larger than the rest of this plan assumed, because it changes
+`gen_gc`'s published `roots_match_stack` postcondition.  It should be planned
+and landed on its own, not bolted onto Phase D2.

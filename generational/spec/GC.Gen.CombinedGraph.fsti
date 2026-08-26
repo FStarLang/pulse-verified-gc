@@ -383,8 +383,10 @@ val combined_reachable_ind_with_reach
 /// `MinorCollectForwarding.roots_valid_for_minor_collection` still places
 /// every nursery root in `minor_objects`, so an interior root cannot occur
 /// under them and the resolution is provably the identity there
-/// (`roots_not_infix_in_minor`).  Relaxing that predicate is Phase D2 step 5
-/// of `docs/minor-infix-support-plan.md`.
+/// (`roots_not_infix_in_minor`).  Relaxing that predicate is Phase H of
+/// `docs/minor-infix-support-plan.md`; it is a project of its own, because it
+/// also reaches `GC.Impl.MarkBoundedPrecondition.root_valid_for_darkening`
+/// and, through it, `gen_gc`'s published `roots_match_stack` postcondition.
 ///
 /// The major branch is still raw, mirroring `classify_minor_field`: a root
 /// pointing into the middle of a *major* closure is excluded by
