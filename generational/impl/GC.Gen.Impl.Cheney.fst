@@ -536,7 +536,9 @@ fn forward_roots
           (not 'oom_in /\ oom_out ==>
              CheneyBFS.cheney_oom_reaching minor_st
                (CheneySpec.cheney_scan minor_st cs1 0 (CheneySpec.cheney_fuel minor_st))) /\
-          (not oom_out ==> CheneyBFS.fwd_covers_roots minor_st cs1.CheneySpec.cs_fwd 'rs))
+          (not oom_out ==> (CheneyBFS.fwd_covers_roots minor_st cs1.CheneySpec.cs_fwd 'rs /\
+                            CheneyBFS.fwd_covers_infix_roots minor_st
+                              cs1.CheneySpec.cs_fwd 'rs)))
 {
   // Ghost reference tracks the spec state through the loop
   let gcs = GR.alloc (Ghost.reveal cs0);
@@ -686,7 +688,9 @@ fn scan_loop
           SimOne.cheney_bfs_inv minor_st cs_final /\
           ('oom_in == true ==> oom_out == true) /\
           (not 'oom_in /\ oom_out ==> CheneyBFS.cheney_oom_reaching minor_st cs_final) /\
-          (not oom_out ==> CheneyBFS.fwd_closed minor_st cs_final.CheneySpec.cs_fwd))
+          (not oom_out ==> (CheneyBFS.fwd_closed minor_st cs_final.CheneySpec.cs_fwd /\
+                            CheneyBFS.fwd_covers_infix_fields minor_st
+                              cs_final.CheneySpec.cs_fwd)))
 {
   let gcs = GR.alloc (Ghost.reveal cs1);
   CheneyBFS.scanned_prefix_empty ({data='md; bump='mb} <: minor_state) (Ghost.reveal cs1);

@@ -472,7 +472,7 @@ private let post_edge_from_major_image_reflects_mem_ce
           (read_word updated (U64.uint_to_t (U64.v src + j * 8))) /\
         HeapGraph.resolve_field updated
           (read_word updated (U64.uint_to_t (U64.v src + j * 8))) == target_img) in
-    let field_addr = U64.uint_to_t (U64.v src + j * 8) in
+    let field_addr = SpecBase.mk_hp_addr (U64.v src + j * 8) in
     assert (HeapGraph.is_pointer_field (read_word updated field_addr));
     assert (HeapGraph.resolve_field updated
               (read_word updated field_addr) == target_img);
