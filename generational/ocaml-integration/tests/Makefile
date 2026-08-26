@@ -84,6 +84,16 @@ test: correctness $(BYTE_FILES)
 # minor -> minor edge (Cheney scanning) are covered, and each is shown to have
 # actually been promoted, so the nursery path is really the one exercised.
 #
+# Groups 11-12 move the interior pointer out of the heap and into a *root*: a
+# local variable, scanned verbatim off the bytecode stack, is the only thing
+# referring to the closure block.  A root cannot be replaced by its enclosing
+# closure -- the mutator keeps calling through it -- so the offset has to
+# survive the collection.  Group 12 keeps 24 such roots live simultaneously,
+# one per frame of a recursion, with the collections forced at the bottom.
+# Both collectors already resolve roots (forward_if_minor_infix in the nursery,
+# check_and_darken_bounded_spec in the major heap); the specifications do not
+# yet admit them, which is Phase H of docs/minor-infix-support-plan.md.
+#
 # It is run under the verified runtime and, as a differential check, under
 # stock OCaml, where it must produce the same verdict.
 

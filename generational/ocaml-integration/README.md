@@ -109,6 +109,8 @@ offset`).
 | 8 | A **major -> minor** interior pointer, reaching a group that lives in the nursery and is anchored *only* by that pointer. The edge arrives through the remembered set (`caml_modify` records the raw interior word, which is why the forwarding map is keyed on it). After one minor collection the target has moved — so it really was young — the field is still `Infix_tag`, the offset is unchanged, and all three closures still compute |
 | 9 | A **minor -> minor** interior pointer: referrer and group both young, so the edge is found by Cheney scanning and both are promoted in one pass. Here the parent is observable, so `interior - parent == wosize*8` is checked as an address difference before *and* after, and sharing between two referrers is preserved |
 | 10 | 200 nursery groups anchored from a major-heap array by interior pointers only, with 200 more dropped: every one is shown to have been promoted, with its offset, reachable-word count and computed values intact |
+| 11 | An interior pointer held in a **root** rather than a heap field: a local variable is the only reference to the block. Taken through promotion (offset, reachable-word count and every computed value preserved) and then through mark & sweep (address stable, since the major collector does not move) |
+| 12 | 24 interior-pointer roots live **simultaneously**, one per frame of a recursion, with the collections forced at the innermost frame and every frame's value re-checked on the way back out |
 
 Collections are forced the way a real program forces them, by allocating;
 `Gc.quick_stat` confirms they happened. (`Gc.full_major` is *not* wired to the
@@ -132,6 +134,18 @@ proved to preserve interiority. The corresponding audits are
 satisfies the whole precondition, is collected by the real `gen_gc`, and comes
 back satisfying it again) and `spot/GC.SPOT.MinorInfix` (the nursery analogue).
 See `docs/minor-infix-support-plan.md`.
+
+Groups 11 and 12 are the exception, and deliberately so: interior pointers held
+directly in a *root* are still outside the specification.
+`MinorCollectForwarding.Helpers.roots_valid_for_minor_collection` places every
+nursery root in `minor_objects`, and
+`GC.Impl.MarkBoundedPrecondition.root_valid_for_darkening` requires every major
+root to be an enumerated object.  Both collectors nonetheless handle such a root
+today --- `GC.Gen.Impl.Cheney`'s root loop dispatches to
+`forward_if_minor_infix` on `Infix_tag`, and
+`GC.Impl.MarkBounded.check_and_darken_bounded_spec` applies `resolve_object`
+before darkening --- which is what these two groups demonstrate.  Lifting the
+specification to match is Phase H of `docs/minor-infix-support-plan.md`.
 
 **The test is sensitive.** Rebuilding the runtime with the pre-fix
 `check_and_darken_bounded` — the version that darkened the raw field value

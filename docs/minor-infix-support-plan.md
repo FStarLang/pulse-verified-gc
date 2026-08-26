@@ -778,6 +778,20 @@ The `**Scope**` note in `generational/ocaml-integration/README.md`, which used
 to say these heaps fell outside the generational invariant, is updated: they are
 now inside it in both generations.
 
+Two further groups (11, 12) were added when Phase H was scoped, taking the
+count to 2514.  They move the interior pointer out of the heap entirely and
+into a **root**: the closure block is referenced by nothing but a local
+variable, which the bytecode runtime scans off the stack verbatim.  Group 11
+takes one such root through promotion and then through mark & sweep, checking
+the infix offset, the reachable-word count and every computed value at each
+step; group 12 keeps 24 of them live simultaneously, one per frame of a
+recursion, with the collections forced at the innermost frame.  Both pass under
+the verified runtime and under stock OCaml.
+
+These two groups are the evidence for the claim made in Phase H: the collector
+handles interior roots today, and it is only the specifications that describe a
+root as its own object.
+
 ## 5. Risks
 
 * **Verification cost.** `CheneyPreservation.*` dominates the build. Phases C

@@ -579,6 +579,97 @@ let test_nursery_many_groups () =
   Printf.printf "  %d nursery groups promoted and verified\n%!" (n / 2);
   ignore (Sys.opaque_identity kept)
 
+(* ------------------------------------------------------------------ *)
+(* 11. an interior pointer held only in a *root*                        *)
+(* ------------------------------------------------------------------ *)
+(* Groups 3-10 keep the interior pointer in a heap field.  A root is the
+   other place OCaml puts one, and it is the harder case for the collector:
+   a root cannot simply be replaced by its enclosing closure, because the
+   mutator goes on calling through it, so the *offset* has to survive the
+   collection.  The nursery collector therefore forwards the enclosing block
+   and re-applies the delta in place, and the major collector resolves the
+   root before greying it.
+
+   Here the closure block is referenced by nothing whatsoever except the
+   local variable `f`.  The bytecode runtime scans that stack slot verbatim
+   (`runtime/roots_byt.c:39`), so the only thing keeping the block alive is
+   a root that is an interior pointer.
+
+   `GC.Gen.Impl.Cheney`'s root loop dispatches to `forward_if_minor_infix`
+   on Infix_tag, and `GC.Impl.MarkBounded.check_and_darken_bounded_spec`
+   applies `resolve_object` to every root before darkening it, so both
+   collectors handle this.  The *specifications* do not yet admit it --
+   `roots_valid_for_minor_collection` and `root_valid_for_darkening` still
+   describe a root as its own object -- which is Phase H of
+   `docs/minor-infix-support-plan.md`.  This test is the evidence that the
+   restriction is a specification artefact and not a collector limitation. *)
+
+let check_group_alive what base (f : int -> int) =
+  let fo = Obj.repr f in
+  check_eq (what ^ ": Infix_tag") (Obj.tag fo) Obj.infix_tag;
+  for k = 0 to 11 do
+    check_eq (Printf.sprintf "%s: value %d" what k)
+      (f k) (expected_second base k)
+  done
+
+let test_interior_root () =
+  section "11. a block reachable only from an interior-pointer root";
+  let base = 9000 in
+  let f = make_interior_only base in
+  let delta = Obj.size (Obj.repr f) in
+  check "root infix offset >= 2" (delta >= 2);
+  check_group_alive "before collection" base f;
+  let words_before = Obj.reachable_words (Obj.repr f) in
+
+  (* Minor collections first: the block is young and this root is its only
+     reference, so Cheney must forward it through the infix header. *)
+  churn_minors 3;
+  check_eq "offset unchanged by promotion" (Obj.size (Obj.repr f)) delta;
+  check_group_alive "after promotion" base f;
+  check_eq "reachable words unchanged by promotion"
+    (Obj.reachable_words (Obj.repr f)) words_before;
+
+  (* Then major collections.  The verified major collector does not move, so
+     the promoted block must now stay put. *)
+  let addr_after_promotion = addr_of_value (Obj.repr f) in
+  churn_majors 3;
+  check_eq "offset unchanged by mark & sweep" (Obj.size (Obj.repr f)) delta;
+  check_eqn "promoted block not moved by mark & sweep"
+    (addr_of_value (Obj.repr f)) addr_after_promotion;
+  check_group_alive "after mark & sweep" base f;
+  check_eq "reachable words unchanged by mark & sweep"
+    (Obj.reachable_words (Obj.repr f)) words_before;
+  Printf.printf "  block kept alive by an interior-pointer root: %d words\n%!"
+    words_before;
+  ignore (Sys.opaque_identity (Obj.repr f))
+
+(* Many interior roots live *simultaneously*: each frame of this recursion
+   holds one, and the collections happen at the bottom, with every frame
+   still on the stack.  A collector that mishandled one root out of `depth`
+   would show up as a wrong value on the way back out. *)
+let rec nest_interior_roots depth =
+  if depth <= 0 then begin
+    churn_minors 2;
+    churn_majors 2;
+    0
+  end else begin
+    let base = 20_000 + depth * 100 in
+    let f = make_interior_only base in
+    check_eq (Printf.sprintf "frame %d: Infix_tag" depth)
+      (Obj.tag (Obj.repr f)) Obj.infix_tag;
+    let n = nest_interior_roots (depth - 1) in
+    (* `f` was a live stack root across both collections. *)
+    check_group_alive (Printf.sprintf "frame %d" depth) base f;
+    n + 1
+  end
+
+let test_many_interior_roots () =
+  section "12. many interior-pointer roots live across a collection";
+  let depth = 24 in
+  let n = nest_interior_roots depth in
+  check_eq "all frames returned" n depth;
+  Printf.printf "  %d simultaneous interior-pointer roots survived\n%!" depth
+
 let () =
   (* The verified major collector is a non-moving mark & sweep, so several
      checks below assert that addresses are stable across a major collection.
@@ -602,6 +693,8 @@ let () =
   test_nursery_major_to_minor ();
   test_nursery_minor_to_minor ();
   test_nursery_many_groups ();
+  test_interior_root ();
+  test_many_interior_roots ();
   let st = Gc.quick_stat () in
   Printf.printf
     "collections observed: %d minor, %d major\n%!"
