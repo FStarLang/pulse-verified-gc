@@ -364,6 +364,38 @@ conjuncts), drop the establishment obligations from
 `spot/GC.SPOT.ConcreteScenarios.fst` and `spot/GC.SPOT.ConcreteMinor.fst`, and
 update the cross-reference comment at `common/spec/GC.Spec.Fields.fst:941`.
 
+**Prerequisite discovered while doing Phase D.** Phase D leaves ~8 `_elim` call
+sites (in `GC.Gen.MinorCollectForwarding`, `.Edges`, `.Reflection`,
+`.NonPointerFields`) discharging their non-interiority obligation from these two
+predicates.  Replacing each with a real interior branch needs one fact that no
+existing invariant supplies:
+
+> for every live nursery object `x` and field index `i`, if the stored word is
+> interior then `fwd` has an entry for the *interior* address, not just for its
+> parent.
+
+`fwd_closed` cannot supply it, because `minor_successors` now resolves: the
+successor of a field holding an interior pointer *is* the parent.  Yet the field
+of the promoted copy is rewritten to `fwd raw`, so `fwd raw <> 0` is exactly what
+`update_object_pointers` needs.
+
+The implementation already establishes it -- `cheney_forward_fields` applies
+`cheney_forward_one` to the raw field word, and its infix branch installs
+`fwd raw = fwd parent + delta` whenever the bounded guard passes, reporting OOM
+otherwise.  Surfacing it means:
+
+1. a third conjunct of `CheneyBFS.addr_covered`,
+   `is_infix_in_minor minor addr ==> cs.cs_fwd addr <> 0UL`, established by
+   `addr_covered_infix_step` (guard passes) and `addr_covered_intro_forwarded`
+   (entry already present);
+2. a `fwd_covers_infix_fields` conjunct of `fwd_well_formed`, with the
+   `fwd_well_formed_covers_reachable` analogue that lifts it to every reachable
+   object; and
+3. only then the eight `_elim` sites, each gaining an interior branch that pairs
+   the new coverage fact with Phase B's `fwd_infix_targets_wf` (the target is a
+   well-formed interior pointer of the final major heap) and Phase C's already
+   resolved `field_fwd_targets_in_objects`.
+
 ### Phase F — audit
 
 A minor-heap analogue of `spot/GC.SPOT.InfixMajor`: a concrete nursery holding
@@ -395,6 +427,25 @@ major-heap infix test.
 A → B → C → D → E, each verified and committed separately; F and G afterwards.
 Phase A is independently useful and low-risk, so it can land first regardless
 of how B lands.
+
+**Status.** Phases A, B, C and D are done: each landed as its own fully verified
+commit, with the extracted C byte-identical throughout.  What that buys, today:
+
+* the spec-level model of interior pointers is complete and non-vacuous --
+  `minor_infix_wf` mirrors `GC.Spec.Object.infix_addr_conds` conjunct for
+  conjunct, and a promoted interior target is proved to be a well-formed
+  interior pointer of the final major heap;
+* the *combined graph* and the *Cheney live set* both resolve interior field
+  values, so an object referenced only through an interior pointer is a
+  first-class member of the reachable set rather than an absent vertex;
+* the forwarding map's root coverage is stated in resolved form, matching what
+  the implementation actually establishes.
+
+What is still restricted: `collection_heap_shape` continues to forbid interior
+pointers in nursery fields and in major-to-nursery fields, so `gen_gc` cannot
+yet be *called* on such a heap.  Removing that is Phase E, whose newly
+identified prerequisite is described above.  Interior pointers held directly in
+a root are covered by Phase D2.
 
 ## 7. Recommendation
 
