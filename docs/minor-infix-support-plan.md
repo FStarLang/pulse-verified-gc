@@ -417,6 +417,38 @@ it by `minor_wosize parent * 8`; the promoted copy occupies
 `[fwd parent, fwd parent + minor_wosize parent * 8)` in a `well_formed_heap`
 major heap, so part 1 of well-formedness puts that whole span below `heap_size`.
 
+**This is not a live defect, and it is worth being precise about why.**  No
+theorem is violated, because `gen_gc`'s precondition makes the arm unreachable
+three ways over -- every route by which an interior nursery address could reach
+`forward_if_minor` is already closed:
+
+* *as a root* -- `roots_valid_for_minor_collection`
+  (`GC.Gen.MinorCollectForwarding.Helpers.fsti:84`) demands
+  `is_minor_pointer r ==> Seq.mem r (minor_objects minor)`, and
+  `minor_objects_not_infix` says an interior address is never in
+  `minor_objects`;
+* *as a nursery field* -- `minor_fields_no_infix_targets`, a conjunct of
+  `minor_heap_shape`;
+* *as a major-to-nursery field* -- `major_minor_fields_no_infix_targets`, a
+  conjunct of `collection_heap_shape` itself.
+
+So the reachable-subgraph isomorphism is not weak here; the precondition is
+strong.  The arm is latent, and it is latent on exactly the path this work item
+is opening: Phase E deletes the two field restrictions and Phase D2 the root
+one, and the moment either lands the arm becomes reachable and the coverage
+conjunct of `addr_covered` becomes unprovable.  That is how it surfaced -- not
+by inspection, but because step 1 above is precisely the statement the arm
+falsifies.
+
+One caveat does survive at the C boundary.  The extracted collector is called
+by a runtime shim that F* preconditions do not bind, and stock OCaml produces
+interior roots and fields routinely (§1.1).  In the failure arm the entry is
+simply not written, and both rewrite sites *skip* zero entries -- roots are left
+unchanged (`GC_Gen_Impl.c:1315`) and fields are not written at all
+(`GC_Gen_Impl.c:1451`) -- so the survivor would point into the nursery, which
+minor collection then zeroes.  A dangling pointer, not a null.  That is reason
+enough to close the arm ahead of the phases that need it.
+
 **The promotion arm of this is done.**  `GC.Gen.AllocProps.
 alloc_spec_obj_body_within_heap` derives the body bound from
 `alloc_spec_obj_in_objects_part1` and `alloc_spec_preserves_wfh_part1`;
