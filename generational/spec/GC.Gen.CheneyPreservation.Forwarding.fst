@@ -130,6 +130,19 @@ let infix_wosize_bound_chain (sv base d wz wfinal: nat)
   le_trans_nat (base + d) (base + wz * 8) (base + wfinal * 8);
   le_trans_nat sv (base + d) (base + wfinal * 8)
 
+let infix_wosize_bound_chain_lt_pf
+  (sv base d wz wfinal: nat)
+  (_: squash (sv == base + d))
+  (_: squash (d < wz * 8))
+  (_: squash (wz <= wfinal))
+  : Lemma (ensures sv < base + wfinal * 8)
+  =
+  assert (sv == base + d);
+  assert (d < wz * 8);
+  assert (wz <= wfinal);
+  FStar.Math.Lemmas.lemma_mult_le_right 8 wz wfinal;
+  assert (wz * 8 <= wfinal * 8)
+
 let infix_wosize_bound_chain_pf
   (sv base d wz wfinal: nat)
   (_: squash (sv == base + d))
@@ -404,7 +417,9 @@ let promote_preserves_is_infix_frame
     is_infix_spec target major;
     tag_of_object_spec target major;
     tag_of_object_spec target res.major_out;
-    is_infix_spec target res.major_out
+    is_infix_spec target res.major_out;
+    wosize_of_object_spec target major;
+    wosize_of_object_spec target res.major_out
   end
 #pop-options
 
@@ -458,6 +473,32 @@ let set_promoted_tag_preserves_wosize_self
   makeHeader_getWosize (getWosize hdr) White (U64.uint_to_t tag);
   wosize_of_object_spec obj h;
   wosize_of_object_spec obj (set_promoted_tag h obj tag)
+
+private let lt256_lt_pow2_64 (n: nat) : Lemma (requires n < 256) (ensures n < pow2 64)
+  = assert_norm (256 <= pow2 64)
+
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
+let promote_object_new_addr_tag
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  =
+  let res = promote_object minor major obj fp wz in
+  promote_object_success minor major obj fp wz;
+  AllocProps.alloc_spec_obj_valid major fp wz;
+  let alloc_res = Allocator.alloc_spec major fp wz in
+  let copied = copy_fields minor alloc_res.heap_out obj alloc_res.obj_out 0 wz in
+  let padded = zero_promote_padding copied alloc_res.obj_out wz in
+  let target : obj_addr = alloc_res.obj_out in
+  let tag = minor_tag minor obj in
+  minor_tag_bound minor obj;
+  lt256_lt_pow2_64 tag;
+  let tag_u = U64.uint_to_t tag in
+  set_promoted_tag_unfold padded target tag;
+  let hdr = hd_address target in
+  let new_hdr = makeHeader (getWosize (read_word padded hdr)) White tag_u in
+  read_write_same padded hdr new_hdr;
+  tag_of_object_spec target res.major_out;
+  makeHeader_getTag (getWosize (read_word padded hdr)) White tag_u
+#pop-options
 
 /// The freshly promoted object keeps the allocator-provided wosize bound
 /// through copy_fields, zero_promote_padding, and set_promoted_tag.
@@ -770,6 +811,8 @@ let cheney_forward_normal_infix_ready_one
     assert (wfinal == U64.v (wosize_of_object fwd_parent cs'.cs_major));
     infix_wosize_bound_chain_pf sv (U64.v fwd_parent) d wz wfinal
       () () ();
+    infix_wosize_bound_chain_lt_pf sv (U64.v fwd_parent) d wz wfinal
+      () () ();
     assert (U64.v res.new_addr + j * 8 == U64.v res.new_addr + (d - 8));
     add_sub_8 (U64.v res.new_addr) d;
     assert (U64.v res.new_addr + (d - 8) == sv - 8);
@@ -801,6 +844,19 @@ let cheney_forward_normal_infix_ready_one
     assert (tag_of_object s cs'.cs_major == infix_tag);
     is_infix_spec s cs'.cs_major;
     assert (is_infix s cs'.cs_major);
+    // The copied infix header is the minor one word for word, so it still
+    // encodes the same offset back to the parent.
+    getWosize_spec (read_word cs'.cs_major (hd_address s));
+    wosize_of_object_spec s cs'.cs_major;
+    assert (U64.v (wosize_of_object s cs'.cs_major) == minor_wosize minor a);
+    // The parent was a closure in the nursery, and `set_promoted_tag` copies
+    // the tag across, so the promoted parent is a closure too.
+    promote_object_new_addr_tag minor cs.cs_major addr cs.cs_fp wz;
+    assert (U64.v (tag_of_object fwd_parent cs'.cs_major) == minor_tag minor addr);
+    assert (minor_tag minor p == 247);
+    closure_tag_val ();
+    is_closure_spec fwd_parent cs'.cs_major;
+    assert (is_closure fwd_parent cs'.cs_major);
     assert (Seq.mem fwd_parent (objects zero_addr cs'.cs_major));
     assert (is_blue fwd_parent cs'.cs_major = false);
     assert (sv - 8 >= U64.v fwd_parent);
@@ -840,7 +896,19 @@ let cheney_forward_normal_infix_ready_one
     is_blue_iff parent_fwd res.major_out;
     color_of_header_eq parent_fwd cs.cs_major res.major_out;
     wosize_of_object_spec parent_fwd cs.cs_major;
-    wosize_of_object_spec parent_fwd res.major_out
+    wosize_of_object_spec parent_fwd res.major_out;
+    // Both new conjuncts are header facts about addresses the promotion does
+    // not touch: `s` is framed by promote_preserves_is_infix_frame, and
+    // `parent_fwd` by promote_object_frame_old_header_derived.
+    assert (U64.v (wosize_of_object s cs.cs_major) == minor_wosize minor a);
+    assert (wosize_of_object s res.major_out == wosize_of_object s cs.cs_major);
+    assert (U64.v (wosize_of_object s cs'.cs_major) == minor_wosize minor a);
+    assert (is_closure parent_fwd cs.cs_major);
+    tag_of_object_spec parent_fwd cs.cs_major;
+    tag_of_object_spec parent_fwd res.major_out;
+    is_closure_spec parent_fwd cs.cs_major;
+    is_closure_spec parent_fwd res.major_out;
+    assert (is_closure parent_fwd cs'.cs_major)
   end
 #pop-options
 
@@ -1155,7 +1223,8 @@ let rec cheney_scan_preserves_fwd_classified
                     chain_objects_blue cs.cs_major cs.cs_fp /\
                     minor_infix_wf minor /\
                     minor_wf minor)
-          (ensures fwd_classified (cheney_scan minor cs scan fuel))
+          (ensures fwd_classified (cheney_scan minor cs scan fuel) /\
+                   infix_fwd_ready minor (cheney_scan minor cs scan fuel))
           (decreases fuel)
   =
   if fuel = 0 then
@@ -1422,6 +1491,202 @@ let cheney_promote_fwd_valid_or_infix
   cheney_promote_fwd_bounded minor major fp roots
 #pop-options
 
+/// ---------------------------------------------------------------------------
+/// fwd_infix_delta: an infix entry is its parent's entry plus the offset
+/// ---------------------------------------------------------------------------
+
+let fwd_infix_delta_state (minor: minor_state) (cs: cheney_state) : prop =
+  fwd_infix_delta minor cs.cs_fwd
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+private let fwd_infix_delta_initial (minor: minor_state) (major: heap) (fp: U64.t)
+  : Lemma (ensures fwd_infix_delta_state minor
+            ({ cs_major = major; cs_fp = fp;
+               cs_fwd = empty_forwarding; cs_queue = Seq.empty }))
+  =
+  let cs0 : cheney_state =
+    { cs_major = major; cs_fp = fp;
+      cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
+  let aux (x: U64.t)
+    : Lemma (requires is_infix_in_minor minor x /\ cs0.cs_fwd x <> 0UL)
+            (ensures False)
+    = assert (cs0.cs_fwd x == 0UL)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// `cheney_forward_normal` only ever records an entry for a *minor object*, and
+/// minor objects are never infix, so it cannot create an infix entry.  Entries
+/// already present are untouched, so the identity is preserved.
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+private let cheney_forward_normal_preserves_fwd_infix_delta
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires fwd_infix_delta_state minor cs /\ minor_wf minor)
+          (ensures fwd_infix_delta_state minor (cheney_forward_normal minor cs addr))
+  =
+  let cs' = cheney_forward_normal minor cs addr in
+  let aux (x: U64.t)
+    : Lemma (requires is_infix_in_minor minor x /\ cs'.cs_fwd x <> 0UL)
+            (ensures (let parent = infix_parent minor x in
+                      cs'.cs_fwd parent <> 0UL /\
+                      U64.v x >= U64.v parent /\
+                      U64.v (cs'.cs_fwd x) ==
+                        U64.v (cs'.cs_fwd parent) + (U64.v x - U64.v parent)))
+    =
+    if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL then
+      cheney_forward_normal_noop minor cs addr
+    else begin
+      let wz = minor_wosize minor addr in
+      if wz = 0 then cheney_forward_normal_noop_wz0 minor cs addr
+      else begin
+        let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+        if res.new_addr = 0UL then cheney_forward_normal_noop_oom minor cs addr
+        else begin
+          cheney_forward_normal_success minor cs addr;
+          minor_objects_not_infix minor addr;
+          // x is infix, addr is a minor object, so x <> addr and the entry for
+          // x is the one cs already had.
+          assert (~(is_infix_in_minor minor addr));
+          assert (x =!= addr);
+          cheney_forward_normal_other_fwd minor cs addr x;
+          assert (cs'.cs_fwd x == cs.cs_fwd x);
+          let parent = infix_parent minor x in
+          assert (cs.cs_fwd parent <> 0UL);
+          // addr is not yet forwarded in this branch, so it cannot be parent.
+          assert (cs.cs_fwd addr == 0UL);
+          assert (parent =!= addr);
+          cheney_forward_normal_other_fwd minor cs addr parent
+        end
+      end
+    end
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+private let cheney_forward_one_preserves_fwd_infix_delta
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires fwd_infix_delta_state minor cs /\
+                    minor_infix_wf minor /\ minor_wf minor)
+          (ensures fwd_infix_delta_state minor (cheney_forward_one minor cs addr))
+  =
+  if cs.cs_fwd addr <> 0UL then cheney_forward_one_noop minor cs addr
+  else if is_infix_in_minor minor addr then begin
+    reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
+    cheney_forward_one_infix minor cs addr;
+    let parent = infix_parent minor addr in
+    cheney_forward_normal_preserves_fwd_infix_delta minor cs parent;
+    let cs' = cheney_forward_normal minor cs parent in
+    let r = cheney_forward_one minor cs addr in
+    let aux (x: U64.t)
+      : Lemma (requires is_infix_in_minor minor x /\ r.cs_fwd x <> 0UL)
+              (ensures (let px = infix_parent minor x in
+                        r.cs_fwd px <> 0UL /\
+                        U64.v x >= U64.v px /\
+                        U64.v (r.cs_fwd x) ==
+                          U64.v (r.cs_fwd px) + (U64.v x - U64.v px)))
+      =
+      if not (cs'.cs_fwd parent <> 0UL &&
+              U64.v addr >= U64.v parent &&
+              U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < heap_size) then
+        cheney_forward_one_infix_guard_fail minor cs addr
+      else begin
+        cheney_forward_one_infix_guard_pass minor cs addr;
+        if x = addr then begin
+          // The entry just recorded: exactly parent's entry plus the offset.
+          minor_objects_not_infix minor parent;
+          cheney_forward_one_infix_fwd minor cs addr parent
+        end else begin
+          cheney_forward_one_infix_fwd minor cs addr x;
+          let px = infix_parent minor x in
+          assert (cs'.cs_fwd px <> 0UL);
+          minor_objects_not_infix minor px;
+          cheney_forward_one_infix_fwd minor cs addr px
+        end
+      end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+  end else begin
+    cheney_forward_one_normal minor cs addr;
+    cheney_forward_normal_preserves_fwd_infix_delta minor cs addr
+  end
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+private let rec cheney_forward_fields_preserves_fwd_infix_delta
+  (minor: minor_state) (cs: cheney_state) (parent: U64.t) (i wosize: nat)
+  : Lemma (requires fwd_infix_delta_state minor cs /\
+                    minor_infix_wf minor /\ minor_wf minor)
+          (ensures fwd_infix_delta_state minor
+            (cheney_forward_fields minor cs parent i wosize))
+          (decreases (if i < wosize then wosize - i else 0))
+  =
+  if i >= wosize then cheney_forward_fields_base minor cs parent i wosize
+  else begin
+    cheney_forward_fields_step minor cs parent i wosize;
+    let field_val = to_minor_offset (minor_read_field minor parent i) in
+    cheney_forward_one_preserves_fwd_infix_delta minor cs field_val;
+    let cs' = cheney_forward_one minor cs field_val in
+    cheney_forward_fields_preserves_fwd_infix_delta minor cs' parent (i + 1) wosize
+  end
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+private let rec cheney_forward_roots_preserves_fwd_infix_delta
+  (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
+  : Lemma (requires fwd_infix_delta_state minor cs /\
+                    minor_infix_wf minor /\ minor_wf minor)
+          (ensures fwd_infix_delta_state minor
+            (cheney_forward_roots minor cs roots idx))
+          (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
+  =
+  if idx >= Seq.length roots then cheney_forward_roots_base minor cs roots idx
+  else begin
+    cheney_forward_roots_step minor cs roots idx;
+    let r = Seq.index roots idx in
+    cheney_forward_one_preserves_fwd_infix_delta minor cs r;
+    let cs' = cheney_forward_one minor cs r in
+    cheney_forward_roots_preserves_fwd_infix_delta minor cs' roots (idx + 1)
+  end
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+private let rec cheney_scan_preserves_fwd_infix_delta
+  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  : Lemma (requires fwd_infix_delta_state minor cs /\
+                    minor_infix_wf minor /\ minor_wf minor)
+          (ensures fwd_infix_delta_state minor (cheney_scan minor cs scan fuel))
+          (decreases fuel)
+  =
+  if fuel > 0 then begin
+    if scan >= Seq.length cs.cs_queue then cheney_scan_base minor cs scan fuel
+    else begin
+      cheney_scan_step minor cs scan fuel;
+      let obj = Seq.index cs.cs_queue scan in
+      let wz = minor_wosize minor obj in
+      cheney_forward_fields_preserves_fwd_infix_delta minor cs obj 0 wz;
+      let cs' = cheney_forward_fields minor cs obj 0 wz in
+      assert (fuel - 1 < fuel);
+      cheney_scan_preserves_fwd_infix_delta minor cs' (scan + 1) (fuel - 1)
+    end
+  end else cheney_scan_base minor cs scan fuel
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let cheney_promote_fwd_infix_delta
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  =
+  let cs0 : cheney_state =
+    { cs_major = major; cs_fp = fp;
+      cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
+  fwd_infix_delta_initial minor major fp;
+  cheney_forward_roots_preserves_fwd_infix_delta minor cs0 roots 0;
+  let cs1 = cheney_forward_roots minor cs0 roots 0 in
+  cheney_scan_preserves_fwd_infix_delta minor cs1 0 (cheney_fuel minor);
+  let cs2 = cheney_scan minor cs1 0 (cheney_fuel minor) in
+  assert ((cheney_promote minor major fp roots).fwd_map == cs2.cs_fwd)
+#pop-options
+
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let cheney_promote_fwd_noninfix_targets_valid
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
@@ -1439,4 +1704,84 @@ let cheney_promote_fwd_noninfix_targets_valid
   let cs2 = cheney_scan minor cs1 0 (cheney_fuel minor) in
   assert ((cheney_promote minor major fp roots).fwd_map == cs2.cs_fwd);
   assert ((cheney_promote minor major fp roots).major_final == cs2.cs_major)
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Promoted infix targets are well-formed interior pointers
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 1"
+let cheney_promote_fwd_infix_targets_wf
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  =
+  wf_parts ();
+  let cs0 : cheney_state =
+    { cs_major = major; cs_fp = fp;
+      cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
+  assert (fwd_classified cs0);
+  assert (infix_fwd_ready minor cs0);
+  cheney_forward_roots_preserves_fwd_classified minor cs0 roots 0;
+  cheney_forward_roots_preserves_wfh_part1 minor cs0 roots 0;
+  cheney_forward_roots_preserves_cob minor cs0 roots 0;
+  let cs1 = cheney_forward_roots minor cs0 roots 0 in
+  cheney_scan_preserves_fwd_classified minor cs1 0 (cheney_fuel minor);
+  let cs2 = cheney_scan minor cs1 0 (cheney_fuel minor) in
+  assert (infix_fwd_ready minor cs2);
+  let g = cs2.cs_major in
+  assert ((cheney_promote minor major fp roots).fwd_map == cs2.cs_fwd);
+  assert ((cheney_promote minor major fp roots).major_final == g);
+  cheney_promote_fwd_infix_delta minor major fp roots;
+  cheney_promote_fwd_valid_or_infix minor major fp roots;
+  cheney_promote_fwd_noninfix_targets_valid minor major fp roots;
+  let aux (x: U64.t)
+    : Lemma (requires is_infix_in_minor minor x /\ cs2.cs_fwd x <> 0UL)
+            (ensures
+              U64.v (cs2.cs_fwd x) >= U64.v mword /\
+              U64.v (cs2.cs_fwd x) < heap_size /\
+              U64.v (cs2.cs_fwd x) % U64.v mword == 0 /\
+              (let t : obj_addr = cs2.cs_fwd x in
+               Seq.mem (resolve_object t g) (objects zero_addr g) /\
+               infix_addr_wf g (objects zero_addr g) t))
+    =
+    let parent = infix_parent minor x in
+    // The parent is a minor object, so it is never itself infix; its entry is
+    // therefore covered by `fwd_noninfix_targets_valid`.
+    infix_parent_in_minor_objects minor x;
+    minor_objects_not_infix minor parent;
+    assert (cs2.cs_fwd parent <> 0UL);
+    assert (U64.v x >= U64.v parent);
+    let d = U64.v x - U64.v parent in
+    assert (U64.v (cs2.cs_fwd x) == U64.v (cs2.cs_fwd parent) + d);
+    assert (U64.v (cs2.cs_fwd parent) >= U64.v mword);
+    assert (U64.v (cs2.cs_fwd parent) < heap_size);
+    assert (U64.v (cs2.cs_fwd parent) % U64.v mword == 0);
+    assert (U64.v (cs2.cs_fwd x) < heap_size);
+    assert (infix_fwd_ready_pre minor cs2 x);
+    infix_fwd_ready_elim minor cs2 x;
+    let fwd_parent : obj_addr = cs2.cs_fwd parent in
+    let sum_v = U64.v fwd_parent + d in
+    assert (sum_v == U64.v (cs2.cs_fwd x));
+    let t : obj_addr = cs2.cs_fwd x in
+    assert (U64.uint_to_t sum_v == t);
+    assert (is_infix t g);
+    // `infix_addr_conds` reads the offset off the *copied* infix header, which
+    // still encodes the minor-side wosize; combined with `minor_infix_wf`'s
+    // `d == wosize * 8` this pins the parent to `fwd_parent`.
+    infix_delta_is_wosize minor x;
+    assert (d == minor_wosize minor x * 8);
+    assert (U64.v (wosize_of_object t g) == minor_wosize minor x);
+    assert (U64.v (wosize_of_object t g) * 8 == d);
+    assert (U64.v t - U64.v (wosize_of_object t g) * 8 == U64.v fwd_parent);
+    assert (U64.v (wosize_of_object t g) >= 2);
+    assert (Seq.mem fwd_parent (objects zero_addr g));
+    assert (is_closure fwd_parent g);
+    assert (U64.v t < U64.v fwd_parent + U64.v (wosize_of_object fwd_parent g) * 8);
+    assert (U64.uint_to_t (U64.v t - U64.v (wosize_of_object t g) * 8) == fwd_parent);
+    infix_addr_wf_intro g (objects zero_addr g) t;
+    parent_closure_addr_nat_spec t g;
+    assert (parent_closure_addr_nat t g == U64.v fwd_parent);
+    resolve_infix_spec t g;
+    assert (resolve_object t g == fwd_parent)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
