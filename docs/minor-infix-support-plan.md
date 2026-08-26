@@ -561,11 +561,35 @@ tracking which positions the chain visits (hence chain-object
 non-overlap), in `GC.Gen.MinorHeap.fsti`. That interface change invalidates the
 entire `.checked` cache on every iteration, which is why it is deferred.
 
-### Phase G — an OCaml-level test
+### Phase G — an OCaml-level test ✅ done
 
-Extend `generational/ocaml-integration/` with a mutually recursive closure that
-stays in the nursery across a minor collection, mirroring the existing
-major-heap infix test.
+`generational/ocaml-integration/tests/infix_closures.ml` gains three nursery
+groups (8, 9, 10), taking it from 678 to 2128 assertions. All pass under the
+verified runtime and, as a differential check, under stock OCaml.
+
+* **8 — major → minor.** A slot is first forced into the major heap (proved by
+  showing a minor collection does not move it), then an interior pointer to a
+  brand-new closure group is stored into it, so the edge arrives through the
+  remembered set. Nothing else references the group. After one minor collection
+  the target address has *changed* — so the group really was in the nursery —
+  the field is still `Infix_tag`, `Obj.size` (the offset back to the parent) is
+  unchanged, `Obj.reachable_words` is unchanged, and all three closures in the
+  group still compute the right answers. Then mark & sweep is run and must not
+  move it.
+* **9 — minor → minor.** Referrer and closure group are both young, so the edge
+  is found by Cheney scanning rather than the remembered set, and both are
+  promoted in the same pass. Because the parent is observable here, the offset
+  relation is checked as an *address difference*: `interior − parent ==
+  wosize*8` before and after, with the difference itself invariant. Sharing is
+  also checked — the field and a second referrer still hold the same address.
+* **10 — sweep pressure.** 200 nursery groups anchored from a promoted array by
+  interior pointers only, with 200 more dropped; every survivor is shown to have
+  moved out of the nursery with its offset, reachable-word count and computed
+  values intact, and to survive three subsequent major collections.
+
+The `**Scope**` note in `generational/ocaml-integration/README.md`, which used
+to say these heaps fell outside the generational invariant, is updated: they are
+now inside it in both generations.
 
 ## 5. Risks
 

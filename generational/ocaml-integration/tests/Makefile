@@ -77,6 +77,13 @@ test: correctness $(BYTE_FILES)
 # only through an interior pointer survives mark & sweep, and that the
 # post-collection heap has exactly the shape it had before.
 #
+# Groups 8-10 do the same for the *nursery*: mutually recursive closures are
+# allocated young, so an interior pointer to one points into the middle of a
+# young block and Cheney copying must forward the enclosing block and re-apply
+# the offset.  Both the major -> minor edge (remembered set) and the
+# minor -> minor edge (Cheney scanning) are covered, and each is shown to have
+# actually been promoted, so the nursery path is really the one exercised.
+#
 # It is run under the verified runtime and, as a differential check, under
 # stock OCaml, where it must produce the same verdict.
 
