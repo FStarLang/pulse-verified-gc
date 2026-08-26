@@ -447,11 +447,23 @@ This is the only phase that changes extracted C, and it is mandatory — see
 `generational/snapshot/`, reviewing the C diff. Then re-run
 `generational/ocaml-integration/tests`.
 
-### Phase 5 — audit
+### Phase 5 — audit  *(done)*
 
-Extend the three-object SPOT fixture with a fourth object: a closure with an
-infix part, pointed at from a major field. This is the fixture that cannot be
-built today. (Deferred by request; listed for completeness.)
+Rather than extending the three-object fixture, the audit is a second,
+independent SPOT scenario: `GC.SPOT.InfixMajor`, `GC.SPOT.InfixPre`,
+`GC.SPOT.InfixPost` and `GC.SPOT.InfixCall`.
+
+`GC.SPOT.InfixMajor` builds a ten-word major heap in which a one-field object
+`Q` points into the body of a five-word closure `P`, at an infix header that
+`objects` never enumerates. It proves, of that one heap, both that it *refutes*
+`no_infix_field_targets` — so it could not have been handed to the collector
+before this work — and that it *satisfies* every conjunct of the current
+`GC.Gen.HeapInvariant.major_heap_shape`.
+
+`GC.SPOT.InfixCall.call_gen_gc_infix` then calls the real `gen_gc` on it over
+an empty nursery and proves the collection succeeds, that
+`collection_heap_shape` is restored, and that `Q` survives. See
+`spot/SPOT_STATUS.md` for the full picture and the word-by-word layout.
 
 ## 6. Risks
 

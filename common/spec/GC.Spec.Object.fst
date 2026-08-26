@@ -29,6 +29,7 @@ let no_scan_tag : U64.t = 251UL
 
 let no_scan_tag_val () : Lemma (no_scan_tag == U64.uint_to_t 251) = ()
 let infix_tag_val () : Lemma (infix_tag == U64.uint_to_t 249) = ()
+let closure_tag_val () : Lemma (closure_tag == U64.uint_to_t 247) = ()
 
 /// ---------------------------------------------------------------------------
 /// Header Masks and Shifts (kept for wosize extraction)

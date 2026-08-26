@@ -1785,6 +1785,9 @@ The active modules are structured as follows:
 | `GC.SPOT.CallMinor` / `ConcreteCallMinor` | Pulse wrappers that call the real `minor_collect_full` and prove concrete consequences. |
 | `GC.SPOT.CallFull` / `ConcreteCallFull` | Pulse wrappers that call the real `gen_gc` and prove final survival facts. |
 | `GC.SPOT.ThreeObjects` | The scenario layer: A is promoted, C.field1 is rewritten to A', B is not promoted, and C/A' survive full GC. |
+| `GC.SPOT.InfixMajor` | A second, independent scenario: a ten-word major heap containing a genuine OCaml interior (infix) pointer. |
+| `GC.SPOT.InfixPre` / `InfixPost` | Discharge `gen_gc`'s precondition for that heap over an empty nursery, and read back its postcondition. |
+| `GC.SPOT.InfixCall` | Pulse wrapper that calls the real `gen_gc` on the infix heap. |
 
 The main useful facts proved by the active SPOT are:
 
@@ -1810,6 +1813,34 @@ assumed by the caller.
 This is a powerful audit because it checks both sides of a public formal
 contract: the preconditions are not impossibly strong, and the postconditions
 are not too weak for clients to use.
+
+### The interior-pointer scenario
+
+A second SPOT audits the relaxation of the major-heap invariant that admits
+OCaml interior pointers. `GC.SPOT.InfixMajor` builds a ten-word major heap in
+which a one-field object `Q` points *into the body* of a five-word closure `P`,
+at an infix header. That target is never enumerated by `objects`, because its
+header sits inside `P`'s body and the object walk steps over it.
+
+The audit is two-sided, on one and the same heap:
+
+* `spot_infix_violates_no_infix_field_targets` proves the heap **refutes**
+  `GC.Spec.Fields.no_infix_field_targets`, the conjunct `major_heap_shape` used
+  to carry. Under the old invariant this heap could not have been handed to the
+  collector at all.
+* `spot_infix_major_heap_shape` proves the heap **satisfies** all fifteen
+  conjuncts of the current `GC.Gen.HeapInvariant.major_heap_shape` — in
+  particular `well_formed_heap` through the *resolved*-target formulation of
+  parts 2 and 3, with `resolve_object H == P` established from
+  `GC.Spec.Object.infix_addr_conds`.
+
+`GC.SPOT.InfixPre` discharges the remainder of `gen_gc`'s precondition (empty
+nursery, empty remembered table, single root `Q`) and proves the collection
+cannot run out of memory. `GC.SPOT.InfixCall.call_gen_gc_infix` then calls the
+real `gen_gc` and proves that it succeeds, that `collection_heap_shape` holds
+again of the state handed back, and that `Q` is still an enumerated object of
+the post-collection heap. Interior pointers are therefore supported by the
+shipped collector, not merely by an intermediate lemma.
 
 ## OCaml integration
 
