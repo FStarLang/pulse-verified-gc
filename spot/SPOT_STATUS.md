@@ -250,3 +250,29 @@ that
 Together these say that the relaxation is real: a heap with a genuine OCaml
 interior pointer is accepted by `gen_gc`, collected, and handed back satisfying
 the same invariant, with the root still live.
+
+## `GC.SPOT.MinorInfix` — interior pointers in the nursery
+
+The nursery counterpart of `GC.SPOT.InfixMajor`, added with the Phase E
+relaxation that let interior (infix) pointers into the minor heap.
+
+It fixes a scenario `minor_infix_scenario minor major fp roots slots n c i`:
+the standard minor-collection context, plus the fact that field `i` of major
+object `c` holds an address *interior to* a nursery closure.
+
+- `spot_minor_infix_admissible` — the scenario satisfies the collector's entry
+  invariant: the enclosing nursery object is a real `minor_objects` member with
+  `Closure_tag`, and the interior address lies strictly inside it.
+- `spot_minor_infix_promoted` — after the collection the closure is promoted,
+  the interior address is forwarded to an interior pointer of the post heap at
+  the same offset (OCaml's `*p += offset`), the major field is rewritten to
+  that interior image, and the post-collection graph still carries the edge
+  `c -> promoted closure`, because the graph resolves interior pointers.
+- `spot_minor_infix_was_forbidden` — reproduces the clause deleted from
+  `collection_heap_shape` and derives `False` from it plus the scenario, so the
+  scenario is exactly what the old restriction ruled out.
+
+Unlike `GC.SPOT.InfixMajor` this SPOT does not exhibit a *concrete* heap:
+`GC.Gen.MinorHeap` offers no way to write an infix header into a nursery body
+(all `minor_alloc_spec` bodies are zero). See the "Satisfiability gap" note in
+`docs/minor-infix-support-plan.md`.

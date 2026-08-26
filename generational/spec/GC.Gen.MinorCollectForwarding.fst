@@ -428,7 +428,7 @@ let normal_classified_root_image_post_reachable
 let combined_reachable_normal_injective = MCFNE.combined_reachable_normal_injective
 private let normal_src_images_injective = MCFNE.normal_src_images_injective
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
 private let post_edge_from_major_image_reflects_mem_ce
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)

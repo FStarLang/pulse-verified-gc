@@ -685,7 +685,12 @@ let fwd_image_resolves
     assert (~(is_infix ((prom.fwd_map rv) <: obj_addr) g));
     assert (updated == update_major_pointers g prom.fwd_map);
     Frame.update_major_pointers_frame_target_header g prom.fwd_map t;
-    resolve_object_locality t g updated
+    resolve_object_locality t g updated;
+    // the header is unchanged by the pointer-update pass, so interiority is too
+    tag_of_object_spec t g;
+    tag_of_object_spec t updated;
+    is_infix_spec t g;
+    is_infix_spec t updated
 #pop-options
 
 /// ---------------------------------------------------------------------------

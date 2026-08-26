@@ -513,13 +513,53 @@ be carried rather than re-derived.  The recipe:
 Only once both arms are closed does the third conjunct of `addr_covered` hold
 unconditionally, which is what steps 2 and 3 above build on.
 
-### Phase F — audit
+### Phase F — audit ✅ done
 
-A minor-heap analogue of `spot/GC.SPOT.InfixMajor`: a concrete nursery holding
-a five-word closure with an infix sub-object, referenced from a second minor
-object's field *and* from a major object's field via the remembered set. Show
-it satisfies `collection_heap_shape`, call `gen_gc`, and characterise the post
-heap. This is what would give the same confidence the major-heap SPOT gives.
+`spot/GC.SPOT.MinorInfix` is the nursery analogue of `spot/GC.SPOT.InfixMajor`.
+It fixes a scenario predicate `minor_infix_scenario minor major fp roots slots n
+c i` — the standard minor-collection context (`collection_heap_shape`, the
+remembered-set coverage facts, `cheney_no_oom`, combined-reachability of both
+endpoints) together with the one thing that makes it interesting: field `i` of
+major object `c` holds an address that is *interior to* a nursery closure,
+`is_infix_in_minor minor (stored_target major c i)`.
+
+Three theorems:
+
+* `spot_minor_infix_admissible` — the scenario is admissible: the enclosing
+  nursery object is a genuine `minor_objects` member carrying `Closure_tag`
+  (247), the interior address has `wosize >= 2`, and it lies strictly inside
+  its parent. That is, the interior pointer is well formed *as OCaml lays it
+  out*, and the entry invariant accepts it.
+* `spot_minor_infix_promoted` — the audit proper. After the collection the
+  enclosing closure is promoted (`fwd par <> 0`), the *interior* address is
+  forwarded too, its image is again an interior pointer of the post-collection
+  major heap resolving to the promoted closure (offset preserved — exactly
+  `caml_oldify_one`'s `*p += offset`), the major field is rewritten to that
+  interior image rather than to the closure, and the post-collection heap graph
+  nevertheless carries the edge `c -> fwd par`, because the graph resolves
+  interior pointers. The proof chains `CG.classify_major_field_is_minor` →
+  `MCFE.combined_major_minor_field_forwarded` → `MCFH.fwd_image_resolves` →
+  `MCFE.combined_major_minor_edge_forwarded`.
+* `spot_minor_infix_was_forbidden` — non-vacuity in the sense that matters
+  here. The clause deleted from `collection_heap_shape` in Phase E is
+  reproduced verbatim as a local definition, and the lemma derives `False` from
+  it together with the scenario. So the scenario is *precisely, and only*, what
+  the old restriction ruled out: the two theorems above were unstatable before
+  Phase E.
+
+**Satisfiability gap (open).** `spot_minor_infix_was_forbidden` shows the
+scenario is exactly the deleted restriction's complement, but it does not
+exhibit a concrete witness the way `GC.SPOT.InfixMajor` does for the major
+heap. A witness needs a nursery *containing* a closure with an infix header,
+and there is currently no way to build one: `GC.Gen.MinorHeap` only ever
+produces `minor_state`s through `minor_init` and `minor_alloc_spec`, and every
+allocated object body is zero. Adding a body-write primitive means proving that
+writing a body word preserves the abstract `minor_chain_valid` /
+`minor_chain_no_infix`, and the existing `_read_eq` lemmas require agreement
+*below bump*, which a body write violates — so it needs a new induction
+tracking which positions the chain visits (hence chain-object
+non-overlap), in `GC.Gen.MinorHeap.fsti`. That interface change invalidates the
+entire `.checked` cache on every iteration, which is why it is deferred.
 
 ### Phase G — an OCaml-level test
 

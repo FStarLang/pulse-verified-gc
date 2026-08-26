@@ -336,7 +336,11 @@ val fwd_image_resolves
       HeapGraph.is_pointer_field (prom.fwd_map x) /\
       (let t : obj_addr = prom.fwd_map x in
        resolve_object t prom.major_final == prom.fwd_map rv /\
-       resolve_object t updated == prom.fwd_map rv)))
+       resolve_object t updated == prom.fwd_map rv /\
+       // an interior nursery pointer is promoted to an interior pointer into
+       // the promoted copy of its enclosing closure
+       (is_infix_in_minor minor x ==> is_infix t updated) /\
+       (~(is_infix_in_minor minor x) ==> t == prom.fwd_map rv))))
 
 /// ---------------------------------------------------------------------------
 /// Interior nursery targets are forwarded
