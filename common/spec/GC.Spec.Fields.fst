@@ -935,13 +935,13 @@ let wf_field_target_infix_wf (g: heap) (src: obj_addr) (dst: obj_addr) : Lemma
 /// This is *not* part of `well_formed_heap`: the whole point of the resolved
 /// formulation of parts 2 and 3 is that interior pointers into closures are
 /// legal.  It is a strictly stronger, optional restriction that individual
-/// collectors may impose on the heaps they handle.  The generational (Cheney)
-/// collector currently does, because its copying pass identifies a field value
-/// with a whole object when it forwards it; see `GC.Gen.HeapInvariant`, where
-/// this sits alongside the pre-existing `minor_fields_no_infix_targets` and
-/// `major_minor_fields_no_infix_targets` clauses that impose the same
-/// restriction on the nursery side.  The mark-and-sweep collector does *not*
-/// need it.
+/// collectors may impose on the heaps they handle.  Neither collector in this
+/// repository imposes it: the mark-and-sweep collector never needed it, and the
+/// generational collector accepts interior pointers in both the major heap and
+/// the nursery (see `GC.Gen.HeapInvariant.collection_heap_shape` and the
+/// interior coverage clauses of `GC.Gen.CheneyBFS.fwd_well_formed`).  The
+/// predicate is retained because it is a convenient hypothesis for lemmas that
+/// only make sense on interior-free heaps.
 ///
 /// Under this restriction `well_formed_heap` part 2 collapses back to raw
 /// membership (`wf_field_target_in_objects_raw`) and part 3 is vacuous.

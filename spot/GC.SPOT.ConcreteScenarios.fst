@@ -109,66 +109,6 @@ let spot_minor_major_fields_no_blue (r: unit{ConcreteMajor.spot_major_room})
     ConcreteMinor.spot_minor2 (ConcreteMajor.spot_major_heap r)
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-let spot_major_minor_fields_no_infix_targets (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma (GenInv.major_minor_fields_no_infix_targets
-             ConcreteMinor.spot_minor2 (ConcreteMajor.spot_major_heap r))
-  =
-  let major = ConcreteMajor.spot_major_heap r in
-  let aux (obj: obj_addr) (j: nat)
-    : Lemma
-        (ensures
-          Seq.mem obj (SpecFields.objects zero_addr major) /\
-          ~(SpecObj.is_blue obj major) /\
-          ~(SpecObj.is_no_scan obj major) /\
-          j < U64.v (SpecObj.wosize_of_object obj major) /\
-          U64.v obj + j * 8 + 8 <= heap_size /\
-          (U64.v obj + j * 8) % 8 == 0 ==>
-          (let v = to_minor_offset
-             (SpecHeap.read_word major (U64.uint_to_t (U64.v obj + j * 8))) in
-           Promote.is_minor_pointer v ==> ~(is_infix_in_minor ConcreteMinor.spot_minor2 v)))
-    =
-    if Seq.mem obj (SpecFields.objects zero_addr major) /\
-       ~(SpecObj.is_blue obj major) /\
-       ~(SpecObj.is_no_scan obj major) /\
-       j < U64.v (SpecObj.wosize_of_object obj major) /\
-       U64.v obj + j * 8 + 8 <= heap_size /\
-       (U64.v obj + j * 8) % 8 == 0
-    then begin
-      ConcreteMajor.spot_major_object_cases r obj;
-      ConcreteMajor.spot_major_c_reads r;
-      ConcreteMajor.spot_major_free_reads r;
-      if obj = ConcreteMajor.spot_c r then begin
-        assert (U64.v (SpecObj.wosize_of_object obj major) == Layout.c_wosize);
-        assert (j < 2);
-        if j = 0 then begin
-          ConcreteMajor.spot_major_layout_facts r;
-          assert (U64.v obj == U64.v (ConcreteMajor.spot_c r));
-          assert (U64.v obj + j * 8 == U64.v (ConcreteMajor.spot_c r));
-          assert (U64.uint_to_t (U64.v obj + j * 8) == ConcreteMajor.spot_c_field0 r);
-          assert (SpecHeap.read_word major (U64.uint_to_t (U64.v obj + j * 8)) == 0UL);
-          zero_not_minor_pointer ()
-        end else begin
-          assert (j == Layout.c_to_a_field_index);
-          ConcreteMajor.spot_major_layout_facts r;
-          assert (U64.uint_to_t (U64.v obj + j * 8) == ConcreteMajor.spot_c_field1 r);
-          assert (SpecHeap.read_word major (U64.uint_to_t (U64.v obj + j * 8)) ==
-                  Layout.a_minor);
-          to_minor_offset_in_minor_range Layout.a_minor;
-          ConcreteMinor.spot_minor_a_not_infix ()
-        end
-      end else begin
-        assert (obj == ConcreteMajor.spot_free_obj r);
-        assert (SpecObj.is_blue obj major);
-        assert False
-      end
-    end
-  in
-  FStar.Classical.forall_intro_2 aux;
-  GenInv.major_minor_fields_no_infix_targets_intro
-    ConcreteMinor.spot_minor2 major
-#pop-options
-
 let spot_collection_heap_shape (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (GenInv.collection_heap_shape
              ConcreteMinor.spot_minor2
@@ -178,7 +118,6 @@ let spot_collection_heap_shape (r: unit{ConcreteMajor.spot_major_room})
   ConcreteMajor.spot_major_heap_shape r;
   ConcreteMinor.spot_minor_heap_shape ();
   spot_minor_major_fields_no_blue r;
-  spot_major_minor_fields_no_infix_targets r;
   GenInv.collection_heap_shape_intro
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)

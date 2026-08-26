@@ -339,28 +339,10 @@ let spot_minor_no_scan_invariant ()
   in
   FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux)
 
-let spot_minor_fields_no_infix_targets ()
-  : Lemma (ensures GenInv.minor_fields_no_infix_targets spot_minor2)
-  =
-  let aux (obj: U64.t) (j: nat)
-    : Lemma (requires Seq.mem obj (minor_objects spot_minor2) /\
-                      j < minor_wosize spot_minor2 obj /\
-                      Promote.is_minor_pointer (to_minor_offset (minor_read_field spot_minor2 obj j)))
-            (ensures ~(is_infix_in_minor spot_minor2
-                        (to_minor_offset (minor_read_field spot_minor2 obj j))))
-    =
-    spot_minor2_field_zero obj j;
-    assert (minor_read_field spot_minor2 obj j == 0UL);
-    assert_norm (Promote.is_minor_pointer 0UL == false)
-  in
-  FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux);
-  GenInv.minor_fields_no_infix_targets_intro spot_minor2
-
 let spot_minor_heap_shape ()
   =
   spot_minor_two_object_layout ();
   spot_minor_guards_complete ();
   spot_minor_infix_wf ();
   spot_minor_no_scan_invariant ();
-  spot_minor_fields_no_infix_targets ();
   GenInv.minor_heap_shape_intro spot_minor2

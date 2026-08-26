@@ -101,6 +101,9 @@ let spot_minor_scenario_pre
   U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size /\
   CG.classify_major_field minor major
     (SpecHeap.read_word major (spot_c_to_a_slot c)) == Some (CG.MinorV Layout.a_minor) /\
+  // in this scenario `c`'s field holds `a_minor` itself, not an interior pointer
+  ~(is_infix_in_minor minor
+      (to_minor_offset (SpecHeap.read_word major (spot_c_to_a_slot c)))) /\
   Seq.mem Layout.a_minor (minor_objects minor) /\
   Seq.mem Layout.b_minor (minor_objects minor) /\
   minor_wosize minor Layout.a_minor > 0 /\
@@ -224,7 +227,10 @@ let spot_c_field_rewritten_to_a_prime
   spot_a_reachable_root minor major fp c farr;
   Postconditions.major_minor_field_rewritten
     minor major fp (spot_roots c) (spot_slots c) 1 c Layout.a_minor
-    Layout.c_to_a_field_index
+    Layout.c_to_a_field_index;
+  // the stored word is `a_minor` itself, so the raw and resolved targets agree
+  resolve_minor_non_infix minor
+    (to_minor_offset (SpecHeap.read_word major (spot_c_to_a_slot c)))
 
 let spot_b_not_promoted_from_forwarding_zero
   (minor: minor_state) (major: heap) (fp: U64.t) (c: obj_addr)

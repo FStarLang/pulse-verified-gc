@@ -294,3 +294,112 @@ val header_eq_preserves_wosize_no_scan
     (requires read_word g1 (hd_address src) == read_word g2 (hd_address src))
     (ensures wosize_of_object src g1 == wosize_of_object src g2 /\
              is_no_scan src g1 == is_no_scan src g2)
+
+/// ---------------------------------------------------------------------------
+/// Resolution of forwarding images
+/// ---------------------------------------------------------------------------
+
+/// The forwarding map is keyed by the address *as stored*, so an interior
+/// nursery pointer has its own entry, distinct from its enclosing closure's.
+/// This lemma is the bridge that makes that entry usable: whatever the source
+/// address is, its image resolves --- in the post-collection major heap --- to
+/// the image of the source's *resolution* in the nursery.
+///
+/// For a non-interior source both sides are the plain image.  For an interior
+/// source the image is an interior major pointer whose copied infix header
+/// still encodes the offset back to the promoted closure
+/// (`GC.Gen.CheneyPreservation.Forwarding.fwd_infix_targets_wf`), and
+/// `update_major_pointers` cannot disturb that header because an infix header
+/// word is congruent to 1 mod 8 and so never looks like a minor pointer.
+///
+/// Stated over `cheney_collect_spec`'s final heap, this is exactly what turns a
+/// rewritten interior field into the combined-graph edge
+/// `MinorV (resolve_minor minor x)`.
+val fwd_image_resolves
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (x: U64.t)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      (cheney_promote minor major fp roots).fwd_map x <> 0UL)
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      let updated = (cheney_collect_spec minor major fp roots).mc_major in
+      let rv = resolve_minor minor x in
+      Seq.mem rv (minor_objects minor) /\
+      is_minor_addr rv /\
+      minor_wosize minor rv > 0 /\
+      prom.fwd_map rv <> 0UL /\
+      is_val_addr (prom.fwd_map rv) /\
+      Seq.mem ((prom.fwd_map rv) <: obj_addr) (objects zero_addr prom.major_final) /\
+      is_infix (prom.fwd_map rv) prom.major_final = false /\
+      is_val_addr (prom.fwd_map x) /\
+      HeapGraph.is_pointer_field (prom.fwd_map x) /\
+      (let t : obj_addr = prom.fwd_map x in
+       resolve_object t prom.major_final == prom.fwd_map rv /\
+       resolve_object t updated == prom.fwd_map rv)))
+
+/// ---------------------------------------------------------------------------
+/// Interior nursery targets are forwarded
+/// ---------------------------------------------------------------------------
+
+/// Generalisation of `field_zero_target_in_roots` to an arbitrary field index:
+/// the write barrier records *every* field of a scannable non-blue major object
+/// that holds a nursery pointer, and the recorded target is the word as stored,
+/// interior or not.
+val major_field_target_in_roots
+  (major: heap) (roots slots: seq U64.t) (n: nat) (src: obj_addr) (j: nat)
+  : Lemma
+    (requires
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Seq.mem src (objects zero_addr major) /\
+      is_blue src major = false /\
+      is_no_scan src major = false /\
+      j < U64.v (wosize_of_object src major) /\
+      U64.v src + j * 8 + 8 <= heap_size /\
+      (U64.v src + j * 8) % 8 == 0 /\
+      is_minor_pointer (to_minor_offset
+        (read_word major (U64.uint_to_t (U64.v src + j * 8)))))
+    (ensures
+      Seq.mem (to_minor_offset (read_word major (U64.uint_to_t (U64.v src + j * 8))))
+        roots)
+
+/// An interior nursery pointer stored in a *nursery* field has its own entry in
+/// the forwarding map.  This is `fwd_covers_infix_fields`, which the scan loop
+/// establishes for every queued object.
+val minor_field_infix_target_forwarded
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (src: U64.t) (j: nat)
+  : Lemma
+    (requires
+      CheneyBFS.cheney_no_oom minor major fp roots /\
+      Seq.mem src (minor_objects minor) /\
+      (cheney_promote minor major fp roots).fwd_map src <> 0UL /\
+      j < minor_wosize minor src /\
+      is_infix_in_minor minor (to_minor_offset (minor_read_field minor src j)))
+    (ensures
+      (cheney_promote minor major fp roots).fwd_map
+        (to_minor_offset (minor_read_field minor src j)) <> 0UL)
+
+/// The same for an interior nursery pointer stored in a *major* field: the
+/// remembered set files it as a Cheney root, and `fwd_covers_infix_roots`
+/// forwards every interior root.
+val major_field_infix_target_forwarded
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots slots: seq U64.t) (n: nat)
+  (src: obj_addr) (j: nat)
+  : Lemma
+    (requires
+      CheneyBFS.cheney_no_oom minor major fp roots /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Seq.mem src (objects zero_addr major) /\
+      is_blue src major = false /\
+      is_no_scan src major = false /\
+      j < U64.v (wosize_of_object src major) /\
+      U64.v src + j * 8 + 8 <= heap_size /\
+      (U64.v src + j * 8) % 8 == 0 /\
+      is_infix_in_minor minor (to_minor_offset
+        (read_word major (U64.uint_to_t (U64.v src + j * 8)))))
+    (ensures
+      (cheney_promote minor major fp roots).fwd_map
+        (to_minor_offset (read_word major (U64.uint_to_t (U64.v src + j * 8)))) <> 0UL)

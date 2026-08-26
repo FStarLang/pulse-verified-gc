@@ -394,9 +394,15 @@ let fwd_infix_targets_wf (minor: minor_state) (fwd: forwarding_map) (g: heap) : 
     U64.v (fwd x) < heap_size /\
     U64.v (fwd x) % U64.v mword == 0 /\
     (let t : obj_addr = fwd x in
+     is_infix t g /\
      Seq.mem (resolve_object t g) (objects zero_addr g) /\
      is_blue (resolve_object t g) g = false /\
-     infix_addr_wf g (objects zero_addr g) t)
+     infix_addr_wf g (objects zero_addr g) t /\
+     // Resolution in the major heap agrees with resolution in the nursery:
+     // the promoted interior pointer names the promoted closure.  This is what
+     // makes a rewritten interior field reflect the combined-graph edge
+     // `MinorV (resolve_minor minor x)`.
+     resolve_object t g == fwd (infix_parent minor x))
 
 val cheney_promote_fwd_noninfix_targets_valid
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)

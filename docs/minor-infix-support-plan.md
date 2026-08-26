@@ -355,7 +355,42 @@ Closing the gap needs, in order:
 4. `normal_classified_root_image_in_rewrite_roots` weakened to the resolved
    form, and its consumers in `GC.Gen.MinorCollectForwarding` adapted.
 
-### Phase E — delete the restrictions
+### Phase E — delete the restrictions  ✅ **done**
+
+*Implemented.*  Both predicates are gone from `GC.Gen.HeapInvariant` (`.fsti` and
+`.fst`), together with their intro/elim lemmas, their `minor_reset_*`
+preservation lemmas, and their conjuncts in `minor_heap_shape_intro/_elim` and
+`collection_heap_shape_intro/_elim`.
+
+The uniform bridge that made every interior branch collapse to the old
+non-interior shape is `GC.Gen.MinorCollectForwarding.Helpers.fwd_image_resolves`:
+for any forwarded source `x`,
+
+```
+resolve_object (fwd x) (cheney_collect_spec …).mc_major == fwd (resolve_minor minor x)
+```
+
+so a field holding an interior nursery pointer is rewritten to an interior
+pointer of the promoted copy, whose *resolution* is the image of the resolved
+target.  The combined-graph edge is therefore unchanged, which is why the
+`_edge_forwarded` theorems in `.Edges` kept their statements verbatim while the
+`_field_forwarded` ones had to be restated over the raw stored word `ov`.
+
+The remaining consumers were repaired module by module: `.NonPointerFields`
+(`fwd_source_resolves_in_minor_objects`), `.Reflection`, `.Edges` and
+`GC.Gen.MinorCollectForwarding` itself.  The two "unforwarded target is not
+interior" helpers (`Reflection.minor_field_target_non_infix`,
+`MinorCollectForwarding.major_field_target_non_infix`) are now proved by
+contradiction against `minor_field_infix_target_forwarded` /
+`major_field_infix_target_forwarded` rather than against a heap-shape clause.
+
+`spot/GC.SPOT.ThreeObjects` keeps its crisp `read_word … == fwd a_minor`
+conclusion because `spot_minor_scenario_pre` was strengthened with the
+scenario-specific fact that `c`'s field holds `a_minor` itself; that is a
+property of the concrete scenario, not a restriction on the collector.
+
+The original plan for this phase follows.
+
 
 Remove `minor_fields_no_infix_targets` and
 `major_minor_fields_no_infix_targets` from `GC.Gen.HeapInvariant` (definitions,

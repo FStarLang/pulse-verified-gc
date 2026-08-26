@@ -229,8 +229,11 @@ val combined_major_minor_field_forwarded
     (ensures (
       let prom = cheney_promote minor major fp roots in
       let res = cheney_collect_spec minor major fp roots in
+      let ov = to_minor_offset (read_word major (U64.uint_to_t (U64.v src + i * 8))) in
       prom.fwd_map dst <> 0UL /\
-      read_word res.mc_major (U64.uint_to_t (U64.v src + i * 8)) == prom.fwd_map dst))
+      prom.fwd_map ov <> 0UL /\
+      resolve_minor minor ov == dst /\
+      read_word res.mc_major (U64.uint_to_t (U64.v src + i * 8)) == prom.fwd_map ov))
 
 /// Side condition for the normal-object edge-forwarding theorem.  Minor-source
 /// cases require the source image to be a normal promoted object; minor-target
