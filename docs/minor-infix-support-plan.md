@@ -415,13 +415,36 @@ The guard is nevertheless never taken, and the argument is short: `delta` is the
 interior object's offset inside its enclosing closure, so `minor_infix_wf` bounds
 it by `minor_wosize parent * 8`; the promoted copy occupies
 `[fwd parent, fwd parent + minor_wosize parent * 8)` in a `well_formed_heap`
-major heap, so `is_fields_within_limit` puts that whole span below `heap_size`.
-Making it a proof means strengthening `promote_new_addr_bound`
-(`GC.Gen.Impl.Cheney.fst:104`), which today concludes only
-`U64.v res.new_addr < heap_size` from `alloc_spec_obj_valid`, to carry the body
-bound as well -- the route is `alloc_spec_obj_in_objects_part1` plus the target
-heap's well-formedness.  The `else` branches in the implementation then become
-`assert (pure False)`, leaving the generated C unchanged.
+major heap, so part 1 of well-formedness puts that whole span below `heap_size`.
+
+**The promotion arm of this is done.**  `GC.Gen.AllocProps.
+alloc_spec_obj_body_within_heap` derives the body bound from
+`alloc_spec_obj_in_objects_part1` and `alloc_spec_preserves_wfh_part1`;
+`GC.Gen.Impl.Cheney.promote_new_addr_body_bound` packages it for
+`promote_object`; and the guard-failure arm that follows a successful promotion
+is now `assert (pure False)`.  The extracted C is unchanged -- the runtime test
+is still emitted, its else arm is merely known to be dead.
+
+**The already-forwarded arm remains.**  There the entry `fwd parent` comes from
+an earlier forwarding step rather than a fresh allocation, so the bound has to
+be carried rather than re-derived.  The recipe:
+
+* add `fwd_has_room minor cs` -- `forall x. Seq.mem x (minor_objects minor) /\
+  cs.cs_fwd x <> 0UL ==> U64.v (cs.cs_fwd x) + minor_wosize minor x * 8 <=
+  heap_size` -- as a conjunct of `GC.Gen.Cheney.SimOne.cheney_bfs_inv`, in the
+  same shape as `fwd_infix_closed`;
+* establishing it at a promotion step needs `alloc_spec_obj_body_within_heap`,
+  whose three hypotheses (`well_formed_heap_part1 cs.cs_major`, `fl_valid`,
+  `fl_chain_terminates`) are *not* currently part of `cheney_bfs_inv`.  Folding
+  them in is the natural move and costs less than it looks: every implementation
+  function that touches the state already carries all three in both its
+  precondition *and* its postcondition (see `forward_if_minor_infix`), so the
+  impl side needs nothing new.  The work is re-establishing them at the
+  spec-level steps, where `GC.Gen.CheneyPreservation.Forwarding` already has the
+  allocator preservation lemmas in hand.
+
+Only once both arms are closed does the third conjunct of `addr_covered` hold
+unconditionally, which is what steps 2 and 3 above build on.
 
 ### Phase F — audit
 
