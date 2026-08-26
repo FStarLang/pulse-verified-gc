@@ -67,6 +67,16 @@ let gen_gc_major_precondition_elim minor major fp roots st cap
     GMP.darken_precondition_after_minor minor major fp roots cap;
     MBP.darken_establishes_precondition result.mc_major st result.mc_roots result.mc_fp cap;
     MBP.darken_roots_match_stack result.mc_major st result.mc_roots result.mc_fp cap;
+    GMP.post_minor_roots_valid_for_darkening minor major fp roots;
+    (let prepared = gen_gc_prepared_state minor major fp roots st cap in
+     introduce forall (r: U64.t). Seq.mem r result.mc_roots ==>
+       is_val_addr r /\ U64.v r >= U64.v zero_addr + U64.v mword /\
+       Seq.mem (r <: obj_addr) (snd prepared)
+     with introduce _ ==> _
+     with (Seq.mem_index r result.mc_roots;
+           eliminate exists (i: nat{i < Seq.length result.mc_roots}).
+             Seq.index result.mc_roots i == r
+           with ()));
     GC.Gen.CheneyPreservation.cheney_collect_preserves_wfh_from_shape minor major fp roots;
     MBP.darken_preserves_create_graph result.mc_major st result.mc_roots result.mc_fp cap
 #pop-options
@@ -1205,7 +1215,10 @@ fn gen_gc (gh: gen_heap_t)
       ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st);
     assert (pure (MajorGC.gc_precondition_with_roots
       prepared_major prepared_st prepared_st fp_val (stack_capacity st)));
-    assert (pure (roots_match_stack rs_mid prepared_st));
+    assert (pure (roots_match_stack
+      (CheneySpec.cheney_collect_spec
+         ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major
+      rs_mid prepared_st));
     // Phase 2: Major collection (mark + sweep + coalesce)
     let final_fp = MajorGC.collect_with_roots gh.major st prepared_st fp_val;
 

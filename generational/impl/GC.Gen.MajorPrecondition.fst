@@ -72,9 +72,9 @@ let empty_bounded_stack_props (g: heap)
   assert_norm (SpecMark.stack_no_dups (Seq.empty #obj_addr))
 #pop-options
 
-let empty_stack_subset (roots: seq U64.t)
+let empty_stack_subset (g: heap) (roots: seq U64.t)
   : Lemma (forall (x: obj_addr). Seq.mem x (Seq.empty #obj_addr) ==>
-             Seq.mem (x <: U64.t) roots)
+             MBP.root_named g roots x)
   =
   empty_stack_no_members ()
 
@@ -99,7 +99,10 @@ let post_minor_minor_root_valid
       let result = Cheney.cheney_collect_spec minor major fp roots in
       prom.fwd_map r <> 0UL /\
       MBP.root_valid_for_darkening result.mc_major
-        (Promote.rewrite_root r prom.fwd_map)))
+        (Promote.rewrite_root r prom.fwd_map) /\
+      SpecObj.resolve_object
+        ((Promote.rewrite_root r prom.fwd_map) <: obj_addr) result.mc_major ==
+        Promote.rewrite_root r prom.fwd_map))
   =
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
@@ -133,7 +136,11 @@ let post_minor_minor_root_valid
   PromUpdAux.update_major_pointers_preserves_objects prom.major_final prom.fwd_map;
   PromUpd.update_major_pointers_preserves_header prom.major_final prom.fwd_map t;
   SpecObj.color_of_header_eq t prom.major_final result.mc_major;
-  SpecFields.objects_addresses_gt_start zero_addr result.mc_major t
+  SpecFields.objects_addresses_gt_start zero_addr result.mc_major t;
+  // `root_valid_for_darkening` speaks about the object the root *names*.  A
+  // promoted non-infix target names itself.
+  SpecObj.resolve_object_locality (t <: obj_addr) prom.major_final result.mc_major;
+  SpecObj.resolve_non_infix (t <: obj_addr) result.mc_major
 #pop-options
 
 /// A non-minor root.  `rewrite_root` leaves it alone, so all that is needed is
@@ -150,7 +157,10 @@ let post_minor_major_root_valid
       let prom = Cheney.cheney_promote minor major fp roots in
       let result = Cheney.cheney_collect_spec minor major fp roots in
       MBP.root_valid_for_darkening result.mc_major
-        (Promote.rewrite_root r prom.fwd_map)))
+        (Promote.rewrite_root r prom.fwd_map) /\
+      SpecObj.resolve_object
+        ((Promote.rewrite_root r prom.fwd_map) <: obj_addr) result.mc_major ==
+        Promote.rewrite_root r prom.fwd_map))
   =
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
@@ -166,7 +176,12 @@ let post_minor_major_root_valid
   PromUpdAux.update_major_pointers_preserves_objects prom.major_final prom.fwd_map;
   PromUpd.update_major_pointers_preserves_header prom.major_final prom.fwd_map r;
   SpecObj.color_of_header_eq r major result.mc_major;
-  SpecFields.objects_addresses_gt_start zero_addr major r
+  SpecFields.objects_addresses_gt_start zero_addr major r;
+  // A major root is an enumerated object, and well-formedness forbids an
+  // enumerated object from carrying an infix header, so it names itself.
+  SpecFields.wf_objects_non_infix major (r <: obj_addr);
+  SpecObj.resolve_object_locality (r <: obj_addr) major result.mc_major;
+  SpecObj.resolve_non_infix (r <: obj_addr) result.mc_major
 #pop-options
 
 /// `Seq` exposes `index_mem` (mem to index) but not its converse.
@@ -186,7 +201,10 @@ let post_minor_roots_valid_for_darkening minor major fp roots
   let aux (i: nat)
     : Lemma
         (ensures i < Seq.length result.mc_roots ==>
-          MBP.root_valid_for_darkening result.mc_major (Seq.index result.mc_roots i))
+          MBP.root_valid_for_darkening result.mc_major (Seq.index result.mc_roots i) /\
+          SpecObj.resolve_object
+            ((Seq.index result.mc_roots i) <: obj_addr) result.mc_major ==
+            Seq.index result.mc_roots i)
     =
     if i < Seq.length result.mc_roots then begin
       let r = Seq.index roots i in
@@ -219,7 +237,7 @@ let darken_precondition_after_minor minor major fp roots cap
   empty_bounded_stack_props result.mc_major;
   MarkBoundedInv.bounded_mark_inv_intro result.mc_major Seq.empty cap;
   // Conjuncts 8-9 are what the empty stack buys.
-  empty_stack_subset result.mc_roots;
+  empty_stack_subset result.mc_major result.mc_roots;
   Promote.rewrite_roots_length roots (Cheney.cheney_promote minor major fp roots).fwd_map;
   // Conjunct 10.
   post_minor_roots_valid_for_darkening minor major fp roots

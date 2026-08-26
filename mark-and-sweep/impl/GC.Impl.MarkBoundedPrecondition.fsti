@@ -27,17 +27,32 @@ module MajorGC = GC.Impl
 
 open GC.Spec.Base
 
-/// A root is usable by the darkening pass when it is a genuine, non-blue object
-/// address of `g`.  This is the `U64.t`-valued analogue of `SpecMark.root_props`.
+/// A root is usable by the darkening pass when it *names* a genuine, non-blue
+/// object of `g`.  This is the `U64.t`-valued analogue of `SpecMark.root_props`.
+///
+/// "Names" rather than "is": the root is passed through
+/// `SpecObject.resolve_object`, exactly as `check_and_darken_bounded_spec`
+/// does, so an interior (infix) pointer is a legitimate root and denotes the
+/// closure it points into.  `resolve_object` is the identity on ordinary
+/// pointers, so for those this is unchanged.
 let root_valid_for_darkening (g: heap) (r: U64.t) : prop =
   is_val_addr r /\
   U64.v r >= U64.v zero_addr + U64.v mword /\
-  Seq.mem (r <: obj_addr) (SpecFields.objects zero_addr g) /\
-  ~(SpecObject.is_blue (r <: obj_addr) g)
+  Seq.mem (SpecObject.resolve_object (r <: obj_addr) g)
+          (SpecFields.objects zero_addr g) /\
+  ~(SpecObject.is_blue (SpecObject.resolve_object (r <: obj_addr) g) g)
 
 val root_valid_for_darkening_points_to_object (g: heap) (r: U64.t)
   : Lemma (requires SpecFields.well_formed_heap g /\ root_valid_for_darkening g r)
           (ensures MB.root_points_to_object g r)
+
+/// The objects `roots` names in `g`: every root, resolved through any interior
+/// (infix) pointer it may be.  A darkened stack holds exactly these, which is
+/// weaker than "every stack entry is a root value" -- an interior root pushes
+/// the closure it points into, and that closure is not itself a root value.
+let root_named (g: heap) (roots: Seq.seq U64.t) (x: obj_addr) : prop =
+  exists (q: obj_addr).
+    Seq.mem (q <: U64.t) roots /\ SpecObject.resolve_object q g == x
 
 /// The obligations a caller must meet on the heap and stack *before* root
 /// darkening.  Every conjunct talks about `g`, `st` and `roots` only; nothing
@@ -52,7 +67,7 @@ let darken_precondition
   SpecMark.no_pointer_to_blue g /\
   SpecFields.no_scan_invariant g /\
   SpecMark.gray_objects_on_stack g st /\
-  (forall (x: obj_addr). Seq.mem x st ==> Seq.mem (x <: U64.t) roots) /\
+  (forall (x: obj_addr). Seq.mem x st ==> root_named g roots x) /\
   Seq.length st + Seq.length roots <= cap /\
   (forall (i: nat). i < Seq.length roots ==>
      root_valid_for_darkening g (Seq.index roots i))
@@ -66,8 +81,9 @@ val darken_roots_match_stack
       (ensures
         (let st' = snd (MB.darken_roots_bounded_spec g st roots cap) in
          (forall (r: U64.t). Seq.mem r roots ==> is_val_addr r) /\
-         (forall (r: obj_addr). Seq.mem (r <: U64.t) roots ==> Seq.mem r st') /\
-         (forall (r: obj_addr). Seq.mem r st' ==> Seq.mem (r <: U64.t) roots)))
+         (forall (r: obj_addr). Seq.mem (r <: U64.t) roots ==>
+            Seq.mem (SpecObject.resolve_object r g) st') /\
+         (forall (r: obj_addr). Seq.mem r st' ==> root_named g roots r)))
 
 /// The main result: darkening a caller-supplied root set turns
 /// `darken_precondition` into the full major-GC precondition.

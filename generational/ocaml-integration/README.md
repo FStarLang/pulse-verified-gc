@@ -135,17 +135,22 @@ satisfies the whole precondition, is collected by the real `gen_gc`, and comes
 back satisfying it again) and `spot/GC.SPOT.MinorInfix` (the nursery analogue).
 See `docs/minor-infix-support-plan.md`.
 
-Groups 11 and 12 are the exception, and deliberately so: interior pointers held
-directly in a *root* are still outside the specification.
-`MinorCollectForwarding.Helpers.roots_valid_for_minor_collection` places every
-nursery root in `minor_objects`, and
-`GC.Impl.MarkBoundedPrecondition.root_valid_for_darkening` requires every major
-root to be an enumerated object.  Both collectors nonetheless handle such a root
-today --- `GC.Gen.Impl.Cheney`'s root loop dispatches to
-`forward_if_minor_infix` on `Infix_tag`, and
-`GC.Impl.MarkBounded.check_and_darken_bounded_spec` applies `resolve_object`
-before darkening --- which is what these two groups demonstrate.  Lifting the
-specification to match is Phase H of `docs/minor-infix-support-plan.md`.
+Groups 11 and 12 concern interior pointers held directly in a *root*, which the
+specification covers on the major-heap side only.
+`GC.Impl.MarkBoundedPrecondition.root_valid_for_darkening` now asks a root to
+*name* a non-blue object --- `SpecObject.resolve_object`, the identity on
+ordinary pointers --- so the mark-and-sweep collector is specified for interior
+roots, and `GC.Gen.Impl.roots_match_stack` correspondingly says the mark stack
+holds the roots' *resolutions*.
+
+`MinorCollectForwarding.Helpers.roots_valid_for_minor_collection` still places
+every nursery root in `minor_objects`, so an interior root pointing into the
+nursery remains outside the specification.  The collector handles it today ---
+`GC.Gen.Impl.Cheney`'s root loop dispatches to `forward_if_minor_infix` on
+`Infix_tag` --- which is what these two groups demonstrate.  Lifting the nursery
+side to match is Phase H.2 of `docs/minor-infix-support-plan.md`, where the
+remaining obligation (an `infix_addr_wf` bound on interior roots, carried
+through promotion) is written out.
 
 **The test is sensitive.** Rebuilding the runtime with the pre-fix
 `check_and_darken_bounded` — the version that darkened the raw field value

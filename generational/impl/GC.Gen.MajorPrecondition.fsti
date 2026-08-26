@@ -64,7 +64,10 @@ val post_minor_roots_valid_for_darkening
     (ensures (
       let result = Cheney.cheney_collect_spec minor major fp roots in
       forall (i: nat). i < Seq.length result.mc_roots ==>
-        MBP.root_valid_for_darkening result.mc_major (Seq.index result.mc_roots i)))
+        MBP.root_valid_for_darkening result.mc_major (Seq.index result.mc_roots i) /\
+        SpecObj.resolve_object
+          ((Seq.index result.mc_roots i) <: obj_addr) result.mc_major ==
+          Seq.index result.mc_roots i))
 
 /// The main result: the major collector can be entered after a minor collection
 /// on the strength of pre-minor facts alone.

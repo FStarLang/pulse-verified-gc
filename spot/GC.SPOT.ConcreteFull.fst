@@ -43,14 +43,13 @@ module CheneyPres = GC.Gen.CheneyPreservation
 let roots_match_u64_mem_in_stack
   (roots: seq U64.t) (st: seq obj_addr) (r: U64.t)
   : Lemma
-      (requires GenImpl.roots_match_stack roots st /\ Seq.mem r roots)
+      (requires
+        (forall (x: U64.t). Seq.mem x roots ==>
+           is_val_addr x /\ U64.v x >= U64.v zero_addr + U64.v mword /\
+           Seq.mem (x <: obj_addr) st) /\
+        Seq.mem r roots)
       (ensures is_val_addr r /\ Seq.mem (r <: obj_addr) st)
-  =
-  GenImpl.roots_match_stack_root_is_val_addr roots st r;
-  GC.Spec.Base.is_val_addr_spec r;
-  let r_obj = (r <: obj_addr) in
-  assert ((r_obj <: U64.t) == r);
-  GenImpl.roots_match_stack_root_in_stack roots st r_obj
+  = ()
 
 let post_roots_mem_c
   (r: unit{ConcreteMajor.spot_major_room})
@@ -103,7 +102,6 @@ let post_roots_mem_c
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)
     roots st cap in
-  assert (GenImpl.roots_match_stack roots_out prepared_roots);
   roots_match_u64_mem_in_stack roots_out prepared_roots (c <: U64.t)
 
 let post_roots_mem_a_prime
@@ -181,7 +179,6 @@ let post_roots_mem_a_prime
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)
     roots st cap in
-  assert (GenImpl.roots_match_stack roots_out prepared_roots);
   roots_match_u64_mem_in_stack roots_out prepared_roots img
 
 let root_heap_reachable_from_major_gc_pre

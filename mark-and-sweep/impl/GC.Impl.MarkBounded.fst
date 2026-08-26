@@ -271,6 +271,8 @@ let check_and_darken_bounded_spec_preserves_is_infix
     let h = U64.sub tgt mword in
     if U64.v h + U64.v mword < heap_size then
       let target = SpecHeap.f_address h in
+      let _ = SpecHeap.f_address_spec h in
+      let _ = SpecHeap.hd_f_roundtrip h in
       if SpecObject.is_white target g then begin
         SpecObject.makeGray_eq target g;
         SpecObject.color_change_preserves_is_infix target obj g Header.Gray
@@ -297,6 +299,61 @@ let rec darken_roots_bounded_prefix_preserves_is_infix
 #pop-options
 
 #push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
+let check_and_darken_bounded_spec_preserves_resolve
+  (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t) (cap: nat)
+  (obj: obj_addr)
+  : Lemma
+      (ensures
+        SpecObject.resolve_object obj
+          (fst (check_and_darken_bounded_spec g st v cap)) ==
+        SpecObject.resolve_object obj g)
+  =
+  if U64.v v >= U64.v zero_addr + U64.v mword &&
+     U64.v v < heap_size &&
+     U64.v v % U64.v mword = 0
+  then
+    let tgt : obj_addr = SpecObject.resolve_object (v <: obj_addr) g in
+    let h = U64.sub tgt mword in
+    if U64.v h + U64.v mword < heap_size then
+      let target = SpecHeap.f_address h in
+      let _ = SpecHeap.f_address_spec h in
+      let _ = SpecHeap.hd_f_roundtrip h in
+      if SpecObject.is_white target g then begin
+        SpecObject.makeGray_eq target g;
+        SpecObject.color_change_preserves_resolve target obj g Header.Gray
+      end
+    else ()
+  else ()
+
+let rec darken_roots_bounded_prefix_preserves_resolve
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (idx: nat{idx <= Seq.length roots}) (cap: nat) (obj: obj_addr)
+  : Lemma
+      (ensures
+        SpecObject.resolve_object obj
+          (fst (darken_roots_bounded_prefix_spec g st roots idx cap)) ==
+        SpecObject.resolve_object obj g)
+      (decreases idx)
+  =
+  if idx = 0 then ()
+  else
+    let idx0 = idx - 1 in
+    darken_roots_bounded_prefix_preserves_resolve g st roots idx0 cap obj;
+    let (g0, st0) = darken_roots_bounded_prefix_spec g st roots idx0 cap in
+    check_and_darken_bounded_spec_preserves_resolve g0 st0 (Seq.index roots idx0) cap obj
+
+let darken_roots_bounded_spec_preserves_resolve
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (cap: nat) (obj: obj_addr)
+  : Lemma
+      (ensures
+        SpecObject.resolve_object obj
+          (fst (darken_roots_bounded_spec g st roots cap)) ==
+        SpecObject.resolve_object obj g)
+  = darken_roots_bounded_prefix_preserves_resolve g st roots (Seq.length roots) cap obj
+#pop-options
+
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
 let check_and_darken_bounded_spec_preserves_wosize
   (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t) (cap: nat)
   (obj: obj_addr)
@@ -314,6 +371,8 @@ let check_and_darken_bounded_spec_preserves_wosize
     let h = U64.sub tgt mword in
     if U64.v h + U64.v mword < heap_size then
       let target = SpecHeap.f_address h in
+      let _ = SpecHeap.f_address_spec h in
+      let _ = SpecHeap.hd_f_roundtrip h in
       if SpecObject.is_white target g then begin
         SpecObject.makeGray_eq target g;
         if target = obj then
@@ -369,6 +428,8 @@ let check_and_darken_bounded_spec_preserves_objects
     let h = U64.sub tgt mword in
     if U64.v h + U64.v mword < heap_size then
       let target = SpecHeap.f_address h in
+      let _ = SpecHeap.f_address_spec h in
+      let _ = SpecHeap.hd_f_roundtrip h in
       if SpecObject.is_white target g then begin
         SpecObject.makeGray_eq target g;
         SpecFields.color_change_preserves_objects g target Header.Gray
@@ -412,18 +473,15 @@ let root_points_to_object_transfer
       (requires
         root_points_to_object g0 v /\
         SpecFields.objects zero_addr g1 == SpecFields.objects zero_addr g0 /\
-        (forall (x: obj_addr). SpecObject.is_infix x g1 == SpecObject.is_infix x g0))
+        (forall (x: obj_addr). SpecObject.resolve_object x g1 == SpecObject.resolve_object x g0))
       (ensures root_points_to_object g1 v)
   =
   if U64.v v >= U64.v zero_addr + U64.v mword &&
      U64.v v < heap_size &&
      U64.v v % U64.v mword = 0
   then
-    let h = U64.sub v mword in
-    if U64.v h + U64.v mword < heap_size then
-      let target = SpecHeap.f_address h in
-      assert (Seq.mem target (SpecFields.objects zero_addr g1))
-    else ()
+    assert (Seq.mem (SpecObject.resolve_object (v <: obj_addr) g1)
+                    (SpecFields.objects zero_addr g1))
   else ()
 
 let check_and_darken_bounded_spec_preserves_read_word
@@ -435,7 +493,7 @@ let check_and_darken_bounded_spec_preserves_read_word
         (U64.v v >= U64.v zero_addr + U64.v mword /\
          U64.v v < heap_size /\
          U64.v v % U64.v mword == 0 ==>
-         U64.sub v mword <> slot))
+         U64.sub (SpecObject.resolve_object (v <: obj_addr) g) mword <> slot))
       (ensures
         SpecHeap.read_word
           (fst (check_and_darken_bounded_spec g st v cap)) slot ==
@@ -445,14 +503,12 @@ let check_and_darken_bounded_spec_preserves_read_word
      U64.v v < heap_size &&
      U64.v v % U64.v mword = 0
   then
-    let h = U64.sub v mword in
+    let tgt : obj_addr = SpecObject.resolve_object (v <: obj_addr) g in
+    let h = U64.sub tgt mword in
     if U64.v h + U64.v mword < heap_size then
       let target = SpecHeap.f_address h in
       let _ = SpecHeap.hd_f_roundtrip h in
       let _ = SpecHeap.f_address_spec h in
-      // `root_points_to_object` rules out an interior pointer, so the spec's
-      // `resolve_object` step is the identity here.
-      let _ = SpecObject.resolve_non_infix (v <: obj_addr) g in
       if SpecObject.is_white target g then begin
         SpecHeap.hd_f_roundtrip h;
         assert (SpecHeap.hd_address target == h);
@@ -473,7 +529,7 @@ let rec darken_roots_bounded_prefix_preserves_read_word
           (U64.v (Seq.index roots i) >= U64.v zero_addr + U64.v mword /\
            U64.v (Seq.index roots i) < heap_size /\
            U64.v (Seq.index roots i) % U64.v mword == 0 ==>
-           U64.sub (Seq.index roots i) mword <> slot))
+           U64.sub (SpecObject.resolve_object (Seq.index roots i <: obj_addr) g) mword <> slot))
       (ensures
         SpecHeap.read_word
           (fst (darken_roots_bounded_prefix_spec g st roots idx cap)) slot ==
@@ -488,8 +544,8 @@ let rec darken_roots_bounded_prefix_preserves_read_word
     let (g0, st0) = darken_roots_bounded_prefix_spec g st roots idx0 cap in
     darken_roots_bounded_prefix_preserves_objects g st roots idx0 cap;
     FStar.Classical.forall_intro (fun (x: obj_addr) ->
-      darken_roots_bounded_prefix_preserves_is_infix g st roots idx0 cap x
-      <: Lemma (SpecObject.is_infix x g0 == SpecObject.is_infix x g));
+      darken_roots_bounded_prefix_preserves_resolve g st roots idx0 cap x
+      <: Lemma (SpecObject.resolve_object x g0 == SpecObject.resolve_object x g));
     root_points_to_object_transfer g g0 root;
     check_and_darken_bounded_spec_preserves_read_word g0 st0 root cap slot
 
@@ -503,7 +559,7 @@ let darken_roots_bounded_spec_preserves_read_word
           (U64.v (Seq.index roots i) >= U64.v zero_addr + U64.v mword /\
            U64.v (Seq.index roots i) < heap_size /\
            U64.v (Seq.index roots i) % U64.v mword == 0 ==>
-           U64.sub (Seq.index roots i) mword <> slot))
+           U64.sub (SpecObject.resolve_object (Seq.index roots i <: obj_addr) g) mword <> slot))
       (ensures
         SpecHeap.read_word
           (fst (darken_roots_bounded_spec g st roots cap)) slot ==
@@ -523,12 +579,12 @@ let check_and_darken_bounded_spec_preserves_wf
      U64.v v < heap_size &&
      U64.v v % U64.v mword = 0
   then
-    let _ = SpecHeap.f_address_spec (U64.sub (v <: obj_addr) mword) in
-    let _ = SpecObject.resolve_non_infix (v <: obj_addr) g in
     let tgt : obj_addr = SpecObject.resolve_object (v <: obj_addr) g in
     let h = U64.sub tgt mword in
     if U64.v h + U64.v mword < heap_size then
       let target = SpecHeap.f_address h in
+      let _ = SpecHeap.f_address_spec h in
+      let _ = SpecHeap.hd_f_roundtrip h in
       if SpecObject.is_white target g then begin
         assert (Seq.mem target (SpecFields.objects zero_addr g));
         SpecObject.makeGray_eq target g;
@@ -559,8 +615,8 @@ let rec darken_roots_bounded_prefix_preserves_wf
     let root = Seq.index roots idx0 in
     assert (root_points_to_object g root);
     FStar.Classical.forall_intro (fun (x: obj_addr) ->
-      darken_roots_bounded_prefix_preserves_is_infix g st roots idx0 cap x
-      <: Lemma (SpecObject.is_infix x g0 == SpecObject.is_infix x g));
+      darken_roots_bounded_prefix_preserves_resolve g st roots idx0 cap x
+      <: Lemma (SpecObject.resolve_object x g0 == SpecObject.resolve_object x g));
     root_points_to_object_transfer g g0 root;
     check_and_darken_bounded_spec_preserves_wf g0 st0 root cap
   end
@@ -580,6 +636,8 @@ let check_and_darken_bounded_spec_preserves_density
     let h = U64.sub tgt mword in
     if U64.v h + U64.v mword < heap_size then
       let target = SpecHeap.f_address h in
+      let _ = SpecHeap.f_address_spec h in
+      let _ = SpecHeap.hd_f_roundtrip h in
       if SpecObject.is_white target g then begin
         SpecObject.makeGray_eq target g;
         SweepInv.color_change_preserves_density target g Header.Gray
@@ -602,12 +660,12 @@ let check_and_darken_bounded_spec_preserves_bsp
      U64.v v < heap_size &&
      U64.v v % U64.v mword = 0
   then
-    let _ = SpecHeap.f_address_spec (U64.sub (v <: obj_addr) mword) in
-    let _ = SpecObject.resolve_non_infix (v <: obj_addr) g in
     let tgt : obj_addr = SpecObject.resolve_object (v <: obj_addr) g in
     let h = U64.sub tgt mword in
     if U64.v h + U64.v mword < heap_size then
       let target = SpecHeap.f_address h in
+      let _ = SpecHeap.f_address_spec h in
+      let _ = SpecHeap.hd_f_roundtrip h in
       if SpecObject.is_white target g then begin
         let g' = SpecObject.set_object_color target g Header.Gray in
         assert (Seq.mem target (SpecFields.objects zero_addr g));
@@ -681,8 +739,8 @@ let rec darken_roots_bounded_prefix_preserves_bounded_mark_inv
     let root = Seq.index roots idx0 in
     assert (root_points_to_object g root);
     FStar.Classical.forall_intro (fun (x: obj_addr) ->
-      darken_roots_bounded_prefix_preserves_is_infix g st roots idx0 cap x
-      <: Lemma (SpecObject.is_infix x g0 == SpecObject.is_infix x g));
+      darken_roots_bounded_prefix_preserves_resolve g st roots idx0 cap x
+      <: Lemma (SpecObject.resolve_object x g0 == SpecObject.resolve_object x g));
     root_points_to_object_transfer g g0 root;
     check_and_darken_bounded_spec_preserves_bounded_mark_inv g0 st0 root cap
   end
@@ -720,6 +778,8 @@ let check_and_darken_bounded_spec_preserves_no_black
     let h = U64.sub tgt mword in
     if U64.v h + U64.v mword < heap_size then
       let target = SpecHeap.f_address h in
+      let _ = SpecHeap.f_address_spec h in
+      let _ = SpecHeap.hd_f_roundtrip h in
       if SpecObject.is_white target g then begin
         let g' = SpecObject.set_object_color target g Header.Gray in
         SpecObject.makeGray_eq target g;
@@ -797,12 +857,12 @@ let check_and_darken_bounded_spec_preserves_no_pointer_to_blue
      U64.v v < heap_size &&
      U64.v v % U64.v mword = 0
   then
-    let _ = SpecHeap.f_address_spec (U64.sub (v <: obj_addr) mword) in
-    let _ = SpecObject.resolve_non_infix (v <: obj_addr) g in
     let tgt : obj_addr = SpecObject.resolve_object (v <: obj_addr) g in
     let h = U64.sub tgt mword in
     if U64.v h + U64.v mword < heap_size then
       let target = SpecHeap.f_address h in
+      let _ = SpecHeap.f_address_spec h in
+      let _ = SpecHeap.hd_f_roundtrip h in
       if SpecObject.is_white target g then begin
         let g' = SpecObject.set_object_color target g Header.Gray in
         assert (Seq.mem target (SpecFields.objects zero_addr g));
@@ -869,8 +929,8 @@ let rec darken_roots_bounded_prefix_preserves_no_pointer_to_blue
     let root = Seq.index roots idx0 in
     assert (root_points_to_object g root);
     FStar.Classical.forall_intro (fun (x: obj_addr) ->
-      darken_roots_bounded_prefix_preserves_is_infix g st roots idx0 cap x
-      <: Lemma (SpecObject.is_infix x g0 == SpecObject.is_infix x g));
+      darken_roots_bounded_prefix_preserves_resolve g st roots idx0 cap x
+      <: Lemma (SpecObject.resolve_object x g0 == SpecObject.resolve_object x g));
     root_points_to_object_transfer g g0 root;
     check_and_darken_bounded_spec_preserves_no_pointer_to_blue g0 st0 root cap
   end
@@ -906,12 +966,12 @@ let check_and_darken_bounded_spec_preserves_no_scan_invariant
      U64.v v < heap_size &&
      U64.v v % U64.v mword = 0
   then
-    let _ = SpecHeap.f_address_spec (U64.sub (v <: obj_addr) mword) in
-    let _ = SpecObject.resolve_non_infix (v <: obj_addr) g in
     let tgt : obj_addr = SpecObject.resolve_object (v <: obj_addr) g in
     let h = U64.sub tgt mword in
     if U64.v h + U64.v mword < heap_size then
       let target = SpecHeap.f_address h in
+      let _ = SpecHeap.f_address_spec h in
+      let _ = SpecHeap.hd_f_roundtrip h in
       if SpecObject.is_white target g then begin
         let g' = SpecObject.set_object_color target g Header.Gray in
         assert (Seq.mem target (SpecFields.objects zero_addr g));
@@ -1016,8 +1076,8 @@ let rec darken_roots_bounded_prefix_preserves_no_scan_invariant
     let root = Seq.index roots idx0 in
     assert (root_points_to_object g root);
     FStar.Classical.forall_intro (fun (x: obj_addr) ->
-      darken_roots_bounded_prefix_preserves_is_infix g st roots idx0 cap x
-      <: Lemma (SpecObject.is_infix x g0 == SpecObject.is_infix x g));
+      darken_roots_bounded_prefix_preserves_resolve g st roots idx0 cap x
+      <: Lemma (SpecObject.resolve_object x g0 == SpecObject.resolve_object x g));
     root_points_to_object_transfer g g0 root;
     check_and_darken_bounded_spec_preserves_no_scan_invariant g0 st0 root cap
   end
