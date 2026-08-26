@@ -395,6 +395,7 @@ let fwd_infix_targets_wf (minor: minor_state) (fwd: forwarding_map) (g: heap) : 
     U64.v (fwd x) % U64.v mword == 0 /\
     (let t : obj_addr = fwd x in
      Seq.mem (resolve_object t g) (objects zero_addr g) /\
+     is_blue (resolve_object t g) g = false /\
      infix_addr_wf g (objects zero_addr g) t)
 
 val cheney_promote_fwd_noninfix_targets_valid

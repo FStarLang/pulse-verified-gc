@@ -1741,6 +1741,7 @@ let cheney_promote_fwd_infix_targets_wf
               U64.v (cs2.cs_fwd x) % U64.v mword == 0 /\
               (let t : obj_addr = cs2.cs_fwd x in
                Seq.mem (resolve_object t g) (objects zero_addr g) /\
+               is_blue (resolve_object t g) g = false /\
                infix_addr_wf g (objects zero_addr g) t))
     =
     let parent = infix_parent minor x in
