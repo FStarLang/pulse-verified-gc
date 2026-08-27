@@ -51,7 +51,9 @@ let field_pointer_no_blue_from_no_pointer_to_blue
 let field_pointer_target_in_objects_nat
   (g: heap) (src dst: obj_addr) (j: nat)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   field_pointer_points_to_nat g src dst j;
-  points_to_target_in_objects g src dst
+  points_to_target_in_objects g src dst;
+  points_to_target_infix_wf g src dst
 #pop-options
+

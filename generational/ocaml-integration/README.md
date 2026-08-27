@@ -70,3 +70,59 @@ Set `MIN_EXPANSION_WORDSIZE` environment variable to control major heap size
 Minor heap size is set at runtime with `MINOR_HEAP_WORDS`.  The default is
 256K words (2MB), matching OCaml's default, with a floor large enough for
 `Max_young_wosize`.
+
+## Tests
+
+`make test` runs two groups, in this order:
+
+1. **Correctness tests** (`make -C tests correctness`) — assertion-driven
+   programs that check specific properties of the collector and exit non-zero
+   on failure.
+2. **Smoke tests** — the eight Computer Language Benchmarks Game programs, run
+   once each to confirm the collector survives realistic workloads.
+
+### `tests/infix_closures.ml` — interior (infix) pointers
+
+Mutually recursive OCaml functions compile to a *single* heap block. The first
+function is that block (`Closure_tag = 247`); every later one is addressed by a
+pointer into the **middle** of the block, just past an extra header tagged
+`Infix_tag = 249` whose size field records the distance in words back to the
+start. So an ordinary OCaml program stores, in an ordinary heap field, a
+pointer that is not the address of any allocated block. The collector has to
+recognise it and mark the *enclosing* block.
+
+The test makes 678 assertions in seven groups:
+
+| # | What it checks |
+|---|---|
+| 1 | Three mutually recursive functions really do share one block, with `Infix_tag` on the 2nd and 3rd |
+| 2 | Every clause of `GC.Spec.Object.infix_addr_conds` holds numerically on the live heap: `wosize >= 2`, `parent == h - wosize*8`, both addresses word-aligned, parent is `Closure_tag`, and the infix header lies strictly inside the parent's body |
+| 3 | A heap field genuinely stores an interior pointer |
+| 4 | The interior pointer survives promotion into the major heap; the parent offset is invariant across the move |
+| 5 | A block reachable from the roots **only** through an interior pointer survives mark & sweep, along with the array captured in its environment |
+| 6 | 400 groups, half dropped, all survivors held only by interior pointers — real sweep pressure |
+| 7 | The post-collection heap has the same shape: identical tags, sizes, addresses, `Obj.reachable_words` counts and physical identities |
+
+Collections are forced the way a real program forces them, by allocating;
+`Gc.quick_stat` confirms they happened. (`Gc.full_major` is *not* wired to the
+verified collector and will crash — the verified collector runs from the
+allocation path.) `MIN_EXPANSION_WORDSIZE` is set small so that major
+collections occur quickly.
+
+The same binary is also run under stock OCaml as a differential check; both
+runtimes must reach the same verdict. Compaction is disabled at startup
+(`max_overhead = 1000000`) so that the address-stability assertions are
+meaningful under stock OCaml too — the verified major collector is non-moving.
+
+**Scope.** The heaps this test builds hold interior pointers in major fields, so
+they violate `no_infix_field_targets` and fall outside the *generational*
+collector's `major_heap_shape` invariant. The marking and sweeping it stresses is
+covered by the mark-and-sweep proofs, which do handle interior pointers; the
+generational reachability argument is not. The test shows the extracted C is
+correct on such heaps, and marks exactly the case the generational proof owes.
+
+**The test is sensitive.** Rebuilding the runtime with the pre-fix
+`check_and_darken_bounded` — the version that darkened the raw field value
+instead of resolving `infix_tag` targets to `v - wosize*8` — makes group 5 fail
+immediately (the infix header is overwritten with a colour, `Obj.tag` reads 0
+instead of 249) and then segfaults.

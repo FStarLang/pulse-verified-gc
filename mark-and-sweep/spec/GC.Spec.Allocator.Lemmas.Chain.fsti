@@ -126,6 +126,12 @@ val chain_avoids (g: heap) (fp excl: U64.t) (steps: nat) : Tot bool
 val chain_avoids_null (g: heap) (excl: U64.t) (steps: nat)
   : Lemma (ensures chain_avoids g 0UL excl steps = true)
 
+/// With no steps left there is nothing to visit, so the walk trivially avoids
+/// `excl`.  Needed as the base case of any induction whose measure is something
+/// other than `steps`.
+val chain_avoids_zero (g: heap) (fp excl: U64.t)
+  : Lemma (ensures chain_avoids g fp excl 0 = true)
+
 val chain_avoids_unfold_step (g: heap) (fp excl: U64.t) (steps: nat)
   : Lemma (requires U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
                     U64.v fp % U64.v mword = 0 /\

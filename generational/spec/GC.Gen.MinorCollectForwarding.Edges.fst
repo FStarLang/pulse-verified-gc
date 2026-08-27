@@ -27,6 +27,7 @@ module Cheney = GC.Gen.Cheney
 module CheneyBFS = GC.Gen.CheneyBFS
 module CheneyCorr = GC.Gen.CheneyCorrectness
 module CheneyPres = GC.Gen.CheneyPreservation
+module Frame = GC.Gen.CheneyPreservation.Frame
 module CheneyFields = GC.Gen.CheneyPreservation.Fields
 module CheneyInj = GC.Gen.CheneyPreservation.Injectivity
 module Forwarding = GC.Gen.CheneyPreservation.Forwarding
@@ -46,6 +47,15 @@ open GC.Gen.MinorCollectForwarding.Helpers
 /// here and brought into scope by an explicit call.
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let mword_nonzero () : Lemma (U64.v mword == 8 /\ U64.v mword <> 0) = ()
+
+private let header_eq_preserves_infix (g1 g2: heap) (obj: obj_addr)
+  : Lemma
+    (requires read_word g1 (hd_address obj) == read_word g2 (hd_address obj))
+    (ensures is_infix obj g1 == is_infix obj g2)
+  = tag_of_object_spec obj g1;
+    tag_of_object_spec obj g2;
+    is_infix_spec obj g1;
+    is_infix_spec obj g2
 #pop-options
 
 let combined_reachable_minor_has_fwd
@@ -170,6 +180,58 @@ let combined_reachable_images_valid_or_infix_from_slots
     combined_reachable_images_valid_or_infix minor major fp roots
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+/// Composite: a live major object's field target keeps its header word --- and
+/// therefore its resolution --- across a whole minor collection.
+///
+/// This is the fact that lets a `MajorV src -> MajorV dst` combined-graph edge
+/// survive into the post-collection heap graph when the field holds an interior
+/// pointer: the raw value is untouched (it is not a minor pointer), and its
+/// header is untouched, so it still resolves to `dst`.
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
+let cheney_collect_frame_target_header
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (h: obj_addr)
+  : Lemma
+    (requires well_formed_heap major /\
+              AllocLemmas.fl_valid major fp heap_words /\
+              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              chain_objects_blue major fp /\
+              minor_infix_wf minor /\
+              GC.Spec.Object.infix_addr_wf major (objects zero_addr major) h /\
+              Seq.mem (GC.Spec.Object.resolve_object h major) (objects zero_addr major) /\
+              is_blue (GC.Spec.Object.resolve_object h major) major = false)
+    (ensures (let res = cheney_collect_spec minor major fp roots in
+              read_word res.mc_major (hd_address h) == read_word major (hd_address h) /\
+              GC.Spec.Object.resolve_object h res.mc_major ==
+                GC.Spec.Object.resolve_object h major))
+  = let prom = cheney_promote minor major fp roots in
+    let res = cheney_collect_spec minor major fp roots in
+    let pf = prom.major_final in
+    Frame.cheney_promote_frame_target_header minor major fp roots h;
+    assert (read_word pf (hd_address h) == read_word major (hd_address h));
+    GC.Spec.Object.resolve_object_locality h major pf;
+    Cheney.cheney_promote_preserves_objects minor major fp roots;
+    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    // transport the infix-shape obligations from `major` to `pf`
+    if GC.Spec.Object.is_infix h major then begin
+      GC.Spec.Object.infix_addr_wf_elim major (objects zero_addr major) h;
+      GC.Spec.Object.parent_closure_addr_nat_spec h major;
+      GC.Spec.Object.resolve_infix_spec h major;
+      let w = U64.v (wosize_of_object h major) in
+      let pa : obj_addr = U64.uint_to_t (U64.v h - w * 8) in
+      assert (GC.Spec.Object.resolve_object h major == pa);
+      CheneyPres.cheney_promote_frame_old_header minor major fp roots pa;
+      color_of_header_eq pa major pf;
+      wosize_of_object_spec pa major;
+      wosize_of_object_spec pa pf
+    end
+    else
+      GC.Spec.Object.resolve_non_infix h major;
+    Frame.update_major_pointers_frame_target_header pf prom.fwd_map h;
+    assert (res.mc_major == update_major_pointers pf prom.fwd_map);
+    GC.Spec.Object.resolve_object_locality h major res.mc_major
+#pop-options
+
 let combined_reachable_major_edge_forwarded
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src dst: obj_addr)
@@ -199,11 +261,27 @@ let combined_reachable_major_edge_forwarded
     let field_addr = U64.uint_to_t (U64.v src + i * 8) in
     let old_raw = read_word major field_addr in
     CG.classify_major_field_inv_major minor major old_raw dst;
-    assert (old_raw == dst);
+    // `dst` is the *resolution* of the raw field value.  The two coincide unless
+    // the field holds an interior (infix) pointer, in which case `dst` is the
+    // enclosing closure --- which is the vertex the combined graph carries and
+    // the vertex the post-collection heap graph must carry too.
+    assert (dst == GC.Spec.Object.resolve_object old_raw major);
+    assert (is_pointer_field old_raw);
+    SpecBase.is_val_addr_spec old_raw;
     RBridge.major_edge_points_to minor major src dst i;
+    assert (points_to major src (old_raw <: obj_addr));
     assert (~(is_blue src major));
+    // `Mark.no_pointer_to_blue` concludes about the *resolved* target, so it
+    // discharges `~(is_blue dst major)` with no no-infix side condition.
     assert (~(is_blue dst major));
-    RBridge.major_object_not_minor_pointer major dst;
+    GC.Spec.Fields.points_to_target_infix_wf major src (old_raw <: obj_addr);
+    GC.Spec.Fields.points_to_target_in_objects major src (old_raw <: obj_addr);
+    // The raw value lies above the nursery, so the pointer-update pass never
+    // mistakes it for a minor pointer and leaves the field alone.
+    zero_addr_above_minor ();
+    assert (U64.v old_raw >= U64.v zero_addr + U64.v mword);
+    to_minor_offset_stable_above_minor old_raw;
+    assert (to_minor_offset old_raw == old_raw);
     Cheney.cheney_promote_preserves_objects minor major fp roots;
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
     CheneyPres.cheney_promote_frame_old_header minor major fp roots src;
@@ -221,15 +299,13 @@ let combined_reachable_major_edge_forwarded
     wosize_of_object_spec src major;
     wosize_of_object_spec src prom.major_final;
     assert (wosize_of_object src prom.major_final == wosize_of_object src major);
-    assert (read_word prom.major_final field_addr == dst);
+    assert (read_word prom.major_final field_addr == old_raw);
     assert (well_formed_heap_part1 prom.major_final);
     PromUpdate.update_major_pointers_field_effect prom.major_final prom.fwd_map src i;
     assert (updated == update_major_pointers prom.major_final prom.fwd_map);
-    let new_val = read_word updated field_addr in
-    assert (to_minor_offset (read_word prom.major_final field_addr) == dst);
     assert (~(is_minor_pointer (to_minor_offset (read_word prom.major_final field_addr)) /\
               prom.fwd_map (to_minor_offset (read_word prom.major_final field_addr)) <> 0UL));
-    assert (new_val == dst);
+    assert (read_word updated field_addr == old_raw);
     PromUpdate.update_major_pointers_preserves_header prom.major_final prom.fwd_map src;
     assert (read_word updated (hd_address src) == read_word prom.major_final (hd_address src));
     wosize_of_object_spec src updated;
@@ -244,14 +320,9 @@ let combined_reachable_major_edge_forwarded
     wf_object_bound updated src;
     HeapGraph.object_fits_from_bound src updated;
     HeapModel.objects_is_vertex_set updated;
-    assert (is_val_addr dst);
-    SpecBase.is_val_addr_spec dst;
-    assert (U64.v dst >= U64.v mword);
-    assert (U64.v dst < heap_size);
-    assert (U64.v dst % U64.v mword == 0);
-    objects_addresses_gt_start zero_addr updated dst;
-    assert (U64.v dst >= U64.v zero_addr + U64.v mword);
-    assert (HeapGraph.is_pointer_field dst);
+    assert (U64.v old_raw < heap_size);
+    assert (U64.v old_raw % U64.v mword == 0);
+    assert (HeapGraph.is_pointer_field old_raw);
     assert (i + 1 < pow2 64);
     let j = U64.uint_to_t (i + 1) in
     assert (U64.v j == i + 1);
@@ -261,8 +332,12 @@ let combined_reachable_major_edge_forwarded
     hd_address_spec src;
     assert (U64.v (hd_address src) + U64.v mword * U64.v j + U64.v mword <= heap_size);
     HeapGraph.get_field_addr_eq updated src j;
-    assert (HeapGraph.get_field updated src j == dst);
-    assert (HeapGraph.is_pointer_field (HeapGraph.get_field updated src j));
+    assert (HeapGraph.get_field updated src j == old_raw);
+    // The target's header --- and hence its resolution --- survives collection,
+    // so the post-collection graph carries the edge `src -> dst` even though the
+    // stored word is the interior pointer `old_raw`.
+    cheney_collect_frame_target_header minor major fp roots (old_raw <: obj_addr);
+    assert (GC.Spec.Object.resolve_object (old_raw <: obj_addr) updated == dst);
     HeapGraph.pointer_field_is_graph_edge updated (objects zero_addr updated) src j
 #pop-options
 
@@ -333,7 +408,24 @@ let combined_major_minor_edge_forwarded
     assert (is_no_scan src updated == is_no_scan src major);
     assert (~(is_no_scan src updated));
     assert (wosize_of_object src updated == wosize_of_object src major);
-    heap_field_points_to_graph_edge updated src (prom.fwd_map dst) i
+    heap_field_points_to_graph_edge updated src (prom.fwd_map dst) i;
+    // the forwarding image of a non-infix minor target is an ordinary major
+    // object, so the graph successor is the raw image
+    CG.classify_major_field_inv_minor minor major
+      (read_word major (U64.uint_to_t (U64.v src + i * 8))) dst;
+    assert (Seq.mem dst (minor_objects minor));
+    minor_objects_not_infix minor dst;
+    assert (~(is_infix_in_minor minor dst));
+    Forwarding.cheney_promote_fwd_noninfix_targets_valid minor major fp roots;
+    Cheney.cheney_promote_preserves_wfh_part4 minor major fp roots;
+    Cheney.cheney_promote_preserves_objects minor major fp roots;
+    let ftgt : obj_addr = prom.fwd_map dst in
+    assert (Seq.mem ftgt (objects zero_addr prom.major_final));
+    assert (~(is_infix ftgt prom.major_final));
+    PromUpdate.update_major_pointers_preserves_header
+      prom.major_final prom.fwd_map ftgt;
+    header_eq_preserves_infix prom.major_final updated ftgt;
+    resolve_non_infix ftgt updated
 #pop-options
 
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
@@ -392,8 +484,12 @@ let promoted_minor_major_edge_forwarded
     PromUpdate.update_major_pointers_preserves_objects prom.major_final prom.fwd_map;
     assert (Seq.mem (dst <: obj_addr) (objects zero_addr res.mc_major));
     objects_addresses_gt_start zero_addr res.mc_major (dst <: obj_addr);
+    SpecBase.is_val_addr_spec dst;
+    RBridge.aligned_gt_ge_plus_mword (U64.v dst) (U64.v zero_addr);
     assert (HeapGraph.is_pointer_field dst);
     heap_field_points_to_graph_edge res.mc_major fwd_src_obj dst j;
+    wf_objects_non_infix res.mc_major (dst <: obj_addr);
+    resolve_non_infix (dst <: obj_addr) res.mc_major;
     let dst_hp : hp_addr = dst in
     assert (mem_graph_edge_at (HeapModel.create_graph res.mc_major) (prom.fwd_map src) dst)
 #pop-options
@@ -448,6 +544,18 @@ let promoted_minor_minor_edge_forwarded
     assert (~(is_no_scan fwd_src_obj res.mc_major));
     assert (wosize_of_object fwd_src_obj res.mc_major == wosize_of_object fwd_src_obj prom.major_final);
     heap_field_points_to_graph_edge res.mc_major fwd_src_obj (prom.fwd_map dst) j;
+    // the forwarding image of a whole minor object is an ordinary major object
+    GenInv.minor_heap_shape_elim minor;
+    CG.classify_minor_field_inv_minor minor major (minor_read_field minor src j) dst;
+    assert (Seq.mem dst (minor_objects minor));
+    minor_objects_not_infix minor dst;
+    Forwarding.cheney_promote_fwd_noninfix_targets_valid minor major fp roots;
+    Cheney.cheney_promote_preserves_objects minor major fp roots;
+    assert (Seq.mem ((prom.fwd_map dst) <: obj_addr)
+                    (objects zero_addr prom.major_final));
+    assert (Seq.mem ((prom.fwd_map dst) <: obj_addr) (objects zero_addr res.mc_major));
+    wf_objects_non_infix res.mc_major ((prom.fwd_map dst) <: obj_addr);
+    resolve_non_infix ((prom.fwd_map dst) <: obj_addr) res.mc_major;
     let fwd_dst_hp : hp_addr = prom.fwd_map dst in
     assert (mem_graph_edge_at (HeapModel.create_graph res.mc_major)
       (prom.fwd_map src) (prom.fwd_map dst))

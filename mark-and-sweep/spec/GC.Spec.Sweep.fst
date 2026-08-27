@@ -135,6 +135,19 @@ let sweep_object_preserves_wf g obj fp =
       if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
         wosize_of_object_spec obj g;
         GC.Spec.Heap.hd_address_spec obj;
+        // Field 0 of an enumerated object is never an infix header, so the
+        // free-list write cannot invalidate anyone's interior pointer.
+        no_field_points_to_field_zero g obj;
+        // fp is either the null sentinel or an enumerated (hence non-infix)
+        // object, and separation keeps it clear of obj's field 0.
+        if U64.v fp <> 0 then begin
+          wf_parts ();
+          assert (Seq.mem (fp <: obj_addr) (objects zero_addr g));
+          GC.Spec.Object.resolve_non_infix (fp <: obj_addr) g;
+          GC.Spec.Object.infix_addr_wf_non_infix g (objects zero_addr g) (fp <: obj_addr);
+          if U64.v fp = U64.v obj + 8 then
+            objects_separated zero_addr g obj (fp <: obj_addr)
+        end;
         field_write_preserves_wf g obj obj fp;
         write_word_preserves_objects g obj obj fp;
         HeapGraph.set_field g obj 1UL fp
@@ -948,7 +961,9 @@ private let sweep_aux_preserves_all_fields
 let rec get_pointer_fields_aux_preserved
   (g: heap) (g': heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t)
   : Lemma (requires (forall (j: U64.t). U64.v j >= U64.v i /\ U64.v j <= U64.v ws ==>
-                                         HeapGraph.get_field g obj j == HeapGraph.get_field g' obj j))
+                                         HeapGraph.get_field g obj j == HeapGraph.get_field g' obj j /\
+                                         HeapGraph.resolve_field g (HeapGraph.get_field g obj j) ==
+                                         HeapGraph.resolve_field g' (HeapGraph.get_field g obj j)))
           (ensures HeapGraph.get_pointer_fields_aux g obj i ws == 
                    HeapGraph.get_pointer_fields_aux g' obj i ws)
           (decreases (U64.v ws - U64.v i + 1))
@@ -990,6 +1005,150 @@ private let sweep_aux_preserves_all_fields_range
     FStar.Classical.forall_intro prove_for_j
 #pop-options
 
+/// ---------------------------------------------------------------------------
+/// Resolve stability
+///
+/// `sweep_object` writes at most two words: `obj`'s header (colour bits only)
+/// and, when `obj` is white and non-empty, `obj`'s field 0.  `resolve_object v`
+/// reads only `v`'s header word, and only its tag and size --- both invariant
+/// under a colour change.  So sweeping moves `resolve_object v` only if it
+/// overwrites `v`'s header, i.e. only when `v` is the field-0 slot of a swept
+/// non-empty object.
+/// ---------------------------------------------------------------------------
+
+/// The addresses whose header a sweep of `objs` may overwrite.
+let sweep_clobbers_header (g: heap) (objs: seq obj_addr) (v: obj_addr) : prop =
+  forall (o: obj_addr). Seq.mem o objs /\ U64.v (wosize_of_object o g) > 0 ==>
+    U64.v v <> U64.v o + 8
+
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+private let sweep_object_preserves_resolve
+  (g: heap) (obj: obj_addr) (fp: U64.t) (v: obj_addr)
+  : Lemma (requires U64.v (wosize_of_object obj g) == 0 \/ U64.v v <> U64.v obj + 8)
+          (ensures GC.Spec.Object.resolve_object v (fst (sweep_object g obj fp)) ==
+                   GC.Spec.Object.resolve_object v g)
+  = GC.Spec.Heap.hd_address_spec obj;
+    GC.Spec.Heap.hd_address_spec v;
+    if is_infix obj g then ()
+    else if is_white obj g then begin
+      let ws = wosize_of_object obj g in
+      let hd = GC.Spec.Heap.hd_address obj in
+      let g' =
+        if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then
+          HeapGraph.set_field g obj 1UL fp
+        else g
+      in
+      if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
+        assert (U64.v (U64.add hd (U64.mul mword 1UL)) == U64.v obj);
+        read_write_different g (obj <: hp_addr) (GC.Spec.Heap.hd_address v) fp
+      end;
+      GC.Spec.Object.resolve_object_locality v g g';
+      makeBlue_eq obj g';
+      GC.Spec.Object.color_change_preserves_resolve obj v g' Header.Blue
+    end
+    else if is_black obj g then begin
+      makeWhite_eq obj g;
+      GC.Spec.Object.color_change_preserves_resolve obj v g Header.White
+    end
+    else ()
+#pop-options
+
+/// `sweep_object` only recolours headers, so every enumerated object keeps its size.
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+private let sweep_object_preserves_wosize_any
+  (g: heap) (obj: obj_addr) (fp: U64.t) (x: obj_addr)
+  : Lemma (requires well_formed_heap g /\ fp_in_heap fp g /\
+                    Seq.mem obj (objects zero_addr g) /\
+                    Seq.mem x (objects zero_addr g))
+          (ensures wosize_of_object x (fst (sweep_object g obj fp)) == wosize_of_object x g)
+  = if x = obj then begin
+      wf_objects_non_infix g obj;
+      if is_white obj g then begin
+        let ws = wosize_of_object obj g in
+        let hd = GC.Spec.Heap.hd_address obj in
+        let g' =
+          if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then
+            HeapGraph.set_field g obj 1UL fp
+          else g
+        in
+        GC.Spec.Heap.hd_address_spec obj;
+        wosize_of_object_spec obj g;
+        wosize_of_object_spec obj g';
+        if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then
+          read_write_different g (obj <: hp_addr) hd fp;
+        makeBlue_eq obj g';
+        color_preserves_wosize obj g' Header.Blue
+      end
+      else if is_black obj g then begin
+        colors_exclusive obj g;
+        sweep_object_self_preserves_wosize g obj fp
+      end
+      else ()
+    end
+    else sweep_object_preserves_other_header g obj fp x
+#pop-options
+
+/// Lifted to the whole sweep list.
+#push-options "--z3rlimit 150 --fuel 2 --ifuel 1"
+private let rec sweep_aux_preserves_resolve
+  (g: heap) (objs: seq obj_addr) (fp: U64.t) (v: obj_addr)
+  : Lemma (requires well_formed_heap g /\
+                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
+                    fp_in_heap fp g /\
+                    sweep_clobbers_header g objs v)
+          (ensures GC.Spec.Object.resolve_object v (fst (sweep_aux g objs fp)) ==
+                   GC.Spec.Object.resolve_object v g)
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let obj = Seq.head objs in
+      let (g', fp') = sweep_object g obj fp in
+      Seq.lemma_index_is_nth objs 0;
+      sweep_object_preserves_objects g obj fp;
+      sweep_object_preserves_wf g obj fp;
+      sweep_object_preserves_resolve g obj fp v;
+      let keep (o: obj_addr) : Lemma
+        (requires Seq.mem o (Seq.tail objs))
+        (ensures Seq.mem o (objects zero_addr g') /\
+                 wosize_of_object o g' == wosize_of_object o g)
+        = Seq.lemma_mem_inversion objs;
+          sweep_object_preserves_wosize_any g obj fp o
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires keep);
+      assert (fp_in_heap fp' g');
+      assert (sweep_clobbers_header g' (Seq.tail objs) v);
+      sweep_aux_preserves_resolve g' (Seq.tail objs) fp' v
+    end
+#pop-options
+
+/// Every pointer field of an enumerated object targets something other than a
+/// non-empty object's field-0 slot (`no_field_points_to_field_zero`), so
+/// sweeping keeps its resolved target.
+#push-options "--z3rlimit 150 --fuel 2 --ifuel 1"
+let sweep_preserves_resolve_field g fp x j
+  = let v = HeapGraph.get_field g x j in
+    if HeapGraph.is_pointer_field v then begin
+      HeapGraph.is_pointer_field_is_obj_addr v;
+      let vo : obj_addr = v in
+      let wz = wosize_of_object x g in
+      wosize_of_object_bound x g;
+      wf_object_size_bound g x;
+      GC.Spec.Heap.hd_address_spec x;
+      FStar.Math.Lemmas.pow2_lt_compat 61 54;
+      HeapGraph.get_field_addr_eq g x j;
+      field_read_implies_exists_pointing g x wz (U64.sub j 1UL) vo;
+      let aux (o: obj_addr) : Lemma
+        (requires Seq.mem o (objects zero_addr g) /\ U64.v (wosize_of_object o g) > 0)
+        (ensures U64.v vo <> U64.v o + 8)
+        = no_field_points_to_field_zero g o;
+          no_field_points_to_addr_elim g (U64.v o + 8) x vo
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+      assert (sweep_clobbers_header g (objects zero_addr g) vo);
+      sweep_aux_preserves_resolve g (objects zero_addr g) fp vo
+    end
+#pop-options
+
 /// Isolated helper: prove get_pointer_fields equality directly
 /// Combines the field range proof with the get_pointer_fields_aux recursive proof.
 /// Specialized to objs = objects zero_addr g (forall o. Seq.mem o objs ==> Seq.mem o (objects zero_addr g) is trivial).
@@ -1008,6 +1167,13 @@ private let sweep_get_pointer_fields_eq
   = let objs = objects zero_addr g in
     let g' = fst (sweep_aux g objs fp) in
     sweep_aux_preserves_all_fields_range g objs fp x 1UL ws;
+    let resolve_ok (j: U64.t{U64.v j >= 1}) : Lemma
+      (requires U64.v j <= U64.v ws)
+      (ensures (let v = HeapGraph.get_field g x j in
+                HeapGraph.resolve_field g v == HeapGraph.resolve_field g' v))
+      = sweep_preserves_resolve_field g fp x j
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires resolve_ok);
     get_pointer_fields_aux_preserved g g' x 1UL ws
 #pop-options
 

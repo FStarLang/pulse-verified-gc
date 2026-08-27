@@ -1068,7 +1068,7 @@ private let cheney_promote_invs
                         cs_fwd = (cheney_promote minor major fp roots).fwd_map;
                         cs_queue = Seq.empty }))
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in

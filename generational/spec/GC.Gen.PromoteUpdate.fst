@@ -67,8 +67,6 @@ let update_major_pointers_preserves_no_scan_field =
 let update_major_pointers_preserves_wfh_part4 =
   GC.Gen.PromoteUpdate.Header.update_major_pointers_preserves_wfh_part4
 
-let update_major_pointers_preserves_wfh_part3 =
-  GC.Gen.PromoteUpdate.Header.update_major_pointers_preserves_wfh_part3
 
 /// --- From GC.Gen.PromoteUpdate.Field ---
 

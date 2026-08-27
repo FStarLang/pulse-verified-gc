@@ -83,6 +83,7 @@ val check_and_darken_bounded_spec_preserves_stack_roots
   (v: U64.t) (cap: nat)
   : Lemma
       (requires
+        MarkBounded.root_points_to_object g v /\
         (forall (x: obj_addr). Seq.mem x st ==> Seq.mem (x <: U64.t) roots) /\
         Seq.mem v roots)
       (ensures

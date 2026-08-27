@@ -74,6 +74,8 @@ static color_sem blue = Blue;
 
 static color_sem black = Black;
 
+static uint64_t infix_tag = 249ULL;
+
 static uint64_t no_scan_tag = 251ULL;
 
 static uint64_t getWosize0(uint64_t hdr)
@@ -1844,7 +1846,17 @@ void check_and_darken_bounded(heap_t heap, gray_stack_rec st, uint64_t v)
   {
     uint64_t target_hdr_raw = v - 8ULL;
     uint64_t target_hdr = target_hdr_raw;
-    darken_if_white_bounded(heap, st, target_hdr);
+    uint64_t hdr = read_word(heap, target_hdr);
+    uint64_t t = getTag(hdr);
+    uint64_t wz = getWosize0(hdr);
+    uint64_t off = wz * 8ULL;
+    if (t == infix_tag && v >= off + 8ULL)
+    {
+      uint64_t parent_hdr = v - off - 8ULL;
+      darken_if_white_bounded(heap, st, parent_hdr);
+    }
+    else
+      darken_if_white_bounded(heap, st, target_hdr);
   }
 }
 

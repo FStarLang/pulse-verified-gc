@@ -153,6 +153,27 @@ val combined_reachable_images_valid_or_infix_from_slots
 /// isomorphism: if a reachable pre-collection major object has a combined-graph
 /// edge to another major object, the post-minor major heap graph still contains
 /// the same concrete edge.
+/// A live major object's field target keeps its header word --- and therefore
+/// its resolution --- across a whole minor collection.  This is what lets a
+/// `MajorV src -> MajorV dst` combined-graph edge survive into the
+/// post-collection heap graph when the field holds an interior pointer.
+val cheney_collect_frame_target_header
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (h: obj_addr)
+  : Lemma
+    (requires well_formed_heap major /\
+              AllocLemmas.fl_valid major fp heap_words /\
+              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              chain_objects_blue major fp /\
+              minor_infix_wf minor /\
+              GC.Spec.Object.infix_addr_wf major (objects zero_addr major) h /\
+              Seq.mem (GC.Spec.Object.resolve_object h major) (objects zero_addr major) /\
+              is_blue (GC.Spec.Object.resolve_object h major) major = false)
+    (ensures (let res = cheney_collect_spec minor major fp roots in
+              read_word res.mc_major (hd_address h) == read_word major (hd_address h) /\
+              GC.Spec.Object.resolve_object h res.mc_major ==
+                GC.Spec.Object.resolve_object h major))
+
 val combined_reachable_major_edge_forwarded
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src dst: obj_addr)

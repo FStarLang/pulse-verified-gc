@@ -42,6 +42,9 @@ val no_scan_tag : U64.t
 /// Expose tag constant values (needed for Pulse bridge lemmas)
 val no_scan_tag_val : unit -> Lemma (no_scan_tag == U64.uint_to_t 251)
 val infix_tag_val : unit -> Lemma (infix_tag == U64.uint_to_t 249)
+/// Needed to build a concrete closure header: `makeHeader` demands `tag < 256`,
+/// which is not derivable from the abstract `closure_tag`.
+val closure_tag_val : unit -> Lemma (closure_tag == U64.uint_to_t 247)
 
 /// ---------------------------------------------------------------------------
 /// Header Masks and Shifts
@@ -231,6 +234,17 @@ val is_infix_spec : (h_addr: obj_addr) -> (g: heap) ->
 val is_no_scan_spec : (h_addr: obj_addr) -> (g: heap) ->
   Lemma (is_no_scan h_addr g == U64.gte (tag_of_object h_addr g) no_scan_tag)
 
+/// The low three bits of a header word are the low three bits of its tag.
+val header_low_bits_are_tag_low_bits : (hdr: U64.t) ->
+  Lemma (U64.v hdr % 8 == U64.v (getTag hdr) % 8)
+
+/// An infix header word is never 8-aligned: the infix tag is 249 and
+/// 249 % 8 == 1.  This is what makes infix headers immune to the pointer
+/// rewriting performed by minor collection, which only touches 8-aligned words.
+val infix_header_misaligned : (h: obj_addr) -> (g: heap) ->
+  Lemma (requires is_infix h g)
+        (ensures U64.v (read_word g (hd_address h)) % 8 == 1)
+
 /// ---------------------------------------------------------------------------
 /// Color Mutation Operations
 /// ---------------------------------------------------------------------------
@@ -372,16 +386,20 @@ val color_change_preserves_other_color : (obj1: obj_addr) -> (obj2: obj_addr) ->
 
 /// Raw computation of parent closure address from infix object.
 /// For an infix object at obj_addr `a` with wosize (offset) `w`:
-///   infix_hdr = a - 8 (hd_address a)
-///   parent_obj_addr = infix_hdr - w * 8
-/// The offset in the infix header's wosize field is from the parent closure's
-/// first-field address to the infix header.
+///   parent_obj_addr = a - w * 8
+///
+/// The wosize field of an infix header stores the offset in words from the
+/// parent closure's first-field address (its `obj_addr`) to the infix object's
+/// own first-field address.  This matches the OCaml runtime, which recovers the
+/// enclosing closure with `v -= Infix_offset_val(v)` where
+/// `Infix_offset_hd(hd) = Bosize_hd(hd) = Wosize_hd(hd) * sizeof(value)`, and it
+/// matches `GC.Gen.MinorHeap.infix_parent` on the minor side.
 val parent_closure_addr_nat (infix_obj: obj_addr) (g: heap) : GTot int
 
 /// parent_closure_addr_nat specification: depends only on wosize_of_object
 val parent_closure_addr_nat_spec : (infix_obj: obj_addr) -> (g: heap) ->
   Lemma (parent_closure_addr_nat infix_obj g ==
-         U64.v infix_obj - 8 - (U64.v (wosize_of_object infix_obj g) * 8))
+         U64.v infix_obj - (U64.v (wosize_of_object infix_obj g) * 8))
 
 /// Resolve an address: if infix, return parent closure; otherwise return self.
 /// Defensive: if the computed parent address is invalid, returns the input unchanged.
@@ -398,6 +416,117 @@ val resolve_infix_spec : (addr: obj_addr) -> (g: heap) ->
                   (let p = parent_closure_addr_nat addr g in
                    p >= 8 /\ p < heap_size /\ p % 8 == 0))
         (ensures resolve_object addr g == U64.uint_to_t (parent_closure_addr_nat addr g))
+
+/// resolve_object is defensive: an infix header whose computed parent address
+/// is out of range resolves to itself.
+val resolve_infix_invalid_parent : (addr: obj_addr) -> (g: heap) ->
+  Lemma (requires (let p = parent_closure_addr_nat addr g in
+                   ~(p >= 8 /\ p < heap_size /\ p % 8 == 0)))
+        (ensures resolve_object addr g == addr)
+
+/// Pointwise infix well-formedness for a single address.
+///
+/// `h` need not be enumerated in `objs`: this is exactly the property that must
+/// hold of a *field target* that turns out to be an interior (infix) pointer
+/// into a closure.  If `h` is not infix the property is trivially true.
+/// The conditions an infix address must satisfy, mirroring the OCaml runtime's
+/// closure layout:
+///
+///   * the enclosing closure `p = h - wosize(h) * 8` is a well-formed, aligned,
+///     enumerated address, and carries `closure_tag`;
+///   * the offset is at least two words.  OCaml lays out a closure as
+///     `code ptr | closinfo | ...` before the first infix header, so
+///     `Infix_offset_val` is never 0 or 1.  This is what makes it impossible for
+///     field 0 of an object to be an infix header (see
+///     `GC.Spec.Fields.no_field_points_to_field_zero`);
+///   * the infix object lies within its parent's fields.  Without this an
+///     "infix" could name a closure arbitrarily far away.
+unfold
+let infix_addr_conds (g: heap) (objs: seq obj_addr) (h: obj_addr) : prop =
+  let w = U64.v (wosize_of_object h g) in
+  let p = U64.v h - w * 8 in
+  w >= 2 /\
+  p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
+  Seq.mem (U64.uint_to_t p <: obj_addr) objs /\
+  is_closure (U64.uint_to_t p) g /\
+  U64.v h < p + U64.v (wosize_of_object (U64.uint_to_t p) g) * 8
+
+val infix_addr_wf (g: heap) (objs: seq obj_addr) (h: obj_addr) : prop
+
+val infix_addr_wf_elim : (g: heap) -> (objs: seq obj_addr) -> (h: obj_addr) ->
+  Lemma (requires infix_addr_wf g objs h /\ is_infix h g)
+        (ensures infix_addr_conds g objs h /\
+                 (let p = parent_closure_addr_nat h g in
+                  p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
+                  Seq.mem (U64.uint_to_t p) objs /\
+                  is_closure (U64.uint_to_t p) g))
+
+val infix_addr_wf_intro : (g: heap) -> (objs: seq obj_addr) -> (h: obj_addr) ->
+  Lemma (requires is_infix h g ==> infix_addr_conds g objs h)
+        (ensures infix_addr_wf g objs h)
+
+/// A non-infix address is vacuously infix-well-formed.
+val infix_addr_wf_non_infix : (g: heap) -> (objs: seq obj_addr) -> (h: obj_addr) ->
+  Lemma (requires ~(is_infix h g))
+        (ensures infix_addr_wf g objs h)
+
+/// The payoff: an infix-well-formed address resolves into `objs`, provided it
+/// is either infix (so resolution moves to the validated parent) or already
+/// enumerated (so resolution is the identity).
+val infix_addr_wf_resolve : (g: heap) -> (objs: seq obj_addr) -> (h: obj_addr) ->
+  Lemma (requires infix_addr_wf g objs h /\ (is_infix h g \/ Seq.mem h objs))
+        (ensures Seq.mem (resolve_object h g) objs)
+
+/// Resolution, infix status and size depend only on the target's own header
+/// word, so they are stable under any write that leaves that word alone.
+val resolve_object_locality : (h: obj_addr) -> (g1: heap) -> (g2: heap) ->
+  Lemma (requires read_word g1 (hd_address h) == read_word g2 (hd_address h))
+        (ensures is_infix h g1 == is_infix h g2 /\
+                 is_closure h g1 == is_closure h g2 /\
+                 wosize_of_object h g1 == wosize_of_object h g2 /\
+                 parent_closure_addr_nat h g1 == parent_closure_addr_nat h g2 /\
+                 resolve_object h g1 == resolve_object h g2)
+
+/// Transport pointwise infix well-formedness across a write that leaves both
+/// `h`'s header and the headers of all enumerated objects alone.
+val infix_addr_wf_locality : (g1: heap) -> (g2: heap) -> (objs: seq obj_addr) -> (h: obj_addr) ->
+  Lemma (requires infix_addr_wf g1 objs h /\
+                  read_word g1 (hd_address h) == read_word g2 (hd_address h) /\
+                  (forall (o: obj_addr). Seq.mem o objs ==>
+                     read_word g1 (hd_address o) == read_word g2 (hd_address o)))
+        (ensures infix_addr_wf g2 objs h)
+
+/// Transport pointwise infix well-formedness across any heap change that agrees
+/// on `h`'s header interpretation and on the headers of enumerated objects.
+/// This is the form clients actually have on hand (colour changes, tag writes),
+/// as opposed to raw header-word equality.
+val infix_addr_wf_congr : (g1: heap) -> (g2: heap) -> (objs: seq obj_addr) -> (h: obj_addr) ->
+  Lemma (requires infix_addr_wf g1 objs h /\
+                  is_infix h g2 == is_infix h g1 /\
+                  wosize_of_object h g2 == wosize_of_object h g1 /\
+                  (forall (o: obj_addr). Seq.mem o objs ==>
+                     is_closure o g2 == is_closure o g1 /\
+                     wosize_of_object o g2 == wosize_of_object o g1))
+        (ensures infix_addr_wf g2 objs h)
+
+/// Pointwise transport of `infix_addr_wf` across *both* a heap change and an
+/// object-list change.  Only agreement at `h` and at its enclosing closure is
+/// required, which is what collectors that rebuild the object list can supply.
+val infix_addr_wf_transfer :
+  (g1: heap) -> (g2: heap) -> (objs1: seq obj_addr) -> (objs2: seq obj_addr) ->
+  (h: obj_addr) ->
+  Lemma (requires infix_addr_wf g1 objs1 h /\
+                  is_infix h g2 == is_infix h g1 /\
+                  wosize_of_object h g2 == wosize_of_object h g1 /\
+                  (is_infix h g1 ==>
+                    (let w = U64.v (wosize_of_object h g1) in
+                     let p = U64.v h - w * 8 in
+                     p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
+                     Seq.mem (U64.uint_to_t p <: obj_addr) objs2 /\
+                     is_closure (U64.uint_to_t p) g2 == is_closure (U64.uint_to_t p) g1 /\
+                     wosize_of_object (U64.uint_to_t p) g2 ==
+                       wosize_of_object (U64.uint_to_t p) g1)))
+        (ensures infix_addr_wf g2 objs2 h)
 
 /// Infix well-formedness: every infix object in the heap has a valid parent closure
 val infix_wf (g: heap) (objs: seq obj_addr) : prop
@@ -430,6 +559,10 @@ val color_change_preserves_is_closure : (obj: obj_addr) -> (addr: obj_addr) -> (
 /// Color change preserves resolve_object (colors don't change tags or wosize)
 val color_change_preserves_resolve : (obj: obj_addr) -> (addr: obj_addr) -> (g: heap) -> (c: color) ->
   Lemma (ensures resolve_object addr (set_object_color obj g c) == resolve_object addr g)
+
+/// Color change preserves wosize at an arbitrary address
+val color_change_preserves_wosize_any : (obj: obj_addr) -> (addr: obj_addr) -> (g: heap) -> (c: color) ->
+  Lemma (ensures wosize_of_object addr (set_object_color obj g c) == wosize_of_object addr g)
 
 /// Color change preserves infix_wf
 val color_change_preserves_infix_wf : (obj: obj_addr) -> (g: heap) -> (c: color) -> (objs: seq obj_addr) ->

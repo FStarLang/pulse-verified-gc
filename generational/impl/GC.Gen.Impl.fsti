@@ -159,14 +159,37 @@ let gen_gc_roots_post
   (ok ==>
    roots_match_stack roots_out (gen_gc_prepared_roots minor major fp roots st cap))
 
-/// Shape facts exposed by the abstract `gen_gc` contract: the nursery is reset,
-/// the final major heap satisfies the major GC postcondition, and the post-minor
-/// heap has the full shape needed by the major phase.
+/// The free-list-free projection of the shape invariant.
+///
+/// This is **not** an independent fact: every conjunct is a consequence of
+/// `GC.Gen.HeapInvariant.collection_heap_shape`, which is what `gen_gc` actually
+/// promises.  `blue_fields_non_infix` is verbatim one of `major_heap_shape`'s
+/// fifteen conjuncts, and `gc_postcondition` -- well-formedness plus "every
+/// object is white or blue" -- follows from three more of them
+/// (`well_formed_heap`, `no_black_objects`, `no_gray_objects`) by colour
+/// exhaustiveness.  `gen_gc_heap_shape_post_intro` below is that derivation.
+///
+/// It is kept because it mentions no free-list head, so a client that only
+/// cares about object colours can state it without threading `fp` through.
+/// That is exactly what the SPOT audit lemmas want.
 let gen_gc_heap_shape_post
   (minor_data: minor_heap) (minor_bump: U64.t)
   (final_major: heap) : prop =
   U64.v minor_bump == 0 /\
-  SpecGCPost.gc_postcondition final_major
+  SpecGCPost.gc_postcondition final_major /\
+  SpecFields.blue_fields_non_infix final_major
+
+/// Recover the projection from the invariant `gen_gc` returns.
+val gen_gc_heap_shape_post_intro
+  (minor_data: minor_heap) (minor_bump: U64.t)
+  (final_major: heap) (final_fp: U64.t)
+  : Lemma
+      (requires
+        U64.v minor_bump == 0 /\
+        GenInv.collection_heap_shape
+          ({ data = minor_data; bump = minor_bump } <: minor_state)
+          final_major final_fp)
+      (ensures gen_gc_heap_shape_post minor_data minor_bump final_major)
 
 /// Reachable subgraph correctness.
 ///
@@ -296,8 +319,14 @@ fn minor_collect_full (gh: gen_heap_t)
       fp2 == prom.fp_final /\
       // Roots rewritten via forwarding map
       rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
-      // Minor heap fully reset
+      // Minor heap fully reset: the nursery bytes are cleared as well as the
+      // bump pointer, so the state handed back is literally
+      // `GC.Gen.MinorHeap.minor_reset`.  That is what makes every minor-side
+      // and cross-generation conjunct of `collection_heap_shape` vacuous for
+      // the collector's output.
       U64.v b2 == 0 /\
+      ({ data = d2; bump = b2 } <: minor_state) ==
+        minor_reset ({ data = 'd; bump = 'b } <: minor_state) /\
       // Forwarding array represents the spec-level forwarding map
       UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
       // Forwarding entries are valid
@@ -377,13 +406,30 @@ fn gen_gc (gh: gen_heap_t)
     is_gray_stack st st2 **
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
-      let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
+      let minor_st_out : minor_state = { data = d2; bump = b2 } in
       let ok = snd res in
       // Failure is reported only for a concrete out-of-memory event: an object
       // the major free list had no room for, at a point of this collection.
       (not ok ==> CheneyBFS.cheney_oom minor_st 's 'fp 'rs) /\
       gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok 'st (stack_capacity st) /\
-      gen_gc_heap_shape_post d2 b2 s2 /\
+      // The nursery handed back is the zeroed one, `GC.Gen.MinorHeap.minor_reset`.
+      // This is the only heap-shape fact in the postcondition that does *not*
+      // follow from the invariant below; everything else about the returned
+      // state, including `gen_gc_heap_shape_post`, is derived from it (see
+      // `gen_gc_heap_shape_post_intro`).
+      minor_st_out == minor_reset minor_st /\
+      // **The collector restores its own precondition**: literally the same
+      // predicate `gen_gc` demands of the state it is handed, now asserted of
+      // the state it hands back.  A runtime driving an unbounded sequence of
+      // collections therefore establishes the invariant once, at start-up, and
+      // never again.
+      //
+      // The minor half is vacuous -- the nursery returned is
+      // `GC.Gen.MinorHeap.minor_reset`, i.e. zeroed -- so the content of the
+      // claim is `GC.Gen.HeapInvariant.major_heap_shape` of the major heap and
+      // free-list head, all fifteen conjuncts of it, supplied by
+      // `GC.Gen.PostCollectionShape.major_gc_restores_major_heap_shape`.
+      GenInv.collection_heap_shape minor_st_out s2 (fst res) /\
       gen_gc_reachable_subgraph_isomorphism_post
         minor_st 's 'fp 'rs ok s2 rs2 'st (stack_capacity st) /\
       gen_gc_unreachable_final_blue_post

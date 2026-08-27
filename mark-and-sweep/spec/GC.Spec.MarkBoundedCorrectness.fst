@@ -83,6 +83,28 @@ let mark_step_bounded_preserves_wosize
       push_children_preserves_wosize g1 (Seq.tail st) obj 1UL ws x
     end
 
+/// mark_step_bounded preserves resolve_object: it only recolours objects, and
+/// colour bits do not participate in interior-pointer resolution.
+let mark_step_bounded_preserves_resolve
+  (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat) (x: obj_addr)
+  = mark_step_bounded_heap_eq g st st cap;
+    let obj = Seq.head st in
+    bounded_stack_head_is_gray g st;
+    makeBlack_eq obj g;
+    let g1 = makeBlack obj g in
+    color_change_preserves_resolve obj x g Header.Black;
+    let ws = wosize_of_object obj g in
+    if is_no_scan obj g then ()
+    else begin
+      color_change_preserves_wf g obj Header.Black;
+      color_change_preserves_objects g obj Header.Black;
+      color_change_preserves_objects_mem g obj Header.Black obj;
+      set_object_color_preserves_getWosize_at_hd obj g Header.Black;
+      wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+      wosize_of_object_bound obj g;
+      push_children_preserves_resolve g1 (Seq.tail st) obj 1UL ws x
+    end
+
 /// mark_step_bounded preserves is_no_scan
 let mark_step_bounded_preserves_is_no_scan
   (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat) (x: obj_addr)
@@ -222,9 +244,6 @@ let mark_step_bounded_preserves_tri_color g st cap =
         assert (~(is_white rc g));
         wosize_of_object_bound b g;
         points_to_target_in_objects g b child;
-        assert (Seq.mem child (objects zero_addr g));
-        wf_infix_wf g;
-        resolve_object_in_objects child g (objects zero_addr g);
         assert (Seq.mem rc (objects zero_addr g));
         if rc = obj then begin
           push_children_preserves_parent_black g1 st' obj 1UL ws;
@@ -335,22 +354,22 @@ let mark_step_bounded_preserves_no_pointer_to_blue
     mark_step_bounded_preserves_objects g st cap;
     let aux (src dst: obj_addr) : Lemma
       (requires Seq.mem src (objects zero_addr g') /\ ~(is_blue src g') /\ points_to g' src dst)
-      (ensures ~(is_blue dst g'))
+      (ensures ~(is_blue (resolve_object dst g') g'))
     = assert (Seq.mem src (objects zero_addr g));
       mark_step_bounded_preserves_points_to g st cap src dst;
       assert (points_to g src dst);
       if is_blue src g then
         mark_step_bounded_preserves_blue g st cap src
       else begin
-        assert (~(is_blue dst g));
         wosize_of_object_bound src g;
         points_to_target_in_objects g src dst;
-        mark_step_bounded_no_new_blue g st cap dst
+        mark_step_bounded_preserves_resolve g st cap dst;
+        mark_step_bounded_no_new_blue g st cap (resolve_object dst g)
       end
     in
     let aux2 (src dst: obj_addr) : Lemma
       (Seq.mem src (objects zero_addr g') ==> ~(is_blue src g') ==> points_to g' src dst ==>
-       ~(is_blue dst g'))
+       ~(is_blue (resolve_object dst g') g'))
     = FStar.Classical.move_requires (aux src) dst
     in
     FStar.Classical.forall_intro_2 aux2
@@ -690,9 +709,9 @@ let rec push_children_bounded_stack_reachable g st obj i ws cap graph roots' =
       if is_white child g then begin
         objects_is_vertex_set g;
         HeapGraph.pointer_field_is_graph_edge g (objects zero_addr g) obj i;
-        graph_vertices_mem g child_raw;
-        wf_resolve_identity g child_raw;
-        assert (child == child_raw);
+        assert (mem_graph_edge graph obj child);
+        graph_vertices_mem g child;
+        assert (Seq.mem child (objects zero_addr g));
         graph_vertices_mem g obj;
         reachable_successor_closed graph roots' obj child;
         let g' = makeGray child g in
@@ -771,10 +790,7 @@ let rec push_children_newly_gray_is_child g st obj i ws x =
           objects_is_vertex_set g;
           wf_implies_object_fits g obj;
           HeapGraph.pointer_field_is_graph_edge g (objects zero_addr g) obj i;
-          assert (mem_graph_edge (create_graph g) obj child_raw);
-          assert (Seq.mem child_raw (create_graph g).vertices);
-          graph_vertices_mem g child_raw;
-          wf_resolve_identity g child_raw
+          assert (mem_graph_edge (create_graph g) obj child)
         end else begin
           hd_address_injective x child;
           color_change_preserves_other_color child x g Header.Gray;
@@ -784,10 +800,8 @@ let rec push_children_newly_gray_is_child g st obj i ws x =
             objects_is_vertex_set g;
             wf_implies_object_fits g obj;
             HeapGraph.pointer_field_is_graph_edge g (objects zero_addr g) obj i;
-            assert (Seq.mem child_raw (create_graph g).vertices);
-            graph_vertices_mem g child_raw;
-            wf_resolve_identity g child_raw;
-            assert (child == child_raw);
+            assert (mem_graph_edge (create_graph g) obj child);
+            graph_vertices_mem g child;
             assert (Seq.mem child (objects zero_addr g));
             color_change_preserves_wf g child Header.Gray;
             color_change_preserves_objects g child Header.Gray;

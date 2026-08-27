@@ -431,42 +431,6 @@ let spot_major_wfh_part1 (r: unit{spot_major_room})
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
-let spot_major_wfh_part2 (r: unit{spot_major_room})
-  : Lemma (ensures SpecFields.well_formed_heap_part2 (spot_major_heap r))
-  =
-  let major = spot_major_heap r in
-  spot_major_wfh_part1 r;
-  let field_closure (src: obj_addr) (j: nat)
-    : Lemma (requires Seq.mem src (SpecFields.objects zero_addr major) /\
-                      j < U64.v (SpecObj.wosize_of_object src major) /\
-                      U64.v src + j * 8 + 8 <= heap_size)
-            (ensures (let v = read_word major (U64.uint_to_t (U64.v src + j * 8)) in
-                      SpecFields.is_pointer_field v ==> Seq.mem (v <: obj_addr) (SpecFields.objects zero_addr major)))
-    =
-    spot_major_field_not_pointer r src j
-  in
-  SpecFields.well_formed_heap_part2_from_field_closure major field_closure
-
-let spot_major_wfh_part3 (r: unit{spot_major_room})
-  : Lemma (ensures SpecFields.well_formed_heap_part3 (spot_major_heap r))
-  =
-  let major = spot_major_heap r in
-  let aux (h: obj_addr)
-    : Lemma (requires Seq.mem h (SpecFields.objects zero_addr major) /\
-                      SpecObj.is_infix h major)
-            (ensures (let p = SpecObj.parent_closure_addr_nat h major in
-                      p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
-                      Seq.mem (U64.uint_to_t p) (SpecFields.objects zero_addr major) /\
-                      SpecObj.is_closure (U64.uint_to_t p) major))
-    =
-    spot_major_object_cases r h;
-    spot_major_c_reads r;
-    spot_major_free_reads r;
-    if h = spot_c r then assert False
-    else assert False
-  in
-  SpecObj.infix_wf_intro major (SpecFields.objects zero_addr major) aux
-
 let spot_major_wfh_part4 (r: unit{spot_major_room})
   : Lemma (ensures SpecFields.well_formed_heap_part4 (spot_major_heap r))
   =
@@ -481,8 +445,35 @@ let spot_major_wfh_part4 (r: unit{spot_major_room})
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
+let spot_major_wfh_part2 (r: unit{spot_major_room})
+  : Lemma (ensures SpecFields.well_formed_heap_part2 (spot_major_heap r) /\
+                   SpecFields.well_formed_heap_part3 (spot_major_heap r) /\
+                   SpecFields.no_infix_field_targets (spot_major_heap r))
+  =
+  let major = spot_major_heap r in
+  spot_major_wfh_part1 r;
+  spot_major_wfh_part4 r;
+  let field_closure (src: obj_addr) (j: nat)
+    : Lemma (requires Seq.mem src (SpecFields.objects zero_addr major) /\
+                      j < U64.v (SpecObj.wosize_of_object src major) /\
+                      U64.v src + j * 8 + 8 <= heap_size)
+            (ensures (let v = read_word major (U64.uint_to_t (U64.v src + j * 8)) in
+                      SpecFields.is_pointer_field v ==> Seq.mem (v <: obj_addr) (SpecFields.objects zero_addr major)))
+    =
+    spot_major_field_not_pointer r src j
+  in
+  SpecFields.well_formed_heap_part2_from_field_closure major field_closure
+
+/// The concrete major heap has no infix objects at all (part 4), so part 3 is
+/// vacuous; it comes out of the field-closure derivation for free.
+let spot_major_wfh_part3 (r: unit{spot_major_room})
+  : Lemma (ensures SpecFields.well_formed_heap_part3 (spot_major_heap r))
+  =
+  spot_major_wfh_part2 r
+
 let spot_major_well_formed_heap (r: unit{spot_major_room})
-  : Lemma (ensures SpecFields.well_formed_heap (spot_major_heap r))
+  : Lemma (ensures SpecFields.well_formed_heap (spot_major_heap r) /\
+                   SpecFields.no_infix_field_targets (spot_major_heap r))
   =
   let major = spot_major_heap r in
   spot_major_wfh_part1 r;
@@ -808,7 +799,7 @@ let spot_major_no_pointer_to_blue (r: unit{spot_major_room})
                       SpecFields.is_pointer_to
                         (read_word major (U64.uint_to_t (U64.v src + j * 8)))
                         dst)
-            (ensures ~(SpecObj.is_blue dst major))
+            (ensures ~(SpecObj.is_blue (SpecObj.resolve_object dst major) major))
     =
     spot_major_field_not_pointer r src j;
     assert (SpecFields.is_pointer_to
@@ -848,4 +839,5 @@ let spot_major_heap_shape (r: unit{spot_major_room})
   spot_major_no_gray_objects r;
   spot_major_no_pointer_to_blue r;
   spot_major_no_scan_invariant r;
+  SpecFields.no_infix_field_targets_weaken major;
   GenInv.major_heap_shape_intro major fp

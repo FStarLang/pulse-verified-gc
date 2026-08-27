@@ -116,7 +116,8 @@ val remembered_roots_in_roots_from_slots
 val heap_graph_edge_to_field_read
   (g: heap) (src dst: obj_addr)
   : Lemma
-    (requires mem_graph_edge (HeapModel.create_graph g) src dst)
+    (requires mem_graph_edge (HeapModel.create_graph g) src dst /\
+              well_formed_heap g)
     (ensures
       Seq.mem src (objects zero_addr g) /\
       is_no_scan src g = false /\
@@ -125,7 +126,10 @@ val heap_graph_edge_to_field_read
         j < U64.v (wosize_of_object src g) /\
         U64.v src + j * 8 + 8 <= heap_size /\
         (U64.v src + j * 8) % 8 == 0 /\
-        read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst))
+        HeapGraph.is_pointer_field
+          (read_word g (U64.uint_to_t (U64.v src + j * 8))) /\
+        HeapGraph.resolve_field g
+          (read_word g (U64.uint_to_t (U64.v src + j * 8))) == dst))
 
 /// Cheney promotion preserves the header-derived facts and body field of a
 /// pre-existing non-blue major object.

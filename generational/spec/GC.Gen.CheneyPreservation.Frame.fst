@@ -20,6 +20,7 @@ open GC.Gen.WriteBodyLemmas
 open GC.Lib.Header
 
 module Allocator = GC.Spec.Allocator
+module PromUpdate = GC.Gen.PromoteUpdate
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module AllocProps = GC.Gen.AllocProps
 
@@ -553,7 +554,7 @@ let cheney_promote_frame_old_fields
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr) (j: nat)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
@@ -739,7 +740,7 @@ let cheney_promote_frame_old_header
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
@@ -749,4 +750,56 @@ let cheney_promote_frame_old_header
   cheney_forward_roots_preserves_cob minor cs0 roots 0;
   let cs1 = cheney_forward_roots minor cs0 roots 0 in
   cheney_scan_frame_header minor cs1 0 (cheney_fuel minor) obj
+#pop-options
+
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
+let cheney_promote_frame_target_header
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (h: obj_addr)
+  = hd_address_spec h;
+    let res = cheney_promote minor major fp roots in
+    cheney_promote_preserves_objects minor major fp roots;
+    if GC.Spec.Object.is_infix h major then begin
+      GC.Spec.Object.infix_addr_wf_elim major (objects zero_addr major) h;
+      GC.Spec.Object.parent_closure_addr_nat_spec h major;
+      GC.Spec.Object.resolve_infix_spec h major;
+      let w = U64.v (wosize_of_object h major) in
+      let pa : obj_addr = U64.uint_to_t (U64.v h - w * 8) in
+      assert (GC.Spec.Object.resolve_object h major == pa);
+      assert (w >= 2);
+      assert (U64.v h < U64.v pa + U64.v (wosize_of_object pa major) * 8);
+      assert (w < U64.v (wosize_of_object pa major));
+      assert (U64.v pa + (w - 1) * 8 == U64.v (hd_address h));
+      cheney_promote_frame_old_fields minor major fp roots pa (w - 1);
+      cheney_promote_frame_old_header minor major fp roots pa;
+      GC.Spec.Object.resolve_object_locality pa major res.major_final
+    end
+    else begin
+      GC.Spec.Object.resolve_non_infix h major;
+      cheney_promote_frame_old_header minor major fp roots h
+    end;
+    GC.Spec.Object.resolve_object_locality h major res.major_final;
+    GC.Spec.Object.infix_addr_wf_transfer major res.major_final
+      (objects zero_addr major) (objects zero_addr res.major_final) h
+#pop-options
+
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
+let update_major_pointers_frame_target_header
+  (g: heap) (fwd: forwarding_map) (h: obj_addr)
+  = hd_address_spec h;
+    if GC.Spec.Object.is_infix h g then begin
+      let w = U64.v (wosize_of_object h g) in
+      let pa : obj_addr = U64.uint_to_t (U64.v h - w * 8) in
+      assert (U64.v pa + (w - 1) * 8 == U64.v (hd_address h));
+      let hdr = read_word g (hd_address h) in
+      GC.Spec.Object.infix_header_misaligned h g;
+      assert (U64.v hdr % 8 == 1);
+      assert (~(is_minor_pointer (to_minor_offset hdr)));
+      if is_no_scan pa g then
+        PromUpdate.update_major_pointers_preserves_no_scan_field g fwd pa (w - 1)
+      else
+        PromUpdate.update_major_pointers_field_effect g fwd pa (w - 1)
+    end
+    else
+      PromUpdate.update_major_pointers_preserves_header g fwd h
 #pop-options

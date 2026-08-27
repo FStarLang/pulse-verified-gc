@@ -167,8 +167,6 @@ let rec push_children_bounded_preserves_bsp g st obj i ws cap =
         wf_object_size_bound g obj;
         field_read_implies_exists_pointing g obj wz (U64.sub i 1UL) child_raw;
         wf_field_target_in_objects g obj child_raw;
-        wf_infix_wf g;
-        resolve_object_in_objects child_raw g (objects zero_addr g);
 
         color_change_preserves_wf g child Header.Gray;
         color_change_preserves_objects g child Header.Gray;

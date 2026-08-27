@@ -117,11 +117,28 @@ let wfh_part2_implies_blue_fields_closed (g: heap)
             assert (U64.v (U64.add_mod src (U64.mul_mod k mword)) % 8 == 0);
             assert (is_pointer_to v (v <: obj_addr));
             field_read_implies_exists_pointing g src wz k (v <: obj_addr);
-            assert (exists_field_pointing_to_unchecked g src wz (v <: obj_addr))
+            assert (exists_field_pointing_to_unchecked g src wz (v <: obj_addr));
+            wfh_part2_elim g src (v <: obj_addr);
+            blue_fields_non_infix_elim g src (v <: obj_addr);
+            GC.Spec.Object.resolve_non_infix (v <: obj_addr) g
           end else ()
         end else ()
     in
     FStar.Classical.forall_intro_2 aux
+#pop-options
+
+#push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
+let blue_fields_closed_implies_blue_fields_non_infix (g: heap)
+  = reveal_opaque (`%blue_fields_closed) blue_fields_closed;
+    let field_closure (src: obj_addr) (j: nat)
+      : Lemma (requires Seq.mem src (objects zero_addr g) /\ is_blue src g /\
+                        j < U64.v (wosize_of_object src g) /\
+                        U64.v src + j * 8 + 8 <= heap_size)
+              (ensures (let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
+                        is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr g)))
+      = ()
+    in
+    blue_fields_non_infix_from_field_closure g field_closure
 #pop-options
 
 /// Helper: alloc_spec preserves blue_fields_closed.

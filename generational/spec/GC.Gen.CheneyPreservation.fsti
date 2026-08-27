@@ -113,6 +113,7 @@ val cheney_promote_preserves_no_scan_invariant
 val cheney_promote_preserves_blue_fields_closed
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
+                    blue_fields_non_infix major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
@@ -326,6 +327,8 @@ val cheney_collect_preserves_wfh_from_shape
   : Lemma
     (requires GenInv.collection_heap_shape minor major fp)
     (ensures well_formed_heap
+      (cheney_collect_spec minor major fp roots).mc_major /\
+      blue_fields_non_infix
       (cheney_collect_spec minor major fp roots).mc_major)
 
 val cheney_collect_preserves_no_pointer_to_blue

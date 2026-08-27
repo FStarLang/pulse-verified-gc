@@ -1,0 +1,498 @@
+# Plan: supporting infix pointers in the heap model
+
+Status: **proposal, not started.** Written for review.
+
+## 1. The defect
+
+`well_formed_heap` is the precondition of essentially every correctness theorem
+in the repository (1,129 references across 105 files). Two of its four clauses
+interact to exclude a class of real OCaml heaps.
+
+`common/spec/GC.Spec.Fields.fst:507`:
+
+```fstar
+let well_formed_heap_part2 (g: heap) : prop =
+  (forall (src dst: obj_addr).
+    (Seq.mem src (objects zero_addr g) /\
+     (let wz = wosize_of_object src g in
+      U64.v wz < pow2 54 /\
+      exists_field_pointing_to_unchecked g src wz dst)) ==>
+    Seq.mem dst (objects zero_addr g))
+```
+
+`exists_field_pointing_to_unchecked` (`:79`) tests fields with `is_pointer_to`
+(`:61`), which compares `hd_address fv` against `hd_address target` on the
+**raw** stored word. Neither function calls `resolve_object`. So the `dst` that
+part 2 requires to be an enumerated object is the literal field contents.
+
+`common/spec/GC.Spec.Fields.fst:518`:
+
+```fstar
+let well_formed_heap_part4 (g: heap) : prop =
+  (forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_infix obj g))
+```
+
+Together: **no field of any major-heap object may point to a major-heap infix
+object.** Mutually recursive OCaml closures produce exactly such fields. The
+theorems are sound; their precondition is unsatisfiable for those heaps.
+
+### Why the object list excludes infix objects
+
+`objects` (`GC.Spec.Fields.fst:185`) walks the heap by `wosize`. A closure's
+`wosize` spans its infix sub-objects, so the walk steps over them. Part 4 is
+therefore consistent with the walk — but note it is *stipulated*, not derived:
+`wf_objects_non_infix` (`:613`) has `reveal_opaque` as its entire body. It reads
+part 4 back out; it does not prove anything about the walk.
+
+## 2. Verified consequences
+
+Confirmed against `gc_gen_impl_spec_tightening` @ `5c931eb`.
+
+| Consequence | Evidence |
+| --- | --- |
+| Part 3 (`infix_wf`) is **vacuous** | `infix_wf` (`GC.Spec.Object.fst:717`) quantifies over `Seq.mem h objs /\ is_infix h g`; part 4 makes that unsatisfiable. `parent_closure_addr_nat`, `infix_wf_elim`, `infix_wf_intro` do no work inside `well_formed_heap`. |
+| `resolve_object` is **provably the identity** in Mark | `GC.Spec.Mark.fst` calls it at ~60 sites; three are immediately followed by `wf_resolve_identity`, which derives `child == child_raw` from part 4. |
+| The graph model **never resolves** | `get_pointer_fields_aux` (`GC.Spec.HeapGraph.fst:115`) conses the raw `v`. Grepping `GC.Spec.HeapGraph.fst` for `resolve_object` or `is_infix` returns **0** hits. |
+| Part 2 is exactly what makes the graph well formed | `graph_wf` (`GC.Spec.Graph.fst:88`) requires both edge endpoints to be vertices; vertices are `objects` (`HeapGraph.fst:208`). An infix target would be an edge to a non-vertex, so `create_graph_wf_from_heap` (`GC.Spec.Mark.fsti:519`) would fail. |
+
+## 3. Corrections and additions to the finding
+
+The PDF is accurate on the core claim. Five points need amending or adding, and
+the third one changes the shape of the fix.
+
+1. **`wf_objects_non_infix` does not prove non-infixness.** The PDF says it
+   "proves that no member of the object set is infix". Its body is
+   `reveal_opaque`. Non-infixness is an assumption (part 4), not a theorem.
+
+2. **Part 3 is vacuous.** Not mentioned. It matters: the parent-closure
+   machinery already exists and is already wired into `well_formed_heap`, but
+   currently guards an empty set. The fix repoints it rather than inventing it.
+
+3. **The extracted mark/sweep C would corrupt the heap, not handle it.** The PDF
+   says "the extracted C code checks for infix objects and would handle them."
+   That is true of the *minor/Cheney* path only. The major mark path does not
+   resolve, and would not merely mis-handle an infix target — it would lose the
+   parent. In `generational/snapshot/GC_Gen_Impl.c`:
+
+   ```c
+   void check_and_darken_bounded(heap_t heap, gray_stack_rec st, uint64_t v) {
+     bool is_ptr = is_pointer(v);
+     if (is_ptr) {
+       uint64_t target_hdr = v - 8ULL;        /* raw field value */
+       darken_if_white_bounded(heap, st, target_hdr);
+     }
+   }
+   ```
+
+   Given an infix target this greys the **infix header** and pushes the infix
+   address. `mark_step_bounded_impl` then pops it, reads `wz`/`tag` from the
+   infix header, and since `tag == 249 < no_scan_tag` it *scans* `wz` words from
+   the infix address — `wz` being the parent offset, not a field count. The
+   parent closure is never darkened, stays white, and is reclaimed by the sweep,
+   leaving the infix pointer dangling.
+
+   **This is the load-bearing correction.** The gap is not "spec is narrower
+   than the code". The precondition is currently the only thing preventing a
+   real bug. Fixing the specification without fixing `check_and_darken_bounded`
+   would turn an unsatisfiable precondition into an unsound collector.
+
+4. **All four source/target combinations are excluded, not just major→major.**
+   The generational layer forbids the rest by explicitly named preconditions in
+   `GC.Gen.HeapInvariant.fsti`: `minor_fields_no_infix_targets` (minor→minor)
+   and `major_minor_fields_no_infix_targets` (major→minor). Infix addresses
+   survive only as *roots* and inside Cheney's promotion machinery.
+
+5. **The two halves of the codebase disagree on how to compute an infix
+   object's parent, and the major-heap one is wrong.** Not in the PDF; found
+   while checking the phase 4 sketch below.
+
+   Both read the *same* header word (`obj - 8`) and extract the *same* field
+   (`hdr >> 10`), then interpret it differently:
+
+   | | Formula | Source |
+   | --- | --- | --- |
+   | minor | `parent = infix - wosize*8` | `GC.Gen.MinorHeap.infix_parent` (`:230`) |
+   | major | `parent = infix - 8 - wosize*8` | `GC.Spec.Object.parent_closure_addr_nat` (`:695`) |
+
+   Their doc comments state the conflicting conventions outright — "word offset
+   from infix val to parent val" versus "offset from parent's obj_addr to infix
+   header". They differ by exactly one word, so at most one can be right.
+
+   OCaml's runtime does `v -= Infix_offset_val(v)` with
+   `Infix_offset_hd(hd) = Bosize_hd(hd) = Wosize_hd(hd) * sizeof(value)`, i.e.
+   `parent = infix - wosize*8`. **The minor version is correct; the major
+   version is off by 8 bytes.** The extracted C agrees with the minor version
+   (`forward_if_minor_infix`: `uint64_t parent = addr - wosize * 8ULL;`).
+
+   This is currently harmless *only* because part 3 is vacuous (§2), so
+   `parent_closure_addr_nat` is unreachable — it is reached solely through
+   `infix_wf`, which quantifies over an empty set, and through
+   `resolve_object`, which is provably the identity. It is dead code that
+   happens to be wrong.
+
+   It is also exactly the definition phase 1 would build on. Fixing it is
+   therefore a prerequisite, not a cleanup, and it belongs in phase 0 where it
+   can be landed and verified in isolation while it is still dead.
+
+6. **The minor heap's infix support is an over-approximation, and it is
+   under-specified.** `find_infix_parents`
+   (`generational/impl/GC.Gen.Impl.MinorHeap.fst:615`) pre-scans the minor heap
+   and appends the *parent* of every embedded infix header to the root array.
+   That is why the minor side can forbid infix field targets and still be
+   correct — every closure containing an infix part is unconditionally rooted.
+   It is sound but imprecise (it retains closures that are actually garbage),
+   and the Pulse postcondition of `maybe_add_infix_parent` is purely structural
+   (`Seq.length rs2 == SZ.v cap /\ SZ.v cnt2 >= SZ.v cnt`) — it does not say
+   *which* parents were added, so nothing downstream can use it. The
+   over-approximation is invisible to the proof.
+
+## 4. Design options
+
+### Option A — resolve only at the graph boundary
+
+Change `get_pointer_fields_aux` to emit `resolve_object v g`; leave part 2 raw.
+
+Rejected. Part 2 is what establishes `graph_wf`; leaving it raw means an infix
+target still violates it before the graph is ever built. This fixes a symptom.
+
+### Option B — resolve in the heap model (recommended)
+
+Three coordinated changes, all behind the existing `opaque_to_smt` boundary:
+
+- Part 2 requires the **resolved** target to be enumerated.
+- Part 3 stops quantifying over `objs` (vacuous) and starts quantifying over
+  **field targets that are infix**, which is where the parent-validity
+  obligation actually belongs.
+- The graph resolves, so vertices remain exactly `objects` and `graph_wf` is
+  preserved by construction.
+
+Sketch:
+
+```fstar
+(* target of a field, with interior pointers mapped to the enclosing closure *)
+let field_target (g: heap) (fv: U64.t{is_pointer_field fv}) : GTot obj_addr =
+  resolve_object (fv <: obj_addr) g
+
+let well_formed_heap_part2 (g: heap) : prop =
+  forall (src: obj_addr) (j: nat).
+    Seq.mem src (objects zero_addr g) /\ j < U64.v (wosize_of_object src g) /\ ... ==>
+    (let fv = read_word g (field_addr src j) in
+     is_pointer_field fv ==> Seq.mem (field_target g fv) (objects zero_addr g))
+
+let well_formed_heap_part3 (g: heap) : prop =
+  forall (src: obj_addr) (j: nat).
+    (* every infix field target has a valid, enumerated, closure-tagged parent *)
+    ... is_infix (fv <: obj_addr) g ==>
+    (let p = parent_closure_addr_nat (fv <: obj_addr) g in
+     p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
+     Seq.mem (U64.uint_to_t p) (objects zero_addr g) /\
+     is_closure (U64.uint_to_t p) g)
+```
+
+Part 4 is unchanged: the object *list* still excludes infix objects, which is
+what keeps the sweep and the allocator walk correct.
+
+Note the safety argument this depends on. `resolve_object` computes the parent
+from the infix object's own header (`parent_closure_addr_nat h g = h - 8 -
+wosize(h) * 8`), i.e. from mutable heap data. Part 3 is what makes that read
+trustworthy, which is precisely why part 3 must be repointed at field targets in
+the same change that makes part 2 depend on `resolve_object`. Doing one without
+the other yields a model that trusts an unvalidated heap word.
+
+Reachability semantics become closure-level: marking is closure-granular, which
+is what OCaml does and what the sweep requires (it frees whole blocks).
+
+### Option C — admit infix objects as graph vertices
+
+Rejected. It would make the vertex set disagree with `objects`, breaking the
+sweep, the allocator free-list walk, and `coerce_to_vertex_list`, and it would
+require edge-level reasoning about partial-block liveness. Much larger change
+for a worse model.
+
+## 5. Phased plan
+
+Each phase ends at a green `make -k -j24 verify`. Phases 1–3 touch no
+extractable code, so `generational/snapshot/` must stay byte-identical
+throughout; phase 4 is the only one that changes C.
+
+### Phase 0 — characterise the boundary, and fix the parent formula
+
+Two deliverables, both semantically inert today.
+
+**0a. Correct `parent_closure_addr_nat`.** Change it to `infix - wosize*8`,
+matching OCaml, the minor heap, and the extracted C (§3.5). While part 3 is
+vacuous this provably changes nothing, which is precisely why it should land
+now, in isolation, rather than during phase 1 when it would be load-bearing and
+entangled. Align the doc comment, and consider unifying with
+`GC.Gen.MinorHeap.infix_parent` so the convention cannot drift again.
+
+**0b. Characterise the part-2 access surface.**
+The change is tractable only because `well_formed_heap` is `opaque_to_smt` and
+part 2 is directly referenced in just 20 places across 9 files. Everything else
+goes through a small lemma surface in `GC.Spec.Fields.fst`:
+
+- reads: `wf_object_size_bound` (`:592`), `wf_object_bound` (`:599`),
+  `wf_objects_non_infix` (`:613`), `wf_infix_wf` (`:627`),
+  `wf_field_target_in_objects` (`:634`), `field_pointer_target_in_objects`
+  (`:644`), `points_to_target_in_objects` (`:660`)
+- writes: `well_formed_heap_part2_from_field_closure` (`:677`),
+  `field_write_preserves_wf` (`:1485`)
+
+Deliverable: confirm this is the complete surface, and add any missing accessor
+so that no client reads part 2 directly. Verify unchanged. This phase is what
+makes phases 1–3 mechanical rather than exploratory.
+
+### Phase 1 — resolution-aware model in `common/spec`
+
+1. `GC.Spec.Object`: keep `resolve_object`; add the lemmas the new clauses need
+   (`resolve_idempotent`, `resolve_in_objects_of_part3`, and preservation of
+   `resolve_object` under `set_object_color` — the last is required because Mark
+   recolours as it goes and currently relies on `color_change_preserves_is_infix`).
+2. `GC.Spec.Fields`: restate parts 2 and 3 as above. Re-prove the accessor
+   surface from phase 0. `wf_field_target_in_objects` gains a `resolve_object`
+   in its conclusion; `field_write_preserves_wf`'s precondition weakens from
+   `Seq.mem v (objects ...)` to `Seq.mem (resolve_object v g) (objects ...)`.
+3. `GC.Spec.HeapGraph`: `get_pointer_fields_aux` emits `resolve_object v g`.
+   Re-prove `get_pointer_fields_aux_mem` (`:279`), `object_edges` (`:156`),
+   `all_edges` (`:161`), and the `pointer_field_is_graph_edge` bridge.
+4. Re-prove `create_graph_wf_from_heap`.
+
+Highest-risk phase. `GC.Spec.Fields.fst` is 1,608 lines and the write-side
+lemmas (`write_word_field_pointing_self_implies` at `:1338`, already at
+`--z3rlimit 200 --fuel 4 --ifuel 2`) reason by induction over
+`exists_field_pointing_to_unchecked`. Changing that predicate's shape will
+disturb them. Mitigation: keep the raw predicate under its current name for the
+induction, and define the resolved clause on top of it, so the existing
+inductions are reused rather than redone.
+
+### Phase 2 — mark-and-sweep specs
+
+`GC.Spec.Mark` (3,693 lines) already threads `resolve_object` through ~60 sites,
+so most call sites are shaped correctly; what changes is that
+`wf_resolve_identity` is no longer available and the three sites that use it
+(`:2598`, `:3456`, `:3693`) need the resolved-target fact instead. Also
+`GC.Spec.MarkBounded`, `GC.Spec.MarkBoundedCorrectness`.
+
+`GC.Spec.Sweep` should be unaffected: it walks `objects`, which still excludes
+infix objects. The one interaction is `field_write_preserves_wf` at
+`Sweep.fst:138` (free-list threading), whose precondition weakens.
+
+### Phase 3 — generational layer
+
+Drop `major_minor_fields_no_infix_targets`, then
+`minor_fields_no_infix_targets`, from `collection_heap_shape`, replacing each
+with the resolved-target obligation. Cheney's forwarding is already infix-aware
+(`forward_if_minor_infix`, `synthesize_infix_forwarding`), so this is mostly
+re-proving `GC.Gen.CheneyPreservation*` with the weaker hypothesis. Expect the
+`normal_vertex_ready` hypothesis chain (`is_infix (fwd x) major_final = false`,
+carried but never derived — see §6.9 of `PROOF_COMPLEXITY.md`) to finally need a
+real proof here, since it is currently discharged by assumption.
+
+Optionally retire `find_infix_parents` once resolution is real, or give it a
+meaningful postcondition. Retiring it is a precision win: it currently roots
+every closure with an infix part, garbage or not.
+
+#### Phase 3 status
+
+**Step 3a — done** (commit *"make the combined graph resolution-aware for major
+fields"*).  `GC.Gen.CombinedGraph.classify_major_field` now returns
+`MajorV (resolve_object v major)` whenever the *resolved* value is enumerated,
+instead of dropping the edge when the raw value is interior.  Its guard also
+strengthened from `is_val_addr v` to `is_val_addr v && is_pointer_field v`,
+which is not a narrowing (every enumerated object lies above `zero_addr`, so any
+`v` that passed the old test already satisfied `is_pointer_field`) and which buys
+callers `points_to` for the raw target even when that target is interior.
+`GC.Gen.ReachabilityBridge.major_edge_points_to` was restated to expose the raw
+field value together with `dst == resolve_object raw major`, and
+`no_infix_field_targets` was dropped from all three `ReachabilityBridge` lemmas
+and from `combined_reachable_major_edge_forwarded`.  This removes the *graph*
+obstruction: the combined graph no longer under-approximates the object graph in
+the presence of interior pointers.
+
+**Step 3b — done** (commit *"narrow the infix restriction to free-list cells"*).
+`no_infix_field_targets major` is no longer a conjunct of
+`GC.Gen.HeapInvariant.major_heap_shape`.  In its place the invariant carries the
+strictly weaker
+
+```fstar
+let blue_fields_non_infix (g: heap) : prop =
+  forall (src dst: obj_addr).
+    Seq.mem src (objects zero_addr g) /\ is_blue src g /\
+    (exists j. j < wosize_of_object src g /\ field j of src is_pointer_to dst) ==>
+    ~(is_infix dst g)
+```
+
+i.e. only **blue (free-list) cells** are forbidden from holding interior
+pointers.  Live white/gray/black objects — the ones a mutator actually writes —
+may point strictly inside other objects.  `infix_closures.ml`'s heaps are
+therefore inside `major_heap_shape` and the composed `gen_gc` theorem covers
+them.
+
+Why the narrowed clause suffices.  The single load-bearing use of the old
+all-objects clause was
+`GC.Gen.PromoteUpdate.BlueAlloc.wfh_part2_implies_blue_fields_closed`, which
+derives the **raw** `blue_fields_closed` (`GC.Gen.Promote.fsti:584`) from the
+resolved `well_formed_heap_part2`.  That step only ever quantifies over blue
+sources, so `blue_fields_non_infix` is exactly what it needs.  Crucially
+`blue_fields_closed` itself stays **raw**, which sidesteps the case-2 obstruction
+recorded below: in `promote_object_preserves_bfc_close` one gets
+`v ∈ objects new_major` directly and part 4 gives `resolve_object v g' == v`, so
+no header framing across `copy_fields` is required.
+
+Re-establishing the narrowed clause after a collection is free: the Cheney
+machinery already proves *raw* part 2 for blue objects, and
+`blue_fields_closed_implies_blue_fields_non_infix` converts.
+
+**How the clause is established (step 3c).**  This deserves its own note,
+because the answer is not "for free" and the invariant would be *false* if the
+collector merely threaded dead blocks onto the free list.  A dying object may
+hold interior pointers, and sweep alone (`GC.Spec.Sweep.sweep_object`) rewrites
+only its link word -- the rest of the corpse, interior pointers included, stays
+exactly as the mutator left it.
+
+What makes the clause true is the **coalescing pass**, which zeroes every field
+of a merged free block above the link word:
+
+```fstar
+let flush_blue g first_blue run_words fp = ...
+  let g1 = write_word g hd (makeHeader wz_u64 Blue 0UL) in
+  let g2 = HeapGraph.set_field g1 fb 1UL fp in          // free-list link
+  let g3 = Alloc.zero_fields g2 (fb + mword) (wz - 1) in // <-- everything else
+```
+
+extracted as `flush_blue_impl` / `zero_fields_loop` in
+`generational/snapshot/GC_Gen_Impl.c`.  A blue cell therefore has exactly one
+pointer-shaped field -- its free-list link, an object address, never an interior
+one.
+
+This is now proved and threaded to the top level:
+
+* `GC.Spec.Coalesce.coalesce_blue_fields_non_infix` -- `post_sweep_strong g ==>
+  blue_fields_non_infix (fst (coalesce g))`, built from the pre-existing
+  (private) `coalesce_blue_field_closure`, which is the raw closure fact the
+  zeroing buys.
+* `GC.Spec.Correctness.gc_blue_fields_non_infix_gen` -- the same statement at
+  the `mark_post` level.  Deliberately kept *out* of `gc_postcondition`, because
+  `gc_postcondition` is also claimed of the post-sweep, pre-coalesce heap, which
+  does **not** satisfy the clause.
+* `GC.Impl.collect_with_roots` / `GC.Impl.collect` postconditions.
+* `GC.Gen.Impl.gen_gc`'s postcondition, so `gen_gc` returns a heap satisfying the
+  clause on both paths -- the major-GC path via the above, and the OOM path
+  (where the major phase is skipped) via
+  `GC.Gen.MajorPrecondition.major_heap_shape_gc_postcondition`.
+
+The invariant is therefore closed across collections: what `major_heap_shape`
+requires on entry, `gen_gc` re-establishes on exit.  That claim was originally
+about `blue_fields_non_infix` alone; it now holds of the *whole* shape
+invariant.  `gen_gc`'s postcondition states
+`GC.Gen.HeapInvariant.collection_heap_shape` of the state it hands back --
+verbatim the predicate its precondition demands of the state it is handed --
+proved by `GC.Gen.PostCollectionShape.major_gc_restores_major_heap_shape` (all fifteen
+conjuncts of `major_heap_shape` for the collector's output) composed with
+`collection_heap_shape_after_minor_reset` (the nursery is zeroed, so the
+minor-side and cross-generation conjuncts are vacuous).  See
+`PROOF_COMPLEXITY.md` §6.11 and `DESIGN_AND_IMPL.md`, "The invariant is
+inductive".
+
+Everything else in the Cheney/allocator layer was restated in resolved form:
+
+* `GC.Gen.CheneyPreservation.Frame` (new home for the header-framing helpers
+  `cheney_promote_frame_target_header`, `update_major_pointers_frame_target_header`,
+  relocated out of `MinorCollectForwarding.Edges` so they sit upstream of
+  `CheneyPreservation`).
+* `GC.Gen.CheneyPreservation.NoBlue` — both `no_pointer_to_blue` preservation
+  lemmas.  `update_major_pointers_preserves_no_pointer_to_blue` gained a
+  *proof-function parameter* `target_shape` supplying, per field, the fwd-target
+  membership together with the resolved/`infix_addr_wf` shape; this breaks the
+  module-layering cycle with `field_old_pointer_targets_in_objects` without
+  moving code.
+* `GC.Gen.CheneyPreservation.field_old_pointer_targets_in_objects` and
+  `update_major_pointers_preserves_wfh_part2_from_field_targets` (the latter now
+  also concludes part 3 and `blue_fields_non_infix`).
+* `GC.Gen.MinorCollectForwarding.{Helpers,Edges,Reflection}` and
+  `GC.Gen.MinorCollectForwarding` itself — the heap-graph ↔ concrete-field
+  bridge now relates a raw pointer field to the edge into
+  `resolve_field g raw`, and the two major-source reflection lemmas produce
+  `CG.MajorV (resolve_object raw major)`.
+* `GC.Gen.NoBlueUtil.field_pointer_target_in_objects_nat_raw` and
+  `field_pointer_no_blue_raw` had no callers left and were deleted.
+
+**Historical note — why the earlier attempt stalled.**  Restating
+`blue_fields_closed` in *resolved* form (rather than narrowing the clause that
+feeds it) breaks `promote_object_preserves_bfc_close`: it must transport
+`Seq.mem (resolve_object v new_major) (objects new_major)` to
+`Seq.mem (resolve_object v g') (objects g')`, where `g'` is `new_major` after
+`copy_fields`, `zero_promote_padding` and `set_promoted_tag` on the freshly
+carved block `dst_obj`.  The case `resolve_object v new_major == dst_obj` with
+`v` strictly interior to `dst_obj` is not dischargeable: `dst_obj`'s fields still
+hold stale garbage in `new_major`, so a different blue object could point into
+its middle at a word that happens to look like an infix header, and `copy_fields`
+then changes the resolution of `v`.  Keeping `blue_fields_closed` raw makes the
+whole case disappear.
+
+### Phase 4 — implementation and extraction
+
+Change `check_and_darken_bounded` (`GC.Impl.MarkBounded`) to resolve before
+darkening:
+
+```c
+uint64_t hdr = read_word(heap, v - 8);
+if ((hdr & 0xFF) == 249ULL)          /* infix_tag */
+  v = v - (hdr >> 10U) * 8ULL;       /* parent closure; cf. §3.5 */
+darken_if_white_bounded(heap, st, v - 8);
+```
+
+This is the only phase that changes extracted C, and it is mandatory — see
+§3.3. Re-verify the Pulse proof, re-extract, and **deliberately update**
+`generational/snapshot/`, reviewing the C diff. Then re-run
+`generational/ocaml-integration/tests`.
+
+### Phase 5 — audit  *(done)*
+
+Rather than extending the three-object fixture, the audit is a second,
+independent SPOT scenario: `GC.SPOT.InfixMajor`, `GC.SPOT.InfixPre`,
+`GC.SPOT.InfixPost` and `GC.SPOT.InfixCall`.
+
+`GC.SPOT.InfixMajor` builds a ten-word major heap in which a one-field object
+`Q` points into the body of a five-word closure `P`, at an infix header that
+`objects` never enumerates. It proves, of that one heap, both that it *refutes*
+`no_infix_field_targets` — so it could not have been handed to the collector
+before this work — and that it *satisfies* every conjunct of the current
+`GC.Gen.HeapInvariant.major_heap_shape`.
+
+`GC.SPOT.InfixCall.call_gen_gc_infix` then calls the real `gen_gc` on it over
+an empty nursery and proves the collection succeeds, that
+`collection_heap_shape` is restored, and that `Q` survives. See
+`spot/SPOT_STATUS.md` for the full picture and the word-by-word layout.
+
+## 6. Risks
+
+| Risk | Assessment |
+| --- | --- |
+| Phase 1 destabilises `GC.Spec.Fields.fst` write lemmas | Highest risk. Mitigated by layering the resolved clause over the existing raw predicate. |
+| Proof-time regressions from an extra `resolve_object` unfolding on every field access | Real. `resolve_object` is a two-branch `GTot`; keep it opaque with explicit intro/elim lemmas rather than letting Z3 unfold it under a quantifier. |
+| Phase 3 uncovers that `is_infix (fwd x) major_final = false` is not actually provable | Possible. It is assumed everywhere today. If it fails, Cheney's forwarding needs a genuine invariant, which would be a scope increase. |
+| Extracted C changes | Certain, and intended (phase 4). Everything before phase 4 must leave the snapshot byte-identical, which is a useful checkpoint. |
+| `parent_closure_addr_nat` trusts a heap word | Addressed by repointing part 3 at field targets — but only if phases 1.2 land together. |
+| The major/minor parent-formula disagreement (§3.5) is discovered late | Eliminated by making it phase 0a, where it is still dead code. If left until phase 1 it would present as an inexplicable off-by-one in the middle of the hardest re-proof. |
+
+## 7. Sequencing
+
+Phases are strictly ordered; each is independently verifiable and committable.
+Phase 0 is cheap and de-risks the rest. Phase 1 is the bulk of the work. If
+phase 3 stalls on the `normal_vertex_ready` issue, phases 0–2 still stand on
+their own: they would make the *major* heap model infix-correct while the
+generational layer keeps its current preconditions.
+
+## 8. Recommendation
+
+Do phase 0 first and report. Both halves are small and semantically inert
+today: 0a corrects a wrong formula while it is still unreachable, and 0b
+converts the central open question — *is the part-2 access surface really only
+nine lemmas?* — from an estimate into a fact. The size of phases 1–2 depends
+entirely on that answer.
+
+Note that §3.3 and §3.5 are independently worth acting on even if the rest of
+this plan is declined: the first says the current precondition is the only thing
+standing between the collector and a dangling-pointer bug, and the second says a
+core address computation is wrong. Both are cheap to record and cheap to fix.

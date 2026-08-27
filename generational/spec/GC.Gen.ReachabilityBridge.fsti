@@ -35,6 +35,13 @@ let minor_no_pointer_to_blue (minor: minor_state) (major: heap) : prop =
      is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) ==>
      ~(is_blue (v <: obj_addr) major))
 
+/// Two distinct `mword`-aligned addresses differ by at least one word.  Used to
+/// turn `addr > zero_addr` (which enumeration gives) into the `is_pointer_field`
+/// lower bound `addr >= zero_addr + mword`.
+val aligned_gt_ge_plus_mword (x z: nat)
+  : Lemma (requires x > z /\ x % U64.v mword == 0 /\ z % U64.v mword == 0)
+          (ensures x >= z + U64.v mword)
+
 /// The central collection heap shape already contains the stronger
 /// `GenInv.minor_major_fields_no_blue` condition; expose this bridge predicate
 /// as a derived fact so clients do not need to carry it as an extra assumption.
@@ -52,6 +59,14 @@ let roots_valid_nonblue (roots: seq U64.t) (major: heap) : prop =
 
 /// Convert a `MajorV -> MajorV` combined-graph edge witness into the concrete
 /// `points_to` relation used by `Mark.no_pointer_to_blue`.
+///
+/// The field value is exposed *raw*: `points_to` holds of it, and `dst` is its
+/// resolution.  The two coincide unless the field holds an interior (infix)
+/// pointer, in which case `dst` is the enclosing closure --- which is exactly
+/// the vertex the combined graph carries.  Stating it this way lets callers
+/// feed the raw target to `Mark.no_pointer_to_blue`, whose conclusion is
+/// already about the resolved target, and so obtain `~(is_blue dst major)`
+/// without any no-infix side condition.
 val major_edge_points_to
   (minor: minor_state) (major: heap) (src: obj_addr) (dst: U64.t) (i: nat)
   : Lemma
@@ -63,7 +78,11 @@ val major_edge_points_to
       (U64.v src + i * 8) % 8 == 0 /\
       classify_major_field minor major
         (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (MajorV dst))
-    (ensures is_val_addr dst /\ points_to major src dst)
+    (ensures (
+      let raw = read_word major (U64.uint_to_t (U64.v src + i * 8)) in
+      is_val_addr dst /\ is_val_addr raw /\ is_pointer_field raw /\
+      points_to major src (raw <: obj_addr) /\
+      dst == resolve_object (raw <: obj_addr) major))
 
 /// Major-heap objects live above the nursery range, so pointer-update logic
 /// cannot mistake an existing major object address for a minor pointer.

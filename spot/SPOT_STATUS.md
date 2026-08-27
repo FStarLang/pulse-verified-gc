@@ -50,6 +50,35 @@ order. Each active SPOT interface and implementation is checked with
 `--z3rlimit 10 --retry 3`, using the same include paths as the
 generational development and treating upstream `GC.*` modules as already cached.
 
+## Where to Start
+
+The top-level SPOT is **`GC.SPOT.ConcreteCallFull.call_concrete_gen_gc_spot`**.
+It takes nothing but the generational heap holding the A/B/C fixture, allocates
+the roots array, forwarding array, Cheney queue, remembered-slot table and a
+two-slot gray stack itself, calls the real `gen_gc`, frees everything, and
+returns the concrete conclusions: `C` survives, `A` has a promoted image `A'`
+that survives, `C.field1` still points to `A'`, and `B` was never promoted.
+
+`GC.SPOT.ConcreteCallMinor.call_concrete_minor_collect_full_spot` is the same
+thing one phase earlier, stopping after `minor_collect_full`.
+
+Reading order, each layer using only the ones above it:
+
+| Layer | Modules |
+| --- | --- |
+| fixture | `Layout`, `ConcreteMinor` (A, B), `ConcreteMajor` (C, free block) |
+| contract packaging | `Preconditions`, `Postconditions` |
+| scenario | `ThreeObjects` (roots `[C; A]`, slot table `[C.field1]`) |
+| pure obligations | `ConcreteForwarding`, `ConcreteScenarios`, `ConcreteFull` |
+| resource setup | `ConcreteSetup` |
+| generic wrappers | `CallMinor`, `CallFull` |
+| concrete wrappers | `ConcreteCallMinor`, **`ConcreteCallFull`** |
+
+Both concrete wrappers also come in a `_borrowed` variant that takes the
+arrays, queue, slot table and gray stack as parameters instead of allocating
+them, for readers who want to see the resource obligations rather than the
+allocation.
+
 ## Active Module Structure
 
 - `GC.SPOT.Layout`: names the intended three-object layout. `A` and `B` are
@@ -79,15 +108,18 @@ generational development and treating upstream `GC.*` modules as already cached.
 - `GC.SPOT.ConcreteFull`: connects the post-minor result to the final `gen_gc`
   postcondition. It proves C survives, A' survives, and C.field1 still points
   to A' in the final major heap.
+- `GC.SPOT.ConcreteSetup`: the sequence lemmas that identify freshly allocated
+  arrays with the concrete root, forwarding and slot sequences, so the
+  concrete wrappers can allocate their own resources.
 - `GC.SPOT.CallMinor`: a Pulse wrapper that calls the real
-  `minor_collect_full`.
+  `minor_collect_full`, taking the packaged precondition and returning the
+  packaged postcondition.
 - `GC.SPOT.ConcreteCallMinor`: the concrete Pulse minor-collection SPOT. From
   the concrete A/B/C heap resources, root array, forwarding array, Cheney queue,
   and remembered slot table, it derives the real `minor_collect_full`
-  precondition, calls `minor_collect_full`, packages its postcondition, and
-  immediately proves the useful concrete consequences: A has a promoted image,
-  C.field1 contains that image in the post-minor heap, and B has no promoted
-  image.
+  precondition, calls it through `GC.SPOT.CallMinor`, and immediately proves
+  the useful concrete consequences: A has a promoted image, C.field1 contains
+  that image in the post-minor heap, and B has no promoted image.
 - `GC.SPOT.CallFull`: a Pulse wrapper that calls the real `gen_gc`.
 - `GC.SPOT.ConcreteCallFull`: the concrete Pulse full-GC SPOT. It derives the
   real `gen_gc` precondition from the concrete heap/resources plus the supplied
@@ -162,3 +194,59 @@ The remaining visible preconditions of the concrete call connectors are linear
 Pulse resources (heap, roots, forwarding array, Cheney queue, remembered slots,
 and an initially empty gray stack). The former stack-shape proof obligation is
 now constructed inside the concrete full-GC wrapper.
+## Second scenario: an interior (infix) pointer in the major heap
+
+`GC.SPOT.InfixMajor`, `GC.SPOT.InfixPre`, `GC.SPOT.InfixPost` and
+`GC.SPOT.InfixCall` audit the *other* end of the specification: the relaxation
+of the major-heap invariant that admits OCaml interior pointers.
+
+The heap is ten words at `zero_addr`:
+
+```
+z + 0   Q's header          wosize 1, tag 0,           White
+z + 8   Q                   field 0 = z + 48  <-- the interior pointer
+z + 16  P's header          wosize 5, tag closure_tag, White
+z + 24  P                   field 0 = 0       (code pointer)
+z + 32  P's field 1 = 0     (closinfo)
+z + 40  H's header          wosize 3, tag infix_tag,   White   (= P field 2)
+z + 48  H                   field 0 = 0                        (= P field 3)
+z + 56  P's field 4 = 0
+z + 64  F's header          wosize FW, tag 0,          Blue
+z + 72  F                   link word = 0     (free list terminates here)
+```
+
+`H` is never enumerated by `objects` — its header sits inside `P`'s body, so
+the object walk steps straight over it — yet the live object `Q` points
+directly at it. That is exactly the shape a mutually recursive OCaml closure
+block produces, and exactly what the retired `no_infix_field_targets` conjunct
+of `major_heap_shape` forbade.
+
+The audit has two halves, and the point is that both hold of *the same heap*:
+
+- `spot_infix_violates_no_infix_field_targets` — the heap refutes
+  `no_infix_field_targets`, so it was inadmissible under the old invariant;
+- `spot_infix_major_heap_shape` — the heap nevertheless satisfies all fifteen
+  conjuncts of the current `GC.Gen.HeapInvariant.major_heap_shape`, including
+  `well_formed_heap` (via the *resolved*-target formulation of part 2/3, with
+  `resolve_object H == P` proved from `infix_addr_conds`), `no_pointer_to_blue`
+  (the interior pointer resolves to the White `P`) and `blue_fields_non_infix`.
+
+`GC.SPOT.InfixPre` discharges the rest of `gen_gc`'s precondition. The nursery
+is `GC.Gen.MinorHeap.minor_reset`, so the minor side is vacuous and the
+remembered table is empty — `spot_infix_ref_table_covers` proves that no field
+of this heap holds a minor pointer, the interior pointer included. It also
+proves `~(cheney_oom ...)`: there is nothing to promote.
+
+`GC.SPOT.InfixCall` then calls the real `gen_gc`. Its postcondition records
+that
+
+- the collection succeeds (`snd res == true`), from `gen_gc`'s
+  `not ok ==> cheney_oom` and the no-OOM proof above;
+- `GC.Gen.HeapInvariant.collection_heap_shape` — literally the predicate the
+  precondition demands — holds again of the returned state;
+- the nursery handed back is the reset one; and
+- `Q` is still an enumerated object of the post-collection major heap.
+
+Together these say that the relaxation is real: a heap with a genuine OCaml
+interior pointer is accepted by `gen_gc`, collected, and handed back satisfying
+the same invariant, with the root still live.

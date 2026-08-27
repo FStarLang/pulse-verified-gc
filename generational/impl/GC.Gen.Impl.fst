@@ -44,6 +44,7 @@ module SweepInv = GC.Spec.SweepInv
 module CheneyCorr = GC.Gen.CheneyCorrectness
 module TwoPass = GC.Gen.TwoPassEquiv
 module GenInv = GC.Gen.HeapInvariant
+module PCS = GC.Gen.PostCollectionShape
 module FreeListShape = GC.Gen.FreeListShape
 module MinorFwd = GC.Gen.MinorCollectForwarding
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
@@ -68,6 +69,18 @@ let gen_gc_major_precondition_elim minor major fp roots st cap
     MBP.darken_roots_match_stack result.mc_major st result.mc_roots result.mc_fp cap;
     GC.Gen.CheneyPreservation.cheney_collect_preserves_wfh_from_shape minor major fp roots;
     MBP.darken_preserves_create_graph result.mc_major st result.mc_roots result.mc_fp cap
+#pop-options
+
+/// The heap-shape projection is a consequence of the invariant, not an extra
+/// promise: `major_heap_shape_gc_postcondition` derives "every object is white
+/// or blue" from `no_black_objects` + `no_gray_objects` by colour exhaustiveness,
+/// and hands back `blue_fields_non_infix` unchanged, it being one of
+/// `major_heap_shape`'s own conjuncts.
+#push-options "--fuel 0 --ifuel 0"
+let gen_gc_heap_shape_post_intro minor_data minor_bump final_major final_fp
+  = GenInv.collection_heap_shape_elim
+      ({ data = minor_data; bump = minor_bump } <: minor_state) final_major final_fp;
+    GMP.major_heap_shape_gc_postcondition final_major final_fp
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -940,8 +953,14 @@ fn minor_collect_full (gh: gen_heap_t)
       fp2 == prom.fp_final /\
       // Roots rewritten via forwarding map
       rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
-      // Minor heap fully reset
+      // Minor heap fully reset: the nursery bytes are cleared as well as the
+      // bump pointer, so the state handed back is literally
+      // `GC.Gen.MinorHeap.minor_reset`.  That is what makes every minor-side
+      // and cross-generation conjunct of `collection_heap_shape` vacuous for
+      // the collector's output.
       U64.v b2 == 0 /\
+      ({ data = d2; bump = b2 } <: minor_state) ==
+        minor_reset ({ data = 'd; bump = 'b } <: minor_state) /\
       // Forwarding array represents the spec-level forwarding map
       represents_fwd farr2 prom.fwd_map /\
       // Forwarding entries are valid
@@ -1047,7 +1066,7 @@ fn minor_collect_full (gh: gen_heap_t)
 /// ---------------------------------------------------------------------------
 
 /// gen_gc composes the verified full minor collection with mark-and-sweep.
-#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 fn gen_gc (gh: gen_heap_t)
            (roots: array U64.t) (nroots: SZ.t)
            (fwd_arr: array U64.t)
@@ -1083,13 +1102,30 @@ fn gen_gc (gh: gen_heap_t)
     is_gray_stack st st2 **
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
-      let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
+      let minor_st_out : minor_state = { data = d2; bump = b2 } in
       let ok = snd res in
       // Failure is reported only for a concrete out-of-memory event: an object
       // the major free list had no room for, at a point of this collection.
       (not ok ==> CheneyBFS.cheney_oom minor_st 's 'fp 'rs) /\
       gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok 'st (stack_capacity st) /\
-      gen_gc_heap_shape_post d2 b2 s2 /\
+      // The nursery handed back is the zeroed one, `GC.Gen.MinorHeap.minor_reset`.
+      // This is the only heap-shape fact in the postcondition that does *not*
+      // follow from the invariant below; everything else about the returned
+      // state, including `gen_gc_heap_shape_post`, is derived from it (see
+      // `gen_gc_heap_shape_post_intro`).
+      minor_st_out == minor_reset minor_st /\
+      // **The collector restores its own precondition**: literally the same
+      // predicate `gen_gc` demands of the state it is handed, now asserted of
+      // the state it hands back.  A runtime driving an unbounded sequence of
+      // collections therefore establishes the invariant once, at start-up, and
+      // never again.
+      //
+      // The minor half is vacuous -- the nursery returned is
+      // `GC.Gen.MinorHeap.minor_reset`, i.e. zeroed -- so the content of the
+      // claim is `GC.Gen.HeapInvariant.major_heap_shape` of the major heap and
+      // free-list head, all fifteen conjuncts of it, supplied by
+      // `GC.Gen.PostCollectionShape.major_gc_restores_major_heap_shape`.
+      GenInv.collection_heap_shape minor_st_out s2 (fst res) /\
       gen_gc_reachable_subgraph_isomorphism_post
         minor_st 's 'fp 'rs ok s2 rs2 'st (stack_capacity st) /\
       gen_gc_unreachable_final_blue_post
@@ -1134,6 +1170,10 @@ fn gen_gc (gh: gen_heap_t)
     (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map;
   assert (pure (SZ.v nroots == Seq.length rs_mid));
   assert (pure (U64.v b_mid == 0));
+  // The nursery handed back by the minor collection is the zeroed one, which is
+  // what makes every minor-side conjunct of `collection_heap_shape` vacuous.
+  assert (pure (({ data = d_mid; bump = b_mid } <: minor_state) ==
+    minor_reset ({ data = 'd; bump = 'b } <: minor_state)));
   GenInv.collection_heap_shape_elim ({ data = d_mid; bump = b_mid } <: minor_state)
     ms_updated fp_val;
   assert (pure (GenInv.major_heap_shape ms_updated fp_val));
@@ -1199,6 +1239,19 @@ fn gen_gc (gh: gen_heap_t)
     MRT.end_to_end_isomorphism_intro
       ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs
       ms_updated rs_mid prepared_major prepared_st s_final;
+
+    // The collector re-establishes the generational shape invariant on the
+    // heap it returns: `collect_with_roots` exposes the marked heap that
+    // produced its result, and `major_gc_restores_major_heap_shape` proves all
+    // fifteen conjuncts of `major_heap_shape` for `coalesce (sweep ...)`.  The
+    // nursery `gen_gc` hands back is `minor_reset`, which makes the minor and
+    // cross-generation conjuncts vacuous.
+    PCS.major_gc_restores_major_heap_shape_of_source
+      prepared_major s_final prepared_st fp_val final_fp;
+    GenInv.collection_heap_shape_after_minor_reset
+      ({data = 'd; bump = 'b} <: minor_state) s_final final_fp;
+    assert (pure (GenInv.collection_heap_shape
+      ({ data = d_mid; bump = b_mid } <: minor_state) s_final final_fp));
 
     // Phase 6: Update free-list pointer and re-fold gen heap
     R.op_Colon_Equals gh.fp_ref final_fp;

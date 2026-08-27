@@ -42,9 +42,12 @@ val field_pointer_no_blue_from_no_pointer_to_blue
               is_pointer_to
                 (read_word g (U64.uint_to_t (U64.v src + j * U64.v mword)))
                 dst)
-    (ensures ~(is_blue dst g))
+    (ensures ~(is_blue (resolve_object dst g) g))
 
-/// A concrete pointer field in a well-formed heap targets an object.
+/// A concrete pointer field in a well-formed heap targets an object --- after
+/// resolution, since the field may hold an interior pointer to an infix object
+/// embedded in a closure.  The infix well-formedness of the raw target is
+/// exposed too, so callers can reach the enclosing closure.
 val field_pointer_target_in_objects_nat
   (g: heap) (src dst: obj_addr) (j: nat)
   : Lemma
@@ -56,4 +59,6 @@ val field_pointer_target_in_objects_nat
               is_pointer_to
                 (read_word g (U64.uint_to_t (U64.v src + j * U64.v mword)))
                 dst)
-    (ensures Seq.mem dst (objects zero_addr g))
+    (ensures Seq.mem (resolve_object dst g) (objects zero_addr g) /\
+             infix_addr_wf g (objects zero_addr g) dst)
+

@@ -509,7 +509,7 @@ let cheney_promote_nonblue_origin
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in

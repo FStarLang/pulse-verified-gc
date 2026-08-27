@@ -458,7 +458,7 @@ let cheney_promote_fwd_target_fields_match
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t) (j: nat)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
@@ -887,7 +887,7 @@ let cheney_promote_fwd_target_not_no_scan_of_minor_tag_lt
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
@@ -1307,7 +1307,7 @@ let cheney_promote_fwd_target_extra_field_not_pointer
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t) (j: nat)
   =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in

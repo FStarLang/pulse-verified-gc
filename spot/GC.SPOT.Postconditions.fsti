@@ -30,6 +30,24 @@ val minor_collect_full_post_intro
                    minor major fp roots post_major)))
       (ensures minor_collect_full_post minor major fp roots ok post_major post_roots)
 
+/// Recover the concrete identity of the post-minor heap and roots from the
+/// packaged postcondition.  Callers that go through `GC.SPOT.CallMinor` only
+/// see the package, so this is what lets them keep reasoning about
+/// `cheney_collect_spec` afterwards.
+val minor_collect_full_post_elim
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    ok:bool -> post_major:heap -> post_roots:seq U64.t ->
+    Lemma
+      (requires minor_collect_full_post minor major fp roots ok post_major post_roots)
+      (ensures (
+        let res = GC.Gen.Cheney.cheney_collect_spec minor major fp roots in
+        post_major == res.mc_major /\
+        post_roots == res.mc_roots /\
+        (ok ==> GC.Gen.MinorCollectForwarding.normal_result_reachable_subgraph_isomorphism_prop
+                   minor major fp roots post_major post_roots /\
+                 GC.Gen.MinorCollectForwarding.normal_result_non_pointer_fields_preserved_prop
+                   minor major fp roots post_major)))
+
 val promoted_image_from_forwarding
   : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
     old:U64.t -> img:U64.t ->

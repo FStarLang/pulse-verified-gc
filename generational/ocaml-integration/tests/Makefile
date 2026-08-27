@@ -30,7 +30,14 @@ bench_stats.cmo: bench_stats.ml
 
 BENCHMARKS = binarytrees fasta quicksort fannkuchredux count_change nbodies spectralnorm mandelbrot
 
-BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS))
+# Correctness tests (not benchmarks): run under both runtimes and compared.
+CORRECTNESS_TESTS = infix_closures
+
+# infix_closures needs a small major heap so that real major collections
+# (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
+INFIX_MAJOR_WORDS ?= 300000
+
+BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS))
 BENCH_TARGETS = $(addsuffix .bench, $(BENCHMARKS))
 STATS_TARGETS = $(addsuffix .stats, $(BENCHMARKS))
 MINHEAP_TARGETS = $(addsuffix .minheap, $(BENCHMARKS))
@@ -40,7 +47,7 @@ all: $(BYTE_FILES)
 
 # ---- Smoke tests (one run each, verified gen GC) ----
 
-test: $(BYTE_FILES)
+test: correctness $(BYTE_FILES)
 	@echo "=== Smoke tests (verified generational GC) ==="
 	@echo "--- binarytrees ---"
 	MIN_EXPANSION_WORDSIZE=$(BINARYTREES_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) binarytrees.byte 10
@@ -59,6 +66,27 @@ test: $(BYTE_FILES)
 	@echo "--- mandelbrot ---"
 	MIN_EXPANSION_WORDSIZE=$(MANDELBROT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) mandelbrot.byte 100
 	@echo "=== All smoke tests passed ==="
+
+# ---- Correctness tests ----
+#
+# infix_closures.ml exercises interior (infix) pointers: mutually recursive
+# OCaml closures share one heap block, and every function after the first is
+# addressed by a pointer into the middle of that block.  The test confirms the
+# heap really contains such pointers, that the parent-address formula in
+# GC.Spec.Object.infix_addr_conds holds numerically, that a block reachable
+# only through an interior pointer survives mark & sweep, and that the
+# post-collection heap has exactly the shape it had before.
+#
+# It is run under the verified runtime and, as a differential check, under
+# stock OCaml, where it must produce the same verdict.
+
+correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
+	@echo "=== Correctness tests ==="
+	@echo "--- infix_closures (verified generational GC) ---"
+	MIN_EXPANSION_WORDSIZE=$(INFIX_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) infix_closures.byte
+	@echo "--- infix_closures (stock OCaml, differential check) ---"
+	$(UNCHANGED_OCAMLRUN) infix_closures.byte
+	@echo "=== Correctness tests passed ==="
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----
 
@@ -214,7 +242,7 @@ bench-min-heaps: $(MINHEAP_TARGETS)
 	head -n 1 results/binarytrees.minheap.csv > results/min_heaps.csv
 	tail -n +2 -q $(MINHEAP_CSVS) >> results/min_heaps.csv
 
-.PHONY: all test benchmark bench-all bench-stats bench-min-heaps clean
+.PHONY: all test correctness benchmark bench-all bench-stats bench-min-heaps clean
 
 clean:
 	rm -f *.byte *.cmi *.cmo *.o

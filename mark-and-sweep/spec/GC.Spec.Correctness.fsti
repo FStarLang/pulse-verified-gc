@@ -492,9 +492,45 @@ val major_gc_unreachable_final_blue_gen :
     (ensures major_gc_unreachable_final_blue
       h_init (fst (Coalesce.coalesce (fst (sweep h_mark fp)))) roots)
 
+/// The mark output that produced a given collector result.
+///
+/// `GC.Impl.collect_with_roots` runs mark, then sweep, then coalesce, and the
+/// intermediate marked heap never escapes.  Downstream clients (notably
+/// `GC.Gen.PostCollectionShape`, which re-establishes the generational shape
+/// invariant on the collector's output) need to know that the returned heap and
+/// free pointer really are `coalesce (sweep h_mark fp)` for *some* heap `h_mark`
+/// satisfying `mark_post`.  This predicate packages that existential so it can
+/// be carried across a Pulse postcondition.
+let gc_coalesce_source (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) : prop =
+  exists (h_mark: heap).
+    mark_post h_init h_mark roots fp /\
+    (s2, final_fp) == Coalesce.coalesce (fst (sweep h_mark fp))
+
+val gc_coalesce_source_intro :
+  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma
+    (requires mark_post h_init h_mark roots fp)
+    (ensures (let r = Coalesce.coalesce (fst (sweep h_mark fp)) in
+              gc_coalesce_source h_init (fst r) roots fp (snd r)))
+
 /// Generalized gc_postcondition
 val gc_postcondition_gen :
   (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
   Lemma
     (requires mark_post h_init h_mark roots fp)
     (ensures gc_postcondition (fst (Coalesce.coalesce (fst (sweep h_mark fp)))))
+
+/// Free-list cells hold no interior pointers after a full collection.
+///
+/// Kept separate from `gc_postcondition` on purpose: the *post-sweep* heap does
+/// **not** satisfy this.  A dying object may hold interior pointers and
+/// `GC.Spec.Sweep.sweep_object` rewrites only its link word, so the corpse still
+/// points into the middle of other blocks.  It is the coalescing pass that makes
+/// the property true, by zeroing every field of a merged free block above the
+/// link (`GC.Spec.Coalesce.flush_blue`).  This is the establishment half of the
+/// `blue_fields_non_infix` conjunct of `GC.Gen.HeapInvariant.major_heap_shape`.
+val gc_blue_fields_non_infix_gen :
+  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma
+    (requires mark_post h_init h_mark roots fp)
+    (ensures blue_fields_non_infix (fst (Coalesce.coalesce (fst (sweep h_mark fp)))))
