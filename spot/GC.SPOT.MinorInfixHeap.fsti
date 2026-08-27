@@ -5,9 +5,15 @@
 ///
 /// `GC.SPOT.MinorInfix` proves the major-to-nursery interior-pointer theorems,
 /// but it does so over an *abstract* nursery, and its own non-vacuity note
-/// records why: `minor_alloc_spec` refuses `tag = 249`, so no sequence of
-/// allocations can produce an infix header, and the module therefore never
-/// exhibits a witness.
+/// records why: `minor_alloc_spec` writes only a header and leaves the body
+/// zero, so no sequence of allocations can produce a nursery containing an
+/// infix header, and the module therefore never exhibits a witness.  (That is a
+/// limitation of the *spec-level* constructors, not of the collector: nursery
+/// infix headers are supported, constrained by `minor_infix_wf` and interpreted
+/// by `resolve_minor`.  They arrive the way OCaml puts them there --- as body
+/// writes into an already-allocated `Closure_tag` block, `runtime/interp.c:575`
+/// --- and the implementation's `GC.Gen.Impl.MinorHeap.minor_write` does
+/// exactly that.)
 ///
 /// This module is that witness.  The nursery is written out word by word ---
 /// which `GC.Gen.MinorHeap`'s chain-walk defining equations now make possible

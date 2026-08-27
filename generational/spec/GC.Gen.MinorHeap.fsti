@@ -146,6 +146,15 @@ let minor_can_alloc (ms: minor_state) (wosize: nat) : bool =
 /// If no room: returns obj_addr = 0, state unchanged.
 ///
 /// The header is written as: wosize in bits 10-63, white color (0), tag.
+///
+/// `tag <> 249` rules out allocating a block whose own header is `Infix_tag`,
+/// which is not a restriction on interior pointers: an infix header is never a
+/// *block* header, it lives inside another block's body.  OCaml agrees --- a
+/// mutually recursive closure group is one `Alloc_small(blksize, Closure_tag)`
+/// followed by plain body stores of `Make_header(i * 3, Infix_tag, ...)`
+/// (`runtime/interp.c:575`), so `Alloc_small` is never called with `Infix_tag`.
+/// Nursery infix headers are supported and constrained by `minor_infix_wf`
+/// below; they arrive through body writes, not through this function.
 val minor_alloc_spec (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                      (tag: nat{tag < 256 /\ tag <> 249})
   : Tot minor_alloc_result
@@ -462,11 +471,22 @@ val minor_objects_count_bound (ms: minor_state)
 /// abstract, and every ordinary client reasons about them only through
 /// `minor_init` and `minor_alloc_spec`.  That is deliberate, but it also puts
 /// every nursery that `minor_alloc_spec` cannot build out of reach --- and
-/// `minor_alloc_spec` refuses `tag = 249`, so it can never lay down an infix
-/// header.  A nursery holding an OCaml interior pointer therefore has to be
-/// written out word by word, and the three lemmas below are what let such a
-/// nursery be checked against `minor_wf`: they are the walk's defining
-/// equations and nothing more.  `spot/GC.SPOT.MinorInfixHeap` is the only user.
+/// `minor_alloc_spec` only ever writes a *header*, leaving the body zero.
+///
+/// In particular it cannot produce a nursery containing an infix header.  That
+/// is not because infix headers are unsupported --- `minor_infix_wf` above
+/// constrains them and `resolve_minor` interprets them --- but because an infix
+/// header is never a block header.  `minor_alloc_spec`'s `tag <> 249` mirrors
+/// OCaml exactly: `CLOSUREREC` (`runtime/interp.c:575`) makes a *single*
+/// `Alloc_small(blksize, Closure_tag)` for a whole mutually recursive group and
+/// then stores `Make_header(i * 3, Infix_tag, ...)` into the block's *body*.
+/// `Alloc_small` is never called with `Infix_tag`.
+///
+/// So a nursery holding an OCaml interior pointer has to be written out word by
+/// word --- as the mutator does, through `GC.Gen.Impl.MinorHeap.minor_write` ---
+/// and the three lemmas below are what let such a nursery be checked against
+/// `minor_wf`: they are the walk's defining equations and nothing more.
+/// `spot/GC.SPOT.MinorInfixHeap` is the only user.
 
 /// The enumeration of the objects laid out between `pos` and `bump`.
 /// `minor_objects ms` is this walk started at 0.

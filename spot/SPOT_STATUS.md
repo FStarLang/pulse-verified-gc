@@ -278,10 +278,20 @@ below.
 ## `GC.SPOT.MinorInfixHeap` / `MinorInfixPre` / `MinorInfixCall` — a concrete major-to-nursery interior pointer
 
 `GC.SPOT.MinorInfix` proves the theorems, but over an abstract nursery, and for
-a while it could not do better: `minor_alloc_spec` refuses `tag = 249`, so no
-sequence of allocations can lay down an infix header, and `GC.Gen.MinorHeap`
-exposed no other way to build a minor state. These three modules close that gap
-with a nursery written out word by word.
+a while it could not do better: `minor_alloc_spec` writes only a header and
+leaves the body zero, so no sequence of allocations can produce a nursery
+containing an infix header, and `GC.Gen.MinorHeap` exposed no other way to build
+a minor state.
+
+That was a limitation of the *spec-level* constructors, not of the collector.
+Nursery infix headers are supported: `minor_infix_wf` constrains them and
+`resolve_minor` interprets them. `minor_alloc_spec`'s `tag <> 249` only rules
+out allocating a block whose own header is `Infix_tag`, which mirrors OCaml
+exactly — `CLOSUREREC` (`runtime/interp.c:575`) makes one
+`Alloc_small(blksize, Closure_tag)` for a whole mutually recursive group and
+then stores the infix headers into the block's *body*, so `Alloc_small` is never
+called with `Infix_tag`. These three modules close the gap by building the
+nursery the way the mutator does, word by word.
 
 `GC.SPOT.MinorInfixHeap` is the nursery. It is laid out exactly as `CLOSUREREC`
 (`runtime/interp.c:575-610`) lays out a two-function mutually recursive group:

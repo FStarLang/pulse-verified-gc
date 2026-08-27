@@ -892,8 +892,19 @@ Three theorems:
 scenario is exactly the deleted restriction's complement, but for a while it did
 not exhibit a concrete witness the way `GC.SPOT.InfixMajor` does for the major
 heap: `GC.Gen.MinorHeap` only ever produced `minor_state`s through `minor_init`
-and `minor_alloc_spec`, `minor_alloc_spec` refuses `tag = 249`, and every
-allocated object body is zero.
+and `minor_alloc_spec`, and `minor_alloc_spec` writes only a header, leaving
+every allocated object body zero.
+
+Note what this was *not*. Nursery infix headers were already supported ---
+`minor_infix_wf` constrains them, `resolve_minor` interprets them.
+`minor_alloc_spec`'s `tag <> 249` rules out allocating a block whose own header
+is `Infix_tag`, which is right, because an infix header is never a block header:
+`CLOSUREREC` (`runtime/interp.c:575`) makes one
+`Alloc_small(blksize, Closure_tag)` for the whole group and then stores
+`Make_header(i * 3, Infix_tag, ...)` into the block's *body*, so `Alloc_small` is
+never called with `Infix_tag`. The gap was that the specification had no way to
+*describe* a nursery built that way, even though
+`GC.Gen.Impl.MinorHeap.minor_write` is exactly that body-write primitive.
 
 The witness now exists, built the other way round. Rather than adding a
 body-write primitive (which would need a new induction over the chain walk to
