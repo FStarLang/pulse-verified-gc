@@ -175,8 +175,10 @@ let spot_infix_roots_valid (r: unit{InfixMajor.spot_infix_room})
         (requires Seq.mem root (spot_infix_roots r))
         (ensures
           ((Promote.is_minor_pointer root ==>
-            Seq.mem root (minor_objects spot_infix_minor) /\
-            minor_wosize spot_infix_minor root > 0) /\
+            Seq.mem (resolve_minor spot_infix_minor root)
+                    (minor_objects spot_infix_minor) /\
+            minor_wosize spot_infix_minor
+                         (resolve_minor spot_infix_minor root) > 0) /\
            (~(Promote.is_minor_pointer root) ==>
             is_val_addr root /\
             Seq.mem (root <: obj_addr) (SpecFields.objects zero_addr g) /\

@@ -82,9 +82,16 @@ let empty_stack_subset (g: heap) (roots: seq U64.t)
 /// Conjunct 10, proved rather than assumed
 /// ---------------------------------------------------------------------------
 
-/// A minor-shaped root.  `roots_valid_for_minor_collection` says it is a live
-/// nursery object, so BFS coverage forwards it, and the forwarding target is an
-/// ordinary non-blue major object.
+/// A minor-shaped root.  `roots_valid_for_minor_collection` says the object it
+/// *names* is a live nursery object, so BFS coverage forwards that object, and
+/// the root itself is forwarded too --- directly when it is an ordinary
+/// pointer, by `fwd_covers_infix_roots` when it is interior.  The rewritten
+/// root therefore names the promoted copy of the named nursery object, which
+/// is an ordinary non-blue major object.
+///
+/// The rewritten root need not *be* that object: `rewrite_root` deliberately
+/// does not resolve, because an interior root has to keep its offset at run
+/// time, so an interior nursery root is rewritten to an interior major pointer.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let post_minor_minor_root_valid
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (r: U64.t)
@@ -102,65 +109,50 @@ let post_minor_minor_root_valid
         (Promote.rewrite_root r prom.fwd_map) /\
       SpecObj.resolve_object
         ((Promote.rewrite_root r prom.fwd_map) <: obj_addr) result.mc_major ==
-        Promote.rewrite_root r prom.fwd_map))
+        prom.fwd_map (resolve_minor minor r)))
   =
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
   GenInv.minor_heap_shape_elim minor;
   let prom = Cheney.cheney_promote minor major fp roots in
   let result = Cheney.cheney_collect_spec minor major fp roots in
-  // The root is a live nursery object, hence reachable, hence forwarded.
-  // `minor_reachable_roots` speaks about the resolution of a root; an
-  // enumerated nursery object is its own resolution.
-  minor_objects_not_infix minor r;
-  resolve_minor_non_infix minor r;
+  let rv = resolve_minor minor r in
+  // The object the root names is a live nursery object, hence reachable, hence
+  // forwarded.
   Reach.minor_reachable_roots minor roots;
   CheneyCorr.cheney_promotes_all_reachable minor major fp roots;
+  assert (prom.fwd_map rv <> 0UL);
+  // The root address itself is forwarded: an ordinary root is its own
+  // resolution, and an interior one is covered by `fwd_covers_infix_roots`,
+  // a conjunct of the `fwd_well_formed` that `cheney_no_oom` asserts.
+  if is_infix_in_minor minor r
+  then assert (CheneyBFS.fwd_covers_infix_roots minor prom.fwd_map roots)
+  else resolve_minor_non_infix minor r;
   assert (prom.fwd_map r <> 0UL);
   let t = prom.fwd_map r in
   assert (Promote.rewrite_root r prom.fwd_map == t);
-  // A member of `minor_objects` is never an infix sub-object, so the
-  // "non-infix source" branch of the forwarding classification applies.
-  minor_objects_not_infix minor r;
-  assert (~(is_infix_in_minor minor r));
-  CheneyFwd.cheney_promote_fwd_noninfix_targets_valid minor major fp roots;
-  assert (Seq.mem (t <: obj_addr) (SpecFields.objects zero_addr prom.major_final));
+  MinorFwd.fwd_image_resolves minor major fp roots r;
+  let p = prom.fwd_map rv in
+  assert (SpecObj.resolve_object (t <: obj_addr) result.mc_major == p);
+  assert (Seq.mem (p <: obj_addr) (SpecFields.objects zero_addr prom.major_final));
   // `well_formed_heap_part4` says no member of the objects list is infix,
   // which is exactly the side condition `fwd_targets_not_blue` guards on.
   Cheney.cheney_promote_preserves_wfh_part4 minor major fp roots;
-  assert (SpecObj.is_infix t prom.major_final = false);
+  assert (SpecObj.is_infix p prom.major_final = false);
   CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
-  assert (SpecObj.is_blue (t <: obj_addr) prom.major_final = false);
+  assert (SpecObj.is_blue (p <: obj_addr) prom.major_final = false);
   // Rewriting the major heap's pointers moves neither objects nor headers.
   Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
   PromUpdAux.update_major_pointers_preserves_objects prom.major_final prom.fwd_map;
-  PromUpd.update_major_pointers_preserves_header prom.major_final prom.fwd_map t;
-  SpecObj.color_of_header_eq t prom.major_final result.mc_major;
-  SpecFields.objects_addresses_gt_start zero_addr result.mc_major t;
-  // `root_valid_for_darkening` speaks about the object the root *names*.  A
-  // promoted non-infix target names itself.
-  SpecObj.resolve_object_locality (t <: obj_addr) prom.major_final result.mc_major;
-  SpecObj.resolve_non_infix (t <: obj_addr) result.mc_major
+  PromUpd.update_major_pointers_preserves_header prom.major_final prom.fwd_map p;
+  SpecObj.color_of_header_eq p prom.major_final result.mc_major;
+  SpecFields.objects_addresses_gt_start zero_addr result.mc_major t
 #pop-options
 
 /// A non-minor root.  `rewrite_root` leaves it alone, so all that is needed is
 /// that a pre-existing non-blue object stays a non-blue object.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-let post_minor_major_root_valid
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (r: U64.t)
-  : Lemma
-    (requires
-      GenInv.collection_heap_shape minor major fp /\
-      MinorFwd.roots_valid_for_minor_collection minor major roots /\
-      Seq.mem r roots /\ ~(Promote.is_minor_pointer r))
-    (ensures (
-      let prom = Cheney.cheney_promote minor major fp roots in
-      let result = Cheney.cheney_collect_spec minor major fp roots in
-      MBP.root_valid_for_darkening result.mc_major
-        (Promote.rewrite_root r prom.fwd_map) /\
-      SpecObj.resolve_object
-        ((Promote.rewrite_root r prom.fwd_map) <: obj_addr) result.mc_major ==
-        Promote.rewrite_root r prom.fwd_map))
+let post_minor_major_root_valid minor major fp roots r
   =
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
@@ -201,10 +193,7 @@ let post_minor_roots_valid_for_darkening minor major fp roots
   let aux (i: nat)
     : Lemma
         (ensures i < Seq.length result.mc_roots ==>
-          MBP.root_valid_for_darkening result.mc_major (Seq.index result.mc_roots i) /\
-          SpecObj.resolve_object
-            ((Seq.index result.mc_roots i) <: obj_addr) result.mc_major ==
-            Seq.index result.mc_roots i)
+          MBP.root_valid_for_darkening result.mc_major (Seq.index result.mc_roots i))
     =
     if i < Seq.length result.mc_roots then begin
       let r = Seq.index roots i in

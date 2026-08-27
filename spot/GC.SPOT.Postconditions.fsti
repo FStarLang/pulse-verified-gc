@@ -25,7 +25,9 @@ val minor_collect_full_post_intro
         post_major == res.mc_major /\
         post_roots == res.mc_roots /\
         (ok ==> GC.Gen.MinorCollectForwarding.normal_result_reachable_subgraph_isomorphism_prop
-                   minor major fp roots post_major post_roots /\
+                   minor major fp roots post_major
+                   (GC.Gen.MinorCollectForwarding.Helpers.resolve_roots
+                      post_major post_roots) /\
                  GC.Gen.MinorCollectForwarding.normal_result_non_pointer_fields_preserved_prop
                    minor major fp roots post_major)))
       (ensures minor_collect_full_post minor major fp roots ok post_major post_roots)
@@ -44,7 +46,9 @@ val minor_collect_full_post_elim
         post_major == res.mc_major /\
         post_roots == res.mc_roots /\
         (ok ==> GC.Gen.MinorCollectForwarding.normal_result_reachable_subgraph_isomorphism_prop
-                   minor major fp roots post_major post_roots /\
+                   minor major fp roots post_major
+                   (GC.Gen.MinorCollectForwarding.Helpers.resolve_roots
+                      post_major post_roots) /\
                  GC.Gen.MinorCollectForwarding.normal_result_non_pointer_fields_preserved_prop
                    minor major fp roots post_major)))
 

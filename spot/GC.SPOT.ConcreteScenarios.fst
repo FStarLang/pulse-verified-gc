@@ -303,8 +303,10 @@ let spot_roots_valid_for_minor_collection (r: unit{ConcreteMajor.spot_major_room
         (requires Seq.mem root (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)))
         (ensures
           ((Promote.is_minor_pointer root ==>
-            Seq.mem root (minor_objects ConcreteMinor.spot_minor2) /\
-            minor_wosize ConcreteMinor.spot_minor2 root > 0) /\
+            Seq.mem (resolve_minor ConcreteMinor.spot_minor2 root)
+                    (minor_objects ConcreteMinor.spot_minor2) /\
+            minor_wosize ConcreteMinor.spot_minor2
+                         (resolve_minor ConcreteMinor.spot_minor2 root) > 0) /\
            (~(Promote.is_minor_pointer root) ==>
             is_val_addr root /\
             Seq.mem (root <: obj_addr) (SpecFields.objects zero_addr major) /\
@@ -321,7 +323,10 @@ let spot_roots_valid_for_minor_collection (r: unit{ConcreteMajor.spot_major_room
       assert (root == Layout.a_minor);
       if root = Layout.a_minor then begin
         Layout.a_minor_is_minor_pointer ();
-        ConcreteMinor.spot_minor_two_object_layout ()
+        ConcreteMinor.spot_minor_two_object_layout ();
+        // An enumerated nursery object is its own resolution.
+        minor_objects_not_infix ConcreteMinor.spot_minor2 root;
+        resolve_minor_non_infix ConcreteMinor.spot_minor2 root
       end else begin
         assert False
       end

@@ -15,6 +15,7 @@ module SpecCorrectness = GC.Spec.Correctness
 module Cheney = GC.Gen.Cheney
 module CheneyBFS = GC.Gen.CheneyBFS
 module MinorFwd = GC.Gen.MinorCollectForwarding
+module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
@@ -28,7 +29,8 @@ let minor_collect_full_post
   post_major == res.mc_major /\
   post_roots == res.mc_roots /\
   (ok ==> MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-             minor major fp roots post_major post_roots /\
+             minor major fp roots post_major
+             (MCFH.resolve_roots post_major post_roots) /\
            MinorFwd.normal_result_non_pointer_fields_preserved_prop
              minor major fp roots post_major)
 

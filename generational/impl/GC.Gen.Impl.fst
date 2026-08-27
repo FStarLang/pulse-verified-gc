@@ -48,6 +48,7 @@ module PCS = GC.Gen.PostCollectionShape
 module FreeListShape = GC.Gen.FreeListShape
 module MinorFwd = GC.Gen.MinorCollectForwarding
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
+module SpecHeapGraph = GC.Spec.HeapGraph
 module RBridge = GC.Gen.ReachabilityBridge
 module CheneyBFS = GC.Gen.CheneyBFS
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
@@ -70,15 +71,45 @@ let gen_gc_major_precondition_elim minor major fp roots st cap
     GMP.post_minor_roots_valid_for_darkening minor major fp roots;
     (let prepared = gen_gc_prepared_state minor major fp roots st cap in
      introduce forall (r: U64.t). Seq.mem r result.mc_roots ==>
-       is_val_addr r /\ U64.v r >= U64.v zero_addr + U64.v mword /\
-       Seq.mem (r <: obj_addr) (snd prepared)
+       GC.Spec.Base.is_val_addr r /\ U64.v r >= U64.v zero_addr + U64.v mword
      with introduce _ ==> _
      with (Seq.mem_index r result.mc_roots;
            eliminate exists (i: nat{i < Seq.length result.mc_roots}).
              Seq.index result.mc_roots i == r
+           with ());
+     // A rewritten root is a well-formed pointer, so `resolve_field` on it is
+     // `resolve_object`, and `roots_match_stack` says darkening pushed exactly
+     // those resolutions.
+     introduce forall (e: U64.t).
+       Seq.mem e (MCFH.resolve_roots result.mc_major result.mc_roots) ==>
+       GC.Spec.Base.is_val_addr e
+     with introduce _ ==> _
+     with (MCFH.resolve_roots_mem_inv result.mc_major result.mc_roots e;
+           eliminate exists (rr: U64.t).
+             Seq.mem rr result.mc_roots /\
+             SpecHeapGraph.resolve_field result.mc_major rr == e
+           with ());
+     introduce forall (e: obj_addr).
+       Seq.mem (e <: U64.t) (MCFH.resolve_roots result.mc_major result.mc_roots) ==>
+       Seq.mem e (snd prepared)
+     with introduce _ ==> _
+     with (MCFH.resolve_roots_mem_inv result.mc_major result.mc_roots e;
+           eliminate exists (rr: U64.t).
+             Seq.mem rr result.mc_roots /\
+             SpecHeapGraph.resolve_field result.mc_major rr == e
            with ()));
     GC.Gen.CheneyPreservation.cheney_collect_preserves_wfh_from_shape minor major fp roots;
     MBP.darken_preserves_create_graph result.mc_major st result.mc_roots result.mc_fp cap
+#pop-options
+
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+let gen_gc_named_root_in_stack minor major fp roots roots_out st cap r
+  = let result = CheneySpec.cheney_collect_spec minor major fp roots in
+    // `r` is a root, so it is a pointer field, and resolving it is the identity.
+    assert (GC.Spec.Base.is_val_addr (r <: U64.t));
+    SpecHeapGraph.is_pointer_field_is_obj_addr (r <: U64.t);
+    assert (SpecHeapGraph.resolve_field result.mc_major (r <: U64.t) == (r <: U64.t));
+    MCFH.resolve_roots_mem result.mc_major roots_out (r <: U64.t)
 #pop-options
 
 /// The heap-shape projection is a consequence of the invariant, not an extra
@@ -884,8 +915,9 @@ let minor_collect_full_isomorphism_post
       GenInv.collection_heap_shape minor major fp /\
       ref_table_covers_minor_ptrs major slots n /\
       post_major == (CheneySpec.cheney_collect_spec minor major fp roots).mc_major /\
-      post_roots == PromoteSpec.rewrite_roots roots
-        (CheneySpec.cheney_promote minor major fp roots).fwd_map /\
+      post_roots == MCFH.resolve_roots post_major
+        (PromoteSpec.rewrite_roots roots
+          (CheneySpec.cheney_promote minor major fp roots).fwd_map) /\
       MinorFwd.remembered_targets_in_roots major roots slots n /\
       MinorFwd.roots_valid_for_minor_collection minor major roots /\
       (ok ==> CheneyBFS.cheney_no_oom minor major fp roots))
@@ -985,7 +1017,7 @@ fn minor_collect_full (gh: gen_heap_t)
       (ok ==>
        CheneyBFS.cheney_no_oom minor_st 's 'fp 'rs /\
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-         minor_st 's 'fp 'rs s2 rs2 /\
+         minor_st 's 'fp 'rs s2 (MCFH.resolve_roots s2 rs2) /\
         MinorFwd.normal_result_non_pointer_fields_preserved_prop
          minor_st 's 'fp 'rs s2))
 {
@@ -1063,8 +1095,9 @@ fn minor_collect_full (gh: gen_heap_t)
   minor_collect_full_isomorphism_post
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'sl (SZ.v nslots) ok
     ms_final
-    (PromoteSpec.rewrite_roots 'rs
-      (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map);
+    (MCFH.resolve_roots ms_final
+      (PromoteSpec.rewrite_roots 'rs
+        (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map));
 
   fold (is_gen_heap gh _ 0UL _ _);
   ok
@@ -1249,9 +1282,18 @@ fn gen_gc (gh: gen_heap_t)
     SpecGCPost.gc_postcondition_elim s_final;
     Mark.create_graph_wf_from_heap s_final;
     assert (pure (MRT.major_transfer_hyp prepared_major s_final prepared_st));
+    // The reachable set is rooted at the objects the rewritten roots name, and
+    // those are exactly what root darkening pushed.
+    assert (pure (forall (e: U64.t).
+      Seq.mem e (MCFH.resolve_roots ms_updated rs_mid) ==>
+      GC.Spec.Base.is_val_addr e));
+    assert (pure (forall (e: obj_addr).
+      Seq.mem (e <: U64.t) (MCFH.resolve_roots ms_updated rs_mid) ==>
+      Seq.mem e prepared_st));
     MRT.end_to_end_isomorphism_intro
       ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs
-      ms_updated rs_mid prepared_major prepared_st s_final;
+      ms_updated (MCFH.resolve_roots ms_updated rs_mid)
+      prepared_major prepared_st s_final;
 
     // The collector re-establishes the generational shape invariant on the
     // heap it returns: `collect_with_roots` exposes the marked heap that

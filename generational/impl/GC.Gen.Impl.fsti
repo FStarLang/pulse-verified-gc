@@ -41,6 +41,7 @@ module Mark = GC.Spec.Mark
 module Cheney = GC.Gen.Impl.Cheney
 module GenInv = GC.Gen.HeapInvariant
 module MinorFwd = GC.Gen.MinorCollectForwarding
+module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RBridge = GC.Gen.ReachabilityBridge
 module CheneyBFS = GC.Gen.CheneyBFS
 module SpecHeapModel = GC.Spec.HeapModel
@@ -152,14 +153,19 @@ val gen_gc_major_precondition_elim
          MajorGC.gc_precondition_with_roots
            (fst prepared) (snd prepared) (snd prepared) result.mc_fp cap /\
          roots_match_stack result.mc_major result.mc_roots (snd prepared) /\
-         /// After a minor collection every rewritten root is an ordinary
-         /// pointer, so the mark stack literally contains the roots.  Interior
-         /// roots are still ruled out by
-         /// `MinorFwd.roots_valid_for_minor_collection`; the mark-and-sweep
-         /// darkening pass itself no longer needs that.
          (forall (r: U64.t). Seq.mem r result.mc_roots ==>
-            is_val_addr r /\ U64.v r >= U64.v zero_addr + U64.v mword /\
-            Seq.mem (r <: obj_addr) (snd prepared)) /\
+            GC.Spec.Base.is_val_addr r /\
+            U64.v r >= U64.v zero_addr + U64.v mword) /\
+         /// The darkened stack holds the objects the rewritten roots *name*.
+         /// For an interior root that is the closure it points into, not the
+         /// root value itself, so this cannot be stated on `result.mc_roots`.
+         (forall (e: U64.t).
+            Seq.mem e (MCFH.resolve_roots result.mc_major result.mc_roots) ==>
+            GC.Spec.Base.is_val_addr e) /\
+         (forall (e: obj_addr).
+            Seq.mem (e <: U64.t)
+                    (MCFH.resolve_roots result.mc_major result.mc_roots) ==>
+            Seq.mem e (snd prepared)) /\
          SpecHeapModel.create_graph (fst prepared) ==
            SpecHeapModel.create_graph result.mc_major))
 
@@ -176,12 +182,32 @@ let gen_gc_roots_post
   (ok ==>
    roots_match_stack (CheneySpec.cheney_collect_spec minor major fp roots).mc_major
                      roots_out (gen_gc_prepared_roots minor major fp roots st cap) /\
-   /// The rewritten roots are ordinary pointers, so the mark stack contains
-   /// them literally.  Interior roots are excluded upstream, by
-   /// `MinorFwd.roots_valid_for_minor_collection`.
    (forall (r: U64.t). Seq.mem r roots_out ==>
-      is_val_addr r /\ U64.v r >= U64.v zero_addr + U64.v mword /\
-      Seq.mem (r <: obj_addr) (gen_gc_prepared_roots minor major fp roots st cap)))
+      GC.Spec.Base.is_val_addr r /\ U64.v r >= U64.v zero_addr + U64.v mword) /\
+   /// The mark stack holds the objects the roots *name*: an interior root
+   /// pushes the closure it points into rather than itself.
+   (forall (e: U64.t).
+      Seq.mem e (MCFH.resolve_roots result.mc_major roots_out) ==>
+      GC.Spec.Base.is_val_addr e) /\
+   (forall (e: obj_addr).
+      Seq.mem (e <: U64.t) (MCFH.resolve_roots result.mc_major roots_out) ==>
+      Seq.mem e (gen_gc_prepared_roots minor major fp roots st cap)))
+
+/// A root that names *itself* --- i.e. one that is not an interior pointer ---
+/// is on the darkened mark stack literally, not merely up to resolution.
+/// This is the shape most callers want: `gen_gc_roots_post` speaks about the
+/// resolved sequence so that interior roots have somewhere to go, and this
+/// lemma reads the ordinary case straight back out of it.
+val gen_gc_named_root_in_stack
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots roots_out: Seq.seq U64.t)
+  (st: Seq.seq obj_addr) (cap: nat) (r: obj_addr)
+  : Lemma
+    (requires
+      gen_gc_roots_post minor major fp roots roots_out true st cap /\
+      Seq.mem (r <: U64.t) roots_out /\
+      SpecObject.resolve_object r
+        (CheneySpec.cheney_collect_spec minor major fp roots).mc_major == r)
+    (ensures Seq.mem r (gen_gc_prepared_roots minor major fp roots st cap))
 
 /// The free-list-free projection of the shape invariant.
 ///
@@ -238,9 +264,11 @@ let gen_gc_reachable_subgraph_isomorphism_post
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
   let prepared = gen_gc_prepared_state minor major fp roots st cap in
   (ok ==>
-   MRT.end_to_end_isomorphism minor major fp roots final_major roots_out /\
+   MRT.end_to_end_isomorphism minor major fp roots final_major
+     (MCFH.resolve_roots result.mc_major roots_out) /\
    MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-     minor major fp roots result.mc_major roots_out /\
+     minor major fp roots result.mc_major
+     (MCFH.resolve_roots result.mc_major roots_out) /\
    MinorFwd.normal_result_non_pointer_fields_preserved_prop
      minor major fp roots result.mc_major /\
    SpecGCPost.major_gc_live_subgraph_isomorphism
@@ -368,7 +396,7 @@ fn minor_collect_full (gh: gen_heap_t)
       (ok ==>
        CheneyBFS.cheney_no_oom minor_st 's 'fp 'rs /\
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-         minor_st 's 'fp 'rs s2 rs2 /\
+         minor_st 's 'fp 'rs s2 (MCFH.resolve_roots s2 rs2) /\
         MinorFwd.normal_result_non_pointer_fields_preserved_prop
          minor_st 's 'fp 'rs s2))
 

@@ -79,14 +79,22 @@ val remembered_targets_in_roots_intro_by_slots:
 
 #push-options "--z3rlimit 10"
 /// Root validity needed to make the target be all concrete post-reachable
-/// vertices: a minor-shaped root must be a real live minor object, while a
-/// non-minor root must be an allocated major object.
+/// vertices: a minor-shaped root must *resolve* to a real live minor object,
+/// while a non-minor root must be an allocated major object.
+///
+/// The minor branch is stated on `resolve_minor minor r` rather than on `r`
+/// itself so that an **interior** nursery root is admissible: OCaml pushes the
+/// entry point of a non-first function of a mutually recursive group directly
+/// (`runtime/interp.c:601`) and the byte-code root scanner walks such stack
+/// slots verbatim (`runtime/roots_byt.c:39`).  For a non-interior root
+/// `resolve_minor` is the identity, so this is a genuine weakening.
 let roots_valid_for_minor_collection
   (minor: minor_state) (major: heap) (roots: seq U64.t) : prop =
   forall (r: U64.t).
     Seq.mem r roots ==>
     ((is_minor_pointer r ==>
-      Seq.mem r (minor_objects minor) /\ minor_wosize minor r > 0) /\
+      Seq.mem (resolve_minor minor r) (minor_objects minor) /\
+      minor_wosize minor (resolve_minor minor r) > 0) /\
      (~(is_minor_pointer r) ==>
      is_val_addr r /\ Seq.mem (r <: obj_addr) (objects zero_addr major) /\
      ~(is_blue (r <: obj_addr) major)))
@@ -134,27 +142,59 @@ let mem_graph_edge_at (g: graph_state) (src dst: U64.t) : prop =
 let mem_graph_vertex_at (g: graph_state) (w: U64.t) : prop =
   exists (x: vertex_id{mem_graph_vertex g x}). x == w
 
-let post_minor_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (w: U64.t) : prop =
-  let prom = cheney_promote minor major fp roots in
-  let res = cheney_collect_spec minor major fp roots in
-  let post_g = HeapModel.create_graph res.mc_major in
-  exists (rr: U64.t)
-         (r: vertex_id{mem_graph_vertex post_g r})
-         (x: vertex_id{mem_graph_vertex post_g x}).
-    Seq.mem rr (rewrite_roots roots prom.fwd_map) /\
-    r == rr /\ x == w /\ reachable post_g r x
+/// The objects a post-collection root sequence names.
+///
+/// A rewritten root may be an *interior* pointer: `rewrite_root` is
+/// deliberately raw --- an interior root must keep its offset at run time ---
+/// so it maps an interior nursery root `r` to `fwd r`, which by
+/// `fwd_infix_targets_wf` is an interior pointer into the promoted copy of the
+/// closure `r` points into.  Such an address is not a graph vertex, so the
+/// post-collection reachable set has to be rooted at the objects the roots
+/// *name*, exactly as the collector's own marking does.
+///
+/// Resolving *once, into a concrete sequence* rather than putting the
+/// resolution step inside the reachability predicate is what makes this
+/// tractable.  `result_post_reachable` stays a statement about a fixed root
+/// set, so the major collection can be crossed
+/// (`GC.Gen.MajorReachabilityTransfer`) with no obligation to show that the
+/// roots resolve the same way on both sides of a sweep --- an obligation that
+/// bottoms out in an `infix_addr_wf` bound nothing supplies for a root.
+let rec resolve_roots (h: heap) (rts: seq U64.t)
+  : GTot (seq U64.t) (decreases Seq.length rts) =
+  if Seq.length rts = 0 then Seq.empty
+  else Seq.cons (HeapGraph.resolve_field h (Seq.head rts))
+                (resolve_roots h (Seq.tail rts))
 
-let post_minor_edge
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (x y: U64.t) : prop =
-  let res = cheney_collect_spec minor major fp roots in
-  mem_graph_edge_at (HeapModel.create_graph res.mc_major) x y
+val resolve_roots_length (h: heap) (rts: seq U64.t)
+  : Lemma (ensures Seq.length (resolve_roots h rts) == Seq.length rts)
+          (decreases Seq.length rts)
+          [SMTPat (Seq.length (resolve_roots h rts))]
 
-/// Result-indexed post-minor reachability: unlike `post_minor_reachable`, this
-/// names the concrete heap and rewritten roots exposed by an implementation
-/// postcondition.
+/// Every root's resolution is in the resolved sequence.
+val resolve_roots_mem (h: heap) (rts: seq U64.t) (rr: U64.t)
+  : Lemma (requires Seq.mem rr rts)
+          (ensures Seq.mem (HeapGraph.resolve_field h rr) (resolve_roots h rts))
+          (decreases Seq.length rts)
+
+/// ... and nothing else is.
+val resolve_roots_mem_inv (h: heap) (rts: seq U64.t) (e: U64.t)
+  : Lemma (requires Seq.mem e (resolve_roots h rts))
+          (ensures exists (rr: U64.t).
+                     Seq.mem rr rts /\ HeapGraph.resolve_field h rr == e)
+          (decreases Seq.length rts)
+
+/// Two heaps that resolve every root alike produce the same resolved sequence.
+/// Root darkening is such a pair, which is how the post-minor statement is
+/// carried to the heap the major collection actually starts from.
+val resolve_roots_congr (h1 h2: heap) (rts: seq U64.t)
+  : Lemma
+    (requires forall (v: U64.t).
+                HeapGraph.resolve_field h1 v == HeapGraph.resolve_field h2 v)
+    (ensures resolve_roots h1 rts == resolve_roots h2 rts)
+    (decreases Seq.length rts)
+
+/// Result-indexed post-minor reachability: this names the concrete heap and
+/// (already resolved) roots exposed by an implementation postcondition.
 let result_post_reachable
   (post_major: heap) (post_roots: seq U64.t) (w: U64.t) : prop =
   let post_g = HeapModel.create_graph post_major in
@@ -164,17 +204,63 @@ let result_post_reachable
     Seq.mem rr post_roots /\
     r == rr /\ x == w /\ reachable post_g r x
 
+/// The same predicate at the collector's own heap and resolved rewritten roots.
+///
+/// It is *defined* as `result_post_reachable` rather than restated, so the two
+/// are interchangeable by unfolding alone.  Restating it duplicates a
+/// three-binder existential whose binders are refined by a graph built from the
+/// heap, and transporting a witness between two such copies across a
+/// propositional heap equality is not something the solver manages.
+let post_minor_reachable
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (w: U64.t) : prop =
+  let prom = cheney_promote minor major fp roots in
+  let res = cheney_collect_spec minor major fp roots in
+  result_post_reachable res.mc_major
+    (resolve_roots res.mc_major (rewrite_roots roots prom.fwd_map)) w
+
+let post_minor_edge
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (x y: U64.t) : prop =
+  let res = cheney_collect_spec minor major fp roots in
+  mem_graph_edge_at (HeapModel.create_graph res.mc_major) x y
+
 let result_post_edge (post_major: heap) (x y: U64.t) : prop =
   mem_graph_edge_at (HeapModel.create_graph post_major) x y
 
+/// Reflexive entry at an *abstract* heap: a rewritten root that is itself a
+/// graph vertex is post-reachable.
+///
+/// Stated abstractly on purpose.  Performed in place --- where the heap is the
+/// applied term `(cheney_collect_spec minor major fp roots).mc_major` --- the
+/// solver does not find the three witnesses.
+val result_post_reachable_refl_direct
+  (post_major: heap) (post_roots: seq U64.t) (w: U64.t)
+  : Lemma
+    (requires Seq.mem w post_roots /\
+              mem_graph_vertex_at (HeapModel.create_graph post_major) w)
+    (ensures result_post_reachable post_major post_roots w)
+
+/// The same for a root whose *resolution* is the vertex.
+val result_post_reachable_refl_resolved
+  (post_major: heap) (rts: seq U64.t) (rr w: U64.t)
+  : Lemma
+    (requires Seq.mem rr rts /\
+              HeapGraph.resolve_field post_major rr == w /\
+              mem_graph_vertex_at (HeapModel.create_graph post_major) w)
+    (ensures result_post_reachable post_major (resolve_roots post_major rts) w)
+
+/// A rewritten root that names `w` --- either directly, or, when the root is an
+/// interior pointer, by resolving to it --- makes `w` post-reachable.
 val post_minor_reachable_refl_from_root
   (minor: minor_state) (major: heap) (fp: U64.t)
-  (roots: seq U64.t) (w: U64.t)
+  (roots: seq U64.t) (rr: U64.t) (w: U64.t)
   : Lemma
     (requires (
       let prom = cheney_promote minor major fp roots in
       let res = cheney_collect_spec minor major fp roots in
-      Seq.mem w (rewrite_roots roots prom.fwd_map) /\
+      Seq.mem rr (rewrite_roots roots prom.fwd_map) /\
+      HeapGraph.resolve_field res.mc_major rr == w /\
       mem_graph_vertex_at (HeapModel.create_graph res.mc_major) w))
     (ensures post_minor_reachable minor major fp roots w)
 
@@ -263,6 +349,14 @@ val mem_graph_vertex_at_is_obj_addr
   : Lemma
     (requires mem_graph_vertex_at (HeapModel.create_graph g) w)
     (ensures is_val_addr w /\ Seq.mem (w <: obj_addr) (objects zero_addr g))
+
+/// A graph vertex resolves to itself: vertices are enumerated objects, and
+/// well-formedness forbids an enumerated object from carrying an infix header.
+val vertex_resolves_to_itself (h: heap) (w: U64.t)
+  : Lemma
+    (requires well_formed_heap h /\
+              mem_graph_vertex_at (HeapModel.create_graph h) w)
+    (ensures HeapGraph.resolve_field h w == w)
 
 /// Cheney promotion preserves the header-derived facts and body field of a
 /// pre-existing non-blue major object.

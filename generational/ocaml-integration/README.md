@@ -135,22 +135,24 @@ satisfies the whole precondition, is collected by the real `gen_gc`, and comes
 back satisfying it again) and `spot/GC.SPOT.MinorInfix` (the nursery analogue).
 See `docs/minor-infix-support-plan.md`.
 
-Groups 11 and 12 concern interior pointers held directly in a *root*, which the
-specification covers on the major-heap side only.
-`GC.Impl.MarkBoundedPrecondition.root_valid_for_darkening` now asks a root to
-*name* a non-blue object --- `SpecObject.resolve_object`, the identity on
-ordinary pointers --- so the mark-and-sweep collector is specified for interior
-roots, and `GC.Gen.Impl.roots_match_stack` correspondingly says the mark stack
-holds the roots' *resolutions*.
+Groups 8 through 12 concern interior pointers held directly in a *root*, which
+the specification now covers in both generations.
+`GC.Impl.MarkBoundedPrecondition.root_valid_for_darkening` asks a root to *name*
+a non-blue object --- `SpecObject.resolve_object`, the identity on ordinary
+pointers --- so the mark-and-sweep collector is specified for interior roots,
+and `GC.Gen.Impl.roots_match_stack` correspondingly says the mark stack holds
+the roots' *resolutions*.
 
-`MinorCollectForwarding.Helpers.roots_valid_for_minor_collection` still places
-every nursery root in `minor_objects`, so an interior root pointing into the
-nursery remains outside the specification.  The collector handles it today ---
-`GC.Gen.Impl.Cheney`'s root loop dispatches to `forward_if_minor_infix` on
-`Infix_tag` --- which is what these two groups demonstrate.  Lifting the nursery
-side to match is Phase H.2 of `docs/minor-infix-support-plan.md`, where the
-remaining obligation (an `infix_addr_wf` bound on interior roots, carried
-through promotion) is written out.
+`MinorCollectForwarding.Helpers.roots_valid_for_minor_collection` asks only that
+a nursery root's *resolution* be in `minor_objects`, so an interior root
+pointing into the nursery is inside the specification too.  Root rewriting keeps
+the offset the mutator sees, so a rewritten interior nursery root is an interior
+pointer into the major heap; `GC.Gen.MinorCollectForwarding.Helpers.resolve_roots`
+maps the rewritten root array through `resolve_field` once, and the
+post-collection reachability statement and `gen_gc_roots_post` are both phrased
+over that resolved sequence.  `GC.Gen.Impl.gen_gc_named_root_in_stack` reads the
+ordinary case back out: a root that resolves to itself is on the mark stack
+literally.  See Phase H of `docs/minor-infix-support-plan.md`.
 
 **The test is sensitive.** Rebuilding the runtime with the pre-fix
 `check_and_darken_bounded` — the version that darkened the raw field value

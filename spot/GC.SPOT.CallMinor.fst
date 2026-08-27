@@ -21,6 +21,7 @@ module CheneyImpl = GC.Gen.Impl.Cheney
 module CheneySpec = GC.Gen.Cheney
 module PromoteSpec = GC.Gen.Promote
 module MinorFwd = GC.Gen.MinorCollectForwarding
+module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
@@ -67,12 +68,14 @@ fn call_minor_collect_full_spot
     (CheneySpec.cheney_collect_spec ({ data = 'd; bump = 'b } <: minor_state)
       's 'fp 'rs).mc_roots));
   assert (pure (ok ==> MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs s2 rs2));
+    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs s2
+    (MCFH.resolve_roots s2 rs2)));
   assert (pure (ok ==> MinorFwd.normal_result_non_pointer_fields_preserved_prop
     ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs s2));
   assert (pure (U64.v b2 == 0));
   assert (pure (ok ==> MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs s2 rs2 /\
+    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs s2
+    (MCFH.resolve_roots s2 rs2) /\
     MinorFwd.normal_result_non_pointer_fields_preserved_prop
       ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs s2));
   Postconditions.minor_collect_full_post_intro

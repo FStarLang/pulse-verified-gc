@@ -65,35 +65,6 @@ let roots_valid_for_minor_collection
   MCFH.roots_valid_for_minor_collection minor major roots
 #pop-options
 
-/// Nursery roots are never interior pointers.
-///
-/// This is the single consequence of `roots_valid_for_minor_collection` that
-/// the reachability-transfer chain needs, and it is deliberately stated on its
-/// own: `roots_valid_for_minor_collection` mentions `minor_objects` and
-/// `objects zero_addr`, both recursive, and carrying the whole predicate
-/// through that chain makes its proofs diverge.
-/// Opaque: the quantifier is threaded through proofs whose contexts already
-/// carry many `Seq.mem _ roots` facts, and letting the solver instantiate it
-/// there makes those queries diverge.  Use `roots_not_infix_in_minor_elim`.
-[@@"opaque_to_smt"]
-let roots_not_infix_in_minor (minor: minor_state) (roots: seq U64.t) : prop =
-  forall (r: U64.t).
-    Seq.mem r roots /\ is_minor_pointer r ==> ~(is_infix_in_minor minor r)
-
-val roots_valid_not_infix
-  (minor: minor_state) (major: heap) (roots: seq U64.t)
-  : Lemma
-    (requires minor_wf minor /\
-              roots_valid_for_minor_collection minor major roots)
-    (ensures roots_not_infix_in_minor minor roots)
-
-val roots_not_infix_in_minor_elim
-  (minor: minor_state) (roots: seq U64.t) (r: U64.t)
-  : Lemma
-    (requires roots_not_infix_in_minor minor roots /\
-              Seq.mem r roots /\ is_minor_pointer r)
-    (ensures ~(is_infix_in_minor minor r))
-
 /// Raw-address view of graph-edge membership, useful when the endpoint is a
 /// forwarding-map image whose `hp_addr` refinement is proved by preconditions.
 let mem_graph_edge_at (g: graph_state) (src dst: U64.t) : prop =
@@ -122,14 +93,17 @@ let result_post_reachable
 let result_post_edge (post_major: heap) (x y: U64.t) : prop =
   MCFH.result_post_edge post_major x y
 
+/// A rewritten root that names `w` --- either directly, or, when the root is an
+/// interior pointer, by resolving to it --- makes `w` post-reachable.
 val post_minor_reachable_refl_from_root
   (minor: minor_state) (major: heap) (fp: U64.t)
-  (roots: seq U64.t) (w: U64.t)
+  (roots: seq U64.t) (rr: U64.t) (w: U64.t)
   : Lemma
     (requires (
       let prom = cheney_promote minor major fp roots in
       let res = cheney_collect_spec minor major fp roots in
-      Seq.mem w (rewrite_roots roots prom.fwd_map) /\
+      Seq.mem rr (rewrite_roots roots prom.fwd_map) /\
+      HeapGraph.resolve_field res.mc_major rr == w /\
       mem_graph_vertex_at (HeapModel.create_graph res.mc_major) w))
     (ensures post_minor_reachable minor major fp roots w)
 
@@ -347,26 +321,34 @@ val normal_edge_forward_ready_intro
       CG.mem_ce (u, v) (CG.build_combined_graph minor major))
     (ensures normal_edge_forward_ready minor major fp roots u v)
 
-/// The image of a classified root is itself a rewritten root.
+/// The image of a classified root is named by a rewritten root --- either
+/// directly, or, when the root is an interior nursery pointer, as the
+/// *resolution* of one.
 ///
 /// `classify_root` resolves, so the vertex `CG.MinorV v` may have been
 /// contributed by an interior root `r` with `resolve_minor minor r == v`
-/// rather than by `v` itself.  `roots_not_infix_in_minor` rules that out, so
-/// `r == v`.  Roots are therefore the one place where interior nursery
-/// pointers are still forbidden --- fields are not.
+/// rather than by `v` itself.  `rewrite_root` does *not* resolve --- an
+/// interior root must keep its offset at run time --- so it maps that `r` to
+/// `fwd r`, an interior pointer into the promoted copy of the closure.
+/// `MCFH.fwd_image_resolves` says that address resolves to `fwd v`, which is
+/// exactly `fwd_morphism fwd u`.
 val normal_classified_root_image_in_rewrite_roots
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t) (u: CG.combined_vertex)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      roots_not_infix_in_minor minor roots /\
+      CheneyBFS.cheney_no_oom minor major fp roots /\
       Seq.mem u (CG.classify_roots minor roots) /\
       normal_vertex_ready minor major fp roots u)
     (ensures (
       let prom = cheney_promote minor major fp roots in
-      Seq.mem (CG.fwd_morphism prom.fwd_map u)
-        (rewrite_roots roots prom.fwd_map)))
+      let res = cheney_collect_spec minor major fp roots in
+      let img = CG.fwd_morphism prom.fwd_map u in
+      Seq.mem img (rewrite_roots roots prom.fwd_map) \/
+      (exists (rr: U64.t).
+         Seq.mem rr (rewrite_roots roots prom.fwd_map) /\
+         HeapGraph.resolve_field res.mc_major rr == img)))
 
 let normal_src_edge
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
@@ -440,7 +422,7 @@ val normal_classified_root_image_post_reachable
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      roots_not_infix_in_minor minor roots /\
+      CheneyBFS.cheney_no_oom minor major fp roots /\
       Seq.mem u (CG.classify_roots minor roots) /\
       normal_src_reachable minor major fp roots u)
     (ensures (
@@ -517,7 +499,6 @@ val ready_src_reach_image_post_reachable
       Mark.no_pointer_to_blue major /\
       RBridge.minor_no_pointer_to_blue minor major /\
       RBridge.roots_valid_nonblue roots major /\
-      roots_not_infix_in_minor minor roots /\
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
       let prom = cheney_promote minor major fp roots in
@@ -537,7 +518,6 @@ val ready_image_reachable_is_post_reachable
       Mark.no_pointer_to_blue major /\
       RBridge.minor_no_pointer_to_blue minor major /\
       RBridge.roots_valid_nonblue roots major /\
-      roots_not_infix_in_minor minor roots /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
       ready_image_reachable minor major fp roots w)
     (ensures post_minor_reachable minor major fp roots w)
@@ -578,7 +558,6 @@ val normal_image_reachable_is_post_reachable
       Mark.no_pointer_to_blue major /\
       RBridge.minor_no_pointer_to_blue minor major /\
       RBridge.roots_valid_nonblue roots major /\
-      roots_not_infix_in_minor minor roots /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
       normal_image_reachable minor major fp roots w)
     (ensures post_minor_reachable minor major fp roots w)
@@ -595,7 +574,6 @@ val normal_image_reachable_is_post_reachable_all
       Mark.no_pointer_to_blue major /\
       RBridge.minor_no_pointer_to_blue minor major /\
       RBridge.roots_valid_nonblue roots major /\
-      roots_not_infix_in_minor minor roots /\
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures normal_image_reachable_is_post_reachable_prop minor major fp roots)
 
@@ -695,7 +673,8 @@ val normal_post_reachable_subgraph_isomorphism_to_result
   : Lemma
     (requires
       post_major == (cheney_collect_spec minor major fp roots).mc_major /\
-      post_roots == rewrite_roots roots (cheney_promote minor major fp roots).fwd_map /\
+      post_roots == MCFH.resolve_roots post_major
+                      (rewrite_roots roots (cheney_promote minor major fp roots).fwd_map) /\
       normal_post_reachable_subgraph_isomorphism_prop minor major fp roots)
     (ensures
       normal_result_reachable_subgraph_isomorphism_prop

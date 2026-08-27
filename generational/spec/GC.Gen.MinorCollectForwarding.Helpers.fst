@@ -37,6 +37,8 @@ module SpecBase = GC.Spec.Base
 module HeapGraph = GC.Spec.HeapGraph
 module HeapModel = GC.Spec.HeapModel
 module Frame = GC.Gen.CheneyPreservation.Frame
+module SpecFields = GC.Spec.Fields
+module SpecObject = GC.Spec.Object
 
 let rec remembered_slot_targets_from
   (major: heap) (slots: seq U64.t) (n idx: nat)
@@ -204,29 +206,71 @@ let major_field_zero_covered_from_slots minor major roots slots n =
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+let rec resolve_roots_length h rts =
+  if Seq.length rts = 0 then ()
+  else resolve_roots_length h (Seq.tail rts)
+
+let rec resolve_roots_mem h rts rr =
+  if Seq.length rts = 0 then ()
+  else if Seq.head rts == rr then ()
+  else begin
+    resolve_roots_mem h (Seq.tail rts) rr;
+    Seq.mem_cons (HeapGraph.resolve_field h (Seq.head rts))
+                 (resolve_roots h (Seq.tail rts))
+  end
+
+let rec resolve_roots_mem_inv h rts e =
+  if Seq.length rts = 0 then ()
+  else if HeapGraph.resolve_field h (Seq.head rts) == e
+  then FStar.Classical.exists_intro
+         (fun (rr: U64.t) -> Seq.mem rr rts /\ HeapGraph.resolve_field h rr == e)
+         (Seq.head rts)
+  else begin
+    Seq.mem_cons (HeapGraph.resolve_field h (Seq.head rts))
+                 (resolve_roots h (Seq.tail rts));
+    resolve_roots_mem_inv h (Seq.tail rts) e;
+    let rr = FStar.IndefiniteDescription.indefinite_description_ghost U64.t
+      (fun rr -> Seq.mem rr (Seq.tail rts) /\ HeapGraph.resolve_field h rr == e) in
+    Seq.cons_head_tail rts;
+    Seq.mem_cons (Seq.head rts) (Seq.tail rts);
+    FStar.Classical.exists_intro
+      (fun (rr: U64.t) -> Seq.mem rr rts /\ HeapGraph.resolve_field h rr == e) rr
+  end
+
+let rec resolve_roots_congr h1 h2 rts =
+  if Seq.length rts = 0 then ()
+  else resolve_roots_congr h1 h2 (Seq.tail rts)
+#pop-options
+
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+let result_post_reachable_refl_direct post_major post_roots w =
+  let post_g = HeapModel.create_graph post_major in
+  let goal = result_post_reachable post_major post_roots w in
+  let proof (x: vertex_id{mem_graph_vertex post_g x}) : Lemma
+    (requires x == w)
+    (ensures goal)
+  =
+    reach_refl post_g x;
+    assert (reachable post_g x x)
+  in
+  FStar.Classical.exists_elim goal #_
+    #(fun x -> x == w)
+    ()
+    (fun x -> FStar.Classical.move_requires proof x)
+
+let result_post_reachable_refl_resolved post_major rts rr w =
+  resolve_roots_mem post_major rts rr;
+  result_post_reachable_refl_direct post_major (resolve_roots post_major rts) w
+
 let post_minor_reachable_refl_from_root
   (minor: minor_state) (major: heap) (fp: U64.t)
-  (roots: seq U64.t) (w: U64.t)
+  (roots: seq U64.t) (rr: U64.t) (w: U64.t)
   =
     let prom = cheney_promote minor major fp roots in
     let res = cheney_collect_spec minor major fp roots in
-    let post_g = HeapModel.create_graph res.mc_major in
-    let goal = post_minor_reachable minor major fp roots w in
-    let proof (x: vertex_id{mem_graph_vertex post_g x}) : Lemma
-      (requires x == w)
-      (ensures goal)
-    =
-      assert (Seq.mem w (rewrite_roots roots prom.fwd_map));
-      assert (x == w);
-      reach_refl post_g x;
-      assert (reachable post_g x x);
-      assert (goal)
-    in
-    FStar.Classical.exists_elim goal #_
-      #(fun x -> x == w)
-      ()
-      (fun x -> FStar.Classical.move_requires proof x)
+    result_post_reachable_refl_resolved res.mc_major
+      (rewrite_roots roots prom.fwd_map) rr w
 #pop-options
 
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
@@ -595,6 +639,11 @@ let mem_graph_vertex_at_is_obj_addr
       ()
       (fun x -> FStar.Classical.move_requires proof x)
 #pop-options
+
+let vertex_resolves_to_itself h w =
+  mem_graph_vertex_at_is_obj_addr h w;
+  SpecFields.wf_objects_non_infix h (w <: obj_addr);
+  SpecObject.resolve_non_infix (w <: obj_addr) h
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let cheney_promote_preserves_old_major_field_context

@@ -527,10 +527,11 @@ stops at the darkening boundary.
 
 ##### Status and recommendation
 
-This is Phase H, and it is a project of its own --- roughly ten modules across
+This is Phase H, and it was a project of its own --- roughly ten modules across
 `mark-and-sweep/impl`, `generational/spec`, `generational/impl` and `spot`, one
 of them (`GC.Gen.Impl`) a large Pulse module, plus a change to `gen_gc`'s
-published postcondition.  It is **not** a tail of Phase D2.
+published postcondition.  It is **not** a tail of Phase D2.  It landed in two
+commits, Phase H.1 (major heap) and Phase H.2 (nursery), both recorded below.
 
 ### Phase H.1 — interior roots in the major collector  ✅ **done**
 
@@ -579,124 +580,121 @@ membership `Seq.mem (r <: obj_addr) prepared_st` alongside the resolved
 Extracted C is byte-identical, and the OCaml integration suite (2514 checks,
 groups 11 and 12 exercising interior-pointer roots) passes under both runtimes.
 
-### Phase H.2 — interior roots in the nursery  ❌ **not done**
+### Phase H.2 — interior roots in the nursery  ✅ **done**
 
-The remaining restriction is the *minor* branch of
-`MinorFwd.roots_valid_for_minor_collection`, which still demands
-`Seq.mem (resolve_minor minor r) (minor_objects minor)` **and** that `r` itself
-be an enumerated nursery object.  Relaxing it was attempted and is recorded in
-`/dev/null`-free form here because the blocker is precise and worth writing down.
-
-Relaxing the minor branch makes a rewritten root an interior pointer *into the
-major heap*, which forces an interior disjunct into the post-collection
-reachability predicate:
+`MinorFwd.roots_valid_for_minor_collection`'s minor branch now reads
 
 ```fstar
-let post_reach_from_root (post_major: heap) (post_roots: seq U64.t) (w rr: U64.t) : prop =
-  let post_g = HeapModel.create_graph post_major in
-  exists (r: vertex_id{mem_graph_vertex post_g r})
-         (x: vertex_id{mem_graph_vertex post_g x}).
-    Seq.mem rr post_roots /\
-    (r == rr \/ r == HeapGraph.resolve_field post_major rr) /\
-    x == w /\ reachable post_g r x
+Promote.is_minor_pointer r ==>
+  Seq.mem (resolve_minor minor r) (minor_objects minor) /\
+  minor_wosize minor (resolve_minor minor r) > 0
 ```
 
-That much *was* made to verify (the restructuring is described below, and is
-worth keeping: it is the general recipe for a duplicated existential).  The hard
-blocker is downstream, in `GC.Gen.MajorReachabilityTransfer`:
+so a nursery root may be an interior pointer: it is the *resolution* that has to
+be an enumerated nursery object, not the root itself.  Together with Phase H.1
+(interior roots in the major heap) the collector now accepts interior roots
+everywhere the mutator can produce them.
 
-`result_post_reachable_swap` moves a reachability fact from the pre-sweep heap
-`h1` to the post-sweep heap `h2`.  With the interior disjunct present it must
-additionally show
+#### Why this is not just a weaker precondition
 
+`Promote.rewrite_root` deliberately does **not** resolve: the mutator keeps
+calling through the interior pointer it handed us, so the rewritten root has to
+keep the same offset.  A rewritten interior nursery root is therefore an
+*interior pointer into the major heap*, which is not a graph vertex --- and the
+post-collection reachability predicate is stated over graph vertices.
+
+#### The `resolve_roots` design
+
+Resolve **once, into a concrete sequence**, in the post-minor heap:
+
+```fstar
+let rec resolve_roots (h: heap) (rts: seq U64.t)
+  : GTot (seq U64.t) (decreases Seq.length rts) =
+  if Seq.length rts = 0 then Seq.empty
+  else Seq.cons (HeapGraph.resolve_field h (Seq.head rts))
+                (resolve_roots h (Seq.tail rts))
 ```
-HG.resolve_field h1 rr == HG.resolve_field h2 rr      -- for every root rr
+
+with `resolve_roots_length` / `_mem` / `_mem_inv` / `_congr` in
+`GC.Gen.MinorCollectForwarding.Helpers`.  `result_post_reachable` keeps its
+original heap-independent three-binder shape and `post_minor_reachable`
+*delegates* to it at `resolve_roots res.mc_major (rewrite_roots roots fwd)`.
+
+The consequence that makes this work: **`GC.Gen.MajorReachabilityTransfer`
+needed no semantic change at all.**  Its statement is about a fixed root
+sequence, and that sequence is now already resolved, so crossing the major
+collection carries no obligation about how roots resolve on either side.
+
+The two entry obligations discharge as follows:
+
+* Minor side: `MCFH.fwd_image_resolves` gives
+  `resolve_object (fwd r) updated == fwd (resolve_minor minor r)` directly, and
+  that address is a promoted *enumerated* object --- a genuine vertex.
+* `MRT`'s "every root is on the darkened stack": `rts` **is** the sequence of
+  resolutions, and the darkened stack holds exactly `MBP.root_named g roots`.
+
+`GC.Gen.Impl.gen_gc_roots_post` therefore states root/stack agreement over
+`MCFH.resolve_roots result.mc_major roots_out`, and
+`GC.Gen.Impl.gen_gc_named_root_in_stack` reads the ordinary case back out: a
+root that resolves to itself is on the stack *literally*.  That is the shape the
+SPOTs consume, via `MajorPre.post_minor_major_root_valid` (for a major root) and
+`MCFH.fwd_image_resolves` (for the promoted image of a non-interior nursery
+root).
+
+#### The approach that failed, and why
+
+The natural move --- put an interior *disjunct* into the reachability predicate:
+
+```fstar
+Seq.mem rr post_roots /\ (r == rr \/ r == HeapGraph.resolve_field post_major rr)
 ```
 
-otherwise the entry vertex on the `h2` side cannot be reconstructed.  That
-equality reduces, via `SpecObject.resolve_object_locality`, to
-
-```
-read_word h1 (hd_address rr) == read_word h2 (hd_address rr)
-```
-
-and the only tool for it is the field-data-preservation pillar of
+--- verifies on the minor side but is blocked downstream.
+`MRT.result_post_reachable_swap` moves a reachability fact from the pre-sweep
+heap `h1` to the post-sweep heap `h2`; with the disjunct present it must also
+show `HG.resolve_field h1 rr == HG.resolve_field h2 rr` for every root, which
+reduces via `SpecObject.resolve_object_locality` to
+`read_word h1 (hd_address rr) == read_word h2 (hd_address rr)`.  The only tool
+for that is the field-data-preservation pillar of
 `MS.major_gc_live_subgraph_isomorphism`, which covers fields `1 .. wosize p` of
-a live object `p`.  The infix header at `hd_address rr` *is* field
-`off / mword` of `p = resolve_object rr h1`, where `off = wosize(header of rr) * 8`
---- but only if `off / mword <= wosize p h1`, i.e. only if the interior root
-actually points *inside* its claimed parent.
+a live object `p` --- applicable only under
+`off / mword <= wosize p h1`, i.e. only if the interior root points *inside* its
+claimed parent.
 
 Nothing in the repository supplies that bound for a **root**.  For an interior
 pointer stored in a *field* it comes from `SpecFields.wf_field_target_infix_wf`,
-which yields `SpecObject.infix_addr_wf g (objects zero_addr g) dst`, whose
-`infix_addr_conds` conjunct is exactly `U64.v h < p + wosize p * 8`.  Roots are
-not field targets, so the condition has to be *assumed* of them.
+which yields `SpecObject.infix_addr_wf g (objects zero_addr g) dst`.  Roots are
+not field targets, so the condition would have to be *assumed* of them ---
+adding `infix_addr_wf` to `MBP.root_valid_for_darkening` and to
+`roots_valid_for_minor_collection`, then transporting it across Cheney
+promotion, which has no existing lemma to build on.  Resolving once into a
+sequence avoids the whole question.
 
-So Phase H.2 needs, in order:
+#### General lessons, kept for whoever touches this next
 
-1. `SpecObject.infix_addr_wf` added as a conjunct of
-   `MBP.root_valid_for_darkening` and of the minor branch of
-   `roots_valid_for_minor_collection` (the honest well-formedness condition on
-   an interior root: if it is interior, it points inside a genuine closure).
-2. A new Cheney preservation lemma carrying that condition from a nursery
-   interior root to its forwarded image --- the analogue for roots of
-   `GC.Gen.CheneyPreservation.Frame`'s field-target transport (`:182-189`).
-   `MCFH.fwd_image_resolves` already gives `is_infix (fwd x) updated` and the
-   resolution; what is missing is `infix_addr_conds`, i.e. that the promoted
-   parent is enumerated, is a closure, and still spans the offset.
-3. `well_formed_heap h1 /\ well_formed_heap h2` added to
-   `MRT.major_transfer_hyp` (needed for the *non*-interior case: a live root is
-   enumerated in `h2`, and `well_formed_heap_part4` forbids an enumerated object
-   from carrying an infix header, so it resolves to itself there).
-4. A new `root_resolution_agrees h1 h2 droots rr` in
-   `GC.Gen.MajorReachabilityTransfer`, and the rewrite of
-   `result_post_reachable_swap` / `major_result_post_transfer` for the nested
-   `exists rr. post_reach_from_root ...` shape.
-5. The `GC.Gen.Impl` call site and the two SPOTs.
+* **Delegation beats restatement** for a predicate that appears at two different
+  argument tuples: define one *as* the other rather than repeating the body, so
+  the two are interchangeable by unfolding alone.
+* **Keep a duplicated existential behind a folded (non-`unfold`) function symbol
+  whose arguments are the varying terms**, so transport across a propositional
+  equality is ordinary SMT congruence.  Inlining it (via `unfold`, or by
+  restating the body) destroys that.
+* Adding a disjunct to an existential body severs the link by which one witness
+  determines the others; Z3 then finds *none* of them, at any fuel/ifuel/rlimit.
+  State introduction lemmas over an **abstract** heap rather than over the
+  collector's own applied terms.
+* `GC.Impl.Heap.is_val_addr` is a *different, weaker* predicate than
+  `GC.Spec.Base.is_val_addr`, and `GC.Impl.Heap` is opened last in
+  `GC.Gen.Impl.{fst,fsti}` --- so bare `is_val_addr` there silently means the
+  weak one.  Always qualify it in those files.
 
-Step 2 is the risk: it is Cheney-layer reasoning about the geometry of a copied
-closure, and there is no existing lemma to build on.
+#### Validation
 
-##### The restructuring that *did* work, for whoever picks this up
-
-`post_minor_reachable` and `result_post_reachable` are the same predicate at
-different arguments.  Adding the interior disjunct broke both introduction and
-transport for one reason:
-
-> While the body said only `r == rr`, the root witness `rr` was *determined* by
-> the source-vertex witness `r`, so the solver recovered all three witnesses
-> from one.  The disjunct severs that link, and Z3 then finds **none** of them
-> --- even in an empty context, even with the entire witness body asserted at
-> the intended witnesses, at any fuel/ifuel/rlimit.
-
-Three changes together fix it:
-
-* **Delegation.**  Define
-  `post_minor_reachable minor major fp roots w = result_post_reachable res.mc_major (rewrite_roots roots prom.fwd_map) w`
-  rather than restating the body, so the two are interchangeable by unfolding
-  alone.
-* **Factoring.**  Put the inner two binders behind `post_reach_from_root`, with
-  the root as a *parameter*; `result_post_reachable` is then a one-binder
-  `exists`.  Introduction becomes
-  `FStar.Classical.exists_intro (post_reach_from_root ...) rr` at an explicitly
-  named root, leaving the solver only the two vertices, which `r == rr` still
-  determines.
-* **Abstract-heap introduction lemmas.**  State the refl lemmas over an abstract
-  heap (`result_post_reachable_refl_direct` / `_resolved`); performing the same
-  introduction in place, where the heap is
-  `(cheney_collect_spec minor major fp roots).mc_major`, does not go through.
-
-The general rule: **keep a duplicated existential behind a folded (non-`unfold`)
-function symbol whose arguments are the varying terms**, so that transport
-across a propositional equality is ordinary SMT congruence.  Inlining it (via
-`unfold`, or by restating the body) destroys that.
-
-These approaches were tried and do **not** work: an equivalence lemma taking the
-heap equality in `requires` (any fuel/ifuel, rlimit up to 100); restating it
-over the collector's own applied terms; marking `result_post_reachable`
-`unfold`; asserting the witness body at the intended witnesses before asserting
-the goal; and an abstract-heap refl lemma with a *disjunctive* `requires`.
+Full `make -k -j128` and `make -C spot -j24` verify; extracted C is
+byte-identical; the OCaml integration suite passes 2514 checks under both
+runtimes, including groups 8-12 (major->minor interior pointers, minor->minor
+interior pointers promoted together, 200 nursery groups anchored only by
+interior pointers, and 24 simultaneous interior-pointer roots).
 
 ### Phase E — delete the restrictions  ✅ **done**
 
@@ -946,8 +944,9 @@ the verified runtime and under stock OCaml.
 
 These two groups are the evidence for the claim made in Phase H: the collector
 handles interior roots today, and it was only the specifications that described
-a root as its own object.  Phase H.1 has since lifted the major-heap half of
-that; the nursery half is Phase H.2.
+a root as its own object.  Phase H.1 lifted the major-heap half of that and
+Phase H.2 the nursery half, so the specifications now say what the
+implementation always did.
 
 ## 5. Risks
 
@@ -966,8 +965,8 @@ that; the nursery half is Phase H.2.
 A → B → C → D → E, each verified and committed separately; F and G afterwards.
 Phase A is independently useful and low-risk, so it can land first regardless
 of how B lands.  Phase D2 sits between D and E; **Phase H --- interior pointers
-held directly in a root --- is separate and open** (see "What is left,
-precisely" under Phase D2).
+held directly in a root --- was separate, and is now done** in two parts, H.1
+(major heap) and H.2 (nursery).
 
 **Status.** Phases A, B, C and D are done: each landed as its own fully verified
 commit, with the extracted C byte-identical throughout.  What that buys, today:
@@ -989,13 +988,13 @@ pointers; `spot/GC.SPOT.MinorInfix` audits that on a concrete heap and
 `generational/ocaml-integration/tests/infix_closures.ml` exercises it against
 real OCaml closures.
 
-What remains restricted is exactly one thing: a **root** may not itself be an
-interior pointer.  `MCFH.roots_valid_for_minor_collection` still places every
-nursery root in `minor_objects minor`, and
-`GC.Impl.MarkBoundedPrecondition.root_valid_for_darkening` still requires a
-major root to be an enumerated object.  Both implementations already resolve
-such a root; only the specifications are conservative.  Lifting the restriction
-is Phase H, scoped and measured above.
+Phase H has since lifted the last restriction --- that a **root** may not itself
+be an interior pointer.  `MCFH.roots_valid_for_minor_collection` now asks only
+that a nursery root's *resolution* be in `minor_objects minor`, and
+`GC.Impl.MarkBoundedPrecondition.root_valid_for_darkening` likewise asks only
+that a major root resolve to an enumerated object.  Interior pointers are
+therefore supported wherever the mutator can produce them: in major fields, in
+nursery fields, and in roots.
 
 ## 7. Recommendation
 
@@ -1005,8 +1004,6 @@ it correctly (§2.1) and the spec-level forwarding function already models it
 (§2.2). The remaining work is confined to the preservation proofs, and follows
 a pattern already executed once for the major heap.
 
-*Done for fields.*  For roots (Phase H) the same recommendation holds and for
-the same reason --- both collectors already resolve roots at run time --- but
-the work is larger than the rest of this plan assumed, because it changes
-`gen_gc`'s published `roots_match_stack` postcondition.  It should be planned
-and landed on its own, not bolted onto Phase D2.
+*Done for fields, and done for roots.*  Phase H landed on its own, in two
+commits, as recommended: it changed `gen_gc`'s published `roots_match_stack`
+postcondition, so it was not bolted onto Phase D2.
