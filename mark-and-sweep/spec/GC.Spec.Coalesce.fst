@@ -1804,6 +1804,13 @@ val coalesce_blue_fields_non_infix (g: heap)
     (requires post_sweep_strong g)
     (ensures blue_fields_non_infix (fst (coalesce g)))
 
+/// Every free block left by the coalescing pass is scannable: `flush_blue`
+/// writes a fresh header with tag 0 for each merged run.
+val coalesce_blue_blocks_scannable (g: heap)
+  : Lemma
+    (requires post_sweep_strong g)
+    (ensures blue_blocks_scannable (fst (coalesce g)))
+
 /// ---------------------------------------------------------------------------
 /// coalesce_preserves_wf proof helpers
 /// ---------------------------------------------------------------------------
@@ -3041,6 +3048,24 @@ val coalesce_objects_subset (g: heap) (y: obj_addr)
 let coalesce_objects_subset g y =
   coalesce_heap_unfold g g (objects zero_addr g) 0UL 0 0UL;
   coalesce_aux_objects_subset g g zero_addr (objects zero_addr g) 0UL 0 0UL (objects zero_addr g) y
+#pop-options
+
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 1"
+let coalesce_blue_blocks_scannable g =
+  let g' = fst (coalesce g) in
+  coalesce_preserves_wf g;
+  let pf (obj: obj_addr) : Lemma
+    (requires Seq.mem obj (objects zero_addr g') /\ is_blue obj g')
+    (ensures ~(is_no_scan obj g'))
+    = coalesce_heap_unfold g g (objects zero_addr g) 0UL 0 0UL;
+      assert (g' == coalesce_heap g g (objects zero_addr g) 0UL 0 0UL);
+      coalesce_aux_blue_tag_zero g g zero_addr (objects zero_addr g) 0UL 0 0UL
+        (objects zero_addr g) obj;
+      assert (tag_of_object obj g' == 0UL);
+      is_no_scan_spec obj g';
+      no_scan_tag_val ()
+  in
+  blue_blocks_scannable_intro g' pf
 #pop-options
 
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 0"

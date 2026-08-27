@@ -156,12 +156,21 @@ by making the predicate mention `is_blue`.
 
 ## 7. What it takes
 
-1. Add a `blue_blocks_scannable` clause (no blue object is no-scan) beside
-   `blue_fields_non_infix` in `GC.Gen.HeapInvariant.major_heap_shape`; prove
-   coalesce establishes it from `coalesce_aux_blue_tag_zero`, mirroring
-   `coalesce_blue_fields_non_infix`, and carry it to the top level alongside
-   `gc_blue_fields_non_infix_gen`. Across a minor collection it comes back the
-   same way `blue_fields_non_infix` does.
+1. **(done)** Add a `blue_blocks_scannable` clause --- no blue object is
+   no-scan --- and prove the coalescing pass establishes it.
+   `GC.Spec.Fields.blue_blocks_scannable` is the predicate, with the usual
+   `_elim`/`_intro` pair, and `GC.Spec.Coalesce.coalesce_blue_blocks_scannable`
+   is the theorem: it mirrors `coalesce_blue_not_infix` line for line, reading
+   tag 0 off `coalesce_aux_blue_tag_zero` and then discharging
+   `~(is_no_scan obj g')` through `is_no_scan_spec` and `no_scan_tag_val`
+   instead of `is_infix_spec` and `infix_tag_val`.
+
+   What remains of this step is the plumbing: putting the clause into
+   `GC.Gen.HeapInvariant.major_heap_shape` beside `blue_fields_non_infix` and
+   carrying it to the top level alongside `gc_blue_fields_non_infix_gen`.
+   Across a minor collection it comes back the same way `blue_fields_non_infix`
+   does. Both are only worth doing together with steps 2-5, since the clause has
+   no consumer until part 2 is relaxed.
 2. Add it to the `requires` of `wfh_part2_implies_blue_fields_closed` and of
    `cheney_promote_preserves_blue_fields_closed`.
 3. Restate `well_formed_heap_part2` and `well_formed_heap_part3` over

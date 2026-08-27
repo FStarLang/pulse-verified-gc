@@ -1122,6 +1122,43 @@ let blue_fields_non_infix_intro (g: heap)
     in
     FStar.Classical.forall_intro aux
 
+/// Every free-list block is scannable, i.e. no blue object carries a tag at or
+/// above `no_scan_tag`.
+///
+/// Like `blue_fields_non_infix`, this is a statement about the collector's own
+/// free blocks rather than about the mutator's data, and it comes from the same
+/// place: `GC.Spec.Coalesce.flush_blue` gives every merged run a *fresh* header
+/// with tag 0, and `GC.Spec.Coalesce.coalesce_aux` flushes every blue run,
+/// singletons included.  A dead string is blue and no-scan only in the transient
+/// heap between the sweep and the coalesce.
+///
+/// It is what lets `well_formed_heap`'s field clauses be relaxed to skip no-scan
+/// sources while `GC.Gen.Promote.blue_fields_closed` --- which is about free
+/// blocks, and which the Cheney promotion development depends on --- stays
+/// derivable from them.
+[@@"opaque_to_smt"]
+let blue_blocks_scannable (g: heap) : prop =
+  (forall (obj: obj_addr).
+    Seq.mem obj (objects zero_addr g) /\ GC.Spec.Object.is_blue obj g ==>
+    ~(GC.Spec.Object.is_no_scan obj g))
+
+/// Eliminate `blue_blocks_scannable` at a single object.
+let blue_blocks_scannable_elim (g: heap) (obj: obj_addr) : Lemma
+  (requires blue_blocks_scannable g /\
+            Seq.mem obj (objects zero_addr g) /\ GC.Spec.Object.is_blue obj g)
+  (ensures ~(GC.Spec.Object.is_no_scan obj g))
+  = reveal_opaque (`%blue_blocks_scannable) blue_blocks_scannable
+
+/// Introduce `blue_blocks_scannable` from a pointwise proof.
+let blue_blocks_scannable_intro (g: heap)
+    (pf: (obj: obj_addr) ->
+      Lemma (requires Seq.mem obj (objects zero_addr g) /\
+                      GC.Spec.Object.is_blue obj g)
+            (ensures ~(GC.Spec.Object.is_no_scan obj g)))
+  : Lemma (blue_blocks_scannable g)
+  = reveal_opaque (`%blue_blocks_scannable) blue_blocks_scannable;
+    FStar.Classical.forall_intro (FStar.Classical.move_requires pf)
+
 /// The blue-only clause is a weakening of the all-objects one.
 let no_infix_field_targets_weaken (g: heap) : Lemma
   (requires no_infix_field_targets g)
