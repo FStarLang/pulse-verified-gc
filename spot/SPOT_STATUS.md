@@ -272,7 +272,70 @@ object `c` holds an address *interior to* a nursery closure.
   `collection_heap_shape` and derives `False` from it plus the scenario, so the
   scenario is exactly what the old restriction ruled out.
 
-Unlike `GC.SPOT.InfixMajor` this SPOT does not exhibit a *concrete* heap:
-`GC.Gen.MinorHeap` offers no way to write an infix header into a nursery body
-(all `minor_alloc_spec` bodies are zero). See the "Satisfiability gap" note in
-`docs/minor-infix-support-plan.md`.
+This module quantifies over an abstract nursery; the concrete witness is
+below.
+
+## `GC.SPOT.MinorInfixHeap` / `MinorInfixPre` / `MinorInfixCall` — a concrete major-to-nursery interior pointer
+
+`GC.SPOT.MinorInfix` proves the theorems, but over an abstract nursery, and for
+a while it could not do better: `minor_alloc_spec` refuses `tag = 249`, so no
+sequence of allocations can lay down an infix header, and `GC.Gen.MinorHeap`
+exposed no other way to build a minor state. These three modules close that gap
+with a nursery written out word by word.
+
+`GC.SPOT.MinorInfixHeap` is the nursery. It is laid out exactly as `CLOSUREREC`
+(`runtime/interp.c:575-610`) lays out a two-function mutually recursive group:
+
+```
+byte  0 : header   wosize 3, tag 247 (Closure_tag)        word 3319
+byte  8 : field 0                          <- the closure, `Layout.a_minor`
+byte 16 : field 1 = infix header, wosize 2, tag 249       word 2297
+byte 24 : field 2                          <- the infix,   `Layout.b_minor`
+byte 32 : bump
+```
+
+The chain walk steps from byte 0 straight to the bump, so `minor_objects` is the
+singleton `[8]` and the infix header at byte 16 is a *body* word. The infix
+wosize is not a size: it is the byte offset back to the closure divided by
+eight, so `2` means "my parent is 16 bytes below me". Note that 2297 is not
+eight-aligned, so neither `GC.Spec.HeapGraph.is_pointer_field` nor
+`GC.Gen.Promote.is_minor_pointer` accepts it — that is what makes an infix
+header safe to store inside a scanned block. Checking this nursery against
+`minor_wf` needs the chain walk's defining equations, which is why
+`GC.Gen.MinorHeap` now exports `minor_objects_from`, `minor_objects_from_zero`,
+`minor_chain_walk_stop` and `minor_chain_walk_step`.
+
+`GC.SPOT.ConcreteMajorInfix` is the major heap: the same two-object heap as
+`GC.SPOT.ConcreteMajor` (both are instantiations of the new
+`GC.SPOT.ConcreteMajorGen`, which is generic in the stored nursery pointer),
+except that field 1 of the live object `c` holds `24` — a pointer into the
+*middle* of the nursery closure — rather than `8`. That the two share one
+construction and one set of proofs is the point: a nursery pointer is opaque to
+the major heap, so storing an interior one changes nothing about its shape.
+
+`GC.SPOT.MinorInfixPre` discharges `gen_gc`'s precondition for that pair, with
+roots `[c; 24]` and a one-entry remembered set holding the address of `c`'s
+field 1. The interior address has to be a root: `remembered_targets_in_roots`
+demands that every minor value reachable through the remembered set also appear
+in the root set, so this SPOT exercises interior *roots* as well as interior
+fields. `roots_valid_for_minor_collection` admits the interior root because
+Phase H.2 routed it through `resolve_minor`, which names the closure at byte 8.
+
+- `spot_mi_field_is_interior` — the value in `c`'s field 1 really is an infix
+  address of the nursery, is *not* itself an enumerated object, and resolves to
+  the closure.
+- `spot_mi_collection_heap_shape` / `spot_mi_gen_gc_pre` — the entry invariant,
+  and the full precondition, hold of this heap.
+- `spot_mi_was_forbidden` — the clause Phase H deleted from
+  `collection_heap_shape` is *false* of this heap. Together with the previous
+  item this is the non-vacuity statement: not merely a heap the collector
+  accepts, but exactly a heap the collector used to reject.
+
+`GC.SPOT.MinorInfixCall` runs the real `gen_gc` on it. Its postcondition records
+that `collection_heap_shape` is restored, the nursery comes back zeroed, and the
+root array has been rewritten to the Cheney-collected roots. It deliberately
+does not pin `snd res == true`: `gen_gc` reports failure only on a concrete
+out-of-memory event, and ruling that out for a nursery with live content is a
+separate and much larger obligation (`GC.SPOT.ConcreteForwarding` spends 600
+lines on it for the two-object nursery) that is orthogonal to the question this
+SPOT answers.

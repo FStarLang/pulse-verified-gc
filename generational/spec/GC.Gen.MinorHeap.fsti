@@ -453,3 +453,59 @@ val minor_objects_count_bound (ms: minor_state)
   : Lemma (requires minor_wf ms)
           (ensures Seq.length (minor_objects ms) <= minor_heap_size / 16 /\
                    Seq.length (minor_objects ms) < minor_heap_size / 8)
+
+/// ---------------------------------------------------------------------------
+/// Defining equations of the chain walk
+/// ---------------------------------------------------------------------------
+///
+/// `minor_chain_valid`, `minor_chain_no_infix` and the object enumeration are
+/// abstract, and every ordinary client reasons about them only through
+/// `minor_init` and `minor_alloc_spec`.  That is deliberate, but it also puts
+/// every nursery that `minor_alloc_spec` cannot build out of reach --- and
+/// `minor_alloc_spec` refuses `tag = 249`, so it can never lay down an infix
+/// header.  A nursery holding an OCaml interior pointer therefore has to be
+/// written out word by word, and the three lemmas below are what let such a
+/// nursery be checked against `minor_wf`: they are the walk's defining
+/// equations and nothing more.  `spot/GC.SPOT.MinorInfixHeap` is the only user.
+
+/// The enumeration of the objects laid out between `pos` and `bump`.
+/// `minor_objects ms` is this walk started at 0.
+val minor_objects_from (data: minor_heap) (pos: nat{pos % 8 == 0})
+                       (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  : GTot (seq U64.t)
+
+val minor_objects_from_zero (ms: minor_state)
+  : Lemma (requires U64.v ms.bump <= minor_heap_size /\ U64.v ms.bump % 8 == 0)
+          (ensures minor_objects ms == minor_objects_from ms.data 0 (U64.v ms.bump))
+
+/// The walk stops once fewer than a header's worth of bytes remain.
+val minor_chain_walk_stop
+      (data: minor_heap) (pos: nat{pos % 8 == 0})
+      (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  : Lemma (requires pos + 8 > bump)
+          (ensures minor_chain_valid data pos bump == true /\
+                   minor_chain_no_infix data pos bump == true /\
+                   minor_objects_from data pos bump == Seq.empty)
+
+/// One step of the walk across a header whose wosize is non-zero and whose
+/// successor does not overshoot `bump`.  The successor is passed in already
+/// refined so that the conclusion typechecks without appealing to the
+/// hypotheses.
+val minor_chain_walk_step
+      (data: minor_heap)
+      (pos: nat{pos % 8 == 0 /\ pos + 8 <= minor_heap_size})
+      (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+      (next: nat{next % 8 == 0 /\ next <= bump})
+  : Lemma
+      (requires
+        (let hdr = minor_read_word data (U64.uint_to_t pos) in
+         let wz = U64.v (U64.shift_right hdr 10ul) in
+         pos + 8 <= bump /\ wz > 0 /\ next == pos + (wz + 1) * 8))
+      (ensures
+        (let hdr = minor_read_word data (U64.uint_to_t pos) in
+         let tag = U64.v (U64.logand hdr 0xFFUL) in
+         minor_chain_valid data pos bump == minor_chain_valid data next bump /\
+         minor_chain_no_infix data pos bump ==
+           (tag <> 249 && minor_chain_no_infix data next bump) /\
+         minor_objects_from data pos bump ==
+           Seq.cons (U64.uint_to_t (pos + 8)) (minor_objects_from data next bump)))

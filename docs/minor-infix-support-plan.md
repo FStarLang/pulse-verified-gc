@@ -888,19 +888,38 @@ Three theorems:
   the old restriction ruled out: the two theorems above were unstatable before
   Phase E.
 
-**Satisfiability gap (open).** `spot_minor_infix_was_forbidden` shows the
-scenario is exactly the deleted restriction's complement, but it does not
-exhibit a concrete witness the way `GC.SPOT.InfixMajor` does for the major
-heap. A witness needs a nursery *containing* a closure with an infix header,
-and there is currently no way to build one: `GC.Gen.MinorHeap` only ever
-produces `minor_state`s through `minor_init` and `minor_alloc_spec`, and every
-allocated object body is zero. Adding a body-write primitive means proving that
-writing a body word preserves the abstract `minor_chain_valid` /
-`minor_chain_no_infix`, and the existing `_read_eq` lemmas require agreement
-*below bump*, which a body write violates — so it needs a new induction
-tracking which positions the chain visits (hence chain-object
-non-overlap), in `GC.Gen.MinorHeap.fsti`. That interface change invalidates the
-entire `.checked` cache on every iteration, which is why it is deferred.
+**Satisfiability gap — closed.** `spot_minor_infix_was_forbidden` shows the
+scenario is exactly the deleted restriction's complement, but for a while it did
+not exhibit a concrete witness the way `GC.SPOT.InfixMajor` does for the major
+heap: `GC.Gen.MinorHeap` only ever produced `minor_state`s through `minor_init`
+and `minor_alloc_spec`, `minor_alloc_spec` refuses `tag = 249`, and every
+allocated object body is zero.
+
+The witness now exists, built the other way round. Rather than adding a
+body-write primitive (which would need a new induction over the chain walk to
+show a body write preserves the abstract `minor_chain_valid` /
+`minor_chain_no_infix`), `GC.Gen.MinorHeap` exports the walk's **defining
+equations** — `minor_objects_from`, `minor_objects_from_zero`,
+`minor_chain_walk_stop`, `minor_chain_walk_step` — so a nursery can be written
+out word by word with `minor_write_word` and then *checked* against `minor_wf`
+directly. Their proofs are one-liners; nothing about the walk is re-derived.
+
+On top of that:
+
+* `GC.SPOT.MinorInfixHeap` — the concrete nursery: a `CLOSUREREC` pair, closure
+  header (wosize 3, tag 247) at byte 0, infix header (wosize 2, tag 249) at byte
+  16, bump at 32. `minor_objects` is the singleton `[8]`; byte 24 is an interior
+  address, not an object. All four conjuncts of `minor_heap_shape` are proved.
+* `GC.SPOT.ConcreteMajorGen` — `GC.SPOT.ConcreteMajor` generalised over the
+  nursery pointer it stores. `GC.SPOT.ConcreteMajor` (stores `8`) and the new
+  `GC.SPOT.ConcreteMajorInfix` (stores `24`) are both thin instantiations of it,
+  which makes the point structurally: the major heap cannot tell the difference.
+* `GC.SPOT.MinorInfixPre` — `gen_gc`'s full precondition for that pair, with
+  roots `[c; 24]` and one remembered slot. It also proves the deleted clause
+  *false* of this heap, so the SPOT is non-vacuous by construction.
+* `GC.SPOT.MinorInfixCall` — a Pulse `fn` that calls the real `gen_gc` on it and
+  records `collection_heap_shape` restored, the nursery zeroed, and the roots
+  rewritten to the Cheney-collected ones.
 
 ### Phase G — an OCaml-level test ✅ done
 
@@ -995,6 +1014,23 @@ that a nursery root's *resolution* be in `minor_objects minor`, and
 that a major root resolve to an enumerated object.  Interior pointers are
 therefore supported wherever the mutator can produce them: in major fields, in
 nursery fields, and in roots.
+
+**Evidence, concrete at both ends.**  Two artefacts close the loop:
+
+* `generational/ocaml-integration/tests/infix_closures.ml` group 13
+  (`test_nursery_entry_invariant`) audits the heap the collector is *handed*,
+  on a live OCaml program: inside a single collection-free window it establishes
+  that the closure blocks are in the nursery, that a root and a young field each
+  hold an interior pointer into one, and that `infix_addr_conds` holds
+  numerically --- i.e. exactly the shape `collection_heap_shape` and
+  `roots_valid_for_minor_collection` now admit --- then forces a minor
+  collection and checks the result.  2597 checks pass under the verified runtime
+  and, as a differential check, under stock OCaml.
+* `spot/GC.SPOT.MinorInfixHeap` + `ConcreteMajorInfix` + `MinorInfixPre` +
+  `MinorInfixCall` are the machine-checked counterpart: a concrete nursery
+  holding a real `Infix_tag` header, a major object pointing into the middle of
+  it, a proof of `gen_gc`'s precondition, a proof that the *deleted* clause is
+  false of that heap, and a Pulse call that runs the collector on it.
 
 ## 7. Recommendation
 

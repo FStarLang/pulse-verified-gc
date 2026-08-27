@@ -97,7 +97,16 @@ SPOT_SRC = \
   GC.SPOT.InfixCall.fsti \
   GC.SPOT.InfixCall.fst \
   GC.SPOT.MinorInfix.fsti \
-  GC.SPOT.MinorInfix.fst
+  GC.SPOT.MinorInfix.fst \
+  GC.SPOT.ConcreteMajorGen.fsti \
+  GC.SPOT.ConcreteMajorGen.fst \
+  GC.SPOT.MinorInfixHeap.fsti \
+  GC.SPOT.MinorInfixHeap.fst \
+  GC.SPOT.ConcreteMajorInfix.fsti \
+  GC.SPOT.ConcreteMajorInfix.fst \
+  GC.SPOT.MinorInfixPre.fsti \
+  GC.SPOT.MinorInfixPre.fst \
+  GC.SPOT.MinorInfixCall.fst
 
 # All checked files land in one shared cache, so targets are derived from the
 # module file name alone.

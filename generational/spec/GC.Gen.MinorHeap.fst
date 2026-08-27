@@ -1172,3 +1172,22 @@ let minor_objects_count_bound (ms: minor_state)
 /// ---------------------------------------------------------------------------
 /// Zero Bump Lemma (for SPOT)
 /// ---------------------------------------------------------------------------
+
+/// ---------------------------------------------------------------------------
+/// Defining equations of the chain walk
+/// ---------------------------------------------------------------------------
+
+let minor_objects_from data pos bump = minor_objects_aux data pos bump
+
+let minor_objects_from_zero ms = ()
+
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
+let minor_chain_walk_stop data pos bump = ()
+#pop-options
+
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 30"
+let minor_chain_walk_step data pos bump next =
+  let hdr = minor_read_word data (U64.uint_to_t pos) in
+  let wz = U64.v (U64.shift_right hdr 10ul) in
+  next_pos_mod8 pos wz
+#pop-options

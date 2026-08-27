@@ -17,7 +17,7 @@
  * formula.  Every numeric relation asserted below is one of those clauses,
  * checked against a live heap rather than against the SMT solver.
  *
- * Groups 1-7 are about the major heap.  Groups 8-10 are about the nursery,
+ * Groups 1-7 are about the major heap.  Groups 8-10 and 13 are about the nursery,
  * where the same pointer is harder: mutually recursive closures are allocated
  * young, so Cheney copying has to forward the *enclosing* block and then
  * re-apply the offset.  That is the concrete counterpart of
@@ -598,11 +598,10 @@ let test_nursery_many_groups () =
    `GC.Gen.Impl.Cheney`'s root loop dispatches to `forward_if_minor_infix`
    on Infix_tag, and `GC.Impl.MarkBounded.check_and_darken_bounded_spec`
    applies `resolve_object` to every root before darkening it, so both
-   collectors handle this.  The *specifications* do not yet admit it --
-   `roots_valid_for_minor_collection` and `root_valid_for_darkening` still
-   describe a root as its own object -- which is Phase H of
-   `docs/minor-infix-support-plan.md`.  This test is the evidence that the
-   restriction is a specification artefact and not a collector limitation. *)
+   collectors handle this.  Phase H of `docs/minor-infix-support-plan.md`
+   brought the specifications into line: `root_valid_for_darkening` and
+   `roots_valid_for_minor_collection` now speak of the object a root *names*
+   rather than of the root itself. *)
 
 let check_group_alive what base (f : int -> int) =
   let fo = Obj.repr f in
@@ -670,6 +669,251 @@ let test_many_interior_roots () =
   check_eq "all frames returned" n depth;
   Printf.printf "  %d simultaneous interior-pointer roots survived\n%!" depth
 
+(* ------------------------------------------------------------------ *)
+(* 13. the nursery entry invariant, checked before the collection       *)
+(* ------------------------------------------------------------------ *)
+(* Groups 8-12 observe what the collector *did*.  This group observes the
+   heap the collector was *handed*: it establishes, on the live heap and
+   before any collection is forced, that
+
+     (a) the closure group is in the nursery,
+     (b) a *root* holds an interior pointer into it,
+     (c) a *nursery field* holds an interior pointer into another young
+         closure group, and
+     (d) every clause of `GC.Spec.Object.infix_addr_conds` holds of both,
+
+   which together are exactly the shape that
+   `GC.Gen.HeapInvariant.collection_heap_shape` and
+   `GC.Gen.MinorCollectForwarding.Helpers.roots_valid_for_minor_collection`
+   now admit and previously forbade.  Then it forces exactly one minor
+   collection and checks the resulting heap.
+
+   `roots_valid_for_minor_collection`'s minor branch reads
+
+     Promote.is_minor_pointer r ==>
+       Seq.mem (resolve_minor minor r) (minor_objects minor) /\
+       minor_wosize minor (resolve_minor minor r) > 0
+
+   -- the *resolution* must be an enumerated nursery object, not the root
+   itself.  Clause (b) below is a heap that satisfies that and does not
+   satisfy the old form.  `spot/GC.SPOT.MajorToMinorInfix` is the machine-
+   checked counterpart on a concrete symbolic heap. *)
+
+(* Nursery residency, checked positionally rather than by guessing address
+   ranges.  Objects allocated in sequence with no intervening collection are
+   contiguous in the minor heap, so two sentinels bracketing an allocation
+   burst enclose everything allocated between them, and the whole burst fits
+   in a few hundred bytes.  A major-heap block satisfies neither property.
+   The bump direction is deliberately not assumed: stock OCaml allocates the
+   minor heap downwards, and the check should hold under both runtimes. *)
+let nursery_span = 4096n
+
+let nmin (a : nativeint) (b : nativeint) = if a < b then a else b
+let nmax (a : nativeint) (b : nativeint) = if a < b then b else a
+
+(* `infix_addr_conds`, as a reusable check: `h` is an interior pointer whose
+   enclosing closure is `p`. *)
+let check_infix_addr_conds what (h_addr : nativeint) (p_addr : nativeint)
+    (h_wosize : int) (parent_tag : int) (parent_wosize : int) =
+  check (what ^ ": wosize >= 2") (h_wosize >= 2);
+  check_eqn (what ^ ": parent = h - wosize*8")
+    (Nativeint.sub h_addr (Nativeint.of_int (h_wosize * 8))) p_addr;
+  check (what ^ ": parent word-aligned") (Nativeint.rem p_addr 8n = 0n);
+  check (what ^ ": infix word-aligned") (Nativeint.rem h_addr 8n = 0n);
+  check_eq (what ^ ": parent is Closure_tag") parent_tag Obj.closure_tag;
+  check (what ^ ": infix strictly after parent start") (h_addr > p_addr);
+  check (what ^ ": infix strictly inside parent body")
+    (h_addr < Nativeint.add p_addr (Nativeint.of_int (parent_wosize * 8)))
+
+(* Everything the pre-collection audit needs, read in one burst. *)
+type young_shape = {
+  y_before : nativeint;   (* sentinel allocated before the groups *)
+  y_after  : nativeint;   (* sentinel allocated after them *)
+  y_root   : nativeint;   (* the interior-pointer root's value *)
+  y_rootp  : nativeint;   (* its enclosing closure *)
+  y_rootw  : int;         (* its interior offset, in words *)
+  y_box    : nativeint;   (* the young referrer *)
+  y_field  : nativeint;   (* the interior pointer in its field 0 *)
+  y_fieldp : nativeint;
+  y_fieldw : int;
+}
+
+let test_nursery_entry_invariant () =
+  section "13. nursery entry invariant: an interior root and an interior \
+           nursery field";
+  let root_base = 31_000 and field_base = 32_000 in
+
+  (* Build the scenario *and* read every address inside one collection-free
+     window, so the positional checks below are all about a single nursery
+     and a single set of addresses.  `addr_of_value` allocates, so the
+     reading is part of the window too. *)
+  let attempt () =
+    let m0 = minors () in
+    let before = Sys.opaque_identity (Array.make 4 0) in
+    (* (b) the interior root: `f` is a local, i.e. a stack root, and it is an
+       interior pointer.  `make_interior_only` returns the second function of
+       the group, so nothing anywhere names the enclosing block. *)
+    let f = make_interior_only root_base in
+    (* (c) the interior nursery field: `box` is young, and its field holds an
+       interior pointer into a second young closure group.  Because `box` is
+       young this edge is found by Cheney scanning, not by the write
+       barrier. *)
+    let box = { v = Obj.repr (make_interior_only field_base) } in
+    let after = Sys.opaque_identity (Array.make 4 0) in
+    let fo = Obj.repr f and bo = Obj.repr box in
+    let y_root = addr_of_value fo in
+    let y_rootw = Obj.size fo in
+    let y_field = addr_of bo 0 in
+    let y_fieldw = Obj.size (Obj.field bo 0) in
+    let shape = {
+      y_before = addr_of_value (Obj.repr before);
+      y_after  = addr_of_value (Obj.repr after);
+      y_root; y_rootw;
+      y_rootp  = Nativeint.sub y_root (Nativeint.of_int (y_rootw * 8));
+      y_box    = addr_of_value bo;
+      y_field; y_fieldw;
+      y_fieldp = Nativeint.sub y_field (Nativeint.of_int (y_fieldw * 8));
+    } in
+    if minors () <> m0 then None else Some (f, box, before, after, shape)
+  in
+  let rec settle n =
+    if n <= 0 then None
+    else match attempt () with Some r -> Some r | None -> settle (n - 1)
+  in
+  match settle 100 with
+  | None ->
+    check "could not build the scenario without an intervening collection"
+      false
+  | Some (f, box, before, after, y) ->
+    let fo = Obj.repr f in
+    let bo = Obj.repr box in
+
+    (* -------- (b) the root really is an interior pointer -------------- *)
+    check_eq "root value is Infix_tag" (Obj.tag fo) Obj.infix_tag;
+    check "root: interior offset is a real offset" (y.y_rootw >= 2);
+    check "root: parent is word-aligned" (Nativeint.rem y.y_rootp 8n = 0n);
+    check "root: interior address is word-aligned"
+      (Nativeint.rem y.y_root 8n = 0n);
+    check "root: parent lies strictly below the interior address"
+      (y.y_rootp < y.y_root);
+
+    (* -------- (c) a young field really holds an interior pointer ------ *)
+    check_eq "young field value is Infix_tag" (Obj.tag (Obj.field bo 0))
+      Obj.infix_tag;
+    check "field: interior offset is a real offset" (y.y_fieldw >= 2);
+    check "field: parent is word-aligned" (Nativeint.rem y.y_fieldp 8n = 0n);
+    check "field: parent lies strictly below the interior address"
+      (y.y_fieldp < y.y_field);
+
+    (* -------- (a) everything is in the nursery, positionally ---------- *)
+    let lo = nmin y.y_before y.y_after and hi = nmax y.y_before y.y_after in
+    check "the allocation burst is nursery-sized"
+      (Nativeint.sub hi lo < nursery_span);
+    let between what a = check (Printf.sprintf "%s (%nx) is inside the burst" what a)
+        (lo < a && a < hi) in
+    between "root's closure block" y.y_rootp;
+    between "field's closure block" y.y_fieldp;
+    between "the young referrer" y.y_box;
+    (* The two groups are laid out in allocation order, in whichever
+       direction this runtime bumps. *)
+    check "the two groups are in allocation order"
+      (if y.y_after > y.y_before then y.y_rootp < y.y_fieldp
+       else y.y_rootp > y.y_fieldp);
+
+    (* -------- everything still computes before the collection --------- *)
+    check_group_alive "root, before collection" root_base f;
+    check_eq "field, before collection"
+      ((Obj.obj box.v : int -> int) 5) (expected_second field_base 5);
+    let root_words = Obj.reachable_words fo in
+    let field_words = Obj.reachable_words box.v in
+
+    Printf.printf
+      "  nursery burst %nx..%nx (%nd bytes): root block %nx (+%d words), \
+       field block %nx (+%d words)\n%!"
+      lo hi (Nativeint.sub hi lo) y.y_rootp y.y_rootw y.y_fieldp y.y_fieldw;
+
+    (* -------- one minor collection ------------------------------------ *)
+    churn_minors 1;
+
+    (* Everything was young, so everything moved. *)
+    check "the first sentinel was young: it moved"
+      (addr_of_value (Obj.repr before) <> y.y_before);
+    check "the second sentinel was young: it moved"
+      (addr_of_value (Obj.repr after) <> y.y_after);
+    check "the interior root's block was young: it moved"
+      (addr_of_value fo <> y.y_root);
+    check "the interior field's block was young: it moved"
+      (addr_of bo 0 <> y.y_field);
+    check "the young referrer was promoted too" (addr_of_value bo <> y.y_box);
+
+    (* -------- the promoted heap has the expected shape ----------------- *)
+    let root_addr' = addr_of_value fo in
+    let root_off' = Obj.size fo in
+    let root_parent' =
+      Nativeint.sub root_addr' (Nativeint.of_int (root_off' * 8))
+    in
+    check_eq "root: interior offset preserved by promotion" root_off' y.y_rootw;
+    check_eq "root: still Infix_tag" (Obj.tag fo) Obj.infix_tag;
+    check "root: promoted parent is word-aligned"
+      (Nativeint.rem root_parent' 8n = 0n);
+    check_group_alive "root, after collection" root_base f;
+    check_eq "root: reachable words unchanged" (Obj.reachable_words fo)
+      root_words;
+
+    let field_addr' = addr_of bo 0 in
+    let field_off' = Obj.size (Obj.field bo 0) in
+    check_eq "field: interior offset preserved by promotion" field_off'
+      y.y_fieldw;
+    check_eq "field: still Infix_tag" (Obj.tag (Obj.field bo 0)) Obj.infix_tag;
+    check_eq "field: reachable words unchanged" (Obj.reachable_words box.v)
+      field_words;
+    check_eq "field, after collection"
+      ((Obj.obj box.v : int -> int) 6) (expected_second field_base 6);
+    (* The two groups were distinct young blocks and are still distinct. *)
+    check "the two promoted groups are distinct" (root_parent' <> field_addr');
+
+    (* -------- the promoted blocks have left the nursery ---------------- *)
+    let fresh = Sys.opaque_identity (Array.make 4 0) in
+    let fresh_addr = addr_of_value (Obj.repr fresh) in
+    let far what (a : nativeint) =
+      check
+        (Printf.sprintf "%s (%nx) is outside the nursery" what a)
+        (Nativeint.abs (Nativeint.sub a fresh_addr) >= nursery_span)
+    in
+    far "promoted root block" root_parent';
+    far "promoted field target" field_addr';
+
+    (* -------- and the major collector leaves them alone ---------------- *)
+    churn_majors 2;
+    check_eqn "root block not moved by mark & sweep" (addr_of_value fo)
+      root_addr';
+    check_eqn "field target not moved by mark & sweep" (addr_of bo 0)
+      field_addr';
+    check_group_alive "root, after mark & sweep" root_base f;
+    check_eq "field, after mark & sweep"
+      ((Obj.obj box.v : int -> int) 10) (expected_second field_base 10);
+
+    (* One last cross-check of `infix_addr_conds`, this time against a group
+       whose parent handle is observable, so the parent's tag and wosize can
+       be read directly rather than inferred from the offset. *)
+    let h = make_handles 33_000 in
+    let ho = Obj.repr h in
+    churn_minors 1;
+    check_infix_addr_conds "promoted handle group" (addr_of ho 1)
+      (addr_of ho 0)
+      (Obj.size (Obj.field ho 1))
+      (Obj.tag (Obj.field ho 0))
+      (Obj.size (Obj.field ho 0));
+    Printf.printf
+      "  after one minor collection: root block %nx, field target %nx, \
+       offsets %d/%d preserved\n%!"
+      root_parent' field_addr' root_off' field_off';
+    ignore (Sys.opaque_identity h);
+    ignore (Sys.opaque_identity before);
+    ignore (Sys.opaque_identity after);
+    ignore (Sys.opaque_identity fo);
+    ignore (Sys.opaque_identity box)
+
 let () =
   (* The verified major collector is a non-moving mark & sweep, so several
      checks below assert that addresses are stable across a major collection.
@@ -695,6 +939,7 @@ let () =
   test_nursery_many_groups ();
   test_interior_root ();
   test_many_interior_roots ();
+  test_nursery_entry_invariant ();
   let st = Gc.quick_stat () in
   Printf.printf
     "collections observed: %d minor, %d major\n%!"

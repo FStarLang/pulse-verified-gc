@@ -152,11 +152,14 @@ val spot_minor_infix_promoted
 /// what changed --- the scenario is precisely, and only, what the deleted
 /// restriction ruled out.
 ///
-/// This does not by itself exhibit a witness.  Doing that needs a *concrete*
-/// nursery containing a closure with an infix header, which in turn needs a
-/// nursery body-write primitive: `GC.Gen.MinorHeap` currently only ever
-/// produces minor states through `minor_init` and `minor_alloc_spec`, whose
-/// object bodies are all zero.  See `docs/minor-infix-support-plan.md`.
+/// This module does not by itself exhibit a witness --- it quantifies over an
+/// abstract nursery.  `GC.SPOT.MinorInfixPre` supplies the witness: a nursery
+/// written out word by word, holding a real `CLOSUREREC` group with an
+/// `Infix_tag` header, and a major object whose field points at the group's
+/// second entry point.  It proves `gen_gc`'s entry invariant of that heap
+/// (`spot_mi_collection_heap_shape`) *and* proves the clause below false of it
+/// (`spot_mi_was_forbidden`), and `GC.SPOT.MinorInfixCall` then runs the real
+/// collector on it.
 let deleted_major_minor_fields_no_infix_targets
   (minor: minor_state) (major: heap) : prop =
   forall (obj: obj_addr) (j: nat).
