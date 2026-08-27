@@ -809,10 +809,18 @@ let wf_parts (_: unit) : Lemma
 /// assumes the demand away.
 ///
 /// The invariant is restricted to non-blue objects because blue (free-list)
-/// objects have their first field repurposed as the free-list pointer.  Note
-/// that this leaves a *freed* no-scan block --- blue, tag >= 251, body still
-/// full of the string's bytes --- covered by part 2 and rescued by nothing;
-/// see the plan document.
+/// objects have their first field repurposed as the free-list pointer.  That
+/// restriction is also what makes the invariant load-bearing rather than merely
+/// propagated: a *freed* no-scan block --- blue, tag >= 251, body still full of
+/// the string's bytes --- is covered by part 2, and it has to be.  `alloc_spec`
+/// recolours a blue block to White with tag 0 without clearing its body, so the
+/// words a free block holds today are the fields a scannable object holds
+/// tomorrow, and `GC.Gen.Promote.blue_fields_closed` is derived from part 2 on
+/// exactly that basis.  When the sweep blues a dead no-scan object it must
+/// therefore *establish* part 2 for the body it is about to publish, and this
+/// invariant --- no pointer-looking field at all --- is what makes that
+/// obligation vacuous.  Dropping it is consequently not a spec-only relaxation;
+/// see `docs/no-scan-support-plan.md`.
 ///
 /// Preservation, and why the gap has never been observed:
 ///   - mark: only changes colors (headers), not fields -> trivially preserved

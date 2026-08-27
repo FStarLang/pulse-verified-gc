@@ -83,73 +83,147 @@ assumption across promotion: `promote_object` copies raw words, so
 only maintain the major invariant if the nursery already satisfied it. It has no
 independent purpose, and cannot be removed on its own.
 
-## 5. The freed-no-scan gap
+## 5. The freed-no-scan gap, and why it decides the design
 
-There is a second, sharper instance, and it is *not* covered by the invariant.
+There is a second instance, and it is the one that settles the shape of the fix.
 
 `no_scan_invariant` excludes blue objects, because a blue object's field 1 is
 the free-list link. But a freed string is blue **and** no-scan, and the sweep
 does not zero its body. Its remaining words are still the string's bytes, and
 `well_formed_heap_part2` still requires every one of them that looks like a
-pointer to name an enumerated object. Nothing rescues them.
+pointer to name an enumerated object.
 
-This is invisible today for the reason in §3 — the allocator cannot produce a
-string to free. It means the fix cannot simply be "exclude no-scan sources from
-part 2": the free-list link of a blue no-scan block genuinely must stay closed,
-while the rest of its body genuinely must not be constrained.
+The tempting reading is that this is a second thing to relax: constrain only
+field 1 of a blue block and leave the rest opaque. That reading is wrong, and
+the reason is `alloc_spec`. Allocation recolours a blue block to White with
+**tag 0** and does *not* clear its body (`GC.Spec.Allocator.fsti:15`). The words
+a free block holds today are the fields a scannable object holds tomorrow. A
+free block's entire body must therefore stay constrained whatever its tag --- it
+is the model's stand-in for "the mutator initialises every field before the
+collector can observe the object".
 
-## 6. What it takes
+This is also what makes `GC.Gen.Promote.blue_fields_closed` derivable from
+part 2 (`GC.Gen.PromoteUpdate.BlueAlloc.wfh_part2_implies_blue_fields_closed`),
+which the whole Cheney promotion development depends on.
 
-Align the heap-level closure predicates with the words the collector can
-actually follow. Those are exactly:
+So the relaxation can only ever exclude *live* (non-blue) no-scan objects:
 
-1. fields `1..wosize` of live (non-blue) **scannable** objects — precisely the
-   graph's edge set; and
-2. **field 1 only** of blue objects — the free-list link.
+```fstar
+let fields_constrained (g: heap) (src: obj_addr) : GTot bool =
+  not (is_no_scan src g) || is_blue src g
+```
 
-Everything else in the heap is opaque bytes.
+## 6. Why that is not enough --- the blocking obstruction
 
-Concretely:
+With blue blocks still fully constrained, `fields_constrained` *changes value*
+when a live no-scan object is recoloured to Blue. Sweeping a dead string
+therefore has to **establish** part 2 for its body, from nothing.
 
-- **Phase 1.** Introduce the notion in `GC.Spec.Fields` (say
-  `field_is_followed g src idx`) and restate `well_formed_heap_part2`'s
-  antecedent over it. Part 2 is `opaque_to_smt` and deliberately sealed, so the
-  body change is confined to this file; the cost lands on its accessors
-  (`wfh_part2_elim`, `well_formed_heap_part2_intro`,
-  `well_formed_heap_part2_3_transport`, `wf_field_target_in_objects`,
-  `points_to_target_infix_wf`, and the `*_raw` variants).
-- **Phase 2.** Repair the elimination sites — about 27 outside `Fields.fst`.
-  Most are scanning the source object, so `~(is_no_scan src g)` is already in
-  scope; the ones that quantify over all objects need restructuring.
-- **Phase 3.** Same treatment for `no_pointer_to_blue` (`Mark.fsti:227`), which
-  is a plain `let` and can take the conjunct directly, plus its
-  `no_pointer_to_blue_intro_from_fields` callback shape.
-- **Phase 4.** Delete `no_scan_invariant`, `minor_no_scan_invariant`,
-  `promote_object_preserves_no_scan_invariant` and the ~41 interface mentions
-  that thread them.
-- **Phase 5.** A SPOT exhibiting a heap with a no-scan object whose body spells
-  a heap address, shown to satisfy the relaxed precondition — the non-vacuity
-  witness, as `GC.SPOT.MinorInfixPre` is for interior pointers. Ideally a second
-  one for a *freed* no-scan block, covering §5.
+The only fact in the repository that discharges that is `no_scan_invariant`
+itself: a live no-scan object has no pointer-looking field at all, so part 2 for
+the freshly-blued block is vacuous. Removing the invariant removes the proof
+that sweep preserves well-formedness.
 
-## 7. Cost and risk
+Concretely the obligation lands on `GC.Spec.Mark.color_change_preserves_wf`,
+which is generic in the target colour and is what `GC.Spec.Sweep` uses to blue a
+block.
 
-`well_formed_heap_part2` is the clause that decides which heaps the collector
-accepts, and it lives in `common/spec/`, so every phase invalidates the whole
-`_cache`. Phase 2 is the bulk of the work and the only part whose difficulty is
-hard to predict from the outside: a preservation proof that currently quantifies
-over all objects may need a genuinely different argument once the obligation is
-restricted.
+`no_scan_invariant` is also genuinely *consumed*, not merely propagated:
 
-The extracted C should not change. As with interior pointers in the nursery, the
-implementation already does the right thing — it simply never reads these words.
+| Site | What it discharges |
+|---|---|
+| `GC.Spec.Correctness.sweep_field_no_scan_contradiction:394` | a black no-scan object has no pointer field, so field-data preservation has no case to prove |
+| `GC.Spec.MarkBoundedCorrectness:1172` | same, transported across `mark_color_inv` |
+| `GC.Impl.MarkBounded.fst:1023` | preservation across bounded root darkening |
+| `GC.Spec.Coalesce.Shape.fst:104` | `coalesce_no_scan_invariant` |
 
-## 8. Recommendation
+The Correctness one is not an artifact. A *genuine* pointer stored in a live
+no-scan object would dangle after a collection, because no-scan fields are not
+traced --- that is true of stock OCaml too. Real OCaml is safe because nothing
+ever dereferences those bytes; the model needs the invariant because
+`well_formed_heap` and successor preservation are stated over the *unchecked*
+field enumeration, which does not consult the tag.
 
-Worth doing, and worth doing after the interior-pointer work has settled rather
-than alongside it, since both touch the same accessors in `GC.Spec.Fields`.
+**Conclusion.** The relaxation is not blocked on proof effort. It is blocked on
+a modelling assumption --- that reused memory is never observed uninitialised
+--- which is currently carried by "a free block's body is well-formed" plus
+"a live no-scan object has no pointer-looking field". Removing the second
+without replacing the first is unsound-by-construction: sweep would put
+arbitrary bytes on the free list and the allocator would hand them out as the
+fields of a scannable object.
 
-The freed-no-scan gap in §5 is the part that should not be left undocumented:
-unlike the live case it is not merely a restriction, it is a clause that no
-invariant in the repository currently discharges, kept satisfiable only by the
-allocator's inability to produce a no-scan block.
+## 7. What it would actually take
+
+In dependency order:
+
+1. Give the model a notion of *uninitialised* field content, or have `sweep`
+   and `alloc_spec` agree on a cleared body for free blocks. This is an
+   implementation-visible change (a header retag and/or body clear in
+   `sweep_object`), so it changes the extracted C. Everything else is blocked on
+   it.
+2. Then `fields_constrained` can drop the `is_blue` disjunct and become simply
+   `not (is_no_scan src g)`, which is colour-independent and therefore survives
+   `color_change_preserves_wf` for free.
+3. Restate `well_formed_heap_part2` and `well_formed_heap_part3` over
+   `fields_constrained`, and thread it through their accessors --- `wfh_part2_elim`,
+   `well_formed_heap_part2_intro`, `well_formed_heap_part2_intro_raw`,
+   `well_formed_heap_part2_3_transport`, `well_formed_heap_part2_3_intro_raw`,
+   `wf_field_target_in_objects{,_raw}`, `points_to_target_in_objects{,_raw}`,
+   `points_to_target_infix_wf`, `field_pointer_target_in_objects`,
+   `no_infix_field_targets*`, `blue_fields_non_infix*`, `no_field_points_to_addr*`.
+4. Same treatment for `no_pointer_to_blue` (`Mark.fsti:227`), a plain `let` that
+   can take the conjunct directly, plus its `no_pointer_to_blue_intro_from_fields`
+   callback shape.
+5. Delete `no_scan_invariant`, `minor_no_scan_invariant`,
+   `promote_object_preserves_no_scan_invariant` and the ~41 interface mentions
+   that thread them, re-proving the four consumers above by *skipping* no-scan
+   objects rather than deriving a contradiction from them.
+6. A SPOT exhibiting a heap with a no-scan object whose body spells a heap
+   address, shown to satisfy the relaxed precondition --- the non-vacuity
+   witness, as `GC.SPOT.MinorInfixPre` is for interior pointers.
+
+## 8. Measured fallout of steps 3 and 4
+
+Steps 3 and 4 were carried out experimentally to size them, then reverted once
+§6 established that they cannot stand on their own.
+
+`GC.Spec.Fields.fst` needed 53 threading sites and four substantive repairs:
+
+- `well_formed_heap_part2_3_transport` must hypothesise agreement of
+  `fields_constrained`, not of `is_no_scan` --- a recolour to Blue changes which
+  objects the clauses cover;
+- inside `field_write_preserves_wf`, `fields_constrained g src ==
+  fields_constrained g' src` needs `tag_of_object_spec`, `is_no_scan_spec`,
+  `color_of_object_spec` and `is_blue_iff` at both heaps, on top of the
+  `read_write_different` that already gives header stability;
+- the private write- and colour-locality lemmas (`write_word_field_pointing_self_implies`,
+  `color_change_preserves_field_pointing_other`) must *not* take the conjunct;
+  they are statements about the unchecked predicate itself;
+- the `ensures` of the transport's `fields` callback must not take it either,
+  or every caller inherits the obligation.
+
+With that in place the whole repository reported just **nine** further errors:
+
+| Module | Nature |
+|---|---|
+| `GC.Spec.Mark.fst:172` | `header_agree` must also transport the new conjunct |
+| `GC.Spec.MarkBounded.fst:169` | `push_children_bounded_preserves_bsp` needs `~(is_no_scan obj g)`; available at the caller, which already branches on `is_no_scan` |
+| `GC.Gen.NoBlueUtil.fst:56,57` | one interface `requires` |
+| `GC.Spec.Coalesce.fst:2778,2779` | `white_target_resolve_stable` and its two callers |
+| `GC.Spec.Sweep.fst:151` | resolved by *not* adding a precondition to `field_write_preserves_wf` |
+| `GC.Gen.PromoteUpdate.BlueAlloc.fst:121,122` | **the structural one** --- `wfh_part2_implies_blue_fields_closed`, i.e. §5 |
+
+So the mechanical cost is small and well understood. The cost is entirely in
+step 1.
+
+## 9. Recommendation
+
+Do not attempt this as a spec-only relaxation; §6 shows it cannot close. Treat
+it as a change to the free-block contract first, and only then as a relaxation
+of parts 2 and 3.
+
+Until then, the honest description of `no_scan_invariant` and
+`minor_no_scan_invariant` is the one now in the source: they are not an OCaml
+memory-model guarantee, they are what lets a dead no-scan object be put on the
+free list while keeping the free list's bodies well-formed for the allocator to
+hand back out.
