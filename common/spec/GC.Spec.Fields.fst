@@ -788,22 +788,44 @@ let wf_parts (_: unit) : Lemma
 /// No-Scan Invariant
 /// ---------------------------------------------------------------------------
 ///
-/// Formalizes the OCaml memory model guarantee that no_scan objects (strings,
-/// bigarrays, custom blocks with tag >= no_scan_tag) contain raw data whose
-/// byte patterns do not form valid managed heap pointers.
+/// No-scan objects (strings, bigarrays, custom blocks with tag >=
+/// no_scan_tag) hold no word that looks like a managed heap pointer.
 ///
-/// This property is required as a precondition to GC correctness: without it,
-/// the tri_color_invariant cannot guarantee that unmarked successors of no_scan
-/// objects are unreachable (since the GC does not trace no_scan fields).
+/// This is **not** a property of OCaml heaps, and the invariant should be read
+/// as a restriction the collector imposes rather than a fact about the
+/// mutator.  A `string`, a `Bytes.t`, a `Bigarray` payload or a `Custom` block
+/// holds arbitrary bytes, and eight of them may perfectly well spell an
+/// 8-aligned in-range address.  See `docs/no-scan-support-plan.md` for why it
+/// is here and what it would take to remove.
+///
+/// In short: it is not needed to justify tracing.  The graph model already
+/// agrees with the collector that a no-scan object has no out-edges ---
+/// `GC.Spec.HeapGraph.get_pointer_fields` returns `Seq.empty` for it.  What
+/// needs it is `well_formed_heap_part2`, whose antecedent runs through
+/// `exists_field_pointing_to_unchecked` --- "unchecked" meaning it walks every
+/// field of every object without consulting the tag --- and likewise
+/// `GC.Spec.Mark.no_pointer_to_blue` via `points_to`.  Those two demand field
+/// closure for words the collector never reads, and this invariant is what
+/// assumes the demand away.
 ///
 /// The invariant is restricted to non-blue objects because blue (free-list)
-/// objects have their first field repurposed as the free-list pointer.
+/// objects have their first field repurposed as the free-list pointer.  Note
+/// that this leaves a *freed* no-scan block --- blue, tag >= 251, body still
+/// full of the string's bytes --- covered by part 2 and rescued by nothing;
+/// see the plan document.
 ///
-/// Preservation:
-///   - mark: only changes colors (headers), not fields → trivially preserved
-///   - sweep: freed objects become blue → excluded from quantifier
-///   - alloc: newly allocated objects have tag=0 < no_scan_tag → not no_scan;
+/// Preservation, and why the gap has never been observed:
+///   - mark: only changes colors (headers), not fields -> trivially preserved
+///   - sweep: freed objects become blue -> excluded from quantifier
+///   - alloc: newly allocated objects have tag=0 < no_scan_tag -> not no_scan;
 ///            existing no_scan object fields are untouched
+///
+/// Read that last line again: no spec-level operation ever *creates* a no-scan
+/// object.  The allocator writes tag 0, the sweep writes only a colour and a
+/// link word.  So a no-scan object can only come from the initial heap, and
+/// the invariant is trivially maintainable precisely because the specification
+/// cannot build a counterexample -- the same shape of vacuity that
+/// `docs/infix-support-plan.md` found for interior pointers.
 
 [@@"opaque_to_smt"]
 let no_scan_invariant (g: heap) : prop =
