@@ -1054,3 +1054,47 @@ a pattern already executed once for the major heap.
 *Done for fields, and done for roots.*  Phase H landed on its own, in two
 commits, as recommended: it changed `gen_gc`'s published `roots_match_stack`
 postcondition, so it was not bolted onto Phase D2.
+
+## 8. What this changed in the extracted C
+
+Almost nothing, and that is the result rather than an oversight.  It is worth
+recording, because "we added interior-pointer support and the C is unchanged"
+reads like a missing regeneration step.
+
+**One hunk, in the whole effort.**  Commit `e1ed4a7` added 13 lines to
+`check_and_darken_bounded` (`generational/snapshot/GC_Gen_Impl.c`): the
+mark-and-sweep darkener now reads the target's header and, when the tag is
+`infix_tag`, darkens `v - wosize * 8` --- the enclosing closure --- instead of
+the interior address.  That was the one place where the *implementation*
+genuinely did not handle an interior pointer.
+
+**The nursery side needed no new code at all.**  `forward_if_minor_infix`,
+`synthesize_infix_forwarding` and `find_infix_parents` were extracted by
+commits `f091aec` and `bfc1640`, long before this plan was written; §2.1 says as
+much.  Phases D through H therefore had nothing to add to the collector.
+
+**So what were the other forty commits?**  `well_formed_heap`,
+`major_heap_shape` and `minor_heap_shape` forbade the very heaps the code
+already collected correctly.  The theorems were sound and *vacuous* on the heap
+shapes stock OCaml produces routinely.  Relaxing a precondition and re-proving
+the same postcondition does not change the program it is a specification of.
+
+The impl modules did change --- roughly 570 lines across
+`GC.Gen.Impl.Cheney`, `GC.Gen.Impl`, `GC.Impl.MarkBounded` and their
+interfaces --- but every one of those lines is erased at extraction: ghost
+lemma calls, `requires`/`ensures` clauses, `pure` slprops, `Ghost.erased`
+values.  Several `else` branches in `forward_if_minor_infix` went from "call a
+guard-failure lemma and return `()`" to `assert (pure False)`.  The defensive
+guard is still in the emitted C; what changed is that it is now *proved dead*
+rather than merely proved harmless.
+
+The healthy reading: on this feature, verification found the specification too
+strong rather than the implementation wrong --- with exactly one exception,
+which is precisely the hunk that did change the C.
+
+To confirm the snapshot is current at any commit:
+
+```bash
+make extract && make -C generational snapshot
+git status --short generational/snapshot   # empty == byte-identical
+```
