@@ -19,6 +19,7 @@ module AllocChain = GC.Spec.Allocator.Lemmas.Chain
 module FreeListShape = GC.Gen.FreeListShape
 module GenInv = GC.Gen.HeapInvariant
 module Promote = GC.Gen.Promote
+module BlueAlloc = GC.Gen.PromoteUpdate.BlueAlloc
 
 #set-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 
@@ -994,31 +995,23 @@ let spot_infix_no_pointer_to_blue (r: unit{spot_infix_room})
   SpecMark.no_pointer_to_blue_intro_from_fields g field_no_blue
 #pop-options
 
-/// No object in this heap is `no_scan`, so the raw-data invariant is vacuous.
+/// No object in this heap is `no_scan`, so in particular no *blue* one is.
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
-let spot_infix_no_scan_invariant (r: unit{spot_infix_room})
-  : Lemma (ensures SpecFields.no_scan_invariant (spot_infix_heap r))
+let spot_infix_blue_blocks_scannable (r: unit{spot_infix_room})
+  : Lemma (ensures SpecFields.blue_blocks_scannable (spot_infix_heap r))
   =
   let g = spot_infix_heap r in
-  let aux (src: obj_addr) (idx: nat)
-    : Lemma (ensures
-        Seq.mem src (SpecFields.objects zero_addr g) /\
-        SpecObj.is_no_scan src g /\
-        ~(SpecObj.is_blue src g) /\
-        idx < U64.v (SpecObj.wosize_of_object src g) /\
-        U64.v src + idx * 8 < heap_size ==>
-        (let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
-         ~(SpecFields.is_pointer_field (read_word g field_addr))))
+  let pf (obj: obj_addr)
+    : Lemma (requires Seq.mem obj (SpecFields.objects zero_addr g) /\
+                      SpecObj.is_blue obj g)
+            (ensures ~(SpecObj.is_no_scan obj g))
     =
-    if Seq.mem src (SpecFields.objects zero_addr g) then begin
-      spot_infix_object_cases r src;
-      spot_infix_q_reads r;
-      spot_infix_p_reads r;
-      spot_infix_free_reads r
-    end
+    spot_infix_object_cases r obj;
+    spot_infix_q_reads r;
+    spot_infix_p_reads r;
+    spot_infix_free_reads r
   in
-  FStar.Classical.forall_intro_2 aux;
-  SpecFields.no_scan_invariant_intro g
+  SpecFields.blue_blocks_scannable_intro g pf
 
 /// The one clause that still constrains interior pointers: a *free-list cell*
 /// may not hold one.  Here the only blue object is F, whose fields are all zero.
@@ -1068,6 +1061,9 @@ let spot_infix_major_heap_shape (r: unit{spot_infix_room})
   spot_infix_no_black_objects r;
   spot_infix_no_gray_objects r;
   spot_infix_no_pointer_to_blue r;
-  spot_infix_no_scan_invariant r;
   spot_infix_blue_fields_non_infix r;
+  spot_infix_blue_blocks_scannable r;
+  spot_infix_wfh_part1 r;
+  spot_infix_wfh_part2_3 r;
+  BlueAlloc.wfh_part2_implies_blue_fields_closed g;
   GenInv.major_heap_shape_intro g fp

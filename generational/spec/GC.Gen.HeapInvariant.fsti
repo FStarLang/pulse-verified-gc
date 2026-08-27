@@ -32,7 +32,27 @@ module FreeListShape = GC.Gen.FreeListShape
 
 /// Major-heap shape needed by both minor collection and the following major GC:
 /// object layout/infix well-formedness, free-list validity, color invariants,
-/// and the no-scan/no-pointer-to-blue safety conditions.
+/// and the no-pointer-to-blue safety condition.
+///
+/// A *no-scan* object (`tag >= 251`: a string, `Bytes.t`, `Bigarray` payload or
+/// custom block) may hold arbitrary bytes, including words that spell a
+/// perfectly well-formed heap address.  Parts 2 and 3 of `well_formed_heap` are
+/// guarded by `GC.Spec.Fields.fields_constrained`, so nothing is demanded of
+/// those words -- matching the extracted collector, which never reads them, and
+/// `GC.Spec.HeapGraph.get_pointer_fields`, which returns `Seq.empty` for such an
+/// object.  `GC.SPOT.NoScanMajor` exhibits a heap that satisfies this shape and
+/// would have been rejected before, so the relaxation is not vacuous.
+///
+/// The relaxation costs one clause.  `GC.Gen.Promote.blue_fields_closed` used to
+/// follow from part 2 alone; a *blue* no-scan block is now unconstrained, so it
+/// no longer does, and `major_heap_shape` carries `blue_fields_closed major`
+/// outright.  That is not a strengthening --- it was derivable before --- and it
+/// is re-established after a major collection by
+/// `GC.Gen.PostCollectionShape.coalesce_blue_fields_closed`, which reads
+/// `GC.Spec.Fields.blue_blocks_scannable` off `GC.Spec.Coalesce.
+/// coalesce_blue_blocks_scannable`: coalescing gives every free block a fresh
+/// tag-0 header, so a blue no-scan block exists only transiently between sweep
+/// and coalesce.
 ///
 /// Interior (infix) pointers in *live* major fields are allowed.  A white, gray
 /// or black object may hold a pointer into the middle of a closure, which is how
@@ -85,6 +105,12 @@ val minor_major_fields_no_blue (minor: minor_state) (major: heap) : prop
 
 /// Minor-heap shape: bump/layout validity, runtime guard completeness, infix
 /// validity, and the minor analogue of the no-scan raw-data invariant.
+///
+/// The nursery clause `GC.Gen.Promote.minor_no_scan_invariant` is *not* relaxed,
+/// unlike its major-heap counterpart: `GC.Gen.CombinedGraph.minor_object_edges`
+/// does not skip no-scan sources, and making it do so requires a
+/// `minor_tag >= 251 ==> is_no_scan target` invariant threaded through the whole
+/// Cheney forwarding development.  See `docs/no-scan-support-plan.md` §10.
 [@@"opaque_to_smt"]
 val minor_heap_shape (minor: minor_state) : prop
 /// Non-stack combined heap shape used by minor collection.
@@ -104,7 +130,7 @@ val major_heap_shape_intro (major: heap) (fp: U64.t)
                     Mark.no_black_objects major /\
                     SweepInv.no_gray_objects major /\
                     Mark.no_pointer_to_blue major /\
-                    no_scan_invariant major /\
+                    blue_fields_closed major /\
                     blue_fields_non_infix major)
           (ensures major_heap_shape major fp)
 
@@ -123,7 +149,7 @@ val major_heap_shape_elim (major: heap) (fp: U64.t)
                    Mark.no_black_objects major /\
                    SweepInv.no_gray_objects major /\
                    Mark.no_pointer_to_blue major /\
-                   no_scan_invariant major /\
+                   blue_fields_closed major /\
                    blue_fields_non_infix major)
 
 val minor_heap_shape_elim (minor: minor_state)

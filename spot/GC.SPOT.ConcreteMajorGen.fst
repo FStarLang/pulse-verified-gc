@@ -20,6 +20,7 @@ module AllocChain = GC.Spec.Allocator.Lemmas.Chain
 module FreeListShape = GC.Gen.FreeListShape
 module GenInv = GC.Gen.HeapInvariant
 module Promote = GC.Gen.Promote
+module BlueAlloc = GC.Gen.PromoteUpdate.BlueAlloc
 module Layout = GC.SPOT.Layout
 module SpecHeap = GC.Spec.Heap
 
@@ -809,14 +810,23 @@ let spot_major_no_pointer_to_blue (r: unit{spot_major_room}) (mp: minor_ptr)
   in
   SpecMark.no_pointer_to_blue_intro_from_fields major field_no_blue
 
-let spot_major_no_scan_invariant (r: unit{spot_major_room}) (mp: minor_ptr)
-  : Lemma (ensures SpecFields.no_scan_invariant (spot_major_heap r mp))
+/// Neither object here is `no_scan`, so in particular the free block is not.
+let spot_major_blue_blocks_scannable (r: unit{spot_major_room}) (mp: minor_ptr)
+  : Lemma (ensures SpecFields.blue_blocks_scannable (spot_major_heap r mp))
   =
+  let g = spot_major_heap r mp in
   spot_major_objects r mp;
   spot_major_c_reads r mp;
   spot_major_free_reads r mp;
-  SpecFields.no_scan_invariant_intro_pair
-    (spot_major_heap r mp) (spot_c r) (spot_free_obj r)
+  let pf (obj: obj_addr)
+    : Lemma (requires Seq.mem obj (SpecFields.objects zero_addr g) /\
+                      SpecObj.is_blue obj g)
+            (ensures ~(SpecObj.is_no_scan obj g))
+    = spot_major_object_cases r mp obj;
+      spot_major_c_reads r mp;
+      spot_major_free_reads r mp
+  in
+  SpecFields.blue_blocks_scannable_intro g pf
 #pop-options
 
 let spot_major_heap_shape (r: unit{spot_major_room}) (mp: minor_ptr)
@@ -838,6 +848,9 @@ let spot_major_heap_shape (r: unit{spot_major_room}) (mp: minor_ptr)
   spot_major_no_black_objects r mp;
   spot_major_no_gray_objects r mp;
   spot_major_no_pointer_to_blue r mp;
-  spot_major_no_scan_invariant r mp;
   SpecFields.no_infix_field_targets_weaken major;
+  spot_major_blue_blocks_scannable r mp;
+  spot_major_wfh_part1 r mp;
+  spot_major_wfh_part2 r mp;
+  BlueAlloc.wfh_part2_implies_blue_fields_closed major;
   GenInv.major_heap_shape_intro major fp

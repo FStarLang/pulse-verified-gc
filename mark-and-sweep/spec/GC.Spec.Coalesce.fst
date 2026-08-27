@@ -1771,7 +1771,7 @@ let coalesce_all_white_or_blue g =
 let post_sweep_strong (g: heap) : prop =
   post_sweep g /\
   (forall (x: obj_addr) (i: nat).
-    Seq.mem x (objects zero_addr g) /\ is_white x g /\
+    Seq.mem x (objects zero_addr g) /\ is_white x g /\ fields_constrained g x /\
     i >= 1 /\ i <= U64.v (wosize_of_object x g) /\ i < pow2 64 ==>
     (let iu = U64.uint_to_t i in
      let field_val = HeapGraph.get_field g x iu in
@@ -2609,7 +2609,7 @@ let rec coalesce_aux_blue_field0_valid g0 g start objs all_objs first_blue run_w
 
 /// Blue source objects after coalescing: if efptu g' src wz dst, then dst in objects g'.
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 1"
-private let coalesce_blue_field_closure (g: heap) (src dst: obj_addr)
+let coalesce_blue_field_closure (g: heap) (src dst: obj_addr)
   : Lemma
     (requires
       post_sweep_strong g /\
@@ -2668,6 +2668,7 @@ private let rec coalesce_white_field_not_blue
     (requires
       post_sweep_strong g /\
       Seq.mem src (objects zero_addr g) /\ is_white src g /\
+      fields_constrained g src /\
       U64.v wz <= U64.v (wosize_of_object src g) /\
       exists_field_pointing_to_unchecked g src wz dst /\
       Seq.mem (GC.Spec.Object.resolve_object dst g) (objects zero_addr g) /\
@@ -2771,6 +2772,7 @@ private let white_target_resolve_stable (g: heap) (src dst: obj_addr)
     (requires
       post_sweep_strong g /\
       Seq.mem src (objects zero_addr g) /\ is_white src g /\
+      fields_constrained g src /\
       (let wz = wosize_of_object src g in
        U64.v wz < pow2 54 /\
        exists_field_pointing_to_unchecked g src wz dst))
@@ -2831,6 +2833,7 @@ private let white_src_field_closure (g: heap) (src dst: obj_addr)
     (requires
       post_sweep_strong g /\
       Seq.mem src (objects zero_addr g) /\ is_white src g /\
+      fields_constrained g src /\
       Seq.mem src (objects zero_addr (fst (coalesce g))) /\
       (let g' = fst (coalesce g) in
        let wz = wosize_of_object src g' in
@@ -2857,6 +2860,7 @@ val coalesce_preserves_survivor_field_resolve
   : Lemma
     (requires post_sweep_strong g /\
               Seq.mem x (objects zero_addr g) /\ is_white x g /\
+              fields_constrained g x /\
               U64.v j <= U64.v (wosize_of_object x g))
     (ensures (let v = HeapGraph.get_field g x j in
               HeapGraph.resolve_field g v ==
@@ -2955,6 +2959,7 @@ let coalesce_preserves_wf g =
     : Lemma
       (requires
         Seq.mem src (objects zero_addr g') /\
+        fields_constrained g' src /\
         (let wz = wosize_of_object src g' in
          U64.v wz < pow2 54 /\
          exists_field_pointing_to_unchecked g' src wz dst))
@@ -2972,6 +2977,12 @@ let coalesce_preserves_wf g =
         is_white_iff src g';
         is_blue_iff src g';
         assert (Seq.mem src (objects zero_addr g) /\ is_white src g);
+        coalesce_preserves_survivor_header g src;
+        tag_of_object_spec src g;
+        tag_of_object_spec src g';
+        hd_address_spec src;
+        is_no_scan_spec src g;
+        is_no_scan_spec src g';
         white_src_field_closure g src dst
       end
   in
@@ -2979,6 +2990,7 @@ let coalesce_preserves_wf g =
     : Lemma
       (requires
         Seq.mem src (objects zero_addr g') /\
+        fields_constrained g' src /\
         U64.v (wosize_of_object src g') < pow2 54 /\
         exists_field_pointing_to_unchecked g' src (wosize_of_object src g') dst)
       (ensures Seq.mem (GC.Spec.Object.resolve_object dst g') (objects zero_addr g') /\

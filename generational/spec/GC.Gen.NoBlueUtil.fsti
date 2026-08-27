@@ -36,6 +36,7 @@ val field_pointer_no_blue_from_no_pointer_to_blue
               Mark.no_pointer_to_blue g /\
               Seq.mem src (objects zero_addr g) /\
               ~(is_blue src g) /\
+              fields_constrained g src /\
               j < U64.v (wosize_of_object src g) /\
               U64.v src + j * U64.v mword + U64.v mword <= heap_size /\
               (U64.v src + j * U64.v mword) % U64.v mword == 0 /\
@@ -53,6 +54,7 @@ val field_pointer_target_in_objects_nat
   : Lemma
     (requires well_formed_heap g /\
               Seq.mem src (objects zero_addr g) /\
+              fields_constrained g src /\
               j < U64.v (wosize_of_object src g) /\
               U64.v src + j * U64.v mword + U64.v mword <= heap_size /\
               (U64.v src + j * U64.v mword) % U64.v mword == 0 /\

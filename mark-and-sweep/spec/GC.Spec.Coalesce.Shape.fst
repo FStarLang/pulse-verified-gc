@@ -71,53 +71,6 @@ let coalesce_fp_pointer_or_zero g =
     objects_addresses_gt_start zero_addr (fst r) (snd r <: obj_addr)
 #pop-options
 
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 100"
-let coalesce_no_scan_invariant g =
-  let g' = fst (coalesce g) in
-  coalesce_preserves_length g;
-  let aux (src: obj_addr) (idx: nat)
-    : Lemma
-      (ensures
-        Seq.mem src (objects zero_addr g') /\
-        is_no_scan src g' /\
-        ~(is_blue src g') /\
-        idx < U64.v (wosize_of_object src g') /\
-        U64.v src + idx * 8 < heap_size ==>
-        (let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
-         ~(is_pointer_field (read_word g' field_addr))))
-    =
-    if Seq.mem src (objects zero_addr g') &&
-       is_no_scan src g' &&
-       not (is_blue src g') &&
-       idx < U64.v (wosize_of_object src g') &&
-       U64.v src + idx * 8 < heap_size
-    then begin
-      coalesce_survivor_transfer g src;
-      wosize_of_object_spec src g;
-      wosize_of_object_spec src g';
-      tag_of_object_spec src g;
-      tag_of_object_spec src g';
-      is_no_scan_spec src g;
-      is_no_scan_spec src g';
-      is_white_iff src g;
-      is_blue_iff src g;
-      no_scan_invariant_elim g src idx;
-      // The field is a body word of a survivor, so coalescing left it alone.
-      let i : U64.t = U64.uint_to_t (idx + 1) in
-      hd_address_spec src;
-      wosize_of_object_bound src g;
-      FStar.Math.Lemmas.pow2_lt_compat 61 54;
-      HeapGraph.get_field_addr_eq g src i;
-      HeapGraph.get_field_addr_eq g' src i;
-      coalesce_preserves_survivor_field g src i;
-      let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
-      assert (~(is_pointer_field (read_word g' field_addr)))
-    end
-  in
-  FStar.Classical.forall_intro_2 aux;
-  no_scan_invariant_intro g'
-#pop-options
-
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 150"
 let coalesce_no_pointer_to_blue g =
   let g' = fst (coalesce g) in
@@ -128,6 +81,7 @@ let coalesce_no_pointer_to_blue g =
     : Lemma
       (requires Seq.mem src (objects zero_addr g') /\
                 ~(is_blue src g') /\
+                fields_constrained g' src /\
                 j < U64.v (wosize_of_object src g') /\
                 U64.v src + j * 8 + 8 <= heap_size /\
                 is_pointer_to
@@ -139,6 +93,12 @@ let coalesce_no_pointer_to_blue g =
       is_white_iff src g;
       let i : U64.t = U64.uint_to_t (j + 1) in
       hd_address_spec src;
+      coalesce_preserves_survivor_header g src;
+      tag_of_object_spec src g;
+      tag_of_object_spec src g';
+      is_no_scan_spec src g;
+      is_no_scan_spec src g';
+      assert (fields_constrained g src);
       wosize_of_object_bound src g;
       FStar.Math.Lemmas.pow2_lt_compat 61 54;
       HeapGraph.get_field_addr_eq g src i;

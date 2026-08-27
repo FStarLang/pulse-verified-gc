@@ -1,6 +1,8 @@
 # Plan: supporting no-scan objects with arbitrary contents
 
-*Status: diagnosed, not yet implemented.*
+*Status: implemented for the major heap.  The nursery clause
+`GC.Gen.Promote.minor_no_scan_invariant` is unchanged; §10 records why, and what
+removing it would cost.*
 
 This is the no-scan analogue of `docs/infix-support-plan.md`. It has the same
 shape as that one, and the same root cause: a whole-heap predicate is stronger
@@ -154,10 +156,9 @@ sweep-blues-a-dead-string transition raises no obligation at all: the block is
 excluded before and after. This is the point the earlier revision got backwards
 by making the predicate mention `is_blue`.
 
-## 7. What it takes
+## 7. What was done
 
-1. **(done)** Add a `blue_blocks_scannable` clause --- no blue object is
-   no-scan --- and prove the coalescing pass establishes it.
+1. **`blue_blocks_scannable`** --- no blue object is no-scan.
    `GC.Spec.Fields.blue_blocks_scannable` is the predicate, with the usual
    `_elim`/`_intro` pair, and `GC.Spec.Coalesce.coalesce_blue_blocks_scannable`
    is the theorem: it mirrors `coalesce_blue_not_infix` line for line, reading
@@ -165,74 +166,114 @@ by making the predicate mention `is_blue`.
    `~(is_no_scan obj g')` through `is_no_scan_spec` and `no_scan_tag_val`
    instead of `is_infix_spec` and `infix_tag_val`.
 
-   What remains of this step is the plumbing: putting the clause into
-   `GC.Gen.HeapInvariant.major_heap_shape` beside `blue_fields_non_infix` and
-   carrying it to the top level alongside `gc_blue_fields_non_infix_gen`.
-   Across a minor collection it comes back the same way `blue_fields_non_infix`
-   does. Both are only worth doing together with steps 2-5, since the clause has
-   no consumer until part 2 is relaxed.
-2. Add it to the `requires` of `wfh_part2_implies_blue_fields_closed` and of
-   `cheney_promote_preserves_blue_fields_closed`.
-3. Restate `well_formed_heap_part2` and `well_formed_heap_part3` over
-   `fields_constrained`, threading it through their accessors --- `wfh_part2_elim`,
-   `well_formed_heap_part2_intro{,_raw}`, `well_formed_heap_part2_3_transport`,
-   `well_formed_heap_part2_3_intro_raw`, `wf_field_target_in_objects{,_raw}`,
-   `points_to_target_in_objects{,_raw}`, `points_to_target_infix_wf`,
-   `field_pointer_target_in_objects`, `no_infix_field_targets*`,
-   `blue_fields_non_infix*`, `no_field_points_to_addr*`.
-4. Same for `no_pointer_to_blue` (`Mark.fsti:227`), a plain `let` that can take
-   the conjunct directly, plus its `no_pointer_to_blue_intro_from_fields`
-   callback shape.
-5. Delete `no_scan_invariant`, `minor_no_scan_invariant`,
-   `promote_object_preserves_no_scan_invariant` and the ~41 interface mentions
-   that thread them, re-proving the four consumers below by *skipping* no-scan
-   objects instead of deriving a contradiction from them:
+2. **`wfh_part2_implies_blue_fields_closed` gained the side condition.**  That
+   is the one derivation §6 identified.
 
-   | Site | What it currently discharges |
-   |---|---|
-   | `GC.Spec.Correctness.sweep_field_no_scan_contradiction:394` | a black no-scan object has no pointer field |
-   | `GC.Spec.MarkBoundedCorrectness:1172` | same, transported across `mark_color_inv` |
-   | `GC.Impl.MarkBounded.fst:1023` | preservation across bounded root darkening |
-   | `GC.Spec.Coalesce.Shape.fst:104` | `coalesce_no_scan_invariant` |
+3. **`well_formed_heap_part2` and `_part3` were restated over
+   `fields_constrained`**, threaded through every accessor, intro, elim and
+   callback type --- 57 sites in `GC.Spec.Fields.fst`.
 
-6. A SPOT exhibiting a heap with a no-scan object whose body spells a heap
-   address, shown to satisfy the relaxed precondition --- the non-vacuity
-   witness, as `GC.SPOT.MinorInfixPre` is for interior pointers.
+4. **`GC.Spec.Mark.no_pointer_to_blue` likewise**, including its
+   `no_pointer_to_blue_intro_from_fields` callback.
 
-## 8. Measured fallout of step 3
+5. **`no_scan_invariant` was removed from every precondition.**  It survives as
+   a *definition* only, because the SPOT in step 6 uses it to state what the old
+   invariant rejected, and because the nursery variant is still live.  Purged
+   from: `GC.Gen.HeapInvariant.major_heap_shape`,
+   `GC.Impl.MarkBoundedPrecondition.darken_precondition`,
+   `GC.Impl.gc_precondition_with_roots`, `GC.Spec.Correctness.mark_post` and
+   `sweep_post_sweep_strong`, `GC.Spec.Coalesce.post_sweep_strong`,
+   `GC.Spec.MarkBoundedCorrectness`.  The four consumers tabulated in the old
+   step 5 now *skip* no-scan objects instead of deriving a contradiction from
+   them; `GC.Spec.Coalesce.Shape.coalesce_no_scan_invariant` and the
+   `mark_*_preserves_no_scan_invariant` family were deleted outright.
 
-Step 3 was carried out experimentally to size it. `GC.Spec.Fields.fst` verifies
-after 53 threading sites and four substantive repairs:
+6. **`GC.SPOT.NoScanMajor`** is the non-vacuity witness: a two-object major heap
+   whose live `no_scan_tag` block holds one word of body spelling
+   `zero_addr + 32` --- a word-aligned in-heap address that is *not* an
+   enumerated object (it points into the middle of the free block).  The module
+   proves both halves:
 
-- `well_formed_heap_part2_3_transport` must hypothesise agreement of
-  `fields_constrained` rather than being stated over `is_no_scan` piecemeal;
-- the private write- and colour-locality lemmas
-  (`write_word_field_pointing_self_implies`,
-  `color_change_preserves_field_pointing_other`) must *not* take the conjunct ---
-  they are statements about the unchecked predicate itself;
-- the `ensures` of the transport's `fields` callback must not take it either, or
-  every caller inherits the obligation;
-- inside `field_write_preserves_wf`, transporting the conjunct across the write
-  needs `tag_of_object_spec` and `is_no_scan_spec` at both heaps, on top of the
-  `read_write_different` that already gives header stability.
+   - `spot_ns_violates_no_scan_invariant` --- the heap does **not** satisfy the
+     old `GC.Spec.Fields.no_scan_invariant`, so it was previously inadmissible;
+   - `spot_ns_major_heap_shape` --- it *does* satisfy
+     `GC.Gen.HeapInvariant.major_heap_shape`, `gen_gc`'s major-heap
+     precondition.
 
-The whole repository then reported only **nine** further errors:
+## 8. The pivot: `blue_fields_closed` rather than `blue_blocks_scannable` in
+   `major_heap_shape`
 
-| Module | Nature |
-|---|---|
-| `GC.Spec.Mark.fst:172` | `header_agree` must also transport the conjunct |
-| `GC.Spec.MarkBounded.fst:169` | `push_children_bounded_preserves_bsp` needs `~(is_no_scan obj g)`; the caller already branches on `is_no_scan` |
-| `GC.Gen.NoBlueUtil.fst:56,57` | one interface `requires` |
-| `GC.Spec.Coalesce.fst:2778,2779` | `white_target_resolve_stable` and its two callers |
-| `GC.Spec.Sweep.fst:151` | resolved by *not* adding a precondition to `field_write_preserves_wf` |
-| `GC.Gen.PromoteUpdate.BlueAlloc.fst:121,122` | the one in §6 |
+Step 1 originally planned to carry `blue_blocks_scannable` in
+`major_heap_shape`, so that `wfh_part2_implies_blue_fields_closed` could be
+invoked wherever `blue_fields_closed` was wanted.  That is one indirection too
+many: the *only* thing the promotion development wants is
+`blue_fields_closed`, and it already had a full `*_preserves_blue_fields_closed`
+chain through Cheney promotion.  So `major_heap_shape` carries
 
-## 9. Recommendation
+```fstar
+blue_fields_closed major
+```
 
-Worth doing. Step 1 is the only genuinely new proof work, and it has a complete
-template in `blue_fields_non_infix` plus an already-proved ingredient in
-`coalesce_aux_blue_tag_zero`. Steps 3 and 4 are measured above. Step 5 is the
-bulk of the diff but is mechanical unthreading.
+directly, in the slot `no_scan_invariant major` used to occupy.  This is not a
+strengthening --- before the relaxation it was derivable from part 2 with no
+side condition at all --- and it removes the need to thread
+`blue_blocks_scannable` through both collections.  `blue_blocks_scannable` is
+still what *establishes* the clause at the one place it must be established,
+after coalescing.
 
-The extracted C should not change: the implementation already ignores these
+Consequences worth knowing:
+
+- `GC.Gen.PostCollectionShape` re-establishes it after a major collection with
+  `coalesce_blue_fields_closed`, a 30-line clone of
+  `coalesce_blue_fields_non_infix`.
+- Clients that build a heap by hand (the SPOTs) prove `blue_blocks_scannable`
+  pointwise and call `wfh_part2_implies_blue_fields_closed` once.
+
+## 9. Threading notes
+
+Three patterns account for nearly all of the mechanical diff, and are worth
+knowing before touching this again:
+
+- **Transporting the conjunct across a colour change** is
+  `color_preserves_is_no_scan obj g c` when the recoloured object *is* the
+  source, and `color_change_preserves_other_is_no_scan recoloured src g c`
+  otherwise.  `GC.Spec.Mark.fst` needed this at 40 call sites, because every
+  `push_children_*` lemma now requires `fields_constrained g obj`.
+- **Transporting it across a header-framing lemma needs four spec calls**, not
+  one: `hd_address_spec src; tag_of_object_spec src h1; tag_of_object_spec src
+  h2; is_no_scan_spec src h1; is_no_scan_spec src h2`.
+- **A local `Lemma` closure passed to a `Fields` combinator does not inherit the
+  combinator's new hypothesis** --- F* accepts a callback that requires *less*,
+  so each lambda's `requires` has to be extended by hand.
+
+Structure-preservation proofs discharge the no-scan case by showing the tag
+survives on both sides: `HeapGraph.get_pointer_fields` returns `Seq.empty` for a
+no-scan object, so both sides of the equation are empty.
+
+## 10. The nursery, and why it was left alone
+
+`minor_no_scan_invariant` remains in `GC.Gen.HeapInvariant.minor_heap_shape`.
+Relaxing it is a strictly larger job than the major heap was, and it is *not*
+mechanical.
+
+`GC.Gen.CombinedGraph.major_object_edges` already skips no-scan sources;
+`minor_object_edges` does not.  Adding the guard there immediately creates an
+obligation `minor_tag minor src < 251` at three points in
+`GC.Gen.MinorCollectForwarding.Reflection`, and the only route to it needs the
+*converse* of `GC.Gen.CheneyPreservation.Fields.
+cheney_promote_fwd_target_not_no_scan_of_minor_tag_lt` --- a
+`minor_tag >= 251 ==> is_no_scan target` invariant threaded through
+`forward_one`, `forward_fields`, `forward_roots`, `scan` and `promote`.  That is
+roughly 250 lines across six lemmas, with no shortcut, and it is orthogonal to
+everything in §7.
+
+Note that the nursery restriction is *much* less objectionable than the major
+one was.  Nursery blocks are young: a `Bytes.t` allocated in the minor heap has
+been written to at most a handful of times before the next collection, whereas
+the major heap accumulates every long-lived string in the program.  The
+practically important half of the relaxation is the one that was done.
+
+## 11. Outcome
+
+The extracted C is **byte-identical**: the implementation already ignored these
 words, and the free blocks it produces are already cleared.

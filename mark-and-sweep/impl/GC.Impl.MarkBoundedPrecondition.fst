@@ -301,7 +301,6 @@ let darken_establishes_precondition g st roots fp cap
     // 5, 6, 7. colour and shape invariants
     MB.darken_roots_bounded_spec_preserves_no_black g st roots cap;
     MB.darken_roots_bounded_spec_preserves_no_pointer_to_blue g st roots cap;
-    MB.darken_roots_bounded_spec_preserves_no_scan_invariant g st roots cap;
     // 8. every gray-or-black object is on the stack: there are no black objects,
     //    and darkening keeps all gray objects on the stack.
     RL.darken_roots_bounded_spec_preserves_gray_objects_on_stack g st roots cap;

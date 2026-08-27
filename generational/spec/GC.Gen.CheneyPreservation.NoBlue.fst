@@ -44,6 +44,7 @@ let cheney_promote_preserves_no_pointer_to_blue_from_shape
     : Lemma
       (requires Seq.mem src (objects zero_addr prom.major_final) /\
                 ~(is_blue src prom.major_final) /\
+                fields_constrained prom.major_final src /\
                 j < U64.v (wosize_of_object src prom.major_final) /\
                 U64.v src + j * 8 + 8 <= heap_size /\
                 is_pointer_to
@@ -58,6 +59,11 @@ let cheney_promote_preserves_no_pointer_to_blue_from_shape
     if Seq.mem src (objects zero_addr major) && is_blue src major = false then begin
       Frame.cheney_promote_frame_old_header minor major fp roots src;
       color_of_header_eq src major prom.major_final;
+      tag_of_object_spec src major;
+      tag_of_object_spec src prom.major_final;
+      hd_address_spec src;
+      is_no_scan_spec src major;
+      is_no_scan_spec src prom.major_final;
       assert (~(is_blue src major));
       wosize_of_object_spec src major;
       wosize_of_object_spec src prom.major_final;
@@ -167,6 +173,7 @@ let update_major_pointers_preserves_no_pointer_to_blue
     : Lemma
       (requires Seq.mem src (objects zero_addr updated) /\
                 ~(is_blue src updated) /\
+                fields_constrained updated src /\
                 j < U64.v (wosize_of_object src updated) /\
                 U64.v src + j * 8 + 8 <= heap_size /\
                 is_pointer_to
@@ -184,10 +191,8 @@ let update_major_pointers_preserves_no_pointer_to_blue
     assert (j < U64.v (wosize_of_object src major));
     assert ((U64.v src + j * 8) % 8 == 0);
     if is_no_scan src major then begin
+      // Vacuous: `no_pointer_to_blue` only constrains scannable sources.
       assert (is_no_scan src updated);
-      no_scan_invariant_elim updated src j;
-      assert (is_pointer_field
-        (read_word updated (U64.uint_to_t (U64.v src + j * 8))));
       assert False
     end else begin
       update_major_pointers_field_effect major fwd src j;

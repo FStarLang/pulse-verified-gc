@@ -277,6 +277,7 @@ val sweep_preserves_resolve_field :
   (g: heap) -> (fp: U64.t) -> (x: obj_addr) -> (j: U64.t{U64.v j >= 1}) ->
   Lemma (requires well_formed_heap g /\ fp_in_heap fp g /\
                   Seq.mem x (objects zero_addr g) /\
+                  fields_constrained g x /\
                   U64.v j <= U64.v (wosize_of_object x g))
         (ensures (let v = HeapGraph.get_field g x j in
                   HeapGraph.resolve_field g v ==
@@ -285,6 +286,7 @@ val sweep_preserves_resolve_field :
 val sweep_preserves_edges : (g: heap) -> (fp: U64.t) -> (x: obj_addr) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\ is_black x g /\
                   Seq.mem x (objects zero_addr g) /\
+                  fields_constrained g x /\
                   fp_in_heap fp g)
         (ensures HeapGraph.get_pointer_fields g x == 
                  HeapGraph.get_pointer_fields (fst (sweep g fp)) x)
