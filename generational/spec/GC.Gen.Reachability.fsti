@@ -53,10 +53,14 @@ val minor_reachable_subset (ms: minor_state) (roots: seq U64.t)
   : Lemma (ensures forall x. Seq.mem x (minor_reachable ms roots) ==>
                              Seq.mem x (minor_objects ms))
 
-/// Every root that is a valid minor object is in the reachable set
+/// Every root that resolves to a valid minor object contributes that object to
+/// the reachable set.  A root may be an interior pointer, in which case the
+/// object it keeps alive is the closure it points into rather than the root
+/// address itself.
 val minor_reachable_roots (ms: minor_state) (roots: seq U64.t)
-  : Lemma (ensures forall r. Seq.mem r roots /\ Seq.mem r (minor_objects ms) ==>
-                             Seq.mem r (minor_reachable ms roots))
+  : Lemma (ensures forall r. Seq.mem r roots /\
+                             Seq.mem (resolve_minor ms r) (minor_objects ms) ==>
+                             Seq.mem (resolve_minor ms r) (minor_reachable ms roots))
 
 /// The number of successors is bounded by the object's wosize
 val minor_successors_length (ms: minor_state) (obj: U64.t)
@@ -67,7 +71,8 @@ val minor_successors_length (ms: minor_state) (obj: U64.t)
 val minor_successors_char (ms: minor_state) (x y: U64.t)
   : Lemma (ensures Seq.mem y (minor_successors ms x) <==>
                     (exists (i:nat). i < minor_wosize ms x /\
-                                     to_minor_offset (minor_read_field ms x i) == y /\
+                                     resolve_minor ms
+                                       (to_minor_offset (minor_read_field ms x i)) == y /\
                                      is_minor_addr y /\
                                      Seq.mem y (minor_objects ms)))
 
@@ -87,6 +92,8 @@ val minor_reachable_closed (ms: minor_state) (roots: seq U64.t) (x y: U64.t)
 val minor_reachable_ind (ms: minor_state) (roots: seq U64.t) (p: U64.t -> prop) (x: U64.t)
   : Lemma (requires
              Seq.mem x (minor_reachable ms roots) /\
-             (forall r. Seq.mem r roots /\ Seq.mem r (minor_objects ms) ==> p r) /\
+             (forall r. Seq.mem r roots /\
+                        Seq.mem (resolve_minor ms r) (minor_objects ms) ==>
+                        p (resolve_minor ms r)) /\
              (forall a b. p a /\ Seq.mem b (minor_successors ms a) ==> p b))
           (ensures p x)

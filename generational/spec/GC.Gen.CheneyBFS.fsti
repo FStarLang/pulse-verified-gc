@@ -29,13 +29,15 @@ module CheneySpec = GC.Gen.Cheney
 /// Predicates: well-formedness of the forwarding map
 /// ---------------------------------------------------------------------------
 
-/// The forwarding map covers all roots that are minor objects with wosize > 0
+/// The forwarding map covers every root that resolves to a minor object with
+/// wosize > 0.  Resolution matters because a root may point into the interior
+/// of a nursery closure; what has to be copied is the closure it points into.
 let fwd_covers_roots (minor: minor_state) (fwd: forwarding_map) (roots: seq U64.t) : prop =
   forall (r: U64.t).
     Seq.mem r roots /\
-    Seq.mem r (minor_objects minor) /\
-    minor_wosize minor r > 0 ==>
-    fwd r <> 0UL
+    Seq.mem (resolve_minor minor r) (minor_objects minor) /\
+    minor_wosize minor (resolve_minor minor r) > 0 ==>
+    fwd (resolve_minor minor r) <> 0UL
 
 /// The forwarding map is closed under minor_successors:
 /// if x is forwarded and y is a successor with wosize > 0, then y is forwarded too
@@ -47,10 +49,31 @@ let fwd_closed (minor: minor_state) (fwd: forwarding_map) : prop =
     minor_wosize minor y > 0 ==>
     fwd y <> 0UL
 
+/// Every interior nursery pointer stored in a field of a forwarded closure has
+/// a forwarding entry of its own, not merely an entry for the closure it points
+/// into.  `update_major_pointers` and `rewrite_root` look the map up at the
+/// address exactly as stored, so the enclosing closure's entry would leave such
+/// a field pointing into the nursery that collection then abandons.
+let fwd_covers_infix_fields (minor: minor_state) (fwd: forwarding_map) : prop =
+  forall (x: U64.t) (j: nat).
+    Seq.mem x (minor_objects minor) /\
+    fwd x <> 0UL /\
+    j < minor_wosize minor x /\
+    is_infix_in_minor minor (to_minor_offset (minor_read_field minor x j)) ==>
+    fwd (to_minor_offset (minor_read_field minor x j)) <> 0UL
+
+/// The same obligation for an interior root: `rewrite_root` reads the map at
+/// the root as the mutator stored it.
+let fwd_covers_infix_roots (minor: minor_state) (fwd: forwarding_map) (roots: seq U64.t) : prop =
+  forall (r: U64.t).
+    Seq.mem r roots /\ is_infix_in_minor minor r ==> fwd r <> 0UL
+
 /// Combined: the forwarding map is well-formed for BFS correctness
 let fwd_well_formed (minor: minor_state) (fwd: forwarding_map) (roots: seq U64.t) : prop =
   fwd_covers_roots minor fwd roots /\
-  fwd_closed minor fwd
+  fwd_closed minor fwd /\
+  fwd_covers_infix_fields minor fwd /\
+  fwd_covers_infix_roots minor fwd roots
 
 /// ---------------------------------------------------------------------------
 /// Graph lemma: fwd_well_formed ⟹ all reachable forwarded
@@ -96,6 +119,14 @@ val scan_preserves_fwd_covers_roots
           (ensures fwd_covers_roots minor
             (CheneySpec.cheney_scan minor cs scan fuel).cs_fwd roots)
 
+val scan_preserves_fwd_covers_infix_roots
+  (minor: minor_state) (cs: CheneySpec.cheney_state)
+  (roots: seq U64.t) (scan fuel: nat)
+  : Lemma (requires minor_infix_wf minor /\
+                    fwd_covers_infix_roots minor cs.cs_fwd roots)
+          (ensures fwd_covers_infix_roots minor
+            (CheneySpec.cheney_scan minor cs scan fuel).cs_fwd roots)
+
 val forward_one_queue_prefix
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t) (k: nat)
   : Lemma (requires k < Seq.length cs.cs_queue)
@@ -114,16 +145,76 @@ val forward_fields_queue_prefix
 [@@"opaque_to_smt"]
 val addr_covered (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t) : prop
 
+/// Introduce coverage for an address that is not an interior pointer, so that
+/// the address is its own resolution.
 val addr_covered_intro
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires (Seq.mem addr (minor_objects minor) /\
+  : Lemma (requires ~(is_infix_in_minor minor addr) /\
+                    (Seq.mem addr (minor_objects minor) /\
                      minor_wosize minor addr > 0 ==> cs.cs_fwd addr <> 0UL))
           (ensures addr_covered minor cs addr)
+
+/// Introduce coverage for an address that already has a forwarding entry.  The
+/// BFS invariant supplies the enclosing closure's entry when the address is an
+/// interior pointer, which is what the *already forwarded* branch of
+/// `cheney_forward_one` needs: it returns the state untouched.
+val addr_covered_intro_forwarded
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
+  : Lemma (requires GC.Gen.Cheney.SimOne.cheney_bfs_inv minor cs /\
+                    minor_wf minor /\
+                    cs.cs_fwd addr <> 0UL)
+          (ensures addr_covered minor cs addr)
+
+/// Introduce coverage for an interior pointer whose enclosing closure has been
+/// forwarded.  The interior address is itself never a minor object, so the
+/// closure's entry is all that coverage asks for.
+val addr_covered_intro_infix
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
+  : Lemma (requires minor_wf minor /\
+                    is_infix_in_minor minor addr /\
+                    cs.cs_fwd addr <> 0UL /\
+                    cs.cs_fwd (infix_parent minor addr) <> 0UL)
+          (ensures addr_covered minor cs addr)
+
+/// Coverage of an interior pointer after one forwarding step: forwarding the
+/// interior address goes through its enclosing closure, so the closure's entry
+/// after the step is all the caller has to exhibit.
+/// The room bound below is what makes the interior branch's arithmetic guard
+/// pass, so the step really does install an entry at the interior address --
+/// coverage now asserts that entry, not just the closure's.
+val addr_covered_infix_step
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
+  : Lemma (requires minor_wf minor /\
+                    minor_infix_wf minor /\
+                    is_infix_in_minor minor addr /\
+                    cs.cs_fwd addr = 0UL /\
+                    infix_parent minor addr <> addr /\
+                    (let parent = infix_parent minor addr in
+                     let cs' = CheneySpec.cheney_forward_normal minor cs parent in
+                     cs'.cs_fwd parent <> 0UL /\
+                     U64.v (cs'.cs_fwd parent) + minor_wosize minor parent * 8 <= heap_size))
+          (ensures addr_covered minor (CheneySpec.cheney_forward_one minor cs addr) addr)
 
 val addr_covered_elim
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
   : Lemma (requires addr_covered minor cs addr /\
                     Seq.mem addr (minor_objects minor) /\ minor_wosize minor addr > 0)
+          (ensures cs.cs_fwd addr <> 0UL)
+
+/// Coverage also names the object an interior pointer keeps alive.
+val addr_covered_elim_resolved
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
+  : Lemma (requires addr_covered minor cs addr /\
+                    Seq.mem (resolve_minor minor addr) (minor_objects minor) /\
+                    minor_wosize minor (resolve_minor minor addr) > 0)
+          (ensures cs.cs_fwd (resolve_minor minor addr) <> 0UL)
+
+/// Coverage of an interior pointer names the interior address itself, which is
+/// where the field rewrite reads the forwarding map.
+val addr_covered_elim_infix
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
+  : Lemma (requires addr_covered minor cs addr /\
+                    is_infix_in_minor minor addr)
           (ensures cs.cs_fwd addr <> 0UL)
 
 val forward_one_preserves_addr_covered
@@ -166,12 +257,14 @@ val root_prefix_step_oom
 val root_prefix_all_implies_covers
   (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t)
   : Lemma (requires root_prefix_covered minor cs roots (Seq.length roots))
-          (ensures fwd_covers_roots minor cs.cs_fwd roots)
+          (ensures fwd_covers_roots minor cs.cs_fwd roots /\
+                   fwd_covers_infix_roots minor cs.cs_fwd roots)
 
 val root_prefix_all_implies_covers_oom
   (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (oom: bool)
   : Lemma (requires (not oom ==> root_prefix_covered minor cs roots (Seq.length roots)))
-          (ensures not oom ==> fwd_covers_roots minor cs.cs_fwd roots)
+          (ensures not oom ==> (fwd_covers_roots minor cs.cs_fwd roots /\
+                                fwd_covers_infix_roots minor cs.cs_fwd roots))
 
 [@@"opaque_to_smt"]
 val field_prefix_covered
@@ -215,6 +308,16 @@ val field_prefix_all_implies_successors
           (ensures forall (y: U64.t).
             Seq.mem y (minor_successors minor parent) /\
             minor_wosize minor y > 0 ==> cs.cs_fwd y <> 0UL)
+
+/// The interior half of the same aggregation: a scanned closure's interior
+/// field targets are entries of the map in their own right.
+val field_prefix_all_implies_infix
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t)
+  : Lemma (requires field_prefix_covered minor cs parent (minor_wosize minor parent))
+          (ensures forall (j: nat).
+            j < minor_wosize minor parent /\
+            is_infix_in_minor minor (to_minor_offset (minor_read_field minor parent j)) ==>
+            cs.cs_fwd (to_minor_offset (minor_read_field minor parent j)) <> 0UL)
 
 [@@"opaque_to_smt"]
 val scanned_prefix_closed
@@ -261,14 +364,16 @@ val scanned_exhausted_implies_fwd_closed
   : Lemma (requires GC.Gen.Cheney.SimOne.cheney_bfs_inv minor cs /\
                     scanned_prefix_closed minor cs scan /\
                     scan >= Seq.length cs.cs_queue)
-          (ensures fwd_closed minor cs.cs_fwd)
+          (ensures fwd_closed minor cs.cs_fwd /\
+                   fwd_covers_infix_fields minor cs.cs_fwd)
 
 val scanned_exhausted_implies_fwd_closed_oom
   (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (oom: bool)
   : Lemma (requires GC.Gen.Cheney.SimOne.cheney_bfs_inv minor cs /\
                     (not oom ==> scanned_prefix_closed minor cs scan) /\
                     scan >= Seq.length cs.cs_queue)
-          (ensures not oom ==> fwd_closed minor cs.cs_fwd)
+          (ensures not oom ==> (fwd_closed minor cs.cs_fwd /\
+                                fwd_covers_infix_fields minor cs.cs_fwd))
 
 /// ---------------------------------------------------------------------------
 /// No-OOM predicate
@@ -300,8 +405,10 @@ val cheney_no_oom_from_loop_posts
                      let cs1 = CheneySpec.cheney_forward_roots minor cs0 roots 0 in
                      let cs2 = CheneySpec.cheney_scan minor cs1 0 (CheneySpec.cheney_fuel minor) in
                      (oom_roots == true ==> oom_final == true) /\
-                     (not oom_roots ==> fwd_covers_roots minor cs1.CheneySpec.cs_fwd roots) /\
-                     (not oom_final ==> fwd_closed minor cs2.CheneySpec.cs_fwd)))
+                     (not oom_roots ==> (fwd_covers_roots minor cs1.CheneySpec.cs_fwd roots /\
+                                         fwd_covers_infix_roots minor cs1.CheneySpec.cs_fwd roots)) /\
+                     (not oom_final ==> (fwd_closed minor cs2.CheneySpec.cs_fwd /\
+                                         fwd_covers_infix_fields minor cs2.CheneySpec.cs_fwd))))
           (ensures not oom_final ==> cheney_no_oom minor major fp roots)
 
 /// ---------------------------------------------------------------------------

@@ -25,7 +25,9 @@ val minor_collect_full_post_intro
         post_major == res.mc_major /\
         post_roots == res.mc_roots /\
         (ok ==> GC.Gen.MinorCollectForwarding.normal_result_reachable_subgraph_isomorphism_prop
-                   minor major fp roots post_major post_roots /\
+                   minor major fp roots post_major
+                   (GC.Gen.MinorCollectForwarding.Helpers.resolve_roots
+                      post_major post_roots) /\
                  GC.Gen.MinorCollectForwarding.normal_result_non_pointer_fields_preserved_prop
                    minor major fp roots post_major)))
       (ensures minor_collect_full_post minor major fp roots ok post_major post_roots)
@@ -44,7 +46,9 @@ val minor_collect_full_post_elim
         post_major == res.mc_major /\
         post_roots == res.mc_roots /\
         (ok ==> GC.Gen.MinorCollectForwarding.normal_result_reachable_subgraph_isomorphism_prop
-                   minor major fp roots post_major post_roots /\
+                   minor major fp roots post_major
+                   (GC.Gen.MinorCollectForwarding.Helpers.resolve_roots
+                      post_major post_roots) /\
                  GC.Gen.MinorCollectForwarding.normal_result_non_pointer_fields_preserved_prop
                    minor major fp roots post_major)))
 
@@ -67,6 +71,9 @@ val not_promoted_from_zero_forwarding
     Lemma (requires (GC.Gen.Cheney.cheney_promote minor major fp roots).fwd_map old == 0UL)
           (ensures minor_not_promoted minor major fp roots old)
 
+/// A major field pointing into the nursery is rewritten to the forwarding image
+/// of the *word as stored*.  When that word is an interior pointer the stored
+/// image is interior too; `resolve_minor` relates it to the vertex `dst`.
 val major_minor_field_rewritten
   : minor:minor_state -> major:heap -> fp:U64.t ->
     roots:seq U64.t -> slots:seq U64.t -> n:nat ->
@@ -82,7 +89,7 @@ val major_minor_field_rewritten
         GC.Gen.ReachabilityBridge.roots_valid_nonblue roots major /\
         GC.Gen.CheneyBFS.cheney_no_oom minor major fp roots /\
         (let cg = GC.Gen.CombinedGraph.build_combined_graph minor major in
-         let combined_roots = GC.Gen.CombinedGraph.classify_roots roots in
+         let combined_roots = GC.Gen.CombinedGraph.classify_roots minor roots in
          GC.Gen.CombinedGraph.combined_reachable cg combined_roots
            (GC.Gen.CombinedGraph.MajorV src) /\
          GC.Gen.CombinedGraph.combined_reachable cg combined_roots
@@ -98,9 +105,12 @@ val major_minor_field_rewritten
       (ensures (
         let prom = GC.Gen.Cheney.cheney_promote minor major fp roots in
         let res = GC.Gen.Cheney.cheney_collect_spec minor major fp roots in
+        let ov = GC.Gen.Base.to_minor_offset
+          (GC.Spec.Heap.read_word major (U64.uint_to_t (U64.v src + i * 8))) in
         promoted_image minor major fp roots dst (prom.fwd_map dst) /\
+        GC.Gen.MinorHeap.resolve_minor minor ov == dst /\
         GC.Spec.Heap.read_word res.mc_major
-          (U64.uint_to_t (U64.v src + i * 8)) == prom.fwd_map dst))
+          (U64.uint_to_t (U64.v src + i * 8)) == prom.fwd_map ov))
 
 val final_major_survives_from_gen_gc_post
   : minor:minor_state -> major:heap -> fp:U64.t ->

@@ -51,10 +51,16 @@ let infix_fwd_ready (minor: minor_state) (cs: cheney_state) : prop =
        sum_v % U64.v mword == 0 /\
        (let sum : obj_addr = U64.uint_to_t sum_v in
         is_infix sum cs.cs_major /\
+        // The copied infix header still encodes the offset back to the parent,
+        // so `resolve_object sum` is `fwd_parent`; and the parent is a closure.
+        // Together with the containment bounds below these are exactly
+        // `GC.Spec.Object.infix_addr_conds`.
+        U64.v (wosize_of_object sum cs.cs_major) == minor_wosize minor addr /\
+        is_closure fwd_parent cs.cs_major /\
         Seq.mem fwd_parent (objects zero_addr cs.cs_major) /\
         is_blue fwd_parent cs.cs_major = false /\
         sum_v - 8 >= U64.v fwd_parent /\
-        sum_v <= U64.v fwd_parent +
+        sum_v < U64.v fwd_parent +
           U64.v (wosize_of_object fwd_parent cs.cs_major) * 8))))
 
 let fwd_valid_or_infix (fwd: forwarding_map) (g: heap) : prop =
@@ -157,10 +163,12 @@ let infix_fwd_ready_post
   sum_v % U64.v mword == 0 /\
   (let sum : obj_addr = U64.uint_to_t sum_v in
    is_infix sum cs.cs_major /\
+   U64.v (wosize_of_object sum cs.cs_major) == minor_wosize minor addr /\
+   is_closure fwd_parent cs.cs_major /\
    Seq.mem fwd_parent (objects zero_addr cs.cs_major) /\
    is_blue fwd_parent cs.cs_major = false /\
    sum_v - 8 >= U64.v fwd_parent /\
-   sum_v <= U64.v fwd_parent +
+   sum_v < U64.v fwd_parent +
      U64.v (wosize_of_object fwd_parent cs.cs_major) * 8)
 
 val infix_fwd_ready_elim (minor: minor_state) (cs: cheney_state) (addr: U64.t)
@@ -185,7 +193,11 @@ val promote_preserves_is_infix_frame
       U64.v (hd_address target) + 8 <= U64.v parent_obj + U64.v (wosize_of_object parent_obj major) * 8)
     (ensures
       (let res = promote_object minor major obj fp wz in
-       is_infix target res.major_out))
+       is_infix target res.major_out /\
+       // The whole header word is framed, so the encoded infix offset --
+       // and hence `resolve_object target` -- is unchanged too.
+       read_word res.major_out (hd_address target) == read_word major (hd_address target) /\
+       wosize_of_object target res.major_out == wosize_of_object target major))
 
 val promote_object_new_addr_in_objects_not_blue
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
@@ -202,6 +214,25 @@ val promote_object_new_addr_in_objects_not_blue
         (let na : obj_addr = res.new_addr in
          Seq.mem na (objects zero_addr res.major_out) /\
          is_blue na res.major_out = false)))
+
+/// The promoted copy carries the source minor object's tag: `promote_object`
+/// finishes with `set_promoted_tag _ new_addr (minor_tag minor obj)`.
+/// Needed to see that the promotion of a *closure* is still a closure, which is
+/// what makes an interior pointer into the copy satisfy `infix_addr_conds`.
+val promote_object_new_addr_tag
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  : Lemma
+    (requires well_formed_heap_part1 major /\
+              AllocLemmas.fl_valid major fp heap_words /\
+              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              (promote_object minor major obj fp wz).new_addr <> 0UL)
+    (ensures
+      (let res = promote_object minor major obj fp wz in
+       U64.v res.new_addr >= U64.v mword /\
+       U64.v res.new_addr < heap_size /\
+       U64.v res.new_addr % U64.v mword == 0 /\
+        (let na : obj_addr = res.new_addr in
+         U64.v (tag_of_object na res.major_out) == minor_tag minor obj)))
 
 val promote_object_new_addr_wosize_ge
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
@@ -316,7 +347,8 @@ val cheney_scan_preserves_fwd_classified
                     chain_objects_blue cs.cs_major cs.cs_fp /\
                     minor_infix_wf minor /\
                     minor_wf minor)
-          (ensures fwd_classified (cheney_scan minor cs scan fuel))
+          (ensures fwd_classified (cheney_scan minor cs scan fuel) /\
+                   infix_fwd_ready minor (cheney_scan minor cs scan fuel))
 
 val cheney_promote_fwd_valid_or_infix
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
@@ -329,6 +361,49 @@ val cheney_promote_fwd_valid_or_infix
           (ensures fwd_valid_or_infix (cheney_promote minor major fp roots).fwd_map
                                       (cheney_promote minor major fp roots).major_final)
 
+/// ---------------------------------------------------------------------------
+/// Infix forwarding entries relate to their parent's entry
+/// ---------------------------------------------------------------------------
+
+/// `cheney_forward_one` records an infix entry as `fwd parent + (x - parent)`
+/// (mirroring `caml_oldify_one`'s `*p += offset`).  `infix_fwd_ready` says the
+/// *derived* address is well formed; this says the recorded entry *is* that
+/// derived address, which is what lets a client combine the two.
+let fwd_infix_delta (minor: minor_state) (fwd: forwarding_map) : prop =
+  forall (x: U64.t).
+    is_infix_in_minor minor x /\ fwd x <> 0UL ==>
+    (let parent = infix_parent minor x in
+     fwd parent <> 0UL /\
+     U64.v x >= U64.v parent /\
+     U64.v (fwd x) == U64.v (fwd parent) + (U64.v x - U64.v parent))
+
+val cheney_promote_fwd_infix_delta
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires minor_wf minor /\ minor_infix_wf minor)
+          (ensures fwd_infix_delta minor
+            (cheney_promote minor major fp roots).fwd_map)
+
+/// Every infix forwarding target is a well-formed interior pointer of the final
+/// major heap: it resolves to an enumerated closure that contains it.  This is
+/// exactly what `well_formed_heap_part2`/`part3` demand of a field value, and
+/// it is the reason minor-heap infix pointers need no longer be forbidden.
+let fwd_infix_targets_wf (minor: minor_state) (fwd: forwarding_map) (g: heap) : prop =
+  forall (x: U64.t).
+    is_infix_in_minor minor x /\ fwd x <> 0UL ==>
+    U64.v (fwd x) >= U64.v mword /\
+    U64.v (fwd x) < heap_size /\
+    U64.v (fwd x) % U64.v mword == 0 /\
+    (let t : obj_addr = fwd x in
+     is_infix t g /\
+     Seq.mem (resolve_object t g) (objects zero_addr g) /\
+     is_blue (resolve_object t g) g = false /\
+     infix_addr_wf g (objects zero_addr g) t /\
+     // Resolution in the major heap agrees with resolution in the nursery:
+     // the promoted interior pointer names the promoted closure.  This is what
+     // makes a rewritten interior field reflect the combined-graph edge
+     // `MinorV (resolve_minor minor x)`.
+     resolve_object t g == fwd (infix_parent minor x))
+
 val cheney_promote_fwd_noninfix_targets_valid
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
@@ -338,6 +413,19 @@ val cheney_promote_fwd_noninfix_targets_valid
                     minor_infix_wf minor /\
                     minor_wf minor)
           (ensures fwd_noninfix_targets_valid
+            minor
+            (cheney_promote minor major fp roots).fwd_map
+            (cheney_promote minor major fp roots).major_final)
+
+val cheney_promote_fwd_infix_targets_wf
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    chain_objects_blue major fp /\
+                    minor_infix_wf minor /\
+                    minor_wf minor)
+          (ensures fwd_infix_targets_wf
             minor
             (cheney_promote minor major fp roots).fwd_map
             (cheney_promote minor major fp roots).major_final)

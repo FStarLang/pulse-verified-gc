@@ -70,26 +70,30 @@ val check_and_darken_bounded_spec_pushes_valid_nonblack_nonblue_root
         U64.v v < heap_size /\
         U64.v v % U64.v mword == 0 /\
         MarkBounded.root_points_to_object g v /\
-        ~(SpecObject.is_black (v <: obj_addr) g) /\
-        ~(SpecObject.is_blue (v <: obj_addr) g) /\
+        ~(SpecObject.is_black (SpecObject.resolve_object (v <: obj_addr) g) g) /\
+        ~(SpecObject.is_blue (SpecObject.resolve_object (v <: obj_addr) g) g) /\
         SpecMark.gray_objects_on_stack g st /\
         Seq.length st < cap)
       (ensures
-        Seq.mem (v <: obj_addr)
+        Seq.mem (SpecObject.resolve_object (v <: obj_addr) g)
           (snd (MarkBounded.check_and_darken_bounded_spec g st v cap)))
 
+/// A darkening step pushes at most one entry, and that entry is the object the
+/// root names.  Stated this way rather than "everything on the stack is a root
+/// value" because an interior root pushes the closure it points into, which is
+/// not itself a root value.
 val check_and_darken_bounded_spec_preserves_stack_roots
-  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
-  (v: U64.t) (cap: nat)
+  (g: heap) (st: Seq.seq obj_addr) (v: U64.t) (cap: nat)
   : Lemma
       (requires
-        MarkBounded.root_points_to_object g v /\
-        (forall (x: obj_addr). Seq.mem x st ==> Seq.mem (x <: U64.t) roots) /\
-        Seq.mem v roots)
+        U64.v v >= U64.v zero_addr + U64.v mword /\
+        U64.v v < heap_size /\
+        U64.v v % U64.v mword == 0 /\
+        MarkBounded.root_points_to_object g v)
       (ensures
         (forall (x: obj_addr).
           Seq.mem x (snd (MarkBounded.check_and_darken_bounded_spec g st v cap)) ==>
-          Seq.mem (x <: U64.t) roots))
+          Seq.mem x st \/ x == SpecObject.resolve_object (v <: obj_addr) g))
 
 val darken_roots_bounded_prefix_preserves_gray_objects_on_stack
   (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)

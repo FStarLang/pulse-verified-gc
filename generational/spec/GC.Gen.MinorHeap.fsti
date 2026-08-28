@@ -146,6 +146,15 @@ let minor_can_alloc (ms: minor_state) (wosize: nat) : bool =
 /// If no room: returns obj_addr = 0, state unchanged.
 ///
 /// The header is written as: wosize in bits 10-63, white color (0), tag.
+///
+/// `tag <> 249` rules out allocating a block whose own header is `Infix_tag`,
+/// which is not a restriction on interior pointers: an infix header is never a
+/// *block* header, it lives inside another block's body.  OCaml agrees --- a
+/// mutually recursive closure group is one `Alloc_small(blksize, Closure_tag)`
+/// followed by plain body stores of `Make_header(i * 3, Infix_tag, ...)`
+/// (`runtime/interp.c:575`), so `Alloc_small` is never called with `Infix_tag`.
+/// Nursery infix headers are supported and constrained by `minor_infix_wf`
+/// below; they arrive through body writes, not through this function.
 val minor_alloc_spec (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                      (tag: nat{tag < 256 /\ tag <> 249})
   : Tot minor_alloc_result
@@ -267,19 +276,34 @@ let minor_guards_complete (ms: minor_state) : prop =
 /// ---------------------------------------------------------------------------
 
 /// When an infix sub-object exists in the minor heap, its encoded parent
-/// must be a valid minor object (a closure). This guarantees that the
-/// infix-aware BFS can safely forward the parent and derive infix forwarding.
+/// must be a valid minor object carrying `Closure_tag`. This guarantees that
+/// the infix-aware BFS can safely forward the parent and derive infix
+/// forwarding, and — crucially — that the *promoted* infix target satisfies
+/// `GC.Spec.Object.infix_addr_conds` in the major heap.
+///
+/// The conjuncts mirror `infix_addr_conds` one for one.  Two of them are
+/// trust assumptions on the mutator that stock OCaml discharges by
+/// construction (citations to `ocaml-4.14-unchanged`):
+///
+///   * `wz >= 2` — `CLOSUREREC` emits `Make_header (i * 3, Infix_tag, _)`
+///     for `i >= 1` (`runtime/interp.c:604`), so the smallest encoded offset
+///     is three words.  Two words is all the proof needs; it is what makes it
+///     impossible for field 0 of an object to be an infix header.
+///   * `minor_tag ms parent == 247` — *"infix headers can only occur in blocks
+///     with tag Closure_tag"* (`runtime/caml/mlvalues.h:225`).
 [@@"opaque_to_smt"]
 let minor_infix_wf (ms: minor_state) : prop =
   forall (addr: U64.t).
     is_infix_in_minor ms addr ==>
     (let wz = minor_wosize ms addr in
      let parent = infix_parent ms addr in
-     wz > 0 /\
+     wz >= 2 /\
      wz * 8 <= U64.v addr - 8 /\
      U64.v parent >= 8 /\
      U64.v parent % 8 == 0 /\
      Seq.mem parent (minor_objects ms) /\
+     // Infix headers occur only inside closures:
+     minor_tag ms parent == 247 /\
      // The infix lies within the parent's body:
      U64.v addr - U64.v parent < minor_wosize ms parent * 8)
 
@@ -302,7 +326,34 @@ val infix_parent_in_minor_objects (ms: minor_state) (addr: U64.t)
                     Seq.mem parent (minor_objects ms) /\
                     U64.v parent >= 8 /\
                     U64.v parent % 8 == 0 /\
+                    minor_wosize ms addr >= 2 /\
+                    minor_tag ms parent == 247 /\
                     U64.v addr - U64.v parent < minor_wosize ms parent * 8))
+
+/// Resolve a nursery address: an infix sub-object resolves to its enclosing
+/// closure, exactly as `GC.Spec.Object.resolve_object` does in the major heap.
+///
+/// Stock OCaml creates such pointers on every path that builds a mutually
+/// recursive closure small enough for the nursery (`runtime/interp.c:575`,
+/// `asmcomp/cmm_helpers.ml:797`, with `Max_young_wosize = 256`), so anything
+/// that walks nursery pointers --- the reachability relation, the combined
+/// graph, the Cheney forwarding map --- has to name the closure an interior
+/// pointer keeps alive rather than dropping it.
+let resolve_minor (ms: minor_state) (v: U64.t) : GTot U64.t =
+  if is_infix_in_minor ms v then infix_parent ms v else v
+
+/// A non-interior nursery address resolves to itself.
+val resolve_minor_non_infix (ms: minor_state) (v: U64.t)
+  : Lemma (requires ~(is_infix_in_minor ms v))
+          (ensures resolve_minor ms v == v)
+
+/// The resolution of a nursery address is a valid minor object whenever the
+/// address is a well-formed infix; for non-infix addresses it is the identity.
+val resolve_minor_in_objects (ms: minor_state) (v: U64.t)
+  : Lemma (requires is_infix_in_minor ms v /\ minor_infix_wf ms)
+          (ensures Seq.mem (resolve_minor ms v) (minor_objects ms) /\
+                   U64.v (resolve_minor ms v) >= 8 /\
+                   U64.v (resolve_minor ms v) % 8 == 0)
 
 val minor_objects_not_infix (ms: minor_state) (addr: U64.t)
   : Lemma (requires minor_wf ms /\ Seq.mem addr (minor_objects ms))
@@ -411,3 +462,70 @@ val minor_objects_count_bound (ms: minor_state)
   : Lemma (requires minor_wf ms)
           (ensures Seq.length (minor_objects ms) <= minor_heap_size / 16 /\
                    Seq.length (minor_objects ms) < minor_heap_size / 8)
+
+/// ---------------------------------------------------------------------------
+/// Defining equations of the chain walk
+/// ---------------------------------------------------------------------------
+///
+/// `minor_chain_valid`, `minor_chain_no_infix` and the object enumeration are
+/// abstract, and every ordinary client reasons about them only through
+/// `minor_init` and `minor_alloc_spec`.  That is deliberate, but it also puts
+/// every nursery that `minor_alloc_spec` cannot build out of reach --- and
+/// `minor_alloc_spec` only ever writes a *header*, leaving the body zero.
+///
+/// In particular it cannot produce a nursery containing an infix header.  That
+/// is not because infix headers are unsupported --- `minor_infix_wf` above
+/// constrains them and `resolve_minor` interprets them --- but because an infix
+/// header is never a block header.  `minor_alloc_spec`'s `tag <> 249` mirrors
+/// OCaml exactly: `CLOSUREREC` (`runtime/interp.c:575`) makes a *single*
+/// `Alloc_small(blksize, Closure_tag)` for a whole mutually recursive group and
+/// then stores `Make_header(i * 3, Infix_tag, ...)` into the block's *body*.
+/// `Alloc_small` is never called with `Infix_tag`.
+///
+/// So a nursery holding an OCaml interior pointer has to be written out word by
+/// word --- as the mutator does, through `GC.Gen.Impl.MinorHeap.minor_write` ---
+/// and the three lemmas below are what let such a nursery be checked against
+/// `minor_wf`: they are the walk's defining equations and nothing more.
+/// `spot/GC.SPOT.MinorInfixHeap` is the only user.
+
+/// The enumeration of the objects laid out between `pos` and `bump`.
+/// `minor_objects ms` is this walk started at 0.
+val minor_objects_from (data: minor_heap) (pos: nat{pos % 8 == 0})
+                       (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  : GTot (seq U64.t)
+
+val minor_objects_from_zero (ms: minor_state)
+  : Lemma (requires U64.v ms.bump <= minor_heap_size /\ U64.v ms.bump % 8 == 0)
+          (ensures minor_objects ms == minor_objects_from ms.data 0 (U64.v ms.bump))
+
+/// The walk stops once fewer than a header's worth of bytes remain.
+val minor_chain_walk_stop
+      (data: minor_heap) (pos: nat{pos % 8 == 0})
+      (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  : Lemma (requires pos + 8 > bump)
+          (ensures minor_chain_valid data pos bump == true /\
+                   minor_chain_no_infix data pos bump == true /\
+                   minor_objects_from data pos bump == Seq.empty)
+
+/// One step of the walk across a header whose wosize is non-zero and whose
+/// successor does not overshoot `bump`.  The successor is passed in already
+/// refined so that the conclusion typechecks without appealing to the
+/// hypotheses.
+val minor_chain_walk_step
+      (data: minor_heap)
+      (pos: nat{pos % 8 == 0 /\ pos + 8 <= minor_heap_size})
+      (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+      (next: nat{next % 8 == 0 /\ next <= bump})
+  : Lemma
+      (requires
+        (let hdr = minor_read_word data (U64.uint_to_t pos) in
+         let wz = U64.v (U64.shift_right hdr 10ul) in
+         pos + 8 <= bump /\ wz > 0 /\ next == pos + (wz + 1) * 8))
+      (ensures
+        (let hdr = minor_read_word data (U64.uint_to_t pos) in
+         let tag = U64.v (U64.logand hdr 0xFFUL) in
+         minor_chain_valid data pos bump == minor_chain_valid data next bump /\
+         minor_chain_no_infix data pos bump ==
+           (tag <> 249 && minor_chain_no_infix data next bump) /\
+         minor_objects_from data pos bump ==
+           Seq.cons (U64.uint_to_t (pos + 8)) (minor_objects_from data next bump)))

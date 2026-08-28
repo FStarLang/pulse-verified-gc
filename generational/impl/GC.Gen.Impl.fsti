@@ -33,6 +33,7 @@ module PromoteSpec = GC.Gen.Promote
 module MajorGC = GC.Impl
 module MarkBoundedImpl = GC.Impl.MarkBounded
 module MBP = GC.Impl.MarkBoundedPrecondition
+module SpecObject = GC.Spec.Object
 module GMP = GC.Gen.MajorPrecondition
 module MarkBoundedInv = GC.Spec.MarkBoundedInv
 module SpecGCPost = GC.Spec.Correctness
@@ -40,6 +41,7 @@ module Mark = GC.Spec.Mark
 module Cheney = GC.Gen.Impl.Cheney
 module GenInv = GC.Gen.HeapInvariant
 module MinorFwd = GC.Gen.MinorCollectForwarding
+module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RBridge = GC.Gen.ReachabilityBridge
 module CheneyBFS = GC.Gen.CheneyBFS
 module SpecHeapModel = GC.Spec.HeapModel
@@ -66,23 +68,31 @@ let is_gen_heap (gh: gen_heap_t) (d: minor_heap) (b: U64.t)
   is_heap gh.major s **
   R.pts_to gh.fp_ref fp
 
-let roots_match_stack (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) : prop =
+/// The mark stack handed to the major collector holds exactly the objects the
+/// root array names in `g`.
+///
+/// "Names" rather than "is": a root may be an interior (infix) pointer, in
+/// which case it names the closure it points into.  `SpecObject.resolve_object`
+/// performs that step and is the identity on ordinary pointers, so for a root
+/// set free of interior pointers this says exactly `roots == st` as sets.
+let roots_match_stack (g: heap) (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) : prop =
   (forall (r: U64.t). Seq.mem r roots ==> GC.Spec.Base.is_val_addr r) /\
-  (forall (r: obj_addr). Seq.mem (r <: U64.t) roots ==> Seq.mem r st) /\
-  (forall (r: obj_addr). Seq.mem r st ==> Seq.mem (r <: U64.t) roots)
+  (forall (r: obj_addr). Seq.mem (r <: U64.t) roots ==>
+     Seq.mem (SpecObject.resolve_object r g) st) /\
+  (forall (r: obj_addr). Seq.mem r st ==> MBP.root_named g roots r)
 
 let roots_match_stack_root_is_val_addr
-  (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) (r: U64.t)
+  (g: heap) (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) (r: U64.t)
   : Lemma
-      (requires roots_match_stack roots st /\ Seq.mem r roots)
+      (requires roots_match_stack g roots st /\ Seq.mem r roots)
       (ensures is_val_addr r)
   = ()
 
 let roots_match_stack_root_in_stack
-  (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) (r: obj_addr)
+  (g: heap) (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) (r: obj_addr)
   : Lemma
-      (requires roots_match_stack roots st /\ Seq.mem (r <: U64.t) roots)
-      (ensures Seq.mem r st)
+      (requires roots_match_stack g roots st /\ Seq.mem (r <: U64.t) roots)
+      (ensures Seq.mem (SpecObject.resolve_object r g) st)
   = ()
 
 let gen_gc_prepared_state
@@ -142,7 +152,20 @@ val gen_gc_major_precondition_elim
          let prepared = gen_gc_prepared_state minor major fp roots st cap in
          MajorGC.gc_precondition_with_roots
            (fst prepared) (snd prepared) (snd prepared) result.mc_fp cap /\
-         roots_match_stack result.mc_roots (snd prepared) /\
+         roots_match_stack result.mc_major result.mc_roots (snd prepared) /\
+         (forall (r: U64.t). Seq.mem r result.mc_roots ==>
+            GC.Spec.Base.is_val_addr r /\
+            U64.v r >= U64.v zero_addr + U64.v mword) /\
+         /// The darkened stack holds the objects the rewritten roots *name*.
+         /// For an interior root that is the closure it points into, not the
+         /// root value itself, so this cannot be stated on `result.mc_roots`.
+         (forall (e: U64.t).
+            Seq.mem e (MCFH.resolve_roots result.mc_major result.mc_roots) ==>
+            GC.Spec.Base.is_val_addr e) /\
+         (forall (e: obj_addr).
+            Seq.mem (e <: U64.t)
+                    (MCFH.resolve_roots result.mc_major result.mc_roots) ==>
+            Seq.mem e (snd prepared)) /\
          SpecHeapModel.create_graph (fst prepared) ==
            SpecHeapModel.create_graph result.mc_major))
 
@@ -157,7 +180,34 @@ let gen_gc_roots_post
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
   roots_out == result.mc_roots /\
   (ok ==>
-   roots_match_stack roots_out (gen_gc_prepared_roots minor major fp roots st cap))
+   roots_match_stack (CheneySpec.cheney_collect_spec minor major fp roots).mc_major
+                     roots_out (gen_gc_prepared_roots minor major fp roots st cap) /\
+   (forall (r: U64.t). Seq.mem r roots_out ==>
+      GC.Spec.Base.is_val_addr r /\ U64.v r >= U64.v zero_addr + U64.v mword) /\
+   /// The mark stack holds the objects the roots *name*: an interior root
+   /// pushes the closure it points into rather than itself.
+   (forall (e: U64.t).
+      Seq.mem e (MCFH.resolve_roots result.mc_major roots_out) ==>
+      GC.Spec.Base.is_val_addr e) /\
+   (forall (e: obj_addr).
+      Seq.mem (e <: U64.t) (MCFH.resolve_roots result.mc_major roots_out) ==>
+      Seq.mem e (gen_gc_prepared_roots minor major fp roots st cap)))
+
+/// A root that names *itself* --- i.e. one that is not an interior pointer ---
+/// is on the darkened mark stack literally, not merely up to resolution.
+/// This is the shape most callers want: `gen_gc_roots_post` speaks about the
+/// resolved sequence so that interior roots have somewhere to go, and this
+/// lemma reads the ordinary case straight back out of it.
+val gen_gc_named_root_in_stack
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots roots_out: Seq.seq U64.t)
+  (st: Seq.seq obj_addr) (cap: nat) (r: obj_addr)
+  : Lemma
+    (requires
+      gen_gc_roots_post minor major fp roots roots_out true st cap /\
+      Seq.mem (r <: U64.t) roots_out /\
+      SpecObject.resolve_object r
+        (CheneySpec.cheney_collect_spec minor major fp roots).mc_major == r)
+    (ensures Seq.mem r (gen_gc_prepared_roots minor major fp roots st cap))
 
 /// The free-list-free projection of the shape invariant.
 ///
@@ -214,9 +264,11 @@ let gen_gc_reachable_subgraph_isomorphism_post
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
   let prepared = gen_gc_prepared_state minor major fp roots st cap in
   (ok ==>
-   MRT.end_to_end_isomorphism minor major fp roots final_major roots_out /\
+   MRT.end_to_end_isomorphism minor major fp roots final_major
+     (MCFH.resolve_roots result.mc_major roots_out) /\
    MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-     minor major fp roots result.mc_major roots_out /\
+     minor major fp roots result.mc_major
+     (MCFH.resolve_roots result.mc_major roots_out) /\
    MinorFwd.normal_result_non_pointer_fields_preserved_prop
      minor major fp roots result.mc_major /\
    SpecGCPost.major_gc_live_subgraph_isomorphism
@@ -344,7 +396,7 @@ fn minor_collect_full (gh: gen_heap_t)
       (ok ==>
        CheneyBFS.cheney_no_oom minor_st 's 'fp 'rs /\
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-         minor_st 's 'fp 'rs s2 rs2 /\
+         minor_st 's 'fp 'rs s2 (MCFH.resolve_roots s2 rs2) /\
         MinorFwd.normal_result_non_pointer_fields_preserved_prop
          minor_st 's 'fp 'rs s2))
 

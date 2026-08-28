@@ -588,6 +588,11 @@ private let rec minor_objects_aux_no_infix
   end
 #pop-options
 
+let resolve_minor_non_infix (ms: minor_state) (v: U64.t) = ()
+
+let resolve_minor_in_objects (ms: minor_state) (v: U64.t) =
+  infix_parent_in_minor_objects ms v
+
 let minor_objects_not_infix (ms: minor_state) (addr: U64.t)
           =
   if U64.v ms.bump > minor_heap_size || U64.v ms.bump % 8 <> 0 then ()
@@ -1167,3 +1172,22 @@ let minor_objects_count_bound (ms: minor_state)
 /// ---------------------------------------------------------------------------
 /// Zero Bump Lemma (for SPOT)
 /// ---------------------------------------------------------------------------
+
+/// ---------------------------------------------------------------------------
+/// Defining equations of the chain walk
+/// ---------------------------------------------------------------------------
+
+let minor_objects_from data pos bump = minor_objects_aux data pos bump
+
+let minor_objects_from_zero ms = ()
+
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
+let minor_chain_walk_stop data pos bump = ()
+#pop-options
+
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 30"
+let minor_chain_walk_step data pos bump next =
+  let hdr = minor_read_word data (U64.uint_to_t pos) in
+  let wz = U64.v (U64.shift_right hdr 10ul) in
+  next_pos_mod8 pos wz
+#pop-options

@@ -91,7 +91,11 @@ start. So an ordinary OCaml program stores, in an ordinary heap field, a
 pointer that is not the address of any allocated block. The collector has to
 recognise it and mark the *enclosing* block.
 
-The test makes 678 assertions in seven groups:
+The test makes 2128 assertions in ten groups. Groups 1-7 are about the major
+heap; groups 8-10 are about the nursery, where interior pointers are hardest,
+because Cheney copying has to forward the *enclosing* block and then re-apply
+the offset (`caml_oldify_one`'s `offset = Infix_offset_hd(hd); ...; *p +=
+offset`).
 
 | # | What it checks |
 |---|---|
@@ -102,6 +106,11 @@ The test makes 678 assertions in seven groups:
 | 5 | A block reachable from the roots **only** through an interior pointer survives mark & sweep, along with the array captured in its environment |
 | 6 | 400 groups, half dropped, all survivors held only by interior pointers — real sweep pressure |
 | 7 | The post-collection heap has the same shape: identical tags, sizes, addresses, `Obj.reachable_words` counts and physical identities |
+| 8 | A **major -> minor** interior pointer, reaching a group that lives in the nursery and is anchored *only* by that pointer. The edge arrives through the remembered set (`caml_modify` records the raw interior word, which is why the forwarding map is keyed on it). After one minor collection the target has moved — so it really was young — the field is still `Infix_tag`, the offset is unchanged, and all three closures still compute |
+| 9 | A **minor -> minor** interior pointer: referrer and group both young, so the edge is found by Cheney scanning and both are promoted in one pass. Here the parent is observable, so `interior - parent == wosize*8` is checked as an address difference before *and* after, and sharing between two referrers is preserved |
+| 10 | 200 nursery groups anchored from a major-heap array by interior pointers only, with 200 more dropped: every one is shown to have been promoted, with its offset, reachable-word count and computed values intact |
+| 11 | An interior pointer held in a **root** rather than a heap field: a local variable is the only reference to the block. Taken through promotion (offset, reachable-word count and every computed value preserved) and then through mark & sweep (address stable, since the major collector does not move) |
+| 12 | 24 interior-pointer roots live **simultaneously**, one per frame of a recursion, with the collections forced at the innermost frame and every frame's value re-checked on the way back out |
 
 Collections are forced the way a real program forces them, by allocating;
 `Gc.quick_stat` confirms they happened. (`Gc.full_major` is *not* wired to the
@@ -114,12 +123,36 @@ runtimes must reach the same verdict. Compaction is disabled at startup
 (`max_overhead = 1000000`) so that the address-stability assertions are
 meaningful under stock OCaml too — the verified major collector is non-moving.
 
-**Scope.** The heaps this test builds hold interior pointers in major fields, so
-they violate `no_infix_field_targets` and fall outside the *generational*
-collector's `major_heap_shape` invariant. The marking and sweeping it stresses is
-covered by the mark-and-sweep proofs, which do handle interior pointers; the
-generational reachability argument is not. The test shows the extracted C is
-correct on such heaps, and marks exactly the case the generational proof owes.
+**Scope.** The heaps this test builds are now inside the *generational*
+collector's invariant, in both generations. Interior pointers in major fields
+are admitted by `GC.Gen.HeapInvariant.major_heap_shape` (`well_formed_heap` is
+stated on `resolve_object dst g`, not on the raw word), and interior pointers
+into the nursery are admitted by `minor_heap_shape` / `collection_heap_shape`,
+whose two restrictions forbidding them were removed once Cheney forwarding was
+proved to preserve interiority. The corresponding audits are
+`spot/GC.SPOT.InfixMajor` (a concrete major heap with an interior pointer that
+satisfies the whole precondition, is collected by the real `gen_gc`, and comes
+back satisfying it again) and `spot/GC.SPOT.MinorInfix` (the nursery analogue).
+See `docs/minor-infix-support-plan.md`.
+
+Groups 8 through 12 concern interior pointers held directly in a *root*, which
+the specification now covers in both generations.
+`GC.Impl.MarkBoundedPrecondition.root_valid_for_darkening` asks a root to *name*
+a non-blue object --- `SpecObject.resolve_object`, the identity on ordinary
+pointers --- so the mark-and-sweep collector is specified for interior roots,
+and `GC.Gen.Impl.roots_match_stack` correspondingly says the mark stack holds
+the roots' *resolutions*.
+
+`MinorCollectForwarding.Helpers.roots_valid_for_minor_collection` asks only that
+a nursery root's *resolution* be in `minor_objects`, so an interior root
+pointing into the nursery is inside the specification too.  Root rewriting keeps
+the offset the mutator sees, so a rewritten interior nursery root is an interior
+pointer into the major heap; `GC.Gen.MinorCollectForwarding.Helpers.resolve_roots`
+maps the rewritten root array through `resolve_field` once, and the
+post-collection reachability statement and `gen_gc_roots_post` are both phrased
+over that resolved sequence.  `GC.Gen.Impl.gen_gc_named_root_in_stack` reads the
+ordinary case back out: a root that resolves to itself is on the mark stack
+literally.  See Phase H of `docs/minor-infix-support-plan.md`.
 
 **The test is sensitive.** Rebuilding the runtime with the pre-fix
 `check_and_darken_bounded` — the version that darkened the raw field value

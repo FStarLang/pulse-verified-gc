@@ -66,7 +66,7 @@ val combined_reachable_minor_has_fwd
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
       let cg = CG.build_combined_graph minor major in
-      let combined_roots = CG.classify_roots roots in
+      let combined_roots = CG.classify_roots minor roots in
       let fwd = (cheney_promote minor major fp roots).fwd_map in
       forall (v: U64.t).
         CG.combined_reachable cg combined_roots (CG.MinorV v) /\
@@ -89,7 +89,7 @@ val combined_reachable_minor_has_fwd_from_slots
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
       let cg = CG.build_combined_graph minor major in
-      let combined_roots = CG.classify_roots roots in
+      let combined_roots = CG.classify_roots minor roots in
       let fwd = (cheney_promote minor major fp roots).fwd_map in
       forall (v: U64.t).
         CG.combined_reachable cg combined_roots (CG.MinorV v) /\
@@ -98,7 +98,7 @@ val combined_reachable_minor_has_fwd_from_slots
 let combined_reachable_images_valid_or_infix_prop
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
   let cg = CG.build_combined_graph minor major in
-  let combined_roots = CG.classify_roots roots in
+  let combined_roots = CG.classify_roots minor roots in
   let prom = cheney_promote minor major fp roots in
   let res = cheney_collect_spec minor major fp roots in
   let fwd = prom.fwd_map in
@@ -184,7 +184,7 @@ val combined_reachable_major_edge_forwarded
       RBridge.minor_no_pointer_to_blue minor major /\
       RBridge.roots_valid_nonblue roots major /\
       (let cg = CG.build_combined_graph minor major in
-       let combined_roots = CG.classify_roots roots in
+       let combined_roots = CG.classify_roots minor roots in
        CG.combined_reachable cg combined_roots (CG.MajorV src) /\
        CG.mem_ce (CG.MajorV src, CG.MajorV dst) cg))
     (ensures
@@ -209,7 +209,7 @@ val combined_major_minor_field_forwarded
       RBridge.roots_valid_nonblue roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
       (let cg = CG.build_combined_graph minor major in
-       let combined_roots = CG.classify_roots roots in
+       let combined_roots = CG.classify_roots minor roots in
        CG.combined_reachable cg combined_roots (CG.MajorV src) /\
        CG.combined_reachable cg combined_roots (CG.MinorV dst)) /\
       ~(is_no_scan src major) /\
@@ -222,8 +222,11 @@ val combined_major_minor_field_forwarded
     (ensures (
       let prom = cheney_promote minor major fp roots in
       let res = cheney_collect_spec minor major fp roots in
+      let ov = to_minor_offset (read_word major (U64.uint_to_t (U64.v src + i * 8))) in
       prom.fwd_map dst <> 0UL /\
-      read_word res.mc_major (U64.uint_to_t (U64.v src + i * 8)) == prom.fwd_map dst))
+      prom.fwd_map ov <> 0UL /\
+      resolve_minor minor ov == dst /\
+      read_word res.mc_major (U64.uint_to_t (U64.v src + i * 8)) == prom.fwd_map ov))
 
 val combined_major_minor_edge_forwarded
   (minor: minor_state) (major: heap) (fp: U64.t)
@@ -242,7 +245,7 @@ val combined_major_minor_edge_forwarded
       (let prom = cheney_promote minor major fp roots in
        HeapGraph.is_pointer_field (prom.fwd_map dst)) /\
       (let cg = CG.build_combined_graph minor major in
-       let combined_roots = CG.classify_roots roots in
+       let combined_roots = CG.classify_roots minor roots in
        CG.combined_reachable cg combined_roots (CG.MajorV src) /\
        CG.combined_reachable cg combined_roots (CG.MinorV dst)) /\
       ~(is_no_scan src major) /\
@@ -317,6 +320,8 @@ val promoted_minor_major_edge_forwarded
 /// Field-level MinorV -> MinorV edge-forwarding slice: for a promoted normal
 /// minor source, a copied field that points to another forwarded minor object
 /// is rewritten to the target's forwarding address in the post-minor heap.
+// the `U64.uint_to_t` in the conclusion needs more than the default budget
+#push-options "--z3rlimit 40"
 val promoted_minor_minor_field_forwarded
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
@@ -339,12 +344,17 @@ val promoted_minor_minor_field_forwarded
        (U64.v fwd_src + j * 8) % 8 == 0 /\
        is_minor_pointer dst /\
        CG.classify_minor_field minor major (minor_read_field minor src j) ==
-       Some (CG.MinorV dst)))
+       Some (CG.MinorV dst)) /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
       let prom = cheney_promote minor major fp roots in
       let res = cheney_collect_spec minor major fp roots in
+      let ov = to_minor_offset (minor_read_field minor src j) in
       read_word res.mc_major (U64.uint_to_t (U64.v (prom.fwd_map src) + j * 8)) ==
-      prom.fwd_map dst))
+      prom.fwd_map ov /\
+      prom.fwd_map ov <> 0UL /\
+      resolve_minor minor ov == dst))
+#pop-options
 
 val promoted_minor_minor_edge_forwarded
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
@@ -369,7 +379,8 @@ val promoted_minor_minor_edge_forwarded
        (U64.v fwd_src + j * 8) % 8 == 0 /\
        is_minor_pointer dst /\
        CG.classify_minor_field minor major (minor_read_field minor src j) ==
-       Some (CG.MinorV dst)))
+       Some (CG.MinorV dst)) /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
       let prom = cheney_promote minor major fp roots in
       let res = cheney_collect_spec minor major fp roots in

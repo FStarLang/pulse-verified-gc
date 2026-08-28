@@ -43,6 +43,30 @@ module MinorFwd = GC.Gen.MinorCollectForwarding.Helpers
 module MBP = GC.Impl.MarkBoundedPrecondition
 module SpecGCPost = GC.Spec.Correctness
 
+/// A root that was already a major pointer is left alone by root rewriting and
+/// still names itself after the minor collection.
+///
+/// The self-resolution conjunct is what distinguishes a major root from a
+/// nursery one: an interior *nursery* root is rewritten to an interior *major*
+/// pointer, so it names the promoted closure rather than itself.  An interior
+/// major root is ruled out by `roots_valid_for_minor_collection`, which asks a
+/// non-nursery root to be an enumerated object.
+val post_minor_major_root_valid
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (r: U64.t)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      MinorFwd.roots_valid_for_minor_collection minor major roots /\
+      Seq.mem r roots /\ ~(Promote.is_minor_pointer r))
+    (ensures (
+      let prom = Cheney.cheney_promote minor major fp roots in
+      let result = Cheney.cheney_collect_spec minor major fp roots in
+      MBP.root_valid_for_darkening result.mc_major
+        (Promote.rewrite_root r prom.fwd_map) /\
+      SpecObj.resolve_object
+        ((Promote.rewrite_root r prom.fwd_map) <: obj_addr) result.mc_major ==
+        Promote.rewrite_root r prom.fwd_map))
+
 /// Every post-minor root is a genuine, non-blue major object.
 ///
 /// This is the one conjunct of `darken_precondition` that mentions the rewritten
@@ -51,9 +75,10 @@ module SpecGCPost = GC.Spec.Correctness
 /// really a theorem about minor collection, and the two cases are quite
 /// different.  A non-minor root survives `rewrite_root` untouched, so it only
 /// has to stay a non-blue object, which Cheney's frame lemmas give.  A minor
-/// root is forwarded (BFS coverage, from `cheney_no_oom`), and its target is an
-/// ordinary object rather than an interior pointer because the source was a
-/// `minor_objects` member and therefore not an infix sub-object.
+/// root is forwarded (BFS coverage, from `cheney_no_oom`), and it *names* the
+/// promoted copy of the nursery object it named before.  It need not *be* that
+/// copy: an interior nursery root is rewritten to an interior major pointer,
+/// because `rewrite_root` must preserve the offset the mutator sees.
 val post_minor_roots_valid_for_darkening
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma

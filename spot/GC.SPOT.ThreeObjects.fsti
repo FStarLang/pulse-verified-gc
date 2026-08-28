@@ -103,7 +103,7 @@ val spot_c_reachable_root
       (ensures (
         let cg = GC.Gen.CombinedGraph.build_combined_graph minor major in
         GC.Gen.CombinedGraph.combined_reachable
-          cg (GC.Gen.CombinedGraph.classify_roots (spot_roots c))
+          cg (GC.Gen.CombinedGraph.classify_roots minor (spot_roots c))
           (GC.Gen.CombinedGraph.MajorV c)))
 
 val spot_a_reachable_root
@@ -115,7 +115,7 @@ val spot_a_reachable_root
       (ensures (
         let cg = GC.Gen.CombinedGraph.build_combined_graph minor major in
         GC.Gen.CombinedGraph.combined_reachable
-          cg (GC.Gen.CombinedGraph.classify_roots (spot_roots c))
+          cg (GC.Gen.CombinedGraph.classify_roots minor (spot_roots c))
           (GC.Gen.CombinedGraph.MinorV GC.SPOT.Layout.a_minor)))
 
 val spot_a_promoted

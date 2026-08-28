@@ -77,6 +77,35 @@ test: correctness $(BYTE_FILES)
 # only through an interior pointer survives mark & sweep, and that the
 # post-collection heap has exactly the shape it had before.
 #
+# Groups 8-10 do the same for the *nursery*: mutually recursive closures are
+# allocated young, so an interior pointer to one points into the middle of a
+# young block and Cheney copying must forward the enclosing block and re-apply
+# the offset.  Both the major -> minor edge (remembered set) and the
+# minor -> minor edge (Cheney scanning) are covered, and each is shown to have
+# actually been promoted, so the nursery path is really the one exercised.
+#
+# Groups 11-12 move the interior pointer out of the heap and into a *root*: a
+# local variable, scanned verbatim off the bytecode stack, is the only thing
+# referring to the closure block.  A root cannot be replaced by its enclosing
+# closure -- the mutator keeps calling through it -- so the offset has to
+# survive the collection.  Group 12 keeps 24 such roots live simultaneously,
+# one per frame of a recursion, with the collections forced at the bottom.
+# Both collectors resolve roots (forward_if_minor_infix in the nursery,
+# check_and_darken_bounded_spec in the major heap), and Phase H of
+# docs/minor-infix-support-plan.md brought the specifications into line.
+#
+# Group 13 audits the heap the collector is *handed* rather than what it did
+# with it: inside one collection-free window it establishes, on the live heap,
+# that the closure blocks are in the nursery (positionally, between two young
+# sentinels), that a root and a young field each hold an interior pointer into
+# one, and that infix_addr_conds holds numerically -- exactly the shape
+# GC.Gen.HeapInvariant.collection_heap_shape and
+# GC.Gen.MinorCollectForwarding.Helpers.roots_valid_for_minor_collection now
+# admit.  It then forces one minor collection and checks the result.
+# spot/GC.SPOT.MinorInfixPre and spot/GC.SPOT.MinorInfixCall are the
+# machine-checked counterparts: a concrete heap of exactly this shape, proved to
+# satisfy gen_gc's precondition, and a Pulse call that runs the collector on it.
+#
 # It is run under the verified runtime and, as a differential check, under
 # stock OCaml, where it must produce the same verdict.
 

@@ -46,7 +46,7 @@ let normal_src_reachable
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (u: CG.combined_vertex) : prop =
   let cg = CG.build_combined_graph minor major in
-  let combined_roots = CG.classify_roots roots in
+  let combined_roots = CG.classify_roots minor roots in
   CG.combined_reachable cg combined_roots u /\
   normal_vertex_ready minor major fp roots u
 

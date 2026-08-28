@@ -68,10 +68,12 @@ module FreeListShape = GC.Gen.FreeListShape
 /// every pointer-shaped word in them to resolve to an enumerated object, garbage
 /// or not --- so this adds nothing to what a heap must already satisfy there.
 ///
-/// The nursery side keeps its own restrictions (`minor_fields_no_infix_targets`,
-/// `major_minor_fields_no_infix_targets`): a pointer *into the nursery* may not
-/// be interior.  Cheney's forwarding map is keyed by whole minor objects, so
-/// lifting that is a separate change.
+/// The nursery side carries no corresponding restriction: a pointer into the
+/// nursery may be interior.  Cheney's forwarding map records an entry for the
+/// interior address as well as for the closure it points into
+/// (`GC.Gen.CheneyBFS.fwd_covers_infix_fields` / `fwd_covers_infix_roots`), so
+/// such a field is rewritten to the corresponding interior address in the
+/// promoted copy.
 [@@"opaque_to_smt"]
 val major_heap_shape (major: heap) (fp: U64.t) : prop
 
@@ -81,23 +83,8 @@ val major_heap_shape (major: heap) (fp: U64.t) : prop
 [@@"opaque_to_smt"]
 val minor_major_fields_no_blue (minor: minor_state) (major: heap) : prop
 
-/// Minor object fields that contain minor-heap pointers must not point at
-/// minor infix sub-objects.  Forwarding an infix sub-object produces an interior
-/// major pointer, which is valid for roots but not for major object fields under
-/// the current `well_formed_heap_part2` model.
-[@@"opaque_to_smt"]
-val minor_fields_no_infix_targets (minor: minor_state) : prop
-
-/// Existing major-heap fields that temporarily contain minor pointers (e.g. via
-/// write barriers) also must not point at minor infix sub-objects, for the same
-/// reason as `minor_fields_no_infix_targets`.
-[@@"opaque_to_smt"]
-val major_minor_fields_no_infix_targets (minor: minor_state) (major: heap) : prop
-
 /// Minor-heap shape: bump/layout validity, runtime guard completeness, infix
-/// validity, the minor analogue of the no-scan raw-data invariant, and the
-/// field-level restriction that prevents storing forwarded infix pointers in
-/// major object bodies.
+/// validity, and the minor analogue of the no-scan raw-data invariant.
 [@@"opaque_to_smt"]
 val minor_heap_shape (minor: minor_state) : prop
 /// Non-stack combined heap shape used by minor collection.
@@ -144,25 +131,13 @@ val minor_heap_shape_elim (minor: minor_state)
            (ensures minor_wf minor /\
                     minor_guards_complete minor /\
                     minor_infix_wf minor /\
-                    minor_no_scan_invariant minor /\
-                    minor_fields_no_infix_targets minor)
-
-val minor_fields_no_infix_targets_intro (minor: minor_state)
-  : Lemma (requires
-            (forall (obj: U64.t) (j: nat).
-              Seq.mem obj (minor_objects minor) /\
-              j < minor_wosize minor obj /\
-              is_minor_pointer (to_minor_offset (minor_read_field minor obj j)) ==>
-              ~(is_infix_in_minor minor
-                  (to_minor_offset (minor_read_field minor obj j)))))
-          (ensures minor_fields_no_infix_targets minor)
+                    minor_no_scan_invariant minor)
 
 val minor_heap_shape_intro (minor: minor_state)
   : Lemma (requires minor_wf minor /\
                     minor_guards_complete minor /\
                     minor_infix_wf minor /\
-                    minor_no_scan_invariant minor /\
-                    minor_fields_no_infix_targets minor)
+                    minor_no_scan_invariant minor)
           (ensures minor_heap_shape minor)
 
 val minor_major_fields_no_blue_no_pointer_fields
@@ -185,58 +160,16 @@ val minor_major_fields_no_blue_elim (minor: minor_state) (major: heap)
                              (objects zero_addr major) /\
                     ~(is_blue ((minor_read_field minor obj j) <: obj_addr) major))
 
-val minor_fields_no_infix_targets_elim (minor: minor_state)
-  (obj: U64.t) (j: nat)
-  : Lemma (requires minor_fields_no_infix_targets minor /\
-                     Seq.mem obj (minor_objects minor) /\
-                     j < minor_wosize minor obj /\
-                     is_minor_pointer (to_minor_offset (minor_read_field minor obj j)))
-          (ensures ~(is_infix_in_minor minor
-                      (to_minor_offset (minor_read_field minor obj j))))
-
-val major_minor_fields_no_infix_targets_elim
-  (minor: minor_state) (major: heap) (obj: obj_addr) (j: nat)
-  : Lemma (requires major_minor_fields_no_infix_targets minor major /\
-                     Seq.mem obj (objects zero_addr major) /\
-                     ~(is_blue obj major) /\
-                     ~(is_no_scan obj major) /\
-                     j < U64.v (wosize_of_object obj major) /\
-                     U64.v obj + j * 8 + 8 <= heap_size /\
-                     (U64.v obj + j * 8) % 8 == 0 /\
-                     (let v = to_minor_offset
-                        (read_word major (U64.uint_to_t (U64.v obj + j * 8))) in
-                      is_minor_pointer v))
-          (ensures (let v = to_minor_offset
-                        (read_word major (U64.uint_to_t (U64.v obj + j * 8))) in
-                    ~(is_infix_in_minor minor v)))
-
-val major_minor_fields_no_infix_targets_intro
-  (minor: minor_state) (major: heap)
-  : Lemma (requires
-            (forall (obj: obj_addr) (j: nat).
-              Seq.mem obj (objects zero_addr major) /\
-              ~(is_blue obj major) /\
-              ~(is_no_scan obj major) /\
-              j < U64.v (wosize_of_object obj major) /\
-              U64.v obj + j * 8 + 8 <= heap_size /\
-              (U64.v obj + j * 8) % 8 == 0 ==>
-              (let v = to_minor_offset
-                 (read_word major (U64.uint_to_t (U64.v obj + j * 8))) in
-               is_minor_pointer v ==> ~(is_infix_in_minor minor v))))
-          (ensures major_minor_fields_no_infix_targets minor major)
-
 val collection_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma (requires collection_heap_shape minor major fp)
            (ensures major_heap_shape major fp /\
                      minor_heap_shape minor /\
-                     minor_major_fields_no_blue minor major /\
-                    major_minor_fields_no_infix_targets minor major)
+                     minor_major_fields_no_blue minor major)
 
 val collection_heap_shape_intro (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma (requires major_heap_shape major fp /\
                     minor_heap_shape minor /\
-                    minor_major_fields_no_blue minor major /\
-                    major_minor_fields_no_infix_targets minor major)
+                    minor_major_fields_no_blue minor major)
           (ensures collection_heap_shape minor major fp)
 
 /// Resetting the nursery clears stale headers and makes all minor-side shape
@@ -246,10 +179,6 @@ val minor_reset_heap_shape (minor: minor_state)
 
 val minor_reset_minor_major_fields_no_blue (minor: minor_state) (major: heap)
   : Lemma (ensures minor_major_fields_no_blue (minor_reset minor) major)
-
-val minor_reset_major_minor_fields_no_infix_targets
-  (minor: minor_state) (major: heap)
-  : Lemma (ensures major_minor_fields_no_infix_targets (minor_reset minor) major)
 
 val collection_heap_shape_after_minor_reset
   (minor: minor_state) (major: heap) (fp: U64.t)

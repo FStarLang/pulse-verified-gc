@@ -103,7 +103,7 @@ val reachable_major_valid_nonblue
       roots_valid_nonblue roots major)
     (ensures (
       let cg = build_combined_graph minor major in
-      let combined_roots = classify_roots roots in
+      let combined_roots = classify_roots minor roots in
       forall (v: U64.t).
         combined_reachable cg combined_roots (MajorV v) ==>
         U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
@@ -118,7 +118,7 @@ val reachable_major_valid
     (requires well_formed_heap major /\ minor_wf minor)
     (ensures (
       let cg = build_combined_graph minor major in
-      let combined_roots = classify_roots roots in
+      let combined_roots = classify_roots minor roots in
       forall (v: U64.t).
         combined_reachable cg combined_roots (MajorV v) ==>
         U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
@@ -130,7 +130,9 @@ val reachable_major_valid
 ///
 /// `major_field_zero_covered` is the right one: it requires only that a
 /// live-minor pointer stored in a scannable non-blue object's first field
-/// already appears in the Cheney root sequence.  That is exactly what the
+/// already appears in the Cheney root sequence.  The liveness test is applied
+/// to the *resolution* of the stored word, so an interior pointer into a live
+/// nursery closure counts as live and must be covered.  That is exactly what the
 /// slot-table preconditions of `minor_collect_full` supply, since
 /// `ref_table_covers_minor_ptrs` quantifies over `j < wosize` and so does
 /// cover `j = 0` (see `major_field_zero_covered_from_slots`).
@@ -142,7 +144,8 @@ let major_field_zero_covered
     0 < U64.v (wosize_of_object src major) /\
     U64.v src + 8 <= heap_size ==>
     (let v = to_minor_offset (read_word major (U64.uint_to_t (U64.v src))) in
-     is_minor_pointer v /\ Seq.mem v (minor_objects ms) ==> Seq.mem v roots)
+     is_minor_pointer v /\ Seq.mem (resolve_minor ms v) (minor_objects ms) ==>
+     Seq.mem v roots)
 
 
 /// The scan-derived remembered roots are already included in the Cheney root
@@ -176,7 +179,7 @@ val reachability_bridge
       major_field_zero_covered minor major roots)
     (ensures (
       let cg = build_combined_graph minor major in
-      let combined_roots = classify_roots roots in
+      let combined_roots = classify_roots minor roots in
       forall (v: U64.t).
         combined_reachable cg combined_roots (MinorV v) ==>
         Seq.mem v (live_set_of minor major roots)))
@@ -196,7 +199,7 @@ val combined_minor_reachable_in_minor_reachable
       remembered_roots_in_roots major roots)
     (ensures (
       let cg = build_combined_graph minor major in
-      let combined_roots = classify_roots roots in
+      let combined_roots = classify_roots minor roots in
       forall (v: U64.t).
         combined_reachable cg combined_roots (MinorV v) ==>
         Seq.mem v (minor_reachable minor roots)))

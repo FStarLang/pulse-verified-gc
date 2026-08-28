@@ -307,16 +307,12 @@ let spot_minor_infix_wf ()
   : Lemma (ensures minor_infix_wf spot_minor2)
   =
   reveal_opaque (`%minor_infix_wf) (minor_infix_wf spot_minor2);
+  // Every tag in `spot_minor2` is 0, so no address is an infix sub-object and
+  // the obligation is vacuous.  Deriving `False` rather than restating the
+  // body of `minor_infix_wf` keeps this proof independent of that definition.
   let aux (addr: U64.t)
     : Lemma (requires is_infix_in_minor spot_minor2 addr)
-            (ensures (let wz = minor_wosize spot_minor2 addr in
-                     let parent = infix_parent spot_minor2 addr in
-                     wz > 0 /\
-                     wz * 8 <= U64.v addr - 8 /\
-                     U64.v parent >= 8 /\
-                     U64.v parent % 8 == 0 /\
-                     Seq.mem parent (minor_objects spot_minor2) /\
-                     U64.v addr - U64.v parent < minor_wosize spot_minor2 parent * 8))
+            (ensures False)
     =
     assert (U64.v addr >= 8);
     assert (U64.v addr < minor_heap_size);
@@ -343,28 +339,10 @@ let spot_minor_no_scan_invariant ()
   in
   FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux)
 
-let spot_minor_fields_no_infix_targets ()
-  : Lemma (ensures GenInv.minor_fields_no_infix_targets spot_minor2)
-  =
-  let aux (obj: U64.t) (j: nat)
-    : Lemma (requires Seq.mem obj (minor_objects spot_minor2) /\
-                      j < minor_wosize spot_minor2 obj /\
-                      Promote.is_minor_pointer (to_minor_offset (minor_read_field spot_minor2 obj j)))
-            (ensures ~(is_infix_in_minor spot_minor2
-                        (to_minor_offset (minor_read_field spot_minor2 obj j))))
-    =
-    spot_minor2_field_zero obj j;
-    assert (minor_read_field spot_minor2 obj j == 0UL);
-    assert_norm (Promote.is_minor_pointer 0UL == false)
-  in
-  FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux);
-  GenInv.minor_fields_no_infix_targets_intro spot_minor2
-
 let spot_minor_heap_shape ()
   =
   spot_minor_two_object_layout ();
   spot_minor_guards_complete ();
   spot_minor_infix_wf ();
   spot_minor_no_scan_invariant ();
-  spot_minor_fields_no_infix_targets ();
   GenInv.minor_heap_shape_intro spot_minor2

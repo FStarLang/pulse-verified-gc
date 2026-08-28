@@ -81,8 +81,8 @@ val major_result_post_transfer
   : Lemma
       (requires
         major_transfer_hyp h1 h2 droots /\
-        (forall (r: U64.t). Seq.mem r rts ==>
-           is_val_addr r /\ Seq.mem (r <: obj_addr) droots))
+        (forall (r: U64.t). Seq.mem r rts ==> is_val_addr r) /\
+        (forall (r: obj_addr). Seq.mem (r <: U64.t) rts ==> Seq.mem r droots))
       (ensures
         (forall (w: U64.t).
            MCFH.result_post_reachable h1 rts w <==>
@@ -127,6 +127,6 @@ val end_to_end_isomorphism_intro
           minor major fp roots post_major post_roots /\
         HM.create_graph darkened == HM.create_graph post_major /\
         major_transfer_hyp darkened final_major droots /\
-        (forall (r: U64.t). Seq.mem r post_roots ==>
-           is_val_addr r /\ Seq.mem (r <: obj_addr) droots))
+        (forall (r: U64.t). Seq.mem r post_roots ==> is_val_addr r) /\
+        (forall (r: obj_addr). Seq.mem (r <: U64.t) post_roots ==> Seq.mem r droots))
       (ensures end_to_end_isomorphism minor major fp roots final_major post_roots)

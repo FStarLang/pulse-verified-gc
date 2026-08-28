@@ -70,6 +70,34 @@ private let fwd_minor_source_in_minor_objects
     Cheney.cheney_promote_preserves_wfh_part4 minor major fp roots;
     assert (~(is_infix fx prom.major_final));
     CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots
+
+/// Generalisation of the above to interior nursery addresses.  A forwarded
+/// address either *is* a minor object (the non-interior case above) or is an
+/// infix inside one, and `minor_infix_wf` puts the enclosing closure in
+/// `minor_objects` outright --- no appeal to the forwarding map is needed for
+/// that half.  Either way the resolved address is an enumerated minor object,
+/// which is exactly the hypothesis the resolution-aware classifiers want.
+private let fwd_source_resolves_in_minor_objects
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (x: U64.t)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      (cheney_promote minor major fp roots).fwd_map x <> 0UL)
+    (ensures
+      Seq.mem (resolve_minor minor x) (minor_objects minor) /\
+      is_minor_addr (resolve_minor minor x))
+  =
+    GenInv.collection_heap_shape_elim minor major fp;
+    GenInv.minor_heap_shape_elim minor;
+    if is_infix_in_minor minor x
+    then resolve_minor_in_objects minor x
+    else begin
+      resolve_minor_non_infix minor x;
+      fwd_minor_source_in_minor_objects minor major fp roots x
+    end;
+    minor_objects_valid minor (resolve_minor minor x);
+    is_minor_addr_from_bounds (resolve_minor minor x)
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
@@ -110,9 +138,7 @@ private let major_non_pointer_field_preserved
       let old_val = to_minor_offset old_raw in
       assert (old_raw == read_word major field_addr);
       if is_minor_pointer old_val && prom.fwd_map old_val <> 0UL then begin
-        GenInv.major_minor_fields_no_infix_targets_elim minor major src j;
-        assert (~(is_infix_in_minor minor old_val));
-        fwd_minor_source_in_minor_objects minor major fp roots old_val;
+        fwd_source_resolves_in_minor_objects minor major fp roots old_val;
         CG.classify_major_field_is_minor minor major (read_word major field_addr);
         assert False
       end;
@@ -166,11 +192,7 @@ private let minor_non_pointer_field_preserved
       let old_val = to_minor_offset old_raw in
       assert (old_raw == minor_read_field minor src j);
       if is_minor_pointer old_val && prom.fwd_map old_val <> 0UL then begin
-        GenInv.minor_fields_no_infix_targets_elim minor src j;
-        assert (~(is_infix_in_minor minor old_val));
-        fwd_minor_source_in_minor_objects minor major fp roots old_val;
-        minor_objects_valid minor old_val;
-        is_minor_addr_from_bounds old_val;
+        fwd_source_resolves_in_minor_objects minor major fp roots old_val;
         CG.classify_minor_field_minor minor major (minor_read_field minor src j);
         assert False
       end;

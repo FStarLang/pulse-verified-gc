@@ -18,6 +18,7 @@ module Cheney = GC.Gen.Cheney
 module CheneyBFS = GC.Gen.CheneyBFS
 module Promote = GC.Gen.Promote
 module GenImpl = GC.Gen.Impl
+module MajorPre = GC.Gen.MajorPrecondition
 module GenInv = GC.Gen.HeapInvariant
 module MinorFwd = GC.Gen.MinorCollectForwarding
 module MajorGC = GC.Impl
@@ -72,10 +73,19 @@ private let post_roots_mem_q
   let prepared_roots = GenImpl.gen_gc_prepared_roots
     InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
     (InfixMajor.spot_infix_fp r) roots st cap in
-  assert (GenImpl.roots_match_stack roots_out prepared_roots);
-  GenImpl.roots_match_stack_root_is_val_addr roots_out prepared_roots (q <: U64.t);
   GC.Spec.Base.is_val_addr_spec (q <: U64.t);
-  GenImpl.roots_match_stack_root_in_stack roots_out prepared_roots q
+  // `q` is a major root, so it survives rewriting untouched and still names
+  // itself in the post-minor heap; the darkened stack therefore holds it
+  // literally, not merely up to resolution.
+  InfixPre.spot_infix_collection_heap_shape r;
+  InfixPre.spot_infix_roots_valid r;
+  MajorPre.post_minor_major_root_valid
+    InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
+    (InfixMajor.spot_infix_fp r) roots (q <: U64.t);
+  GenImpl.gen_gc_named_root_in_stack
+    InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
+    (InfixMajor.spot_infix_fp r) roots roots_out st cap ((q <: U64.t) <: obj_addr);
+  assert (Seq.mem ((q <: U64.t) <: obj_addr) prepared_roots)
 #pop-options
 
 /// Any prepared root is reachable in the prepared (post-minor) heap, which is

@@ -175,8 +175,10 @@ let spot_infix_roots_valid (r: unit{InfixMajor.spot_infix_room})
         (requires Seq.mem root (spot_infix_roots r))
         (ensures
           ((Promote.is_minor_pointer root ==>
-            Seq.mem root (minor_objects spot_infix_minor) /\
-            minor_wosize spot_infix_minor root > 0) /\
+            Seq.mem (resolve_minor spot_infix_minor root)
+                    (minor_objects spot_infix_minor) /\
+            minor_wosize spot_infix_minor
+                         (resolve_minor spot_infix_minor root) > 0) /\
            (~(Promote.is_minor_pointer root) ==>
             is_val_addr root /\
             Seq.mem (root <: obj_addr) (SpecFields.objects zero_addr g) /\
@@ -225,7 +227,14 @@ let spot_infix_cheney_no_oom (r: unit{InfixMajor.spot_infix_room})
     : Lemma (ensures ~(Seq.mem addr (minor_objects spot_infix_minor)))
     = minor_reset_objects_not_mem ms0 addr
   in
-  FStar.Classical.forall_intro no_mem
+  FStar.Classical.forall_intro no_mem;
+  // A reset nursery holds no infix header either, so the interior-coverage
+  // halves of `fwd_well_formed` are vacuous.
+  let no_infix (addr: U64.t)
+    : Lemma (ensures ~(is_infix_in_minor spot_infix_minor addr))
+    = minor_reset_no_infix ms0 addr
+  in
+  FStar.Classical.forall_intro no_infix
 #pop-options
 
 /// ---------------------------------------------------------------------------

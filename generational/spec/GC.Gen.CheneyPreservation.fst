@@ -1277,6 +1277,11 @@ let cheney_promote_nonblue_origin
   = NonBlueOrigin.cheney_promote_nonblue_origin minor major fp roots obj
 #pop-options
 
+/// Stated on the *resolved* target, exactly like
+/// `field_old_pointer_targets_in_objects` below: a promoted closure's infix
+/// sub-object is a legitimate forwarding target, and it is an interior pointer
+/// rather than a member of `objects zero_addr`.  `Forwarding.fwd_infix_targets_wf`
+/// supplies the infix case; `fwd_noninfix_targets_valid` the ordinary one.
 let field_fwd_targets_in_objects (major: heap) (fwd: forwarding_map) : prop =
   forall (src: obj_addr) (j: nat).
     Seq.mem src (objects zero_addr major) /\
@@ -1291,7 +1296,10 @@ let field_fwd_targets_in_objects (major: heap) (fwd: forwarding_map) : prop =
       U64.v (fwd old_val) >= U64.v mword /\
       U64.v (fwd old_val) < heap_size /\
       U64.v (fwd old_val) % U64.v mword == 0 /\
-      Seq.mem ((fwd old_val) <: obj_addr) (objects zero_addr major))
+      (let t : obj_addr = fwd old_val in
+       Seq.mem (resolve_object t major) (objects zero_addr major) /\
+       is_blue (resolve_object t major) major = false /\
+       infix_addr_wf major (objects zero_addr major) t))
 
 /// Stated on the *resolved* target, so that a live object's field may hold an
 /// interior pointer into a closure.  `infix_addr_wf` is carried alongside
@@ -1323,6 +1331,52 @@ private let header_eq_preserves_no_scan
   is_no_scan_spec obj g1;
   is_no_scan_spec obj g2
 
+#pop-options
+
+/// A forwarding target is a well-formed *resolved* pointer, whether or not its
+/// source was an interior (infix) address in the nursery.  The two cases are
+/// `Forwarding.fwd_noninfix_targets_valid` (an ordinary promoted object, which
+/// resolves to itself because `well_formed_heap_part4` forbids enumerated
+/// objects from carrying `infix_tag`) and `Forwarding.fwd_infix_targets_wf`
+/// (a promoted closure's infix sub-object).
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
+private let fwd_target_resolved
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (v: U64.t)
+  : Lemma
+    (requires well_formed_heap major /\
+              AllocLemmas.fl_valid major fp heap_words /\
+              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              chain_objects_blue major fp /\
+              minor_infix_wf minor /\ minor_wf minor /\
+              (cheney_promote minor major fp roots).fwd_map v <> 0UL)
+    (ensures (let prom = cheney_promote minor major fp roots in
+              U64.v (prom.fwd_map v) >= U64.v mword /\
+              U64.v (prom.fwd_map v) < heap_size /\
+              U64.v (prom.fwd_map v) % U64.v mword == 0 /\
+              (let t : obj_addr = prom.fwd_map v in
+               Seq.mem (resolve_object t prom.major_final)
+                       (objects zero_addr prom.major_final) /\
+               is_blue (resolve_object t prom.major_final) prom.major_final = false /\
+               infix_addr_wf prom.major_final
+                       (objects zero_addr prom.major_final) t)))
+  =
+  wf_parts ();
+  let prom = cheney_promote minor major fp roots in
+  cheney_promote_preserves_wfh_part4 minor major fp roots;
+  if is_infix_in_minor minor v then
+    Forwarding.cheney_promote_fwd_infix_targets_wf minor major fp roots
+  else begin
+    Forwarding.cheney_promote_fwd_noninfix_targets_valid minor major fp roots;
+    Injectivity.cheney_promote_fwd_targets_not_blue minor major fp roots;
+    let t : obj_addr = prom.fwd_map v in
+    assert (Seq.mem t (objects zero_addr prom.major_final));
+    // enumerated objects never carry `infix_tag` (part 4), so `t` resolves to
+    // itself and is infix-well-formed vacuously
+    assert (~(is_infix t prom.major_final));
+    resolve_non_infix t prom.major_final;
+    infix_addr_wf_non_infix prom.major_final
+      (objects zero_addr prom.major_final) t
+  end
 #pop-options
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
@@ -1358,8 +1412,12 @@ private let cheney_promote_field_fwd_targets_in_objects_from_shape
          U64.v (prom.fwd_map old_val) >= U64.v mword /\
          U64.v (prom.fwd_map old_val) < heap_size /\
          U64.v (prom.fwd_map old_val) % U64.v mword == 0 /\
-         Seq.mem ((prom.fwd_map old_val) <: obj_addr)
-                 (objects zero_addr prom.major_final))))
+         (let t : obj_addr = prom.fwd_map old_val in
+          Seq.mem (resolve_object t prom.major_final)
+                  (objects zero_addr prom.major_final) /\
+          is_blue (resolve_object t prom.major_final) prom.major_final = false /\
+          infix_addr_wf prom.major_final
+                  (objects zero_addr prom.major_final) t))))
     =
     if Seq.mem src (objects zero_addr prom.major_final) &&
        not (is_blue src prom.major_final) &&
@@ -1380,13 +1438,7 @@ private let cheney_promote_field_fwd_targets_in_objects_from_shape
           assert (j < U64.v (wosize_of_object src major));
           Frame.cheney_promote_frame_old_fields minor major fp roots src j;
           assert (old_val == to_minor_offset (read_word major field_addr));
-          GenInv.major_minor_fields_no_infix_targets_elim minor major src j;
-          assert (~(is_infix_in_minor minor old_val));
-          assert (U64.v (prom.fwd_map old_val) >= U64.v mword);
-          assert (U64.v (prom.fwd_map old_val) < heap_size);
-          assert (U64.v (prom.fwd_map old_val) % U64.v mword == 0);
-          assert (Seq.mem ((prom.fwd_map old_val) <: obj_addr)
-                  (objects zero_addr prom.major_final))
+          fwd_target_resolved minor major fp roots old_val
         end else begin
           assert (~(Seq.mem src (objects zero_addr major) /\
                     is_blue src major = false));
@@ -1406,13 +1458,7 @@ private let cheney_promote_field_fwd_targets_in_objects_from_shape
             Fields.cheney_promote_fwd_target_fields_match minor major fp roots x j;
             assert (old_raw == minor_read_field minor x j);
             assert (old_val == to_minor_offset (minor_read_field minor x j));
-            GenInv.minor_fields_no_infix_targets_elim minor x j;
-            assert (~(is_infix_in_minor minor old_val));
-            assert (U64.v (prom.fwd_map old_val) >= U64.v mword);
-            assert (U64.v (prom.fwd_map old_val) < heap_size);
-            assert (U64.v (prom.fwd_map old_val) % U64.v mword == 0);
-            assert (Seq.mem ((prom.fwd_map old_val) <: obj_addr)
-                    (objects zero_addr prom.major_final))
+            fwd_target_resolved minor major fp roots old_val
           end else begin
             Fields.cheney_promote_fwd_target_extra_field_not_pointer minor major fp roots x j;
             assert (old_raw == 0UL);
@@ -1608,44 +1654,50 @@ private let update_major_pointers_preserves_wfh_part2_from_field_targets
       let old_raw = read_word major field_addr in
       let old_val = to_minor_offset old_raw in
       let new_val = read_word updated field_addr in
+      // Both branches end up with a pointer that is well formed *in `major`*
+      // and must be transferred to `updated`.  Only the source of that fact
+      // differs: `field_fwd_targets_in_objects` for a rewritten field,
+      // `field_old_pointer_targets_in_objects` for one left alone.  The target
+      // may be an interior pointer either way, so the transfer is shared.
+      let transfer (dst: obj_addr)
+        : Lemma (requires Seq.mem (resolve_object dst major) (objects zero_addr major) /\
+                          is_blue (resolve_object dst major) major = false /\
+                          infix_addr_wf major (objects zero_addr major) dst)
+                (ensures Seq.mem (resolve_object dst updated) (objects zero_addr updated) /\
+                         infix_addr_wf updated (objects zero_addr updated) dst)
+        =
+        // the target's header --- which may sit inside a closure --- survives
+        // the update pass, so its resolution is unchanged
+        if is_infix dst major then begin
+          infix_addr_wf_elim major (objects zero_addr major) dst;
+          parent_closure_addr_nat_spec dst major;
+          resolve_infix_spec dst major;
+          let w = U64.v (wosize_of_object dst major) in
+          let pa : obj_addr = U64.uint_to_t (U64.v dst - w * 8) in
+          assert (resolve_object dst major == pa);
+          assert (Seq.mem pa (objects zero_addr major));
+          assert (~(is_blue pa major));
+          update_major_pointers_preserves_header major fwd pa;
+          resolve_object_locality pa major updated
+        end
+        else resolve_non_infix dst major;
+        Frame.update_major_pointers_frame_target_header major fwd dst;
+        resolve_object_locality dst major updated;
+        infix_addr_wf_transfer major updated
+          (objects zero_addr major) (objects zero_addr updated) dst
+      in
       if is_minor_pointer old_val && fwd old_val <> 0UL then begin
         assert (new_val == fwd old_val);
         assert (U64.v (fwd old_val) >= U64.v mword);
         assert (U64.v (fwd old_val) < heap_size);
         assert (U64.v (fwd old_val) % U64.v mword == 0);
-        assert (Seq.mem ((fwd old_val) <: obj_addr) (objects zero_addr major));
-        assert (Seq.mem ((fwd old_val) <: obj_addr) (objects zero_addr updated));
-        // a forwarding target is a whole object, hence non-infix in `updated`
-        assert (~(is_infix ((fwd old_val) <: obj_addr) updated));
-        resolve_non_infix ((fwd old_val) <: obj_addr) updated;
-        infix_addr_wf_non_infix updated (objects zero_addr updated)
-          ((fwd old_val) <: obj_addr)
+        transfer ((fwd old_val) <: obj_addr)
       end else begin
         assert (new_val == old_raw);
         if is_pointer old_raw then begin
           let dst : obj_addr = old_raw in
-          assert (Seq.mem (resolve_object dst major) (objects zero_addr major));
-          assert (infix_addr_wf major (objects zero_addr major) dst);
-          // the target's header --- which may sit inside a closure --- survives
-          // the update pass, so its resolution is unchanged
-          if is_infix dst major then begin
-            NoBlueUtil.field_pointer_no_blue_from_no_pointer_to_blue major src dst j;
-            infix_addr_wf_elim major (objects zero_addr major) dst;
-            parent_closure_addr_nat_spec dst major;
-            resolve_infix_spec dst major;
-            let w = U64.v (wosize_of_object dst major) in
-            let pa : obj_addr = U64.uint_to_t (U64.v dst - w * 8) in
-            assert (resolve_object dst major == pa);
-            assert (Seq.mem pa (objects zero_addr major));
-            assert (~(is_blue pa major));
-            update_major_pointers_preserves_header major fwd pa;
-            resolve_object_locality pa major updated
-          end
-          else resolve_non_infix dst major;
-          Frame.update_major_pointers_frame_target_header major fwd dst;
-          resolve_object_locality dst major updated;
-          infix_addr_wf_transfer major updated
-            (objects zero_addr major) (objects zero_addr updated) dst
+          NoBlueUtil.field_pointer_no_blue_from_no_pointer_to_blue major src dst j;
+          transfer dst
         end
       end
     end
@@ -1713,8 +1765,12 @@ let cheney_collect_preserves_no_pointer_to_blue
                   U64.v (prom.fwd_map mv) >= U64.v mword /\
                   U64.v (prom.fwd_map mv) < heap_size /\
                   U64.v (prom.fwd_map mv) % U64.v mword == 0 /\
-                  Seq.mem ((prom.fwd_map mv) <: obj_addr)
-                          (objects zero_addr prom.major_final)) /\
+                  (let t : obj_addr = prom.fwd_map mv in
+                   Seq.mem (resolve_object t prom.major_final)
+                           (objects zero_addr prom.major_final) /\
+                   is_blue (resolve_object t prom.major_final) prom.major_final = false /\
+                   infix_addr_wf prom.major_final
+                           (objects zero_addr prom.major_final) t)) /\
                 (is_pointer raw /\ ~(is_minor_pointer mv /\ prom.fwd_map mv <> 0UL) ==>
                   Seq.mem (resolve_object (raw <: obj_addr) prom.major_final)
                           (objects zero_addr prom.major_final) /\

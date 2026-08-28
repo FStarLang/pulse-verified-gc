@@ -253,6 +253,9 @@ let forward_roots_cover_concrete_roots (r: unit{ConcreteMajor.spot_major_room})
        let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
        CheneyBFS.fwd_covers_roots ConcreteMinor.spot_minor2
          (Cheney.cheney_forward_roots
+           ConcreteMinor.spot_minor2 cs0 roots 0).Cheney.cs_fwd roots /\
+       CheneyBFS.fwd_covers_infix_roots ConcreteMinor.spot_minor2
+         (Cheney.cheney_forward_roots
            ConcreteMinor.spot_minor2 cs0 roots 0).Cheney.cs_fwd roots))
   =
   let c = ConcreteMajor.spot_c r in
@@ -266,20 +269,45 @@ let forward_roots_cover_concrete_roots (r: unit{ConcreteMajor.spot_major_room})
   forward_roots_a_nonzero r;
   let aux (root: U64.t)
     : Lemma (requires Seq.mem root roots /\
-                      Seq.mem root (minor_objects ConcreteMinor.spot_minor2) /\
-                      minor_wosize ConcreteMinor.spot_minor2 root > 0)
-            (ensures cs1.Cheney.cs_fwd root <> 0UL)
+                      Seq.mem (resolve_minor ConcreteMinor.spot_minor2 root)
+                        (minor_objects ConcreteMinor.spot_minor2) /\
+                      minor_wosize ConcreteMinor.spot_minor2
+                        (resolve_minor ConcreteMinor.spot_minor2 root) > 0)
+            (ensures cs1.Cheney.cs_fwd
+                       (resolve_minor ConcreteMinor.spot_minor2 root) <> 0UL)
     =
     ThreeObjects.spot_roots_cases c root;
+    ConcreteMinor.spot_minor_two_object_layout ();
+    // Neither concrete root is an interior pointer, so each is its own
+    // resolution: `c` is a major address and `a_minor` is an enumerated
+    // nursery object.
     if root = (c <: U64.t) then begin
       c_not_minor_or_infix r;
+      resolve_minor_non_infix ConcreteMinor.spot_minor2 root;
       assert False
     end else begin
       assert (root == Layout.a_minor);
+      minor_objects_not_infix ConcreteMinor.spot_minor2 Layout.a_minor;
+      resolve_minor_non_infix ConcreteMinor.spot_minor2 root;
       assert (cs1.Cheney.cs_fwd Layout.a_minor <> 0UL)
     end
   in
-  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+  // Neither concrete root is interior, so the infix obligation is vacuous.
+  let aux_infix (root: U64.t)
+    : Lemma (requires Seq.mem root roots /\
+                      is_infix_in_minor ConcreteMinor.spot_minor2 root)
+            (ensures cs1.Cheney.cs_fwd root <> 0UL)
+    =
+    ThreeObjects.spot_roots_cases c root;
+    ConcreteMinor.spot_minor_two_object_layout ();
+    if root = (c <: U64.t) then c_not_minor_or_infix r
+    else begin
+      assert (root == Layout.a_minor);
+      minor_objects_not_infix ConcreteMinor.spot_minor2 Layout.a_minor
+    end
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux_infix)
 
 let spot_minor2_successor_impossible (obj y: U64.t)
   : Lemma (requires Seq.mem obj (minor_objects ConcreteMinor.spot_minor2) /\
@@ -289,8 +317,9 @@ let spot_minor2_successor_impossible (obj y: U64.t)
   =
   let no_witness (i: nat)
     : Lemma (requires i < minor_wosize ConcreteMinor.spot_minor2 obj /\
-                      to_minor_offset
-                        (minor_read_field ConcreteMinor.spot_minor2 obj i) == y /\
+                      resolve_minor ConcreteMinor.spot_minor2
+                        (to_minor_offset
+                          (minor_read_field ConcreteMinor.spot_minor2 obj i)) == y /\
                       is_minor_addr y /\
                       Seq.mem y (minor_objects ConcreteMinor.spot_minor2))
             (ensures False)
@@ -299,6 +328,9 @@ let spot_minor2_successor_impossible (obj y: U64.t)
     to_minor_offset_in_minor_range 0UL;
     assert (to_minor_offset
       (minor_read_field ConcreteMinor.spot_minor2 obj i) == 0UL);
+    // The null word is below the first nursery object, so it is not interior
+    // and is its own resolution.
+    resolve_minor_non_infix ConcreteMinor.spot_minor2 0UL;
     assert (y == 0UL);
     zero_not_in_minor_objects ();
     assert False
@@ -307,7 +339,8 @@ let spot_minor2_successor_impossible (obj y: U64.t)
   Reachability.minor_successors_char ConcreteMinor.spot_minor2 obj y;
   assert (~(exists (i: nat).
     i < minor_wosize ConcreteMinor.spot_minor2 obj /\
-    to_minor_offset (minor_read_field ConcreteMinor.spot_minor2 obj i) == y /\
+    resolve_minor ConcreteMinor.spot_minor2
+      (to_minor_offset (minor_read_field ConcreteMinor.spot_minor2 obj i)) == y /\
     is_minor_addr y /\
     Seq.mem y (minor_objects ConcreteMinor.spot_minor2)));
   assert False
@@ -322,6 +355,9 @@ let scan_fwd_closed_concrete (r: unit{ConcreteMajor.spot_major_room})
        let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
        let cs1 = Cheney.cheney_forward_roots ConcreteMinor.spot_minor2 cs0 roots 0 in
        CheneyBFS.fwd_closed ConcreteMinor.spot_minor2
+         (Cheney.cheney_scan ConcreteMinor.spot_minor2 cs1 0
+           (Cheney.cheney_fuel ConcreteMinor.spot_minor2)).Cheney.cs_fwd /\
+       CheneyBFS.fwd_covers_infix_fields ConcreteMinor.spot_minor2
          (Cheney.cheney_scan ConcreteMinor.spot_minor2 cs1 0
            (Cheney.cheney_fuel ConcreteMinor.spot_minor2)).Cheney.cs_fwd))
   =
@@ -346,7 +382,23 @@ let scan_fwd_closed_concrete (r: unit{ConcreteMajor.spot_major_room})
     spot_minor2_successor_impossible x y;
     assert False
   in
-  FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux)
+  FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux);
+  // Every field of the concrete nursery reads as the null word, which is below
+  // the first object and so never interior.
+  let aux_infix (x: U64.t) (j: nat)
+    : Lemma (requires Seq.mem x (minor_objects ConcreteMinor.spot_minor2) /\
+                      j < minor_wosize ConcreteMinor.spot_minor2 x /\
+                      is_infix_in_minor ConcreteMinor.spot_minor2
+                        (to_minor_offset
+                          (minor_read_field ConcreteMinor.spot_minor2 x j)))
+            (ensures False)
+    =
+    ConcreteMinor.spot_minor2_field_zero x j;
+    to_minor_offset_in_minor_range 0UL;
+    assert (to_minor_offset
+      (minor_read_field ConcreteMinor.spot_minor2 x j) == 0UL)
+  in
+  FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux_infix)
 
 let spot_concrete_no_oom (r: unit{ConcreteMajor.spot_major_room})
   =

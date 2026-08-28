@@ -34,23 +34,23 @@ module CheneyBFS = GC.Gen.CheneyBFS
 module GenImpl = GC.Gen.Impl
 module MinorFwd = GC.Gen.MinorCollectForwarding
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
+module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module MajorGC = GC.Impl
 module MarkBoundedImpl = GC.Impl.MarkBounded
 module MBP = GC.Impl.MarkBoundedPrecondition
 module MajorPre = GC.Gen.MajorPrecondition
 module CheneyPres = GC.Gen.CheneyPreservation
 
-let roots_match_u64_mem_in_stack
-  (roots: seq U64.t) (st: seq obj_addr) (r: U64.t)
-  : Lemma
-      (requires GenImpl.roots_match_stack roots st /\ Seq.mem r roots)
-      (ensures is_val_addr r /\ Seq.mem (r <: obj_addr) st)
-  =
-  GenImpl.roots_match_stack_root_is_val_addr roots st r;
-  GC.Spec.Base.is_val_addr_spec r;
-  let r_obj = (r <: obj_addr) in
-  assert ((r_obj <: U64.t) == r);
-  GenImpl.roots_match_stack_root_in_stack roots st r_obj
+/// A nursery address whose header tag is not `Infix_tag` resolves to itself.
+/// Stated in an empty context: inside the big proofs below Z3 will not unfold
+/// `is_infix_in_minor` on its own.
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+let minor_non_infix_resolves_to_itself (ms: minor_state) (v: U64.t)
+  : Lemma (requires minor_tag ms v <> 249)
+          (ensures resolve_minor ms v == v)
+  = assert (~(is_infix_in_minor ms v));
+    resolve_minor_non_infix ms v
+#pop-options
 
 let post_roots_mem_c
   (r: unit{ConcreteMajor.spot_major_room})
@@ -65,6 +65,13 @@ let post_roots_mem_c
           roots_out true st cap)
       (ensures
         Seq.mem (ConcreteMajor.spot_c r <: U64.t) roots_out /\
+        SpecObj.resolve_object (ConcreteMajor.spot_c r)
+          (Cheney.cheney_collect_spec
+            ConcreteMinor.spot_minor2
+            (ConcreteMajor.spot_major_heap r)
+            (ConcreteMajor.spot_major_fp r)
+            (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))).mc_major ==
+          (ConcreteMajor.spot_c r <: U64.t) /\
         Seq.mem (ConcreteMajor.spot_c r)
           (GenImpl.gen_gc_prepared_roots
             ConcreteMinor.spot_minor2
@@ -103,8 +110,21 @@ let post_roots_mem_c
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)
     roots st cap in
-  assert (GenImpl.roots_match_stack roots_out prepared_roots);
-  roots_match_u64_mem_in_stack roots_out prepared_roots (c <: U64.t)
+  // `c` is a major root: rewriting leaves it alone and it still names itself
+  // after the minor collection, so the darkened stack holds it literally.
+  ConcreteScenarios.spot_collection_heap_shape r;
+  ConcreteScenarios.spot_roots_valid_for_minor_collection r;
+  MajorPre.post_minor_major_root_valid
+    ConcreteMinor.spot_minor2
+    (ConcreteMajor.spot_major_heap r)
+    (ConcreteMajor.spot_major_fp r)
+    roots (c <: U64.t);
+  GenImpl.gen_gc_named_root_in_stack
+    ConcreteMinor.spot_minor2
+    (ConcreteMajor.spot_major_heap r)
+    (ConcreteMajor.spot_major_fp r)
+    roots roots_out st cap c;
+  assert (Seq.mem c prepared_roots)
 
 let post_roots_mem_a_prime
   (r: unit{ConcreteMajor.spot_major_room})
@@ -137,6 +157,12 @@ let post_roots_mem_a_prime
           st cap in
         Seq.mem img roots_out /\
         is_val_addr img /\
+        SpecObj.resolve_object (img <: obj_addr)
+          (Cheney.cheney_collect_spec
+            ConcreteMinor.spot_minor2
+            (ConcreteMajor.spot_major_heap r)
+            (ConcreteMajor.spot_major_fp r)
+            (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))).mc_major == img /\
         Seq.mem (img <: obj_addr) prepared_roots)
       )
   =
@@ -181,8 +207,25 @@ let post_roots_mem_a_prime
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)
     roots st cap in
-  assert (GenImpl.roots_match_stack roots_out prepared_roots);
-  roots_match_u64_mem_in_stack roots_out prepared_roots img
+  // `a_minor` is an ordinary (non-interior) nursery root, so its promoted copy
+  // `img` names itself in the post-minor heap.
+  ConcreteScenarios.spot_collection_heap_shape r;
+  ConcreteMinor.spot_minor_two_object_layout ();
+  minor_objects_not_infix ConcreteMinor.spot_minor2 Layout.a_minor;
+  minor_non_infix_resolves_to_itself ConcreteMinor.spot_minor2 Layout.a_minor;
+  MCFH.fwd_image_resolves
+    ConcreteMinor.spot_minor2
+    (ConcreteMajor.spot_major_heap r)
+    (ConcreteMajor.spot_major_fp r)
+    roots Layout.a_minor;
+  assert (is_val_addr img);
+  assert (SpecObj.resolve_object (img <: obj_addr) res.mc_major == img);
+  GenImpl.gen_gc_named_root_in_stack
+    ConcreteMinor.spot_minor2
+    (ConcreteMajor.spot_major_heap r)
+    (ConcreteMajor.spot_major_fp r)
+    roots roots_out st cap (img <: obj_addr);
+  assert (Seq.mem (img <: obj_addr) prepared_roots)
 
 let root_heap_reachable_from_major_gc_pre
   (minor: minor_state) (major: heap) (fp: U64.t)
@@ -588,13 +631,18 @@ let prepared_roots_preserve_c_field1
           (U64.v (Seq.index roots_out i) >= U64.v zero_addr + U64.v mword /\
            U64.v (Seq.index roots_out i) < heap_size /\
            U64.v (Seq.index roots_out i) % U64.v mword == 0 ==>
-           U64.sub (Seq.index roots_out i) mword <> slot))
+           U64.sub (SpecObj.resolve_object (Seq.index roots_out i <: obj_addr)
+                                           result.mc_major) mword <> slot))
     =
     if i < Seq.length roots_out then begin
       assert (Seq.length roots_out == 2);
       match i with
       | 0 ->
         assert (Seq.index roots_out i == (c <: U64.t));
+        // `c` is a major root: it names itself, so darkening touches its own
+        // header and not `c`'s field slot.
+        assert (SpecObj.resolve_object (Seq.index roots_out i <: obj_addr)
+                                       result.mc_major == (c <: U64.t));
         object_header_not_c_field1 r prepared_major c;
         SpecHeap.hd_address_spec c;
         assert (U64.v (U64.sub (Seq.index roots_out i) mword) ==
@@ -603,6 +651,8 @@ let prepared_roots_preserve_c_field1
         assert (U64.sub (Seq.index roots_out i) mword == SpecHeap.hd_address c)
       | 1 ->
         assert (Seq.index roots_out i == img);
+        assert (SpecObj.resolve_object (Seq.index roots_out i <: obj_addr)
+                                       result.mc_major == img);
         object_header_not_c_field1 r prepared_major a_prime;
         assert (Seq.index roots_out i == (a_prime <: U64.t));
         SpecHeap.hd_address_spec a_prime;

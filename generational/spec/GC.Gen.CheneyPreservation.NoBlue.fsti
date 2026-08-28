@@ -58,7 +58,10 @@ val update_major_pointers_preserves_no_pointer_to_blue
                        U64.v (fwd mv) >= U64.v mword /\
                        U64.v (fwd mv) < heap_size /\
                        U64.v (fwd mv) % U64.v mword == 0 /\
-                       Seq.mem ((fwd mv) <: obj_addr) (objects zero_addr major)) /\
+                       (let t : obj_addr = fwd mv in
+                        Seq.mem (resolve_object t major) (objects zero_addr major) /\
+                        is_blue (resolve_object t major) major = false /\
+                        infix_addr_wf major (objects zero_addr major) t)) /\
                      (is_pointer raw /\ ~(is_minor_pointer mv /\ fwd mv <> 0UL) ==>
                        Seq.mem (resolve_object (raw <: obj_addr) major)
                                (objects zero_addr major) /\

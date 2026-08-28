@@ -196,44 +196,15 @@ let update_major_pointers_preserves_no_pointer_to_blue
       let old_raw = read_word major field_addr in
       let old_val = to_minor_offset old_raw in
       let new_val = read_word updated field_addr in
-      if is_minor_pointer old_val && fwd old_val <> 0UL then begin
-        assert (new_val == fwd old_val);
-        assert (U64.v (fwd old_val) >= U64.v mword);
-        assert (U64.v (fwd old_val) < heap_size);
-        assert (U64.v (fwd old_val) % U64.v mword == 0);
-        let fwd_obj : obj_addr = fwd old_val in
-        assert (is_pointer_to (fwd old_val) dst);
-        if fwd_obj <> dst then begin
-          hd_address_injective fwd_obj dst;
-          assert False
-        end;
-        assert (fwd old_val == dst);
-        assert (Seq.mem dst (objects zero_addr updated));
-        assert (Seq.mem dst (objects zero_addr major));
-        update_major_pointers_preserves_header major fwd dst;
-        wf_objects_non_infix updated dst;
-        header_eq_preserves_infix major updated dst;
-        assert (is_infix dst major = false);
-        assert (is_infix (fwd old_val) major = false);
-        assert (is_val_addr (fwd old_val));
-        assert (is_blue ((fwd old_val) <: obj_addr) major = false);
-        color_of_header_eq dst major updated;
-        assert (~(is_blue dst updated));
-        resolve_non_infix dst updated
-      end else begin
-        assert (new_val == old_raw);
-        assert (is_pointer_to old_raw dst);
-        let old_obj : obj_addr = old_raw in
-        if old_obj <> dst then begin
-          hd_address_injective old_obj dst;
-          assert False
-        end;
-        assert (old_raw == dst);
-        assert (Seq.mem (resolve_object dst major) (objects zero_addr major));
-        assert (infix_addr_wf major (objects zero_addr major) dst);
-        NoBlueUtil.field_pointer_no_blue_from_no_pointer_to_blue major src dst j;
-        // the target's header --- possibly inside a closure --- survives the
-        // update pass, so its resolution and the parent's colour carry over
+      // Whether the field was rewritten to a forwarding target or left alone,
+      // the resulting pointer is well formed *in `major`* and may be interior;
+      // the colour of its resolution is what carries over to `updated`.
+      let transfer (_: unit)
+        : Lemma (requires Seq.mem (resolve_object dst major) (objects zero_addr major) /\
+                          is_blue (resolve_object dst major) major = false /\
+                          infix_addr_wf major (objects zero_addr major) dst)
+                (ensures ~(is_blue (resolve_object dst updated) updated))
+        =
         if is_infix dst major then begin
           infix_addr_wf_elim major (objects zero_addr major) dst;
           parent_closure_addr_nat_spec dst major;
@@ -251,6 +222,31 @@ let update_major_pointers_preserves_no_pointer_to_blue
         end;
         Frame.update_major_pointers_frame_target_header major fwd dst;
         resolve_object_locality dst major updated
+      in
+      if is_minor_pointer old_val && fwd old_val <> 0UL then begin
+        assert (new_val == fwd old_val);
+        assert (U64.v (fwd old_val) >= U64.v mword);
+        assert (U64.v (fwd old_val) < heap_size);
+        assert (U64.v (fwd old_val) % U64.v mword == 0);
+        let fwd_obj : obj_addr = fwd old_val in
+        assert (is_pointer_to (fwd old_val) dst);
+        if fwd_obj <> dst then begin
+          hd_address_injective fwd_obj dst;
+          assert False
+        end;
+        assert (fwd old_val == dst);
+        transfer ()
+      end else begin
+        assert (new_val == old_raw);
+        assert (is_pointer_to old_raw dst);
+        let old_obj : obj_addr = old_raw in
+        if old_obj <> dst then begin
+          hd_address_injective old_obj dst;
+          assert False
+        end;
+        assert (old_raw == dst);
+        NoBlueUtil.field_pointer_no_blue_from_no_pointer_to_blue major src dst j;
+        transfer ()
       end
     end
   in

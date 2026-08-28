@@ -28,7 +28,7 @@ let rec collect_minor_successors
   =
   if idx >= wosize then Seq.empty
   else
-    let field_val = to_minor_offset (minor_read_field ms obj idx) in
+    let field_val = resolve_minor ms (to_minor_offset (minor_read_field ms obj idx)) in
     let rest = collect_minor_successors ms obj (idx + 1) wosize in
     if is_minor_addr field_val && Seq.mem field_val (minor_objects ms)
     then Seq.cons field_val rest
@@ -60,7 +60,7 @@ let rec collect_minor_successors_valid
   =
   if idx >= wosize then ()
   else
-    let field_val = to_minor_offset (minor_read_field ms obj idx) in
+    let field_val = resolve_minor ms (to_minor_offset (minor_read_field ms obj idx)) in
     let rest = collect_minor_successors ms obj (idx + 1) wosize in
     if is_minor_addr field_val && Seq.mem field_val (minor_objects ms)
     then begin
@@ -126,8 +126,17 @@ let minor_reachable_fuel (ms: minor_state) (roots: seq U64.t) : GTot nat =
 /// minor_reachable
 /// ---------------------------------------------------------------------------
 
+/// Roots are resolved before the traversal starts.  A root may be an interior
+/// pointer --- the bytecode interpreter pushes closure entry points directly
+/// onto the OCaml stack (`runtime/interp.c:601`, scanned by
+/// `runtime/roots_byt.c:39`), and `caml_modify` records major-to-minor interior
+/// stores in `ref_table` without any special case --- and the object such a
+/// root keeps alive is the closure it points into.
+let resolve_roots (ms: minor_state) (roots: seq U64.t) : GTot (seq U64.t) =
+  Seq.init_ghost (Seq.length roots) (fun i -> resolve_minor ms (Seq.index roots i))
+
 let minor_reachable (ms: minor_state) (roots: seq U64.t) : GTot (seq U64.t) =
-  minor_reachable_aux ms roots Seq.empty (minor_reachable_fuel ms roots)
+  minor_reachable_aux ms (resolve_roots ms roots) Seq.empty (minor_reachable_fuel ms roots)
 
 /// ---------------------------------------------------------------------------
 /// Proof: subset property
@@ -175,7 +184,8 @@ let minor_reachable_subset (ms: minor_state) (roots: seq U64.t)
   let aux (x: U64.t)
     : Lemma (requires Seq.mem x (minor_reachable ms roots))
             (ensures Seq.mem x (minor_objects ms))
-    = minor_reachable_aux_subset ms roots Seq.empty (minor_reachable_fuel ms roots) x
+    = minor_reachable_aux_subset ms (resolve_roots ms roots) Seq.empty
+        (minor_reachable_fuel ms roots) x
   in
   Classical.forall_intro (Classical.move_requires aux)
 
@@ -310,16 +320,26 @@ let rec seq_mem_to_index (#a: eqtype) (x: a) (s: seq a)
     1 + seq_mem_to_index x tl
   end
 
+/// A root's resolution sits at the same index in `resolve_roots`.
+let resolve_roots_index (ms: minor_state) (roots: seq U64.t) (i: nat)
+  : Lemma (requires i < Seq.length roots)
+          (ensures Seq.length (resolve_roots ms roots) == Seq.length roots /\
+                   Seq.index (resolve_roots ms roots) i ==
+                     resolve_minor ms (Seq.index roots i))
+  = ()
+
 let minor_reachable_roots (ms: minor_state) (roots: seq U64.t)
   =
   let fuel = minor_reachable_fuel ms roots in
+  let rroots = resolve_roots ms roots in
   let aux (r: U64.t)
-    : Lemma (requires Seq.mem r roots /\ Seq.mem r (minor_objects ms))
-            (ensures Seq.mem r (minor_reachable ms roots))
+    : Lemma (requires Seq.mem r roots /\ Seq.mem (resolve_minor ms r) (minor_objects ms))
+            (ensures Seq.mem (resolve_minor ms r) (minor_reachable ms roots))
     =
     let pos = seq_mem_to_index r roots in
+    resolve_roots_index ms roots pos;
     // pos < length roots, fuel >= length roots > pos
-    minor_reachable_aux_at_pos ms roots Seq.empty fuel r pos
+    minor_reachable_aux_at_pos ms rroots Seq.empty fuel (resolve_minor ms r) pos
   in
   Classical.forall_intro (Classical.move_requires aux)
 
@@ -379,7 +399,7 @@ private let collect_char_base
     (requires idx >= wosize)
     (ensures Seq.mem y (collect_minor_successors ms obj idx wosize) <==>
                     (exists (i:nat). idx <= i /\ i < wosize /\
-                                     to_minor_offset (minor_read_field ms obj i) == y /\
+                                     resolve_minor ms (to_minor_offset (minor_read_field ms obj i)) == y /\
                                      is_minor_addr y /\
                                      Seq.mem y (minor_objects ms)))
   = assert (collect_minor_successors ms obj idx wosize == Seq.empty)
@@ -394,18 +414,18 @@ private let collect_char_step
     (requires idx < wosize /\
               (Seq.mem y (collect_minor_successors ms obj (idx + 1) wosize) <==>
                     (exists (i:nat). idx + 1 <= i /\ i < wosize /\
-                                     to_minor_offset (minor_read_field ms obj i) == y /\
+                                     resolve_minor ms (to_minor_offset (minor_read_field ms obj i)) == y /\
                                      is_minor_addr y /\
                                      Seq.mem y (minor_objects ms))))
     (ensures Seq.mem y (collect_minor_successors ms obj idx wosize) <==>
                     (exists (i:nat). idx <= i /\ i < wosize /\
-                                     to_minor_offset (minor_read_field ms obj i) == y /\
+                                     resolve_minor ms (to_minor_offset (minor_read_field ms obj i)) == y /\
                                      is_minor_addr y /\
                                      Seq.mem y (minor_objects ms)))
-  = let field_val = to_minor_offset (minor_read_field ms obj idx) in
+  = let field_val = resolve_minor ms (to_minor_offset (minor_read_field ms obj idx)) in
     let rest = collect_minor_successors ms obj (idx + 1) wosize in
     exists_peel idx wosize
-      (fun (i: nat) -> to_minor_offset (minor_read_field ms obj i) == y /\
+      (fun (i: nat) -> resolve_minor ms (to_minor_offset (minor_read_field ms obj i)) == y /\
                        is_minor_addr y /\ Seq.mem y (minor_objects ms));
     if is_minor_addr field_val && Seq.mem field_val (minor_objects ms)
     then Seq.mem_cons field_val rest
@@ -422,7 +442,7 @@ private let rec collect_minor_successors_char
   : Lemma
     (ensures Seq.mem y (collect_minor_successors ms obj idx wosize) <==>
                     (exists (i:nat). idx <= i /\ i < wosize /\
-                                     to_minor_offset (minor_read_field ms obj i) == y /\
+                                     resolve_minor ms (to_minor_offset (minor_read_field ms obj i)) == y /\
                                      is_minor_addr y /\
                                      Seq.mem y (minor_objects ms)))
     (decreases (if idx < wosize then wosize - idx else 0))
@@ -632,7 +652,7 @@ let minor_reachable_closed (ms: minor_state) (roots: seq U64.t) (x y: U64.t)
   //   count_not_mem(minor_objects, empty) <= n (by count_not_mem_bound)
   //   So fuel >= |roots| + (n+1)*mhs >= |roots| + n*mhs >= |roots| + count*mhs
   count_not_mem_bound (minor_objects ms) (Seq.empty #U64.t);
-  minor_reachable_aux_closed_aux ms roots Seq.empty
+  minor_reachable_aux_closed_aux ms (resolve_roots ms roots) Seq.empty
     (minor_reachable_fuel ms roots) x y
 
 #pop-options
@@ -717,4 +737,14 @@ let rec minor_reachable_aux_ind
 
 let minor_reachable_ind (ms: minor_state) (roots: seq U64.t) (p: U64.t -> prop) (x: U64.t)
   =
-  minor_reachable_aux_ind ms roots Seq.empty (minor_reachable_fuel ms roots) p x
+  let rroots = resolve_roots ms roots in
+  let aux_w (w: U64.t)
+    : Lemma (requires Seq.mem w rroots /\ Seq.mem w (minor_objects ms))
+            (ensures p w)
+    = let i = seq_mem_to_index w rroots in
+      resolve_roots_index ms roots i;
+      Seq.lemma_index_is_nth roots i;
+      assert (Seq.mem (Seq.index roots i) roots)
+  in
+  Classical.forall_intro (Classical.move_requires aux_w);
+  minor_reachable_aux_ind ms rroots Seq.empty (minor_reachable_fuel ms roots) p x
