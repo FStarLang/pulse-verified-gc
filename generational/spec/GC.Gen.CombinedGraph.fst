@@ -122,9 +122,14 @@ let rec minor_field_edges (ms: minor_state) (major: heap) (src: U64.t)
       | None -> rest
 
 /// Build edges from a single minor object
+///
+/// A no-scan source contributes no edges, exactly as `major_object_edges`
+/// yields none for an `is_no_scan` source.  `GC.Gen.Cheney.cheney_scan` skips
+/// the same objects via `minor_scan_wosize`, so the graph and the collector
+/// agree on which words are pointers.
 let minor_object_edges (ms: minor_state) (major: heap) (obj: U64.t)
   : GTot (seq combined_edge)
-  = let wz = minor_wosize ms obj in
+  = let wz = minor_scan_wosize ms obj in
     minor_field_edges ms major obj wz 0
 
 /// Build edges from a single major object's fields
@@ -604,7 +609,7 @@ let minor_field_edge_intro (ms: minor_state) (major: heap)
   (src: U64.t) (i: nat) (dst: combined_vertex)
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
-    let wz = minor_wosize ms src in
+    let wz = minor_scan_wosize ms src in
     // Step 1: edge is in minor_field_edges from index 0
     minor_field_edge_later ms major src wz 0 i dst;
     // Step 2: minor_field_edges from 0 == minor_object_edges

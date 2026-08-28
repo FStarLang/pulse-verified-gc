@@ -30,7 +30,7 @@ module GenInv = GC.Gen.HeapInvariant
 /// non-blue allocated object.
 let minor_no_pointer_to_blue (minor: minor_state) (major: heap) : prop =
   forall (obj: U64.t) (j: nat).
-    Seq.mem obj (minor_objects minor) /\ j < minor_wosize minor obj ==>
+    Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj ==>
     (let v = minor_read_field minor obj j in
      is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) ==>
      ~(is_blue (v <: obj_addr) major))

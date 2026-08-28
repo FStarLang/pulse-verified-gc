@@ -1236,7 +1236,7 @@ let rec cheney_scan_preserves_fwd_classified
     assert (fuel > 0);
     cheney_scan_step minor cs scan fuel;
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     cheney_forward_fields_preserves_fwd_classified minor cs obj 0 wz;
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     cheney_forward_fields_preserves_cob minor cs obj 0 wz;
@@ -1454,7 +1454,7 @@ let rec cheney_scan_preserves_fwd_noninfix_targets_valid
     else begin
       cheney_scan_step minor cs scan fuel;
       let obj = Seq.index cs.cs_queue scan in
-      let wz = minor_wosize minor obj in
+      let wz = minor_scan_wosize minor obj in
       cheney_forward_fields_preserves_fwd_noninfix_targets_valid minor cs obj 0 wz;
       cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
       cheney_forward_fields_preserves_cob minor cs obj 0 wz;
@@ -1663,7 +1663,7 @@ private let rec cheney_scan_preserves_fwd_infix_delta
     else begin
       cheney_scan_step minor cs scan fuel;
       let obj = Seq.index cs.cs_queue scan in
-      let wz = minor_wosize minor obj in
+      let wz = minor_scan_wosize minor obj in
       cheney_forward_fields_preserves_fwd_infix_delta minor cs obj 0 wz;
       let cs' = cheney_forward_fields minor cs obj 0 wz in
       assert (fuel - 1 < fuel);

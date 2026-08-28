@@ -322,27 +322,15 @@ let spot_minor_infix_wf ()
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
-let spot_minor_no_scan_invariant ()
-  : Lemma (ensures Promote.minor_no_scan_invariant spot_minor2)
-  =
-  reveal_opaque (`%Promote.minor_no_scan_invariant) (Promote.minor_no_scan_invariant spot_minor2);
-  let aux (obj: U64.t) (j: nat)
-    : Lemma (requires Seq.mem obj (minor_objects spot_minor2) /\
-                      minor_tag spot_minor2 obj >= 251 /\
-                      j < minor_wosize spot_minor2 obj)
-            (ensures ~(GC.Spec.HeapGraph.is_pointer_field (minor_read_field spot_minor2 obj j)) /\
-                     ~(Promote.is_minor_pointer (to_minor_offset (minor_read_field spot_minor2 obj j))))
-    =
-    minor_objects_valid spot_minor2 obj;
-    spot_minor2_tag_zero obj;
-    assert (minor_tag spot_minor2 obj == 0)
-  in
-  FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux)
-
 let spot_minor_heap_shape ()
   =
   spot_minor_two_object_layout ();
   spot_minor_guards_complete ();
   spot_minor_infix_wf ();
-  spot_minor_no_scan_invariant ();
   GenInv.minor_heap_shape_intro spot_minor2
+
+let spot_minor2_scan_wosize (obj: U64.t)
+  =
+  minor_objects_valid spot_minor2 obj;
+  spot_minor2_tag_zero obj;
+  minor_scan_wosize_cases spot_minor2 obj

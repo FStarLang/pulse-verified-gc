@@ -544,25 +544,7 @@ val promote_object_preserves_wfh_part4
              minor_tag minor obj <> U64.v GC.Spec.Object.infix_tag)
            (ensures (let res = promote_object minor major obj fp wosize in
                      well_formed_heap_part4 res.major_out))
-/// ---------------------------------------------------------------------------
-/// Minor No-Scan Invariant
-/// ---------------------------------------------------------------------------
 
-/// No-scan objects in the minor heap (tag >= 251) contain only raw data:
-/// no field looks like a valid heap pointer.
-///
-/// The major-heap analogue has been retired: parts 2 and 3 of
-/// `well_formed_heap` are guarded by `GC.Spec.Fields.fields_constrained`, so a
-/// major no-scan object may hold arbitrary bytes.  The nursery restriction
-/// remains because `GC.Gen.CombinedGraph.minor_object_edges` does not skip
-/// no-scan sources; see `docs/no-scan-support-plan.md` section 10.
-let minor_no_scan_invariant (minor: minor_state) : prop =
-  forall (obj: U64.t) (j: nat).
-    Seq.mem obj (minor_objects minor) /\
-    minor_tag minor obj >= 251 /\
-    j < minor_wosize minor obj ==>
-     ~(is_pointer_field (minor_read_field minor obj j)) /\
-     ~(is_minor_pointer (to_minor_offset (minor_read_field minor obj j)))
 /// ---------------------------------------------------------------------------
 /// Heap objects density definition (used by PromoteUpdate)
 /// ---------------------------------------------------------------------------

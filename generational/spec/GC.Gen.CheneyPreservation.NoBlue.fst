@@ -102,7 +102,12 @@ let cheney_promote_preserves_no_pointer_to_blue_from_shape
         assert (Injectivity.fwd_noninfix_sources_in_minor_objects
                   minor prom.fwd_map prom.major_final);
         assert (Seq.mem x (minor_objects minor));
-        if j < minor_wosize minor x then begin
+        // `src` is `fields_constrained`, i.e. not no-scan; promotion copies the
+        // tag, so `x` was scannable and its scan window is its whole body.
+        Fields.cheney_promote_fwd_target_no_scan_iff_minor_tag minor major fp roots x;
+        assert (minor_tag minor x < 251);
+        minor_scan_wosize_cases minor x;
+        if j < minor_scan_wosize minor x then begin
           Fields.cheney_promote_fwd_target_fields_match minor major fp roots x j;
           assert (read_word prom.major_final field_addr ==
                   minor_read_field minor x j);

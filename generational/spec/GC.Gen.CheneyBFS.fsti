@@ -58,7 +58,7 @@ let fwd_covers_infix_fields (minor: minor_state) (fwd: forwarding_map) : prop =
   forall (x: U64.t) (j: nat).
     Seq.mem x (minor_objects minor) /\
     fwd x <> 0UL /\
-    j < minor_wosize minor x /\
+    j < minor_scan_wosize minor x /\
     is_infix_in_minor minor (to_minor_offset (minor_read_field minor x j)) ==>
     fwd (to_minor_offset (minor_read_field minor x j)) <> 0UL
 
@@ -304,7 +304,7 @@ val field_prefix_step_oom
 
 val field_prefix_all_implies_successors
   (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t)
-  : Lemma (requires field_prefix_covered minor cs parent (minor_wosize minor parent))
+  : Lemma (requires field_prefix_covered minor cs parent (minor_scan_wosize minor parent))
           (ensures forall (y: U64.t).
             Seq.mem y (minor_successors minor parent) /\
             minor_wosize minor y > 0 ==> cs.cs_fwd y <> 0UL)
@@ -313,9 +313,9 @@ val field_prefix_all_implies_successors
 /// field targets are entries of the map in their own right.
 val field_prefix_all_implies_infix
   (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t)
-  : Lemma (requires field_prefix_covered minor cs parent (minor_wosize minor parent))
+  : Lemma (requires field_prefix_covered minor cs parent (minor_scan_wosize minor parent))
           (ensures forall (j: nat).
-            j < minor_wosize minor parent /\
+            j < minor_scan_wosize minor parent /\
             is_infix_in_minor minor (to_minor_offset (minor_read_field minor parent j)) ==>
             cs.cs_fwd (to_minor_offset (minor_read_field minor parent j)) <> 0UL)
 
@@ -336,10 +336,10 @@ val scanned_prefix_step
       scan < Seq.length cs.cs_queue /\
       cs' == CheneySpec.cheney_forward_fields minor cs
         (Seq.index cs.cs_queue scan) 0
-        (minor_wosize minor (Seq.index cs.cs_queue scan)) /\
+        (minor_scan_wosize minor (Seq.index cs.cs_queue scan)) /\
       field_prefix_covered minor cs'
         (Seq.index cs.cs_queue scan)
-        (minor_wosize minor (Seq.index cs.cs_queue scan)))
+        (minor_scan_wosize minor (Seq.index cs.cs_queue scan)))
     (ensures scanned_prefix_closed minor cs' (scan + 1))
 
 val scanned_prefix_step_oom
@@ -353,10 +353,10 @@ val scanned_prefix_step_oom
       scan < Seq.length cs.cs_queue /\
       cs' == CheneySpec.cheney_forward_fields minor cs
         (Seq.index cs.cs_queue scan) 0
-        (minor_wosize minor (Seq.index cs.cs_queue scan)) /\
+        (minor_scan_wosize minor (Seq.index cs.cs_queue scan)) /\
       (not oom_after ==> field_prefix_covered minor cs'
         (Seq.index cs.cs_queue scan)
-        (minor_wosize minor (Seq.index cs.cs_queue scan))))
+        (minor_scan_wosize minor (Seq.index cs.cs_queue scan))))
     (ensures not oom_after ==> scanned_prefix_closed minor cs' (scan + 1))
 
 val scanned_exhausted_implies_fwd_closed

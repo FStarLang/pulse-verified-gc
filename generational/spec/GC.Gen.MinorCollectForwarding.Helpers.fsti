@@ -473,7 +473,7 @@ val minor_field_infix_target_forwarded
       CheneyBFS.cheney_no_oom minor major fp roots /\
       Seq.mem src (minor_objects minor) /\
       (cheney_promote minor major fp roots).fwd_map src <> 0UL /\
-      j < minor_wosize minor src /\
+      j < minor_scan_wosize minor src /\
       is_infix_in_minor minor (to_minor_offset (minor_read_field minor src j)))
     (ensures
       (cheney_promote minor major fp roots).fwd_map

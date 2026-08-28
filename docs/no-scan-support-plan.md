@@ -1,8 +1,8 @@
 # Plan: supporting no-scan objects with arbitrary contents
 
-*Status: implemented for the major heap.  The nursery clause
-`GC.Gen.Promote.minor_no_scan_invariant` is unchanged; §10 records why, and what
-removing it would cost.*
+*Status: implemented, for both heaps.  §§1--9 cover the major heap, which
+needed no implementation change.  §10 covers the nursery, done in a follow-up;
+that one was a real bug and did change the extracted C.*
 
 This is the no-scan analogue of `docs/infix-support-plan.md`. It has the same
 shape as that one, and the same root cause: a whole-heap predicate is stronger
@@ -250,30 +250,91 @@ Structure-preservation proofs discharge the no-scan case by showing the tag
 survives on both sides: `HeapGraph.get_pointer_fields` returns `Seq.empty` for a
 no-scan object, so both sides of the equation are empty.
 
-## 10. The nursery, and why it was left alone
+## 10. The nursery (done in a follow-up)
 
-`minor_no_scan_invariant` remains in `GC.Gen.HeapInvariant.minor_heap_shape`.
-Relaxing it is a strictly larger job than the major heap was, and it is *not*
-mechanical.
+`minor_no_scan_invariant` was initially left in
+`GC.Gen.HeapInvariant.minor_heap_shape`, on the grounds that relaxing it was a
+strictly larger job than the major heap and not mechanical.  That turned out to
+be right about the size and wrong about the difficulty, and it has since been
+done --- it had to be, because unlike the major-heap clauses this one was
+covering a *real* bug: the extracted `scan_loop` walked no-scan nursery bodies,
+and a forged interior pointer inside a young `Bytes.t` crashed the collector.
+See `docs/known-issues.md`, "Fixed: no-scan blocks in the nursery were
+scanned", and `tests/nursery_no_scan_interior.ml`.
 
-`GC.Gen.CombinedGraph.major_object_edges` already skips no-scan sources;
-`minor_object_edges` does not.  Adding the guard there immediately creates an
-obligation `minor_tag minor src < 251` at three points in
-`GC.Gen.MinorCollectForwarding.Reflection`, and the only route to it needs the
-*converse* of `GC.Gen.CheneyPreservation.Fields.
-cheney_promote_fwd_target_not_no_scan_of_minor_tag_lt` --- a
-`minor_tag >= 251 ==> is_no_scan target` invariant threaded through
-`forward_one`, `forward_fields`, `forward_roots`, `scan` and `promote`.  That is
-roughly 250 lines across six lemmas, with no shortcut, and it is orthogonal to
-everything in §7.
+The shape of the fix is different from the major heap's, because the asymmetry
+runs the other way.  The major heap needed no implementation change: parts 2
+and 3 of `well_formed_heap` are guarded by `GC.Spec.Fields.fields_constrained`,
+so relaxing the spec was enough.  The nursery needed the opposite --- the spec
+was silent in the wrong direction (it quantified over all objects and excluded
+the awkward ones by hypothesis) and the implementation genuinely read the
+bodies.
 
-Note that the nursery restriction is *much* less objectionable than the major
-one was.  Nursery blocks are young: a `Bytes.t` allocated in the minor heap has
-been written to at most a handful of times before the next collection, whereas
-the major heap accumulates every long-lived string in the program.  The
-practically important half of the relaxation is the one that was done.
+What made it tractable was choosing where to put the guard.  Rather than adding
+a tag test inside `cheney_forward_fields`, the *scan window* became a derived
+quantity:
+
+```fstar
+let minor_scan_wosize (ms: minor_state) (obj: U64.t) : nat =
+  if minor_tag ms obj >= 251 then 0 else minor_wosize ms obj
+```
+
+and every site that *reads* a nursery body switched to it, while every site
+that *promotes* one kept `minor_wosize` (promotion copies the body verbatim,
+tag notwithstanding).  Because `cheney_forward_fields ... 0 0` is already the
+base case, every preservation lemma --- all proved for arbitrary `i, wz` ---
+carried over unchanged.  `cheney_scan` being a `val` in the `.fsti` with
+`cheney_scan_base` / `cheney_scan_step` equation lemmas confined the body
+change to one module.
+
+The `minor_tag minor src < 251` obligation in
+`GC.Gen.MinorCollectForwarding.{Reflection,Edges}` was discharged not by
+threading a new invariant through six lemmas, but by *strengthening the
+existing one to an equation*:
+`GC.Gen.CheneyPreservation.Fields.cheney_promote_fwd_target_no_scan_iff_minor_tag`
+went from `is_no_scan target = false` to
+`is_no_scan target = (minor_tag minor x >= 251)`.  That is sound because
+`promote_object` ends in `set_promoted_tag ... (minor_tag minor obj)`, and it
+is cheap because the threading lemmas around it are frame/preservation lemmas
+that never look at the tag: only the establishing branch changed, by keeping
+the comparison symbolic instead of assuming `tag < 251`.  Roughly 60 lines,
+confined to one module, instead of the ~250 across six that were feared.
+
+`minor_no_scan_invariant` is now deleted, and `minor_heap_shape` is
+`minor_wf /\ minor_guards_complete /\ minor_infix_wf`.
+
+`GC.Gen.HeapInvariant.minor_major_fields_no_blue` was narrowed in the same way,
+for the same reason: it quantified over every young field, so an ordinary young
+`Bytes.t` holding a word that happens to satisfy `is_pointer_field` still
+falsified `gen_gc`'s precondition even after `minor_no_scan_invariant` was gone.
+It now quantifies over `minor_scan_wosize` too, as does
+`GC.Gen.ReachabilityBridge.minor_no_pointer_to_blue`.
+
+`spot/GC.SPOT.NoScanMinor` is the machine-checked non-vacuity witness, the
+nursery counterpart of `GC.SPOT.NoScanMajor`: a three-word nursery holding one
+tag-251 block whose two body words are `8` --- a value `is_minor_pointer`
+accepts, so the pre-fix `scan_loop` would have forwarded it.  The module proves
+both halves of the claim: `spot_ns_minor_was_forbidden` refutes the deleted
+clause (restated verbatim in the interface), and `spot_ns_collection_heap_shape`
+establishes `gen_gc`'s full entry invariant for the same nursery against
+`GC.SPOT.ConcreteMajor`'s major heap.
 
 ## 11. Outcome
 
-The extracted C is **byte-identical**: the implementation already ignored these
-words, and the free blocks it produces are already cleared.
+For the major heap (§§1--9) the extracted C is **byte-identical**: the
+implementation already ignored these words, and the free blocks it produces are
+already cleared.
+
+For the nursery (§10) it is not, and that is the point.  `scan_loop` gained
+
+```c
+uint64_t tag = hdr & 0xFFULL;
+uint64_t wosize;
+if (tag >= 251ULL) wosize = 0ULL; else wosize = hdr >> 10U;
+```
+
+which is exactly the guard `update_all_objects` and `mark_and_push` already
+had.  With the old C, `tests/nursery_no_scan_interior.ml` dies with "major heap
+full"; with the new C it passes, and `tests/no_scan.ml` section 9 was
+strengthened back to the word-aligned interior forgery (`v+8`) it had been
+downgraded from.

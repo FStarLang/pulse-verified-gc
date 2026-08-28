@@ -43,6 +43,17 @@ fn read_minor_tag (minor: minor_heap_t) (obj: U64.t)
   ensures is_minor minor 'md 'mb **
           pure (U64.v tag == minor_tag {data='md; bump='mb} obj)
 
+/// Read the number of fields the collector may scan in a minor object: 0 for a
+/// no-scan object (tag >= 251), whose body is raw data, and the full wosize
+/// otherwise.  See `GC.Gen.MinorHeap.minor_scan_wosize`.
+inline_for_extraction
+fn read_minor_scan_wosize (minor: minor_heap_t) (obj: U64.t)
+  requires is_minor minor 'md 'mb **
+           pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\ U64.v obj % 8 == 0)
+  returns wosize: U64.t
+  ensures is_minor minor 'md 'mb **
+          pure (U64.v wosize == minor_scan_wosize {data='md; bump='mb} obj)
+
 /// ---------------------------------------------------------------------------
 /// Promote a single object from minor heap to major heap.
 ///

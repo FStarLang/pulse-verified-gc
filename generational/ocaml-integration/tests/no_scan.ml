@@ -524,14 +524,14 @@ let test_many_nursery () =
     let a = addr_of_value (Obj.repr anchors.(i)) in
     let v = Int64.of_nativeint a in
     (* Offsets 0 and 40 hold a real young address; offset 8 holds a
-       deliberately MISALIGNED variant (v+4).  A misaligned word can never be
-       mistaken for a pointer by any scanner, so this still proves the payload
-       was copied verbatim.
-       A word-aligned *interior* address (v+8) belongs here too, and stock
-       OCaml handles it, but it currently breaks the verified nursery
-       collector -- see nursery_no_scan_interior.ml and docs/known-issues.md. *)
+       word-aligned *interior* address (v+8), i.e. a pointer into the middle
+       of a live young block.  That is the hardest case: it is 8-aligned and
+       inside the nursery, so a scanner that does not check the tag will look
+       it up in the forwarding array and take the infix path.  Since the scan
+       window for a tag >= 251 block is `minor_scan_wosize` = 0, the body is
+       never read and the bytes must come through verbatim. *)
     Bytes.set_int64_ne b 0 v;
-    Bytes.set_int64_ne b 8 (Int64.add v 4L);
+    Bytes.set_int64_ne b 8 (Int64.add v 8L);
     Bytes.set_int64_ne b 40 v;
     expect.(i) <- v;
     keep.(i) <- Obj.repr b
@@ -545,7 +545,7 @@ let test_many_nursery () =
     if Bytes.length b <> 48 then ok := false;
     if Bytes.get_int64_ne b 0 <> expect.(i) then ok := false;
     if Bytes.get_int64_ne b 40 <> expect.(i) then ok := false;
-    if Bytes.get_int64_ne b 8 <> Int64.add expect.(i) 4L then ok := false;
+    if Bytes.get_int64_ne b 8 <> Int64.add expect.(i) 8L then ok := false;
     (* Almost all of these will now be stale, since the anchors were young
        and got promoted.  Count them: a nonzero count is what proves the
        payloads were copied verbatim rather than forwarded. *)

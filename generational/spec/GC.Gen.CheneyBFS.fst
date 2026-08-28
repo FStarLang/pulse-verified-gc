@@ -131,7 +131,7 @@ let rec scan_fwd_monotone
     assert (fuel > 0);
     CheneySpec.cheney_scan_step minor cs scan fuel;
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     let cs' = CheneySpec.cheney_forward_fields minor cs obj 0 wz in
     forward_fields_fwd_monotone minor cs obj 0 wz x;
     scan_fwd_monotone minor cs' (scan + 1) (fuel - 1) x
@@ -412,17 +412,17 @@ let field_prefix_all_implies_successors
   (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t)
   =
     reveal_opaque (`%field_prefix_covered)
-      (field_prefix_covered minor cs parent (minor_wosize minor parent));
+      (field_prefix_covered minor cs parent (minor_scan_wosize minor parent));
     let aux (y: U64.t) : Lemma
       (requires Seq.mem y (minor_successors minor parent) /\ minor_wosize minor y > 0)
       (ensures cs.cs_fwd y <> 0UL)
     =
       minor_successors_char minor parent y;
       let j = FStar.IndefiniteDescription.indefinite_description_ghost nat
-        (fun j -> j < minor_wosize minor parent /\
+        (fun j -> j < minor_scan_wosize minor parent /\
                   resolve_minor minor (to_minor_offset (minor_read_field minor parent j)) == y /\
                   is_minor_addr y /\ Seq.mem y (minor_objects minor)) in
-      assert (j < minor_wosize minor parent);
+      assert (j < minor_scan_wosize minor parent);
       let raw = to_minor_offset (minor_read_field minor parent j) in
       assert (resolve_minor minor raw == y);
       addr_covered_elim_resolved minor cs raw
@@ -433,9 +433,9 @@ let field_prefix_all_implies_infix
   (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t)
   =
     reveal_opaque (`%field_prefix_covered)
-      (field_prefix_covered minor cs parent (minor_wosize minor parent));
+      (field_prefix_covered minor cs parent (minor_scan_wosize minor parent));
     let aux (j: nat) : Lemma
-      (requires j < minor_wosize minor parent /\
+      (requires j < minor_scan_wosize minor parent /\
                 is_infix_in_minor minor (to_minor_offset (minor_read_field minor parent j)))
       (ensures cs.cs_fwd (to_minor_offset (minor_read_field minor parent j)) <> 0UL)
     =
@@ -462,7 +462,7 @@ let scanned_prefix_closed
   // Interior field targets of a scanned closure carry their own entries.
   (forall (k:nat) (j:nat).
     k < scan /\ k < Seq.length cs.cs_queue /\
-    j < minor_wosize minor (Seq.index cs.cs_queue k) /\
+    j < minor_scan_wosize minor (Seq.index cs.cs_queue k) /\
     is_infix_in_minor minor
       (to_minor_offset (minor_read_field minor (Seq.index cs.cs_queue k) j)) ==>
     cs.cs_fwd (to_minor_offset (minor_read_field minor (Seq.index cs.cs_queue k) j)) <> 0UL)
@@ -485,16 +485,16 @@ let scanned_prefix_step
       (ensures cs'.cs_fwd y <> 0UL)
     =
       if idx_is_last k scan then begin
-        forward_fields_queue_prefix minor cs parent 0 (minor_wosize minor parent) scan;
+        forward_fields_queue_prefix minor cs parent 0 (minor_scan_wosize minor parent) scan;
         assert (Seq.index cs'.cs_queue k == parent);
         field_prefix_all_implies_successors minor cs' parent
       end else begin
         assert (k < scan);
         assert (k < Seq.length cs.cs_queue);
-        forward_fields_queue_prefix minor cs parent 0 (minor_wosize minor parent) k;
+        forward_fields_queue_prefix minor cs parent 0 (minor_scan_wosize minor parent) k;
         assert (Seq.index cs'.cs_queue k == Seq.index cs.cs_queue k);
         assert (cs.cs_fwd y <> 0UL);
-        forward_fields_fwd_monotone minor cs parent 0 (minor_wosize minor parent) y
+        forward_fields_fwd_monotone minor cs parent 0 (minor_scan_wosize minor parent) y
       end
     in
     FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux);
@@ -503,7 +503,7 @@ let scanned_prefix_step
     // so `Seq.index cs'.cs_queue k` would have no index bound there.
     let aux_infix (k:nat) (j:nat) : Lemma
       (ensures (k < scan + 1 /\ k < Seq.length cs'.cs_queue /\
-                j < minor_wosize minor (Seq.index cs'.cs_queue k) /\
+                j < minor_scan_wosize minor (Seq.index cs'.cs_queue k) /\
                 is_infix_in_minor minor
                   (to_minor_offset (minor_read_field minor (Seq.index cs'.cs_queue k) j)) ==>
                 cs'.cs_fwd
@@ -511,17 +511,17 @@ let scanned_prefix_step
     =
       if k < scan + 1 && k < Seq.length cs'.cs_queue then begin
         if idx_is_last k scan then begin
-          forward_fields_queue_prefix minor cs parent 0 (minor_wosize minor parent) scan;
+          forward_fields_queue_prefix minor cs parent 0 (minor_scan_wosize minor parent) scan;
           assert (Seq.index cs'.cs_queue k == parent);
           field_prefix_all_implies_infix minor cs' parent
         end else begin
           assert (k < scan);
           assert (k < Seq.length cs.cs_queue);
-          forward_fields_queue_prefix minor cs parent 0 (minor_wosize minor parent) k;
+          forward_fields_queue_prefix minor cs parent 0 (minor_scan_wosize minor parent) k;
           assert (Seq.index cs'.cs_queue k == Seq.index cs.cs_queue k);
           let v = to_minor_offset (minor_read_field minor (Seq.index cs.cs_queue k) j) in
           FStar.Classical.move_requires
-            (forward_fields_fwd_monotone minor cs parent 0 (minor_wosize minor parent)) v
+            (forward_fields_fwd_monotone minor cs parent 0 (minor_scan_wosize minor parent)) v
         end
       end
     in
@@ -560,7 +560,7 @@ let scanned_exhausted_implies_fwd_closed
     let aux_infix (x:U64.t) (j:nat) : Lemma
       (requires Seq.mem x (minor_objects minor) /\
                 cs.cs_fwd x <> 0UL /\
-                j < minor_wosize minor x /\
+                j < minor_scan_wosize minor x /\
                 is_infix_in_minor minor (to_minor_offset (minor_read_field minor x j)))
       (ensures cs.cs_fwd (to_minor_offset (minor_read_field minor x j)) <> 0UL)
     =

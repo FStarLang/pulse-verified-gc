@@ -380,34 +380,10 @@ let nursery_infix_wf ()
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 1 --ifuel 1"
-let nursery_no_scan_invariant ()
-  : Lemma (ensures Promote.minor_no_scan_invariant spot_infix_nursery)
-  =
-  nursery_wf_and_objects ();
-  nursery_closure_header_fields ();
-  reveal_opaque (`%Promote.minor_no_scan_invariant)
-                (Promote.minor_no_scan_invariant spot_infix_nursery);
-  let aux (obj: U64.t) (j: nat)
-    : Lemma (requires Seq.mem obj (minor_objects spot_infix_nursery) /\
-                      minor_tag spot_infix_nursery obj >= 251 /\
-                      j < minor_wosize spot_infix_nursery obj)
-            (ensures ~(HeapGraph.is_pointer_field
-                         (minor_read_field spot_infix_nursery obj j)) /\
-                     ~(Promote.is_minor_pointer
-                         (to_minor_offset (minor_read_field spot_infix_nursery obj j))))
-    =
-    // the only object is the closure, whose tag is 247
-    spot_infix_nursery_object_cases obj;
-    assert (minor_tag spot_infix_nursery obj == 247)
-  in
-  FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux)
-#pop-options
 
 let spot_infix_nursery_heap_shape ()
   =
   nursery_wf_and_objects ();
   nursery_guards_complete ();
   nursery_infix_wf ();
-  nursery_no_scan_invariant ();
   GenInv.minor_heap_shape_intro spot_infix_nursery

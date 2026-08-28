@@ -218,7 +218,7 @@ let rec cheney_scan (minor: minor_state) (cs: cheney_state)
   if fuel < 1 || scan >= Seq.length cs.cs_queue then cs
   else
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     let cs' = cheney_forward_fields minor cs obj 0 wz in
     cheney_scan minor cs' (scan + 1) (fuel - 1)
 
@@ -360,7 +360,7 @@ let rec cheney_scan_preserves_wfh_part1
   else begin
     assert (fuel > 0);
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     let cs' = cheney_forward_fields minor cs obj 0 wz in
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     let fuel' = dec_fuel fuel in
@@ -497,7 +497,7 @@ private let rec cheney_scan_preserves_cob
   else begin
     assert (fuel > 0);
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     let cs' = cheney_forward_fields minor cs obj 0 wz in
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     cheney_forward_fields_preserves_cob minor cs obj 0 wz;
@@ -638,7 +638,7 @@ private let rec cheney_scan_preserves_free_list_shape
     else begin
       assert (fuel > 0);
       let obj = Seq.index cs.cs_queue scan in
-      let wz = minor_wosize minor obj in
+      let wz = minor_scan_wosize minor obj in
       let cs' = cheney_forward_fields minor cs obj 0 wz in
       cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
       cheney_forward_fields_preserves_cob minor cs obj 0 wz;
@@ -815,7 +815,7 @@ private let rec cheney_scan_preserves_both
   else if scan >= Seq.length cs.cs_queue then ()
   else begin
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     cheney_forward_fields_preserves_objects minor cs obj 0 wz;
     let cs' = cheney_forward_fields minor cs obj 0 wz in
@@ -1092,7 +1092,7 @@ private let rec cheney_scan_preserves_dense
   else begin
     assert (fuel > 0);
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     let cs' = cheney_forward_fields minor cs obj 0 wz in
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     cheney_forward_fields_preserves_dense minor cs obj 0 wz;
@@ -1285,7 +1285,7 @@ private let rec cheney_scan_preserves_fwd_bounded
   else if scan >= Seq.length cs.cs_queue then ()
   else begin
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     let cs' = cheney_forward_fields minor cs obj 0 wz in
     cheney_forward_fields_preserves_fwd_bounded minor cs obj 0 wz;
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
@@ -1458,7 +1458,7 @@ private let rec cheney_scan_preserves_fwd_above_zero
   else if scan >= Seq.length cs.cs_queue then ()
   else begin
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     let cs' = cheney_forward_fields minor cs obj 0 wz in
     cheney_forward_fields_preserves_fwd_above_zero minor cs obj 0 wz;
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
@@ -1612,7 +1612,7 @@ private let rec cheney_scan_preserves_wfh_part4
   else if scan >= Seq.length cs.cs_queue then ()
   else begin
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     let cs' = cheney_forward_fields minor cs obj 0 wz in
     cheney_forward_fields_preserves_wfh_part4 minor cs obj 0 wz;
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;

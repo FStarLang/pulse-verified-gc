@@ -100,17 +100,25 @@ val major_heap_shape (major: heap) (fp: U64.t) : prop
 /// Cross-generation safety: any field of an allocated minor object that already
 /// looks like a major-heap pointer must target a live non-blue major object.
 /// This is what lets promotion preserve `Mark.no_pointer_to_blue`.
+///
+/// Quantified over the *scan window* `GC.Gen.MinorHeap.minor_scan_wosize`, not
+/// the whole body: a tag >= No_scan_tag nursery block holds raw data whose
+/// words routinely look like major addresses, and nothing may be assumed about
+/// them.  That is sound because such a block promotes to a no-scan major
+/// object, whose body `Mark.no_pointer_to_blue` also ignores (it is guarded by
+/// `GC.Spec.Fields.fields_constrained`).
 [@@"opaque_to_smt"]
 val minor_major_fields_no_blue (minor: minor_state) (major: heap) : prop
 
-/// Minor-heap shape: bump/layout validity, runtime guard completeness, infix
-/// validity, and the minor analogue of the no-scan raw-data invariant.
+/// Minor-heap shape: bump/layout validity, runtime guard completeness, and
+/// infix validity.
 ///
-/// The nursery clause `GC.Gen.Promote.minor_no_scan_invariant` is *not* relaxed,
-/// unlike its major-heap counterpart: `GC.Gen.CombinedGraph.minor_object_edges`
-/// does not skip no-scan sources, and making it do so requires a
-/// `minor_tag >= 251 ==> is_no_scan target` invariant threaded through the whole
-/// Cheney forwarding development.  See `docs/no-scan-support-plan.md` §10.
+/// There is deliberately *no* no-scan clause here.  The nursery scan window is
+/// `GC.Gen.MinorHeap.minor_scan_wosize`, which is 0 on a tag >= No_scan_tag
+/// object, so the collector never reads a raw-data body and nothing needs to be
+/// assumed about its contents -- exactly mirroring the major heap, where
+/// `GC.Spec.Fields.fields_constrained` guards the corresponding clauses of
+/// `well_formed_heap`.
 [@@"opaque_to_smt"]
 val minor_heap_shape (minor: minor_state) : prop
 /// Non-stack combined heap shape used by minor collection.
@@ -156,14 +164,12 @@ val minor_heap_shape_elim (minor: minor_state)
   : Lemma (requires minor_heap_shape minor)
            (ensures minor_wf minor /\
                     minor_guards_complete minor /\
-                    minor_infix_wf minor /\
-                    minor_no_scan_invariant minor)
+                    minor_infix_wf minor)
 
 val minor_heap_shape_intro (minor: minor_state)
   : Lemma (requires minor_wf minor /\
                     minor_guards_complete minor /\
-                    minor_infix_wf minor /\
-                    minor_no_scan_invariant minor)
+                    minor_infix_wf minor)
           (ensures minor_heap_shape minor)
 
 val minor_major_fields_no_blue_no_pointer_fields
@@ -172,7 +178,7 @@ val minor_major_fields_no_blue_no_pointer_fields
       (requires
         (forall (obj:U64.t) (j:nat).
           Seq.mem obj (minor_objects minor) /\
-          j < minor_wosize minor obj ==>
+          j < minor_scan_wosize minor obj ==>
           ~(is_pointer_field (minor_read_field minor obj j))))
       (ensures minor_major_fields_no_blue minor major)
 
@@ -180,7 +186,7 @@ val minor_major_fields_no_blue_elim (minor: minor_state) (major: heap)
   (obj: U64.t) (j: nat)
   : Lemma (requires minor_major_fields_no_blue minor major /\
                      Seq.mem obj (minor_objects minor) /\
-                     j < minor_wosize minor obj /\
+                     j < minor_scan_wosize minor obj /\
                      is_pointer_field (minor_read_field minor obj j))
            (ensures Seq.mem ((minor_read_field minor obj j) <: obj_addr)
                              (objects zero_addr major) /\

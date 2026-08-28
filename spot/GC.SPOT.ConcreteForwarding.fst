@@ -494,6 +494,8 @@ let scan_after_roots_b_zero (r: unit{ConcreteMajor.spot_major_room})
   Cheney.cheney_forward_one_normal ConcreteMinor.spot_minor2 cs0 Layout.a_minor;
   let wz = minor_wosize ConcreteMinor.spot_minor2 Layout.a_minor in
   assert (wz == 1);
+  ConcreteMinor.spot_minor2_scan_wosize Layout.a_minor;
+  assert (minor_scan_wosize ConcreteMinor.spot_minor2 Layout.a_minor == 1);
   let prom_a = Promote.promote_object
     ConcreteMinor.spot_minor2 major Layout.a_minor fp wz in
   if prom_a.Promote.new_addr = 0UL then begin
@@ -565,6 +567,8 @@ let spot_concrete_a_forwarding_free_obj
   Cheney.cheney_forward_one_normal ConcreteMinor.spot_minor2 cs0 Layout.a_minor;
   let wz = minor_wosize ConcreteMinor.spot_minor2 Layout.a_minor in
   assert (wz == 1);
+  ConcreteMinor.spot_minor2_scan_wosize Layout.a_minor;
+  assert (minor_scan_wosize ConcreteMinor.spot_minor2 Layout.a_minor == 1);
   spot_promote_a_to_free_obj r;
   let prom_a = Promote.promote_object
     ConcreteMinor.spot_minor2 major Layout.a_minor fp wz in

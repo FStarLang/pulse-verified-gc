@@ -1098,7 +1098,16 @@ scan_loop(
     {
       uint64_t hdr_addr0 = obj - 8ULL;
       uint64_t hdr = minor_read(minor, hdr_addr0);
-      uint64_t wosize = hdr >> 10U;
+      uint64_t tag = hdr & 0xFFULL;
+      uint64_t wosize;
+      if (tag >= 251ULL)
+        wosize = 0ULL;
+      else
+      {
+        uint64_t hdr_addr = obj - 8ULL;
+        uint64_t hdr = minor_read(minor, hdr_addr);
+        wosize = hdr >> 10U;
+      }
       if (wosize >= minor_heap_size_u64)
         scan = s + (size_t)1U;
       else if (obj + wosize * 8ULL > minor_heap_size_u64)

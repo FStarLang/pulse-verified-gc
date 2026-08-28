@@ -393,5 +393,51 @@ Both halves are proved of the same heap:
   proving `GC.Spec.Fields.blue_blocks_scannable` pointwise and calling
   `GC.Gen.PromoteUpdate.BlueAlloc.wfh_part2_implies_blue_fields_closed`.
 
-The nursery analogue `GC.Gen.Promote.minor_no_scan_invariant` is *not* relaxed;
-`docs/no-scan-support-plan.md` §10 records what that would cost.
+The nursery analogue `GC.Gen.Promote.minor_no_scan_invariant` has since been
+removed as well: the Cheney scan window is now
+`GC.Gen.MinorHeap.minor_scan_wosize`, which is 0 for a tag >= 251 object, so
+nothing is assumed about young no-scan bodies either.  See
+`docs/no-scan-support-plan.md` §10.  That relaxation *did* change the extracted
+C --- it was covering a real bug, reproduced by
+`generational/ocaml-integration/tests/nursery_no_scan_interior.ml`.
+
+## `GC.SPOT.NoScanMinor` — a young no-scan block whose body spells a nursery address
+
+The nursery analogue of the previous SPOT, and the witness for deleting
+`GC.Gen.Promote.minor_no_scan_invariant` from `gen_gc`'s precondition.
+
+The nursery is three words:
+
+```
+byte  0   header       wosize 2, tag 251 (no_scan_tag)
+byte  8   field 0      = 8   <-- passes the collector's nursery-pointer test
+byte 16   field 1      = 8
+byte 24   bump
+```
+
+`8` is chosen for two reasons. It satisfies `GC.Gen.Promote.is_minor_pointer`
+(`8 <= v < minor_heap_size && v % 8 = 0`) — that predicate is the *whole* of the
+runtime test the Cheney scan applies to a body word, so before the fix the
+collector would have forwarded this word — and its upper 54 bits are zero, so it
+has wosize 0 and cannot pose as an object header. That keeps the two surviving
+mutator assumptions, `minor_guards_complete` and `minor_infix_wf`, true of the
+same heap: nothing here masquerades as an object start, and no address carries
+`Infix_tag`.
+
+- `spot_ns_minor_was_forbidden` — the nursery refutes the deleted clause
+  (restated verbatim in the interface as `deleted_minor_no_scan_invariant`), so
+  it was inadmissible before;
+- `spot_ns_minor_heap_shape` / `spot_ns_collection_heap_shape` — it nevertheless
+  satisfies `GC.Gen.HeapInvariant.minor_heap_shape`, and the full entry
+  invariant `collection_heap_shape` against `GC.SPOT.ConcreteMajor`'s major
+  heap. The scan window is empty (`spot_ns_nursery_scan_window_empty`), which is
+  what makes `minor_major_fields_no_blue` — narrowed to `minor_scan_wosize` in
+  the same change — hold without saying anything about the forged words.
+
+One incidental fact falls out and is exported as
+`forged_word_not_major_pointer`: the two halves of the deleted invariant were
+never simultaneously refutable. `GC.Spec.HeapGraph.is_pointer_field` demands
+`v >= zero_addr + 8`, and `GC.Spec.Base.zero_addr_above_2048` gives
+`zero_addr >= 2048 == minor_heap_size`, while `is_minor_pointer` demands
+`v < minor_heap_size`. The ranges are disjoint, so refuting either half refutes
+the conjunction.

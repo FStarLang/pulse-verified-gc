@@ -259,7 +259,10 @@ val build_combined_graph_wf (ms: minor_state) (major: heap)
 val minor_field_edge_intro (ms: minor_state) (major: heap)
   (src: U64.t) (i: nat) (dst: combined_vertex)
   : Lemma (requires Seq.mem src (minor_objects ms) /\
-                    i < minor_wosize ms src /\
+                    // `minor_scan_wosize` rather than `minor_wosize`: a no-scan
+                    // source contributes no edges, exactly as the major-heap
+                    // analogue below requires `~(is_no_scan src major)`.
+                    i < minor_scan_wosize ms src /\
                     classify_minor_field ms major (minor_read_field ms src i) == Some dst)
           (ensures mem_ce (MinorV src, dst) (build_combined_graph ms major))
 
@@ -297,7 +300,9 @@ val minor_edge_elim (ms: minor_state) (major: heap)
   (src: U64.t) (dst: combined_vertex)
   : Lemma (requires mem_ce (MinorV src, dst) (build_combined_graph ms major))
           (ensures Seq.mem src (minor_objects ms) /\
-                   (exists (i: nat). i < minor_wosize ms src /\
+                   // `minor_scan_wosize`, mirroring `~(is_no_scan src major)` in
+                   // `major_edge_elim`: a no-scan source has no outgoing edges.
+                   (exists (i: nat). i < minor_scan_wosize ms src /\
                      classify_minor_field ms major (minor_read_field ms src i) == Some dst))
 
 /// Major edge elimination: every edge from a major source has a witness field.

@@ -31,7 +31,7 @@ bench_stats.cmo: bench_stats.ml
 BENCHMARKS = binarytrees fasta quicksort fannkuchredux count_change nbodies spectralnorm mandelbrot
 
 # Correctness tests (not benchmarks): run under both runtimes and compared.
-CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier
+CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior
 
 # infix_closures needs a small major heap so that real major collections
 # (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
@@ -45,10 +45,10 @@ NO_SCAN_MAJOR_WORDS ?= 4000000
 # make_vect_barrier promotes a large young live set ten times over.
 MAKE_VECT_MAJOR_WORDS ?= 4000000
 
-# Reproducers for gaps that are known to be still open.  These are NOT part
-# of `correctness` because they are expected to fail under the verified
-# runtime; see docs/known-issues.md.
-KNOWN_GAP_TESTS = nursery_no_scan_interior
+# nursery_no_scan_interior forges interior pointers into no-scan nursery
+# payloads.  It was a known-gap reproducer until the nursery scan window
+# became `GC.Gen.MinorHeap.minor_scan_wosize`; it is now a regression test.
+KNOWN_GAP_TESTS =
 NURSERY_NO_SCAN_MAJOR_WORDS ?= 4000000
 
 BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
@@ -138,6 +138,10 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	MIN_EXPANSION_WORDSIZE=$(MAKE_VECT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) make_vect_barrier.byte
 	@echo "--- make_vect_barrier (stock OCaml, differential check) ---"
 	$(UNCHANGED_OCAMLRUN) make_vect_barrier.byte
+	@echo "--- nursery_no_scan_interior (verified generational GC) ---"
+	MIN_EXPANSION_WORDSIZE=$(NURSERY_NO_SCAN_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) nursery_no_scan_interior.byte
+	@echo "--- nursery_no_scan_interior (stock OCaml, differential check) ---"
+	$(UNCHANGED_OCAMLRUN) nursery_no_scan_interior.byte
 	@echo "=== Correctness tests passed ==="
 
 # ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
@@ -145,14 +149,12 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 # Run these deliberately, e.g. `make known-gaps`.  Each one passes under
 # stock OCaml and demonstrates a gap that is still open in the verified
 # collector.  See docs/known-issues.md.
+#
+# There are currently none: nursery_no_scan_interior graduated to
+# `correctness` when the nursery stopped scanning no-scan bodies.
 
 known-gaps: $(addsuffix .byte, $(KNOWN_GAP_TESTS))
-	@echo "=== Known-gap reproducers (expected to fail under verified GC) ==="
-	@echo "--- nursery_no_scan_interior (stock OCaml: must pass) ---"
-	$(UNCHANGED_OCAMLRUN) nursery_no_scan_interior.byte
-	@echo "--- nursery_no_scan_interior (verified generational GC: expected to abort) ---"
-	-MIN_EXPANSION_WORDSIZE=$(NURSERY_NO_SCAN_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) nursery_no_scan_interior.byte
-	@echo "=== Known-gap reproducers done ==="
+	@echo "=== No known-gap reproducers outstanding ==="
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----
 

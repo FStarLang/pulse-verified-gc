@@ -70,7 +70,7 @@ val minor_successors_length (ms: minor_state) (obj: U64.t)
 /// and y is a valid allocated minor object.
 val minor_successors_char (ms: minor_state) (x y: U64.t)
   : Lemma (ensures Seq.mem y (minor_successors ms x) <==>
-                    (exists (i:nat). i < minor_wosize ms x /\
+                    (exists (i:nat). i < minor_scan_wosize ms x /\
                                      resolve_minor ms
                                        (to_minor_offset (minor_read_field ms x i)) == y /\
                                      is_minor_addr y /\

@@ -761,7 +761,7 @@ fn scan_loop
       // Unreachable: we proved obj % 8 == 0
       scan := SZ.add s 1sz
     } else {
-      let wosize = read_minor_wosize minor obj;
+      let wosize = read_minor_scan_wosize minor obj;
       if U64.gte wosize minor_heap_size_u64 {
         // Unreachable: we proved wosize < minor_heap_size
         scan := SZ.add s 1sz

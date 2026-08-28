@@ -54,7 +54,7 @@ private let minor_field_target_non_infix
   : Lemma (requires CheneyBFS.cheney_no_oom minor major fp roots /\
                     Seq.mem src (minor_objects minor) /\
                     (cheney_promote minor major fp roots).fwd_map src <> 0UL /\
-                    j < minor_wosize minor src /\
+                    j < minor_scan_wosize minor src /\
                     ~(is_minor_pointer (to_minor_offset (minor_read_field minor src j)) /\
                       (cheney_promote minor major fp roots).fwd_map
                         (to_minor_offset (minor_read_field minor src j)) <> 0UL))
@@ -255,6 +255,13 @@ let post_edge_from_minor_image_reflects_mem_ce
     is_no_scan_spec fwd_src_obj prom.major_final;
     assert (is_no_scan fwd_src_obj updated = false);
     assert (is_no_scan fwd_src_obj prom.major_final = false);
+    // A no-scan image has no outgoing edges (`GC.Spec.HeapGraph.object_edges`),
+    // so the edge hypothesis forces the nursery source to have been scannable.
+    // That is exactly what makes the scan window the full body here.
+    CheneyFields.cheney_promote_fwd_target_no_scan_iff_minor_tag minor major fp roots src;
+    assert (minor_tag minor src < 251);
+    minor_scan_wosize_cases minor src;
+    assert (minor_scan_wosize minor src == minor_wosize minor src);
     assert (j < U64.v (wosize_of_object fwd_src_obj prom.major_final));
     assert (U64.v fwd_src + j * 8 + 8 <= heap_size);
     assert ((U64.v fwd_src + j * 8) % 8 == 0);
@@ -450,6 +457,13 @@ let post_edge_from_minor_image_reflects_target
     is_no_scan_spec fwd_src_obj prom.major_final;
     assert (is_no_scan fwd_src_obj updated = false);
     assert (is_no_scan fwd_src_obj prom.major_final = false);
+    // A no-scan image has no outgoing edges (`GC.Spec.HeapGraph.object_edges`),
+    // so the edge hypothesis forces the nursery source to have been scannable.
+    // That is exactly what makes the scan window the full body here.
+    CheneyFields.cheney_promote_fwd_target_no_scan_iff_minor_tag minor major fp roots src;
+    assert (minor_tag minor src < 251);
+    minor_scan_wosize_cases minor src;
+    assert (minor_scan_wosize minor src == minor_wosize minor src);
     assert (j < U64.v (wosize_of_object fwd_src_obj prom.major_final));
     assert (U64.v fwd_src + j * 8 + 8 <= heap_size);
     assert ((U64.v fwd_src + j * 8) % 8 == 0);

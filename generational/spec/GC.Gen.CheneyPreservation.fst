@@ -400,7 +400,7 @@ private let rec cheney_scan_preserves_no_black
   else begin
     cheney_scan_step minor cs scan fuel;
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     let cs' = cheney_forward_fields minor cs obj 0 wz in
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     cheney_forward_fields_preserves_no_black minor cs obj 0 wz;
@@ -819,7 +819,7 @@ private let rec cheney_scan_preserves_gray_black_objects_on_stack
       cheney_scan_step minor cs scan fuel;
       let fuel' : nat = fuel - 1 in
       let obj = Seq.index cs.cs_queue scan in
-      let wz = minor_wosize minor obj in
+      let wz = minor_scan_wosize minor obj in
       let cs' = cheney_forward_fields minor cs obj 0 wz in
       cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
       Forwarding.cheney_forward_fields_preserves_cob minor cs obj 0 wz;
@@ -992,7 +992,7 @@ private let rec cheney_scan_preserves_blue_fields_closed
   else begin
     cheney_scan_step minor cs scan fuel;
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     let cs' = cheney_forward_fields minor cs obj 0 wz in
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     Forwarding.cheney_forward_fields_preserves_cob minor cs obj 0 wz;
@@ -1336,7 +1336,12 @@ private let cheney_promote_field_old_targets_in_objects_from_shape
             assert (is_val_addr (prom.fwd_map x));
             assert (is_infix (prom.fwd_map x) prom.major_final = false);
             assert (Seq.mem x (minor_objects minor));
-            if j < minor_wosize minor x then begin
+            // `src` is not no-scan here (see the guard above); promotion copies
+            // the tag, so `x` was scannable and its scan window is its body.
+            Fields.cheney_promote_fwd_target_no_scan_iff_minor_tag minor major fp roots x;
+            assert (minor_tag minor x < 251);
+            minor_scan_wosize_cases minor x;
+            if j < minor_scan_wosize minor x then begin
               Fields.cheney_promote_fwd_target_fields_match minor major fp roots x j;
               assert (v == minor_read_field minor x j);
               GenInv.minor_major_fields_no_blue_elim minor major x j;

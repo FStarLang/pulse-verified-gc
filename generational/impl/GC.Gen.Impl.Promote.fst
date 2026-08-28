@@ -60,6 +60,32 @@ fn read_minor_tag (minor: minor_heap_t) (obj: U64.t)
   U64.logand hdr 0xFFUL
 }
 
+/// Read the number of fields the collector may scan in a minor object.
+///
+/// An object whose tag is at least `no_scan_tag` (251) holds raw bytes rather
+/// than fields, so its contents must never be interpreted as pointers; for
+/// scanning purposes it has no fields at all.  This is the runtime counterpart
+/// of `GC.Gen.MinorHeap.minor_scan_wosize`, and mirrors the two guards the
+/// major heap already carries (`update_all_objects`, `mark_and_push`).
+///
+/// Note this is *not* the size used to promote the object: promotion copies the
+/// whole body verbatim, no-scan or not, and so keeps using `read_minor_wosize`.
+inline_for_extraction
+fn read_minor_scan_wosize (minor: minor_heap_t) (obj: U64.t)
+  requires is_minor minor 'md 'mb **
+           pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\ U64.v obj % 8 == 0)
+  returns wosize: U64.t
+  ensures is_minor minor 'md 'mb **
+          pure (U64.v wosize == minor_scan_wosize {data='md; bump='mb} obj)
+{
+  let tag = read_minor_tag minor obj;
+  if (U64.gte tag 251UL) {
+    0UL
+  } else {
+    read_minor_wosize minor obj
+  }
+}
+
 /// Copy wosize fields from minor[src_obj + 0..] to major[dst_obj + 0..]
 /// Copies fields at indices 0..(wosize-1), matching spec copy_fields.
 ///
