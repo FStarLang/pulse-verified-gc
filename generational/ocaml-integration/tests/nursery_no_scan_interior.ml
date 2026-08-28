@@ -20,7 +20,14 @@
    inside the nursery is looked up in the forwarding array, and if the block it
    points at carries tag 249 the collector reads a *synthetic* infix header and
    walks backwards to a "parent closure".  Applied to arbitrary bytes that
-   promotes nonsense, and the run dies with "major heap full".
+   promotes nonsense, and the run dies with "promotion failed -- major heap
+   full".  That message is a misnomer: the heap is nearly empty and no
+   allocation fails.  The forged word makes the scan read field 0 of an anchor
+   as a header; that word is the immediate 2i+1, whose tag byte is 249 for
+   i in {124, 252, 380}, and whose wosize is (2i+1) >> 10 == 0.  The infix walk
+   therefore computes parent = child - 0 == child and the promoter takes its
+   defensive "cannot promote a zero-word object" branch, which sets the same
+   `oom` flag a genuine exhaustion would.
 
    The gap was masked in the proof by a precondition: `gen_gc` required
    `GC.Gen.Promote.minor_no_scan_invariant`, which simply *assumed* that no

@@ -17,6 +17,33 @@ with `make -C generational/ocaml-integration/tests correctness`.
 
 ---
 
+## Open: every promotion failure is reported as "major heap full"
+
+**Observed by:** instrumenting the pre-fix build while diagnosing the nursery
+no-scan bug below
+
+`cheney_promote_phase` reports failure through a single `bool oom`, and
+`verified_gc/alloc_gen.c` renders any `false` as
+
+```
+verified gen GC: promotion failed — major heap full (30 MB)
+  Set MIN_EXPANSION_WORDSIZE=8000000 (or larger) to increase heap.
+```
+
+That flag is set by seven distinct sites in `GC_Gen_Impl.c`, only some of which
+are genuine allocation failures. The rest are defensive refusals — most notably
+"cannot promote a zero-word object", which is what actually fired in the no-scan
+diagnosis below with the major heap 99.5% empty. The advice to raise
+`MIN_EXPANSION_WORDSIZE` is then actively misleading: no heap size could have
+helped.
+
+This is a diagnostics defect, not a soundness one — the collector correctly
+declines and aborts rather than proceeding. Fixing it means widening the failure
+channel (an enum, or at minimum distinguishing "allocator returned null" from
+"refused a malformed object") and having `alloc_gen.c` print accordingly.
+
+---
+
 ## Open: finalisers and weak pointers are not run
 
 **Observed by:** `tests/no_scan.ml` section 4 (which skips its liveness
@@ -115,7 +142,20 @@ loop contains the infix-aware path: a word that is 8-aligned and lands inside
 the nursery is looked up in the forwarding array, and if the block it appears
 to point at carries tag 249 the collector reads a synthetic infix header and
 walks *backwards* to a supposed parent closure. Applied to arbitrary bytes,
-that promoted nonsense and the program died with "major heap full".
+that promoted nonsense.
+
+The observed symptom is the abort `"promotion failed — major heap full"`, which
+is a misnomer worth spelling out. Instrumenting the pre-fix build shows the
+major heap is essentially empty at the abort (18,716 words promoted into a
+30 MB heap) and that **no** allocation ever failed. The real path: the forged
+word makes the scan read field 0 of the anchor as a header; that word is the
+OCaml immediate `2i+1`, whose tag byte is 249 (`Infix_tag`) for `i ∈ {124, 252,
+380}`; its `wosize` is `(2i+1) >> 10 == 0`, so the infix walk computes
+`parent = child - 0 == child` and the promoter hits its defensive "cannot
+promote a zero-word object" branch. That branch sets the `oom` flag, and
+`cheney_promote_phase`'s single boolean result is rendered by `alloc_gen.c` as
+"major heap full". Measured: 9 refusals = 3 anchors × 3 minor collections. The
+misleading diagnostic is itself an open issue, recorded above.
 
 ### Why the proof did not catch it
 
