@@ -320,14 +320,38 @@ diff --git a/runtime/minor_gc.c b/runtime/minor_gc.c
 index 18cfe3e..ea08e38 100644
 --- a/runtime/minor_gc.c
 +++ b/runtime/minor_gc.c
-@@ -564,17 +564,13 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -564,17 +564,37 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
  */
++/* Defined in verified_gc/alloc_gen.c. */
++extern void verified_do_minor_gc (void);
++
  CAMLexport void caml_minor_collection (void)
  {
 -  Caml_state->requested_minor_gc = 1;
 -  caml_gc_dispatch ();
-+  /* Disabled: we use our own verified GC.
-+     Keep the function body empty so callers don't crash. */
++  /* This must NOT be a no-op.  Every caller uses it to establish the
++     invariant "the value I am holding is no longer in the minor heap",
++     and then relies on that invariant to store the value without a write
++     barrier.  caml_make_vect (runtime/array.c) is the sharpest example:
++
++         if (Is_block(init) && Is_young(init)) caml_minor_collection ();
++         CAMLassert(!(Is_block(init) && Is_young(init)));
++         res = caml_alloc_shr(size, 0);
++         // "no need to call [caml_initialize]"
++         for (i = 0; i < size; i++) Field(res, i) = init;
++
++     With an empty body [init] stays young, the CAMLassert is compiled out
++     of a release build, and those `size` raw stores create major->minor
++     pointers recorded in neither the ref_table nor any root set.  The next
++     minor collection then promotes the target without updating them, and
++     every slot is left dangling.  Observable from pure OCaml as
++
++         let y = Array.make 4 7 in
++         let a = Array.make 300 y in   (* 300 > Max_young_wosize *)
++         ... minor collection ...      (* a.(0) is now garbage *)
++
++     so run the verified minor collection for real. */
++  verified_do_minor_gc ();
  }
  
  CAMLexport value caml_check_urgent_gc (value extra_root)

@@ -34,3 +34,6 @@ _depgraph/
 
 # Review artifacts dropped in the worktree (e.g. finding-*.pdf); keep out of git
 *.pdf
+
+# Scratch PR description (not part of the repo)
+PR.md

@@ -31,13 +31,28 @@ bench_stats.cmo: bench_stats.ml
 BENCHMARKS = binarytrees fasta quicksort fannkuchredux count_change nbodies spectralnorm mandelbrot
 
 # Correctness tests (not benchmarks): run under both runtimes and compared.
-CORRECTNESS_TESTS = infix_closures
+CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier
 
 # infix_closures needs a small major heap so that real major collections
 # (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
 INFIX_MAJOR_WORDS ?= 300000
 
-BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS))
+# no_scan allocates 300 x 2KB no-scan blocks and then promotes 400 nursery
+# blocks, so it needs more room than infix_closures while still forcing real
+# major collections.
+NO_SCAN_MAJOR_WORDS ?= 4000000
+
+# make_vect_barrier promotes a large young live set ten times over.
+MAKE_VECT_MAJOR_WORDS ?= 4000000
+
+# Reproducers for gaps that are known to be still open.  These are NOT part
+# of `correctness` because they are expected to fail under the verified
+# runtime; see docs/known-issues.md.
+KNOWN_GAP_TESTS = nursery_no_scan_interior
+NURSERY_NO_SCAN_MAJOR_WORDS ?= 4000000
+
+BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
+             $(addsuffix .byte, $(KNOWN_GAP_TESTS))
 BENCH_TARGETS = $(addsuffix .bench, $(BENCHMARKS))
 STATS_TARGETS = $(addsuffix .stats, $(BENCHMARKS))
 MINHEAP_TARGETS = $(addsuffix .minheap, $(BENCHMARKS))
@@ -115,7 +130,29 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	MIN_EXPANSION_WORDSIZE=$(INFIX_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) infix_closures.byte
 	@echo "--- infix_closures (stock OCaml, differential check) ---"
 	$(UNCHANGED_OCAMLRUN) infix_closures.byte
+	@echo "--- no_scan (verified generational GC) ---"
+	MIN_EXPANSION_WORDSIZE=$(NO_SCAN_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) no_scan.byte
+	@echo "--- no_scan (stock OCaml, differential check) ---"
+	$(UNCHANGED_OCAMLRUN) no_scan.byte
+	@echo "--- make_vect_barrier (verified generational GC) ---"
+	MIN_EXPANSION_WORDSIZE=$(MAKE_VECT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) make_vect_barrier.byte
+	@echo "--- make_vect_barrier (stock OCaml, differential check) ---"
+	$(UNCHANGED_OCAMLRUN) make_vect_barrier.byte
 	@echo "=== Correctness tests passed ==="
+
+# ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
+#
+# Run these deliberately, e.g. `make known-gaps`.  Each one passes under
+# stock OCaml and demonstrates a gap that is still open in the verified
+# collector.  See docs/known-issues.md.
+
+known-gaps: $(addsuffix .byte, $(KNOWN_GAP_TESTS))
+	@echo "=== Known-gap reproducers (expected to fail under verified GC) ==="
+	@echo "--- nursery_no_scan_interior (stock OCaml: must pass) ---"
+	$(UNCHANGED_OCAMLRUN) nursery_no_scan_interior.byte
+	@echo "--- nursery_no_scan_interior (verified generational GC: expected to abort) ---"
+	-MIN_EXPANSION_WORDSIZE=$(NURSERY_NO_SCAN_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) nursery_no_scan_interior.byte
+	@echo "=== Known-gap reproducers done ==="
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----
 
@@ -271,7 +308,7 @@ bench-min-heaps: $(MINHEAP_TARGETS)
 	head -n 1 results/binarytrees.minheap.csv > results/min_heaps.csv
 	tail -n +2 -q $(MINHEAP_CSVS) >> results/min_heaps.csv
 
-.PHONY: all test correctness benchmark bench-all bench-stats bench-min-heaps clean
+.PHONY: all test correctness known-gaps benchmark bench-all bench-stats bench-min-heaps clean
 
 clean:
 	rm -f *.byte *.cmi *.cmo *.o
