@@ -71,19 +71,114 @@ are exactly what a length-prefixed binary format or a serialized pointer-like
 value produces by accident. `nursery_no_scan_interior.ml` runs all three
 patterns (`odd`, `plain`, `interior`) so the discriminating one is obvious.
 
-### Specification side
+### Why the proof does not catch this
 
-The matching gap is that `GC.Gen.CombinedGraph.major_object_edges` skips
-no-scan sources but `minor_object_edges` does not, so `gen_gc` still carries a
-nursery counterpart of the `no_scan_invariant` that real OCaml heaps violate.
-The major-heap half of that invariant was removed (see
-`docs/no-scan-support-plan.md`); the nursery half was deliberately deferred
-because adding the guard creates an obligation `minor_tag minor src < 251` at
-three points in `GC.Gen.MinorCollectForwarding.Reflection`, which needs the
-converse of
+It is worth being precise, because "the collector is verified and yet this
+happens" is the obvious objection.
+
+The missing guard does not slip past a postcondition. It is admitted by a
+*precondition* that `gen_gc` assumes and that nothing on the C side
+establishes. The chain is:
+
+```
+GC.Gen.Impl.fsti:436      gen_gc  requires  collection_heap_shape minor 's 'fp
+GC.Gen.HeapInvariant.fst:63   collection_heap_shape = major_heap_shape
+                                                    /\ minor_heap_shape
+                                                    /\ minor_major_fields_no_blue
+GC.Gen.HeapInvariant.fst:57   minor_heap_shape      = minor_wf
+                                                    /\ minor_guards_complete
+                                                    /\ minor_infix_wf
+                                                    /\ minor_no_scan_invariant
+```
+
+and `GC.Gen.Promote.fsti:559` reads:
+
+```fstar
+let minor_no_scan_invariant (minor: minor_state) : prop =
+  forall (obj: U64.t) (j: nat).
+    Seq.mem obj (minor_objects minor) /\
+    minor_tag minor obj >= 251 /\
+    j < minor_wosize minor obj ==>
+     ~(is_pointer_field (minor_read_field minor obj j)) /\
+     ~(is_minor_pointer (to_minor_offset (minor_read_field minor obj j)))
+```
+
+That is exactly the property the reproducer violates. Under this hypothesis a
+young no-scan block provably contains nothing pointer-shaped, so walking its
+fields is a no-op and the guard in `scan_loop` is *redundant*. The
+implementation is correct with respect to the specification; the
+specification simply assumes the case away. This is also why deleting the
+invariant and adding the guard are one and the same piece of work.
+
+Note the asymmetry with the major heap, which is what made that half cheap:
+`well_formed_heap` parts 2 and 3 are guarded by
+`GC.Spec.Fields.fields_constrained` (`= not is_no_scan`), so the major
+specification is *unconditionally* silent about no-scan bodies and needed no
+implementation change. The nursery instead states its field property over
+*all* objects and then excludes the inconvenient ones by hypothesis.
+
+### Two further mutator trust assumptions in the same conjunction
+
+`minor_no_scan_invariant` is not the only unchecked hypothesis about nursery
+contents, and the reproducer's three patterns discriminate between them:
+
+| Predicate | Says | Labelled |
+|---|---|---|
+| `minor_no_scan_invariant` (`Promote.fsti:559`) | no-scan bodies hold nothing pointer-shaped | — |
+| `minor_guards_complete` (`MinorHeap.fsti:266`) | any word that *looks* like a valid header **is** a real object | "In practice OCaml tagged values ... do not produce such confusion" |
+| `minor_infix_wf` (`MinorHeap.fsti:295`) | any infix-looking address has a real `Closure_tag` parent | "trust assumption on the mutator" |
+
+which explains the observed behaviour precisely:
+
+* `odd` (`v lor 1`) — not `is_pointer_field`, so it does not even violate the
+  no-scan invariant. Survives.
+* `plain` (an exact live young address) — violates `minor_no_scan_invariant`,
+  but happens to satisfy the other two, because it *is* a real object.
+  Survives by luck, and therefore proves nothing.
+* `interior` (`v + 8`) — violates all three. Reaches the tag-249 backwards
+  walk with no real closure parent. Aborts.
+
+So the failing pattern is the one where the auxiliary assumptions break too.
+That is a useful confirmation that this conjunction is load-bearing rather
+than incidental.
+
+### Where it actually leaks: the trust boundary
+
+These are `pure` conjuncts of a Pulse precondition, so they are erased at
+extraction. `verified_gc/alloc_gen.c:383` calls
+
+```c
+promote_ok = minor_collect_full(gc_gen_heap, root_values, root_count,
+                                gc_fwd_arr, gc_queue,
+                                (uint64_t *)tbl->base, n_slots);
+```
+
+passing data only — there is no check, and no comment recording the debt.
+
+The sharper point is that the assumption is not merely unchecked but *false*
+for ordinary programs. `is_minor_pointer v` is just
+`8 <= v < minor_heap_size && v % 8 = 0` (`Promote.fsti:315`), i.e. "an
+8-aligned integer below 256 KB". Any young `Bytes` holding a small
+little-endian integer — a length prefix, a counter, a zero-padded field —
+satisfies it. `minor_no_scan_invariant` is violated routinely, not rarely,
+and an attacker who controls the contents of a young buffer controls whether
+it is violated.
+
+### Cost of fixing
+
+The spec-side twin is that `GC.Gen.CombinedGraph.major_object_edges` skips
+no-scan sources while `minor_object_edges` does not. Adding the guard creates
+an obligation `minor_tag minor src < 251` at three points in
+`GC.Gen.MinorCollectForwarding.Reflection`, which needs the converse of
 `GC.Gen.CheneyPreservation.Fields.cheney_promote_fwd_target_not_no_scan_of_minor_tag_lt`
 threaded through `forward_one` / `forward_fields` / `forward_roots` / `scan` /
-`promote`.
+`promote`. The major-heap half of the same relaxation is written up in
+`docs/no-scan-support-plan.md`; §10 there records why the nursery half was
+deferred.
+
+Ideally `minor_guards_complete` and `minor_infix_wf` would go the same way —
+replaced by runtime tag tests — since they are assumptions about mutator data
+of exactly the same character.
 
 **Fixing it means changing the implementation as well as the proof:** a
 `tag >= no_scan_tag` guard in `GC.Gen.Impl.Cheney`'s scan loop, mirroring the
