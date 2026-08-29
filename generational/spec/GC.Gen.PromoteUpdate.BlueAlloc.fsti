@@ -19,9 +19,14 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module FreeListShape = GC.Gen.FreeListShape
 
 /// well_formed_heap_part2 implies blue_fields_closed
+/// `blue_blocks_scannable` is what lets part 2 --- which since the no-scan
+/// relaxation constrains only scannable sources --- still say something about
+/// every free block.  It is not an extra assumption on the collector: the
+/// coalescing pass gives every free block tag 0, and
+/// `GC.Spec.Coalesce.coalesce_blue_blocks_scannable` proves it.
 val wfh_part2_implies_blue_fields_closed (g: heap)
   : Lemma (requires well_formed_heap_part1 g /\ well_formed_heap_part2 g /\
-                    blue_fields_non_infix g)
+                    blue_fields_non_infix g /\ blue_blocks_scannable g)
           (ensures blue_fields_closed g)
 
 /// The converse: `blue_fields_closed` (raw) plus part 4 gives back the clause

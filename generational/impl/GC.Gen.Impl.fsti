@@ -285,10 +285,6 @@ let gen_gc_unreachable_final_blue_post
   ok ==>
   SpecGCPost.major_gc_unreachable_final_blue (fst prepared) final_major (snd prepared)
 
-[@@"opaque_to_smt"]
-let minor_heap_no_scan_invariant (d: minor_heap) (b: U64.t) : prop =
-  PromoteSpec.minor_no_scan_invariant ({ data = d; bump = b })
-
 /// ---------------------------------------------------------------------------
 /// Allocation
 /// ---------------------------------------------------------------------------

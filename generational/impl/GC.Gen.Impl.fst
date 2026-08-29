@@ -170,11 +170,6 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 module PromoteSpec = GC.Gen.Promote
 open GC.Gen.PromoteUpdate
 
-let minor_heap_no_scan_invariant_elim (d: minor_heap) (b: U64.t)
-  : Lemma (requires minor_heap_no_scan_invariant d b)
-          (ensures PromoteSpec.minor_no_scan_invariant ({ data = d; bump = b }))
-  = reveal_opaque (`%minor_heap_no_scan_invariant) (minor_heap_no_scan_invariant d b)
-
 /// Helper: advancing by a multiple of 8 preserves 8-alignment
 let advance_aligned (p tw: nat)
   : Lemma (requires p % 8 == 0)

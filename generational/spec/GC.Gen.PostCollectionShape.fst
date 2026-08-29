@@ -22,71 +22,6 @@ module GenInv = GC.Gen.HeapInvariant
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 60"
 
-/// **Sweeping preserves `no_scan_invariant`.**
-///
-/// A block that is still non-blue after the sweep must have been black before
-/// it (white blocks are freed, blue blocks stay blue), and the sweep leaves a
-/// black block's tag, size and body words alone -- it only repaints the header.
-/// So the clause transfers verbatim from the marked heap.
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 100"
-private let sweep_preserves_no_scan_invariant (g: heap) (fp: U64.t)
-  : Lemma
-    (requires well_formed_heap g /\ Mark.noGreyObjects g /\
-              Sweep.fp_in_heap fp g /\ no_scan_invariant g)
-    (ensures no_scan_invariant (fst (Sweep.sweep g fp)))
-  = let g' = fst (Sweep.sweep g fp) in
-    Sweep.sweep_preserves_objects g fp;
-    Sweep.sweep_resets_colors g fp;
-    let aux (src: obj_addr) (idx: nat)
-      : Lemma
-        (ensures
-          Seq.mem src (objects zero_addr g') /\
-          is_no_scan src g' /\
-          ~(is_blue src g') /\
-          idx < U64.v (wosize_of_object src g') /\
-          U64.v src + idx * 8 < heap_size ==>
-          (let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
-           ~(is_pointer_field (read_word g' field_addr))))
-      =
-      if Seq.mem src (objects zero_addr g') &&
-         is_no_scan src g' &&
-         not (is_blue src g') &&
-         idx < U64.v (wosize_of_object src g') &&
-         U64.v src + idx * 8 < heap_size
-      then begin
-        // Non-blue after the sweep: the block cannot have been white or blue,
-        // and marking left no gray, so it was black.
-        assert (Seq.mem src (objects zero_addr g));
-        Sweep.sweep_white_becomes_blue g fp;
-        Sweep.sweep_blue_stays_blue g fp;
-        is_blue_iff src g; is_white_iff src g; is_gray_iff src g;
-        is_black_iff src g; is_blue_iff src g';
-        assert (~(is_white src g));
-        assert (~(is_blue src g));
-        assert (~(is_gray src g));
-        assert (is_black src g);
-        Sweep.sweep_preserves_wosize_black g fp src;
-        Sweep.sweep_preserves_tag_black g fp src;
-        tag_of_object_spec src g;
-        tag_of_object_spec src g';
-        is_no_scan_spec src g;
-        is_no_scan_spec src g';
-        no_scan_invariant_elim g src idx;
-        let i : U64.t = U64.uint_to_t (idx + 1) in
-        hd_address_spec src;
-        wosize_of_object_bound src g;
-        FStar.Math.Lemmas.pow2_lt_compat 61 54;
-        GC.Spec.HeapGraph.get_field_addr_eq g src i;
-        GC.Spec.HeapGraph.get_field_addr_eq g' src i;
-        Sweep.sweep_preserves_field g fp src i;
-        let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
-        assert (~(is_pointer_field (read_word g' field_addr)))
-      end
-    in
-    FStar.Classical.forall_intro_2 aux;
-    no_scan_invariant_intro g'
-#pop-options
-
 /// `GC.Gen.Promote.heap_objects_dense` restates `GC.Spec.SweepInv`'s abstract
 /// density predicate transparently, and `major_heap_shape` is stated against
 /// the former.  This is the bridge between them.
@@ -167,6 +102,56 @@ private let coalesced_chain_objects_blue (g: heap)
     FStar.Classical.forall_intro
       (FStar.Classical.move_requires (Shape.coalesce_chain_objects_blue g))
 
+/// **Every free block the coalescer leaves has enumerated pointer fields.**
+///
+/// This is the raw-membership companion of `blue_fields_non_infix`, and it comes
+/// from the same place: `GC.Spec.Coalesce.flush_blue` gives a merged run a fresh
+/// tag-0 header, its free-list link, and zeroes above that, so its one
+/// pointer-shaped word is an object address.
+///
+/// `major_heap_shape` carries this explicitly rather than re-deriving it from
+/// part 2 the way `GC.Gen.PromoteUpdate.BlueAlloc.wfh_part2_implies_blue_fields_closed`
+/// does.  Part 2 no longer constrains no-scan sources, so on its own it says
+/// nothing about a free block that carries a no-scan tag; carrying the clause
+/// directly keeps the promotion machinery supplied without making the collector
+/// prove anything it did not already prove.
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 100"
+private let coalesce_blue_fields_closed (g: heap)
+  : Lemma (requires Coalesce.post_sweep_strong g)
+          (ensures Promote.blue_fields_closed (fst (Coalesce.coalesce g)))
+  = let g' = fst (Coalesce.coalesce g) in
+    Coalesce.coalesce_preserves_wf g;
+    reveal_opaque (`%Promote.blue_fields_closed) Promote.blue_fields_closed;
+    let aux (src: obj_addr) (j: nat)
+      : Lemma (Seq.mem src (objects zero_addr g') /\ is_blue src g' /\
+               j < U64.v (wosize_of_object src g') /\
+               U64.v src + j * 8 + 8 <= heap_size ==>
+               (let v = read_word g' (U64.uint_to_t (U64.v src + j * 8)) in
+                is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr g')))
+      = if Seq.mem src (objects zero_addr g') && is_blue src g' &&
+           j < U64.v (wosize_of_object src g') &&
+           U64.v src + j * 8 + 8 <= heap_size
+        then begin
+          let wz = wosize_of_object src g' in
+          let far : hp_addr = U64.uint_to_t (U64.v src + j * 8) in
+          let v = read_word g' far in
+          if is_pointer v then begin
+            hd_address_spec src;
+            wosize_of_object_bound src g';
+            wf_object_size_bound g' src;
+            let k : U64.t = U64.uint_to_t j in
+            FStar.Math.Lemmas.pow2_lt_compat 61 54;
+            FStar.Math.Lemmas.small_mod (j * U64.v mword) (pow2 64);
+            FStar.Math.Lemmas.small_mod (U64.v src + j * 8) (pow2 64);
+            assert (is_pointer_to v (v <: obj_addr));
+            field_read_implies_exists_pointing g' src wz k (v <: obj_addr);
+            Coalesce.coalesce_blue_field_closure g src (v <: obj_addr)
+          end else ()
+        end else ()
+    in
+    FStar.Classical.forall_intro_2 aux
+#pop-options
+
 /// **The coalescer's output satisfies every clause of `major_heap_shape`.**
 ///
 /// The clauses come from four places: the walk-transfer lemmas of
@@ -180,7 +165,6 @@ private let coalesce_major_heap_shape (g: heap)
       Coalesce.post_sweep_strong g /\
       SweepInv.heap_objects_dense g /\
       Seq.length (objects zero_addr g) > 0 /\
-      no_scan_invariant g /\
       blue_fields_non_infix (fst (Coalesce.coalesce g)))
     (ensures (let r = Coalesce.coalesce g in
               GenInv.major_heap_shape (fst r) (snd r)))
@@ -207,8 +191,8 @@ private let coalesce_major_heap_shape (g: heap)
     coalesced_no_black_no_gray g;
     // 13. nothing live points into the free list
     Shape.coalesce_no_pointer_to_blue g;
-    // 14. no-scan objects still have no pointer fields
-    Shape.coalesce_no_scan_invariant g;
+    // 14. free blocks hold nothing but their link word
+    coalesce_blue_fields_closed g;
     // 15. supplied by the caller (`Corr.gc_blue_fields_non_infix_gen`)
     GenInv.major_heap_shape_intro g' fp'
 
@@ -220,8 +204,6 @@ let major_gc_restores_major_heap_shape major h_mark roots fp =
   Corr.mark_post_elim_wfh major h_mark roots fp;
   Corr.mark_post_elim_no_grey major h_mark roots fp;
   Corr.mark_post_elim_fp major h_mark roots fp;
-  Corr.mark_post_elim_no_scan major h_mark roots fp;
-  sweep_preserves_no_scan_invariant h_mark fp;
   coalesce_major_heap_shape g
 
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 60"

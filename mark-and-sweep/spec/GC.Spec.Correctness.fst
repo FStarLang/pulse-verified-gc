@@ -136,8 +136,18 @@ let gc_preserves_structure g st fp =
   = // successors(create_graph g) x == successors(create_graph g_mark) x [by mark_preserves_create_graph]
     // successors(create_graph g_mark) x == get_pointer_fields g_mark x [by bridge]
     HeapGraph.successors_eq_pointer_fields g_mark (objects zero_addr g_mark) x;
-    // get_pointer_fields g_mark x == get_pointer_fields g_sweep x [by sweep_preserves_edges]
-    sweep_preserves_edges g_mark fp x;
+    // get_pointer_fields g_mark x == get_pointer_fields g_sweep x
+    // A no-scan object has no pointer fields in either heap: sweep preserves the
+    // tag of a black object, so both sides are empty.
+    if is_no_scan x g_mark then begin
+      sweep_preserves_tag_black g_mark fp x;
+      hd_address_spec x;
+      tag_of_object_spec x g_mark;
+      tag_of_object_spec x g_sweep;
+      is_no_scan_spec x g_mark;
+      is_no_scan_spec x g_sweep
+    end else
+      sweep_preserves_edges g_mark fp x;
     // get_pointer_fields g_sweep x == successors(create_graph g_sweep) x [by bridge]
     HeapGraph.successors_eq_pointer_fields g_sweep (objects zero_addr g_sweep) x;
     // Chain: successors g x == successors g_mark x == pf g_mark x == pf g_sweep x == successors g_sweep x
@@ -353,73 +363,10 @@ let mark_preserves_field_read_forall
     FStar.Classical.forall_intro f
 #pop-options
 
-/// mark preserves no_scan_invariant
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
-let mark_preserves_no_scan_invariant
-  (h_init: heap{well_formed_heap h_init /\ no_scan_invariant h_init})
-  (st: seq obj_addr{stack_props h_init st})
-  : Lemma (no_scan_invariant (mark h_init st))
-  = let h_mark = mark h_init st in
-    mark_aux_preserves_objects h_init st heap_words;
-    // Establish universal preservation facts individually
-    let aux1 (src: obj_addr) : Lemma
-      (requires Seq.mem src (objects zero_addr h_init))
-      (ensures is_no_scan src h_mark == is_no_scan src h_init /\
-               wosize_of_object src h_mark == wosize_of_object src h_init /\
-               (~(is_blue src h_init) ==> ~(is_blue src h_mark)) /\
-               (is_blue src h_init ==> is_blue src h_mark) /\
-               (forall (idx:nat).
-                 idx < U64.v (wosize_of_object src h_init) /\
-                 U64.v src + idx * 8 < heap_size ==>
-                 read_word h_mark (U64.uint_to_t (U64.v src + idx * 8)) ==
-                 read_word h_init (U64.uint_to_t (U64.v src + idx * 8))))
-    = mark_preserves_is_no_scan h_init st src;
-      mark_preserves_wosize h_init st src;
-      (if not (is_blue src h_init) then mark_no_new_blue h_init st src
-       else mark_preserves_blue h_init st src);
-      mark_preserves_field_read_forall h_init st src
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires aux1);
-    // Reveal and conclude
-    reveal_opaque (`%no_scan_invariant) (no_scan_invariant h_init);
-    no_scan_invariant_intro h_mark
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// Shared helper: prove white object's field doesn't point to blue object
 /// ---------------------------------------------------------------------------
 /// Split into sub-cases for small Z3 queries.
-
-/// Sub-case: no_scan object has no pointer fields (contradiction branch)
-#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
-private let sweep_field_no_scan_contradiction
-  (h_mark h_sweep: heap) (x: obj_addr) (i: nat) (fp: U64.t)
-  : Lemma
-    (requires
-      well_formed_heap h_mark /\
-      no_scan_invariant h_mark /\
-      fp_in_heap fp h_mark /\
-      h_sweep == fst (sweep h_mark fp) /\
-      objects zero_addr h_sweep == objects zero_addr h_mark /\
-      Seq.mem x (objects zero_addr h_mark) /\
-      is_black x h_mark /\
-      is_no_scan x h_mark /\
-      i >= 1 /\ i <= U64.v (wosize_of_object x h_mark) /\ i < pow2 64 /\
-      (let iu = U64.uint_to_t i in
-       let field_val = HeapGraph.get_field h_mark x iu in
-       HeapGraph.is_pointer_field field_val))
-    (ensures False)
-  = let iu = U64.uint_to_t i in
-    wf_implies_object_fits h_mark x;
-    HeapGraph.object_fits_to_bound x h_mark;
-    wosize_of_object_bound x h_mark;
-    let idx = U64.v iu - 1 in
-    assert (idx < U64.v (wosize_of_object x h_mark));
-    HeapGraph.get_field_addr_eq h_mark x iu;
-    colors_exclusive x h_mark;
-    assert (~(is_blue x h_mark));
-    no_scan_invariant_elim h_mark x idx
-#pop-options
 
 /// Sub-case: pointer field → successor was black → contradiction with blue
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
@@ -477,13 +424,13 @@ private let sweep_post_field_property
       well_formed_heap h_mark /\
       noGreyObjects h_mark /\
       tri_color_invariant h_mark /\
-      no_scan_invariant h_mark /\
       no_pointer_to_blue h_mark /\
       fp_in_heap fp h_mark /\
       h_sweep == fst (sweep h_mark fp) /\
       objects zero_addr h_sweep == objects zero_addr h_mark /\
       is_vertex_set (HeapGraph.coerce_to_vertex_list (objects zero_addr h_mark)) /\
       Seq.mem x (objects zero_addr h_sweep) /\ is_white x h_sweep /\
+      fields_constrained h_sweep x /\
       i >= 1 /\ i <= U64.v (wosize_of_object x h_sweep) /\ i < pow2 64)
     (ensures
       (let iu = U64.uint_to_t i in
@@ -513,13 +460,18 @@ private let sweep_post_field_property
     else if U64.v field_val % U64.v mword <> 0 then ()
     else begin
       assert (HeapGraph.is_pointer_field field_val);
-      if is_no_scan x h_mark then
-        sweep_field_no_scan_contradiction h_mark h_sweep x i fp
-      else begin
-        sweep_field_black_successor_not_blue h_mark h_sweep x i fp;
-        // resolution is stable across sweep (headers keep tag and size)
-        sweep_preserves_resolve_field h_mark fp x iu
-      end
+      // A no-scan source is unconstrained: `fields_constrained h_sweep x` rules
+      // it out, and sweep preserves the tag of a black object.
+      sweep_preserves_tag_black h_mark fp x;
+      hd_address_spec x;
+      tag_of_object_spec x h_mark;
+      tag_of_object_spec x h_sweep;
+      is_no_scan_spec x h_mark;
+      is_no_scan_spec x h_sweep;
+      assert (~(is_no_scan x h_mark));
+      sweep_field_black_successor_not_blue h_mark h_sweep x i fp;
+      // resolution is stable across sweep (headers keep tag and size)
+      sweep_preserves_resolve_field h_mark fp x iu
     end
 #pop-options
 
@@ -532,7 +484,6 @@ let sweep_post_sweep_strong h_init st fp =
   mark_preserves_wf h_init st;
   mark_no_grey_remains h_init st;
   mark_preserves_no_pointer_to_blue h_init st;
-  mark_preserves_no_scan_invariant h_init st;
   mark_aux_preserves_objects h_init st heap_words;
   assert (objects zero_addr h_mark == objects zero_addr h_init);
   assert (fp_in_heap fp h_mark);
@@ -554,7 +505,8 @@ let sweep_post_sweep_strong h_init st fp =
 
   // Phase 3: Inner quantifier — delegated to shared helper
   let aux (x: obj_addr) (i: nat) : Lemma
-    (requires Seq.mem x (objects zero_addr h_sweep) /\ is_white x h_sweep)
+    (requires Seq.mem x (objects zero_addr h_sweep) /\ is_white x h_sweep /\
+              fields_constrained h_sweep x)
     (ensures
       (i >= 1 /\ i <= U64.v (wosize_of_object x h_sweep) /\ i < pow2 64) ==>
       (let iu = U64.uint_to_t i in
@@ -570,6 +522,7 @@ let sweep_post_sweep_strong h_init st fp =
   let wrap (x: obj_addr) : Lemma
     (forall (i: nat).
       Seq.mem x (objects zero_addr h_sweep) /\ is_white x h_sweep /\
+      fields_constrained h_sweep x /\
       i >= 1 /\ i <= U64.v (wosize_of_object x h_sweep) /\ i < pow2 64 ==>
       (let iu = U64.uint_to_t i in
        let field_val = HeapGraph.get_field h_sweep x iu in
@@ -858,7 +811,21 @@ let full_gc_correctness_through_coalesce
     objects_is_vertex_set h_mark;
     HeapGraph.successors_eq_pointer_fields h_mark (objects zero_addr h_mark) x;
     // get_pointer_fields h_mark x == get_pointer_fields h_sweep x
-    sweep_preserves_edges h_mark fp x;
+    //
+    // A no-scan object has no fields to preserve: both sides enumerate the
+    // empty sequence, so all that is needed is that the tag survives sweep.
+    (if is_no_scan x h_mark then begin
+       sweep_preserves_tag_black h_mark fp x;
+       sweep_preserves_wosize_black h_mark fp x;
+       GC.Spec.Heap.hd_address_spec x;
+       tag_of_object_spec x h_mark;
+       tag_of_object_spec x h_sweep;
+       is_no_scan_spec x h_mark;
+       is_no_scan_spec x h_sweep;
+       assert (is_no_scan x h_sweep);
+       assert (HeapGraph.get_pointer_fields h_mark x == Seq.empty);
+       assert (HeapGraph.get_pointer_fields h_sweep x == Seq.empty)
+     end else sweep_preserves_edges h_mark fp x);
     // get_pointer_fields h_sweep x == get_pointer_fields h_coal x
     coalesce_preserves_edges h_sweep x;
     // successors (create_graph h_coal) x == get_pointer_fields h_coal x
@@ -939,7 +906,6 @@ let mark_post (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) : prop =
   fp_in_heap fp h_init /\
   no_black_objects h_init /\
   no_pointer_to_blue h_init /\
-  no_scan_invariant h_mark /\
   (let g_init = create_graph h_init in
    let roots' = HeapGraph.coerce_to_vertex_list roots in
    graph_wf g_init /\ is_vertex_set roots' /\ subset_vertices roots' g_init.vertices ==>
@@ -966,7 +932,6 @@ let mark_post_elim_fp h_init h_mark roots fp =
   assert (fp_in_heap fp h_init);
   // fp_in_heap depends on objects; since objects are the same, fp_in_heap transfers
   ()
-let mark_post_elim_no_scan h_init h_mark roots fp = ()
 
 /// `mark h_init st` satisfies mark_post
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
@@ -1008,8 +973,6 @@ let mark_satisfies_mark_post h_init st roots fp =
     else ()
   in
   FStar.Classical.forall_intro_2 aux_field;
-  // no_scan_invariant preservation through mark
-  mark_preserves_no_scan_invariant h_init st;
   mark_post_intro h_init h_mark roots fp
 #pop-options
 
@@ -1031,7 +994,6 @@ let sweep_post_sweep_strong_gen h_init h_mark roots fp =
   mark_post_elim_objects h_init h_mark roots fp;
   mark_post_elim_tri_color h_init h_mark roots fp;
   mark_post_elim_fp h_init h_mark roots fp;
-  mark_post_elim_no_scan h_init h_mark roots fp;
 
   // Sweep invariants
   sweep_preserves_wf h_mark fp;
@@ -1041,7 +1003,8 @@ let sweep_post_sweep_strong_gen h_init h_mark roots fp =
 
   // Phase 3: delegated to shared helper
   let aux (x: obj_addr) (i: nat) : Lemma
-    (requires Seq.mem x (objects zero_addr h_sweep) /\ is_white x h_sweep)
+    (requires Seq.mem x (objects zero_addr h_sweep) /\ is_white x h_sweep /\
+              fields_constrained h_sweep x)
     (ensures
       (i >= 1 /\ i <= U64.v (wosize_of_object x h_sweep) /\ i < pow2 64) ==>
       (let iu = U64.uint_to_t i in
@@ -1057,6 +1020,7 @@ let sweep_post_sweep_strong_gen h_init h_mark roots fp =
   let wrap (x: obj_addr) : Lemma
     (forall (i: nat).
       Seq.mem x (objects zero_addr h_sweep) /\ is_white x h_sweep /\
+      fields_constrained h_sweep x /\
       i >= 1 /\ i <= U64.v (wosize_of_object x h_sweep) /\ i < pow2 64 ==>
       (let iu = U64.uint_to_t i in
        let field_val = HeapGraph.get_field h_sweep x iu in
@@ -1147,7 +1111,18 @@ let full_gc_correctness_through_coalesce_gen h_init h_mark roots fp =
     assert (is_white x h_sweep);
     objects_is_vertex_set h_mark;
     HeapGraph.successors_eq_pointer_fields h_mark (objects zero_addr h_mark) x;
-    sweep_preserves_edges h_mark fp x;
+    (if is_no_scan x h_mark then begin
+       sweep_preserves_tag_black h_mark fp x;
+       sweep_preserves_wosize_black h_mark fp x;
+       GC.Spec.Heap.hd_address_spec x;
+       tag_of_object_spec x h_mark;
+       tag_of_object_spec x h_sweep;
+       is_no_scan_spec x h_mark;
+       is_no_scan_spec x h_sweep;
+       assert (is_no_scan x h_sweep);
+       assert (HeapGraph.get_pointer_fields h_mark x == Seq.empty);
+       assert (HeapGraph.get_pointer_fields h_sweep x == Seq.empty)
+     end else sweep_preserves_edges h_mark fp x);
     coalesce_preserves_edges h_sweep x;
     objects_is_vertex_set h_coal;
     HeapGraph.successors_eq_pointer_fields h_coal (objects zero_addr h_coal) x;

@@ -195,6 +195,8 @@ let rec push_children_bounded_preserves_bsp g st obj i ws cap =
           set_object_color_preserves_getWosize_at_hd child g Header.Gray;
           wosize_of_object_spec obj g; wosize_of_object_spec obj g';
           color_change_preserves_objects_mem g child Header.Gray obj;
+          if child = obj then color_preserves_is_no_scan obj g Header.Gray
+          else color_change_preserves_other_is_no_scan child obj g Header.Gray;
 
           if U64.v i < U64.v ws then
             push_children_bounded_preserves_bsp g' st' obj (U64.add i 1UL) ws cap
@@ -215,6 +217,8 @@ let rec push_children_bounded_preserves_bsp g st obj i ws cap =
           set_object_color_preserves_getWosize_at_hd child g Header.Gray;
           wosize_of_object_spec obj g; wosize_of_object_spec obj g';
           color_change_preserves_objects_mem g child Header.Gray obj;
+          if child = obj then color_preserves_is_no_scan obj g Header.Gray
+          else color_change_preserves_other_is_no_scan child obj g Header.Gray;
 
           if U64.v i < U64.v ws then
             push_children_bounded_preserves_bsp g' st obj (U64.add i 1UL) ws cap
@@ -294,6 +298,7 @@ let mark_step_bounded_preserves_bsp
       assert (wosize_of_object obj g1 == ws);
       wf_object_size_bound g obj;
       color_change_preserves_objects_mem g obj Header.Black obj;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_bounded_preserves_bsp g1 st_tail obj 1UL ws cap
     end
 #pop-options

@@ -1158,6 +1158,7 @@ private let sweep_get_pointer_fields_eq
   : Lemma (requires well_formed_heap g /\
                     fp_in_heap fp g /\
                     Seq.mem x (objects zero_addr g) /\
+                    fields_constrained g x /\
                     is_vertex_set (HeapGraph.coerce_to_vertex_list (objects zero_addr g)) /\
                     is_black x g /\
                     U64.v ws == U64.v (wosize_of_object x g) /\

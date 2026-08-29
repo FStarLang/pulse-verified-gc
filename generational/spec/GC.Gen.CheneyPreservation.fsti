@@ -99,43 +99,15 @@ val cheney_collect_preserves_gray_black_objects_on_stack
           (ensures (let res = cheney_collect_spec minor major fp roots in
                     gray_black_objects_on_stack res.mc_major st))
 
-val cheney_promote_preserves_no_scan_invariant
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
-                    no_scan_invariant major /\
-                    minor_no_scan_invariant minor /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp /\
-                    minor_infix_wf minor)
-          (ensures no_scan_invariant (cheney_promote minor major fp roots).major_final)
-
 val cheney_promote_preserves_blue_fields_closed
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    blue_fields_non_infix major /\
+                    blue_fields_closed major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor)
           (ensures blue_fields_closed (cheney_promote minor major fp roots).major_final)
-
-val update_major_pointers_preserves_no_scan_invariant
-  (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major /\
-                    no_scan_invariant major)
-          (ensures no_scan_invariant (update_major_pointers major fwd))
-
-val cheney_collect_preserves_no_scan_invariant
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
-                    no_scan_invariant major /\
-                    minor_no_scan_invariant minor /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp /\
-                     minor_infix_wf minor)
-          (ensures no_scan_invariant (cheney_collect_spec minor major fp roots).mc_major)
 
 /// ---------------------------------------------------------------------------
 /// Forwarding targets classification: in objects or infix
@@ -327,6 +299,8 @@ val cheney_collect_preserves_wfh_from_shape
   : Lemma
     (requires GenInv.collection_heap_shape minor major fp)
     (ensures well_formed_heap
+      (cheney_collect_spec minor major fp roots).mc_major /\
+      blue_fields_closed
       (cheney_collect_spec minor major fp roots).mc_major /\
       blue_fields_non_infix
       (cheney_collect_spec minor major fp roots).mc_major)

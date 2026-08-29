@@ -440,7 +440,7 @@ let rec cheney_scan_preserves_fwd_target_fields_match_state
       assert (fuel >= 1);
       cheney_scan_step minor cs scan fuel;
       let obj = Seq.index cs.cs_queue scan in
-      let wz = minor_wosize minor obj in
+      let wz = minor_scan_wosize minor obj in
       cheney_forward_fields_preserves_fwd_target_fields_match_state minor cs obj 0 wz;
       cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
       Forwarding.cheney_forward_fields_preserves_cob minor cs obj 0 wz;
@@ -477,11 +477,16 @@ let cheney_promote_fwd_target_fields_match
   fwd_target_fields_match_state_elim minor cs2 x j field_addr
 #pop-options
 
+/// Every forwarded minor object has a well-formed, non-blue image in the major
+/// heap whose *scannability matches the source tag*.  The equation rather than
+/// a one-sided `= false` is what lets `GC.Gen.MinorCollectForwarding.Reflection`
+/// conclude `minor_tag minor x < 251` from an edge out of the image: promotion
+/// copies the tag verbatim (`GC.Gen.Promote.promote_object` ends in
+/// `set_promoted_tag ... (minor_tag minor obj)`), so the two agree exactly.
 let fwd_target_not_no_scan_pre (minor: minor_state) (cs: cheney_state)
                                (x: U64.t) : prop =
   cs.cs_fwd x <> 0UL /\
-  Seq.mem x (minor_objects minor) /\
-  minor_tag minor x < 251
+  Seq.mem x (minor_objects minor)
 
 let fwd_target_not_no_scan_match (minor: minor_state) (cs: cheney_state)
                                  (x: U64.t) : prop =
@@ -490,7 +495,7 @@ let fwd_target_not_no_scan_match (minor: minor_state) (cs: cheney_state)
   (let target : obj_addr = cs.cs_fwd x in
    Seq.mem target (objects zero_addr cs.cs_major) /\
    is_blue target cs.cs_major = false /\
-   is_no_scan target cs.cs_major = false /\
+   is_no_scan target cs.cs_major = (minor_tag minor x >= 251) /\
    U64.v (wosize_of_object target cs.cs_major) >= minor_wosize minor x)
 
 let fwd_target_not_no_scan_state (minor: minor_state) (cs: cheney_state) : prop =
@@ -507,7 +512,7 @@ let fwd_target_not_no_scan_state_elim
        (let target : obj_addr = cs.cs_fwd x in
         Seq.mem target (objects zero_addr cs.cs_major) /\
         is_blue target cs.cs_major = false /\
-        is_no_scan target cs.cs_major = false /\
+        is_no_scan target cs.cs_major = (minor_tag minor x >= 251) /\
         U64.v (wosize_of_object target cs.cs_major) >= minor_wosize minor x))
   = assert (fwd_target_not_no_scan_match minor cs x)
 #pop-options
@@ -536,7 +541,7 @@ let fwd_state_extend_infix
       (let target : obj_addr = r.cs_fwd x in
        Seq.mem target (objects zero_addr r.cs_major) /\
        is_blue target r.cs_major = false /\
-       is_no_scan target r.cs_major = false /\
+       is_no_scan target r.cs_major = (minor_tag minor x >= 251) /\
        U64.v (wosize_of_object target r.cs_major) >= minor_wosize minor x))
     = if x = addr then begin
         minor_objects_not_infix minor addr;
@@ -565,7 +570,7 @@ let fwd_target_not_no_scan_initial (minor: minor_state) (major: heap) (fp: U64.t
       (let target : obj_addr = cs0.cs_fwd x in
        Seq.mem target (objects zero_addr cs0.cs_major) /\
        is_blue target cs0.cs_major = false /\
-       is_no_scan target cs0.cs_major = false /\
+       is_no_scan target cs0.cs_major = (minor_tag minor x >= 251) /\
        U64.v (wosize_of_object target cs0.cs_major) >= minor_wosize minor x))
   =
     assert (cs0.cs_fwd x == 0UL);
@@ -597,7 +602,7 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
       (let target : obj_addr = cs'.cs_fwd x in
        Seq.mem target (objects zero_addr cs'.cs_major) /\
        is_blue target cs'.cs_major = false /\
-       is_no_scan target cs'.cs_major = false /\
+       is_no_scan target cs'.cs_major = (minor_tag minor x >= 251) /\
        U64.v (wosize_of_object target cs'.cs_major) >= minor_wosize minor x))
   =
     if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL then begin
@@ -640,7 +645,6 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
             lt256_lt_pow2_64 tag;
             let tag_u = U64.uint_to_t tag in
             assert (U64.v tag_u == tag);
-            assert (tag < 251);
             set_promoted_tag_unfold padded target tag;
             let hdr = hd_address target in
             let new_hdr = makeHeader (getWosize (read_word padded hdr)) White tag_u in
@@ -650,15 +654,17 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
             makeHeader_getTag (getWosize (read_word padded hdr)) White tag_u;
             assert (tag_of_object target res.major_out == tag_u);
             no_scan_tag_val ();
-            assert (U64.v (tag_of_object target res.major_out) < 251);
             assert_norm (251 < pow2 64);
             assert (no_scan_tag == U64.uint_to_t 251);
             assert (U64.v (U64.uint_to_t 251) == 251);
             assert (U64.v no_scan_tag == 251);
-            assert (U64.v (tag_of_object target res.major_out) < U64.v no_scan_tag);
-            assert (U64.gte (tag_of_object target res.major_out) no_scan_tag = false);
+            assert (U64.v (tag_of_object target res.major_out) == tag);
+            // The promoted header carries the source tag verbatim, so the image
+            // is no-scan exactly when the nursery object was.
+            assert (U64.gte (tag_of_object target res.major_out) no_scan_tag
+                      = (tag >= 251));
             is_no_scan_spec target res.major_out;
-            assert (is_no_scan target res.major_out = false);
+            assert (is_no_scan target res.major_out = (minor_tag minor x >= 251));
             assert (U64.v (wosize_of_object target res.major_out) >= minor_wosize minor x)
           end
           else begin
@@ -669,7 +675,7 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
             assert (U64.v (wosize_of_object target cs.cs_major) >= minor_wosize minor x);
             Frame.cheney_forward_normal_preserves_old_nonblue_shape minor cs addr target;
             assert (is_no_scan target cs'.cs_major == is_no_scan target cs.cs_major);
-            assert (is_no_scan target cs'.cs_major = false);
+            assert (is_no_scan target cs'.cs_major = (minor_tag minor x >= 251));
             assert (wosize_of_object target cs'.cs_major == wosize_of_object target cs.cs_major);
             assert (U64.v (wosize_of_object target cs'.cs_major) >= minor_wosize minor x)
           end
@@ -871,7 +877,7 @@ let rec cheney_scan_preserves_fwd_target_not_no_scan_state
     assert (fuel >= 1);
     cheney_scan_step minor cs scan fuel;
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     cheney_forward_fields_preserves_fwd_target_not_no_scan_state minor cs obj 0 wz;
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     Forwarding.cheney_forward_fields_preserves_cob minor cs obj 0 wz;
@@ -883,7 +889,7 @@ let rec cheney_scan_preserves_fwd_target_not_no_scan_state
 #pop-options
 
 #push-options "--z3rlimit 15 --fuel 0 --ifuel 0"
-let cheney_promote_fwd_target_not_no_scan_of_minor_tag_lt
+let cheney_promote_fwd_target_no_scan_iff_minor_tag
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t)
   =
@@ -1291,7 +1297,7 @@ let rec cheney_scan_preserves_fwd_target_extra_fields_state
       assert (fuel >= 1);
       cheney_scan_step minor cs scan fuel;
       let obj = Seq.index cs.cs_queue scan in
-      let wz = minor_wosize minor obj in
+      let wz = minor_scan_wosize minor obj in
       cheney_forward_fields_preserves_fwd_target_extra_fields_state minor cs obj 0 wz;
       cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
       Forwarding.cheney_forward_fields_preserves_cob minor cs obj 0 wz;

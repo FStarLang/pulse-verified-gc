@@ -71,7 +71,6 @@ val update_major_pointers_preserves_no_pointer_to_blue
     (requires
       well_formed_heap_part1 major /\
       well_formed_heap (update_major_pointers major fwd) /\
-      no_scan_invariant (update_major_pointers major fwd) /\
       Mark.no_pointer_to_blue major /\
       Forwarding.fwd_valid_or_infix fwd major /\
       Injectivity.fwd_targets_not_blue fwd major)

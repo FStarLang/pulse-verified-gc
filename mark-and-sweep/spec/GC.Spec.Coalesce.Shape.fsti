@@ -77,15 +77,6 @@ val coalesce_fp_pointer_or_zero (g: heap)
     (ensures (let r = coalesce g in
               snd r = 0UL \/ HeapGraph.is_pointer_field (snd r)))
 
-/// **`no_scan_invariant`**: a live no-scan object has no pointer fields.
-///
-/// Only survivors can be no-scan and non-blue, and coalescing leaves survivors
-/// untouched, so this transfers verbatim from the input heap.
-val coalesce_no_scan_invariant (g: heap)
-  : Lemma
-    (requires post_sweep g /\ no_scan_invariant g)
-    (ensures no_scan_invariant (fst (coalesce g)))
-
 /// **`no_pointer_to_blue`**: nothing live points into the free list.
 ///
 /// `post_sweep_strong` says exactly this of the input heap, for survivors.

@@ -493,7 +493,7 @@ private let rec cheney_scan_preserves_nonblue_origin_inv
   else begin
     cheney_scan_step minor cs scan fuel;
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     cheney_forward_fields_preserves_nonblue_origin_inv major0 minor cs obj 0 wz;
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     cheney_forward_fields_preserves_cob minor cs obj 0 wz;

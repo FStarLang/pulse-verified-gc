@@ -118,6 +118,7 @@ let wfh_part2_implies_blue_fields_closed (g: heap)
             assert (is_pointer_to v (v <: obj_addr));
             field_read_implies_exists_pointing g src wz k (v <: obj_addr);
             assert (exists_field_pointing_to_unchecked g src wz (v <: obj_addr));
+            blue_blocks_scannable_elim g src;
             wfh_part2_elim g src (v <: obj_addr);
             blue_fields_non_infix_elim g src (v <: obj_addr);
             GC.Spec.Object.resolve_non_infix (v <: obj_addr) g

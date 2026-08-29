@@ -511,6 +511,12 @@ let promoted_minor_minor_field_forwarded
     assert (resolve_minor minor ov == dst);
     assert (is_minor_addr dst);
     assert (Seq.mem dst (minor_objects minor));
+    // The premise says the image is scannable; promotion copies the tag, so the
+    // nursery source was scannable too and `j` is inside the scan window.
+    CheneyFields.cheney_promote_fwd_target_no_scan_iff_minor_tag minor major fp roots src;
+    assert (minor_tag minor src < 251);
+    minor_scan_wosize_cases minor src;
+    assert (j < minor_scan_wosize minor src);
     // the stored word may be interior; either way its *raw* form is forwarded
     if is_infix_in_minor minor ov then
       MCFH.minor_field_infix_target_forwarded minor major fp roots src j

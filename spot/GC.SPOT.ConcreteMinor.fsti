@@ -54,3 +54,10 @@ val spot_minor_a_not_infix : unit ->
 
 val spot_minor_heap_shape : unit ->
   Lemma (ensures GenInv.minor_heap_shape spot_minor2)
+
+/// Both nursery objects carry tag 0, so the Cheney scan window
+/// (`GC.Gen.MinorHeap.minor_scan_wosize`) is the whole object body.
+val spot_minor2_scan_wosize : obj:U64.t ->
+  Lemma (requires Seq.mem obj (minor_objects spot_minor2))
+        (ensures minor_scan_wosize spot_minor2 obj ==
+                 minor_wosize spot_minor2 obj)

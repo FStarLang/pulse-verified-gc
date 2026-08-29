@@ -221,6 +221,36 @@ val minor_tag_bound (ms: minor_state) (obj: U64.t)
   : Lemma (minor_tag ms obj < 256)
 
 /// ---------------------------------------------------------------------------
+/// No-Scan Objects
+/// ---------------------------------------------------------------------------
+
+/// The number of fields the collector may scan in a minor object.
+///
+/// An object whose tag is at least `no_scan_tag` (251) holds raw bytes rather
+/// than fields: `string`/`Bytes`, boxed `Int64`/`Int32`/`nativeint`, flat float
+/// arrays, `Bigarray` and custom blocks.  Its contents are ordinary program
+/// data and may hold *any* bit pattern, including words that look exactly like
+/// heap addresses, so a collector must never interpret them as pointers.  For
+/// scanning purposes such an object therefore has no fields at all.
+///
+/// This mirrors the major heap, where `GC.Gen.CombinedGraph.major_object_edges`
+/// yields no edges for a `GC.Spec.Object.is_no_scan` source and
+/// `GC.Gen.Promote.update_all_objects_aux` skips its body.  Using it in
+/// `GC.Gen.Cheney.cheney_scan` is what retired the old nursery hypothesis
+/// `minor_no_scan_invariant`, which asserted that no-scan bodies happen to
+/// contain nothing pointer-shaped — a property real OCaml heaps violate
+/// routinely.  See `docs/known-issues.md`.
+let minor_scan_wosize (ms: minor_state) (obj: U64.t) : GTot nat =
+  if minor_tag ms obj >= 251 then 0 else minor_wosize ms obj
+
+/// A scanned object is scanned in full; an unscanned one has no fields.
+val minor_scan_wosize_cases (ms: minor_state) (obj: U64.t)
+  : Lemma ((minor_tag ms obj >= 251 ==> minor_scan_wosize ms obj == 0) /\
+           (minor_tag ms obj < 251 ==>
+              minor_scan_wosize ms obj == minor_wosize ms obj) /\
+           minor_scan_wosize ms obj <= minor_wosize ms obj)
+
+/// ---------------------------------------------------------------------------
 /// Infix Object Detection
 /// ---------------------------------------------------------------------------
 

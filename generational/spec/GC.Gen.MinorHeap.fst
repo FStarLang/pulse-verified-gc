@@ -475,6 +475,9 @@ let minor_tag_bound (ms: minor_state) (obj: U64.t)
       else ()
     else ()
 
+let minor_scan_wosize_cases (ms: minor_state) (obj: U64.t)
+  = ()
+
 /// ---------------------------------------------------------------------------
 /// Wosize bound for minor objects
 /// ---------------------------------------------------------------------------

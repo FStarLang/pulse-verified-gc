@@ -38,8 +38,11 @@ let rec collect_minor_successors
 /// minor_successors
 /// ---------------------------------------------------------------------------
 
+/// A no-scan object has no successors: `minor_scan_wosize` is 0 for it, so the
+/// collection below is empty.  This keeps the reachability spec in step with
+/// `GC.Gen.Cheney.cheney_scan` and `GC.Gen.CombinedGraph.minor_object_edges`.
 let minor_successors (ms: minor_state) (obj: U64.t) : GTot (seq U64.t) =
-  collect_minor_successors ms obj 0 (minor_wosize ms obj)
+  collect_minor_successors ms obj 0 (minor_scan_wosize ms obj)
 
 /// ---------------------------------------------------------------------------
 /// Helper lemma: every element collected is in minor_objects
@@ -79,7 +82,7 @@ let rec collect_minor_successors_valid
 
 let minor_successors_valid (ms: minor_state) (obj: U64.t) (x: U64.t)
   =
-  collect_minor_successors_valid ms obj 0 (minor_wosize ms obj) x
+  collect_minor_successors_valid ms obj 0 (minor_scan_wosize ms obj) x
 
 /// ---------------------------------------------------------------------------
 /// BFS worklist algorithm for reachability
@@ -370,7 +373,7 @@ let rec collect_minor_successors_length
 
 /// Length of minor_successors bounded by wosize
 let minor_successors_length (ms: minor_state) (obj: U64.t)
-  = collect_minor_successors_length ms obj 0 (minor_wosize ms obj)
+  = collect_minor_successors_length ms obj 0 (minor_scan_wosize ms obj)
 
 /// Characterization of collect_minor_successors
 ///

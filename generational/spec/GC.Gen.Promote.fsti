@@ -544,42 +544,7 @@ val promote_object_preserves_wfh_part4
              minor_tag minor obj <> U64.v GC.Spec.Object.infix_tag)
            (ensures (let res = promote_object minor major obj fp wosize in
                      well_formed_heap_part4 res.major_out))
-/// ---------------------------------------------------------------------------
-/// Minor No-Scan Invariant
-/// ---------------------------------------------------------------------------
 
-/// No-scan objects in the minor heap (tag >= 251) contain only raw data:
-/// no field looks like a valid heap pointer. This mirrors the major-heap
-/// no_scan_invariant and ensures that after promotion, the major-heap
-/// no_scan_invariant is maintained for promoted no-scan objects.
-let minor_no_scan_invariant (minor: minor_state) : prop =
-  forall (obj: U64.t) (j: nat).
-    Seq.mem obj (minor_objects minor) /\
-    minor_tag minor obj >= 251 /\
-    j < minor_wosize minor obj ==>
-     ~(is_pointer_field (minor_read_field minor obj j)) /\
-     ~(is_minor_pointer (to_minor_offset (minor_read_field minor obj j)))
-
-/// Allocated (non-blue) objects avoid the free-list chain.
-/// (Defined here for use in the no-scan preservation proof.)
-let allocated_avoid_chain (major: heap) (fp: U64.t) : prop =
-  forall (x: obj_addr).
-    Seq.mem x (objects zero_addr major) /\ ~(is_blue x major) ==>
-    AllocLemmas.chain_avoids major fp x heap_words = true
-
-/// A single Cheney promotion step preserves the no-scan invariant when the
-/// promoted minor heap itself satisfies the analogous no-scan condition.
-val promote_object_preserves_no_scan_invariant
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
-  : Lemma (requires no_scan_invariant major /\
-                    well_formed_heap_part1 major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    allocated_avoid_chain major fp /\
-                    minor_no_scan_invariant minor /\
-                    Seq.mem obj (minor_objects minor) /\
-                    wz == minor_wosize minor obj)
-          (ensures no_scan_invariant (promote_object minor major obj fp wz).major_out)
 /// ---------------------------------------------------------------------------
 /// Heap objects density definition (used by PromoteUpdate)
 /// ---------------------------------------------------------------------------

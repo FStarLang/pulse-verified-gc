@@ -65,7 +65,6 @@ let darken_precondition
   SpecSweep.fp_in_heap fp g /\
   SpecMark.no_black_objects g /\
   SpecMark.no_pointer_to_blue g /\
-  SpecFields.no_scan_invariant g /\
   SpecMark.gray_objects_on_stack g st /\
   (forall (x: obj_addr). Seq.mem x st ==> root_named g roots x) /\
   Seq.length st + Seq.length roots <= cap /\

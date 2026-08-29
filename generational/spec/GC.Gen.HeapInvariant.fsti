@@ -32,7 +32,27 @@ module FreeListShape = GC.Gen.FreeListShape
 
 /// Major-heap shape needed by both minor collection and the following major GC:
 /// object layout/infix well-formedness, free-list validity, color invariants,
-/// and the no-scan/no-pointer-to-blue safety conditions.
+/// and the no-pointer-to-blue safety condition.
+///
+/// A *no-scan* object (`tag >= 251`: a string, `Bytes.t`, `Bigarray` payload or
+/// custom block) may hold arbitrary bytes, including words that spell a
+/// perfectly well-formed heap address.  Parts 2 and 3 of `well_formed_heap` are
+/// guarded by `GC.Spec.Fields.fields_constrained`, so nothing is demanded of
+/// those words -- matching the extracted collector, which never reads them, and
+/// `GC.Spec.HeapGraph.get_pointer_fields`, which returns `Seq.empty` for such an
+/// object.  `GC.SPOT.NoScanMajor` exhibits a heap that satisfies this shape and
+/// would have been rejected before, so the relaxation is not vacuous.
+///
+/// The relaxation costs one clause.  `GC.Gen.Promote.blue_fields_closed` used to
+/// follow from part 2 alone; a *blue* no-scan block is now unconstrained, so it
+/// no longer does, and `major_heap_shape` carries `blue_fields_closed major`
+/// outright.  That is not a strengthening --- it was derivable before --- and it
+/// is re-established after a major collection by
+/// `GC.Gen.PostCollectionShape.coalesce_blue_fields_closed`, which reads
+/// `GC.Spec.Fields.blue_blocks_scannable` off `GC.Spec.Coalesce.
+/// coalesce_blue_blocks_scannable`: coalescing gives every free block a fresh
+/// tag-0 header, so a blue no-scan block exists only transiently between sweep
+/// and coalesce.
 ///
 /// Interior (infix) pointers in *live* major fields are allowed.  A white, gray
 /// or black object may hold a pointer into the middle of a closure, which is how
@@ -80,11 +100,25 @@ val major_heap_shape (major: heap) (fp: U64.t) : prop
 /// Cross-generation safety: any field of an allocated minor object that already
 /// looks like a major-heap pointer must target a live non-blue major object.
 /// This is what lets promotion preserve `Mark.no_pointer_to_blue`.
+///
+/// Quantified over the *scan window* `GC.Gen.MinorHeap.minor_scan_wosize`, not
+/// the whole body: a tag >= No_scan_tag nursery block holds raw data whose
+/// words routinely look like major addresses, and nothing may be assumed about
+/// them.  That is sound because such a block promotes to a no-scan major
+/// object, whose body `Mark.no_pointer_to_blue` also ignores (it is guarded by
+/// `GC.Spec.Fields.fields_constrained`).
 [@@"opaque_to_smt"]
 val minor_major_fields_no_blue (minor: minor_state) (major: heap) : prop
 
-/// Minor-heap shape: bump/layout validity, runtime guard completeness, infix
-/// validity, and the minor analogue of the no-scan raw-data invariant.
+/// Minor-heap shape: bump/layout validity, runtime guard completeness, and
+/// infix validity.
+///
+/// There is deliberately *no* no-scan clause here.  The nursery scan window is
+/// `GC.Gen.MinorHeap.minor_scan_wosize`, which is 0 on a tag >= No_scan_tag
+/// object, so the collector never reads a raw-data body and nothing needs to be
+/// assumed about its contents -- exactly mirroring the major heap, where
+/// `GC.Spec.Fields.fields_constrained` guards the corresponding clauses of
+/// `well_formed_heap`.
 [@@"opaque_to_smt"]
 val minor_heap_shape (minor: minor_state) : prop
 /// Non-stack combined heap shape used by minor collection.
@@ -104,7 +138,7 @@ val major_heap_shape_intro (major: heap) (fp: U64.t)
                     Mark.no_black_objects major /\
                     SweepInv.no_gray_objects major /\
                     Mark.no_pointer_to_blue major /\
-                    no_scan_invariant major /\
+                    blue_fields_closed major /\
                     blue_fields_non_infix major)
           (ensures major_heap_shape major fp)
 
@@ -123,21 +157,19 @@ val major_heap_shape_elim (major: heap) (fp: U64.t)
                    Mark.no_black_objects major /\
                    SweepInv.no_gray_objects major /\
                    Mark.no_pointer_to_blue major /\
-                   no_scan_invariant major /\
+                   blue_fields_closed major /\
                    blue_fields_non_infix major)
 
 val minor_heap_shape_elim (minor: minor_state)
   : Lemma (requires minor_heap_shape minor)
            (ensures minor_wf minor /\
                     minor_guards_complete minor /\
-                    minor_infix_wf minor /\
-                    minor_no_scan_invariant minor)
+                    minor_infix_wf minor)
 
 val minor_heap_shape_intro (minor: minor_state)
   : Lemma (requires minor_wf minor /\
                     minor_guards_complete minor /\
-                    minor_infix_wf minor /\
-                    minor_no_scan_invariant minor)
+                    minor_infix_wf minor)
           (ensures minor_heap_shape minor)
 
 val minor_major_fields_no_blue_no_pointer_fields
@@ -146,7 +178,7 @@ val minor_major_fields_no_blue_no_pointer_fields
       (requires
         (forall (obj:U64.t) (j:nat).
           Seq.mem obj (minor_objects minor) /\
-          j < minor_wosize minor obj ==>
+          j < minor_scan_wosize minor obj ==>
           ~(is_pointer_field (minor_read_field minor obj j))))
       (ensures minor_major_fields_no_blue minor major)
 
@@ -154,7 +186,7 @@ val minor_major_fields_no_blue_elim (minor: minor_state) (major: heap)
   (obj: U64.t) (j: nat)
   : Lemma (requires minor_major_fields_no_blue minor major /\
                      Seq.mem obj (minor_objects minor) /\
-                     j < minor_wosize minor obj /\
+                     j < minor_scan_wosize minor obj /\
                      is_pointer_field (minor_read_field minor obj j))
            (ensures Seq.mem ((minor_read_field minor obj j) <: obj_addr)
                              (objects zero_addr major) /\

@@ -161,10 +161,13 @@ let color_change_preserves_wf g obj c =
   let header_agree (h: obj_addr) : Lemma
     (is_infix h g' == is_infix h g /\
      is_closure h g' == is_closure h g /\
+     GC.Spec.Object.is_no_scan h g' == GC.Spec.Object.is_no_scan h g /\
      wosize_of_object h g' == wosize_of_object h g /\
      GC.Spec.Object.resolve_object h g' == GC.Spec.Object.resolve_object h g)
   = color_change_preserves_is_infix obj h g c;
     color_change_preserves_is_closure obj h g c;
+    (if h = obj then GC.Spec.Object.color_preserves_is_no_scan obj g c
+     else GC.Spec.Object.color_change_preserves_other_is_no_scan obj h g c);
     color_change_preserves_wosize_any obj h g c;
     color_change_preserves_resolve obj h g c
   in
@@ -183,6 +186,7 @@ let color_change_preserves_wf g obj c =
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec push_children_preserves_wf g st obj i ws
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
+                  fields_constrained g obj /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures well_formed_heap (fst (push_children g st obj i ws)))
@@ -226,6 +230,8 @@ let rec push_children_preserves_wf g st obj i ws
         wosize_of_object_spec obj g;
         wosize_of_object_spec obj g';
         assert (wosize_of_object obj g' == wosize_of_object obj g);
+        if child = obj then color_preserves_is_no_scan obj g Header.Gray
+        else color_change_preserves_other_is_no_scan child obj g Header.Gray;
         if U64.v i < U64.v ws then
           push_children_preserves_wf g' st' obj (U64.add i 1UL) ws
         else ()
@@ -246,6 +252,7 @@ let rec push_children_preserves_wf g st obj i ws
 let rec push_children_preserves_stack_props g st obj i ws
   : Lemma (requires well_formed_heap g /\ stack_props g st /\
                   is_black obj g /\ Seq.mem obj (objects zero_addr g) /\
+                  fields_constrained g obj /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ~(Seq.mem obj st))
@@ -301,7 +308,8 @@ let rec push_children_preserves_stack_props g st obj i ws
         set_object_color_preserves_getWosize_at_hd child g Header.Gray;
         wosize_of_object_spec obj g; wosize_of_object_spec obj g';
         color_change_preserves_objects_mem g child Header.Gray obj;
-        
+        if child = obj then color_preserves_is_no_scan obj g Header.Gray
+        else color_change_preserves_other_is_no_scan child obj g Header.Gray;
         if U64.v i < U64.v ws then
           push_children_preserves_stack_props g' st' obj (U64.add i 1UL) ws
         else ()
@@ -466,12 +474,14 @@ let mark_step_preserves_stack_props g st =
     let pcsp_call () : Lemma
       (requires well_formed_heap g1 /\ stack_props g1 st_tail /\
                 is_black obj g1 /\ Seq.mem obj (objects zero_addr g1) /\
+                fields_constrained g1 obj /\
                 U64.v ws <= U64.v (wosize_of_object obj g1) /\
                 U64.v (wosize_of_object obj g1) < pow2 54 /\
                 ~(Seq.mem obj st_tail))
       (ensures (let (g', st') = push_children g1 st_tail obj 1UL ws in stack_props g' st'))
     = push_children_preserves_stack_props g1 st_tail obj 1UL ws
     in
+    color_preserves_is_no_scan obj g Header.Black;
     pcsp_call ()
   end
 #pop-options
@@ -499,6 +509,7 @@ let mark_step_preserves_wf g st =
   wosize_of_object_spec obj g;
   wosize_of_object_spec obj g';
   assert (wosize_of_object obj g' == wosize_of_object obj g);
+  color_preserves_is_no_scan obj g Header.Black;
   if is_no_scan obj g then ()
   else
     push_children_preserves_wf g' (Seq.tail st) obj 1UL ws
@@ -514,6 +525,7 @@ let no_pointer_to_blue_intro_from_fields
   (field_no_blue: (src:obj_addr -> dst:obj_addr -> j:nat -> Lemma
     (requires Seq.mem src (objects zero_addr g) /\
               ~(is_blue src g) /\
+              fields_constrained g src /\
               j < U64.v (wosize_of_object src g) /\
               U64.v src + j * 8 + 8 <= heap_size /\
               is_pointer_to
@@ -524,6 +536,7 @@ let no_pointer_to_blue_intro_from_fields
   let aux (src dst: obj_addr)
     : Lemma (requires Seq.mem src (objects zero_addr g) /\
                       ~(is_blue src g) /\
+                      fields_constrained g src /\
                       points_to g src dst)
             (ensures ~(is_blue (GC.Spec.Object.resolve_object dst g) g))
     =
@@ -874,6 +887,7 @@ val push_children_preserves_non_black : (g: heap) -> (st: seq obj_addr) ->
                                          (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> 
                                          (ws: U64.t) -> (objs: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
+                  fields_constrained g obj /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\ objects zero_addr g == objs)
         (ensures (let (g', _) = push_children g st obj i ws in
@@ -929,6 +943,8 @@ let rec push_children_preserves_non_black g st obj i ws objs =
           color_change_preserves_objects_mem g child Header.Gray obj;
           set_object_color_preserves_getWosize_at_hd child g Header.Gray;
           wosize_of_object_spec obj g; wosize_of_object_spec obj g';
+          (if child = obj then color_preserves_is_no_scan obj g Header.Gray
+           else color_change_preserves_other_is_no_scan child obj g Header.Gray);
           push_children_preserves_non_black g' st' obj (U64.add i 1UL) ws objs
         end else ()
       end else begin
@@ -978,6 +994,7 @@ let mark_step_decreases_non_black g st =
     wosize_of_object_bound obj g;
     set_object_color_preserves_getWosize_at_hd obj g Header.Black;
     wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+    color_preserves_is_no_scan obj g Header.Black;
     push_children_preserves_non_black g1 (Seq.tail st) obj 1UL ws objs
   end
 #pop-options
@@ -1050,6 +1067,7 @@ let rec push_children_no_new_white g st obj i ws x
   : Lemma (requires ~(is_white x g) /\ Seq.mem x (objects zero_addr g) /\
                   well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
+                  fields_constrained g obj /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures ~(is_white x (fst (push_children g st obj i ws))))
         (decreases (U64.v ws - U64.v i))
@@ -1097,6 +1115,7 @@ let rec push_children_no_new_white g st obj i ws x
         color_change_preserves_objects_mem g child Header.Gray obj;
         color_change_preserves_objects_mem g child Header.Gray x;
         let st' = Seq.cons child st in
+        (if child = obj then color_preserves_is_no_scan obj g Header.Gray else color_change_preserves_other_is_no_scan child obj g Header.Gray);
         if U64.v i < U64.v ws then
           push_children_no_new_white g' st' obj (U64.add i 1UL) ws x
         else ()
@@ -1166,6 +1185,7 @@ let rec push_children_grays_white_at_field (g: heap) (st: seq obj_addr) (obj: ob
   (i: U64.t{U64.v i >= 1}) (ws: U64.t) (j: U64.t) (child: obj_addr)
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                     U64.v ws <= U64.v (wosize_of_object obj g) /\
+                    fields_constrained g obj /\
                     U64.v (wosize_of_object obj g) < pow2 54 /\
                     U64.v j >= U64.v i /\ U64.v j <= U64.v ws /\
                     HeapGraph.get_field g obj j == child /\
@@ -1206,6 +1226,7 @@ let rec push_children_grays_white_at_field (g: heap) (st: seq obj_addr) (obj: ob
           set_object_color_preserves_getWosize_at_hd rc g Header.Gray;
           wosize_of_object_spec obj g; wosize_of_object_spec obj g';
           let st' = Seq.cons rc st in
+          (if rc = obj then color_preserves_is_no_scan obj g Header.Gray else color_change_preserves_other_is_no_scan rc obj g Header.Gray);
           if U64.v i < U64.v ws then
             push_children_no_new_white g' st' obj (U64.add i 1UL) ws rc
           else ()
@@ -1246,6 +1267,7 @@ let rec push_children_grays_white_at_field (g: heap) (st: seq obj_addr) (obj: ob
               end else ()
             end;
             let st' = Seq.cons c st in
+            (if c = obj then color_preserves_is_no_scan obj g Header.Gray else color_change_preserves_other_is_no_scan c obj g Header.Gray);
             if U64.v i < U64.v ws then
               push_children_grays_white_at_field g' st' obj (U64.add i 1UL) ws j child
             else ()
@@ -1290,6 +1312,7 @@ let rec push_children_preserves_points_to g st obj i ws b child
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem b (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
+                  fields_constrained g obj /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   points_to g' b child == points_to g b child))
@@ -1327,6 +1350,7 @@ let rec push_children_preserves_points_to g st obj i ws b child
         set_object_color_preserves_getWosize_at_hd c g Header.Gray;
         wosize_of_object_spec obj g; wosize_of_object_spec obj g';
         let st' = Seq.cons c st in
+        (if c = obj then color_preserves_is_no_scan obj g Header.Gray else color_change_preserves_other_is_no_scan c obj g Header.Gray);
         if U64.v i < U64.v ws then
           push_children_preserves_points_to g' st' obj (U64.add i 1UL) ws b child
         else ()
@@ -1349,6 +1373,7 @@ let rec push_children_preserves_points_to g st obj i ws b child
 let rec push_children_black_backward g st obj i ws b
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
+                  fields_constrained g obj /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   is_black b (fst (push_children g st obj i ws)))
         (ensures is_black b g)
@@ -1378,6 +1403,7 @@ let rec push_children_black_backward g st obj i ws b
         wosize_of_object_spec obj g; wosize_of_object_spec obj g';
         let st' = Seq.cons c st in
         if U64.v i < U64.v ws then begin
+          (if c = obj then color_preserves_is_no_scan obj g Header.Gray else color_change_preserves_other_is_no_scan c obj g Header.Gray);
           push_children_black_backward g' st' obj (U64.add i 1UL) ws b;
           // is_black b g' → is_black b g
           if b = c then begin
@@ -1421,6 +1447,7 @@ let rec push_children_preserves_is_no_scan g st obj i ws b
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem b (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
+                  fields_constrained g obj /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   is_no_scan b g' == is_no_scan b g))
@@ -1455,6 +1482,7 @@ let rec push_children_preserves_is_no_scan g st obj i ws b
         else
           color_change_preserves_other_is_no_scan c b g Header.Gray;
         let st' = Seq.cons c st in
+        (if c = obj then color_preserves_is_no_scan obj g Header.Gray else color_change_preserves_other_is_no_scan c obj g Header.Gray);
         if U64.v i < U64.v ws then
           push_children_preserves_is_no_scan g' st' obj (U64.add i 1UL) ws b
         else ()
@@ -1476,6 +1504,7 @@ let rec push_children_preserves_is_no_scan g st obj i ws b
 let rec push_children_preserves_objects g st obj i ws
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
+                  fields_constrained g obj /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   objects zero_addr g' == objects zero_addr g))
@@ -1505,6 +1534,7 @@ let rec push_children_preserves_objects g st obj i ws
         set_object_color_preserves_getWosize_at_hd c g Header.Gray;
         wosize_of_object_spec obj g; wosize_of_object_spec obj g';
         let st' = Seq.cons c st in
+        (if c = obj then color_preserves_is_no_scan obj g Header.Gray else color_change_preserves_other_is_no_scan c obj g Header.Gray);
         if U64.v i < U64.v ws then
           push_children_preserves_objects g' st' obj (U64.add i 1UL) ws
         else ()
@@ -1528,6 +1558,7 @@ val push_children_preserves_density : (g: heap) -> (st: seq obj_addr) -> (obj: o
   Lemma (requires well_formed_heap g /\ SweepInv.heap_objects_dense g /\
                   Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
+                  fields_constrained g obj /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures SweepInv.heap_objects_dense (fst (push_children g st obj i ws)))
         (decreases (U64.v ws - U64.v i))
@@ -1558,6 +1589,7 @@ let rec push_children_preserves_density g st obj i ws =
         set_object_color_preserves_getWosize_at_hd c g Header.Gray;
         wosize_of_object_spec obj g; wosize_of_object_spec obj g';
         let st' = Seq.cons c st in
+        (if c = obj then color_preserves_is_no_scan obj g Header.Gray else color_change_preserves_other_is_no_scan c obj g Header.Gray);
         if U64.v i < U64.v ws then
           push_children_preserves_density g' st' obj (U64.add i 1UL) ws
         else ()
@@ -1588,6 +1620,7 @@ let mark_step_preserves_density g st =
   set_object_color_preserves_getWosize_at_hd obj g Header.Black;
   wosize_of_object_spec obj g; wosize_of_object_spec obj g';
   color_change_preserves_wf g obj Header.Black;
+  color_preserves_is_no_scan obj g Header.Black;
   if is_no_scan obj g then ()
   else
     push_children_preserves_density g' (Seq.tail st) obj 1UL ws
@@ -1622,6 +1655,7 @@ let mark_preserves_density (g: heap) (st: seq obj_addr)
 let rec push_children_preserves_resolve g st obj i ws addr
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
+                  fields_constrained g obj /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   resolve_object addr g' == resolve_object addr g))
@@ -1651,6 +1685,7 @@ let rec push_children_preserves_resolve g st obj i ws addr
         set_object_color_preserves_getWosize_at_hd c g Header.Gray;
         wosize_of_object_spec obj g; wosize_of_object_spec obj g';
         let st' = Seq.cons c st in
+        (if c = obj then color_preserves_is_no_scan obj g Header.Gray else color_change_preserves_other_is_no_scan c obj g Header.Gray);
         if U64.v i < U64.v ws then
           push_children_preserves_resolve g' st' obj (U64.add i 1UL) ws addr
         else ()
@@ -1692,6 +1727,7 @@ let mark_step_preserves_tri_color g st =
     color_change_preserves_objects_mem g obj Header.Black obj;
     set_object_color_preserves_getWosize_at_hd obj g Header.Black;
     wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+    color_preserves_is_no_scan obj g Header.Black;
     push_children_preserves_objects g1 st' obj 1UL ws
   end;
   assert (objects zero_addr g_final == objs);
@@ -1735,14 +1771,17 @@ let mark_step_preserves_tri_color g st =
       set_object_color_preserves_getWosize_at_hd obj g Header.Black;
       wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
       // resolve_object child g_final == resolve_object child g1 == rc
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_resolve g1 st' obj 1UL ws child;
       assert (resolve_object child g_final == rc);
       if b = obj then begin
         // obj's children are all non-white (resolved) after push_children
+        color_preserves_is_no_scan obj g Header.Black;
         push_children_preserves_points_to g1 st' obj 1UL ws obj child;
         color_change_preserves_points_to_self g obj Header.Black child;
         assert (points_to g obj child);
         color_change_preserves_objects_mem g obj Header.Black obj;
+        color_preserves_is_no_scan obj g Header.Black;
         push_children_obj_children_non_white g1 st' obj child;
         // gives ~(is_white (resolve_object child g1) g_final)
         // resolve_object child g1 = rc, so ~(is_white rc g_final)
@@ -1751,13 +1790,16 @@ let mark_step_preserves_tri_color g st =
         // b ≠ obj
         hd_address_injective b obj;
         color_change_preserves_objects_mem g obj Header.Black b;
+        color_preserves_is_no_scan obj g Header.Black;
         push_children_black_backward g1 st' obj 1UL ws b;
         color_change_preserves_other_color obj b g Header.Black;
         is_black_iff b g; is_black_iff b g1;
         assert (is_black b g);
+        color_preserves_is_no_scan obj g Header.Black;
         push_children_preserves_points_to g1 st' obj 1UL ws b child;
         color_change_preserves_points_to_other g obj Header.Black b child;
         assert (points_to g b child);
+        color_preserves_is_no_scan obj g Header.Black;
         push_children_preserves_is_no_scan g1 st' obj 1UL ws b;
         color_change_preserves_other_is_no_scan obj b g Header.Black;
         assert (~(is_no_scan b g));
@@ -1778,6 +1820,7 @@ let mark_step_preserves_tri_color g st =
           is_white_iff rc g; is_white_iff rc g1;
           assert (~(is_white rc g1));
           color_change_preserves_objects_mem g obj Header.Black rc;
+          color_preserves_is_no_scan obj g Header.Black;
           push_children_no_new_white g1 st' obj 1UL ws rc
         end
       end
@@ -1854,6 +1897,7 @@ let rec mark_aux_preserves_objects g st fuel
       color_change_preserves_objects_mem g obj Header.Black obj;
       set_object_color_preserves_getWosize_at_hd obj g Header.Black;
       wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_objects g1 st_tail obj 1UL ws;
       assert (objects zero_addr (fst (push_children g1 st_tail obj 1UL ws)) == objects zero_addr g1);
       assert (mark_step g st == push_children g1 st_tail obj 1UL ws);
@@ -1894,6 +1938,7 @@ let mark_step_no_new_white g st x =
       color_change_preserves_objects_mem g obj Header.Black obj;
       set_object_color_preserves_getWosize_at_hd obj g Header.Black;
       wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_no_new_white g1 st' obj 1UL ws obj
     end
   end else begin
@@ -1907,6 +1952,7 @@ let mark_step_no_new_white g st x =
       color_change_preserves_objects_mem g obj Header.Black x;
       set_object_color_preserves_getWosize_at_hd obj g Header.Black;
       wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_no_new_white g1 st' obj 1UL ws x
     end
   end
@@ -1946,6 +1992,7 @@ let rec push_children_no_new_blue (g: heap) (st: seq obj_addr) (obj: obj_addr)
   : Lemma (requires well_formed_heap g /\ ~(is_blue x g) /\
                     Seq.mem obj (objects zero_addr g) /\
                     U64.v ws <= U64.v (wosize_of_object obj g) /\
+                    fields_constrained g obj /\
                     U64.v (wosize_of_object obj g) < pow2 54)
           (ensures ~(is_blue x (fst (push_children g st obj i ws))))
           (decreases (U64.v ws - U64.v i))
@@ -1977,6 +2024,7 @@ let rec push_children_no_new_blue (g: heap) (st: seq obj_addr) (obj: obj_addr)
             color_preserves_wosize child g Header.Gray
           else
             color_change_preserves_other_wosize child obj g Header.Gray;
+          (if child = obj then color_preserves_is_no_scan obj g Header.Gray else color_change_preserves_other_is_no_scan child obj g Header.Gray);
           if U64.v i < U64.v ws then
             push_children_no_new_blue g' st' obj (U64.add i 1UL) ws x
         end else begin
@@ -2013,6 +2061,7 @@ let mark_step_no_new_blue g st x =
     set_object_color_preserves_getWosize_at_hd obj g Header.Black;
     wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
     color_change_preserves_objects_mem g obj Header.Black x;
+    color_preserves_is_no_scan obj g Header.Black;
     push_children_no_new_blue g1 st' obj 1UL ws x
   end
 #pop-options
@@ -2049,6 +2098,7 @@ let rec push_children_preserves_blue (g: heap) (st: seq obj_addr) (obj: obj_addr
   : Lemma (requires well_formed_heap g /\ is_blue x g /\
                     Seq.mem obj (objects zero_addr g) /\
                     U64.v ws <= U64.v (wosize_of_object obj g) /\
+                    fields_constrained g obj /\
                     U64.v (wosize_of_object obj g) < pow2 54)
           (ensures is_blue x (fst (push_children g st obj i ws)))
           (decreases (U64.v ws - U64.v i))
@@ -2086,6 +2136,7 @@ let rec push_children_preserves_blue (g: heap) (st: seq obj_addr) (obj: obj_addr
             color_preserves_wosize child g Header.Gray
           else
             color_change_preserves_other_wosize child obj g Header.Gray;
+          (if child = obj then color_preserves_is_no_scan obj g Header.Gray else color_change_preserves_other_is_no_scan child obj g Header.Gray);
           if U64.v i < U64.v ws then
             push_children_preserves_blue g' st' obj (U64.add i 1UL) ws x
         end else begin
@@ -2128,6 +2179,7 @@ let mark_step_preserves_blue g st x =
     set_object_color_preserves_getWosize_at_hd obj g Header.Black;
     wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
     color_change_preserves_objects_mem g obj Header.Black x;
+    color_preserves_is_no_scan obj g Header.Black;
     push_children_preserves_blue g1 st' obj 1UL ws x
   end
 #pop-options
@@ -2789,6 +2841,7 @@ let color_preserves_create_graph obj g c =
 #push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let rec push_children_preserves_create_graph g st obj i ws
   : Lemma (requires U64.v ws <= U64.v (wosize_of_object obj g) /\
+  fields_constrained g obj /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures create_graph (fst (push_children g st obj i ws)) == create_graph g)
         (decreases (U64.v ws - U64.v i))
@@ -2845,6 +2898,7 @@ let rec push_children_preserves_create_graph g st obj i ws
         assert (wosize_of_object obj g' == wosize_of_object obj g);
         
         if U64.v i < U64.v ws then begin
+          (if child = obj then color_preserves_is_no_scan obj g Header.Gray else color_change_preserves_other_is_no_scan child obj g Header.Gray);
           push_children_preserves_create_graph g' (Seq.cons child st) obj (U64.add i 1UL) ws
         end
       end else begin
@@ -2877,6 +2931,7 @@ let mark_step_preserves_create_graph g st =
   color_preserves_wosize obj g Header.Black;
   wosize_of_object_bound obj g;
   let ws = wosize_of_object obj g in
+  color_preserves_is_no_scan obj g Header.Black;
   if is_no_scan obj g then ()
   else
     push_children_preserves_create_graph g' st_tail obj 1UL ws
@@ -2925,6 +2980,7 @@ let color_preserves_object_fits (target: obj_addr) (hd: obj_addr) (g: heap) (c: 
 let rec push_children_preserves_wosize g st obj i ws x
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem x (objects zero_addr g) /\
+                  fields_constrained g obj /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ws == wosize_of_object obj g /\
                   HeapGraph.object_fits_in_heap obj g)
@@ -2962,6 +3018,7 @@ let rec push_children_preserves_wosize g st obj i ws x
         set_object_color_preserves_getWosize_at_hd child g Header.Gray;
         wosize_of_object_spec obj g; wosize_of_object_spec obj g';
         color_preserves_object_fits child obj g Header.Gray;
+        (if child = obj then color_preserves_is_no_scan obj g Header.Gray else color_change_preserves_other_is_no_scan child obj g Header.Gray);
         if U64.v i < U64.v ws then
           push_children_preserves_wosize g' st' obj (U64.add i 1UL) ws x
         else ()
@@ -2983,6 +3040,7 @@ let rec push_children_preserves_wosize g st obj i ws x
 let rec push_children_preserves_get_field g st obj i ws x j
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem x (objects zero_addr g) /\ U64.v j <= U64.v (wosize_of_object x g) /\
+                  fields_constrained g obj /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ws == wosize_of_object obj g /\
                   HeapGraph.object_fits_in_heap obj g)
@@ -3020,6 +3078,7 @@ let rec push_children_preserves_get_field g st obj i ws x j
         wosize_of_object_spec obj g; wosize_of_object_spec obj g';
         wosize_of_object_spec x g; wosize_of_object_spec x g';
         color_preserves_object_fits child obj g Header.Gray;
+        (if child = obj then color_preserves_is_no_scan obj g Header.Gray else color_change_preserves_other_is_no_scan child obj g Header.Gray);
         if U64.v i < U64.v ws then
           push_children_preserves_get_field g' st' obj (U64.add i 1UL) ws x j
         else ()
@@ -3064,6 +3123,7 @@ let mark_step_preserves_get_field g st x j =
     wf_implies_object_fits g obj;
     wosize_of_object_bound obj g;
     color_preserves_object_fits obj obj g Header.Black;
+    color_preserves_is_no_scan obj g Header.Black;
     push_children_preserves_get_field g1 st' obj 1UL ws x j
   end
 #pop-options
@@ -3104,7 +3164,9 @@ let rec mark_aux_preserves_get_field g st fuel x i =
       wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
       wf_implies_object_fits g obj;
       color_preserves_object_fits obj obj g Header.Black;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_objects g1 (Seq.tail st) obj 1UL ws;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_wosize g1 (Seq.tail st) obj 1UL ws x;
       wosize_of_object_spec x g';
       mark_aux_preserves_get_field g' st' (fuel - 1) x i
@@ -3151,7 +3213,9 @@ let rec mark_aux_preserves_wosize g st fuel x =
       wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
       wf_implies_object_fits g obj;
       color_preserves_object_fits obj obj g Header.Black;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_objects g1 (Seq.tail st) obj 1UL ws;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_wosize g1 (Seq.tail st) obj 1UL ws x;
       wosize_of_object_spec x g';
       mark_aux_preserves_wosize g' st' (fuel - 1) x
@@ -3197,7 +3261,9 @@ let rec mark_aux_preserves_is_no_scan g st fuel x =
       wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
       wf_implies_object_fits g obj;
       color_preserves_object_fits obj obj g Header.Black;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_objects g1 (Seq.tail st) obj 1UL ws;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_is_no_scan g1 (Seq.tail st) obj 1UL ws x;
       mark_aux_preserves_is_no_scan g' st' (fuel - 1) x
     end
@@ -3302,7 +3368,8 @@ let mark_preserves_infix_header (g: heap{well_formed_heap g}) (st: seq obj_addr{
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 let mark_resolve_stable (g: heap{well_formed_heap g}) (st: seq obj_addr{stack_props g st})
     (src: obj_addr) (dst: obj_addr)
-  : Lemma (requires Seq.mem src (objects zero_addr g) /\ points_to g src dst)
+  : Lemma (requires Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
+                    points_to g src dst)
           (ensures GC.Spec.Object.resolve_object dst (mark g st) ==
                    GC.Spec.Object.resolve_object dst g)
   = let gm = mark g st in
@@ -3326,10 +3393,13 @@ let mark_preserves_no_pointer_to_blue g st =
   mark_aux_preserves_objects g st heap_words;
   mark_preserves_wf g st;
   let aux (src: obj_addr) (dst: obj_addr) : Lemma
-    (Seq.mem src (objects zero_addr gm) /\ ~(is_blue src gm) /\ points_to gm src dst ==>
+    (Seq.mem src (objects zero_addr gm) /\ ~(is_blue src gm) /\ fields_constrained gm src /\
+     points_to gm src dst ==>
      ~(is_blue (GC.Spec.Object.resolve_object dst gm) gm))
-  = if Seq.mem src (objects zero_addr gm) && not (is_blue src gm) && points_to gm src dst then begin
+  = if Seq.mem src (objects zero_addr gm) && not (is_blue src gm) &&
+       fields_constrained gm src && points_to gm src dst then begin
       assert (Seq.mem src (objects zero_addr g));
+      mark_preserves_is_no_scan g st src;
       // Prove src was non-blue in g: contrapositive of mark_aux_preserves_blue
       // mark_aux_preserves_blue: is_blue src g → is_blue src gm
       // We have ~(is_blue src gm), so by contrapositive ~(is_blue src g)
@@ -3569,6 +3639,7 @@ let rec mark_aux_backward_inv (g: heap{well_formed_heap g}) (st: seq obj_addr{st
             color_change_preserves_objects_mem g hd Header.Black hd;
             set_object_color_preserves_getWosize_at_hd hd g Header.Black;
             wosize_of_object_spec hd g; wosize_of_object_spec hd g_black;
+            color_preserves_is_no_scan hd g Header.Black;
             push_children_preserves_objects g_black (Seq.tail st) hd 1UL ws;
             assert (objects zero_addr g' == objects zero_addr g)
           end;
@@ -3641,6 +3712,7 @@ let rec mark_aux_backward_inv (g: heap{well_formed_heap g}) (st: seq obj_addr{st
         color_change_preserves_objects_mem g hd Header.Black hd;
         set_object_color_preserves_getWosize_at_hd hd g Header.Black;
         wosize_of_object_spec hd g; wosize_of_object_spec hd g_black';
+        color_preserves_is_no_scan hd g Header.Black;
         push_children_preserves_objects g_black' (Seq.tail st) hd 1UL ws'
       end;
       assert (objects zero_addr g' == objects zero_addr g);

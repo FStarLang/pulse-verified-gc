@@ -46,10 +46,10 @@ val cheney_promote_fwd_target_fields_match
           (U64.uint_to_t (U64.v (prom.fwd_map x) + j * 8))
         == minor_read_field minor x j))
 
-/// A normally-forwarded minor object whose source tag is below No_scan_tag is
-/// not a no-scan object in the final promoted heap.  Infix forwarding targets
-/// are excluded by the `is_infix = false` premise.
-val cheney_promote_fwd_target_not_no_scan_of_minor_tag_lt
+/// The scannability of a normally-forwarded minor object's image in the final
+/// promoted heap is exactly the scannability of its nursery source.  Infix
+/// forwarding targets are excluded by the `is_infix = false` premise.
+val cheney_promote_fwd_target_no_scan_iff_minor_tag
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t)
   : Lemma
@@ -63,14 +63,18 @@ val cheney_promote_fwd_target_not_no_scan_of_minor_tag_lt
                prom.fwd_map x <> 0UL /\
                Seq.mem x (minor_objects minor) /\
                is_val_addr (prom.fwd_map x) /\
-               is_infix (prom.fwd_map x) prom.major_final = false /\
-               minor_tag minor x < 251))
+               is_infix (prom.fwd_map x) prom.major_final = false))
     (ensures
       (let prom = cheney_promote minor major fp roots in
        let target : obj_addr = prom.fwd_map x in
        Seq.mem target (objects zero_addr prom.major_final) /\
        is_blue target prom.major_final = false /\
-       is_no_scan target prom.major_final = false /\
+       // An equation, not `= false`: promotion copies the tag verbatim, so the
+       // image is no-scan exactly when the nursery source was.  The `<==`
+       // direction is what lets `GC.Gen.MinorCollectForwarding.Reflection`
+       // recover `minor_tag minor x < 251` -- and hence
+       // `minor_scan_wosize == minor_wosize` -- from an edge out of the image.
+       is_no_scan target prom.major_final = (minor_tag minor x >= 251) /\
        U64.v (wosize_of_object target prom.major_final) >= minor_wosize minor x))
 
 /// Allocator rounding can leave one extra body word in a promoted block.

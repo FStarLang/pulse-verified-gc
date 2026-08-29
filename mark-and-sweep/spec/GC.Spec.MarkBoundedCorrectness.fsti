@@ -213,7 +213,6 @@ val mark_bounded_satisfies_mark_post
       GC.Spec.Sweep.fp_in_heap fp h_init /\
       no_black_objects h_init /\
       no_pointer_to_blue h_init /\
-      no_scan_invariant h_init /\
       fuel >= count_non_black h_init /\
       (forall (x: obj_addr). Seq.mem x (objects zero_addr h_init) /\
         (is_gray x h_init \/ is_black x h_init) ==> Seq.mem x roots) /\
@@ -289,6 +288,5 @@ val mark_post_from_bounded_mark
       root_props h_init roots /\
       GC.Spec.Sweep.fp_in_heap fp h_init /\
       no_black_objects h_init /\
-      no_pointer_to_blue h_init /\
-      no_scan_invariant h_init)
+      no_pointer_to_blue h_init)
     (ensures Correctness.mark_post h_init h_mark roots fp)

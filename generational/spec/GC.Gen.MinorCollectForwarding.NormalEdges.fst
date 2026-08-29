@@ -186,39 +186,15 @@ let minor_source_edge_not_no_scan
   (minor: minor_state) (major: heap) (fp: U64.t)
   (src: U64.t) (dst: CG.combined_vertex)
   =
-    GenInv.collection_heap_shape_elim minor major fp;
-    GenInv.minor_heap_shape_elim minor;
-    assert (minor_no_scan_invariant minor);
     CG.minor_edge_elim minor major src dst;
-    assert (Seq.mem src (minor_objects minor));
+    // `minor_object_edges` enumerates `minor_scan_wosize` fields, which is 0 on
+    // a no-scan object, so a no-scan source emits no edge at all.  This used to
+    // be a contradiction argument against `minor_no_scan_invariant`.
     let i = FStar.IndefiniteDescription.indefinite_description_ghost nat
-      (fun i -> i < minor_wosize minor src /\
+      (fun i -> i < minor_scan_wosize minor src /\
         CG.classify_minor_field minor major (minor_read_field minor src i) == Some dst) in
-    assert (i < minor_wosize minor src);
-    assert (CG.classify_minor_field minor major (minor_read_field minor src i) == Some dst);
-    if minor_tag minor src >= 251 then begin
-      let field = minor_read_field minor src i in
-      match dst with
-      | CG.MinorV d ->
-        CG.classify_minor_field_inv_minor minor major field d;
-        assert (to_minor_offset field == d);
-        assert (Seq.mem d (minor_objects minor));
-        minor_objects_valid minor d;
-        assert (is_minor_pointer d);
-        assert (is_minor_pointer (to_minor_offset field));
-        assert (~(is_minor_pointer (to_minor_offset field)));
-        assert False
-      | CG.MajorV d ->
-        CG.classify_minor_field_inv_major minor major field d;
-        assert (field == d);
-        assert (Seq.mem (d <: obj_addr) (objects zero_addr major));
-        objects_addresses_gt_start zero_addr major (d <: obj_addr);
-        assert (U64.v d > U64.v zero_addr);
-        assert (U64.v d >= U64.v zero_addr + U64.v mword);
-        assert (is_pointer_field field);
-        assert (~(is_pointer_field field));
-        assert False
-    end
+    assert (i < minor_scan_wosize minor src);
+    minor_scan_wosize_cases minor src
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
@@ -330,7 +306,7 @@ private let normal_minor_source_ready_intro
     assert (Seq.mem (fwd_src <: obj_addr) (objects zero_addr prom.major_final));
     assert (is_blue (fwd_src <: obj_addr) prom.major_final = false);
     minor_source_edge_not_no_scan minor major fp src dst;
-    CheneyFields.cheney_promote_fwd_target_not_no_scan_of_minor_tag_lt
+    CheneyFields.cheney_promote_fwd_target_no_scan_iff_minor_tag
       minor major fp roots src;
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
     assert (is_no_scan (fwd_src <: obj_addr) prom.major_final = false);

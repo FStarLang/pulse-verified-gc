@@ -54,6 +54,7 @@ let mark_step_bounded_preserves_create_graph
       color_change_preserves_objects_mem g obj Header.Black obj;
       set_object_color_preserves_getWosize_at_hd obj g Header.Black;
       wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_create_graph g1 (Seq.tail st) obj 1UL ws
     end
 
@@ -80,6 +81,7 @@ let mark_step_bounded_preserves_wosize
       wf_implies_object_fits g obj;
       wosize_of_object_bound obj g;
       color_preserves_object_fits obj obj g Header.Black;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_wosize g1 (Seq.tail st) obj 1UL ws x
     end
 
@@ -102,6 +104,7 @@ let mark_step_bounded_preserves_resolve
       set_object_color_preserves_getWosize_at_hd obj g Header.Black;
       wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
       wosize_of_object_bound obj g;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_resolve g1 (Seq.tail st) obj 1UL ws x
     end
 
@@ -131,6 +134,7 @@ let mark_step_bounded_preserves_is_no_scan
       wf_implies_object_fits g obj;
       wosize_of_object_bound obj g;
       color_preserves_object_fits obj obj g Header.Black;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_is_no_scan g1 (Seq.tail st) obj 1UL ws x
     end
 
@@ -157,6 +161,7 @@ let mark_step_bounded_preserves_get_field
       wf_implies_object_fits g obj;
       wosize_of_object_bound obj g;
       color_preserves_object_fits obj obj g Header.Black;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_get_field g1 (Seq.tail st) obj 1UL ws x j
     end
 
@@ -185,6 +190,7 @@ let mark_step_bounded_preserves_tri_color g st cap =
     color_change_preserves_objects_mem g obj Header.Black obj;
     set_object_color_preserves_getWosize_at_hd obj g Header.Black;
     wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+    color_preserves_is_no_scan obj g Header.Black;
     push_children_preserves_objects g1 st' obj 1UL ws
   end;
   assert (objects zero_addr g_final == objs);
@@ -219,25 +225,31 @@ let mark_step_bounded_preserves_tri_color g st cap =
       color_change_preserves_objects_mem g obj Header.Black obj;
       set_object_color_preserves_getWosize_at_hd obj g Header.Black;
       wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_resolve g1 st' obj 1UL ws child;
       assert (resolve_object child g_final == rc);
       if b = obj then begin
+        color_preserves_is_no_scan obj g Header.Black;
         push_children_preserves_points_to g1 st' obj 1UL ws obj child;
         color_change_preserves_points_to_self g obj Header.Black child;
         assert (points_to g obj child);
         color_change_preserves_objects_mem g obj Header.Black obj;
+        color_preserves_is_no_scan obj g Header.Black;
         push_children_obj_children_non_white g1 st' obj child;
         assert (~(is_white rc g_final))
       end else begin
         hd_address_injective b obj;
         color_change_preserves_objects_mem g obj Header.Black b;
+        color_preserves_is_no_scan obj g Header.Black;
         push_children_black_backward g1 st' obj 1UL ws b;
         color_change_preserves_other_color obj b g Header.Black;
         is_black_iff b g; is_black_iff b g1;
         assert (is_black b g);
+        color_preserves_is_no_scan obj g Header.Black;
         push_children_preserves_points_to g1 st' obj 1UL ws b child;
         color_change_preserves_points_to_other g obj Header.Black b child;
         assert (points_to g b child);
+        color_preserves_is_no_scan obj g Header.Black;
         push_children_preserves_is_no_scan g1 st' obj 1UL ws b;
         color_change_preserves_other_is_no_scan obj b g Header.Black;
         assert (~(is_no_scan b g));
@@ -255,6 +267,7 @@ let mark_step_bounded_preserves_tri_color g st cap =
           is_white_iff rc g; is_white_iff rc g1;
           assert (~(is_white rc g1));
           color_change_preserves_objects_mem g obj Header.Black rc;
+          color_preserves_is_no_scan obj g Header.Black;
           push_children_no_new_white g1 st' obj 1UL ws rc
         end
       end
@@ -297,6 +310,7 @@ let mark_step_bounded_preserves_points_to
       set_object_color_preserves_getWosize_at_hd obj g Header.Black;
       wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
       wosize_of_object_bound obj g;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_points_to g1 (Seq.tail st) obj 1UL ws src dst
     end
 
@@ -324,6 +338,7 @@ let mark_step_bounded_preserves_blue
       wosize_of_object_bound obj g;
       set_object_color_preserves_getWosize_at_hd obj g Header.Black;
       wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_preserves_blue g1 (Seq.tail st) obj 1UL ws x
     end
 
@@ -344,6 +359,7 @@ let mark_step_bounded_no_new_blue
       wosize_of_object_bound obj g;
       set_object_color_preserves_getWosize_at_hd obj g Header.Black;
       wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+      color_preserves_is_no_scan obj g Header.Black;
       push_children_no_new_blue g1 (Seq.tail st) obj 1UL ws x
     end
 
@@ -353,10 +369,12 @@ let mark_step_bounded_preserves_no_pointer_to_blue
   = let g' = fst (mark_step_bounded g st cap) in
     mark_step_bounded_preserves_objects g st cap;
     let aux (src dst: obj_addr) : Lemma
-      (requires Seq.mem src (objects zero_addr g') /\ ~(is_blue src g') /\ points_to g' src dst)
+      (requires Seq.mem src (objects zero_addr g') /\ ~(is_blue src g') /\
+                fields_constrained g' src /\ points_to g' src dst)
       (ensures ~(is_blue (resolve_object dst g') g'))
     = assert (Seq.mem src (objects zero_addr g));
       mark_step_bounded_preserves_points_to g st cap src dst;
+      mark_step_bounded_preserves_is_no_scan g st cap src;
       assert (points_to g src dst);
       if is_blue src g then
         mark_step_bounded_preserves_blue g st cap src
@@ -368,7 +386,8 @@ let mark_step_bounded_preserves_no_pointer_to_blue
       end
     in
     let aux2 (src dst: obj_addr) : Lemma
-      (Seq.mem src (objects zero_addr g') ==> ~(is_blue src g') ==> points_to g' src dst ==>
+      (Seq.mem src (objects zero_addr g') ==> ~(is_blue src g') ==>
+       fields_constrained g' src ==> points_to g' src dst ==>
        ~(is_blue (resolve_object dst g') g'))
     = FStar.Classical.move_requires (aux src) dst
     in
@@ -399,6 +418,7 @@ let mark_step_bounded_preserves_color_inv
        set_object_color_preserves_getWosize_at_hd obj g Header.Black;
        wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
        wosize_of_object_bound obj g;
+       color_preserves_is_no_scan obj g Header.Black;
        push_children_preserves_wf g1 (Seq.tail st) obj 1UL ws
      end);
     mark_step_bounded_preserves_tri_color g st cap;
@@ -518,13 +538,16 @@ let mark_step_bounded_gray_becomes_black g st cap x =
         set_object_color_preserves_getWosize_at_hd obj g Header.Black;
         wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
         colors_exclusive x g1;
+        color_preserves_is_no_scan obj g Header.Black;
         push_children_no_new_white g1 (Seq.tail st) obj 1UL ws x;
+        color_preserves_is_no_scan obj g Header.Black;
         push_children_no_new_blue g1 (Seq.tail st) obj 1UL ws x;
         push_children_not_blackens g1 (Seq.tail st) obj 1UL ws x;
         is_gray_iff x g1; is_black_iff x g1;
         let g_final = fst (push_children g1 (Seq.tail st) obj 1UL ws) in
         color_change_preserves_objects g obj Header.Black;
         color_change_preserves_objects_mem g obj Header.Black x;
+        color_preserves_is_no_scan obj g Header.Black;
         push_children_preserves_objects g1 (Seq.tail st) obj 1UL ws;
         assert (Seq.mem x (objects zero_addr g_final));
         color_exhaustive x g_final
@@ -1135,67 +1158,6 @@ let mark_bounded_black_is_reachable
 let mark_color_inv_init (h_init: heap)
   = assert (tri_color_invariant h_init)
 
-/// Helper: mark_color_inv preserves no_scan_invariant.
-/// Factored as top-level to get its own SMT query (avoids "incomplete quantifiers").
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
-let mark_color_inv_preserves_no_scan_aux (h_init h_mark: heap) (src: obj_addr) (idx: nat)
-  : Lemma
-    (requires
-      mark_color_inv h_init h_mark /\
-      no_scan_invariant h_init /\
-      Seq.mem src (objects zero_addr h_mark) /\
-      is_no_scan src h_mark /\
-      ~(is_blue src h_mark) /\
-      idx < U64.v (wosize_of_object src h_mark) /\
-      U64.v src + idx * 8 < heap_size)
-    (ensures
-      (let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
-       ~(HeapGraph.is_pointer_field (read_word h_mark field_addr))))
-  = // mark_color_inv gives: objects, wosize, is_no_scan, is_blue, get_field all preserved
-    assert (Seq.mem src (objects zero_addr h_init));
-    assert (is_no_scan src h_init == is_no_scan src h_mark);
-    assert (is_blue src h_init == is_blue src h_mark);
-    // Establish bounds for get_field_addr_eq
-    wf_implies_object_fits h_mark src;
-    HeapGraph.object_fits_to_bound src h_mark;
-    wosize_of_object_bound src h_mark;
-    let i : (j:U64.t{U64.v j >= 1}) = U64.uint_to_t (idx + 1) in
-    // Bridge: get_field == read_word at field address
-    HeapGraph.get_field_addr_eq h_mark src i;
-    HeapGraph.get_field_addr_eq h_init src i;
-    // mark_color_inv: get_field preserved
-    assert (HeapGraph.get_field h_mark src i == HeapGraph.get_field h_init src i);
-    // Therefore read_word h_mark addr == read_word h_init addr
-    let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
-    assert (read_word h_mark field_addr == read_word h_init field_addr);
-    // Use elimination lemma on h_init (blue preserved → ~blue h_init)
-    no_scan_invariant_elim h_init src idx
-#pop-options
-
-#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
-let mark_color_inv_preserves_no_scan (h_init h_mark: heap)
-  : Lemma
-    (requires mark_color_inv h_init h_mark /\ no_scan_invariant h_init)
-    (ensures no_scan_invariant h_mark)
-  = let f (src: obj_addr) (idx: nat) : Lemma
-      (Seq.mem src (objects zero_addr h_mark) /\
-       is_no_scan src h_mark /\
-       ~(is_blue src h_mark) /\
-       idx < U64.v (wosize_of_object src h_mark) /\
-       U64.v src + idx * 8 < heap_size ==>
-       (let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
-        ~(HeapGraph.is_pointer_field (read_word h_mark field_addr))))
-    = if Seq.mem src (objects zero_addr h_mark) &&
-         is_no_scan src h_mark &&
-         not (is_blue src h_mark) &&
-         idx < U64.v (wosize_of_object src h_mark) &&
-         U64.v src + idx * 8 < heap_size
-      then mark_color_inv_preserves_no_scan_aux h_init h_mark src idx
-    in
-    FStar.Classical.forall_intro_2 f;
-    no_scan_invariant_intro h_mark
-#pop-options
-
 /// Main theorem: mark_bounded satisfies mark_post
 ///
 /// Requires one additional precondition vs mark_satisfies_mark_post:
@@ -1213,8 +1175,6 @@ let mark_bounded_satisfies_mark_post
     noGreyObjects_from_no_gray h_mark;
     mark_bounded_reachable_is_black h_init roots cap fuel;
     mark_bounded_black_is_reachable h_init roots cap fuel;
-    // Prove no_scan_invariant h_mark via top-level helper
-    mark_color_inv_preserves_no_scan h_init h_mark;
     let graph = create_graph h_init in
     let roots' = HeapGraph.coerce_to_vertex_list roots in
     // Combine forward + backward into biconditional
@@ -1362,8 +1322,6 @@ let mark_post_from_bounded_mark
       assert (is_gray x h_mark \/ is_black x h_mark)
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires prove_backward);
-    // no_scan_invariant h_mark from mark_color_inv field preservation
-    mark_color_inv_preserves_no_scan h_init h_mark;
     // Combine: mark_post_intro needs the biconditional under implication
     Correctness.mark_post_intro h_init h_mark roots fp
 #pop-options

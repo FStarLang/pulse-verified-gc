@@ -539,7 +539,7 @@ private let rec cheney_scan_frame_field
   else begin
     cheney_scan_step minor cs scan fuel;
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     cheney_forward_fields_frame_field minor cs obj 0 wz src idx;
     cheney_forward_fields_preserves_old_nonblue_shape minor cs obj 0 wz src;
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
@@ -725,7 +725,7 @@ private let rec cheney_scan_frame_header
   else begin
     cheney_scan_step minor cs scan fuel;
     let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
+    let wz = minor_scan_wosize minor obj in
     cheney_forward_fields_frame_header minor cs obj 0 wz src;
     cheney_forward_fields_preserves_old_nonblue_shape minor cs obj 0 wz src;
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;

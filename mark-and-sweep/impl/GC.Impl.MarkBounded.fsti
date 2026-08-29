@@ -298,19 +298,6 @@ val darken_roots_bounded_spec_preserves_no_pointer_to_blue
         SpecMark.no_pointer_to_blue
           (fst (darken_roots_bounded_spec g st roots cap)))
 
-val darken_roots_bounded_spec_preserves_no_scan_invariant
-  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
-  (cap: nat)
-  : Lemma
-      (requires
-        SpecFields.well_formed_heap g /\
-        SpecFields.no_scan_invariant g /\
-        (forall (i:nat). i < Seq.length roots ==>
-          root_points_to_object g (Seq.index roots i)))
-      (ensures
-        SpecFields.no_scan_invariant
-          (fst (darken_roots_bounded_spec g st roots cap)))
-
 /// Darkening only recolours white objects, so it changes neither the set of
 /// allocated objects nor the free-list head.  Both free-list facts therefore
 /// come for free from `darken_roots_bounded_spec_preserves_objects`.

@@ -151,6 +151,7 @@ private let old_major_field_pointer_target_nonblue
       Mark.no_pointer_to_blue major /\
       Seq.mem src (objects zero_addr major) /\
       ~(is_blue src major) /\
+      fields_constrained major src /\
       j < U64.v (wosize_of_object src major) /\
       U64.v src + j * 8 + 8 <= heap_size /\
       (U64.v src + j * 8) % 8 == 0 /\

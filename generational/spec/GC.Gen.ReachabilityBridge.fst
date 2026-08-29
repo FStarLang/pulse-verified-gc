@@ -53,7 +53,7 @@ let minor_no_pointer_to_blue_from_collection_shape
     let aux (obj: U64.t) (j: nat)
       : Lemma
         (requires Seq.mem obj (minor_objects minor) /\
-                  j < minor_wosize minor obj)
+                  j < minor_scan_wosize minor obj)
         (ensures
           (let v = minor_read_field minor obj j in
            is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) ==>
@@ -167,7 +167,7 @@ let reachable_major_valid_nonblue
         | MinorV src ->
           minor_edge_elim minor major src (MajorV dst);
           let inv_aux (i:nat) : Lemma
-            (requires i < minor_wosize minor src /\
+            (requires i < minor_scan_wosize minor src /\
                       classify_minor_field minor major (minor_read_field minor src i) == Some (MajorV dst))
             (ensures minor_read_field minor src i == dst /\ is_val_addr dst /\
                      Seq.mem (dst <: obj_addr) (objects zero_addr major))
@@ -318,7 +318,7 @@ let reachability_bridge
         | MinorV src ->
           minor_edge_elim minor major src (MinorV v);
           let aux (i:nat) : Lemma
-            (requires i < minor_wosize minor src /\
+            (requires i < minor_scan_wosize minor src /\
                       classify_minor_field minor major (minor_read_field minor src i) == Some (MinorV v))
             (ensures resolve_minor minor
                        (to_minor_offset (minor_read_field minor src i)) == v /\

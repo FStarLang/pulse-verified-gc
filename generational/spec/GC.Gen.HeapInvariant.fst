@@ -40,14 +40,14 @@ let major_heap_shape (major: heap) (fp: U64.t) : prop =
   Mark.no_black_objects major /\
   SweepInv.no_gray_objects major /\
   Mark.no_pointer_to_blue major /\
-  no_scan_invariant major /\
+  blue_fields_closed major /\
   blue_fields_non_infix major
 
 [@@"opaque_to_smt"]
 let minor_major_fields_no_blue (minor: minor_state) (major: heap) : prop =
   forall (obj: U64.t) (j: nat).
     Seq.mem obj (minor_objects minor) /\
-    j < minor_wosize minor obj /\
+    j < minor_scan_wosize minor obj /\
     is_pointer_field (minor_read_field minor obj j) ==>
     Seq.mem ((minor_read_field minor obj j) <: obj_addr)
             (objects zero_addr major) /\
@@ -57,8 +57,7 @@ let minor_major_fields_no_blue (minor: minor_state) (major: heap) : prop =
 let minor_heap_shape (minor: minor_state) : prop =
   minor_wf minor /\
   minor_guards_complete minor /\
-  minor_infix_wf minor /\
-  minor_no_scan_invariant minor
+  minor_infix_wf minor
 [@@"opaque_to_smt"]
 let collection_heap_shape (minor: minor_state) (major: heap) (fp: U64.t) : prop =
   major_heap_shape major fp /\
@@ -139,29 +138,11 @@ private let minor_reset_infix_wf (minor: minor_state)
   reveal_opaque (`%minor_infix_wf) (minor_infix_wf reset);
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
-private let minor_reset_no_scan_invariant (minor: minor_state)
-  : Lemma (ensures minor_no_scan_invariant (minor_reset minor))
-  =
-  let reset = minor_reset minor in
-  minor_reset_objects_empty minor;
-  assert (minor_objects reset == Seq.empty);
-  let aux (obj: U64.t) (j: nat)
-    : Lemma (ensures (Seq.mem obj (minor_objects reset) /\
-                      minor_tag reset obj >= 251 /\
-                      j < minor_wosize reset obj ==>
-                      ~(is_pointer_field (minor_read_field reset obj j)) /\
-                      ~(is_minor_pointer (to_minor_offset (minor_read_field reset obj j)))))
-    =
-    minor_reset_objects_not_mem minor obj
-  in
-  FStar.Classical.forall_intro_2 aux
-
 let minor_reset_heap_shape (minor: minor_state)
   =
   let reset = minor_reset minor in
   minor_reset_guards_complete minor;
   minor_reset_infix_wf minor;
-  minor_reset_no_scan_invariant minor;
   reveal_opaque (`%minor_heap_shape) (minor_heap_shape reset)
 
 let minor_reset_minor_major_fields_no_blue (minor: minor_state) (major: heap)
