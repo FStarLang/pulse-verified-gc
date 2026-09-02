@@ -9,21 +9,19 @@
 # Entries should only ever be REMOVED as fixes land, unless a note says why.
 #
 # Provenance, because a baseline is a claim about a specific collector: this
-# list was measured on the reference branch, whose GC differs from this one by
-# exactly one thing -- the allocator fix ("patch 17"), which makes a block
-# declare the size that was requested rather than the size of the free block it
-# came from. Everything else, including upstream's no-scan and infix work, is
-# identical here; verified by diffing the extracted snapshot.
+# list was measured on the reference branch. Its GC snapshot is identical to
+# this one apart from the allocator fix ("patch 17"); the bridge and the
+# runtime patch differ too, so treat the list as a strong starting point
+# rather than a guarantee, and regenerate from a run of this branch.
 #
-# EXPECT ONE NEW FAILURE on the first run:
+# EXPECT ONE NEW FAILURE:
 #
 #     tests/ast-invariants/'test.ml' with 1.1 (native)
 #
-# That is the allocator bug, not a broken pipeline. It parses every .ml file in
-# the OCaml tree and segfaults once major-heap fragmentation makes the allocator
-# hand back a block one word too large; the over-declared header then leaves a
-# phantom field holding 0, which is not a representable OCaml value. Reproduce
-# it directly with:
+# That is the allocator bug ("patch 17"), not a broken pipeline: a free block
+# one word too large is handed over whole, and the header records the block's
+# size rather than the requested size, so the object declares a phantom field
+# holding 0 -- not a representable OCaml value. Reproduce it with:
 #
 #     MIN_EXPANSION_WORDSIZE=8388608 ./test.opt <ocaml-tree-root>
 #
