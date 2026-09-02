@@ -39,6 +39,56 @@ make -C generational/ocaml-integration/tests test # run smoke tests
 make -C generational/ocaml-integration/tests benchmark # run benchmarks
 ```
 
+## Testing against the verified GC
+
+```bash
+# Once: clone and build both OCaml trees (stock, installed + verified, patched).
+# This already produces everything needed to run your own code: the verified
+# runtime/ocamlrun and runtime/libasmrun.a.
+make -C generational/ocaml-integration setup
+
+# Run your own code, bytecode and native.
+sh ci/run-verified.sh prog.ml
+sh ci/run-verified.sh --byte prog.ml
+sh ci/run-verified.sh --native prog.ml
+sh ci/run-verified.sh --stock prog.ml     # stock OCaml, for comparison
+sh ci/run-verified.sh some/dir            # every t*.ml; diffs against
+                                          # expected_output.txt if present
+
+# Smoke tests: the same programs, arguments and heap sizes under each flavour.
+make -C generational/ocaml-integration/tests test          # bytecode
+make -C generational/ocaml-integration/tests test-native   # native
+make -C generational/ocaml-integration/tests correctness    # differential vs stock
+
+# After changing the collector, the bridge, the snapshot or the runtime patch,
+# rebuild the GC and BOTH runtimes. `setup` will not do this -- it skips a tree
+# that already exists.
+make -C generational/ocaml-integration/verified_gc
+make -C generational/ocaml-integration/ocaml-4.14-verified-gen/runtime ocamlrun
+make -C generational/ocaml-integration/ocaml-4.14-verified-gen/runtime libasmrun.a
+```
+
+> **`libasmrun.a` is a separate target.** `make ocamlrun` refreshes only the
+> *bytecode* runtime, so a native test built after it will silently link a
+> stale collector and appear to pass. Always build both.
+
+### How the collector gets swapped in
+
+Simpler than it looks, and worth knowing so results are interpretable.
+
+**Bytecode**: a `.byte` file is portable and contains no collector -- the
+collector is whichever `ocamlrun` you invoke. So compile with the **stock**
+compiler and run with the verified runtime. The very same `.byte` runs on
+either, which is why `--stock` costs nothing and gives a free side-by-side.
+
+**Native**: the collector is archived *inside* `libasmrun.a`, so stock
+`ocamlopt` is pointed at the verified GC's copy with
+`-I .../ocaml-4.14-verified-gen/runtime`. No compiler rebuild needed. Check it
+worked with `nm prog | grep verified_allocate` -- symbols present with the
+`-I`, none without.
+
+Same mechanism the benchmarks in `generational/ocaml-integration/tests` use.
+
 ## Current status
 
 The active development is organized around dependency-scanned builds. The

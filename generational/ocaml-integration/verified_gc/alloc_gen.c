@@ -536,7 +536,7 @@ static void do_full_gc(void) {
     #ifdef NATIVE_CODE
         /* A full GC can be entered without passing through
         * vergc_native_run_minor_collection() */
-        vergc_sync_bump_from_young_ptr();
+        vergc_sync_bump_ref_from_young_ptr();
     #endif
 
     PROF_INC(major_gc_count);
