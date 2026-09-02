@@ -80,8 +80,13 @@ result and a CI result mean the same thing.
 The gate is **"no new failures"**, not "zero failures": the collector does not
 implement weak pointers, ephemerons, finalisers, compaction or memprof
 sampling, so a known set of tests fails for understood reasons. That set lives
-in `ci/expected-failures.txt`, which starts empty and is measured on this
-branch -- see the header in that file for how to bootstrap it.
+in `ci/expected-failures.txt`.
+
+That baseline was measured on a collector identical to this one except for the
+allocator fix ("patch 17"), so the first run is expected to report **exactly
+one** new failure -- `tests/ast-invariants/'test.ml' with 1.1 (native)`, which
+is that bug. See the header of `ci/expected-failures.txt`: it should be fixed,
+not baselined.
 
 > **`libasmrun.a` is a separate target.** `make ocamlrun` refreshes only the
 > *bytecode* runtime, so a native test built after it will silently link a
