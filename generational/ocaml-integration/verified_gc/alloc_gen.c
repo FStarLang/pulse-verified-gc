@@ -533,6 +533,12 @@ static void do_full_gc(void) {
     ensure_heap();
     in_full_gc = 1;
 
+    #ifdef NATIVE_CODE
+        /* A full GC can be entered without passing through
+        * vergc_native_run_minor_collection() */
+        vergc_sync_bump_from_young_ptr();
+    #endif
+
     PROF_INC(major_gc_count);
     PROF_START(major_gc);
     Caml_state->_stat_major_collections++;
