@@ -15,19 +15,27 @@ CFLAGS  += -I$(SNAPSHOT) -I$(SNAPSHOT)/internal \
            -I$(SNAPSHOT)/krmllib -I$(SNAPSHOT)/krmllib/krml -I$(SNAPSHOT)/krmllib/krml/internal
 # Allow access to OCaml runtime internals (for alloc_gen.c)
 CFLAGS  += -I.. -I../ocaml-4.14-verified-gen/runtime -I../ocaml-4.14-verified-gen
+NATIVE_CFLAGS  = $(CFLAGS) -DNATIVE_CODE # TODO: pass -DTARGET_${ARCH} might be a good idea?
 
 # VPATH lets make find .c files in the snapshot directory
 VPATH = $(SNAPSHOT)
 
 OBJECTS = GC_Gen_Impl.o GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.o \
           krmlinit.o compat.o alloc_gen.o
+NATIVE_OBJECTS = $(OBJECTS:.o=.n.o)
 
-all: libvergc_gen.a
+all: libvergc_gen.a libvergc_gen_native.a
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+%.n.o: %.c
+	$(CC) $(NATIVE_CFLAGS) -c $< -o $@
+
 libvergc_gen.a: $(OBJECTS)
+	$(AR) rcs $@ $^
+
+libvergc_gen_native.a: $(NATIVE_OBJECTS)
 	$(AR) rcs $@ $^
 
 clean:
