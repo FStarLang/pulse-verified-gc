@@ -145,7 +145,7 @@ index d9e58bc..33a6bdd 100644
 +    Setup_for_gc;                                                      \
 +    vergc_alloc_hp =                                                   \
 +      (value)verified_allocate_minor((wosize), (uint8_t)(tag));        \
-+    Restore_after_gc;                                                  \                          \
++    Restore_after_gc;                                                  \
 +  }                                                                    \
 +  if (VERGC_SHOULD_WRITE_SMALL_HEADER(vergc_fast_alloc, vergc_alloc_hp)) {\
 +    Hd_hp (vergc_alloc_hp) =                                           \
