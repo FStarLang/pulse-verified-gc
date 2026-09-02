@@ -81,7 +81,7 @@ index b62a579..9fa3887 100644
  libasmrund.$(A): $(libasmrund_OBJECTS)
  	$(call MKLIB,$@, $^)
 diff --git a/runtime/caml/memory.h b/runtime/caml/memory.h
-index d9e58bc..33a6bdd 100644
+index d9e58bc..89602c2 100644
 --- a/runtime/caml/memory.h
 +++ b/runtime/caml/memory.h
 @@ -217,6 +217,34 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
@@ -357,7 +357,7 @@ index 66d1c50..e37a2b6 100644
  }
  
 diff --git a/runtime/minor_gc.c b/runtime/minor_gc.c
-index 18cfe3e..37ae5fb 100644
+index 18cfe3e..890904a 100644
 --- a/runtime/minor_gc.c
 +++ b/runtime/minor_gc.c
 @@ -351,7 +351,12 @@ void caml_oldify_mopup (void)
@@ -395,7 +395,7 @@ index 18cfe3e..37ae5fb 100644
    }
  
    /* Re-do the allocation: we now have enough space in the minor heap. */
-@@ -562,19 +572,47 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -562,19 +572,46 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
  /* Exported for backward compatibility with Lablgtk: do a minor
     collection to ensure that the minor heap is empty.
  */
@@ -438,7 +438,6 @@ index 18cfe3e..37ae5fb 100644
 -  }
 +  if (Caml_state->requested_minor_gc) {
 +     CAMLparam1 (extra_root);
-+     caml_gc_dispatch();
 +     Caml_state->requested_minor_gc = 0;
 +     verified_do_minor_gc();
 +     CAMLdrop;
