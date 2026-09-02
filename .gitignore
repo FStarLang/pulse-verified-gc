@@ -37,3 +37,13 @@ _depgraph/
 
 # Scratch PR description (not part of the repo)
 PR.md
+
+# Local test artifacts from ci/run-testsuite.sh and ci/build-verified-toolchain.sh
+/build-verified-toolchain.log
+/testsuite.log
+/testsuite-report.html
+/testsuite-report.json
+
+# Python bytecode from ci/testsuite_report.py
+__pycache__/
+*.pyc

@@ -63,10 +63,25 @@ make -C generational/ocaml-integration/tests correctness    # differential vs st
 # After changing the collector, the bridge, the snapshot or the runtime patch,
 # rebuild the GC and BOTH runtimes. `setup` will not do this -- it skips a tree
 # that already exists.
-make -C generational/ocaml-integration/verified_gc
-make -C generational/ocaml-integration/ocaml-4.14-verified-gen/runtime ocamlrun
-make -C generational/ocaml-integration/ocaml-4.14-verified-gen/runtime libasmrun.a
+sh ci/build-verified-toolchain.sh
+
+# OCaml's own testsuite -- ~3100 test instances, each in a bytecode and a
+# native variant. Needs the tree's compilers to EXIST, which --full builds
+# (15-40 min); after that a GC change needs only the rebuild above.
+sh ci/build-verified-toolchain.sh --full
+sh ci/run-testsuite.sh
+sh ci/run-testsuite.sh tests/lib-hashtbl   # one directory
 ```
+
+These are the same steps as
+[`.github/workflows/testsuite.yml`](.github/workflows/testsuite.yml), so a local
+result and a CI result mean the same thing.
+
+The gate is **"no new failures"**, not "zero failures": the collector does not
+implement weak pointers, ephemerons, finalisers, compaction or memprof
+sampling, so a known set of tests fails for understood reasons. That set lives
+in `ci/expected-failures.txt`, which starts empty and is measured on this
+branch -- see the header in that file for how to bootstrap it.
 
 > **`libasmrun.a` is a separate target.** `make ocamlrun` refreshes only the
 > *bytecode* runtime, so a native test built after it will silently link a

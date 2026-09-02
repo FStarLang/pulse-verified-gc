@@ -1,0 +1,26 @@
+# Known failures of the verified GC on the OCaml testsuite.
+#
+# The gate is "no NEW failures", not "zero failures": the collector does not
+# implement weak pointers, ephemerons, finalisers, compaction or memprof
+# sampling, so a sizeable set of tests fails for reasons that are expected and
+# understood. Gating on zero would be permanently red and therefore ignored.
+#
+# THIS FILE IS EMPTY ON PURPOSE. A baseline is a claim about *this* branch's
+# collector, so it has to be measured here rather than copied from elsewhere --
+# importing another branch's list would hide a real regression behind a
+# spurious "now passing" line.
+#
+# Bootstrap it from the first run (locally, or from CI's report artifact):
+#
+#   sh ci/build-verified-toolchain.sh --full     # once: world.opt + ocamltest
+#   sh ci/run-testsuite.sh                       # produces testsuite.log
+#   python3 ci/testsuite_report.py --log testsuite.log \
+#       --expected ci/expected-failures.txt --update-expected
+#
+# Then read the list before committing it. Every entry is a claim that a
+# failure is understood and expected; anything you cannot explain is a bug to
+# chase, not a line to add.
+#
+# Entries should only ever be REMOVED as fixes land, unless a note says why.
+# Until this is populated the first run reports every failure as new and exits
+# non-zero -- that is the bootstrap working, not a broken pipeline.

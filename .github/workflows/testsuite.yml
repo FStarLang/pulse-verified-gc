@@ -1,0 +1,181 @@
+name: OCaml testsuite
+
+# Runs OCaml's own testsuite (231 directories, ~3100 test instances, both
+# bytecode and native variants) against the verified GC.
+#
+# Deliberately does NOT install F*: the OCaml integration compiles from the
+# committed generational/snapshot/*.c, so this job only needs a C toolchain.
+# Proof verification lives in verify.yml.
+#
+# The gate is "no NEW failures" rather than "zero failures". The verified GC
+# has a known, documented set of failures (statmemprof, weak/ephemeron --
+# subsystems it does not implement), so a zero-failure gate would be
+# permanently red and would stop being read. ci/expected-failures.txt is the
+# baseline; shrinking it is progress, growing it needs justification.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_baseline:
+        description: 'Also run the suite on stock OCaml for a side-by-side comparison (roughly doubles the runtime)'
+        type: boolean
+        default: false
+
+# An expensive job: don't pile up runs on a busy branch.
+concurrency:
+  group: testsuite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  testsuite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential
+
+      # Cheap, and catches the failure mode this repo is most exposed to:
+      # `make snapshot` overwrites the extracted C by plain cp, so an
+      # unguarded regeneration silently drops the hand patches.
+
+      - name: Build both OCaml trees (stock + verified GC)
+        run: make -C generational/ocaml-integration setup
+
+      # Tee to a file so a build failure is diagnosable from the artifact.
+      # Downloading raw CI logs needs admin rights on the repo, so anything we
+      # want to read after the fact has to be captured here. `pipefail` keeps
+      # the step failing despite the pipe.
+      - name: Build the compiler on the verified GC
+        id: build
+        working-directory: generational/ocaml-integration/ocaml-4.14-verified-gen
+        run: |
+          set -o pipefail
+          make world.opt 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Build ocamltest
+        working-directory: generational/ocaml-integration/ocaml-4.14-verified-gen
+        run: |
+          set -o pipefail
+          make ocamltest 2>&1 | tee -a "$GITHUB_WORKSPACE/build.log"
+
+      # The GC bugs this repo has hit are mostly silent-corruption bugs that
+      # surface as a crash in an unrelated compilation unit, so the useful
+      # signal is *which* unit was being compiled and what the runtime said.
+      - name: Diagnose build failure
+        if: failure()
+        run: |
+          {
+            echo "## Build failed"
+            echo
+            echo "### Faults reported"
+            echo '```'
+            grep -nE 'Segmentation|Fatal error|Aborted|out of memory|internal error' \
+              build.log | tail -20 || echo "(none matched)"
+            echo '```'
+            echo
+            echo "### Last compilation attempted"
+            echo '```'
+            grep -E 'ocamlc|ocamlopt|ocamlrun' build.log | tail -5
+            echo '```'
+            echo
+            echo "### Tail of build log"
+            echo '```'
+            tail -60 build.log
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # `make all` exits non-zero whenever any test fails, which is the normal
+      # state here -- the real verdict comes from the report step below.
+      - name: Run the testsuite
+        id: run
+        continue-on-error: true
+        working-directory: generational/ocaml-integration/ocaml-4.14-verified-gen/testsuite
+        env:
+          OCAMLRUNPARAM: b,v=0
+          TIMEOUT: 120
+        run: make all 2>&1 | tee "$GITHUB_WORKSPACE/testsuite.log"
+
+      - name: Sanity-check that tests actually ran
+        run: |
+          if ! grep -q 'tests considered' testsuite.log; then
+            echo "::error::The suite produced no summary -- it aborted before running tests."
+            tail -40 testsuite.log
+            exit 1
+          fi
+
+      # Optional side-by-side against stock. Off by default: it means building
+      # and running the whole suite a second time.
+      - name: Run the testsuite on stock OCaml (baseline)
+        if: ${{ inputs.run_baseline }}
+        continue-on-error: true
+        working-directory: generational/ocaml-integration/ocaml-4.14-unchanged
+        env:
+          OCAMLRUNPARAM: b,v=0
+          TIMEOUT: 120
+        run: |
+          make ocamltest
+          cd testsuite && make all 2>&1 | tee "$GITHUB_WORKSPACE/stock.log"
+
+      - name: Generate report
+        id: report
+        run: |
+          # NB: capture the script's status, not tee's -- piping into tee would
+          # always report 0 and the gate below would never fire.
+          set +e
+          python3 ci/testsuite_report.py \
+            --log testsuite.log \
+            ${{ inputs.run_baseline && '--baseline-log stock.log' || '' }} \
+            --expected ci/expected-failures.txt \
+            --html testsuite-report.html \
+            --json testsuite-report.json \
+            --title "OCaml testsuite — verified GC (${GITHUB_SHA:0:8})" \
+            > report.txt 2>&1
+          rc=$?
+          set -e
+          cat report.txt
+          echo "verdict=$rc" >> "$GITHUB_OUTPUT"
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## OCaml testsuite — verified GC"
+            echo
+            echo '```'
+            cat report.txt 2>/dev/null || echo "(no report produced)"
+            echo '```'
+            echo
+            echo "Full HTML report is in the **testsuite-report** artifact."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testsuite-report
+          path: |
+            build.log
+            testsuite-report.html
+            testsuite-report.json
+            testsuite.log
+            stock.log
+            report.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail on new failures
+        run: |
+          if [ "${{ steps.report.outputs.verdict }}" != "0" ]; then
+            echo "::error::New test failures that are not in ci/expected-failures.txt."
+            echo "Review the report artifact. If a failure is genuinely expected,"
+            echo "add it to the baseline with a note explaining why."
+            grep 'NEW FAILURE' report.txt || true
+            exit 1
+          fi
+          echo "No regressions against ci/expected-failures.txt."
