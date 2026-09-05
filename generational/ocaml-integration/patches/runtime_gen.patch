@@ -301,16 +301,20 @@ index 9b18f3c..6c90643 100644
        Store_double_flat_field(block, 0, Double_val(accu));
        for (i = 1; i < size; i++){
 diff --git a/runtime/memory.c b/runtime/memory.c
-index 66d1c50..e37a2b6 100644
+index 66d1c50..c11d87e 100644
 --- a/runtime/memory.c
 +++ b/runtime/memory.c
-@@ -464,38 +464,10 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
+@@ -464,38 +464,16 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
                                        uintnat profinfo)
  {
    header_t *hp;
 -  value *new_block;
 -
--  if (wosize > Max_wosize) return 0;
++  /* Both guards below are stock's and were dropped when verified_allocate()
++     replaced caml_fl_allocate(). Without them an oversized or unsatisfiable
++     request could not report failure, so check_oom() below never fired and
++     Out_of_memory was unraisable in this runtime. */
+   if (wosize > Max_wosize) return 0;
 -  CAML_EV_ALLOC(wosize);
 -  hp = caml_fl_allocate (wosize);
 -  if (hp == NULL){
@@ -341,13 +345,14 @@ index 66d1c50..e37a2b6 100644
 -    caml_request_major_slice ();
 -  }
 +  hp = (header_t *) verified_allocate(wosize, (uint8_t)tag);
++  if (hp == NULL) return 0;
 +  caml_allocated_words += Whsize_wosize(wosize);
 +  Hd_hp (hp) =
 +    Make_header_with_profinfo (wosize, tag, Caml_white, profinfo);
  #ifdef DEBUG
    {
      uintnat i;
-@@ -504,8 +476,6 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
+@@ -504,8 +482,6 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
      }
    }
  #endif

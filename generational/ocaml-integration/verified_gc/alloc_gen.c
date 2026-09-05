@@ -682,7 +682,27 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     }
 
     if (result == 0) {
-        caml_fatal_error("verified gen GC: major allocation failed after collection");
+        /* Return failure rather than aborting: caml_alloc_shr_aux's check_oom()
+         * turns a NULL/0 into a catchable Out_of_memory (and into a fatal error
+         * by itself if we are inside a minor collection, where raising is not
+         * possible -- that is stock's own distinction). Calling
+         * caml_fatal_error() here instead made Out_of_memory unraisable in this
+         * runtime: a program with `try ... with Out_of_memory` had its process
+         * killed instead of its handler run.
+         *
+         * Keep the sizing hint, once, because our major heap does not grow and
+         * the user genuinely needs to know which knob to turn. */
+        static int hinted = 0;
+        if (!hinted) {
+            uint64_t major_size = heap_size_u64 - zero_addr;
+            hinted = 1;
+            fprintf(stderr,
+                "verified gen GC: major heap exhausted (%lu MB) — raising "
+                "Out_of_memory.\n  The major heap does not grow; set "
+                "MIN_EXPANSION_WORDSIZE=%lu (or larger) to enlarge it.\n",
+                (unsigned long)(major_size / 1048576),
+                (unsigned long)(major_size / 4));
+        }
         return NULL;
     }
 
