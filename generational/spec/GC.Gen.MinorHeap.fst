@@ -1028,6 +1028,21 @@ let minor_reset_objects_not_mem (ms: minor_state) (addr: U64.t)
   minor_reset_objects_empty ms;
   assert_norm (Seq.count addr Seq.empty == 0)
 
+/// `logand 0 0xFF = 0`, proved in an empty context.
+///
+/// Inside `minor_reset_tag_zero` this step used to be discharged by
+/// `assert_norm`, which forces the normalizer through `UInt.to_vec`/`from_vec`
+/// at width 64.  That is expensive, and in the large proof context of
+/// `minor_reset_tag_zero` (checked at `--ifuel 0`) Z3 then failed to relate the
+/// two occurrences of the uninterpreted `logand` application, reporting
+/// `incomplete quantifiers`.  Hoisting the fact to a top-level lemma and
+/// proving it from `UInt.logand_le` instead of by normalisation makes it
+/// cheap and context-independent.
+private let logand_zero_ff (x: U64.t)
+  : Lemma (requires x == 0UL)
+          (ensures U64.v (U64.logand x 0xFFUL) == 0)
+  = FStar.UInt.logand_le #64 0 255
+
 private let minor_reset_tag_zero (ms: minor_state) (addr: U64.t)
   : Lemma (ensures minor_tag (minor_reset ms) addr == 0)
   =
@@ -1042,8 +1057,14 @@ private let minor_reset_tag_zero (ms: minor_state) (addr: U64.t)
       assert (U64.v h % 8 == 0);
       zeroed_minor_read_word h;
       assert (minor_read_word (Seq.create minor_heap_size 0uy) h == 0UL);
-      assert (minor_tag (minor_reset ms) addr == U64.v (U64.logand 0UL 0xFFUL));
-      assert_norm (U64.v (U64.logand 0UL 0xFFUL) == 0)
+      // Spell out the congruence step.  Unlike `minor_wosize`, which uses
+      // `shift_right` (interpreted by Z3 as division), `minor_tag` uses
+      // `logand`, which is uninterpreted: Z3 has to rewrite the header to
+      // `0UL` *before* the `logand_zero_ff` instance applies.
+      let hdr = minor_read_word (minor_reset ms).data h in
+      assert (hdr == 0UL);
+      logand_zero_ff hdr;
+      assert (minor_tag (minor_reset ms) addr == 0)
     end
   end
 

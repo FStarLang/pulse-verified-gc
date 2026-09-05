@@ -15,6 +15,11 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 /// Helper: establish all common facts from split precondition under part1
+// Checking that this (large) postcondition is well formed needs a little more
+// than the default budget: the `U64.uint_to_t next_hd_nat` near the end has to
+// re-derive `next_hd_nat < pow2 64` from a conjunct stated ~20 lines earlier.
+// Measured with --query_stats: `canceled` at exactly 5.000, 6.925 used at 10.
+#push-options "--z3rlimit 10"
 val alloc_split_facts_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   Lemma (requires well_formed_heap_part1 g /\
@@ -60,6 +65,8 @@ val alloc_split_facts_part1 :
                    (next_hd_nat < heap_size ==>
                      objects (U64.uint_to_t next_hd_nat) g3 ==
                      objects (U64.uint_to_t next_hd_nat) g))))
+
+#pop-options
 
 /// Helper: g3 agrees with g at non-write positions under part1
 val alloc_split_g3_agrees_part1 :
