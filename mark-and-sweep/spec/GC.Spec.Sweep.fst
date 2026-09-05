@@ -526,8 +526,15 @@ let sweep_object_preserves_other_header
       assert (U64.v hd_x + 8 <= U64.v (GC.Spec.Heap.hd_address obj));
       assert (U64.v hd_x + 8 <= U64.v obj)
     end;
+    // Each branch establishes the locality fact through a *different*
+    // intermediate heap (`g_sf` for white, `g` for black), so after the join Z3
+    // is left to re-derive it from the disjunction; it gives up with
+    // `incomplete quantifiers` in 2s having used 2 of the 125 rlimit. Asserting
+    // the shared conclusion at the end of each branch does the case split for
+    // it, and is what the neighbouring lemmas in this module already do.
     if is_infix obj g then begin
-      colors_exclusive obj g
+      colors_exclusive obj g;
+      assert (read_word g' hd_x == read_word g hd_x)
     end else if is_white obj g then begin
       // White: set_field at obj + makeBlue at hd_address(obj)
       let ws_obj = wosize_of_object obj g in
@@ -543,14 +550,18 @@ let sweep_object_preserves_other_header
       in
       // makeBlue writes at hd_address(obj) ≠ hd_x (from hd_address_injective)
       makeBlue_eq obj g_sf;
-      color_change_header_locality obj hd_x g_sf Header.Blue
+      assert (fst (sweep_object g obj fp) == makeBlue obj g_sf);
+      color_change_header_locality obj hd_x g_sf Header.Blue;
+      assert (read_word g' hd_x == read_word g hd_x)
     end else if is_black obj g then begin
       makeWhite_eq obj g;
-      color_change_header_locality obj hd_x g Header.White
+      assert (fst (sweep_object g obj fp) == makeWhite obj g);
+      color_change_header_locality obj hd_x g Header.White;
+      assert (read_word g' hd_x == read_word g hd_x)
     end else begin
-      colors_exclusive obj g
+      colors_exclusive obj g;
+      assert (read_word g' hd_x == read_word g hd_x)
     end;
-    assert (read_word g' hd_x == read_word g hd_x);
     wosize_of_object_spec x g'
 #pop-options
 

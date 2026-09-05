@@ -168,7 +168,13 @@ let scan_preserves_fwd_covers_infix_roots
 
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
+// The two `cheney_forward_normal_noop_oom` calls below discharge
+// `minor_wosize minor _ > 0` from the negation of the enclosing `= 0` test.
+// This was already right at the edge: --query_stats reports `canceled` at
+// exactly 10.000 used, and 13.886 used once the budget is 20. Bumped rather
+// than restructured because the goal itself is trivial; the cost is the size
+// of the branch context, which the primitive-effects PR made slightly larger.
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let forward_one_queue_prefix
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t) (k: nat)
   =

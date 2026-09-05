@@ -333,6 +333,22 @@ private let fwd_normal_preserves_bfs_inv
 /// For the infix case: forward parent preserves bfs_inv, then extending
 /// fwd for the infix addr (which is NOT in minor_objects) doesn't change
 /// the queue or count_unforwarded.
+/// Two facts that used to be discharged in passing inside
+/// `fwd_one_preserves_bfs_inv` below, but that now exhaust its budget
+/// (--query_stats: `canceled` after ~40s at rlimit 60, fuel/ifuel 0). Both are
+/// immediate in an empty context, so hoist them instead of raising the budget:
+/// the cost is entirely the size of the surrounding proof context, not the
+/// difficulty of the fact.
+private let u64_v_pos (x: U64.t)
+  : Lemma (requires x <> 0UL) (ensures U64.v x > 0)
+  = ()
+
+private let infix_sum_fits (fp addr parent: U64.t)
+  : Lemma (requires U64.v addr >= U64.v parent /\
+                    U64.v fp + (U64.v addr - U64.v parent) < heap_size)
+          (ensures FStar.UInt.size (U64.v fp + (U64.v addr - U64.v parent)) U64.n)
+  = ()
+
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
 
 let fwd_one_preserves_bfs_inv
@@ -416,6 +432,8 @@ let fwd_one_preserves_bfs_inv
        U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < heap_size
     then begin
       CheneySpec.cheney_forward_one_infix_guard_pass minor cs addr;
+      u64_v_pos (cs'.cs_fwd parent);
+      infix_sum_fits (cs'.cs_fwd parent) addr parent;
       let sum = U64.uint_to_t (U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent)) in
       assert (U64.v (cs'.cs_fwd parent) > 0);
       assert (U64.v sum > 0);
