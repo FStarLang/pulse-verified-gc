@@ -183,6 +183,21 @@ let dst_fields_valid_of_bound (addr: U64.t) (wz: pos)
   assert ((wz - 1) * 8 + 8 == wz * 8);
   dst_fields_valid_from_bounds addr wz
 
+/// Two small arithmetic facts, hoisted out of the large proofs below.
+///
+/// Both are trivial in an empty context but neither survives the ambient
+/// context of `promote_object_frame_old_header_derived` /
+/// `promote_preserves_is_infix_frame`, where Z3 reports `canceled` even at
+/// rlimit 120.
+private let plus_mult_mod8 (a: nat) (k: nat)
+  : Lemma (requires a % 8 == 0) (ensures (a + k * 8) % 8 == 0)
+  = FStar.Math.Lemmas.lemma_mod_plus a k 8
+
+private let aligned_diff_div_mul (a: int) (b: int)
+  : Lemma (requires a % 8 == 0 /\ b % 8 == 0)
+          (ensures b + ((a - b) / 8) * 8 == a)
+  = FStar.Math.Lemmas.euclidean_division_definition (a - b) 8
+
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 let promote_object_frame_old_header_derived
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
@@ -217,6 +232,7 @@ let promote_object_frame_old_header_derived
     // src > dst_obj + wosize(dst_obj)*8, wosize(dst_obj) >= wz
     let wos = U64.v (wosize_of_object_as_wosize dst_obj alloc_res.heap_out) in
     assert (U64.v src > U64.v dst_obj + wos * 8);
+    plus_mult_mod8 (U64.v dst_obj) wos;
     assert ((U64.v dst_obj + wos * 8) % 8 == 0);
     aligned_gap (U64.v src) (U64.v dst_obj + wos * 8);
     assert (U64.v hd_src >= U64.v dst_obj + wos * 8);
@@ -406,6 +422,7 @@ let promote_preserves_is_infix_frame
     AllocProps.alloc_spec_obj_ne_excl major fp wz parent_obj;
     let hd_idx = (U64.v (hd_address target) - U64.v parent_obj) / 8 in
     hd_address_spec target;
+    aligned_diff_div_mul (U64.v (hd_address target)) (U64.v parent_obj);
     assert (U64.v parent_obj + hd_idx * 8 == U64.v (hd_address target));
     assert (hd_idx < U64.v (wosize_of_object parent_obj major));
     assert (U64.v parent_obj + hd_idx * 8 + 8 <= heap_size);

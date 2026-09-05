@@ -669,6 +669,16 @@ let copy_fields_all_correct
 /// Pointwise lemma: for a specific field j, promote_object preserves the value.
 /// Takes addr as pre-computed hp_addr to avoid uint_to_t subtyping cascade in ensures.
 #restart-solver
+/// `j < wosize ==> base + j*8 + 8 <= heap_size`, given the bound for the last
+/// field.  Proved in an empty context: inline, the multiplication
+/// `lemma_mult_le_right 8 j (wosize - 1)` has to be combined with the ambient
+/// (large) context of `promote_preserves_field_at`, and Z3 runs out of budget
+/// (`canceled`, 14.0 used against the module's rlimit of 10).
+private let field_offset_in_bounds (base: nat) (j: nat) (wosize: nat)
+  : Lemma (requires j < wosize /\ base + (wosize - 1) * 8 + 8 <= heap_size)
+          (ensures base + j * 8 + 8 <= heap_size)
+  = FStar.Math.Lemmas.lemma_mult_le_right 8 j (wosize - 1)
+
 #push-options "--z3rlimit 10 --fuel 2"
 let promote_preserves_field_at
   (minor: minor_state) (major: heap) (obj: U64.t)
@@ -700,7 +710,7 @@ let promote_preserves_field_at
      else ());
     let dst_obj : obj_addr = dst_addr in
     let padded = zero_promote_padding copied dst_obj wosize in
-    FStar.Math.Lemmas.lemma_mult_le_right 8 j (wosize - 1);
+    field_offset_in_bounds (U64.v dst_obj) j wosize;
     assert (U64.v dst_obj + j * 8 + 8 <= heap_size);
     hd_address_spec dst_obj;
     assert (j * 8 < wosize * 8);

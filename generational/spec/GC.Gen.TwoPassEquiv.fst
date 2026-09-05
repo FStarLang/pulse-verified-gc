@@ -1889,7 +1889,12 @@ private let two_pass_pointwise
     then begin
       if IndDesc.strong_excluded_middle (scannable_field_addr major a)
       then begin
-        let obj : obj_addr = IndDesc.indefinite_description_ghost obj_addr (fun obj ->
+        // NB: no type ascriptions on these two `let`s.  `indefinite_description_ghost`
+        // returns a *refined* result (`x:a{p x}`); ascribing the unrefined
+        // `obj_addr` / `nat` throws the refinement away and leaves Z3 to
+        // re-derive `p obj` from the definitional equation, which it cannot do
+        // within the module's rlimit.
+        let obj = IndDesc.indefinite_description_ghost obj_addr (fun obj ->
           exists (j: nat).
             Seq.mem obj (objects zero_addr major) /\
             is_blue obj major = false /\
@@ -1898,7 +1903,7 @@ private let two_pass_pointwise
             a == U64.v obj + j * 8 /\
             U64.v obj + j * 8 + 8 <= heap_size /\
             (U64.v obj + j * 8) % 8 == 0) in
-        let j : nat = IndDesc.indefinite_description_ghost nat (fun j ->
+        let j = IndDesc.indefinite_description_ghost nat (fun j ->
             Seq.mem obj (objects zero_addr major) /\
             is_blue obj major = false /\
             is_no_scan obj major = false /\
