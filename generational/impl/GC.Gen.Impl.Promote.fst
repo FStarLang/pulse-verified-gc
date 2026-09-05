@@ -148,7 +148,7 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
             // equals full copy_fields from initial state
             WBL.copy_fields {data='md; bump='mb} ms_i src_obj dst_obj (U64.v iv) (U64.v wosize) ==
             WBL.copy_fields {data='md; bump='mb} 'ms src_obj dst_obj 0 (U64.v wosize))
-    decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !i))
+    decreases (Prims.op_Minus (U64.v wosize) (U64.v !i))
   {
     let iv = !i;
     assert (pure (U64.v iv < U64.v wosize));

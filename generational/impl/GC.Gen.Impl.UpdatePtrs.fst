@@ -145,7 +145,7 @@ fn rewrite_roots_impl
               Seq.index rs_i j == PromoteSpec.rewrite_root (Seq.index 'rs j) fwd) /\
             (forall (j: nat). j >= SZ.v iv /\ j < Seq.length 'rs ==>
               Seq.index rs_i j == Seq.index 'rs j))
-    decreases (Prims.op_Subtraction (SZ.v n) (SZ.v !i))
+    decreases (Prims.op_Minus (SZ.v n) (SZ.v !i))
   {
     let iv = !i;
     rewrite_at_index roots fwd_arr iv;
@@ -249,7 +249,7 @@ fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
             represents_fwd 'farr fwd /\
             PromoteSpec.update_object_pointers ms_i obj (U64.v wosize) fwd (U64.v iv) ==
             PromoteSpec.update_object_pointers 'ms obj (U64.v wosize) fwd 0)
-    decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !i))
+    decreases (Prims.op_Minus (U64.v wosize) (U64.v !i))
   {
     let iv = !i;
     update_one_field major fwd_arr obj wosize iv #fwd;
@@ -379,7 +379,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
               GC.Gen.Promote.update_all_objects_aux ms_i
                 (SpecFields.objects pos_i ms_i) fwd 0 ==
                 PromoteSpec.update_major_pointers 'ms fwd)))
-    decreases (Prims.op_Addition (Prims.op_Subtraction heap_size (U64.v !pos)) (if !done then 0 else 1))
+    decreases (Prims.op_Plus (Prims.op_Minus heap_size (U64.v !pos)) (if !done then 0 else 1))
   {
     let p = !pos;
     with ms_cur. assert (is_heap major ms_cur);
@@ -632,7 +632,7 @@ fn rewrite_heap_slots
             valid_slot_addrs 'sl (SZ.v n) /\
             represents_fwd 'farr fwd /\
             ms_i == rewrite_slots_iter 'ms fwd 'sl (SZ.v iv) 0)
-    decreases (Prims.op_Subtraction (SZ.v n) (SZ.v !i))
+    decreases (Prims.op_Minus (SZ.v n) (SZ.v !i))
   {
     let iv = !i;
     let slot_addr = slots.(iv);
@@ -748,7 +748,7 @@ fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
             valid_fwd_entries 'farr /\
             update_promoted_iter ms_i 'farr fwd (SZ.v iv) ==
             update_promoted_iter 'ms 'farr fwd 0)
-    decreases (Prims.op_Subtraction (SZ.v fwd_size) (SZ.v !i))
+    decreases (Prims.op_Minus (SZ.v fwd_size) (SZ.v !i))
   {
     let iv = !i;
     let major_addr = fwd_arr.(iv);
@@ -770,7 +770,7 @@ fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
       SpecObj.no_scan_tag_val ();
       SpecObj.infix_tag_val ();
       if U64.gt wosize 0UL {
-        let is_scannable = U64.lt tag 251UL && Prims.op_Negation (U64.eq tag 249UL);
+        let is_scannable = U64.lt tag 251UL && Prims.not (U64.eq tag 249UL);
         if is_scannable {
           // Scannable non-infix promoted object with wosize > 0
           // Prove wosize * 8 doesn't overflow: wosize < 2^54, so wosize * 8 < 2^57 < 2^64
