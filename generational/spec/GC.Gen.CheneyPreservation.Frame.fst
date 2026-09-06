@@ -171,6 +171,9 @@ private let cheney_forward_one_preserves_cob
     cheney_forward_one_noop minor cs addr
   else if is_infix_in_minor minor addr then begin
     reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
+    // `cheney_forward_one_infix` needs `addr >= infix_parent minor addr`;
+    // name the equation that gives it rather than leaving Z3 to find it.
+    infix_parent_value minor addr;
     cheney_forward_one_infix minor cs addr;
     let parent = infix_parent minor addr in
     cheney_forward_normal_preserves_cob minor cs parent

@@ -244,7 +244,10 @@ let rec update_all_objects_aux_field_effect
         U64.v (Seq.index objs k) < U64.v obj))
     (ensures
       (let updated = update_all_objects_aux major objs fwd idx in
-       let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
+       // `mk_hp_addr` discharges `UInt.size (U64.v obj + j*8) 64` and the
+       // alignment side condition once, in an empty context; inline here they
+       // time out (34.6 rlimit used against the module's 12).
+       let field_addr = mk_hp_addr (U64.v obj + j * 8) in
        let old_raw = read_word major field_addr in
        let old_val = to_minor_offset old_raw in
        let new_val = read_word updated field_addr in

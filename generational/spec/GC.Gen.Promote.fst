@@ -713,6 +713,7 @@ let promote_preserves_field_at
     field_offset_in_bounds (U64.v dst_obj) j wosize;
     assert (U64.v dst_obj + j * 8 + 8 <= heap_size);
     hd_address_spec dst_obj;
+    FStar.Math.Lemmas.lemma_mult_lt_right 8 j wosize;
     assert (j * 8 < wosize * 8);
     assert (U64.v addr <> U64.v dst_obj + wosize * U64.v mword);
     zero_promote_padding_frame copied dst_obj wosize addr;
