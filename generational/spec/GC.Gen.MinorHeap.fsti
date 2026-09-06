@@ -220,16 +220,26 @@ let minor_tag (ms: minor_state) (obj: U64.t) : GTot nat =
 val minor_tag_bound (ms: minor_state) (obj: U64.t)
   : Lemma (minor_tag ms obj < 256)
 
-/// A zero header word gives wosize 0 and tag 0.
+/// `minor_wosize`/`minor_tag` in terms of the header word.
 ///
-/// `minor_wosize`/`minor_tag` decode the header with `shift_right`/`logand`, so
-/// reducing them at a *known* header requires the solver to (a) reduce the two
-/// address guards, (b) rewrite under `minor_read_word`, and (c) evaluate the
-/// bit operation.  Done inside a client's proof -- e.g. the SPOT nurseries,
-/// where the context also fixes several other header words -- step (c) drags in
-/// the bit-vector encoding and the query times out.  Establishing it once here,
-/// against an arbitrary `ms`, keeps the bit-level reasoning in an empty
-/// context.
+/// Both decode the header with `shift_right`/`logand` behind two address
+/// guards, so reducing them at a *known* address makes the solver (a) discharge
+/// the guards, (b) rewrite under `minor_read_word`, and (c) evaluate the bit
+/// operation.  Done inside a client's proof -- e.g. the SPOT nurseries, whose
+/// context also fixes several other header words -- that combination times out.
+/// Discharging (a) and (b) once here, against an arbitrary `ms`, leaves the
+/// client with nothing but (c), which its own `assert_norm`ed decoding facts
+/// already give it.
+val minor_header_fields (ms: minor_state) (obj: U64.t)
+  : Lemma (requires U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
+                    U64.v obj % 8 == 0)
+          (ensures (let hdr = minor_read_word ms.data (U64.uint_to_t (U64.v obj - 8)) in
+                    minor_wosize ms obj == U64.v (U64.shift_right hdr 10ul) /\
+                    minor_tag ms obj == U64.v (U64.logand hdr 0xFFUL)))
+
+/// The common case: a zero header word gives wosize 0 and tag 0.  Stated
+/// separately because the bit-level step is worth doing once too -- see the
+/// implementation.
 val minor_zero_header_fields (ms: minor_state) (obj: U64.t)
   : Lemma (requires U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
                     U64.v obj % 8 == 0 /\

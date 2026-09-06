@@ -476,9 +476,19 @@ let minor_tag_bound (ms: minor_state) (obj: U64.t)
     else ()
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let minor_header_fields (ms: minor_state) (obj: U64.t)
+  = ()
+
 let minor_zero_header_fields (ms: minor_state) (obj: U64.t)
-  = assert_norm (U64.v (U64.shift_right 0UL 10ul) == 0);
-    assert_norm (U64.v (U64.logand 0UL 0xFFUL) == 0)
+  = minor_header_fields ms obj;
+    let hdr_addr = U64.v obj - 8 in
+    let hdr = minor_read_word ms.data (U64.uint_to_t hdr_addr) in
+    assert (U64.v hdr == 0);
+    // Not `assert_norm`: normalising a 64-bit `logand`/`shift_right` drives the
+    // evaluator through `UInt.to_vec`/`from_vec` at width 64.  These two lemmas
+    // give the same facts arithmetically.
+    FStar.UInt.logand_le #64 (U64.v hdr) 255;
+    FStar.UInt.shift_right_value_lemma #64 (U64.v hdr) 10
 #pop-options
 
 let minor_scan_wosize_cases (ms: minor_state) (obj: U64.t)

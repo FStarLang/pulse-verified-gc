@@ -197,7 +197,10 @@ let nursery_closure_header_fields ()
   nursery_closure_header_read ();
   assert (U64.v Layout.a_minor == 8);
   assert (U64.v Layout.a_minor - 8 == 0);
-  assert (U64.uint_to_t (U64.v Layout.a_minor - 8) == 0UL)
+  assert (U64.uint_to_t (U64.v Layout.a_minor - 8) == 0UL);
+  // See GC.Gen.MinorHeap.minor_header_fields: unfolding minor_wosize/minor_tag
+  // in place, with the other nursery header words also fixed, times out.
+  minor_header_fields spot_infix_nursery Layout.a_minor
 
 let nursery_infix_header_fields ()
   : Lemma (ensures
@@ -209,7 +212,9 @@ let nursery_infix_header_fields ()
   nursery_infix_header_read ();
   assert (U64.v Layout.b_minor == 24);
   assert (U64.v Layout.b_minor - 8 == 16);
-  assert (U64.uint_to_t (U64.v Layout.b_minor - 8) == 16UL)
+  assert (U64.uint_to_t (U64.v Layout.b_minor - 8) == 16UL);
+  // See GC.Gen.MinorHeap.minor_header_fields.
+  minor_header_fields spot_infix_nursery Layout.b_minor
 #pop-options
 
 /// Every address in the nursery has tag 0, except the closure (247) and the
