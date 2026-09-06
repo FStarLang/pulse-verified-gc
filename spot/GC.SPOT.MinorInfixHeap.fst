@@ -181,8 +181,9 @@ let nursery_other_addr_header_zero (addr: U64.t)
   nursery_word_zero hdr_addr;
   assert (spot_infix_nursery.data == nursery_data);
   assert (minor_read_word spot_infix_nursery.data hdr_addr == 0UL);
-  assert (minor_wosize spot_infix_nursery addr == U64.v (U64.shift_right 0UL 10ul));
-  assert (minor_tag spot_infix_nursery addr == U64.v (U64.logand 0UL 0xFFUL))
+  // See GC.Gen.MinorHeap.minor_zero_header_fields: decoding a zero header in
+  // place needs the bit-vector encoding, which times out here.
+  minor_zero_header_fields spot_infix_nursery addr
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"

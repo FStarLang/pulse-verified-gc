@@ -1485,6 +1485,23 @@ let rec cheney_scan_preserves_fwd_noninfix_targets_valid
   end
 #pop-options
 
+/// `fwd_valid_or_infix` is `fwd_classified` with the witness dropped.
+///
+/// Deriving one from the other is a per-x weakening, but it is a weakening
+/// *under two quantifiers*: the solver has to instantiate `fwd_classified` at
+/// the same `x` the goal introduces and then discard the `exists p`.  At the
+/// end of `cheney_promote_fwd_valid_or_infix`, with every intermediate Cheney
+/// state and the whole `well_formed_heap` invariant in scope, whether it finds
+/// that instantiation is a coin flip -- the goal took 0.1s in isolation and
+/// then timed out at rlimit 20 in a full build.  Proving the weakening for an
+/// arbitrary `cs`, in an empty context, makes it deterministic.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let fwd_classified_weakens (cs: cheney_state)
+  : Lemma (requires fwd_classified cs)
+          (ensures fwd_valid_or_infix cs.cs_fwd cs.cs_major)
+  = ()
+#pop-options
+
 /// Top-level: cheney_promote_fwd_valid_or_infix
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let cheney_promote_fwd_valid_or_infix
@@ -1505,7 +1522,8 @@ let cheney_promote_fwd_valid_or_infix
   cheney_scan_preserves_fwd_classified minor cs1 0 (cheney_fuel minor);
   let cs2 = cheney_scan minor cs1 0 (cheney_fuel minor) in
   assert (fwd_classified cs2);
-  cheney_promote_fwd_bounded minor major fp roots
+  cheney_promote_fwd_bounded minor major fp roots;
+  fwd_classified_weakens cs2
 #pop-options
 
 /// ---------------------------------------------------------------------------

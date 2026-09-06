@@ -220,6 +220,22 @@ let minor_tag (ms: minor_state) (obj: U64.t) : GTot nat =
 val minor_tag_bound (ms: minor_state) (obj: U64.t)
   : Lemma (minor_tag ms obj < 256)
 
+/// A zero header word gives wosize 0 and tag 0.
+///
+/// `minor_wosize`/`minor_tag` decode the header with `shift_right`/`logand`, so
+/// reducing them at a *known* header requires the solver to (a) reduce the two
+/// address guards, (b) rewrite under `minor_read_word`, and (c) evaluate the
+/// bit operation.  Done inside a client's proof -- e.g. the SPOT nurseries,
+/// where the context also fixes several other header words -- step (c) drags in
+/// the bit-vector encoding and the query times out.  Establishing it once here,
+/// against an arbitrary `ms`, keeps the bit-level reasoning in an empty
+/// context.
+val minor_zero_header_fields (ms: minor_state) (obj: U64.t)
+  : Lemma (requires U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
+                    U64.v obj % 8 == 0 /\
+                    minor_read_word ms.data (U64.uint_to_t (U64.v obj - 8)) == 0UL)
+          (ensures minor_wosize ms obj == 0 /\ minor_tag ms obj == 0)
+
 /// ---------------------------------------------------------------------------
 /// No-Scan Objects
 /// ---------------------------------------------------------------------------

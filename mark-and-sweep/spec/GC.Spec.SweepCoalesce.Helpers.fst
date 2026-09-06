@@ -160,6 +160,21 @@ private let combine_extract_nth
       UInt.shift_right_lemma_2 #64 w (8 * k) i;
       let j = i - 8 * k in
       assert (j >= 56 - 8 * k /\ j <= 63 - 8 * k /\ j < 64);
+      // For m > k the m-th shifted byte contributes nothing at bit j: from
+      // `j >= 56 - 8 * k` and `8 * m >= 8 * (k + 1)` we get `j >= 64 - 8 * m`,
+      // which is the first case of `shifted_byte_nth`.  Naming the seven
+      // instances -- with `m` a literal, so `8 * m` is a constant -- is what
+      // keeps this affordable: left to the solver it is a case analysis with
+      // both `8 * k` and `8 * m` symbolic, and that is where the query used to
+      // run out of rlimit.  (For m < k the corresponding bound is already
+      // forced by the refinement on `nth_small_high_zero`'s argument.)
+      (if k < 1 then assert (j >= 64 - 8 * 1));
+      (if k < 2 then assert (j >= 64 - 8 * 2));
+      (if k < 3 then assert (j >= 64 - 8 * 3));
+      (if k < 4 then assert (j >= 64 - 8 * 4));
+      (if k < 5 then assert (j >= 64 - 8 * 5));
+      (if k < 6 then assert (j >= 64 - 8 * 6));
+      (if k < 7 then assert (j >= 64 - 8 * 7));
       combine_value_decomp b0 b1 b2 b3 b4 b5 b6 b7;
       let t0 = U8.v b0 in
       let t1 = UInt.shift_left #64 (U8.v b1) 8 in

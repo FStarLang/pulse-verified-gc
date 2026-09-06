@@ -475,6 +475,12 @@ let minor_tag_bound (ms: minor_state) (obj: U64.t)
       else ()
     else ()
 
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let minor_zero_header_fields (ms: minor_state) (obj: U64.t)
+  = assert_norm (U64.v (U64.shift_right 0UL 10ul) == 0);
+    assert_norm (U64.v (U64.logand 0UL 0xFFUL) == 0)
+#pop-options
+
 let minor_scan_wosize_cases (ms: minor_state) (obj: U64.t)
   = ()
 

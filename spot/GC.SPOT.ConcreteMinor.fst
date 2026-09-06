@@ -243,7 +243,8 @@ let spot_minor2_tag_zero (addr: U64.t)
     assert (hdr_nat <> 0);
     spot_minor2_header_word_zero hdr_addr;
     assert (minor_read_word spot_minor2.data hdr_addr == 0UL);
-    assert_norm (U64.v (U64.logand 0UL 0xFFUL) == 0)
+    // See GC.Gen.MinorHeap.minor_zero_header_fields.
+    minor_zero_header_fields spot_minor2 addr
   end
 
 let spot_minor2_object_cases (obj: U64.t)

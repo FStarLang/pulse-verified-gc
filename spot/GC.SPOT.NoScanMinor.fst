@@ -223,8 +223,8 @@ let nursery_other_addr_wosize_zero (addr: U64.t)
   end else begin
     nursery_word_zero hdr_addr;
     assert (minor_read_word spot_ns_nursery.data hdr_addr == 0UL);
-    assert (minor_wosize spot_ns_nursery addr == U64.v (U64.shift_right 0UL 10ul));
-    assert (minor_tag spot_ns_nursery addr == U64.v (U64.logand 0UL 0xFFUL))
+    // See GC.Gen.MinorHeap.minor_zero_header_fields.
+    minor_zero_header_fields spot_ns_nursery addr
   end
 #pop-options
 
