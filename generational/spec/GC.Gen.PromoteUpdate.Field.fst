@@ -224,6 +224,30 @@ let rec update_all_objects_aux_after_preserves_field
 #pop-options
 
 /// Main induction: update_all_objects_aux computes the expected field effect.
+/// The address of field `j` of `obj`, as a *total* function.
+///
+/// Writing `U64.uint_to_t (U64.v obj + j * 8)` directly in the statement below
+/// raises `FStar.UInt.size (U64.v obj + j * 8) 64` as a well-typedness side
+/// condition, and that side condition is discharged in the full context of
+/// `update_all_objects_aux_field_effect`.  Trivial as it is, it cost 21s and
+/// 35 rlimit units there against the lemma's budget of 12, and stating the
+/// bound as an extra `requires` conjunct did not help: the context, not the
+/// goal, is what the solver is drowning in.  Giving the out-of-range case a
+/// junk value moves the obligation here, where it is discharged in an empty
+/// context, and `field_addr_v` names the equation for the callers that need
+/// it.
+private let field_addr (obj: U64.t) (j: nat) : GTot hp_addr =
+  if U64.v obj + j * 8 < heap_size && (U64.v obj + j * 8) % U64.v mword = 0
+  then mk_hp_addr (U64.v obj + j * 8)
+  else zero_addr
+
+private let field_addr_v (obj: U64.t) (j: nat)
+  : Lemma (requires U64.v obj + j * 8 < heap_size /\
+                    (U64.v obj + j * 8) % U64.v mword == 0)
+          (ensures field_addr obj j == U64.uint_to_t (U64.v obj + j * 8) /\
+                   U64.v (field_addr obj j) == U64.v obj + j * 8)
+  = ()
+
 #push-options "--z3rlimit 12 --fuel 1 --z3refresh"
 let rec update_all_objects_aux_field_effect
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map)
@@ -244,16 +268,14 @@ let rec update_all_objects_aux_field_effect
         U64.v (Seq.index objs k) < U64.v obj))
     (ensures
       (let updated = update_all_objects_aux major objs fwd idx in
-       // `mk_hp_addr` discharges `UInt.size (U64.v obj + j*8) 64` and the
-       // alignment side condition once, in an empty context; inline here they
-       // time out (34.6 rlimit used against the module's 12).
-       let field_addr = mk_hp_addr (U64.v obj + j * 8) in
+       let field_addr = field_addr obj j in
        let old_raw = read_word major field_addr in
        let old_val = to_minor_offset old_raw in
        let new_val = read_word updated field_addr in
        (is_minor_pointer old_val /\ fwd old_val <> 0UL ==> new_val == fwd old_val) /\
        (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> new_val == old_raw)))
     (decreases (Seq.length objs - idx)) =
+  field_addr_v obj j;
   if idx >= Seq.length objs then ()
   else if idx = pos then begin
     // Processing obj itself
@@ -364,6 +386,7 @@ let update_major_pointers_field_effect
   let objs = objects zero_addr major in
   let pos = seq_index_of objs obj in
   objects_below_before major obj pos;
+  field_addr_v obj j;
   update_all_objects_aux_field_effect major objs fwd 0 obj j pos
 
 /// update_major_pointers establishes well_formed_heap_part2 (pointer closure).

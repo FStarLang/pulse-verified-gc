@@ -541,6 +541,10 @@ let infix_parent_value (ms: minor_state) (addr: U64.t)
   assert (U64.v addr - off >= 0);
   assert (U64.v addr - off < pow2 64)
 
+let infix_parent_below (ms: minor_state) (addr: U64.t)
+                   =
+  infix_parent_value ms addr
+
 let infix_parent_in_minor_objects (ms: minor_state) (addr: U64.t)
                     =
   reveal_opaque (`%minor_infix_wf) (minor_infix_wf ms)
