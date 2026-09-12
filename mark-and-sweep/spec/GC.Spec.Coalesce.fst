@@ -4891,6 +4891,32 @@ let run_at (first_blue: U64.t) (run_words: nat) (run_end: nat) : prop =
      U64.v first_blue % U64.v mword == 0 /\
      U64.v first_blue - U64.v mword + run_words * U64.v mword == run_end)
 
+/// Two heaps that agree word-for-word at every position at or above `bound`
+/// produce identical object walks from any starting point at or above
+/// `bound`.  Pure write-locality: `objects` only ever reads the header at its
+/// current cursor, and the cursor only moves forward.
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+let rec objects_agree_above (g g1: heap) (s: hp_addr) (bound: nat)
+  : Lemma
+    (requires
+      U64.v s >= bound /\
+      (forall (q: hp_addr). U64.v q >= bound /\ U64.v q + U64.v mword <= heap_size ==>
+         read_word g1 q == read_word g q))
+    (ensures objects s g1 == objects s g)
+    (decreases (heap_size - U64.v s))
+  = if U64.v s + 8 >= heap_size then ()
+    else begin
+      let wz = getWosize (read_word g s) in
+      let next_nat = U64.v s + (U64.v wz + 1) * 8 in
+      if next_nat > heap_size || next_nat >= pow2 64 then ()
+      else if next_nat >= heap_size then ()
+      else begin
+        aligned_plus_mul8 (U64.v s) (U64.v wz + 1);
+        objects_agree_above g g1 (mk_hp_addr next_nat) bound
+      end
+    end
+#pop-options
+
 /// The flush leaves the heap at and above `run_end` unchanged, word for word,
 /// and hence leaves the walk there unchanged too.
 ///
@@ -4910,7 +4936,24 @@ val flush_preserves_walk
        (forall (s: hp_addr). U64.v s >= run_end ==>
           objects s g1 == objects s g)))
 
-let flush_preserves_walk g run_end first_blue run_words fp = admit ()
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let flush_preserves_walk g run_end first_blue run_words fp =
+  let g1 = fst (flush_blue g first_blue run_words fp) in
+  let outside (p: hp_addr)
+    : Lemma
+      (requires U64.v p >= run_end /\ U64.v p + U64.v mword <= heap_size)
+      (ensures read_word g1 p == read_word g p)
+    = flush_blue_preserves_outside g first_blue run_words fp p
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires outside);
+  let walks (s: hp_addr)
+    : Lemma
+      (requires U64.v s >= run_end)
+      (ensures objects s g1 == objects s g)
+    = objects_agree_above g g1 s run_end
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires walks)
+#pop-options
 
 /// No white object's header is written by the flush.
 ///
