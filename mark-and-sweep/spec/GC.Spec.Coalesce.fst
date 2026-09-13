@@ -4955,6 +4955,126 @@ let flush_preserves_walk g run_end first_blue run_words fp =
   FStar.Classical.forall_intro (FStar.Classical.move_requires walks)
 #pop-options
 
+/// Membership in a walk started at `s` implies the walk from `s` actually
+/// visits the member's header position.  Purely structural: `objects` and
+/// `walk_visits` share the same recursion, so this is the membership analogue
+/// of `objects_addresses_gt_start`.
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+let rec objects_mem_implies_walk_visits (g: heap) (s: hp_addr) (y: obj_addr)
+  : Lemma
+    (requires Seq.mem y (objects s g))
+    (ensures walk_visits g s (hd_address y))
+    (decreases (heap_size - U64.v s))
+  = objects_nonempty_next s g;
+    f_address_spec s;
+    let obj = f_address s in
+    if y = obj then begin
+      hd_address_bounds y;
+      hd_f_roundtrip s
+    end else begin
+      let wz = getWosize (read_word g s) in
+      let next_nat = U64.v s + (U64.v wz + 1) * 8 in
+      aligned_plus_mul8 (U64.v s) (U64.v wz + 1);
+      if next_nat >= heap_size then
+        mem_cons_lemma y obj Seq.empty
+      else begin
+        let next = mk_hp_addr next_nat in
+        mem_cons_lemma y obj (objects next g);
+        objects_mem_implies_walk_visits g next y
+      end
+    end
+#pop-options
+
+/// Membership below the run transfers across the flush: if `y`'s header lies
+/// strictly below `first_blue - mword`, and the walk from `s <= hd_address y`
+/// reaches `y`, then the flushed heap's walk from `s` reaches `y` too.  The
+/// entire path from `s` to `y` lies below the write range, so reads agree at
+/// every step (`flush_blue_preserves_outside`) and the two walks step in
+/// lockstep all the way to `y`.
+#push-options "--z3rlimit 60 --fuel 2 --ifuel 1"
+let rec flush_membership_below
+  (g: heap) (first_blue: U64.t) (run_words: pos) (fp: U64.t)
+  (s: hp_addr) (y: obj_addr)
+  : Lemma
+    (requires
+      U64.v first_blue >= U64.v mword /\ U64.v first_blue < heap_size /\
+      U64.v first_blue % U64.v mword == 0 /\
+      U64.v s <= U64.v (hd_address y) /\
+      U64.v (hd_address y) < U64.v first_blue - U64.v mword /\
+      Seq.mem y (objects s g))
+    (ensures Seq.mem y (objects s (fst (flush_blue g first_blue run_words fp))))
+    (decreases (Seq.length (objects s g)))
+  = let g1 = fst (flush_blue g first_blue run_words fp) in
+    objects_nonempty_next s g;
+    f_address_spec s;
+    hd_address_spec y;
+    let obj = f_address s in
+    flush_blue_preserves_outside g first_blue run_words fp s;
+    objects_nonempty_next s g1;
+    if U64.v s = U64.v (hd_address y) then begin
+      hd_address_bounds y;
+      hd_f_roundtrip s;
+      mem_cons_lemma y obj Seq.empty
+    end else begin
+      let wz = getWosize (read_word g s) in
+      let next_nat = U64.v s + (U64.v wz + 1) * 8 in
+      aligned_plus_mul8 (U64.v s) (U64.v wz + 1);
+      if next_nat >= heap_size then
+        mem_cons_lemma y obj Seq.empty
+      else begin
+        let next = mk_hp_addr next_nat in
+        mem_cons_lemma y obj (objects next g);
+        objects_addresses_gt_start next g y;
+        flush_membership_below g first_blue run_words fp next y;
+        mem_cons_lemma y obj (objects next g1)
+      end
+    end
+#pop-options
+
+/// Mirror of `flush_membership_below`: membership below the run transfers
+/// the other way, from the flushed heap back to the original.  Same proof,
+/// `g` and `g1` exchanged (`flush_blue_preserves_outside`'s conclusion is a
+/// plain equality, symmetric in use).
+#push-options "--z3rlimit 60 --fuel 2 --ifuel 1"
+let rec flush_membership_below_rev
+  (g: heap) (first_blue: U64.t) (run_words: pos) (fp: U64.t)
+  (s: hp_addr) (y: obj_addr)
+  : Lemma
+    (requires
+      U64.v first_blue >= U64.v mword /\ U64.v first_blue < heap_size /\
+      U64.v first_blue % U64.v mword == 0 /\
+      U64.v s <= U64.v (hd_address y) /\
+      U64.v (hd_address y) < U64.v first_blue - U64.v mword /\
+      Seq.mem y (objects s (fst (flush_blue g first_blue run_words fp))))
+    (ensures Seq.mem y (objects s g))
+    (decreases (Seq.length (objects s (fst (flush_blue g first_blue run_words fp)))))
+  = let g1 = fst (flush_blue g first_blue run_words fp) in
+    objects_nonempty_next s g1;
+    f_address_spec s;
+    hd_address_spec y;
+    let obj = f_address s in
+    flush_blue_preserves_outside g first_blue run_words fp s;
+    objects_nonempty_next s g;
+    if U64.v s = U64.v (hd_address y) then begin
+      hd_address_bounds y;
+      hd_f_roundtrip s;
+      mem_cons_lemma y obj Seq.empty
+    end else begin
+      let wz = getWosize (read_word g1 s) in
+      let next_nat = U64.v s + (U64.v wz + 1) * 8 in
+      aligned_plus_mul8 (U64.v s) (U64.v wz + 1);
+      if next_nat >= heap_size then
+        mem_cons_lemma y obj Seq.empty
+      else begin
+        let next = mk_hp_addr next_nat in
+        mem_cons_lemma y obj (objects next g1);
+        objects_addresses_gt_start next g1 y;
+        flush_membership_below_rev g first_blue run_words fp next y;
+        mem_cons_lemma y obj (objects next g)
+      end
+    end
+#pop-options
+
 /// No white object's header is written by the flush.
 ///
 /// Carries clause 4 across the white case.  The last hypothesis is clause 5
@@ -4979,6 +5099,26 @@ val flush_preserves_white
          Seq.mem y (objects zero_addr g1) /\ is_white y g1 /\
          wosize_of_object y g1 == wosize_of_object y g))
 
+// NOT PROVABLE AS STATED -- see NOTES.md ("flush_preserves_white").  The
+// `hd_address y < first_blue - mword` case (below the run) is a genuine,
+// complete proof (`flush_membership_below` above does exactly this, and is
+// used from `coalesce_aux_preserves_white`'s own corrected internal argument).
+// The `hd_address y >= run_end` case (above the run) needs, in addition to
+// this lemma's stated hypotheses, that the *original* heap's own walk from
+// `zero_addr` actually reaches `first_blue - mword` (equivalently, that the
+// run genuinely corresponds to a real run of objects in `g`, not merely to
+// arithmetic satisfying `run_at`).  Without that, `g`'s real walk can enter
+// the flushed range at a non-edge position under cover of an unconstrained
+// blue object, in which case the flushed heap's reconstruction from that
+// point does not match anything about `g`'s real structure past there, and
+// the target white object need not be found again.  That extra fact is not
+// among this lemma's hypotheses (nor derivable from
+// `SI.heap_objects_dense g`, which only speaks about positions *already*
+// known reachable from `zero_addr`), so the lemma is not provable in this
+// generality.  Confirmed empirically: the natural proof (below-case complete,
+// above-case via `flush_preserves_walk` + `objects_mem_implies_walk_visits`)
+// leaves exactly one un-discharged goal, `Seq.mem y (objects zero_addr g1)`,
+// which Z3 cannot close from the available hypotheses.
 let flush_preserves_white g run_end first_blue run_words fp = admit ()
 
 /// Density survives the flush: the merged block ends exactly where the run
@@ -4992,6 +5132,22 @@ val flush_preserves_density
       run_at first_blue run_words run_end)
     (ensures SI.heap_objects_dense (fst (flush_blue g first_blue run_words fp)))
 
+// NOT PROVABLE AS STATED -- see NOTES.md ("flush_preserves_density").  Same
+// root cause as `flush_preserves_white`: `heap_objects_dense_intro`'s
+// obligation, for a position `start` that is a genuine member of `g1`'s own
+// walk from `zero_addr`, needs `f_address next` to *also* be a member of
+// `objects zero_addr g1` once `next` has room.  When `start`'s real object
+// (below the run, hence identical in `g` and `g1`) has `next` landing
+// strictly inside `(first_blue - mword, run_end)` -- not exactly at
+// `first_blue - mword`, the one position `g1` gives a well-formed fresh
+// header -- `g1` reads back either a zeroed field or the untyped `fp` value
+// there.  `fp` is a completely unconstrained `U64.t` in this lemma's
+// hypotheses, so for `run_words >= 2` its bits, misread as a header at
+// `first_blue`, can be chosen to send `next` to an address with no relation
+// to `g`'s real structure at all, breaking the density obligation outright.
+// `SI.heap_objects_dense g` does not rule this out: it is conditioned on
+// positions *already known* reachable from `zero_addr`, and gives no control
+// over where an object below the run happens to end.
 let flush_preserves_density g run_end first_blue run_words fp = admit ()
 
 /// The cursor advances to the next walk position.
@@ -5021,6 +5177,380 @@ let rec walk_visits_step g s p q
       walk_visits_step g (mk_hp_addr next) p q
     end
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Corrected white/density transfer, for internal use only
+/// ---------------------------------------------------------------------------
+///
+/// `flush_preserves_white` and `flush_preserves_density` above are not
+/// provable as stated (see NOTES.md).  What *is* true, and is what
+/// `coalesce_aux_preserves_white`'s own induction actually has on hand, is
+/// the same statement plus one extra fact that only the induction (not a
+/// standalone lemma about an arbitrary heap) can supply: that the walk from
+/// `zero_addr` reaches `first_blue - mword` -- i.e. that the run is not just
+/// arithmetic, but genuinely starts where a real object of `g` begins.  The
+/// lemmas below take that fact as an explicit extra hypothesis and are
+/// completely proved.
+
+/// Append membership, the general form of `mem_cons_lemma`.
+let mem_append_lemma (#a: eqtype) (x: a) (lo hi: Seq.seq a)
+  : Lemma (Seq.mem x (Seq.append lo hi) <==> Seq.mem x lo \/ Seq.mem x hi)
+  = Seq.Properties.lemma_append_count lo hi
+
+/// Two heaps that agree at every position below `bound` have the same walk
+/// reachability below `bound`: if the walk from `s <= bound` reaches `bound`
+/// in one heap, it reaches `bound` in the other.  Mirrors `objects_agree_above`
+/// (which handles positions *above* a bound) for the below-a-bound case.
+#push-options "--z3rlimit 60 --fuel 2 --ifuel 1"
+let rec walk_visits_agree_below (g g1: heap) (s bound: hp_addr)
+  : Lemma
+    (requires
+      U64.v s <= U64.v bound /\
+      (forall (q: hp_addr). U64.v q + U64.v mword <= U64.v bound ==>
+         read_word g1 q == read_word g q) /\
+      walk_visits g s bound)
+    (ensures walk_visits g1 s bound)
+    (decreases (heap_size - U64.v s))
+  = if U64.v s = U64.v bound then ()
+    else begin
+      let wz = getWosize (read_word g s) in
+      let next_nat = U64.v s + (U64.v wz + 1) * 8 in
+      aligned_plus_mul8 (U64.v s) (U64.v wz + 1);
+      let next = mk_hp_addr next_nat in
+      walk_visits_above g next bound;
+      walk_visits_agree_below g g1 next bound
+    end
+#pop-options
+
+/// `objects p g`'s nonemptiness (as opposed to its full structure) depends
+/// only on the single header word at `p`: whether there is room for it, and
+/// whether its wosize overflows past the end of the heap.  So agreement at
+/// `p` alone -- not agreement everywhere `objects` subsequently reads --
+/// already transfers nonemptiness.
+let objects_nonempty_transfers (g g1: heap) (p: hp_addr)
+  : Lemma
+    (requires read_word g1 p == read_word g p /\ Seq.length (objects p g) > 0)
+    (ensures Seq.length (objects p g1) > 0)
+  = ()
+
+/// Given that `g`'s own walk from `zero_addr` reaches exactly
+/// `first_blue - mword` (the run's start), the flushed heap's walk reaches
+/// `re` (`run_end`) too: below the run start the two heaps agree, so the walk
+/// gets there the same way; from there, the flushed heap's own header -- the
+/// fresh merged one -- takes it straight to `re` in one step.
+#push-options "--z3rlimit 60 --fuel 2 --ifuel 1"
+let flush_reaches_run_end
+  (g: heap) (first_blue: U64.t) (run_words: pos) (fp: U64.t) (re: hp_addr)
+  : Lemma
+    (requires
+      U64.v first_blue >= U64.v mword /\ U64.v first_blue < heap_size /\
+      U64.v first_blue % U64.v mword == 0 /\
+      run_words - 1 < pow2 54 /\
+      U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v re /\
+      walk_visits g zero_addr (hd_address (first_blue <: obj_addr)))
+    (ensures walk_visits (fst (flush_blue g first_blue run_words fp)) zero_addr re)
+  = let g1 = fst (flush_blue g first_blue run_words fp) in
+    let fb : obj_addr = first_blue in
+    let h = hd_address fb in
+    hd_address_spec fb;
+    let below (q: hp_addr)
+      : Lemma
+        (requires U64.v q + U64.v mword <= U64.v h)
+        (ensures read_word g1 q == read_word g q)
+      = flush_blue_preserves_outside g first_blue run_words fp q
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires below);
+    walk_visits_above g zero_addr h;
+    walk_visits_agree_below g g1 zero_addr h;
+    flush_blue_header_spec g fb run_words fp;
+    let wz_u64 : wosize = U64.uint_to_t (run_words - 1) in
+    makeHeader_getWosize wz_u64 Blue 0UL;
+    walk_visits_step g1 zero_addr h re
+#pop-options
+
+/// The flushed heap's `zero_addr`-membership above the run agrees exactly
+/// with the original heap's, given that both `first_blue - mword` and `re`
+/// (`run_end`) are genuinely reached by `g`'s own walk from `zero_addr`.
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 1"
+let flush_membership_above_run_iff
+  (g: heap) (first_blue: U64.t) (run_words: pos) (fp: U64.t) (re: hp_addr) (y: obj_addr)
+  : Lemma
+    (requires
+      U64.v first_blue >= U64.v mword /\ U64.v first_blue < heap_size /\
+      U64.v first_blue % U64.v mword == 0 /\
+      run_words - 1 < pow2 54 /\
+      U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v re /\
+      walk_visits g zero_addr (hd_address (first_blue <: obj_addr)) /\
+      walk_visits g zero_addr re /\
+      U64.v (hd_address y) >= U64.v re)
+    (ensures
+      (Seq.mem y (objects zero_addr (fst (flush_blue g first_blue run_words fp))) <==>
+       Seq.mem y (objects zero_addr g)))
+  = let g1 = fst (flush_blue g first_blue run_words fp) in
+    flush_reaches_run_end g first_blue run_words fp re;
+    flush_preserves_walk g (U64.v re) first_blue run_words fp;
+    objects_split_from g zero_addr re;
+    eliminate exists (pre: seq obj_addr).
+        objects zero_addr g == Seq.append pre (objects re g) /\
+        (forall (z: obj_addr). Seq.mem z pre ==> U64.v (hd_address z) < U64.v re) /\
+        (forall (z: obj_addr). Seq.mem z (objects re g) ==> U64.v (hd_address z) >= U64.v re)
+    with begin
+      objects_split_from g1 zero_addr re;
+      eliminate exists (pre1: seq obj_addr).
+          objects zero_addr g1 == Seq.append pre1 (objects re g1) /\
+          (forall (z: obj_addr). Seq.mem z pre1 ==> U64.v (hd_address z) < U64.v re) /\
+          (forall (z: obj_addr). Seq.mem z (objects re g1) ==> U64.v (hd_address z) >= U64.v re)
+      with begin
+        mem_append_lemma y pre (objects re g);
+        mem_append_lemma y pre1 (objects re g1)
+      end
+    end
+#pop-options
+
+/// The corrected `flush_preserves_white`: same conclusion, with the one
+/// extra hypothesis that makes it true (see the section comment above).
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 1"
+let flush_white_transfer
+  (g: heap) (re: hp_addr) (first_blue: U64.t) (run_words: pos) (fp: U64.t)
+  : Lemma
+    (requires
+      U64.v first_blue >= U64.v mword /\ U64.v first_blue < heap_size /\
+      U64.v first_blue % U64.v mword == 0 /\
+      run_words - 1 < pow2 54 /\
+      U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v re /\
+      walk_visits g zero_addr (hd_address (first_blue <: obj_addr)) /\
+      walk_visits g zero_addr re /\
+      (forall (y: obj_addr).
+         Seq.mem y (objects zero_addr g) /\ is_white y g /\
+         U64.v (hd_address y) >= U64.v first_blue - U64.v mword /\
+         U64.v (hd_address y) < U64.v re ==> False))
+    (ensures
+      (let g1 = fst (flush_blue g first_blue run_words fp) in
+       forall (y: obj_addr).
+         Seq.mem y (objects zero_addr g) /\ is_white y g ==>
+         Seq.mem y (objects zero_addr g1) /\ is_white y g1 /\
+         wosize_of_object y g1 == wosize_of_object y g))
+  = let g1 = fst (flush_blue g first_blue run_words fp) in
+    let aux (y: obj_addr)
+      : Lemma
+        (requires Seq.mem y (objects zero_addr g) /\ is_white y g)
+        (ensures
+          Seq.mem y (objects zero_addr g1) /\ is_white y g1 /\
+          wosize_of_object y g1 == wosize_of_object y g)
+      = (if U64.v (hd_address y) < U64.v first_blue - U64.v mword then begin
+           objects_addresses_gt_start zero_addr g y;
+           hd_address_spec y;
+           flush_membership_below g first_blue run_words fp zero_addr y
+         end
+         else if U64.v (hd_address y) < U64.v re then ()
+         else
+           flush_membership_above_run_iff g first_blue run_words fp re y);
+        flush_blue_preserves_outside g first_blue run_words fp (hd_address y);
+        is_white_iff y g; is_white_iff y g1;
+        color_of_object_spec y g; color_of_object_spec y g1;
+        wosize_of_object_spec y g; wosize_of_object_spec y g1
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// The flushed heap's walk from the run start unfolds to exactly one cons:
+/// `first_blue` itself, then straight on to `re`.  Isolated as its own fact
+/// (rather than inlined) so later proofs can use it without re-deriving the
+/// header/wosize arithmetic each time.
+#push-options "--z3rlimit 80 --fuel 2 --ifuel 1"
+let flush_h_decompose
+  (g: heap) (first_blue: U64.t) (run_words: pos) (fp: U64.t) (re: hp_addr)
+  : Lemma
+    (requires
+      U64.v first_blue >= U64.v mword /\ U64.v first_blue < heap_size /\
+      U64.v first_blue % U64.v mword == 0 /\
+      run_words - 1 < pow2 54 /\
+      U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v re /\
+      walk_visits g zero_addr (hd_address (first_blue <: obj_addr)))
+    (ensures
+      (let g1 = fst (flush_blue g first_blue run_words fp) in
+       walk_visits g1 zero_addr (hd_address (first_blue <: obj_addr)) /\
+       objects (hd_address (first_blue <: obj_addr)) g1 ==
+       Seq.cons (first_blue <: obj_addr) (objects re g1)))
+  = let g1 = fst (flush_blue g first_blue run_words fp) in
+    let fb : obj_addr = first_blue in
+    let h = hd_address fb in
+    hd_address_spec fb;
+    let below (q: hp_addr)
+      : Lemma
+        (requires U64.v q + U64.v mword <= U64.v h)
+        (ensures read_word g1 q == read_word g q)
+      = flush_blue_preserves_outside g first_blue run_words fp q
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires below);
+    walk_visits_above g zero_addr h;
+    walk_visits_agree_below g g1 zero_addr h;
+    flush_blue_header_spec g fb run_words fp;
+    let wz_u64 : wosize = U64.uint_to_t (run_words - 1) in
+    makeHeader_getWosize wz_u64 Blue 0UL;
+    f_hd_roundtrip fb;
+    objects_nonempty_next h g1
+#pop-options
+
+/// `first_blue` itself is a member of the flushed heap's walk, given
+/// H-reachability.  Shared by `flush_no_interior_member`'s edge case and
+/// `flush_density_transfer`'s "lands exactly on H" case.
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 1"
+let flush_h_is_member
+  (g: heap) (first_blue: U64.t) (run_words: pos) (fp: U64.t) (re: hp_addr)
+  : Lemma
+    (requires
+      U64.v first_blue >= U64.v mword /\ U64.v first_blue < heap_size /\
+      U64.v first_blue % U64.v mword == 0 /\
+      run_words - 1 < pow2 54 /\
+      U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v re /\
+      walk_visits g zero_addr (hd_address (first_blue <: obj_addr)))
+    (ensures
+      Seq.mem (first_blue <: obj_addr) (objects zero_addr (fst (flush_blue g first_blue run_words fp))))
+  = let g1 = fst (flush_blue g first_blue run_words fp) in
+    let fb : obj_addr = first_blue in
+    let h = hd_address fb in
+    hd_address_spec fb;
+    flush_h_decompose g first_blue run_words fp re;
+    mem_cons_lemma fb fb (objects re g1);
+    objects_split_from g1 zero_addr h;
+    eliminate exists (pre: seq obj_addr).
+        objects zero_addr g1 == Seq.append pre (objects h g1) /\
+        (forall (z: obj_addr). Seq.mem z pre ==> U64.v (hd_address z) < U64.v h) /\
+        (forall (z: obj_addr). Seq.mem z (objects h g1) ==> U64.v (hd_address z) >= U64.v h)
+    with begin
+      mem_append_lemma fb pre (objects h g1)
+    end
+#pop-options
+
+/// No position strictly between `first_blue - mword` and `re` is ever a
+/// member of the flushed heap's walk: the merged header takes the walk
+/// straight from `H` to `re` in one step.
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 1"
+let flush_no_interior_member
+  (g: heap) (first_blue: U64.t) (run_words: pos) (fp: U64.t) (re: hp_addr) (y: obj_addr)
+  : Lemma
+    (requires
+      U64.v first_blue >= U64.v mword /\ U64.v first_blue < heap_size /\
+      U64.v first_blue % U64.v mword == 0 /\
+      run_words - 1 < pow2 54 /\
+      U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v re /\
+      walk_visits g zero_addr (hd_address (first_blue <: obj_addr)) /\
+      U64.v (hd_address y) > U64.v (hd_address (first_blue <: obj_addr)) /\
+      U64.v (hd_address y) < U64.v re)
+    (ensures ~(Seq.mem y (objects zero_addr (fst (flush_blue g first_blue run_words fp)))))
+  = let g1 = fst (flush_blue g first_blue run_words fp) in
+    let fb : obj_addr = first_blue in
+    let h = hd_address fb in
+    hd_address_spec fb;
+    flush_h_decompose g first_blue run_words fp re;
+    if Seq.mem y (objects zero_addr g1) then begin
+      objects_split_from g1 zero_addr h;
+      eliminate exists (pre: seq obj_addr).
+          objects zero_addr g1 == Seq.append pre (objects h g1) /\
+          (forall (z: obj_addr). Seq.mem z pre ==> U64.v (hd_address z) < U64.v h) /\
+          (forall (z: obj_addr). Seq.mem z (objects h g1) ==> U64.v (hd_address z) >= U64.v h)
+      with begin
+        mem_append_lemma y pre (objects h g1);
+        mem_cons_lemma y fb (objects re g1);
+        hd_address_spec y;
+        if y = fb then ()
+        else if Seq.mem y (objects re g1) then objects_addresses_gt_start re g1 y
+      end
+    end
+#pop-options
+
+/// If the walk from `zero_addr` reaches both `start` and `bound`, with
+/// `start <= bound`, it reaches `bound` starting from `start` too: the walk
+/// is a single deterministic sequence, so reaching both means reaching one
+/// from the other.
+#push-options "--z3rlimit 60 --fuel 2 --ifuel 1"
+let rec walk_visits_prefix_gen (g: heap) (s start bound: hp_addr)
+  : Lemma
+    (requires
+      U64.v s <= U64.v start /\ U64.v start <= U64.v bound /\
+      walk_visits g s start /\ walk_visits g s bound)
+    (ensures walk_visits g start bound)
+    (decreases (heap_size - U64.v s))
+  = if U64.v s = U64.v start then ()
+    else begin
+      let wz = getWosize (read_word g s) in
+      let next_nat = U64.v s + (U64.v wz + 1) * 8 in
+      aligned_plus_mul8 (U64.v s) (U64.v wz + 1);
+      let next = mk_hp_addr next_nat in
+      walk_visits_above g next start;
+      walk_visits_prefix_gen g next start bound
+    end
+#pop-options
+
+let walk_visits_prefix (g: heap) (start bound: hp_addr)
+  : Lemma
+    (requires
+      walk_visits g zero_addr start /\ walk_visits g zero_addr bound /\
+      U64.v start <= U64.v bound)
+    (ensures walk_visits g start bound)
+  = walk_visits_above g zero_addr start;
+    walk_visits_prefix_gen g zero_addr start bound
+
+/// A walk position's next position never overshoots a target the walk
+/// (from that position) is known to reach.
+let walk_visits_next_bound (g: heap) (start bound: hp_addr)
+  : Lemma
+    (requires U64.v start < U64.v bound /\ walk_visits g start bound)
+    (ensures
+      (let wz = getWosize (read_word g start) in
+       U64.v start + (U64.v wz + 1) * 8 <= U64.v bound))
+  = let wz = getWosize (read_word g start) in
+    let next_nat = U64.v start + (U64.v wz + 1) * 8 in
+    aligned_plus_mul8 (U64.v start) (U64.v wz + 1);
+    let next = mk_hp_addr next_nat in
+    walk_visits_above g next bound
+
+/// A position the walk from `zero_addr` reaches, with room for a header, is
+/// never a dead end: density (plus the heap being nonempty to begin with)
+/// carries the walk's own "doesn't stop early" property all the way from
+/// `zero_addr` to any such position.  Needed because `walk_visits` only
+/// records that the walk *reaches* a position, not that it *continues*
+/// there -- that extra step is exactly what `SI.heap_objects_dense` supplies,
+/// one hop at a time.
+#push-options "--z3rlimit 60 --fuel 2 --ifuel 1"
+let rec walk_visits_dense_continues (g: heap) (s p: hp_addr)
+  : Lemma
+    (requires
+      SI.heap_objects_dense g /\ walk_visits g s p /\
+      Seq.length (objects s g) > 0 /\
+      Seq.mem (f_address s) (objects zero_addr g) /\
+      U64.v p + 8 < heap_size)
+    (ensures Seq.length (objects p g) > 0)
+    (decreases (heap_size - U64.v s))
+  = if U64.v s = U64.v p then ()
+    else begin
+      SI.objects_dense_step s g;
+      let wz = getWosize (read_word g s) in
+      let next_nat = U64.v s + (U64.v wz + 1) * 8 in
+      aligned_plus_mul8 (U64.v s) (U64.v wz + 1);
+      let next = mk_hp_addr next_nat in
+      if U64.v next + 8 < heap_size then begin
+        SI.objects_dense_obj_in s g;
+        SI.obj_in_objects_elim (U64.uint_to_t (next_nat + 8)) g;
+        f_address_spec next;
+        walk_visits_dense_continues g next p
+      end
+    end
+#pop-options
+
+/// A corrected `flush_preserves_density` (same extra hypotheses as
+/// `flush_white_transfer`, plus heap-nonempty) was attempted here and NOT
+/// completed -- see NOTES.md ("flush_density_transfer") for what was tried,
+/// what closed, and the one remaining obligation (a position's own
+/// nonemptiness past the run, which needs the same single-word-agreement
+/// transfer `objects_nonempty_transfers` provides, chained through one more
+/// case than got closed in the time available). No body is left here since
+/// leaving a non-typechecking definition in the file is not allowed; the
+/// general lemmas above (`walk_visits_dense_continues`,
+/// `objects_nonempty_transfers`, `flush_h_decompose`, `flush_h_is_member`,
+/// `flush_no_interior_member`) are all independently proven and don't depend
+/// on this one, so they stay.
 
 /// ---------------------------------------------------------------------------
 /// White preservation: the induction
