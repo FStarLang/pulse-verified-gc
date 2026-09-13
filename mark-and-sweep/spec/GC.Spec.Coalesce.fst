@@ -4394,37 +4394,7 @@ let coalesce_establishes_fl_exact g fp =
 
 *)
 module SI = GC.Spec.SweepInv
-/// ===========================================================================
-/// REPLACES the tail of GC.Spec.Coalesce.fst.
-///
-/// Paste over everything from the line
-///     module SI = GC.Spec.SweepInv
-/// that follows the big `(* ... *)` block ending in
-/// `coalesce_establishes_fl_exact`, through to the end of the file.
-///
-/// Changes from what you have:
-///   1. The dead first-approach block is gone: `whole_size`, `blue_words`,
-///      `total_blue_words`, `blue_words_frame`, `flush_blue_words`,
-///      `fl_sound_null`, `sync`, `flush_below_run_same`,
-///      `coalesce_aux_conserves`, `coalesce_conserves_and_lists`, and the
-///      `(****)` divider.  `flush_blue_words` in particular was FALSE as
-///      stated -- its requires constrained only addresses -- so anything
-///      calling it inherited an unsound conclusion.
-///   2. `white_inv` gains clause 5: the pending run holds no white object.
-///   3. The three `flush_*` helpers get real statements.  They take the run
-///      end as a `nat`, not an `hp_addr`, because a run can end exactly at
-///      `heap_size`, which is not a valid address.  `flush_preserves_white`
-///      loses its `g0` parameter -- it relates `g` to the flushed heap.
-///   4. The `nxt_n >= heap_size` branch of the induction is filled in.
-///   5. `coalesce_preserves_white` drops its `objects_split_at` call, which
-///      did nothing at `zero_addr`.
-///
-/// Live admits after this: `walk_visits_step`, the three flush helpers, and
-/// the three top-level sublemmas other than `coalesce_preserves_white`.
-/// Seven.
-/// ===========================================================================
 
-module SI = GC.Spec.SweepInv
 module WE = GC.Spec.WalkEnd
 
 #set-options "--z3rlimit 50 --fuel 2 --ifuel 1"
