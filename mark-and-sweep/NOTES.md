@@ -96,12 +96,12 @@ worth actually proving where provable.
 |---|-------|--------|
 | 1 | walk_visits_step | CLOSED |
 | 2 | flush_preserves_walk | CLOSED |
-| 3 | flush_preserves_white | NOT PROVABLE AS STATED (see below) |
-| 4 | flush_preserves_density | NOT PROVABLE AS STATED (see below) |
-| 5 | coalesce_aux_preserves_white | |
-| 6 | coalesce_conserves_whsize | |
-| 7 | coalesce_preserves_blue_coverage | |
-| 8 | coalesce_no_adjacent_blue | |
+| 3 | flush_preserves_white | NOT PROVABLE AS STATED (corrected private version `flush_white_transfer` CLOSED, see below) |
+| 4 | flush_preserves_density | NOT PROVABLE AS STATED (corrected private version `flush_density_transfer` attempted, NOT CLOSED, see below) |
+| 5 | coalesce_aux_preserves_white | NOT CLOSED — blocked on #4 (see below) |
+| 6 | coalesce_conserves_whsize | NOT CLOSED — blocked on #4, same reason (see below) |
+| 7 | coalesce_preserves_blue_coverage | NOT CLOSED — blocked on #4, same reason (see below) |
+| 8 | coalesce_no_adjacent_blue | NOT CLOSED — blocked on #4, same reason (see below) |
 
 (table filled in below as each is closed / abandoned)
 
@@ -364,11 +364,53 @@ but the fast single-file loop now runs in the foreground.
 verify attempts, stop on it... move to the next"), stopping on
 `flush_density_transfer` here (well past 10 attempts across the two
 lemmas), recording the above, and moving to `coalesce_aux_preserves_white`.
-Since `coalesce_aux_preserves_white`'s own induction needs *both* a white
-transfer *and* a density transfer at every flush to satisfy `white_inv`'s
-requirement that the invariant include `SI.heap_objects_dense g`, and only
-the white half is available, lemma 5 is attempted below using
-`flush_white_transfer` wherever needed, but is expected to be blocked at
-exactly the points that would otherwise call a working density transfer.
+
+### 5. `coalesce_aux_preserves_white` — NOT CLOSED (blocked on #4)
+
+`coalesce_aux_preserves_white`'s `requires` is `white_inv g0 g start objs
+first_blue run_words all_objs`, and `white_inv`'s clause 3 is literally
+`SI.heap_objects_dense g`. Every recursive call the induction makes after a
+flush (the white-case branch, and the boundary case at the top of the heap)
+passes the *flushed* heap as the new `g`, so satisfying `white_inv` at that
+recursive call requires `SI.heap_objects_dense (fst (flush_blue ...))` —
+exactly `flush_density_transfer`'s conclusion. `white_inv` is not one of the
+8 target lemmas and its clause 3 is not something I can change or route
+around (that would be weakening what `coalesce_aux_preserves_white` is
+asked to prove without touching its `val`, which I also can't do). With
+`flush_density_transfer` not closed (see above), every recursive step of
+this induction that flushes is unreachable without an unsound axiom.
+
+Not attempting a full write-up of the induction body: the white-preservation
+half is fully worked out and provable (`flush_white_transfer` plus the
+existing `walk_visits_step`, `coalesce_aux_blue_step`/`coalesce_aux_white_step`,
+mirroring the commented draft already in the file), but the density half is
+the identical gap already documented above, and writing out the ~150-line
+induction just to watch it stop at that one obligation would not add
+information beyond what's already recorded. Left `coalesce_aux_preserves_white`
+admitted, untouched, matching the task's own contingency: "if it is one of
+1-4, note that 5-8 may now be unreachable" — #4 is not closed, so #5 is
+correctly unreachable via the intended route, and I found no alternative
+route around `white_inv`'s clause 3 that doesn't require the identical
+density-transfer fact in some form.
+
+### 6, 7, 8 — checked for an independent route, also blocked
+
+`coalesce_conserves_whsize`, `coalesce_preserves_blue_coverage`, and
+`coalesce_no_adjacent_blue` are all proved (per the task's own framing) by
+an analogous induction over `coalesce_aux` from `zero_addr` with `run_words
+= 0`, tracking a different invariant each time (whsize sum, blue coverage,
+adjacency) instead of whiteness. Every one of them needs the *same* two
+ingredients as `coalesce_aux_preserves_white`: (a) a white/blue-preservation-shaped
+transfer lemma for whatever the specific invariant is, requiring the same
+H-reachability + run_end-reachability extra hypotheses `flush_white_transfer`
+established are necessary and sufficient, and (b) `SI.heap_objects_dense`
+maintained at every recursive step after a flush, to even state that the
+walk continues far enough for the invariant to make sense at the next
+position — i.e. `flush_density_transfer` again, verbatim. None of them has
+an independent proof route that sidesteps needing the object walk to stay
+dense after coalescing; density is a structural precondition for the walk
+itself to continue being well-defined at each induction step, not something
+specific to whiteness. So all three are blocked on the exact same gap as #5,
+for the same reason, and are left admitted, untouched.
 
 ---
