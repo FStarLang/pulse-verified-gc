@@ -97,11 +97,11 @@ worth actually proving where provable.
 | 1 | walk_visits_step | CLOSED |
 | 2 | flush_preserves_walk | CLOSED |
 | 3 | flush_preserves_white | NOT PROVABLE AS STATED (corrected private version `flush_white_transfer` CLOSED, see below) |
-| 4 | flush_preserves_density | NOT PROVABLE AS STATED (corrected private version `flush_density_transfer` attempted, NOT CLOSED, see below) |
-| 5 | coalesce_aux_preserves_white | NOT CLOSED — blocked on #4 (see below) |
-| 6 | coalesce_conserves_whsize | NOT CLOSED — blocked on #4, same reason (see below) |
-| 7 | coalesce_preserves_blue_coverage | NOT CLOSED — blocked on #4, same reason (see below) |
-| 8 | coalesce_no_adjacent_blue | NOT CLOSED — blocked on #4, same reason (see below) |
+| 4 | flush_preserves_density | NOT PROVABLE AS STATED (corrected private version `flush_density_transfer` CLOSED via `GC.Spec.WalkEnd`, see below) |
+| 5 | coalesce_aux_preserves_white | in progress (unblocked now that #4 closed) |
+| 6 | coalesce_conserves_whsize | in progress |
+| 7 | coalesce_preserves_blue_coverage | in progress |
+| 8 | coalesce_no_adjacent_blue | in progress |
 
 (table filled in below as each is closed / abandoned)
 
@@ -328,72 +328,109 @@ lack, plus `run_end`-reachability, both genuinely available inside
   `flush_blue_preserves_outside` for the color/wosize agreement. Verified
   clean via `/tmp/check_coalesce.sh` (run in the foreground, per correction
   below).
-- **`flush_density_transfer` — NOT CLOSED, removed from the file.** Attempted
-  the analogous corrected `flush_preserves_density`. Closed every case except
-  one: for an arbitrary walk position `start` below the run with genuine
-  `g1`-membership, showing `objects next g1` is nonempty (`next` being
-  `start`'s own successor) needs `next`'s *own* header word to not overflow
-  past the heap — which is not automatic from `start+8 < heap_size` alone
-  (`objects`'s recursion can legitimately go empty on an oversized `wosize`
-  even with room for the header — this is the same "data can be anything
-  outside what's constrained" shape as the original gap, just one level
-  removed). The fix in progress (`walk_visits_dense_continues` +
-  `objects_nonempty_transfers`, both closed and kept) chains `SI.heap_objects_dense`
-  from `zero_addr` up to `start`, then transfers nonemptiness at `next` via
-  single-word read agreement — this closed 3 of the 4 branches of the
-  `heap_objects_dense_intro` case split (the `start = h` branch, the
-  `start >= re` branch, and the vacuous `h < start < re` branch via
-  `flush_no_interior_member`), but the 4th (`start < h`, ordinary interior
-  position, deriving `objects next g1 > 0`) did not close within the
-  session's iteration budget. Removed the broken definition rather than leave
-  a non-typechecking body in the file; the reusable general lemmas it would
-  have called (listed above) all check independently and are kept.
+- **`flush_density_transfer` — first attempt NOT CLOSED, removed from the
+  file (superseded below).** Attempted the analogous corrected
+  `flush_preserves_density` by attacking `SI.heap_objects_dense`'s quantified
+  form directly (case-splitting the position `heap_objects_dense_intro`
+  quantifies over). Closed every case except one: for an arbitrary walk
+  position `start` below the run with genuine `g1`-membership, showing
+  `objects next g1` is nonempty (`next` being `start`'s own successor) needs
+  `next`'s *own* header word to not overflow past the heap — which is not
+  automatic from `start+8 < heap_size` alone (`objects`'s recursion can
+  legitimately go empty on an oversized `wosize` even with room for the
+  header). Removed the broken definition rather than leave a non-typechecking
+  body in the file; the reusable general lemmas it depended on
+  (`walk_visits_dense_continues`, `objects_nonempty_transfers`,
+  `flush_h_decompose`, `flush_h_is_member`, `flush_no_interior_member`) all
+  checked independently and were kept.
 
 **Process correction**: for several iterations here I launched
 `/tmp/check_coalesce.sh` as a background task and then tried to wait for it
 via repeated `Monitor`/`ScheduleWakeup`-style polling loops that kept
 timing out or firing empty — wasted real time without new information.
 Corrected to running the check directly in the foreground (`Bash` without
-backgrounding, reading `stdout` directly) for the remainder of the session;
-that is the reliable way to get a definitive pass/fail on this file. Kept
-`gmake verify` (whole-project) as a background task, since it is slow
-(multiple minutes) and it is fine to check on it after doing other work,
-but the fast single-file loop now runs in the foreground.
+backgrounding, reading `stdout` directly); that is the reliable way to get a
+definitive pass/fail on this file. `gmake verify` (whole-project) stays a
+background task since it is slow (the repo has one particular module,
+`impl/GC.Impl.MarkBounded.fst`, that alone regularly takes several minutes
+under `--z3rlimit 300`, unrelated to anything touched here), but the fast
+single-file loop runs in the foreground from here on.
 
-**Decision**: per the task's own rule ("if a lemma is not closed after 10
-verify attempts, stop on it... move to the next"), stopping on
-`flush_density_transfer` here (well past 10 attempts across the two
-lemmas), recording the above, and moving to `coalesce_aux_preserves_white`.
+### `flush_density_transfer`, take two — CLOSED, via `GC.Spec.WalkEnd`
 
-### 5. `coalesce_aux_preserves_white` — NOT CLOSED (blocked on #4)
+Re-attempted per instruction: route through `GC.Spec.WalkEnd`'s scalar
+`walk_end` instead of `SI.heap_objects_dense`'s quantified form. `walk_end g
+start` is the single address where the object walk from `start` halts;
+`WE.walk_end_of_dense_top` and `WE.dense_from_walk_end` already convert
+between that scalar and `SI.heap_objects_dense` (given the heap is
+nonempty), so the whole job reduces to showing the flush leaves `walk_end g
+zero_addr` unchanged — one scalar equality, not a case split over every walk
+position.
+
+Two small general lemmas, unconditionally true, no heap-agreement needed for
+the first:
+  - `walk_end_agree_on_visit (g s a)`: if the walk visits `a` starting from
+    `s` (`walk_visits g s a`), the walk's ultimate halt from `s` is the same
+    as from `a` — `a` is just an intermediate checkpoint of the same
+    computation. Proof mirrors `walk_visits_step`'s induction exactly
+    (`walk_visits` and `walk_end` share one recursive step).
+  - `walk_end_agree_above (g g1 s bound)`: mirrors `objects_agree_above` —
+    heaps agreeing at every position `>= bound` have the same `walk_end` from
+    any `s >= bound`.
+
+Then `flush_preserves_walk_end` (the one substantive lemma, same extra
+H-reachability/`re`-reachability hypotheses as `flush_white_transfer`, for
+the same reason — they're what ties `first_blue`/`run_words` to the heap's
+real layout):
+  1. Below `H`, `g`/`g1` agree (`flush_blue_preserves_outside`), so
+     `walk_visits_agree_below` gives `walk_visits g1 zero_addr H` from
+     `walk_visits g zero_addr H`, and `walk_end_agree_on_visit` (applied to
+     each heap) gives `walk_end g zero_addr == walk_end g H` and
+     `walk_end g1 zero_addr == walk_end g1 H`.
+  2. `walk_visits_prefix` (already proven, from the two "reachable from
+     `zero_addr`" hypotheses) gives `walk_visits g H re`, so
+     `walk_end_agree_on_visit` again gives `walk_end g H == walk_end g re`.
+  3. `walk_end g1 H == walk_end g1 re` needs no lemma at all: it is one
+     unfolding of `walk_end`'s own recursive step, using `g1`'s fresh merged
+     header at `H` (`flush_blue_header_spec` + `makeHeader_getWosize` give
+     its wosize is `run_words - 1`), whose next-hop is `re` exactly, by the
+     same whole-size-conservation arithmetic already used everywhere else in
+     this file (`H + run_words * mword == re`). This is the "should be short"
+     step the task description named, and it was — a handful of already-proven
+     facts, no new case analysis.
+  4. Above `re`, `g`/`g1` agree again, so `walk_end_agree_above` gives
+     `walk_end g1 re == walk_end g re`.
+  5. Chain 1-4: `walk_end g1 zero_addr == walk_end g1 H == walk_end g1 re ==
+     walk_end g re == walk_end g H == walk_end g zero_addr`.
+
+`flush_density_transfer` itself is then three calls: `WE.walk_end_of_dense_top
+g` (density(`g`) + nonempty → the scalar fact), `flush_preserves_walk_end`
+(carries it across the flush), a small case split on whether `zero_addr < H`
+or `zero_addr == H` to get `objects zero_addr g1` nonempty (the first case
+via `objects_nonempty_transfers`; the second — the run starts at the very
+first object — via `flush_h_decompose`'s cons-shaped conclusion), then
+`WE.dense_from_walk_end g1` (scalar fact + nonempty → density(`g1`)).
+
+Closed on the first attempt with this route (previous attempt was well past
+10 tries; this one took one syntax fix — `walk_end` needed the `WE.` module
+qualifier, it isn't opened unqualified — and then compiled clean). Verified
+via `/tmp/check_coalesce.sh` in the foreground.  Vacuity-checked
+(`ensures False`, body `()`) — **fails** as required (`Failed to prove:
+Prims.l_False`), so the hypotheses are not contradictory; restored the real
+proof and reverified clean.
+
+With this closed, lemma 5 (and 6-8, which need the identical two
+ingredients) are no longer blocked on this gap; see below.
+
+### 5. `coalesce_aux_preserves_white` — attempting for real now that #4 is closed
 
 `coalesce_aux_preserves_white`'s `requires` is `white_inv g0 g start objs
-first_blue run_words all_objs`, and `white_inv`'s clause 3 is literally
+first_blue run_words all_objs`, and `white_inv`'s clause 3 is
 `SI.heap_objects_dense g`. Every recursive call the induction makes after a
-flush (the white-case branch, and the boundary case at the top of the heap)
-passes the *flushed* heap as the new `g`, so satisfying `white_inv` at that
-recursive call requires `SI.heap_objects_dense (fst (flush_blue ...))` —
-exactly `flush_density_transfer`'s conclusion. `white_inv` is not one of the
-8 target lemmas and its clause 3 is not something I can change or route
-around (that would be weakening what `coalesce_aux_preserves_white` is
-asked to prove without touching its `val`, which I also can't do). With
-`flush_density_transfer` not closed (see above), every recursive step of
-this induction that flushes is unreachable without an unsound axiom.
+flush needs `SI.heap_objects_dense (fst (flush_blue ...))` at that point —
+now available via `flush_density_transfer`.
 
-Not attempting a full write-up of the induction body: the white-preservation
-half is fully worked out and provable (`flush_white_transfer` plus the
-existing `walk_visits_step`, `coalesce_aux_blue_step`/`coalesce_aux_white_step`,
-mirroring the commented draft already in the file), but the density half is
-the identical gap already documented above, and writing out the ~150-line
-induction just to watch it stop at that one obligation would not add
-information beyond what's already recorded. Left `coalesce_aux_preserves_white`
-admitted, untouched, matching the task's own contingency: "if it is one of
-1-4, note that 5-8 may now be unreachable" — #4 is not closed, so #5 is
-correctly unreachable via the intended route, and I found no alternative
-route around `white_inv`'s clause 3 that doesn't require the identical
-density-transfer fact in some form.
-
-### 6, 7, 8 — checked for an independent route, also blocked
+### 6, 7, 8 — will need the analogous transfer lemma for their own invariant
 
 `coalesce_conserves_whsize`, `coalesce_preserves_blue_coverage`, and
 `coalesce_no_adjacent_blue` are all proved (per the task's own framing) by
@@ -404,13 +441,7 @@ ingredients as `coalesce_aux_preserves_white`: (a) a white/blue-preservation-sha
 transfer lemma for whatever the specific invariant is, requiring the same
 H-reachability + run_end-reachability extra hypotheses `flush_white_transfer`
 established are necessary and sufficient, and (b) `SI.heap_objects_dense`
-maintained at every recursive step after a flush, to even state that the
-walk continues far enough for the invariant to make sense at the next
-position — i.e. `flush_density_transfer` again, verbatim. None of them has
-an independent proof route that sidesteps needing the object walk to stay
-dense after coalescing; density is a structural precondition for the walk
-itself to continue being well-defined at each induction step, not something
-specific to whiteness. So all three are blocked on the exact same gap as #5,
-for the same reason, and are left admitted, untouched.
+maintained at every recursive step after a flush — now `flush_density_transfer`,
+closed above. Attempting 5 first, then 6-8 in turn below.
 
 ---

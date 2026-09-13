@@ -5304,18 +5304,152 @@ let rec walk_visits_dense_continues (g: heap) (s p: hp_addr)
     end
 #pop-options
 
-/// A corrected `flush_preserves_density` (same extra hypotheses as
-/// `flush_white_transfer`, plus heap-nonempty) was attempted here and NOT
-/// completed -- see NOTES.md ("flush_density_transfer") for what was tried,
-/// what closed, and the one remaining obligation (a position's own
-/// nonemptiness past the run, which needs the same single-word-agreement
-/// transfer `objects_nonempty_transfers` provides, chained through one more
-/// case than got closed in the time available). No body is left here since
-/// leaving a non-typechecking definition in the file is not allowed; the
-/// general lemmas above (`walk_visits_dense_continues`,
-/// `objects_nonempty_transfers`, `flush_h_decompose`, `flush_h_is_member`,
-/// `flush_no_interior_member`) are all independently proven and don't depend
-/// on this one, so they stay.
+/// ---------------------------------------------------------------------------
+/// Density via `walk_end`: the scalar route
+/// ---------------------------------------------------------------------------
+///
+/// The earlier attempt at `flush_density_transfer` went straight at
+/// `SI.heap_objects_dense`'s quantified form -- for every walk position with
+/// room, show the walk continues -- and got stuck exactly where `flush_preserves_white`
+/// did: transferring a single position's own nonemptiness across the flush.
+/// `GC.Spec.WalkEnd` gives a scalar restatement of density (`walk_end g
+/// zero_addr` is *the* address where the whole-heap walk stops) and a pair of
+/// bridging lemmas (`walk_end_of_dense_top`, `dense_from_walk_end`), so the
+/// job reduces to showing the flush doesn't move that one number.  That's
+/// what's done below: `flush_preserves_walk_end` is the only real content;
+/// `flush_density_transfer` is three lines around it.
+
+/// Membership in a walk between two points already visited: if the walk
+/// visits `a` starting from `s`, its ultimate stopping point from `s` is the
+/// same as from `a` -- `a` is just an intermediate checkpoint. Unconditional,
+/// no heap-agreement hypotheses needed: `walk_visits` and `walk_end` share
+/// the same recursive step, so visiting `a` en route doesn't change where
+/// the walk eventually halts.
+#push-options "--z3rlimit 60 --fuel 2 --ifuel 1"
+let rec walk_end_agree_on_visit (g: heap) (s a: hp_addr)
+  : Lemma
+    (requires walk_visits g s a)
+    (ensures WE.walk_end g s == WE.walk_end g a)
+    (decreases (heap_size - U64.v s))
+  = if U64.v s = U64.v a then ()
+    else begin
+      let wz = getWosize (read_word g s) in
+      let next_nat = U64.v s + (U64.v wz + 1) * 8 in
+      aligned_plus_mul8 (U64.v s) (U64.v wz + 1);
+      let next = mk_hp_addr next_nat in
+      walk_end_agree_on_visit g next a
+    end
+#pop-options
+
+/// Two heaps that agree at every position at or above `bound` have the same
+/// `walk_end` from any starting point at or above `bound`.  Mirrors
+/// `objects_agree_above`.
+#push-options "--z3rlimit 60 --fuel 2 --ifuel 1"
+let rec walk_end_agree_above (g g1: heap) (s: hp_addr) (bound: nat)
+  : Lemma
+    (requires
+      U64.v s >= bound /\
+      (forall (q: hp_addr). U64.v q >= bound /\ U64.v q + U64.v mword <= heap_size ==>
+         read_word g1 q == read_word g q))
+    (ensures WE.walk_end g1 s == WE.walk_end g s)
+    (decreases (heap_size - U64.v s))
+  = if U64.v s + 8 >= heap_size then ()
+    else begin
+      let wz = getWosize (read_word g s) in
+      let next_nat = U64.v s + (U64.v wz + 1) * 8 in
+      if next_nat > heap_size || next_nat >= pow2 64 then ()
+      else if next_nat >= heap_size then ()
+      else begin
+        aligned_plus_mul8 (U64.v s) (U64.v wz + 1);
+        walk_end_agree_above g g1 (mk_hp_addr next_nat) bound
+      end
+    end
+#pop-options
+
+/// The flush leaves `walk_end` from `zero_addr` exactly where it was.  Below
+/// the run, the two heaps agree, so the walk gets to `H` the same way in
+/// both; from `H`, the flushed heap's one merged block covers exactly the
+/// same ground -- `run_words` words -- as however many blocks the run held
+/// in the original, so both heaps' walks resume at the same place, `re`;
+/// above `re` the heaps agree again.  `H`- and `re`-reachability (from
+/// `zero_addr`, in the original heap) are the same two extra facts
+/// `flush_white_transfer` needed and for the same reason: they are what ties
+/// `first_blue`/`run_words` to the heap's real layout, which
+/// `SI.heap_objects_dense` alone does not supply.
+#push-options "--z3rlimit 80 --fuel 2 --ifuel 1"
+let flush_preserves_walk_end
+  (g: heap) (first_blue: U64.t) (run_words: pos) (fp: U64.t) (re: hp_addr)
+  : Lemma
+    (requires
+      U64.v first_blue >= U64.v mword /\ U64.v first_blue < heap_size /\
+      U64.v first_blue % U64.v mword == 0 /\
+      run_words - 1 < pow2 54 /\
+      U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v re /\
+      walk_visits g zero_addr (hd_address (first_blue <: obj_addr)) /\
+      walk_visits g zero_addr re)
+    (ensures WE.walk_end (fst (flush_blue g first_blue run_words fp)) zero_addr == WE.walk_end g zero_addr)
+  = let g1 = fst (flush_blue g first_blue run_words fp) in
+    let fb : obj_addr = first_blue in
+    let h = hd_address fb in
+    hd_address_spec fb;
+    let below (q: hp_addr)
+      : Lemma
+        (requires U64.v q + U64.v mword <= U64.v h)
+        (ensures read_word g1 q == read_word g q)
+      = flush_blue_preserves_outside g first_blue run_words fp q
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires below);
+    walk_visits_above g zero_addr h;
+    walk_visits_agree_below g g1 zero_addr h;
+    walk_end_agree_on_visit g zero_addr h;
+    walk_end_agree_on_visit g1 zero_addr h;
+    walk_visits_prefix g h re;
+    walk_end_agree_on_visit g h re;
+    flush_blue_header_spec g fb run_words fp;
+    let wz_u64 : wosize = U64.uint_to_t (run_words - 1) in
+    makeHeader_getWosize wz_u64 Blue 0UL;
+    let above (q: hp_addr)
+      : Lemma
+        (requires U64.v q >= U64.v re)
+        (ensures read_word g1 q == read_word g q)
+      = flush_blue_preserves_outside g first_blue run_words fp q
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires above);
+    walk_end_agree_above g g1 re (U64.v re)
+#pop-options
+
+/// The corrected `flush_preserves_density`: same extra hypotheses as
+/// `flush_white_transfer`, plus the heap being nonempty to begin with (needed
+/// by `dense_from_walk_end`).  `walk_end_of_dense_top` turns density(`g`)
+/// into a scalar fact, `flush_preserves_walk_end` carries that scalar fact
+/// across the flush unchanged, and `dense_from_walk_end` turns it back into
+/// density(`g1`).
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
+let flush_density_transfer
+  (g: heap) (re: hp_addr) (first_blue: U64.t) (run_words: pos) (fp: U64.t)
+  : Lemma
+    (requires
+      U64.v first_blue >= U64.v mword /\ U64.v first_blue < heap_size /\
+      U64.v first_blue % U64.v mword == 0 /\
+      run_words - 1 < pow2 54 /\
+      U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v re /\
+      SI.heap_objects_dense g /\
+      Seq.length (objects zero_addr g) > 0 /\
+      walk_visits g zero_addr (hd_address (first_blue <: obj_addr)) /\
+      walk_visits g zero_addr re)
+    (ensures SI.heap_objects_dense (fst (flush_blue g first_blue run_words fp)))
+  = let g1 = fst (flush_blue g first_blue run_words fp) in
+    let h = hd_address (first_blue <: obj_addr) in
+    hd_address_spec (first_blue <: obj_addr);
+    WE.walk_end_of_dense_top g;
+    flush_preserves_walk_end g first_blue run_words fp re;
+    (if U64.v zero_addr < U64.v h then begin
+       flush_blue_preserves_outside g first_blue run_words fp zero_addr;
+       objects_nonempty_transfers g g1 zero_addr
+     end else
+       flush_h_decompose g first_blue run_words fp re);
+    WE.dense_from_walk_end g1
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// White preservation: the induction
