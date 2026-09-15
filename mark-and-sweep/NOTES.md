@@ -119,7 +119,7 @@ worth actually proving where provable.
 | 3 | flush_preserves_white | NOT PROVABLE AS STATED (corrected private version `flush_white_transfer` CLOSED, see below) |
 | 4 | flush_preserves_density | NOT PROVABLE AS STATED (corrected private version `flush_density_transfer` CLOSED via `GC.Spec.WalkEnd`, see below) |
 | 5 | coalesce_aux_preserves_white | CLOSED (required adding a clause to `white_inv`, see below) |
-| 6 | coalesce_conserves_whsize | in progress |
+| 6 | coalesce_conserves_whsize | CLOSED (new `whsize_inv`, built on top of `white_inv`, see below) |
 | 7 | coalesce_preserves_blue_coverage | in progress |
 | 8 | coalesce_no_adjacent_blue | in progress |
 
@@ -552,5 +552,113 @@ GC.Spec.Coalesce", "All verification conditions discharged successfully".
 (`Failed to prove: Prims.l_False`), so `white_inv`'s hypotheses (with the
 new clause 6) are not contradictory. Restored the real proof; reverified
 clean.
+
+---
+
+### 6. `coalesce_conserves_whsize` — CLOSED, via a new `whsize_inv`
+
+Applied the lesson from #5 from the start: built a shared-facts bundle
+(`whsize_inv`) and the H-reachability-style clause into the invariant design
+up front, rather than discovering the need for them mid-debugging.
+
+**`whsize_inv`**, defined on top of `white_inv` (not a parallel
+reimplementation of its bookkeeping):
+
+```fstar
+let whsize_inv
+  (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
+  (first_blue: U64.t) (run_words: nat) (all_objs: seq obj_addr)
+  : prop =
+  white_inv g0 g start objs first_blue run_words all_objs /\
+  total_blue_whsize g0 == total_blue_whsize g /\
+  (run_words > 0 ==>
+    blue_whsize g (objects (mk_hp_addr (U64.v first_blue - U64.v mword)) g) ==
+      run_words + blue_whsize g objs)
+```
+
+Including `white_inv` as a conjunct (rather than restating its clauses) means
+every recursive step's re-establishment of clauses 1–6 is done by literally
+reusing `white_inv`'s own already-proven machinery
+(`caw_unpack_white_inv`/`caw_shared_facts`, `caw_extend_run_white_free`,
+`caw_clause4_ext_blue`, `caw_clause4_ext_white`) — the only *new* work per
+step is maintaining the two whsize-specific clauses. The second clause is
+deliberately a **sum**, not an existential "list of run objects" (an earlier
+design considered and discarded): `run_words` already *is* the accumulated
+blue whsize of the pending run by construction
+(`coalesce_aux`'s own `run_words + wosize_of_object obj g0 + 1` step), so the
+invariant only needs to say so numerically. No clause-6-style extra
+existential witness was needed beyond what clause 6 itself (reused from
+`white_inv`) already supplies.
+
+**General helpers, factored before writing the cases** (per the standing
+instruction, not discovered mid-debugging as with #5):
+  - `blue_whsize_append (g s1 s2)`: `blue_whsize` is additive over
+    `Seq.append`.
+  - `blue_whsize_agree (g g' s)`: if every element of `s` has the same header
+    word in `g` and `g'`, `blue_whsize g s == blue_whsize g' s`. The
+    sequence-lifted form of `header_agree_transfers`.
+  - `objects_prefix_agree (g g1 s bound)`: if `g`'s walk from `s` reaches
+    `bound`, and `g`/`g1` agree at every whole word in `[s, bound)`, the
+    *same* split witness works for both heaps: `exists pre. objects s g ==
+    append pre (objects bound g) /\ objects s g1 == append pre (objects
+    bound g1)`. Proved by an induction running in lockstep with
+    `objects_split_from`'s own, tracking both heaps at once. This is what
+    lets a flush's "unaffected prefix below the run" be reused across the
+    pre/post-flush heaps without reproving `objects_split_from` from
+    scratch on each side and hoping the witnesses coincide.
+
+**The flush-conserves-whsize argument**, in two forms exactly mirroring the
+`flush_white_transfer` / `flush_white_transfer_at_end` split (general
+run-end vs. run-ends-at-top-of-heap, the latter needed because `heap_size`
+itself is not a valid `hp_addr`):
+  - `flush_conserves_whsize (g start first_blue run_words fp)`: decomposes
+    `objects zero_addr g` as `pre ++ (objects h g)` where `h` is the run's
+    floor, uses the invariant's own sum clause to get
+    `blue_whsize g (objects h g) == run_words + blue_whsize g (objects start
+    g)`, shows the merged block alone (`flush_blue_header_spec` +
+    `makeHeader_getWosize`/`getColor`) has whsize exactly `run_words`, and
+    that `pre` and the `start`-and-above tail are each untouched
+    (`blue_whsize_agree`, fed by `flush_blue_preserves_outside` pointwise).
+  - `flush_conserves_whsize_at_end (g first_blue run_words fp)`: the same
+    argument with no tail at all — `objects h g1` decomposes via
+    `WE.walk_end_step`'s own `next >= heap_size ==> Seq.cons ... Seq.empty`
+    branch instead of `flush_h_decompose` (which needs `re : hp_addr`, and
+    `heap_size` isn't one). The needed nonemptiness of `objects h g` fell out
+    directly: `h + mword == first_blue < heap_size` is already a hypothesis,
+    and `objects`'s own nonemptiness condition depends only on position, not
+    heap content — no separate lemma needed once that identity was written
+    down.
+
+**The induction**: `coalesce_aux_conserves_whsize_aux` plus
+`caw_ws_empty`/`caw_ws_top` (private, non-recursive) and
+`caw_ws_blue_head`/`caw_ws_white_head` (mutually recursive with the
+dispatcher), a direct structural mirror of
+`coalesce_aux_preserves_white_aux`'s own four-way split. `caw_ws_blue_head`
+and `caw_ws_white_head` reuse `white_inv`'s own re-establishment bookkeeping
+verbatim (the arithmetic setting up `nxt`, `caw_extend_run_white_free`,
+`caw_clause4_ext_blue`/`_white`) and add only the whsize-specific facts on
+top, via one new shared helper, `caw_ws_head_whsize`, factored out the
+*second* time the "consuming one more blue object adds exactly `wz + 1` to
+`blue_whsize g objs`" argument was needed (`caw_ws_top`'s blue branch, then
+`caw_ws_blue_head`) rather than being copied a third time.
+
+**One bug caught by the checker, not by design**: a stray
+`h_addr_agree first_blue` (copy-pasted from a sibling `h_addr_agree fb'`
+line, should have read `fb'` throughout) tried to use `first_blue` under
+`run_words = 0`, where it is unconstrained. Removed; it was redundant with
+the `h_addr_agree fb'` call immediately above it in any case.
+
+Verified via `/tmp/check_coalesce.sh`, run in the **foreground** per
+explicit correction this session (backgrounding the check and waiting on a
+notification cost several restarts — the harness does not reliably wake the
+turn back up) — clean, "Verified module: GC.Spec.Coalesce", "All
+verification conditions discharged successfully".
+**Vacuity check**: restated `coalesce_conserves_whsize`'s `let` with
+`(ensures False)` — **fails** as required (`Failed to prove:
+Prims.l_False`), so `whsize_inv`'s hypotheses are not contradictory. Restored
+the real proof; reverified clean.
+
+No `val` was changed for this lemma; `whsize_inv` is a new `let`/`prop`, same
+category as `white_inv`'s own status.
 
 ---
