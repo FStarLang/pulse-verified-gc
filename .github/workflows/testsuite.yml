@@ -15,6 +15,7 @@ name: OCaml testsuite
 
 on:
   push:
+    branches: [ main ]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -23,7 +24,9 @@ on:
         type: boolean
         default: false
 
-# An expensive job: don't pile up runs on a busy branch.
+# An expensive job: `push` is limited to main so that a push to a PR branch does
+# not fire both events and run it twice, and concurrency stops runs piling up on
+# a busy branch.
 concurrency:
   group: testsuite-${{ github.ref }}
   cancel-in-progress: true

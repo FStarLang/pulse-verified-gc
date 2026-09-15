@@ -2,11 +2,13 @@ name: Verify
 
 on:
   push:
+    branches: [ main ]
   pull_request:
   workflow_dispatch:
 
-# Verification is a multi-hour job, so running it on every branch means
-# superseded pushes must not pile up behind each other.
+# Verification is a multi-hour job. `push` is limited to main so that a push to
+# a PR branch does not fire both events and run the whole thing twice, and
+# concurrency stops superseded pushes piling up behind each other.
 concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
