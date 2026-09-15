@@ -120,7 +120,7 @@ worth actually proving where provable.
 | 4 | flush_preserves_density | NOT PROVABLE AS STATED (corrected private version `flush_density_transfer` CLOSED via `GC.Spec.WalkEnd`, see below) |
 | 5 | coalesce_aux_preserves_white | CLOSED (required adding a clause to `white_inv`, see below) |
 | 6 | coalesce_conserves_whsize | CLOSED (new `whsize_inv`, built on top of `white_inv`, see below) |
-| 7 | coalesce_preserves_blue_coverage | in progress |
+| 7 | coalesce_preserves_blue_coverage | CLOSED (new `blue_cov_inv`, built on top of `white_inv`, see below) |
 | 8 | coalesce_no_adjacent_blue | in progress |
 
 (table filled in below as each is closed / abandoned)
@@ -660,5 +660,107 @@ the real proof; reverified clean.
 
 No `val` was changed for this lemma; `whsize_inv` is a new `let`/`prop`, same
 category as `white_inv`'s own status.
+
+---
+
+### 7. `coalesce_preserves_blue_coverage` — CLOSED, via a new `blue_cov_inv`
+
+Same shape as #6: `blue_cov_inv`, built on `white_inv`, plus two new clauses
+tracked from the start (not discovered mid-debugging):
+
+```fstar
+let blue_cov_inv
+  (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
+  (first_blue: U64.t) (run_words: nat) (all_objs: seq obj_addr)
+  : prop =
+  white_inv g0 g start objs first_blue run_words all_objs /\
+  (forall (p: nat). p < heap_size ==> (blue_covered g0 p <==> blue_covered g p)) /\
+  (run_words > 0 ==>
+    (forall (p: nat). U64.v first_blue - U64.v mword <= p /\ p < U64.v start ==>
+       blue_covered g p))
+```
+
+The second clause (coverage agrees between `g0` and `g` at *every* position,
+not just below `start`) is the coverage analogue of `total_blue_whsize g0 ==
+total_blue_whsize g`: both are global equalities that happen to be trivially
+preserved by the blue-accumulate step (`g` doesn't change) and require the
+real argument only at a flush. The third clause is the coverage analogue of
+`whsize_inv`'s sum clause — the pending run's own byte range is already
+covered by its still-unmerged individual blue objects, needed to show the
+merge doesn't change the covered set.
+
+**New general helpers**, mirroring `header_agree_transfers`/`objects_split_from`
+for the coverage predicate specifically:
+  - `blue_covered_by_agree (g g' x p)`: if `x`'s header agrees between two
+    heaps, `x`'s contribution to `blue_covered` at any position transfers
+    (same colour, same extent, since `next_pos` only depends on the header).
+  - `objects_no_straddle (g s bound x)`: no object visited from `s` extends
+    past `bound`, given the walk from `s` reaches `bound`. A pure structural
+    fact about `objects`/`walk_visits` tiling the heap, independent of
+    coalescing — needed to rule out an object below a cursor from covering a
+    position above it (and vice versa), localizing which objects can
+    possibly witness `blue_covered` on each side of a boundary.
+
+**The flush-preserves-coverage argument**, in the same two-lemma split as
+`flush_white_transfer`/`flush_white_transfer_at_end` and
+`flush_conserves_whsize`/`_at_end`: `flush_conserves_coverage` and
+`flush_conserves_coverage_at_end`. Three regions per position: below the
+run's floor (`objects_prefix_agree` gives the common split witness, header
+agreement transfers any covering object), inside the run (the merged block's
+own extent is exactly `[floor, run_end)`, matching the invariant's own
+"run is covered" clause), and at/above the run's end (`objects_no_straddle`
+rules out a below-boundary object reaching across, so any covering object is
+on the unaffected side and transfers via `flush_preserves_walk`).
+
+**The induction** (`coalesce_aux_preserves_blue_coverage_aux`,
+`caw_bc_empty`/`top`/`blue_head`/`white_head`) is again a direct structural
+mirror of `coalesce_aux_conserves_whsize_aux`'s four-way split, reusing
+`white_inv`'s own re-establishment bookkeeping verbatim and adding only the
+coverage-specific facts.
+
+**Debugging, in order encountered** (each caught by the checker, not by
+design review — recorded since the pattern is likely to recur for #8):
+  - In the "at or above `start`" case of `flush_conserves_coverage`, the
+    `fwd`/`bwd` directions each need to bridge *two* separate `objects`
+    splits (`g`'s own split at `start`, and a *second*, independently-derived
+    split of `g1` at `start` -- reusing `g`'s split witness for `g1` is
+    wrong, since the two heaps' global object lists genuinely differ). Each
+    direction was originally written using the wrong split's witness for the
+    wrong heap; fixed by deriving both splits explicitly (`pre2` for `g`,
+    `pre3` for `g1`) and writing out every intermediate membership fact as
+    its own `assert` rather than composing the lemma calls in one expression.
+  - `eliminate exists (x: t). P with y` binds the witness under the *same*
+    name given after `with begin ... end`; `with y. e` (a name introduced
+    fresh after `with`, then a bare expression) is not the right shape and
+    fails with "Identifier not found". Fixed throughout by using
+    `with begin f witness end`, reusing the quantifier's own bound name.
+  - `objects s g`'s nonemptiness is *not* purely positional: `objects`'s own
+    definition has a second escape hatch (`next_start_nat > Seq.length g`)
+    that depends on the wosize actually stored at `s`, which is unconstrained
+    for an arbitrary heap. A general lemma asserting nonemptiness from room
+    alone (`U64.v s + U64.v mword < heap_size`) is therefore not provable,
+    despite `flush_conserves_whsize_at_end`'s identical-looking bare assert
+    having gone through earlier — that assert worked only because
+    `blue_whsize g (objects h g) == run_words` (with `run_words > 0`) was
+    already in scope there, and `blue_whsize`'s own base case forces
+    nonemptiness. For coverage, the matching argument instead goes through
+    `blue_covered g h` (given, since `h < heap_size`) plus
+    `objects_no_straddle` to show the covering object sits exactly at `h`.
+  - Two SMT timeouts (not genuine gaps): `run_words_bound_top` was needed
+    before `flush_conserves_coverage_at_end` (whose requires includes
+    `run_words - 1 < pow2 54`) but the call was missing; and
+    `flush_density_transfer`'s `Seq.length (objects zero_addr g) > 0`
+    hypothesis, previously left for Z3 to find unaided, needed an explicit
+    `objects_split_from`-based derivation once `blue_cov_inv`'s extra
+    coverage clause made the ambient query noisier than `whsize_inv`'s did.
+
+Verified via `/tmp/check_coalesce.sh`, run in the **foreground** throughout
+(per the standing correction from lemma 6) — clean, "Verified module:
+GC.Spec.Coalesce", "All verification conditions discharged successfully".
+**Vacuity check**: restated the `let` with `(ensures False)` — **fails** as
+required (`Failed to prove: Prims.l_False`). Restored the real proof;
+reverified clean.
+
+No `val` was changed; `blue_cov_inv` is a new `let`/`prop`.
 
 ---

@@ -4601,8 +4601,6 @@ val coalesce_preserves_blue_coverage (g: heap)
       (let g' = fst (coalesce g) in
        forall (p: nat). p < heap_size ==> (blue_covered g' p <==> blue_covered g p)))
 
-let coalesce_preserves_blue_coverage g = admit ()
-
 val coalesce_no_adjacent_blue (g: heap)
   : Lemma
     (requires post_sweep_strong g /\ SI.heap_objects_dense g /\
@@ -7112,6 +7110,724 @@ and caw_ws_white_head
 let coalesce_conserves_whsize g =
   coalesce_aux_conserves_whsize_aux g g zero_addr (objects zero_addr g) 0UL 0 0UL
                                     (objects zero_addr g)
+
+/// ---------------------------------------------------------------------------
+/// Blue coverage: general helpers
+/// ---------------------------------------------------------------------------
+///
+/// `blue_covered g p` is existential over `objects zero_addr g`; the two
+/// facts the flush-preserves-coverage argument needs are: a header-agreeing
+/// witness transfers (the `blue_covered` analogue of `header_agree_transfers`),
+/// and no object's extent crosses a walk boundary (a pure structural fact,
+/// independent of coalescing, needed to localize which objects can possibly
+/// cover a position below/above a given cursor).
+
+/// If `x`'s header agrees between two heaps, `x`'s contribution to
+/// `blue_covered` at any position transfers: same colour, same extent.
+let blue_covered_by_agree (g g': heap) (x: obj_addr) (p: nat)
+  : Lemma
+    (requires
+      Seq.length g == heap_size /\ Seq.length g' == heap_size /\
+      read_word g (hd_address x) == read_word g' (hd_address x))
+    (ensures (is_blue x g /\ in_extent g x p) <==> (is_blue x g' /\ in_extent g' x p))
+  = header_agree_transfers g g' x
+
+/// No object visited along the walk from `s` to `bound` extends past
+/// `bound`: if `x` is on the walk from `s` with `hd_address x < bound`, and
+/// the walk from `s` reaches `bound`, `x`'s own extent ends at or before
+/// `bound`.  A structural fact about how `objects`/`walk_visits` tile the
+/// heap; proved by an induction mirroring `objects_split_from`'s own.
+#push-options "--z3rlimit 60 --fuel 2 --ifuel 1"
+let rec objects_no_straddle (g: heap) (s bound: hp_addr) (x: obj_addr)
+  : Lemma
+    (requires
+      Seq.length g == heap_size /\ walk_visits g s bound /\
+      Seq.mem x (objects s g) /\ U64.v (hd_address x) < U64.v bound)
+    (ensures next_pos g x <= U64.v bound)
+    (decreases (heap_size - U64.v s))
+  = if U64.v s = U64.v bound then begin
+      objects_addresses_gt_start s g x;
+      hd_address_spec x
+    end
+    else begin
+      walk_visits_above g s bound;
+      WE.walk_end_step g s;
+      WE.walk_head g s;
+      f_address_spec s;
+      let y : obj_addr = f_address s in
+      hd_address_spec y;
+      let wz = getWosize (read_word g s) in
+      let next_nat = U64.v s + (U64.v wz + 1) * 8 in
+      aligned_plus_mul8 (U64.v s) (U64.v wz + 1);
+      let nxt = mk_hp_addr next_nat in
+      assert (walk_visits g nxt bound);
+      if x = y then begin
+        wosize_of_object_spec x g;
+        walk_visits_above g nxt bound
+      end else begin
+        Seq.cons_head_tail (objects s g);
+        mem_cons_lemma x y (objects nxt g);
+        objects_no_straddle g nxt bound x
+      end
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Blue coverage: the walk invariant
+/// ---------------------------------------------------------------------------
+
+let blue_cov_inv
+  (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
+  (first_blue: U64.t) (run_words: nat) (all_objs: seq obj_addr)
+  : prop =
+  white_inv g0 g start objs first_blue run_words all_objs /\
+  (forall (p: nat). p < heap_size ==> (blue_covered g0 p <==> blue_covered g p)) /\
+  (run_words > 0 ==>
+    (forall (p: nat). U64.v first_blue - U64.v mword <= p /\ p < U64.v start ==>
+       blue_covered g p))
+
+/// A flush conserves blue coverage at every position: below the run's
+/// floor, the same split witness (`objects_prefix_agree`) plus header
+/// agreement carries any covering object across unchanged; inside the run,
+/// the merged block itself covers exactly `[h, start)`, matching the
+/// invariant's own "run is covered" clause; at or above `start`, no object
+/// can straddle the boundary (`objects_no_straddle`), so any covering
+/// object is untouched by the flush.
+#push-options "--z3rlimit 150 --fuel 2 --ifuel 1"
+let flush_conserves_coverage
+  (g: heap) (start: hp_addr) (first_blue: U64.t) (run_words: pos) (fp: U64.t)
+  : Lemma
+    (requires
+      Seq.length g == heap_size /\
+      U64.v first_blue >= U64.v mword /\ U64.v first_blue < heap_size /\
+      U64.v first_blue % U64.v mword == 0 /\
+      run_words - 1 < pow2 54 /\
+      U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v start /\
+      walk_visits g zero_addr (mk_hp_addr (U64.v first_blue - U64.v mword)) /\
+      walk_visits g zero_addr start /\
+      (forall (p: nat). U64.v first_blue - U64.v mword <= p /\ p < U64.v start ==>
+         blue_covered g p))
+    (ensures
+      (let g1 = fst (flush_blue g first_blue run_words fp) in
+       forall (p: nat). p < heap_size ==> (blue_covered g p <==> blue_covered g1 p)))
+  = let fb : obj_addr = first_blue in
+    let h = hd_address fb in
+    hd_address_spec fb;
+    let g1 = fst (flush_blue g first_blue run_words fp) in
+    let below (q: hp_addr)
+      : Lemma
+        (requires U64.v q + U64.v mword <= U64.v h)
+        (ensures read_word g1 q == read_word g q)
+      = flush_blue_preserves_outside g first_blue run_words fp q
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires below);
+    objects_prefix_agree g g1 zero_addr h;
+    flush_preserves_walk g (U64.v start) first_blue run_words fp;
+    flush_reaches_run_end g first_blue run_words fp start;
+    flush_h_decompose g first_blue run_words fp start;
+    flush_blue_header_spec g fb run_words fp;
+    let wz_u64 : wosize = U64.uint_to_t (run_words - 1) in
+    makeHeader_getWosize wz_u64 Blue 0UL;
+    makeHeader_getColor wz_u64 Blue 0UL;
+    wosize_of_object_spec fb g1;
+    color_of_object_spec fb g1;
+    is_blue_iff fb g1;
+    assert (is_blue fb g1);
+    assert (wosize_of_object fb g1 == wz_u64);
+    assert (next_pos g1 fb == U64.v start);
+    objects_split_from g zero_addr start;
+    eliminate exists (pre: seq obj_addr).
+        objects zero_addr g == Seq.append pre (objects h g) /\
+        objects zero_addr g1 == Seq.append pre (objects h g1) /\
+        (forall (z: obj_addr). Seq.mem z pre ==> U64.v (hd_address z) < U64.v h)
+    with begin
+      Seq.head_cons fb (objects start g1);
+      Seq.lemma_tl fb (objects start g1);
+      assert (objects h g1 == Seq.cons fb (objects start g1));
+      eliminate exists (pre2: seq obj_addr).
+          objects zero_addr g == Seq.append pre2 (objects start g) /\
+          (forall (z: obj_addr). Seq.mem z pre2 ==> U64.v (hd_address z) < U64.v start) /\
+          (forall (z: obj_addr). Seq.mem z (objects start g) ==> U64.v (hd_address z) >= U64.v start)
+      with begin
+      objects_split_from g1 zero_addr start;
+      eliminate exists (pre3: seq obj_addr).
+          objects zero_addr g1 == Seq.append pre3 (objects start g1) /\
+          (forall (z: obj_addr). Seq.mem z pre3 ==> U64.v (hd_address z) < U64.v start) /\
+          (forall (z: obj_addr). Seq.mem z (objects start g1) ==> U64.v (hd_address z) >= U64.v start)
+      with begin
+        let step (p: nat)
+          : Lemma
+            (requires p < heap_size)
+            (ensures blue_covered g p <==> blue_covered g1 p)
+          = if p < U64.v h then begin
+              let fwd (witness: obj_addr)
+                : Lemma
+                  (requires
+                    Seq.mem witness (objects zero_addr g) /\ is_blue witness g /\
+                    in_extent g witness p)
+                  (ensures blue_covered g1 p)
+                = mem_append_lemma witness pre (objects h g);
+                  (if not (Seq.mem witness pre) then mem_from_le_hd_address h g witness);
+                  mem_append_lemma witness pre (objects h g1);
+                  blue_covered_by_agree g g1 witness p
+              in
+              let bwd (witness: obj_addr)
+                : Lemma
+                  (requires
+                    Seq.mem witness (objects zero_addr g1) /\ is_blue witness g1 /\
+                    in_extent g1 witness p)
+                  (ensures blue_covered g p)
+                = mem_append_lemma witness pre (objects h g1);
+                  (if not (Seq.mem witness pre) then mem_from_le_hd_address h g1 witness);
+                  mem_append_lemma witness pre (objects h g);
+                  blue_covered_by_agree g g1 witness p
+              in
+              (if blue_covered g p then
+                 eliminate exists (witness: obj_addr).
+                     Seq.mem witness (objects zero_addr g) /\ is_blue witness g /\
+                     in_extent g witness p
+                 with begin fwd witness end);
+              (if blue_covered g1 p then
+                 eliminate exists (witness: obj_addr).
+                     Seq.mem witness (objects zero_addr g1) /\ is_blue witness g1 /\
+                     in_extent g1 witness p
+                 with begin bwd witness end)
+            end
+            else if p < U64.v start then begin
+              assert (blue_covered g p);
+              mem_append_lemma fb pre (objects h g1);
+              assert (Seq.mem fb (objects zero_addr g1));
+              assert (in_extent g1 fb p);
+              assert (blue_covered g1 p)
+            end
+            else begin
+              let fwd (witness: obj_addr)
+                : Lemma
+                  (requires
+                    Seq.mem witness (objects zero_addr g) /\ is_blue witness g /\
+                    in_extent g witness p)
+                  (ensures blue_covered g1 p)
+                = (if U64.v (hd_address witness) < U64.v start then
+                     objects_no_straddle g zero_addr start witness);
+                  assert (U64.v (hd_address witness) >= U64.v start);
+                  mem_append_lemma witness pre2 (objects start g);
+                  assert (Seq.mem witness (objects start g));
+                  assert (objects start g1 == objects start g);
+                  assert (Seq.mem witness (objects start g1));
+                  mem_append_lemma witness pre3 (objects start g1);
+                  assert (Seq.mem witness (objects zero_addr g1));
+                  blue_covered_by_agree g g1 witness p;
+                  assert (is_blue witness g1 /\ in_extent g1 witness p);
+                  assert (blue_covered g1 p)
+              in
+              let bwd (witness: obj_addr)
+                : Lemma
+                  (requires
+                    Seq.mem witness (objects zero_addr g1) /\ is_blue witness g1 /\
+                    in_extent g1 witness p)
+                  (ensures blue_covered g p)
+                = (if U64.v (hd_address witness) < U64.v start then
+                     objects_no_straddle g1 zero_addr start witness);
+                  assert (U64.v (hd_address witness) >= U64.v start);
+                  mem_append_lemma witness pre3 (objects start g1);
+                  assert (Seq.mem witness (objects start g1));
+                  assert (objects start g1 == objects start g);
+                  assert (Seq.mem witness (objects start g));
+                  mem_append_lemma witness pre2 (objects start g);
+                  assert (Seq.mem witness (objects zero_addr g));
+                  blue_covered_by_agree g g1 witness p;
+                  assert (is_blue witness g /\ in_extent g witness p);
+                  assert (blue_covered g p)
+              in
+              (if blue_covered g p then
+                 eliminate exists (witness: obj_addr).
+                     Seq.mem witness (objects zero_addr g) /\ is_blue witness g /\
+                     in_extent g witness p
+                 with begin fwd witness end);
+              (if blue_covered g1 p then
+                 eliminate exists (witness: obj_addr).
+                     Seq.mem witness (objects zero_addr g1) /\ is_blue witness g1 /\
+                     in_extent g1 witness p
+                 with begin bwd witness end)
+            end
+        in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires step)
+      end
+      end
+    end
+#pop-options
+
+/// The top-of-heap analogue of `flush_conserves_coverage`: the run ends
+/// exactly at `heap_size`, so there is no "at or above `start`" case at all
+/// -- every position below `heap_size` is either below the run's floor or
+/// inside the run itself.
+#push-options "--z3rlimit 150 --fuel 2 --ifuel 1"
+let flush_conserves_coverage_at_end
+  (g: heap) (first_blue: U64.t) (run_words: pos) (fp: U64.t)
+  : Lemma
+    (requires
+      Seq.length g == heap_size /\
+      U64.v first_blue >= U64.v mword /\ U64.v first_blue < heap_size /\
+      U64.v first_blue % U64.v mword == 0 /\
+      run_words - 1 < pow2 54 /\
+      U64.v first_blue - U64.v mword + run_words * U64.v mword == heap_size /\
+      walk_visits g zero_addr (mk_hp_addr (U64.v first_blue - U64.v mword)) /\
+      (forall (p: nat). U64.v first_blue - U64.v mword <= p /\ p < heap_size ==>
+         blue_covered g p))
+    (ensures
+      (let g1 = fst (flush_blue g first_blue run_words fp) in
+       forall (p: nat). p < heap_size ==> (blue_covered g p <==> blue_covered g1 p)))
+  = let fb : obj_addr = first_blue in
+    let h = hd_address fb in
+    hd_address_spec fb;
+    let g1 = fst (flush_blue g first_blue run_words fp) in
+    assert (U64.v h + U64.v mword == U64.v first_blue);
+    // `objects h g` is nonempty: `h` itself is covered (by hypothesis, since
+    // `h < heap_size`), and no object visited from `zero_addr` can straddle
+    // the walk position `h` (`objects_no_straddle`), so the covering object
+    // sits exactly at `h`, giving `objects h g` its head.
+    assert (blue_covered g (U64.v h));
+    objects_split_from g zero_addr h;
+    eliminate exists (pre0: seq obj_addr).
+        objects zero_addr g == Seq.append pre0 (objects h g) /\
+        (forall (z: obj_addr). Seq.mem z pre0 ==> U64.v (hd_address z) < U64.v h) /\
+        (forall (z: obj_addr). Seq.mem z (objects h g) ==> U64.v (hd_address z) >= U64.v h)
+    with begin
+      let land (x: obj_addr)
+        : Lemma
+          (requires
+            Seq.mem x (objects zero_addr g) /\ is_blue x g /\ in_extent g x (U64.v h))
+          (ensures Seq.mem x (objects h g))
+        = (if U64.v (hd_address x) < U64.v h then objects_no_straddle g zero_addr h x);
+          assert (U64.v (hd_address x) >= U64.v h);
+          mem_append_lemma x pre0 (objects h g)
+      in
+      eliminate exists (x: obj_addr).
+          Seq.mem x (objects zero_addr g) /\ is_blue x g /\ in_extent g x (U64.v h)
+      with begin
+        land x;
+        assert (Seq.length (objects h g) > 0)
+      end
+    end;
+    let below (q: hp_addr)
+      : Lemma
+        (requires U64.v q + U64.v mword <= U64.v h)
+        (ensures read_word g1 q == read_word g q)
+      = flush_blue_preserves_outside g first_blue run_words fp q
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires below);
+    objects_prefix_agree g g1 zero_addr h;
+    flush_blue_header_spec g fb run_words fp;
+    let wz_u64 : wosize = U64.uint_to_t (run_words - 1) in
+    makeHeader_getWosize wz_u64 Blue 0UL;
+    makeHeader_getColor wz_u64 Blue 0UL;
+    wosize_of_object_spec fb g1;
+    color_of_object_spec fb g1;
+    is_blue_iff fb g1;
+    assert (is_blue fb g1);
+    assert (wosize_of_object fb g1 == wz_u64);
+    assert (next_pos g1 fb == heap_size);
+    f_hd_roundtrip fb;
+    assert (Seq.length (objects h g1) > 0);
+    WE.walk_end_step g1 h;
+    Seq.lemma_eq_elim (objects h g1) (Seq.cons fb Seq.empty);
+    eliminate exists (pre: seq obj_addr).
+        objects zero_addr g == Seq.append pre (objects h g) /\
+        objects zero_addr g1 == Seq.append pre (objects h g1) /\
+        (forall (z: obj_addr). Seq.mem z pre ==> U64.v (hd_address z) < U64.v h)
+    with begin
+      let step (p: nat)
+        : Lemma
+          (requires p < heap_size)
+          (ensures blue_covered g p <==> blue_covered g1 p)
+        = if p < U64.v h then begin
+            let fwd (witness: obj_addr)
+              : Lemma
+                (requires
+                  Seq.mem witness (objects zero_addr g) /\ is_blue witness g /\
+                  in_extent g witness p)
+                (ensures blue_covered g1 p)
+              = mem_append_lemma witness pre (objects h g);
+                (if not (Seq.mem witness pre) then mem_from_le_hd_address h g witness);
+                mem_append_lemma witness pre (objects h g1);
+                blue_covered_by_agree g g1 witness p
+            in
+            let bwd (witness: obj_addr)
+              : Lemma
+                (requires
+                  Seq.mem witness (objects zero_addr g1) /\ is_blue witness g1 /\
+                  in_extent g1 witness p)
+                (ensures blue_covered g p)
+              = mem_append_lemma witness pre (objects h g1);
+                (if not (Seq.mem witness pre) then mem_from_le_hd_address h g1 witness);
+                mem_append_lemma witness pre (objects h g);
+                blue_covered_by_agree g g1 witness p
+            in
+            (if blue_covered g p then
+               eliminate exists (witness: obj_addr).
+                   Seq.mem witness (objects zero_addr g) /\ is_blue witness g /\
+                   in_extent g witness p
+               with begin fwd witness end);
+            (if blue_covered g1 p then
+               eliminate exists (witness: obj_addr).
+                   Seq.mem witness (objects zero_addr g1) /\ is_blue witness g1 /\
+                   in_extent g1 witness p
+               with begin bwd witness end)
+          end
+          else begin
+            assert (blue_covered g p);
+            mem_append_lemma fb pre (objects h g1);
+            assert (Seq.mem fb (objects zero_addr g1));
+            assert (in_extent g1 fb p);
+            assert (blue_covered g1 p)
+          end
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires step)
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Blue coverage: the induction
+/// ---------------------------------------------------------------------------
+
+/// Empty case: flush whatever run is pending, using `flush_conserves_coverage`
+/// (vacuous if `run_words = 0`).
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
+private let caw_bc_empty
+  (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
+  (first_blue: U64.t) (run_words: nat) (fp: U64.t) (all_objs: seq obj_addr)
+  : Lemma
+    (requires
+      blue_cov_inv g0 g start objs first_blue run_words all_objs /\
+      Seq.length objs = 0)
+    (ensures
+      (let g1 = fst (flush_blue g first_blue run_words fp) in
+       forall (p: nat). p < heap_size ==> (blue_covered g0 p <==> blue_covered g1 p)))
+  = if run_words = 0 then ()
+    else begin
+      run_words_bound first_blue run_words start;
+      assert (objects start g == objs);
+      assert (forall (p: nat). U64.v first_blue - U64.v mword <= p /\ p < U64.v start ==>
+                blue_covered g p);
+      flush_conserves_coverage g start first_blue run_words fp
+    end
+#pop-options
+
+/// Top-of-heap case: `x` is the last object.  Blue: extend the run and
+/// flush it against the top of the heap, `x`'s own extent covering exactly
+/// `[floor, heap_size)`.  White: the pending run (if any) ends exactly at
+/// `start`, an ordinary flush.
+#push-options "--z3rlimit 150 --fuel 2 --ifuel 1"
+private let caw_bc_top
+      (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
+      (first_blue: U64.t) (run_words: nat) (fp: U64.t) (all_objs: seq obj_addr)
+  : Lemma
+    (requires
+      blue_cov_inv g0 g start objs first_blue run_words all_objs /\
+      Seq.length objs > 0 /\
+      (let x = Seq.head objs in
+       U64.v start + (U64.v (wosize_of_object x g0) + 1) * U64.v mword >= heap_size))
+    (ensures
+      (let g' = fst (coalesce_aux g0 g objs first_blue run_words fp) in
+       forall (p: nat). p < heap_size ==> (blue_covered g0 p <==> blue_covered g' p)))
+  = let x = Seq.head objs in
+    Seq.cons_head_tail objs;
+    mem_cons_lemma x x (Seq.tail objs);
+    assert (Seq.length (objects start g0) > 0);
+    WE.walk_end_step g0 start;
+    WE.walk_head g0 start;
+    f_address_spec start;
+    hd_address_spec x;
+    wosize_of_object_spec x g0;
+    let wz = U64.v (wosize_of_object x g0) in
+    aligned_plus_mul8 (U64.v start) (wz + 1);
+    assert (Seq.length (objects start g) > 0);
+    WE.walk_end_step g start;
+    FStar.Math.Lemmas.distributivity_add_left run_words (wz + 1) (U64.v mword);
+    Seq.lemma_eq_elim (objects start g0) (Seq.cons x Seq.empty);
+    Seq.lemma_eq_elim (Seq.tail objs) Seq.empty;
+    assert (objects start g == objs);
+    if is_blue x g0 then begin
+      let fb' = if run_words = 0 then x else first_blue in
+      let rw' = run_words + wz + 1 in
+      coalesce_aux_blue_step g0 g objs first_blue run_words fp;
+      coalesce_aux_empty g0 g fb' rw' fp;
+      hd_address_spec fb';
+      h_addr_agree fb';
+      assert (U64.v fb' - U64.v mword + rw' * U64.v mword == heap_size);
+      header_agree_transfers g0 g x;
+      assert (is_blue x g);
+      wosize_of_object_spec x g;
+      assert (next_pos g x == heap_size);
+      objects_split_from g zero_addr start;
+      eliminate exists (pre: seq obj_addr).
+          objects zero_addr g == Seq.append pre (objects start g) /\
+          (forall (z: obj_addr). Seq.mem z pre ==> U64.v (hd_address z) < U64.v start) /\
+          (forall (z: obj_addr). Seq.mem z (objects start g) ==> U64.v (hd_address z) >= U64.v start)
+      with begin
+        mem_append_lemma x pre (objects start g);
+        assert (Seq.mem x (objects zero_addr g));
+        let cov_run (p: nat)
+          : Lemma
+            (requires U64.v fb' - U64.v mword <= p /\ p < heap_size)
+            (ensures blue_covered g p)
+          = if run_words = 0 then begin
+              assert (in_extent g x p)
+            end
+            else if p < U64.v start then ()
+            else assert (in_extent g x p)
+        in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires cov_run);
+        run_words_bound_top fb' rw';
+        flush_conserves_coverage_at_end g fb' rw' fp;
+        let g1 = fst (flush_blue g fb' rw' fp) in
+        assert (forall (p: nat). p < heap_size ==> (blue_covered g p <==> blue_covered g1 p));
+        assert (forall (p: nat). p < heap_size ==> (blue_covered g0 p <==> blue_covered g1 p))
+      end
+    end else begin
+      coalesce_aux_white_step g0 g objs first_blue run_words fp;
+      let (g1, fp1) = flush_blue g first_blue run_words fp in
+      coalesce_aux_empty g0 g1 0UL 0 fp1;
+      if run_words = 0 then ()
+      else begin
+        run_words_bound first_blue run_words start;
+        assert (forall (p: nat). U64.v first_blue - U64.v mword <= p /\ p < U64.v start ==>
+                  blue_covered g p);
+        flush_conserves_coverage g start first_blue run_words fp
+      end
+    end
+#pop-options
+
+/// The real induction.  Four-way dispatcher, mirroring
+/// `coalesce_aux_conserves_whsize_aux`'s own structure and reusing the same
+/// leaf lemmas (`caw_extend_run_white_free`, `caw_clause4_ext_blue`,
+/// `caw_clause4_ext_white`) for the `white_inv` bookkeeping.
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
+let rec coalesce_aux_preserves_blue_coverage_aux
+      (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
+      (first_blue: U64.t) (run_words: nat) (fp: U64.t) (all_objs: seq obj_addr)
+  : Lemma
+    (requires blue_cov_inv g0 g start objs first_blue run_words all_objs)
+    (ensures
+      (let g' = fst (coalesce_aux g0 g objs first_blue run_words fp) in
+       forall (p: nat). p < heap_size ==> (blue_covered g0 p <==> blue_covered g' p)))
+    (decreases %[Seq.length objs; 1])
+  = if Seq.length objs = 0 then
+      caw_bc_empty g0 g start objs first_blue run_words fp all_objs
+    else begin
+      let x = Seq.head objs in
+      if U64.v start + (U64.v (wosize_of_object x g0) + 1) * U64.v mword >= heap_size then
+        caw_bc_top g0 g start objs first_blue run_words fp all_objs
+      else if is_blue x g0 then
+        caw_bc_blue_head g0 g start objs first_blue run_words fp all_objs
+      else
+        caw_bc_white_head g0 g start objs first_blue run_words fp all_objs
+    end
+
+and caw_bc_blue_head
+      (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
+      (first_blue: U64.t) (run_words: nat) (fp: U64.t) (all_objs: seq obj_addr)
+  : Lemma
+    (requires
+      blue_cov_inv g0 g start objs first_blue run_words all_objs /\
+      Seq.length objs > 0 /\ is_blue (Seq.head objs) g0 /\
+      (let x = Seq.head objs in
+       U64.v start + (U64.v (wosize_of_object x g0) + 1) * U64.v mword < heap_size))
+    (ensures
+      (let g' = fst (coalesce_aux g0 g objs first_blue run_words fp) in
+       forall (p: nat). p < heap_size ==> (blue_covered g0 p <==> blue_covered g' p)))
+    (decreases %[Seq.length objs; 0])
+  = caw_unpack_white_inv g0 g start objs first_blue run_words all_objs;
+    let x = Seq.head objs in
+    Seq.cons_head_tail objs;
+    mem_cons_lemma x x (Seq.tail objs);
+    assert (Seq.length (objects start g0) > 0);
+    WE.walk_end_step g0 start;
+    WE.walk_head g0 start;
+    f_address_spec start;
+    hd_address_spec x;
+    wosize_of_object_spec x g0;
+    wosize_of_object_spec x g;
+    let wz = U64.v (wosize_of_object x g0) in
+    let nxt_n = U64.v start + (wz + 1) * U64.v mword in
+    aligned_plus_mul8 (U64.v start) (wz + 1);
+    assert (Seq.length (objects start g) > 0);
+    WE.walk_end_step g start;
+    FStar.Math.Lemmas.distributivity_add_left run_words (wz + 1) (U64.v mword);
+    let nxt = mk_hp_addr nxt_n in
+    let fb' = if run_words = 0 then x else first_blue in
+    let rw' = run_words + wz + 1 in
+    coalesce_aux_blue_step g0 g objs first_blue run_words fp;
+    assert (read_word g start == read_word g0 start);
+    header_agree_transfers g0 g x;
+    walk_visits_step g zero_addr start nxt;
+    walk_visits_step g0 zero_addr start nxt;
+    hd_address_spec fb';
+    objects_cons_step_to start g nxt;
+    objects_cons_step_to start g0 nxt;
+    let only_x (y: obj_addr)
+      : Lemma
+        (requires
+          Seq.mem y (objects zero_addr g) /\
+          U64.v (hd_address y) >= U64.v start /\ U64.v (hd_address y) < U64.v nxt)
+        (ensures y == x)
+      = objects_agree_above g0 g start (U64.v start);
+        objects_split_from g zero_addr start;
+        eliminate exists (pre: seq obj_addr).
+            objects zero_addr g == Seq.append pre (objects start g) /\
+            (forall (z: obj_addr). Seq.mem z pre ==> U64.v (hd_address z) < U64.v start) /\
+            (forall (z: obj_addr). Seq.mem z (objects start g) ==> U64.v (hd_address z) >= U64.v start)
+        with begin
+          mem_append_lemma y pre (objects start g);
+          mem_cons_lemma y x (objects nxt g);
+          if y = x then ()
+          else begin
+            objects_addresses_gt_start nxt g y;
+            hd_address_spec y
+          end
+        end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires only_x);
+    caw_extend_run_white_free g0 g start x (U64.v nxt) first_blue fb' run_words;
+    (if run_words = 0 then h_addr_agree fb');
+    assert (walk_pre g0 g nxt (Seq.tail objs) all_objs fb' rw');
+    assert (Seq.length g == heap_size);
+    assert (Seq.length g0 == heap_size);
+    assert (SI.heap_objects_dense g);
+    assert (post_sweep_strong g0);
+    assert (forall (p: hp_addr). U64.v p >= U64.v nxt /\ U64.v p + U64.v mword <= heap_size ==>
+              read_word g p == read_word g0 p);
+    assert (walk_visits g zero_addr nxt);
+    assert (walk_visits g0 zero_addr nxt);
+    assert (objects nxt g == Seq.tail objs);
+    caw_clause4_ext_blue g0 g start nxt x;
+    assert (rw' > 0 ==>
+              (forall (y: obj_addr).
+                 Seq.mem y (objects zero_addr g) /\ is_white y g /\
+                 U64.v (hd_address y) >= U64.v fb' - U64.v mword /\
+                 U64.v (hd_address y) < U64.v nxt ==> False));
+    assert (rw' > 0 ==> walk_visits g zero_addr (mk_hp_addr (U64.v fb' - U64.v mword)));
+    assert (white_inv g0 g nxt (Seq.tail objs) fb' rw' all_objs);
+    // blue_cov_inv's own two extra clauses at the new state: coverage is a
+    // global equivalence unaffected by the blue step (`g` doesn't change),
+    // and the extended run's own coverage, mirroring `caw_ws_head_whsize`'s
+    // role for whsize but for the "is covered" predicate instead of a sum.
+    assert (forall (p: nat). p < heap_size ==> (blue_covered g0 p <==> blue_covered g p));
+    let cov_run (p: nat)
+      : Lemma
+        (requires U64.v fb' - U64.v mword <= p /\ p < U64.v nxt)
+        (ensures blue_covered g p)
+      = if p < U64.v start then ()
+        else assert (in_extent g x p)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires cov_run);
+    assert (blue_cov_inv g0 g nxt (Seq.tail objs) fb' rw' all_objs);
+    coalesce_aux_preserves_blue_coverage_aux g0 g nxt (Seq.tail objs) fb' rw' fp all_objs
+
+and caw_bc_white_head
+      (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
+      (first_blue: U64.t) (run_words: nat) (fp: U64.t) (all_objs: seq obj_addr)
+  : Lemma
+    (requires
+      blue_cov_inv g0 g start objs first_blue run_words all_objs /\
+      Seq.length objs > 0 /\ ~(is_blue (Seq.head objs) g0) /\
+      (let x = Seq.head objs in
+       U64.v start + (U64.v (wosize_of_object x g0) + 1) * U64.v mword < heap_size))
+    (ensures
+      (let g' = fst (coalesce_aux g0 g objs first_blue run_words fp) in
+       forall (p: nat). p < heap_size ==> (blue_covered g0 p <==> blue_covered g' p)))
+    (decreases %[Seq.length objs; 0])
+  = caw_unpack_white_inv g0 g start objs first_blue run_words all_objs;
+    let x = Seq.head objs in
+    Seq.cons_head_tail objs;
+    mem_cons_lemma x x (Seq.tail objs);
+    assert (Seq.length (objects start g0) > 0);
+    WE.walk_end_step g0 start;
+    WE.walk_head g0 start;
+    f_address_spec start;
+    hd_address_spec x;
+    wosize_of_object_spec x g0;
+    wosize_of_object_spec x g;
+    let wz = U64.v (wosize_of_object x g0) in
+    let nxt_n = U64.v start + (wz + 1) * U64.v mword in
+    aligned_plus_mul8 (U64.v start) (wz + 1);
+    assert (Seq.length (objects start g) > 0);
+    WE.walk_end_step g start;
+    FStar.Math.Lemmas.distributivity_add_left run_words (wz + 1) (U64.v mword);
+    let nxt = mk_hp_addr nxt_n in
+    coalesce_aux_white_step g0 g objs first_blue run_words fp;
+    let (g1, fp1) = flush_blue g first_blue run_words fp in
+    flush_preserves_walk g (U64.v start) first_blue run_words fp;
+    objects_split_from g zero_addr start;
+    eliminate exists (pre0: seq obj_addr).
+        objects zero_addr g == Seq.append pre0 (objects start g) /\
+        (forall (z: obj_addr). Seq.mem z pre0 ==> U64.v (hd_address z) < U64.v start) /\
+        (forall (z: obj_addr). Seq.mem z (objects start g) ==> U64.v (hd_address z) >= U64.v start)
+    with begin
+      Seq.lemma_len_append pre0 (objects start g)
+    end;
+    assert (Seq.length (objects zero_addr g) > 0);
+    (if run_words > 0 then begin
+       run_words_bound first_blue run_words start;
+       h_addr_agree first_blue;
+       flush_white_transfer g start first_blue run_words fp;
+       flush_density_transfer g start first_blue run_words fp;
+       flush_reaches_run_end g first_blue run_words fp start;
+       assert (forall (p: nat). U64.v first_blue - U64.v mword <= p /\ p < U64.v start ==>
+                 blue_covered g p);
+       flush_conserves_coverage g start first_blue run_words fp
+     end);
+    assert (forall (p: nat). p < heap_size ==> (blue_covered g0 p <==> blue_covered g1 p));
+    assert (walk_visits g1 zero_addr start);
+    objects_cons_step_to start g nxt;
+    objects_cons_step_to start g0 nxt;
+    assert (objects nxt g0 == Seq.tail objs);
+    assert (objects nxt g1 == Seq.tail objs);
+    walk_visits_step g1 zero_addr start nxt;
+    walk_visits_step g0 zero_addr start nxt;
+    assert (Seq.tail objs == objects nxt g0);
+    assert (all_objs == objects zero_addr g0);
+    assert (Seq.length g0 == heap_size);
+    assert (Seq.length g1 == heap_size);
+    assert (post_sweep_strong g0);
+    assert (post_sweep g0);
+    (let subset (o: obj_addr)
+       : Lemma (requires Seq.mem o (Seq.tail objs)) (ensures Seq.mem o all_objs)
+       = mem_cons_lemma o x (Seq.tail objs)
+     in
+     FStar.Classical.forall_intro (FStar.Classical.move_requires subset));
+    assert (forall (p: hp_addr). U64.v p >= U64.v nxt /\ U64.v p + U64.v mword <= heap_size ==>
+              read_word g1 p == read_word g0 p);
+    (let word_agree (o: obj_addr)
+       : Lemma
+         (requires Seq.mem o (Seq.tail objs) /\ is_white o g0)
+         (ensures read_word g1 (hd_address o) == read_word g0 (hd_address o))
+       = assert (Seq.mem o (objects nxt g0));
+         mem_from_le_hd_address nxt g0 o;
+         hd_address_bounds o
+     in
+     FStar.Classical.forall_intro (FStar.Classical.move_requires word_agree));
+    assert (walk_pre g0 g1 nxt (Seq.tail objs) all_objs 0UL 0);
+    assert (Seq.length g1 == heap_size);
+    assert (Seq.length g0 == heap_size);
+    assert (SI.heap_objects_dense g1);
+    assert (post_sweep_strong g0);
+    assert (walk_visits g1 zero_addr nxt);
+    assert (walk_visits g0 zero_addr nxt);
+    assert (objects nxt g1 == Seq.tail objs);
+    objects_agree_above g g1 start (U64.v start);
+    objects_agree_above g g1 nxt (U64.v start);
+    assert (objects start g1 == Seq.cons x (objects nxt g1));
+    assert (read_word g start == read_word g0 start);
+    caw_clause4_ext_white g0 g g1 start nxt x first_blue run_words fp;
+    assert (white_inv g0 g1 nxt (Seq.tail objs) 0UL 0 all_objs);
+    assert (blue_cov_inv g0 g1 nxt (Seq.tail objs) 0UL 0 all_objs);
+    coalesce_aux_preserves_blue_coverage_aux g0 g1 nxt (Seq.tail objs) 0UL 0 fp1 all_objs
+#pop-options
+
+let coalesce_preserves_blue_coverage g =
+  coalesce_aux_preserves_blue_coverage_aux g g zero_addr (objects zero_addr g) 0UL 0 0UL
+                                           (objects zero_addr g)
 
 /// ---------------------------------------------------------------------------
 /// Top level
