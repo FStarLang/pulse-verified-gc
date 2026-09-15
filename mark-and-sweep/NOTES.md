@@ -43,35 +43,55 @@ proven, live) states.
   `_cache/*.checked` files are up to date (`--report_assumes warn`, so
   pre-existing `admit()`s elsewhere in the codebase do not fail the build —
   they only warn).
-- **Baseline**: before any edits, `gmake verify` (whole project) succeeds
-  with GC.Spec.Coalesce.fst's 8 target admits plus several *other*,
-  out-of-scope admits already present in a dead first-approach block
-  (`flush_blue_words`, `flush_below_run_same`, `coalesce_aux_conserves`,
-  lines ~4487-4581 — see "File structure" below). Not touched: out of the
-  task's scope, and touching them would violate "do not touch anything
-  outside those eight bodies."
+- **Baseline (as of this writing)**: `gmake verify` (whole project) succeeds
+  with GC.Spec.Coalesce.fst's 8 target admits and no others. The dead
+  first-approach block that used to sit between the two `(* ... *)` comment
+  blocks (`whole_size`, `blue_words`, `total_blue_words`, `flush_blue_words`,
+  `fl_sound_null`, `sync`, `flush_below_run_same`, `coalesce_aux_conserves`,
+  `coalesce_conserves_and_lists`, with its own out-of-scope admits) has since
+  been deleted from the file entirely (by the task owner, between sessions;
+  not by these edits) — see "File structure" below, now current.
 
 ## File structure (important — read before calling anything)
 
-Two real (* ... *) block comments in this file, confirmed by bracket-matching
-the whole file:
-  - lines 3195-3815 (dead code)
-  - lines 3842-4395 (dead code; ends with the old `fl_exact`/free-list-based
+Two real `(* ... *)` block comments in this file, confirmed by
+bracket-matching the whole file (line numbers drift as the live code grows;
+re-check with the bracket-matching script below rather than trusting these
+verbatim if the file has grown further):
+  - lines 3227-3847 (dead code)
+  - lines 3874-4427 (dead code; ends with the old `fl_exact`/free-list-based
     top-level lemma `coalesce_establishes_fl_exact`)
 
-Everything else, **including lines 4396-4601** (the first, superseded
-"conservation" approach: `whole_size`, `blue_words`, `total_blue_words`,
-`flush_blue_words`, `fl_sound_null`, `sync`, `flush_below_run_same`,
-`coalesce_aux_conserves`, `coalesce_conserves_and_lists`), **is live,
-uncompiled-out code**, despite an in-file `///` doc comment (not a real
-`(* *)` block — confirmed by bracket-matching) at line ~4601 claiming this
-block should be deleted/replaced. It was apparently never actually deleted.
-It has its own pre-existing `admit()`s (not in our list of 8) which are out of
-scope; left untouched per the task's constraints.
+```python
+python3 - <<'EOF'
+depth = 0; start = None; blocks = []; line_no = 1; pos = 0
+text = open('spec/GC.Spec.Coalesce.fst').read()
+while pos < len(text):
+    if text[pos:pos+2] == '(*':
+        if depth == 0: start = line_no
+        depth += 1; pos += 2; continue
+    if text[pos:pos+2] == '*)':
+        depth -= 1
+        if depth == 0: blocks.append((start, line_no))
+        pos += 2; continue
+    if text[pos] == '\n': line_no += 1
+    pos += 1
+print(blocks)
+EOF
+```
 
-The 8 target admits are all in the second ("new", whsize-based) approach,
-starting at `module SI = GC.Spec.SweepInv` (line 4632) through the end of the
-file (`coalesce_correct`).
+Between the two dead blocks (lines 3848-3872) sits live glue code:
+`coalesce_aux_empty`, `coalesce_aux_blue_step`, `coalesce_aux_white_step` —
+small unfolding lemmas about `coalesce_aux`, used throughout the live
+induction below.
+
+The first-approach "conservation" block that used to follow the second dead
+block (the old `whole_size`/`blue_words`/`flush_blue_words`/... code,
+previously live, superseded, and never actually deleted) **is gone**: the
+second dead block's closing `*)` (line 4427) is immediately followed by
+`module SI = GC.Spec.SweepInv` (line 4428), which starts the one remaining,
+live ("new", whsize-based) approach and runs through the end of the file
+(`coalesce_correct`). The 8 target admits are all in this live approach.
 
 `GC.Spec.Coalesce.coalesce_correct` (and hence all 8 target lemmas) is
 *orphaned*: grepped the whole repo (`mark-and-sweep`, `common`,
@@ -98,7 +118,7 @@ worth actually proving where provable.
 | 2 | flush_preserves_walk | CLOSED |
 | 3 | flush_preserves_white | NOT PROVABLE AS STATED (corrected private version `flush_white_transfer` CLOSED, see below) |
 | 4 | flush_preserves_density | NOT PROVABLE AS STATED (corrected private version `flush_density_transfer` CLOSED via `GC.Spec.WalkEnd`, see below) |
-| 5 | coalesce_aux_preserves_white | in progress (unblocked now that #4 closed) |
+| 5 | coalesce_aux_preserves_white | CLOSED (required adding a clause to `white_inv`, see below) |
 | 6 | coalesce_conserves_whsize | in progress |
 | 7 | coalesce_preserves_blue_coverage | in progress |
 | 8 | coalesce_no_adjacent_blue | in progress |
@@ -443,5 +463,94 @@ H-reachability + run_end-reachability extra hypotheses `flush_white_transfer`
 established are necessary and sufficient, and (b) `SI.heap_objects_dense`
 maintained at every recursive step after a flush — now `flush_density_transfer`,
 closed above. Attempting 5 first, then 6-8 in turn below.
+
+### 5. `coalesce_aux_preserves_white` — CLOSED, via a `white_inv` clause change
+
+**The wrapper's own generality was the last real gap.** The induction itself
+(`coalesce_aux_preserves_white_aux`, private) went through cleanly using the
+same H-reachability idea as `flush_white_transfer`/`flush_density_transfer`:
+carry `run_words > 0 ==> walk_visits g zero_addr (hd_address first_blue)` as
+an extra fact through the recursion, established fresh whenever a run begins
+(clause 2, at that moment) and unchanged while a run extends (`g` itself
+doesn't change in the blue case). But `coalesce_aux_preserves_white`'s own
+`val` takes no such extra hypothesis — only `white_inv` — and for an
+externally-supplied `run_words > 0` with no guarantee `first_blue` sits on
+the real walk, the same counterexample construction that sank lemmas 3/4
+applies directly to lemma 5's own conclusion (a corrupted flush can
+disconnect a later, physically-untouched white object from the walk). Since
+the task authorized changing `white_inv` (and only `white_inv`) once this
+was identified: added clause 6,
+
+```fstar
+(run_words > 0 ==>
+  walk_visits g zero_addr (mk_hp_addr (U64.v first_blue - U64.v mword)))
+```
+
+which holds by construction (start of a run: clause 2 at `start`; extending:
+`g` and `first_blue` both unchanged) and closes exactly the gap the
+counterexample exploited. With it, the wrapper is just the induction,
+unconditionally, for every `run_words` — no admit anywhere in this lemma.
+
+**Structure.** Split into a four-way dispatcher (`coalesce_aux_preserves_white_aux`)
+over empty / heap-top / blue-continuing / white-continuing, each case its own
+lemma (`caw_empty`, `caw_top`, `caw_blue_head`, `caw_white_head`) with a
+lexicographic `decreases %[Seq.length objs; 1|0]` — the dispatcher and the
+two recursive cases form one mutual-recursion group; `caw_empty`/`caw_top`
+don't recurse and sit outside it. `caw_top`/`caw_blue_head`/`caw_white_head`
+each further delegate to a standalone top-level lemma for the actual
+flush-crossing argument (`caw_top_blue`, `caw_top_white`,
+`caw_clause4_ext_blue`, `caw_clause4_ext_white`) — giving each its own small,
+independently-checkable proof context rather than one large nested-closure
+body, per the task's "split rather than raise the rlimit" instruction.
+
+**Three pieces of shared machinery, extracted after each fact went missing
+independently at more than one call site** (the actual proof-engineering
+content of this lemma, beyond the `white_inv` change above):
+  - `mem_from_le_hd_address (lo g y)`: if `y` is on the walk from `lo`, then
+    `lo <= hd_address y` — two `mword`-aligned addresses that differ at all
+    differ by a whole word. Used with `lo = zero_addr` and `lo = nxt` alike.
+    This exact three-line argument was re-derived by hand at three call
+    sites and got the wrong lemma (`hd_address_bounds`, an upper bound,
+    instead of `hd_address_spec`, the exact equation) at more than one of
+    them before being pulled out.
+  - `header_agree_transfers (g g' y)`: if two heaps agree at `y`'s header
+    word, `y`'s color and wosize agree between them too. The
+    `is_white_iff`/`is_blue_iff`/`color_of_object_spec`/`wosize_of_object_spec`
+    conversion was being hand-written at every call site that needed it and
+    was missing a piece at more than one of them.
+  - `caw_shared_facts`/`caw_unpack_white_inv`: bundles the `white_inv`
+    consequences every one of the four case lemmas needs (first_blue's
+    validity and H-reachability, the zero_addr alignment fact, clause 4,
+    clause 5) into one named `prop`, established once by
+    `caw_unpack_white_inv` (called as the first line of `caw_empty`,
+    `caw_top`, `caw_blue_head`, `caw_white_head` — the only four places that
+    actually have `white_inv` in scope) instead of each case re-deriving,
+    and independently forgetting one of, the same four things. One
+    subtlety: `eliminate forall ... with y` (used to instantiate clause
+    4/5 at a specific witness) needs a *literal* raw `forall` hypothesis in
+    context to find — it does not unfold an opaque named `prop` during its
+    search (confirmed empirically: wrapping clause 4 in a named prop and
+    calling `eliminate forall` against it reproduced the identical failure
+    as not having the fact at all). So the leaf lemmas that need
+    `eliminate forall` re-state the relevant piece of `caw_shared_facts` as
+    a raw local `assert` once, immediately after taking it as a hypothesis,
+    and use the raw local copy from then on.
+
+**Process note**: many iterations here produced the same symptom (one
+overloaded `assert` covering an entire `if`/`else`, or an entire recursive
+call's precondition, failing as a single unit) for what turned out to be
+several distinct missing facts stacked on top of each other. Splitting a
+compound assertion into one fact per line, and re-deriving a repeated
+argument as its own lemma the moment it's needed a second time, converged
+much faster than continuing to patch the failing line in place each time.
+
+Verified via `/tmp/check_coalesce.sh` (foreground/backgrounded-and-read
+directly depending on run length, never polled) — clean, "Verified module:
+GC.Spec.Coalesce", "All verification conditions discharged successfully".
+**Vacuity check**: restated `coalesce_aux_preserves_white`'s `let` with
+`(ensures False)` (legal without touching the `val`) — **fails** as required
+(`Failed to prove: Prims.l_False`), so `white_inv`'s hypotheses (with the
+new clause 6) are not contradictory. Restored the real proof; reverified
+clean.
 
 ---
