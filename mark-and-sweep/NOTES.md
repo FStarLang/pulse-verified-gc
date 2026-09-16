@@ -121,7 +121,7 @@ worth actually proving where provable.
 | 5 | coalesce_aux_preserves_white | CLOSED (required adding a clause to `white_inv`, see below) |
 | 6 | coalesce_conserves_whsize | CLOSED (new `whsize_inv`, built on top of `white_inv`, see below) |
 | 7 | coalesce_preserves_blue_coverage | CLOSED (new `blue_cov_inv`, built on top of `white_inv`, see below) |
-| 8 | coalesce_no_adjacent_blue | in progress |
+| 8 | coalesce_no_adjacent_blue | CLOSED (new `adj_free_inv`, built on top of `white_inv`, see below) |
 
 (table filled in below as each is closed / abandoned)
 
@@ -762,5 +762,125 @@ required (`Failed to prove: Prims.l_False`). Restored the real proof;
 reverified clean.
 
 No `val` was changed; `blue_cov_inv` is a new `let`/`prop`.
+
+---
+
+### 8. `coalesce_no_adjacent_blue` — CLOSED, via a new `adj_free_inv`
+
+Same shape as #6/#7, but the invariant tracks the *finalized* region below
+the pending run's own floor (or below `start` when no run is pending) rather
+than a global equality, and needs two clauses instead of one because the
+property itself is about a *boundary* (what sits immediately before a
+cursor), not a sum or a set:
+
+```fstar
+let adj_free_inv
+  (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
+  (first_blue: U64.t) (run_words: nat) (all_objs: seq obj_addr)
+  : prop =
+  white_inv g0 g start objs first_blue run_words all_objs /\
+  (run_words = 0 ==>
+    (forall (x y: obj_addr). ... adjacent g x y /\ hd_address y < start ==> False) /\
+    (forall (z: obj_addr). ... is_blue z g /\ next_pos g z == start ==> False)) /\
+  (run_words > 0 ==>
+    (forall (x y: obj_addr). ... adjacent g x y /\ hd_address y < first_blue - mword ==> False) /\
+    (forall (z: obj_addr). ... is_blue z g /\ next_pos g z == first_blue - mword ==> False))
+```
+
+The first sub-clause (no two blue objects already finalized are adjacent) is
+the actual goal, tracked incrementally. The second ("no blue object ends
+exactly at the floor") is the load-bearing extra fact -- the analogue of
+`white_inv`'s clause 5/6 for *this* invariant: without it, nothing rules out
+the object immediately preceding a *freshly started* run from being blue
+too, which would make that object and the new run's own first element an
+already-finalized, unmerged adjacent pair the moment the run finishes.
+Getting this clause's *conditioning* right (on `run_words = 0` vs `> 0`, and
+which of `start`/`first_blue - mword` it names) took two wrong attempts,
+recorded below since the reasoning is easy to get backwards.
+
+**New general helper**: `adjacent_by_agree (g g' x y)`, the two-object form
+of `header_agree_transfers`/`blue_covered_by_agree` -- if both objects'
+headers agree between two heaps, the whole "adjacent and both blue" triple
+transfers.
+
+**The flush-preserves-adj-free argument**, in the same two-lemma split as
+before: `flush_conserves_adj_free` and `flush_conserves_adj_free_at_end`.
+Both take the *old* floor's two clauses as hypotheses and give the pairwise
+clause at the *new* floor (`start`, or unconditionally at the top of the
+heap) as their conclusion -- deliberately **not** re-deriving a "no blue
+ends at the new floor" fact themselves, since that fact's meaning depends on
+what happens *next* (whether a new run starts there or the object is
+white), which these general lemmas don't know. Below the old floor: the
+common split witness (`objects_prefix_agree`) plus header agreement
+transfers any pair unchanged. Inside the run: the only candidate for the
+"first" element of a pair reaching the merged block is ruled out entirely by
+the "no blue ends at the old floor" hypothesis (whatever would be adjacent
+to the merged block from below is exactly what that hypothesis forbids).
+
+**The induction** (`coalesce_aux_no_adjacent_blue_aux`,
+`caw_adj_empty`/`top`/`blue_head`/`white_head`) again mirrors the four-way
+split, with one structural difference from #6/#7: in `caw_adj_blue_head`,
+*nothing new needs proving* for `adj_free_inv`'s own two clauses -- the
+finalized floor is provably the same value across a blue step (whether
+starting fresh, where the new floor `hd_address fb'` equals the old
+`start`, or continuing, where `first_blue` itself doesn't change), so the
+old state's matching branch *is* the new state's fact, no flush or sum
+argument involved. `caw_adj_white_head`'s "no blue ends at `nxt`" (the new
+floor after a flush-and-reset) needs a genuine new argument: `x` is the
+*unique* object whose extent reaches `nxt` (`objects_no_straddle` rules out
+anything below `start` reaching that far; anything at or above `nxt` can't
+have `next_pos == nxt` either, since `next_pos > hd_address`), and `x` is
+white.
+
+**Debugging, in order encountered:**
+  - Two wrong invariant designs before the one above. First attempt used a
+    single unconditional "no blue ends at `start`" clause; this is *false*
+    immediately after any flush, since the merged block itself always ends
+    exactly at `start` and is blue -- conflating "the new floor after this
+    flush" with "the floor the *next* run, if any, will need protected."
+    Second attempt tried to fold the "no blue ends" check into the pairwise
+    clause's own antecedent; this made `flush_conserves_adj_free`'s ensures
+    responsible for a fact (the new floor's own boundary) that only the
+    *caller* can establish, since it depends on what's processed next.
+    Settled on conditioning both sub-clauses on `run_words` matching the
+    *current* pending-run state, giving each transition (fresh-start,
+    continuing, flush-and-reset) a clean, independently-provable step.
+  - A same-shaped `assert` restating a lemma's own universally-quantified
+    ensures, immediately after the call, intermittently failed to
+    discharge even though the fact was visibly present in context (as a
+    named `p : prop` unified with the forall via `==`). Root-caused to
+    E-matching not firing reliably at that shape once the surrounding
+    context grew large enough. Fixed by moving the consuming use *inside*
+    the per-pair closure that actually needs it and forcing instantiation
+    explicitly with `eliminate forall (x: t1) (y: t2). P with a b` (the
+    two-variable form of the same `eliminate forall ... with y` idiom from
+    lemma 5) rather than relying on a bare `assert` plus E-matching.
+  - A stray `Seq.cons x Seq.empty` copy-pasted from the heap-top case's
+    white branch (where `objects nxt g1` genuinely is empty) into the
+    general continuing case (where it isn't) -- caught immediately by the
+    checker; replaced with the actual needed fact (`read_word` agreement at
+    `x`'s header, transitively through `g`), which doesn't need the objects
+    decomposition at all.
+  - `flush_density_transfer`'s `Seq.length (objects zero_addr g) > 0`
+    hypothesis (see lemma 7's debugging notes) recurred here and needed the
+    same explicit `objects_split_from`-based derivation.
+  - The top-level wrapper's own call needed explicit proof that
+    `adj_free_inv`'s two extra clauses hold vacuously at `zero_addr`
+    (`mem_from_le_hd_address zero_addr g y` rules out `hd_address y <
+    zero_addr` for any real object) -- lemmas 6/7's wrappers needed no such
+    step, since their extra clauses don't have a "vacuous below the very
+    first position" case to establish.
+
+Verified via `/tmp/check_coalesce.sh`, run in the **foreground** throughout
+— clean, "Verified module: GC.Spec.Coalesce", "All verification conditions
+discharged successfully". **Vacuity check**: restated the `let` with
+`(ensures False)` — **fails** as required (`Failed to prove:
+Prims.l_False`). Restored the real proof; reverified clean.
+
+No `val` was changed; `adj_free_inv` is a new `let`/`prop`.
+
+**All 8 target admits are now closed.** `coalesce_correct` (the combined
+top-level theorem) typechecks with no admits anywhere in this file's live
+approach.
 
 ---
