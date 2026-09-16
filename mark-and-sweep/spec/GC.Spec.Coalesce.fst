@@ -4874,82 +4874,6 @@ let rec flush_membership_below_rev
       end
     end
 #pop-options
-
-/// No white object's header is written by the flush.
-///
-/// Carries clause 4 across the white case.  The last hypothesis is clause 5
-/// of the invariant: the run holds no white object, so the writes cannot land
-/// on one.
-val flush_preserves_white
-  (g: heap) (run_end: nat) (first_blue: U64.t) (run_words: nat) (fp: U64.t)
-  : Lemma
-    (requires
-      Seq.length g == heap_size /\ run_end <= heap_size /\
-      SI.heap_objects_dense g /\
-      run_at first_blue run_words run_end /\
-      (run_words > 0 ==>
-        (forall (y: obj_addr).
-           Seq.mem y (objects zero_addr g) /\ is_white y g /\
-           U64.v (hd_address y) >= U64.v first_blue - U64.v mword /\
-           U64.v (hd_address y) < run_end ==> False)))
-    (ensures
-      (let g1 = fst (flush_blue g first_blue run_words fp) in
-       forall (y: obj_addr).
-         Seq.mem y (objects zero_addr g) /\ is_white y g ==>
-         Seq.mem y (objects zero_addr g1) /\ is_white y g1 /\
-         wosize_of_object y g1 == wosize_of_object y g))
-
-// NOT PROVABLE AS STATED -- see NOTES.md ("flush_preserves_white").  The
-// `hd_address y < first_blue - mword` case (below the run) is a genuine,
-// complete proof (`flush_membership_below` above does exactly this, and is
-// used from `coalesce_aux_preserves_white`'s own corrected internal argument).
-// The `hd_address y >= run_end` case (above the run) needs, in addition to
-// this lemma's stated hypotheses, that the *original* heap's own walk from
-// `zero_addr` actually reaches `first_blue - mword` (equivalently, that the
-// run genuinely corresponds to a real run of objects in `g`, not merely to
-// arithmetic satisfying `run_at`).  Without that, `g`'s real walk can enter
-// the flushed range at a non-edge position under cover of an unconstrained
-// blue object, in which case the flushed heap's reconstruction from that
-// point does not match anything about `g`'s real structure past there, and
-// the target white object need not be found again.  That extra fact is not
-// among this lemma's hypotheses (nor derivable from
-// `SI.heap_objects_dense g`, which only speaks about positions *already*
-// known reachable from `zero_addr`), so the lemma is not provable in this
-// generality.  Confirmed empirically: the natural proof (below-case complete,
-// above-case via `flush_preserves_walk` + `objects_mem_implies_walk_visits`)
-// leaves exactly one un-discharged goal, `Seq.mem y (objects zero_addr g1)`,
-// which Z3 cannot close from the available hypotheses.
-let flush_preserves_white g run_end first_blue run_words fp = admit ()
-
-/// Density survives the flush: the merged block ends exactly where the run
-/// ended, so the walk still tiles the heap.
-val flush_preserves_density
-  (g: heap) (run_end: nat) (first_blue: U64.t) (run_words: nat) (fp: U64.t)
-  : Lemma
-    (requires
-      Seq.length g == heap_size /\ run_end <= heap_size /\
-      SI.heap_objects_dense g /\
-      run_at first_blue run_words run_end)
-    (ensures SI.heap_objects_dense (fst (flush_blue g first_blue run_words fp)))
-
-// NOT PROVABLE AS STATED -- see NOTES.md ("flush_preserves_density").  Same
-// root cause as `flush_preserves_white`: `heap_objects_dense_intro`'s
-// obligation, for a position `start` that is a genuine member of `g1`'s own
-// walk from `zero_addr`, needs `f_address next` to *also* be a member of
-// `objects zero_addr g1` once `next` has room.  When `start`'s real object
-// (below the run, hence identical in `g` and `g1`) has `next` landing
-// strictly inside `(first_blue - mword, run_end)` -- not exactly at
-// `first_blue - mword`, the one position `g1` gives a well-formed fresh
-// header -- `g1` reads back either a zeroed field or the untyped `fp` value
-// there.  `fp` is a completely unconstrained `U64.t` in this lemma's
-// hypotheses, so for `run_words >= 2` its bits, misread as a header at
-// `first_blue`, can be chosen to send `next` to an address with no relation
-// to `g`'s real structure at all, breaking the density obligation outright.
-// `SI.heap_objects_dense g` does not rule this out: it is conditioned on
-// positions *already known* reachable from `zero_addr`, and gives no control
-// over where an object below the run happens to end.
-let flush_preserves_density g run_end first_blue run_words fp = admit ()
-
 /// The cursor advances to the next walk position.
 val walk_visits_step (g: heap) (s p q: hp_addr)
   : Lemma (requires walk_visits g s p /\ Seq.length (objects p g) > 0 /\
@@ -7676,12 +7600,26 @@ and caw_bc_blue_head
             (forall (z: obj_addr). Seq.mem z pre ==> U64.v (hd_address z) < U64.v start) /\
             (forall (z: obj_addr). Seq.mem z (objects start g) ==> U64.v (hd_address z) >= U64.v start)
         with begin
+          assert (objects zero_addr g == Seq.append pre (objects start g));
           mem_append_lemma y pre (objects start g);
-          mem_cons_lemma y x (objects nxt g);
-          if y = x then ()
-          else begin
-            objects_addresses_gt_start nxt g y;
-            hd_address_spec y
+          assert (Seq.mem y pre \/ Seq.mem y (objects start g));
+          if Seq.mem y pre then begin
+            assert (U64.v (hd_address y) < U64.v start);
+            assert (U64.v (hd_address y) >= U64.v start);
+            assert (y == x)
+          end else begin
+            assert (Seq.mem y (objects start g));
+            mem_cons_lemma y x (objects nxt g);
+            assert (y == x \/ Seq.mem y (objects nxt g));
+            if y = x then ()
+            else begin
+              assert (Seq.mem y (objects nxt g));
+              objects_addresses_gt_start nxt g y;
+              hd_address_spec y;
+              assert (U64.v (hd_address y) >= U64.v nxt);
+              assert (U64.v (hd_address y) < U64.v nxt);
+              assert (y == x)
+            end
           end
         end
     in
