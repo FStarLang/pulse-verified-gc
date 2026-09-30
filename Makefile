@@ -101,6 +101,7 @@ FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 # This identifies orphaned/unused files that are not reachable
 ROOT_MODULES = \
   mark-and-sweep/spec/GC.Spec.Partition.fst \
+  mark-and-sweep/spec/GC.Spec.Coalesce.Complete.fst \
   mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fsti \
   mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fst \
   mark-and-sweep/spec/GC.Spec.FreeList.Sweep.fst \
