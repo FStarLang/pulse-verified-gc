@@ -572,9 +572,18 @@ private let sweep_aux_step_wosize
     wf_objects_non_infix g obj;
     // fp_in_heap fp' g'
     if is_white obj g then begin
-      assert (fp' == obj);
-      assert (Seq.mem obj (objects zero_addr g'));
-      assert (fp_in_heap fp' g')
+      // Only a block with room for a link becomes the new head; a wosize-0
+      // block cannot hold one, and `sweep_object` leaves `fp` untouched.
+      let ws = wosize_of_object obj g in
+      let hd = GC.Spec.Heap.hd_address obj in
+      if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
+        assert (fp' == obj);
+        assert (Seq.mem obj (objects zero_addr g'));
+        assert (fp_in_heap fp' g')
+      end else begin
+        assert (fp' == fp);
+        assert (fp_in_heap fp' g')
+      end
     end else begin
       assert (fp' == fp);
       assert (fp_in_heap fp' g')

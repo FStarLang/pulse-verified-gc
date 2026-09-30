@@ -40,14 +40,17 @@ let sweep_object (g: heap) (obj: obj_addr) (fp: U64.t)
   else if is_white obj g then
     let ws = wosize_of_object obj g in
     let hd = GC.Spec.Heap.hd_address obj in
-    let g' = 
-      if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
-        assert (U64.v (GC.Spec.Heap.hd_address obj) + U64.v mword * (U64.v 1UL + 1) <= heap_size);
-        HeapGraph.set_field g obj 1UL fp
-      end else g
-    in
-    let g'' = makeBlue obj g' in
-    (g'', obj)
+    // A block with no field cannot carry a link, so it cannot become the head
+    // of the list: writing `obj` there would drop every block already on it,
+    // and leave a blue object that is not a cell. Colour it blue and leave the
+    // list alone -- which is what `flush_blue` does with a one-word run, and
+    // what stock does in nf_allocate_block's case 1.
+    if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
+      assert (U64.v (GC.Spec.Heap.hd_address obj) + U64.v mword * (U64.v 1UL + 1) <= heap_size);
+      let g' = HeapGraph.set_field g obj 1UL fp in
+      (makeBlue obj g', obj)
+    end else
+      (makeBlue obj g, fp)
   else if is_black obj g then
     let g' = makeWhite obj g in
     (g', fp)
