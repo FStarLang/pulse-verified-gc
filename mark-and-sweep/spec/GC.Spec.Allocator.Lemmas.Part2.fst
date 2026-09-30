@@ -2922,11 +2922,23 @@ private let rec alloc_search_new_objects_blue_part1
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
           (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
                     r.obj_out <> 0UL ==>
-                    (forall (x: obj_addr).
+                    // The second conjunct is the one with content. Under
+                    // right-justification the remainder keeps the block's
+                    // address, so the ONLY object that appears is the one
+                    // handed back -- which makes the first conjunct, whose
+                    // domain excludes exactly that object, vacuously true.
+                    // The proof has always derived this (see
+                    // `alloc_from_block_only_new_is_alloc` below); it simply
+                    // was not stated.
+                    ((forall (x: obj_addr).
                       Seq.mem x (objects zero_addr r.heap_out) /\
                       ~(Seq.mem x (objects zero_addr g)) /\
                       (x <: U64.t) <> r.obj_out ==>
-                      is_blue x r.heap_out = true)))
+                      is_blue x r.heap_out = true) /\
+                     (forall (x: obj_addr).
+                      Seq.mem x (objects zero_addr r.heap_out) /\
+                      ~(Seq.mem x (objects zero_addr g)) ==>
+                      (x <: U64.t) == r.obj_out))))
           (decreases fuel)
   = if fuel = 0 then ()
     else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
@@ -3029,6 +3041,10 @@ private let rec alloc_search_new_objects_blue_part1
 /// ---------------------------------------------------------------------------
 
 let alloc_spec_new_objects_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
+  = let wz = if requested_wz = 0 then 1 else requested_wz in
+    alloc_search_new_objects_blue_part1 g fp 0UL fp wz heap_words
+
+let alloc_spec_only_new_is_obj_out_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_new_objects_blue_part1 g fp 0UL fp wz heap_words
 

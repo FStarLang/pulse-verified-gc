@@ -36,6 +36,8 @@ module U64 = FStar.UInt64
 module WE  = GC.Spec.WalkEnd
 module IndDesc = FStar.IndefiniteDescription
 module FL  = GC.Spec.FreeList
+module Alloc = GC.Spec.Allocator
+module ACore = GC.Spec.Allocator.Lemmas.Core
 
 /// Blue with room for a link word, i.e. able to be a free-list cell.
 /// `GC.Spec.FreeList.Descending.fl_cell` demands exactly this wosize bound.
@@ -173,6 +175,12 @@ let partition_swept (g: heap) (objs: seq obj_addr)
 /// `total_whsize` on a cons, so the walk induction can step.
 let total_whsize_cons (g: heap) (x: obj_addr) (s: seq obj_addr)
   : Lemma (total_whsize g (Seq.cons x s) == whsize g x + total_whsize g s)
+  = Seq.head_cons x s; Seq.lemma_tl x s
+
+/// The same, for the allocated class.
+let white_whsize_cons (g: heap) (x: obj_addr) (s: seq obj_addr)
+  : Lemma (white_whsize g (Seq.cons x s)
+           == (if is_white x g then whsize g x else 0) + white_whsize g s)
   = Seq.head_cons x s; Seq.lemma_tl x s
 
 /// THE TILING. The classes above sum to the space the walk actually covers:
@@ -322,6 +330,10 @@ let rec orphan_zero (g: heap) (fp: U64.t) (objs: seq obj_addr)
 
 /// THE STRONG PARTITION THEOREM.
 ///
+/// The completeness hypothesis is `GC.Spec.FreeList.fl_complete` itself,
+/// which says every blue object that can hold a link is on the chain -- and
+/// that is exactly the condition under which the orphan class is empty.
+///
 /// Allocated words, plus free words that are actually reachable on the free
 /// list, plus fragment words, is exactly the heap the walk covers. There is no
 /// fourth term: nothing is free-but-unreachable.
@@ -345,3 +357,252 @@ let heap_partition_strong (g: heap) (fp: U64.t)
     cell_splits g fp objs;
     orphan_zero g fp objs;
     walk_is_tiled g zero_addr
+
+/// ---------------------------------------------------------------------------
+/// Allocation accounting: the words the block loses are the words the object
+/// gains
+/// ---------------------------------------------------------------------------
+///
+/// The partition above is bookkeeping -- it is true of any heap, so on its own
+/// it forbids nothing. This is the statement with teeth, and the reason it has
+/// any is that the REQUESTED size appears in it.
+///
+/// Plain conservation would not do. "The total is unchanged" is satisfied by
+/// the pre-fix allocator too: at a one-word leftover it handed the whole block
+/// over, so a blue block of whsize `bwz + 1` became a white block of whsize
+/// `bwz + 1` and nothing was lost. The defect is invisible to a law that only
+/// counts words. It becomes visible the moment the law says how many words the
+/// caller asked for.
+///
+/// So: the source block keeps its address and shrinks by exactly `wz + 1`
+/// words, and exactly `wz + 1` words appear at the right-justified header.
+/// The pre-fix allocator fails this -- it left `bwz` in the header at `hd` and
+/// wrote nothing at `hd + leftover * 8` -- which is issue #19 stated as
+/// arithmetic.
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 80"
+let alloc_from_block_accounting
+  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
+  : Lemma
+    (requires (let hd = hd_address obj in
+               let bwz = U64.v (getWosize (read_word g hd)) in
+               bwz - wz >= 1 /\ wz < pow2 54 /\ bwz - wz - 1 < pow2 54 /\
+               U64.v hd + (bwz - wz) * 8 < heap_size))
+    (ensures (let hd = hd_address obj in
+              let bwz = U64.v (getWosize (read_word g hd)) in
+              let leftover = bwz - wz in
+              let g' = fst (Alloc.alloc_from_block g obj wz next) in
+              let ah : hp_addr = U64.uint_to_t (U64.v hd + leftover * 8) in
+              // the block at `hd` is still a block, and it is exactly `wz + 1`
+              // words smaller than it was
+              (U64.v (getWosize (read_word g' hd)) + 1) + (wz + 1) == bwz + 1 /\
+              // and exactly those `wz + 1` words are the allocated object
+              U64.v (getWosize (read_word g' ah)) == wz /\
+              // Sizes alone would be satisfied by an allocator that carved the
+              // block correctly and coloured everything free, so the classes
+              // have to be pinned too: the words leave the free class and
+              // arrive in the allocated one.
+              getColor (read_word g' ah) == White /\
+              getColor (read_word g' hd) == Blue))
+  = let hd = hd_address obj in
+    let bwz = U64.v (getWosize (read_word g hd)) in
+    let leftover = bwz - wz in
+    Alloc.alloc_from_block_split_normal g obj wz next;
+    let rhdr = Alloc.make_header (U64.uint_to_t (leftover - 1)) Alloc.blue_bits 0UL in
+    let g1 = write_word g hd rhdr in
+    let ahn = U64.v hd + leftover * 8 in
+    let ah : hp_addr = U64.uint_to_t ahn in
+    let ahdr = Alloc.make_header (U64.uint_to_t wz) Alloc.white_bits 0UL in
+    let g2 = write_word g1 ah ahdr in
+    // the allocated header: written last, so read it back directly
+    read_write_same g1 ah ahdr;
+    ACore.make_header_getWosize (U64.uint_to_t wz) Alloc.white_bits 0UL;
+    // the remainder header: written first, and `ah <> hd` because leftover >= 1
+    read_write_different g1 ah hd ahdr;
+    read_write_same g hd rhdr;
+    ACore.make_header_getWosize (U64.uint_to_t (leftover - 1)) Alloc.blue_bits 0UL;
+    // colours: the header bits decode to the classes
+    ACore.make_header_getColor (U64.uint_to_t wz) Alloc.white_bits 0UL;
+    getColor_raw ahdr;
+    ACore.make_header_getColor (U64.uint_to_t (leftover - 1)) Alloc.blue_bits 0UL;
+    getColor_raw rhdr
+#pop-options
+
+/// The exact-fit arm. The block becomes the object outright: no remainder, no
+/// fragment, and the object declares exactly what was asked for. Stated
+/// separately because there is no leftover to account for -- the whole block
+/// is the `wz + 1` words.
+///
+/// The pre-fix allocator happened to get this arm right, because at
+/// `leftover = 0` the block size and the requested size coincide. It is the
+/// `leftover = 1` arm above where the two part company.
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 40"
+let alloc_from_block_accounting_exact
+  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
+  : Lemma
+    (requires (let bwz = U64.v (getWosize (read_word g (hd_address obj))) in
+               bwz == wz /\ wz < pow2 54))
+    (ensures (let hd = hd_address obj in
+              let g' = fst (Alloc.alloc_from_block g obj wz next) in
+              U64.v (getWosize (read_word g' hd)) == wz))
+  = let hd = hd_address obj in
+    Alloc.alloc_from_block_exact g obj wz next;
+    let ahdr = Alloc.make_header (U64.uint_to_t wz) Alloc.white_bits 0UL in
+    read_write_same g hd ahdr;
+    ACore.make_header_getWosize (U64.uint_to_t wz) Alloc.white_bits 0UL
+#pop-options
+
+/// Both arms together: however the block is carved, the object the allocator
+/// hands back declares exactly the number of fields that were requested.
+///
+/// This is the whole of issue #19 as a single statement. It is not a counting
+/// law -- counting cannot see the defect, because the pre-fix allocator lost no
+/// words -- it is a law relating what was asked for to what was produced.
+let alloc_from_block_gives_requested_size
+  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
+  : Lemma
+    (requires (let hd = hd_address obj in
+               let bwz = U64.v (getWosize (read_word g hd)) in
+               bwz >= wz /\ wz >= 1 /\ wz < pow2 54 /\ bwz - wz - 1 < pow2 54 /\
+               U64.v hd + (bwz - wz) * 8 < heap_size))
+    (ensures (let hd = hd_address obj in
+              let bwz = U64.v (getWosize (read_word g hd)) in
+              let g' = fst (Alloc.alloc_from_block g obj wz next) in
+              let ah : hp_addr = U64.uint_to_t (U64.v hd + (bwz - wz) * 8) in
+              U64.v (getWosize (read_word g' ah)) == wz))
+  = let hd = hd_address obj in
+    let bwz = U64.v (getWosize (read_word g hd)) in
+    if bwz = wz then alloc_from_block_accounting_exact g obj wz next
+    else alloc_from_block_accounting g obj wz next
+
+/// ---------------------------------------------------------------------------
+/// The sum form: how much the allocated class grows
+/// ---------------------------------------------------------------------------
+
+/// Two heaps that agree on every word from `start` upward have the same walk
+/// from `start`, and the same allocated total along it.
+///
+/// Walk-equality and sum-equality are proved together on purpose. Separating
+/// them would mean two inductions over the same recursion, and the second
+/// would still need the first at every step: a shared header gives the same
+/// wosize (so the same next position) AND the same colour (so the same
+/// contribution).
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 150"
+let rec walk_white_agree (g g': heap) (start: hp_addr)
+  : Lemma
+    (requires Seq.length g == heap_size /\ Seq.length g' == heap_size /\
+              (forall (a: hp_addr). U64.v a >= U64.v start ==>
+                 read_word g a == read_word g' a))
+    (ensures objects start g == objects start g' /\
+             white_whsize g (objects start g) == white_whsize g' (objects start g'))
+    (decreases (heap_size - U64.v start))
+  = if U64.v start + 8 >= heap_size then begin
+      assert (objects start g == Seq.empty);
+      assert (objects start g' == Seq.empty)
+    end
+    else begin
+      assert (read_word g start == read_word g' start);
+      let wz = getWosize (read_word g start) in
+      let next = U64.v start + (U64.v wz + 1) * 8 in
+      if next > heap_size || next >= pow2 64 then begin
+        assert (objects start g == Seq.empty);
+        assert (objects start g' == Seq.empty)
+      end
+      else begin
+        f_address_spec start;
+        hd_f_roundtrip start;
+        let o : obj_addr = f_address start in
+        // same header at `start`, so same size and same colour
+        wosize_of_object_spec o g;
+        wosize_of_object_spec o g';
+        assert (whsize g o == whsize g' o);
+        color_of_object_spec o g;
+        color_of_object_spec o g';
+        is_white_iff o g;
+        is_white_iff o g';
+        assert (is_white o g == is_white o g');
+        if next >= heap_size then begin
+          assert (objects start g == Seq.cons o Seq.empty);
+          assert (objects start g' == Seq.cons o Seq.empty);
+          white_whsize_cons g o Seq.empty;
+          white_whsize_cons g' o Seq.empty
+        end
+        else begin
+          aligned_plus_mul8 (U64.v start) (U64.v wz + 1);
+          let nx : hp_addr = mk_hp_addr next in
+          walk_white_agree g g' nx;
+          assert (objects start g == Seq.cons o (objects nx g));
+          assert (objects start g' == Seq.cons o (objects nx g'));
+          white_whsize_cons g o (objects nx g);
+          white_whsize_cons g' o (objects nx g')
+        end
+      end
+    end
+#pop-options
+
+/// **The allocated class grows by exactly the words requested.**
+///
+/// This is the sum form of `alloc_from_block_accounting`, over the walk that
+/// starts at the block being carved. Everything below the block is untouched,
+/// so the whole-heap statement differs from this one only by a prefix that
+/// both sides share -- splitting the walk at an arbitrary address is the one
+/// piece of machinery the repository does not have, and it is the only reason
+/// this is stated from `hd` rather than from `zero_addr`.
+///
+/// `~(is_white obj g)` holds because the block comes off the free list, and it
+/// is needed: if the source block were already allocated the arithmetic would
+/// count it twice.
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 200"
+let alloc_from_block_white_grows
+  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
+  : Lemma
+    (requires (let hd = hd_address obj in
+               let bwz = U64.v (getWosize (read_word g hd)) in
+               Seq.length g == heap_size /\
+               bwz - wz >= 1 /\ wz >= 1 /\ wz < pow2 54 /\ bwz - wz - 1 < pow2 54 /\
+               ~(is_white obj g) /\
+               U64.v hd + (bwz + 1) * 8 < heap_size))
+    (ensures (let hd = hd_address obj in
+              let g' = fst (Alloc.alloc_from_block g obj wz next) in
+              white_whsize g' (objects hd g')
+                == white_whsize g (objects hd g) + (wz + 1)))
+  = let hd = hd_address obj in
+    let bwz = U64.v (getWosize (read_word g hd)) in
+    let leftover = bwz - wz in
+    let g' = fst (Alloc.alloc_from_block g obj wz next) in
+    let ahn = U64.v hd + leftover * 8 in
+    let ah : hp_addr = U64.uint_to_t ahn in
+    let aftn = U64.v hd + (bwz + 1) * 8 in
+    let aft : hp_addr = mk_hp_addr aftn in
+    // sizes and colours of the two rewritten headers
+    alloc_from_block_accounting g obj wz next;
+    // the walk above the block is untouched
+    let frame (a: hp_addr) : Lemma
+      (requires U64.v a >= aftn)
+      (ensures read_word g' a == read_word g a)
+      = Alloc.alloc_from_block_read_outside g obj wz next a
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires frame);
+    walk_white_agree g g' aft;
+    // the block's own two steps in g', and its one step in g
+    // `objects` emits `f_address hd`, and the goal is phrased with `obj`:
+    // this is the direction that identifies them.
+    f_hd_roundtrip obj;
+    hd_address_spec obj;
+    f_address_spec hd; hd_f_roundtrip hd;
+    f_address_spec ah; hd_f_roundtrip ah;
+    let ao : obj_addr = f_address ah in
+    wosize_of_object_spec obj g; wosize_of_object_spec obj g';
+    wosize_of_object_spec ao g';
+    color_of_object_spec obj g'; color_of_object_spec ao g';
+    is_white_iff obj g'; is_white_iff ao g';
+    // the arithmetic that makes the two walks meet again at `aft`
+    assert (ahn + (wz + 1) * 8 == aftn);
+    // one step in g: the block spans to `aft`
+    assert (objects hd g == Seq.cons obj (objects aft g));
+    // two steps in g': the remainder at `hd`, then the object at `ah`
+    assert (objects ah g' == Seq.cons ao (objects aft g'));
+    assert (objects hd g' == Seq.cons obj (objects ah g'));
+    white_whsize_cons g obj (objects aft g);
+    white_whsize_cons g' ao (objects aft g');
+    white_whsize_cons g' obj (objects ah g')
+#pop-options

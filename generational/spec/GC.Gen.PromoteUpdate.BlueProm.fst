@@ -510,6 +510,7 @@ private let chain_blue_proof_for_excl
     set_promoted_tag_read_frame padded dst_obj tag (hd_address excl);
     // 2. excl must be in objects(major) (new objects are blue → contradiction)
     AllocLemmas.alloc_spec_new_objects_blue_part1 major fp wosize;
+    AllocLemmas.alloc_spec_only_new_is_obj_out_part1 major fp wosize;
     if not (Seq.mem excl (objects zero_addr major)) then begin
       assert (is_blue excl new_major = true);
       copy_fields_other_hdr_precond new_major excl dst_obj wosize;

@@ -379,6 +379,23 @@ val alloc_spec_new_objects_blue_part1 :
                     (x <: U64.t) <> r.obj_out ==>
                     is_blue x r.heap_out = true))
 
+/// **Theorem**: the only object allocation creates is the one it returns.
+/// The lemma above is vacuous under right-justification -- its domain excludes
+/// `obj_out`, and `obj_out` is the only object that appears. This is the
+/// statement with content.
+val alloc_spec_only_new_is_obj_out_part1 :
+  (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
+  Lemma (requires well_formed_heap_part1 g /\
+                  fl_valid g fp heap_words /\
+                  fl_chain_terminates g fp heap_words /\
+                  requested_wz >= 1 /\
+                  (alloc_spec g fp requested_wz).obj_out <> 0UL)
+        (ensures (let r = alloc_spec g fp requested_wz in
+                  forall (x: obj_addr).
+                    Seq.mem x (objects zero_addr r.heap_out) /\
+                    ~(Seq.mem x (objects zero_addr g)) ==>
+                    (x <: U64.t) == r.obj_out))
+
 /// **Theorem**: Backward inclusion for alloc_from_block.
 /// If h is in objects of the output heap but NOT in objects of the input heap,
 /// then h is the RIGHT-JUSTIFIED allocated block.  The remainder keeps `obj`'s

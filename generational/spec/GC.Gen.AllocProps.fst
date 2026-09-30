@@ -527,7 +527,19 @@ let alloc_spec_obj_wosize_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_obj_wosize_part1 g fp 0UL fp wz heap_words
 
-/// Top-level: after alloc_spec, wosize <= requested_wz + 1
+/// Top-level: after alloc_spec, wosize <= requested_wz.
+///
+/// This said `<= wz + 1` until right-justification. Together with the `>= wz`
+/// lemma above that admitted `wosize in [wz, wz+1]`, and the `+1` is exactly
+/// the latitude issue #19 lived in: a free block one word too long handed over
+/// whole, with the block's size left in the header. The allocator has been
+/// exact since right-justification landed -- `alloc_search_obj_wosize_part1`
+/// proves `== wz` -- so the range was a stale projection, not a real bound.
+///
+/// Phrased as an inequality rather than an equation on purpose: an equation
+/// unifies `wz` with a machine integer and would force a `pow2 54` bound onto
+/// every caller. The pair of inequalities says the same thing and costs the
+/// call sites nothing.
 let alloc_spec_obj_wosize_upper_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires AllocLemmas.fl_valid g fp heap_words)
           (ensures (let wz = if requested_wz = 0 then 1 else requested_wz in
@@ -537,7 +549,35 @@ let alloc_spec_obj_wosize_upper_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
                      U64.v r.obj_out < heap_size /\
                      U64.v r.obj_out % U64.v mword == 0 /\
                      (let obj_out : obj_addr = r.obj_out in
-                      U64.v (wosize_of_object obj_out r.heap_out) <= wz + 1))))
+                      U64.v (wosize_of_object obj_out r.heap_out) <= wz))))
+  = let wz = if requested_wz = 0 then 1 else requested_wz in
+    alloc_search_obj_wosize_part1 g fp 0UL fp wz heap_words
+
+/// Top-level, EXACT: the allocated object declares exactly what was asked for.
+///
+/// The two lemmas above are weaker projections of the same induction, kept
+/// because their 29 call sites only need one side. Neither states the property
+/// that matters: together they permit `wosize in [wz, wz+1]`, and that `+1` is
+/// precisely the latitude issue #19 exploited -- a free block one word too long
+/// handed over whole, with the block's size left in the header.
+///
+/// `alloc_search_obj_wosize_part1` has proved the exact bound since
+/// right-justification landed; this exposes it at the `alloc_spec` level, so a
+/// caller can rely on the size rather than on a range that still admits the
+/// bug.
+/// `requested_wz < pow2 54` is the standing wosize bound, needed here and not
+/// in the two weaker wrappers only because an equation unifies `wz` with a
+/// machine integer where an inequality does not.
+let alloc_spec_obj_wosize_exact_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
+  : Lemma (requires AllocLemmas.fl_valid g fp heap_words /\ requested_wz < pow2 54)
+          (ensures (let wz = if requested_wz = 0 then 1 else requested_wz in
+                    let r = alloc_spec g fp requested_wz in
+                    r.obj_out <> 0UL ==>
+                    (U64.v r.obj_out >= U64.v mword /\
+                     U64.v r.obj_out < heap_size /\
+                     U64.v r.obj_out % U64.v mword == 0 /\
+                     (let obj_out : obj_addr = r.obj_out in
+                      U64.v (wosize_of_object obj_out r.heap_out) == wz))))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_obj_wosize_part1 g fp 0UL fp wz heap_words
 

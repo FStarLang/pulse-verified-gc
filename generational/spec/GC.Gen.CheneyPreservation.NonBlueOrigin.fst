@@ -283,6 +283,7 @@ let promote_object_nonblue_other_reflects_pre
     is_blue_iff target res.major_out
   end else begin
     AllocLemmas.alloc_spec_new_objects_blue_part1 major fp wz;
+    AllocLemmas.alloc_spec_only_new_is_obj_out_part1 major fp wz;
     assert (is_blue target alloc_res.heap_out = true);
     color_of_header_eq target alloc_res.heap_out res.major_out;
     assert (is_blue target res.major_out = true)

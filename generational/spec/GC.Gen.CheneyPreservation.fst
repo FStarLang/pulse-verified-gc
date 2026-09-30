@@ -481,7 +481,12 @@ private let alloc_spec_preserves_gray_black_objects_on_stack_part1
     AllocProps.alloc_spec_oom_unchanged g fp wz;
     assert (r.heap_out == g)
   end else begin
+    // The blue lemma's conclusion is vacuous -- its domain excludes
+    // `obj_out`, and `obj_out` is the only object allocation creates. Both
+    // are kept: the second supplies the fact, the first the instantiation
+    // the solver already routes this proof through.
     AllocLemmas.alloc_spec_new_objects_blue_part1 g fp wz;
+    AllocLemmas.alloc_spec_only_new_is_obj_out_part1 g fp wz;
     AllocProps.alloc_spec_obj_not_blue_part1 g fp wz;
     let dst : obj_addr = r.obj_out in
     let aux (h: obj_addr)
