@@ -93,6 +93,11 @@ val promote_object_frame_old_header_derived
       (let res = promote_object minor major obj fp wz in
        res.new_addr <> 0UL) /\
       Seq.mem src (objects zero_addr major) /\
+      // Right-justification splits `obj_out` from the block it came out of:
+      // the remainder keeps the block's address and ITS header is rewritten
+      // too, so excluding `obj_out` no longer excludes every rewritten
+      // header.  `src` has to be off the free list entirely.
+      AllocLemmas.chain_avoids major fp src heap_words = true /\
       (src <> (Allocator.alloc_spec major fp wz).obj_out))
     (ensures
       (let res = promote_object minor major obj fp wz in

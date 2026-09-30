@@ -26,6 +26,12 @@ val promote_object_nonblue_other_reflects_pre
       well_formed_heap_part1 major /\
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
+      // Right-justification rewrites the remainder's header as well as the
+      // allocated one, so `alloc_spec_read_header_other_part1` now needs
+      // `target` off the free list.  A cell is blue before and stays blue,
+      // so a target that is NOT blue afterwards cannot be one -- but that
+      // step needs to know the chain is all blue to begin with.
+      chain_objects_blue major fp /\
       (promote_object minor major obj fp wz).new_addr <> 0UL /\
       Seq.mem target (objects zero_addr (promote_object minor major obj fp wz).major_out) /\
       is_blue target (promote_object minor major obj fp wz).major_out = false /\

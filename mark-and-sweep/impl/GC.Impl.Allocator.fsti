@@ -48,7 +48,15 @@ fn init_heap (heap: heap_t)
 /// Postcondition ties the result to the pure spec alloc_spec.
 fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
   requires is_heap heap 's **
-           pure (SpecFields.well_formed_heap 's)
+           // The allocator is never asked for a zero-word block: `gen_alloc`
+           // requires wosize > 0, `promote_one` guards `wosize = 0` before
+           // calling, and the C bridge rejects it outright -- OCaml represents
+           // a zero-length block as a static Atom, never a heap allocation.
+           // Stating it here lets the implementation drop the 0 -> 1 bump,
+           // which was a compare-and-select on every major allocation for a
+           // case that cannot occur.
+           pure (SpecFields.well_formed_heap 's /\
+                 U64.v wosize >= 1)
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
     pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in
@@ -67,7 +75,8 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap_part1 's /\
                  AllocLemmas.fl_valid 's fp SpecBase.heap_words /\
-                 AllocLemmas.fl_chain_terminates 's fp SpecBase.heap_words)
+                 AllocLemmas.fl_chain_terminates 's fp SpecBase.heap_words /\
+                 U64.v wosize >= 1)
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
     pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in

@@ -21,6 +21,9 @@ val alloc_from_block_preserves_wfh_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   Lemma (requires well_formed_heap_part1 g /\
                   Seq.mem obj (objects zero_addr g) /\
+                  // needed so the right-justified object address lands
+                  // strictly inside the heap
+                  wz >= 1 /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
         (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
@@ -138,8 +141,13 @@ val alloc_from_block_preserves_objects_part1 :
                   (forall (h: obj_addr). Seq.mem h (objects zero_addr g) ==> Seq.mem h (objects zero_addr g'))))
 
 /// **Theorem**: Any object in the post-alloc heap that was NOT in the pre-alloc
-/// heap is blue. (The only possible new object is the remainder block,
-/// which receives a blue header.)
+/// heap, OTHER than the allocated block itself, is blue.
+///
+/// Under right-justification the exclusion is what makes this true, and it
+/// also makes it vacuous: the remainder keeps `obj`'s address, so the only
+/// object allocation creates is `obj_out`, and that one is white by
+/// construction.  Callers already case-split on `obj_out` (it is the block
+/// they just asked for), so the weaker statement is the one they use.
 val alloc_spec_new_objects_blue_part1 :
   (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires well_formed_heap_part1 g /\
@@ -150,23 +158,29 @@ val alloc_spec_new_objects_blue_part1 :
         (ensures (let r = alloc_spec g fp requested_wz in
                   forall (x: obj_addr).
                     Seq.mem x (objects zero_addr r.heap_out) /\
-                    ~(Seq.mem x (objects zero_addr g)) ==>
+                    ~(Seq.mem x (objects zero_addr g)) /\
+                    (x <: U64.t) <> r.obj_out ==>
                     is_blue x r.heap_out = true))
 
-/// **Theorem**: Backward inclusion for alloc_from_block (split case).
+/// **Theorem**: Backward inclusion for alloc_from_block.
 /// If h is in objects of the output heap but NOT in objects of the input heap,
-/// then h must be the remainder address returned by alloc_from_block.
+/// then h is the RIGHT-JUSTIFIED allocated block.  The remainder keeps `obj`'s
+/// address, so it is never the new object -- that is the structural gain of
+/// right-justification, and it holds at leftover = 1 as well as leftover >= 2.
 val alloc_from_block_objects_backward_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) -> (h: obj_addr) ->
   Lemma (requires well_formed_heap_part1 g /\
                   Seq.mem obj (objects zero_addr g) /\
-                  (let hdr = read_word g (hd_address obj) in
-                   let bwz = U64.v (getWosize hdr) in
-                   bwz >= wz /\ wz >= 1 /\ bwz - wz >= 2) /\
+                  (let hd = hd_address obj in
+                   let bwz = U64.v (getWosize (read_word g hd)) in
+                   bwz >= wz /\ wz >= 1 /\
+                   U64.v hd + (bwz - wz) * 8 + 8 < heap_size) /\
                   (let (g', _) = alloc_from_block g obj wz next_fp in
                    Seq.mem h (objects zero_addr g') /\
                    ~(Seq.mem h (objects zero_addr g))))
-        (ensures h == snd (alloc_from_block g obj wz next_fp))
+        (ensures (let hd = hd_address obj in
+                  let bwz = U64.v (getWosize (read_word g hd)) in
+                  U64.v h == U64.v hd + (bwz - wz) * 8 + 8))
 
 /// **Theorem**: alloc_spec preserves no_black_objects under well_formed_heap_part1.
 ///
