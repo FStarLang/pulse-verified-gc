@@ -37,9 +37,6 @@ module WE  = GC.Spec.WalkEnd
 module IndDesc = FStar.IndefiniteDescription
 module FL  = GC.Spec.FreeList
 
-/// Machine words an object occupies: its fields plus its header.
-let whsize (g: heap) (x: obj_addr) : GTot nat = 1 + U64.v (wosize_of_object x g)
-
 /// Blue with room for a link word, i.e. able to be a free-list cell.
 /// `GC.Spec.FreeList.Descending.fl_cell` demands exactly this wosize bound.
 let is_cellish (g: heap) (x: obj_addr) : GTot bool =
