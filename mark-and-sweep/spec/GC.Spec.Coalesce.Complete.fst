@@ -705,3 +705,158 @@ let fused_partition (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
     Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
     coalesce_partition (fst (SpecSweep.sweep h_mark fp))
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Coalesce establishes fl_exact
+/// ---------------------------------------------------------------------------
+///
+/// `coalesce_complete` gives the completeness half. The soundness half is
+/// already known in other forms: `coalesce_fl_entry` gives the allocator's
+/// `fl_valid` + `fl_chain_terminates`, and `coalesce_desc` gives
+/// `fl_desc_chain`, which records for every node on the chain that it is in
+/// range, aligned, blue, has room for a link, and lies below the previous one.
+/// `fl_sound` asks for one more thing per node: that it is an object of the
+/// heap walk. The same `mem_step` that `coalesce_fl_entry` uses supplies that
+/// one link at a time, so `fl_sound` follows by induction along the chain.
+
+/// One step of that induction: anything reachable in `n` links from a head
+/// that starts a descending chain is a sound cell.
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 60"
+private let rec on_fl_desc_sound
+  (g: heap) (fp: U64.t) (bound: nat)
+  (mem_step: (a: U64.t -> Lemma
+     (requires U64.v a >= U64.v mword /\ U64.v a < heap_size /\
+               U64.v a % U64.v mword == 0 /\
+               Seq.mem (a <: obj_addr) (objects zero_addr g) /\
+               is_blue (a <: obj_addr) g /\
+               U64.v (wosize_of_object (a <: obj_addr) g) >= 1)
+     (ensures (let n = read_word g (a <: obj_addr) in
+               n == 0UL \/
+               (U64.v n >= U64.v mword /\ U64.v n < heap_size /\
+                U64.v n % U64.v mword == 0 /\
+                Seq.mem (n <: obj_addr) (objects zero_addr g))))))
+  (obj: U64.t) (n: nat)
+  : Lemma
+    (requires
+      FLD.fl_desc_chain g fp bound /\ bound <= heap_size /\
+      (fp == 0UL \/
+       (U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
+        U64.v fp % U64.v mword == 0 /\
+        Seq.mem (fp <: obj_addr) (objects zero_addr g))) /\
+      on_fl g fp obj n)
+    (ensures
+      fl_node obj /\
+      (U64.v obj >= U64.v mword /\ U64.v obj < heap_size /\ U64.v obj % U64.v mword == 0) /\
+      Seq.mem (obj <: obj_addr) (objects zero_addr g) /\
+      is_blue (obj <: obj_addr) g /\
+      U64.v (wosize_of_object (obj <: obj_addr) g) >= 1)
+    (decreases n)
+  = // `on_fl` with any fuel forces `fl_node fp`, so `fp` is not null and is a
+    // real object; the descending chain then gives its colour and size.
+    if fp = obj then ()
+    else begin
+      on_fl_uncons g fp obj n;
+      let o : obj_addr = fp in
+      mem_step fp;
+      on_fl_desc_sound g (read_word g o) (U64.v fp - U64.v mword) mem_step obj (n - 1)
+    end
+#pop-options
+
+/// A descending chain whose links all land on heap objects is sound.
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 60"
+let fl_desc_chain_gives_sound
+  (g: heap) (fp: U64.t)
+  (mem_step: (a: U64.t -> Lemma
+     (requires U64.v a >= U64.v mword /\ U64.v a < heap_size /\
+               U64.v a % U64.v mword == 0 /\
+               Seq.mem (a <: obj_addr) (objects zero_addr g) /\
+               is_blue (a <: obj_addr) g /\
+               U64.v (wosize_of_object (a <: obj_addr) g) >= 1)
+     (ensures (let n = read_word g (a <: obj_addr) in
+               n == 0UL \/
+               (U64.v n >= U64.v mword /\ U64.v n < heap_size /\
+                U64.v n % U64.v mword == 0 /\
+                Seq.mem (n <: obj_addr) (objects zero_addr g))))))
+  : Lemma
+    (requires FLD.fl_desc_chain g fp heap_size /\
+              (fp == 0UL \/
+               (U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
+                U64.v fp % U64.v mword == 0 /\
+                Seq.mem (fp <: obj_addr) (objects zero_addr g))))
+    (ensures FL.fl_sound g fp)
+  = let aux (obj: U64.t)
+      : Lemma (requires reachable_on_fl g fp obj)
+              (ensures
+                fl_node obj /\
+                (U64.v obj >= U64.v mword /\ U64.v obj < heap_size /\
+                 U64.v obj % U64.v mword == 0) /\
+                Seq.mem (obj <: obj_addr) (objects zero_addr g) /\
+                is_blue (obj <: obj_addr) g /\
+                U64.v (wosize_of_object (obj <: obj_addr) g) >= 1)
+      = eliminate exists (n: nat). on_fl g fp obj n
+        with on_fl_desc_sound g fp heap_size mem_step obj n
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// **The coalescer's output free list is sound**, in the form `fl_exact`
+/// uses: every cell reachable from the head is a blue heap object with room
+/// for a link. Assembled exactly as `coalesce_fl_entry` is.
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 60"
+let coalesce_sound (g: heap)
+  : Lemma (requires post_sweep g)
+          (ensures (let r = coalesce g in FL.fl_sound (fst r) (snd r)))
+  = let r = coalesce g in
+    let g' = fst r in
+    let fp' = snd r in
+    CD.coalesce_desc g;
+    coalesce_head_in_walk g;
+    let mem_step (a: U64.t)
+      : Lemma
+        (requires U64.v a >= U64.v mword /\ U64.v a < heap_size /\
+                  U64.v a % U64.v mword == 0 /\
+                  Seq.mem (a <: obj_addr) (objects zero_addr g') /\
+                  is_blue (a <: obj_addr) g' /\
+                  U64.v (wosize_of_object (a <: obj_addr) g') >= 1)
+        (ensures (let n = read_word g' (a <: obj_addr) in
+                  n == 0UL \/
+                  (U64.v n >= U64.v mword /\ U64.v n < heap_size /\
+                   U64.v n % U64.v mword == 0 /\
+                   Seq.mem (n <: obj_addr) (objects zero_addr g'))))
+      = coalesce_heap_unfold g g (objects zero_addr g) 0UL 0 0UL;
+        coalesce_aux_blue_field0_valid g g zero_addr (objects zero_addr g)
+          (objects zero_addr g) 0UL 0 0UL (a <: obj_addr)
+    in
+    fl_desc_chain_gives_sound g' fp' mem_step
+#pop-options
+
+/// **Coalescing establishes `fl_exact`.** The free list the coalescer builds
+/// is exactly the cells of the heap it returns: nothing on the chain is
+/// anything but a free cell, and no free cell is missing from it.
+///
+/// "Establishes", not "preserves": the coalescer discards any incoming free
+/// list and builds its own from a null head, so it needs nothing about the
+/// old list -- only `post_sweep`, the colours sweep leaves. Whatever state
+/// allocation left the list in, a collection restores `fl_exact`.
+let coalesce_exact (g: heap)
+  : Lemma (requires post_sweep g)
+          (ensures (let r = coalesce g in FL.fl_exact (fst r) (snd r)))
+  = coalesce_sound g;
+    coalesce_complete g
+
+/// The same, at the pass the collector actually runs. Same hypotheses as
+/// `fused_partition`.
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 100"
+let fused_exact (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
+  : Lemma
+    (requires
+      Corr.mark_post h_init h_mark roots fp /\
+      well_formed_heap h_mark /\
+      SI.heap_objects_dense h_mark /\
+      SpecSweep.fp_in_heap fp h_mark /\
+      (forall (x: obj_addr). Seq.mem x (objects zero_addr h_mark) ==> ~(is_gray x h_mark)))
+    (ensures (let r = SCD.fused_sweep_coalesce h_mark in FL.fl_exact (fst r) (snd r)))
+  = SC.fused_eq_sweep_coalesce h_mark fp;
+    Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
+    coalesce_exact (fst (SpecSweep.sweep h_mark fp))
+#pop-options
