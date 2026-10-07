@@ -57,6 +57,11 @@ module FL = GC.Spec.FreeList
 module FLD = GC.Spec.FreeList.Descending
 module Part = GC.Spec.Partition
 module WE = GC.Spec.WalkEnd
+module SI = GC.Spec.SweepInv
+module Corr = GC.Spec.Correctness
+module SC = GC.Spec.SweepCoalesce
+module SCD = GC.Spec.SweepCoalesce.Defs
+module SpecSweep = GC.Spec.Sweep
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 40"
 
@@ -666,3 +671,37 @@ let coalesce_partition (g: heap)
     Part.heap_partition_strong (fst (coalesce g)) (snd (coalesce g))
 #pop-options
 
+/// **The partition, at the heap the collector actually produces.**
+///
+/// `coalesce_partition` is about `coalesce g`, but the shipped pipeline is the
+/// fused single pass: `GC.Impl.fst` calls `fused_sweep_coalesce heap`, never
+/// `sweep` and `coalesce` separately.  `fused_eq_sweep_coalesce` bridges the
+/// two, and `sweep_post_sweep_strong_gen` supplies `post_sweep` of the sweeper's
+/// output from the mark postcondition, so the identity transfers to the pass
+/// the collector runs.
+///
+/// The hypotheses are exactly the ones `GC.Impl.fst` already discharges at the
+/// call site (`fp_valid_transfer`, `noGreyObjects_from_no_gray`, and the mark
+/// postcondition it carries in).
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 100"
+let fused_partition (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
+  : Lemma
+    (requires
+      Corr.mark_post h_init h_mark roots fp /\
+      well_formed_heap h_mark /\
+      SI.heap_objects_dense h_mark /\
+      SpecSweep.fp_in_heap fp h_mark /\
+      (forall (x: obj_addr). Seq.mem x (objects zero_addr h_mark) ==> ~(is_gray x h_mark)))
+    (ensures (
+      let r = SCD.fused_sweep_coalesce h_mark in
+      let g' = fst r in
+      let objs = objects zero_addr g' in
+      U64.v zero_addr
+      + (Part.white_whsize g' objs
+         + Part.onchain_whsize g' (snd r) objs
+         + Part.frag_whsize g' objs) * U64.v mword
+      == WE.walk_end g' zero_addr))
+  = SC.fused_eq_sweep_coalesce h_mark fp;
+    Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
+    coalesce_partition (fst (SpecSweep.sweep h_mark fp))
+#pop-options
