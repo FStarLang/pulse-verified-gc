@@ -505,10 +505,10 @@ static void do_full_gc(void) {
         size_t n_slots = (size_t)(tbl->ptr - tbl->base);
         _Static_assert(sizeof(value *) == sizeof(uint64_t),
             "ref_table optimization requires LP64 (sizeof(value*)==8)");
-        K___uint64_t_bool result =
+        FStar_Pervasives_Native_tuple2__uint64_t_bool result =
             gen_gc(gc_gen_heap, roots_for_gc, (size_t)root_count, gc_fwd_arr,
                    gc_queue, (uint64_t *)tbl->base, n_slots, gc_stack);
-        if (!result.snd) {
+        if (!result._2) {
             free(roots_for_gc);
             free(gray_storage);
             in_full_gc = 0;
@@ -576,9 +576,9 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
 
     PROF_START(major_alloc);
     uint64_t fp = *gc_gen_heap.fp_ref;
-    K___uint64_t_uint64_t res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize);
-    *gc_gen_heap.fp_ref = res.fst;
-    uint64_t result = res.snd;
+    FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize);
+    *gc_gen_heap.fp_ref = res._1;
+    uint64_t result = res._2;
     PROF_END(major_alloc);
 
     if (result == 0) {
@@ -586,8 +586,8 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
         PROF_START(major_alloc);
         fp = *gc_gen_heap.fp_ref;
         res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize);
-        *gc_gen_heap.fp_ref = res.fst;
-        result = res.snd;
+        *gc_gen_heap.fp_ref = res._1;
+        result = res._2;
         PROF_END(major_alloc);
     }
 
