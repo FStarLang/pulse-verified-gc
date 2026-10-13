@@ -31,7 +31,8 @@
 ///
 ///   sweep_par bs g == fused_sweep_coalesce g      (heap and free-list head)
 ///
-/// It is stated and admitted; see docs/parallel-sweep-phase1.md.
+/// It is proved below (the proof uses only `valid_bounds`, not the rest of
+/// the precondition); see docs/parallel-sweep-phase1.md.
 /// ---------------------------------------------------------------------------
 module GC.Spec.SweepPar
 
@@ -1110,6 +1111,33 @@ let sweep_par_two (b: nat) (g: heap)
 #pop-options
 
 /// ---------------------------------------------------------------------------
+/// Proof, part 8: any number of segments
+/// ---------------------------------------------------------------------------
+
+/// From boundary `b` to the end of the heap, by induction over the
+/// remaining boundaries: one `link_step` per segment, then `link_base`.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let rec link_correct (g: heap) (b: nat) (rest: list nat)
+    (h gl: heap) (c: run) (fp: U64.t) (x: heap)
+  : Lemma (requires link_inv g b rest h gl c x)
+          (ensures link_all gl c fp (sweep_all g (segments (b :: rest))) ==
+                   Defs.fused_aux g h (objs_from g b) c.fb c.rw fp)
+          (decreases rest)
+  = if b = heap_size then link_base g h gl c fp x
+    else match rest with
+    | [] -> ()
+    | hi :: rest' ->
+      link_step g b hi rest' h gl c fp x;
+      let lo = mk_hp_addr b in
+      let o = sweep_segment g lo hi in
+      let (hs, r, fs) = fsteps g h (seg_objects g lo hi) c fp in
+      let (gl', c', fp') = link_one gl c fp o in
+      link_all_cons gl c fp ({ lo = b; hi = hi; out = o } <: seg)
+        (sweep_all g (segments (hi :: rest')));
+      link_correct g hi rest' hs gl' c' fp' (splice x o.sheap b hi)
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// Statement
 /// ---------------------------------------------------------------------------
 
@@ -1125,7 +1153,12 @@ val sweep_par_correct (bs: list nat) (g: heap)
   : Lemma (requires fused_pre g /\ valid_bounds g bs)
           (ensures sweep_par bs g == Defs.fused_sweep_coalesce g)
 
-let sweep_par_correct bs g = admit ()
+let sweep_par_correct bs g =
+  match bs with
+  | _ :: rest ->
+    link_start g rest;
+    link_correct g (U64.v zero_addr) rest
+      g (splice_all g (sweep_all g (segments bs))) no_run 0UL g
 
 /// ---------------------------------------------------------------------------
 /// Non-vacuity

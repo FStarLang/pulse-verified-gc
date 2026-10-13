@@ -1,7 +1,7 @@
 # Parallel sweep, Phase 1 (see docs/parallel-sweep-phase1.md).
 #
-# Kept out of the root build on purpose: GC.Spec.SweepPar's correctness
-# theorem is stated but closed with `admit` until it is proved.
+# Kept out of the root build: this is Phase 1 work, verified and tested
+# here on its own.
 #
 #   make verify     Verify the parallel-sweep spec modules
 #   make test       Extract to OCaml and compare sweep_par with the sequential pass

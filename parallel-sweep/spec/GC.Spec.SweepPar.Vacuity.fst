@@ -110,3 +110,11 @@ let two_lemmas (g: heap) : unit =
     assert (valid_bounds g [z; b; heap_size]);
     sweep_par_two b g
   end
+
+/// The induction, from its starting state on [zero_addr; heap_size].
+let general_lemmas (g: heap) : unit =
+  let z = U64.v zero_addr in
+  whole_heap_bounds_valid g;
+  link_start g [heap_size];
+  link_correct g z [heap_size] g (splice_all g (sweep_all g (segments [z; heap_size])))
+    no_run 0UL g
