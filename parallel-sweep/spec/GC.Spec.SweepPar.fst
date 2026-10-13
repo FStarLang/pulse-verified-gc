@@ -51,6 +51,8 @@ module SC = GC.Spec.Coalesce
 module CC = GC.Spec.Coalesce.Correct
 module Ind = GC.Spec.SweepCoalesce.Induction
 module HeapGraph = GC.Spec.HeapGraph
+module SCH = GC.Spec.SweepCoalesce.Helpers
+module FA = GC.Spec.SweepCoalesce.FlushAgree
 
 /// ---------------------------------------------------------------------------
 /// Boundaries
@@ -790,6 +792,321 @@ let segment_correct (g h: heap) (c0: run) (p0: U64.t) (lo: hp_addr) (hi: nat)
     U64.v_inj (mk_hp_addr (U64.v lo)) lo;
     assert (seg_rest g (U64.v lo) hi == seg_objects g lo hi);
     lead_phase g h c0 p0 lo hi (U64.v lo) no_run
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Proof, part 5: splicing
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let splice_index (base src: heap) (lo: nat) (hi: nat{lo <= hi /\ hi <= heap_size})
+    (i: nat{i < heap_size})
+  : Lemma (Seq.index (splice base src lo hi) i ==
+           (if lo <= i && i < hi then Seq.index src i else Seq.index base i))
+  = ()
+#pop-options
+
+/// A word of a splice comes from `src` inside [lo, hi) and from `base`
+/// outside (both ends are word-aligned, so no word straddles them).
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+let splice_read (base src: heap) (lo: nat) (hi: nat{lo <= hi /\ hi <= heap_size}) (p: hp_addr)
+  : Lemma (requires lo % 8 == 0 /\ hi % 8 == 0)
+          (ensures read_word (splice base src lo hi) p ==
+                   (if lo <= U64.v p && U64.v p < hi then read_word src p
+                    else read_word base p))
+  = let s = splice base src lo hi in
+    let a = U64.v p in
+    assert (a + 8 <= heap_size);
+    read_word_spec s p; read_word_spec src p; read_word_spec base p;
+    splice_index base src lo hi a;
+    splice_index base src lo hi (a + 1);
+    splice_index base src lo hi (a + 2);
+    splice_index base src lo hi (a + 3);
+    splice_index base src lo hi (a + 4);
+    splice_index base src lo hi (a + 5);
+    splice_index base src lo hi (a + 6);
+    splice_index base src lo hi (a + 7)
+#pop-options
+
+/// Segments from `b` on leave the words below `b` alone.
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+let rec splice_all_below (g x: heap) (b: nat) (rest: list nat) (p: hp_addr)
+  : Lemma (requires b % 8 == 0 /\ b < heap_size /\ bounds_from g b rest /\ U64.v p < b)
+          (ensures read_word (splice_all x (sweep_all g (segments (b :: rest)))) p ==
+                   read_word x p)
+          (decreases rest)
+  = match rest with
+    | hi :: rest' ->
+      let o = sweep_segment g (U64.uint_to_t b) hi in
+      let x' = splice x o.sheap b hi in
+      if Cons? rest' then splice_all_below g x' hi rest' p;
+      splice_read x o.sheap b hi p
+#pop-options
+
+/// Splicing segment [b, hi), then the segments from `hi`.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let splice_seg (g x: heap) (b hi: nat) (rest: list nat) (p: hp_addr)
+  : Lemma (requires b % 8 == 0 /\ b < hi /\ hi <= heap_size /\ hi % 8 == 0 /\
+                    (hi < heap_size ==> bounds_from g hi rest) /\
+                    (hi == heap_size ==> rest == []))
+          (ensures (let o = sweep_segment g (U64.uint_to_t b) hi in
+                    let x' = splice x o.sheap b hi in
+                    (U64.v p < hi ==>
+                       read_word (splice_all x' (sweep_all g (segments (hi :: rest)))) p ==
+                       read_word x' p) /\
+                    (b <= U64.v p /\ U64.v p < hi ==> read_word x' p == read_word o.sheap p) /\
+                    (U64.v p < b ==> read_word x' p == read_word x p)))
+  = let o = sweep_segment g (U64.uint_to_t b) hi in
+    let x' = splice x o.sheap b hi in
+    splice_read x o.sheap b hi p;
+    if U64.v p < hi && hi < heap_size then splice_all_below g x' hi rest p
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Proof, part 6: one merge-and-link step
+/// ---------------------------------------------------------------------------
+
+/// What `link_all` does at one segment.
+let link_one (gl: heap) (c: run) (fp: U64.t) (o: seg_out) : heap & run & U64.t =
+  if o.all_free then (gl, join c o.lead, fp)
+  else
+    let run = join c o.lead in
+    let (g1, fp1) = flush_blue_x gl run.fb run.rw fp in
+    match o.first_link with
+    | None -> (g1, o.trail, fp1)
+    | Some a -> (patch_link g1 a fp1, o.trail, o.local_head)
+
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+let link_all_cons (gl: heap) (c: run) (fp: U64.t) (s: seg) (rs: list seg)
+  : Lemma (link_all gl c fp (s :: rs) ==
+           (let (g', c', fp') = link_one gl c fp s.out in link_all g' c' fp' rs))
+  = ()
+#pop-options
+
+/// `sweep_all` and `splice_all`, unfolded at one valid segment.
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
+let sweep_all_cons (g x: heap) (b hi: nat) (rest: list nat)
+  : Lemma (requires b < hi /\ hi <= heap_size /\ b % 8 == 0)
+          (ensures (let o = sweep_segment g (U64.uint_to_t b) hi in
+                    sweep_all g (segments (b :: hi :: rest)) ==
+                      ({ lo = b; hi = hi; out = o } <: seg) :: sweep_all g (segments (hi :: rest)) /\
+                    splice_all x (sweep_all g (segments (b :: hi :: rest))) ==
+                      splice_all (splice x o.sheap b hi) (sweep_all g (segments (hi :: rest)))))
+  = ()
+#pop-options
+
+/// The patch writes exactly the block's link word.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let patch_read (g: heap) (a: U64.t) (v: U64.t) (p: hp_addr)
+  : Lemma (requires U64.v a >= U64.v mword /\ U64.v a % 8 == 0 /\
+                    U64.v a + U64.v mword <= heap_size)
+          (ensures read_word (patch_link g a v) p ==
+                   (if U64.v p = U64.v a then v else read_word g p))
+  = let ah : hp_addr = a in
+    hd_address_spec (a <: obj_addr);
+    let fa = U64.add (hd_address (a <: obj_addr)) (U64.mul mword 1UL) in
+    U64.v_inj fa ah;
+    if U64.v p = U64.v a then read_write_same g ah v
+    else read_write_different g ah p v
+#pop-options
+
+/// The walk from boundary `b` on.
+let objs_from (g: heap) (b: nat) : GTot (seq obj_addr) =
+  if b < heap_size && b % 8 = 0 then objects (mk_hp_addr b) g else Seq.empty
+
+/// At boundary `b`: the sequential heap `h` is still the input from `b` up;
+/// the link heap `gl` equals `h` below `b` and the spliced segments from `b`
+/// up; the carried run ends at `b`.
+let link_inv (g: heap) (b: nat) (rest: list nat) (h gl: heap) (c: run) (x: heap) : prop =
+  b % 8 == 0 /\ b <= heap_size /\
+  (b < heap_size ==>
+     CC.walk_visits g zero_addr (mk_hp_addr b) /\ bounds_from g b rest /\ run_geom c b) /\
+  (b == heap_size ==> rest == []) /\
+  (forall (p: hp_addr). U64.v p >= b ==> read_word h p == read_word g p) /\
+  (forall (p: hp_addr). U64.v p < b ==> read_word gl p == read_word h p) /\
+  (forall (p: hp_addr). U64.v p >= b ==>
+     read_word gl p == read_word (splice_all x (sweep_all g (segments (b :: rest)))) p)
+
+/// The boundaries after `b`, unfolded once.
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+let bounds_next (g: heap) (b hi: nat) (rest: list nat)
+  : Lemma (requires bounds_from g b (hi :: rest))
+          (ensures b < hi /\ hi <= heap_size /\ hi % 8 == 0 /\
+                   (hi == heap_size <==> rest == []) /\
+                   (hi < heap_size ==>
+                      CC.walk_visits g zero_addr (mk_hp_addr hi) /\ bounds_from g hi rest))
+  = match rest with
+    | [] -> ()
+    | _ :: _ -> ()
+#pop-options
+
+/// The step's walk facts: the sequential walk from `b` is the segment, then
+/// the walk from `hi`; the segment's walk lands on `hi`.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let walk_step (g: heap) (b hi: nat) (rest: list nat)
+  : Lemma (requires b % 8 == 0 /\ b < heap_size /\
+                    CC.walk_visits g zero_addr (mk_hp_addr b) /\ bounds_from g b (hi :: rest))
+          (ensures reach g b hi /\
+                   objs_from g b == Seq.append (seg_objects g (mk_hp_addr b) hi) (objs_from g hi))
+  = bounds_next g b hi rest;
+    let lo = mk_hp_addr b in
+    if hi < heap_size then begin
+      let hh = mk_hp_addr hi in
+      CC.walk_visits_prefix g lo hh;
+      objects_seg_split g lo hh
+    end else begin
+      objects_seg_last g lo;
+      Seq.append_empty_r (seg_objects g lo hi)
+    end
+#pop-options
+
+/// An all-free segment: nothing written, the carried run grows.
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
+let link_step_free (g: heap) (b hi: nat) (rest: list nat) (h gl: heap) (c: run) (fp: U64.t) (x: heap)
+  : Lemma (requires link_inv g b (hi :: rest) h gl c x /\ b < heap_size /\
+                    b < hi /\ hi <= heap_size /\ hi % 8 == 0 /\
+                    (let lo = mk_hp_addr b in
+                     let o = sweep_segment g lo hi in
+                     let (hs, r, fs) = fsteps g h (seg_objects g lo hi) c fp in
+                     o.all_free == true /\ seg_post g h c fp lo hi o hs r fs))
+          (ensures (let lo = mk_hp_addr b in
+                    let o = sweep_segment g lo hi in
+                    let (hs, r, fs) = fsteps g h (seg_objects g lo hi) c fp in
+                    let (gl', c', fp') = link_one gl c fp o in
+                    c' == r /\ fp' == fs /\
+                    link_inv g hi rest hs gl' c' (splice x o.sheap b hi)))
+  = bounds_next g b hi rest;
+    sweep_all_cons g x b hi rest;
+    let lo = mk_hp_addr b in
+    let o = sweep_segment g lo hi in
+    let aux (p: hp_addr)
+      : Lemma ((U64.v p < hi ==> read_word gl p == read_word h p) /\
+               (U64.v p >= hi ==>
+                  read_word gl p ==
+                  read_word (splice_all (splice x o.sheap b hi)
+                               (sweep_all g (segments (hi :: rest)))) p))
+      = splice_seg g x b hi rest p in
+    FStar.Classical.forall_intro aux
+#pop-options
+
+/// A segment with a survivor: flush the edge run once, patch the segment's
+/// first linked block to the head after that flush.
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 1"
+let link_step_used (g: heap) (b hi: nat) (rest: list nat) (h gl: heap) (c: run) (fp: U64.t) (x: heap)
+  : Lemma (requires link_inv g b (hi :: rest) h gl c x /\ b < heap_size /\
+                    b < hi /\ hi <= heap_size /\ hi % 8 == 0 /\
+                    (let lo = mk_hp_addr b in
+                     let o = sweep_segment g lo hi in
+                     let (hs, r, fs) = fsteps g h (seg_objects g lo hi) c fp in
+                     o.all_free == false /\ seg_post g h c fp lo hi o hs r fs))
+          (ensures (let lo = mk_hp_addr b in
+                    let o = sweep_segment g lo hi in
+                    let (hs, r, fs) = fsteps g h (seg_objects g lo hi) c fp in
+                    let (gl', c', fp') = link_one gl c fp o in
+                    c' == r /\ fp' == fs /\
+                    link_inv g hi rest hs gl' c' (splice x o.sheap b hi)))
+  = bounds_next g b hi rest;
+    sweep_all_cons g x b hi rest;
+    let lo = mk_hp_addr b in
+    let o = sweep_segment g lo hi in
+    let hs = Mktuple3?._1 (fsteps g h (seg_objects g lo hi) c fp) in
+    let e = b + o.lead.rw * 8 in
+    let run = join c o.lead in
+    let hf = SC.flush_blue h run.fb run.rw fp in
+    let gf = SC.flush_blue gl run.fb run.rw fp in
+    SCH.flush_blue_snd_heap_independent gl h run.fb run.rw fp;
+    let gl' = Mktuple3?._1 (link_one gl c fp o) in
+    let at (p: hp_addr)
+      : Lemma ((U64.v p < hi ==> read_word gl' p == read_word hs p) /\
+               (U64.v p >= hi ==>
+                  read_word gl' p ==
+                  read_word (splice_all (splice x o.sheap b hi)
+                               (sweep_all g (segments (hi :: rest)))) p))
+      = splice_seg g x b hi rest p;
+        (match o.first_link with
+         | Some a -> patch_read (fst gf) a (snd gf) p
+         | None -> ());
+        if U64.v p < e then flush_agree_at gl h run e fp fp p
+        else flush_outside gl run e fp p in
+    FStar.Classical.forall_intro at
+#pop-options
+
+/// One step: from boundary `b` to the next boundary `hi`.
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+let link_step (g: heap) (b hi: nat) (rest: list nat) (h gl: heap) (c: run) (fp: U64.t) (x: heap)
+  : Lemma (requires link_inv g b (hi :: rest) h gl c x /\ b < heap_size)
+          (ensures (let lo = mk_hp_addr b in
+                    let o = sweep_segment g lo hi in
+                    let (hs, r, fs) = fsteps g h (seg_objects g lo hi) c fp in
+                    let (gl', c', fp') = link_one gl c fp o in
+                    b < hi /\ hi <= heap_size /\
+                    sweep_all g (segments (b :: hi :: rest)) ==
+                      ({ lo = b; hi = hi; out = o } <: seg) :: sweep_all g (segments (hi :: rest)) /\
+                    c' == r /\ fp' == fs /\
+                    link_inv g hi rest hs gl' c' (splice x o.sheap b hi) /\
+                    Defs.fused_aux g h (objs_from g b) c.fb c.rw fp ==
+                      Defs.fused_aux g hs (objs_from g hi) r.fb r.rw fs))
+  = bounds_next g b hi rest;
+    sweep_all_cons g x b hi rest;
+    walk_step g b hi rest;
+    let lo = mk_hp_addr b in
+    fused_aux_append g h (seg_objects g lo hi) (objs_from g hi) c fp;
+    segment_correct g h c fp lo hi;
+    let o = sweep_segment g lo hi in
+    if o.all_free then link_step_free g b hi rest h gl c fp x
+    else link_step_used g b hi rest h gl c fp x
+#pop-options
+
+/// The end of the heap: both sides flush the carried run on equal heaps.
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+let link_base (g: heap) (h gl: heap) (c: run) (fp: U64.t) (x: heap)
+  : Lemma (requires link_inv g heap_size [] h gl c x)
+          (ensures link_all gl c fp (sweep_all g (segments [heap_size])) ==
+                   Defs.fused_aux g h (objs_from g heap_size) c.fb c.rw fp)
+  = FA.heaps_word_agree_implies_equal gl h
+#pop-options
+
+/// The start: boundary `zero_addr`, both heaps the input.
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+let link_start (g: heap) (rest: list nat)
+  : Lemma (requires valid_bounds g (U64.v zero_addr :: rest))
+          (ensures link_inv g (U64.v zero_addr) rest g
+                     (splice_all g (sweep_all g (segments (U64.v zero_addr :: rest)))) no_run g /\
+                   objs_from g (U64.v zero_addr) == objects zero_addr g)
+  = U64.v_inj (mk_hp_addr (U64.v zero_addr)) zero_addr;
+    FStar.Classical.forall_intro
+      (FStar.Classical.move_requires (splice_all_below g g (U64.v zero_addr) rest))
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Proof, part 7: two segments
+/// ---------------------------------------------------------------------------
+
+/// The sequential pass over two adjacent segments [zero_addr, b) and
+/// [b, heap_size) equals the two segment results, with the run that crosses
+/// `b` (the first segment's trailing run joined with the second's leading
+/// run) flushed once.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let sweep_par_two (b: nat) (g: heap)
+  : Lemma (requires valid_bounds g [U64.v zero_addr; b; heap_size])
+          (ensures sweep_par [U64.v zero_addr; b; heap_size] g == Defs.fused_sweep_coalesce g)
+  = let z = U64.v zero_addr in
+    let rs = sweep_all g (segments [z; b; heap_size]) in
+    let gl0 = splice_all g rs in
+    link_start g [b; heap_size];
+    link_step g z b [heap_size] g gl0 no_run 0UL g;
+    let o1 = sweep_segment g (mk_hp_addr z) b in
+    let (h1, c1, f1) = fsteps g g (seg_objects g (mk_hp_addr z) b) no_run 0UL in
+    let (gl1, _, _) = link_one gl0 no_run 0UL o1 in
+    let x1 = splice g o1.sheap z b in
+    link_all_cons gl0 no_run 0UL (List.Tot.hd rs) (List.Tot.tl rs);
+    link_step g b heap_size [] h1 gl1 c1 f1 x1;
+    let o2 = sweep_segment g (mk_hp_addr b) heap_size in
+    let (h2, c2, f2) = fsteps g h1 (seg_objects g (mk_hp_addr b) heap_size) c1 f1 in
+    let (gl2, _, _) = link_one gl1 c1 f1 o2 in
+    let x2 = splice x1 o2.sheap b heap_size in
+    link_all_cons gl1 c1 f1 (List.Tot.hd (List.Tot.tl rs)) [];
+    link_base g h2 gl2 c2 f2 x2
 #pop-options
 
 /// ---------------------------------------------------------------------------

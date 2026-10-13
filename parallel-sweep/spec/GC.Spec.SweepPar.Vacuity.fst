@@ -22,6 +22,8 @@ open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Spec.SweepPar
+open GC.Spec.SweepPar.Exec
+module CC = GC.Spec.Coalesce.Correct
 
 /// A one-word run (a wosize-0 fragment) at the bottom of the heap, and a
 /// two-word one.
@@ -68,3 +70,43 @@ let segment_lemmas (g: heap) : unit =
   seen_phase g heap_size z g 0UL no_run z g g no_run 0UL 0UL None;
   lead_phase g g no_run 0UL zero_addr heap_size z no_run;
   segment_correct g g no_run 0UL zero_addr heap_size
+
+/// The splice and link lemmas, on the one-segment boundary list
+/// [zero_addr; heap_size], which every heap admits.
+let link_lemmas (g: heap) : unit =
+  let z = U64.v zero_addr in
+  whole_heap_bounds_valid g;
+  zero_addr_above_2048 ();
+  U64.v_inj (mk_hp_addr z) zero_addr;
+  splice_read g g 0 0 0UL;
+  splice_all_below g g z [heap_size] 0UL;
+  splice_seg g g z heap_size [] 0UL;
+  sweep_all_cons g g z heap_size [];
+  patch_read g 8UL 0UL 0UL;
+  bounds_next g z heap_size [];
+  walk_step g z heap_size [];
+  link_start g [heap_size];
+  let gl0 = splice_all g (sweep_all g (segments [z; heap_size])) in
+  link_step g z heap_size [] g gl0 no_run 0UL g;
+  link_base g g g no_run 0UL g;
+  (* link_step_free and link_step_used split link_step's two cases; each
+     is called here in its own case, with its precondition from
+     segment_correct. *)
+  let lo = mk_hp_addr z in
+  segment_correct g g no_run 0UL lo heap_size;
+  if (sweep_segment g lo heap_size).all_free
+  then link_step_free g z heap_size [] g gl0 no_run 0UL g
+  else link_step_used g z heap_size [] g gl0 no_run 0UL g
+
+/// Two segments: the boundary just after the first object, when it is
+/// inside the heap, is a walk position.
+let two_lemmas (g: heap) : unit =
+  let z = U64.v zero_addr in
+  let wz = getWosize (read_word g zero_addr) in
+  let b = z + (U64.v wz + 1) * 8 in
+  aligned_plus_mul8 z (U64.v wz + 1);
+  if b < heap_size then begin
+    assert (CC.walk_visits g zero_addr (mk_hp_addr b));
+    assert (valid_bounds g [z; b; heap_size]);
+    sweep_par_two b g
+  end
