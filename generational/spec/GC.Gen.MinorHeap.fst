@@ -1042,8 +1042,10 @@ private let minor_reset_tag_zero (ms: minor_state) (addr: U64.t)
       assert (U64.v h % 8 == 0);
       zeroed_minor_read_word h;
       assert (minor_read_word (Seq.create minor_heap_size 0uy) h == 0UL);
-      assert (minor_tag (minor_reset ms) addr == U64.v (U64.logand 0UL 0xFFUL));
-      assert_norm (U64.v (U64.logand 0UL 0xFFUL) == 0)
+      // `U64.v (U64.logand 0UL 0xFFUL)` is reduced to `0` before the query
+      // reaches SMT, so supply the bit-vector fact `logand 0 255 <= 0` directly.
+      FStar.UInt.logand_le #64 0 255;
+      assert (minor_tag (minor_reset ms) addr == 0)
     end
   end
 

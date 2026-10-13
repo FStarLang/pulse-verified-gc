@@ -158,6 +158,21 @@ let header_words_decode ()
   assert_norm (U64.v (U64.logand 0UL 0xFFUL) == 0)
 #pop-options
 
+/// A zero header word decodes to wosize 0 and tag 0.  `U64.v (U64.shift_right
+/// 0UL 10ul)` and `U64.v (U64.logand 0UL 0xFFUL)` are reduced to `0` before a
+/// query reaches SMT, so the last two conjuncts of `header_words_decode` carry
+/// no information there; this states the facts about a word known to be zero.
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let zero_word_decode (w: U64.t)
+  : Lemma (requires w == 0UL)
+          (ensures U64.v (U64.shift_right w 10ul) == 0 /\
+                   U64.v (U64.logand w 0xFFUL) == 0)
+  =
+  FStar.UInt.shift_right_value_lemma #64 0 10;
+  FStar.Math.Lemmas.small_div 0 (pow2 10);
+  FStar.UInt.logand_le #64 0 255
+#pop-options
+
 /// The header address of an address other than `a_minor` and `b_minor` holds a
 /// zero word, so such an address has wosize 0 and tag 0.
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
@@ -181,6 +196,7 @@ let nursery_other_addr_header_zero (addr: U64.t)
   nursery_word_zero hdr_addr;
   assert (spot_infix_nursery.data == nursery_data);
   assert (minor_read_word spot_infix_nursery.data hdr_addr == 0UL);
+  zero_word_decode (minor_read_word spot_infix_nursery.data hdr_addr);
   assert (minor_wosize spot_infix_nursery addr == U64.v (U64.shift_right 0UL 10ul));
   assert (minor_tag spot_infix_nursery addr == U64.v (U64.logand 0UL 0xFFUL))
 #pop-options

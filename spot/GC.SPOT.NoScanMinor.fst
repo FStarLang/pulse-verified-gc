@@ -223,6 +223,13 @@ let nursery_other_addr_wosize_zero (addr: U64.t)
   end else begin
     nursery_word_zero hdr_addr;
     assert (minor_read_word spot_ns_nursery.data hdr_addr == 0UL);
+    // `U64.v (U64.shift_right 0UL 10ul)` and `U64.v (U64.logand 0UL 0xFFUL)`
+    // are reduced to `0` before the query reaches SMT (so the corresponding
+    // conjuncts of `header_words_decode` no longer help); supply the
+    // arithmetic and bit-vector facts directly.
+    FStar.UInt.shift_right_value_lemma #64 0 10;
+    FStar.Math.Lemmas.small_div 0 (pow2 10);
+    FStar.UInt.logand_le #64 0 255;
     assert (minor_wosize spot_ns_nursery addr == U64.v (U64.shift_right 0UL 10ul));
     assert (minor_tag spot_ns_nursery addr == U64.v (U64.logand 0UL 0xFFUL))
   end

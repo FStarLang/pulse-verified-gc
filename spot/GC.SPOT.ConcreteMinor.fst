@@ -157,6 +157,21 @@ let spot_minor2_header_word_zero (hdr_addr: U64.t)
   minor_read_word_zero_heap hdr_addr;
   assert (minor_read_word spot_minor2.data hdr_addr == 0UL)
 
+/// A zero header word decodes to wosize 0 and tag 0.  This is stated about a
+/// word known to be zero rather than with `assert_norm` on `0UL`: F* reduces
+/// `U64.v (U64.shift_right 0UL 10ul)` and `U64.v (U64.logand 0UL 0xFFUL)` to
+/// `0` before a query reaches SMT, so such a fact carries no information there.
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let zero_word_decode (w: U64.t)
+  : Lemma (requires w == 0UL)
+          (ensures U64.v (U64.shift_right w 10ul) == 0 /\
+                   U64.v (U64.logand w 0xFFUL) == 0)
+  =
+  FStar.UInt.shift_right_value_lemma #64 0 10;
+  FStar.Math.Lemmas.small_div 0 (pow2 10);
+  FStar.UInt.logand_le #64 0 255
+#pop-options
+
 let spot_minor2_non_object_wosize_zero (addr: U64.t)
   : Lemma (requires U64.v addr >= 8 /\
                     U64.v addr < minor_heap_size /\
@@ -180,7 +195,7 @@ let spot_minor2_non_object_wosize_zero (addr: U64.t)
   assert (hdr_nat <> 0);
   spot_minor2_header_word_zero hdr_addr;
   assert (minor_read_word spot_minor2.data hdr_addr == 0UL);
-  assert_norm (U64.v (U64.shift_right 0UL 10ul) == 0)
+  zero_word_decode (minor_read_word spot_minor2.data hdr_addr)
 
 let spot_minor2_a_tag_zero ()
   : Lemma (ensures minor_tag spot_minor2 Layout.a_minor == 0)
@@ -243,7 +258,7 @@ let spot_minor2_tag_zero (addr: U64.t)
     assert (hdr_nat <> 0);
     spot_minor2_header_word_zero hdr_addr;
     assert (minor_read_word spot_minor2.data hdr_addr == 0UL);
-    assert_norm (U64.v (U64.logand 0UL 0xFFUL) == 0)
+    zero_word_decode (minor_read_word spot_minor2.data hdr_addr)
   end
 
 let spot_minor2_object_cases (obj: U64.t)
