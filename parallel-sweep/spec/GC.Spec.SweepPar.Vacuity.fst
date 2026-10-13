@@ -48,3 +48,23 @@ let walk_lemmas (g: heap) : unit =
   end;
   seg_empty_end g (U64.v zero_addr) (U64.v zero_addr);
   objects_seg_split g zero_addr zero_addr
+
+let run_lemmas (a b: run) (x: obj_addr) : unit =
+  join_geom no_run no_run 0 0;
+  join_geom r1 no_run 8 8;
+  join_no_run r1
+
+/// The segment lemmas, on the whole heap as one segment from `zero_addr`,
+/// with the input heap on both sides: every invariant holds there.
+let segment_lemmas (g: heap) : unit =
+  let z = U64.v zero_addr in
+  U64.v_inj (mk_hp_addr z) zero_addr;
+  objects_seg_last g zero_addr;
+  if Seq.length (objects zero_addr g) > 0 then begin
+    seen_free g heap_size z g 0UL z g g no_run 0UL 0UL None;
+    seen_black g heap_size z g 0UL z g g no_run 0UL 0UL None;
+    lead_black g g no_run 0UL zero_addr heap_size z no_run
+  end;
+  seen_phase g heap_size z g 0UL no_run z g g no_run 0UL 0UL None;
+  lead_phase g g no_run 0UL zero_addr heap_size z no_run;
+  segment_correct g g no_run 0UL zero_addr heap_size

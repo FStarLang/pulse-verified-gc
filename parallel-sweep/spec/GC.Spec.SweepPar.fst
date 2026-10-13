@@ -327,13 +327,13 @@ let flush_inside (h1 h2: heap) (r: run) (run_end: nat) (fp1 fp2: U64.t) (p: hp_a
 #pop-options
 
 /// Two flushes of the same run agree at `p` if the heaps agreed there or `p`
-/// is in the run, and the heads agree or `p` is not the link word.
+/// is in the run, and the heads agree or `p` is not a link word written.
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let flush_agree_at (h1 h2: heap) (r: run) (run_end: nat) (fp1 fp2: U64.t) (p: hp_addr)
   : Lemma (requires run_geom r run_end /\
                     (read_word h1 p == read_word h2 p \/
                      (r.rw > 0 /\ U64.v r.fb - U64.v mword <= U64.v p /\ U64.v p < run_end)) /\
-                    (fp1 == fp2 \/ p <> r.fb))
+                    (fp1 == fp2 \/ p <> r.fb \/ r.rw < 2))
           (ensures read_word (fst (SC.flush_blue h1 r.fb r.rw fp1)) p ==
                    read_word (fst (SC.flush_blue h2 r.fb r.rw fp2)) p)
   = if r.rw > 0 && U64.v r.fb - U64.v mword <= U64.v p && U64.v p < run_end
@@ -492,6 +492,304 @@ let rec objects_seg_last (g: heap) (s: hp_addr)
     aligned_plus_mul8 (U64.v s) (U64.v wz + 1);
     if U64.v s + 8 < heap_size && next_nat < heap_size then
       objects_seg_last g (mk_hp_addr next_nat)
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Proof, part 4: one segment against the sequential pass
+/// ---------------------------------------------------------------------------
+///
+/// The sequential pass enters a segment at its first boundary `lo` with a
+/// heap `h`, a pending run `c0` ending at `lo`, and a head `p0`.  The
+/// segment's own run starts from the input heap `g`, no run and head 0UL.
+///
+/// Lead phase (before the first survivor): neither side writes.  The
+/// sequential run is `join c0 lead`.
+///
+/// At the first survivor, whose header is at `e`, the sequential pass
+/// flushes `join c0 lead` with `p0`, giving (h1, f1).  The segment flushes
+/// nothing.  Both whiten the survivor.
+///
+/// Seen phase (after it): both run the same steps on the same objects.  Their
+/// heaps agree at and above `e`, except at the segment's first linked block
+/// `a`, whose link word holds f1 in the sequential heap and 0UL in the
+/// segment's.  Below `e` the sequential heap is h1 and the segment's is `g`.
+///
+/// Every write lands at or above `wlo`: the pending run's first word, or the
+/// cursor when there is no run.  So facts about words below `wlo` persist.
+
+/// Joining a run that ends where the next one starts.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+let join_geom (a b: run) (m n: nat)
+  : Lemma (requires run_geom a m /\ run_geom b n /\
+                    (b.rw > 0 ==> U64.v b.fb - U64.v mword == m) /\
+                    (b.rw = 0 ==> n == m))
+          (ensures run_geom (join a b) n)
+  = ()
+
+let join_extend (a b: run) (obj: obj_addr) (ws: nat)
+  : Lemma (extend (join a b) obj ws == join a (extend b obj ws))
+  = ()
+
+let join_no_run (a: run)
+  : Lemma (requires a.rw = 0 ==> a == no_run)
+          (ensures join a no_run == a)
+  = ()
+#pop-options
+
+/// The first word any later step can write.
+let wlo (cur: run) (c: nat) : int =
+  if cur.rw > 0 then U64.v cur.fb - U64.v mword else c
+
+let seen_inv (g: heap) (hi e: nat) (h1: heap) (f1: U64.t)
+    (c: nat) (hs gs: heap) (cur: run) (fs fl: U64.t) (first: option U64.t) : prop =
+  c % 8 == 0 /\ e <= c /\ c <= hi /\ hi <= heap_size /\ reach g c hi /\
+  run_geom cur c /\ e <= wlo cur c /\
+  (match first with
+   | None -> fs == f1 /\ fl == 0UL
+   | Some a -> fs == fl /\ e <= U64.v a /\ U64.v a >= U64.v mword /\ U64.v a % 8 == 0 /\
+              U64.v a + U64.v mword <= wlo cur c) /\
+  (forall (a: hp_addr). first == Some (a <: U64.t) ==> read_word hs a == f1) /\
+  (forall (p: hp_addr). U64.v p < e ==>
+     read_word hs p == read_word h1 p /\ read_word gs p == read_word g p) /\
+  (forall (p: hp_addr). U64.v p >= e /\ first <> Some (p <: U64.t) ==>
+     read_word hs p == read_word gs p) /\
+  (forall (p: hp_addr). U64.v p >= wlo cur c ==>
+     read_word hs p == read_word g p /\ read_word gs p == read_word g p)
+
+let seen_post (g: heap) (hi e: nat) (h1: heap) (f1: U64.t) (lead: run)
+    (o: seg_out) (hs: heap) (r: run) (fs: U64.t) : prop =
+  o.all_free == false /\ o.lead == lead /\ r == o.trail /\
+  (hi < heap_size ==> run_geom r hi) /\
+  (match o.first_link with
+   | None -> fs == f1
+   | Some a -> fs == o.local_head /\ e <= U64.v a /\ U64.v a >= U64.v mword /\
+              U64.v a % 8 == 0 /\ U64.v a + U64.v mword <= hi) /\
+  (forall (a: hp_addr). o.first_link == Some (a <: U64.t) ==> read_word hs a == f1) /\
+  (forall (p: hp_addr). U64.v p < e ==>
+     read_word hs p == read_word h1 p /\ read_word o.sheap p == read_word g p) /\
+  (forall (p: hp_addr). U64.v p >= e /\ o.first_link <> Some (p <: U64.t) ==>
+     read_word hs p == read_word o.sheap p) /\
+  (forall (p: hp_addr). U64.v p >= hi ==>
+     read_word hs p == read_word g p /\ read_word o.sheap p == read_word g p)
+
+/// Seen phase, a free object: the run grows, nothing is written.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
+let seen_free (g: heap) (hi e: nat) (h1: heap) (f1: U64.t)
+    (c: nat) (hs gs: heap) (cur: run) (fs fl: U64.t) (first: option U64.t)
+  : Lemma (requires seen_inv g hi e h1 f1 c hs gs cur fs fl first /\ c < hi /\
+                    Seq.length (seg_rest g c hi) > 0)
+          (ensures (let obj = Seq.head (seg_rest g c hi) in
+                    let ws = U64.v (wosize_of_object obj g) in
+                    seen_inv g hi e h1 f1 (c + (ws + 1) * 8) hs gs (extend cur obj ws) fs fl first))
+  = seg_step g c hi;
+    let obj = Seq.head (seg_rest g c hi) in
+    let ws = U64.v (wosize_of_object obj g) in
+    let next = c + (ws + 1) * 8 in
+    assert (wlo (extend cur obj ws) next == wlo cur c)
+#pop-options
+
+/// Seen phase, a survivor: flush the pending run on both sides (with the
+/// two heads), then whiten.  The first block linked becomes `a`.
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
+let seen_black (g: heap) (hi e: nat) (h1: heap) (f1: U64.t)
+    (c: nat) (hs gs: heap) (cur: run) (fs fl: U64.t) (first: option U64.t)
+  : Lemma (requires seen_inv g hi e h1 f1 c hs gs cur fs fl first /\ c < hi /\
+                    Seq.length (seg_rest g c hi) > 0)
+          (ensures (let obj = Seq.head (seg_rest g c hi) in
+                    let next = c + (U64.v (wosize_of_object obj g) + 1) * 8 in
+                    let hf = SC.flush_blue hs cur.fb cur.rw fs in
+                    let gf = SC.flush_blue gs cur.fb cur.rw fl in
+                    let first' = match first with
+                                 | Some _ -> first
+                                 | None -> if snd gf <> fl then Some (snd gf) else None in
+                    seen_inv g hi e h1 f1 next (makeWhite obj (fst hf)) (makeWhite obj (fst gf))
+                      no_run (snd hf) (snd gf) first'))
+  = seg_step g c hi;
+    let obj = Seq.head (seg_rest g c hi) in
+    let next = c + (U64.v (wosize_of_object obj g) + 1) * 8 in
+    let hf = SC.flush_blue hs cur.fb cur.rw fs in
+    let gf = SC.flush_blue gs cur.fb cur.rw fl in
+    let hs1 = fst hf in
+    let gs1 = fst gf in
+    flush_head hs cur c fs;
+    flush_head gs cur c fl;
+    let first' = match first with
+                 | Some _ -> first
+                 | None -> if snd gf <> fl then Some (snd gf) else None in
+    let hs2 = makeWhite obj hs1 in
+    let gs2 = makeWhite obj gs1 in
+    let cc : hp_addr = hd_address obj in
+    flush_outside hs cur c fs cc;
+    flush_outside gs cur c fl cc;
+    white_same hs1 gs1 obj;
+    if cur.rw >= 2 then begin
+      flush_link_word hs cur c fs;
+      white_other hs1 obj (cur.fb <: hp_addr)
+    end;
+    (match first with
+     | Some a -> flush_outside hs cur c fs (a <: hp_addr); white_other hs1 obj (a <: hp_addr)
+     | None -> ());
+    let below (p: hp_addr)
+      : Lemma (U64.v p < e ==>
+               read_word hs2 p == read_word h1 p /\ read_word gs2 p == read_word g p)
+      = if U64.v p < e then begin
+          flush_outside hs cur c fs p; flush_outside gs cur c fl p;
+          white_other hs1 obj p; white_other gs1 obj p
+        end in
+    let mid (p: hp_addr)
+      : Lemma (U64.v p >= e /\ first' <> Some (p <: U64.t) ==>
+               read_word hs2 p == read_word gs2 p)
+      = if U64.v p >= e && first' <> Some (p <: U64.t) && p <> cc then begin
+          white_other hs1 obj p; white_other gs1 obj p;
+          flush_agree_at hs gs cur c fs fl p
+        end in
+    let above (p: hp_addr)
+      : Lemma (U64.v p >= next ==>
+               read_word hs2 p == read_word g p /\ read_word gs2 p == read_word g p)
+      = if U64.v p >= next then begin
+          flush_outside hs cur c fs p; flush_outside gs cur c fl p;
+          white_other hs1 obj p; white_other gs1 obj p
+        end in
+    FStar.Classical.forall_intro below;
+    FStar.Classical.forall_intro mid;
+    FStar.Classical.forall_intro above
+#pop-options
+
+/// The seen phase, to the end of the segment.
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
+let rec seen_phase (g: heap) (hi e: nat) (h1: heap) (f1: U64.t) (lead: run)
+    (c: nat) (hs gs: heap) (cur: run) (fs fl: U64.t) (first: option U64.t)
+  : Lemma (requires seen_inv g hi e h1 f1 c hs gs cur fs fl first)
+          (ensures (let (hs', r', fs') = fsteps g hs (seg_rest g c hi) cur fs in
+                    seen_post g hi e h1 f1 lead
+                      (seg_aux g gs (seg_rest g c hi) true lead cur fl first) hs' r' fs'))
+          (decreases Seq.length (seg_rest g c hi))
+  = let objs = seg_rest g c hi in
+    if Seq.length objs = 0 then begin
+      if hi < heap_size then seg_empty_end g c hi
+    end else begin
+      seg_step g c hi;
+      let obj = Seq.head objs in
+      let ws = U64.v (wosize_of_object obj g) in
+      let next = c + (ws + 1) * 8 in
+      if is_black obj g then begin
+        seen_black g hi e h1 f1 c hs gs cur fs fl first;
+        let hf = SC.flush_blue hs cur.fb cur.rw fs in
+        let gf = SC.flush_blue gs cur.fb cur.rw fl in
+        let first' = match first with
+                     | Some _ -> first
+                     | None -> if snd gf <> fl then Some (snd gf) else None in
+        seen_phase g hi e h1 f1 lead next
+          (makeWhite obj (fst hf)) (makeWhite obj (fst gf)) no_run (snd hf) (snd gf) first'
+      end else begin
+        seen_free g hi e h1 f1 c hs gs cur fs fl first;
+        seen_phase g hi e h1 f1 lead next hs gs (extend cur obj ws) fs fl first
+      end
+    end
+#pop-options
+
+let lead_inv (g: heap) (lo: hp_addr) (hi: nat) (h: heap) (c0: run) (c: nat) (lead: run) : prop =
+  c % 8 == 0 /\ U64.v lo <= c /\ c <= hi /\ hi <= heap_size /\ reach g c hi /\
+  run_geom c0 (U64.v lo) /\ run_geom lead c /\
+  (lead.rw = 0 ==> c == U64.v lo) /\
+  (lead.rw > 0 ==> U64.v lead.fb == U64.v lo + U64.v mword) /\
+  (forall (p: hp_addr). U64.v p >= U64.v lo ==> read_word h p == read_word g p)
+
+/// What a segment's result says about the sequential pass over it.
+let seg_post (g h: heap) (c0: run) (p0: U64.t) (lo: hp_addr) (hi: nat)
+    (o: seg_out) (hs: heap) (r: run) (fs: U64.t) : prop =
+  (o.all_free == true ==>
+     hs == h /\ r == join c0 o.lead /\ fs == p0 /\ o.sheap == g /\
+     (hi < heap_size ==> run_geom r hi)) /\
+  (o.all_free == false ==>
+     (let e = U64.v lo + o.lead.rw * U64.v mword in
+      let run = join c0 o.lead in
+      let fl = SC.flush_blue h run.fb run.rw p0 in
+      run_geom run e /\ e <= hi /\
+      seen_post g hi e (fst fl) (snd fl) o.lead o hs r fs))
+
+/// The first survivor: the sequential pass flushes the edge run, the
+/// segment does not; both whiten.  The seen phase starts at `e = c`.
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
+let lead_black (g h: heap) (c0: run) (p0: U64.t) (lo: hp_addr) (hi: nat) (c: nat) (lead: run)
+  : Lemma (requires lead_inv g lo hi h c0 c lead /\ c < hi /\ Seq.length (seg_rest g c hi) > 0)
+          (ensures (let obj = Seq.head (seg_rest g c hi) in
+                    let next = c + (U64.v (wosize_of_object obj g) + 1) * 8 in
+                    let run = join c0 lead in
+                    let fl = SC.flush_blue h run.fb run.rw p0 in
+                    run_geom run c /\
+                    seen_inv g hi c (fst fl) (snd fl) next
+                      (makeWhite obj (fst fl)) (makeWhite obj g) no_run (snd fl) 0UL None))
+  = seg_step g c hi;
+    let obj = Seq.head (seg_rest g c hi) in
+    let next = c + (U64.v (wosize_of_object obj g) + 1) * 8 in
+    join_geom c0 lead (U64.v lo) c;
+    let run = join c0 lead in
+    let h1 = fst (SC.flush_blue h run.fb run.rw p0) in
+    let cc : hp_addr = hd_address obj in
+    flush_outside h run c p0 cc;
+    white_same h1 g obj;
+    let below (p: hp_addr)
+      : Lemma (U64.v p < c ==>
+               read_word (makeWhite obj h1) p == read_word h1 p /\
+               read_word (makeWhite obj g) p == read_word g p)
+      = if U64.v p < c then begin white_other h1 obj p; white_other g obj p end in
+    let at_or_above (p: hp_addr)
+      : Lemma (U64.v p >= c ==>
+               read_word (makeWhite obj h1) p == read_word (makeWhite obj g) p /\
+               (U64.v p >= next ==>
+                 read_word (makeWhite obj h1) p == read_word g p /\
+                 read_word (makeWhite obj g) p == read_word g p))
+      = if U64.v p >= c && p <> cc then begin
+          white_other h1 obj p; white_other g obj p;
+          flush_outside h run c p0 p
+        end in
+    FStar.Classical.forall_intro below;
+    FStar.Classical.forall_intro at_or_above
+#pop-options
+
+/// The lead phase, to the first survivor or the end of the segment.
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
+let rec lead_phase (g h: heap) (c0: run) (p0: U64.t) (lo: hp_addr) (hi: nat) (c: nat) (lead: run)
+  : Lemma (requires lead_inv g lo hi h c0 c lead)
+          (ensures (let (hs, r, fs) = fsteps g h (seg_rest g c hi) (join c0 lead) p0 in
+                    seg_post g h c0 p0 lo hi
+                      (seg_aux g g (seg_rest g c hi) false lead no_run 0UL None) hs r fs))
+          (decreases Seq.length (seg_rest g c hi))
+  = let objs = seg_rest g c hi in
+    if Seq.length objs = 0 then begin
+      if hi < heap_size then seg_empty_end g c hi;
+      join_geom c0 lead (U64.v lo) c
+    end else begin
+      seg_step g c hi;
+      let obj = Seq.head objs in
+      let ws = U64.v (wosize_of_object obj g) in
+      let next = c + (ws + 1) * 8 in
+      if is_black obj g then begin
+        lead_black g h c0 p0 lo hi c lead;
+        let run = join c0 lead in
+        let fl = SC.flush_blue h run.fb run.rw p0 in
+        seen_phase g hi c (fst fl) (snd fl) lead next
+          (makeWhite obj (fst fl)) (makeWhite obj g) no_run (snd fl) 0UL None
+      end else begin
+        join_extend c0 lead obj ws;
+        lead_phase g h c0 p0 lo hi next (extend lead obj ws)
+      end
+    end
+#pop-options
+
+/// One segment, from its first boundary.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
+let segment_correct (g h: heap) (c0: run) (p0: U64.t) (lo: hp_addr) (hi: nat)
+  : Lemma (requires U64.v lo < hi /\ hi <= heap_size /\ reach g (U64.v lo) hi /\
+                    run_geom c0 (U64.v lo) /\
+                    (forall (p: hp_addr). U64.v p >= U64.v lo ==> read_word h p == read_word g p))
+          (ensures (let (hs, r, fs) = fsteps g h (seg_objects g lo hi) c0 p0 in
+                    seg_post g h c0 p0 lo hi (sweep_segment g lo hi) hs r fs))
+  = join_no_run c0;
+    U64.v_inj (mk_hp_addr (U64.v lo)) lo;
+    assert (seg_rest g (U64.v lo) hi == seg_objects g lo hi);
+    lead_phase g h c0 p0 lo hi (U64.v lo) no_run
 #pop-options
 
 /// ---------------------------------------------------------------------------
