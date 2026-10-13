@@ -170,15 +170,25 @@ check-orphans:
 verify: check-orphans $(VERIFY_CHECKED)
 	@echo "=== GC.Gen.Impl root closure verified ==="
 
-# === Extraction (.krml → C) =================================================
+# === Extraction (Custard .krml → C) ==========================================
 #
 # Extracts generational impl + mark-and-sweep impl + common impl into a
 # single C file via KaRaMeL bundling.
+#
+# F*'s Custard backend (`--codegen KrmlC`) extracts everything reachable from
+# its entry points in one run, into a single file $(OUTPUT_DIR)/Custard.krml.
+# `--custard_split` keeps one KaRaMeL module per F* module, so the bundles
+# below still name F* modules.  The entry modules are the API modules of the
+# C bundle; Custard roots the values their interfaces declare.
 #
 # Prerequisites: M&S and common .checked files must already exist
 # (run `make -C ../mark-and-sweep verify` first if needed).
 
 # --- Modules to extract -----------------------------------------------------
+
+CUSTARD_ENTRY_MODS = \
+  GC.Gen.Impl GC.Gen.Impl.MinorHeap GC.Gen.Impl.Cheney GC.Gen.Impl.UpdatePtrs \
+  GC.Impl GC.Impl.Allocator GC.Impl.MarkBounded
 
 ALL_KRML_MODS = \
   GC.Gen.Impl GC.Gen.Impl.MinorHeap GC.Gen.Impl.Cheney \
@@ -191,49 +201,33 @@ ALL_KRML_MODS = \
   GC.Spec.ZeroAddr GC.Spec.Base GC.Spec.Heap GC.Spec.Object \
   GC.Lib.Header GC.Lib.Address
 
-ALL_KRML = $(foreach m,$(ALL_KRML_MODS),$(OUTPUT_DIR)/$(subst .,_,$(m)).krml) \
-           $(OUTPUT_DIR)/FStar_Pervasives_Native.krml
+CUSTARD_KRML = $(OUTPUT_DIR)/Custard.krml
 
-# --- .krml extraction rules -------------------------------------------------
-#
-# Pattern rule: _output/GC_Gen_Impl.krml from GC.Gen.Impl.fst
-# fstar.exe finds the source via --include paths; prerequisite is verify.
+# --- .krml extraction rule --------------------------------------------------
 
-$(OUTPUT_DIR)/%.krml: verify | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) --codegen krml \
-	  --extract_module $(subst _,.,$*) $(subst _,.,$*).fst
-
-# GC.Impl.ArrayWord — interface-only module (assumed vals, no .fst)
-$(OUTPUT_DIR)/GC_Impl_ArrayWord.krml: verify | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) --codegen krml \
-	  --extract_module GC.Impl.ArrayWord GC.Impl.ArrayWord.fsti
-
-# GC.Spec.ZeroAddr — interface-only module (extern zero_addr, no .fst)
-$(OUTPUT_DIR)/GC_Spec_ZeroAddr.krml: verify | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) --codegen krml \
-	  --extract_module GC.Spec.ZeroAddr GC.Spec.ZeroAddr.fsti
-
-# FStar.Pervasives.Native (tuple types used by allocate) — special case
-$(OUTPUT_DIR)/FStar_Pervasives_Native.krml: | $(OUTPUT_DIR)
-	$(FSTAR_EXE) --cache_checked_modules --warn_error -321 \
-	  --codegen krml --extract_module FStar.Pervasives.Native \
-	  --odir $(OUTPUT_DIR) $(FSTAR_LIB)/ulib/FStar.Pervasives.Native.fst
+$(CUSTARD_KRML): verify | $(OUTPUT_DIR)
+	$(FSTAR) --odir $(OUTPUT_DIR) --codegen KrmlC --custard_split \
+	  $(addprefix --custard_entry_module ,$(CUSTARD_ENTRY_MODS)) \
+	  GC.Gen.Impl.fst
 
 # --- KaRaMeL bundling (.krml → C) ------------------------------------------
 #
 # Bundle layout:
-#   GC_Gen_Impl.{c,h}  — all gen + M&S impl code (one translation unit)
+#   GC_Gen_Impl.{c,h}  — all gen + M&S impl code (one translation unit),
+#                        including the Pulse.Lib.Array functions it calls
 #   Spec/constants      — heap_size_u64, minor_heap_size_u64, color enum (internal)
 #
 # API (public in header): GC.Gen.Impl, GC.Gen.Impl.MinorHeap, GC.Impl, GC.Impl.Allocator
 # Internal (static):      Cheney, Promote, UpdatePtrs, Mark, Sweep, Fields, ...
 # Hidden (no C output):   Spec modules, Prims, FStar, Pulse
+#
+# Custard does not mark definitions missing from a module's interface as
+# private, so every function of an API module appears in GC_Gen_Impl.h.
 
 KRML_FLAGS = \
   -tmpdir $(EXTRACT_DIR) \
   -skip-compilation -skip-linking \
-  -bundle 'GC.Gen.Impl+GC.Gen.Impl.MinorHeap+GC.Gen.Impl.Cheney+GC.Gen.Impl.UpdatePtrs+GC.Impl+GC.Impl.Allocator+GC.Impl.MarkBounded=GC.Gen.Impl.*,GC.Impl.*[rename=GC_Gen_Impl]' \
-  -bundle 'FStar.Pervasives.Native' \
+  -bundle 'GC.Gen.Impl+GC.Gen.Impl.MinorHeap+GC.Gen.Impl.Cheney+GC.Gen.Impl.UpdatePtrs+GC.Impl+GC.Impl.Allocator+GC.Impl.MarkBounded=GC.Gen.Impl.*,GC.Impl.*,Pulse.Lib.Array[rename=GC_Gen_Impl]' \
   -bundle 'GC.Spec.ZeroAddr=GC.Spec.ZeroAddr' \
   -bundle 'GC.Gen.Base,GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
   $(foreach m,$(ALL_KRML_MODS),-no-prefix $(m)) \
@@ -242,8 +236,8 @@ KRML_FLAGS = \
 $(EXTRACT_DIR):
 	@mkdir -p $@
 
-$(EXTRACT_DIR)/GC_Gen_Impl.c: $(ALL_KRML) | $(EXTRACT_DIR)
-	$(KRML) $(KRML_FLAGS) $(ALL_KRML)
+$(EXTRACT_DIR)/GC_Gen_Impl.c: $(CUSTARD_KRML) | $(EXTRACT_DIR)
+	$(KRML) $(KRML_FLAGS) $(CUSTARD_KRML)
 
 extract: $(EXTRACT_DIR)/GC_Gen_Impl.c
 	@echo "=== Extraction complete: $(EXTRACT_DIR)/GC_Gen_Impl.{c,h} ==="

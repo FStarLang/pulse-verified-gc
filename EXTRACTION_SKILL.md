@@ -17,38 +17,32 @@ KaRaMeL (krml) translates a subset of F* (called Low*) and Pulse to C.
 The pipeline is:
 
 1. **F* verification** — `fstar.exe` checks `.fst`/`.fsti` files
-2. **F* extraction to .krml** — `fstar.exe --codegen krml --extract ModuleName`
+2. **F* extraction to .krml** — `fstar.exe --codegen KrmlC --custard_entry_module ModuleName`
 3. **KaRaMeL translation to C** — `krml` reads `.krml` files and produces `.c`/`.h`
 
 ## Two-Phase Extraction
 
 ### Phase 1: F* → .krml
 
-Each module is extracted individually:
+F* extracts through Custard, a whole-program backend (`--codegen krml`,
+`--extract` and `--extract_module` no longer exist).  One invocation extracts
+everything reachable from the entry points into a single `Custard.krml`:
 
 ```bash
-# Regular F* modules
-fstar.exe --codegen krml --extract 'MyModule' --odir _output MyModule.fst
-
-# #lang-pulse modules produce out.krml instead of ModuleName.krml
-fstar.exe --codegen krml --extract 'My.Pulse.Module' --odir _output pulse/My.Pulse.Module.fst
-# IMPORTANT: rename out.krml to expected name
-mv -f _output/out.krml _output/My_Pulse_Module.krml
+fstar.exe --codegen KrmlC --custard_split \
+  --custard_entry_module My.Api --custard_entry_module My.Other.Api \
+  --odir _output My.Api.fst
+# Produces: _output/Custard.krml
 ```
 
-**Multi-module quirk**: When `--extract 'M'` causes **multiple modules** to be
-extracted in a single invocation (e.g., `M` depends on `M.Sub`, so both are
-extracted), the output is named `out.krml` instead of `M.krml`. This is not
-Pulse-specific — it happens with plain F* modules too.
-
-**Best fix**: Use `--extract_module M` instead of `--extract 'M'`. This
-extracts exactly the named module and always produces `M.krml`:
-```bash
-fstar.exe --codegen krml --extract_module My.Module pulse/My.Module.fst
-# Produces: _output/My_Module.krml  (never out.krml)
-```
-Use one invocation per module. This also enables `make -j` parallelism
-via per-file make targets (see Build Integration below).
+- `--custard_entry_module M` (repeatable) makes the values of `M`'s public
+  surface (its interface, if it has one) roots of the extraction.  Everything
+  reachable from a root is extracted, including library code such as
+  `Pulse.Lib.Array.fill`.
+- `--custard_split` keeps the F* module names inside `Custard.krml`, so the
+  `-bundle` patterns of Phase 2 can still select F* modules.
+- Custard does not mark definitions missing from an interface as private;
+  control C visibility with bundles.
 
 ### Phase 2: .krml → C
 
@@ -59,8 +53,7 @@ krml \
   -warn-error -2-9-11-15-17 \
   -bundle '...' \
   -no-prefix ModuleName \
-  _output/*.krml \
-  $KRML_HOME/krmllib/.extract/*.krml
+  _output/Custard.krml
 ```
 
 Key flags:
@@ -70,8 +63,8 @@ Key flags:
 - `-no-prefix M` — strip module prefix from declarations in module M
 - `-minimal` — omit `#include "krmllib.h"` (but also omits `<stdint.h>` — usually not what you want)
 
-Always pass `$KRML_HOME/krmllib/.extract/*.krml` so KaRaMeL knows the
-signatures of standard library types (FStar.UInt64, etc.).
+`Custard.krml` is self-contained: the library code the program reaches is
+part of it.
 
 ## Bundle Syntax
 
@@ -138,8 +131,7 @@ krml \
   -bundle 'FStar.*,Pulse.*,PulseCore.*,Prims,Spec.Types,Spec.Logic' \
   -no-prefix Impl \
   -no-prefix Impl.Search \
-  _output/*.krml \
-  $KRML_HOME/krmllib/.extract/*.krml
+  _output/Custard.krml
 ```
 
 ## F*/Pulse Coding Patterns for Clean Extraction
@@ -167,7 +159,7 @@ KaRaMeL extracts the following F* types to C:
 | `FStar.Int64.t` (`I64.t`) | `int64_t` |
 | `FStar.SizeT.t` (`SZ.t`) | `size_t` |
 | `bool` | `bool` |
-| `a & b` (F* tuple) | C struct with `.fst`, `.snd` fields |
+| `a & b` (F* tuple) | C struct `FStar_Pervasives_Native_tuple2__a_b` with `._1`, `._2` fields |
 | `Pulse.Lib.Array.array t` | `t *` (C pointer) |
 | `noeq type` with named fields | C `typedef struct` |
 
