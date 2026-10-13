@@ -36,7 +36,7 @@ FSTAR_FLAGS = \
 
 FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 
-SPEC = spec/GC.Spec.SweepPar.Exec.fst spec/GC.Spec.SweepPar.fst spec/GC.Spec.SweepPar.Mutants.fst
+SPEC = spec/GC.Spec.SweepPar.Exec.fst spec/GC.Spec.SweepPar.fst spec/GC.Spec.SweepPar.Mutants.fst spec/GC.Spec.SweepPar.Vacuity.fst
 
 .PHONY: verify test clean
 verify:
