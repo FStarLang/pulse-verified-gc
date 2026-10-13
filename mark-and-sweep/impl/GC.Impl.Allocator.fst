@@ -45,8 +45,9 @@ let init_heap_normal_lemma (s: heap_state) (hdr: U64.t)
                            (wz: wosize{U64.v wz == SpecBase.heap_words - 1})
   : Lemma (requires SpecBase.heap_words >= 2 /\
                     hdr == makeHeader wz blue 0UL)
-          (ensures (SH.write_word (SH.write_word s zero_addr hdr)
-                                         (mword <: hp_addr) 0UL, mword)
+          (ensures ((SH.write_word (SH.write_word s zero_addr hdr)
+                                          (mword <: hp_addr) 0UL, mword)
+                    <: SpecBase.heap & U64.t)
                    == SA.init_heap_spec s)
   = ()
 
