@@ -1217,7 +1217,7 @@ fn darken_roots_bounded
             stack_capacity st == cap /\
             (s_i, st_i) ==
               darken_roots_bounded_prefix_spec 's 'st 'rs (SZ.v iv) cap)
-    decreases (Prims.op_Subtraction (SZ.v nroots) (SZ.v !i))
+    decreases (SZ.v nroots - SZ.v !i)
   {
     let iv = !i;
     let r = roots.(iv);
@@ -1318,7 +1318,7 @@ fn push_children_bounded_impl (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
             U64.v (wosize_of_object obj s) < pow2 54 /\
             SpecMarkBounded.push_children_bounded s st_cur obj vi wz cap ==
             SpecMarkBounded.push_children_bounded 's 'st obj 1UL wz cap)
-    decreases (Prims.op_Subtraction (U64.v wz + 1) (U64.v !i))
+    decreases (U64.v wz + 1 - U64.v !i)
   {
     let curr_i = !i;
     push_step_body_bounded heap st h_addr obj curr_i wz cap;
@@ -1521,7 +1521,7 @@ fn mark_inner_loop_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
             SpecMarkBoundedCorr.stack_elems_reachable g_init st_cur roots /\
             m == SpecMarkBounded.count_non_black s /\
             (m < SpecMarkBounded.count_non_black 's \/ (st_cur == 'st /\ s == 's)))
-    decreases (Prims.op_Addition (GR.op_Bang gm) (if !go then 1 else 0))
+    decreases (GR.op_Bang gm + (if !go then 1 else 0))
   {
     let empty = is_empty st;
     if empty {
@@ -2017,7 +2017,7 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
             (Seq.length st_cur == 0 ==> no_gray_visited_at (U64.v vc) 's) /\
             // Boundary: when past heap_size and stack empty, no_gray_objects holds
             (Seq.length st_cur == 0 /\ U64.v vc >= heap_size ==> SweepInv.no_gray_objects 's))
-    decreases (Prims.op_Subtraction heap_size (U64.v !current))
+    decreases (heap_size - U64.v !current)
   {
     let v = !current;
     hp_addr_plus_8 v;
@@ -2160,7 +2160,7 @@ fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
             SpecMarkBoundedCorr.mark_color_inv 's s /\
             SpecMarkBoundedCorr.gray_black_reachable 's s roots /\
             SpecMarkBoundedCorr.gray_stays 's s)
-    decreases (Prims.op_Addition (GR.op_Bang gm) (if !go then 1 else 0))
+    decreases (GR.op_Bang gm + (if !go then 1 else 0))
   {
     with _vg s_cur st_cur. assert (
       R.pts_to go _vg **

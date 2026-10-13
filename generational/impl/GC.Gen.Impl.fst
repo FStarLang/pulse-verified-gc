@@ -266,7 +266,7 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
             AllocLemmas.fl_valid ms_i fp_i heap_words /\
             AllocLemmas.fl_chain_terminates ms_i fp_i heap_words /\
             Seq.length farr_i == Seq.length 'farr)
-    decreases (Prims.op_Subtraction (U64.v bump) (U64.v !pos))
+    decreases (U64.v bump - U64.v !pos)
   {
     let p = !pos;
     if U64.gte (U64.add p 8UL) bump {

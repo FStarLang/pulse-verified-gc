@@ -198,7 +198,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
            vhead == sr.fp_out /\
            vresult == sr.obj_out))
       )
-    decreases (Prims.op_Addition (U64.v !fuel_ref) (if !go then 1 else 0))
+    decreases (U64.v !fuel_ref + (if !go then 1 else 0))
   {
     let vfuel = !fuel_ref;
     if U64.eq vfuel 0UL {
@@ -427,7 +427,7 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
            vhead == sr.fp_out /\
            vresult == sr.obj_out))
       )
-    decreases (Prims.op_Addition (U64.v !fuel_ref) (if !go then 1 else 0))
+    decreases (U64.v !fuel_ref + (if !go then 1 else 0))
   {
     let vfuel = !fuel_ref;
     if U64.eq vfuel 0UL {

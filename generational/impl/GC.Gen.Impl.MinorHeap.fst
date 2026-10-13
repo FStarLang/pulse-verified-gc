@@ -272,7 +272,7 @@ fn translate_object_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
             U64.v obj_addr + U64.v wosize * 8 <= minor_heap_size /\
             U64.v bump <= minor_heap_size /\
             U64.v minor_base_addr > 0)
-  decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !j))
+  decreases (U64.v wosize - U64.v !j)
   {
     let jv = !j;
     minor_field_in_bounds (U64.v obj_addr) (U64.v wosize) (U64.v jv);
@@ -334,7 +334,7 @@ fn translate_minor_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
               U64.v bump >= 8 /\
               U64.v minor_base_addr > 0 /\
               (not dn ==> U64.v pv + 8 <= U64.v bump))
-    decreases (Prims.op_Addition (Prims.op_Subtraction minor_heap_size (U64.v !pos)) (if !done_ then 0 else 1))
+    decreases (minor_heap_size - U64.v !pos + (if !done_ then 0 else 1))
   {
     let pv = !pos;
     let hdr = minor_read mh pv;
@@ -497,7 +497,7 @@ fn synthesize_one_closure_infix
             Seq.length farr_i == fwd_arr_size /\
             U64.v parent_fwd > 0 /\
             U64.v parent_fwd < pow2 63)
-  decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !j))
+  decreases (U64.v wosize - U64.v !j)
   {
     let jv = !j;
     minor_field_in_bounds (U64.v obj_addr) (U64.v wosize) (U64.v jv);
@@ -576,7 +576,7 @@ fn synthesize_infix_forwarding (mh: minor_heap_t) (fwd_arr: array U64.t)
               U64.v bump >= 8 /\
               Seq.length farr_i == fwd_arr_size /\
               (not dn ==> U64.v pv + 8 <= U64.v bump))
-      decreases (Prims.op_Addition (Prims.op_Subtraction minor_heap_size (U64.v !pos)) (if !done_ then 0 else 1))
+      decreases (minor_heap_size - U64.v !pos + (if !done_ then 0 else 1))
     {
       let pv = !pos;
       let hdr = minor_read mh pv;
@@ -706,7 +706,7 @@ fn find_infix_in_one_closure
             Seq.length rs_i == SZ.v cap /\
             SZ.v cnt_i <= SZ.v cap /\
             SZ.v cnt_i >= SZ.v 'cnt)
-  decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !j))
+  decreases (U64.v wosize - U64.v !j)
   {
     let jv = !j;
     minor_field_in_bounds (U64.v obj_addr) (U64.v wosize) (U64.v jv);
@@ -795,7 +795,7 @@ fn find_infix_parents (mh: minor_heap_t)
               SZ.v cnt <= SZ.v cap /\
               SZ.v cnt >= SZ.v nroots /\
               (not dn ==> U64.v pv + 8 <= U64.v bump))
-      decreases (Prims.op_Addition (Prims.op_Subtraction minor_heap_size (U64.v !pos)) (if !done_ then 0 else 1))
+      decreases (minor_heap_size - U64.v !pos + (if !done_ then 0 else 1))
     {
       let pv = !pos;
       let hdr = minor_read mh pv;

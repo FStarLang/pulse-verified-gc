@@ -308,7 +308,7 @@ fn do_lookup
     pure (action_corresponds result (spec_lookup (table_of s) index (I64.v quantum)))
 {
   // Read from array — generates C array access
-  let node = A.op_Array_Access table (SZ.uint32_to_sizet index);
+  let node = A.op_Dot_Lparen_Rparen table (SZ.uint32_to_sizet index);
   let chamber = fst node;
   let route = snd node;
 
@@ -332,11 +332,14 @@ Pulse uses `Pulse.Lib.Array` for heap-allocated arrays:
 
 ```fstar
 // Read: requires pts_to permission
-let elem = A.op_Array_Access arr (SZ.uint32_to_sizet idx);
+let elem = A.op_Dot_Lparen_Rparen arr (SZ.uint32_to_sizet idx);
 
 // Write: requires pts_to permission (full)
-A.op_Array_Assignment arr (SZ.uint32_to_sizet idx) new_val;
+A.op_Dot_Lparen_Rparen_Less_Minus arr (SZ.uint32_to_sizet idx) new_val;
 ```
+
+These are the operators behind the `arr.(i)` / `arr.(i) <- v` sugar (named
+`op_Array_Access` / `op_Array_Assignment` before F* renamed them); prefer the sugar.
 
 Array indices must be `FStar.SizeT.t`. Convert with:
 ```fstar
@@ -359,7 +362,7 @@ while (let d = !done; not d)
       pure (b == not d /\ loop_invariant i d ...)
 {
   let i = !idx;
-  let node = A.op_Array_Access table (SZ.uint64_to_sizet i);
+  let node = A.op_Dot_Lparen_Rparen table (SZ.uint64_to_sizet i);
   // ... loop body ...
   done := true;  // or update idx
 }
