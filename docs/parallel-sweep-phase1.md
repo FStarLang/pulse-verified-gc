@@ -39,7 +39,7 @@ valid_bounds g bs =
     the last element is exactly heap_size
 ```
 
-`walk_visits` is copied verbatim from `GC.Spec.Coalesce` on `sheera/coalesce-exact`, because it is **not on main**. The only change is that `GTot` became `Tot`, since its body uses only `Tot` operations.
+`walk_visits` is `GC.Spec.Coalesce.Correct.walk_visits` (merged from `sheera/coalesce-exact`). That one is `GTot`, so `valid_bounds` calls its executable twin `walk_visits_x`, whose type states it equals the original (see §3).
 
 **Stage 1: segments, in parallel (`sweep_segment`, `seg_aux`).**
 
@@ -233,12 +233,12 @@ Each job's log is in `parallel-sweep/_build/logs/`. Every log must end with an `
 
 - **Equality by twins.** `sweep_par` is built from the `_x` twins, whose types already state equality with the ghost functions. So the proof can work on the ghost side throughout.
 - **Lemmas the proof will need:**
-  - `seg_objects g b_i b_{i+1}` is the slice of `objects zero_addr g` between consecutive boundaries. `walk_visits_prefix` and `objects_split_from` on `sheera/coalesce-exact` look like the tools for this.
+  - `seg_objects g b_i b_{i+1}` is the slice of `objects zero_addr g` between consecutive boundaries. `objects_split_from` in `GC.Spec.Coalesce.Correct` looks like the tool for this.
   - `fused_aux` over a concatenation of object lists factors through the carried `(fb, rw, fp)`.
   - Flushes and whitening stay inside their segment's range, so `splice_all` keeps every write.
   - Patching the link word commutes with the later flushes. They touch disjoint words.
   - The three guards in §1 are dead under `valid_bounds`.
-- **`walk_visits` and its lemmas live on `sheera/coalesce-exact`.** Merging that branch first would avoid proving them twice.
+- **`walk_visits` and its lemmas** come from `GC.Spec.Coalesce.Correct`, merged in from `sheera/coalesce-exact`.
 - **Toolchain notes from this session:**
   - The root `Makefile` needs GNU make 4 (`gmake`); macOS `make` 3.81 stops with "multiple target patterns".
   - The shared `_cache` held a `GC.Spec.Coalesce` checked file from another branch. `gmake _cache/GC.Spec.SweepCoalesce.Defs.fst.checked` rebuilt it for `fork/main`.

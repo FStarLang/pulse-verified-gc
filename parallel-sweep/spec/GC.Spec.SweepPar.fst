@@ -61,7 +61,7 @@ let rec bounds_from (g: heap) (prev: nat) (bs: list nat)
   | [b] -> prev < b && b = heap_size
   | b :: rest ->
     prev < b && b < heap_size && b % 8 = 0 &&
-    walk_visits g zero_addr (U64.uint_to_t b) &&
+    walk_visits_x g zero_addr (U64.uint_to_t b) &&
     bounds_from g b rest
 
 let valid_bounds (g: heap) (bs: list nat) : bool =

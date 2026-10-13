@@ -10,9 +10,6 @@
 /// spec's value; nothing here is a re-implementation that tests could
 /// disagree with silently.
 ///
-/// `walk_visits` is copied verbatim from `GC.Spec.Coalesce` on
-/// `sheera/coalesce-exact` (not yet on main), with `GTot` relaxed to `Tot`:
-/// its body only uses `Tot` operations.
 /// ---------------------------------------------------------------------------
 module GC.Spec.SweepPar.Exec
 
@@ -29,6 +26,7 @@ open GC.Lib.Header
 module HeapGraph = GC.Spec.HeapGraph
 module Alloc = GC.Spec.Allocator
 module SpecCoalesce = GC.Spec.Coalesce
+module CC = GC.Spec.Coalesce.Correct
 module Defs = GC.Spec.SweepCoalesce.Defs
 
 /// ---------------------------------------------------------------------------
@@ -162,12 +160,12 @@ let fused_sweep_coalesce_x (g: heap)
   = fused_aux_x g g (objects_x zero_addr g) 0UL 0 0UL
 
 /// ---------------------------------------------------------------------------
-/// walk_visits (verbatim from sheera/coalesce-exact, GTot -> Tot)
+/// walk_visits
 /// ---------------------------------------------------------------------------
 
-/// `a` is a position the walk from `s` lands on.
-let rec walk_visits (g: heap) (s a: hp_addr)
-  : Tot bool (decreases (heap_size - U64.v s)) =
+#push-options "--fuel 1 --ifuel 0"
+let rec walk_visits_x (g: heap) (s a: hp_addr)
+  : Tot (r:bool{r == CC.walk_visits g s a}) (decreases (heap_size - U64.v s)) =
   if U64.v s = U64.v a then true
   else if U64.v s + 8 >= heap_size then false
   else
@@ -176,5 +174,6 @@ let rec walk_visits (g: heap) (s a: hp_addr)
     if next > heap_size || next >= pow2 64 || next >= heap_size then false
     else begin
       aligned_plus_mul8 (U64.v s) (U64.v wz + 1);
-      walk_visits g (mk_hp_addr next) a
+      walk_visits_x g (mk_hp_addr next) a
     end
+#pop-options
