@@ -1,19 +1,20 @@
-# Parallel sweep, Phase 1: model, statement, and attack
+# Parallel sweep, Phase 1: model, statement, attack, and proof
 
 Branch `sheera/parallel-sweep`, from `fork/main` `0ce5e09`. Context: `spike/parallel/SPIKE.md` on `sheera/spike-parallel`.
 
 **Status.**
 
-- **Stage A:** the model and theorem are written. The theorem is closed with `admit`.
+- **Stage A:** the model and theorem are written.
 - **Stage B:** no counterexample. 10,750 (heap, boundary list) pairs were tested, from 17 hand-built and 862 generated heaps. All four deliberately broken variants were caught.
-- **Not done yet:** nothing has been proved. Proving waits for a go-ahead.
+- **Stage C:** `sweep_par_correct` is proved, with no `admit` or `assume` (§6). The model, the theorem and every `val` are unchanged. The proof uses only `valid_bounds`; the rest of `fused_pre` is not needed.
 
-Everything is new, under `parallel-sweep/`, and no existing file was changed. The directory is deliberately left out of the root build, so the `admit` never enters `make`.
+Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct` and `mark-and-sweep/NOTES.md`, merged in from `sheera/coalesce-exact`. The directory is left out of the root build.
 
 | File | Contents |
 |---|---|
 | `parallel-sweep/spec/GC.Spec.SweepPar.Exec.fst` | Executable twins of the ghost sweep spec, each proven equal to the original. |
-| `parallel-sweep/spec/GC.Spec.SweepPar.fst` | The model `sweep_par`, the theorem, and two non-vacuity lemmas. |
+| `parallel-sweep/spec/GC.Spec.SweepPar.fst` | The model `sweep_par`, the proof, the theorem, and two non-vacuity lemmas. |
+| `parallel-sweep/spec/GC.Spec.SweepPar.Vacuity.fst` | A satisfying call for every proof lemma's precondition. |
 | `parallel-sweep/spec/GC.Spec.SweepPar.Mutants.fst` | Four wrong merge and link steps. Used only by the tests. |
 | `parallel-sweep/test/` | The OCaml driver, the build script, the runner, and the `GC.Spec.ZeroAddr` realisation. |
 | `parallel-sweep/Makefile` | `make verify` and `make test`. |
@@ -92,12 +93,12 @@ val sweep_par_correct (bs: list nat) (g: heap)
   : Lemma (requires fused_pre g /\ valid_bounds g bs)
           (ensures sweep_par bs g == Defs.fused_sweep_coalesce g)
 
-let sweep_par_correct bs g = admit ()
+let sweep_par_correct bs g = (* proved; see §6 *)
 ```
 
 The equality is on the pair, so it covers both the heap and the free-list head.
 
-`make verify` checks all three modules. Within these modules, the only assumption is that `admit`, which `--report_assumes warn` reports. Assumptions inside the existing GC modules they depend on are unchanged.
+`make verify` checks all four modules. With `--report_assumes warn`, none reports an `admit` or `assume`. The GC modules the proof adds as dependencies (`GC.Spec.Coalesce.Correct`, `GC.Spec.SweepCoalesce.Induction`, `.Helpers`, `.FlushAgree`) contain none either.
 
 **Non-vacuity.**
 
@@ -211,7 +212,7 @@ Each mutant in `GC.Spec.SweepPar.Mutants` breaks one thing the statement depends
 
 ```
 cd parallel-sweep
-make verify     # the three modules; reports the one admit
+make verify     # the four modules, about 35 s
 make test       # verify, extract, build, run all 19 jobs; about 6 min on 8 cores
 ```
 
@@ -229,16 +230,38 @@ Each job's log is in `parallel-sweep/_build/logs/`. Every log must end with an `
 - **Trusted for the test:** F*'s OCaml extraction, the runtime's `.ml` sources compiled here (list-based `Seq`, `Stdint` `UInt64`), and the `heap_size` line `build.sh` restores.
 - **Parallelism is modelled, not run.** The segments are evaluated one after another, each against the input heap; disjointness is modelled by `splice`.
 
-## 6. Notes for the proof (not started)
+## 6. The proof
 
-- **Equality by twins.** `sweep_par` is built from the `_x` twins, whose types already state equality with the ghost functions. So the proof can work on the ghost side throughout.
-- **Lemmas the proof will need:**
-  - `seg_objects g b_i b_{i+1}` is the slice of `objects zero_addr g` between consecutive boundaries. `objects_split_from` in `GC.Spec.Coalesce.Correct` looks like the tool for this.
-  - `fused_aux` over a concatenation of object lists factors through the carried `(fb, rw, fp)`.
-  - Flushes and whitening stay inside their segment's range, so `splice_all` keeps every write.
-  - Patching the link word commutes with the later flushes. They touch disjoint words.
-  - The three guards in §1 are dead under `valid_bounds`.
-- **`walk_visits` and its lemmas** come from `GC.Spec.Coalesce.Correct`, merged in from `sheera/coalesce-exact`.
+All of it is in `GC.Spec.SweepPar.fst`, between the model and the statement, in eight parts. It works on the ghost side: the `_x` twins' types already state equality with the ghost functions.
+
+**The sequential pass, cut at boundaries.** `fsteps` is `fused_aux` without its final flush, and returns the heap, the pending run and the head. `fused_aux_append` shows that `fused_aux` over `a ++ b` is `fused_aux` over `b`, started from the state `fsteps` gives after `a`. `objects_seg_split` and `objects_seg_last` show that the walk from a boundary is that segment's `seg_objects` followed by the walk from the next boundary.
+
+**One segment** (`segment_correct`). The sequential pass enters segment [lo, hi) with a heap `h`, a carried run `c0` ending at `lo`, and a head `p0`. The segment starts from the input `g`, no run, and `0UL`. Each object is one step on both sides:
+
+- **Lead phase** (`lead_phase`): neither side writes, and the sequential run is `join c0 lead`.
+- **First survivor**, header at `e` (`lead_black`): the sequential pass flushes `join c0 lead` with `p0`, giving `(h1, f1)`. The segment flushes nothing, and both whiten.
+- **Seen phase** (`seen_phase`, with steps `seen_free` and `seen_black`): both sides take the same steps. From `e` up, their heaps agree word for word, except the segment's first linked block `a`. Its link word holds `f1` sequentially and `0UL` in the segment. Below `e`, the sequential heap is `h1` and the segment's is `g`.
+
+Every write lands at or above `wlo`, the pending run's first word, or the cursor when there is no run. So facts below `wlo` persist, and the link word at `a` keeps `f1` for the rest of the segment.
+
+**One merge-and-link step** (`link_step`). `link_inv` relates the two sides at a boundary `b`:
+
+- the sequential heap is still the input from `b` up;
+- the link heap equals the sequential heap below `b`, and the spliced segments from `b` up;
+- the carried runs and heads are equal.
+
+`link_step` takes it from `b` to the next boundary. For a segment with a survivor, the edge run is flushed on both sides with the same head, and the flushes agree below `e`. Patching `a` with the head that flush returns restores the one differing word. An all-free segment writes nothing on either side.
+
+**Two segments, then any number.** `sweep_par_two` applies `link_step` twice from `link_start`, then `link_base`. In `link_base`, the heaps agree on every word, so the final flushes agree. `link_correct` is the same argument by induction over the boundary list, and `sweep_par_correct` calls it from `link_start`.
+
+**The guards in §1 are dead.** `sweep_all`'s guard holds by `bounds_next`. `patch_link`'s guard holds because `a` is a linked block below `hi` (`seen_post`). The link test `fp' <> fp` only matters before the first link, when `fp` is `0UL` and a linked block is at least 8.
+
+**Reused from `GC.Spec.Coalesce.Correct`:** `walk_visits`, `walk_visits_above`, `walk_visits_prefix`, `walk_visits_next_bound`. Its step lemmas (`white_inv_step_blue`, `_flush`, and the other invariants' steps) are about `coalesce_aux` and its invariants, not `fused_aux`, so they do not apply. The flush facts come from `GC.Spec.Coalesce` (`flush_blue_preserves_outside`, `flush_blue_header_spec`, `flush_blue_field1_spec`) and from `GC.Spec.SweepCoalesce` (`flush_blue_inside_agree`, `zero_fields_read_within`, `flush_blue_snd_heap_independent`, `heaps_word_agree_implies_equal`). `flush_zero_word` re-proves a fact both modules prove only privately.
+
+**Vacuity.** `GC.Spec.SweepPar.Vacuity` calls every proof lemma on arguments that meet its precondition: small constant runs for the flush facts, and the whole heap as one segment from `zero_addr` for the segment and link lemmas. A few witnesses need a heap shape, and are guarded by it: `heap_size >= 32`, a non-empty walk, or the first object ending inside the heap. `link_step_free` and `link_step_used` are each called in their own case of `link_step`. The witness file shows that, on every heap, one of the two preconditions holds. That each holds on some heap is shown by the tests (15,828 all-free segments, and many with a survivor), not by a formal witness.
+
+**Proof check:** about 27 s for `GC.Spec.SweepPar`. It verifies again from scratch with `--z3seed 7`. The largest rlimit is 80, and no query needed splitting.
+
 - **Toolchain notes from this session:**
   - The root `Makefile` needs GNU make 4 (`gmake`); macOS `make` 3.81 stops with "multiple target patterns".
   - The shared `_cache` held a `GC.Spec.Coalesce` checked file from another branch. `gmake _cache/GC.Spec.SweepCoalesce.Defs.fst.checked` rebuilt it for `fork/main`.
