@@ -1468,6 +1468,16 @@ let rec cheney_scan_preserves_fwd_noninfix_targets_valid
   end
 #pop-options
 
+/// fwd_classified is a strengthening of fwd_valid_or_infix (the infix
+/// disjunct additionally names a parent object).  Stated as a standalone
+/// lemma so the quantifier reasoning happens in a minimal context.
+#push-options "--fuel 0 --ifuel 0"
+private let fwd_classified_valid_or_infix (cs: cheney_state)
+  : Lemma (requires fwd_classified cs)
+          (ensures fwd_valid_or_infix cs.cs_fwd cs.cs_major)
+  = ()
+#pop-options
+
 /// Top-level: cheney_promote_fwd_valid_or_infix
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let cheney_promote_fwd_valid_or_infix
@@ -1488,6 +1498,7 @@ let cheney_promote_fwd_valid_or_infix
   cheney_scan_preserves_fwd_classified minor cs1 0 (cheney_fuel minor);
   let cs2 = cheney_scan minor cs1 0 (cheney_fuel minor) in
   assert (fwd_classified cs2);
+  fwd_classified_valid_or_infix cs2;
   cheney_promote_fwd_bounded minor major fp roots
 #pop-options
 

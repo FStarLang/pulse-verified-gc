@@ -244,6 +244,13 @@ let cheney_forward_normal_preserves_old_nonblue_shape
         wosize_of_object_spec src cs'.cs_major
       end
 
+/// `infix_parent` never exceeds its argument (it is `addr - off` or 0).
+/// Proved in isolation: in the callers' contexts the arithmetic goal
+/// (a precondition of `cheney_forward_one_infix`) can time out.
+private let infix_parent_le (minor: minor_state) (addr: U64.t)
+  : Lemma (U64.v (infix_parent minor addr) <= U64.v addr)
+  = ()
+
 let cheney_forward_one_preserves_old_nonblue_shape
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   (src: obj_addr)
@@ -252,6 +259,7 @@ let cheney_forward_one_preserves_old_nonblue_shape
     cheney_forward_one_noop minor cs addr
   else if is_infix_in_minor minor addr then begin
     reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
+    infix_parent_le minor addr;
     cheney_forward_one_infix minor cs addr;
     let parent = infix_parent minor addr in
     cheney_forward_normal_preserves_old_nonblue_shape minor cs parent src
@@ -428,6 +436,7 @@ let cheney_forward_one_frame_field
     cheney_forward_one_noop minor cs addr
   else if is_infix_in_minor minor addr then begin
     reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
+    infix_parent_le minor addr;
     cheney_forward_one_infix minor cs addr;
     let parent = infix_parent minor addr in
     cheney_forward_normal_frame_field minor cs parent src idx
@@ -623,6 +632,7 @@ private let cheney_forward_one_frame_header
     cheney_forward_one_noop minor cs addr
   else if is_infix_in_minor minor addr then begin
     reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
+    infix_parent_le minor addr;
     cheney_forward_one_infix minor cs addr;
     let parent = infix_parent minor addr in
     cheney_forward_normal_frame_header minor cs parent src

@@ -224,7 +224,9 @@ let rec update_all_objects_aux_after_preserves_field
 #pop-options
 
 /// Main induction: update_all_objects_aux computes the expected field effect.
-#push-options "--z3rlimit 12 --fuel 1 --z3refresh"
+/// (ifuel 0: with ifuel 1, the well-formedness of the `U64.uint_to_t` in the
+/// type of the recursive occurrence times out in a typing-axiom cascade)
+#push-options "--z3rlimit 12 --fuel 1 --ifuel 0 --z3refresh"
 let rec update_all_objects_aux_field_effect
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map)
   (idx: nat) (obj: obj_addr) (j: nat) (pos: nat)
