@@ -1150,6 +1150,28 @@ let resolve_object_rt (g: heap_state) (v: obj_addr) (hdr: U64.t)
       SpecObject.resolve_non_infix v g
 #pop-options
 
+/// No-overflow fact for the infix-offset computation `wz * mword + mword` in
+/// `check_and_darken_bounded`.  Proved once here (it needs the values of
+/// `pow2 54` and `pow2 64`) instead of being re-derived, by unfolding `pow2`,
+/// inside the large Pulse context.
+let infix_offset_fits (wz: wosize)
+  : Lemma (U64.v wz * U64.v mword + U64.v mword < pow2 64)
+  = assert_norm (pow2 54 * 8 < pow2 64)
+
+/// The header address `v - off - mword` of the closure enclosing the infix
+/// pointer `v` (with `off = wosize * mword`, read from the infix header) is a
+/// valid word-aligned heap address.  Factored out of `check_and_darken_bounded`
+/// so that the modular arithmetic is discharged outside the Pulse context.
+let infix_parent_hdr_ok (g: heap_state) (v: obj_addr) (hdr off: U64.t)
+  : Lemma (requires hdr == SpecHeap.read_word g (SpecHeap.hd_address v) /\
+                    U64.v off == U64.v (getWosize hdr) * U64.v mword /\
+                    getTag hdr = infix_tag /\
+                    U64.v v >= U64.v off + U64.v mword)
+          (ensures U64.v v - U64.v off - U64.v mword < heap_size /\
+                   (U64.v v - U64.v off - U64.v mword) % U64.v mword == 0)
+  = resolve_object_rt g v hdr;
+    ML.lemma_mod_sub (U64.v v - U64.v off) (U64.v mword) 1
+
 /// Check if value is a pointer, and if so, darken its target with bounded push
 fn check_and_darken_bounded (heap: heap_t) (st: gray_stack) (v: U64.t) (cap: Ghost.erased nat)
   requires is_heap heap 's ** is_gray_stack st 'st **
@@ -1175,8 +1197,10 @@ fn check_and_darken_bounded (heap: heap_t) (st: gray_stack) (v: U64.t) (cap: Gho
     resolve_object_rt 's vo hdr;
     let t = getTag hdr;
     let wz = getWosize hdr;
+    infix_offset_fits wz;
     let off = U64.mul wz mword;
     if (t = infix_tag && U64.gte v (U64.add off mword)) {
+      infix_parent_hdr_ok 's vo hdr off;
       let parent_hdr : hp_addr = U64.sub (U64.sub v off) mword;
       darken_if_white_bounded heap st parent_hdr cap;
       ()

@@ -185,6 +185,15 @@ private let split_next_hd_objects_eq_part1
 /// P1a: split_old_mem_in_new_part1
 /// ---------------------------------------------------------------------------
 
+/// The header following the object at `start` is word-aligned.  Stated
+/// separately so that `split_old_mem_in_new_part1` gets this fact up front:
+/// otherwise each `hp_addr` refinement on `U64.uint_to_t next_nat` there
+/// re-derives it with modular arithmetic inside a large context, which can
+/// time out.
+private let next_header_aligned (start: hp_addr) (wz: nat)
+  : Lemma ((U64.v start + (wz + 1) * 8) % U64.v mword == 0)
+  = FStar.Math.Lemmas.lemma_mod_plus (U64.v start) (wz + 1) 8
+
 #restart-solver
 #push-options "--z3rlimit 50 --fuel 3 --ifuel 1"
 private let rec split_old_mem_in_new_part1
@@ -225,6 +234,7 @@ private let rec split_old_mem_in_new_part1
       let next_nat = U64.v start + (U64.v wz_g + 1) * 8 in
       if next_nat > Seq.length g || next_nat >= pow2 64 then ()
       else begin
+        next_header_aligned start (U64.v wz_g);
         f_address_spec start;
         let first : obj_addr = f_address start in
         mem_cons_lemma h first

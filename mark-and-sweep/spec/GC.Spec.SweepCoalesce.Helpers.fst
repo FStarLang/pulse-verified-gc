@@ -138,6 +138,36 @@ private let v0_shift_eq (b0: U8.t) (i: nat{i < 64})
            UInt.nth #64 (UInt.shift_left #64 (U8.v b0) 0) i)
   = UInt.shift_left_lemma_2 #64 (U8.v b0) 0 i
 
+/// For a high bit i (>= 56) and j = i - 8k: bit j of byte b shifted left by
+/// 8m is bit i of b when m = k, and 0 otherwise.  Proved per byte, so that
+/// combine_extract_nth's final step need not redo this case analysis for all
+/// eight bytes at once (that goal times out in a bit-vector instantiation
+/// cascade).
+private let shifted_byte_nth_at (b: U8.t) (m: nat{m <= 7}) (k: nat{k <= 7})
+    (i: nat{56 <= i /\ i < 64})
+  : Lemma (UInt.nth #64 (UInt.shift_left #64 (U8.v b) (8 * m)) (i - 8 * k) ==
+           (m = k && UInt.nth #64 (U8.v b) i))
+  = let j = i - 8 * k in
+    shifted_byte_nth b m j;
+    if m < k then nth_small_high_zero b (j + 8 * m)
+
+/// Final step of combine_extract_nth, over abstract bits c0..c7 (bit j of
+/// each shifted byte): if c_m is (m = k && bit i of byte m), their OR is bit
+/// i of byte k.
+private let select_byte_or_nth (b0 b1 b2 b3 b4 b5 b6 b7: U8.t) (k: nat{k <= 7})
+    (i: nat{i < 64}) (c0 c1 c2 c3 c4 c5 c6 c7: bool)
+  : Lemma (requires c0 == (0 = k && UInt.nth #64 (U8.v b0) i) /\
+                    c1 == (1 = k && UInt.nth #64 (U8.v b1) i) /\
+                    c2 == (2 = k && UInt.nth #64 (U8.v b2) i) /\
+                    c3 == (3 = k && UInt.nth #64 (U8.v b3) i) /\
+                    c4 == (4 = k && UInt.nth #64 (U8.v b4) i) /\
+                    c5 == (5 = k && UInt.nth #64 (U8.v b5) i) /\
+                    c6 == (6 = k && UInt.nth #64 (U8.v b6) i) /\
+                    c7 == (7 = k && UInt.nth #64 (U8.v b7) i))
+          (ensures (c0 || c1 || c2 || c3 || c4 || c5 || c6 || c7) ==
+                   UInt.nth #64 (U8.v (select_byte b0 b1 b2 b3 b4 b5 b6 b7 k)) i)
+  = ()
+
 #push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
 private let combine_extract_nth
     (b0 b1 b2 b3 b4 b5 b6 b7: U8.t) (k: nat{k <= 7}) (i: nat{i < 64})
@@ -171,22 +201,17 @@ private let combine_extract_nth
       let t7 = UInt.shift_left #64 (U8.v b7) 56 in
       or_chain_nth t0 t1 t2 t3 t4 t5 t6 t7 j;
       v0_shift_eq b0 j;
-      shifted_byte_nth b0 0 j;
-      shifted_byte_nth b1 1 j;
-      shifted_byte_nth b2 2 j;
-      shifted_byte_nth b3 3 j;
-      shifted_byte_nth b4 4 j;
-      shifted_byte_nth b5 5 j;
-      shifted_byte_nth b6 6 j;
-      shifted_byte_nth b7 7 j;
-      (if k > 0 then nth_small_high_zero b0 (j + 0));
-      (if k > 1 then nth_small_high_zero b1 (j + 8));
-      (if k > 2 then nth_small_high_zero b2 (j + 16));
-      (if k > 3 then nth_small_high_zero b3 (j + 24));
-      (if k > 4 then nth_small_high_zero b4 (j + 32));
-      (if k > 5 then nth_small_high_zero b5 (j + 40));
-      (if k > 6 then nth_small_high_zero b6 (j + 48));
-      ()
+      shifted_byte_nth_at b0 0 k i;
+      shifted_byte_nth_at b1 1 k i;
+      shifted_byte_nth_at b2 2 k i;
+      shifted_byte_nth_at b3 3 k i;
+      shifted_byte_nth_at b4 4 k i;
+      shifted_byte_nth_at b5 5 k i;
+      shifted_byte_nth_at b6 6 k i;
+      shifted_byte_nth_at b7 7 k i;
+      select_byte_or_nth b0 b1 b2 b3 b4 b5 b6 b7 k i
+        (UInt.nth #64 t0 j) (UInt.nth #64 t1 j) (UInt.nth #64 t2 j) (UInt.nth #64 t3 j)
+        (UInt.nth #64 t4 j) (UInt.nth #64 t5 j) (UInt.nth #64 t6 j) (UInt.nth #64 t7 j)
     end
 #pop-options
 
