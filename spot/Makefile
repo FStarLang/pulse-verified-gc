@@ -22,7 +22,7 @@ INCLUDES = \
 CACHE_DIR ?= ../_cache
 
 # Z3 version used for all SMT queries (bundled with the F* installation).
-Z3_VERSION ?= 4.15.3
+Z3_VERSION ?= 5.1.0
 
 
 # Z3 4.15.3 flakiness workaround -- see the top-level Makefile.

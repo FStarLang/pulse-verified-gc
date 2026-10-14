@@ -27,7 +27,7 @@ CACHE_DIR ?= ../_cache
 # --- F* flags ---------------------------------------------------------------
 
 # Z3 version used for all SMT queries (bundled with the F* installation).
-Z3_VERSION ?= 4.15.3
+Z3_VERSION ?= 5.1.0
 
 # Z3 4.15.3 regression workaround -- see the root Makefile for details.
 # Applied per module (EAGER_QI_CHECKED), never globally: at the raised
