@@ -393,17 +393,19 @@ let field_prefix_step
   =
     let child = to_minor_offset (minor_read_field minor parent idx) in
     let cs' = CheneySpec.cheney_forward_one minor cs child in
-    reveal_opaque (`%field_prefix_covered) (field_prefix_covered minor cs parent idx);
-    reveal_opaque (`%field_prefix_covered) (field_prefix_covered minor cs' parent (idx + 1));
+    // The prefix facts are revealed only where they are used: with both
+    // quantified facts in scope, Z3 5.x times out on `j < idx` below.
     let aux (j:nat{j < idx + 1}) : Lemma (addr_covered minor cs' (to_minor_offset (minor_read_field minor parent j)))
       =
         if j = idx then ()
         else begin
           assert (j < idx);
+          reveal_opaque (`%field_prefix_covered) (field_prefix_covered minor cs parent idx);
           forward_one_preserves_addr_covered minor cs child (to_minor_offset (minor_read_field minor parent j))
         end
     in
-    FStar.Classical.forall_intro aux
+    FStar.Classical.forall_intro aux;
+    reveal_opaque (`%field_prefix_covered) (field_prefix_covered minor cs' parent (idx + 1))
 
 let field_prefix_step_oom
   (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t) (idx: nat)

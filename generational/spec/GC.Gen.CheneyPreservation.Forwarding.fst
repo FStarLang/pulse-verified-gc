@@ -159,6 +159,12 @@ let infix_wosize_bound_chain_pf
 /// `d`.  Both bounds are trivial, but discharging them inline drags the whole
 /// ambient context into a non-linear division query, so they are proved here
 /// in an empty context instead.
+/// `d == w * 8 /\ w > 0 ==> d >= 8`, in an empty context (Z3 5.x times out on
+/// it inside the forwarding proofs).
+let pos_words_ge8 (w: nat) (d: int)
+  : Lemma (requires w > 0 /\ d == w * 8) (ensures d >= 8)
+  = ()
+
 let infix_index_nonneg (d: nat)
   : Lemma (requires d >= 8) (ensures (d - 8) / 8 >= 0)
   = ()
@@ -771,7 +777,7 @@ let cheney_forward_normal_infix_ready_one
     let j = (d - 8) / 8 in
     reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
     assert (wz_infix > 0);
-    assert (d >= 8);
+    pos_words_ge8 wz_infix d;
     infix_index_nonneg d;
     assert (j >= 0);
     assert (minor_wosize minor p == wz);

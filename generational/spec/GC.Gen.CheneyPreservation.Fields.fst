@@ -238,8 +238,7 @@ let cheney_forward_normal_preserves_fwd_target_fields_match_state
             let target : obj_addr = res.new_addr in
             Forwarding.promote_object_new_addr_wosize_ge minor cs.cs_major addr cs.cs_fp wz target;
             wfh_part1_obj_bound res.major_out target;
-            assert (U64.v target + wz * 8 <= heap_size);
-            dst_fields_valid_from_bounds target wz;
+            dst_fields_valid_from_obj res.major_out target wz;
             assert (j < wz);
             let expected_addr : hp_addr = U64.uint_to_t (U64.v target + j * 8) in
             assert (field_addr == expected_addr);

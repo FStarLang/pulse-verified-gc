@@ -117,12 +117,14 @@ let minor_alloc_spec (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_
     assert (minor_heap_size < pow2 57);
     assert_norm (pow2 57 == 8 * pow2 54);
     assert (wosize < pow2 54);
-    let hdr = make_minor_header wosize tag in
     let new_bump = U64.v ms.bump + (wosize + 1) * 8 in
-    let data' = minor_write_word ms.data ms.bump hdr in
     let obj_offset = U64.v ms.bump + 8 in
-    let ms' = { data = data'; bump = U64.uint_to_t new_bump } in
-    { ms_out = ms'; obj_addr = U64.uint_to_t obj_offset }
+    let new_bump64 = U64.uint_to_t new_bump in
+    let obj_offset64 = U64.uint_to_t obj_offset in
+    let hdr = make_minor_header wosize tag in
+    let data' = minor_write_word ms.data ms.bump hdr in
+    let ms' = { data = data'; bump = new_bump64 } in
+    { ms_out = ms'; obj_addr = obj_offset64 }
   end
 #pop-options
 
@@ -130,7 +132,9 @@ let minor_alloc_spec (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_
 /// Object enumeration
 /// ---------------------------------------------------------------------------
 
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
+/// fuel 0: nothing here needs unfolding, and with fuel Z3 5.1.0 unrolls
+/// `UInt.to_vec`/`from_vec` (from `U64.shift_right`'s spec) instead.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 let rec minor_objects_aux (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
   : GTot (seq U64.t) (decreases (bump - pos)) =
   if pos + 8 > bump then Seq.empty
@@ -229,6 +233,20 @@ let make_header_tag (wosize: nat{wosize > 0 /\ wosize < pow2 54})
 /// Chain validity helpers
 /// ---------------------------------------------------------------------------
 
+/// Two heaps that agree below `bump` read the same word below `bump`.
+/// Proved separately at fuel 0: inside the fuel-3 context of
+/// `minor_chain_valid_read_eq` Z3 5.1.0 sometimes takes minutes for it.
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+private let minor_read_word_agree
+  (data1 data2: minor_heap)
+  (addr: U64.t{U64.v addr + 8 <= minor_heap_size /\ U64.v addr % 8 == 0})
+  (bump: nat{bump <= minor_heap_size})
+  : Lemma (requires (forall (i:nat). i < bump ==> Seq.index data1 i == Seq.index data2 i) /\
+                    U64.v addr + 8 <= bump)
+          (ensures minor_read_word data1 addr == minor_read_word data2 addr)
+  = ()
+#pop-options
+
 /// If data1 and data2 agree below bump, chain_valid transfers
 #push-options "--fuel 3 --ifuel 0 --z3rlimit 30 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let rec minor_chain_valid_read_eq
@@ -244,6 +262,7 @@ let rec minor_chain_valid_read_eq
     assert_norm (pow2 57 < pow2 64);
     let hdr1 = minor_read_word data1 (U64.uint_to_t pos) in
     let hdr2 = minor_read_word data2 (U64.uint_to_t pos) in
+    minor_read_word_agree data1 data2 (U64.uint_to_t pos) bump;
     assert (hdr1 == hdr2);
     let wz = U64.v (U64.shift_right hdr1 10ul) in
     assert (wz > 0);  // from chain_valid == true
@@ -528,6 +547,21 @@ private let rec minor_objects_aux_wosize_bound_raw
 #pop-options
 
 /// infix_parent_value: unfolds infix_parent definition and proves the value
+/// (`--fuel 0`, as for `infix_parent` itself: with fuel Z3 5.1.0 unrolls the
+/// bitvector definitions under `minor_wosize`.)
+private let u64_sub_words_fits (a: U64.t) (wz: nat)
+  : Lemma (requires wz * 8 <= U64.v a)
+          (ensures FStar.UInt.size (U64.v a - wz * 8) 64 /\
+                   U64.v (U64.uint_to_t (U64.v a - wz * 8)) == U64.v a - wz * 8)
+  = ()
+
+#push-options "--fuel 0 --ifuel 0"
+let infix_parent_le (ms: minor_state) (addr: U64.t)
+  = let off = minor_wosize ms addr * 8 in
+    if off <= U64.v addr then u64_sub_words_fits addr (minor_wosize ms addr)
+#pop-options
+
+#push-options "--fuel 0 --ifuel 0"
 let infix_parent_value (ms: minor_state) (addr: U64.t)
           =
   reveal_opaque (`%minor_infix_wf) (minor_infix_wf ms);
@@ -535,11 +569,13 @@ let infix_parent_value (ms: minor_state) (addr: U64.t)
   let off = wz * 8 in
   // From minor_infix_wf: wz * 8 <= U64.v addr - 8, hence off <= U64.v addr
   assert (off <= U64.v addr);
+  u64_sub_words_fits addr wz;
   // infix_parent takes the `then` branch, returning uint_to_t (v addr - off)
   assert (infix_parent ms addr == U64.uint_to_t (U64.v addr - off));
   // The value is in range [0, 2^64), so the roundtrip works
   assert (U64.v addr - off >= 0);
   assert (U64.v addr - off < pow2 64)
+#pop-options
 
 let infix_parent_in_minor_objects (ms: minor_state) (addr: U64.t)
                     =
@@ -1003,6 +1039,7 @@ private let zeroed_minor_read_word (addr: U64.t)
   FStar.Seq.Base.lemma_index_create minor_heap_size 0uy (U64.v addr + 7);
   assert_norm (minor_combine_bytes 0uy 0uy 0uy 0uy 0uy 0uy 0uy 0uy == 0UL)
 
+#push-options "--fuel 0 --ifuel 0"
 let minor_reset_wosize_zero (ms: minor_state) (addr: U64.t)
   =
   if U64.v addr >= 8 && U64.v addr < minor_heap_size then begin
@@ -1016,9 +1053,15 @@ let minor_reset_wosize_zero (ms: minor_state) (addr: U64.t)
       assert (U64.v h % 8 == 0);
       zeroed_minor_read_word h;
       assert (minor_read_word (Seq.create minor_heap_size 0uy) h == 0UL);
+      // 0 >> 10 == 0, stated arithmetically so Z3 need not unfold bitvectors
+      FStar.UInt.shift_right_value_lemma #64 0 10;
+      assert (U64.v (U64.shift_right 0UL 10ul) == 0);
+      assert ((minor_reset ms).data == Seq.create minor_heap_size 0uy);
+      assert (minor_read_word (minor_reset ms).data h == 0UL);
       assert (minor_wosize (minor_reset ms) addr == 0)
     end
   end
+#pop-options
 
 let minor_reset_objects_empty (ms: minor_state)
   = ()
@@ -1028,6 +1071,7 @@ let minor_reset_objects_not_mem (ms: minor_state) (addr: U64.t)
   minor_reset_objects_empty ms;
   assert_norm (Seq.count addr Seq.empty == 0)
 
+#push-options "--fuel 0 --ifuel 0"
 private let minor_reset_tag_zero (ms: minor_state) (addr: U64.t)
   : Lemma (ensures minor_tag (minor_reset ms) addr == 0)
   =
@@ -1045,9 +1089,12 @@ private let minor_reset_tag_zero (ms: minor_state) (addr: U64.t)
       // `U64.v (U64.logand 0UL 0xFFUL)` is reduced to `0` before the query
       // reaches SMT, so supply the bit-vector fact `logand 0 255 <= 0` directly.
       FStar.UInt.logand_le #64 0 255;
+      assert ((minor_reset ms).data == Seq.create minor_heap_size 0uy);
+      assert (minor_read_word (minor_reset ms).data h == 0UL);
       assert (minor_tag (minor_reset ms) addr == 0)
     end
   end
+#pop-options
 
 let minor_reset_no_infix (ms: minor_state) (addr: U64.t)
   =

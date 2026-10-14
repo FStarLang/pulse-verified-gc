@@ -236,6 +236,17 @@ private let bfc_field_disjoint
     end
 #pop-options
 
+/// The padding word `dst + wz * mword` is not the header of an object `src`
+/// that lies either below `dst` or beyond its (larger) actual extent.  Stated
+/// in an empty context: inside the large promotion proofs below Z3 5.x times
+/// out on this disequality.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let padding_addr_ne_hd (s d wz awz: nat)
+  : Lemma (requires s >= 8 /\ (s < d \/ (s > d + awz * 8 /\ awz > wz)))
+          (ensures s - 8 <> d + wz * 8)
+  = ()
+#pop-options
+
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 /// Pattern: inner bfc_proof has conclusion as implication (no requires).
 private let promote_object_preserves_bfc_close
@@ -285,7 +296,7 @@ private let promote_object_preserves_bfc_close
           hd_address_spec dst_obj;
           AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
           wfh_part1_obj_bound new_major dst_obj;
-          dst_fields_valid_from_bounds dst_obj wosize;
+          dst_fields_valid_from_obj new_major dst_obj wosize;
           copy_fields_frame minor new_major obj dst_obj 0 wosize (hd_address dst_obj);
           wosize_of_object_spec dst_obj new_major;
           wosize_of_object_spec dst_obj copied;
@@ -298,8 +309,10 @@ private let promote_object_preserves_bfc_close
               objects_separated zero_addr new_major src dst_obj
             else begin
               objects_separated zero_addr new_major dst_obj src;
-              wosize_of_object_spec dst_obj new_major
+              wosize_of_object_spec dst_obj new_major;
+              assert (U64.v src > U64.v dst_obj + actual_wz * 8)
             end;
+            padding_addr_ne_hd (U64.v src) (U64.v dst_obj) wosize actual_wz;
             zero_promote_padding_frame copied dst_obj wosize (hd_address src)
           end;
           // Derive wosize and color in new_major
@@ -473,7 +486,7 @@ private let chain_blue_proof_for_excl
     // Establish wosize relationship between copied and new_major
     hd_address_spec dst_obj;
     wfh_part1_obj_bound new_major dst_obj;
-    dst_fields_valid_from_bounds dst_obj wosize;
+    dst_fields_valid_from_obj new_major dst_obj wosize;
     copy_fields_frame minor new_major obj dst_obj 0 wosize (hd_address dst_obj);
     wosize_of_object_spec dst_obj new_major;
     wosize_of_object_spec dst_obj copied;
@@ -486,8 +499,12 @@ private let chain_blue_proof_for_excl
       // Case dst_obj < excl: objects_separated on new_major gives
       //   excl > dst_obj + actual_wz*8 >= dst_obj + (wosize+1)*8
       //   so hd_address excl = excl - 8 >= dst_obj + wosize*8 + 8 > dst_obj + wosize*8.
-      objects_separated zero_addr new_major dst_obj excl;
       hd_address_spec excl;
+      if U64.v excl > U64.v dst_obj then begin
+        objects_separated zero_addr new_major dst_obj excl;
+        assert (U64.v excl > U64.v dst_obj + actual_wz_excl * 8)
+      end;
+      padding_addr_ne_hd (U64.v excl) (U64.v dst_obj) wosize actual_wz_excl;
       zero_promote_padding_frame copied dst_obj wosize (hd_address excl)
     end;
     set_promoted_tag_read_frame padded dst_obj tag (hd_address excl);
@@ -675,7 +692,7 @@ let promote_object_preserves_free_list_shape
         copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (hd_address src);
         hd_address_spec dst_obj;
         wfh_part1_obj_bound new_major dst_obj;
-        dst_fields_valid_from_bounds dst_obj wosize;
+        dst_fields_valid_from_obj new_major dst_obj wosize;
         copy_fields_frame minor new_major obj dst_obj 0 wosize (hd_address dst_obj);
         wosize_of_object_spec dst_obj new_major;
         wosize_of_object_spec dst_obj copied;
@@ -688,8 +705,10 @@ let promote_object_preserves_free_list_shape
             objects_separated zero_addr new_major src dst_obj
           else begin
             objects_separated zero_addr new_major dst_obj src;
-            wosize_of_object_spec dst_obj new_major
+            wosize_of_object_spec dst_obj new_major;
+            assert (U64.v src > U64.v dst_obj + actual_wz * 8)
           end;
+          padding_addr_ne_hd (U64.v src) (U64.v dst_obj) wosize actual_wz;
           zero_promote_padding_frame copied dst_obj wosize (hd_address src)
         end;
         wosize_of_object_spec src new_major;

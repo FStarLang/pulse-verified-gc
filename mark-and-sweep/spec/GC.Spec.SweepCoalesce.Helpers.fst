@@ -73,7 +73,9 @@ private let select_byte (b0 b1 b2 b3 b4 b5 b6 b7: U8.t) (k: nat{k <= 7}) : U8.t 
   else if k = 6 then b6
   else b7
 
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+/// fuel 0: this is pure rewriting with the U64 operator specs; with fuel
+/// Z3 5.1.0 unrolls `UInt.to_vec`/`from_vec` instead.
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 private let combine_value_decomp (b0 b1 b2 b3 b4 b5 b6 b7: U8.t)
   : Lemma
     (let t0 = U8.v b0 in

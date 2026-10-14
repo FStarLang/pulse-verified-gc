@@ -31,6 +31,11 @@ module GenInv = GC.Gen.HeapInvariant
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 open GC.Gen.MinorCollectForwarding.Helpers
 
+/// Statement well-formedness here involves `U64.uint_to_t (v x + j * 8)`
+/// side conditions (`FStar.UInt.size ... 64`); with fuel, Z3 5.x unrolls the
+/// `FStar.UInt.to_vec` definitions reachable from the context and times out.
+/// None of the statements below need recursive unfolding.
+#push-options "--fuel 0 --ifuel 1"
 let normal_vertex_ready
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (u: CG.combined_vertex) : prop =
@@ -136,3 +141,4 @@ val normal_post_non_pointer_fields_preserved_to_result
     (ensures
       normal_result_non_pointer_fields_preserved_prop
         minor major fp roots post_major)
+#pop-options

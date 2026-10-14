@@ -95,15 +95,16 @@ let spot_ns_nursery : minor_state =
   { data = nursery_data; bump = 24UL }
 
 /// Record projection needs `ifuel`, and the proofs below run at `ifuel 0`.
-/// Nothing names this definition; its type is the point.
+/// Called where needed.  (As a top-level `squash` standing hypothesis it makes
+/// Z3 5.x time out on unrelated arithmetic in every later query.)
 #push-options "--fuel 0 --ifuel 1"
-let nursery_state_facts
-  : squash (spot_ns_nursery.data == nursery_data /\
-            U64.v spot_ns_nursery.bump == 24)
+let nursery_state_facts ()
+  : Lemma (spot_ns_nursery.data == nursery_data /\
+           U64.v spot_ns_nursery.bump == 24)
   = ()
 #pop-options
 
-let spot_ns_nursery_bump () = ()
+let spot_ns_nursery_bump () = nursery_state_facts ()
 
 /// ---------------------------------------------------------------------------
 /// Word reads
@@ -173,18 +174,33 @@ let header_words_decode ()
   assert_norm (U64.v (U64.logand 0UL 0xFFUL) == 0)
 #pop-options
 
+/// `minor_wosize`/`minor_tag` of a nursery address in terms of the header word
+/// just below it, discharged once in an empty context (Z3 5.x does not reliably
+/// unfold the guards of the two definitions inside the lemmas below).
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
+private let header_fields_at (ms: minor_state) (obj: U64.t)
+    (hdr: U64.t{U64.v hdr + 8 <= minor_heap_size /\ U64.v hdr % 8 == 0}) (h: U64.t)
+  : Lemma (requires U64.v obj == U64.v hdr + 8 /\ U64.v obj < minor_heap_size /\
+                    minor_read_word ms.data hdr == h)
+          (ensures minor_wosize ms obj == U64.v (U64.shift_right h 10ul) /\
+                   minor_tag ms obj == U64.v (U64.logand h 0xFFUL))
+  = ()
+#pop-options
+
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let nursery_block_header_fields ()
   : Lemma (ensures
       minor_wosize spot_ns_nursery Layout.a_minor == 2 /\
       minor_tag spot_ns_nursery Layout.a_minor == 251)
   =
+  nursery_state_facts ();
   nursery_room ();
   header_words_decode ();
   nursery_header_read ();
   assert (U64.v Layout.a_minor == 8);
   assert (U64.v Layout.a_minor - 8 == 0);
-  assert (U64.uint_to_t (U64.v Layout.a_minor - 8) == 0UL)
+  assert (U64.uint_to_t (U64.v Layout.a_minor - 8) == 0UL);
+  header_fields_at spot_ns_nursery Layout.a_minor 0UL no_scan_header
 #pop-options
 
 /// Every address other than the block itself has wosize 0: the words at bytes 8
@@ -198,9 +214,11 @@ let nursery_other_addr_wosize_zero (addr: U64.t)
           (ensures minor_wosize spot_ns_nursery addr == 0 /\
                    minor_tag spot_ns_nursery addr <> 249)
   =
+  nursery_state_facts ();
   nursery_room ();
   header_words_decode ();
   let hdr_nat = U64.v addr - 8 in
+  FStar.Math.Lemmas.lemma_mod_sub (U64.v addr) 8 1;
   assert (hdr_nat % 8 == 0);
   assert (hdr_nat + 8 <= minor_heap_size);
   assert (hdr_nat < pow2 64);
@@ -212,12 +230,14 @@ let nursery_other_addr_wosize_zero (addr: U64.t)
     assert (hdr_addr == (8UL <: U64.t));
     nursery_body0_read ();
     assert (minor_read_word spot_ns_nursery.data hdr_addr == forged_word);
+    header_fields_at spot_ns_nursery addr hdr_addr forged_word;
     assert (minor_wosize spot_ns_nursery addr == U64.v (U64.shift_right forged_word 10ul));
     assert (minor_tag spot_ns_nursery addr == U64.v (U64.logand forged_word 0xFFUL))
   end else if hdr_nat = 16 then begin
     assert (hdr_addr == (16UL <: U64.t));
     nursery_body1_read ();
     assert (minor_read_word spot_ns_nursery.data hdr_addr == forged_word);
+    header_fields_at spot_ns_nursery addr hdr_addr forged_word;
     assert (minor_wosize spot_ns_nursery addr == U64.v (U64.shift_right forged_word 10ul));
     assert (minor_tag spot_ns_nursery addr == U64.v (U64.logand forged_word 0xFFUL))
   end else begin
@@ -230,6 +250,7 @@ let nursery_other_addr_wosize_zero (addr: U64.t)
     FStar.UInt.shift_right_value_lemma #64 0 10;
     FStar.Math.Lemmas.small_div 0 (pow2 10);
     FStar.UInt.logand_le #64 0 255;
+    header_fields_at spot_ns_nursery addr hdr_addr 0UL;
     assert (minor_wosize spot_ns_nursery addr == U64.v (U64.shift_right 0UL 10ul));
     assert (minor_tag spot_ns_nursery addr == U64.v (U64.logand 0UL 0xFFUL))
   end
@@ -239,6 +260,35 @@ let nursery_other_addr_wosize_zero (addr: U64.t)
 /// The chain walk
 /// ---------------------------------------------------------------------------
 
+/// One step of the walk across a header of known wosize `wz`, stated in an
+/// empty context: Z3 5.x times out on the step's arithmetic side condition
+/// when it is discharged inside the chain-walk proof below.
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+private let walk_step_wz (data: minor_heap)
+      (pos: nat{pos % 8 == 0 /\ pos + 8 <= minor_heap_size})
+      (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+      (wz: Prims.pos)
+      (next: nat{next % 8 == 0 /\ next <= bump})
+  : Lemma
+      (requires
+        U64.v (U64.shift_right (minor_read_word data (U64.uint_to_t pos)) 10ul) == wz /\
+        pos + 8 <= bump /\ next == pos + (wz + 1) * 8)
+      (ensures
+        (let hdr = minor_read_word data (U64.uint_to_t pos) in
+         let tag = U64.v (U64.logand hdr 0xFFUL) in
+         minor_chain_valid data pos bump == minor_chain_valid data next bump /\
+         minor_chain_no_infix data pos bump ==
+           (tag <> 249 && minor_chain_no_infix data next bump) /\
+         minor_objects_from data pos bump ==
+           Seq.cons (U64.uint_to_t (pos + 8)) (minor_objects_from data next bump)))
+  = minor_chain_walk_step data pos bump next
+
+private let bump_24_facts (ms: minor_state)
+  : Lemma (requires U64.v ms.bump == 24)
+          (ensures U64.v ms.bump <= minor_heap_size /\ U64.v ms.bump % 8 == 0)
+  = nursery_room (); assert_norm (24 % 8 == 0)
+#pop-options
+
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
 let nursery_wf_and_objects ()
   : Lemma (ensures
@@ -246,13 +296,17 @@ let nursery_wf_and_objects ()
       minor_objects spot_ns_nursery ==
         Seq.cons (Layout.a_minor <: U64.t) Seq.empty)
   =
+  nursery_state_facts ();
   nursery_room ();
   header_words_decode ();
   nursery_header_read ();
+  assert (U64.uint_to_t 0 == 0UL);
+  assert (U64.v (U64.shift_right (minor_read_word nursery_data (U64.uint_to_t 0)) 10ul) == 2);
   // one step across the header at byte 0, landing exactly on the bump
-  minor_chain_walk_step nursery_data 0 24 24;
+  walk_step_wz nursery_data 0 24 2 24;
   // and the walk stops there
   minor_chain_walk_stop nursery_data 24 24;
+  bump_24_facts spot_ns_nursery;
   minor_objects_from_zero spot_ns_nursery;
   assert (U64.uint_to_t (0 + 8) == (Layout.a_minor <: U64.t))
 #pop-options
@@ -262,6 +316,7 @@ let spot_ns_nursery_objects () = nursery_wf_and_objects ()
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let spot_ns_nursery_object_cases (obj: U64.t)
   =
+  nursery_state_facts ();
   nursery_wf_and_objects ();
   Seq.mem_cons (Layout.a_minor <: U64.t) (Seq.empty #U64.t);
   assert (~(Seq.mem obj (Seq.empty #U64.t)))
@@ -270,6 +325,7 @@ let spot_ns_nursery_object_cases (obj: U64.t)
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 let spot_ns_nursery_block ()
   =
+  nursery_state_facts ();
   nursery_wf_and_objects ();
   nursery_block_header_fields ();
   Seq.mem_cons (Layout.a_minor <: U64.t) (Seq.empty #U64.t);
@@ -280,12 +336,24 @@ let spot_ns_nursery_block ()
 /// The forged fields
 /// ---------------------------------------------------------------------------
 
+/// The two field offsets of the block, by cases (Z3 5.x times out on the
+/// arithmetic when it is left to the proof below).
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+private let field_offset_cases (j: nat)
+  : Lemma (requires j < 2)
+          (ensures (8 + j * 8 == 8 \/ 8 + j * 8 == 16) /\ (8 + j * 8) % 8 == 0)
+  = if j = 0 then assert_norm (8 % 8 == 0)
+    else assert_norm (16 % 8 == 0)
+#pop-options
+
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 let spot_ns_nursery_fields_look_like_pointers (j: nat)
   =
+  nursery_state_facts ();
   nursery_room ();
   GC.Spec.ZeroAddr.zero_addr_above_minor_size ();
   assert (U64.v Layout.a_minor == 8);
+  field_offset_cases j;
   let byte_offset = 8 + j * 8 in
   assert (byte_offset == 8 \/ byte_offset == 16);
   assert (byte_offset + 8 <= minor_heap_size);
@@ -314,6 +382,7 @@ let forged_word_not_major_pointer ()
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let spot_ns_nursery_scan_window_empty ()
   =
+  nursery_state_facts ();
   nursery_block_header_fields ();
   minor_scan_wosize_cases spot_ns_nursery Layout.a_minor
 #pop-options
@@ -326,6 +395,7 @@ let spot_ns_nursery_scan_window_empty ()
 private let nursery_guards_complete ()
   : Lemma (ensures minor_guards_complete spot_ns_nursery)
   =
+  nursery_state_facts ();
   nursery_wf_and_objects ();
   nursery_block_header_fields ();
   Seq.mem_cons (Layout.a_minor <: U64.t) (Seq.empty #U64.t);
@@ -352,6 +422,7 @@ private let nursery_guards_complete ()
 private let nursery_infix_wf ()
   : Lemma (ensures minor_infix_wf spot_ns_nursery)
   =
+  nursery_state_facts ();
   nursery_wf_and_objects ();
   nursery_block_header_fields ();
   reveal_opaque (`%minor_infix_wf) (minor_infix_wf spot_ns_nursery);
@@ -369,6 +440,7 @@ private let nursery_infix_wf ()
 
 let spot_ns_minor_heap_shape ()
   =
+  nursery_state_facts ();
   nursery_wf_and_objects ();
   nursery_guards_complete ();
   nursery_infix_wf ();
@@ -382,6 +454,7 @@ let spot_ns_minor_heap_shape ()
 private let spot_ns_minor_major_fields_no_blue (r: unit{Major.spot_major_room})
   : Lemma (GenInv.minor_major_fields_no_blue spot_ns_nursery (Major.spot_major_heap r))
   =
+  nursery_state_facts ();
   let aux (obj: U64.t) (j: nat)
     : Lemma
         (requires Seq.mem obj (minor_objects spot_ns_nursery) /\
@@ -399,6 +472,7 @@ private let spot_ns_minor_major_fields_no_blue (r: unit{Major.spot_major_room})
 
 let spot_ns_collection_heap_shape r
   =
+  nursery_state_facts ();
   Major.spot_major_heap_shape r;
   spot_ns_minor_heap_shape ();
   spot_ns_minor_major_fields_no_blue r;
@@ -412,6 +486,7 @@ let spot_ns_collection_heap_shape r
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 1"
 let spot_ns_minor_was_forbidden ()
   =
+  nursery_state_facts ();
   spot_ns_nursery_block ();
   spot_ns_nursery_fields_look_like_pointers 0;
   assert (Seq.mem (Layout.a_minor <: U64.t) (minor_objects spot_ns_nursery));

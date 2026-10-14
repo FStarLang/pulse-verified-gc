@@ -52,6 +52,11 @@ module HeapModel = GC.Spec.HeapModel
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 open GC.Gen.MinorCollectForwarding.Helpers
 
+/// Statement well-formedness here involves `U64.uint_to_t (v x + j * 8)`
+/// side conditions (`FStar.UInt.size ... 64`); with fuel, Z3 5.x unrolls the
+/// `FStar.UInt.to_vec` definitions reachable from the context and times out.
+/// None of the statements below need recursive unfolding.
+#push-options "--fuel 0 --ifuel 0"
 val combined_reachable_minor_has_fwd
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
@@ -191,6 +196,14 @@ val combined_reachable_major_edge_forwarded
       (let res = cheney_collect_spec minor major fp roots in
        mem_graph_edge (HeapModel.create_graph res.mc_major) src dst))
 
+/// `U64.uint_to_t (v src + i * 8)` side condition, discharged in an empty
+/// context: under the full hypotheses of the lemma below Z3 5.x needs more than
+/// the default rlimit for this linear fact.
+let field_addr_fits (src: U64.t) (i: nat)
+  : Lemma (requires U64.v src + i * 8 + 8 <= heap_size)
+          (ensures FStar.UInt.size (U64.v src + i * 8) 64)
+  = ()
+
 /// Field-level MajorV -> MinorV edge-forwarding lemma: if an old major field
 /// points to a reachable positive-size minor object, the post-minor heap stores
 /// the target's forwarding address in that field.
@@ -220,13 +233,14 @@ val combined_major_minor_field_forwarded
         (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (CG.MinorV dst) /\
       minor_wosize minor dst > 0)
     (ensures (
+      let fa = (field_addr_fits src i; U64.uint_to_t (U64.v src + i * 8)) in
       let prom = cheney_promote minor major fp roots in
       let res = cheney_collect_spec minor major fp roots in
-      let ov = to_minor_offset (read_word major (U64.uint_to_t (U64.v src + i * 8))) in
+      let ov = to_minor_offset (read_word major fa) in
       prom.fwd_map dst <> 0UL /\
       prom.fwd_map ov <> 0UL /\
       resolve_minor minor ov == dst /\
-      read_word res.mc_major (U64.uint_to_t (U64.v src + i * 8)) == prom.fwd_map ov))
+      read_word res.mc_major fa == prom.fwd_map ov))
 
 val combined_major_minor_edge_forwarded
   (minor: minor_state) (major: heap) (fp: U64.t)
@@ -390,3 +404,4 @@ val promoted_minor_minor_edge_forwarded
 /// Side condition for the normal-object edge-forwarding theorem.  Minor-source
 /// cases require the source image to be a normal promoted object; minor-target
 /// cases require the target image to be pointer-shaped.
+#pop-options
