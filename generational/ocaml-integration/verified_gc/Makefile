@@ -15,7 +15,9 @@ CFLAGS  += -I$(SNAPSHOT) -I$(SNAPSHOT)/internal \
            -I$(SNAPSHOT)/krmllib -I$(SNAPSHOT)/krmllib/krml -I$(SNAPSHOT)/krmllib/krml/internal
 # Allow access to OCaml runtime internals (for alloc_gen.c)
 CFLAGS  += -I.. -I../ocaml-4.14-verified-gen/runtime -I../ocaml-4.14-verified-gen
-NATIVE_CFLAGS  = $(CFLAGS) -DNATIVE_CODE # TODO: pass -DTARGET_${ARCH} might be a good idea?
+# None of the runtime headers alloc_gen.c includes depend on TARGET_*, so
+# NATIVE_CODE is the only flag the native build needs.
+NATIVE_CFLAGS  = $(CFLAGS) -DNATIVE_CODE
 
 # VPATH lets make find .c files in the snapshot directory
 VPATH = $(SNAPSHOT)

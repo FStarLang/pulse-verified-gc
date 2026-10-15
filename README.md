@@ -15,17 +15,17 @@ layout, benchmark table, and current verification boundary, see
 ## Quick local setup
 
 The exact sequence CI runs in [`.github/workflows/verify.yml`](.github/workflows/verify.yml),
-guaranteed to work end-to-end. Steps must run in this order
+guaranteed to work end-to-end. Steps must run in this order:
 
 ```bash
-./setup.sh # setups up F*
+./setup.sh # sets up F*
 
 fstar/bin/fstar.exe --version # check fstar version
 # verify GC
-make -j$(nproc) 
+make -j$(nproc)
 
 # verify SPOT
-make -C spot -j$(nproc) 
+make -C spot -j$(nproc)
 
 # extract to C using Karamel
 make extract
