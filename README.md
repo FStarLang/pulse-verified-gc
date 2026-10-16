@@ -67,12 +67,13 @@ make -C generational/ocaml-integration/tests correctness    # differential vs st
 # After changing the collector, the bridge, the snapshot or the runtime patch,
 # rebuild the GC and BOTH runtimes. `setup` will not do this -- it skips a tree
 # that already exists.
-sh ci/build-verified-toolchain.sh
+make -C generational/ocaml-integration/verified_gc
+make -C generational/ocaml-integration/ocaml-4.14-verified-gen/runtime ocamlrun libasmrun.a
 
 # OCaml's own testsuite -- ~3100 test instances, each in a bytecode and a
-# native variant. Needs the tree's compilers to EXIST, which --full builds
+# native variant. Needs the tree's compilers to EXIST, which this builds once
 # (15-40 min); after that a GC change needs only the rebuild above.
-sh ci/build-verified-toolchain.sh --full
+sh ci/build-verified-toolchain.sh
 sh ci/run-testsuite.sh
 sh ci/run-testsuite.sh tests/lib-hashtbl   # one directory
 ```
