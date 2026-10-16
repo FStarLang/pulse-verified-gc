@@ -58,9 +58,25 @@ jobs:
         run: make -C generational/ocaml-integration/tests test-native
 
       # Reproducers for open bugs. Fails only if a test fails on STOCK OCaml
-      # (a broken test); the verified run is expected to fail and is reported.
+      # (a broken test); the verified run is expected to fail, and each gap's
+      # status goes into the job summary below the testsuite result.
       - name: Known gaps (not a gate)
-        run: make -C generational/ocaml-integration/tests known-gaps
+        run: |
+          set -o pipefail
+          make -C generational/ocaml-integration/tests known-gaps 2>&1 | tee known-gaps.log
+          {
+            echo "### Known gaps"
+            echo
+            if grep -q '^KNOWN-GAP ' known-gaps.log; then
+              echo "Reproducers for open bugs, expected to fail on the verified GC. Not a gate."
+              echo
+              echo "| Reproducer | Status |"
+              echo "|---|---|"
+              sed -n 's/^KNOWN-GAP \([^:]*\): \(.*\)$/| `\1` | \2 |/p' known-gaps.log
+            else
+              echo "None outstanding."
+            fi
+          } > known-gaps.md
 
       # Tee to a file so a build failure is diagnosable from the uploaded logs.
       # Downloading raw CI logs needs admin rights on the repo, so anything we
@@ -157,6 +173,7 @@ jobs:
             --summary "$GITHUB_STEP_SUMMARY" \
             --title "OCaml testsuite — verified GC (${GITHUB_SHA:0:8})"
           echo "verdict=$?" >> "$GITHUB_OUTPUT"
+          [ ! -f known-gaps.md ] || { echo; cat known-gaps.md; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload logs
         if: always()

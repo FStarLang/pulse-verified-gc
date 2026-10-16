@@ -163,6 +163,9 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 # stock OCaml and demonstrates a gap that is still open in the verified
 # collector.  See docs/known-issues.md.
 #
+# Each gap prints one `KNOWN-GAP <test>: <status>` line, which CI collects
+# into the job summary.
+#
 # A gap's test graduates to `correctness` once the fix lands, as
 # nursery_no_scan_interior did when the nursery stopped scanning no-scan
 # bodies.
@@ -178,8 +181,8 @@ known-gaps: $(addsuffix .byte, $(KNOWN_GAP_TESTS))
 	@echo "--- alloc_exact_promotion (verified generational GC) ---"
 	@if MIN_EXPANSION_WORDSIZE=$(ALLOC_EXACT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) \
 	      alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS); then \
-	  echo "alloc_exact_promotion now PASSES: move it to CORRECTNESS_TESTS"; \
-	else echo "still open (issue #19)"; fi
+	  echo "KNOWN-GAP alloc_exact_promotion: now passes -- move it to CORRECTNESS_TESTS"; \
+	else echo "KNOWN-GAP alloc_exact_promotion: still open (issue #19)"; fi
 
 # ---- Smoke tests, native (ocamlopt + verified gen GC's libasmrun.a) ----
 # Same programs, same arguments and same heap sizes as the bytecode `test`
