@@ -1,11 +1,13 @@
 name: OCaml testsuite
 
-# Runs OCaml's own testsuite (231 directories, ~3100 test instances, both
-# bytecode and native variants) against the verified GC.
+# Everything that runs the verified GC: the integration smoke and correctness
+# tests, the known-gap reproducers, and OCaml's own testsuite (231
+# directories, ~3100 test instances, bytecode and native) on top.
 #
 # Deliberately does NOT install F*: the OCaml integration compiles from the
 # committed generational/snapshot/*.c, so this job only needs a C toolchain.
-# Proof verification lives in verify.yml.
+# Proof verification lives in verify.yml, which also checks that the committed
+# snapshot is exactly what the verified code extracts to.
 #
 # The gate is "no NEW failures" rather than "zero failures". The verified GC
 # has a known, documented set of failures (statmemprof, weak/ephemeron --
@@ -45,6 +47,20 @@ jobs:
 
       - name: Build both OCaml trees (stock + verified GC)
         run: make -C generational/ocaml-integration setup
+
+      # Minutes, not hours: run these before the long compiler build so a
+      # broken runtime fails fast. Stock ocamlc/ocamlopt compile them; they
+      # run on the verified ocamlrun / link the verified libasmrun.a.
+      - name: Smoke tests (bytecode)
+        run: make -C generational/ocaml-integration test
+
+      - name: Smoke tests (native)
+        run: make -C generational/ocaml-integration/tests test-native
+
+      # Reproducers for open bugs. Fails only if a test fails on STOCK OCaml
+      # (a broken test); the verified run is expected to fail and is reported.
+      - name: Known gaps (not a gate)
+        run: make -C generational/ocaml-integration/tests known-gaps
 
       # Tee to a file so a build failure is diagnosable from the uploaded logs.
       # Downloading raw CI logs needs admin rights on the repo, so anything we

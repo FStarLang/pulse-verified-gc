@@ -14,8 +14,10 @@ layout, benchmark table, and current verification boundary, see
 
 ## Quick local setup
 
-The exact sequence CI runs in [`.github/workflows/verify.yml`](.github/workflows/verify.yml),
-guaranteed to work end-to-end. Steps must run in this order:
+The sequence CI runs, guaranteed to work end-to-end: verification and extraction
+are [`.github/workflows/verify.yml`](.github/workflows/verify.yml), the OCaml
+integration and its tests are [`.github/workflows/testsuite.yml`](.github/workflows/testsuite.yml).
+Steps must run in this order:
 
 ```bash
 ./setup.sh # sets up F*
@@ -36,6 +38,8 @@ make -C generational snapshot
 make -C generational/ocaml-integration setup
 
 make -C generational/ocaml-integration/tests test # run smoke tests
+make -C generational/ocaml-integration/tests test-native # native smoke tests
+make -C generational/ocaml-integration/tests known-gaps # open bugs' reproducers
 make -C generational/ocaml-integration/tests benchmark # run benchmarks
 ```
 
