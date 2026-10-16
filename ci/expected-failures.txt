@@ -38,7 +38,7 @@
 # out, the collector or the runner got slower -- investigate rather than
 # baseline it. The same goes for lib-systhreads/eintr's timing-sensitive
 # variants.
-tests/asmcomp/'polling_insertion.ml' with 1.1 (native)
+tests/ast-invariants/'test.ml' with 1.1 (native)
 tests/backtrace/'callstack.ml' with 1.1.1 (native)
 tests/backtrace/'callstack.ml' with 1.1.2 (bytecode)
 tests/c-api/'alloc_async.ml' with 1 (native)
@@ -51,7 +51,6 @@ tests/lib-sys/'opaque.ml' with 1 (native)
 tests/lib-sys/'opaque.ml' with 2 (bytecode)
 tests/lib-systhreads/'eintr.ml' with 1.1.1 (bytecode)
 tests/lib-systhreads/'eintr.ml' with 1.1.2 (native)
-tests/lib-threads/'torture.ml' with 1.1 (bytecode)
 tests/misc/'ephe_infix.ml' with 1 (native)
 tests/misc/'ephe_infix.ml' with 2 (bytecode)
 tests/misc/'ephe_infix_new.ml' with 1 (native)
