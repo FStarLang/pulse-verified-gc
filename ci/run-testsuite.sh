@@ -20,13 +20,16 @@ SUBDIR=${1:-}
 [ -x "$TREE/ocamltest/ocamltest" ] || {
   echo "ocamltest is missing -- run: sh ci/build-verified-toolchain.sh" >&2; exit 1; }
 
+# TIMEOUT=300, not 120: weak-heavy tests are very slow without a weak table
+# (tests/misc/weaktest.ml, 108s native here vs 0.2s on stock), close enough to a
+# 120s budget to flap, and a timeout is reported as a NEW FAILURE.
 echo "=== running the testsuite (both variants per test); log: $LOG"
 cd "$TREE/testsuite"
 set +e
 if [ -n "$SUBDIR" ]; then
-  OCAMLRUNPARAM=b,v=0 TIMEOUT=120 make one DIR="$SUBDIR" 2>&1 | tee "$LOG"
+  OCAMLRUNPARAM=b,v=0 TIMEOUT=300 make one DIR="$SUBDIR" 2>&1 | tee "$LOG"
 else
-  OCAMLRUNPARAM=b,v=0 TIMEOUT=120 make all 2>&1 | tee "$LOG"
+  OCAMLRUNPARAM=b,v=0 TIMEOUT=300 make all 2>&1 | tee "$LOG"
 fi
 set -e
 

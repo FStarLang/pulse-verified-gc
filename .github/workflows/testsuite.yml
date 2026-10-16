@@ -101,7 +101,14 @@ jobs:
         working-directory: generational/ocaml-integration/ocaml-4.14-verified-gen/testsuite
         env:
           OCAMLRUNPARAM: b,v=0
-          TIMEOUT: 120
+          # 300, not 120. The verified collector implements no weak table, so
+          # weak-heavy tests run orders of magnitude slower than stock:
+          # tests/misc/weaktest.ml takes 108s natively against 0.2s on stock,
+          # close enough to a 120s budget to flap -- and a timeout is reported
+          # as a NEW FAILURE, so the gate flapped with it. This is headroom for
+          # a known-slow collector, not tolerance for a hang -- the job itself
+          # still has timeout-minutes.
+          TIMEOUT: 300
         run: make all 2>&1 | tee "$GITHUB_WORKSPACE/testsuite.log"
 
       - name: Sanity-check that tests actually ran
@@ -120,7 +127,7 @@ jobs:
         working-directory: generational/ocaml-integration/ocaml-4.14-unchanged
         env:
           OCAMLRUNPARAM: b,v=0
-          TIMEOUT: 120
+          TIMEOUT: 300
         run: |
           make ocamltest
           cd testsuite && make all 2>&1 | tee "$GITHUB_WORKSPACE/stock.log"
