@@ -43,14 +43,10 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq build-essential
 
-      # Cheap, and catches the failure mode this repo is most exposed to:
-      # `make snapshot` overwrites the extracted C by plain cp, so an
-      # unguarded regeneration silently drops the hand patches.
-
       - name: Build both OCaml trees (stock + verified GC)
         run: make -C generational/ocaml-integration setup
 
-      # Tee to a file so a build failure is diagnosable from the artifact.
+      # Tee to a file so a build failure is diagnosable from the uploaded logs.
       # Downloading raw CI logs needs admin rights on the repo, so anything we
       # want to read after the fact has to be captured here. `pipefail` keeps
       # the step failing despite the pipe.
@@ -132,60 +128,34 @@ jobs:
           make ocamltest
           cd testsuite && make all 2>&1 | tee "$GITHUB_WORKSPACE/stock.log"
 
-      - name: Generate report
+      # Writes the job summary: a verdict line, then every failed test marked
+      # NEW or expected. Its exit status is the gate.
+      - name: Check against the expected failures
         id: report
         run: |
-          # NB: capture the script's status, not tee's -- piping into tee would
-          # always report 0 and the gate below would never fire.
           set +e
           python3 ci/testsuite_report.py \
             --log testsuite.log \
             ${{ inputs.run_baseline && '--baseline-log stock.log' || '' }} \
             --expected ci/expected-failures.txt \
-            --html testsuite-report.html \
-            --json testsuite-report.json \
-            --title "OCaml testsuite — verified GC (${GITHUB_SHA:0:8})" \
-            > report.txt 2>&1
-          rc=$?
-          set -e
-          cat report.txt
-          echo "verdict=$rc" >> "$GITHUB_OUTPUT"
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --title "OCaml testsuite — verified GC (${GITHUB_SHA:0:8})"
+          echo "verdict=$?" >> "$GITHUB_OUTPUT"
 
-      - name: Job summary
-        if: always()
-        run: |
-          {
-            echo "## OCaml testsuite — verified GC"
-            echo
-            echo '```'
-            cat report.txt 2>/dev/null || echo "(no report produced)"
-            echo '```'
-            echo
-            echo "Full HTML report is in the **testsuite-report** artifact."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload report and logs
+      - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: testsuite-report
+          name: testsuite-logs
           path: |
             build.log
-            testsuite-report.html
-            testsuite-report.json
             testsuite.log
             stock.log
-            report.txt
           if-no-files-found: warn
           retention-days: 30
 
       - name: Fail on new failures
+        if: steps.report.outputs.verdict != '0'
         run: |
-          if [ "${{ steps.report.outputs.verdict }}" != "0" ]; then
-            echo "::error::New test failures that are not in ci/expected-failures.txt."
-            echo "Review the report artifact. If a failure is genuinely expected,"
-            echo "add it to the baseline with a note explaining why."
-            grep 'NEW FAILURE' report.txt || true
-            exit 1
-          fi
-          echo "No regressions against ci/expected-failures.txt."
+          echo "::error::New test failures that are not in ci/expected-failures.txt -- see the job summary."
+          exit 1

@@ -82,11 +82,8 @@ implement weak pointers, ephemerons, finalisers, compaction or memprof
 sampling, so a known set of tests fails for understood reasons. That set lives
 in `ci/expected-failures.txt`.
 
-That baseline was measured on a collector identical to this one except for the
-allocator fix ("patch 17"), so the first run is expected to report **exactly
-one** new failure -- `tests/ast-invariants/'test.ml' with 1.1 (native)`, which
-is that bug. See the header of `ci/expected-failures.txt`: it should be fixed,
-not baselined.
+`ci/run-testsuite.sh` writes the same summary CI posts, every failed test
+marked NEW or expected, to `testsuite-summary.md`.
 
 > **`libasmrun.a` is a separate target.** `make ocamlrun` refreshes only the
 > *bytecode* runtime, so a native test built after it will silently link a

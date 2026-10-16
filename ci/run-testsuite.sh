@@ -56,18 +56,18 @@ fi
 echo
 echo "=== report against ci/expected-failures.txt"
 cd "$ROOT"
+rm -f testsuite-summary.md
 set +e
 python3 ci/testsuite_report.py \
   --log "$LOG" \
   --expected ci/expected-failures.txt \
-  --html testsuite-report.html \
-  --json testsuite-report.json \
-  --title "OCaml testsuite - verified GC (local)"
+  --summary testsuite-summary.md \
+  --title "OCaml testsuite — verified GC (local)"
 rc=$?
 set -e
 echo
 if [ $rc -ne 0 ]; then
-  echo "NEW failures, not in the baseline. See testsuite-report.html."
+  echo "NEW failures, not in the baseline. See testsuite-summary.md."
 else
   echo "No regressions against ci/expected-failures.txt."
 fi
