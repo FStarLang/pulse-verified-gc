@@ -1,30 +1,55 @@
 diff --git a/runtime/Makefile b/runtime/Makefile
-index b62a579..d24d2b2 100644
+index b62a579..9fa3887 100644
 --- a/runtime/Makefile
 +++ b/runtime/Makefile
-@@ -176,6 +176,7 @@ endif
+@@ -176,6 +176,9 @@ endif
  
  .PHONY: clean
  clean:
 +	$(MAKE) -C verified_gc clean
++	rm -rf vergc_native_objs
++	rm -rf vergc_byte_objs
  	rm -f *.o *.obj *.a *.lib *.so *.dll ld.conf
  	rm -f ocamlrun ocamlrund ocamlruni ocamlruns sak
  	rm -f ocamlrun.exe ocamlrund.exe ocamlruni.exe ocamlruns.exe sak.exe
-@@ -268,7 +269,12 @@ build_config.h: $(ROOTDIR)/Makefile.config sak$(EXE)
+@@ -268,25 +271,47 @@ build_config.h: $(ROOTDIR)/Makefile.config sak$(EXE)
  
  # Libraries and programs
  
 -ocamlrun$(EXE): prims.$(O) libcamlrun.$(A)
 +.PHONY: libvergc_gen.a
 +libvergc_gen.a:
-+	$(MAKE) -C verified_gc
++	$(MAKE) -C verified_gc libvergc_gen.a
 +	cp verified_gc/libvergc_gen.a .
++
++.PHONY: libvergc_gen_native.a
++libvergc_gen_native.a:
++	$(MAKE) -C verified_gc libvergc_gen_native.a
++	cp verified_gc/libvergc_gen_native.a .
++
 +
 +ocamlrun$(EXE): prims.$(O) libcamlrun.$(A) libvergc_gen.a
  	$(MKEXE) -o $@ $^ $(LIBS)
  
  ocamlruns$(EXE): prims.$(O) libcamlrun_non_shared.$(A)
-@@ -280,13 +286,13 @@ libcamlrun.$(A): $(libcamlrun_OBJECTS)
+ 	$(call MKEXE_USING_COMPILER,$@,$^ $(LIBS))
+ 
+-libcamlrun.$(A): $(libcamlrun_OBJECTS)
+-	$(call MKLIB,$@, $^)
++# Verified GC: embed the verified collector's objects the same way
++# libasmrun.a does. The patched interp.c/memory.h in $(libcamlrun_OBJECTS)
++# reference vergc_minor_base / vergc_minor_bump_ref / vergc_minor_size /
++# verified_allocate_minor, which live in libvergc_gen.a. ocamlrun itself links
++# both archives explicitly, so it was fine -- but ANY `-custom` link (ocamlc
++# -custom, and hence ocamltest, which builds a custom runtime) links only
++# libcamlrun.a and failed with undefined references to those symbols.
++libcamlrun.$(A): $(libcamlrun_OBJECTS) libvergc_gen.a
++	rm -rf vergc_byte_objs
++	mkdir -p vergc_byte_objs
++	cd vergc_byte_objs && $(AR) x ../libvergc_gen.a
++	$(call MKLIB,$@, $(libcamlrun_OBJECTS) vergc_byte_objs/*.o)
++	rm -rf vergc_byte_objs
+ 
  libcamlrun_non_shared.$(A): $(libcamlrun_non_shared_OBJECTS)
  	$(call MKLIB,$@, $^)
  
@@ -40,30 +65,38 @@ index b62a579..d24d2b2 100644
  	$(MKEXE) -o $@ $^ $(INSTRUMENTED_RUNTIME_LIBS) $(LIBS)
  
  libcamlruni.$(A): $(libcamlruni_OBJECTS)
-diff --git a/runtime/caml/domain_state.tbl b/runtime/caml/domain_state.tbl
-index 4429f24..8b8d704 100644
---- a/runtime/caml/domain_state.tbl
-+++ b/runtime/caml/domain_state.tbl
-@@ -14,6 +14,7 @@
- /*                                                                        */
- /**************************************************************************/
+@@ -298,8 +323,12 @@ libcamlrun_pic.$(A): $(libcamlrunpic_OBJECTS)
+ libcamlrun_shared.$(SO): $(libcamlrunpic_OBJECTS)
+ 	$(MKDLL) -o $@ $^ $(BYTECCLIBS)
  
-+DOMAIN_STATE(value, temp)
- DOMAIN_STATE(value*, young_limit)
- DOMAIN_STATE(value*, young_ptr)
- /* Minor heap limit. See minor_gc.c. */
+-libasmrun.$(A): $(libasmrun_OBJECTS)
+-	$(call MKLIB,$@, $^)
++libasmrun.$(A): $(libasmrun_OBJECTS) libvergc_gen_native.a
++	rm -rf vergc_native_objs
++	mkdir -p vergc_native_objs
++	cd vergc_native_objs && $(AR) x ../libvergc_gen_native.a
++	$(call MKLIB,$@, $(libasmrun_OBJECTS) vergc_native_objs/*.o)
++	rm -rf vergc_native_objs
+ 
+ libasmrund.$(A): $(libasmrund_OBJECTS)
+ 	$(call MKLIB,$@, $^)
 diff --git a/runtime/caml/memory.h b/runtime/caml/memory.h
-index d9e58bc..e6b15a2 100644
+index d9e58bc..89602c2 100644
 --- a/runtime/caml/memory.h
 +++ b/runtime/caml/memory.h
-@@ -217,20 +217,54 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -217,6 +217,34 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
                                         int nallocs, unsigned char* alloc_lens);
  // Do not call asynchronous callbacks from allocation functions
  #define Alloc_small_origin CAML_FROM_C
 +
 +void* verified_allocate_minor(mlsize_t wosize, uint8_t tag);
 +void* verified_allocate(mlsize_t wosize, uint8_t tag);
-+
++#ifdef NATIVE_CODE
++void vergc_native_minor_startup_init(void);
++void vergc_native_run_minor_collection(void);
++#endif
++/* Defined in verified_gc/alloc_gen.c. */
++extern void verified_do_minor_gc (void);
 +extern uint64_t *vergc_minor_bump_ref;
 +extern uint8_t  *vergc_minor_base;
 +extern uint64_t  vergc_minor_size;
@@ -79,16 +112,26 @@ index d9e58bc..e6b15a2 100644
 +#define VERGC_SHOULD_WRITE_SMALL_HEADER(fast, hp) 1
 +#endif
 +
++#ifdef NATIVE_CODE
++/* Native code doesn't use this macro for allocations for most cases. 
++ * it is only called from other C files in 
++ * the runtime (weak.c, memprof.c etc)*/
  #define Alloc_small_aux(result, wosize, tag, profinfo, track) do {     \
+   CAMLassert ((wosize) >= 1);                                          \
+   CAMLassert ((tag_t) (tag) < 256);                                    \
+@@ -233,6 +261,38 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
+   (result) = Val_hp (Caml_state_field(young_ptr));                     \
+   DEBUG_clear ((result), (wosize));                                    \
+ }while(0)
++#else
++#define Alloc_small_aux(result, wosize, tag, profinfo, track) do {     \
 +  value vergc_alloc_hp;                                                \
 +  int vergc_fast_alloc = 0;                                            \
 +  uint64_t vergc_needed =                                              \
 +    (uint64_t) Whsize_wosize (wosize) * (uint64_t) sizeof(value);      \
-   CAMLassert ((wosize) >= 1);                                          \
-   CAMLassert ((tag_t) (tag) < 256);                                    \
-   CAMLassert ((wosize) <= Max_young_wosize);                           \
--  Caml_state_field(young_ptr) -= Whsize_wosize (wosize);               \
--  if (Caml_state_field(young_ptr) < Caml_state_field(young_limit)) {   \
++  CAMLassert ((wosize) >= 1);                                          \
++  CAMLassert ((tag_t) (tag) < 256);                                    \
++  CAMLassert ((wosize) <= Max_young_wosize);                           \
 +  if (vergc_minor_bump_ref != NULL && vergc_minor_base != NULL) {      \
 +    uint64_t vergc_bump = *vergc_minor_bump_ref;                       \
 +    if (vergc_bump <= vergc_minor_size &&                               \
@@ -99,25 +142,22 @@ index d9e58bc..e6b15a2 100644
 +    }                                                                  \
 +  }                                                                    \
 +  if (!vergc_fast_alloc) {                                             \
-     Setup_for_gc;                                                      \
--    caml_alloc_small_dispatch((wosize), (track) | Alloc_small_origin,  \
--                              1, NULL);                                \
-+    Caml_state_field(temp) =                                           \
++    Setup_for_gc;                                                      \
++    vergc_alloc_hp =                                                   \
 +      (value)verified_allocate_minor((wosize), (uint8_t)(tag));        \
-     Restore_after_gc;                                                  \
-+    vergc_alloc_hp = Caml_state_field(temp);                           \
++    Restore_after_gc;                                                  \
 +  }                                                                    \
 +  if (VERGC_SHOULD_WRITE_SMALL_HEADER(vergc_fast_alloc, vergc_alloc_hp)) {\
 +    Hd_hp (vergc_alloc_hp) =                                           \
 +      Make_header_with_profinfo ((wosize), (tag), 0, profinfo);        \
-   }                                                                    \
--  Hd_hp (Caml_state_field(young_ptr)) =                                \
--    Make_header_with_profinfo ((wosize), (tag), 0, profinfo);          \
--  (result) = Val_hp (Caml_state_field(young_ptr));                     \
++  }                                                                    \
 +  (result) = Val_hp (vergc_alloc_hp);                                  \
-   DEBUG_clear ((result), (wosize));                                    \
- }while(0)
++  DEBUG_clear ((result), (wosize));                                    \
++}while(0)
++#endif
  
+ #define Alloc_small_with_profinfo(result, wosize, tag, profinfo) \
+   Alloc_small_aux(result, wosize, tag, profinfo, CAML_DO_TRACK)
 diff --git a/runtime/gc_ctrl.c b/runtime/gc_ctrl.c
 index 9c47b91..2601ad1 100644
 --- a/runtime/gc_ctrl.c
@@ -261,16 +301,20 @@ index 9b18f3c..6c90643 100644
        Store_double_flat_field(block, 0, Double_val(accu));
        for (i = 1; i < size; i++){
 diff --git a/runtime/memory.c b/runtime/memory.c
-index 66d1c50..e37a2b6 100644
+index 66d1c50..c11d87e 100644
 --- a/runtime/memory.c
 +++ b/runtime/memory.c
-@@ -464,38 +464,10 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
+@@ -464,38 +464,16 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
                                        uintnat profinfo)
  {
    header_t *hp;
 -  value *new_block;
 -
--  if (wosize > Max_wosize) return 0;
++  /* Both guards below are stock's and were dropped when verified_allocate()
++     replaced caml_fl_allocate(). Without them an oversized or unsatisfiable
++     request could not report failure, so check_oom() below never fired and
++     Out_of_memory was unraisable in this runtime. */
+   if (wosize > Max_wosize) return 0;
 -  CAML_EV_ALLOC(wosize);
 -  hp = caml_fl_allocate (wosize);
 -  if (hp == NULL){
@@ -301,13 +345,14 @@ index 66d1c50..e37a2b6 100644
 -    caml_request_major_slice ();
 -  }
 +  hp = (header_t *) verified_allocate(wosize, (uint8_t)tag);
++  if (hp == NULL) return 0;
 +  caml_allocated_words += Whsize_wosize(wosize);
 +  Hd_hp (hp) =
 +    Make_header_with_profinfo (wosize, tag, Caml_white, profinfo);
  #ifdef DEBUG
    {
      uintnat i;
-@@ -504,8 +476,6 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
+@@ -504,8 +482,6 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
      }
    }
  #endif
@@ -317,13 +362,48 @@ index 66d1c50..e37a2b6 100644
  }
  
 diff --git a/runtime/minor_gc.c b/runtime/minor_gc.c
-index 18cfe3e..ea08e38 100644
+index 18cfe3e..890904a 100644
 --- a/runtime/minor_gc.c
 +++ b/runtime/minor_gc.c
-@@ -564,17 +564,37 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -351,7 +351,12 @@ void caml_oldify_mopup (void)
+ /* Make sure the minor heap is empty by performing a minor collection
+    if needed.
  */
-+/* Defined in verified_gc/alloc_gen.c. */
-+extern void verified_do_minor_gc (void);
+-void caml_empty_minor_heap (void)
++void caml_empty_minor_heap (void) {
++  verified_do_minor_gc();
++}
++#if 0
++/* stock ocaml caml_empty_minor_heap for reference */
++static void caml_empty_minor_heap_unused (void)
+ {
+   value **r;
+   struct caml_custom_elt *elt;
+@@ -449,6 +454,7 @@ void caml_empty_minor_heap (void)
+   }
+ #endif
+ }
++#endif
+ 
+ #ifdef CAML_INSTR
+ extern uintnat caml_instr_alloc_jump;
+@@ -536,7 +542,11 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
+     /* If not, then empty the minor heap, and check again for async
+        callbacks. */
+     CAML_EV_COUNTER (EV_C_FORCE_MINOR_ALLOC_SMALL, 1);
+-    caml_gc_dispatch ();
++    #ifdef NATIVE_CODE
++      vergc_native_run_minor_collection();
++    #else
++      caml_gc_dispatch ();
++    #endif
+   }
+ 
+   /* Re-do the allocation: we now have enough space in the minor heap. */
+@@ -562,19 +572,46 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
+ /* Exported for backward compatibility with Lablgtk: do a minor
+    collection to ensure that the minor heap is empty.
+ */
 +
  CAMLexport void caml_minor_collection (void)
  {
@@ -361,7 +441,29 @@ index 18cfe3e..ea08e38 100644
 -    caml_gc_dispatch();
 -    CAMLdrop;
 -  }
-+  /* Disabled: we use our own verified GC */
++  if (Caml_state->requested_minor_gc) {
++     CAMLparam1 (extra_root);
++     Caml_state->requested_minor_gc = 0;
++     verified_do_minor_gc();
++     CAMLdrop;
++   }
++  /* We have no incremental major slice: major pressure is handled by
++     do_minor_gc()'s proactive threshold and by verified_allocate() running a
++     full GC and retrying. Clear the flag rather than let it accumulate. */
++  Caml_state->requested_major_slice = 0;
    return extra_root;
  }
  
+diff --git a/runtime/startup_nat.c b/runtime/startup_nat.c
+index b757325..6de3615 100644
+--- a/runtime/startup_nat.c
++++ b/runtime/startup_nat.c
+@@ -137,6 +137,8 @@ value caml_startup_common(char_os **argv, int pooling)
+                 caml_init_max_percent_free, caml_init_major_window,
+                 caml_init_custom_major_ratio, caml_init_custom_minor_ratio,
+                 caml_init_custom_minor_max_bsz, caml_init_policy);
++  /* Override minor heap to point to the one managed by verified GC */
++  vergc_native_minor_startup_init();
+   init_static();
+   caml_init_signals();
+ #ifdef _WIN32

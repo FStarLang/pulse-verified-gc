@@ -50,7 +50,9 @@
 #include "../caml/roots.h"
 #include "../caml/minor_gc.h"  /* for struct caml_ref_table */
 #include "../caml/domain_state.h"  /* for Caml_state */
+#include "../caml/signals.h" /* for caml_update_young_limit */
 #include "../caml/address_class.h" /* for In_heap, caml_page_table_add */
+#include "../caml/memprof.h" /* for caml_memprof_renew_minor_sample */
 
 /* --- Patched externs from GC_Gen_Impl.c --- */
 #include "GC_Spec_ZeroAddr.h"  /* zero_addr, heap_size_u64 */
@@ -197,6 +199,27 @@ static void ensure_heap(void) {
     Caml_state->_young_ptr   = Caml_state->_young_end;
     Caml_state->_young_alloc_start = Caml_state->_young_start;
     Caml_state->_young_alloc_end   = Caml_state->_young_end;
+
+    /* Finish the swap the way stock caml_set_minor_heap_size does (see the
+     * tail of that function in runtime/minor_gc.c).  Overwriting young_start /
+     * young_end / young_ptr alone is not enough: young_limit and
+     * caml_memprof_young_trigger still point into the buffer we are about to
+     * free, and both are at a *higher* address than this heap, so
+     *
+     *   - every allocation sees young_ptr < young_limit and traps into
+     *     caml_alloc_small_dispatch, and
+     *   - young_ptr < caml_memprof_young_trigger breaks memprof's invariant
+     *     "lambda == 0 implies caml_memprof_young_trigger == young_alloc_start",
+     *     so a sample is recorded with lambda == 0 and a garbage n_samples.
+     *     The callback then reads Alloc_minor(tracker) with tracker == 0.
+     *
+     * caml_memprof_renew_minor_sample() resets the trigger and calls
+     * caml_update_young_limit() for us. */
+    Caml_state->_young_alloc_mid = Caml_state->_young_alloc_start
+                                   + Wsize_bsize (minor_sz) / 2;
+    Caml_state->_young_trigger   = Caml_state->_young_alloc_start;
+    Caml_state->_minor_heap_wsz  = Wsize_bsize (minor_sz);
+    caml_memprof_renew_minor_sample();
 
     /* Register our major heap in OCaml's page table so that Is_in_heap()
      * returns true for addresses inside it.  Without this, the write
@@ -441,6 +464,67 @@ static void do_minor_gc(void) {
     bytes_promoted_since_major += bump_before;
 }
 
+#ifdef NATIVE_CODE
+
+/* Called from runtime/startup_nat.c, right
+ * after caml_init_gc(), to point minor heap to the one managed by verified GC 
+ * overriding whatever stock init has set up. */
+void vergc_native_minor_startup_init(void) {
+    /* Save stock's real minor buffer (allocated moments ago by
+     * caml_init_gc -> caml_set_minor_heap_size, in runtime/startup_nat.c
+     * right before this function is called) so it can be freed below --
+     * ensure_heap() immediately overwrites these fields to point at our
+     * own buffer, and once overwritten, the old pointer is unrecoverable.
+     */
+    void  *old_base  = Caml_state->_young_base;
+    value *old_start = Caml_state->_young_start;
+    value *old_end   = Caml_state->_young_end;
+
+    ensure_heap();
+
+    if (caml_page_table_add(In_young, minor_base,
+                             minor_base + minor_heap_size_u64) != 0)
+        caml_fatal_error("verified gen GC: minor page table registration failed");
+
+    if (old_start != NULL) {
+        caml_page_table_remove(In_young, old_start, old_end);
+        caml_stat_free(old_base);
+    }
+}
+
+/* Native backend decrements young_ptr in the fast allocation path to minor heap. 
+ * Native's compiled code allocates top-down (young_ptr descends from
+ * young_alloc_end); bump_ref counts bytes used, bottom-up.  The two
+ * conventions differ in DIRECTION, but "how many bytes are in use" is the
+ * same number in both.
+
+ * Setting bump_ref to number of bytes used would mean that minor heap is occupied
+ * from [0, bump_ref) - but that is not the case as native code fills the minor heap 
+ * from high end. But, our verified gc only uses bump_ref to know how many bytes are used
+ * and never walks from [0, bump_ref] - so this is safe to do until we make our verified gc
+ * match the native code's allocation direction.
+ */
+static void vergc_sync_bump_ref_from_young_ptr(void) {
+     uint64_t used_bytes = (uint64_t)((uint8_t *)Caml_state->_young_alloc_end
+                                      - (uint8_t *)Caml_state->_young_ptr);
+    /* This check is required because native code decrements young_ptr regardless of it going below the start */
+    if (used_bytes > minor_heap_size_u64) used_bytes = minor_heap_size_u64;
+    *gc_gen_heap.minor.bump_ref = used_bytes;
+}
+
+void vergc_native_run_minor_collection(void) {
+    vergc_sync_bump_ref_from_young_ptr(); /* do_minor_gc uses bump_ref to check if collection is needed */
+    do_minor_gc();
+
+    Caml_state->_young_ptr = Caml_state->_young_alloc_end; /* reset minor heap to empty */
+    Caml_state->_young_trigger = Caml_state->_young_alloc_start; /* ensures young_trigger remains start of the heap */
+    caml_update_young_limit(); /* set the young_limit, which is actually used by native code to check if heap is full 
+                                * can be different from young_trigger if there is memory profiling */
+
+}
+
+#endif
+
 /* --- Full GC (minor + major) --- */
 
 static int full_gc_count = 0;
@@ -448,6 +532,12 @@ static int full_gc_count = 0;
 static void do_full_gc(void) {
     ensure_heap();
     in_full_gc = 1;
+
+    #ifdef NATIVE_CODE
+        /* A full GC can be entered without passing through
+        * vergc_native_run_minor_collection() */
+        vergc_sync_bump_ref_from_young_ptr();
+    #endif
 
     PROF_INC(major_gc_count);
     PROF_START(major_gc);
@@ -592,7 +682,27 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     }
 
     if (result == 0) {
-        caml_fatal_error("verified gen GC: major allocation failed after collection");
+        /* Return failure rather than aborting: caml_alloc_shr_aux's check_oom()
+         * turns a NULL/0 into a catchable Out_of_memory (and into a fatal error
+         * by itself if we are inside a minor collection, where raising is not
+         * possible -- that is stock's own distinction). Calling
+         * caml_fatal_error() here instead made Out_of_memory unraisable in this
+         * runtime: a program with `try ... with Out_of_memory` had its process
+         * killed instead of its handler run.
+         *
+         * Keep the sizing hint, once, because our major heap does not grow and
+         * the user genuinely needs to know which knob to turn. */
+        static int hinted = 0;
+        if (!hinted) {
+            uint64_t major_size = heap_size_u64 - zero_addr;
+            hinted = 1;
+            fprintf(stderr,
+                "verified gen GC: major heap exhausted (%lu MB) — raising "
+                "Out_of_memory.\n  The major heap does not grow; set "
+                "MIN_EXPANSION_WORDSIZE=%lu (or larger) to enlarge it.\n",
+                (unsigned long)(major_size / 1048576),
+                (unsigned long)(major_size / 4));
+        }
         return NULL;
     }
 
@@ -619,7 +729,14 @@ CAMLprim value caml_trigger_verified_gc(value v) {
  * promoted to major and (b) the ref_table isn't silently cleared. */
 void verified_do_minor_gc(void) {
     ensure_heap();
-    if (*gc_gen_heap.minor.bump_ref > 0) {
-        do_minor_gc();
-    }
+#ifdef NATIVE_CODE
+    /* Native keeps the authoritative state in young_ptr; the helper does the
+     * young_ptr <-> bump_ref translation and resets young_ptr afterwards. */
+    if (Caml_state->_young_ptr != Caml_state->_young_alloc_end) vergc_native_run_minor_collection();
+#else
+    /* Bytecode allocates through bump_ref directly (young_ptr is parked at
+     * young_alloc_end by ensure_heap and never moves), so no translation is
+     * needed; do_minor_gc() already no-ops when bump_ref == 0. */
+    do_minor_gc();
+#endif
 }

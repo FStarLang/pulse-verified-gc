@@ -3,6 +3,11 @@
 # Three-way comparison using the Computer Language Benchmarks Game programs.
 
 OCAMLC            ?= ../ocaml-4.14-unchanged/_install/bin/ocamlc
+OCAMLOPT          ?= ../ocaml-4.14-unchanged/_install/bin/ocamlopt
+# Native smoke tests link the stock ocamlopt straight against the verified
+# GC's own libasmrun.a (no compiler rebuild -- ocamlopt just needs -I
+# pointed at a directory containing it). See NATIVE_INTEGRATION.md.
+VERGC_NATIVE_RUNTIME_DIR ?= ../ocaml-4.14-verified-gen/runtime
 VERIFIED_GEN_OCAMLRUN ?= ../ocaml-4.14-verified-gen/runtime/ocamlrun
 UNCHANGED_OCAMLRUN    ?= ../ocaml-4.14-unchanged/runtime/ocamlrun
 
@@ -21,6 +26,9 @@ MANDELBROT_MAJOR_WORDS    ?= $(DEFAULT_MAJOR_WORDS)
 
 %.byte: %.ml
 	$(OCAMLC) -o $@ $<
+
+%.native: %.ml
+	$(OCAMLOPT) -I $(VERGC_NATIVE_RUNTIME_DIR) -o $@ $<
 
 bench_stats.cmo: bench_stats.ml
 	$(OCAMLC) -c $<
@@ -53,6 +61,7 @@ NURSERY_NO_SCAN_MAJOR_WORDS ?= 4000000
 
 BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
              $(addsuffix .byte, $(KNOWN_GAP_TESTS))
+NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS))
 BENCH_TARGETS = $(addsuffix .bench, $(BENCHMARKS))
 STATS_TARGETS = $(addsuffix .stats, $(BENCHMARKS))
 MINHEAP_TARGETS = $(addsuffix .minheap, $(BENCHMARKS))
@@ -155,6 +164,35 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 
 known-gaps: $(addsuffix .byte, $(KNOWN_GAP_TESTS))
 	@echo "=== No known-gap reproducers outstanding ==="
+
+# ---- Smoke tests, native (ocamlopt + verified gen GC's libasmrun.a) ----
+# Same programs, same arguments and same heap sizes as the bytecode `test`
+# target above -- kept in lockstep on purpose so the two are directly
+# comparable, and so a native-only failure is informative. No compiler
+# rebuild: stock ocamlopt links against the verified GC's libasmrun.a via -I.
+#
+# If this fails but `make test` passes, suspect the young_ptr <-> bump_ref
+# translation before anything else (verified_gc/alloc_gen.c).
+
+test-native: $(NATIVE_FILES)
+	@echo "=== Smoke tests, native (verified generational GC) ==="
+	@echo "--- binarytrees ---"
+	MIN_EXPANSION_WORDSIZE=$(BINARYTREES_MAJOR_WORDS) ./binarytrees.native 10
+	@echo "--- fasta ---"
+	MIN_EXPANSION_WORDSIZE=$(FASTA_MAJOR_WORDS) ./fasta.native 1000
+	@echo "--- quicksort ---"
+	MIN_EXPANSION_WORDSIZE=$(QUICKSORT_MAJOR_WORDS) ./quicksort.native 10000
+	@echo "--- fannkuchredux ---"
+	MIN_EXPANSION_WORDSIZE=$(FANNKUCHREDUX_MAJOR_WORDS) ./fannkuchredux.native 7
+	@echo "--- count_change ---"
+	MIN_EXPANSION_WORDSIZE=$(COUNT_CHANGE_MAJOR_WORDS) ./count_change.native 50
+	@echo "--- nbodies ---"
+	MIN_EXPANSION_WORDSIZE=$(NBODIES_MAJOR_WORDS) ./nbodies.native 1000
+	@echo "--- spectralnorm ---"
+	MIN_EXPANSION_WORDSIZE=$(SPECTRALNORM_MAJOR_WORDS) ./spectralnorm.native 100
+	@echo "--- mandelbrot ---"
+	MIN_EXPANSION_WORDSIZE=$(MANDELBROT_MAJOR_WORDS) ./mandelbrot.native 100
+	@echo "=== All native smoke tests passed ==="
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----
 
@@ -310,7 +348,7 @@ bench-min-heaps: $(MINHEAP_TARGETS)
 	head -n 1 results/binarytrees.minheap.csv > results/min_heaps.csv
 	tail -n +2 -q $(MINHEAP_CSVS) >> results/min_heaps.csv
 
-.PHONY: all test correctness known-gaps benchmark bench-all bench-stats bench-min-heaps clean
+.PHONY: all test test-native correctness known-gaps benchmark bench-all bench-stats bench-min-heaps clean
 
 clean:
 	rm -f *.byte *.cmi *.cmo *.o
