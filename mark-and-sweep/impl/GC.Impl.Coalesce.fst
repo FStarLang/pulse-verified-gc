@@ -92,7 +92,7 @@ fn zero_fields_loop (heap: heap_t) (start_addr: U64.t) (n: U64.t)
             Seq.length s == heap_size /\
             Alloc.zero_fields s (U64.uint_to_t (U64.v a)) (U64.v n - U64.v i) ==
               Alloc.zero_fields 's start_addr (U64.v n))
-    decreases (Prims.op_Subtraction (U64.v n) (U64.v !idx))
+    decreases (U64.v n - U64.v !idx)
   {
     let cur_a = !addr;
     let cur_i = !idx;

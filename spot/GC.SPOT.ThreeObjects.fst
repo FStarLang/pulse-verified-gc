@@ -224,6 +224,19 @@ let spot_a_promoted
     minor major fp (spot_roots c) Layout.a_minor
     ((Cheney.cheney_promote minor major fp (spot_roots c)).fwd_map Layout.a_minor)
 
+/// The c->a slot as the field address `c + idx * 8`, aligned.  Stated in an
+/// empty context: Z3 5.x times out on these facts inside the proof below.
+#push-options "--fuel 0 --ifuel 0"
+private let c_to_a_slot_field_addr
+  (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
+  : Lemma ((U64.v c + Layout.c_to_a_field_index * 8) % 8 == 0 /\
+           spot_c_to_a_slot c == U64.uint_to_t (U64.v c + Layout.c_to_a_field_index * 8))
+  =
+  aligned_plus_mul8 (U64.v c) Layout.c_to_a_field_index;
+  spot_c_to_a_slot_spec c;
+  U64.v_inj (spot_c_to_a_slot c) (U64.uint_to_t (U64.v c + Layout.c_to_a_field_index * 8))
+#pop-options
+
 let spot_c_field_rewritten_to_a_prime
   (minor: minor_state) (major: heap) (fp: U64.t)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
@@ -232,6 +245,7 @@ let spot_c_field_rewritten_to_a_prime
   expose_spot_collection_facts minor major fp c farr;
   spot_c_reachable_root minor major fp c farr;
   spot_a_reachable_root minor major fp c farr;
+  c_to_a_slot_field_addr c;
   Postconditions.major_minor_field_rewritten
     minor major fp (spot_roots c) (spot_slots c) 1 c Layout.a_minor
     Layout.c_to_a_field_index;

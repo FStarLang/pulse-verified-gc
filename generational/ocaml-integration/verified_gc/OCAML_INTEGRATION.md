@@ -1205,11 +1205,11 @@ memcpy(roots_for_gc, root_values, root_count * sizeof(uint64_t));
 
 gray_top = gray_cap;
 gray_stack_rec s = { gray_storage, &gray_top, gray_cap };
-K___uint64_t_bool r =
+FStar_Pervasives_Native_tuple2__uint64_t_bool r =
     gen_gc(gc_gen_heap, roots_for_gc, root_count,
            gc_fwd_arr, gc_queue,
            (uint64_t *)tbl->base, n_slots, s);
-if (!r.snd) fatal_promotion_failed();
+if (!r._2) fatal_promotion_failed();
 
 write_back_forwarded_roots();
 Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;

@@ -174,6 +174,16 @@ private let rec update_all_objects_aux_shift
   end
 #pop-options
 
+/// `next_hp` (= pos + (wz+1)*8) is at or past the end of the fields of
+/// `obj` (= pos + 8). Proved in isolation: in the context of the positional
+/// step this arithmetic precondition of
+/// `update_object_pointers_preserves_objects_above` times out.
+private let next_hp_past_fields (pos obj next_hp: U64.t) (wz: nat)
+  : Lemma (requires U64.v obj == U64.v pos + 8 /\
+                    U64.v next_hp == U64.v pos + (wz + 1) * 8)
+          (ensures U64.v next_hp >= U64.v obj + wz * 8)
+  = ()
+
 /// Master positional step lemma
 #push-options "--z3rlimit 12 --fuel 2 --ifuel 1 --z3refresh"
 let update_all_objects_positional_step
@@ -236,6 +246,7 @@ let update_all_objects_positional_step
       let next_hp : hp_addr = U64.uint_to_t next_nat in
       // next_hp = pos + (wz+1)*8 = obj + wz*8 (since obj = pos + 8)
       // All field writes are at addresses [obj, obj+(wz-1)*8], all < next_hp
+      next_hp_past_fields pos obj next_hp wz;
       update_object_pointers_preserves_objects_above major obj wz fwd next_hp;
       assert (objects pos major == Seq.cons obj (objects next_hp major));
       assert (objects next_hp major' == objects next_hp major);
@@ -251,6 +262,7 @@ let update_all_objects_positional_step
     // Step 6: Density at next position
     if next_nat + 8 < heap_size then begin
       let next_hp : hp_addr = U64.uint_to_t next_nat in
+      next_hp_past_fields pos obj next_hp wz;
       update_object_pointers_preserves_objects_above major obj wz fwd next_hp;
       assert (objects next_hp major' == objects next_hp major);
       f_address_spec next_hp;

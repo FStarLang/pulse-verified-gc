@@ -279,6 +279,10 @@ let live_set_in_minor_reachable
     Classical.forall_intro (Classical.move_requires aux)
 #pop-options
 
+/// `i <> 0 ==> i >= 1` for a nat, in an empty context: inside the nested
+/// lemmas of `reachability_bridge` Z3 5.x times out on it.
+private let nonzero_nat_ge1 (i: nat) : Lemma (requires i <> 0) (ensures i >= 1) = ()
+
 #push-options "--z3rlimit 15 --fuel 0 --ifuel 1"
 let reachability_bridge
   (minor: minor_state) (major: heap) (roots: seq U64.t)
@@ -356,7 +360,7 @@ let reachability_bridge
               assert (U64.v src + 8 <= heap_size);
               assert (Seq.mem raw roots)
             end else begin
-              assert (i >= 1);
+              nonzero_nat_ge1 i;
               // `is_minor_object_addr` is purely an address-range test, so it
               // holds of an interior pointer just as it does of a base one:
               // the remembered-set scan records the raw stored word.

@@ -18,7 +18,7 @@ PULSE_LIB ?= $(FSTAR_HOME)/pulse/lib/pulse/lib
 CACHE_DIR ?= ../_cache
 
 # Z3 version used for all SMT queries (bundled with the F* installation).
-Z3_VERSION ?= 4.15.3
+Z3_VERSION ?= 5.3.0
 
 
 Z3_FLAGS = --z3version $(Z3_VERSION) --cache_dir $(CACHE_DIR)

@@ -16,15 +16,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FSTAR_DIR="$SCRIPT_DIR/fstar"
 
 # Default: the validated nightly build.  The proofs in this repository are
-# checked against this F* (and the Z3 4.15.3 that ships with it); see
+# checked against this F* (and the Z3 5.3.0 that ships with it); see
 # Z3_VERSION in the top-level Makefile.
 SOURCE="--nightly"
 # NOTE: for --nightly the upstream installer builds the release tag as
 # "nightly-$VERSION", so VERSION must be the bare date.  Writing the full tag
 # here yields "nightly-nightly-<date>", which 404s and then fails confusingly
 # with "gzip: stdin: not in gzip format" when tar unpacks the error page.
-VERSION="2026-08-15"
-EXPECTED_VERSION="F* nightly-2026-08-15"
+VERSION="2026-10-17"
+EXPECTED_VERSION="F* nightly-2026-10-17"
 FORCE=false
 
 red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }

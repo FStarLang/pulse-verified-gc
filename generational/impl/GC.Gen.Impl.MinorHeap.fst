@@ -33,6 +33,24 @@ let mod8_add (a b: nat)
   : Lemma (requires a % 8 == 0 /\ b % 8 == 0) (ensures (a + b) % 8 == 0)
   = FStar.Math.Lemmas.modulo_distributivity a b 8
 
+/// The arithmetic behind `minor_alloc`: no overflow in computing the object
+/// size and the new bump pointer, and the object size is 8-aligned.  Proved
+/// here, in an empty context: inside the Pulse VC for `minor_alloc` Z3 5.1.0
+/// cannot find these facts (it needed fuel 8 to unfold `pow2` even before).
+let minor_alloc_arith (w b: nat)
+  : Lemma (requires w > 0 /\ w <= max_young_wosize /\ b <= minor_heap_size)
+          (ensures w + 1 < pow2 64 /\
+                   (w + 1) * 8 < pow2 64 /\
+                   (w + 1) * 8 >= 8 /\
+                   ((w + 1) * 8) % 8 == 0 /\
+                   b + (w + 1) * 8 < pow2 64 /\
+                   b + 8 < pow2 64)
+  = assert_norm (2 * pow2 57 < pow2 64);
+    max_young_object_fits ();
+    assert ((w + 1) * 8 <= minor_heap_size);
+    assert (minor_heap_size < pow2 57);
+    FStar.Math.Lemmas.multiple_modulo_lemma (w + 1) 8
+
 /// Minor heap size as SizeT
 let minor_heap_size_sz : (n:SZ.t{SZ.v n == minor_heap_size}) =
   SZ.uint64_to_sizet minor_heap_size_u64
@@ -87,17 +105,12 @@ fn minor_write (mh: minor_heap_t) (addr: U64.t) (v: U64.t)
 /// Allocation
 /// ---------------------------------------------------------------------------
 
-/// `minor_alloc`'s VC needs deep unfolding: two of its goals -- the body VC and
-/// the `minor_heap_size` refinement from GC.Gen.Base -- only discharge at fuel
-/// 8.  Left to find that itself, F* escalates (2,1) -> (2,2) -> (4,2) -> (8,2),
-/// and each losing attempt runs the full rlimit to exhaustion first; those dead
-/// attempts, not the successful proof, were the bulk of this module's runtime.
-/// Naming the setting that works turns ~14 Z3 calls into 2, and this module
-/// from the slowest in the repository into an unremarkable one: 802s -> 32s.
-///
-/// rlimit 30, not the file default: the body VC lands at 9.4 even when it
-/// succeeds, so 10 leaves no margin.
-#push-options "--z3rlimit 30 --fuel 8 --ifuel 2"
+/// `minor_alloc` used to need fuel 8 (and rlimit 30) for Z3 to unfold `pow2`
+/// far enough to show that the size and bump computations cannot overflow.
+/// All of that arithmetic now lives in `minor_alloc_arith`, proved in an empty
+/// context, so the Pulse VC needs no unfolding at all: under Z3 5.1.0 the old
+/// fuel-8 VC diverged on the `obj_bytes % 8 == 0` and `'b + 8` goals.
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
   requires is_minor mh 'd 'b **
            pure (U64.v wosize > 0 /\ U64.v wosize <= max_young_wosize /\
@@ -110,6 +123,7 @@ fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
 {
   unfold is_minor;
   let bump = R.op_Bang mh.bump_ref;
+  minor_alloc_arith (U64.v wosize) (U64.v bump);
   // (wosize + 1) * 8 = total object bytes (header + fields)
   let obj_bytes = U64.mul (U64.add wosize 1UL) 8UL;
   let new_bump = U64.add bump obj_bytes;
@@ -125,6 +139,7 @@ fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
     // Advance bump
     R.op_Colon_Equals mh.bump_ref new_bump;
     assert (pure (U64.v new_bump <= minor_heap_size));
+    assert (pure (U64.v obj_bytes == (U64.v wosize + 1) * 8));
     assert (pure (U64.v obj_bytes % 8 == 0));
     assert (pure (U64.v bump % 8 == 0));
     assert (pure (U64.v new_bump == U64.v bump + U64.v obj_bytes));
@@ -200,9 +215,12 @@ let minor_add_no_overflow (a b: nat)
 
 let minor_pos_advance_no_overflow (pos wz bump: nat)
   : Lemma (requires pos <= minor_heap_size /\ wz <= bump / 8 /\ bump <= minor_heap_size)
-          (ensures (wz + 1) * 8 < pow2 64 /\ pos + (wz + 1) * 8 < pow2 64)
+          (ensures (wz + 1) * 8 < pow2 64 /\ pos + (wz + 1) * 8 < pow2 64 /\
+                   (wz + 1) * 8 == wz * 8 + 8 /\
+                   (pos % 8 == 0 ==> (pos + (wz + 1) * 8) % 8 == 0))
   = minor_wz_mul_no_overflow wz bump;
-    assert_norm (2 * pow2 57 < pow2 64)
+    assert_norm (2 * pow2 57 < pow2 64);
+    FStar.Math.Lemmas.lemma_mod_plus pos (wz + 1) 8
 
 /// For the inner loop: jv < wosize implies field at obj_addr + jv*8 is in bounds
 let minor_field_in_bounds (obj_addr wosize jv: nat)
@@ -272,7 +290,7 @@ fn translate_object_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
             U64.v obj_addr + U64.v wosize * 8 <= minor_heap_size /\
             U64.v bump <= minor_heap_size /\
             U64.v minor_base_addr > 0)
-  decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !j))
+  decreases (U64.v wosize - U64.v !j)
   {
     let jv = !j;
     minor_field_in_bounds (U64.v obj_addr) (U64.v wosize) (U64.v jv);
@@ -334,7 +352,7 @@ fn translate_minor_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
               U64.v bump >= 8 /\
               U64.v minor_base_addr > 0 /\
               (not dn ==> U64.v pv + 8 <= U64.v bump))
-    decreases (Prims.op_Addition (Prims.op_Subtraction minor_heap_size (U64.v !pos)) (if !done_ then 0 else 1))
+    decreases (minor_heap_size - U64.v !pos + (if !done_ then 0 else 1))
   {
     let pv = !pos;
     let hdr = minor_read mh pv;
@@ -497,7 +515,7 @@ fn synthesize_one_closure_infix
             Seq.length farr_i == fwd_arr_size /\
             U64.v parent_fwd > 0 /\
             U64.v parent_fwd < pow2 63)
-  decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !j))
+  decreases (U64.v wosize - U64.v !j)
   {
     let jv = !j;
     minor_field_in_bounds (U64.v obj_addr) (U64.v wosize) (U64.v jv);
@@ -576,7 +594,7 @@ fn synthesize_infix_forwarding (mh: minor_heap_t) (fwd_arr: array U64.t)
               U64.v bump >= 8 /\
               Seq.length farr_i == fwd_arr_size /\
               (not dn ==> U64.v pv + 8 <= U64.v bump))
-      decreases (Prims.op_Addition (Prims.op_Subtraction minor_heap_size (U64.v !pos)) (if !done_ then 0 else 1))
+      decreases (minor_heap_size - U64.v !pos + (if !done_ then 0 else 1))
     {
       let pv = !pos;
       let hdr = minor_read mh pv;
@@ -706,7 +724,7 @@ fn find_infix_in_one_closure
             Seq.length rs_i == SZ.v cap /\
             SZ.v cnt_i <= SZ.v cap /\
             SZ.v cnt_i >= SZ.v 'cnt)
-  decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !j))
+  decreases (U64.v wosize - U64.v !j)
   {
     let jv = !j;
     minor_field_in_bounds (U64.v obj_addr) (U64.v wosize) (U64.v jv);
@@ -795,7 +813,7 @@ fn find_infix_parents (mh: minor_heap_t)
               SZ.v cnt <= SZ.v cap /\
               SZ.v cnt >= SZ.v nroots /\
               (not dn ==> U64.v pv + 8 <= U64.v bump))
-      decreases (Prims.op_Addition (Prims.op_Subtraction minor_heap_size (U64.v !pos)) (if !done_ then 0 else 1))
+      decreases (minor_heap_size - U64.v !pos + (if !done_ then 0 else 1))
     {
       let pv = !pos;
       let hdr = minor_read mh pv;

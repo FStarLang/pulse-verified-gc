@@ -159,6 +159,12 @@ let infix_wosize_bound_chain_pf
 /// `d`.  Both bounds are trivial, but discharging them inline drags the whole
 /// ambient context into a non-linear division query, so they are proved here
 /// in an empty context instead.
+/// `d == w * 8 /\ w > 0 ==> d >= 8`, in an empty context (Z3 5.x times out on
+/// it inside the forwarding proofs).
+let pos_words_ge8 (w: nat) (d: int)
+  : Lemma (requires w > 0 /\ d == w * 8) (ensures d >= 8)
+  = ()
+
 let infix_index_nonneg (d: nat)
   : Lemma (requires d >= 8) (ensures (d - 8) / 8 >= 0)
   = ()
@@ -771,7 +777,7 @@ let cheney_forward_normal_infix_ready_one
     let j = (d - 8) / 8 in
     reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
     assert (wz_infix > 0);
-    assert (d >= 8);
+    pos_words_ge8 wz_infix d;
     infix_index_nonneg d;
     assert (j >= 0);
     assert (minor_wosize minor p == wz);
@@ -1468,6 +1474,16 @@ let rec cheney_scan_preserves_fwd_noninfix_targets_valid
   end
 #pop-options
 
+/// fwd_classified is a strengthening of fwd_valid_or_infix (the infix
+/// disjunct additionally names a parent object).  Stated as a standalone
+/// lemma so the quantifier reasoning happens in a minimal context.
+#push-options "--fuel 0 --ifuel 0"
+private let fwd_classified_valid_or_infix (cs: cheney_state)
+  : Lemma (requires fwd_classified cs)
+          (ensures fwd_valid_or_infix cs.cs_fwd cs.cs_major)
+  = ()
+#pop-options
+
 /// Top-level: cheney_promote_fwd_valid_or_infix
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let cheney_promote_fwd_valid_or_infix
@@ -1488,6 +1504,7 @@ let cheney_promote_fwd_valid_or_infix
   cheney_scan_preserves_fwd_classified minor cs1 0 (cheney_fuel minor);
   let cs2 = cheney_scan minor cs1 0 (cheney_fuel minor) in
   assert (fwd_classified cs2);
+  fwd_classified_valid_or_infix cs2;
   cheney_promote_fwd_bounded minor major fp roots
 #pop-options
 

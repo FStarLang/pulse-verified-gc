@@ -103,14 +103,16 @@ val major_minor_field_rewritten
           Some (GC.Gen.CombinedGraph.MinorV dst) /\
         GC.Gen.MinorHeap.minor_wosize minor dst > 0)
       (ensures (
+        // `field_addr_fits` discharges the `UInt.size` side condition of the
+        // field address in an empty context (Z3 5.x times out on it here).
+        let fa = (GC.Gen.MinorCollectForwarding.Edges.field_addr_fits src i;
+                  U64.uint_to_t (U64.v src + i * 8)) in
         let prom = GC.Gen.Cheney.cheney_promote minor major fp roots in
         let res = GC.Gen.Cheney.cheney_collect_spec minor major fp roots in
-        let ov = GC.Gen.Base.to_minor_offset
-          (GC.Spec.Heap.read_word major (U64.uint_to_t (U64.v src + i * 8))) in
+        let ov = GC.Gen.Base.to_minor_offset (GC.Spec.Heap.read_word major fa) in
         promoted_image minor major fp roots dst (prom.fwd_map dst) /\
         GC.Gen.MinorHeap.resolve_minor minor ov == dst /\
-        GC.Spec.Heap.read_word res.mc_major
-          (U64.uint_to_t (U64.v src + i * 8)) == prom.fwd_map ov))
+        GC.Spec.Heap.read_word res.mc_major fa == prom.fwd_map ov))
 
 val final_major_survives_from_gen_gc_post
   : minor:minor_state -> major:heap -> fp:U64.t ->

@@ -30,7 +30,7 @@ out=$("$FSTAR_EXE" \
   $RETRY \
   --z3smtopt '(set-option :timeout 300000)' \
   --cache_checked_modules --cache_dir "$SCRATCH" \
-  --z3version 4.15.3 --odir "$ROOT/_output" \
+  --z3version ${Z3_VERSION:-5.3.0} --odir "$ROOT/_output" \
   --warn_error -321 --report_assumes warn \
   --already_cached 'Prims FStar Pulse PulseCore -GC' \
   --include "$ROOT/common/spec" --include "$ROOT/common/lib" --include "$ROOT/common/impl" \

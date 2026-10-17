@@ -45,8 +45,9 @@ let init_heap_normal_lemma (s: heap_state) (hdr: U64.t)
                            (wz: wosize{U64.v wz == SpecBase.heap_words - 1})
   : Lemma (requires SpecBase.heap_words >= 2 /\
                     hdr == makeHeader wz blue 0UL)
-          (ensures (SH.write_word (SH.write_word s zero_addr hdr)
-                                         (mword <: hp_addr) 0UL, mword)
+          (ensures ((SH.write_word (SH.write_word s zero_addr hdr)
+                                          (mword <: hp_addr) 0UL, mword)
+                    <: SpecBase.heap & U64.t)
                    == SA.init_heap_spec s)
   = ()
 
@@ -198,7 +199,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
            vhead == sr.fp_out /\
            vresult == sr.obj_out))
       )
-    decreases (Prims.op_Addition (U64.v !fuel_ref) (if !go then 1 else 0))
+    decreases (U64.v !fuel_ref + (if !go then 1 else 0))
   {
     let vfuel = !fuel_ref;
     if U64.eq vfuel 0UL {
@@ -427,7 +428,7 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
            vhead == sr.fp_out /\
            vresult == sr.obj_out))
       )
-    decreases (Prims.op_Addition (U64.v !fuel_ref) (if !go then 1 else 0))
+    decreases (U64.v !fuel_ref + (if !go then 1 else 0))
   {
     let vfuel = !fuel_ref;
     if U64.eq vfuel 0UL {

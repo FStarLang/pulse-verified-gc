@@ -266,11 +266,24 @@ let is_infix_in_minor (ms: minor_state) (addr: U64.t) : GTot bool =
 /// The infix header's wosize field encodes the word offset from infix val
 /// to parent val: parent = infix_val - wosize * 8.
 /// Returns 0 if the offset would underflow (defensive; minor_infix_wf prevents this).
+///
+/// `--fuel 0`: otherwise Z3 5.1 unrolls the bitvector definitions under
+/// `minor_wosize` instead of using its `nat` result type.
+#push-options "--fuel 0 --ifuel 0"
 let infix_parent (ms: minor_state) (addr: U64.t) : GTot U64.t =
   let off = minor_wosize ms addr * 8 in
   if off <= U64.v addr
   then U64.uint_to_t (U64.v addr - off)
   else 0UL
+#pop-options
+
+/// `infix_parent` never lies above its argument (both branches).  Stated as an
+/// SMT pattern so that the many callers needing `addr >= infix_parent addr`
+/// do not have to unfold `infix_parent` (and the bitvector definitions under
+/// `minor_wosize`) inside their large proof contexts.
+val infix_parent_le (ms: minor_state) (addr: U64.t)
+  : Lemma (ensures U64.v (infix_parent ms addr) <= U64.v addr)
+          [SMTPat (infix_parent ms addr)]
 
 /// ---------------------------------------------------------------------------
 /// Guard Completeness (trust assumption on the mutator)
@@ -346,7 +359,8 @@ let minor_infix_wf (ms: minor_state) : prop =
 /// the parent's value is addr minus the encoded offset (wosize*8).
 val infix_parent_value (ms: minor_state) (addr: U64.t)
   : Lemma (requires is_infix_in_minor ms addr /\ minor_infix_wf ms)
-          (ensures U64.v (infix_parent ms addr) == U64.v addr - minor_wosize ms addr * 8)
+          (ensures U64.v (infix_parent ms addr) == U64.v addr - minor_wosize ms addr * 8 /\
+                   U64.v (infix_parent ms addr) <= U64.v addr)
 
 /// When addr is an infix sub-object and minor_infix_wf holds,
 /// the parent is a valid minor object with expected bounds.

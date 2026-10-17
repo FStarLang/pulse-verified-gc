@@ -28,25 +28,9 @@ uint64_t heap_size_u64 = 0;
 
 bool FStar_UInt64_ne(uint64_t a, uint64_t b) { return a != b; }
 
-/* --- Pulse library functions --- */
-
-/* Pulse.Lib.Array.fill — fill an array with a constant value.
- * After ghost erasure: fill(n, arr, val, <erased>).
- * Optimized: use memset for zero fill (common case). */
-void Pulse_Lib_Array_fill(size_t n, uint64_t *arr, uint64_t val, void *ghost) {
-  (void)ghost;
-  if (val == 0)
-    memset(arr, 0, n * sizeof(uint64_t));
-  else
-    for (size_t i = 0; i < n; i++) arr[i] = val;
-}
-
-/* Pulse.Lib.Array.zeroize — zero a byte array.
- * After ghost erasure: zeroize(n, arr, <erased>). */
-void Pulse_Lib_Array_zeroize(size_t n, uint8_t *arr, void *ghost) {
-  (void)ghost;
-  memset(arr, 0, n);
-}
+/* The Pulse.Lib.Array functions the GC calls (`fill`, `zeroize`) are now
+ * extracted by F* together with the GC (see ../Makefile), so they are no
+ * longer provided here. */
 
 /* --- Word-level heap read/write (GC.Impl.ArrayWord assumed vals) ---
  * On little-endian platforms (x86-64, AArch64-LE), these are simple
