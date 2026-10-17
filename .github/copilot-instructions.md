@@ -37,8 +37,8 @@ depend on each other.
 ### Toolchain
 
 F\* and KaRaMeL live in `./fstar/` and are installed by `./setup.sh` (which pins a
-specific nightly — see `VERSION` in that script). Z3 **4.15.3** ships with that
-installation; every build passes `--z3version 4.15.3` explicitly.
+specific nightly — see `VERSION` in that script). Z3 **5.3.0** ships with that
+installation; every build passes `--z3version 5.3.0` explicitly.
 
 ```bash
 ./setup.sh          # download + unpack the pinned F* nightly and krml into ./fstar
@@ -76,7 +76,7 @@ dependency scanning behaves oddly, `make clean` (or `rm -rf _cache`) and rebuild
 ### Verifying a single module
 
 ```bash
-./fstar/bin/fstar.exe --z3version 4.15.3 --retry 3 \
+./fstar/bin/fstar.exe --z3version 5.3.0 --retry 3 \
   --cache_checked_modules --cache_dir _cache --odir _output \
   --warn_error -321 --report_assumes warn \
   --already_cached 'Prims FStar Pulse PulseCore -GC' \
@@ -237,7 +237,7 @@ library and unmarshals `.checked` files, so it must be built against *the same
 F\* build* that produced them:
 
 - The cache version must match (`fstar.exe --print_cache_version`). Our
-  nightly-2026-08-15 emits **89**; a current FStar checkout emits 90.
+  nightly-2026-10-17 emits **102**.
 - Linking against `./fstar/lib` fails with *"inconsistent assumptions over
   interface Stdlib"*: the binary nightly's `.cmi`s were built against a
   different OCaml 5.3.0 build than a typical opam switch.
@@ -318,7 +318,7 @@ checked-in C.
 
 ### SMT Tuning
 Flags are set centrally in the Makefiles, not per file:
-- Baseline: `--z3version 4.15.3 --retry 3 --warn_error -321-233-331` plus the
+- Baseline: `--z3version 5.3.0 --retry 3 --warn_error -321-233-331` plus the
   shared `--include` list and `--cache_dir _cache`.
 - Modules listed in `EAGER_QI_CHECKED` (root Makefile ~line 216, `generational/Makefile`
   ~line 120) additionally get `--z3smtopt '(set-option :smt.qi.eager_threshold 100)'`.
@@ -331,7 +331,7 @@ fuel and rlimit tuning. Because interfaces no longer scope over implementations,
 For stubborn proofs: add intermediate `assert` statements to guide the solver, factor the goal into a top-level helper lemma proved in an empty context, or increase `--z3rlimit`. `--split_queries` no longer exists in F\*; see "Z3 4.15.3 and `--retry`" below.
 
 ### Z3 4.15.3 and `--retry`
-The project pins Z3 **4.15.3** (`--z3version 4.15.3`, bundled under `fstar/lib/fstar/z3-4.15.3/`). Under this version a number of otherwise trivial leaf goals — nat-ness side conditions (`fuel - 1 >= 0`), alignment facts (`x % 8 == 0`), `U64.uint_to_t` bounds — intermittently send the solver down a search path that exhausts the rlimit, even though a neighbouring identical goal is discharged in milliseconds.
+The project now pins Z3 **5.3.0** (`--z3version 5.3.0`, bundled under `fstar/lib/fstar/z3-5.3.0/`). The workarounds below date from Z3 4.15.3, under which a number of otherwise trivial leaf goals — nat-ness side conditions (`fuel - 1 >= 0`), alignment facts (`x % 8 == 0`), `U64.uint_to_t` bounds — intermittently send the solver down a search path that exhausts the rlimit, even though a neighbouring identical goal is discharged in milliseconds.
 
 Worse, some of these searches never terminate *and never charge the rlimit*, so
 `--z3rlimit` cannot bound them: the module simply hangs. Four mitigations are in place,
