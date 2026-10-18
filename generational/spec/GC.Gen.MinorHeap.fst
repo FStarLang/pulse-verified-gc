@@ -45,7 +45,7 @@ private let field_offset_from_header (xv: int) (i: nat)
   = ()
 #pop-options
 
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 let rec minor_chain_valid (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
   : GTot bool (decreases (bump - pos)) =
   if pos + 8 > bump then true
@@ -64,7 +64,7 @@ let rec minor_chain_valid (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat
 
 /// Chain no-infix: same walk structure, checks tag <> 249 at each header position.
 /// Where chain_valid returns false (wz=0 or overflow), no_infix is vacuously true.
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 let rec minor_chain_no_infix (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
   : GTot bool (decreases (bump - pos)) =
   if pos + 8 > bump then true
@@ -448,7 +448,7 @@ let minor_chain_no_infix_extend
 /// ---------------------------------------------------------------------------
 
 /// Every element in the walk is a valid object address
-#push-options "--fuel 3 --ifuel 0 --z3rlimit 30 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 30 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let rec minor_objects_aux_valid (data: minor_heap) (pos: nat{pos % 8 == 0}) 
                                  (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
                                  (x: U64.t)
@@ -504,7 +504,7 @@ let minor_scan_wosize_cases (ms: minor_state) (obj: U64.t)
 /// Objects returned by minor_objects_aux have wosize < minor_heap_size.
 /// Proof: at each step, pos + (wz+1)*8 <= bump <= minor_heap_size,
 /// so wz+1 <= minor_heap_size/8, thus wz < minor_heap_size.
-#push-options "--fuel 2 --ifuel 0 --z3rlimit 15"
+#push-options "--fuel 2 --ifuel 0 --z3rlimit 15 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 private let rec minor_objects_aux_wosize_bound_raw
   (data: minor_heap) (pos: nat{pos % 8 == 0})
   (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
