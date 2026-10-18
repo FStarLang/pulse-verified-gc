@@ -52,7 +52,10 @@ let cheney_promote_preserves_old_major_field_context = MCFH.cheney_promote_prese
 let mem_graph_vertex_at_is_obj_addr = MCFH.mem_graph_vertex_at_is_obj_addr
 let combined_reachable_minor_has_fwd = MCFE.combined_reachable_minor_has_fwd
 let combined_reachable_minor_has_fwd_from_slots = MCFE.combined_reachable_minor_has_fwd_from_slots
+// See the val: the ensures' `uint_to_t` side condition is rechecked here.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 let combined_major_minor_field_forwarded = MCFE.combined_major_minor_field_forwarded
+#pop-options
 let combined_reachable_edge_forwarded_normal = MCFNE.combined_reachable_edge_forwarded_normal
 let fwd_disjoint_reachable_major_intro = MCFNE.fwd_disjoint_reachable_major_intro
 let normal_edge_forward_ready_intro = MCFNE.normal_edge_forward_ready_intro
@@ -707,6 +710,28 @@ private let post_edge_from_major_image_reflects_mem_ce
     end
 #pop-options
 
+/// The `exists` body of `heap_graph_edge_to_field_read`'s postcondition, and a
+/// witness for it.  Kept out of `post_edge_from_major_image_reflects_target`, so
+/// that its `uint_to_t` side conditions are not rechecked in that large context.
+private let edge_field (g: heap) (src dst: obj_addr) (j: nat) : prop =
+  j < U64.v (wosize_of_object src g) /\
+  U64.v src + j * 8 + 8 <= heap_size /\
+  (U64.v src + j * 8) % 8 == 0 /\
+  HeapGraph.is_pointer_field
+    (read_word g (U64.uint_to_t (U64.v src + j * 8))) /\
+  HeapGraph.resolve_field g
+    (read_word g (U64.uint_to_t (U64.v src + j * 8))) == dst
+
+private let choose_edge_field (g: heap) (src dst: obj_addr)
+  : Ghost nat
+    (requires mem_graph_edge (HeapModel.create_graph g) src dst /\ well_formed_heap g)
+    (ensures fun j ->
+      Seq.mem src (objects zero_addr g) /\
+      is_no_scan src g = false /\
+      edge_field g src dst j)
+  = heap_graph_edge_to_field_read g src dst;
+    FStar.IndefiniteDescription.indefinite_description_ghost nat (edge_field g src dst)
+
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 private let post_edge_from_major_image_reflects_target
   (minor: minor_state) (major: heap) (fp: U64.t)
@@ -748,16 +773,8 @@ private let post_edge_from_major_image_reflects_target
     assert (is_val_addr y);
     post_minor_edge_to_mem_graph_edge minor major fp roots src y;
     CheneyPres.cheney_collect_preserves_wfh_from_shape minor major fp roots;
-    heap_graph_edge_to_field_read updated src_obj (y <: obj_addr);
-    let j = FStar.IndefiniteDescription.indefinite_description_ghost nat
-      (fun j ->
-        j < U64.v (wosize_of_object src_obj updated) /\
-        U64.v src + j * 8 + 8 <= heap_size /\
-        (U64.v src + j * 8) % 8 == 0 /\
-        HeapGraph.is_pointer_field
-          (read_word updated (U64.uint_to_t (U64.v src + j * 8))) /\
-        HeapGraph.resolve_field updated
-          (read_word updated (U64.uint_to_t (U64.v src + j * 8))) == y) in
+    let j = choose_edge_field updated src_obj (y <: obj_addr) in
+    MCFE.field_addr_fits src j;
     let field_addr = U64.uint_to_t (U64.v src + j * 8) in
     assert (HeapGraph.is_pointer_field (read_word updated field_addr));
     assert (HeapGraph.resolve_field updated (read_word updated field_addr) == y);
