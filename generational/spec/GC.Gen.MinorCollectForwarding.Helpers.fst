@@ -682,6 +682,14 @@ let header_eq_preserves_wosize_no_scan
 /// Resolution of forwarding images
 /// ---------------------------------------------------------------------------
 
+/// An interior pointer's wosize (its offset in words) is below its parent's
+/// wosize.  Empty-context arithmetic step for `fwd_image_resolves`.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let infix_wosize_lt_parent (h p w wp: int)
+  : Lemma (requires p == h - w * 8 /\ h < p + wp * 8) (ensures w < wp)
+  = ()
+#pop-options
+
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
 let fwd_image_resolves
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (x: U64.t)
@@ -716,7 +724,10 @@ let fwd_image_resolves
       // enumerated object and hence strictly above `zero_addr`
       objects_addresses_gt_start zero_addr g
         (U64.uint_to_t (U64.v t - U64.v (wosize_of_object t g) * 8) <: obj_addr);
-      RBridge.aligned_gt_ge_plus_mword (U64.v t) (U64.v zero_addr)
+      RBridge.aligned_gt_ge_plus_mword (U64.v t) (U64.v zero_addr);
+      infix_wosize_lt_parent (U64.v t) (U64.v t - U64.v (wosize_of_object t g) * 8)
+        (U64.v (wosize_of_object t g))
+        (U64.v (wosize_of_object (U64.uint_to_t (U64.v t - U64.v (wosize_of_object t g) * 8)) g))
     end else begin
       resolve_minor_non_infix minor x;
       CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots;

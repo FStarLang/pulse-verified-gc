@@ -459,7 +459,7 @@ let mark_step_bounded_preserves_color_inv
 /// Part 6: mark_inner_loop preserves mark_color_inv
 /// =========================================================================
 
-#push-options "--z3rlimit 10"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 let rec mark_inner_loop_preserves_color_inv
   (h_init: heap) (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
   : Lemma (requires mark_color_inv h_init g /\ bounded_stack_props g st)
@@ -467,10 +467,11 @@ let rec mark_inner_loop_preserves_color_inv
           (decreases fuel)
   = if fuel = 0 || Seq.length st = 0 then ()
     else begin
+      let fuel' : nat = fuel - 1 in
       mark_step_bounded_preserves_color_inv h_init g st cap;
       mark_step_bounded_preserves_bsp g st cap;
       let (g', st') = mark_step_bounded g st cap in
-      mark_inner_loop_preserves_color_inv h_init g' st' cap (fuel - 1)
+      mark_inner_loop_preserves_color_inv h_init g' st' cap fuel'
     end
 #pop-options
 

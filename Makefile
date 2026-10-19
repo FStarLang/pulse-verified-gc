@@ -20,7 +20,7 @@ KRML       ?= $(KRML_HOME)/krml
 FSTAR_LIB  := $(shell $(FSTAR_EXE) --locate_lib 2>/dev/null)
 
 # Z3 version used for all SMT queries (bundled with the F* installation).
-Z3_VERSION ?= 4.15.3
+Z3_VERSION ?= 5.3.0
 
 # Z3 4.15.3 regression workaround.
 #

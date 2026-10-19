@@ -396,6 +396,7 @@ let post_minor_c_wosize
   ConcreteMajor.spot_major_c_reads r;
   assert (SpecObj.is_blue c major = false);
   assert (Layout.c_to_a_field_index < U64.v (SpecObj.wosize_of_object c major));
+  aligned_plus_mul8 (U64.v c) Layout.c_to_a_field_index;
   MinorFwd.cheney_promote_preserves_old_major_field_context
     minor major fp roots c Layout.c_to_a_field_index;
   Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;

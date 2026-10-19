@@ -116,19 +116,63 @@ private let or_byte_windows_identity (w: UInt.uint_t 64)
     UInt.nth_lemma #64 (or_bytes t0 t1 t2 t3 t4 t5 t6 t7) w
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+/// Value of one decomposed-and-recombined byte, as a FStar.UInt term.
+private let byte_roundtrip (v: U64.t) (k: FStar.UInt32.t{FStar.UInt32.v k < 64})
+  : Lemma (U64.v (uint8_to_uint64 (uint64_to_uint8 (U64.shift_right v k))) ==
+           UInt.logand #64 (UInt.shift_right #64 (U64.v v) (FStar.UInt32.v k)) 255)
+  = assert_norm (pow2 8 == 256);
+    UInt.logand_mask #64 (UInt.shift_right #64 (U64.v v) (FStar.UInt32.v k)) 8
+
+private let shift_zero (x: UInt.uint_t 64)
+  : Lemma (UInt.shift_left #64 x 0 == x /\ UInt.shift_right #64 x 0 == x)
+  = UInt.shift_left_value_lemma #64 x 0;
+    UInt.shift_right_value_lemma #64 x 0;
+    assert_norm (pow2 0 == 1)
+
+#push-options "--fuel 0 --ifuel 0"
 let combine_decompose_identity (v: U64.t)
   = let w = U64.v v in
-    assert_norm (pow2 8 == 256);
-    UInt.logand_mask #64 w 8;
-    UInt.logand_mask #64 (UInt.shift_right #64 w 8) 8;
-    UInt.logand_mask #64 (UInt.shift_right #64 w 16) 8;
-    UInt.logand_mask #64 (UInt.shift_right #64 w 24) 8;
-    UInt.logand_mask #64 (UInt.shift_right #64 w 32) 8;
-    UInt.logand_mask #64 (UInt.shift_right #64 w 40) 8;
-    UInt.logand_mask #64 (UInt.shift_right #64 w 48) 8;
-    UInt.logand_mask #64 (UInt.shift_right #64 w 56) 8;
-    or_byte_windows_identity w
+    let b0 = uint8_to_uint64 (uint64_to_uint8 v) in
+    let b1 = uint8_to_uint64 (uint64_to_uint8 (U64.shift_right v 8ul)) in
+    let b2 = uint8_to_uint64 (uint64_to_uint8 (U64.shift_right v 16ul)) in
+    let b3 = uint8_to_uint64 (uint64_to_uint8 (U64.shift_right v 24ul)) in
+    let b4 = uint8_to_uint64 (uint64_to_uint8 (U64.shift_right v 32ul)) in
+    let b5 = uint8_to_uint64 (uint64_to_uint8 (U64.shift_right v 40ul)) in
+    let b6 = uint8_to_uint64 (uint64_to_uint8 (U64.shift_right v 48ul)) in
+    let b7 = uint8_to_uint64 (uint64_to_uint8 (U64.shift_right v 56ul)) in
+    byte_roundtrip v 0ul;
+    assert (U64.shift_right v 0ul == v);
+    byte_roundtrip v 8ul;  byte_roundtrip v 16ul; byte_roundtrip v 24ul;
+    byte_roundtrip v 32ul; byte_roundtrip v 40ul; byte_roundtrip v 48ul;
+    byte_roundtrip v 56ul;
+    shift_zero w;
+    shift_zero (UInt.logand #64 w 255);
+    let t0 = UInt.shift_left #64 (UInt.logand #64 (UInt.shift_right #64 w 0) 255) 0 in
+    let t1 = UInt.shift_left #64 (UInt.logand #64 (UInt.shift_right #64 w 8) 255) 8 in
+    let t2 = UInt.shift_left #64 (UInt.logand #64 (UInt.shift_right #64 w 16) 255) 16 in
+    let t3 = UInt.shift_left #64 (UInt.logand #64 (UInt.shift_right #64 w 24) 255) 24 in
+    let t4 = UInt.shift_left #64 (UInt.logand #64 (UInt.shift_right #64 w 32) 255) 32 in
+    let t5 = UInt.shift_left #64 (UInt.logand #64 (UInt.shift_right #64 w 40) 255) 40 in
+    let t6 = UInt.shift_left #64 (UInt.logand #64 (UInt.shift_right #64 w 48) 255) 48 in
+    let t7 = UInt.shift_left #64 (UInt.logand #64 (UInt.shift_right #64 w 56) 255) 56 in
+    assert (U64.v b0 == t0);
+    assert (U64.v (U64.shift_left b1 8ul) == t1);
+    assert (U64.v (U64.shift_left b2 16ul) == t2);
+    assert (U64.v (U64.shift_left b3 24ul) == t3);
+    assert (U64.v (U64.shift_left b4 32ul) == t4);
+    assert (U64.v (U64.shift_left b5 40ul) == t5);
+    assert (U64.v (U64.shift_left b6 48ul) == t6);
+    assert (U64.v (U64.shift_left b7 56ul) == t7);
+    or_byte_windows_identity w;
+    assert (U64.v (combine_bytes
+      (uint64_to_uint8 v)
+      (uint64_to_uint8 (U64.shift_right v 8ul))
+      (uint64_to_uint8 (U64.shift_right v 16ul))
+      (uint64_to_uint8 (U64.shift_right v 24ul))
+      (uint64_to_uint8 (U64.shift_right v 32ul))
+      (uint64_to_uint8 (U64.shift_right v 40ul))
+      (uint64_to_uint8 (U64.shift_right v 48ul))
+      (uint64_to_uint8 (U64.shift_right v 56ul))) == or_bytes t0 t1 t2 t3 t4 t5 t6 t7)
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -182,10 +226,26 @@ let read_write_same g addr v = ()
 #pop-options
 
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+/// A byte outside [addr, addr+8) is unchanged by write_word.
+private let write_word_index_other (g: heap) (addr: hp_addr) (v: U64.t)
+  (i: nat{i < Seq.length g})
+  : Lemma (requires i < U64.v addr \/ i >= U64.v addr + 8)
+          (ensures Seq.index (write_word g addr v) i == Seq.index g i)
+  = write_word_spec g addr v
+
 let read_write_different g addr1 addr2 v =
-  // write_word produces a chain of Seq.upd starting from g
-  // Each Seq.upd only changes one index, all addr2+k are outside [addr1, addr1+8)
-  ()
+  // Each of the 8 bytes read at addr2 lies outside [addr1, addr1+8)
+  let a2 = U64.v addr2 in
+  write_word_index_other g addr1 v a2;
+  write_word_index_other g addr1 v (a2 + 1);
+  write_word_index_other g addr1 v (a2 + 2);
+  write_word_index_other g addr1 v (a2 + 3);
+  write_word_index_other g addr1 v (a2 + 4);
+  write_word_index_other g addr1 v (a2 + 5);
+  write_word_index_other g addr1 v (a2 + 6);
+  write_word_index_other g addr1 v (a2 + 7);
+  read_word_spec g addr2;
+  read_word_spec (write_word g addr1 v) addr2
 #pop-options
 
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"

@@ -1850,6 +1850,48 @@ let if_branch_field_eq
 #pop-options
 
 /// ---------------------------------------------------------------------------
+/// Choose an (obj, j) field witness for a scannable field address.
+///
+/// Kept out of `two_pass_pointwise`: there, the refinements of the chosen
+/// witnesses had to be recovered in the presence of that lemma's quantified
+/// requires (notably the pairwise quantifier of `slots_pairwise_distinct`),
+/// which Z3 4.15.3 instantiated a million times before giving up.
+/// ---------------------------------------------------------------------------
+#push-options "--fuel 0 --ifuel 0"
+private let scannable_field_witness (major: heap) (a: nat)
+  : Ghost (obj_addr & nat)
+    (requires scannable_field_addr major a)
+    (ensures fun r ->
+      let obj = fst r in
+      let j = snd r in
+      Seq.mem obj (objects zero_addr major) /\
+      is_blue obj major = false /\
+      is_no_scan obj major = false /\
+      j < U64.v (wosize_of_object obj major) /\
+      a == U64.v obj + j * 8 /\
+      U64.v obj + j * 8 + 8 <= heap_size /\
+      (U64.v obj + j * 8) % 8 == 0)
+  = let obj : obj_addr = IndDesc.indefinite_description_ghost obj_addr (fun obj ->
+      exists (j: nat).
+        Seq.mem obj (objects zero_addr major) /\
+        is_blue obj major = false /\
+        is_no_scan obj major = false /\
+        j < U64.v (wosize_of_object obj major) /\
+        a == U64.v obj + j * 8 /\
+        U64.v obj + j * 8 + 8 <= heap_size /\
+        (U64.v obj + j * 8) % 8 == 0) in
+    let j : nat = IndDesc.indefinite_description_ghost nat (fun j ->
+        Seq.mem obj (objects zero_addr major) /\
+        is_blue obj major = false /\
+        is_no_scan obj major = false /\
+        j < U64.v (wosize_of_object obj major) /\
+        a == U64.v obj + j * 8 /\
+        U64.v obj + j * 8 + 8 <= heap_size /\
+        (U64.v obj + j * 8) % 8 == 0) in
+    (obj, j)
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// Pointwise core of the main theorem, hoisted to top level.
 ///
 /// This used to be a local `aux` inside `promoted_plus_slots_eq_full_update`.
@@ -1889,23 +1931,9 @@ private let two_pass_pointwise
     then begin
       if IndDesc.strong_excluded_middle (scannable_field_addr major a)
       then begin
-        let obj : obj_addr = IndDesc.indefinite_description_ghost obj_addr (fun obj ->
-          exists (j: nat).
-            Seq.mem obj (objects zero_addr major) /\
-            is_blue obj major = false /\
-            is_no_scan obj major = false /\
-            j < U64.v (wosize_of_object obj major) /\
-            a == U64.v obj + j * 8 /\
-            U64.v obj + j * 8 + 8 <= heap_size /\
-            (U64.v obj + j * 8) % 8 == 0) in
-        let j : nat = IndDesc.indefinite_description_ghost nat (fun j ->
-            Seq.mem obj (objects zero_addr major) /\
-            is_blue obj major = false /\
-            is_no_scan obj major = false /\
-            j < U64.v (wosize_of_object obj major) /\
-            a == U64.v obj + j * 8 /\
-            U64.v obj + j * 8 + 8 <= heap_size /\
-            (U64.v obj + j * 8) % 8 == 0) in
+        let w = scannable_field_witness major a in
+        let obj : obj_addr = fst w in
+        let j : nat = snd w in
         if_branch_field_eq major fwd farr slots n obj j addr
       end else begin
         update_major_pointers_preserves_non_field major fwd addr;

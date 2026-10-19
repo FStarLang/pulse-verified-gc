@@ -203,7 +203,7 @@ fn push (st: gray_stack) (addr: obj_addr)
   with t contents. _;
   let top_val = B.op_Bang st.top;
   let new_top = SZ.sub top_val 1sz;
-  V.op_Array_Assignment st.storage new_top (addr <: U64.t);
+  V.op_Dot_Lparen_Rparen_Less_Minus st.storage new_top (addr <: U64.t);
   B.op_Colon_Equals st.top new_top;
   push_stack_lemma contents (SZ.v top_val) (SZ.v st.cap) addr 's;
   fold (is_gray_stack st (Seq.cons addr 's))
@@ -219,7 +219,7 @@ fn pop (st: gray_stack)
   unfold is_gray_stack;
   with t contents. _;
   let top_val = B.op_Bang st.top;
-  let v_raw = V.op_Array_Access st.storage top_val;
+  let v_raw = V.op_Dot_Lparen_Rparen st.storage top_val;
   let new_top = SZ.add top_val 1sz;
   B.op_Colon_Equals st.top new_top;
   pop_stack_lemma contents (SZ.v top_val) (SZ.v st.cap) 's;

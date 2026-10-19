@@ -461,12 +461,18 @@ let minor_successors_char (ms: minor_state) (x y: U64.t)
   = collect_minor_successors_char ms x 0 (minor_wosize ms x) y
 
 /// For objects in minor_objects, successors length < minor_heap_size
+private let length_lt_of_wosize_fits (l w: nat) (m: int)
+  : Lemma (requires l <= w /\ (w + 1) * 8 <= m) (ensures l < m) = ()
+
+#push-options "--fuel 0 --ifuel 0"
 let minor_successors_length_bound (ms: minor_state) (obj: U64.t)
   : Lemma (requires Seq.mem obj (minor_objects ms))
           (ensures Seq.length (minor_successors ms obj) < minor_heap_size)
   =
   minor_successors_length ms obj;
-  minor_objects_wosize_bound ms obj
+  minor_objects_wosize_bound ms obj;
+  length_lt_of_wosize_fits (Seq.length (minor_successors ms obj)) (minor_wosize ms obj) minor_heap_size
+#pop-options
   // (minor_wosize ms obj + 1) * 8 <= minor_heap_size
   // so minor_wosize ms obj <= minor_heap_size / 8 - 1 < minor_heap_size
 
@@ -655,6 +661,13 @@ let minor_reachable_closed (ms: minor_state) (roots: seq U64.t) (x y: U64.t)
   //   count_not_mem(minor_objects, empty) <= n (by count_not_mem_bound)
   //   So fuel >= |roots| + (n+1)*mhs >= |roots| + n*mhs >= |roots| + count*mhs
   count_not_mem_bound (minor_objects ms) (Seq.empty #U64.t);
+  FStar.Math.Lemmas.lemma_mult_le_right minor_heap_size
+    (count_not_mem (minor_objects ms) (Seq.empty #U64.t))
+    (Seq.length (minor_objects ms) + 1);
+  assert (Seq.length (resolve_roots ms roots) == Seq.length roots);
+  assert (minor_reachable_fuel ms roots >=
+          Seq.length (resolve_roots ms roots) +
+          count_not_mem (minor_objects ms) (Seq.empty #U64.t) * minor_heap_size);
   minor_reachable_aux_closed_aux ms (resolve_roots ms roots) Seq.empty
     (minor_reachable_fuel ms roots) x y
 

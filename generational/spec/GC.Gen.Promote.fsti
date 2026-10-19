@@ -149,7 +149,7 @@ val set_promoted_tag_unfold
 /// zero_promote_padding frame: reads at addresses != padding slot are unchanged.
 val zero_promote_padding_frame
   (g: heap) (dst: obj_addr) (wz: nat) (addr: hp_addr)
-  : Lemma (requires U64.v addr <> U64.v dst + wz * U64.v mword)
+  : Lemma (requires U64.v addr <> U64.v dst + wz * 8)  // `wz * U64.v mword` is nonlinear for Z3
           (ensures read_word (zero_promote_padding g dst wz) addr == read_word g addr)
 
 /// zero_promote_padding preserves wosize (only writes to a field, not a header).
@@ -452,6 +452,14 @@ val dst_fields_valid_from_bounds (addr: U64.t) (wz: pos)
   : Lemma (requires U64.v addr % 8 == 0 /\ U64.v addr + (wz - 1) * 8 + 8 <= heap_size)
           (ensures dst_fields_valid addr wz)
 
+/// Same, from the object bound of `wfh_part1_obj_bound` and a lower bound on
+/// the object's wosize.  Callers used to derive the scalar bound inline, which
+/// Z3 5.x fails to do inside their large contexts.
+val dst_fields_valid_from_obj (g: heap) (addr: obj_addr) (wz: pos)
+  : Lemma (requires U64.v addr + U64.v (wosize_of_object addr g) * 8 <= Seq.length g /\
+                    U64.v (wosize_of_object addr g) >= wz)
+          (ensures dst_fields_valid addr wz)
+
 /// copy_fields doesn't modify addresses outside the dst region
 val copy_fields_frame
   (minor: minor_state) (major: heap)
@@ -483,6 +491,9 @@ val copy_fields_all_correct
 
 /// After promotion, field data is preserved: every field of the promoted
 /// object in the major heap equals the corresponding minor-heap field.
+/// (`--fuel 0`: the statement's well-formedness needs no unfolding, and with
+/// fuel Z3 5.1.0 unrolls `promote_object` instead of using `dst_fields_valid`.)
+#push-options "--fuel 0 --ifuel 0"
 val promote_preserves_fields
   (minor: minor_state) (major: heap) (obj: U64.t)
   (fp: U64.t) (wosize: nat{wosize > 0})
@@ -496,6 +507,7 @@ val promote_preserves_fields
               (forall (j:nat). j < wosize ==>
                 read_word res.major_out (U64.uint_to_t (U64.v res.new_addr + j * 8)) ==
                 minor_read_field minor obj j)))
+#pop-options
 
 /// If allocation rounded a promoted block up by one word, the extra field is
 /// zeroed by `zero_promote_padding`, hence cannot be a pointer.

@@ -90,6 +90,16 @@ private let spot_mi_fwd_array_zero ()
 /// It really is an interior pointer
 /// ---------------------------------------------------------------------------
 
+/// `field_slot c 1` is the hp_addr `c + 8`, in an empty context (Z3 5.x can
+/// time out on this inside the proof below).
+#push-options "--fuel 0 --ifuel 0"
+private let field1_slot_eq (c: obj_addr) (f: hp_addr)
+  : Lemma (requires U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size /\
+                    U64.v f == U64.v c + 8)
+          (ensures MinorInfix.field_slot c Layout.c_to_a_field_index == f)
+  = U64.v_inj (MinorInfix.field_slot c Layout.c_to_a_field_index) f
+#pop-options
+
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 let spot_mi_field_is_interior r =
   Major.spot_major_layout_facts r;
@@ -99,6 +109,7 @@ let spot_mi_field_is_interior r =
   let major = Major.spot_major_heap r in
   let c = Major.spot_c r in
   assert (U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size);
+  field1_slot_eq c (Major.spot_c_field1 r);
   assert (MinorInfix.field_slot c Layout.c_to_a_field_index == Major.spot_c_field1 r);
   assert (SpecHeap.read_word major (Major.spot_c_field1 r) == (Layout.b_minor <: U64.t));
   to_minor_offset_in_minor_range (Layout.b_minor <: U64.t);

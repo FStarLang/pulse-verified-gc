@@ -634,6 +634,18 @@ let dst_fields_valid_from_bounds (addr: U64.t) (wz: pos)
     Classical.forall_intro (Classical.move_requires aux)
 #pop-options
 
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let dst_obj_bound_arith (d awz wz len: nat)
+  : Lemma (requires d % U64.v mword == 0 /\ d + awz * 8 <= len /\ len == heap_size /\
+                    awz >= wz /\ wz > 0)
+          (ensures d % 8 == 0 /\ d + (wz - 1) * 8 + 8 <= heap_size)
+  = ()
+
+let dst_fields_valid_from_obj (g: heap) (addr: obj_addr) (wz: pos)
+  = dst_obj_bound_arith (U64.v addr) (U64.v (wosize_of_object addr g)) wz (Seq.length g);
+    dst_fields_valid_from_bounds addr wz
+#pop-options
+
 /// copy_fields doesn't modify addresses outside the dst region [dst, dst+(n-1)*8+8).
 /// Proved by delegating to the internal copy_fields_preserves_other.
 #push-options "--z3rlimit 10 --fuel 2"
@@ -669,7 +681,7 @@ let copy_fields_all_correct
 /// Pointwise lemma: for a specific field j, promote_object preserves the value.
 /// Takes addr as pre-computed hp_addr to avoid uint_to_t subtyping cascade in ensures.
 #restart-solver
-#push-options "--z3rlimit 10 --fuel 2"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let promote_preserves_field_at
   (minor: minor_state) (major: heap) (obj: U64.t)
   (fp: U64.t) (wosize: nat{wosize > 0}) (j: nat)
@@ -703,9 +715,11 @@ let promote_preserves_field_at
     FStar.Math.Lemmas.lemma_mult_le_right 8 j (wosize - 1);
     assert (U64.v dst_obj + j * 8 + 8 <= heap_size);
     hd_address_spec dst_obj;
+    FStar.Math.Lemmas.lemma_mult_lt_right 8 j wosize;
     assert (j * 8 < wosize * 8);
-    assert (U64.v addr <> U64.v dst_obj + wosize * U64.v mword);
+    assert (U64.v addr <> U64.v dst_obj + wosize * 8);
     zero_promote_padding_frame copied dst_obj wosize addr;
+    assert (U64.v (hd_address dst_obj) + U64.v mword <= U64.v addr);
     set_promoted_tag_read_frame padded dst_obj tag addr
 #pop-options
 

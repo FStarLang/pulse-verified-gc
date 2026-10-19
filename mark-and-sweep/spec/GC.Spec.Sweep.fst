@@ -532,15 +532,17 @@ let sweep_object_preserves_other_header
       // White: set_field at obj + makeBlue at hd_address(obj)
       let ws_obj = wosize_of_object obj g in
       let hd_obj = GC.Spec.Heap.hd_address obj in
-      let g_sf = 
-        if U64.v ws_obj > 0 && U64.v hd_obj + U64.v mword * 2 <= heap_size then begin
-          if U64.v obj < U64.v x then
-            read_write_different g obj hd_x fp
-          else
-            read_write_different g obj hd_x fp;
-          HeapGraph.set_field g obj 1UL fp
-        end else g
-      in
+      let do_sf = U64.v ws_obj > 0 && U64.v hd_obj + U64.v mword * 2 <= heap_size in
+      // The frame lemma is called outside the let-bound `if` defining g_sf:
+      // F* drops the postcondition of a lemma called inside a let-bound `if`
+      // nested in an outer `if` before it reaches the code after the outer `if`.
+      if do_sf then begin
+        if U64.v obj < U64.v x then
+          read_write_different g obj hd_x fp
+        else
+          read_write_different g obj hd_x fp
+      end;
+      let g_sf = if do_sf then HeapGraph.set_field g obj 1UL fp else g in
       // makeBlue writes at hd_address(obj) ≠ hd_x (from hd_address_injective)
       makeBlue_eq obj g_sf;
       color_change_header_locality obj hd_x g_sf Header.Blue
