@@ -13,7 +13,7 @@ FSTAR_EXE  ?= $(FSTAR_HOME)/bin/fstar.exe
 FSTAR_LIB  := $(shell $(FSTAR_EXE) --locate_lib 2>/dev/null)
 
 CACHE_DIR ?= $(ROOT)/_cache
-Z3_VERSION ?= 4.15.3
+Z3_VERSION ?= 5.3.0
 RETRY ?= --retry 3
 Z3_TIMEOUT ?= --z3smtopt '(set-option :timeout 300000)'
 
