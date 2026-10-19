@@ -4,7 +4,7 @@
 # here on its own.
 #
 #   make verify     Verify the parallel-sweep spec modules
-#   make test       Extract to OCaml and compare sweep_par with the sequential pass
+#   make test       Extract to OCaml (Custard) and compare sweep_par with the sequential pass
 #   make clean
 
 ROOT       := $(abspath ..)
@@ -42,16 +42,30 @@ SPEC = spec/GC.Spec.SweepPar.Exec.fst spec/GC.Spec.SweepPar.fst spec/GC.Spec.Swe
 verify:
 	for f in $(SPEC); do $(FSTAR) $$f || exit 1; done
 
-# Modules extracted to OCaml: the parallel-sweep model and the spec modules
-# its executable twins call into.
-EXTRACT = '* -FStar -Prims -Pulse -PulseCore'
+# Custard (--codegen OCaml) extracts a whole program from its entry points,
+# and reads every module from its .checked file, so `verify` must have written
+# them (see docs/parallel-sweep-phase1.md).  The roots are the three
+# parallel-sweep modules, plus the spec functions the driver calls directly.
+# --custard_split writes one .ml per F* module, as the driver expects;
+# GC.Spec.Base.heap is kept by name because the driver's types use it.
+CUSTARD = \
+  --codegen OCaml --custard_split \
+  --custard_no_unfold GC.Spec.Base.heap \
+  --custard_entry_module GC.Spec.SweepPar \
+  --custard_entry_module GC.Spec.SweepPar.Exec \
+  --custard_entry_module GC.Spec.SweepPar.Mutants \
+  --custard_entry GC.Spec.Base.heap_size \
+  --custard_entry GC.Spec.Heap.read_word \
+  --custard_entry GC.Spec.Object.makeHeader \
+  --custard_entry GC.Spec.Object.getTag \
+  --custard_entry GC.Spec.Fields.is_pointer_field \
+  --custard_entry FStar.Seq.Base.seq_of_list \
+  --custard_entry FStar.Seq.Base.seq_to_list
 OUT = _build/ml
 
 test: verify
-	mkdir -p $(OUT)
-	# 342: GC.Spec.Base.heap_size refers to a noextract definition; build.sh
-	# restores it (see there).
-	$(FSTAR) --warn_error -342 --codegen OCaml --odir $(OUT) --extract $(EXTRACT) spec/GC.Spec.SweepPar.Mutants.fst
+	rm -rf $(OUT); mkdir -p $(OUT)
+	$(FSTAR) $(CUSTARD) --odir $(OUT) spec/GC.Spec.SweepPar.Mutants.fst
 	./test/build.sh $(OUT) $(FSTAR_LIB)
 	./test/run.sh
 

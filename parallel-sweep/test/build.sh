@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Build the Stage B test driver from the F*-extracted OCaml.
+# Build the Stage B test driver from the Custard-extracted OCaml.
 #
 #   build.sh <extracted-ml-dir> <fstar --locate_lib>
 #
 # The F* OCaml runtime shipped with ./fstar was compiled with OCaml 5.3, so
 # its .cmx files cannot be linked here (OCaml 4.14, opam switch fstar-gc).
 # Instead the runtime's own .ml sources, under <locate_lib>/lib, are
-# compiled: only the modules the extracted code reaches.
+# compiled: only the modules the extracted code reaches and Custard did not
+# write itself.
 set -euo pipefail
 
 ML=$(cd "$1" && pwd)
@@ -19,7 +20,7 @@ rm -rf "$OBJ"; mkdir -p "$OBJ"
 PKGS=batteries,zarith,stdint,yojson,ppx_deriving.show,ppx_deriving_yojson
 
 find_rt() {
-  for d in "$RT_ROOT/app" "$RT_ROOT/app/ints" "$RT_ROOT/ulib.ml"; do
+  for d in "$RT_ROOT/app" "$RT_ROOT/app/ints"; do
     if [ -f "$d/$1.ml" ]; then echo "$d/$1.ml"; return; fi
   done
 }
@@ -31,12 +32,8 @@ deps_of() { ocamlfind ocamldep -modules "$1" | cut -d: -f2 | tr ' ' '\n' | grep 
 cp "$HERE/GC_Spec_ZeroAddr.ml" "$OBJ/"
 cp "$ML"/*.ml "$OBJ/"
 
-# GC.Spec.Base.heap_size is `GC.Spec.ZeroAddr.heap_size`, which is noextract
-# (`let heap_size = U64.v heap_size_u64`), so extraction leaves `Obj.magic ()`.
-# Put the definition back; fail loudly if the extracted line ever changes.
-want='let heap_size : Prims.pos= Obj.magic ()'
-grep -qxF "$want" "$OBJ/GC_Spec_Base.ml" || { echo "build.sh: heap_size line not found in GC_Spec_Base.ml" >&2; exit 1; }
-sed -i '' 's/^let heap_size : Prims.pos= Obj.magic ()$/let heap_size : Prims.pos= FStar_UInt64.v GC_Spec_ZeroAddr.heap_size_u64/' "$OBJ/GC_Spec_Base.ml"
+# Custard writes only real code: anything erased that is still used shows up
+# as `Obj.magic ()`.  Fail loudly if the extracted GC code has one.
 if grep -q 'Obj.magic ()' "$OBJ"/GC_*.ml; then
   echo "build.sh: an erased value is still used by extracted code:" >&2
   grep -n 'Obj.magic ()' "$OBJ"/GC_*.ml >&2; exit 1
@@ -50,8 +47,10 @@ while [ -n "$todo" ]; do
   for m in $todo; do
     case "$seen" in *" $m "*) continue;; esac
     seen="$seen$m "
+    # Custard emits the F* library modules it compiles (FStar_Seq_Base, ...);
+    # only the hand-written runtime is taken from <locate_lib>.
     f=$(find_rt "$m")
-    if [ -n "$f" ]; then cp "$f" "$OBJ/"; next="$next $(deps_of "$f")"; fi
+    if [ -n "$f" ] && [ ! -f "$OBJ/$(basename "$f")" ]; then cp "$f" "$OBJ/"; next="$next $(deps_of "$f")"; fi
   done
   todo=$next
 done
