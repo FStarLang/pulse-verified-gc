@@ -133,6 +133,9 @@ let cheney_forward_normal_other_fwd (minor: minor_state) (cs: cheney_state) (add
   = ()
 
 /// Unfold lemmas for cheney_forward_one (infix-aware)
+/// (`--fuel 0`: `cheney_forward_one` is not recursive; with fuel, Z3 5.1.0
+/// unrolls the bitvector definitions under `infix_parent` and times out.)
+#push-options "--fuel 0 --ifuel 0"
 
 let cheney_forward_one_noop (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   = ()
@@ -159,6 +162,7 @@ let cheney_forward_one_infix_guard_fail (minor: minor_state) (cs: cheney_state) 
 /// extend_forwarding cs'.cs_fwd addr val, where val = parent_fwd + delta
 let cheney_forward_one_infix_guard_pass (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   = ()
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// cheney_forward_fields: forward all children of an object

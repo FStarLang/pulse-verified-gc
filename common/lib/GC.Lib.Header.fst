@@ -87,15 +87,12 @@ let set_color (v: uint_t 64) (c: uint_t 64{c < 4}) : uint_t 64 =
 
 /// Bounds lemmas needed for unpacking
 ///
-/// `--fuel 8 --ifuel 2`: this one-line lemma discharges only at fuel 8.  Left to
-/// search, F* tries (2,1), (2,2) and (4,2) three times each and every one of
-/// those eight attempts runs the whole rlimit 12 to exhaustion before being
-/// discarded -- roughly a hundred rlimit units of pure waste for a proof that
-/// then costs 6.6.  See PROOF_COMPLEXITY.md §6.4.
-#push-options "--z3rlimit 12 --fuel 8 --ifuel 2"
+/// `mask_tag` is computed as `ones 64 >> 56`; its value, 255, is given
+/// explicitly rather than left to unfolding with high fuel.
 let get_tag_bound (v: uint_t 64) : Lemma (get_tag v < 256) =
-  logand_le #64 v 255
-#pop-options
+  shift_right_value_lemma #64 (ones 64) 56;
+  assert_norm ((pow2 64 - 1) / pow2 56 == 255);
+  logand_le #64 v mask_tag
 
 let get_wosize_bound (v: uint_t 64) : Lemma (get_wosize v < pow2 54) =
   shift_right_value_lemma #64 v 10;
@@ -303,9 +300,12 @@ private let small_value_nth (t: uint_t 64{t < 256}) (i: nat{i < 64 /\ i < 56})
 /// Helper: c < 4 means only bits 62-63 can be non-zero
 private let small_2bit_nth (c: uint_t 64{c < 4}) (i: nat{i < 64 /\ i < 62})
   : Lemma (nth c i = false)
-  = logand_mask #64 c 2;
+  = assert_norm (pow2 1 == 2 /\ pow2 2 == 4);
+    logand_mask #64 c 2;
     assert (logand c 3 == c);
     logand_definition c 3 i;
+    logor_disjoint #64 2 1 1;
+    logor_commutative #64 1 2;
     logor_definition #64 1 2 i;
     one_nth_lemma #64 i;
     pow2_nth_lemma #64 1 i

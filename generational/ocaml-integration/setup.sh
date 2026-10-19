@@ -72,12 +72,13 @@ build_verified_gc() {
     fi
     git apply ../patches/runtime_gen.patch
     
-    # Build just the runtime (we only need ocamlrun for bytecode)
+    # Build just the runtime: ocamlrun for bytecode, libasmrun.a for native
+    # (stock ocamlopt links against it with -I, so no compiler rebuild)
     if [ ! -f Makefile.config ]; then
         ./configure --disable-naked-pointers
     fi
     echo "=== Building patched OCaml runtime ==="
-    make -C runtime -j8 ocamlrun
+    make -C runtime -j8 ocamlrun libasmrun.a
     cd ..
     echo "=== Verified generational GC OCaml runtime ready ==="
 }

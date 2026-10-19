@@ -312,12 +312,13 @@ val alloc_from_block_split_normal (g: heap) (obj: obj_addr) (wz: nat) (next: U64
                     let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
                     let g1 = write_word g hd ahdr in
                     let rhn = U64.v hd + (1 + wz) * 8 in
-                    let rh : hp_addr = U64.uint_to_t rhn in
+                    let rh : hp_addr = (aligned_plus_mul8 (U64.v hd) (1 + wz);
+                                        U64.uint_to_t rhn) in
                     let rw = bwz - wz - 1 in
                     let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
                     let g2 = write_word g1 rh rhdr in
                     let ron = rhn + 8 in
-                    let ro : hp_addr = U64.uint_to_t ron in
+                    let ro : hp_addr = (aligned_plus_mul8 rhn 1; U64.uint_to_t ron) in
                     let g3 = write_word g2 ro next in
                     alloc_from_block g obj wz next == (g3, ro)))
 
@@ -345,7 +346,8 @@ val alloc_from_block_split_rem_obj_oob (g: heap) (obj: obj_addr) (wz: nat) (next
                     let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
                     let g1 = write_word g hd ahdr in
                     let rhn = U64.v hd + (1 + wz) * 8 in
-                    let rh : hp_addr = U64.uint_to_t rhn in
+                    let rh : hp_addr = (aligned_plus_mul8 (U64.v hd) (1 + wz);
+                                        U64.uint_to_t rhn) in
                     let hdr = read_word g hd in
                     let bwz = U64.v (getWosize hdr) in
                     let rw = bwz - wz - 1 in
@@ -388,7 +390,8 @@ val alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U6
                     let hdr = read_word g hd in
                     let bwz = U64.v (getWosize hdr) in
                     let rhn = U64.v hd + (1 + wz) * 8 in
-                    let rh : hp_addr = U64.uint_to_t rhn in
+                    let rh : hp_addr = (aligned_plus_mul8 (U64.v hd) (1 + wz);
+                                        U64.uint_to_t rhn) in
                     let rw = bwz - wz - 1 in
                     read_word g' rh == make_header (U64.uint_to_t rw) blue_bits 0UL))
 
@@ -399,7 +402,7 @@ val alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next:
                     let hd = hd_address obj in
                     let rhn = U64.v hd + (1 + wz) * 8 in
                     let ron = rhn + 8 in
-                    let ro : hp_addr = U64.uint_to_t ron in
+                    let ro : hp_addr = (aligned_plus_mul8 rhn 1; U64.uint_to_t ron) in
                     read_word g' ro == next))
 
 /// Reading an unwritten address: result equals original

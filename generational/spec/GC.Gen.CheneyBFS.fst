@@ -168,6 +168,10 @@ let scan_preserves_fwd_covers_infix_roots
 
 #pop-options
 
+/// Turns the negated branch test `minor_wosize .. = 0` into the `> 0` form
+/// required by the Cheney unfolding lemmas, in a context where it is cheap.
+private let nat_nonzero_pos (n: nat) : Lemma (requires n <> 0) (ensures n > 0) = ()
+
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 let forward_one_queue_prefix
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t) (k: nat)
@@ -183,6 +187,7 @@ let forward_one_queue_prefix
       else if minor_wosize minor parent = 0 then
         CheneySpec.cheney_forward_normal_noop_wz0 minor cs parent
       else begin
+        nat_nonzero_pos (minor_wosize minor parent);
         let res = promote_object minor cs.cs_major parent cs.cs_fp (minor_wosize minor parent) in
         if res.new_addr = 0UL then
           CheneySpec.cheney_forward_normal_noop_oom minor cs parent
@@ -198,6 +203,7 @@ let forward_one_queue_prefix
       else if minor_wosize minor addr = 0 then
         CheneySpec.cheney_forward_normal_noop_wz0 minor cs addr
       else begin
+        nat_nonzero_pos (minor_wosize minor addr);
         let res = promote_object minor cs.cs_major addr cs.cs_fp (minor_wosize minor addr) in
         if res.new_addr = 0UL then
           CheneySpec.cheney_forward_normal_noop_oom minor cs addr
@@ -387,17 +393,19 @@ let field_prefix_step
   =
     let child = to_minor_offset (minor_read_field minor parent idx) in
     let cs' = CheneySpec.cheney_forward_one minor cs child in
-    reveal_opaque (`%field_prefix_covered) (field_prefix_covered minor cs parent idx);
-    reveal_opaque (`%field_prefix_covered) (field_prefix_covered minor cs' parent (idx + 1));
+    // The prefix facts are revealed only where they are used: with both
+    // quantified facts in scope, Z3 5.x times out on `j < idx` below.
     let aux (j:nat{j < idx + 1}) : Lemma (addr_covered minor cs' (to_minor_offset (minor_read_field minor parent j)))
       =
         if j = idx then ()
         else begin
           assert (j < idx);
+          reveal_opaque (`%field_prefix_covered) (field_prefix_covered minor cs parent idx);
           forward_one_preserves_addr_covered minor cs child (to_minor_offset (minor_read_field minor parent j))
         end
     in
-    FStar.Classical.forall_intro aux
+    FStar.Classical.forall_intro aux;
+    reveal_opaque (`%field_prefix_covered) (field_prefix_covered minor cs' parent (idx + 1))
 
 let field_prefix_step_oom
   (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t) (idx: nat)

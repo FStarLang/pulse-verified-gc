@@ -15,6 +15,10 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 /// Helper: establish all common facts from split precondition under part1
+/// (fuel 0: the well-formedness goals of this signature are pure arithmetic;
+/// with fuel, unfolding the heap/bit-vector definitions in the hypotheses
+/// makes the `U64.uint_to_t next_hd_nat` typing goal time out)
+#push-options "--fuel 0 --ifuel 0"
 val alloc_split_facts_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   Lemma (requires well_formed_heap_part1 g /\
@@ -60,6 +64,7 @@ val alloc_split_facts_part1 :
                    (next_hd_nat < heap_size ==>
                      objects (U64.uint_to_t next_hd_nat) g3 ==
                      objects (U64.uint_to_t next_hd_nat) g))))
+#pop-options
 
 /// Helper: g3 agrees with g at non-write positions under part1
 val alloc_split_g3_agrees_part1 :
