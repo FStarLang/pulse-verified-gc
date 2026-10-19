@@ -674,7 +674,7 @@ let rec seen_phase (g: heap) (hi e: nat) (h1: heap) (f1: U64.t) (lead: run)
       seg_step g c hi;
       let obj = Seq.head objs in
       let ws = U64.v (wosize_of_object obj g) in
-      let next = c + (ws + 1) * 8 in
+      let next : nat = c + (ws + 1) * 8 in
       if is_black obj g then begin
         seen_black g hi e h1 f1 c hs gs cur fs fl first;
         let hf = SC.flush_blue hs cur.fb cur.rw fs in
