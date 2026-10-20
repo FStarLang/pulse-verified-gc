@@ -92,7 +92,12 @@ let spot_major_layout_facts (r: unit{spot_major_room})
   assert (U64.v (spot_free_obj r) == U64.v zero_addr + 32);
   assert (heap_size - (U64.v zero_addr + 24) >= 16);
   assert (((heap_size - (U64.v zero_addr + 24)) / 8) >= 2);
-  assert (spot_free_wosize r >= 1)
+  assert (spot_free_wosize r >= 1);
+  // wosize is one less than the words available above the header, so the
+  // block ends at or before the end of the heap
+  FStar.Math.Lemmas.lemma_div_mod (heap_size - (U64.v zero_addr + 24)) 8;
+  assert (spot_free_wosize r * 8 <= heap_size - (U64.v zero_addr + 24) - 8);
+  assert (U64.v (spot_free_header r) + 8 + spot_free_wosize r * 8 <= heap_size)
 
 let c_header_facts ()
   : Lemma (SpecObj.getWosize c_header == U64.uint_to_t Layout.c_wosize /\

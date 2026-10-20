@@ -122,8 +122,19 @@ let spot_promote_a_success (r: unit{ConcreteMajor.spot_major_room})
   assert (U64.v (SpecObj.getWosize
     (SpecHeap.read_word major (SpecHeap.hd_address (fp <: obj_addr)))) >= 1);
   assert (fuel > 0);
+  // the right-justified header sits `bwz - 1` words up, still a full block
+  // below the end of the free block
+  SpecHeap.hd_address_bounds free;
+  assert (U64.v (SpecHeap.hd_address (fp <: obj_addr)) == U64.v zero_addr + 24);
+  assert (U64.v (SpecHeap.hd_address (fp <: obj_addr)) + 8
+            + ConcreteMajor.spot_free_wosize r * 8 <= heap_size);
+  assert (U64.v (SpecHeap.hd_address (fp <: obj_addr))
+            + (ConcreteMajor.spot_free_wosize r - 1) * 8 + 8 < heap_size);
+  FStar.Math.Lemmas.pow2_lt_compat 64 57;
   SpecAlloc.alloc_search_found_head major fp 0UL fp 1 fuel;
-  assert ((SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out == fp);
+  assert (U64.v ((SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out)
+          == U64.v fp + (ConcreteMajor.spot_free_wosize r - 1) * 8);
+  assert (U64.v ((SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out) >= U64.v fp);
   assert (fp <> 0UL);
   Promote.promote_object_success
     ConcreteMinor.spot_minor2 major Layout.a_minor fp 1;
@@ -133,12 +144,14 @@ let spot_promote_a_success (r: unit{ConcreteMajor.spot_major_room})
 
 let spot_promote_a_to_free_obj (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (ensures
-      (Promote.promote_object
+      U64.v ((Promote.promote_object
         ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
         Layout.a_minor
         (ConcreteMajor.spot_major_fp r)
-        1).Promote.new_addr == (ConcreteMajor.spot_free_obj r <: U64.t))
+        1).Promote.new_addr) ==
+      U64.v (ConcreteMajor.spot_free_obj r)
+        + (ConcreteMajor.spot_free_wosize r - 1) * 8)
   =
   let major = ConcreteMajor.spot_major_heap r in
   let fp = ConcreteMajor.spot_major_fp r in
@@ -161,16 +174,26 @@ let spot_promote_a_to_free_obj (r: unit{ConcreteMajor.spot_major_room})
   assert (U64.v (SpecObj.getWosize
     (SpecHeap.read_word major (SpecHeap.hd_address (fp <: obj_addr)))) >= 1);
   assert (fuel > 0);
+  // the right-justified header sits `bwz - 1` words up, which is still a
+  // full block below the end of the free block
+  SpecHeap.hd_address_bounds free;
+  assert (U64.v (SpecHeap.hd_address (fp <: obj_addr)) == U64.v zero_addr + 24);
+  assert (U64.v (SpecHeap.hd_address (fp <: obj_addr)) + 8
+            + ConcreteMajor.spot_free_wosize r * 8 <= heap_size);
+  assert (U64.v (SpecHeap.hd_address (fp <: obj_addr))
+            + (ConcreteMajor.spot_free_wosize r - 1) * 8 + 8 < heap_size);
   SpecAlloc.alloc_search_found_head major fp 0UL fp 1 fuel;
-  assert ((SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out == fp);
+  FStar.Math.Lemmas.pow2_lt_compat 64 57;
+  assert (U64.v ((SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out)
+          == U64.v fp + (ConcreteMajor.spot_free_wosize r - 1) * 8);
   Promote.promote_object_success
     ConcreteMinor.spot_minor2 major Layout.a_minor fp 1;
   assert ((Promote.promote_object
     ConcreteMinor.spot_minor2 major Layout.a_minor fp 1).Promote.new_addr ==
     (SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out);
-  assert ((Promote.promote_object
-    ConcreteMinor.spot_minor2 major Layout.a_minor fp 1).Promote.new_addr ==
-    (free <: U64.t))
+  assert (U64.v ((Promote.promote_object
+    ConcreteMinor.spot_minor2 major Layout.a_minor fp 1).Promote.new_addr) ==
+    U64.v (free <: U64.t) + (ConcreteMajor.spot_free_wosize r - 1) * 8)
 
 let forward_a_from_initial_nonzero (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (ensures
@@ -570,13 +593,15 @@ let spot_concrete_a_forwarding_free_obj
   ConcreteMinor.spot_minor2_scan_wosize Layout.a_minor;
   assert (minor_scan_wosize ConcreteMinor.spot_minor2 Layout.a_minor == 1);
   spot_promote_a_to_free_obj r;
+  spot_promote_a_success r;
   let prom_a = Promote.promote_object
     ConcreteMinor.spot_minor2 major Layout.a_minor fp wz in
   Cheney.cheney_forward_normal_success
     ConcreteMinor.spot_minor2 cs0 Layout.a_minor;
   assert (cs_a.Cheney.cs_fwd Layout.a_minor == prom_a.Promote.new_addr);
-  assert (cs_a.Cheney.cs_fwd Layout.a_minor ==
-    (ConcreteMajor.spot_free_obj r <: U64.t));
+  assert (U64.v (cs_a.Cheney.cs_fwd Layout.a_minor) ==
+    U64.v (ConcreteMajor.spot_free_obj r)
+      + (ConcreteMajor.spot_free_wosize r - 1) * 8);
   Cheney.cheney_forward_roots_base
     ConcreteMinor.spot_minor2 cs_a roots 2;
   assert (Cheney.cheney_forward_roots
@@ -607,11 +632,14 @@ let spot_concrete_a_forwarding_free_obj
   Cheney.cheney_scan_base
     ConcreteMinor.spot_minor2 cs_a 1
     (Cheney.cheney_fuel ConcreteMinor.spot_minor2 - 1);
-  assert ((Cheney.cheney_scan ConcreteMinor.spot_minor2 cs_a 0
+  assert (U64.v ((Cheney.cheney_scan ConcreteMinor.spot_minor2 cs_a 0
     (Cheney.cheney_fuel ConcreteMinor.spot_minor2)).Cheney.cs_fwd
-    Layout.a_minor == (ConcreteMajor.spot_free_obj r <: U64.t));
-  assert ((Cheney.cheney_promote
-    ConcreteMinor.spot_minor2 major fp roots).fwd_map Layout.a_minor ==
-    (ConcreteMajor.spot_free_obj r <: U64.t))
+    Layout.a_minor) ==
+    U64.v (ConcreteMajor.spot_free_obj r)
+      + (ConcreteMajor.spot_free_wosize r - 1) * 8);
+  assert (U64.v ((Cheney.cheney_promote
+    ConcreteMinor.spot_minor2 major fp roots).fwd_map Layout.a_minor) ==
+    U64.v (ConcreteMajor.spot_free_obj r)
+      + (ConcreteMajor.spot_free_wosize r - 1) * 8)
 
 #pop-options

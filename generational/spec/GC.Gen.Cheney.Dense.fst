@@ -288,6 +288,16 @@ private let zero_promote_padding_preserves_dense
 
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 
+/// Right-justified split (and the one-word leftover, which writes the same
+/// two headers): the remainder keeps `hd` and shrinks to `leftover - 1`, and
+/// the allocated header sits `leftover` words above it.  The two blocks tile
+/// exactly the span the original block covered --
+///
+///     hd .. hd + leftover*8   the remainder, wosize leftover - 1
+///     ah .. ah + (wz+1)*8     the allocated block, wosize wz
+///
+/// and `ah + (wz+1)*8 = hd + (bwz+1)*8` is where the next block always
+/// started -- so density is preserved by construction.
 private let alloc_from_block_split_dense
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -296,7 +306,7 @@ private let alloc_from_block_split_dense
                     wz >= 1 /\
                     (let hdr = read_word g (hd_address obj) in
                      let bwz = U64.v (getWosize hdr) in
-                     bwz >= wz /\ bwz - wz >= 2))
+                     bwz >= wz /\ bwz - wz >= 1))
           (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
                     heap_objects_dense g'))
   = let hd_obj = hd_address obj in
@@ -307,27 +317,29 @@ private let alloc_from_block_split_dense
     wosize_of_object_spec obj g;
     assert (U64.v hd_obj + 8 + bwz * 8 <= heap_size);
 
-    let rhn = U64.v hd_obj + (1 + wz) * 8 in
-    assert (rhn + 16 <= heap_size);
+    let leftover = bwz - wz in
+    let rw = leftover - 1 in
+    let ahn = U64.v hd_obj + leftover * 8 in
+    // wz >= 1 keeps the allocated header a full block below the end
+    assert (ahn + 8 + wz * 8 == U64.v hd_obj + 8 + bwz * 8);
+    assert (ahn + 8 < heap_size);
 
     SA.alloc_from_block_split_normal g obj wz next_fp;
-    let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
-    let g1 = write_word g hd_obj ahdr in
-    let rh : hp_addr = U64.uint_to_t rhn in
-    let rw = bwz - wz - 1 in
     let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
-    let g2 = write_word g1 rh rhdr in
-    let ron = rhn + 8 in
-    let ro : hp_addr = U64.uint_to_t ron in
-    let g3 = write_word g2 ro next_fp in
-    assert (alloc_from_block g obj wz next_fp == (g3, U64.uint_to_t ron));
-    let g' = g3 in
+    let g1 = write_word g hd_obj rhdr in
+    let ah : hp_addr = U64.uint_to_t ahn in
+    let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
+    let g2 = write_word g1 ah ahdr in
+    let g' = g2 in
 
     AllocLemmas.make_header_getWosize (U64.uint_to_t wz) white_bits 0UL;
     AllocLemmas.make_header_getWosize (U64.uint_to_t rw) blue_bits 0UL;
 
-    Part1.alloc_from_block_rem_in_objects_part1 g obj wz next_fp;
-    let rem_obj : obj_addr = U64.uint_to_t ron in
+    // the allocated block is an object of g'
+    Part1.alloc_from_block_alloc_in_objects_part1 g obj wz next_fp;
+    f_address_spec ah;
+    let alloc_obj : obj_addr = f_address ah in
+    assert (Seq.mem (alloc_obj <: U64.t) (objects zero_addr g'));
 
     let aux (start: hp_addr) : Lemma
       (requires U64.v start + 8 < heap_size /\
@@ -340,132 +352,74 @@ private let alloc_from_block_split_dense
                 Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr g')))
       = f_address_spec start;
         if start = hd_obj then begin
-          // Allocated block header: wosize = wz, next = rhn = rh
-          aligned_apart ro start;
-          read_write_different g2 ro start next_fp;
-          aligned_apart rh start;
-          read_write_different g1 rh start rhdr;
-          read_write_same g hd_obj ahdr;
-          assert (read_word g' start == ahdr);
-          if rhn + 8 < heap_size then begin
-            f_address_spec rh;
-            assert (f_address rh == rem_obj);
-            aligned_apart ro rh;
-            read_write_different g2 ro rh next_fp;
-            read_write_same g1 rh rhdr;
-            ()
-          end
+          // the remainder: wosize rw, so the next header is exactly `ah`
+          aligned_apart ah start;
+          read_write_different g1 ah start ahdr;
+          read_write_same g hd_obj rhdr;
+          assert (read_word g' start == rhdr);
+          assert (U64.v start + (rw + 1) * 8 == ahn);
+          objects_nonempty_from_header g' g' ah
         end
-        else if start = rh then begin
-          // Remainder header: wosize = rw, next = hd_obj + (1+bwz)*8
-          aligned_apart ro rh;
-          read_write_different g2 ro rh next_fp;
-          read_write_same g1 rh rhdr;
-          assert (read_word g' rh == rhdr);
-          let next = rhn + (rw + 1) * 8 in
-          split_next_offset (U64.v hd_obj) wz bwz;
+        else if start = ah then begin
+          // the allocated block: its end is where the old block ended
+          read_write_same g1 ah ahdr;
+          assert (read_word g' ah == ahdr);
+          let next = ahn + (wz + 1) * 8 in
           assert (next == U64.v hd_obj + (1 + bwz) * 8);
           if next + 8 < heap_size then begin
             let next_hp : hp_addr = U64.uint_to_t next in
             let fa_next = f_address next_hp in
             f_address_spec next_hp;
-            // Explicitly instantiate density of g at hd_obj
             f_address_spec hd_obj;
             assert (Seq.mem (f_address hd_obj) (objects zero_addr g));
             density_at g hd_obj;
-            // density_at gives: f_address(next_hp) in objects(0, g)
             assert (Seq.mem fa_next (objects zero_addr g));
             Part1.alloc_split_old_in_new_part1 g obj wz next_fp (fa_next <: obj_addr);
-            // Header at next_hp unchanged (beyond all writes)
-            aligned_apart ro next_hp;
-            read_write_different g2 ro next_hp next_fp;
-            aligned_apart rh next_hp;
-            read_write_different g1 rh next_hp rhdr;
+            // the next header is beyond both writes
+            aligned_apart ah next_hp;
+            read_write_different g1 ah next_hp ahdr;
             aligned_apart hd_obj next_hp;
-            read_write_different g hd_obj next_hp ahdr;
+            read_write_different g hd_obj next_hp rhdr;
             objects_nonempty_from_header g g' next_hp
           end
         end
         else begin
-          // Other start: show header unchanged and use old density
+          // every other header is untouched, so the old density carries over
           let fa = f_address start in
-          // First handle start = ro (impossible case)
-          if U64.v start = U64.v ro then begin
-            // f_address(ro) = ron + 8. Show this is NOT in objects(0, g').
-            assert (U64.v fa == ron + 8);
-            // If fa in objects(g), objects_separated gives fa > obj + bwz*8.
-            // But fa = obj + (2+wz)*8 and obj + bwz*8 >= obj + (wz+2)*8 = fa. Contradiction.
-            if Seq.mem fa (objects zero_addr g) then begin
-              objects_separated zero_addr g obj (fa <: obj_addr);
-              wosize_of_object_spec obj g;
-              assert false
+          aligned_apart ah start;
+          read_write_different g1 ah start ahdr;
+          aligned_apart hd_obj start;
+          read_write_different g hd_obj start rhdr;
+          assert (read_word g' start == read_word g start);
+          // `fa` must be an old object: the only new one is the allocated block
+          if not (Seq.mem fa (objects zero_addr g)) then begin
+            AllocLemmas.alloc_from_block_objects_backward_part1 g obj wz next_fp fa;
+            assert false
+          end else ();
+          objects_nonempty_from_header g' g start;
+          density_at g start;
+          let wz' = getWosize (read_word g start) in
+          let next = U64.v start + ((U64.v wz' + 1) * 8) in
+          if next + 8 < heap_size then begin
+            let next_hp : hp_addr = U64.uint_to_t next in
+            let fa_next = f_address next_hp in
+            f_address_spec next_hp;
+            assert (Seq.mem fa_next (objects zero_addr g));
+            Part1.alloc_split_old_in_new_part1 g obj wz next_fp (fa_next <: obj_addr);
+            if next_hp = hd_obj then begin
+              aligned_apart ah next_hp;
+              read_write_different g1 ah next_hp ahdr;
+              read_write_same g hd_obj rhdr;
+              ()
+            end else if next_hp = ah then begin
+              read_write_same g1 ah ahdr;
+              ()
             end else begin
-              // fa not in objects(g). Backward: fa = rem_obj? No, ron+8 != ron.
-              AllocLemmas.alloc_from_block_objects_backward_part1 g obj wz next_fp fa;
-              assert false
-            end
-          end else begin
-            // start != hd_obj, start != rh, start != ro → header unchanged
-            aligned_apart ro start;
-            aligned_apart ro start;
-            read_write_different g2 ro start next_fp;
-            aligned_apart rh start;
-            read_write_different g1 rh start rhdr;
-            aligned_apart hd_obj start;
-            read_write_different g hd_obj start ahdr;
-            assert (read_word g' start == read_word g start);
-            // fa must be in objects(0, g)
-            if not (Seq.mem fa (objects zero_addr g)) then begin
-              AllocLemmas.alloc_from_block_objects_backward_part1 g obj wz next_fp fa;
-              f_address_spec rh;
-              // backward says fa = rem_obj = f_address rh, so U64.v fa = ron
-              // f_address start = start + 8 = U64.v fa, so start = U64.v fa - 8 = ron - 8 = rhn = rh
-              // But start != rh. Contradiction.
-              assert false
-            end else ();
-            objects_nonempty_from_header g' g start;
-            let wz' = getWosize (read_word g start) in
-            let next = U64.v start + ((U64.v wz' + 1) * 8) in
-            if next + 8 < heap_size then begin
-              let next_hp : hp_addr = U64.uint_to_t next in
-              let fa_next = f_address next_hp in
-              f_address_spec next_hp;
-              // fa_next in objects(g) from density
-              assert (Seq.mem fa_next (objects zero_addr g));
-              Part1.alloc_split_old_in_new_part1 g obj wz next_fp (fa_next <: obj_addr);
-              // Header at next_hp
-              if next_hp = hd_obj then begin
-                aligned_apart ro next_hp;
-                aligned_apart ro next_hp;
-                read_write_different g2 ro next_hp next_fp;
-                aligned_apart rh next_hp;
-                read_write_different g1 rh next_hp rhdr;
-                read_write_same g hd_obj ahdr;
-                ()
-              end else if next_hp = rh then begin
-                aligned_apart ro next_hp;
-                aligned_apart ro next_hp;
-                read_write_different g2 ro next_hp next_fp;
-                read_write_same g1 rh rhdr;
-                ()
-              end else if U64.v next_hp = U64.v ro then begin
-                // next_hp = ro. f_address(ro) = ron + 8. This should be in objects(g).
-                // But objects_separated obj (f_address ro) gives contradiction.
-                f_address_spec next_hp;
-                assert (U64.v fa_next == ron + 8);
-                objects_separated zero_addr g obj (fa_next <: obj_addr);
-                wosize_of_object_spec obj g;
-                assert false
-              end else begin
-                aligned_apart ro next_hp;
-                aligned_apart ro next_hp;
-                read_write_different g2 ro next_hp next_fp;
-                aligned_apart rh next_hp;
-                read_write_different g1 rh next_hp rhdr;
-                aligned_apart hd_obj next_hp;
-                read_write_different g hd_obj next_hp ahdr;
-                objects_nonempty_from_header g g' next_hp
-              end
+              aligned_apart ah next_hp;
+              read_write_different g1 ah next_hp ahdr;
+              aligned_apart hd_obj next_hp;
+              read_write_different g hd_obj next_hp rhdr;
+              objects_nonempty_from_header g g' next_hp
             end
           end
         end
@@ -488,7 +442,7 @@ private let alloc_from_block_exact_dense
                     wz >= 1 /\
                     (let hdr = read_word g (hd_address obj) in
                      let bwz = U64.v (getWosize hdr) in
-                     bwz >= wz /\ bwz - wz < 2))
+                     bwz == wz))
           (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
                     heap_objects_dense g'))
   = let (g', _) = alloc_from_block g obj wz next_fp in
@@ -498,8 +452,8 @@ private let alloc_from_block_exact_dense
     SA.alloc_from_block_exact g obj wz next_fp;
     hd_address_spec obj;
     hd_address_bounds obj;
-    let ahdr = make_header (U64.uint_to_t bwz) white_bits 0UL in
-    AllocLemmas.make_header_getWosize (U64.uint_to_t bwz) white_bits 0UL;
+    let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
+    AllocLemmas.make_header_getWosize (U64.uint_to_t wz) white_bits 0UL;
     // All wosizes preserved (only hd_address(obj) written, same wosize)
     let hd_obj = hd_address obj in
     let aux_wz (p: hp_addr) : Lemma (getWosize (read_word g' p) == getWosize (read_word g p))
@@ -576,10 +530,10 @@ private let alloc_from_block_preserves_dense
                     heap_objects_dense g'))
   = let hdr = read_word g (hd_address obj) in
     let bwz = U64.v (getWosize hdr) in
-    if bwz - wz < 2 then
-      alloc_from_block_exact_dense g obj wz next_fp
-    else
+    if bwz - wz >= 1 then
       alloc_from_block_split_dense g obj wz next_fp
+    else
+      alloc_from_block_exact_dense g obj wz next_fp
 
 #pop-options
 
@@ -673,91 +627,43 @@ private let alloc_split_prev_mem
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 
-/// When alloc_search finds a block (bwz >= wz) and prev ≠ 0, the result is
-/// write_word (alloc_from_block g obj wz next) prev new_fp. Prove density.
+/// When alloc_search finds a block and prev <> 0, the result is
+/// `alloc_from_block (write_word g prev new_fp) obj wz next`.  In the
+/// reordered search the link write comes first, and that makes this proof two
+/// independent steps instead of a case analysis over the block writes: a
+/// field write preserves density, and then the block writes preserve it.
 private let alloc_search_found_prev_dense
   (g: heap) (obj: obj_addr) (prev_fp: obj_addr) (wz: nat) (next_fp: U64.t)
+  (new_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
                     heap_objects_dense g /\
                     Seq.mem obj (objects zero_addr g) /\
                     Seq.mem prev_fp (objects zero_addr g) /\
                     prev_fp <> obj /\
+                    U64.v (prev_fp <: U64.t) <> U64.v (hd_address obj) /\
                     wz >= 1 /\
                     U64.v (wosize_of_object prev_fp g) >= 1 /\
                     (let bwz = U64.v (getWosize (read_word g (hd_address obj))) in
                      bwz >= wz))
-          (ensures (let (g_alloc, new_fp_out) = alloc_from_block g obj wz next_fp in
-                    heap_objects_dense (write_word g_alloc prev_fp new_fp_out)))
-  = let (g_alloc, new_fp_out) = alloc_from_block g obj wz next_fp in
-    alloc_from_block_preserves_dense g obj wz next_fp;
-    Part2.alloc_from_block_preserves_wfh_part1 g obj wz next_fp;
-    // Prove prev_fp membership in g_alloc (exact vs split)
-    let bwz_obj = U64.v (getWosize (read_word g (hd_address obj))) in
-    (if bwz_obj - wz < 2 then
-      AllocProps.alloc_from_block_exact_objects_eq_part1 g obj wz next_fp
-    else begin
-      assert (bwz_obj >= wz);
-      assert (bwz_obj - wz >= 2);
-      assert ((let bwz = U64.v (getWosize (read_word g (hd_address obj))) in
-               bwz >= wz /\ bwz - wz >= 2));
-      alloc_split_prev_mem g obj prev_fp wz next_fp
-    end);
-    assert (Seq.mem prev_fp (objects zero_addr g_alloc));
-    // prev ≠ obj, so hd_prev ≠ hd_obj
+          (ensures (let gw = write_word g (prev_fp <: hp_addr) new_fp in
+                    heap_objects_dense (fst (alloc_from_block gw obj wz next_fp))))
+  = let gw = write_word g (prev_fp <: hp_addr) new_fp in
     hd_address_spec prev_fp;
+    hd_address_bounds prev_fp;
     hd_address_spec obj;
     hd_address_bounds obj;
-    let hd_prev : hp_addr = hd_address prev_fp in
-    let hd_obj : hp_addr = hd_address obj in
-    assert (hd_prev <> hd_obj);
-    let hdr_obj = read_word g hd_obj in
-    let bwz_obj = U64.v (getWosize hdr_obj) in
-    if bwz_obj - wz < 2 then begin
-      // Exact case: only hd_obj written
-      SA.alloc_from_block_exact g obj wz next_fp;
-      read_write_different g hd_obj hd_prev
-        (make_header (U64.uint_to_t bwz_obj) white_bits 0UL);
-      wosize_of_object_spec prev_fp g;
-      wosize_of_object_spec prev_fp g_alloc;
-      write_field_preserves_dense g_alloc prev_fp new_fp_out
-    end else begin
-      // Split case: 3 writes within obj's span
-      wosize_of_object_spec obj g;
-      assert (U64.v hd_obj + 8 + bwz_obj * 8 <= heap_size);
-      // bwz_obj >= wz + 2, so hd_obj + (1+wz)*8 + 16 <= heap_size
-      assert (U64.v hd_obj + (1 + wz) * 8 < heap_size);
-      assert (U64.v hd_obj + (1 + wz) * 8 + 8 < heap_size);
-      SA.alloc_from_block_split_normal g obj wz next_fp;
-      let rhn = U64.v hd_obj + (1 + wz) * 8 in
-      let rh : hp_addr = U64.uint_to_t rhn in
-      let ron = rhn + 8 in
-      let ro : hp_addr = U64.uint_to_t ron in
-      // prev's header outside obj's entire span
-      if U64.v prev_fp < U64.v obj then begin
-        objects_separated zero_addr g prev_fp obj;
-        assert (U64.v hd_prev < U64.v hd_obj)
-      end else begin
-        objects_separated zero_addr g obj prev_fp;
-        assert (U64.v (prev_fp <: obj_addr) > U64.v obj + bwz_obj * 8);
-        assert (U64.v hd_prev > U64.v obj + bwz_obj * 8 - 8);
-        assert (rhn <= U64.v obj + bwz_obj * 8 - 8)
-      end;
-      let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
-      let g1 = write_word g hd_obj ahdr in
-      let rw = bwz_obj - wz - 1 in
-      let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
-      let g2 = write_word g1 rh rhdr in
-      aligned_apart hd_obj hd_prev;
-      read_write_different g hd_obj hd_prev ahdr;
-      aligned_apart rh hd_prev;
-      read_write_different g1 rh hd_prev rhdr;
-      aligned_apart ro hd_prev;
-      read_write_different g2 ro hd_prev next_fp;
-      assert (read_word g_alloc hd_prev == read_word g hd_prev);
-      wosize_of_object_spec prev_fp g;
-      wosize_of_object_spec prev_fp g_alloc;
-      write_field_preserves_dense g_alloc prev_fp new_fp_out
-    end
+    wosize_of_object_spec prev_fp g;
+    wosize_of_object_bound prev_fp g;
+    // Step 1: the link write is a field write, which preserves density,
+    // well-formedness and the enumeration.
+    write_field_preserves_dense g prev_fp new_fp;
+    AllocLemmas.write_body_preserves_wfh_part1 g prev_fp (prev_fp <: hp_addr) new_fp;
+    AllocLemmas.write_body_preserves_objects_local
+      zero_addr g prev_fp (prev_fp <: hp_addr) new_fp;
+    // Step 2: obj's header survives it, so the block writes see the same block
+    aligned_apart (prev_fp <: hp_addr) (hd_address obj);
+    read_write_different g (prev_fp <: hp_addr) (hd_address obj) new_fp;
+    alloc_from_block_preserves_dense gw obj wz next_fp
 
 #pop-options
 
@@ -799,15 +705,25 @@ private let rec alloc_search_preserves_dense
       AllocLemmas.fl_valid_gives_mem g cur_fp fuel;
       let next_fp = if U64.v hd + 16 <= heap_size then read_word g obj else 0UL in
       if bwz >= wz then begin
-        // Found a block that fits. alloc_from_block preserves density.
-        // Case: prev = 0 (head of list)
-        if prev_fp = 0UL then begin
+        let leftover = bwz - wz in
+        let ahn = U64.v hd + leftover * 8 in
+        if ahn + 8 >= heap_size || ahn >= pow2 64 || ahn % 8 <> 0 then
+          // the right-justified object would leave the heap; the search bails
+          // and the heap is untouched
+          SA.alloc_search_found_oob g head_fp prev_fp cur_fp wz fuel
+        else if prev_fp = 0UL then begin
           SA.alloc_search_found_head g head_fp prev_fp cur_fp wz fuel;
           alloc_from_block_preserves_dense g obj wz next_fp
-        end else begin
-          // prev != 0: use helper
+        end else if U64.v prev_fp <> U64.v hd then begin
+          // prev usable: the search relinks it, then allocates
           SA.alloc_search_found_prev g head_fp prev_fp cur_fp wz fuel;
           alloc_search_found_prev_dense g obj (prev_fp <: obj_addr) wz next_fp
+            (SA.alloc_replacement_fp g obj wz next_fp)
+        end else begin
+          // prev is the degenerate wosize-0 shape; the search treats it as
+          // absent and allocates without touching any link
+          SA.alloc_search_found_head g head_fp prev_fp cur_fp wz fuel;
+          alloc_from_block_preserves_dense g obj wz next_fp
         end
       end else begin
         // Block too small, advance to next

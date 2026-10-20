@@ -4,7 +4,14 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main ]
+  workflow_dispatch:
+
+# Verification is a multi-hour job. `push` is limited to main so that a push to
+# a PR branch does not fire both events and run the whole thing twice, and
+# concurrency stops superseded pushes piling up behind each other.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify:
@@ -39,19 +46,16 @@ jobs:
       - name: Refresh generational snapshot
         run: make -C generational snapshot
 
-      - name: Build verified_gc runtime
-        run: make -C generational/ocaml-integration setup
-
-      - name: Run verified_gc smoke tests
+      # The OCaml testsuite workflow builds and tests the COMMITTED snapshot,
+      # so this is what ties those tests to the verified code: what the proofs
+      # extract must be exactly what is committed. Only the KaRaMeL invocation
+      # comment differs between machines (it records an absolute path).
+      - name: Check the committed snapshot matches the extraction
         run: |
-          make -C generational/ocaml-integration/tests test \
-            OCAMLC="$PWD/generational/ocaml-integration/ocaml-4.14-unchanged/_install/bin/ocamlc" \
-            VERIFIED_GEN_OCAMLRUN="$PWD/generational/ocaml-integration/ocaml-4.14-verified-gen/runtime/ocamlrun" \
-            UNCHANGED_OCAMLRUN="$PWD/generational/ocaml-integration/ocaml-4.14-unchanged/runtime/ocamlrun"
-
-      - name: Check snapshots are up to date
-        run: |
-          if ! git diff --quiet -- generational/snapshot/; then
-            echo "::warning::Snapshots are out of date. Regenerate and commit them."
-            git diff --stat -- generational/snapshot/
+          untracked=$(git ls-files --others --exclude-standard -- generational/snapshot/)
+          if ! git diff --quiet -I'KaRaMeL invocation' -- generational/snapshot/ || [ -n "$untracked" ]; then
+            echo "::error::generational/snapshot/ does not match what the verified code extracts to. Run 'make extract && make -C generational snapshot' and commit the result."
+            git diff --stat -I'KaRaMeL invocation' -- generational/snapshot/
+            [ -z "$untracked" ] || printf 'untracked: %s\n' $untracked
+            exit 1
           fi
