@@ -125,14 +125,14 @@ The same is done for `is_black`, `wosize_of_object`, `makeWhite`, `set_field`, `
 
 `make test` does the following:
 
-1. Extracts the three modules and their GC dependencies to OCaml (13 modules).
-2. Compiles them against the F* OCaml runtime. The shipped `.cmx` files were built with OCaml 5.3, so `test/build.sh` compiles the runtime's own `.ml` sources, just the modules that are reachable.
-3. Runs `test/run.sh`, which runs 19 jobs in parallel.
+1. Verifies the four modules, which writes their `.checked` files. Custard, F*'s extractor, reads every module it extracts from its `.checked` file, so these must exist first.
+2. Extracts with Custard (`--codegen OCaml --custard_split`). Custard compiles the whole program reachable from its roots: the three modules, plus the spec functions the driver calls directly. It writes 13 `.ml` files, one per F* module: 8 GC modules, and the 5 F* library modules the program reaches (`FStar.Seq.Base`, for instance, compiled to lists). `--custard_no_unfold GC.Spec.Base.heap` keeps the `heap` type under its own name, since the driver's types use it.
+3. Compiles them against the F* OCaml runtime. The shipped `.cmx` files were built with OCaml 5.3, so `test/build.sh` compiles the runtime's own `.ml` sources, only the reachable ones Custard did not write itself (`Prims`, `FStar_List_Tot_Base`, `FStar_UInt8`/`32`/`64`). It fails if any `Obj.magic ()` remains in the extracted GC code, which would mean a value Custard erased is still used.
+4. Runs `test/run.sh`, which runs 19 jobs in parallel.
 
-Two items are supplied by hand. Both are fixed by the F* sources.
+One item is supplied by hand, and it is fixed by the F* sources.
 
-- **`GC.Spec.ZeroAddr`** is an interface whose implementation is C. `test/GC_Spec_ZeroAddr.ml` sets `zero_addr = 2048` and `heap_size = 2048 + 8 * PS_WORDS`, which satisfies every requirement in the `.fsti` (including `zero_addr >= 2048`).
-- **`GC.Spec.Base.heap_size`** refers to the `noextract` `ZeroAddr.heap_size`, so it extracts as `Obj.magic ()`. `build.sh` replaces that one line with the F* definition, `U64.v heap_size_u64`. It fails if the line is missing, or if any `Obj.magic ()` remains in the extracted GC code.
+- **`GC.Spec.ZeroAddr`** is an interface whose implementation is C. `test/GC_Spec_ZeroAddr.ml` sets `zero_addr = 2048` and `heap_size_u64 = 2048 + 8 * PS_WORDS`, which satisfies every requirement in the `.fsti` (including `zero_addr >= 2048`). It also defines `heap_size`, which `GC.Spec.Base.heap_size` refers to: the `.fsti` defines it as `U64.v heap_size_u64` but marks it `noextract`, so the realisation repeats that definition.
 
 ### Each (heap, bs) pair
 
@@ -227,7 +227,7 @@ Each job's log is in `parallel-sweep/_build/logs/`. Every log must end with an `
 - **It is testing, not proof.** Heaps had at most 96 words past `zero_addr`. The size limit comes from cost: F*'s OCaml `Seq` is a list, and every access walks past the 2048-byte prefix, at about 85 ms per pair.
 - **Parts 2 and 3 of `well_formed_heap`** were checked only in the form the generator produces (pointer fields point to enumerated objects). Arbitrary heaps meeting the opaque predicate were not enumerated. The sweep never reads fields, so this restricts which heaps were tried, not what was observed.
 - **The 2048-byte prefix below `zero_addr`** is always zero, and `zero_addr` is fixed at 2048.
-- **Trusted for the test:** F*'s OCaml extraction, the runtime's `.ml` sources compiled here (list-based `Seq`, `Stdint` `UInt64`), and the `heap_size` line `build.sh` restores.
+- **Trusted for the test:** Custard's OCaml extraction, including the F* library modules it compiles (list-based `Seq`); the runtime's `.ml` sources compiled here (`Prims`, `Stdint` `UInt64`); and `GC_Spec_ZeroAddr.ml`, including the `heap_size` definition it repeats.
 - **Parallelism is modelled, not run.** The segments are evaluated one after another, each against the input heap; disjointness is modelled by `splice`.
 
 ## 6. The proof
