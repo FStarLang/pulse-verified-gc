@@ -138,13 +138,13 @@ int main(void)
     /* No roots → everything becomes garbage after full GC */
     uint64_t empty_roots[1] = { 0 };
     memset(fwd_arr, 0, fwd_entries * sizeof(uint64_t));
-    K___uint64_t_bool result = gen_gc(gh, empty_roots, 0, fwd_arr, queue, empty_slots, 0, st);
-    if (!result.snd) {
+    FStar_Pervasives_Native_tuple2__uint64_t_bool result = gen_gc(gh, empty_roots, 0, fwd_arr, queue, empty_slots, 0, st);
+    if (!result._2) {
         printf("FAIL: gen_gc promotion phase failed\n");
         free(gray_storage);
         goto cleanup_queue;
     }
-    uint64_t result_fp = result.fst;
+    uint64_t result_fp = result._1;
     printf("gen_gc returned fp = %llu\n", (unsigned long long)result_fp);
 
     /* ---- Phase 4: Allocate after GC ---- */

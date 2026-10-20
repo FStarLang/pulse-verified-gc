@@ -202,7 +202,7 @@ private let promote_object_preserves_no_black
     // Step 3: copy_fields preserves no_black (delegated)
     AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
     wfh_part1_obj_bound g_alloc dst;
-    dst_fields_valid_from_bounds dst wz;
+    dst_fields_valid_from_obj g_alloc dst wz;
     copy_fields_preserves_no_black minor g_alloc obj dst wz;
     let result = copy_fields minor g_alloc obj dst 0 wz in
 
@@ -670,7 +670,7 @@ private let promote_object_preserves_gray_black_objects_on_stack
     assert (Seq.mem dst (objects zero_addr g_alloc));
     assert (U64.v (wosize_of_object dst g_alloc) >= wz);
     wfh_part1_obj_bound g_alloc dst;
-    dst_fields_valid_from_bounds dst wz;
+    dst_fields_valid_from_obj g_alloc dst wz;
 
     copy_fields_preserves_gray_black_objects_on_stack minor g_alloc obj dst wz st;
     let result = copy_fields minor g_alloc obj dst 0 wz in

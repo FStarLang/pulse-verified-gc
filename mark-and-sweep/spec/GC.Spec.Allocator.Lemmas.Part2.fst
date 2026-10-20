@@ -98,6 +98,33 @@ private let hd_address_of_succ (h o: hp_addr)
   = hd_address_spec (o <: obj_addr)
 #pop-options
 
+/// The header of the object at `rem_hd_nat + 8` is at `rem_hd_nat`.  At the call
+/// site in `alloc_search_new_objects_blue_part1` the hypothesis holds by
+/// equational reasoning alone, whereas the conclusion needs integer arithmetic,
+/// which F*'s one-query-per-goal encoding asks Z3 to find under the full
+/// hypothesis load of that proof (where it runs out of rlimit).
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let hd_address_below (x: obj_addr) (rem_hd_nat: int)
+  : Lemma (requires U64.v x == rem_hd_nat + 8)
+          (ensures U64.v (hd_address x) == rem_hd_nat)
+  = hd_address_spec x
+#pop-options
+
+/// `objects_separated` for the free block `obj` and a later object `y`, stated
+/// over `obj`'s raw header.  In `alloc_search_preserves_fl_valid_part1` the
+/// arithmetic consequence was left to Z3 under the full hypothesis load of that
+/// proof, which F*'s one-query-per-goal encoding made exhaust its rlimit on the
+/// first attempt (succeeding only on `--retry`).
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let objects_separated_from_block (g: heap) (obj y: obj_addr)
+  : Lemma (requires Seq.mem obj (objects zero_addr g) /\
+                    Seq.mem y (objects zero_addr g) /\
+                    U64.v y >= U64.v obj /\ y <> obj)
+          (ensures U64.v y > U64.v obj + U64.v (getWosize (read_word g (hd_address obj))) * 8)
+  = objects_separated zero_addr g obj y;
+    wosize_of_object_spec obj g
+#pop-options
+
 /// Compose an object-level frame (`g` to `g'`) with the address-level frame of a
 /// single `write_word` at `excl` (`g'` to `g2`), yielding the frame condition in
 /// the exact shape that `GC.Spec.Allocator.Lemmas.Chain` requires.
@@ -1072,6 +1099,7 @@ private let rec alloc_search_preserves_fl_valid_part1
             assert (read_word g' new_fp == next_fp);
             // 2. wosize_of_object new_fp g' = rem_wz >= 1
             hd_address_spec (rem_obj <: obj_addr);
+            hd_address_of_succ rem_hd rem_obj;
             assert (hd_address (rem_obj <: obj_addr) == rem_hd);
             read_write_different g2 rem_obj rem_hd next_fp;
             read_write_same g1 rem_hd rem_hdr;
@@ -1102,7 +1130,7 @@ private let rec alloc_search_preserves_fl_valid_part1
                if U64.v next_fp < U64.v obj then begin
                  assert (U64.v next_fp < U64.v new_fp)
                end else begin
-                 objects_separated zero_addr g obj (next_fp <: obj_addr);
+                 objects_separated_from_block g obj (next_fp <: obj_addr);
                  assert (U64.v next_fp > U64.v obj + block_wz * 8);
                  assert (U64.v new_fp < U64.v obj + block_wz * 8);
                  assert (U64.v next_fp > U64.v new_fp)
@@ -1195,6 +1223,7 @@ private let rec alloc_search_preserves_fl_valid_part1
             read_write_different g2_tmp rem_obj rem_hd next_fp;
             assert (read_word g' rem_hd == rem_hdr);
             hd_address_spec (new_fp <: obj_addr);
+            hd_address_of_succ rem_hd rem_obj;
             assert (hd_address (new_fp <: obj_addr) == rem_hd);
             wosize_of_object_spec (new_fp <: obj_addr) g';
             assert (rem_wz >= 1);
@@ -3059,6 +3088,7 @@ private let rec alloc_search_new_objects_blue_part1
               objects_addresses_gt_start zero_addr g obj;
               split_new_mem_in_old_or_rem_part1 zero_addr g g' obj wz block_wz x;
               assert (U64.v x == rem_obj_nat);
+              hd_address_below x rem_hd_nat;
               assert (U64.v (hd_address x) == rem_hd_nat);
               // prev is separate from obj's block
               wosize_of_object_spec obj g;

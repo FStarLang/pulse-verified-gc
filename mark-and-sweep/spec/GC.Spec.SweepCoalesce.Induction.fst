@@ -390,6 +390,15 @@ private let black_case_below_ok
 #pop-options
 
 /// Pointwise: for a single address past all rest objects, h_f'' and h_c' agree
+/// Header word of `obj` lies below an address past `obj`'s fields.  Stated in
+/// an empty context: inside `black_case_above_ok` Z3 5.x times out on it.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let hd_word_below (hd o a w: nat)
+  : Lemma (requires hd == o - 8 /\ a > o + w * 8)
+          (ensures hd + U64.v mword <= a)
+  = ()
+#pop-options
+
 #push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 private let black_case_above_ok
   (g: heap) (h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
@@ -458,7 +467,8 @@ private let black_case_above_ok
         assert (U64.v a >= U64.v fb - 8 + rw * 8);
         flush_pair_preserves_outside h_f h_c fb rw fp a
       end else ());
-      assert (U64.v a > U64.v hd_obj);
+      assert (U64.v a > U64.v obj + wz_obj * 8);
+      hd_word_below (U64.v hd_obj) (U64.v obj) (U64.v a) wz_obj;
       read_write_different h_f' hd_obj a
         (colorHeader (read_word h_f' hd_obj) White)
     end else ())

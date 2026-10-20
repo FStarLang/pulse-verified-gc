@@ -329,6 +329,18 @@ private let fwd_normal_preserves_bfs_inv
 
 #pop-options
 
+/// The forwarding target of an infix address, `fwd parent + (addr - parent)`,
+/// fits in a U64 and the parent's entry is positive.  Stated with an empty
+/// context: inside `fwd_one_preserves_bfs_inv` these two arithmetic facts are
+/// separate SMT goals carrying that proof's whole context, which Z3 4.15.3
+/// cannot get through within its rlimit.
+private let infix_fwd_target_fits (f a p: U64.t)
+  : Lemma (requires f <> 0UL /\ U64.v a >= U64.v p /\
+                    U64.v f + (U64.v a - U64.v p) < heap_size)
+          (ensures FStar.UInt.size (U64.v f + (U64.v a - U64.v p)) 64 /\
+                   U64.v f > 0)
+  = ()
+
 /// Forward_one preserves BFS invariant (infix-aware).
 /// For the infix case: forward parent preserves bfs_inv, then extending
 /// fwd for the infix addr (which is NOT in minor_objects) doesn't change
@@ -416,6 +428,7 @@ let fwd_one_preserves_bfs_inv
        U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < heap_size
     then begin
       CheneySpec.cheney_forward_one_infix_guard_pass minor cs addr;
+      infix_fwd_target_fits (cs'.cs_fwd parent) addr parent;
       let sum = U64.uint_to_t (U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent)) in
       assert (U64.v (cs'.cs_fwd parent) > 0);
       assert (U64.v sum > 0);

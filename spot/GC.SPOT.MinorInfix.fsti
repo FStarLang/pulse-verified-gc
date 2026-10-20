@@ -46,9 +46,13 @@ module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 /// interior pointer, and the conclusions below are proved from the ordinary
 /// minor-collection theorems.
 
-/// The address of field `i` of major object `c`.
-let field_slot (c: obj_addr) (i: nat{U64.v c + i * 8 + 8 <= heap_size}) : U64.t =
-  U64.uint_to_t (U64.v c + i * 8)
+/// The address of field `i` of major object `c`.  (Typed as `hp_addr`, with
+/// the alignment discharged once here, so that uses as a heap address do not
+/// re-derive it inside large contexts.)
+let field_slot (c: obj_addr) (i: nat{U64.v c + i * 8 + 8 <= heap_size})
+  : (r: hp_addr{U64.v r == U64.v c + i * 8 /\ r == U64.uint_to_t (U64.v c + i * 8)}) =
+  aligned_plus_mul8 (U64.v c) i;
+  mk_hp_addr (U64.v c + i * 8)
 
 /// The interior pointer as stored in that field, in nursery-offset form.
 let stored_target

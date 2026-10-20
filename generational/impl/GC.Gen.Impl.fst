@@ -180,7 +180,7 @@ let advance_aligned (p tw: nat)
 /// (since total_words <= minor_heap_size < pow2 57, so tw*8 < pow2 60 < pow2 64)
 let mul8_no_overflow (tw: nat)
   : Lemma (requires tw <= minor_heap_size)
-          (ensures tw * 8 < pow2 64)
+          (ensures tw * 8 < pow2 64 /\ FStar.UInt.size (tw * 8) 64)
   = FStar.Math.Lemmas.lemma_mult_le_right 8 tw minor_heap_size;
     FStar.Math.Lemmas.lemma_mult_le_right 8 minor_heap_size (pow2 57);
     assert_norm (pow2 57 * 8 < pow2 64)
@@ -189,7 +189,7 @@ let mul8_no_overflow (tw: nat)
 /// (p <= minor_heap_size < pow2 57, total_bytes <= minor_heap_size * 8 < pow2 60)
 let add_no_overflow (p tw: nat)
   : Lemma (requires p <= minor_heap_size /\ tw <= minor_heap_size)
-          (ensures p + tw * 8 < pow2 64)
+          (ensures p + tw * 8 < pow2 64 /\ FStar.UInt.size (p + tw * 8) 64)
   = mul8_no_overflow tw;
     assert (tw * 8 < pow2 64);
     assert (p < pow2 57);
@@ -218,6 +218,26 @@ let promote_body_bound (p wosize bump: nat)
   : Lemma (requires p + (wosize + 1) * 8 <= bump)
           (ensures (p + 8) + wosize * 8 <= bump)
   = ()
+
+/// The forwarding-array index of a minor address is in bounds.  Proved in an
+/// empty context; Z3 5.x does not find it under `promote_phase`'s loop.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+let fwd_index_bound (o: U64.t)
+  : Lemma (requires U64.v o < minor_heap_size)
+          (ensures U64.v (U64.div o 8UL) < fwd_array_size)
+  = ML.lemma_div_mod (U64.v o) 8;
+    ML.lemma_div_mod minor_heap_size 8
+
+
+/// Advancing the scan position by a non-empty object strictly increases it
+/// (loop measure of `promote_phase`), in an empty context.
+let add_bytes_advances (p tw tb: U64.t)
+  : Lemma (requires U64.v tb == U64.v tw * 8 /\ U64.v tw >= 1 /\
+                    FStar.UInt.size (U64.v p + U64.v tw * 8) 64)
+          (ensures U64.v (U64.add p tb) == U64.v p + U64.v tb /\
+                   U64.v (U64.add p tb) > U64.v p)
+  = ()
+#pop-options
 
 /// Phase 1: Promote all minor objects and fill forwarding array.
 /// Walks minor heap linearly from 0 to bump, promoting each object.
@@ -266,7 +286,7 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
             AllocLemmas.fl_valid ms_i fp_i heap_words /\
             AllocLemmas.fl_chain_terminates ms_i fp_i heap_words /\
             Seq.length farr_i == Seq.length 'farr)
-    decreases (Prims.op_Subtraction (U64.v bump) (U64.v !pos))
+    decreases (U64.v bump - U64.v !pos)
   {
     let p = !pos;
     if U64.gte (U64.add p 8UL) bump {
@@ -301,10 +321,13 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
             //   = p + (wosize+1)*8 = p + total_bytes <= bump <= minor_heap_size
             let new_addr = promote_one minor major fp_ref obj_addr;
             with farr_pre. assert (pts_to fwd_arr farr_pre);
+            fwd_index_bound obj_addr;
             let idx = SZ.uint64_to_sizet (U64.div obj_addr 8UL);
             fwd_arr.(idx) <- new_addr;
             // Prove next pos is aligned
             advance_aligned (U64.v p) (U64.v total_words);
+            assert (pure (U64.v total_bytes == U64.v total_words * 8 /\ U64.v total_words >= 1));
+            add_bytes_advances p total_words total_bytes;
             pos := U64.add p total_bytes
           }
         }

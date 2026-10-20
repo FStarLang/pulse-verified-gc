@@ -581,7 +581,7 @@ fn forward_roots
             (not oom_i ==> CheneyBFS.root_prefix_covered minor_st cs_i 'rs (SZ.v iv)) /\
             CheneySpec.cheney_forward_roots minor_st cs_i 'rs (SZ.v iv) ==
               CheneySpec.cheney_forward_roots minor_st cs0 'rs 0)
-    decreases (Prims.op_Subtraction (SZ.v nroots) (SZ.v !i))
+    decreases (SZ.v nroots - SZ.v !i)
   {
     let iv = !i;
     let r = roots.(iv);
@@ -733,7 +733,7 @@ fn scan_loop
             CheneySpec.cheney_scan minor_st cs_s (SZ.v sv)
               (CheneySpec.cheney_fuel minor_st - SZ.v sv) ==
               CheneySpec.cheney_scan minor_st cs1 0 (CheneySpec.cheney_fuel minor_st))
-    decreases (Prims.op_Subtraction queue_size (SZ.v !scan))
+    decreases (queue_size - SZ.v !scan)
   {
     let s = !scan;
     // Read the minor address at queue[scan]
@@ -824,7 +824,7 @@ fn scan_loop
                 (not oom_f ==> CheneyBFS.field_prefix_covered minor_st cs_f obj (U64.v fi)) /\
                 CheneySpec.cheney_forward_fields minor_st cs_f obj (U64.v fi) (U64.v wosize) ==
                   CheneySpec.cheney_forward_fields minor_st (reveal cs_cur) obj 0 (U64.v wosize))
-        decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !field_idx))
+        decreases (U64.v wosize - U64.v !field_idx)
       {
         let fi = !field_idx;
         assert (pure (U64.v fi < U64.v wosize));
