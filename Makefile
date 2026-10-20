@@ -103,6 +103,7 @@ ROOT_MODULES = \
   mark-and-sweep/spec/GC.Spec.Partition.fst \
   mark-and-sweep/spec/GC.Spec.Coalesce.Complete.fst \
   mark-and-sweep/spec/GC.Spec.Coalesce.Correct.fst \
+  mark-and-sweep/spec/GC.Spec.Allocator.Oom.fst \
   mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fsti \
   mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fst \
   mark-and-sweep/spec/GC.Spec.FreeList.Sweep.fst \

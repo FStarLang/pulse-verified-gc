@@ -116,14 +116,29 @@ codebase:
 
 ## 6. Still open
 
-- **When may allocation fail?** After a full collection the free list is exact
-  (`fused_exact`). Combined with a lemma that `alloc_search` returning 0 means
-  no listed block fits, that says an `Out_of_memory` raised after a full
-  collection means no free block anywhere is big enough. Fragmentation can
-  still cause it.
-- **Allocation preserves `fl_exact`.** Not needed for the above, but needed to
-  add `fl_complete` to the generational heap-shape invariant.
+- **Allocation preserves `fl_exact`.** Not needed for the OOM result in §7,
+  but needed to add `fl_complete` to the generational heap-shape invariant, or
+  to say anything about an allocation that fails *without* a collection first.
 - **Promotion padding.** `zero_promote_padding` and the lemmas around it now
   zero a word that no longer exists. Removing them changes the extracted C.
 - **`heap_objects_dense`** is defined twice (`GC.Gen.Promote.fsti`,
   `GC.Spec.SweepInv.fst`) and should live in `common/spec`.
+
+## 7. When allocation may fail
+
+`verified_allocate` raises `Out_of_memory` only after a failed allocation, a
+full collection, and a second failed allocation. `GC.Spec.Allocator.Oom`
+proves what that second failure means:
+
+| lemma | says |
+|---|---|
+| `alloc_spec_oom_no_fit` | if `alloc_spec` returns no object on a well-formed heap whose free list is valid, terminates and is complete, then every blue block is smaller than the request |
+| `coalesce_oom_no_fit` | the coalescer's output meets those hypotheses |
+| `fused_oom_no_fit` | so on the heap the collector produces (`fused_sweep_coalesce`, under the hypotheses `GC.Impl.fst` discharges), a failed allocation means **no free block anywhere is big enough** |
+
+It does not say the heap is full. Fragmentation can still make an allocation
+fail with enough free words in total, spread over blocks that are each too
+small. The argument has to rule out the search giving up early: running out of
+fuel (`fl_chain_terminates`), stopping at a node the free list would continue
+past (objects lie at least a word above `zero_addr`), and bailing on bounds
+(a right-justified object lies inside its block, which lies inside the heap).
