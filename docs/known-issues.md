@@ -7,37 +7,14 @@ reproducer under `generational/ocaml-integration/tests/`. Run them with
 make -C generational/ocaml-integration/tests known-gaps
 ```
 
+There are currently none: the last one graduated to a regression test.
+
 Fixed issues are kept below for the record, because their reproducers are now
 regression tests and it is useful to know what they were guarding. Run those
 with `make -C generational/ocaml-integration/tests correctness`.
 
 ---
 
-## Open: the major allocator writes the block size, not the requested size
-
-**Issue:** [#19](https://github.com/FStarLang/pulse-verified-gc/issues/19)
-**Reproducer:** `tests/alloc_exact_promotion.ml` (`make known-gaps`)
-**Severity:** an object field that is not a value, visible from safe OCaml
-(`Array.length` is one too large)
-
-When a free block is exactly one word longer than the request, the allocator
-hands the whole block over and writes the header with the *block's* wosize.
-On the direct major path the runtime overwrites that header straight away, so
-nothing sees it. Promotion does not: the minor-to-major copy rebuilds the
-header from the one the allocator wrote, so the promoted object declares one
-field more than was copied into it, and that field is not a value.
-
-The reproducer fragments the major heap into blocks of wosize 101 pinned
-between survivors, then promotes objects of wosize 100, so every request
-leaves a one-word remainder. It checks `Array.length` of each promoted object
-and passes under stock OCaml. Under the verified GC, 6793 of 22671 promoted
-objects declare 101 fields.
-
-`tests/ast-invariants` in OCaml's testsuite trips over the same bug natively,
-but only on some platforms, because it depends on something following the
-extra field and faulting.
-
----
 
 ## Open: every promotion failure is reported as "major heap full"
 
@@ -77,6 +54,38 @@ against a *control* — a second doomed block with no forged reference — and
 only asserts collection when the control's finaliser fires, so the test
 carries no information on a runtime without finalisers rather than failing
 spuriously.
+
+---
+
+## Fixed: the major allocator wrote the block size, not the requested size
+
+**Issue:** [#19](https://github.com/FStarLang/pulse-verified-gc/issues/19)
+**Regression test:** `tests/alloc_exact_promotion.ml` (`make correctness`)
+**Fixed by:** right-justified allocation (`GC.Spec.Allocator`, `GC.Impl.Allocator`)
+**Severity:** an object field that is not a value, visible from safe OCaml
+(`Array.length` is one too large)
+
+When a free block was exactly one word longer than the request, the allocator
+handed the whole block over and wrote the header with the *block's* wosize.
+On the direct major path the runtime overwrites that header straight away, so
+nothing sees it. Promotion does not: the minor-to-major copy rebuilds the
+header from the one the allocator wrote, so the promoted object declares one
+field more than was copied into it, and that field is not a value.
+
+The reproducer fragments the major heap into blocks of wosize 101 pinned
+between survivors, then promotes objects of wosize 100, so every request
+leaves a one-word remainder. It checks `Array.length` of each promoted object
+and passes under stock OCaml. Before the fix, 6793 of 22671 promoted objects
+declared 101 fields under the verified GC.
+
+`tests/ast-invariants` in OCaml's testsuite tripped over the same bug natively,
+but only on some platforms, because it depends on something following the
+extra field and faulting.
+
+The fix is the one stock OCaml uses: allocation is right-justified. The object
+is carved from the *end* of the free block, so its header always records
+exactly the requested size, and whatever is left (even a single word) stays
+behind as a free remainder. See `docs/allocator-exactness.md`.
 
 ---
 

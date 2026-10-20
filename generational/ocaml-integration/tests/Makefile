@@ -39,7 +39,8 @@ bench_stats.cmo: bench_stats.ml
 BENCHMARKS = binarytrees fasta quicksort fannkuchredux count_change nbodies spectralnorm mandelbrot
 
 # Correctness tests (not benchmarks): run under both runtimes and compared.
-CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior
+CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior \
+                    alloc_exact_promotion
 
 # infix_closures needs a small major heap so that real major collections
 # (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
@@ -56,10 +57,11 @@ MAKE_VECT_MAJOR_WORDS ?= 4000000
 # nursery_no_scan_interior forges interior pointers into no-scan nursery
 # payloads.  It was a known-gap reproducer until the nursery scan window
 # became `GC.Gen.MinorHeap.minor_scan_wosize`; it is now a regression test.
-KNOWN_GAP_TESTS = alloc_exact_promotion
+KNOWN_GAP_TESTS =
 
 # alloc_exact_promotion (issue #19) fills 60% of a 4M-word major heap, frees
-# every other block and promotes into the fragments.
+# every other block and promotes into the fragments. It was a known-gap
+# reproducer until allocation became size-exact (right-justified).
 ALLOC_EXACT_MAJOR_WORDS ?= 4194304
 NURSERY_NO_SCAN_MAJOR_WORDS ?= 4000000
 
@@ -155,6 +157,10 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	MIN_EXPANSION_WORDSIZE=$(NURSERY_NO_SCAN_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) nursery_no_scan_interior.byte
 	@echo "--- nursery_no_scan_interior (stock OCaml, differential check) ---"
 	$(UNCHANGED_OCAMLRUN) nursery_no_scan_interior.byte
+	@echo "--- alloc_exact_promotion (verified generational GC) ---"
+	MIN_EXPANSION_WORDSIZE=$(ALLOC_EXACT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS)
+	@echo "--- alloc_exact_promotion (stock OCaml, differential check) ---"
+	$(UNCHANGED_OCAMLRUN) alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS)
 	@echo "=== Correctness tests passed ==="
 
 # ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
@@ -167,22 +173,12 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 # into the job summary.
 #
 # A gap's test graduates to `correctness` once the fix lands, as
-# nursery_no_scan_interior did when the nursery stopped scanning no-scan
-# bodies.
+# nursery_no_scan_interior and alloc_exact_promotion (issue #19) did.
 #
-#   alloc_exact_promotion -- issue #19: the major allocator writes the free
-#   block's size, not the requested size, into the header when the block is
-#   one word too large, so a promoted object declares a field it does not own.
+# There are currently none.
 
 known-gaps: $(addsuffix .byte, $(KNOWN_GAP_TESTS))
-	@echo "=== Known-gap reproducers (expected to FAIL under the verified GC) ==="
-	@echo "--- alloc_exact_promotion (stock OCaml, must pass) ---"
-	$(UNCHANGED_OCAMLRUN) alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS)
-	@echo "--- alloc_exact_promotion (verified generational GC) ---"
-	@if MIN_EXPANSION_WORDSIZE=$(ALLOC_EXACT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) \
-	      alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS); then \
-	  echo "KNOWN-GAP alloc_exact_promotion: now passes -- move it to CORRECTNESS_TESTS"; \
-	else echo "KNOWN-GAP alloc_exact_promotion: still open (issue #19)"; fi
+	@echo "=== No known-gap reproducers outstanding ==="
 
 # ---- Smoke tests, native (ocamlopt + verified gen GC's libasmrun.a) ----
 # Same programs, same arguments and same heap sizes as the bytecode `test`

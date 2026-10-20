@@ -1628,7 +1628,6 @@ bool is_valid_fp(uint64_t v)
 FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
 allocate(heap_t heap, uint64_t fp, uint64_t wosize)
 {
-  uint64_t wz = wosize == 0ULL ? 1ULL : wosize;
   uint64_t head_fp = fp;
   uint64_t prev_fp = 0ULL;
   uint64_t cur_fp = fp;
@@ -1652,92 +1651,56 @@ allocate(heap_t heap, uint64_t fp, uint64_t wosize)
         uint64_t hdr = read_word(heap, hd_addr);
         uint64_t block_wz = getWosize0(hdr);
         uint64_t next = read_word(heap, vcur);
-        if (block_wz >= wz)
+        if (block_wz >= wosize)
         {
-          uint64_t leftover = block_wz - wz;
+          uint64_t leftover = block_wz - wosize;
           uint64_t vp = prev_fp;
-          if (leftover >= 2ULL)
+          uint64_t alloc_hd_off = hd_addr + leftover * 8ULL;
+          uint64_t alloc_obj = alloc_hd_off + 8ULL;
+          if (alloc_obj >= heap_size_u640)
+            go = false;
+          else if (leftover >= 1ULL)
           {
-            uint64_t wz_plus_1 = wz + 1ULL;
-            uint64_t offset = wz_plus_1 * 8ULL;
-            uint64_t rem_hd_off = hd_addr + offset;
-            if (rem_hd_off >= heap_size_u640)
+            uint64_t new_fp = leftover >= 2ULL ? vcur : next;
+            bool vp_unusable = vp == 0ULL || vp == hd_addr;
+            if (vp_unusable)
             {
-              uint64_t alloc_hdr = makeHeader(wz, white, 0ULL);
-              write_word(heap, hd_addr, alloc_hdr);
-              if (vp == 0ULL)
-              {
-                head_fp = next;
-                result_obj = vcur;
-                go = false;
-              }
-              else
-              {
-                write_word(heap, vp, next);
-                result_obj = vcur;
-                go = false;
-              }
+              uint64_t rem_hdr = makeHeader(leftover - 1ULL, blue, 0ULL);
+              write_word(heap, hd_addr, rem_hdr);
+              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              write_word(heap, alloc_hd_off, alloc_hdr);
+              head_fp = new_fp;
+              result_obj = alloc_obj;
+              go = false;
             }
             else
             {
-              uint64_t rem_obj = rem_hd_off + 8ULL;
-              if (rem_obj >= heap_size_u640)
-              {
-                uint64_t alloc_hdr = makeHeader(wz, white, 0ULL);
-                write_word(heap, hd_addr, alloc_hdr);
-                uint64_t rem_wz_u = leftover - 1ULL;
-                uint64_t rem_hdr = makeHeader(rem_wz_u, blue, 0ULL);
-                write_word(heap, rem_hd_off, rem_hdr);
-                if (vp == 0ULL)
-                {
-                  head_fp = rem_obj;
-                  result_obj = vcur;
-                  go = false;
-                }
-                else
-                {
-                  write_word(heap, vp, rem_obj);
-                  result_obj = vcur;
-                  go = false;
-                }
-              }
-              else
-              {
-                uint64_t alloc_hdr = makeHeader(wz, white, 0ULL);
-                write_word(heap, hd_addr, alloc_hdr);
-                uint64_t rem_wz_u = leftover - 1ULL;
-                uint64_t rem_hdr = makeHeader(rem_wz_u, blue, 0ULL);
-                write_word(heap, rem_hd_off, rem_hdr);
-                write_word(heap, rem_obj, next);
-                if (vp == 0ULL)
-                {
-                  head_fp = rem_obj;
-                  result_obj = vcur;
-                  go = false;
-                }
-                else
-                {
-                  write_word(heap, vp, rem_obj);
-                  result_obj = vcur;
-                  go = false;
-                }
-              }
+              write_word(heap, vp, new_fp);
+              uint64_t rem_hdr = makeHeader(leftover - 1ULL, blue, 0ULL);
+              write_word(heap, hd_addr, rem_hdr);
+              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              write_word(heap, alloc_hd_off, alloc_hdr);
+              result_obj = alloc_obj;
+              go = false;
             }
           }
           else
           {
-            uint64_t alloc_hdr = makeHeader(block_wz, white, 0ULL);
-            write_word(heap, hd_addr, alloc_hdr);
-            if (vp == 0ULL)
+            bool vp_unusable = vp == 0ULL || vp == hd_addr;
+            if (vp_unusable)
             {
+              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              write_word(heap, hd_addr, alloc_hdr);
               head_fp = next;
-              result_obj = vcur;
+              result_obj = alloc_obj;
               go = false;
             }
             else
             {
               write_word(heap, vp, next);
-              result_obj = vcur;
+              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              write_word(heap, hd_addr, alloc_hdr);
+              result_obj = alloc_obj;
               go = false;
             }
           }
@@ -1760,7 +1723,6 @@ allocate(heap_t heap, uint64_t fp, uint64_t wosize)
 FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
 allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize)
 {
-  uint64_t wz = wosize == 0ULL ? 1ULL : wosize;
   uint64_t head_fp = fp;
   uint64_t prev_fp = 0ULL;
   uint64_t cur_fp = fp;
@@ -1784,92 +1746,56 @@ allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize)
         uint64_t hdr = read_word(heap, hd_addr);
         uint64_t block_wz = getWosize0(hdr);
         uint64_t next = read_word(heap, vcur);
-        if (block_wz >= wz)
+        if (block_wz >= wosize)
         {
-          uint64_t leftover = block_wz - wz;
+          uint64_t leftover = block_wz - wosize;
           uint64_t vp = prev_fp;
-          if (leftover >= 2ULL)
+          uint64_t alloc_hd_off = hd_addr + leftover * 8ULL;
+          uint64_t alloc_obj = alloc_hd_off + 8ULL;
+          if (alloc_obj >= heap_size_u640)
+            go = false;
+          else if (leftover >= 1ULL)
           {
-            uint64_t wz_plus_1 = wz + 1ULL;
-            uint64_t offset = wz_plus_1 * 8ULL;
-            uint64_t rem_hd_off = hd_addr + offset;
-            if (rem_hd_off >= heap_size_u640)
+            uint64_t new_fp = leftover >= 2ULL ? vcur : next;
+            bool vp_unusable = vp == 0ULL || vp == hd_addr;
+            if (vp_unusable)
             {
-              uint64_t alloc_hdr = makeHeader(wz, white, 0ULL);
-              write_word(heap, hd_addr, alloc_hdr);
-              if (vp == 0ULL)
-              {
-                head_fp = next;
-                result_obj = vcur;
-                go = false;
-              }
-              else
-              {
-                write_word(heap, vp, next);
-                result_obj = vcur;
-                go = false;
-              }
+              uint64_t rem_hdr = makeHeader(leftover - 1ULL, blue, 0ULL);
+              write_word(heap, hd_addr, rem_hdr);
+              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              write_word(heap, alloc_hd_off, alloc_hdr);
+              head_fp = new_fp;
+              result_obj = alloc_obj;
+              go = false;
             }
             else
             {
-              uint64_t rem_obj = rem_hd_off + 8ULL;
-              if (rem_obj >= heap_size_u640)
-              {
-                uint64_t alloc_hdr = makeHeader(wz, white, 0ULL);
-                write_word(heap, hd_addr, alloc_hdr);
-                uint64_t rem_wz_u = leftover - 1ULL;
-                uint64_t rem_hdr = makeHeader(rem_wz_u, blue, 0ULL);
-                write_word(heap, rem_hd_off, rem_hdr);
-                if (vp == 0ULL)
-                {
-                  head_fp = rem_obj;
-                  result_obj = vcur;
-                  go = false;
-                }
-                else
-                {
-                  write_word(heap, vp, rem_obj);
-                  result_obj = vcur;
-                  go = false;
-                }
-              }
-              else
-              {
-                uint64_t alloc_hdr = makeHeader(wz, white, 0ULL);
-                write_word(heap, hd_addr, alloc_hdr);
-                uint64_t rem_wz_u = leftover - 1ULL;
-                uint64_t rem_hdr = makeHeader(rem_wz_u, blue, 0ULL);
-                write_word(heap, rem_hd_off, rem_hdr);
-                write_word(heap, rem_obj, next);
-                if (vp == 0ULL)
-                {
-                  head_fp = rem_obj;
-                  result_obj = vcur;
-                  go = false;
-                }
-                else
-                {
-                  write_word(heap, vp, rem_obj);
-                  result_obj = vcur;
-                  go = false;
-                }
-              }
+              write_word(heap, vp, new_fp);
+              uint64_t rem_hdr = makeHeader(leftover - 1ULL, blue, 0ULL);
+              write_word(heap, hd_addr, rem_hdr);
+              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              write_word(heap, alloc_hd_off, alloc_hdr);
+              result_obj = alloc_obj;
+              go = false;
             }
           }
           else
           {
-            uint64_t alloc_hdr = makeHeader(block_wz, white, 0ULL);
-            write_word(heap, hd_addr, alloc_hdr);
-            if (vp == 0ULL)
+            bool vp_unusable = vp == 0ULL || vp == hd_addr;
+            if (vp_unusable)
             {
+              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              write_word(heap, hd_addr, alloc_hdr);
               head_fp = next;
-              result_obj = vcur;
+              result_obj = alloc_obj;
               go = false;
             }
             else
             {
               write_word(heap, vp, next);
-              result_obj = vcur;
+              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              write_word(heap, hd_addr, alloc_hdr);
+              result_obj = alloc_obj;
               go = false;
             }
           }

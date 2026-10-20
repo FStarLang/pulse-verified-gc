@@ -30,15 +30,12 @@
 #   - the bridge's fixed root buffer (MAX_ROOTS in alloc_gen.c) overflows in
 #     large compiler runs ("verified gen GC: root overflow":
 #     typing-modules/merge_constraint, unboxed-primitive-args)
-#   - the major allocator writes the block size, not the requested size, into
-#     the header (issue #19): tests/ast-invariants (native)
 #
 # Do NOT add tests/misc/'weaktest.ml': it is slow here (~108s native against
 # 0.2s on stock, no weak table) but passes within TIMEOUT=300. If it times
 # out, the collector or the runner got slower -- investigate rather than
 # baseline it. The same goes for lib-systhreads/eintr's timing-sensitive
 # variants.
-tests/ast-invariants/'test.ml' with 1.1 (native)
 tests/backtrace/'callstack.ml' with 1.1.1 (native)
 tests/backtrace/'callstack.ml' with 1.1.2 (bytecode)
 tests/c-api/'alloc_async.ml' with 1 (native)
