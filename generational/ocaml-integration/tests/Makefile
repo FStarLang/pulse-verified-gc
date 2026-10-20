@@ -56,7 +56,11 @@ MAKE_VECT_MAJOR_WORDS ?= 4000000
 # nursery_no_scan_interior forges interior pointers into no-scan nursery
 # payloads.  It was a known-gap reproducer until the nursery scan window
 # became `GC.Gen.MinorHeap.minor_scan_wosize`; it is now a regression test.
-KNOWN_GAP_TESTS =
+KNOWN_GAP_TESTS = alloc_exact_promotion
+
+# alloc_exact_promotion (issue #19) fills 60% of a 4M-word major heap, frees
+# every other block and promotes into the fragments.
+ALLOC_EXACT_MAJOR_WORDS ?= 4194304
 NURSERY_NO_SCAN_MAJOR_WORDS ?= 4000000
 
 BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
@@ -159,11 +163,26 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 # stock OCaml and demonstrates a gap that is still open in the verified
 # collector.  See docs/known-issues.md.
 #
-# There are currently none: nursery_no_scan_interior graduated to
-# `correctness` when the nursery stopped scanning no-scan bodies.
+# Each gap prints one `KNOWN-GAP <test>: <status>` line, which CI collects
+# into the job summary.
+#
+# A gap's test graduates to `correctness` once the fix lands, as
+# nursery_no_scan_interior did when the nursery stopped scanning no-scan
+# bodies.
+#
+#   alloc_exact_promotion -- issue #19: the major allocator writes the free
+#   block's size, not the requested size, into the header when the block is
+#   one word too large, so a promoted object declares a field it does not own.
 
 known-gaps: $(addsuffix .byte, $(KNOWN_GAP_TESTS))
-	@echo "=== No known-gap reproducers outstanding ==="
+	@echo "=== Known-gap reproducers (expected to FAIL under the verified GC) ==="
+	@echo "--- alloc_exact_promotion (stock OCaml, must pass) ---"
+	$(UNCHANGED_OCAMLRUN) alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS)
+	@echo "--- alloc_exact_promotion (verified generational GC) ---"
+	@if MIN_EXPANSION_WORDSIZE=$(ALLOC_EXACT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) \
+	      alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS); then \
+	  echo "KNOWN-GAP alloc_exact_promotion: now passes -- move it to CORRECTNESS_TESTS"; \
+	else echo "KNOWN-GAP alloc_exact_promotion: still open (issue #19)"; fi
 
 # ---- Smoke tests, native (ocamlopt + verified gen GC's libasmrun.a) ----
 # Same programs, same arguments and same heap sizes as the bytecode `test`
