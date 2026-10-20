@@ -662,7 +662,7 @@ let alloc_spec_preserves_wfh_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 
 #restart-solver
 #push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
-private let alloc_split_fl_transfer_pre_part1
+let alloc_split_fl_transfer_pre_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (a: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
                     Seq.mem obj (objects zero_addr g) /\
@@ -744,7 +744,7 @@ private let alloc_split_fl_transfer_pre_part1
 
 #restart-solver
 #push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
-private let alloc_exact_fl_transfer_pre_part1
+let alloc_exact_fl_transfer_pre_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (a: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
                     Seq.mem obj (objects zero_addr g) /\

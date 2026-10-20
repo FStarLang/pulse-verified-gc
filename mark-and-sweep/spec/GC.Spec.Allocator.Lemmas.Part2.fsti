@@ -37,6 +37,58 @@ val alloc_spec_preserves_wfh_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: 
         (ensures (let r = alloc_spec g fp requested_wz in
                   well_formed_heap_part1 r.heap_out))
 
+/// ---------------------------------------------------------------------------
+/// Frame facts for one block's allocation: every other object keeps its
+/// membership, its wosize >= 1, and its link word.  Exported for the
+/// free-list exactness proof in GC.Gen.AllocExact.
+/// ---------------------------------------------------------------------------
+
+val alloc_split_fl_transfer_pre_part1
+  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (a: obj_addr)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    Seq.mem obj (objects zero_addr g) /\
+                    (let hdr = read_word g (hd_address obj) in
+                     let block_wz = U64.v (getWosize hdr) in
+                     block_wz >= wz /\ block_wz - wz >= 1 /\
+                     // At leftover = 1 the remainder at `hd` is the empty
+                     // block, so `obj` -- its object address -- has wosize 0
+                     // in the output heap and is the one object for which the
+                     // conclusion below is false.  It is also no longer a
+                     // free-list cell, so callers exclude it instead.
+                     (block_wz - wz >= 2 \/ a <> obj)) /\
+                    wz >= 1 /\
+                    Seq.mem a (objects zero_addr g) /\
+                    U64.v a >= U64.v mword /\
+                    U64.v a < heap_size /\
+                    U64.v a % U64.v mword = 0)
+          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+                    Seq.mem a (objects zero_addr g') /\
+                    (U64.v (wosize_of_object a g) >= 1 ==>
+                      U64.v (wosize_of_object a g') >= 1) /\
+                    (U64.v (wosize_of_object a g) >= 1 /\
+                     U64.v (hd_address a) + 16 <= heap_size ==>
+                      read_word g' a == read_word g a)))
+
+val alloc_exact_fl_transfer_pre_part1
+  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (a: obj_addr)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    Seq.mem obj (objects zero_addr g) /\
+                    (let hdr = read_word g (hd_address obj) in
+                     let block_wz = U64.v (getWosize hdr) in
+                     block_wz == wz) /\
+                    Seq.mem a (objects zero_addr g) /\
+                    U64.v a >= U64.v mword /\
+                    U64.v a < heap_size /\
+                    U64.v a % U64.v mword = 0)
+          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+                    Seq.mem a (objects zero_addr g') /\
+                    (U64.v (wosize_of_object a g) >= 1 ==>
+                      U64.v (wosize_of_object a g') >= 1) /\
+                    (U64.v (wosize_of_object a g) >= 1 /\
+                     U64.v (hd_address a) + 16 <= heap_size ==>
+                      read_word g' a == read_word g a)))
+
+
 /// **Theorem**: alloc_spec preserves fl_valid under well_formed_heap_part1.
 val alloc_spec_preserves_fl_valid_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires well_formed_heap_part1 g /\

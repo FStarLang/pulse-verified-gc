@@ -414,6 +414,9 @@ let chain_avoids_zero (g: heap) (fp excl: U64.t)
 /// chain_avoids_unfold_step: one-step unfolding of chain_avoids.
 /// When fp is a valid non-terminal node, fp ≠ excl, and steps > 0,
 /// chain_avoids reduces to the recursive call on the successor.
+let chain_avoids_terminal (g: heap) (fp excl: U64.t) (steps: nat)
+  = ()
+
 let chain_avoids_unfold_step (g: heap) (fp excl: U64.t) (steps: nat)
   = ()
 
