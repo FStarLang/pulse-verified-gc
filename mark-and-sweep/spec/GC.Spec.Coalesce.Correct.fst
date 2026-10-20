@@ -2592,6 +2592,13 @@ let coalesce_conserves_free_space g =
 /// independent of coalescing, needed to localize which objects can possibly
 /// cover a position below/above a given cursor).
 
+/// Two word-aligned addresses with `a < b` are at least a word apart.  Kept
+/// out of line so the flush lemmas below need not find it in their context.
+private let aligned_lt_word (a b: hp_addr)
+  : Lemma (requires U64.v a < U64.v b) (ensures U64.v a + U64.v mword <= U64.v b)
+  = FStar.Math.Lemmas.lemma_div_mod (U64.v a) (U64.v mword);
+    FStar.Math.Lemmas.lemma_div_mod (U64.v b) (U64.v mword)
+
 /// If `x`'s header agrees between two heaps, `x`'s contribution to
 /// `blue_covered` at any position transfers: same colour, same extent.
 let blue_covered_by_agree (g g': heap) (x: obj_addr) (p: nat)
@@ -2740,6 +2747,12 @@ let flush_conserves_coverage
                 = mem_append_lemma witness pre (objects h g);
                   (if not (Seq.mem witness pre) then mem_from_le_hd_address h g witness);
                   mem_append_lemma witness pre (objects h g1);
+                  // witness's header is below h (it covers p < h), and both
+                  // are word-aligned, so the whole header word is below h.
+                  let q = hd_address witness in
+                  assert (U64.v q < U64.v h);
+                  aligned_lt_word q h;
+                  below q;
                   blue_covered_by_agree g g1 witness p
               in
               let bwd (witness: obj_addr)
@@ -2751,6 +2764,11 @@ let flush_conserves_coverage
                 = mem_append_lemma witness pre (objects h g1);
                   (if not (Seq.mem witness pre) then mem_from_le_hd_address h g1 witness);
                   mem_append_lemma witness pre (objects h g);
+                  // As in fwd: the header word lies entirely below h.
+                  let q = hd_address witness in
+                  assert (U64.v q < U64.v h);
+                  aligned_lt_word q h;
+                  below q;
                   blue_covered_by_agree g g1 witness p
               in
               (if blue_covered g p then
@@ -2922,6 +2940,12 @@ let flush_conserves_coverage_at_end
               = mem_append_lemma witness pre (objects h g);
                 (if not (Seq.mem witness pre) then mem_from_le_hd_address h g witness);
                 mem_append_lemma witness pre (objects h g1);
+                // witness's header is below h (it covers p < h), and both
+                // are word-aligned, so the whole header word is below h.
+                let q = hd_address witness in
+                assert (U64.v q < U64.v h);
+                aligned_lt_word q h;
+                below q;
                 blue_covered_by_agree g g1 witness p
             in
             let bwd (witness: obj_addr)
@@ -2933,6 +2957,11 @@ let flush_conserves_coverage_at_end
               = mem_append_lemma witness pre (objects h g1);
                 (if not (Seq.mem witness pre) then mem_from_le_hd_address h g1 witness);
                 mem_append_lemma witness pre (objects h g);
+                // As in fwd: the header word lies entirely below h.
+                let q = hd_address witness in
+                assert (U64.v q < U64.v h);
+                aligned_lt_word q h;
+                below q;
                 blue_covered_by_agree g g1 witness p
             in
             (if blue_covered g p then
@@ -3682,10 +3711,9 @@ let no_adjacent_inv_step_flush
             end
           end else begin
             mem_cons_lemma y' x (objects nxt g1);
-            (if not (y' = x) then begin
-               objects_addresses_gt_start nxt g1 y';
-               hd_address_spec y'
-             end);
+            // Otherwise y' is on the walk from nxt, so its header is at or
+            // above nxt, contradicting hd_address y' < nxt.
+            (if not (y' = x) then mem_from_le_hd_address nxt g1 y');
             assert (y' == x)
           end
       in
