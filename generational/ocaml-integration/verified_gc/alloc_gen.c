@@ -695,7 +695,12 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     }
 
     if (result == 0) {
-        /* Return failure rather than aborting: caml_alloc_shr_aux's check_oom()
+        /* The heap here is the one a full collection just produced, so by
+         * GC.Spec.Allocator.Oom.fused_oom_no_fit every free block is smaller
+         * than the request: the heap may still have enough free words in total,
+         * but no single block fits.
+         *
+         * Return failure rather than aborting: caml_alloc_shr_aux's check_oom()
          * turns a NULL/0 into a catchable Out_of_memory (and into a fatal error
          * by itself if we are inside a minor collection, where raising is not
          * possible -- that is stock's own distinction). Calling
