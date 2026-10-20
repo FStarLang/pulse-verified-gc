@@ -16,6 +16,7 @@ open GC.Gen.MinorHeap
 open GC.Gen.Promote
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module FL = GC.Spec.FreeList
 module Mark = GC.Spec.Mark
 module MarkBoundedInv = GC.Spec.MarkBoundedInv
 module Sweep = GC.Spec.Sweep
@@ -30,6 +31,10 @@ let major_heap_shape (major: heap) (fp: U64.t) : prop =
   well_formed_heap major /\
   AllocLemmas.fl_valid major fp heap_words /\
   AllocLemmas.fl_chain_terminates major fp heap_words /\
+  // Every blue block that can hold a link is on the free list -- so an
+  // allocation fails only when no free block is big enough
+  // (GC.Gen.AllocExact.alloc_spec_fits_succeeds).
+  FL.fl_complete major fp /\
   FreeListShape.fp_pointer_or_zero fp /\
   FreeListShape.blue_link_fields_valid major /\
   heap_objects_dense major /\

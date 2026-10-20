@@ -2,6 +2,7 @@ module GC.SPOT.NoScanMajor
 
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
+module FL = GC.Spec.FreeList
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -842,6 +843,30 @@ let spot_ns_blue_blocks_scannable (r: unit{spot_ns_room})
 /// The audit
 /// ---------------------------------------------------------------------------
 
+
+/// The free list is complete: the only blue block with room for a link is the
+/// free block, which is the list's head.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+let spot_ns_fl_complete (r: unit{spot_ns_room})
+  : Lemma (ensures FL.fl_complete (spot_ns_heap r) (spot_ns_fp r))
+  =
+  let g = spot_ns_heap r in
+  let proof (obj: obj_addr)
+    : Lemma (requires Seq.mem obj (SpecFields.objects zero_addr g) /\
+                      SpecObj.is_blue obj g /\
+                      U64.v (SpecObj.wosize_of_object obj g) >= 1)
+            (ensures FL.reachable_on_fl g (spot_ns_fp r) obj)
+    =
+    spot_ns_object_cases r obj;
+    spot_ns_s_reads r;
+    spot_ns_free_reads r;
+    spot_ns_layout_facts r;
+    hd_address_spec (spot_free_obj r);
+    FL.reachable_head g (spot_ns_fp r)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires proof)
+#pop-options
+
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 let spot_ns_major_heap_shape (r: unit{spot_ns_room})
   =
@@ -866,5 +891,6 @@ let spot_ns_major_heap_shape (r: unit{spot_ns_room})
   spot_ns_wfh_part1 r;
   spot_ns_wfh_part2_3 r;
   BlueAlloc.wfh_part2_implies_blue_fields_closed g;
+  spot_ns_fl_complete r;
   GenInv.major_heap_shape_intro g fp
 #pop-options

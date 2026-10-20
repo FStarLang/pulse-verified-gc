@@ -3,6 +3,7 @@ module GC.SPOT.ConcreteMajorGen
 module U64 = FStar.UInt64
 module U8 = FStar.UInt8
 module Seq = FStar.Seq
+module FL = GC.Spec.FreeList
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -834,6 +835,30 @@ let spot_major_blue_blocks_scannable (r: unit{spot_major_room}) (mp: minor_ptr)
   SpecFields.blue_blocks_scannable_intro g pf
 #pop-options
 
+
+/// The free list is complete: the only blue block with room for a link is the
+/// free block, which is the list's head.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+let spot_major_fl_complete (r: unit{spot_major_room}) (mp: minor_ptr)
+  : Lemma (ensures FL.fl_complete (spot_major_heap r mp) (spot_major_fp r))
+  =
+  let g = spot_major_heap r mp in
+  let proof (obj: obj_addr)
+    : Lemma (requires Seq.mem obj (SpecFields.objects zero_addr g) /\
+                      SpecObj.is_blue obj g /\
+                      U64.v (SpecObj.wosize_of_object obj g) >= 1)
+            (ensures FL.reachable_on_fl g (spot_major_fp r) obj)
+    =
+    spot_major_object_cases r mp obj;
+    spot_major_c_reads r mp;
+    spot_major_free_reads r mp;
+    spot_major_layout_facts r;
+    hd_address_spec (spot_free_obj r);
+    FL.reachable_head g (spot_major_fp r)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires proof)
+#pop-options
+
 let spot_major_heap_shape (r: unit{spot_major_room}) (mp: minor_ptr)
   =
   let major = spot_major_heap r mp in
@@ -858,4 +883,5 @@ let spot_major_heap_shape (r: unit{spot_major_room}) (mp: minor_ptr)
   spot_major_wfh_part1 r mp;
   spot_major_wfh_part2 r mp;
   BlueAlloc.wfh_part2_implies_blue_fields_closed major;
+  spot_major_fl_complete r mp;
   GenInv.major_heap_shape_intro major fp

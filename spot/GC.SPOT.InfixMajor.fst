@@ -3,6 +3,7 @@ module GC.SPOT.InfixMajor
 module U64 = FStar.UInt64
 module U8 = FStar.UInt8
 module Seq = FStar.Seq
+module FL = GC.Spec.FreeList
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -1043,6 +1044,31 @@ let spot_infix_blue_fields_non_infix (r: unit{spot_infix_room})
 /// The audit
 /// ---------------------------------------------------------------------------
 
+
+/// The free list is complete: the only blue block with room for a link is the
+/// free block, which is the list's head.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+let spot_infix_fl_complete (r: unit{spot_infix_room})
+  : Lemma (ensures FL.fl_complete (spot_infix_heap r) (spot_infix_fp r))
+  =
+  let g = spot_infix_heap r in
+  let proof (obj: obj_addr)
+    : Lemma (requires Seq.mem obj (SpecFields.objects zero_addr g) /\
+                      SpecObj.is_blue obj g /\
+                      U64.v (SpecObj.wosize_of_object obj g) >= 1)
+            (ensures FL.reachable_on_fl g (spot_infix_fp r) obj)
+    =
+    spot_infix_object_cases r obj;
+    spot_infix_q_reads r;
+    spot_infix_p_reads r;
+    spot_infix_free_reads r;
+    spot_infix_layout_facts r;
+    hd_address_spec (spot_free_obj r);
+    FL.reachable_head g (spot_infix_fp r)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires proof)
+#pop-options
+
 let spot_infix_major_heap_shape (r: unit{spot_infix_room})
   =
   let g = spot_infix_heap r in
@@ -1066,4 +1092,5 @@ let spot_infix_major_heap_shape (r: unit{spot_infix_room})
   spot_infix_wfh_part1 r;
   spot_infix_wfh_part2_3 r;
   BlueAlloc.wfh_part2_implies_blue_fields_closed g;
+  spot_infix_fl_complete r;
   GenInv.major_heap_shape_intro g fp
