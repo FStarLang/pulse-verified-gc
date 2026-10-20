@@ -19,7 +19,7 @@ Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct
 | `parallel-sweep/test/` | The OCaml driver, the build script, the runner, and the `GC.Spec.ZeroAddr` realisation. |
 | `parallel-sweep/Makefile` | `make verify` and `make test`. |
 
-Toolchain: only the pinned `./fstar` (F* `nightly-2026-08-15`, `ae858eac`, Z3 4.15.3), with the repo's own F* flags. The OCaml side uses opam switch `fstar-gc` (OCaml 4.14.0).
+Toolchain: only the pinned `./fstar` (F* `nightly-2026-10-17`, `f43a1127`, Z3 5.3.0), with the repo's own F* flags. The OCaml side uses opam switch `fstar-gc` (OCaml 4.14.0).
 
 ---
 
