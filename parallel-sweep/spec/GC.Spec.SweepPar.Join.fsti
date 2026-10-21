@@ -1,7 +1,7 @@
 /// ---------------------------------------------------------------------------
 /// GC.Spec.SweepPar.Join — the workers' ranges, put back together
 ///
-/// Statement only; the proof is not written yet.
+/// Statement; the proof is in GC.Spec.SweepPar.Join.fst.
 ///
 /// Each worker gives back the bytes [lo, hi) of its segment's copy of the
 /// heap (GC.Impl.SweepSegment.sweep_segment).  The bytes below zero_addr

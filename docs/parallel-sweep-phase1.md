@@ -8,7 +8,7 @@ Branch `sheera/parallel-sweep`, from `fork/main` `0ce5e09`, with `origin/main` `
 - **Stage B:** no counterexample. 10,750 (heap, boundary list) pairs were tested, from 17 hand-built and 862 generated heaps. All four deliberately broken variants were caught.
 - **Stage C:** `sweep_par_correct` is proved, with no `admit` or `assume` (§6). The model, the theorem and every `val` are unchanged. The proof uses only `valid_bounds`; the rest of `fused_pre` is not needed.
 - **Pulse, one segment:** the specification of `sweep_segment` is written and reviewed (§7). Locality, that a segment depends only on its own bytes, is tested and proved (§7). The function is not implemented yet.
-- **From theorem to running code:** the pre-pass, the merge, the joining lemma and a sequential driver are specified and type-check (§8). None is implemented or proved. They are waiting for review.
+- **From theorem to running code:** the pre-pass, the merge, the joining lemma and a sequential driver are specified and approved (§8). The joining lemma `join_correct` is proved. The rest is not implemented yet.
 
 Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct` and `mark-and-sweep/NOTES.md`, merged in from `sheera/coalesce-exact`. The directory is left out of the root build.
 
@@ -22,7 +22,8 @@ Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct
 | `parallel-sweep/test/` | The OCaml driver, the build script, the runner, and the `GC.Spec.ZeroAddr` realisation. |
 | `parallel-sweep/impl/GC.Impl.SweepSegment.fsti` | The Pulse specification of one segment, `sweep_segment` (§7). No implementation yet. |
 | `parallel-sweep/impl/GC.Impl.SweepPar.fsti` | The Pulse specifications of the pre-pass, the merge, and a sequential driver (§8). No implementation yet. |
-| `parallel-sweep/spec/GC.Spec.SweepPar.Join.fsti` | The joining lemma, stated (§8). No proof yet. |
+| `parallel-sweep/spec/GC.Spec.SweepPar.Join.fsti` | The joining lemma, stated (§8). |
+| `parallel-sweep/spec/GC.Spec.SweepPar.Join.fst` | Its proof, and its non-vacuity witnesses (§8). |
 | `parallel-sweep/Makefile` | `make verify` and `make test`. |
 
 Toolchain: only the pinned `./fstar` (F* `nightly-2026-10-17`, `f43a1127`, Z3 5.3.0), with the repo's own F* flags. The OCaml side uses opam switch `fstar-gc` (OCaml 4.14.0).
@@ -491,7 +492,9 @@ val join_correct (g: heap) (bs: list nat)
 - **Why these pieces:** each piece is what one worker holds when it finishes. `sweep_segment`'s postcondition gives exactly `Seq.slice (sweep_segment g lo hi).sheap lo hi`, which is `r.out.sheap` for that segment in `sweep_all`. The bytes below `zero_addr` belong to no segment. Nobody writes them, so the caller keeps them as they are in `g`.
 - **Why it should hold:** under `valid_bounds`, the segments start at `zero_addr`, end at `heap_size`, and touch with no gap or overlap. `splice_all` replaces each range in turn, and the ranges are disjoint, so each byte is replaced once, by its own segment. This is pure reasoning about sequences: it does not use locality or anything about the sweep.
 - **How it connects to Pulse:** `pts_to_range_join` turns two adjacent ranges into one range holding the two sequences appended. Joining the range below `zero_addr` with each worker's range in turn, then `pts_to_range_elim`, gives `is_heap` holding exactly this left-hand side. So the lemma is what turns "the workers finished" into the merge's precondition.
-- It is a `val` in an interface with no implementation yet, so nothing depends on it until it is proved.
+- **Proved** in `GC.Spec.SweepPar.Join.fst`, with no `admit` or `assume`. `tiles lo0 rs` says the segments cover `[lo0, heap_size)` with no gap or overlap. `bounds_tile` shows that `valid_bounds` gives `tiles zero_addr` for `sweep_all g (segments bs)`, so none of `sweep_all`'s pairs is skipped. `splice_tiles` shows, by induction on the list and for any starting heap, that splicing a tiling equals the heap's bytes below `lo0` followed by `seg_bytes`. Its one step, `splice_prefix`, says that after splicing `[lo, hi)`, the bytes `[0, hi)` are the base's `[0, lo)` then the source's `[lo, hi)`.
+- **Non-vacuity.** `join_witness` calls `join_correct` on every heap with the whole heap as one segment, which reaches every helper and both cases of `splice_tiles`. `join_witness_two` calls it with two segments, guarded by `valid_bounds`; that reaches `bounds_tile`'s recursive case. Deleting the `splice_prefix` call makes the proof fail, so the lemma is not proved trivially.
+- **Proof check:** about 2 s. It also verifies with `--retry` off on `--z3seed 7`. The largest rlimit is 20.
 
 ### 4. A sequential driver: `sweep_par_seq` (`GC.Impl.SweepPar`)
 
@@ -520,7 +523,7 @@ fn sweep_par_seq (heap: heap_t) (k: SZ.t{SZ.v k >= 1})
 
 ### What is left, in order
 
-1. Prove `join_correct`.
+1. ~~Prove `join_correct`.~~ Done.
 2. Implement and prove `sweep_segment`, using locality (§7) and range versions of `read_word`, `write_word`, `makeWhite` and `flush_blue_impl`.
 3. Implement and prove `prepass` and `merge`.
 4. Implement and prove `sweep_par_seq` from the three pieces.
