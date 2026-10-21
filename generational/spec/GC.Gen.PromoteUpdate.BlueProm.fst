@@ -330,7 +330,7 @@ private let promote_object_preserves_bfc_close
     FStar.Classical.forall_intro_2 bfc_proof
 #pop-options
 
-#push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 48 --fuel 1 --ifuel 0"
 let promote_object_preserves_bfc
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
@@ -510,6 +510,7 @@ private let chain_blue_proof_for_excl
     set_promoted_tag_read_frame padded dst_obj tag (hd_address excl);
     // 2. excl must be in objects(major) (new objects are blue → contradiction)
     AllocLemmas.alloc_spec_new_objects_blue_part1 major fp wosize;
+    AllocLemmas.alloc_spec_only_new_is_obj_out_part1 major fp wosize;
     if not (Seq.mem excl (objects zero_addr major)) then begin
       assert (is_blue excl new_major = true);
       copy_fields_other_hdr_precond new_major excl dst_obj wosize;
@@ -519,13 +520,27 @@ private let chain_blue_proof_for_excl
     end;
     assert (Seq.mem excl (objects zero_addr major));
     // 3. dst_obj ∈ objects(major)
-    GC.Gen.AllocProps.alloc_search_obj_in_objects_pre_part1 major fp zero_addr fp
-      (if wosize = 0 then 1 else wosize) fuel;
-    GC.Gen.AllocProps.alloc_spec_obj_wosize_pre_part1 major fp wosize;
+    // dst_obj is an object of the OUTPUT heap, not the input one: with the
+    // allocation right-justified it is the piece split off from the free
+    // block, so the separation facts have to be taken in new_major.
+    GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
+    GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize;
     // 4. Header of excl preserved → derive non-blue in major
-    copy_fields_other_hdr_precond major excl dst_obj wosize;
+    copy_fields_other_hdr_precond new_major excl dst_obj wosize;
     copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (hd_address excl);
     color_of_header_eq excl res.major_out new_major;
+    // `alloc_spec_read_header_other_part1` now needs `excl` off the free
+    // list: right-justification rewrites the remainder's header as well as
+    // the allocated one.  A cell is blue and stays blue, and the copy that
+    // follows leaves its header alone, so a non-blue `excl` is not one.
+    reveal_opaque (`%chain_objects_blue) chain_objects_blue;
+    (if AllocLemmas.chain_avoids major fp (excl <: U64.t) heap_words = false then begin
+       assert (is_blue excl major = true);
+       GC.Gen.AllocProps.alloc_spec_preserves_blue_part1 major fp wosize excl;
+       is_blue_iff excl new_major;
+       is_blue_iff excl res.major_out;
+       assert False
+     end else ());
     GC.Gen.AllocProps.alloc_spec_read_header_other_part1 major fp wosize excl;
     color_of_header_eq excl new_major major;
     assert (is_blue excl major = false);
@@ -629,7 +644,7 @@ let promote_object_preserves_chain_objects_blue
 /// A successful promotion preserves the shape of the free-list head and blue
 /// link fields. Allocation establishes the shape for the immediate post-alloc
 /// heap; copy/padding/tag writes do not affect link fields of still-blue objects.
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
 let promote_object_preserves_free_list_shape
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})

@@ -425,6 +425,58 @@ let chain_avoids_head_ne (g: heap) (fp excl: U64.t) (fuel: nat)
 let chain_avoids_tail (g: heap) (fp excl: U64.t) (fuel: nat)
   = ()
 
+/// Like `fl_valid_transfer`, but excluding one object from the per-object
+/// hypotheses, in exchange for `chain_avoids`.
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
+let rec fl_valid_transfer_excl (g g': heap) (fp excl: U64.t) (fuel: nat)
+  : Lemma
+    (requires fl_valid g fp fuel /\
+              chain_avoids g fp excl fuel /\
+              (forall (a: U64.t).
+                 (U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword = 0 /\
+                  Seq.mem a (objects zero_addr g) /\ a <> excl) ==>
+                 (Seq.mem a (objects zero_addr g') /\
+                  (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 ==>
+                    U64.v (wosize_of_object (a <: obj_addr) g') >= 1) /\
+                  (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 /\
+                   U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size ==>
+                    read_word g' (a <: obj_addr) == read_word g (a <: obj_addr)))))
+    (ensures fl_valid g' fp fuel)
+    (decreases fuel)
+  = if fuel = 0 then
+      fl_valid_zero g' fp
+    else if fp = 0UL then
+      fl_valid_terminal g' fp fuel
+    else if U64.v fp < U64.v mword then
+      fl_valid_terminal g' fp fuel
+    else if U64.v fp >= heap_size then
+      fl_valid_terminal g' fp fuel
+    else if U64.v fp % U64.v mword <> 0 then
+      fl_valid_terminal g' fp fuel
+    else begin
+      let obj : obj_addr = fp in
+      let hd = hd_address obj in
+      chain_avoids_head_ne g fp excl fuel;
+      fl_valid_elim g fp fuel;
+      assert (fp <> excl);
+      assert (Seq.mem fp (objects zero_addr g));
+      assert (U64.v (wosize_of_object obj g) >= 1);
+      assert (Seq.mem fp (objects zero_addr g'));
+      assert (U64.v (wosize_of_object obj g') >= 1);
+      if U64.v hd + 16 <= heap_size then begin
+        let link = read_word g obj in
+        assert (read_word g' obj == link);
+        chain_avoids_tail g fp excl fuel;
+        fl_valid_transfer_excl g g' link excl (fuel - 1);
+        assert (fl_valid g' link (fuel - 1));
+        assert (read_word g' obj <> fp);
+        fl_valid_step g' fp fuel
+      end
+      else
+        fl_valid_step g' fp fuel
+    end
+#pop-options
+
 /// chain_avoids_transfer: if chain_avoids holds in heap g, and all link reads along the chain
 /// are preserved in heap g' (for objects in objects(g) with wosize >= 1), then chain_avoids
 /// also holds in g'. Uses fl_valid to know chain nodes are in objects(g).
@@ -1005,3 +1057,30 @@ let rec walk_chain_valid_preserved (g g2: heap) (fp excl: U64.t) (d fuel: nat)
 /// Corollary: the `heap_words` budget baked into `alloc_spec` never binds.
 /// Any surplus fuel leaves the answer unchanged, so `alloc_spec` reports OOM
 /// only when the free list genuinely holds no block of the requested size.
+
+/// ---------------------------------------------------------------------------
+/// chain_avoids for addresses that are not objects
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
+let rec chain_avoids_non_object (g: heap) (fp: U64.t) (excl: obj_addr) (fuel: nat)
+  : Lemma (requires GC.Spec.Allocator.Lemmas.Common.fl_valid g fp fuel /\
+                    ~(Seq.mem (excl <: U64.t) (objects zero_addr g)))
+          (ensures chain_avoids g fp (excl <: U64.t) fuel = true)
+          (decreases fuel)
+  = if fp = 0UL then ()
+    else if U64.v fp < U64.v mword then ()
+    else if U64.v fp >= heap_size then ()
+    else if U64.v fp % U64.v mword <> 0 then ()
+    else if fuel = 0 then ()
+    else begin
+      // fl_valid puts `fp` in objects, and `excl` is not there, so fp <> excl.
+      GC.Spec.Allocator.Lemmas.Common.fl_valid_gives_mem g fp fuel;
+      let hd = hd_address (fp <: obj_addr) in
+      if U64.v hd + 16 > heap_size then ()
+      else begin
+        GC.Spec.Allocator.Lemmas.Common.fl_valid_next g fp fuel;
+        chain_avoids_non_object g (read_word g (fp <: obj_addr)) excl (fuel - 1)
+      end
+    end
+#pop-options

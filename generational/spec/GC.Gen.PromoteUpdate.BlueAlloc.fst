@@ -211,15 +211,40 @@ private let rec alloc_search_preserves_bfc
 
     if bwz >= wz then begin
       // *** FOUND CASE ***
-      let (g', new_rem_fp) = alloc_from_block g obj wz next_fp in
-      let heap_out =
-        if prev_fp = 0UL then g'
-        else if U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                U64.v prev_fp % U64.v mword = 0
-        then write_word g' (prev_fp <: hp_addr) new_rem_fp
-        else g'
-      in
+      let leftover = bwz - wz in
+      let ahn = U64.v hd + leftover * 8 in
+      if ahn + 8 >= heap_size || ahn >= pow2 64 || ahn % 8 <> 0 then
+        // the search bails; the heap is untouched
+        GC.Spec.Allocator.alloc_search_found_oob g head_fp prev_fp cur_fp wz fuel
+      else begin
+      wosize_of_object_spec obj g;
+      wfh_part1_obj_bound g obj;
+      let new_rem_fp = GC.Spec.Allocator.alloc_replacement_fp g obj wz next_fp in
+      GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp;
+      // The reordered search rewrites prev's link FIRST and runs the block
+      // writes on the result.  `prev_usable` is exactly the arm's condition.
+      let prev_usable =
+        prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
+        U64.v prev_fp % U64.v mword = 0 && U64.v prev_fp <> U64.v hd in
+      let base = if prev_usable then write_word g (prev_fp <: hp_addr) new_rem_fp else g in
+      (if prev_usable then begin
+         let prev_obj : obj_addr = prev_fp in
+         hd_address_spec prev_obj;
+         hd_address_bounds prev_obj;
+         wosize_of_object_spec prev_obj g;
+         wosize_of_object_bound prev_obj g;
+         AllocLemmas.write_body_preserves_wfh_part1
+           g prev_obj (prev_obj <: hp_addr) new_rem_fp;
+         AllocLemmas.write_body_preserves_objects_local
+           zero_addr g prev_obj (prev_obj <: hp_addr) new_rem_fp;
+         read_write_different g (prev_obj <: hp_addr) hd new_rem_fp
+       end else ());
+      assert (well_formed_heap_part1 base);
+      assert (objects zero_addr base == objects zero_addr g);
+      assert (read_word base hd == hdr);
+      let heap_out = fst (alloc_from_block base obj wz next_fp) in
       assert (heap_out == (alloc_search g head_fp prev_fp cur_fp wz fuel).heap_out);
+      AllocLemmas.alloc_from_block_objects_facts_part1 base obj wz next_fp;
 
       let bfc_proof (src: obj_addr) (j: nat)
         : Lemma (Seq.mem src (objects zero_addr heap_out) /\ is_blue src heap_out /\
@@ -235,250 +260,164 @@ private let rec alloc_search_preserves_bfc
             let field_addr : hp_addr = U64.uint_to_t (U64.v src + j * 8) in
             let v = read_word heap_out field_addr in
             if not (is_pointer v) then ()
-            else if Seq.mem src (objects zero_addr g) then begin
-              // Case A: src in objects(g) — frame reasoning
-              // Step 1: obj is not blue in heap_out → src ≠ obj
-              GC.Gen.AllocProps.alloc_from_block_obj_not_blue g obj wz next_fp;
-              hd_address_spec obj;
-              if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                 U64.v prev_fp % U64.v mword = 0 then begin
-                hd_address_spec obj;
-                if U64.v prev_fp < U64.v obj then
-                  objects_separated zero_addr g (prev_fp <: obj_addr) obj
-                else
-                  objects_separated zero_addr g obj (prev_fp <: obj_addr);
-                // prev_fp and hd(obj) are word-separated (from objects_separated)
-                read_write_different g' (prev_fp <: hp_addr) (hd_address obj) new_rem_fp;
-                color_of_header_eq obj (write_word g' (prev_fp <: hp_addr) new_rem_fp) g'
-              end else ();
-              assert (is_blue obj heap_out = false);
-              assert (src <> obj);
-
-              // Step 2: Header of src preserved → color/wosize preserved
+            else begin
+              // The only object allocation creates is the ALLOCATED block, and
+              // that one is white -- so a BLUE `src` was already an object.
+              (if not (Seq.mem (src <: U64.t) (objects zero_addr base)) then begin
+                 GC.Gen.AllocProps.alloc_from_block_obj_not_blue base obj wz next_fp;
+                 AllocLemmas.alloc_from_block_objects_backward_part1 base obj wz next_fp src;
+                 f_address_spec (mk_hp_addr ahn);
+                 is_blue_iff src heap_out;
+                 assert False
+               end else ());
+              assert (Seq.mem (src <: U64.t) (objects zero_addr g));
               hd_address_spec src;
               hd_address_bounds src;
               wosize_of_object_spec src g;
               wosize_of_object_spec obj g;
-              if U64.v src < U64.v obj then
-                objects_separated zero_addr g src obj
-              else
-                objects_separated zero_addr g obj src;
-              GC.Gen.AllocProps.alloc_from_block_read_frame g obj wz next_fp (hd_address src);
-              if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                 U64.v prev_fp % U64.v mword = 0 then begin
-                if U64.v src < U64.v prev_fp then
-                  objects_separated zero_addr g src (prev_fp <: obj_addr)
-                else if U64.v src > U64.v prev_fp then
-                  objects_separated zero_addr g (prev_fp <: obj_addr) src
-                else ();  // src = prev_fp: hd(src) = src - 8 ≠ src = prev_fp (write addr)
-                read_write_different g' (prev_fp <: hp_addr) (hd_address src) new_rem_fp
-              end else ();
-              color_of_header_eq src heap_out g;
-              assert (is_blue src g);
-              wosize_of_object_spec src heap_out;
-              assert (j < U64.v (wosize_of_object src g));
 
-              // Step 3: Field value preservation
-              if j > 0 || src <> prev_fp ||
-                 prev_fp = 0UL ||
-                 not (U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                      U64.v prev_fp % U64.v mword = 0) then begin
-                // Field NOT overwritten by prev_fp write
-                GC.Gen.AllocProps.alloc_from_block_read_frame g obj wz next_fp field_addr;
-                if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                   U64.v prev_fp % U64.v mword = 0 then begin
-                  if src <> prev_fp then begin
-                    if U64.v src < U64.v prev_fp then
-                      objects_separated zero_addr g src (prev_fp <: obj_addr)
+              // Where is `src` relative to the block being carved up?
+              if (src <: U64.t) = (obj <: U64.t) then begin
+                // `src` IS the block: in `heap_out` it is the remainder, whose
+                // wosize is leftover - 1, so field j lies strictly below the
+                // allocated header at `ahn` and is untouched by both writes.
+                // At leftover = 0 the header turns WHITE, so a blue `src`
+                // rules that out; at leftover = 1 the remainder has no fields,
+                // so `j <` its wosize rules that out too.
+                (if leftover = 0 then begin
+                   GC.Spec.Allocator.alloc_from_block_exact base obj wz next_fp;
+                   let ahdr0 = make_header (U64.uint_to_t wz) white_bits 0UL in
+                   AllocLemmas.make_header_getColor (U64.uint_to_t wz) white_bits 0UL;
+                   getColor_raw ahdr0;
+                   read_write_same base hd ahdr0;
+                   color_of_object_spec src heap_out;
+                   is_blue_iff src heap_out;
+                   assert False
+                 end else ());
+                GC.Spec.Allocator.alloc_from_block_split_normal base obj wz next_fp;
+                let rhdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
+                let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
+                let b1 = write_word base hd rhdr in
+                let ah : hp_addr = U64.uint_to_t ahn in
+                assert (heap_out == write_word b1 ah ahdr);
+                read_write_different b1 ah hd ahdr;
+                read_write_same base hd rhdr;
+                assert (read_word heap_out hd == rhdr);
+                AllocLemmas.make_header_getWosize
+                  (U64.uint_to_t (leftover - 1)) blue_bits 0UL;
+                wosize_of_object_spec src heap_out;
+                assert (U64.v (wosize_of_object src heap_out) == leftover - 1);
+                assert (U64.v field_addr + 8 <= ahn);
+                // both header writes miss field j of the remainder
+                read_write_different b1 ah field_addr ahdr;
+                read_write_different base hd field_addr rhdr;
+                assert (read_word heap_out field_addr == read_word base field_addr);
+                // and the prev write misses it too, since prev is a separate
+                // object's field
+                (if prev_usable then begin
+                   let prev_obj : obj_addr = prev_fp in
+                   hd_address_spec prev_obj;
+                   hd_address_bounds prev_obj;
+                   wosize_of_object_spec prev_obj g;
+                   wosize_of_object_bound prev_obj g;
+                   assert (U64.v field_addr >= U64.v obj);
+                   assert (U64.v field_addr < U64.v obj + bwz * 8);
+                   if U64.v prev_fp < U64.v obj then begin
+                     objects_separated zero_addr g prev_obj obj;
+                     assert (U64.v prev_fp + 8 <= U64.v obj);
+                     assert (U64.v prev_fp + 8 <= U64.v field_addr)
+                   end else begin
+                     objects_separated zero_addr g obj prev_obj;
+                     assert (U64.v prev_fp > U64.v obj + bwz * 8);
+                     assert (U64.v field_addr + 8 <= U64.v prev_fp)
+                   end;
+                   read_write_different g (prev_obj <: hp_addr) field_addr new_rem_fp
+                 end else ());
+                blue_fields_closed_inst g obj j;
+                assert (Seq.mem (v <: obj_addr) (objects zero_addr g))
+              end
+              else begin
+                // A different object: separated from the whole block, so both
+                // header writes miss it.  Only the prev link can touch it.
+                wosize_of_object_bound src g;
+                // where src sits relative to the block, at the header first so
+                // that `j <` its wosize can then be read off in `g`
+                if U64.v src < U64.v obj then begin
+                  objects_separated zero_addr g src obj;
+                  assert (U64.v (hd_address src) + 8 <= U64.v hd)
+                end else begin
+                  objects_separated zero_addr g obj src;
+                  assert (U64.v src > U64.v obj + bwz * 8);
+                  assert (U64.v (hd_address src) >= U64.v obj + bwz * 8)
+                end;
+                GC.Gen.AllocProps.alloc_from_block_read_frame
+                  base obj wz next_fp (hd_address src);
+                (if prev_usable then begin
+                   let prev_obj : obj_addr = prev_fp in
+                   hd_address_spec prev_obj;
+                   hd_address_bounds prev_obj;
+                   wosize_of_object_spec prev_obj g;
+                   wosize_of_object_bound prev_obj g;
+                   (if (src <: U64.t) = prev_fp then ()
+                    else if U64.v src < U64.v prev_fp then
+                      objects_separated zero_addr g src prev_obj
                     else
-                      objects_separated zero_addr g (prev_fp <: obj_addr) src
-                  end else ();
-                  read_write_different g' (prev_fp <: hp_addr) field_addr new_rem_fp
-                end else ();
-                blue_fields_closed_inst g src j;
-                assert (Seq.mem (v <: obj_addr) (objects zero_addr g));
-                assert (Seq.mem (v <: obj_addr) (objects zero_addr heap_out));
-                ()
-              end
-              else begin
-                // j = 0 and src = prev_fp: field_addr = src = prev_fp, overwritten
-                // v = new_rem_fp (the overwritten value)
-                // Need: is_pointer new_rem_fp ==> new_rem_fp ∈ objects(heap_out)
-                not_gt0_eq0 j;
-                uint_to_t_v_id src;
-                assert (field_addr == src);
-                assert (v == new_rem_fp);
-                wfh_part1_obj_bound g obj;
-                assert (U64.v obj + bwz * 8 <= heap_size);
-                if bwz - wz < 2 then begin
-                  // Exact fit: new_rem_fp = next_fp
-                  GC.Spec.Allocator.alloc_from_block_exact g obj wz next_fp;
-                  // next_fp = read_word g obj (field 0 of obj)
-                  // obj is blue, in objects(g), wosize >= 1
-                  blue_fields_closed_inst g obj 0;
-                  assert (Seq.mem (v <: obj_addr) (objects zero_addr g));
-                  assert (Seq.mem (v <: obj_addr) (objects zero_addr heap_out));
-                  ()
-                end
-                else begin
-                  // Split: bwz - wz >= 2
-                  let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
-                  if rem_hd_nat >= heap_size then begin
-                    // rem_hd OOB: new_rem_fp = next_fp (same as exact)
-                    GC.Spec.Allocator.alloc_from_block_split_rem_hd_oob g obj wz next_fp;
-                    blue_fields_closed_inst g obj 0;
-                    assert (Seq.mem (v <: obj_addr) (objects zero_addr g));
-                    assert (Seq.mem (v <: obj_addr) (objects zero_addr heap_out));
-                    ()
-                  end
+                      objects_separated zero_addr g prev_obj src);
+                   read_write_different g (prev_obj <: hp_addr) (hd_address src) new_rem_fp
+                 end else ());
+                wosize_of_object_spec src heap_out;
+                assert (U64.v (wosize_of_object src heap_out)
+                        == U64.v (wosize_of_object src g));
+                assert (j < U64.v (wosize_of_object src g));
+                assert (read_word heap_out (hd_address src) == read_word g (hd_address src));
+                color_of_header_eq src heap_out g;
+                is_blue_iff src g;
+                is_blue_iff src heap_out;
+                assert (is_blue src g = true);
+                // now the field itself
+                if U64.v src < U64.v obj then
+                  assert (U64.v field_addr + 8 <= U64.v hd)
+                else
+                  assert (U64.v field_addr >= U64.v obj + bwz * 8);
+                GC.Gen.AllocProps.alloc_from_block_read_frame base obj wz next_fp field_addr;
+                if prev_usable && (src <: U64.t) = prev_fp && j = 0 then begin
+                  // the one overwritten field: the value is the block's
+                  // replacement, either `obj` itself or its old link
+                  read_write_same g (prev_fp <: hp_addr) new_rem_fp;
+                  assert (v == new_rem_fp);
+                  if leftover >= 2 then
+                    assert (Seq.mem (v <: obj_addr) (objects zero_addr g))
                   else begin
-                    let rem_obj_nat = rem_hd_nat + 8 in
-                    if rem_obj_nat >= heap_size then begin
-                      // rem_obj OOB: new_rem_fp has address >= heap_size → not a pointer
-                      GC.Spec.Allocator.alloc_from_block_split_rem_obj_oob g obj wz next_fp;
-                      // is_pointer requires U64.v v < heap_size, contradiction
-                      assert (U64.v new_rem_fp >= heap_size);
-                      assert (~(is_pointer v));
-                      assert False
-                    end
-                    else begin
-                      // Normal split: new_rem_fp = remainder object address
-                      GC.Spec.Allocator.alloc_from_block_split_normal g obj wz next_fp;
-                      // new_rem_fp ∈ objects(g')
-                      AllocLemmas.alloc_from_block_rem_in_objects_part1 g obj wz next_fp;
-                      // objects(heap_out) == objects(g') via write_body_preserves_objects
-                      AllocLemmas.alloc_from_block_preserves_objects_part1 g obj wz next_fp;
-                      wosize_of_object_spec (prev_fp <: obj_addr) g';
-                      write_body_preserves_objects g' (prev_fp <: obj_addr)
-                        (prev_fp <: hp_addr) new_rem_fp;
-                      assert (Seq.mem (v <: obj_addr) (objects zero_addr heap_out));
-                      ()
-                    end
+                    blue_fields_closed_inst g obj 0;
+                    assert (Seq.mem (v <: obj_addr) (objects zero_addr g))
                   end
                 end
-              end
-            end
-            else begin
-              // Case B: src not in objects(g) — must be the remainder from a normal split.
-              assert (~(Seq.mem src (objects zero_addr g)));
-
-              // bwz - wz must be >= 2 (otherwise objects unchanged → contradiction)
-              if bwz - wz < 2 then begin
-                // Exact fit: objects(g') == objects(g), so objects(heap_out) == objects(g)
-                // But src ∈ objects(heap_out) and src ∉ objects(g) — contradiction!
-                GC.Gen.AllocProps.alloc_from_block_exact_objects_eq_part1 g obj wz next_fp;
-                wosize_of_object_spec obj g;
-                wfh_part1_obj_bound g obj;
-                if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                   U64.v prev_fp % U64.v mword = 0 then begin
-                  assert (Seq.mem (prev_fp <: obj_addr) (objects zero_addr g));
-                  AllocLemmas.alloc_from_block_preserves_objects_part1 g obj wz next_fp;
-                  assert (Seq.mem (prev_fp <: obj_addr) (objects zero_addr g'));
-                  assert (prev_fp <> obj);
-                  objects_separated zero_addr g (prev_fp <: obj_addr) obj;
-                  objects_separated zero_addr g obj (prev_fp <: obj_addr);
-                  hd_address_spec (prev_fp <: obj_addr);
-                  wosize_of_object_spec (prev_fp <: obj_addr) g;
-                  GC.Gen.AllocProps.alloc_from_block_read_frame g obj wz next_fp
-                    (hd_address (prev_fp <: obj_addr));
-                  wosize_of_object_spec (prev_fp <: obj_addr) g';
-                  write_body_preserves_objects g' (prev_fp <: obj_addr)
-                    (prev_fp <: hp_addr) new_rem_fp
-                end else ();
-                // objects(heap_out) == objects(g) in all cases → src ∈ objects(g)
-                assert (Seq.mem src (objects zero_addr g))
-              end
-              else begin
-                // Split case: bwz - wz >= 2
-                // Establish normal split bounds first (needed by alloc_from_block_split_normal)
-                wosize_of_object_spec obj g;
-                wfh_part1_obj_bound g obj;
-                assert (U64.v obj + bwz * 8 <= heap_size);
-
-                // Establish objects(heap_out) = objects(g') via write_body_preserves_objects
-                GC.Spec.Allocator.alloc_from_block_split_normal g obj wz next_fp;
-                AllocLemmas.alloc_from_block_rem_in_objects_part1 g obj wz next_fp;
-                AllocLemmas.alloc_from_block_preserves_objects_part1 g obj wz next_fp;
-                if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                   U64.v prev_fp % U64.v mword = 0 then begin
-                  assert (Seq.mem (prev_fp <: obj_addr) (objects zero_addr g));
-                  AllocLemmas.alloc_from_block_preserves_objects_part1 g obj wz next_fp;
-                  assert (Seq.mem (prev_fp <: obj_addr) (objects zero_addr g'));
-                  // Establish wosize(prev_fp, g') == wosize(prev_fp, g) via frame
-                  assert (prev_fp <> obj);
-                  objects_separated zero_addr g (prev_fp <: obj_addr) obj;
-                  objects_separated zero_addr g obj (prev_fp <: obj_addr);
-                  hd_address_spec (prev_fp <: obj_addr);
-                  wosize_of_object_spec (prev_fp <: obj_addr) g;
-                  GC.Gen.AllocProps.alloc_from_block_read_frame g obj wz next_fp
-                    (hd_address (prev_fp <: obj_addr));
-                  wosize_of_object_spec (prev_fp <: obj_addr) g';
-                  write_body_preserves_objects g' (prev_fp <: obj_addr)
-                    (prev_fp <: hp_addr) new_rem_fp
-                end else ();
-
-                // src ∈ objects(g') (from objects(heap_out) = objects(g') and hypothesis)
-                AllocLemmas.alloc_from_block_objects_backward_part1 g obj wz next_fp src;
-                assert (src == new_rem_fp);
-                let rem_hd_nat2 = U64.v hd + (1 + wz) * 8 in
-                let rem_obj_nat2 = rem_hd_nat2 + 8 in
-                assert (rem_hd_nat2 < heap_size);
-                assert (rem_obj_nat2 < heap_size);
-
-                let rem_hd2 : hp_addr = mk_hp_addr_mul8 (U64.v hd) (1 + wz) in
-
-                hd_address_spec (src <: obj_addr);
-                assert (hd_address (src <: obj_addr) == rem_hd2);
-
-                // Establish wosize of src in heap_out
-                GC.Spec.Allocator.alloc_split_normal_read_rem_hd g obj wz next_fp;
-                let rem_wz = bwz - wz - 1 in
-                if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                   U64.v prev_fp % U64.v mword = 0 then
-                  read_write_different g' (prev_fp <: hp_addr) rem_hd2 new_rem_fp
-                else ();
-                wosize_of_object_spec (src <: obj_addr) heap_out;
-                AllocLemmas.make_header_getWosize (U64.uint_to_t rem_wz) blue_bits 0UL;
-                assert (U64.v (wosize_of_object (src <: obj_addr) heap_out) = rem_wz);
-                assert (j < rem_wz);
-
-                // Handle field j
-                if j < 1 then begin
-                  lt1_eq0 j;
-                  uint_to_t_v_id src;
-                  uint_to_t_v_id obj;
-                  assert (field_addr == src);
-                  GC.Spec.Allocator.alloc_split_normal_read_rem_field g obj wz next_fp;
-                  if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                     U64.v prev_fp % U64.v mword = 0 then
-                    read_write_different g' (prev_fp <: hp_addr) (src <: hp_addr) new_rem_fp
-                  else ();
-                  blue_fields_closed_inst g obj 0;
-                  assert (Seq.mem (v <: obj_addr) (objects zero_addr g));
-                  assert (Seq.mem (v <: obj_addr) (objects zero_addr heap_out));
-                  ()
-                end
                 else begin
-                  split_field_disjoint (U64.v hd) (U64.v obj) (U64.v src) wz j;
-                  GC.Spec.Allocator.alloc_split_normal_read_other g obj wz next_fp field_addr;
-                  if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                     U64.v prev_fp % U64.v mword = 0 then
-                    read_write_different g' (prev_fp <: hp_addr) field_addr new_rem_fp
-                  else ();
-                  assert (wz + 1 + j < bwz);
-                  assert (U64.v src == rem_obj_nat2);
-                  split_field_addr_eq (U64.v obj) (U64.v hd) (U64.v src) wz j;
-                  blue_fields_closed_inst g obj (wz + 1 + j);
-                  assert (Seq.mem (v <: obj_addr) (objects zero_addr g));
-                  assert (Seq.mem (v <: obj_addr) (objects zero_addr heap_out));
-                  ()
+                  (if prev_usable then begin
+                     let prev_obj : obj_addr = prev_fp in
+                     (if (src <: U64.t) = prev_fp then
+                        // j >= 1, so the field is above prev's link word
+                        assert (U64.v (prev_obj <: U64.t) + 8 <= U64.v field_addr)
+                      else if U64.v src < U64.v prev_fp then begin
+                        objects_separated zero_addr g src prev_obj;
+                        assert (U64.v field_addr + 8 <= U64.v prev_fp)
+                      end else begin
+                        objects_separated zero_addr g prev_obj src;
+                        assert (U64.v prev_fp + 8 <= U64.v field_addr)
+                      end);
+                     read_write_different g (prev_obj <: hp_addr) field_addr new_rem_fp
+                   end else ());
+                  blue_fields_closed_inst g src j;
+                  assert (Seq.mem (v <: obj_addr) (objects zero_addr g))
                 end
-              end
+              end;
+              assert (Seq.mem (v <: obj_addr) (objects zero_addr heap_out))
             end
           end
       in
       reveal_opaque (`%blue_fields_closed) blue_fields_closed;
       FStar.Classical.forall_intro_2 bfc_proof
+      end
     end
     else begin
       // *** NOT FOUND: advance to next ***
@@ -513,6 +452,54 @@ let alloc_spec_preserves_blue_fields_closed
 
 /// The allocator's output free-list head is null or a syntactically valid heap
 /// pointer when all blue free-list link fields have that same value shape.
+/// The predecessor cell lies entirely outside the block being carved up.
+/// Trivial from `objects_separated`, but the call sites are deep inside
+/// closures nested in a recursive proof, where the query is large enough that
+/// Z3 will not find it; discharged here where the context is empty.
+#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+private let block_prev_separated (g: heap) (obj prev: obj_addr) (bwz: nat)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    Seq.mem (obj <: U64.t) (objects zero_addr g) /\
+                    Seq.mem (prev <: U64.t) (objects zero_addr g) /\
+                    (prev <: U64.t) <> (obj <: U64.t) /\
+                    U64.v (getWosize (read_word g (hd_address obj))) == bwz)
+          (ensures U64.v prev + 8 <= U64.v obj \/
+                   U64.v prev > U64.v obj + bwz * 8)
+  = hd_address_spec obj;
+    hd_address_bounds obj;
+    hd_address_spec prev;
+    hd_address_bounds prev;
+    wosize_of_object_spec obj g;
+    wosize_of_object_spec prev g;
+    wosize_of_object_bound prev g;
+    if U64.v prev < U64.v obj then objects_separated zero_addr g prev obj
+    else objects_separated zero_addr g obj prev
+#pop-options
+
+
+/// The same, sharpened by `prev` having at least one field: then its header
+/// and link both sit a full word below the block's header.
+#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+private let block_prev_separated_body (g: heap) (obj prev: obj_addr) (bwz: nat)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    Seq.mem (obj <: U64.t) (objects zero_addr g) /\
+                    Seq.mem (prev <: U64.t) (objects zero_addr g) /\
+                    (prev <: U64.t) <> (obj <: U64.t) /\
+                    U64.v (wosize_of_object prev g) >= 1 /\
+                    U64.v (getWosize (read_word g (hd_address obj))) == bwz)
+          (ensures U64.v prev + 8 <= U64.v (hd_address obj) \/
+                   U64.v prev > U64.v obj + bwz * 8)
+  = hd_address_spec obj;
+    hd_address_bounds obj;
+    hd_address_spec prev;
+    hd_address_bounds prev;
+    wosize_of_object_spec obj g;
+    wosize_of_object_spec prev g;
+    wosize_of_object_bound prev g;
+    if U64.v prev < U64.v obj then objects_separated zero_addr g prev obj
+    else objects_separated zero_addr g obj prev
+#pop-options
+
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let alloc_from_block_fp_pointer_or_zero
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
@@ -533,42 +520,13 @@ private let alloc_from_block_fp_pointer_or_zero
     hd_address_spec obj;
     hd_address_bounds obj;
     wosize_of_object_spec obj g;
-    let hdr = read_word g hd in
-    let bwz = U64.v (getWosize hdr) in
-    assert (bwz >= wz);
-    if bwz - wz < 2 then begin
-      assert (FreeListShape.fp_pointer_or_zero next_fp);
-      assert ((let hdr = read_word g (hd_address obj) in
-               let bwz = U64.v (getWosize hdr) in
-               bwz >= wz /\ bwz - wz < 2));
-      GC.Spec.Allocator.alloc_from_block_exact g obj wz next_fp
-    end
-    else begin
-      let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
-      if rem_hd_nat >= heap_size then begin
-        assert (FreeListShape.fp_pointer_or_zero next_fp);
-        GC.Spec.Allocator.alloc_from_block_split_rem_hd_oob g obj wz next_fp
-      end
-      else begin
-        let rem_obj_nat = rem_hd_nat + 8 in
-        if rem_obj_nat >= heap_size then begin
-          wfh_part1_obj_bound g obj;
-          assert (U64.v obj + bwz * 8 <= heap_size);
-          assert (wz + 1 < bwz);
-          assert (rem_obj_nat == U64.v obj + (wz + 1) * 8);
-          assert False
-        end else begin
-          GC.Spec.Allocator.alloc_from_block_split_normal g obj wz next_fp;
-          objects_addresses_gt_start zero_addr g obj;
-          assert (rem_obj_nat > U64.v obj);
-          assert (rem_obj_nat > U64.v zero_addr);
-          aligned_plus_mul8 (U64.v hd) (wz + 2);
-          assert (rem_obj_nat % U64.v mword == 0);
-          assert (rem_obj_nat >= U64.v zero_addr + U64.v mword);
-          assert (FreeListShape.fp_pointer_or_zero (U64.uint_to_t rem_obj_nat))
-        end
-      end
-    end
+    // Right-justification makes this immediate: the block's replacement in
+    // the free list is either the block ITSELF -- still a perfectly good
+    // object address, since the remainder keeps it -- or the old link, which
+    // the hypothesis already covers.
+    GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp;
+    objects_addresses_gt_start zero_addr g obj;
+    assert (FreeListShape.fp_pointer_or_zero (obj <: U64.t))
 #pop-options
 
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
@@ -621,12 +579,13 @@ private let rec alloc_search_fp_pointer_or_zero
       if not (is_blue obj g) then
         AllocLemmas.chain_avoids_head_ne g cur_fp (obj <: U64.t) fuel
       else if bwz >= wz then begin
-        if prev_fp = 0UL then begin
-          FreeListShape.blue_link_fields_valid_elim g obj;
-          assert (FreeListShape.fp_pointer_or_zero next_fp);
-          alloc_from_block_fp_pointer_or_zero g obj wz next_fp
-        end
-        else ()
+        // `fp_out` is either `head_fp`, which the precondition covers, or the
+        // block's replacement -- and that case no longer lines up with
+        // `prev_fp = 0` alone: an unusable predecessor takes the same arm.
+        FreeListShape.blue_link_fields_valid_elim g obj;
+        assert (FreeListShape.fp_pointer_or_zero next_fp);
+        GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp;
+        alloc_from_block_fp_pointer_or_zero g obj wz next_fp
       end else begin
         AllocLemmas.fl_chain_terminates_elim g cur_fp fuel;
         let chain_blue_next (nobj: obj_addr)
@@ -654,7 +613,7 @@ let alloc_spec_preserves_fp_pointer_or_zero
     alloc_search_fp_pointer_or_zero g fp 0UL fp wz fuel
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 150 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_blfv
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma
@@ -705,18 +664,40 @@ private let rec alloc_search_preserves_blfv
       if not (is_blue obj g) then
         AllocLemmas.chain_avoids_head_ne g cur_fp (obj <: U64.t) fuel
       else if bwz >= wz then begin
-        let (g', new_rem_fp) = alloc_from_block g obj wz next_fp in
-        let heap_out =
-          if prev_fp = 0UL then g'
-          else if U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                  U64.v prev_fp % U64.v mword = 0
-          then write_word g' (prev_fp <: hp_addr) new_rem_fp
-          else g'
-        in
+        let leftover = bwz - wz in
+        let ahn = U64.v hd + leftover * 8 in
+        if ahn + 8 >= heap_size || ahn >= pow2 64 || ahn % 8 <> 0 then
+          GC.Spec.Allocator.alloc_search_found_oob g head_fp prev_fp cur_fp wz fuel
+        else begin
+        wosize_of_object_spec obj g;
+        wfh_part1_obj_bound g obj;
+        let new_rem_fp = GC.Spec.Allocator.alloc_replacement_fp g obj wz next_fp in
+        GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp;
+        let prev_usable =
+          prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
+          U64.v prev_fp % U64.v mword = 0 && U64.v prev_fp <> U64.v hd in
+        let base = if prev_usable then write_word g (prev_fp <: hp_addr) new_rem_fp else g in
+        (if prev_usable then begin
+           let prev_obj : obj_addr = prev_fp in
+           hd_address_spec prev_obj;
+           hd_address_bounds prev_obj;
+           wosize_of_object_spec prev_obj g;
+           wosize_of_object_bound prev_obj g;
+           AllocLemmas.write_body_preserves_wfh_part1
+             g prev_obj (prev_obj <: hp_addr) new_rem_fp;
+           AllocLemmas.write_body_preserves_objects_local
+             zero_addr g prev_obj (prev_obj <: hp_addr) new_rem_fp;
+           read_write_different g (prev_obj <: hp_addr) hd new_rem_fp
+         end else ());
+        assert (well_formed_heap_part1 base);
+        assert (objects zero_addr base == objects zero_addr g);
+        assert (read_word base hd == hdr);
+        let heap_out = fst (alloc_from_block base obj wz next_fp) in
         assert (heap_out == (alloc_search g head_fp prev_fp cur_fp wz fuel).heap_out);
         FreeListShape.blue_link_fields_valid_elim g obj;
         assert (FreeListShape.fp_pointer_or_zero next_fp);
         alloc_from_block_fp_pointer_or_zero g obj wz next_fp;
+        AllocLemmas.alloc_from_block_objects_facts_part1 base obj wz next_fp;
 
         let blfv_proof (src: obj_addr)
           : Lemma (requires Seq.mem src (objects zero_addr heap_out) /\
@@ -725,124 +706,111 @@ private let rec alloc_search_preserves_blfv
                             U64.v (hd_address src) + 16 <= heap_size)
                   (ensures (let v = read_word heap_out src in
                             FreeListShape.fp_pointer_or_zero v))
-          = if Seq.mem src (objects zero_addr g) then begin
-              GC.Gen.AllocProps.alloc_from_block_obj_not_blue g obj wz next_fp;
-              if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                 U64.v prev_fp % U64.v mword = 0 then begin
-                if U64.v prev_fp < U64.v obj then
-                  objects_separated zero_addr g (prev_fp <: obj_addr) obj
-                else
-                  objects_separated zero_addr g obj (prev_fp <: obj_addr);
-                read_write_different g' (prev_fp <: hp_addr) (hd_address obj) new_rem_fp;
-                color_of_header_eq obj (write_word g' (prev_fp <: hp_addr) new_rem_fp) g'
-              end else ();
-              assert (is_blue obj heap_out = false);
-              assert (src <> obj);
-
-              hd_address_spec src;
-              hd_address_bounds src;
-              wosize_of_object_spec src g;
-              wosize_of_object_spec obj g;
-              if U64.v src < U64.v obj then
-                objects_separated zero_addr g src obj
-              else
-                objects_separated zero_addr g obj src;
-              GC.Gen.AllocProps.alloc_from_block_read_frame g obj wz next_fp (hd_address src);
-              if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                 U64.v prev_fp % U64.v mword = 0 then begin
-                if U64.v src < U64.v prev_fp then
-                  objects_separated zero_addr g src (prev_fp <: obj_addr)
-                else if U64.v src > U64.v prev_fp then
-                  objects_separated zero_addr g (prev_fp <: obj_addr) src
-                else ();
-                read_write_different g' (prev_fp <: hp_addr) (hd_address src) new_rem_fp
-              end else ();
-              color_of_header_eq src heap_out g;
-              assert (is_blue src g);
+          = // the only object allocation creates is the allocated block, and
+            // that one is white, so a BLUE `src` was already there
+            (if not (Seq.mem (src <: U64.t) (objects zero_addr base)) then begin
+               GC.Gen.AllocProps.alloc_from_block_obj_not_blue base obj wz next_fp;
+               AllocLemmas.alloc_from_block_objects_backward_part1 base obj wz next_fp src;
+               f_address_spec (mk_hp_addr ahn);
+               is_blue_iff src heap_out;
+               assert False
+             end else ());
+            assert (Seq.mem (src <: U64.t) (objects zero_addr g));
+            hd_address_spec src;
+            hd_address_bounds src;
+            wosize_of_object_spec src g;
+            wosize_of_object_spec obj g;
+            if (src <: U64.t) = (obj <: U64.t) then begin
+              // `src` IS the block.  At leftover = 0 its header turns white,
+              // at leftover = 1 the remainder has wosize 0 -- both excluded by
+              // the hypotheses -- so it is the blue remainder, and its link
+              // word is the one the allocation deliberately leaves alone.
+              (if leftover = 0 then begin
+                 GC.Spec.Allocator.alloc_from_block_exact base obj wz next_fp;
+                 let ahdr0 = make_header (U64.uint_to_t wz) white_bits 0UL in
+                 AllocLemmas.make_header_getColor (U64.uint_to_t wz) white_bits 0UL;
+                 getColor_raw ahdr0;
+                 read_write_same base hd ahdr0;
+                 color_of_object_spec src heap_out;
+                 is_blue_iff src heap_out;
+                 assert False
+               end else ());
+              assert (leftover >= 1);
+              GC.Spec.Allocator.alloc_from_block_split_normal base obj wz next_fp;
+              let rhdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
+              let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
+              let b1 = write_word base hd rhdr in
+              let ah : hp_addr = U64.uint_to_t ahn in
+              assert (heap_out == write_word b1 ah ahdr);
+              read_write_different b1 ah hd ahdr;
+              read_write_same base hd rhdr;
+              AllocLemmas.make_header_getWosize
+                (U64.uint_to_t (leftover - 1)) blue_bits 0UL;
               wosize_of_object_spec src heap_out;
+              assert (U64.v (wosize_of_object src heap_out) == leftover - 1);
+              assert (leftover >= 2);
+              // the link word sits strictly below the allocated header
+              assert (U64.v (src <: U64.t) + 8 <= ahn);
+              read_write_different b1 ah (src <: hp_addr) ahdr;
+              read_write_different base hd (src <: hp_addr) rhdr;
+              (if prev_usable then begin
+                 let prev_obj : obj_addr = prev_fp in
+                 block_prev_separated_body g obj prev_obj bwz;
+                 assert (bwz >= 1);
+                 read_write_different g (prev_obj <: hp_addr) (src <: hp_addr) new_rem_fp
+               end else ());
+              assert (read_word heap_out src == read_word g src);
+              FreeListShape.blue_link_fields_valid_elim g obj
+            end
+            else begin
+              // A different object: both header writes miss it; only the prev
+              // link can touch its field 0, and that value is fine by the
+              // block-level lemma above.
+              wosize_of_object_bound src g;
+              block_prev_separated g obj src bwz;
+              GC.Gen.AllocProps.alloc_from_block_read_frame
+                base obj wz next_fp (hd_address src);
+              (if prev_usable then begin
+                 let prev_obj : obj_addr = prev_fp in
+                 hd_address_spec prev_obj;
+                 hd_address_bounds prev_obj;
+                 wosize_of_object_spec prev_obj g;
+                 wosize_of_object_bound prev_obj g;
+                 (if (src <: U64.t) = prev_fp then ()
+                  else if U64.v src < U64.v prev_fp then
+                    objects_separated zero_addr g src prev_obj
+                  else
+                    objects_separated zero_addr g prev_obj src);
+                 read_write_different g (prev_obj <: hp_addr) (hd_address src) new_rem_fp
+               end else ());
+              wosize_of_object_spec src heap_out;
+              color_of_header_eq src heap_out g;
+              is_blue_iff src g;
+              is_blue_iff src heap_out;
               assert (U64.v (wosize_of_object src g) >= 1);
-
-              if src = prev_fp &&
-                 prev_fp <> 0UL &&
-                 U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                 U64.v prev_fp % U64.v mword = 0 then begin
-                assert (read_word heap_out src == new_rem_fp);
-                assert (FreeListShape.fp_pointer_or_zero new_rem_fp)
+              // with a field of its own, `src`'s link word is a full word
+              // clear of the block, so the header writes miss it too
+              block_prev_separated_body g obj src bwz;
+              GC.Gen.AllocProps.alloc_from_block_read_frame base obj wz next_fp (src <: hp_addr);
+              if prev_usable && (src <: U64.t) = prev_fp then begin
+                read_write_same g (prev_fp <: hp_addr) new_rem_fp;
+                assert (read_word heap_out src == new_rem_fp)
               end else begin
-                GC.Gen.AllocProps.alloc_from_block_read_frame g obj wz next_fp (src <: hp_addr);
-                if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                   U64.v prev_fp % U64.v mword = 0 then
-                  read_write_different g' (prev_fp <: hp_addr) (src <: hp_addr) new_rem_fp
-                else ();
+                (if prev_usable then begin
+                   let prev_obj : obj_addr = prev_fp in
+                   (if U64.v src < U64.v prev_fp then
+                      objects_separated zero_addr g src prev_obj
+                    else
+                      objects_separated zero_addr g prev_obj src);
+                   read_write_different g (prev_obj <: hp_addr) (src <: hp_addr) new_rem_fp
+                 end else ());
                 assert (read_word heap_out src == read_word g src);
                 FreeListShape.blue_link_fields_valid_elim g src
-              end
-            end else begin
-              assert (~(Seq.mem src (objects zero_addr g)));
-              if bwz - wz < 2 then begin
-                GC.Gen.AllocProps.alloc_from_block_exact_objects_eq_part1 g obj wz next_fp;
-                wosize_of_object_spec obj g;
-                wfh_part1_obj_bound g obj;
-                if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                   U64.v prev_fp % U64.v mword = 0 then begin
-                  assert (Seq.mem (prev_fp <: obj_addr) (objects zero_addr g));
-                  AllocLemmas.alloc_from_block_preserves_objects_part1 g obj wz next_fp;
-                  assert (Seq.mem (prev_fp <: obj_addr) (objects zero_addr g'));
-                  assert (prev_fp <> obj);
-                  objects_separated zero_addr g (prev_fp <: obj_addr) obj;
-                  objects_separated zero_addr g obj (prev_fp <: obj_addr);
-                  hd_address_spec (prev_fp <: obj_addr);
-                  wosize_of_object_spec (prev_fp <: obj_addr) g;
-                  GC.Gen.AllocProps.alloc_from_block_read_frame g obj wz next_fp
-                    (hd_address (prev_fp <: obj_addr));
-                  wosize_of_object_spec (prev_fp <: obj_addr) g';
-                  write_body_preserves_objects g' (prev_fp <: obj_addr)
-                    (prev_fp <: hp_addr) new_rem_fp
-                end else ();
-                assert (Seq.mem src (objects zero_addr g))
-              end else begin
-                wosize_of_object_spec obj g;
-                wfh_part1_obj_bound g obj;
-                assert (U64.v obj + bwz * 8 <= heap_size);
-                GC.Spec.Allocator.alloc_from_block_split_normal g obj wz next_fp;
-                AllocLemmas.alloc_from_block_rem_in_objects_part1 g obj wz next_fp;
-                AllocLemmas.alloc_from_block_preserves_objects_part1 g obj wz next_fp;
-                if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                   U64.v prev_fp % U64.v mword = 0 then begin
-                  assert (Seq.mem (prev_fp <: obj_addr) (objects zero_addr g));
-                  AllocLemmas.alloc_from_block_preserves_objects_part1 g obj wz next_fp;
-                  assert (Seq.mem (prev_fp <: obj_addr) (objects zero_addr g'));
-                  assert (prev_fp <> obj);
-                  objects_separated zero_addr g (prev_fp <: obj_addr) obj;
-                  objects_separated zero_addr g obj (prev_fp <: obj_addr);
-                  hd_address_spec (prev_fp <: obj_addr);
-                  wosize_of_object_spec (prev_fp <: obj_addr) g;
-                  GC.Gen.AllocProps.alloc_from_block_read_frame g obj wz next_fp
-                    (hd_address (prev_fp <: obj_addr));
-                  wosize_of_object_spec (prev_fp <: obj_addr) g';
-                  write_body_preserves_objects g' (prev_fp <: obj_addr)
-                    (prev_fp <: hp_addr) new_rem_fp
-                end else ();
-                AllocLemmas.alloc_from_block_objects_backward_part1 g obj wz next_fp src;
-                assert (src == new_rem_fp);
-                let rem_hd_nat2 = U64.v hd + (1 + wz) * 8 in
-                let rem_obj_nat2 = rem_hd_nat2 + 8 in
-                assert (rem_hd_nat2 < heap_size);
-                assert (rem_obj_nat2 < heap_size);
-                let rem_hd2 : hp_addr = mk_hp_addr_mul8 (U64.v hd) (1 + wz) in
-                hd_address_spec src;
-                assert (hd_address src == rem_hd2);
-                GC.Spec.Allocator.alloc_split_normal_read_rem_field g obj wz next_fp;
-                if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                   U64.v prev_fp % U64.v mword = 0 then
-                  read_write_different g' (prev_fp <: hp_addr) (src <: hp_addr) new_rem_fp
-                else ();
-                assert (read_word heap_out src == next_fp);
-                assert (FreeListShape.fp_pointer_or_zero next_fp)
               end
             end
         in
         FreeListShape.blue_link_fields_valid_intro heap_out blfv_proof
+        end
       end else begin
         AllocLemmas.fl_chain_terminates_elim g cur_fp fuel;
         let chain_blue_next (nobj: obj_addr)

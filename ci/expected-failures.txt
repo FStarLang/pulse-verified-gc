@@ -1,32 +1,41 @@
-# Known failures of the verified GC on the OCaml testsuite.
+# Known failures of the verified GC on OCaml 4.14's own testsuite.
 #
-# The gate is "no NEW failures", not "zero failures": the collector implements
-# neither weak pointers, ephemerons, finalisers, compaction nor memprof
-# sampling, so a sizeable set of tests fails for reasons that are expected and
-# understood. Gating on zero would be permanently red and stop being read.
+# CI fails only on a failure that is NOT listed here ("no new failures"). The
+# collector does not implement everything the suite exercises, so a known set
+# of tests fails for understood reasons; a zero-failure gate would be
+# permanently red.
 #
-# Regenerate: ci/testsuite_report.py --log LOG --expected THIS --update-expected
-# Entries should only ever be REMOVED as fixes land, unless a note says why.
+# Regenerate after a run (keeps this header):
+#     python3 ci/testsuite_report.py --log testsuite.log \
+#         --expected ci/expected-failures.txt --update-expected
+# Entries should only be REMOVED as fixes land. Adding one needs a reason
+# below.
 #
-# Provenance, because a baseline is a claim about a specific collector: this
-# list was measured on the reference branch. Its GC snapshot is identical to
-# this one apart from the allocator fix ("patch 17"); the bridge and the
-# runtime patch differ too, so treat the list as a strong starting point
-# rather than a guarantee, and regenerate from a run of this branch.
+# Why these fail:
+#   - weak pointers, ephemerons, finalisers: not implemented (tests/misc/ephe*,
+#     weak*, finaliser; ephe-c-api; tool-ocaml/t340-weak, t350-heapcheck; and
+#     three whose names hide it: lib-sys/opaque, backtrace/callstack and
+#     c-api/alloc_async all assert on Gc.finalise)
+#   - Gc.Memprof sampling: not implemented (every tests/statmemprof entry,
+#     including the timeouts)
+#   - custom-block finalisers: not run (regression/pr3612)
+#   - signal handlers are not run at allocation safe points: the verified
+#     allocator does not consult young_limit (callback/signals_alloc,
+#     lib-systhreads/eintr)
+#   - Gc.set knobs the fixed-size verified heap cannot honour
+#     (regression/pr9326 resizes the minor heap; regression/pr9292 asks for
+#     best-fit and ~400 MB, and gets Out_of_memory)
+#   - packaging, not GC behaviour: no libasmrun_i.a (instrumented-runtime),
+#     -output-complete-obj does not carry the verified GC's objects
+#   - the bridge's fixed root buffer (MAX_ROOTS in alloc_gen.c) overflows in
+#     large compiler runs ("verified gen GC: root overflow":
+#     typing-modules/merge_constraint, unboxed-primitive-args)
 #
-# EXPECT ONE NEW FAILURE:
-#
-#     tests/ast-invariants/'test.ml' with 1.1 (native)
-#
-# That is the allocator bug ("patch 17"), not a broken pipeline: a free block
-# one word too large is handed over whole, and the header records the block's
-# size rather than the requested size, so the object declares a phantom field
-# holding 0 -- not a representable OCaml value. Reproduce it with:
-#
-#     MIN_EXPANSION_WORDSIZE=8388608 ./test.opt <ocaml-tree-root>
-#
-# Do not baseline it. Fix it, then this file needs no change.
-tests/asmcomp/'polling_insertion.ml' with 1.1 (native)
+# Do NOT add tests/misc/'weaktest.ml': it is slow here (~108s native against
+# 0.2s on stock, no weak table) but passes within TIMEOUT=300. If it times
+# out, the collector or the runner got slower -- investigate rather than
+# baseline it. The same goes for lib-systhreads/eintr's timing-sensitive
+# variants.
 tests/backtrace/'callstack.ml' with 1.1.1 (native)
 tests/backtrace/'callstack.ml' with 1.1.2 (bytecode)
 tests/c-api/'alloc_async.ml' with 1 (native)
@@ -39,7 +48,6 @@ tests/lib-sys/'opaque.ml' with 1 (native)
 tests/lib-sys/'opaque.ml' with 2 (bytecode)
 tests/lib-systhreads/'eintr.ml' with 1.1.1 (bytecode)
 tests/lib-systhreads/'eintr.ml' with 1.1.2 (native)
-tests/lib-threads/'torture.ml' with 1.1 (bytecode)
 tests/misc/'ephe_infix.ml' with 1 (native)
 tests/misc/'ephe_infix.ml' with 2 (bytecode)
 tests/misc/'ephe_infix_new.ml' with 1 (native)

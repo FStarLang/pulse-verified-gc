@@ -664,6 +664,19 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     (void)tag;
     ensure_heap();
 
+    /* The verified `allocate` now carries `wosize >= 1` as a precondition, so
+     * that the implementation can drop a compare-and-select from every major
+     * allocation. Nothing in the OCaml runtime should reach here with zero --
+     * a zero-length block is the static Atom, not a heap allocation -- but a
+     * C stub calling caml_alloc_shr(0, tag) would, and the patched
+     * caml_alloc_shr_aux only rejects sizes ABOVE Max_wosize.
+     *
+     * Normalize rather than reject, because that is what `alloc_spec` does
+     * (`let wz = if requested_wz = 0 then 1 else requested_wz`). Rejecting
+     * would make the bridge disagree with the spec the Pulse code is verified
+     * against; normalizing keeps them in step. */
+    if (wosize == 0) wosize = 1;
+
     PROF_START(major_alloc);
     uint64_t fp = *gc_gen_heap.fp_ref;
     FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize);
@@ -682,7 +695,12 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     }
 
     if (result == 0) {
-        /* Return failure rather than aborting: caml_alloc_shr_aux's check_oom()
+        /* The heap here is the one a full collection just produced, so by
+         * GC.Spec.Allocator.Oom.fused_oom_no_fit every free block is smaller
+         * than the request: the heap may still have enough free words in total,
+         * but no single block fits.
+         *
+         * Return failure rather than aborting: caml_alloc_shr_aux's check_oom()
          * turns a NULL/0 into a catchable Out_of_memory (and into a fatal error
          * by itself if we are inside a minor collection, where raising is not
          * possible -- that is stock's own distinction). Calling

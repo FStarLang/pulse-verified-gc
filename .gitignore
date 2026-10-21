@@ -41,8 +41,7 @@ PR.md
 # Local test artifacts from ci/run-testsuite.sh and ci/build-verified-toolchain.sh
 /build-verified-toolchain.log
 /testsuite.log
-/testsuite-report.html
-/testsuite-report.json
+/testsuite-summary.md
 
 # Python bytecode from ci/testsuite_report.py
 __pycache__/

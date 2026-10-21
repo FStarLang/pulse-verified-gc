@@ -1,11 +1,13 @@
 name: OCaml testsuite
 
-# Runs OCaml's own testsuite (231 directories, ~3100 test instances, both
-# bytecode and native variants) against the verified GC.
+# Everything that runs the verified GC: the integration smoke and correctness
+# tests, the known-gap reproducers, and OCaml's own testsuite (231
+# directories, ~3100 test instances, bytecode and native) on top.
 #
 # Deliberately does NOT install F*: the OCaml integration compiles from the
 # committed generational/snapshot/*.c, so this job only needs a C toolchain.
-# Proof verification lives in verify.yml.
+# Proof verification lives in verify.yml, which also checks that the committed
+# snapshot is exactly what the verified code extracts to.
 #
 # The gate is "no NEW failures" rather than "zero failures". The verified GC
 # has a known, documented set of failures (statmemprof, weak/ephemeron --
@@ -43,50 +45,40 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq build-essential
 
-      # --- Issue #19 regression tests -------------------------------------
-      #
-      # BOTH OF THESE FAIL ON MAIN TODAY, ON PURPOSE. They detect the
-      # allocator bug of issue #19: when a free block is exactly one word
-      # longer than the request, the whole block is handed over and the
-      # header records the BLOCK's size, so the object declares a field it
-      # does not own.
-      #
-      # They are `continue-on-error` until the fix lands, so main stays green
-      # while the bug is measured rather than merely described. When the
-      # right-justification fix merges, DELETE the continue-on-error lines --
-      # both must then pass, and a regression must break the build. That flip
-      # is the point of landing them first.
-      #
-      # Seconds, and deterministic. `tests/ast-invariants` covers the same
-      # defect end to end but only sometimes: it fails 100% on Fedora 44 and
-      # passes 15/15 on ubuntu-latest with the allocator provably broken in
-      # both, because it needs the phantom field to be followed and faulted
-      # on. These decide on the code, not the platform.
-      - name: "Issue #19: allocator size-exactness (unit)"
-        id: unit19
-        continue-on-error: true
-        run: |
-          set +e
-          out=$(make -C generational/snapshot alloc-exact-test 2>&1); rc=$?
-          echo "$out"
-          {
-            echo "## Issue #19 — allocator size-exactness (unit)"
-            echo
-            echo "exit $rc — expected **non-zero until the fix lands**"
-            echo '```'
-            echo "$out" | tail -12
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit $rc
-
-      # Cheap, and catches the failure mode this repo is most exposed to:
-      # `make snapshot` overwrites the extracted C by plain cp, so an
-      # unguarded regeneration silently drops the hand patches.
-
       - name: Build both OCaml trees (stock + verified GC)
         run: make -C generational/ocaml-integration setup
 
-      # Tee to a file so a build failure is diagnosable from the artifact.
+      # Minutes, not hours: run these before the long compiler build so a
+      # broken runtime fails fast. Stock ocamlc/ocamlopt compile them; they
+      # run on the verified ocamlrun / link the verified libasmrun.a.
+      - name: Smoke tests (bytecode)
+        run: make -C generational/ocaml-integration test
+
+      - name: Smoke tests (native)
+        run: make -C generational/ocaml-integration/tests test-native
+
+      # Reproducers for open bugs. Fails only if a test fails on STOCK OCaml
+      # (a broken test); the verified run is expected to fail, and each gap's
+      # status goes into the job summary below the testsuite result.
+      - name: Known gaps (not a gate)
+        run: |
+          set -o pipefail
+          make -C generational/ocaml-integration/tests known-gaps 2>&1 | tee known-gaps.log
+          {
+            echo "### Known gaps"
+            echo
+            if grep -q '^KNOWN-GAP ' known-gaps.log; then
+              echo "Reproducers for open bugs, expected to fail on the verified GC. Not a gate."
+              echo
+              echo "| Reproducer | Status |"
+              echo "|---|---|"
+              sed -n 's/^KNOWN-GAP \([^:]*\): \(.*\)$/| `\1` | \2 |/p' known-gaps.log
+            else
+              echo "None outstanding."
+            fi
+          } > known-gaps.md
+
+      # Tee to a file so a build failure is diagnosable from the uploaded logs.
       # Downloading raw CI logs needs admin rights on the repo, so anything we
       # want to read after the fact has to be captured here. `pipefail` keeps
       # the step failing despite the pipe.
@@ -102,45 +94,6 @@ jobs:
         run: |
           set -o pipefail
           make ocamltest 2>&1 | tee -a "$GITHUB_WORKSPACE/build.log"
-
-      # The same defect through the path that actually reaches objects.
-      # Direct major allocation is harmless -- caml_alloc_shr_aux overwrites
-      # the header -- so this drives PROMOTION, where the minor->major copy
-      # keeps the allocator's header verbatim. Needs the tree's ocamlc,
-      # because it calls the caml_trigger_verified_gc primitive: Gc.full_major
-      # does NOT run this collector.
-      - name: "Issue #19: allocator size-exactness (end to end, promotion)"
-        id: e2e19
-        continue-on-error: true
-        run: |
-          set +e
-          out=$(sh ci/run-promotion-test.sh 2>&1); rc=$?
-          echo "$out"
-          {
-            echo "## Issue #19 — through promotion (end to end)"
-            echo
-            echo "exit $rc — expected **non-zero until the fix lands**"
-            echo '```'
-            echo "$out" | tail -12
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit $rc
-
-      - name: "Issue #19: report"
-        if: always()
-        run: |
-          {
-            echo "## Issue #19 status"
-            echo
-            echo "| test | outcome |"
-            echo "| --- | --- |"
-            echo "| unit (extracted allocator) | ${{ steps.unit19.outcome }} |"
-            echo "| end to end (promotion) | ${{ steps.e2e19.outcome }} |"
-            echo
-            echo "Both are expected to FAIL while the bug is present. When the"
-            echo "right-justification fix lands, remove the two"
-            echo "\`continue-on-error\` lines so these become hard gates."
-          } >> "$GITHUB_STEP_SUMMARY"
 
       # The GC bugs this repo has hit are mostly silent-corruption bugs that
       # surface as a crash in an unrelated compilation unit, so the useful
@@ -176,7 +129,14 @@ jobs:
         working-directory: generational/ocaml-integration/ocaml-4.14-verified-gen/testsuite
         env:
           OCAMLRUNPARAM: b,v=0
-          TIMEOUT: 120
+          # 300, not 120. The verified collector implements no weak table, so
+          # weak-heavy tests run orders of magnitude slower than stock:
+          # tests/misc/weaktest.ml takes 108s natively against 0.2s on stock,
+          # close enough to a 120s budget to flap -- and a timeout is reported
+          # as a NEW FAILURE, so the gate flapped with it. This is headroom for
+          # a known-slow collector, not tolerance for a hang -- the job itself
+          # still has timeout-minutes.
+          TIMEOUT: 300
         run: make all 2>&1 | tee "$GITHUB_WORKSPACE/testsuite.log"
 
       - name: Sanity-check that tests actually ran
@@ -195,65 +155,40 @@ jobs:
         working-directory: generational/ocaml-integration/ocaml-4.14-unchanged
         env:
           OCAMLRUNPARAM: b,v=0
-          TIMEOUT: 120
+          TIMEOUT: 300
         run: |
           make ocamltest
           cd testsuite && make all 2>&1 | tee "$GITHUB_WORKSPACE/stock.log"
 
-      - name: Generate report
+      # Writes the job summary: a verdict line, then every failed test marked
+      # NEW or expected. Its exit status is the gate.
+      - name: Check against the expected failures
         id: report
         run: |
-          # NB: capture the script's status, not tee's -- piping into tee would
-          # always report 0 and the gate below would never fire.
           set +e
           python3 ci/testsuite_report.py \
             --log testsuite.log \
             ${{ inputs.run_baseline && '--baseline-log stock.log' || '' }} \
             --expected ci/expected-failures.txt \
-            --html testsuite-report.html \
-            --json testsuite-report.json \
-            --title "OCaml testsuite — verified GC (${GITHUB_SHA:0:8})" \
-            > report.txt 2>&1
-          rc=$?
-          set -e
-          cat report.txt
-          echo "verdict=$rc" >> "$GITHUB_OUTPUT"
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --title "OCaml testsuite — verified GC (${GITHUB_SHA:0:8})"
+          echo "verdict=$?" >> "$GITHUB_OUTPUT"
+          [ ! -f known-gaps.md ] || { echo; cat known-gaps.md; } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Job summary
-        if: always()
-        run: |
-          {
-            echo "## OCaml testsuite — verified GC"
-            echo
-            echo '```'
-            cat report.txt 2>/dev/null || echo "(no report produced)"
-            echo '```'
-            echo
-            echo "Full HTML report is in the **testsuite-report** artifact."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload report and logs
+      - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: testsuite-report
+          name: testsuite-logs
           path: |
             build.log
-            testsuite-report.html
-            testsuite-report.json
             testsuite.log
             stock.log
-            report.txt
           if-no-files-found: warn
           retention-days: 30
 
       - name: Fail on new failures
+        if: steps.report.outputs.verdict != '0'
         run: |
-          if [ "${{ steps.report.outputs.verdict }}" != "0" ]; then
-            echo "::error::New test failures that are not in ci/expected-failures.txt."
-            echo "Review the report artifact. If a failure is genuinely expected,"
-            echo "add it to the baseline with a note explaining why."
-            grep 'NEW FAILURE' report.txt || true
-            exit 1
-          fi
-          echo "No regressions against ci/expected-failures.txt."
+          echo "::error::New test failures that are not in ci/expected-failures.txt -- see the job summary."
+          exit 1

@@ -44,6 +44,10 @@ module ImplObject = GC.Spec.Object
 /// Step lemmas for alloc_search (for loop correspondence proofs)
 /// ---------------------------------------------------------------------------
 
+let alloc_replacement_fp_eq (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
+  = hd_address_spec obj; hd_address_bounds obj;
+    reveal_opaque (`%alloc_from_block) alloc_from_block
+
 /// When fuel = 0: OOM
 let alloc_search_fuel_0 (g: heap) (head prev cur: U64.t) (wz: nat)
   = ()
@@ -64,6 +68,10 @@ let alloc_search_found_head (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: na
 let alloc_search_found_prev (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
   = ()
 
+/// The block fits but the right-justified object would be out of bounds
+let alloc_search_found_oob (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
+  = ()
+
 /// Helper: for multiples of d, a < b implies a + d <= b
 let multiple_gap_lemma (a b: nat) (d: pos)
   : Lemma (requires a % d == 0 /\ b % d == 0 /\ a < b)
@@ -82,7 +90,7 @@ let spec_next_fp_eq (g: heap) (obj: obj_addr)
 /// alloc_from_block unfolding lemmas (for Pulse proof)
 /// ---------------------------------------------------------------------------
 
-/// Exact fit: leftover < 2
+/// Exact fit: leftover = 0
 #push-options "--z3rlimit 25"
 let alloc_from_block_exact (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
   = hd_address_spec obj; hd_address_bounds obj;
@@ -96,19 +104,13 @@ let alloc_from_block_split_normal (g: heap) (obj: obj_addr) (wz: nat) (next: U64
     reveal_opaque (`%alloc_from_block) alloc_from_block
 #pop-options
 
-/// Split, rem_hd out of bounds
+/// The right-justified object header would fall outside the heap
 #push-options "--z3rlimit 25"
-let alloc_from_block_split_rem_hd_oob (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
+let alloc_from_block_oob (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
   = hd_address_spec obj; hd_address_bounds obj;
     reveal_opaque (`%alloc_from_block) alloc_from_block
 #pop-options
 
-/// Split, rem_obj out of bounds (rem_hd ok but rem_obj >= heap_size)
-#push-options "--z3rlimit 25 --fuel 1"
-let alloc_from_block_split_rem_obj_oob (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
-  = hd_address_spec obj; hd_address_bounds obj;
-    reveal_opaque (`%alloc_from_block) alloc_from_block
-#pop-options
 
 /// ---------------------------------------------------------------------------
 /// Read-level bridge lemmas for alloc_from_block (split, normal case)
@@ -118,69 +120,85 @@ let alloc_from_block_split_rem_obj_oob (g: heap) (obj: obj_addr) (wz: nat) (next
 /// read_word equalities instead of chaining through 3 write_words.
 /// ---------------------------------------------------------------------------
 
+#push-options "--z3rlimit 60 --fuel 1"
+/// Writes stay inside the block, so a disjoint address is untouched.
+let alloc_from_block_read_outside
+  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr)
+  = hd_address_spec obj; hd_address_bounds obj;
+    reveal_opaque (`%alloc_from_block) alloc_from_block;
+    let hd = hd_address obj in
+    let bwz = U64.v (getWosize (read_word g hd)) in
+    let leftover = bwz - wz in
+    let ahn = U64.v hd + leftover * 8 in
+    if leftover < 0 then ()
+    else if ahn >= heap_size || ahn >= pow2 64 || ahn % 8 <> 0 then ()
+    else begin
+      let ah : hp_addr = U64.uint_to_t ahn in
+      let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
+      if leftover >= 2 then begin
+        let rhdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
+        read_write_different g hd addr rhdr;
+        read_write_different (write_word g hd rhdr) ah addr ahdr
+      end else if leftover = 1 then begin
+        let frag = make_header 0UL blue_bits 0UL in
+        read_write_different g hd addr frag;
+        read_write_different (write_word g hd frag) ah addr ahdr
+      end else
+        read_write_different g hd addr ahdr
+    end
+#pop-options
+
 #push-options "--z3rlimit 25 --fuel 1"
-/// Reading the remainder header: header at rem_hd == make_header rem_wz blue 0
+/// The remainder keeps hd; the object header is written above it.
 let alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
   = alloc_from_block_split_normal g obj wz next;
+    hd_address_spec obj; hd_address_bounds obj;
     let hd = hd_address obj in
-    let hdr = read_word g hd in
-    let bwz = U64.v (getWosize hdr) in
+    let bwz = U64.v (getWosize (read_word g hd)) in
+    let leftover = bwz - wz in
+    let rhdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
+    let g1 = write_word g hd rhdr in
+    let ahn = U64.v hd + leftover * 8 in
+    let ah : hp_addr = U64.uint_to_t ahn in
     let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
-    let g1 = write_word g hd ahdr in
-    let rhn = U64.v hd + (1 + wz) * 8 in
-    let rh : hp_addr = U64.uint_to_t rhn in
-    let rw = bwz - wz - 1 in
-    let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
-    let g2 = write_word g1 rh rhdr in
-    let ron = rhn + 8 in
-    let ro : hp_addr = U64.uint_to_t ron in
-    let g3 = write_word g2 ro next in
-    // ro > rh, so read_word g3 rh == read_word g2 rh
-    read_write_different g2 ro rh next;
-    // read_word g2 rh == rhdr
-    read_write_same g1 rh rhdr
+    // leftover >= 2, so ah >= hd + 16: the object header does not touch hd
+    read_write_different g1 ah hd ahdr;
+    read_write_same g hd rhdr
 #pop-options
 
 #push-options "--z3rlimit 25 --fuel 1"
-/// Reading the remainder field: read_word g' ro == next_fp
+/// Neither write touches obj = hd + 8, so the cell's link survives.
 let alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
   = alloc_from_block_split_normal g obj wz next;
+    hd_address_spec obj; hd_address_bounds obj;
     let hd = hd_address obj in
-    let hdr = read_word g hd in
-    let bwz = U64.v (getWosize hdr) in
+    let bwz = U64.v (getWosize (read_word g hd)) in
+    let leftover = bwz - wz in
+    let rhdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
+    let g1 = write_word g hd rhdr in
+    let ahn = U64.v hd + leftover * 8 in
+    let ah : hp_addr = U64.uint_to_t ahn in
     let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
-    let g1 = write_word g hd ahdr in
-    let rhn = U64.v hd + (1 + wz) * 8 in
-    let rh : hp_addr = U64.uint_to_t rhn in
-    let rw = bwz - wz - 1 in
-    let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
-    let g2 = write_word g1 rh rhdr in
-    let ron = rhn + 8 in
-    let ro : hp_addr = U64.uint_to_t ron in
-    let _g3 = write_word g2 ro next in
-    read_write_same g2 ro next
+    // hd + 8 differs from hd, and from ah because leftover >= 2
+    read_write_different g hd (obj <: hp_addr) rhdr;
+    read_write_different g1 ah (obj <: hp_addr) ahdr
 #pop-options
 
 #push-options "--z3rlimit 25 --fuel 1"
-/// Reading an unwritten address: result equals original
+/// Only two words are written.
 let alloc_split_normal_read_other (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr)
   = alloc_from_block_split_normal g obj wz next;
+    hd_address_spec obj; hd_address_bounds obj;
     let hd = hd_address obj in
-    let hdr = read_word g hd in
-    let bwz = U64.v (getWosize hdr) in
+    let bwz = U64.v (getWosize (read_word g hd)) in
+    let leftover = bwz - wz in
+    let rhdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
+    let g1 = write_word g hd rhdr in
+    let ahn = U64.v hd + leftover * 8 in
+    let ah : hp_addr = U64.uint_to_t ahn in
     let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
-    let g1 = write_word g hd ahdr in
-    let rhn = U64.v hd + (1 + wz) * 8 in
-    let rh : hp_addr = U64.uint_to_t rhn in
-    let rw = bwz - wz - 1 in
-    let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
-    let g2 = write_word g1 rh rhdr in
-    let ron = rhn + 8 in
-    let ro : hp_addr = U64.uint_to_t ron in
-    let g3 = write_word g2 ro next in
-    read_write_different g2 ro addr next;
-    read_write_different g1 rh addr rhdr;
-    read_write_different g hd addr ahdr
+    read_write_different g hd addr rhdr;
+    read_write_different g1 ah addr ahdr
 #pop-options
 
 /// ---------------------------------------------------------------------------

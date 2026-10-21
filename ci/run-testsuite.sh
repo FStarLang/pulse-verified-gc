@@ -20,13 +20,16 @@ SUBDIR=${1:-}
 [ -x "$TREE/ocamltest/ocamltest" ] || {
   echo "ocamltest is missing -- run: sh ci/build-verified-toolchain.sh" >&2; exit 1; }
 
+# TIMEOUT=300, not 120: weak-heavy tests are very slow without a weak table
+# (tests/misc/weaktest.ml, 108s native here vs 0.2s on stock), close enough to a
+# 120s budget to flap, and a timeout is reported as a NEW FAILURE.
 echo "=== running the testsuite (both variants per test); log: $LOG"
 cd "$TREE/testsuite"
 set +e
 if [ -n "$SUBDIR" ]; then
-  OCAMLRUNPARAM=b,v=0 TIMEOUT=120 make one DIR="$SUBDIR" 2>&1 | tee "$LOG"
+  OCAMLRUNPARAM=b,v=0 TIMEOUT=300 make one DIR="$SUBDIR" 2>&1 | tee "$LOG"
 else
-  OCAMLRUNPARAM=b,v=0 TIMEOUT=120 make all 2>&1 | tee "$LOG"
+  OCAMLRUNPARAM=b,v=0 TIMEOUT=300 make all 2>&1 | tee "$LOG"
 fi
 set -e
 
@@ -53,18 +56,18 @@ fi
 echo
 echo "=== report against ci/expected-failures.txt"
 cd "$ROOT"
+rm -f testsuite-summary.md
 set +e
 python3 ci/testsuite_report.py \
   --log "$LOG" \
   --expected ci/expected-failures.txt \
-  --html testsuite-report.html \
-  --json testsuite-report.json \
-  --title "OCaml testsuite - verified GC (local)"
+  --summary testsuite-summary.md \
+  --title "OCaml testsuite — verified GC (local)"
 rc=$?
 set -e
 echo
 if [ $rc -ne 0 ]; then
-  echo "NEW failures, not in the baseline. See testsuite-report.html."
+  echo "NEW failures, not in the baseline. See testsuite-summary.md."
 else
   echo "No regressions against ci/expected-failures.txt."
 fi

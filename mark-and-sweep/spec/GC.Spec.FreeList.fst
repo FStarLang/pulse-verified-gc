@@ -113,40 +113,54 @@ let reachable_is_node (g: heap) (fp: U64.t) (obj: U64.t)
 /// The invariant
 /// ---------------------------------------------------------------------------
 
-/// Every cell on the chain is a blue object of the heap.
+/// Every cell on the chain is a blue object of the heap with room for a link.
+///
+/// The `wosize >= 1` conjunct used to come from `linkable_heap`, which claimed
+/// it of *every* object. That was always too strong, and became false once
+/// right-justified allocation could leave a wosize-0 block. The bound belongs
+/// here instead: a block with no field cannot hold a link, so it cannot be on
+/// a chain at all -- which is exactly what `fl_cell` already says.
 let fl_sound (g: heap) (fp: U64.t) : prop =
   forall (obj: U64.t). reachable_on_fl g fp obj ==>
     (fl_node obj /\
      (U64.v obj >= U64.v mword /\ U64.v obj < heap_size /\ U64.v obj % U64.v mword == 0) /\
      Seq.mem (obj <: obj_addr) (objects zero_addr g) /\
-     is_blue (obj <: obj_addr) g)
+     is_blue (obj <: obj_addr) g /\
+     U64.v (wosize_of_object (obj <: obj_addr) g) >= 1)
 
-/// Every blue object of the heap is a cell on the chain.
+/// Every blue object that *can* be a cell is on the chain.
+///
+/// The `wosize >= 1` conjunct is not a weakening of intent, it is what "cell"
+/// has always meant: `fl_cell` requires it, because a block with no field
+/// cannot hold a link. Right-justified allocation can leave such a block, and
+/// `sweep_object` can colour one blue, so the older form -- every *blue*
+/// object is on the chain -- is simply false on those heaps. It was harmless
+/// only because nothing ever established it.
 let fl_complete (g: heap) (fp: U64.t) : prop =
-  forall (obj: obj_addr). (Seq.mem obj (objects zero_addr g) /\ is_blue obj g) ==>
+  forall (obj: obj_addr). (Seq.mem obj (objects zero_addr g) /\ is_blue obj g
+                           /\ U64.v (wosize_of_object obj g) >= 1) ==>
     reachable_on_fl g fp obj
 
-/// The free list is exactly the set of blue objects.
+/// The free list is exactly the set of blue objects that can hold a link.
+///
+/// `fl_sound` is the "only cells" direction and `fl_complete` the "all cells"
+/// one; between them the chain is precisely the cellish blue objects. A
+/// wosize-0 fragment is blue and in neither, which is the whole point: it is
+/// free space that is not on the list, and saying so is what `linkable_heap`
+/// refused to allow.
 let fl_exact (g: heap) (fp: U64.t) : prop =
   fl_sound g fp /\ fl_complete g fp
 
-/// Every object of the heap has room for a link word.
+/// Instantiate completeness at a single object.
 ///
-/// This is the standing side condition that makes the heap threadable at all:
-/// a block of wosize 0 has no field 1, so it cannot carry a free-list link.
-/// `sweep_object` already guards its link write on exactly this condition, and
-/// the allocator's own `fl_valid` already demands `wosize >= 1` of every cell it
-/// walks, so the requirement is not new -- it was simply never stated.
-let linkable_heap (g: heap) : prop =
-  forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==>
-    (U64.v (wosize_of_object obj g) >= 1 /\
-     U64.v (hd_address obj) + U64.v mword * 2 <= heap_size)
-
-/// A linkable heap object is a chain cell.
-let linkable_is_fl_node (g: heap) (obj: obj_addr)
-  : Lemma (requires linkable_heap g /\ Seq.mem obj (objects zero_addr g))
-          (ensures fl_node obj)
-  = hd_address_spec obj
+/// `fl_complete` carries no explicit SMT pattern, so the solver will not
+/// instantiate it at a witness unless `reachable_on_fl g fp y` already appears
+/// in the goal -- which is exactly what one is trying to prove. This forces it.
+let fl_complete_elim (g: heap) (fp: U64.t) (y: obj_addr)
+  : Lemma (requires fl_complete g fp /\ Seq.mem y (objects zero_addr g)
+                    /\ is_blue y g /\ U64.v (wosize_of_object y g) >= 1)
+          (ensures reachable_on_fl g fp y)
+  = ()
 
 /// Soundness is inherited by the tail of the chain.
 let fl_sound_tail (g: heap) (fp: U64.t)
@@ -156,7 +170,8 @@ let fl_sound_tail (g: heap) (fp: U64.t)
       (fl_node obj /\
        (U64.v obj >= U64.v mword /\ U64.v obj < heap_size /\ U64.v obj % U64.v mword == 0) /\
        Seq.mem (obj <: obj_addr) (objects zero_addr g) /\
-       is_blue (obj <: obj_addr) g)
+       is_blue (obj <: obj_addr) g /\
+       U64.v (wosize_of_object (obj <: obj_addr) g) >= 1)
     with introduce _ ==> _
     with reachable_cons g fp obj
 

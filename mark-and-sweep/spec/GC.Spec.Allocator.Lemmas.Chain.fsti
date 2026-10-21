@@ -153,6 +153,27 @@ val chain_avoids_tail (g: heap) (fp excl: U64.t) (fuel: nat)
                     U64.v (hd_address (fp <: obj_addr)) + 16 <= heap_size)
           (ensures chain_avoids g (read_word g (fp <: obj_addr)) excl (fuel - 1) = true)
 
+/// Like `fl_valid_transfer`, but the per-object facts are only required away
+/// from `excl`, in exchange for knowing that the chain from `fp` never visits
+/// it.  Needed by the allocator's one-word-leftover case: the block leaves the
+/// free list and its object address becomes a wosize-0 fragment, so it is the
+/// one object for which "wosize stays >= 1" is false.  `chain_avoids` comes
+/// from `fl_chain_predecessor_not_in_suffix_b`.
+val fl_valid_transfer_excl (g g': heap) (fp excl: U64.t) (fuel: nat)
+  : Lemma
+    (requires GC.Spec.Allocator.Lemmas.Common.fl_valid g fp fuel /\
+              chain_avoids g fp excl fuel /\
+              (forall (a: U64.t).
+                 (U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword = 0 /\
+                  Seq.mem a (objects zero_addr g) /\ a <> excl) ==>
+                 (Seq.mem a (objects zero_addr g') /\
+                  (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 ==>
+                    U64.v (wosize_of_object (a <: obj_addr) g') >= 1) /\
+                  (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 /\
+                   U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size ==>
+                    read_word g' (a <: obj_addr) == read_word g (a <: obj_addr)))))
+    (ensures GC.Spec.Allocator.Lemmas.Common.fl_valid g' fp fuel)
+
 val chain_avoids_transfer (g g': heap) (fp excl: U64.t) (fuel: nat)
   : Lemma (requires chain_avoids g fp excl fuel = true /\
                     GC.Spec.Allocator.Lemmas.Common.fl_valid g fp fuel /\
@@ -293,3 +314,13 @@ val walk_chain_valid_preserved (g g2: heap) (fp excl: U64.t) (d fuel: nat)
                  U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size ==>
                    read_word g2 (a <: obj_addr) == read_word g (a <: obj_addr))))
     (ensures walk_chain_valid g2 fp d /\ walk_chain g2 fp d = walk_chain g fp d)
+
+/// An address that is not an object at all cannot be on the chain: every cell
+/// the walk visits is a member of `objects` (that is what `fl_valid` records
+/// of each hop), so an interior address -- the right-justified allocated block
+/// before it acquires its own header, say -- is avoided for free.
+val chain_avoids_non_object (g: heap) (fp: U64.t) (excl: obj_addr) (fuel: nat)
+  : Lemma (requires GC.Spec.Allocator.Lemmas.Common.fl_valid g fp fuel /\
+                    ~(Seq.mem (excl <: U64.t) (objects zero_addr g)))
+          (ensures chain_avoids g fp (excl <: U64.t) fuel = true)
+          (decreases fuel)

@@ -47,7 +47,10 @@ val spot_major_layout_facts
       U64.v (spot_free_header r) == U64.v zero_addr + 24 /\
       U64.v (spot_free_obj r) == U64.v zero_addr + 32 /\
       U64.v (spot_major_fp r) == U64.v (spot_free_obj r) /\
-      spot_free_wosize r >= 1)
+      spot_free_wosize r >= 1 /\
+      // the free block runs to the end of the heap, which is what makes the
+      // right-justified allocated header land in bounds
+      U64.v (spot_free_header r) + 8 + spot_free_wosize r * 8 <= heap_size)
 
 val spot_major_c_reads
   : r:unit{spot_major_room} -> mp:minor_ptr ->

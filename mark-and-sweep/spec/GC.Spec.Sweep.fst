@@ -201,14 +201,23 @@ let rec sweep_aux_non_member_color (g: heap) (objs: seq obj_addr) (fp: U64.t) (x
     // Establish that fp' is either 0UL or in objects g' = objects g
     // Case analysis on color of obj
     if is_white obj g then begin
-      // fp' = obj, which is in objects g
-      assert (fp' == obj);
-      // Explicit fp_in_heap construction
-      assert (U64.v fp' >= U64.v mword);
-      assert (U64.v fp' < heap_size);
-      assert (U64.v fp' % U64.v mword == 0);
-      assert (Seq.mem (fp' <: obj_addr) (objects zero_addr g'));
-      assert (fp_in_heap fp' g')
+      // A swept white object becomes the head only if it can hold a link; a
+      // wosize-0 block cannot, and `sweep_object` then leaves `fp` alone.
+      let ws = wosize_of_object obj g in
+      let hd = GC.Spec.Heap.hd_address obj in
+      if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
+        // fp' = obj, which is in objects g
+        assert (fp' == obj);
+        // Explicit fp_in_heap construction
+        assert (U64.v fp' >= U64.v mword);
+        assert (U64.v fp' < heap_size);
+        assert (U64.v fp' % U64.v mword == 0);
+        assert (Seq.mem (fp' <: obj_addr) (objects zero_addr g'));
+        assert (fp_in_heap fp' g')
+      end else begin
+        assert (fp' == fp);
+        assert (fp_in_heap fp' g')
+      end
     end else begin
       // fp' = fp, which is 0UL or in objects g by precondition
       assert (fp' == fp);
@@ -324,8 +333,16 @@ let rec sweep_aux_preserves_objects (g: heap) (objs: seq obj_addr) (fp: U64.t)
     wf_objects_non_infix g obj;
     // Establish fp' is 0UL or in objects for recursion
     if is_white obj g then begin
-      assert (fp' == obj);
-      assert (fp_in_heap fp' g')
+      // Only a block with room for a link becomes the new head.
+      let ws = wosize_of_object obj g in
+      let hd = GC.Spec.Heap.hd_address obj in
+      if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
+        assert (fp' == obj);
+        assert (fp_in_heap fp' g')
+      end else begin
+        assert (fp' == fp);
+        assert (fp_in_heap fp' g')
+      end
     end else begin
       assert (fp' == fp);
       assert (fp_in_heap fp' g')
@@ -353,8 +370,16 @@ let rec sweep_aux_preserves_wf (g: heap) (objs: seq obj_addr) (fp: U64.t)
     sweep_object_preserves_wf g obj fp;
     wf_objects_non_infix g obj;
     if is_white obj g then begin
-      assert (fp' == obj);
-      assert (fp_in_heap fp' g')
+      // Only a block with room for a link becomes the new head.
+      let ws = wosize_of_object obj g in
+      let hd = GC.Spec.Heap.hd_address obj in
+      if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
+        assert (fp' == obj);
+        assert (fp_in_heap fp' g')
+      end else begin
+        assert (fp' == fp);
+        assert (fp_in_heap fp' g')
+      end
     end else begin
       assert (fp' == fp);
       assert (fp_in_heap fp' g')

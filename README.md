@@ -14,8 +14,10 @@ layout, benchmark table, and current verification boundary, see
 
 ## Quick local setup
 
-The exact sequence CI runs in [`.github/workflows/verify.yml`](.github/workflows/verify.yml),
-guaranteed to work end-to-end. Steps must run in this order:
+The sequence CI runs, guaranteed to work end-to-end: verification and extraction
+are [`.github/workflows/verify.yml`](.github/workflows/verify.yml), the OCaml
+integration and its tests are [`.github/workflows/testsuite.yml`](.github/workflows/testsuite.yml).
+Steps must run in this order:
 
 ```bash
 ./setup.sh # sets up F*
@@ -36,6 +38,8 @@ make -C generational snapshot
 make -C generational/ocaml-integration setup
 
 make -C generational/ocaml-integration/tests test # run smoke tests
+make -C generational/ocaml-integration/tests test-native # native smoke tests
+make -C generational/ocaml-integration/tests known-gaps # open bugs' reproducers
 make -C generational/ocaml-integration/tests benchmark # run benchmarks
 ```
 
@@ -63,12 +67,13 @@ make -C generational/ocaml-integration/tests correctness    # differential vs st
 # After changing the collector, the bridge, the snapshot or the runtime patch,
 # rebuild the GC and BOTH runtimes. `setup` will not do this -- it skips a tree
 # that already exists.
-sh ci/build-verified-toolchain.sh
+make -C generational/ocaml-integration/verified_gc
+make -C generational/ocaml-integration/ocaml-4.14-verified-gen/runtime ocamlrun libasmrun.a
 
 # OCaml's own testsuite -- ~3100 test instances, each in a bytecode and a
-# native variant. Needs the tree's compilers to EXIST, which --full builds
+# native variant. Needs the tree's compilers to EXIST, which this builds once
 # (15-40 min); after that a GC change needs only the rebuild above.
-sh ci/build-verified-toolchain.sh --full
+sh ci/build-verified-toolchain.sh
 sh ci/run-testsuite.sh
 sh ci/run-testsuite.sh tests/lib-hashtbl   # one directory
 ```
@@ -82,11 +87,8 @@ implement weak pointers, ephemerons, finalisers, compaction or memprof
 sampling, so a known set of tests fails for understood reasons. That set lives
 in `ci/expected-failures.txt`.
 
-That baseline was measured on a collector identical to this one except for the
-allocator fix ("patch 17"), so the first run is expected to report **exactly
-one** new failure -- `tests/ast-invariants/'test.ml' with 1.1 (native)`, which
-is that bug. See the header of `ci/expected-failures.txt`: it should be fixed,
-not baselined.
+`ci/run-testsuite.sh` writes the same summary CI posts, every failed test
+marked NEW or expected, to `testsuite-summary.md`.
 
 > **`libasmrun.a` is a separate target.** `make ocamlrun` refreshes only the
 > *bytecode* runtime, so a native test built after it will silently link a
