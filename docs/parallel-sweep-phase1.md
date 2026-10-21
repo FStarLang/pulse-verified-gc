@@ -8,7 +8,7 @@ Branch `sheera/parallel-sweep`, from `fork/main` `0ce5e09`, with `origin/main` `
 - **Stage B:** no counterexample. 10,750 (heap, boundary list) pairs were tested, from 17 hand-built and 862 generated heaps. All four deliberately broken variants were caught.
 - **Stage C:** `sweep_par_correct` is proved, with no `admit` or `assume` (§6). The model, the theorem and every `val` are unchanged. The proof uses only `valid_bounds`; the rest of `fused_pre` is not needed.
 - **Pulse, one segment:** the specification of `sweep_segment` is written and reviewed (§7). Locality, that a segment depends only on its own bytes, is tested and proved (§7). `sweep_segment` is implemented and proved against that specification, on range versions of the heap operations (§7).
-- **From theorem to running code:** the pre-pass, the merge, the joining lemma and a sequential driver are specified and approved (§8). The joining lemma `join_correct` is proved, and the pre-pass and the merge are implemented and proved. The sequential driver is not implemented yet.
+- **From theorem to running code:** the pre-pass, the merge, the joining lemma and a sequential driver are specified and approved (§8). All four are now implemented and proved, with no `admit` or `assume`. `sweep_par_seq` has `fused_sweep_coalesce`'s own postcondition, so the whole chain is checked end to end in one thread. No specification, model, theorem or `val` was changed.
 
 Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct` and `mark-and-sweep/NOTES.md`, merged in from `sheera/coalesce-exact`. The directory is left out of the root build.
 
@@ -24,12 +24,13 @@ Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct
 | `parallel-sweep/impl/GC.Impl.SweepSegment.fst` | Its implementation and proof (§7). |
 | `parallel-sweep/impl/GC.Impl.HeapRange.fst` | `read_word`, `write_word`, whitening and `flush_blue` on one range `[lo, hi)` (§7). |
 | `parallel-sweep/spec/GC.Spec.SweepPar.SegLoop.fst` | The loop invariant of `sweep_segment` and one lemma per case of its body (§7). |
-| `parallel-sweep/impl/GC.Impl.SweepPar.fsti` | The Pulse specifications of the pre-pass, the merge, and a sequential driver (§8). No implementation yet. |
+| `parallel-sweep/impl/GC.Impl.SweepPar.fsti` | The Pulse specifications of the pre-pass, the merge, and a sequential driver (§8). |
+| `parallel-sweep/impl/GC.Impl.SweepPar.fst` | Their implementation: `prepass` and `merge` call the two modules below, and `sweep_par_seq` is proved here (§8). |
 | `parallel-sweep/spec/GC.Spec.SweepPar.Join.fsti` | The joining lemma, stated (§8). |
 | `parallel-sweep/spec/GC.Spec.SweepPar.Join.fst` | Its proof, and its non-vacuity witnesses (§8). |
 | `parallel-sweep/impl/GC.Impl.SweepPar.Prepass.fst` | The pre-pass, implemented and proved (§8). |
 | `parallel-sweep/impl/GC.Impl.SweepPar.Merge.fst` | The merge, implemented and proved (§8). |
-| `parallel-sweep/Makefile` | `make verify` and `make test`. |
+| `parallel-sweep/Makefile` | `make verify` (now including every module above) and `make test`. |
 
 Toolchain: only the pinned `./fstar` (F* `nightly-2026-10-17`, `f43a1127`, Z3 5.3.0), with the repo's own F* flags. The OCaml side uses opam switch `fstar-gc` (OCaml 4.14.0).
 
@@ -566,11 +567,21 @@ fn sweep_par_seq (heap: heap_t) (k: SZ.t{SZ.v k >= 1})
   - The same heap condition as the shipped `fused_sweep_coalesce`: `is_heap heap g` and `fused_pre g`.
   - Two caller-provided buffers: room for `k + 1` boundaries and `k` records. This follows `GC.Impl.Stack`, whose storage the caller also provides.
 - **Postcondition:** the heap and the returned free-list head are exactly what `fused_sweep_coalesce g` gives. That is the shipped function's own postcondition, so `sweep_par_seq` can stand in for it. The buffers are handed back, with unspecified contents.
+- **Implemented and proved** in `GC.Impl.SweepPar.fst`, with no `admit` or `assume`.
+  - **Separate modules.** `prepass` and `merge` live in `GC.Impl.SweepPar.Prepass` and `.Merge`, with the interface's signatures copied, and `GC.Impl.SweepPar.fst` defines each by calling them. Once `GC.Impl.SweepPar.fst` exists, F* requires every `val` of the interface to be defined. Keeping them separate let each step be verified and committed without stubbing the others with `admit`. `bounds_list` and `results_match` are repeated there word for word, and SMT equates them with the interface's by unfolding.
+  - **The ranges.** After `prepass`, the heap is cut into `[0, zero_addr)` and `[zero_addr, heap_size)`. For segment `j` (`sweep_one`), the unswept part is cut at the segment's end, `sweep_segment` runs on the segment's range alone, and the range is joined onto the swept part. The swept part then holds `done_bytes g all j`: the bytes below `zero_addr`, then each swept segment's range. After the last segment, `done_end` uses `join_correct` to turn that into `splice_all g rs`. That is `merge`'s precondition, and `sweep_par_correct` finishes the proof.
+  - **The boundary array.** `seg_facts` shows that pair `j` of `bounds_list s n` is a segment of the list, aligned and in range. It also shows that `sweep_all` gives exactly that segment at index `j`, so record `j` matches `results_match`. `ends` shows that the first boundary is `zero_addr` and the last `heap_size`.
+  - **Non-vacuity.** `driver_witness` calls every pure lemma with the boundary array `[zero_addr; heap_size]`, and with three boundaries when the heap has a walk position. Two mutations fail to verify: dropping the call to `sweep_par_correct`, and storing every record at index 0.
+  - **Proof check:** about 18 s, with the default rlimit apart from `--fuel 3` in the witness. Every module in `make verify` also verifies from scratch with `--retry` off on `--z3seed 7`, about 2 min.
 - **Why it is useful:** it is the whole chain (`prepass`, `sweep_segment`, `join_correct`, `merge` and `sweep_par_correct`) checked end to end in one thread. Once it is proved, the only unverified part of the parallel collector is the runtime's thread handling. That handling must give each worker its own range, `bs` and `g`, and must join the ranges only after every worker has finished.
 
 ### What is left, in order
 
+All four are done. Steps 1, 2 and 3 are below; the fourth, the sequential driver, is above.
+
 1. ~~Prove `join_correct`.~~ Done.
 2. ~~Implement and prove `sweep_segment`, using locality (§7) and range versions of `read_word`, `write_word`, `makeWhite` and `flush_blue_impl`.~~ Done; it did not need locality (§7).
 3. ~~Implement and prove `prepass` and `merge`.~~ Done.
-4. Implement and prove `sweep_par_seq` from the three pieces.
+4. ~~Implement and prove `sweep_par_seq` from the three pieces.~~ Done.
+
+What remains is outside Pulse: the OCaml runtime's thread handling, which must give each worker its own range, `bs` and `g`, and join the ranges only after every worker has finished. Neither the balance of the pre-pass's segments nor the speed of the byte-wise range access (§7) has been measured.

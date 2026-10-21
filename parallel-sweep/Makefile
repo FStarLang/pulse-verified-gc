@@ -37,7 +37,7 @@ FSTAR_FLAGS = \
 FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 
 SPEC = spec/GC.Spec.SweepPar.Exec.fst spec/GC.Spec.SweepPar.fst spec/GC.Spec.SweepPar.Mutants.fst spec/GC.Spec.SweepPar.Vacuity.fst spec/GC.Spec.SweepPar.Local.fst spec/GC.Spec.SweepPar.Join.fst spec/GC.Spec.SweepPar.SegLoop.fst
-IMPL = impl/GC.Impl.HeapRange.fst impl/GC.Impl.SweepSegment.fst impl/GC.Impl.SweepPar.fsti impl/GC.Impl.SweepPar.Prepass.fst impl/GC.Impl.SweepPar.Merge.fst
+IMPL = impl/GC.Impl.HeapRange.fst impl/GC.Impl.SweepSegment.fst impl/GC.Impl.SweepPar.Prepass.fst impl/GC.Impl.SweepPar.Merge.fst impl/GC.Impl.SweepPar.fst
 
 .PHONY: verify test clean
 verify:
