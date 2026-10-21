@@ -93,10 +93,8 @@ let coalesce_aux_white_step
 ///
 /// Before: B1(wz 2) B2(wz 2) B3(wz 3) B4(wz 1) -- whole 3 + 3 + 4 + 2 = 12
 /// After:  B2, B3 merged, B2 has wosize 6      -- whole 3 + 7 + 2 = 12
-
-/// Machine words occupied by an object: its fields plus its header.
-let whsize (g: heap) (x: obj_addr) : GTot nat =
-  1 + U64.v (wosize_of_object x g)
+///
+/// `whsize` (fields plus header) is `GC.Spec.Object.whsize`.
 
 /// Total whole size of the blue objects of a walk.
 let rec free_space (g: heap) (objs: seq obj_addr)
@@ -239,14 +237,14 @@ let objects_split_at g a = objects_split_from g zero_addr a
 
 val coalesce_conserves_free_space (g: heap)
   : Lemma
-    (requires post_sweep_strong g /\ SI.heap_objects_dense g /\
+    (requires post_sweep_strong g /\ heap_objects_dense g /\
               Seq.length g == heap_size /\
               Seq.length (objects zero_addr g) > 0)
     (ensures total_free_space (fst (coalesce g)) == total_free_space g)
 
 val coalesce_preserves_blue_coverage (g: heap)
   : Lemma
-    (requires post_sweep_strong g /\ SI.heap_objects_dense g /\
+    (requires post_sweep_strong g /\ heap_objects_dense g /\
               Seq.length g == heap_size /\
               Seq.length (objects zero_addr g) > 0)
     (ensures
@@ -255,7 +253,7 @@ val coalesce_preserves_blue_coverage (g: heap)
 
 val coalesce_no_adjacent_blue (g: heap)
   : Lemma
-    (requires post_sweep_strong g /\ SI.heap_objects_dense g /\
+    (requires post_sweep_strong g /\ heap_objects_dense g /\
               Seq.length g == heap_size /\
               Seq.length (objects zero_addr g) > 0)
     (ensures
@@ -266,7 +264,7 @@ val coalesce_no_adjacent_blue (g: heap)
 
 val coalesce_preserves_white (g: heap)
   : Lemma
-    (requires post_sweep_strong g /\ SI.heap_objects_dense g /\
+    (requires post_sweep_strong g /\ heap_objects_dense g /\
               Seq.length g == heap_size /\
               Seq.length (objects zero_addr g) > 0)
     (ensures
@@ -290,7 +288,7 @@ let white_inv
   walk_pre g0 g start objs all_objs first_blue run_words /\
   Seq.length g == heap_size /\
   Seq.length g0 == heap_size /\
-  SI.heap_objects_dense g /\
+  heap_objects_dense g /\
   post_sweep_strong g0 /\
   /// 1. Above the cursor, the two heaps agree word for word.
   (forall (p: hp_addr). U64.v p >= U64.v start /\
@@ -889,13 +887,13 @@ let walk_visits_next_bound (g: heap) (start bound: hp_addr)
 /// carries the walk's own "doesn't stop early" property all the way from
 /// `zero_addr` to any such position.  Needed because `walk_visits` only
 /// records that the walk *reaches* a position, not that it *continues*
-/// there -- that extra step is exactly what `SI.heap_objects_dense` supplies,
+/// there -- that extra step is exactly what `heap_objects_dense` supplies,
 /// one hop at a time.
 #push-options "--z3rlimit 60 --fuel 2 --ifuel 1"
 let rec walk_visits_dense_continues (g: heap) (s p: hp_addr)
   : Lemma
     (requires
-      SI.heap_objects_dense g /\ walk_visits g s p /\
+      heap_objects_dense g /\ walk_visits g s p /\
       Seq.length (objects s g) > 0 /\
       Seq.mem (f_address s) (objects zero_addr g) /\
       U64.v p + 8 < heap_size)
@@ -922,7 +920,7 @@ let rec walk_visits_dense_continues (g: heap) (s p: hp_addr)
 /// ---------------------------------------------------------------------------
 ///
 /// The earlier attempt at `flush_density_transfer` went straight at
-/// `SI.heap_objects_dense`'s quantified form -- for every walk position with
+/// `heap_objects_dense`'s quantified form -- for every walk position with
 /// room, show the walk continues -- and got stuck exactly where `flush_preserves_white`
 /// did: transferring a single position's own nonemptiness across the flush.
 /// `GC.Spec.WalkEnd` gives a scalar restatement of density (`walk_end g
@@ -988,7 +986,7 @@ let rec walk_end_agree_above (g g1: heap) (s: hp_addr) (bound: nat)
 /// `zero_addr`, in the original heap) are the same two extra facts
 /// `flush_white_transfer` needed and for the same reason: they are what ties
 /// `first_blue`/`run_words` to the heap's real layout, which
-/// `SI.heap_objects_dense` alone does not supply.
+/// `heap_objects_dense` alone does not supply.
 #push-options "--z3rlimit 80 --fuel 2 --ifuel 1"
 let flush_preserves_walk_end
   (g: heap) (first_blue: U64.t) (run_words: pos) (fp: U64.t) (re: hp_addr)
@@ -1047,11 +1045,11 @@ let flush_density_transfer
       U64.v first_blue % U64.v mword == 0 /\
       run_words - 1 < pow2 54 /\
       U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v re /\
-      SI.heap_objects_dense g /\
+      heap_objects_dense g /\
       Seq.length (objects zero_addr g) > 0 /\
       walk_visits g zero_addr (hd_address (first_blue <: obj_addr)) /\
       walk_visits g zero_addr re)
-    (ensures SI.heap_objects_dense (fst (flush_blue g first_blue run_words fp)))
+    (ensures heap_objects_dense (fst (flush_blue g first_blue run_words fp)))
   = let g1 = fst (flush_blue g first_blue run_words fp) in
     let h = hd_address (first_blue <: obj_addr) in
     hd_address_spec (first_blue <: obj_addr);
@@ -1932,7 +1930,7 @@ let white_inv_step_blue
     assert (walk_pre g0 g nxt (Seq.tail objs) all_objs fb' rw');
     assert (Seq.length g == heap_size);
     assert (Seq.length g0 == heap_size);
-    assert (SI.heap_objects_dense g);
+    assert (heap_objects_dense g);
     assert (post_sweep_strong g0);
     assert (forall (p: hp_addr). U64.v p >= U64.v nxt /\ U64.v p + U64.v mword <= heap_size ==>
               read_word g p == read_word g0 p);
@@ -2029,7 +2027,7 @@ let white_inv_step_flush
     assert (walk_pre g0 g1 nxt (Seq.tail objs) all_objs 0UL 0);
     assert (Seq.length g1 == heap_size);
     assert (Seq.length g0 == heap_size);
-    assert (SI.heap_objects_dense g1);
+    assert (heap_objects_dense g1);
     assert (post_sweep_strong g0);
     assert (walk_visits g1 zero_addr nxt);
     assert (walk_visits g0 zero_addr nxt);
@@ -3811,7 +3809,7 @@ let coalesce_no_adjacent_blue g =
 val coalesce_correct (g: heap)
   : Lemma
     (requires post_sweep_strong g /\
-              SI.heap_objects_dense g /\
+              heap_objects_dense g /\
               Seq.length g == heap_size /\
               Seq.length (objects zero_addr g) > 0)
     (ensures

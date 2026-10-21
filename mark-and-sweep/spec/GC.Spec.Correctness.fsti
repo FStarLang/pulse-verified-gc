@@ -262,8 +262,8 @@ val sweep_preserves_density :
       well_formed_heap g /\
       GC.Spec.Mark.noGreyObjects g /\
       GC.Spec.Sweep.fp_in_heap fp g /\
-      GC.Spec.SweepInv.heap_objects_dense g)
-    (ensures GC.Spec.SweepInv.heap_objects_dense (fst (sweep g fp)))
+      heap_objects_dense g)
+    (ensures heap_objects_dense (fst (sweep g fp)))
 
 /// ---------------------------------------------------------------------------
 /// Coalesce Precondition Bridge
@@ -279,12 +279,12 @@ val coalesce_precondition_bridge :
       well_formed_heap h_mark /\
       noGreyObjects h_mark /\
       fp_in_heap fp h_mark /\
-      GC.Spec.SweepInv.heap_objects_dense h_mark /\
+      heap_objects_dense h_mark /\
       Seq.length (objects zero_addr h_mark) > 0)
     (ensures
       (let h_sweep = fst (sweep h_mark fp) in
        Seq.length (objects zero_addr h_sweep) > 0 /\
-       GC.Spec.SweepInv.heap_objects_dense h_sweep))
+       heap_objects_dense h_sweep))
 
 /// ---------------------------------------------------------------------------
 /// Full GC Correctness Through Coalesce
@@ -333,7 +333,7 @@ val mark_post_intro :
       well_formed_heap h_init /\ well_formed_heap h_mark /\
       noGreyObjects h_mark /\
       objects zero_addr h_mark == objects zero_addr h_init /\
-      SweepInv.heap_objects_dense h_mark /\
+      heap_objects_dense h_mark /\
       Seq.length (objects zero_addr h_mark) > 0 /\
       no_pointer_to_blue h_mark /\
       tri_color_invariant h_mark /\
@@ -370,7 +370,7 @@ val mark_post_elim_graph : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> f
         (ensures create_graph h_mark == create_graph h_init)
 val mark_post_elim_density : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
   Lemma (requires mark_post h_init h_mark roots fp)
-        (ensures SweepInv.heap_objects_dense h_mark)
+        (ensures heap_objects_dense h_mark)
 val mark_post_elim_objects_gt0 : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
   Lemma (requires mark_post h_init h_mark roots fp)
         (ensures Seq.length (objects zero_addr h_mark) > 0)
@@ -456,7 +456,7 @@ val coalesce_precondition_bridge_gen :
     (ensures
       (let h_sweep = fst (sweep h_mark fp) in
        Seq.length (objects zero_addr h_sweep) > 0 /\
-       SweepInv.heap_objects_dense h_sweep))
+       heap_objects_dense h_sweep))
 
 /// Generalized full_gc_correctness_through_coalesce
 val full_gc_correctness_through_coalesce_gen :

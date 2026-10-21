@@ -920,7 +920,7 @@ fn cheney_promote_phase
                  SF.well_formed_heap 'ms /\
                  AllocLemmas.fl_valid 'ms 'fp heap_words /\
                  AllocLemmas.fl_chain_terminates 'ms 'fp heap_words /\
-                 PromoteSpec.heap_objects_dense 'ms /\
+                 GC.Spec.Fields.heap_objects_dense 'ms /\
                  PromoteSpec.chain_objects_blue 'ms 'fp /\
                  Seq.length 'farr == fwd_array_size /\
                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
@@ -946,7 +946,7 @@ fn cheney_promote_phase
           SF.well_formed_heap_part1 ms2 /\
           AllocLemmas.fl_valid ms2 fp2 heap_words /\
           AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
-          PromoteSpec.heap_objects_dense ms2 /\
+          GC.Spec.Fields.heap_objects_dense ms2 /\
           PromoteSpec.chain_objects_blue ms2 fp2 /\
           Seq.length (SF.objects zero_addr ms2) > 0 /\
           Seq.length farr2 == fwd_array_size /\

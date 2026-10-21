@@ -557,21 +557,7 @@ val promote_object_preserves_wfh_part4
            (ensures (let res = promote_object minor major obj fp wosize in
                      well_formed_heap_part4 res.major_out))
 
-/// ---------------------------------------------------------------------------
-/// Heap objects density definition (used by PromoteUpdate)
-/// ---------------------------------------------------------------------------
-
-/// Heap objects density: all objects reachable from the linear scan are valid.
-let heap_objects_dense (g: heap) : prop =
-  forall (start: hp_addr).
-    U64.v start + 8 < heap_size ==>
-    Seq.mem (f_address start) (objects zero_addr g) ==>
-    Seq.length (objects start g) > 0 ==>
-    (let wz = getWosize (read_word g start) in
-     let next = U64.v start + ((U64.v wz + 1) * 8) in
-     next + 8 < heap_size ==>
-     Seq.length (objects (U64.uint_to_t next) g) > 0 /\
-     Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr g))
+/// `heap_objects_dense` is `GC.Spec.Fields.heap_objects_dense`.
 
 /// Blue fields closed: for blue (free-list) objects, all pointer fields
 /// target valid objects in the heap.

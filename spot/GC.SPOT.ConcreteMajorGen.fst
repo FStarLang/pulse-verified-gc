@@ -643,7 +643,7 @@ let heap_objects_dense_intro_by_proof (g: heap)
        next + 8 < heap_size ==>
        Seq.length (SpecFields.objects (U64.uint_to_t next) g) > 0 /\
        Seq.mem (f_address (U64.uint_to_t next)) (SpecFields.objects zero_addr g)))))
-  : Lemma (ensures Promote.heap_objects_dense g)
+  : Lemma (ensures GC.Spec.Fields.heap_objects_dense g)
   =
   let aux (start: hp_addr)
     : Lemma (ensures
@@ -658,10 +658,11 @@ let heap_objects_dense_intro_by_proof (g: heap)
     =
     if U64.v start + 8 < heap_size then proof start
   in
-  FStar.Classical.forall_intro aux
+  FStar.Classical.forall_intro aux;
+  reveal_opaque (`%GC.Spec.Fields.heap_objects_dense) GC.Spec.Fields.heap_objects_dense
 
 let spot_major_dense (r: unit{spot_major_room}) (mp: minor_ptr)
-  : Lemma (ensures Promote.heap_objects_dense (spot_major_heap r mp))
+  : Lemma (ensures GC.Spec.Fields.heap_objects_dense (spot_major_heap r mp))
   =
   let major = spot_major_heap r mp in
   spot_major_objects r mp;

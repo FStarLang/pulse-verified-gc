@@ -483,7 +483,7 @@ private let sweep_preserves_header_parts_black
 let fused_eq_sweep_coalesce (g: heap) (fp: U64.t)
   : Lemma
     (requires well_formed_heap g /\
-              SI.heap_objects_dense g /\
+              heap_objects_dense g /\
               SpecSweep.fp_in_heap fp g /\
               (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                 ~(is_gray x g)))

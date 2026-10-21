@@ -908,7 +908,7 @@ let mark_post (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) : prop =
   well_formed_heap h_init /\ well_formed_heap h_mark /\
   noGreyObjects h_mark /\
   objects zero_addr h_mark == objects zero_addr h_init /\
-  SweepInv.heap_objects_dense h_mark /\
+  heap_objects_dense h_mark /\
   Seq.length (objects zero_addr h_mark) > 0 /\
   no_pointer_to_blue h_mark /\
   tri_color_invariant h_mark /\

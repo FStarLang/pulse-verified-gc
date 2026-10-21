@@ -358,7 +358,7 @@ the first three already wired into every Makefile:
   Goal shapes that reliably blow up, and their fixes:
   1. `n - 1 >= 0` / `n - 1 << n` at a recursive call → a helper carrying the facts in its *result type*, e.g. `dec_fuel (fuel: nat{fuel >= 1}) : (r: nat{r == fuel - 1 /\ r << fuel})` (`GC.Gen.Cheney`), or `dec_field_idx` (`GC.Gen.CheneyPreservation.Fields`) for an `if i < n then n - i else 0` measure.
   2. `UInt.size a 64` for `U64.uint_to_t a` → `GC.Spec.Base.mk_hp_addr`, or a module-local `Pure` wrapper such as `mk_u64_lt_heap`.
-  3. `(base + k * 8) % 8 == 0` → `GC.Spec.Base.aligned_plus_mul8`; an `SMTPat`-carrying module-local wrapper works well when the coercion appears many times (`aligned_step`/`aligned_step8` in `GC.Gen.Cheney.Dense`). Note `(x + 8)` does *not* match a pattern written `(base + k * 8)`, so both variants are needed.
+  3. `(base + k * 8) % 8 == 0` → `GC.Spec.Base.aligned_plus_mul8`; an `SMTPat`-carrying module-local wrapper works well when the coercion appears many times (`aligned_step`/`aligned_step8` in `GC.Spec.Allocator.Dense`). Note `(x + 8)` does *not* match a pattern written `(base + k * 8)`, so both variants are needed.
   4. Two distinct aligned addresses being at least a word apart → an `aligned_distinct`/`aligned_apart` helper, needed before nearly every `read_write_different`.
   5. A large local `aux` closure inside a big theorem → **hoist it to a top-level lemma over abstract parameters** (`two_pass_pointwise` in `GC.Gen.TwoPassEquiv`, `fwd_state_extend_infix` in `GC.Gen.CheneyPreservation.Fields`). The win comes from replacing huge terms with opaque variables.
   6. Composing two frame conditions → one helper doing both steps (`frame_excl_compose`); splitting it in two never sufficed.

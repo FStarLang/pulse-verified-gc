@@ -899,7 +899,7 @@ let two_pass_implies_full_update
        ref_table_complete major_pre prom.fwd_map slots n /\
        fwd_targets_stable prom.fwd_map /\
        SpecFields.well_formed_heap_part1 prom.major_final /\
-       PromoteSpec.heap_objects_dense prom.major_final /\
+       GC.Spec.Fields.heap_objects_dense prom.major_final /\
        Seq.length (SpecFields.objects zero_addr prom.major_final) > 0 /\
        SpecFields.well_formed_heap major_pre /\
        minor_infix_wf minor /\

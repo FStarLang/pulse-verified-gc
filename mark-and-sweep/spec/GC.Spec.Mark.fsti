@@ -370,16 +370,16 @@ val push_children_preserves_objects : (g: heap) -> (st: seq obj_addr) -> (obj: o
                   objects zero_addr g' == objects zero_addr g))
 
 val mark_step_preserves_density : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st /\ SweepInv.heap_objects_dense g)
-        (ensures SweepInv.heap_objects_dense (fst (mark_step g st)))
+  Lemma (requires well_formed_heap g /\ stack_props g st /\ heap_objects_dense g)
+        (ensures heap_objects_dense (fst (mark_step g st)))
 
 /// ---------------------------------------------------------------------------
 /// Mark/Mark_aux Preservation
 /// ---------------------------------------------------------------------------
 
 val mark_preserves_density : (g: heap) -> (st: seq obj_addr) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st /\ SweepInv.heap_objects_dense g)
-        (ensures SweepInv.heap_objects_dense (mark g st))
+  Lemma (requires well_formed_heap g /\ stack_props g st /\ heap_objects_dense g)
+        (ensures heap_objects_dense (mark g st))
 
 val push_children_preserves_resolve : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (addr: obj_addr) ->
