@@ -7,7 +7,8 @@ Branch `sheera/parallel-sweep`, from `fork/main` `0ce5e09`, with `origin/main` `
 - **Stage A:** the model and theorem are written.
 - **Stage B:** no counterexample. 10,750 (heap, boundary list) pairs were tested, from 17 hand-built and 862 generated heaps. All four deliberately broken variants were caught.
 - **Stage C:** `sweep_par_correct` is proved, with no `admit` or `assume` (§6). The model, the theorem and every `val` are unchanged. The proof uses only `valid_bounds`; the rest of `fused_pre` is not needed.
-- **Pulse, one segment:** the specification of `sweep_segment` is written and type-checks (§7). It is not implemented or proved yet. It is waiting for review.
+- **Pulse, one segment:** the specification of `sweep_segment` is written and reviewed (§7). Locality, that a segment depends only on its own bytes, is tested and proved (§7). The function is not implemented yet.
+- **From theorem to running code:** the pre-pass, the merge, the joining lemma and a sequential driver are specified and type-check (§8). None is implemented or proved. They are waiting for review.
 
 Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct` and `mark-and-sweep/NOTES.md`, merged in from `sheera/coalesce-exact`. The directory is left out of the root build.
 
@@ -20,6 +21,8 @@ Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct
 | `parallel-sweep/spec/GC.Spec.SweepPar.Mutants.fst` | Four wrong merge and link steps. Used only by the tests. |
 | `parallel-sweep/test/` | The OCaml driver, the build script, the runner, and the `GC.Spec.ZeroAddr` realisation. |
 | `parallel-sweep/impl/GC.Impl.SweepSegment.fsti` | The Pulse specification of one segment, `sweep_segment` (§7). No implementation yet. |
+| `parallel-sweep/impl/GC.Impl.SweepPar.fsti` | The Pulse specifications of the pre-pass, the merge, and a sequential driver (§8). No implementation yet. |
+| `parallel-sweep/spec/GC.Spec.SweepPar.Join.fsti` | The joining lemma, stated (§8). No proof yet. |
 | `parallel-sweep/Makefile` | `make verify` and `make test`. |
 
 Toolchain: only the pinned `./fstar` (F* `nightly-2026-10-17`, `f43a1127`, Z3 5.3.0), with the repo's own F* flags. The OCaml side uses opam switch `fstar-gc` (OCaml 4.14.0).
@@ -408,3 +411,116 @@ The parts: `agree` (byte-wise agreement on a range) and its conversions to and f
 **Non-vacuity.** `local_witness` calls the lemma on a heap `g` and the same heap with one word below `zero_addr` overwritten. These are two different heaps meeting the hypothesis, with `[zero_addr, heap_size)` as the segment. Every other lemma in the module is called on the way, on arguments meeting its precondition.
 
 **Proof check:** about 15 s. It also verifies with `--retry` off on `--z3seed` 0 and 7. The largest rlimit is 60.
+
+## 8. From the theorem to running code
+
+The theorem is about the model: `sweep_par bs g == fused_sweep_coalesce g`. Running code needs four more pieces. Each is written here as a specification only, with no implementation or proof yet. `make verify` type-checks them.
+
+```
+ heap g ──► prepass ──► bounds b0 < b1 < … < bn-1
+                │
+                ▼
+   sweep_segment [b0,b1)   sweep_segment [b1,b2)   …      (workers; one record each)
+                │
+                ▼  ranges put back together  =  splice_all g rs     (joining lemma)
+                │
+              merge ──► final heap, free-list head  =  sweep_par bs g
+                                                    =  fused_sweep_coalesce g
+```
+
+In the parallel collector, the OCaml runtime does the middle step on its worker threads: it hands each worker its range and gathers them back. `sweep_par_seq` does all of it in one thread, in Pulse, which shows the pieces fit together.
+
+### 1. The pre-pass: `prepass` (`GC.Impl.SweepPar`)
+
+```fstar
+fn prepass (heap: heap_t) (k: SZ.t{SZ.v k >= 1}) (bounds: A.array U64.t)
+  (#g: erased heap_state) (#s0: erased (Seq.seq U64.t))
+  requires is_heap heap g ** A.pts_to bounds s0 ** pure (A.length bounds == SZ.v k + 1)
+  returns n: SZ.t
+  ensures exists* s. is_heap heap g ** A.pts_to bounds s **
+    pure (Seq.length s == SZ.v k + 1 /\ 2 <= SZ.v n /\ SZ.v n <= SZ.v k + 1 /\
+          SP.valid_bounds g (bounds_list s (SZ.v n)))
+```
+
+- **What it does:** it chooses at most `k` segments and writes their `n` boundaries into the caller's array `bounds`. `bounds_list s n` reads the first `n` entries as the model's `list nat`.
+- **Precondition:** the caller owns the heap and an array with room for `k + 1` boundaries. The pre-pass does not need `fused_pre`: `valid_bounds` is meaningful on any heap.
+- **Postcondition:**
+  - The heap is unchanged (`is_heap heap g`, the same `g`). The pre-pass only reads.
+  - The first `n` entries are a valid boundary list for `g`. So they start at `zero_addr`, end at `heap_size`, increase strictly, and every one in between is a header the sequential walk lands on. This is exactly the theorem's hypothesis.
+- **Not specified:** how evenly the boundaries are spread. That affects speed, not correctness. A pre-pass that always returns `[zero_addr; heap_size]` meets the specification.
+- **A cost to keep in mind.** A header cannot be recognised from its bytes alone, so the only way to find walk positions is to walk from `zero_addr`. The pre-pass is therefore a sequential walk over every header. It does no writes and reads one word per object, so it is cheaper than the sweep, but it is still linear in the number of objects. Spreading the boundaries well needs that walk, or positions recorded earlier (during marking or allocation, for example). That is a design question for the implementation, not for this specification.
+
+### 2. The merge: `merge` (`GC.Impl.SweepPar`)
+
+```fstar
+fn merge (heap: heap_t) (results: A.array seg_result) (m: SZ.t)
+  (#g: erased heap_state) (#bs: erased (list nat))
+  (#rs: erased (Seq.seq seg_result)) (#p: perm)
+  requires is_heap heap (SP.splice_all g (SP.sweep_all g (SP.segments bs))) **
+           A.pts_to results #p rs **
+           pure (SP.fused_pre g /\ SP.valid_bounds g bs /\
+                 results_match rs (SZ.v m) (SP.sweep_all g (SP.segments bs)))
+  returns fp: U64.t
+  ensures exists* h. is_heap heap h ** A.pts_to results #p rs **
+    pure ((h, fp) == SP.sweep_par bs g)
+```
+
+- **What it does:** the model's `link_all`. Left to right, it chains the free runs across segment boundaries, flushes each one, patches each segment's first linked block, and threads the free-list head.
+- **Precondition:**
+  - **The heap** is the whole heap after all workers have finished. It is stated as the model's `splice_all g rs`: the input heap with each segment's range replaced by that worker's bytes. The joining lemma (below) is what shows the workers' output is this.
+  - **`results`** holds the workers' `m` records, in segment order. `results_match` says that record `i` matches the model's output for segment `i` (`result_matches`, from §7), and that there are exactly as many records as segments. The merge only reads them, so any fraction `p` of permission is enough.
+  - **`fused_pre g` and `valid_bounds g bs`.** The model's merge is defined for any heap, but its implementation, like `fused_sweep_coalesce`'s, will need to know the runs stay inside the heap.
+- **No boundaries needed.** `link_all` uses only the records and the heap, never `lo` or `hi`, so the merge takes no boundary array. `bs` is ghost.
+- **Postcondition:** the final heap and the returned head are the pair the model's `sweep_par bs g` returns. With `sweep_par_correct`, that is the pair `fused_sweep_coalesce g` returns.
+
+### 3. The joining lemma: `join_correct` (`GC.Spec.SweepPar.Join`)
+
+```fstar
+let rec seg_bytes (rs: list SP.seg) : seq U8.t =
+  match rs with
+  | [] -> Seq.empty
+  | r :: rest -> Seq.append (Seq.slice r.out.sheap r.lo r.hi) (seg_bytes rest)
+
+val join_correct (g: heap) (bs: list nat)
+  : Lemma (requires SP.valid_bounds g bs)
+          (ensures (let rs = SP.sweep_all g (SP.segments bs) in
+                    Seq.append (Seq.slice g 0 zero_addr) (seg_bytes rs) == SP.splice_all g rs))
+```
+
+- **What it says:** take the heap's bytes below `zero_addr`, then each segment's range `[lo, hi)` of that segment's copy, in order. The result is the model's spliced heap.
+- **Why these pieces:** each piece is what one worker holds when it finishes. `sweep_segment`'s postcondition gives exactly `Seq.slice (sweep_segment g lo hi).sheap lo hi`, which is `r.out.sheap` for that segment in `sweep_all`. The bytes below `zero_addr` belong to no segment. Nobody writes them, so the caller keeps them as they are in `g`.
+- **Why it should hold:** under `valid_bounds`, the segments start at `zero_addr`, end at `heap_size`, and touch with no gap or overlap. `splice_all` replaces each range in turn, and the ranges are disjoint, so each byte is replaced once, by its own segment. This is pure reasoning about sequences: it does not use locality or anything about the sweep.
+- **How it connects to Pulse:** `pts_to_range_join` turns two adjacent ranges into one range holding the two sequences appended. Joining the range below `zero_addr` with each worker's range in turn, then `pts_to_range_elim`, gives `is_heap` holding exactly this left-hand side. So the lemma is what turns "the workers finished" into the merge's precondition.
+- It is a `val` in an interface with no implementation yet, so nothing depends on it until it is proved.
+
+### 4. A sequential driver: `sweep_par_seq` (`GC.Impl.SweepPar`)
+
+```fstar
+fn sweep_par_seq (heap: heap_t) (k: SZ.t{SZ.v k >= 1})
+  (bounds: A.array U64.t) (results: A.array seg_result)
+  (#g: erased heap_state) (#b0: erased (Seq.seq U64.t)) (#r0: erased (Seq.seq seg_result))
+  requires is_heap heap g ** A.pts_to bounds b0 ** A.pts_to results r0 **
+           pure (A.length bounds == SZ.v k + 1 /\ A.length results == SZ.v k /\ SP.fused_pre g)
+  returns fp: U64.t
+  ensures exists* h b r. is_heap heap h ** A.pts_to bounds b ** A.pts_to results r **
+    pure ((h, fp) == Defs.fused_sweep_coalesce g)
+```
+
+- **What it does:**
+  1. `prepass` into `bounds`.
+  2. Split the heap into the range below `zero_addr` and one range per segment.
+  3. Call `sweep_segment` on each segment in order, storing record `i` in `results[i]`.
+  4. Join the ranges back into the whole heap.
+  5. Call `merge`.
+- **Precondition:**
+  - The same heap condition as the shipped `fused_sweep_coalesce`: `is_heap heap g` and `fused_pre g`.
+  - Two caller-provided buffers: room for `k + 1` boundaries and `k` records. This follows `GC.Impl.Stack`, whose storage the caller also provides.
+- **Postcondition:** the heap and the returned free-list head are exactly what `fused_sweep_coalesce g` gives. That is the shipped function's own postcondition, so `sweep_par_seq` can stand in for it. The buffers are handed back, with unspecified contents.
+- **Why it is useful:** it is the whole chain (`prepass`, `sweep_segment`, `join_correct`, `merge` and `sweep_par_correct`) checked end to end in one thread. Once it is proved, the only unverified part of the parallel collector is the runtime's thread handling. That handling must give each worker its own range, `bs` and `g`, and must join the ranges only after every worker has finished.
+
+### What is left, in order
+
+1. Prove `join_correct`.
+2. Implement and prove `sweep_segment`, using locality (§7) and range versions of `read_word`, `write_word`, `makeWhite` and `flush_blue_impl`.
+3. Implement and prove `prepass` and `merge`.
+4. Implement and prove `sweep_par_seq` from the three pieces.
