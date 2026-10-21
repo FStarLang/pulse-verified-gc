@@ -1,5 +1,5 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.AllocExact - the free list stays exact, so the first attempt succeeds
+/// GC.Gen.AllocExact - the free list stays exact, so allocation succeeds when a block fits
 /// ---------------------------------------------------------------------------
 ///
 /// A full collection leaves the free list exact (`fused_exact`): it holds
@@ -8,9 +8,9 @@
 /// promotion, the pointer rewrite after a minor collection, and the program's
 /// own field writes to live objects -- and concludes that an allocation
 /// succeeds whenever some free block is big enough
-/// (`first_attempt_succeeds_between_collections`).  `fl_complete` is part of
-/// the collector's invariant `GC.Gen.HeapInvariant.major_heap_shape`, which
-/// both collections re-establish.
+/// (`alloc_succeeds_when_a_block_fits`).  `fl_exact` is part of the
+/// collector's invariant `GC.Gen.HeapInvariant.major_heap_shape`, which both
+/// collections re-establish.
 ///
 /// The free-list predicates in `GC.Spec.FreeList` speak of reachability with
 /// an existential number of steps; the allocator's own preservation lemmas
@@ -866,24 +866,18 @@ let alloc_spec_preserves_entry (g: heap) (fp: U64.t) (wz: nat)
     end
 #pop-options
 
-/// A run of allocations, each of at least one word.
-let rec allocs (g: heap) (fp: U64.t) (ws: list pos) : GTot (heap & U64.t) (decreases ws) =
-  match ws with
-  | [] -> (g, fp)
-  | w :: rest -> let r = alloc_spec g fp w in allocs r.heap_out r.fp_out rest
+/// Coalescing a swept heap establishes the entry conditions.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+let coalesce_entry (g: heap)
+  : Lemma (requires Coalesce.post_sweep_strong g)
+          (ensures (let r = Coalesce.coalesce g in alloc_entry (fst r) (snd r)))
+  = Coalesce.coalesce_preserves_wf g;
+    wf_parts ();
+    CD.coalesce_fl_entry g;
+    CC.coalesce_exact g
+#pop-options
 
-let rec allocs_preserve_entry (g: heap) (fp: U64.t) (ws: list pos)
-  : Lemma (requires alloc_entry g fp)
-          (ensures (let r = allocs g fp ws in alloc_entry (fst r) (snd r)))
-          (decreases ws)
-  = match ws with
-    | [] -> ()
-    | w :: rest ->
-      alloc_spec_preserves_entry g fp w;
-      let r = alloc_spec g fp w in
-      allocs_preserve_entry r.heap_out r.fp_out rest
-
-/// A full collection establishes the entry conditions.
+/// The same, at the pass the collector actually runs.
 #push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
 let fused_entry (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
   : Lemma
@@ -896,40 +890,8 @@ let fused_entry (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
     (ensures (let r = SCD.fused_sweep_coalesce h_mark in alloc_entry (fst r) (snd r)))
   = SC.fused_eq_sweep_coalesce h_mark fp;
     Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    let gs = fst (SpecSweep.sweep h_mark fp) in
-    Coalesce.coalesce_preserves_wf gs;
-    wf_parts ();
-    CD.coalesce_fl_entry gs;
-    CC.fused_exact h_init h_mark roots fp
+    coalesce_entry (fst (SpecSweep.sweep h_mark fp))
 #pop-options
-
-/// **After a full collection, and after any run of allocations that follows
-/// it, an allocation succeeds whenever some free block is big enough.**
-///
-/// This is the allocator's side of "the first attempt succeeds": the runtime's
-/// retry after a collection is needed only when no single free block fits.
-let first_attempt_succeeds
-  (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) (ws: list pos) (wz: nat) (x: obj_addr)
-  : Lemma
-    (requires
-      Corr.mark_post h_init h_mark roots fp /\
-      well_formed_heap h_mark /\
-      SI.heap_objects_dense h_mark /\
-      SpecSweep.fp_in_heap fp h_mark /\
-      (forall (y: obj_addr). Seq.mem y (objects zero_addr h_mark) ==> ~(is_gray y h_mark)) /\
-      wz >= 1 /\
-      (let c = SCD.fused_sweep_coalesce h_mark in
-       let r = allocs (fst c) (snd c) ws in
-       Seq.mem x (objects zero_addr (fst r)) /\ is_blue x (fst r) /\
-       U64.v (wosize_of_object x (fst r)) >= wz))
-    (ensures (let c = SCD.fused_sweep_coalesce h_mark in
-              let r = allocs (fst c) (snd c) ws in
-              (alloc_spec (fst r) (snd r) wz).obj_out <> 0UL))
-  = let c = SCD.fused_sweep_coalesce h_mark in
-    fused_entry h_init h_mark roots fp;
-    allocs_preserve_entry (fst c) (snd c) ws;
-    let r = allocs (fst c) (snd c) ws in
-    alloc_spec_fits_succeeds (fst r) (snd r) wz x
 
 /// ---------------------------------------------------------------------------
 /// Promotion keeps the free list complete
@@ -1225,29 +1187,37 @@ let field_write_preserves_entry (g: heap) (fp: U64.t) (a: obj_addr) (w: hp_addr)
 /// The first attempt succeeds, from any heap the collector hands back
 /// ---------------------------------------------------------------------------
 
-/// The collector's invariant gives the allocator's entry conditions.  `fl_sound`
-/// is not a separate conjunct of `major_heap_shape`: it follows from `fl_valid`
-/// (every cell is an object with room for a link) and `chain_objects_blue`
-/// (every cell is blue).
+/// A valid free list whose cells are all blue is sound: `fl_valid` gives
+/// membership and room for a link, `chain_objects_blue` the colour.  Used
+/// where the collector re-establishes `fl_exact` from those two.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+let fl_valid_cob_gives_sound (g: heap) (fp: U64.t)
+  : Lemma (requires AllocLemmas.fl_valid g fp heap_words /\
+                    AllocLemmas.fl_chain_terminates g fp heap_words /\
+                    Promote.chain_objects_blue g fp)
+          (ensures FL.fl_sound g fp)
+  = reveal_opaque (`%Promote.chain_objects_blue) (Promote.chain_objects_blue g fp);
+    let snd (y: U64.t) : Lemma
+      (requires FL.reachable_on_fl g fp y)
+      (ensures FL.fl_node y /\
+               (U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0) /\
+               Seq.mem (y <: obj_addr) (objects zero_addr g) /\
+               is_blue (y <: obj_addr) g /\
+               U64.v (wosize_of_object (y <: obj_addr) g) >= 1)
+      = reachable_valid_cell g fp y;
+        reachable_iff_met g fp y
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires snd)
+#pop-options
+
+/// Every heap the collector hands back satisfies the entry conditions:
+/// `major_heap_shape` carries `fl_exact`.
 let major_heap_shape_gives_entry (major: heap) (fp: U64.t)
   : Lemma (requires GenInv.major_heap_shape major fp)
           (ensures alloc_entry major fp)
   = GenInv.major_heap_shape_elim major fp;
-    wf_parts ();
-    reveal_opaque (`%Promote.chain_objects_blue) (Promote.chain_objects_blue major fp);
-    let snd (y: U64.t) : Lemma
-      (requires FL.reachable_on_fl major fp y)
-      (ensures FL.fl_node y /\
-               (U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0) /\
-               Seq.mem (y <: obj_addr) (objects zero_addr major) /\
-               is_blue (y <: obj_addr) major /\
-               U64.v (wosize_of_object (y <: obj_addr) major) >= 1)
-      = reachable_valid_cell major fp y;
-        reachable_iff_met major fp y
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires snd)
-#pop-options
+    GenInv.free_list_exact_iff major fp;
+    wf_parts ()
 
 /// What the program may do to the major heap between collections: allocate,
 /// or write a field of a live object.
@@ -1292,25 +1262,23 @@ let rec run_preserves_entry (g: heap) (fp: U64.t) (es: list event)
       let s = step g fp e in
       run_preserves_entry (fst s) (snd s) rest
 
-/// **From any heap the collector hands back, and after any run of allocations
-/// and field writes to live objects, an allocation succeeds whenever some free
-/// block is big enough.**
+/// **An allocation succeeds whenever some free block is big enough** -- from
+/// any heap with an exact free list, and after any run of allocations and
+/// field writes to live objects.
 ///
-/// `collection_heap_shape` is what `GC.Gen.Impl.gen_gc` and
-/// `minor_collect_full` establish of the heap they return, so this covers the
-/// runtime between collections: the second, post-collection attempt in
-/// `verified_allocate` is needed only when no single free block fits.
-let first_attempt_succeeds_between_collections
-  (minor: MH.minor_state) (major: heap) (fp: U64.t) (es: list event) (wz: nat) (x: obj_addr)
-  : Lemma (requires GenInv.collection_heap_shape minor major fp /\
-                    run_ok major fp es /\ wz >= 1 /\
-                    (let r = run major fp es in
+/// Where an exact free list comes from: `coalesce_entry` (a coalesced swept
+/// heap), `fused_entry` (the pass the collector runs), and
+/// `major_heap_shape_gives_entry` (any heap satisfying the collector's
+/// invariant, i.e. anything `gen_gc` or `minor_collect_full` returns).  So
+/// the retry after a collection in `verified_allocate` is needed only when no
+/// single free block fits.
+let alloc_succeeds_when_a_block_fits
+  (g: heap) (fp: U64.t) (es: list event) (wz: pos) (x: obj_addr)
+  : Lemma (requires alloc_entry g fp /\ run_ok g fp es /\
+                    (let r = run g fp es in
                      Seq.mem x (objects zero_addr (fst r)) /\ is_blue x (fst r) /\
                      U64.v (wosize_of_object x (fst r)) >= wz))
-          (ensures (let r = run major fp es in (alloc_spec (fst r) (snd r) wz).obj_out <> 0UL))
-  = GenInv.collection_heap_shape_elim minor major fp;
-    major_heap_shape_gives_entry major fp;
-    run_preserves_entry major fp es;
-    let r = run major fp es in
+          (ensures (let r = run g fp es in (alloc_spec (fst r) (snd r) wz).obj_out <> 0UL))
+  = run_preserves_entry g fp es;
+    let r = run g fp es in
     alloc_spec_fits_succeeds (fst r) (snd r) wz x
-

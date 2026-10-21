@@ -884,4 +884,6 @@ let spot_major_heap_shape (r: unit{spot_major_room}) (mp: minor_ptr)
   spot_major_wfh_part2 r mp;
   BlueAlloc.wfh_part2_implies_blue_fields_closed major;
   spot_major_fl_complete r mp;
+  GC.Gen.AllocExact.fl_valid_cob_gives_sound major fp;
+  GenInv.free_list_exact_iff major fp;
   GenInv.major_heap_shape_intro major fp

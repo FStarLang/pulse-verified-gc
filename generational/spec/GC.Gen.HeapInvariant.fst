@@ -26,15 +26,19 @@ module HeapGraph = GC.Spec.HeapGraph
 module Graph = GC.Spec.Graph
 module FreeListShape = GC.Gen.FreeListShape
 
+let free_list_exact (major: heap) (fp: U64.t) : prop = FL.fl_exact major fp
+
+let free_list_exact_iff (major: heap) (fp: U64.t) = ()
+
 [@@"opaque_to_smt"]
 let major_heap_shape (major: heap) (fp: U64.t) : prop =
   well_formed_heap major /\
   AllocLemmas.fl_valid major fp heap_words /\
   AllocLemmas.fl_chain_terminates major fp heap_words /\
-  // Every blue block that can hold a link is on the free list -- so an
+  // The free list is exactly the blue blocks that can hold a link -- so an
   // allocation fails only when no free block is big enough
-  // (GC.Gen.AllocExact.alloc_spec_fits_succeeds).
-  FL.fl_complete major fp /\
+  // (GC.Gen.AllocExact.alloc_succeeds_when_a_block_fits).
+  free_list_exact major fp /\
   FreeListShape.fp_pointer_or_zero fp /\
   FreeListShape.blue_link_fields_valid major /\
   heap_objects_dense major /\

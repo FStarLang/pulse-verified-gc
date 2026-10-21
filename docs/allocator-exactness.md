@@ -143,8 +143,7 @@ past (objects lie at least a word above `zero_addr`), and bailing on bounds
 ## 8. Allocation keeps the free list exact
 
 A full collection leaves the free list exact (`fused_exact`).
-`GC.Gen.AllocExact` shows allocation keeps it that way, so the property
-survives every allocation up to the next collection:
+`GC.Gen.AllocExact` shows allocation keeps it that way:
 
 | lemma | says |
 |---|---|
@@ -152,7 +151,6 @@ survives every allocation up to the next collection:
 | `alloc_spec_preserves_fl_complete` | and every such block is still on the list |
 | `alloc_spec_preserves_fl_exact` | the two together |
 | `alloc_spec_fits_succeeds` | with an exact free list, an allocation succeeds whenever some free block is big enough |
-| `first_attempt_succeeds` | so after a full collection, and after any run of allocations that follows it, an allocation succeeds whenever some free block is big enough |
 
 Soundness follows from what the allocator proofs already show (nothing new
 joins the chain, and the allocated object is not on it). Completeness is the
@@ -168,30 +166,38 @@ where a node `y` sits:
   `prev` now links to `next` -- and termination guarantees the old walk never
   passes `prev` or the block again.
 
-## 9. The first attempt, between collections
+## 9. An allocation succeeds whenever a block fits
 
-§8 starts from the heap a full collection produces. The collector's
-invariant, `collection_heap_shape` (`GC.Gen.HeapInvariant`), now carries
-`fl_complete` as part of `major_heap_shape`, so the result holds from *any*
-heap the collector hands back, and both collections re-establish it:
+The headline is `alloc_succeeds_when_a_block_fits`: from any heap with an
+exact free list (`alloc_entry`), after any run of allocations and field
+writes to live objects (`run`, `run_ok`), an allocation succeeds whenever
+some free block is big enough. The runtime's retry after a collection
+(`verified_allocate`) is then needed only when no single free block fits.
 
-| who changes the major heap | why `fl_complete` survives |
+An exact free list comes from:
+
+| starting point | lemma |
 |---|---|
-| full collection (`gen_gc`) | `coalesce_complete` (`GC.Gen.PostCollectionShape`) |
+| a coalesced swept heap | `coalesce_entry` |
+| the pass the collector runs | `fused_entry` |
+| any heap satisfying the collector's invariant, i.e. anything `gen_gc` or `minor_collect_full` returns | `major_heap_shape_gives_entry` |
+
+The last needs the invariant to carry it: `major_heap_shape`
+(`GC.Gen.HeapInvariant`) now includes `fl_exact`, and both collections
+re-establish it:
+
+| who changes the major heap | why the free list stays exact |
+|---|---|
+| full collection (`gen_gc`) | `coalesce_exact` (`GC.Gen.PostCollectionShape`) |
 | minor collection: promotion | each `promote_object` is an allocation (§8) followed by writes inside the promoted object (`promote_object_preserves_fl_complete`), carried through the Cheney traversal by `GC.Gen.CheneyFlComplete` |
 | minor collection: pointer rewrite | it changes no header and no field of a blue block (`update_major_pointers_preserves_fl_complete`) |
 | direct allocation | §8 (`alloc_spec_preserves_entry`) |
 | the program's field writes | a write inside a live object's body is no header and no free cell's link (`field_write_preserves_entry`) |
 
-`fl_sound` needs no new conjunct: it follows from `fl_valid` and
-`chain_objects_blue`, which the invariant already carries
-(`major_heap_shape_gives_entry`).
-
-The headline is `first_attempt_succeeds_between_collections`: from a heap
-satisfying `collection_heap_shape`, after any run of allocations and field
-writes to live objects (`run_ok`), an allocation succeeds whenever some free
-block is big enough. The runtime's retry after a collection
-(`verified_allocate`) is then needed only when no single free block fits.
+After a minor collection, soundness comes for free from conjuncts the
+invariant already had: `fl_valid` (every cell is an object with room for a
+link) and `chain_objects_blue` (every cell is blue), via
+`fl_valid_cob_gives_sound`.
 
 Two things are assumed rather than proved, as they already are for the rest
 of the invariant:
@@ -200,5 +206,4 @@ of the invariant:
 - the runtime fills a newly allocated object's fields before the next
   collection. Allocation alone does not keep all of `major_heap_shape` --
   until then the new object's fields hold whatever the free block held -- but
-  it does keep the free-list part, which is all the first attempt needs.
-
+  it does keep the free-list part, which is all an allocation needs.

@@ -174,8 +174,9 @@ private let coalesce_major_heap_shape (g: heap)
     let fp' = snd r in
     // 1. well-formedness
     Coalesce.coalesce_preserves_wf g;
-    // the rebuilt free list is complete: every blue cell is on it
-    CC.coalesce_complete g;
+    // the rebuilt free list is exact: it holds exactly the blue cells
+    CC.coalesce_exact g;
+    GenInv.free_list_exact_iff g' fp';
     // 2, 3. the allocator's entry conditions on the rebuilt free list
     CD.coalesce_fl_entry g;
     // 4. the head is null or a pointer

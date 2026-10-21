@@ -892,5 +892,7 @@ let spot_ns_major_heap_shape (r: unit{spot_ns_room})
   spot_ns_wfh_part2_3 r;
   BlueAlloc.wfh_part2_implies_blue_fields_closed g;
   spot_ns_fl_complete r;
+  GC.Gen.AllocExact.fl_valid_cob_gives_sound g fp;
+  GenInv.free_list_exact_iff g fp;
   GenInv.major_heap_shape_intro g fp
 #pop-options
