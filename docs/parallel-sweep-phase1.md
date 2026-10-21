@@ -16,6 +16,7 @@ Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct
 | `parallel-sweep/spec/GC.Spec.SweepPar.Exec.fst` | Executable twins of the ghost sweep spec, each proven equal to the original. |
 | `parallel-sweep/spec/GC.Spec.SweepPar.fst` | The model `sweep_par`, the proof, the theorem, and two non-vacuity lemmas. |
 | `parallel-sweep/spec/GC.Spec.SweepPar.Vacuity.fst` | A satisfying call for every proof lemma's precondition. |
+| `parallel-sweep/spec/GC.Spec.SweepPar.Local.fst` | Locality: one segment depends only on its own bytes (§7). |
 | `parallel-sweep/spec/GC.Spec.SweepPar.Mutants.fst` | Four wrong merge and link steps. Used only by the tests. |
 | `parallel-sweep/test/` | The OCaml driver, the build script, the runner, and the `GC.Spec.ZeroAddr` realisation. |
 | `parallel-sweep/impl/GC.Impl.SweepSegment.fsti` | The Pulse specification of one segment, `sweep_segment` (§7). No implementation yet. |
@@ -370,9 +371,40 @@ noeq type seg_result = {
 
 Nothing below is done yet. These are the obligations the specification creates.
 
-- **Locality.** *Tested in §3, item 5: no difference in 32,700 runs.* The model's `sweep_segment` takes the whole heap `g`, but the implementation sees only `[lo, hi)`. The proof needs a lemma that the model's output on `[lo, hi)`, and its returned values, depend only on `g`'s bytes in `[lo, hi)`. This should hold for two reasons. First, `seg_objects` only reads headers in `[lo, hi)`, and each object ends at or before `hi` (precondition 3). Second, `flush_blue` writes only its run's words: its header, its link word only when the run has at least two words, and the fields after it. The proof of `sweep_par_correct` shows the writes stay inside (`splice` would lose any outside one), but not the reads.
+- **Locality: done.** The implementation sees only `[lo, hi)`, but the model's `sweep_segment` takes the whole heap. So the proof needs the model's result to depend only on the bytes in `[lo, hi)`. This was first tested (§3, item 5: no difference in 32,700 runs), then proved; see below.
 - **Range versions** of `read_word`, `write_word`, `makeWhite`, and `flush_blue_impl`, working on `is_heap_range`.
 - **From `segments bs` to walk facts.** `bounds_next` and `walk_step` in `GC.Spec.SweepPar` already turn precondition 3 into local facts: `lo < hi`, `hi` is a walk position or `heap_size`, and the walk from `lo` lands on `hi` (`reach`).
 - **Joining.** A lemma that the workers' ranges, joined left to right, equal `splice_all g rs`. The sequential `link_all` then runs on the whole heap as before.
 
 The precondition is satisfiable for every heap the sequential pass runs on: `bs = [zero_addr; heap_size]` is valid (`whole_heap_bounds_valid`), and `(zero_addr, heap_size)` is its only segment. That is the whole heap as one segment. A formal witness is left for the proof stage.
+
+### Locality, proved
+
+`GC.Spec.SweepPar.Local` proves, with no `admit` or `assume`:
+
+```fstar
+let sweep_segment_local (g1 g2: heap) (lo: hp_addr) (hi: nat)
+  : Lemma (requires U64.v lo <= hi /\ hi <= heap_size /\ hi % 8 == 0 /\
+                    Seq.slice g1 (U64.v lo) hi == Seq.slice g2 (U64.v lo) hi)
+          (ensures (let o1 = sweep_segment g1 lo hi in
+                    let o2 = sweep_segment g2 lo hi in
+                    Seq.slice o1.sheap (U64.v lo) hi == Seq.slice o2.sheap (U64.v lo) hi /\
+                    o1.all_free == o2.all_free /\ o1.lead == o2.lead /\
+                    o1.trail == o2.trail /\ o1.first_link == o2.first_link /\
+                    o1.local_head == o2.local_head))
+```
+
+In words: if two heaps have the same bytes in `[lo, hi)`, then one segment gives the same bytes in `[lo, hi)` and the same other outputs on both.
+
+**The hypothesis is weaker than the Pulse precondition.** It needs only that `hi` is word-aligned and in the heap. It does not need `fused_pre`, or that `lo` and `hi` are walk positions. So it applies to every call the precondition allows.
+
+**Why it holds.** The proof follows `seg_aux` step by step, keeping the two runs' current heaps in agreement on `[lo, hi)`.
+
+- **Reads.** A segment reads only object headers, and every one lies in `[lo, hi)`: the walk (`seg_objects`), the colour and size tests on the input heap, and `makeWhite`'s re-read of the header it rewrites. `seg_objects_agree` shows the two walks list the same objects, each with its header in `[lo, hi)`. That needs `hi` word-aligned, so that a header that starts below `hi` also ends at or below it.
+- **Writes.** `makeWhite` and all of `flush_blue` (header, link word, `zero_fields`) write the same value at the same address in both runs. The values depend only on the run, the head and the header just read, which are equal in both runs. Writing the same word to both heaps keeps them in agreement on any range, wherever the word lands (`write_agree`). So no fact about where a flush writes is needed for this lemma.
+
+The parts: `agree` (byte-wise agreement on a range) and its conversions to and from `Seq.slice` equality; `read_agree`; `write_agree`; `makeWhite_agree`; `zero_fields_agree`; `flush_agree`; `seg_objects_agree`; `seg_aux_agree`, by induction on the object list; and the lemma.
+
+**Non-vacuity.** `local_witness` calls the lemma on a heap `g` and the same heap with one word below `zero_addr` overwritten. These are two different heaps meeting the hypothesis, with `[zero_addr, heap_size)` as the segment. Every other lemma in the module is called on the way, on arguments meeting its precondition.
+
+**Proof check:** about 15 s. It also verifies with `--retry` off on `--z3seed` 0 and 7. The largest rlimit is 60.
