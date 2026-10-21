@@ -206,6 +206,89 @@ let note g interior =
   if List.mem last interior then st.last_bd <- st.last_bd + 1;
   if List.mem (hsize - 8) interior && not (List.mem hsize objs) then st.end_bd <- st.end_bd + 1
 
+(* ------------------------------------------------------------------ *)
+(* Locality: a segment's result depends only on its own bytes          *)
+(* ------------------------------------------------------------------ *)
+
+(* For each segment [lo, hi), run the model's sweep_segment on g and on
+   copies of g whose bytes outside [lo, hi) are changed.  The bytes it
+   leaves in [lo, hi), and every other output, must not change.  Each
+   distinct segment of a heap is checked once.  A separate generator keeps
+   the heaps the other checks see unchanged. *)
+
+let lrng = Random.State.make [| 20261021 |]
+let seg_seen : (int * int, unit) Hashtbl.t = Hashtbl.create 64
+
+type lstats = { mutable lsegs : int; mutable lruns : int; mutable lbytes : int }
+let ls = { lsegs = 0; lruns = 0; lbytes = 0 }
+
+let sub l lo hi = List.filteri (fun i _ -> lo <= i && i < hi) l
+
+let show_run (r : SP.run) = Printf.sprintf "{fb=%s; rw=%s}" (U64.to_string r.SP.fb) (Z.to_string r.SP.rw)
+
+(* Every output of the segment except its heap copy. *)
+let show_out (o : SP.seg_out) =
+  Printf.sprintf "all_free=%b lead=%s trail=%s first_link=%s local_head=%s"
+    o.SP.all_free (show_run o.SP.lead) (show_run o.SP.trail)
+    (match o.SP.first_link with None -> "None" | Some a -> "Some " ^ U64.to_string a)
+    (U64.to_string o.SP.local_head)
+
+let mode_name = [| "all outside bytes random"; "all outside bytes flipped";
+                   "16 bytes either side of the segment, and 1 in 64 elsewhere, random" |]
+
+(* g's bytes with those outside [lo, hi) changed; returns how many changed. *)
+let perturb mode orig lo hi =
+  let a = Array.of_list orig in
+  let changed = ref 0 in
+  let set i v = if v <> a.(i) then incr changed; a.(i) <- v in
+  for i = 0 to hsize - 1 do
+    if i < lo || i >= hi then
+      match mode with
+      | 0 -> set i (Random.State.int lrng 256)
+      | 1 -> set i (255 - a.(i))
+      | _ ->
+        if (i >= lo - 16 && i < lo) || (i >= hi && i < hi + 16) || Random.State.int lrng 64 = 0
+        then set i (Random.State.int lrng 256)
+  done;
+  (Array.to_list a, !changed)
+
+let fail_loc g interior lo hi what =
+  Printf.printf "LOCALITY: segment [%d, %d): %s\n" lo hi what;
+  print_string (describe g interior);
+  exit 1
+
+let locality g interior =
+  let orig = bytes g in
+  List.iter (fun (lo, hi) ->
+      let lo = Z.to_int lo and hi = Z.to_int hi in
+      if not (Hashtbl.mem seg_seen (lo, hi)) then begin
+        Hashtbl.add seg_seen (lo, hi) ();
+        ls.lsegs <- ls.lsegs + 1;
+        let run h = SP.sweep_segment h (U64.of_int lo) (Z.of_int hi) in
+        let o = run g in
+        let ob = bytes o.SP.sheap in
+        let inside = sub ob lo hi in
+        if sub ob 0 lo <> sub orig 0 lo || sub ob hi hsize <> sub orig hi hsize then
+          fail_loc g interior lo hi "the model writes outside the segment";
+        for mode = 0 to 2 do
+          let (l', n) = perturb mode orig lo hi in
+          let o' = run (Seq.seq_of_list l') in
+          ls.lruns <- ls.lruns + 1;
+          ls.lbytes <- ls.lbytes + n;
+          let inside' = sub (bytes o'.SP.sheap) lo hi in
+          if inside' <> inside then begin
+            let i = match first_diff inside inside' with Some i -> lo + i | None -> -1 in
+            fail_loc g interior lo hi
+              (Printf.sprintf "%s: bytes inside differ first at byte %d" mode_name.(mode) i)
+          end;
+          if show_out o' <> show_out o then
+            fail_loc g interior lo hi
+              (Printf.sprintf "%s: outputs differ\n  on g:       %s\n  on changed: %s"
+                 mode_name.(mode) (show_out o) (show_out o'))
+        done
+      end)
+    (SP.segments (bs_of interior))
+
 let check g interior =
   let bs = bs_of interior in
   if not (SP.valid_bounds g bs) then begin
@@ -223,7 +306,8 @@ let check g interior =
       st.mut_seen.(m) <- st.mut_seen.(m) + 1
   done;
   st.cases <- st.cases + 1;
-  note g interior
+  note g interior;
+  locality g interior
 
 (* Boundaries that are not walk positions, or are out of order, must be
    rejected: otherwise the theorem's hypothesis would admit them. *)
@@ -268,6 +352,7 @@ let run_heap ?(sets = None) g =
     print_string (describe g []); exit 2
   end;
   st.heaps <- st.heaps + 1;
+  Hashtbl.reset seg_seen;
   check_rejects g;
   let ps = List.tl (walk_positions g) in
   let sets = match sets with Some s -> s | None -> boundary_sets ps in
@@ -403,7 +488,9 @@ let report () =
     st.first_bd st.last_bd st.end_bd;
   Printf.printf "  invalid bs rejected: %d\n" st.rejected;
   Printf.printf "  mutants detected (pairs where the mutant differs): %s\n"
-    (String.concat ", " (List.map (fun m -> Printf.sprintf "m%d=%d" m st.mut_seen.(m)) [1; 2; 3; 4]))
+    (String.concat ", " (List.map (fun m -> Printf.sprintf "m%d=%d" m st.mut_seen.(m)) [1; 2; 3; 4]));
+  Printf.printf "  locality: %d segments, %d changed heaps (%d outside bytes changed), no difference\n"
+    ls.lsegs ls.lruns ls.lbytes
 
 let () =
   (match Array.to_list Sys.argv with

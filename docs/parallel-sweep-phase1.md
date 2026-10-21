@@ -151,6 +151,13 @@ The driver `test/sweep_par_test.ml` builds a heap byte by byte, little-endian as
 3. **The comparison.** It compares `sweep_par bs g` with `fused_sweep_coalesce_x g`, every byte of the heap plus the free-list head. On the first difference it prints the heap layout, `bs`, both heads, and the first differing word, then stops with exit 1.
 4. **Mutants.** It checks that mutant 0 equals `sweep_par`, then runs mutants 1 to 4 and counts the pairs each one gets wrong.
 
+5. **Locality of one segment.** For each distinct segment `[lo, hi)` of the heap, it runs the model's `sweep_segment g lo hi`. It then runs it again on three copies of `g` whose bytes outside `[lo, hi)` are changed:
+   - every outside byte random;
+   - every outside byte flipped (`255 - b`), so every one differs;
+   - the 16 bytes on each side of the segment random, plus 1 in 64 elsewhere.
+
+   The bytes it leaves in `[lo, hi)`, and every other output, must be unchanged. It also checks that the model writes nothing outside `[lo, hi)`. The changes come from a separate random generator, so the heaps and boundary lists are the same as before. A wrong function is caught: widening the segment by one word, in a scratch copy of the driver, made the first hand-built case fail at once.
+
 ### Heaps
 
 **Generated (862 heaps).**
@@ -198,6 +205,7 @@ A boundary at the first object is always present, since `bs` starts at `zero_add
 | first-link patches (with a non-zero head) | 1,829 (583) |
 | boundary right after the first object / at the last object | 4,171 / 4,133 |
 | boundary at an unenumerated trailing wosize-0 header | 1,283 |
+| locality: distinct segments / changed heaps / outside bytes changed | 10,900 / 32,700 / 48,783,185 |
 
 ### The tests can see bugs
 
@@ -215,7 +223,7 @@ Each mutant in `GC.Spec.SweepPar.Mutants` breaks one thing the statement depends
 ```
 cd parallel-sweep
 make verify     # the four modules and the Pulse interface, about 35 s
-make test       # verify, extract, build, run all 19 jobs; about 6 min on 8 cores
+make test       # verify, extract, build, run all 19 jobs; about 8 min on 8 cores
 ```
 
 Each job's log is in `parallel-sweep/_build/logs/`. Every log must end with an `ok:` line.
@@ -362,7 +370,7 @@ noeq type seg_result = {
 
 Nothing below is done yet. These are the obligations the specification creates.
 
-- **Locality.** The model's `sweep_segment` takes the whole heap `g`, but the implementation sees only `[lo, hi)`. The proof needs a lemma that the model's output on `[lo, hi)`, and its returned values, depend only on `g`'s bytes in `[lo, hi)`. This should hold for two reasons. First, `seg_objects` only reads headers in `[lo, hi)`, and each object ends at or before `hi` (precondition 3). Second, `flush_blue` writes only its run's words: its header, its link word only when the run has at least two words, and the fields after it. The proof of `sweep_par_correct` shows the writes stay inside (`splice` would lose any outside one), but not the reads.
+- **Locality.** *Tested in §3, item 5: no difference in 32,700 runs.* The model's `sweep_segment` takes the whole heap `g`, but the implementation sees only `[lo, hi)`. The proof needs a lemma that the model's output on `[lo, hi)`, and its returned values, depend only on `g`'s bytes in `[lo, hi)`. This should hold for two reasons. First, `seg_objects` only reads headers in `[lo, hi)`, and each object ends at or before `hi` (precondition 3). Second, `flush_blue` writes only its run's words: its header, its link word only when the run has at least two words, and the fields after it. The proof of `sweep_par_correct` shows the writes stay inside (`splice` would lose any outside one), but not the reads.
 - **Range versions** of `read_word`, `write_word`, `makeWhite`, and `flush_blue_impl`, working on `is_heap_range`.
 - **From `segments bs` to walk facts.** `bounds_next` and `walk_step` in `GC.Spec.SweepPar` already turn precondition 3 into local facts: `lo < hi`, `hi` is a walk position or `heap_size`, and the walk from `lo` lands on `hi` (`reach`).
 - **Joining.** A lemma that the workers' ranges, joined left to right, equal `splice_all g rs`. The sequential `link_all` then runs on the whole heap as before.
