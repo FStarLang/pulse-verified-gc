@@ -7,7 +7,7 @@ Branch `sheera/parallel-sweep`, from `fork/main` `0ce5e09`, with `origin/main` `
 - **Stage A:** the model and theorem are written.
 - **Stage B:** no counterexample. 10,750 (heap, boundary list) pairs were tested, from 17 hand-built and 862 generated heaps. All four deliberately broken variants were caught.
 - **Stage C:** `sweep_par_correct` is proved, with no `admit` or `assume` (§6). The model, the theorem and every `val` are unchanged. The proof uses only `valid_bounds`; the rest of `fused_pre` is not needed.
-- **Pulse, one segment:** the specification of `sweep_segment` is written and reviewed (§7). Locality, that a segment depends only on its own bytes, is tested and proved (§7). The function is not implemented yet.
+- **Pulse, one segment:** the specification of `sweep_segment` is written and reviewed (§7). Locality, that a segment depends only on its own bytes, is tested and proved (§7). `sweep_segment` is implemented and proved against that specification, on range versions of the heap operations (§7).
 - **From theorem to running code:** the pre-pass, the merge, the joining lemma and a sequential driver are specified and approved (§8). The joining lemma `join_correct` is proved, and the pre-pass is implemented and proved. The rest is not implemented yet.
 
 Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct` and `mark-and-sweep/NOTES.md`, merged in from `sheera/coalesce-exact`. The directory is left out of the root build.
@@ -20,7 +20,10 @@ Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct
 | `parallel-sweep/spec/GC.Spec.SweepPar.Local.fst` | Locality: one segment depends only on its own bytes (§7). |
 | `parallel-sweep/spec/GC.Spec.SweepPar.Mutants.fst` | Four wrong merge and link steps. Used only by the tests. |
 | `parallel-sweep/test/` | The OCaml driver, the build script, the runner, and the `GC.Spec.ZeroAddr` realisation. |
-| `parallel-sweep/impl/GC.Impl.SweepSegment.fsti` | The Pulse specification of one segment, `sweep_segment` (§7). No implementation yet. |
+| `parallel-sweep/impl/GC.Impl.SweepSegment.fsti` | The Pulse specification of one segment, `sweep_segment` (§7). |
+| `parallel-sweep/impl/GC.Impl.SweepSegment.fst` | Its implementation and proof (§7). |
+| `parallel-sweep/impl/GC.Impl.HeapRange.fst` | `read_word`, `write_word`, whitening and `flush_blue` on one range `[lo, hi)` (§7). |
+| `parallel-sweep/spec/GC.Spec.SweepPar.SegLoop.fst` | The loop invariant of `sweep_segment` and one lemma per case of its body (§7). |
 | `parallel-sweep/impl/GC.Impl.SweepPar.fsti` | The Pulse specifications of the pre-pass, the merge, and a sequential driver (§8). No implementation yet. |
 | `parallel-sweep/spec/GC.Spec.SweepPar.Join.fsti` | The joining lemma, stated (§8). |
 | `parallel-sweep/spec/GC.Spec.SweepPar.Join.fst` | Its proof, and its non-vacuity witnesses (§8). |
@@ -374,7 +377,7 @@ noeq type seg_result = {
 
 ### What the implementation and its proof will need
 
-Nothing below is done yet. These are the obligations the specification creates.
+These are the obligations the specification creates. All are now met; see "The implementation, proved" below.
 
 - **Locality: done.** The implementation sees only `[lo, hi)`, but the model's `sweep_segment` takes the whole heap. So the proof needs the model's result to depend only on the bytes in `[lo, hi)`. This was first tested (§3, item 5: no difference in 32,700 runs), then proved; see below.
 - **Range versions** of `read_word`, `write_word`, `makeWhite`, and `flush_blue_impl`, working on `is_heap_range`.
@@ -382,6 +385,34 @@ Nothing below is done yet. These are the obligations the specification creates.
 - **Joining.** A lemma that the workers' ranges, joined left to right, equal `splice_all g rs`. The sequential `link_all` then runs on the whole heap as before.
 
 The precondition is satisfiable for every heap the sequential pass runs on: `bs = [zero_addr; heap_size]` is valid (`whole_heap_bounds_valid`), and `(zero_addr, heap_size)` is its only segment. That is the whole heap as one segment. A formal witness is left for the proof stage.
+
+### The implementation, proved
+
+`GC.Impl.SweepSegment.fst` implements `sweep_segment` against the interface above, unchanged, with no `admit` or `assume`.
+
+**Range operations** (`GC.Impl.HeapRange`). `heap_range h lo hi g` is `is_heap_range h lo hi (Seq.slice g lo hi)`: the range holds the bytes `[lo, hi)` of a ghost whole heap `g`. Each operation is stated against that ghost heap. If all its writes land in `[lo, hi)`, the range afterwards holds the bytes of the spec operation's result.
+
+- `read_word_r` gives `read_word g a`, and `write_word_r` leaves the range holding `write_word g a v`, for a word inside `[lo, hi)`.
+- `makeWhite_r` writes the header the sequential pass writes, and leaves `makeWhite obj g`. Its bridge, `whiten_header`, needs only that the object is black, not `well_formed_heap`.
+- `zero_fields_r` and `flush_blue_r` port `GC.Impl.Coalesce`'s code line for line, and reuse its lemmas (`flush_blue_impl_wz0`, `_wz1`, `_wz_ge2`, `zero_fields_step`). `flush_blue_r` requires the run's words to lie in `[lo, hi)`.
+
+So the whole-heap spec lemmas apply unchanged, and the proof only has to show that addresses lie in the range. A word is read and written as 8 bytes (`pts_to_range_index`, `pts_to_range_upd`). `GC.Impl.ArrayWord`'s single-load primitives take a whole array, so using them on a range would need a new assumed primitive. Whether the C compiler merges the 8 byte accesses into one is not checked.
+
+**The loop** keeps the model's `seg_aux` state as machine values: the cursor, the segment's copy of the heap (ghost), whether a survivor has been seen, the two runs as first block and U64 word count, the local head, and the first link as a flag and a value. `GC.Spec.SweepPar.SegLoop.loop_inv` says the following:
+
+- running `seg_aux` from that state over the rest of the segment gives `sweep_segment g lo hi`;
+- the copy still equals `g` from the cursor up;
+- the cursor is a walk position with `reach g c hi`;
+- the pending run ends at the cursor, inside `[lo, c)`.
+
+`loop_inv` is opaque to SMT. The Pulse proof carries it as one fact, and one lemma per case of the loop body takes it one object further: `loop_free`, `loop_black_first`, `loop_black_seen`. `loop_head` reads the header, `loop_more` decides the loop test, and `loop_exit` turns the final state into the model's output. `loop_entry` gets `reach g lo hi` from `valid_bounds` and segment membership (`seg_mem_reach`).
+
+- **Every access is in range.** The header read and the whitening write are at the cursor, which is below `hi`. The flushed run ends at the cursor. `lo` and `hi` are consecutive boundaries, so no object crosses `hi` (`seg_step`).
+- **`fused_pre` is not used.** Only `valid_bounds` and segment membership are.
+
+**Non-vacuity.** `seg_witness` calls the loop lemmas in the order the loop does, from the entry state of the whole heap as one segment. The entry and the first header need nothing of the heap. Each later case is guarded by the heap shape that leads to it. `range_witness` does the same for `HeapRange`'s pure lemmas. Two mutations of `sweep_segment` fail to verify: a free object that does not grow the current run, and a first link that is never recorded.
+
+**Proof check:** about 15 s for the three modules, with the default rlimit everywhere. They also verify with `--retry` off on `--z3seed 7`.
 
 ### Locality, proved
 
@@ -450,7 +481,7 @@ fn prepass (heap: heap_t) (k: SZ.t{SZ.v k >= 1}) (bounds: A.array U64.t)
   - The heap is unchanged (`is_heap heap g`, the same `g`). The pre-pass only reads.
   - The first `n` entries are a valid boundary list for `g`. So they start at `zero_addr`, end at `heap_size`, increase strictly, and every one in between is a header the sequential walk lands on. This is exactly the theorem's hypothesis.
 - **Not specified:** how evenly the boundaries are spread. That affects speed, not correctness. A pre-pass that always returns `[zero_addr; heap_size]` meets the specification.
-- **Implemented and proved** in `GC.Impl.SweepPar.Prepass`, with the interface's signature, with no `admit` or `assume`. Section 5 of this list explains why it is a separate module.
+- **Implemented and proved** in `GC.Impl.SweepPar.Prepass`, with the interface's signature, with no `admit` or `assume`. Why it is a separate module is explained under item 4 below.
   - **Work.** An object counts 1, plus its wosize if it is white or blue. The sweep reads every header, and it also flushes free objects, which zeroes their fields. A first walk from `zero_addr` (`total_work`) adds up the heap's total work `W`, which is at most the heap's size in words.
   - **Cuts.** A second walk cuts at the first object start whose work before it reaches the next share's target, `floor(i * W / k)` for `i = 1 .. k - 1`. Every cut is an object start, so the heap size need not divide by `k`, and segments differ in size. An object that passes several targets gives one cut, and every target it passes is skipped. So a heap with fewer objects than `k` gets fewer segments. The target is kept as a quotient and remainder (`advance`), so `i * W` is never formed and nothing overflows. These counters are `SZ.t`, because `SZ.sizet_to_uint64` only gives `v k % pow2 64`.
   - **The proof.** The boundaries written so far form a `prefix_ok`: they start at `zero_addr`, increase strictly, and each later one passes `bounds_from`'s check (`cut_ok`). `visits_step` shows that one step of the walk from a visited position lands on a visited position. `prefix_close` turns a good prefix with `heap_size` appended into `valid_bounds` of `bounds_list`. The counter `n` never passes the share index `i`, which is at most `k`, so the closing `heap_size` always fits.
