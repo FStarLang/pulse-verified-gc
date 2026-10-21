@@ -3,6 +3,11 @@
 # Three-way comparison using the Computer Language Benchmarks Game programs.
 
 OCAMLC            ?= ../ocaml-4.14-unchanged/_install/bin/ocamlc
+OCAMLOPT          ?= ../ocaml-4.14-unchanged/_install/bin/ocamlopt
+# Native smoke tests link the stock ocamlopt straight against the verified
+# GC's own libasmrun.a (no compiler rebuild -- ocamlopt just needs -I
+# pointed at a directory containing it). See NATIVE_INTEGRATION.md.
+VERGC_NATIVE_RUNTIME_DIR ?= ../ocaml-4.14-verified-gen/runtime
 VERIFIED_GEN_OCAMLRUN ?= ../ocaml-4.14-verified-gen/runtime/ocamlrun
 UNCHANGED_OCAMLRUN    ?= ../ocaml-4.14-unchanged/runtime/ocamlrun
 
@@ -22,6 +27,9 @@ MANDELBROT_MAJOR_WORDS    ?= $(DEFAULT_MAJOR_WORDS)
 %.byte: %.ml
 	$(OCAMLC) -o $@ $<
 
+%.native: %.ml
+	$(OCAMLOPT) -I $(VERGC_NATIVE_RUNTIME_DIR) -o $@ $<
+
 bench_stats.cmo: bench_stats.ml
 	$(OCAMLC) -c $<
 
@@ -31,7 +39,8 @@ bench_stats.cmo: bench_stats.ml
 BENCHMARKS = binarytrees fasta quicksort fannkuchredux count_change nbodies spectralnorm mandelbrot
 
 # Correctness tests (not benchmarks): run under both runtimes and compared.
-CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior
+CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior \
+                    alloc_exact_promotion
 
 # infix_closures needs a small major heap so that real major collections
 # (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
@@ -49,10 +58,16 @@ MAKE_VECT_MAJOR_WORDS ?= 4000000
 # payloads.  It was a known-gap reproducer until the nursery scan window
 # became `GC.Gen.MinorHeap.minor_scan_wosize`; it is now a regression test.
 KNOWN_GAP_TESTS =
+
+# alloc_exact_promotion (issue #19) fills 60% of a 4M-word major heap, frees
+# every other block and promotes into the fragments. It was a known-gap
+# reproducer until allocation became size-exact (right-justified).
+ALLOC_EXACT_MAJOR_WORDS ?= 4194304
 NURSERY_NO_SCAN_MAJOR_WORDS ?= 4000000
 
 BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
              $(addsuffix .byte, $(KNOWN_GAP_TESTS))
+NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS))
 BENCH_TARGETS = $(addsuffix .bench, $(BENCHMARKS))
 STATS_TARGETS = $(addsuffix .stats, $(BENCHMARKS))
 MINHEAP_TARGETS = $(addsuffix .minheap, $(BENCHMARKS))
@@ -142,6 +157,10 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	MIN_EXPANSION_WORDSIZE=$(NURSERY_NO_SCAN_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) nursery_no_scan_interior.byte
 	@echo "--- nursery_no_scan_interior (stock OCaml, differential check) ---"
 	$(UNCHANGED_OCAMLRUN) nursery_no_scan_interior.byte
+	@echo "--- alloc_exact_promotion (verified generational GC) ---"
+	MIN_EXPANSION_WORDSIZE=$(ALLOC_EXACT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS)
+	@echo "--- alloc_exact_promotion (stock OCaml, differential check) ---"
+	$(UNCHANGED_OCAMLRUN) alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS)
 	@echo "=== Correctness tests passed ==="
 
 # ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
@@ -150,11 +169,45 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 # stock OCaml and demonstrates a gap that is still open in the verified
 # collector.  See docs/known-issues.md.
 #
-# There are currently none: nursery_no_scan_interior graduated to
-# `correctness` when the nursery stopped scanning no-scan bodies.
+# Each gap prints one `KNOWN-GAP <test>: <status>` line, which CI collects
+# into the job summary.
+#
+# A gap's test graduates to `correctness` once the fix lands, as
+# nursery_no_scan_interior and alloc_exact_promotion (issue #19) did.
+#
+# There are currently none.
 
 known-gaps: $(addsuffix .byte, $(KNOWN_GAP_TESTS))
 	@echo "=== No known-gap reproducers outstanding ==="
+
+# ---- Smoke tests, native (ocamlopt + verified gen GC's libasmrun.a) ----
+# Same programs, same arguments and same heap sizes as the bytecode `test`
+# target above -- kept in lockstep on purpose so the two are directly
+# comparable, and so a native-only failure is informative. No compiler
+# rebuild: stock ocamlopt links against the verified GC's libasmrun.a via -I.
+#
+# If this fails but `make test` passes, suspect the young_ptr <-> bump_ref
+# translation before anything else (verified_gc/alloc_gen.c).
+
+test-native: $(NATIVE_FILES)
+	@echo "=== Smoke tests, native (verified generational GC) ==="
+	@echo "--- binarytrees ---"
+	MIN_EXPANSION_WORDSIZE=$(BINARYTREES_MAJOR_WORDS) ./binarytrees.native 10
+	@echo "--- fasta ---"
+	MIN_EXPANSION_WORDSIZE=$(FASTA_MAJOR_WORDS) ./fasta.native 1000
+	@echo "--- quicksort ---"
+	MIN_EXPANSION_WORDSIZE=$(QUICKSORT_MAJOR_WORDS) ./quicksort.native 10000
+	@echo "--- fannkuchredux ---"
+	MIN_EXPANSION_WORDSIZE=$(FANNKUCHREDUX_MAJOR_WORDS) ./fannkuchredux.native 7
+	@echo "--- count_change ---"
+	MIN_EXPANSION_WORDSIZE=$(COUNT_CHANGE_MAJOR_WORDS) ./count_change.native 50
+	@echo "--- nbodies ---"
+	MIN_EXPANSION_WORDSIZE=$(NBODIES_MAJOR_WORDS) ./nbodies.native 1000
+	@echo "--- spectralnorm ---"
+	MIN_EXPANSION_WORDSIZE=$(SPECTRALNORM_MAJOR_WORDS) ./spectralnorm.native 100
+	@echo "--- mandelbrot ---"
+	MIN_EXPANSION_WORDSIZE=$(MANDELBROT_MAJOR_WORDS) ./mandelbrot.native 100
+	@echo "=== All native smoke tests passed ==="
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----
 
@@ -310,7 +363,7 @@ bench-min-heaps: $(MINHEAP_TARGETS)
 	head -n 1 results/binarytrees.minheap.csv > results/min_heaps.csv
 	tail -n +2 -q $(MINHEAP_CSVS) >> results/min_heaps.csv
 
-.PHONY: all test correctness known-gaps benchmark bench-all bench-stats bench-min-heaps clean
+.PHONY: all test test-native correctness known-gaps benchmark bench-all bench-stats bench-min-heaps clean
 
 clean:
 	rm -f *.byte *.cmi *.cmo *.o

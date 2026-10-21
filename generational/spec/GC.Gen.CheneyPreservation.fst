@@ -481,7 +481,12 @@ private let alloc_spec_preserves_gray_black_objects_on_stack_part1
     AllocProps.alloc_spec_oom_unchanged g fp wz;
     assert (r.heap_out == g)
   end else begin
+    // The blue lemma's conclusion is vacuous -- its domain excludes
+    // `obj_out`, and `obj_out` is the only object allocation creates. Both
+    // are kept: the second supplies the fact, the first the instantiation
+    // the solver already routes this proof through.
     AllocLemmas.alloc_spec_new_objects_blue_part1 g fp wz;
+    AllocLemmas.alloc_spec_only_new_is_obj_out_part1 g fp wz;
     AllocProps.alloc_spec_obj_not_blue_part1 g fp wz;
     let dst : obj_addr = r.obj_out in
     let aux (h: obj_addr)
@@ -496,6 +501,19 @@ private let alloc_spec_preserves_gray_black_objects_on_stack_part1
         assert False
       end else if Seq.mem h (objects zero_addr g) then begin
         assert ((h <: U64.t) <> r.obj_out);
+        // `alloc_spec_read_header_other_part1` now wants `h` off the free
+        // list: right-justification rewrites the remainder's header as well
+        // as the allocated one, so "not obj_out" no longer covers it.  A
+        // free-list cell is blue and stays blue, hence never gray or black.
+        reveal_opaque (`%chain_objects_blue) chain_objects_blue;
+        (if AllocLemmas.chain_avoids g fp (h <: U64.t) heap_words = false then begin
+           assert (is_blue h g = true);
+           AllocProps.alloc_spec_preserves_blue_part1 g fp wz h;
+           is_blue_iff h r.heap_out;
+           is_gray_iff h r.heap_out;
+           is_black_iff h r.heap_out;
+           assert False
+         end else ());
         AllocProps.alloc_spec_read_header_other_part1 g fp wz h;
         color_of_header_eq h g r.heap_out;
         assert (is_gray h g \/ is_black h g);
@@ -1769,6 +1787,13 @@ let cheney_collect_preserves_collection_heap_shape
   update_major_pointers_preserves_chain_objects_blue
     prom.major_final prom.fwd_map prom.fp_final;
   cheney_collect_preserves_no_black minor major fp roots;
+  // the free list stays complete through promotion and the pointer rewrite
+  wf_parts ();
+  GenInv.free_list_exact_iff major fp;
+  GC.Gen.CheneyFlComplete.cheney_promote_preserves_fl_complete minor major fp roots;
+  cheney_promote_preserves_wfh_part1 minor major fp roots;
+  GC.Gen.AllocExact.update_major_pointers_preserves_fl_complete
+    prom.major_final prom.fwd_map prom.fp_final;
   assert (well_formed_heap res.mc_major);
   cheney_collect_preserves_no_pointer_to_blue minor major fp roots;
   FreeListShape.fp_pointer_or_zero_fl_valid_implies_fp_valid
@@ -1793,6 +1818,8 @@ let cheney_collect_preserves_collection_heap_shape
   assert (Mark.no_pointer_to_blue res.mc_major);
   cheney_collect_preserves_wfh_from_shape minor major fp roots;
   assert (blue_fields_closed res.mc_major);
+  GC.Gen.AllocExact.fl_valid_cob_gives_sound res.mc_major res.mc_fp;
+  GenInv.free_list_exact_iff res.mc_major res.mc_fp;
   GenInv.major_heap_shape_intro res.mc_major res.mc_fp;
   GenInv.collection_heap_shape_after_minor_reset minor res.mc_major res.mc_fp
 #pop-options

@@ -1,0 +1,194 @@
+name: OCaml testsuite
+
+# Everything that runs the verified GC: the integration smoke and correctness
+# tests, the known-gap reproducers, and OCaml's own testsuite (231
+# directories, ~3100 test instances, bytecode and native) on top.
+#
+# Deliberately does NOT install F*: the OCaml integration compiles from the
+# committed generational/snapshot/*.c, so this job only needs a C toolchain.
+# Proof verification lives in verify.yml, which also checks that the committed
+# snapshot is exactly what the verified code extracts to.
+#
+# The gate is "no NEW failures" rather than "zero failures". The verified GC
+# has a known, documented set of failures (statmemprof, weak/ephemeron --
+# subsystems it does not implement), so a zero-failure gate would be
+# permanently red and would stop being read. ci/expected-failures.txt is the
+# baseline; shrinking it is progress, growing it needs justification.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_baseline:
+        description: 'Also run the suite on stock OCaml for a side-by-side comparison (roughly doubles the runtime)'
+        type: boolean
+        default: false
+
+# An expensive job: `push` is limited to main so that a push to a PR branch does
+# not fire both events and run it twice, and concurrency stops runs piling up on
+# a busy branch.
+concurrency:
+  group: testsuite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  testsuite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential
+
+      - name: Build both OCaml trees (stock + verified GC)
+        run: make -C generational/ocaml-integration setup
+
+      # Minutes, not hours: run these before the long compiler build so a
+      # broken runtime fails fast. Stock ocamlc/ocamlopt compile them; they
+      # run on the verified ocamlrun / link the verified libasmrun.a.
+      - name: Smoke tests (bytecode)
+        run: make -C generational/ocaml-integration test
+
+      - name: Smoke tests (native)
+        run: make -C generational/ocaml-integration/tests test-native
+
+      # Reproducers for open bugs. Fails only if a test fails on STOCK OCaml
+      # (a broken test); the verified run is expected to fail, and each gap's
+      # status goes into the job summary below the testsuite result.
+      - name: Known gaps (not a gate)
+        run: |
+          set -o pipefail
+          make -C generational/ocaml-integration/tests known-gaps 2>&1 | tee known-gaps.log
+          {
+            echo "### Known gaps"
+            echo
+            if grep -q '^KNOWN-GAP ' known-gaps.log; then
+              echo "Reproducers for open bugs, expected to fail on the verified GC. Not a gate."
+              echo
+              echo "| Reproducer | Status |"
+              echo "|---|---|"
+              sed -n 's/^KNOWN-GAP \([^:]*\): \(.*\)$/| `\1` | \2 |/p' known-gaps.log
+            else
+              echo "None outstanding."
+            fi
+          } > known-gaps.md
+
+      # Tee to a file so a build failure is diagnosable from the uploaded logs.
+      # Downloading raw CI logs needs admin rights on the repo, so anything we
+      # want to read after the fact has to be captured here. `pipefail` keeps
+      # the step failing despite the pipe.
+      - name: Build the compiler on the verified GC
+        id: build
+        working-directory: generational/ocaml-integration/ocaml-4.14-verified-gen
+        run: |
+          set -o pipefail
+          make world.opt 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Build ocamltest
+        working-directory: generational/ocaml-integration/ocaml-4.14-verified-gen
+        run: |
+          set -o pipefail
+          make ocamltest 2>&1 | tee -a "$GITHUB_WORKSPACE/build.log"
+
+      # The GC bugs this repo has hit are mostly silent-corruption bugs that
+      # surface as a crash in an unrelated compilation unit, so the useful
+      # signal is *which* unit was being compiled and what the runtime said.
+      - name: Diagnose build failure
+        if: failure()
+        run: |
+          {
+            echo "## Build failed"
+            echo
+            echo "### Faults reported"
+            echo '```'
+            grep -nE 'Segmentation|Fatal error|Aborted|out of memory|internal error' \
+              build.log | tail -20 || echo "(none matched)"
+            echo '```'
+            echo
+            echo "### Last compilation attempted"
+            echo '```'
+            grep -E 'ocamlc|ocamlopt|ocamlrun' build.log | tail -5
+            echo '```'
+            echo
+            echo "### Tail of build log"
+            echo '```'
+            tail -60 build.log
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # `make all` exits non-zero whenever any test fails, which is the normal
+      # state here -- the real verdict comes from the report step below.
+      - name: Run the testsuite
+        id: run
+        continue-on-error: true
+        working-directory: generational/ocaml-integration/ocaml-4.14-verified-gen/testsuite
+        env:
+          OCAMLRUNPARAM: b,v=0
+          # 300, not 120. The verified collector implements no weak table, so
+          # weak-heavy tests run orders of magnitude slower than stock:
+          # tests/misc/weaktest.ml takes 108s natively against 0.2s on stock,
+          # close enough to a 120s budget to flap -- and a timeout is reported
+          # as a NEW FAILURE, so the gate flapped with it. This is headroom for
+          # a known-slow collector, not tolerance for a hang -- the job itself
+          # still has timeout-minutes.
+          TIMEOUT: 300
+        run: make all 2>&1 | tee "$GITHUB_WORKSPACE/testsuite.log"
+
+      - name: Sanity-check that tests actually ran
+        run: |
+          if ! grep -q 'tests considered' testsuite.log; then
+            echo "::error::The suite produced no summary -- it aborted before running tests."
+            tail -40 testsuite.log
+            exit 1
+          fi
+
+      # Optional side-by-side against stock. Off by default: it means building
+      # and running the whole suite a second time.
+      - name: Run the testsuite on stock OCaml (baseline)
+        if: ${{ inputs.run_baseline }}
+        continue-on-error: true
+        working-directory: generational/ocaml-integration/ocaml-4.14-unchanged
+        env:
+          OCAMLRUNPARAM: b,v=0
+          TIMEOUT: 300
+        run: |
+          make ocamltest
+          cd testsuite && make all 2>&1 | tee "$GITHUB_WORKSPACE/stock.log"
+
+      # Writes the job summary: a verdict line, then every failed test marked
+      # NEW or expected. Its exit status is the gate.
+      - name: Check against the expected failures
+        id: report
+        run: |
+          set +e
+          python3 ci/testsuite_report.py \
+            --log testsuite.log \
+            ${{ inputs.run_baseline && '--baseline-log stock.log' || '' }} \
+            --expected ci/expected-failures.txt \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --title "OCaml testsuite — verified GC (${GITHUB_SHA:0:8})"
+          echo "verdict=$?" >> "$GITHUB_OUTPUT"
+          [ ! -f known-gaps.md ] || { echo; cat known-gaps.md; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testsuite-logs
+          path: |
+            build.log
+            testsuite.log
+            stock.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail on new failures
+        if: steps.report.outputs.verdict != '0'
+        run: |
+          echo "::error::New test failures that are not in ci/expected-failures.txt -- see the job summary."
+          exit 1

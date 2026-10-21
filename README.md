@@ -12,6 +12,105 @@ For the detailed design, proof architecture, public contracts, OCaml bridge
 layout, benchmark table, and current verification boundary, see
 [`DESIGN_AND_IMPL.md`](DESIGN_AND_IMPL.md).
 
+## Quick local setup
+
+The sequence CI runs, guaranteed to work end-to-end: verification and extraction
+are [`.github/workflows/verify.yml`](.github/workflows/verify.yml), the OCaml
+integration and its tests are [`.github/workflows/testsuite.yml`](.github/workflows/testsuite.yml).
+Steps must run in this order:
+
+```bash
+./setup.sh # sets up F*
+
+fstar/bin/fstar.exe --version # check fstar version
+# verify GC
+make -j$(nproc)
+
+# verify SPOT
+make -C spot -j$(nproc)
+
+# extract to C using Karamel
+make extract
+
+# generate a snapshot for integrating into OCaml runtime
+make -C generational snapshot
+# setup ocaml integration (stock ocaml and modified ocaml runtime with verified gc)
+make -C generational/ocaml-integration setup
+
+make -C generational/ocaml-integration/tests test # run smoke tests
+make -C generational/ocaml-integration/tests test-native # native smoke tests
+make -C generational/ocaml-integration/tests known-gaps # open bugs' reproducers
+make -C generational/ocaml-integration/tests benchmark # run benchmarks
+```
+
+## Testing against the verified GC
+
+```bash
+# Once: clone and build both OCaml trees (stock, installed + verified, patched).
+# This already produces everything needed to run your own code: the verified
+# runtime/ocamlrun and runtime/libasmrun.a.
+make -C generational/ocaml-integration setup
+
+# Run your own code, bytecode and native.
+sh ci/run-verified.sh prog.ml
+sh ci/run-verified.sh --byte prog.ml
+sh ci/run-verified.sh --native prog.ml
+sh ci/run-verified.sh --stock prog.ml     # stock OCaml, for comparison
+sh ci/run-verified.sh some/dir            # every t*.ml; diffs against
+                                          # expected_output.txt if present
+
+# Smoke tests: the same programs, arguments and heap sizes under each flavour.
+make -C generational/ocaml-integration/tests test          # bytecode
+make -C generational/ocaml-integration/tests test-native   # native
+make -C generational/ocaml-integration/tests correctness    # differential vs stock
+
+# After changing the collector, the bridge, the snapshot or the runtime patch,
+# rebuild the GC and BOTH runtimes. `setup` will not do this -- it skips a tree
+# that already exists.
+make -C generational/ocaml-integration/verified_gc
+make -C generational/ocaml-integration/ocaml-4.14-verified-gen/runtime ocamlrun libasmrun.a
+
+# OCaml's own testsuite -- ~3100 test instances, each in a bytecode and a
+# native variant. Needs the tree's compilers to EXIST, which this builds once
+# (15-40 min); after that a GC change needs only the rebuild above.
+sh ci/build-verified-toolchain.sh
+sh ci/run-testsuite.sh
+sh ci/run-testsuite.sh tests/lib-hashtbl   # one directory
+```
+
+These are the same steps as
+[`.github/workflows/testsuite.yml`](.github/workflows/testsuite.yml), so a local
+result and a CI result mean the same thing.
+
+The gate is **"no new failures"**, not "zero failures": the collector does not
+implement weak pointers, ephemerons, finalisers, compaction or memprof
+sampling, so a known set of tests fails for understood reasons. That set lives
+in `ci/expected-failures.txt`.
+
+`ci/run-testsuite.sh` writes the same summary CI posts, every failed test
+marked NEW or expected, to `testsuite-summary.md`.
+
+> **`libasmrun.a` is a separate target.** `make ocamlrun` refreshes only the
+> *bytecode* runtime, so a native test built after it will silently link a
+> stale collector and appear to pass. Always build both.
+
+### How the collector gets swapped in
+
+Simpler than it looks, and worth knowing so results are interpretable.
+
+**Bytecode**: a `.byte` file is portable and contains no collector -- the
+collector is whichever `ocamlrun` you invoke. So compile with the **stock**
+compiler and run with the verified runtime. The very same `.byte` runs on
+either, which is why `--stock` costs nothing and gives a free side-by-side.
+
+**Native**: the collector is archived *inside* `libasmrun.a`, so stock
+`ocamlopt` is pointed at the verified GC's copy with
+`-I .../ocaml-4.14-verified-gen/runtime`. No compiler rebuild needed. Check it
+worked with `nm prog | grep verified_allocate` -- symbols present with the
+`-I`, none without.
+
+Same mechanism the benchmarks in `generational/ocaml-integration/tests` use.
+
 ## Current status
 
 The active development is organized around dependency-scanned builds. The

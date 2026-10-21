@@ -1,0 +1,107 @@
+# Known failures of the verified GC on OCaml 4.14's own testsuite.
+#
+# CI fails only on a failure that is NOT listed here ("no new failures"). The
+# collector does not implement everything the suite exercises, so a known set
+# of tests fails for understood reasons; a zero-failure gate would be
+# permanently red.
+#
+# Regenerate after a run (keeps this header):
+#     python3 ci/testsuite_report.py --log testsuite.log \
+#         --expected ci/expected-failures.txt --update-expected
+# Entries should only be REMOVED as fixes land. Adding one needs a reason
+# below.
+#
+# Why these fail:
+#   - weak pointers, ephemerons, finalisers: not implemented (tests/misc/ephe*,
+#     weak*, finaliser; ephe-c-api; tool-ocaml/t340-weak, t350-heapcheck; and
+#     three whose names hide it: lib-sys/opaque, backtrace/callstack and
+#     c-api/alloc_async all assert on Gc.finalise)
+#   - Gc.Memprof sampling: not implemented (every tests/statmemprof entry,
+#     including the timeouts)
+#   - custom-block finalisers: not run (regression/pr3612)
+#   - signal handlers are not run at allocation safe points: the verified
+#     allocator does not consult young_limit (callback/signals_alloc,
+#     lib-systhreads/eintr)
+#   - Gc.set knobs the fixed-size verified heap cannot honour
+#     (regression/pr9326 resizes the minor heap; regression/pr9292 asks for
+#     best-fit and ~400 MB, and gets Out_of_memory)
+#   - packaging, not GC behaviour: no libasmrun_i.a (instrumented-runtime),
+#     -output-complete-obj does not carry the verified GC's objects
+#   - the bridge's fixed root buffer (MAX_ROOTS in alloc_gen.c) overflows in
+#     large compiler runs ("verified gen GC: root overflow":
+#     typing-modules/merge_constraint, unboxed-primitive-args)
+#
+# Do NOT add tests/misc/'weaktest.ml': it is slow here (~108s native against
+# 0.2s on stock, no weak table) but passes within TIMEOUT=300. If it times
+# out, the collector or the runner got slower -- investigate rather than
+# baseline it. The same goes for lib-systhreads/eintr's timing-sensitive
+# variants.
+tests/backtrace/'callstack.ml' with 1.1.1 (native)
+tests/backtrace/'callstack.ml' with 1.1.2 (bytecode)
+tests/c-api/'alloc_async.ml' with 1 (native)
+tests/c-api/'alloc_async.ml' with 2 (bytecode)
+tests/callback/'signals_alloc.ml' with 1.1 (bytecode)
+tests/ephe-c-api/'test.ml' with 1 (native)
+tests/ephe-c-api/'test.ml' with 2 (bytecode)
+tests/instrumented-runtime/'main.ml' with 1.1 (native)
+tests/lib-sys/'opaque.ml' with 1 (native)
+tests/lib-sys/'opaque.ml' with 2 (bytecode)
+tests/lib-systhreads/'eintr.ml' with 1.1.1 (bytecode)
+tests/lib-systhreads/'eintr.ml' with 1.1.2 (native)
+tests/misc/'ephe_infix.ml' with 1 (native)
+tests/misc/'ephe_infix.ml' with 2 (bytecode)
+tests/misc/'ephe_infix_new.ml' with 1 (native)
+tests/misc/'ephe_infix_new.ml' with 2 (bytecode)
+tests/misc/'ephe_issue9391.ml' with 1 (native)
+tests/misc/'ephe_issue9391.ml' with 2 (bytecode)
+tests/misc/'ephetest.ml' with 1 (native)
+tests/misc/'ephetest.ml' with 2 (bytecode)
+tests/misc/'ephetest2.ml' with 1 (native)
+tests/misc/'ephetest2.ml' with 2 (bytecode)
+tests/misc/'ephetest2_new.ml' with 1 (native)
+tests/misc/'ephetest2_new.ml' with 2 (bytecode)
+tests/misc/'ephetest3.ml' with 1 (native)
+tests/misc/'ephetest3.ml' with 2 (bytecode)
+tests/misc/'ephetest_new.ml' with 1 (native)
+tests/misc/'ephetest_new.ml' with 2 (bytecode)
+tests/misc/'finaliser.ml' with 1 (native)
+tests/misc/'finaliser.ml' with 2 (bytecode)
+tests/misc/'weaklifetime.ml' with 1 (native)
+tests/misc/'weaklifetime.ml' with 2 (bytecode)
+tests/misc/'weaklifetime2.ml' with 1 (native)
+tests/misc/'weaklifetime2.ml' with 2 (bytecode)
+tests/output-complete-obj/'test.ml' with 1.1.1 (script)
+tests/output-complete-obj/'test.ml' with 2.1.1 (script)
+tests/regression/pr3612/'pr3612.ml' with 1 (native)
+tests/regression/pr3612/'pr3612.ml' with 2 (bytecode)
+tests/regression/pr9292/'pr9292.ml' with 1 (native)
+tests/regression/pr9292/'pr9292.ml' with 2 (bytecode)
+tests/regression/pr9326/'gc_set.ml' with 1 (native)
+tests/statmemprof/'alloc_counts.ml' with 1 (native)
+tests/statmemprof/'alloc_counts.ml' with 2 (bytecode)
+tests/statmemprof/'arrays_in_major.ml' with 1 (native)
+tests/statmemprof/'arrays_in_major.ml' with 2 (bytecode)
+tests/statmemprof/'arrays_in_minor.ml' with 1 (native)
+tests/statmemprof/'arrays_in_minor.ml' with 2 (bytecode)
+tests/statmemprof/'blocking_in_callback.ml' with 1.1 (bytecode)
+tests/statmemprof/'blocking_in_callback.ml' with 1.2 (native)
+tests/statmemprof/'callstacks.ml' with 1.1 (native)
+tests/statmemprof/'callstacks.ml' with 1.2 (bytecode)
+tests/statmemprof/'comballoc.ml' with 1 (bytecode)
+tests/statmemprof/'comballoc.ml' with 2 (native)
+tests/statmemprof/'custom.ml' with 1 (native)
+tests/statmemprof/'custom.ml' with 2 (bytecode)
+tests/statmemprof/'exception_callback.ml' with 2 (bytecode)
+tests/statmemprof/'exception_callback_minor.ml' with 2 (bytecode)
+tests/statmemprof/'intern.ml' with 1 (native)
+tests/statmemprof/'intern.ml' with 2 (bytecode)
+tests/statmemprof/'lists_in_minor.ml' with 1 (native)
+tests/statmemprof/'lists_in_minor.ml' with 2 (bytecode)
+tests/statmemprof/'minor_no_postpone.ml' with 2 (bytecode)
+tests/statmemprof/'moved_while_blocking.ml' with 1.1 (bytecode)
+tests/statmemprof/'moved_while_blocking.ml' with 1.2 (native)
+tests/statmemprof/'thread_exit_in_callback.ml' with 1.1 (bytecode)
+tests/tool-ocaml/'t340-weak.ml' with 1.1 (ocaml)
+tests/tool-ocaml/'t350-heapcheck.ml' with 1.1 (ocaml)
+tests/typing-modules/'merge_constraint.ml' with 1 (expect)
+tests/unboxed-primitive-args/'test.ml' with 1.1.1.1 (ocamlopt.byte)

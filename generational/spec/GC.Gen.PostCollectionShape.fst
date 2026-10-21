@@ -15,6 +15,7 @@ module Coalesce = GC.Spec.Coalesce
 module Shape = GC.Spec.Coalesce.Shape
 module CD = GC.Spec.Coalesce.Descending
 module CDense = GC.Spec.Coalesce.Dense
+module CC = GC.Spec.Coalesce.Complete
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module FreeListShape = GC.Gen.FreeListShape
 module Promote = GC.Gen.Promote
@@ -173,6 +174,9 @@ private let coalesce_major_heap_shape (g: heap)
     let fp' = snd r in
     // 1. well-formedness
     Coalesce.coalesce_preserves_wf g;
+    // the rebuilt free list is exact: it holds exactly the blue cells
+    CC.coalesce_exact g;
+    GenInv.free_list_exact_iff g' fp';
     // 2, 3. the allocator's entry conditions on the rebuilt free list
     CD.coalesce_fl_entry g;
     // 4. the head is null or a pointer

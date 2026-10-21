@@ -171,6 +171,14 @@ val wosize_of_object_bound : (h_addr: obj_addr) -> (g: heap) ->
 val wosize_of_object_spec : (h_addr: obj_addr) -> (g: heap) ->
   Lemma (wosize_of_object h_addr g == getWosize (read_word g (hd_address h_addr)))
 
+/// Machine words an object occupies: its fields plus its header (stock's
+/// `Whsize_wosize`). Unlike wosize, whsize is conserved when a block is split,
+/// since the split costs a header word, so counting arguments use this.
+/// Arguments are (heap, object), not wosize_of_object's (object, heap), to
+/// match the definitions this replaces in GC.Spec.Partition and
+/// GC.Spec.Coalesce.
+let whsize (g: heap) (x: obj_addr) : GTot nat = 1 + U64.v (wosize_of_object x g)
+
 /// Color predicates
 val is_black (h_addr: obj_addr) (g: heap) : GTot bool
 val is_white (h_addr: obj_addr) (g: heap) : GTot bool

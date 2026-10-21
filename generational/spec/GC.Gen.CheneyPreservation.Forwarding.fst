@@ -1259,7 +1259,7 @@ let rec cheney_scan_preserves_fwd_classified
 #pop-options
 
 /// Non-infix minor sources are forwarded to ordinary objects.
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
 let fwd_noninfix_targets_valid_initial (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma (ensures fwd_noninfix_targets_valid_state minor
     { cs_major = major; cs_fp = fp;

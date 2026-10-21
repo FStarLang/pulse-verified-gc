@@ -21,6 +21,7 @@ open GC.Gen.MinorHeap
 open GC.Gen.Promote
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module FL = GC.Spec.FreeList
 module Mark = GC.Spec.Mark
 module MarkBoundedInv = GC.Spec.MarkBoundedInv
 module Sweep = GC.Spec.Sweep
@@ -29,6 +30,15 @@ module HeapModel = GC.Spec.HeapModel
 module HeapGraph = GC.Spec.HeapGraph
 module Graph = GC.Spec.Graph
 module FreeListShape = GC.Gen.FreeListShape
+
+/// The free list is exact: it holds exactly the blue blocks that can carry a
+/// link (`GC.Spec.FreeList.fl_exact`).  Abstract here so that the many proofs
+/// that unpack `major_heap_shape` without needing the free list do not carry
+/// its quantifiers; `free_list_exact_iff` opens it where it is needed.
+val free_list_exact (major: heap) (fp: U64.t) : prop
+
+val free_list_exact_iff (major: heap) (fp: U64.t)
+  : Lemma (free_list_exact major fp <==> FL.fl_exact major fp)
 
 /// Major-heap shape needed by both minor collection and the following major GC:
 /// object layout/infix well-formedness, free-list validity, color invariants,
@@ -128,6 +138,7 @@ val major_heap_shape_intro (major: heap) (fp: U64.t)
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    free_list_exact major fp /\
                     FreeListShape.fp_pointer_or_zero fp /\
                     FreeListShape.blue_link_fields_valid major /\
                     heap_objects_dense major /\
@@ -147,6 +158,7 @@ val major_heap_shape_elim (major: heap) (fp: U64.t)
           (ensures well_formed_heap major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    free_list_exact major fp /\
                     FreeListShape.fp_pointer_or_zero fp /\
                     FreeListShape.blue_link_fields_valid major /\
                     heap_objects_dense major /\

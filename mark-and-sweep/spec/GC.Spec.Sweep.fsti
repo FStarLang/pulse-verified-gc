@@ -40,14 +40,25 @@ let sweep_object (g: heap) (obj: obj_addr) (fp: U64.t)
   else if is_white obj g then
     let ws = wosize_of_object obj g in
     let hd = GC.Spec.Heap.hd_address obj in
-    let g' = 
-      if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
-        assert (U64.v (GC.Spec.Heap.hd_address obj) + U64.v mword * (U64.v 1UL + 1) <= heap_size);
-        HeapGraph.set_field g obj 1UL fp
-      end else g
-    in
-    let g'' = makeBlue obj g' in
-    (g'', obj)
+    // A block with no field cannot carry a link, so it cannot become the head
+    // of the list: writing `obj` there would drop every block already on it,
+    // and leave a blue object that is not a cell. Leave the list alone, as
+    // stock does in nf_allocate_block's case 1 -- though stock keeps such a
+    // fragment white, and this one is coloured blue (see below).
+    if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
+      assert (U64.v (GC.Spec.Heap.hd_address obj) + U64.v mword * (U64.v 1UL + 1) <= heap_size);
+      let g' = HeapGraph.set_field g obj 1UL fp in
+      (makeBlue obj g', obj)
+    end else
+      // Why blue rather than stock's white. The main reason is allocation:
+      // `alloc_spec_new_objects_blue_part1` says every object an allocation
+      // creates, other than the one it returns, is blue, so the fragments
+      // allocation leaves are blue and this one should match. Nothing is lost
+      // by it, because the sweep+coalesce pass that actually runs (`fused_aux`)
+      // does not distinguish blue from white -- it only checks whether a
+      // block is black. And `flush_blue` already handles fragments this way:
+      // a wosize-0 run is coloured blue and not linked onto the free list.
+      (makeBlue obj g, fp)
   else if is_black obj g then
     let g' = makeWhite obj g in
     (g', fp)

@@ -31,8 +31,7 @@ open GC.Spec.FreeList
 #push-options "--z3rlimit 15 --fuel 2 --ifuel 1"
 let rec sweep_object_preserves_chain
   (g: heap) (obj: obj_addr) (fp: U64.t) (head: U64.t) (x: U64.t) (n: nat)
-  : Lemma (requires well_formed_heap g /\ linkable_heap g /\
-                    Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g /\
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g /\
                     fl_sound g head /\ ~(is_blue obj g))
           (ensures on_fl (fst (sweep_object g obj fp)) head x n == on_fl g head x n)
           (decreases n)
@@ -57,8 +56,7 @@ let rec sweep_object_preserves_chain
 
 let sweep_object_preserves_reachable
   (g: heap) (obj: obj_addr) (fp: U64.t) (head: U64.t) (x: U64.t)
-  : Lemma (requires well_formed_heap g /\ linkable_heap g /\
-                    Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g /\
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g /\
                     fl_sound g head /\ ~(is_blue obj g))
           (ensures reachable_on_fl (fst (sweep_object g obj fp)) head x <==>
                    reachable_on_fl g head x)
@@ -78,58 +76,127 @@ let sweep_object_preserves_reachable
 
 /// The white case: `obj` is freed, made blue, and pushed onto the head of the
 /// list with its link pointing at the old head.
-#push-options "--z3rlimit 37 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 300 --fuel 2 --ifuel 1"
 private let sweep_object_white_preserves_fl_exact
   (g: heap) (obj: obj_addr) (fp: U64.t)
-  : Lemma (requires well_formed_heap g /\ linkable_heap g /\
-                    Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g /\
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g /\
                     fl_exact g fp /\ is_white obj g)
           (ensures (let (g', fp') = sweep_object g obj fp in fl_exact g' fp'))
   = wf_objects_non_infix g obj;
     colors_exclusive obj g;
     sweep_object_preserves_objects g obj fp;
-    linkable_is_fl_node g obj;
-    let g' = fst (sweep_object g obj fp) in
-    assert (snd (sweep_object g obj fp) == obj);
-    // the new head links to the old head
-    sweep_object_white_field0 g obj fp;
-    assert (fl_next g' obj == fp);
-    sweep_object_resets_self_color g obj fp;
-    assert (is_blue obj g');
-    // soundness
-    introduce forall (y: U64.t). reachable_on_fl g' obj y ==>
-      (fl_node y /\
-       (U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0) /\
-       Seq.mem (y <: obj_addr) (objects zero_addr g') /\
-       is_blue (y <: obj_addr) g')
-    with introduce _ ==> _
-    with begin
-      reachable_is_node g' obj y;
-      if y = obj then ()
-      else begin
-        reachable_uncons g' obj y;
+    hd_address_spec obj;
+    let ws = wosize_of_object obj g in
+    let hd = GC.Spec.Heap.hd_address obj in
+    // `wf_object_bound` gives obj + wosize*8 <= heap_size, i.e.
+    // hd + (wosize+1)*8 <= heap_size, so at wosize >= 1 the room for a link
+    // word is automatic. The else branch below is therefore exactly wosize 0.
+    wf_object_bound g obj;
+    if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
+      let g' = fst (sweep_object g obj fp) in
+      assert (snd (sweep_object g obj fp) == obj);
+      // the new head links to the old head
+      sweep_object_white_field0 g obj fp;
+      assert (fl_next g' obj == fp);
+      sweep_object_resets_self_color g obj fp;
+      assert (is_blue obj g');
+      sweep_object_preserves_self_wosize g obj fp;
+      assert (U64.v (wosize_of_object obj g') >= 1);
+      // soundness
+      introduce forall (y: U64.t). reachable_on_fl g' obj y ==>
+        (fl_node y /\
+         (U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0) /\
+         Seq.mem (y <: obj_addr) (objects zero_addr g') /\
+         is_blue (y <: obj_addr) g' /\
+         U64.v (wosize_of_object (y <: obj_addr) g') >= 1)
+      with introduce _ ==> _
+      with begin
+        reachable_is_node g' obj y;
+        if y = obj then ()
+        else begin
+          reachable_uncons g' obj y;
+          sweep_object_preserves_reachable g obj fp fp y;
+          assert (reachable_on_fl g fp y);
+          assert (is_blue (y <: obj_addr) g);
+          assert (U64.v (wosize_of_object (y <: obj_addr) g) >= 1);
+          sweep_object_color_locality g obj (y <: obj_addr) fp;
+          sweep_object_preserves_other_header g obj fp (y <: obj_addr);
+          is_blue_iff (y <: obj_addr) g;
+          is_blue_iff (y <: obj_addr) g'
+        end
+      end;
+      // completeness
+      introduce forall (y: obj_addr). (Seq.mem y (objects zero_addr g') /\ is_blue y g'
+                                       /\ U64.v (wosize_of_object y g') >= 1) ==>
+                                      reachable_on_fl g' obj y
+      with introduce _ ==> _
+      with begin
+        if y = obj then reachable_head g' obj
+        else begin
+          sweep_object_color_locality g obj y fp;
+          sweep_object_preserves_other_header g obj fp y;
+          is_blue_iff y g;
+          is_blue_iff y g';
+          assert (is_blue y g);
+          assert (U64.v (wosize_of_object y g) >= 1);
+          assert (reachable_on_fl g fp y);
+          sweep_object_preserves_reachable g obj fp fp y;
+          reachable_cons g' obj y
+        end
+      end
+    end
+    else begin
+      // wosize 0: the block cannot hold a link, so `sweep_object` colours it
+      // blue and leaves the list alone. The chain is untouched, and the new
+      // blue block is not a cell, so completeness does not reach for it.
+      let g' = fst (sweep_object g obj fp) in
+      assert (snd (sweep_object g obj fp) == fp);
+      sweep_object_resets_self_color g obj fp;
+      sweep_object_preserves_self_wosize g obj fp;
+      assert (U64.v (wosize_of_object obj g') == 0);
+      // soundness: the chain is the same chain, and its members keep their
+      // colour and their header, because none of them is `obj`.
+      introduce forall (y: U64.t). reachable_on_fl g' fp y ==>
+        (fl_node y /\
+         (U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0) /\
+         Seq.mem (y <: obj_addr) (objects zero_addr g') /\
+         is_blue (y <: obj_addr) g' /\
+         U64.v (wosize_of_object (y <: obj_addr) g') >= 1)
+      with introduce _ ==> _
+      with begin
         sweep_object_preserves_reachable g obj fp fp y;
         assert (reachable_on_fl g fp y);
         assert (is_blue (y <: obj_addr) g);
+        // y is blue in g and obj is white in g, so they are distinct
+        is_blue_iff (y <: obj_addr) g;
+        is_white_iff obj g;
+        assert ((y <: obj_addr) <> obj);
         sweep_object_color_locality g obj (y <: obj_addr) fp;
+        sweep_object_preserves_other_header g obj fp (y <: obj_addr);
         is_blue_iff (y <: obj_addr) g;
         is_blue_iff (y <: obj_addr) g'
-      end
-    end;
-    // completeness
-    introduce forall (y: obj_addr). (Seq.mem y (objects zero_addr g') /\ is_blue y g') ==>
-                                    reachable_on_fl g' obj y
-    with introduce _ ==> _
-    with begin
-      if y = obj then reachable_head g' obj
-      else begin
-        sweep_object_color_locality g obj y fp;
-        is_blue_iff y g;
-        is_blue_iff y g';
-        assert (is_blue y g);
-        assert (reachable_on_fl g fp y);
-        sweep_object_preserves_reachable g obj fp fp y;
-        reachable_cons g' obj y
+      end;
+      // completeness: obj is blue in g' but has wosize 0, so it is excluded.
+      introduce forall (y: obj_addr). (Seq.mem y (objects zero_addr g') /\ is_blue y g'
+                                       /\ U64.v (wosize_of_object y g') >= 1) ==>
+                                      reachable_on_fl g' fp y
+      with introduce _ ==> _
+      with begin
+        assert (Seq.mem y (objects zero_addr g));
+        // y cannot be obj: obj has wosize 0 in g', and the hypothesis of this
+        // implication demands wosize >= 1, so that case is vacuous.
+        if y = obj then ()
+        else begin
+          sweep_object_color_locality g obj y fp;
+          sweep_object_preserves_other_header g obj fp y;
+          is_blue_iff y g;
+          is_blue_iff y g';
+          assert (is_blue y g);
+          assert (U64.v (wosize_of_object y g) >= 1);
+          fl_complete_elim g fp y;
+          assert (reachable_on_fl g fp y);
+          sweep_object_preserves_reachable g obj fp fp y
+        end
       end
     end
 #pop-options
@@ -138,8 +205,7 @@ private let sweep_object_white_preserves_fl_exact
 #push-options "--z3rlimit 37 --fuel 2 --ifuel 1"
 private let sweep_object_black_preserves_fl_exact
   (g: heap) (obj: obj_addr) (fp: U64.t)
-  : Lemma (requires well_formed_heap g /\ linkable_heap g /\
-                    Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g /\
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g /\
                     fl_exact g fp /\ is_black obj g)
           (ensures (let (g', fp') = sweep_object g obj fp in fl_exact g' fp'))
   = wf_objects_non_infix g obj;
@@ -156,7 +222,8 @@ private let sweep_object_black_preserves_fl_exact
       (fl_node y /\
        (U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0) /\
        Seq.mem (y <: obj_addr) (objects zero_addr g') /\
-       is_blue (y <: obj_addr) g')
+       is_blue (y <: obj_addr) g' /\
+       U64.v (wosize_of_object (y <: obj_addr) g') >= 1)
     with introduce _ ==> _
     with begin
       reachable_is_node g' fp y;
@@ -165,19 +232,24 @@ private let sweep_object_black_preserves_fl_exact
       assert (is_blue (y <: obj_addr) g);
       assert ((y <: obj_addr) <> obj);
       sweep_object_color_locality g obj (y <: obj_addr) fp;
+      sweep_object_preserves_other_header g obj fp (y <: obj_addr);
       is_blue_iff (y <: obj_addr) g;
       is_blue_iff (y <: obj_addr) g'
     end;
     // completeness
-    introduce forall (y: obj_addr). (Seq.mem y (objects zero_addr g') /\ is_blue y g') ==>
+    introduce forall (y: obj_addr). (Seq.mem y (objects zero_addr g') /\ is_blue y g'
+                                     /\ U64.v (wosize_of_object y g') >= 1) ==>
                                     reachable_on_fl g' fp y
     with introduce _ ==> _
     with begin
       assert (y <> obj);
       sweep_object_color_locality g obj y fp;
+      sweep_object_preserves_other_header g obj fp y;
       is_blue_iff y g;
       is_blue_iff y g';
       assert (is_blue y g);
+      assert (U64.v (wosize_of_object y g) >= 1);
+      fl_complete_elim g fp y;
       assert (reachable_on_fl g fp y);
       sweep_object_preserves_reachable g obj fp fp y
     end
@@ -186,8 +258,7 @@ private let sweep_object_black_preserves_fl_exact
 /// A sweep step preserves free-list exactness.
 #push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let sweep_object_preserves_fl_exact (g: heap) (obj: obj_addr) (fp: U64.t)
-  : Lemma (requires well_formed_heap g /\ linkable_heap g /\
-                    Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g /\
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g /\
                     fl_exact g fp)
           (ensures (let (g', fp') = sweep_object g obj fp in fl_exact g' fp'))
   = wf_objects_non_infix g obj;
@@ -199,23 +270,6 @@ let sweep_object_preserves_fl_exact (g: heap) (obj: obj_addr) (fp: U64.t)
 /// ---------------------------------------------------------------------------
 /// Side conditions are preserved, so the induction goes through
 /// ---------------------------------------------------------------------------
-
-#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
-let sweep_object_preserves_linkable (g: heap) (obj: obj_addr) (fp: U64.t)
-  : Lemma (requires well_formed_heap g /\ linkable_heap g /\
-                    Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g)
-          (ensures linkable_heap (fst (sweep_object g obj fp)))
-  = let g' = fst (sweep_object g obj fp) in
-    sweep_object_preserves_objects g obj fp;
-    introduce forall (y: obj_addr). Seq.mem y (objects zero_addr g') ==>
-      (U64.v (wosize_of_object y g') >= 1 /\
-       U64.v (hd_address y) + U64.v mword * 2 <= heap_size)
-    with introduce _ ==> _
-    with begin
-      if y = obj then sweep_object_preserves_self_wosize g obj fp
-      else sweep_object_preserves_other_header g obj fp y
-    end
-#pop-options
 
 /// The updated free pointer is still a heap object (or null).
 #push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
@@ -232,7 +286,7 @@ let sweep_object_preserves_fp_in_heap (g: heap) (obj: obj_addr) (fp: U64.t)
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec sweep_aux_preserves_fl_exact
   (g: heap) (objs: seq obj_addr) (fp: U64.t)
-  : Lemma (requires well_formed_heap g /\ linkable_heap g /\ fp_in_heap fp g /\
+  : Lemma (requires well_formed_heap g /\ fp_in_heap fp g /\
                     (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
                     fl_exact g fp)
           (ensures (let (g', fp') = sweep_aux g objs fp in fl_exact g' fp'))
@@ -245,7 +299,6 @@ let rec sweep_aux_preserves_fl_exact
       let (g', fp') = sweep_object g obj fp in
       sweep_object_preserves_objects g obj fp;
       sweep_object_preserves_wf g obj fp;
-      sweep_object_preserves_linkable g obj fp;
       sweep_object_preserves_fp_in_heap g obj fp;
       sweep_object_preserves_fl_exact g obj fp;
       Seq.lemma_mem_inversion objs;
@@ -259,7 +312,7 @@ let rec sweep_aux_preserves_fl_exact
 /// free pointer are *exactly* the blue objects of the heap: nothing live is on
 /// the list (soundness) and no free block is stranded off it (completeness).
 let sweep_preserves_fl_exact (g: heap) (fp: U64.t)
-  : Lemma (requires well_formed_heap g /\ linkable_heap g /\ fp_in_heap fp g /\
+  : Lemma (requires well_formed_heap g /\ fp_in_heap fp g /\
                     fl_exact g fp)
           (ensures (let (g', fp') = sweep g fp in fl_exact g' fp'))
   = sweep_aux_preserves_fl_exact g (objects zero_addr g) fp
@@ -282,8 +335,7 @@ let fl_exact_null (g: heap)
 
 /// Sweeping a heap that has no free blocks *establishes* exactness.
 let sweep_establishes_fl_exact (g: heap)
-  : Lemma (requires well_formed_heap g /\ linkable_heap g /\
-                    (forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_blue obj g)))
+  : Lemma (requires well_formed_heap g /\                     (forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_blue obj g)))
           (ensures (let (g', fp') = sweep g 0UL in fl_exact g' fp'))
   = fl_exact_null g;
     assert (fp_in_heap 0UL g);
@@ -311,21 +363,32 @@ private let rec seq_filter_mem_intro (#a: eqtype) (f: a -> GTot bool) (s: Seq.se
     end
 #pop-options
 
-/// **The free list is exactly `blue_blocks`.**
+/// **The free list is exactly the blue blocks that can hold a link.**
 ///
-/// This is the reviewer's property in the repository's own vocabulary: the set
-/// of objects reachable along the free list coincides with the sequence of blue
-/// blocks of the heap, in both directions.
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 15"
-let fl_exact_blue_blocks (g: heap) (fp: U64.t)
+/// This is the reviewer's property in the repository's own vocabulary, with
+/// the correction the fragment forces. It used to say `blue_blocks`, the blue
+/// objects of the heap, full stop. That is false once a wosize-0 block can be
+/// blue: such a block is free space, it is in `blue_blocks`, and it cannot be
+/// on the chain, because a cell needs a field to hold the link. The set the
+/// free list coincides with is the blue blocks that have one.
+let cell_blocks (g: heap) : GTot (Seq.seq obj_addr) =
+  seq_filter (fun h -> is_blue h g && U64.v (wosize_of_object h g) >= 1)
+             (objects zero_addr g)
+
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 30"
+let fl_exact_cell_blocks (g: heap) (fp: U64.t)
   : Lemma (requires fl_exact g fp)
           (ensures forall (obj: obj_addr).
-                     Seq.mem obj (blue_blocks g) <==> reachable_on_fl g fp obj)
-  = introduce forall (obj: obj_addr). Seq.mem obj (blue_blocks g) <==> reachable_on_fl g fp obj
+                     Seq.mem obj (cell_blocks g) <==> reachable_on_fl g fp obj)
+  = let f = (fun (h: obj_addr) -> is_blue h g && U64.v (wosize_of_object h g) >= 1) in
+    introduce forall (obj: obj_addr). Seq.mem obj (cell_blocks g) <==> reachable_on_fl g fp obj
     with begin
-      introduce Seq.mem obj (blue_blocks g) ==> reachable_on_fl g fp obj
-      with seq_filter_mem (fun h -> is_blue h g) (objects zero_addr g) obj;
-      introduce reachable_on_fl g fp obj ==> Seq.mem obj (blue_blocks g)
-      with seq_filter_mem_intro (fun h -> is_blue h g) (objects zero_addr g) obj
+      introduce Seq.mem obj (cell_blocks g) ==> reachable_on_fl g fp obj
+      with begin
+        seq_filter_mem f (objects zero_addr g) obj;
+        fl_complete_elim g fp obj
+      end;
+      introduce reachable_on_fl g fp obj ==> Seq.mem obj (cell_blocks g)
+      with seq_filter_mem_intro f (objects zero_addr g) obj
     end
 #pop-options

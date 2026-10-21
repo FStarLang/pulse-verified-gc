@@ -263,6 +263,18 @@ let promote_object_nonblue_other_reflects_pre
   assert (read_word res.major_out (hd_address target) ==
           read_word alloc_res.heap_out (hd_address target));
   if Seq.mem target (objects zero_addr major) then begin
+    // A free-list cell is blue, and stays blue through the allocation and
+    // the copy that follows it -- so a target that is not blue afterwards is
+    // not on the chain, which is what the header frame now requires.
+    reveal_opaque (`%chain_objects_blue) chain_objects_blue;
+    (if AllocLemmas.chain_avoids major fp (target <: U64.t) heap_words = false then begin
+       assert (is_blue target major = true);
+       AllocProps.alloc_spec_preserves_blue_part1 major fp wz target;
+       color_of_header_eq target alloc_res.heap_out res.major_out;
+       is_blue_iff target alloc_res.heap_out;
+       is_blue_iff target res.major_out;
+       assert False
+     end else ());
     AllocProps.alloc_spec_read_header_other_part1 major fp wz target;
     assert (read_word alloc_res.heap_out (hd_address target) ==
             read_word major (hd_address target));
@@ -271,6 +283,7 @@ let promote_object_nonblue_other_reflects_pre
     is_blue_iff target res.major_out
   end else begin
     AllocLemmas.alloc_spec_new_objects_blue_part1 major fp wz;
+    AllocLemmas.alloc_spec_only_new_is_obj_out_part1 major fp wz;
     assert (is_blue target alloc_res.heap_out = true);
     color_of_header_eq target alloc_res.heap_out res.major_out;
     assert (is_blue target res.major_out = true)
