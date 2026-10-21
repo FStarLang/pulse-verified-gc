@@ -8,7 +8,7 @@ Branch `sheera/parallel-sweep`, from `fork/main` `0ce5e09`, with `origin/main` `
 - **Stage B:** no counterexample. 10,750 (heap, boundary list) pairs were tested, from 17 hand-built and 862 generated heaps. All four deliberately broken variants were caught.
 - **Stage C:** `sweep_par_correct` is proved, with no `admit` or `assume` (§6). The model, the theorem and every `val` are unchanged. The proof uses only `valid_bounds`; the rest of `fused_pre` is not needed.
 - **Pulse, one segment:** the specification of `sweep_segment` is written and reviewed (§7). Locality, that a segment depends only on its own bytes, is tested and proved (§7). `sweep_segment` is implemented and proved against that specification, on range versions of the heap operations (§7).
-- **From theorem to running code:** the pre-pass, the merge, the joining lemma and a sequential driver are specified and approved (§8). The joining lemma `join_correct` is proved, and the pre-pass is implemented and proved. The rest is not implemented yet.
+- **From theorem to running code:** the pre-pass, the merge, the joining lemma and a sequential driver are specified and approved (§8). The joining lemma `join_correct` is proved, and the pre-pass and the merge are implemented and proved. The sequential driver is not implemented yet.
 
 Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct` and `mark-and-sweep/NOTES.md`, merged in from `sheera/coalesce-exact`. The directory is left out of the root build.
 
@@ -28,6 +28,7 @@ Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct
 | `parallel-sweep/spec/GC.Spec.SweepPar.Join.fsti` | The joining lemma, stated (§8). |
 | `parallel-sweep/spec/GC.Spec.SweepPar.Join.fst` | Its proof, and its non-vacuity witnesses (§8). |
 | `parallel-sweep/impl/GC.Impl.SweepPar.Prepass.fst` | The pre-pass, implemented and proved (§8). |
+| `parallel-sweep/impl/GC.Impl.SweepPar.Merge.fst` | The merge, implemented and proved (§8). |
 | `parallel-sweep/Makefile` | `make verify` and `make test`. |
 
 Toolchain: only the pinned `./fstar` (F* `nightly-2026-10-17`, `f43a1127`, Z3 5.3.0), with the repo's own F* flags. The OCaml side uses opam switch `fstar-gc` (OCaml 4.14.0).
@@ -512,6 +513,13 @@ fn merge (heap: heap_t) (results: A.array seg_result) (m: SZ.t)
   - **`fused_pre g` and `valid_bounds g bs`.** The model's merge is defined for any heap, but its implementation, like `fused_sweep_coalesce`'s, will need to know the runs stay inside the heap.
 - **No boundaries needed.** `link_all` uses only the records and the heap, never `lo` or `hi`, so the merge takes no boundary array. `bs` is ghost.
 - **Postcondition:** the final heap and the returned head are the pair the model's `sweep_par bs g` returns. With `sweep_par_correct`, that is the pair `fused_sweep_coalesce g` returns.
+- **Implemented and proved** in `GC.Impl.SweepPar.Merge`, with the interface's signature, with no `admit` or `assume`. It follows `link_all` record by record, and flushes with the shipped `GC.Impl.Coalesce.flush_blue_impl`.
+  - **Every flushed run lies in the heap.** `flush_blue_impl` requires it. The proof derives it from each segment's own output: `GC.Spec.SweepPar.SegLoop.seg_geom` shows that a leading run starts at its segment's first object and ends by `hi`, and that a trailing run lies in `[lo, hi)`. It runs the segment loop's lemmas to the end (`seg_geom_from`), which needed one more fact in the loop invariant: before the first survivor, the leading run ends at the cursor. `bounds_chain` collects this for every segment of a valid `bs`, with each segment starting where the last ended. The carried run then always ends by the next segment's start, and a joined run by that segment's end.
+  - **The patch keeps the model's own guard**, checked at run time (`patch`). Proving the guard dead in the merge, as the model's proof does, would need facts about where segments link. The guard costs four comparisons per segment.
+  - **`fused_pre` is not used.**
+  - **The invariant.** `merge_inv` is opaque to SMT and says three things: linking the remaining records from the current state gives `sweep_par bs g`, the remaining segments chain, and the carry ends by the next start. One lemma per case moves it: `merge_free`, `merge_used`, and `merge_exit` for the final flush.
+  - **Non-vacuity.** `merge_witness` calls every lemma in the order merge does, on the whole heap as one segment, with the record built from the model's output. Two mutations fail to verify: patching with the head from before the flush (the model's mutant m4), and ending the carried run at an all-free segment (m1).
+  - **Proof check:** about 17 s, with the default rlimit everywhere. It also verifies with `--retry` off on `--z3seed 7`.
 
 ### 3. The joining lemma: `join_correct` (`GC.Spec.SweepPar.Join`)
 
@@ -563,6 +571,6 @@ fn sweep_par_seq (heap: heap_t) (k: SZ.t{SZ.v k >= 1})
 ### What is left, in order
 
 1. ~~Prove `join_correct`.~~ Done.
-2. Implement and prove `sweep_segment`, using locality (§7) and range versions of `read_word`, `write_word`, `makeWhite` and `flush_blue_impl`.
-3. Implement and prove `prepass` (done) and `merge`.
+2. ~~Implement and prove `sweep_segment`, using locality (§7) and range versions of `read_word`, `write_word`, `makeWhite` and `flush_blue_impl`.~~ Done; it did not need locality (§7).
+3. ~~Implement and prove `prepass` and `merge`.~~ Done.
 4. Implement and prove `sweep_par_seq` from the three pieces.

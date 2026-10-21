@@ -47,7 +47,9 @@ let seg_inv (g: heap) (lo: hp_addr) (hi: nat) (c: nat) (h: heap)
   lead.rw * 8 <= c - U64.v lo /\
   cur.rw * 8 <= c - U64.v lo /\
   run_in (U64.v lo) c cur /\
-  (seen == false ==> cur.rw == 0)
+  (seen == false ==> cur.rw == 0) /\
+  (lead.rw > 0 ==> U64.v lead.fb == U64.v lo + 8 /\ U64.v lo + 8 < heap_size) /\
+  (seen == false ==> U64.v lo + lead.rw * 8 == c)
 
 /// ---------------------------------------------------------------------------
 /// Entry
@@ -71,6 +73,12 @@ let rec seg_mem_reach (g: heap) (prev: nat) (bs: list nat) (lo hi: nat)
       else seg_mem_reach g b rest lo hi
 #pop-options
 
+/// The entry state of a segment the walk from `lo` reaches.
+let seg_entry_reach (g: heap) (lo: hp_addr) (hi: nat)
+  : Lemma (requires reach g (U64.v lo) hi /\ U64.v lo < hi /\ hi <= heap_size /\ hi % 8 == 0)
+          (ensures seg_inv g lo hi (U64.v lo) g false no_run no_run 0UL None)
+  = assert (mk_hp_addr (U64.v lo) == lo)
+
 let seg_entry (g: heap) (bs: list nat) (lo: hp_addr) (hi: nat)
   : Lemma (requires valid_bounds g bs /\ List.Tot.memP (U64.v lo, hi) (segments bs) /\
                     hi <= heap_size)
@@ -78,7 +86,7 @@ let seg_entry (g: heap) (bs: list nat) (lo: hp_addr) (hi: nat)
   = match bs with
     | b0 :: rest ->
       seg_mem_reach g b0 rest (U64.v lo) hi;
-      assert (mk_hp_addr (U64.v lo) == lo)
+      seg_entry_reach g lo hi
 
 /// ---------------------------------------------------------------------------
 /// The loop test
@@ -235,6 +243,63 @@ let seg_exit (g: heap) (lo: hp_addr) (hi: nat) (c: nat) (h: heap)
                      first_link = first; local_head = fp })
   = ()
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Where a segment's runs lie
+/// ---------------------------------------------------------------------------
+
+/// The merge flushes these runs, so it needs them inside the heap.  The
+/// leading run starts at the segment's first object and ends by `hi`; the
+/// trailing run lies in [lo, hi); an all-free segment has no trailing run.
+let out_geom (lo hi: nat) (o: seg_out) : prop =
+  run_in lo (lo + o.lead.rw * 8) o.lead /\ lo + o.lead.rw * 8 <= hi /\
+  (o.trail.rw > 0 ==>
+     U64.v o.trail.fb >= 8 /\ U64.v o.trail.fb < heap_size /\ U64.v o.trail.fb % 8 == 0 /\
+     lo <= U64.v o.trail.fb - 8 /\ U64.v o.trail.fb - 8 + o.trail.rw * 8 <= hi) /\
+  (o.all_free ==> o.trail.rw == 0)
+
+/// From any state of the loop, by running it to the end.
+#push-options "--fuel 0 --ifuel 1"
+let rec seg_geom_from (g: heap) (lo: hp_addr) (hi: nat) (c: nat) (h: heap)
+    (seen: bool) (lead cur: run) (fp: U64.t) (first: option U64.t)
+  : Lemma (requires seg_inv g lo hi c h seen lead cur fp first)
+          (ensures out_geom (U64.v lo) hi (sweep_segment g lo hi))
+          (decreases (heap_size - c))
+  = if Seq.length (seg_rest g c hi) = 0 then
+      seg_exit g lo hi c h seen lead cur fp first
+    else begin
+      seg_more g c hi;
+      let obj : obj_addr = U64.uint_to_t (c + 8) in
+      let ws = U64.v (wosize_of_object obj g) in
+      let next = c + (ws + 1) * 8 in
+      if is_black obj g then begin
+        if seen then begin
+          step_black_seen g lo hi c h lead cur fp first;
+          let (h1, fp') = SC.flush_blue h cur.fb cur.rw fp in
+          let first' =
+            match first with
+            | Some _ -> first
+            | None -> if fp' <> fp then Some fp' else None in
+          seg_geom_from g lo hi next (makeWhite obj h1) true lead no_run fp' first'
+        end else begin
+          step_black_first g lo hi c h lead cur fp first;
+          seg_geom_from g lo hi next (makeWhite obj h) true lead no_run fp first
+        end
+      end else begin
+        step_free g lo hi c h seen lead cur fp first;
+        seg_geom_from g lo hi next h seen
+          (if seen then lead else extend lead obj ws)
+          (if seen then extend cur obj ws else cur) fp first
+      end
+    end
+#pop-options
+
+/// A segment the walk from `lo` reaches.
+let seg_geom (g: heap) (lo: hp_addr) (hi: nat)
+  : Lemma (requires reach g (U64.v lo) hi /\ U64.v lo < hi /\ hi <= heap_size /\ hi % 8 == 0)
+          (ensures out_geom (U64.v lo) hi (sweep_segment g lo hi))
+  = seg_entry_reach g lo hi;
+    seg_geom_from g lo hi (U64.v lo) g false no_run no_run 0UL None
 
 /// ---------------------------------------------------------------------------
 /// The loop's own variables
