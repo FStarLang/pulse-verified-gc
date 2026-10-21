@@ -8,7 +8,7 @@ Branch `sheera/parallel-sweep`, from `fork/main` `0ce5e09`, with `origin/main` `
 - **Stage B:** no counterexample. 10,750 (heap, boundary list) pairs were tested, from 17 hand-built and 862 generated heaps. All four deliberately broken variants were caught.
 - **Stage C:** `sweep_par_correct` is proved, with no `admit` or `assume` (§6). The model, the theorem and every `val` are unchanged. The proof uses only `valid_bounds`; the rest of `fused_pre` is not needed.
 - **Pulse, one segment:** the specification of `sweep_segment` is written and reviewed (§7). Locality, that a segment depends only on its own bytes, is tested and proved (§7). The function is not implemented yet.
-- **From theorem to running code:** the pre-pass, the merge, the joining lemma and a sequential driver are specified and approved (§8). The joining lemma `join_correct` is proved. The rest is not implemented yet.
+- **From theorem to running code:** the pre-pass, the merge, the joining lemma and a sequential driver are specified and approved (§8). The joining lemma `join_correct` is proved, and the pre-pass is implemented and proved. The rest is not implemented yet.
 
 Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct` and `mark-and-sweep/NOTES.md`, merged in from `sheera/coalesce-exact`. The directory is left out of the root build.
 
@@ -24,6 +24,7 @@ Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct
 | `parallel-sweep/impl/GC.Impl.SweepPar.fsti` | The Pulse specifications of the pre-pass, the merge, and a sequential driver (§8). No implementation yet. |
 | `parallel-sweep/spec/GC.Spec.SweepPar.Join.fsti` | The joining lemma, stated (§8). |
 | `parallel-sweep/spec/GC.Spec.SweepPar.Join.fst` | Its proof, and its non-vacuity witnesses (§8). |
+| `parallel-sweep/impl/GC.Impl.SweepPar.Prepass.fst` | The pre-pass, implemented and proved (§8). |
 | `parallel-sweep/Makefile` | `make verify` and `make test`. |
 
 Toolchain: only the pinned `./fstar` (F* `nightly-2026-10-17`, `f43a1127`, Z3 5.3.0), with the repo's own F* flags. The OCaml side uses opam switch `fstar-gc` (OCaml 4.14.0).
@@ -449,6 +450,13 @@ fn prepass (heap: heap_t) (k: SZ.t{SZ.v k >= 1}) (bounds: A.array U64.t)
   - The heap is unchanged (`is_heap heap g`, the same `g`). The pre-pass only reads.
   - The first `n` entries are a valid boundary list for `g`. So they start at `zero_addr`, end at `heap_size`, increase strictly, and every one in between is a header the sequential walk lands on. This is exactly the theorem's hypothesis.
 - **Not specified:** how evenly the boundaries are spread. That affects speed, not correctness. A pre-pass that always returns `[zero_addr; heap_size]` meets the specification.
+- **Implemented and proved** in `GC.Impl.SweepPar.Prepass`, with the interface's signature, with no `admit` or `assume`. Section 5 of this list explains why it is a separate module.
+  - **Work.** An object counts 1, plus its wosize if it is white or blue. The sweep reads every header, and it also flushes free objects, which zeroes their fields. A first walk from `zero_addr` (`total_work`) adds up the heap's total work `W`, which is at most the heap's size in words.
+  - **Cuts.** A second walk cuts at the first object start whose work before it reaches the next share's target, `floor(i * W / k)` for `i = 1 .. k - 1`. Every cut is an object start, so the heap size need not divide by `k`, and segments differ in size. An object that passes several targets gives one cut, and every target it passes is skipped. So a heap with fewer objects than `k` gets fewer segments. The target is kept as a quotient and remainder (`advance`), so `i * W` is never formed and nothing overflows. These counters are `SZ.t`, because `SZ.sizet_to_uint64` only gives `v k % pow2 64`.
+  - **The proof.** The boundaries written so far form a `prefix_ok`: they start at `zero_addr`, increase strictly, and each later one passes `bounds_from`'s check (`cut_ok`). `visits_step` shows that one step of the walk from a visited position lands on a visited position. `prefix_close` turns a good prefix with `heap_size` appended into `valid_bounds` of `bounds_list`. The counter `n` never passes the share index `i`, which is at most `k`, so the closing `heap_size` always fits.
+  - **Not proved: how even the segments are.** The specification does not state it, so the code above follows the rule, but nothing checks the rule.
+  - **Non-vacuity.** `prepass_witness` calls every pure lemma on arguments meeting its precondition: the one-entry prefix on any heap, and a first cut on heaps whose first object ends inside the heap. Writing a cut one word past the object start makes the proof fail.
+  - **Proof check:** about 25 s, with the default rlimit everywhere. It also verifies with `--retry` off on `--z3seed 7`.
 - **A cost to keep in mind.** A header cannot be recognised from its bytes alone, so the only way to find walk positions is to walk from `zero_addr`. The pre-pass is therefore a sequential walk over every header. It does no writes and reads one word per object, so it is cheaper than the sweep, but it is still linear in the number of objects. Spreading the boundaries well needs that walk, or positions recorded earlier (during marking or allocation, for example). That is a design question for the implementation, not for this specification.
 
 ### 2. The merge: `merge` (`GC.Impl.SweepPar`)
@@ -525,5 +533,5 @@ fn sweep_par_seq (heap: heap_t) (k: SZ.t{SZ.v k >= 1})
 
 1. ~~Prove `join_correct`.~~ Done.
 2. Implement and prove `sweep_segment`, using locality (§7) and range versions of `read_word`, `write_word`, `makeWhite` and `flush_blue_impl`.
-3. Implement and prove `prepass` and `merge`.
+3. Implement and prove `prepass` (done) and `merge`.
 4. Implement and prove `sweep_par_seq` from the three pieces.
