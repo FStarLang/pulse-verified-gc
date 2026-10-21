@@ -1,12 +1,13 @@
 # Parallel sweep, Phase 1: model, statement, attack, and proof
 
-Branch `sheera/parallel-sweep`, from `fork/main` `0ce5e09`. Context: `spike/parallel/SPIKE.md` on `sheera/spike-parallel`.
+Branch `sheera/parallel-sweep`, from `fork/main` `0ce5e09`, with `origin/main` `f594eff` merged in (PRs #25, #26, #28). Context: `spike/parallel/SPIKE.md` on `sheera/spike-parallel`.
 
 **Status.**
 
 - **Stage A:** the model and theorem are written.
 - **Stage B:** no counterexample. 10,750 (heap, boundary list) pairs were tested, from 17 hand-built and 862 generated heaps. All four deliberately broken variants were caught.
 - **Stage C:** `sweep_par_correct` is proved, with no `admit` or `assume` (§6). The model, the theorem and every `val` are unchanged. The proof uses only `valid_bounds`; the rest of `fused_pre` is not needed.
+- **Pulse, one segment:** the specification of `sweep_segment` is written and type-checks (§7). It is not implemented or proved yet. It is waiting for review.
 
 Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct` and `mark-and-sweep/NOTES.md`, merged in from `sheera/coalesce-exact`. The directory is left out of the root build.
 
@@ -17,6 +18,7 @@ Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct
 | `parallel-sweep/spec/GC.Spec.SweepPar.Vacuity.fst` | A satisfying call for every proof lemma's precondition. |
 | `parallel-sweep/spec/GC.Spec.SweepPar.Mutants.fst` | Four wrong merge and link steps. Used only by the tests. |
 | `parallel-sweep/test/` | The OCaml driver, the build script, the runner, and the `GC.Spec.ZeroAddr` realisation. |
+| `parallel-sweep/impl/GC.Impl.SweepSegment.fsti` | The Pulse specification of one segment, `sweep_segment` (§7). No implementation yet. |
 | `parallel-sweep/Makefile` | `make verify` and `make test`. |
 
 Toolchain: only the pinned `./fstar` (F* `nightly-2026-10-17`, `f43a1127`, Z3 5.3.0), with the repo's own F* flags. The OCaml side uses opam switch `fstar-gc` (OCaml 4.14.0).
@@ -212,7 +214,7 @@ Each mutant in `GC.Spec.SweepPar.Mutants` breaks one thing the statement depends
 
 ```
 cd parallel-sweep
-make verify     # the four modules, about 35 s
+make verify     # the four modules and the Pulse interface, about 35 s
 make test       # verify, extract, build, run all 19 jobs; about 6 min on 8 cores
 ```
 
@@ -265,3 +267,104 @@ Every write lands at or above `wlo`, the pending run's first word, or the cursor
 - **Toolchain notes from this session:**
   - The root `Makefile` needs GNU make 4 (`gmake`); macOS `make` 3.81 stops with "multiple target patterns".
   - The shared `_cache` held a `GC.Spec.Coalesce` checked file from another branch. `gmake _cache/GC.Spec.SweepCoalesce.Defs.fst.checked` rebuilt it for `fork/main`.
+  - After merging `origin/main`, the shared `_cache` was stale for the spec modules it changed (`GC.Spec.Object`, `GC.Spec.Allocator`, and those above them). `make verify` still passed, re-checking them in memory, but did not write `GC.Spec.SweepPar.Vacuity`'s checked file. Rebuilding the 23 GC modules the parallel-sweep files depend on through the root `Makefile` (`gmake _cache/<module>.checked`) fixed it. After the merge, `make test`'s 19 logs are byte-for-byte identical to the ones before it.
+
+## 7. The Pulse specification of one segment
+
+`parallel-sweep/impl/GC.Impl.SweepSegment.fsti`. It is specification only: no body and no proof. `make verify` type-checks it.
+
+The OCaml runtime owns the worker threads, and each worker calls `sweep_segment` on its own segment. The merge-and-link step (`link_all`) stays sequential and is not part of this function.
+
+### The heap representation, and owning one range
+
+The function reuses `GC.Impl.Heap`, as `fused_sweep_coalesce` does. A `heap_t` is a byte array `data`, and its contents are a spec `heap`, so model and implementation talk about the same bytes. The sequential pass holds `is_heap heap s`, which is a full `pts_to` on the whole array.
+
+A segment instead holds
+
+```fstar
+let is_heap_range (h: heap_t) (lo hi: nat) (s: Seq.seq U8.t) : slprop =
+  pts_to_range h.data lo hi s
+```
+
+`pts_to_range` is Pulse's standard permission for a sub-range of an array. It answers the question of whether owning one range is hard: it is not.
+
+- `pts_to_range_intro` and `pts_to_range_split` cut a whole-array `pts_to` into one `pts_to_range` per segment, and `pts_to_range_join` puts them back. So `[lo, hi)` ranges that tile the heap can be handed out and collected again.
+- `pts_to_range_index` and `pts_to_range_upd` read and write one byte inside the range.
+- `pts_to_range` is `is_send`, so Pulse lets it move to another thread.
+
+Owning `[lo, hi)` gives no access at all to any byte outside it. That is what makes running segments at the same time sound: two workers' permissions cover disjoint bytes, so neither can read what the other writes.
+
+The cost is in the implementation, not the specification. `read_word`, `write_word` and `flush_blue_impl` take the whole-heap `is_heap`, so the implementation will need versions of them that work on `is_heap_range`.
+
+### The signature
+
+```fstar
+fn sweep_segment
+  (heap: heap_t)
+  (lo: hp_addr)
+  (hi: U64.t{U64.v lo < U64.v hi /\ U64.v hi <= heap_size})
+  (#g: erased heap_state)
+  (#bs: erased (list nat))
+  requires is_heap_range heap (U64.v lo) (U64.v hi)
+             (Seq.slice g (U64.v lo) (U64.v hi)) **
+           pure (SP.fused_pre g /\
+                 SP.valid_bounds g bs /\
+                 List.Tot.memP (U64.v lo, U64.v hi) (SP.segments bs))
+  returns r: seg_result
+  ensures exists* s.
+    is_heap_range heap (U64.v lo) (U64.v hi) s **
+    pure (s == Seq.slice (SP.sweep_segment g lo (U64.v hi)).SP.sheap
+                         (U64.v lo) (U64.v hi) /\
+          result_matches r (SP.sweep_segment g lo (U64.v hi)))
+```
+
+`SP` is `GC.Spec.SweepPar`. The model's function is called exactly as `sweep_all` calls it: `sweep_segment g (U64.uint_to_t lo) hi`.
+
+**Arguments.**
+
+- `heap`, `lo` and `hi` are the only runtime arguments. `lo` is an `hp_addr`: word-aligned, and below `heap_size`. `hi` may equal `heap_size`, so it is a plain `U64.t`. The refinement `lo < hi <= heap_size` is erased in C, but it lets the signature take `Seq.slice` of `g` from `lo` to `hi`.
+- `g` is ghost: the whole heap as it was before any worker started. Every worker is given the same `g`. Since it is ghost, sharing it costs nothing at run time and gives no access to memory. The model sweeps every segment against this one input heap, so the specification needs it too.
+- `bs` is ghost: the boundary list the runtime chose.
+
+**Precondition, part by part.**
+
+1. **`is_heap_range heap lo hi (Seq.slice g lo hi)`.** The worker owns the bytes `[lo, hi)`, and nothing else, and they hold `g`'s bytes there. The rest of the heap belongs to other workers. This is the condition that makes parallel calls sound.
+2. **`SP.fused_pre g`.** The heap is one the sequential pass may run on. It is the precondition of the shipped `fused_sweep_coalesce`, the same one the theorem assumes (§2). The proof of `sweep_par_correct` did not need it, but the implementation may: `fused_sweep_coalesce`'s own proof uses its density and well-formedness to keep each run inside the heap. Requiring it costs the caller nothing, since the runtime only sweeps where the sequential pass would.
+3. **`SP.valid_bounds g bs /\ List.Tot.memP (lo, hi) (SP.segments bs)`.** `lo` and `hi` are two consecutive boundaries of a valid boundary list for `g`, so `[lo, hi)` is one of the segments the model sweeps. In particular, both are walk positions, or `zero_addr` and `heap_size`, so every object whose header lies in `[lo, hi)` ends at or before `hi`. That is why the segment needs no byte outside its range. This is stated through the model's own `valid_bounds` and `segments`, not a new predicate, so the result plugs straight into `sweep_all`.
+
+**Postcondition, part by part.**
+
+1. **`is_heap_range heap lo hi s`.** The worker gives back ownership of `[lo, hi)`, and of nothing else. The runtime can join the ranges back into the whole heap.
+2. **`s == Seq.slice (SP.sweep_segment g lo hi).sheap lo hi`.** The bytes of the segment are those of the model's segment copy of the heap, restricted to `[lo, hi)`. These are exactly the bytes `splice` keeps from that copy. The model's copy outside `[lo, hi)` is not mentioned, because no worker owns it and `splice` discards it. So joining all workers' ranges gives the model's `splice_all g rs`, byte for byte.
+3. **`result_matches r (SP.sweep_segment g lo hi)`.** Every returned value equals the model's.
+
+### The returned record
+
+`seg_out` holds a whole heap and uses `nat` and `option`, which the C extraction cannot take (`EXTRACTION_SKILL.md`: no `option` in return types, and records are flat structs of machine types). So the values other than the heap go in one flat record:
+
+```fstar
+noeq type seg_result = {
+  all_free   : bool;
+  lead_fb    : U64.t;  lead_rw  : U64.t;
+  trail_fb   : U64.t;  trail_rw : U64.t;
+  has_link   : bool;   first_link : U64.t;
+  local_head : U64.t;
+}
+```
+
+`result_matches r o` says, field by field:
+
+- `all_free`, `local_head`, `lead.fb` and `trail.fb` are equal.
+- `lead.rw` and `trail.rw` are equal as numbers (`U64.v r.lead_rw == o.lead.rw`). A run has at most `heap_size / 8` words, so a `U64.t` holds it.
+- `first_link = None` gives `has_link = false` and `first_link = 0UL`. `Some a` gives `has_link = true` and `first_link = a`. Fixing the `None` case to `0UL` makes the record a function of the model's output, with no unspecified field.
+
+### What the implementation and its proof will need
+
+Nothing below is done yet. These are the obligations the specification creates.
+
+- **Locality.** The model's `sweep_segment` takes the whole heap `g`, but the implementation sees only `[lo, hi)`. The proof needs a lemma that the model's output on `[lo, hi)`, and its returned values, depend only on `g`'s bytes in `[lo, hi)`. This should hold for two reasons. First, `seg_objects` only reads headers in `[lo, hi)`, and each object ends at or before `hi` (precondition 3). Second, `flush_blue` writes only its run's words: its header, its link word only when the run has at least two words, and the fields after it. The proof of `sweep_par_correct` shows the writes stay inside (`splice` would lose any outside one), but not the reads.
+- **Range versions** of `read_word`, `write_word`, `makeWhite`, and `flush_blue_impl`, working on `is_heap_range`.
+- **From `segments bs` to walk facts.** `bounds_next` and `walk_step` in `GC.Spec.SweepPar` already turn precondition 3 into local facts: `lo < hi`, `hi` is a walk position or `heap_size`, and the walk from `lo` lands on `hi` (`reach`).
+- **Joining.** A lemma that the workers' ranges, joined left to right, equal `splice_all g rs`. The sequential `link_all` then runs on the whole heap as before.
+
+The precondition is satisfiable for every heap the sequential pass runs on: `bs = [zero_addr; heap_size]` is valid (`whole_heap_bounds_valid`), and `(zero_addr, heap_size)` is its only segment. That is the whole heap as one segment. A formal witness is left for the proof stage.

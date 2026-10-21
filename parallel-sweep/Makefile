@@ -3,7 +3,7 @@
 # Kept out of the root build: this is Phase 1 work, verified and tested
 # here on its own.
 #
-#   make verify     Verify the parallel-sweep spec modules
+#   make verify     Verify the parallel-sweep spec modules and the Pulse interface
 #   make test       Extract to OCaml (Custard) and compare sweep_par with the sequential pass
 #   make clean
 
@@ -20,7 +20,7 @@ Z3_TIMEOUT ?= --z3smtopt '(set-option :timeout 300000)'
 INCLUDES = \
   --include $(ROOT)/common/spec --include $(ROOT)/common/lib --include $(ROOT)/common/impl \
   --include $(ROOT)/mark-and-sweep/spec --include $(ROOT)/mark-and-sweep/impl \
-  --include spec
+  --include spec --include impl
 
 FSTAR_FLAGS = \
   $(RETRY) \
@@ -37,10 +37,11 @@ FSTAR_FLAGS = \
 FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 
 SPEC = spec/GC.Spec.SweepPar.Exec.fst spec/GC.Spec.SweepPar.fst spec/GC.Spec.SweepPar.Mutants.fst spec/GC.Spec.SweepPar.Vacuity.fst
+IMPL = impl/GC.Impl.SweepSegment.fsti
 
 .PHONY: verify test clean
 verify:
-	for f in $(SPEC); do $(FSTAR) $$f || exit 1; done
+	for f in $(SPEC) $(IMPL); do $(FSTAR) $$f || exit 1; done
 
 # Custard (--codegen OCaml) extracts a whole program from its entry points,
 # and reads every module from its .checked file, so `verify` must have written
