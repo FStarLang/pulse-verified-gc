@@ -1787,6 +1787,13 @@ let cheney_collect_preserves_collection_heap_shape
   update_major_pointers_preserves_chain_objects_blue
     prom.major_final prom.fwd_map prom.fp_final;
   cheney_collect_preserves_no_black minor major fp roots;
+  // the free list stays complete through promotion and the pointer rewrite
+  wf_parts ();
+  GenInv.free_list_exact_iff major fp;
+  GC.Gen.CheneyFlComplete.cheney_promote_preserves_fl_complete minor major fp roots;
+  cheney_promote_preserves_wfh_part1 minor major fp roots;
+  GC.Gen.AllocExact.update_major_pointers_preserves_fl_complete
+    prom.major_final prom.fwd_map prom.fp_final;
   assert (well_formed_heap res.mc_major);
   cheney_collect_preserves_no_pointer_to_blue minor major fp roots;
   FreeListShape.fp_pointer_or_zero_fl_valid_implies_fp_valid
@@ -1811,6 +1818,8 @@ let cheney_collect_preserves_collection_heap_shape
   assert (Mark.no_pointer_to_blue res.mc_major);
   cheney_collect_preserves_wfh_from_shape minor major fp roots;
   assert (blue_fields_closed res.mc_major);
+  GC.Gen.AllocExact.fl_valid_cob_gives_sound res.mc_major res.mc_fp;
+  GenInv.free_list_exact_iff res.mc_major res.mc_fp;
   GenInv.major_heap_shape_intro res.mc_major res.mc_fp;
   GenInv.collection_heap_shape_after_minor_reset minor res.mc_major res.mc_fp
 #pop-options

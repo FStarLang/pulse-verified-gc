@@ -132,6 +132,15 @@ val chain_avoids_null (g: heap) (excl: U64.t) (steps: nat)
 val chain_avoids_zero (g: heap) (fp excl: U64.t)
   : Lemma (ensures chain_avoids g fp excl 0 = true)
 
+/// A walk that stops at once avoids everything it has not already met: at a
+/// null, out-of-range or misaligned node, or at a node whose link word lies
+/// outside the heap.
+val chain_avoids_terminal (g: heap) (fp excl: U64.t) (steps: nat)
+  : Lemma (requires fp = 0UL \/ U64.v fp < U64.v mword \/ U64.v fp >= heap_size \/
+                    U64.v fp % U64.v mword <> 0 \/
+                    (fp <> excl /\ U64.v (hd_address (fp <: obj_addr)) + 16 > heap_size))
+          (ensures chain_avoids g fp excl steps = true)
+
 val chain_avoids_unfold_step (g: heap) (fp excl: U64.t) (steps: nat)
   : Lemma (requires U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
                     U64.v fp % U64.v mword = 0 /\
