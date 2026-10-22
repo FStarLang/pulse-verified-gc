@@ -58,6 +58,7 @@
 #include "GC_Spec_ZeroAddr.h"  /* zero_addr, heap_size_u64 */
 #include "profiling_counters.h"
 extern size_t queue_size_sz;
+void vergc_par_sweep_setup(void);  /* par_sweep_bridge.c */
 
 /* --- Globals --- */
 static gen_heap_t   gc_gen_heap;
@@ -158,6 +159,9 @@ static void ensure_heap(void) {
 
     /* Re-derive constants that depend on minor_heap_size */
     krmlinit_globals();
+    /* The parallel sweep: off unless VERGC_PAR_SWEEP_THREADS is set
+     * (par_sweep_bridge.c). */
+    vergc_par_sweep_setup();
     uint8_t *minor_data = (uint8_t *)calloc(1, minor_sz);
     if (!minor_data)
         caml_fatal_error("verified gen GC: cannot allocate minor heap");

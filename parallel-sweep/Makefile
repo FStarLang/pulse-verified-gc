@@ -39,7 +39,7 @@ FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 SPEC = spec/GC.Spec.SweepPar.Exec.fst spec/GC.Spec.SweepPar.fst spec/GC.Spec.SweepPar.Mutants.fst spec/GC.Spec.SweepPar.Vacuity.fst spec/GC.Spec.SweepPar.Local.fst spec/GC.Spec.SweepPar.Join.fsti spec/GC.Spec.SweepPar.Join.fst spec/GC.Spec.SweepPar.SegLoop.fst
 IMPL = impl/GC.Impl.HeapRange.fst impl/GC.Impl.SweepSegment.fsti impl/GC.Impl.SweepSegment.fst impl/GC.Impl.SweepPar.fsti impl/GC.Impl.SweepPar.Prepass.fst impl/GC.Impl.SweepPar.Merge.fst impl/GC.Impl.SweepPar.fst
 
-.PHONY: verify test extract ctest clean
+.PHONY: verify test extract ctest snapshot clean
 verify:
 	for f in $(SPEC) $(IMPL); do $(FSTAR) $$f || exit 1; done
 
@@ -92,12 +92,16 @@ CUSTARD_C = \
   --custard_entry GC.Impl.SweepSegment.sweep_segment \
   --custard_entry GC.Impl.FusedSweepCoalesce.fused_sweep_coalesce
 
+# GC.Spec.Base and GC.Impl.Heap keep their prefix: their globals (zero_addr,
+# heap_size_u64) would otherwise be emitted as zero_addr0, zero_addr1 and
+# heap_size_u640, the names the generational extraction gives its own copies,
+# and the two could not be linked into one runtime (§9, Stage 3).
 KRML_MODS = \
   GC.Impl.SweepPar GC.Impl.SweepPar.Prepass GC.Impl.SweepPar.Merge \
   GC.Impl.SweepSegment GC.Impl.HeapRange \
   GC.Impl.FusedSweepCoalesce GC.Impl.Coalesce \
-  GC.Impl.ArrayWord GC.Impl.Heap GC.Impl.Object \
-  GC.Spec.ZeroAddr GC.Spec.Base GC.Spec.Heap GC.Spec.Object \
+  GC.Impl.ArrayWord GC.Impl.Object \
+  GC.Spec.ZeroAddr GC.Spec.Heap GC.Spec.Object \
   GC.Lib.Header GC.Lib.Address
 
 # One translation unit, GC_SweepPar.{c,h}, with the three entry modules as
@@ -132,6 +136,16 @@ EXTRACTED_C = $(EXTRACT)/GC_SweepPar.c $(EXTRACT)/GC_Spec_GC_Lib_Header_GC_Lib_A
 ctest: extract
 	$(CC) $(CFLAGS_C) $(EXTRACTED_C) $(COMPAT)/compat.c c/sweep_par_ctest.c -o _build/sweep_par_ctest
 	./_build/sweep_par_ctest
+
+# The extracted C, committed so the OCaml runtime builds without F* or krml
+# (generational/ocaml-integration/verified_gc/Makefile compiles it), as
+# generational/snapshot is.
+SNAPSHOT = snapshot
+
+snapshot: extract
+	rm -rf $(SNAPSHOT); mkdir -p $(SNAPSHOT)/internal
+	cp $(EXTRACT)/*.c $(EXTRACT)/*.h $(SNAPSHOT)/
+	cp $(EXTRACT)/internal/*.h $(SNAPSHOT)/internal/
 
 clean:
 	rm -rf _build

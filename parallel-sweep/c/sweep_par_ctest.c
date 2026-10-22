@@ -126,14 +126,14 @@ static int run_heap(uint64_t seed, uint64_t za, uint64_t words, enum shape sh) {
   gen_heap(g, za, hs, sh);
 
   memcpy(a, g, hs);
-  uint64_t fpa = fused_sweep_coalesce((heap_t){ .data = a, .size = hs });
+  uint64_t fpa = fused_sweep_coalesce((GC_Impl_Heap_heap_t){ .data = a, .size = hs });
 
   static const size_t ks[] = { 1, 2, 4, 8 };
   for (size_t ki = 0; ki < 4; ki++) {
     size_t k = ks[ki];
     uint64_t bounds[9];
     seg_result results[8];
-    heap_t hb = { .data = b, .size = hs };
+    GC_Impl_Heap_heap_t hb = { .data = b, .size = hs };
 
     memcpy(b, g, hs);
     size_t n = prepass0(hb, k, bounds);

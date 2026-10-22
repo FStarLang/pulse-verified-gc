@@ -1593,10 +1593,16 @@ void update_promoted_objects(heap_t major, uint64_t *fwd_arr)
   }
 }
 
+/* HAND-ADDED, not extracted (docs/parallel-sweep-phase1.md, §9, Stage 3):
+   the parallel sweep's hook.  NULL, so the sequential sweep runs, unless
+   ocaml-integration/verified_gc/par_sweep_bridge.c installs it. */
+uint64_t (*vergc_sweep_hook)(heap_t heap, uint64_t (*seq)(heap_t heap)) = NULL;
+
 uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp)
 {
   KRML_MAYBE_UNUSED_VAR(fp);
   mark_loop_bounded(heap, st);
+  if (vergc_sweep_hook != NULL) return vergc_sweep_hook(heap, fused_sweep_coalesce); /* HAND-ADDED */
   return fused_sweep_coalesce(heap);
 }
 

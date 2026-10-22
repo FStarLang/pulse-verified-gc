@@ -623,6 +623,7 @@ seg_result sweep_one(heap_t heap, uint64_t lo, uint64_t hi);
 uint64_t   fused_sweep_coalesce(heap_t heap);
 ```
 
+- These are the names as first extracted. Stage 3 drops `-no-prefix` on two modules, so `heap_t` becomes `GC_Impl_Heap_heap_t`; nothing else in the list changes.
 - Every ghost argument (`g`, `bs`, `rs`, `p`) and every refinement is erased. `seg_result` is the flat record of §7, field for field.
 - `prepass0` and `merge0` are `GC.Impl.SweepPar.prepass` and `.merge`, the functions with the interface's specifications (finding 2).
 - `sweep_one` is a helper of `sweep_par_seq` that is not in the interface (finding 3).
@@ -693,11 +694,11 @@ make ctest      # verify, extract, compile with -Wall -Wextra, run; about 16 s o
 
 ### Stage 2: the threads (design only, not wired in)
 
-`parallel-sweep/c/par_sweep.c`, 63 lines, is the C that would run the pieces on threads. Nothing calls it, and no target builds it. It was compiled once with `cc -c -O2 -Wall -Wextra -Wpedantic -std=c11` against the Stage 1 headers, with no warnings. It has not been linked or run.
+`parallel-sweep/c/par_sweep.c`, 64 lines, is the C that runs the pieces on threads. Stage 3 wires it into the collector. In Stage 2 it was compiled once with `cc -c -O2 -Wall -Wextra -Wpedantic -std=c11` against the Stage 1 headers, with no warnings, but not linked or run.
 
 It has two entry points. Both are called only from the thread that runs the collector, never at the same time:
 
-- `par_sweep_init(nthreads)` starts the pool once, for example at collector start-up.
+- `par_sweep_init(nthreads)` starts the pool once, for example at collector start-up, and returns the number of workers started.
 - `par_sweep(h, k)` is one sweep. It has `fused_sweep_coalesce(h)`'s meaning and returns the free-list head.
 
 The main thread runs `prepass0`, publishes the pieces, sleeps until the last one is done, then runs `merge0`. A worker takes the next unclaimed piece, sweeps it without the lock, stores its record, and takes another. There may be more pieces than workers. The main thread does not sweep. A worker calls only `sweep_segment` and the pthread functions on lines 21 to 31.
@@ -710,14 +711,14 @@ The main thread runs `prepass0`, publishes the pieces, sleeps until the last one
 |---|---|---|
 | 3-4 | `#include <pthread.h>`, `<signal.h>` | Mutex, condition variables, threads, signal masks. Nothing from `caml/`. |
 | 5 | `#include "GC_SweepPar.h"` | The extracted `heap_t`, `seg_result`, `sweep_segment`, `prepass0`, `merge0`, `sweep_par_seq`, unchanged. |
-| 7 | `MAX_PIECES 64` | An upper bound on pieces. It sizes the two arrays, and line 53 keeps `k` within it. |
+| 7 | `MAX_PIECES 64` | An upper bound on pieces. It sizes the two arrays, and line 54 keeps `k` within it. |
 | 9 | `mu` | Guards `heap`, `npieces`, `next`, `unfinished` and `results`, and `bounds` while a sweep is running. |
 | 10 | `work` | Idle workers wait on it for pieces. |
 | 11 | `done` | The main thread waits on it for the last piece. |
 | 12 | `nworkers` | The number of threads started. Written by `par_sweep_init` and read by `par_sweep`, both on the collector's thread. Also set to 0 in a forked child by `forget_workers` (line 35), which runs on the child's only thread. |
-| 13 | `heap` | The current sweep's heap. Written by the main thread under `mu` (line 57), read by workers under `mu` (line 25). |
-| 14 | `bounds[MAX_PIECES + 1]` | Room for `k + 1` boundaries. Written only by `prepass0` (line 55), on the main thread, between sweeps. Read by workers only under `mu` (line 26), during a sweep. |
-| 15 | `results[MAX_PIECES]` | One slot per piece. Slot `i` is written only by the worker that took piece `i`, under `mu` (line 30). Read by `merge0` after the sweep (line 62). |
+| 13 | `heap` (`GC_Impl_Heap_heap_t`) | The current sweep's heap. Written by the main thread under `mu` (line 58), read by workers under `mu` (line 25). |
+| 14 | `bounds[MAX_PIECES + 1]` | Room for `k + 1` boundaries. Written only by `prepass0` (line 56), on the main thread, between sweeps. Read by workers only under `mu` (line 26), during a sweep. |
+| 15 | `results[MAX_PIECES]` | One slot per piece. Slot `i` is written only by the worker that took piece `i`, under `mu` (line 30). Read by `merge0` after the sweep (line 63). |
 | 16 | `npieces, next, unfinished` | The hand-out state, all zero at start. Under `mu`, always `next <= npieces` and `unfinished >= npieces - next`. `unfinished` counts the pieces of this sweep whose record is not yet stored. Between sweeps, `next == npieces` and `unfinished == 0`. |
 
 **`worker`, lines 18-33.**
@@ -729,48 +730,49 @@ The main thread runs `prepass0`, publishes the pieces, sleeps until the last one
 | 22 | `for (;;)` | Workers never exit. They live until the process ends. |
 | 23 | `while (next == npieces) pthread_cond_wait(&work, &mu);` | With no piece left, sleep. The `while` re-checks after spurious wake-ups, and when a broadcast wakes more workers than there are pieces. |
 | 24 | `size_t i = next++;` | **Each piece goes to exactly one worker.** Pieces are taken only here, under `mu`, by incrementing `next`. Line 23 ensures `next < npieces`, so `i` is a piece of this sweep and `next` never exceeds `npieces`. |
-| 25 | `heap_t h = heap;` | The worker copies the heap handle under `mu`. It never reads the shared `heap` again for this piece. |
+| 25 | `GC_Impl_Heap_heap_t h = heap;` | The worker copies the heap handle under `mu`. It never reads the shared `heap` again for this piece. |
 | 26 | `uint64_t lo = bounds[i], hi = bounds[i + 1];` | Piece `i` is the segment between consecutive boundaries. Since `i + 1 <= npieces = n - 1`, both entries are among the `n` that `prepass0` wrote this sweep. They are read under `mu`, which orders them after `prepass0`'s writes. |
 | 27 | `pthread_mutex_unlock(&mu);` | Pieces are swept without the lock, so they run at the same time. |
 | 28 | `seg_result r = sweep_segment(h, lo, hi);` | The only work done outside the lock. It is the extracted, proved `sweep_segment`. Its precondition holds as in `sweep_par_seq`: `(lo, hi)` is a segment of a valid boundary list for the heap, and the bytes `[lo, hi)` are still the input heap's, because no other piece touches them. It reads and writes only `[lo, hi)`, plus the read-only globals `heap_size_u640` and `blue` (Stage 1). It calls no OCaml runtime function and does not allocate. It returns, because its loop has a `decreases` clause. Distinct `i` give disjoint ranges, since the boundaries strictly increase. |
 | 29 | `pthread_mutex_lock(&mu);` | Orders all of this piece's heap writes before anything the main thread does after it next takes `mu`. |
 | 30 | `results[i] = r;` | Slot `i` gets piece `i`'s record. Only this worker took `i` (line 24), so no other thread writes the slot. |
-| 31 | `if (--unfinished == 0) pthread_cond_signal(&done);` | **A piece is counted as finished only after its sweep has returned and its record is stored.** The last one wakes the main thread. Signalling under `mu` means the wake-up cannot be lost: the main thread checks `unfinished` under `mu` before it waits (line 60). |
+| 31 | `if (--unfinished == 0) pthread_cond_signal(&done);` | **A piece is counted as finished only after its sweep has returned and its record is stored.** The last one wakes the main thread. Signalling under `mu` means the wake-up cannot be lost: the main thread checks `unfinished` under `mu` before it waits (line 61). |
 
-**`par_sweep_init`, lines 35-49.**
+**`par_sweep_init`, lines 35-50.**
 
 | Line | Code | Must guarantee |
 |---|---|---|
-| 35 | `static void forget_workers(void) { nworkers = 0; }` | The child handler for `fork`. A child process has only the thread that called `fork`; the workers are not copied. Setting `nworkers` to 0 sends the child's `par_sweep` down line 54 to `sweep_par_seq`, on its own thread. That path never touches `mu`, `work`, `done` or the hand-out state, so it does not matter what state `fork` left them in. |
+| 35 | `static void forget_workers(void) { nworkers = 0; }` | The child handler for `fork`. A child process has only the thread that called `fork`; the workers are not copied. Setting `nworkers` to 0 sends the child's `par_sweep` down line 55 to `sweep_par_seq`, on its own thread. That path never touches `mu`, `work`, `done` or the hand-out state, so it does not matter what state `fork` left them in. |
 | 39 | `pthread_atfork(NULL, NULL, forget_workers);` | Registers that handler, before any worker exists. It then runs in every child, as `fork` returns there. `par_sweep_init` is called once, so the handler is registered once. Registering it twice would still be harmless. |
 | 40-42 | `sigfillset`; `pthread_sigmask(SIG_BLOCK, &all, &old)` | Block every signal on the calling thread while threads are created. New threads inherit the mask, so **no asynchronous signal is delivered to a worker**. The OCaml runtime's handlers would otherwise run on a worker and touch runtime state. |
 | 43 | `for (; nworkers < nthreads; nworkers++)` | Start up to `nthreads` workers. On return, `nworkers` is the number actually started. |
-| 44-45 | `pthread_create(&t, NULL, worker, NULL)`; stop on failure | A failure leaves fewer workers, possibly none. Line 54 handles none. |
+| 44-45 | `pthread_create(&t, NULL, worker, NULL)`; stop on failure | A failure leaves fewer workers, possibly none. Line 55 handles none. |
 | 46 | `pthread_detach(t);` | Workers are never joined. |
 | 48 | `pthread_sigmask(SIG_SETMASK, &old, NULL);` | The calling thread's signal mask is restored. The program sees no change. |
+| 49 | `return nworkers;` | The number of workers started, for the caller to report. Added in Stage 3. |
 
-**`par_sweep`, lines 51-63.**
+**`par_sweep`, lines 52-64.**
 
 | Line | Code | Must guarantee |
 |---|---|---|
-| 53 | `k = k < 1 ? 1 : k > MAX_PIECES ? MAX_PIECES : k;` | `prepass0`'s `k >= 1`. Also `k + 1 <= MAX_PIECES + 1` boundaries and `n - 1 <= k <= MAX_PIECES` records, so both arrays are big enough. |
-| 54 | `if (nworkers == 0) return sweep_par_seq(h, k, bounds, results);` | With no worker, nobody would sweep and line 60 would wait forever. Instead, run the verified single-thread driver. |
-| 55 | `size_t n = prepass0(h, k, bounds);` | Runs on the main thread, between sweeps, when no worker reads `bounds` (`next == npieces`). Gives `2 <= n <= k + 1` valid boundaries, so `n - 1 >= 1` pieces. |
-| 56 | `pthread_mutex_lock(&mu);` | Orders `prepass0`'s writes to `bounds` before any worker's read at line 26. |
-| 57 | `heap = h;` | Publishes the heap. |
-| 58 | `npieces = n - 1; next = 0; unfinished = n - 1;` | Publishes this sweep's pieces `0 .. n-2`, none taken and none finished. The last sweep ended with `unfinished == 0`, so no worker is still inside an old piece. |
-| 59 | `pthread_cond_broadcast(&work);` | Wakes every idle worker. A worker not yet waiting sees `next < npieces` at line 23 and does not wait. |
-| 60 | `while (unfinished > 0) pthread_cond_wait(&done, &mu);` | **Merge only after every piece has finished.** The loop exits only when `unfinished == 0`, that is after `n - 1` decrements, one per piece at line 31. The `while` covers spurious wake-ups. |
-| 61 | `pthread_mutex_unlock(&mu);` | At this point `next == npieces` and `unfinished == 0`, the between-sweeps state that lines 55 and 58 rely on next time. |
-| 62 | `return merge0(h, results, n - 1);` | Runs on the main thread after every worker's heap writes and record stores, which are ordered before it by `mu` (lines 29 and 60). Its precondition is `merge`'s: the heap is the spliced heap and the records match, in segment order. |
+| 54 | `k = k < 1 ? 1 : k > MAX_PIECES ? MAX_PIECES : k;` | `prepass0`'s `k >= 1`. Also `k + 1 <= MAX_PIECES + 1` boundaries and `n - 1 <= k <= MAX_PIECES` records, so both arrays are big enough. |
+| 55 | `if (nworkers == 0) return sweep_par_seq(h, k, bounds, results);` | With no worker, nobody would sweep and line 61 would wait forever. Instead, run the verified single-thread driver. |
+| 56 | `size_t n = prepass0(h, k, bounds);` | Runs on the main thread, between sweeps, when no worker reads `bounds` (`next == npieces`). Gives `2 <= n <= k + 1` valid boundaries, so `n - 1 >= 1` pieces. |
+| 57 | `pthread_mutex_lock(&mu);` | Orders `prepass0`'s writes to `bounds` before any worker's read at line 26. |
+| 58 | `heap = h;` | Publishes the heap. |
+| 59 | `npieces = n - 1; next = 0; unfinished = n - 1;` | Publishes this sweep's pieces `0 .. n-2`, none taken and none finished. The last sweep ended with `unfinished == 0`, so no worker is still inside an old piece. |
+| 60 | `pthread_cond_broadcast(&work);` | Wakes every idle worker. A worker not yet waiting sees `next < npieces` at line 23 and does not wait. |
+| 61 | `while (unfinished > 0) pthread_cond_wait(&done, &mu);` | **Merge only after every piece has finished.** The loop exits only when `unfinished == 0`, that is after `n - 1` decrements, one per piece at line 31. The `while` covers spurious wake-ups. |
+| 62 | `pthread_mutex_unlock(&mu);` | At this point `next == npieces` and `unfinished == 0`, the between-sweeps state that lines 56 and 59 rely on next time. |
+| 63 | `return merge0(h, results, n - 1);` | Runs on the main thread after every worker's heap writes and record stores, which are ordered before it by `mu` (lines 29 and 61). Its precondition is `merge`'s: the heap is the spliced heap and the records match, in segment order. |
 
 #### Why the three properties hold
 
-- **Every piece is swept.** `nworkers >= 1` here, by line 54. A worker loops while `next < npieces` (lines 23-24), so all `n - 1` pieces are taken. Each one returns (line 28) and is counted (line 31).
+- **Every piece is swept.** `nworkers >= 1` here, by line 55. A worker loops while `next < npieces` (lines 23-24), so all `n - 1` pieces are taken. Each one returns (line 28) and is counted (line 31).
 - **Each piece is swept by exactly one worker.** A piece is taken only at line 24, under `mu`, by `i = next++`. So the indices handed out in one sweep are `0, 1, ..., n - 2`, each once. Line 23 stops `next` before `npieces`.
-- **Merge runs only after all pieces have finished.** Line 60 leaves its loop only when `unfinished == 0`. `unfinished` starts at `n - 1` (line 58) and drops only at line 31, after a sweep has returned and its record is stored. The mutex orders those writes before line 62.
+- **Merge runs only after all pieces have finished.** Line 61 leaves its loop only when `unfinished == 0`. `unfinished` starts at `n - 1` (line 59) and drops only at line 31, after a sweep has returned and its record is stored. The mutex orders those writes before line 63.
 
-**No data race.** Every shared variable other than the heap is read and written only under `mu`, apart from two cases: `bounds`, written by `prepass0` while no worker can read it, and `results`, read by `merge0` after the last worker has stored its record. On the heap, workers access disjoint byte ranges `[b_i, b_{i+1})`. C11 treats each byte as its own memory location, so two workers never touch the same one. No worker touches the bytes below `zero_addr`. The main thread touches the heap only before line 56 (`prepass0`) and after line 60 (`merge0`).
+**No data race.** Every shared variable other than the heap is read and written only under `mu`, apart from two cases: `bounds`, written by `prepass0` while no worker can read it, and `results`, read by `merge0` after the last worker has stored its record. On the heap, workers access disjoint byte ranges `[b_i, b_{i+1})`. C11 treats each byte as its own memory location, so two workers never touch the same one. No worker touches the bytes below `zero_addr`. The main thread touches the heap only before line 57 (`prepass0`) and after line 61 (`merge0`).
 
 **How this relates to the proof.** `sweep_par_seq` is proved, and it makes these same calls: `prepass`, then `sweep_segment` on each segment, then `merge`. The arguments are the same, and so is the boundary array. `par_sweep` changes only the order of the `sweep_segment` calls and which thread runs each one. The argument that this keeps the result is that each call owns, and touches, only its own range (its `pts_to_range` precondition). That argument is not checked by F*: this C file is trusted. Stage 1's reverse-order run tests one other order.
 
@@ -792,3 +794,94 @@ These are the same as for calling the extracted `fused_sweep_coalesce`, plus two
 - **Choosing `k` and `nthreads`.** Some multiple of the thread count gives balance, and `MAX_PIECES` caps it. Not measured.
 - **Portability.** On Linux, `-std=c11` needs `_POSIX_C_SOURCE` for `pthread_sigmask` and `sigset_t`. Checked only on macOS 15.7.9, x86_64.
 - **Not done:** wiring into `collect_with_roots`, the `runtime_gen.patch` and `verified_gc/Makefile` changes Spike 3 lists, ThreadSanitizer, and programs that use the `threads` library.
+
+### Stage 3: wired into the verified collector
+
+#### The setting
+
+The parallel sweep is off unless an environment variable turns it on, read once at heap set-up, like `MIN_EXPANSION_WORDSIZE`:
+
+| Variable | Meaning |
+|---|---|
+| `VERGC_PAR_SWEEP_THREADS=n` | Start `n` worker threads, and sweep in parallel. Unset or `0`: the sequential `fused_sweep_coalesce`, as before. |
+| `VERGC_PAR_SWEEP_K=k` | At most `k` pieces per sweep. The default is `4n`, and the pool caps it at 64. |
+
+#### What changed, and why each change is there
+
+| File | Change |
+|---|---|
+| `generational/snapshot/GC_Gen_Impl.c` | **Two hand-added lines in extracted code**, both marked `HAND-ADDED`. One is a global function pointer `vergc_sweep_hook`, `NULL` by default. The other is in `collect_with_roots`: if the hook is set, call it with the heap and the sequential `fused_sweep_coalesce`, in place of `fused_sweep_coalesce(heap)`. |
+| `generational/ocaml-integration/verified_gc/par_sweep_bridge.c` | New. Reads the two variables. If on, it initialises the parallel sweep's globals, starts the pool, and installs the hook. The hook calls `par_sweep`. |
+| `generational/ocaml-integration/verified_gc/alloc_gen.c` | One call, `vergc_par_sweep_setup()`, in `ensure_heap`, after `zero_addr`, `heap_size_u64` and `krmlinit_globals()` are set. |
+| `generational/ocaml-integration/verified_gc/Makefile` | Compiles `parallel-sweep/snapshot/*.c`, `parallel-sweep/c/par_sweep.c` and the bridge into both `libvergc_gen.a` and `libvergc_gen_native.a`. `runtime_gen.patch` already copies every member of those archives into `libcamlrun.a` and `libasmrun.a`, so the patch is unchanged. |
+| `parallel-sweep/snapshot/` | New. The extracted C from `make snapshot`, committed so the runtime builds without F*, as `generational/snapshot` is. |
+| `parallel-sweep/Makefile` | `make snapshot`. `GC.Spec.Base` and `GC.Impl.Heap` no longer get `-no-prefix`. |
+| `parallel-sweep/c/par_sweep.c` | The heap type is renamed (see below), and `par_sweep_init` returns the number of workers started (line 49). |
+
+**Why the hook is in extracted code.** The sweep is called from inside the extracted collector: `gen_gc` calls `collect_with_roots`, which calls `fused_sweep_coalesce`, a `static` function in the same file. No C outside `GC_Gen_Impl.c` can replace that call. The alternative is to change `GC.Gen.Impl` in F* to call an assumed `val` with `fused_sweep_coalesce`'s specification. That would add a trusted `val` to the verified collector and require regenerating the whole snapshot, so it was not done. The hand edit is two lines. Its correctness rests on `par_sweep` having `fused_sweep_coalesce`'s result on every heap that satisfies `fused_sweep_coalesce`'s precondition. That precondition is what the verified `mark_loop_bounded` establishes at that point.
+
+**Regenerating the snapshot drops the hook**, since the snapshot is regenerated wholesale and has had no hand patches until now. That cannot go unnoticed: the bridge refers to `vergc_sweep_hook`, so without the hook the runtime fails to link. Until the hook moves into F*, it has to be re-applied after every regeneration.
+
+**Two extractions in one runtime.** Linking the parallel sweep's extracted C next to the generational collector's gave four duplicate symbols: `zero_addr0`, `zero_addr1`, `heap_size_u640` and `krmlinit_globals`. Both extractions name their copies of `zero_addr` and `heap_size_u64` this way.
+
+- Without `-no-prefix` on `GC.Spec.Base` and `GC.Impl.Heap`, krml names them `GC_Spec_Base_zero_addr`, `GC_Spec_Base_heap_size_u64` and `GC_Impl_Heap_zero_addr`.
+- The heap type becomes `GC_Impl_Heap_heap_t`. It has the same two fields as the generational `heap_t`. The bridge declares the generational `heap_t` itself and copies the two fields across.
+- `krmlinit_globals` is renamed at compile time, with `-Dkrmlinit_globals=sweep_par_krmlinit_globals`.
+- The parallel sweep's objects are compiled with `-fno-common`. Otherwise Apple clang 12 emits its two globals as common symbols, which the macOS linker does not pull out of an archive, and `ocamlrun` failed to link with `Undefined symbols: _GC_Spec_Base_zero_addr`.
+
+The C test (`make ctest`) passes unchanged after the renaming.
+
+**The two copies of `zero_addr`.** The parallel sweep reads its own copies, set by `sweep_par_krmlinit_globals()` from the same `zero_addr` and `heap_size_u64` externs the generational collector reads. The bridge calls it once, at set-up. The major heap never grows: `alloc_gen.c` allocates it once in `ensure_heap`. So the copies stay equal.
+
+**With the setting off,** behaviour is unchanged: the hook stays `NULL`, and `collect_with_roots` calls `fused_sweep_coalesce` as before. `make test` and `make test-native` pass, as they did on the same tree before the change. The generational snapshot's own `make -C generational/snapshot test` passes too.
+
+#### The test build
+
+`parallel-sweep/rt/build.sh check` builds a test runtime, out of tree under `parallel-sweep/_build/rt/check/`. It then rebuilds the tree's runtimes as the default build. The test runtime is the same collector with the bridge compiled with `-DVERGC_PAR_SWEEP_CHECK`. At every major collection, that bridge:
+
+1. copies the heap `[zero_addr, heap_size)` aside;
+2. runs the collector's own sequential `fused_sweep_coalesce` (passed in through the hook), and keeps its heap and head;
+3. puts the copy back, and runs `par_sweep` on it;
+4. aborts unless the heap is equal byte for byte and the head is equal;
+5. prints at exit: `par-sweep check: N collections, heap and head equal to the sequential sweep, W workers, k K`. `W` is the number of workers actually started.
+
+The heap left in place is the parallel sweep's.
+
+**The check is live.** With `VERGC_PAR_SWEEP_CHECK_CONTROL=1`, the test bridge flips one heap byte after the parallel sweep. On `infix_closures`, the run aborts at the first collection:
+
+```
+par-sweep check: collection 1 DIFFERS: head 140461321732104 vs sequential 140461321732104, first differing byte at offset 1200000 of 2400000
+```
+
+`parallel-sweep/rt/run.sh byte|native VARIANT THREADS [K]` runs each program on the test runtime with the setting on, and on the tree's default runtime with it off. It requires, for each program:
+
+- both runs exit 0;
+- the same stdout, with heap addresses masked;
+- the summary line, with at least one collection compared.
+
+For native code, it links each program twice with the stock `ocamlopt`, once against each `libasmrun.a`, using `-I` as `make test-native` does.
+
+The programs and heap sizes are Spike 3's, chosen to force major collections. `nursery_no_scan_interior` is left out because it does no major collection at any size tried. `fasta` is bytecode only, for the reason Spike 3 gives.
+
+| Program | Major heap (words), args | Collections compared |
+|---|---|---|
+| `infix_closures` | 300000 | 54 |
+| `no_scan` | 4000000 | 22 |
+| `make_vect_barrier` | 4000000 | 2 |
+| `alloc_exact_promotion` | 4194304, `4194304` | 3 |
+| `fasta` (bytecode only) | 300000, `100000` | 31 |
+| `count_change` | 2000000, `100` | 2 |
+| `binarytrees` | 1000000, `10` | 34 |
+
+The counts are the same in bytecode and native, and for every number of workers and every k below.
+
+#### Step 1: one worker
+
+`run.sh byte check 1 K` and `run.sh native check 1 K`, for K = 1, 4 (the default) and 64:
+
+| | k = 1 | k = 4 | k = 64 |
+|---|---|---|---|
+| bytecode (148 collections) | ok | ok | ok |
+| native (117 collections) | ok | ok | ok |
+
+At every collection, the heap and the free-list head were equal to the sequential sweep's, and every program's output was the default runtime's. In each run the summary reports `1 workers`, so the pool started and `par_sweep` took the threaded path, not the `sweep_par_seq` fallback.
