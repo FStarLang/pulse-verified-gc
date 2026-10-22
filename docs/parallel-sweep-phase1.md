@@ -290,7 +290,7 @@ Every write lands at or above `wlo`, the pending run's first word, or the cursor
 
 ## 7. The Pulse specification of one segment
 
-`parallel-sweep/impl/GC.Impl.SweepSegment.fsti`. It is specification only: no body and no proof. `make verify` type-checks it.
+`parallel-sweep/impl/GC.Impl.SweepSegment.fsti` is the interface. The implementation and its proof are in `GC.Impl.SweepSegment.fst` (see "The implementation, proved" below). `make verify` checks both.
 
 The OCaml runtime owns the worker threads, and each worker calls `sweep_segment` on its own segment. The merge-and-link step (`link_all`) stays sequential and is not part of this function.
 
@@ -449,7 +449,7 @@ The parts: `agree` (byte-wise agreement on a range) and its conversions to and f
 
 ## 8. From the theorem to running code
 
-The theorem is about the model: `sweep_par bs g == fused_sweep_coalesce g`. Running code needs four more pieces. Each is written here as a specification only, with no implementation or proof yet. `make verify` type-checks them.
+The theorem is about the model: `sweep_par bs g == fused_sweep_coalesce g`. Running code needs four more pieces. Each is specified below, and each is now implemented and proved; the notes under each item say where and how. `make verify` checks them all.
 
 ```
  heap g ──► prepass ──► bounds b0 < b1 < … < bn-1
