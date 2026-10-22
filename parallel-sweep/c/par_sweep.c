@@ -32,8 +32,11 @@ static void *worker(void *unused)
   }
 }
 
+static void forget_workers(void) { nworkers = 0; }
+
 void par_sweep_init(int nthreads)
 {
+  pthread_atfork(NULL, NULL, forget_workers);
   sigset_t all, old;
   sigfillset(&all);
   pthread_sigmask(SIG_BLOCK, &all, &old);

@@ -693,7 +693,7 @@ make ctest      # verify, extract, compile with -Wall -Wextra, run; about 16 s o
 
 ### Stage 2: the threads (design only, not wired in)
 
-`parallel-sweep/c/par_sweep.c`, 60 lines, is the C that would run the pieces on threads. Nothing calls it, and no target builds it. It was compiled once with `cc -c -O2 -Wall -Wextra -Wpedantic -std=c11` against the Stage 1 headers, with no warnings. It has not been linked or run.
+`parallel-sweep/c/par_sweep.c`, 63 lines, is the C that would run the pieces on threads. Nothing calls it, and no target builds it. It was compiled once with `cc -c -O2 -Wall -Wextra -Wpedantic -std=c11` against the Stage 1 headers, with no warnings. It has not been linked or run.
 
 It has two entry points. Both are called only from the thread that runs the collector, never at the same time:
 
@@ -710,14 +710,14 @@ The main thread runs `prepass0`, publishes the pieces, sleeps until the last one
 |---|---|---|
 | 3-4 | `#include <pthread.h>`, `<signal.h>` | Mutex, condition variables, threads, signal masks. Nothing from `caml/`. |
 | 5 | `#include "GC_SweepPar.h"` | The extracted `heap_t`, `seg_result`, `sweep_segment`, `prepass0`, `merge0`, `sweep_par_seq`, unchanged. |
-| 7 | `MAX_PIECES 64` | An upper bound on pieces. It sizes the two arrays, and line 50 keeps `k` within it. |
+| 7 | `MAX_PIECES 64` | An upper bound on pieces. It sizes the two arrays, and line 53 keeps `k` within it. |
 | 9 | `mu` | Guards `heap`, `npieces`, `next`, `unfinished` and `results`, and `bounds` while a sweep is running. |
 | 10 | `work` | Idle workers wait on it for pieces. |
 | 11 | `done` | The main thread waits on it for the last piece. |
-| 12 | `nworkers` | The number of threads started. Written only by `par_sweep_init`, read only by `par_sweep`, both on the collector's thread. |
-| 13 | `heap` | The current sweep's heap. Written by the main thread under `mu` (line 54), read by workers under `mu` (line 25). |
-| 14 | `bounds[MAX_PIECES + 1]` | Room for `k + 1` boundaries. Written only by `prepass0` (line 52), on the main thread, between sweeps. Read by workers only under `mu` (line 26), during a sweep. |
-| 15 | `results[MAX_PIECES]` | One slot per piece. Slot `i` is written only by the worker that took piece `i`, under `mu` (line 30). Read by `merge0` after the sweep (line 59). |
+| 12 | `nworkers` | The number of threads started. Written by `par_sweep_init` and read by `par_sweep`, both on the collector's thread. Also set to 0 in a forked child by `forget_workers` (line 35), which runs on the child's only thread. |
+| 13 | `heap` | The current sweep's heap. Written by the main thread under `mu` (line 57), read by workers under `mu` (line 25). |
+| 14 | `bounds[MAX_PIECES + 1]` | Room for `k + 1` boundaries. Written only by `prepass0` (line 55), on the main thread, between sweeps. Read by workers only under `mu` (line 26), during a sweep. |
+| 15 | `results[MAX_PIECES]` | One slot per piece. Slot `i` is written only by the worker that took piece `i`, under `mu` (line 30). Read by `merge0` after the sweep (line 62). |
 | 16 | `npieces, next, unfinished` | The hand-out state, all zero at start. Under `mu`, always `next <= npieces` and `unfinished >= npieces - next`. `unfinished` counts the pieces of this sweep whose record is not yet stored. Between sweeps, `next == npieces` and `unfinished == 0`. |
 
 **`worker`, lines 18-33.**
@@ -735,40 +735,42 @@ The main thread runs `prepass0`, publishes the pieces, sleeps until the last one
 | 28 | `seg_result r = sweep_segment(h, lo, hi);` | The only work done outside the lock. It is the extracted, proved `sweep_segment`. Its precondition holds as in `sweep_par_seq`: `(lo, hi)` is a segment of a valid boundary list for the heap, and the bytes `[lo, hi)` are still the input heap's, because no other piece touches them. It reads and writes only `[lo, hi)`, plus the read-only globals `heap_size_u640` and `blue` (Stage 1). It calls no OCaml runtime function and does not allocate. It returns, because its loop has a `decreases` clause. Distinct `i` give disjoint ranges, since the boundaries strictly increase. |
 | 29 | `pthread_mutex_lock(&mu);` | Orders all of this piece's heap writes before anything the main thread does after it next takes `mu`. |
 | 30 | `results[i] = r;` | Slot `i` gets piece `i`'s record. Only this worker took `i` (line 24), so no other thread writes the slot. |
-| 31 | `if (--unfinished == 0) pthread_cond_signal(&done);` | **A piece is counted as finished only after its sweep has returned and its record is stored.** The last one wakes the main thread. Signalling under `mu` means the wake-up cannot be lost: the main thread checks `unfinished` under `mu` before it waits (line 57). |
+| 31 | `if (--unfinished == 0) pthread_cond_signal(&done);` | **A piece is counted as finished only after its sweep has returned and its record is stored.** The last one wakes the main thread. Signalling under `mu` means the wake-up cannot be lost: the main thread checks `unfinished` under `mu` before it waits (line 60). |
 
-**`par_sweep_init`, lines 35-46.**
-
-| Line | Code | Must guarantee |
-|---|---|---|
-| 37-39 | `sigfillset`; `pthread_sigmask(SIG_BLOCK, &all, &old)` | Block every signal on the calling thread while threads are created. New threads inherit the mask, so **no asynchronous signal is delivered to a worker**. The OCaml runtime's handlers would otherwise run on a worker and touch runtime state. |
-| 40 | `for (; nworkers < nthreads; nworkers++)` | Start up to `nthreads` workers. On return, `nworkers` is the number actually started. |
-| 41-42 | `pthread_create(&t, NULL, worker, NULL)`; stop on failure | A failure leaves fewer workers, possibly none. Line 51 handles none. |
-| 43 | `pthread_detach(t);` | Workers are never joined. |
-| 45 | `pthread_sigmask(SIG_SETMASK, &old, NULL);` | The calling thread's signal mask is restored. The program sees no change. |
-
-**`par_sweep`, lines 48-60.**
+**`par_sweep_init`, lines 35-49.**
 
 | Line | Code | Must guarantee |
 |---|---|---|
-| 50 | `k = k < 1 ? 1 : k > MAX_PIECES ? MAX_PIECES : k;` | `prepass0`'s `k >= 1`. Also `k + 1 <= MAX_PIECES + 1` boundaries and `n - 1 <= k <= MAX_PIECES` records, so both arrays are big enough. |
-| 51 | `if (nworkers == 0) return sweep_par_seq(h, k, bounds, results);` | With no worker, nobody would sweep and line 57 would wait forever. Instead, run the verified single-thread driver. |
-| 52 | `size_t n = prepass0(h, k, bounds);` | Runs on the main thread, between sweeps, when no worker reads `bounds` (`next == npieces`). Gives `2 <= n <= k + 1` valid boundaries, so `n - 1 >= 1` pieces. |
-| 53 | `pthread_mutex_lock(&mu);` | Orders `prepass0`'s writes to `bounds` before any worker's read at line 26. |
-| 54 | `heap = h;` | Publishes the heap. |
-| 55 | `npieces = n - 1; next = 0; unfinished = n - 1;` | Publishes this sweep's pieces `0 .. n-2`, none taken and none finished. The last sweep ended with `unfinished == 0`, so no worker is still inside an old piece. |
-| 56 | `pthread_cond_broadcast(&work);` | Wakes every idle worker. A worker not yet waiting sees `next < npieces` at line 23 and does not wait. |
-| 57 | `while (unfinished > 0) pthread_cond_wait(&done, &mu);` | **Merge only after every piece has finished.** The loop exits only when `unfinished == 0`, that is after `n - 1` decrements, one per piece at line 31. The `while` covers spurious wake-ups. |
-| 58 | `pthread_mutex_unlock(&mu);` | At this point `next == npieces` and `unfinished == 0`, the between-sweeps state that lines 52 and 55 rely on next time. |
-| 59 | `return merge0(h, results, n - 1);` | Runs on the main thread after every worker's heap writes and record stores, which are ordered before it by `mu` (lines 29 and 57). Its precondition is `merge`'s: the heap is the spliced heap and the records match, in segment order. |
+| 35 | `static void forget_workers(void) { nworkers = 0; }` | The child handler for `fork`. A child process has only the thread that called `fork`; the workers are not copied. Setting `nworkers` to 0 sends the child's `par_sweep` down line 54 to `sweep_par_seq`, on its own thread. That path never touches `mu`, `work`, `done` or the hand-out state, so it does not matter what state `fork` left them in. |
+| 39 | `pthread_atfork(NULL, NULL, forget_workers);` | Registers that handler, before any worker exists. It then runs in every child, as `fork` returns there. `par_sweep_init` is called once, so the handler is registered once. Registering it twice would still be harmless. |
+| 40-42 | `sigfillset`; `pthread_sigmask(SIG_BLOCK, &all, &old)` | Block every signal on the calling thread while threads are created. New threads inherit the mask, so **no asynchronous signal is delivered to a worker**. The OCaml runtime's handlers would otherwise run on a worker and touch runtime state. |
+| 43 | `for (; nworkers < nthreads; nworkers++)` | Start up to `nthreads` workers. On return, `nworkers` is the number actually started. |
+| 44-45 | `pthread_create(&t, NULL, worker, NULL)`; stop on failure | A failure leaves fewer workers, possibly none. Line 54 handles none. |
+| 46 | `pthread_detach(t);` | Workers are never joined. |
+| 48 | `pthread_sigmask(SIG_SETMASK, &old, NULL);` | The calling thread's signal mask is restored. The program sees no change. |
+
+**`par_sweep`, lines 51-63.**
+
+| Line | Code | Must guarantee |
+|---|---|---|
+| 53 | `k = k < 1 ? 1 : k > MAX_PIECES ? MAX_PIECES : k;` | `prepass0`'s `k >= 1`. Also `k + 1 <= MAX_PIECES + 1` boundaries and `n - 1 <= k <= MAX_PIECES` records, so both arrays are big enough. |
+| 54 | `if (nworkers == 0) return sweep_par_seq(h, k, bounds, results);` | With no worker, nobody would sweep and line 60 would wait forever. Instead, run the verified single-thread driver. |
+| 55 | `size_t n = prepass0(h, k, bounds);` | Runs on the main thread, between sweeps, when no worker reads `bounds` (`next == npieces`). Gives `2 <= n <= k + 1` valid boundaries, so `n - 1 >= 1` pieces. |
+| 56 | `pthread_mutex_lock(&mu);` | Orders `prepass0`'s writes to `bounds` before any worker's read at line 26. |
+| 57 | `heap = h;` | Publishes the heap. |
+| 58 | `npieces = n - 1; next = 0; unfinished = n - 1;` | Publishes this sweep's pieces `0 .. n-2`, none taken and none finished. The last sweep ended with `unfinished == 0`, so no worker is still inside an old piece. |
+| 59 | `pthread_cond_broadcast(&work);` | Wakes every idle worker. A worker not yet waiting sees `next < npieces` at line 23 and does not wait. |
+| 60 | `while (unfinished > 0) pthread_cond_wait(&done, &mu);` | **Merge only after every piece has finished.** The loop exits only when `unfinished == 0`, that is after `n - 1` decrements, one per piece at line 31. The `while` covers spurious wake-ups. |
+| 61 | `pthread_mutex_unlock(&mu);` | At this point `next == npieces` and `unfinished == 0`, the between-sweeps state that lines 55 and 58 rely on next time. |
+| 62 | `return merge0(h, results, n - 1);` | Runs on the main thread after every worker's heap writes and record stores, which are ordered before it by `mu` (lines 29 and 60). Its precondition is `merge`'s: the heap is the spliced heap and the records match, in segment order. |
 
 #### Why the three properties hold
 
-- **Every piece is swept.** `nworkers >= 1` here, by line 51. A worker loops while `next < npieces` (lines 23-24), so all `n - 1` pieces are taken. Each one returns (line 28) and is counted (line 31).
+- **Every piece is swept.** `nworkers >= 1` here, by line 54. A worker loops while `next < npieces` (lines 23-24), so all `n - 1` pieces are taken. Each one returns (line 28) and is counted (line 31).
 - **Each piece is swept by exactly one worker.** A piece is taken only at line 24, under `mu`, by `i = next++`. So the indices handed out in one sweep are `0, 1, ..., n - 2`, each once. Line 23 stops `next` before `npieces`.
-- **Merge runs only after all pieces have finished.** Line 57 leaves its loop only when `unfinished == 0`. `unfinished` starts at `n - 1` (line 55) and drops only at line 31, after a sweep has returned and its record is stored. The mutex orders those writes before line 59.
+- **Merge runs only after all pieces have finished.** Line 60 leaves its loop only when `unfinished == 0`. `unfinished` starts at `n - 1` (line 58) and drops only at line 31, after a sweep has returned and its record is stored. The mutex orders those writes before line 62.
 
-**No data race.** Every shared variable other than the heap is read and written only under `mu`, apart from two cases: `bounds`, written by `prepass0` while no worker can read it, and `results`, read by `merge0` after the last worker has stored its record. On the heap, workers access disjoint byte ranges `[b_i, b_{i+1})`. C11 treats each byte as its own memory location, so two workers never touch the same one. No worker touches the bytes below `zero_addr`. The main thread touches the heap only before line 53 (`prepass0`) and after line 57 (`merge0`).
+**No data race.** Every shared variable other than the heap is read and written only under `mu`, apart from two cases: `bounds`, written by `prepass0` while no worker can read it, and `results`, read by `merge0` after the last worker has stored its record. On the heap, workers access disjoint byte ranges `[b_i, b_{i+1})`. C11 treats each byte as its own memory location, so two workers never touch the same one. No worker touches the bytes below `zero_addr`. The main thread touches the heap only before line 56 (`prepass0`) and after line 60 (`merge0`).
 
 **How this relates to the proof.** `sweep_par_seq` is proved, and it makes these same calls: `prepass`, then `sweep_segment` on each segment, then `merge`. The arguments are the same, and so is the boundary array. `par_sweep` changes only the order of the `sweep_segment` calls and which thread runs each one. The argument that this keeps the result is that each call owns, and touches, only its own range (its `pts_to_range` precondition). That argument is not checked by F*: this C file is trusted. Stage 1's reverse-order run tests one other order.
 
@@ -783,7 +785,7 @@ These are the same as for calling the extracted `fused_sweep_coalesce`, plus two
 #### Open points for review
 
 - **The array lengths are larger than the specifications state.** `prepass`'s and `sweep_par_seq`'s Pulse preconditions require `bounds` to have exactly `k + 1` entries, and `sweep_par_seq` requires `results` to have exactly `k`. Here they are `MAX_PIECES + 1` and `MAX_PIECES`. The C receives only a pointer, and the proof bounds every write by `k`, so this is believed harmless. It is not what was proved.
-- **`fork`.** A child process has no workers but keeps `nworkers > 0`, so its first `par_sweep` would wait forever. This would need a `pthread_atfork` handler that resets `nworkers`, or a check in the child.
+- **`fork`: fixed after review.** Without lines 35 and 39, a child process would have no workers but keep `nworkers > 0`, so its first `par_sweep` would wait forever.
 - **Return values that are not checked:** `pthread_mutex_lock`, `pthread_cond_wait` and `pthread_sigmask`. On default mutexes these fail only on misuse.
 - **Synchronous signals** (`SIGSEGV`, `SIGBUS`) cannot be blocked. If `sweep_segment` faulted, the OCaml runtime's handler would run on a worker. The proof rules out a fault when the preconditions hold.
 - **The main thread idles** during the sweep. Letting it take pieces too would add about 5 lines.
