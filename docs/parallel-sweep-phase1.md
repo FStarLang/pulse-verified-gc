@@ -885,3 +885,18 @@ The counts are the same in bytecode and native, and for every number of workers 
 | native (117 collections) | ok | ok | ok |
 
 At every collection, the heap and the free-list head were equal to the sequential sweep's, and every program's output was the default runtime's. In each run the summary reports `1 workers`, so the pool started and `par_sweep` took the threaded path, not the `sweep_par_seq` fallback.
+
+#### Step 2: 2, 4 and 8 workers
+
+The same runs, with 2, 4 and 8 workers:
+
+| Workers | k | bytecode (148 collections) | native (117 collections) |
+|---|---|---|---|
+| 2 | 8 (default), 64 | ok | ok |
+| 4 | 16 (default), 64 | ok | ok |
+| 8 | 32 (default), 64 | ok | ok |
+| 8 | 1, 2 (fewer pieces than workers) | ok | ok |
+
+At every collection, the heap and the free-list head were equal to the sequential sweep's, and every program's output was the default runtime's. Every summary reports the requested number of workers started.
+
+Not shown by this step: how the pieces were spread over the workers. The test bridge cannot see which thread swept which piece without instrumenting `par_sweep.c`, and that was not done. Step 4's ThreadSanitizer runs show heap accesses from the worker threads.
