@@ -8,6 +8,7 @@ Branch `sheera/parallel-sweep`, from `fork/main` `0ce5e09`, with `origin/main` `
 - **Stage B:** no counterexample. 10,750 (heap, boundary list) pairs were tested, from 17 hand-built and 862 generated heaps. All four deliberately broken variants were caught.
 - **Stage C:** `sweep_par_correct` is proved, with no `admit` or `assume` (§6). The model, the theorem and every `val` are unchanged. The proof uses only `valid_bounds`; the rest of `fused_pre` is not needed.
 - **Pulse, one segment:** the specification of `sweep_segment` is written and reviewed (§7). Locality, that a segment depends only on its own bytes, is tested and proved (§7). `sweep_segment` is implemented and proved against that specification, on range versions of the heap operations (§7).
+- **Extraction to C (§9, Stage 1):** `prepass`, `sweep_segment`, `merge` and `sweep_par_seq` extract to C with Custard. Run one piece at a time, they give the same heap and head as the extracted `fused_sweep_coalesce` on 4,408 heaps for k = 1, 2, 4 and 8.
 - **From theorem to running code:** the pre-pass, the merge, the joining lemma and a sequential driver are specified and approved (§8). All four are now implemented and proved, with no `admit` or `assume`. `sweep_par_seq` has `fused_sweep_coalesce`'s own postcondition, so the whole chain is checked end to end in one thread. No specification, model, theorem or `val` was changed.
 
 Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct` and `mark-and-sweep/NOTES.md`, merged in from `sheera/coalesce-exact`. The directory is left out of the root build.
@@ -30,7 +31,8 @@ Everything is new, under `parallel-sweep/`, apart from `GC.Spec.Coalesce.Correct
 | `parallel-sweep/spec/GC.Spec.SweepPar.Join.fst` | Its proof, and its non-vacuity witnesses (§8). |
 | `parallel-sweep/impl/GC.Impl.SweepPar.Prepass.fst` | The pre-pass, implemented and proved (§8). |
 | `parallel-sweep/impl/GC.Impl.SweepPar.Merge.fst` | The merge, implemented and proved (§8). |
-| `parallel-sweep/Makefile` | `make verify` (now including every module above) and `make test`. |
+| `parallel-sweep/c/sweep_par_ctest.c` | The extracted C, run piece by piece against the extracted `fused_sweep_coalesce` (§9). |
+| `parallel-sweep/Makefile` | `make verify` (now including every module above), `make test`, `make extract` and `make ctest` (§9). |
 
 Toolchain: only the pinned `./fstar` (F* `nightly-2026-10-17`, `f43a1127`, Z3 5.3.0), with the repo's own F* flags. The OCaml side uses opam switch `fstar-gc` (OCaml 4.14.0).
 
@@ -585,3 +587,106 @@ All four are done. Steps 1, 2 and 3 are below; the fourth, the sequential driver
 4. ~~Implement and prove `sweep_par_seq` from the three pieces.~~ Done.
 
 What remains is outside Pulse: the OCaml runtime's thread handling, which must give each worker its own range, `bs` and `g`, and join the ranges only after every worker has finished. Neither the balance of the pre-pass's segments nor the speed of the byte-wise range access (§7) has been measured.
+
+## 9. Extraction to C, and the threads that will run it
+
+### Stage 1: extraction
+
+**Build.** `make extract` writes `_build/extract/`, and `make ctest` compiles it and runs the test. Both are in `parallel-sweep/Makefile`. They use the Custard setup of `origin/main`'s `generational/Makefile`:
+
+- `--codegen KrmlC --custard_split` writes one `Custard.krml`;
+- krml runs with `-skip-compilation -skip-linking -warn-error -2-9-15`, the same three-bundle layout, and `-no-prefix` on every GC module;
+- the code goes into one translation unit, `GC_SweepPar.{c,h}`, in place of `GC_Gen_Impl.{c,h}`.
+
+The roots differ from `generational/Makefile` in one way: each function is named with `--custard_entry`, not its module with `--custard_entry_module` (finding 1). The roots are `GC.Impl.SweepPar.prepass`, `.merge`, `.sweep_par_seq`, `GC.Impl.SweepSegment.sweep_segment`, and `GC.Impl.FusedSweepCoalesce.fused_sweep_coalesce`. The C test links against `generational/snapshot/compat.c` as it is, which supplies `zero_addr`, `heap_size_u64`, `read_u64_le`, `write_u64_le` and `FStar_UInt64_ne`.
+
+`make verify` now also checks the three interfaces, `GC.Spec.SweepPar.Join.fsti`, `GC.Impl.SweepSegment.fsti` and `GC.Impl.SweepPar.fsti`. Before, it checked each `.fst` with its interface in memory and never wrote the interfaces' `.checked` files. So `GC.Impl.SweepPar.Merge` and `GC.Impl.SweepPar` were checked but not cached (warning 247), and Custard could not read them. No F* source changed.
+
+**The generated C signatures** (`_build/extract/GC_SweepPar.h`):
+
+```c
+typedef struct heap_t_s { uint8_t *data; size_t size; } heap_t;
+
+typedef struct seg_result_s {
+  bool all_free;
+  uint64_t lead_fb;  uint64_t lead_rw;
+  uint64_t trail_fb; uint64_t trail_rw;
+  bool has_link;     uint64_t first_link;
+  uint64_t local_head;
+} seg_result;
+
+size_t     prepass0(heap_t heap, size_t k, uint64_t *bounds);
+uint64_t   merge0(heap_t heap, seg_result *results, size_t m);
+seg_result sweep_segment(heap_t heap, uint64_t lo, uint64_t hi);
+uint64_t   sweep_par_seq(heap_t heap, size_t k, uint64_t *bounds, seg_result *results);
+seg_result sweep_one(heap_t heap, uint64_t lo, uint64_t hi);
+uint64_t   fused_sweep_coalesce(heap_t heap);
+```
+
+- Every ghost argument (`g`, `bs`, `rs`, `p`) and every refinement is erased. `seg_result` is the flat record of §7, field for field.
+- `prepass0` and `merge0` are `GC.Impl.SweepPar.prepass` and `.merge`, the functions with the interface's specifications (finding 2).
+- `sweep_one` is a helper of `sweep_par_seq` that is not in the interface (finding 3).
+- `krmlinit_globals()` copies `zero_addr` and `heap_size_u64` into the copies the code reads (`zero_addr1`, `heap_size_u640`). The caller sets the two externs first, as the generational bridge does.
+
+**What a worker runs.** `sweep_segment` calls only `read_word_r`, `write_word_r`, `getWosize`, `getTag`, `makeHeader`, `makeWhite_r`, `flush_blue_r` and `zero_fields_r`. Besides the heap, it reads two globals, `heap_size_u640` and the constant `blue`, and writes none. It allocates nothing and calls no library function. The one exit path is `makeHeader`'s default case for a colour outside the four-value enum, which no caller reaches. A word in a range is still accessed as 8 bytes (§7). At `-O2`, Apple clang 12 leaves 19 single-byte moves in `sweep_segment`'s assembly, so it does not merge them all. The cost was not measured.
+
+**Findings from extraction.**
+
+1. **Rooting `GC.Impl.SweepPar` as a module gives C that does not compile.** `--custard_entry_module GC.Impl.SweepPar`, as `generational/Makefile` roots its modules, also roots `bounds_list`. That is a specification helper defined in `GC.Impl.SweepPar.fsti` and not marked `noextract`. Custard compiles it, with `Seq.slice` on F*'s list-based `Seq`. krml then rejects three of the resulting definitions:
+
+   ```
+   Cannot re-check FStar.Seq.Base.tl__uint64_t as valid Low* and will not extract it.
+   Warning 4: in top-level declaration FStar.Seq.Base.tl__uint64_t, in file GC_SweepPar: Malformed input:
+   subtype mismatch:
+     Custard_Prims_list__uint64_t (a.k.a. Custard_Prims_list__uint64_t) vs:
+     Custard_Prims_list__any (a.k.a. Custard_Prims_list__any)
+   ```
+
+   The same happens for `FStar.Seq.Base.hd__uint64_t` and `GC.Impl.SweepPar.bounds_list`. krml keeps `FStar_Seq_Base_slice___uint64_t`, which calls the two dropped functions, so clang stops with `implicit declaration of function 'FStar_Seq_Base_tl__uint64_t'`. Nothing at run time calls this code. Naming the five functions as roots leaves `bounds_list` out, and the C compiles with no warnings. The other fix would be `noextract` on `bounds_list`, which would change the interface, so it was not made.
+2. **`prepass0` and `merge0`.** `GC.Impl.SweepPar.Prepass.prepass` and `GC.Impl.SweepPar.prepass` share a name, and so do the two `merge`s. With both modules in one bundle and `-no-prefix`, krml gives the plain name to the private one (`static prepass`) and suffixes the public one. Taking `-no-prefix` off the Prepass and Merge modules did not change this. Callers use `prepass0` and `merge0`.
+3. **`sweep_one` is public.** It is defined in `GC.Impl.SweepPar.fst` and is not in the interface. Custard does not make such definitions `static`; `generational/Makefile` notes the same.
+4. **Stale checked files in the shared `_cache`.** `GC.Impl.Fields`, `GC.Impl.Coalesce.Lemmas` and `GC.Impl.FusedSweepCoalesce.Lemmas` were stale (warning 241), so Custard re-checked them in memory. Each was rebuilt through the root `Makefile` (`gmake _cache/<module>.checked`). After that, extraction prints no warning apart from those below.
+5. **krml warning 17, three times.** `GC.Spec.Base.zero_addr`, `GC.Spec.Base.heap_size_u64` and `GC.Impl.Heap.zero_addr` become globals set in `krmlinit_globals`. The generational extraction does the same.
+
+**The test** (`c/sweep_par_ctest.c`). For each heap, every k in {1, 2, 4, 8}, and each of the runs below on a fresh copy of the heap, the heap must equal what `fused_sweep_coalesce` gives on its own copy, every byte including those below `zero_addr`, and so must the free-list head:
+
+- **pieces, in order:** `prepass0(k)`, then `sweep_segment(bounds[i], bounds[i+1])` for `i = 0 .. n-2`, then `merge0(results, n-1)`;
+- **pieces, in reverse order:** the same, with the segments swept last to first. Threads may finish in any order, and this checks the result does not depend on it;
+- **`sweep_par_seq(k)`:** the extracted single-thread driver.
+
+It also checks that `prepass0` returns `2 <= n <= k + 1`, starting at `zero_addr` and ending at `heap_size`.
+
+The heaps follow `test/sweep_par_test.ml`'s generator, so they meet the executable part of `fused_pre`. Objects tile `[zero_addr, heap_size)`, none is gray or has the infix tag, and a scannable field is odd, `0`, or an enumerated object. The bytes below `zero_addr` are random. `zero_addr` is 2048 or 4104. There are four shapes, in equal numbers:
+
+- **mixed:** colours drawn as in the OCaml generator;
+- **front-packed:** live objects at the front and one free block to the end of the heap, the shape Spike 3 found after promotion;
+- **all free;**
+- **all live.**
+
+| Heaps | Words after `zero_addr` | Count |
+|---|---|---|
+| small | 2 to 96 | 4,000 |
+| medium | 100 to 20,099 | 400 |
+| large | 1,048,576 (8 MB) | 8 |
+
+**Result.**
+
+```
+heaps: 4408 (mixed 1102, front-packed 1102, all-free 1102, all-live 1102)
+(heap, k) runs: 17632, pieces: 48073, at most 8 per run, 5664 runs with fewer than k
+control (last piece unswept): caught in 17409 of 17632 runs
+ok: pieces (in order and reversed) and sweep_par_seq equal fused_sweep_coalesce, heap and head, k = 1, 2, 4, 8
+```
+
+There is no difference on any run. Runs with fewer than k pieces are heaps with fewer objects than k, where the pre-pass makes fewer cuts (§8).
+
+**The test can see a missing piece.** In the control, the last segment is never swept and its record is left zeroed. The test fails unless that is caught at least once, and it is caught in 17,409 of 17,632 runs. In the other 223, leaving that segment unswept happens to give the right heap and head.
+
+**Reproducing.**
+
+```
+cd parallel-sweep
+make ctest      # verify, extract, compile with -Wall -Wextra, run; about 16 s once verified
+```
+
+**Trusted for this test:** Custard and krml; `compat.c`'s word access and externs; and the C compiler (Apple clang 12.0.0, x86_64).
