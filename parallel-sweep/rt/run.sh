@@ -2,10 +2,11 @@
 # Runs test programs on a runtime variant with the parallel sweep on, and on the
 # tree's default runtime with it off, and checks for each program:
 #   - both exit 0, with the same stdout once heap addresses are masked;
-#   - check variant: the bridge's summary line, with at least one collection
-#     compared (a difference aborts the run).
+#   - check and tsan variants: the bridge's summary line, with at least one
+#     collection compared (a difference aborts the run);
+#   - no ThreadSanitizer report.
 #
-#   ./run.sh byte|native VARIANT THREADS [K]
+#   ./run.sh byte|native check|tsan THREADS [K]
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 MODE=$1; V=$2; N=$3; K=${4:-}
@@ -17,11 +18,13 @@ O=$B/runs/$MODE-$V-t$N-k${K:-def}
 mkdir -p "$O"
 if [ "$MODE" = native ]; then   # link each program against both libasmrun.a
   mkdir -p "$B/native/ref" "$B/native/$V"
+  CC_TSAN=; [ "$V" = tsan ] && CC_TSAN="-cc ${TSAN_CC:-/usr/local/opt/llvm@18/bin/clang} -ccopt -fsanitize=thread -cclib -lpthread"
   cp "$TREE/runtime/libasmrun.a" "$B/native/ref/"
   cp "$B/$V/libasmrun.a" "$B/native/$V/"
   for p in infix_closures no_scan make_vect_barrier count_change binarytrees alloc_exact_promotion; do
     for d in ref $V; do
-      ( cd "$B/native/$d" && cp "$T/$p.ml" . && "$OPT" -I . -o "$p" "$p.ml" ) >/dev/null 2>&1 \
+      F=; [ "$d" = tsan ] && F=$CC_TSAN
+      ( cd "$B/native/$d" && cp "$T/$p.ml" . && "$OPT" $F -I . -o "$p" "$p.ml" ) >/dev/null 2>&1 \
         || { echo "native link of $p ($d) failed"; exit 1; }
     done
   done
@@ -47,9 +50,10 @@ while read -r p w a; do
   same=$( [ "$(mask "$O/$p.out")" = "$(mask "$O/$p.ref")" ] && echo same || echo DIFF)
   summ=$(grep -a '^par-sweep check:' "$O/$p.err" | tail -1)
   n=$(echo "$summ" | sed -nE 's/^par-sweep check: ([0-9]+) collections.*/\1/p')
-  echo "$p: rc $rv/$rr, stdout $same, ${summ:-no summary}"
-  if [ $rv -ne 0 ] || [ $rr -ne 0 ] || [ "$same" != same ]; then fail=1; fi
-  if [ "$V" = check ] && { [ -z "$n" ] || [ "$n" -eq 0 ]; }; then fail=1; fi
+  tsan=$(grep -ac 'WARNING: ThreadSanitizer' "$O/$p.err")
+  echo "$p: rc $rv/$rr, stdout $same, tsan reports $tsan, ${summ:-no summary}"
+  if [ $rv -ne 0 ] || [ $rr -ne 0 ] || [ "$same" != same ] || [ "$tsan" -ne 0 ]; then fail=1; fi
+  if { [ -z "$n" ] || [ "$n" -eq 0 ]; }; then fail=1; fi
 done <<'LIST'
 infix_closures 300000
 no_scan 4000000

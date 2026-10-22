@@ -900,3 +900,34 @@ The same runs, with 2, 4 and 8 workers:
 At every collection, the heap and the free-list head were equal to the sequential sweep's, and every program's output was the default runtime's. Every summary reports the requested number of workers started.
 
 Not shown by this step: how the pieces were spread over the workers. The test bridge cannot see which thread swept which piece without instrumenting `par_sweep.c`, and that was not done. Step 4's ThreadSanitizer runs show heap accesses from the worker threads.
+
+#### Step 3: the repository's tests and OCaml's testsuite, with the parallel sweep on
+
+All of step 3 runs with `VERGC_PAR_SWEEP_THREADS=4`, so k is 16.
+
+**`make test` and `make test-native`**, in `generational/ocaml-integration`, on the shipped runtimes (the tree's default build) and on the test runtime:
+
+| | shipped runtime | test runtime |
+|---|---|---|
+| `make test` (bytecode) | passes | passes; 81 collections compared, all equal |
+| `make test-native` | passes | passes; 0 collections compared |
+
+These targets exercise the sweep less than their names suggest. At their heap sizes (8M to 134M words), the eight smoke programs compare no collection. In bytecode each reports 0. In native, seven report 0, and `mandelbrot` prints no summary line at all; why was not investigated. All 81 comparisons come from the bytecode correctness tests: `infix_closures` 54, `no_scan` 22, `alloc_exact_promotion` 3, `make_vect_barrier` 2. Steps 1 and 2 cover native collections, on the same programs at smaller heaps.
+
+**OCaml's testsuite** (`ci/run-testsuite.sh`, with the setting on, on the shipped runtimes): 2917 passed, 27 failed, 43 unexpected errors, 3141 considered. Against `ci/expected-failures.txt`, 3 failures are new, and 2 expected ones now pass (`output-complete-obj/test.ml`, 1.1.1 and 2.1.1, which are not about the sweep). The shipped runtime cannot count how many testsuite collections went through the parallel sweep; only the test runtime counts.
+
+The three new failures are one bug, and it is in the pool, not in the sweep:
+
+| test | failure |
+|---|---|
+| `lib-threads/pr9971.ml`, bytecode | timeout |
+| `lib-threads/pr9971.ml`, native | timeout |
+| `statmemprof/thread_exit_in_callback.ml`, native | timeout |
+
+All three end with the main thread calling `Thread.exit`. OCaml then ends the main thread with `pthread_exit`: directly in bytecode, through `caml_termination_hook` in native. A process whose main thread has called `pthread_exit` lives until every other thread has ended. The pool's workers never end, so the process never exits. `pr9971.opt` reproduces it: it exits 0 in under a second with the setting off, and hangs with `VERGC_PAR_SWEEP_THREADS=4`.
+
+This is OCaml's own issue #9971, met again. Its fix is in `caml_thread_stop` (`otherlibs/systhreads/st_stubs.c`): when the last OCaml thread stops, it joins the tick thread "so that it does not prevent the whole process from exiting". The pool needs the same treatment.
+
+The hang also cannot be interrupted. Every thread left blocks all signals: the workers by design (Stage 2, line 42) and the tick thread by OCaml's own code. So SIGALRM and SIGINT stay pending forever. A timeout by `alarm` did not end it; only SIGKILL did.
+
+Not fixed yet; the fix changes the reviewed `par_sweep.c`.

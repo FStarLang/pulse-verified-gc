@@ -15,6 +15,9 @@
  * aborts unless the heap and the free-list head are exactly equal.  With
  * VERGC_PAR_SWEEP_CHECK_CONTROL=1 it flips one heap byte after the parallel
  * sweep, so the comparison must fail: a control that the check is live.
+ * With VERGC_PAR_SWEEP_RACE_CONTROL=1 it runs par_sweep on a helper thread
+ * while this thread reads the whole heap, with no synchronisation: a data
+ * race that ThreadSanitizer must report.
  */
 
 #include <stdio.h>
@@ -34,7 +37,12 @@ uint64_t par_sweep(GC_Impl_Heap_heap_t h, size_t k);
 static size_t pieces;
 
 #ifdef VERGC_PAR_SWEEP_CHECK
+#include <pthread.h>
+
 static long checked;
+
+struct race { GC_Impl_Heap_heap_t h; uint64_t fp; };
+static void *race_sweep(void *p) { struct race *r = p; r->fp = par_sweep(r->h, pieces); return NULL; }
 static int workers;
 
 static void check_summary(void)
@@ -57,7 +65,17 @@ static uint64_t parallel(heap_t h, uint64_t (*seq)(heap_t))
   uint64_t fp_seq = seq(h);
   memcpy(want, base, n);
   memcpy(base, in, n);
-  uint64_t fp = par_sweep(ph, pieces);
+  uint64_t fp;
+  if (getenv("VERGC_PAR_SWEEP_RACE_CONTROL") != NULL) {
+    struct race r = { ph, 0 };
+    pthread_t t;
+    volatile uint64_t sum = 0;
+    if (pthread_create(&t, NULL, race_sweep, &r) != 0) abort();
+    for (size_t i = 0; i + 8 <= n; i += 8) sum += *(uint64_t *)(base + i);
+    pthread_join(t, NULL);
+    fp = r.fp;
+  } else
+    fp = par_sweep(ph, pieces);
   if (getenv("VERGC_PAR_SWEEP_CHECK_CONTROL") != NULL) base[n / 2] ^= 1;
   checked++;
   if (fp != fp_seq || memcmp(base, want, n) != 0) {

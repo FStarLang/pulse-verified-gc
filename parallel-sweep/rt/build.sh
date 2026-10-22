@@ -26,6 +26,7 @@ case $V in
   *) echo "unknown variant $V" >&2; exit 2 ;;
 esac
 mkdir -p "$OUT/$V"
-cp "$TREE/runtime/ocamlrun" "$TREE/runtime/libasmrun.a" "$OUT/$V/"
+cp "$TREE/runtime/ocamlrun" "$TREE/runtime/libasmrun.a" "$TREE/runtime/libcamlrun.a" \
+   "$TREE/runtime/prims.o" "$OUT/$V/"
 runtimes PAR_SWEEP_CHECK=
 echo "built $OUT/$V; tree runtimes rebuilt as the default build"
