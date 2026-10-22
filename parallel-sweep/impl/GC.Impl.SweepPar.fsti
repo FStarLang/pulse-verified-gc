@@ -1,6 +1,8 @@
 (*
    Pulse GC - Parallel sweep: pre-pass, merge, and a sequential driver
-   (specification only)
+   (interface; the implementations and their proofs are in
+   GC.Impl.SweepPar.fst, GC.Impl.SweepPar.Prepass.fst and
+   GC.Impl.SweepPar.Merge.fst)
 
    The parallel sweep runs in three steps (docs/parallel-sweep-phase1.md, §8):
 

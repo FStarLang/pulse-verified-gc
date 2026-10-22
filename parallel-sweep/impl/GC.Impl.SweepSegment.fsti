@@ -1,5 +1,6 @@
 (*
-   Pulse GC - Parallel sweep, one segment (specification only)
+   Pulse GC - Parallel sweep, one segment (interface; the implementation
+   and its proof are in GC.Impl.SweepSegment.fst)
 
    The OCaml runtime owns the worker threads; each worker calls
    sweep_segment on its own segment [lo, hi) of the heap.  This is the
