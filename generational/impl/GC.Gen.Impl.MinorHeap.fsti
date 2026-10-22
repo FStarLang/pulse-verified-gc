@@ -41,6 +41,10 @@ let is_minor (mh: minor_heap_t) (d: minor_heap) (b: U64.t) : slprop =
   R.pts_to mh.bump_ref b **
   pure (U64.v b % 8 == 0 /\ U64.v b <= minor_heap_size)
 
+/// Minor heap size as SizeT. Exposed so that C code (krmlinit.c, main.c)
+/// can refer to the global.
+val minor_heap_size_sz : (n:SZ.t{SZ.v n == minor_heap_size})
+
 /// ---------------------------------------------------------------------------
 /// Read / Write
 /// ---------------------------------------------------------------------------
@@ -114,6 +118,10 @@ fn translate_minor_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
 /// Number of entries in the forwarding array = minor_heap_size / 8
 noextract
 let fwd_arr_size : n:pos{n == minor_heap_size / 8} = minor_heap_size / 8
+
+/// SizeT version of fwd_arr_size. Exposed so that C code (krmlinit.c) can
+/// refer to the global.
+val fwd_arr_size_sz : n:SZ.t{SZ.v n == fwd_arr_size}
 
 /// Walk the minor heap and synthesize forwarding entries for infix sub-objects.
 /// For each closure whose parent was promoted (fwd_arr entry != 0), finds embedded
