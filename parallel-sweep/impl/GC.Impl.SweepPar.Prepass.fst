@@ -4,15 +4,15 @@
    GC.Impl.SweepPar.prepass is defined as `prepass` here; its signature is
    the interface's, word for word (docs/parallel-sweep-phase1.md, §8).
 
-   The pre-pass chooses at most k segments of roughly equal work.  An object
-   counts 1, plus its wosize if it is white or blue: the sweep reads every
-   header, and a free object is also flushed, which zeroes its fields.  The
-   heap's total work W is found by one walk from zero_addr.  A second walk
-   then cuts at the first object start at or after each share's target
-   floor(i * W / k), for i = 1 .. k - 1.  Every cut is an object start, so
-   segments need not be the same size, and the heap size need not divide by
-   k.  Several targets passed by one object give one cut, so a heap with few
-   objects gets fewer segments.
+   The pre-pass chooses at most k segments of roughly equal size.  The heap
+   past zero_addr spans W = (heap_size - zero_addr) / 8 words, known without
+   walking.  One walk from zero_addr then cuts at the first object start at
+   or after each share's target, floor(i * W / k) words past zero_addr, for
+   i = 1 .. k - 1.  Every cut is an object start, so segments need not be the
+   same size, and the heap size need not divide by k.  Several targets passed
+   by one object give one cut, so a heap with few objects gets fewer
+   segments.  (An earlier version weighed objects by sweep work, which took a
+   second walk; see docs/parallel-sweep-phase1.md, §9.)
 
    Only the validity of the boundaries is proved; how evenly they spread is
    not part of the specification.
@@ -154,65 +154,34 @@ let cut_ok_zero (g: heap_state)
   = ()
 
 /// ---------------------------------------------------------------------------
-/// Work
+/// Words walked
 /// ---------------------------------------------------------------------------
 
-/// The bounds that keep the work counters from overflowing.
+/// The bounds that keep the word counters from overflowing.
 let pow2_facts () : Lemma (pow2 57 == 8 * pow2 54 /\ pow2 54 + pow2 54 + 2 < pow2 64 /\ pow2 57 < pow2 64)
   = assert_norm (pow2 57 == 8 * pow2 54 /\ pow2 54 + pow2 54 + 2 < pow2 64 /\ pow2 57 < pow2 64)
 
-/// One step of the walk keeps the cursor aligned and the work below it.
+/// One step of the walk keeps the cursor aligned and the words counted below it.
 let step_arith (c wz a0 wt: nat)
   : Lemma (requires c % 8 == 0 /\ a0 * 8 <= c /\ wt <= wz + 1)
           (ensures (c + (wz + 1) * 8) % 8 == 0 /\ (a0 + wt) * 8 <= c + (wz + 1) * 8)
   = ()
 
-/// An object's work: 1, plus its wosize if it is white or blue.
-inline_for_extraction
-let weight (hdr: U64.t) (wz: wosize) : r:U64.t{1 <= U64.v r /\ U64.v r <= U64.v wz + 1} =
-  let c = getColor hdr in
-  assert_norm (pow2 54 < pow2 64);
-  if Header.White? c || Header.Blue? c then U64.add wz 1UL else 1UL
-
-/// The heap's total work.  It is at most the heap's size in words.
-fn total_work (heap: heap_t) (#g: erased heap_state)
-  requires is_heap heap g
-  returns w: U64.t
-  ensures is_heap heap g ** pure (U64.v w * 8 <= heap_size)
-{
-  pow2_facts ();
-  let mut cur = (zero_addr <: U64.t);
-  let mut acc = 0UL;
-  while (U64.lt (U64.add !cur mword) heap_size_u64)
-    invariant exists* c a.
-      pts_to cur c ** pts_to acc a ** is_heap heap g **
-      pure (U64.v c <= heap_size /\ U64.v c % 8 == 0 /\ U64.v a * 8 <= U64.v c)
-    decreases (heap_size - U64.v !cur)
-  {
-    let c = !cur;
-    let hdr = read_word heap c;
-    let wz = getWosize hdr;
-    lemma_object_size_no_overflow (U64.v wz);
-    lemma_address_add_no_overflow (U64.v c) ((U64.v wz + 1) * 8);
-    let next = U64.add c (U64.mul (U64.add wz 1UL) mword);
-    if (U64.lte next heap_size_u64) {
-      let a = !acc;
-      let wt = weight hdr wz;
-      step_arith (U64.v c) (U64.v wz) (U64.v a) (U64.v wt);
-      acc := U64.add a wt;
-      cur := next
-    } else {
-      cur := heap_size_u64
-    }
-  };
-  !acc
-}
+/// The heap's span past zero_addr, in words.  It is at most the heap's size
+/// in words, so below pow2 54.
+let span_bound (h z: nat)
+  : Lemma (requires z <= h /\ h < pow2 57)
+          (ensures (h - z) / 8 < pow2 54 /\ ((h - z) / 8) * 8 <= h)
+  = pow2_facts ();
+    FStar.Math.Lemmas.lemma_div_le (h - z) h 8;
+    FStar.Math.Lemmas.lemma_div_lt_nat h 57 3;
+    FStar.Math.Lemmas.multiply_fractions (h - z) 8
 
 /// ---------------------------------------------------------------------------
 /// Share targets
 /// ---------------------------------------------------------------------------
 ///
-/// Target i is floor(i * W / k).  It is kept as a quotient and remainder,
+/// Target i is floor(i * W / k) words.  It is kept as a quotient and remainder,
 /// q and r, so i * W is never formed and nothing overflows: going from i to
 /// i + 1 adds W / k to q and W % k to r, carrying into q when r reaches k.
 
@@ -271,7 +240,7 @@ fn advance
 /// Cutting
 /// ---------------------------------------------------------------------------
 
-/// The boundaries written so far and the share counters, after work `a` and
+/// The boundaries written so far and the share counters, after `a` words and
 /// with the walk at `c`.  n boundaries are written, the last at or below
 /// `c`; share i is next, its target is q, and n <= i, so the closing
 /// heap_size still fits.
@@ -287,7 +256,7 @@ let cut_state (g: heap_state) (k: SZ.t) (wq wr: SZ.t) (bounds: A.array U64.t)
           SZ.v q <= a + SZ.v wq + 1 /\
           SZ.v wq < pow2 54 /\ SZ.v wr < SZ.v k)
 
-/// More work done, or the walk further on: the state still holds.
+/// More words counted, or the walk further on: the state still holds.
 ghost fn cut_state_mono
   (g: heap_state) (k: SZ.t) (wq wr: SZ.t) (bounds: A.array U64.t)
   (nref iref qref rref: ref SZ.t) (a c a' c': nat)
@@ -298,7 +267,7 @@ ghost fn cut_state_mono
   fold (cut_state g k wq wr bounds nref iref qref rref a' c')
 }
 
-/// At an object start `next`, after work `a`: cut there if the next share's
+/// At an object start `next`, after `a` words: cut there if the next share's
 /// target is reached, and pass every target `a` reaches.
 fn maybe_cut
   (g: erased heap_state) (k: SZ.t{SZ.v k >= 1}) (wq wr: SZ.t) (bounds: A.array U64.t)
@@ -348,7 +317,8 @@ fn prepass
 {
   A.pts_to_len bounds;
   pow2_facts ();
-  let w = total_work heap;
+  span_bound heap_size (U64.v zero_addr);
+  let w = U64.div (U64.sub heap_size_u64 zero_addr) mword;
   let wsz = SZ.uint64_to_sizet w;
   let wq = SZ.div wsz k;
   let wr = SZ.rem wsz k;
@@ -384,7 +354,7 @@ fn prepass
     let next = U64.add c (U64.mul (U64.add wz 1UL) mword);
     if (U64.lte next heap_size_u64) {
       let a0 = !acc;
-      let wt = weight hdr wz;
+      let wt = U64.add wz 1UL;
       step_arith (U64.v c) (U64.v wz) (U64.v a0) (U64.v wt);
       let a = U64.add a0 wt;
       acc := a;

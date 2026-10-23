@@ -305,35 +305,6 @@ static uint64_t merge(GC_Impl_Heap_heap_t heap, seg_result *results, size_t m)
   return fl._2;
 }
 
-static uint64_t total_work(GC_Impl_Heap_heap_t heap)
-{
-  uint64_t cur = GC_Impl_Heap_zero_addr;
-  uint64_t acc = 0ULL;
-  uint64_t __anf0 = cur;
-  bool cond = __anf0 + 8ULL < GC_Spec_Base_heap_size_u64;
-  while (cond)
-  {
-    uint64_t c = cur;
-    uint64_t hdr = read_word(heap, c);
-    uint64_t wz = getWosize(hdr);
-    uint64_t next = c + (wz + 1ULL) * 8ULL;
-    if (next <= GC_Spec_Base_heap_size_u64)
-    {
-      uint64_t a = acc;
-      uint64_t raw = hdr >> 8U & 3ULL;
-      color_sem c1 = raw == 0ULL ? White : raw == 1ULL ? Gray : raw == 2ULL ? Blue : Black;
-      uint64_t wt = c1 == White || c1 == Blue ? wz + 1ULL : 1ULL;
-      acc = a + wt;
-      cur = next;
-    }
-    else
-      cur = GC_Spec_Base_heap_size_u64;
-    uint64_t __anf0 = cur;
-    cond = __anf0 + 8ULL < GC_Spec_Base_heap_size_u64;
-  }
-  return acc;
-}
-
 static void
 advance(size_t *iref, size_t *qref, size_t *rref, size_t k, size_t wq, size_t wr, size_t a)
 {
@@ -390,7 +361,7 @@ maybe_cut(
 
 static size_t prepass(GC_Impl_Heap_heap_t heap, size_t k, uint64_t *bounds)
 {
-  uint64_t w = total_work(heap);
+  uint64_t w = (GC_Spec_Base_heap_size_u64 - GC_Impl_Heap_zero_addr) / 8ULL;
   size_t wsz = (size_t)w;
   size_t wq = wsz / k;
   size_t wr = wsz % k;
@@ -412,9 +383,7 @@ static size_t prepass(GC_Impl_Heap_heap_t heap, size_t k, uint64_t *bounds)
     if (next <= GC_Spec_Base_heap_size_u64)
     {
       uint64_t a0 = acc;
-      uint64_t raw = hdr >> 8U & 3ULL;
-      color_sem c1 = raw == 0ULL ? White : raw == 1ULL ? Gray : raw == 2ULL ? Blue : Black;
-      uint64_t wt = c1 == White || c1 == Blue ? wz + 1ULL : 1ULL;
+      uint64_t wt = wz + 1ULL;
       uint64_t a = a0 + wt;
       acc = a;
       if (next < GC_Spec_Base_heap_size_u64)

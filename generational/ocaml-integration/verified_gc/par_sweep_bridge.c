@@ -17,6 +17,7 @@
  * aborts unless the heap and the free-list head are exactly equal.  With
  * VERGC_PAR_SWEEP_CHECK_CONTROL=1 it flips one heap byte after the parallel
  * sweep, so the comparison must fail: a control that the check is live.
+ * It also times both sweeps and prints the totals at exit.
  * With VERGC_PAR_SWEEP_RACE_CONTROL=1 it runs par_sweep on a helper thread
  * while this thread reads the whole heap, with no synchronisation: a data
  * race that ThreadSanitizer must report.
@@ -40,8 +41,17 @@ static size_t pieces;
 
 #ifdef VERGC_PAR_SWEEP_CHECK
 #include <pthread.h>
+#include <time.h>
 
 static long checked;
+static double seq_us, par_us;   /* time in the two sweeps, summed over collections */
+
+static double now_us(void)
+{
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ts.tv_sec * 1e6 + ts.tv_nsec / 1e3;
+}
 
 struct race { GC_Impl_Heap_heap_t h; uint64_t fp; };
 static void *race_sweep(void *p) { struct race *r = p; r->fp = par_sweep(r->h, pieces); return NULL; }
@@ -50,7 +60,8 @@ static int workers;
 static void check_summary(void)
 {
   fprintf(stderr, "par-sweep check: %ld collections, heap and head equal to the sequential "
-          "sweep, %d workers, k %zu\n", checked, workers, pieces);
+          "sweep, %d workers, k %zu; sweep time: sequential %.0f us, parallel %.0f us\n",
+          checked, workers, pieces, seq_us, par_us);
 }
 
 static uint64_t parallel(heap_t h, uint64_t (*seq)(heap_t))
@@ -64,10 +75,13 @@ static uint64_t parallel(heap_t h, uint64_t (*seq)(heap_t))
   uint8_t *in = malloc(n), *want = malloc(n);
   if (in == NULL || want == NULL) { fprintf(stderr, "par-sweep check: out of memory\n"); abort(); }
   memcpy(in, base, n);
+  double t0 = now_us();
   uint64_t fp_seq = seq(h);
+  seq_us += now_us() - t0;
   memcpy(want, base, n);
   memcpy(base, in, n);
   uint64_t fp;
+  double t1 = now_us();
   if (getenv("VERGC_PAR_SWEEP_RACE_CONTROL") != NULL) {
     struct race r = { ph, 0 };
     pthread_t t;
@@ -78,6 +92,7 @@ static uint64_t parallel(heap_t h, uint64_t (*seq)(heap_t))
     fp = r.fp;
   } else
     fp = par_sweep(ph, pieces);
+  par_us += now_us() - t1;
   if (getenv("VERGC_PAR_SWEEP_CHECK_CONTROL") != NULL) base[n / 2] ^= 1;
   checked++;
   if (fp != fp_seq || memcmp(base, want, n) != 0) {

@@ -35,6 +35,7 @@ int main(int argc, char **argv)
   static const uint64_t sizes[] = { 64, 4096, 65536, 1u << 20, 4u << 20 };
   uint64_t za = 2048;
   int started = 0;
+  for (int sh = 0; sh < NSHAPES; sh++)
   for (size_t si = 0; si < sizeof sizes / sizeof *sizes; si++) {
     uint64_t words = sizes[si], hs = za + 8 * words;
     zero_addr = za; heap_size_u64 = hs;
@@ -42,7 +43,7 @@ int main(int argc, char **argv)
     if (!started) { par_sweep_init(nthreads); started = 1; }   /* after the globals */
     rng_s = 42 + si;
     uint8_t *g = calloc(1, hs), *a = malloc(hs), *b = malloc(hs);
-    gen_heap(g, za, hs, MIXED);
+    gen_heap(g, za, hs, (enum shape)sh);
     GC_Impl_Heap_heap_t ha = { .data = a, .size = hs }, hb = { .data = b, .size = hs };
     double ts[REPS], tp[REPS];
     for (int r = 0; r < REPS; r++) {
@@ -52,12 +53,13 @@ int main(int argc, char **argv)
       double t1 = now_us();
       uint64_t fb = par_sweep(hb, 4 * (size_t)nthreads);
       double t2 = now_us();
-      if (fa != fb || memcmp(a, b, hs) != 0) { printf("DIFFERS at %llu words\n", (unsigned long long)words); return 1; }
+      if (fa != fb || memcmp(a, b, hs) != 0) { printf("DIFFERS: %s, %llu words\n", shape_name[sh], (unsigned long long)words); return 1; }
       ts[r] = t1 - t0; tp[r] = t2 - t1;
     }
     qsort(ts, REPS, sizeof *ts, cmp); qsort(tp, REPS, sizeof *tp, cmp);
-    printf("%s %d threads, %8llu words: sequential %9.1f us, parallel %9.1f us (median of %d, equal)\n",
-           name, nthreads, (unsigned long long)words, ts[REPS / 2], tp[REPS / 2], REPS);
+    printf("%s %d threads, %-12s %8llu words: sequential %9.1f us, parallel %9.1f us, speed-up %5.2f (median of %d, equal)\n",
+           name, nthreads, shape_name[sh], (unsigned long long)words, ts[REPS / 2], tp[REPS / 2],
+           ts[REPS / 2] / tp[REPS / 2], REPS);
     free(g); free(a); free(b);
   }
   return 0;

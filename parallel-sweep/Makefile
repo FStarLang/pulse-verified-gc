@@ -139,10 +139,12 @@ ctest: extract
 
 # c/par_sweep_bench.c times c/par_sweep.c against fused_sweep_coalesce, for
 # 1, 2, 4 and 8 threads, checking every result.  Uses the C that
-# `make extract` left in _build/extract.
+# `make extract` left in _build/extract.  Built with -flto, as the runtime's
+# collector is (generational/ocaml-integration/verified_gc/Makefile), so
+# compat.c's read_u64_le and write_u64_le are inlined.
 BENCH_THREADS = 1 2 4 8
 bench:
-	$(CC) $(CFLAGS_C) -Ic $(EXTRACTED_C) $(COMPAT)/compat.c c/par_sweep.c c/par_sweep_bench.c \
+	$(CC) $(CFLAGS_C) -flto -Ic $(EXTRACTED_C) $(COMPAT)/compat.c c/par_sweep.c c/par_sweep_bench.c \
 	  -lpthread -o _build/par_sweep_bench
 	for n in $(BENCH_THREADS); do ./_build/par_sweep_bench $$n par_sweep || exit 1; done
 

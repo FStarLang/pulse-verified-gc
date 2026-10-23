@@ -1101,3 +1101,73 @@ The control shows the test can detect a pool that does not survive `fork`. The c
 The first attempt used `b4be32e`'s pool as the control. It failed to compile against the Stage 3 headers, because `heap_t` was renamed in Stage 3. The script did not stop, so the "control" runtime silently kept the current `par_sweep.c` and passed. The script now stops if the control does not compile.
 
 `par_sweep.c` needs no fork handling: between sweeps, the process has none of its threads, and a fork cannot happen during a sweep from OCaml code.
+
+### The slowdown, and fix 1: one walk in the pre-pass
+
+**Where the time went.** These are 1-thread timings on generated 1M-word heaps, built with `-flto` like the runtime:
+
+| Heap | Sequential sweep | prepass | All segments | merge |
+|---|---|---|---|---|
+| mixed | 2.50 ms | 3.56 ms | 2.69 ms | 0 |
+| all free | 1.89 ms | 2.12 ms | 1.73 ms | 0.43 ms |
+| all live | 1.40 ms | 2.15 ms | 1.68 ms | 0 |
+| front-packed | 0.59 ms | 0.05 ms | 0.04 ms | 0.54 ms |
+
+`prepass` walked every header twice: once in `total_work` to add up the weights, then again to cut. That cost more than the whole sequential sweep, and none of it could overlap with the threads. A bare walk along the headers costs about 1.0 ms here (3.9 ns per header).
+
+**The change.** Only `prepass`'s implementation and proof changed (`impl/GC.Impl.SweepPar.Prepass.fst`). It now makes one walk and cuts at the first object start at or after each `floor(i * W / k)` words past `zero_addr`, where `W = (heap_size - zero_addr) / 8` is computed without walking. The weight of an object is now its size, `wz + 1`, so there is no colour test in the loop. `total_work` and `weight` are gone, and a lemma `span_bound` bounds `W` by `pow2 54`. The share arithmetic (`advance`, `maybe_cut`) and every boundary lemma are unchanged. So are the `prepass` val, whose specification already said "How the boundaries are spread is not specified", every specification, and the theorem. `make verify` passes every module, with no admits or assumes in the file. The extracted C loses `total_work` and the colour test, and nothing else changes.
+
+**Tests.**
+
+- **The C test** (`make ctest`) passes: 4,408 heaps and 17,632 runs, with pieces in order, in reverse, and through `sweep_par_seq`, all equal to `fused_sweep_coalesce`. The control is caught in 17,233 runs.
+- **Steps 1 and 2** were rerun with the full matrix (1, 2, 4 and 8 threads, several k, bytecode and native). Every collection was equal to the sequential sweep: 148 bytecode and 117 native per configuration.
+- **On the same machine at the same time**, the old and new `prepass` take 5.2–5.9 ms and 1.4–1.6 ms on the mixed 1M-word heap.
+
+**`make bench`**, now built with `-flto` and covering all four shapes. The table gives the speed-up, sequential time over parallel time, median of 41. The machine had a load average of about 3 from other applications during these runs, which counts most against more threads.
+
+| Heap | Words | 1 thread | 2 | 4 | 8 |
+|---|---|---|---|---|---|
+| mixed | 1M | 0.58 | 0.89 | 1.21 | 1.31 |
+| mixed | 4M | 0.59 | 0.92 | 1.25 | 1.42 |
+| front-packed | 1M | 0.94 | 0.82 | 0.81 | 0.75 |
+| front-packed | 4M | 0.95 | 0.93 | 0.92 | 0.89 |
+| all free | 1M | 0.50 | 0.68 | 0.82 | 0.86 |
+| all free | 4M | 0.51 | 0.70 | 0.85 | 0.94 |
+| all live | 1M | 0.43 | 0.58 | 0.72 | 0.77 |
+| all live | 4M | 0.42 | 0.61 | 0.77 | 0.83 |
+
+At 4K and 64K words, every configuration is slower than sequential (0.02 to 0.77), because thread start-up costs 25 to 100 µs.
+
+**The real test programs.** The test runtime now times both sweeps at every collection and prints the totals. The table gives speed-ups over whole runs, bytecode and native:
+
+| Program | Collections | 1 thread | 2 | 4 | 8 |
+|---|---|---|---|---|---|
+| `infix_closures` | 54 | 0.88 / 0.83 | 0.59 / 0.56 | 0.45 / 0.48 | 0.42 / 0.38 |
+| `no_scan` | 22 | 1.05 / 1.13 | 0.99 / 1.00 | 1.01 / 0.97 | 1.00 / 0.91 |
+| `make_vect_barrier` | 2 | 1.44 / 1.44 | 1.53 / 1.42 | 1.28 / 1.36 | 1.31 / 1.83 |
+| `alloc_exact_promotion` | 3 | 0.61 / 0.57 | 0.69 / 0.75 | 0.85 / 0.79 | 0.92 / 0.79 |
+| `fasta` (bytecode only) | 31 | 0.82 | 0.67 | 0.48 | 0.38 |
+| `count_change` | 2 | 0.72 / 1.19 | 0.97 / 0.90 | 1.06 / 1.08 | 1.13 / 1.05 |
+| `binarytrees` | 34 | 0.77 / 0.84 | 0.70 / 0.72 | 0.65 / 0.71 | 0.69 / 0.77 |
+
+These in-runtime timings favour the parallel sweep slightly. The sequential sweep runs first, on a heap that has just been copied out. The parallel sweep runs on a heap that has just been copied back in, so it starts with more of the heap in cache. That is why some 1-thread figures are above 1.
+
+**Why real heaps differ.** To see the shapes, one heap from each program was dumped just before a sweep. This was done in a scratch build only, not committed. Each dump was then timed alone, with the heap copied fresh before every run:
+
+| Program | Words | Headers | Live | Largest object | Pieces (k 16) | Sequential | prepass | Segments | merge | Speed-up at 1 / 2 / 4 / 8 threads |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `infix_closures` | 300K | 1,981 | 3% | 97% of heap | 2 | 152 µs | 8 | 15 | 157 | 1.27 / 0.77 / 0.64 / 0.50 |
+| `fasta` | 300K | 645 | 22% | 65% | 4 | 106 µs | 3 | 5 | 121 | 1.18 / 0.77 / 0.46 / 0.39 |
+| `binarytrees` | 1M | 5,457 | 28% | 51% | 7 | 599 µs | 171 | 103 | 409 | 0.97 / 0.85 / 0.85 / 0.75 |
+| `count_change` | 2M | 56,440 | 9% | 91% | 3 | 1.45 ms | 198 | 411 | 1174 | 0.84 / 0.81 / 0.80 / 0.84 |
+| `no_scan` | 4M | 1,765 | 0% | 100% | 2 | 2.47 ms | 9 | 22 | 2463 | 0.86 / 0.88 / 0.86 / 0.84 |
+| `make_vect_barrier` | 4M | 2,260 | 0% | 100% | 2 | 2.61 ms | 12 | 26 | 2540 | 0.97 / 0.93 / 0.98 / 0.97 |
+| `alloc_exact_promotion` | 4.2M | 46,763 | 6% | 39% | 11 | 2.89 ms | 2921 | 1706 | 1047 | 0.50 / 0.55 / 0.61 / 0.58 |
+
+(prepass, segments and merge are in µs.)
+
+Real heaps here have few headers and mostly one huge free block. Their sweep is mostly the zeroing of free blocks' fields, which is bound by memory bandwidth. A free run that reaches a piece boundary or the end of the heap is zeroed by `merge`, on one thread. Cuts can only be made at headers, so one free object covering most of the heap cannot be split, and few pieces result.
+
+Where headers are sparse, the walk waits on memory. On `alloc_exact_promotion`, each of its 47,000 header reads, across 32 MB, misses the cache: `prepass` takes 2.9 ms, as long as the whole sequential sweep. In the sequential sweep, the zeroing streams through memory ahead of the next header.
+
+On these heaps fix 1 removes little, because `prepass` was already cheap except on `alloc_exact_promotion`. The time is in `merge`'s serial zeroing. Fix 3 from the investigation, zeroing edge runs inside `sweep_segment`, would move most of it to the threads. It would not split a single free object larger than a piece, because the boundaries must be headers. Fix 3 changes specifications, and is not done.
