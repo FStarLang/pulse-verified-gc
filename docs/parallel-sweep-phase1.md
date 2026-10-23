@@ -1083,3 +1083,21 @@ In every run, every collection was equal to the sequential sweep, and the output
 The other side of each report is the collector thread's read in `parallel` (`par_sweep_bridge.c:76`). So TSan sees the worker threads' heap writes. A race in them would be reported. Both control runs exit 134 once TSan has reported. The same run without the control exits 0.
 
 **Not run under TSan: OCaml's testsuite.** That would need the tree's compilers, libraries and every test's runtime built with TSan, beyond what `build_tsan.sh` builds.
+
+#### Step 5: fork
+
+`parallel-sweep/rt/fork.sh` runs `rt/fork_sweep.ml` in bytecode and native, with a 60-second limit per run. The program forces major collections in three places: in the parent before `Unix.fork`, in the child, and in the parent after the child exits. It checks that retained values are intact after each phase. The child exits 0 only if it ran at least one major collection. The parent prints `ok: fork` only if the child exited 0 and the parent collected again.
+
+| Runtime | 1 thread | 2 | 4 | 8 |
+|---|---|---|---|---|
+| check (`par_sweep.c`, threads per sweep), byte and native | ok | ok | ok | ok |
+| control: the pool as wired in (`4ab50e1`) minus its `pthread_atfork` line, byte and native | hangs (timeout) | hangs | hangs | hangs |
+| default runtime, setting off, byte and native | ok | | | |
+
+In the check runs, the parent did 35 major collections before the fork. The child and the parent then did 36 each, and every one was compared with the sequential sweep. The child's summary counts 71, because its counter starts from the parent's 35.
+
+The control shows the test can detect a pool that does not survive `fork`. The child inherits `nworkers > 0` but not the workers, so its first sweep waits for ever. It is the reviewed pool without the fix of `f71d5da`.
+
+The first attempt used `b4be32e`'s pool as the control. It failed to compile against the Stage 3 headers, because `heap_t` was renamed in Stage 3. The script did not stop, so the "control" runtime silently kept the current `par_sweep.c` and passed. The script now stops if the control does not compile.
+
+`par_sweep.c` needs no fork handling: between sweeps, the process has none of its threads, and a fork cannot happen during a sweep from OCaml code.

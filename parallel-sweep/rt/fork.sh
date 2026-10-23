@@ -3,8 +3,9 @@
 # and native, with 1, 2, 4 and 8 workers, on
 #   check    the test runtime (build.sh check): must pass
 #   nofork   the same runtime with par_sweep.c replaced by the persistent pool
-#            as first reviewed (b4be32e), before its fork fix: the child must
-#            hang, showing the test can see a pool that does not survive fork
+#            as wired in (4ab50e1) minus its pthread_atfork line, that is the
+#            pool without its fork fix: the child must hang, showing the test
+#            can see a pool that does not survive fork
 # and once on the tree's default runtime with the setting off.  Needs
 # build.sh check, and ci/build-verified-toolchain.sh for the tree's compilers
 # and its Unix library (built against the patched runtime headers).
@@ -19,13 +20,15 @@ F=$B/fork
 TIMEOUT=${TIMEOUT:-60}
 mkdir -p $F
 
-# --- the control runtime: check, with b4be32e's pool in place of par_sweep.c ---
+# --- the control runtime: check, with the unfixed pool in place of par_sweep.c ---
 rm -rf $B/nofork && cp -R $B/check $B/nofork
-git -C $HERE show b4be32e:parallel-sweep/c/par_sweep.c > $F/par_sweep_nofork.c || exit 1
+git -C $HERE show 4ab50e1:parallel-sweep/c/par_sweep.c \
+  | grep -v 'pthread_atfork(NULL, NULL, forget_workers);' > $F/par_sweep_nofork.c || exit 1
 CF="-O2 -I$PSW -include $SNAP/compat.h -I$SNAP -I$SNAP/krmllib -I$SNAP/krmllib/krml -fno-common"
-cc $CF -Wno-unused-function -c $F/par_sweep_nofork.c -o $F/psw_par_sweep.o
-cc $CF -Wno-unused-function -DNATIVE_CODE -c $F/par_sweep_nofork.c -o $F/psw_par_sweep.n.o
-(cd $F && ar r $B/nofork/libcamlrun.a psw_par_sweep.o && ar r $B/nofork/libasmrun.a psw_par_sweep.n.o) 2>/dev/null
+rm -f $F/psw_par_sweep.o $F/psw_par_sweep.n.o
+cc $CF -Wno-unused-function -c $F/par_sweep_nofork.c -o $F/psw_par_sweep.o || exit 1
+cc $CF -Wno-unused-function -DNATIVE_CODE -c $F/par_sweep_nofork.c -o $F/psw_par_sweep.n.o || exit 1
+(cd $F && ar r $B/nofork/libcamlrun.a psw_par_sweep.o && ar r $B/nofork/libasmrun.a psw_par_sweep.n.o) || exit 1
 cc -O2 -flto -o $B/nofork/ocamlrun $B/nofork/prims.o $B/nofork/libcamlrun.a -lm -lpthread -Wl,-no_compact_unwind
 
 # --- the program, bytecode once, native once per runtime ---
