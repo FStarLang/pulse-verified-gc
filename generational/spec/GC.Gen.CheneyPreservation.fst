@@ -1652,6 +1652,7 @@ private let update_major_pointers_preserves_dense
                     heap_objects_dense major)
           (ensures heap_objects_dense (update_major_pointers major fwd))
   =
+  reveal_opaque (`%heap_objects_dense) heap_objects_dense;
   let updated = update_major_pointers major fwd in
   update_major_pointers_preserves_objects major fwd;
   let aux (start: hp_addr) : Lemma

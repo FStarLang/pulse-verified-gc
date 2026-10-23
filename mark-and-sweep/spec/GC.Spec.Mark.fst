@@ -1555,12 +1555,12 @@ let rec push_children_preserves_objects g st obj i ws
 /// push_children preserves heap_objects_dense (each makeGray is a color change)
 val push_children_preserves_density : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
-  Lemma (requires well_formed_heap g /\ SweepInv.heap_objects_dense g /\
+  Lemma (requires well_formed_heap g /\ heap_objects_dense g /\
                   Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   fields_constrained g obj /\
                   U64.v (wosize_of_object obj g) < pow2 54)
-        (ensures SweepInv.heap_objects_dense (fst (push_children g st obj i ws)))
+        (ensures heap_objects_dense (fst (push_children g st obj i ws)))
         (decreases (U64.v ws - U64.v i))
 
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
@@ -1628,8 +1628,8 @@ let mark_step_preserves_density g st =
 
 /// mark_aux preserves heap_objects_dense (induction on fuel, uses mark_step_preserves_density)
 val mark_aux_preserves_density : (g: heap) -> (st: seq obj_addr) -> (fuel: nat) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st /\ SweepInv.heap_objects_dense g)
-        (ensures SweepInv.heap_objects_dense (mark_aux g st fuel))
+  Lemma (requires well_formed_heap g /\ stack_props g st /\ heap_objects_dense g)
+        (ensures heap_objects_dense (mark_aux g st fuel))
         (decreases fuel)
 
 let rec mark_aux_preserves_density g st fuel =

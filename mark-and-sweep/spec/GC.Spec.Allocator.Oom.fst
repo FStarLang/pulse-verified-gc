@@ -187,7 +187,7 @@ let fused_oom_no_fit (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) (wz
     (requires
       Corr.mark_post h_init h_mark roots fp /\
       well_formed_heap h_mark /\
-      SI.heap_objects_dense h_mark /\
+      heap_objects_dense h_mark /\
       SpecSweep.fp_in_heap fp h_mark /\
       (forall (x: obj_addr). Seq.mem x (objects zero_addr h_mark) ==> ~(is_gray x h_mark)) /\
       wz >= 1 /\

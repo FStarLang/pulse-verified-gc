@@ -23,44 +23,7 @@ module GenInv = GC.Gen.HeapInvariant
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 60"
 
-/// `GC.Gen.Promote.heap_objects_dense` restates `GC.Spec.SweepInv`'s abstract
-/// density predicate transparently, and `major_heap_shape` is stated against
-/// the former.  This is the bridge between them.
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 80"
-private let dense_bridge (g: heap)
-  : Lemma
-    (requires SweepInv.heap_objects_dense g)
-    (ensures Promote.heap_objects_dense g)
-  = let aux (start: hp_addr)
-      : Lemma
-        (ensures
-          U64.v start + 8 < heap_size ==>
-          Seq.mem (f_address start) (objects zero_addr g) ==>
-          Seq.length (objects start g) > 0 ==>
-          (let wz = getWosize (read_word g start) in
-           let next = U64.v start + ((U64.v wz + 1) * 8) in
-           next + 8 < heap_size ==>
-           Seq.length (objects (U64.uint_to_t next) g) > 0 /\
-           Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr g)))
-      = if U64.v start + 8 < heap_size &&
-           Seq.mem (f_address start) (objects zero_addr g) &&
-           Seq.length (objects start g) > 0
-        then begin
-          SweepInv.objects_dense_step start g;
-          SweepInv.objects_dense_obj_in start g;
-          let wz = getWosize (read_word g start) in
-          let next = U64.v start + ((U64.v wz + 1) * 8) in
-          if next + 8 < heap_size then begin
-            aligned_plus_mul8 (U64.v start) (U64.v wz + 1);
-            let nx : hp_addr = U64.uint_to_t next in
-            f_address_spec nx;
-            SweepInv.obj_in_objects_elim (U64.uint_to_t (next + 8)) g;
-            assert (Seq.mem (f_address nx) (objects zero_addr g))
-          end
-        end
-    in
-    FStar.Classical.forall_intro aux
-
 /// The colour clauses.  `coalesce_all_white_or_blue` says every object of the
 /// coalesced walk is white or blue; black and gray are the other two cases of
 /// the colour type, so both clauses follow by exhaustiveness.
@@ -164,7 +127,7 @@ private let coalesce_major_heap_shape (g: heap)
   : Lemma
     (requires
       Coalesce.post_sweep_strong g /\
-      SweepInv.heap_objects_dense g /\
+      heap_objects_dense g /\
       Seq.length (objects zero_addr g) > 0 /\
       blue_fields_non_infix (fst (Coalesce.coalesce g)))
     (ensures (let r = Coalesce.coalesce g in
@@ -185,7 +148,6 @@ private let coalesce_major_heap_shape (g: heap)
     coalesced_blue_link_fields_valid g;
     // 6, 8. the walk still tiles the heap, and is non-empty
     CDense.coalesce_dense g;
-    dense_bridge g';
     // 7. no live object is on the free list
     coalesced_chain_objects_blue g;
     // 9, 10. the head is a well-formed free-list entry

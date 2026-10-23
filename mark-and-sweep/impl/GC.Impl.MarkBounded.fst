@@ -630,9 +630,9 @@ let rec darken_roots_bounded_prefix_preserves_wf
 let check_and_darken_bounded_spec_preserves_density
   (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t) (cap: nat)
   : Lemma
-      (requires SweepInv.heap_objects_dense g)
+      (requires GC.Spec.Fields.heap_objects_dense g)
       (ensures
-        SweepInv.heap_objects_dense (fst (check_and_darken_bounded_spec g st v cap)))
+        GC.Spec.Fields.heap_objects_dense (fst (check_and_darken_bounded_spec g st v cap)))
   =
   if U64.v v >= U64.v zero_addr + U64.v mword &&
      U64.v v < heap_size &&
@@ -1516,7 +1516,7 @@ fn mark_inner_loop_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (well_formed_heap s2 /\
                 Seq.length (objects zero_addr s2) > 0 /\
-                SweepInv.heap_objects_dense s2 /\
+                GC.Spec.Fields.heap_objects_dense s2 /\
                 Seq.length st2 == 0 /\
                 SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's /\
                 SpecMarkBoundedCorr.mark_color_inv g_init s2 /\
@@ -1613,7 +1613,7 @@ let objects_nonempty_implies_heap_gt_8 (g: heap_state)
 /// We need: obj_in_objects (f_address (uint_to_t next_val)) g
 /// These are equal when next_val + 8 < heap_size (so f_address is defined).
 let rescan_density_bridge (start: hp_addr) (g: heap_state)
-  : Lemma (requires SweepInv.heap_objects_dense g /\
+  : Lemma (requires GC.Spec.Fields.heap_objects_dense g /\
                     U64.v start + 8 < heap_size /\
                     Seq.mem (SpecHeap.f_address start) (SpecFields.objects zero_addr g) /\
                     Seq.length (SpecFields.objects start g) > 0)
@@ -1988,7 +1988,7 @@ let no_gray_when_scan_complete_nat
 fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecFields.well_formed_heap 's /\
-                 SweepInv.heap_objects_dense 's /\
+                 GC.Spec.Fields.heap_objects_dense 's /\
                  Seq.length (SpecFields.objects zero_addr 's) > 0 /\
                  Seq.length 'st == 0 /\
                  stack_capacity st == cap /\ cap > 0)
@@ -2031,7 +2031,7 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
             U64.v vc + 8 < pow2 64 /\
             Seq.length st_cur <= cap /\
             SpecFields.well_formed_heap 's /\
-            SweepInv.heap_objects_dense 's /\
+            GC.Spec.Fields.heap_objects_dense 's /\
             Seq.length 's == heap_size /\
             SpecMarkBounded.bounded_stack_props 's st_cur /\
             (U64.v vc + U64.v mword < heap_size ==>
@@ -2175,7 +2175,7 @@ fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
       GR.pts_to gm m **
       pure (m == SpecMarkBounded.count_non_black s /\
             SpecFields.well_formed_heap s /\
-            SweepInv.heap_objects_dense s /\
+            GC.Spec.Fields.heap_objects_dense s /\
             Seq.length (SpecFields.objects zero_addr s) > 0 /\
             Seq.length st_cur == 0 /\
             stack_capacity st > 0 /\

@@ -2,7 +2,7 @@ module GC.Spec.Coalesce.Dense
 
 /// Coalescing preserves the "the walk tiles the heap" invariant.
 ///
-/// `GC.Spec.SweepInv.heap_objects_dense` is one of the fifteen clauses of
+/// `heap_objects_dense` is one of the fifteen clauses of
 /// `GC.Gen.HeapInvariant.major_heap_shape`, and it is the one clause the
 /// coalescer cannot inherit by transfer: merging a run of free blocks changes
 /// the wosize of the block at the run's head, so `heap_objects_dense_transfer`
@@ -250,11 +250,11 @@ let rec coalesce_aux_walk_end g0 g start objs first_blue run_words fp all_objs =
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 100"
 let coalesce_dense (g: heap)
   : Lemma
-    (requires post_sweep g /\ SI.heap_objects_dense g /\
+    (requires post_sweep g /\ heap_objects_dense g /\
               Seq.length (objects zero_addr g) > 0)
     (ensures (
       let g' = fst (coalesce g) in
-      SI.heap_objects_dense g' /\ Seq.length (objects zero_addr g') > 0))
+      heap_objects_dense g' /\ Seq.length (objects zero_addr g') > 0))
   = let g' = fst (coalesce g) in
     coalesce_preserves_length g;
     WE.walk_end_of_dense_top g;

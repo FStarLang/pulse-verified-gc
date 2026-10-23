@@ -73,7 +73,7 @@ fn fused_sweep_coalesce (heap: heap_t)
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap 's /\
                  Seq.length (SpecFields.objects zero_addr 's) > 0 /\
-                 SI.heap_objects_dense 's /\
+                 GC.Spec.Fields.heap_objects_dense 's /\
                  (forall (x: obj_addr).
                    Seq.mem x (SpecFields.objects zero_addr 's) ==>
                    ~(SpecObject.is_gray x 's)))

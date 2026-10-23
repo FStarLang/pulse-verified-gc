@@ -16,7 +16,7 @@ open GC.Spec.Heap
 
 let mark_inv (g: heap) (st: seq obj_addr) : prop =
   well_formed_heap g /\ stack_props g st /\
-  Seq.length (objects zero_addr g) > 0 /\ SweepInv.heap_objects_dense g
+  Seq.length (objects zero_addr g) > 0 /\ heap_objects_dense g
 
 let mark_inv_elim_wfh g st = ()
 

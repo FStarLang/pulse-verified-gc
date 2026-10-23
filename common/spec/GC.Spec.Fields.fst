@@ -2494,3 +2494,31 @@ let field_write_preserves_wf g obj addr v =
   // Reconstruct well_formed_heap for the modified heap
   reveal_opaque (`%well_formed_heap) well_formed_heap
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Heap density
+/// ---------------------------------------------------------------------------
+
+/// The objects walk never stops early: from every object header, if the next
+/// position has room for a header, the walk continues there and the object at
+/// that position is in the global list.  Only object header positions are
+/// constrained, so the zero words inside a large block (phantom wosize-0
+/// objects, not in the global walk) are excluded.
+///
+/// Used by both collectors: `GC.Spec.Coalesce.Correct` needs it of the swept
+/// heap, and the generational invariant `major_heap_shape` carries it.
+///
+/// Opaque to SMT, so a quantifier this size stays out of the large mark and
+/// sweep contexts; `reveal_opaque (`%heap_objects_dense) heap_objects_dense`
+/// unfolds it where a proof needs it.
+[@@"opaque_to_smt"]
+let heap_objects_dense (g: heap) : prop =
+  forall (start: hp_addr).
+    U64.v start + 8 < heap_size ==>
+    Seq.mem (f_address start) (objects zero_addr g) ==>
+    Seq.length (objects start g) > 0 ==>
+    (let wz = getWosize (read_word g start) in
+     let next = U64.v start + ((U64.v wz + 1) * 8) in
+     next + 8 < heap_size ==>
+     Seq.length (objects (U64.uint_to_t next) g) > 0 /\
+     Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr g))

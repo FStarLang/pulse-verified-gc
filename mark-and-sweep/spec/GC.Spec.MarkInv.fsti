@@ -61,7 +61,7 @@ val mark_inv_elim_objects : (g: heap) -> (st: seq obj_addr) ->
 
 val mark_inv_elim_density : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires mark_inv g st)
-        (ensures SweepInv.heap_objects_dense g)
+        (ensures heap_objects_dense g)
 
 /// ---------------------------------------------------------------------------
 /// Stack length bound (proof gap — provable from stack_no_dups + stack_elements_valid)

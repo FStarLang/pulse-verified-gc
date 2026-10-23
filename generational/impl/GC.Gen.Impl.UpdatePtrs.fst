@@ -339,7 +339,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
   requires is_heap major 'ms **
            pts_to fwd_arr 'farr **
            pure (SpecFields.well_formed_heap_part1 'ms /\
-                 PromoteSpec.heap_objects_dense 'ms /\
+                 GC.Spec.Fields.heap_objects_dense 'ms /\
                  heap_size > 8 /\
                  Seq.length (SpecFields.objects zero_addr 'ms) > 0 /\
                  Seq.length 'farr == fwd_array_size /\
@@ -348,7 +348,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
     is_heap major ms2 **
     pts_to fwd_arr 'farr **
     pure (SpecFields.well_formed_heap_part1 ms2 /\
-          PromoteSpec.heap_objects_dense ms2 /\
+          GC.Spec.Fields.heap_objects_dense ms2 /\
           Seq.length (SpecFields.objects zero_addr ms2) > 0 /\
           ms2 == PromoteSpec.update_major_pointers 'ms fwd)
 {
@@ -367,7 +367,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
       pure (U64.v pos_i % 8 == 0 /\
             U64.v pos_i <= heap_size /\
             SpecFields.well_formed_heap_part1 ms_i /\
-            PromoteSpec.heap_objects_dense ms_i /\
+            GC.Spec.Fields.heap_objects_dense ms_i /\
             Seq.length 'farr == fwd_array_size /\
             represents_fwd 'farr fwd /\
             // When done: target achieved
@@ -385,7 +385,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
     with ms_cur. assert (is_heap major ms_cur);
     // Explicitly assert the invariant conditions for the not-done case
     assert (pure (SpecFields.well_formed_heap_part1 ms_cur /\
-                  PromoteSpec.heap_objects_dense ms_cur /\
+                  GC.Spec.Fields.heap_objects_dense ms_cur /\
                   U64.v p + 8 < heap_size /\
                   Seq.mem (GC.Spec.Heap.f_address p) (SpecFields.objects zero_addr ms_cur) /\
                   Seq.length (SpecFields.objects p ms_cur) > 0));
@@ -480,7 +480,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
           ms_after == PromoteSpec.update_object_pointers ms_cur obj (U64.v wosize) fwd 0 /\
           obj == GC.Spec.Heap.f_address p /\
           SpecFields.well_formed_heap_part1 ms_after /\
-          PromoteSpec.heap_objects_dense ms_after /\
+          GC.Spec.Fields.heap_objects_dense ms_after /\
           Seq.length 'farr == fwd_array_size /\
           represents_fwd 'farr fwd
         ));
