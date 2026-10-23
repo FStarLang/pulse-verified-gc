@@ -1045,3 +1045,41 @@ The three tests that hung, run with `make one`:
 The bytecode failure is listed in `ci/expected-failures.txt`, and it fails with the setting off too.
 
 **OCaml's testsuite**, with the setting on (4 threads), on the shipped runtimes: 2920 passed, 27 failed, 40 unexpected errors, 3141 considered. There are **no regressions against `ci/expected-failures.txt`**. Two expected failures now pass: `output-complete-obj/test.ml`, 1.1.1 and 2.1.1, as in the first run. Against the pool's run, the three timeouts are gone: 3 more passed and 3 fewer errors.
+
+#### Step 4: ThreadSanitizer
+
+`parallel-sweep/rt/build_tsan.sh` builds the TSan runtimes under `parallel-sweep/_build/rt/tsan/`, using Homebrew clang 18; Apple clang 12's TSan crashes on this macOS (SPIKE.md, Spike 2). Instrumented with `-fsanitize=thread`:
+
+- the OCaml runtime's own objects, rebuilt in a copy of the tree;
+- the generational collector;
+- the parallel sweep's extracted C;
+- `par_sweep.c`;
+- the test bridge (`-DVERGC_PAR_SWEEP_CHECK`).
+
+Each collection is still compared with the sequential sweep. In native code, the OCaml-generated code and `amd64.S` are not instrumented.
+
+The first build was missing one primitive. With `verified_gc/` removed from the copied tree, `gen_primitives.sh` could not read `alloc_gen.c`, so `caml_trigger_verified_gc` was not in the table, and `binarytrees.byte` uses it. The script now copies `alloc_gen.c` into the copy, and its `primitives` file is identical to the tree's.
+
+**The programs** (`run.sh byte|native tsan N [K]`):
+
+| Threads | k | bytecode (148 collections) | native (117 collections) |
+|---|---|---|---|
+| 2 | 8 | ok, 0 reports | ok, 0 reports |
+| 4 | 16 | ok, 0 reports | ok, 0 reports |
+| 8 | 32 | ok, 0 reports | ok, 0 reports |
+| 8 | 64 | ok, 0 reports | ok, 0 reports |
+
+In every run, every collection was equal to the sequential sweep, and the output was the default runtime's. The native binaries are linked against the TSan runtime (`libclang_rt.tsan_osx_dynamic.dylib`). One thread is not run, because it starts no thread.
+
+**`make test` and `make test-native`**, with `VERGC_PAR_SWEEP_THREADS=4`, on the TSan runtimes (`VERIFIED_GEN_OCAMLRUN`, `VERGC_NATIVE_RUNTIME_DIR`, and `ocamlopt -cc clang-18 -ccopt -fsanitize=thread`): both pass, with 0 reports. As in step 3, bytecode compares 81 collections and native 0.
+
+**The control.** With `VERGC_PAR_SWEEP_RACE_CONTROL=1`, the test bridge runs `par_sweep` on a helper thread while the collector's thread reads the whole heap, with no synchronisation. On `infix_closures` with 4 threads, TSan reports the race:
+
+| | Reports | With `sweep_segment` on a worker (`par_sweep.c:22`) | With `merge0` |
+|---|---|---|---|
+| bytecode | 54 | 45 | 9 |
+| native | 85 | 70 | 15 |
+
+The other side of each report is the collector thread's read in `parallel` (`par_sweep_bridge.c:76`). So TSan sees the worker threads' heap writes. A race in them would be reported. Both control runs exit 134 once TSan has reported. The same run without the control exits 0.
+
+**Not run under TSan: OCaml's testsuite.** That would need the tree's compilers, libraries and every test's runtime built with TSan, beyond what `build_tsan.sh` builds.

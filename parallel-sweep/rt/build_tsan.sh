@@ -41,6 +41,8 @@ T=$B/ocaml-tsan
 if [ ! -f $T/.objs-built ]; then
   rm -rf $T && mkdir -p $T && cp -R $OC/. $T/
   rm -f $T/runtime/verified_gc $T/runtime/*.o $T/runtime/*.a
+  # gen_primitives.sh reads verified_gc/alloc_gen.c for caml_trigger_verified_gc
+  mkdir -p $T/runtime/verified_gc && cp $GI/verified_gc/alloc_gen.c $T/runtime/verified_gc/
   printf 'psw-byte: $(libcamlrun_OBJECTS) prims.$(O)\npsw-native: $(libasmrun_OBJECTS)\n' >$B/objs.mk
   make -C $T/runtime -f Makefile -f $B/objs.mk -j8 psw-byte psw-native CC="$TSAN_CC" \
     OC_CFLAGS="-O1 -g -fsanitize=thread -fno-strict-aliasing -fwrapv -pthread" >/dev/null
