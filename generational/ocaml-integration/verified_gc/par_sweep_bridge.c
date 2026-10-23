@@ -1,10 +1,12 @@
 /* par_sweep_bridge.c — the parallel sweep, behind a setting that is off by
  * default (docs/parallel-sweep-phase1.md, §9, Stage 3).
  *
- *   VERGC_PAR_SWEEP_THREADS=n   start n worker threads and sweep in parallel;
- *                               unset or 0: the sequential sweep, unchanged
- *   VERGC_PAR_SWEEP_K=k         at most k pieces per sweep (default 4n; the
- *                               pool caps it at 64)
+ *   VERGC_PAR_SWEEP_THREADS=n   sweep in parallel on n threads: the
+ *                               collector's own and n - 1 started for each
+ *                               sweep; unset or 0: the sequential sweep,
+ *                               unchanged
+ *   VERGC_PAR_SWEEP_K=k         at most k pieces per sweep (default 4n;
+ *                               par_sweep caps it at 64)
  *
  * When on, collect_with_roots (GC_Gen_Impl.c) calls `parallel` in place of
  * fused_sweep_coalesce.  par_sweep has fused_sweep_coalesce's result, by

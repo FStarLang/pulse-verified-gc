@@ -694,6 +694,8 @@ make ctest      # verify, extract, compile with -Wall -Wextra, run; about 16 s o
 
 ### Stage 2: the threads (design only, not wired in)
 
+> **Superseded.** This section describes the persistent pool as reviewed (`f71d5da`). Step 3 found that the pool's workers keep a process alive after its main thread calls `Thread.exit`. After review, the pool was replaced by threads started at each sweep and joined before merge. See "The pool replaced", after step 3, for that code, its line-by-line account and the reruns. This section is kept as the record of what was reviewed and tested in steps 1 and 2 the first time.
+
 `parallel-sweep/c/par_sweep.c`, 64 lines, is the C that runs the pieces on threads. Stage 3 wires it into the collector. In Stage 2 it was compiled once with `cc -c -O2 -Wall -Wextra -Wpedantic -std=c11` against the Stage 1 headers, with no warnings, but not linked or run.
 
 It has two entry points. Both are called only from the thread that runs the collector, never at the same time:
@@ -930,4 +932,116 @@ This is OCaml's own issue #9971, met again. Its fix is in `caml_thread_stop` (`o
 
 The hang also cannot be interrupted. Every thread left blocks all signals: the workers by design (Stage 2, line 42) and the tick thread by OCaml's own code. So SIGALRM and SIGINT stay pending forever. A timeout by `alarm` did not end it; only SIGKILL did.
 
-Not fixed yet; the fix changes the reviewed `par_sweep.c`.
+Resolved by replacing the pool; see the next section.
+
+### The pool replaced: threads started at each sweep
+
+After review, the persistent pool was replaced. `parallel-sweep/c/par_sweep.c` now starts its threads at the start of each sweep and joins them before merge. No thread outlives a sweep, so nothing needs to happen at `fork` or `Thread.exit`. The interface is unchanged (`par_sweep_init`, `par_sweep`), and so are the bridge and the hook in `collect_with_roots`.
+
+#### The two candidates
+
+Two fixes for the hang were written and measured. A was not committed.
+
+- **A: keep the pool and add a stop hook.** `par_sweep_stop` sets a flag, wakes the workers and joins them. `caml_thread_stop` (`otherlibs/systhreads/st_stubs.c`, through `runtime_gen.patch`) calls it through a hook pointer when the last OCaml thread stops, next to its own tick-thread cleanup. A fixed the three tests. But its first draft broke every bytecode program that uses threads, even with the setting off: `dllthreads.so` could not load, because LTO had made the hook pointer a local symbol in `ocamlrun`. Marking it `__attribute__((used))` fixed that, but the fix depends on how `ocamlrun` is linked.
+- **B: threads started at each sweep.** Chosen.
+
+| | A: pool and stop hook | B: started at each sweep |
+|---|---|---|
+| Trusted C, the thread driver (no blank, comment or brace-only lines) | 57 | 36 |
+| Trusted C, OCaml's systhreads | 4 | 0 |
+| Trusted C, the bridge | 2 | 0 |
+| **Total** | **63** | **36** |
+| Fork handler | needed | none |
+| Change to OCaml's code | `st_stubs.c` | none |
+
+Start-up cost per collection, measured with `make -C parallel-sweep bench` (median of 41 sweeps of a 64-word heap, where sweeping costs almost nothing). This is on a 4-core, 8-thread Intel i5-1038NG7:
+
+| Threads | A | B | B minus A |
+|---|---|---|---|
+| 1 | 10 µs | 2 µs (no thread started) | −8 µs |
+| 2 | 9 µs | 27 µs | +18 µs |
+| 4 | 14 µs | 71 µs | +57 µs |
+| 8 | 27 µs | 101 µs | +74 µs |
+
+On heaps of 1M and 4M words, the size of the test programs' heaps, the two were within noise of each other. At 1M words with 8 threads, A took 4.7 ms and B 4.8 ms. The same runs found the parallel sweep slower than the sequential one at every size; see "The slowdown" below.
+
+#### Every line, and what it must guarantee
+
+The main thread is the collector's. `par_sweep` starts `nworkers - 1` threads, and the main thread is the last worker. All of them run `worker`, which claims pieces by an atomic increment until none are left. The main thread then joins the others and runs `merge0`.
+
+| Line | Code | Must guarantee |
+|---|---|---|
+| 4-7 | `#include <pthread.h>`, `<signal.h>`, `<stdatomic.h>`, `"GC_SweepPar.h"` | Threads, signal masks, C11 atomics, and the extracted functions, unchanged. Nothing from `caml/`. |
+| 9 | `MAX_PIECES 64` | Bounds the pieces and the threads. It sizes `bounds`, `results` and `t`. |
+| 11 | `nworkers` | The number of threads that sweep, including the main thread. It is written by `par_sweep_init` and read by `par_sweep`, both on the collector's thread, and never by a worker. |
+| 12-15 | `heap`, `bounds`, `results`, `npieces` | This sweep's inputs and outputs. `heap`, `bounds` and `npieces` are written only by the main thread, while no worker exists (lines 36-39). `results[i]` is written only by the thread that claimed piece `i`. |
+| 16 | `atomic_size_t next` | The next unclaimed piece. It is the only variable that threads write at the same time, and every access to it is atomic. |
+| 21 | `for (size_t i; (i = atomic_fetch_add(&next, 1)) < npieces; )` | **Each piece goes to exactly one thread.** An atomic read-modify-write returns each value of `next` exactly once across all threads, so each `i < npieces` is claimed once. A thread stops at its first `i >= npieces`. So each thread overshoots `npieces` at most once, and `next` stays at most `npieces + nworkers`. |
+| 22 | `results[i] = sweep_segment(heap, bounds[i], bounds[i + 1]);` | The extracted, proved `sweep_segment` on piece `i`. Its precondition holds as in `sweep_par_seq`, as in Stage 2's line 28. It reads and writes only `[bounds[i], bounds[i+1])` and the read-only globals. It calls no OCaml runtime function. Distinct `i` give disjoint ranges. A thread stores the record and finishes this piece before it claims another. |
+| 23 | `return NULL;` | A thread returns only after every piece it claimed has been swept and its record stored. |
+| 28 | `nworkers = nthreads < 0 ? 0 : nthreads > MAX_PIECES ? MAX_PIECES : nthreads;` | Starts nothing. It records how many threads should sweep, between 0 and 64. More than 64 would be idle, since there are at most 64 pieces. |
+| 29 | `return nworkers;` | The number of threads that will sweep, for the caller to report. |
+| 34 | `k = k < 1 ? 1 : k > MAX_PIECES ? MAX_PIECES : k;` | As in Stage 2: `k >= 1`, and both arrays are big enough. |
+| 35 | `if (nworkers == 0) return sweep_par_seq(h, k, bounds, results);` | The verified single-thread driver, when the caller asked for none. |
+| 36 | `size_t n = prepass0(h, k, bounds);` | On the main thread, while no worker exists. It gives `2 <= n <= k + 1` boundaries, so `n - 1 >= 1` pieces. |
+| 37-39 | `heap = h; npieces = n - 1; atomic_store(&next, 0);` | Publishes the sweep, while no worker exists: the last sweep joined all of its threads (line 48). `pthread_create` orders these writes, and `prepass0`'s, before everything the new threads do. |
+| 40-41 | `pthread_t t[MAX_PIECES]; int started = 0;` | Room for the at most `nworkers - 1 <= 63` threads started. |
+| 42-44 | `sigfillset`; `pthread_sigmask(SIG_BLOCK, &all, &old)` | All signals are blocked while threads are created. New threads inherit the mask, so **no asynchronous signal is delivered to a worker**. |
+| 45 | `while (started < nworkers - 1 && pthread_create(...) == 0) started++;` | Starts up to `nworkers - 1` threads, stopping at the first failure. `started` is how many exist. A failure leaves fewer threads, possibly none. Line 47 still sweeps every piece. |
+| 46 | `pthread_sigmask(SIG_SETMASK, &old, NULL);` | The main thread's mask is restored before it sweeps. Signals reach it as they would during the sequential sweep. |
+| 47 | `worker(NULL);` | **Every piece is claimed.** The main thread claims pieces until `next >= npieces`. So when it returns, every `i < npieces` has been claimed by some thread, whether or not any thread was started. Its own pieces are finished. |
+| 48 | `for (int i = 0; i < started; i++) pthread_join(t[i], NULL);` | **Merge only after every piece has finished.** Each started thread has finished every piece it claimed when it returns (line 23). `pthread_join` orders its heap writes and record stores before what follows. After the loop, no thread from this sweep exists. |
+| 49 | `return merge0(h, results, n - 1);` | On the main thread, after every piece's writes. Its precondition is `merge`'s, as in Stage 2. |
+
+**The three properties.**
+
+- **Every piece is swept.** Line 47 claims the pieces left after line 45, and a thread that claims a piece sweeps it before it claims another.
+- **Each piece is swept by exactly one thread.** This is the atomic increment at line 21.
+- **Merge runs only after all pieces have finished.** The main thread's own pieces are done when line 47 returns. Every other thread's pieces are done when that thread returns, and line 48 joins each one.
+
+**No data race.** `next` is atomic. `heap`, `bounds` and `npieces` are written only while no other thread exists, and read by threads that `pthread_create` has ordered after the writes. `results[i]` is written by one thread and read by `merge0` after the join. On the heap, threads touch disjoint ranges. The main thread touches the heap only before line 45 (`prepass0`) and after line 48 (`merge0`), apart from its own pieces.
+
+**Lifetime.** The parallel sweep's threads exist only between lines 45 and 48, inside a collection. Between collections, the process has none of them. So `fork`, `Thread.exit` and `exit` find nothing to clean up. A fork cannot happen during a sweep from OCaml code, because the sweep runs on the thread that holds the runtime lock. The relation to the proof is unchanged from Stage 2: the same calls as `sweep_par_seq`, in another order and on other threads, which rests on each call touching only its own range.
+
+**Assumptions the caller must meet.** These are the same as in Stage 2. Also, `par_sweep` is not re-entrant: its state is static, and it is called only from the collector's thread.
+
+**Open points.**
+
+- **The array lengths are larger than the specifications state**, as in Stage 2.
+- **Return values that are not checked:** `pthread_sigmask` and `pthread_join`, which fail only on misuse.
+- **Synchronous signals** are as in Stage 2.
+- **Cost.** There is a thread start-up cost at each collection: about 25 to 100 µs for 2 to 8 threads (table above).
+- **Portability.** `stdatomic.h` needs C11. Checked only on macOS, x86_64.
+
+#### Steps 1-3, rerun
+
+**Steps 1 and 2.** `run.sh byte|native check N [K]`, with the same matrix as before. With `N = 1` no thread is started: the main thread sweeps every piece through `prepass0`, `sweep_segment` and `merge0`. Threads are first exercised at `N = 2`.
+
+| Threads | k | bytecode (148 collections) | native (117 collections) |
+|---|---|---|---|
+| 1 | 1, 4 (default), 64 | ok | ok |
+| 2 | 8 (default), 64 | ok | ok |
+| 4 | 16 (default), 64 | ok | ok |
+| 8 | 32 (default), 64 | ok | ok |
+| 8 | 1, 2 | ok | ok |
+
+At every collection, the heap and the head were equal to the sequential sweep's. The check control still aborts at the first collection.
+
+**Step 3**, with `VERGC_PAR_SWEEP_THREADS=4`:
+
+| | shipped runtime | test runtime |
+|---|---|---|
+| `make test` (bytecode) | passes | passes; 81 collections compared, all equal |
+| `make test-native` | passes | passes; 0 collections compared |
+
+The three tests that hung, run with `make one`:
+
+| Test | 0 threads | 4 threads | 8 threads |
+|---|---|---|---|
+| `lib-threads/pr9971.ml`, bytecode and native | pass | pass | pass |
+| `statmemprof/thread_exit_in_callback.ml`, native | pass | pass | pass |
+| `statmemprof/thread_exit_in_callback.ml`, bytecode | fails (baseline) | fails (baseline) | fails (baseline) |
+
+The bytecode failure is listed in `ci/expected-failures.txt`, and it fails with the setting off too.
+
+**OCaml's testsuite**, with the setting on (4 threads), on the shipped runtimes: 2920 passed, 27 failed, 40 unexpected errors, 3141 considered. There are **no regressions against `ci/expected-failures.txt`**. Two expected failures now pass: `output-complete-obj/test.ml`, 1.1.1 and 2.1.1, as in the first run. Against the pool's run, the three timeouts are gone: 3 more passed and 3 fewer errors.

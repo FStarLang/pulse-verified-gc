@@ -39,7 +39,7 @@ FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 SPEC = spec/GC.Spec.SweepPar.Exec.fst spec/GC.Spec.SweepPar.fst spec/GC.Spec.SweepPar.Mutants.fst spec/GC.Spec.SweepPar.Vacuity.fst spec/GC.Spec.SweepPar.Local.fst spec/GC.Spec.SweepPar.Join.fsti spec/GC.Spec.SweepPar.Join.fst spec/GC.Spec.SweepPar.SegLoop.fst
 IMPL = impl/GC.Impl.HeapRange.fst impl/GC.Impl.SweepSegment.fsti impl/GC.Impl.SweepSegment.fst impl/GC.Impl.SweepPar.fsti impl/GC.Impl.SweepPar.Prepass.fst impl/GC.Impl.SweepPar.Merge.fst impl/GC.Impl.SweepPar.fst
 
-.PHONY: verify test extract ctest snapshot clean
+.PHONY: verify test extract ctest bench snapshot clean
 verify:
 	for f in $(SPEC) $(IMPL); do $(FSTAR) $$f || exit 1; done
 
@@ -136,6 +136,15 @@ EXTRACTED_C = $(EXTRACT)/GC_SweepPar.c $(EXTRACT)/GC_Spec_GC_Lib_Header_GC_Lib_A
 ctest: extract
 	$(CC) $(CFLAGS_C) $(EXTRACTED_C) $(COMPAT)/compat.c c/sweep_par_ctest.c -o _build/sweep_par_ctest
 	./_build/sweep_par_ctest
+
+# c/par_sweep_bench.c times c/par_sweep.c against fused_sweep_coalesce, for
+# 1, 2, 4 and 8 threads, checking every result.  Uses the C that
+# `make extract` left in _build/extract.
+BENCH_THREADS = 1 2 4 8
+bench:
+	$(CC) $(CFLAGS_C) -Ic $(EXTRACTED_C) $(COMPAT)/compat.c c/par_sweep.c c/par_sweep_bench.c \
+	  -lpthread -o _build/par_sweep_bench
+	for n in $(BENCH_THREADS); do ./_build/par_sweep_bench $$n par_sweep || exit 1; done
 
 # The extracted C, committed so the OCaml runtime builds without F* or krml
 # (generational/ocaml-integration/verified_gc/Makefile compiles it), as

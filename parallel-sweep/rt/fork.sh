@@ -2,8 +2,9 @@
 # Step 5 (docs/parallel-sweep-phase1.md, §9, Stage 3): fork_sweep.ml, in bytecode
 # and native, with 1, 2, 4 and 8 workers, on
 #   check    the test runtime (build.sh check): must pass
-#   nofork   the same runtime with par_sweep.c's pthread_atfork line removed: the
-#            child must hang, showing the test can see the bug the line fixes
+#   nofork   the same runtime with par_sweep.c replaced by the persistent pool
+#            as first reviewed (b4be32e), before its fork fix: the child must
+#            hang, showing the test can see a pool that does not survive fork
 # and once on the tree's default runtime with the setting off.  Needs
 # build.sh check, and ci/build-verified-toolchain.sh for the tree's compilers
 # and its Unix library (built against the patched runtime headers).
@@ -18,9 +19,9 @@ F=$B/fork
 TIMEOUT=${TIMEOUT:-60}
 mkdir -p $F
 
-# --- the control runtime: check, with the atfork registration deleted ---
+# --- the control runtime: check, with b4be32e's pool in place of par_sweep.c ---
 rm -rf $B/nofork && cp -R $B/check $B/nofork
-grep -v 'pthread_atfork(NULL, NULL, forget_workers);' $HERE/../c/par_sweep.c > $F/par_sweep_nofork.c
+git -C $HERE show b4be32e:parallel-sweep/c/par_sweep.c > $F/par_sweep_nofork.c || exit 1
 CF="-O2 -I$PSW -include $SNAP/compat.h -I$SNAP -I$SNAP/krmllib -I$SNAP/krmllib/krml -fno-common"
 cc $CF -Wno-unused-function -c $F/par_sweep_nofork.c -o $F/psw_par_sweep.o
 cc $CF -Wno-unused-function -DNATIVE_CODE -c $F/par_sweep_nofork.c -o $F/psw_par_sweep.n.o
@@ -68,4 +69,4 @@ for n in 1 2 4 8; do
   run "nofork, $n workers, byte  " hang $B/nofork/ocamlrun $F/fork_sweep.byte
   run "nofork, $n workers, native" hang $F/fork_sweep.nofork
 done
-[ $fail -eq 0 ] && echo "ok: fork (fixed runtime passes, control hangs)" || { echo "FAIL: fork"; exit 1; }
+[ $fail -eq 0 ] && echo "ok: fork (runtime passes, control hangs)" || { echo "FAIL: fork"; exit 1; }
