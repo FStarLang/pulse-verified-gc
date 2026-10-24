@@ -25,9 +25,10 @@
 ///      wosize-0 fragment is smaller than any request of at least one word.
 ///      Two layers because the heap-wide claim is not inductive: blocks the walk
 ///      has already passed are not reachable from the next node.
-///   3. `coalesce_oom_no_fit` / `fused_oom_no_fit` -- the coalescer's output
-///      satisfies every hypothesis of layer 2, so the statement holds at the
-///      pass the collector actually runs.
+///   3. `fused_oom_no_fit` -- the coalescer's output satisfies every
+///      hypothesis of layer 2, and the fused pass's heap agrees with it on
+///      everything layer 2 reads, so the statement holds at the pass the
+///      collector actually runs.
 
 module GC.Spec.Allocator.Oom
 
@@ -50,6 +51,7 @@ module Corr = GC.Spec.Correctness
 module SC = GC.Spec.SweepCoalesce
 module SCD = GC.Spec.SweepCoalesce.Defs
 module SpecSweep = GC.Spec.Sweep
+module HA = GC.Spec.HeapAgree
 
 /// ---------------------------------------------------------------------------
 /// Layer 1: a failed search saw only small cells
@@ -156,23 +158,6 @@ let alloc_spec_oom_no_fit (g: heap) (fp: U64.t) (wz: nat)
 /// Layer 3: after a full collection
 /// ---------------------------------------------------------------------------
 
-/// The coalescer's output satisfies every hypothesis of layer 2.
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-let coalesce_oom_no_fit (g: heap) (wz: nat)
-  : Lemma
-    (requires Coalesce.post_sweep_strong g /\ wz >= 1 /\
-              (let r = Coalesce.coalesce g in
-               (alloc_spec (fst r) (snd r) wz).obj_out == 0UL))
-    (ensures (let g' = fst (Coalesce.coalesce g) in
-              forall (x: obj_addr). Seq.mem x (objects zero_addr g') /\ is_blue x g' ==>
-                U64.v (wosize_of_object x g') < wz))
-  = let r = Coalesce.coalesce g in
-    Coalesce.coalesce_preserves_wf g;
-    wf_parts ();
-    CD.coalesce_fl_entry g;
-    CC.coalesce_complete g;
-    alloc_spec_oom_no_fit (fst r) (snd r) wz
-#pop-options
 
 /// **After a full collection, a failed allocation means no free block anywhere
 /// is big enough.**
@@ -196,7 +181,18 @@ let fused_oom_no_fit (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) (wz
     (ensures (let g' = fst (SCD.fused_sweep_coalesce h_mark) in
               forall (x: obj_addr). Seq.mem x (objects zero_addr g') /\ is_blue x g' ==>
                 U64.v (wosize_of_object x g') < wz))
-  = SC.fused_eq_sweep_coalesce h_mark fp;
+  = SC.fused_agrees_sweep_coalesce h_mark fp;
     Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    coalesce_oom_no_fit (fst (SpecSweep.sweep h_mark fp)) wz
+    let g = fst (SpecSweep.sweep h_mark fp) in
+    let rc = Coalesce.coalesce g in
+    let f = fst (SCD.fused_sweep_coalesce h_mark) in
+    Coalesce.coalesce_preserves_wf g;
+    wf_parts ();
+    CD.coalesce_fl_entry g;
+    CC.coalesce_exact g;
+    HA.agree_wfh_part1 f (fst rc);
+    HA.agree_fl_valid f (fst rc) (snd rc) heap_words;
+    HA.agree_fl_chain_terminates f (fst rc) (snd rc) heap_words;
+    HA.agree_fl_exact f (fst rc) (snd rc);
+    alloc_spec_oom_no_fit f (snd rc) wz
 #pop-options

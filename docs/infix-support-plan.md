@@ -211,6 +211,13 @@ for a worse model.
 
 ## 5. Phased plan
 
+> **Superseded.**  `blue_fields_closed`, `blue_fields_non_infix` and
+> `blue_blocks_scannable` no longer exist: free (blue) blocks are now
+> unconstrained beyond their free-list link (`GC.Spec.Fields.fields_constrained`
+> excludes them), and `GC.Spec.Coalesce.flush_blue` no longer zeroes them.  The
+> text below records how the clauses were used before that change.
+
+
 Each phase ends at a green `make -k -j24 verify`. Phases 1–3 touch no
 extractable code, so `generational/snapshot/` must stay byte-identical
 throughout; phase 4 is the only one that changes C.

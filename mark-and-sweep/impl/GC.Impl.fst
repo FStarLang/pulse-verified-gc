@@ -62,7 +62,6 @@ fn collect_with_roots
   returns final_fp: U64.t
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecGCPost.gc_postcondition s2 /\
-                SpecFields.blue_fields_non_infix s2 /\
                SpecGCPost.full_gc_correctness 's s2 roots /\
                SpecGCPost.major_gc_live_subgraph_isomorphism 's s2 roots /\
                SpecGCPost.major_gc_unreachable_final_blue 's s2 roots /\
@@ -90,17 +89,14 @@ fn collect_with_roots
   with s_fused. assert (is_heap heap s_fused **
     pure ((s_fused, final_fp) == Defs.fused_sweep_coalesce s_mark));
 
-  // Bridge: fused_sweep_coalesce == coalesce(fst(sweep ...))
-  SpecSweepCoalesce.fused_eq_sweep_coalesce s_mark fp;
+  // Bridge: fused_sweep_coalesce agrees with coalesce(fst(sweep ...)) on the
+  // free pointer, and on the heap modulo free-block bodies
+  SpecSweepCoalesce.fused_agrees_sweep_coalesce s_mark fp;
 
-  // gc_postcondition and full_gc_correctness from generalized bridges
+  // The theorems about coalesce(sweep ...), carried to the fused heap.
   // These only need mark_post, which we established above
-  SpecGCPost.gc_coalesce_source_intro 's s_mark roots fp;
-  SpecGCPost.gc_postcondition_gen 's s_mark roots fp;
-  SpecGCPost.gc_blue_fields_non_infix_gen 's s_mark roots fp;
-  SpecGCPost.full_gc_correctness_through_coalesce_gen 's s_mark roots fp;
-  SpecGCPost.major_gc_live_subgraph_isomorphism_gen 's s_mark roots fp;
-  SpecGCPost.major_gc_unreachable_final_blue_gen 's s_mark roots fp;
+  SpecGCPost.gc_coalesce_source_intro 's s_mark roots fp s_fused final_fp;
+  SpecGCPost.gc_result_agree 's s_mark roots fp s_fused;
   
   final_fp
 }
@@ -111,7 +107,6 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   returns final_fp: U64.t
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecGCPost.gc_postcondition s2 /\
-                SpecFields.blue_fields_non_infix s2 /\
                 SpecGCPost.full_gc_correctness 's s2 'st /\
                 SpecGCPost.major_gc_live_subgraph_isomorphism 's s2 'st /\
                 SpecGCPost.major_gc_unreachable_final_blue 's s2 'st /\

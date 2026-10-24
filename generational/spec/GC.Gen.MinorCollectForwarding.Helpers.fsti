@@ -301,7 +301,7 @@ val heap_field_points_to_graph_edge
     (requires
       well_formed_heap g /\
       Seq.mem src (objects zero_addr g) /\
-      ~(is_no_scan src g) /\
+      ~(is_no_scan src g) /\ ~(is_blue src g) /\
       j < U64.v (wosize_of_object src g) /\
       U64.v src + j * 8 + 8 <= heap_size /\
       (U64.v src + j * 8) % 8 == 0 /\

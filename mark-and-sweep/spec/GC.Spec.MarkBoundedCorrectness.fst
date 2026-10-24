@@ -716,7 +716,7 @@ val push_children_bounded_stack_reachable :
              is_vertex_set roots' /\ subset_vertices roots' graph.vertices /\
              Seq.mem obj (reachable_set graph roots') /\
              (forall y. Seq.mem y st ==> Seq.mem y (reachable_set graph roots')) /\
-             ~(is_no_scan obj g) /\ HeapGraph.object_fits_in_heap obj g)
+             ~(is_no_scan obj g) /\ ~(is_blue obj g) /\ HeapGraph.object_fits_in_heap obj g)
     (ensures (forall y. Seq.mem y (snd (push_children_bounded g st obj i ws cap)) ==>
                         Seq.mem y (reachable_set graph roots')))
     (decreases (U64.v ws - U64.v i))
@@ -786,7 +786,7 @@ val push_children_newly_gray_is_child :
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) ->
   Lemma
     (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
-             ~(is_no_scan obj g) /\
+             ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
              ws == wosize_of_object obj g /\
              U64.v (wosize_of_object obj g) < pow2 54 /\
              graph_wf (create_graph g) /\

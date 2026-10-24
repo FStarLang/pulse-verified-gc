@@ -101,6 +101,10 @@ let rec sev_mem_objects (g: heap) (st: seq obj_addr) (x: obj_addr)
 /// ---------------------------------------------------------------------------
 /// Mark Step: Process One Gray Object
 /// ---------------------------------------------------------------------------
+let is_blue_exclusive x g = colors_exhaustive_and_exclusive x g
+
+let set_color_keeps_not_blue obj x g c = set_color_preserves_not_blue obj x g c
+
 /// Pillar 1: Mark Preserves Well-Formedness
 /// ---------------------------------------------------------------------------
 
@@ -162,9 +166,16 @@ let color_change_preserves_wf g obj c =
     (is_infix h g' == is_infix h g /\
      is_closure h g' == is_closure h g /\
      GC.Spec.Object.is_no_scan h g' == GC.Spec.Object.is_no_scan h g /\
+     (is_blue h g ==> is_blue h g') /\
      wosize_of_object h g' == wosize_of_object h g /\
      GC.Spec.Object.resolve_object h g' == GC.Spec.Object.resolve_object h g)
   = color_change_preserves_is_infix obj h g c;
+    (if h = obj then begin
+       if c = Header.Blue then begin makeBlue_eq obj g; makeBlue_is_blue obj g end
+     end else begin
+       color_change_preserves_other_color obj h g c;
+       is_blue_iff h g; is_blue_iff h g'
+     end);
     color_change_preserves_is_closure obj h g c;
     (if h = obj then GC.Spec.Object.color_preserves_is_no_scan obj g c
      else GC.Spec.Object.color_change_preserves_other_is_no_scan obj h g c);
@@ -223,7 +234,9 @@ let rec push_children_preserves_wf g st obj i ws
         // Part 2 lands directly on the resolved target
         wf_field_target_in_objects g obj child_raw;
         assert (Seq.mem child (objects zero_addr g));
+        colors_exhaustive_and_exclusive child g;
         color_change_preserves_wf g child Header.Gray;
+        set_color_preserves_not_blue child obj g Header.Gray;
         color_change_preserves_objects_mem g child Header.Gray obj;
         // wosize preserved after makeGray
         set_object_color_preserves_getWosize_at_hd child g Header.Gray;
@@ -2753,7 +2766,8 @@ let rec color_preserves_get_pointer_fields_aux target h g c i ws =
 /// Color change preserves get_pointer_fields
 val color_preserves_get_pointer_fields :
   (target: obj_addr) -> (h: obj_addr) -> (g: heap{well_formed_heap g}) -> (c: color) ->
-  Lemma (requires Seq.mem target (objects zero_addr g) /\ Seq.mem h (objects zero_addr g))
+  Lemma (requires Seq.mem target (objects zero_addr g) /\ Seq.mem h (objects zero_addr g) /\
+                  c <> Header.Blue /\ ~(is_blue target g))
         (ensures HeapGraph.get_pointer_fields (set_object_color target g c) h ==
                  HeapGraph.get_pointer_fields g h)
 
@@ -2773,6 +2787,13 @@ let color_preserves_get_pointer_fields target h g c =
   else
     color_change_preserves_other_is_no_scan target h g c;
   
+  // Preserve blueness (blue blocks contribute no edges)
+  if target = h then set_color_preserves_not_blue target h g c
+  else begin
+    color_change_preserves_other_color target h g c;
+    is_blue_iff h g; is_blue_iff h g'
+  end;
+
   // Preserve heap length (for object_fits_in_heap)
   set_object_color_length target g c;
   
@@ -2780,7 +2801,7 @@ let color_preserves_get_pointer_fields target h g c =
   if not (HeapGraph.object_fits_in_heap h g) then ()
   else begin
     let ws = wosize_of_object h g in
-    if is_no_scan h g then ()
+    if is_no_scan h g || is_blue h g then ()
     else
       color_preserves_get_pointer_fields_aux target h g c 1UL ws
   end
@@ -2789,7 +2810,8 @@ let color_preserves_get_pointer_fields target h g c =
 /// Color change preserves object_edges
 val color_preserves_object_edges :
   (target: obj_addr) -> (h: obj_addr) -> (g: heap{well_formed_heap g}) -> (c: color) ->
-  Lemma (requires Seq.mem target (objects zero_addr g) /\ Seq.mem h (objects zero_addr g))
+  Lemma (requires Seq.mem target (objects zero_addr g) /\ Seq.mem h (objects zero_addr g) /\
+                  c <> Header.Blue /\ ~(is_blue target g))
         (ensures HeapGraph.object_edges (set_object_color target g c) h ==
                  HeapGraph.object_edges g h)
 
@@ -2803,7 +2825,7 @@ let color_preserves_object_edges target h g c =
 /// Changing an object's color preserves all edges (recursive on objs list)
 val color_preserves_all_edges :
   (obj: obj_addr) -> (g: heap{well_formed_heap g}) -> (c: color) -> (objs: seq obj_addr) ->
-  Lemma (requires Seq.mem obj (objects zero_addr g) /\ 
+  Lemma (requires Seq.mem obj (objects zero_addr g) /\ c <> Header.Blue /\ ~(is_blue obj g) /\
                   (forall (h: obj_addr). Seq.mem h objs ==> Seq.mem h (objects zero_addr g)))
         (ensures HeapGraph.all_edges (set_object_color obj g c) objs == HeapGraph.all_edges g objs)
         (decreases Seq.length objs)
@@ -3536,7 +3558,7 @@ let rec push_children_stack_reachable (g: heap) (st: seq obj_addr) (obj: obj_add
              is_vertex_set roots' /\ subset_vertices roots' graph.vertices /\
              Seq.mem obj (reachable_set graph roots') /\
              (forall y. Seq.mem y st ==> Seq.mem y (reachable_set graph roots')) /\
-             ~(is_no_scan obj g) /\ HeapGraph.object_fits_in_heap obj g)
+             ~(is_no_scan obj g) /\ ~(is_blue obj g) /\ HeapGraph.object_fits_in_heap obj g)
     (ensures (forall y. Seq.mem y (snd (push_children g st obj i ws)) ==> 
                         Seq.mem y (reachable_set graph roots')))
     (decreases (U64.v ws - U64.v i))

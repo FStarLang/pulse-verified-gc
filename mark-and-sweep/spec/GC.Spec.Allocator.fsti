@@ -50,7 +50,8 @@ let blue_bits : U64.t = 2UL
 /// Zero a range of fields in the heap (pure spec)
 /// ---------------------------------------------------------------------------
 
-/// Zero n words starting at byte address addr
+/// Zero n words starting at byte address addr.
+/// No longer used by `GC.Spec.Coalesce.flush_blue`, which leaves free bodies alone.
 let rec zero_fields (g: heap) (addr: U64.t) (n: nat)
   : GTot heap (decreases n)
   = if n = 0 then g

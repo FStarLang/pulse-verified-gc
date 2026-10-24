@@ -1,5 +1,5 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.PromoteUpdate.BlueProm — promote preserves blue_fields_closed
+/// GC.Gen.PromoteUpdate.BlueProm — promote preserves the free-list shape
 /// ---------------------------------------------------------------------------
 
 module GC.Gen.PromoteUpdate.BlueProm
@@ -32,15 +32,6 @@ private let copy_fields_preserves_fl_valid_aux = WriteBody.copy_fields_preserves
 private let copy_fields_preserves_fl_chain_terminates = WriteBody.copy_fields_preserves_fl_chain_terminates
 private let copy_fields_preserves_wfh_part1 = WriteBody.copy_fields_preserves_wfh_part1
 private let chain_avoids_implies_not_in_fl_chain = WriteBody.chain_avoids_implies_not_in_fl_chain
-
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-
-/// Helper: construct field address as hp_addr
-private let field_addr_of (src: obj_addr) (j: nat{U64.v src + j * 8 + 8 <= heap_size})
-  : hp_addr
-  = U64.uint_to_t (U64.v src + j * 8)
-
-#pop-options
 
 /// Helper: prove header of src is disjoint from header of dst_obj
 /// when both are distinct members of objects
@@ -159,83 +150,6 @@ private let copy_fields_other_hdr_precond
       objects_separated zero_addr g dst_obj src
 #pop-options
 
-/// Helper: read at any address of a non-dst object is preserved through
-/// copy_fields + zero_promote_padding + set_promoted_tag (full promote pipeline).
-#push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
-private let promote_read_non_dst
-  (minor: minor_state) (new_major: heap) (obj: U64.t)
-  (dst_obj: obj_addr) (wosize: nat{wosize > 0})
-  (tag: nat{tag < 256})
-  (a: hp_addr)
-  : Lemma
-    (requires
-      Seq.mem dst_obj (objects zero_addr new_major) /\
-      U64.v (wosize_of_object dst_obj new_major) >= wosize /\
-      // a is disjoint from dst_obj's header
-      (U64.v a + U64.v mword <= U64.v (hd_address dst_obj) \/
-       U64.v (hd_address dst_obj) + U64.v mword <= U64.v a) /\
-      // a disjoint from dst_obj's field range including padding slot
-      (forall (k:nat). 0 <= k /\ k <= wosize ==>
-        (U64.v a + 8 <= U64.v dst_obj + k * 8 \/ U64.v dst_obj + k * 8 + 8 <= U64.v a)))
-    (ensures
-      (let copied = copy_fields minor new_major obj dst_obj 0 wosize in
-       let padded = zero_promote_padding copied dst_obj wosize in
-       read_word (set_promoted_tag padded dst_obj tag) a == read_word new_major a))
-  = // Derive field bounds from membership
-    objects_member_size_bound zero_addr new_major dst_obj;
-    wosize_of_object_spec dst_obj new_major;
-    hd_address_spec dst_obj;
-    let copied = copy_fields minor new_major obj dst_obj 0 wosize in
-    // Step 1: copy_fields preserves read at a
-    copy_fields_preserves_other minor new_major obj dst_obj 0 wosize a;
-    // Step 2: zero_promote_padding preserves read at a
-    // a is disjoint from padding position (dst_obj + wosize * 8) by the forall at k = wosize
-    zero_promote_padding_frame copied dst_obj wosize a;
-    let padded = zero_promote_padding copied dst_obj wosize in
-    // Step 3: set_promoted_tag preserves read at a
-    set_promoted_tag_read_frame padded dst_obj tag a
-#pop-options
-
-/// Helper: derive copy_fields_preserves_other precondition from objects_separated
-#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
-private let bfc_field_disjoint
-  (new_major: heap) (src dst_obj: obj_addr) (j: nat) (wosize: nat{wosize > 0})
-  : Lemma
-    (requires
-      Seq.mem src (objects zero_addr new_major) /\
-      Seq.mem dst_obj (objects zero_addr new_major) /\
-      src <> dst_obj /\
-      U64.v (wosize_of_object dst_obj new_major) >= wosize /\
-      j < U64.v (wosize_of_object src new_major) /\
-      U64.v src + j * 8 + 8 <= heap_size)
-    (ensures
-      (let field_addr = field_addr_of src j in
-       // field disjoint from [dst_obj, dst_obj + wosize*8] (including padding slot at k=wosize)
-       (forall (k:nat). 0 <= k /\ k <= wosize ==>
-         (U64.v field_addr + 8 <= U64.v dst_obj + k * 8 \/
-          U64.v dst_obj + k * 8 + 8 <= U64.v field_addr)) /\
-       // field disjoint from hd_address dst_obj
-       (U64.v field_addr + U64.v mword <= U64.v (hd_address dst_obj) \/
-        U64.v (hd_address dst_obj) + U64.v mword <= U64.v field_addr)))
-  = let field_addr = field_addr_of src j in
-    hd_address_spec src;
-    hd_address_spec dst_obj;
-    if U64.v src < U64.v dst_obj then begin
-      objects_separated zero_addr new_major src dst_obj;
-      // src + wosize(src)*8 < dst_obj
-      // field = src + j*8 < src + wosize(src)*8 <= dst_obj - 8
-      // So field + 8 <= dst_obj <= dst_obj + k*8 for all k >= 0 (including k = wosize)
-      ()
-    end else begin
-      objects_separated zero_addr new_major dst_obj src;
-      wosize_of_object_spec dst_obj new_major;
-      // src >= dst_obj + wosize_actual*8 + 8 >= dst_obj + wosize*8 + 8
-      // field = src + j*8 >= src >= dst_obj + wosize*8 + 8
-      // So dst_obj + k*8 + 8 <= field for k <= wosize
-      ()
-    end
-#pop-options
-
 /// The padding word `dst + wz * mword` is not the header of an object `src`
 /// that lies either below `dst` or beyond its (larger) actual extent.  Stated
 /// in an empty context: inside the large promotion proofs below Z3 5.x times
@@ -247,132 +161,6 @@ private let padding_addr_ne_hd (s d wz awz: nat)
   = ()
 #pop-options
 
-#push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
-/// Pattern: inner bfc_proof has conclusion as implication (no requires).
-private let promote_object_preserves_bfc_close
-  (minor: minor_state) (major new_major: heap) (obj: U64.t) (fp: U64.t)
-  (wosize: nat{wosize > 0})
-  (dst_obj: obj_addr) (copied padded: heap)
-  (tag: nat{tag < 256})
-  (g': heap)
-  : Lemma (requires
-      new_major == (GC.Spec.Allocator.alloc_spec major fp wosize).heap_out /\
-      dst_obj == (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out /\
-      copied == copy_fields minor new_major obj dst_obj 0 wosize /\
-      padded == zero_promote_padding copied dst_obj wosize /\
-      tag == minor_tag minor obj /\
-      g' == set_promoted_tag padded dst_obj tag /\
-      well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp heap_words /\
-      AllocLemmas.fl_chain_terminates major fp heap_words /\
-      blue_fields_closed new_major /\
-      Seq.mem dst_obj (objects zero_addr new_major) /\
-      U64.v (wosize_of_object dst_obj new_major) >= wosize /\
-      objects zero_addr g' == objects zero_addr new_major /\
-      ~(is_blue dst_obj g'))
-    (ensures blue_fields_closed g')
-  = let bfc_proof (src: obj_addr) (j: nat)
-      : Lemma (Seq.mem src (objects zero_addr g') /\ is_blue src g' /\
-               j < U64.v (wosize_of_object src g') /\
-               U64.v src + j * 8 + 8 <= heap_size ==>
-               (let field_addr = field_addr_of src j in
-                let v = read_word g' field_addr in
-                is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr g')))
-      = if not (Seq.mem src (objects zero_addr g') && is_blue src g' &&
-                j < U64.v (wosize_of_object src g') &&
-                U64.v src + j * 8 + 8 <= heap_size)
-        then ()
-        else begin
-          // src is blue, dst_obj is not → src ≠ dst_obj
-          assert (src <> dst_obj);
-          assert (Seq.mem src (objects zero_addr new_major));
-          // Header disjointness
-          headers_disjoint_from_separation new_major src dst_obj;
-          // Header of src preserved through set_tag, padding, and copy_fields
-          set_promoted_tag_read_frame padded dst_obj tag (hd_address src);
-          copy_fields_other_hdr_precond new_major src dst_obj wosize;
-          copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (hd_address src);
-          // Padding frame: handle exact-fit case
-          hd_address_spec dst_obj;
-          AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
-          wfh_part1_obj_bound new_major dst_obj;
-          dst_fields_valid_from_obj new_major dst_obj wosize;
-          copy_fields_frame minor new_major obj dst_obj 0 wosize (hd_address dst_obj);
-          wosize_of_object_spec dst_obj new_major;
-          wosize_of_object_spec dst_obj copied;
-          let actual_wz = U64.v (wosize_of_object dst_obj copied) in
-          if actual_wz <= wosize then
-            zero_promote_padding_noop copied dst_obj wosize
-          else begin
-            hd_address_spec src;
-            if U64.v src < U64.v dst_obj then
-              objects_separated zero_addr new_major src dst_obj
-            else begin
-              objects_separated zero_addr new_major dst_obj src;
-              wosize_of_object_spec dst_obj new_major;
-              assert (U64.v src > U64.v dst_obj + actual_wz * 8)
-            end;
-            padding_addr_ne_hd (U64.v src) (U64.v dst_obj) wosize actual_wz;
-            zero_promote_padding_frame copied dst_obj wosize (hd_address src)
-          end;
-          // Derive wosize and color in new_major
-          wosize_of_object_spec src new_major;
-          wosize_of_object_spec src g';
-          color_of_header_eq src g' new_major;
-          // Field also preserved
-          bfc_field_disjoint new_major src dst_obj j wosize;
-          promote_read_non_dst minor new_major obj dst_obj wosize tag (field_addr_of src j);
-          // Instantiate bfc from new_major
-          blue_fields_closed_inst new_major src j
-        end
-    in
-    reveal_opaque (`%blue_fields_closed) blue_fields_closed;
-    FStar.Classical.forall_intro_2 bfc_proof
-#pop-options
-
-#push-options "--z3rlimit 48 --fuel 1 --ifuel 0"
-let promote_object_preserves_bfc
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
-  (wosize: nat{wosize > 0})
-  = let res = promote_object minor major obj fp wosize in
-    let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
-    let new_major = alloc_res.heap_out in
-    let dst : U64.t = alloc_res.obj_out in
-    GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize;
-    let dst_obj : obj_addr = dst in
-    promote_object_success minor major obj fp wosize;
-    let copied = copy_fields minor new_major obj dst_obj 0 wosize in
-    let padded = zero_promote_padding copied dst_obj wosize in
-    let tag = minor_tag minor obj in
-    minor_tag_bound minor obj;
-    assert (res.major_out == set_promoted_tag padded dst_obj tag);
-    // alloc preserves bfc
-    alloc_spec_preserves_blue_fields_closed major fp wosize;
-    // Key properties of alloc
-    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
-    GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
-    GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize;
-    // objects preserved through copy + pad + set_tag
-    copy_fields_preserves_objects_aux minor new_major obj dst_obj 0 wosize;
-    copy_fields_preserves_wfh_part1 minor new_major obj dst_obj wosize;
-    zero_promote_padding_preserves_objects copied dst_obj wosize;
-    zero_promote_padding_preserves_wfh_part1 copied dst_obj wosize;
-    set_promoted_tag_preserves_objects padded dst_obj tag;
-    // dst_obj not blue in res.major_out (it's White)
-    // header of dst preserved through padding (hd_address is at dst-8, padding at dst+wz*8)
-    hd_address_spec dst_obj;
-    zero_promote_padding_frame copied dst_obj wosize (hd_address dst_obj);
-    set_promoted_tag_unfold padded dst_obj tag;
-    let padded_hdr = read_word padded (hd_address dst_obj) in
-    getWosize_bound padded_hdr;
-    let new_hdr = makeHeader (getWosize padded_hdr) White (U64.uint_to_t tag) in
-    read_write_same padded (hd_address dst_obj) new_hdr;
-    makeHeader_getColor (getWosize padded_hdr) White (U64.uint_to_t tag);
-    color_of_object_spec dst_obj res.major_out;
-    GC.Spec.Object.is_blue_iff dst_obj res.major_out;
-    // Close the quantifier via the dedicated helper
-    promote_object_preserves_bfc_close minor major new_major obj fp wosize dst_obj copied padded tag res.major_out
-#pop-options
 /// Helper: transfer chain_avoids from new_major to res.major_out via read preservation.
 /// Separated to keep the Z3 context small.
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
@@ -736,6 +524,3 @@ let promote_object_preserves_free_list_shape
     in
     FreeListShape.blue_link_fields_valid_intro final blfv_proof
 #pop-options
-
-/// Inductive proof: promote_all_aux preserves blue_fields_closed.
-/// After promote_all, blue objects' pointer fields target valid objects.

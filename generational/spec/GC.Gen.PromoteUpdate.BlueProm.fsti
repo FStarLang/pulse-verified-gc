@@ -18,19 +18,6 @@ open GC.Gen.WriteBodyLemmas
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module FreeListShape = GC.Gen.FreeListShape
 
-val promote_object_preserves_bfc
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
-  (wosize: nat{wosize > 0})
-  : Lemma (requires
-      well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp heap_words /\
-      AllocLemmas.fl_chain_terminates major fp heap_words /\
-      blue_fields_closed major /\
-      chain_objects_blue major fp /\
-      (promote_object minor major obj fp wosize).new_addr <> 0UL)
-    (ensures
-      blue_fields_closed (promote_object minor major obj fp wosize).major_out)
-
 /// promote_object preserves chain_objects_blue
 val promote_object_preserves_chain_objects_blue
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)

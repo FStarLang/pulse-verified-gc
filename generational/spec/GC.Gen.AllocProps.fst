@@ -744,7 +744,7 @@ let alloc_spec_oom_unchanged (g: heap) (fp: U64.t) (requested_wz: nat)
     alloc_search_oom_unchanged g fp 0UL fp wz heap_words
 
 /// ---------------------------------------------------------------------------
-/// Allocator properties for blue_fields_closed proofs
+/// Colour of the allocated block
 /// ---------------------------------------------------------------------------
 
 /// After alloc_from_block, the ALLOCATED object has colour White.

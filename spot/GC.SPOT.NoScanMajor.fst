@@ -19,7 +19,6 @@ module AllocChain = GC.Spec.Allocator.Lemmas.Chain
 module FreeListShape = GC.Gen.FreeListShape
 module GenInv = GC.Gen.HeapInvariant
 module Promote = GC.Gen.Promote
-module BlueAlloc = GC.Gen.PromoteUpdate.BlueAlloc
 
 #set-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 
@@ -797,47 +796,6 @@ let spot_ns_no_pointer_to_blue (r: unit{spot_ns_room})
   in
   SpecMark.no_pointer_to_blue_intro_from_fields g field_no_blue
 
-/// The free block's fields are all zero, so no free-list cell holds an interior
-/// pointer and every one of its pointer-shaped words targets an object
-/// (vacuously).
-let spot_ns_blue_fields_non_infix (r: unit{spot_ns_room})
-  : Lemma (ensures SpecFields.blue_fields_non_infix (spot_ns_heap r))
-  =
-  let g = spot_ns_heap r in
-  spot_ns_wfh_part1 r;
-  spot_ns_wfh_part4 r;
-  let field_closure (src: obj_addr) (j: nat)
-    : Lemma (requires Seq.mem src (SpecFields.objects zero_addr g) /\
-                      SpecObj.is_blue src g /\
-                      j < U64.v (SpecObj.wosize_of_object src g) /\
-                      U64.v src + j * 8 + 8 <= heap_size)
-            (ensures (let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
-                      SpecFields.is_pointer v ==>
-                      Seq.mem (v <: obj_addr) (SpecFields.objects zero_addr g)))
-    =
-    spot_ns_object_cases r src;
-    spot_ns_s_reads r;
-    spot_ns_free_reads r;
-    spot_ns_field_read r src j
-  in
-  SpecFields.blue_fields_non_infix_from_field_closure g field_closure
-
-/// Neither object here is blue *and* no-scan: S is no-scan but white, F is blue
-/// but has tag 0.
-let spot_ns_blue_blocks_scannable (r: unit{spot_ns_room})
-  : Lemma (ensures SpecFields.blue_blocks_scannable (spot_ns_heap r))
-  =
-  let g = spot_ns_heap r in
-  let pf (obj: obj_addr)
-    : Lemma (requires Seq.mem obj (SpecFields.objects zero_addr g) /\
-                      SpecObj.is_blue obj g)
-            (ensures ~(SpecObj.is_no_scan obj g))
-    =
-    spot_ns_object_cases r obj;
-    spot_ns_s_reads r;
-    spot_ns_free_reads r
-  in
-  SpecFields.blue_blocks_scannable_intro g pf
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -887,11 +845,8 @@ let spot_ns_major_heap_shape (r: unit{spot_ns_room})
   spot_ns_no_black_objects r;
   spot_ns_no_gray_objects r;
   spot_ns_no_pointer_to_blue r;
-  spot_ns_blue_fields_non_infix r;
-  spot_ns_blue_blocks_scannable r;
   spot_ns_wfh_part1 r;
   spot_ns_wfh_part2_3 r;
-  BlueAlloc.wfh_part2_implies_blue_fields_closed g;
   spot_ns_fl_complete r;
   GC.Gen.AllocExact.fl_valid_cob_gives_sound g fp;
   GenInv.free_list_exact_iff g fp;

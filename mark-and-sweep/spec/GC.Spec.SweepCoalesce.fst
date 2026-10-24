@@ -1,13 +1,14 @@
 (*
    GC.Spec.SweepCoalesce — Fused sweep+coalesce specification (implementation)
 
-   Proves that a single-pass fused sweep+coalesce produces the same result
-   as the sequential composition `coalesce(fst(sweep(g, fp)))`.
+   Proves that a single-pass fused sweep+coalesce produces the same free
+   pointer as the sequential composition `coalesce(fst(sweep(g, fp)))`, and a
+   heap that agrees with it modulo free-block bodies
+   (`GC.Spec.HeapAgree.heaps_agree_mod_free`).
 
    Architecture:
    - GC.Spec.SweepCoalesce.Helpers    : bit-level helpers (write_word_id, etc.)
-   - GC.Spec.SweepCoalesce.FlushAgree : flush_blue heap-independence
-   - GC.Spec.SweepCoalesce.Induction  : core relational induction (combined_proof)
+   - GC.Spec.SweepCoalesce.Induction  : core relational induction (walk_proof)
    - GC.Spec.SweepCoalesce            : this file, fused spec + composition theorem
 *)
 module GC.Spec.SweepCoalesce
@@ -27,6 +28,7 @@ module SpecCoalesce = GC.Spec.Coalesce
 module HeapGraph = GC.Spec.HeapGraph
 module SI = GC.Spec.SweepInv
 module Ind = GC.Spec.SweepCoalesce.Induction
+module HA = GC.Spec.HeapAgree
 module Graph = GC.Spec.Graph
 
 open GC.Spec.Mark
@@ -377,63 +379,6 @@ private let rec sweep_aux_preserves_past_all
     end
 #pop-options
 
-/// sweep_aux preserves reads at addresses below zero_addr
-/// (sweep only writes at hd_address(obj) >= zero_addr and obj >= zero_addr + mword)
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
-private let rec sweep_aux_preserves_below_zero
-  (g: heap) (objs: seq obj_addr) (fp: U64.t) (a: hp_addr)
-  : Lemma (requires well_formed_heap g /\
-                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
-                    SpecSweep.fp_in_heap fp g /\
-                    U64.v a + U64.v mword <= U64.v zero_addr)
-          (ensures read_word (fst (SpecSweep.sweep_aux g objs fp)) a == read_word g a)
-          (decreases Seq.length objs)
-  = if Seq.length objs = 0 then ()
-    else begin
-      let obj = Seq.head objs in
-      let (g', fp') = SpecSweep.sweep_object g obj fp in
-      Seq.lemma_index_is_nth objs 0;
-      SpecSweep.sweep_object_preserves_objects g obj fp;
-      SpecSweep.sweep_object_preserves_wf g obj fp;
-      wf_objects_non_infix g obj;
-      // obj >= mword >= 8, hd_address(obj) = obj - 8 >= zero_addr
-      // a + 8 <= zero_addr, so a < zero_addr <= hd_address(obj) <= obj
-      hd_address_spec obj;
-      objects_addresses_gt_start zero_addr g obj;
-      assert (U64.v obj > U64.v zero_addr);
-      assert (U64.v (hd_address obj) >= U64.v zero_addr);
-      assert (U64.v a < U64.v zero_addr);
-      // Therefore a <> hd_address(obj) and a <> obj
-      if is_infix obj g then begin
-        assert (g' == g);
-        assert (fp' == fp)
-      end else if is_white obj g then begin
-        let ws = wosize_of_object obj g in
-        let hd = GC.Spec.Heap.hd_address obj in
-        let g_sf =
-          if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
-            read_write_different g obj a fp;
-            HeapGraph.set_field g obj 1UL fp
-          end else g
-        in
-        makeBlue_eq obj g_sf;
-        color_change_header_locality obj a g_sf Header.Blue;
-        assert (read_word g' a == read_word g a)
-      end else if is_black obj g then begin
-        makeWhite_eq obj g;
-        color_change_header_locality obj a g Header.White;
-        assert (read_word g' a == read_word g a)
-      end else begin
-        colors_exclusive obj g;
-        assert (g' == g)
-      end;
-      assert (read_word g' a == read_word g a);
-      // For tail: need well_formed_heap g' and fp' in heap
-      (if is_white obj g then () else ());
-      // Recurse
-      sweep_aux_preserves_below_zero g' (Seq.tail objs) fp' a
-    end
-#pop-options
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let sweep_preserves_past_all_objects
   (g: heap) (fp: U64.t) (a: hp_addr)
@@ -475,20 +420,26 @@ private let sweep_preserves_header_parts_black
 /// Main composition theorem
 /// ---------------------------------------------------------------------------
 
-/// The proof instantiates combined_proof with:
+/// The proof instantiates walk_proof with:
 ///   h_f = g, h_c = gs, objs = objects zero_addr g, fb = 0UL, rw = 0, fp = 0UL
 /// where gs = fst (sweep g fp).
+///
+/// The two heaps are not equal: `sweep` writes a blue header and a free-list
+/// link into every dead object, the fused pass writes neither, and since
+/// `flush_blue` no longer zeroes a merged free block those words survive inside
+/// it on one side and not the other.  They agree on everything the model reads.
 
 #push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
-let fused_eq_sweep_coalesce (g: heap) (fp: U64.t)
+let fused_agrees_sweep_coalesce (g: heap) (fp: U64.t)
   : Lemma
     (requires well_formed_heap g /\
               heap_objects_dense g /\
               SpecSweep.fp_in_heap fp g /\
               (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                 ~(is_gray x g)))
-    (ensures fused_sweep_coalesce g ==
-             SpecCoalesce.coalesce (fst (SpecSweep.sweep g fp)))
+    (ensures (let rf = fused_sweep_coalesce g in
+              let rc = SpecCoalesce.coalesce (fst (SpecSweep.sweep g fp)) in
+              snd rf == snd rc /\ HA.heaps_agree_mod_free (fst rf) (fst rc)))
   =
   let gs = fst (SpecSweep.sweep g fp) in
   let objs = objects zero_addr g in
@@ -520,44 +471,6 @@ let fused_eq_sweep_coalesce (g: heap) (fp: U64.t)
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires cond3_aux);
 
-  // === Condition 4: Agree below bound ===
-  // With rw=0, bound = if len objs > 0 then hd_address(head objs) else heap_size
-  // Case 1: objs nonempty → head objs = f_address zero_addr = 8UL, hd_address 8UL = 0UL, bound=0 → vacuous
-  // Case 2: objs empty → bound = heap_size → need all reads to agree
-  //   But when objs is empty, sweep_aux does nothing, so g == gs anyway
-  let cond4 : squash (let bound = if 0 > 0 then U64.v 0UL - 8
-                      else if Seq.length objs > 0 then U64.v (hd_address (Seq.head objs))
-                      else heap_size in
-          forall (a: hp_addr). U64.v a + 8 <= bound ==> read_word g a == read_word gs a)
-    = if Seq.length objs > 0 then begin
-        objects_nonempty_head zero_addr g;
-        f_address_spec zero_addr;
-        hd_address_spec (f_address zero_addr);
-        // bound = U64.v zero_addr
-        // For any a:hp_addr with U64.v a + 8 <= U64.v zero_addr,
-        // a is below all objects, so sweep doesn't touch it.
-        // All objects x have hd_address x >= zero_addr > a, and x >= zero_addr + mword > a.
-        // sweep only writes at hd_address(obj) and obj for each obj in objs.
-        let aux (a: hp_addr) : Lemma
-          (requires U64.v a + 8 <= U64.v zero_addr)
-          (ensures read_word g a == read_word gs a)
-        = // a < zero_addr, but every obj in objs satisfies U64.v (hd_address obj) >= U64.v zero_addr
-          // So a is past all objects in the reverse direction.
-          // Use: sweep only modifies headers and first fields, all of which are >= zero_addr
-          sweep_aux_preserves_below_zero g objs fp a
-        in
-        FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-      end else begin
-        // objs = objects zero_addr g is empty, so sweep_aux g objs fp = (g, fp)
-        // meaning gs = g and all reads agree trivially
-        assert (Seq.length objs = 0);
-        // sweep g fp = sweep_aux g (objects zero_addr g) fp = sweep_aux g objs fp
-        // When objs is empty, sweep_aux g Seq.empty fp = (g, fp) by definition
-        // So gs = fst (sweep g fp) = fst (sweep_aux g objs fp) = g
-        ()
-      end
-  in
-
   // === Condition 5: Agree above ===
   // With rw=0, the condition simplifies to:
   //   forall a. (forall x ∈ objs. a >= x + wosize(x)*8) ==> read_word g a == read_word gs a
@@ -573,8 +486,11 @@ let fused_eq_sweep_coalesce (g: heap) (fp: U64.t)
   let cond6_aux (x: obj_addr)
     : Lemma (requires Seq.mem x objs /\ is_black x g)
             (ensures getWosize (read_word g (hd_address x)) == getWosize (read_word gs (hd_address x)) /\
-                     getTag (read_word g (hd_address x)) == getTag (read_word gs (hd_address x)))
-    = sweep_preserves_header_parts_black g fp gs x
+                     getTag (read_word g (hd_address x)) == getTag (read_word gs (hd_address x)) /\
+                     U64.v (getWosize (read_word gs (hd_address x))) == U64.v (wosize_of_object x g))
+    = sweep_preserves_header_parts_black g fp gs x;
+      sweep_preserves_wosize_all g fp x;
+      wosize_of_object_spec x gs
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires cond6_aux);
 
@@ -615,21 +531,16 @@ let fused_eq_sweep_coalesce (g: heap) (fp: U64.t)
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires cond14_aux);
 
-  // === Apply combined_proof ===
-  // Instantiate: h_f = g, h_c = gs, objs = objects zero_addr g, fb = 0UL, rw = 0, fp = 0UL
-  Ind.combined_proof g gs g gs objs 0UL 0 0UL;
-  // This gives: fused_aux g g objs 0UL 0 0UL == coalesce_aux gs gs objs 0UL 0 0UL
-  assert (fused_aux g g objs 0UL 0 0UL == SpecCoalesce.coalesce_aux gs gs objs 0UL 0 0UL);
+  // === Condition 15: the walk starts at zero_addr ===
+  if Seq.length objs > 0 then begin
+    objects_nonempty_head zero_addr g;
+    f_address_spec zero_addr
+  end;
 
-  // LHS: fused_sweep_coalesce g = fused_aux g g (objects zero_addr g) 0UL 0 0UL  (by definition)
-
-  // RHS: coalesce gs = coalesce_aux gs gs (objects zero_addr gs) 0UL 0 0UL  (by definition)
-  //     = coalesce_aux gs gs (objects zero_addr g) 0UL 0 0UL   (since objects zero_addr gs == objects zero_addr g)
-  //     = coalesce_aux gs gs objs 0UL 0 0UL
+  // === Apply walk_proof ===
+  Ind.walk_proof g gs g gs objs 0UL 0 0UL (U64.v zero_addr);
+  assert (fused_sweep_coalesce g == fused_aux g g objs 0UL 0 0UL);
   assert (SpecCoalesce.coalesce gs == SpecCoalesce.coalesce_aux gs gs (objects zero_addr gs) 0UL 0 0UL);
   assert (objects zero_addr gs == objs);
-  assert (SpecCoalesce.coalesce gs == SpecCoalesce.coalesce_aux gs gs objs 0UL 0 0UL);
-
-  // Conclude
-  assert (fused_sweep_coalesce g == SpecCoalesce.coalesce gs)
+  assert (U64.uint_to_t (U64.v zero_addr) == zero_addr)
 #pop-options

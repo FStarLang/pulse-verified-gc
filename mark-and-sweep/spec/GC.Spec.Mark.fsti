@@ -134,8 +134,25 @@ let rec push_children (g: heap) (st: seq obj_addr) (obj: obj_addr) (i: U64.t{U64
 /// Well-Formedness Preservation
 /// ---------------------------------------------------------------------------
 
+/// Blueness is what `fields_constrained` and the graph look at, and mark never
+/// creates or removes it.  These two facts let the many colour-change sites in
+/// the mark proofs see that without a lemma call each.
+val is_blue_exclusive (x: obj_addr) (g: heap)
+  : Lemma (is_blue x g ==> ~(is_white x g) /\ ~(is_gray x g) /\ ~(is_black x g))
+          [SMTPat (is_blue x g)]
+
+val set_color_keeps_not_blue (obj x: obj_addr) (g: heap) (c: color)
+  : Lemma (requires c <> Header.Blue /\ ~(is_blue x g))
+          (ensures ~(is_blue x (set_object_color obj g c)))
+          [SMTPat (is_blue x (set_object_color obj g c))]
+
+/// A free block's body is unconstrained (`fields_constrained`), so a colour
+/// change may not take a block *out* of blue: its stale fields would become
+/// obligations.  Mark and sweep never do; allocation, which does, is not a
+/// colour change in this sense.
 val color_change_preserves_wf : (g: heap) -> (obj: obj_addr) -> (c: color) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g))
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
+                  (c <> Header.Blue ==> ~(is_blue obj g)))
         (ensures well_formed_heap (set_object_color obj g c))
 
 val push_children_preserves_wf : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
@@ -450,9 +467,11 @@ val color_preserves_get_field :
                   U64.v i <= U64.v (wosize_of_object h g))
         (ensures HeapGraph.get_field (set_object_color target g c) h i == HeapGraph.get_field g h i)
 
+/// Blue blocks have no edges, so the colour change must neither start nor end
+/// at blue.
 val color_preserves_create_graph :
   (obj: obj_addr) -> (g: heap{well_formed_heap g}) -> (c: color) ->
-  Lemma (requires Seq.mem obj (objects zero_addr g))
+  Lemma (requires Seq.mem obj (objects zero_addr g) /\ c <> Header.Blue /\ ~(is_blue obj g))
         (ensures create_graph (set_object_color obj g c) == create_graph g)
 
 /// ---------------------------------------------------------------------------
