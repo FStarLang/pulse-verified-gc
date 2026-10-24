@@ -422,7 +422,7 @@ Everything else in the Cheney/allocator layer was restated in resolved form:
 feeds it) breaks `promote_object_preserves_bfc_close`: it must transport
 `Seq.mem (resolve_object v new_major) (objects new_major)` to
 `Seq.mem (resolve_object v g') (objects g')`, where `g'` is `new_major` after
-`copy_fields`, `zero_promote_padding` and `set_promoted_tag` on the freshly
+`copy_fields` and `set_promoted_tag` on the freshly
 carved block `dst_obj`.  The case `resolve_object v new_major == dst_obj` with
 `v` strictly interior to `dst_obj` is not dischargeable: `dst_obj`'s fields still
 hold stale garbage in `new_major`, so a different blue object could point into
