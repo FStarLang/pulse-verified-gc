@@ -91,7 +91,7 @@ private let copy_fields_other_obj_precond
 #pop-options
 
 /// Helper: read at any object address of a non-dst object is preserved through
-/// copy_fields + zero_promote_padding + set_promoted_tag (full promote pipeline).
+/// copy_fields + set_promoted_tag (full promote pipeline).
 /// Requires ao's wosize >= 1 to ensure ao doesn't overlap with hd_address(dst_obj)
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 private let read_word_preserved_at_obj
@@ -106,8 +106,7 @@ private let read_word_preserved_at_obj
       U64.v (wosize_of_object ao g) >= 1)
     (ensures (
       let copied = copy_fields minor g src_obj dst_obj 0 wosize in
-      let padded = zero_promote_padding copied dst_obj wosize in
-      read_word (set_promoted_tag padded dst_obj tag) ao ==
+      read_word (set_promoted_tag copied dst_obj tag) ao ==
       read_word g ao))
   = copy_fields_other_obj_precond minor g src_obj ao dst_obj wosize;
     hd_address_spec ao;
@@ -124,13 +123,8 @@ private let read_word_preserved_at_obj
     let copied = copy_fields minor g src_obj dst_obj 0 wosize in
     // Step 1: copy_fields preserves read at ao
     copy_fields_preserves_other minor g src_obj dst_obj 0 wosize (ao <: hp_addr);
-    // Step 2: zero_promote_padding preserves read at ao
-    // padding is at dst_obj + wosize*8, which is in dst_obj's range
-    // ao is in a different object's range, so ao <> padding position
-    zero_promote_padding_frame copied dst_obj wosize (ao <: hp_addr);
-    let padded = zero_promote_padding copied dst_obj wosize in
-    // Step 3: set_promoted_tag preserves read at ao
-    set_promoted_tag_read_frame padded dst_obj tag (ao <: hp_addr)
+    // Step 2: set_promoted_tag preserves read at ao
+    set_promoted_tag_read_frame copied dst_obj tag (ao <: hp_addr)
 #pop-options
 
 /// Helper: prove copy_fields_preserves_other precondition for hd_address src
@@ -160,7 +154,7 @@ private let copy_fields_other_hdr_precond
 #pop-options
 
 /// Helper: read at any address of a non-dst object is preserved through
-/// copy_fields + zero_promote_padding + set_promoted_tag (full promote pipeline).
+/// copy_fields + set_promoted_tag (full promote pipeline).
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let promote_read_non_dst
   (minor: minor_state) (new_major: heap) (obj: U64.t)
@@ -174,13 +168,12 @@ private let promote_read_non_dst
       // a is disjoint from dst_obj's header
       (U64.v a + U64.v mword <= U64.v (hd_address dst_obj) \/
        U64.v (hd_address dst_obj) + U64.v mword <= U64.v a) /\
-      // a disjoint from dst_obj's field range including padding slot
-      (forall (k:nat). 0 <= k /\ k <= wosize ==>
+      // a disjoint from dst_obj's field range
+      (forall (k:nat). 0 <= k /\ k < wosize ==>
         (U64.v a + 8 <= U64.v dst_obj + k * 8 \/ U64.v dst_obj + k * 8 + 8 <= U64.v a)))
     (ensures
       (let copied = copy_fields minor new_major obj dst_obj 0 wosize in
-       let padded = zero_promote_padding copied dst_obj wosize in
-       read_word (set_promoted_tag padded dst_obj tag) a == read_word new_major a))
+       read_word (set_promoted_tag copied dst_obj tag) a == read_word new_major a))
   = // Derive field bounds from membership
     objects_member_size_bound zero_addr new_major dst_obj;
     wosize_of_object_spec dst_obj new_major;
@@ -188,12 +181,8 @@ private let promote_read_non_dst
     let copied = copy_fields minor new_major obj dst_obj 0 wosize in
     // Step 1: copy_fields preserves read at a
     copy_fields_preserves_other minor new_major obj dst_obj 0 wosize a;
-    // Step 2: zero_promote_padding preserves read at a
-    // a is disjoint from padding position (dst_obj + wosize * 8) by the forall at k = wosize
-    zero_promote_padding_frame copied dst_obj wosize a;
-    let padded = zero_promote_padding copied dst_obj wosize in
-    // Step 3: set_promoted_tag preserves read at a
-    set_promoted_tag_read_frame padded dst_obj tag a
+    // Step 2: set_promoted_tag preserves read at a
+    set_promoted_tag_read_frame copied dst_obj tag a
 #pop-options
 
 /// Helper: derive copy_fields_preserves_other precondition from objects_separated
@@ -210,8 +199,8 @@ private let bfc_field_disjoint
       U64.v src + j * 8 + 8 <= heap_size)
     (ensures
       (let field_addr = field_addr_of src j in
-       // field disjoint from [dst_obj, dst_obj + wosize*8] (including padding slot at k=wosize)
-       (forall (k:nat). 0 <= k /\ k <= wosize ==>
+       // field disjoint from [dst_obj, dst_obj + wosize*8)
+       (forall (k:nat). 0 <= k /\ k < wosize ==>
          (U64.v field_addr + 8 <= U64.v dst_obj + k * 8 \/
           U64.v dst_obj + k * 8 + 8 <= U64.v field_addr)) /\
        // field disjoint from hd_address dst_obj
@@ -236,32 +225,20 @@ private let bfc_field_disjoint
     end
 #pop-options
 
-/// The padding word `dst + wz * mword` is not the header of an object `src`
-/// that lies either below `dst` or beyond its (larger) actual extent.  Stated
-/// in an empty context: inside the large promotion proofs below Z3 5.x times
-/// out on this disequality.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
-private let padding_addr_ne_hd (s d wz awz: nat)
-  : Lemma (requires s >= 8 /\ (s < d \/ (s > d + awz * 8 /\ awz > wz)))
-          (ensures s - 8 <> d + wz * 8)
-  = ()
-#pop-options
-
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 /// Pattern: inner bfc_proof has conclusion as implication (no requires).
 private let promote_object_preserves_bfc_close
   (minor: minor_state) (major new_major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
-  (dst_obj: obj_addr) (copied padded: heap)
+  (dst_obj: obj_addr) (copied: heap)
   (tag: nat{tag < 256})
   (g': heap)
   : Lemma (requires
       new_major == (GC.Spec.Allocator.alloc_spec major fp wosize).heap_out /\
       dst_obj == (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out /\
       copied == copy_fields minor new_major obj dst_obj 0 wosize /\
-      padded == zero_promote_padding copied dst_obj wosize /\
       tag == minor_tag minor obj /\
-      g' == set_promoted_tag padded dst_obj tag /\
+      g' == set_promoted_tag copied dst_obj tag /\
       well_formed_heap_part1 major /\
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
@@ -288,33 +265,10 @@ private let promote_object_preserves_bfc_close
           assert (Seq.mem src (objects zero_addr new_major));
           // Header disjointness
           headers_disjoint_from_separation new_major src dst_obj;
-          // Header of src preserved through set_tag, padding, and copy_fields
-          set_promoted_tag_read_frame padded dst_obj tag (hd_address src);
+          // Header of src preserved through set_tag and copy_fields
+          set_promoted_tag_read_frame copied dst_obj tag (hd_address src);
           copy_fields_other_hdr_precond new_major src dst_obj wosize;
           copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (hd_address src);
-          // Padding frame: handle exact-fit case
-          hd_address_spec dst_obj;
-          AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
-          wfh_part1_obj_bound new_major dst_obj;
-          dst_fields_valid_from_obj new_major dst_obj wosize;
-          copy_fields_frame minor new_major obj dst_obj 0 wosize (hd_address dst_obj);
-          wosize_of_object_spec dst_obj new_major;
-          wosize_of_object_spec dst_obj copied;
-          let actual_wz = U64.v (wosize_of_object dst_obj copied) in
-          if actual_wz <= wosize then
-            zero_promote_padding_noop copied dst_obj wosize
-          else begin
-            hd_address_spec src;
-            if U64.v src < U64.v dst_obj then
-              objects_separated zero_addr new_major src dst_obj
-            else begin
-              objects_separated zero_addr new_major dst_obj src;
-              wosize_of_object_spec dst_obj new_major;
-              assert (U64.v src > U64.v dst_obj + actual_wz * 8)
-            end;
-            padding_addr_ne_hd (U64.v src) (U64.v dst_obj) wosize actual_wz;
-            zero_promote_padding_frame copied dst_obj wosize (hd_address src)
-          end;
           // Derive wosize and color in new_major
           wosize_of_object_spec src new_major;
           wosize_of_object_spec src g';
@@ -342,36 +296,31 @@ let promote_object_preserves_bfc
     let dst_obj : obj_addr = dst in
     promote_object_success minor major obj fp wosize;
     let copied = copy_fields minor new_major obj dst_obj 0 wosize in
-    let padded = zero_promote_padding copied dst_obj wosize in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
-    assert (res.major_out == set_promoted_tag padded dst_obj tag);
+    assert (res.major_out == set_promoted_tag copied dst_obj tag);
     // alloc preserves bfc
     alloc_spec_preserves_blue_fields_closed major fp wosize;
     // Key properties of alloc
     AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
     GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
     GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize;
-    // objects preserved through copy + pad + set_tag
+    // objects preserved through copy + set_tag
     copy_fields_preserves_objects_aux minor new_major obj dst_obj 0 wosize;
     copy_fields_preserves_wfh_part1 minor new_major obj dst_obj wosize;
-    zero_promote_padding_preserves_objects copied dst_obj wosize;
-    zero_promote_padding_preserves_wfh_part1 copied dst_obj wosize;
-    set_promoted_tag_preserves_objects padded dst_obj tag;
+    set_promoted_tag_preserves_objects copied dst_obj tag;
     // dst_obj not blue in res.major_out (it's White)
-    // header of dst preserved through padding (hd_address is at dst-8, padding at dst+wz*8)
     hd_address_spec dst_obj;
-    zero_promote_padding_frame copied dst_obj wosize (hd_address dst_obj);
-    set_promoted_tag_unfold padded dst_obj tag;
-    let padded_hdr = read_word padded (hd_address dst_obj) in
-    getWosize_bound padded_hdr;
-    let new_hdr = makeHeader (getWosize padded_hdr) White (U64.uint_to_t tag) in
-    read_write_same padded (hd_address dst_obj) new_hdr;
-    makeHeader_getColor (getWosize padded_hdr) White (U64.uint_to_t tag);
+    set_promoted_tag_unfold copied dst_obj tag;
+    let dst_hdr = read_word copied (hd_address dst_obj) in
+    getWosize_bound dst_hdr;
+    let new_hdr = makeHeader (getWosize dst_hdr) White (U64.uint_to_t tag) in
+    read_write_same copied (hd_address dst_obj) new_hdr;
+    makeHeader_getColor (getWosize dst_hdr) White (U64.uint_to_t tag);
     color_of_object_spec dst_obj res.major_out;
     GC.Spec.Object.is_blue_iff dst_obj res.major_out;
     // Close the quantifier via the dedicated helper
-    promote_object_preserves_bfc_close minor major new_major obj fp wosize dst_obj copied padded tag res.major_out
+    promote_object_preserves_bfc_close minor major new_major obj fp wosize dst_obj copied tag res.major_out
 #pop-options
 /// Helper: transfer chain_avoids from new_major to res.major_out via read preservation.
 /// Separated to keep the Z3 context small.
@@ -411,10 +360,9 @@ private let chain_blue_transfer_step
     GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize;
     let dst_obj : obj_addr = alloc_res.obj_out in
     let copied = copy_fields minor new_major obj dst_obj 0 wosize in
-    let padded = zero_promote_padding copied dst_obj wosize in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
-    let final = set_promoted_tag padded dst_obj tag in
+    let final = set_promoted_tag copied dst_obj tag in
     promote_object_success minor major obj fp wosize;
     GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
     GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize;
@@ -464,7 +412,6 @@ private let chain_blue_proof_for_excl
     let dst_obj : obj_addr = alloc_res.obj_out in
     promote_object_success minor major obj fp wosize;
     let copied = copy_fields minor new_major obj dst_obj 0 wosize in
-    let padded = zero_promote_padding copied dst_obj wosize in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
     // Key alloc properties
@@ -477,37 +424,12 @@ private let chain_blue_proof_for_excl
     assert (U64.v (wosize_of_object dst_obj new_major) >= wosize);
     copy_fields_preserves_objects_aux minor new_major obj dst_obj 0 wosize;
     copy_fields_preserves_wfh_part1 minor new_major obj dst_obj wosize;
-    zero_promote_padding_preserves_objects copied dst_obj wosize;
-    set_promoted_tag_preserves_objects padded dst_obj tag;
+    set_promoted_tag_preserves_objects copied dst_obj tag;
     // 1. excl ∈ objects(new_major)
     assert (Seq.mem excl (objects zero_addr new_major));
-    // Bridge: header of excl preserved through padding + set_promoted_tag
+    // Bridge: header of excl preserved through set_promoted_tag
     headers_disjoint_from_separation new_major excl dst_obj;
-    // Establish wosize relationship between copied and new_major
-    hd_address_spec dst_obj;
-    wfh_part1_obj_bound new_major dst_obj;
-    dst_fields_valid_from_obj new_major dst_obj wosize;
-    copy_fields_frame minor new_major obj dst_obj 0 wosize (hd_address dst_obj);
-    wosize_of_object_spec dst_obj new_major;
-    wosize_of_object_spec dst_obj copied;
-    let actual_wz_excl = U64.v (wosize_of_object dst_obj copied) in
-    if actual_wz_excl <= wosize then
-      zero_promote_padding_noop copied dst_obj wosize
-    else begin
-      // actual_wz > wosize. Two sub-cases from headers_disjoint:
-      // Case excl < dst_obj: hd_address excl < dst_obj <= dst_obj + wosize*8. Trivial.
-      // Case dst_obj < excl: objects_separated on new_major gives
-      //   excl > dst_obj + actual_wz*8 >= dst_obj + (wosize+1)*8
-      //   so hd_address excl = excl - 8 >= dst_obj + wosize*8 + 8 > dst_obj + wosize*8.
-      hd_address_spec excl;
-      if U64.v excl > U64.v dst_obj then begin
-        objects_separated zero_addr new_major dst_obj excl;
-        assert (U64.v excl > U64.v dst_obj + actual_wz_excl * 8)
-      end;
-      padding_addr_ne_hd (U64.v excl) (U64.v dst_obj) wosize actual_wz_excl;
-      zero_promote_padding_frame copied dst_obj wosize (hd_address excl)
-    end;
-    set_promoted_tag_read_frame padded dst_obj tag (hd_address excl);
+    set_promoted_tag_read_frame copied dst_obj tag (hd_address excl);
     // 2. excl must be in objects(major) (new objects are blue → contradiction)
     AllocLemmas.alloc_spec_new_objects_blue_part1 major fp wosize;
     AllocLemmas.alloc_spec_only_new_is_obj_out_part1 major fp wosize;
@@ -548,7 +470,7 @@ private let chain_blue_proof_for_excl
     reveal_opaque (`%chain_objects_blue) chain_objects_blue;
     // 6. alloc_spec preserves chain_avoids for excl
     AllocLemmas.alloc_spec_preserves_chain_avoids_other major fp wosize excl;
-    // 7. Transfer through copy_fields + padding + set_promoted_tag
+    // 7. Transfer through copy_fields + set_promoted_tag
     AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wosize;
     AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wosize;
     chain_blue_transfer_step minor major obj fp wosize excl
@@ -588,7 +510,6 @@ let promote_object_preserves_chain_objects_blue
     let dst_obj : obj_addr = alloc_res.obj_out in
     promote_object_success minor major obj fp wosize;
     let copied = copy_fields minor new_major obj dst_obj 0 wosize in
-    let padded = zero_promote_padding copied dst_obj wosize in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
     // Key properties of alloc
@@ -609,16 +530,13 @@ let promote_object_preserves_chain_objects_blue
     // chain_avoids preserved through copy_fields
     copy_fields_preserves_chain_avoids_self minor new_major obj dst_obj 0 wosize alloc_res.fp_out fuel;
     copy_fields_preserves_wfh_part1 minor new_major obj dst_obj wosize;
-    // zero_promote_padding preserves alloc invariants
-    zero_promote_padding_preserves_alloc_invariants copied dst_obj wosize alloc_res.fp_out;
-    zero_promote_padding_preserves_objects copied dst_obj wosize;
     // set_promoted_tag preserves alloc invariants
-    set_promoted_tag_preserves_alloc_invariants padded dst_obj tag alloc_res.fp_out;
-    set_promoted_tag_preserves_objects padded dst_obj tag;
+    set_promoted_tag_preserves_alloc_invariants copied dst_obj tag alloc_res.fp_out;
+    set_promoted_tag_preserves_objects copied dst_obj tag;
     // Prove chain_avoids for dst_obj preserved through set_promoted_tag
     FStar.Classical.forall_intro
-      (FStar.Classical.move_requires (set_tag_preserves_read_at_obj padded dst_obj tag));
-    AllocLemmas.chain_avoids_transfer padded (set_promoted_tag padded dst_obj tag)
+      (FStar.Classical.move_requires (set_tag_preserves_read_at_obj copied dst_obj tag));
+    AllocLemmas.chain_avoids_transfer copied (set_promoted_tag copied dst_obj tag)
       alloc_res.fp_out dst_obj fuel;
     // For non-blue obj' ≠ dst_obj: delegate to top-level helper
     let full_proof (excl: obj_addr)
@@ -643,7 +561,7 @@ let promote_object_preserves_chain_objects_blue
 
 /// A successful promotion preserves the shape of the free-list head and blue
 /// link fields. Allocation establishes the shape for the immediate post-alloc
-/// heap; copy/padding/tag writes do not affect link fields of still-blue objects.
+/// heap; copy/tag writes do not affect link fields of still-blue objects.
 #push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
 let promote_object_preserves_free_list_shape
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
@@ -656,10 +574,9 @@ let promote_object_preserves_free_list_shape
     let dst_obj : obj_addr = alloc_res.obj_out in
     promote_object_success minor major obj fp wosize;
     let copied = copy_fields minor new_major obj dst_obj 0 wosize in
-    let padded = zero_promote_padding copied dst_obj wosize in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
-    let final = set_promoted_tag padded dst_obj tag in
+    let final = set_promoted_tag copied dst_obj tag in
     assert (res.major_out == final);
     // Allocation establishes both shape components on new_major / alloc_res.fp_out.
     GC.Gen.PromoteUpdate.BlueAlloc.alloc_spec_preserves_fp_pointer_or_zero major fp wosize;
@@ -674,20 +591,17 @@ let promote_object_preserves_free_list_shape
     GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize;
     copy_fields_preserves_objects_aux minor new_major obj dst_obj 0 wosize;
     copy_fields_preserves_wfh_part1 minor new_major obj dst_obj wosize;
-    zero_promote_padding_preserves_objects copied dst_obj wosize;
-    zero_promote_padding_preserves_wfh_part1 copied dst_obj wosize;
-    set_promoted_tag_preserves_objects padded dst_obj tag;
+    set_promoted_tag_preserves_objects copied dst_obj tag;
 
     // The promoted destination is white in the final heap, so it is not a blue
     // free-list node whose link field must be considered.
     hd_address_spec dst_obj;
-    zero_promote_padding_frame copied dst_obj wosize (hd_address dst_obj);
-    set_promoted_tag_unfold padded dst_obj tag;
-    let padded_hdr = read_word padded (hd_address dst_obj) in
-    getWosize_bound padded_hdr;
-    let new_hdr = makeHeader (getWosize padded_hdr) White (U64.uint_to_t tag) in
-    read_write_same padded (hd_address dst_obj) new_hdr;
-    makeHeader_getColor (getWosize padded_hdr) White (U64.uint_to_t tag);
+    set_promoted_tag_unfold copied dst_obj tag;
+    let dst_hdr = read_word copied (hd_address dst_obj) in
+    getWosize_bound dst_hdr;
+    let new_hdr = makeHeader (getWosize dst_hdr) White (U64.uint_to_t tag) in
+    read_write_same copied (hd_address dst_obj) new_hdr;
+    makeHeader_getColor (getWosize dst_hdr) White (U64.uint_to_t tag);
     color_of_object_spec dst_obj final;
     GC.Spec.Object.is_blue_iff dst_obj final;
     assert (is_blue dst_obj final = false);
@@ -702,30 +616,9 @@ let promote_object_preserves_free_list_shape
       = assert (Seq.mem src (objects zero_addr new_major));
         assert (src <> dst_obj);
         headers_disjoint_from_separation new_major src dst_obj;
-        set_promoted_tag_read_frame padded dst_obj tag (hd_address src);
+        set_promoted_tag_read_frame copied dst_obj tag (hd_address src);
         copy_fields_other_hdr_precond new_major src dst_obj wosize;
         copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (hd_address src);
-        hd_address_spec dst_obj;
-        wfh_part1_obj_bound new_major dst_obj;
-        dst_fields_valid_from_obj new_major dst_obj wosize;
-        copy_fields_frame minor new_major obj dst_obj 0 wosize (hd_address dst_obj);
-        wosize_of_object_spec dst_obj new_major;
-        wosize_of_object_spec dst_obj copied;
-        let actual_wz = U64.v (wosize_of_object dst_obj copied) in
-        if actual_wz <= wosize then
-          zero_promote_padding_noop copied dst_obj wosize
-        else begin
-          hd_address_spec src;
-          if U64.v src < U64.v dst_obj then
-            objects_separated zero_addr new_major src dst_obj
-          else begin
-            objects_separated zero_addr new_major dst_obj src;
-            wosize_of_object_spec dst_obj new_major;
-            assert (U64.v src > U64.v dst_obj + actual_wz * 8)
-          end;
-          padding_addr_ne_hd (U64.v src) (U64.v dst_obj) wosize actual_wz;
-          zero_promote_padding_frame copied dst_obj wosize (hd_address src)
-        end;
         wosize_of_object_spec src new_major;
         wosize_of_object_spec src final;
         color_of_header_eq src final new_major;

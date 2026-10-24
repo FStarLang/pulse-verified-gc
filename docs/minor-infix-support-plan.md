@@ -234,15 +234,13 @@ meets — and it is what makes the field restriction removable.
 
 ### 3.2 Why promotion preserves the layout
 
-`promote_object` (`GC.Gen.Promote.fsti:103`) is
+`promote_object` (`GC.Gen.Promote.fsti:85`) is
 `alloc_spec`, then `copy_fields minor new_major obj new_addr 0 wosize`, then
-`zero_promote_padding`, then `set_promoted_tag`.
+`set_promoted_tag`.
 
 * `copy_fields` copies the body **verbatim**, so the infix header word at
   parent-relative byte offset `delta - 8` is reproduced exactly. Hence
   `wosize_of_object (fwd addr) major_final == minor_wosize minor addr`.
-* `zero_promote_padding` only touches field indices `>= wosize`; the infix
-  header is at index `(delta - 8)/8 < wosize - 1`, so it is untouched.
 * `set_promoted_tag` writes `minor_tag minor obj`, preserving `Closure_tag`.
 
 Therefore, writing `P = fwd(parent)` and `delta = addr - parent = wz*8`:

@@ -125,51 +125,6 @@ private let copy_fields_preserves_no_black
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-/// Helper: zero_promote_padding preserves no_black_objects
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-private let zero_promote_padding_preserves_no_black
-  (g: heap) (dst: obj_addr) (wz: nat{wz > 0})
-  : Lemma (requires Mark.no_black_objects g /\
-                    well_formed_heap_part1 g /\
-                    Seq.mem dst (objects zero_addr g))
-          (ensures Mark.no_black_objects (zero_promote_padding g dst wz))
-  = zero_promote_padding_preserves_objects g dst wz;
-    let padded = zero_promote_padding g dst wz in
-    let aux (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects zero_addr padded))
-      (ensures ~(is_black h padded))
-    = assert (Seq.mem h (objects zero_addr g));
-      hd_address_spec h;
-      hd_address_spec dst;
-      if h = dst then begin
-        // hd_address dst = dst - 8, pad at dst + wz*8: these differ since wz*8 + 8 > 0
-        assert (U64.v (hd_address h) == U64.v dst - U64.v mword);
-        assert (U64.v (hd_address h) <> U64.v dst + wz * U64.v mword);
-        zero_promote_padding_frame g dst wz (hd_address h);
-        color_of_header_eq h g padded;
-        is_black_iff h g;
-        is_black_iff h padded
-      end else begin
-        if U64.v h < U64.v dst then begin
-          objects_separated zero_addr g h dst;
-          zero_promote_padding_frame g dst wz (hd_address h)
-        end else begin
-          objects_separated zero_addr g dst h;
-          wosize_of_object_spec dst g;
-          let actual_wz = U64.v (wosize_of_object dst g) in
-          if actual_wz <= wz then
-            zero_promote_padding_noop g dst wz
-          else
-            zero_promote_padding_frame g dst wz (hd_address h)
-        end;
-        color_of_header_eq h g padded;
-        is_black_iff h g;
-        is_black_iff h padded
-      end
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-#pop-options
-
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 
 private let promote_object_preserves_no_black
@@ -206,17 +161,13 @@ private let promote_object_preserves_no_black
     copy_fields_preserves_no_black minor g_alloc obj dst wz;
     let result = copy_fields minor g_alloc obj dst 0 wz in
 
-    // Step 4: zero_promote_padding + set_promoted_tag preserve no_black
+    // Step 4: set_promoted_tag preserves no_black
     copy_fields_preserves_objects_aux minor g_alloc obj dst 0 wz;
     copy_fields_preserves_wfh_part1 minor g_alloc obj dst wz;
     assert (Seq.mem dst (objects zero_addr result));
-    zero_promote_padding_preserves_no_black result dst wz;
-    zero_promote_padding_preserves_objects result dst wz;
-    zero_promote_padding_preserves_wfh_part1 result dst wz;
-    let padded = zero_promote_padding result dst wz in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
-    set_promoted_tag_preserves_no_black padded dst tag
+    set_promoted_tag_preserves_no_black result dst tag
   end
 
 #pop-options
@@ -615,52 +566,6 @@ private let copy_fields_preserves_gray_black_objects_on_stack
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-private let zero_promote_padding_preserves_gray_black_objects_on_stack
-  (g: heap) (dst: obj_addr) (wz: nat{wz > 0}) (st: seq obj_addr)
-  : Lemma (requires gray_black_objects_on_stack g st /\
-                    well_formed_heap_part1 g /\
-                    Seq.mem dst (objects zero_addr g))
-          (ensures gray_black_objects_on_stack (zero_promote_padding g dst wz) st)
-  =
-  zero_promote_padding_preserves_objects g dst wz;
-  let padded = zero_promote_padding g dst wz in
-  let aux (h: obj_addr)
-    : Lemma (requires Seq.mem h (objects zero_addr padded) /\
-                      (is_gray h padded \/ is_black h padded))
-            (ensures Seq.mem h st)
-    =
-    assert (Seq.mem h (objects zero_addr g));
-    hd_address_spec h;
-    hd_address_spec dst;
-    if h = dst then begin
-      assert (U64.v (hd_address h) == U64.v dst - U64.v mword);
-      assert (U64.v (hd_address h) <> U64.v dst + wz * U64.v mword);
-      zero_promote_padding_frame g dst wz (hd_address h);
-      color_of_header_eq h g padded;
-      assert (is_gray h g \/ is_black h g);
-      assert (Seq.mem h st)
-    end else begin
-      if U64.v h < U64.v dst then begin
-        objects_separated zero_addr g h dst;
-        zero_promote_padding_frame g dst wz (hd_address h)
-      end else begin
-        objects_separated zero_addr g dst h;
-        wosize_of_object_spec dst g;
-        let actual_wz = U64.v (wosize_of_object dst g) in
-        if actual_wz <= wz then
-          zero_promote_padding_noop g dst wz
-        else
-          zero_promote_padding_frame g dst wz (hd_address h)
-      end;
-      color_of_header_eq h g padded;
-      assert (is_gray h g \/ is_black h g);
-      assert (Seq.mem h st)
-    end
-  in
-  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-#pop-options
-
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 private let promote_object_preserves_gray_black_objects_on_stack
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
@@ -696,13 +601,9 @@ private let promote_object_preserves_gray_black_objects_on_stack
     copy_fields_preserves_wfh_part1 minor g_alloc obj dst wz;
     assert (Seq.mem dst (objects zero_addr result));
 
-    zero_promote_padding_preserves_gray_black_objects_on_stack result dst wz st;
-    zero_promote_padding_preserves_objects result dst wz;
-    zero_promote_padding_preserves_wfh_part1 result dst wz;
-    let padded = zero_promote_padding result dst wz in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
-    set_promoted_tag_preserves_gray_black_objects_on_stack padded dst tag st
+    set_promoted_tag_preserves_gray_black_objects_on_stack result dst tag st
   end
 #pop-options
 
@@ -1245,18 +1146,13 @@ private let cheney_promote_field_fwd_targets_in_objects_from_shape
           assert (is_val_addr (prom.fwd_map x));
           assert (is_infix (prom.fwd_map x) prom.major_final = false);
           assert (Seq.mem x (minor_objects minor));
-          if j < minor_wosize minor x then begin
-            Fields.cheney_promote_fwd_target_fields_match minor major fp roots x j;
-            assert (old_raw == minor_read_field minor x j);
-            assert (old_val == to_minor_offset (minor_read_field minor x j));
-            fwd_target_resolved minor major fp roots old_val
-          end else begin
-            Fields.cheney_promote_fwd_target_extra_field_not_pointer minor major fp roots x j;
-            assert (old_raw == 0UL);
-            assert (old_val == 0UL);
-            assert (~(is_minor_pointer old_val));
-            assert False
-          end
+          // Promotion is size-exact, so `j` lies inside the copied fields.
+          Fields.cheney_promote_fwd_target_no_scan_iff_minor_tag minor major fp roots x;
+          assert (j < minor_wosize minor x);
+          Fields.cheney_promote_fwd_target_fields_match minor major fp roots x j;
+          assert (old_raw == minor_read_field minor x j);
+          assert (old_val == to_minor_offset (minor_read_field minor x j));
+          fwd_target_resolved minor major fp roots old_val
         end
       end
     end
@@ -1359,7 +1255,9 @@ private let cheney_promote_field_old_targets_in_objects_from_shape
             Fields.cheney_promote_fwd_target_no_scan_iff_minor_tag minor major fp roots x;
             assert (minor_tag minor x < 251);
             minor_scan_wosize_cases minor x;
-            if j < minor_scan_wosize minor x then begin
+            // Promotion is size-exact, so `j` lies inside the copied scan window.
+            assert (j < minor_scan_wosize minor x);
+            begin
               Fields.cheney_promote_fwd_target_fields_match minor major fp roots x j;
               assert (v == minor_read_field minor x j);
               GenInv.minor_major_fields_no_blue_elim minor major x j;
@@ -1370,11 +1268,6 @@ private let cheney_promote_field_old_targets_in_objects_from_shape
               resolve_non_infix (v <: obj_addr) prom.major_final;
               infix_addr_wf_non_infix prom.major_final
                 (objects zero_addr prom.major_final) (v <: obj_addr)
-            end else begin
-              Fields.cheney_promote_fwd_target_extra_field_not_pointer minor major fp roots x j;
-              assert (v == 0UL);
-              assert (~(is_pointer v));
-              assert False
             end
           in
           let x = IndDesc.indefinite_description_ghost U64.t

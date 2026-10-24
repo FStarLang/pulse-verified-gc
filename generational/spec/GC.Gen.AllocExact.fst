@@ -897,8 +897,8 @@ let fused_entry (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
 /// Promotion keeps the free list complete
 /// ---------------------------------------------------------------------------
 
-/// Promotion writes only inside the promoted object's block: its fields, its
-/// padding (none, now that allocation is exact) and its header.
+/// Promotion writes only inside the promoted object's block: its fields and
+/// its header.
 #push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
 let promote_writes_frame (minor: MH.minor_state) (g1: heap) (obj: U64.t)
   (dst: obj_addr) (wosize: nat{wosize > 0}) (tag: nat{tag < 256}) (w: hp_addr)
@@ -906,14 +906,12 @@ let promote_writes_frame (minor: MH.minor_state) (g1: heap) (obj: U64.t)
                     U64.v dst + wosize * 8 <= heap_size /\
                     (U64.v w + 8 <= U64.v (hd_address dst) \/ U64.v dst + wosize * 8 <= U64.v w))
           (ensures (let copied = WB.copy_fields minor g1 obj dst 0 wosize in
-                    let padded = Promote.zero_promote_padding copied dst wosize in
-                    read_word (Promote.set_promoted_tag padded dst tag) w == read_word g1 w))
+                    read_word (Promote.set_promoted_tag copied dst tag) w == read_word g1 w))
   = hd_address_spec dst;
     let copied = WB.copy_fields minor g1 obj dst 0 wosize in
     WB.copy_fields_preserves_other minor g1 obj (dst <: U64.t) 0 wosize w;
     WB.copy_fields_preserves_other minor g1 obj (dst <: U64.t) 0 wosize (hd_address dst);
     wosize_of_object_spec dst g1; wosize_of_object_spec dst copied;
-    assert (Promote.zero_promote_padding copied dst wosize == copied);
     Promote.set_promoted_tag_read_frame copied dst tag w
 #pop-options
 
@@ -954,7 +952,6 @@ let promote_object_preserves_fl_complete (minor: MH.minor_state) (major: heap) (
     assert (U64.v (hd_address dst) + 8 + wosize * 8 <= heap_size);
     WB.copy_fields_preserves_other minor g1 obj (dst <: U64.t) 0 wosize (hd_address dst);
     wosize_of_object_spec dst copied;
-    assert (Promote.zero_promote_padding copied dst wosize == copied);
     Promote.set_promoted_tag_preserves_objects copied dst tag;
     assert (objects zero_addr res.Promote.major_out == objects zero_addr g1);
     let fr (a: obj_addr) : Lemma
