@@ -107,6 +107,7 @@ ROOT_MODULES = \
   mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fsti \
   mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fst \
   mark-and-sweep/spec/GC.Spec.FreeList.Sweep.fst \
+  mark-and-sweep/impl/GC.Impl.Correct.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst
 
@@ -355,7 +356,7 @@ DEPGRAPH_IFACE_ROOTS = \
 # have to be named explicitly or the whole proof development looks dead.
 DEPGRAPH_THEOREM_ROOTS = \
   GC.Spec.Correctness GC.Spec.MarkBoundedCorrectness GC.Gen.CheneyCorrectness \
-  GC.Impl.MarkBoundedRootLemmas GC.Spec.FreeList.Sweep
+  GC.Impl.MarkBoundedRootLemmas GC.Spec.FreeList.Sweep GC.Impl.Correct
 
 DEPGRAPH_SPOT_ROOTS = $(sort $(basename $(notdir $(wildcard spot/GC.SPOT.*.fst))))
 
