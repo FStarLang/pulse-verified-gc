@@ -245,7 +245,7 @@ let live_b
   : Lemma
     (requires source_at h_init s2 roots fp final_fp h_mark)
     (ensures free_blocks_listed s2 final_fp)
-  = admit ()
+  = s2_fl_exact h_init s2 roots fp final_fp h_mark
 
 let live_c2
   (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) (h_mark: heap)
