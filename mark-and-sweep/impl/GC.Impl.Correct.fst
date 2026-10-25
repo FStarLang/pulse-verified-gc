@@ -252,7 +252,9 @@ let live_c2
   : Lemma
     (requires source_at h_init s2 roots fp final_fp h_mark /\ Corr.gc_postcondition s2)
     (ensures heap_partitioned s2 final_fp)
-  = admit ()
+  = Corr.gc_postcondition_elim s2;
+    s2_fl_exact h_init s2 roots fp final_fp h_mark;
+    Part.heap_partition_strong s2 final_fp
 
 let live_c1
   (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) (h_mark: heap)
