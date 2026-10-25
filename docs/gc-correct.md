@@ -189,13 +189,42 @@ These are in the module and are checked on every build:
 | `unreachable_reclaimed_header`, proved | Clause (a)'s guard is not empty: an object's own header word is always in its extent. Clause (a) therefore constrains every unreachable object. |
 
 The first two only show that Z3 cannot prove something. They do not
-*construct* a heap that satisfies the hypotheses.
+*construct* a heap that satisfies the hypotheses. The concrete witness below
+does.
 
 The two remaining guards are not empty either:
 
 - Clause (b) quantifies over the free blocks of `s2` with at least one field.
 - Clause (c1) is an existential. It is pinned to the same `h_mark` as the
   postcondition's witness, and so cannot be met by an unrelated heap.
+
+## Concrete witness
+
+`spot/GC.SPOT.GcCorrect.fst` shows `gc_correct`'s precondition hypothesis holds
+on a concrete heap, the SPOT's A/B/C fixture.
+
+Inside `gen_gc`, the major phase calls `collect_with_roots` on
+`gen_gc_prepared_major` of the fixture, which is the post-minor major heap with
+the roots darkened. It passes the prepared root stack and the minor collection's
+free pointer. `spot_gc_precondition` proves
+`gc_precondition_with_roots` for exactly those arguments, with capacity 2. The
+proof uses the fixture's existing SPOT lemmas (`spot_collection_heap_shape`,
+`spot_roots_valid_for_minor_collection`, `spot_concrete_no_oom`) and
+`gen_gc_major_precondition_elim`. `spot_gc_correct` then instantiates
+`gc_correct` there: any result of `collect_with_roots` on that heap is safe and
+live.
+
+What the witness covers:
+
+- **The precondition.** It is shown to hold concretely, under
+  `spot_major_room` (`zero_addr + 40 <= heap_size`), the same assumption every
+  SPOT takes about the configured heap size.
+- **The postcondition, `collect_post`.** It is not constructed as a value.
+  Its satisfiability rests on `collect_with_roots` being a verified Pulse
+  function that the SPOT's `call_concrete_gen_gc_spot` actually runs on this
+  heap: any run that returns produces an `s2` satisfying it. Building `s2`
+  explicitly in the spec would mean replaying the bounded mark, which no spec
+  function currently does.
 
 ## Points for review
 
