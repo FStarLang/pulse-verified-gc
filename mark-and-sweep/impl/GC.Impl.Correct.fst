@@ -237,6 +237,91 @@ let sweep_preserves_wosize_all
 #pop-options
 
 /// ---------------------------------------------------------------------------
+/// Carrying `coalesce_correct` from the spec heap to `s2`
+/// ---------------------------------------------------------------------------
+
+/// Every conjunct of `coalesce_correct_post` reads only the object walk and
+/// each object's header word, and `heaps_agree_mod_free` keeps both.
+let agree_headers (s2 g': heap)
+  : Lemma
+    (requires HA.heaps_agree_mod_free s2 g')
+    (ensures objects zero_addr s2 == objects zero_addr g' /\
+             (forall (x: obj_addr). Seq.mem x (objects zero_addr g') ==>
+                read_word s2 (hd_address x) == read_word g' (hd_address x)))
+  = HA.agree_objects s2 g';
+    introduce forall (x: obj_addr).
+      Seq.mem x (objects zero_addr g') ==>
+      read_word s2 (hd_address x) == read_word g' (hd_address x)
+    with introduce _ ==> _
+    with HA.agree_block s2 g' x
+
+let transfer_free_space (s2 g': heap)
+  : Lemma
+    (requires HA.heaps_agree_mod_free s2 g')
+    (ensures CC.total_free_space s2 == CC.total_free_space g')
+  = agree_headers s2 g';
+    CC.free_space_agree s2 g' (objects zero_addr g')
+
+let transfer_blue_covered (s2 g': heap) (p: nat)
+  : Lemma
+    (requires HA.heaps_agree_mod_free s2 g')
+    (ensures CC.blue_covered s2 p <==> CC.blue_covered g' p)
+  = agree_headers s2 g';
+    let aux (x: obj_addr)
+      : Lemma (Seq.mem x (objects zero_addr g') ==>
+               ((is_blue x s2 /\ CC.in_extent s2 x p) <==>
+                (is_blue x g' /\ CC.in_extent g' x p)))
+      = if Seq.mem x (objects zero_addr g') then CC.blue_covered_by_agree s2 g' x p
+    in
+    FStar.Classical.forall_intro aux
+
+let transfer_no_adjacent_blue (s2 g': heap)
+  : Lemma
+    (requires HA.heaps_agree_mod_free s2 g' /\
+              (forall (x y: obj_addr).
+                 Seq.mem x (objects zero_addr g') /\ Seq.mem y (objects zero_addr g') /\
+                 is_blue x g' /\ is_blue y g' /\ CC.adjacent g' x y ==> False))
+    (ensures forall (x y: obj_addr).
+               Seq.mem x (objects zero_addr s2) /\ Seq.mem y (objects zero_addr s2) /\
+               is_blue x s2 /\ is_blue y s2 /\ CC.adjacent s2 x y ==> False)
+  = agree_headers s2 g';
+    introduce forall (x y: obj_addr).
+      Seq.mem x (objects zero_addr s2) /\ Seq.mem y (objects zero_addr s2) /\
+      is_blue x s2 /\ is_blue y s2 /\ CC.adjacent s2 x y ==> False
+    with introduce _ ==> _
+    with CC.adjacent_by_agree s2 g' x y
+
+let transfer_white (hs s2 g': heap)
+  : Lemma
+    (requires HA.heaps_agree_mod_free s2 g' /\
+              (forall (x: obj_addr).
+                 Seq.mem x (objects zero_addr hs) /\ is_white x hs ==>
+                 Seq.mem x (objects zero_addr g') /\ is_white x g' /\
+                 wosize_of_object x g' == wosize_of_object x hs))
+    (ensures forall (x: obj_addr).
+               Seq.mem x (objects zero_addr hs) /\ is_white x hs ==>
+               Seq.mem x (objects zero_addr s2) /\ is_white x s2 /\
+               wosize_of_object x s2 == wosize_of_object x hs)
+  = introduce forall (x: obj_addr).
+      Seq.mem x (objects zero_addr hs) /\ is_white x hs ==>
+      Seq.mem x (objects zero_addr s2) /\ is_white x s2 /\
+      wosize_of_object x s2 == wosize_of_object x hs
+    with introduce _ ==> _
+    with HA.agree_block s2 g' x
+
+let coalesce_correct_transfer (hs s2 g': heap)
+  : Lemma
+    (requires HA.heaps_agree_mod_free s2 g' /\ coalesce_correct_post hs g')
+    (ensures coalesce_correct_post hs s2)
+  = transfer_free_space s2 g';
+    introduce forall (p: nat). p < heap_size ==>
+      (CC.blue_covered s2 p <==> CC.blue_covered hs p)
+    with introduce _ ==> _
+    with transfer_blue_covered s2 g' p;
+    transfer_no_adjacent_blue s2 g';
+    transfer_white hs s2 g'
+
+/// ---------------------------------------------------------------------------
 /// The liveness clauses, one lemma each
 /// ---------------------------------------------------------------------------
 
@@ -261,7 +346,20 @@ let live_c1
   : Lemma
     (requires source_at h_init s2 roots fp final_fp h_mark)
     (ensures coalescing_lossless h_init s2 roots fp final_fp)
-  = admit ()
+  = let hs = fst (SpecSweep.sweep h_mark fp) in
+    let r = SpecCoalesce.coalesce hs in
+    Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
+    Corr.coalesce_precondition_bridge_gen h_init h_mark roots fp;
+    CC.coalesce_correct hs;
+    coalesce_correct_transfer hs s2 (fst r);
+    introduce exists (h: heap).
+      Corr.mark_post h_init h roots fp /\
+      (let hs = fst (SpecSweep.sweep h fp) in
+       let r = SpecCoalesce.coalesce hs in
+       HA.heaps_agree_mod_free s2 (fst r) /\
+       final_fp == snd r /\
+       coalesce_correct_post hs s2)
+    with h_mark and ()
 
 let live_a
   (h_init s2: heap) (st roots: seq obj_addr) (fp final_fp: U64.t) (cap: nat) (h_mark: heap)
