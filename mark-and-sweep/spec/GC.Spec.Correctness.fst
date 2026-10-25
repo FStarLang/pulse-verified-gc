@@ -947,6 +947,8 @@ let mark_post_elim_fp h_init h_mark roots fp =
   assert (fp_in_heap fp h_init);
   // fp_in_heap depends on objects; since objects are the same, fp_in_heap transfers
   ()
+let mark_post_elim_black_reachable h_init h_mark roots fp = ()
+let mark_post_elim_wosize h_init h_mark roots fp = ()
 
 /// `mark h_init st` satisfies mark_post
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"

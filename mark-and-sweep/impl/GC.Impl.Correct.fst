@@ -13,9 +13,9 @@
 /// headers, live fields and free links; free-block bodies not compared), so
 /// the coalescing theorems are carried across that relation.
 ///
-/// Stage 1: definitions and statements only.  The proofs are admitted.  See
-/// docs/gc-correct.md for each clause in plain words, which existing lemma it
-/// rests on, and the vacuity checks at the end of this file.
+/// Fully proved, no admits.  See docs/gc-correct.md for each clause in plain
+/// words, the lemmas it rests on, and the vacuity checks at the end of this
+/// file.
 
 module GC.Impl.Correct
 
@@ -361,6 +361,75 @@ let live_c1
        coalesce_correct_post hs s2)
     with h_mark and ()
 
+/// The graph-shape facts of the initial heap that `gc_precondition_with_roots`
+/// carries; pillar 2 of `mark_post` is guarded by them.
+let graph_pre (h_init: heap) (roots: seq obj_addr) : prop =
+  let g = GC.Spec.HeapModel.create_graph h_init in
+  let roots' = HeapGraph.coerce_to_vertex_list roots in
+  Graph.graph_wf g /\ Graph.is_vertex_set roots' /\ Graph.subset_vertices roots' g.vertices
+
+/// Neither grey nor black, so white or blue; sweep leaves either blue.
+let swept_blue (g: heap) (fp: U64.t) (x: obj_addr)
+  : Lemma
+    (requires well_formed_heap g /\ Mark.noGreyObjects g /\ SpecSweep.fp_in_heap fp g /\
+              Seq.mem x (objects zero_addr g) /\ ~(is_black x g))
+    (ensures is_blue x (fst (SpecSweep.sweep g fp)))
+  = is_white_iff x g;
+    is_blue_iff x g;
+    is_gray_iff x g;
+    is_black_iff x g;
+    if is_white x g then SpecSweep.sweep_white_becomes_blue g fp
+    else SpecSweep.sweep_blue_stays_blue g fp
+
+/// A word of an object's extent lies inside the heap.
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let extent_in_heap (g: heap) (x: obj_addr) (p: nat)
+  : Lemma
+    (requires well_formed_heap g /\ Seq.mem x (objects zero_addr g) /\ CC.in_extent g x p)
+    (ensures p < heap_size)
+  = let wz = U64.v (wosize_of_object x g) in
+    wf_parts ();
+    assert (U64.v (hd_address x) + 8 + wz * 8 <= Seq.length g);
+    assert (CC.next_pos g x == U64.v (hd_address x) + (1 + wz) * 8)
+#pop-options
+
+/// One word `p` of one object `x` unreachable in `h_init`.  `x` is not black
+/// in the marked heap (pillar 2), so sweep leaves it blue at the same size;
+/// its words are then blue-covered in the swept heap, coalescing keeps that
+/// coverage (`coalesce_correct` 3a), and agreement carries it to `s2`.
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+let live_a_word
+  (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) (h_mark: heap)
+  (x: obj_addr) (p: nat)
+  : Lemma
+    (requires source_at h_init s2 roots fp final_fp h_mark /\
+              graph_pre h_init roots /\
+              Seq.mem x (objects zero_addr h_init) /\
+              ~(Corr.heap_reachable h_init roots x) /\
+              CC.in_extent h_init x p)
+    (ensures CC.blue_covered s2 p)
+  = let hs = fst (SpecSweep.sweep h_mark fp) in
+    let g' = fst (SpecCoalesce.coalesce hs) in
+    Corr.mark_post_elim_wfh h_init h_mark roots fp;
+    Corr.mark_post_elim_no_grey h_init h_mark roots fp;
+    Corr.mark_post_elim_objects h_init h_mark roots fp;
+    Corr.mark_post_elim_fp h_init h_mark roots fp;
+    Corr.mark_post_elim_black_reachable h_init h_mark roots fp;
+    Corr.mark_post_elim_wosize h_init h_mark roots fp;
+    GC.Spec.HeapModel.graph_vertices_mem h_init x;
+    assert (~(is_black x h_mark));
+    swept_blue h_mark fp x;
+    SpecSweep.sweep_preserves_objects h_mark fp;
+    sweep_preserves_wosize_all h_mark fp x;
+    assert (CC.in_extent hs x p);
+    assert (CC.blue_covered hs p);
+    Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
+    extent_in_heap hs x p;
+    Corr.coalesce_precondition_bridge_gen h_init h_mark roots fp;
+    CC.coalesce_correct hs;
+    transfer_blue_covered s2 g' p
+#pop-options
+
 let live_a
   (h_init s2: heap) (st roots: seq obj_addr) (fp final_fp: U64.t) (cap: nat) (h_mark: heap)
   : Lemma
@@ -368,7 +437,13 @@ let live_a
               collect_post h_init s2 roots fp final_fp /\
               source_at h_init s2 roots fp final_fp h_mark)
     (ensures unreachable_reclaimed h_init s2 roots)
-  = admit ()
+  = introduce forall (x: obj_addr) (p: nat).
+      Seq.mem x (objects zero_addr h_init) /\
+      ~(Corr.heap_reachable h_init roots x) /\
+      CC.in_extent h_init x p ==>
+      CC.blue_covered s2 p
+    with introduce _ ==> _
+    with live_a_word h_init s2 roots fp final_fp h_mark x p
 
 /// ---------------------------------------------------------------------------
 /// 3. The top-level theorem
