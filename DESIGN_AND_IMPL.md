@@ -935,42 +935,15 @@ let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
     { major_out = major; fp_out = fp; new_addr = 0UL }
   else
     let copied_major = copy_fields minor new_major obj new_addr 0 wosize in
-    let padded_major = zero_promote_padding copied_major new_addr wosize in
     let tag = minor_tag minor obj in
-    let final_major = set_promoted_tag padded_major new_addr tag in
+    let final_major = set_promoted_tag copied_major new_addr tag in
     { major_out = final_major; fp_out = new_fp; new_addr = new_addr }
 ```
 
-The padding step is a subtle OCaml allocator detail. If the major allocator
-returns a block one word larger than requested, that leftover word cannot form a
-standalone free block. The promoted object consumes the whole block, and the
-extra field is zeroed so the proof can show it is not a stale pointer.
-
-Why can the allocator return a larger block? The major allocator is first-fit
-over blue free-list blocks. When it finds a free block with `block_wz >=
-requested_wz`, it computes `leftover = block_wz - requested_wz`. If `leftover >=
-2`, it can split: one word becomes the remainder's header and at least one word
-remains for the remainder's link field. If `leftover = 0`, the fit is exact. If
-`leftover = 1`, however, splitting would create a "free block" with only enough
-space for a header and no body word to hold the next free-list pointer. The
-allocator therefore consumes the whole block and writes the allocated header
-with `block_wz`, not `requested_wz`:
-
-```fstar
-if leftover >= 2 then
-  // split: allocated header uses requested_wz,
-  // remainder gets its own header and first-field free-list link
-  ...
-else
-  // exact fit or leftover = 1: use whole block
-  let alloc_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
-  write_word g hd alloc_hdr
-```
-
-Promotion copies only the minor object's original `wosize` payload. If the
-allocator consumed a `requested_wz + 1` block, the promoted major object has one
-extra field. `zero_promote_padding` zeros exactly that padding field, preserving
-the no-scan and non-pointer-field invariants.
+The major allocator is size-exact: the allocated header declares exactly the
+requested `wosize` (`GC.Gen.AllocProps.alloc_spec_obj_wosize_exact_part1`; see
+`docs/allocator-exactness.md`), so the copied fields fill the promoted object
+and there is no extra word to account for.
 
 ### Cheney BFS
 

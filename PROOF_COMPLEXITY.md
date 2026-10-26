@@ -187,8 +187,8 @@ implementation uses a real array, and `GC.Gen.Cheney.Sim`/`.SimOne` prove the ar
 simulates the map (which is what eliminated the last `assume_` in
 `GC.Gen.Impl.Cheney.fst`).
 
-`promote_object` (`Promote.fsti:96-114`) is `alloc_spec` → `copy_fields` →
-`zero_promote_padding` → `set_promoted_tag`. **Promotion is an allocator client**, and
+`promote_object` (`Promote.fsti:77-99`) is `alloc_spec` → `copy_fields` →
+`set_promoted_tag`. **Promotion is an allocator client**, and
 that is the hinge on which most of the generational proof's weight hangs (§5.2).
 
 The generational theorem comes in two tiers:

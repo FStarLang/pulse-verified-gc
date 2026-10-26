@@ -90,10 +90,6 @@ private let mk_field_addr (src: U64.t) (j: nat) : Pure hp_addr
   (ensures fun r -> U64.v r == U64.v src + j * 8 /\
                  r == U64.uint_to_t (U64.v src + j * 8))
 = mk_hp_addr (U64.v src + j * 8)
-
-private let to_minor_offset_zero_not_pointer (_: unit)
-  : Lemma (to_minor_offset 0UL == 0UL /\ ~(is_minor_pointer (to_minor_offset 0UL)))
-  = ()
 #pop-options
 
 /// Named form of the field-read witness produced by
@@ -269,17 +265,9 @@ let post_edge_from_minor_image_reflects_mem_ce
     assert (updated == update_major_pointers prom.major_final prom.fwd_map);
     let old_raw = read_word prom.major_final field_addr in
     let old_val = to_minor_offset old_raw in
-    if j >= minor_wosize minor src then begin
-      CheneyFields.cheney_promote_fwd_target_extra_field_not_pointer
-        minor major fp roots src j;
-      assert (old_raw == 0UL);
-      to_minor_offset_zero_not_pointer ();
-      assert (~(is_minor_pointer old_val /\ prom.fwd_map old_val <> 0UL));
-      assert (read_word updated field_addr == old_raw);
-      assert (~(HeapGraph.is_pointer_field (read_word updated field_addr)));
-      assert False
-    end else begin
-      assert (j < minor_wosize minor src);
+    // Promotion is size-exact: the image declares exactly `minor_wosize` fields.
+    assert (j < minor_wosize minor src);
+    begin
       CheneyFields.cheney_promote_fwd_target_fields_match minor major fp roots src j;
       assert (old_raw == minor_read_field minor src j);
       if is_minor_pointer old_val && prom.fwd_map old_val <> 0UL then begin
@@ -471,17 +459,9 @@ let post_edge_from_minor_image_reflects_target
     assert (updated == update_major_pointers prom.major_final prom.fwd_map);
     let old_raw = read_word prom.major_final field_addr in
     let old_val = to_minor_offset old_raw in
-    if j >= minor_wosize minor src then begin
-      CheneyFields.cheney_promote_fwd_target_extra_field_not_pointer
-        minor major fp roots src j;
-      assert (old_raw == 0UL);
-      to_minor_offset_zero_not_pointer ();
-      assert (~(is_minor_pointer old_val /\ prom.fwd_map old_val <> 0UL));
-      assert (read_word updated field_addr == old_raw);
-      assert (~(HeapGraph.is_pointer_field (read_word updated field_addr)));
-      assert False
-    end else begin
-      assert (j < minor_wosize minor src);
+    // Promotion is size-exact: the image declares exactly `minor_wosize` fields.
+    assert (j < minor_wosize minor src);
+    begin
       CheneyFields.cheney_promote_fwd_target_fields_match minor major fp roots src j;
       assert (old_raw == minor_read_field minor src j);
       if is_minor_pointer old_val && prom.fwd_map old_val <> 0UL then begin
