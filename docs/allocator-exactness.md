@@ -116,8 +116,6 @@ codebase:
 
 ## 6. Still open
 
-- **Promotion padding.** `zero_promote_padding` and the lemmas around it now
-  zero a word that no longer exists. Removing them changes the extracted C.
 - **`heap_objects_dense`** is defined twice (`GC.Gen.Promote.fsti`,
   `GC.Spec.SweepInv.fst`) and should live in `common/spec`.
 

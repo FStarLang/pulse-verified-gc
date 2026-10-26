@@ -5,7 +5,7 @@
     "--cache_dir", "_cache",
     "--retry", "3",
     "--z3smtopt", "(set-option :timeout 300000)",
-    "--z3version", "4.15.3",
+    "--z3version", "5.3.0",
     "--warn_error", "-321",
     "--report_assumes", "warn",
     "--already_cached", "Prims FStar Pulse PulseCore -GC"
