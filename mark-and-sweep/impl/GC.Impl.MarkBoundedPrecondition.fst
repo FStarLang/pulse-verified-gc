@@ -16,6 +16,8 @@ module Graph = GC.Spec.Graph
 module HeapModel = GC.Spec.HeapModel
 module MajorGC = GC.Impl
 module SpecHeap = GC.Spec.Heap
+module FLA = GC.Spec.FreeList.Ascending
+module FL = GC.Spec.FreeList
 
 open GC.Spec.Base
 
@@ -280,6 +282,65 @@ let darken_roots_match_stack g st roots fp cap
     )
 #pop-options
 
+/// Darkening recolours only roots, which are not free, so it keeps every free
+/// block, its size and its link: the free list survives it.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
+private let darken_keeps_cell
+  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t) (fp: U64.t) (cap: nat) (x: U64.t)
+  : Lemma (requires darken_precondition g st roots fp cap)
+          (ensures (let g' = fst (MB.darken_roots_bounded_spec g st roots cap) in
+                    (FLA.fl_cell g' x <==> FLA.fl_cell g x) /\
+                    (FLA.fl_cell g x ==> FL.fl_next g' x == FL.fl_next g x)))
+  = let g' = fst (MB.darken_roots_bounded_spec g st roots cap) in
+    MarkBoundedInv.bounded_mark_inv_elim_wfh g st cap;
+    MB.darken_roots_bounded_spec_preserves_objects g st roots cap;
+    if U64.v x >= U64.v mword && U64.v x < heap_size && U64.v x % U64.v mword = 0 then begin
+      let o : obj_addr = x in
+      MB.darken_roots_bounded_spec_preserves_wosize g st roots cap o;
+      if SpecObject.is_blue o g then begin
+        SpecHeap.hd_address_spec o;
+        let pre (slot: hp_addr) : Lemma
+          (requires slot == SpecHeap.hd_address o \/
+                    (slot == (o <: hp_addr) /\ Seq.mem o (SpecFields.objects zero_addr g) /\
+                     U64.v (SpecObject.wosize_of_object o g) >= 1))
+          (ensures forall (i:nat). i < Seq.length roots ==>
+                     MB.root_points_to_object g (Seq.index roots i) /\
+                     (U64.v (Seq.index roots i) >= U64.v zero_addr + U64.v mword /\
+                      U64.v (Seq.index roots i) < heap_size /\
+                      U64.v (Seq.index roots i) % U64.v mword == 0 ==>
+                      U64.sub (SpecObject.resolve_object (Seq.index roots i <: obj_addr) g) mword <> slot))
+          = let aux (i: nat) : Lemma
+              (i < Seq.length roots ==>
+                 MB.root_points_to_object g (Seq.index roots i) /\
+                 (U64.v (Seq.index roots i) >= U64.v zero_addr + U64.v mword /\
+                  U64.v (Seq.index roots i) < heap_size /\
+                  U64.v (Seq.index roots i) % U64.v mword == 0 ==>
+                  U64.sub (SpecObject.resolve_object (Seq.index roots i <: obj_addr) g) mword <> slot))
+              = if i < Seq.length roots then begin
+                  let r = Seq.index roots i in
+                  root_valid_for_darkening_points_to_object g r;
+                  let ro = SpecObject.resolve_object (r <: obj_addr) g in
+                  SpecHeap.hd_address_spec ro;
+                  if U64.v ro < U64.v o then SpecFields.objects_separated zero_addr g ro o
+                  else if U64.v ro > U64.v o then SpecFields.objects_separated zero_addr g o ro;
+                  SpecObject.wosize_of_object_spec o g
+                end
+            in
+            FStar.Classical.forall_intro aux
+        in
+        pre (SpecHeap.hd_address o);
+        MB.darken_roots_bounded_spec_preserves_read_word g st roots cap (SpecHeap.hd_address o);
+        SpecObject.color_of_header_eq o g g';
+        if Seq.mem o (SpecFields.objects zero_addr g) && U64.v (SpecObject.wosize_of_object o g) >= 1
+        then begin
+          pre (o <: hp_addr);
+          MB.darken_roots_bounded_spec_preserves_read_word g st roots cap (o <: hp_addr)
+        end
+      end
+      else prefix_preserves_not_blue g st roots (Seq.length roots) cap o
+    end
+#pop-options
+
 #push-options "--z3rlimit 60 --fuel 2 --ifuel 1"
 let darken_establishes_precondition g st roots fp cap
   = let n = Seq.length roots in
@@ -298,6 +359,9 @@ let darken_establishes_precondition g st roots fp cap
     // 2, 4. free-list facts survive because `objects` is unchanged
     MB.darken_roots_bounded_spec_preserves_fp_valid g st roots cap fp;
     MB.darken_roots_bounded_spec_preserves_fp_in_heap g st roots cap fp;
+    // 3. the free list
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (darken_keeps_cell g st roots fp cap));
+    FLA.fl_ascending_transfer g g' fp;
     // 5, 6, 7. colour and shape invariants
     MB.darken_roots_bounded_spec_preserves_no_black g st roots cap;
     MB.darken_roots_bounded_spec_preserves_no_pointer_to_blue g st roots cap;

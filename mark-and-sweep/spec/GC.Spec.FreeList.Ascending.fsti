@@ -165,3 +165,9 @@ val fl_ascending_avoids (g: heap) (fp: U64.t) (x: U64.t) (n: nat)
 val fl_ascending_null (g: heap)
   : Lemma (requires forall (x: U64.t). ~(fl_cell g x))
           (ensures fl_ascending g 0UL)
+
+/// A heap with a single cell, the head, whose link is null.
+val fl_ascending_single (g: heap) (fp: U64.t)
+  : Lemma (requires fl_cell g fp /\ FL.fl_next g fp == 0UL /\
+                    (forall (x: U64.t). fl_cell g x ==> x == fp))
+          (ensures fl_ascending g fp)

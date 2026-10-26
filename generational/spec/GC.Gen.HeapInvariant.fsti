@@ -30,6 +30,7 @@ module HeapModel = GC.Spec.HeapModel
 module HeapGraph = GC.Spec.HeapGraph
 module Graph = GC.Spec.Graph
 module FreeListShape = GC.Gen.FreeListShape
+module FLA = GC.Spec.FreeList.Ascending
 
 /// The free list is exact: it holds exactly the blue blocks that can carry a
 /// link (`GC.Spec.FreeList.fl_exact`).  Abstract here so that the many proofs
@@ -77,6 +78,13 @@ val free_list_exact_iff (major: heap) (fp: U64.t)
 /// (`GC.Gen.CheneyBFS.fwd_covers_infix_fields` / `fwd_covers_infix_roots`), so
 /// such a field is rewritten to the corresponding interior address in the
 /// promoted copy.
+///
+/// The free list is also in address order (`FLA.fl_ascending`): the major
+/// collection's fused sweep (`GC.Spec.FusedSweep`) keeps the list across
+/// cycles and edits it in place as it walks the heap upwards, so it needs the
+/// list it is handed to run the same way.  Allocation, promotion and the
+/// pointer rewrite keep it so (`GC.Gen.AllocAscending`,
+/// `GC.Gen.FreeListAscending`).
 [@@"opaque_to_smt"]
 val major_heap_shape (major: heap) (fp: U64.t) : prop
 
@@ -112,6 +120,7 @@ val major_heap_shape_intro (major: heap) (fp: U64.t)
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     free_list_exact major fp /\
+                    FLA.fl_ascending major fp /\
                     FreeListShape.fp_pointer_or_zero fp /\
                     FreeListShape.blue_link_fields_valid major /\
                     heap_objects_dense major /\
@@ -130,6 +139,7 @@ val major_heap_shape_elim (major: heap) (fp: U64.t)
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     free_list_exact major fp /\
+                    FLA.fl_ascending major fp /\
                     FreeListShape.fp_pointer_or_zero fp /\
                     FreeListShape.blue_link_fields_valid major /\
                     heap_objects_dense major /\

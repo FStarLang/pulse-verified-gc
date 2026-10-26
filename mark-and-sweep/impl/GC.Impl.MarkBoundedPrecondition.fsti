@@ -24,6 +24,7 @@ module SweepInv = GC.Spec.SweepInv
 module MarkBoundedInv = GC.Spec.MarkBoundedInv
 module MB = GC.Impl.MarkBounded
 module MajorGC = GC.Impl
+module FLA = GC.Spec.FreeList.Ascending
 
 open GC.Spec.Base
 
@@ -63,6 +64,7 @@ let darken_precondition
   MarkBoundedInv.bounded_mark_inv g st cap /\
   SweepInv.fp_valid fp g /\
   SpecSweep.fp_in_heap fp g /\
+  FLA.fl_ascending g fp /\
   SpecMark.no_black_objects g /\
   SpecMark.no_pointer_to_blue g /\
   SpecMark.gray_objects_on_stack g st /\

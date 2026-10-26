@@ -1531,6 +1531,8 @@ let cheney_collect_preserves_collection_heap_shape
   cheney_collect_preserves_wfh_from_shape minor major fp roots;
   GC.Gen.AllocExact.fl_valid_cob_gives_sound res.mc_major res.mc_fp;
   GenInv.free_list_exact_iff res.mc_major res.mc_fp;
+  // ... and stays in address order
+  GC.Gen.FreeListAscending.cheney_collect_preserves_fl_ascending minor major fp roots;
   GenInv.major_heap_shape_intro res.mc_major res.mc_fp;
   GenInv.collection_heap_shape_after_minor_reset minor res.mc_major res.mc_fp
 #pop-options

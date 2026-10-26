@@ -3,6 +3,7 @@ module GC.SPOT.NoScanMajor
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module FL = GC.Spec.FreeList
+module FLA = GC.Spec.FreeList.Ascending
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -826,6 +827,27 @@ let spot_ns_fl_complete (r: unit{spot_ns_room})
   FStar.Classical.forall_intro (FStar.Classical.move_requires proof)
 #pop-options
 
+
+/// The free list is ascending: its only cell is the free block, which is the
+/// head and links to null.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let spot_ns_fl_ascending (r: unit{spot_ns_room})
+  : Lemma (ensures FLA.fl_ascending (spot_ns_heap r) (spot_ns_fp r))
+  =
+  let g = spot_ns_heap r in
+  let only (x: U64.t)
+    : Lemma (requires FLA.fl_cell g x) (ensures x == spot_ns_fp r)
+    =
+    spot_ns_object_cases r x; spot_ns_s_reads r; spot_ns_free_reads r; spot_ns_layout_facts r
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires only);
+  spot_ns_objects r; spot_ns_free_reads r; spot_ns_layout_facts r;
+  hd_address_spec (spot_free_obj r);
+  spot_ns_fl_valid r;
+  GC.Spec.Allocator.Lemmas.fl_valid_gives_mem g (spot_ns_fp r) heap_words;
+  FLA.fl_ascending_single g (spot_ns_fp r)
+#pop-options
+
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 let spot_ns_major_heap_shape (r: unit{spot_ns_room})
   =
@@ -848,6 +870,7 @@ let spot_ns_major_heap_shape (r: unit{spot_ns_room})
   spot_ns_wfh_part1 r;
   spot_ns_wfh_part2_3 r;
   spot_ns_fl_complete r;
+  spot_ns_fl_ascending r;
   GC.Gen.AllocExact.fl_valid_cob_gives_sound g fp;
   GenInv.free_list_exact_iff g fp;
   GenInv.major_heap_shape_intro g fp

@@ -25,6 +25,7 @@ module HeapModel = GC.Spec.HeapModel
 module HeapGraph = GC.Spec.HeapGraph
 module Graph = GC.Spec.Graph
 module FreeListShape = GC.Gen.FreeListShape
+module FLA = GC.Spec.FreeList.Ascending
 
 let free_list_exact (major: heap) (fp: U64.t) : prop = FL.fl_exact major fp
 
@@ -39,6 +40,9 @@ let major_heap_shape (major: heap) (fp: U64.t) : prop =
   // allocation fails only when no free block is big enough
   // (GC.Gen.AllocExact.alloc_succeeds_when_a_block_fits).
   free_list_exact major fp /\
+  // ... and in address order: the next fused sweep edits it in place
+  // (GC.Spec.FreeList.Ascending, GC.Spec.FusedSweep).
+  FLA.fl_ascending major fp /\
   FreeListShape.fp_pointer_or_zero fp /\
   FreeListShape.blue_link_fields_valid major /\
   heap_objects_dense major /\

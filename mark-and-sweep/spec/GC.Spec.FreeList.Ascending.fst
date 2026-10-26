@@ -354,3 +354,6 @@ let fl_ascending_null g =
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
   fl_ascending_intro g 0UL
+
+let fl_ascending_single (g: heap) (fp: U64.t) =
+  fl_ascending_intro g fp

@@ -22,18 +22,17 @@ open GC.Spec.Fields
 
 module U64 = FStar.UInt64
 module Corr = GC.Spec.Correctness
-module Sweep = GC.Spec.Sweep
-module Coalesce = GC.Spec.Coalesce
 module GenInv = GC.Gen.HeapInvariant
 module FS = GC.Spec.FusedSweep
 module FLA = GC.Spec.FreeList.Ascending
 
 /// **The major collector restores `major_heap_shape`.**
 ///
-/// Given a heap satisfying the shape invariant and any mark output for it, the
-/// heap and free pointer produced by `coalesce (sweep ...)` -- which is what
-/// `GC.Impl.FusedSweepCoalesce.fused_sweep_coalesce` computes, up to the bodies
-/// of free blocks -- satisfy the shape invariant again.
+/// Given any mark output for a heap whose free list is exact and ascending,
+/// the heap and free pointer the fused sweep (`GC.Spec.FusedSweep`, which
+/// `GC.Impl.FusedSweepCoalesce.fused_sweep_coalesce` computes exactly)
+/// produces satisfy the shape invariant again -- including the ascending,
+/// exact free list the next cycle's sweep starts from.
 ///
 /// This is what makes the generational invariant *inductive* rather than merely
 /// assumed: composed with `collection_heap_shape_after_minor_reset` it gives
@@ -41,8 +40,8 @@ module FLA = GC.Spec.FreeList.Ascending
 val major_gc_restores_major_heap_shape
   (major: heap) (h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
   : Lemma
-    (requires Corr.mark_post major h_mark roots fp)
-    (ensures (let r = Coalesce.coalesce (fst (Sweep.sweep h_mark fp)) in
+    (requires Corr.mark_post major h_mark roots fp /\ FLA.fl_ascending major fp)
+    (ensures (let r = FS.fused_sweep_coalesce h_mark fp in
               GenInv.major_heap_shape (fst r) (snd r)))
 
 /// The same statement against the collector's Pulse postcondition.
@@ -56,14 +55,3 @@ val major_gc_restores_major_heap_shape_of_source
   : Lemma
     (requires Corr.gc_coalesce_source h_init s2 roots fp final_fp)
     (ensures GenInv.major_heap_shape s2 final_fp)
-
-/// **The fused sweep restores `major_heap_shape`.**  Given the mark
-/// postcondition and the free list the previous cycle left (exact and
-/// ascending), the heap and free-list head the fused sweep returns satisfy the
-/// shape invariant, and the list is again exact and ascending.
-val major_gc_restores_major_heap_shape_fused
-  (major: heap) (h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
-  : Lemma
-    (requires Corr.mark_post major h_mark roots fp /\ FLA.fl_ascending major fp)
-    (ensures (let r = FS.fused_sweep_coalesce h_mark fp in
-              GenInv.major_heap_shape (fst r) (snd r) /\ FLA.fl_ascending (fst r) (snd r)))

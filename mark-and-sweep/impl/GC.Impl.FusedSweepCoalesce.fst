@@ -1,15 +1,12 @@
 (*
-   Pulse GC - Fused Sweep+Coalesce Implementation
+   Pulse GC - the fused sweep
 
-   A single-pass loop that combines sweep (blacken→white) and coalesce
-   (merge adjacent free blocks) into one traversal. Replaces the two-pass
-   sweep-then-coalesce approach.
-
-   Follows the same loop structure as GC.Impl.Coalesce, but:
-   - Checks colors against the *original* (frozen) heap g0, not the mutable heap
-   - Black objects get flushed (pending blue run) then whitened
-   - Non-black objects (white, blue) get accumulated into the blue run
-   - The spec is Defs.fused_aux (from GC.Spec.SweepCoalesce.Defs)
+   A loop of `GC.Spec.FusedSweep.sweep_step`s over the current heap, with the
+   sweep state {cursor, swept_tail, last_fragment} and the free-list head in
+   references.  The loop invariant is the spec's own
+   (`GC.Spec.FusedSweep.Inv.sweep_inv`), which also supplies the facts that
+   make every read and every arithmetic step safe, plus the statement that
+   the rest of the pass computes the spec's result.
 *)
 
 module GC.Impl.FusedSweepCoalesce
@@ -20,288 +17,219 @@ open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object
 module U64 = FStar.UInt64
-module Seq = FStar.Seq
-module Defs = GC.Spec.SweepCoalesce.Defs
-module SpecCoalesce = GC.Spec.Coalesce
-module SpecFields = GC.Spec.Fields
-module SpecObject = GC.Spec.Object
 module SpecHeap = GC.Spec.Heap
+module SpecObject = GC.Spec.Object
 module Header = GC.Lib.Header
-module SI = GC.Spec.SweepInv
-module FusedLemmas = GC.Impl.FusedSweepCoalesce.Lemmas
-module CoalLemmas = GC.Impl.Coalesce.Lemmas
-module Coalesce = GC.Impl.Coalesce
-
-open GC.Impl.Fields
+module FS = GC.Spec.FusedSweep
+module FSI = GC.Spec.FusedSweep.Inv
+module FStep = GC.Spec.FusedSweep.Step
 
 /// ---------------------------------------------------------------------------
-/// Helper: expose heap length from is_heap
+/// Pure helpers
 /// ---------------------------------------------------------------------------
 
-ghost fn fused_heap_length (h: heap_t)
-  requires is_heap h 's
-  ensures is_heap h 's ** pure (Seq.length 's == heap_size)
+let mk_st (c t f: U64.t) : FS.sweep_state = { FS.cursor = c; FS.swept_tail = t; FS.last_fragment = f }
+
+/// The implementation's header constructor is the spec's.
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
+let makeHeader_bridge (wz: SpecObject.wosize) (c: color) (tag: U64.t{U64.v tag < 256})
+  : Lemma (GC.Impl.Object.makeHeader wz c tag == SpecObject.makeHeader wz c tag)
+  = SpecObject.makeHeader_is_pack_header64 wz c tag;
+    GC.Impl.Object.makeHeader_eq_pack_header wz c tag;
+    U64.v_inj (GC.Impl.Object.makeHeader wz c tag) (SpecObject.makeHeader wz c tag)
+#pop-options
+
+/// Everything a step needs to be safe.
+let step_ready (g: heap_state) (st: FS.sweep_state) : prop =
+  FS.can_sweep g st /\
+  (st.FS.swept_tail == 0UL \/ FS.is_obj st.FS.swept_tail) /\
+  (st.FS.last_fragment == 0UL \/ FS.is_obj st.FS.last_fragment) /\
+  (FS.prev_free g st ==>
+    (let p = if st.FS.last_fragment <> 0UL then st.FS.last_fragment else st.FS.swept_tail in
+     FS.is_obj p /\
+     FS.wosize_at g p + U64.v (SpecObject.getWosize (SpecHeap.read_word g (st.FS.cursor <: hp_addr))) + 1
+       < pow2 54))
+
+/// `sweep_step`, total.
+let step_total (g: heap_state) (fp: U64.t) (st: FS.sweep_state) : heap_state & U64.t & FS.sweep_state =
+  if FS.can_sweep g st then FS.sweep_step g fp st else (g, fp, st)
+
+let step_matches (g: heap_state) (fp: U64.t) (c t f: U64.t)
+    (g': heap_state) (r: U64.t & U64.t & U64.t & U64.t) : prop =
+  let (c', t', f', fp') = r in
+  step_total g fp (mk_st c t f) == (g', fp', mk_st c' t' f')
+
+let pow2_facts () : Lemma (pow2 54 * 8 <= pow2 57 /\ pow2 57 * 2 <= pow2 64 /\
+                           GC.Spec.Base.heap_size < pow2 57 /\ heap_size == GC.Spec.Base.heap_size)
+  = assert_norm (pow2 54 * 8 <= pow2 57 /\ pow2 57 * 2 <= pow2 64)
+
+/// ---------------------------------------------------------------------------
+/// Is the block before the cursor free?
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+fn prev_free_impl (heap: heap_t) (c t f: U64.t)
+  requires is_heap heap 's ** pure (t == 0UL \/ FS.is_obj t)
+  returns b: bool
+  ensures is_heap heap 's ** pure (b == FS.prev_free 's (mk_st c t f))
 {
-  unfold is_heap;
-  fold (is_heap h 's)
+  if (not (U64.eq f 0UL)) { true }
+  else if (U64.eq t 0UL) { false }
+  else {
+    SpecHeap.hd_address_spec (t <: obj_addr);
+    let th = read_word heap (U64.sub t mword);
+    getWosize_eq th;
+    pow2_facts ();
+    assert (pure (SpecHeap.hd_address (t <: obj_addr) == U64.sub t mword));
+    U64.eq (U64.add t (U64.mul (getWosize th) mword)) c
+  }
 }
+#pop-options
 
 /// ---------------------------------------------------------------------------
-/// Spec invariant for the fused loop
+/// One step
 /// ---------------------------------------------------------------------------
 
-/// Mirrors coalesce_spec_inv but for fused_aux / fused_sweep_coalesce
-let fused_spec_inv (g0: heap_state) (g: heap_state)
-  (v_nat: nat) (fb: U64.t) (rw_nat: nat) (fv: U64.t) : prop =
-  if v_nat < heap_size && v_nat % 8 = 0 then
-    let start : hp_addr = U64.uint_to_t v_nat in
-    let objs = SpecFields.objects start g0 in
-    (if v_nat + U64.v mword < heap_size then
-      Seq.length objs > 0 /\
-      SI.obj_in_objects (U64.uint_to_t (v_nat + U64.v mword)) g0
-    else True) /\
-    Defs.fused_aux g0 g objs fb rw_nat fv == Defs.fused_sweep_coalesce g0
-  else
-    Defs.fused_aux g0 g Seq.empty fb rw_nat fv == Defs.fused_sweep_coalesce g0
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
+fn sweep_step_impl (heap: heap_t) (c t f fp: U64.t)
+  requires is_heap heap 's ** pure (step_ready 's (mk_st c t f))
+  returns r: (U64.t & U64.t & U64.t & U64.t)
+  ensures exists* s2. is_heap heap s2 ** pure (step_matches 's fp c t f s2 r)
+{
+  let st = Ghost.hide (mk_st c t f);
+  let hdr = read_word heap c;
+  getWosize_eq hdr; getColor_eq hdr; getTag_eq hdr;
+  pow2_facts ();
+  let wz = getWosize hdr;
+  let nx = U64.add c (U64.mul (U64.add wz 1UL) mword);
+  assert (pure (nx == FStep.nx_of 's st));
+  let b : hp_addr = U64.add c mword;
+  assert (pure (b == FStep.bx_of st));
+  let col = getColor hdr;
+  if (Header.Black? col) {
+    FStep.step_eq_black 's fp st;
+    makeHeader_bridge wz Header.White (getTag hdr);
+    write_word heap c (makeHeader wz white (getTag hdr));
+    (nx, t, 0UL, fp)
+  } else {
+    let pf = prev_free_impl heap c t f;
+    if (pf) {
+      let p = (if not (U64.eq f 0UL) then f else t);
+      FStep.step_eq_merge 's fp st;
+      SpecHeap.hd_address_spec (p <: obj_addr);
+      let ph : hp_addr = U64.sub p mword;
+      assert (pure (SpecHeap.hd_address (p <: obj_addr) == ph));
+      let phdr = read_word heap ph;
+      getWosize_eq phdr;
+      let pw = getWosize phdr;
+      let linked = (Header.Blue? col && U64.gt wz 0UL);
+      let bl = if (linked) { read_word heap b } else { 0UL };
+      let tl = if (U64.eq t 0UL) { fp } else { read_word heap t };
+      let neww = U64.add (U64.add pw wz) 1UL;
+      FStar.Math.Lemmas.pow2_lt_compat 64 54;
+      assert (pure (FS.free_header (FS.wosize_at 's p + U64.v wz + 1) ==
+                    SpecObject.makeHeader neww Header.Blue 0UL));
+      makeHeader_bridge neww Header.Blue 0UL;
+      write_word heap ph (makeHeader neww blue 0UL);
+      if (not (U64.eq f 0UL)) {
+        let nxt = (if linked then bl else tl);
+        write_word heap p nxt;
+        if (U64.eq t 0UL) { (nx, p, 0UL, p) }
+        else { write_word heap t p; (nx, p, 0UL, fp) }
+      } else if (linked) {
+        write_word heap t bl;
+        (nx, t, 0UL, fp)
+      } else {
+        (nx, t, 0UL, fp)
+      }
+    } else if (Header.Blue? col) {
+      FStep.step_eq_blue 's fp st;
+      if (U64.gt wz 0UL) { (nx, b, 0UL, fp) } else { (nx, t, b, fp) }
+    } else {
+      FStep.step_eq_white 's fp st;
+      let tl = if (U64.eq t 0UL) { fp } else { read_word heap t };
+      FStar.Math.Lemmas.pow2_lt_compat 64 54;
+      assert (pure (FS.free_header (U64.v wz) == SpecObject.makeHeader wz Header.Blue 0UL));
+      makeHeader_bridge wz Header.Blue 0UL;
+      write_word heap c (makeHeader wz blue 0UL);
+      if (U64.gt wz 0UL) {
+        write_word heap b tl;
+        if (U64.eq t 0UL) { (nx, b, 0UL, b) }
+        else { write_word heap t b; (nx, b, 0UL, fp) }
+      } else {
+        (nx, t, b, fp)
+      }
+    }
+  }
+}
+#pop-options
 
 /// ---------------------------------------------------------------------------
-/// Main entry point
+/// The pass
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
-fn fused_sweep_coalesce (heap: heap_t)
-  requires is_heap heap 's **
-           pure (SpecFields.well_formed_heap 's /\
-                 Seq.length (SpecFields.objects zero_addr 's) > 0 /\
-                 GC.Spec.Fields.heap_objects_dense 's /\
-                 (forall (x: obj_addr).
-                   Seq.mem x (SpecFields.objects zero_addr 's) ==>
-                   ~(SpecObject.is_gray x 's)))
+/// What the loop needs at a step, from the invariant.
+let step_facts (g0 g: heap_state) (fp: U64.t) (c t f: U64.t)
+  : Lemma (requires FSI.sweep_g0 g0 /\ FSI.sweep_inv g0 g fp (mk_st c t f) /\ U64.v c + 8 < heap_size)
+          (ensures step_ready g (mk_st c t f) /\
+                   (let (g', fp', st') = step_total g fp (mk_st c t f) in
+                    FSI.sweep_inv g0 g' fp' st' /\
+                    U64.v st'.FS.cursor > U64.v c /\ U64.v st'.FS.cursor <= heap_size /\
+                    FS.sweep_from g fp (mk_st c t f) == FS.sweep_from g' fp' st'))
+  = FSI.sweep_inv_facts g0 g fp (mk_st c t f);
+    FStep.sweep_step_inv g0 g fp (mk_st c t f);
+    FS.sweep_from_step g fp (mk_st c t f)
+
+/// The pass stops at the end of the heap.
+let stop_facts (g0 g: heap_state) (fp: U64.t) (c t f: U64.t)
+  : Lemma (requires U64.v c + 8 >= heap_size)
+          (ensures FS.sweep_from g fp (mk_st c t f) == (g, fp))
+  = FS.sweep_from_stop g fp (mk_st c t f)
+
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
+fn fused_sweep_coalesce (heap: heap_t) (fp: U64.t)
+  requires is_heap heap 's ** pure (FSI.sweep_pre 's fp)
   returns new_fp: U64.t
   ensures exists* s2. is_heap heap s2 **
-    pure ((s2, new_fp) == Defs.fused_sweep_coalesce 's)
+    pure ((s2, new_fp) == FS.fused_sweep_coalesce 's fp)
 {
-  // Establish initial facts
-  fused_heap_length heap;
-  FusedLemmas.fused_unfold 's;
-  CoalLemmas.objects_mem_at_zero 's;
-  SI.obj_in_objects_intro (SpecHeap.f_address zero_addr) 's;
-  SpecHeap.f_address_spec zero_addr;
-
-  let mut current = (zero_addr <: U64.t);
-  let mut fb_ref = 0UL;
-  let mut rw_ref = 0UL;
-  let mut fp_ref = 0UL;
-
-  while (U64.lt (U64.add !current mword) heap_size_u64)
-    invariant exists* v fb rw fv s.
-      pts_to current v **
-      pts_to fb_ref fb **
-      pts_to rw_ref rw **
-      pts_to fp_ref fv **
+  FSI.sweep_start_inv 's fp;
+  pow2_facts ();
+  let mut cursor = (zero_addr <: U64.t);
+  let mut tail = 0UL;
+  let mut frag = 0UL;
+  let mut head = fp;
+  while (U64.lt (U64.add !cursor mword) heap_size_u64)
+    invariant exists* c t f h s.
+      pts_to cursor c ** pts_to tail t ** pts_to frag f ** pts_to head h **
       is_heap heap s **
-      pure (U64.v v % 8 == 0 /\
-            U64.v v <= heap_size /\
-            U64.v v + 8 < pow2 64 /\
-            Seq.length s == heap_size /\
-            // Suffix preservation: unprocessed region matches original
-            (forall (addr: hp_addr). U64.v addr >= U64.v v ==>
-              SpecHeap.read_word s addr == SpecHeap.read_word 's addr) /\
-            // Run geometry (same as coalesce)
-            (U64.v rw > 0 ==>
-              U64.v rw < pow2 54 /\
-              U64.v fb >= U64.v mword /\
-              U64.v fb < heap_size /\
-              U64.v fb % U64.v mword == 0 /\
-              U64.v fb - U64.v mword + op_Star (U64.v rw) (U64.v mword) == U64.v v) /\
-            // Spec equivalence
-            fused_spec_inv 's s (U64.v v) fb (U64.v rw) fv)
-    decreases (heap_size - U64.v !current)
+      pure (U64.v c <= heap_size /\ U64.v c < pow2 57 /\
+            FSI.sweep_inv 's s h (mk_st c t f) /\
+            FS.sweep_from s h (mk_st c t f) == FS.fused_sweep_coalesce 's fp)
+    decreases (heap_size - U64.v !cursor)
   {
-    let cur = !current;
-    let cur_fb = !fb_ref;
-    let cur_rw = !rw_ref;
-    let cur_fv = !fp_ref;
+    let c = !cursor;
+    let t = !tail;
+    let f = !frag;
+    let h = !head;
     with s. assert (is_heap heap s);
-
-    // Read header from current heap (same bytes as original via suffix preservation)
-    let hdr = read_word heap cur;
-    let wz = getWosize hdr;
-    let obj : obj_addr = SpecHeap.f_address cur;
-
-    // Bridge: suffix preservation → colors readable from current heap match original
-    FusedLemmas.is_black_from_original 's s obj cur;
-
-    // Bridge impl getWosize to spec getWosize
-    GC.Impl.Object.getWosize_eq hdr;
-
-    // Advance computation (using original heap for objects walk)
-    CoalLemmas.objects_advance cur 's;
-    let ws_plus_1 = U64.add wz 1UL;
-    lemma_object_size_no_overflow (U64.v wz);
-    let offset = U64.mul ws_plus_1 mword;
-    lemma_address_add_no_overflow (U64.v cur) (U64.v offset);
-    let next = U64.add cur offset;
-
-    // Convert obj_in_objects → Seq.mem
-    SI.obj_in_objects_elim (U64.uint_to_t (U64.v cur + U64.v mword)) 's;
-    SpecHeap.f_address_spec cur;
-
-    // Propagate objects density for next iteration
-    SI.objects_dense_step cur 's;
-    SI.objects_dense_obj_in cur 's;
-
-    // Bridge impl getColor to spec getColor
-    GC.Impl.Object.getColor_eq hdr;
-
-    // Check if black in g0 (which equals black in g since suffix preserved)
-    let clr = getColor hdr;
-    if Header.Black? clr {
-      // =====================================================
-      // BLACK CASE: flush pending blue run, then whiten
-      // =====================================================
-
-      // 1. Bridge lemma: establish what the spec expects BEFORE any mutations
-      SpecHeap.hd_f_roundtrip cur;
-      SpecObject.color_of_object_spec obj s;
-      SpecObject.is_black_iff obj s;
-
-      FusedLemmas.black_step_fused_aux_eq 's s cur
-        cur_fb (U64.v cur_rw) cur_fv;
-
-      // 2. Flush any pending blue run
-      let res = Coalesce.flush_blue_impl heap cur_fb cur_rw cur_fv;
-      let new_rw = fst res;
-      let new_fv = snd res;
-      with s_flush. assert (is_heap heap s_flush);
-
-      // 2a. flush_blue suffix preservation: reads at cur and beyond are unchanged
-      CoalLemmas.flush_blue_suffix_preserved s cur_fb (U64.v cur_rw) cur_fv (U64.v cur);
-      // Connect s_flush to fst of flush_blue
-      assert (pure (s_flush == fst (SpecCoalesce.flush_blue s cur_fb (U64.v cur_rw) cur_fv)));
-      // Chain: s_flush preserves reads at cur from s, and s preserves from 's
-      assert (pure (SpecHeap.read_word s_flush (SpecHeap.hd_address obj) ==
-                    SpecHeap.read_word 's (SpecHeap.hd_address obj)));
-
-      // 2b. s_flush length from flush_blue_impl postcondition (already have Seq.length s_flush == heap_size)
-
-      // 2c. Establish Seq.mem obj (objects zero_addr 's) via density
-      // obj == f_address cur, obj_in_objects is in the invariant from density lemmas
-      // SI.obj_in_objects_elim was called above, giving Seq.mem obj (objects zero_addr 's)
-
-      // 3. Write white header for the black object
-      let white_hdr = makeHeader wz Header.White (getTag hdr);
-      write_word heap cur white_hdr;
-      with s_white. assert (is_heap heap s_white);
-
-      // 4. Bridge: write_word matches makeWhite
-      GC.Impl.Object.getTag_eq hdr;
-      // Key fact: hdr is the same value that whiten_from_original will see
-      // hdr == read_word s cur == read_word s_flush cur == read_word s_flush (hd_address obj)
-      assert (pure (hdr == SpecHeap.read_word s_flush (SpecHeap.hd_address obj)));
-      FusedLemmas.whiten_from_original 's s_flush obj;
-
-      // 5. makeWhite suffix preservation (for next iteration)
-      SpecHeap.hd_address_spec obj;
-      FusedLemmas.makeWhite_suffix_preserved s_flush obj (U64.v next);
-      FusedLemmas.makeWhite_length s_flush obj;
-
-      // 6. Update loop state
-      current := next;
-      fb_ref := 0UL;
-      rw_ref := new_rw;
-      fp_ref := new_fv;
-
-      // Arithmetic facts
-      assert (pure (U64.v next % 8 == 0));
-      assert (pure (U64.v next <= heap_size));
-      assert (pure (U64.v next + 8 < pow2 64));
-      assert (pure (U64.v new_rw == 0));
-
-      // Suffix preservation for s_white past next:
-      // s_white == makeWhite obj s_flush
-      // makeWhite only writes at hd_address obj (< next)
-      // s_flush agrees with 's past cur (from flush_blue suffix + original suffix)
-      // Therefore s_white agrees with 's past next
-      assert (pure (forall (addr: hp_addr). U64.v addr >= U64.v next ==>
-        SpecHeap.read_word s_white addr == SpecHeap.read_word 's addr));
-
-      // Spec equivalence from black_step bridge lemma
-      assert (pure (
-        U64.v next < heap_size ==>
-          Defs.fused_aux 's s_white
-            (SpecFields.objects (U64.uint_to_t (U64.v next)) 's)
-            0UL 0 new_fv == Defs.fused_sweep_coalesce 's));
-      assert (pure (
-        U64.v next >= heap_size ==>
-          Defs.fused_aux 's s_white Seq.empty
-            0UL 0 new_fv == Defs.fused_sweep_coalesce 's));
-      ()
-    } else {
-      // =====================================================
-      // NON-BLACK CASE: accumulate into blue run (no heap writes)
-      // =====================================================
-      let new_fb = (if U64.eq cur_rw 0UL then obj else cur_fb);
-      let new_rw = U64.add cur_rw ws_plus_1;
-
-      current := next;
-      fb_ref := new_fb;
-      rw_ref := new_rw;
-
-      // Step lemma
-      SpecHeap.hd_f_roundtrip cur;
-      SpecObject.color_of_object_spec obj s;
-      SpecObject.is_black_iff obj s;
-
-      FusedLemmas.nonblack_step_fused_aux_eq 's s cur
-        cur_fb (U64.v cur_rw) cur_fv;
-
-      // Arithmetic facts
-      assert (pure (U64.v next % 8 == 0));
-      assert (pure (U64.v next <= heap_size));
-      assert (pure (U64.v next + 8 < pow2 64));
-      assert (pure (U64.v new_rw == U64.v cur_rw + U64.v wz + 1));
-      assert (pure (U64.v new_rw > 0));
-      assert (pure (U64.v new_rw < pow2 54));
-      assert (pure (U64.v new_fb >= U64.v mword));
-      assert (pure (U64.v new_fb < heap_size));
-      assert (pure (U64.v new_fb % U64.v mword == 0));
-      assert (pure (U64.v new_fb - U64.v mword + op_Star (U64.v new_rw) (U64.v mword) == U64.v next));
-
-      // Suffix preservation: no writes happened, next >= cur
-      assert (pure (U64.v next >= U64.v cur));
-      assert (pure (forall (addr: hp_addr). U64.v addr >= U64.v next ==>
-        SpecHeap.read_word s addr == SpecHeap.read_word 's addr));
-
-      // Spec equivalence from nonblack_step bridge lemma
-      assert (pure (
-        U64.v next < heap_size ==>
-          Defs.fused_aux 's s
-            (SpecFields.objects (U64.uint_to_t (U64.v next)) 's)
-            new_fb (U64.v new_rw) cur_fv == Defs.fused_sweep_coalesce 's));
-      assert (pure (
-        U64.v next >= heap_size ==>
-          Defs.fused_aux 's s Seq.empty
-            new_fb (U64.v new_rw) cur_fv == Defs.fused_sweep_coalesce 's));
-      ()
+    step_facts 's s h c t f;
+    pow2_facts ();
+    let r = sweep_step_impl heap c t f h;
+    match r {
+      (c', t', f', h') -> {
+        cursor := c';
+        tail := t';
+        frag := f';
+        head := h'
+      }
     }
   };
-
-  // =====================================================
-  // POST-LOOP: flush final pending blue run
-  // =====================================================
-  let final_fb = !fb_ref;
-  let final_rw = !rw_ref;
-  let final_fv = !fp_ref;
-  with s_exit. assert (is_heap heap s_exit);
-
-  // Bridge: fused_aux with Seq.empty == flush_blue
-  FusedLemmas.fused_step_empty 's s_exit final_fb (U64.v final_rw) final_fv;
-
-  let res = Coalesce.flush_blue_impl heap final_fb final_rw final_fv;
-  let result_fp = snd res;
-  with s2. assert (is_heap heap s2);
-
-  result_fp
+  let c = !cursor;
+  let t = !tail;
+  let f = !frag;
+  with s. assert (is_heap heap s);
+  stop_facts 's s !head c t f;
+  !head
 }
 #pop-options

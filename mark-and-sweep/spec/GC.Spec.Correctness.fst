@@ -1535,6 +1535,7 @@ let major_gc_unreachable_final_blue_gen h_init h_mark roots fp =
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+
 let gc_coalesce_source_intro h_init h_mark roots fp s2 final_fp = ()
 
 let gc_postcondition_gen h_init h_mark roots fp =
@@ -1546,131 +1547,6 @@ let gc_postcondition_gen h_init h_mark roots fp =
   Coalesce.coalesce_preserves_wf (fst (sweep h_mark fp));
   Coalesce.coalesce_all_white_or_blue (fst (sweep h_mark fp));
   gc_postcondition_intro (fst (Coalesce.coalesce (fst (sweep h_mark fp))))
-#pop-options
-
-/// ---------------------------------------------------------------------------
-/// The theorems, at a heap that agrees with the coalesced one modulo free bodies
-/// ---------------------------------------------------------------------------
-
-/// A survivor keeps its size through sweep and coalesce.
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
-private let coal_black_wosize (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
-    (x: obj_addr)
-  : Lemma (requires mark_post h_init h_mark roots fp /\
-                    Seq.mem x (objects zero_addr (fst (Coalesce.coalesce (fst (sweep h_mark fp))))) /\
-                    is_black x h_mark)
-          (ensures wosize_of_object x (fst (Coalesce.coalesce (fst (sweep h_mark fp)))) ==
-                   wosize_of_object x h_init)
-  = let h_sweep = fst (sweep h_mark fp) in
-    let h_coal = fst (Coalesce.coalesce h_sweep) in
-    mark_post_elim_wfh h_init h_mark roots fp;
-    mark_post_elim_no_grey h_init h_mark roots fp;
-    mark_post_elim_objects h_init h_mark roots fp;
-    mark_post_elim_fp h_init h_mark roots fp;
-    sweep_preserves_objects h_mark fp;
-    sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    sweep_black_survives h_mark fp;
-    Coalesce.coalesce_objects_subset h_sweep x;
-    sweep_preserves_wosize_black h_mark fp x;
-    Coalesce.coalesce_preserves_survivor_header h_sweep x;
-    wosize_of_object_spec x h_sweep;
-    wosize_of_object_spec x h_coal
-#pop-options
-
-/// What `heaps_agree_mod_free s2 h_coal` gives, gathered once.
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-private let coal_agree_facts (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) (s2: heap)
-  : Lemma (requires mark_post h_init h_mark roots fp /\
-                    HeapAgree.heaps_agree_mod_free s2 (fst (Coalesce.coalesce (fst (sweep h_mark fp)))))
-          (ensures (let c = fst (Coalesce.coalesce (fst (sweep h_mark fp))) in
-                    HeapAgree.agree_target_pre c /\
-                    objects zero_addr s2 == objects zero_addr c /\
-                    well_formed_heap s2 /\
-                    create_graph s2 == create_graph c /\
-                    (forall (x: obj_addr). Seq.mem x (objects zero_addr c) ==>
-                       is_white x s2 == is_white x c /\ is_blue x s2 == is_blue x c) /\
-                    (forall (x: obj_addr) (i: U64.t).
-                       Seq.mem x (objects zero_addr c) /\ is_black x h_mark /\
-                       U64.v i >= 1 /\ U64.v i <= U64.v (wosize_of_object x h_init) ==>
-                       HeapGraph.get_field s2 x i == HeapGraph.get_field c x i)))
-  = let h_sweep = fst (sweep h_mark fp) in
-    let c = fst (Coalesce.coalesce h_sweep) in
-    mark_post_elim_wfh h_init h_mark roots fp;
-    mark_post_elim_fp h_init h_mark roots fp;
-    mark_post_elim_objects h_init h_mark roots fp;
-    mark_post_elim_no_grey h_init h_mark roots fp;
-    sweep_preserves_objects h_mark fp;
-    sweep_preserves_wf h_mark fp;
-    sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    Coalesce.coalesce_preserves_wf h_sweep;
-    Shape.coalesce_no_pointer_to_blue h_sweep;
-    HeapAgree.agree_objects s2 c;
-    HeapAgree.agree_well_formed_heap s2 c;
-    HeapAgree.agree_create_graph s2 c;
-    let col (x: obj_addr)
-      : Lemma (Seq.mem x (objects zero_addr c) ==>
-               is_white x s2 == is_white x c /\ is_blue x s2 == is_blue x c)
-      = if Seq.mem x (objects zero_addr c) then HeapAgree.agree_block s2 c x
-    in
-    FStar.Classical.forall_intro col;
-    let fld (x: obj_addr) (i: U64.t)
-      : Lemma (Seq.mem x (objects zero_addr c) /\ is_black x h_mark /\
-               U64.v i >= 1 /\ U64.v i <= U64.v (wosize_of_object x h_init) ==>
-               HeapGraph.get_field s2 x i == HeapGraph.get_field c x i)
-      = if Seq.mem x (objects zero_addr c) && is_black x h_mark &&
-           U64.v i >= 1 && U64.v i <= U64.v (wosize_of_object x h_init) then begin
-          coal_black_wosize h_init h_mark roots fp x;
-          sweep_black_survives h_mark fp;
-          Coalesce.coalesce_objects_subset h_sweep x;
-          Coalesce.coalesce_preserves_survivor_header h_sweep x;
-          color_of_header_eq x h_sweep c;
-          colors_exclusive x c;
-          HeapAgree.agree_get_field s2 c x i
-        end
-    in
-    FStar.Classical.forall_intro_2 fld
-#pop-options
-
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-let gc_result_agree h_init h_mark roots fp s2 =
-  let h_sweep = fst (sweep h_mark fp) in
-  let c = fst (Coalesce.coalesce h_sweep) in
-  coal_agree_facts h_init h_mark roots fp s2;
-  // gc_postcondition
-  gc_postcondition_gen h_init h_mark roots fp;
-  gc_postcondition_intro s2;
-  // full_gc_correctness, with the same marked heap as witness
-  fgc_pillars_through_coalesce h_init h_mark roots fp;
-  let vert (x: obj_addr)
-    : Lemma (Seq.mem x (create_graph s2).vertices <==> Seq.mem x (objects zero_addr c))
-    = graph_vertices_mem s2 x
-  in
-  FStar.Classical.forall_intro vert;
-  assert (fgc_pillars h_init h_mark s2 roots);
-  // the two graph-guarded theorems
-  let g = create_graph h_init in
-  let roots' = HeapGraph.coerce_to_vertex_list roots in
-  if FStar.IndefiniteDescription.strong_excluded_middle
-       (graph_wf g /\ is_vertex_set roots' /\ subset_vertices roots' g.vertices)
-  then begin
-    major_gc_live_subgraph_isomorphism_gen h_init h_mark roots fp;
-    major_gc_unreachable_final_blue_gen h_init h_mark roots fp;
-    mark_post_elim_graph h_init h_mark roots fp;
-    mark_post_elim_objects h_init h_mark roots fp;
-    let reach_black (x: obj_addr)
-      : Lemma (heap_reachable h_init roots x ==> is_black x h_mark /\ Seq.mem x (objects zero_addr c))
-      = if FStar.IndefiniteDescription.strong_excluded_middle (heap_reachable h_init roots x) then
-          graph_vertices_mem h_init x
-    in
-    FStar.Classical.forall_intro reach_black;
-    let reach (x: obj_addr)
-      : Lemma (heap_reachable s2 roots x <==> heap_reachable c roots x)
-      = ()
-    in
-    FStar.Classical.forall_intro reach;
-    assert (major_gc_live_subgraph_isomorphism h_init s2 roots);
-    assert (major_gc_unreachable_final_blue h_init s2 roots)
-  end
 #pop-options
 
 /// ---------------------------------------------------------------------------

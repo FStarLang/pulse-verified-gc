@@ -4,6 +4,7 @@ module U64 = FStar.UInt64
 module U8 = FStar.UInt8
 module Seq = FStar.Seq
 module FL = GC.Spec.FreeList
+module FLA = GC.Spec.FreeList.Ascending
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -842,6 +843,27 @@ let spot_major_fl_complete (r: unit{spot_major_room}) (mp: minor_ptr)
   FStar.Classical.forall_intro (FStar.Classical.move_requires proof)
 #pop-options
 
+/// The free list is ascending: its only cell is the free block, which is the
+/// head and links to null.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let spot_major_fl_ascending (r: unit{spot_major_room}) (mp: minor_ptr)
+  : Lemma (ensures FLA.fl_ascending (spot_major_heap r mp) (spot_major_fp r))
+  =
+  let g = spot_major_heap r mp in
+  let only (x: U64.t)
+    : Lemma (requires FLA.fl_cell g x) (ensures x == spot_major_fp r)
+    =
+    spot_major_object_cases r mp x; spot_major_c_reads r mp; spot_major_free_reads r mp; spot_major_layout_facts r
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires only);
+  spot_major_objects r mp; spot_major_free_reads r mp; spot_major_layout_facts r;
+  hd_address_spec (spot_free_obj r);
+  spot_major_fl_valid r mp;
+  GC.Spec.Allocator.Lemmas.fl_valid_gives_mem g (spot_major_fp r) heap_words;
+  FLA.fl_ascending_single g (spot_major_fp r)
+#pop-options
+
+
 let spot_major_heap_shape (r: unit{spot_major_room}) (mp: minor_ptr)
   =
   let major = spot_major_heap r mp in
@@ -864,6 +886,7 @@ let spot_major_heap_shape (r: unit{spot_major_room}) (mp: minor_ptr)
   spot_major_wfh_part1 r mp;
   spot_major_wfh_part2 r mp;
   spot_major_fl_complete r mp;
+  spot_major_fl_ascending r mp;
   GC.Gen.AllocExact.fl_valid_cob_gives_sound major fp;
   GenInv.free_list_exact_iff major fp;
   GenInv.major_heap_shape_intro major fp

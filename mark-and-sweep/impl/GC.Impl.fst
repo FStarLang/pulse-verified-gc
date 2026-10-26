@@ -37,8 +37,7 @@ module SI = GC.Spec.SweepInv
 module SpecHeapModel = GC.Spec.HeapModel
 module SpecHeapGraph = GC.Spec.HeapGraph
 module SpecGraph = GC.Spec.Graph
-module Defs = GC.Spec.SweepCoalesce.Defs
-module SpecSweepCoalesce = GC.Spec.SweepCoalesce
+module FS = GC.Spec.FusedSweep
 
 
 /// ---------------------------------------------------------------------------
@@ -47,7 +46,7 @@ module SpecSweepCoalesce = GC.Spec.SweepCoalesce
 
 /// Main garbage collection entry point
 /// 1. Mark: bounded-stack mark with overflow handling
-/// 2. Fused sweep+coalesce: single-pass scan whitening survivors and merging free blocks
+/// 2. Fused sweep: single-pass scan whitening survivors and merging free blocks
 ///
 /// Precondition: bounded_mark_inv + root/graph conditions for full correctness
 /// Postcondition:
@@ -79,25 +78,19 @@ fn collect_with_roots
   // fp_valid transfers from 's to s_mark since objects list is preserved
   SI.fp_valid_transfer fp 's s_mark;
   
-  // No gray objects: bridge from SweepInv to Mark for fused_sweep_coalesce
-  SpecMarkBoundedCorr.noGreyObjects_from_no_gray s_mark;
-  
-  // Fused sweep+coalesce: single pass that whitens survivors and merges free blocks
-  let final_fp = fused_sweep_coalesce heap;
-  
-  // After fused: (s_fused, final_fp) == fused_sweep_coalesce s_mark
+  // The sweep starts from the marked heap and the free list the last cycle left
+  SpecGCPost.mark_post_sweep_pre 's s_mark roots fp;
+
+  // Fused sweep: one pass that whitens survivors, frees garbage, merges free
+  // blocks and keeps the free list exact and ascending
+  let final_fp = fused_sweep_coalesce heap fp;
   with s_fused. assert (is_heap heap s_fused **
-    pure ((s_fused, final_fp) == Defs.fused_sweep_coalesce s_mark));
+    pure ((s_fused, final_fp) == FS.fused_sweep_coalesce s_mark fp));
 
-  // Bridge: fused_sweep_coalesce agrees with coalesce(fst(sweep ...)) on the
-  // free pointer, and on the heap modulo free-block bodies
-  SpecSweepCoalesce.fused_agrees_sweep_coalesce s_mark fp;
-
-  // The theorems about coalesce(sweep ...), carried to the fused heap.
-  // These only need mark_post, which we established above
+  // The collector's theorems at that heap
+  SpecGCPost.gc_result_fused 's s_mark roots fp;
   SpecGCPost.gc_coalesce_source_intro 's s_mark roots fp s_fused final_fp;
-  SpecGCPost.gc_result_agree 's s_mark roots fp s_fused;
-  
+
   final_fp
 }
 
