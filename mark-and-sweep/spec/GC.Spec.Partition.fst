@@ -33,7 +33,7 @@ open GC.Spec.Fields
 open GC.Lib.Header
 
 module U64 = FStar.UInt64
-module WE  = GC.Spec.WalkEnd
+module W   = GC.Spec.Walk
 module IndDesc = FStar.IndefiniteDescription
 module FL  = GC.Spec.FreeList
 module Alloc = GC.Spec.Allocator
@@ -196,18 +196,18 @@ let rec walk_is_tiled (g: heap) (start: hp_addr)
   : Lemma
     (requires Seq.length g == heap_size)
     (ensures U64.v start + total_whsize g (objects start g) * U64.v mword
-             == WE.walk_end g start)
+             == W.walk_end g start)
     (decreases (heap_size - U64.v start))
   = if U64.v start + 8 >= heap_size then begin
       assert (objects start g == Seq.empty);
-      assert (WE.walk_end g start == U64.v start)
+      assert (W.walk_end g start == U64.v start)
     end
     else begin
       let wz = getWosize (read_word g start) in
       let next = U64.v start + (U64.v wz + 1) * 8 in
       if next > heap_size || next >= pow2 64 then begin
         assert (objects start g == Seq.empty);
-        assert (WE.walk_end g start == U64.v start)
+        assert (W.walk_end g start == U64.v start)
       end
       else begin
         f_address_spec start;
@@ -218,7 +218,7 @@ let rec walk_is_tiled (g: heap) (start: hp_addr)
         if next >= heap_size then begin
           assert (objects start g == Seq.cons o Seq.empty);
           total_whsize_cons g o Seq.empty;
-          assert (WE.walk_end g start == next)
+          assert (W.walk_end g start == next)
         end
         else begin
           aligned_plus_mul8 (U64.v start) (U64.v wz + 1);
@@ -226,7 +226,7 @@ let rec walk_is_tiled (g: heap) (start: hp_addr)
           assert (U64.v nx == next);
           assert (objects start g == Seq.cons o (objects nx g));
           total_whsize_cons g o (objects nx g);
-          assert (WE.walk_end g start == WE.walk_end g nx);
+          assert (W.walk_end g start == W.walk_end g nx);
           walk_is_tiled g nx
         end
       end
@@ -253,7 +253,7 @@ let heap_partition_swept (g: heap)
        U64.v zero_addr
        + (white_whsize g objs + cell_whsize g objs + frag_whsize g objs)
          * U64.v mword
-       == WE.walk_end g zero_addr))
+       == W.walk_end g zero_addr))
   = partition_swept g (objects zero_addr g);
     walk_is_tiled g zero_addr
 
@@ -351,7 +351,7 @@ let heap_partition_strong (g: heap) (fp: U64.t)
        U64.v zero_addr
        + (white_whsize g objs + onchain_whsize g fp objs + frag_whsize g objs)
          * U64.v mword
-       == WE.walk_end g zero_addr))
+       == W.walk_end g zero_addr))
   = let objs = objects zero_addr g in
     partition_swept g objs;
     cell_splits g fp objs;

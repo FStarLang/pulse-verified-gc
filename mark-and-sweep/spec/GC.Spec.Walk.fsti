@@ -181,6 +181,42 @@ val walk_merge (g: heap) (a p: hp_addr) (v: U64.t)
                     (forall (c: nat). reaches g' a c == (reaches g a c && c <> b))))
 
 /// ---------------------------------------------------------------------------
+/// Where the walk stops
+/// ---------------------------------------------------------------------------
+
+/// `walk_end g a`: the position at which the walk from `a` stops -- the end of
+/// the heap, or the first position whose block cannot step.  It is the last
+/// position the walk lands on (`reaches_walk_end`); when the walk runs to the
+/// end of the heap it is that end (`walk_end_of_reaches`).
+///
+/// `heap_objects_dense` says that the walk tiles the heap: it stops only when
+/// there is no room left for another header, never because a block claims
+/// more space than the heap has.  As a scalar, density is the one equation
+/// `walk_end g zero_addr + 8 >= heap_size` (`dense_of_reaches_end`,
+/// `reaches_end_of_dense`), which a phase that changes block sizes preserves
+/// exactly when it preserves that address.
+let rec walk_end (g: heap) (a: hp_addr)
+  : GTot nat (decreases (heap_size - U64.v a))
+  = if not (can_step g a) then U64.v a
+    else begin
+      let n = bnext g a in
+      if n >= heap_size then n
+      else begin
+        aligned_plus_mul8 (U64.v a) (U64.v (getWosize (read_word g a)) + 1);
+        walk_end g (mk_hp_addr n)
+      end
+    end
+
+/// A walk that lands at the end of the heap stops there.
+val walk_end_of_reaches (g: heap) (a: hp_addr) (e: nat)
+  : Lemma (requires reaches g a e /\ e + 8 >= heap_size)
+          (ensures walk_end g a == e)
+
+/// The walk lands on the position where it stops.
+val reaches_walk_end (g: heap) (a: hp_addr)
+  : Lemma (reaches g a (walk_end g a))
+
+/// ---------------------------------------------------------------------------
 /// Density
 /// ---------------------------------------------------------------------------
 
@@ -193,8 +229,8 @@ val dense_of_reaches_end (g: heap) (e: nat)
 val reaches_end_of_dense (g: heap)
   : Lemma (requires heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0)
           (ensures can_step g zero_addr /\
-                   reaches g zero_addr (GC.Spec.WalkEnd.walk_end g zero_addr) /\
-                   GC.Spec.WalkEnd.walk_end g zero_addr + 8 >= heap_size)
+                   reaches g zero_addr (walk_end g zero_addr) /\
+                   walk_end g zero_addr + 8 >= heap_size)
 
 /// On a walk that reaches the end of the heap, every position with room for a
 /// header can step.

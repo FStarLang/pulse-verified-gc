@@ -22,7 +22,7 @@ module FS = GC.Spec.FusedSweep
 module FSE = GC.Spec.FusedSweep.End
 module Corr = GC.Spec.Correctness
 module Part = GC.Spec.Partition
-module WE = GC.Spec.WalkEnd
+module W = GC.Spec.Walk
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 30"
 
@@ -52,7 +52,7 @@ let fused_partition (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
       + (Part.white_whsize g' objs
          + Part.onchain_whsize g' (snd r) objs
          + Part.frag_whsize g' objs) * U64.v mword
-      == WE.walk_end g' zero_addr))
+      == W.walk_end g' zero_addr))
   = let r = FS.fused_sweep_coalesce h_mark fp in
     fused_exact h_init h_mark roots fp;
     Corr.fused_post_gen h_init h_mark roots fp;

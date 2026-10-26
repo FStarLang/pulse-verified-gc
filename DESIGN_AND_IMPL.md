@@ -1496,7 +1496,7 @@ entry conditions outright.
 **Density is a statement about the walk.**  `heap_objects_dense` -- "the object
 walk tiles the heap, never stopping because a block overruns" -- is equivalent
 to the walk from `zero_addr` reaching the end of the heap
-(`GC.Spec.WalkEnd`, `GC.Spec.Walk.reaches`).  The sweep's invariant says the
+(`GC.Spec.Walk.walk_end`, `GC.Spec.Walk.reaches`).  The sweep's invariant says the
 cursor is a position of the current heap's walk; at the end the cursor is the
 end of the heap, so the result is dense.
 

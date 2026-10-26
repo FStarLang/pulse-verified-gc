@@ -13,7 +13,6 @@ module Header = GC.Lib.Header
 module W = GC.Spec.Walk
 module FL = GC.Spec.FreeList
 module FLA = GC.Spec.FreeList.Ascending
-module WE = GC.Spec.WalkEnd
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
@@ -76,7 +75,7 @@ let cursor_block (g0 g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr)
     sweep_inv_elim g0 g fp st;
     front_same_elim g0 g (U64.v c) c;
     W.reaches_end_of_dense g0;
-    W.can_step_before_end g0 zero_addr c (WE.walk_end g0 zero_addr);
+    W.can_step_before_end g0 zero_addr c (W.walk_end g0 zero_addr);
     W.reaches_snoc g zero_addr c;
     W.reaches_snoc g0 zero_addr c
 

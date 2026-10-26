@@ -12,7 +12,6 @@ module Header = GC.Lib.Header
 module W = GC.Spec.Walk
 module FL = GC.Spec.FreeList
 module FLA = GC.Spec.FreeList.Ascending
-module WE = GC.Spec.WalkEnd
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 
@@ -209,7 +208,7 @@ let g0_can_step (g0: heap) (c: hp_addr)
   : Lemma (requires sweep_g0 g0 /\ W.reaches g0 zero_addr (U64.v c) /\ U64.v c + 8 < heap_size)
           (ensures W.can_step g0 c)
   = W.reaches_end_of_dense g0;
-    W.can_step_before_end g0 zero_addr c (WE.walk_end g0 zero_addr)
+    W.can_step_before_end g0 zero_addr c (W.walk_end g0 zero_addr)
 #pop-options
 
 #push-options "--fuel 0 --ifuel 1 --z3rlimit 40"
