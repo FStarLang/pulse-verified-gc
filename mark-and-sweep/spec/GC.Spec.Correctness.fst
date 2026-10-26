@@ -375,10 +375,10 @@ let gc_coalesce_source_intro h_init h_mark roots fp s2 final_fp = ()
 /// Marking keeps every free block, its size and its link, so it keeps the list.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 let mark_post_sweep_pre h_init h_mark roots fp =
-  let cells (x: U64.t) : Lemma (FLA.fl_cell h_mark x <==> FLA.fl_cell h_init x) = () in
+  let cells (x: U64.t) : Lemma (FL.fl_cell h_mark x <==> FL.fl_cell h_init x) = () in
   FStar.Classical.forall_intro cells;
   let links (x: U64.t)
-    : Lemma (requires FLA.fl_cell h_init x) (ensures FL.fl_next h_mark x == FL.fl_next h_init x)
+    : Lemma (requires FL.fl_cell h_init x) (ensures FL.fl_next h_mark x == FL.fl_next h_init x)
     = FLA.fl_cell_facts h_init x;
       let o : obj_addr = x in
       hd_address_spec o;

@@ -189,7 +189,7 @@ let sweep_start_inv (g0: heap) (fp: U64.t) =
   ends_free_intro g0 c false (fun p ->
     W.reaches_bounds g0 zero_addr (U64.v p); W.bnext_facts g0 p);
   let no_low (x: U64.t)
-    : Lemma (requires FLA.fl_cell g0 x /\ U64.v x < c) (ensures False)
+    : Lemma (requires FL.fl_cell g0 x /\ U64.v x < c) (ensures False)
     = FLA.fl_cell_facts g0 x
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires no_low);

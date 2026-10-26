@@ -73,8 +73,8 @@ let promote_object_preserves_fl_ascending minor major obj fp wosize =
         AE.promote_writes_frame minor g1 obj dst wosize tag (hd_address a)
     in
     let cell (x: U64.t)
-      : Lemma ((FLA.fl_cell res.major_out x <==> FLA.fl_cell g1 x) /\
-               (FLA.fl_cell g1 x ==> FL.fl_next res.major_out x == FL.fl_next g1 x))
+      : Lemma ((FL.fl_cell res.major_out x <==> FL.fl_cell g1 x) /\
+               (FL.fl_cell g1 x ==> FL.fl_next res.major_out x == FL.fl_next g1 x))
       = if U64.v x >= U64.v mword && U64.v x < heap_size && U64.v x % U64.v mword = 0 then begin
           let xo : obj_addr = x in
           if x = (dst <: U64.t) then ()
@@ -208,8 +208,8 @@ let update_major_pointers_preserves_fl_ascending major fwd fp =
   let m' = update_major_pointers major fwd in
   PU.update_major_pointers_preserves_objects major fwd;
   let cell (x: U64.t)
-    : Lemma ((FLA.fl_cell m' x <==> FLA.fl_cell major x) /\
-             (FLA.fl_cell major x ==> FL.fl_next m' x == FL.fl_next major x))
+    : Lemma ((FL.fl_cell m' x <==> FL.fl_cell major x) /\
+             (FL.fl_cell major x ==> FL.fl_next m' x == FL.fl_next major x))
     = if U64.v x >= U64.v mword && U64.v x < heap_size && U64.v x % U64.v mword = 0 then begin
         let xo : obj_addr = x in
         if Seq.mem xo (objects zero_addr major) then begin

@@ -850,7 +850,7 @@ let spot_major_fl_ascending (r: unit{spot_major_room}) (mp: minor_ptr)
   =
   let g = spot_major_heap r mp in
   let only (x: U64.t)
-    : Lemma (requires FLA.fl_cell g x) (ensures x == spot_major_fp r)
+    : Lemma (requires FL.fl_cell g x) (ensures x == spot_major_fp r)
     =
     spot_major_object_cases r mp x; spot_major_c_reads r mp; spot_major_free_reads r mp; spot_major_layout_facts r
   in

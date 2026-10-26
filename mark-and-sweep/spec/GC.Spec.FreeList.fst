@@ -47,6 +47,17 @@ let fl_node (a: U64.t) : GTot bool =
   U64.v a >= U64.v mword &&
   U64.v a % U64.v mword = 0 &&
   U64.v a + U64.v mword <= heap_size
+
+/// A free-list cell of `g`: a blue block of the object walk with room for a
+/// link word.  These are exactly the blocks `fl_exact` puts on the list.
+let fl_cell (g: heap) (x: U64.t) : prop =
+  if U64.v x >= U64.v mword && U64.v x < heap_size && U64.v x % U64.v mword = 0
+  then (let o : obj_addr = x in
+        Seq.mem o (objects zero_addr g) /\
+        is_blue o g /\
+        U64.v (wosize_of_object o g) >= 1)
+  else False
+
 /// The link stored in a cell.
 let fl_next (g: heap) (a: U64.t) : GTot U64.t =
   if fl_node a then read_word g (a <: hp_addr) else 0UL
@@ -131,11 +142,7 @@ let reachable_is_node (g: heap) (fp: U64.t) (obj: U64.t)
 /// a chain at all -- which is exactly what `fl_cell` already says.
 let fl_sound (g: heap) (fp: U64.t) : prop =
   forall (obj: U64.t). reachable_on_fl g fp obj ==>
-    (fl_node obj /\
-     (U64.v obj >= U64.v mword /\ U64.v obj < heap_size /\ U64.v obj % U64.v mword == 0) /\
-     Seq.mem (obj <: obj_addr) (objects zero_addr g) /\
-     is_blue (obj <: obj_addr) g /\
-     U64.v (wosize_of_object (obj <: obj_addr) g) >= 1)
+    (fl_node obj /\ fl_cell g obj)
 
 /// Every blue object that *can* be a cell is on the chain.
 ///
@@ -146,9 +153,7 @@ let fl_sound (g: heap) (fp: U64.t) : prop =
 /// object is on the chain -- is simply false on those heaps. It was harmless
 /// only because nothing ever established it.
 let fl_complete (g: heap) (fp: U64.t) : prop =
-  forall (obj: obj_addr). (Seq.mem obj (objects zero_addr g) /\ is_blue obj g
-                           /\ U64.v (wosize_of_object obj g) >= 1) ==>
-    reachable_on_fl g fp obj
+  forall (obj: obj_addr). fl_cell g obj ==> reachable_on_fl g fp obj
 
 /// The free list is exactly the set of blue objects that can hold a link.
 ///
@@ -166,8 +171,7 @@ let fl_exact (g: heap) (fp: U64.t) : prop =
 /// instantiate it at a witness unless `reachable_on_fl g fp y` already appears
 /// in the goal -- which is exactly what one is trying to prove. This forces it.
 let fl_complete_elim (g: heap) (fp: U64.t) (y: obj_addr)
-  : Lemma (requires fl_complete g fp /\ Seq.mem y (objects zero_addr g)
-                    /\ is_blue y g /\ U64.v (wosize_of_object y g) >= 1)
+  : Lemma (requires fl_complete g fp /\ fl_cell g y)
           (ensures reachable_on_fl g fp y)
   = ()
 
@@ -176,11 +180,7 @@ let fl_sound_tail (g: heap) (fp: U64.t)
   : Lemma (requires fl_sound g fp /\ fl_node fp)
           (ensures fl_sound g (fl_next g fp))
   = introduce forall (obj: U64.t). reachable_on_fl g (fl_next g fp) obj ==>
-      (fl_node obj /\
-       (U64.v obj >= U64.v mword /\ U64.v obj < heap_size /\ U64.v obj % U64.v mword == 0) /\
-       Seq.mem (obj <: obj_addr) (objects zero_addr g) /\
-       is_blue (obj <: obj_addr) g /\
-       U64.v (wosize_of_object (obj <: obj_addr) g) >= 1)
+      (fl_node obj /\ fl_cell g obj)
     with introduce _ ==> _
     with reachable_cons g fp obj
 

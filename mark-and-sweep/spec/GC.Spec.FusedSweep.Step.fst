@@ -31,7 +31,7 @@ let no_pos_inside (g: heap) (p: hp_addr) (q: nat)
 /// A cell's link word lies in its own block and in no other.
 #push-options "--z3rlimit 30"
 let cell_link_own_block (g: heap) (x: U64.t) (p: hp_addr)
-  : Lemma (requires FLA.fl_cell g x /\ W.reaches g zero_addr (U64.v p) /\
+  : Lemma (requires FL.fl_cell g x /\ W.reaches g zero_addr (U64.v p) /\
                     U64.v p <> U64.v x - 8)
           (ensures U64.v x < U64.v p \/ U64.v x >= W.bnext g p)
   = fl_cell_iff g x;
@@ -45,7 +45,7 @@ let cell_link_own_block (g: heap) (x: U64.t) (p: hp_addr)
 /// The cell at a walk position.
 let cell_at (g: heap) (q: hp_addr)
   : Lemma (requires pos_cell g q /\ U64.v q + 8 < heap_size)
-          (ensures FLA.fl_cell g (U64.add q mword) /\
+          (ensures FL.fl_cell g (U64.add q mword) /\
                    U64.v (U64.add q mword) == U64.v q + 8)
   = W.reaches_bounds g zero_addr (U64.v q);
     fl_cell_iff g (U64.add q mword);
@@ -53,7 +53,7 @@ let cell_at (g: heap) (q: hp_addr)
 
 /// A cell is at a walk position.
 let cell_pos (g: heap) (x: U64.t)
-  : Lemma (requires FLA.fl_cell g x)
+  : Lemma (requires FL.fl_cell g x)
           (ensures U64.v x >= U64.v zero_addr + 8 /\ is_obj x /\
                    W.reaches g zero_addr (U64.v x - 8) /\
                    pos_cell g (mk_hp_addr (U64.v x - 8)) /\
@@ -98,7 +98,7 @@ let nm_frame (g g': heap) (c: hp_addr) (n: nat) (w: U64.t) : prop =
 let nm_ctx (g g': heap) (c: hp_addr) (w: U64.t) : prop =
   W.reaches g zero_addr (U64.v c) /\ W.can_step g c /\
   nm_frame g g' c (W.bnext g c) w /\
-  (w == 0UL \/ (FLA.fl_cell g w /\ U64.v w < U64.v c))
+  (w == 0UL \/ (FL.fl_cell g w /\ U64.v w < U64.v c))
 
 #push-options "--z3rlimit 40"
 let nm_walk (g g': heap) (c: hp_addr) (w: U64.t)
@@ -217,10 +217,10 @@ let nm_ends (g g': heap) (c: hp_addr) (w: U64.t)
 #push-options "--z3rlimit 40"
 let nm_cells (g g': heap) (c: hp_addr) (w: U64.t) (x: U64.t)
   : Lemma (requires nm_ctx g g' c w)
-          (ensures (U64.v x <> U64.v c + 8 ==> (FLA.fl_cell g' x <==> FLA.fl_cell g x)) /\
+          (ensures (U64.v x <> U64.v c + 8 ==> (FL.fl_cell g' x <==> FL.fl_cell g x)) /\
                    (U64.v x == U64.v c + 8 ==>
-                     (FLA.fl_cell g' x <==> blue_at g' c /\ wz_at g c >= 1) /\
-                     (FLA.fl_cell g x <==> blue_at g c /\ wz_at g c >= 1)))
+                     (FL.fl_cell g' x <==> blue_at g' c /\ wz_at g c >= 1) /\
+                     (FL.fl_cell g x <==> blue_at g c /\ wz_at g c >= 1)))
   = nm_walk g g' c w;
     fl_cell_iff g x;
     fl_cell_iff g' x;
@@ -239,7 +239,7 @@ let nm_cells (g g': heap) (c: hp_addr) (w: U64.t) (x: U64.t)
 
 /// Links of cells are unchanged, other than `w`'s and the cursor block's own.
 let nm_links (g g': heap) (c: hp_addr) (w: U64.t) (x: U64.t)
-  : Lemma (requires nm_ctx g g' c w /\ FLA.fl_cell g x /\ x <> w /\ U64.v x <> U64.v c + 8)
+  : Lemma (requires nm_ctx g g' c w /\ FL.fl_cell g x /\ x <> w /\ U64.v x <> U64.v c + 8)
           (ensures FL.fl_next g' x == FL.fl_next g x)
   = cell_pos g x;
     let q = mk_hp_addr (U64.v x - 8) in
@@ -249,7 +249,7 @@ let nm_links (g g': heap) (c: hp_addr) (w: U64.t) (x: U64.t)
 
 /// `w`'s size is unchanged.
 let nm_wosize (g g': heap) (c: hp_addr) (w: U64.t) (x: U64.t)
-  : Lemma (requires nm_ctx g g' c w /\ FLA.fl_cell g x /\ U64.v x < U64.v c)
+  : Lemma (requires nm_ctx g g' c w /\ FL.fl_cell g x /\ U64.v x < U64.v c)
           (ensures wosize_at g' x == wosize_at g x)
   = cell_pos g x;
     let q = mk_hp_addr (U64.v x - 8) in
@@ -275,7 +275,7 @@ let mg_ctx (g g': heap) (ph c: hp_addr) (w: U64.t) : prop =
   (forall (a: hp_addr). U64.v a < U64.v c /\ a <> ph /\ U64.v a <> U64.v ph + 8 /\
                         (w == 0UL \/ U64.v a <> U64.v w) ==>
      read_word g' a == read_word g a) /\
-  (w == 0UL \/ (FLA.fl_cell g w /\ U64.v w < U64.v c))
+  (w == 0UL \/ (FL.fl_cell g w /\ U64.v w < U64.v c))
 
 #push-options "--z3rlimit 40"
 let mg_walk (g g': heap) (ph c: hp_addr) (w: U64.t)
@@ -416,8 +416,8 @@ let mg_ends (g g': heap) (ph c: hp_addr) (w: U64.t)
 #push-options "--z3rlimit 40"
 let mg_cells (g g': heap) (ph c: hp_addr) (w: U64.t) (x: U64.t)
   : Lemma (requires mg_ctx g g' ph c w)
-          (ensures FLA.fl_cell g' x <==>
-                   (U64.v x == U64.v ph + 8 \/ (FLA.fl_cell g x /\ U64.v x <> U64.v c + 8)))
+          (ensures FL.fl_cell g' x <==>
+                   (U64.v x == U64.v ph + 8 \/ (FL.fl_cell g x /\ U64.v x <> U64.v c + 8)))
   = mg_walk g g' ph c w;
     free_header_facts (wz_at g ph + wz_at g c + 1);
     fl_cell_iff g x;
@@ -439,7 +439,7 @@ let mg_cells (g g': heap) (ph c: hp_addr) (w: U64.t) (x: U64.t)
 
 /// Links of cells below the grown block are unchanged, other than `w`'s.
 let mg_links (g g': heap) (ph c: hp_addr) (w: U64.t) (x: U64.t)
-  : Lemma (requires mg_ctx g g' ph c w /\ FLA.fl_cell g x /\ x <> w /\
+  : Lemma (requires mg_ctx g g' ph c w /\ FL.fl_cell g x /\ x <> w /\
                     U64.v x <> U64.v ph + 8 /\ U64.v x <> U64.v c + 8)
           (ensures FL.fl_next g' x == FL.fl_next g x)
   = cell_pos g x;
@@ -466,7 +466,7 @@ let mg_wosize (g g': heap) (ph c: hp_addr) (w: U64.t)
 #push-options "--z3rlimit 40"
 let linked_follows_tail (g: heap) (fp: U64.t) (c: hp_addr) (t: U64.t)
   : Lemma (requires FLA.fl_ascending g fp /\ tail_ok g (U64.v c) t /\
-                    W.reaches g zero_addr (U64.v c) /\ FLA.fl_cell g (U64.add c mword) /\
+                    W.reaches g zero_addr (U64.v c) /\ FL.fl_cell g (U64.add c mword) /\
                     U64.v (U64.add c mword) == U64.v c + 8)
           (ensures (t == 0UL ==> fp == U64.add c mword) /\
                    (t <> 0UL ==> FL.fl_next g t == U64.add c mword))
@@ -489,7 +489,7 @@ let linked_follows_tail (g: heap) (fp: U64.t) (c: hp_addr) (t: U64.t)
 /// A cell below the cursor's block is below the cursor, hence at most `swept_tail`.
 let cell_below (g: heap) (c: hp_addr) (t: U64.t) (x: U64.t)
   : Lemma (requires tail_ok g (U64.v c) t /\ W.reaches g zero_addr (U64.v c) /\
-                    FLA.fl_cell g x /\ U64.v x <= U64.v c + 8 /\ U64.v x <> U64.v c + 8)
+                    FL.fl_cell g x /\ U64.v x <= U64.v c + 8 /\ U64.v x <> U64.v c + 8)
           (ensures U64.v x < U64.v c /\ t <> 0UL /\ U64.v x <= U64.v t)
   = cell_pos g x;
     cell_link_not_pos g x (U64.v c);
@@ -518,7 +518,7 @@ let read_sat (g: heap) (fp t v: U64.t) (a: hp_addr)
 
 /// The link that follows `swept_tail` is the list's.
 let after_tail_next (g: heap) (fp t: U64.t)
-  : Lemma (requires t == 0UL \/ FLA.fl_cell g t)
+  : Lemma (requires t == 0UL \/ FL.fl_cell g t)
           (ensures after_tail g fp t == (if t = 0UL then fp else FL.fl_next g t))
   = if t <> 0UL then FLA.fl_cell_facts g t
 
@@ -549,7 +549,7 @@ let opened (g0 g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr) : prop =
   tail_ok g (U64.v c) st.swept_tail /\ frag_ok g (U64.v c) st.last_fragment /\
   FLA.fl_ascending g fp /\
   (st.swept_tail == 0UL \/
-    (FLA.fl_cell g st.swept_tail /\ is_obj st.swept_tail /\
+    (FL.fl_cell g st.swept_tail /\ is_obj st.swept_tail /\
      U64.v st.swept_tail + wosize_at g st.swept_tail * 8 <= U64.v c /\
      U64.v st.swept_tail < U64.v c))
 
@@ -569,7 +569,7 @@ let open_ctx (g0 g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr)
 /// lies below the cursor.
 let cell_below_n (g: heap) (c: hp_addr) (x: U64.t)
   : Lemma (requires W.reaches g zero_addr (U64.v c) /\ W.can_step g c /\
-                    FLA.fl_cell g x /\ U64.v x < W.bnext g c /\ U64.v x <> U64.v c + 8)
+                    FL.fl_cell g x /\ U64.v x < W.bnext g c /\ U64.v x <> U64.v c + 8)
           (ensures U64.v x < U64.v c)
   = cell_pos g x;
     cell_link_not_pos g x (U64.v c);
@@ -581,14 +581,14 @@ let cell_below_n (g: heap) (c: hp_addr) (x: U64.t)
 #push-options "--z3rlimit 40"
 let nm_tail_keep (g g': heap) (c: hp_addr) (w t: U64.t)
   : Lemma (requires nm_ctx g g' c w /\ tail_ok g (U64.v c) t /\
-                    (t == 0UL \/ (FLA.fl_cell g t /\ U64.v t < U64.v c)) /\
-                    not (FLA.fl_cell g' (U64.add c mword) && U64.v (U64.add c mword) = U64.v c + 8))
+                    (t == 0UL \/ (FL.fl_cell g t /\ U64.v t < U64.v c)) /\
+                    not (FL.fl_cell g' (U64.add c mword) && U64.v (U64.add c mword) = U64.v c + 8))
           (ensures tail_ok g' (W.bnext g c) t)
   = tail_ok_elim g (U64.v c) t;
     W.bnext_facts g c;
     (if t <> 0UL then begin nm_wosize g g' c w t; nm_cells g g' c w t end);
     let below (x: U64.t)
-      : Lemma (requires FLA.fl_cell g' x /\ U64.v x < W.bnext g c)
+      : Lemma (requires FL.fl_cell g' x /\ U64.v x < W.bnext g c)
               (ensures t <> 0UL /\ U64.v x <= U64.v t)
       = nm_cells g g' c w x;
         if U64.v x = U64.v c + 8 then assert (x == U64.add c mword)
@@ -604,7 +604,7 @@ let nm_tail_keep (g g': heap) (c: hp_addr) (w t: U64.t)
 let nm_tail_new (g g': heap) (c: hp_addr) (w t: U64.t)
   : Lemma (requires nm_ctx g g' c w /\ tail_ok g (U64.v c) t /\
                     (t == 0UL \/ U64.v t < U64.v c) /\
-                    FLA.fl_cell g' (U64.add c mword) /\ U64.v (U64.add c mword) = U64.v c + 8)
+                    FL.fl_cell g' (U64.add c mword) /\ U64.v (U64.add c mword) = U64.v c + 8)
           (ensures tail_ok g' (W.bnext g c) (U64.add c mword))
   = let b = U64.add c mword in
     tail_ok_elim g (U64.v c) t;
@@ -612,7 +612,7 @@ let nm_tail_new (g g': heap) (c: hp_addr) (w t: U64.t)
     wosize_at_hd g' b;
     assert (mk_hp_addr (U64.v b - 8) == c);
     let below (x: U64.t)
-      : Lemma (requires FLA.fl_cell g' x /\ U64.v x < W.bnext g c)
+      : Lemma (requires FL.fl_cell g' x /\ U64.v x < W.bnext g c)
               (ensures U64.v x <= U64.v b)
       = nm_cells g g' c w x;
         if U64.v x = U64.v c + 8 then ()
@@ -626,11 +626,11 @@ let nm_tail_new (g g': heap) (c: hp_addr) (w t: U64.t)
 #push-options "--z3rlimit 40"
 let nm_same_list (g g': heap) (fp: U64.t) (c: hp_addr) (w: U64.t)
   : Lemma (requires nm_ctx g g' c w /\ FLA.fl_ascending g fp /\
-                    (FLA.fl_cell g (U64.add c mword) <==> FLA.fl_cell g' (U64.add c mword)) /\
+                    (FL.fl_cell g (U64.add c mword) <==> FL.fl_cell g' (U64.add c mword)) /\
                     U64.v (U64.add c mword) = U64.v c + 8 /\
-                    (forall (x: U64.t). FLA.fl_cell g x ==> FL.fl_next g' x == FL.fl_next g x))
+                    (forall (x: U64.t). FL.fl_cell g x ==> FL.fl_next g' x == FL.fl_next g x))
           (ensures FLA.fl_ascending g' fp)
-  = let cells (x: U64.t) : Lemma (FLA.fl_cell g' x <==> FLA.fl_cell g x)
+  = let cells (x: U64.t) : Lemma (FL.fl_cell g' x <==> FL.fl_cell g x)
       = nm_cells g g' c w x;
         if U64.v x = U64.v c + 8 then assert (x == U64.add c mword)
     in
@@ -698,7 +698,7 @@ let case_black (g0 g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr)
     assert (prev_free g' st' == false);
     nm_cells g g' c 0UL (U64.add c mword);
     nm_tail_keep g g' c 0UL t;
-    let links (x: U64.t) : Lemma (requires FLA.fl_cell g x) (ensures FL.fl_next g' x == FL.fl_next g x)
+    let links (x: U64.t) : Lemma (requires FL.fl_cell g x) (ensures FL.fl_next g' x == FL.fl_next g x)
       = FLA.fl_cell_facts g x;
         cell_link_not_pos g x (U64.v c)
     in
@@ -786,18 +786,18 @@ let case_white_cell (g0 g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr)
     assert (prev_free g3 st' == true);
     nm_tail_new g g3 c t t;
     // the list: b is inserted after t
-    let cells (x: U64.t) : Lemma (FLA.fl_cell g3 x <==> (FLA.fl_cell g x \/ x == b))
+    let cells (x: U64.t) : Lemma (FL.fl_cell g3 x <==> (FL.fl_cell g x \/ x == b))
       = nm_cells g g3 c t x;
         if U64.v x = U64.v c + 8 then assert (x == b)
     in
     FStar.Classical.forall_intro cells;
-    let below (x: U64.t) : Lemma (requires FLA.fl_cell g x /\ U64.v x < U64.v b)
+    let below (x: U64.t) : Lemma (requires FL.fl_cell g x /\ U64.v x < U64.v b)
                                  (ensures t <> 0UL /\ U64.v x <= U64.v t)
       = cell_below g c t x
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires below);
     after_tail_next g fp t;
-    let links (x: U64.t) : Lemma (requires FLA.fl_cell g x /\ x <> t)
+    let links (x: U64.t) : Lemma (requires FL.fl_cell g x /\ x <> t)
                                  (ensures FL.fl_next g3 x == FL.fl_next g x)
       = nm_links g g3 c t x
     in
@@ -835,7 +835,7 @@ let case_white_frag (g0 g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr)
     W.bnext_facts g c;
     assert (U64.v b == n);
     assert (frag_ok g1 n b);
-    let links (x: U64.t) : Lemma (requires FLA.fl_cell g x) (ensures FL.fl_next g1 x == FL.fl_next g x)
+    let links (x: U64.t) : Lemma (requires FL.fl_cell g x) (ensures FL.fl_next g1 x == FL.fl_next g x)
       = FLA.fl_cell_facts g x;
         cell_link_not_pos g x (U64.v c)
     in
@@ -861,9 +861,9 @@ let merge_setup (g0 g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr)
                      wz_at g ph == wosize_at g p /\
                      wosize_at g p + wz_at g c + 1 < pow2 54 /\
                      (st.last_fragment <> 0UL ==> U64.v p == U64.v c /\
-                        wz_at g ph == 0 /\ ~(FLA.fl_cell g p) /\
+                        wz_at g ph == 0 /\ ~(FL.fl_cell g p) /\
                         (st.swept_tail == 0UL \/ U64.v st.swept_tail + 8 <= U64.v ph)) /\
-                     (st.last_fragment == 0UL ==> p == st.swept_tail /\ FLA.fl_cell g p))))
+                     (st.last_fragment == 0UL ==> p == st.swept_tail /\ FL.fl_cell g p))))
   = open_ctx g0 g fp st c;
     sweep_inv_facts g0 g fp st;
     let p = if st.last_fragment <> 0UL then st.last_fragment else st.swept_tail in
@@ -873,7 +873,7 @@ let merge_setup (g0 g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr)
       let ph = mk_hp_addr (U64.v c - 8) in
       assert (frag_ok g (U64.v c) st.last_fragment);
       W.bnext_facts g ph;
-      (if FLA.fl_cell g p then cell_link_not_pos g p (U64.v c));
+      (if FL.fl_cell g p then cell_link_not_pos g p (U64.v c));
       if st.swept_tail <> 0UL then begin
         cell_pos g st.swept_tail;
         let tq = mk_hp_addr (U64.v st.swept_tail - 8) in
@@ -891,7 +891,7 @@ let mg_tail (g g': heap) (ph c: hp_addr) (w: U64.t)
   : Lemma (requires mg_ctx g g' ph c w)
           (ensures tail_ok g' (W.bnext g c) (U64.add ph mword) /\
                    U64.v (U64.add ph mword) == U64.v ph + 8 /\
-                   FLA.fl_cell g' (U64.add ph mword) /\
+                   FL.fl_cell g' (U64.add ph mword) /\
                    U64.v (U64.add ph mword) + wosize_at g' (U64.add ph mword) * 8 == W.bnext g c)
   = let t' = U64.add ph mword in
     W.bnext_facts g ph;
@@ -899,7 +899,7 @@ let mg_tail (g g': heap) (ph c: hp_addr) (w: U64.t)
     mg_wosize g g' ph c w;
     mg_cells g g' ph c w t';
     let below (x: U64.t)
-      : Lemma (requires FLA.fl_cell g' x /\ U64.v x < W.bnext g c)
+      : Lemma (requires FL.fl_cell g' x /\ U64.v x < W.bnext g c)
               (ensures U64.v x <= U64.v t')
       = mg_cells g g' ph c w x;
         if U64.v x = U64.v ph + 8 then ()
@@ -958,14 +958,14 @@ let case_merge_tail (g0 g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr)
       assert (prev_free g2 st' == true);
       // the list: b is unlinked from after t
       linked_follows_tail g fp c t;
-      let cells (x: U64.t) : Lemma (FLA.fl_cell g2 x <==> (FLA.fl_cell g x /\ x <> b))
+      let cells (x: U64.t) : Lemma (FL.fl_cell g2 x <==> (FL.fl_cell g x /\ x <> b))
         = mg_cells g g2 ph c t x;
           if U64.v x = U64.v c + 8 then assert (x == b)
       in
       FStar.Classical.forall_intro cells;
       FLA.fl_cell_facts g t;
       FLA.fl_cell_facts g b;
-      let links (x: U64.t) : Lemma (requires FLA.fl_cell g x /\ x <> t /\ x <> b)
+      let links (x: U64.t) : Lemma (requires FL.fl_cell g x /\ x <> t /\ x <> b)
                                    (ensures FL.fl_next g2 x == FL.fl_next g x)
         = mg_links g g2 ph c t x
       in
@@ -985,12 +985,12 @@ let case_merge_tail (g0 g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr)
       mg_ends g g1 ph c 0UL;
       mg_tail g g1 ph c 0UL;
       assert (prev_free g1 st' == true);
-      let cells (x: U64.t) : Lemma (FLA.fl_cell g1 x <==> FLA.fl_cell g x)
+      let cells (x: U64.t) : Lemma (FL.fl_cell g1 x <==> FL.fl_cell g x)
         = mg_cells g g1 ph c 0UL x;
           if U64.v x = U64.v c + 8 then assert (x == b)
       in
       FStar.Classical.forall_intro cells;
-      let links (x: U64.t) : Lemma (requires FLA.fl_cell g x) (ensures FL.fl_next g1 x == FL.fl_next g x)
+      let links (x: U64.t) : Lemma (requires FL.fl_cell g x) (ensures FL.fl_next g1 x == FL.fl_next g x)
         = FLA.fl_cell_facts g x;
           cell_link_not_pos g x (U64.v ph)
       in
@@ -1046,7 +1046,7 @@ let case_merge_frag (g0 g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr)
     mg_tail g g3 ph c t;
     assert (prev_free g3 st' == true);
     nm_cells g g c 0UL b;
-    let links (x: U64.t) : Lemma (requires FLA.fl_cell g x /\ x <> t /\ x <> b)
+    let links (x: U64.t) : Lemma (requires FL.fl_cell g x /\ x <> t /\ x <> b)
                                  (ensures FL.fl_next g3 x == FL.fl_next g x)
       = cell_link_not_pos g x (U64.v c);
         mg_links g g3 ph c t x
@@ -1057,7 +1057,7 @@ let case_merge_frag (g0 g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr)
     if linked then begin
       // f takes b's place on the list
       linked_follows_tail g fp c t;
-      let cells (x: U64.t) : Lemma (FLA.fl_cell g3 x <==> ((FLA.fl_cell g x /\ x <> b) \/ x == f))
+      let cells (x: U64.t) : Lemma (FL.fl_cell g3 x <==> ((FL.fl_cell g x /\ x <> b) \/ x == f))
         = mg_cells g g3 ph c t x;
           if U64.v x = U64.v c + 8 then assert (x == b);
           if U64.v x = U64.v ph + 8 then assert (x == f)
@@ -1068,18 +1068,18 @@ let case_merge_frag (g0 g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr)
       sweep_inv_intro g0 g3 fp3 st'
     end else begin
       // f joins the list after t
-      let cells (x: U64.t) : Lemma (FLA.fl_cell g3 x <==> (FLA.fl_cell g x \/ x == f))
+      let cells (x: U64.t) : Lemma (FL.fl_cell g3 x <==> (FL.fl_cell g x \/ x == f))
         = mg_cells g g3 ph c t x;
           if U64.v x = U64.v c + 8 then assert (x == b);
           if U64.v x = U64.v ph + 8 then assert (x == f)
       in
       FStar.Classical.forall_intro cells;
-      let below (x: U64.t) : Lemma (requires FLA.fl_cell g x /\ U64.v x < U64.v f)
+      let below (x: U64.t) : Lemma (requires FL.fl_cell g x /\ U64.v x < U64.v f)
                                    (ensures t <> 0UL /\ U64.v x <= U64.v t)
         = tail_ok_elim g (U64.v c) t
       in
       FStar.Classical.forall_intro (FStar.Classical.move_requires below);
-      let links' (x: U64.t) : Lemma (requires FLA.fl_cell g x /\ x <> t)
+      let links' (x: U64.t) : Lemma (requires FL.fl_cell g x /\ x <> t)
                                     (ensures FL.fl_next g3 x == FL.fl_next g x)
         = links x
       in

@@ -288,8 +288,8 @@ private let darken_keeps_cell
   (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t) (fp: U64.t) (cap: nat) (x: U64.t)
   : Lemma (requires darken_precondition g st roots fp cap)
           (ensures (let g' = fst (MB.darken_roots_bounded_spec g st roots cap) in
-                    (FLA.fl_cell g' x <==> FLA.fl_cell g x) /\
-                    (FLA.fl_cell g x ==> FL.fl_next g' x == FL.fl_next g x)))
+                    (FL.fl_cell g' x <==> FL.fl_cell g x) /\
+                    (FL.fl_cell g x ==> FL.fl_next g' x == FL.fl_next g x)))
   = let g' = fst (MB.darken_roots_bounded_spec g st roots cap) in
     MarkBoundedInv.bounded_mark_inv_elim_wfh g st cap;
     MB.darken_roots_bounded_spec_preserves_objects g st roots cap;

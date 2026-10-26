@@ -159,8 +159,8 @@ let ends_free (g: heap) (c: nat) (b: bool) : prop =
 
 [@@"opaque_to_smt"]
 let tail_ok (g: heap) (c: nat) (t: U64.t) : prop =
-  (t == 0UL \/ (FLA.fl_cell g t /\ U64.v t + wosize_at g t * 8 <= c)) /\
-  (forall (x: U64.t). FLA.fl_cell g x /\ U64.v x < c ==> t <> 0UL /\ U64.v x <= U64.v t)
+  (t == 0UL \/ (FL.fl_cell g t /\ U64.v t + wosize_at g t * 8 <= c)) /\
+  (forall (x: U64.t). FL.fl_cell g x /\ U64.v x < c ==> t <> 0UL /\ U64.v x <= U64.v t)
 
 let frag_ok (g: heap) (c: nat) (f: U64.t) : prop =
   f == 0UL \/
@@ -256,13 +256,13 @@ val ends_free_intro (g: heap) (c: nat) (b: bool)
 
 val tail_ok_elim (g: heap) (c: nat) (t: U64.t)
   : Lemma (requires tail_ok g c t)
-          (ensures (t == 0UL \/ (FLA.fl_cell g t /\ U64.v t + wosize_at g t * 8 <= c)) /\
-                   (forall (x: U64.t). FLA.fl_cell g x /\ U64.v x < c ==>
+          (ensures (t == 0UL \/ (FL.fl_cell g t /\ U64.v t + wosize_at g t * 8 <= c)) /\
+                   (forall (x: U64.t). FL.fl_cell g x /\ U64.v x < c ==>
                       t <> 0UL /\ U64.v x <= U64.v t))
 
 val tail_ok_intro (g: heap) (c: nat) (t: U64.t)
-  : Lemma (requires (t == 0UL \/ (FLA.fl_cell g t /\ U64.v t + wosize_at g t * 8 <= c)) /\
-                    (forall (x: U64.t). FLA.fl_cell g x /\ U64.v x < c ==>
+  : Lemma (requires (t == 0UL \/ (FL.fl_cell g t /\ U64.v t + wosize_at g t * 8 <= c)) /\
+                    (forall (x: U64.t). FL.fl_cell g x /\ U64.v x < c ==>
                        t <> 0UL /\ U64.v x <= U64.v t))
           (ensures tail_ok g c t)
 
@@ -277,7 +277,7 @@ let pos_cell (g: heap) (q: hp_addr) : bool =
 /// A cell is the object of a block at a walk position that is free and has
 /// room for a link.
 val fl_cell_iff (g: heap) (x: U64.t)
-  : Lemma (FLA.fl_cell g x <==>
+  : Lemma (FL.fl_cell g x <==>
            (is_obj x /\ U64.v x >= U64.v zero_addr + 8 /\ pos_cell g (mk_hp_addr (U64.v x - 8))))
 
 /// `wosize_at` is the header's size.
@@ -288,7 +288,7 @@ val wosize_at_hd (g: heap) (x: U64.t)
 /// A cell's link word is never a walk position: it is strictly inside the
 /// cell's own block.
 val cell_link_not_pos (g: heap) (x: U64.t) (q: nat)
-  : Lemma (requires FLA.fl_cell g x /\ W.reaches g zero_addr q)
+  : Lemma (requires FL.fl_cell g x /\ W.reaches g zero_addr q)
           (ensures U64.v x <> q)
 
 /// ---------------------------------------------------------------------------

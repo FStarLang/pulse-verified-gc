@@ -752,11 +752,7 @@ let alloc_spec_preserves_fl_sound (g: heap) (fp: U64.t) (wz: nat)
     AllocLemmas.alloc_spec_only_new_is_obj_out_part1 g fp wz;
     let aux (y: U64.t)
       : Lemma (requires FL.reachable_on_fl r.heap_out r.fp_out y)
-              (ensures FL.fl_node y /\
-                       (U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0) /\
-                       Seq.mem (y <: obj_addr) (objects zero_addr r.heap_out) /\
-                       is_blue (y <: obj_addr) r.heap_out /\
-                       U64.v (wosize_of_object (y <: obj_addr) r.heap_out) >= 1)
+              (ensures FL.fl_node y /\ FL.fl_cell r.heap_out y)
       = reachable_valid_cell r.heap_out r.fp_out y;
         reachable_iff_met r.heap_out r.fp_out y;
         let yo : obj_addr = y in
@@ -790,8 +786,7 @@ let alloc_spec_preserves_fl_complete (g: heap) (fp: U64.t) (wz: nat)
     AllocLemmas.alloc_spec_only_new_is_obj_out_part1 g fp wz;
     AllocProps.alloc_spec_obj_not_blue_part1 g fp wz;
     let aux (x: obj_addr)
-      : Lemma (requires Seq.mem x (objects zero_addr r.heap_out) /\ is_blue x r.heap_out /\
-                        U64.v (wosize_of_object x r.heap_out) >= 1)
+      : Lemma (requires FL.fl_cell r.heap_out x)
               (ensures FL.reachable_on_fl r.heap_out r.fp_out x)
       = // x is not the allocated object, which is white ...
         is_blue_iff x r.heap_out;
@@ -953,9 +948,7 @@ let promote_object_preserves_fl_complete (minor: MH.minor_state) (major: heap) (
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires fr);
     let aux (x: obj_addr)
-      : Lemma (requires Seq.mem x (objects zero_addr res.Promote.major_out) /\
-                        is_blue x res.Promote.major_out /\
-                        U64.v (wosize_of_object x res.Promote.major_out) >= 1)
+      : Lemma (requires FL.fl_cell res.Promote.major_out x)
               (ensures FL.reachable_on_fl res.Promote.major_out res.Promote.fp_out x)
       = assert ((x <: U64.t) <> (dst <: U64.t));
         fr x;
@@ -986,8 +979,7 @@ let rec meeting_transfer_blue (g g': heap) (fp y: U64.t) (n: nat)
                     AllocLemmas.fl_valid g fp (n + 1) /\
                     (forall (o: obj_addr). Seq.mem o (objects zero_addr g) /\ is_blue o g = false ==>
                        AllocLemmas.chain_avoids g fp (o <: U64.t) (n + 1) = true) /\
-                    (forall (a: obj_addr). Seq.mem a (objects zero_addr g) /\ is_blue a g /\
-                       U64.v (wosize_of_object a g) >= 1 ==>
+                    (forall (a: obj_addr). FL.fl_cell g a ==>
                        read_word g' a == read_word g a))
           (ensures meets_at g' fp y n)
           (decreases n)
@@ -1042,15 +1034,13 @@ let update_major_pointers_preserves_fl_complete (major: heap) (fwd: Promote.forw
     Cheney.update_major_pointers_preserves_fl_valid major fwd fp;
     reveal_opaque (`%Promote.chain_objects_blue) (Promote.chain_objects_blue major fp);
     let bf (a: obj_addr) : Lemma
-      (requires Seq.mem a (objects zero_addr major) /\ is_blue a major /\
-                U64.v (wosize_of_object a major) >= 1)
+      (requires FL.fl_cell major a)
       (ensures read_word m' a == read_word major a)
       = hd_address_spec a;
         PU.update_major_pointers_preserves_blue_field major fwd a 0 in
     FStar.Classical.forall_intro (FStar.Classical.move_requires bf);
     let aux (x: obj_addr)
-      : Lemma (requires Seq.mem x (objects zero_addr m') /\ is_blue x m' /\
-                        U64.v (wosize_of_object x m') >= 1)
+      : Lemma (requires FL.fl_cell m' x)
               (ensures FL.reachable_on_fl m' fp x)
       = PU.update_major_pointers_preserves_header major fwd x;
         color_of_object_spec x major; color_of_object_spec x m';
@@ -1134,11 +1124,7 @@ let field_write_preserves_entry (g: heap) (fp: U64.t) (a: obj_addr) (w: hp_addr)
     // soundness: anything on the new chain was on the old one
     let snd (y: U64.t) : Lemma
       (requires FL.reachable_on_fl g' fp y)
-      (ensures FL.fl_node y /\
-               (U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0) /\
-               Seq.mem (y <: obj_addr) (objects zero_addr g') /\
-               is_blue (y <: obj_addr) g' /\
-               U64.v (wosize_of_object (y <: obj_addr) g') >= 1)
+      (ensures FL.fl_node y /\ FL.fl_cell g' y)
       = FL.reachable_is_node g' fp y;
         reachable_iff_met g' fp y;
         (if AllocLemmas.chain_avoids g fp y heap_words then
@@ -1149,8 +1135,7 @@ let field_write_preserves_entry (g: heap) (fp: U64.t) (a: obj_addr) (w: hp_addr)
     FStar.Classical.forall_intro (FStar.Classical.move_requires snd);
     // completeness: every blue cell is still met
     let cmp (x: obj_addr) : Lemma
-      (requires Seq.mem x (objects zero_addr g') /\ is_blue x g' /\
-                U64.v (wosize_of_object x g') >= 1)
+      (requires FL.fl_cell g' x)
       (ensures FL.reachable_on_fl g' fp x)
       = same_sz x;
         FL.fl_complete_elim g fp x;
@@ -1180,11 +1165,7 @@ let fl_valid_cob_gives_sound (g: heap) (fp: U64.t)
   = reveal_opaque (`%Promote.chain_objects_blue) (Promote.chain_objects_blue g fp);
     let snd (y: U64.t) : Lemma
       (requires FL.reachable_on_fl g fp y)
-      (ensures FL.fl_node y /\
-               (U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0) /\
-               Seq.mem (y <: obj_addr) (objects zero_addr g) /\
-               is_blue (y <: obj_addr) g /\
-               U64.v (wosize_of_object (y <: obj_addr) g) >= 1)
+      (ensures FL.fl_node y /\ FL.fl_cell g y)
       = reachable_valid_cell g fp y;
         reachable_iff_met g fp y
     in

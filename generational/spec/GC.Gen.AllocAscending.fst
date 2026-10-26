@@ -23,7 +23,7 @@ module Header = GC.Lib.Header
 /// ---------------------------------------------------------------------------
 
 private let cell_elim (g: heap) (x: U64.t)
-  : Lemma (requires FLA.fl_cell g x)
+  : Lemma (requires FL.fl_cell g x)
           (ensures U64.v x >= U64.v mword /\ U64.v x < heap_size /\ U64.v x % U64.v mword == 0 /\
                    Seq.mem (x <: obj_addr) (objects zero_addr g) /\ is_blue (x <: obj_addr) g /\
                    U64.v (wosize_of_object (x <: obj_addr) g) >= 1)
@@ -34,7 +34,7 @@ private let cell_elim (g: heap) (x: U64.t)
 private let cell_same_header (g g': heap) (x: obj_addr)
   : Lemma (requires read_word g' (hd_address x) == read_word g (hd_address x) /\
                     (Seq.mem x (objects zero_addr g') <==> Seq.mem x (objects zero_addr g)))
-          (ensures FLA.fl_cell g' (x <: U64.t) <==> FLA.fl_cell g (x <: U64.t))
+          (ensures FL.fl_cell g' (x <: U64.t) <==> FL.fl_cell g (x <: U64.t))
   = color_of_object_spec x g; color_of_object_spec x g';
     is_blue_iff x g; is_blue_iff x g';
     wosize_of_object_spec x g; wosize_of_object_spec x g'
@@ -61,7 +61,7 @@ private let two_objects_apart (g: heap) (a b: obj_addr)
 /// Relinking `prev` leaves every header alone.
 #push-options "--z3rlimit 30"
 private let prev_write_header (g: heap) (prev: U64.t) (v: U64.t) (a: obj_addr)
-  : Lemma (requires FLA.fl_cell g prev /\ Seq.mem a (objects zero_addr g))
+  : Lemma (requires FL.fl_cell g prev /\ Seq.mem a (objects zero_addr g))
           (ensures read_word (write_word g (prev <: hp_addr) v) (hd_address a) ==
                    read_word g (hd_address a))
   = cell_elim g prev;
@@ -172,13 +172,13 @@ let found_heap (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) : GTot heap =
 /// Cells after the found arm: the old ones, minus `obj` unless it split.
 #push-options "--z3rlimit 60"
 private let found_cells (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (x: U64.t)
-  : Lemma (requires well_formed_heap_part1 g /\ FLA.fl_cell g (obj <: U64.t) /\ wz >= 1 /\
+  : Lemma (requires well_formed_heap_part1 g /\ FL.fl_cell g (obj <: U64.t) /\ wz >= 1 /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     U64.v (hd_address obj) + (U64.v (wosize_of_object obj g) - wz) * 8 + 8 < heap_size /\
-                    (prev = 0UL \/ (FLA.fl_cell g prev /\ prev <> (obj <: U64.t))))
+                    (prev = 0UL \/ (FL.fl_cell g prev /\ prev <> (obj <: U64.t))))
           (ensures (let lo = U64.v (wosize_of_object obj g) - wz in
-                    FLA.fl_cell (found_heap g prev obj wz) x <==>
-                    (FLA.fl_cell g x /\ (x <> (obj <: U64.t) \/ lo >= 2))))
+                    FL.fl_cell (found_heap g prev obj wz) x <==>
+                    (FL.fl_cell g x /\ (x <> (obj <: U64.t) \/ lo >= 2))))
   = let next = read_word g obj in
     let new_fp = alloc_replacement_fp g obj wz next in
     let gw = if prev = 0UL then g else write_word g (prev <: hp_addr) new_fp in
@@ -225,11 +225,11 @@ private let found_cells (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (x: U6
 #push-options "--z3rlimit 60"
 private let found_case (g: heap) (head prev: U64.t) (obj: obj_addr) (wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\ FLA.fl_ascending g head /\
-                    FLA.fl_cell g (obj <: U64.t) /\ wz >= 1 /\
+                    FL.fl_cell g (obj <: U64.t) /\ wz >= 1 /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     U64.v (hd_address obj) + (U64.v (wosize_of_object obj g) - wz) * 8 + 8 < heap_size /\
                     ((prev = 0UL /\ (obj <: U64.t) == head) \/
-                     (FLA.fl_cell g prev /\ FL.fl_next g prev == (obj <: U64.t))))
+                     (FL.fl_cell g prev /\ FL.fl_next g prev == (obj <: U64.t))))
           (ensures (let new_fp = alloc_replacement_fp g obj wz (read_word g obj) in
                     FLA.fl_ascending (found_heap g prev obj wz)
                                      (if prev = 0UL then new_fp else head)))
@@ -254,7 +254,7 @@ private let found_case (g: heap) (head prev: U64.t) (obj: obj_addr) (wz: nat)
     FStar.Classical.forall_intro (FStar.Classical.move_requires (found_cells g prev obj wz));
     // links: every cell but prev (and obj, unless it split) keeps its link
     let link (a: U64.t)
-      : Lemma (requires FLA.fl_cell g a /\ a <> prev /\ (lo >= 2 \/ a <> (obj <: U64.t)))
+      : Lemma (requires FL.fl_cell g a /\ a <> prev /\ (lo >= 2 \/ a <> (obj <: U64.t)))
               (ensures FL.fl_next g2 a == FL.fl_next g a)
       = cell_elim g a;
         FLA.fl_cell_facts g a;
@@ -268,12 +268,12 @@ private let found_case (g: heap) (head prev: U64.t) (obj: obj_addr) (wz: nat)
        assert (FL.fl_next g2 prev == new_fp)
      end);
     if lo >= 2 then begin
-      assert (forall (x: U64.t). FLA.fl_cell g2 x <==> FLA.fl_cell g x);
+      assert (forall (x: U64.t). FL.fl_cell g2 x <==> FL.fl_cell g x);
       FLA.fl_ascending_transfer g g2 head;
       assert (fp2 == head)
     end
     else begin
-      assert (forall (x: U64.t). FLA.fl_cell g2 x <==> (FLA.fl_cell g x /\ x <> (obj <: U64.t)));
+      assert (forall (x: U64.t). FL.fl_cell g2 x <==> (FL.fl_cell g x /\ x <> (obj <: U64.t)));
       FLA.fl_ascending_remove g g2 head fp2 prev (obj <: U64.t)
     end
 #pop-options
@@ -286,7 +286,7 @@ private let found_case (g: heap) (head prev: U64.t) (obj: obj_addr) (wz: nat)
 private let rec search_asc (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires well_formed_heap_part1 g /\ FLA.fl_ascending g head /\ wz >= 1 /\
                     ((prev = 0UL /\ cur == head) \/
-                     (FLA.fl_cell g prev /\ FL.fl_next g prev == cur)))
+                     (FL.fl_cell g prev /\ FL.fl_next g prev == cur)))
           (ensures (let r = alloc_search g head prev cur wz fuel in
                     FLA.fl_ascending r.heap_out r.fp_out))
           (decreases fuel)
@@ -298,7 +298,7 @@ private let rec search_asc (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat
       // cur is a cell: the head, or the link of a cell
       (if prev = 0UL then FLA.fl_ascending_head_cell g head
        else FLA.fl_ascending_next_cell g head prev);
-      assert (FLA.fl_cell g cur);
+      assert (FL.fl_cell g cur);
       cell_elim g cur;
       let obj : obj_addr = cur in
       hd_address_spec obj;

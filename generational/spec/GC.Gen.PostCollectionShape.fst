@@ -40,7 +40,7 @@ let major_gc_restores_major_heap_shape major h_mark roots fp =
                       U64.v (wosize_of_object src g) >= 1 /\
                       U64.v (hd_address src) + 16 <= heap_size)
             (ensures (let v = read_word g src in v = 0UL \/ HeapGraph.is_pointer_field v))
-    = assert (FLA.fl_cell g (src <: U64.t));
+    = assert (FL.fl_cell g (src <: U64.t));
       FLA.fl_ascending_next_cell g fp' (src <: U64.t);
       let n = FL.fl_next g (src <: U64.t) in
       if n <> 0UL then FLA.fl_cell_facts g n

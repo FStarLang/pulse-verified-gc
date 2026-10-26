@@ -835,7 +835,7 @@ let spot_ns_fl_ascending (r: unit{spot_ns_room})
   =
   let g = spot_ns_heap r in
   let only (x: U64.t)
-    : Lemma (requires FLA.fl_cell g x) (ensures x == spot_ns_fp r)
+    : Lemma (requires FL.fl_cell g x) (ensures x == spot_ns_fp r)
     =
     spot_ns_object_cases r x; spot_ns_s_reads r; spot_ns_free_reads r; spot_ns_layout_facts r
   in

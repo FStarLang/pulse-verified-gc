@@ -1034,7 +1034,7 @@ let spot_infix_fl_ascending (r: unit{spot_infix_room})
   =
   let g = spot_infix_heap r in
   let only (x: U64.t)
-    : Lemma (requires FLA.fl_cell g x) (ensures x == spot_infix_fp r)
+    : Lemma (requires FL.fl_cell g x) (ensures x == spot_infix_fp r)
     =
     spot_infix_object_cases r x; spot_infix_q_reads r; spot_infix_p_reads r; spot_infix_free_reads r; spot_infix_layout_facts r
   in

@@ -46,10 +46,10 @@ let fl_ascending_next_cell g fp c = fl_ascending_next g fp c
 
 /// The cells of `g'` are those of `g`, less `r`, plus `a` when `has_a`.
 let cells_eq (g g': heap) (r a: U64.t) (has_a: bool) : prop =
-  forall (x: U64.t). fl_cell g' x <==> ((fl_cell g x /\ x <> r) \/ (has_a /\ x == a))
+  forall (x: U64.t). FL.fl_cell g' x <==> ((FL.fl_cell g x /\ x <> r) \/ (has_a /\ x == a))
 
 private let fcf_same (g g': heap) (lo: nat) (n: U64.t)
-  : Lemma (requires first_cell_from g lo n /\ (forall (x: U64.t). fl_cell g' x <==> fl_cell g x))
+  : Lemma (requires first_cell_from g lo n /\ (forall (x: U64.t). FL.fl_cell g' x <==> FL.fl_cell g x))
           (ensures first_cell_from g' lo n)
   = ()
 
@@ -64,7 +64,7 @@ private let fcf_mod (g g': heap) (lo: nat) (n r a: U64.t) (has_a: bool)
 /// No cell between `lo1` and `lo2`: the first cell is the same from either.
 private let fcf_shift (g: heap) (lo1 lo2: nat) (n: U64.t)
   : Lemma (requires first_cell_from g lo1 n /\ lo1 <= lo2 /\
-                    (forall (x: U64.t). fl_cell g x /\ lo1 <= U64.v x ==> lo2 <= U64.v x))
+                    (forall (x: U64.t). FL.fl_cell g x /\ lo1 <= U64.v x ==> lo2 <= U64.v x))
           (ensures first_cell_from g lo2 n)
   = ()
 
@@ -73,7 +73,7 @@ private let fcf_shift (g: heap) (lo1 lo2: nat) (n: U64.t)
 private let fcf_skip (g g': heap) (lo: nat) (b n a: U64.t) (has_a: bool)
   : Lemma (requires first_cell_from g (U64.v b + 1) n /\ cells_eq g g' b a has_a /\
                     lo <= U64.v b /\
-                    (forall (x: U64.t). fl_cell g x /\ lo <= U64.v x ==> U64.v b <= U64.v x) /\
+                    (forall (x: U64.t). FL.fl_cell g x /\ lo <= U64.v x ==> U64.v b <= U64.v x) /\
                     (has_a ==> U64.v a < lo))
           (ensures first_cell_from g' lo n)
   = ()
@@ -81,7 +81,7 @@ private let fcf_skip (g g': heap) (lo: nat) (b n a: U64.t) (has_a: bool)
 /// The added cell `a` is the first one from `lo`.
 private let fcf_new (g g': heap) (lo: nat) (r a: U64.t)
   : Lemma (requires cells_eq g g' r a true /\ lo <= U64.v a /\
-                    (forall (x: U64.t). fl_cell g x /\ lo <= U64.v x /\ x <> r ==>
+                    (forall (x: U64.t). FL.fl_cell g x /\ lo <= U64.v x /\ x <> r ==>
                        U64.v a <= U64.v x))
           (ensures first_cell_from g' lo a)
   = ()
@@ -94,7 +94,7 @@ let fl_ascending_transfer g g' fp =
   fl_ascending_head g fp;
   fcf_same g g' 0 fp;
   let aux (c: U64.t)
-    : Lemma (requires fl_cell g' c)
+    : Lemma (requires FL.fl_cell g' c)
             (ensures first_cell_from g' (U64.v c + 1) (FL.fl_next g' c))
     = fl_ascending_next g fp c;
       fcf_same g g' (U64.v c + 1) (FL.fl_next g c)
@@ -109,7 +109,7 @@ let fl_ascending_insert g g' fp fp' t b =
   (if t = 0UL then fcf_new g g' 0 b b
    else fcf_mod g g' 0 fp b b true);
   let aux (c: U64.t)
-    : Lemma (requires fl_cell g' c)
+    : Lemma (requires FL.fl_cell g' c)
             (ensures first_cell_from g' (U64.v c + 1) (FL.fl_next g' c))
     = if c = b then begin
         let n = if t = 0UL then fp else FL.fl_next g t in
@@ -124,7 +124,7 @@ let fl_ascending_insert g g' fp fp' t b =
         fcf_new g g' (U64.v t + 1) b b
       end
       else begin
-        assert (fl_cell g c);
+        assert (FL.fl_cell g c);
         fl_ascending_next g fp c;
         let n = FL.fl_next g c in
         if U64.v c < U64.v b then begin
@@ -151,9 +151,9 @@ let fl_ascending_remove g g' fp fp' t b =
      fcf_mod g g' 0 fp b b false
    end);
   let aux (c: U64.t)
-    : Lemma (requires fl_cell g' c)
+    : Lemma (requires FL.fl_cell g' c)
             (ensures first_cell_from g' (U64.v c + 1) (FL.fl_next g' c))
-    = assert (fl_cell g c);
+    = assert (FL.fl_cell g c);
       fl_ascending_next g fp c;
       if t <> 0UL && c = t then begin
         fl_ascending_next g fp b;
@@ -182,19 +182,19 @@ let fl_ascending_replace g g' fp fp' t b f =
   fl_ascending_next g fp b;
   (if t <> 0UL then fl_ascending_next g fp t);
   // Every cell of `g` past `t` is at or above `b`.
-  assert (forall (x: U64.t). fl_cell g x /\ (t == 0UL \/ U64.v t + 1 <= U64.v x) ==>
+  assert (forall (x: U64.t). FL.fl_cell g x /\ (t == 0UL \/ U64.v t + 1 <= U64.v x) ==>
             U64.v b <= U64.v x);
   (if t = 0UL then fcf_new g g' 0 b f
    else fcf_mod g g' 0 fp b f true);
   let aux (c: U64.t)
-    : Lemma (requires fl_cell g' c)
+    : Lemma (requires FL.fl_cell g' c)
             (ensures first_cell_from g' (U64.v c + 1) (FL.fl_next g' c))
     = if c = f then
         fcf_skip g g' (U64.v f + 1) b (FL.fl_next g b) f true
       else if t <> 0UL && c = t then
         fcf_new g g' (U64.v t + 1) b f
       else begin
-        assert (fl_cell g c);
+        assert (FL.fl_cell g c);
         fl_ascending_next g fp c;
         let n = FL.fl_next g c in
         if t <> 0UL && U64.v c < U64.v t then begin
@@ -217,8 +217,8 @@ let fl_ascending_replace g g' fp fp' t b f =
 
 #push-options "--fuel 1 --ifuel 0"
 private let rec sound_from (g: heap) (fp p obj: U64.t) (n: nat)
-  : Lemma (requires fl_ascending g fp /\ (p == 0UL \/ fl_cell g p) /\ FL.on_fl g p obj n)
-          (ensures fl_cell g obj)
+  : Lemma (requires fl_ascending g fp /\ (p == 0UL \/ FL.fl_cell g p) /\ FL.on_fl g p obj n)
+          (ensures FL.fl_cell g obj)
           (decreases n)
   = if n = 0 then ()
     else if not (FL.fl_node p) then ()
@@ -234,7 +234,7 @@ private let sound (g: heap) (fp: U64.t)
   = fl_ascending_head_cell g fp;
     let aux (obj: U64.t)
       : Lemma (requires FL.reachable_on_fl g fp obj)
-              (ensures fl_cell g obj /\ FL.fl_node obj)
+              (ensures FL.fl_cell g obj /\ FL.fl_node obj)
       = eliminate exists (n: nat). FL.on_fl g fp obj n
         with (sound_from g fp fp obj n; fl_cell_facts g obj)
     in
@@ -242,7 +242,7 @@ private let sound (g: heap) (fp: U64.t)
 
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 30"
 private let rec complete_from (g: heap) (fp: U64.t) (lo: nat) (c y: U64.t)
-  : Lemma (requires fl_ascending g fp /\ first_cell_from g lo c /\ fl_cell g y /\ lo <= U64.v y)
+  : Lemma (requires fl_ascending g fp /\ first_cell_from g lo c /\ FL.fl_cell g y /\ lo <= U64.v y)
           (ensures FL.reachable_on_fl g c y)
           (decreases (if U64.v y >= U64.v c then U64.v y - U64.v c else 0))
   = assert (c <> 0UL);
@@ -261,10 +261,9 @@ private let complete (g: heap) (fp: U64.t)
   : Lemma (requires fl_ascending g fp) (ensures FL.fl_complete g fp)
   = fl_ascending_head g fp;
     let aux (obj: obj_addr)
-      : Lemma (requires Seq.mem obj (objects zero_addr g) /\ is_blue obj g /\
-                        U64.v (wosize_of_object obj g) >= 1)
+      : Lemma (requires FL.fl_cell g obj)
               (ensures FL.reachable_on_fl g fp obj)
-      = assert (fl_cell g (obj <: U64.t));
+      = assert (FL.fl_cell g (obj <: U64.t));
         complete_from g fp 0 fp (obj <: U64.t)
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
@@ -289,7 +288,7 @@ private let fuel_step (p n: nat)
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 40"
 private let rec walk (g: heap) (fp p: U64.t) (fuel: nat)
   : Lemma (requires fl_ascending g fp /\
-                    (p == 0UL \/ (fl_cell g p /\ (heap_size - U64.v p) / 8 <= fuel)))
+                    (p == 0UL \/ (FL.fl_cell g p /\ (heap_size - U64.v p) / 8 <= fuel)))
           (ensures AllocLemmas.fl_valid g p fuel /\ AllocLemmas.fl_chain_terminates g p fuel)
           (decreases fuel)
   = if p = 0UL then begin
@@ -325,7 +324,7 @@ let fl_ascending_valid g fp =
 
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 30"
 private let rec avoids_from (g: heap) (fp p x: U64.t) (n: nat)
-  : Lemma (requires fl_ascending g fp /\ (p == 0UL \/ fl_cell g p) /\ ~(fl_cell g x))
+  : Lemma (requires fl_ascending g fp /\ (p == 0UL \/ FL.fl_cell g p) /\ ~(FL.fl_cell g x))
           (ensures AllocLemmas.chain_avoids g p x n = true)
           (decreases n)
   = if p = 0UL then AllocChain.chain_avoids_null g x n
@@ -348,7 +347,7 @@ let fl_ascending_avoids g fp x n =
 
 let fl_ascending_null g =
   let aux (c: U64.t)
-    : Lemma (requires fl_cell g c)
+    : Lemma (requires FL.fl_cell g c)
             (ensures first_cell_from g (U64.v c + 1) (FL.fl_next g c))
     = ()
   in
