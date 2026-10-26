@@ -60,13 +60,12 @@ a wosize-0 fragment, which the previous ones could not.
 
 | claim | where |
 |---|---|
-| Sweep never makes an unlinkable (wosize-0) block the list head | `sweep_object`, `GC.Spec.Sweep.fsti` |
+| The sweep never links an unlinkable (wosize-0) block: it is a fragment, merged into a neighbour as soon as one is free | `last_fragment`, `GC.Spec.FusedSweep` |
 | The free list is exactly the blue blocks that can carry a link: `fl_sound` (every list node is such a block) and `fl_complete` (every such block is on the list), together `fl_exact` | `GC.Spec.FreeList.fst` |
 | Every heap word is counted exactly once: on a swept heap, allocated + free cells + fragments (in whsize, header included) cover the whole walk; with `fl_complete`, the free cells are exactly the ones on the list, so nothing is free but unreachable | `heap_partition_swept`, `heap_partition_strong`, `GC.Spec.Partition.fst` |
 | Allocation is exact, and conserves words: the object gets exactly `wz`, and the remainder plus fragment account for the rest | `alloc_from_block_exact` (`GC.Spec.Allocator.fsti`), `alloc_from_block_accounting` (`GC.Spec.Partition.fst`) |
 | The only object an allocation creates is the allocated one | `alloc_from_block_only_new_is_alloc`, `GC.Spec.Allocator.Lemmas.Part2.fst` |
-| Coalescing produces a free list that is complete, and the partition holds after it | `coalesce_complete`, `fused_partition`, `GC.Spec.Coalesce.Complete.fst` |
-| After a full collection the free list is exact | `coalesce_exact`, `fused_exact`, `GC.Spec.Coalesce.Complete.fst` |
+| After a full collection the free list is exact and ascending, and the partition holds | `fused_exact`, `fused_partition`, `GC.Spec.FusedSweep.Facts.fst` (from the sweep's invariant, `GC.Spec.FusedSweep.End`) |
 
 `linkable_heap`, the previous assumption that every blue object is linkable,
 is gone. A wosize-0 fragment falsifies it, and it was assumed, never
@@ -128,7 +127,7 @@ proves what that second failure means:
 | lemma | says |
 |---|---|
 | `alloc_spec_oom_no_fit` | if `alloc_spec` returns no object on a well-formed heap whose free list is valid, terminates and is complete, then every blue block is smaller than the request |
-| `fused_oom_no_fit` | the coalescer's output meets those hypotheses, and so does the fused pass's heap, which agrees with it modulo free-block bodies; so on the heap the collector produces (`fused_sweep_coalesce`, under the hypotheses `GC.Impl.fst` discharges), a failed allocation means **no free block anywhere is big enough** |
+| `fused_oom_no_fit` | the fused sweep's output meets those hypotheses (its list is exact and ascending); so on the heap the collector produces (`fused_sweep_coalesce`, under the hypotheses `GC.Impl.fst` discharges), a failed allocation means **no free block anywhere is big enough** |
 
 It does not say the heap is full. Fragmentation can still make an allocation
 fail with enough free words in total, spread over blocks that are each too
@@ -175,7 +174,6 @@ An exact free list comes from:
 
 | starting point | lemma |
 |---|---|
-| a coalesced swept heap | `coalesce_entry` |
 | the pass the collector runs | `fused_entry` |
 | any heap satisfying the collector's invariant, i.e. anything `gen_gc` or `minor_collect_full` returns | `major_heap_shape_gives_entry` |
 
@@ -185,7 +183,7 @@ re-establish it:
 
 | who changes the major heap | why the free list stays exact |
 |---|---|
-| full collection (`gen_gc`) | `coalesce_exact` (`GC.Gen.PostCollectionShape`) |
+| full collection (`gen_gc`) | the fused sweep's end lemma (`GC.Gen.PostCollectionShape`); the sweep needs, and keeps, the list ascending, which the allocator (`GC.Gen.AllocAscending`) and the minor collection (`GC.Gen.FreeListAscending`) also keep |
 | minor collection: promotion | each `promote_object` is an allocation (§8) followed by writes inside the promoted object (`promote_object_preserves_fl_complete`), carried through the Cheney traversal by `GC.Gen.CheneyFlComplete` |
 | minor collection: pointer rewrite | it changes no header and no field of a blue block (`update_major_pointers_preserves_fl_complete`) |
 | direct allocation | §8 (`alloc_spec_preserves_entry`) |

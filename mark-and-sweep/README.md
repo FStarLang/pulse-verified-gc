@@ -14,13 +14,19 @@ mark-and-sweep/
 │   ├── GC.Spec.SweepInv.fst[i]      # Sweep invariant spec
 │   ├── GC.Spec.MarkInv.fst[i]       # Mark invariant spec
 │   ├── GC.Spec.Mark.fst             # Mark phase spec + lemmas
-│   ├── GC.Spec.Sweep.fst            # Sweep phase spec + lemmas
+│   ├── GC.Spec.Walk.fst[i]          # Positions of the object walk
+│   ├── GC.Spec.FreeList.Ascending.fst[i] # The free list: every cell, ascending
+│   ├── GC.Spec.FusedSweep.fst       # The sweep: state, step, pass
+│   ├── GC.Spec.FusedSweep.Inv.fst[i]  # Its loop invariant + start lemma
+│   ├── GC.Spec.FusedSweep.Step.fst[i] # One step keeps it (one lemma per case)
+│   ├── GC.Spec.FusedSweep.End.fst[i]  # What the sweep leaves behind
+│   ├── GC.Spec.FusedSweep.Facts.fst # fused_exact / _partition / _sweep_correct
 │   ├── GC.Spec.Correctness.fst[i]   # END-TO-END THEOREM
 ├── impl/                             # Pulse implementation modules
 │   ├── GC.Impl.Fields.fst           # Field access, successors
 │   ├── GC.Impl.MarkBounded.fst      # Bounded-stack mark phase
 │   ├── GC.Impl.Sweep.Lemmas.fst[i]  # Sweep bridge lemmas
-│   ├── GC.Impl.FusedSweepCoalesce.fst  # Fused sweep + coalesce pass
+│   ├── GC.Impl.FusedSweepCoalesce.fst  # The sweep (merging, in-place list)
 │   ├── GC.Impl.Allocator.fst        # Free-list allocator
 │   └── GC.Impl.fst                  # Top-level GC entry point
 ├── Makefile

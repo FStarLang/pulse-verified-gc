@@ -12,10 +12,10 @@ Verified OCaml garbage collector formalized in **F\*** and **Pulse** (concurrent
   `GC.Impl.Stack`, `GC.Impl.ArrayWord`). `.fsti` interfaces exist for Base, Heap, Object,
   ZeroAddr, Stack, ArrayWord.
 - **mark-and-sweep/** — Sequential stop-the-world GC. `spec/` = `GC.Spec.Mark*`,
-  `GC.Spec.Sweep*`, `GC.Spec.Coalesce`, `GC.Spec.SweepCoalesce.*`, the free-list
-  `GC.Spec.Allocator*` family, and `GC.Spec.Correctness`. `impl/` = the Pulse
-  implementation (`GC.Impl`, `GC.Impl.MarkBounded`, `GC.Impl.Allocator`,
-  `GC.Impl.Coalesce`, `GC.Impl.FusedSweepCoalesce`, `GC.Impl.Fields`).  It has no
+  `GC.Spec.FusedSweep*` (the sweep, its invariant and end lemma), `GC.Spec.Walk`,
+  `GC.Spec.FreeList*`, the `GC.Spec.Allocator*` family, and `GC.Spec.Correctness`.
+  `impl/` = the Pulse implementation (`GC.Impl`, `GC.Impl.MarkBounded`,
+  `GC.Impl.Allocator`, `GC.Impl.FusedSweepCoalesce`, `GC.Impl.Fields`).  It has no
   extraction target of its own: the generational collector runs this code for its
   major collections, so `generational/snapshot/` is the only checked-in C.
 - **generational/** — Minor/major generational GC with Cheney copying collection.
@@ -159,12 +159,12 @@ skipped during marking and during Cheney scanning.
 ### Mark-and-Sweep phases
 1. Mark — DFS/BFS from roots, `White → Gray → Black` (`GC.Spec.Mark`,
    `GC.Spec.MarkBounded` for the fuel-bounded variant used by the implementation).
-2. Sweep — reclaim `White` objects onto the free list, reset `Black → White`
-   (`GC.Spec.Sweep`).
-3. Coalesce — merge adjacent free (`Blue`) blocks (`GC.Spec.Coalesce`); the
-   implementation fuses sweep and coalesce in one pass (`GC.Spec.SweepCoalesce`,
-   `GC.Impl.FusedSweepCoalesce`).
-4. Allocate — first-fit search of the free list with block splitting
+2. Sweep — one pass (`GC.Spec.FusedSweep`, `GC.Impl.FusedSweepCoalesce`):
+   reset `Black → White`, free `White` objects, and merge adjacent free (`Blue`)
+   blocks eagerly, editing the ascending free list in place
+   (`GC.Spec.FreeList.Ascending`).  Proved by a per-step loop invariant
+   (`GC.Spec.FusedSweep.Inv/Step/End`).
+3. Allocate — first-fit search of the free list with block splitting
    (`GC.Spec.Allocator` + the `GC.Spec.Allocator.Lemmas.*` family).
 
 ### Generational phases
@@ -196,15 +196,10 @@ preservation.
 - `fl_sound` (every cell is a blue heap object) / `fl_complete` (every blue heap
   object is a cell) / `fl_exact` (both).
 
-`GC.Spec.FreeList.Sweep` proves `sweep_preserves_fl_exact`,
-`sweep_establishes_fl_exact` (from a heap with no blue blocks and a null `fp`,
-so the invariant is reachable and preservation is not vacuous) and
-`fl_exact_blue_blocks` (exactness restated against `blue_blocks`).
-
-The step proof is self-supporting: soundness says every cell is blue, so a step
-on a *non*-blue object cannot write a cell's link word. That discharges write
-locality via the existing `sweep_object_preserves_other_body_read` — no new
-aliasing reasoning is needed.
+`GC.Spec.FreeList.Ascending.fl_ascending` is the form the collector keeps:
+the list is every cell of the heap in address order.  It implies `fl_exact`,
+`fl_valid` and `fl_chain_terminates`, and it is local, so the sweep's steps and
+the allocator keep it with insert/remove/replace lemmas.
 
 **Standing side condition — `linkable_heap`.** Every heap object must have room
 for a link word (`wosize >= 1` and field 1 inside the heap). This is *not*
@@ -455,7 +450,7 @@ Idioms used in this repository:
 | fuel-driven `while (!go)` | `U64.v !fuel_ref + (if !go then 1 else 0)` |
 
 For a heap walk the loop body must be shown to *strictly* advance the cursor.  Where the
-body is a separate `fn` (e.g. `GC.Impl.FusedSweepCoalesce.fused_step`) the strict increase has to
+body is a separate `fn` (e.g. `GC.Impl.FusedSweepCoalesce.sweep_step_impl`) the strict increase has to
 be added to that function's postcondition (`U64.v v1 > U64.v 'v0`).
 
 **Worklist loops with no concrete counter** (the bounded mark loops in

@@ -8,8 +8,12 @@ does) and [`docs/bloat-analysis.md`](docs/bloat-analysis.md) (what has already b
 trimmed and why). Where those documents describe the artefact, this one describes the
 *argument* and its cost.
 
-Every number below is measured against the tree as it stands. §9 says how to reproduce
-them.
+Every number below was measured against the tree before the sweep refactor (the
+one-pass sweep with an ascending, in-place free list; see `DESIGN_AND_IMPL.md`), which
+deleted `GC.Spec.Sweep`, `GC.Spec.Coalesce*`, `GC.Spec.SweepCoalesce*` and
+`GC.Spec.HeapAgree` and proves the sweep by a per-step invariant instead
+(`GC.Spec.FusedSweep.*`, about 2,000 lines).  The sections on those modules are
+historical.  §9 says how to reproduce the measurements.
 
 ---
 
@@ -99,21 +103,17 @@ Everything above this line is representation; everything below is algorithm. The
 correctness statement is phrased over the graph, so every algorithmic step must be
 pushed back through `create_graph`.
 
-### 2.3 The major collector: mark → sweep → coalesce
+### 2.3 The major collector: mark → sweep
 
-- **`mark`** (`GC.Spec.Mark.fsti:196`) = `mark_aux g st heap_words`: a fuel-indexed
+- **`mark`** (`GC.Spec.Mark.fsti`) = `mark_aux g st heap_words`: a fuel-indexed
   worklist that grays children and blackens parents.
-- **`sweep`** (`GC.Spec.Sweep.fsti:77`): one linear walk; black → white (survives),
-  white → blue and threaded onto the free list.
-- **`coalesce`** (`GC.Spec.Coalesce.fst:123`): merge maximal runs of adjacent blue
-  blocks.
+- **`fused_sweep_coalesce`** (`GC.Spec.FusedSweep`): one walk of steps over the current
+  heap; black → white (survives), dead blocks freed and merged eagerly into their free
+  neighbour, the ascending free list edited in place.
 
-The implementation fuses sweep and coalesce into one heap pass. `GC.Spec.SweepCoalesce*`
-exists purely to prove that `fused_sweep_coalesce g` and
-`coalesce (fst (sweep g fp))` have the same free pointer and agree modulo free-block
-bodies (`fused_agrees_sweep_coalesce`, with `GC.Spec.HeapAgree` carrying the
-theorems across) so that the rest of the proof can keep using the clean
-two-pass composition.
+The proof is a loop invariant on the step (`GC.Spec.FusedSweep.Inv`), kept by one
+lemma per case (`.Step`), and an end lemma (`.End`) from which the top-level
+theorems are read directly -- there is no two-pass reference composition.
 
 ### 2.4 The top theorem, and its five pillars
 

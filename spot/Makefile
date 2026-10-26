@@ -110,7 +110,8 @@ SPOT_SRC = \
   GC.SPOT.NoScanMajor.fsti \
   GC.SPOT.NoScanMajor.fst \
   GC.SPOT.NoScanMinor.fsti \
-  GC.SPOT.NoScanMinor.fst
+  GC.SPOT.NoScanMinor.fst \
+  GC.SPOT.FusedSweepSteps.fst
 
 # All checked files land in one shared cache, so targets are derived from the
 # module file name alone.

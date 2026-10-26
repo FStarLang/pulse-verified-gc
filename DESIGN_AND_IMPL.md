@@ -597,108 +597,89 @@ The major collector also exports graph-isomorphism flavored consequences:
 These are the bridge to the generational proof, where graph isomorphism becomes
 the main correctness language.
 
-### Sweep and free-object coalescing
+### The sweep: one pass, eager merging, an ascending list kept across cycles
 
 After marking completes there are no gray objects: black objects are the live
-major-heap objects, while white objects are unreachable. The sweep phase resets
-black survivors to white and turns unreachable objects into blue free blocks.
-To reduce fragmentation, the implementation does not leave one free-list entry
-per dead object. It coalesces adjacent blue objects into one larger blue block
-and builds a fresh free list from those merged blocks.
+major-heap objects, while white objects are unreachable. The sweep turns black
+survivors white, frees unreachable objects, and merges every run of adjacent
+free blocks into one -- in a single pass, as OCaml 4.14's first-fit sweep does
+it.
 
-The pure coalescing spec is `GC.Spec.Coalesce`. It walks the post-sweep object
-list in address order and carries a pending blue run:
+**The free list is ascending and kept across cycles.** The sweep edits it in
+place rather than rebuilding it. It walks the heap upwards with a cursor, so the
+list splits at the cursor: behind it the blocks already swept, ending at
+`swept_tail`; in front of it the list as marking left it. The block after
+`swept_tail` on the list is always the first list block at or above the
+cursor, so appending a new free block costs one link write, and unlinking a
+block that gets merged costs one.
 
-```fstar
-let rec coalesce_aux (g0: heap) (g: heap) (objs: seq obj_addr)
-    (first_blue: U64.t) (run_words: nat) (fp: U64.t)
-  : GTot (heap & U64.t)
-```
-
-`g0` is the frozen heap used for color and size decisions; `g` is the heap being
-rewritten. A blue object extends the pending run by `wosize + 1` words, counting
-the header. A white survivor ends the run: `flush_blue` writes one merged blue
-header at the first object's header address, stores the previous free-list head
-in field 1 when the merged block has room for a link, leaves the remaining
-payload words alone, and returns the first object of the run as the new
-free-list head. A zero-word run is a no-op, and a one-word run can only be represented as
-a header-only blue block because it has no field in which to store a free-list
-link.
-
-The Pulse implementation uses the fused entry point
-`GC.Impl.FusedSweepCoalesce.fused_sweep_coalesce`, which performs sweep and
-coalescing in one heap traversal. It keeps the same pending-run state
-`(first_blue, run_words, fp)` but checks colors and sizes against the original
-marked heap:
+The specification is `GC.Spec.FusedSweep`. Its state between steps is
 
 ```fstar
-let rec fused_aux (g0: heap) (g: heap) (objs: seq obj_addr)
-    (fb: U64.t) (rw: nat) (fp: U64.t)
-  : GTot (heap & U64.t) =
-  if Seq.length objs = 0 then
-    flush_blue g fb rw fp
-  else if is_black (Seq.head objs) g0 then
-    let (g', fp') = flush_blue g fb rw fp in
-    fused_aux g0 (makeWhite (Seq.head objs) g') (Seq.tail objs) 0UL 0 fp'
-  else
-    fused_aux g0 g (Seq.tail objs) new_fb (rw + ws + 1) fp
+type sweep_state = {
+  cursor: U64.t;         (* header of the next block to visit *)
+  swept_tail: U64.t;     (* last list block behind the cursor, or 0 (the head) *)
+  last_fragment: U64.t;  (* the header-only free block just behind the cursor, or 0 *)
+}
 ```
 
-So a live black object first flushes any preceding free run and is then whitened;
-a non-black object is accumulated into the current free run without writing the
-heap. The top-level fused pass starts with an empty free list (`fp = 0UL`), so
-the final free list is a fresh list of the coalesced free runs rather than a
-mutation of the pre-GC free list.
+and one step (`sweep_step`) reads the header at the cursor *in the current
+heap*:
 
-The proof deliberately separates the easy specification from the efficient
-implementation. `GC.Spec.Coalesce` proves that coalescing only changes blue
-regions: survivor headers and fields are preserved, the heap length and
-well-formedness are preserved, all final objects are white or blue, and the
-returned free-list head is either null or a valid object in the coalesced heap.
-Those survivor-preservation lemmas are what let the end-to-end correctness proof
-reuse the existing mark/sweep graph facts: live edges and scalar fields are
-unchanged by coalescing because live objects are white after sweep, and
-coalescing writes only the blue runs.
+- **black**: a survivor; turn it white;
+- **blue or white, previous block free** (`prev_free`: `last_fragment` is
+  set, or `swept_tail`'s block ends at the cursor): grow the previous block
+  over this one, unlinking this block if it was on the list; a header-only
+  fragment that grows gains a link field and joins the list after
+  `swept_tail`;
+- **blue, previous not free**: leave it; a list block becomes `swept_tail`,
+  a header-only one becomes `last_fragment`;
+- **white, previous not free**: free it (blue header, tag 0); link it after
+  `swept_tail` if it has room for a link, otherwise it is a fragment.
 
-The key bridge theorem is
-`GC.Spec.SweepCoalesce.fused_agrees_sweep_coalesce`:
+`fused_sweep_coalesce g fp` runs steps from `zero_addr` to the end of the heap.
+Free blocks' bodies are left alone: a merged block's header records its full
+size, so the object walk jumps over the stale words of the blocks it absorbed.
 
-```fstar
-let fused_agrees_sweep_coalesce (g: heap) (fp: U64.t)
-  : Lemma
-    (requires well_formed_heap g /\
-              heap_objects_dense g /\
-              SpecSweep.fp_in_heap fp g /\
-              (forall x. Seq.mem x (objects zero_addr g) ==> ~(is_gray x g)))
-    (ensures (let rf = fused_sweep_coalesce g in
-              let rc = SpecCoalesce.coalesce (fst (SpecSweep.sweep g fp)) in
-              snd rf == snd rc /\ HA.heaps_agree_mod_free (fst rf) (fst rc)))
-```
+**The proof is a loop invariant on the step**, not a reduction to a two-pass
+specification. `GC.Spec.FusedSweep.Inv.sweep_inv g0 g fp st` relates the
+marked heap `g0` to the current heap `g`:
 
-The two heaps are not byte-equal: sweep writes a blue header and a link into
-every dead object, the fused pass writes neither, and neither pass overwrites
-those words once the dead objects are merged into one free block.
-`GC.Spec.HeapAgree.heaps_agree_mod_free` says they agree on everything else,
-block by block along the object walk: the same header at every block, the same
-fields in every live block, and the same link in every free one.
+1. behind the cursor, every block of `g`'s walk is a survivor (black in `g0`,
+   now white with the same size, tag and fields) or a free block covering a run
+   of blocks that were dead in `g0`; no two free blocks are adjacent;
+2. in front of the cursor, `g` is `g0` word for word;
+3. the free list from `fp` is exactly the heap's cells, in ascending order
+   (`GC.Spec.FreeList.Ascending.fl_ascending`);
+4. `swept_tail` and `last_fragment` mean what they say;
+5. the cursor is a position of both walks (`GC.Spec.Walk.reaches`), so `g`'s
+   walk tiles the swept part and continues as `g0`'s.
 
-Its induction (`GC.Spec.SweepCoalesce.Induction.walk_proof`) relates two walks
-over the same dense object sequence: the fused walk over the marked heap, and
-the standalone coalescing walk over the post-sweep heap. The proof uses that
-sweep preserves object order and wosizes, that a pre-sweep black object
-corresponds exactly to a non-blue post-sweep survivor, and that black-object
-headers, tags, and bodies agree between the two heaps except for the color
-reset. A flushed run gets the same merged header and link on both sides, and
-everything the rest of each walk writes lies above it.
+`sweep_start_inv` establishes it from the previous cycle's list,
+`GC.Spec.FusedSweep.Step` keeps it with one lemma per case of the step, and
+`GC.Spec.FusedSweep.End` reads the post-collection facts off it once the cursor
+reaches the end of the heap (`sweep_post`): live objects unchanged and white,
+every dead block inside a free block, free blocks holding only dead blocks, no
+adjacent free blocks, the walk dense, the list exact and ascending, and -- from
+the mark postcondition's colour facts -- the heap well formed, with no pointer
+into a free block and every live object's edges unchanged.
 
-Finally, `GC.Impl.collect_with_roots` calls the fused Pulse implementation and
-invokes `fused_agrees_sweep_coalesce` and `GC.Spec.Correctness.gc_result_agree`,
-which carries the end-to-end theorems `gc_postcondition_gen`,
-`full_gc_correctness_through_coalesce_gen`,
-`major_gc_live_subgraph_isomorphism_gen`, and
-`major_gc_unreachable_final_blue_gen` from the coalesced heap to the fused one:
-they read only what the relation keeps.  They therefore prove correctness of the
-actual single-pass implementation while reasoning at the cleaner two-phase level.
+`GC.Impl.FusedSweepCoalesce.fused_sweep_coalesce` is the Pulse loop: the state
+lives in references, the loop invariant is `sweep_inv` plus "the rest of the
+pass computes the spec's result", and each iteration is one
+`sweep_step_impl`, checked against the step equations
+(`GC.Spec.FusedSweep.Step.step_eq_*`). `GC.Impl.collect_with_roots` calls it
+with the free list it was handed and proves its postcondition with
+`GC.Spec.Correctness.gc_result_fused`; `gc_coalesce_source` records that the
+result is exactly `fused_sweep_coalesce h_mark fp`.
+
+Because the list is kept, the collector needs it ascending and exact on entry.
+`gc_precondition_with_roots` asks for it, root darkening keeps it, and the
+generational invariant `major_heap_shape` carries it: the allocator keeps it
+(`GC.Gen.AllocAscending`: a right-justified split keeps the remainder's
+address, an exact fit unlinks the block from its unique predecessor), and so
+do promotion and the pointer rewrite (`GC.Gen.FreeListAscending`). First-fit
+on an ascending list prefers low addresses (OCaml's allocation policy 1).
 
 ### Bounded mark stack
 
@@ -1484,64 +1465,40 @@ the implementation always had and simply never stated.  With it,
 cross-generation conjuncts and reduces the whole obligation to
 `major_heap_shape` of the major heap and free-list head.
 
-That is fourteen conjuncts, and it is where the work is.
+That is fifteen conjuncts, and it is where the work is.
 `GC.Gen.PostCollectionShape.major_gc_restores_major_heap_shape` proves them for
-`coalesce (sweep h_mark fp)` under nothing more than
-`GC.Spec.Correctness.mark_post`, and `major_gc_restores_major_heap_shape_of_source`
-carries them to the fused pass's heap, which agrees with it modulo free-block
-bodies (`GC.Spec.HeapAgree`):
+`fused_sweep_coalesce h_mark fp` under `GC.Spec.Correctness.mark_post` and an
+exact, ascending input list, all read off the sweep's end lemma
+(`GC.Spec.FusedSweep.End.sweep_post`):
 
 | conjunct | supplied by |
 | --- | --- |
-| `well_formed_heap` | `GC.Spec.Coalesce.coalesce_preserves_wf` |
-| `fl_valid` | `GC.Spec.Coalesce.Descending.coalesce_fl_entry` |
-| `fl_chain_terminates` | `GC.Spec.Coalesce.Descending.coalesce_fl_entry` |
-| `fp_pointer_or_zero` | `GC.Spec.Coalesce.Shape.coalesce_fp_pointer_or_zero` |
-| `blue_link_fields_valid` | `GC.Spec.Coalesce.Shape.coalesce_blue_link_fields_valid` |
-| `heap_objects_dense` | `GC.Spec.Coalesce.Dense.coalesce_dense` |
-| `chain_objects_blue` | `GC.Spec.Coalesce.Shape.coalesce_chain_objects_blue` |
-| `objects` non-empty | `GC.Spec.Coalesce.Dense.coalesce_dense` |
-| `fp_valid` | `GC.Gen.FreeListShape`, from `fl_valid` |
-| `fp_in_heap` | `GC.Gen.FreeListShape`, from `fp_valid` |
-| `no_black_objects` | `GC.Spec.Coalesce.coalesce_all_white_or_blue` |
-| `no_gray_objects` | `GC.Spec.Coalesce.coalesce_all_white_or_blue` |
-| `no_pointer_to_blue` | `GC.Spec.Coalesce.Shape.coalesce_no_pointer_to_blue` |
-| `no_scan_invariant` | `GC.Spec.Coalesce.Shape.coalesce_no_scan_invariant` |
+| `well_formed_heap` | `FusedSweep.End.sweep_post_wf` |
+| `fl_valid`, `fl_chain_terminates` | `FreeList.Ascending.fl_ascending_valid` |
+| `free_list_exact` | `FreeList.Ascending.fl_ascending_exact` |
+| `fl_ascending` | `sweep_post` (the sweep's invariant carries it) |
+| `fp_pointer_or_zero`, `blue_link_fields_valid` | every link of an ascending list is null or a cell |
+| `heap_objects_dense`, `objects` non-empty | `sweep_post`, from `GC.Spec.Walk.dense_of_reaches_end` |
+| `chain_objects_blue` | `FreeList.Ascending.fl_ascending_avoids` |
+| `fp_valid`, `fp_in_heap` | `GC.Gen.FreeListShape`, from `fl_valid` |
+| `no_black_objects`, `no_gray_objects` | `FusedSweep.End.sweep_post_white_or_blue` |
+| `no_pointer_to_blue` | `FusedSweep.End.sweep_post_wf` |
 
-Two of these deserve comment.
+**The free list is kept, so it must be invariant.**  The sweep needs the list
+it is handed to be exact and ascending, which is why the shape invariant
+carries `fl_ascending` and why every operation between collections must keep it:
+allocation (`GC.Gen.AllocAscending`), promotion and the pointer rewrite
+(`GC.Gen.FreeListAscending`), and root darkening
+(`GC.Impl.MarkBoundedPrecondition`).  An ascending list is acyclic and bounded
+by the number of 8-aligned heap addresses, which discharges the allocator's two
+entry conditions outright.
 
-**The free list is earned, not inherited.**  Nothing about the *input* free list
-is required, which at first looks too good.  The reason is that the coalescer
-does not thread the sweep's list through at all: `coalesce` starts from a null
-head and rebuilds the list from scratch, pushing each merged block onto the front
-as the upward walk passes it.  Every link it writes therefore points back at a
-block the walk has already left behind, so the list is *descending*, and a
-descending list is trivially acyclic and bounded by the number of distinct
-8-aligned heap addresses.  `GC.Spec.FreeList.Descending` states that property and
-`GC.Spec.Coalesce.Descending` proves the coalescer maintains it, which discharges
-the allocator's two entry conditions outright.
-
-**Density needed a reformulation.**  `heap_objects_dense` — "the object walk
-tiles the heap, never stopping because a block overruns" — is the one conjunct
-that cannot transfer, because `heap_objects_dense_transfer` requires equal
-wosizes everywhere and merging a free run is precisely a change of wosize.
-Proving it directly founders on the fact that the pre- and post-coalesce walks
-do not visit the same addresses, so a pointwise correspondence does not exist.
-`GC.Spec.WalkEnd` removes the quantifier instead: `objects start g` is empty
-exactly when the walk has run out of room or the block at `start` overruns, so
-density is equivalent to the single scalar statement
-
-```fstar
-walk_end g zero_addr + 8 >= heap_size
-```
-
-where `walk_end` follows the same steps `objects` does and returns the address it
-stops at.  `GC.Spec.Coalesce.Dense` then runs the coalescing walk once more and
-shows the coalescer leaves that address alone — a merged block covers exactly the
-addresses its constituents covered, and a survivor keeps its header, so the last
-block still ends where it did.  The scalar invariant has the pleasant side effect
-of *supplying* the "objects empty implies no room left" fact that a direct proof
-would have had to assume.
+**Density is a statement about the walk.**  `heap_objects_dense` -- "the object
+walk tiles the heap, never stopping because a block overruns" -- is equivalent
+to the walk from `zero_addr` reaching the end of the heap
+(`GC.Spec.WalkEnd`, `GC.Spec.Walk.reaches`).  The sweep's invariant says the
+cursor is a position of the current heap's walk; at the end the cursor is the
+end of the heap, so the result is dense.
 
 The Pulse entry point `GC.Impl.collect_with_roots` does not expose the marked
 heap, so it exposes `GC.Spec.Correctness.gc_coalesce_source` instead — "some
@@ -1551,8 +1508,6 @@ is what `gen_gc` actually calls.  On the out-of-memory path nothing runs after
 the minor collection, so the invariant is the post-minor one, which
 `GC.Gen.CheneyPreservation.cheney_collect_preserves_collection_heap_shape`
 already provides.
-
-All of it is ghost: the extracted C is byte-identical.
 
 ### Transporting the rest across the minor collection
 
@@ -2047,7 +2002,7 @@ ALL_KRML_MODS = \
   GC.Gen.Impl.Promote GC.Gen.Impl.UpdatePtrs \
   GC.Gen.Base \
   GC.Impl GC.Impl.Fields \
-  GC.Impl.MarkBounded GC.Impl.Coalesce \
+  GC.Impl.MarkBounded \
   GC.Impl.FusedSweepCoalesce GC.Impl.Allocator \
   GC.Impl.ArrayWord GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
   GC.Spec.ZeroAddr GC.Spec.Base GC.Spec.Heap GC.Spec.Object \

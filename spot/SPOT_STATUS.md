@@ -440,3 +440,25 @@ never simultaneously refutable. `GC.Spec.HeapGraph.is_pointer_field` demands
 `zero_addr >= 2048 == minor_heap_size`, while `is_minor_pointer` demands
 `v < minor_heap_size`. The ranges are disjoint, so refuting either half refutes
 the conjunction.
+
+## The fused sweep's step on concrete heaps
+
+`GC.SPOT.FusedSweepSteps` exercises `GC.Spec.FusedSweep.sweep_step` on small
+hand-built heap prefixes starting at `zero_addr` (the start of the heap's only
+extent), for the cases the in-place, ascending free list introduced.  Each
+lemma states the exact heap words and sweep state after the step:
+
+- `frag_at_start_joins_list`: a header-only free block at the very start of
+  the heap absorbs the garbage block after it, gains a link field, and becomes
+  the head of the list and the new `swept_tail` (a merge at an extent's start,
+  and a fragment that grows linkable);
+- `old_cell_absorbed_and_unlinked`: a list block left by the previous cycle
+  sits right after `swept_tail`'s block; it is merged into it and unlinked, so
+  `swept_tail` now links where it linked;
+- `old_cell_kept`: a list block from the previous cycle with no free neighbour
+  is left alone -- the heap is unchanged -- and becomes `swept_tail`;
+- `survivor_whitened`: a black block is turned white, nothing else.
+
+The concrete major heaps above (`ConcreteMajorGen`, `InfixMajor`,
+`NoScanMajor`) also prove their single-cell free list ascending, which the
+shape invariant now carries, so the end-to-end SPOTs run the new sweep.
