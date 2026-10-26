@@ -39,17 +39,10 @@ module AllocProps = GC.Gen.AllocProps
 module P1 = GC.Spec.Allocator.Lemmas.Part1
 module P2 = GC.Spec.Allocator.Lemmas.Part2
 module Oom = GC.Spec.Allocator.Oom
-module Coalesce = GC.Spec.Coalesce
-module CD = GC.Spec.Coalesce.Descending
-module CC = GC.Spec.Coalesce.Complete
 module SI = GC.Spec.SweepInv
 module Corr = GC.Spec.Correctness
 module FS = GC.Spec.FusedSweep
 module FLA = GC.Spec.FreeList.Ascending
-module SC = GC.Spec.SweepCoalesce
-module SCD = GC.Spec.SweepCoalesce.Defs
-module SpecSweep = GC.Spec.Sweep
-module HA = GC.Spec.HeapAgree
 module Promote = GC.Gen.Promote
 module WB = GC.Gen.WriteBodyLemmas
 module MH = GC.Gen.MinorHeap
@@ -869,18 +862,8 @@ let alloc_spec_preserves_entry (g: heap) (fp: U64.t) (wz: nat)
     end
 #pop-options
 
-/// Coalescing a swept heap establishes the entry conditions.
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-let coalesce_entry (g: heap)
-  : Lemma (requires Coalesce.post_sweep_strong g)
-          (ensures (let r = Coalesce.coalesce g in alloc_entry (fst r) (snd r)))
-  = Coalesce.coalesce_preserves_wf g;
-    wf_parts ();
-    CD.coalesce_fl_entry g;
-    CC.coalesce_exact g
-#pop-options
-
-/// The same, at the pass the collector actually runs.
+/// A full collection establishes the entry conditions, at the pass the
+/// collector actually runs.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let fused_entry (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
   : Lemma
@@ -1264,8 +1247,8 @@ let rec run_preserves_entry (g: heap) (fp: U64.t) (es: list event)
 /// any heap with an exact free list, and after any run of allocations and
 /// field writes to live objects.
 ///
-/// Where an exact free list comes from: `coalesce_entry` (a coalesced swept
-/// heap), `fused_entry` (the pass the collector runs), and
+/// Where an exact free list comes from: `fused_entry` (the pass the collector
+/// runs), and
 /// `major_heap_shape_gives_entry` (any heap satisfying the collector's
 /// invariant, i.e. anything `gen_gc` or `minor_collect_full` returns).  So
 /// the retry after a collection in `verified_allocate` is needed only when no

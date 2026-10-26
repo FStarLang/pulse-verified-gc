@@ -19,7 +19,6 @@ module Seq = FStar.Seq
 module SpecMark = GC.Spec.Mark
 module SpecObject = GC.Spec.Object
 module SpecFields = GC.Spec.Fields
-module SpecSweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module MarkBoundedInv = GC.Spec.MarkBoundedInv
 module MB = GC.Impl.MarkBounded
@@ -63,7 +62,7 @@ let darken_precondition
   : prop =
   MarkBoundedInv.bounded_mark_inv g st cap /\
   SweepInv.fp_valid fp g /\
-  SpecSweep.fp_in_heap fp g /\
+  GC.Spec.FreeList.fp_in_heap fp g /\
   FLA.fl_ascending g fp /\
   SpecMark.no_black_objects g /\
   SpecMark.no_pointer_to_blue g /\

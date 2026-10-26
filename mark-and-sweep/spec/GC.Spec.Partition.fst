@@ -40,7 +40,7 @@ module Alloc = GC.Spec.Allocator
 module ACore = GC.Spec.Allocator.Lemmas.Core
 
 /// Blue with room for a link word, i.e. able to be a free-list cell.
-/// `GC.Spec.FreeList.Descending.fl_cell` demands exactly this wosize bound.
+/// `GC.Spec.FreeList.Ascending.fl_cell` demands exactly this wosize bound.
 let is_cellish (g: heap) (x: obj_addr) : GTot bool =
   is_blue x g && U64.v (wosize_of_object x g) >= 1
 

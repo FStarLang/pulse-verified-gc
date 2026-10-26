@@ -14,7 +14,6 @@ module SpecFields = GC.Spec.Fields
 module SpecObj = GC.Spec.Object
 module Header = GC.Lib.Header
 module SpecMark = GC.Spec.Mark
-module Sweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module HeapGraph = GC.Spec.HeapGraph
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -585,7 +584,7 @@ let spot_major_fp_valid (r: unit{spot_major_room}) (mp: minor_ptr)
     (spot_major_fp r) (spot_major_heap r mp) fuel
 
 let spot_major_fp_in_heap (r: unit{spot_major_room}) (mp: minor_ptr)
-  : Lemma (ensures Sweep.fp_in_heap (spot_major_fp r) (spot_major_heap r mp))
+  : Lemma (ensures GC.Spec.FreeList.fp_in_heap (spot_major_fp r) (spot_major_heap r mp))
   =
   spot_major_fp_pointer_or_zero r;
   spot_major_fp_valid r mp;

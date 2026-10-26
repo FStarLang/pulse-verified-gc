@@ -37,7 +37,6 @@ module SpecFields = GC.Spec.Fields
 module SpecObj = GC.Spec.Object
 module Header = GC.Lib.Header
 module SpecMark = GC.Spec.Mark
-module Sweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module HeapGraph = GC.Spec.HeapGraph
 module AllocLemmas = GC.Spec.Allocator.Lemmas

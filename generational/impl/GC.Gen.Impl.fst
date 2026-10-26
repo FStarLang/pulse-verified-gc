@@ -39,7 +39,6 @@ module GMP = GC.Gen.MajorPrecondition
 module MarkBoundedInv = GC.Spec.MarkBoundedInv
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
-module Sweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module CheneyCorr = GC.Gen.CheneyCorrectness
 module TwoPass = GC.Gen.TwoPassEquiv

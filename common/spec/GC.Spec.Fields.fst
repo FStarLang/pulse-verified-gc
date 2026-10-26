@@ -842,14 +842,11 @@ let wf_parts (_: unit) : Lemma
 /// assumes the demand away.
 ///
 /// The invariant is restricted to non-blue objects because blue (free-list)
-/// objects have their first field repurposed as the free-list pointer.  That
-/// exclusion costs nothing, because free blocks are *cleared*:
-/// `GC.Spec.Coalesce.flush_blue` gives every merged run a fresh header with
-/// tag 0 and zeroes fields 2..wosize, leaving the free-list link as the only
-/// pointer-shaped word in a free block.  So a blue object is never no-scan in a
-/// coalesced heap (`GC.Spec.Coalesce.coalesce_aux_blue_tag_zero`), and blue
-/// no-scan blocks exist only in the transient heap between the sweep and the
-/// coalesce.
+/// objects have their first field repurposed as the free-list pointer, and the
+/// rest of a free block's body is not part of the model at all
+/// (`fields_constrained` excludes blue objects): the sweep
+/// (`GC.Spec.FusedSweep`) leaves a dead object's stale words in the free block
+/// that absorbs it.
 ///
 /// Preservation, and why the gap has never been observed:
 ///   - mark: only changes colors (headers), not fields -> trivially preserved
@@ -2048,8 +2045,8 @@ private let field_write_preserves_infix_wf
 
 /// Nothing can point at field 0's slot of an enumerated object.
 ///
-/// This is the fact that makes the free-list write in `GC.Spec.Sweep` legal:
-/// sweep threads the free pointer through field 0, and `field_write_preserves_wf`
+/// This is the fact that makes a free-list write into field 0 legal:
+/// `field_write_preserves_wf`
 /// demands that the write not clobber the header of anything a field points at.
 ///
 /// Suppose some field pointed at `t = f_address obj`.  Part 2 puts
@@ -2315,8 +2312,9 @@ let field_write_preserves_wf g obj addr v =
 /// constrained, so the zero words inside a large block (phantom wosize-0
 /// objects, not in the global walk) are excluded.
 ///
-/// Used by both collectors: `GC.Spec.Coalesce.Correct` needs it of the swept
-/// heap, and the generational invariant `major_heap_shape` carries it.
+/// Used by both collectors: the fused sweep's walk relies on it of the marked
+/// heap (`GC.Spec.FusedSweep.Inv.sweep_g0`), and the generational invariant
+/// `major_heap_shape` carries it.
 ///
 /// Opaque to SMT, so a quantifier this size stays out of the large mark and
 /// sweep contexts; `reveal_opaque (`%heap_objects_dense) heap_objects_dense`

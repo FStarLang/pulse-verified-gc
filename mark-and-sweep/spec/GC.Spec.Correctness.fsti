@@ -8,7 +8,7 @@
 ///
 /// Colors used: White (initial/free), Gray (mark frontier), Black (marked/reachable).
 /// After mark: black = reachable, white = unreachable, no gray.
-/// After sweep: all objects white (black reset to white, white unchanged).
+/// After the sweep: survivors white, everything else blue (free).
 
 module GC.Spec.Correctness
 
@@ -21,12 +21,10 @@ open GC.Spec.Graph
 open GC.Spec.HeapModel
 open GC.Spec.DFS
 open GC.Spec.Mark
-open GC.Spec.Sweep
 module HeapGraph = GC.Spec.HeapGraph
-module Coalesce = GC.Spec.Coalesce
 module SweepInv = GC.Spec.SweepInv
+module FL = GC.Spec.FreeList
 module MarkInv = GC.Spec.MarkInv
-module HeapAgree = GC.Spec.HeapAgree
 module FS = GC.Spec.FusedSweep
 module FSI = GC.Spec.FusedSweep.Inv
 module FSE = GC.Spec.FusedSweep.End
@@ -121,110 +119,6 @@ val full_gc_correctness_elim_colors : h_init:heap -> h_final:heap -> roots:seq o
   Lemma (requires full_gc_correctness h_init h_final roots)
         (ensures gc_postcondition h_final)
 
-/// ---------------------------------------------------------------------------
-/// End-to-End Correctness Theorem
-/// ---------------------------------------------------------------------------
-
-val end_to_end_correctness :
-  (h_init: heap) ->
-  (st: seq obj_addr) ->
-  (roots: seq obj_addr) ->
-  (fp: U64.t) ->
-  Lemma
-    (requires
-      well_formed_heap h_init /\
-      stack_props h_init st /\
-      root_props h_init roots /\
-      fp_in_heap fp h_init /\
-      no_black_objects h_init /\
-      no_pointer_to_blue h_init /\
-      (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
-      (let graph = create_graph h_init in
-       let roots' = HeapGraph.coerce_to_vertex_list roots in
-       graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
-    (ensures
-      (let h_mark = mark h_init st in
-       let h_sweep = fst (sweep h_mark fp) in
-       let g_init = create_graph h_init in
-       let g_sweep = create_graph h_sweep in
-       well_formed_heap h_sweep /\
-       (let roots' = HeapGraph.coerce_to_vertex_list roots in
-        graph_wf g_init /\ is_vertex_set roots' /\ subset_vertices roots' g_init.vertices ==>
-        (forall (x: obj_addr).
-          mem_graph_vertex g_init x ==>
-          (is_black x h_mark <==> Seq.mem x (reachable_set g_init roots')))) /\
-       (forall (x: obj_addr).
-         Seq.mem x g_sweep.vertices /\ is_black x h_mark ==>
-         successors g_init x == successors g_sweep x) /\
-       (forall (x: obj_addr).
-         Seq.mem x g_sweep.vertices ==>
-         (is_white x h_sweep \/ is_blue x h_sweep)) /\
-       (forall (x: obj_addr).
-         Seq.mem x g_sweep.vertices /\ is_black x h_mark ==>
-         is_white x h_sweep) /\
-       (forall (x: obj_addr) (i: U64.t).
-         Seq.mem x g_sweep.vertices /\
-         is_black x h_mark /\
-         U64.v i >= 1 /\ U64.v i <= U64.v (wosize_of_object x h_init) ==>
-         HeapGraph.get_field h_init x i == HeapGraph.get_field h_sweep x i)))
-
-/// ---------------------------------------------------------------------------
-/// Corollaries and Bridges
-/// ---------------------------------------------------------------------------
-
-/// Derive gc_postcondition from end_to_end_correctness
-val gc_postcondition_from_correctness :
-  (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
-  Lemma
-    (requires
-      well_formed_heap h_init /\
-      stack_props h_init st /\
-      root_props h_init roots /\
-      fp_in_heap fp h_init /\
-      no_black_objects h_init /\
-      no_pointer_to_blue h_init /\
-      (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
-      (let graph = create_graph h_init in
-       let roots' = HeapGraph.coerce_to_vertex_list roots in
-       graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
-    (ensures gc_postcondition (fst (sweep (mark h_init st) fp)))
-
-/// Derive full_gc_correctness from end_to_end_correctness
-val full_gc_correctness_from_end_to_end :
-  (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
-  Lemma
-    (requires
-      well_formed_heap h_init /\
-      stack_props h_init st /\
-      root_props h_init roots /\
-      fp_in_heap fp h_init /\
-      no_black_objects h_init /\
-      no_pointer_to_blue h_init /\
-      (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
-      (let graph = create_graph h_init in
-       let roots' = HeapGraph.coerce_to_vertex_list roots in
-       graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
-    (ensures full_gc_correctness h_init (fst (sweep (mark h_init st) fp)) roots)
-
-/// GC safety: reachable objects survive
-val gc_safety : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
-  Lemma (requires well_formed_heap h_init /\ stack_props h_init st /\
-                  root_props h_init roots /\
-                  fp_in_heap fp h_init /\
-                  no_black_objects h_init /\
-                  no_pointer_to_blue h_init /\
-                  (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
-                  (let graph = create_graph h_init in
-                   let roots' = HeapGraph.coerce_to_vertex_list roots in
-                   graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
-        (ensures (let graph = create_graph h_init in
-                  let roots' = HeapGraph.coerce_to_vertex_list roots in
-                  let h_sweep = fst (sweep (mark h_init st) fp) in
-                  forall (x: obj_addr).
-                    mem_graph_vertex graph x /\
-                    Seq.mem x (reachable_set graph roots') ==>
-                    Seq.mem x (objects zero_addr h_sweep)))
-
 /// GC completeness: unreachable objects are not marked
 val gc_completeness : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap h_init /\ stack_props h_init st /\
@@ -242,80 +136,6 @@ val gc_completeness : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_ad
                     mem_graph_vertex graph x /\
                     ~(Seq.mem x (reachable_set graph roots')) ==>
                     ~(is_black x h_mark)))
-
-/// Coalesce bridge: sweep output satisfies post_sweep_strong
-val sweep_post_sweep_strong :
-  (h_init: heap) -> (st: seq obj_addr) -> (fp: U64.t) ->
-  Lemma
-    (requires
-      well_formed_heap h_init /\
-      stack_props h_init st /\
-      fp_in_heap fp h_init /\
-      no_black_objects h_init /\
-      no_pointer_to_blue h_init)
-    (ensures GC.Spec.Coalesce.post_sweep_strong (fst (sweep (mark h_init st) fp)))
-
-/// ---------------------------------------------------------------------------
-/// Density Preservation Through Sweep
-/// ---------------------------------------------------------------------------
-
-/// Density is preserved through sweep
-val sweep_preserves_density :
-  (g: heap) -> (fp: U64.t) ->
-  Lemma
-    (requires
-      well_formed_heap g /\
-      GC.Spec.Mark.noGreyObjects g /\
-      GC.Spec.Sweep.fp_in_heap fp g /\
-      heap_objects_dense g)
-    (ensures heap_objects_dense (fst (sweep g fp)))
-
-/// ---------------------------------------------------------------------------
-/// Coalesce Precondition Bridge
-/// ---------------------------------------------------------------------------
-
-/// Establishes objects > 0 and density for the post-sweep heap.
-/// Takes the post-mark heap directly so the caller can provide
-/// mark_inv-derived properties (density, objects > 0, wfh, noGrey).
-val coalesce_precondition_bridge :
-  (h_mark: heap) -> (fp: U64.t) ->
-  Lemma
-    (requires
-      well_formed_heap h_mark /\
-      noGreyObjects h_mark /\
-      fp_in_heap fp h_mark /\
-      heap_objects_dense h_mark /\
-      Seq.length (objects zero_addr h_mark) > 0)
-    (ensures
-      (let h_sweep = fst (sweep h_mark fp) in
-       Seq.length (objects zero_addr h_sweep) > 0 /\
-       heap_objects_dense h_sweep))
-
-/// ---------------------------------------------------------------------------
-/// Full GC Correctness Through Coalesce
-/// ---------------------------------------------------------------------------
-///
-/// Lifts full_gc_correctness from the sweep output to the coalesced output.
-/// The key bridge: coalesce_objects_subset ensures all objects in the
-/// coalesced walk were in the original walk, enabling reuse of sweep-level proofs.
-
-val full_gc_correctness_through_coalesce :
-  (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
-  Lemma
-    (requires
-      well_formed_heap h_init /\
-      stack_props h_init st /\
-      root_props h_init roots /\
-      fp_in_heap fp h_init /\
-      no_black_objects h_init /\
-      no_pointer_to_blue h_init /\
-      (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
-      (let graph = create_graph h_init in
-       let roots' = HeapGraph.coerce_to_vertex_list roots in
-       graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
-    (ensures
-      full_gc_correctness h_init
-        (fst (Coalesce.coalesce (fst (sweep (mark h_init st) fp)))) roots)
 
 /// ---------------------------------------------------------------------------
 /// Generalized Mark Postcondition
@@ -342,7 +162,7 @@ val mark_post_intro :
       Seq.length (objects zero_addr h_mark) > 0 /\
       no_pointer_to_blue h_mark /\
       tri_color_invariant h_mark /\
-      fp_in_heap fp h_init /\
+      FL.fp_in_heap fp h_init /\
       no_black_objects h_init /\
       no_pointer_to_blue h_init /\
       (let g_init = create_graph h_init in
@@ -383,7 +203,7 @@ val mark_post_elim_objects_gt0 : h_init:heap -> h_mark:heap -> roots:seq obj_add
         (ensures Seq.length (objects zero_addr h_mark) > 0)
 val mark_post_elim_fp : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
   Lemma (requires mark_post h_init h_mark roots fp)
-        (ensures fp_in_heap fp h_mark)
+        (ensures FL.fp_in_heap fp h_mark)
 
 /// Marking leaves free blocks -- and so the free list -- alone.
 val mark_post_elim_blue : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
@@ -446,7 +266,7 @@ val mark_satisfies_mark_post :
     (requires
       MarkInv.mark_inv h_init st /\
       root_props h_init roots /\
-      fp_in_heap fp h_init /\
+      FL.fp_in_heap fp h_init /\
       no_black_objects h_init /\
       no_pointer_to_blue h_init /\
       (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
@@ -454,54 +274,6 @@ val mark_satisfies_mark_post :
        let roots' = HeapGraph.coerce_to_vertex_list roots in
        graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
     (ensures mark_post h_init (mark h_init st) roots fp)
-
-/// ---------------------------------------------------------------------------
-/// Generalized Correctness Bridges (parametric in mark implementation)
-/// ---------------------------------------------------------------------------
-
-/// Generalized sweep_post_sweep_strong
-val sweep_post_sweep_strong_gen :
-  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
-  Lemma
-    (requires mark_post h_init h_mark roots fp)
-    (ensures Coalesce.post_sweep_strong (fst (sweep h_mark fp)))
-
-/// Generalized coalesce_precondition_bridge
-val coalesce_precondition_bridge_gen :
-  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
-  Lemma
-    (requires mark_post h_init h_mark roots fp)
-    (ensures
-      (let h_sweep = fst (sweep h_mark fp) in
-       Seq.length (objects zero_addr h_sweep) > 0 /\
-       heap_objects_dense h_sweep))
-
-/// Generalized full_gc_correctness_through_coalesce
-val full_gc_correctness_through_coalesce_gen :
-  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
-  Lemma
-    (requires mark_post h_init h_mark roots fp)
-    (ensures full_gc_correctness h_init (fst (Coalesce.coalesce (fst (sweep h_mark fp)))) roots)
-
-val major_gc_live_subgraph_isomorphism_gen :
-  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
-  Lemma
-    (requires mark_post h_init h_mark roots fp /\
-              (let g = create_graph h_init in
-               let roots' = HeapGraph.coerce_to_vertex_list roots in
-               graph_wf g /\ is_vertex_set roots' /\ subset_vertices roots' g.vertices))
-    (ensures major_gc_live_subgraph_isomorphism
-      h_init (fst (Coalesce.coalesce (fst (sweep h_mark fp)))) roots)
-
-val major_gc_unreachable_final_blue_gen :
-  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
-  Lemma
-    (requires mark_post h_init h_mark roots fp /\
-              (let g = create_graph h_init in
-               let roots' = HeapGraph.coerce_to_vertex_list roots in
-               graph_wf g /\ is_vertex_set roots' /\ subset_vertices roots' g.vertices))
-    (ensures major_gc_unreachable_final_blue
-      h_init (fst (Coalesce.coalesce (fst (sweep h_mark fp)))) roots)
 
 /// The mark output that produced a given collector result.
 ///
@@ -526,13 +298,6 @@ val gc_coalesce_source_intro :
     (requires mark_post h_init h_mark roots fp /\ FLA.fl_ascending h_init fp /\
               (s2, final_fp) == FS.fused_sweep_coalesce h_mark fp)
     (ensures gc_coalesce_source h_init s2 roots fp final_fp)
-
-/// Generalized gc_postcondition
-val gc_postcondition_gen :
-  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
-  Lemma
-    (requires mark_post h_init h_mark roots fp)
-    (ensures gc_postcondition (fst (Coalesce.coalesce (fst (sweep h_mark fp)))))
 
 /// ---------------------------------------------------------------------------
 /// The theorems, at the heap the fused sweep produces
@@ -607,3 +372,77 @@ val gc_result_fused :
                 graph_wf g /\ is_vertex_set roots' /\ subset_vertices roots' g.vertices) ==>
                major_gc_live_subgraph_isomorphism h_init s2 roots /\
                major_gc_unreachable_final_blue h_init s2 roots)))
+
+/// ---------------------------------------------------------------------------
+/// End-to-end, with the unbounded mark
+/// ---------------------------------------------------------------------------
+///
+/// The five pillars for `mark` followed by the fused sweep.  Beyond the mark's
+/// own preconditions the sweep needs the heap's walk to cover it
+/// (`heap_objects_dense`, a non-empty heap) and the free list it is handed to
+/// be exact and ascending.
+
+let e2e_pre (h_init: heap) (st: seq obj_addr) (roots: seq obj_addr) (fp: U64.t) : prop =
+  well_formed_heap h_init /\
+  stack_props h_init st /\
+  root_props h_init roots /\
+  heap_objects_dense h_init /\
+  Seq.length (objects zero_addr h_init) > 0 /\
+  FLA.fl_ascending h_init fp /\
+  no_black_objects h_init /\
+  no_pointer_to_blue h_init /\
+  (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
+  (let graph = create_graph h_init in
+   let roots' = HeapGraph.coerce_to_vertex_list roots in
+   graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices)
+
+val end_to_end_correctness :
+  (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma
+    (requires e2e_pre h_init st roots fp)
+    (ensures
+      (let h_mark = mark h_init st in
+       let h_final = fst (FS.fused_sweep_coalesce h_mark fp) in
+       let g_init = create_graph h_init in
+       let g_final = create_graph h_final in
+       well_formed_heap h_final /\
+       (let roots' = HeapGraph.coerce_to_vertex_list roots in
+        graph_wf g_init /\ is_vertex_set roots' /\ subset_vertices roots' g_init.vertices ==>
+        (forall (x: obj_addr).
+          mem_graph_vertex g_init x ==>
+          (is_black x h_mark <==> Seq.mem x (reachable_set g_init roots')))) /\
+       (forall (x: obj_addr).
+         Seq.mem x g_final.vertices /\ is_black x h_mark ==>
+         successors g_init x == successors g_final x) /\
+       (forall (x: obj_addr).
+         Seq.mem x g_final.vertices ==>
+         (is_white x h_final \/ is_blue x h_final)) /\
+       (forall (x: obj_addr).
+         Seq.mem x g_final.vertices /\ is_black x h_mark ==>
+         is_white x h_final) /\
+       (forall (x: obj_addr) (i: U64.t).
+         Seq.mem x g_final.vertices /\
+         is_black x h_mark /\
+         U64.v i >= 1 /\ U64.v i <= U64.v (wosize_of_object x h_init) ==>
+         HeapGraph.get_field h_init x i == HeapGraph.get_field h_final x i)))
+
+val gc_postcondition_from_correctness :
+  (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma (requires e2e_pre h_init st roots fp)
+        (ensures gc_postcondition (fst (FS.fused_sweep_coalesce (mark h_init st) fp)))
+
+val full_gc_correctness_from_end_to_end :
+  (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma (requires e2e_pre h_init st roots fp)
+        (ensures full_gc_correctness h_init (fst (FS.fused_sweep_coalesce (mark h_init st) fp)) roots)
+
+/// GC safety: reachable objects survive.
+val gc_safety : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma (requires e2e_pre h_init st roots fp)
+        (ensures (let graph = create_graph h_init in
+                  let roots' = HeapGraph.coerce_to_vertex_list roots in
+                  let h_final = fst (FS.fused_sweep_coalesce (mark h_init st) fp) in
+                  forall (x: obj_addr).
+                    mem_graph_vertex graph x /\
+                    Seq.mem x (reachable_set graph roots') ==>
+                    Seq.mem x (objects zero_addr h_final)))

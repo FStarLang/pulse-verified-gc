@@ -175,8 +175,7 @@ val wosize_of_object_spec : (h_addr: obj_addr) -> (g: heap) ->
 /// `Whsize_wosize`). Unlike wosize, whsize is conserved when a block is split,
 /// since the split costs a header word, so counting arguments use this.
 /// Arguments are (heap, object), not wosize_of_object's (object, heap), to
-/// match the definitions this replaces in GC.Spec.Partition and
-/// GC.Spec.Coalesce.
+/// match the definitions this replaces in GC.Spec.Partition.
 let whsize (g: heap) (x: obj_addr) : GTot nat = 1 + U64.v (wosize_of_object x g)
 
 /// Color predicates

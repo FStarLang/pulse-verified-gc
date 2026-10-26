@@ -5,7 +5,6 @@ module Seq = FStar.Seq
 module SpecMark = GC.Spec.Mark
 module SpecObject = GC.Spec.Object
 module SpecFields = GC.Spec.Fields
-module SpecSweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module MarkBoundedInv = GC.Spec.MarkBoundedInv
 module SpecMarkBounded = GC.Spec.MarkBounded

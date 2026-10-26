@@ -11,7 +11,6 @@ open GC.Gen.MinorHeap
 module SpecObj = GC.Spec.Object
 module SpecFields = GC.Spec.Fields
 module SpecMark = GC.Spec.Mark
-module SpecSweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module SpecMarkBounded = GC.Spec.MarkBounded
 module MarkBoundedInv = GC.Spec.MarkBoundedInv

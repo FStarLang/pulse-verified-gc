@@ -312,8 +312,8 @@ val darken_roots_bounded_spec_preserves_fp_in_heap
   (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
   (cap: nat) (fp: U64.t)
   : Lemma
-      (requires GC.Spec.Sweep.fp_in_heap fp g)
-      (ensures GC.Spec.Sweep.fp_in_heap fp (fst (darken_roots_bounded_spec g st roots cap)))
+      (requires GC.Spec.FreeList.fp_in_heap fp g)
+      (ensures GC.Spec.FreeList.fp_in_heap fp (fst (darken_roots_bounded_spec g st roots cap)))
 
 /// Bounded mark loop: process gray objects with overflow handling.
 /// The outer loop alternates between draining the stack and rescanning

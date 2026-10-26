@@ -210,7 +210,7 @@ val mark_bounded_satisfies_mark_post
       Seq.length (objects zero_addr h_init) > 0 /\
       heap_objects_dense h_init /\
       root_props h_init roots /\
-      GC.Spec.Sweep.fp_in_heap fp h_init /\
+      GC.Spec.FreeList.fp_in_heap fp h_init /\
       no_black_objects h_init /\
       no_pointer_to_blue h_init /\
       fuel >= count_non_black h_init /\
@@ -286,7 +286,7 @@ val mark_post_from_bounded_mark
       gray_black_reachable h_init h_mark roots /\
       gray_stays h_init h_mark /\
       root_props h_init roots /\
-      GC.Spec.Sweep.fp_in_heap fp h_init /\
+      GC.Spec.FreeList.fp_in_heap fp h_init /\
       no_black_objects h_init /\
       no_pointer_to_blue h_init)
     (ensures Correctness.mark_post h_init h_mark roots fp)

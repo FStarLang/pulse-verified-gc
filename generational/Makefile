@@ -195,7 +195,7 @@ ALL_KRML_MODS = \
   GC.Gen.Impl.Promote GC.Gen.Impl.UpdatePtrs \
   GC.Gen.Base \
   GC.Impl GC.Impl.Fields \
-  GC.Impl.MarkBounded GC.Impl.Coalesce \
+  GC.Impl.MarkBounded \
   GC.Impl.FusedSweepCoalesce GC.Impl.Allocator \
   GC.Impl.ArrayWord GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
   GC.Spec.ZeroAddr GC.Spec.Base GC.Spec.Heap GC.Spec.Object \

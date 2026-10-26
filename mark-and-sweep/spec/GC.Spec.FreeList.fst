@@ -28,6 +28,15 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 /// ---------------------------------------------------------------------------
+/// The head
+/// ---------------------------------------------------------------------------
+
+/// Free-pointer validity: either null (0) or a valid object address in the heap
+let fp_in_heap (fp: U64.t) (g: heap) : prop =
+  fp = 0UL \/ (U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
+               U64.v fp % U64.v mword == 0 /\ Seq.mem (fp <: obj_addr) (objects zero_addr g))
+
+/// ---------------------------------------------------------------------------
 /// Chain cells
 /// ---------------------------------------------------------------------------
 

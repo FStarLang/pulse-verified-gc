@@ -11,7 +11,6 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
-module Sweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module HeapGraph = GC.Spec.HeapGraph
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -46,7 +45,7 @@ val blue_link_fields_valid_intro (major: heap)
 
 val fp_pointer_or_zero_implies_fp_in_heap (fp: U64.t) (g: heap)
   : Lemma (requires fp_pointer_or_zero fp /\ SweepInv.fp_valid fp g)
-          (ensures Sweep.fp_in_heap fp g)
+          (ensures GC.Spec.FreeList.fp_in_heap fp g)
 
 val fp_pointer_or_zero_fl_valid_implies_fp_valid
   (fp: U64.t) (g: heap) (fuel: nat)

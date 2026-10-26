@@ -101,12 +101,9 @@ FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 # This identifies orphaned/unused files that are not reachable
 ROOT_MODULES = \
   mark-and-sweep/spec/GC.Spec.Partition.fst \
-  mark-and-sweep/spec/GC.Spec.Coalesce.Complete.fst \
-  mark-and-sweep/spec/GC.Spec.Coalesce.Correct.fst \
   mark-and-sweep/spec/GC.Spec.Allocator.Oom.fst \
   mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fsti \
   mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fst \
-  mark-and-sweep/spec/GC.Spec.FreeList.Sweep.fst \
   mark-and-sweep/spec/GC.Spec.FusedSweep.Facts.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst
@@ -344,7 +341,7 @@ DEPGRAPH_OCAMLPATH ?= $(FSTAR_HOME)/lib
 # The interface: the API surface of the one extraction bundle, i.e. exactly the
 # modules named on the left of `-bundle ...=` in generational/Makefile.  Modules
 # they call (GC.Impl.Heap, GC.Impl.Object, GC.Impl.Stack, GC.Impl.Fields,
-# GC.Impl.Coalesce, GC.Impl.FusedSweepCoalesce, ...) are reached transitively
+# GC.Impl.FusedSweepCoalesce, ...) are reached transitively
 # and must NOT be listed here -- listing a module as a root asserts that we want
 # to keep it even if nothing calls it, which is how dead code survived before.
 DEPGRAPH_IFACE_ROOTS = \
@@ -356,7 +353,7 @@ DEPGRAPH_IFACE_ROOTS = \
 # have to be named explicitly or the whole proof development looks dead.
 DEPGRAPH_THEOREM_ROOTS = \
   GC.Spec.Correctness GC.Spec.MarkBoundedCorrectness GC.Gen.CheneyCorrectness \
-  GC.Impl.MarkBoundedRootLemmas GC.Spec.FreeList.Sweep
+  GC.Impl.MarkBoundedRootLemmas GC.Spec.FusedSweep.Facts
 
 DEPGRAPH_SPOT_ROOTS = $(sort $(basename $(notdir $(wildcard spot/GC.SPOT.*.fst))))
 

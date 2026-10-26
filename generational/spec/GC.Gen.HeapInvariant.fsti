@@ -24,7 +24,6 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module FL = GC.Spec.FreeList
 module Mark = GC.Spec.Mark
 module MarkBoundedInv = GC.Spec.MarkBoundedInv
-module Sweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module HeapModel = GC.Spec.HeapModel
 module HeapGraph = GC.Spec.HeapGraph
@@ -127,7 +126,7 @@ val major_heap_shape_intro (major: heap) (fp: U64.t)
                     chain_objects_blue major fp /\
                     Seq.length (objects zero_addr major) > 0 /\
                     SweepInv.fp_valid fp major /\
-                    Sweep.fp_in_heap fp major /\
+                    GC.Spec.FreeList.fp_in_heap fp major /\
                     Mark.no_black_objects major /\
                     SweepInv.no_gray_objects major /\
                     Mark.no_pointer_to_blue major)
@@ -146,7 +145,7 @@ val major_heap_shape_elim (major: heap) (fp: U64.t)
                     chain_objects_blue major fp /\
                    Seq.length (objects zero_addr major) > 0 /\
                    SweepInv.fp_valid fp major /\
-                   Sweep.fp_in_heap fp major /\
+                   GC.Spec.FreeList.fp_in_heap fp major /\
                    Mark.no_black_objects major /\
                    SweepInv.no_gray_objects major /\
                    Mark.no_pointer_to_blue major)

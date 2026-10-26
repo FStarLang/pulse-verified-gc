@@ -12,7 +12,6 @@ module SpecFields = GC.Spec.Fields
 module SpecObj = GC.Spec.Object
 module Header = GC.Lib.Header
 module SpecMark = GC.Spec.Mark
-module Sweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module HeapGraph = GC.Spec.HeapGraph
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -612,7 +611,7 @@ let spot_ns_fp_valid (r: unit{spot_ns_room})
     (spot_ns_fp r) (spot_ns_heap r) heap_words
 
 let spot_ns_fp_in_heap (r: unit{spot_ns_room})
-  : Lemma (ensures Sweep.fp_in_heap (spot_ns_fp r) (spot_ns_heap r))
+  : Lemma (ensures GC.Spec.FreeList.fp_in_heap (spot_ns_fp r) (spot_ns_heap r))
   =
   spot_ns_fp_pointer_or_zero r;
   spot_ns_fp_valid r;

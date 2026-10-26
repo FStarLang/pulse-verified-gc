@@ -24,7 +24,6 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module AllocProps = GC.Gen.AllocProps
 module Mark = GC.Spec.Mark
 module MarkBounded = GC.Spec.MarkBounded
-module Sweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module HeapGraph = GC.Spec.HeapGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -1519,7 +1518,7 @@ let cheney_collect_preserves_collection_heap_shape
   assert (FreeListShape.blue_link_fields_valid res.mc_major);
   assert (Seq.length (objects zero_addr res.mc_major) > 0);
   assert (SweepInv.fp_valid res.mc_fp res.mc_major);
-  assert (Sweep.fp_in_heap res.mc_fp res.mc_major);
+  assert (GC.Spec.FreeList.fp_in_heap res.mc_fp res.mc_major);
   assert (Mark.no_black_objects res.mc_major);
   // No gray objects: the pre-minor heap has none (`major_heap_shape`) and none
   // are black either, so the empty stack already satisfies the gray-or-black

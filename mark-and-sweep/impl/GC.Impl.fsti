@@ -18,8 +18,6 @@ module SpecGCPost = GC.Spec.Correctness
 module SpecMark = GC.Spec.Mark
 module SpecMarkInv = GC.Spec.MarkInv
 module SpecMarkBoundedInv = GC.Spec.MarkBoundedInv
-module SpecSweep = GC.Spec.Sweep
-module SpecCoalesce = GC.Spec.Coalesce
 module SpecFields = GC.Spec.Fields
 module SpecObject = GC.Spec.Object
 module SI = GC.Spec.SweepInv
@@ -38,7 +36,7 @@ let gc_precondition_with_roots
   SI.fp_valid fp s /\
   FLA.fl_ascending s fp /\
   SpecMark.root_props s roots /\
-  SpecSweep.fp_in_heap fp s /\
+  GC.Spec.FreeList.fp_in_heap fp s /\
   SpecMark.no_black_objects s /\
   SpecMark.no_pointer_to_blue s /\
   (forall (x: GC.Spec.Base.obj_addr). Seq.mem x (SpecFields.objects GC.Spec.Base.zero_addr s) /\

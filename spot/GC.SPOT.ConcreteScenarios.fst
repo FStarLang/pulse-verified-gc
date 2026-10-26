@@ -36,7 +36,6 @@ module MarkBoundedRootLemmas = GC.Impl.MarkBoundedRootLemmas
 module SpecMarkBounded = GC.Spec.MarkBounded
 module SpecMarkBoundedInv = GC.Spec.MarkBoundedInv
 module SpecMark = GC.Spec.Mark
-module SpecSweep = GC.Spec.Sweep
 module SpecHeapModel = GC.Spec.HeapModel
 module SpecHeapGraph = GC.Spec.HeapGraph
 module SpecGraph = GC.Spec.Graph
