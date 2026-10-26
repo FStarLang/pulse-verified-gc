@@ -25,9 +25,9 @@
 ///      wosize-0 fragment is smaller than any request of at least one word.
 ///      Two layers because the heap-wide claim is not inductive: blocks the walk
 ///      has already passed are not reachable from the next node.
-///   3. `fused_oom_no_fit` -- the coalescer's output satisfies every
-///      hypothesis of layer 2, and the fused pass's heap agrees with it on
-///      everything layer 2 reads, so the statement holds at the pass the
+///   3. `fused_oom_no_fit` -- the fused sweep's output satisfies every
+///      hypothesis of layer 2 (`GC.Spec.FusedSweep.End`: the list it leaves
+///      is exact and ascending), so the statement holds at the pass the
 ///      collector actually runs.
 
 module GC.Spec.Allocator.Oom
@@ -43,15 +43,11 @@ open GC.Lib.Header
 module U64 = FStar.UInt64
 module FL = GC.Spec.FreeList
 module AllocLemmas = GC.Spec.Allocator.Lemmas
-module Coalesce = GC.Spec.Coalesce
-module CD = GC.Spec.Coalesce.Descending
-module CC = GC.Spec.Coalesce.Complete
 module SI = GC.Spec.SweepInv
 module Corr = GC.Spec.Correctness
-module SC = GC.Spec.SweepCoalesce
-module SCD = GC.Spec.SweepCoalesce.Defs
-module SpecSweep = GC.Spec.Sweep
-module HA = GC.Spec.HeapAgree
+module FS = GC.Spec.FusedSweep
+module FSE = GC.Spec.FusedSweep.End
+module FLA = GC.Spec.FreeList.Ascending
 
 /// ---------------------------------------------------------------------------
 /// Layer 1: a failed search saw only small cells
@@ -163,36 +159,25 @@ let alloc_spec_oom_no_fit (g: heap) (fp: U64.t) (wz: nat)
 /// is big enough.**
 ///
 /// Stated over `fused_sweep_coalesce`, the pass the collector runs
-/// (`GC.Impl.collect_with_roots` returns exactly its result), under the
-/// hypotheses `GC.Impl.fst` already discharges at that call site -- the same
-/// ones as `GC.Spec.Coalesce.Complete.fused_exact`.
-#push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
+/// (`GC.Impl.collect_with_roots` returns exactly its result), under the mark
+/// postcondition and the free list the previous cycle left.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let fused_oom_no_fit (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) (wz: nat)
   : Lemma
     (requires
       Corr.mark_post h_init h_mark roots fp /\
-      well_formed_heap h_mark /\
-      heap_objects_dense h_mark /\
-      SpecSweep.fp_in_heap fp h_mark /\
-      (forall (x: obj_addr). Seq.mem x (objects zero_addr h_mark) ==> ~(is_gray x h_mark)) /\
+      FLA.fl_ascending h_init fp /\
       wz >= 1 /\
-      (let r = SCD.fused_sweep_coalesce h_mark in
+      (let r = FS.fused_sweep_coalesce h_mark fp in
        (alloc_spec (fst r) (snd r) wz).obj_out == 0UL))
-    (ensures (let g' = fst (SCD.fused_sweep_coalesce h_mark) in
+    (ensures (let g' = fst (FS.fused_sweep_coalesce h_mark fp) in
               forall (x: obj_addr). Seq.mem x (objects zero_addr g') /\ is_blue x g' ==>
                 U64.v (wosize_of_object x g') < wz))
-  = SC.fused_agrees_sweep_coalesce h_mark fp;
-    Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    let g = fst (SpecSweep.sweep h_mark fp) in
-    let rc = Coalesce.coalesce g in
-    let f = fst (SCD.fused_sweep_coalesce h_mark) in
-    Coalesce.coalesce_preserves_wf g;
+  = let r = FS.fused_sweep_coalesce h_mark fp in
+    Corr.fused_post_gen h_init h_mark roots fp;
+    FSE.sweep_post_elim h_mark (fst r) (snd r);
     wf_parts ();
-    CD.coalesce_fl_entry g;
-    CC.coalesce_exact g;
-    HA.agree_wfh_part1 f (fst rc);
-    HA.agree_fl_valid f (fst rc) (snd rc) heap_words;
-    HA.agree_fl_chain_terminates f (fst rc) (snd rc) heap_words;
-    HA.agree_fl_exact f (fst rc) (snd rc);
-    alloc_spec_oom_no_fit f (snd rc) wz
+    FLA.fl_ascending_valid (fst r) (snd r);
+    FLA.fl_ascending_exact (fst r) (snd r);
+    alloc_spec_oom_no_fit (fst r) (snd r) wz
 #pop-options

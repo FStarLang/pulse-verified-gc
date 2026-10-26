@@ -44,6 +44,8 @@ module CD = GC.Spec.Coalesce.Descending
 module CC = GC.Spec.Coalesce.Complete
 module SI = GC.Spec.SweepInv
 module Corr = GC.Spec.Correctness
+module FS = GC.Spec.FusedSweep
+module FLA = GC.Spec.FreeList.Ascending
 module SC = GC.Spec.SweepCoalesce
 module SCD = GC.Spec.SweepCoalesce.Defs
 module SpecSweep = GC.Spec.Sweep
@@ -879,25 +881,17 @@ let coalesce_entry (g: heap)
 #pop-options
 
 /// The same, at the pass the collector actually runs.
-#push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let fused_entry (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
   : Lemma
-    (requires
-      Corr.mark_post h_init h_mark roots fp /\
-      well_formed_heap h_mark /\
-      heap_objects_dense h_mark /\
-      SpecSweep.fp_in_heap fp h_mark /\
-      (forall (x: obj_addr). Seq.mem x (objects zero_addr h_mark) ==> ~(is_gray x h_mark)))
-    (ensures (let r = SCD.fused_sweep_coalesce h_mark in alloc_entry (fst r) (snd r)))
-  = SC.fused_agrees_sweep_coalesce h_mark fp;
-    Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    let rc = Coalesce.coalesce (fst (SpecSweep.sweep h_mark fp)) in
-    let f = fst (SCD.fused_sweep_coalesce h_mark) in
-    coalesce_entry (fst (SpecSweep.sweep h_mark fp));
-    HA.agree_wfh_part1 f (fst rc);
-    HA.agree_fl_valid f (fst rc) (snd rc) heap_words;
-    HA.agree_fl_chain_terminates f (fst rc) (snd rc) heap_words;
-    HA.agree_fl_exact f (fst rc) (snd rc)
+    (requires Corr.mark_post h_init h_mark roots fp /\ FLA.fl_ascending h_init fp)
+    (ensures (let r = FS.fused_sweep_coalesce h_mark fp in alloc_entry (fst r) (snd r)))
+  = let r = FS.fused_sweep_coalesce h_mark fp in
+    Corr.fused_post_gen h_init h_mark roots fp;
+    GC.Spec.FusedSweep.End.sweep_post_elim h_mark (fst r) (snd r);
+    wf_parts ();
+    FLA.fl_ascending_valid (fst r) (snd r);
+    FLA.fl_ascending_exact (fst r) (snd r)
 #pop-options
 
 /// ---------------------------------------------------------------------------

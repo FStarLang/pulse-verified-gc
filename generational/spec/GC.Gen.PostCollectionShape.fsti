@@ -25,6 +25,8 @@ module Corr = GC.Spec.Correctness
 module Sweep = GC.Spec.Sweep
 module Coalesce = GC.Spec.Coalesce
 module GenInv = GC.Gen.HeapInvariant
+module FS = GC.Spec.FusedSweep
+module FLA = GC.Spec.FreeList.Ascending
 
 /// **The major collector restores `major_heap_shape`.**
 ///
@@ -54,3 +56,14 @@ val major_gc_restores_major_heap_shape_of_source
   : Lemma
     (requires Corr.gc_coalesce_source h_init s2 roots fp final_fp)
     (ensures GenInv.major_heap_shape s2 final_fp)
+
+/// **The fused sweep restores `major_heap_shape`.**  Given the mark
+/// postcondition and the free list the previous cycle left (exact and
+/// ascending), the heap and free-list head the fused sweep returns satisfy the
+/// shape invariant, and the list is again exact and ascending.
+val major_gc_restores_major_heap_shape_fused
+  (major: heap) (h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
+  : Lemma
+    (requires Corr.mark_post major h_mark roots fp /\ FLA.fl_ascending major fp)
+    (ensures (let r = FS.fused_sweep_coalesce h_mark fp in
+              GenInv.major_heap_shape (fst r) (snd r) /\ FLA.fl_ascending (fst r) (snd r)))

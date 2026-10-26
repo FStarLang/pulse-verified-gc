@@ -267,6 +267,26 @@ let covered_at (g0 g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
     end
 #pop-options
 
+/// A free block of the result holds only blocks that were dead.
+#push-options "--z3rlimit 40"
+let free_holds_dead (g0 g: heap) (fp: U64.t) (st: sweep_state) (x y: obj_addr)
+  : Lemma (requires at_end g0 g fp st /\ Seq.mem y (objects zero_addr g) /\ is_blue y g /\
+                    Seq.mem x (objects zero_addr g0) /\ inside g0 g x y)
+          (ensures ~(is_black x g0))
+  = block_g g0 g fp st y;
+    colour_of g y;
+    colour_of g0 x;
+    let q = hd_address y in
+    swept_cases g0 g q;
+    white_header_facts (read_word g0 q);
+    assert (free_run g0 g q);
+    W.hd_address_pos x; W.hd_address_pos y;
+    W.objects_mem_iff g0 zero_addr x;
+    W.bnext_facts g q;
+    W.reaches_det g0 zero_addr q (U64.v (hd_address x));
+    dead_run_mem g0 q (W.bnext g q) (hd_address x)
+#pop-options
+
 #push-options "--z3rlimit 40"
 let dense_at_end (g0 g: heap) (fp: U64.t) (st: sweep_state)
   : Lemma (requires at_end g0 g fp st)
@@ -297,6 +317,7 @@ let sweep_done_post (g0 g: heap) (fp: U64.t) =
     FStar.Classical.forall_intro (FStar.Classical.move_requires (not_infix_at g0 g fp st));
     FStar.Classical.forall_intro_2 (fun x -> FStar.Classical.move_requires (no_adjacent_at g0 g fp st x));
     FStar.Classical.forall_intro (FStar.Classical.move_requires (covered_at g0 g fp st));
+    FStar.Classical.forall_intro_2 (fun x -> FStar.Classical.move_requires (free_holds_dead g0 g fp st x));
     reveal_opaque (`%sweep_post) (sweep_post g0 g fp)
   end
 #pop-options

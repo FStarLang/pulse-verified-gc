@@ -10,8 +10,8 @@
 ///     tag and fields (`survives`);
 ///   * every other block of the result is free (blue), and the result's
 ///     blocks are blocks of the marked heap;
-///   * every dead block of the marked heap lies inside a free block, and no
-///     two free blocks are adjacent;
+///   * every dead block of the marked heap lies inside a free block, every
+///     free block holds only dead blocks, and no two free blocks are adjacent;
 ///   * the walk covers the heap (`heap_objects_dense`);
 ///   * the free list is exact and ascending (`FLA.fl_ascending`), so valid and
 ///     terminating;
@@ -69,6 +69,8 @@ let sweep_post (g0 g: heap) (fp: U64.t) : prop =
      is_blue x g /\ is_blue y g ==> ~(adjacent g x y)) /\
   (forall (x: obj_addr). Seq.mem x (objects zero_addr g0) /\ ~(is_black x g0) ==>
      (exists (y: obj_addr). Seq.mem y (objects zero_addr g) /\ is_blue y g /\ inside g0 g x y)) /\
+  (forall (x y: obj_addr). Seq.mem y (objects zero_addr g) /\ is_blue y g /\
+     Seq.mem x (objects zero_addr g0) /\ inside g0 g x y ==> ~(is_black x g0)) /\
   FLA.fl_ascending g fp
 
 val sweep_post_elim (g0 g: heap) (fp: U64.t)
@@ -83,6 +85,8 @@ val sweep_post_elim (g0 g: heap) (fp: U64.t)
                is_blue x g /\ is_blue y g ==> ~(adjacent g x y)) /\
             (forall (x: obj_addr). Seq.mem x (objects zero_addr g0) /\ ~(is_black x g0) ==>
                (exists (y: obj_addr). Seq.mem y (objects zero_addr g) /\ is_blue y g /\ inside g0 g x y)) /\
+            (forall (x y: obj_addr). Seq.mem y (objects zero_addr g) /\ is_blue y g /\
+               Seq.mem x (objects zero_addr g0) /\ inside g0 g x y ==> ~(is_black x g0)) /\
             FLA.fl_ascending g fp)
 
 /// **The end lemma.**  A sweep that has reached the end of the heap with its

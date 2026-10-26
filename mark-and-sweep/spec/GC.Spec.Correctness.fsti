@@ -27,6 +27,10 @@ module Coalesce = GC.Spec.Coalesce
 module SweepInv = GC.Spec.SweepInv
 module MarkInv = GC.Spec.MarkInv
 module HeapAgree = GC.Spec.HeapAgree
+module FS = GC.Spec.FusedSweep
+module FSI = GC.Spec.FusedSweep.Inv
+module FSE = GC.Spec.FusedSweep.End
+module FLA = GC.Spec.FreeList.Ascending
 module U64 = FStar.UInt64
 
 /// ---------------------------------------------------------------------------
@@ -349,6 +353,8 @@ val mark_post_intro :
       create_graph h_mark == create_graph h_init /\
       (forall (x: obj_addr). Seq.mem x (objects zero_addr h_init) ==>
         wosize_of_object x h_mark == wosize_of_object x h_init) /\
+      (forall (x: obj_addr). Seq.mem x (objects zero_addr h_init) ==>
+        is_blue x h_mark == is_blue x h_init) /\
       (forall (x: obj_addr) (i: U64.t). Seq.mem x (objects zero_addr h_init) /\
         U64.v i >= 1 /\ U64.v i <= U64.v (wosize_of_object x h_init) ==>
         HeapGraph.get_field h_mark x i == HeapGraph.get_field h_init x i))
@@ -378,6 +384,17 @@ val mark_post_elim_objects_gt0 : h_init:heap -> h_mark:heap -> roots:seq obj_add
 val mark_post_elim_fp : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
   Lemma (requires mark_post h_init h_mark roots fp)
         (ensures fp_in_heap fp h_mark)
+
+/// Marking leaves free blocks -- and so the free list -- alone.
+val mark_post_elim_blue : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
+  Lemma (requires mark_post h_init h_mark roots fp)
+        (ensures (forall (x: obj_addr). Seq.mem x (objects zero_addr h_init) ==>
+                    is_blue x h_mark == is_blue x h_init /\
+                    wosize_of_object x h_mark == wosize_of_object x h_init) /\
+                 (forall (x: obj_addr) (i: U64.t). Seq.mem x (objects zero_addr h_init) /\
+                    U64.v i >= 1 /\ U64.v i <= U64.v (wosize_of_object x h_init) ==>
+                    HeapGraph.get_field h_mark x i == HeapGraph.get_field h_init x i) /\
+                 objects zero_addr h_mark == objects zero_addr h_init)
 
 let heap_reachable (h: heap) (roots: seq obj_addr) (x: obj_addr) : prop =
   let g = create_graph h in
@@ -539,3 +556,77 @@ val gc_result_agree :
                graph_wf g /\ is_vertex_set roots' /\ subset_vertices roots' g.vertices) ==>
               major_gc_live_subgraph_isomorphism h_init s2 roots /\
               major_gc_unreachable_final_blue h_init s2 roots))
+
+/// ---------------------------------------------------------------------------
+/// The theorems, at the heap the fused sweep produces
+/// ---------------------------------------------------------------------------
+///
+/// The collector sweeps with `GC.Spec.FusedSweep.fused_sweep_coalesce`, which
+/// keeps the free list across cycles and edits it in place.  It therefore
+/// needs the list it is handed to be exact and ascending
+/// (`GC.Spec.FreeList.Ascending.fl_ascending`); every other hypothesis is the
+/// mark postcondition.  The statements below are the collector's theorems at
+/// the heap that pass returns, proved from its end lemma
+/// (`GC.Spec.FusedSweep.End`), with no reference heap in between.
+
+/// What the sweep needs, from the mark postcondition and the free list.
+val mark_post_sweep_pre :
+  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma
+    (requires mark_post h_init h_mark roots fp /\ FLA.fl_ascending h_init fp)
+    (ensures FSI.sweep_pre h_mark fp /\ FSE.marked h_mark)
+
+/// Everything the sweep leaves behind (`FSE.sweep_post`), with well-formedness.
+val fused_post_gen :
+  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma
+    (requires mark_post h_init h_mark roots fp /\ FLA.fl_ascending h_init fp)
+    (ensures (let r = FS.fused_sweep_coalesce h_mark fp in
+              FSE.sweep_post h_mark (fst r) (snd r) /\
+              well_formed_heap (fst r) /\ no_pointer_to_blue (fst r)))
+
+val gc_postcondition_fused :
+  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma
+    (requires mark_post h_init h_mark roots fp /\ FLA.fl_ascending h_init fp)
+    (ensures gc_postcondition (fst (FS.fused_sweep_coalesce h_mark fp)))
+
+val full_gc_correctness_fused :
+  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma
+    (requires mark_post h_init h_mark roots fp /\ FLA.fl_ascending h_init fp)
+    (ensures full_gc_correctness h_init (fst (FS.fused_sweep_coalesce h_mark fp)) roots)
+
+val major_gc_live_subgraph_isomorphism_fused :
+  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma
+    (requires mark_post h_init h_mark roots fp /\ FLA.fl_ascending h_init fp /\
+              (let g = create_graph h_init in
+               let roots' = HeapGraph.coerce_to_vertex_list roots in
+               graph_wf g /\ is_vertex_set roots' /\ subset_vertices roots' g.vertices))
+    (ensures major_gc_live_subgraph_isomorphism
+      h_init (fst (FS.fused_sweep_coalesce h_mark fp)) roots)
+
+val major_gc_unreachable_final_blue_fused :
+  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma
+    (requires mark_post h_init h_mark roots fp /\ FLA.fl_ascending h_init fp /\
+              (let g = create_graph h_init in
+               let roots' = HeapGraph.coerce_to_vertex_list roots in
+               graph_wf g /\ is_vertex_set roots' /\ subset_vertices roots' g.vertices))
+    (ensures major_gc_unreachable_final_blue
+      h_init (fst (FS.fused_sweep_coalesce h_mark fp)) roots)
+
+/// All of the above at once: what `GC.Impl.collect_with_roots` promises.
+val gc_result_fused :
+  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma
+    (requires mark_post h_init h_mark roots fp /\ FLA.fl_ascending h_init fp)
+    (ensures (let s2 = fst (FS.fused_sweep_coalesce h_mark fp) in
+              gc_postcondition s2 /\
+              full_gc_correctness h_init s2 roots /\
+              ((let g = create_graph h_init in
+                let roots' = HeapGraph.coerce_to_vertex_list roots in
+                graph_wf g /\ is_vertex_set roots' /\ subset_vertices roots' g.vertices) ==>
+               major_gc_live_subgraph_isomorphism h_init s2 roots /\
+               major_gc_unreachable_final_blue h_init s2 roots)))

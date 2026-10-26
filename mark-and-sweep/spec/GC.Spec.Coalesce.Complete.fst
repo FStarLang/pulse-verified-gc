@@ -12,8 +12,6 @@
 /// statement itself: `fl_complete` previously appeared only as a hypothesis,
 /// never as a conclusion about a heap anything constructs, so every theorem
 /// resting on it described a set of heaps that nothing was known to inhabit.
-/// `fused_partition` at the end of this module is the first consumer to be
-/// handed one.
 ///
 /// It could not have been proved before the wosize-0 fragment forced
 /// `fl_complete` to be weakened.  The old form -- every *blue* object is on
@@ -55,14 +53,8 @@ module U64 = FStar.UInt64
 module CD = GC.Spec.Coalesce.Descending
 module FL = GC.Spec.FreeList
 module FLD = GC.Spec.FreeList.Descending
-module Part = GC.Spec.Partition
 module WE = GC.Spec.WalkEnd
 module SI = GC.Spec.SweepInv
-module Corr = GC.Spec.Correctness
-module SC = GC.Spec.SweepCoalesce
-module SCD = GC.Spec.SweepCoalesce.Defs
-module SpecSweep = GC.Spec.Sweep
-module HA = GC.Spec.HeapAgree
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 40"
 
@@ -774,78 +766,3 @@ let coalesce_exact (g: heap)
           (ensures (let r = coalesce g in FL.fl_exact (fst r) (snd r)))
   = coalesce_sound g;
     coalesce_complete g
-
-/// The same, at the pass the collector actually runs. Same hypotheses as
-/// `fused_partition`.
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 100"
-let fused_exact (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
-  : Lemma
-    (requires
-      Corr.mark_post h_init h_mark roots fp /\
-      well_formed_heap h_mark /\
-      heap_objects_dense h_mark /\
-      SpecSweep.fp_in_heap fp h_mark /\
-      (forall (x: obj_addr). Seq.mem x (objects zero_addr h_mark) ==> ~(is_gray x h_mark)))
-    (ensures (let r = SCD.fused_sweep_coalesce h_mark in FL.fl_exact (fst r) (snd r)))
-  = SC.fused_agrees_sweep_coalesce h_mark fp;
-    Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    let rc = coalesce (fst (SpecSweep.sweep h_mark fp)) in
-    coalesce_exact (fst (SpecSweep.sweep h_mark fp));
-    HA.agree_fl_exact (fst (SCD.fused_sweep_coalesce h_mark)) (fst rc) (snd rc)
-#pop-options
-
-/// ---------------------------------------------------------------------------
-/// The payoff: the partition, at a heap the collector actually produces
-/// ---------------------------------------------------------------------------
-
-/// `GC.Spec.Partition.heap_partition_strong` is stated of an arbitrary heap
-/// satisfying three hypotheses, and until now the third -- `fl_complete` --
-/// had no base case anywhere in the development, so the theorem described a
-/// set of heaps that nothing was known to inhabit.  All three now come from
-/// `post_sweep`, which `GC.Spec.Correctness.sweep_post_sweep_strong` proves of
-/// the sweeper's output.  So: after a collection, the heap is exactly the live
-/// words, plus the words on the free list, plus the fragments -- with no fourth
-/// class of free space that has been lost track of.
-///
-/// **The partition, at the heap the collector actually produces.**
-///
-/// `GC.Spec.Partition.heap_partition_strong` holds of `coalesce g`, but the shipped pipeline is the
-/// fused single pass: `GC.Impl.fst` calls `fused_sweep_coalesce heap`, never
-/// `sweep` and `coalesce` separately.  `fused_agrees_sweep_coalesce` bridges
-/// the two (same free pointer, heaps equal modulo free-block bodies, which is
-/// all the partition reads), and `sweep_post_sweep_strong_gen` supplies `post_sweep` of the sweeper's
-/// output from the mark postcondition, so the identity transfers to the pass
-/// the collector runs.
-///
-/// The hypotheses are exactly the ones `GC.Impl.fst` already discharges at the
-/// call site (`fp_valid_transfer`, `noGreyObjects_from_no_gray`, and the mark
-/// postcondition it carries in).
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 100"
-let fused_partition (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
-  : Lemma
-    (requires
-      Corr.mark_post h_init h_mark roots fp /\
-      well_formed_heap h_mark /\
-      heap_objects_dense h_mark /\
-      SpecSweep.fp_in_heap fp h_mark /\
-      (forall (x: obj_addr). Seq.mem x (objects zero_addr h_mark) ==> ~(is_gray x h_mark)))
-    (ensures (
-      let r = SCD.fused_sweep_coalesce h_mark in
-      let g' = fst r in
-      let objs = objects zero_addr g' in
-      U64.v zero_addr
-      + (Part.white_whsize g' objs
-         + Part.onchain_whsize g' (snd r) objs
-         + Part.frag_whsize g' objs) * U64.v mword
-      == WE.walk_end g' zero_addr))
-  = SC.fused_agrees_sweep_coalesce h_mark fp;
-    Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    let g = fst (SpecSweep.sweep h_mark fp) in
-    let rc = coalesce g in
-    let rf = SCD.fused_sweep_coalesce h_mark in
-    coalesce_all_white_or_blue g;
-    coalesce_exact g;
-    HA.agree_fl_exact (fst rf) (fst rc) (snd rc);
-    HA.agree_white_or_blue (fst rf) (fst rc);
-    Part.heap_partition_strong (fst rf) (snd rf)
-#pop-options

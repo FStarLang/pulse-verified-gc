@@ -32,6 +32,11 @@ module SweepInv = GC.Spec.SweepInv
 module MarkInv = GC.Spec.MarkInv
 module HeapAgree = GC.Spec.HeapAgree
 module Shape = GC.Spec.Coalesce.Shape
+module FS = GC.Spec.FusedSweep
+module FSI = GC.Spec.FusedSweep.Inv
+module FSE = GC.Spec.FusedSweep.End
+module FLA = GC.Spec.FreeList.Ascending
+module FL = GC.Spec.FreeList
 
 /// ---------------------------------------------------------------------------
 /// Abstract GC Postcondition (Pillars 1 + 4)
@@ -929,6 +934,8 @@ let mark_post (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) : prop =
   create_graph h_mark == create_graph h_init /\
   (forall (x: obj_addr). Seq.mem x (objects zero_addr h_init) ==>
     wosize_of_object x h_mark == wosize_of_object x h_init) /\
+  (forall (x: obj_addr). Seq.mem x (objects zero_addr h_init) ==>
+    is_blue x h_mark == is_blue x h_init) /\
   (forall (x: obj_addr) (i: U64.t). Seq.mem x (objects zero_addr h_init) /\
     U64.v i >= 1 /\ U64.v i <= U64.v (wosize_of_object x h_init) ==>
     HeapGraph.get_field h_mark x i == HeapGraph.get_field h_init x i)
@@ -947,6 +954,8 @@ let mark_post_elim_fp h_init h_mark roots fp =
   assert (fp_in_heap fp h_init);
   // fp_in_heap depends on objects; since objects are the same, fp_in_heap transfers
   ()
+
+let mark_post_elim_blue h_init h_mark roots fp = ()
 
 /// `mark h_init st` satisfies mark_post
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
@@ -988,6 +997,14 @@ let mark_satisfies_mark_post h_init st roots fp =
     else ()
   in
   FStar.Classical.forall_intro_2 aux_field;
+  // free blocks stay free, and nothing else becomes free
+  let aux_blue (x: obj_addr) : Lemma
+    (requires Seq.mem x (objects zero_addr h_init))
+    (ensures is_blue x h_mark == is_blue x h_init)
+  = if is_blue x h_init then mark_preserves_blue h_init st x
+    else mark_no_new_blue h_init st x
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux_blue);
   mark_post_intro h_init h_mark roots fp
 #pop-options
 
@@ -1653,5 +1670,191 @@ let gc_result_agree h_init h_mark roots fp s2 =
     FStar.Classical.forall_intro reach;
     assert (major_gc_live_subgraph_isomorphism h_init s2 roots);
     assert (major_gc_unreachable_final_blue h_init s2 roots)
+  end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// The theorems, at the heap the fused sweep produces
+/// ---------------------------------------------------------------------------
+
+/// Marking keeps every free block, its size and its link, so it keeps the list.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
+let mark_post_sweep_pre h_init h_mark roots fp =
+  let cells (x: U64.t) : Lemma (FLA.fl_cell h_mark x <==> FLA.fl_cell h_init x) = () in
+  FStar.Classical.forall_intro cells;
+  let links (x: U64.t)
+    : Lemma (requires FLA.fl_cell h_init x) (ensures FL.fl_next h_mark x == FL.fl_next h_init x)
+    = FLA.fl_cell_facts h_init x;
+      let o : obj_addr = x in
+      hd_address_spec o;
+      assert_norm (1 < pow2 54);
+      HeapGraph.get_field_addr_eq h_mark o 1UL;
+      HeapGraph.get_field_addr_eq h_init o 1UL;
+      assert (HeapGraph.get_field h_mark o 1UL == HeapGraph.get_field h_init o 1UL)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires links);
+  FLA.fl_ascending_transfer h_init h_mark fp
+#pop-options
+
+let fused_post_gen h_init h_mark roots fp =
+  mark_post_sweep_pre h_init h_mark roots fp;
+  FSE.fused_sweep_post h_mark fp;
+  let r = FS.fused_sweep_coalesce h_mark fp in
+  FSE.sweep_post_wf h_mark (fst r) (snd r)
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let gc_postcondition_fused h_init h_mark roots fp =
+  fused_post_gen h_init h_mark roots fp;
+  let r = FS.fused_sweep_coalesce h_mark fp in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires (FSE.sweep_post_white_or_blue h_mark (fst r) (snd r)));
+  gc_postcondition_intro (fst r)
+#pop-options
+
+/// The five pillars at the fused result, with the marked heap as witness.
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+private let fgc_pillars_fused (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
+  : Lemma (requires mark_post h_init h_mark roots fp /\ FLA.fl_ascending h_init fp)
+          (ensures fgc_pillars h_init h_mark (fst (FS.fused_sweep_coalesce h_mark fp)) roots)
+  = let r = FS.fused_sweep_coalesce h_mark fp in
+    let h_f = fst r in
+    fused_post_gen h_init h_mark roots fp;
+    FSE.sweep_post_elim h_mark h_f (snd r);
+    mark_post_sweep_pre h_init h_mark roots fp;
+    objects_is_vertex_set h_f;
+    objects_is_vertex_set h_mark;
+    let vert (x: obj_addr) : Lemma
+      (Seq.mem x (objects zero_addr h_f) <==> Seq.mem x (create_graph h_f).vertices)
+      = graph_vertices_mem h_f x
+    in
+    FStar.Classical.forall_intro vert;
+    // Pillar 3: a survivor keeps its successors
+    let succ (x: obj_addr) : Lemma
+      (requires Seq.mem x (create_graph h_f).vertices /\ is_black x h_mark)
+      (ensures successors (create_graph h_init) x == successors (create_graph h_f) x)
+      = assert (Seq.mem x (objects zero_addr h_mark));
+        FSE.sweep_post_pointer_fields h_mark h_f (snd r) x;
+        HeapGraph.successors_eq_pointer_fields h_f (objects zero_addr h_f) x;
+        HeapGraph.successors_eq_pointer_fields h_mark (objects zero_addr h_mark) x;
+        Seq.lemma_eq_elim (successors (create_graph h_mark) x) (successors (create_graph h_f) x)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires succ);
+    // Pillar 4
+    FStar.Classical.forall_intro
+      (FStar.Classical.move_requires (FSE.sweep_post_white_or_blue h_mark h_f (snd r)));
+    // Pillar 5: a survivor keeps its fields
+    let fld (x: obj_addr) (i: U64.t{U64.v i >= 1}) : Lemma
+      (requires Seq.mem x (create_graph h_f).vertices /\ is_black x h_mark /\
+                U64.v i <= U64.v (wosize_of_object x h_init))
+      (ensures HeapGraph.get_field h_init x i == HeapGraph.get_field h_f x i)
+      = FSE.sweep_post_get_field h_mark h_f (snd r) x i
+    in
+    let fld' (x: obj_addr) : Lemma
+      (forall (i: U64.t). Seq.mem x (create_graph h_f).vertices /\ is_black x h_mark /\
+         U64.v i >= 1 /\ U64.v i <= U64.v (wosize_of_object x h_init) ==>
+         HeapGraph.get_field h_init x i == HeapGraph.get_field h_f x i)
+      = FStar.Classical.forall_intro (FStar.Classical.move_requires (fld x))
+    in
+    FStar.Classical.forall_intro fld'
+#pop-options
+
+let full_gc_correctness_fused h_init h_mark roots fp =
+  fgc_pillars_fused h_init h_mark roots fp;
+  full_gc_correctness_intro h_init h_mark (fst (FS.fused_sweep_coalesce h_mark fp)) roots
+
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+let major_gc_live_subgraph_isomorphism_fused h_init h_mark roots fp =
+  let r = FS.fused_sweep_coalesce h_mark fp in
+  let h_f = fst r in
+  let g_init = create_graph h_init in
+  let g_f = create_graph h_f in
+  fgc_pillars_fused h_init h_mark roots fp;
+  fused_post_gen h_init h_mark roots fp;
+  FSE.sweep_post_elim h_mark h_f (snd r);
+  mark_post_elim_objects h_init h_mark roots fp;
+  let live_survives (x: obj_addr) : Lemma
+    (heap_reachable h_init roots x ==>
+     Seq.mem x (objects zero_addr h_f) /\ is_white x h_f)
+  = if FStar.IndefiniteDescription.strong_excluded_middle (heap_reachable h_init roots x) then begin
+      graph_vertices_mem h_init x;
+      assert (is_black x h_mark)
+    end
+  in
+  FStar.Classical.forall_intro live_survives;
+  let succ_live (x: obj_addr) : Lemma
+    (heap_reachable h_init roots x ==>
+     mem_graph_vertex g_f x /\ successors g_init x == successors g_f x)
+  = if FStar.IndefiniteDescription.strong_excluded_middle (heap_reachable h_init roots x) then begin
+      graph_vertices_mem h_init x;
+      live_survives x;
+      graph_vertices_mem h_f x
+    end
+  in
+  FStar.Classical.forall_intro succ_live;
+  let edge_preserved (x y: obj_addr) : Lemma
+    (heap_reachable h_init roots x /\ heap_reachable h_init roots y ==>
+     (heap_edge h_init x y <==> heap_edge h_f x y))
+  = if FStar.IndefiniteDescription.strong_excluded_middle
+         (heap_reachable h_init roots x /\ heap_reachable h_init roots y) then begin
+      succ_live x;
+      graph_vertices_mem h_init x;
+      (if heap_edge h_init x y then begin
+         edge_mem_successors g_init x y;
+         successors_mem_edge g_f x y
+       end);
+      (if heap_edge h_f x y then begin
+         edge_mem_successors g_f x y;
+         successors_mem_edge g_init x y
+       end)
+    end
+  in
+  FStar.Classical.forall_intro_2 edge_preserved;
+  let field_preserved (x: obj_addr) (i: U64.t) : Lemma
+    (heap_reachable h_init roots x /\ U64.v i >= 1 /\
+     U64.v i <= U64.v (wosize_of_object x h_init) ==>
+     HeapGraph.get_field h_init x i == HeapGraph.get_field h_f x i)
+  = if FStar.IndefiniteDescription.strong_excluded_middle
+         (heap_reachable h_init roots x /\ U64.v i >= 1 /\
+          U64.v i <= U64.v (wosize_of_object x h_init)) then begin
+      graph_vertices_mem h_init x;
+      live_survives x;
+      graph_vertices_mem h_f x
+    end
+  in
+  FStar.Classical.forall_intro_2 field_preserved
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+let major_gc_unreachable_final_blue_fused h_init h_mark roots fp =
+  let r = FS.fused_sweep_coalesce h_mark fp in
+  let h_f = fst r in
+  fused_post_gen h_init h_mark roots fp;
+  FSE.sweep_post_elim h_mark h_f (snd r);
+  mark_post_elim_objects h_init h_mark roots fp;
+  major_gc_live_subgraph_isomorphism_fused h_init h_mark roots fp;
+  create_graph_wf_from_heap h_f;
+  roots_subset_coal_from_iso h_init h_f roots;
+  let aux (x: obj_addr) : Lemma
+    (requires Seq.mem x (objects zero_addr h_f) /\ ~(heap_reachable h_f roots x))
+    (ensures is_blue x h_f)
+  = assert (Seq.mem x (objects zero_addr h_mark));
+    graph_vertices_mem h_init x;
+    if is_black x h_mark then
+      heap_reachable_transfer_init_to_coal h_init h_f roots x
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+let gc_result_fused h_init h_mark roots fp =
+  gc_postcondition_fused h_init h_mark roots fp;
+  full_gc_correctness_fused h_init h_mark roots fp;
+  let g = create_graph h_init in
+  let roots' = HeapGraph.coerce_to_vertex_list roots in
+  if FStar.IndefiniteDescription.strong_excluded_middle
+       (graph_wf g /\ is_vertex_set roots' /\ subset_vertices roots' g.vertices)
+  then begin
+    major_gc_live_subgraph_isomorphism_fused h_init h_mark roots fp;
+    major_gc_unreachable_final_blue_fused h_init h_mark roots fp
   end
 #pop-options
