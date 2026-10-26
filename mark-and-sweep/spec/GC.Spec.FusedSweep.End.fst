@@ -69,7 +69,7 @@ let swept_cases (g0 g: heap) (p: hp_addr)
 /// ---------------------------------------------------------------------------
 
 let at_end (g0 g: heap) (fp: U64.t) (st: sweep_state) : prop =
-  well_formed_heap g0 /\ sweep_g0 g0 /\ sweep_inv g0 g fp st /\ U64.v st.cursor + 8 >= heap_size
+  well_formed_heap_part4 g0 /\ sweep_g0 g0 /\ sweep_inv g0 g fp st /\ U64.v st.cursor + 8 >= heap_size
 
 /// Every position of `g`'s walk up to the cursor is one of `g0`'s.
 #push-options "--z3rlimit 40"
@@ -323,6 +323,7 @@ let sweep_done_post (g0 g: heap) (fp: U64.t) =
 #pop-options
 
 let fused_sweep_post (g0: heap) (fp: U64.t) =
+  wf_parts ();
   fused_sweep_done g0 fp;
   let r = fused_sweep_coalesce g0 fp in
   sweep_done_post g0 (fst r) (snd r)

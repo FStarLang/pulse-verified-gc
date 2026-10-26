@@ -90,9 +90,13 @@ val sweep_post_elim (g0 g: heap) (fp: U64.t)
             FLA.fl_ascending g fp)
 
 /// **The end lemma.**  A sweep that has reached the end of the heap with its
-/// invariant intact has produced a heap satisfying `sweep_post`.
+/// invariant intact has produced a heap satisfying `sweep_post`.  Of `g0` it
+/// needs only that its walk covers the heap and that no block of it is infix
+/// (part 4 of well-formedness): during an incremental sweep `g0` is the
+/// reference heap (`GC.Spec.FusedSweep.Phase`), whose garbage may point into
+/// blocks the sweep has already freed.
 val sweep_done_post (g0 g: heap) (fp: U64.t)
-  : Lemma (requires well_formed_heap g0 /\ sweep_g0 g0 /\ sweep_done g0 g fp)
+  : Lemma (requires well_formed_heap_part4 g0 /\ sweep_g0 g0 /\ sweep_done g0 g fp)
           (ensures sweep_post g0 g fp)
 
 /// The fused sweep, from the heap marking left.

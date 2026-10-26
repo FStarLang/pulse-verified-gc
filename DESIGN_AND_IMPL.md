@@ -762,6 +762,17 @@ or free block carved out of a free block of `g0` (`front_carved`). The plan's
 - promotion of one object (`promote_sweeping`, with `promote_at` =
   `GC.Gen.Promote.promote_object` outside a sweep, `promote_at_idle`).
 
+**When the sweep phase ends** (`GC.Spec.FusedSweep.PhaseEnd.sweeping_end`), the
+sweep's end lemma applies against the reference heap (it needs only that the
+reference heap's walk covers the heap and has no infix block), and `ref_ok`
+turns it into facts that mention no reference heap: the walk covers the heap,
+the list is exact and ascending, every object is white or free (no black or
+grey object), none is infix (`swept_clean`); and, the safety theorem, every
+object that was live when marking finished is still an object, white, with
+its size and tag (`live_survive`). While the sweep runs the list stays exact,
+so an allocation fails only when no free block anywhere is big enough
+(`sweeping_oom_no_fit`, #29 mid-sweep).
+
 ### Bounded mark stack
 
 The earlier verified mark-and-sweep design assumed an unbounded mark stack. That
