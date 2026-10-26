@@ -122,6 +122,13 @@ bytes intact. Those are precisely the objects the relaxation wants to exclude.
 
 ## 6. The one real side condition
 
+> **Superseded.**  `blue_fields_closed`, `blue_fields_non_infix` and
+> `blue_blocks_scannable` no longer exist: free (blue) blocks are now
+> unconstrained beyond their free-list link (`GC.Spec.Fields.fields_constrained`
+> excludes them), and `GC.Spec.Coalesce.flush_blue` no longer zeroes them.  The
+> text below records how the clauses were used before that change.
+
+
 With §5 corrected, only a single derivation actually needs repair:
 
 ```

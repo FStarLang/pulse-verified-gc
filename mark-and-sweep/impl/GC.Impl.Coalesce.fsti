@@ -20,7 +20,7 @@ module SpecFields = GC.Spec.Fields
 module SpecObject = GC.Spec.Object
 module SI = GC.Spec.SweepInv
 
-/// Flush a pending blue run: write merged header, link, and zero remaining fields.
+/// Flush a pending blue run: write merged header and link.
 /// Shared helper used by both coalesce and fused_sweep_coalesce.
 fn flush_blue_impl (heap: heap_t) (fb: U64.t) (rw: U64.t) (fp: U64.t)
   requires is_heap heap 's **

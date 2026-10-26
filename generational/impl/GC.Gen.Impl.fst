@@ -114,9 +114,7 @@ let gen_gc_named_root_in_stack minor major fp roots roots_out st cap r
 
 /// The heap-shape projection is a consequence of the invariant, not an extra
 /// promise: `major_heap_shape_gc_postcondition` derives "every object is white
-/// or blue" from `no_black_objects` + `no_gray_objects` by colour exhaustiveness,
-/// and hands back `blue_fields_non_infix` unchanged, it being one of
-/// `major_heap_shape`'s own conjuncts.
+/// or blue" from `no_black_objects` + `no_gray_objects` by colour exhaustiveness.
 #push-options "--fuel 0 --ifuel 0"
 let gen_gc_heap_shape_post_intro minor_data minor_bump final_major final_fp
   = GenInv.collection_heap_shape_elim
@@ -1184,7 +1182,7 @@ fn gen_gc (gh: gen_heap_t)
       // The minor half is vacuous -- the nursery returned is
       // `GC.Gen.MinorHeap.minor_reset`, i.e. zeroed -- so the content of the
       // claim is `GC.Gen.HeapInvariant.major_heap_shape` of the major heap and
-      // free-list head, all fifteen conjuncts of it, supplied by
+      // free-list head, every conjunct of it, supplied by
       // `GC.Gen.PostCollectionShape.major_gc_restores_major_heap_shape`.
       GenInv.collection_heap_shape minor_st_out s2 (fst res) /\
       gen_gc_reachable_subgraph_isomorphism_post
@@ -1316,7 +1314,8 @@ fn gen_gc (gh: gen_heap_t)
     // The collector re-establishes the generational shape invariant on the
     // heap it returns: `collect_with_roots` exposes the marked heap that
     // produced its result, and `major_gc_restores_major_heap_shape` proves all
-    // fifteen conjuncts of `major_heap_shape` for `coalesce (sweep ...)`.  The
+    // conjuncts of `major_heap_shape` for `coalesce (sweep ...)`, which the
+    // returned heap agrees with modulo free-block bodies.  The
     // nursery `gen_gc` hands back is `minor_reset`, which makes the minor and
     // cross-generation conjuncts vacuous.
     PCS.major_gc_restores_major_heap_shape_of_source

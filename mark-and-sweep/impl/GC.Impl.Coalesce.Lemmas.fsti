@@ -46,7 +46,7 @@ val objects_mem_at_zero (g: heap)
   : Lemma
     (requires Seq.length g == heap_size /\ Seq.length (objects zero_addr g) > 0)
     (ensures Seq.mem (f_address zero_addr) (objects zero_addr g))
-/// zero_fields one-step unfolding
+/// zero_fields one-step unfolding.  No longer used by `flush_blue_impl`.
 val zero_fields_step
   (g: heap) (addr: U64.t) (n: nat)
   : Lemma
@@ -100,29 +100,14 @@ val flush_blue_impl_wz0
       g1 == write_word g (hd_address fb) (makeHeader 0UL Header.Blue 0UL))
     (ensures flush_blue g fb 1 fp == (g1, fp))
 
-/// Case wz=1 (rw=2): header + link, no zeroing
-val flush_blue_impl_wz1
-  (g: heap) (fb: obj_addr) (fp: U64.t) (g1 g2: heap)
-  : Lemma
-    (requires
-      Seq.length g == heap_size /\
-      U64.v fb - U64.v mword + 2 * U64.v mword <= heap_size /\
-      g1 == write_word g (hd_address fb) (makeHeader 1UL Header.Blue 0UL) /\
-      Seq.length g1 == heap_size /\
-      g2 == write_word g1 fb fp)
-    (ensures flush_blue g fb 2 fp == (g2, fb))
-
-/// Case wz>=2 (rw>=3): header + link + zeroing
-val flush_blue_impl_wz_ge2
-  (g: heap) (fb: obj_addr) (wz: wosize{U64.v wz >= 2}) (fp: U64.t) (g1 g2 g3: heap)
+/// Case wz>=1 (rw>=2): header + link
+val flush_blue_impl_wz_ge1
+  (g: heap) (fb: obj_addr) (wz: wosize{U64.v wz >= 1}) (fp: U64.t) (g1 g2: heap)
   : Lemma
     (requires
       Seq.length g == heap_size /\
       U64.v fb - U64.v mword + (U64.v wz + 1) * U64.v mword <= heap_size /\
       g1 == write_word g (hd_address fb) (makeHeader wz Header.Blue 0UL) /\
       Seq.length g1 == heap_size /\
-      g2 == write_word g1 fb fp /\
-      Seq.length g2 == heap_size /\
-      U64.v fb + U64.v mword < pow2 64 /\
-      g3 == Alloc.zero_fields g2 (U64.add fb mword) (U64.v wz - 1))
-    (ensures flush_blue g fb (U64.v wz + 1) fp == (g3, fb))
+      g2 == write_word g1 fb fp)
+    (ensures flush_blue g fb (U64.v wz + 1) fp == (g2, fb))

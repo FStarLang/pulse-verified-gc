@@ -1234,6 +1234,11 @@ let sweep_preserves_edges g fp x =
   
   // 5. object_fits_in_heap is preserved (depends on wosize and heap_size constant)
   assert (HeapGraph.object_fits_in_heap x g == HeapGraph.object_fits_in_heap x g');
+
+  // 5b. x is black before and white after, so blue in neither
+  sweep_resets_black_to_white g fp;
+  colors_exhaustive_and_exclusive x g;
+  colors_exhaustive_and_exclusive x g';
   
   // 6. Prove all fields are preserved using the quantifier helper
   objects_is_vertex_set g;

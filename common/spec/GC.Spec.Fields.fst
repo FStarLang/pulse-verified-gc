@@ -517,18 +517,24 @@ let well_formed_heap_part4 (g: heap) : prop =
 /// field-closure clauses below must stop at the tag too, or they demand a
 /// property of the mutator's data that OCaml does not have.
 ///
-/// The predicate deliberately mentions only the tag and not the colour.  A
-/// colour-dependent version would flip when the sweep blues a dead string,
-/// forcing the sweep to establish field closure for a body it never wrote;
-/// as written, `GC.Spec.Mark.color_change_preserves_wf` --- which is generic
-/// in the target colour --- transports it for free.
+/// Free (blue) blocks are excluded too.  Nothing in the collector reads a free
+/// block's body beyond its free-list link: mark only scans grey objects, sweep
+/// and coalesce read headers and colours, the generational pointer update skips
+/// blue objects, and the allocator reads the header and field 0.  So a dead
+/// object's stale fields may stay in the block after it is freed --- the sweep
+/// does not zero them --- and `GC.Spec.HeapGraph.get_pointer_fields` returns no
+/// edges for a blue block, matching this clause.  The link word itself is
+/// constrained by the free-list invariants (`fl_valid`,
+/// `GC.Gen.FreeListShape.blue_link_fields_valid`), not here.
 ///
-/// Free blocks are covered, and cost nothing: `GC.Spec.Coalesce.flush_blue`
-/// gives every merged run a fresh header with tag 0, so a coalesced heap has
-/// no blue no-scan block (`GC.Spec.Coalesce.coalesce_blue_blocks_scannable`).
-/// What part 2 buys on a blue block is its free-list link word.
+/// The colour dependence is one-directional in practice: colour changes made
+/// by mark (white -> grey -> black) and sweep (black -> white) never involve
+/// blue, sweeping white -> blue only drops obligations, and the one place a
+/// blue block becomes live --- allocation --- hands out a block whose fields
+/// the caller overwrites before anything reads them (`copy_fields` on
+/// promotion; the runtime on direct allocation).
 let fields_constrained (g: heap) (src: obj_addr) : GTot bool =
-  not (GC.Spec.Object.is_no_scan src g)
+  not (GC.Spec.Object.is_no_scan src g) && not (GC.Spec.Object.is_blue src g)
 
 /// Part 2 --- the field-closure clause --- is `opaque_to_smt`, and deliberately
 /// so.  It is the clause that decides which heaps the collector is willing to
@@ -691,7 +697,9 @@ let well_formed_heap_part3_intro_no_infix (g: heap)
     well_formed_heap_part3_intro g pf'
 
 /// Transport parts 2 and 3 across a heap change that preserves the object
-/// enumeration and every address's header interpretation.  Colour changes and
+/// enumeration and every address's header interpretation (a blue object may
+/// stay blue or become blue, never stop being blue: only then does
+/// `fields_constrained g'` imply `fields_constrained g`).  Colour changes and
 /// tag rewrites are the canonical instances: they leave `objects`, `is_infix`,
 /// `is_closure`, `wosize_of_object` and hence `resolve_object` alone, so both
 /// clauses carry over verbatim once the field-pointer structure is transported
@@ -712,6 +720,7 @@ let well_formed_heap_part2_3_transport (g: heap) (g': heap)
                        GC.Spec.Object.is_infix h g' == GC.Spec.Object.is_infix h g /\
                        GC.Spec.Object.is_closure h g' == GC.Spec.Object.is_closure h g /\
                        GC.Spec.Object.is_no_scan h g' == GC.Spec.Object.is_no_scan h g /\
+                       (GC.Spec.Object.is_blue h g ==> GC.Spec.Object.is_blue h g') /\
                        GC.Spec.Object.wosize_of_object h g' == GC.Spec.Object.wosize_of_object h g /\
                        GC.Spec.Object.resolve_object h g' == GC.Spec.Object.resolve_object h g))
           (ensures well_formed_heap_part2 g' /\ well_formed_heap_part3 g')
@@ -1085,142 +1094,6 @@ let no_infix_field_targets_from_raw (g: heap)
     in
     no_infix_field_targets_intro g pf
 
-/// ---------------------------------------------------------------------------
-/// Interior pointers out of free-list cells
-/// ---------------------------------------------------------------------------
-///
-/// `no_infix_field_targets` restricts *every* object.  Almost nothing in the
-/// generational collector actually needs that: what needs it is
-/// `GC.Gen.Promote.blue_fields_closed`, which is stated on the raw field value
-/// and is derived from part 2 by
-/// `GC.Gen.PromoteUpdate.BlueAlloc.wfh_part2_implies_blue_fields_closed`.  That
-/// derivation only ever looks at *blue* (free-list) objects.
-///
-/// `blue_fields_non_infix` is exactly that restriction and no more: a free-list
-/// cell may not hold an interior pointer.  Live objects --- white, gray and
-/// black --- are unconstrained, which is what makes interior pointers between
-/// mutually recursive closures expressible under the generational invariant.
-///
-/// It costs nothing to re-establish.  After a collection the Cheney machinery
-/// proves *raw* part 2 for blue objects (they are untouched, and `objects` is
-/// preserved), and `blue_fields_non_infix_from_raw` turns that straight into
-/// this clause.  See `GC.Gen.HeapInvariant.major_heap_shape`.
-[@@"opaque_to_smt"]
-let blue_fields_non_infix (g: heap) : prop =
-  forall (src: obj_addr) (dst: obj_addr).
-    Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
-    GC.Spec.Object.is_blue src g /\
-    (let wz = wosize_of_object src g in
-     U64.v wz < pow2 54 /\
-     exists_field_pointing_to_unchecked g src wz dst) ==>
-    ~(GC.Spec.Object.is_infix dst g)
-
-let blue_fields_non_infix_elim (g: heap) (src: obj_addr) (dst: obj_addr) : Lemma
-  (requires blue_fields_non_infix g /\ Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
-            GC.Spec.Object.is_blue src g /\
-            (let wz = wosize_of_object src g in
-             U64.v wz < pow2 54 /\
-             exists_field_pointing_to_unchecked g src wz dst))
-  (ensures ~(GC.Spec.Object.is_infix dst g))
-  = reveal_opaque (`%blue_fields_non_infix) blue_fields_non_infix
-
-let blue_fields_non_infix_intro (g: heap)
-    (pf: (src: obj_addr) -> (dst: obj_addr) ->
-      Lemma (requires Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
-                      GC.Spec.Object.is_blue src g /\
-                      (let wz = wosize_of_object src g in
-                       U64.v wz < pow2 54 /\
-                       exists_field_pointing_to_unchecked g src wz dst))
-            (ensures ~(GC.Spec.Object.is_infix dst g)))
-  : Lemma (blue_fields_non_infix g)
-  = reveal_opaque (`%blue_fields_non_infix) blue_fields_non_infix;
-    let aux (src: obj_addr) : Lemma
-      (forall (dst: obj_addr).
-        (Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
-         GC.Spec.Object.is_blue src g /\
-         (let wz = wosize_of_object src g in
-          U64.v wz < pow2 54 /\
-          exists_field_pointing_to_unchecked g src wz dst)) ==>
-        ~(GC.Spec.Object.is_infix dst g))
-      = FStar.Classical.forall_intro (FStar.Classical.move_requires (pf src))
-    in
-    FStar.Classical.forall_intro aux
-
-/// Every free-list block is scannable, i.e. no blue object carries a tag at or
-/// above `no_scan_tag`.
-///
-/// Like `blue_fields_non_infix`, this is a statement about the collector's own
-/// free blocks rather than about the mutator's data, and it comes from the same
-/// place: `GC.Spec.Coalesce.flush_blue` gives every merged run a *fresh* header
-/// with tag 0, and `GC.Spec.Coalesce.coalesce_aux` flushes every blue run,
-/// singletons included.  A dead string is blue and no-scan only in the transient
-/// heap between the sweep and the coalesce.
-///
-/// It is what lets `well_formed_heap`'s field clauses be relaxed to skip no-scan
-/// sources while `GC.Gen.Promote.blue_fields_closed` --- which is about free
-/// blocks, and which the Cheney promotion development depends on --- stays
-/// derivable from them.
-[@@"opaque_to_smt"]
-let blue_blocks_scannable (g: heap) : prop =
-  (forall (obj: obj_addr).
-    Seq.mem obj (objects zero_addr g) /\ GC.Spec.Object.is_blue obj g ==>
-    ~(GC.Spec.Object.is_no_scan obj g))
-
-/// Eliminate `blue_blocks_scannable` at a single object.
-let blue_blocks_scannable_elim (g: heap) (obj: obj_addr) : Lemma
-  (requires blue_blocks_scannable g /\
-            Seq.mem obj (objects zero_addr g) /\ GC.Spec.Object.is_blue obj g)
-  (ensures ~(GC.Spec.Object.is_no_scan obj g))
-  = reveal_opaque (`%blue_blocks_scannable) blue_blocks_scannable
-
-/// Introduce `blue_blocks_scannable` from a pointwise proof.
-let blue_blocks_scannable_intro (g: heap)
-    (pf: (obj: obj_addr) ->
-      Lemma (requires Seq.mem obj (objects zero_addr g) /\
-                      GC.Spec.Object.is_blue obj g)
-            (ensures ~(GC.Spec.Object.is_no_scan obj g)))
-  : Lemma (blue_blocks_scannable g)
-  = reveal_opaque (`%blue_blocks_scannable) blue_blocks_scannable;
-    FStar.Classical.forall_intro (FStar.Classical.move_requires pf)
-
-/// The blue-only clause is a weakening of the all-objects one.
-let no_infix_field_targets_weaken (g: heap) : Lemma
-  (requires no_infix_field_targets g)
-  (ensures blue_fields_non_infix g)
-  = let pf (src: obj_addr) (dst: obj_addr) : Lemma
-      (requires Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
-                GC.Spec.Object.is_blue src g /\
-                (let wz = wosize_of_object src g in
-                 U64.v wz < pow2 54 /\
-                 exists_field_pointing_to_unchecked g src wz dst))
-      (ensures ~(GC.Spec.Object.is_infix dst g))
-      = no_infix_field_targets_elim g src dst
-    in
-    blue_fields_non_infix_intro g pf
-
-/// Raw part 2 restricted to blue objects entails the clause.  This is how it is
-/// re-established after every collection, and why it is free.
-let blue_fields_non_infix_from_raw (g: heap)
-    (raw: (src: obj_addr) -> (dst: obj_addr) ->
-      Lemma (requires Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
-                      GC.Spec.Object.is_blue src g /\
-                      (let wz = wosize_of_object src g in
-                       U64.v wz < pow2 54 /\
-                       exists_field_pointing_to_unchecked g src wz dst))
-            (ensures Seq.mem dst (objects zero_addr g)))
-  : Lemma (requires well_formed_heap_part4 g)
-          (ensures blue_fields_non_infix g)
-  = let pf (src: obj_addr) (dst: obj_addr) : Lemma
-      (requires Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
-                GC.Spec.Object.is_blue src g /\
-                (let wz = wosize_of_object src g in
-                 U64.v wz < pow2 54 /\
-                 exists_field_pointing_to_unchecked g src wz dst))
-      (ensures ~(GC.Spec.Object.is_infix dst g))
-      = raw src dst
-    in
-    blue_fields_non_infix_intro g pf
-
 /// Combined: field read + pointer target → target ∈ objects.
 /// Internalizes wf_object_size_bound + field_read_implies_exists_pointing + wf_field_target_in_objects.
 let field_pointer_target_in_objects (g: heap) (h: obj_addr)
@@ -1345,70 +1218,6 @@ let well_formed_heap_part2_from_field_closure (g: heap)
     in
     well_formed_heap_part3_intro_no_infix g aux_non_infix;
     no_infix_field_targets_intro g aux_non_infix
-#pop-options
-
-/// `blue_fields_non_infix` from a per-index closure proof about blue objects.
-///
-/// The counterpart of `well_formed_heap_part2_from_field_closure`, restricted to
-/// free-list cells.  Producers that can show a blue object's pointer fields hold
-/// *enumerated* addresses get the clause for free, since part 4 keeps infix
-/// objects out of the enumeration.
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
-let blue_fields_non_infix_from_field_closure (g: heap)
-    (field_closure: (src: obj_addr) -> (j: nat) ->
-      Lemma (requires Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
-                      GC.Spec.Object.is_blue src g /\
-                      j < U64.v (wosize_of_object src g) /\
-                      U64.v src + j * 8 + 8 <= heap_size)
-            (ensures (let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
-                      is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr g))))
-  : Lemma (requires well_formed_heap_part1 g /\ well_formed_heap_part4 g)
-          (ensures blue_fields_non_infix g)
-  = let contra (src: obj_addr) (dst: obj_addr)
-    : Lemma (requires Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
-                      GC.Spec.Object.is_blue src g /\
-                      U64.v (wosize_of_object src g) < pow2 54 /\
-                      GC.Spec.Object.is_infix dst g)
-            (ensures ~(exists_field_pointing_to_unchecked g src
-                         (wosize_of_object src g) dst))
-    = begin
-        let wz = wosize_of_object src g in
-        hd_address_spec src;
-        assert (U64.v src + U64.v wz * 8 <= heap_size);
-        let field_not_dst (idx: nat{idx < U64.v wz})
-          : Lemma (let far = U64.add_mod src (U64.mul_mod (U64.uint_to_t idx) mword) in
-                   U64.v far < heap_size /\ U64.v far % 8 == 0 ==>
-                   ~(is_pointer_to (read_word g (far <: hp_addr)) dst))
-          = let far = U64.add_mod src (U64.mul_mod (U64.uint_to_t idx) mword) in
-            assert (idx * 8 < pow2 64);
-            assert (U64.v (U64.mul_mod (U64.uint_to_t idx) mword) == idx * 8);
-            assert (U64.v src + idx * 8 < pow2 64);
-            assert (U64.v far == U64.v src + idx * 8);
-            if U64.v far >= heap_size || U64.v far % 8 <> 0 then ()
-            else begin
-              let fv = read_word g (far <: hp_addr) in
-              if is_pointer_to fv dst then begin
-                hd_address_spec (fv <: obj_addr);
-                hd_address_spec dst;
-                assert (fv == dst);
-                assert (is_pointer fv);
-                field_closure src idx
-              end else ()
-            end
-        in
-        Classical.forall_intro field_not_dst;
-        efptu_false_if_no_field_matches g src wz dst
-      end
-    in
-    let pf (src: obj_addr) (dst: obj_addr) : Lemma
-      (requires Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
-                GC.Spec.Object.is_blue src g /\
-                (let wz = wosize_of_object src g in
-                 U64.v wz < pow2 54 /\ exists_field_pointing_to_unchecked g src wz dst))
-      (ensures ~(GC.Spec.Object.is_infix dst g))
-      = Classical.move_requires (contra src) dst
-    in
-    blue_fields_non_infix_intro g pf
 #pop-options
 
 /// Resolved analogue of `well_formed_heap_part2_from_field_closure`.
@@ -2394,6 +2203,7 @@ let field_write_preserves_wf g obj addr v =
       GC.Spec.Object.tag_of_object_spec src g';
       GC.Spec.Object.is_no_scan_spec src g;
       GC.Spec.Object.is_no_scan_spec src g';
+      GC.Spec.Object.color_of_header_eq src g g';
       assert (fields_constrained g src);
       // Pull the target back into the original heap.  In both branches `dst` is
       // either a field target of `g` or the freshly written value `v`; neither

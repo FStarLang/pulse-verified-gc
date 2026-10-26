@@ -109,9 +109,10 @@ pushed back through `create_graph`.
   blocks.
 
 The implementation fuses sweep and coalesce into one heap pass. `GC.Spec.SweepCoalesce*`
-(≈2,300 lines across five modules) exists purely to prove
-`fused_sweep_coalesce g == coalesce (fst (sweep g fp))`
-(`fused_eq_sweep_coalesce`, `SweepCoalesce.fst:483`) so that the rest of the proof can keep using the clean
+exists purely to prove that `fused_sweep_coalesce g` and
+`coalesce (fst (sweep g fp))` have the same free pointer and agree modulo free-block
+bodies (`fused_agrees_sweep_coalesce`, with `GC.Spec.HeapAgree` carrying the
+theorems across) so that the rest of the proof can keep using the clean
 two-pass composition.
 
 ### 2.4 The top theorem, and its five pillars
@@ -210,7 +211,7 @@ are:
 - `GC.Gen.CheneyCorrectness` — the minor collector is correct;
 - `GC.Gen.CheneyPreservation.*` (≈6,500 lines, 7 modules) — the minor collector leaves
   every conjunct of the *major* collector's precondition intact (`no_black_objects`,
-  `gray_black_objects_on_stack`, `no_scan_invariant`, `blue_fields_closed`,
+  `gray_black_objects_on_stack`,
   `collection_heap_shape`, `no_pointer_to_blue`).
 
 They are stitched together in Pulse, at `generational/impl/GC.Gen.Impl.fst:1146`, which
@@ -990,12 +991,12 @@ debt: nothing fails, so nothing tells you.
   resolving the root-darkening subsystem, which kept that whole subsystem raw.
   The conjunct is free wherever `well_formed_heap` is in scope.
 
-**What was retained.**  The generational (Cheney) collector retains one narrow
-residual restriction: a **blue** (free-list) cell may not hold an interior
-pointer.  This is the explicit opaque predicate
-`GC.Spec.Fields.blue_fields_non_infix`, a conjunct of
-`GC.Gen.HeapInvariant.major_heap_shape` — *not* of `well_formed_heap`.  Live
-white/gray/black objects, the ones a mutator writes, are unrestricted.
+**What was retained.**  Nothing.  The generational (Cheney) collector for a
+while retained one narrow residual restriction -- a **blue** (free-list) cell
+could not hold an interior pointer (`blue_fields_non_infix`), which the
+coalescer made true by zeroing every merged free block.  Free blocks are now
+unconstrained beyond their link (`GC.Spec.Fields.fields_constrained` excludes
+them), the coalescer no longer zeroes them, and the clause is gone.
 
 The route there went through an intermediate stage worth recording, because the
 stronger clause it used reads like a regression and is easy to misread as one.
@@ -1007,9 +1008,9 @@ That clause, `no_infix_field_targets`, forbade interior field targets out of
 so `major_heap_shape` admitted precisely the heaps it admitted before.  The
 restriction had merely moved from being an unstated consequence of parts 2 and 4
 to a named predicate, and out of `well_formed_heap`, so that mark-and-sweep was
-no longer subject to it.  It has since been narrowed to blue objects only, so
-`major_heap_shape` now admits strictly more heaps than the original
-`well_formed_heap` did.
+no longer subject to it.  It was then narrowed to blue objects only, and has
+since been dropped, so `major_heap_shape` now admits strictly more heaps than the
+original `well_formed_heap` did.
 
 Two obstructions had to be removed.
 
@@ -1027,7 +1028,8 @@ alongside `dst == resolve_object raw major`, and the clause is gone from all
 three `ReachabilityBridge` lemmas and from
 `combined_reachable_major_edge_forwarded`.
 
-*The allocator.*  `GC.Gen.Promote.blue_fields_closed` is stated on the raw field
+*The allocator* (historical: `blue_fields_closed` and `blue_fields_non_infix`
+were later removed with the free-block relaxation).  `GC.Gen.Promote.blue_fields_closed` is stated on the raw field
 value of a **blue** cell and is derived from part 2 by
 `wfh_part2_implies_blue_fields_closed`, which needs a non-infix hypothesis for
 exactly that step.  The instinctive fix — restate `blue_fields_closed` in

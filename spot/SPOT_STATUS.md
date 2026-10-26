@@ -225,11 +225,11 @@ The audit has two halves, and the point is that both hold of *the same heap*:
 
 - `spot_infix_violates_no_infix_field_targets` — the heap refutes
   `no_infix_field_targets`, so it was inadmissible under the old invariant;
-- `spot_infix_major_heap_shape` — the heap nevertheless satisfies all fifteen
-  conjuncts of the current `GC.Gen.HeapInvariant.major_heap_shape`, including
+- `spot_infix_major_heap_shape` — the heap nevertheless satisfies every
+  conjunct of the current `GC.Gen.HeapInvariant.major_heap_shape`, including
   `well_formed_heap` (via the *resolved*-target formulation of part 2/3, with
   `resolve_object H == P` proved from `infix_addr_conds`), `no_pointer_to_blue`
-  (the interior pointer resolves to the White `P`) and `blue_fields_non_infix`.
+  (the interior pointer resolves to the White `P`).
 
 `GC.SPOT.InfixPre` discharges the rest of `gen_gc`'s precondition. The nursery
 is `GC.Gen.MinorHeap.minor_reset`, so the minor side is vacuous and the
@@ -388,10 +388,9 @@ Both halves are proved of the same heap:
 - `spot_ns_major_heap_shape` — the heap nevertheless satisfies every conjunct of
   `GC.Gen.HeapInvariant.major_heap_shape`, including `well_formed_heap` (parts 2
   and 3 are now guarded by `fields_constrained`, which skips `S` entirely),
-  `no_pointer_to_blue` (likewise), and the clause that replaced
-  `no_scan_invariant`, `GC.Gen.Promote.blue_fields_closed` — supplied here by
-  proving `GC.Spec.Fields.blue_blocks_scannable` pointwise and calling
-  `GC.Gen.PromoteUpdate.BlueAlloc.wfh_part2_implies_blue_fields_closed`.
+  and `no_pointer_to_blue` (likewise).  The clause that briefly replaced
+  `no_scan_invariant`, `GC.Gen.Promote.blue_fields_closed`, is gone too: free
+  blocks are no longer constrained beyond their link.
 
 The nursery analogue `GC.Gen.Promote.minor_no_scan_invariant` has since been
 removed as well: the Cheney scan window is now

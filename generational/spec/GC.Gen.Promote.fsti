@@ -440,16 +440,6 @@ val promote_object_preserves_wfh_part4
 
 /// `heap_objects_dense` is `GC.Spec.Fields.heap_objects_dense`.
 
-/// Blue fields closed: for blue (free-list) objects, all pointer fields
-/// target valid objects in the heap.
-[@@"opaque_to_smt"]
-let blue_fields_closed (major: heap) : prop =
-  forall (src: obj_addr) (j: nat).
-    Seq.mem src (objects zero_addr major) /\ is_blue src major /\
-    j < U64.v (wosize_of_object src major) /\
-    U64.v src + j * 8 + 8 <= heap_size ==>
-    (let v = read_word major (U64.uint_to_t (U64.v src + j * 8)) in
-     is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr major))
 /// All free-chain objects are blue (standard allocator invariant).
 [@@"opaque_to_smt"]
 let chain_objects_blue (major: heap) (fp: U64.t) : prop =

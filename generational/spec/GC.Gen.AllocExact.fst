@@ -47,6 +47,7 @@ module Corr = GC.Spec.Correctness
 module SC = GC.Spec.SweepCoalesce
 module SCD = GC.Spec.SweepCoalesce.Defs
 module SpecSweep = GC.Spec.Sweep
+module HA = GC.Spec.HeapAgree
 module Promote = GC.Gen.Promote
 module WB = GC.Gen.WriteBodyLemmas
 module MH = GC.Gen.MinorHeap
@@ -888,9 +889,15 @@ let fused_entry (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
       SpecSweep.fp_in_heap fp h_mark /\
       (forall (x: obj_addr). Seq.mem x (objects zero_addr h_mark) ==> ~(is_gray x h_mark)))
     (ensures (let r = SCD.fused_sweep_coalesce h_mark in alloc_entry (fst r) (snd r)))
-  = SC.fused_eq_sweep_coalesce h_mark fp;
+  = SC.fused_agrees_sweep_coalesce h_mark fp;
     Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    coalesce_entry (fst (SpecSweep.sweep h_mark fp))
+    let rc = Coalesce.coalesce (fst (SpecSweep.sweep h_mark fp)) in
+    let f = fst (SCD.fused_sweep_coalesce h_mark) in
+    coalesce_entry (fst (SpecSweep.sweep h_mark fp));
+    HA.agree_wfh_part1 f (fst rc);
+    HA.agree_fl_valid f (fst rc) (snd rc) heap_words;
+    HA.agree_fl_chain_terminates f (fst rc) (snd rc) heap_words;
+    HA.agree_fl_exact f (fst rc) (snd rc)
 #pop-options
 
 /// ---------------------------------------------------------------------------

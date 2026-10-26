@@ -333,51 +333,22 @@ Two consequences of the resolved formulation:
   `infix_tag`, darkens `v - wosize * 8` (the parent closure) instead. This is a
   real change in the extracted C, not a proof-only artefact.
 
-##### Residual restriction: free-list cells only
+##### Free-list cells
 
 Both collectors handle interior pointers out of *live* objects in full
-generality.  The generational (Cheney) collector retains one narrow residual
-restriction: a **blue** (free-list) cell may not hold an interior pointer.  This
-is expressed by an explicit, opaque, **optional** predicate
-
-```fstar
-let blue_fields_non_infix (g: heap) : prop =
-  forall (src dst: obj_addr).
-    Seq.mem src (objects zero_addr g) /\ GC.Spec.Object.is_blue src g /\
-    exists_field_pointing_to_unchecked g src (wosize_of_object src g) dst ==>
-    ~(is_infix dst g)
-```
-
-which appears as a conjunct of `GC.Gen.HeapInvariant.major_heap_shape` and
-nowhere in `well_formed_heap`.  It is not a mutator-visible constraint: free-list
-cells are owned by the allocator, their fields hold link words and stale data,
-and no OCaml program can arrange for one to point into the interior of another.
-It sits alongside the pre-existing `minor_fields_no_infix_targets` and
-`major_minor_fields_no_infix_targets` clauses, which impose the same restriction
-on *nursery*-directed pointers.
-
-It is preserved across *minor* collection for free: the Cheney machinery already
-proves raw `well_formed_heap_part2` for blue objects, which
-`blue_fields_closed_implies_blue_fields_non_infix` converts.
-
-Across a *major* collection it is not free, and it is worth being precise about
-why it holds, because it would be false if the collector simply threaded dead
-blocks onto the free list.  A dying object may hold interior pointers, and sweep
-alone (`GC.Spec.Sweep.sweep_object`) rewrites only its link word -- the rest of
-the corpse survives untouched.  What makes the clause true is the **coalescing
-pass**: `GC.Spec.Coalesce.flush_blue` writes the blue header, sets the free-list
-link, and then calls `Alloc.zero_fields` over every remaining field of the merged
-block (extracted as `flush_blue_impl` / `zero_fields_loop`).  A blue cell
-therefore has exactly one pointer-shaped field, its link, which is an object
-address and never an interior one.
-
-That is proved by `GC.Spec.Coalesce.coalesce_blue_fields_non_infix`, lifted by
-`GC.Spec.Correctness.gc_blue_fields_non_infix_gen`, and carried through the
-postconditions of `GC.Impl.collect_with_roots` and `GC.Gen.Impl.gen_gc`.  The
-invariant is closed: what `major_heap_shape` demands on entry, `gen_gc`
-re-establishes on exit, on both the normal and the out-of-memory path.  Note it is kept out of `gc_postcondition` on purpose --
-that predicate is also asserted of the post-sweep, pre-coalesce heap, which does
-not satisfy the clause.
+generality.  Free (blue) blocks are not constrained at all beyond their
+free-list link: `GC.Spec.Fields.fields_constrained` excludes blue sources from
+parts 2 and 3 of `well_formed_heap` and from `no_pointer_to_blue`, and
+`GC.Spec.HeapGraph.get_pointer_fields` gives a blue block no edges.  Nothing in
+the collector reads such a word -- mark scans only grey objects, sweep and
+coalesce read headers and colours, the generational pointer update skips blue
+objects, and the allocator reads the header and field 0 -- so the coalescing
+pass leaves the stale fields of dead objects in a merged block as they are
+rather than zeroing them.  The link itself is covered by the free-list
+invariants (`fl_valid`, `GC.Gen.FreeListShape.blue_link_fields_valid`).  A block
+the allocator hands out has every field written before anything reads it:
+promotion copies all of them (`copy_fields`), and a direct allocation is filled
+by the runtime.
 
 Infix addresses survive as **roots** for both collectors, and inside Cheney's
 promotion machinery, which is what `find_infix_parents` and
@@ -389,16 +360,6 @@ Getting here removed two obstructions.  The first was the graph model:
 an interior-pointer edge is no longer silently dropped;
 `GC.Gen.ReachabilityBridge.major_edge_points_to` exposes the raw field value
 alongside `dst == resolve_object raw major`.
-
-The second was the allocator.  `GC.Gen.Promote.blue_fields_closed` is stated on
-the *raw* field value of a free-list cell and is derived from part 2 by
-`wfh_part2_implies_blue_fields_closed`, which needs a non-infix hypothesis for
-exactly that step — but only over blue sources, which is what
-`blue_fields_non_infix` supplies.  Deliberately keeping `blue_fields_closed`
-raw is what makes this work: restating it in resolved form instead breaks
-`promote_object_preserves_bfc_close`, which would then have to transport a
-resolution across `copy_fields` on a block just carved off the free list.
-`docs/infix-support-plan.md` §5 records the measurement.
 
 ##### End-to-end test
 
@@ -414,7 +375,7 @@ and stock OCaml. Rebuilt against the pre-fix `check_and_darken_bounded` it fails
 and then segfaults, so it is a genuine regression test and not a smoke test.
 
 The heaps it builds hold interior pointers in major fields.  Since
-`no_infix_field_targets` was narrowed to `blue_fields_non_infix`, they are inside
+`no_infix_field_targets` was dropped from the invariant, they are inside
 `GC.Gen.HeapInvariant.major_heap_shape` and the composed `gen_gc` theorem applies
 to them: the generational reachability argument, not just the mark-and-sweep
 proofs, covers what the test stresses.
@@ -658,9 +619,9 @@ let rec coalesce_aux (g0: heap) (g: heap) (objs: seq obj_addr)
 rewritten. A blue object extends the pending run by `wosize + 1` words, counting
 the header. A white survivor ends the run: `flush_blue` writes one merged blue
 header at the first object's header address, stores the previous free-list head
-in field 1 when the merged block has room for a link, zeroes the remaining
-payload words, and returns the first object of the run as the new free-list
-head. A zero-word run is a no-op, and a one-word run can only be represented as
+in field 1 when the merged block has room for a link, leaves the remaining
+payload words alone, and returns the first object of the run as the new
+free-list head. A zero-word run is a no-op, and a one-word run can only be represented as
 a header-only blue block because it has no field in which to store a free-list
 link.
 
@@ -700,37 +661,44 @@ unchanged by coalescing because live objects are white after sweep, and
 coalescing writes only the blue runs.
 
 The key bridge theorem is
-`GC.Spec.SweepCoalesce.fused_eq_sweep_coalesce`:
+`GC.Spec.SweepCoalesce.fused_agrees_sweep_coalesce`:
 
 ```fstar
-let fused_eq_sweep_coalesce (g: heap) (fp: U64.t)
+let fused_agrees_sweep_coalesce (g: heap) (fp: U64.t)
   : Lemma
     (requires well_formed_heap g /\
               heap_objects_dense g /\
               SpecSweep.fp_in_heap fp g /\
               (forall x. Seq.mem x (objects zero_addr g) ==> ~(is_gray x g)))
-    (ensures fused_sweep_coalesce g ==
-             SpecCoalesce.coalesce (fst (SpecSweep.sweep g fp)))
+    (ensures (let rf = fused_sweep_coalesce g in
+              let rc = SpecCoalesce.coalesce (fst (SpecSweep.sweep g fp)) in
+              snd rf == snd rc /\ HA.heaps_agree_mod_free (fst rf) (fst rc)))
 ```
 
-Its induction relates two walks over the same dense object sequence: the fused
-walk over the marked heap, and the standalone coalescing walk over the
-post-sweep heap. The proof establishes that sweep preserves object order and
-wosizes, that a pre-sweep black object corresponds exactly to a non-blue
-post-sweep survivor, and that black-object headers, tags, and bodies agree
-between the two heaps except for the color reset. For pending free runs,
-`flush_blue` is deterministic: inside the run both sides write the same merged
-blue header, link field, and zero padding; outside the run both sides preserve
-the previous word reads. With those facts, the relational induction shows each
-fused loop step matches the corresponding sweep-then-coalesce step.
+The two heaps are not byte-equal: sweep writes a blue header and a link into
+every dead object, the fused pass writes neither, and neither pass overwrites
+those words once the dead objects are merged into one free block.
+`GC.Spec.HeapAgree.heaps_agree_mod_free` says they agree on everything else,
+block by block along the object walk: the same header at every block, the same
+fields in every live block, and the same link in every free one.
 
-Finally, `GC.Impl.collect_with_roots` calls the fused Pulse implementation but
-then invokes `fused_eq_sweep_coalesce` to expose the result as the simpler
-`coalesce (sweep ...)` specification. The end-to-end theorems
-`gc_postcondition_gen`, `full_gc_correctness_through_coalesce_gen`,
+Its induction (`GC.Spec.SweepCoalesce.Induction.walk_proof`) relates two walks
+over the same dense object sequence: the fused walk over the marked heap, and
+the standalone coalescing walk over the post-sweep heap. The proof uses that
+sweep preserves object order and wosizes, that a pre-sweep black object
+corresponds exactly to a non-blue post-sweep survivor, and that black-object
+headers, tags, and bodies agree between the two heaps except for the color
+reset. A flushed run gets the same merged header and link on both sides, and
+everything the rest of each walk writes lies above it.
+
+Finally, `GC.Impl.collect_with_roots` calls the fused Pulse implementation and
+invokes `fused_agrees_sweep_coalesce` and `GC.Spec.Correctness.gc_result_agree`,
+which carries the end-to-end theorems `gc_postcondition_gen`,
+`full_gc_correctness_through_coalesce_gen`,
 `major_gc_live_subgraph_isomorphism_gen`, and
-`major_gc_unreachable_final_blue_gen` therefore prove correctness of the actual
-single-pass implementation while reasoning at the cleaner two-phase level.
+`major_gc_unreachable_final_blue_gen` from the coalesced heap to the fused one:
+they read only what the relation keeps.  They therefore prove correctness of the
+actual single-pass implementation while reasoning at the cleaner two-phase level.
 
 ### Bounded mark stack
 
@@ -1516,10 +1484,12 @@ the implementation always had and simply never stated.  With it,
 cross-generation conjuncts and reduces the whole obligation to
 `major_heap_shape` of the major heap and free-list head.
 
-That is fifteen conjuncts, and it is where the work is.
+That is fourteen conjuncts, and it is where the work is.
 `GC.Gen.PostCollectionShape.major_gc_restores_major_heap_shape` proves them for
 `coalesce (sweep h_mark fp)` under nothing more than
-`GC.Spec.Correctness.mark_post`:
+`GC.Spec.Correctness.mark_post`, and `major_gc_restores_major_heap_shape_of_source`
+carries them to the fused pass's heap, which agrees with it modulo free-block
+bodies (`GC.Spec.HeapAgree`):
 
 | conjunct | supplied by |
 | --- | --- |
@@ -1537,7 +1507,6 @@ That is fifteen conjuncts, and it is where the work is.
 | `no_gray_objects` | `GC.Spec.Coalesce.coalesce_all_white_or_blue` |
 | `no_pointer_to_blue` | `GC.Spec.Coalesce.Shape.coalesce_no_pointer_to_blue` |
 | `no_scan_invariant` | `GC.Spec.Coalesce.Shape.coalesce_no_scan_invariant` |
-| `blue_fields_non_infix` | `GC.Spec.Correctness.gc_blue_fields_non_infix_gen` |
 
 Two of these deserve comment.
 
@@ -1801,8 +1770,8 @@ The audit is two-sided, on one and the same heap:
   `GC.Spec.Fields.no_infix_field_targets`, the conjunct `major_heap_shape` used
   to carry. Under the old invariant this heap could not have been handed to the
   collector at all.
-* `spot_infix_major_heap_shape` proves the heap **satisfies** all fifteen
-  conjuncts of the current `GC.Gen.HeapInvariant.major_heap_shape` — in
+* `spot_infix_major_heap_shape` proves the heap **satisfies** every
+  conjunct of the current `GC.Gen.HeapInvariant.major_heap_shape` — in
   particular `well_formed_heap` through the *resolved*-target formulation of
   parts 2 and 3, with `resolve_object H == P` established from
   `GC.Spec.Object.infix_addr_conds`.

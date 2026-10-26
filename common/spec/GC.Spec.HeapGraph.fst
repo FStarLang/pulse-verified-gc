@@ -147,7 +147,7 @@ let get_pointer_fields (g: heap) (h_addr: obj_addr) : GTot (seq vertex_id) =
   if not (object_fits_in_heap h_addr g) then Seq.empty
   else
     let ws = wosize_of_object h_addr g in
-    if is_no_scan h_addr g then Seq.empty
+    if is_no_scan h_addr g || is_blue h_addr g then Seq.empty
     else get_pointer_fields_aux g h_addr 1UL ws
 
 /// ---------------------------------------------------------------------------
@@ -344,7 +344,7 @@ let rec all_edges_superset (g: heap) (objs: seq obj_addr) (obj: obj_addr)
 let pointer_field_is_graph_edge (g: heap) (objs: seq obj_addr) (obj: obj_addr)
     (j: U64.t{U64.v j >= 1})
   : Lemma (requires Seq.mem obj objs /\ is_vertex_set (coerce_to_vertex_list objs) /\
-                    object_fits_in_heap obj g /\ ~(is_no_scan obj g) /\
+                    object_fits_in_heap obj g /\ ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                     U64.v j <= U64.v (wosize_of_object obj g) /\
                     is_pointer_field (get_field g obj j))
           (ensures (is_pointer_field_is_obj_addr (get_field g obj j);

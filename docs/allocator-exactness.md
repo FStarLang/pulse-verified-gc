@@ -128,8 +128,7 @@ proves what that second failure means:
 | lemma | says |
 |---|---|
 | `alloc_spec_oom_no_fit` | if `alloc_spec` returns no object on a well-formed heap whose free list is valid, terminates and is complete, then every blue block is smaller than the request |
-| `coalesce_oom_no_fit` | the coalescer's output meets those hypotheses |
-| `fused_oom_no_fit` | so on the heap the collector produces (`fused_sweep_coalesce`, under the hypotheses `GC.Impl.fst` discharges), a failed allocation means **no free block anywhere is big enough** |
+| `fused_oom_no_fit` | the coalescer's output meets those hypotheses, and so does the fused pass's heap, which agrees with it modulo free-block bodies; so on the heap the collector produces (`fused_sweep_coalesce`, under the hypotheses `GC.Impl.fst` discharges), a failed allocation means **no free block anywhere is big enough** |
 
 It does not say the heap is full. Fragmentation can still make an allocation
 fail with enough free words in total, spread over blocks that are each too

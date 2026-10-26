@@ -20,6 +20,8 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module FreeListShape = GC.Gen.FreeListShape
 module Promote = GC.Gen.Promote
 module GenInv = GC.Gen.HeapInvariant
+module HA = GC.Spec.HeapAgree
+module HeapGraph = GC.Spec.HeapGraph
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 60"
 
@@ -66,56 +68,6 @@ private let coalesced_chain_objects_blue (g: heap)
     FStar.Classical.forall_intro
       (FStar.Classical.move_requires (Shape.coalesce_chain_objects_blue g))
 
-/// **Every free block the coalescer leaves has enumerated pointer fields.**
-///
-/// This is the raw-membership companion of `blue_fields_non_infix`, and it comes
-/// from the same place: `GC.Spec.Coalesce.flush_blue` gives a merged run a fresh
-/// tag-0 header, its free-list link, and zeroes above that, so its one
-/// pointer-shaped word is an object address.
-///
-/// `major_heap_shape` carries this explicitly rather than re-deriving it from
-/// part 2 the way `GC.Gen.PromoteUpdate.BlueAlloc.wfh_part2_implies_blue_fields_closed`
-/// does.  Part 2 no longer constrains no-scan sources, so on its own it says
-/// nothing about a free block that carries a no-scan tag; carrying the clause
-/// directly keeps the promotion machinery supplied without making the collector
-/// prove anything it did not already prove.
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 100"
-private let coalesce_blue_fields_closed (g: heap)
-  : Lemma (requires Coalesce.post_sweep_strong g)
-          (ensures Promote.blue_fields_closed (fst (Coalesce.coalesce g)))
-  = let g' = fst (Coalesce.coalesce g) in
-    Coalesce.coalesce_preserves_wf g;
-    reveal_opaque (`%Promote.blue_fields_closed) Promote.blue_fields_closed;
-    let aux (src: obj_addr) (j: nat)
-      : Lemma (Seq.mem src (objects zero_addr g') /\ is_blue src g' /\
-               j < U64.v (wosize_of_object src g') /\
-               U64.v src + j * 8 + 8 <= heap_size ==>
-               (let v = read_word g' (U64.uint_to_t (U64.v src + j * 8)) in
-                is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr g')))
-      = if Seq.mem src (objects zero_addr g') && is_blue src g' &&
-           j < U64.v (wosize_of_object src g') &&
-           U64.v src + j * 8 + 8 <= heap_size
-        then begin
-          let wz = wosize_of_object src g' in
-          let far : hp_addr = U64.uint_to_t (U64.v src + j * 8) in
-          let v = read_word g' far in
-          if is_pointer v then begin
-            hd_address_spec src;
-            wosize_of_object_bound src g';
-            wf_object_size_bound g' src;
-            let k : U64.t = U64.uint_to_t j in
-            FStar.Math.Lemmas.pow2_lt_compat 61 54;
-            FStar.Math.Lemmas.small_mod (j * U64.v mword) (pow2 64);
-            FStar.Math.Lemmas.small_mod (U64.v src + j * 8) (pow2 64);
-            assert (is_pointer_to v (v <: obj_addr));
-            field_read_implies_exists_pointing g' src wz k (v <: obj_addr);
-            Coalesce.coalesce_blue_field_closure g src (v <: obj_addr)
-          end else ()
-        end else ()
-    in
-    FStar.Classical.forall_intro_2 aux
-#pop-options
-
 /// **The coalescer's output satisfies every clause of `major_heap_shape`.**
 ///
 /// The clauses come from four places: the walk-transfer lemmas of
@@ -128,8 +80,7 @@ private let coalesce_major_heap_shape (g: heap)
     (requires
       Coalesce.post_sweep_strong g /\
       heap_objects_dense g /\
-      Seq.length (objects zero_addr g) > 0 /\
-      blue_fields_non_infix (fst (Coalesce.coalesce g)))
+      Seq.length (objects zero_addr g) > 0)
     (ensures (let r = Coalesce.coalesce g in
               GenInv.major_heap_shape (fst r) (snd r)))
   = let r = Coalesce.coalesce g in
@@ -157,29 +108,82 @@ private let coalesce_major_heap_shape (g: heap)
     coalesced_no_black_no_gray g;
     // 13. nothing live points into the free list
     Shape.coalesce_no_pointer_to_blue g;
-    // 14. free blocks hold nothing but their link word
-    coalesce_blue_fields_closed g;
-    // 15. supplied by the caller (`Corr.gc_blue_fields_non_infix_gen`)
     GenInv.major_heap_shape_intro g' fp'
 
 let major_gc_restores_major_heap_shape major h_mark roots fp =
   let g = fst (Sweep.sweep h_mark fp) in
   Corr.sweep_post_sweep_strong_gen major h_mark roots fp;
   Corr.coalesce_precondition_bridge_gen major h_mark roots fp;
-  Corr.gc_blue_fields_non_infix_gen major h_mark roots fp;
   Corr.mark_post_elim_wfh major h_mark roots fp;
   Corr.mark_post_elim_no_grey major h_mark roots fp;
   Corr.mark_post_elim_fp major h_mark roots fp;
   coalesce_major_heap_shape g
+
+/// The shape invariant reads nothing that `heaps_agree_mod_free` lets differ.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 60"
+private let major_heap_shape_agree (s2 c: heap) (fp: U64.t)
+  : Lemma (requires GenInv.major_heap_shape c fp /\ HA.heaps_agree_mod_free s2 c)
+          (ensures GenInv.major_heap_shape s2 fp)
+  = GenInv.major_heap_shape_elim c fp;
+    HA.agree_objects s2 c;
+    HA.agree_well_formed_heap s2 c;
+    HA.agree_no_pointer_to_blue s2 c;
+    HA.agree_fl_valid s2 c fp heap_words;
+    HA.agree_fl_chain_terminates s2 c fp heap_words;
+    GenInv.free_list_exact_iff c fp;
+    GenInv.free_list_exact_iff s2 fp;
+    HA.agree_fl_exact s2 c fp;
+    HA.agree_dense s2 c;
+    let blk (x: obj_addr)
+      : Lemma (Seq.mem x (objects zero_addr c) ==>
+               is_blue x s2 == is_blue x c /\ is_black x s2 == is_black x c /\
+               is_gray x s2 == is_gray x c /\
+               wosize_of_object x s2 == wosize_of_object x c)
+      = if Seq.mem x (objects zero_addr c) then HA.agree_block s2 c x
+    in
+    FStar.Classical.forall_intro blk;
+    // link words
+    let link (src: obj_addr)
+      : Lemma (requires Seq.mem src (objects zero_addr s2) /\ is_blue src s2 /\
+                        U64.v (wosize_of_object src s2) >= 1 /\
+                        U64.v (hd_address src) + 16 <= heap_size)
+              (ensures (let v = read_word s2 src in v = 0UL \/ HeapGraph.is_pointer_field v))
+      = HA.agree_field0 s2 c src;
+        FreeListShape.blue_link_fields_valid_elim c src
+    in
+    FreeListShape.blue_link_fields_valid_intro s2 link;
+    // nothing live on the free list
+    reveal_opaque (`%Promote.chain_objects_blue) (Promote.chain_objects_blue c fp);
+    reveal_opaque (`%Promote.chain_objects_blue) (Promote.chain_objects_blue s2 fp);
+    let avoid (obj: obj_addr)
+      : Lemma (requires Seq.mem obj (objects zero_addr s2) /\ ~(is_blue obj s2))
+              (ensures AllocLemmas.chain_avoids s2 fp obj heap_words = true)
+      = HA.agree_chain_avoids s2 c fp obj heap_words
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires avoid);
+    // colours
+    let ng (x: obj_addr)
+      : Lemma (requires Seq.mem x (objects zero_addr s2)) (ensures ~(is_gray x s2))
+      = SweepInv.no_gray_elim x c
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires ng);
+    SweepInv.no_gray_intro s2;
+    FreeListShape.fp_pointer_or_zero_fl_valid_implies_fp_valid fp s2 heap_words;
+    FreeListShape.fp_pointer_or_zero_implies_fp_in_heap fp s2;
+    GenInv.major_heap_shape_intro s2 fp
+#pop-options
 
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 60"
 let major_gc_restores_major_heap_shape_of_source h_init s2 roots fp final_fp =
   let pick (h_mark: heap)
     : Lemma
       (requires Corr.mark_post h_init h_mark roots fp /\
-                (s2, final_fp) == Coalesce.coalesce (fst (Sweep.sweep h_mark fp)))
+                (let r = Coalesce.coalesce (fst (Sweep.sweep h_mark fp)) in
+                 HA.heaps_agree_mod_free s2 (fst r) /\ final_fp == snd r))
       (ensures GenInv.major_heap_shape s2 final_fp)
-    = major_gc_restores_major_heap_shape h_init h_mark roots fp
+    = let r = Coalesce.coalesce (fst (Sweep.sweep h_mark fp)) in
+      major_gc_restores_major_heap_shape h_init h_mark roots fp;
+      major_heap_shape_agree s2 (fst r) (snd r)
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires pick)
 #pop-options
