@@ -71,14 +71,8 @@ let sweeping_stw g0 g fp0 fp st = ref_ok_refl g0 fp0 (U64.v st.cursor)
 /// In front of the cursor
 /// ---------------------------------------------------------------------------
 
-/// Two heaps whose walks both reach `c` and that agree from `c` on have the same
-/// blocks from `c` on, with the same headers.
 #push-options "--z3rlimit 30"
-let front_pos (g1 g: heap) (c: nat) (p: hp_addr)
-  : Lemma (requires W.reaches g1 zero_addr c /\ W.reaches g zero_addr c /\
-                    front_same g1 g c /\ U64.v p >= c)
-          (ensures (pos g p <==> pos g1 p) /\ read_word g p == read_word g1 p /\
-                   W.bnext g p == W.bnext g1 p)
+let front_pos g1 g c p
   = W.reaches_bounds g zero_addr c;
     front_same_elim g1 g c p;
     let ca = mk_hp_addr c in

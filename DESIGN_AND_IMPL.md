@@ -711,6 +711,57 @@ address, an exact fit unlinks the block from its unique predecessor), and so
 do promotion and the pointer rewrite (`GC.Gen.FreeListAscending`). First-fit
 on an ascending list prefers low addresses (OCaml's allocation policy 1).
 
+### The sweep phase: the program between sweep steps (incremental sweep, in progress)
+
+An incremental sweep runs the program between slices of `sweep_step`s
+(`incremental-sweep-plan.md`). Three things the program does then are
+specified and proved so far; the minor collection mid-sweep, the Pulse
+plumbing and the bridge are not yet done.
+
+**Allocation colour by position** (`GC.Spec.Allocator.Cursor`). The allocator
+takes the sweep cursor: an object allocated in front of it (header at or
+above the cursor) is black, so the sweep keeps it; one behind it is white.
+"Not sweeping" is the cursor at the end of the heap (`idle_cursor`), where
+`alloc_at` is exactly `alloc_spec`. The allocator also maintains
+`swept_tail`: when it takes `swept_tail`'s own cell off the list (an exact
+fit or a one-word leftover), `swept_tail` moves to the cell before it
+(`alloc_tail`; `alloc_find` names the block first-fit takes and its list
+predecessor). Both are stated as a layer over `alloc_spec`, whose lemmas are
+reused unchanged.
+
+**The reference heap** (`GC.Spec.FusedSweep.Phase`). With the program
+running, the heap in front of the cursor is no longer the post-mark heap `g0`
+word for word. Instead of restating `sweep_inv` against a relation, the sweep
+phase keeps a ghost reference heap `g1` -- `g0` as the program has changed it,
+with every new object black -- and the invariant is
+
+```fstar
+let sweeping (g0 g1 g: heap) (fp: U64.t) (st: sweep_state) : prop =
+  ref_ok g0 g1 (U64.v st.cursor) /\ sweep_inv g1 g fp st
+```
+
+so the step, start and end lemmas apply unchanged (`sweeping_step` keeps `g1`
+fixed), and the stop-the-world sweep is the case `g1 = g0`
+(`sweeping_stw`). `ref_ok` relates `g1` to `g0`: every block live after
+marking is still a block with its header (`keeps_live`); every block that is
+neither black nor free is a block of `g0` with its header (`no_new_garbage`);
+in front of the cursor every block is a `g0` block with its header, or a black
+or free block carved out of a free block of `g0` (`front_carved`). The plan's
+`front_ok` is read back off it (`sweeping_front_ok`).
+
+**The program's actions keep it**, each updating `g1` alongside the heap:
+
+- a write to a field of a block that is not free -- the program's writes,
+  the pointer update, promotion's field copies (`GC.Spec.FusedSweep.Edit.write_sweeping`);
+- retagging a new object, keeping its size and colour (`retag_sweeping`);
+- allocation (`GC.Gen.SweepPhase.alloc_sweeping`): in front of the cursor
+  `g1` takes the heap's words from the cursor on; behind it, the dead run the
+  allocation carved is replaced in `g1` by what the allocation made of it,
+  with the new object black (a white object behind the cursor is, to the
+  sweep's invariant, a survivor of a black one);
+- promotion of one object (`promote_sweeping`, with `promote_at` =
+  `GC.Gen.Promote.promote_object` outside a sweep, `promote_at_idle`).
+
 ### Bounded mark stack
 
 The earlier verified mark-and-sweep design assumed an unbounded mark stack. That

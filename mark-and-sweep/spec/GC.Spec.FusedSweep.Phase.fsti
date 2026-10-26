@@ -178,6 +178,14 @@ let front_ok (g0 g: heap) (c: nat) : prop =
   (forall (p: hp_addr). pos g p /\ U64.v p >= c /\ not (black_at g p) /\ not (blue_at g p) ==>
      pos g0 p /\ read_word g p == read_word g0 p)
 
+/// Two heaps whose walks both reach `c` and that agree from `c` on have the
+/// same blocks from `c` on, with the same headers.
+val front_pos (g1 g: heap) (c: nat) (p: hp_addr)
+  : Lemma (requires W.reaches g1 zero_addr c /\ W.reaches g zero_addr c /\
+                    front_same g1 g c /\ U64.v p >= c)
+          (ensures (pos g p <==> pos g1 p) /\ read_word g p == read_word g1 p /\
+                   W.bnext g p == W.bnext g1 p)
+
 /// Stop-the-world, `front_same` gives `front_ok`.
 val front_same_front_ok (g0 g: heap) (c: nat)
   : Lemma (requires front_same g0 g c /\ W.reaches g0 zero_addr c /\ W.reaches g zero_addr c)

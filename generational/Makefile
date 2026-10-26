@@ -70,7 +70,10 @@ ALL_SRC  = $(filter-out $(SPOT_SRC),$(SPEC_SRC) $(IMPL_SRC))
 # module file name alone.
 checked = $(addprefix $(CACHE_DIR)/,$(addsuffix .checked,$(notdir $(1))))
 
-ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst
+# GC.Gen.SweepPhase states the sweep phase's allocation and promotion
+# theorems; until the incremental sweep's Pulse code uses it, it is a root of
+# its own.
+ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst spec/GC.Gen.SweepPhase.fst
 ROOT_CHECKED = $(call checked,$(ROOT_SRC))
 ALL_CHECKED  = $(call checked,$(ALL_SRC))
 
