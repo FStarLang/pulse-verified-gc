@@ -1020,6 +1020,13 @@ if (bytes_promoted_since_major + bump > major_size / 2)
     do_full_gc();
 ```
 
+Direct major allocations (`verified_allocate`, blocks larger than
+`Max_young_wosize`) add their size to `bytes_promoted_since_major`, and
+`verified_allocate` checks the same threshold against the requested size
+before allocating. Without this, a heap filled by large blocks that are then
+dropped never triggered a full collection, and the next minor collection
+failed to promote (issue #34).
+
 ---
 
 ## Build System
