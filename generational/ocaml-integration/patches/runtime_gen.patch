@@ -608,8 +608,24 @@ index 66d1c50..19ffeec 100644
    return Val_hp (hp);
  }
  
+diff --git a/runtime/memprof.c b/runtime/memprof.c
+index 1f6d9cb..54b6729 100644
+--- a/runtime/memprof.c
++++ b/runtime/memprof.c
+@@ -907,7 +907,10 @@ void caml_memprof_track_young(uintnat wosize, int from_caml,
+        [Alloc_small_aux]. */
+     if (Caml_state->young_ptr - whsize < Caml_state->young_trigger) {
+       CAML_EV_COUNTER(EV_C_FORCE_MINOR_MEMPROF, 1);
+-      caml_gc_dispatch();
++      /* Verified GC: empty the minor heap with the verified collector
++         instead of the stock caml_gc_dispatch (which would also run a
++         stock major slice). */
++      verified_do_minor_gc();
+     }
+ 
+     /* Re-allocate the blocks in the minor heap. We should not call the
 diff --git a/runtime/minor_gc.c b/runtime/minor_gc.c
-index 18cfe3e..bb04fc4 100644
+index 18cfe3e..e13323a 100644
 --- a/runtime/minor_gc.c
 +++ b/runtime/minor_gc.c
 @@ -141,6 +141,11 @@ void caml_set_minor_heap_size (asize_t bsz)
@@ -670,7 +686,7 @@ index 18cfe3e..bb04fc4 100644
    CAML_EVENTLOG_DO({
      CAML_EV_COUNTER(EV_C_ALLOC_JUMP, caml_instr_alloc_jump);
      caml_instr_alloc_jump =  0;
-@@ -536,7 +550,11 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -536,7 +550,13 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
      /* If not, then empty the minor heap, and check again for async
         callbacks. */
      CAML_EV_COUNTER (EV_C_FORCE_MINOR_ALLOC_SMALL, 1);
@@ -678,12 +694,14 @@ index 18cfe3e..bb04fc4 100644
 +    #ifdef NATIVE_CODE
 +      vergc_native_run_minor_collection();
 +    #else
-+      caml_gc_dispatch ();
++      /* Not reached in practice: bytecode allocates through the patched
++         Alloc_small, which never moves young_ptr. */
++      verified_do_minor_gc ();
 +    #endif
    }
  
    /* Re-do the allocation: we now have enough space in the minor heap. */
-@@ -562,19 +580,46 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -562,19 +582,46 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
  /* Exported for backward compatibility with Lablgtk: do a minor
     collection to ensure that the minor heap is empty.
  */
