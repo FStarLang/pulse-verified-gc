@@ -604,6 +604,44 @@ index 18cfe3e..bb04fc4 100644
    return extra_root;
  }
  
+diff --git a/runtime/startup_byt.c b/runtime/startup_byt.c
+index de75497..cbe58be 100644
+--- a/runtime/startup_byt.c
++++ b/runtime/startup_byt.c
+@@ -571,9 +571,13 @@ CAMLexport void caml_main(char_os **argv)
+   Unlock(chan);
+   caml_close_channel(chan); /* this also closes fd */
+   caml_stat_free(trail.section);
+-  /* Ensure that the globals are in the major heap. */
+-  caml_oldify_one (caml_global_data, &caml_global_data);
+-  caml_oldify_mopup ();
++  /* Ensure that the globals are in the major heap.  The verified minor
++     collection treats caml_global_data as a root (caml_do_roots), so it
++     promotes them and rewrites caml_global_data; the stock
++     caml_oldify_one / caml_oldify_mopup must not run.  The globals are
++     young only when the DATA section is at most Max_young_wosize words. */
++  if (Is_block (caml_global_data) && Is_young (caml_global_data))
++    caml_minor_collection ();
+   /* Initialize system libraries */
+   caml_sys_init(exe_name, argv + pos);
+   /* Load debugging info, if b>=2 */
+@@ -661,9 +665,13 @@ CAMLexport value caml_startup_code_exn(
+   caml_build_primitive_table_builtin();
+   /* Load the globals */
+   caml_global_data = caml_input_value_from_block(data, data_size);
+-  /* Ensure that the globals are in the major heap. */
+-  caml_oldify_one (caml_global_data, &caml_global_data);
+-  caml_oldify_mopup ();
++  /* Ensure that the globals are in the major heap.  The verified minor
++     collection treats caml_global_data as a root (caml_do_roots), so it
++     promotes them and rewrites caml_global_data; the stock
++     caml_oldify_one / caml_oldify_mopup must not run.  The globals are
++     young only when the DATA section is at most Max_young_wosize words. */
++  if (Is_block (caml_global_data) && Is_young (caml_global_data))
++    caml_minor_collection ();
+   /* Record the sections (for caml_get_section_table in meta.c) */
+   caml_section_table = section_table;
+   caml_section_table_size = section_table_size;
 diff --git a/runtime/startup_nat.c b/runtime/startup_nat.c
 index b757325..6de3615 100644
 --- a/runtime/startup_nat.c

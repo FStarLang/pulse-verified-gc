@@ -30,6 +30,14 @@ MANDELBROT_MAJOR_WORDS    ?= $(DEFAULT_MAJOR_WORDS)
 %.native: %.ml
 	$(OCAMLOPT) -I $(VERGC_NATIVE_RUNTIME_DIR) -o $@ $<
 
+# tiny_globals is linked without the stdlib (and against an empty std_exit,
+# since the stdlib's pulls in all of Stdlib) so that its DATA section fits in
+# the minor heap and bytecode startup has to promote its globals.  `-I
+# $(OCAMLC) -where` comes last and only supplies camlheader.
+tiny_globals.byte: tiny_globals.ml tiny_globals/std_exit.ml
+	$(OCAMLC) -nostdlib -nopervasives -c -o tiny_globals/std_exit.cmo tiny_globals/std_exit.ml
+	$(OCAMLC) -nostdlib -nopervasives -I tiny_globals -I "$$($(OCAMLC) -where)" -o $@ tiny_globals.ml
+
 bench_stats.cmo: bench_stats.ml
 	$(OCAMLC) -c $<
 
@@ -40,7 +48,7 @@ BENCHMARKS = binarytrees fasta quicksort fannkuchredux count_change nbodies spec
 
 # Correctness tests (not benchmarks): run under both runtimes and compared.
 CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior \
-                    alloc_exact_promotion
+                    alloc_exact_promotion tiny_globals
 
 # infix_closures needs a small major heap so that real major collections
 # (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
@@ -161,6 +169,10 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	MIN_EXPANSION_WORDSIZE=$(ALLOC_EXACT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS)
 	@echo "--- alloc_exact_promotion (stock OCaml, differential check) ---"
 	$(UNCHANGED_OCAMLRUN) alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS)
+	@echo "--- tiny_globals (verified generational GC) ---"
+	TINY_GLOBALS_RUNTIME=verified $(VERIFIED_GEN_OCAMLRUN) tiny_globals.byte
+	@echo "--- tiny_globals (stock OCaml, differential check) ---"
+	$(UNCHANGED_OCAMLRUN) tiny_globals.byte
 	@echo "=== Correctness tests passed ==="
 
 # ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
@@ -366,5 +378,5 @@ bench-min-heaps: $(MINHEAP_TARGETS)
 .PHONY: all test test-native correctness known-gaps benchmark bench-all bench-stats bench-min-heaps clean
 
 clean:
-	rm -f *.byte *.cmi *.cmo *.o
+	rm -f *.byte *.cmi *.cmo *.o tiny_globals/*.cmi tiny_globals/*.cmo
 	rm -rf results
