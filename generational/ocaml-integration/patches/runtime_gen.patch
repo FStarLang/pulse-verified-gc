@@ -222,7 +222,7 @@ index c4be4d2..48d67d1 100644
    if (caml_percent_max >= 1000000) return;
    if (Caml_state->stat_major_collections < 3) return;
 diff --git a/runtime/gc_ctrl.c b/runtime/gc_ctrl.c
-index 9c47b91..743b543 100644
+index 9c47b91..c6edb1d 100644
 --- a/runtime/gc_ctrl.c
 +++ b/runtime/gc_ctrl.c
 @@ -49,6 +49,7 @@ extern uintnat caml_allocation_policy;    /*        see freelist.c */
@@ -273,7 +273,30 @@ index 9c47b91..743b543 100644
    double prowords = Caml_state->stat_promoted_words;
    double majwords =
      Caml_state->stat_major_words + (double) caml_allocated_words;
-@@ -544,21 +549,6 @@ CAMLprim value caml_gc_minor(value v)
+@@ -516,11 +521,18 @@ CAMLprim value caml_gc_set(value v)
+                      ARCH_INTNAT_PRINTF_FORMAT "u\n", newpolicy);
+   }
+ 
+-  /* Minor heap size comes last because it can raise [Out_of_memory]. */
++  /* Verified GC: the minor heap belongs to the verified collector, and its
++     size is fixed when the collector initialises it (MINOR_HEAP_WORDS; the
++     forwarding array and queue are sized from it).  A new size is ignored,
++     not rejected: Gc.set { (Gc.get ()) with minor_heap_size = n } is an
++     ordinary tuning call and must not fail.  Gc.get keeps reporting the
++     size actually in use. */
+   if (newminwsz != Caml_state->minor_heap_wsz){
+-    caml_gc_message (0x20, "New minor heap size: %"
+-                     ARCH_SIZET_PRINTF_FORMAT "uk words\n", newminwsz / 1024);
+-    caml_set_minor_heap_size (Bsize_wsize (newminwsz));
++    caml_gc_message (0x20, "Minor heap size not changed (verified GC): "
++                     "requested %" ARCH_SIZET_PRINTF_FORMAT "uk words, "
++                     "keeping %" ARCH_SIZET_PRINTF_FORMAT "uk words\n",
++                     newminwsz / 1024,
++                     (asize_t) Caml_state->minor_heap_wsz / 1024);
+   }
+   CAML_EV_END(EV_EXPLICIT_GC_SET);
+ 
+@@ -544,21 +556,6 @@ CAMLprim value caml_gc_minor(value v)
    return Val_unit;
  }
  
@@ -295,7 +318,7 @@ index 9c47b91..743b543 100644
  CAMLprim value caml_gc_major(value v)
  {
    value exn;
-@@ -566,9 +556,9 @@ CAMLprim value caml_gc_major(value v)
+@@ -566,9 +563,9 @@ CAMLprim value caml_gc_major(value v)
    CAML_EV_BEGIN(EV_EXPLICIT_GC_MAJOR);
    CAMLassert (v == Val_unit);
    caml_gc_message (0x1, "Finishing major GC cycle (requested by user)\n");
@@ -308,7 +331,7 @@ index 9c47b91..743b543 100644
    // call finalisers
    exn = caml_process_pending_actions_exn();
    CAML_EV_END(EV_EXPLICIT_GC_MAJOR);
-@@ -583,19 +573,14 @@ CAMLprim value caml_gc_full_major(value v)
+@@ -583,19 +580,14 @@ CAMLprim value caml_gc_full_major(value v)
    CAML_EV_BEGIN(EV_EXPLICIT_GC_FULL_MAJOR);
    CAMLassert (v == Val_unit);
    caml_gc_message (0x1, "Full major GC cycle (requested by user)\n");
@@ -332,7 +355,7 @@ index 9c47b91..743b543 100644
    CAML_EV_END(EV_EXPLICIT_GC_FULL_MAJOR);
    caml_raise_if_exception(exn);
  
-@@ -629,20 +614,15 @@ CAMLprim value caml_gc_compaction(value v)
+@@ -629,20 +621,15 @@ CAMLprim value caml_gc_compaction(value v)
    CAML_EV_BEGIN(EV_EXPLICIT_GC_COMPACT);
    CAMLassert (v == Val_unit);
    caml_gc_message (0x10, "Heap compaction requested\n");

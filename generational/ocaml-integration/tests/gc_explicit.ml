@@ -1,5 +1,5 @@
-(* Gc.major, Gc.full_major and Gc.compact under the verified collector.
-   ====================================================================
+(* Gc.major, Gc.full_major, Gc.compact and Gc.set under the verified collector.
+   ==========================================================================
 
    Stock OCaml implements these with its own incremental major collector and
    compactor, which must not run once the verified collector owns the heap.
@@ -17,9 +17,14 @@
      not again by the next minor collection.  (Native code keeps the nursery
      fill level in young_ptr, which the full collection must reset.)
 
+   Gc.set with a new minor_heap_size: stock moves to a new nursery; the
+   verified runtime keeps its own (its size is fixed at initialisation) and
+   ignores the request.  Under both, young data must survive the call.
+
    Checked only with GC_EXPLICIT_RUNTIME=verified: each call is exactly one
-   major collection (stock's full_major and compact run two cycles), and
-   Gc.compact does not count a compaction (the verified heap is non-moving).
+   major collection (stock's full_major and compact run two cycles),
+   Gc.compact does not count a compaction (the verified heap is non-moving),
+   and after Gc.set Gc.get still reports the minor heap size in use.
 
    Exits 1 if any check fails. *)
 
@@ -98,6 +103,25 @@ let minor_words_once name f =
        name grew n)
     (grew > 0.5 *. float n && grew < 1.5 *. float n)
 
+let set_minor_heap_size () =
+  let fill_round = 7 in
+  fill fill_round;
+  let local = young_list 500 in
+  let before = (Gc.get ()).Gc.minor_heap_size in
+  let requested = if before = 524288 then 262144 else 524288 in
+  Gc.set { (Gc.get ()) with Gc.minor_heap_size = requested };
+  let after = (Gc.get ()).Gc.minor_heap_size in
+  check "Gc.set minor_heap_size: old table intact" (check_table fill_round);
+  check "Gc.set minor_heap_size: young local intact" (check_young local 500);
+  ignore (young_list 100_000);  (* several minor collections afterwards *)
+  check "Gc.set minor_heap_size: young local intact after collections"
+    (check_young local 500);
+  if verified then
+    check
+      (Printf.sprintf "Gc.set minor_heap_size: Gc.get reports %d (want %d, in use)"
+         after before)
+      (after = before)
+
 let () =
   run "Gc.major" Gc.major ~forced:0;
   run "Gc.full_major" Gc.full_major ~forced:1;
@@ -105,6 +129,7 @@ let () =
   minor_words_once "Gc.full_major" Gc.full_major;
   minor_words_once "Gc.major" Gc.major;
   minor_words_once "Gc.compact" Gc.compact;
+  set_minor_heap_size ();
   if !failures = 0 then print_endline "gc_explicit: all checks passed"
   else begin
     Printf.printf "gc_explicit: %d check(s) failed\n" !failures;
