@@ -105,10 +105,10 @@ index 1735d77..29ae9fa 100644
  Caml_inline void caml_make_free_blocks
    (value *p, mlsize_t size, int do_merge, int color)
 diff --git a/runtime/caml/memory.h b/runtime/caml/memory.h
-index d9e58bc..89602c2 100644
+index d9e58bc..da87b62 100644
 --- a/runtime/caml/memory.h
 +++ b/runtime/caml/memory.h
-@@ -217,6 +217,34 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -217,6 +217,35 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
                                         int nallocs, unsigned char* alloc_lens);
  // Do not call asynchronous callbacks from allocation functions
  #define Alloc_small_origin CAML_FROM_C
@@ -121,6 +121,7 @@ index d9e58bc..89602c2 100644
 +#endif
 +/* Defined in verified_gc/alloc_gen.c. */
 +extern void verified_do_minor_gc (void);
++extern void verified_do_full_gc (void);
 +extern uint64_t *vergc_minor_bump_ref;
 +extern uint8_t  *vergc_minor_base;
 +extern uint64_t  vergc_minor_size;
@@ -143,7 +144,7 @@ index d9e58bc..89602c2 100644
  #define Alloc_small_aux(result, wosize, tag, profinfo, track) do {     \
    CAMLassert ((wosize) >= 1);                                          \
    CAMLassert ((tag_t) (tag) < 256);                                    \
-@@ -233,6 +261,38 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -233,6 +262,38 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
    (result) = Val_hp (Caml_state_field(young_ptr));                     \
    DEBUG_clear ((result), (wosize));                                    \
  }while(0)
@@ -221,7 +222,7 @@ index c4be4d2..48d67d1 100644
    if (caml_percent_max >= 1000000) return;
    if (Caml_state->stat_major_collections < 3) return;
 diff --git a/runtime/gc_ctrl.c b/runtime/gc_ctrl.c
-index 9c47b91..2601ad1 100644
+index 9c47b91..743b543 100644
 --- a/runtime/gc_ctrl.c
 +++ b/runtime/gc_ctrl.c
 @@ -49,6 +49,7 @@ extern uintnat caml_allocation_policy;    /*        see freelist.c */
@@ -272,6 +273,90 @@ index 9c47b91..2601ad1 100644
    double prowords = Caml_state->stat_promoted_words;
    double majwords =
      Caml_state->stat_major_words + (double) caml_allocated_words;
+@@ -544,21 +549,6 @@ CAMLprim value caml_gc_minor(value v)
+   return Val_unit;
+ }
+ 
+-static void test_and_compact (void)
+-{
+-  double fp;
+-
+-  fp = 100.0 * caml_fl_cur_wsz / (Caml_state->stat_heap_wsz - caml_fl_cur_wsz);
+-  if (fp > 999999.0) fp = 999999.0;
+-  caml_gc_message (0x200, "Estimated overhead (lower bound) = %"
+-                          ARCH_INTNAT_PRINTF_FORMAT "u%%\n",
+-                   (uintnat) fp);
+-  if (fp >= caml_percent_max){
+-    caml_gc_message (0x200, "Automatic compaction triggered.\n");
+-    caml_compact_heap (-1);
+-  }
+-}
+-
+ CAMLprim value caml_gc_major(value v)
+ {
+   value exn;
+@@ -566,9 +556,9 @@ CAMLprim value caml_gc_major(value v)
+   CAML_EV_BEGIN(EV_EXPLICIT_GC_MAJOR);
+   CAMLassert (v == Val_unit);
+   caml_gc_message (0x1, "Finishing major GC cycle (requested by user)\n");
+-  caml_empty_minor_heap ();
+-  caml_finish_major_cycle ();
+-  test_and_compact ();
++  /* Verified GC: one stop-the-world collection of both generations replaces
++     the stock major cycle; the verified heap is never compacted. */
++  verified_do_full_gc ();
+   // call finalisers
+   exn = caml_process_pending_actions_exn();
+   CAML_EV_END(EV_EXPLICIT_GC_MAJOR);
+@@ -583,19 +573,14 @@ CAMLprim value caml_gc_full_major(value v)
+   CAML_EV_BEGIN(EV_EXPLICIT_GC_FULL_MAJOR);
+   CAMLassert (v == Val_unit);
+   caml_gc_message (0x1, "Full major GC cycle (requested by user)\n");
+-  caml_empty_minor_heap ();
+-  caml_finish_major_cycle ();
+-  // call finalisers
+-  exn = caml_process_pending_actions_exn();
+-  if (Is_exception_result(exn)) goto cleanup;
+-  caml_empty_minor_heap ();
+-  caml_finish_major_cycle ();
++  /* Verified GC: stock runs two cycles because its incremental marking
++     leaves floating garbage; one stop-the-world verified collection leaves
++     none.  It is still one forced major collection. */
++  verified_do_full_gc ();
+   ++ Caml_state->stat_forced_major_collections;
+-  test_and_compact ();
+   // call finalisers
+   exn = caml_process_pending_actions_exn();
+ 
+-cleanup:
+   CAML_EV_END(EV_EXPLICIT_GC_FULL_MAJOR);
+   caml_raise_if_exception(exn);
+ 
+@@ -629,20 +614,15 @@ CAMLprim value caml_gc_compaction(value v)
+   CAML_EV_BEGIN(EV_EXPLICIT_GC_COMPACT);
+   CAMLassert (v == Val_unit);
+   caml_gc_message (0x10, "Heap compaction requested\n");
+-  caml_empty_minor_heap ();
+   caml_gc_message (0x1, "Full major GC cycle (compaction)\n");
+-  caml_finish_major_cycle ();
+-  // call finalisers
+-  exn = caml_process_pending_actions_exn();
+-  if (Is_exception_result(exn)) goto cleanup;
+-  caml_empty_minor_heap ();
+-  caml_finish_major_cycle ();
++  /* Verified GC: a full collection, as for Gc.full_major.  The verified
++     heap is non-moving, so there is no compaction, and stat_compactions is
++     not incremented. */
++  verified_do_full_gc ();
+   ++ Caml_state->stat_forced_major_collections;
+-  caml_compact_heap (-1);
+   // call finalisers
+   exn = caml_process_pending_actions_exn();
+ 
+- cleanup:
+   CAML_EV_END(EV_EXPLICIT_GC_COMPACT);
+   caml_raise_if_exception(exn);
+   return Val_unit;
 diff --git a/runtime/gen_primitives.sh b/runtime/gen_primitives.sh
 index a727d5c..331a07d 100755
 --- a/runtime/gen_primitives.sh

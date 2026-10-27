@@ -113,9 +113,9 @@ offset`).
 | 12 | 24 interior-pointer roots live **simultaneously**, one per frame of a recursion, with the collections forced at the innermost frame and every frame's value re-checked on the way back out |
 
 Collections are forced the way a real program forces them, by allocating;
-`Gc.quick_stat` confirms they happened. (`Gc.full_major` is *not* wired to the
-verified collector and will crash — the verified collector runs from the
-allocation path.) `MIN_EXPANSION_WORDSIZE` is set small so that major
+`Gc.quick_stat` confirms they happened. (`Gc.full_major`, `Gc.major` and
+`Gc.compact` also run the verified collector, as one full collection; see
+`tests/gc_explicit.ml`.) `MIN_EXPANSION_WORDSIZE` is set small so that major
 collections occur quickly.
 
 The same binary is also run under stock OCaml as a differential check; both

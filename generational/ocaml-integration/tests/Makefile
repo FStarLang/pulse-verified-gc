@@ -48,7 +48,7 @@ BENCHMARKS = binarytrees fasta quicksort fannkuchredux count_change nbodies spec
 
 # Correctness tests (not benchmarks): run under both runtimes and compared.
 CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior \
-                    alloc_exact_promotion tiny_globals
+                    alloc_exact_promotion tiny_globals gc_explicit
 
 # infix_closures needs a small major heap so that real major collections
 # (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
@@ -71,11 +71,14 @@ KNOWN_GAP_TESTS =
 # every other block and promotes into the fragments. It was a known-gap
 # reproducer until allocation became size-exact (right-justified).
 ALLOC_EXACT_MAJOR_WORDS ?= 4194304
+
+# gc_explicit calls Gc.major / Gc.full_major / Gc.compact; it needs little room.
+GC_EXPLICIT_MAJOR_WORDS ?= 4000000
 NURSERY_NO_SCAN_MAJOR_WORDS ?= 4000000
 
 BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
              $(addsuffix .byte, $(KNOWN_GAP_TESTS))
-NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS))
+NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS)) gc_explicit.native
 BENCH_TARGETS = $(addsuffix .bench, $(BENCHMARKS))
 STATS_TARGETS = $(addsuffix .stats, $(BENCHMARKS))
 MINHEAP_TARGETS = $(addsuffix .minheap, $(BENCHMARKS))
@@ -173,6 +176,10 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	TINY_GLOBALS_RUNTIME=verified $(VERIFIED_GEN_OCAMLRUN) tiny_globals.byte
 	@echo "--- tiny_globals (stock OCaml, differential check) ---"
 	$(UNCHANGED_OCAMLRUN) tiny_globals.byte
+	@echo "--- gc_explicit (verified generational GC) ---"
+	GC_EXPLICIT_RUNTIME=verified MIN_EXPANSION_WORDSIZE=$(GC_EXPLICIT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) gc_explicit.byte
+	@echo "--- gc_explicit (stock OCaml, differential check) ---"
+	$(UNCHANGED_OCAMLRUN) gc_explicit.byte
 	@echo "=== Correctness tests passed ==="
 
 # ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
@@ -219,6 +226,8 @@ test-native: $(NATIVE_FILES)
 	MIN_EXPANSION_WORDSIZE=$(SPECTRALNORM_MAJOR_WORDS) ./spectralnorm.native 100
 	@echo "--- mandelbrot ---"
 	MIN_EXPANSION_WORDSIZE=$(MANDELBROT_MAJOR_WORDS) ./mandelbrot.native 100
+	@echo "--- gc_explicit (correctness; native keeps the nursery in young_ptr) ---"
+	GC_EXPLICIT_RUNTIME=verified MIN_EXPANSION_WORDSIZE=$(GC_EXPLICIT_MAJOR_WORDS) ./gc_explicit.native
 	@echo "=== All native smoke tests passed ==="
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----
@@ -378,5 +387,6 @@ bench-min-heaps: $(MINHEAP_TARGETS)
 .PHONY: all test test-native correctness known-gaps benchmark bench-all bench-stats bench-min-heaps clean
 
 clean:
-	rm -f *.byte *.cmi *.cmo *.o tiny_globals/*.cmi tiny_globals/*.cmo
+	rm -f *.byte *.cmi *.cmo *.o gc_explicit.native gc_explicit.cmx \
+	      tiny_globals/*.cmi tiny_globals/*.cmo
 	rm -rf results

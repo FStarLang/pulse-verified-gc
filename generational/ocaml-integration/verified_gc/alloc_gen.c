@@ -549,15 +549,19 @@ static void vergc_sync_bump_ref_from_young_ptr(void) {
     *gc_gen_heap.minor.bump_ref = used_bytes;
 }
 
-void vergc_native_run_minor_collection(void) {
-    vergc_sync_bump_ref_from_young_ptr(); /* do_minor_gc uses bump_ref to check if collection is needed */
-    do_minor_gc();
-
+/* After a collection has emptied the minor heap (bump_ref == 0), move
+ * young_ptr back to match. */
+static void vergc_native_reset_young_ptr(void) {
     Caml_state->_young_ptr = Caml_state->_young_alloc_end; /* reset minor heap to empty */
     Caml_state->_young_trigger = Caml_state->_young_alloc_start; /* ensures young_trigger remains start of the heap */
     caml_update_young_limit(); /* set the young_limit, which is actually used by native code to check if heap is full 
                                 * can be different from young_trigger if there is memory profiling */
+}
 
+void vergc_native_run_minor_collection(void) {
+    vergc_sync_bump_ref_from_young_ptr(); /* do_minor_gc uses bump_ref to check if collection is needed */
+    do_minor_gc();
+    vergc_native_reset_young_ptr();
 }
 
 #endif
@@ -664,6 +668,13 @@ static void do_full_gc(void) {
     free(roots_for_gc);
     free(gray_storage);
     PROF_END(major_gc);
+
+    #ifdef NATIVE_CODE
+        /* gen_gc emptied the minor heap.  Without this young_ptr keeps its
+         * old value: the next collection would count those words in
+         * minor_words a second time, and the space would not be reused. */
+        vergc_native_reset_young_ptr();
+    #endif
 
     in_full_gc = 0;
 }
@@ -786,6 +797,14 @@ CAMLprim value caml_trigger_verified_gc(value v) {
     (void)v;
     do_full_gc();
     return Val_unit;
+}
+
+/* Called by Gc.major, Gc.full_major and Gc.compact (runtime/gc_ctrl.c) in
+ * place of the stock major cycle and compaction.  do_full_gc collects both
+ * generations and counts the minor collection, the major collection and the
+ * promoted words. */
+void verified_do_full_gc(void) {
+    do_full_gc();
 }
 
 /* Called by caml_minor_collection() in minor_gc.c.
