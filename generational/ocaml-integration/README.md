@@ -69,7 +69,39 @@ Set `MIN_EXPANSION_WORDSIZE` environment variable to control major heap size
 
 Minor heap size is set at runtime with `MINOR_HEAP_WORDS`.  The default is
 256K words (2MB), matching OCaml's default, with a floor large enough for
-`Max_young_wosize`.
+`Max_young_wosize`.  `Gc.set` cannot change it: a new `minor_heap_size` is
+ignored, and `Gc.get` keeps reporting the size in use.
+
+## Stock collector entry points
+
+Once the verified collector owns the heap, the stock collector must never
+run.  In the verified build each stock entry point calls `caml_fatal_error`
+naming itself ("verified GC: stock *f* must not run under the verified
+collector"), so a path that still reaches one fails at that call rather than
+corrupting the heap and failing somewhere unrelated later: the major slice
+and `caml_finish_major_cycle`, `caml_darken`, compaction and
+`caml_shrink_heap`, the stock free list (`caml_fl_allocate`,
+`caml_fl_merge_block`, `caml_fl_add_blocks`), heap expansion
+(`caml_add_to_heap`, `expand_heap`), `caml_gc_dispatch`, the stock minor
+collector (`caml_oldify_one`, `caml_oldify_mopup`) and, after startup,
+`caml_set_minor_heap_size`.
+
+The runtime paths that used to reach them now use the verified collector:
+
+| Path | Now |
+|---|---|
+| Bytecode startup ("ensure that the globals are in the major heap") | The verified minor collection, when the globals are young (`tests/tiny_globals.ml`) |
+| `Gc.major`, `Gc.full_major`, `Gc.compact` | One verified full collection; the verified heap is non-moving, so nothing is compacted (`tests/gc_explicit.ml`) |
+| `caml_shutdown` (`OCAMLRUNPARAM=c`) | Nothing: the stock major cycle and sweep are skipped |
+| `Gc.set` with a new `minor_heap_size` | Ignored |
+| Memprof's minor-heap refill | The verified minor collection |
+
+Finalisers (`Gc.finalise`, custom-block finalisers), weak references and
+ephemerons are not implemented by the verified collector yet; this is a
+known limitation, and the tests that exercise them are listed in
+`ci/expected-failures.txt`.  Skipping the stock major cycle and sweep at
+exit is consistent with it: finalisers run neither during the program nor
+at exit.
 
 ## Tests
 
