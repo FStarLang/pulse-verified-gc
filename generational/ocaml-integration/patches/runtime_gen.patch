@@ -448,7 +448,7 @@ index 9b18f3c..6c90643 100644
        Store_double_flat_field(block, 0, Double_val(accu));
        for (i = 1; i < size; i++){
 diff --git a/runtime/major_gc.c b/runtime/major_gc.c
-index 3da350e..8a9fbb1 100644
+index 3da350e..2b31dae 100644
 --- a/runtime/major_gc.c
 +++ b/runtime/major_gc.c
 @@ -277,6 +277,7 @@ static void is_naked_pointer_safe (value v, value *p);
@@ -475,6 +475,31 @@ index 3da350e..8a9fbb1 100644
    if (caml_gc_phase == Phase_idle){
      p_backlog = 0.0; /* full major GC cycle, the backlog becomes irrelevant */
      start_cycle ();
+@@ -1280,19 +1283,11 @@ void caml_set_major_window (int w){
+ 
+ void caml_finalise_heap (void)
+ {
+-  /* Finishing major cycle (all values become white) */
+-  caml_empty_minor_heap ();
+-  caml_gc_message (0x1, "Finishing major GC cycle (finalising heap)\n");
+-  caml_finish_major_cycle ();
+-  CAMLassert (caml_gc_phase == Phase_idle);
+-
+-  /* Finalising all values (by means of forced sweeping) */
+-  caml_fl_init_merge ();
+-  caml_gc_phase = Phase_sweep;
+-  sweep_chunk = caml_heap_start;
+-  caml_gc_sweep_hp = sweep_chunk;
+-  while (caml_gc_phase == Phase_sweep)
+-    sweep_slice (LONG_MAX);
++  /* Verified GC: stock finishes a major cycle and sweeps the stock heap so
++     that every custom block's finaliser runs at shutdown.  The verified
++     collector does not implement finalisers, weak references or ephemerons
++     yet (a known limitation), so, consistently with the rest of the run,
++     the stock major cycle and sweep are skipped here. */
+ }
+ 
+ #if defined(NAKED_POINTERS_CHECKER) && defined(NATIVE_CODE)
 diff --git a/runtime/memory.c b/runtime/memory.c
 index 66d1c50..19ffeec 100644
 --- a/runtime/memory.c

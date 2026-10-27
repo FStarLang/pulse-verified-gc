@@ -180,6 +180,8 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	GC_EXPLICIT_RUNTIME=verified MIN_EXPANSION_WORDSIZE=$(GC_EXPLICIT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) gc_explicit.byte
 	@echo "--- gc_explicit (stock OCaml, differential check) ---"
 	$(UNCHANGED_OCAMLRUN) gc_explicit.byte
+	@echo "--- gc_explicit with OCAMLRUNPARAM=c (caml_shutdown at exit) ---"
+	OCAMLRUNPARAM=c GC_EXPLICIT_RUNTIME=verified MIN_EXPANSION_WORDSIZE=$(GC_EXPLICIT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) gc_explicit.byte
 	@echo "=== Correctness tests passed ==="
 
 # ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
