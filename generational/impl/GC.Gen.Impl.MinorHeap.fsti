@@ -41,6 +41,11 @@ let is_minor (mh: minor_heap_t) (d: minor_heap) (b: U64.t) : slprop =
   R.pts_to mh.bump_ref b **
   pure (U64.v b % 8 == 0 /\ U64.v b <= minor_heap_size)
 
+/// Minor heap size as SizeT.  Exposed so that it extracts to a public C
+/// global: the OCaml integration resizes the minor heap at startup and
+/// re-derives it in snapshot/krmlinit.c.
+val minor_heap_size_sz : (n:SZ.t{SZ.v n == minor_heap_size})
+
 /// ---------------------------------------------------------------------------
 /// Read / Write
 /// ---------------------------------------------------------------------------
