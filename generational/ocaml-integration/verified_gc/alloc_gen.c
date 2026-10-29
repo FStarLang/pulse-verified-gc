@@ -86,8 +86,9 @@ static uint64_t   root_values[MAX_ROOTS];
 static value      *root_locs[MAX_ROOTS];
 static size_t      root_count;
 
-/* Track total bytes promoted since last major GC.  When this approaches
- * the major heap size, we trigger a major GC to avoid promotion failures. */
+/* Track total bytes promoted or allocated directly in the major heap
+ * (verified_allocate) since the last major GC.  When this approaches the
+ * major heap size, we trigger a major GC to avoid promotion failures. */
 static uint64_t   bytes_promoted_since_major = 0;
 static int        in_full_gc = 0;  /* re-entrancy guard */
 
@@ -736,6 +737,18 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
      * against; normalizing keeps them in step. */
     if (wosize == 0) wosize = 1;
 
+    /* Proactive full GC, on the same 50% threshold as do_minor_gc().  Direct
+     * major allocations count toward bytes_promoted_since_major (below), so a
+     * heap filled by large blocks that are then dropped still triggers a full
+     * collection before the next minor collection has to promote into it
+     * (issue #34). */
+    uint64_t alloc_bytes = ((uint64_t)wosize + 1) * 8;
+    if (!in_full_gc) {
+        uint64_t major_size = heap_size_u64 - zero_addr;
+        if (bytes_promoted_since_major + alloc_bytes > major_size / 2)
+            do_full_gc();
+    }
+
     PROF_START(major_alloc);
     uint64_t fp = *gc_gen_heap.fp_ref;
     FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize);
@@ -784,6 +797,7 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     }
 
     PROF_INC(major_alloc_count);
+    bytes_promoted_since_major += alloc_bytes;
 
     /* allocate returns an absolute object address (first field = header + 8)
      * via the major heap's NULL-base trick.  The OCaml runtime finalizes the
