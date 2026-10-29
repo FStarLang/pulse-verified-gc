@@ -378,6 +378,18 @@ val mark_post_elim_objects_gt0 : h_init:heap -> h_mark:heap -> roots:seq obj_add
 val mark_post_elim_fp : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
   Lemma (requires mark_post h_init h_mark roots fp)
         (ensures fp_in_heap fp h_mark)
+val mark_post_elim_black_reachable : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
+  Lemma (requires mark_post h_init h_mark roots fp)
+        (ensures
+          (let g_init = create_graph h_init in
+           let roots' = HeapGraph.coerce_to_vertex_list roots in
+           graph_wf g_init /\ is_vertex_set roots' /\ subset_vertices roots' g_init.vertices ==>
+           (forall (x: obj_addr). mem_graph_vertex g_init x ==>
+             (is_black x h_mark <==> Seq.mem x (reachable_set g_init roots')))))
+val mark_post_elim_wosize : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
+  Lemma (requires mark_post h_init h_mark roots fp)
+        (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr h_init) ==>
+                   wosize_of_object x h_mark == wosize_of_object x h_init)
 
 let heap_reachable (h: heap) (roots: seq obj_addr) (x: obj_addr) : prop =
   let g = create_graph h in
