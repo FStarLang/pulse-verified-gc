@@ -55,8 +55,13 @@ fn call_minor_collect_full_spot
 {
   Preconditions.minor_collect_full_pre_elim
     ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl (SZ.v nslots);
-  let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots;
+  minor_collect_idle_pre ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl
+    (SZ.v nslots);
+  let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots
+             #(hide (GC.Spec.Fields.idle_live 's));
   with d2 b2 s2 fp2 rs2 farr2 qv2. _;
+  minor_collect_idle_post ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl
+    (SZ.v nslots) ok d2 b2 s2 fp2 rs2 farr2;
   assert (pure (s2 ==
     (CheneySpec.cheney_collect_spec ({ data = 'd; bump = 'b } <: minor_state)
       's 'fp 'rs).mc_major));

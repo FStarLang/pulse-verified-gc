@@ -53,6 +53,42 @@ let ref_table_sound_over_idle major_pre fwd slots n =
   Classical.forall_intro aux
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let ref_table_sound_live_implies_over major_pre live fwd slots n =
+  let aux (i: nat) : Lemma
+    (i < n ==>
+      (let addr = U64.v (Seq.index slots i) in
+       addr < heap_size /\ addr % 8 == 0 /\
+       (exists (obj: obj_addr) (j: nat).
+         Seq.mem obj (objects zero_addr major_pre) /\
+         is_blue obj major_pre = false /\
+         is_no_scan obj major_pre = false /\
+         j < U64.v (wosize_of_object obj major_pre) /\
+         addr == U64.v obj + j * 8 /\
+         (live obj \/
+          ~(TwoPass.holds_forwarded major_pre fwd (U64.uint_to_t addr))))))
+    = ()
+  in
+  Classical.forall_intro aux
+
+let ref_table_sound_live_idle major_pre slots n =
+  let aux (i: nat) : Lemma
+    (i < n ==>
+      (let addr = U64.v (Seq.index slots i) in
+       addr < heap_size /\ addr % 8 == 0 /\
+       (exists (obj: obj_addr) (j: nat).
+         Seq.mem obj (objects zero_addr major_pre) /\
+         is_blue obj major_pre = false /\
+         is_no_scan obj major_pre = false /\
+         j < U64.v (wosize_of_object obj major_pre) /\
+         addr == U64.v obj + j * 8 /\
+         (idle_live major_pre obj \/
+          ~(is_minor_pointer (to_minor_offset (read_word major_pre (U64.uint_to_t addr))))))))
+    = ()
+  in
+  Classical.forall_intro aux
+#pop-options
+
 /// Derivation: fwd_valid_or_infix + wfh_part1 + fwd_bounded + represents_fwd
 /// implies promoted_entries_valid_from.
 /// Each non-zero farr entry fwd(i*8) has valid bounds (from fwd_bounded),

@@ -46,6 +46,7 @@ module RBridge = GC.Gen.ReachabilityBridge
 module CheneyBFS = GC.Gen.CheneyBFS
 module SpecHeapModel = GC.Spec.HeapModel
 module MRT = GC.Gen.MajorReachabilityTransfer
+module TPC = GC.Gen.TwoPassEquiv.Collect
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -307,46 +308,84 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
   ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2
 
 /// ---------------------------------------------------------------------------
-/// Full minor collection with ref_table (full correctness)
+/// Full minor collection with ref_table
 /// ---------------------------------------------------------------------------
 
 /// Full minor collection with a ref_table of major-heap field addresses holding
-/// minor pointers. Rewrites both promoted-object fields and existing major slots,
-/// proving full cheney_collect_spec correctness.
+/// minor pointers.  It promotes the nursery objects reachable from `roots`
+/// (Cheney BFS), rewrites the promoted objects' fields and the remembered
+/// slots, rewrites the roots and resets the nursery.
 ///
-/// The ref_table comes from the write barrier: it records addresses of existing
-/// major-heap fields that were assigned minor-heap pointers. Combined with
-/// update_promoted_objects (which handles newly promoted objects), this covers
-/// all minor pointers in the major heap.
+/// The contract is stated for a **live set** `live` of the major heap, supplied
+/// by the caller (a ghost argument): the objects the collection may reach,
+/// which point only at live objects (`GenInv.collection_shape_over`).  Garbage
+/// -- a non-live, non-free block -- is unconstrained and never read or
+/// written.  The stop-the-world collector passes `idle_live` (every non-free
+/// block); `minor_collect_pre_idle` / `minor_collect_post_idle` below are that
+/// instance, with the reachable-subgraph isomorphism added.
 ///
-/// The caller states this as a pre-promotion remembered-set property
-/// (`ref_table_covers_minor_ptrs`); the implementation derives the
-/// forwarding-map-specific `ref_table_complete` fact after computing Cheney's
-/// promotion map.
-///
-/// The remaining reachability/validity preconditions state that `roots` is the
-/// complete valid minor-collection root set for the supplied remembered table.
+/// The ref_table comes from the write barrier: it records addresses of
+/// existing major-heap fields that were assigned minor-heap pointers.  The
+/// caller states it as a pre-promotion property over the live set
+/// (`TPC.ref_table_covers_over`: every nursery pointer held by a live object is
+/// at a recorded slot; `TPC.ref_table_sound_live`: slots are fields of non-free
+/// scannable objects, and those of non-live objects hold no nursery pointer).
+let minor_collect_pre_over
+  (minor_st: minor_state) (s: heap_state) (fp: U64.t)
+  (farr sl: Seq.seq U64.t) (nslots: nat) (live: obj_addr -> prop) : prop =
+  GenInv.collection_shape_over minor_st s fp live /\
+  Seq.length farr == UpdatePtrs.fwd_array_size /\
+  (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
+  TPC.ref_table_sound_live s live sl nslots /\
+  TPC.ref_table_covers_over s live sl nslots /\
+  UpdatePtrs.slots_pairwise_distinct sl nslots
+
+/// What the collection guarantees over a live set.
+let minor_collect_post_over
+  (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs sl: Seq.seq U64.t) (nslots: nat)
+  (live: obj_addr -> prop) (ok: bool)
+  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t) : prop =
+  let prom = CheneySpec.cheney_promote minor_st s fp rs in
+  // Heap is the two-pass result (update promoted + rewrite slots) ...
+  s2 == UpdatePtrs.rewrite_slots_iter
+          (UpdatePtrs.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
+          prom.fwd_map sl nslots 0 /\
+  // ... which is the pointer update of the live-set collection
+  s2 == (CheneySpec.cheney_collect_spec_over minor_st s fp rs live).mc_major /\
+  // Free pointer from promotion phase
+  fp2 == prom.fp_final /\
+  // Roots rewritten via forwarding map
+  rs2 == PromoteSpec.rewrite_roots rs prom.fwd_map /\
+  // Minor heap fully reset: the nursery bytes are cleared as well as the
+  // bump pointer, so the state handed back is literally
+  // `GC.Gen.MinorHeap.minor_reset`.
+  U64.v b2 == 0 /\
+  ({ data = d2; bump = b2 } <: minor_state) == minor_reset minor_st /\
+  // Forwarding array represents the spec-level forwarding map
+  UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
+  UpdatePtrs.valid_fwd_entries farr2 /\
+  Seq.length farr2 == UpdatePtrs.fwd_array_size /\
+  SpecFields.well_formed_heap_part1 prom.major_final /\
+  // The shape is kept, for the live set extended with the promoted objects
+  GenInv.collection_shape_over ({ data = d2; bump = b2 } <: minor_state) s2 fp2
+    (PromoteSpec.promoted_live minor_st live prom.fwd_map) /\
+  (not ok ==> CheneyBFS.cheney_oom minor_st s fp rs) /\
+  (ok ==> CheneyBFS.cheney_no_oom minor_st s fp rs)
+
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
                       (queue: larray U64.t Cheney.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
+                      (#live: erased (obj_addr -> prop))
   requires is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to slots 'sl **
-            pure (GenInv.collection_heap_shape
-                    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp /\
-                  SZ.v nroots == Seq.length 'rs /\
-                  Seq.length 'farr == UpdatePtrs.fwd_array_size /\
-                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
-                  UpdatePtrs.ref_table_sound 's 'sl (SZ.v nslots) /\
-                  UpdatePtrs.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
-                  UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots) /\
-                  MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
-                  MinorFwd.roots_valid_for_minor_collection
-                    ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
+           pure (SZ.v nroots == Seq.length 'rs /\
+                 minor_collect_pre_over ({ data = 'd; bump = 'b } <: minor_state) 's 'fp
+                   'farr 'sl (SZ.v nslots) live)
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
     is_gen_heap gh d2 b2 s2 fp2 **
@@ -354,45 +393,85 @@ fn minor_collect_full (gh: gen_heap_t)
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
-    pure (
-      let minor_st : minor_state = { data = 'd; bump = 'b } in
-      let prom = CheneySpec.cheney_promote minor_st 's 'fp 'rs in
-      // Heap is the two-pass result (update promoted + rewrite slots)
-      s2 == UpdatePtrs.rewrite_slots_iter
-              (UpdatePtrs.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
-              prom.fwd_map 'sl (SZ.v nslots) 0 /\
-      // Free pointer from promotion phase
-      fp2 == prom.fp_final /\
-      // Roots rewritten via forwarding map
-      rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
-      // Minor heap fully reset: the nursery bytes are cleared as well as the
-      // bump pointer, so the state handed back is literally
-      // `GC.Gen.MinorHeap.minor_reset`.  That is what makes every minor-side
-      // and cross-generation conjunct of `collection_heap_shape` vacuous for
-      // the collector's output.
-      U64.v b2 == 0 /\
-      ({ data = d2; bump = b2 } <: minor_state) ==
-        minor_reset ({ data = 'd; bump = 'b } <: minor_state) /\
-      // Forwarding array represents the spec-level forwarding map
-      UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
-      // Forwarding entries are valid
-      UpdatePtrs.valid_fwd_entries farr2 /\
-      Seq.length farr2 == UpdatePtrs.fwd_array_size /\
-      // Well-formedness preserved through promotion
-      SpecFields.well_formed_heap_part1 prom.major_final /\
-      // Strong correctness: the result equals cheney_collect_spec
-      // (single-pass full update of all pointer fields in the major heap).
-      s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major /\
-      GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
-      // If promotion succeeds, minor collection is a concrete reachable
-      // subgraph isomorphism over the actual post-minor heap graph.
-      (not ok ==> CheneyBFS.cheney_oom minor_st 's 'fp 'rs) /\
-      (ok ==>
-       CheneyBFS.cheney_no_oom minor_st 's 'fp 'rs /\
-       MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-         minor_st 's 'fp 'rs s2 (MCFH.resolve_roots s2 rs2) /\
-        MinorFwd.normal_result_non_pointer_fields_preserved_prop
-         minor_st 's 'fp 'rs s2))
+    pure (minor_collect_post_over ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'sl
+            (SZ.v nslots) live ok d2 b2 s2 fp2 rs2 farr2)
+
+/// --- The stop-the-world instance ---
+
+/// The stop-the-world precondition: the whole major heap is in shape
+/// (`collection_heap_shape`), the remembered set covers every nursery pointer
+/// of the major heap, and `roots` is the complete valid root set for it.
+let minor_collect_pre_idle
+  (minor_st: minor_state) (s: heap_state) (fp: U64.t)
+  (rs farr sl: Seq.seq U64.t) (nslots: nat) : prop =
+  GenInv.collection_heap_shape minor_st s fp /\
+  Seq.length farr == UpdatePtrs.fwd_array_size /\
+  (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
+  UpdatePtrs.ref_table_sound s sl nslots /\
+  UpdatePtrs.ref_table_covers_minor_ptrs s sl nslots /\
+  UpdatePtrs.slots_pairwise_distinct sl nslots /\
+  MinorFwd.remembered_targets_in_roots s rs sl nslots /\
+  MinorFwd.roots_valid_for_minor_collection minor_st s rs
+
+/// The stop-the-world postcondition.
+let minor_collect_post_idle
+  (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs sl: Seq.seq U64.t) (nslots: nat)
+  (ok: bool)
+  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t) : prop =
+  let prom = CheneySpec.cheney_promote minor_st s fp rs in
+  // Heap is the two-pass result (update promoted + rewrite slots)
+  s2 == UpdatePtrs.rewrite_slots_iter
+          (UpdatePtrs.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
+          prom.fwd_map sl nslots 0 /\
+  // Free pointer from promotion phase
+  fp2 == prom.fp_final /\
+  // Roots rewritten via forwarding map
+  rs2 == PromoteSpec.rewrite_roots rs prom.fwd_map /\
+  // Minor heap fully reset: the nursery bytes are cleared as well as the
+  // bump pointer, so the state handed back is literally
+  // `GC.Gen.MinorHeap.minor_reset`.  That is what makes every minor-side
+  // and cross-generation conjunct of `collection_heap_shape` vacuous for
+  // the collector's output.
+  U64.v b2 == 0 /\
+  ({ data = d2; bump = b2 } <: minor_state) == minor_reset minor_st /\
+  // Forwarding array represents the spec-level forwarding map
+  UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
+  // Forwarding entries are valid
+  UpdatePtrs.valid_fwd_entries farr2 /\
+  Seq.length farr2 == UpdatePtrs.fwd_array_size /\
+  // Well-formedness preserved through promotion
+  SpecFields.well_formed_heap_part1 prom.major_final /\
+  // Strong correctness: the result equals cheney_collect_spec
+  // (single-pass full update of all pointer fields in the major heap).
+  s2 == (CheneySpec.cheney_collect_spec minor_st s fp rs).mc_major /\
+  GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
+  // If promotion succeeds, minor collection is a concrete reachable
+  // subgraph isomorphism over the actual post-minor heap graph.
+  (not ok ==> CheneyBFS.cheney_oom minor_st s fp rs) /\
+  (ok ==>
+   CheneyBFS.cheney_no_oom minor_st s fp rs /\
+   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+     minor_st s fp rs s2 (MCFH.resolve_roots s2 rs2) /\
+   MinorFwd.normal_result_non_pointer_fields_preserved_prop
+     minor_st s fp rs s2)
+
+/// The stop-the-world precondition is the live-set one at `idle_live s` ...
+val minor_collect_idle_pre
+  (minor_st: minor_state) (s: heap_state) (fp: U64.t)
+  (rs farr sl: Seq.seq U64.t) (nslots: nat)
+  : Lemma (requires minor_collect_pre_idle minor_st s fp rs farr sl nslots)
+          (ensures minor_collect_pre_over minor_st s fp farr sl nslots (SpecFields.idle_live s))
+
+/// ... and the live-set postcondition at `idle_live s` gives the
+/// stop-the-world one, the reachable-subgraph isomorphism included.
+val minor_collect_idle_post
+  (minor_st: minor_state) (s: heap_state) (fp: U64.t)
+  (rs farr sl: Seq.seq U64.t) (nslots: nat) (ok: bool)
+  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t)
+  : Lemma (requires minor_collect_pre_idle minor_st s fp rs farr sl nslots /\
+                    minor_collect_post_over minor_st s fp rs sl nslots (SpecFields.idle_live s)
+                      ok d2 b2 s2 fp2 rs2 farr2)
+          (ensures minor_collect_post_idle minor_st s fp rs sl nslots ok d2 b2 s2 fp2 rs2 farr2)
 
 /// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)

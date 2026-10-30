@@ -94,6 +94,35 @@ val ref_table_sound_over_idle
   : Lemma (requires ref_table_sound major_pre slots n)
           (ensures ref_table_sound_over major_pre (idle_live major_pre) fwd slots n)
 
+/// The caller's form of `ref_table_sound_over`, before any forwarding map
+/// exists: every slot is a field of a non-free scannable object, and a slot in
+/// an object that is not live holds no nursery pointer at all (garbage is
+/// never written after it became garbage, and the nursery was empty then).
+let ref_table_sound_live (major_pre: heap) (live: obj_addr -> prop)
+                         (slots: seq U64.t) (n: nat) : prop =
+  n <= Seq.length slots /\
+  (forall (i: nat). i < n ==>
+    (let addr = U64.v (Seq.index slots i) in
+     addr < heap_size /\ addr % 8 == 0 /\
+     (exists (obj: obj_addr) (j: nat).
+       Seq.mem obj (objects zero_addr major_pre) /\
+       is_blue obj major_pre = false /\
+       is_no_scan obj major_pre = false /\
+       j < U64.v (wosize_of_object obj major_pre) /\
+       addr == U64.v obj + j * 8 /\
+       (live obj \/
+        ~(is_minor_pointer (to_minor_offset (read_word major_pre (U64.uint_to_t addr))))))))
+
+val ref_table_sound_live_implies_over
+  (major_pre: heap) (live: obj_addr -> prop) (fwd: forwarding_map) (slots: seq U64.t) (n: nat)
+  : Lemma (requires ref_table_sound_live major_pre live slots n)
+          (ensures ref_table_sound_over major_pre live fwd slots n /\
+                   valid_slot_addrs slots n)
+
+val ref_table_sound_live_idle (major_pre: heap) (slots: seq U64.t) (n: nat)
+  : Lemma (requires ref_table_sound major_pre slots n)
+          (ensures ref_table_sound_live major_pre (idle_live major_pre) slots n)
+
 /// ---------------------------------------------------------------------------
 /// The two passes are the live-set collection's pointer update
 /// ---------------------------------------------------------------------------
