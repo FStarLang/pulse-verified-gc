@@ -221,12 +221,12 @@ that lets the same verified code work with any heap placement.
 | Function | Called by bridge? | Purpose |
 |----------|-------------------|---------|
 | `minor_alloc(minor, wosize, tag)` | Yes, small-allocation slow path | Bump-allocate in the minor heap after any needed minor collection |
-| `allocate(major, fp, wosize)` | Yes, shared/major allocation path | Allocate from the major free list; the OCaml runtime finalizes the tag/profinfo header |
+| `allocate(major, fp, wosize, tag)` | Yes, shared/major allocation path | Allocate from the major free list.  The bridge passes tag 0 and the OCaml runtime finalizes the tag/profinfo header (passing the real tag instead is a possible follow-up) |
 | `minor_collect_full(gh, roots, n, fwd_arr, queue, slots, nslots)` | Yes, `do_minor_gc_core` | Verified minor collection: Cheney promotion, promoted-object field rewrite, remembered-slot rewrite, root rewrite, and minor bump reset |
 | `gen_gc(gh, roots, n, fwd_arr, queue, slots, nslots, gray_stack)` | Yes, `do_full_gc` | Verified full collection: first `minor_collect_full`, then root darkening into an initially empty gray stack, then major `collect_with_roots` |
 | `collect_with_roots(major, gray_stack, roots, n, fp)` | Indirectly through `gen_gc` | Mark-and-sweep over the major heap from the post-minor roots, returning the new free-list head |
 | `rewrite_heap_slots(major, fwd_arr, slots, n)` | Indirectly through `minor_collect_full` and `gen_gc` | Rewrite remembered major fields that still point into the minor heap |
-| `allocate_part1(major, wosize, tag, fp)` | Indirectly through `allocate` | Internal split/consume step used by the major free-list allocator |
+| `allocate_part1(major, fp, wosize, tag)` | Indirectly through `minor_collect_full` | The same free-list allocator under a weaker precondition; promotion calls it with the minor object's tag, so the copy's header is written once |
 
 ---
 
@@ -578,9 +578,8 @@ range and ARE rewritten — so no separate infix scan is needed.
 `promote_object` copies the ENTIRE parent closure body verbatim:
 ```
 promote_object(minor, major, parent_addr, fp, wosize):
-  alloc_res = alloc_spec(major, fp, wosize)      // allocate wosize words
+  alloc_res = alloc_spec(major, fp, wosize, parent_tag)  // allocate, header carries the tag
   copy_fields(minor, major, parent, new_addr, 0, wosize)  // copy ALL fields
-  set_promoted_tag(major, new_addr, parent_tag)  // set outer header tag
 ```
 
 The `copy_fields` step copies the raw body INCLUDING:

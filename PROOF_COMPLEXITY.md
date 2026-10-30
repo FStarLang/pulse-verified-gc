@@ -187,8 +187,9 @@ implementation uses a real array, and `GC.Gen.Cheney.Sim`/`.SimOne` prove the ar
 simulates the map (which is what eliminated the last `assume_` in
 `GC.Gen.Impl.Cheney.fst`).
 
-`promote_object` (`Promote.fsti:77-99`) is `alloc_spec` → `copy_fields` →
-`set_promoted_tag`. **Promotion is an allocator client**, and
+`promote_object` (`Promote.fsti`) is `alloc_spec` with the minor object's tag →
+`copy_fields`, the way OCaml's `caml_alloc_shr (wosize, tag)` is allocation with a
+tag. **Promotion is an allocator client**, and
 that is the hinge on which most of the generational proof's weight hangs (§5.2).
 
 The generational theorem comes in two tiers:
@@ -232,7 +233,7 @@ step of unrolling a pure recursive spec function.** The allocator's invariant is
 literally
 
 ```
-SA.alloc_search 's vhead vprev vcur (U64.v wz) (U64.v vfuel) == SA.alloc_spec 's fp (U64.v wosize)
+SA.alloc_search 's vhead vprev vcur (U64.v wz) tag (U64.v vfuel) == SA.alloc_spec 's fp (U64.v wosize) tag
 ```
 (`mark-and-sweep/impl/GC.Impl.Allocator.fst:174-192`), and the Cheney scan loop's is
 literally

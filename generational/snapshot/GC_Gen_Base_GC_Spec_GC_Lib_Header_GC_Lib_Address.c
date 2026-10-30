@@ -17,10 +17,3 @@ uint64_t minor_base_addr = 0ULL;
 
 uint64_t max_young_wosize_u64 = 128ULL;
 
-static uint32_t wosize_shift = 10U;
-
-uint64_t getWosize(uint64_t hdr)
-{
-  return hdr >> wosize_shift;
-}
-

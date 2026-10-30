@@ -76,7 +76,7 @@ static uint64_t makeHeader(uint64_t wz, color_sem c, uint64_t t)
   return wz_shifted | c_shifted | t;
 }
 
-static uint64_t getWosize0(uint64_t hdr)
+static uint64_t getWosize(uint64_t hdr)
 {
   return hdr >> 10U;
 }
@@ -206,7 +206,7 @@ static bool prev_free_impl(heap_t heap, uint64_t c, uint64_t t, uint64_t f)
   else
   {
     uint64_t th = read_word(heap, t - 8ULL);
-    return t + getWosize0(th) * 8ULL == c;
+    return t + getWosize(th) * 8ULL == c;
   }
 }
 
@@ -214,7 +214,7 @@ static FStar_Pervasives_Native_tuple4__uint64_t_uint64_t_uint64_t_uint64_t
 sweep_step_impl(heap_t heap, uint64_t c, uint64_t t, uint64_t f, uint64_t fp)
 {
   uint64_t hdr = read_word(heap, c);
-  uint64_t wz = getWosize0(hdr);
+  uint64_t wz = getWosize(hdr);
   uint64_t nx = c + (wz + 1ULL) * 8ULL;
   uint64_t b = c + 8ULL;
   uint64_t raw = hdr >> 8U & 3ULL;
@@ -240,7 +240,7 @@ sweep_step_impl(heap_t heap, uint64_t c, uint64_t t, uint64_t f, uint64_t fp)
       uint64_t p = !(f == 0ULL) ? f : t;
       uint64_t ph = p - 8ULL;
       uint64_t phdr = read_word(heap, ph);
-      uint64_t pw = getWosize0(phdr);
+      uint64_t pw = getWosize(phdr);
       bool linked = col == Blue && wz > 0ULL;
       uint64_t bl;
       if (linked)
@@ -411,7 +411,7 @@ uint64_t gen_alloc(gen_heap_t gh, uint64_t wosize, uint64_t tag)
     if (obj == 0ULL)
     {
       uint64_t fp = gh.fp_ref[0U];
-      FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate(gh.major, fp, wosize);
+      FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate(gh.major, fp, wosize, tag);
       gh.fp_ref[0U] = res._1;
       return res._2;
     }
@@ -421,7 +421,7 @@ uint64_t gen_alloc(gen_heap_t gh, uint64_t wosize, uint64_t tag)
   else
   {
     uint64_t fp = gh.fp_ref[0U];
-    FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate(gh.major, fp, wosize);
+    FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate(gh.major, fp, wosize, tag);
     gh.fp_ref[0U] = res._1;
     return res._2;
   }
@@ -814,8 +814,11 @@ forward_if_minor_infix(
       new_parent_addr = 0ULL;
     else
     {
+      uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
+      uint64_t tag = getTag(minor_hdr);
       uint64_t fp = fp_ref[0U];
-      FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate_part1(major, fp, wosize1);
+      FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
+      res = allocate_part1(major, fp, wosize1, tag);
       uint64_t new_fp = res._1;
       uint64_t new_obj = res._2;
       fp_ref[0U] = new_fp;
@@ -824,13 +827,6 @@ forward_if_minor_infix(
       else
       {
         copy_fields_loop(minor, major, parent, new_obj, wosize1);
-        uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
-        uint64_t tag = getTag(minor_hdr);
-        uint64_t major_hdr_addr = new_obj - 8ULL;
-        uint64_t major_hdr = read_word(major, major_hdr_addr);
-        uint64_t wz_read = getWosize(major_hdr);
-        uint64_t new_hdr = makeHeader(wz_read, White, tag);
-        write_word(major, major_hdr_addr, new_hdr);
         new_parent_addr = new_obj;
       }
     }
@@ -905,9 +901,11 @@ forward_if_minor(
                 new_parent_addr = 0ULL;
               else
               {
+                uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
+                uint64_t tag1 = getTag(minor_hdr);
                 uint64_t fp = fp_ref[0U];
                 FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                res = allocate_part1(major, fp, wosize1);
+                res = allocate_part1(major, fp, wosize1, tag1);
                 uint64_t new_fp = res._1;
                 uint64_t new_obj = res._2;
                 fp_ref[0U] = new_fp;
@@ -916,13 +914,6 @@ forward_if_minor(
                 else
                 {
                   copy_fields_loop(minor, major, parent, new_obj, wosize1);
-                  uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
-                  uint64_t tag1 = getTag(minor_hdr);
-                  uint64_t major_hdr_addr = new_obj - 8ULL;
-                  uint64_t major_hdr = read_word(major, major_hdr_addr);
-                  uint64_t wz_read = getWosize(major_hdr);
-                  uint64_t new_hdr = makeHeader(wz_read, White, tag1);
-                  write_word(major, major_hdr_addr, new_hdr);
                   new_parent_addr = new_obj;
                 }
               }
@@ -960,9 +951,11 @@ forward_if_minor(
                   new_addr = 0ULL;
                 else
                 {
+                  uint64_t minor_hdr = minor_read(minor, addr - 8ULL);
+                  uint64_t tag1 = getTag(minor_hdr);
                   uint64_t fp = fp_ref[0U];
                   FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                  res = allocate_part1(major, fp, wosize1);
+                  res = allocate_part1(major, fp, wosize1, tag1);
                   uint64_t new_fp = res._1;
                   uint64_t new_obj = res._2;
                   fp_ref[0U] = new_fp;
@@ -971,13 +964,6 @@ forward_if_minor(
                   else
                   {
                     copy_fields_loop(minor, major, addr, new_obj, wosize1);
-                    uint64_t minor_hdr = minor_read(minor, addr - 8ULL);
-                    uint64_t tag1 = getTag(minor_hdr);
-                    uint64_t major_hdr_addr = new_obj - 8ULL;
-                    uint64_t major_hdr = read_word(major, major_hdr_addr);
-                    uint64_t wz_read = getWosize(major_hdr);
-                    uint64_t new_hdr = makeHeader(wz_read, White, tag1);
-                    write_word(major, major_hdr_addr, new_hdr);
                     new_addr = new_obj;
                   }
                 }
@@ -1062,9 +1048,11 @@ forward_roots(
                   new_parent_addr = 0ULL;
                 else
                 {
+                  uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
+                  uint64_t tag1 = getTag(minor_hdr);
                   uint64_t fp = fp_ref[0U];
                   FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                  res = allocate_part1(major, fp, wosize1);
+                  res = allocate_part1(major, fp, wosize1, tag1);
                   uint64_t new_fp = res._1;
                   uint64_t new_obj = res._2;
                   fp_ref[0U] = new_fp;
@@ -1073,13 +1061,6 @@ forward_roots(
                   else
                   {
                     copy_fields_loop(minor, major, parent, new_obj, wosize1);
-                    uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
-                    uint64_t tag1 = getTag(minor_hdr);
-                    uint64_t major_hdr_addr = new_obj - 8ULL;
-                    uint64_t major_hdr = read_word(major, major_hdr_addr);
-                    uint64_t wz_read = getWosize(major_hdr);
-                    uint64_t new_hdr = makeHeader(wz_read, White, tag1);
-                    write_word(major, major_hdr_addr, new_hdr);
                     new_parent_addr = new_obj;
                   }
                 }
@@ -1117,9 +1098,11 @@ forward_roots(
                     new_addr = 0ULL;
                   else
                   {
+                    uint64_t minor_hdr = minor_read(minor, r - 8ULL);
+                    uint64_t tag1 = getTag(minor_hdr);
                     uint64_t fp = fp_ref[0U];
                     FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                    res = allocate_part1(major, fp, wosize1);
+                    res = allocate_part1(major, fp, wosize1, tag1);
                     uint64_t new_fp = res._1;
                     uint64_t new_obj = res._2;
                     fp_ref[0U] = new_fp;
@@ -1128,13 +1111,6 @@ forward_roots(
                     else
                     {
                       copy_fields_loop(minor, major, r, new_obj, wosize1);
-                      uint64_t minor_hdr = minor_read(minor, r - 8ULL);
-                      uint64_t tag1 = getTag(minor_hdr);
-                      uint64_t major_hdr_addr = new_obj - 8ULL;
-                      uint64_t major_hdr = read_word(major, major_hdr_addr);
-                      uint64_t wz_read = getWosize(major_hdr);
-                      uint64_t new_hdr = makeHeader(wz_read, White, tag1);
-                      write_word(major, major_hdr_addr, new_hdr);
                       new_addr = new_obj;
                     }
                   }
@@ -1258,9 +1234,11 @@ scan_loop(
                         new_parent_addr = 0ULL;
                       else
                       {
+                        uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
+                        uint64_t tag2 = getTag(minor_hdr);
                         uint64_t fp = fp_ref[0U];
                         FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                        res = allocate_part1(major, fp, wosize2);
+                        res = allocate_part1(major, fp, wosize2, tag2);
                         uint64_t new_fp = res._1;
                         uint64_t new_obj = res._2;
                         fp_ref[0U] = new_fp;
@@ -1269,13 +1247,6 @@ scan_loop(
                         else
                         {
                           copy_fields_loop(minor, major, parent, new_obj, wosize2);
-                          uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
-                          uint64_t tag2 = getTag(minor_hdr);
-                          uint64_t major_hdr_addr = new_obj - 8ULL;
-                          uint64_t major_hdr = read_word(major, major_hdr_addr);
-                          uint64_t wz_read = getWosize(major_hdr);
-                          uint64_t new_hdr = makeHeader(wz_read, White, tag2);
-                          write_word(major, major_hdr_addr, new_hdr);
                           new_parent_addr = new_obj;
                         }
                       }
@@ -1313,9 +1284,11 @@ scan_loop(
                           new_addr = 0ULL;
                         else
                         {
+                          uint64_t minor_hdr = minor_read(minor, child - 8ULL);
+                          uint64_t tag2 = getTag(minor_hdr);
                           uint64_t fp = fp_ref[0U];
                           FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                          res = allocate_part1(major, fp, wosize2);
+                          res = allocate_part1(major, fp, wosize2, tag2);
                           uint64_t new_fp = res._1;
                           uint64_t new_obj = res._2;
                           fp_ref[0U] = new_fp;
@@ -1324,13 +1297,6 @@ scan_loop(
                           else
                           {
                             copy_fields_loop(minor, major, child, new_obj, wosize2);
-                            uint64_t minor_hdr = minor_read(minor, child - 8ULL);
-                            uint64_t tag2 = getTag(minor_hdr);
-                            uint64_t major_hdr_addr = new_obj - 8ULL;
-                            uint64_t major_hdr = read_word(major, major_hdr_addr);
-                            uint64_t wz_read = getWosize(major_hdr);
-                            uint64_t new_hdr = makeHeader(wz_read, White, tag2);
-                            write_word(major, major_hdr_addr, new_hdr);
                             new_addr = new_obj;
                           }
                         }
@@ -1661,7 +1627,7 @@ bool is_valid_fp(uint64_t v)
 }
 
 FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-allocate(heap_t heap, uint64_t fp, uint64_t wosize)
+allocate(heap_t heap, uint64_t fp, uint64_t wosize, uint64_t tag)
 {
   uint64_t head_fp = fp;
   uint64_t prev_fp = 0ULL;
@@ -1684,7 +1650,7 @@ allocate(heap_t heap, uint64_t fp, uint64_t wosize)
       {
         uint64_t hd_addr = hd_address(vcur);
         uint64_t hdr = read_word(heap, hd_addr);
-        uint64_t block_wz = getWosize0(hdr);
+        uint64_t block_wz = getWosize(hdr);
         uint64_t next = read_word(heap, vcur);
         if (block_wz >= wosize)
         {
@@ -1702,7 +1668,7 @@ allocate(heap_t heap, uint64_t fp, uint64_t wosize)
             {
               uint64_t rem_hdr = makeHeader(leftover - 1ULL, blue, 0ULL);
               write_word(heap, hd_addr, rem_hdr);
-              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
               write_word(heap, alloc_hd_off, alloc_hdr);
               head_fp = new_fp;
               result_obj = alloc_obj;
@@ -1713,7 +1679,7 @@ allocate(heap_t heap, uint64_t fp, uint64_t wosize)
               write_word(heap, vp, new_fp);
               uint64_t rem_hdr = makeHeader(leftover - 1ULL, blue, 0ULL);
               write_word(heap, hd_addr, rem_hdr);
-              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
               write_word(heap, alloc_hd_off, alloc_hdr);
               result_obj = alloc_obj;
               go = false;
@@ -1724,7 +1690,7 @@ allocate(heap_t heap, uint64_t fp, uint64_t wosize)
             bool vp_unusable = vp == 0ULL || vp == hd_addr;
             if (vp_unusable)
             {
-              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
               write_word(heap, hd_addr, alloc_hdr);
               head_fp = next;
               result_obj = alloc_obj;
@@ -1733,7 +1699,7 @@ allocate(heap_t heap, uint64_t fp, uint64_t wosize)
             else
             {
               write_word(heap, vp, next);
-              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
               write_word(heap, hd_addr, alloc_hdr);
               result_obj = alloc_obj;
               go = false;
@@ -1756,7 +1722,7 @@ allocate(heap_t heap, uint64_t fp, uint64_t wosize)
 }
 
 FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize)
+allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize, uint64_t tag)
 {
   uint64_t head_fp = fp;
   uint64_t prev_fp = 0ULL;
@@ -1779,7 +1745,7 @@ allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize)
       {
         uint64_t hd_addr = hd_address(vcur);
         uint64_t hdr = read_word(heap, hd_addr);
-        uint64_t block_wz = getWosize0(hdr);
+        uint64_t block_wz = getWosize(hdr);
         uint64_t next = read_word(heap, vcur);
         if (block_wz >= wosize)
         {
@@ -1797,7 +1763,7 @@ allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize)
             {
               uint64_t rem_hdr = makeHeader(leftover - 1ULL, blue, 0ULL);
               write_word(heap, hd_addr, rem_hdr);
-              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
               write_word(heap, alloc_hd_off, alloc_hdr);
               head_fp = new_fp;
               result_obj = alloc_obj;
@@ -1808,7 +1774,7 @@ allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize)
               write_word(heap, vp, new_fp);
               uint64_t rem_hdr = makeHeader(leftover - 1ULL, blue, 0ULL);
               write_word(heap, hd_addr, rem_hdr);
-              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
               write_word(heap, alloc_hd_off, alloc_hdr);
               result_obj = alloc_obj;
               go = false;
@@ -1819,7 +1785,7 @@ allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize)
             bool vp_unusable = vp == 0ULL || vp == hd_addr;
             if (vp_unusable)
             {
-              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
               write_word(heap, hd_addr, alloc_hdr);
               head_fp = next;
               result_obj = alloc_obj;
@@ -1828,7 +1794,7 @@ allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize)
             else
             {
               write_word(heap, vp, next);
-              uint64_t alloc_hdr = makeHeader(wosize, white, 0ULL);
+              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
               write_word(heap, hd_addr, alloc_hdr);
               result_obj = alloc_obj;
               go = false;
@@ -1854,7 +1820,7 @@ void darken_write_gray(heap_t heap, uint64_t h_addr, uint64_t obj)
 {
   KRML_MAYBE_UNUSED_VAR(obj);
   uint64_t hdr = read_word(heap, h_addr);
-  uint64_t new_hdr = makeHeader(getWosize0(hdr), gray, getTag(hdr));
+  uint64_t new_hdr = makeHeader(getWosize(hdr), gray, getTag(hdr));
   write_word(heap, h_addr, new_hdr);
 }
 
@@ -1881,7 +1847,7 @@ void check_and_darken_bounded(heap_t heap, gray_stack_rec st, uint64_t v)
     uint64_t target_hdr_raw = v - 8ULL;
     uint64_t hdr = read_word(heap, target_hdr_raw);
     uint64_t t = getTag(hdr);
-    uint64_t wz = getWosize0(hdr);
+    uint64_t wz = getWosize(hdr);
     uint64_t off = wz * 8ULL;
     if (t == infix_tag && v >= off + 8ULL)
     {
@@ -1913,7 +1879,7 @@ FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
 mark_read_header(heap_t heap, uint64_t h_addr)
 {
   uint64_t hdr = read_word(heap, h_addr);
-  uint64_t wz = getWosize0(hdr);
+  uint64_t wz = getWosize(hdr);
   uint64_t tag = getTag(hdr);
   return ((FStar_Pervasives_Native_tuple2__uint64_t_uint64_t){ ._1 = wz, ._2 = tag });
 }
@@ -1922,7 +1888,7 @@ void mark_write_black(heap_t heap, uint64_t h_addr, uint64_t f_addr)
 {
   KRML_MAYBE_UNUSED_VAR(f_addr);
   uint64_t hdr = read_word(heap, h_addr);
-  uint64_t new_hdr = makeHeader(getWosize0(hdr), black, getTag(hdr));
+  uint64_t new_hdr = makeHeader(getWosize(hdr), black, getTag(hdr));
   write_word(heap, h_addr, new_hdr);
 }
 
@@ -2015,7 +1981,7 @@ void rescan_heap_impl(heap_t heap, gray_stack_rec st)
   {
     uint64_t v = current;
     uint64_t hdr = read_word(heap, v);
-    uint64_t wz = getWosize0(hdr);
+    uint64_t wz = getWosize(hdr);
     rescan_push_if_gray(heap, st, v);
     uint64_t skip = 1ULL + wz;
     uint64_t offset = skip * 8ULL;

@@ -451,7 +451,7 @@ the free-list link is stored in the first field of the free block:
 /// 2. For each blue (free) block, check if wosize >= requested
 /// 3. If leftover >= 2: split -- create remainder block
 /// 4. If leftover < 2: use entire block (no split)
-/// 5. Recolor allocated block's header to White, tag 0
+/// 5. Write the allocated block's header: White, with the caller's tag
 /// 6. Return (updated heap, new free pointer, allocated obj_addr)
 ```
 
@@ -465,16 +465,22 @@ type alloc_result = {
 }
 ```
 
+Like OCaml's `caml_alloc_shr (wosize, tag)`, the allocator takes the header
+tag: the allocated block's header is written once, white, carrying `tag`
+(remainder and fragment headers are blue with tag 0).  Mark-and-sweep callers
+and the C bridge's `verified_allocate` pass 0; promotion passes the minor
+object's tag.
+
 The key implementation contract is intentionally simple: the Pulse allocator
 returns a heap that is exactly the pure `alloc_spec` result.
 
 ```fstar
-fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
+fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap 's)
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
-    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in
+    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) tag in
           s2 == spec_res.heap_out /\
           fst res == spec_res.fp_out /\
           snd res == spec_res.obj_out)
@@ -483,7 +489,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
 There is also a weaker `allocate_part1` contract used during promotion:
 
 ```fstar
-fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
+fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap_part1 's /\
                  AllocLemmas.fl_valid 's fp (heap_size / U64.v mword) /\
@@ -904,21 +910,21 @@ let extend_forwarding (fwd: forwarding_map) (minor_addr: U64.t) (major_addr: U64
   fun a -> if a = minor_addr then major_addr else fwd a
 ```
 
-`promote_object` copies one object:
+`promote_object` copies one object.  Promotion is just allocation with the
+minor object's tag, followed by the field copy; the copy's header is written
+once, by the allocator:
 
 ```fstar
 let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
                    (fp: U64.t) (wosize: nat{wosize > 0})
   : GTot promote_one_result =
-  let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
+  let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
   ...
   if new_addr = 0UL then
     { major_out = major; fp_out = fp; new_addr = 0UL }
   else
     let copied_major = copy_fields minor new_major obj new_addr 0 wosize in
-    let tag = minor_tag minor obj in
-    let final_major = set_promoted_tag copied_major new_addr tag in
-    { major_out = final_major; fp_out = new_fp; new_addr = new_addr }
+    { major_out = copied_major; fp_out = new_fp; new_addr = new_addr }
 ```
 
 The major allocator is size-exact: the allocated header declares exactly the

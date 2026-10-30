@@ -677,9 +677,13 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
      * against; normalizing keeps them in step. */
     if (wosize == 0) wosize = 1;
 
+    /* Tag 0, as before: the patched runtime writes the real header (tag and
+     * colour) itself after this returns.  The verified allocator now takes the
+     * tag -- promotion passes the minor tag -- so a possible follow-up is to
+     * pass `tag` here and let the runtime skip its header write. */
     PROF_START(major_alloc);
     uint64_t fp = *gc_gen_heap.fp_ref;
-    FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize);
+    FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize, 0);
     *gc_gen_heap.fp_ref = res._1;
     uint64_t result = res._2;
     PROF_END(major_alloc);
@@ -688,7 +692,7 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
         do_full_gc();
         PROF_START(major_alloc);
         fp = *gc_gen_heap.fp_ref;
-        res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize);
+        res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize, 0);
         *gc_gen_heap.fp_ref = res._1;
         result = res._2;
         PROF_END(major_alloc);
