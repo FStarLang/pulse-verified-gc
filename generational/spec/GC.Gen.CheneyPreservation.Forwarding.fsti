@@ -98,7 +98,7 @@ val promote_object_frame_old_header_derived
       // too, so excluding `obj_out` no longer excludes every rewritten
       // header.  `src` has to be off the free list entirely.
       AllocLemmas.chain_avoids major fp src heap_words = true /\
-      (src <> (Allocator.alloc_spec major fp wz 0UL).obj_out))
+      (src <> (Allocator.alloc_spec major fp wz (promoted_tag minor obj)).obj_out))
     (ensures
       (let res = promote_object minor major obj fp wz in
        read_word res.major_out (hd_address src) == read_word major (hd_address src)))
@@ -221,7 +221,7 @@ val promote_object_new_addr_in_objects_not_blue
          is_blue na res.major_out = false)))
 
 /// The promoted copy carries the source minor object's tag: `promote_object`
-/// finishes with `set_promoted_tag _ new_addr (minor_tag minor obj)`.
+/// allocates the copy with `promoted_tag minor obj`.
 /// Needed to see that the promotion of a *closure* is still a closure, which is
 /// what makes an interior pointer into the copy satisfy `infix_addr_conds`.
 val promote_object_new_addr_tag

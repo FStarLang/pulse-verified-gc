@@ -141,7 +141,7 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
     if U64.eq obj 0UL {
       // Minor full — allocate directly from major
       let fp = R.op_Bang gh.fp_ref;
-      let res = Alloc.allocate gh.major fp wosize;
+      let res = Alloc.allocate gh.major fp wosize tag;
       R.op_Colon_Equals gh.fp_ref (fst res);
       fold (is_gen_heap gh _ _ _ _);
       snd res
@@ -152,7 +152,7 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
   } else {
     // Large object → major heap directly
     let fp = R.op_Bang gh.fp_ref;
-    let res = Alloc.allocate gh.major fp wosize;
+    let res = Alloc.allocate gh.major fp wosize tag;
     R.op_Colon_Equals gh.fp_ref (fst res);
     fold (is_gen_heap gh _ _ _ _);
     snd res

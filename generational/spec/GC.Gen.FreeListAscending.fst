@@ -30,24 +30,22 @@ module GenInv = GC.Gen.HeapInvariant
 
 #push-options "--z3rlimit 40"
 let promote_object_preserves_fl_ascending minor major obj fp wosize =
-  let ar = GC.Spec.Allocator.alloc_spec major fp wosize 0UL in
+  let ar = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
   FLA.fl_ascending_valid major fp;
-  AA.alloc_spec_preserves_fl_ascending major fp wosize 0UL;
+  AA.alloc_spec_preserves_fl_ascending major fp wosize (promoted_tag minor obj);
   if ar.GC.Spec.Allocator.obj_out = 0UL then promote_object_oom minor major obj fp wosize
   else begin
     let g1 = ar.GC.Spec.Allocator.heap_out in
     let fp1 = ar.GC.Spec.Allocator.fp_out in
     let res = promote_object minor major obj fp wosize in
     promote_object_success minor major obj fp wosize;
-    AllocProps.alloc_spec_obj_wosize_exact_part1 major fp wosize 0UL;
+    AllocProps.alloc_spec_obj_wosize_exact_part1 major fp wosize (promoted_tag minor obj);
     let dst : obj_addr = ar.GC.Spec.Allocator.obj_out in
-    minor_tag_bound minor obj;
-    let tag = minor_tag minor obj in
-    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize 0UL;
-    AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wosize 0UL;
-    AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wosize 0UL;
-    AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize 0UL;
-    AllocProps.alloc_spec_obj_not_blue_part1 major fp wosize 0UL;
+    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize (promoted_tag minor obj);
+    AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wosize (promoted_tag minor obj);
+    AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wosize (promoted_tag minor obj);
+    AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize (promoted_tag minor obj);
+    AllocProps.alloc_spec_obj_not_blue_part1 major fp wosize (promoted_tag minor obj);
     is_blue_iff dst g1;
     Fwd.promote_object_new_addr_in_objects_not_blue minor major obj fp wosize;
     let copied = WB.copy_fields minor g1 obj dst 0 wosize in
@@ -57,7 +55,6 @@ let promote_object_preserves_fl_ascending minor major obj fp wosize =
     assert (U64.v (hd_address dst) + 8 + wosize * 8 <= heap_size);
     WB.copy_fields_preserves_other minor g1 obj (dst <: U64.t) 0 wosize (hd_address dst);
     wosize_of_object_spec dst copied;
-    set_promoted_tag_preserves_objects copied dst tag;
     assert (objects zero_addr res.major_out == objects zero_addr g1);
     let fr (a: obj_addr) : Lemma
       (requires Seq.mem a (objects zero_addr g1) /\ (a <: U64.t) <> (dst <: U64.t))
@@ -69,8 +66,8 @@ let promote_object_preserves_fl_ascending minor major obj fp wosize =
         (if U64.v a < U64.v dst then objects_separated zero_addr g1 a dst
          else objects_separated zero_addr g1 dst a);
         (if U64.v (wosize_of_object a g1) >= 1
-         then AE.promote_writes_frame minor g1 obj dst wosize tag (a <: hp_addr));
-        AE.promote_writes_frame minor g1 obj dst wosize tag (hd_address a)
+         then AE.promote_writes_frame minor g1 obj dst wosize (a <: hp_addr));
+        AE.promote_writes_frame minor g1 obj dst wosize (hd_address a)
     in
     let cell (x: U64.t)
       : Lemma ((FL.fl_cell res.major_out x <==> FL.fl_cell g1 x) /\

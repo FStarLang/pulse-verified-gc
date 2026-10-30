@@ -473,7 +473,7 @@ val cheney_promote_fwd_above_zero_addr
 /// Cheney promote preserves well_formed_heap_part4 (no infix objects in the
 /// objects list). Proof: cheney_forward_normal only promotes objects from
 /// minor_objects, which have tag <> infix_tag (by minor_objects_not_infix).
-/// set_promoted_tag with non-infix tag preserves part4.
+/// Promotion allocates with that non-infix tag, which preserves part4.
 val cheney_promote_preserves_wfh_part4
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\

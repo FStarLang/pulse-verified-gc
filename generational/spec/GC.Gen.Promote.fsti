@@ -61,31 +61,23 @@ type promote_one_result = {
   new_addr  : U64.t;        // address of object in major heap (0 if failed)
 }
 
-/// Set the tag in a promoted object's header.
-/// Reads the current header, builds a new one with same wosize + white color + new tag.
-/// When obj is not a valid obj_addr or tag >= 256, returns the heap unchanged.
-let set_promoted_tag (major: heap) (obj: U64.t) (tag: nat) : GTot heap =
-  if tag >= 256 then major
-  else if U64.v obj >= U64.v mword && U64.v obj < heap_size && U64.v obj % U64.v mword = 0 then
-    let hd = hd_address (obj <: obj_addr) in
-    let hdr = read_word major hd in
-    let wz = getWosize hdr in
-    let new_hdr = makeHeader wz White (U64.uint_to_t tag) in
-    write_word major hd new_hdr
-  else major
+/// The tag a promoted copy is allocated with: the minor object's own.
+let promoted_tag (minor: minor_state) (obj: U64.t) : GTot (t:U64.t{U64.v t < 256}) =
+  minor_tag_bound minor obj;
+  U64.uint_to_t (minor_tag minor obj)
 
 /// Promote a single object from minor heap to major heap.
 ///
-/// 1. Read wosize and tag from minor object header
-/// 2. Allocate in major heap via the major allocator
-/// 3. Copy field data from minor to major
-/// 4. Set the correct tag from the minor header
+/// 1. Allocate in the major heap with the minor object's wosize and tag, as
+///    OCaml's `caml_alloc_shr (wosize, tag)` does: the header is written once,
+///    white, carrying the tag
+/// 2. Copy field data from minor to major
 ///
 /// If major allocation fails (OOM), returns new_addr = 0.
 let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
                    (fp: U64.t) (wosize: nat{wosize > 0})
   : GTot promote_one_result =
-  let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize 0UL in
+  let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
   let new_major = alloc_res.heap_out in
   let new_fp = alloc_res.fp_out in
   let new_addr = alloc_res.obj_out in
@@ -93,71 +85,27 @@ let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
     { major_out = major; fp_out = fp; new_addr = 0UL }
   else
     let copied_major = copy_fields minor new_major obj new_addr 0 wosize in
-    let tag = minor_tag minor obj in
-    minor_tag_bound minor obj;
-    let final_major = set_promoted_tag copied_major new_addr tag in
-    { major_out = final_major; fp_out = new_fp; new_addr = new_addr }
+    { major_out = copied_major; fp_out = new_fp; new_addr = new_addr }
 
 /// Unfold: when alloc fails (OOM), promote_object returns original heap/fp unchanged.
 val promote_object_oom (minor: minor_state) (major: heap) (obj: U64.t)
                        (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize 0UL).obj_out == 0UL)
+  : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).obj_out == 0UL)
           (ensures (let res = promote_object minor major obj fp wosize in
                     res.major_out == major /\ res.fp_out == fp /\ res.new_addr == 0UL))
 
-/// Unfold: when alloc succeeds, promote_object = alloc + copy_fields + set_tag.
+/// Unfold: when alloc succeeds, promote_object = tagged alloc + copy_fields.
 val promote_object_success (minor: minor_state) (major: heap) (obj: U64.t)
                            (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize 0UL).obj_out <> 0UL)
-          (ensures (let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize 0UL in
+  : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).obj_out <> 0UL)
+          (ensures (let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
                     let res = promote_object minor major obj fp wosize in
-                    let copied = copy_fields minor alloc_res.heap_out obj alloc_res.obj_out 0 wosize in
-                    let tag = minor_tag minor obj in
-                    res.major_out == set_promoted_tag copied alloc_res.obj_out tag /\
+                    res.major_out == copy_fields minor alloc_res.heap_out obj alloc_res.obj_out 0 wosize /\
                     res.fp_out == alloc_res.fp_out /\
                     res.new_addr == alloc_res.obj_out))
 
-/// Unfold set_promoted_tag: when tag < 256 and obj is a valid obj_addr,
-/// set_promoted_tag is just a header write.
-val set_promoted_tag_unfold
-  (major: heap) (obj: obj_addr) (tag: nat{tag < 256})
-  : Lemma (set_promoted_tag major obj tag ==
-           write_word major (hd_address obj)
-             (makeHeader (getWosize (read_word major (hd_address obj)))
-                         White (U64.uint_to_t tag)))
-
-/// set_promoted_tag preserves the objects enumeration (same wosize → same objects list)
-val set_promoted_tag_preserves_objects
-  (major: heap) (obj: obj_addr) (tag: nat{tag < 256})
-  : Lemma (requires Seq.mem obj (objects zero_addr major))
-          (ensures objects zero_addr (set_promoted_tag major obj tag) ==
-                   objects zero_addr major)
-
-/// set_promoted_tag preserves reads at addresses disjoint from the header of obj
-val set_promoted_tag_read_frame
-  (major: heap) (obj: obj_addr) (tag: nat{tag < 256}) (addr: hp_addr)
-  : Lemma (requires (U64.v addr + U64.v mword <= U64.v (hd_address obj) \/
-                     U64.v (hd_address obj) + U64.v mword <= U64.v addr))
-          (ensures read_word (set_promoted_tag major obj tag) addr == read_word major addr)
-
-/// set_promoted_tag preserves allocator invariants (wfh_part1, fl_valid, fl_chain_terminates)
-/// because it writes to a header position that is not in the free-list chain,
-/// and the new header has the same wosize as the old one.
-val set_promoted_tag_preserves_alloc_invariants
-  (major: heap) (obj: obj_addr) (tag: nat{tag < 256}) (fp: U64.t)
-  : Lemma (requires
-             well_formed_heap_part1 major /\
-             Seq.mem obj (objects zero_addr major) /\
-             AllocLemmas.fl_valid major fp heap_words /\
-             AllocLemmas.fl_chain_terminates major fp heap_words /\
-             AllocLemmas.chain_avoids major fp obj heap_words = true)
-          (ensures (let g' = set_promoted_tag major obj tag in
-                    well_formed_heap_part1 g' /\
-                    AllocLemmas.fl_valid g' fp heap_words /\
-                    AllocLemmas.fl_chain_terminates g' fp heap_words))
-
 /// promote_object preserves allocator invariants (wfh_part1, fl_valid, fl_chain_terminates).
-/// Combines alloc_spec, copy_fields, and set_promoted_tag preservation in one lemma.
+/// Combines alloc_spec and copy_fields preservation in one lemma.
 val promote_object_preserves_alloc_invariants
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires

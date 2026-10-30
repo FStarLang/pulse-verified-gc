@@ -104,7 +104,7 @@ let infix_fwd_no_overflow (parent_fwd delta: nat)
 let promote_new_addr_bound (ms: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   : Lemma (ensures (let res = PromoteSpec.promote_object ms major obj fp wz in
                     res.new_addr <> 0UL ==> U64.v res.new_addr < heap_size))
-  = AllocProps.alloc_spec_obj_valid major fp wz 0UL
+  = AllocProps.alloc_spec_obj_valid major fp wz (PromoteSpec.promoted_tag ms obj)
 
 /// ---------------------------------------------------------------------------
 /// forward_if_minor: forward a single potential minor pointer

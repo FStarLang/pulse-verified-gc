@@ -84,10 +84,6 @@ private let infix_addr_ge_parent (minor: minor_state) (addr: U64.t)
 /// comparison diverges under the enclosing Cheney-state hypotheses.
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let lt1_eq0 (n: nat) : Lemma (requires n < 1) (ensures n = 0) = ()
-
-private let lt256_lt_pow2_64 (n: nat) : Lemma (requires n < 256) (ensures n < pow2 64)
-  = FStar.Math.Lemmas.pow2_le_compat 64 8;
-    assert_norm (pow2 8 == 256)
 #pop-options
 
 let fwd_target_field_pre (minor: minor_state) (cs: cheney_state)
@@ -480,8 +476,8 @@ let cheney_promote_fwd_target_fields_match
 /// heap whose *scannability matches the source tag*.  The equation rather than
 /// a one-sided `= false` is what lets `GC.Gen.MinorCollectForwarding.Reflection`
 /// conclude `minor_tag minor x < 251` from an edge out of the image: promotion
-/// copies the tag verbatim (`GC.Gen.Promote.promote_object` ends in
-/// `set_promoted_tag ... (minor_tag minor obj)`), so the two agree exactly.
+/// copies the tag verbatim (`GC.Gen.Promote.promote_object` allocates the copy
+/// with `promoted_tag minor obj`), so the two agree exactly.
 let fwd_target_not_no_scan_pre (minor: minor_state) (cs: cheney_state)
                                (x: U64.t) : prop =
   cs.cs_fwd x <> 0UL /\
@@ -635,22 +631,8 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
             Forwarding.promote_object_new_addr_in_objects_not_blue minor cs.cs_major addr cs.cs_fp wz;
             let target : obj_addr = res.new_addr in
             Forwarding.promote_object_new_addr_wosize_eq minor cs.cs_major addr cs.cs_fp wz target;
-            let alloc_res = GC.Spec.Allocator.alloc_spec cs.cs_major cs.cs_fp wz 0UL in
-            let copied = WriteBody.copy_fields minor alloc_res.heap_out addr alloc_res.obj_out 0 wz in
+            Forwarding.promote_object_new_addr_tag minor cs.cs_major addr cs.cs_fp wz;
             let tag = minor_tag minor addr in
-            minor_tag_bound minor addr;
-            assert (tag < 256);
-            lt256_lt_pow2_64 tag;
-            let tag_u = U64.uint_to_t tag in
-            assert (U64.v tag_u == tag);
-            set_promoted_tag_unfold copied target tag;
-            let hdr = hd_address target in
-            let new_hdr = makeHeader (getWosize (read_word copied hdr)) White tag_u in
-            assert (res.major_out == set_promoted_tag copied target tag);
-            read_write_same copied hdr new_hdr;
-            tag_of_object_spec target res.major_out;
-            makeHeader_getTag (getWosize (read_word copied hdr)) White tag_u;
-            assert (tag_of_object target res.major_out == tag_u);
             no_scan_tag_val ();
             assert_norm (251 < pow2 64);
             assert (no_scan_tag == U64.uint_to_t 251);

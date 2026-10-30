@@ -768,7 +768,8 @@ let alloc_from_block_obj_not_blue (g: heap) (obj: obj_addr) (wz: nat) (next_fp: 
                     let (g', _) = alloc_from_block g obj wz tag next_fp in
                     ahn % U64.v mword == 0 /\ ahn + 8 < heap_size /\
                     (let ao : obj_addr = f_address (mk_hp_addr ahn) in
-                     color_of_object ao g' == White /\ is_blue ao g' = false)))
+                     color_of_object ao g' == White /\ is_blue ao g' = false /\
+                     tag_of_object ao g' == tag)))
   = let hd = hd_address obj in
     hd_address_spec obj;
     hd_address_bounds obj;
@@ -787,6 +788,7 @@ let alloc_from_block_obj_not_blue (g: heap) (obj: obj_addr) (wz: nat) (next_fp: 
     let alloc_hdr = make_header (U64.uint_to_t wz) white_bits tag in
     AllocLemmas.make_header_getColor (U64.uint_to_t wz) white_bits tag;
     getColor_raw alloc_hdr;
+    GC.Spec.Allocator.Lemmas.Header.make_header_getTag (U64.uint_to_t wz) white_bits tag;
     if leftover = 0 then begin
       // ah = hd and ao = obj: a single write, and it is the allocated header
       GC.Spec.Allocator.alloc_from_block_exact g obj wz next_fp tag;
@@ -794,6 +796,7 @@ let alloc_from_block_obj_not_blue (g: heap) (obj: obj_addr) (wz: nat) (next_fp: 
       assert (g' == write_word g hd alloc_hdr);
       assert (read_word g' (hd_address ao) == alloc_hdr);
       color_of_object_spec ao g';
+      tag_of_object_spec ao g';
       is_blue_iff ao g'
     end else begin
       GC.Spec.Allocator.alloc_from_block_split_normal g obj wz next_fp tag;
@@ -803,6 +806,7 @@ let alloc_from_block_obj_not_blue (g: heap) (obj: obj_addr) (wz: nat) (next_fp: 
       assert (g' == write_word g1 ah alloc_hdr);
       assert (read_word g' (hd_address ao) == alloc_hdr);
       color_of_object_spec ao g';
+      tag_of_object_spec ao g';
       is_blue_iff ao g'
     end
 #pop-options
@@ -911,7 +915,8 @@ let rec alloc_search_obj_white
                U64.v out >= U64.v mword /\
                U64.v out < heap_size /\
                U64.v out % U64.v mword = 0 /\
-               color_of_object (out <: obj_addr) r.heap_out == White)))
+               color_of_object (out <: obj_addr) r.heap_out == White /\
+               tag_of_object (out <: obj_addr) r.heap_out == tag)))
     (decreases fuel)
   = alloc_search_obj_not_blue g head_fp prev_fp cur_fp wz fuel tag;
     if fuel = 0 then ()
@@ -1004,7 +1009,8 @@ let alloc_spec_obj_not_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (tag
                     (U64.v r.obj_out >= U64.v mword /\
                      U64.v r.obj_out < heap_size /\
                      U64.v r.obj_out % U64.v mword = 0 /\
-                     color_of_object (r.obj_out <: obj_addr) r.heap_out == White)))
+                     color_of_object (r.obj_out <: obj_addr) r.heap_out == White /\
+                     tag_of_object (r.obj_out <: obj_addr) r.heap_out == tag)))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_obj_white g fp 0UL fp wz heap_words tag
 #pop-options

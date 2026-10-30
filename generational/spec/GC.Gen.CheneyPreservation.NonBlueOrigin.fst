@@ -188,21 +188,21 @@ private let promote_object_header_from_alloc_frame
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
       (promote_object minor major obj fp wz).new_addr <> 0UL /\
-      Seq.mem target (objects zero_addr (Allocator.alloc_spec major fp wz 0UL).heap_out) /\
-      target <> (Allocator.alloc_spec major fp wz 0UL).obj_out)
+      Seq.mem target (objects zero_addr (Allocator.alloc_spec major fp wz (promoted_tag minor obj)).heap_out) /\
+      target <> (Allocator.alloc_spec major fp wz (promoted_tag minor obj)).obj_out)
     (ensures
-      (let alloc_res = Allocator.alloc_spec major fp wz 0UL in
+      (let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
        let res = promote_object minor major obj fp wz in
        read_word res.major_out (hd_address target) ==
        read_word alloc_res.heap_out (hd_address target)))
   =
-  let alloc_res = Allocator.alloc_spec major fp wz 0UL in
+  let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
   let res = promote_object minor major obj fp wz in
   promote_object_success minor major obj fp wz;
-  AllocProps.alloc_spec_obj_valid major fp wz 0UL;
-  AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz 0UL;
-  AllocProps.alloc_spec_obj_in_objects_part1 major fp wz 0UL;
-  AllocProps.alloc_spec_obj_wosize_part1 major fp wz 0UL;
+  AllocProps.alloc_spec_obj_valid major fp wz (promoted_tag minor obj);
+  AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz (promoted_tag minor obj);
+  AllocProps.alloc_spec_obj_in_objects_part1 major fp wz (promoted_tag minor obj);
+  AllocProps.alloc_spec_obj_wosize_part1 major fp wz (promoted_tag minor obj);
   let dst : obj_addr = alloc_res.obj_out in
   wfh_part1_obj_bound alloc_res.heap_out dst;
   assert (U64.v dst + U64.v (wosize_of_object dst alloc_res.heap_out) * 8 <= heap_size);
@@ -227,11 +227,7 @@ private let promote_object_header_from_alloc_frame
   copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst wz;
   copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst 0 wz;
   assert (Seq.mem target (objects zero_addr copied));
-  assert (Seq.mem dst (objects zero_addr copied));
-  let tag = minor_tag minor obj in
-  minor_tag_bound minor obj;
-  hd_address_injective target dst;
-  set_promoted_tag_read_frame copied dst tag hd
+  assert (Seq.mem dst (objects zero_addr copied))
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
@@ -239,20 +235,17 @@ let promote_object_nonblue_other_reflects_pre
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (target: obj_addr)
   =
-  let alloc_res = Allocator.alloc_spec major fp wz 0UL in
+  let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
   let res = promote_object minor major obj fp wz in
   promote_object_success minor major obj fp wz;
-  AllocProps.alloc_spec_obj_valid major fp wz 0UL;
-  AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz 0UL;
-  AllocProps.alloc_spec_obj_in_objects_part1 major fp wz 0UL;
-  AllocProps.alloc_spec_obj_wosize_part1 major fp wz 0UL;
+  AllocProps.alloc_spec_obj_valid major fp wz (promoted_tag minor obj);
+  AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz (promoted_tag minor obj);
+  AllocProps.alloc_spec_obj_in_objects_part1 major fp wz (promoted_tag minor obj);
+  AllocProps.alloc_spec_obj_wosize_part1 major fp wz (promoted_tag minor obj);
   let dst : obj_addr = alloc_res.obj_out in
   copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst 0 wz;
   let copied = copy_fields minor alloc_res.heap_out obj dst 0 wz in
   copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst wz;
-  let tag = minor_tag minor obj in
-  minor_tag_bound minor obj;
-  set_promoted_tag_preserves_objects copied dst tag;
   assert (Seq.mem target (objects zero_addr alloc_res.heap_out));
   assert (target <> dst);
   promote_object_header_from_alloc_frame minor major obj fp wz target;
@@ -265,21 +258,21 @@ let promote_object_nonblue_other_reflects_pre
     reveal_opaque (`%chain_objects_blue) chain_objects_blue;
     (if AllocLemmas.chain_avoids major fp (target <: U64.t) heap_words = false then begin
        assert (is_blue target major = true);
-       AllocProps.alloc_spec_preserves_blue_part1 major fp wz target 0UL;
+       AllocProps.alloc_spec_preserves_blue_part1 major fp wz target (promoted_tag minor obj);
        color_of_header_eq target alloc_res.heap_out res.major_out;
        is_blue_iff target alloc_res.heap_out;
        is_blue_iff target res.major_out;
        assert False
      end else ());
-    AllocProps.alloc_spec_read_header_other_part1 major fp wz target 0UL;
+    AllocProps.alloc_spec_read_header_other_part1 major fp wz target (promoted_tag minor obj);
     assert (read_word alloc_res.heap_out (hd_address target) ==
             read_word major (hd_address target));
     color_of_header_eq target major res.major_out;
     is_blue_iff target major;
     is_blue_iff target res.major_out
   end else begin
-    AllocLemmas.alloc_spec_new_objects_blue_part1 major fp wz 0UL;
-    AllocLemmas.alloc_spec_only_new_is_obj_out_part1 major fp wz 0UL;
+    AllocLemmas.alloc_spec_new_objects_blue_part1 major fp wz (promoted_tag minor obj);
+    AllocLemmas.alloc_spec_only_new_is_obj_out_part1 major fp wz (promoted_tag minor obj);
     assert (is_blue target alloc_res.heap_out = true);
     color_of_header_eq target alloc_res.heap_out res.major_out;
     assert (is_blue target res.major_out = true)

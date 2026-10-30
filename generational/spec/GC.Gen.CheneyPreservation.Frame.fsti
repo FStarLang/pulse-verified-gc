@@ -32,7 +32,7 @@ val promote_object_frame_old_field_derived
        res.new_addr <> 0UL) /\
       Seq.mem src (objects zero_addr major) /\
       AllocLemmas.chain_avoids major fp src heap_words = true /\
-      (src <> (Allocator.alloc_spec major fp wz 0UL).obj_out) /\
+      (src <> (Allocator.alloc_spec major fp wz (promoted_tag minor obj)).obj_out) /\
       idx < U64.v (wosize_of_object src major) /\
       U64.v src + idx * 8 + 8 <= heap_size /\
       (U64.v src + idx * 8) % 8 == 0)
@@ -57,7 +57,7 @@ val promote_object_frame_old_header_derived
       // too, so excluding `obj_out` no longer excludes every rewritten
       // header.  `src` has to be off the free list entirely.
       AllocLemmas.chain_avoids major fp src heap_words = true /\
-      (src <> (Allocator.alloc_spec major fp wz 0UL).obj_out))
+      (src <> (Allocator.alloc_spec major fp wz (promoted_tag minor obj)).obj_out))
     (ensures
       (let res = promote_object minor major obj fp wz in
        read_word res.major_out (hd_address src) == read_word major (hd_address src)))

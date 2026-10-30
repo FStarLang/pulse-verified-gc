@@ -29,23 +29,23 @@ let promote_object_frame_old_field_derived
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (src: obj_addr) (idx: nat)
   =
-  let alloc_res = Allocator.alloc_spec major fp wz 0UL in
+  let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
   (if alloc_res.obj_out = 0UL then promote_object_oom minor major obj fp wz else ());
-  AllocProps.alloc_spec_obj_valid major fp wz 0UL;
+  AllocProps.alloc_spec_obj_valid major fp wz (promoted_tag minor obj);
   let dst_obj : obj_addr = alloc_res.obj_out in
   assert ((U64.v src + idx * 8) % 8 == 0);
   let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
-  AllocLemmas.alloc_spec_read_other major fp wz src field_addr 0UL;
-  AllocProps.alloc_spec_obj_in_objects_part1 major fp wz 0UL;
-  AllocLemmas.alloc_spec_preserves_objects_part1 major fp wz 0UL;
-  AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz 0UL;
-  AllocProps.alloc_spec_obj_wosize_part1 major fp wz 0UL;
+  AllocLemmas.alloc_spec_read_other major fp wz src field_addr (promoted_tag minor obj);
+  AllocProps.alloc_spec_obj_in_objects_part1 major fp wz (promoted_tag minor obj);
+  AllocLemmas.alloc_spec_preserves_objects_part1 major fp wz (promoted_tag minor obj);
+  AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz (promoted_tag minor obj);
+  AllocProps.alloc_spec_obj_wosize_part1 major fp wz (promoted_tag minor obj);
   copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wz;
   objects_separated zero_addr alloc_res.heap_out src dst_obj;
   objects_separated zero_addr alloc_res.heap_out dst_obj src;
   wosize_of_object_spec src alloc_res.heap_out;
   wosize_of_object_spec src major;
-  AllocProps.alloc_spec_read_header_other_part1 major fp wz src 0UL;
+  AllocProps.alloc_spec_read_header_other_part1 major fp wz src (promoted_tag minor obj);
   hd_address_spec dst_obj;
   hd_address_spec src;
   wfh_part1_obj_bound alloc_res.heap_out dst_obj;
@@ -58,11 +58,7 @@ let promote_object_frame_old_field_derived
     assert (U64.v src > U64.v dst_obj + U64.v (wosize_of_object_as_wosize dst_obj alloc_res.heap_out) * 8);
     assert (U64.v field_addr >= U64.v src);
     copy_fields_preserves_other minor alloc_res.heap_out obj dst_obj 0 wz field_addr
-  end;
-  let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
-  let tag = minor_tag minor obj in
-  minor_tag_bound minor obj;
-  set_promoted_tag_read_frame copied dst_obj tag field_addr
+  end
 #pop-options
 
 private let aligned_gap (a b: nat)
@@ -75,15 +71,15 @@ let promote_object_frame_old_header_derived
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (src: obj_addr)
   =
-  let alloc_res = Allocator.alloc_spec major fp wz 0UL in
+  let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
   (if alloc_res.obj_out = 0UL then promote_object_oom minor major obj fp wz else ());
-  AllocProps.alloc_spec_obj_valid major fp wz 0UL;
+  AllocProps.alloc_spec_obj_valid major fp wz (promoted_tag minor obj);
   let dst_obj : obj_addr = alloc_res.obj_out in
-  AllocProps.alloc_spec_read_header_other_part1 major fp wz src 0UL;
-  AllocProps.alloc_spec_obj_in_objects_part1 major fp wz 0UL;
-  AllocLemmas.alloc_spec_preserves_objects_part1 major fp wz 0UL;
-  AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz 0UL;
-  AllocProps.alloc_spec_obj_wosize_part1 major fp wz 0UL;
+  AllocProps.alloc_spec_read_header_other_part1 major fp wz src (promoted_tag minor obj);
+  AllocProps.alloc_spec_obj_in_objects_part1 major fp wz (promoted_tag minor obj);
+  AllocLemmas.alloc_spec_preserves_objects_part1 major fp wz (promoted_tag minor obj);
+  AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz (promoted_tag minor obj);
+  AllocProps.alloc_spec_obj_wosize_part1 major fp wz (promoted_tag minor obj);
   copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wz;
   objects_separated zero_addr alloc_res.heap_out src dst_obj;
   objects_separated zero_addr alloc_res.heap_out dst_obj src;
@@ -112,11 +108,7 @@ let promote_object_frame_old_header_derived
   assert (Seq.mem src (objects zero_addr alloc_res.heap_out));
   assert (objects zero_addr copied == objects zero_addr alloc_res.heap_out);
   assert (Seq.mem src (objects zero_addr copied));
-  assert (Seq.mem dst_obj (objects zero_addr copied));
-  let tag = minor_tag minor obj in
-  minor_tag_bound minor obj;
-  hd_address_injective src dst_obj;
-  set_promoted_tag_read_frame copied dst_obj tag hd_src
+  assert (Seq.mem dst_obj (objects zero_addr copied))
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
@@ -225,7 +217,7 @@ let cheney_forward_normal_preserves_old_nonblue_shape
         cheney_forward_normal_success minor cs addr;
         cheney_forward_normal_preserves_objects minor cs addr;
         reveal_opaque (`%chain_objects_blue) chain_objects_blue;
-        AllocProps.alloc_spec_obj_ne_excl cs.cs_major cs.cs_fp wz src 0UL;
+        AllocProps.alloc_spec_obj_ne_excl cs.cs_major cs.cs_fp wz src (promoted_tag minor addr);
         promote_object_frame_old_header_derived minor cs.cs_major addr cs.cs_fp wz src;
         let cs' = cheney_forward_normal minor cs addr in
         assert (read_word cs'.cs_major (hd_address src) ==
@@ -416,7 +408,7 @@ let cheney_forward_normal_frame_field
       else begin
         cheney_forward_normal_success minor cs addr;
         reveal_opaque (`%chain_objects_blue) chain_objects_blue;
-        AllocProps.alloc_spec_obj_ne_excl cs.cs_major cs.cs_fp wz src 0UL;
+        AllocProps.alloc_spec_obj_ne_excl cs.cs_major cs.cs_fp wz src (promoted_tag minor addr);
         assert ((U64.v src + idx * 8) % 8 == 0);
         promote_object_frame_old_field_derived minor cs.cs_major addr cs.cs_fp wz src idx
       end
@@ -600,7 +592,7 @@ private let cheney_forward_normal_frame_header
       else begin
         cheney_forward_normal_success minor cs addr;
         reveal_opaque (`%chain_objects_blue) chain_objects_blue;
-        AllocProps.alloc_spec_obj_ne_excl cs.cs_major cs.cs_fp wz src 0UL;
+        AllocProps.alloc_spec_obj_ne_excl cs.cs_major cs.cs_fp wz src (promoted_tag minor addr);
         promote_object_frame_old_header_derived minor cs.cs_major addr cs.cs_fp wz src
       end
 #pop-options

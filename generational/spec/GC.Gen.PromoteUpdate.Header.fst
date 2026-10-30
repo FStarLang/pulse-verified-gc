@@ -221,16 +221,6 @@ let update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map
 /// Promoted objects land in the final major heap's objects list
 /// ---------------------------------------------------------------------------
 
-/// Recursive helper: set_promoted_tag preserves objects at every start position.
-/// Mirrors the structure of color_change_preserves_objects_aux (GC.Spec.Fields)
-/// but provides explicit read/write facts instead of relying on SMT patterns.
-///
-/// Key insight: set_promoted_tag writes makeHeader(wz, White, tag) to hd_address obj.
-/// Since makeHeader preserves getWosize (makeHeader_getWosize), and the objects
-/// enumeration only depends on getWosize at each header position, objects is preserved.
-#restart-solver
-/// Helper: set_promoted_tag preserves objects membership.
-#restart-solver
 /// After promote_object succeeds (new_addr ≠ 0), new_addr ∈ objects(result).
 #restart-solver
 /// The core induction: promote_all_aux puts every forwarded address into objects of the final heap.

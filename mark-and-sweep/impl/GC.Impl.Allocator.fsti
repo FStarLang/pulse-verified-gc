@@ -40,13 +40,15 @@ fn init_heap (heap: heap_t)
 ///   heap: mutable heap array
 ///   fp: current free-list head (obj_addr of first free block, or 0UL)
 ///   wosize: number of words needed (bumped to 1 if 0)
+///   tag: the allocated header's tag (`caml_alloc_shr (wosize, tag)`); the
+///        header is written once, white, with this tag
 ///
 /// Returns: (new_fp, obj_addr)
 ///   new_fp: updated free-list head
 ///   obj_addr: allocated object address, or 0UL if out of memory
 ///
 /// Postcondition ties the result to the pure spec alloc_spec.
-fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
+fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
   requires is_heap heap 's **
            // The allocator is never asked for a zero-word block: `gen_alloc`
            // requires wosize > 0, `promote_one` guards `wosize = 0` before
@@ -60,7 +62,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
                  U64.v wosize >= 1)
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
-    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) 0UL in
+    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) tag in
           s2 == spec_res.heap_out /\
           fst res == spec_res.fp_out /\
           snd res == spec_res.obj_out)
@@ -72,7 +74,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
 /// The implementation is identical to `allocate` — the allocator only reads
 /// headers and free-list links, never inspecting object pointer fields.
 
-fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
+fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap_part1 's /\
                  AllocLemmas.fl_valid 's fp SpecBase.heap_words /\
@@ -80,7 +82,7 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
                  U64.v wosize >= 1)
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
-    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) 0UL in
+    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) tag in
           s2 == spec_res.heap_out /\
           fst res == spec_res.fp_out /\
           snd res == spec_res.obj_out)
