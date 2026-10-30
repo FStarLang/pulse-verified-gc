@@ -927,27 +927,67 @@ and there is no extra word to account for.
 
 ### The pointer update over a live set
 
-`cheney_collect_spec` rewrites nursery pointers with `update_major_pointers`, a
-walk over every major object that skips the free (blue) ones.  The same walk
-is also stated over an explicit set of live objects:
+The pointer update is a walk over the major heap's objects that rewrites the
+nursery pointers held by the objects of a *live set*:
 `GC.Gen.Promote.update_live_pointers major live fwd` rewrites the fields of the
-objects `x` with `live x` (scannable, as before) and never reads anything
-else, and `GC.Gen.Cheney.cheney_collect_spec_over minor major fp roots live`
-is the collection whose pointer update runs over `live` extended with the
-promoted objects (`promoted_live`, the images of the promoted nursery
-objects).  At `idle_live major` (every non-free block) these are today's
-functions: `GC.Gen.PromoteUpdate.Aux.update_live_pointers_idle` and
-`GC.Gen.CheneyLive.cheney_collect_spec_over_idle`.  The `PromoteUpdate`
-lemmas and the free-list preservation lemmas are proved for the live walk
-(with "not blue" read as "live", and `live_ok` supplying that live objects are
-not free), and the `update_major_pointers` forms are their idle instances.
+objects `x` with `live x` (scannable ones) and never reads anything else.  The
+stop-the-world update is its instance at the idle live set (every non-free
+block): `update_major_pointers major fwd` is *defined* as
+`update_live_pointers major (idle_live major) fwd`, so there is one walk.
+`GC.Gen.Cheney.cheney_collect_spec_over minor major fp roots live` is the
+collection whose pointer update runs over `live` extended with the promoted
+objects (`promoted_live`, the images of the promoted nursery objects); at
+`idle_live major` it is `cheney_collect_spec`
+(`GC.Gen.CheneyLive.cheney_collect_spec_over_idle`).  The `PromoteUpdate`
+lemmas and the free-list preservation lemmas are proved for the live walk (with
+"not blue" read as "live", and `live_ok` supplying that live objects are not
+free), and the `update_major_pointers` forms are their idle instances.
 
 The implementation's two passes are proved equal to the live walk
 (`GC.Gen.TwoPassEquiv.promoted_plus_slots_eq_live_update`), and at a Cheney
 result, with the write barrier's guarantees stated over live objects
-(`ref_table_covers_over`, `ref_table_sound_over`), to the pointer update of
-`cheney_collect_spec_over` (`GC.Gen.TwoPassEquiv.Collect.two_pass_implies_collect_over`).
-`minor_collect_full` uses its idle instance, `two_pass_implies_full_update`.
+(`ref_table_covers_over`, `ref_table_sound_over`; the caller's form is
+`ref_table_sound_live`), to the pointer update of `cheney_collect_spec_over`
+(`GC.Gen.TwoPassEquiv.Collect.two_pass_implies_collect_over`).
+
+### The minor collection's shape over a live set
+
+`GC.Gen.HeapInvariant.collection_shape_over minor major fp live` is what a
+minor collection needs of the heaps, for a live set chosen by the caller:
+
+- `major_shape_over major fp live`: `live_ok` (live objects are real non-free
+  blocks), `well_formed_heap_over major live` (parts 1 and 4 of the walk, and
+  every field of a live scannable object points at a live object with a valid
+  interior pointer), and the free-list facts of `major_heap_shape` (valid,
+  terminating, exact, ascending, its link words, density, `chain_objects_blue`);
+- the nursery's shape, as before;
+- `minor_major_fields_live`: a nursery field that looks like a major pointer
+  targets a live object.
+
+Garbage -- a non-live, non-free block -- is unconstrained: its fields may point
+anywhere, free blocks included.  At `idle_live` this is `collection_heap_shape`
+without its two colour facts (`collection_heap_shape_over_idle`,
+`collection_heap_shape_of_over_idle`); part 2 over `idle_live` already contains
+`no_pointer_to_blue`.
+
+`GC.Gen.CheneyOver` proves it is kept, event by event: promotion adds the
+promoted objects to the live set and keeps `well_formed_heap_over`
+(`cheney_promote_preserves_wfh_over`: an old live object is untouched, a
+promoted one holds its nursery source's fields); the live walk keeps it when
+every forwarding target is live (`update_live_pointers_preserves_wfh_over`,
+`cheney_promote_fwd_targets_live`).  With the free-list facts this gives
+`cheney_collect_over_preserves_shape`: `collection_shape_over` of the input
+implies `collection_shape_over` of `cheney_collect_spec_over`'s result for
+`promoted_live minor live fwd`.  The promotion lemmas only ask for the walk
+facts of the major heap (parts 1 and 4), not `well_formed_heap`.  The
+stop-the-world `cheney_collect_preserves_collection_heap_shape` is the
+instance at `idle_live`, plus the colour facts (no black, no gray objects).
+
+The reachable-subgraph isomorphism (`GC.Gen.MinorCollectForwarding`) is still
+stated and proved for the stop-the-world collection only: its graphs
+(`CombinedGraph.build_combined_graph`, `HeapModel.create_graph`) take edges out
+of every non-free object, garbage included, and the proofs use their
+well-formedness, which needs the whole-heap invariant.
 
 ### Cheney BFS
 
@@ -1275,7 +1315,8 @@ entry points are much stronger.
 ### `minor_collect_full`
 
 `minor_collect_full` is the verified minor-collection boundary used by the C
-bridge. It takes roots, a forwarding array, a BFS queue, and remembered slots:
+bridge. It takes roots, a forwarding array, a BFS queue, and remembered slots,
+and -- as a ghost argument, erased in the C -- the major heap's live set:
 
 ```fstar
 fn minor_collect_full (gh: gen_heap_t)
@@ -1283,35 +1324,47 @@ fn minor_collect_full (gh: gen_heap_t)
                       (fwd_arr: array U64.t)
                       (queue: larray U64.t Cheney.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
+                      (#live: erased (obj_addr -> prop))
 ```
 
-The precondition includes:
+The precondition (`minor_collect_pre_over`) is:
 
-- `collection_heap_shape` for the minor and major heap;
-- root-array length consistency;
-- a zeroed forwarding array of the expected size;
-- remembered slot soundness, coverage, distinctness, and root inclusion;
-- root validity and non-blue target facts.
+- `collection_shape_over` for the minor and major heap and `live`;
+- root-array length consistency and a zeroed forwarding array of the expected size;
+- remembered slot soundness and coverage over the live set
+  (`ref_table_sound_live`, `ref_table_covers_over`), and distinctness.
 
-The postcondition states, among other facts:
+The postcondition (`minor_collect_post_over`) states, among other facts:
 
 ```fstar
 s2 == UpdatePtrs.rewrite_slots_iter
         (UpdatePtrs.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
-        prom.fwd_map 'sl (SZ.v nslots) 0 /\
+        prom.fwd_map sl nslots 0 /\
+s2 == (CheneySpec.cheney_collect_spec_over minor_st s fp rs live).mc_major /\
 fp2 == prom.fp_final /\
-rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
+rs2 == PromoteSpec.rewrite_roots rs prom.fwd_map /\
 U64.v b2 == 0 /\
 UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
-SpecFields.well_formed_heap_part1 prom.major_final /\
-s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major /\
+GenInv.collection_shape_over ({ data = d2; bump = b2 } <: minor_state) s2 fp2
+  (PromoteSpec.promoted_live minor_st live prom.fwd_map)
+```
+
+The stop-the-world contract is the instance at `idle_live s`:
+`minor_collect_pre_idle` (`collection_heap_shape`, the remembered set over the
+whole heap, the root-set facts) and `minor_collect_post_idle`, which adds
+
+```fstar
+s2 == (CheneySpec.cheney_collect_spec minor_st s fp rs).mc_major /\
 GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
 (ok ==>
   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-    minor_st 's 'fp 'rs s2 rs2 /\
+    minor_st s fp rs s2 (MCFH.resolve_roots s2 rs2) /\
   MinorFwd.normal_result_non_pointer_fields_preserved_prop
-    minor_st 's 'fp 'rs s2)
+    minor_st s fp rs s2)
 ```
+
+`minor_collect_idle_pre` / `minor_collect_idle_post` connect the two; `gen_gc`
+calls `minor_collect_full` with `#(idle_live 's)` and uses them.
 
 The equality with `cheney_collect_spec` is the strongest operational statement:
 the imperative code implements the pure full minor-collection spec, including
