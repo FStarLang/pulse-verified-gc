@@ -14,6 +14,7 @@ mark-and-sweep/
 │   ├── GC.Spec.SweepInv.fst[i]      # Sweep invariant spec
 │   ├── GC.Spec.MarkInv.fst[i]       # Mark invariant spec
 │   ├── GC.Spec.Mark.fst             # Mark phase spec + lemmas
+│   ├── GC.Spec.IdleLive.fst         # Well-formedness over idle_live vs. today's form
 │   ├── GC.Spec.Walk.fst[i]          # Positions of the object walk
 │   ├── GC.Spec.FreeList.Ascending.fst[i] # The free list: every cell, ascending
 │   ├── GC.Spec.FusedSweep.fst       # The sweep: state, step, pass
