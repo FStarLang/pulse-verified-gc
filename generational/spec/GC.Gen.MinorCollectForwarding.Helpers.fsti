@@ -31,7 +31,6 @@ open GC.Spec.Graph
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
-open GC.Gen.Remembered
 open GC.Gen.Reachability
 open GC.Gen.Cheney
 
@@ -111,27 +110,6 @@ val roots_valid_for_minor_collection_nonblue
   : Lemma
     (requires roots_valid_for_minor_collection minor major roots)
     (ensures RBridge.roots_valid_nonblue roots major)
-
-/// The slot table already covers field 0.
-///
-/// `ref_table_covers_minor_ptrs` quantifies over `j < wosize` at address
-/// `obj + j*8`, so `j = 0` -- the word at `obj + 0` -- is included; the write
-/// barrier records that field like any other.  Combined with
-/// `remembered_targets_in_roots`, which puts every recorded slot's minor target
-/// into the Cheney root sequence, the two preconditions that
-/// `minor_collect_full` already demands are together enough to discharge
-/// `RBridge.major_field_zero_covered` outright.
-///
-/// Callers therefore do not need to supply a separate field-0 hypothesis at
-/// all: it is discharged inside `minor_collect_full` from preconditions the
-/// caller was already required to establish.
-val major_field_zero_covered_from_slots
-  (minor: minor_state) (major: heap) (roots slots: seq U64.t) (n: nat)
-  : Lemma
-    (requires
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
-      remembered_targets_in_roots major roots slots n)
-    (ensures RBridge.major_field_zero_covered minor major roots)
 
 /// Raw-address view of graph-edge membership, useful when the endpoint is a
 /// forwarding-map image whose `hp_addr` refinement is proved by preconditions.
@@ -263,16 +241,6 @@ val post_minor_reachable_refl_from_root
       HeapGraph.resolve_field res.mc_major rr == w /\
       mem_graph_vertex_at (HeapModel.create_graph res.mc_major) w))
     (ensures post_minor_reachable minor major fp roots w)
-
-/// Bridge the implementation-facing ref-table coverage predicate to the
-/// scan-root coverage predicate used by the combined-graph reachability bridge.
-val remembered_roots_in_roots_from_slots
-  (major: heap) (roots slots: seq U64.t) (n: nat)
-  : Lemma
-    (requires
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
-      remembered_targets_in_roots major roots slots n)
-    (ensures RBridge.remembered_roots_in_roots major roots)
 
 /// A major-to-major field is not affected by `update_major_pointers`: existing
 /// major object addresses are outside the nursery range.
@@ -440,7 +408,7 @@ val fwd_image_resolves
 /// Interior nursery targets are forwarded
 /// ---------------------------------------------------------------------------
 
-/// Generalisation of `field_zero_target_in_roots` to an arbitrary field index:
+/// A nursery pointer in any field of a scannable non-blue major object is in roots:
 /// the write barrier records *every* field of a scannable non-blue major object
 /// that holds a nursery pointer, and the recorded target is the word as stored,
 /// interior or not.
@@ -461,6 +429,23 @@ val major_field_target_in_roots
     (ensures
       Seq.mem (to_minor_offset (read_word major (U64.uint_to_t (U64.v src + j * 8))))
         roots)
+
+/// The slot table covers every field, field 0 included.
+///
+/// `ref_table_covers_minor_ptrs` quantifies over `j < wosize` at address
+/// `obj + j*8`, so the write barrier records every nursery pointer stored in a
+/// scannable non-blue major object.  Combined with
+/// `remembered_targets_in_roots`, which puts every recorded slot's minor target
+/// into the Cheney root sequence, the two preconditions that
+/// `minor_collect_full` already demands are together enough to discharge
+/// `RBridge.major_fields_covered` outright.
+val major_fields_covered_from_slots
+  (minor: minor_state) (major: heap) (roots slots: seq U64.t) (n: nat)
+  : Lemma
+    (requires
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n)
+    (ensures RBridge.major_fields_covered minor major roots)
 
 /// An interior nursery pointer stored in a *nursery* field has its own entry in
 /// the forwarding map.  This is `fwd_covers_infix_fields`, which the scan loop

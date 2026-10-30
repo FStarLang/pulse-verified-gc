@@ -16,7 +16,6 @@ open GC.Lib.Header
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Reachability
-open GC.Gen.Remembered
 open GC.Gen.Promote
 open GC.Gen.WriteBodyLemmas
 open GC.Gen.PromoteUpdate.Aux

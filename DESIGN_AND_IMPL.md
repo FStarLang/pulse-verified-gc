@@ -863,20 +863,13 @@ minor infix interiors. This keeps the graph model clean.
 
 A generational collector must not scan the entire major heap on every minor
 collection. Instead, the write barrier records major fields that may contain
-minor pointers. The pure remembered-set scan in
-`generational/spec/GC.Gen.Remembered.fst` is the specification counterpart:
-
-```fstar
-let scan_object_for_minor_refs (major: heap) (obj: obj_addr)
-  : GTot (seq remembered_ref) =
-  if is_blue obj major || is_no_scan obj major then Seq.empty
-  else
-    let wz = U64.v (wosize_of_object obj major) in
-    scan_object_fields major obj wz 0
-
-let minor_roots_from_major (major: heap) : GTot (seq U64.t) =
-  extract_targets (scan_major_for_minor_refs major) 0
-```
+minor pointers. The specification has no whole-heap scan of its own either: the
+combined-graph reachability bridge (`GC.Gen.ReachabilityBridge`) uses the slot
+coverage directly at a major-to-nursery edge, through the pure predicate
+`major_fields_covered` ("every live nursery pointer stored in a scannable
+non-blue major field is in the Cheney roots"), which
+`MinorCollectForwarding.Helpers.major_fields_covered_from_slots` derives from
+the two slot facts below.
 
 The implementation does not rescan the major heap during minor collection. It
 uses OCaml's `ref_table`, populated by `caml_modify`, as the concrete remembered

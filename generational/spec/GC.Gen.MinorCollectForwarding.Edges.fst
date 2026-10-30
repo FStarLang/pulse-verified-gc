@@ -15,7 +15,6 @@ open GC.Spec.Graph
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
-open GC.Gen.Remembered
 open GC.Gen.Reachability
 open GC.Gen.Cheney
 
@@ -62,7 +61,7 @@ let combined_reachable_minor_has_fwd
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   = let cg = CG.build_combined_graph minor major in
     let combined_roots = CG.classify_roots minor roots in
-    RBridge.combined_minor_reachable_in_minor_reachable minor major roots;
+    RBridge.reachability_bridge minor major roots;
     CheneyCorr.cheney_promotes_all_reachable minor major fp roots;
     let aux (v: U64.t) : Lemma
       (requires CG.combined_reachable cg combined_roots (CG.MinorV v) /\
@@ -72,13 +71,6 @@ let combined_reachable_minor_has_fwd
     in
     Classical.forall_intro (Classical.move_requires aux)
 
-let combined_reachable_minor_has_fwd_from_slots
-  (minor: minor_state) (major: heap) (fp: U64.t)
-  (roots slots: seq U64.t) (n: nat)
-  =
-    remembered_roots_in_roots_from_slots major roots slots n;
-    combined_reachable_minor_has_fwd minor major fp roots
-
 /// The two halves of `combined_reachable_images_valid_or_infix_prop`, proved
 /// separately: the combined query diverges under Z3 4.15.3.
 private let combined_reachable_images_valid_or_infix_major
@@ -86,8 +78,7 @@ private let combined_reachable_images_valid_or_infix_major
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
-      RBridge.remembered_roots_in_roots major roots /\
+      RBridge.major_fields_covered minor major roots /\
       Mark.no_pointer_to_blue major /\
       RBridge.minor_no_pointer_to_blue minor major /\
       RBridge.roots_valid_nonblue roots major /\
@@ -123,8 +114,7 @@ private let combined_reachable_images_valid_or_infix_minor
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
-      RBridge.remembered_roots_in_roots major roots /\
+      RBridge.major_fields_covered minor major roots /\
       Mark.no_pointer_to_blue major /\
       RBridge.minor_no_pointer_to_blue minor major /\
       RBridge.roots_valid_nonblue roots major /\
@@ -171,13 +161,6 @@ let combined_reachable_images_valid_or_infix
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   = combined_reachable_images_valid_or_infix_major minor major fp roots;
     combined_reachable_images_valid_or_infix_minor minor major fp roots
-
-let combined_reachable_images_valid_or_infix_from_slots
-  (minor: minor_state) (major: heap) (fp: U64.t)
-  (roots slots: seq U64.t) (n: nat)
-  =
-    remembered_roots_in_roots_from_slots major roots slots n;
-    combined_reachable_images_valid_or_infix minor major fp roots
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 /// Composite: a live major object's field target keeps its header word --- and
@@ -365,7 +348,7 @@ let combined_major_minor_field_forwarded
     assert (resolve_minor minor ov == dst);
     assert (is_minor_pointer dst);
     assert (Seq.mem dst (minor_objects minor));
-    combined_reachable_minor_has_fwd_from_slots minor major fp roots slots n;
+    combined_reachable_minor_has_fwd minor major fp roots;
     assert (prom.fwd_map dst <> 0UL);
     // the stored word may be interior; either way its *raw* form is forwarded
     if is_infix_in_minor minor ov then

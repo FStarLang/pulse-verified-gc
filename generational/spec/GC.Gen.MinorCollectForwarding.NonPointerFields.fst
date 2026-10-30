@@ -15,7 +15,6 @@ open GC.Spec.Graph
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
-open GC.Gen.Remembered
 open GC.Gen.Reachability
 open GC.Gen.Cheney
 
@@ -212,7 +211,7 @@ let normal_post_non_pointer_fields_preserved
     assert (RBridge.minor_no_pointer_to_blue minor major);
     assert (RBridge.roots_valid_nonblue roots major);
     RBridge.reachable_major_valid_nonblue minor major roots;
-    MCFE.combined_reachable_images_valid_or_infix_from_slots minor major fp roots slots n;
+    MCFE.combined_reachable_images_valid_or_infix minor major fp roots;
     CheneyInj.cheney_promote_fwd_targets_not_blue minor major fp roots;
     CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots;
     let aux (u: CG.combined_vertex) : Lemma

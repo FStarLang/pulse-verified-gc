@@ -70,7 +70,7 @@ let minor_infix_scenario
   (U64.v c + i * 8) % 8 == 0 /\
   // ---- the standard minor-collection context ------------------------------
   GenInv.collection_heap_shape minor major fp /\
-  RBridge.major_field_zero_covered minor major roots /\
+  RBridge.major_fields_covered minor major roots /\
   UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
   MinorFwd.remembered_targets_in_roots major roots slots n /\
   SpecMark.no_pointer_to_blue major /\

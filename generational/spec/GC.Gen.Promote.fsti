@@ -29,7 +29,6 @@ open GC.Lib.Header
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Reachability
-open GC.Gen.Remembered
 open GC.Gen.WriteBodyLemmas
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -240,12 +239,6 @@ let update_major_pointers (major: heap) (fwd: forwarding_map) : GTot heap =
 /// ---------------------------------------------------------------------------
 /// Live Set and Root Rewriting
 /// ---------------------------------------------------------------------------
-
-/// Compute the live set: minor objects reachable from program roots combined
-/// with the remembered set (major-heap objects pointing into the minor heap).
-let live_set_of (minor: minor_state) (major: heap) (roots: seq U64.t) : GTot (seq U64.t) =
-  let remembered = minor_roots_from_major major in
-  minor_reachable minor (Seq.append roots remembered)
 
 /// Rewrite a single root: if it's a minor pointer that was forwarded, use the new address
 let rewrite_root (r: U64.t) (fwd: forwarding_map) : GTot U64.t =

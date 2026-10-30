@@ -147,7 +147,7 @@ The cleaned campaign now validates the collector proof surface directly:
    field 1, which contains a minor pointer to A. Field 0 happens to be empty in
    this fixture, but nothing requires that: field 0 is covered by the slot
    table like any other field, and the bridge hypothesis
-   `major_field_zero_covered` is discharged from the slot-table preconditions
+   `major_fields_covered` is discharged from the slot-table preconditions
    rather than assumed. The postcondition proof uses the exported forwarding
    theorem to show that field 1 is rewritten to A's promoted image.
 4. B's collection fact is isolated to the exact Cheney execution fact that

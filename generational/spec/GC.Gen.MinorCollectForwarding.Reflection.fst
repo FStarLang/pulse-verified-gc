@@ -15,7 +15,6 @@ open GC.Spec.Graph
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
-open GC.Gen.Remembered
 open GC.Gen.Reachability
 open GC.Gen.Cheney
 
@@ -216,8 +215,7 @@ let post_edge_from_minor_image_reflects_mem_ce
     assert (is_val_addr fwd_src);
     assert (is_infix fwd_src prom.major_final = false);
     CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
-    MCFH.remembered_roots_in_roots_from_slots major roots slots n;
-    RBridge.combined_minor_reachable_in_minor_reachable minor major roots;
+    RBridge.reachability_bridge minor major roots;
     minor_reachable_subset minor roots;
     assert (Seq.mem src (minor_objects minor));
     let fwd_src_obj : obj_addr = fwd_src in
@@ -334,7 +332,7 @@ let post_edge_from_minor_image_reflects_mem_ce
           minor_objects_body_bound minor old_val;
           assert (CG.combined_reachable cg combined_roots (CG.MinorV old_val));
           assert (minor_wosize minor old_val > 0);
-          MCFE.combined_reachable_minor_has_fwd_from_slots minor major fp roots slots n;
+          MCFE.combined_reachable_minor_has_fwd minor major fp roots;
           assert (prom.fwd_map old_val <> 0UL);
           assert False
         end else begin
@@ -407,8 +405,7 @@ let post_edge_from_minor_image_reflects_target
     assert (minor_wf minor);
     assert (minor_infix_wf minor);
     assert (GenInv.minor_major_fields_no_blue minor major);
-    MCFH.remembered_roots_in_roots_from_slots major roots slots n;
-    RBridge.combined_minor_reachable_in_minor_reachable minor major roots;
+    RBridge.reachability_bridge minor major roots;
     minor_reachable_subset minor roots;
     assert (fwd_src <> 0UL);
     assert (is_val_addr fwd_src);
@@ -501,7 +498,7 @@ let post_edge_from_minor_image_reflects_target
           minor_objects_body_bound minor old_val;
           assert (CG.combined_reachable cg combined_roots (CG.MinorV old_val));
           assert (minor_wosize minor old_val > 0);
-          MCFE.combined_reachable_minor_has_fwd_from_slots minor major fp roots slots n;
+          MCFE.combined_reachable_minor_has_fwd minor major fp roots;
           assert (prom.fwd_map old_val <> 0UL);
           assert False
         end else begin

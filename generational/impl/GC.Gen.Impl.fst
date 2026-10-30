@@ -946,7 +946,7 @@ let minor_collect_full_isomorphism_post
     if ok
     then begin
       MCFH.roots_valid_for_minor_collection_nonblue minor major roots;
-      MCFH.major_field_zero_covered_from_slots minor major roots slots n;
+      MCFH.major_fields_covered_from_slots minor major roots slots n;
       GenInv.collection_heap_shape_elim minor major fp;
       GenInv.major_heap_shape_elim major fp;
       RBridge.minor_no_pointer_to_blue_from_collection_shape minor major fp;
@@ -1037,7 +1037,7 @@ fn minor_collect_full (gh: gen_heap_t)
          minor_st 's 'fp 'rs s2))
 {
   unfold is_gen_heap;
-  MCFH.major_field_zero_covered_from_slots
+  MCFH.major_fields_covered_from_slots
     ({data = 'd; bump = 'b} <: minor_state) 's 'rs 'sl (SZ.v nslots);
   GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
   GenInv.major_heap_shape_elim 's 'fp;

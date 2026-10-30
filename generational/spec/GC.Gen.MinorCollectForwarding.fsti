@@ -31,7 +31,6 @@ open GC.Spec.Graph
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
-open GC.Gen.Remembered
 open GC.Gen.Reachability
 open GC.Gen.Cheney
 
@@ -107,15 +106,6 @@ val post_minor_reachable_refl_from_root
       mem_graph_vertex_at (HeapModel.create_graph res.mc_major) w))
     (ensures post_minor_reachable minor major fp roots w)
 
-/// Bridge the implementation-facing ref-table coverage predicate to the
-/// scan-root coverage predicate used by the combined-graph reachability bridge.
-val remembered_roots_in_roots_from_slots
-  (major: heap) (roots slots: seq U64.t) (n: nat)
-  : Lemma
-    (requires
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
-      remembered_targets_in_roots major roots slots n)
-    (ensures RBridge.remembered_roots_in_roots major roots)
 val heap_graph_edge_to_field_read
   (g: heap) (src dst: obj_addr)
   : Lemma
@@ -156,37 +146,13 @@ val cheney_promote_preserves_old_major_field_context
       read_word prom.major_final (U64.uint_to_t (U64.v src + j * 8)) ==
       read_word major (U64.uint_to_t (U64.v src + j * 8))))
 /// Combined-reachable minor vertices have forwarding images when promotion does
-/// not run out of space and scan-derived remembered roots are included in the
-/// Cheney roots.
+/// not run out of space and every nursery pointer in a scannable major field is
+/// in the Cheney roots.
 val combined_reachable_minor_has_fwd
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
     (requires
-      RBridge.major_field_zero_covered minor major roots /\
-      RBridge.remembered_roots_in_roots major roots /\
-      well_formed_heap major /\
-      minor_wf minor /\
-      Mark.no_pointer_to_blue major /\
-      RBridge.minor_no_pointer_to_blue minor major /\
-      RBridge.roots_valid_nonblue roots major /\
-      CheneyBFS.cheney_no_oom minor major fp roots)
-    (ensures (
-      let cg = CG.build_combined_graph minor major in
-      let combined_roots = CG.classify_roots minor roots in
-      let fwd = (cheney_promote minor major fp roots).fwd_map in
-      forall (v: U64.t).
-        CG.combined_reachable cg combined_roots (CG.MinorV v) /\
-        minor_wosize minor v > 0 ==> fwd v <> 0UL))
-
-/// Slot-table-facing form of `combined_reachable_minor_has_fwd`.
-val combined_reachable_minor_has_fwd_from_slots
-  (minor: minor_state) (major: heap) (fp: U64.t)
-  (roots slots: seq U64.t) (n: nat)
-  : Lemma
-    (requires
-      RBridge.major_field_zero_covered minor major roots /\
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
-      remembered_targets_in_roots major roots slots n /\
+      RBridge.major_fields_covered minor major roots /\
       well_formed_heap major /\
       minor_wf minor /\
       Mark.no_pointer_to_blue major /\
@@ -211,7 +177,7 @@ val combined_major_minor_field_forwarded
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -258,7 +224,7 @@ val combined_reachable_edge_forwarded_normal
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -471,7 +437,7 @@ val normal_src_edge_preserves_post_minor_reachable
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -495,7 +461,7 @@ val ready_src_reach_image_post_reachable
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -514,7 +480,7 @@ val ready_image_reachable_is_post_reachable
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -531,7 +497,7 @@ val normal_src_reachable_is_ready_src_reachable
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -554,7 +520,7 @@ val normal_image_reachable_is_post_reachable
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -570,7 +536,7 @@ val normal_image_reachable_is_post_reachable_all
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -586,7 +552,7 @@ val post_normal_image_edges_reflect_src
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -643,7 +609,7 @@ val post_minor_reachable_is_normal_image_reachable_all
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -659,7 +625,7 @@ val normal_post_reachable_subgraph_isomorphism
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -688,7 +654,7 @@ val normal_post_non_pointer_fields_preserved
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\

@@ -161,12 +161,12 @@ let expose_spot_collection_facts
         UpdatePtrs.ref_table_covers_minor_ptrs major (spot_slots c) 1 /\
         MinorFwd.remembered_targets_in_roots major (spot_roots c) (spot_slots c) 1 /\
         RBridge.roots_valid_nonblue (spot_roots c) major /\
-        RBridge.major_field_zero_covered minor major (spot_roots c))
+        RBridge.major_fields_covered minor major (spot_roots c))
   =
   Preconditions.minor_collect_full_pre_elim
     minor major fp (spot_roots c) farr (spot_slots c) 1;
   MCFH.roots_valid_for_minor_collection_nonblue minor major (spot_roots c);
-  MCFH.major_field_zero_covered_from_slots
+  MCFH.major_fields_covered_from_slots
     minor major (spot_roots c) (spot_slots c) 1;
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
@@ -216,8 +216,8 @@ let spot_a_promoted
   =
   expose_spot_collection_facts minor major fp c farr;
   spot_a_reachable_root minor major fp c farr;
-  MinorFwd.combined_reachable_minor_has_fwd_from_slots
-    minor major fp (spot_roots c) (spot_slots c) 1;
+  MinorFwd.combined_reachable_minor_has_fwd
+    minor major fp (spot_roots c);
   assert ((Cheney.cheney_promote minor major fp (spot_roots c)).fwd_map
     Layout.a_minor <> 0UL);
   Postconditions.promoted_image_from_forwarding

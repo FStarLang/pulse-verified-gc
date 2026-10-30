@@ -15,7 +15,6 @@ open GC.Spec.Graph
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
-open GC.Gen.Remembered
 open GC.Gen.Reachability
 open GC.Gen.Cheney
 
@@ -46,12 +45,10 @@ module MCFNP = GC.Gen.MinorCollectForwarding.NonPointerFields
 module MCFR = GC.Gen.MinorCollectForwarding.Reflection
 module NoBlueUtil = GC.Gen.NoBlueUtil
 let post_minor_reachable_refl_from_root = MCFH.post_minor_reachable_refl_from_root
-let remembered_roots_in_roots_from_slots = MCFH.remembered_roots_in_roots_from_slots
 let heap_graph_edge_to_field_read = MCFH.heap_graph_edge_to_field_read
 let cheney_promote_preserves_old_major_field_context = MCFH.cheney_promote_preserves_old_major_field_context
 let mem_graph_vertex_at_is_obj_addr = MCFH.mem_graph_vertex_at_is_obj_addr
 let combined_reachable_minor_has_fwd = MCFE.combined_reachable_minor_has_fwd
-let combined_reachable_minor_has_fwd_from_slots = MCFE.combined_reachable_minor_has_fwd_from_slots
 let combined_major_minor_field_forwarded = MCFE.combined_major_minor_field_forwarded
 let combined_reachable_edge_forwarded_normal = MCFNE.combined_reachable_edge_forwarded_normal
 let fwd_disjoint_reachable_major_intro = MCFNE.fwd_disjoint_reachable_major_intro
@@ -373,7 +370,7 @@ private let post_root_image_is_normal_image
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -423,7 +420,7 @@ private let post_root_image_is_normal_image
         (CG.build_combined_graph minor major)
         (CG.classify_roots minor roots)
         (CG.MinorV rv);
-      combined_reachable_minor_has_fwd_from_slots minor major fp roots slots n;
+      combined_reachable_minor_has_fwd minor major fp roots;
       assert (prom.fwd_map rv <> 0UL);
       // Every live nursery root is forwarded: a non-interior one is its own
       // resolution, an interior one by `fwd_covers_infix_roots`.
@@ -517,7 +514,7 @@ private let post_edge_from_major_image_reflects_mem_ce
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -668,7 +665,7 @@ private let post_edge_from_major_image_reflects_mem_ce
         minor_objects_body_bound minor old_val;
         assert (CG.combined_reachable cg combined_roots (CG.MinorV old_val));
         assert (minor_wosize minor old_val > 0);
-        combined_reachable_minor_has_fwd_from_slots minor major fp roots slots n;
+        combined_reachable_minor_has_fwd minor major fp roots;
         assert (prom.fwd_map old_val <> 0UL);
         assert False
       end else begin
@@ -715,7 +712,7 @@ private let post_edge_from_major_image_reflects_target
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -818,7 +815,7 @@ private let post_edge_from_major_image_reflects_target
         CG.major_field_edge_intro minor major src_obj j (CG.MinorV old_val);
         CG.combined_reachable_step cg combined_roots (CG.MajorV src) (CG.MinorV old_val);
         minor_objects_body_bound minor old_val;
-        combined_reachable_minor_has_fwd_from_slots minor major fp roots slots n;
+        combined_reachable_minor_has_fwd minor major fp roots;
         assert (prom.fwd_map old_val <> 0UL);
         assert False
       end else begin
@@ -862,7 +859,7 @@ private let post_edge_from_minor_image_reflects_mem_ce
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -888,7 +885,7 @@ private let post_edge_from_minor_image_reflects_target
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -1009,7 +1006,7 @@ private let post_successor_of_normal_image_reflects
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -1055,7 +1052,7 @@ private let rec post_reach_witness_is_normal_image
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -1226,7 +1223,7 @@ let rec ready_src_reach_image_post_reachable
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -1295,7 +1292,7 @@ private let edge_source_normal_vertex_ready
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_covered minor major roots /\
+      RBridge.major_fields_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -1319,7 +1316,7 @@ private let edge_source_normal_vertex_ready
       assert (AllocLemmas.fl_valid major fp heap_words);
       assert (AllocLemmas.fl_chain_terminates major fp heap_words);
       assert (chain_objects_blue major fp);
-      remembered_roots_in_roots_from_slots major roots slots n;
+      major_fields_covered_from_slots minor major roots slots n;
       combined_reachable_minor_has_fwd minor major fp roots;
       CG.minor_edge_elim minor major src v;
       assert (Seq.mem src (minor_objects minor));
