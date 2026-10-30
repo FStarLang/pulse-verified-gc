@@ -249,14 +249,14 @@ private let set_promoted_tag_preserves_dense
 
 let promote_object_preserves_dense
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
-  = let alloc_res = alloc_spec major fp wz in
+  = let alloc_res = alloc_spec major fp wz 0UL in
     if alloc_res.obj_out = 0UL then
       promote_object_oom minor major obj fp wz
     else begin
-      AD.alloc_spec_preserves_dense_part1 major fp wz;
-      AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
-      AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
-      AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
+      AD.alloc_spec_preserves_dense_part1 major fp wz 0UL;
+      AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz 0UL;
+      AllocProps.alloc_spec_obj_in_objects_part1 major fp wz 0UL;
+      AllocProps.alloc_spec_obj_wosize_part1 major fp wz 0UL;
       promote_object_success minor major obj fp wz;
       let dst_obj : obj_addr = alloc_res.obj_out in
       // Step 1: copy_fields preserves density

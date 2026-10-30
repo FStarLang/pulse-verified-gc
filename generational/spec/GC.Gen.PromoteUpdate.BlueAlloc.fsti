@@ -19,26 +19,26 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module FreeListShape = GC.Gen.FreeListShape
 
 val alloc_spec_preserves_fp_pointer_or_zero
-  (g: heap) (fp: U64.t) (wz: nat)
+  (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words /\
                     FreeListShape.blue_link_fields_valid g /\
                     FreeListShape.fp_pointer_or_zero fp /\
                     wz >= 1 /\
-                    (GC.Spec.Allocator.alloc_spec g fp wz).obj_out <> 0UL /\
+                    (GC.Spec.Allocator.alloc_spec g fp wz tag).obj_out <> 0UL /\
                     chain_objects_blue g fp)
           (ensures FreeListShape.fp_pointer_or_zero
-                     (GC.Spec.Allocator.alloc_spec g fp wz).fp_out)
+                     (GC.Spec.Allocator.alloc_spec g fp wz tag).fp_out)
 
 val alloc_spec_preserves_blue_link_fields_valid
-  (g: heap) (fp: U64.t) (wz: nat)
+  (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words /\
                     FreeListShape.blue_link_fields_valid g /\
                     wz >= 1 /\
-                    (GC.Spec.Allocator.alloc_spec g fp wz).obj_out <> 0UL /\
+                    (GC.Spec.Allocator.alloc_spec g fp wz tag).obj_out <> 0UL /\
                     chain_objects_blue g fp)
           (ensures FreeListShape.blue_link_fields_valid
-                     (GC.Spec.Allocator.alloc_spec g fp wz).heap_out)
+                     (GC.Spec.Allocator.alloc_spec g fp wz tag).heap_out)

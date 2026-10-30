@@ -72,12 +72,12 @@ private let object_above_zero_addr (g: heap) (x: obj_addr)
 
 #push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
 private let rec alloc_search_oom_cells_small
-  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (y: U64.t)
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (y: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires well_formed_heap_part1 g /\ wz >= 1 /\
               AllocLemmas.fl_valid g cur_fp fuel /\
               AllocLemmas.fl_chain_terminates g cur_fp fuel /\
-              (alloc_search g head_fp prev_fp cur_fp wz fuel).obj_out == 0UL /\
+              (alloc_search g head_fp prev_fp cur_fp wz tag fuel).obj_out == 0UL /\
               FL.reachable_on_fl g cur_fp y)
     (ensures U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0 /\
              U64.v (wosize_of_object (y <: obj_addr) g) < wz)
@@ -119,7 +119,7 @@ private let rec alloc_search_oom_cells_small
     else begin
       FL.reachable_uncons g cur_fp y;
       AllocLemmas.fl_chain_terminates_elim g cur_fp fuel;
-      alloc_search_oom_cells_small g head_fp cur_fp next_fp wz (fuel - 1) y
+      alloc_search_oom_cells_small g head_fp cur_fp next_fp wz (fuel - 1) y tag
     end
   end
 #pop-options
@@ -129,13 +129,13 @@ private let rec alloc_search_oom_cells_small
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
-let alloc_spec_oom_no_fit (g: heap) (fp: U64.t) (wz: nat)
+let alloc_spec_oom_no_fit (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires well_formed_heap_part1 g /\ wz >= 1 /\
               AllocLemmas.fl_valid g fp heap_words /\
               AllocLemmas.fl_chain_terminates g fp heap_words /\
               FL.fl_complete g fp /\
-              (alloc_spec g fp wz).obj_out == 0UL)
+              (alloc_spec g fp wz tag).obj_out == 0UL)
     (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ is_blue x g ==>
                U64.v (wosize_of_object x g) < wz)
   = let aux (x: obj_addr)
@@ -144,7 +144,7 @@ let alloc_spec_oom_no_fit (g: heap) (fp: U64.t) (wz: nat)
       = if U64.v (wosize_of_object x g) = 0 then ()
         else begin
           FL.fl_complete_elim g fp x;
-          alloc_search_oom_cells_small g fp 0UL fp wz heap_words x
+          alloc_search_oom_cells_small g fp 0UL fp wz heap_words x tag
         end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
@@ -162,14 +162,14 @@ let alloc_spec_oom_no_fit (g: heap) (fp: U64.t) (wz: nat)
 /// (`GC.Impl.collect_with_roots` returns exactly its result), under the mark
 /// postcondition and the free list the previous cycle left.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-let fused_oom_no_fit (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) (wz: nat)
+let fused_oom_no_fit (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires
       Corr.mark_post h_init h_mark roots fp /\
       FLA.fl_ascending h_init fp /\
       wz >= 1 /\
       (let r = FS.fused_sweep_coalesce h_mark fp in
-       (alloc_spec (fst r) (snd r) wz).obj_out == 0UL))
+       (alloc_spec (fst r) (snd r) wz tag).obj_out == 0UL))
     (ensures (let g' = fst (FS.fused_sweep_coalesce h_mark fp) in
               forall (x: obj_addr). Seq.mem x (objects zero_addr g') /\ is_blue x g' ==>
                 U64.v (wosize_of_object x g') < wz))
@@ -179,5 +179,5 @@ let fused_oom_no_fit (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) (wz
     wf_parts ();
     FLA.fl_ascending_valid (fst r) (snd r);
     FLA.fl_ascending_exact (fst r) (snd r);
-    alloc_spec_oom_no_fit (fst r) (snd r) wz
+    alloc_spec_oom_no_fit (fst r) (snd r) wz tag
 #pop-options

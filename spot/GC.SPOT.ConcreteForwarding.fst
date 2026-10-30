@@ -131,16 +131,16 @@ let spot_promote_a_success (r: unit{ConcreteMajor.spot_major_room})
   assert (U64.v (SpecHeap.hd_address (fp <: obj_addr))
             + (ConcreteMajor.spot_free_wosize r - 1) * 8 + 8 < heap_size);
   FStar.Math.Lemmas.pow2_lt_compat 64 57;
-  SpecAlloc.alloc_search_found_head major fp 0UL fp 1 fuel;
-  assert (U64.v ((SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out)
+  SpecAlloc.alloc_search_found_head major fp 0UL fp 1 fuel 0UL;
+  assert (U64.v ((SpecAlloc.alloc_spec major fp 1 0UL).SpecAlloc.obj_out)
           == U64.v fp + (ConcreteMajor.spot_free_wosize r - 1) * 8);
-  assert (U64.v ((SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out) >= U64.v fp);
+  assert (U64.v ((SpecAlloc.alloc_spec major fp 1 0UL).SpecAlloc.obj_out) >= U64.v fp);
   assert (fp <> 0UL);
   Promote.promote_object_success
     ConcreteMinor.spot_minor2 major Layout.a_minor fp 1;
   assert ((Promote.promote_object
     ConcreteMinor.spot_minor2 major Layout.a_minor fp 1).Promote.new_addr ==
-    (SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out)
+    (SpecAlloc.alloc_spec major fp 1 0UL).SpecAlloc.obj_out)
 
 let spot_promote_a_to_free_obj (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (ensures
@@ -182,15 +182,15 @@ let spot_promote_a_to_free_obj (r: unit{ConcreteMajor.spot_major_room})
             + ConcreteMajor.spot_free_wosize r * 8 <= heap_size);
   assert (U64.v (SpecHeap.hd_address (fp <: obj_addr))
             + (ConcreteMajor.spot_free_wosize r - 1) * 8 + 8 < heap_size);
-  SpecAlloc.alloc_search_found_head major fp 0UL fp 1 fuel;
+  SpecAlloc.alloc_search_found_head major fp 0UL fp 1 fuel 0UL;
   FStar.Math.Lemmas.pow2_lt_compat 64 57;
-  assert (U64.v ((SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out)
+  assert (U64.v ((SpecAlloc.alloc_spec major fp 1 0UL).SpecAlloc.obj_out)
           == U64.v fp + (ConcreteMajor.spot_free_wosize r - 1) * 8);
   Promote.promote_object_success
     ConcreteMinor.spot_minor2 major Layout.a_minor fp 1;
   assert ((Promote.promote_object
     ConcreteMinor.spot_minor2 major Layout.a_minor fp 1).Promote.new_addr ==
-    (SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out);
+    (SpecAlloc.alloc_spec major fp 1 0UL).SpecAlloc.obj_out);
   assert (U64.v ((Promote.promote_object
     ConcreteMinor.spot_minor2 major Layout.a_minor fp 1).Promote.new_addr) ==
     U64.v (free <: U64.t) + (ConcreteMajor.spot_free_wosize r - 1) * 8)

@@ -682,18 +682,18 @@ private let promote_object_preserves_objects_part1
                     forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
                       Seq.mem x (objects zero_addr res.major_out)))
   =
-  let alloc_res = Allocator.alloc_spec major fp wz in
+  let alloc_res = Allocator.alloc_spec major fp wz 0UL in
   if alloc_res.obj_out = 0UL then
     promote_object_oom minor major obj fp wz
   else begin
-    AllocLemmas.alloc_spec_preserves_objects_part1 major fp wz;
-    AllocProps.alloc_spec_obj_valid major fp wz;
-    AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
-    AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
+    AllocLemmas.alloc_spec_preserves_objects_part1 major fp wz 0UL;
+    AllocProps.alloc_spec_obj_valid major fp wz 0UL;
+    AllocProps.alloc_spec_obj_in_objects_part1 major fp wz 0UL;
+    AllocProps.alloc_spec_obj_wosize_part1 major fp wz 0UL;
     let dst_obj : obj_addr = alloc_res.obj_out in
     WriteBody.copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wz;
     promote_object_success minor major obj fp wz;
-    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
+    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz 0UL;
     WriteBody.copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
     let copied = WriteBody.copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
     let tag = minor_tag minor obj in
@@ -1151,7 +1151,7 @@ private let cheney_forward_normal_preserves_fwd_bounded
       let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
       if res.new_addr = 0UL then ()
       else begin
-        AllocProps.alloc_spec_obj_valid cs.cs_major cs.cs_fp wz;
+        AllocProps.alloc_spec_obj_valid cs.cs_major cs.cs_fp wz 0UL;
         ()
       end
 
@@ -1339,8 +1339,8 @@ private let cheney_forward_normal_preserves_fwd_above_zero
       let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
       if res.new_addr = 0UL then ()
       else begin
-        AllocProps.alloc_spec_obj_in_objects_part1 cs.cs_major cs.cs_fp wz;
-        let alloc_res = Allocator.alloc_spec cs.cs_major cs.cs_fp wz in
+        AllocProps.alloc_spec_obj_in_objects_part1 cs.cs_major cs.cs_fp wz 0UL;
+        let alloc_res = Allocator.alloc_spec cs.cs_major cs.cs_fp wz 0UL in
         objects_addresses_gt_start zero_addr alloc_res.heap_out alloc_res.obj_out;
         assert (U64.v res.new_addr > U64.v zero_addr);
         ()

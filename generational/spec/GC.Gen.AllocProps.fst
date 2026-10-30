@@ -49,9 +49,9 @@ private let aligned_plus_mul8 (base: nat{base % U64.v mword == 0}) (k: nat)
 #push-options "--z3rlimit 60 --fuel 4 --ifuel 1"
 let rec alloc_search_obj_valid
   (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
-  (cur_fp: U64.t) (wz: nat) (fuel: nat)
+  (cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
-    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz tag fuel in
               r.obj_out <> 0UL ==>
               (U64.v r.obj_out >= U64.v mword /\
                U64.v r.obj_out < heap_size /\
@@ -91,20 +91,20 @@ let rec alloc_search_obj_valid
       end
     end
     else
-      alloc_search_obj_valid g head_fp cur_fp next_fp wz (fuel - 1)
+      alloc_search_obj_valid g head_fp cur_fp next_fp wz (fuel - 1) tag
   end
 #pop-options
 
 /// Top-level: alloc_spec returns a valid obj_addr when successful
-let alloc_spec_obj_valid (g: heap) (fp: U64.t) (requested_wz: nat)
-  : Lemma (ensures (let r = alloc_spec g fp requested_wz in
+let alloc_spec_obj_valid (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})
+  : Lemma (ensures (let r = alloc_spec g fp requested_wz tag in
                     r.obj_out <> 0UL ==>
                     (U64.v r.obj_out >= U64.v mword /\
                      U64.v r.obj_out < heap_size /\
                      U64.v r.obj_out % U64.v mword == 0)))
   =
   let wz = if requested_wz = 0 then 1 else requested_wz in
-  alloc_search_obj_valid g fp 0UL fp wz heap_words
+  alloc_search_obj_valid g fp 0UL fp wz heap_words tag
 
 /// ---------------------------------------------------------------------------
 /// When alloc_spec succeeds, obj_out is in objects zero_addr heap_out
@@ -149,7 +149,7 @@ module SA = GC.Spec.Allocator
 /// block), so the old form -- a bound on `wosize_of_object obj` -- no longer
 /// describes the allocation at all.
 let alloc_from_block_wosize_lemma
-  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
+  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires (let hd = hd_address obj in
                      let bwz = U64.v (getWosize (read_word g hd)) in
                      bwz >= wz /\
@@ -157,7 +157,7 @@ let alloc_from_block_wosize_lemma
           (ensures (let hd = hd_address obj in
                     let bwz = U64.v (getWosize (read_word g hd)) in
                     let ahn = U64.v hd + (bwz - wz) * 8 in
-                    let (g', _) = alloc_from_block g obj wz next_fp in
+                    let (g', _) = alloc_from_block g obj wz tag next_fp in
                     ahn % U64.v mword == 0 /\
                     U64.v (getWosize (read_word g' (mk_hp_addr ahn))) == wz))
   =
@@ -170,16 +170,16 @@ let alloc_from_block_wosize_lemma
   aligned_plus_mul8 (U64.v hd) leftover;
   let ahn = U64.v hd + leftover * 8 in
   let ah : hp_addr = mk_hp_addr ahn in
-  let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
-  AllocLemmas.make_header_getWosize (U64.uint_to_t wz) white_bits 0UL;
+  let ahdr = make_header (U64.uint_to_t wz) white_bits tag in
+  AllocLemmas.make_header_getWosize (U64.uint_to_t wz) white_bits tag;
   if leftover = 0 then begin
     // ah = hd: a single write, and it is the allocated header.
-    SA.alloc_from_block_exact g obj wz next_fp;
+    SA.alloc_from_block_exact g obj wz next_fp tag;
     read_write_same g hd ahdr
   end
   else begin
     // Two writes; the allocated header is the second, at ah > hd.
-    SA.alloc_from_block_split_normal g obj wz next_fp;
+    SA.alloc_from_block_split_normal g obj wz next_fp tag;
     let rhdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
     let g1 = write_word g hd rhdr in
     read_write_same g1 ah ahdr
@@ -243,7 +243,7 @@ private let write_prev_preserves_wosize
 #push-options "--z3rlimit 60 --fuel 4 --ifuel 1"
 let rec alloc_search_obj_in_objects_post_part1
   (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
-  (cur_fp: U64.t) (wz: nat) (fuel: nat)
+  (cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires well_formed_heap_part1 g /\ AllocLemmas.fl_valid g cur_fp fuel /\
               // carried so the prev-link write can be shown to leave the
@@ -255,7 +255,7 @@ let rec alloc_search_obj_in_objects_post_part1
                 U64.v prev_fp % U64.v mword = 0 /\
                 Seq.mem (prev_fp <: obj_addr) (objects zero_addr g) /\
                 U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
-    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz tag fuel in
               r.obj_out <> 0UL ==>
               (U64.v r.obj_out >= U64.v mword /\
                U64.v r.obj_out < heap_size /\
@@ -263,7 +263,7 @@ let rec alloc_search_obj_in_objects_post_part1
                Seq.mem (r.obj_out <: obj_addr) (objects zero_addr r.heap_out))))
     (decreases fuel)
   =
-  alloc_search_obj_valid g head_fp prev_fp cur_fp wz fuel;
+  alloc_search_obj_valid g head_fp prev_fp cur_fp wz fuel tag;
   if fuel = 0 then ()
   else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
   else if U64.v cur_fp >= heap_size then ()
@@ -291,7 +291,7 @@ let rec alloc_search_obj_in_objects_post_part1
         // the block writes on the result, so the block lemmas below have to
         // be applied to that intermediate heap, not to `g`.
         let new_fp = alloc_replacement_fp g obj wz next_fp in
-        alloc_replacement_fp_eq g obj wz next_fp;
+        alloc_replacement_fp_eq g obj wz next_fp tag;
         let base =
           if prev_fp = 0UL then g
           else if U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
@@ -328,12 +328,12 @@ let rec alloc_search_obj_in_objects_post_part1
         assert (read_word base hd == hdr);
         assert (U64.v (getWosize (read_word base hd)) == block_wz);
         assert (Seq.mem (obj <: U64.t) (objects zero_addr base));
-        AllocLemmas.alloc_from_block_objects_facts_part1 base obj wz next_fp;
+        AllocLemmas.alloc_from_block_objects_facts_part1 base obj wz next_fp tag;
         if leftover = 0 then
           // the allocation IS the original block, already an object
           assert (U64.v (U64.add cur_fp (U64.uint_to_t (leftover * 8))) == U64.v obj)
         else begin
-          AllocLemmas.alloc_from_block_alloc_in_objects_part1 base obj wz next_fp;
+          AllocLemmas.alloc_from_block_alloc_in_objects_part1 base obj wz next_fp tag;
           // bridge the lemma's f_address form to alloc_search's obj_out:
           //   f_address(ahn) = hd + leftover*8 + 8 = cur_fp + leftover*8
           let ah : hp_addr = U64.uint_to_t ahn in
@@ -350,17 +350,17 @@ let rec alloc_search_obj_in_objects_post_part1
       // fl_valid_elim gives next_fp <> cur_fp, which is the strictness
       // objects_separated needs on the next step
       AllocLemmas.fl_valid_gives_wosize g cur_fp fuel;
-      alloc_search_obj_in_objects_post_part1 g head_fp cur_fp next_fp wz (fuel - 1)
+      alloc_search_obj_in_objects_post_part1 g head_fp cur_fp next_fp wz (fuel - 1) tag
     end
   end
 #pop-options
 
 /// After alloc, obj_out is in objects of the output heap (part1 only)
-let alloc_spec_obj_in_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
+let alloc_spec_obj_in_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words)
-          (ensures (let r = alloc_spec g fp requested_wz in
+          (ensures (let r = alloc_spec g fp requested_wz tag in
                     r.obj_out <> 0UL ==>
                     (U64.v r.obj_out >= U64.v mword /\
                      U64.v r.obj_out < heap_size /\
@@ -371,7 +371,7 @@ let alloc_spec_obj_in_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
   let fuel = heap_words in
   // obj_out is an object of the OUTPUT heap directly: at leftover = 0 it is the
   // original block, at leftover >= 1 the newly split-off allocated piece.
-  alloc_search_obj_in_objects_post_part1 g fp 0UL fp wz fuel
+  alloc_search_obj_in_objects_post_part1 g fp 0UL fp wz fuel tag
 
 /// The allocated block's *body* lies within the heap, not just its header.
 ///
@@ -382,11 +382,11 @@ let alloc_spec_obj_in_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 /// Membership in `objects zero_addr r.heap_out` plus part 1 of the target
 /// heap's well-formedness says exactly that.
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
-let alloc_spec_obj_body_within_heap (g: heap) (fp: U64.t) (requested_wz: nat)
+let alloc_spec_obj_body_within_heap (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words)
-          (ensures (let r = alloc_spec g fp requested_wz in
+          (ensures (let r = alloc_spec g fp requested_wz tag in
                     r.obj_out <> 0UL ==>
                     (U64.v r.obj_out >= U64.v mword /\
                      U64.v r.obj_out < heap_size /\
@@ -395,9 +395,9 @@ let alloc_spec_obj_body_within_heap (g: heap) (fp: U64.t) (requested_wz: nat)
                       U64.v obj_out +
                         U64.v (wosize_of_object obj_out r.heap_out) * 8 <= heap_size))))
   =
-  alloc_spec_obj_in_objects_part1 g fp requested_wz;
-  AllocLemmas.alloc_spec_preserves_wfh_part1 g fp requested_wz;
-  let r = alloc_spec g fp requested_wz in
+  alloc_spec_obj_in_objects_part1 g fp requested_wz tag;
+  AllocLemmas.alloc_spec_preserves_wfh_part1 g fp requested_wz tag;
+  let r = alloc_spec g fp requested_wz tag in
   if r.obj_out <> 0UL then begin
     let obj_out : obj_addr = r.obj_out in
     hd_address_spec obj_out;
@@ -411,7 +411,7 @@ let alloc_spec_obj_body_within_heap (g: heap) (fp: U64.t) (requested_wz: nat)
 #push-options "--z3rlimit 12 --fuel 4 --ifuel 1"
 private let rec alloc_search_obj_wosize_part1
   (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
-  (cur_fp: U64.t) (wz: nat) (fuel: nat)
+  (cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires AllocLemmas.fl_valid g cur_fp fuel /\
               (prev_fp <> 0UL ==>
@@ -421,7 +421,7 @@ private let rec alloc_search_obj_wosize_part1
                  U64.v prev_fp % U64.v mword = 0 /\
                  Seq.mem prev_fp (objects zero_addr g) /\
                  U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
-    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz tag fuel in
               r.obj_out <> 0UL ==>
               (U64.v r.obj_out >= U64.v mword /\
                U64.v r.obj_out < heap_size /\
@@ -454,7 +454,7 @@ private let rec alloc_search_obj_wosize_part1
         // Reordered: prev's link is rewritten on `g` first, and the block
         // writes run on the result, so the header lemma applies to `base`.
         let new_fp = alloc_replacement_fp g obj wz next_fp in
-        alloc_replacement_fp_eq g obj wz next_fp;
+        alloc_replacement_fp_eq g obj wz next_fp tag;
         let base =
           if prev_fp = 0UL then g
           else if U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
@@ -484,8 +484,8 @@ private let rec alloc_search_obj_wosize_part1
          end else ());
         assert (read_word base hd == hdr);
         assert (U64.v (getWosize (read_word base hd)) == block_wz);
-        alloc_from_block_wosize_lemma base obj wz next_fp;
-        let g2 = fst (alloc_from_block base obj wz next_fp) in
+        alloc_from_block_wosize_lemma base obj wz next_fp tag;
+        let g2 = fst (alloc_from_block base obj wz tag next_fp) in
         let ah : hp_addr = mk_hp_addr ahn in
         f_address_spec ah;
         let alloc_obj : obj_addr = f_address ah in
@@ -509,15 +509,15 @@ private let rec alloc_search_obj_wosize_part1
       if U64.v hd + 16 <= heap_size then begin
         AllocLemmas.fl_valid_gives_mem g cur_fp fuel;
         AllocLemmas.fl_valid_gives_wosize g cur_fp fuel;
-        alloc_search_obj_wosize_part1 g head_fp cur_fp next_fp wz (fuel - 1)
+        alloc_search_obj_wosize_part1 g head_fp cur_fp next_fp wz (fuel - 1) tag
       end else ()
     end
   end
 #pop-options
 
-let alloc_spec_obj_wosize_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
+let alloc_spec_obj_wosize_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires AllocLemmas.fl_valid g fp heap_words)
-          (ensures (let r = alloc_spec g fp requested_wz in
+          (ensures (let r = alloc_spec g fp requested_wz tag in
                     r.obj_out <> 0UL ==>
                     (U64.v r.obj_out >= U64.v mword /\
                      U64.v r.obj_out < heap_size /\
@@ -525,7 +525,7 @@ let alloc_spec_obj_wosize_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
                      U64.v (wosize_of_object (r.obj_out <: obj_addr) r.heap_out) >= 
                        (if requested_wz = 0 then 1 else requested_wz))))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_obj_wosize_part1 g fp 0UL fp wz heap_words
+    alloc_search_obj_wosize_part1 g fp 0UL fp wz heap_words tag
 
 /// Top-level: after alloc_spec, wosize <= requested_wz.
 ///
@@ -540,10 +540,10 @@ let alloc_spec_obj_wosize_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 /// unifies `wz` with a machine integer and would force a `pow2 54` bound onto
 /// every caller. The pair of inequalities says the same thing and costs the
 /// call sites nothing.
-let alloc_spec_obj_wosize_upper_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
+let alloc_spec_obj_wosize_upper_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires AllocLemmas.fl_valid g fp heap_words)
           (ensures (let wz = if requested_wz = 0 then 1 else requested_wz in
-                    let r = alloc_spec g fp requested_wz in
+                    let r = alloc_spec g fp requested_wz tag in
                     r.obj_out <> 0UL ==>
                     (U64.v r.obj_out >= U64.v mword /\
                      U64.v r.obj_out < heap_size /\
@@ -551,7 +551,7 @@ let alloc_spec_obj_wosize_upper_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
                      (let obj_out : obj_addr = r.obj_out in
                       U64.v (wosize_of_object obj_out r.heap_out) <= wz))))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_obj_wosize_part1 g fp 0UL fp wz heap_words
+    alloc_search_obj_wosize_part1 g fp 0UL fp wz heap_words tag
 
 /// Top-level, EXACT: the allocated object declares exactly what was asked for.
 ///
@@ -568,10 +568,10 @@ let alloc_spec_obj_wosize_upper_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 /// `requested_wz < pow2 54` is the standing wosize bound, needed here and not
 /// in the two weaker wrappers only because an equation unifies `wz` with a
 /// machine integer where an inequality does not.
-let alloc_spec_obj_wosize_exact_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
+let alloc_spec_obj_wosize_exact_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires AllocLemmas.fl_valid g fp heap_words /\ requested_wz < pow2 54)
           (ensures (let wz = if requested_wz = 0 then 1 else requested_wz in
-                    let r = alloc_spec g fp requested_wz in
+                    let r = alloc_spec g fp requested_wz tag in
                     r.obj_out <> 0UL ==>
                     (U64.v r.obj_out >= U64.v mword /\
                      U64.v r.obj_out < heap_size /\
@@ -579,7 +579,7 @@ let alloc_spec_obj_wosize_exact_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
                      (let obj_out : obj_addr = r.obj_out in
                       U64.v (wosize_of_object obj_out r.heap_out) == wz))))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_obj_wosize_part1 g fp 0UL fp wz heap_words
+    alloc_search_obj_wosize_part1 g fp 0UL fp wz heap_words tag
 
 /// ---------------------------------------------------------------------------
 /// alloc_spec returns an object that is IN the pre-alloc chain.
@@ -593,7 +593,7 @@ let alloc_spec_obj_wosize_exact_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 
 #push-options "--z3rlimit 12 --fuel 4 --ifuel 1"
 let rec alloc_search_obj_ne_excl
-  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (excl: U64.t)
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (excl: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires well_formed_heap_part1 g /\
               AllocLemmas.fl_valid g cur_fp fuel /\
@@ -607,7 +607,7 @@ let rec alloc_search_obj_ne_excl
                U64.v excl < heap_size /\
                U64.v excl % U64.v mword = 0 /\
                Seq.mem (excl <: obj_addr) (objects zero_addr g)))
-    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz tag fuel in
               r.obj_out <> 0UL ==> r.obj_out <> excl))
     (decreases fuel)
   =
@@ -650,7 +650,7 @@ let rec alloc_search_obj_ne_excl
       // Advance: need chain_avoids g next_fp excl (fuel-1)
       if U64.v hd + 16 <= heap_size then begin
         AllocLemmas.chain_avoids_tail g cur_fp excl fuel;
-        alloc_search_obj_ne_excl g head_fp cur_fp next_fp wz (fuel - 1) excl
+        alloc_search_obj_ne_excl g head_fp cur_fp next_fp wz (fuel - 1) excl tag
       end
       else ()
     end
@@ -658,7 +658,7 @@ let rec alloc_search_obj_ne_excl
 #pop-options
 
 /// Top-level: if chain_avoids g fp excl fuel = true, then alloc_spec obj_out ≠ excl
-let alloc_spec_obj_ne_excl (g: heap) (fp: U64.t) (requested_wz: nat) (excl: U64.t)
+let alloc_spec_obj_ne_excl (g: heap) (fp: U64.t) (requested_wz: nat) (excl: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.chain_avoids g fp excl heap_words = true /\
@@ -668,10 +668,10 @@ let alloc_spec_obj_ne_excl (g: heap) (fp: U64.t) (requested_wz: nat) (excl: U64.
                      U64.v excl < heap_size /\
                      U64.v excl % U64.v mword = 0 /\
                      Seq.mem (excl <: obj_addr) (objects zero_addr g)))
-          (ensures (let r = alloc_spec g fp requested_wz in
+          (ensures (let r = alloc_spec g fp requested_wz tag in
                     r.obj_out <> 0UL ==> r.obj_out <> excl))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_obj_ne_excl g fp 0UL fp wz heap_words excl
+    alloc_search_obj_ne_excl g fp 0UL fp wz heap_words excl tag
 
 /// ---------------------------------------------------------------------------
 /// (removed) Pre-alloc wosize of obj_out
@@ -690,9 +690,9 @@ let alloc_spec_obj_ne_excl (g: heap) (fp: U64.t) (requested_wz: nat) (excl: U64.
 
 #push-options "--z3rlimit 12 --fuel 4 --ifuel 1"
 private let rec alloc_search_oom_unchanged
-  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
-    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz tag fuel in
               r.obj_out == 0UL ==>
               (r.heap_out == g /\ r.fp_out == head_fp)))
     (decreases fuel)
@@ -731,17 +731,17 @@ private let rec alloc_search_oom_unchanged
       end
     end
     else
-      alloc_search_oom_unchanged g head_fp cur_fp next_fp wz (fuel - 1)
+      alloc_search_oom_unchanged g head_fp cur_fp next_fp wz (fuel - 1) tag
   end
 #pop-options
 
 /// Top-level: when alloc_spec fails (obj_out = 0UL), heap and fp are unchanged
-let alloc_spec_oom_unchanged (g: heap) (fp: U64.t) (requested_wz: nat)
-  : Lemma (ensures (let r = alloc_spec g fp requested_wz in
+let alloc_spec_oom_unchanged (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})
+  : Lemma (ensures (let r = alloc_spec g fp requested_wz tag in
                     r.obj_out == 0UL ==>
                     (r.heap_out == g /\ r.fp_out == fp)))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_oom_unchanged g fp 0UL fp wz heap_words
+    alloc_search_oom_unchanged g fp 0UL fp wz heap_words tag
 
 /// ---------------------------------------------------------------------------
 /// Colour of the allocated block
@@ -755,7 +755,7 @@ let alloc_spec_oom_unchanged (g: heap) (fp: U64.t) (requested_wz: nat)
 /// false for any split.
 #restart-solver
 #push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
-let alloc_from_block_obj_not_blue (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
+let alloc_from_block_obj_not_blue (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     Seq.mem obj (objects zero_addr g) /\
                     (let hd = hd_address obj in
@@ -765,7 +765,7 @@ let alloc_from_block_obj_not_blue (g: heap) (obj: obj_addr) (wz: nat) (next_fp: 
           (ensures (let hd = hd_address obj in
                     let bwz = U64.v (getWosize (read_word g hd)) in
                     let ahn = U64.v hd + (bwz - wz) * 8 in
-                    let (g', _) = alloc_from_block g obj wz next_fp in
+                    let (g', _) = alloc_from_block g obj wz tag next_fp in
                     ahn % U64.v mword == 0 /\ ahn + 8 < heap_size /\
                     (let ao : obj_addr = f_address (mk_hp_addr ahn) in
                      color_of_object ao g' == White /\ is_blue ao g' = false)))
@@ -783,20 +783,20 @@ let alloc_from_block_obj_not_blue (g: heap) (obj: obj_addr) (wz: nat) (next_fp: 
     let ao : obj_addr = f_address ah in
     hd_address_spec ao;
     assert (U64.v (hd_address ao) == ahn);
-    let (g', _) = alloc_from_block g obj wz next_fp in
-    let alloc_hdr = make_header (U64.uint_to_t wz) white_bits 0UL in
-    AllocLemmas.make_header_getColor (U64.uint_to_t wz) white_bits 0UL;
+    let (g', _) = alloc_from_block g obj wz tag next_fp in
+    let alloc_hdr = make_header (U64.uint_to_t wz) white_bits tag in
+    AllocLemmas.make_header_getColor (U64.uint_to_t wz) white_bits tag;
     getColor_raw alloc_hdr;
     if leftover = 0 then begin
       // ah = hd and ao = obj: a single write, and it is the allocated header
-      GC.Spec.Allocator.alloc_from_block_exact g obj wz next_fp;
+      GC.Spec.Allocator.alloc_from_block_exact g obj wz next_fp tag;
       read_write_same g hd alloc_hdr;
       assert (g' == write_word g hd alloc_hdr);
       assert (read_word g' (hd_address ao) == alloc_hdr);
       color_of_object_spec ao g';
       is_blue_iff ao g'
     end else begin
-      GC.Spec.Allocator.alloc_from_block_split_normal g obj wz next_fp;
+      GC.Spec.Allocator.alloc_from_block_split_normal g obj wz next_fp tag;
       let rem_hdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
       let g1 = write_word g hd rem_hdr in
       read_write_same g1 ah alloc_hdr;
@@ -829,14 +829,14 @@ let write_preserves_color (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
 /// If addr is outside obj's block entirely, read_word is unchanged.
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let alloc_from_block_read_frame (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
-                                (addr: hp_addr)
+                                (addr: hp_addr) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     Seq.mem obj (objects zero_addr g) /\
                     U64.v (getWosize (read_word g (hd_address obj))) >= wz /\
                     wz >= 1 /\
                     (U64.v addr + 8 <= U64.v (hd_address obj) \/
                      U64.v addr >= U64.v obj + U64.v (getWosize (read_word g (hd_address obj))) * 8))
-          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+          (ensures (let (g', _) = alloc_from_block g obj wz tag next_fp in
                     read_word g' addr == read_word g addr))
   = hd_address_spec obj;
     hd_address_bounds obj;
@@ -845,7 +845,7 @@ let alloc_from_block_read_frame (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U6
     // the framing lemma's disjointness condition -- and that lemma covers every
     // arm at once, so the old four-way case analysis over the two out-of-bounds
     // variants and the split is no longer needed.
-    alloc_from_block_read_outside g obj wz next_fp addr
+    alloc_from_block_read_outside g obj wz next_fp addr tag
 #pop-options
 
 /// Top-level: alloc_spec result obj is not blue (the allocator writes White color).
@@ -853,13 +853,13 @@ let alloc_from_block_read_frame (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U6
 /// alloc_from_block_obj_not_blue proves the block-level result.
 #push-options "--z3rlimit 12 --fuel 4 --ifuel 1"
 let rec alloc_search_obj_not_blue
-  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires well_formed_heap_part1 g /\
              AllocLemmas.fl_valid g cur_fp fuel /\
              AllocLemmas.fl_chain_terminates g cur_fp fuel /\
              wz >= 1)
-    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz tag fuel in
               r.obj_out <> 0UL ==>
               (U64.v r.obj_out >= U64.v mword /\
                U64.v r.obj_out < heap_size /\
@@ -883,7 +883,7 @@ let rec alloc_search_obj_not_blue
       else begin
         if U64.v hd + 16 <= heap_size then begin
           AllocLemmas.fl_chain_terminates_elim g cur_fp fuel;
-          alloc_search_obj_not_blue g head_fp cur_fp next_fp wz (fuel - 1)
+          alloc_search_obj_not_blue g head_fp cur_fp next_fp wz (fuel - 1) tag
         end else ()
       end
     end
@@ -892,7 +892,7 @@ let rec alloc_search_obj_not_blue
 /// alloc_search result has color White (the allocator writes White)
 #push-options "--z3rlimit 12 --fuel 4 --ifuel 1"
 let rec alloc_search_obj_white
-  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires well_formed_heap_part1 g /\
              AllocLemmas.fl_valid g cur_fp fuel /\
@@ -905,7 +905,7 @@ let rec alloc_search_obj_white
                 U64.v prev_fp % U64.v mword = 0 /\
                 Seq.mem prev_fp (objects zero_addr g) /\
                 U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
-    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz tag fuel in
               r.obj_out <> 0UL ==>
               (let out = r.obj_out in
                U64.v out >= U64.v mword /\
@@ -913,7 +913,7 @@ let rec alloc_search_obj_white
                U64.v out % U64.v mword = 0 /\
                color_of_object (out <: obj_addr) r.heap_out == White)))
     (decreases fuel)
-  = alloc_search_obj_not_blue g head_fp prev_fp cur_fp wz fuel;
+  = alloc_search_obj_not_blue g head_fp prev_fp cur_fp wz fuel tag;
     if fuel = 0 then ()
     else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
     else if U64.v cur_fp >= heap_size then ()
@@ -937,7 +937,7 @@ let rec alloc_search_obj_white
           // Reordered: prev's link is rewritten on `g` first, so the White
           // header lands in `alloc_from_block base ...`, not in `... g ...`.
           let new_fp = alloc_replacement_fp g obj wz next_fp in
-          alloc_replacement_fp_eq g obj wz next_fp;
+          alloc_replacement_fp_eq g obj wz next_fp tag;
           let base =
             if prev_fp = 0UL then g
             else if U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
@@ -972,7 +972,7 @@ let rec alloc_search_obj_white
           assert (U64.v (getWosize (read_word base hd)) == bwz);
           assert (Seq.mem (obj <: U64.t) (objects zero_addr base));
           // the White header is written at the right-justified address
-          alloc_from_block_obj_not_blue base obj wz next_fp;
+          alloc_from_block_obj_not_blue base obj wz next_fp tag;
           let ah : hp_addr = mk_hp_addr ahn in
           f_address_spec ah;
           let ao : obj_addr = f_address ah in
@@ -988,25 +988,25 @@ let rec alloc_search_obj_white
         if U64.v hd + 16 <= heap_size then begin
           AllocLemmas.fl_chain_terminates_elim g cur_fp fuel;
           AllocLemmas.fl_valid_gives_mem g cur_fp fuel;
-          alloc_search_obj_white g head_fp cur_fp next_fp wz (fuel - 1)
+          alloc_search_obj_white g head_fp cur_fp next_fp wz (fuel - 1) tag
         end else ()
       end
     end
 #pop-options
 
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
-let alloc_spec_obj_not_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
+let alloc_spec_obj_not_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words)
-          (ensures (let r = alloc_spec g fp requested_wz in
+          (ensures (let r = alloc_spec g fp requested_wz tag in
                     r.obj_out <> 0UL ==>
                     (U64.v r.obj_out >= U64.v mword /\
                      U64.v r.obj_out < heap_size /\
                      U64.v r.obj_out % U64.v mword = 0 /\
                      color_of_object (r.obj_out <: obj_addr) r.heap_out == White)))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_obj_white g fp 0UL fp wz heap_words
+    alloc_search_obj_white g fp 0UL fp wz heap_words tag
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -1024,7 +1024,7 @@ let alloc_spec_obj_not_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 /// the chain, which is exactly the fact being established.
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let alloc_from_block_preserves_blue
-  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
+  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     Seq.mem obj (objects zero_addr g) /\
                     Seq.mem (h <: U64.t) (objects zero_addr g) /\
@@ -1034,7 +1034,7 @@ let alloc_from_block_preserves_blue
                      bwz >= wz /\ wz >= 1 /\
                      U64.v hd + (bwz - wz) * 8 + 8 < heap_size /\
                      U64.v h <> U64.v hd + (bwz - wz) * 8 + 8))
-          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+          (ensures (let (g', _) = alloc_from_block g obj wz tag next_fp in
                     is_blue h g' = true))
   = let hd = hd_address obj in
     hd_address_spec obj;
@@ -1048,22 +1048,22 @@ let alloc_from_block_preserves_blue
     aligned_plus_mul8 (U64.v hd) leftover;
     let ahn = U64.v hd + leftover * 8 in
     let ah : hp_addr = mk_hp_addr ahn in
-    let (g', _) = alloc_from_block g obj wz next_fp in
-    let alloc_hdr = make_header (U64.uint_to_t wz) white_bits 0UL in
+    let (g', _) = alloc_from_block g obj wz tag next_fp in
+    let alloc_hdr = make_header (U64.uint_to_t wz) white_bits tag in
     // `hd_address h = ah` would make h the allocated block, which is excluded
     f_address_spec ah;
     assert (U64.v (hd_address h) == U64.v h - 8);
     assert (U64.v (hd_address h) <> ahn);
     if leftover = 0 then begin
       // single write, at hd; h = obj keeps a white header, so h <> obj
-      GC.Spec.Allocator.alloc_from_block_exact g obj wz next_fp;
+      GC.Spec.Allocator.alloc_from_block_exact g obj wz next_fp tag;
       assert (ahn == U64.v hd);
       assert (U64.v (hd_address h) <> U64.v hd);
       write_preserves_color g h hd alloc_hdr;
       is_blue_iff h g;
       is_blue_iff h g'
     end else begin
-      GC.Spec.Allocator.alloc_from_block_split_normal g obj wz next_fp;
+      GC.Spec.Allocator.alloc_from_block_split_normal g obj wz next_fp tag;
       let rem_hdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
       let g1 = write_word g hd rem_hdr in
       AllocLemmas.make_header_getColor (U64.uint_to_t (leftover - 1)) blue_bits 0UL;
@@ -1090,7 +1090,7 @@ let alloc_from_block_preserves_blue
 /// The same fact, lifted over the whole search.
 #push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_blue
-  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (h: obj_addr)
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (h: obj_addr) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     AllocLemmas.fl_valid g cur_fp fuel /\
                     AllocLemmas.fl_chain_terminates g cur_fp fuel /\
@@ -1104,7 +1104,7 @@ private let rec alloc_search_preserves_blue
                        U64.v prev_fp % U64.v mword = 0 /\
                        Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
-          (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+          (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz tag fuel in
                     r.obj_out <> 0UL /\ (h <: U64.t) <> r.obj_out ==>
                     is_blue h r.heap_out = true))
           (decreases fuel)
@@ -1135,12 +1135,12 @@ private let rec alloc_search_preserves_blue
             ()
           else begin
           let new_fp = alloc_replacement_fp g obj wz next_fp in
-          alloc_replacement_fp_eq g obj wz next_fp;
+          alloc_replacement_fp_eq g obj wz next_fp tag;
           if prev_fp = 0UL || U64.v prev_fp = U64.v hd ||
              not (U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
                   U64.v prev_fp % U64.v mword = 0)
           then
-            alloc_from_block_preserves_blue g obj wz next_fp h
+            alloc_from_block_preserves_blue g obj wz next_fp h tag
           else begin
             // the link write comes first; it touches a field, not a header
             let prev_obj : obj_addr = prev_fp in
@@ -1170,7 +1170,7 @@ private let rec alloc_search_preserves_blue
             is_blue_iff h gw;
             // and it leaves obj's block exactly as it was
             read_write_different g (prev_obj <: hp_addr) hd new_fp;
-            alloc_from_block_preserves_blue gw obj wz next_fp h
+            alloc_from_block_preserves_blue gw obj wz next_fp h tag
           end
           end
         end
@@ -1179,25 +1179,25 @@ private let rec alloc_search_preserves_blue
         if U64.v hd + 16 <= heap_size then begin
           AllocLemmas.fl_valid_elim g cur_fp fuel;
           AllocLemmas.fl_chain_terminates_elim g cur_fp fuel;
-          alloc_search_preserves_blue g head_fp cur_fp next_fp wz (fuel - 1) h
+          alloc_search_preserves_blue g head_fp cur_fp next_fp wz (fuel - 1) h tag
         end else ()
       end
     end
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let alloc_spec_preserves_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (h: obj_addr)
+let alloc_spec_preserves_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (h: obj_addr) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words /\
                     requested_wz >= 1 /\
                     Seq.mem (h <: U64.t) (objects zero_addr g) /\
                     is_blue h g = true)
-          (ensures (let r = alloc_spec g fp requested_wz in
+          (ensures (let r = alloc_spec g fp requested_wz tag in
                     r.obj_out <> 0UL /\ (h <: U64.t) <> r.obj_out ==>
                     is_blue h r.heap_out = true))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_preserves_blue g fp 0UL fp wz heap_words h
+    alloc_search_preserves_blue g fp 0UL fp wz heap_words h tag
 #pop-options
 
 /// Helper: alloc_from_block preserves read at hd_address of a different object.
@@ -1205,14 +1205,14 @@ let alloc_spec_preserves_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (h
 /// separated from excl's header by objects_separated.
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 private let alloc_from_block_read_header_other
-  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (excl: obj_addr)
+  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (excl: obj_addr) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     Seq.mem obj (objects zero_addr g) /\
                     Seq.mem excl (objects zero_addr g) /\
                     (obj <: U64.t) <> (excl <: U64.t) /\
                     (let hdr = read_word g (hd_address obj) in
                      U64.v (getWosize hdr) >= wz /\ wz >= 1))
-          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+          (ensures (let (g', _) = alloc_from_block g obj wz tag next_fp in
                     read_word g' (hd_address excl) == read_word g (hd_address excl)))
   = let hd_obj = hd_address obj in
     let hd_excl = hd_address excl in
@@ -1240,19 +1240,19 @@ private let alloc_from_block_read_header_other
     // so the framing lemma settles all arms at once.
     assert (U64.v hd_excl + 8 <= U64.v hd_obj \/
             U64.v hd_excl >= U64.v hd_obj + (bwz + 1) * 8);
-    alloc_from_block_read_outside g obj wz next_fp hd_excl
+    alloc_from_block_read_outside g obj wz next_fp hd_excl tag
 #pop-options
 
 /// Inductive: alloc_search preserves the header of excl when excl ≠ obj_out.
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let rec alloc_search_read_header_other
-  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (excl: obj_addr)
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (excl: obj_addr) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     AllocLemmas.fl_valid g cur_fp fuel /\
                     AllocLemmas.fl_chain_terminates g cur_fp fuel /\
                     wz >= 1 /\
                     Seq.mem excl (objects zero_addr g) /\
-                    (excl <: U64.t) <> (alloc_search g head_fp prev_fp cur_fp wz fuel).obj_out /\
+                    (excl <: U64.t) <> (alloc_search g head_fp prev_fp cur_fp wz tag fuel).obj_out /\
                     // excl must differ from every CELL, not just from obj_out.
                     // Under the old layout obj_out was cur_fp, so excl <> obj_out
                     // already gave that; right-justification separates the two,
@@ -1265,7 +1265,7 @@ private let rec alloc_search_read_header_other
                        U64.v prev_fp % U64.v mword = 0 /\
                        Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
-          (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+          (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz tag fuel in
                     r.obj_out <> 0UL ==>
                     read_word r.heap_out (hd_address excl) ==
                     read_word g (hd_address excl)))
@@ -1298,7 +1298,7 @@ private let rec alloc_search_read_header_other
           // Reordered: prev's link is rewritten on `g` first, and the block
           // writes run on the result, so the frame is taken in two steps.
           let new_fp = alloc_replacement_fp g obj wz next_fp in
-          alloc_replacement_fp_eq g obj wz next_fp;
+          alloc_replacement_fp_eq g obj wz next_fp tag;
           let base =
             if prev_fp = 0UL then g
             else if U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
@@ -1340,7 +1340,7 @@ private let rec alloc_search_read_header_other
           assert (read_word base (hd_address excl) == read_word g (hd_address excl));
           assert (read_word base hd == hdr);
           assert (Seq.mem (excl <: U64.t) (objects zero_addr base));
-          alloc_from_block_read_header_other base obj wz next_fp excl
+          alloc_from_block_read_header_other base obj wz next_fp excl tag
         end
       end else begin
         // Block too small, continue
@@ -1349,26 +1349,26 @@ private let rec alloc_search_read_header_other
           AllocLemmas.fl_chain_terminates_elim g cur_fp fuel
         end else ();
         AllocLemmas.chain_avoids_tail g cur_fp excl fuel;
-        alloc_search_read_header_other g head_fp cur_fp next_fp wz (fuel - 1) excl
+        alloc_search_read_header_other g head_fp cur_fp next_fp wz (fuel - 1) excl tag
       end
     end
 #pop-options
 
 /// Top-level: alloc_spec preserves the header of other objects.
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
-let alloc_spec_read_header_other_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (excl: obj_addr)
+let alloc_spec_read_header_other_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (excl: obj_addr) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words /\
                     Seq.mem excl (objects zero_addr g) /\
-                    (excl <: U64.t) <> (alloc_spec g fp requested_wz).obj_out /\
+                    (excl <: U64.t) <> (alloc_spec g fp requested_wz tag).obj_out /\
                     // see alloc_search_read_header_other: excl must avoid every
                     // free-list cell, not merely obj_out
                     AllocLemmas.chain_avoids g fp excl heap_words = true)
-          (ensures (let r = alloc_spec g fp requested_wz in
+          (ensures (let r = alloc_spec g fp requested_wz tag in
                     r.obj_out <> 0UL ==>
                     read_word r.heap_out (hd_address excl) ==
                     read_word g (hd_address excl)))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_read_header_other g fp 0UL fp wz heap_words excl
+    alloc_search_read_header_other g fp 0UL fp wz heap_words excl tag
 #pop-options

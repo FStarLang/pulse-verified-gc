@@ -381,7 +381,7 @@ let heap_partition_strong (g: heap) (fp: U64.t)
 /// arithmetic.
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 80"
 let alloc_from_block_accounting
-  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
+  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires (let hd = hd_address obj in
                let bwz = U64.v (getWosize (read_word g hd)) in
@@ -390,7 +390,7 @@ let alloc_from_block_accounting
     (ensures (let hd = hd_address obj in
               let bwz = U64.v (getWosize (read_word g hd)) in
               let leftover = bwz - wz in
-              let g' = fst (Alloc.alloc_from_block g obj wz next) in
+              let g' = fst (Alloc.alloc_from_block g obj wz tag next) in
               let ah : hp_addr = U64.uint_to_t (U64.v hd + leftover * 8) in
               // the block at `hd` is still a block, and it is exactly `wz + 1`
               // words smaller than it was
@@ -406,22 +406,22 @@ let alloc_from_block_accounting
   = let hd = hd_address obj in
     let bwz = U64.v (getWosize (read_word g hd)) in
     let leftover = bwz - wz in
-    Alloc.alloc_from_block_split_normal g obj wz next;
+    Alloc.alloc_from_block_split_normal g obj wz next tag;
     let rhdr = Alloc.make_header (U64.uint_to_t (leftover - 1)) Alloc.blue_bits 0UL in
     let g1 = write_word g hd rhdr in
     let ahn = U64.v hd + leftover * 8 in
     let ah : hp_addr = U64.uint_to_t ahn in
-    let ahdr = Alloc.make_header (U64.uint_to_t wz) Alloc.white_bits 0UL in
+    let ahdr = Alloc.make_header (U64.uint_to_t wz) Alloc.white_bits tag in
     let g2 = write_word g1 ah ahdr in
     // the allocated header: written last, so read it back directly
     read_write_same g1 ah ahdr;
-    ACore.make_header_getWosize (U64.uint_to_t wz) Alloc.white_bits 0UL;
+    ACore.make_header_getWosize (U64.uint_to_t wz) Alloc.white_bits tag;
     // the remainder header: written first, and `ah <> hd` because leftover >= 1
     read_write_different g1 ah hd ahdr;
     read_write_same g hd rhdr;
     ACore.make_header_getWosize (U64.uint_to_t (leftover - 1)) Alloc.blue_bits 0UL;
     // colours: the header bits decode to the classes
-    ACore.make_header_getColor (U64.uint_to_t wz) Alloc.white_bits 0UL;
+    ACore.make_header_getColor (U64.uint_to_t wz) Alloc.white_bits tag;
     getColor_raw ahdr;
     ACore.make_header_getColor (U64.uint_to_t (leftover - 1)) Alloc.blue_bits 0UL;
     getColor_raw rhdr
@@ -437,18 +437,18 @@ let alloc_from_block_accounting
 /// `leftover = 1` arm above where the two part company.
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 40"
 let alloc_from_block_accounting_exact
-  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
+  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires (let bwz = U64.v (getWosize (read_word g (hd_address obj))) in
                bwz == wz /\ wz < pow2 54))
     (ensures (let hd = hd_address obj in
-              let g' = fst (Alloc.alloc_from_block g obj wz next) in
+              let g' = fst (Alloc.alloc_from_block g obj wz tag next) in
               U64.v (getWosize (read_word g' hd)) == wz))
   = let hd = hd_address obj in
-    Alloc.alloc_from_block_exact g obj wz next;
-    let ahdr = Alloc.make_header (U64.uint_to_t wz) Alloc.white_bits 0UL in
+    Alloc.alloc_from_block_exact g obj wz next tag;
+    let ahdr = Alloc.make_header (U64.uint_to_t wz) Alloc.white_bits tag in
     read_write_same g hd ahdr;
-    ACore.make_header_getWosize (U64.uint_to_t wz) Alloc.white_bits 0UL
+    ACore.make_header_getWosize (U64.uint_to_t wz) Alloc.white_bits tag
 #pop-options
 
 /// Both arms together: however the block is carved, the object the allocator
@@ -458,7 +458,7 @@ let alloc_from_block_accounting_exact
 /// law -- counting cannot see the defect, because the pre-fix allocator lost no
 /// words -- it is a law relating what was asked for to what was produced.
 let alloc_from_block_gives_requested_size
-  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
+  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires (let hd = hd_address obj in
                let bwz = U64.v (getWosize (read_word g hd)) in
@@ -466,13 +466,13 @@ let alloc_from_block_gives_requested_size
                U64.v hd + (bwz - wz) * 8 < heap_size))
     (ensures (let hd = hd_address obj in
               let bwz = U64.v (getWosize (read_word g hd)) in
-              let g' = fst (Alloc.alloc_from_block g obj wz next) in
+              let g' = fst (Alloc.alloc_from_block g obj wz tag next) in
               let ah : hp_addr = U64.uint_to_t (U64.v hd + (bwz - wz) * 8) in
               U64.v (getWosize (read_word g' ah)) == wz))
   = let hd = hd_address obj in
     let bwz = U64.v (getWosize (read_word g hd)) in
-    if bwz = wz then alloc_from_block_accounting_exact g obj wz next
-    else alloc_from_block_accounting g obj wz next
+    if bwz = wz then alloc_from_block_accounting_exact g obj wz next tag
+    else alloc_from_block_accounting g obj wz next tag
 
 /// ---------------------------------------------------------------------------
 /// The sum form: how much the allocated class grows
@@ -553,7 +553,7 @@ let rec walk_white_agree (g g': heap) (start: hp_addr)
 /// count it twice.
 #push-options "--fuel 2 --ifuel 1 --z3rlimit 200"
 let alloc_from_block_white_grows
-  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
+  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires (let hd = hd_address obj in
                let bwz = U64.v (getWosize (read_word g hd)) in
@@ -562,24 +562,24 @@ let alloc_from_block_white_grows
                ~(is_white obj g) /\
                U64.v hd + (bwz + 1) * 8 < heap_size))
     (ensures (let hd = hd_address obj in
-              let g' = fst (Alloc.alloc_from_block g obj wz next) in
+              let g' = fst (Alloc.alloc_from_block g obj wz tag next) in
               white_whsize g' (objects hd g')
                 == white_whsize g (objects hd g) + (wz + 1)))
   = let hd = hd_address obj in
     let bwz = U64.v (getWosize (read_word g hd)) in
     let leftover = bwz - wz in
-    let g' = fst (Alloc.alloc_from_block g obj wz next) in
+    let g' = fst (Alloc.alloc_from_block g obj wz tag next) in
     let ahn = U64.v hd + leftover * 8 in
     let ah : hp_addr = U64.uint_to_t ahn in
     let aftn = U64.v hd + (bwz + 1) * 8 in
     let aft : hp_addr = mk_hp_addr aftn in
     // sizes and colours of the two rewritten headers
-    alloc_from_block_accounting g obj wz next;
+    alloc_from_block_accounting g obj wz next tag;
     // the walk above the block is untouched
     let frame (a: hp_addr) : Lemma
       (requires U64.v a >= aftn)
       (ensures read_word g' a == read_word g a)
-      = Alloc.alloc_from_block_read_outside g obj wz next a
+      = Alloc.alloc_from_block_read_outside g obj wz next a tag
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires frame);
     walk_white_agree g g' aft;

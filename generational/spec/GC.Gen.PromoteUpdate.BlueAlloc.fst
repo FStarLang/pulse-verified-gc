@@ -77,7 +77,7 @@ private let block_prev_separated_body (g: heap) (obj prev: obj_addr) (bwz: nat)
 
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let alloc_from_block_fp_pointer_or_zero
-  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
+  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires
       well_formed_heap_part1 g /\
       Seq.mem obj (objects zero_addr g) /\
@@ -90,7 +90,7 @@ private let alloc_from_block_fp_pointer_or_zero
       U64.v (hd_address obj) + 16 <= heap_size)
     (ensures
       FreeListShape.fp_pointer_or_zero
-        (snd (GC.Spec.Allocator.alloc_from_block g obj wz next_fp)))
+        (snd (GC.Spec.Allocator.alloc_from_block g obj wz tag next_fp)))
   = let hd = hd_address obj in
     hd_address_spec obj;
     hd_address_bounds obj;
@@ -99,14 +99,14 @@ private let alloc_from_block_fp_pointer_or_zero
     // the free list is either the block ITSELF -- still a perfectly good
     // object address, since the remainder keeps it -- or the old link, which
     // the hypothesis already covers.
-    GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp;
+    GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp tag;
     objects_addresses_gt_start zero_addr g obj;
     assert (FreeListShape.fp_pointer_or_zero (obj <: U64.t))
 #pop-options
 
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let rec alloc_search_fp_pointer_or_zero
-  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires
       well_formed_heap_part1 g /\
       AllocLemmas.fl_valid g cur_fp fuel /\
@@ -114,7 +114,7 @@ private let rec alloc_search_fp_pointer_or_zero
       FreeListShape.blue_link_fields_valid g /\
       FreeListShape.fp_pointer_or_zero head_fp /\
       wz >= 1 /\
-      (GC.Spec.Allocator.alloc_search g head_fp prev_fp cur_fp wz fuel).obj_out <> 0UL /\
+      (GC.Spec.Allocator.alloc_search g head_fp prev_fp cur_fp wz tag fuel).obj_out <> 0UL /\
       (forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) /\ is_blue obj g = false ==>
         AllocLemmas.chain_avoids g cur_fp obj fuel = true) /\
       (prev_fp <> 0UL ==>
@@ -126,7 +126,7 @@ private let rec alloc_search_fp_pointer_or_zero
          is_blue (prev_fp <: obj_addr) g)))
     (ensures
       FreeListShape.fp_pointer_or_zero
-        (GC.Spec.Allocator.alloc_search g head_fp prev_fp cur_fp wz fuel).fp_out)
+        (GC.Spec.Allocator.alloc_search g head_fp prev_fp cur_fp wz tag fuel).fp_out)
     (decreases fuel)
   =
     if fuel = 0 then ()
@@ -159,8 +159,8 @@ private let rec alloc_search_fp_pointer_or_zero
         // `prev_fp = 0` alone: an unusable predecessor takes the same arm.
         FreeListShape.blue_link_fields_valid_elim g obj;
         assert (FreeListShape.fp_pointer_or_zero next_fp);
-        GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp;
-        alloc_from_block_fp_pointer_or_zero g obj wz next_fp
+        GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp tag;
+        alloc_from_block_fp_pointer_or_zero g obj wz next_fp tag
       end else begin
         AllocLemmas.fl_chain_terminates_elim g cur_fp fuel;
         let chain_blue_next (nobj: obj_addr)
@@ -169,14 +169,14 @@ private let rec alloc_search_fp_pointer_or_zero
           = AllocLemmas.chain_avoids_tail g cur_fp nobj fuel
         in
         FStar.Classical.forall_intro (FStar.Classical.move_requires chain_blue_next);
-        alloc_search_fp_pointer_or_zero g head_fp cur_fp next_fp wz (fuel - 1)
+        alloc_search_fp_pointer_or_zero g head_fp cur_fp next_fp wz (fuel - 1) tag
       end
     end
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let alloc_spec_preserves_fp_pointer_or_zero
-  (g: heap) (fp: U64.t) (wz: nat)
+  (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
   =
     let fuel = heap_words in
     let chain_avoids_non_blue (obj: obj_addr)
@@ -185,12 +185,12 @@ let alloc_spec_preserves_fp_pointer_or_zero
       = reveal_opaque (`%chain_objects_blue) chain_objects_blue
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires chain_avoids_non_blue);
-    alloc_search_fp_pointer_or_zero g fp 0UL fp wz fuel
+    alloc_search_fp_pointer_or_zero g fp 0UL fp wz fuel tag
 #pop-options
 
 #push-options "--z3rlimit 150 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_blfv
-  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires
       well_formed_heap_part1 g /\
@@ -198,11 +198,11 @@ private let rec alloc_search_preserves_blfv
       AllocLemmas.fl_chain_terminates g cur_fp fuel /\
       FreeListShape.blue_link_fields_valid g /\
       wz >= 1 /\
-      (GC.Spec.Allocator.alloc_search g head_fp prev_fp cur_fp wz fuel).obj_out <> 0UL /\
+      (GC.Spec.Allocator.alloc_search g head_fp prev_fp cur_fp wz tag fuel).obj_out <> 0UL /\
       (forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) /\ is_blue obj g = false ==>
         AllocLemmas.chain_avoids g cur_fp obj fuel = true) /\
       (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
-        Seq.mem x (objects zero_addr (GC.Spec.Allocator.alloc_search g head_fp prev_fp cur_fp wz fuel).heap_out)) /\
+        Seq.mem x (objects zero_addr (GC.Spec.Allocator.alloc_search g head_fp prev_fp cur_fp wz tag fuel).heap_out)) /\
       (prev_fp <> 0UL ==>
         (prev_fp <> cur_fp /\
          U64.v prev_fp >= U64.v mword /\ U64.v prev_fp < heap_size /\
@@ -212,7 +212,7 @@ private let rec alloc_search_preserves_blfv
          is_blue (prev_fp <: obj_addr) g)))
     (ensures
       FreeListShape.blue_link_fields_valid
-        (GC.Spec.Allocator.alloc_search g head_fp prev_fp cur_fp wz fuel).heap_out)
+        (GC.Spec.Allocator.alloc_search g head_fp prev_fp cur_fp wz tag fuel).heap_out)
     (decreases fuel)
   =
     let open GC.Spec.Allocator in
@@ -242,12 +242,12 @@ private let rec alloc_search_preserves_blfv
         let leftover = bwz - wz in
         let ahn = U64.v hd + leftover * 8 in
         if ahn + 8 >= heap_size || ahn >= pow2 64 || ahn % 8 <> 0 then
-          GC.Spec.Allocator.alloc_search_found_oob g head_fp prev_fp cur_fp wz fuel
+          GC.Spec.Allocator.alloc_search_found_oob g head_fp prev_fp cur_fp wz fuel tag
         else begin
         wosize_of_object_spec obj g;
         wfh_part1_obj_bound g obj;
         let new_rem_fp = GC.Spec.Allocator.alloc_replacement_fp g obj wz next_fp in
-        GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp;
+        GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp tag;
         let prev_usable =
           prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
           U64.v prev_fp % U64.v mword = 0 && U64.v prev_fp <> U64.v hd in
@@ -267,12 +267,12 @@ private let rec alloc_search_preserves_blfv
         assert (well_formed_heap_part1 base);
         assert (objects zero_addr base == objects zero_addr g);
         assert (read_word base hd == hdr);
-        let heap_out = fst (alloc_from_block base obj wz next_fp) in
-        assert (heap_out == (alloc_search g head_fp prev_fp cur_fp wz fuel).heap_out);
+        let heap_out = fst (alloc_from_block base obj wz tag next_fp) in
+        assert (heap_out == (alloc_search g head_fp prev_fp cur_fp wz tag fuel).heap_out);
         FreeListShape.blue_link_fields_valid_elim g obj;
         assert (FreeListShape.fp_pointer_or_zero next_fp);
-        alloc_from_block_fp_pointer_or_zero g obj wz next_fp;
-        AllocLemmas.alloc_from_block_objects_facts_part1 base obj wz next_fp;
+        alloc_from_block_fp_pointer_or_zero g obj wz next_fp tag;
+        AllocLemmas.alloc_from_block_objects_facts_part1 base obj wz next_fp tag;
 
         let blfv_proof (src: obj_addr)
           : Lemma (requires Seq.mem src (objects zero_addr heap_out) /\
@@ -284,8 +284,8 @@ private let rec alloc_search_preserves_blfv
           = // the only object allocation creates is the allocated block, and
             // that one is white, so a BLUE `src` was already there
             (if not (Seq.mem (src <: U64.t) (objects zero_addr base)) then begin
-               GC.Gen.AllocProps.alloc_from_block_obj_not_blue base obj wz next_fp;
-               AllocLemmas.alloc_from_block_objects_backward_part1 base obj wz next_fp src;
+               GC.Gen.AllocProps.alloc_from_block_obj_not_blue base obj wz next_fp tag;
+               AllocLemmas.alloc_from_block_objects_backward_part1 base obj wz next_fp src tag;
                f_address_spec (mk_hp_addr ahn);
                is_blue_iff src heap_out;
                assert False
@@ -301,9 +301,9 @@ private let rec alloc_search_preserves_blfv
               // the hypotheses -- so it is the blue remainder, and its link
               // word is the one the allocation deliberately leaves alone.
               (if leftover = 0 then begin
-                 GC.Spec.Allocator.alloc_from_block_exact base obj wz next_fp;
-                 let ahdr0 = make_header (U64.uint_to_t wz) white_bits 0UL in
-                 AllocLemmas.make_header_getColor (U64.uint_to_t wz) white_bits 0UL;
+                 GC.Spec.Allocator.alloc_from_block_exact base obj wz next_fp tag;
+                 let ahdr0 = make_header (U64.uint_to_t wz) white_bits tag in
+                 AllocLemmas.make_header_getColor (U64.uint_to_t wz) white_bits tag;
                  getColor_raw ahdr0;
                  read_write_same base hd ahdr0;
                  color_of_object_spec src heap_out;
@@ -311,9 +311,9 @@ private let rec alloc_search_preserves_blfv
                  assert False
                end else ());
               assert (leftover >= 1);
-              GC.Spec.Allocator.alloc_from_block_split_normal base obj wz next_fp;
+              GC.Spec.Allocator.alloc_from_block_split_normal base obj wz next_fp tag;
               let rhdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
-              let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
+              let ahdr = make_header (U64.uint_to_t wz) white_bits tag in
               let b1 = write_word base hd rhdr in
               let ah : hp_addr = U64.uint_to_t ahn in
               assert (heap_out == write_word b1 ah ahdr);
@@ -344,7 +344,7 @@ private let rec alloc_search_preserves_blfv
               wosize_of_object_bound src g;
               block_prev_separated g obj src bwz;
               GC.Gen.AllocProps.alloc_from_block_read_frame
-                base obj wz next_fp (hd_address src);
+                base obj wz next_fp (hd_address src) tag;
               (if prev_usable then begin
                  let prev_obj : obj_addr = prev_fp in
                  hd_address_spec prev_obj;
@@ -366,7 +366,7 @@ private let rec alloc_search_preserves_blfv
               // with a field of its own, `src`'s link word is a full word
               // clear of the block, so the header writes miss it too
               block_prev_separated_body g obj src bwz;
-              GC.Gen.AllocProps.alloc_from_block_read_frame base obj wz next_fp (src <: hp_addr);
+              GC.Gen.AllocProps.alloc_from_block_read_frame base obj wz next_fp (src <: hp_addr) tag;
               if prev_usable && (src <: U64.t) = prev_fp then begin
                 read_write_same g (prev_fp <: hp_addr) new_rem_fp;
                 assert (read_word heap_out src == new_rem_fp)
@@ -394,22 +394,22 @@ private let rec alloc_search_preserves_blfv
           = AllocLemmas.chain_avoids_tail g cur_fp nobj fuel
         in
         FStar.Classical.forall_intro (FStar.Classical.move_requires chain_blue_next);
-        alloc_search_preserves_blfv g head_fp cur_fp next_fp wz (fuel - 1)
+        alloc_search_preserves_blfv g head_fp cur_fp next_fp wz (fuel - 1) tag
       end
     end
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let alloc_spec_preserves_blue_link_fields_valid
-  (g: heap) (fp: U64.t) (wz: nat)
+  (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
   =
     let fuel = heap_words in
-    AllocLemmas.alloc_spec_preserves_objects_part1 g fp wz;
+    AllocLemmas.alloc_spec_preserves_objects_part1 g fp wz tag;
     let chain_avoids_non_blue (obj: obj_addr)
       : Lemma (requires Seq.mem obj (objects zero_addr g) /\ is_blue obj g = false)
               (ensures AllocLemmas.chain_avoids g fp obj fuel = true)
       = reveal_opaque (`%chain_objects_blue) chain_objects_blue
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires chain_avoids_non_blue);
-    alloc_search_preserves_blfv g fp 0UL fp wz fuel
+    alloc_search_preserves_blfv g fp 0UL fp wz fuel tag
 #pop-options

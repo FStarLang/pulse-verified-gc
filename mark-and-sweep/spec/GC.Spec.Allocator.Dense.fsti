@@ -27,10 +27,10 @@ val objects_nonempty_from_header (g1 g2: heap) (start: hp_addr)
           (ensures Seq.length (objects start g2) > 0)
 
 /// alloc_spec preserves heap_objects_dense under well_formed_heap_part1.
-val alloc_spec_preserves_dense_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
+val alloc_spec_preserves_dense_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     heap_objects_dense g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words)
-          (ensures (let r = GC.Spec.Allocator.alloc_spec g fp requested_wz in
+          (ensures (let r = GC.Spec.Allocator.alloc_spec g fp requested_wz tag in
                     heap_objects_dense r.heap_out))

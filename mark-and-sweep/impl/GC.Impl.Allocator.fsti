@@ -60,7 +60,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
                  U64.v wosize >= 1)
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
-    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in
+    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) 0UL in
           s2 == spec_res.heap_out /\
           fst res == spec_res.fp_out /\
           snd res == spec_res.obj_out)
@@ -80,7 +80,7 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
                  U64.v wosize >= 1)
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
-    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in
+    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) 0UL in
           s2 == spec_res.heap_out /\
           fst res == spec_res.fp_out /\
           snd res == spec_res.obj_out)

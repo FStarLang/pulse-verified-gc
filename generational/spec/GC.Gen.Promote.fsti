@@ -85,7 +85,7 @@ let set_promoted_tag (major: heap) (obj: U64.t) (tag: nat) : GTot heap =
 let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
                    (fp: U64.t) (wosize: nat{wosize > 0})
   : GTot promote_one_result =
-  let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
+  let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize 0UL in
   let new_major = alloc_res.heap_out in
   let new_fp = alloc_res.fp_out in
   let new_addr = alloc_res.obj_out in
@@ -101,15 +101,15 @@ let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
 /// Unfold: when alloc fails (OOM), promote_object returns original heap/fp unchanged.
 val promote_object_oom (minor: minor_state) (major: heap) (obj: U64.t)
                        (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out == 0UL)
+  : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize 0UL).obj_out == 0UL)
           (ensures (let res = promote_object minor major obj fp wosize in
                     res.major_out == major /\ res.fp_out == fp /\ res.new_addr == 0UL))
 
 /// Unfold: when alloc succeeds, promote_object = alloc + copy_fields + set_tag.
 val promote_object_success (minor: minor_state) (major: heap) (obj: U64.t)
                            (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out <> 0UL)
-          (ensures (let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
+  : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize 0UL).obj_out <> 0UL)
+          (ensures (let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize 0UL in
                     let res = promote_object minor major obj fp wosize in
                     let copied = copy_fields minor alloc_res.heap_out obj alloc_res.obj_out 0 wosize in
                     let tag = minor_tag minor obj in

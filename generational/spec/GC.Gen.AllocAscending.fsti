@@ -20,7 +20,7 @@ open GC.Spec.Fields
 module U64 = FStar.UInt64
 module FLA = GC.Spec.FreeList.Ascending
 
-val alloc_spec_preserves_fl_ascending (g: heap) (fp: U64.t) (wz: nat)
+val alloc_spec_preserves_fl_ascending (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\ FLA.fl_ascending g fp)
-          (ensures (let r = GC.Spec.Allocator.alloc_spec g fp wz in
+          (ensures (let r = GC.Spec.Allocator.alloc_spec g fp wz tag in
                     FLA.fl_ascending r.GC.Spec.Allocator.heap_out r.GC.Spec.Allocator.fp_out))

@@ -76,17 +76,17 @@ private let prev_write_header (g: heap) (prev: U64.t) (v: U64.t) (a: obj_addr)
 
 /// Allocating from `obj` leaves the header of every other object alone.
 #push-options "--z3rlimit 40"
-private let afb_header (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (a: obj_addr)
+private let afb_header (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (a: obj_addr) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\ Seq.mem obj (objects zero_addr g) /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     Seq.mem a (objects zero_addr g) /\ a <> obj)
-          (ensures read_word (fst (alloc_from_block g obj wz next)) (hd_address a) ==
+          (ensures read_word (fst (alloc_from_block g obj wz tag next)) (hd_address a) ==
                    read_word g (hd_address a))
   = hd_address_spec a; hd_address_spec obj;
     wosize_of_object_spec obj g;
     if U64.v a < U64.v obj then objects_separated zero_addr g a obj
     else objects_separated zero_addr g obj a;
-    alloc_from_block_read_outside g obj wz next (hd_address a)
+    alloc_from_block_read_outside g obj wz next (hd_address a) tag
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -96,12 +96,12 @@ private let afb_header (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (a: obj
 /// The allocated object is white; the block it came from (when distinct) is
 /// still blue, with `leftover - 1` fields.
 #push-options "--z3rlimit 60"
-private let afb_obj_facts (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
+private let afb_obj_facts (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\ Seq.mem obj (objects zero_addr g) /\ wz >= 1 /\
                     is_blue obj g /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     U64.v (hd_address obj) + (U64.v (wosize_of_object obj g) - wz) * 8 + 8 < heap_size)
-          (ensures (let g2 = fst (alloc_from_block g obj wz next) in
+          (ensures (let g2 = fst (alloc_from_block g obj wz tag next) in
                     let lo = U64.v (wosize_of_object obj g) - wz in
                     let oo = U64.v obj + lo * 8 in
                     oo < heap_size /\ oo % 8 == 0 /\
@@ -120,31 +120,31 @@ private let afb_obj_facts (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
     aligned_plus_mul8 (U64.v obj) lo;
     let ooa : obj_addr = U64.uint_to_t oo in
     hd_address_spec ooa;
-    let g2 = fst (alloc_from_block g obj wz next) in
-    AllocLemmas.alloc_from_block_objects_facts_part1 g obj wz next;
+    let g2 = fst (alloc_from_block g obj wz tag next) in
+    AllocLemmas.alloc_from_block_objects_facts_part1 g obj wz next tag;
     let back (h: obj_addr)
       : Lemma (Seq.mem h (objects zero_addr g2) <==>
                (Seq.mem h (objects zero_addr g) \/ U64.v h == oo))
       = if Seq.mem h (objects zero_addr g2) && not (Seq.mem h (objects zero_addr g)) then
-          AllocLemmas.alloc_from_block_objects_backward_part1 g obj wz next h
+          AllocLemmas.alloc_from_block_objects_backward_part1 g obj wz next h tag
         else if U64.v h = oo && not (Seq.mem h (objects zero_addr g)) then begin
           // lo >= 1 here (lo = 0 makes h = obj); the allocated block is new
           if lo = 0 then ()
-          else AllocLemmas.alloc_from_block_alloc_in_objects_part1 g obj wz next;
+          else AllocLemmas.alloc_from_block_alloc_in_objects_part1 g obj wz next tag;
           f_address_spec (U64.uint_to_t (U64.v hd + lo * 8) <: hp_addr)
         end
     in
     FStar.Classical.forall_intro back;
-    let alloc_hdr = make_header (U64.uint_to_t wz) white_bits 0UL in
-    AllocLemmas.make_header_getColor (U64.uint_to_t wz) white_bits 0UL;
+    let alloc_hdr = make_header (U64.uint_to_t wz) white_bits tag in
+    AllocLemmas.make_header_getColor (U64.uint_to_t wz) white_bits tag;
     getColor_raw alloc_hdr;
     if lo = 0 then begin
-      alloc_from_block_exact g obj wz next;
+      alloc_from_block_exact g obj wz next tag;
       read_write_same g hd alloc_hdr;
       color_of_object_spec ooa g2;
       is_blue_iff ooa g2
     end else begin
-      P1.alloc_split_facts_part1 g obj wz next;
+      P1.alloc_split_facts_part1 g obj wz next tag;
       let ah : hp_addr = U64.uint_to_t (U64.v hd + lo * 8) in
       assert (hd_address ooa == ah);
       color_of_object_spec ooa g2;
@@ -152,7 +152,7 @@ private let afb_obj_facts (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
       // the allocated block lies inside obj's, so it was no object of g
       (if Seq.mem ooa (objects zero_addr g) then
          objects_separated zero_addr g obj ooa);
-      AP.alloc_from_block_preserves_blue g obj wz next obj;
+      AP.alloc_from_block_preserves_blue g obj wz next obj tag;
       wosize_of_object_spec obj g2
     end
 #pop-options
@@ -162,27 +162,27 @@ private let afb_obj_facts (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
 /// ---------------------------------------------------------------------------
 
 /// The heap the found arm produces, given whether `prev` is relinked first.
-let found_heap (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) : GTot heap =
+let found_heap (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (tag: U64.t{U64.v tag < 256}) : GTot heap =
   let next = read_word g obj in
   let new_fp = alloc_replacement_fp g obj wz next in
   let gw = if prev = 0UL || not (U64.v prev < heap_size && U64.v prev % U64.v mword = 0)
            then g else write_word g (prev <: hp_addr) new_fp in
-  fst (alloc_from_block gw obj wz next)
+  fst (alloc_from_block gw obj wz tag next)
 
 /// Cells after the found arm: the old ones, minus `obj` unless it split.
 #push-options "--z3rlimit 60"
-private let found_cells (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (x: U64.t)
+private let found_cells (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (tag: U64.t{U64.v tag < 256}) (x: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\ FL.fl_cell g (obj <: U64.t) /\ wz >= 1 /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     U64.v (hd_address obj) + (U64.v (wosize_of_object obj g) - wz) * 8 + 8 < heap_size /\
                     (prev = 0UL \/ (FL.fl_cell g prev /\ prev <> (obj <: U64.t))))
           (ensures (let lo = U64.v (wosize_of_object obj g) - wz in
-                    FL.fl_cell (found_heap g prev obj wz) x <==>
+                    FL.fl_cell (found_heap g prev obj wz tag) x <==>
                     (FL.fl_cell g x /\ (x <> (obj <: U64.t) \/ lo >= 2))))
   = let next = read_word g obj in
     let new_fp = alloc_replacement_fp g obj wz next in
     let gw = if prev = 0UL then g else write_word g (prev <: hp_addr) new_fp in
-    let g2 = fst (alloc_from_block gw obj wz next) in
+    let g2 = fst (alloc_from_block gw obj wz tag next) in
     cell_elim g (obj <: U64.t);
     hd_address_spec obj;
     let bwz = U64.v (wosize_of_object obj g) in
@@ -191,7 +191,7 @@ private let found_cells (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (x: U6
     (if prev <> 0UL then begin
        cell_elim g prev;
        let p : obj_addr = prev in
-       AE.relinked_frame g p obj wz next new_fp p;
+       AE.relinked_frame g p obj wz next new_fp p tag;
        prev_write_header g prev new_fp obj
      end);
     assert (objects zero_addr gw == objects zero_addr g);
@@ -200,7 +200,7 @@ private let found_cells (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (x: U6
     wosize_of_object_spec obj g; wosize_of_object_spec obj gw;
     color_of_object_spec obj g; color_of_object_spec obj gw;
     is_blue_iff obj g; is_blue_iff obj gw;
-    afb_obj_facts gw obj wz next;
+    afb_obj_facts gw obj wz next tag;
     let oo = U64.v obj + lo * 8 in
     if U64.v x >= U64.v mword && U64.v x < heap_size && U64.v x % U64.v mword = 0 then begin
       let xo : obj_addr = x in
@@ -213,7 +213,7 @@ private let found_cells (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (x: U6
         ()
       end
       else if Seq.mem xo (objects zero_addr g) then begin
-        afb_header gw obj wz next xo;
+        afb_header gw obj wz next xo tag;
         (if prev <> 0UL then prev_write_header g prev new_fp xo);
         cell_same_header g g2 xo
       end
@@ -223,7 +223,7 @@ private let found_cells (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (x: U6
 
 /// The found arm keeps the list ascending.
 #push-options "--z3rlimit 60"
-private let found_case (g: heap) (head prev: U64.t) (obj: obj_addr) (wz: nat)
+private let found_case (g: heap) (head prev: U64.t) (obj: obj_addr) (wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\ FLA.fl_ascending g head /\
                     FL.fl_cell g (obj <: U64.t) /\ wz >= 1 /\
                     U64.v (wosize_of_object obj g) >= wz /\
@@ -231,11 +231,11 @@ private let found_case (g: heap) (head prev: U64.t) (obj: obj_addr) (wz: nat)
                     ((prev = 0UL /\ (obj <: U64.t) == head) \/
                      (FL.fl_cell g prev /\ FL.fl_next g prev == (obj <: U64.t))))
           (ensures (let new_fp = alloc_replacement_fp g obj wz (read_word g obj) in
-                    FLA.fl_ascending (found_heap g prev obj wz)
+                    FLA.fl_ascending (found_heap g prev obj wz tag)
                                      (if prev = 0UL then new_fp else head)))
   = let next = read_word g obj in
     let new_fp = alloc_replacement_fp g obj wz next in
-    let g2 = found_heap g prev obj wz in
+    let g2 = found_heap g prev obj wz tag in
     let fp2 = if prev = 0UL then new_fp else head in
     cell_elim g (obj <: U64.t);
     FLA.fl_cell_facts g (obj <: U64.t);
@@ -251,7 +251,7 @@ private let found_case (g: heap) (head prev: U64.t) (obj: obj_addr) (wz: nat)
     assert (FL.fl_next g (obj <: U64.t) == next);
     assert (lo >= 2 ==> new_fp == (obj <: U64.t));
     assert (lo < 2 ==> new_fp == next);
-    FStar.Classical.forall_intro (FStar.Classical.move_requires (found_cells g prev obj wz));
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (found_cells g prev obj wz tag));
     // links: every cell but prev (and obj, unless it split) keeps its link
     let link (a: U64.t)
       : Lemma (requires FL.fl_cell g a /\ a <> prev /\ (lo >= 2 \/ a <> (obj <: U64.t)))
@@ -259,12 +259,12 @@ private let found_case (g: heap) (head prev: U64.t) (obj: obj_addr) (wz: nat)
       = cell_elim g a;
         FLA.fl_cell_facts g a;
         let ao : obj_addr = a in
-        if prev = 0UL then AE.block_frame g obj wz next ao
-        else AE.relinked_frame g (prev <: obj_addr) obj wz next new_fp ao
+        if prev = 0UL then AE.block_frame g obj wz next ao tag
+        else AE.relinked_frame g (prev <: obj_addr) obj wz next new_fp ao tag
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires link);
     (if prev <> 0UL then begin
-       AE.relinked_frame g (prev <: obj_addr) obj wz next new_fp (prev <: obj_addr);
+       AE.relinked_frame g (prev <: obj_addr) obj wz next new_fp (prev <: obj_addr) tag;
        assert (FL.fl_next g2 prev == new_fp)
      end);
     if lo >= 2 then begin
@@ -283,17 +283,17 @@ private let found_case (g: heap) (head prev: U64.t) (obj: obj_addr) (wz: nat)
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 40 --fuel 1"
-private let rec search_asc (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
+private let rec search_asc (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\ FLA.fl_ascending g head /\ wz >= 1 /\
                     ((prev = 0UL /\ cur == head) \/
                      (FL.fl_cell g prev /\ FL.fl_next g prev == cur)))
-          (ensures (let r = alloc_search g head prev cur wz fuel in
+          (ensures (let r = alloc_search g head prev cur wz tag fuel in
                     FLA.fl_ascending r.heap_out r.fp_out))
           (decreases fuel)
-  = if fuel = 0 then alloc_search_fuel_0 g head prev cur wz
+  = if fuel = 0 then alloc_search_fuel_0 g head prev cur wz tag
     else if U64.v cur < U64.v zero_addr + U64.v mword || U64.v cur >= heap_size ||
             U64.v cur % U64.v mword <> 0
-    then alloc_search_invalid g head prev cur wz fuel
+    then alloc_search_invalid g head prev cur wz fuel tag
     else begin
       // cur is a cell: the head, or the link of a cell
       (if prev = 0UL then FLA.fl_ascending_head_cell g head
@@ -307,32 +307,32 @@ private let rec search_asc (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat
       if bwz >= wz then begin
         let ahn = U64.v (hd_address obj) + (bwz - wz) * 8 in
         if ahn + 8 >= heap_size || ahn >= pow2 64 || ahn % 8 <> 0 then
-          alloc_search_found_oob g head prev cur wz fuel
+          alloc_search_found_oob g head prev cur wz fuel tag
         else begin
           spec_next_fp_eq g obj;
           if prev = 0UL then begin
-            alloc_search_found_head g head prev cur wz fuel;
-            found_case g head prev obj wz
+            alloc_search_found_head g head prev cur wz fuel tag;
+            found_case g head prev obj wz tag
           end else begin
             cell_elim g prev;
             FLA.fl_cell_facts g prev;
             FLA.fl_ascending_next_cell g head prev;
             two_objects_apart g (prev <: obj_addr) obj;
-            alloc_search_found_prev g head prev cur wz fuel;
-            found_case g head prev obj wz
+            alloc_search_found_prev g head prev cur wz fuel tag;
+            found_case g head prev obj wz tag
           end
         end
       end
       else begin
-        alloc_search_advance g head prev cur wz fuel;
+        alloc_search_advance g head prev cur wz fuel tag;
         spec_next_fp_eq g obj;
         FLA.fl_cell_facts g cur;
         assert (FL.fl_next g cur == read_word g obj);
-        search_asc g head cur (spec_next_fp g obj) wz (fuel - 1)
+        search_asc g head cur (spec_next_fp g obj) wz (fuel - 1) tag
       end
     end
 #pop-options
 
-let alloc_spec_preserves_fl_ascending (g: heap) (fp: U64.t) (wz: nat) =
+let alloc_spec_preserves_fl_ascending (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}) =
   let w = if wz = 0 then 1 else wz in
-  search_asc g fp 0UL fp w heap_words
+  search_asc g fp 0UL fp w heap_words tag

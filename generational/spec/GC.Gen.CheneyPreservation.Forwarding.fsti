@@ -98,7 +98,7 @@ val promote_object_frame_old_header_derived
       // too, so excluding `obj_out` no longer excludes every rewritten
       // header.  `src` has to be off the free list entirely.
       AllocLemmas.chain_avoids major fp src heap_words = true /\
-      (src <> (Allocator.alloc_spec major fp wz).obj_out))
+      (src <> (Allocator.alloc_spec major fp wz 0UL).obj_out))
     (ensures
       (let res = promote_object minor major obj fp wz in
        read_word res.major_out (hd_address src) == read_word major (hd_address src)))

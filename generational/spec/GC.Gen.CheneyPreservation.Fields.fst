@@ -635,7 +635,7 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
             Forwarding.promote_object_new_addr_in_objects_not_blue minor cs.cs_major addr cs.cs_fp wz;
             let target : obj_addr = res.new_addr in
             Forwarding.promote_object_new_addr_wosize_eq minor cs.cs_major addr cs.cs_fp wz target;
-            let alloc_res = GC.Spec.Allocator.alloc_spec cs.cs_major cs.cs_fp wz in
+            let alloc_res = GC.Spec.Allocator.alloc_spec cs.cs_major cs.cs_fp wz 0UL in
             let copied = WriteBody.copy_fields minor alloc_res.heap_out addr alloc_res.obj_out 0 wz in
             let tag = minor_tag minor addr in
             minor_tag_bound minor addr;

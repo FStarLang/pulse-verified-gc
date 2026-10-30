@@ -135,7 +135,7 @@ private let promote_object_preserves_no_black
           (ensures (let res = promote_object minor major obj fp wz in
                     Mark.no_black_objects res.major_out))
   =
-  let alloc_res = Allocator.alloc_spec major fp wz in
+  let alloc_res = Allocator.alloc_spec major fp wz 0UL in
   if alloc_res.obj_out = 0UL then
     promote_object_oom minor major obj fp wz
   else begin
@@ -143,18 +143,18 @@ private let promote_object_preserves_no_black
     let g_alloc = alloc_res.heap_out in
 
     // Step 1: alloc preserves no_black
-    AllocLemmas.alloc_spec_preserves_no_black_part1 major fp wz;
+    AllocLemmas.alloc_spec_preserves_no_black_part1 major fp wz 0UL;
     assert (Mark.no_black_objects g_alloc);
 
     // Step 2: dst is in objects of g_alloc with sufficient wosize
-    AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
-    AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
+    AllocProps.alloc_spec_obj_in_objects_part1 major fp wz 0UL;
+    AllocProps.alloc_spec_obj_wosize_part1 major fp wz 0UL;
     let dst : obj_addr = alloc_res.obj_out in
     assert (Seq.mem dst (objects zero_addr g_alloc));
     assert (U64.v (wosize_of_object dst g_alloc) >= wz);
 
     // Step 3: copy_fields preserves no_black (delegated)
-    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
+    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz 0UL;
     wfh_part1_obj_bound g_alloc dst;
     dst_fields_valid_from_obj g_alloc dst wz;
     copy_fields_preserves_no_black minor g_alloc obj dst wz;
@@ -418,26 +418,26 @@ let cheney_collect_preserves_fp_pointer_or_zero
 
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let alloc_spec_preserves_gray_black_objects_on_stack_part1
-  (g: heap) (fp: U64.t) (wz: nat{wz > 0}) (st: seq obj_addr)
+  (g: heap) (fp: U64.t) (wz: nat{wz > 0}) (st: seq obj_addr) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words /\
                     chain_objects_blue g fp /\
                     gray_black_objects_on_stack g st)
-          (ensures gray_black_objects_on_stack (Allocator.alloc_spec g fp wz).heap_out st)
+          (ensures gray_black_objects_on_stack (Allocator.alloc_spec g fp wz tag).heap_out st)
   =
-  let r = Allocator.alloc_spec g fp wz in
+  let r = Allocator.alloc_spec g fp wz tag in
   if r.obj_out = 0UL then begin
-    AllocProps.alloc_spec_oom_unchanged g fp wz;
+    AllocProps.alloc_spec_oom_unchanged g fp wz tag;
     assert (r.heap_out == g)
   end else begin
     // The blue lemma's conclusion is vacuous -- its domain excludes
     // `obj_out`, and `obj_out` is the only object allocation creates. Both
     // are kept: the second supplies the fact, the first the instantiation
     // the solver already routes this proof through.
-    AllocLemmas.alloc_spec_new_objects_blue_part1 g fp wz;
-    AllocLemmas.alloc_spec_only_new_is_obj_out_part1 g fp wz;
-    AllocProps.alloc_spec_obj_not_blue_part1 g fp wz;
+    AllocLemmas.alloc_spec_new_objects_blue_part1 g fp wz tag;
+    AllocLemmas.alloc_spec_only_new_is_obj_out_part1 g fp wz tag;
+    AllocProps.alloc_spec_obj_not_blue_part1 g fp wz tag;
     let dst : obj_addr = r.obj_out in
     let aux (h: obj_addr)
       : Lemma (requires Seq.mem h (objects zero_addr r.heap_out) /\
@@ -458,13 +458,13 @@ private let alloc_spec_preserves_gray_black_objects_on_stack_part1
         reveal_opaque (`%chain_objects_blue) chain_objects_blue;
         (if AllocLemmas.chain_avoids g fp (h <: U64.t) heap_words = false then begin
            assert (is_blue h g = true);
-           AllocProps.alloc_spec_preserves_blue_part1 g fp wz h;
+           AllocProps.alloc_spec_preserves_blue_part1 g fp wz h tag;
            is_blue_iff h r.heap_out;
            is_gray_iff h r.heap_out;
            is_black_iff h r.heap_out;
            assert False
          end else ());
-        AllocProps.alloc_spec_read_header_other_part1 g fp wz h;
+        AllocProps.alloc_spec_read_header_other_part1 g fp wz h tag;
         color_of_header_eq h g r.heap_out;
         assert (is_gray h g \/ is_black h g);
         assert (Seq.mem h st)
@@ -577,17 +577,17 @@ private let promote_object_preserves_gray_black_objects_on_stack
           (ensures (let res = promote_object minor major obj fp wz in
                     gray_black_objects_on_stack res.major_out st))
   =
-  let alloc_res = Allocator.alloc_spec major fp wz in
+  let alloc_res = Allocator.alloc_spec major fp wz 0UL in
   if alloc_res.obj_out = 0UL then
     promote_object_oom minor major obj fp wz
   else begin
     promote_object_success minor major obj fp wz;
     let g_alloc = alloc_res.heap_out in
-    alloc_spec_preserves_gray_black_objects_on_stack_part1 major fp wz st;
+    alloc_spec_preserves_gray_black_objects_on_stack_part1 major fp wz st 0UL;
 
-    AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
-    AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
-    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
+    AllocProps.alloc_spec_obj_in_objects_part1 major fp wz 0UL;
+    AllocProps.alloc_spec_obj_wosize_part1 major fp wz 0UL;
+    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz 0UL;
     let dst : obj_addr = alloc_res.obj_out in
     assert (Seq.mem dst (objects zero_addr g_alloc));
     assert (U64.v (wosize_of_object dst g_alloc) >= wz);

@@ -233,28 +233,28 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     R.op_Colon_Equals fp_ref new_fp;
     if U64.eq new_obj 0UL {
       // OOM — alloc_spec with obj_out=0 returns heap unchanged
-      AllocLemmas.alloc_spec_preserves_wfh_part1 'ms fp (U64.v wosize);
-      AllocLemmas.alloc_spec_preserves_fl_valid_part1 'ms fp (U64.v wosize);
-      AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 'ms fp (U64.v wosize);
+      AllocLemmas.alloc_spec_preserves_wfh_part1 'ms fp (U64.v wosize) 0UL;
+      AllocLemmas.alloc_spec_preserves_fl_valid_part1 'ms fp (U64.v wosize) 0UL;
+      AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 'ms fp (U64.v wosize) 0UL;
       // Spec refinement for OOM: promote_object returns {major_out='ms; fp_out='fp; new_addr=0UL}
-      AllocProps.alloc_spec_oom_unchanged 'ms fp (U64.v wosize);
+      AllocProps.alloc_spec_oom_unchanged 'ms fp (U64.v wosize) 0UL;
       PromoteSpec.promote_object_oom {data='md; bump='mb} 'ms obj 'fp (U64.v wosize);
       0UL
     } else {
       // Derive bounds from allocator postconditions:
-      AllocProps.alloc_spec_obj_in_objects_part1 'ms fp (U64.v wosize);
+      AllocProps.alloc_spec_obj_in_objects_part1 'ms fp (U64.v wosize) 0UL;
       assert (pure (U64.v new_obj >= U64.v mword /\
                     U64.v new_obj < heap_size /\
                     U64.v new_obj % U64.v mword == 0));
-      AllocLemmas.alloc_spec_preserves_wfh_part1 'ms fp (U64.v wosize);
-      AllocLemmas.alloc_spec_preserves_fl_valid_part1 'ms fp (U64.v wosize);
-      AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 'ms fp (U64.v wosize);
-      AllocProps.alloc_spec_obj_wosize_part1 'ms fp (U64.v wosize);
+      AllocLemmas.alloc_spec_preserves_wfh_part1 'ms fp (U64.v wosize) 0UL;
+      AllocLemmas.alloc_spec_preserves_fl_valid_part1 'ms fp (U64.v wosize) 0UL;
+      AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 'ms fp (U64.v wosize) 0UL;
+      AllocProps.alloc_spec_obj_wosize_part1 'ms fp (U64.v wosize) 0UL;
       SF.wfh_part1_obj_bound
-        (GC.Spec.Allocator.alloc_spec 'ms fp (U64.v wosize)).heap_out
+        (GC.Spec.Allocator.alloc_spec 'ms fp (U64.v wosize) 0UL).heap_out
         (new_obj <: obj_addr);
       assert (pure (U64.v new_obj + U64.v wosize * 8 <= heap_size));
-      AllocLemmas.alloc_spec_obj_not_in_chain_part1 'ms fp (U64.v wosize);
+      AllocLemmas.alloc_spec_obj_not_in_chain_part1 'ms fp (U64.v wosize) 0UL;
       // Copy all fields (0..wosize-1) from minor to major
       copy_fields_loop minor major obj new_obj wosize;
       // Bind the existential witnesses from copy_fields_loop

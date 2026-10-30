@@ -12,7 +12,7 @@
 /// 2. For each blue (free) block, check if wosize >= requested
 /// 3. If leftover >= 2: split — create remainder block
 /// 4. If leftover < 2: use entire block (no split)
-/// 5. Recolor allocated block's header to White, tag 0
+/// 5. Write the allocated block's header: White, with the caller's tag
 /// 6. Return (updated heap, new free pointer, allocated obj_addr)
 ///
 /// Note: field zeroing (step 7 in original allocator.c) is specified
@@ -44,32 +44,32 @@ module ImplObject = GC.Spec.Object
 /// Step lemmas for alloc_search (for loop correspondence proofs)
 /// ---------------------------------------------------------------------------
 
-let alloc_replacement_fp_eq (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
+let alloc_replacement_fp_eq (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
   = hd_address_spec obj; hd_address_bounds obj;
     reveal_opaque (`%alloc_from_block) alloc_from_block
 
 /// When fuel = 0: OOM
-let alloc_search_fuel_0 (g: heap) (head prev cur: U64.t) (wz: nat)
+let alloc_search_fuel_0 (g: heap) (head prev cur: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
   = ()
 
 /// When cur is invalid (not a valid obj_addr): OOM
-let alloc_search_invalid (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
+let alloc_search_invalid (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   = ()
 
 /// When the block is too small: advance to next
-let alloc_search_advance (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
+let alloc_search_advance (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   = ()
 
 /// When the block fits and prev = 0 (head of list)
-let alloc_search_found_head (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
+let alloc_search_found_head (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   = ()
 
 /// When the block fits and prev is a valid hp_addr
-let alloc_search_found_prev (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
+let alloc_search_found_prev (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   = ()
 
 /// The block fits but the right-justified object would be out of bounds
-let alloc_search_found_oob (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
+let alloc_search_found_oob (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   = ()
 
 /// Helper: for multiples of d, a < b implies a + d <= b
@@ -92,21 +92,21 @@ let spec_next_fp_eq (g: heap) (obj: obj_addr)
 
 /// Exact fit: leftover = 0
 #push-options "--z3rlimit 25"
-let alloc_from_block_exact (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
+let alloc_from_block_exact (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag: U64.t{U64.v tag < 256})
   = hd_address_spec obj; hd_address_bounds obj;
     reveal_opaque (`%alloc_from_block) alloc_from_block
 #pop-options
 
 /// Split, normal: all bounds pass
 #push-options "--z3rlimit 25 --fuel 1"
-let alloc_from_block_split_normal (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
+let alloc_from_block_split_normal (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag: U64.t{U64.v tag < 256})
   = hd_address_spec obj; hd_address_bounds obj;
     reveal_opaque (`%alloc_from_block) alloc_from_block
 #pop-options
 
 /// The right-justified object header would fall outside the heap
 #push-options "--z3rlimit 25"
-let alloc_from_block_oob (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
+let alloc_from_block_oob (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag: U64.t{U64.v tag < 256})
   = hd_address_spec obj; hd_address_bounds obj;
     reveal_opaque (`%alloc_from_block) alloc_from_block
 #pop-options
@@ -123,7 +123,7 @@ let alloc_from_block_oob (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
 #push-options "--z3rlimit 60 --fuel 1"
 /// Writes stay inside the block, so a disjoint address is untouched.
 let alloc_from_block_read_outside
-  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr)
+  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr) (tag: U64.t{U64.v tag < 256})
   = hd_address_spec obj; hd_address_bounds obj;
     reveal_opaque (`%alloc_from_block) alloc_from_block;
     let hd = hd_address obj in
@@ -134,7 +134,7 @@ let alloc_from_block_read_outside
     else if ahn >= heap_size || ahn >= pow2 64 || ahn % 8 <> 0 then ()
     else begin
       let ah : hp_addr = U64.uint_to_t ahn in
-      let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
+      let ahdr = make_header (U64.uint_to_t wz) white_bits tag in
       if leftover >= 2 then begin
         let rhdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
         read_write_different g hd addr rhdr;
@@ -150,8 +150,8 @@ let alloc_from_block_read_outside
 
 #push-options "--z3rlimit 25 --fuel 1"
 /// The remainder keeps hd; the object header is written above it.
-let alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
-  = alloc_from_block_split_normal g obj wz next;
+let alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag: U64.t{U64.v tag < 256})
+  = alloc_from_block_split_normal g obj wz next tag;
     hd_address_spec obj; hd_address_bounds obj;
     let hd = hd_address obj in
     let bwz = U64.v (getWosize (read_word g hd)) in
@@ -160,7 +160,7 @@ let alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U6
     let g1 = write_word g hd rhdr in
     let ahn = U64.v hd + leftover * 8 in
     let ah : hp_addr = U64.uint_to_t ahn in
-    let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
+    let ahdr = make_header (U64.uint_to_t wz) white_bits tag in
     // leftover >= 2, so ah >= hd + 16: the object header does not touch hd
     read_write_different g1 ah hd ahdr;
     read_write_same g hd rhdr
@@ -168,8 +168,8 @@ let alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U6
 
 #push-options "--z3rlimit 25 --fuel 1"
 /// Neither write touches obj = hd + 8, so the cell's link survives.
-let alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
-  = alloc_from_block_split_normal g obj wz next;
+let alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag: U64.t{U64.v tag < 256})
+  = alloc_from_block_split_normal g obj wz next tag;
     hd_address_spec obj; hd_address_bounds obj;
     let hd = hd_address obj in
     let bwz = U64.v (getWosize (read_word g hd)) in
@@ -178,7 +178,7 @@ let alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next:
     let g1 = write_word g hd rhdr in
     let ahn = U64.v hd + leftover * 8 in
     let ah : hp_addr = U64.uint_to_t ahn in
-    let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
+    let ahdr = make_header (U64.uint_to_t wz) white_bits tag in
     // hd + 8 differs from hd, and from ah because leftover >= 2
     read_write_different g hd (obj <: hp_addr) rhdr;
     read_write_different g1 ah (obj <: hp_addr) ahdr
@@ -186,8 +186,8 @@ let alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next:
 
 #push-options "--z3rlimit 25 --fuel 1"
 /// Only two words are written.
-let alloc_split_normal_read_other (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr)
-  = alloc_from_block_split_normal g obj wz next;
+let alloc_split_normal_read_other (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr) (tag: U64.t{U64.v tag < 256})
+  = alloc_from_block_split_normal g obj wz next tag;
     hd_address_spec obj; hd_address_bounds obj;
     let hd = hd_address obj in
     let bwz = U64.v (getWosize (read_word g hd)) in
@@ -196,7 +196,7 @@ let alloc_split_normal_read_other (g: heap) (obj: obj_addr) (wz: nat) (next: U64
     let g1 = write_word g hd rhdr in
     let ahn = U64.v hd + leftover * 8 in
     let ah : hp_addr = U64.uint_to_t ahn in
-    let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
+    let ahdr = make_header (U64.uint_to_t wz) white_bits tag in
     read_write_different g hd addr rhdr;
     read_write_different g1 ah addr ahdr
 #pop-options

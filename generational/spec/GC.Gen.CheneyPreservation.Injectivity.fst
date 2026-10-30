@@ -289,7 +289,7 @@ private let promote_object_preserves_old_target_not_blue
   promote_object_success minor major obj fp wz;
   promote_object_preserves_objects_part1 minor major obj fp wz;
   chain_avoids_from_blue major fp target;
-  AllocProps.alloc_spec_obj_ne_excl major fp wz target;
+  AllocProps.alloc_spec_obj_ne_excl major fp wz target 0UL;
   assert (res.new_addr <> target);
   promote_object_frame_old_header_derived minor major obj fp wz target;
   color_of_header_eq target major res.major_out;
@@ -444,7 +444,7 @@ private let cheney_forward_normal_preserves_disjoint_inv
           if x = addr then begin
             assert (cs'.cs_fwd addr == res.new_addr);
             chain_avoids_from_blue cs.cs_major cs.cs_fp y;
-            AllocProps.alloc_spec_obj_ne_excl cs.cs_major cs.cs_fp wz y;
+            AllocProps.alloc_spec_obj_ne_excl cs.cs_major cs.cs_fp wz y 0UL;
             assert (res.new_addr <> y)
           end else begin
             cheney_forward_normal_other_fwd minor cs addr x;
@@ -536,7 +536,7 @@ private let cheney_forward_normal_preserves_inj_inv
               cheney_forward_normal_old_target_preserved minor cs addr y;
               let ty : obj_addr = cs.cs_fwd y in
               chain_avoids_from_blue cs.cs_major cs.cs_fp ty;
-              AllocProps.alloc_spec_obj_ne_excl cs.cs_major cs.cs_fp wz ty;
+              AllocProps.alloc_spec_obj_ne_excl cs.cs_major cs.cs_fp wz ty 0UL;
               assert (res.new_addr <> ty);
               assert (cs'.cs_fwd addr == res.new_addr);
               assert (res.new_addr == ty)
@@ -548,7 +548,7 @@ private let cheney_forward_normal_preserves_inj_inv
             cheney_forward_normal_old_target_preserved minor cs addr x;
             let tx : obj_addr = cs.cs_fwd x in
             chain_avoids_from_blue cs.cs_major cs.cs_fp tx;
-            AllocProps.alloc_spec_obj_ne_excl cs.cs_major cs.cs_fp wz tx;
+            AllocProps.alloc_spec_obj_ne_excl cs.cs_major cs.cs_fp wz tx 0UL;
             assert (res.new_addr <> tx);
             assert (cs'.cs_fwd addr == res.new_addr);
             assert (res.new_addr == tx)

@@ -135,25 +135,25 @@ private let rec write_header_same_wosize_preserves_objects_aux
 /// allocated object, so `objects` gains an entry.  Callers must dispatch on
 /// leftover = 0 versus leftover = 1 rather than lumping them together.
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
-private let alloc_from_block_exact_objects_eq_part1 (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
+private let alloc_from_block_exact_objects_eq_part1 (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     Seq.mem obj (objects zero_addr g) /\
                     (let bwz = U64.v (getWosize (read_word g (hd_address obj))) in
                      bwz == wz) /\
                     wz >= 1)
-          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+          (ensures (let (g', _) = alloc_from_block g obj wz tag next_fp in
                     objects zero_addr g' == objects zero_addr g))
   = let hd = hd_address obj in
     let hdr = read_word g hd in
     let bwz = U64.v (getWosize hdr) in
     hd_address_spec obj;
     hd_address_bounds obj;
-    SA.alloc_from_block_exact g obj wz next_fp;
-    let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
+    SA.alloc_from_block_exact g obj wz next_fp tag;
+    let ahdr = make_header (U64.uint_to_t wz) white_bits tag in
     let g1 = write_word g hd ahdr in
-    assert (alloc_from_block g obj wz next_fp == (g1, next_fp));
+    assert (alloc_from_block g obj wz tag next_fp == (g1, next_fp));
     getWosize_bound hdr;
-    AllocLemmas.make_header_getWosize (U64.uint_to_t wz) white_bits 0UL;
+    AllocLemmas.make_header_getWosize (U64.uint_to_t wz) white_bits tag;
     assert (getWosize ahdr == getWosize hdr);
     write_header_same_wosize_preserves_objects_aux zero_addr g hd ahdr
 #pop-options
@@ -175,7 +175,7 @@ private let alloc_from_block_exact_objects_eq_part1 (g: heap) (obj: obj_addr) (w
 /// and `ah + (wz+1)*8 = hd + (bwz+1)*8` is where the next block always
 /// started -- so density is preserved by construction.
 private let alloc_from_block_split_dense
-  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
+  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     heap_objects_dense g /\
                     Seq.mem obj (objects zero_addr g) /\
@@ -183,7 +183,7 @@ private let alloc_from_block_split_dense
                     (let hdr = read_word g (hd_address obj) in
                      let bwz = U64.v (getWosize hdr) in
                      bwz >= wz /\ bwz - wz >= 1))
-          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+          (ensures (let (g', _) = alloc_from_block g obj wz tag next_fp in
                     heap_objects_dense g'))
   = reveal_opaque (`%heap_objects_dense) heap_objects_dense;
     let hd_obj = hd_address obj in
@@ -201,19 +201,19 @@ private let alloc_from_block_split_dense
     assert (ahn + 8 + wz * 8 == U64.v hd_obj + 8 + bwz * 8);
     assert (ahn + 8 < heap_size);
 
-    SA.alloc_from_block_split_normal g obj wz next_fp;
+    SA.alloc_from_block_split_normal g obj wz next_fp tag;
     let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
     let g1 = write_word g hd_obj rhdr in
     let ah : hp_addr = U64.uint_to_t ahn in
-    let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
+    let ahdr = make_header (U64.uint_to_t wz) white_bits tag in
     let g2 = write_word g1 ah ahdr in
     let g' = g2 in
 
-    AllocLemmas.make_header_getWosize (U64.uint_to_t wz) white_bits 0UL;
+    AllocLemmas.make_header_getWosize (U64.uint_to_t wz) white_bits tag;
     AllocLemmas.make_header_getWosize (U64.uint_to_t rw) blue_bits 0UL;
 
     // the allocated block is an object of g'
-    Part1.alloc_from_block_alloc_in_objects_part1 g obj wz next_fp;
+    Part1.alloc_from_block_alloc_in_objects_part1 g obj wz next_fp tag;
     f_address_spec ah;
     let alloc_obj : obj_addr = f_address ah in
     assert (Seq.mem (alloc_obj <: U64.t) (objects zero_addr g'));
@@ -251,7 +251,7 @@ private let alloc_from_block_split_dense
             assert (Seq.mem (f_address hd_obj) (objects zero_addr g));
             density_at g hd_obj;
             assert (Seq.mem fa_next (objects zero_addr g));
-            Part1.alloc_split_old_in_new_part1 g obj wz next_fp (fa_next <: obj_addr);
+            Part1.alloc_split_old_in_new_part1 g obj wz next_fp (fa_next <: obj_addr) tag;
             // the next header is beyond both writes
             aligned_apart ah next_hp;
             read_write_different g1 ah next_hp ahdr;
@@ -270,7 +270,7 @@ private let alloc_from_block_split_dense
           assert (read_word g' start == read_word g start);
           // `fa` must be an old object: the only new one is the allocated block
           if not (Seq.mem fa (objects zero_addr g)) then begin
-            AllocLemmas.alloc_from_block_objects_backward_part1 g obj wz next_fp fa;
+            AllocLemmas.alloc_from_block_objects_backward_part1 g obj wz next_fp fa tag;
             assert false
           end else ();
           objects_nonempty_from_header g' g start;
@@ -282,7 +282,7 @@ private let alloc_from_block_split_dense
             let fa_next = f_address next_hp in
             f_address_spec next_hp;
             assert (Seq.mem fa_next (objects zero_addr g));
-            Part1.alloc_split_old_in_new_part1 g obj wz next_fp (fa_next <: obj_addr);
+            Part1.alloc_split_old_in_new_part1 g obj wz next_fp (fa_next <: obj_addr) tag;
             if next_hp = hd_obj then begin
               aligned_apart ah next_hp;
               read_write_different g1 ah next_hp ahdr;
@@ -312,7 +312,7 @@ private let alloc_from_block_split_dense
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 
 private let alloc_from_block_exact_dense
-  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
+  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     heap_objects_dense g /\
                     Seq.mem obj (objects zero_addr g) /\
@@ -320,18 +320,18 @@ private let alloc_from_block_exact_dense
                     (let hdr = read_word g (hd_address obj) in
                      let bwz = U64.v (getWosize hdr) in
                      bwz == wz))
-          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+          (ensures (let (g', _) = alloc_from_block g obj wz tag next_fp in
                     heap_objects_dense g'))
   = reveal_opaque (`%heap_objects_dense) heap_objects_dense;
-    let (g', _) = alloc_from_block g obj wz next_fp in
-    alloc_from_block_exact_objects_eq_part1 g obj wz next_fp;
+    let (g', _) = alloc_from_block g obj wz tag next_fp in
+    alloc_from_block_exact_objects_eq_part1 g obj wz next_fp tag;
     let hdr = read_word g (hd_address obj) in
     let bwz = U64.v (getWosize hdr) in
-    SA.alloc_from_block_exact g obj wz next_fp;
+    SA.alloc_from_block_exact g obj wz next_fp tag;
     hd_address_spec obj;
     hd_address_bounds obj;
-    let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
-    AllocLemmas.make_header_getWosize (U64.uint_to_t wz) white_bits 0UL;
+    let ahdr = make_header (U64.uint_to_t wz) white_bits tag in
+    AllocLemmas.make_header_getWosize (U64.uint_to_t wz) white_bits tag;
     // All wosizes preserved (only hd_address(obj) written, same wosize)
     let hd_obj = hd_address obj in
     let aux_wz (p: hp_addr) : Lemma (getWosize (read_word g' p) == getWosize (read_word g p))
@@ -398,20 +398,20 @@ private let alloc_from_block_exact_dense
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 
 private let alloc_from_block_preserves_dense
-  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
+  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     heap_objects_dense g /\
                     Seq.mem obj (objects zero_addr g) /\
                     wz >= 1 /\
                     U64.v (getWosize (read_word g (hd_address obj))) >= wz)
-          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+          (ensures (let (g', _) = alloc_from_block g obj wz tag next_fp in
                     heap_objects_dense g'))
   = let hdr = read_word g (hd_address obj) in
     let bwz = U64.v (getWosize hdr) in
     if bwz - wz >= 1 then
-      alloc_from_block_split_dense g obj wz next_fp
+      alloc_from_block_split_dense g obj wz next_fp tag
     else
-      alloc_from_block_exact_dense g obj wz next_fp
+      alloc_from_block_exact_dense g obj wz next_fp tag
 
 #pop-options
 
@@ -493,7 +493,7 @@ private let write_field_preserves_dense
 /// field write preserves density, and then the block writes preserve it.
 private let alloc_search_found_prev_dense
   (g: heap) (obj: obj_addr) (prev_fp: obj_addr) (wz: nat) (next_fp: U64.t)
-  (new_fp: U64.t)
+  (new_fp: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\
                     heap_objects_dense g /\
                     Seq.mem obj (objects zero_addr g) /\
@@ -505,7 +505,7 @@ private let alloc_search_found_prev_dense
                     (let bwz = U64.v (getWosize (read_word g (hd_address obj))) in
                      bwz >= wz))
           (ensures (let gw = write_word g (prev_fp <: hp_addr) new_fp in
-                    heap_objects_dense (fst (alloc_from_block gw obj wz next_fp))))
+                    heap_objects_dense (fst (alloc_from_block gw obj wz tag next_fp))))
   = let gw = write_word g (prev_fp <: hp_addr) new_fp in
     hd_address_spec prev_fp;
     hd_address_bounds prev_fp;
@@ -522,7 +522,7 @@ private let alloc_search_found_prev_dense
     // Step 2: obj's header survives it, so the block writes see the same block
     aligned_apart (prev_fp <: hp_addr) (hd_address obj);
     read_write_different g (prev_fp <: hp_addr) (hd_address obj) new_fp;
-    alloc_from_block_preserves_dense gw obj wz next_fp
+    alloc_from_block_preserves_dense gw obj wz next_fp tag
 
 #pop-options
 
@@ -533,7 +533,7 @@ private let alloc_search_found_prev_dense
 #push-options "--z3rlimit 150 --fuel 4 --ifuel 1"
 
 private let rec alloc_search_preserves_dense
-  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires well_formed_heap_part1 g /\
              heap_objects_dense g /\
@@ -547,7 +547,7 @@ private let rec alloc_search_preserves_dense
                 U64.v prev_fp % U64.v mword == 0 /\
                 Seq.mem (prev_fp <: obj_addr) (objects zero_addr g) /\
                 U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
-    (ensures heap_objects_dense (alloc_search g head_fp prev_fp cur_fp wz fuel).heap_out)
+    (ensures heap_objects_dense (alloc_search g head_fp prev_fp cur_fp wz tag fuel).heap_out)
     (decreases fuel)
   = if fuel = 0 then ()
     else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
@@ -569,20 +569,20 @@ private let rec alloc_search_preserves_dense
         if ahn + 8 >= heap_size || ahn >= pow2 64 || ahn % 8 <> 0 then
           // the right-justified object would leave the heap; the search bails
           // and the heap is untouched
-          SA.alloc_search_found_oob g head_fp prev_fp cur_fp wz fuel
+          SA.alloc_search_found_oob g head_fp prev_fp cur_fp wz fuel tag
         else if prev_fp = 0UL then begin
-          SA.alloc_search_found_head g head_fp prev_fp cur_fp wz fuel;
-          alloc_from_block_preserves_dense g obj wz next_fp
+          SA.alloc_search_found_head g head_fp prev_fp cur_fp wz fuel tag;
+          alloc_from_block_preserves_dense g obj wz next_fp tag
         end else if U64.v prev_fp <> U64.v hd then begin
           // prev usable: the search relinks it, then allocates
-          SA.alloc_search_found_prev g head_fp prev_fp cur_fp wz fuel;
+          SA.alloc_search_found_prev g head_fp prev_fp cur_fp wz fuel tag;
           alloc_search_found_prev_dense g obj (prev_fp <: obj_addr) wz next_fp
-            (SA.alloc_replacement_fp g obj wz next_fp)
+            (SA.alloc_replacement_fp g obj wz next_fp) tag
         end else begin
           // prev is the degenerate wosize-0 shape; the search treats it as
           // absent and allocates without touching any link
-          SA.alloc_search_found_head g head_fp prev_fp cur_fp wz fuel;
-          alloc_from_block_preserves_dense g obj wz next_fp
+          SA.alloc_search_found_head g head_fp prev_fp cur_fp wz fuel tag;
+          alloc_from_block_preserves_dense g obj wz next_fp tag
         end
       end else begin
         // Block too small, advance to next
@@ -596,7 +596,7 @@ private let rec alloc_search_preserves_dense
           assert (AllocLemmas.fl_chain_terminates g next_fp (fuel - 1) = true);
           // fl_valid_elim gives read_word g obj ≠ obj, i.e. next_fp ≠ cur_fp
           assert (next_fp <> cur_fp);
-          alloc_search_preserves_dense g head_fp cur_fp next_fp wz (fuel - 1)
+          alloc_search_preserves_dense g head_fp cur_fp next_fp wz (fuel - 1) tag
         end else ()
       end
     end
@@ -605,8 +605,8 @@ private let rec alloc_search_preserves_dense
 
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 
-let alloc_spec_preserves_dense_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
+let alloc_spec_preserves_dense_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_preserves_dense g fp 0UL fp wz heap_words
+    alloc_search_preserves_dense g fp 0UL fp wz heap_words tag
 
 #pop-options

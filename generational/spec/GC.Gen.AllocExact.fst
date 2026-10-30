@@ -357,25 +357,25 @@ private let two_objects_apart (g: heap) (a b: obj_addr)
 /// The allocator's frame, block-local form: allocating from `obj` changes no
 /// other object's link word, and at a split not even `obj`'s.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-let block_frame (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (a: obj_addr)
+let block_frame (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (a: obj_addr) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\ Seq.mem obj (objects zero_addr g) /\ wz >= 1 /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     Seq.mem a (objects zero_addr g) /\ U64.v (wosize_of_object a g) >= 1 /\
                     (U64.v (wosize_of_object obj g) - wz >= 2 \/ a <> obj))
-          (ensures read_word (fst (alloc_from_block g obj wz next)) a == read_word g a)
+          (ensures read_word (fst (alloc_from_block g obj wz tag next)) a == read_word g a)
   = wosize_of_object_spec obj g;
     hd_address_spec a;
     assert (U64.v (hd_address a) + 16 <= heap_size);
     if U64.v (wosize_of_object obj g) - wz >= 1
-    then P2.alloc_split_fl_transfer_pre_part1 g obj wz next a
-    else P2.alloc_exact_fl_transfer_pre_part1 g obj wz next a
+    then P2.alloc_split_fl_transfer_pre_part1 g obj wz next a tag
+    else P2.alloc_exact_fl_transfer_pre_part1 g obj wz next a tag
 #pop-options
 
 /// The same, after the search has first relinked the predecessor `prev`:
 /// the only link words that differ from `g` are `prev`'s, which now holds
 /// `new_fp`, and -- at a one-word leftover -- `obj`'s.
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
-let relinked_frame (g: heap) (prev obj: obj_addr) (wz: nat) (next new_fp: U64.t) (a: obj_addr)
+let relinked_frame (g: heap) (prev obj: obj_addr) (wz: nat) (next new_fp: U64.t) (a: obj_addr) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\ Seq.mem obj (objects zero_addr g) /\ wz >= 1 /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     Seq.mem prev (objects zero_addr g) /\ U64.v (wosize_of_object prev g) >= 1 /\
@@ -383,7 +383,7 @@ let relinked_frame (g: heap) (prev obj: obj_addr) (wz: nat) (next new_fp: U64.t)
                     Seq.mem a (objects zero_addr g) /\ U64.v (wosize_of_object a g) >= 1 /\
                     (U64.v (wosize_of_object obj g) - wz >= 2 \/ a <> obj))
           (ensures (let gw = write_word g (prev <: hp_addr) new_fp in
-                    let g2 = fst (alloc_from_block gw obj wz next) in
+                    let g2 = fst (alloc_from_block gw obj wz tag next) in
                     well_formed_heap_part1 gw /\
                     objects zero_addr gw == objects zero_addr g /\
                     wosize_of_object obj gw == wosize_of_object obj g /\
@@ -399,13 +399,13 @@ let relinked_frame (g: heap) (prev obj: obj_addr) (wz: nat) (next new_fp: U64.t)
     hd_address_spec prev;
     wosize_of_object_spec prev g; wosize_of_object_spec prev gw;
     read_write_different g (prev <: hp_addr) (hd_address prev) new_fp;
-    block_frame gw obj wz next prev;
+    block_frame gw obj wz next prev tag;
     if (a <: U64.t) <> (prev <: U64.t) then begin
       two_objects_apart g prev a;
       read_write_different g (prev <: hp_addr) (a <: hp_addr) new_fp;
       read_write_different g (prev <: hp_addr) (hd_address a) new_fp;
       wosize_of_object_spec a g; wosize_of_object_spec a gw;
-      block_frame gw obj wz next a
+      block_frame gw obj wz next a tag
     end
 #pop-options
 
@@ -480,7 +480,7 @@ let unlinked (g': heap) (obj_out: U64.t) (y: obj_addr) : prop =
 
 /// The search allocates from the head of the list (`prev = 0`).
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
-let found_head (g: heap) (obj: obj_addr) (wz: nat) (y: obj_addr) (n: nat)
+let found_head (g: heap) (obj: obj_addr) (wz: nat) (y: obj_addr) (n: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\ wz >= 1 /\
                     AllocLemmas.fl_valid g obj heap_words /\
                     AllocLemmas.fl_chain_terminates g obj heap_words /\
@@ -488,7 +488,7 @@ let found_head (g: heap) (obj: obj_addr) (wz: nat) (y: obj_addr) (n: nat)
                     meets_at g obj (y <: U64.t) n /\ n < heap_words)
           (ensures (let next = read_word g obj in
                     let bwz = U64.v (wosize_of_object obj g) in
-                    let g' = fst (alloc_from_block g obj wz next) in
+                    let g' = fst (alloc_from_block g obj wz tag next) in
                     let fp' = alloc_replacement_fp g obj wz next in
                     let obj_out = U64.v obj + (bwz - wz) * 8 in
                     AllocLemmas.chain_avoids g' fp' (y <: U64.t) heap_words = false \/
@@ -500,7 +500,7 @@ let found_head (g: heap) (obj: obj_addr) (wz: nat) (y: obj_addr) (n: nat)
     let bwz = U64.v (wosize_of_object obj g) in
     assert (U64.v hd + 8 + bwz * 8 <= heap_size);
     let next = read_word g obj in
-    let g' = fst (alloc_from_block g obj wz next) in
+    let g' = fst (alloc_from_block g obj wz tag next) in
     let lo = bwz - wz in
     // the walk is at obj after 0 steps, at next after 1
     AllocChain.walk_chain_zero g (obj <: U64.t);
@@ -512,7 +512,7 @@ let found_head (g: heap) (obj: obj_addr) (wz: nat) (y: obj_addr) (n: nat)
         (requires Seq.mem a (objects zero_addr g) /\ U64.v (wosize_of_object a g) >= 1 /\
                   (a <: U64.t) <> (y <: U64.t))
         (ensures read_word g' a == read_word g a)
-        = block_frame g obj wz next a in
+        = block_frame g obj wz next a tag in
       FStar.Classical.forall_intro (FStar.Classical.move_requires fr);
       AllocChain.chain_avoids_zero g (obj <: U64.t) (y <: U64.t);
       meets_at_mono g (obj <: U64.t) (y <: U64.t) n n;
@@ -522,7 +522,7 @@ let found_head (g: heap) (obj: obj_addr) (wz: nat) (y: obj_addr) (n: nat)
       // y is obj itself
       meets_at_unique g (obj <: U64.t) (y <: U64.t) (obj <: U64.t) 0;
       if lo = 1 then begin
-        P1.alloc_split_facts_part1 g obj wz next;
+        P1.alloc_split_facts_part1 g obj wz next tag;
         wosize_of_object_spec obj g'
       end
     end
@@ -538,7 +538,7 @@ let found_head (g: heap) (obj: obj_addr) (wz: nat) (y: obj_addr) (n: nat)
         (requires Seq.mem a (objects zero_addr g) /\ U64.v (wosize_of_object a g) >= 1 /\
                   (a <: U64.t) <> (obj <: U64.t))
         (ensures read_word g' a == read_word g a)
-        = block_frame g obj wz next a in
+        = block_frame g obj wz next a tag in
       FStar.Classical.forall_intro (FStar.Classical.move_requires fr);
       meets_transfer_within g g' next (y <: U64.t) (obj <: U64.t) (obj <: U64.t) (n - 1) n;
       met_more g' next (y <: U64.t) n heap_words
@@ -547,7 +547,7 @@ let found_head (g: heap) (obj: obj_addr) (wz: nat) (y: obj_addr) (n: nat)
 
 /// The search allocates from a block past the head, relinking `prev` first.
 #push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
-let found_rest (g: heap) (head: U64.t) (prev obj: obj_addr) (wz: nat) (fuel: nat) (y: obj_addr) (n: nat)
+let found_rest (g: heap) (head: U64.t) (prev obj: obj_addr) (wz: nat) (fuel: nat) (y: obj_addr) (n: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\ wz >= 1 /\
                     fuel > 0 /\ fuel < heap_words /\
                     AllocLemmas.fl_valid g obj fuel /\
@@ -566,7 +566,7 @@ let found_rest (g: heap) (head: U64.t) (prev obj: obj_addr) (wz: nat) (fuel: nat
                     let bwz = U64.v (wosize_of_object obj g) in
                     let new_fp = alloc_replacement_fp g obj wz next in
                     let gw = write_word g (prev <: hp_addr) new_fp in
-                    let g2 = fst (alloc_from_block gw obj wz next) in
+                    let g2 = fst (alloc_from_block gw obj wz tag next) in
                     let obj_out = U64.v obj + (bwz - wz) * 8 in
                     AllocLemmas.chain_avoids g2 head (y <: U64.t) heap_words = false \/
                     U64.v y == obj_out \/ U64.v (wosize_of_object y g2) = 0))
@@ -581,7 +581,7 @@ let found_rest (g: heap) (head: U64.t) (prev obj: obj_addr) (wz: nat) (fuel: nat
     let lo = bwz - wz in
     let new_fp = alloc_replacement_fp g obj wz next in
     let gw = write_word g (prev <: hp_addr) new_fp in
-    let g2 = fst (alloc_from_block gw obj wz next) in
+    let g2 = fst (alloc_from_block gw obj wz tag next) in
     depth_facts g head (prev <: U64.t) (obj <: U64.t) k;
     // links: every object but prev (and, at a one-word leftover, obj) keeps
     // its link word; prev's now holds new_fp
@@ -590,7 +590,7 @@ let found_rest (g: heap) (head: U64.t) (prev obj: obj_addr) (wz: nat) (fuel: nat
                 (lo >= 2 \/ a <> obj))
       (ensures read_word g2 (prev <: hp_addr) == new_fp /\
                ((a <: U64.t) <> (prev <: U64.t) ==> read_word g2 a == read_word g a))
-      = relinked_frame g prev obj wz next new_fp a in
+      = relinked_frame g prev obj wz next new_fp a tag in
     FStar.Classical.forall_intro (FStar.Classical.move_requires fr);
     fr prev;
     if lo >= 2 then begin
@@ -603,9 +603,9 @@ let found_rest (g: heap) (head: U64.t) (prev obj: obj_addr) (wz: nat) (fuel: nat
     else if n = k then begin
       meets_at_unique g head (y <: U64.t) (obj <: U64.t) k;
       if lo = 1 then begin
-        relinked_frame g prev obj wz next new_fp prev;
+        relinked_frame g prev obj wz next new_fp prev tag;
         wosize_of_object_spec obj gw;
-        P1.alloc_split_facts_part1 gw obj wz next;
+        P1.alloc_split_facts_part1 gw obj wz next tag;
         wosize_of_object_spec obj g2
       end
     end
@@ -643,7 +643,7 @@ let found_rest (g: heap) (head: U64.t) (prev obj: obj_addr) (wz: nat) (fuel: nat
 /// fragment.
 #push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
 private let rec search_keeps
-  (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat) (y: obj_addr) (n: nat)
+  (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat) (y: obj_addr) (n: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\ wz >= 1 /\
                     AllocLemmas.fl_valid g cur fuel /\
                     AllocLemmas.fl_chain_terminates g cur fuel /\
@@ -660,7 +660,7 @@ private let rec search_keeps
                        read_word g (prev <: obj_addr) = cur)) /\
                     at_block g head prev cur (heap_words - fuel) /\
                     meets_at g head (y <: U64.t) n /\ n < heap_words)
-          (ensures (let r = alloc_search g head prev cur wz fuel in
+          (ensures (let r = alloc_search g head prev cur wz tag fuel in
                     r.obj_out <> 0UL ==>
                     (AllocLemmas.chain_avoids r.heap_out r.fp_out (y <: U64.t) heap_words = false \/
                      U64.v y == U64.v r.obj_out \/
@@ -690,13 +690,13 @@ private let rec search_keeps
             AllocChain.walk_chain_zero g head;
             assert (cur == head);
             assert (fuel == heap_words);
-            found_head g obj wz y n
+            found_head g obj wz y n tag
           end
           else begin
             let p : obj_addr = prev in
             two_objects_apart g p obj;
             assert (U64.v prev <> U64.v hd);
-            found_rest g head p obj wz fuel y n
+            found_rest g head p obj wz fuel y n tag
           end
         end
       end
@@ -706,19 +706,19 @@ private let rec search_keeps
         GC.Spec.Allocator.Lemmas.Common.fl_valid_next g cur fuel;
         AllocLemmas.fl_chain_terminates_elim g cur fuel;
         assert (at_block g head cur next (heap_words - (fuel - 1)));
-        search_keeps g head cur next wz (fuel - 1) y n
+        search_keeps g head cur next wz (fuel - 1) y n tag
       end
     end
 #pop-options
 
 /// **Allocation keeps everything on the chain except the block it unlinks.**
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
-let alloc_spec_keeps (g: heap) (fp: U64.t) (wz: nat) (y: obj_addr)
+let alloc_spec_keeps (g: heap) (fp: U64.t) (wz: nat) (y: obj_addr) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires well_formed_heap_part1 g /\ wz >= 1 /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words /\
                     AllocLemmas.chain_avoids g fp (y <: U64.t) heap_words = false)
-          (ensures (let r = alloc_spec g fp wz in
+          (ensures (let r = alloc_spec g fp wz tag in
                     r.obj_out <> 0UL ==>
                     (AllocLemmas.chain_avoids r.heap_out r.fp_out (y <: U64.t) heap_words = false \/
                      U64.v y == U64.v r.obj_out \/
@@ -727,7 +727,7 @@ let alloc_spec_keeps (g: heap) (fp: U64.t) (wz: nat) (y: obj_addr)
     AllocChain.walk_chain_zero g fp;
     AllocChain.walk_chain_valid_zero g fp;
     assert (at_block g fp 0UL fp 0);
-    search_keeps g fp 0UL fp wz heap_words y n
+    search_keeps g fp 0UL fp wz heap_words y n tag
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -741,15 +741,15 @@ let alloc_pre (g: heap) (fp: U64.t) (wz: nat) : prop =
   AllocLemmas.fl_chain_terminates g fp heap_words
 
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
-let alloc_spec_preserves_fl_sound (g: heap) (fp: U64.t) (wz: nat)
+let alloc_spec_preserves_fl_sound (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires alloc_pre g fp wz /\ FL.fl_sound g fp /\
-                    (alloc_spec g fp wz).obj_out <> 0UL)
-          (ensures (let r = alloc_spec g fp wz in FL.fl_sound r.heap_out r.fp_out))
-  = let r = alloc_spec g fp wz in
-    AllocLemmas.alloc_spec_preserves_fl_valid_part1 g fp wz;
-    AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 g fp wz;
-    AllocLemmas.alloc_spec_obj_not_in_chain_part1 g fp wz;
-    AllocLemmas.alloc_spec_only_new_is_obj_out_part1 g fp wz;
+                    (alloc_spec g fp wz tag).obj_out <> 0UL)
+          (ensures (let r = alloc_spec g fp wz tag in FL.fl_sound r.heap_out r.fp_out))
+  = let r = alloc_spec g fp wz tag in
+    AllocLemmas.alloc_spec_preserves_fl_valid_part1 g fp wz tag;
+    AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 g fp wz tag;
+    AllocLemmas.alloc_spec_obj_not_in_chain_part1 g fp wz tag;
+    AllocLemmas.alloc_spec_only_new_is_obj_out_part1 g fp wz tag;
     let aux (y: U64.t)
       : Lemma (requires FL.reachable_on_fl r.heap_out r.fp_out y)
               (ensures FL.fl_node y /\ FL.fl_cell r.heap_out y)
@@ -762,10 +762,10 @@ let alloc_spec_preserves_fl_sound (g: heap) (fp: U64.t) (wz: nat)
         assert (Seq.mem yo (objects zero_addr g));
         // ... and it was on the old chain: anything off it stays off it.
         if AllocLemmas.chain_avoids g fp y heap_words then
-          AllocLemmas.alloc_spec_preserves_chain_avoids_other g fp wz y;
+          AllocLemmas.alloc_spec_preserves_chain_avoids_other g fp wz y tag;
         reachable_iff_met g fp y;
         // So it was blue, and it is not the allocated object, so it still is.
-        AllocProps.alloc_spec_preserves_blue_part1 g fp wz yo
+        AllocProps.alloc_spec_preserves_blue_part1 g fp wz yo tag
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
@@ -775,16 +775,16 @@ let alloc_spec_preserves_fl_sound (g: heap) (fp: U64.t) (wz: nat)
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
-let alloc_spec_preserves_fl_complete (g: heap) (fp: U64.t) (wz: nat)
+let alloc_spec_preserves_fl_complete (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires alloc_pre g fp wz /\ FL.fl_complete g fp /\
-                    (alloc_spec g fp wz).obj_out <> 0UL)
-          (ensures (let r = alloc_spec g fp wz in FL.fl_complete r.heap_out r.fp_out))
-  = let r = alloc_spec g fp wz in
-    AllocLemmas.alloc_spec_preserves_wfh_part1 g fp wz;
-    AllocLemmas.alloc_spec_preserves_fl_valid_part1 g fp wz;
-    AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 g fp wz;
-    AllocLemmas.alloc_spec_only_new_is_obj_out_part1 g fp wz;
-    AllocProps.alloc_spec_obj_not_blue_part1 g fp wz;
+                    (alloc_spec g fp wz tag).obj_out <> 0UL)
+          (ensures (let r = alloc_spec g fp wz tag in FL.fl_complete r.heap_out r.fp_out))
+  = let r = alloc_spec g fp wz tag in
+    AllocLemmas.alloc_spec_preserves_wfh_part1 g fp wz tag;
+    AllocLemmas.alloc_spec_preserves_fl_valid_part1 g fp wz tag;
+    AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 g fp wz tag;
+    AllocLemmas.alloc_spec_only_new_is_obj_out_part1 g fp wz tag;
+    AllocProps.alloc_spec_obj_not_blue_part1 g fp wz tag;
     let aux (x: obj_addr)
       : Lemma (requires FL.fl_cell r.heap_out x)
               (ensures FL.reachable_on_fl r.heap_out r.fp_out x)
@@ -797,7 +797,7 @@ let alloc_spec_preserves_fl_complete (g: heap) (fp: U64.t) (wz: nat)
         // unchanged, so it would have been a blue cell, which fl_complete puts
         // on the chain.
         if AllocLemmas.chain_avoids g fp (x <: U64.t) heap_words then begin
-          AllocProps.alloc_spec_read_header_other_part1 g fp wz x;
+          AllocProps.alloc_spec_read_header_other_part1 g fp wz x tag;
           color_of_object_spec x g; color_of_object_spec x r.heap_out;
           wosize_of_object_spec x g; wosize_of_object_spec x r.heap_out;
           is_blue_iff x g;
@@ -805,7 +805,7 @@ let alloc_spec_preserves_fl_complete (g: heap) (fp: U64.t) (wz: nat)
           reachable_iff_met g fp (x <: U64.t)
         end;
         // So it is still on the new one.
-        alloc_spec_keeps g fp wz x;
+        alloc_spec_keeps g fp wz x tag;
         hd_address_spec x;
         assert (U64.v (hd_address x) + 8 + U64.v (wosize_of_object x r.heap_out) * 8 <= heap_size);
         reachable_iff_met r.heap_out r.fp_out (x <: U64.t)
@@ -814,12 +814,12 @@ let alloc_spec_preserves_fl_complete (g: heap) (fp: U64.t) (wz: nat)
 #pop-options
 
 /// **Allocation keeps the free list exact.**
-let alloc_spec_preserves_fl_exact (g: heap) (fp: U64.t) (wz: nat)
+let alloc_spec_preserves_fl_exact (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires alloc_pre g fp wz /\ FL.fl_exact g fp /\
-                    (alloc_spec g fp wz).obj_out <> 0UL)
-          (ensures (let r = alloc_spec g fp wz in FL.fl_exact r.heap_out r.fp_out))
-  = alloc_spec_preserves_fl_sound g fp wz;
-    alloc_spec_preserves_fl_complete g fp wz
+                    (alloc_spec g fp wz tag).obj_out <> 0UL)
+          (ensures (let r = alloc_spec g fp wz tag in FL.fl_exact r.heap_out r.fp_out))
+  = alloc_spec_preserves_fl_sound g fp wz tag;
+    alloc_spec_preserves_fl_complete g fp wz tag
 
 /// ---------------------------------------------------------------------------
 /// The first attempt succeeds
@@ -835,25 +835,25 @@ let alloc_entry (g: heap) (fp: U64.t) : prop =
 
 /// With an exact free list, an allocation succeeds whenever some free block
 /// is big enough.
-let alloc_spec_fits_succeeds (g: heap) (fp: U64.t) (wz: nat) (x: obj_addr)
+let alloc_spec_fits_succeeds (g: heap) (fp: U64.t) (wz: nat) (x: obj_addr) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires alloc_entry g fp /\ wz >= 1 /\
                     Seq.mem x (objects zero_addr g) /\ is_blue x g /\
                     U64.v (wosize_of_object x g) >= wz)
-          (ensures (alloc_spec g fp wz).obj_out <> 0UL)
-  = if (alloc_spec g fp wz).obj_out = 0UL then Oom.alloc_spec_oom_no_fit g fp wz
+          (ensures (alloc_spec g fp wz tag).obj_out <> 0UL)
+  = if (alloc_spec g fp wz tag).obj_out = 0UL then Oom.alloc_spec_oom_no_fit g fp wz tag
 
 /// Every allocation, successful or not, keeps the entry conditions.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-let alloc_spec_preserves_entry (g: heap) (fp: U64.t) (wz: nat)
+let alloc_spec_preserves_entry (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires alloc_entry g fp /\ wz >= 1)
-          (ensures (let r = alloc_spec g fp wz in alloc_entry r.heap_out r.fp_out))
-  = let r = alloc_spec g fp wz in
-    if r.obj_out = 0UL then AllocProps.alloc_spec_oom_unchanged g fp wz
+          (ensures (let r = alloc_spec g fp wz tag in alloc_entry r.heap_out r.fp_out))
+  = let r = alloc_spec g fp wz tag in
+    if r.obj_out = 0UL then AllocProps.alloc_spec_oom_unchanged g fp wz tag
     else begin
-      AllocLemmas.alloc_spec_preserves_wfh_part1 g fp wz;
-      AllocLemmas.alloc_spec_preserves_fl_valid_part1 g fp wz;
-      AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 g fp wz;
-      alloc_spec_preserves_fl_exact g fp wz
+      AllocLemmas.alloc_spec_preserves_wfh_part1 g fp wz tag;
+      AllocLemmas.alloc_spec_preserves_fl_valid_part1 g fp wz tag;
+      AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 g fp wz tag;
+      alloc_spec_preserves_fl_exact g fp wz tag
     end
 #pop-options
 
@@ -905,22 +905,22 @@ let promote_object_preserves_fl_complete (minor: MH.minor_state) (major: heap) (
                     (Promote.promote_object minor major obj fp wosize).new_addr <> 0UL)
           (ensures (let res = Promote.promote_object minor major obj fp wosize in
                     FL.fl_complete res.Promote.major_out res.Promote.fp_out))
-  = let ar = alloc_spec major fp wosize in
+  = let ar = alloc_spec major fp wosize 0UL in
     let g1 = ar.heap_out in
     let fp1 = ar.fp_out in
     let res = Promote.promote_object minor major obj fp wosize in
     Promote.promote_object_success minor major obj fp wosize;
-    AllocProps.alloc_spec_obj_wosize_exact_part1 major fp wosize;
+    AllocProps.alloc_spec_obj_wosize_exact_part1 major fp wosize 0UL;
     let dst : obj_addr = ar.obj_out in
     MH.minor_tag_bound minor obj;
     let tag = MH.minor_tag minor obj in
     // the allocation alone keeps the list complete (stage 4) ...
-    alloc_spec_preserves_fl_complete major fp wosize;
-    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
-    AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wosize;
-    AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wosize;
-    AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wosize;
-    AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
+    alloc_spec_preserves_fl_complete major fp wosize 0UL;
+    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize 0UL;
+    AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wosize 0UL;
+    AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wosize 0UL;
+    AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wosize 0UL;
+    AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize 0UL;
     // ... and the writes that follow stay inside the promoted object
     Promote.promote_object_preserves_alloc_invariants minor major obj fp wosize;
     Fwd.promote_object_new_addr_in_objects_not_blue minor major obj fp wosize;
@@ -1184,21 +1184,21 @@ let major_heap_shape_gives_entry (major: heap) (fp: U64.t)
 /// What the program may do to the major heap between collections: allocate,
 /// or write a field of a live object.
 noeq type event =
-  | EAlloc : wz:pos -> event
+  | EAlloc : wz:pos -> tag:U64.t{U64.v tag < 256} -> event
   | EWrite : a:obj_addr -> w:hp_addr -> v:U64.t -> event
 
 /// A write is only to a field of a live (non-blue) object -- the runtime's side
 /// of the contract; allocation is always allowed.
 let event_ok (g: heap) (e: event) : prop =
   match e with
-  | EAlloc _ -> True
+  | EAlloc _ _ -> True
   | EWrite a w _ ->
     Seq.mem a (objects zero_addr g) /\ is_blue a g = false /\
     U64.v w >= U64.v a /\ U64.v w < U64.v a + U64.v (wosize_of_object a g) * 8
 
 let step (g: heap) (fp: U64.t) (e: event) : GTot (heap & U64.t) =
   match e with
-  | EAlloc wz -> let r = alloc_spec g fp wz in (r.heap_out, r.fp_out)
+  | EAlloc wz tag -> let r = alloc_spec g fp wz tag in (r.heap_out, r.fp_out)
   | EWrite _ w v -> (write_word g w v, fp)
 
 let rec run (g: heap) (fp: U64.t) (es: list event) : GTot (heap & U64.t) (decreases es) =
@@ -1219,7 +1219,7 @@ let rec run_preserves_entry (g: heap) (fp: U64.t) (es: list event)
     | [] -> ()
     | e :: rest ->
       (match e with
-       | EAlloc wz -> alloc_spec_preserves_entry g fp wz
+       | EAlloc wz tag -> alloc_spec_preserves_entry g fp wz tag
        | EWrite a w v -> field_write_preserves_entry g fp a w v);
       let s = step g fp e in
       run_preserves_entry (fst s) (snd s) rest
@@ -1235,12 +1235,12 @@ let rec run_preserves_entry (g: heap) (fp: U64.t) (es: list event)
 /// the retry after a collection in `verified_allocate` is needed only when no
 /// single free block fits.
 let alloc_succeeds_when_a_block_fits
-  (g: heap) (fp: U64.t) (es: list event) (wz: pos) (x: obj_addr)
+  (g: heap) (fp: U64.t) (es: list event) (wz: pos) (x: obj_addr) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires alloc_entry g fp /\ run_ok g fp es /\
                     (let r = run g fp es in
                      Seq.mem x (objects zero_addr (fst r)) /\ is_blue x (fst r) /\
                      U64.v (wosize_of_object x (fst r)) >= wz))
-          (ensures (let r = run g fp es in (alloc_spec (fst r) (snd r) wz).obj_out <> 0UL))
+          (ensures (let r = run g fp es in (alloc_spec (fst r) (snd r) wz tag).obj_out <> 0UL))
   = run_preserves_entry g fp es;
     let r = run g fp es in
-    alloc_spec_fits_succeeds (fst r) (snd r) wz x
+    alloc_spec_fits_succeeds (fst r) (snd r) wz x tag
