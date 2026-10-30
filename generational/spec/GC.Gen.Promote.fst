@@ -300,6 +300,9 @@ let promote_preserves_fields
   end
 #pop-options
 
+let wfh_walk_facts (g: heap) = wf_parts ()
+
+
 /// ---------------------------------------------------------------------------
 /// copy_fields preserves heap structure — delegated to WriteBodyLemmas module
 /// ---------------------------------------------------------------------------

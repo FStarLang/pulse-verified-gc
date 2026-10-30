@@ -144,6 +144,7 @@ private let fwd_disjoint_reachable_major_at
     let combined_roots = CG.classify_roots minor roots in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     CheneyPres.cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
       minor major fp roots;
@@ -202,6 +203,7 @@ let combined_reachable_normal_injective
   =
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
     RBridge.reachable_major_valid_nonblue minor major roots;
@@ -289,6 +291,7 @@ private let normal_minor_source_ready_intro
     let fwd_src = prom.fwd_map src in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     assert (well_formed_heap major);
     assert (AllocLemmas.fl_valid major fp heap_words);
@@ -340,6 +343,7 @@ let normal_edge_forward_ready_intro
     let prom = cheney_promote minor major fp roots in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     assert (well_formed_heap major);
     assert (minor_wf minor);
@@ -400,6 +404,7 @@ let normal_src_images_injective
     let prom = cheney_promote minor major fp roots in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
     match u, v with

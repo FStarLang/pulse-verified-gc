@@ -391,6 +391,7 @@ let post_minor_c_wosize
     (ThreeObjects.spot_slots c) 1;
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
+  GenInv.major_heap_shape_walk major fp;
   ConcreteMajor.spot_major_layout_facts r;
   ConcreteMajor.spot_major_c_mem r;
   ConcreteMajor.spot_major_c_reads r;

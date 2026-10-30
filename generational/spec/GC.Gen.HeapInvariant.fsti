@@ -150,6 +150,12 @@ val major_heap_shape_elim (major: heap) (fp: U64.t)
                    SweepInv.no_gray_objects major /\
                    Mark.no_pointer_to_blue major)
 
+/// The walk facts of the shape (parts 1 and 4 of well-formedness), which are
+/// all that promotion reads of the major heap.
+val major_heap_shape_walk (major: heap) (fp: U64.t)
+  : Lemma (requires major_heap_shape major fp)
+          (ensures well_formed_heap_part1 major /\ well_formed_heap_part4 major)
+
 val minor_heap_shape_elim (minor: minor_state)
   : Lemma (requires minor_heap_shape minor)
            (ensures minor_wf minor /\
@@ -206,3 +212,152 @@ val collection_heap_shape_after_minor_reset
   (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma (requires major_heap_shape major fp)
           (ensures collection_heap_shape (minor_reset minor) major fp)
+
+/// ---------------------------------------------------------------------------
+/// The collection's shape over a live set
+/// ---------------------------------------------------------------------------
+///
+/// `collection_heap_shape` is the stop-the-world shape: the whole major heap is
+/// well formed, nothing is black or gray, and nothing points at a free block.
+/// A minor collection needs much less of the major heap: a sound walk, an exact
+/// ascending free list, and that the objects it may reach -- a *live set*,
+/// supplied by whoever holds the invariant -- point only at live objects.
+/// Garbage (a non-live, non-free block) is unconstrained: its fields may point
+/// anywhere, free blocks included, and the collection never reads them.
+///
+/// The live set is not recomputed from colours: the idle collector supplies
+/// `idle_live major` (every non-free block), and a sweep in progress supplies
+/// its own.  At `idle_live` this is `collection_heap_shape` without its two
+/// colour facts (`collection_heap_shape_over_idle`,
+/// `collection_heap_shape_of_over_idle`).
+
+/// The major half: the walk, the free list, and the live set's field closure
+/// (`GC.Spec.Fields.well_formed_heap_over`, whose part 2 also says no live
+/// object points at a free block).
+[@@"opaque_to_smt"]
+val major_shape_over (major: heap) (fp: U64.t) (live: obj_addr -> prop) : prop
+
+val major_shape_over_intro (major: heap) (fp: U64.t) (live: obj_addr -> prop)
+  : Lemma (requires live_ok major live /\
+                    well_formed_heap_over major live /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    free_list_exact major fp /\
+                    FLA.fl_ascending major fp /\
+                    FreeListShape.fp_pointer_or_zero fp /\
+                    FreeListShape.blue_link_fields_valid major /\
+                    heap_objects_dense major /\
+                    chain_objects_blue major fp /\
+                    Seq.length (objects zero_addr major) > 0 /\
+                    SweepInv.fp_valid fp major /\
+                    GC.Spec.FreeList.fp_in_heap fp major)
+          (ensures major_shape_over major fp live)
+
+val major_shape_over_elim (major: heap) (fp: U64.t) (live: obj_addr -> prop)
+  : Lemma (requires major_shape_over major fp live)
+          (ensures live_ok major live /\
+                   well_formed_heap_over major live /\
+                   well_formed_heap_part1 major /\
+                   well_formed_heap_part4 major /\
+                   AllocLemmas.fl_valid major fp heap_words /\
+                   AllocLemmas.fl_chain_terminates major fp heap_words /\
+                   free_list_exact major fp /\
+                   FLA.fl_ascending major fp /\
+                   FreeListShape.fp_pointer_or_zero fp /\
+                   FreeListShape.blue_link_fields_valid major /\
+                   heap_objects_dense major /\
+                   chain_objects_blue major fp /\
+                   Seq.length (objects zero_addr major) > 0 /\
+                   SweepInv.fp_valid fp major /\
+                   GC.Spec.FreeList.fp_in_heap fp major)
+
+/// The shape depends on the live set only extensionally.
+val major_shape_over_congr (major: heap) (fp: U64.t) (live live': obj_addr -> prop)
+  : Lemma (requires major_shape_over major fp live /\
+                    (forall (x: obj_addr). live x <==> live' x))
+          (ensures major_shape_over major fp live')
+
+/// Cross-generation condition over a live set: a nursery field (in the scan
+/// window) that looks like a major pointer targets a live major object.
+/// Nursery pointers lie below `zero_addr`, so they never look like one.  At
+/// `idle_live major` this is `minor_major_fields_no_blue minor major`.
+[@@"opaque_to_smt"]
+val minor_major_fields_live (minor: minor_state) (live: obj_addr -> prop) : prop
+
+val minor_major_fields_live_intro (minor: minor_state) (live: obj_addr -> prop)
+  (pf: (obj: U64.t) -> (j: nat) ->
+       Lemma (requires Seq.mem obj (minor_objects minor) /\
+                       j < minor_scan_wosize minor obj /\
+                       is_pointer_field (minor_read_field minor obj j))
+             (ensures live ((minor_read_field minor obj j) <: obj_addr)))
+  : Lemma (minor_major_fields_live minor live)
+
+val minor_major_fields_live_elim (minor: minor_state) (live: obj_addr -> prop)
+  (obj: U64.t) (j: nat)
+  : Lemma (requires minor_major_fields_live minor live /\
+                    Seq.mem obj (minor_objects minor) /\
+                    j < minor_scan_wosize minor obj /\
+                    is_pointer_field (minor_read_field minor obj j))
+          (ensures live ((minor_read_field minor obj j) <: obj_addr))
+
+val minor_major_fields_live_idle (minor: minor_state) (major: heap)
+  : Lemma (minor_major_fields_live minor (idle_live major) <==>
+           minor_major_fields_no_blue minor major)
+
+/// The minor collection's entry shape over a live set.
+[@@"opaque_to_smt"]
+val collection_shape_over (minor: minor_state) (major: heap) (fp: U64.t)
+  (live: obj_addr -> prop) : prop
+
+val collection_shape_over_intro (minor: minor_state) (major: heap) (fp: U64.t)
+  (live: obj_addr -> prop)
+  : Lemma (requires major_shape_over major fp live /\
+                    minor_heap_shape minor /\
+                    minor_major_fields_live minor live)
+          (ensures collection_shape_over minor major fp live)
+
+val collection_shape_over_elim (minor: minor_state) (major: heap) (fp: U64.t)
+  (live: obj_addr -> prop)
+  : Lemma (requires collection_shape_over minor major fp live)
+          (ensures major_shape_over major fp live /\
+                   minor_heap_shape minor /\
+                   minor_major_fields_live minor live)
+
+val collection_shape_over_congr (minor: minor_state) (major: heap) (fp: U64.t)
+  (live live': obj_addr -> prop)
+  : Lemma (requires collection_shape_over minor major fp live /\
+                    (forall (x: obj_addr). live x <==> live' x))
+          (ensures collection_shape_over minor major fp live')
+
+/// --- The idle instance ---
+
+/// `major_heap_shape` is the idle shape plus the two colour facts.
+val major_heap_shape_over_idle (major: heap) (fp: U64.t)
+  : Lemma (requires major_heap_shape major fp)
+          (ensures major_shape_over major fp (idle_live major) /\
+                   Mark.no_black_objects major /\
+                   SweepInv.no_gray_objects major)
+
+val major_heap_shape_of_over_idle (major: heap) (fp: U64.t)
+  : Lemma (requires major_shape_over major fp (idle_live major) /\
+                    Mark.no_black_objects major /\
+                    SweepInv.no_gray_objects major)
+          (ensures major_heap_shape major fp)
+
+val collection_heap_shape_over_idle (minor: minor_state) (major: heap) (fp: U64.t)
+  : Lemma (requires collection_heap_shape minor major fp)
+          (ensures collection_shape_over minor major fp (idle_live major) /\
+                   Mark.no_black_objects major /\
+                   SweepInv.no_gray_objects major)
+
+val collection_heap_shape_of_over_idle (minor: minor_state) (major: heap) (fp: U64.t)
+  : Lemma (requires collection_shape_over minor major fp (idle_live major) /\
+                    Mark.no_black_objects major /\
+                    SweepInv.no_gray_objects major)
+          (ensures collection_heap_shape minor major fp)
+
+/// The reset nursery makes the minor half vacuous, over any live set.
+val collection_shape_over_after_minor_reset
+  (minor: minor_state) (major: heap) (fp: U64.t) (live: obj_addr -> prop)
+  : Lemma (requires major_shape_over major fp live)
+          (ensures collection_shape_over (minor_reset minor) major fp live)

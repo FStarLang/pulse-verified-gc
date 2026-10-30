@@ -26,7 +26,7 @@ val cheney_promote_fwd_target_fields_match
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t) (j: nat)
   : Lemma
-    (requires well_formed_heap major /\
+    (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
               AllocLemmas.fl_valid major fp heap_words /\
               AllocLemmas.fl_chain_terminates major fp heap_words /\
               chain_objects_blue major fp /\
@@ -53,7 +53,7 @@ val cheney_promote_fwd_target_no_scan_iff_minor_tag
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t)
   : Lemma
-    (requires well_formed_heap major /\
+    (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
               AllocLemmas.fl_valid major fp heap_words /\
               AllocLemmas.fl_chain_terminates major fp heap_words /\
               chain_objects_blue major fp /\

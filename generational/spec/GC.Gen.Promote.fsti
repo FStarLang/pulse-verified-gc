@@ -397,6 +397,14 @@ val promote_preserves_fields
                 minor_read_field minor obj j)))
 #pop-options
 
+/// The walk facts of a well-formed heap: parts 1 and 4, which are all of
+/// well-formedness that promotion reads.  The promotion lemmas ask for these
+/// alone, so they also apply to a heap that is well formed only over a live
+/// set (`GC.Spec.Fields.well_formed_heap_over`).
+val wfh_walk_facts (g: heap)
+  : Lemma (requires well_formed_heap g)
+          (ensures well_formed_heap_part1 g /\ well_formed_heap_part4 g)
+
 /// promote_object preserves objects (part1 version — no full well_formed_heap needed)
 val promote_object_preserves_objects_part1
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})

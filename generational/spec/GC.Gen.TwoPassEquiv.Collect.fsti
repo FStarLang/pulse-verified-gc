@@ -118,7 +118,7 @@ val two_pass_implies_collect_over
        ref_table_complete_over major_pre live prom.fwd_map slots n /\
        fwd_targets_stable prom.fwd_map /\
        well_formed_heap_part1 prom.major_final /\
-       well_formed_heap major_pre /\
+       well_formed_heap_part1 major_pre /\ well_formed_heap_part4 major_pre /\
        minor_infix_wf minor /\
        minor_wf minor /\
        chain_objects_blue major_pre fp /\
@@ -152,7 +152,7 @@ val two_pass_implies_full_update
        well_formed_heap_part1 prom.major_final /\
        heap_objects_dense prom.major_final /\
        Seq.length (objects zero_addr prom.major_final) > 0 /\
-       well_formed_heap major_pre /\
+       well_formed_heap_part1 major_pre /\ well_formed_heap_part4 major_pre /\
        minor_infix_wf minor /\
        minor_wf minor /\
        chain_objects_blue major_pre fp /\

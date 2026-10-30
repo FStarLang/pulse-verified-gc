@@ -43,7 +43,7 @@ val promote_object_nonblue_other_reflects_pre
 val cheney_promote_nonblue_origin
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr)
-  : Lemma (requires well_formed_heap major /\
+  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\

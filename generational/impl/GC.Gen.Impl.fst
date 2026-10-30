@@ -530,6 +530,7 @@ fn minor_collect_full (gh: gen_heap_t)
     ({data = 'd; bump = 'b} <: minor_state) 's 'rs 'sl (SZ.v nslots);
   GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
   GenInv.major_heap_shape_elim 's 'fp;
+  GenInv.major_heap_shape_walk 's 'fp;
   GenInv.minor_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state);
 
   // Phase 1: Cheney BFS promotion (forward roots + scan)
@@ -680,6 +681,7 @@ fn gen_gc (gh: gen_heap_t)
 {
   GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
   GenInv.major_heap_shape_elim 's 'fp;
+  GenInv.major_heap_shape_walk 's 'fp;
   GenInv.minor_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state);
 
   // Phase 1: Full minor collection, including remembered-set slot rewriting.

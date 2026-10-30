@@ -357,7 +357,7 @@ val cheney_scan_preserves_fwd_classified
 
 val cheney_promote_fwd_valid_or_infix
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
+  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
@@ -411,7 +411,7 @@ let fwd_infix_targets_wf (minor: minor_state) (fwd: forwarding_map) (g: heap) : 
 
 val cheney_promote_fwd_noninfix_targets_valid
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
+  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
@@ -424,7 +424,7 @@ val cheney_promote_fwd_noninfix_targets_valid
 
 val cheney_promote_fwd_infix_targets_wf
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
+  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\

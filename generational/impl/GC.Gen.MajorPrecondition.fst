@@ -112,6 +112,7 @@ let post_minor_minor_root_valid
   =
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
+  GenInv.major_heap_shape_walk major fp;
   GenInv.minor_heap_shape_elim minor;
   let prom = Cheney.cheney_promote minor major fp roots in
   let result = Cheney.cheney_collect_spec minor major fp roots in
@@ -155,6 +156,7 @@ let post_minor_major_root_valid minor major fp roots r
   =
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
+  GenInv.major_heap_shape_walk major fp;
   GenInv.minor_heap_shape_elim minor;
   let prom = Cheney.cheney_promote minor major fp roots in
   let result = Cheney.cheney_collect_spec minor major fp roots in

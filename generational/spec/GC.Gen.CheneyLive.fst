@@ -106,3 +106,22 @@ let cheney_collect_spec_over_idle minor major fp roots =
     (FStar.Classical.move_requires (promoted_live_idle minor major fp roots));
   PU.update_live_pointers_ext prom.major_final live' (idle_live prom.major_final) prom.fwd_map;
   PU.update_live_pointers_idle prom.major_final prom.fwd_map
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let promoted_live_idle_ext minor major fp roots =
+  let prom = cheney_promote minor major fp roots in
+  let res = cheney_collect_spec minor major fp roots in
+  let live' = promoted_live minor (idle_live major) prom.fwd_map in
+  cheney_promote_preserves_wfh_part1 minor major fp roots;
+  cheney_promote_live_ok minor major fp roots (idle_live major);
+  PU.update_major_pointers_preserves_objects prom.major_final prom.fwd_map;
+  assert (res.mc_major == update_major_pointers prom.major_final prom.fwd_map);
+  let aux (x: obj_addr) : Lemma (live' x <==> idle_live res.mc_major x)
+    = if Seq.mem x (objects zero_addr prom.major_final) then begin
+        promoted_live_idle minor major fp roots x;
+        PU.update_major_pointers_preserves_header prom.major_final prom.fwd_map x;
+        Aux.header_eq_object_facts res.mc_major prom.major_final x
+      end
+  in
+  FStar.Classical.forall_intro aux
+#pop-options

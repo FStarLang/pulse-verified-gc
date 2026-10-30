@@ -206,6 +206,7 @@ let post_edge_from_minor_image_reflects_mem_ce
     let target_img = CG.fwd_morphism prom.fwd_map v in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     assert (well_formed_heap major);
     assert (minor_wf minor);
@@ -400,6 +401,7 @@ let post_edge_from_minor_image_reflects_target
     let fwd_src = prom.fwd_map src in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     assert (well_formed_heap major);
     assert (minor_wf minor);

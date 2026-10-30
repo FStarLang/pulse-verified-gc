@@ -548,6 +548,7 @@ let cheney_promote_preserves_old_major_field_context
   =
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     let prom = cheney_promote minor major fp roots in
     cheney_promote_preserves_objects minor major fp roots;
@@ -596,6 +597,7 @@ let fwd_image_resolves
     let rv = resolve_minor minor x in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     cheney_promote_preserves_wfh_part1 minor major fp roots;
     cheney_promote_preserves_wfh_part4 minor major fp roots;

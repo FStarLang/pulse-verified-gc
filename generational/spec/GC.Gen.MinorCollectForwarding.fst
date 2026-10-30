@@ -304,6 +304,7 @@ let normal_image_vertex_is_post_vertex
     let post_g = HeapModel.create_graph res.mc_major in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
     CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
@@ -536,6 +537,7 @@ private let post_edge_from_major_image_reflects_mem_ce
     let target_img = CG.fwd_morphism prom.fwd_map v in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     assert (well_formed_heap major);
     assert (minor_wf minor);
@@ -732,6 +734,7 @@ private let post_edge_from_major_image_reflects_target
     let combined_roots = CG.classify_roots minor roots in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     assert (well_formed_heap major);
     assert (minor_wf minor);
@@ -909,6 +912,7 @@ let normal_image_reachable_subgraph_isomorphism
     let prom = cheney_promote minor major fp roots in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     combined_reachable_normal_injective minor major fp roots;
     CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
@@ -1309,6 +1313,7 @@ private let edge_source_normal_vertex_ready
     | CG.MinorV src ->
       GenInv.collection_heap_shape_elim minor major fp;
       GenInv.major_heap_shape_elim major fp;
+      GenInv.major_heap_shape_walk major fp;
       GenInv.minor_heap_shape_elim minor;
       assert (well_formed_heap major);
       assert (minor_wf minor);

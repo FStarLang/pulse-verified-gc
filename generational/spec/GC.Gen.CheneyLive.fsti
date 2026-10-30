@@ -33,7 +33,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 /// What a minor collection assumes of the major heap and the nursery for the
 /// facts below (the promotion-side part of `collection_heap_shape`).
 let promote_pre (minor: minor_state) (major: heap) (fp: U64.t) : prop =
-  well_formed_heap major /\
+  well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
   AllocLemmas.fl_valid major fp heap_words /\
   AllocLemmas.fl_chain_terminates major fp heap_words /\
   chain_objects_blue major fp /\
@@ -71,3 +71,15 @@ val cheney_collect_spec_over_idle
   : Lemma (requires promote_pre minor major fp)
           (ensures cheney_collect_spec_over minor major fp roots (idle_live major) ==
                    cheney_collect_spec minor major fp roots)
+
+/// The same, everywhere and against the collection's result: the live set
+/// after an idle collection is the idle live set of the heap it returns (the
+/// pointer update changes neither the walk nor any header).
+val promoted_live_idle_ext
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires promote_pre minor major fp)
+          (ensures (let prom = cheney_promote minor major fp roots in
+                    let res = cheney_collect_spec minor major fp roots in
+                    forall (x: obj_addr).
+                      promoted_live minor (idle_live major) prom.fwd_map x <==>
+                      idle_live res.mc_major x))

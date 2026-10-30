@@ -62,12 +62,6 @@ let minor_arith_no_overflow (addr wosize: nat)
     assert_norm (pow2 57 * 8 == pow2 60);
     assert_norm (pow2 57 + pow2 60 < pow2 64)
 
-/// Helper: well_formed_heap implies well_formed_heap_part1
-let wfh_implies_part1 (g: heap)
-  : Lemma (requires SF.well_formed_heap g)
-          (ensures SF.well_formed_heap_part1 g)
-  = reveal_opaque (`%SF.well_formed_heap) (SF.well_formed_heap g)
-
 /// Helper: if minor_wf and wosize == 0, addr is not a minor object
 let not_minor_if_wosize_zero (ms: minor_state) (addr: U64.t)
   : Lemma (requires minor_wf ms /\ minor_wosize ms addr == 0)
@@ -917,7 +911,8 @@ fn cheney_promote_phase
            pts_to queue 'qv **
            pts_to roots 'rs **
            pure (let minor_st : minor_state = {data='md; bump='mb} in
-                 SF.well_formed_heap 'ms /\
+                 SF.well_formed_heap_part1 'ms /\
+                 SF.well_formed_heap_part4 'ms /\
                  AllocLemmas.fl_valid 'ms 'fp heap_words /\
                  AllocLemmas.fl_chain_terminates 'ms 'fp heap_words /\
                  GC.Spec.Fields.heap_objects_dense 'ms /\
@@ -960,9 +955,6 @@ fn cheney_promote_phase
 
   // OOM tracking flag
   let mut oom = false;
-
-  // Help SMT: well_formed_heap implies well_formed_heap_part1
-  wfh_implies_part1 'ms;
 
   // Establish initial ghost spec state
   // cs0 = { cs_major='ms; cs_fp='fp; cs_fwd=empty_forwarding; cs_queue=empty }

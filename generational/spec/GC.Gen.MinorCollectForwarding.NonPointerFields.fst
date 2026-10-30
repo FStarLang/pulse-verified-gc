@@ -63,6 +63,7 @@ private let fwd_minor_source_in_minor_objects
     let fx = prom.fwd_map x in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     Forwarding.cheney_promote_fwd_noninfix_targets_valid minor major fp roots;
     assert (Seq.mem (fx <: obj_addr) (objects zero_addr prom.major_final));
@@ -124,6 +125,7 @@ private let major_non_pointer_field_preserved
     let field_addr : hp_addr = U64.uint_to_t (U64.v src + j * 8) in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     MCFH.cheney_promote_preserves_old_major_field_context minor major fp roots src j;
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
@@ -178,6 +180,7 @@ private let minor_non_pointer_field_preserved
     let field_addr : hp_addr = U64.uint_to_t (U64.v img + j * 8) in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     CheneyFields.cheney_promote_fwd_target_fields_match minor major fp roots src j;
     assert (read_word prom.major_final field_addr == minor_read_field minor src j);
@@ -205,6 +208,7 @@ let normal_post_non_pointer_fields_preserved
     let prom = cheney_promote minor major fp roots in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     assert (well_formed_heap major);
     assert (minor_wf minor);

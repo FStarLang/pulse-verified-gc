@@ -96,6 +96,7 @@ private let combined_reachable_images_valid_or_infix_major
     let res = cheney_collect_spec minor major fp roots in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     RBridge.reachable_major_valid minor major roots;
     CheneyCorr.cheney_collect_preserves_objects minor major fp roots;
@@ -139,6 +140,7 @@ private let combined_reachable_images_valid_or_infix_minor
     let fwd = prom.fwd_map in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     combined_reachable_minor_has_fwd minor major fp roots;
     CheneyPres.cheney_promote_fwd_valid_or_infix minor major fp roots;
@@ -190,6 +192,7 @@ let cheney_collect_frame_target_header
   = let prom = cheney_promote minor major fp roots in
     let res = cheney_collect_spec minor major fp roots in
     let pf = prom.major_final in
+    wfh_walk_facts major;
     Frame.cheney_promote_frame_target_header minor major fp roots h;
     assert (read_word pf (hd_address h) == read_word major (hd_address h));
     GC.Spec.Object.resolve_object_locality h major pf;
@@ -226,6 +229,7 @@ let combined_reachable_major_edge_forwarded
     let updated = res.mc_major in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     assert (well_formed_heap major);
     assert (minor_wf minor);
@@ -339,6 +343,7 @@ let combined_major_minor_field_forwarded
     let field_addr = U64.uint_to_t (U64.v src + i * 8) in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     RBridge.reachable_major_valid_nonblue minor major roots;
     assert (~(is_blue src major));
@@ -386,6 +391,7 @@ let combined_major_minor_edge_forwarded
     assert (read_word updated (U64.uint_to_t (U64.v src + i * 8)) == prom.fwd_map ov);
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     RBridge.reachable_major_valid_nonblue minor major roots;
     assert (~(is_blue src major));
@@ -424,6 +430,7 @@ let promoted_minor_major_field_preserved
     let field_addr = U64.uint_to_t (U64.v fwd_src + j * 8) in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     CG.classify_minor_field_inv_major minor major (minor_read_field minor src j) dst;
     assert (minor_read_field minor src j == dst);
@@ -451,6 +458,7 @@ let promoted_minor_major_edge_forwarded
     let res = cheney_collect_spec minor major fp roots in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     promoted_minor_major_field_preserved minor major fp roots src dst j;
     CheneyPres.cheney_collect_preserves_wfh_from_shape minor major fp roots;
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
@@ -497,6 +505,7 @@ let promoted_minor_minor_field_forwarded
     let field_addr = U64.uint_to_t (U64.v fwd_src + j * 8) in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     GenInv.minor_heap_shape_elim minor;
     CG.classify_minor_field_inv_minor minor major (minor_read_field minor src j) dst;
     let ov = to_minor_offset (minor_read_field minor src j) in
@@ -537,6 +546,7 @@ let promoted_minor_minor_edge_forwarded
     let res = cheney_collect_spec minor major fp roots in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
+    GenInv.major_heap_shape_walk major fp;
     promoted_minor_minor_field_forwarded minor major fp roots src dst j;
     CheneyPres.cheney_collect_preserves_wfh_from_shape minor major fp roots;
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;

@@ -53,10 +53,6 @@ let ref_table_sound_over_idle major_pre fwd slots n =
   Classical.forall_intro aux
 #pop-options
 
-private let wfh_part1_of (g: heap)
-  : Lemma (requires well_formed_heap g) (ensures well_formed_heap_part1 g)
-  = reveal_opaque (`%well_formed_heap) well_formed_heap
-
 /// Derivation: fwd_valid_or_infix + wfh_part1 + fwd_bounded + represents_fwd
 /// implies promoted_entries_valid_from.
 /// Each non-zero farr entry fwd(i*8) has valid bounds (from fwd_bounded),
@@ -240,7 +236,6 @@ private let derive_slot_rewrite_live
        TwoPass.live_field_addr prom.major_final (promoted_live minor live prom.fwd_map) a \/
        ~(TwoPass.holds_forwarded prom.major_final prom.fwd_map (U64.uint_to_t a))))
   = let prom = CheneySpec.cheney_promote minor major_pre fp roots in
-    wfh_part1_of major_pre;
     SpecFields.wfh_part1_obj_bound major_pre obj;
     ML.lemma_mod_plus (U64.v obj) j 8;
     assert (U64.v obj + j * 8 + 8 <= heap_size);
