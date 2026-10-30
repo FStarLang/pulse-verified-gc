@@ -32,6 +32,8 @@ module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
 
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
+module TPC = GC.Gen.TwoPassEquiv.Collect
+module CE = GC.Gen.CheneyExcept
 open GC.Gen.MinorCollectForwarding.Helpers
 
 module MCFE = GC.Gen.MinorCollectForwarding.Edges
@@ -49,11 +51,11 @@ private let combined_vertex_cases (v: CG.combined_vertex)
 /// the three forall instantiations run cheaply at low rlimit.
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 private let fwd_minor_source_in_minor_objects
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (x: U64.t)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
+      GenInv.collection_shape_except minor major fp pf /\
       ~(is_infix_in_minor minor x) /\
       (cheney_promote minor major fp roots).fwd_map x <> 0UL)
     (ensures
@@ -61,9 +63,8 @@ private let fwd_minor_source_in_minor_objects
   =
     let prom = cheney_promote minor major fp roots in
     let fx = prom.fwd_map x in
-    GenInv.collection_heap_shape_elim minor major fp;
-    GenInv.major_heap_shape_elim major fp;
-    GenInv.major_heap_shape_walk major fp;
+    GenInv.collection_shape_except_elim minor major fp pf;
+    GenInv.major_shape_except_elim major fp pf;
     GenInv.minor_heap_shape_elim minor;
     Forwarding.cheney_promote_fwd_noninfix_targets_valid minor major fp roots;
     assert (Seq.mem (fx <: obj_addr) (objects zero_addr prom.major_final));
@@ -78,23 +79,23 @@ private let fwd_minor_source_in_minor_objects
 /// that half.  Either way the resolved address is an enumerated minor object,
 /// which is exactly the hypothesis the resolution-aware classifiers want.
 private let fwd_source_resolves_in_minor_objects
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (x: U64.t)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
+      GenInv.collection_shape_except minor major fp pf /\
       (cheney_promote minor major fp roots).fwd_map x <> 0UL)
     (ensures
       Seq.mem (resolve_minor minor x) (minor_objects minor) /\
       is_minor_addr (resolve_minor minor x))
   =
-    GenInv.collection_heap_shape_elim minor major fp;
+    GenInv.collection_shape_except_elim minor major fp pf;
     GenInv.minor_heap_shape_elim minor;
     if is_infix_in_minor minor x
     then resolve_minor_in_objects minor x
     else begin
       resolve_minor_non_infix minor x;
-      fwd_minor_source_in_minor_objects minor major fp roots x
+      fwd_minor_source_in_minor_objects minor major fp pf roots x
     end;
     minor_objects_valid minor (resolve_minor minor x);
     is_minor_addr_from_bounds (resolve_minor minor x)
@@ -102,11 +103,11 @@ private let fwd_source_resolves_in_minor_objects
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 private let major_non_pointer_field_preserved
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (src: obj_addr) (j: nat)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
+      GenInv.collection_shape_except minor major fp pf /\
       Seq.mem src (objects zero_addr major) /\
       is_blue src major = false /\
       j < U64.v (wosize_of_object src major) /\
@@ -115,31 +116,32 @@ private let major_non_pointer_field_preserved
       CG.classify_major_field minor major
         (read_word major (U64.uint_to_t (U64.v src + j * 8))) == None)
     (ensures
-      (let res = cheney_collect_spec minor major fp roots in
+      (let res = cheney_collect_spec_except minor major fp roots pf in
        let field_addr : hp_addr = U64.uint_to_t (U64.v src + j * 8) in
        read_word res.mc_major field_addr ==
        read_word major field_addr))
   =
     let prom = cheney_promote minor major fp roots in
-    let res = cheney_collect_spec minor major fp roots in
+    let res = cheney_collect_spec_except minor major fp roots pf in
     let field_addr : hp_addr = U64.uint_to_t (U64.v src + j * 8) in
-    GenInv.collection_heap_shape_elim minor major fp;
-    GenInv.major_heap_shape_elim major fp;
-    GenInv.major_heap_shape_walk major fp;
+    GenInv.collection_shape_except_elim minor major fp pf;
+    GenInv.major_shape_except_elim major fp pf;
     GenInv.minor_heap_shape_elim minor;
-    MCFH.cheney_promote_preserves_old_major_field_context minor major fp roots src j;
+    MCFH.cheney_promote_preserves_old_major_field_context minor major fp pf roots src j;
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
     assert (read_word prom.major_final field_addr == read_word major field_addr);
-    if is_no_scan src prom.major_final then begin
-      PromUpdate.update_major_pointers_preserves_no_scan_field
-        prom.major_final prom.fwd_map src j
-    end else begin
-      PromUpdate.update_major_pointers_field_effect prom.major_final prom.fwd_map src j;
+    if is_no_scan src prom.major_final ||
+       not (FStar.IndefiniteDescription.strong_excluded_middle (not_freed prom.major_final pf src))
+    then
+      PromUpdate.update_walk_preserves_skipped_field
+        prom.major_final (not_freed prom.major_final pf) prom.fwd_map src j
+    else begin
+      PromUpdate.update_walk_field_effect prom.major_final (not_freed prom.major_final pf) prom.fwd_map src j;
       let old_raw = read_word prom.major_final field_addr in
       let old_val = to_minor_offset old_raw in
       assert (old_raw == read_word major field_addr);
       if is_minor_pointer old_val && prom.fwd_map old_val <> 0UL then begin
-        fwd_source_resolves_in_minor_objects minor major fp roots old_val;
+        fwd_source_resolves_in_minor_objects minor major fp pf roots old_val;
         CG.classify_major_field_is_minor minor major (read_word major field_addr);
         assert False
       end;
@@ -147,11 +149,11 @@ private let major_non_pointer_field_preserved
     end
 
 private let minor_non_pointer_field_preserved
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (src: U64.t) (j: nat)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
+      GenInv.collection_shape_except minor major fp pf /\
       (let prom = cheney_promote minor major fp roots in
        let img = prom.fwd_map src in
        img <> 0UL /\
@@ -167,7 +169,7 @@ private let minor_non_pointer_field_preserved
        CG.classify_minor_field minor major (minor_read_field minor src j) == None))
     (ensures
       (let prom = cheney_promote minor major fp roots in
-       let res = cheney_collect_spec minor major fp roots in
+       let res = cheney_collect_spec_except minor major fp roots pf in
        let img = prom.fwd_map src in
        let field_addr : hp_addr = U64.uint_to_t (U64.v img + j * 8) in
        read_word res.mc_major field_addr ==
@@ -176,25 +178,26 @@ private let minor_non_pointer_field_preserved
     let prom = cheney_promote minor major fp roots in
     let img = prom.fwd_map src in
     let img_obj : obj_addr = img in
-    let res = cheney_collect_spec minor major fp roots in
+    let res = cheney_collect_spec_except minor major fp roots pf in
     let field_addr : hp_addr = U64.uint_to_t (U64.v img + j * 8) in
-    GenInv.collection_heap_shape_elim minor major fp;
-    GenInv.major_heap_shape_elim major fp;
-    GenInv.major_heap_shape_walk major fp;
+    GenInv.collection_shape_except_elim minor major fp pf;
+    GenInv.major_shape_except_elim major fp pf;
     GenInv.minor_heap_shape_elim minor;
     CheneyFields.cheney_promote_fwd_target_fields_match minor major fp roots src j;
     assert (read_word prom.major_final field_addr == minor_read_field minor src j);
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
-    if is_no_scan img_obj prom.major_final then begin
-      PromUpdate.update_major_pointers_preserves_no_scan_field
-        prom.major_final prom.fwd_map img_obj j
-    end else begin
-      PromUpdate.update_major_pointers_field_effect prom.major_final prom.fwd_map img_obj j;
+    if is_no_scan img_obj prom.major_final ||
+       not (FStar.IndefiniteDescription.strong_excluded_middle (not_freed prom.major_final pf img_obj))
+    then
+      PromUpdate.update_walk_preserves_skipped_field
+        prom.major_final (not_freed prom.major_final pf) prom.fwd_map img_obj j
+    else begin
+      PromUpdate.update_walk_field_effect prom.major_final (not_freed prom.major_final pf) prom.fwd_map img_obj j;
       let old_raw = read_word prom.major_final field_addr in
       let old_val = to_minor_offset old_raw in
       assert (old_raw == minor_read_field minor src j);
       if is_minor_pointer old_val && prom.fwd_map old_val <> 0UL then begin
-        fwd_source_resolves_in_minor_objects minor major fp roots old_val;
+        fwd_source_resolves_in_minor_objects minor major fp pf roots old_val;
         CG.classify_minor_field_minor minor major (minor_read_field minor src j);
         assert False
       end;
@@ -202,20 +205,17 @@ private let minor_non_pointer_field_preserved
     end
 
 let normal_post_non_pointer_fields_preserved
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
   (roots slots: seq U64.t) (n: nat)
   =
     let prom = cheney_promote minor major fp roots in
-    GenInv.collection_heap_shape_elim minor major fp;
-    GenInv.major_heap_shape_elim major fp;
-    GenInv.major_heap_shape_walk major fp;
+    GenInv.collection_shape_except_elim minor major fp pf;
+    GenInv.major_shape_except_elim major fp pf;
     GenInv.minor_heap_shape_elim minor;
-    assert (well_formed_heap major);
     assert (minor_wf minor);
-    assert (RBridge.minor_no_pointer_to_blue minor major);
-    assert (RBridge.roots_valid_nonblue roots major);
-    RBridge.reachable_major_valid_nonblue minor major roots;
-    MCFE.combined_reachable_images_valid_or_infix minor major fp roots;
+    assert (RBridge.roots_not_freed roots major pf);
+    RBridge.reachable_major_not_freed minor major pf roots;
+    MCFE.combined_reachable_images_valid_or_infix minor major fp pf roots;
     CheneyInj.cheney_promote_fwd_targets_not_blue minor major fp roots;
     CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots;
     let aux (u: CG.combined_vertex) : Lemma
@@ -230,7 +230,7 @@ let normal_post_non_pointer_fields_preserved
             (U64.v src + j * 8) % 8 == 0 /\
             CG.classify_major_field minor major
               (read_word major (U64.uint_to_t (U64.v src + j * 8))) == None ==>
-            read_word (cheney_collect_spec minor major fp roots).mc_major
+            read_word (cheney_collect_spec_except minor major fp roots pf).mc_major
               (U64.uint_to_t (U64.v src + j * 8)) ==
             read_word major (U64.uint_to_t (U64.v src + j * 8))
         | CG.MinorV src ->
@@ -242,7 +242,7 @@ let normal_post_non_pointer_fields_preserved
             U64.v img + j * 8 + 8 <= heap_size /\
             (U64.v img + j * 8) % 8 == 0 /\
             CG.classify_minor_field minor major (minor_read_field minor src j) == None ==>
-            read_word (cheney_collect_spec minor major fp roots).mc_major
+            read_word (cheney_collect_spec_except minor major fp roots pf).mc_major
               (U64.uint_to_t (U64.v img + j * 8)) ==
             minor_read_field minor src j
         | _ -> True))
@@ -260,7 +260,7 @@ let normal_post_non_pointer_fields_preserved
              (U64.v src + j * 8) % 8 == 0 /\
              CG.classify_major_field minor major
                (read_word major (U64.uint_to_t (U64.v src + j * 8))) == None ==>
-             read_word (cheney_collect_spec minor major fp roots).mc_major
+             read_word (cheney_collect_spec_except minor major fp roots pf).mc_major
                (U64.uint_to_t (U64.v src + j * 8)) ==
              read_word major (U64.uint_to_t (U64.v src + j * 8))))
         =
@@ -271,8 +271,8 @@ let normal_post_non_pointer_fields_preserved
                (read_word major (U64.uint_to_t (U64.v src + j * 8))) == None
           then begin
             let field_addr : hp_addr = U64.uint_to_t (U64.v src + j * 8) in
-            major_non_pointer_field_preserved minor major fp roots src_obj j;
-            assert (read_word (cheney_collect_spec minor major fp roots).mc_major field_addr ==
+            major_non_pointer_field_preserved minor major fp pf roots src_obj j;
+            assert (read_word (cheney_collect_spec_except minor major fp roots pf).mc_major field_addr ==
                     read_word major field_addr)
           end
         in
@@ -291,7 +291,7 @@ let normal_post_non_pointer_fields_preserved
              U64.v (prom.fwd_map src) + j * 8 + 8 <= heap_size /\
              (U64.v (prom.fwd_map src) + j * 8) % 8 == 0 /\
              CG.classify_minor_field minor major (minor_read_field minor src j) == None ==>
-             read_word (cheney_collect_spec minor major fp roots).mc_major
+             read_word (cheney_collect_spec_except minor major fp roots pf).mc_major
                (U64.uint_to_t (U64.v (prom.fwd_map src) + j * 8)) ==
              minor_read_field minor src j))
         =
@@ -303,8 +303,8 @@ let normal_post_non_pointer_fields_preserved
           then begin
             let img = prom.fwd_map src in
             let field_addr : hp_addr = U64.uint_to_t (U64.v img + j * 8) in
-            minor_non_pointer_field_preserved minor major fp roots src j;
-            assert (read_word (cheney_collect_spec minor major fp roots).mc_major field_addr ==
+            minor_non_pointer_field_preserved minor major fp pf roots src j;
+            assert (read_word (cheney_collect_spec_except minor major fp roots pf).mc_major field_addr ==
                     minor_read_field minor src j)
           end
         in
@@ -318,7 +318,7 @@ let normal_post_non_pointer_fields_preserved
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let normal_post_non_pointer_fields_preserved_to_result
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (post_major: heap)
   =
     let prom = cheney_promote minor major fp roots in
@@ -370,7 +370,7 @@ let normal_post_non_pointer_fields_preserved_to_result
                  (read_word major (U64.uint_to_t (U64.v src + j * 8))) == None
             then begin
               let field_addr : hp_addr = U64.uint_to_t (U64.v src + j * 8) in
-              assert (read_word (cheney_collect_spec minor major fp roots).mc_major field_addr ==
+              assert (read_word (cheney_collect_spec_except minor major fp roots pf).mc_major field_addr ==
                       read_word major field_addr);
               assert (read_word post_major field_addr ==
                       read_word major field_addr)
@@ -415,7 +415,7 @@ let normal_post_non_pointer_fields_preserved_to_result
                CG.classify_minor_field minor major (minor_read_field minor src j) == None
             then begin
               let field_addr : hp_addr = U64.uint_to_t (U64.v img + j * 8) in
-              assert (read_word (cheney_collect_spec minor major fp roots).mc_major field_addr ==
+              assert (read_word (cheney_collect_spec_except minor major fp roots pf).mc_major field_addr ==
                       minor_read_field minor src j);
               assert (read_word post_major field_addr ==
                       minor_read_field minor src j)

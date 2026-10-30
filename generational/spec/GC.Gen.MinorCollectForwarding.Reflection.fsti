@@ -28,6 +28,8 @@ module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
 module HeapModel = GC.Spec.HeapModel
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
+module TPC = GC.Gen.TwoPassEquiv.Collect
+module CE = GC.Gen.CheneyExcept
 module MCFNE = GC.Gen.MinorCollectForwarding.NormalEdges
 
 let normal_image_reachable
@@ -39,43 +41,39 @@ let normal_image_reachable
     CG.fwd_morphism prom.fwd_map u == w
 
 val post_edge_from_minor_image_reflects_mem_ce
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
   (roots slots: seq U64.t) (n: nat)
   (src: U64.t) (v: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_fields_covered minor major roots /\
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      GenInv.collection_shape_except minor major fp pf /\
+      RBridge.major_fields_covered minor major pf roots /\
+      TPC.ref_table_covers_except major pf slots n /\
       MCFH.remembered_targets_in_roots major roots slots n /\
-      Mark.no_pointer_to_blue major /\
-      RBridge.minor_no_pointer_to_blue minor major /\
-      RBridge.roots_valid_nonblue roots major /\
+      RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
       MCFNE.normal_src_reachable minor major fp roots (CG.MinorV src) /\
       MCFNE.normal_src_reachable minor major fp roots v /\
       (let prom = cheney_promote minor major fp roots in
-       MCFH.post_minor_edge minor major fp roots (prom.fwd_map src)
+       MCFH.post_minor_edge minor major fp pf roots (prom.fwd_map src)
          (CG.fwd_morphism prom.fwd_map v)))
     (ensures CG.mem_ce (CG.MinorV src, v) (CG.build_combined_graph minor major))
 
 val post_edge_from_minor_image_reflects_target
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
   (roots slots: seq U64.t) (n: nat)
   (src y: U64.t)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_fields_covered minor major roots /\
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      GenInv.collection_shape_except minor major fp pf /\
+      RBridge.major_fields_covered minor major pf roots /\
+      TPC.ref_table_covers_except major pf slots n /\
       MCFH.remembered_targets_in_roots major roots slots n /\
-      Mark.no_pointer_to_blue major /\
-      RBridge.minor_no_pointer_to_blue minor major /\
-      RBridge.roots_valid_nonblue roots major /\
+      RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
       MCFNE.normal_src_reachable minor major fp roots (CG.MinorV src) /\
       (let prom = cheney_promote minor major fp roots in
-       MCFH.post_minor_edge minor major fp roots (prom.fwd_map src) y) /\
-      (let res = cheney_collect_spec minor major fp roots in
+       MCFH.post_minor_edge minor major fp pf roots (prom.fwd_map src) y) /\
+      (let res = cheney_collect_spec_except minor major fp roots pf in
        MCFH.mem_graph_vertex_at (HeapModel.create_graph res.mc_major) y))
     (ensures normal_image_reachable minor major fp roots y)

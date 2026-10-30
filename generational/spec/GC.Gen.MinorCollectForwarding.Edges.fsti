@@ -6,8 +6,11 @@
 /// minor-collection isomorphism proof, specialized to the current
 /// `minor_collect_full` path.
 ///
-/// The property is intentionally stated over `cheney_collect_spec`, since the
-/// Pulse implementation proves its concrete two-pass update equals that spec.
+/// The property is stated over `cheney_collect_spec_except` for a set `pf` of
+/// major objects pending free (`no_pending` is the stop-the-world
+/// `cheney_collect_spec`), since the Pulse implementation proves its concrete
+/// two-pass update equals that spec.  Pending objects are never reachable: the
+/// roots are not pending and a not-freed object points only at not-freed ones.
 /// The source roots are the program roots plus the remembered-set slot targets;
 /// when those remembered targets are represented in the root array and the
 /// collector returns `ok`, the forwarding map is an injective morphism for
@@ -49,6 +52,8 @@ module HeapGraph = GC.Spec.HeapGraph
 module HeapModel = GC.Spec.HeapModel
 
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
+module TPC = GC.Gen.TwoPassEquiv.Collect
+module CE = GC.Gen.CheneyExcept
 open GC.Gen.MinorCollectForwarding.Helpers
 
 /// Statement well-formedness here involves `U64.uint_to_t (v x + j * 8)`
@@ -57,15 +62,14 @@ open GC.Gen.MinorCollectForwarding.Helpers
 /// None of the statements below need recursive unfolding.
 #push-options "--fuel 0 --ifuel 0"
 val combined_reachable_minor_has_fwd
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   : Lemma
     (requires
-      RBridge.major_fields_covered minor major roots /\
-      well_formed_heap major /\
+      RBridge.major_fields_covered minor major pf roots /\
+      well_formed_heap_except major pf /\
       minor_wf minor /\
-      Mark.no_pointer_to_blue major /\
-      RBridge.minor_no_pointer_to_blue minor major /\
-      RBridge.roots_valid_nonblue roots major /\
+      GenInv.minor_major_fields_not_freed minor major pf /\
+      RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
       let cg = CG.build_combined_graph minor major in
@@ -76,11 +80,11 @@ val combined_reachable_minor_has_fwd
         minor_wosize minor v > 0 ==> fwd v <> 0UL))
 
 let combined_reachable_images_valid_or_infix_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t) : prop =
   let cg = CG.build_combined_graph minor major in
   let combined_roots = CG.classify_roots minor roots in
   let prom = cheney_promote minor major fp roots in
-  let res = cheney_collect_spec minor major fp roots in
+  let res = cheney_collect_spec_except minor major fp roots pf in
   let fwd = prom.fwd_map in
   (forall (v: U64.t).
     CG.combined_reachable cg combined_roots (CG.MajorV v) ==>
@@ -101,16 +105,14 @@ let combined_reachable_images_valid_or_infix_prop
 /// - reachable positive-size minor vertices have valid-or-infix forwarding
 ///   images in the post-promotion heap.
 val combined_reachable_images_valid_or_infix
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_fields_covered minor major roots /\
-      Mark.no_pointer_to_blue major /\
-      RBridge.minor_no_pointer_to_blue minor major /\
-      RBridge.roots_valid_nonblue roots major /\
+      GenInv.collection_shape_except minor major fp pf /\
+      RBridge.major_fields_covered minor major pf roots /\
+      RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots)
-    (ensures combined_reachable_images_valid_or_infix_prop minor major fp roots)
+    (ensures combined_reachable_images_valid_or_infix_prop minor major fp pf roots)
 
 /// Concrete MajorV -> MajorV edge-forwarding lemma for the eventual
 /// isomorphism: if a reachable pre-collection major object has a combined-graph
@@ -121,10 +123,10 @@ val combined_reachable_images_valid_or_infix
 /// `MajorV src -> MajorV dst` combined-graph edge survive into the
 /// post-collection heap graph when the field holds an interior pointer.
 val cheney_collect_frame_target_header
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (h: obj_addr)
   : Lemma
-    (requires well_formed_heap major /\
+    (requires well_formed_heap_except major pf /\
               AllocLemmas.fl_valid major fp heap_words /\
               AllocLemmas.fl_chain_terminates major fp heap_words /\
               chain_objects_blue major fp /\
@@ -132,26 +134,24 @@ val cheney_collect_frame_target_header
               GC.Spec.Object.infix_addr_wf major (objects zero_addr major) h /\
               Seq.mem (GC.Spec.Object.resolve_object h major) (objects zero_addr major) /\
               is_blue (GC.Spec.Object.resolve_object h major) major = false)
-    (ensures (let res = cheney_collect_spec minor major fp roots in
+    (ensures (let res = cheney_collect_spec_except minor major fp roots pf in
               read_word res.mc_major (hd_address h) == read_word major (hd_address h) /\
               GC.Spec.Object.resolve_object h res.mc_major ==
                 GC.Spec.Object.resolve_object h major))
 
 val combined_reachable_major_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (src dst: obj_addr)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
-      Mark.no_pointer_to_blue major /\
-      RBridge.minor_no_pointer_to_blue minor major /\
-      RBridge.roots_valid_nonblue roots major /\
+      GenInv.collection_shape_except minor major fp pf /\
+      RBridge.roots_not_freed roots major pf /\
       (let cg = CG.build_combined_graph minor major in
        let combined_roots = CG.classify_roots minor roots in
        CG.combined_reachable cg combined_roots (CG.MajorV src) /\
        CG.mem_ce (CG.MajorV src, CG.MajorV dst) cg))
     (ensures
-      (let res = cheney_collect_spec minor major fp roots in
+      (let res = cheney_collect_spec_except minor major fp roots pf in
        mem_graph_edge (HeapModel.create_graph res.mc_major) src dst))
 
 /// `U64.uint_to_t (v src + i * 8)` side condition, discharged in an empty
@@ -166,18 +166,16 @@ let field_addr_fits (src: U64.t) (i: nat)
 /// points to a reachable positive-size minor object, the post-minor heap stores
 /// the target's forwarding address in that field.
 val combined_major_minor_field_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
   (roots slots: seq U64.t) (n: nat)
   (src: obj_addr) (dst: U64.t) (i: nat)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_fields_covered minor major roots /\
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      GenInv.collection_shape_except minor major fp pf /\
+      RBridge.major_fields_covered minor major pf roots /\
+      TPC.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
-      Mark.no_pointer_to_blue major /\
-      RBridge.minor_no_pointer_to_blue minor major /\
-      RBridge.roots_valid_nonblue roots major /\
+      RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
       (let cg = CG.build_combined_graph minor major in
        let combined_roots = CG.classify_roots minor roots in
@@ -193,7 +191,7 @@ val combined_major_minor_field_forwarded
     (ensures (
       let fa = (field_addr_fits src i; U64.uint_to_t (U64.v src + i * 8)) in
       let prom = cheney_promote minor major fp roots in
-      let res = cheney_collect_spec minor major fp roots in
+      let res = cheney_collect_spec_except minor major fp roots pf in
       let ov = to_minor_offset (read_word major fa) in
       prom.fwd_map dst <> 0UL /\
       prom.fwd_map ov <> 0UL /\
@@ -201,18 +199,16 @@ val combined_major_minor_field_forwarded
       read_word res.mc_major fa == prom.fwd_map ov))
 
 val combined_major_minor_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
   (roots slots: seq U64.t) (n: nat)
   (src: obj_addr) (dst: U64.t) (i: nat)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_fields_covered minor major roots /\
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      GenInv.collection_shape_except minor major fp pf /\
+      RBridge.major_fields_covered minor major pf roots /\
+      TPC.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
-      Mark.no_pointer_to_blue major /\
-      RBridge.minor_no_pointer_to_blue minor major /\
-      RBridge.roots_valid_nonblue roots major /\
+      RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
       (let prom = cheney_promote minor major fp roots in
        HeapGraph.is_pointer_field (prom.fwd_map dst)) /\
@@ -229,18 +225,18 @@ val combined_major_minor_edge_forwarded
       minor_wosize minor dst > 0)
     (ensures (
       let prom = cheney_promote minor major fp roots in
-      let res = cheney_collect_spec minor major fp roots in
+      let res = cheney_collect_spec_except minor major fp roots pf in
       mem_graph_edge (HeapModel.create_graph res.mc_major) src (prom.fwd_map dst)))
 
 /// Field-level MinorV -> MajorV edge-forwarding slice: for a promoted normal
 /// minor source, a field that points to an old major object remains that major
 /// object in the post-minor heap.
 val promoted_minor_major_field_preserved
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
+      GenInv.collection_shape_except minor major fp pf /\
       (let prom = cheney_promote minor major fp roots in
        let fwd_src = prom.fwd_map src in
        fwd_src <> 0UL /\
@@ -259,15 +255,15 @@ val promoted_minor_major_field_preserved
        Some (CG.MajorV dst)))
     (ensures (
       let prom = cheney_promote minor major fp roots in
-      let res = cheney_collect_spec minor major fp roots in
+      let res = cheney_collect_spec_except minor major fp roots pf in
       read_word res.mc_major (U64.uint_to_t (U64.v (prom.fwd_map src) + j * 8)) == dst))
 
 val promoted_minor_major_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
+      GenInv.collection_shape_except minor major fp pf /\
       (let prom = cheney_promote minor major fp roots in
        let fwd_src = prom.fwd_map src in
        fwd_src <> 0UL /\
@@ -286,7 +282,7 @@ val promoted_minor_major_edge_forwarded
        Some (CG.MajorV dst)))
     (ensures (
       let prom = cheney_promote minor major fp roots in
-      let res = cheney_collect_spec minor major fp roots in
+      let res = cheney_collect_spec_except minor major fp roots pf in
       mem_graph_edge_at (HeapModel.create_graph res.mc_major) (prom.fwd_map src) dst))
 
 /// Field-level MinorV -> MinorV edge-forwarding slice: for a promoted normal
@@ -295,11 +291,11 @@ val promoted_minor_major_edge_forwarded
 // the `U64.uint_to_t` in the conclusion needs more than the default budget
 #push-options "--z3rlimit 40"
 val promoted_minor_minor_field_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
+      GenInv.collection_shape_except minor major fp pf /\
       (let prom = cheney_promote minor major fp roots in
        let fwd_src = prom.fwd_map src in
        fwd_src <> 0UL /\
@@ -320,7 +316,7 @@ val promoted_minor_minor_field_forwarded
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
       let prom = cheney_promote minor major fp roots in
-      let res = cheney_collect_spec minor major fp roots in
+      let res = cheney_collect_spec_except minor major fp roots pf in
       let ov = to_minor_offset (minor_read_field minor src j) in
       read_word res.mc_major (U64.uint_to_t (U64.v (prom.fwd_map src) + j * 8)) ==
       prom.fwd_map ov /\
@@ -329,11 +325,11 @@ val promoted_minor_minor_field_forwarded
 #pop-options
 
 val promoted_minor_minor_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
+      GenInv.collection_shape_except minor major fp pf /\
       (let prom = cheney_promote minor major fp roots in
        let fwd_src = prom.fwd_map src in
        fwd_src <> 0UL /\
@@ -355,7 +351,7 @@ val promoted_minor_minor_edge_forwarded
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
       let prom = cheney_promote minor major fp roots in
-      let res = cheney_collect_spec minor major fp roots in
+      let res = cheney_collect_spec_except minor major fp roots pf in
       mem_graph_edge_at (HeapModel.create_graph res.mc_major)
         (prom.fwd_map src) (prom.fwd_map dst)))
 

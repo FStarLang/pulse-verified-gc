@@ -74,8 +74,9 @@ let major_minor_field_rewritten
   (roots slots: seq U64.t) (n: nat)
   (src: obj_addr) (dst: U64.t) (i: nat)
   =
+  MinorFwd.no_pending_context minor major fp roots slots n;
   MinorFwd.combined_major_minor_field_forwarded
-    minor major fp roots slots n src dst i;
+    minor major fp SpecFields.no_pending roots slots n src dst i;
   promoted_image_from_forwarding minor major fp roots dst
     ((Cheney.cheney_promote minor major fp roots).fwd_map dst)
 

@@ -6,8 +6,13 @@
 /// minor-collection isomorphism proof, specialized to the current
 /// `minor_collect_full` path.
 ///
-/// The property is intentionally stated over `cheney_collect_spec`, since the
-/// Pulse implementation proves its concrete two-pass update equals that spec.
+/// The property is stated over `cheney_collect_spec_except` for a set `pf` of
+/// major objects pending free, since the Pulse implementation proves its
+/// concrete two-pass update equals that spec.  A pending object is never
+/// reachable (the roots are not pending, and a not-freed object points only at
+/// not-freed objects), so the graphs may keep it: it is outside every
+/// reachable part the theorems talk about.  `pf = no_pending` is the
+/// stop-the-world collection, `cheney_collect_spec`.
 /// The source roots are the program roots plus the remembered-set slot targets;
 /// when those remembered targets are represented in the root array and the
 /// collector returns `ok`, the forwarding map is an injective morphism for
@@ -46,6 +51,7 @@ module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
 module HeapGraph = GC.Spec.HeapGraph
 module HeapModel = GC.Spec.HeapModel
+module TPC = GC.Gen.TwoPassEquiv.Collect
 
 /// Read the remembered-set slot targets from the pre-collection major heap.
 /// Only valid slots containing minor pointers contribute roots.
@@ -99,17 +105,26 @@ let roots_valid_for_minor_collection
      ~(is_blue (r <: obj_addr) major)))
 #pop-options
 
-/// `roots_valid_for_minor_collection` subsumes `RBridge.roots_valid_nonblue`:
-/// the non-minor branch of the former already establishes exactly the
-/// non-blueness that the latter asserts, under strictly weaker hypotheses
-/// (the latter additionally guards on `is_val_addr` and object membership,
-/// both of which the former supplies outright).  Callers that already have
-/// the former therefore need not carry the latter as a separate assumption.
-val roots_valid_for_minor_collection_nonblue
+/// The same, except the objects pending free: a non-minor root is a
+/// not-freed major object.  (A root is reachable, so it is never pending.)
+let roots_valid_except
+  (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (roots: seq U64.t) : prop =
+  roots_valid_for_minor_collection minor major roots /\
+  (forall (r: U64.t). Seq.mem r roots /\ ~(is_minor_pointer r) /\ is_val_addr r ==>
+     ~(pf (r <: obj_addr)))
+
+val roots_valid_no_pending
   (minor: minor_state) (major: heap) (roots: seq U64.t)
   : Lemma
     (requires roots_valid_for_minor_collection minor major roots)
-    (ensures RBridge.roots_valid_nonblue roots major)
+    (ensures roots_valid_except minor major no_pending roots)
+
+/// `roots_valid_except` subsumes `RBridge.roots_not_freed`.
+val roots_valid_except_not_freed
+  (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (roots: seq U64.t)
+  : Lemma
+    (requires roots_valid_except minor major pf roots)
+    (ensures RBridge.roots_not_freed roots major pf)
 
 /// Raw-address view of graph-edge membership, useful when the endpoint is a
 /// forwarding-map image whose `hp_addr` refinement is proved by preconditions.
@@ -190,17 +205,17 @@ let result_post_reachable
 /// heap, and transporting a witness between two such copies across a
 /// propositional heap equality is not something the solver manages.
 let post_minor_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (w: U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
-  let res = cheney_collect_spec minor major fp roots in
+  let res = cheney_collect_spec_except minor major fp roots pf in
   result_post_reachable res.mc_major
     (resolve_roots res.mc_major (rewrite_roots roots prom.fwd_map)) w
 
 let post_minor_edge
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (x y: U64.t) : prop =
-  let res = cheney_collect_spec minor major fp roots in
+  let res = cheney_collect_spec_except minor major fp roots pf in
   mem_graph_edge_at (HeapModel.create_graph res.mc_major) x y
 
 let result_post_edge (post_major: heap) (x y: U64.t) : prop =
@@ -210,7 +225,7 @@ let result_post_edge (post_major: heap) (x y: U64.t) : prop =
 /// graph vertex is post-reachable.
 ///
 /// Stated abstractly on purpose.  Performed in place --- where the heap is the
-/// applied term `(cheney_collect_spec minor major fp roots).mc_major` --- the
+/// applied term `(cheney_collect_spec_except minor major fp roots pf).mc_major` --- the
 /// solver does not find the three witnesses.
 val result_post_reachable_refl_direct
   (post_major: heap) (post_roots: seq U64.t) (w: U64.t)
@@ -231,21 +246,21 @@ val result_post_reachable_refl_resolved
 /// A rewritten root that names `w` --- either directly, or, when the root is an
 /// interior pointer, by resolving to it --- makes `w` post-reachable.
 val post_minor_reachable_refl_from_root
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
   (roots: seq U64.t) (rr: U64.t) (w: U64.t)
   : Lemma
     (requires (
       let prom = cheney_promote minor major fp roots in
-      let res = cheney_collect_spec minor major fp roots in
+      let res = cheney_collect_spec_except minor major fp roots pf in
       Seq.mem rr (rewrite_roots roots prom.fwd_map) /\
       HeapGraph.resolve_field res.mc_major rr == w /\
       mem_graph_vertex_at (HeapModel.create_graph res.mc_major) w))
-    (ensures post_minor_reachable minor major fp roots w)
+    (ensures post_minor_reachable minor major fp pf roots w)
 
-/// A major-to-major field is not affected by `update_major_pointers`: existing
+/// A major-to-major field is not affected by the pointer update: existing
 /// major object addresses are outside the nursery range.
 val update_preserves_major_target_field
-  (major: heap) (fwd: forwarding_map) (src dst: obj_addr) (j: nat)
+  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (src dst: obj_addr) (j: nat)
   : Lemma
     (requires
       well_formed_heap_part1 major /\
@@ -254,11 +269,10 @@ val update_preserves_major_target_field
       j < U64.v (wosize_of_object src major) /\
       U64.v src + j * 8 + 8 <= heap_size /\
       (U64.v src + j * 8) % 8 == 0 /\
-      is_blue src major = false /\
       is_no_scan src major = false /\
       read_word major (U64.uint_to_t (U64.v src + j * 8)) == dst)
     (ensures
-      read_word (update_major_pointers major fwd)
+      read_word (update_walk major upd fwd)
         (U64.uint_to_t (U64.v src + j * 8)) == dst)
 
 /// Turn a concrete field value in a heap object into a graph edge in
@@ -267,7 +281,7 @@ val heap_field_points_to_graph_edge
   (g: heap) (src: obj_addr) (dst: U64.t) (j: nat)
   : Lemma
     (requires
-      well_formed_heap g /\
+      well_formed_heap_part1 g /\
       Seq.mem src (objects zero_addr g) /\
       ~(is_no_scan src g) /\ ~(is_blue src g) /\
       j < U64.v (wosize_of_object src g) /\
@@ -278,11 +292,12 @@ val heap_field_points_to_graph_edge
     (ensures mem_graph_edge (HeapModel.create_graph g) src
                (HeapGraph.resolve_field g dst))
 
+/// A graph edge out of a not-freed object is one of its pointer fields.
 val heap_graph_edge_to_pointer_field
-  (g: heap) (src dst: obj_addr)
+  (g: heap) (pf: obj_addr -> prop) (src dst: obj_addr)
   : Lemma
     (requires mem_graph_edge (HeapModel.create_graph g) src dst /\
-              well_formed_heap g)
+              well_formed_heap_except g pf /\ not_freed g pf src)
     (ensures
       Seq.mem src (objects zero_addr g) /\
       HeapGraph.object_fits_in_heap src g /\
@@ -294,10 +309,10 @@ val heap_graph_edge_to_pointer_field
         HeapGraph.resolve_field g (HeapGraph.get_field g src j) == dst))
 
 val heap_graph_edge_to_field_read
-  (g: heap) (src dst: obj_addr)
+  (g: heap) (pf: obj_addr -> prop) (src dst: obj_addr)
   : Lemma
     (requires mem_graph_edge (HeapModel.create_graph g) src dst /\
-              well_formed_heap g)
+              well_formed_heap_except g pf /\ not_freed g pf src)
     (ensures
       Seq.mem src (objects zero_addr g) /\
       is_no_scan src g = false /\
@@ -319,21 +334,21 @@ val mem_graph_vertex_at_is_obj_addr
     (ensures is_val_addr w /\ Seq.mem (w <: obj_addr) (objects zero_addr g))
 
 /// A graph vertex resolves to itself: vertices are enumerated objects, and
-/// well-formedness forbids an enumerated object from carrying an infix header.
+/// part 4 forbids an enumerated object from carrying an infix header.
 val vertex_resolves_to_itself (h: heap) (w: U64.t)
   : Lemma
-    (requires well_formed_heap h /\
+    (requires well_formed_heap_part4 h /\
               mem_graph_vertex_at (HeapModel.create_graph h) w)
     (ensures HeapGraph.resolve_field h w == w)
 
 /// Cheney promotion preserves the header-derived facts and body field of a
 /// pre-existing non-blue major object.
 val cheney_promote_preserves_old_major_field_context
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (src: obj_addr) (j: nat)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
+  (roots: seq U64.t) (src: obj_addr) (j: nat)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
+      GenInv.collection_shape_except minor major fp pf /\
       Seq.mem src (objects zero_addr major) /\
       is_blue src major = false /\
       j < U64.v (wosize_of_object src major) /\
@@ -371,21 +386,22 @@ val header_eq_preserves_wosize_no_scan
 /// source the image is an interior major pointer whose copied infix header
 /// still encodes the offset back to the promoted closure
 /// (`GC.Gen.CheneyPreservation.Forwarding.fwd_infix_targets_wf`), and
-/// `update_major_pointers` cannot disturb that header because an infix header
+/// the pointer update cannot disturb that header because an infix header
 /// word is congruent to 1 mod 8 and so never looks like a minor pointer.
 ///
-/// Stated over `cheney_collect_spec`'s final heap, this is exactly what turns a
+/// Stated over `cheney_collect_spec_except`'s final heap, this is exactly what turns a
 /// rewritten interior field into the combined-graph edge
 /// `MinorV (resolve_minor minor x)`.
 val fwd_image_resolves
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (x: U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
+  (roots: seq U64.t) (x: U64.t)
   : Lemma
     (requires
-      GenInv.collection_heap_shape minor major fp /\
+      GenInv.collection_shape_except minor major fp pf /\
       (cheney_promote minor major fp roots).fwd_map x <> 0UL)
     (ensures (
       let prom = cheney_promote minor major fp roots in
-      let updated = (cheney_collect_spec minor major fp roots).mc_major in
+      let updated = (cheney_collect_spec_except minor major fp roots pf).mc_major in
       let rv = resolve_minor minor x in
       Seq.mem rv (minor_objects minor) /\
       is_minor_addr rv /\
@@ -408,18 +424,17 @@ val fwd_image_resolves
 /// Interior nursery targets are forwarded
 /// ---------------------------------------------------------------------------
 
-/// A nursery pointer in any field of a scannable non-blue major object is in roots:
-/// the write barrier records *every* field of a scannable non-blue major object
+/// A nursery pointer in any field of a scannable not-freed major object is in
+/// roots: the write barrier records *every* field of a scannable not-freed major object
 /// that holds a nursery pointer, and the recorded target is the word as stored,
 /// interior or not.
 val major_field_target_in_roots
-  (major: heap) (roots slots: seq U64.t) (n: nat) (src: obj_addr) (j: nat)
+  (major: heap) (pf: obj_addr -> prop) (roots slots: seq U64.t) (n: nat) (src: obj_addr) (j: nat)
   : Lemma
     (requires
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      TPC.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
-      Seq.mem src (objects zero_addr major) /\
-      is_blue src major = false /\
+      not_freed major pf src /\
       is_no_scan src major = false /\
       j < U64.v (wosize_of_object src major) /\
       U64.v src + j * 8 + 8 <= heap_size /\
@@ -432,20 +447,20 @@ val major_field_target_in_roots
 
 /// The slot table covers every field, field 0 included.
 ///
-/// `ref_table_covers_minor_ptrs` quantifies over `j < wosize` at address
+/// `ref_table_covers_except` quantifies over `j < wosize` at address
 /// `obj + j*8`, so the write barrier records every nursery pointer stored in a
-/// scannable non-blue major object.  Combined with
+/// scannable not-freed major object.  Combined with
 /// `remembered_targets_in_roots`, which puts every recorded slot's minor target
 /// into the Cheney root sequence, the two preconditions that
 /// `minor_collect_full` already demands are together enough to discharge
 /// `RBridge.major_fields_covered` outright.
 val major_fields_covered_from_slots
-  (minor: minor_state) (major: heap) (roots slots: seq U64.t) (n: nat)
+  (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      TPC.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n)
-    (ensures RBridge.major_fields_covered minor major roots)
+    (ensures RBridge.major_fields_covered minor major pf roots)
 
 /// An interior nursery pointer stored in a *nursery* field has its own entry in
 /// the forwarding map.  This is `fwd_covers_infix_fields`, which the scan loop
@@ -468,15 +483,14 @@ val minor_field_infix_target_forwarded
 /// remembered set files it as a Cheney root, and `fwd_covers_infix_roots`
 /// forwards every interior root.
 val major_field_infix_target_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots slots: seq U64.t) (n: nat)
-  (src: obj_addr) (j: nat)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
+  (roots slots: seq U64.t) (n: nat) (src: obj_addr) (j: nat)
   : Lemma
     (requires
       CheneyBFS.cheney_no_oom minor major fp roots /\
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      TPC.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
-      Seq.mem src (objects zero_addr major) /\
-      is_blue src major = false /\
+      not_freed major pf src /\
       is_no_scan src major = false /\
       j < U64.v (wosize_of_object src major) /\
       U64.v src + j * 8 + 8 <= heap_size /\
@@ -486,3 +500,41 @@ val major_field_infix_target_forwarded
     (ensures
       (cheney_promote minor major fp roots).fwd_map
         (to_minor_offset (read_word major (U64.uint_to_t (U64.v src + j * 8)))) <> 0UL)
+
+/// The post-collection major heap is well formed except the same pending
+/// objects (`GC.Gen.CheneyExcept.cheney_collect_except_preserves_shape`).
+val post_shape_except
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
+  : Lemma
+    (requires GenInv.collection_shape_except minor major fp pf)
+    (ensures (
+      let res = cheney_collect_spec_except minor major fp roots pf in
+      well_formed_heap_except res.mc_major pf /\
+      well_formed_heap_part1 res.mc_major /\
+      well_formed_heap_part4 res.mc_major))
+
+/// Part 4 at one object.
+val part4_non_infix (g: heap) (h: obj_addr)
+  : Lemma (requires well_formed_heap_part4 g /\ Seq.mem h (objects zero_addr g))
+          (ensures ~(is_infix h g))
+
+/// The image of a promoted nursery object is not freed, after promotion and
+/// after the pointer update.
+val image_not_freed
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
+  (v: U64.t) (x: obj_addr)
+  : Lemma
+    (requires GenInv.collection_shape_except minor major fp pf /\
+              Seq.mem v (minor_objects minor) /\
+              (cheney_promote minor major fp roots).fwd_map v == x)
+    (ensures not_freed (cheney_promote minor major fp roots).major_final pf x /\
+             not_freed (cheney_collect_spec_except minor major fp roots pf).mc_major pf x)
+
+/// An old not-freed object stays not freed through the collection.
+val old_not_freed
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
+  (x: obj_addr)
+  : Lemma
+    (requires GenInv.collection_shape_except minor major fp pf /\ not_freed major pf x)
+    (ensures not_freed (cheney_promote minor major fp roots).major_final pf x /\
+             not_freed (cheney_collect_spec_except minor major fp roots pf).mc_major pf x)

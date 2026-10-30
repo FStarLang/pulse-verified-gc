@@ -22,24 +22,24 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 /// ---------------------------------------------------------------------------
 
 let cheney_collect_preserves_objects
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   =
   cheney_promote_preserves_objects minor major fp roots;
   let prom = cheney_promote minor major fp roots in
   wf_parts ();
   cheney_promote_preserves_wfh_part1 minor major fp roots;
-  update_major_pointers_preserves_objects prom.major_final prom.fwd_map
+  GC.Gen.PromoteUpdate.update_walk_preserves_objects prom.major_final (not_freed prom.major_final pf) prom.fwd_map
 
 /// ---------------------------------------------------------------------------
 /// Property 2: well_formed_heap_part1
 /// ---------------------------------------------------------------------------
 
 let cheney_collect_preserves_wfh_part1
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   =
   cheney_promote_preserves_wfh_part1 minor major fp roots;
   let prom = cheney_promote minor major fp roots in
-  update_major_pointers_preserves_wfh_part1 prom.major_final prom.fwd_map
+  GC.Gen.PromoteUpdate.update_walk_preserves_wfh_part1 prom.major_final (not_freed prom.major_final pf) prom.fwd_map
 
 /// ---------------------------------------------------------------------------
 /// Property 3: Minor reset
@@ -64,8 +64,8 @@ let cheney_collect_rewrites_roots
 let cheney_gc_correct
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
-  cheney_collect_preserves_objects minor major fp roots;
-  cheney_collect_preserves_wfh_part1 minor major fp roots;
+  cheney_collect_preserves_objects minor major fp no_pending roots;
+  cheney_collect_preserves_wfh_part1 minor major fp no_pending roots;
   cheney_collect_resets_minor minor major fp roots;
   cheney_collect_rewrites_roots minor major fp roots;
   cheney_collect_preserves_fl_valid minor major fp roots

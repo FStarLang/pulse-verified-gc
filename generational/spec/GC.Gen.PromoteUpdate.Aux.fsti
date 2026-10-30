@@ -58,13 +58,6 @@ val update_walk_preserves_wfh_part1
   : Lemma (requires well_formed_heap_part1 major)
     (ensures well_formed_heap_part1 (update_walk major upd fwd))
 
-/// Only the members of the rewritten set on the walk matter.
-val update_walk_ext
-  (major: heap) (upd1 upd2: obj_addr -> prop) (fwd: forwarding_map)
-  : Lemma (requires forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
-                      (upd1 x <==> upd2 x))
-    (ensures update_walk major upd1 fwd == update_walk major upd2 fwd)
-
 /// ---------------------------------------------------------------------------
 /// The stop-the-world instances
 /// ---------------------------------------------------------------------------

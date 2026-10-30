@@ -97,31 +97,6 @@ let update_walk_preserves_objects major upd fwd =
 let update_walk_preserves_wfh_part1 major upd fwd =
   update_walk_aux_preserves_objects_wfh major (objects zero_addr major) upd fwd 0
 
-#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
-private let rec update_walk_aux_ext
-  (major: heap) (objs: seq obj_addr) (upd1 upd2: obj_addr -> prop)
-  (fwd: forwarding_map) (idx: nat)
-  : Lemma (requires forall (x: obj_addr). Seq.mem x objs ==> (upd1 x <==> upd2 x))
-    (ensures update_walk_aux major objs upd1 fwd idx == update_walk_aux major objs upd2 fwd idx)
-    (decreases (Seq.length objs - idx)) =
-  if idx >= Seq.length objs then ()
-  else begin
-    let obj = Seq.index objs idx in
-    assert (Seq.mem obj objs);
-    if not (FStar.IndefiniteDescription.strong_excluded_middle (upd1 obj)) then
-      update_walk_aux_ext major objs upd1 upd2 fwd (idx + 1)
-    else if is_no_scan obj major then
-      update_walk_aux_ext major objs upd1 upd2 fwd (idx + 1)
-    else
-      update_walk_aux_ext
-        (update_object_pointers major obj (U64.v (wosize_of_object obj major)) fwd 0)
-        objs upd1 upd2 fwd (idx + 1)
-  end
-#pop-options
-
-let update_walk_ext major upd1 upd2 fwd =
-  update_walk_aux_ext major (objects zero_addr major) upd1 upd2 fwd 0
-
 /// update_major_pointers preserves the objects walk.
 let update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map) =
   update_walk_preserves_objects major (not_freed major no_pending) fwd

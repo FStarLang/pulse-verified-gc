@@ -322,7 +322,7 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 /// (`GenInv.collection_shape_except`); a pending object is unconstrained and
 /// never read or written.  The stop-the-world collector passes `no_pending`;
 /// `minor_collect_pre_idle` / `minor_collect_post_idle` below are that
-/// instance, with the reachable-subgraph isomorphism added.
+/// instance, with the colour facts of `collection_heap_shape` added.
 ///
 /// The ref_table comes from the write barrier: it records addresses of
 /// existing major-heap fields that were assigned minor-heap pointers.  The
@@ -330,16 +330,20 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 /// (`TPC.ref_table_covers_except`: every nursery pointer held by a not-freed
 /// object is at a recorded slot; `TPC.ref_table_sound_except`: slots are fields
 /// of non-free scannable objects, and those of pending objects hold no nursery
-/// pointer).
+/// pointer).  The recorded slots' nursery targets are among the roots
+/// (`remembered_targets_in_roots`), and the roots are valid and not pending
+/// (`roots_valid_except`): roots are reachable, so never pending.
 let minor_collect_pre_except
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
-  (farr sl: Seq.seq U64.t) (nslots: nat) (pf: obj_addr -> prop) : prop =
+  (rs farr sl: Seq.seq U64.t) (nslots: nat) (pf: obj_addr -> prop) : prop =
   GenInv.collection_shape_except minor_st s fp pf /\
   Seq.length farr == UpdatePtrs.fwd_array_size /\
   (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
   TPC.ref_table_sound_except s pf sl nslots /\
   TPC.ref_table_covers_except s pf sl nslots /\
-  UpdatePtrs.slots_pairwise_distinct sl nslots
+  UpdatePtrs.slots_pairwise_distinct sl nslots /\
+  MinorFwd.remembered_targets_in_roots s rs sl nslots /\
+  MinorFwd.roots_valid_except minor_st s pf rs
 
 /// What the collection guarantees, except the objects pending free.
 let minor_collect_post_except
@@ -369,8 +373,15 @@ let minor_collect_post_except
   SpecFields.well_formed_heap_part1 prom.major_final /\
   // The shape is kept, for the same pending set
   GenInv.collection_shape_except ({ data = d2; bump = b2 } <: minor_state) s2 fp2 pf /\
+  // If promotion succeeds, the collection is a reachable-subgraph isomorphism
+  // over the post-collection heap graph (pending objects are never reachable).
   (not ok ==> CheneyBFS.cheney_oom minor_st s fp rs) /\
-  (ok ==> CheneyBFS.cheney_no_oom minor_st s fp rs)
+  (ok ==>
+   CheneyBFS.cheney_no_oom minor_st s fp rs /\
+   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+     minor_st s fp rs s2 (MCFH.resolve_roots s2 rs2) /\
+   MinorFwd.normal_result_non_pointer_fields_preserved_prop
+     minor_st s fp rs s2)
 
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
@@ -385,7 +396,7 @@ fn minor_collect_full (gh: gen_heap_t)
            pts_to slots 'sl **
            pure (SZ.v nroots == Seq.length 'rs /\
                  minor_collect_pre_except ({ data = 'd; bump = 'b } <: minor_state) 's 'fp
-                   'farr 'sl (SZ.v nslots) pf)
+                   'rs 'farr 'sl (SZ.v nslots) pf)
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
     is_gen_heap gh d2 b2 s2 fp2 **
@@ -460,10 +471,10 @@ val minor_collect_idle_pre
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
   (rs farr sl: Seq.seq U64.t) (nslots: nat)
   : Lemma (requires minor_collect_pre_idle minor_st s fp rs farr sl nslots)
-          (ensures minor_collect_pre_except minor_st s fp farr sl nslots SpecFields.no_pending)
+          (ensures minor_collect_pre_except minor_st s fp rs farr sl nslots SpecFields.no_pending)
 
 /// ... and the general postcondition at `no_pending` gives the
-/// stop-the-world one, the reachable-subgraph isomorphism included.
+/// stop-the-world one.
 val minor_collect_idle_post
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
   (rs farr sl: Seq.seq U64.t) (nslots: nat) (ok: bool)

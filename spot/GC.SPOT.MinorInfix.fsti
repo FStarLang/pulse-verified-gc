@@ -70,12 +70,10 @@ let minor_infix_scenario
   (U64.v c + i * 8) % 8 == 0 /\
   // ---- the standard minor-collection context ------------------------------
   GenInv.collection_heap_shape minor major fp /\
-  RBridge.major_fields_covered minor major roots /\
+  RBridge.major_fields_covered minor major GC.Spec.Fields.no_pending roots /\
   UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
   MinorFwd.remembered_targets_in_roots major roots slots n /\
-  SpecMark.no_pointer_to_blue major /\
-  RBridge.minor_no_pointer_to_blue minor major /\
-  RBridge.roots_valid_nonblue roots major /\
+  RBridge.roots_not_freed roots major GC.Spec.Fields.no_pending /\
   CheneyBFS.cheney_no_oom minor major fp roots /\
   ~(SpecObj.is_no_scan c major) /\
   i < U64.v (SpecObj.wosize_of_object c major) /\

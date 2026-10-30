@@ -925,69 +925,98 @@ requested `wosize` (`GC.Gen.AllocProps.alloc_spec_obj_wosize_exact_part1`; see
 `docs/allocator-exactness.md`), so the copied fields fill the promoted object
 and there is no extra word to account for.
 
-### The pointer update over a live set
+### The pointer update, except the objects pending free
 
 The pointer update is a walk over the major heap's objects that rewrites the
-nursery pointers held by the objects of a *live set*:
-`GC.Gen.Promote.update_live_pointers major live fwd` rewrites the fields of the
-objects `x` with `live x` (scannable ones) and never reads anything else.  The
-stop-the-world update is its instance at the idle live set (every non-free
-block): `update_major_pointers major fwd` is *defined* as
-`update_live_pointers major (idle_live major) fwd`, so there is one walk.
-`GC.Gen.Cheney.cheney_collect_spec_over minor major fp roots live` is the
-collection whose pointer update runs over `live` extended with the promoted
-objects (`promoted_live`, the images of the promoted nursery objects); at
-`idle_live major` it is `cheney_collect_spec`
-(`GC.Gen.CheneyLive.cheney_collect_spec_over_idle`).  The `PromoteUpdate`
-lemmas and the free-list preservation lemmas are proved for the live walk (with
-"not blue" read as "live", and `live_ok` supplying that live objects are not
-free), and the `update_major_pointers` forms are their idle instances.
+nursery pointers held by a fixed set of objects:
+`GC.Gen.Promote.update_walk major upd fwd` rewrites the fields of the objects
+`x` with `upd x` (scannable ones) and never reads anything else.  The minor
+collection runs it over the *not-freed* objects,
+`update_pointers_except major pf fwd = update_walk major (not_freed major pf) fwd`,
+where `pf` is the set of objects *pending free* (known dead, not yet
+reclaimed) and `GC.Spec.Fields.not_freed g pf x` says that `x` is on the walk,
+not free (blue), and not pending.  The stop-the-world update is the instance
+with nothing pending: `update_major_pointers major fwd` is *defined* as
+`update_pointers_except major no_pending fwd`, so there is one walk.
+`GC.Gen.Cheney.cheney_collect_spec_except minor major fp roots pf` is the
+collection whose pointer update is `update_pointers_except` over the promoted
+heap; at `no_pending` it is `cheney_collect_spec`.  Promotion allocates in free
+blocks, so it never makes an object pending: `pf` is the same before and after a
+minor collection, and the promoted objects are simply not freed in the promoted
+heap.  The `PromoteUpdate` lemmas and the free-list preservation lemmas are
+proved for the walk over any set (`walk_ok`: its members are not free), and the
+`update_major_pointers` forms are their stop-the-world instances.
 
-The implementation's two passes are proved equal to the live walk
-(`GC.Gen.TwoPassEquiv.promoted_plus_slots_eq_live_update`), and at a Cheney
-result, with the write barrier's guarantees stated over live objects
-(`ref_table_covers_over`, `ref_table_sound_over`; the caller's form is
-`ref_table_sound_live`), to the pointer update of `cheney_collect_spec_over`
-(`GC.Gen.TwoPassEquiv.Collect.two_pass_implies_collect_over`).
+The implementation's two passes are proved equal to the walk
+(`GC.Gen.TwoPassEquiv.promoted_plus_slots_eq_walk`), and at a Cheney result,
+with the write barrier's guarantees stated except the pending objects
+(`ref_table_covers_except`, `ref_table_sound_fwd_except`; the caller's form is
+`ref_table_sound_except`: a slot in a pending object holds no nursery pointer),
+to the pointer update of `cheney_collect_spec_except`
+(`GC.Gen.TwoPassEquiv.Collect.two_pass_implies_collect_except`).
 
-### The minor collection's shape over a live set
+### The minor collection's shape, except the objects pending free
 
-`GC.Gen.HeapInvariant.collection_shape_over minor major fp live` is what a
-minor collection needs of the heaps, for a live set chosen by the caller:
+`GC.Gen.HeapInvariant.collection_shape_except minor major fp pf` is what a
+minor collection needs of the heaps, for a pending set chosen by the caller:
 
-- `major_shape_over major fp live`: `live_ok` (live objects are real non-free
-  blocks), `well_formed_heap_over major live` (parts 1 and 4 of the walk, and
-  every field of a live scannable object points at a live object with a valid
-  interior pointer), and the free-list facts of `major_heap_shape` (valid,
-  terminating, exact, ascending, its link words, density, `chain_objects_blue`);
+- `major_shape_except major fp pf`: `pending_ok` (pending objects are real
+  non-free blocks), `well_formed_heap_except major pf` (parts 1 and 4 of the
+  walk, and every field of a not-freed scannable object points at a not-freed
+  object with a valid interior pointer), and the free-list facts of
+  `major_heap_shape` (valid, terminating, exact, ascending, its link words,
+  density, `chain_objects_blue`);
 - the nursery's shape, as before;
-- `minor_major_fields_live`: a nursery field that looks like a major pointer
-  targets a live object.
+- `minor_major_fields_not_freed`: a nursery field that looks like a major
+  pointer targets a not-freed object.
 
-Garbage -- a non-live, non-free block -- is unconstrained: its fields may point
-anywhere, free blocks included.  At `idle_live` this is `collection_heap_shape`
-without its two colour facts (`collection_heap_shape_over_idle`,
-`collection_heap_shape_of_over_idle`); part 2 over `idle_live` already contains
-`no_pointer_to_blue`.
+A pending object is unconstrained: its fields may point anywhere, free blocks
+included, and the collection never reads them.  At `no_pending` this is
+`collection_heap_shape` without its two colour facts
+(`collection_heap_shape_no_pending`, `collection_heap_shape_of_no_pending`);
+part 2 at `no_pending` already contains `no_pointer_to_blue`
+(`GC.Spec.NoPending`).
 
-`GC.Gen.CheneyOver` proves it is kept, event by event: promotion adds the
-promoted objects to the live set and keeps `well_formed_heap_over`
-(`cheney_promote_preserves_wfh_over`: an old live object is untouched, a
-promoted one holds its nursery source's fields); the live walk keeps it when
-every forwarding target is live (`update_live_pointers_preserves_wfh_over`,
-`cheney_promote_fwd_targets_live`).  With the free-list facts this gives
-`cheney_collect_over_preserves_shape`: `collection_shape_over` of the input
-implies `collection_shape_over` of `cheney_collect_spec_over`'s result for
-`promoted_live minor live fwd`.  The promotion lemmas only ask for the walk
-facts of the major heap (parts 1 and 4), not `well_formed_heap`.  The
-stop-the-world `cheney_collect_preserves_collection_heap_shape` is the
-instance at `idle_live`, plus the colour facts (no black, no gray objects).
+`GC.Gen.CheneyExcept` proves it is kept, event by event: promotion keeps every
+not-freed object not freed, makes the images of the promoted nursery objects
+not freed (they are fresh, so not pending), and keeps
+`well_formed_heap_except` (`cheney_promote_preserves_wfh_except`: an old
+not-freed object is untouched, a promoted one holds its nursery source's
+fields); the walk keeps it when every forwarding target is not freed
+(`update_pointers_except_preserves_wfh_except`,
+`cheney_promote_fwd_targets_not_freed`).  With the free-list facts this gives
+`cheney_collect_except_preserves_shape`: `collection_shape_except` of the input
+implies `collection_shape_except` of `cheney_collect_spec_except`'s result, for
+the same `pf`.  The promotion lemmas only ask for the walk facts of the major
+heap (parts 1 and 4), not `well_formed_heap`.  The stop-the-world
+`cheney_collect_preserves_collection_heap_shape` is the instance at
+`no_pending`, plus the colour facts (no black, no gray objects).
 
-The reachable-subgraph isomorphism (`GC.Gen.MinorCollectForwarding`) is still
-stated and proved for the stop-the-world collection only: its graphs
-(`CombinedGraph.build_combined_graph`, `HeapModel.create_graph`) take edges out
-of every non-free object, garbage included, and the proofs use their
-well-formedness, which needs the whole-heap invariant.
+The reachable-subgraph isomorphism (`GC.Gen.MinorCollectForwarding`) is
+stated and proved for the collection except `pf` as well, over the same graphs
+as before (`CombinedGraph.build_combined_graph` of the nursery and the major
+heap, `HeapModel.create_graph` of the post-collection heap).  Those graphs still
+have the pending objects as vertices and edge sources, but no pending object is
+reachable: the roots are not pending (`roots_valid_except`; a root is reachable,
+hence never pending), and a not-freed object points only at not-freed objects
+(`ReachabilityBridge.reachable_major_not_freed`, from part 2 except `pf` and
+`minor_major_fields_not_freed`).  So every field the proofs read is a field of
+a reachable, hence not-freed, object, and whole-heap well-formedness is never
+needed: the combined graph is well formed for any heaps
+(`build_combined_graph_wf`), and the reachable parts the theorems compare are
+the same with or without the pending objects.  The stop-the-world theorems are
+the instances at `no_pending` (`MinorCollectForwarding.no_pending_context`
+turns the stop-the-world hypotheses into the generic ones).
+
+`minor_collect_full`'s contract is generic, isomorphism included:
+`minor_collect_pre_except minor s fp rs farr slots n pf` (the shape except
+`pf`, the write barrier's guarantees except `pf`, the remembered targets in the
+roots, valid non-pending roots) and `minor_collect_post_except` (the heap is the
+two-pass result and `cheney_collect_spec_except`'s, the shape is kept for the
+same `pf`, and on success the result is a reachable-subgraph isomorphism with
+the non-pointer fields preserved).  `minor_collect_pre_idle` /
+`minor_collect_post_idle` are the stop-the-world instance with the colour facts
+of `collection_heap_shape`; `gen_gc` uses them, and its contract is unchanged.
 
 ### Cheney BFS
 
@@ -1316,7 +1345,8 @@ entry points are much stronger.
 
 `minor_collect_full` is the verified minor-collection boundary used by the C
 bridge. It takes roots, a forwarding array, a BFS queue, and remembered slots,
-and -- as a ghost argument, erased in the C -- the major heap's live set:
+and -- as a ghost argument, erased in the C -- the major heap's objects
+pending free (known dead, not yet reclaimed):
 
 ```fstar
 fn minor_collect_full (gh: gen_heap_t)
@@ -1324,38 +1354,30 @@ fn minor_collect_full (gh: gen_heap_t)
                       (fwd_arr: array U64.t)
                       (queue: larray U64.t Cheney.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
-                      (#live: erased (obj_addr -> prop))
+                      (#pf: erased (obj_addr -> prop))
 ```
 
-The precondition (`minor_collect_pre_over`) is:
+The precondition (`minor_collect_pre_except`) is:
 
-- `collection_shape_over` for the minor and major heap and `live`;
+- `collection_shape_except` for the minor and major heap and `pf`;
 - root-array length consistency and a zeroed forwarding array of the expected size;
-- remembered slot soundness and coverage over the live set
-  (`ref_table_sound_live`, `ref_table_covers_over`), and distinctness.
+- remembered slot soundness and coverage except the pending objects
+  (`ref_table_sound_except`, `ref_table_covers_except`), and distinctness;
+- the remembered targets are among the roots, and the roots are valid and not
+  pending (`remembered_targets_in_roots`, `roots_valid_except`).
 
-The postcondition (`minor_collect_post_over`) states, among other facts:
+The postcondition (`minor_collect_post_except`) states, among other facts:
 
 ```fstar
 s2 == UpdatePtrs.rewrite_slots_iter
         (UpdatePtrs.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
         prom.fwd_map sl nslots 0 /\
-s2 == (CheneySpec.cheney_collect_spec_over minor_st s fp rs live).mc_major /\
+s2 == (CheneySpec.cheney_collect_spec_except minor_st s fp rs pf).mc_major /\
 fp2 == prom.fp_final /\
 rs2 == PromoteSpec.rewrite_roots rs prom.fwd_map /\
 U64.v b2 == 0 /\
 UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
-GenInv.collection_shape_over ({ data = d2; bump = b2 } <: minor_state) s2 fp2
-  (PromoteSpec.promoted_live minor_st live prom.fwd_map)
-```
-
-The stop-the-world contract is the instance at `idle_live s`:
-`minor_collect_pre_idle` (`collection_heap_shape`, the remembered set over the
-whole heap, the root-set facts) and `minor_collect_post_idle`, which adds
-
-```fstar
-s2 == (CheneySpec.cheney_collect_spec minor_st s fp rs).mc_major /\
-GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
+GenInv.collection_shape_except ({ data = d2; bump = b2 } <: minor_state) s2 fp2 pf /\
 (ok ==>
   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
     minor_st s fp rs s2 (MCFH.resolve_roots s2 rs2) /\
@@ -1363,8 +1385,17 @@ GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
     minor_st s fp rs s2)
 ```
 
+The stop-the-world contract is the instance at `no_pending`:
+`minor_collect_pre_idle` (`collection_heap_shape`, the remembered set over the
+whole heap, the root-set facts) and `minor_collect_post_idle`, which adds
+
+```fstar
+s2 == (CheneySpec.cheney_collect_spec minor_st s fp rs).mc_major /\
+GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2
+```
+
 `minor_collect_idle_pre` / `minor_collect_idle_post` connect the two; `gen_gc`
-calls `minor_collect_full` with `#(idle_live 's)` and uses them.
+calls `minor_collect_full` with `#(hide no_pending)` and uses them.
 
 The equality with `cheney_collect_spec` is the strongest operational statement:
 the imperative code implements the pure full minor-collection spec, including

@@ -213,11 +213,16 @@ let post_roots_mem_a_prime
   ConcreteMinor.spot_minor_two_object_layout ();
   minor_objects_not_infix ConcreteMinor.spot_minor2 Layout.a_minor;
   minor_non_infix_resolves_to_itself ConcreteMinor.spot_minor2 Layout.a_minor;
+  MinorFwd.no_pending_context
+    ConcreteMinor.spot_minor2
+    (ConcreteMajor.spot_major_heap r)
+    (ConcreteMajor.spot_major_fp r)
+    roots Seq.empty 0;
   MCFH.fwd_image_resolves
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)
-    roots Layout.a_minor;
+    GC.Spec.Fields.no_pending roots Layout.a_minor;
   assert (is_val_addr img);
   assert (SpecObj.resolve_object (img <: obj_addr) res.mc_major == img);
   GenImpl.gen_gc_named_root_in_stack
@@ -398,8 +403,9 @@ let post_minor_c_wosize
   assert (SpecObj.is_blue c major = false);
   assert (Layout.c_to_a_field_index < U64.v (SpecObj.wosize_of_object c major));
   aligned_plus_mul8 (U64.v c) Layout.c_to_a_field_index;
+  MinorFwd.no_pending_context minor major fp roots Seq.empty 0;
   MinorFwd.cheney_promote_preserves_old_major_field_context
-    minor major fp roots c Layout.c_to_a_field_index;
+    minor major fp GC.Spec.Fields.no_pending roots c Layout.c_to_a_field_index;
   Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
   PromoteUpdate.update_major_pointers_preserves_header prom.major_final prom.fwd_map c;
   MCFH.header_eq_preserves_wosize_no_scan result.mc_major prom.major_final c;

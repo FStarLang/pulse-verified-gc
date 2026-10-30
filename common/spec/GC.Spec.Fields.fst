@@ -925,6 +925,18 @@ let wf_except_parts (_: unit) : Lemma
               well_formed_heap_part4 g))
   = reveal_opaque (`%well_formed_heap_except) well_formed_heap_except
 
+/// A `points_to` target of a not-freed scannable object is not freed, and a
+/// valid interior pointer if it is one.
+let points_to_target_except (g: heap) (pf: obj_addr -> prop) (src dst: obj_addr) : Lemma
+  (requires well_formed_heap_except g pf /\ not_freed g pf src /\ fields_constrained g src /\
+            points_to g src dst)
+  (ensures not_freed g pf (GC.Spec.Object.resolve_object dst g) /\
+           GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst)
+  = wf_except_parts ();
+    wosize_of_object_bound src g;
+    wfh_part2_except_elim g pf src dst;
+    wfh_part3_except_elim g pf src dst
+
 /// No pointer field of any enumerated object holds the raw address `t`.
 ///
 /// Needed by the field-write lemmas.  Writing a word inside an object's body

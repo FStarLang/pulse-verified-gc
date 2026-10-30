@@ -193,27 +193,3 @@ val cheney_promote_frame_target_header
                 GC.Spec.Object.resolve_object h major /\
               GC.Spec.Object.infix_addr_wf res.major_final
                 (objects zero_addr res.major_final) h))
-
-/// The same framing fact for the pointer-update pass, stated with the enclosing
-/// closure supplied explicitly so it can be discharged in the *post-promotion*
-/// heap, where `infix_addr_wf` is not yet available.
-///
-/// An infix header sits at a *field* offset of its enclosing closure, so
-/// `update_major_pointers` could in principle overwrite it.  It never does: the
-/// infix tag is 249, so the header word is congruent to 1 mod 8 and can never
-/// look like a minor pointer, which is the only thing the pass rewrites.
-val update_major_pointers_frame_target_header
-  (g: heap) (fwd: forwarding_map) (h: obj_addr)
-  : Lemma
-    (requires
-      well_formed_heap_part1 g /\
-      (~(GC.Spec.Object.is_infix h g) ==> Seq.mem h (objects zero_addr g)) /\
-      (GC.Spec.Object.is_infix h g ==>
-        (let w = U64.v (wosize_of_object h g) in
-         let p = U64.v h - w * 8 in
-         w >= 2 /\ p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
-         Seq.mem (U64.uint_to_t p <: obj_addr) (objects zero_addr g) /\
-         ~(is_blue (U64.uint_to_t p <: obj_addr) g) /\
-         w < U64.v (wosize_of_object (U64.uint_to_t p) g))))
-    (ensures read_word (update_major_pointers g fwd) (hd_address h) ==
-             read_word g (hd_address h))

@@ -42,42 +42,27 @@ let aligned_gt_ge_plus_mword (x z: nat)
       assert False
     end
 
-/// The central collection heap shape already contains the stronger
-/// `GenInv.minor_major_fields_no_blue` condition.
+/// A nursery field that holds a major object's address targets a not-freed
+/// object.
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
-let minor_no_pointer_to_blue_from_collection_shape
-  (minor: minor_state) (major: heap) (fp: U64.t)
-  =
-    GenInv.collection_heap_shape_elim minor major fp;
-    let aux (obj: U64.t) (j: nat)
-      : Lemma
-        (requires Seq.mem obj (minor_objects minor) /\
-                  j < minor_scan_wosize minor obj)
-        (ensures
-          (let v = minor_read_field minor obj j in
-           is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) ==>
-           ~(is_blue (v <: obj_addr) major)))
-      =
-        let v = minor_read_field minor obj j in
-        if is_val_addr v && Seq.mem (v <: obj_addr) (objects zero_addr major) then begin
-          is_val_addr_spec v;
-          assert (Seq.mem (v <: obj_addr) (objects zero_addr major));
-          objects_addresses_gt_start zero_addr major (v <: obj_addr);
-          assert (U64.v (v <: obj_addr) > U64.v zero_addr);
-          assert (U64.v v > U64.v zero_addr);
-          assert (U64.v v % U64.v mword == 0);
-          assert (U64.v zero_addr % U64.v mword == 0);
-          aligned_gt_ge_plus_mword (U64.v v) (U64.v zero_addr);
-          assert (U64.v v >= U64.v zero_addr + U64.v mword);
-          assert (is_pointer_field v);
-          GenInv.minor_major_fields_no_blue_elim minor major obj j
-        end
-    in
-    FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux)
+private let minor_field_major_not_freed
+  (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (obj: U64.t) (j: nat)
+  : Lemma
+    (requires GenInv.minor_major_fields_not_freed minor major pf /\
+              Seq.mem obj (minor_objects minor) /\
+              j < minor_scan_wosize minor obj /\
+              (let v = minor_read_field minor obj j in
+               is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major)))
+    (ensures not_freed major pf ((minor_read_field minor obj j) <: obj_addr))
+  = let v = minor_read_field minor obj j in
+    is_val_addr_spec v;
+    objects_addresses_gt_start zero_addr major (v <: obj_addr);
+    aligned_gt_ge_plus_mword (U64.v v) (U64.v zero_addr);
+    assert (is_pointer_field v);
+    GenInv.minor_major_fields_not_freed_elim minor major pf obj j
 #pop-options
 
-/// Helper: from `major_edge_elim`'s witness, establish `points_to` for
-/// `Mark.no_pointer_to_blue`.
+/// Helper: from `major_edge_elim`'s witness, establish `points_to`.
 #push-options "--z3rlimit 20 --fuel 2 --ifuel 0"
 let major_edge_points_to
   (minor: minor_state) (major: heap) (src: obj_addr) (dst: U64.t) (i: nat)
@@ -92,7 +77,8 @@ let major_edge_points_to
     assert (is_pointer_to fv (fv <: obj_addr));
     let k = U64.uint_to_t i in
     let wz = wosize_of_object src major in
-    wf_object_size_bound major src;
+    wfh_part1_obj_bound major src;
+    hd_address_spec src;
     wosize_of_object_bound src major;
     FStar.Math.Lemmas.pow2_lt_compat 61 54;
     field_read_implies_exists_pointing major src wz k (fv <: obj_addr)
@@ -109,8 +95,8 @@ let major_object_not_minor_pointer
 #pop-options
 
 #push-options "--z3rlimit 15 --fuel 0 --ifuel 1"
-let reachable_major_valid_nonblue
-  (minor: minor_state) (major: heap) (roots: seq U64.t)
+let reachable_major_not_freed
+  (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (roots: seq U64.t)
   = let cg = build_combined_graph minor major in
     let combined_roots = classify_roots minor roots in
     let p (cv: combined_vertex) : prop =
@@ -118,7 +104,7 @@ let reachable_major_valid_nonblue
       | MajorV v ->
         U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
         Seq.mem (v <: obj_addr) (objects zero_addr major) /\
-        ~(is_blue (v <: obj_addr) major)
+        not_freed major pf (v <: obj_addr)
       | MinorV _ -> True
       | _ -> False
     in
@@ -151,15 +137,16 @@ let reachable_major_valid_nonblue
                       classify_major_field minor major
                         (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (MajorV dst))
             (ensures Seq.mem (dst <: obj_addr) (objects zero_addr major) /\
-                     ~(is_blue (dst <: obj_addr) major))
+                     not_freed major pf (dst <: obj_addr))
           = // `major_edge_points_to` gives `points_to` for the *raw* field value
-            // together with `dst == resolve_object raw major`.  `no_pointer_to_blue`
-            // is already stated about the resolved target, so it fires directly
-            // and yields `~(is_blue dst major)` even when the field holds an
-            // interior pointer into a closure.
+            // together with `dst == resolve_object raw major`; part 2 except the
+            // pending objects is stated about the resolved target, so it yields
+            // `not_freed major pf dst` even when the field holds an interior
+            // pointer into a closure.
+            wf_except_parts ();
             major_edge_points_to minor major src dst i;
             let raw = read_word major (U64.uint_to_t (U64.v src + i * 8)) in
-            points_to_target_in_objects major src (raw <: obj_addr);
+            points_to_target_except major pf src (raw <: obj_addr);
             classify_major_field_inv_major minor major raw dst
           in
           Classical.forall_intro (Classical.move_requires pts_aux)
@@ -169,8 +156,10 @@ let reachable_major_valid_nonblue
             (requires i < minor_scan_wosize minor src /\
                       classify_minor_field minor major (minor_read_field minor src i) == Some (MajorV dst))
             (ensures minor_read_field minor src i == dst /\ is_val_addr dst /\
-                     Seq.mem (dst <: obj_addr) (objects zero_addr major))
-          = classify_minor_field_inv_major minor major (minor_read_field minor src i) dst
+                     Seq.mem (dst <: obj_addr) (objects zero_addr major) /\
+                     not_freed major pf (dst <: obj_addr))
+          = classify_minor_field_inv_major minor major (minor_read_field minor src i) dst;
+            minor_field_major_not_freed minor major pf src i
           in
           Classical.forall_intro (Classical.move_requires inv_aux)
     in
@@ -225,7 +214,7 @@ let reachable_major_valid
 
 #push-options "--z3rlimit 15 --fuel 0 --ifuel 1"
 let reachability_bridge
-  (minor: minor_state) (major: heap) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (roots: seq U64.t)
   = let cg = build_combined_graph minor major in
     let combined_roots = classify_roots minor roots in
     let p (cv: combined_vertex) : prop =
@@ -273,8 +262,8 @@ let reachability_bridge
         | MajorV src ->
           build_combined_graph_wf minor major;
           major_vertex_valid minor major src;
-          reachable_major_valid_nonblue minor major roots;
-          assert (~(is_blue (src <: obj_addr) major));
+          reachable_major_not_freed minor major pf roots;
+          assert (not_freed major pf (src <: obj_addr));
           major_edge_elim minor major src (MinorV v);
           let case_aux (i:nat) : Lemma
             (requires i < U64.v (wosize_of_object src major) /\

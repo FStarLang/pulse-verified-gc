@@ -98,7 +98,7 @@ val classify_minor_field_minor_raw (ms: minor_state) (major: heap) (v: U64.t)
 ///
 /// Unlike `classify_major_field`, the *major* branch of this classifier is still
 /// raw: a minor object's field holding an interior pointer into a major closure
-/// is ruled out by `GC.Gen.HeapInvariant.minor_major_fields_no_blue`, which
+/// is ruled out by `GC.Gen.HeapInvariant.minor_major_fields_not_freed`, which
 /// requires every pointer-valued minor field to name an enumerated major object
 /// outright.
 val classify_minor_field_major (ms: minor_state) (major: heap) (v: U64.t)
@@ -244,10 +244,10 @@ val major_vertex_valid (ms: minor_state) (major: heap) (v: U64.t)
 /// Well-Formedness of Construction
 /// ---------------------------------------------------------------------------
 
-/// The constructed graph is well-formed (all edge endpoints are vertices)
+/// The constructed graph is well-formed (all edge endpoints are vertices), for
+/// any heaps: the field classifiers only name vertices.
 val build_combined_graph_wf (ms: minor_state) (major: heap)
-  : Lemma (requires well_formed_heap major /\ minor_wf ms)
-          (ensures combined_graph_wf (build_combined_graph ms major))
+  : Lemma (ensures combined_graph_wf (build_combined_graph ms major))
 
 /// ---------------------------------------------------------------------------
 /// Edge Introduction Lemmas
@@ -394,7 +394,7 @@ val combined_reachable_ind_with_reach
 ///
 /// The major branch is still raw, mirroring `classify_minor_field`: a root
 /// pointing into the middle of a *major* closure is excluded by
-/// `roots_valid_nonblue`, which requires every root to name an enumerated
+/// `roots_not_freed`, which requires every root to name an enumerated
 /// major object outright.
 let classify_root (ms: minor_state) (r: U64.t) : GTot combined_vertex =
   if is_minor_pointer r then MinorV (resolve_minor ms r) else MajorV r

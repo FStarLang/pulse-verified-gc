@@ -3,7 +3,8 @@
 /// ---------------------------------------------------------------------------
 ///
 /// Proves reusable facts connecting `CombinedGraph.combined_reachable` to the
-/// existing minor-reachability and major no-blue invariants.
+/// existing minor-reachability and the major heap's well-formedness except
+/// the objects pending free.
 
 module GC.Gen.ReachabilityBridge
 
@@ -25,15 +26,6 @@ open GC.Gen.CombinedGraph
 module Mark = GC.Spec.Mark
 module GenInv = GC.Gen.HeapInvariant
 
-/// If a minor object has a field pointing to the major heap, the target is a
-/// non-blue allocated object.
-let minor_no_pointer_to_blue (minor: minor_state) (major: heap) : prop =
-  forall (obj: U64.t) (j: nat).
-    Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj ==>
-    (let v = minor_read_field minor obj j in
-     is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) ==>
-     ~(is_blue (v <: obj_addr) major))
-
 /// Two distinct `mword`-aligned addresses differ by at least one word.  Used to
 /// turn `addr > zero_addr` (which enumeration gives) into the `is_pointer_field`
 /// lower bound `addr >= zero_addr + mword`.
@@ -41,36 +33,29 @@ val aligned_gt_ge_plus_mword (x z: nat)
   : Lemma (requires x > z /\ x % U64.v mword == 0 /\ z % U64.v mword == 0)
           (ensures x >= z + U64.v mword)
 
-/// The central collection heap shape already contains the stronger
-/// `GenInv.minor_major_fields_no_blue` condition; expose this bridge predicate
-/// as a derived fact so clients do not need to carry it as an extra assumption.
-val minor_no_pointer_to_blue_from_collection_shape
-  (minor: minor_state) (major: heap) (fp: U64.t)
-  : Lemma (requires GenInv.collection_heap_shape minor major fp)
-          (ensures minor_no_pointer_to_blue minor major)
-
-/// Major roots must be valid non-blue objects when they classify as `MajorV`.
-let roots_valid_nonblue (roots: seq U64.t) (major: heap) : prop =
+/// Major roots are not freed (neither free nor pending free) when they
+/// classify as `MajorV`.
+let roots_not_freed (roots: seq U64.t) (major: heap) (pf: obj_addr -> prop) : prop =
   forall (r: U64.t).
     Seq.mem r roots /\ ~(is_minor_pointer r) /\
     is_val_addr r /\ Seq.mem (r <: obj_addr) (objects zero_addr major) ==>
-    ~(is_blue (r <: obj_addr) major)
+    not_freed major pf (r <: obj_addr)
 
 /// Convert a `MajorV -> MajorV` combined-graph edge witness into the concrete
-/// `points_to` relation used by `Mark.no_pointer_to_blue`.
+/// `points_to` relation used by `GC.Spec.Fields.points_to_target_except`.
 ///
 /// The field value is exposed *raw*: `points_to` holds of it, and `dst` is its
 /// resolution.  The two coincide unless the field holds an interior (infix)
 /// pointer, in which case `dst` is the enclosing closure --- which is exactly
 /// the vertex the combined graph carries.  Stating it this way lets callers
-/// feed the raw target to `Mark.no_pointer_to_blue`, whose conclusion is
-/// already about the resolved target, and so obtain `~(is_blue dst major)`
+/// feed the raw target to `points_to_target_except`, whose conclusion is
+/// already about the resolved target, and so obtain `not_freed major pf dst`
 /// without any no-infix side condition.
 val major_edge_points_to
   (minor: minor_state) (major: heap) (src: obj_addr) (dst: U64.t) (i: nat)
   : Lemma
     (requires
-      well_formed_heap major /\
+      well_formed_heap_part1 major /\
       Seq.mem src (objects zero_addr major) /\
       i < U64.v (wosize_of_object src major) /\
       U64.v src + i * 8 + 8 <= heap_size /\
@@ -90,16 +75,19 @@ val major_object_not_minor_pointer
   : Lemma (requires Seq.mem obj (objects zero_addr major))
           (ensures ~(is_minor_pointer obj) /\ to_minor_offset obj == obj)
 
-/// Every reachable major vertex is a valid non-blue major object.
-val reachable_major_valid_nonblue
-  (minor: minor_state) (major: heap) (roots: seq U64.t)
+/// Every reachable major vertex is a valid not-freed major object: the roots
+/// are, a nursery field into the major heap targets one
+/// (`minor_major_fields_not_freed`), and so does a field of a not-freed major
+/// object (`well_formed_heap_except`).  So a pending-free object is never
+/// reachable, and its fields are never read.
+val reachable_major_not_freed
+  (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (roots: seq U64.t)
   : Lemma
     (requires
-      well_formed_heap major /\
+      well_formed_heap_except major pf /\
       minor_wf minor /\
-      Mark.no_pointer_to_blue major /\
-      minor_no_pointer_to_blue minor major /\
-      roots_valid_nonblue roots major)
+      GenInv.minor_major_fields_not_freed minor major pf /\
+      roots_not_freed roots major pf)
     (ensures (
       let cg = build_combined_graph minor major in
       let combined_roots = classify_roots minor roots in
@@ -107,14 +95,14 @@ val reachable_major_valid_nonblue
         combined_reachable cg combined_roots (MajorV v) ==>
         U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
         Seq.mem (v <: obj_addr) (objects zero_addr major) /\
-        ~(is_blue (v <: obj_addr) major)))
+        not_freed major pf (v <: obj_addr)))
 
 /// Every reachable major vertex is a valid major object.  This weaker form is
 /// enough for image-validity proofs and does not require root color facts.
 val reachable_major_valid
   (minor: minor_state) (major: heap) (roots: seq U64.t)
   : Lemma
-    (requires well_formed_heap major /\ minor_wf minor)
+    (requires minor_wf minor)
     (ensures (
       let cg = build_combined_graph minor major in
       let combined_roots = classify_roots minor roots in
@@ -124,22 +112,21 @@ val reachable_major_valid
         Seq.mem (v <: obj_addr) (objects zero_addr major)))
 
 /// The remembered-set coverage the bridge needs: a live-minor pointer stored
-/// in any field of a scannable non-blue major object already appears in the
+/// in any field of a scannable not-freed major object already appears in the
 /// Cheney root sequence.  The liveness test is applied to the *resolution* of
 /// the stored word, so an interior pointer into a live nursery closure counts
 /// as live and must be covered.
 ///
 /// This is exactly what the slot-table preconditions of `minor_collect_full`
-/// supply: `ref_table_covers_minor_ptrs` puts the address of every such field
+/// supply: `ref_table_covers_except` puts the address of every such field
 /// (field 0 included) into `slots[0..n)`, and `remembered_targets_in_roots`
 /// puts every recorded slot's minor target into `roots` (see
 /// `major_fields_covered_from_slots`).  The bridge therefore never needs a
 /// whole-heap scan of its own.
 let major_fields_covered
-  (ms: minor_state) (major: heap) (roots: seq U64.t) : prop =
+  (ms: minor_state) (major: heap) (pf: obj_addr -> prop) (roots: seq U64.t) : prop =
   forall (src: obj_addr) (j: nat).
-    Seq.mem src (objects zero_addr major) /\
-    ~(is_blue src major) /\ ~(is_no_scan src major) /\
+    not_freed major pf src /\ ~(is_no_scan src major) /\
     j < U64.v (wosize_of_object src major) /\
     U64.v src + j * 8 + 8 <= heap_size ==>
     (let v = to_minor_offset (read_word major (U64.uint_to_t (U64.v src + j * 8))) in
@@ -149,15 +136,14 @@ let major_fields_covered
 /// Any minor vertex reachable in the combined graph is reachable by Cheney
 /// from `roots`.
 val reachability_bridge
-  (minor: minor_state) (major: heap) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (roots: seq U64.t)
   : Lemma
     (requires
-      well_formed_heap major /\
+      well_formed_heap_except major pf /\
       minor_wf minor /\
-      Mark.no_pointer_to_blue major /\
-      minor_no_pointer_to_blue minor major /\
-      roots_valid_nonblue roots major /\
-      major_fields_covered minor major roots)
+      GenInv.minor_major_fields_not_freed minor major pf /\
+      roots_not_freed roots major pf /\
+      major_fields_covered minor major pf roots)
     (ensures (
       let cg = build_combined_graph minor major in
       let combined_roots = classify_roots minor roots in

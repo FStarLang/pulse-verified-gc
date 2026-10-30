@@ -81,12 +81,10 @@ val major_minor_field_rewritten
     Lemma
       (requires
         GC.Gen.HeapInvariant.collection_heap_shape minor major fp /\
-        GC.Gen.ReachabilityBridge.major_fields_covered minor major roots /\
+        GC.Gen.ReachabilityBridge.major_fields_covered minor major GC.Spec.Fields.no_pending roots /\
         GC.Gen.Impl.UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
         GC.Gen.MinorCollectForwarding.remembered_targets_in_roots major roots slots n /\
-        GC.Spec.Mark.no_pointer_to_blue major /\
-        GC.Gen.ReachabilityBridge.minor_no_pointer_to_blue minor major /\
-        GC.Gen.ReachabilityBridge.roots_valid_nonblue roots major /\
+        GC.Gen.ReachabilityBridge.roots_not_freed roots major GC.Spec.Fields.no_pending /\
         GC.Gen.CheneyBFS.cheney_no_oom minor major fp roots /\
         (let cg = GC.Gen.CombinedGraph.build_combined_graph minor major in
          let combined_roots = GC.Gen.CombinedGraph.classify_roots minor roots in

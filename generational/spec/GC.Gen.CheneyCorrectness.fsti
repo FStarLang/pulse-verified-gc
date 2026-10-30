@@ -52,7 +52,8 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 /// ---------------------------------------------------------------------------
 
 /// Every object address present in objects(0, major) before collection is
-/// still present in objects(0, mc_major) after collection. Cheney promotion
+/// still present in objects(0, mc_major) after collection (for any set `pf` of
+/// objects pending free; the pointer update writes no header). Cheney promotion
 /// consumes free-list nodes to hold promoted objects, but never overwrites
 /// or removes any existing allocated object.
 ///
@@ -60,7 +61,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 /// is valid and terminates. These ensure promote_object writes only into
 /// legitimate free-list nodes.
 val cheney_collect_preserves_objects
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   : Lemma
     (requires
       // Major heap has valid OCaml object layout
@@ -69,7 +70,7 @@ val cheney_collect_preserves_objects
       AllocLemmas.fl_valid major fp heap_words /\
       // Free-list traversal terminates (no cycles)
       AllocLemmas.fl_chain_terminates major fp heap_words)
-    (ensures (let res = cheney_collect_spec minor major fp roots in
+    (ensures (let res = cheney_collect_spec_except minor major fp roots pf in
               // Every pre-existing object address is still in the post-collection object list
               forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
                 Seq.mem x (objects zero_addr res.mc_major)))
@@ -87,7 +88,7 @@ val cheney_collect_preserves_objects
 /// because promotion may violate pointer-closure (part 2) if the forwarding
 /// map introduces dangling minor-heap references. Part 1 alone is always safe.
 val cheney_collect_preserves_wfh_part1
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   : Lemma
     (requires
       // Major heap well-formed
@@ -97,7 +98,7 @@ val cheney_collect_preserves_wfh_part1
       AllocLemmas.fl_chain_terminates major fp heap_words)
     (ensures
       // Every object's header+body fits within the post-collection heap byte array
-      well_formed_heap_part1 (cheney_collect_spec minor major fp roots).mc_major)
+      well_formed_heap_part1 (cheney_collect_spec_except minor major fp roots pf).mc_major)
 
 /// ---------------------------------------------------------------------------
 /// Property 3: Minor heap is properly reset

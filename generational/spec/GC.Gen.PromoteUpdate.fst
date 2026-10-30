@@ -32,9 +32,6 @@ let update_walk_preserves_objects =
 let update_walk_preserves_wfh_part1 =
   GC.Gen.PromoteUpdate.Aux.update_walk_preserves_wfh_part1
 
-let update_walk_ext =
-  GC.Gen.PromoteUpdate.Aux.update_walk_ext
-
 let update_walk_preserves_header =
   GC.Gen.PromoteUpdate.Header.update_walk_preserves_header
 

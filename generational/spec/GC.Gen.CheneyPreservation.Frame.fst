@@ -779,24 +779,3 @@ let cheney_promote_frame_target_header
     GC.Spec.Object.infix_addr_wf_transfer major res.major_final
       (objects zero_addr major) (objects zero_addr res.major_final) h
 #pop-options
-
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
-let update_major_pointers_frame_target_header
-  (g: heap) (fwd: forwarding_map) (h: obj_addr)
-  = hd_address_spec h;
-    if GC.Spec.Object.is_infix h g then begin
-      let w = U64.v (wosize_of_object h g) in
-      let pa : obj_addr = U64.uint_to_t (U64.v h - w * 8) in
-      assert (U64.v pa + (w - 1) * 8 == U64.v (hd_address h));
-      let hdr = read_word g (hd_address h) in
-      GC.Spec.Object.infix_header_misaligned h g;
-      assert (U64.v hdr % 8 == 1);
-      assert (~(is_minor_pointer (to_minor_offset hdr)));
-      if is_no_scan pa g then
-        PromUpdate.update_major_pointers_preserves_no_scan_field g fwd pa (w - 1)
-      else
-        PromUpdate.update_major_pointers_field_effect g fwd pa (w - 1)
-    end
-    else
-      PromUpdate.update_major_pointers_preserves_header g fwd h
-#pop-options
