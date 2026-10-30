@@ -16,10 +16,10 @@ open GC.Gen.WriteBodyLemmas
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
-/// A field of a live scannable object on the walk is rewritten exactly when it
+/// A field of a rewritten scannable object on the walk is rewritten exactly when it
 /// holds a forwarded nursery pointer.
-val update_live_pointers_field_effect
-  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
+val update_walk_field_effect
+  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
   : Lemma
     (requires
       well_formed_heap_part1 major /\
@@ -27,10 +27,10 @@ val update_live_pointers_field_effect
       j < U64.v (wosize_of_object obj major) /\
       U64.v obj + j * 8 + 8 <= heap_size /\
       (U64.v obj + j * 8) % 8 == 0 /\
-      live obj /\
+      upd obj /\
       is_no_scan obj major = false)
     (ensures
-      (let updated = update_live_pointers major live fwd in
+      (let updated = update_walk major upd fwd in
        let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
        let old_raw = read_word major field_addr in
        let old_val = to_minor_offset old_raw in

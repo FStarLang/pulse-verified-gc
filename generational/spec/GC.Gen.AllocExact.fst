@@ -6,7 +6,7 @@
 /// exactly the blue blocks that can carry a link.  This module shows that
 /// everything that changes the major heap keeps it that way -- allocation,
 /// promotion, the pointer rewrite after a minor collection, and the program's
-/// own field writes to live objects -- and concludes that an allocation
+/// own field writes to not-freed objects -- and concludes that an allocation
 /// succeeds whenever some free block is big enough
 /// (`alloc_succeeds_when_a_block_fits`).  `fl_exact` is part of the
 /// collector's invariant `GC.Gen.HeapInvariant.major_heap_shape`, which both
@@ -1013,31 +1013,31 @@ let rec meeting_transfer_blue (g g': heap) (fp y: U64.t) (n: nat)
 #pop-options
 
 /// **Pointer updates keep the free list complete**: they rewrite fields of
-/// live objects only, never a header and never a field of a blue block.
+/// rewritten objects only, never a header and never a field of a blue block.
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
-let update_live_pointers_preserves_fl_complete
-  (major: heap) (live: obj_addr -> prop) (fwd: Promote.forwarding_map) (fp: U64.t)
+let update_walk_preserves_fl_complete
+  (major: heap) (upd: obj_addr -> prop) (fwd: Promote.forwarding_map) (fp: U64.t)
   : Lemma (requires well_formed_heap_part1 major /\
-                    live_ok major live /\
+                    Promote.walk_ok major upd /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     Promote.chain_objects_blue major fp /\
                     FL.fl_complete major fp)
-          (ensures FL.fl_complete (Promote.update_live_pointers major live fwd) fp)
-  = let m' = Promote.update_live_pointers major live fwd in
-    PU.update_live_pointers_preserves_objects major live fwd;
-    Cheney.update_live_pointers_preserves_fl_valid major live fwd fp;
+          (ensures FL.fl_complete (Promote.update_walk major upd fwd) fp)
+  = let m' = Promote.update_walk major upd fwd in
+    PU.update_walk_preserves_objects major upd fwd;
+    Cheney.update_walk_preserves_fl_valid major upd fwd fp;
     reveal_opaque (`%Promote.chain_objects_blue) (Promote.chain_objects_blue major fp);
     let bf (a: obj_addr) : Lemma
       (requires FL.fl_cell major a)
       (ensures read_word m' a == read_word major a)
       = hd_address_spec a;
-        PU.update_live_pointers_preserves_skipped_field major live fwd a 0 in
+        PU.update_walk_preserves_skipped_field major upd fwd a 0 in
     FStar.Classical.forall_intro (FStar.Classical.move_requires bf);
     let aux (x: obj_addr)
       : Lemma (requires FL.fl_cell m' x)
               (ensures FL.reachable_on_fl m' fp x)
-      = PU.update_live_pointers_preserves_header major live fwd x;
+      = PU.update_walk_preserves_header major upd fwd x;
         color_of_object_spec x major; color_of_object_spec x m';
         is_blue_iff x major; is_blue_iff x m';
         wosize_of_object_spec x major; wosize_of_object_spec x m';
@@ -1065,9 +1065,7 @@ let update_major_pointers_preserves_fl_complete (major: heap) (fwd: Promote.forw
                     Promote.chain_objects_blue major fp /\
                     FL.fl_complete major fp)
           (ensures FL.fl_complete (Promote.update_major_pointers major fwd) fp)
-  = PU.update_live_pointers_idle major fwd;
-    idle_live_ok major;
-    update_live_pointers_preserves_fl_complete major (idle_live major) fwd fp
+  = update_walk_preserves_fl_complete major (not_freed major no_pending) fwd fp
 
 
 /// ---------------------------------------------------------------------------
@@ -1091,7 +1089,7 @@ private let body_word_apart (g: heap) (a b: obj_addr) (w: hp_addr)
 #pop-options
 
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
-/// **A write to a field of a live (non-blue) object keeps the free list
+/// **A write to a field of a not-freed object keeps the free list
 /// exact**, and the allocator's other entry conditions with it.
 let field_write_preserves_entry (g: heap) (fp: U64.t) (a: obj_addr) (w: hp_addr) (v: U64.t)
   : Lemma (requires alloc_entry g fp /\
@@ -1189,12 +1187,12 @@ let major_heap_shape_gives_entry (major: heap) (fp: U64.t)
     wf_parts ()
 
 /// What the program may do to the major heap between collections: allocate,
-/// or write a field of a live object.
+/// or write a field of a not-freed object.
 noeq type event =
   | EAlloc : wz:pos -> tag:U64.t{U64.v tag < 256} -> event
   | EWrite : a:obj_addr -> w:hp_addr -> v:U64.t -> event
 
-/// A write is only to a field of a live (non-blue) object -- the runtime's side
+/// A write is only to a field of a not-freed object -- the runtime's side
 /// of the contract; allocation is always allowed.
 let event_ok (g: heap) (e: event) : prop =
   match e with
@@ -1233,7 +1231,7 @@ let rec run_preserves_entry (g: heap) (fp: U64.t) (es: list event)
 
 /// **An allocation succeeds whenever some free block is big enough** -- from
 /// any heap with an exact free list, and after any run of allocations and
-/// field writes to live objects.
+/// field writes to not-freed objects.
 ///
 /// Where an exact free list comes from: `fused_entry` (the pass the collector
 /// runs), and

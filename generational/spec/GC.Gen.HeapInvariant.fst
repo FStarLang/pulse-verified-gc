@@ -193,15 +193,15 @@ let collection_heap_shape_after_minor_reset
 /// ---------------------------------------------------------------------------
 
 /// ---------------------------------------------------------------------------
-/// The collection's shape over a live set
+/// The collection's shape, except the objects pending free
 /// ---------------------------------------------------------------------------
 
-module IdleLive = GC.Spec.IdleLive
+module NoPending = GC.Spec.NoPending
 
 [@@"opaque_to_smt"]
-let major_shape_over (major: heap) (fp: U64.t) (live: obj_addr -> prop) : prop =
-  live_ok major live /\
-  well_formed_heap_over major live /\
+let major_shape_except (major: heap) (fp: U64.t) (pf: obj_addr -> prop) : prop =
+  pending_ok major pf /\
+  well_formed_heap_except major pf /\
   AllocLemmas.fl_valid major fp heap_words /\
   AllocLemmas.fl_chain_terminates major fp heap_words /\
   free_list_exact major fp /\
@@ -214,104 +214,90 @@ let major_shape_over (major: heap) (fp: U64.t) (live: obj_addr -> prop) : prop =
   SweepInv.fp_valid fp major /\
   GC.Spec.FreeList.fp_in_heap fp major
 
-let major_shape_over_intro major fp live =
-  reveal_opaque (`%major_shape_over) (major_shape_over major fp live)
+let major_shape_except_intro major fp pf =
+  reveal_opaque (`%major_shape_except) (major_shape_except major fp pf)
 
-let major_shape_over_elim major fp live =
-  reveal_opaque (`%major_shape_over) (major_shape_over major fp live);
-  wf_over_parts ()
-
-let major_shape_over_congr major fp live live' =
-  reveal_opaque (`%major_shape_over) (major_shape_over major fp live);
-  reveal_opaque (`%major_shape_over) (major_shape_over major fp live');
-  wf_over_parts ();
-  well_formed_heap_part2_over_congr major live live';
-  well_formed_heap_part3_over_weaken major live live'
+let major_shape_except_elim major fp pf =
+  reveal_opaque (`%major_shape_except) (major_shape_except major fp pf);
+  wf_except_parts ()
 
 #push-options "--fuel 0 --ifuel 0"
 [@@"opaque_to_smt"]
-let minor_major_fields_live (minor: minor_state) (live: obj_addr -> prop) : prop =
+let minor_major_fields_not_freed (minor: minor_state) (major: heap) (pf: obj_addr -> prop) : prop =
   forall (obj: U64.t) (j: nat).
     Seq.mem obj (minor_objects minor) /\
     j < minor_scan_wosize minor obj /\
     is_pointer_field (minor_read_field minor obj j) ==>
-    live ((minor_read_field minor obj j) <: obj_addr)
+    not_freed major pf ((minor_read_field minor obj j) <: obj_addr)
 #pop-options
 
-let minor_major_fields_live_intro minor live pf =
-  reveal_opaque (`%minor_major_fields_live) (minor_major_fields_live minor live);
+let minor_major_fields_not_freed_intro minor major pf h =
+  reveal_opaque (`%minor_major_fields_not_freed) (minor_major_fields_not_freed minor major pf);
   let aux (obj: U64.t) (j: nat) : Lemma
     (Seq.mem obj (minor_objects minor) /\
      j < minor_scan_wosize minor obj /\
      is_pointer_field (minor_read_field minor obj j) ==>
-     live ((minor_read_field minor obj j) <: obj_addr))
+     not_freed major pf ((minor_read_field minor obj j) <: obj_addr))
     = if Seq.mem obj (minor_objects minor) &&
          j < minor_scan_wosize minor obj &&
          is_pointer_field (minor_read_field minor obj j)
-      then pf obj j
+      then h obj j
   in
   FStar.Classical.forall_intro_2 aux
 
-let minor_major_fields_live_elim minor live obj j =
-  reveal_opaque (`%minor_major_fields_live) (minor_major_fields_live minor live)
+let minor_major_fields_not_freed_elim minor major pf obj j =
+  reveal_opaque (`%minor_major_fields_not_freed) (minor_major_fields_not_freed minor major pf)
 
-let minor_major_fields_live_idle minor major =
-  reveal_opaque (`%minor_major_fields_live) (minor_major_fields_live minor (idle_live major));
+let minor_major_fields_not_freed_no_pending minor major =
+  reveal_opaque (`%minor_major_fields_not_freed) (minor_major_fields_not_freed minor major no_pending);
   reveal_opaque (`%minor_major_fields_no_blue) (minor_major_fields_no_blue minor major)
 
 [@@"opaque_to_smt"]
-let collection_shape_over (minor: minor_state) (major: heap) (fp: U64.t)
-  (live: obj_addr -> prop) : prop =
-  major_shape_over major fp live /\
+let collection_shape_except (minor: minor_state) (major: heap) (fp: U64.t)
+  (pf: obj_addr -> prop) : prop =
+  major_shape_except major fp pf /\
   minor_heap_shape minor /\
-  minor_major_fields_live minor live
+  minor_major_fields_not_freed minor major pf
 
-let collection_shape_over_intro minor major fp live =
-  reveal_opaque (`%collection_shape_over) (collection_shape_over minor major fp live)
+let collection_shape_except_intro minor major fp pf =
+  reveal_opaque (`%collection_shape_except) (collection_shape_except minor major fp pf)
 
-let collection_shape_over_elim minor major fp live =
-  reveal_opaque (`%collection_shape_over) (collection_shape_over minor major fp live)
+let collection_shape_except_elim minor major fp pf =
+  reveal_opaque (`%collection_shape_except) (collection_shape_except minor major fp pf)
 
-let collection_shape_over_congr minor major fp live live' =
-  reveal_opaque (`%collection_shape_over) (collection_shape_over minor major fp live);
-  reveal_opaque (`%collection_shape_over) (collection_shape_over minor major fp live');
-  major_shape_over_congr major fp live live';
-  reveal_opaque (`%minor_major_fields_live) (minor_major_fields_live minor live);
-  reveal_opaque (`%minor_major_fields_live) (minor_major_fields_live minor live')
-
-let major_heap_shape_over_idle major fp =
+let major_heap_shape_no_pending major fp =
   major_heap_shape_elim major fp;
-  idle_live_ok major;
-  IdleLive.wf_over_idle_intro major;
-  major_shape_over_intro major fp (idle_live major)
+  no_pending_ok major;
+  NoPending.wf_except_no_pending_intro major;
+  major_shape_except_intro major fp no_pending
 
-let major_heap_shape_of_over_idle major fp =
-  major_shape_over_elim major fp (idle_live major);
-  IdleLive.wf_over_idle_elim major;
+let major_heap_shape_of_no_pending major fp =
+  major_shape_except_elim major fp no_pending;
+  NoPending.wf_except_no_pending_elim major;
   major_heap_shape_intro major fp
 
-let collection_heap_shape_over_idle minor major fp =
+let collection_heap_shape_no_pending minor major fp =
   collection_heap_shape_elim minor major fp;
-  major_heap_shape_over_idle major fp;
-  minor_major_fields_live_idle minor major;
-  collection_shape_over_intro minor major fp (idle_live major)
+  major_heap_shape_no_pending major fp;
+  minor_major_fields_not_freed_no_pending minor major;
+  collection_shape_except_intro minor major fp no_pending
 
-let collection_heap_shape_of_over_idle minor major fp =
-  collection_shape_over_elim minor major fp (idle_live major);
-  major_heap_shape_of_over_idle major fp;
-  minor_major_fields_live_idle minor major;
+let collection_heap_shape_of_no_pending minor major fp =
+  collection_shape_except_elim minor major fp no_pending;
+  major_heap_shape_of_no_pending major fp;
+  minor_major_fields_not_freed_no_pending minor major;
   collection_heap_shape_intro minor major fp
 
-let collection_shape_over_after_minor_reset minor major fp live =
+let collection_shape_except_after_minor_reset minor major fp pf =
   let reset = minor_reset minor in
   minor_reset_heap_shape minor;
   minor_reset_objects_empty minor;
-  let pf (obj: U64.t) (j: nat) : Lemma
+  let h (obj: U64.t) (j: nat) : Lemma
     (requires Seq.mem obj (minor_objects reset) /\
               j < minor_scan_wosize reset obj /\
               is_pointer_field (minor_read_field reset obj j))
-    (ensures live ((minor_read_field reset obj j) <: obj_addr))
+    (ensures not_freed major pf ((minor_read_field reset obj j) <: obj_addr))
     = minor_reset_objects_not_mem minor obj
   in
-  minor_major_fields_live_intro reset live pf;
-  collection_shape_over_intro reset major fp live
+  minor_major_fields_not_freed_intro reset major pf h;
+  collection_shape_except_intro reset major fp pf

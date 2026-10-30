@@ -1,8 +1,8 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.CheneyOver -- Implementation
+/// GC.Gen.CheneyExcept -- Implementation
 /// ---------------------------------------------------------------------------
 
-module GC.Gen.CheneyOver
+module GC.Gen.CheneyExcept
 
 open FStar.Seq
 module U64 = FStar.UInt64
@@ -18,31 +18,103 @@ open GC.Gen.Cheney
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module GenInv = GC.Gen.HeapInvariant
-module CL = GC.Gen.CheneyLive
 module PU = GC.Gen.PromoteUpdate
 module Aux = GC.Gen.PromoteUpdate.Aux
 module Frame = GC.Gen.CheneyPreservation.Frame
 module Fwd = GC.Gen.CheneyPreservation.Forwarding
 module Inj = GC.Gen.CheneyPreservation.Injectivity
+module NBO = GC.Gen.CheneyPreservation.NonBlueOrigin
 module CPF = GC.Gen.CheneyPreservation.Fields
 module NoBlueUtil = GC.Gen.NoBlueUtil
 module IndDesc = FStar.IndefiniteDescription
-module FL = GC.Spec.FreeList
 module FreeListShape = GC.Gen.FreeListShape
 module HeapGraph = GC.Spec.HeapGraph
 module FLAsc = GC.Gen.FreeListAscending
 module AllocExact = GC.Gen.AllocExact
 
+let cheney_collect_spec_except_no_pending minor major fp roots = ()
+
 /// ---------------------------------------------------------------------------
-/// Well-formedness over a live set, field by field
+/// The not-freed objects across the two events
+/// ---------------------------------------------------------------------------
+
+let update_walk_not_freed major upd pf fwd x =
+  PU.update_walk_preserves_objects major upd fwd;
+  if Seq.mem x (objects zero_addr major) then begin
+    PU.update_walk_preserves_header major upd fwd x;
+    Aux.header_eq_object_facts (update_walk major upd fwd) major x
+  end
+
+let update_walk_preserves_pending_ok major upd pf fwd =
+  let aux (x: obj_addr) : Lemma
+    (requires pf x)
+    (ensures Seq.mem x (objects zero_addr (update_walk major upd fwd)) /\
+             ~(is_blue x (update_walk major upd fwd)))
+  = PU.update_walk_preserves_objects major upd fwd;
+    PU.update_walk_preserves_header major upd fwd x;
+    Aux.header_eq_object_facts (update_walk major upd fwd) major x
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
+/// An old non-free block stays a non-free block through promotion.
+private let old_nonblue_kept
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (x: obj_addr)
+  : Lemma (requires promote_pre minor major fp /\
+                    Seq.mem x (objects zero_addr major) /\ ~(is_blue x major))
+          (ensures (let prom = cheney_promote minor major fp roots in
+                    Seq.mem x (objects zero_addr prom.major_final) /\
+                    ~(is_blue x prom.major_final)))
+  = cheney_promote_preserves_objects minor major fp roots;
+    Frame.cheney_promote_frame_old_header minor major fp roots x;
+    Aux.header_eq_object_facts (cheney_promote minor major fp roots).major_final major x
+
+let cheney_promote_keeps_not_freed minor major fp roots pf x =
+  old_nonblue_kept minor major fp roots x
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let cheney_promote_image_not_freed minor major fp roots pf v x =
+  let prom = cheney_promote minor major fp roots in
+  minor_objects_not_infix minor v;
+  Fwd.cheney_promote_fwd_noninfix_targets_valid minor major fp roots;
+  assert (Seq.mem x (objects zero_addr prom.major_final));
+  cheney_promote_preserves_wfh_part4 minor major fp roots;
+  assert (~(is_infix x prom.major_final));
+  Inj.cheney_promote_fwd_targets_not_blue minor major fp roots;
+  Inj.cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue minor major fp roots;
+  assert (~(Seq.mem x (objects zero_addr major) /\ ~(is_blue x major)))
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let cheney_promote_not_freed_origin minor major fp roots pf x =
+  let prom = cheney_promote minor major fp roots in
+  if Seq.mem x (objects zero_addr major) && not (is_blue x major) then ()
+  else begin
+    NBO.cheney_promote_nonblue_origin minor major fp roots x;
+    cheney_promote_preserves_wfh_part4 minor major fp roots;
+    assert (~(is_infix x prom.major_final));
+    Inj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots
+  end
+#pop-options
+
+let cheney_promote_pending_ok minor major fp roots pf =
+  let aux (x: obj_addr) : Lemma
+    (requires pf x)
+    (ensures (let g = (cheney_promote minor major fp roots).major_final in
+              Seq.mem x (objects zero_addr g) /\ ~(is_blue x g)))
+  = old_nonblue_kept minor major fp roots x
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
+/// ---------------------------------------------------------------------------
+/// Well-formedness except the pending objects, field by field
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
-let wfh_over_from_field_closure g live field_closure =
+let wfh_except_from_field_closure g pf field_closure =
   let contra (src: obj_addr) (dst: obj_addr)
-    : Lemma (requires live src /\ fields_constrained g src /\
+    : Lemma (requires not_freed g pf src /\ fields_constrained g src /\
                       U64.v (wosize_of_object src g) < pow2 54 /\
-                      ~(live (resolve_object dst g) /\
+                      ~(not_freed g pf (resolve_object dst g) /\
                         infix_addr_wf g (objects zero_addr g) dst))
             (ensures ~(exists_field_pointing_to_unchecked g src
                          (wosize_of_object src g) dst))
@@ -75,57 +147,57 @@ let wfh_over_from_field_closure g live field_closure =
       efptu_false_if_no_field_matches g src wz dst
   in
   let aux (src: obj_addr) (dst: obj_addr) : Lemma
-    (requires live src /\ fields_constrained g src /\
+    (requires not_freed g pf src /\ fields_constrained g src /\
               (let wz = wosize_of_object src g in
                U64.v wz < pow2 54 /\ exists_field_pointing_to_unchecked g src wz dst))
-    (ensures live (resolve_object dst g) /\
+    (ensures not_freed g pf (resolve_object dst g) /\
              infix_addr_wf g (objects zero_addr g) dst)
     = FStar.Classical.move_requires (contra src) dst
   in
   let aux2 (src: obj_addr) (dst: obj_addr) : Lemma
-    (requires live src /\ fields_constrained g src /\
+    (requires not_freed g pf src /\ fields_constrained g src /\
               (let wz = wosize_of_object src g in
                U64.v wz < pow2 54 /\ exists_field_pointing_to_unchecked g src wz dst))
-    (ensures live (resolve_object dst g))
+    (ensures not_freed g pf (resolve_object dst g))
     = aux src dst
   in
   let aux3 (src: obj_addr) (dst: obj_addr) : Lemma
-    (requires live src /\ fields_constrained g src /\
+    (requires not_freed g pf src /\ fields_constrained g src /\
               (let wz = wosize_of_object src g in
                U64.v wz < pow2 54 /\ exists_field_pointing_to_unchecked g src wz dst))
     (ensures infix_addr_wf g (objects zero_addr g) dst)
     = aux src dst
   in
-  well_formed_heap_part2_over_intro g live aux2;
-  well_formed_heap_part3_over_intro g live aux3
+  well_formed_heap_part2_except_intro g pf aux2;
+  well_formed_heap_part3_except_intro g pf aux3
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let wfh_over_field g live src j =
-  wf_over_parts ();
+let wfh_except_field g pf src j =
+  wf_except_parts ();
   let v : obj_addr = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
   assert (Seq.mem src (objects zero_addr g));
   assert (is_pointer_to (read_word g (U64.uint_to_t (U64.v src + j * U64.v mword))) v);
   NoBlueUtil.field_pointer_points_to_nat g src v j;
   wosize_of_object_bound src g;
-  wfh_part2_over_elim g live src v;
-  wfh_part3_over_elim g live src v
+  wfh_part2_except_elim g pf src v;
+  wfh_part3_except_elim g pf src v
 #pop-options
 
 /// ---------------------------------------------------------------------------
 /// Event 1: promotion
 /// ---------------------------------------------------------------------------
 
-/// A field of an old live object: untouched by promotion, and so is its target.
+/// A field of an old not-freed object: untouched by promotion, and so is its
+/// target.
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 private let promoted_old_field
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (live: obj_addr -> prop) (src: obj_addr) (j: nat)
+  (pf: obj_addr -> prop) (src: obj_addr) (j: nat)
   : Lemma
-    (requires CL.promote_pre minor major fp /\
-              live_ok major live /\
-              well_formed_heap_over major live /\
-              live src /\
+    (requires promote_pre minor major fp /\
+              well_formed_heap_except major pf /\
+              not_freed major pf src /\
               (let g = (cheney_promote minor major fp roots).major_final in
                fields_constrained g src /\
                j < U64.v (wosize_of_object src g) /\
@@ -133,7 +205,7 @@ private let promoted_old_field
                is_pointer (read_word g (U64.uint_to_t (U64.v src + j * 8)))))
     (ensures (let g = (cheney_promote minor major fp roots).major_final in
               let v : obj_addr = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
-              live (resolve_object v g) /\
+              not_freed g pf (resolve_object v g) /\
               infix_addr_wf g (objects zero_addr g) v))
   = let g = (cheney_promote minor major fp roots).major_final in
     let field_addr = U64.uint_to_t (U64.v src + j * 8) in
@@ -141,21 +213,22 @@ private let promoted_old_field
     Aux.header_eq_object_facts g major src;
     Frame.cheney_promote_frame_old_fields minor major fp roots src j;
     assert (read_word g field_addr == read_word major field_addr);
-    wfh_over_field major live src j;
+    wfh_except_field major pf src j;
     let v : obj_addr = read_word major field_addr in
-    Frame.cheney_promote_frame_target_header minor major fp roots v
+    Frame.cheney_promote_frame_target_header minor major fp roots v;
+    cheney_promote_keeps_not_freed minor major fp roots pf (resolve_object v major)
 #pop-options
 
 /// A field of a promoted object: it is its nursery source's field, which
-/// points at a live major object (or into the nursery, not a major pointer).
+/// points at a not-freed major object (or into the nursery, not a major
+/// pointer).
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 private let promoted_new_field
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (live: obj_addr -> prop) (x: U64.t) (src: obj_addr) (j: nat)
+  (pf: obj_addr -> prop) (x: U64.t) (src: obj_addr) (j: nat)
   : Lemma
-    (requires CL.promote_pre minor major fp /\
-              live_ok major live /\
-              GenInv.minor_major_fields_live minor live /\
+    (requires promote_pre minor major fp /\
+              GenInv.minor_major_fields_not_freed minor major pf /\
               Seq.mem x (minor_objects minor) /\
               (let prom = cheney_promote minor major fp roots in
                let g = prom.major_final in
@@ -167,7 +240,7 @@ private let promoted_new_field
                is_pointer (read_word g (U64.uint_to_t (U64.v src + j * 8)))))
     (ensures (let g = (cheney_promote minor major fp roots).major_final in
               let v : obj_addr = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
-              live (resolve_object v g) /\
+              not_freed g pf (resolve_object v g) /\
               infix_addr_wf g (objects zero_addr g) v))
   = let prom = cheney_promote minor major fp roots in
     let g = prom.major_final in
@@ -181,8 +254,8 @@ private let promoted_new_field
     CPF.cheney_promote_fwd_target_fields_match minor major fp roots x j;
     let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
     assert (v == minor_read_field minor x j);
-    GenInv.minor_major_fields_live_elim minor live x j;
-    assert (Seq.mem (v <: obj_addr) (objects zero_addr major));
+    GenInv.minor_major_fields_not_freed_elim minor major pf x j;
+    cheney_promote_keeps_not_freed minor major fp roots pf (v <: obj_addr);
     assert (Seq.mem (v <: obj_addr) (objects zero_addr g));
     assert (~(is_infix (v <: obj_addr) g));
     resolve_non_infix (v <: obj_addr) g;
@@ -190,43 +263,42 @@ private let promoted_new_field
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let cheney_promote_preserves_wfh_over minor major fp roots live =
-  wf_over_parts ();
+let cheney_promote_preserves_wfh_except minor major fp roots pf =
+  wf_except_parts ();
   let prom = cheney_promote minor major fp roots in
   let g = prom.major_final in
-  let live' = promoted_live minor live prom.fwd_map in
   cheney_promote_preserves_wfh_part1 minor major fp roots;
   cheney_promote_preserves_wfh_part4 minor major fp roots;
-  CL.cheney_promote_live_ok minor major fp roots live;
   let field_closure (src: obj_addr) (j: nat) : Lemma
-    (requires live' src /\ Seq.mem src (objects zero_addr g) /\
+    (requires not_freed g pf src /\
               fields_constrained g src /\
               j < U64.v (wosize_of_object src g) /\
               U64.v src + j * 8 + 8 <= heap_size)
     (ensures (let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
               is_pointer v ==>
-              live' (resolve_object (v <: obj_addr) g) /\
+              not_freed g pf (resolve_object (v <: obj_addr) g) /\
               infix_addr_wf g (objects zero_addr g) (v <: obj_addr)))
     = let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
       if is_pointer v then begin
-        if IndDesc.strong_excluded_middle (live src)
-        then promoted_old_field minor major fp roots live src j
+        cheney_promote_not_freed_origin minor major fp roots pf src;
+        if IndDesc.strong_excluded_middle (not_freed major pf src)
+        then promoted_old_field minor major fp roots pf src j
         else begin
           let x = IndDesc.indefinite_description_ghost U64.t
             (fun x -> Seq.mem x (minor_objects minor) /\ prom.fwd_map x == src) in
-          promoted_new_field minor major fp roots live x src j
+          promoted_new_field minor major fp roots pf x src j
         end
       end
   in
-  wfh_over_from_field_closure g live' field_closure
+  wfh_except_from_field_closure g pf field_closure
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// Event 2: the pointer update over a live set
+/// Event 2: the pointer update
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
-let update_live_pointers_frame_target_header g live fwd h =
+let update_walk_frame_target_header g upd fwd h =
   hd_address_spec h;
   if is_infix h g then begin
     let w = U64.v (wosize_of_object h g) in
@@ -236,27 +308,28 @@ let update_live_pointers_frame_target_header g live fwd h =
     infix_header_misaligned h g;
     assert (U64.v hdr % 8 == 1);
     assert (~(is_minor_pointer (to_minor_offset hdr)));
-    if IndDesc.strong_excluded_middle (live pa) && not (is_no_scan pa g) then
-      PU.update_live_pointers_field_effect g live fwd pa (w - 1)
+    if IndDesc.strong_excluded_middle (upd pa) && not (is_no_scan pa g) then
+      PU.update_walk_field_effect g upd fwd pa (w - 1)
     else
-      PU.update_live_pointers_preserves_skipped_field g live fwd pa (w - 1)
+      PU.update_walk_preserves_skipped_field g upd fwd pa (w - 1)
   end
   else
-    PU.update_live_pointers_preserves_header g live fwd h
+    PU.update_walk_preserves_header g upd fwd h
 #pop-options
 
-/// A well-formed live target in the walked heap is one in the updated heap.
+/// A well-formed not-freed target in the walked heap is one in the updated heap.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
-private let update_live_pointers_transfer_target
-  (g: heap) (live: obj_addr -> prop) (fwd: forwarding_map) (dst: obj_addr)
-  : Lemma (requires well_formed_heap_part1 g /\ live_ok g live /\
-                    live (resolve_object dst g) /\
+private let update_pointers_except_transfer_target
+  (g: heap) (pf: obj_addr -> prop) (fwd: forwarding_map) (dst: obj_addr)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    not_freed g pf (resolve_object dst g) /\
                     infix_addr_wf g (objects zero_addr g) dst)
-          (ensures (let updated = update_live_pointers g live fwd in
-                    live (resolve_object dst updated) /\
+          (ensures (let updated = update_pointers_except g pf fwd in
+                    not_freed updated pf (resolve_object dst updated) /\
                     infix_addr_wf updated (objects zero_addr updated) dst))
-  = let updated = update_live_pointers g live fwd in
-    PU.update_live_pointers_preserves_objects g live fwd;
+  = let upd = not_freed g pf in
+    let updated = update_walk g upd fwd in
+    PU.update_walk_preserves_objects g upd fwd;
     if is_infix dst g then begin
       infix_addr_wf_elim g (objects zero_addr g) dst;
       parent_closure_addr_nat_spec dst g;
@@ -265,64 +338,66 @@ private let update_live_pointers_transfer_target
       let pa : obj_addr = U64.uint_to_t (U64.v dst - w * 8) in
       assert (resolve_object dst g == pa);
       assert (Seq.mem pa (objects zero_addr g));
-      PU.update_live_pointers_preserves_header g live fwd pa;
+      PU.update_walk_preserves_header g upd fwd pa;
       resolve_object_locality pa g updated
     end
     else begin
       resolve_non_infix dst g;
       assert (Seq.mem dst (objects zero_addr g))
     end;
-    update_live_pointers_frame_target_header g live fwd dst;
+    update_walk_frame_target_header g upd fwd dst;
     resolve_object_locality dst g updated;
+    update_walk_not_freed g upd pf fwd (resolve_object dst g);
     infix_addr_wf_transfer g updated (objects zero_addr g) (objects zero_addr updated) dst
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
-let update_live_pointers_preserves_wfh_over g live fwd =
-  wf_over_parts ();
-  let updated = update_live_pointers g live fwd in
-  PU.update_live_pointers_preserves_objects g live fwd;
-  PU.update_live_pointers_preserves_wfh_part1 g live fwd;
-  PU.update_live_pointers_preserves_wfh_part4 g live fwd;
-  CL.update_live_pointers_preserves_live_ok g live live fwd;
+let update_pointers_except_preserves_wfh_except g pf fwd =
+  wf_except_parts ();
+  let upd = not_freed g pf in
+  let updated = update_walk g upd fwd in
+  PU.update_walk_preserves_objects g upd fwd;
+  PU.update_walk_preserves_wfh_part1 g upd fwd;
+  PU.update_walk_preserves_wfh_part4 g upd fwd;
   let field_closure (src: obj_addr) (j: nat) : Lemma
-    (requires live src /\ Seq.mem src (objects zero_addr updated) /\
+    (requires not_freed updated pf src /\
               fields_constrained updated src /\
               j < U64.v (wosize_of_object src updated) /\
               U64.v src + j * 8 + 8 <= heap_size)
     (ensures (let v = read_word updated (U64.uint_to_t (U64.v src + j * 8)) in
               is_pointer v ==>
-              live (resolve_object (v <: obj_addr) updated) /\
+              not_freed updated pf (resolve_object (v <: obj_addr) updated) /\
               infix_addr_wf updated (objects zero_addr updated) (v <: obj_addr)))
-    = PU.update_live_pointers_preserves_header g live fwd src;
+    = update_walk_not_freed g upd pf fwd src;
+      PU.update_walk_preserves_header g upd fwd src;
       Aux.header_eq_object_facts updated g src;
       assert (fields_constrained g src);
-      PU.update_live_pointers_field_effect g live fwd src j;
+      PU.update_walk_field_effect g upd fwd src j;
       let field_addr = U64.uint_to_t (U64.v src + j * 8) in
       let old_raw = read_word g field_addr in
       let old_val = to_minor_offset old_raw in
       if is_minor_pointer old_val && fwd old_val <> 0UL then
-        update_live_pointers_transfer_target g live fwd ((fwd old_val) <: obj_addr)
+        update_pointers_except_transfer_target g pf fwd ((fwd old_val) <: obj_addr)
       else if is_pointer old_raw then begin
-        wfh_over_field g live src j;
-        update_live_pointers_transfer_target g live fwd (old_raw <: obj_addr)
+        wfh_except_field g pf src j;
+        update_pointers_except_transfer_target g pf fwd (old_raw <: obj_addr)
       end
   in
-  wfh_over_from_field_closure updated live field_closure
+  wfh_except_from_field_closure updated pf field_closure
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
-private let fwd_target_live
+private let fwd_target_not_freed
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (live: obj_addr -> prop) (v: U64.t)
-  : Lemma (requires CL.promote_pre minor major fp /\
+  (pf: obj_addr -> prop) (v: U64.t)
+  : Lemma (requires promote_pre minor major fp /\ pending_ok major pf /\
                     (cheney_promote minor major fp roots).fwd_map v <> 0UL)
           (ensures (let prom = cheney_promote minor major fp roots in
                     let t = prom.fwd_map v in
                     U64.v t >= U64.v mword /\
                     U64.v t < heap_size /\
                     U64.v t % U64.v mword == 0 /\
-                    promoted_live minor live prom.fwd_map (resolve_object (t <: obj_addr) prom.major_final) /\
+                    not_freed prom.major_final pf (resolve_object (t <: obj_addr) prom.major_final) /\
                     infix_addr_wf prom.major_final (objects zero_addr prom.major_final) (t <: obj_addr)))
   = let prom = cheney_promote minor major fp roots in
     let g = prom.major_final in
@@ -334,7 +409,7 @@ private let fwd_target_live
       let parent = infix_parent minor v in
       assert (Seq.mem parent (minor_objects minor));
       assert (resolve_object t g == prom.fwd_map parent);
-      assert (promoted_live minor live prom.fwd_map (resolve_object t g))
+      cheney_promote_image_not_freed minor major fp roots pf parent (resolve_object t g)
     end
     else begin
       Fwd.cheney_promote_fwd_noninfix_targets_valid minor major fp roots;
@@ -344,26 +419,27 @@ private let fwd_target_live
       Inj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots;
       assert (Seq.mem v (minor_objects minor));
       resolve_non_infix t g;
+      cheney_promote_image_not_freed minor major fp roots pf v t;
       infix_addr_wf_non_infix g (objects zero_addr g) t
     end
 #pop-options
 
-let cheney_promote_fwd_targets_live minor major fp roots live =
+let cheney_promote_fwd_targets_not_freed minor major fp roots pf =
   FStar.Classical.forall_intro
-    (FStar.Classical.move_requires (fwd_target_live minor major fp roots live))
+    (FStar.Classical.move_requires (fwd_target_not_freed minor major fp roots pf))
 
 /// ---------------------------------------------------------------------------
-/// Free-list facts across the pointer update over a live set
+/// Free-list facts across the pointer update
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
-private let update_live_pointers_preserves_blue_link_fields_valid
-  (g: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 g /\ live_ok g live /\
+private let update_walk_preserves_blue_link_fields_valid
+  (g: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
+  : Lemma (requires well_formed_heap_part1 g /\ walk_ok g upd /\
                     FreeListShape.blue_link_fields_valid g)
-          (ensures FreeListShape.blue_link_fields_valid (update_live_pointers g live fwd))
-  = let updated = update_live_pointers g live fwd in
-    PU.update_live_pointers_preserves_objects g live fwd;
+          (ensures FreeListShape.blue_link_fields_valid (update_walk g upd fwd))
+  = let updated = update_walk g upd fwd in
+    PU.update_walk_preserves_objects g upd fwd;
     let aux (src: obj_addr)
       : Lemma (requires Seq.mem src (objects zero_addr updated) /\
                         is_blue src updated /\
@@ -371,12 +447,12 @@ private let update_live_pointers_preserves_blue_link_fields_valid
                         U64.v (hd_address src) + 16 <= heap_size)
               (ensures (let v = read_word updated src in
                         v = 0UL \/ HeapGraph.is_pointer_field v))
-      = PU.update_live_pointers_preserves_header g live fwd src;
+      = PU.update_walk_preserves_header g upd fwd src;
         Aux.header_eq_object_facts updated g src;
         assert (is_blue src g);
-        assert (~(live src));
+        assert (~(upd src));
         hd_address_spec src;
-        PU.update_live_pointers_preserves_skipped_field g live fwd src 0;
+        PU.update_walk_preserves_skipped_field g upd fwd src 0;
         FreeListShape.blue_link_fields_valid_elim g src;
         assert (read_word updated src == read_word g src)
     in
@@ -393,13 +469,13 @@ private let objects_nonempty_from_header (g1 g2: heap) (start: hp_addr)
 #pop-options
 
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
-private let update_live_pointers_preserves_dense
-  (g: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
+private let update_walk_preserves_dense
+  (g: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 g /\ heap_objects_dense g)
-          (ensures heap_objects_dense (update_live_pointers g live fwd))
+          (ensures heap_objects_dense (update_walk g upd fwd))
   = reveal_opaque (`%heap_objects_dense) heap_objects_dense;
-    let updated = update_live_pointers g live fwd in
-    PU.update_live_pointers_preserves_objects g live fwd;
+    let updated = update_walk g upd fwd in
+    PU.update_walk_preserves_objects g upd fwd;
     let aux (start: hp_addr) : Lemma
       (requires U64.v start + 8 < heap_size /\
                 Seq.mem (f_address start) (objects zero_addr updated) /\
@@ -410,7 +486,7 @@ private let update_live_pointers_preserves_dense
                 Seq.length (objects (U64.uint_to_t next) updated) > 0 /\
                 Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr updated)))
     = assert (Seq.mem (f_address start) (objects zero_addr g));
-      PU.update_live_pointers_preserves_header g live fwd (f_address start);
+      PU.update_walk_preserves_header g upd fwd (f_address start);
       hd_f_roundtrip start;
       assert (read_word updated start == read_word g start);
       objects_nonempty_from_header updated g start;
@@ -421,7 +497,7 @@ private let update_live_pointers_preserves_dense
         assert (Seq.length (objects (U64.uint_to_t next) g) > 0);
         assert (Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr g));
         let next_hp : hp_addr = U64.uint_to_t next in
-        PU.update_live_pointers_preserves_header g live fwd (f_address next_hp);
+        PU.update_walk_preserves_header g upd fwd (f_address next_hp);
         hd_f_roundtrip next_hp;
         assert (read_word updated next_hp == read_word g next_hp);
         objects_nonempty_from_header g updated next_hp
@@ -431,21 +507,21 @@ private let update_live_pointers_preserves_dense
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
-private let update_live_pointers_preserves_chain_objects_blue
-  (g: heap) (live: obj_addr -> prop) (fwd: forwarding_map) (fp: U64.t)
-  : Lemma (requires well_formed_heap_part1 g /\ live_ok g live /\
+private let update_walk_preserves_chain_objects_blue
+  (g: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (fp: U64.t)
+  : Lemma (requires well_formed_heap_part1 g /\ walk_ok g upd /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     chain_objects_blue g fp)
-          (ensures chain_objects_blue (update_live_pointers g live fwd) fp)
-  = let updated = update_live_pointers g live fwd in
+          (ensures chain_objects_blue (update_walk g upd fwd) fp)
+  = let updated = update_walk g upd fwd in
     let fuel = heap_words in
-    PU.update_live_pointers_preserves_objects g live fwd;
+    PU.update_walk_preserves_objects g upd fwd;
     reveal_opaque (`%chain_objects_blue) chain_objects_blue;
     let aux (obj: obj_addr) : Lemma
       (requires Seq.mem obj (objects zero_addr updated) /\ ~(is_blue obj updated))
       (ensures AllocLemmas.chain_avoids updated fp obj fuel = true)
       = assert (Seq.mem obj (objects zero_addr g));
-        PU.update_live_pointers_preserves_header g live fwd obj;
+        PU.update_walk_preserves_header g upd fwd obj;
         Aux.header_eq_object_facts updated g obj;
         assert (~(is_blue obj g));
         assert (AllocLemmas.chain_avoids g fp obj fuel = true);
@@ -458,7 +534,7 @@ private let update_live_pointers_preserves_chain_objects_blue
           (ensures read_word updated a == read_word g a)
           = if is_blue a g then begin
               hd_address_spec a;
-              PU.update_live_pointers_preserves_skipped_field g live fwd a 0
+              PU.update_walk_preserves_skipped_field g upd fwd a 0
             end else
               assert (AllocLemmas.chain_avoids g fp a fuel = true)
         in
@@ -474,16 +550,14 @@ private let update_live_pointers_preserves_chain_objects_blue
 
 /// The free-list half of the shape after promotion and the update.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-private let cheney_collect_over_free_list
+private let cheney_collect_except_free_list
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (live: obj_addr -> prop)
+  (pf: obj_addr -> prop)
   : Lemma
-    (requires CL.promote_pre minor major fp /\
-              live_ok major live /\
-              GenInv.major_shape_over major fp live)
+    (requires promote_pre minor major fp /\
+              GenInv.major_shape_except major fp pf)
     (ensures (let prom = cheney_promote minor major fp roots in
-              let live' = promoted_live minor live prom.fwd_map in
-              let m = update_live_pointers prom.major_final live' prom.fwd_map in
+              let m = update_pointers_except prom.major_final pf prom.fwd_map in
               let fp' = prom.fp_final in
               AllocLemmas.fl_valid m fp' heap_words /\
               AllocLemmas.fl_chain_terminates m fp' heap_words /\
@@ -496,15 +570,14 @@ private let cheney_collect_over_free_list
               Seq.length (objects zero_addr m) > 0 /\
               GC.Spec.SweepInv.fp_valid fp' m /\
               GC.Spec.FreeList.fp_in_heap fp' m))
-  = GenInv.major_shape_over_elim major fp live;
+  = GenInv.major_shape_except_elim major fp pf;
     let prom = cheney_promote minor major fp roots in
     let g = prom.major_final in
     let fp' = prom.fp_final in
-    let live' = promoted_live minor live prom.fwd_map in
-    let m = update_live_pointers g live' prom.fwd_map in
+    let upd = not_freed g pf in
+    let m = update_walk g upd prom.fwd_map in
     // promotion
     cheney_promote_preserves_wfh_part1 minor major fp roots;
-    CL.cheney_promote_live_ok minor major fp roots live;
     cheney_promote_preserves_cob minor major fp roots;
     cheney_promote_preserves_free_list_shape minor major fp roots;
     cheney_promote_preserves_dense minor major fp roots;
@@ -512,13 +585,14 @@ private let cheney_collect_over_free_list
     GC.Gen.CheneyFlComplete.cheney_promote_preserves_fl_complete minor major fp roots;
     FLAsc.cheney_promote_preserves_fl_ascending minor major fp roots;
     // the update
-    PU.update_live_pointers_preserves_objects g live' prom.fwd_map;
-    update_live_pointers_preserves_fl_valid g live' prom.fwd_map fp';
-    AllocExact.update_live_pointers_preserves_fl_complete g live' prom.fwd_map fp';
-    FLAsc.update_live_pointers_preserves_fl_ascending g live' prom.fwd_map fp';
-    update_live_pointers_preserves_blue_link_fields_valid g live' prom.fwd_map;
-    update_live_pointers_preserves_dense g live' prom.fwd_map;
-    update_live_pointers_preserves_chain_objects_blue g live' prom.fwd_map fp';
+    assert (walk_ok g upd);
+    PU.update_walk_preserves_objects g upd prom.fwd_map;
+    update_walk_preserves_fl_valid g upd prom.fwd_map fp';
+    AllocExact.update_walk_preserves_fl_complete g upd prom.fwd_map fp';
+    FLAsc.update_walk_preserves_fl_ascending g upd prom.fwd_map fp';
+    update_walk_preserves_blue_link_fields_valid g upd prom.fwd_map;
+    update_walk_preserves_dense g upd prom.fwd_map;
+    update_walk_preserves_chain_objects_blue g upd prom.fwd_map fp';
     AllocExact.fl_valid_cob_gives_sound m fp';
     GenInv.free_list_exact_iff m fp';
     FreeListShape.fp_pointer_or_zero_fl_valid_implies_fp_valid fp' m heap_words;
@@ -526,29 +600,28 @@ private let cheney_collect_over_free_list
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let cheney_collect_over_preserves_shape minor major fp roots live =
-  GenInv.collection_shape_over_elim minor major fp live;
-  GenInv.major_shape_over_elim major fp live;
+let cheney_collect_except_preserves_shape minor major fp roots pf =
+  GenInv.collection_shape_except_elim minor major fp pf;
+  GenInv.major_shape_except_elim major fp pf;
   GenInv.minor_heap_shape_elim minor;
   let prom = cheney_promote minor major fp roots in
-  let live' = promoted_live minor live prom.fwd_map in
   let g = prom.major_final in
-  let res = cheney_collect_spec_over minor major fp roots live in
-  let m = update_live_pointers g live' prom.fwd_map in
+  let res = cheney_collect_spec_except minor major fp roots pf in
+  let m = update_pointers_except g pf prom.fwd_map in
   assert (res.mc_major == m);
   assert (res.mc_fp == prom.fp_final);
   assert (res.mc_minor == minor_reset minor);
-  assert (CL.promote_pre minor major fp);
-  // the live set
+  assert (promote_pre minor major fp);
+  // the pending set stays admissible
   cheney_promote_preserves_wfh_part1 minor major fp roots;
-  CL.cheney_promote_live_ok minor major fp roots live;
-  CL.update_live_pointers_preserves_live_ok g live' live' prom.fwd_map;
-  // well-formedness over it: promotion, then the update
-  cheney_promote_preserves_wfh_over minor major fp roots live;
-  cheney_promote_fwd_targets_live minor major fp roots live;
-  update_live_pointers_preserves_wfh_over g live' prom.fwd_map;
+  cheney_promote_pending_ok minor major fp roots pf;
+  update_walk_preserves_pending_ok g (not_freed g pf) pf prom.fwd_map;
+  // well-formedness except it: promotion, then the update
+  cheney_promote_preserves_wfh_except minor major fp roots pf;
+  cheney_promote_fwd_targets_not_freed minor major fp roots pf;
+  update_pointers_except_preserves_wfh_except g pf prom.fwd_map;
   // the free list
-  cheney_collect_over_free_list minor major fp roots live;
-  GenInv.major_shape_over_intro m prom.fp_final live';
-  GenInv.collection_shape_over_after_minor_reset minor m prom.fp_final live'
+  cheney_collect_except_free_list minor major fp roots pf;
+  GenInv.major_shape_except_intro m prom.fp_final pf;
+  GenInv.collection_shape_except_after_minor_reset minor m prom.fp_final pf
 #pop-options

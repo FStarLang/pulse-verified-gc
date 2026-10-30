@@ -1,5 +1,5 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.PromoteUpdate.Aux — the pointer-update walk: objects, part 1, live-set extensionality
+/// GC.Gen.PromoteUpdate.Aux — the pointer-update walk: objects, part 1, extensionality in the rewritten set
 /// ---------------------------------------------------------------------------
 
 module GC.Gen.PromoteUpdate.Aux
@@ -45,33 +45,28 @@ val update_object_pointers_step (major: heap) (obj: obj_addr) (fwd: forwarding_m
                 read_word major' (hd_address h) == read_word major (hd_address h))))
 
 /// ---------------------------------------------------------------------------
-/// The walk over a live set
+/// The walk over a fixed set of objects
 /// ---------------------------------------------------------------------------
 
-val update_live_pointers_preserves_objects
-  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
+val update_walk_preserves_objects
+  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major)
-    (ensures objects zero_addr (update_live_pointers major live fwd) == objects zero_addr major)
+    (ensures objects zero_addr (update_walk major upd fwd) == objects zero_addr major)
 
-val update_live_pointers_preserves_wfh_part1
-  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
+val update_walk_preserves_wfh_part1
+  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major)
-    (ensures well_formed_heap_part1 (update_live_pointers major live fwd))
+    (ensures well_formed_heap_part1 (update_walk major upd fwd))
 
-/// Only the live set's members on the walk matter.
-val update_live_pointers_ext
-  (major: heap) (live1 live2: obj_addr -> prop) (fwd: forwarding_map)
+/// Only the members of the rewritten set on the walk matter.
+val update_walk_ext
+  (major: heap) (upd1 upd2: obj_addr -> prop) (fwd: forwarding_map)
   : Lemma (requires forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
-                      (live1 x <==> live2 x))
-    (ensures update_live_pointers major live1 fwd == update_live_pointers major live2 fwd)
-
-/// At the idle live set (every non-free block), the live walk is today's walk.
-val update_live_pointers_idle (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major)
-    (ensures update_live_pointers major (idle_live major) fwd == update_major_pointers major fwd)
+                      (upd1 x <==> upd2 x))
+    (ensures update_walk major upd1 fwd == update_walk major upd2 fwd)
 
 /// ---------------------------------------------------------------------------
-/// The idle instances
+/// The stop-the-world instances
 /// ---------------------------------------------------------------------------
 
 val update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map)

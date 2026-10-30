@@ -213,53 +213,55 @@ val update_object_pointers_done (major: heap) (obj: U64.t) (wosize: nat)
           (ensures update_object_pointers major obj wosize fwd i == major)
 
 /// ---------------------------------------------------------------------------
-/// The pointer update over a live set
+/// The pointer update, except the objects pending free
 /// ---------------------------------------------------------------------------
 
-/// The walk over the major heap, over a live set fixed for the whole walk: it
-/// rewrites the fields of the objects `x` with `live x` (and scannable) and
-/// skips every other object without reading its fields.  It reads every header,
-/// so it needs only the walk facts of the heap (parts 1 and 4).
+/// The walk over the major heap, over a set `upd` of objects fixed for the
+/// whole walk: it rewrites the fields of the objects `x` with `upd x` (and
+/// scannable) and skips every other object without reading its fields.  It
+/// reads every header, so it needs only the walk facts of the heap (parts 1
+/// and 4).
 ///
-/// `live` is a proposition (as in `GC.Spec.Fields.live_ok`), so the test goes
-/// through `strong_excluded_middle`; this is a ghost specification function.
-/// At `idle_live major` it is the stop-the-world `update_major_pointers` below,
-/// which is defined as that instance.
-let rec update_live_aux (major: heap) (objs: seq obj_addr) (live: obj_addr -> prop)
+/// `upd` is a proposition, so the test goes through `strong_excluded_middle`;
+/// this is a ghost specification function.  The minor collection runs it over
+/// the not-freed objects (`update_pointers_except`).
+let rec update_walk_aux (major: heap) (objs: seq obj_addr) (upd: obj_addr -> prop)
                         (fwd: forwarding_map) (idx: nat)
   : GTot heap (decreases (Seq.length objs - idx)) =
   if idx >= Seq.length objs then major
   else
     let obj = Seq.index objs idx in
-    if not (FStar.IndefiniteDescription.strong_excluded_middle (live obj)) then
-      update_live_aux major objs live fwd (idx + 1)
+    if not (FStar.IndefiniteDescription.strong_excluded_middle (upd obj)) then
+      update_walk_aux major objs upd fwd (idx + 1)
     else if is_no_scan obj major then
-      update_live_aux major objs live fwd (idx + 1)
+      update_walk_aux major objs upd fwd (idx + 1)
     else
       let wz = U64.v (wosize_of_object obj major) in
       let major' = update_object_pointers major obj wz fwd 0 in
-      update_live_aux major' objs live fwd (idx + 1)
+      update_walk_aux major' objs upd fwd (idx + 1)
 
-/// Rewrite the nursery pointers held by the live objects of the major heap.
-let update_live_pointers (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
+/// Rewrite the nursery pointers held by the objects `upd` of the major heap.
+let update_walk (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
   : GTot heap =
-  update_live_aux major (objects zero_addr major) live fwd 0
+  update_walk_aux major (objects zero_addr major) upd fwd 0
 
-/// The stop-the-world pointer update: the live walk over every non-free block.
+/// The objects a walk rewrites are real, non-free blocks.
+let walk_ok (major: heap) (upd: obj_addr -> prop) : prop =
+  forall (x: obj_addr). upd x ==> Seq.mem x (objects zero_addr major) /\ ~(is_blue x major)
+
+/// The minor collection's pointer update, except the objects pending free: it
+/// rewrites the fields of the not-freed scannable objects and never reads a
+/// field of a free or pending-free block.
+let update_pointers_except (major: heap) (pf: obj_addr -> prop) (fwd: forwarding_map)
+  : GTot heap =
+  update_walk major (not_freed major pf) fwd
+
+/// The stop-the-world pointer update: nothing is pending free.
 let update_major_pointers (major: heap) (fwd: forwarding_map) : GTot heap =
-  update_live_pointers major (idle_live major) fwd
-
-/// The live set after promotion: the live set before it, plus the images of
-/// the promoted nursery objects.  It is an explicit set, not recomputed from
-/// the heap's colours.  (An unpromoted nursery object maps to `0UL`, which is
-/// not an `obj_addr`; interior nursery pointers are not `minor_objects`, so
-/// their interior images are not members.)
-let promoted_live (minor: minor_state) (live: obj_addr -> prop) (fwd: forwarding_map)
-  : obj_addr -> prop =
-  fun x -> live x \/ (exists (v: U64.t). Seq.mem v (minor_objects minor) /\ fwd v == x)
+  update_pointers_except major no_pending fwd
 
 /// ---------------------------------------------------------------------------
-/// Live Set and Root Rewriting
+/// Root Rewriting
 /// ---------------------------------------------------------------------------
 
 /// Rewrite a single root: if it's a minor pointer that was forwarded, use the new address
@@ -379,8 +381,8 @@ val promote_preserves_fields
 
 /// The walk facts of a well-formed heap: parts 1 and 4, which are all of
 /// well-formedness that promotion reads.  The promotion lemmas ask for these
-/// alone, so they also apply to a heap that is well formed only over a live
-/// set (`GC.Spec.Fields.well_formed_heap_over`).
+/// alone, so they also apply to a heap that is well formed only except the
+/// objects pending free (`GC.Spec.Fields.well_formed_heap_except`).
 val wfh_walk_facts (g: heap)
   : Lemma (requires well_formed_heap g)
           (ensures well_formed_heap_part1 g /\ well_formed_heap_part4 g)

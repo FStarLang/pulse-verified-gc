@@ -404,6 +404,6 @@ let fwd_targets_stable (fwd: PromoteSpec.forwarding_map) : prop =
      let target_as_minor = GC.Gen.Base.to_minor_offset target in
      ~(PromoteSpec.is_minor_pointer target_as_minor /\ fwd target_as_minor <> 0UL))
 
-/// The key equivalence theorem (promoted + slots = the pointer update over a
-/// live set) is `GC.Gen.TwoPassEquiv.promoted_plus_slots_eq_live_update`; its
+/// The key equivalence theorem (promoted + slots = the pointer-update walk) is
+/// `GC.Gen.TwoPassEquiv.promoted_plus_slots_eq_walk`; its
 /// Cheney instances are in `GC.Gen.TwoPassEquiv.Collect`.

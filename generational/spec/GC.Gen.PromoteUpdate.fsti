@@ -26,59 +26,55 @@ module FreeListShape = GC.Gen.FreeListShape
 open GC.Gen.Promote
 
 /// ---------------------------------------------------------------------------
-/// The pointer update over a live set (`update_live_pointers`)
+/// The pointer update over a fixed set of objects (`update_walk`)
 /// ---------------------------------------------------------------------------
 ///
-/// The walk rewrites the fields of live scannable objects and nothing else.
-/// Each `update_major_pointers_*` lemma below is the instance at
-/// `idle_live major` (`update_live_pointers_idle`), with `is_blue x` read as
-/// "`x` is not live".
+/// The walk rewrites the fields of the scannable objects in its set `upd` and
+/// nothing else.  Each `update_major_pointers_*` lemma below is the instance
+/// at `not_freed major no_pending` (`update_major_pointers` is defined so),
+/// with `is_blue x` read as "`x` is not rewritten".
 
-val update_live_pointers_preserves_objects
-  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
+val update_walk_preserves_objects
+  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major)
-    (ensures objects zero_addr (update_live_pointers major live fwd) == objects zero_addr major)
+    (ensures objects zero_addr (update_walk major upd fwd) == objects zero_addr major)
 
-val update_live_pointers_preserves_wfh_part1
-  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
+val update_walk_preserves_wfh_part1
+  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major)
-    (ensures well_formed_heap_part1 (update_live_pointers major live fwd))
+    (ensures well_formed_heap_part1 (update_walk major upd fwd))
 
-val update_live_pointers_ext
-  (major: heap) (live1 live2: obj_addr -> prop) (fwd: forwarding_map)
+val update_walk_ext
+  (major: heap) (upd1 upd2: obj_addr -> prop) (fwd: forwarding_map)
   : Lemma (requires forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
-                      (live1 x <==> live2 x))
-    (ensures update_live_pointers major live1 fwd == update_live_pointers major live2 fwd)
+                      (upd1 x <==> upd2 x))
+    (ensures update_walk major upd1 fwd == update_walk major upd2 fwd)
 
-val update_live_pointers_idle (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major)
-    (ensures update_live_pointers major (idle_live major) fwd == update_major_pointers major fwd)
-
-val update_live_pointers_preserves_header
-  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map) (h: obj_addr)
+val update_walk_preserves_header
+  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (h: obj_addr)
   : Lemma (requires well_formed_heap_part1 major /\ Seq.mem h (objects zero_addr major))
-    (ensures read_word (update_live_pointers major live fwd) (hd_address h) ==
+    (ensures read_word (update_walk major upd fwd) (hd_address h) ==
              read_word major (hd_address h))
 
-val update_live_pointers_preserves_skipped_field
-  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map) (h: obj_addr) (j: nat)
+val update_walk_preserves_skipped_field
+  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (h: obj_addr) (j: nat)
   : Lemma (requires well_formed_heap_part1 major /\
                     Seq.mem h (objects zero_addr major) /\
-                    (~(live h) \/ is_no_scan h major) /\
+                    (~(upd h) \/ is_no_scan h major) /\
                     j < U64.v (wosize_of_object h major) /\
                     U64.v h + j * 8 + 8 <= heap_size /\
                     (U64.v h + j * 8) % 8 == 0)
     (ensures (let field_addr = U64.uint_to_t (U64.v h + j * 8) in
-              read_word (update_live_pointers major live fwd) field_addr ==
+              read_word (update_walk major upd fwd) field_addr ==
               read_word major field_addr))
 
-val update_live_pointers_preserves_wfh_part4
-  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
+val update_walk_preserves_wfh_part4
+  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
-    (ensures well_formed_heap_part4 (update_live_pointers major live fwd))
+    (ensures well_formed_heap_part4 (update_walk major upd fwd))
 
-val update_live_pointers_field_effect
-  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
+val update_walk_field_effect
+  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
   : Lemma
     (requires
       well_formed_heap_part1 major /\
@@ -86,10 +82,10 @@ val update_live_pointers_field_effect
       j < U64.v (wosize_of_object obj major) /\
       U64.v obj + j * 8 + 8 <= heap_size /\
       (U64.v obj + j * 8) % 8 == 0 /\
-      live obj /\
+      upd obj /\
       is_no_scan obj major = false)
     (ensures
-      (let updated = update_live_pointers major live fwd in
+      (let updated = update_walk major upd fwd in
        let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
        let old_raw = read_word major field_addr in
        let old_val = to_minor_offset old_raw in

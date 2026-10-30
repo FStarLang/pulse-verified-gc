@@ -316,42 +316,43 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 /// (Cheney BFS), rewrites the promoted objects' fields and the remembered
 /// slots, rewrites the roots and resets the nursery.
 ///
-/// The contract is stated for a **live set** `live` of the major heap, supplied
-/// by the caller (a ghost argument): the objects the collection may reach,
-/// which point only at live objects (`GenInv.collection_shape_over`).  Garbage
-/// -- a non-live, non-free block -- is unconstrained and never read or
-/// written.  The stop-the-world collector passes `idle_live` (every non-free
-/// block); `minor_collect_pre_idle` / `minor_collect_post_idle` below are that
+/// The contract is stated except a set `pf` of major objects **pending free**
+/// (known dead, not yet reclaimed), supplied by the caller as a ghost
+/// argument.  The not-freed objects point only at not-freed objects
+/// (`GenInv.collection_shape_except`); a pending object is unconstrained and
+/// never read or written.  The stop-the-world collector passes `no_pending`;
+/// `minor_collect_pre_idle` / `minor_collect_post_idle` below are that
 /// instance, with the reachable-subgraph isomorphism added.
 ///
 /// The ref_table comes from the write barrier: it records addresses of
 /// existing major-heap fields that were assigned minor-heap pointers.  The
-/// caller states it as a pre-promotion property over the live set
-/// (`TPC.ref_table_covers_over`: every nursery pointer held by a live object is
-/// at a recorded slot; `TPC.ref_table_sound_live`: slots are fields of non-free
-/// scannable objects, and those of non-live objects hold no nursery pointer).
-let minor_collect_pre_over
+/// caller states it as a pre-promotion property except the pending objects
+/// (`TPC.ref_table_covers_except`: every nursery pointer held by a not-freed
+/// object is at a recorded slot; `TPC.ref_table_sound_except`: slots are fields
+/// of non-free scannable objects, and those of pending objects hold no nursery
+/// pointer).
+let minor_collect_pre_except
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
-  (farr sl: Seq.seq U64.t) (nslots: nat) (live: obj_addr -> prop) : prop =
-  GenInv.collection_shape_over minor_st s fp live /\
+  (farr sl: Seq.seq U64.t) (nslots: nat) (pf: obj_addr -> prop) : prop =
+  GenInv.collection_shape_except minor_st s fp pf /\
   Seq.length farr == UpdatePtrs.fwd_array_size /\
   (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
-  TPC.ref_table_sound_live s live sl nslots /\
-  TPC.ref_table_covers_over s live sl nslots /\
+  TPC.ref_table_sound_except s pf sl nslots /\
+  TPC.ref_table_covers_except s pf sl nslots /\
   UpdatePtrs.slots_pairwise_distinct sl nslots
 
-/// What the collection guarantees over a live set.
-let minor_collect_post_over
+/// What the collection guarantees, except the objects pending free.
+let minor_collect_post_except
   (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs sl: Seq.seq U64.t) (nslots: nat)
-  (live: obj_addr -> prop) (ok: bool)
+  (pf: obj_addr -> prop) (ok: bool)
   (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t) : prop =
   let prom = CheneySpec.cheney_promote minor_st s fp rs in
   // Heap is the two-pass result (update promoted + rewrite slots) ...
   s2 == UpdatePtrs.rewrite_slots_iter
           (UpdatePtrs.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
           prom.fwd_map sl nslots 0 /\
-  // ... which is the pointer update of the live-set collection
-  s2 == (CheneySpec.cheney_collect_spec_over minor_st s fp rs live).mc_major /\
+  // ... which is the pointer update of the collection except `pf`
+  s2 == (CheneySpec.cheney_collect_spec_except minor_st s fp rs pf).mc_major /\
   // Free pointer from promotion phase
   fp2 == prom.fp_final /\
   // Roots rewritten via forwarding map
@@ -366,9 +367,8 @@ let minor_collect_post_over
   UpdatePtrs.valid_fwd_entries farr2 /\
   Seq.length farr2 == UpdatePtrs.fwd_array_size /\
   SpecFields.well_formed_heap_part1 prom.major_final /\
-  // The shape is kept, for the live set extended with the promoted objects
-  GenInv.collection_shape_over ({ data = d2; bump = b2 } <: minor_state) s2 fp2
-    (PromoteSpec.promoted_live minor_st live prom.fwd_map) /\
+  // The shape is kept, for the same pending set
+  GenInv.collection_shape_except ({ data = d2; bump = b2 } <: minor_state) s2 fp2 pf /\
   (not ok ==> CheneyBFS.cheney_oom minor_st s fp rs) /\
   (ok ==> CheneyBFS.cheney_no_oom minor_st s fp rs)
 
@@ -377,15 +377,15 @@ fn minor_collect_full (gh: gen_heap_t)
                       (fwd_arr: array U64.t)
                       (queue: larray U64.t Cheney.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
-                      (#live: erased (obj_addr -> prop))
+                      (#pf: erased (obj_addr -> prop))
   requires is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to slots 'sl **
            pure (SZ.v nroots == Seq.length 'rs /\
-                 minor_collect_pre_over ({ data = 'd; bump = 'b } <: minor_state) 's 'fp
-                   'farr 'sl (SZ.v nslots) live)
+                 minor_collect_pre_except ({ data = 'd; bump = 'b } <: minor_state) 's 'fp
+                   'farr 'sl (SZ.v nslots) pf)
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
     is_gen_heap gh d2 b2 s2 fp2 **
@@ -393,8 +393,8 @@ fn minor_collect_full (gh: gen_heap_t)
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
-    pure (minor_collect_post_over ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'sl
-            (SZ.v nslots) live ok d2 b2 s2 fp2 rs2 farr2)
+    pure (minor_collect_post_except ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'sl
+            (SZ.v nslots) pf ok d2 b2 s2 fp2 rs2 farr2)
 
 /// --- The stop-the-world instance ---
 
@@ -455,21 +455,21 @@ let minor_collect_post_idle
    MinorFwd.normal_result_non_pointer_fields_preserved_prop
      minor_st s fp rs s2)
 
-/// The stop-the-world precondition is the live-set one at `idle_live s` ...
+/// The stop-the-world precondition is the general one at `no_pending` ...
 val minor_collect_idle_pre
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
   (rs farr sl: Seq.seq U64.t) (nslots: nat)
   : Lemma (requires minor_collect_pre_idle minor_st s fp rs farr sl nslots)
-          (ensures minor_collect_pre_over minor_st s fp farr sl nslots (SpecFields.idle_live s))
+          (ensures minor_collect_pre_except minor_st s fp farr sl nslots SpecFields.no_pending)
 
-/// ... and the live-set postcondition at `idle_live s` gives the
+/// ... and the general postcondition at `no_pending` gives the
 /// stop-the-world one, the reachable-subgraph isomorphism included.
 val minor_collect_idle_post
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
   (rs farr sl: Seq.seq U64.t) (nslots: nat) (ok: bool)
   (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t)
   : Lemma (requires minor_collect_pre_idle minor_st s fp rs farr sl nslots /\
-                    minor_collect_post_over minor_st s fp rs sl nslots (SpecFields.idle_live s)
+                    minor_collect_post_except minor_st s fp rs sl nslots SpecFields.no_pending
                       ok d2 b2 s2 fp2 rs2 farr2)
           (ensures minor_collect_post_idle minor_st s fp rs sl nslots ok d2 b2 s2 fp2 rs2 farr2)
 

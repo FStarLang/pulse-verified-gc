@@ -857,23 +857,23 @@ let cheney_promote_preserves_objects
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 
 private let rec update_preserves_fl_valid_aux
-  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map) (fp: U64.t) (fuel: nat)
+  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (fp: U64.t) (fuel: nat)
   : Lemma
     (requires
       well_formed_heap_part1 major /\
-      live_ok major live /\
+      walk_ok major upd /\
       AllocLemmas.fl_valid major fp fuel /\
       AllocLemmas.fl_chain_terminates major fp fuel /\
       (forall (obj: obj_addr).
         Seq.mem obj (objects zero_addr major) /\ Object.is_blue obj major = false ==>
         AllocLemmas.chain_avoids major fp obj fuel = true))
-    (ensures (let m' = update_live_pointers major live fwd in
+    (ensures (let m' = update_walk major upd fwd in
               AllocLemmas.fl_valid m' fp fuel /\
               AllocLemmas.fl_chain_terminates m' fp fuel))
     (decreases fuel)
   =
-  let m' = update_live_pointers major live fwd in
-  update_live_pointers_preserves_objects major live fwd;
+  let m' = update_walk major upd fwd in
+  update_walk_preserves_objects major upd fwd;
 
   // Terminal fp: fl_valid and fl_chain_terminates hold for any heap/fuel
   if fp = 0UL || U64.v fp < U64.v mword || U64.v fp >= heap_size || U64.v fp % U64.v mword <> 0
@@ -902,7 +902,7 @@ private let rec update_preserves_fl_valid_aux
     AllocLemmas.fl_valid_gives_mem major fp fuel;
 
     // Step 3: header preserved → wosize preserved
-    update_live_pointers_preserves_header major live fwd fp_obj;
+    update_walk_preserves_header major upd fwd fp_obj;
     Object.wosize_of_object_spec fp_obj m';
     Object.wosize_of_object_spec fp_obj major;
 
@@ -922,7 +922,7 @@ private let rec update_preserves_fl_valid_aux
       // hd + 16 ≤ heap_size
 
       // Step 6: field 0 preserved (blue object, j = 0)
-      update_live_pointers_preserves_skipped_field major live fwd fp_obj 0;
+      update_walk_preserves_skipped_field major upd fwd fp_obj 0;
 
       // Step 7: Eliminate fl_valid/fl_chain_terminates on major
       AllocLemmas.fl_valid_elim major fp fuel;
@@ -938,7 +938,7 @@ private let rec update_preserves_fl_valid_aux
       FStar.Classical.forall_intro (FStar.Classical.move_requires avoids_next);
 
       // Step 9: recurse on next_fp with fuel - 1
-      update_preserves_fl_valid_aux major live fwd next_fp (fuel - 1);
+      update_preserves_fl_valid_aux major upd fwd next_fp (fuel - 1);
 
       // Step 10: Build fl_valid and fl_chain_terminates on m'
       AllocLemmas.fl_valid_step m' fp fuel;
@@ -950,19 +950,17 @@ private let rec update_preserves_fl_valid_aux
 
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 
-let update_live_pointers_preserves_fl_valid
-  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map) (fp: U64.t)
+let update_walk_preserves_fl_valid
+  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (fp: U64.t)
   =
   let fuel = heap_words in
   reveal_opaque (`%chain_objects_blue) chain_objects_blue;
-  update_preserves_fl_valid_aux major live fwd fp fuel
+  update_preserves_fl_valid_aux major upd fwd fp fuel
 
 let update_major_pointers_preserves_fl_valid
   (major: heap) (fwd: forwarding_map) (fp: U64.t)
   =
-  update_live_pointers_idle major fwd;
-  idle_live_ok major;
-  update_live_pointers_preserves_fl_valid major (idle_live major) fwd fp
+  update_walk_preserves_fl_valid major (not_freed major no_pending) fwd fp
 
 #pop-options
 

@@ -25,7 +25,7 @@ open GC.Gen.PromoteUpdate.Aux
 open GC.Gen.PromoteUpdate.Header
 
 /// ---------------------------------------------------------------------------
-/// The live walk's field effect
+/// The walk's field effect
 /// ---------------------------------------------------------------------------
 
 /// Helper: find the index of an element in a sequence
@@ -145,11 +145,11 @@ private let objects_above_after (g: heap) (obj: obj_addr) (pos: nat)
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-/// The live walk processing objects AFTER obj doesn't change obj's field j:
+/// The walk processing objects AFTER obj doesn't change obj's field j:
 /// those objects are at higher addresses, so their bodies don't overlap it.
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
-private let rec update_live_aux_after_preserves_field
-  (major: heap) (objs: seq obj_addr) (live: obj_addr -> prop) (fwd: forwarding_map)
+private let rec update_walk_aux_after_preserves_field
+  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> prop) (fwd: forwarding_map)
   (idx: nat) (obj: obj_addr) (j: nat)
   : Lemma
     (requires
@@ -163,17 +163,17 @@ private let rec update_live_aux_after_preserves_field
         U64.v (Seq.index objs k) > U64.v obj))
     (ensures
       (let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
-       read_word (update_live_aux major objs live fwd idx) field_addr ==
+       read_word (update_walk_aux major objs upd fwd idx) field_addr ==
        read_word major field_addr))
     (decreases (Seq.length objs - idx)) =
   if idx >= Seq.length objs then ()
   else begin
     let other = Seq.index objs idx in
     assert (U64.v other > U64.v obj);
-    if not (FStar.IndefiniteDescription.strong_excluded_middle (live other)) then
-      update_live_aux_after_preserves_field major objs live fwd (idx + 1) obj j
+    if not (FStar.IndefiniteDescription.strong_excluded_middle (upd other)) then
+      update_walk_aux_after_preserves_field major objs upd fwd (idx + 1) obj j
     else if is_no_scan other major then
-      update_live_aux_after_preserves_field major objs live fwd (idx + 1) obj j
+      update_walk_aux_after_preserves_field major objs upd fwd (idx + 1) obj j
     else begin
       let wz_other = U64.v (wosize_of_object other major) in
       assert (Seq.mem other objs);
@@ -185,15 +185,15 @@ private let rec update_live_aux_after_preserves_field
       update_object_pointers_preserves_addr_below major other wz_other fwd 0 field_addr;
       let major' = update_object_pointers major other wz_other fwd 0 in
       header_eq_object_facts major' major obj;
-      update_live_aux_after_preserves_field major' objs live fwd (idx + 1) obj j
+      update_walk_aux_after_preserves_field major' objs upd fwd (idx + 1) obj j
     end
   end
 #pop-options
 
-/// Main induction: the live walk computes the expected field effect.
+/// Main induction: the walk computes the expected field effect.
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0 --z3refresh"
-private let rec update_live_aux_field_effect
-  (major: heap) (objs: seq obj_addr) (live: obj_addr -> prop) (fwd: forwarding_map)
+private let rec update_walk_aux_field_effect
+  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> prop) (fwd: forwarding_map)
   (idx: nat) (obj: obj_addr) (j: nat) (pos: nat)
   : Lemma
     (requires
@@ -205,12 +205,12 @@ private let rec update_live_aux_field_effect
       j < U64.v (wosize_of_object obj major) /\
       U64.v obj + j * 8 + 8 <= heap_size /\
       (U64.v obj + j * 8) % 8 == 0 /\
-      live obj /\
+      upd obj /\
       is_no_scan obj major = false /\
       (forall (k:nat). k >= idx /\ k < pos ==>
         U64.v (Seq.index objs k) < U64.v obj))
     (ensures
-      (let updated = update_live_aux major objs live fwd idx in
+      (let updated = update_walk_aux major objs upd fwd idx in
        let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
        let old_raw = read_word major field_addr in
        let old_val = to_minor_offset old_raw in
@@ -228,15 +228,15 @@ private let rec update_live_aux_field_effect
     header_eq_object_facts major' major obj;
     // Remaining objects (pos+1..) are all > obj — they don't change field j
     objects_above_after major obj pos;
-    update_live_aux_after_preserves_field major' objs live fwd (idx + 1) obj j
+    update_walk_aux_after_preserves_field major' objs upd fwd (idx + 1) obj j
   end else begin
     // idx < pos: an object before obj (lower address)
     let other = Seq.index objs idx in
     assert (U64.v other < U64.v obj);
-    if not (FStar.IndefiniteDescription.strong_excluded_middle (live other)) then
-      update_live_aux_field_effect major objs live fwd (idx + 1) obj j pos
+    if not (FStar.IndefiniteDescription.strong_excluded_middle (upd other)) then
+      update_walk_aux_field_effect major objs upd fwd (idx + 1) obj j pos
     else if is_no_scan other major then
-      update_live_aux_field_effect major objs live fwd (idx + 1) obj j pos
+      update_walk_aux_field_effect major objs upd fwd (idx + 1) obj j pos
     else begin
       let wz_other = U64.v (wosize_of_object other major) in
       assert (Seq.mem other objs);
@@ -247,19 +247,18 @@ private let rec update_live_aux_field_effect
       update_object_pointers_preserves_addr_above major other wz_other fwd 0 field_addr;
       let major' = update_object_pointers major other wz_other fwd 0 in
       header_eq_object_facts major' major obj;
-      update_live_aux_field_effect major' objs live fwd (idx + 1) obj j pos
+      update_walk_aux_field_effect major' objs upd fwd (idx + 1) obj j pos
     end
   end
 #pop-options
 
-let update_live_pointers_field_effect major live fwd obj j =
+let update_walk_field_effect major upd fwd obj j =
   let objs = objects zero_addr major in
   let pos = seq_index_of objs obj in
   objects_below_before major obj pos;
-  update_live_aux_field_effect major objs live fwd 0 obj j pos
+  update_walk_aux_field_effect major objs upd fwd 0 obj j pos
 
 /// The idle instance.
 let update_major_pointers_field_effect
   (major: heap) (fwd: forwarding_map) (obj: obj_addr) (j: nat) =
-  update_live_pointers_idle major fwd;
-  update_live_pointers_field_effect major (idle_live major) fwd obj j
+  update_walk_field_effect major (not_freed major no_pending) fwd obj j

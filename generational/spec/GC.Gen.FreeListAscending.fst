@@ -201,22 +201,22 @@ let cheney_promote_preserves_fl_ascending minor major fp roots =
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 40"
-let update_live_pointers_preserves_fl_ascending major live fwd fp =
-  let m' = update_live_pointers major live fwd in
-  PU.update_live_pointers_preserves_objects major live fwd;
+let update_walk_preserves_fl_ascending major upd fwd fp =
+  let m' = update_walk major upd fwd in
+  PU.update_walk_preserves_objects major upd fwd;
   let cell (x: U64.t)
     : Lemma ((FL.fl_cell m' x <==> FL.fl_cell major x) /\
              (FL.fl_cell major x ==> FL.fl_next m' x == FL.fl_next major x))
     = if U64.v x >= U64.v mword && U64.v x < heap_size && U64.v x % U64.v mword = 0 then begin
         let xo : obj_addr = x in
         if Seq.mem xo (objects zero_addr major) then begin
-          PU.update_live_pointers_preserves_header major live fwd xo;
+          PU.update_walk_preserves_header major upd fwd xo;
           color_of_object_spec xo major; color_of_object_spec xo m';
           is_blue_iff xo major; is_blue_iff xo m';
           wosize_of_object_spec xo major; wosize_of_object_spec xo m';
           if is_blue xo major && U64.v (wosize_of_object xo major) >= 1 then begin
             wfh_part1_obj_bound major xo;
-            PU.update_live_pointers_preserves_skipped_field major live fwd xo 0;
+            PU.update_walk_preserves_skipped_field major upd fwd xo 0;
             assert (U64.uint_to_t (U64.v xo + 0 * 8) == xo)
           end
         end
@@ -227,9 +227,7 @@ let update_live_pointers_preserves_fl_ascending major live fwd fp =
 #pop-options
 
 let update_major_pointers_preserves_fl_ascending major fwd fp =
-  PU.update_live_pointers_idle major fwd;
-  idle_live_ok major;
-  update_live_pointers_preserves_fl_ascending major (idle_live major) fwd fp
+  update_walk_preserves_fl_ascending major (not_freed major no_pending) fwd fp
 
 
 /// ---------------------------------------------------------------------------

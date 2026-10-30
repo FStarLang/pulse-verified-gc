@@ -1,5 +1,5 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.PromoteUpdate.Aux — the pointer-update walk: objects, part 1, live-set extensionality
+/// GC.Gen.PromoteUpdate.Aux — the pointer-update walk: objects, part 1, extensionality in the rewritten set
 /// ---------------------------------------------------------------------------
 
 module GC.Gen.PromoteUpdate.Aux
@@ -63,14 +63,14 @@ let update_object_pointers_step (major: heap) (obj: obj_addr) (fwd: forwarding_m
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux_wfh)
 #pop-options
 
-/// The live walk keeps the object list and part 1: each step does.
+/// The walk keeps the object list and part 1: each step does.
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
-private let rec update_live_aux_preserves_objects_wfh
-  (major: heap) (objs: seq obj_addr) (live: obj_addr -> prop) (fwd: forwarding_map) (idx: nat)
+private let rec update_walk_aux_preserves_objects_wfh
+  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> prop) (fwd: forwarding_map) (idx: nat)
   : Lemma (requires
       well_formed_heap_part1 major /\
       objs == objects zero_addr major)
-    (ensures (let major' = update_live_aux major objs live fwd idx in
+    (ensures (let major' = update_walk_aux major objs upd fwd idx in
               objects zero_addr major' == objs /\
               well_formed_heap_part1 major'))
     (decreases (Seq.length objs - idx)) =
@@ -78,60 +78,55 @@ private let rec update_live_aux_preserves_objects_wfh
   else begin
     let obj = Seq.index objs idx in
     assert (Seq.mem obj objs);
-    if not (FStar.IndefiniteDescription.strong_excluded_middle (live obj)) then
-      update_live_aux_preserves_objects_wfh major objs live fwd (idx + 1)
+    if not (FStar.IndefiniteDescription.strong_excluded_middle (upd obj)) then
+      update_walk_aux_preserves_objects_wfh major objs upd fwd (idx + 1)
     else if is_no_scan obj major then
-      update_live_aux_preserves_objects_wfh major objs live fwd (idx + 1)
+      update_walk_aux_preserves_objects_wfh major objs upd fwd (idx + 1)
     else begin
       let wz = U64.v (wosize_of_object obj major) in
       update_object_pointers_step major obj fwd;
-      update_live_aux_preserves_objects_wfh
-        (update_object_pointers major obj wz fwd 0) objs live fwd (idx + 1)
+      update_walk_aux_preserves_objects_wfh
+        (update_object_pointers major obj wz fwd 0) objs upd fwd (idx + 1)
     end
   end
 #pop-options
 
-let update_live_pointers_preserves_objects major live fwd =
-  update_live_aux_preserves_objects_wfh major (objects zero_addr major) live fwd 0
+let update_walk_preserves_objects major upd fwd =
+  update_walk_aux_preserves_objects_wfh major (objects zero_addr major) upd fwd 0
 
-let update_live_pointers_preserves_wfh_part1 major live fwd =
-  update_live_aux_preserves_objects_wfh major (objects zero_addr major) live fwd 0
+let update_walk_preserves_wfh_part1 major upd fwd =
+  update_walk_aux_preserves_objects_wfh major (objects zero_addr major) upd fwd 0
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
-private let rec update_live_aux_ext
-  (major: heap) (objs: seq obj_addr) (live1 live2: obj_addr -> prop)
+private let rec update_walk_aux_ext
+  (major: heap) (objs: seq obj_addr) (upd1 upd2: obj_addr -> prop)
   (fwd: forwarding_map) (idx: nat)
-  : Lemma (requires forall (x: obj_addr). Seq.mem x objs ==> (live1 x <==> live2 x))
-    (ensures update_live_aux major objs live1 fwd idx == update_live_aux major objs live2 fwd idx)
+  : Lemma (requires forall (x: obj_addr). Seq.mem x objs ==> (upd1 x <==> upd2 x))
+    (ensures update_walk_aux major objs upd1 fwd idx == update_walk_aux major objs upd2 fwd idx)
     (decreases (Seq.length objs - idx)) =
   if idx >= Seq.length objs then ()
   else begin
     let obj = Seq.index objs idx in
     assert (Seq.mem obj objs);
-    if not (FStar.IndefiniteDescription.strong_excluded_middle (live1 obj)) then
-      update_live_aux_ext major objs live1 live2 fwd (idx + 1)
+    if not (FStar.IndefiniteDescription.strong_excluded_middle (upd1 obj)) then
+      update_walk_aux_ext major objs upd1 upd2 fwd (idx + 1)
     else if is_no_scan obj major then
-      update_live_aux_ext major objs live1 live2 fwd (idx + 1)
+      update_walk_aux_ext major objs upd1 upd2 fwd (idx + 1)
     else
-      update_live_aux_ext
+      update_walk_aux_ext
         (update_object_pointers major obj (U64.v (wosize_of_object obj major)) fwd 0)
-        objs live1 live2 fwd (idx + 1)
+        objs upd1 upd2 fwd (idx + 1)
   end
 #pop-options
 
-let update_live_pointers_ext major live1 live2 fwd =
-  update_live_aux_ext major (objects zero_addr major) live1 live2 fwd 0
-
-/// `update_major_pointers` is defined as the live walk at `idle_live`.
-let update_live_pointers_idle major fwd = ()
+let update_walk_ext major upd1 upd2 fwd =
+  update_walk_aux_ext major (objects zero_addr major) upd1 upd2 fwd 0
 
 /// update_major_pointers preserves the objects walk.
 let update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map) =
-  update_live_pointers_idle major fwd;
-  update_live_pointers_preserves_objects major (idle_live major) fwd
+  update_walk_preserves_objects major (not_freed major no_pending) fwd
 
 /// update_major_pointers preserves well_formed_heap_part1.
 let update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map) =
-  update_live_pointers_idle major fwd;
-  update_live_pointers_preserves_wfh_part1 major (idle_live major) fwd
+  update_walk_preserves_wfh_part1 major (not_freed major no_pending) fwd
 

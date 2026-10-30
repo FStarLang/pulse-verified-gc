@@ -732,19 +732,16 @@ let cheney_promote_nonblue_origin
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// The stop-the-world shape, from the shape over a live set
+/// The stop-the-world shape, from the shape except the pending objects
 /// ---------------------------------------------------------------------------
 ///
-/// `collection_heap_shape` is the shape over the idle live set plus two colour
-/// facts (`GenInv.collection_heap_shape_over_idle`).  The shape part is
-/// `GC.Gen.CheneyOver.cheney_collect_over_preserves_shape` at `idle_live`,
-/// carried to `cheney_collect_spec` by `CheneyLive.cheney_collect_spec_over_idle`
-/// and to the idle live set of the result by `CheneyLive.promoted_live_idle_ext`;
-/// the colour facts are proved directly (promotion allocates white objects and
-/// the pointer update writes no header).
+/// `collection_heap_shape` is the shape with nothing pending plus two colour
+/// facts (`GenInv.collection_heap_shape_no_pending`).  The shape part is
+/// `GC.Gen.CheneyExcept.cheney_collect_except_preserves_shape` at `no_pending`,
+/// which is `cheney_collect_spec`; the colour facts are proved directly
+/// (promotion allocates white objects and the pointer update writes no header).
 
-module CL = GC.Gen.CheneyLive
-module CO = GC.Gen.CheneyOver
+module CE = GC.Gen.CheneyExcept
 
 /// With no gray and no black objects, the empty stack trivially carries every
 /// gray-or-black object -- and conversely.
@@ -784,25 +781,21 @@ let cheney_collect_preserves_collection_heap_shape
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
   let res = cheney_collect_spec minor major fp roots in
-  let prom = cheney_promote minor major fp roots in
-  GenInv.collection_heap_shape_over_idle minor major fp;
+  GenInv.collection_heap_shape_no_pending minor major fp;
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
   GenInv.major_heap_shape_walk major fp;
   GenInv.minor_heap_shape_elim minor;
-  // the shape over the idle live set ...
-  CO.cheney_collect_over_preserves_shape minor major fp roots (idle_live major);
-  CL.cheney_collect_spec_over_idle minor major fp roots;
-  CL.promoted_live_idle_ext minor major fp roots;
-  GenInv.collection_shape_over_congr res.mc_minor res.mc_major res.mc_fp
-    (promoted_live minor (idle_live major) prom.fwd_map) (idle_live res.mc_major);
+  // the shape with nothing pending ...
+  CE.cheney_collect_except_preserves_shape minor major fp roots no_pending;
+  CE.cheney_collect_spec_except_no_pending minor major fp roots;
   // ... and the colour facts: nothing is black, and (the empty stack carrying
   // every gray-or-black object before, and so after) nothing is gray
   cheney_collect_preserves_no_black minor major fp roots;
   no_gray_and_no_black_is_empty_stack major;
   cheney_collect_preserves_gray_black_objects_on_stack minor major fp roots Seq.empty;
   no_empty_stack_implies_no_gray res.mc_major;
-  GenInv.collection_heap_shape_of_over_idle res.mc_minor res.mc_major res.mc_fp
+  GenInv.collection_heap_shape_of_no_pending res.mc_minor res.mc_major res.mc_fp
 #pop-options
 
 let cheney_collect_preserves_wfh_from_shape

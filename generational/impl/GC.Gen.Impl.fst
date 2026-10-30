@@ -455,67 +455,65 @@ let minor_collect_full_isomorphism_post
 /// minor_collect_full: includes ref_table rewriting for full correctness
 /// ---------------------------------------------------------------------------
 
-module CO = GC.Gen.CheneyOver
-module CL = GC.Gen.CheneyLive
+module CE = GC.Gen.CheneyExcept
 
-/// The spec half of the minor collection over a live set: the two passes over
-/// a Cheney result are the live-set collection's pointer update
-/// (`TPC.two_pass_implies_collect_over`), and that collection keeps the shape
-/// (`CO.cheney_collect_over_preserves_shape`).
+/// The spec half of the minor collection except the pending objects: the two
+/// passes over a Cheney result are the collection's pointer update
+/// (`TPC.two_pass_implies_collect_except`), and that collection keeps the shape
+/// (`CE.cheney_collect_except_preserves_shape`).
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let minor_collect_over_spec
+let minor_collect_except_spec
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
-  (live: obj_addr -> prop) (farr slots: Seq.seq U64.t) (n: nat)
+  (pf: obj_addr -> prop) (farr slots: Seq.seq U64.t) (n: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_over minor major fp live /\
+      GenInv.collection_shape_except minor major fp pf /\
       Seq.length farr == fwd_array_size /\
       represents_fwd farr (CheneySpec.cheney_promote minor major fp roots).fwd_map /\
-      TPC.ref_table_sound_live major live slots n /\
-      TPC.ref_table_covers_over major live slots n /\
+      TPC.ref_table_sound_except major pf slots n /\
+      TPC.ref_table_covers_except major pf slots n /\
       slots_pairwise_distinct slots n)
     (ensures
       (let prom = CheneySpec.cheney_promote minor major fp roots in
-       let res = CheneySpec.cheney_collect_spec_over minor major fp roots live in
+       let res = CheneySpec.cheney_collect_spec_except minor major fp roots pf in
        rewrite_slots_iter (update_promoted_iter prom.major_final farr prom.fwd_map 0)
          prom.fwd_map slots n 0 == res.mc_major /\
-       GenInv.collection_shape_over (minor_reset minor) res.mc_major prom.fp_final
-         (PromoteSpec.promoted_live minor live prom.fwd_map)))
+       GenInv.collection_shape_except (minor_reset minor) res.mc_major prom.fp_final pf))
   = let prom = CheneySpec.cheney_promote minor major fp roots in
-    GenInv.collection_shape_over_elim minor major fp live;
-    GenInv.major_shape_over_elim major fp live;
+    GenInv.collection_shape_except_elim minor major fp pf;
+    GenInv.major_shape_except_elim major fp pf;
     GenInv.minor_heap_shape_elim minor;
     CheneySpec.cheney_promote_fwd_above_zero_addr minor major fp roots;
     CheneySpec.cheney_promote_fwd_bounded minor major fp roots;
     derive_fwd_targets_stable prom.fwd_map;
-    TPC.ref_table_sound_live_implies_over major live prom.fwd_map slots n;
-    TPC.ref_table_covers_over_implies_complete_over major live prom.fwd_map slots n;
+    TPC.ref_table_sound_except_implies_fwd major pf prom.fwd_map slots n;
+    TPC.ref_table_covers_except_implies_complete major pf prom.fwd_map slots n;
     CheneySpec.cheney_promote_preserves_wfh_part1 minor major fp roots;
     CheneySpec.cheney_promote_preserves_wfh_part4 minor major fp roots;
     CheneyPres.cheney_promote_fwd_valid_or_infix minor major fp roots;
     CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
-    TPC.two_pass_implies_collect_over minor major fp roots live farr slots n;
-    CO.cheney_collect_over_preserves_shape minor major fp roots live
+    TPC.two_pass_implies_collect_except minor major fp roots pf farr slots n;
+    CE.cheney_collect_except_preserves_shape minor major fp roots pf
 #pop-options
 
 /// Compose all phases into a single verified call.  The proof is over the
-/// caller's live set throughout: nothing here reads or assumes anything of
-/// a non-live block.
+/// caller's pending set throughout: nothing here reads or assumes anything of
+/// a pending-free block.
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
                       (queue: larray U64.t Cheney.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
-                      (#live: erased (obj_addr -> prop))
+                      (#pf: erased (obj_addr -> prop))
   requires is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to slots 'sl **
            pure (SZ.v nroots == Seq.length 'rs /\
-                 minor_collect_pre_over ({ data = 'd; bump = 'b } <: minor_state) 's 'fp
-                   'farr 'sl (SZ.v nslots) live)
+                 minor_collect_pre_except ({ data = 'd; bump = 'b } <: minor_state) 's 'fp
+                   'farr 'sl (SZ.v nslots) pf)
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
     is_gen_heap gh d2 b2 s2 fp2 **
@@ -523,12 +521,12 @@ fn minor_collect_full (gh: gen_heap_t)
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
-    pure (minor_collect_post_over ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'sl
-            (SZ.v nslots) live ok d2 b2 s2 fp2 rs2 farr2)
+    pure (minor_collect_post_except ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'sl
+            (SZ.v nslots) pf ok d2 b2 s2 fp2 rs2 farr2)
 {
   unfold is_gen_heap;
-  GenInv.collection_shape_over_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp live;
-  GenInv.major_shape_over_elim 's 'fp live;
+  GenInv.collection_shape_except_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp pf;
+  GenInv.major_shape_except_elim 's 'fp pf;
   GenInv.minor_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state);
 
   // Phase 1: Cheney BFS promotion (forward roots + scan)
@@ -553,7 +551,7 @@ fn minor_collect_full (gh: gen_heap_t)
   with farr_post2. assert (pts_to fwd_arr farr_post2);
 
   // Phase 2b: Rewrite ref_table slots
-  TPC.ref_table_sound_live_implies_over 's live
+  TPC.ref_table_sound_except_implies_fwd 's pf
     (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map
     'sl (SZ.v nslots);
   rewrite_heap_slots gh.major fwd_arr slots nslots
@@ -570,8 +568,8 @@ fn minor_collect_full (gh: gen_heap_t)
   // Phase 4: Reset minor heap
   minor_heap_reset gh.minor;
 
-  // The two passes are the live-set collection's update, which keeps the shape.
-  minor_collect_over_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs live
+  // The two passes are the collection's update, which keeps the shape.
+  minor_collect_except_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs pf
     farr_post3 'sl (SZ.v nslots);
 
   fold (is_gen_heap gh _ 0UL _ _);
@@ -583,9 +581,9 @@ fn minor_collect_full (gh: gen_heap_t)
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let minor_collect_idle_pre minor_st s fp rs farr sl nslots =
-  GenInv.collection_heap_shape_over_idle minor_st s fp;
-  TPC.ref_table_sound_live_idle s sl nslots;
-  TPC.ref_table_covers_over_idle s sl nslots
+  GenInv.collection_heap_shape_no_pending minor_st s fp;
+  TPC.ref_table_sound_except_no_pending s sl nslots;
+  TPC.ref_table_covers_except_no_pending s sl nslots
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
@@ -594,8 +592,8 @@ let minor_collect_idle_post minor_st s fp rs farr sl nslots ok d2 b2 s2 fp2 rs2 
   GenInv.major_heap_shape_elim s fp;
   GenInv.major_heap_shape_walk s fp;
   GenInv.minor_heap_shape_elim minor_st;
-  // the live-set collection at `idle_live` is the stop-the-world one ...
-  CL.cheney_collect_spec_over_idle minor_st s fp rs;
+  // the collection at `no_pending` is the stop-the-world one ...
+  CE.cheney_collect_spec_except_no_pending minor_st s fp rs;
   // ... which keeps the stop-the-world shape ...
   CheneyPres.cheney_collect_preserves_collection_heap_shape minor_st s fp rs;
   // ... and is a reachable-subgraph isomorphism
@@ -679,11 +677,11 @@ fn gen_gc (gh: gen_heap_t)
   GenInv.minor_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state);
 
   // Phase 1: Full minor collection, including remembered-set slot rewriting,
-  // over the idle live set (every non-free block).
+  // with nothing pending free.
   minor_collect_idle_pre ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots);
   let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots
-             #(hide (SpecFields.idle_live 's));
+             #(hide SpecFields.no_pending);
 
   with d_mid b_mid ms_updated fp_mid. assert (is_gen_heap gh d_mid b_mid ms_updated fp_mid);
   with rs_mid. assert (pts_to roots rs_mid);

@@ -4,7 +4,7 @@
 ///
 /// The major heap changes between major collections through promotion (an
 /// allocation, then writes confined to the new object) and the pointer
-/// rewrite after a minor collection (field writes to live objects).  Neither
+/// rewrite after a minor collection (field writes to not-freed objects).  Neither
 /// changes which blocks are free cells or what they link to, beyond what the
 /// allocator itself does (`GC.Gen.AllocAscending`), so the free list stays
 /// ascending (`GC.Spec.FreeList.Ascending.fl_ascending`) -- which is what the
@@ -37,12 +37,12 @@ val cheney_promote_preserves_fl_ascending
                     well_formed_heap_part1 prom.Promote.major_final /\
                     FLA.fl_ascending prom.Promote.major_final prom.Promote.fp_final))
 
-/// The pointer update over a live set keeps the free list ascending: it never
-/// writes a blue block, since live objects are not blue (`live_ok`).
-val update_live_pointers_preserves_fl_ascending
-  (major: heap) (live: obj_addr -> prop) (fwd: Promote.forwarding_map) (fp: U64.t)
-  : Lemma (requires well_formed_heap_part1 major /\ live_ok major live /\ FLA.fl_ascending major fp)
-          (ensures FLA.fl_ascending (Promote.update_live_pointers major live fwd) fp)
+/// The pointer update over a fixed set of objects keeps the free list ascending: it never
+/// writes a blue block, since rewritten objects are not blue (`walk_ok`).
+val update_walk_preserves_fl_ascending
+  (major: heap) (upd: obj_addr -> prop) (fwd: Promote.forwarding_map) (fp: U64.t)
+  : Lemma (requires well_formed_heap_part1 major /\ Promote.walk_ok major upd /\ FLA.fl_ascending major fp)
+          (ensures FLA.fl_ascending (Promote.update_walk major upd fwd) fp)
 
 val update_major_pointers_preserves_fl_ascending
   (major: heap) (fwd: Promote.forwarding_map) (fp: U64.t)

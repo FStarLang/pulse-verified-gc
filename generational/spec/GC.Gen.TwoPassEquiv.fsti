@@ -3,9 +3,9 @@
 /// ---------------------------------------------------------------------------
 ///
 /// Proves: update_promoted_iter + rewrite_slots_iter == the pointer update over
-/// a live set (`update_live_pointers`), under a classification of the
-/// forwarded fields of live objects and standard well-formedness conditions
-/// (`promoted_plus_slots_eq_live_update`).  `GC.Gen.TwoPassEquiv.Collect`
+/// a fixed set of objects (`update_walk`), under a classification of the
+/// forwarded fields of rewritten objects and standard well-formedness conditions
+/// (`promoted_plus_slots_eq_walk`).  `GC.Gen.TwoPassEquiv.Collect`
 /// instantiates it at a Cheney result.
 
 module GC.Gen.TwoPassEquiv
@@ -28,14 +28,14 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 let heap_fuel : nat = heap_words
 
 /// ---------------------------------------------------------------------------
-/// Predicates of the two passes over a live set
+/// Predicates of the two passes over a fixed set of objects
 /// ---------------------------------------------------------------------------
 
-/// The addresses the live walk may rewrite: fields of live scannable objects.
-let live_field_addr (major: heap) (live: obj_addr -> prop) (a: nat) : prop =
+/// The addresses the walk may rewrite: fields of rewritten scannable objects.
+let walked_field_addr (major: heap) (upd: obj_addr -> prop) (a: nat) : prop =
   exists (obj: obj_addr) (j: nat).
     Seq.mem obj (objects zero_addr major) /\
-    live obj /\
+    upd obj /\
     is_no_scan obj major = false /\
     j < U64.v (wosize_of_object obj major) /\
     a == U64.v obj + j * 8 /\
@@ -47,8 +47,8 @@ let holds_forwarded (major: heap) (fwd: forwarding_map) (a: hp_addr) : prop =
   let v = to_minor_offset (read_word major a) in
   is_minor_pointer v /\ fwd v <> 0UL
 
-/// The promoted entries (non-zero, non-infix) are live.
-let promoted_entries_live (major: heap) (live: obj_addr -> prop) (farr: seq U64.t) : prop =
+/// The promoted entries (non-zero, non-infix) are rewritten by the walk.
+let promoted_entries_walked (major: heap) (upd: obj_addr -> prop) (farr: seq U64.t) : prop =
   Seq.length farr == fwd_array_size /\
   (forall (i: nat). i < fwd_array_size ==>
     (let obj = Seq.index farr i in
@@ -57,31 +57,31 @@ let promoted_entries_live (major: heap) (live: obj_addr -> prop) (farr: seq U64.
      U64.v obj % U64.v mword == 0 /\
      U64.v obj < heap_size /\
      is_infix obj major = false ==>
-     live (obj <: obj_addr)))
+     upd (obj <: obj_addr)))
 
-/// Every slot either is a field of a live scannable object, or holds no
+/// Every slot either is a field of a rewritten scannable object, or holds no
 /// forwarded nursery pointer (so rewriting it is a no-op).  The second case is
 /// a slot recorded in an object that has since become garbage.
-let slots_rewrite_live (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
+let slots_rewrite_walked (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
                        (slots: seq U64.t) (n: nat) : prop =
   n <= Seq.length slots /\
   (forall (i: nat). i < n ==>
     (let a = U64.v (Seq.index slots i) in
      a < heap_size /\ a % 8 == 0 /\
-     (live_field_addr major live a \/ ~(holds_forwarded major fwd (U64.uint_to_t a)))))
+     (walked_field_addr major upd a \/ ~(holds_forwarded major fwd (U64.uint_to_t a)))))
 
-/// Classification of forwarded nursery pointers at the fields of live
+/// Classification of forwarded nursery pointers at the fields of rewritten
 /// scannable objects: each is in a promoted object or at a slot.  Stated over
 /// field positions rather than addresses, since a header word can look like a
 /// forwarded nursery pointer.
-let fwd_ptrs_classified_live (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
+let fwd_ptrs_classified_walked (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
                              (farr: seq U64.t) (slots: seq U64.t) (n: nat) : prop =
   Seq.length farr == fwd_array_size /\
   n <= Seq.length slots /\
   (forall (obj: obj_addr) (j: nat).
     {:pattern (to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + j * 8))))}
     Seq.mem obj (objects zero_addr major) /\
-    live obj /\
+    upd obj /\
     is_no_scan obj major = false /\
     j < U64.v (wosize_of_object obj major) /\
     U64.v obj + j * 8 + 8 <= heap_size /\
@@ -233,13 +233,13 @@ val rewrite_slots_iter_slot_effect
        (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> result == old_raw)))
 
 /// ---------------------------------------------------------------------------
-/// The two passes over a live set
+/// The two passes over a fixed set of objects
 /// ---------------------------------------------------------------------------
 
 /// Rewriting the promoted objects' fields, then the slots, is the pointer
-/// update over the live set.
-val promoted_plus_slots_eq_live_update
-  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
+/// update over that set.
+val promoted_plus_slots_eq_walk
+  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
   (farr: seq U64.t) (slots: seq U64.t) (n: nat)
   : Lemma
     (requires
@@ -248,12 +248,12 @@ val promoted_plus_slots_eq_live_update
       Seq.length farr == fwd_array_size /\
       promoted_entries_valid_from major farr 0 /\
       promoted_entries_disjoint major farr /\
-      promoted_entries_live major live farr /\
+      promoted_entries_walked major upd farr /\
       valid_slot_addrs slots n /\
       slots_pairwise_distinct slots n /\
-      slots_rewrite_live major live fwd slots n /\
+      slots_rewrite_walked major upd fwd slots n /\
       fwd_targets_stable fwd /\
-      fwd_ptrs_classified_live major live fwd farr slots n)
+      fwd_ptrs_classified_walked major upd fwd farr slots n)
     (ensures
       rewrite_slots_iter (update_promoted_iter major farr fwd 0) fwd slots n 0
-        == update_live_pointers major live fwd)
+        == update_walk major upd fwd)

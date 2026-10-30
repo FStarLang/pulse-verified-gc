@@ -537,81 +537,82 @@ let fields_constrained (g: heap) (src: obj_addr) : GTot bool =
   not (GC.Spec.Object.is_no_scan src g) && not (GC.Spec.Object.is_blue src g)
 
 /// ---------------------------------------------------------------------------
-/// Well-formedness over a live set
+/// Well-formedness except the objects pending free
 /// ---------------------------------------------------------------------------
 ///
-/// The field-closure clauses (parts 2 and 3) are also stated over an explicit
-/// *live set*, supplied by whoever holds the invariant, rather than over every
-/// block of the walk.  The heap invariant then knows nothing about who decides
-/// liveness: the idle collector supplies `idle_live` (every non-free block of
-/// the walk), and a collector phase that leaves garbage in place (a sweep in
-/// progress) supplies its own set.
+/// The field-closure clauses (parts 2 and 3) are also stated *except* a set of
+/// objects pending free, `pf`: objects known dead but not yet reclaimed (in the
+/// middle of a sweep, the white objects in front of the cursor).  Such an
+/// object is garbage left in place; its fields are never read, so they may
+/// point anywhere, free blocks included.  The heap invariant knows nothing
+/// about who decides what is pending: stop-the-world, and while idle or
+/// marking, nothing is (`no_pending`), and a collector phase that leaves
+/// garbage in place supplies its own set.
 ///
-/// The live set is a fixed predicate, not recomputed from the heap's colours:
-/// each operation says how it changes it (a field write keeps it, an
-/// allocation adds the new object).
+/// The constrained objects are those `not_freed g pf`: on the walk, not free
+/// (blue), and not pending free.  The set `pf` is fixed across an operation
+/// that does not reclaim anything (a field write, an allocation, a minor
+/// collection), while `not_freed` is read off the heap, so newly allocated
+/// objects are constrained automatically.
 
-/// A live set is admissible for `g` when every member is a real, non-free
+/// Neither free nor pending free.
+let not_freed (g: heap) (pf: obj_addr -> prop) (x: obj_addr) : prop =
+  Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\ ~(pf x)
+
+/// A pending set is admissible for `g` when every member is a real, non-free
 /// block of the walk.
-let live_ok (g: heap) (live: obj_addr -> prop) : prop =
-  forall (x: obj_addr). live x ==> Seq.mem x (objects zero_addr g) /\ ~(is_blue x g)
+let pending_ok (g: heap) (pf: obj_addr -> prop) : prop =
+  forall (x: obj_addr). pf x ==> Seq.mem x (objects zero_addr g) /\ ~(is_blue x g)
 
-/// The idle collector's live set: every non-free block of the walk.  (F* has
-/// no default arguments, so the idle case is a named instance.)
-let idle_live (g: heap) : obj_addr -> prop =
-  fun x -> Seq.mem x (objects zero_addr g) /\ ~(is_blue x g)
+/// Nothing is pending free: the stop-the-world (and idle, and marking) case.
+/// (F* has no default arguments, so this case is a named instance.)
+let no_pending (x: obj_addr) : prop = False
 
-let idle_live_ok (g: heap) : Lemma (live_ok g (idle_live g)) = ()
+let no_pending_ok (g: heap) : Lemma (pending_ok g no_pending) = ()
 
-/// Part 2 over a live set: every field of a live, scannable object points
-/// (after resolving infix pointers) at a live object.
+/// Part 2 except the pending objects: every field of a not-freed, scannable
+/// object points (after resolving infix pointers) at a not-freed object.
 ///
-/// At `idle_live` this is today's part 2 *plus* `GC.Spec.Mark.no_pointer_to_blue`
-/// (the target must also be non-free); see `GC.Spec.IdleLive` for the bridge.
+/// At `no_pending` this is today's part 2 *plus* `GC.Spec.Mark.no_pointer_to_blue`
+/// (the target must also be non-free); see `GC.Spec.NoPending` for the bridge.
 [@@"opaque_to_smt"]
-let well_formed_heap_part2_over (g: heap) (live: obj_addr -> prop) : prop =
+let well_formed_heap_part2_except (g: heap) (pf: obj_addr -> prop) : prop =
   (forall (src dst: obj_addr).
-    (live src /\ fields_constrained g src /\
+    (not_freed g pf src /\ fields_constrained g src /\
      (let wz = wosize_of_object src g in
       U64.v wz < pow2 54 /\
       exists_field_pointing_to_unchecked g src wz dst)) ==>
-    live (GC.Spec.Object.resolve_object dst g))
+    not_freed g pf (GC.Spec.Object.resolve_object dst g))
 
-/// Eliminate part 2 over a live set at a single (src, dst) pair.
-let wfh_part2_over_elim (g: heap) (live: obj_addr -> prop) (src dst: obj_addr) : Lemma
-  (requires well_formed_heap_part2_over g live /\ live src /\ fields_constrained g src /\
+/// Eliminate part 2 except the pending objects at a single (src, dst) pair.
+let wfh_part2_except_elim (g: heap) (pf: obj_addr -> prop) (src dst: obj_addr) : Lemma
+  (requires well_formed_heap_part2_except g pf /\ not_freed g pf src /\ fields_constrained g src /\
             (let wz = wosize_of_object src g in
              U64.v wz < pow2 54 /\
              exists_field_pointing_to_unchecked g src wz dst))
-  (ensures live (GC.Spec.Object.resolve_object dst g))
-  = reveal_opaque (`%well_formed_heap_part2_over) well_formed_heap_part2_over
+  (ensures not_freed g pf (GC.Spec.Object.resolve_object dst g))
+  = reveal_opaque (`%well_formed_heap_part2_except) well_formed_heap_part2_except
 
-/// Introduce part 2 over a live set from the pointwise obligation.
-let well_formed_heap_part2_over_intro (g: heap) (live: obj_addr -> prop)
-    (pf: (src: obj_addr) -> (dst: obj_addr) ->
-      Lemma (requires live src /\ fields_constrained g src /\
+/// Introduce part 2 except the pending objects from the pointwise obligation.
+let well_formed_heap_part2_except_intro (g: heap) (pf: obj_addr -> prop)
+    (h: (src: obj_addr) -> (dst: obj_addr) ->
+      Lemma (requires not_freed g pf src /\ fields_constrained g src /\
                       (let wz = wosize_of_object src g in
                        U64.v wz < pow2 54 /\
                        exists_field_pointing_to_unchecked g src wz dst))
-            (ensures live (GC.Spec.Object.resolve_object dst g)))
-  : Lemma (well_formed_heap_part2_over g live)
-  = reveal_opaque (`%well_formed_heap_part2_over) well_formed_heap_part2_over;
+            (ensures not_freed g pf (GC.Spec.Object.resolve_object dst g)))
+  : Lemma (well_formed_heap_part2_except g pf)
+  = reveal_opaque (`%well_formed_heap_part2_except) well_formed_heap_part2_except;
     let aux (src: obj_addr) : Lemma
       (forall (dst: obj_addr).
-        (live src /\ fields_constrained g src /\
+        (not_freed g pf src /\ fields_constrained g src /\
          (let wz = wosize_of_object src g in
           U64.v wz < pow2 54 /\
           exists_field_pointing_to_unchecked g src wz dst)) ==>
-        live (GC.Spec.Object.resolve_object dst g))
-      = FStar.Classical.forall_intro (FStar.Classical.move_requires (pf src))
+        not_freed g pf (GC.Spec.Object.resolve_object dst g))
+      = FStar.Classical.forall_intro (FStar.Classical.move_requires (h src))
     in
     FStar.Classical.forall_intro aux
-
-/// Part 2 over a live set depends on the live set only extensionally.
-let well_formed_heap_part2_over_congr (g: heap) (live live': obj_addr -> prop) : Lemma
-  (requires well_formed_heap_part2_over g live /\ (forall (x: obj_addr). live x <==> live' x))
-  (ensures well_formed_heap_part2_over g live')
-  = reveal_opaque (`%well_formed_heap_part2_over) well_formed_heap_part2_over
 
 
 /// Part 2 --- the field-closure clause --- is `opaque_to_smt`, and deliberately
@@ -713,68 +714,63 @@ let well_formed_heap_part2_intro_raw (g: heap)
 /// Note that `resolve_object` computes the parent from a mutable heap word, so
 /// part 2 and part 3 must be kept in step; a model that made part 2 depend on
 /// `resolve_object` without validating the parent would be trusting an
-/// Part 3 over a live set: the fields of a live, scannable object have valid
-/// interior pointers.
+/// arbitrary field of the object graph.
+///
+/// It is the `no_pending` instance of `well_formed_heap_part3_except` below:
+/// with nothing pending, `not_freed` is "on the walk and not blue", and
+/// `fields_constrained` already excludes blue sources, so the sources checked
+/// are exactly "on the walk and constrained".
+///
+/// Part 3 except the pending objects: the fields of a not-freed, scannable
+/// object have valid interior pointers.
 [@@"opaque_to_smt"]
-let well_formed_heap_part3_over (g: heap) (live: obj_addr -> prop) : prop =
+let well_formed_heap_part3_except (g: heap) (pf: obj_addr -> prop) : prop =
   (forall (src dst: obj_addr).
-    (live src /\ fields_constrained g src /\
+    (not_freed g pf src /\ fields_constrained g src /\
      (let wz = wosize_of_object src g in
       U64.v wz < pow2 54 /\
       exists_field_pointing_to_unchecked g src wz dst)) ==>
     GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst)
 
-/// Eliminate part 3 over a live set at a single (src, dst) pair.
-let wfh_part3_over_elim (g: heap) (live: obj_addr -> prop) (src dst: obj_addr) : Lemma
-  (requires well_formed_heap_part3_over g live /\ live src /\ fields_constrained g src /\
+/// Eliminate part 3 except the pending objects at a single (src, dst) pair.
+let wfh_part3_except_elim (g: heap) (pf: obj_addr -> prop) (src dst: obj_addr) : Lemma
+  (requires well_formed_heap_part3_except g pf /\ not_freed g pf src /\ fields_constrained g src /\
             (let wz = wosize_of_object src g in
              U64.v wz < pow2 54 /\
              exists_field_pointing_to_unchecked g src wz dst))
   (ensures GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst)
-  = reveal_opaque (`%well_formed_heap_part3_over) well_formed_heap_part3_over
+  = reveal_opaque (`%well_formed_heap_part3_except) well_formed_heap_part3_except
 
-/// Introduce part 3 over a live set from the pointwise obligation.
-let well_formed_heap_part3_over_intro (g: heap) (live: obj_addr -> prop)
-    (pf: (src: obj_addr) -> (dst: obj_addr) ->
-      Lemma (requires live src /\ fields_constrained g src /\
+/// Introduce part 3 except the pending objects from the pointwise obligation.
+let well_formed_heap_part3_except_intro (g: heap) (pf: obj_addr -> prop)
+    (h: (src: obj_addr) -> (dst: obj_addr) ->
+      Lemma (requires not_freed g pf src /\ fields_constrained g src /\
                       (let wz = wosize_of_object src g in
                        U64.v wz < pow2 54 /\
                        exists_field_pointing_to_unchecked g src wz dst))
             (ensures GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst))
-  : Lemma (well_formed_heap_part3_over g live)
-  = reveal_opaque (`%well_formed_heap_part3_over) well_formed_heap_part3_over;
+  : Lemma (well_formed_heap_part3_except g pf)
+  = reveal_opaque (`%well_formed_heap_part3_except) well_formed_heap_part3_except;
     let aux (src: obj_addr) : Lemma
       (forall (dst: obj_addr).
-        (live src /\ fields_constrained g src /\
+        (not_freed g pf src /\ fields_constrained g src /\
          (let wz = wosize_of_object src g in
           U64.v wz < pow2 54 /\
           exists_field_pointing_to_unchecked g src wz dst)) ==>
         GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst)
-      = FStar.Classical.forall_intro (FStar.Classical.move_requires (pf src))
+      = FStar.Classical.forall_intro (FStar.Classical.move_requires (h src))
     in
     FStar.Classical.forall_intro aux
 
-/// Part 3 over a live set only constrains live sources, so it survives
-/// shrinking the live set.
-let well_formed_heap_part3_over_weaken (g: heap) (live live': obj_addr -> prop) : Lemma
-  (requires well_formed_heap_part3_over g live /\ (forall (x: obj_addr). live' x ==> live x))
-  (ensures well_formed_heap_part3_over g live')
-  = reveal_opaque (`%well_formed_heap_part3_over) well_formed_heap_part3_over
-
-/// arbitrary field of the object graph.
-///
-/// It is the idle instance of `well_formed_heap_part3_over`: the idle live set
-/// is "on the walk and not blue", and `fields_constrained` already excludes
-/// blue sources, so the sources checked are exactly "on the walk and
-/// constrained".  It stays sealed, so clients see the same opaque symbol and
-/// go through the accessors below (or `well_formed_heap_part3_is_idle`).
+/// Today's part 3, sealed: clients see the same opaque symbol and go through
+/// the accessors below (or `well_formed_heap_part3_is_no_pending`).
 [@@"opaque_to_smt"]
 let well_formed_heap_part3 (g: heap) : prop =
-  well_formed_heap_part3_over g (idle_live g)
+  well_formed_heap_part3_except g no_pending
 
-/// `well_formed_heap_part3` is the idle instance of part 3 over a live set.
-let well_formed_heap_part3_is_idle (g: heap) : Lemma
-  (well_formed_heap_part3 g <==> well_formed_heap_part3_over g (idle_live g))
+/// `well_formed_heap_part3` is the `no_pending` instance of part 3.
+let well_formed_heap_part3_is_no_pending (g: heap) : Lemma
+  (well_formed_heap_part3 g <==> well_formed_heap_part3_except g no_pending)
   = reveal_opaque (`%well_formed_heap_part3) well_formed_heap_part3
 
 /// Eliminate part 3 at a single (src, dst) pair.
@@ -785,7 +781,7 @@ let wfh_part3_elim (g: heap) (src dst: obj_addr) : Lemma
              exists_field_pointing_to_unchecked g src wz dst))
   (ensures GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst)
   = reveal_opaque (`%well_formed_heap_part3) well_formed_heap_part3;
-    wfh_part3_over_elim g (idle_live g) src dst
+    wfh_part3_except_elim g no_pending src dst
 
 let well_formed_heap_part3_intro (g: heap)
     (pf: (src: obj_addr) -> (dst: obj_addr) ->
@@ -797,14 +793,14 @@ let well_formed_heap_part3_intro (g: heap)
   : Lemma (well_formed_heap_part3 g)
   = reveal_opaque (`%well_formed_heap_part3) well_formed_heap_part3;
     let pf' (src: obj_addr) (dst: obj_addr) : Lemma
-      (requires idle_live g src /\ fields_constrained g src /\
+      (requires not_freed g no_pending src /\ fields_constrained g src /\
                 (let wz = wosize_of_object src g in
                  U64.v wz < pow2 54 /\
                  exists_field_pointing_to_unchecked g src wz dst))
       (ensures GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst)
       = pf src dst
     in
-    well_formed_heap_part3_over_intro g (idle_live g) pf'
+    well_formed_heap_part3_except_intro g no_pending pf'
 
 /// Convenience intro for heaps with no infix field targets at all: part 3 is
 /// then vacuous.  Producers that already know their targets are enumerated
@@ -908,26 +904,26 @@ let well_formed_heap (g: heap) : prop =
   well_formed_heap_part3 g /\
   well_formed_heap_part4 g
 
-/// Well-formedness over a live set: parts 1 and 4 are about the walk and
-/// unchanged; parts 2 and 3 constrain only the live set's fields.  At
-/// `idle_live` this is `well_formed_heap` plus `GC.Spec.Mark.no_pointer_to_blue`
-/// (see `GC.Spec.IdleLive`).  Sealed like `well_formed_heap`; cross the
-/// boundary with `wf_over_parts`.
+/// Well-formedness except the objects pending free: parts 1 and 4 are about
+/// the walk and unchanged; parts 2 and 3 constrain only the fields of not-freed
+/// objects.  At `no_pending` this is `well_formed_heap` plus
+/// `GC.Spec.Mark.no_pointer_to_blue` (see `GC.Spec.NoPending`).  Sealed like
+/// `well_formed_heap`; cross the boundary with `wf_except_parts`.
 [@@"opaque_to_smt"]
-let well_formed_heap_over (g: heap) (live: obj_addr -> prop) : prop =
+let well_formed_heap_except (g: heap) (pf: obj_addr -> prop) : prop =
   well_formed_heap_part1 g /\
-  well_formed_heap_part2_over g live /\
-  well_formed_heap_part3_over g live /\
+  well_formed_heap_part2_except g pf /\
+  well_formed_heap_part3_except g pf /\
   well_formed_heap_part4 g
 
-let wf_over_parts (_: unit) : Lemma
-  (ensures forall (g: heap) (live: obj_addr -> prop).
-             well_formed_heap_over g live <==>
+let wf_except_parts (_: unit) : Lemma
+  (ensures forall (g: heap) (pf: obj_addr -> prop).
+             well_formed_heap_except g pf <==>
              (well_formed_heap_part1 g /\
-              well_formed_heap_part2_over g live /\
-              well_formed_heap_part3_over g live /\
+              well_formed_heap_part2_except g pf /\
+              well_formed_heap_part3_except g pf /\
               well_formed_heap_part4 g))
-  = reveal_opaque (`%well_formed_heap_over) well_formed_heap_over
+  = reveal_opaque (`%well_formed_heap_except) well_formed_heap_except
 
 /// No pointer field of any enumerated object holds the raw address `t`.
 ///
