@@ -333,6 +333,9 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
             } else {
               // === EXACT FIT === leftover = 0, so alloc_hd_off = hd_addr and
               // alloc_obj = vcur; the block is detached from the free list.
+              // Stated here, in a small context: re-deriving it inside the
+              // relinked arm below can send Z3 into a long search.
+              assert (pure (U64.v leftover == 0 /\ U64.v block_wz == U64.v wz));
               SA.alloc_from_block_exact 's (vcur <: obj_addr) (U64.v wz) next tag;
               // Same split of cases, and the same ordering, as above.
               let vp_unusable = (if U64.eq vp 0UL then true else U64.eq vp hd_addr);
@@ -558,6 +561,9 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v t
             } else {
               // === EXACT FIT === leftover = 0, so alloc_hd_off = hd_addr and
               // alloc_obj = vcur; the block is detached from the free list.
+              // Stated here, in a small context: re-deriving it inside the
+              // relinked arm below can send Z3 into a long search.
+              assert (pure (U64.v leftover == 0 /\ U64.v block_wz == U64.v wz));
               SA.alloc_from_block_exact 's (vcur <: obj_addr) (U64.v wz) next tag;
               // Same split of cases, and the same ordering, as above.
               let vp_unusable = (if U64.eq vp 0UL then true else U64.eq vp hd_addr);

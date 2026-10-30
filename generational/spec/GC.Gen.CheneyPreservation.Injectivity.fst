@@ -1032,25 +1032,25 @@ private let rec cheney_scan_preserves_invs
           (ensures cheney_invs minor major0 (cheney_scan minor cs scan fuel))
           (decreases fuel)
   =
-  if fuel > 0 then begin
-    if scan >= Seq.length cs.cs_queue then
-      cheney_scan_base minor cs scan fuel
-    else begin
-      cheney_scan_step minor cs scan fuel;
-      let obj = Seq.index cs.cs_queue scan in
-      let wz = minor_scan_wosize minor obj in
-      cheney_forward_fields_preserves_invs minor major0 cs obj 0 wz;
-      cheney_forward_fields_preserves_fwd_classified minor cs obj 0 wz;
-      cheney_forward_fields_preserves_wfh_part4_local minor cs obj 0 wz;
-      cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
-      cheney_forward_fields_preserves_cob minor cs obj 0 wz;
-      let cs' = cheney_forward_fields minor cs obj 0 wz in
-      let fuel' : nat = fuel - 1 in
-      assert (fuel' < fuel);
-      cheney_scan_preserves_invs minor major0 cs' (scan + 1) fuel'
-    end
-  end else
+  // The base cases come first, tested directly, so that `cheney_scan_base`'s
+  // precondition is a hypothesis rather than something to re-derive from a
+  // negated guard under the invariants' quantifiers.
+  if fuel = 0 || scan >= Seq.length cs.cs_queue then
     cheney_scan_base minor cs scan fuel
+  else begin
+    cheney_scan_step minor cs scan fuel;
+    let obj = Seq.index cs.cs_queue scan in
+    let wz = minor_scan_wosize minor obj in
+    cheney_forward_fields_preserves_invs minor major0 cs obj 0 wz;
+    cheney_forward_fields_preserves_fwd_classified minor cs obj 0 wz;
+    cheney_forward_fields_preserves_wfh_part4_local minor cs obj 0 wz;
+    cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
+    cheney_forward_fields_preserves_cob minor cs obj 0 wz;
+    let cs' = cheney_forward_fields minor cs obj 0 wz in
+    let fuel' : nat = fuel - 1 in
+    assert (fuel' < fuel);
+    cheney_scan_preserves_invs minor major0 cs' (scan + 1) fuel'
+  end
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
