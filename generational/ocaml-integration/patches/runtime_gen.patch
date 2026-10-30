@@ -301,10 +301,10 @@ index 9b18f3c..6c90643 100644
        Store_double_flat_field(block, 0, Double_val(accu));
        for (i = 1; i < size; i++){
 diff --git a/runtime/memory.c b/runtime/memory.c
-index 66d1c50..c11d87e 100644
+index 66d1c50..12be69f 100644
 --- a/runtime/memory.c
 +++ b/runtime/memory.c
-@@ -464,38 +464,16 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
+@@ -464,38 +464,28 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
                                        uintnat profinfo)
  {
    header_t *hp;
@@ -336,7 +336,21 @@ index 66d1c50..c11d87e 100644
 -                && (char *)hp < (char *)caml_gc_sweep_hp));
 -    Hd_hp (hp) = Make_header_with_profinfo (wosize, tag, Caml_white, profinfo);
 -  }
--  CAMLassert (Hd_hp (hp)
++  hp = (header_t *) verified_allocate(wosize, (uint8_t)tag);
++  if (hp == NULL) return 0;
++  caml_allocated_words += Whsize_wosize(wosize);
++  /* verified_allocate() has already written this block's header: wosize,
++     tag, Caml_white (the verified allocator never allocates black, so this
++     runtime's major allocation colour is always white). Rewrite it only when
++     the header has profiling bits to carry, as Alloc_small_aux does for the
++     minor slow path. */
++#ifdef WITH_PROFINFO
++  Hd_hp (hp) =
++    Make_header_with_profinfo (wosize, tag, Caml_white, profinfo);
++#else
++  (void) profinfo;
++  /* (verified_allocate() rounds a zero wosize up to 1.) */
+   CAMLassert (Hd_hp (hp)
 -    == Make_header_with_profinfo (wosize, tag, caml_allocation_color (hp),
 -                                  profinfo));
 -  caml_allocated_words += Whsize_wosize (wosize);
@@ -344,15 +358,12 @@ index 66d1c50..c11d87e 100644
 -    CAML_EV_COUNTER (EV_C_REQUEST_MAJOR_ALLOC_SHR, 1);
 -    caml_request_major_slice ();
 -  }
-+  hp = (header_t *) verified_allocate(wosize, (uint8_t)tag);
-+  if (hp == NULL) return 0;
-+  caml_allocated_words += Whsize_wosize(wosize);
-+  Hd_hp (hp) =
-+    Make_header_with_profinfo (wosize, tag, Caml_white, profinfo);
++              == Make_header (wosize == 0 ? 1 : wosize, tag, Caml_white));
++#endif
  #ifdef DEBUG
    {
      uintnat i;
-@@ -504,8 +482,6 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
+@@ -504,8 +494,6 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
      }
    }
  #endif
