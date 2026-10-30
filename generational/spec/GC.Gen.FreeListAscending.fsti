@@ -37,6 +37,13 @@ val cheney_promote_preserves_fl_ascending
                     well_formed_heap_part1 prom.Promote.major_final /\
                     FLA.fl_ascending prom.Promote.major_final prom.Promote.fp_final))
 
+/// The pointer update over a live set keeps the free list ascending: it never
+/// writes a blue block, since live objects are not blue (`live_ok`).
+val update_live_pointers_preserves_fl_ascending
+  (major: heap) (live: obj_addr -> prop) (fwd: Promote.forwarding_map) (fp: U64.t)
+  : Lemma (requires well_formed_heap_part1 major /\ live_ok major live /\ FLA.fl_ascending major fp)
+          (ensures FLA.fl_ascending (Promote.update_live_pointers major live fwd) fp)
+
 val update_major_pointers_preserves_fl_ascending
   (major: heap) (fwd: Promote.forwarding_map) (fp: U64.t)
   : Lemma (requires well_formed_heap_part1 major /\ FLA.fl_ascending major fp)

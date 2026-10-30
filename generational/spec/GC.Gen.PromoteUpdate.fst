@@ -26,6 +26,30 @@ module FreeListShape = GC.Gen.FreeListShape
 
 /// --- From GC.Gen.PromoteUpdate.Aux ---
 
+let update_live_pointers_preserves_objects =
+  GC.Gen.PromoteUpdate.Aux.update_live_pointers_preserves_objects
+
+let update_live_pointers_preserves_wfh_part1 =
+  GC.Gen.PromoteUpdate.Aux.update_live_pointers_preserves_wfh_part1
+
+let update_live_pointers_ext =
+  GC.Gen.PromoteUpdate.Aux.update_live_pointers_ext
+
+let update_live_pointers_idle =
+  GC.Gen.PromoteUpdate.Aux.update_live_pointers_idle
+
+let update_live_pointers_preserves_header =
+  GC.Gen.PromoteUpdate.Header.update_live_pointers_preserves_header
+
+let update_live_pointers_preserves_skipped_field =
+  GC.Gen.PromoteUpdate.Header.update_live_pointers_preserves_skipped_field
+
+let update_live_pointers_preserves_wfh_part4 =
+  GC.Gen.PromoteUpdate.Header.update_live_pointers_preserves_wfh_part4
+
+let update_live_pointers_field_effect =
+  GC.Gen.PromoteUpdate.Field.update_live_pointers_field_effect
+
 let update_major_pointers_preserves_objects =
   GC.Gen.PromoteUpdate.Aux.update_major_pointers_preserves_objects
 
@@ -61,7 +85,7 @@ let update_major_pointers_preserves_blue_field =
   GC.Gen.PromoteUpdate.Header.update_major_pointers_preserves_blue_field
 
 let update_major_pointers_preserves_no_scan_field =
-  GC.Gen.PromoteUpdate.NoScanField.update_major_pointers_preserves_no_scan_field
+  GC.Gen.PromoteUpdate.Header.update_major_pointers_preserves_no_scan_field
 
 let update_major_pointers_preserves_wfh_part4 =
   GC.Gen.PromoteUpdate.Header.update_major_pointers_preserves_wfh_part4

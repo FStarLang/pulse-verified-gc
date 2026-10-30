@@ -23,7 +23,6 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 open GC.Gen.PromoteUpdate.Obj
 open GC.Gen.PromoteUpdate.Aux
 open GC.Gen.PromoteUpdate.Header
-open GC.Gen.PromoteUpdate.NoScanField
 
 /// ---------------------------------------------------------------------------
 /// update_all_objects_aux field effect
@@ -146,11 +145,11 @@ private let objects_above_after (g: heap) (obj: obj_addr) (pos: nat)
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-/// update_all_objects_aux processing objects AFTER obj doesn't change obj's field j.
-/// Those objects are at higher addresses, so their body regions don't overlap obj's fields.
-#push-options "--z3rlimit 12 --fuel 1"
-let rec update_all_objects_aux_after_preserves_field
-  (major: heap) (objs: seq obj_addr) (fwd: forwarding_map)
+/// The live walk processing objects AFTER obj doesn't change obj's field j:
+/// those objects are at higher addresses, so their bodies don't overlap it.
+#push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
+private let rec update_live_aux_after_preserves_field
+  (major: heap) (objs: seq obj_addr) (live: obj_addr -> prop) (fwd: forwarding_map)
   (idx: nat) (obj: obj_addr) (j: nat)
   : Lemma
     (requires
@@ -164,70 +163,37 @@ let rec update_all_objects_aux_after_preserves_field
         U64.v (Seq.index objs k) > U64.v obj))
     (ensures
       (let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
-       read_word (update_all_objects_aux major objs fwd idx) field_addr ==
+       read_word (update_live_aux major objs live fwd idx) field_addr ==
        read_word major field_addr))
     (decreases (Seq.length objs - idx)) =
   if idx >= Seq.length objs then ()
   else begin
     let other = Seq.index objs idx in
     assert (U64.v other > U64.v obj);
-    if is_blue other major then
-      // Blue skip: heap unchanged, field trivially preserved
-      update_all_objects_aux_after_preserves_field major objs fwd (idx + 1) obj j
+    if not (FStar.IndefiniteDescription.strong_excluded_middle (live other)) then
+      update_live_aux_after_preserves_field major objs live fwd (idx + 1) obj j
     else if is_no_scan other major then
-      // No-scan skip: heap unchanged, field trivially preserved
-      update_all_objects_aux_after_preserves_field major objs fwd (idx + 1) obj j
+      update_live_aux_after_preserves_field major objs live fwd (idx + 1) obj j
     else begin
       let wz_other = U64.v (wosize_of_object other major) in
-      hd_address_spec other;
-      // obj + j*8 < obj + wz_obj*8 < other (by objects_separated, since obj < other and both in objs)
+      assert (Seq.mem other objs);
+      update_object_pointers_step major other fwd;
       let wz_obj = U64.v (wosize_of_object obj major) in
       objects_separated zero_addr major obj other;
       assert (U64.v obj + (wz_obj + 1) * 8 <= U64.v other);
-      assert (U64.v obj + j * 8 < U64.v other);
       let field_addr : hp_addr = U64.uint_to_t (U64.v obj + j * 8) in
-      assert (forall (k:nat). k < wz_other ==>
-        (U64.v other + k * 8 + 8 <= heap_size /\ (U64.v other + k * 8) % 8 == 0));
       update_object_pointers_preserves_addr_below major other wz_other fwd 0 field_addr;
       let major' = update_object_pointers major other wz_other fwd 0 in
-      update_object_pointers_preserves_objects major other wz_other fwd 0;
-      assert (objects zero_addr major' == objs);
-      // Establish well_formed_heap_part1 major'
-      let aux_wfh (h: obj_addr) : Lemma
-        (requires Seq.mem h (objects zero_addr major'))
-        (ensures U64.v (hd_address h) + 8 + (U64.v (wosize_of_object h major') * 8) <= Seq.length major')
-      = hd_address_spec h;
-        if h = other then begin
-          update_object_pointers_preserves_self_header major other wz_other fwd 0;
-          wosize_of_object_spec h major';
-          wosize_of_object_spec h major
-        end else if U64.v h > U64.v other then begin
-          update_object_pointers_preserves_other_header major other wz_other fwd 0 h;
-          wosize_of_object_spec h major';
-          wosize_of_object_spec h major
-        end else begin
-          update_object_pointers_preserves_addr_below major other wz_other fwd 0 (hd_address h);
-          wosize_of_object_spec h major;
-          wosize_of_object_spec h major'
-        end
-      in
-      FStar.Classical.forall_intro (FStar.Classical.move_requires aux_wfh);
-      // wosize of obj is unchanged: hd_address obj < other, so header is preserved
-      hd_address_spec obj;
-      update_object_pointers_preserves_addr_below major other wz_other fwd 0 (hd_address obj);
-      wosize_of_object_spec obj major;
-      wosize_of_object_spec obj major';
-      update_all_objects_aux_after_preserves_field major' objs fwd (idx + 1) obj j
+      header_eq_object_facts major' major obj;
+      update_live_aux_after_preserves_field major' objs live fwd (idx + 1) obj j
     end
   end
 #pop-options
 
-/// Main induction: update_all_objects_aux computes the expected field effect.
-/// (ifuel 0: with ifuel 1, the well-formedness of the `U64.uint_to_t` in the
-/// type of the recursive occurrence times out in a typing-axiom cascade)
+/// Main induction: the live walk computes the expected field effect.
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0 --z3refresh"
-let rec update_all_objects_aux_field_effect
-  (major: heap) (objs: seq obj_addr) (fwd: forwarding_map)
+private let rec update_live_aux_field_effect
+  (major: heap) (objs: seq obj_addr) (live: obj_addr -> prop) (fwd: forwarding_map)
   (idx: nat) (obj: obj_addr) (j: nat) (pos: nat)
   : Lemma
     (requires
@@ -239,12 +205,12 @@ let rec update_all_objects_aux_field_effect
       j < U64.v (wosize_of_object obj major) /\
       U64.v obj + j * 8 + 8 <= heap_size /\
       (U64.v obj + j * 8) % 8 == 0 /\
-      is_blue obj major = false /\
+      live obj /\
       is_no_scan obj major = false /\
       (forall (k:nat). k >= idx /\ k < pos ==>
         U64.v (Seq.index objs k) < U64.v obj))
     (ensures
-      (let updated = update_all_objects_aux major objs fwd idx in
+      (let updated = update_live_aux major objs live fwd idx in
        let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
        let old_raw = read_word major field_addr in
        let old_val = to_minor_offset old_raw in
@@ -256,113 +222,44 @@ let rec update_all_objects_aux_field_effect
   else if idx = pos then begin
     // Processing obj itself
     let wz = U64.v (wosize_of_object obj major) in
-    hd_address_spec obj;
-    assert (forall (k:nat). k < wz ==>
-      (U64.v obj + k * 8 + 8 <= heap_size /\ (U64.v obj + k * 8) % 8 == 0));
+    update_object_pointers_step major obj fwd;
     update_object_pointers_field_self major obj wz fwd 0 j;
     let major' = update_object_pointers major obj wz fwd 0 in
-    update_object_pointers_preserves_objects major obj wz fwd 0;
-    assert (objects zero_addr major' == objs);
-    let aux_wfh (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects zero_addr major'))
-      (ensures U64.v (hd_address h) + 8 + (U64.v (wosize_of_object h major') * 8) <= Seq.length major')
-    = hd_address_spec h;
-      if h = obj then begin
-        update_object_pointers_preserves_self_header major obj wz fwd 0;
-        wosize_of_object_spec h major';
-        wosize_of_object_spec h major
-      end else if U64.v h > U64.v obj then begin
-        update_object_pointers_preserves_other_header major obj wz fwd 0 h;
-        wosize_of_object_spec h major';
-        wosize_of_object_spec h major
-      end else begin
-        update_object_pointers_preserves_addr_below major obj wz fwd 0 (hd_address h);
-        wosize_of_object_spec h major;
-        wosize_of_object_spec h major'
-      end
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires aux_wfh);
-    update_object_pointers_preserves_self_header major obj wz fwd 0;
-    wosize_of_object_spec obj major;
-    wosize_of_object_spec obj major';
+    header_eq_object_facts major' major obj;
     // Remaining objects (pos+1..) are all > obj — they don't change field j
     objects_above_after major obj pos;
-    let field_addr : hp_addr = U64.uint_to_t (U64.v obj + j * 8) in
-    update_all_objects_aux_after_preserves_field major' objs fwd (idx + 1) obj j
+    update_live_aux_after_preserves_field major' objs live fwd (idx + 1) obj j
   end else begin
-    // idx < pos: processing an object before obj (which has lower address)
+    // idx < pos: an object before obj (lower address)
     let other = Seq.index objs idx in
     assert (U64.v other < U64.v obj);
-    if is_blue other major then
-      // Blue skip: heap unchanged, recurse
-      update_all_objects_aux_field_effect major objs fwd (idx + 1) obj j pos
+    if not (FStar.IndefiniteDescription.strong_excluded_middle (live other)) then
+      update_live_aux_field_effect major objs live fwd (idx + 1) obj j pos
     else if is_no_scan other major then
-      // No-scan skip: heap unchanged, recurse
-      update_all_objects_aux_field_effect major objs fwd (idx + 1) obj j pos
+      update_live_aux_field_effect major objs live fwd (idx + 1) obj j pos
     else begin
       let wz_other = U64.v (wosize_of_object other major) in
-      hd_address_spec other;
-      // other's body is [other, other + wz_other*8), and by objects_separated,
-      // other + (wz_other+1)*8 <= obj, so obj + j*8 >= obj > other + wz_other*8
+      assert (Seq.mem other objs);
+      update_object_pointers_step major other fwd;
       objects_separated zero_addr major other obj;
       let field_addr : hp_addr = U64.uint_to_t (U64.v obj + j * 8) in
       assert (U64.v field_addr >= U64.v other + wz_other * 8);
-      assert (forall (k:nat). k < wz_other ==>
-        (U64.v other + k * 8 + 8 <= heap_size /\ (U64.v other + k * 8) % 8 == 0));
       update_object_pointers_preserves_addr_above major other wz_other fwd 0 field_addr;
       let major' = update_object_pointers major other wz_other fwd 0 in
-      update_object_pointers_preserves_objects major other wz_other fwd 0;
-      assert (objects zero_addr major' == objs);
-      let aux_wfh (h: obj_addr) : Lemma
-        (requires Seq.mem h (objects zero_addr major'))
-        (ensures U64.v (hd_address h) + 8 + (U64.v (wosize_of_object h major') * 8) <= Seq.length major')
-      = hd_address_spec h;
-        if h = other then begin
-          update_object_pointers_preserves_self_header major other wz_other fwd 0;
-          wosize_of_object_spec h major';
-          wosize_of_object_spec h major
-        end else if U64.v h > U64.v other then begin
-          update_object_pointers_preserves_other_header major other wz_other fwd 0 h;
-          wosize_of_object_spec h major';
-          wosize_of_object_spec h major
-        end else begin
-          update_object_pointers_preserves_addr_below major other wz_other fwd 0 (hd_address h);
-          wosize_of_object_spec h major;
-          wosize_of_object_spec h major'
-        end
-      in
-      FStar.Classical.forall_intro (FStar.Classical.move_requires aux_wfh);
-      // wosize of obj preserved (obj > other, so header of obj preserved)
-      hd_address_spec obj;
-      // obj > other + wz_other*8, both multiples of 8, so obj >= other + wz_other*8 + 8
-      // hence hd_address obj = obj - 8 >= other + wz_other*8
-      assert (U64.v (hd_address obj) >= U64.v other + wz_other * 8);
-      update_object_pointers_preserves_addr_above major other wz_other fwd 0 (hd_address obj);
-      // Explicitly chain: header preserved → color preserved → is_blue preserved
-      color_of_object_spec obj major;
-      color_of_object_spec obj major';
-      is_blue_iff obj major;
-      is_blue_iff obj major';
-      // Also chain: header preserved → tag preserved → is_no_scan preserved
-      is_no_scan_spec obj major;
-      is_no_scan_spec obj major';
-      tag_of_object_spec obj major;
-      tag_of_object_spec obj major';
-      wosize_of_object_spec obj major;
-      wosize_of_object_spec obj major';
-      update_all_objects_aux_field_effect major' objs fwd (idx + 1) obj j pos
+      header_eq_object_facts major' major obj;
+      update_live_aux_field_effect major' objs live fwd (idx + 1) obj j pos
     end
   end
 #pop-options
 
-/// Top-level: update_major_pointers field effect
-let update_major_pointers_field_effect
-  (major: heap) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
-       =
+let update_live_pointers_field_effect major live fwd obj j =
   let objs = objects zero_addr major in
   let pos = seq_index_of objs obj in
   objects_below_before major obj pos;
-  update_all_objects_aux_field_effect major objs fwd 0 obj j pos
+  update_live_aux_field_effect major objs live fwd 0 obj j pos
 
-/// update_major_pointers establishes well_formed_heap_part2 (pointer closure).
-/// Uses pointer_closure_modulo_fwd (weaker than full part2) + fwd_all_targets_valid.
+/// The idle instance.
+let update_major_pointers_field_effect
+  (major: heap) (fwd: forwarding_map) (obj: obj_addr) (j: nat) =
+  update_live_pointers_idle major fwd;
+  update_live_pointers_field_effect major (idle_live major) fwd obj j

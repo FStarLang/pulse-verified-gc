@@ -237,6 +237,48 @@ let update_major_pointers (major: heap) (fwd: forwarding_map) : GTot heap =
   update_all_objects_aux major (objects zero_addr major) fwd 0
 
 /// ---------------------------------------------------------------------------
+/// The pointer update over a live set
+/// ---------------------------------------------------------------------------
+
+/// The same walk, over a live set fixed for the whole walk: it rewrites the
+/// fields of the objects `x` with `live x` (and scannable, as above) and skips
+/// every other object without reading its fields.  It reads every header, so it
+/// needs only the walk facts of the heap (parts 1 and 4).
+///
+/// `live` is a proposition (as in `GC.Spec.Fields.live_ok`), so the test goes
+/// through `strong_excluded_middle`; this is a ghost specification function.
+/// At `idle_live major` it is today's `update_major_pointers`
+/// (`GC.Gen.PromoteUpdate.Aux.update_live_pointers_idle`).
+let rec update_live_aux (major: heap) (objs: seq obj_addr) (live: obj_addr -> prop)
+                        (fwd: forwarding_map) (idx: nat)
+  : GTot heap (decreases (Seq.length objs - idx)) =
+  if idx >= Seq.length objs then major
+  else
+    let obj = Seq.index objs idx in
+    if not (FStar.IndefiniteDescription.strong_excluded_middle (live obj)) then
+      update_live_aux major objs live fwd (idx + 1)
+    else if is_no_scan obj major then
+      update_live_aux major objs live fwd (idx + 1)
+    else
+      let wz = U64.v (wosize_of_object obj major) in
+      let major' = update_object_pointers major obj wz fwd 0 in
+      update_live_aux major' objs live fwd (idx + 1)
+
+/// Rewrite the nursery pointers held by the live objects of the major heap.
+let update_live_pointers (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
+  : GTot heap =
+  update_live_aux major (objects zero_addr major) live fwd 0
+
+/// The live set after promotion: the live set before it, plus the images of
+/// the promoted nursery objects.  It is an explicit set, not recomputed from
+/// the heap's colours.  (An unpromoted nursery object maps to `0UL`, which is
+/// not an `obj_addr`; interior nursery pointers are not `minor_objects`, so
+/// their interior images are not members.)
+let promoted_live (minor: minor_state) (live: obj_addr -> prop) (fwd: forwarding_map)
+  : obj_addr -> prop =
+  fun x -> live x \/ (exists (v: U64.t). Seq.mem v (minor_objects minor) /\ fwd v == x)
+
+/// ---------------------------------------------------------------------------
 /// Live Set and Root Rewriting
 /// ---------------------------------------------------------------------------
 

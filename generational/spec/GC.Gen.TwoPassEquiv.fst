@@ -3,7 +3,7 @@
 /// ---------------------------------------------------------------------------
 ///
 /// Main theorem: rewriting promoted object fields + rewriting ref_table slots
-/// produces the same heap as the full update_major_pointers walk.
+/// produces the same heap as the pointer update over a live set.
 ///
 /// Strategy: pointwise read_word equality at all aligned addresses,
 /// followed by heap byte-level extensionality.
@@ -24,11 +24,9 @@ open GC.Gen.Promote
 open GC.Gen.Impl.UpdatePtrs
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
-module CheneySpec = GC.Gen.Cheney
 module PromObj = GC.Gen.PromoteUpdate.Obj
 module PromField = GC.Gen.PromoteUpdate.Field
 module HeapExt = GC.Gen.HeapExtensional
-module Classif = GC.Gen.TwoPassEquiv.Classification
 module IndDesc = FStar.IndefiniteDescription
 
 /// ---------------------------------------------------------------------------
@@ -55,18 +53,6 @@ let heap_read_word_extensional_mk (h1 h2: heap)
     FStar.Classical.forall_intro aux;
     HeapExt.heap_read_word_ext h1 h2
 #pop-options
-
-/// Addresses that the full update_major_pointers walk may rewrite: fields of
-/// non-blue, non-no_scan objects in the current major heap.
-private let scannable_field_addr (major: heap) (a: nat) : prop =
-  exists (obj: obj_addr) (j: nat).
-    Seq.mem obj (objects zero_addr major) /\
-    is_blue obj major = false /\
-    is_no_scan obj major = false /\
-    j < U64.v (wosize_of_object obj major) /\
-    a == U64.v obj + j * 8 /\
-    U64.v obj + j * 8 + 8 <= heap_size /\
-    (U64.v obj + j * 8) % 8 == 0
 
 /// ---------------------------------------------------------------------------
 /// update_promoted_iter: preservation at non-forwarded addresses
@@ -764,12 +750,14 @@ let rec rewrite_slots_iter_frame
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 private let slots_frame_from_non_field
-  (major: heap) (slots: seq U64.t) (n: nat) (addr: hp_addr)
+  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
+  (slots: seq U64.t) (n: nat) (addr: hp_addr)
   : Lemma
     (requires
       valid_slot_addrs slots n /\
-      slots_scannable_in_major major slots n /\
-      ~(scannable_field_addr major (U64.v addr)))
+      slots_rewrite_live major live fwd slots n /\
+      ~(live_field_addr major live (U64.v addr)) /\
+      holds_forwarded major fwd addr)
     (ensures
       (forall (i: nat). i < n ==>
         (let sa = U64.v (Seq.index slots i) in
@@ -783,9 +771,8 @@ private let slots_frame_from_non_field
          (U64.v addr + 8 <= sa \/ sa + 8 <= U64.v addr)))
     = let sa = U64.v (Seq.index slots i) in
       assert (sa < heap_size /\ sa % 8 == 0);
-      assert (scannable_field_addr major sa);
       if sa = U64.v addr then begin
-        assert (scannable_field_addr major (U64.v addr));
+        assert (U64.uint_to_t sa == addr);
         assert false
       end else if U64.v addr < sa then begin
         assert (U64.v addr % 8 == 0);
@@ -1051,8 +1038,8 @@ private let update_obj_ptrs_preserves_entries_valid
 /// headers or the object list.  Thus any scannable-field witness after the
 /// update was already a scannable-field witness before the update.
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
-private let update_obj_ptrs_reflects_scannable_field_addr
-  (major: heap) (obj: obj_addr) (wz: nat) (fwd: forwarding_map) (addr: hp_addr)
+private let update_obj_ptrs_reflects_live_field_addr
+  (major: heap) (live: obj_addr -> prop) (obj: obj_addr) (wz: nat) (fwd: forwarding_map) (addr: hp_addr)
   : Lemma
     (requires
       Seq.mem obj (objects zero_addr major) /\
@@ -1060,13 +1047,13 @@ private let update_obj_ptrs_reflects_scannable_field_addr
       wz == U64.v (wosize_of_object obj major) /\
       (forall (k:nat). k < wz ==>
         (U64.v obj + k * 8 + 8 <= heap_size /\ (U64.v obj + k * 8) % 8 == 0)) /\
-      scannable_field_addr (update_object_pointers major obj wz fwd 0) (U64.v addr))
-    (ensures scannable_field_addr major (U64.v addr))
+      live_field_addr (update_object_pointers major obj wz fwd 0) live (U64.v addr))
+    (ensures live_field_addr major live (U64.v addr))
   = let major' = update_object_pointers major obj wz fwd 0 in
     let h : obj_addr = IndDesc.indefinite_description_ghost obj_addr (fun h ->
       exists (j: nat).
         Seq.mem h (objects zero_addr major') /\
-        is_blue h major' = false /\
+        live h /\
         is_no_scan h major' = false /\
         j < U64.v (wosize_of_object h major') /\
         U64.v addr == U64.v h + j * 8 /\
@@ -1074,7 +1061,7 @@ private let update_obj_ptrs_reflects_scannable_field_addr
         (U64.v h + j * 8) % 8 == 0) in
     let j : nat = IndDesc.indefinite_description_ghost nat (fun j ->
         Seq.mem h (objects zero_addr major') /\
-        is_blue h major' = false /\
+        live h /\
         is_no_scan h major' = false /\
         j < U64.v (wosize_of_object h major') /\
         U64.v addr == U64.v h + j * 8 /\
@@ -1101,13 +1088,12 @@ private let update_obj_ptrs_reflects_scannable_field_addr
     wosize_of_object_spec h major';
     wosize_of_object_spec h major;
     assert (wosize_of_object h major' == wosize_of_object h major);
-    assert (is_blue h major = false);
     assert (is_no_scan h major = false);
     assert (j < U64.v (wosize_of_object h major));
-    assert (scannable_field_addr major (U64.v addr))
+    assert (live_field_addr major live (U64.v addr))
 
-private let update_obj_ptrs_preserves_not_scannable_field_addr
-  (major: heap) (obj: obj_addr) (wz: nat) (fwd: forwarding_map) (addr: hp_addr)
+private let update_obj_ptrs_preserves_not_live_field_addr
+  (major: heap) (live: obj_addr -> prop) (obj: obj_addr) (wz: nat) (fwd: forwarding_map) (addr: hp_addr)
   : Lemma
     (requires
       Seq.mem obj (objects zero_addr major) /\
@@ -1115,17 +1101,18 @@ private let update_obj_ptrs_preserves_not_scannable_field_addr
       wz == U64.v (wosize_of_object obj major) /\
       (forall (k:nat). k < wz ==>
         (U64.v obj + k * 8 + 8 <= heap_size /\ (U64.v obj + k * 8) % 8 == 0)) /\
-      ~(scannable_field_addr major (U64.v addr)))
+      ~(live_field_addr major live (U64.v addr)))
     (ensures
-      ~(scannable_field_addr (update_object_pointers major obj wz fwd 0) (U64.v addr)))
+      ~(live_field_addr (update_object_pointers major obj wz fwd 0) live (U64.v addr)))
   = let major' = update_object_pointers major obj wz fwd 0 in
-    if IndDesc.strong_excluded_middle (scannable_field_addr major' (U64.v addr)) then begin
-      update_obj_ptrs_reflects_scannable_field_addr major obj wz fwd addr;
+    if IndDesc.strong_excluded_middle (live_field_addr major' live (U64.v addr)) then begin
+      update_obj_ptrs_reflects_live_field_addr major live obj wz fwd addr;
       assert false
     end
 #pop-options
 
-private let promoted_entries_not_blue_from (major: heap) (farr: seq U64.t) (idx: nat) : prop =
+private let promoted_entries_live_from (major: heap) (live: obj_addr -> prop)
+                                       (farr: seq U64.t) (idx: nat) : prop =
   Seq.length farr == fwd_array_size /\
   (forall (i: nat). i >= idx /\ i < fwd_array_size ==>
     (let obj = Seq.index farr i in
@@ -1134,15 +1121,17 @@ private let promoted_entries_not_blue_from (major: heap) (farr: seq U64.t) (idx:
      U64.v obj % U64.v mword == 0 /\
      U64.v obj < heap_size /\
      is_infix obj major = false ==>
-     is_blue obj major = false))
+     live (obj <: obj_addr)))
 
+/// The entries' liveness is fixed; only their infix status is read from the
+/// heap, and that is preserved.
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
-private let update_obj_ptrs_preserves_entries_not_blue_from
-  (major: heap) (farr: seq U64.t) (fwd: forwarding_map) (idx: nat)
+private let update_obj_ptrs_preserves_entries_live_from
+  (major: heap) (live: obj_addr -> prop) (farr: seq U64.t) (fwd: forwarding_map) (idx: nat)
   : Lemma
     (requires
       promoted_entries_valid_from major farr idx /\
-      promoted_entries_not_blue_from major farr idx /\
+      promoted_entries_live_from major live farr idx /\
       idx < fwd_array_size /\
       (let obj = Seq.index farr idx in
        obj <> 0UL /\
@@ -1158,12 +1147,10 @@ private let update_obj_ptrs_preserves_entries_not_blue_from
       (let obj = Seq.index farr idx in
        let wz = U64.v (wosize_of_object obj major) in
        let major' = update_object_pointers major obj wz fwd 0 in
-       promoted_entries_not_blue_from major' farr (idx + 1)))
+       promoted_entries_live_from major' live farr (idx + 1)))
   = let obj = Seq.index farr idx in
     let wz = U64.v (wosize_of_object obj major) in
     let major' = update_object_pointers major obj wz fwd 0 in
-    PromObj.update_object_pointers_preserves_objects major obj wz fwd 0;
-    assert (objects zero_addr major' == objects zero_addr major);
     let aux_entry (i: nat{i < Seq.length farr}) : Lemma
       (requires i > idx)
       (ensures
@@ -1173,7 +1160,7 @@ private let update_obj_ptrs_preserves_entries_not_blue_from
          U64.v o % U64.v mword == 0 /\
          U64.v o < heap_size /\
          is_infix o major' = false ==>
-         is_blue o major' = false))
+         live (o <: obj_addr)))
     = let o = Seq.index farr i in
       if o <> 0UL &&
          U64.v o >= U64.v mword &&
@@ -1184,21 +1171,6 @@ private let update_obj_ptrs_preserves_entries_not_blue_from
         if is_infix o major then begin
           update_obj_ptrs_preserves_is_infix major obj wz fwd o;
           assert false
-        end else begin
-          assert (is_blue o major = false);
-          assert (Seq.mem o (objects zero_addr major));
-          if o = obj then
-            PromObj.update_object_pointers_preserves_self_header major obj wz fwd 0
-          else if U64.v o > U64.v obj then
-            PromObj.update_object_pointers_preserves_other_header major obj wz fwd 0 o
-          else begin
-            hd_address_spec o;
-            assert (U64.v (hd_address o) < U64.v obj);
-            PromObj.update_object_pointers_preserves_addr_below major obj wz fwd 0 (hd_address o)
-          end;
-          assert (read_word major' (hd_address o) == read_word major (hd_address o));
-          color_of_header_eq o major major';
-          assert (is_blue o major' = false)
         end
       end
     in
@@ -1275,19 +1247,20 @@ let rec update_promoted_iter_preserves_non_fwd
     end
 #pop-options
 
-/// update_promoted_iter also preserves any address that is not a non-blue
-/// scannable field.  The promoted_entries_not_blue_from invariant is what
-/// excludes the otherwise-unsound case where farr names a blue object that
-/// update_major_pointers would skip.
+/// update_promoted_iter also preserves any address that is not a field of a
+/// live scannable object.  The promoted_entries_live_from invariant is what
+/// excludes the otherwise-unsound case where farr names an object that the
+/// live walk would skip.
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
 let rec update_promoted_iter_preserves_non_field
-  (major: heap) (farr: seq U64.t) (fwd: forwarding_map) (idx: nat) (addr: hp_addr)
+  (major: heap) (live: obj_addr -> prop) (farr: seq U64.t) (fwd: forwarding_map)
+  (idx: nat) (addr: hp_addr)
   : Lemma
     (requires
       promoted_entries_valid_from major farr idx /\
-      promoted_entries_not_blue_from major farr idx /\
+      promoted_entries_live_from major live farr idx /\
       idx <= fwd_array_size /\
-      ~(scannable_field_addr major (U64.v addr)))
+      ~(live_field_addr major live (U64.v addr)))
     (ensures
       read_word (update_promoted_iter major farr fwd idx) addr == read_word major addr)
     (decreases (fwd_array_size - idx))
@@ -1296,11 +1269,11 @@ let rec update_promoted_iter_preserves_non_field
     else begin
       let obj = Seq.index farr idx in
       if obj = 0UL then
-        update_promoted_iter_preserves_non_field major farr fwd (idx + 1) addr
+        update_promoted_iter_preserves_non_field major live farr fwd (idx + 1) addr
       else begin
         let hdr_addr_v = U64.v obj - 8 in
         if hdr_addr_v + 8 > heap_size || hdr_addr_v % 8 <> 0 then
-          update_promoted_iter_preserves_non_field major farr fwd (idx + 1) addr
+          update_promoted_iter_preserves_non_field major live farr fwd (idx + 1) addr
         else begin
           let hdr = read_word major (U64.uint_to_t hdr_addr_v) in
           let wosize = U64.v (getWosize hdr) in
@@ -1315,7 +1288,7 @@ let rec update_promoted_iter_preserves_non_field
               assert (is_infix obj major = false);
               assert (is_no_scan obj major = false);
               assert (Seq.mem obj (objects zero_addr major));
-              assert (is_blue obj major = false);
+              assert (live obj);
               wosize_of_object_spec obj major;
               assert (wosize == U64.v (wosize_of_object obj major));
               assert (forall (k:nat). k < wosize ==>
@@ -1325,41 +1298,41 @@ let rec update_promoted_iter_preserves_non_field
                 PromObj.update_object_pointers_preserves_addr_below
                   major obj wosize fwd 0 addr;
                 update_obj_ptrs_preserves_entries_valid major farr fwd idx;
-                update_obj_ptrs_preserves_entries_not_blue_from major farr fwd idx;
-                update_obj_ptrs_preserves_not_scannable_field_addr major obj wosize fwd addr;
-                update_promoted_iter_preserves_non_field major' farr fwd (idx + 1) addr
+                update_obj_ptrs_preserves_entries_live_from major live farr fwd idx;
+                update_obj_ptrs_preserves_not_live_field_addr major live obj wosize fwd addr;
+                update_promoted_iter_preserves_non_field major' live farr fwd (idx + 1) addr
               end else if U64.v addr >= U64.v obj + wosize * 8 then begin
                 PromObj.update_object_pointers_preserves_addr_above
                   major obj wosize fwd 0 addr;
                 update_obj_ptrs_preserves_entries_valid major farr fwd idx;
-                update_obj_ptrs_preserves_entries_not_blue_from major farr fwd idx;
-                update_obj_ptrs_preserves_not_scannable_field_addr major obj wosize fwd addr;
-                update_promoted_iter_preserves_non_field major' farr fwd (idx + 1) addr
+                update_obj_ptrs_preserves_entries_live_from major live farr fwd idx;
+                update_obj_ptrs_preserves_not_live_field_addr major live obj wosize fwd addr;
+                update_promoted_iter_preserves_non_field major' live farr fwd (idx + 1) addr
               end else begin
                 let j = (U64.v addr - U64.v obj) / 8 in
                 assert (U64.v addr == U64.v obj + j * 8);
                 assert (j < wosize);
                 assert (U64.v obj + j * 8 + 8 <= heap_size);
                 assert ((U64.v obj + j * 8) % 8 == 0);
-                assert (scannable_field_addr major (U64.v addr));
+                assert (live_field_addr major live (U64.v addr));
                 assert false
               end
             end else
-              update_promoted_iter_preserves_non_field major farr fwd (idx + 1) addr
+              update_promoted_iter_preserves_non_field major live farr fwd (idx + 1) addr
           end else
-            update_promoted_iter_preserves_non_field major farr fwd (idx + 1) addr
+            update_promoted_iter_preserves_non_field major live farr fwd (idx + 1) addr
         end
       end
     end
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// Helper: update_major_pointers characterization at non-forwarded addresses
+/// Helper: the live walk at non-forwarded addresses
 /// ---------------------------------------------------------------------------
 ///
-/// Key lemma: update_major_pointers preserves any address where the conditional
+/// Key lemma: the live walk preserves any address where the conditional
 /// rewrite formula evaluates to "no change" (no forwarded minor pointer).
-/// Proof: induction on update_all_objects_aux — at each step, the address is
+/// Proof: induction on update_live_aux — at each step, the address is
 /// either outside the current object (frame) or inside but not rewritten
 /// (condition false → update_object_pointers skips it).
 ///
@@ -1408,10 +1381,10 @@ private let update_obj_ptrs_preserves_wfh
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_wfh)
 #pop-options
 
-/// Recursive helper: update_all_objects_aux preserves non-fwd addresses.
+/// Recursive helper: the live walk preserves non-fwd addresses.
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
-private let rec update_all_objects_aux_preserves_non_fwd
-  (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
+private let rec update_live_aux_preserves_non_fwd
+  (major: heap) (objs: seq obj_addr) (live: obj_addr -> prop) (fwd: forwarding_map) (idx: nat)
   (addr: hp_addr)
   : Lemma
     (requires
@@ -1420,17 +1393,17 @@ private let rec update_all_objects_aux_preserves_non_fwd
       (let old_val = to_minor_offset (read_word major addr) in
        ~(is_minor_pointer old_val /\ fwd old_val <> 0UL)))
     (ensures
-      read_word (update_all_objects_aux major objs fwd idx) addr == read_word major addr)
+      read_word (update_live_aux major objs live fwd idx) addr == read_word major addr)
     (decreases (Seq.length objs - idx))
   = if idx >= Seq.length objs then ()
     else begin
       let obj = Seq.index objs idx in
       // Seq.mem obj (objects zero_addr major) from indexing
       assert (Seq.mem obj objs);
-      if is_blue obj major then
-        update_all_objects_aux_preserves_non_fwd major objs fwd (idx + 1) addr
+      if not (IndDesc.strong_excluded_middle (live obj)) then
+        update_live_aux_preserves_non_fwd major objs live fwd (idx + 1) addr
       else if is_no_scan obj major then
-        update_all_objects_aux_preserves_non_fwd major objs fwd (idx + 1) addr
+        update_live_aux_preserves_non_fwd major objs live fwd (idx + 1) addr
       else begin
         // Scannable: process this object
         let wz = U64.v (wosize_of_object obj major) in
@@ -1456,47 +1429,46 @@ private let rec update_all_objects_aux_preserves_non_fwd
         update_obj_ptrs_preserves_wfh major obj wz fwd;
         assert (objects zero_addr major' == objects zero_addr major);
         // Recurse
-        update_all_objects_aux_preserves_non_fwd major' objs fwd (idx + 1) addr
+        update_live_aux_preserves_non_fwd major' objs live fwd (idx + 1) addr
       end
     end
 #pop-options
 
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
-let update_major_pointers_preserves_non_fwd
-  (major: heap) (fwd: forwarding_map) (addr: hp_addr)
+let update_live_pointers_preserves_non_fwd
+  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map) (addr: hp_addr)
   : Lemma
     (requires
       well_formed_heap_part1 major /\
       (let old_val = to_minor_offset (read_word major addr) in
        ~(is_minor_pointer old_val /\ fwd old_val <> 0UL)))
     (ensures
-      read_word (update_major_pointers major fwd) addr == read_word major addr)
-  = update_all_objects_aux_preserves_non_fwd major (objects zero_addr major) fwd 0 addr
+      read_word (update_live_pointers major live fwd) addr == read_word major addr)
+  = update_live_aux_preserves_non_fwd major (objects zero_addr major) live fwd 0 addr
 #pop-options
 
-/// Recursive helper: update_all_objects_aux preserves addresses that are not
-/// fields of any non-blue scannable object, irrespective of the word stored at
-/// that address.
+/// Recursive helper: the live walk preserves addresses that are not fields of
+/// any live scannable object, irrespective of the word stored at that address.
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
-private let rec update_all_objects_aux_preserves_non_field
-  (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
+private let rec update_live_aux_preserves_non_field
+  (major: heap) (objs: seq obj_addr) (live: obj_addr -> prop) (fwd: forwarding_map) (idx: nat)
   (addr: hp_addr)
   : Lemma
     (requires
       well_formed_heap_part1 major /\
       objs == objects zero_addr major /\
-      ~(scannable_field_addr major (U64.v addr)))
+      ~(live_field_addr major live (U64.v addr)))
     (ensures
-      read_word (update_all_objects_aux major objs fwd idx) addr == read_word major addr)
+      read_word (update_live_aux major objs live fwd idx) addr == read_word major addr)
     (decreases (Seq.length objs - idx))
   = if idx >= Seq.length objs then ()
     else begin
       let obj = Seq.index objs idx in
       assert (Seq.mem obj objs);
-      if is_blue obj major then
-        update_all_objects_aux_preserves_non_field major objs fwd (idx + 1) addr
+      if not (IndDesc.strong_excluded_middle (live obj)) then
+        update_live_aux_preserves_non_field major objs live fwd (idx + 1) addr
       else if is_no_scan obj major then
-        update_all_objects_aux_preserves_non_field major objs fwd (idx + 1) addr
+        update_live_aux_preserves_non_field major objs live fwd (idx + 1) addr
       else begin
         let wz = U64.v (wosize_of_object obj major) in
         let major' = update_object_pointers major obj wz fwd 0 in
@@ -1509,44 +1481,44 @@ private let rec update_all_objects_aux_preserves_non_field
           PromObj.update_object_pointers_preserves_addr_below major obj wz fwd 0 addr;
           update_obj_ptrs_preserves_wfh major obj wz fwd;
           assert (objects zero_addr major' == objects zero_addr major);
-          update_obj_ptrs_preserves_not_scannable_field_addr major obj wz fwd addr;
-          update_all_objects_aux_preserves_non_field major' objs fwd (idx + 1) addr
+          update_obj_ptrs_preserves_not_live_field_addr major live obj wz fwd addr;
+          update_live_aux_preserves_non_field major' objs live fwd (idx + 1) addr
         end else if U64.v addr >= U64.v obj + wz * 8 then begin
           PromObj.update_object_pointers_preserves_addr_above major obj wz fwd 0 addr;
           update_obj_ptrs_preserves_wfh major obj wz fwd;
           assert (objects zero_addr major' == objects zero_addr major);
-          update_obj_ptrs_preserves_not_scannable_field_addr major obj wz fwd addr;
-          update_all_objects_aux_preserves_non_field major' objs fwd (idx + 1) addr
+          update_obj_ptrs_preserves_not_live_field_addr major live obj wz fwd addr;
+          update_live_aux_preserves_non_field major' objs live fwd (idx + 1) addr
         end else begin
           let j = (U64.v addr - U64.v obj) / 8 in
           assert (U64.v addr == U64.v obj + j * 8);
           assert (j < wz);
           assert (U64.v obj + j * 8 + 8 <= heap_size);
           assert ((U64.v obj + j * 8) % 8 == 0);
-          assert (scannable_field_addr major (U64.v addr));
+          assert (live_field_addr major live (U64.v addr));
           assert false
         end
       end
     end
 
-let update_major_pointers_preserves_non_field
-  (major: heap) (fwd: forwarding_map) (addr: hp_addr)
+let update_live_pointers_preserves_non_field
+  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map) (addr: hp_addr)
   : Lemma
     (requires
       well_formed_heap_part1 major /\
-      ~(scannable_field_addr major (U64.v addr)))
+      ~(live_field_addr major live (U64.v addr)))
     (ensures
-      read_word (update_major_pointers major fwd) addr == read_word major addr)
-  = update_all_objects_aux_preserves_non_field major (objects zero_addr major) fwd 0 addr
+      read_word (update_live_pointers major live fwd) addr == read_word major addr)
+  = update_live_aux_preserves_non_field major (objects zero_addr major) live fwd 0 addr
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// Helper: update_major_pointers applies conditional rewrite at scannable fields
+/// Helper: the live walk applies the conditional rewrite at live fields
 /// ---------------------------------------------------------------------------
 ///
-/// For an address that IS a field of a scannable non-blue object with a forwarded
-/// minor pointer, update_major_pointers rewrites it to the fwd target.
-/// This is a direct corollary of update_major_pointers_field_effect.
+/// For an address that IS a field of a live scannable object with a forwarded
+/// minor pointer, the live walk rewrites it to the fwd target.
+/// This is a direct corollary of update_live_pointers_field_effect.
 /// ---------------------------------------------------------------------------
 /// Helper: forwarding targets don't look like minor pointers
 /// ---------------------------------------------------------------------------
@@ -1571,19 +1543,19 @@ let fwd_targets_not_minor_ptr
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// Helper: RHS at a forwarded address (update_major_pointers applies fwd)
+/// Helper: RHS at a forwarded address (the live walk applies fwd)
 /// ---------------------------------------------------------------------------
 ///
-/// Given witnesses obj, j from fwd_ptrs_classified part (1), the full-walk
-/// update_major_pointers rewrites the field to fwd(to_minor_offset(old)).
+/// Given witnesses obj, j from fwd_ptrs_classified_live part (1), the full-walk
+/// live walk rewrites the field to fwd(to_minor_offset(old)).
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let if_branch_rhs
-  (major: heap) (fwd: forwarding_map) (obj: obj_addr) (j: nat) (addr: hp_addr)
+  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map) (obj: obj_addr) (j: nat) (addr: hp_addr)
   : Lemma
     (requires
       well_formed_heap_part1 major /\
       Seq.mem obj (objects zero_addr major) /\
-      is_blue obj major = false /\
+      live obj /\
       is_no_scan obj major = false /\
       j < U64.v (wosize_of_object obj major) /\
       U64.v addr == U64.v obj + j * 8 /\
@@ -1593,8 +1565,8 @@ let if_branch_rhs
        is_minor_pointer old_val /\ fwd old_val <> 0UL))
     (ensures
       (let old_val = to_minor_offset (read_word major addr) in
-       read_word (update_major_pointers major fwd) addr == fwd old_val))
-  = PromField.update_major_pointers_field_effect major fwd obj j
+       read_word (update_live_pointers major live fwd) addr == fwd old_val))
+  = PromField.update_live_pointers_field_effect major live fwd obj j
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -1789,11 +1761,11 @@ let field_not_in_any_promoted_body
 /// ---------------------------------------------------------------------------
 ///
 /// The old address-only helper was intentionally removed: after
-/// fwd_ptrs_classified was reformulated over (obj,j) field positions, an
+/// fwd_ptrs_classified_live was reformulated over (obj,j) field positions, an
 /// arbitrary aligned address is not enough to recover a field witness.
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 let if_branch_field_eq
-  (major: heap) (fwd: forwarding_map) (farr: seq U64.t) (slots: seq U64.t) (n: nat)
+  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map) (farr: seq U64.t) (slots: seq U64.t) (n: nat)
   (obj: obj_addr) (j: nat) (addr: hp_addr)
   : Lemma
     (requires
@@ -1805,9 +1777,9 @@ let if_branch_field_eq
       valid_slot_addrs slots n /\
       slots_pairwise_distinct slots n /\
       fwd_targets_stable fwd /\
-      fwd_ptrs_classified major fwd farr slots n /\
+      fwd_ptrs_classified_live major live fwd farr slots n /\
       Seq.mem obj (objects zero_addr major) /\
-      is_blue obj major = false /\
+      live obj /\
       is_no_scan obj major = false /\
       j < U64.v (wosize_of_object obj major) /\
       U64.v addr == U64.v obj + j * 8 /\
@@ -1818,16 +1790,18 @@ let if_branch_field_eq
     (ensures
       (let intermediate = update_promoted_iter major farr fwd 0 in
        let lhs = rewrite_slots_iter intermediate fwd slots n 0 in
-       let rhs = update_major_pointers major fwd in
+       let rhs = update_live_pointers major live fwd in
        read_word lhs addr == read_word rhs addr))
   = let a = U64.v addr in
     let old_val = to_minor_offset (read_word major addr) in
     let intermediate = update_promoted_iter major farr fwd 0 in
     let lhs = rewrite_slots_iter intermediate fwd slots n 0 in
-    let rhs = update_major_pointers major fwd in
+    let rhs = update_live_pointers major live fwd in
     assert (a == U64.v obj + j * 8);
-    Classif.fwd_ptrs_classified_field major fwd farr slots n obj j;
-    if_branch_rhs major fwd obj j addr;
+    assert (U64.uint_to_t (U64.v obj + j * 8) == addr);
+    assert ((exists (pi: nat). pi < fwd_array_size /\ Seq.index farr pi == obj) \/
+            (exists (si: nat). si < n /\ U64.v (Seq.index slots si) == U64.v obj + j * 8));
+    if_branch_rhs major live fwd obj j addr;
     assert (read_word rhs addr == fwd old_val);
     if IndDesc.strong_excluded_middle
          (exists (pi: nat). pi < fwd_array_size /\ Seq.index farr pi == obj)
@@ -1850,7 +1824,7 @@ let if_branch_field_eq
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// Choose an (obj, j) field witness for a scannable field address.
+/// Choose an (obj, j) field witness for a live field address.
 ///
 /// Kept out of `two_pass_pointwise`: there, the refinements of the chosen
 /// witnesses had to be recovered in the presence of that lemma's quantified
@@ -1858,14 +1832,14 @@ let if_branch_field_eq
 /// which Z3 4.15.3 instantiated a million times before giving up.
 /// ---------------------------------------------------------------------------
 #push-options "--fuel 0 --ifuel 0"
-private let scannable_field_witness (major: heap) (a: nat)
+private let live_field_witness (major: heap) (live: obj_addr -> prop) (a: nat)
   : Ghost (obj_addr & nat)
-    (requires scannable_field_addr major a)
+    (requires live_field_addr major live a)
     (ensures fun r ->
       let obj = fst r in
       let j = snd r in
       Seq.mem obj (objects zero_addr major) /\
-      is_blue obj major = false /\
+      live obj /\
       is_no_scan obj major = false /\
       j < U64.v (wosize_of_object obj major) /\
       a == U64.v obj + j * 8 /\
@@ -1874,7 +1848,7 @@ private let scannable_field_witness (major: heap) (a: nat)
   = let obj : obj_addr = IndDesc.indefinite_description_ghost obj_addr (fun obj ->
       exists (j: nat).
         Seq.mem obj (objects zero_addr major) /\
-        is_blue obj major = false /\
+        live obj /\
         is_no_scan obj major = false /\
         j < U64.v (wosize_of_object obj major) /\
         a == U64.v obj + j * 8 /\
@@ -1882,7 +1856,7 @@ private let scannable_field_witness (major: heap) (a: nat)
         (U64.v obj + j * 8) % 8 == 0) in
     let j : nat = IndDesc.indefinite_description_ghost nat (fun j ->
         Seq.mem obj (objects zero_addr major) /\
-        is_blue obj major = false /\
+        live obj /\
         is_no_scan obj major = false /\
         j < U64.v (wosize_of_object obj major) /\
         a == U64.v obj + j * 8 /\
@@ -1903,7 +1877,8 @@ private let scannable_field_witness (major: heap) (a: nat)
 /// and `fwd` keeps the query small.
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let two_pass_pointwise
-  (major: heap) (fwd: forwarding_map) (farr: seq U64.t) (slots: seq U64.t) (n: nat)
+  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
+  (farr: seq U64.t) (slots: seq U64.t) (n: nat)
   (a: nat{a < heap_size /\ a % U64.v mword == 0})
   : Lemma
     (requires
@@ -1911,17 +1886,17 @@ private let two_pass_pointwise
       well_formed_heap_part4 major /\
       Seq.length farr == fwd_array_size /\
       promoted_entries_valid_from major farr 0 /\
-      promoted_entries_not_blue_from major farr 0 /\
+      promoted_entries_live_from major live farr 0 /\
       promoted_entries_disjoint major farr /\
       valid_slot_addrs slots n /\
       slots_pairwise_distinct slots n /\
-      slots_scannable_in_major major slots n /\
+      slots_rewrite_live major live fwd slots n /\
       fwd_targets_stable fwd /\
-      fwd_ptrs_classified major fwd farr slots n)
+      fwd_ptrs_classified_live major live fwd farr slots n)
     (ensures
       (let intermediate = update_promoted_iter major farr fwd 0 in
        let lhs = rewrite_slots_iter intermediate fwd slots n 0 in
-       let rhs = update_major_pointers major fwd in
+       let rhs = update_live_pointers major live fwd in
        read_word lhs (mk_hp_addr a) == read_word rhs (mk_hp_addr a)))
   = let intermediate = update_promoted_iter major farr fwd 0 in
     let addr : hp_addr = mk_hp_addr a in
@@ -1929,46 +1904,43 @@ private let two_pass_pointwise
     let old_val = to_minor_offset old_raw in
     if is_minor_pointer old_val && fwd old_val <> 0UL
     then begin
-      if IndDesc.strong_excluded_middle (scannable_field_addr major a)
+      if IndDesc.strong_excluded_middle (live_field_addr major live a)
       then begin
-        let w = scannable_field_witness major a in
+        let w = live_field_witness major live a in
         let obj : obj_addr = fst w in
         let j : nat = snd w in
-        if_branch_field_eq major fwd farr slots n obj j addr
+        if_branch_field_eq major live fwd farr slots n obj j addr
       end else begin
-        update_major_pointers_preserves_non_field major fwd addr;
-        update_promoted_iter_preserves_non_field major farr fwd 0 addr;
-        slots_frame_from_non_field major slots n addr;
+        update_live_pointers_preserves_non_field major live fwd addr;
+        update_promoted_iter_preserves_non_field major live farr fwd 0 addr;
+        slots_frame_from_non_field major live fwd slots n addr;
         rewrite_slots_iter_frame intermediate fwd slots n 0 addr
       end
     end else begin
-      update_major_pointers_preserves_non_fwd major fwd addr;
+      update_live_pointers_preserves_non_fwd major live fwd addr;
       update_promoted_iter_preserves_non_fwd major farr fwd 0 addr;
       rewrite_slots_iter_preserves_non_fwd intermediate fwd slots n 0 addr
     end
 #pop-options
 
-/// Main theorem: two-pass rewriting equals full update
+/// Main theorem: two-pass rewriting equals the live walk
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 75 --fuel 0 --ifuel 0"
-let promoted_plus_slots_eq_full_update
-  (minor: minor_state) (major_pre: heap) (fp: U64.t) (roots: seq U64.t)
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let promoted_plus_slots_eq_live_update
+  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
   (farr: seq U64.t) (slots: seq U64.t) (n: nat)
-  = let prom = CheneySpec.cheney_promote minor major_pre fp roots in
-    let major = prom.major_final in
-    let fwd = prom.fwd_map in
-    let intermediate = update_promoted_iter major farr fwd 0 in
+  = let intermediate = update_promoted_iter major farr fwd 0 in
     let lhs = rewrite_slots_iter intermediate fwd slots n 0 in
-    let rhs = update_major_pointers major fwd in
-    assert (promoted_entries_not_blue_from major farr 0);
+    let rhs = update_live_pointers major live fwd in
+    assert (promoted_entries_live_from major live farr 0);
     // Strategy: show read_word lhs a == read_word rhs a for every aligned
     // address.  The forwarded-pointer case is handled only after extracting an
-    // explicit non-blue scannable field witness; headers and other non-fields
-    // need separate frame lemmas and must not use fwd_ptrs_classified.
+    // explicit live scannable field witness; headers and other non-fields
+    // need separate frame lemmas and must not use fwd_ptrs_classified_live.
     let aux (a: nat{a < heap_size /\ a % U64.v mword == 0})
       : Lemma (read_word lhs (mk_hp_addr a) == read_word rhs (mk_hp_addr a))
-      = two_pass_pointwise major fwd farr slots n a
+      = two_pass_pointwise major live fwd farr slots n a
     in
     FStar.Classical.forall_intro aux;
     heap_read_word_extensional_mk lhs rhs

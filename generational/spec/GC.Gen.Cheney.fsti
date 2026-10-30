@@ -303,6 +303,26 @@ let cheney_collect_spec (minor: minor_state) (major: heap) (fp: U64.t) (roots: s
       mc_roots = rewrite_roots roots prom.fwd_map;
       mc_fwd   = prom.fwd_map }
 
+/// The minor collection over a live set of the major heap.
+///
+/// `live` is the major heap's live set *before* the collection, supplied by
+/// whoever holds the heap invariant.  Promotion adds the promoted objects, so
+/// the pointer update runs over `promoted_live minor live fwd`: it rewrites the
+/// fields of live objects (old or promoted) and never reads garbage or free
+/// blocks.  Everything else is as in `cheney_collect_spec`, which is the
+/// instance `live = idle_live major` (`GC.Gen.CheneyLive.cheney_collect_spec_over_idle`).
+let cheney_collect_spec_over (minor: minor_state) (major: heap) (fp: U64.t)
+    (roots: seq U64.t) (live: obj_addr -> prop)
+  : GTot minor_collect_result
+  = let prom = cheney_promote minor major fp roots in
+    let updated =
+      update_live_pointers prom.major_final (promoted_live minor live prom.fwd_map) prom.fwd_map in
+    { mc_major = updated;
+      mc_fp    = prom.fp_final;
+      mc_minor = minor_reset minor;
+      mc_roots = rewrite_roots roots prom.fwd_map;
+      mc_fwd   = prom.fwd_map }
+
 /// ---------------------------------------------------------------------------
 /// Correctness Properties
 /// ---------------------------------------------------------------------------
@@ -383,10 +403,22 @@ val cheney_promote_preserves_objects
 /// --- Full well_formed_heap after collection ---
 /// --- Allocator (fl_valid) preservation through full collection ---
 
-/// update_major_pointers preserves fl_valid.
-/// Proof: update_major_pointers skips blue objects (free-list nodes), so
-/// both the free-list headers and the next-pointers (field 0 of blue objects)
-/// are unchanged, leaving the free-chain structure intact.
+/// The pointer update preserves fl_valid.
+/// Proof: the walk skips non-live objects, and live objects are not blue
+/// (`live_ok`), so the free-list headers and next-pointers (field 0 of blue
+/// objects) are unchanged, leaving the free-chain structure intact.
+val update_live_pointers_preserves_fl_valid
+  (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map) (fp: U64.t)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    live_ok major live /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    chain_objects_blue major fp)
+          (ensures (let m' = update_live_pointers major live fwd in
+                    AllocLemmas.fl_valid m' fp heap_words /\
+                    AllocLemmas.fl_chain_terminates m' fp heap_words))
+
+/// The idle instance.
 val update_major_pointers_preserves_fl_valid
   (major: heap) (fwd: forwarding_map) (fp: U64.t)
   : Lemma (requires well_formed_heap_part1 major /\

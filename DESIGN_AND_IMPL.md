@@ -925,6 +925,30 @@ requested `wosize` (`GC.Gen.AllocProps.alloc_spec_obj_wosize_exact_part1`; see
 `docs/allocator-exactness.md`), so the copied fields fill the promoted object
 and there is no extra word to account for.
 
+### The pointer update over a live set
+
+`cheney_collect_spec` rewrites nursery pointers with `update_major_pointers`, a
+walk over every major object that skips the free (blue) ones.  The same walk
+is also stated over an explicit set of live objects:
+`GC.Gen.Promote.update_live_pointers major live fwd` rewrites the fields of the
+objects `x` with `live x` (scannable, as before) and never reads anything
+else, and `GC.Gen.Cheney.cheney_collect_spec_over minor major fp roots live`
+is the collection whose pointer update runs over `live` extended with the
+promoted objects (`promoted_live`, the images of the promoted nursery
+objects).  At `idle_live major` (every non-free block) these are today's
+functions: `GC.Gen.PromoteUpdate.Aux.update_live_pointers_idle` and
+`GC.Gen.CheneyLive.cheney_collect_spec_over_idle`.  The `PromoteUpdate`
+lemmas and the free-list preservation lemmas are proved for the live walk
+(with "not blue" read as "live", and `live_ok` supplying that live objects are
+not free), and the `update_major_pointers` forms are their idle instances.
+
+The implementation's two passes are proved equal to the live walk
+(`GC.Gen.TwoPassEquiv.promoted_plus_slots_eq_live_update`), and at a Cheney
+result, with the write barrier's guarantees stated over live objects
+(`ref_table_covers_over`, `ref_table_sound_over`), to the pointer update of
+`cheney_collect_spec_over` (`GC.Gen.TwoPassEquiv.Collect.two_pass_implies_collect_over`).
+`minor_collect_full` uses its idle instance, `two_pass_implies_full_update`.
+
 ### Cheney BFS
 
 The copying collector is specified in `generational/spec/GC.Gen.Cheney.fst`.

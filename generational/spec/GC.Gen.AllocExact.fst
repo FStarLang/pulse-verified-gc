@@ -1015,27 +1015,29 @@ let rec meeting_transfer_blue (g g': heap) (fp y: U64.t) (n: nat)
 /// **Pointer updates keep the free list complete**: they rewrite fields of
 /// live objects only, never a header and never a field of a blue block.
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
-let update_major_pointers_preserves_fl_complete (major: heap) (fwd: Promote.forwarding_map) (fp: U64.t)
+let update_live_pointers_preserves_fl_complete
+  (major: heap) (live: obj_addr -> prop) (fwd: Promote.forwarding_map) (fp: U64.t)
   : Lemma (requires well_formed_heap_part1 major /\
+                    live_ok major live /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     Promote.chain_objects_blue major fp /\
                     FL.fl_complete major fp)
-          (ensures FL.fl_complete (Promote.update_major_pointers major fwd) fp)
-  = let m' = Promote.update_major_pointers major fwd in
-    PU.update_major_pointers_preserves_objects major fwd;
-    Cheney.update_major_pointers_preserves_fl_valid major fwd fp;
+          (ensures FL.fl_complete (Promote.update_live_pointers major live fwd) fp)
+  = let m' = Promote.update_live_pointers major live fwd in
+    PU.update_live_pointers_preserves_objects major live fwd;
+    Cheney.update_live_pointers_preserves_fl_valid major live fwd fp;
     reveal_opaque (`%Promote.chain_objects_blue) (Promote.chain_objects_blue major fp);
     let bf (a: obj_addr) : Lemma
       (requires FL.fl_cell major a)
       (ensures read_word m' a == read_word major a)
       = hd_address_spec a;
-        PU.update_major_pointers_preserves_blue_field major fwd a 0 in
+        PU.update_live_pointers_preserves_skipped_field major live fwd a 0 in
     FStar.Classical.forall_intro (FStar.Classical.move_requires bf);
     let aux (x: obj_addr)
       : Lemma (requires FL.fl_cell m' x)
               (ensures FL.reachable_on_fl m' fp x)
-      = PU.update_major_pointers_preserves_header major fwd x;
+      = PU.update_live_pointers_preserves_header major live fwd x;
         color_of_object_spec x major; color_of_object_spec x m';
         is_blue_iff x major; is_blue_iff x m';
         wosize_of_object_spec x major; wosize_of_object_spec x m';
@@ -1055,6 +1057,18 @@ let update_major_pointers_preserves_fl_complete (major: heap) (fwd: Promote.forw
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
+
+let update_major_pointers_preserves_fl_complete (major: heap) (fwd: Promote.forwarding_map) (fp: U64.t)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    Promote.chain_objects_blue major fp /\
+                    FL.fl_complete major fp)
+          (ensures FL.fl_complete (Promote.update_major_pointers major fwd) fp)
+  = PU.update_live_pointers_idle major fwd;
+    idle_live_ok major;
+    update_live_pointers_preserves_fl_complete major (idle_live major) fwd fp
+
 
 /// ---------------------------------------------------------------------------
 /// The program's field writes keep the entry conditions
