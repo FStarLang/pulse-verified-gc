@@ -213,42 +213,18 @@ val update_object_pointers_done (major: heap) (obj: U64.t) (wosize: nat)
           (ensures update_object_pointers major obj wosize fwd i == major)
 
 /// ---------------------------------------------------------------------------
-/// update_all_objects_aux — exposed for Pulse implementation
-/// ---------------------------------------------------------------------------
-
-/// Exposed recursive worker: processes objects in `objs` starting at index `idx`
-let rec update_all_objects_aux (major: heap) (objs: seq obj_addr)
-                               (fwd: forwarding_map) (idx: nat)
-  : GTot heap (decreases (Seq.length objs - idx)) =
-  if idx >= Seq.length objs then major
-  else
-    let obj = Seq.index objs idx in
-    if is_blue obj major then
-      update_all_objects_aux major objs fwd (idx + 1)
-    else if is_no_scan obj major then
-      update_all_objects_aux major objs fwd (idx + 1)
-    else
-      let wz = U64.v (wosize_of_object obj major) in
-      let major' = update_object_pointers major obj wz fwd 0 in
-      update_all_objects_aux major' objs fwd (idx + 1)
-
-/// Update all pointers in the major heap that refer to minor addresses
-let update_major_pointers (major: heap) (fwd: forwarding_map) : GTot heap =
-  update_all_objects_aux major (objects zero_addr major) fwd 0
-
-/// ---------------------------------------------------------------------------
 /// The pointer update over a live set
 /// ---------------------------------------------------------------------------
 
-/// The same walk, over a live set fixed for the whole walk: it rewrites the
-/// fields of the objects `x` with `live x` (and scannable, as above) and skips
-/// every other object without reading its fields.  It reads every header, so it
-/// needs only the walk facts of the heap (parts 1 and 4).
+/// The walk over the major heap, over a live set fixed for the whole walk: it
+/// rewrites the fields of the objects `x` with `live x` (and scannable) and
+/// skips every other object without reading its fields.  It reads every header,
+/// so it needs only the walk facts of the heap (parts 1 and 4).
 ///
 /// `live` is a proposition (as in `GC.Spec.Fields.live_ok`), so the test goes
 /// through `strong_excluded_middle`; this is a ghost specification function.
-/// At `idle_live major` it is today's `update_major_pointers`
-/// (`GC.Gen.PromoteUpdate.Aux.update_live_pointers_idle`).
+/// At `idle_live major` it is the stop-the-world `update_major_pointers` below,
+/// which is defined as that instance.
 let rec update_live_aux (major: heap) (objs: seq obj_addr) (live: obj_addr -> prop)
                         (fwd: forwarding_map) (idx: nat)
   : GTot heap (decreases (Seq.length objs - idx)) =
@@ -268,6 +244,10 @@ let rec update_live_aux (major: heap) (objs: seq obj_addr) (live: obj_addr -> pr
 let update_live_pointers (major: heap) (live: obj_addr -> prop) (fwd: forwarding_map)
   : GTot heap =
   update_live_aux major (objects zero_addr major) live fwd 0
+
+/// The stop-the-world pointer update: the live walk over every non-free block.
+let update_major_pointers (major: heap) (fwd: forwarding_map) : GTot heap =
+  update_live_pointers major (idle_live major) fwd
 
 /// The live set after promotion: the live set before it, plus the images of
 /// the promoted nursery objects.  It is an explicit set, not recomputed from

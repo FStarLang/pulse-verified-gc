@@ -1,5 +1,5 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.PromoteUpdate.Aux — Auxiliary update_all_objects lemmas
+/// GC.Gen.PromoteUpdate.Aux — the pointer-update walk: objects, part 1, live-set extensionality
 /// ---------------------------------------------------------------------------
 
 module GC.Gen.PromoteUpdate.Aux
@@ -122,41 +122,8 @@ private let rec update_live_aux_ext
 let update_live_pointers_ext major live1 live2 fwd =
   update_live_aux_ext major (objects zero_addr major) live1 live2 fwd 0
 
-/// The two walks agree when the live set is "non-free in the original heap":
-/// the headers of the current heap are those of the original, so its colour
-/// test is the live test.
-#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
-private let rec update_live_aux_idle
-  (g0 major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
-  : Lemma (requires
-      well_formed_heap_part1 major /\
-      objs == objects zero_addr major /\
-      objs == objects zero_addr g0 /\
-      (forall (h: obj_addr). Seq.mem h objs ==>
-        read_word major (hd_address h) == read_word g0 (hd_address h)))
-    (ensures update_live_aux major objs (idle_live g0) fwd idx ==
-             update_all_objects_aux major objs fwd idx)
-    (decreases (Seq.length objs - idx)) =
-  if idx >= Seq.length objs then ()
-  else begin
-    let obj = Seq.index objs idx in
-    assert (Seq.mem obj objs);
-    header_eq_object_facts major g0 obj;
-    if is_blue obj major then
-      update_live_aux_idle g0 major objs fwd (idx + 1)
-    else if is_no_scan obj major then
-      update_live_aux_idle g0 major objs fwd (idx + 1)
-    else begin
-      update_object_pointers_step major obj fwd;
-      update_live_aux_idle g0
-        (update_object_pointers major obj (U64.v (wosize_of_object obj major)) fwd 0)
-        objs fwd (idx + 1)
-    end
-  end
-#pop-options
-
-let update_live_pointers_idle major fwd =
-  update_live_aux_idle major major (objects zero_addr major) fwd 0
+/// `update_major_pointers` is defined as the live walk at `idle_live`.
+let update_live_pointers_idle major fwd = ()
 
 /// update_major_pointers preserves the objects walk.
 let update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map) =
@@ -168,6 +135,3 @@ let update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map
   update_live_pointers_idle major fwd;
   update_live_pointers_preserves_wfh_part1 major (idle_live major) fwd
 
-/// Unfold: update_major_pointers is update_all_objects_aux at index 0
-let update_major_pointers_unfold (major: heap) (fwd: forwarding_map)
-  = ()

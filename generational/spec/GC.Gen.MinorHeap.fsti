@@ -235,7 +235,7 @@ val minor_tag_bound (ms: minor_state) (obj: U64.t)
 ///
 /// This mirrors the major heap, where `GC.Gen.CombinedGraph.major_object_edges`
 /// yields no edges for a `GC.Spec.Object.is_no_scan` source and
-/// `GC.Gen.Promote.update_all_objects_aux` skips its body.  Using it in
+/// `GC.Gen.Promote.update_live_aux` skips its body.  Using it in
 /// `GC.Gen.Cheney.cheney_scan` is what retired the old nursery hypothesis
 /// `minor_no_scan_invariant`, which asserted that no-scan bodies happen to
 /// contain nothing pointer-shaped — a property real OCaml heaps violate

@@ -25,7 +25,7 @@ open GC.Gen.PromoteUpdate.Aux
 open GC.Gen.PromoteUpdate.Header
 
 /// ---------------------------------------------------------------------------
-/// update_all_objects_aux field effect
+/// The live walk's field effect
 /// ---------------------------------------------------------------------------
 
 /// Helper: find the index of an element in a sequence

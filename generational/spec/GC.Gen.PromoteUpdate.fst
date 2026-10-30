@@ -56,26 +56,6 @@ let update_major_pointers_preserves_objects =
 let update_major_pointers_preserves_wfh_part1 =
   GC.Gen.PromoteUpdate.Aux.update_major_pointers_preserves_wfh_part1
 
-let update_major_pointers_unfold =
-  GC.Gen.PromoteUpdate.Aux.update_major_pointers_unfold
-
-/// --- From GC.Gen.PromoteUpdate.Positional ---
-
-let update_all_objects_positional_step =
-  GC.Gen.PromoteUpdate.Positional.update_all_objects_positional_step
-
-let update_all_objects_positional_step_blue =
-  GC.Gen.PromoteUpdate.Positional.update_all_objects_positional_step_blue
-
-let update_all_objects_positional_step_no_scan =
-  GC.Gen.PromoteUpdate.Positional.update_all_objects_positional_step_no_scan
-
-let update_all_objects_terminal_step =
-  GC.Gen.PromoteUpdate.Positional.update_all_objects_terminal_step
-
-let objects_initial_membership =
-  GC.Gen.PromoteUpdate.Positional.objects_initial_membership
-
 /// --- From GC.Gen.PromoteUpdate.Header ---
 
 let update_major_pointers_preserves_header =

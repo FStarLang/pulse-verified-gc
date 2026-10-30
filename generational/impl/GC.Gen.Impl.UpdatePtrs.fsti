@@ -94,30 +94,6 @@ fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
     pure (ms2 == PromoteSpec.update_object_pointers 'ms obj (U64.v wosize) fwd 0)
 
 /// ---------------------------------------------------------------------------
-/// Update ALL major-heap objects' pointer fields
-/// ---------------------------------------------------------------------------
-
-/// Walk the major heap linearly and for each object call update_one_object.
-/// Result equals PromoteSpec.update_major_pointers applied to the initial heap.
-fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
-                      (#fwd: erased PromoteSpec.forwarding_map)
-  requires is_heap major 'ms **
-           pts_to fwd_arr 'farr **
-           pure (GC.Spec.Fields.well_formed_heap_part1 'ms /\
-                 GC.Spec.Fields.heap_objects_dense 'ms /\
-                 heap_size > 8 /\
-                 Seq.length (GC.Spec.Fields.objects zero_addr 'ms) > 0 /\
-                 Seq.length 'farr == fwd_array_size /\
-                 represents_fwd 'farr fwd)
-  ensures exists* ms2.
-    is_heap major ms2 **
-    pts_to fwd_arr 'farr **
-    pure (GC.Spec.Fields.well_formed_heap_part1 ms2 /\
-          GC.Spec.Fields.heap_objects_dense ms2 /\
-          Seq.length (GC.Spec.Fields.objects zero_addr ms2) > 0 /\
-          ms2 == PromoteSpec.update_major_pointers 'ms fwd)
-
-/// ---------------------------------------------------------------------------
 /// Rewrite heap slots (ref_table entries)
 /// ---------------------------------------------------------------------------
 

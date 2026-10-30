@@ -1,5 +1,5 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.PromoteUpdate.Aux — Auxiliary update_all_objects lemmas
+/// GC.Gen.PromoteUpdate.Aux — the pointer-update walk: objects, part 1, live-set extensionality
 /// ---------------------------------------------------------------------------
 
 module GC.Gen.PromoteUpdate.Aux
@@ -82,6 +82,3 @@ val update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map
   : Lemma (requires well_formed_heap_part1 major)
     (ensures well_formed_heap_part1 (update_major_pointers major fwd))
 
-val update_major_pointers_unfold (major: heap) (fwd: forwarding_map)
-  : Lemma (update_major_pointers major fwd ==
-           update_all_objects_aux major (objects zero_addr major) fwd 0)
