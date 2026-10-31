@@ -517,6 +517,7 @@ let spot_ns_wfh_part2_3 (r: unit{spot_ns_room})
                       SpecFields.is_pointer v ==>
                       Seq.mem (SpecObj.resolve_object (v <: obj_addr) g)
                               (SpecFields.objects zero_addr g) /\
+                      ~(SpecObj.is_blue (SpecObj.resolve_object (v <: obj_addr) g) g) /\
                       SpecObj.infix_addr_wf g (SpecFields.objects zero_addr g)
                               (v <: obj_addr)))
     =
@@ -535,7 +536,7 @@ let spot_ns_well_formed_heap (r: unit{spot_ns_room})
   spot_ns_wfh_part1 r;
   spot_ns_wfh_part2_3 r;
   spot_ns_wfh_part4 r;
-  reveal_opaque (`%SpecFields.well_formed_heap) SpecFields.well_formed_heap
+  SpecFields.wf_parts ()
 #pop-options
 
 /// ---------------------------------------------------------------------------

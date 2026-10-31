@@ -338,7 +338,7 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
 let wfh_implies_part1 (g: heap_state)
   : Lemma (requires SpecFields.well_formed_heap g)
           (ensures SpecFields.well_formed_heap_part1 g)
-  = reveal_opaque (`%SpecFields.well_formed_heap) SpecFields.well_formed_heap
+  = SpecFields.wf_parts ()
 
 /// Lemma: unfold cheney_collect_spec in terms of cheney_promote
 let cheney_collect_spec_unfold (minor: minor_state) (major: heap_state) (fp: U64.t) (roots: Seq.seq U64.t)

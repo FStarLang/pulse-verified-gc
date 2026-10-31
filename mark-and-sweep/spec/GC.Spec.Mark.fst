@@ -166,13 +166,12 @@ let color_change_preserves_wf g obj c =
     (is_infix h g' == is_infix h g /\
      is_closure h g' == is_closure h g /\
      GC.Spec.Object.is_no_scan h g' == GC.Spec.Object.is_no_scan h g /\
-     (is_blue h g ==> is_blue h g') /\
+     is_blue h g' == is_blue h g /\
      wosize_of_object h g' == wosize_of_object h g /\
      GC.Spec.Object.resolve_object h g' == GC.Spec.Object.resolve_object h g)
   = color_change_preserves_is_infix obj h g c;
-    (if h = obj then begin
-       if c = Header.Blue then begin makeBlue_eq obj g; makeBlue_is_blue obj g end
-     end else begin
+    (if h = obj then set_color_preserves_not_blue obj obj g c
+     else begin
        color_change_preserves_other_color obj h g c;
        is_blue_iff h g; is_blue_iff h g'
      end);

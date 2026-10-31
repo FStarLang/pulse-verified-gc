@@ -449,12 +449,14 @@ let sweep_post_wf (g0 g: heap) (fp: U64.t) =
                       (let wz = wosize_of_object src g in
                        U64.v wz < pow2 54 /\ exists_field_pointing_to_unchecked g src wz dst))
             (ensures Seq.mem (resolve_object dst g) objs /\
+                     ~(is_blue (resolve_object dst g) g) /\
                      infix_addr_wf g objs dst)
     = live_source g0 g fp src;
       survivor_points_to g0 g fp src dst;
       sweep_post_target g0 g fp src dst;
       let r = resolve_object dst g0 in
       assert (survives g0 g r);
+      Mark.colors_exclusive r g;
       wosize_of_object_bound src g0;
       wfh_part3_elim g0 src dst;
       if is_infix dst g0 then begin

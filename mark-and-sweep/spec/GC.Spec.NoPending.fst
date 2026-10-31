@@ -23,59 +23,24 @@ open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Spec.Mark
 
-/// Part 2 with nothing pending is today's part 2 plus `no_pointer_to_blue`.
-let wfh_part2_except_no_pending_iff (g: heap) : Lemma
-  (well_formed_heap_part2_except g no_pending <==>
-   (well_formed_heap_part2 g /\ no_pointer_to_blue g))
-  = let fwd () : Lemma
-      (requires well_formed_heap_part2_except g no_pending)
-      (ensures well_formed_heap_part2 g /\ no_pointer_to_blue g)
-      = let pf (src dst: obj_addr) : Lemma
-          (requires Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
-                    (let wz = wosize_of_object src g in
-                     U64.v wz < pow2 54 /\
-                     exists_field_pointing_to_unchecked g src wz dst))
-          (ensures Seq.mem (resolve_object dst g) (objects zero_addr g) /\
-                   ~(is_blue (resolve_object dst g) g))
-          = wfh_part2_except_elim g no_pending src dst
-        in
-        well_formed_heap_part2_intro g (fun src dst -> pf src dst);
-        let npb (src dst: obj_addr) : Lemma
-          ((Seq.mem src (objects zero_addr g) /\ ~(is_blue src g) /\
-            fields_constrained g src /\ points_to g src dst) ==>
-           ~(is_blue (resolve_object dst g) g))
-          = wosize_of_object_bound src g;
-            FStar.Classical.move_requires (pf src) dst
-        in
-        FStar.Classical.forall_intro_2 npb
+/// A well-formed heap has no pointer to a free block.
+let wf_no_pointer_to_blue (g: heap) : Lemma
+  (requires well_formed_heap g)
+  (ensures no_pointer_to_blue g)
+  = let aux (src dst: obj_addr) : Lemma
+      ((Seq.mem src (objects zero_addr g) /\ ~(is_blue src g) /\
+        fields_constrained g src /\ points_to g src dst) ==>
+       ~(is_blue (resolve_object dst g) g))
+      = FStar.Classical.move_requires (points_to_target_not_blue g src) dst
     in
-    let bwd () : Lemma
-      (requires well_formed_heap_part2 g /\ no_pointer_to_blue g)
-      (ensures well_formed_heap_part2_except g no_pending)
-      = let pf (src dst: obj_addr) : Lemma
-          (requires not_freed g no_pending src /\ fields_constrained g src /\
-                    (let wz = wosize_of_object src g in
-                     U64.v wz < pow2 54 /\
-                     exists_field_pointing_to_unchecked g src wz dst))
-          (ensures not_freed g no_pending (resolve_object dst g))
-          = wfh_part2_elim g src dst;
-            wosize_of_object_bound src g;
-            assert (points_to g src dst)
-        in
-        well_formed_heap_part2_except_intro g no_pending pf
-    in
-    FStar.Classical.move_requires fwd ();
-    FStar.Classical.move_requires bwd ()
+    FStar.Classical.forall_intro_2 aux
 
 /// Well-formedness with nothing pending is `well_formed_heap` plus
 /// `no_pointer_to_blue`.
 let wf_except_no_pending_iff (g: heap) : Lemma
   (well_formed_heap_except g no_pending <==>
    (well_formed_heap g /\ no_pointer_to_blue g))
-  = wf_except_parts ();
-    wf_parts ();
-    wfh_part2_except_no_pending_iff g;
-    well_formed_heap_part3_is_no_pending g
+  = FStar.Classical.move_requires wf_no_pointer_to_blue g
 
 /// The two directions, for callers that only need one.
 let wf_except_no_pending_intro (g: heap) : Lemma

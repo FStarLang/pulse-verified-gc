@@ -464,7 +464,8 @@ let spot_major_wfh_part2 (r: unit{spot_major_room}) (mp: minor_ptr)
                       j < U64.v (SpecObj.wosize_of_object src major) /\
                       U64.v src + j * 8 + 8 <= heap_size)
             (ensures (let v = read_word major (U64.uint_to_t (U64.v src + j * 8)) in
-                      SpecFields.is_pointer_field v ==> Seq.mem (v <: obj_addr) (SpecFields.objects zero_addr major)))
+                      SpecFields.is_pointer_field v ==> Seq.mem (v <: obj_addr) (SpecFields.objects zero_addr major) /\
+                                                        ~(SpecObj.is_blue (v <: obj_addr) major)))
     =
     spot_major_field_not_pointer r mp src j
   in
@@ -486,7 +487,7 @@ let spot_major_well_formed_heap (r: unit{spot_major_room}) (mp: minor_ptr)
   spot_major_wfh_part2 r mp;
   spot_major_wfh_part3 r mp;
   spot_major_wfh_part4 r mp;
-  reveal_opaque (`%SpecFields.well_formed_heap) SpecFields.well_formed_heap
+  SpecFields.wf_parts ()
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0"

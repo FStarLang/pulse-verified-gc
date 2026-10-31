@@ -444,8 +444,7 @@ val resolve_infix_invalid_parent : (addr: obj_addr) -> (g: heap) ->
 ///   * the offset is at least two words.  OCaml lays out a closure as
 ///     `code ptr | closinfo | ...` before the first infix header, so
 ///     `Infix_offset_val` is never 0 or 1.  This is what makes it impossible for
-///     field 0 of an object to be an infix header (see
-///     `GC.Spec.Fields.no_field_points_to_field_zero`);
+///     field 0 of an object to be an infix header;
 ///   * the infix object lies within its parent's fields.  Without this an
 ///     "infix" could name a closure arbitrarily far away.
 unfold

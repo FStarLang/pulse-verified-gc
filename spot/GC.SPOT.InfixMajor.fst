@@ -644,6 +644,7 @@ let spot_infix_wfh_part2_3 (r: unit{spot_infix_room})
                       SpecFields.is_pointer v ==>
                       Seq.mem (SpecObj.resolve_object (v <: obj_addr) g)
                               (SpecFields.objects zero_addr g) /\
+                      ~(SpecObj.is_blue (SpecObj.resolve_object (v <: obj_addr) g) g) /\
                       SpecObj.infix_addr_wf g (SpecFields.objects zero_addr g)
                               (v <: obj_addr)))
     =
@@ -655,7 +656,8 @@ let spot_infix_wfh_part2_3 (r: unit{spot_infix_room})
       assert ((v <: obj_addr) == spot_h r);
       spot_infix_h_resolves_to_p r;
       spot_infix_h_addr_wf r;
-      spot_infix_mem r
+      spot_infix_mem r;
+      spot_infix_p_reads r
     end
   in
   SpecFields.well_formed_heap_part2_3_from_resolved_field_closure g field_closure
@@ -665,7 +667,7 @@ let spot_infix_well_formed_heap (r: unit{spot_infix_room})
   spot_infix_wfh_part1 r;
   spot_infix_wfh_part2_3 r;
   spot_infix_wfh_part4 r;
-  reveal_opaque (`%SpecFields.well_formed_heap) SpecFields.well_formed_heap
+  SpecFields.wf_parts ()
 #pop-options
 
 /// The negative half of the audit: this heap does *not* satisfy the old
