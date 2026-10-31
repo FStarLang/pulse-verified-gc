@@ -266,9 +266,18 @@ let get_pointer_fields (g: heap) (h_addr: obj_addr) : GTot (seq vertex_id) =
   if not (object_fits_in_heap h_addr g) then Seq.empty
   else
     let ws = wosize_of_object h_addr g in
-    if is_no_scan h_addr g then Seq.empty
+    if is_no_scan h_addr g || is_blue h_addr g then Seq.empty
     else get_pointer_fields_aux g h_addr 1UL ws
 ```
+
+A free (blue) block is a vertex with no outgoing edges.  Objects *pending free*
+(known dead, not yet reclaimed; see the minor collection below) are skipped the
+same way: `get_pointer_fields_except g pf h` is empty when `pf h`, and
+`GC.Spec.HeapModel.create_graph_except g pf` has the vertices of `create_graph
+g` but only the edges out of objects not pending
+(`create_graph_except_edge`).  With nothing pending it is `create_graph`
+(`create_graph_except_no_pending`), so mark-and-sweep never sees the
+difference.
 
 The main heap well-formedness predicate lives in
 `common/spec/GC.Spec.Fields.fst`:
@@ -339,7 +348,8 @@ Both collectors handle interior pointers out of *live* objects in full
 generality.  Free (blue) blocks are not constrained at all beyond their
 free-list link: `GC.Spec.Fields.fields_constrained` excludes blue sources from
 parts 2 and 3 of `well_formed_heap` and from `no_pointer_to_blue`, and
-`GC.Spec.HeapGraph.get_pointer_fields` gives a blue block no edges.  Nothing in
+`GC.Spec.HeapGraph.get_pointer_fields` gives a blue block no edges (and the
+graphs except the objects pending free give a pending one none).  Nothing in
 the collector reads such a word -- mark scans only grey objects, sweep and
 coalesce read headers and colours, the generational pointer update skips blue
 objects, and the allocator reads the header and field 0 -- so the coalescing
@@ -993,20 +1003,30 @@ heap (parts 1 and 4), not `well_formed_heap`.  The stop-the-world
 `no_pending`, plus the colour facts (no black, no gray objects).
 
 The reachable-subgraph isomorphism (`GC.Gen.MinorCollectForwarding`) is
-stated and proved for the collection except `pf` as well, over the same graphs
-as before (`CombinedGraph.build_combined_graph` of the nursery and the major
-heap, `HeapModel.create_graph` of the post-collection heap).  Those graphs still
-have the pending objects as vertices and edge sources, but no pending object is
-reachable: the roots are not pending (`roots_valid_except`; a root is reachable,
-hence never pending), and a not-freed object points only at not-freed objects
-(`ReachabilityBridge.reachable_major_not_freed`, from part 2 except `pf` and
-`minor_major_fields_not_freed`).  So every field the proofs read is a field of
-a reachable, hence not-freed, object, and whole-heap well-formedness is never
-needed: the combined graph is well formed for any heaps
-(`build_combined_graph_wf`), and the reachable parts the theorems compare are
-the same with or without the pending objects.  The stop-the-world theorems are
-the instances at `no_pending` (`MinorCollectForwarding.no_pending_context`
-turns the stop-the-world hypotheses into the generic ones).
+stated and proved for the collection except `pf` as well, over graphs that skip
+the pending objects exactly as they skip free blocks: a pending object stays a
+vertex but has no outgoing edges.  Mid-sweep its fields may name blocks already
+merged into the free list, so this is what keeps every edge pointing at a
+vertex.  The pre-collection graph is `CombinedGraph.build_combined_graph minor
+major pf` (only a not-freed major object has major-side edges; it is well formed
+for any heaps, `build_combined_graph_wf`); the post-collection graph is
+`HeapModel.create_graph_except post pf`, well formed whenever the heap is well
+formed except `pf` (`MinorCollectForwarding.Helpers.create_graph_except_wf`).
+An edge of either graph therefore leaves a not-freed object
+(`CG.major_edge_elim`, `Helpers.heap_graph_edge_to_pointer_field`), which is
+what most proofs used to derive from reachability: the remembered-set bridge
+(`ReachabilityBridge.reachability_bridge`) now needs only the nursery's
+well-formedness and the remembered set's coverage, and a major-to-major edge
+survives the collection whether or not its source is reachable
+(`Edges.combined_major_edge_forwarded`).  Facts about a reachable
+*vertex* (not blue, not pending, so its image or its fields are what the
+theorems say) still come from `ReachabilityBridge.reachable_never_pending`:
+the roots are not pending (`roots_valid_except`), and a not-freed object points
+only at not-freed objects (part 2 except `pf`, `minor_major_fields_not_freed`).
+The stop-the-world theorems are the instances at `no_pending`
+(`MinorCollectForwarding.no_pending_context` turns the stop-the-world
+hypotheses into the generic ones), where the post-collection graph is
+`HeapModel.create_graph` (`Helpers.result_post_no_pending`).
 
 `minor_collect_full`'s contract is generic, isomorphism included:
 `minor_collect_pre_except minor s fp rs farr slots n pf` (the shape except
@@ -1170,14 +1190,14 @@ isomorphism to the actual Cheney promotion result:
 
 ```fstar
 let normal_result_reachable_subgraph_isomorphism_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (post_major: heap) (post_roots: seq U64.t) : prop =
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
+  (roots: seq U64.t) (post_major: heap) (post_roots: seq U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   CG.reachable_subgraph_isomorphism
-    (normal_src_reachable minor major fp roots)
-    (result_post_reachable post_major post_roots)
-    (normal_src_edge minor major fp roots)
-    (result_post_edge post_major)
+    (normal_src_reachable minor major fp pf roots)
+    (result_post_reachable post_major pf post_roots)
+    (normal_src_edge minor major fp pf roots)
+    (result_post_edge post_major pf)
     prom.fwd_map
 ```
 
@@ -1194,11 +1214,11 @@ the original minor word:
 
 ```fstar
 let normal_result_non_pointer_fields_preserved_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (post_major: heap) : prop =
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
+  (roots: seq U64.t) (post_major: heap) : prop =
   let prom = cheney_promote minor major fp roots in
   forall (u: CG.combined_vertex).
-    normal_src_reachable minor major fp roots u ==>
+    normal_src_reachable minor major fp pf roots u ==>
     (match u with
     | CG.MajorV src ->
       is_val_addr src ==>
@@ -1293,10 +1313,10 @@ let end_to_end_isomorphism
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (final_major: heap) (final_roots: seq U64.t) : prop =
   CG.reachable_subgraph_isomorphism
-    (MinorFwd.normal_src_reachable minor major fp roots)
-    (MCFH.result_post_reachable final_major final_roots)
-    (MinorFwd.normal_src_edge minor major fp roots)
-    (MCFH.result_post_edge final_major)
+    (MinorFwd.normal_src_reachable minor major fp no_pending roots)
+    (MCFH.result_post_reachable final_major no_pending final_roots)
+    (MinorFwd.normal_src_edge minor major fp no_pending roots)
+    (MCFH.result_post_edge final_major no_pending)
     (cheney_promote minor major fp roots).fwd_map
 ```
 
@@ -1380,9 +1400,9 @@ UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
 GenInv.collection_shape_except ({ data = d2; bump = b2 } <: minor_state) s2 fp2 pf /\
 (ok ==>
   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-    minor_st s fp rs s2 (MCFH.resolve_roots s2 rs2) /\
+    minor_st s fp pf rs s2 (MCFH.resolve_roots s2 rs2) /\
   MinorFwd.normal_result_non_pointer_fields_preserved_prop
-    minor_st s fp rs s2)
+    minor_st s fp pf rs s2)
 ```
 
 The stop-the-world contract is the instance at `no_pending`:
@@ -1395,7 +1415,11 @@ GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2
 ```
 
 `minor_collect_idle_pre` / `minor_collect_idle_post` connect the two; `gen_gc`
-calls `minor_collect_full` with `#(hide no_pending)` and uses them.
+calls `minor_collect_full` with `#(hide no_pending)` and uses them.  The
+isomorphism is over the graphs except `pf` (`CG.build_combined_graph minor s
+pf`, `HeapModel.create_graph_except s2 pf`); at `no_pending` the latter is
+`create_graph`, the graph the major collection's own isomorphism speaks of, which
+is how `MajorReachabilityTransfer.end_to_end_isomorphism_intro` chains the two.
 
 The equality with `cheney_collect_spec` is the strongest operational statement:
 the imperative code implements the pure full minor-collection spec, including
@@ -2312,7 +2336,8 @@ The project becomes tractable when heap operations are related to graph
 operations:
 
 - `HeapGraph.get_pointer_fields` explains how fields become successors.
-- `HeapModel.create_graph` gives a graph for a heap.
+- `HeapModel.create_graph` gives a graph for a heap (`create_graph_except`
+  skips the objects pending free).
 - mark-and-sweep correctness is stated over reachability in that graph.
 - generational correctness uses a combined graph and a forwarding morphism.
 

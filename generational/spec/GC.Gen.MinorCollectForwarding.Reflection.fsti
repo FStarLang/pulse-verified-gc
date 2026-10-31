@@ -33,11 +33,11 @@ module CE = GC.Gen.CheneyExcept
 module MCFNE = GC.Gen.MinorCollectForwarding.NormalEdges
 
 let normal_image_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (w: U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   exists (u: CG.combined_vertex).
-    MCFNE.normal_src_reachable minor major fp roots u /\
+    MCFNE.normal_src_reachable minor major fp pf roots u /\
     CG.fwd_morphism prom.fwd_map u == w
 
 val post_edge_from_minor_image_reflects_mem_ce
@@ -52,12 +52,12 @@ val post_edge_from_minor_image_reflects_mem_ce
       MCFH.remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
-      MCFNE.normal_src_reachable minor major fp roots (CG.MinorV src) /\
-      MCFNE.normal_src_reachable minor major fp roots v /\
+      MCFNE.normal_src_reachable minor major fp pf roots (CG.MinorV src) /\
+      MCFNE.normal_src_reachable minor major fp pf roots v /\
       (let prom = cheney_promote minor major fp roots in
        MCFH.post_minor_edge minor major fp pf roots (prom.fwd_map src)
          (CG.fwd_morphism prom.fwd_map v)))
-    (ensures CG.mem_ce (CG.MinorV src, v) (CG.build_combined_graph minor major))
+    (ensures CG.mem_ce (CG.MinorV src, v) (CG.build_combined_graph minor major pf))
 
 val post_edge_from_minor_image_reflects_target
   (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
@@ -71,9 +71,9 @@ val post_edge_from_minor_image_reflects_target
       MCFH.remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
-      MCFNE.normal_src_reachable minor major fp roots (CG.MinorV src) /\
+      MCFNE.normal_src_reachable minor major fp pf roots (CG.MinorV src) /\
       (let prom = cheney_promote minor major fp roots in
        MCFH.post_minor_edge minor major fp pf roots (prom.fwd_map src) y) /\
       (let res = cheney_collect_spec_except minor major fp roots pf in
-       MCFH.mem_graph_vertex_at (HeapModel.create_graph res.mc_major) y))
-    (ensures normal_image_reachable minor major fp roots y)
+       MCFH.mem_graph_vertex_at (HeapModel.create_graph_except res.mc_major pf) y))
+    (ensures normal_image_reachable minor major fp pf roots y)

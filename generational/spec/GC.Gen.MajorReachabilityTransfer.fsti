@@ -53,6 +53,7 @@ module HM = GC.Spec.HeapModel
 module HG = GC.Spec.HeapGraph
 module MS = GC.Spec.Correctness
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
+module SF = GC.Spec.Fields
 
 /// The live set of the major collection, as a predicate on graph vertices.
 let major_live (h: heap) (droots: Seq.seq obj_addr) (x: vertex_id) : prop =
@@ -85,12 +86,13 @@ val major_result_post_transfer
         (forall (r: obj_addr). Seq.mem (r <: U64.t) rts ==> Seq.mem r droots))
       (ensures
         (forall (w: U64.t).
-           MCFH.result_post_reachable h1 rts w <==>
-           MCFH.result_post_reachable h2 rts w) /\
+           MCFH.result_post_reachable h1 SF.no_pending rts w <==>
+           MCFH.result_post_reachable h2 SF.no_pending rts w) /\
         (forall (w1 w2: U64.t).
-           MCFH.result_post_reachable h1 rts w1 /\
-           MCFH.result_post_reachable h1 rts w2 ==>
-           (MCFH.result_post_edge h1 w1 w2 <==> MCFH.result_post_edge h2 w1 w2)))
+           MCFH.result_post_reachable h1 SF.no_pending rts w1 /\
+           MCFH.result_post_reachable h1 SF.no_pending rts w2 ==>
+           (MCFH.result_post_edge h1 SF.no_pending w1 w2 <==>
+            MCFH.result_post_edge h2 SF.no_pending w1 w2)))
 
 /// ---------------------------------------------------------------------------
 /// The composed, end-to-end isomorphism
@@ -107,10 +109,10 @@ let end_to_end_isomorphism
   (minor: GC.Gen.MinorHeap.minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
   (final_major: heap) (final_roots: Seq.seq U64.t) : prop =
   CG.reachable_subgraph_isomorphism
-    (MinorFwd.normal_src_reachable minor major fp roots)
-    (MCFH.result_post_reachable final_major final_roots)
-    (MinorFwd.normal_src_edge minor major fp roots)
-    (MCFH.result_post_edge final_major)
+    (MinorFwd.normal_src_reachable minor major fp SF.no_pending roots)
+    (MCFH.result_post_reachable final_major SF.no_pending final_roots)
+    (MinorFwd.normal_src_edge minor major fp SF.no_pending roots)
+    (MCFH.result_post_edge final_major SF.no_pending)
     (GC.Gen.Cheney.cheney_promote minor major fp roots).fwd_map
 
 /// Compose the minor collector's isomorphism with the major collection.
@@ -124,7 +126,7 @@ val end_to_end_isomorphism_intro
   : Lemma
       (requires
         MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-          minor major fp roots post_major post_roots /\
+          minor major fp SF.no_pending roots post_major post_roots /\
         HM.create_graph darkened == HM.create_graph post_major /\
         major_transfer_hyp darkened final_major droots /\
         (forall (r: U64.t). Seq.mem r post_roots ==> is_val_addr r) /\

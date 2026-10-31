@@ -520,3 +520,137 @@ val successors_eq_pointer_fields : (g: heap) -> (objs: seq obj_addr) -> (x: obj_
 
 let successors_eq_pointer_fields g objs x =
   successors_aux_all_edges g objs x
+
+/// ---------------------------------------------------------------------------
+/// Edge Membership Inversion
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 15 --fuel 1 --ifuel 1"
+let rec make_edges_mem_inv (src dst h: vertex_id) (succs: seq vertex_id)
+  : Lemma (requires Seq.mem (src, dst) (make_edges h succs))
+          (ensures src == h /\ Seq.mem dst succs)
+          (decreases Seq.length succs)
+  = if Seq.length succs = 0 then ()
+    else begin
+      let hd = Seq.head succs in
+      let tl = Seq.tail succs in
+      Seq.mem_cons (h, hd) (make_edges h tl);
+      Seq.mem_cons hd tl;
+      if (src, dst) = (h, hd) then ()
+      else make_edges_mem_inv src dst h tl
+    end
+
+/// A successor is an object address.
+let rec get_pointer_fields_aux_mem_ge_mword
+  (g: heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t) (dst: vertex_id)
+  : Lemma (requires Seq.mem dst (get_pointer_fields_aux g obj i ws))
+          (ensures U64.v dst >= U64.v mword)
+          (decreases (U64.v ws - U64.v i + 1))
+  = if U64.v i > U64.v ws then ()
+    else begin
+      let v = get_field g obj i in
+      let rest =
+        if U64.v i < U64.v ws then get_pointer_fields_aux g obj (U64.add i 1UL) ws
+        else Seq.empty in
+      if is_pointer_field v then begin
+        is_pointer_field_is_obj_addr v;
+        Seq.mem_cons (resolve_field g v) rest
+      end;
+      if U64.v i < U64.v ws && Seq.mem dst rest
+      then get_pointer_fields_aux_mem_ge_mword g obj (U64.add i 1UL) ws dst
+    end
+
+let get_pointer_fields_mem_ge_mword (g: heap) (obj: obj_addr) (dst: vertex_id)
+  : Lemma (requires Seq.mem dst (get_pointer_fields g obj))
+          (ensures U64.v dst >= U64.v mword)
+  = if object_fits_in_heap obj g && not (is_no_scan obj g || is_blue obj g)
+    then get_pointer_fields_aux_mem_ge_mword g obj 1UL (wosize_of_object obj g) dst
+
+/// An edge of `all_edges` leaves an enumerated object along one of its
+/// pointer fields.
+let rec all_edges_mem_inv (g: heap) (objs: seq obj_addr) (src dst: vertex_id)
+  : Lemma (requires Seq.mem (src, dst) (all_edges g objs))
+          (ensures U64.v src >= U64.v mword /\ U64.v dst >= U64.v mword /\
+                   Seq.mem (src <: obj_addr) objs /\
+                   Seq.mem dst (get_pointer_fields g (src <: obj_addr)))
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let hd = Seq.head objs in
+      let tl = Seq.tail objs in
+      Seq.lemma_mem_append (object_edges g hd) (all_edges g tl);
+      Seq.mem_cons hd tl;
+      if Seq.mem (src, dst) (object_edges g hd) then begin
+        make_edges_mem_inv src dst hd (get_pointer_fields g hd);
+        get_pointer_fields_mem_ge_mword g hd dst
+      end
+      else all_edges_mem_inv g tl src dst
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Edges Except the Objects Pending Free
+/// ---------------------------------------------------------------------------
+///
+/// A free (blue) block is a vertex with no outgoing edges (`get_pointer_fields`
+/// above).  An object *pending free* --- known dead, not yet reclaimed, so its
+/// fields may name blocks a sweep has already merged --- is treated the same
+/// way: it stays a vertex but contributes no edges.  `pf` is the pending set;
+/// with nothing pending these are the ordinary edges (`all_edges_except_none`,
+/// `GC.Spec.HeapModel.create_graph_except_no_pending`).
+
+let get_pointer_fields_except (g: heap) (pf: obj_addr -> prop) (h_addr: obj_addr)
+  : GTot (seq vertex_id) =
+  if FStar.IndefiniteDescription.strong_excluded_middle (pf h_addr) then Seq.empty
+  else get_pointer_fields g h_addr
+
+let object_edges_except (g: heap) (pf: obj_addr -> prop) (h_addr: obj_addr) : GTot edge_list =
+  make_edges h_addr (get_pointer_fields_except g pf h_addr)
+
+let rec all_edges_except (g: heap) (pf: obj_addr -> prop) (objs: seq obj_addr)
+  : GTot edge_list (decreases Seq.length objs)
+  = if Seq.length objs = 0 then Seq.empty
+    else Seq.append (object_edges_except g pf (Seq.head objs))
+                    (all_edges_except g pf (Seq.tail objs))
+
+/// With nothing pending, the edges are `all_edges`.
+let rec all_edges_except_none (g: heap) (pf: obj_addr -> prop) (objs: seq obj_addr)
+  : Lemma (requires forall (x: obj_addr). ~(pf x))
+          (ensures all_edges_except g pf objs == all_edges g objs)
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else all_edges_except_none g pf (Seq.tail objs)
+
+/// The edges except `pf` are the edges whose source is not pending.
+#push-options "--z3rlimit 15 --fuel 1 --ifuel 1"
+let rec all_edges_except_mem (g: heap) (pf: obj_addr -> prop) (objs: seq obj_addr)
+    (src: obj_addr) (dst: vertex_id)
+  : Lemma (ensures Seq.mem (src, dst) (all_edges_except g pf objs) <==>
+                   Seq.mem (src, dst) (all_edges g objs) /\ ~(pf src))
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let hd = Seq.head objs in
+      let tl = Seq.tail objs in
+      Seq.lemma_mem_append (object_edges_except g pf hd) (all_edges_except g pf tl);
+      Seq.lemma_mem_append (object_edges g hd) (all_edges g tl);
+      if Seq.mem (src, dst) (object_edges g hd)
+      then make_edges_mem_inv src dst hd (get_pointer_fields g hd);
+      if Seq.mem (src, dst) (object_edges_except g pf hd)
+      then make_edges_mem_inv src dst hd (get_pointer_fields_except g pf hd);
+      all_edges_except_mem g pf tl src dst
+    end
+
+/// Every edge except `pf` is an edge.
+let rec all_edges_except_subset (g: heap) (pf: obj_addr -> prop) (objs: seq obj_addr) (e: edge)
+  : Lemma (ensures Seq.mem e (all_edges_except g pf objs) ==> Seq.mem e (all_edges g objs))
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let hd = Seq.head objs in
+      let tl = Seq.tail objs in
+      Seq.lemma_mem_append (object_edges_except g pf hd) (all_edges_except g pf tl);
+      Seq.lemma_mem_append (object_edges g hd) (all_edges g tl);
+      all_edges_except_subset g pf tl e
+    end
+#pop-options

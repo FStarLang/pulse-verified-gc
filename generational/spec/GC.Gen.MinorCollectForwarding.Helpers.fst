@@ -152,7 +152,7 @@ let remembered_targets_in_roots_intro_by_slots major roots slots n
 
 let roots_valid_no_pending minor major roots = ()
 
-let roots_valid_except_not_freed minor major pf roots = ()
+let roots_valid_except_implies_not_freed minor major pf roots = ()
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 let rec resolve_roots_length h rts =
@@ -192,9 +192,12 @@ let rec resolve_roots_congr h1 h2 rts =
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
-let result_post_reachable_refl_direct post_major post_roots w =
-  let post_g = HeapModel.create_graph post_major in
-  let goal = result_post_reachable post_major post_roots w in
+let result_post_no_pending post_major post_roots =
+  HeapModel.create_graph_except_no_pending post_major
+
+let result_post_reachable_refl_direct post_major pf post_roots w =
+  let post_g = HeapModel.create_graph_except post_major pf in
+  let goal = result_post_reachable post_major pf post_roots w in
   let proof (x: vertex_id{mem_graph_vertex post_g x}) : Lemma
     (requires x == w)
     (ensures goal)
@@ -207,9 +210,9 @@ let result_post_reachable_refl_direct post_major post_roots w =
     ()
     (fun x -> FStar.Classical.move_requires proof x)
 
-let result_post_reachable_refl_resolved post_major rts rr w =
+let result_post_reachable_refl_resolved post_major pf rts rr w =
   resolve_roots_mem post_major rts rr;
-  result_post_reachable_refl_direct post_major (resolve_roots post_major rts) w
+  result_post_reachable_refl_direct post_major pf (resolve_roots post_major rts) w
 
 let post_minor_reachable_refl_from_root
   (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
@@ -217,7 +220,7 @@ let post_minor_reachable_refl_from_root
   =
     let prom = cheney_promote minor major fp roots in
     let res = cheney_collect_spec_except minor major fp roots pf in
-    result_post_reachable_refl_resolved res.mc_major
+    result_post_reachable_refl_resolved res.mc_major pf
       (rewrite_roots roots prom.fwd_map) rr w
 #pop-options
 
@@ -240,7 +243,7 @@ let update_preserves_major_target_field
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let heap_field_points_to_graph_edge
-  (g: heap) (src: obj_addr) (dst: U64.t) (j: nat)
+  (g: heap) (pf: obj_addr -> prop) (src: obj_addr) (dst: U64.t) (j: nat)
   =
     wfh_part1_obj_bound g src;
     HeapGraph.object_fits_from_bound src g;
@@ -257,69 +260,11 @@ let heap_field_points_to_graph_edge
     HeapGraph.get_field_addr_eq g src field_index;
     assert (HeapGraph.get_field g src field_index == dst);
     HeapGraph.pointer_field_is_graph_edge g (objects zero_addr g) src field_index;
-    HeapGraph.is_pointer_field_is_obj_addr dst
+    HeapGraph.is_pointer_field_is_obj_addr dst;
+    HeapModel.create_graph_except_edge g pf src (HeapGraph.resolve_field g dst)
 #pop-options
 
 #push-options "--z3rlimit 15 --fuel 1 --ifuel 1"
-private let rec make_edges_mem_inv
-  (src dst h: vertex_id) (succs: seq vertex_id)
-  : Lemma
-    (requires Seq.mem (src, dst) (HeapGraph.make_edges h succs))
-    (ensures src == h /\ Seq.mem dst succs)
-    (decreases Seq.length succs)
-  =
-    if Seq.length succs = 0 then ()
-    else begin
-      let hd = Seq.head succs in
-      let tl = Seq.tail succs in
-      Seq.mem_cons (h, hd) (HeapGraph.make_edges h tl);
-      if (src, dst) = (h, hd) then begin
-        assert (src == h);
-        assert (dst == hd);
-        Seq.mem_cons hd tl
-      end else begin
-        assert (Seq.mem (src, dst) (HeapGraph.make_edges h tl));
-        make_edges_mem_inv src dst h tl;
-        assert (Seq.mem dst tl);
-        Seq.mem_cons hd tl
-      end
-    end
-
-private let object_edges_mem_inv
-  (g: heap) (obj src dst: obj_addr)
-  : Lemma
-    (requires Seq.mem (src, dst) (HeapGraph.object_edges g obj))
-    (ensures src == obj /\ Seq.mem dst (HeapGraph.get_pointer_fields g obj))
-  =
-    make_edges_mem_inv src dst obj (HeapGraph.get_pointer_fields g obj)
-
-private let rec all_edges_mem_inv
-  (g: heap) (objs: seq obj_addr) (src dst: obj_addr)
-  : Lemma
-    (requires Seq.mem (src, dst) (HeapGraph.all_edges g objs))
-    (ensures Seq.mem src objs /\ Seq.mem dst (HeapGraph.get_pointer_fields g src))
-    (decreases Seq.length objs)
-  =
-    if Seq.length objs = 0 then ()
-    else begin
-      let hd = Seq.head objs in
-      let tl = Seq.tail objs in
-      let edges_hd = HeapGraph.object_edges g hd in
-      let edges_tl = HeapGraph.all_edges g tl in
-      Seq.lemma_mem_append edges_hd edges_tl;
-      if Seq.mem (src, dst) edges_hd then begin
-        object_edges_mem_inv g hd src dst;
-        assert (src == hd);
-        assert (Seq.mem dst (HeapGraph.get_pointer_fields g src));
-        Seq.mem_cons hd tl
-      end else begin
-        assert (Seq.mem (src, dst) edges_tl);
-        all_edges_mem_inv g tl src dst;
-        assert (Seq.mem src tl);
-        Seq.mem_cons hd tl
-      end
-    end
-
 private let rec get_pointer_fields_aux_mem_inv
   (g: heap) (obj dst: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t)
   : Lemma
@@ -367,11 +312,15 @@ let heap_graph_edge_to_pointer_field
   (g: heap) (pf: obj_addr -> prop) (src dst: obj_addr)
   =
     HeapModel.objects_is_vertex_set g;
+    HeapModel.create_graph_except_edge g pf src dst;
     assert (Seq.mem (src, dst) (HeapGraph.all_edges g (objects zero_addr g)));
-    all_edges_mem_inv g (objects zero_addr g) src dst;
+    HeapGraph.all_edges_mem_inv g (objects zero_addr g) src dst;
     assert (Seq.mem src (objects zero_addr g));
     assert (Seq.mem dst (HeapGraph.get_pointer_fields g src));
     let ws = wosize_of_object src g in
+    // A free block has no edges, and the graph gives a pending one none.
+    if is_blue src g then assert (HeapGraph.get_pointer_fields g src == Seq.empty);
+    assert (not_freed g pf src);
     if not (HeapGraph.object_fits_in_heap src g) then begin
       assert (HeapGraph.get_pointer_fields g src == Seq.empty);
       assert False
@@ -392,7 +341,7 @@ let heap_graph_edge_to_pointer_field
                   U64.v j <= U64.v ws /\
                   HeapGraph.is_pointer_field (HeapGraph.get_field g src j) /\
                   HeapGraph.resolve_field g (HeapGraph.get_field g src j) == dst)
-        (ensures goal /\ HeapGraph.is_pointer_field dst)
+        (ensures goal /\ HeapGraph.is_pointer_field dst /\ not_freed g pf dst)
       =
         // The graph successor is the *resolved* field value; the target may be
         // an interior pointer, in which case `dst` is its enclosing closure.
@@ -420,7 +369,7 @@ let heap_graph_edge_to_pointer_field
           j
       in
       FStar.Classical.exists_elim
-        (goal /\ HeapGraph.is_pointer_field dst)
+        (goal /\ HeapGraph.is_pointer_field dst /\ not_freed g pf dst)
         #_
         #(fun j -> U64.v j >= 1 /\
                   U64.v j <= U64.v ws /\
@@ -429,6 +378,22 @@ let heap_graph_edge_to_pointer_field
         ()
         (fun j -> FStar.Classical.move_requires proof j)
     end
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
+let create_graph_except_wf (g: heap) (pf: obj_addr -> prop) =
+  let gr = HeapModel.create_graph_except g pf in
+  let edge_ok (e: edge)
+    : Lemma (requires Seq.mem e gr.edges)
+            (ensures Seq.mem (fst e) gr.vertices /\ Seq.mem (snd e) gr.vertices)
+    = let (s, d) = e in
+      HeapModel.create_graph_except_edge_subset g pf s d;
+      HeapGraph.all_edges_mem_inv g (objects zero_addr g) s d;
+      heap_graph_edge_to_pointer_field g pf s d;
+      HeapModel.graph_vertices_mem g s;
+      HeapModel.graph_vertices_mem g d
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires edge_ok)
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
@@ -521,9 +486,9 @@ private let rec coerce_vertex_mem_is_obj_addr
     end
 
 let mem_graph_vertex_at_is_obj_addr
-  (g: heap) (w: U64.t)
+  (g: heap) (pf: obj_addr -> prop) (w: U64.t)
   =
-    let post_g = HeapModel.create_graph g in
+    let post_g = HeapModel.create_graph_except g pf in
     let goal = is_val_addr w /\ Seq.mem (w <: obj_addr) (objects zero_addr g) in
     let proof (x: vertex_id{mem_graph_vertex post_g x}) : Lemma
       (requires x == w)
@@ -541,8 +506,8 @@ let mem_graph_vertex_at_is_obj_addr
       (fun x -> FStar.Classical.move_requires proof x)
 #pop-options
 
-let vertex_resolves_to_itself h w =
-  mem_graph_vertex_at_is_obj_addr h w;
+let vertex_resolves_to_itself h pf w =
+  mem_graph_vertex_at_is_obj_addr h pf w;
   SpecObject.resolve_non_infix (w <: obj_addr) h
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"

@@ -29,10 +29,10 @@ let minor_collect_full_post
   post_major == res.mc_major /\
   post_roots == res.mc_roots /\
   (ok ==> MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-             minor major fp roots post_major
+             minor major fp GC.Spec.Fields.no_pending roots post_major
              (MCFH.resolve_roots post_major post_roots) /\
            MinorFwd.normal_result_non_pointer_fields_preserved_prop
-             minor major fp roots post_major)
+             minor major fp GC.Spec.Fields.no_pending roots post_major)
 
 let promoted_image
   (minor: minor_state) (major: heap) (fp: U64.t)

@@ -74,6 +74,7 @@ module HM = GC.Spec.HeapModel
 module HG = GC.Spec.HeapGraph
 module MS = GC.Spec.Correctness
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
+module SF = GC.Spec.Fields
 
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 40"
 
@@ -81,11 +82,12 @@ module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 let vertex_is_val_addr (h: heap) (x: vertex_id)
   : Lemma (requires mem_graph_vertex (HM.create_graph h) x)
           (ensures is_val_addr x)
-  = let g = HM.create_graph h in
+  = HM.create_graph_except_vertices h SF.no_pending;
+    let g = HM.create_graph_except h SF.no_pending in
     FStar.Classical.exists_intro
       (fun (x': vertex_id{mem_graph_vertex g x'}) -> x' == x) x;
     assert (MCFH.mem_graph_vertex_at g x);
-    MCFH.mem_graph_vertex_at_is_obj_addr h x
+    MCFH.mem_graph_vertex_at_is_obj_addr h SF.no_pending x
 
 let major_graphs_agree h1 h2 droots =
   let g1 = HM.create_graph h1 in
@@ -136,8 +138,8 @@ let result_post_reachable_swap
       (requires
         graphs_agree_on (HM.create_graph ha) (HM.create_graph hb) live /\
         (forall (r: vertex_id). Seq.mem (r <: U64.t) rts ==> live r) /\
-        MCFH.result_post_reachable ha rts w)
-      (ensures live w /\ MCFH.result_post_reachable hb rts w)
+        MCFH.reachable_from_roots (HM.create_graph ha) rts w)
+      (ensures live w /\ MCFH.reachable_from_roots (HM.create_graph hb) rts w)
   = let ga = HM.create_graph ha in
     let gb = HM.create_graph hb in
     eliminate exists (rr: U64.t)
@@ -145,13 +147,15 @@ let result_post_reachable_swap
                      (x: vertex_id{mem_graph_vertex ga x}).
       Seq.mem rr rts /\ r == rr /\ x == w /\ reachable ga r x
     with (reachable_transfer ga gb live r x;
-          assert (MCFH.result_post_reachable hb rts w))
+          assert (MCFH.reachable_from_roots gb rts w))
 
 let major_result_post_transfer h1 h2 droots rts =
   let g1 = HM.create_graph h1 in
   let g2 = HM.create_graph h2 in
   let droots' = HG.coerce_to_vertex_list droots in
   let live : vertex_id -> prop = major_live h1 droots in
+  MCFH.result_post_no_pending h1 rts;
+  MCFH.result_post_no_pending h2 rts;
   major_graphs_agree h1 h2 droots;
   graphs_agree_on_sym g1 g2 live;
   let roots_live (r: vertex_id) : Lemma (Seq.mem (r <: U64.t) rts ==> live r)
@@ -162,34 +166,39 @@ let major_result_post_transfer h1 h2 droots rts =
   in
   FStar.Classical.forall_intro roots_live;
   let fwd (w: U64.t) : Lemma
-    (MCFH.result_post_reachable h1 rts w ==> MCFH.result_post_reachable h2 rts w)
-  = if MCFH.result_post_reachable h1 rts w
+    (MCFH.result_post_reachable h1 SF.no_pending rts w ==>
+     MCFH.result_post_reachable h2 SF.no_pending rts w)
+  = if MCFH.result_post_reachable h1 SF.no_pending rts w
     then result_post_reachable_swap h1 h2 live rts w
   in
   FStar.Classical.forall_intro fwd;
   let bwd (w: U64.t) : Lemma
-    (MCFH.result_post_reachable h2 rts w ==> MCFH.result_post_reachable h1 rts w)
-  = if MCFH.result_post_reachable h2 rts w
+    (MCFH.result_post_reachable h2 SF.no_pending rts w ==>
+     MCFH.result_post_reachable h1 SF.no_pending rts w)
+  = if MCFH.result_post_reachable h2 SF.no_pending rts w
     then result_post_reachable_swap h2 h1 live rts w
   in
   FStar.Classical.forall_intro bwd;
   let edges (w1 w2: U64.t) : Lemma
-    (MCFH.result_post_reachable h1 rts w1 /\ MCFH.result_post_reachable h1 rts w2 ==>
-     (MCFH.result_post_edge h1 w1 w2 <==> MCFH.result_post_edge h2 w1 w2))
-  = if MCFH.result_post_reachable h1 rts w1 && MCFH.result_post_reachable h1 rts w2
+    (MCFH.result_post_reachable h1 SF.no_pending rts w1 /\
+     MCFH.result_post_reachable h1 SF.no_pending rts w2 ==>
+     (MCFH.result_post_edge h1 SF.no_pending w1 w2 <==>
+      MCFH.result_post_edge h2 SF.no_pending w1 w2))
+  = if MCFH.result_post_reachable h1 SF.no_pending rts w1 &&
+       MCFH.result_post_reachable h1 SF.no_pending rts w2
     then begin
       result_post_reachable_swap h1 h2 live rts w1;
       assert (live w1);
-      if MCFH.result_post_edge h1 w1 w2 then
+      if MCFH.result_post_edge h1 SF.no_pending w1 w2 then
         eliminate exists (s: hp_addr) (d: hp_addr).
           s == w1 /\ d == w2 /\ mem_graph_edge g1 s d
         with (edge_transfer g1 g2 live s d;
-              assert (MCFH.result_post_edge h2 w1 w2));
-      if MCFH.result_post_edge h2 w1 w2 then
+              assert (MCFH.result_post_edge h2 SF.no_pending w1 w2));
+      if MCFH.result_post_edge h2 SF.no_pending w1 w2 then
         eliminate exists (s: hp_addr) (d: hp_addr).
           s == w1 /\ d == w2 /\ mem_graph_edge g2 s d
         with (edge_transfer g1 g2 live s d;
-              assert (MCFH.result_post_edge h1 w1 w2))
+              assert (MCFH.result_post_edge h1 SF.no_pending w1 w2))
     end
   in
   FStar.Classical.forall_intro_2 edges
@@ -225,13 +234,16 @@ let iso_dst_swap
 let end_to_end_isomorphism_intro
   minor major fp roots post_major post_roots darkened droots final_major
   = major_result_post_transfer darkened final_major droots post_roots;
+    // darkening only recolours, so the graphs (with nothing pending) agree
+    MCFH.result_post_no_pending darkened post_roots;
+    MCFH.result_post_no_pending post_major post_roots;
     iso_dst_swap
-      (MinorFwd.normal_src_reachable minor major fp roots)
-      (MCFH.result_post_reachable post_major post_roots)
-      (MCFH.result_post_reachable final_major post_roots)
-      (MinorFwd.normal_src_edge minor major fp roots)
-      (MCFH.result_post_edge post_major)
-      (MCFH.result_post_edge final_major)
+      (MinorFwd.normal_src_reachable minor major fp SF.no_pending roots)
+      (MCFH.result_post_reachable post_major SF.no_pending post_roots)
+      (MCFH.result_post_reachable final_major SF.no_pending post_roots)
+      (MinorFwd.normal_src_edge minor major fp SF.no_pending roots)
+      (MCFH.result_post_edge post_major SF.no_pending)
+      (MCFH.result_post_edge final_major SF.no_pending)
       (GC.Gen.Cheney.cheney_promote minor major fp roots).fwd_map
 
 #pop-options

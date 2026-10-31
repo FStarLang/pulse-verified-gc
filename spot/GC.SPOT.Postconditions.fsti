@@ -25,11 +25,11 @@ val minor_collect_full_post_intro
         post_major == res.mc_major /\
         post_roots == res.mc_roots /\
         (ok ==> GC.Gen.MinorCollectForwarding.normal_result_reachable_subgraph_isomorphism_prop
-                   minor major fp roots post_major
+                   minor major fp GC.Spec.Fields.no_pending roots post_major
                    (GC.Gen.MinorCollectForwarding.Helpers.resolve_roots
                       post_major post_roots) /\
                  GC.Gen.MinorCollectForwarding.normal_result_non_pointer_fields_preserved_prop
-                   minor major fp roots post_major)))
+                   minor major fp GC.Spec.Fields.no_pending roots post_major)))
       (ensures minor_collect_full_post minor major fp roots ok post_major post_roots)
 
 /// Recover the concrete identity of the post-minor heap and roots from the
@@ -46,11 +46,11 @@ val minor_collect_full_post_elim
         post_major == res.mc_major /\
         post_roots == res.mc_roots /\
         (ok ==> GC.Gen.MinorCollectForwarding.normal_result_reachable_subgraph_isomorphism_prop
-                   minor major fp roots post_major
+                   minor major fp GC.Spec.Fields.no_pending roots post_major
                    (GC.Gen.MinorCollectForwarding.Helpers.resolve_roots
                       post_major post_roots) /\
                  GC.Gen.MinorCollectForwarding.normal_result_non_pointer_fields_preserved_prop
-                   minor major fp roots post_major)))
+                   minor major fp GC.Spec.Fields.no_pending roots post_major)))
 
 val promoted_image_from_forwarding
   : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
@@ -86,7 +86,7 @@ val major_minor_field_rewritten
         GC.Gen.MinorCollectForwarding.remembered_targets_in_roots major roots slots n /\
         GC.Gen.ReachabilityBridge.roots_not_freed roots major GC.Spec.Fields.no_pending /\
         GC.Gen.CheneyBFS.cheney_no_oom minor major fp roots /\
-        (let cg = GC.Gen.CombinedGraph.build_combined_graph minor major in
+        (let cg = GC.Gen.CombinedGraph.build_combined_graph minor major GC.Spec.Fields.no_pending in
          let combined_roots = GC.Gen.CombinedGraph.classify_roots minor roots in
          GC.Gen.CombinedGraph.combined_reachable cg combined_roots
            (GC.Gen.CombinedGraph.MajorV src) /\

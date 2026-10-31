@@ -428,13 +428,13 @@ let minor_collect_full_isomorphism_post
     (ensures
       (ok ==>
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-         minor major fp roots post_major post_roots /\
+         minor major fp pf roots post_major post_roots /\
        MinorFwd.normal_result_non_pointer_fields_preserved_prop
-         minor major fp roots post_major))
+         minor major fp pf roots post_major))
   =
     if ok
     then begin
-      MCFH.roots_valid_except_not_freed minor major pf roots;
+      MCFH.roots_valid_except_implies_not_freed minor major pf roots;
       MCFH.major_fields_covered_from_slots minor major pf roots slots n;
       MinorFwd.normal_post_reachable_subgraph_isomorphism
         minor major fp pf roots slots n;

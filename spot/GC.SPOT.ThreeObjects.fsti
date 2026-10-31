@@ -101,7 +101,7 @@ val spot_c_reachable_root
     Lemma
       (requires spot_minor_scenario_pre minor major fp c farr)
       (ensures (
-        let cg = GC.Gen.CombinedGraph.build_combined_graph minor major in
+        let cg = GC.Gen.CombinedGraph.build_combined_graph minor major GC.Spec.Fields.no_pending in
         GC.Gen.CombinedGraph.combined_reachable
           cg (GC.Gen.CombinedGraph.classify_roots minor (spot_roots c))
           (GC.Gen.CombinedGraph.MajorV c)))
@@ -113,7 +113,7 @@ val spot_a_reachable_root
     Lemma
       (requires spot_minor_scenario_pre minor major fp c farr)
       (ensures (
-        let cg = GC.Gen.CombinedGraph.build_combined_graph minor major in
+        let cg = GC.Gen.CombinedGraph.build_combined_graph minor major GC.Spec.Fields.no_pending in
         GC.Gen.CombinedGraph.combined_reachable
           cg (GC.Gen.CombinedGraph.classify_roots minor (spot_roots c))
           (GC.Gen.CombinedGraph.MinorV GC.SPOT.Layout.a_minor)))

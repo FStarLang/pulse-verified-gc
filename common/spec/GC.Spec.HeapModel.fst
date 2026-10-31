@@ -86,3 +86,35 @@ let graph_vertices_mem (g: heap) (x: obj_addr)
 /// ---------------------------------------------------------------------------
 /// Field Reads Equality (Data Transparency)
 /// ---------------------------------------------------------------------------
+
+/// ---------------------------------------------------------------------------
+/// The Graph Except the Objects Pending Free
+/// ---------------------------------------------------------------------------
+
+/// The heap graph except the objects pending free (`pf`): the same vertices,
+/// but a pending object, like a free block, has no outgoing edges.  So no edge
+/// dangles mid-sweep (`GC.Gen.MinorCollectForwarding.Helpers.create_graph_except_wf`).
+let create_graph_except (g: heap) (pf: obj_addr -> prop) : GTot graph_state =
+  objects_is_vertex_set g;
+  { vertices = HeapGraph.coerce_to_vertex_list (objects zero_addr g);
+    edges = HeapGraph.all_edges_except g pf (objects zero_addr g) }
+
+/// With nothing pending it is `create_graph`.
+let create_graph_except_no_pending (g: heap)
+  : Lemma (create_graph_except g no_pending == create_graph g)
+  = HeapGraph.all_edges_except_none g no_pending (objects zero_addr g)
+
+let create_graph_except_vertices (g: heap) (pf: obj_addr -> prop)
+  : Lemma ((create_graph_except g pf).vertices == (create_graph g).vertices)
+  = ()
+
+/// Its edges are those of `create_graph` out of the objects not pending.
+let create_graph_except_edge (g: heap) (pf: obj_addr -> prop) (src: obj_addr) (dst: vertex_id)
+  : Lemma (mem_graph_edge (create_graph_except g pf) src dst <==>
+           mem_graph_edge (create_graph g) src dst /\ ~(pf src))
+  = HeapGraph.all_edges_except_mem g pf (objects zero_addr g) src dst
+
+let create_graph_except_edge_subset (g: heap) (pf: obj_addr -> prop) (src dst: vertex_id)
+  : Lemma (mem_graph_edge (create_graph_except g pf) src dst ==>
+           mem_graph_edge (create_graph g) src dst)
+  = HeapGraph.all_edges_except_subset g pf (objects zero_addr g) (src, dst)

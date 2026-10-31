@@ -8,11 +8,11 @@
 ///
 /// The property is stated over `cheney_collect_spec_except` for a set `pf` of
 /// major objects pending free, since the Pulse implementation proves its
-/// concrete two-pass update equals that spec.  A pending object is never
-/// reachable (the roots are not pending, and a not-freed object points only at
-/// not-freed objects), so the graphs may keep it: it is outside every
-/// reachable part the theorems talk about.  `pf = no_pending` is the
-/// stop-the-world collection, `cheney_collect_spec`.
+/// concrete two-pass update equals that spec.  The graphs skip the pending
+/// objects as they skip free blocks: a pending object is a vertex with no
+/// outgoing edges (`CG.build_combined_graph`, `HeapModel.create_graph_except`),
+/// so no edge dangles mid-sweep.  `pf = no_pending` is the stop-the-world
+/// collection, `cheney_collect_spec`, over `HeapModel.create_graph`.
 /// The source roots are the program roots plus the remembered-set slot targets;
 /// when those remembered targets are represented in the root array and the
 /// collector returns `ok`, the forwarding map is an injective morphism for
@@ -120,7 +120,7 @@ val roots_valid_no_pending
     (ensures roots_valid_except minor major no_pending roots)
 
 /// `roots_valid_except` subsumes `RBridge.roots_not_freed`.
-val roots_valid_except_not_freed
+val roots_valid_except_implies_not_freed
   (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (roots: seq U64.t)
   : Lemma
     (requires roots_valid_except minor major pf roots)
@@ -186,16 +186,21 @@ val resolve_roots_congr (h1 h2: heap) (rts: seq U64.t)
     (ensures resolve_roots h1 rts == resolve_roots h2 rts)
     (decreases Seq.length rts)
 
-/// Result-indexed post-minor reachability: this names the concrete heap and
-/// (already resolved) roots exposed by an implementation postcondition.
-let result_post_reachable
-  (post_major: heap) (post_roots: seq U64.t) (w: U64.t) : prop =
-  let post_g = HeapModel.create_graph post_major in
+/// `w` is reachable in `post_g` from a vertex among `post_roots`.
+let reachable_from_roots (post_g: graph_state) (post_roots: seq U64.t) (w: U64.t) : prop =
   exists (rr: U64.t)
          (r: vertex_id{mem_graph_vertex post_g r})
          (x: vertex_id{mem_graph_vertex post_g x}).
     Seq.mem rr post_roots /\
     r == rr /\ x == w /\ reachable post_g r x
+
+/// Result-indexed post-minor reachability: this names the concrete heap and
+/// (already resolved) roots exposed by an implementation postcondition.  The
+/// graph is the heap graph except the objects pending free; at `no_pending`
+/// it is `HeapModel.create_graph` (`result_post_no_pending`).
+let result_post_reachable
+  (post_major: heap) (pf: obj_addr -> prop) (post_roots: seq U64.t) (w: U64.t) : prop =
+  reachable_from_roots (HeapModel.create_graph_except post_major pf) post_roots w
 
 /// The same predicate at the collector's own heap and resolved rewritten roots.
 ///
@@ -209,17 +214,25 @@ let post_minor_reachable
   (w: U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   let res = cheney_collect_spec_except minor major fp roots pf in
-  result_post_reachable res.mc_major
+  result_post_reachable res.mc_major pf
     (resolve_roots res.mc_major (rewrite_roots roots prom.fwd_map)) w
 
 let post_minor_edge
   (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (x y: U64.t) : prop =
   let res = cheney_collect_spec_except minor major fp roots pf in
-  mem_graph_edge_at (HeapModel.create_graph res.mc_major) x y
+  mem_graph_edge_at (HeapModel.create_graph_except res.mc_major pf) x y
 
-let result_post_edge (post_major: heap) (x y: U64.t) : prop =
-  mem_graph_edge_at (HeapModel.create_graph post_major) x y
+let result_post_edge (post_major: heap) (pf: obj_addr -> prop) (x y: U64.t) : prop =
+  mem_graph_edge_at (HeapModel.create_graph_except post_major pf) x y
+
+/// With nothing pending, the result predicates are about `HeapModel.create_graph`.
+val result_post_no_pending (post_major: heap) (post_roots: seq U64.t)
+  : Lemma
+    ((forall (w: U64.t). result_post_reachable post_major no_pending post_roots w <==>
+                         reachable_from_roots (HeapModel.create_graph post_major) post_roots w) /\
+     (forall (x y: U64.t). result_post_edge post_major no_pending x y <==>
+                           mem_graph_edge_at (HeapModel.create_graph post_major) x y))
 
 /// Reflexive entry at an *abstract* heap: a rewritten root that is itself a
 /// graph vertex is post-reachable.
@@ -228,20 +241,20 @@ let result_post_edge (post_major: heap) (x y: U64.t) : prop =
 /// applied term `(cheney_collect_spec_except minor major fp roots pf).mc_major` --- the
 /// solver does not find the three witnesses.
 val result_post_reachable_refl_direct
-  (post_major: heap) (post_roots: seq U64.t) (w: U64.t)
+  (post_major: heap) (pf: obj_addr -> prop) (post_roots: seq U64.t) (w: U64.t)
   : Lemma
     (requires Seq.mem w post_roots /\
-              mem_graph_vertex_at (HeapModel.create_graph post_major) w)
-    (ensures result_post_reachable post_major post_roots w)
+              mem_graph_vertex_at (HeapModel.create_graph_except post_major pf) w)
+    (ensures result_post_reachable post_major pf post_roots w)
 
 /// The same for a root whose *resolution* is the vertex.
 val result_post_reachable_refl_resolved
-  (post_major: heap) (rts: seq U64.t) (rr w: U64.t)
+  (post_major: heap) (pf: obj_addr -> prop) (rts: seq U64.t) (rr w: U64.t)
   : Lemma
     (requires Seq.mem rr rts /\
               HeapGraph.resolve_field post_major rr == w /\
-              mem_graph_vertex_at (HeapModel.create_graph post_major) w)
-    (ensures result_post_reachable post_major (resolve_roots post_major rts) w)
+              mem_graph_vertex_at (HeapModel.create_graph_except post_major pf) w)
+    (ensures result_post_reachable post_major pf (resolve_roots post_major rts) w)
 
 /// A rewritten root that names `w` --- either directly, or, when the root is an
 /// interior pointer, by resolving to it --- makes `w` post-reachable.
@@ -254,7 +267,7 @@ val post_minor_reachable_refl_from_root
       let res = cheney_collect_spec_except minor major fp roots pf in
       Seq.mem rr (rewrite_roots roots prom.fwd_map) /\
       HeapGraph.resolve_field res.mc_major rr == w /\
-      mem_graph_vertex_at (HeapModel.create_graph res.mc_major) w))
+      mem_graph_vertex_at (HeapModel.create_graph_except res.mc_major pf) w))
     (ensures post_minor_reachable minor major fp pf roots w)
 
 /// A major-to-major field is not affected by the pointer update: existing
@@ -275,30 +288,32 @@ val update_preserves_major_target_field
       read_word (update_walk major upd fwd)
         (U64.uint_to_t (U64.v src + j * 8)) == dst)
 
-/// Turn a concrete field value in a heap object into a graph edge in
-/// `HeapModel.create_graph`.
+/// Turn a concrete field value in a not-freed heap object into a graph edge in
+/// `HeapModel.create_graph_except`.
 val heap_field_points_to_graph_edge
-  (g: heap) (src: obj_addr) (dst: U64.t) (j: nat)
+  (g: heap) (pf: obj_addr -> prop) (src: obj_addr) (dst: U64.t) (j: nat)
   : Lemma
     (requires
       well_formed_heap_part1 g /\
-      Seq.mem src (objects zero_addr g) /\
-      ~(is_no_scan src g) /\ ~(is_blue src g) /\
+      not_freed g pf src /\
+      ~(is_no_scan src g) /\
       j < U64.v (wosize_of_object src g) /\
       U64.v src + j * 8 + 8 <= heap_size /\
       (U64.v src + j * 8) % 8 == 0 /\
       read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst /\
       HeapGraph.is_pointer_field dst)
-    (ensures mem_graph_edge (HeapModel.create_graph g) src
+    (ensures mem_graph_edge (HeapModel.create_graph_except g pf) src
                (HeapGraph.resolve_field g dst))
 
-/// A graph edge out of a not-freed object is one of its pointer fields.
+/// An edge of the graph except the objects pending free leaves a not-freed
+/// object along one of its pointer fields, and ends at a not-freed object.
 val heap_graph_edge_to_pointer_field
   (g: heap) (pf: obj_addr -> prop) (src dst: obj_addr)
   : Lemma
-    (requires mem_graph_edge (HeapModel.create_graph g) src dst /\
-              well_formed_heap_except g pf /\ not_freed g pf src)
+    (requires mem_graph_edge (HeapModel.create_graph_except g pf) src dst /\
+              well_formed_heap_except g pf)
     (ensures
+      not_freed g pf src /\ not_freed g pf dst /\
       Seq.mem src (objects zero_addr g) /\
       HeapGraph.object_fits_in_heap src g /\
       is_no_scan src g = false /\
@@ -308,12 +323,20 @@ val heap_graph_edge_to_pointer_field
         HeapGraph.is_pointer_field (HeapGraph.get_field g src j) /\
         HeapGraph.resolve_field g (HeapGraph.get_field g src j) == dst))
 
+/// The graph except the objects pending free is well formed (every edge ends
+/// at a vertex) when the heap is well formed except them: no edge dangles
+/// into a block a sweep has already merged.
+val create_graph_except_wf (g: heap) (pf: obj_addr -> prop)
+  : Lemma (requires well_formed_heap_except g pf)
+          (ensures graph_wf (HeapModel.create_graph_except g pf))
+
 val heap_graph_edge_to_field_read
   (g: heap) (pf: obj_addr -> prop) (src dst: obj_addr)
   : Lemma
-    (requires mem_graph_edge (HeapModel.create_graph g) src dst /\
-              well_formed_heap_except g pf /\ not_freed g pf src)
+    (requires mem_graph_edge (HeapModel.create_graph_except g pf) src dst /\
+              well_formed_heap_except g pf)
     (ensures
+      not_freed g pf src /\ not_freed g pf dst /\
       Seq.mem src (objects zero_addr g) /\
       is_no_scan src g = false /\
       HeapGraph.is_pointer_field dst /\
@@ -328,17 +351,17 @@ val heap_graph_edge_to_field_read
 
 /// Internal helper exposed to later forwarding proof slices.
 val mem_graph_vertex_at_is_obj_addr
-  (g: heap) (w: U64.t)
+  (g: heap) (pf: obj_addr -> prop) (w: U64.t)
   : Lemma
-    (requires mem_graph_vertex_at (HeapModel.create_graph g) w)
+    (requires mem_graph_vertex_at (HeapModel.create_graph_except g pf) w)
     (ensures is_val_addr w /\ Seq.mem (w <: obj_addr) (objects zero_addr g))
 
 /// A graph vertex resolves to itself: vertices are enumerated objects, and
 /// part 4 forbids an enumerated object from carrying an infix header.
-val vertex_resolves_to_itself (h: heap) (w: U64.t)
+val vertex_resolves_to_itself (h: heap) (pf: obj_addr -> prop) (w: U64.t)
   : Lemma
     (requires well_formed_heap_part4 h /\
-              mem_graph_vertex_at (HeapModel.create_graph h) w)
+              mem_graph_vertex_at (HeapModel.create_graph_except h pf) w)
     (ensures HeapGraph.resolve_field h w == w)
 
 /// Cheney promotion preserves the header-derived facts and body field of a

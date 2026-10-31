@@ -213,13 +213,13 @@ let normal_post_non_pointer_fields_preserved
     GenInv.major_shape_except_elim major fp pf;
     GenInv.minor_heap_shape_elim minor;
     assert (minor_wf minor);
-    assert (RBridge.roots_not_freed roots major pf);
-    RBridge.reachable_major_not_freed minor major pf roots;
+    MCFH.roots_valid_except_implies_not_freed minor major pf roots;
+    RBridge.reachable_never_pending minor major pf roots;
     MCFE.combined_reachable_images_valid_or_infix minor major fp pf roots;
     CheneyInj.cheney_promote_fwd_targets_not_blue minor major fp roots;
     CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots;
     let aux (u: CG.combined_vertex) : Lemma
-      (requires normal_src_reachable minor major fp roots u)
+      (requires normal_src_reachable minor major fp pf roots u)
       (ensures
         (match u with
         | CG.MajorV src ->
@@ -323,7 +323,7 @@ let normal_post_non_pointer_fields_preserved_to_result
   =
     let prom = cheney_promote minor major fp roots in
     let aux (u: CG.combined_vertex) : Lemma
-      (requires normal_src_reachable minor major fp roots u)
+      (requires normal_src_reachable minor major fp pf roots u)
       (ensures
         (match u with
         | CG.MajorV src ->

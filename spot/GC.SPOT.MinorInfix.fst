@@ -77,7 +77,10 @@ let spot_minor_infix_promoted
   assert (resolve_minor minor ov == par);
   // and the graph edge still names the promoted closure
   MCFE.combined_major_minor_edge_forwarded
-    minor major fp GC.Spec.Fields.no_pending roots slots n c par i
+    minor major fp GC.Spec.Fields.no_pending roots slots n c par i;
+  // with nothing pending, the post graph is `create_graph`
+  HeapModel.create_graph_except_no_pending
+    (Cheney.cheney_collect_spec minor major fp roots).mc_major
 #pop-options
 
 let spot_minor_infix_was_forbidden
@@ -89,7 +92,7 @@ let spot_minor_infix_was_forbidden
   GenInv.minor_heap_shape_elim minor;
   GenInv.major_heap_shape_elim major fp;
   MinorFwd.no_pending_context minor major fp roots slots n;
-  RBridge.reachable_major_not_freed minor major GC.Spec.Fields.no_pending roots;
+  RBridge.reachable_never_pending minor major GC.Spec.Fields.no_pending roots;
   assert (Seq.mem c (GC.Spec.Fields.objects zero_addr major));
   assert (~(SpecObj.is_blue c major));
   assert (deleted_major_minor_fields_no_infix_targets minor major);

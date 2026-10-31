@@ -44,7 +44,7 @@ let combined_reachable_edge_forwarded_normal
   (roots slots: seq U64.t) (n: nat)
   (u v: CG.combined_vertex)
   =
-    let cg = CG.build_combined_graph minor major in
+    let cg = CG.build_combined_graph minor major pf in
     let combined_roots = CG.classify_roots minor roots in
     let prom = cheney_promote minor major fp roots in
     GenInv.collection_shape_except_elim minor major fp pf;
@@ -53,22 +53,22 @@ let combined_reachable_edge_forwarded_normal
     assert (minor_wf minor);
     match u, v with
     | CG.MajorV src, CG.MajorV dst ->
-      CG.build_combined_graph_wf minor major;
+      CG.build_combined_graph_wf minor major pf;
       assert (CG.mem_cv u cg /\ CG.mem_cv v cg);
-      CG.major_vertex_valid minor major src;
-      CG.major_vertex_valid minor major dst;
+      CG.major_vertex_valid minor major pf src;
+      CG.major_vertex_valid minor major pf dst;
       let src_obj : obj_addr = src in
       let dst_obj : obj_addr = dst in
-      combined_reachable_major_edge_forwarded minor major fp pf roots src_obj dst_obj;
+      combined_major_edge_forwarded minor major fp pf roots src_obj dst_obj;
       assert (mem_graph_edge_at
-        (HeapModel.create_graph (cheney_collect_spec_except minor major fp roots pf).mc_major)
+        (HeapModel.create_graph_except (cheney_collect_spec_except minor major fp roots pf).mc_major pf)
         src dst)
     | CG.MajorV src, CG.MinorV dst ->
-      CG.build_combined_graph_wf minor major;
+      CG.build_combined_graph_wf minor major pf;
       assert (CG.mem_cv u cg);
-      CG.major_vertex_valid minor major src;
+      CG.major_vertex_valid minor major pf src;
       let src_obj : obj_addr = src in
-      CG.major_edge_elim minor major src (CG.MinorV dst);
+      CG.major_edge_elim minor major pf src (CG.MinorV dst);
       let i = FStar.IndefiniteDescription.indefinite_description_ghost nat
         (fun i -> i < U64.v (wosize_of_object src major) /\
           U64.v src + i * 8 + 8 <= heap_size /\
@@ -86,7 +86,7 @@ let combined_reachable_edge_forwarded_normal
       assert (is_blue (fwd_src <: obj_addr) prom.major_final = false);
       assert (is_no_scan (fwd_src <: obj_addr) prom.major_final = false);
       assert (is_val_addr dst);
-      CG.minor_edge_elim minor major src (CG.MajorV dst);
+      CG.minor_edge_elim minor major pf src (CG.MajorV dst);
       let i = FStar.IndefiniteDescription.indefinite_description_ghost nat
         (fun i -> i < minor_wosize minor src /\
           CG.classify_minor_field minor major (minor_read_field minor src i) == Some (CG.MajorV dst)) in
@@ -107,7 +107,7 @@ let combined_reachable_edge_forwarded_normal
       assert (is_blue (fwd_src <: obj_addr) prom.major_final = false);
       assert (is_no_scan (fwd_src <: obj_addr) prom.major_final = false);
       assert (is_minor_pointer dst);
-      CG.minor_edge_elim minor major src (CG.MinorV dst);
+      CG.minor_edge_elim minor major pf src (CG.MinorV dst);
       let i = FStar.IndefiniteDescription.indefinite_description_ghost nat
         (fun i -> i < minor_wosize minor src /\
           CG.classify_minor_field minor major (minor_read_field minor src i) == Some (CG.MinorV dst)) in
@@ -126,7 +126,7 @@ private let fwd_disjoint_reachable_major_at
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.roots_not_freed roots major pf /\
-      (let cg = CG.build_combined_graph minor major in
+      (let cg = CG.build_combined_graph minor major pf in
        let combined_roots = CG.classify_roots minor roots in
        let prom = cheney_promote minor major fp roots in
        CG.combined_reachable cg combined_roots (CG.MinorV x) /\
@@ -139,14 +139,14 @@ private let fwd_disjoint_reachable_major_at
        prom.fwd_map x <> y))
   =
     let prom = cheney_promote minor major fp roots in
-    let cg = CG.build_combined_graph minor major in
+    let cg = CG.build_combined_graph minor major pf in
     let combined_roots = CG.classify_roots minor roots in
     GenInv.collection_shape_except_elim minor major fp pf;
     GenInv.major_shape_except_elim major fp pf;
     GenInv.minor_heap_shape_elim minor;
     CheneyPres.cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
       minor major fp roots;
-    RBridge.reachable_major_not_freed minor major pf roots;
+    RBridge.reachable_never_pending minor major pf roots;
     assert (CG.combined_reachable cg combined_roots (CG.MajorV y));
     assert (U64.v y >= U64.v mword);
     assert (U64.v y < heap_size);
@@ -162,7 +162,7 @@ let fwd_disjoint_reachable_major_intro
   =
     let aux (x y: U64.t) : Lemma
       (requires
-        (let cg = CG.build_combined_graph minor major in
+        (let cg = CG.build_combined_graph minor major pf in
          let combined_roots = CG.classify_roots minor roots in
          let prom = cheney_promote minor major fp roots in
          CG.combined_reachable cg combined_roots (CG.MinorV x) /\
@@ -184,7 +184,7 @@ let minor_source_edge_not_no_scan
   (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
   (src: U64.t) (dst: CG.combined_vertex)
   =
-    CG.minor_edge_elim minor major src dst;
+    CG.minor_edge_elim minor major pf src dst;
     // `minor_object_edges` enumerates `minor_scan_wosize` fields, which is 0 on
     // a no-scan object, so a no-scan source emits no edge at all.  This used to
     // be a contradiction argument against `minor_no_scan_invariant`.
@@ -203,11 +203,11 @@ let combined_reachable_normal_injective
     GenInv.major_shape_except_elim major fp pf;
     GenInv.minor_heap_shape_elim minor;
     CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
-    RBridge.reachable_major_not_freed minor major pf roots;
+    RBridge.reachable_never_pending minor major pf roots;
     let prom = cheney_promote minor major fp roots in
     let aux (u v: CG.combined_vertex) : Lemma
       (requires
-        (let cg = CG.build_combined_graph minor major in
+        (let cg = CG.build_combined_graph minor major pf in
          let combined_roots = CG.classify_roots minor roots in
          CG.combined_reachable cg combined_roots u /\
          CG.combined_reachable cg combined_roots v /\
@@ -226,7 +226,7 @@ let combined_reachable_normal_injective
          CG.fwd_morphism prom.fwd_map u == CG.fwd_morphism prom.fwd_map v))
       (ensures u == v)
     =
-      let cg = CG.build_combined_graph minor major in
+      let cg = CG.build_combined_graph minor major pf in
       let combined_roots = CG.classify_roots minor roots in
       match u, v with
       | CG.MajorV x, CG.MajorV y -> ()
@@ -242,16 +242,16 @@ let combined_reachable_normal_injective
         assert (x == y)
       | CG.MinorV x, CG.MajorV y ->
         assert (prom.fwd_map x == y);
-        assert (fwd_disjoint_reachable_major minor major fp roots);
-        assert (normal_src_reachable minor major fp roots (CG.MinorV x));
-        assert (normal_src_reachable minor major fp roots (CG.MajorV y));
+        assert (fwd_disjoint_reachable_major minor major fp pf roots);
+        assert (normal_src_reachable minor major fp pf roots (CG.MinorV x));
+        assert (normal_src_reachable minor major fp pf roots (CG.MajorV y));
         assert (prom.fwd_map x <> y);
         assert False
       | CG.MajorV y, CG.MinorV x ->
         assert (y == prom.fwd_map x);
-        assert (fwd_disjoint_reachable_major minor major fp roots);
-        assert (normal_src_reachable minor major fp roots (CG.MinorV x));
-        assert (normal_src_reachable minor major fp roots (CG.MajorV y));
+        assert (fwd_disjoint_reachable_major minor major fp pf roots);
+        assert (normal_src_reachable minor major fp pf roots (CG.MinorV x));
+        assert (normal_src_reachable minor major fp pf roots (CG.MajorV y));
         assert (prom.fwd_map x <> y);
         assert False
     in
@@ -265,8 +265,8 @@ private let normal_minor_source_ready_intro
   : Lemma
     (requires
       GenInv.collection_shape_except minor major fp pf /\
-      normal_src_reachable minor major fp roots (CG.MinorV src) /\
-      CG.mem_ce (CG.MinorV src, dst) (CG.build_combined_graph minor major))
+      normal_src_reachable minor major fp pf roots (CG.MinorV src) /\
+      CG.mem_ce (CG.MinorV src, dst) (CG.build_combined_graph minor major pf))
     (ensures (
       let prom = cheney_promote minor major fp roots in
       let fwd_src = prom.fwd_map src in
@@ -297,7 +297,7 @@ private let normal_minor_source_ready_intro
     assert (fwd_src <> 0UL);
     assert (is_val_addr fwd_src);
     assert (is_infix fwd_src prom.major_final = false);
-    CG.edge_source_decomposition minor major (CG.MinorV src, dst);
+    CG.edge_source_decomposition minor major pf (CG.MinorV src, dst);
     assert (Seq.mem src (minor_objects minor));
     CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
     assert (Seq.mem (fwd_src <: obj_addr) (objects zero_addr prom.major_final));
@@ -342,18 +342,18 @@ let normal_edge_forward_ready_intro
     assert (minor_wf minor);
     assert (minor_infix_wf minor);
     CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
-    CG.build_combined_graph_wf minor major;
-    assert (CG.combined_graph_wf (CG.build_combined_graph minor major));
-    assert (CG.mem_cv u (CG.build_combined_graph minor major));
-    assert (CG.mem_cv v (CG.build_combined_graph minor major));
+    CG.build_combined_graph_wf minor major pf;
+    assert (CG.combined_graph_wf (CG.build_combined_graph minor major pf));
+    assert (CG.mem_cv u (CG.build_combined_graph minor major pf));
+    assert (CG.mem_cv v (CG.build_combined_graph minor major pf));
     match u, v with
     | CG.MajorV _, CG.MajorV _ -> ()
     | CG.MajorV _, CG.MinorV dst ->
       assert (prom.fwd_map dst <> 0UL);
       assert (is_val_addr (prom.fwd_map dst));
       is_val_addr_spec (prom.fwd_map dst);
-      assert (CG.mem_cv (CG.MinorV dst) (CG.build_combined_graph minor major));
-      CG.minor_vertex_char minor major dst;
+      assert (CG.mem_cv (CG.MinorV dst) (CG.build_combined_graph minor major pf));
+      CG.minor_vertex_char minor major pf dst;
       assert (Seq.mem dst (minor_objects minor));
       minor_objects_body_bound minor dst;
       assert (minor_wosize minor dst > 0);
@@ -365,8 +365,8 @@ let normal_edge_forward_ready_intro
       assert (HeapGraph.is_pointer_field (prom.fwd_map dst))
     | CG.MinorV src, CG.MajorV dst ->
       normal_minor_source_ready_intro minor major fp pf roots src (CG.MajorV dst);
-      assert (CG.mem_cv (CG.MajorV dst) (CG.build_combined_graph minor major));
-      CG.major_vertex_valid minor major dst;
+      assert (CG.mem_cv (CG.MajorV dst) (CG.build_combined_graph minor major pf));
+      CG.major_vertex_valid minor major pf dst;
       assert (U64.v dst >= U64.v mword);
       assert (U64.v dst < heap_size);
       assert (U64.v dst % U64.v mword == 0);
@@ -382,8 +382,8 @@ let normal_edge_forward_ready_intro
       assert (U64.v (prom.fwd_map dst) > U64.v zero_addr);
       assert (U64.v (prom.fwd_map dst) >= U64.v zero_addr + U64.v mword);
       assert (HeapGraph.is_pointer_field (prom.fwd_map dst));
-      assert (CG.mem_cv (CG.MinorV dst) (CG.build_combined_graph minor major));
-      CG.minor_vertex_char minor major dst;
+      assert (CG.mem_cv (CG.MinorV dst) (CG.build_combined_graph minor major pf));
+      CG.minor_vertex_char minor major pf dst;
       assert (Seq.mem dst (minor_objects minor));
       minor_objects_valid minor dst;
       assert (is_minor_pointer dst)
@@ -414,15 +414,15 @@ let normal_src_images_injective
       assert (is_infix (prom.fwd_map y) prom.major_final = false);
       assert (x == y)
     | CG.MinorV x, CG.MajorV y ->
-      assert (normal_src_reachable minor major fp roots (CG.MinorV x));
-      assert (normal_src_reachable minor major fp roots (CG.MajorV y));
+      assert (normal_src_reachable minor major fp pf roots (CG.MinorV x));
+      assert (normal_src_reachable minor major fp pf roots (CG.MajorV y));
       assert (prom.fwd_map x == y);
       fwd_disjoint_reachable_major_at minor major fp pf roots x y;
       assert (prom.fwd_map x <> y);
       assert False
     | CG.MajorV y, CG.MinorV x ->
-      assert (normal_src_reachable minor major fp roots (CG.MinorV x));
-      assert (normal_src_reachable minor major fp roots (CG.MajorV y));
+      assert (normal_src_reachable minor major fp pf roots (CG.MinorV x));
+      assert (normal_src_reachable minor major fp pf roots (CG.MajorV y));
       assert (y == prom.fwd_map x);
       fwd_disjoint_reachable_major_at minor major fp pf roots x y;
       assert (prom.fwd_map x <> y);

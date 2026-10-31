@@ -180,10 +180,10 @@ let spot_c_reachable_root
   =
   spot_roots_mem_c c;
   CG.classify_roots_major_mem minor (spot_roots c) (c <: U64.t);
-  CG.major_vertex_char minor major c;
-  assert (CG.mem_cv (CG.MajorV c) (CG.build_combined_graph minor major));
+  CG.major_vertex_char minor major GC.Spec.Fields.no_pending c;
+  assert (CG.mem_cv (CG.MajorV c) (CG.build_combined_graph minor major GC.Spec.Fields.no_pending));
   CG.combined_reachable_root
-    (CG.build_combined_graph minor major)
+    (CG.build_combined_graph minor major GC.Spec.Fields.no_pending)
     (CG.classify_roots minor (spot_roots c))
     (CG.MajorV c)
 
@@ -202,10 +202,11 @@ let spot_a_reachable_root
   GenInv.minor_heap_shape_elim minor;
   minor_objects_not_infix minor Layout.a_minor;
   CG.classify_roots_minor_mem_raw minor (spot_roots c) Layout.a_minor;
-  CG.minor_vertex_char minor major Layout.a_minor;
-  assert (CG.mem_cv (CG.MinorV Layout.a_minor) (CG.build_combined_graph minor major));
+  CG.minor_vertex_char minor major GC.Spec.Fields.no_pending Layout.a_minor;
+  assert (CG.mem_cv (CG.MinorV Layout.a_minor)
+    (CG.build_combined_graph minor major GC.Spec.Fields.no_pending));
   CG.combined_reachable_root
-    (CG.build_combined_graph minor major)
+    (CG.build_combined_graph minor major GC.Spec.Fields.no_pending)
     (CG.classify_roots minor (spot_roots c))
     (CG.MinorV Layout.a_minor)
 

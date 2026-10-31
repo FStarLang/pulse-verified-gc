@@ -73,16 +73,16 @@ fn call_minor_collect_full_spot
     (CheneySpec.cheney_collect_spec ({ data = 'd; bump = 'b } <: minor_state)
       's 'fp 'rs).mc_roots));
   assert (pure (ok ==> MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs s2
+    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.no_pending 'rs s2
     (MCFH.resolve_roots s2 rs2)));
   assert (pure (ok ==> MinorFwd.normal_result_non_pointer_fields_preserved_prop
-    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs s2));
+    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.no_pending 'rs s2));
   assert (pure (U64.v b2 == 0));
   assert (pure (ok ==> MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs s2
+    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.no_pending 'rs s2
     (MCFH.resolve_roots s2 rs2) /\
     MinorFwd.normal_result_non_pointer_fields_preserved_prop
-      ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs s2));
+      ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.no_pending 'rs s2));
   Postconditions.minor_collect_full_post_intro
     ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs ok s2 rs2;
   assert (pure (Postconditions.minor_collect_full_post

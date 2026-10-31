@@ -95,9 +95,9 @@ let major_object_not_minor_pointer
 #pop-options
 
 #push-options "--z3rlimit 15 --fuel 0 --ifuel 1"
-let reachable_major_not_freed
+let reachable_never_pending
   (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (roots: seq U64.t)
-  = let cg = build_combined_graph minor major in
+  = let cg = build_combined_graph minor major pf in
     let combined_roots = classify_roots minor roots in
     let p (cv: combined_vertex) : prop =
       match cv with
@@ -114,7 +114,7 @@ let reachable_major_not_freed
     = match r with
       | MinorV _ -> ()
       | MajorV v ->
-        major_vertex_valid minor major v;
+        major_vertex_valid minor major pf v;
         classify_roots_inv_major minor roots v
       | _ -> combined_vertex_cases r; assert False
     in
@@ -124,12 +124,12 @@ let reachable_major_not_freed
     = match w with
       | MinorV _ -> ()
       | MajorV dst ->
-        build_combined_graph_wf minor major;
+        build_combined_graph_wf minor major pf;
         assert (mem_cv w cg);
-        major_vertex_valid minor major dst;
+        major_vertex_valid minor major pf dst;
         match u with
         | MajorV src ->
-          major_edge_elim minor major src (MajorV dst);
+          major_edge_elim minor major pf src (MajorV dst);
           let pts_aux (i:nat) : Lemma
             (requires i < U64.v (wosize_of_object src major) /\
                       U64.v src + i * 8 + 8 <= heap_size /\
@@ -151,7 +151,7 @@ let reachable_major_not_freed
           in
           Classical.forall_intro (Classical.move_requires pts_aux)
         | MinorV src ->
-          minor_edge_elim minor major src (MajorV dst);
+          minor_edge_elim minor major pf src (MajorV dst);
           let inv_aux (i:nat) : Lemma
             (requires i < minor_scan_wosize minor src /\
                       classify_minor_field minor major (minor_read_field minor src i) == Some (MajorV dst))
@@ -175,8 +175,8 @@ let reachable_major_not_freed
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let reachable_major_valid
-  (minor: minor_state) (major: heap) (roots: seq U64.t)
-  = let cg = build_combined_graph minor major in
+  (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (roots: seq U64.t)
+  = let cg = build_combined_graph minor major pf in
     let combined_roots = classify_roots minor roots in
     let p (cv: combined_vertex) : prop =
       match cv with
@@ -190,7 +190,7 @@ let reachable_major_valid
       (ensures p r)
     = match r with
       | MinorV _ -> ()
-      | MajorV v -> major_vertex_valid minor major v
+      | MajorV v -> major_vertex_valid minor major pf v
     in
     let edge (u w: combined_vertex) : Lemma
       (requires p u /\ mem_ce (u, w) cg)
@@ -198,9 +198,9 @@ let reachable_major_valid
     = match w with
       | MinorV _ -> ()
       | MajorV v ->
-        build_combined_graph_wf minor major;
+        build_combined_graph_wf minor major pf;
         assert (mem_cv w cg);
-        major_vertex_valid minor major v
+        major_vertex_valid minor major pf v
     in
     Classical.forall_intro (Classical.move_requires base);
     Classical.forall_intro_2 (fun u -> Classical.move_requires (edge u));
@@ -215,7 +215,7 @@ let reachable_major_valid
 #push-options "--z3rlimit 15 --fuel 0 --ifuel 1"
 let reachability_bridge
   (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (roots: seq U64.t)
-  = let cg = build_combined_graph minor major in
+  = let cg = build_combined_graph minor major pf in
     let combined_roots = classify_roots minor roots in
     let p (cv: combined_vertex) : prop =
       match cv with
@@ -233,7 +233,7 @@ let reachability_bridge
         // `minor_reachable_roots` is stated over the resolution, so the
         // witness feeds it directly.
         classify_roots_inv_minor minor roots v;
-        minor_vertex_char minor major v;
+        minor_vertex_char minor major pf v;
         minor_reachable_roots minor roots
       | MajorV v ->
         ()
@@ -247,7 +247,7 @@ let reachability_bridge
       | MinorV v ->
         match u with
         | MinorV src ->
-          minor_edge_elim minor major src (MinorV v);
+          minor_edge_elim minor major pf src (MinorV v);
           let aux (i:nat) : Lemma
             (requires i < minor_scan_wosize minor src /\
                       classify_minor_field minor major (minor_read_field minor src i) == Some (MinorV v))
@@ -260,11 +260,9 @@ let reachability_bridge
           minor_successors_char minor src v;
           minor_reachable_closed minor roots src v
         | MajorV src ->
-          build_combined_graph_wf minor major;
-          major_vertex_valid minor major src;
-          reachable_major_not_freed minor major pf roots;
-          assert (not_freed major pf (src <: obj_addr));
-          major_edge_elim minor major src (MinorV v);
+          build_combined_graph_wf minor major pf;
+          major_vertex_valid minor major pf src;
+          major_edge_elim minor major pf src (MinorV v);
           let case_aux (i:nat) : Lemma
             (requires i < U64.v (wosize_of_object src major) /\
                       U64.v src + i * 8 + 8 <= heap_size /\

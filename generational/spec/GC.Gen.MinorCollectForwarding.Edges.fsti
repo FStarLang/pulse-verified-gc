@@ -9,8 +9,10 @@
 /// The property is stated over `cheney_collect_spec_except` for a set `pf` of
 /// major objects pending free (`no_pending` is the stop-the-world
 /// `cheney_collect_spec`), since the Pulse implementation proves its concrete
-/// two-pass update equals that spec.  Pending objects are never reachable: the
-/// roots are not pending and a not-freed object points only at not-freed ones.
+/// two-pass update equals that spec.  The graphs skip the pending objects as
+/// they skip free blocks (vertices with no outgoing edges), and no pending
+/// object is reachable: the roots are not pending and a not-freed object points
+/// only at not-freed ones.
 /// The source roots are the program roots plus the remembered-set slot targets;
 /// when those remembered targets are represented in the root array and the
 /// collector returns `ok`, the forwarding map is an injective morphism for
@@ -72,7 +74,7 @@ val combined_reachable_minor_has_fwd
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
-      let cg = CG.build_combined_graph minor major in
+      let cg = CG.build_combined_graph minor major pf in
       let combined_roots = CG.classify_roots minor roots in
       let fwd = (cheney_promote minor major fp roots).fwd_map in
       forall (v: U64.t).
@@ -81,7 +83,7 @@ val combined_reachable_minor_has_fwd
 
 let combined_reachable_images_valid_or_infix_prop
   (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t) : prop =
-  let cg = CG.build_combined_graph minor major in
+  let cg = CG.build_combined_graph minor major pf in
   let combined_roots = CG.classify_roots minor roots in
   let prom = cheney_promote minor major fp roots in
   let res = cheney_collect_spec_except minor major fp roots pf in
@@ -114,10 +116,7 @@ val combined_reachable_images_valid_or_infix
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures combined_reachable_images_valid_or_infix_prop minor major fp pf roots)
 
-/// Concrete MajorV -> MajorV edge-forwarding lemma for the eventual
-/// isomorphism: if a reachable pre-collection major object has a combined-graph
-/// edge to another major object, the post-minor major heap graph still contains
-/// the same concrete edge.
+
 /// A live major object's field target keeps its header word --- and therefore
 /// its resolution --- across a whole minor collection.  This is what lets a
 /// `MajorV src -> MajorV dst` combined-graph edge survive into the
@@ -139,20 +138,20 @@ val cheney_collect_frame_target_header
               GC.Spec.Object.resolve_object h res.mc_major ==
                 GC.Spec.Object.resolve_object h major))
 
-val combined_reachable_major_edge_forwarded
+/// Concrete MajorV -> MajorV edge-forwarding lemma for the eventual
+/// isomorphism: a combined-graph edge between two major objects is still an
+/// edge of the post-minor major heap graph.  Only a not-freed object has edges,
+/// so the source need not be known reachable.
+val combined_major_edge_forwarded
   (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (src dst: obj_addr)
   : Lemma
     (requires
       GenInv.collection_shape_except minor major fp pf /\
-      RBridge.roots_not_freed roots major pf /\
-      (let cg = CG.build_combined_graph minor major in
-       let combined_roots = CG.classify_roots minor roots in
-       CG.combined_reachable cg combined_roots (CG.MajorV src) /\
-       CG.mem_ce (CG.MajorV src, CG.MajorV dst) cg))
+      CG.mem_ce (CG.MajorV src, CG.MajorV dst) (CG.build_combined_graph minor major pf))
     (ensures
       (let res = cheney_collect_spec_except minor major fp roots pf in
-       mem_graph_edge (HeapModel.create_graph res.mc_major) src dst))
+       mem_graph_edge (HeapModel.create_graph_except res.mc_major pf) src dst))
 
 /// `U64.uint_to_t (v src + i * 8)` side condition, discharged in an empty
 /// context: under the full hypotheses of the lemma below Z3 5.x needs more than
@@ -177,7 +176,7 @@ val combined_major_minor_field_forwarded
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
-      (let cg = CG.build_combined_graph minor major in
+      (let cg = CG.build_combined_graph minor major pf in
        let combined_roots = CG.classify_roots minor roots in
        CG.combined_reachable cg combined_roots (CG.MajorV src) /\
        CG.combined_reachable cg combined_roots (CG.MinorV dst)) /\
@@ -212,7 +211,7 @@ val combined_major_minor_edge_forwarded
       CheneyBFS.cheney_no_oom minor major fp roots /\
       (let prom = cheney_promote minor major fp roots in
        HeapGraph.is_pointer_field (prom.fwd_map dst)) /\
-      (let cg = CG.build_combined_graph minor major in
+      (let cg = CG.build_combined_graph minor major pf in
        let combined_roots = CG.classify_roots minor roots in
        CG.combined_reachable cg combined_roots (CG.MajorV src) /\
        CG.combined_reachable cg combined_roots (CG.MinorV dst)) /\
@@ -226,7 +225,7 @@ val combined_major_minor_edge_forwarded
     (ensures (
       let prom = cheney_promote minor major fp roots in
       let res = cheney_collect_spec_except minor major fp roots pf in
-      mem_graph_edge (HeapModel.create_graph res.mc_major) src (prom.fwd_map dst)))
+      mem_graph_edge (HeapModel.create_graph_except res.mc_major pf) src (prom.fwd_map dst)))
 
 /// Field-level MinorV -> MajorV edge-forwarding slice: for a promoted normal
 /// minor source, a field that points to an old major object remains that major
@@ -283,7 +282,7 @@ val promoted_minor_major_edge_forwarded
     (ensures (
       let prom = cheney_promote minor major fp roots in
       let res = cheney_collect_spec_except minor major fp roots pf in
-      mem_graph_edge_at (HeapModel.create_graph res.mc_major) (prom.fwd_map src) dst))
+      mem_graph_edge_at (HeapModel.create_graph_except res.mc_major pf) (prom.fwd_map src) dst))
 
 /// Field-level MinorV -> MinorV edge-forwarding slice: for a promoted normal
 /// minor source, a copied field that points to another forwarded minor object
@@ -352,7 +351,7 @@ val promoted_minor_minor_edge_forwarded
     (ensures (
       let prom = cheney_promote minor major fp roots in
       let res = cheney_collect_spec_except minor major fp roots pf in
-      mem_graph_edge_at (HeapModel.create_graph res.mc_major)
+      mem_graph_edge_at (HeapModel.create_graph_except res.mc_major pf)
         (prom.fwd_map src) (prom.fwd_map dst)))
 
 /// Side condition for the normal-object edge-forwarding theorem.  Minor-source

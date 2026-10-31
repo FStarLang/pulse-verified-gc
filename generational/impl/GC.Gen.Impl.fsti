@@ -266,10 +266,10 @@ let gen_gc_reachable_subgraph_isomorphism_post
    MRT.end_to_end_isomorphism minor major fp roots final_major
      (MCFH.resolve_roots result.mc_major roots_out) /\
    MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-     minor major fp roots result.mc_major
+     minor major fp SpecFields.no_pending roots result.mc_major
      (MCFH.resolve_roots result.mc_major roots_out) /\
    MinorFwd.normal_result_non_pointer_fields_preserved_prop
-     minor major fp roots result.mc_major /\
+     minor major fp SpecFields.no_pending roots result.mc_major /\
    SpecGCPost.major_gc_live_subgraph_isomorphism
      (fst prepared) final_major (snd prepared))
 
@@ -374,14 +374,14 @@ let minor_collect_post_except
   // The shape is kept, for the same pending set
   GenInv.collection_shape_except ({ data = d2; bump = b2 } <: minor_state) s2 fp2 pf /\
   // If promotion succeeds, the collection is a reachable-subgraph isomorphism
-  // over the post-collection heap graph (pending objects are never reachable).
+  // over the graphs except the pending objects, which have no outgoing edges.
   (not ok ==> CheneyBFS.cheney_oom minor_st s fp rs) /\
   (ok ==>
    CheneyBFS.cheney_no_oom minor_st s fp rs /\
    MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-     minor_st s fp rs s2 (MCFH.resolve_roots s2 rs2) /\
+     minor_st s fp pf rs s2 (MCFH.resolve_roots s2 rs2) /\
    MinorFwd.normal_result_non_pointer_fields_preserved_prop
-     minor_st s fp rs s2)
+     minor_st s fp pf rs s2)
 
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
@@ -462,9 +462,9 @@ let minor_collect_post_idle
   (ok ==>
    CheneyBFS.cheney_no_oom minor_st s fp rs /\
    MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-     minor_st s fp rs s2 (MCFH.resolve_roots s2 rs2) /\
+     minor_st s fp SpecFields.no_pending rs s2 (MCFH.resolve_roots s2 rs2) /\
    MinorFwd.normal_result_non_pointer_fields_preserved_prop
-     minor_st s fp rs s2)
+     minor_st s fp SpecFields.no_pending rs s2)
 
 /// The stop-the-world precondition is the general one at `no_pending` ...
 val minor_collect_idle_pre

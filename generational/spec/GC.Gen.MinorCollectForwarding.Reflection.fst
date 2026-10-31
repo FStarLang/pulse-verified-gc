@@ -108,8 +108,8 @@ let field_read_at (g: heap) (src: obj_addr) (dst: U64.t) (j: nat) : prop =
 #push-options "--fuel 0 --ifuel 2 --z3rlimit 10"
 private let field_read_exists (g: heap) (pf: obj_addr -> prop) (src dst: obj_addr)
   : Lemma
-    (requires mem_graph_edge (HeapModel.create_graph g) src dst /\
-              well_formed_heap_except g pf /\ not_freed g pf src)
+    (requires mem_graph_edge (HeapModel.create_graph_except g pf) src dst /\
+              well_formed_heap_except g pf)
     (ensures exists (j: nat). field_read_at g src dst j)
   =
   MCFH.heap_graph_edge_to_field_read g pf src dst
@@ -145,7 +145,7 @@ private let normal_src_image_is_val_addr
   : Lemma
     (requires
       GenInv.collection_shape_except minor major fp pf /\
-      normal_src_reachable minor major fp roots u)
+      normal_src_reachable minor major fp pf roots u)
     (ensures (
       let prom = cheney_promote minor major fp roots in
       is_val_addr (CG.fwd_morphism prom.fwd_map u)))
@@ -156,7 +156,7 @@ private let normal_src_image_is_val_addr
     GenInv.minor_heap_shape_elim minor;
     match u with
     | CG.MajorV x ->
-      RBridge.reachable_major_valid minor major roots;
+      RBridge.reachable_major_valid minor major pf roots;
       assert (U64.v x >= U64.v mword);
       assert (U64.v x < heap_size);
       assert (U64.v x % U64.v mword == 0);
@@ -175,13 +175,13 @@ private let post_minor_edge_to_mem_graph_edge
       post_minor_edge minor major fp pf roots x y)
     (ensures (
       let res = cheney_collect_spec_except minor major fp roots pf in
-      mem_graph_edge (HeapModel.create_graph res.mc_major)
+      mem_graph_edge (HeapModel.create_graph_except res.mc_major pf)
         (x <: obj_addr) (y <: obj_addr)))
   =
     is_val_addr_spec x;
     is_val_addr_spec y;
     let res = cheney_collect_spec_except minor major fp roots pf in
-    let post_g = HeapModel.create_graph res.mc_major in
+    let post_g = HeapModel.create_graph_except res.mc_major pf in
     let s = FStar.IndefiniteDescription.indefinite_description_ghost hp_addr
       (fun s -> exists (d: hp_addr). s == x /\ d == y /\ mem_graph_edge post_g s d) in
     let d = FStar.IndefiniteDescription.indefinite_description_ghost hp_addr
@@ -202,7 +202,7 @@ let post_edge_from_minor_image_reflects_mem_ce
     let prom = cheney_promote minor major fp roots in
     let res = cheney_collect_spec_except minor major fp roots pf in
     let updated = res.mc_major in
-    let cg = CG.build_combined_graph minor major in
+    let cg = CG.build_combined_graph minor major pf in
     let combined_roots = CG.classify_roots minor roots in
     let fwd_src = prom.fwd_map src in
     let target_img = CG.fwd_morphism prom.fwd_map v in
@@ -226,7 +226,6 @@ let post_edge_from_minor_image_reflects_mem_ce
     assert (is_val_addr target_img);
     post_minor_edge_to_mem_graph_edge minor major fp pf roots fwd_src target_img;
     MCFH.post_shape_except minor major fp pf roots;
-    MCFH.image_not_freed minor major fp pf roots src fwd_src_obj;
     MCFH.heap_graph_edge_to_field_read updated pf fwd_src_obj (target_img <: obj_addr);
     heap_size_facts ();
     field_read_exists updated pf fwd_src_obj (target_img <: obj_addr);
@@ -296,11 +295,11 @@ let post_edge_from_minor_image_reflects_mem_ce
           CG.classify_minor_field_minor minor major (minor_read_field minor src j);
           assert (CG.classify_minor_field minor major (minor_read_field minor src j) ==
             Some (CG.MinorV dst));
-          CG.minor_field_edge_intro minor major src j (CG.MinorV dst)
+          CG.minor_field_edge_intro minor major pf src j (CG.MinorV dst)
         | CG.MajorV dst ->
           assert (target_img == dst);
           assert (CG.combined_reachable cg combined_roots (CG.MajorV dst));
-          RBridge.reachable_major_not_freed minor major pf roots;
+          RBridge.reachable_never_pending minor major pf roots;
           assert (Seq.mem (dst <: obj_addr) (objects zero_addr major));
           assert (~(is_blue (dst <: obj_addr) major));
           assert (prom.fwd_map rv == dst);
@@ -329,7 +328,7 @@ let post_edge_from_minor_image_reflects_mem_ce
           CG.classify_minor_field_minor_raw minor major (minor_read_field minor src j);
           assert (CG.classify_minor_field minor major (minor_read_field minor src j) ==
             Some (CG.MinorV old_val));
-          CG.minor_field_edge_intro minor major src j (CG.MinorV old_val);
+          CG.minor_field_edge_intro minor major pf src j (CG.MinorV old_val);
           CG.combined_reachable_step cg combined_roots (CG.MinorV src) (CG.MinorV old_val);
           minor_objects_body_bound minor old_val;
           assert (CG.combined_reachable cg combined_roots (CG.MinorV old_val));
@@ -368,7 +367,7 @@ let post_edge_from_minor_image_reflects_mem_ce
           CG.classify_minor_field_major minor major (minor_read_field minor src j);
           assert (CG.classify_minor_field minor major (minor_read_field minor src j) ==
             Some (CG.MajorV old_raw));
-          CG.minor_field_edge_intro minor major src j (CG.MajorV old_raw);
+          CG.minor_field_edge_intro minor major pf src j (CG.MajorV old_raw);
           match v with
           | CG.MajorV dst ->
             assert (old_raw == dst)
@@ -397,7 +396,7 @@ let post_edge_from_minor_image_reflects_target
     let prom = cheney_promote minor major fp roots in
     let res = cheney_collect_spec_except minor major fp roots pf in
     let updated = res.mc_major in
-    let cg = CG.build_combined_graph minor major in
+    let cg = CG.build_combined_graph minor major pf in
     let combined_roots = CG.classify_roots minor roots in
     let fwd_src = prom.fwd_map src in
     GenInv.collection_shape_except_elim minor major fp pf;
@@ -416,11 +415,10 @@ let post_edge_from_minor_image_reflects_target
     let fwd_src_obj : obj_addr = fwd_src in
     assert (Seq.mem fwd_src_obj (objects zero_addr prom.major_final));
     assert (is_blue fwd_src_obj prom.major_final = false);
-    MCFH.mem_graph_vertex_at_is_obj_addr updated y;
+    MCFH.mem_graph_vertex_at_is_obj_addr updated pf y;
     assert (is_val_addr y);
     post_minor_edge_to_mem_graph_edge minor major fp pf roots fwd_src y;
     MCFH.post_shape_except minor major fp pf roots;
-    MCFH.image_not_freed minor major fp pf roots src fwd_src_obj;
     MCFH.heap_graph_edge_to_field_read updated pf fwd_src_obj (y <: obj_addr);
     heap_size_facts ();
     field_read_exists updated pf fwd_src_obj (y <: obj_addr);
@@ -478,12 +476,12 @@ let post_edge_from_minor_image_reflects_target
         CG.classify_minor_field_minor minor major (minor_read_field minor src j);
         assert (CG.classify_minor_field minor major (minor_read_field minor src j) ==
           Some (CG.MinorV rv));
-        CG.minor_field_edge_intro minor major src j (CG.MinorV rv);
+        CG.minor_field_edge_intro minor major pf src j (CG.MinorV rv);
         CG.combined_reachable_step cg combined_roots (CG.MinorV src) (CG.MinorV rv);
         assert (normal_vertex_ready minor major fp roots (CG.MinorV rv));
         FStar.Classical.exists_intro
           (fun (u: CG.combined_vertex) ->
-            normal_src_reachable minor major fp roots u /\
+            normal_src_reachable minor major fp pf roots u /\
             CG.fwd_morphism prom.fwd_map u == y)
           (CG.MinorV rv)
       end else begin
@@ -495,7 +493,7 @@ let post_edge_from_minor_image_reflects_target
           assert (is_minor_addr old_val);
           minor_field_target_non_infix minor major fp pf roots src j;
           CG.classify_minor_field_minor_raw minor major (minor_read_field minor src j);
-          CG.minor_field_edge_intro minor major src j (CG.MinorV old_val);
+          CG.minor_field_edge_intro minor major pf src j (CG.MinorV old_val);
           CG.combined_reachable_step cg combined_roots (CG.MinorV src) (CG.MinorV old_val);
           minor_objects_body_bound minor old_val;
           assert (CG.combined_reachable cg combined_roots (CG.MinorV old_val));
@@ -534,12 +532,12 @@ let post_edge_from_minor_image_reflects_target
           CG.classify_minor_field_major minor major (minor_read_field minor src j);
           assert (CG.classify_minor_field minor major (minor_read_field minor src j) ==
             Some (CG.MajorV old_raw));
-          CG.minor_field_edge_intro minor major src j (CG.MajorV old_raw);
+          CG.minor_field_edge_intro minor major pf src j (CG.MajorV old_raw);
           CG.combined_reachable_step cg combined_roots (CG.MinorV src) (CG.MajorV old_raw);
-          assert (normal_src_reachable minor major fp roots (CG.MajorV old_raw));
+          assert (normal_src_reachable minor major fp pf roots (CG.MajorV old_raw));
           FStar.Classical.exists_intro
             (fun (u: CG.combined_vertex) ->
-              normal_src_reachable minor major fp roots u /\
+              normal_src_reachable minor major fp pf roots u /\
               CG.fwd_morphism prom.fwd_map u == y)
             (CG.MajorV old_raw)
         end

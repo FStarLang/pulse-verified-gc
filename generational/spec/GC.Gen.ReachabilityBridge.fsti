@@ -75,12 +75,13 @@ val major_object_not_minor_pointer
   : Lemma (requires Seq.mem obj (objects zero_addr major))
           (ensures ~(is_minor_pointer obj) /\ to_minor_offset obj == obj)
 
-/// Every reachable major vertex is a valid not-freed major object: the roots
+/// Every reachable major vertex is a real not-freed major object: the roots
 /// are, a nursery field into the major heap targets one
 /// (`minor_major_fields_not_freed`), and so does a field of a not-freed major
-/// object (`well_formed_heap_except`).  So a pending-free object is never
-/// reachable, and its fields are never read.
-val reachable_major_not_freed
+/// object (`well_formed_heap_except`).  So an object pending free is never
+/// reachable.  (Its fields are never read either way: in the graph it has no
+/// edges.)
+val reachable_never_pending
   (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (roots: seq U64.t)
   : Lemma
     (requires
@@ -89,7 +90,7 @@ val reachable_major_not_freed
       GenInv.minor_major_fields_not_freed minor major pf /\
       roots_not_freed roots major pf)
     (ensures (
-      let cg = build_combined_graph minor major in
+      let cg = build_combined_graph minor major pf in
       let combined_roots = classify_roots minor roots in
       forall (v: U64.t).
         combined_reachable cg combined_roots (MajorV v) ==>
@@ -100,11 +101,11 @@ val reachable_major_not_freed
 /// Every reachable major vertex is a valid major object.  This weaker form is
 /// enough for image-validity proofs and does not require root color facts.
 val reachable_major_valid
-  (minor: minor_state) (major: heap) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (roots: seq U64.t)
   : Lemma
     (requires minor_wf minor)
     (ensures (
-      let cg = build_combined_graph minor major in
+      let cg = build_combined_graph minor major pf in
       let combined_roots = classify_roots minor roots in
       forall (v: U64.t).
         combined_reachable cg combined_roots (MajorV v) ==>
@@ -134,18 +135,14 @@ let major_fields_covered
      Seq.mem v roots)
 
 /// Any minor vertex reachable in the combined graph is reachable by Cheney
-/// from `roots`.
+/// from `roots`.  Only a not-freed major object has edges, so the remembered
+/// set's coverage of those objects is all the major heap must supply.
 val reachability_bridge
   (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (roots: seq U64.t)
   : Lemma
-    (requires
-      well_formed_heap_except major pf /\
-      minor_wf minor /\
-      GenInv.minor_major_fields_not_freed minor major pf /\
-      roots_not_freed roots major pf /\
-      major_fields_covered minor major pf roots)
+    (requires minor_wf minor /\ major_fields_covered minor major pf roots)
     (ensures (
-      let cg = build_combined_graph minor major in
+      let cg = build_combined_graph minor major pf in
       let combined_roots = classify_roots minor roots in
       forall (v: U64.t).
         combined_reachable cg combined_roots (MinorV v) ==>

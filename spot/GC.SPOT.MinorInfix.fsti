@@ -77,7 +77,7 @@ let minor_infix_scenario
   CheneyBFS.cheney_no_oom minor major fp roots /\
   ~(SpecObj.is_no_scan c major) /\
   i < U64.v (SpecObj.wosize_of_object c major) /\
-  (let cg = CG.build_combined_graph minor major in
+  (let cg = CG.build_combined_graph minor major GC.Spec.Fields.no_pending in
    let combined_roots = CG.classify_roots minor roots in
    CG.combined_reachable cg combined_roots (CG.MajorV c) /\
    CG.combined_reachable cg combined_roots

@@ -49,9 +49,9 @@ let normal_vertex_ready
     is_infix (prom.fwd_map x) prom.major_final = false
 
 let normal_src_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (u: CG.combined_vertex) : prop =
-  let cg = CG.build_combined_graph minor major in
+  let cg = CG.build_combined_graph minor major pf in
   let combined_roots = CG.classify_roots minor roots in
   CG.combined_reachable cg combined_roots u /\
   normal_vertex_ready minor major fp roots u
@@ -61,7 +61,7 @@ let normal_post_non_pointer_fields_preserved_prop
   let prom = cheney_promote minor major fp roots in
   let res = cheney_collect_spec_except minor major fp roots pf in
   forall (u: CG.combined_vertex).
-    normal_src_reachable minor major fp roots u ==>
+    normal_src_reachable minor major fp pf roots u ==>
     (match u with
     | CG.MajorV src ->
       is_val_addr src ==>
@@ -87,11 +87,11 @@ let normal_post_non_pointer_fields_preserved_prop
     | _ -> True)
 
 let normal_result_non_pointer_fields_preserved_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
   (post_major: heap) : prop =
   let prom = cheney_promote minor major fp roots in
   forall (u: CG.combined_vertex).
-    normal_src_reachable minor major fp roots u ==>
+    normal_src_reachable minor major fp pf roots u ==>
     (match u with
     | CG.MajorV src ->
       is_val_addr src ==>
@@ -125,7 +125,6 @@ val normal_post_non_pointer_fields_preserved
       RBridge.major_fields_covered minor major pf roots /\
       TPC.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
-      RBridge.roots_not_freed roots major pf /\
       roots_valid_except minor major pf roots /\
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures normal_post_non_pointer_fields_preserved_prop minor major fp pf roots)
@@ -139,5 +138,5 @@ val normal_post_non_pointer_fields_preserved_to_result
       normal_post_non_pointer_fields_preserved_prop minor major fp pf roots)
     (ensures
       normal_result_non_pointer_fields_preserved_prop
-        minor major fp roots post_major)
+        minor major fp pf roots post_major)
 #pop-options
