@@ -337,8 +337,8 @@ These lemmas replace many current facts that follow trivially from
 - Existing object headers and fields are unchanged by expansion.
 - Existing no-scan objects still have no pointer fields.
 - Existing graph vertices and edges are unchanged.
-- Fresh blue free blocks are excluded from the live graph and from
-  `no_pointer_to_blue` obligations except as non-targets.
+- Fresh blue free blocks are excluded from the live graph and from part 2 of
+  `well_formed_heap` except as non-targets.
 - If a field pointed to a valid old major object before expansion, it still does
   after expansion.
 

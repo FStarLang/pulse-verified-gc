@@ -280,40 +280,55 @@ g` but only the edges out of objects not pending
 difference.
 
 The main heap well-formedness predicate lives in
-`common/spec/GC.Spec.Fields.fst`:
+`common/spec/GC.Spec.Fields.fst`.  It is stated except a set `pf` of objects
+*pending free* (see the minor collection below), and the stop-the-world
+predicate is the case where nothing is pending:
 
 ```fstar
-let well_formed_heap (g: heap) : prop =
+let well_formed_heap_except (g: heap) (pf: obj_addr -> prop) : prop =
   well_formed_heap_part1 g /\
-  well_formed_heap_part2 g /\
-  well_formed_heap_part3 g /\
+  well_formed_heap_part2_except g pf /\
+  well_formed_heap_part3_except g pf /\
   well_formed_heap_part4 g
+
+let well_formed_heap (g: heap) : prop = well_formed_heap_except g no_pending
 ```
 
-The four parts say:
+(`well_formed_heap_part2 g` and `well_formed_heap_part3 g` are likewise the
+`no_pending` instances.)  The four parts say:
 
 1. Every enumerated object fits in the heap.
-2. Every pointer field of every object points *into* another enumerated object:
-   the target's enclosing block (`resolve_object`) is enumerated.
+2. Every pointer field of every scannable, non-free object points *into* another
+   enumerated, non-free object: the target's enclosing block (`resolve_object`)
+   is enumerated and not blue.  So nothing the collector scans points at a free
+   block.
 3. Infix objects are well-formed relative to their parent objects.
 4. The enumerated object list excludes infix sub-objects as independent roots of
    the object traversal.
+
+Part 2 used to say only "enumerated"; "not blue" was the separate predicate
+`no_pointer_to_blue`, which every mark and sweep lemma carried beside it.  It is
+now one clause.  Marking keeps it because it only recolours among white, grey
+and black (`Mark.color_change_preserves_wf` requires a non-blue colour and a
+non-blue object, so blueness is unchanged); the sweep proves it of its result
+in `FusedSweep.End.sweep_post_wf`.
 
 #### Interior (infix) pointers in major fields
 
 Parts 2 and 3 are stated on the **resolved** target, not on the raw field value:
 
 ```fstar
-let well_formed_heap_part2 (g: heap) : prop =
+let well_formed_heap_part2_except (g: heap) (pf: obj_addr -> prop) : prop =
   forall (src dst: obj_addr).
-    Seq.mem src (objects zero_addr g) /\
-    exists_field_pointing_to_unchecked g src (wosize_of_object src g) dst ==>
-    Seq.mem (resolve_object dst g) (objects zero_addr g)
+    (not_freed g pf src /\ fields_constrained g src /\
+     exists_field_pointing_to_unchecked g src (wosize_of_object src g) dst) ==>
+    not_freed g pf (resolve_object dst g)
 ```
 
+where `not_freed g pf x` is "enumerated, not blue, not pending".
 `resolve_object` is the identity on an ordinary pointer and maps an interior
 pointer to the head of the closure that contains it. So part 2 says *the
-enclosing block of every field target is an enumerated object*, which is exactly
+enclosing block of every field target is a live enumerated object*, which is exactly
 OCaml's rule, and part 3 (`infix_wf`) is the non-vacuous side condition that
 makes the mapping well defined: an infix header carries the offset back to its
 parent, that parent is itself an enumerated object, and it has `Closure_tag`.
@@ -347,7 +362,7 @@ Two consequences of the resolved formulation:
 Both collectors handle interior pointers out of *live* objects in full
 generality.  Free (blue) blocks are not constrained at all beyond their
 free-list link: `GC.Spec.Fields.fields_constrained` excludes blue sources from
-parts 2 and 3 of `well_formed_heap` and from `no_pointer_to_blue`, and
+parts 2 and 3 of `well_formed_heap`, and
 `GC.Spec.HeapGraph.get_pointer_fields` gives a blue block no edges (and the
 graphs except the objects pending free give a pending one none).  Nothing in
 the collector reads such a word -- mark scans only grey objects, sweep and
@@ -566,7 +581,6 @@ let gc_precondition (s: heap) (st: seq obj_addr)
   SpecMark.root_props s st /\
   SpecSweep.fp_in_heap fp s /\
   SpecMark.no_black_objects s /\
-  SpecMark.no_pointer_to_blue s /\
   SpecFields.no_scan_invariant s /\
   ... graph_wf/create_graph/root facts ...
 ```
@@ -832,7 +846,6 @@ let major_heap_shape (major: heap) (fp: U64.t) : prop =
   SweepInv.fp_valid fp major /\
   Sweep.fp_in_heap fp major /\
   Mark.no_black_objects major /\
-  Mark.no_pointer_to_blue major /\
   no_scan_invariant major
 
 let minor_heap_shape (minor: minor_state) : prop =
@@ -983,9 +996,8 @@ minor collection needs of the heaps, for a pending set chosen by the caller:
 A pending object is unconstrained: its fields may point anywhere, free blocks
 included, and the collection never reads them.  At `no_pending` this is
 `collection_heap_shape` without its two colour facts
-(`collection_heap_shape_no_pending`, `collection_heap_shape_of_no_pending`);
-part 2 at `no_pending` already contains `no_pointer_to_blue`
-(`GC.Spec.NoPending`).
+(`collection_heap_shape_no_pending`, `collection_heap_shape_of_no_pending`):
+`well_formed_heap` *is* `well_formed_heap_except` at `no_pending`.
 
 `GC.Gen.CheneyExcept` proves it is kept, event by event: promotion keeps every
 not-freed object not freed, makes the images of the promoted nursery objects
@@ -1596,7 +1608,7 @@ the implementation always had and simply never stated.  With it,
 cross-generation conjuncts and reduces the whole obligation to
 `major_heap_shape` of the major heap and free-list head.
 
-That is fifteen conjuncts, and it is where the work is.
+That is fourteen conjuncts, and it is where the work is.
 `GC.Gen.PostCollectionShape.major_gc_restores_major_heap_shape` proves them for
 `fused_sweep_coalesce h_mark fp` under `GC.Spec.Correctness.mark_post` and an
 exact, ascending input list, all read off the sweep's end lemma
@@ -1613,7 +1625,6 @@ exact, ascending input list, all read off the sweep's end lemma
 | `chain_objects_blue` | `FreeList.Ascending.fl_ascending_avoids` |
 | `fp_valid`, `fp_in_heap` | `GC.Gen.FreeListShape`, from `fl_valid` |
 | `no_black_objects`, `no_gray_objects` | `FusedSweep.End.sweep_post_white_or_blue` |
-| `no_pointer_to_blue` | `FusedSweep.End.sweep_post_wf` |
 
 **The free list is kept, so it must be invariant.**  The sweep needs the list
 it is handed to be exact and ascending, which is why the shape invariant
