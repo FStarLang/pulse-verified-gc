@@ -574,8 +574,20 @@ let alloc_from_block_preserves_objects_part1
 /// alloc_from_block_rem_in_objects_part1
 /// ---------------------------------------------------------------------------
 
+/// An enumerated object's header is at or above the enumeration start
+/// (obj > start, both word-aligned, hd = obj - 8).
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+private let enumerated_hd_ge_start (start: hp_addr) (g: heap) (obj: obj_addr)
+  : Lemma (requires Seq.mem obj (objects start g))
+          (ensures U64.v start <= U64.v (hd_address obj))
+  = objects_addresses_gt_start start g obj;
+    hd_address_spec obj;
+    assert (U64.v obj > U64.v start);
+    assert (U64.v obj % 8 == 0 /\ U64.v start % 8 == 0)
+#pop-options
+
 #restart-solver
-#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let alloc_from_block_alloc_in_objects_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   = alloc_split_facts_part1 g obj wz next_fp;
@@ -591,17 +603,35 @@ let alloc_from_block_alloc_in_objects_part1
     f_address_spec ah;
     let alloc_obj_addr : obj_addr = f_address ah in
     // the allocated object heads objects(ah, g3)
-    if next_hd_nat >= heap_size then
+    assert (getWosize (read_word g3 ah) == U64.uint_to_t wz);
+    FStar.Math.Lemmas.distributivity_add_left wz 1 8;
+    FStar.Math.Lemmas.distributivity_sub_left block_wz wz 8;
+    FStar.Math.Lemmas.distributivity_add_left block_wz 1 8;
+    assert (U64.v ah + ((U64.v (getWosize (read_word g3 ah)) + 1) * 8) == next_hd_nat);
+    if next_hd_nat >= heap_size then begin
+      objects_cons_end ah g3;
       mem_cons_lemma alloc_obj_addr alloc_obj_addr (Seq.empty #obj_addr)
-    else begin
+    end else begin
       let next_hd_hp : hp_addr = U64.uint_to_t next_hd_nat in
+      objects_cons_step_to ah g3 next_hd_hp;
       mem_cons_lemma alloc_obj_addr alloc_obj_addr (objects next_hd_hp g3)
     end;
+    assert (Seq.mem alloc_obj_addr (objects ah g3));
     // objects(hd, g3) = obj :: objects(ah, g3), the remainder then the object
-    mem_cons_lemma alloc_obj_addr obj (objects ah g3);
-    alloc_split_old_in_new_part1 g obj wz next_fp obj;
+    // (the remainder header at hd has wosize leftover - 1, so its successor
+    // header is exactly ah)
+    assert (Seq.length g3 == Seq.length g);
+    assert (getWosize (read_word g3 hd) == U64.uint_to_t (leftover - 1));
+    assert (U64.v hd + ((U64.v (getWosize (read_word g3 hd)) + 1) * 8) == ahn);
+    objects_cons_step_to hd g3 ah;
     f_address_spec hd;
-    objects_addresses_gt_start zero_addr g obj;
+    f_hd_roundtrip obj;
+    assert (f_address hd == obj);
+    assert (objects hd g3 == Seq.cons obj (objects ah g3));
+    mem_cons_lemma alloc_obj_addr obj (objects ah g3);
+    assert (Seq.mem alloc_obj_addr (objects hd g3));
+    alloc_split_old_in_new_part1 g obj wz next_fp obj;
+    enumerated_hd_ge_start zero_addr g obj;
     assert (U64.v zero_addr <= U64.v hd);
     objects_later_in_earlier zero_addr g3 hd alloc_obj_addr
 #pop-options
