@@ -285,19 +285,6 @@ val darken_roots_bounded_spec_preserves_no_black
         SpecMark.no_black_objects
           (fst (darken_roots_bounded_spec g st roots cap)))
 
-val darken_roots_bounded_spec_preserves_no_pointer_to_blue
-  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
-  (cap: nat)
-  : Lemma
-      (requires
-        SpecFields.well_formed_heap g /\
-        SpecMark.no_pointer_to_blue g /\
-        (forall (i:nat). i < Seq.length roots ==>
-          root_points_to_object g (Seq.index roots i)))
-      (ensures
-        SpecMark.no_pointer_to_blue
-          (fst (darken_roots_bounded_spec g st roots cap)))
-
 /// Darkening only recolours white objects, so it changes neither the set of
 /// allocated objects nor the free-list head.  Both free-list facts therefore
 /// come for free from `darken_roots_bounded_spec_preserves_objects`.
@@ -364,7 +351,6 @@ fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkBoundedInv.bounded_mark_inv 's 'st (stack_capacity st) /\
                  SpecMark.no_black_objects 's /\
-                 SpecMark.no_pointer_to_blue 's /\
                  SpecMark.root_props 's roots /\
                  (forall (x:GC.Spec.Base.obj_addr). Seq.mem x (SpecFields.objects GC.Spec.Base.zero_addr 's) /\
                    (GC.Spec.Object.is_gray x 's \/ GC.Spec.Object.is_black x 's) ==> Seq.mem x roots) /\

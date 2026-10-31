@@ -967,38 +967,6 @@ let spot_infix_no_gray_objects (r: unit{spot_infix_room})
   SweepInv.no_gray_intro g
 #pop-options
 
-/// The interior pointer's *resolved* target is P, which is white, so the
-/// no-pointer-to-blue invariant survives it.
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
-let spot_infix_no_pointer_to_blue (r: unit{spot_infix_room})
-  : Lemma (ensures SpecMark.no_pointer_to_blue (spot_infix_heap r))
-  =
-  let g = spot_infix_heap r in
-  spot_infix_wfh_part1 r;
-  let field_no_blue (src: obj_addr) (dst: obj_addr) (j: nat)
-    : Lemma (requires Seq.mem src (SpecFields.objects zero_addr g) /\
-                      ~(SpecObj.is_blue src g) /\
-                      j < U64.v (SpecObj.wosize_of_object src g) /\
-                      U64.v src + j * 8 + 8 <= heap_size /\
-                      SpecFields.is_pointer_to
-                        (read_word g (U64.uint_to_t (U64.v src + j * 8))) dst)
-            (ensures ~(SpecObj.is_blue (SpecObj.resolve_object dst g) g))
-    =
-    spot_infix_field_pointer_cases r src j;
-    spot_infix_layout_facts r;
-    let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
-    assert (SpecFields.is_pointer_field v);
-    assert (v == (spot_h r <: U64.t));
-    hd_address_spec (v <: obj_addr);
-    hd_address_spec dst;
-    assert (dst == spot_h r);
-    spot_infix_h_resolves_to_p r;
-    spot_infix_p_reads r
-  in
-  SpecMark.no_pointer_to_blue_intro_from_fields g field_no_blue
-#pop-options
-
-
 /// ---------------------------------------------------------------------------
 /// The audit
 /// ---------------------------------------------------------------------------
@@ -1066,7 +1034,6 @@ let spot_infix_major_heap_shape (r: unit{spot_infix_room})
   spot_infix_fp_in_heap r;
   spot_infix_no_black_objects r;
   spot_infix_no_gray_objects r;
-  spot_infix_no_pointer_to_blue r;
   spot_infix_wfh_part1 r;
   spot_infix_wfh_part2_3 r;
   spot_infix_fl_complete r;

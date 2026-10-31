@@ -124,7 +124,6 @@ val gc_completeness : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_ad
   Lemma (requires well_formed_heap h_init /\ stack_props h_init st /\
                   root_props h_init roots /\
                   no_black_objects h_init /\
-                  no_pointer_to_blue h_init /\
                   (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
                   (let graph = create_graph h_init in
                    let roots' = HeapGraph.coerce_to_vertex_list roots in
@@ -160,11 +159,9 @@ val mark_post_intro :
       objects zero_addr h_mark == objects zero_addr h_init /\
       heap_objects_dense h_mark /\
       Seq.length (objects zero_addr h_mark) > 0 /\
-      no_pointer_to_blue h_mark /\
       tri_color_invariant h_mark /\
       FL.fp_in_heap fp h_init /\
       no_black_objects h_init /\
-      no_pointer_to_blue h_init /\
       (let g_init = create_graph h_init in
        let roots' = HeapGraph.coerce_to_vertex_list roots in
        graph_wf g_init /\ is_vertex_set roots' /\ subset_vertices roots' g_init.vertices ==>
@@ -190,8 +187,6 @@ val mark_post_elim_objects : h_init:heap -> h_mark:heap -> roots:seq obj_addr ->
         (ensures objects zero_addr h_mark == objects zero_addr h_init)
 val mark_post_elim_tri_color : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
   Lemma (requires mark_post h_init h_mark roots fp) (ensures tri_color_invariant h_mark)
-val mark_post_elim_no_pointer_to_blue : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
-  Lemma (requires mark_post h_init h_mark roots fp) (ensures no_pointer_to_blue h_mark)
 val mark_post_elim_graph : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
   Lemma (requires mark_post h_init h_mark roots fp)
         (ensures create_graph h_mark == create_graph h_init)
@@ -268,7 +263,6 @@ val mark_satisfies_mark_post :
       root_props h_init roots /\
       FL.fp_in_heap fp h_init /\
       no_black_objects h_init /\
-      no_pointer_to_blue h_init /\
       (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
       (let graph = create_graph h_init in
        let roots' = HeapGraph.coerce_to_vertex_list roots in
@@ -325,7 +319,7 @@ val fused_post_gen :
     (requires mark_post h_init h_mark roots fp /\ FLA.fl_ascending h_init fp)
     (ensures (let r = FS.fused_sweep_coalesce h_mark fp in
               FSE.sweep_post h_mark (fst r) (snd r) /\
-              well_formed_heap (fst r) /\ no_pointer_to_blue (fst r)))
+              well_formed_heap (fst r)))
 
 val gc_postcondition_fused :
   (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
@@ -390,7 +384,6 @@ let e2e_pre (h_init: heap) (st: seq obj_addr) (roots: seq obj_addr) (fp: U64.t) 
   Seq.length (objects zero_addr h_init) > 0 /\
   FLA.fl_ascending h_init fp /\
   no_black_objects h_init /\
-  no_pointer_to_blue h_init /\
   (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
   (let graph = create_graph h_init in
    let roots' = HeapGraph.coerce_to_vertex_list roots in

@@ -468,19 +468,7 @@ let sweep_post_wf (g0 g: heap) (fp: U64.t) =
       infix_addr_wf_transfer g0 g objs0 objs dst
   in
   well_formed_heap_part2_intro g (fun src dst -> facts src dst);
-  well_formed_heap_part3_intro g (fun src dst -> facts src dst);
-  let npb (src dst: obj_addr)
-    : Lemma (Seq.mem src objs /\ ~(is_blue src g) /\ fields_constrained g src /\
-             points_to g src dst ==> ~(is_blue (resolve_object dst g) g))
-    = if Seq.mem src objs && not (is_blue src g) && fields_constrained g src &&
-         points_to g src dst then begin
-        live_source g0 g fp src;
-        survivor_points_to g0 g fp src dst;
-        sweep_post_target g0 g fp src dst;
-        Mark.colors_exclusive (resolve_object dst g) g
-      end
-  in
-  FStar.Classical.forall_intro_2 npb
+  well_formed_heap_part3_intro g (fun src dst -> facts src dst)
 #pop-options
 
 #push-options "--z3rlimit 40"

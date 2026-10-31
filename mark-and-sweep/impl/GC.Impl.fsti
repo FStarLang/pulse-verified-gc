@@ -38,7 +38,6 @@ let gc_precondition_with_roots
   SpecMark.root_props s roots /\
   GC.Spec.FreeList.fp_in_heap fp s /\
   SpecMark.no_black_objects s /\
-  SpecMark.no_pointer_to_blue s /\
   (forall (x: GC.Spec.Base.obj_addr). Seq.mem x (SpecFields.objects GC.Spec.Base.zero_addr s) /\
     (GC.Spec.Object.is_gray x s \/ GC.Spec.Object.is_black x s) ==> Seq.mem x roots) /\
   (let graph = SpecHeapModel.create_graph s in

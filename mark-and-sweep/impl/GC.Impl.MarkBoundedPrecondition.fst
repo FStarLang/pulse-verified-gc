@@ -361,13 +361,12 @@ let darken_establishes_precondition g st roots fp cap
     // 3. the free list
     FStar.Classical.forall_intro (FStar.Classical.move_requires (darken_keeps_cell g st roots fp cap));
     FLA.fl_ascending_transfer g g' fp;
-    // 5, 6, 7. colour and shape invariants
+    // 5, 6. colour and shape invariants
     MB.darken_roots_bounded_spec_preserves_no_black g st roots cap;
-    MB.darken_roots_bounded_spec_preserves_no_pointer_to_blue g st roots cap;
-    // 8. every gray-or-black object is on the stack: there are no black objects,
+    // 7. every gray-or-black object is on the stack: there are no black objects,
     //    and darkening keeps all gray objects on the stack.
     RL.darken_roots_bounded_spec_preserves_gray_objects_on_stack g st roots cap;
-    // 9. graph facts
+    // 8. graph facts
     SpecMark.create_graph_wf_from_heap g';
     stack_no_dups_is_vertex_set st';
     SpecMark.root_props_subset_create_graph g' st'

@@ -771,34 +771,6 @@ let spot_ns_no_gray_objects (r: unit{spot_ns_room})
   SweepInv.no_gray_intro g
 #pop-options
 
-/// The raw word is never followed, so it cannot be a pointer to the free list:
-/// `no_pointer_to_blue` skips no-scan sources for exactly the same reason
-/// `well_formed_heap_part2` does.
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
-let spot_ns_no_pointer_to_blue (r: unit{spot_ns_room})
-  : Lemma (ensures SpecMark.no_pointer_to_blue (spot_ns_heap r))
-  =
-  let g = spot_ns_heap r in
-  spot_ns_wfh_part1 r;
-  let field_no_blue (src: obj_addr) (dst: obj_addr) (j: nat)
-    : Lemma (requires Seq.mem src (SpecFields.objects zero_addr g) /\
-                      ~(SpecObj.is_blue src g) /\
-                      SpecFields.fields_constrained g src /\
-                      j < U64.v (SpecObj.wosize_of_object src g) /\
-                      U64.v src + j * 8 + 8 <= heap_size /\
-                      SpecFields.is_pointer_to
-                        (read_word g (U64.uint_to_t (U64.v src + j * 8))) dst)
-            (ensures ~(SpecObj.is_blue (SpecObj.resolve_object dst g) g))
-    =
-    spot_ns_object_cases r src;
-    spot_ns_s_reads r;
-    spot_ns_free_reads r;
-    spot_ns_field_read r src j
-  in
-  SpecMark.no_pointer_to_blue_intro_from_fields g field_no_blue
-
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// The audit
 /// ---------------------------------------------------------------------------
@@ -866,7 +838,6 @@ let spot_ns_major_heap_shape (r: unit{spot_ns_room})
   spot_ns_fp_in_heap r;
   spot_ns_no_black_objects r;
   spot_ns_no_gray_objects r;
-  spot_ns_no_pointer_to_blue r;
   spot_ns_wfh_part1 r;
   spot_ns_wfh_part2_3 r;
   spot_ns_fl_complete r;

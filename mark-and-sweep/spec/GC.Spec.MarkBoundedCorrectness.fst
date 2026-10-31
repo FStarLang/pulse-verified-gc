@@ -85,29 +85,6 @@ let mark_step_bounded_preserves_wosize
       push_children_preserves_wosize g1 (Seq.tail st) obj 1UL ws x
     end
 
-/// mark_step_bounded preserves resolve_object: it only recolours objects, and
-/// colour bits do not participate in interior-pointer resolution.
-let mark_step_bounded_preserves_resolve
-  (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat) (x: obj_addr)
-  = mark_step_bounded_heap_eq g st st cap;
-    let obj = Seq.head st in
-    bounded_stack_head_is_gray g st;
-    makeBlack_eq obj g;
-    let g1 = makeBlack obj g in
-    color_change_preserves_resolve obj x g Header.Black;
-    let ws = wosize_of_object obj g in
-    if is_no_scan obj g then ()
-    else begin
-      color_change_preserves_wf g obj Header.Black;
-      color_change_preserves_objects g obj Header.Black;
-      color_change_preserves_objects_mem g obj Header.Black obj;
-      set_object_color_preserves_getWosize_at_hd obj g Header.Black;
-      wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
-      wosize_of_object_bound obj g;
-      color_preserves_is_no_scan obj g Header.Black;
-      push_children_preserves_resolve g1 (Seq.tail st) obj 1UL ws x
-    end
-
 /// mark_step_bounded preserves is_no_scan
 let mark_step_bounded_preserves_is_no_scan
   (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat) (x: obj_addr)
@@ -282,37 +259,8 @@ let mark_step_bounded_preserves_tri_color g st cap =
 #pop-options
 
 /// =========================================================================
-/// Part 4: mark_step_bounded preserves no_pointer_to_blue
+/// Part 4: mark_step_bounded and blueness
 /// =========================================================================
-
-let mark_step_bounded_preserves_points_to
-  (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
-  (src dst: obj_addr)
-  = mark_step_bounded_heap_eq g st st cap;
-    let obj = Seq.head st in
-    bounded_stack_head_is_gray g st;
-    makeBlack_eq obj g;
-    let g1 = makeBlack obj g in
-    if src = obj then
-      color_change_preserves_points_to_self g obj Header.Black dst
-    else begin
-      hd_address_injective src obj;
-      color_change_preserves_points_to_other g obj Header.Black src dst
-    end;
-    assert (points_to g1 src dst == points_to g src dst);
-    let ws = wosize_of_object obj g in
-    if is_no_scan obj g then ()
-    else begin
-      color_change_preserves_wf g obj Header.Black;
-      color_change_preserves_objects g obj Header.Black;
-      color_change_preserves_objects_mem g obj Header.Black obj;
-      color_change_preserves_objects_mem g obj Header.Black src;
-      set_object_color_preserves_getWosize_at_hd obj g Header.Black;
-      wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
-      wosize_of_object_bound obj g;
-      color_preserves_is_no_scan obj g Header.Black;
-      push_children_preserves_points_to g1 (Seq.tail st) obj 1UL ws src dst
-    end
 
 let mark_step_bounded_preserves_blue
   (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat) (x: obj_addr)
@@ -363,37 +311,6 @@ let mark_step_bounded_no_new_blue
       push_children_no_new_blue g1 (Seq.tail st) obj 1UL ws x
     end
 
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
-let mark_step_bounded_preserves_no_pointer_to_blue
-  (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
-  = let g' = fst (mark_step_bounded g st cap) in
-    mark_step_bounded_preserves_objects g st cap;
-    let aux (src dst: obj_addr) : Lemma
-      (requires Seq.mem src (objects zero_addr g') /\ ~(is_blue src g') /\
-                fields_constrained g' src /\ points_to g' src dst)
-      (ensures ~(is_blue (resolve_object dst g') g'))
-    = assert (Seq.mem src (objects zero_addr g));
-      mark_step_bounded_preserves_points_to g st cap src dst;
-      mark_step_bounded_preserves_is_no_scan g st cap src;
-      assert (points_to g src dst);
-      if is_blue src g then
-        mark_step_bounded_preserves_blue g st cap src
-      else begin
-        wosize_of_object_bound src g;
-        points_to_target_in_objects g src dst;
-        mark_step_bounded_preserves_resolve g st cap dst;
-        mark_step_bounded_no_new_blue g st cap (resolve_object dst g)
-      end
-    in
-    let aux2 (src dst: obj_addr) : Lemma
-      (Seq.mem src (objects zero_addr g') ==> ~(is_blue src g') ==>
-       fields_constrained g' src ==> points_to g' src dst ==>
-       ~(is_blue (resolve_object dst g') g'))
-    = FStar.Classical.move_requires (aux src) dst
-    in
-    FStar.Classical.forall_intro_2 aux2
-#pop-options
-
 /// =========================================================================
 /// Part 5: mark_step_bounded preserves mark_color_inv
 /// =========================================================================
@@ -422,7 +339,6 @@ let mark_step_bounded_preserves_color_inv
        push_children_preserves_wf g1 (Seq.tail st) obj 1UL ws
      end);
     mark_step_bounded_preserves_tri_color g st cap;
-    mark_step_bounded_preserves_no_pointer_to_blue g st cap;
     mark_step_bounded_preserves_create_graph g st cap;
     let aux_ws (x: obj_addr) : Lemma
       (requires Seq.mem x (objects zero_addr h_init))
@@ -648,7 +564,6 @@ let mark_bounded_reachable_is_black
       noGreyObjects_from_no_gray h_mark;
       assert (noGreyObjects h_mark);
       assert (tri_color_invariant h_mark);
-      assert (no_pointer_to_blue h_mark);
       reachable_set_correct graph roots';
       FStar.Classical.exists_elim (is_black x h_mark) ()
         (fun (r: vertex_id{mem_graph_vertex graph r /\
@@ -1273,7 +1188,6 @@ let mark_post_from_bounded_mark
     assert (objects zero_addr h_mark == objects zero_addr h_init);
     assert (heap_objects_dense h_mark);
     assert (Seq.length (objects zero_addr h_mark) > 0);
-    assert (no_pointer_to_blue h_mark);
     assert (tri_color_invariant h_mark);
     assert (create_graph h_mark == create_graph h_init);
     // noGreyObjects from no_gray_objects
@@ -1299,7 +1213,6 @@ let mark_post_from_bounded_mark
     = assert (create_graph h_mark == graph);
       assert (noGreyObjects h_mark);
       assert (tri_color_invariant h_mark);
-      assert (no_pointer_to_blue h_mark);
       reachable_set_correct graph roots';
       FStar.Classical.exists_elim (is_black x h_mark) ()
         (fun (r: vertex_id{mem_graph_vertex graph r /\

@@ -50,8 +50,7 @@ let major_heap_shape (major: heap) (fp: U64.t) : prop =
   SweepInv.fp_valid fp major /\
   GC.Spec.FreeList.fp_in_heap fp major /\
   Mark.no_black_objects major /\
-  SweepInv.no_gray_objects major /\
-  Mark.no_pointer_to_blue major
+  SweepInv.no_gray_objects major
 
 [@@"opaque_to_smt"]
 let minor_major_fields_no_blue (minor: minor_state) (major: heap) : prop =
@@ -94,11 +93,6 @@ let minor_major_fields_no_blue_no_pointer_fields
   =
   reveal_opaque (`%minor_major_fields_no_blue)
     (minor_major_fields_no_blue minor major)
-
-let minor_major_fields_no_blue_elim (minor: minor_state) (major: heap)
-  (obj: U64.t) (j: nat)
-  = reveal_opaque (`%minor_major_fields_no_blue)
-      (minor_major_fields_no_blue minor major)
 
 let collection_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
   = reveal_opaque (`%collection_heap_shape)
@@ -196,8 +190,6 @@ let collection_heap_shape_after_minor_reset
 /// The collection's shape, except the objects pending free
 /// ---------------------------------------------------------------------------
 
-module NoPending = GC.Spec.NoPending
-
 [@@"opaque_to_smt"]
 let major_shape_except (major: heap) (fp: U64.t) (pf: obj_addr -> prop) : prop =
   pending_ok major pf /\
@@ -268,12 +260,10 @@ let collection_shape_except_elim minor major fp pf =
 let major_heap_shape_no_pending major fp =
   major_heap_shape_elim major fp;
   no_pending_ok major;
-  NoPending.wf_except_no_pending_intro major;
   major_shape_except_intro major fp no_pending
 
 let major_heap_shape_of_no_pending major fp =
   major_shape_except_elim major fp no_pending;
-  NoPending.wf_except_no_pending_elim major;
   major_heap_shape_intro major fp
 
 let collection_heap_shape_no_pending minor major fp =

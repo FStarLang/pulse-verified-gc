@@ -127,11 +127,9 @@ let mark_post (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) : prop =
   objects zero_addr h_mark == objects zero_addr h_init /\
   heap_objects_dense h_mark /\
   Seq.length (objects zero_addr h_mark) > 0 /\
-  no_pointer_to_blue h_mark /\
   tri_color_invariant h_mark /\
   FL.fp_in_heap fp h_init /\
   no_black_objects h_init /\
-  no_pointer_to_blue h_init /\
   (let g_init = create_graph h_init in
    let roots' = HeapGraph.coerce_to_vertex_list roots in
    graph_wf g_init /\ is_vertex_set roots' /\ subset_vertices roots' g_init.vertices ==>
@@ -151,7 +149,6 @@ let mark_post_elim_wfh h_init h_mark roots fp = ()
 let mark_post_elim_no_grey h_init h_mark roots fp = ()
 let mark_post_elim_objects h_init h_mark roots fp = ()
 let mark_post_elim_tri_color h_init h_mark roots fp = ()
-let mark_post_elim_no_pointer_to_blue h_init h_mark roots fp = ()
 let mark_post_elim_graph h_init h_mark roots fp = ()
 let mark_post_elim_density h_init h_mark roots fp = ()
 let mark_post_elim_objects_gt0 h_init h_mark roots fp = ()
@@ -177,8 +174,6 @@ let mark_satisfies_mark_post h_init st roots fp =
   // density and objects > 0 for h_mark
   mark_preserves_density h_init st;
   mark_preserves_objects_gt0 h_init st;
-  // no_pointer_to_blue
-  mark_preserves_no_pointer_to_blue h_init st;
   // tri_color
   no_black_implies_tri_color h_init;
   mark_preserves_tri_color h_init st;

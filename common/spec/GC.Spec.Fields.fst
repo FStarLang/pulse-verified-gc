@@ -940,8 +940,7 @@ let wf_parts (_: unit) : Lemma
 /// `GC.Spec.HeapGraph.get_pointer_fields` returns `Seq.empty` for it.  What
 /// needs it is `well_formed_heap_part2`, whose antecedent runs through
 /// `exists_field_pointing_to_unchecked` --- "unchecked" meaning it walks every
-/// field of every object without consulting the tag --- and likewise
-/// `GC.Spec.Mark.no_pointer_to_blue` via `points_to`.  Those two demand field
+/// field of every object without consulting the tag.  That demands field
 /// closure for words the collector never reads, and this invariant is what
 /// assumes the demand away.
 ///
@@ -1041,25 +1040,6 @@ let wf_resolve_identity (g: heap) (x: obj_addr) : Lemma
   (ensures GC.Spec.Object.resolve_object x g == x)
   = wf_objects_non_infix g x;
     GC.Spec.Object.resolve_non_infix x g
-
-/// `infix_wf` over the enumerated object list.  Since part 4 keeps infix
-/// objects out of that list, this is vacuous --- which is exactly why part 3
-/// was moved off `objects` and onto field targets.  Retained because a number
-/// of downstream lemmas (`resolve_object_in_objects` and friends) are phrased
-/// in terms of it.
-let wf_infix_wf (g: heap) : Lemma
-  (requires well_formed_heap g)
-  (ensures GC.Spec.Object.infix_wf g (objects zero_addr g))
-  = wf_parts ();
-    let pf (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects zero_addr g) /\ GC.Spec.Object.is_infix h g)
-      (ensures (let p = GC.Spec.Object.parent_closure_addr_nat h g in
-                p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
-                Seq.mem (U64.uint_to_t p) (objects zero_addr g) /\
-                GC.Spec.Object.is_closure (U64.uint_to_t p) g))
-      = ()  // part 4 makes the hypothesis contradictory
-    in
-    GC.Spec.Object.infix_wf_intro g (objects zero_addr g) pf
 
 /// In a well-formed heap, the *resolved* target of a pointer field of an
 /// enumerated object is itself an enumerated object.  This directly
@@ -1230,23 +1210,6 @@ let points_to_target_not_blue (g: heap) (src dst: obj_addr) : Lemma
   = wf_parts ();
     wosize_of_object_bound src g;
     wfh_part2_elim g src dst
-
-/// Part 3 at a `points_to` target: an interior pointer's target has a valid
-/// enclosing closure.
-let points_to_target_infix_wf (g: heap) (src dst: obj_addr) : Lemma
-  (requires well_formed_heap g /\ Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
-            points_to g src dst)
-  (ensures GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst)
-  = wosize_of_object_bound src g;
-    wf_field_target_infix_wf g src dst
-
-/// The pre-infix conclusion, recovered when the target is known non-infix.
-let points_to_target_in_objects_raw (g: heap) (src dst: obj_addr) : Lemma
-  (requires well_formed_heap g /\ Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
-            ~(GC.Spec.Object.is_infix dst g) /\ points_to g src dst)
-  (ensures Seq.mem dst (objects zero_addr g))
-  = points_to_target_in_objects g src dst;
-    GC.Spec.Object.resolve_non_infix dst g
 
 /// Derive well_formed_heap_part2 from a per-field closure property.
 /// If every pointer-valued field of every object targets another, non-free

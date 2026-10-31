@@ -29,7 +29,6 @@ let mark_color_inv (h_init h_cur: heap) : prop =
   heap_objects_dense h_cur /\
   objects zero_addr h_cur == objects zero_addr h_init /\
   tri_color_invariant h_cur /\
-  no_pointer_to_blue h_cur /\
   create_graph h_cur == create_graph h_init /\
   (forall (x: obj_addr). Seq.mem x (objects zero_addr h_init) ==>
     wosize_of_object x h_cur == wosize_of_object x h_init) /\
@@ -74,12 +73,6 @@ val mark_step_bounded_preserves_wosize
           (ensures wosize_of_object x (fst (mark_step_bounded g st cap)) ==
                    wosize_of_object x g)
 
-val mark_step_bounded_preserves_resolve
-  (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat) (x: obj_addr)
-  : Lemma (requires well_formed_heap g /\ bounded_stack_props g st)
-          (ensures resolve_object x (fst (mark_step_bounded g st cap)) ==
-                   resolve_object x g)
-
 val mark_step_bounded_preserves_get_field
   (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
   (x: obj_addr) (j: U64.t)
@@ -95,14 +88,6 @@ val mark_step_bounded_preserves_tri_color :
                   tri_color_invariant g)
         (ensures tri_color_invariant (fst (mark_step_bounded g st cap)))
 
-val mark_step_bounded_preserves_points_to
-  (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
-  (src dst: obj_addr)
-  : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                   Seq.mem src (objects zero_addr g))
-          (ensures points_to (fst (mark_step_bounded g st cap)) src dst ==
-                   points_to g src dst)
-
 val mark_step_bounded_preserves_blue
   (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat) (x: obj_addr)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
@@ -114,12 +99,6 @@ val mark_step_bounded_no_new_blue
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
                    Seq.mem x (objects zero_addr g) /\ ~(is_blue x g))
           (ensures ~(is_blue x (fst (mark_step_bounded g st cap))))
-
-val mark_step_bounded_preserves_no_pointer_to_blue
-  (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
-  : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                   no_pointer_to_blue g)
-          (ensures no_pointer_to_blue (fst (mark_step_bounded g st cap)))
 
 val mark_step_bounded_preserves_color_inv
   (h_init: heap) (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
@@ -197,8 +176,7 @@ val mark_color_inv_init (h_init: heap)
     (requires well_formed_heap h_init /\
              Seq.length (objects zero_addr h_init) > 0 /\
              heap_objects_dense h_init /\
-             no_black_objects h_init /\
-             no_pointer_to_blue h_init)
+             no_black_objects h_init)
     (ensures mark_color_inv h_init h_init)
 
 val mark_bounded_satisfies_mark_post
@@ -212,7 +190,6 @@ val mark_bounded_satisfies_mark_post
       root_props h_init roots /\
       GC.Spec.FreeList.fp_in_heap fp h_init /\
       no_black_objects h_init /\
-      no_pointer_to_blue h_init /\
       fuel >= count_non_black h_init /\
       (forall (x: obj_addr). Seq.mem x (objects zero_addr h_init) /\
         (is_gray x h_init \/ is_black x h_init) ==> Seq.mem x roots) /\
@@ -287,6 +264,5 @@ val mark_post_from_bounded_mark
       gray_stays h_init h_mark /\
       root_props h_init roots /\
       GC.Spec.FreeList.fp_in_heap fp h_init /\
-      no_black_objects h_init /\
-      no_pointer_to_blue h_init)
+      no_black_objects h_init)
     (ensures Correctness.mark_post h_init h_mark roots fp)

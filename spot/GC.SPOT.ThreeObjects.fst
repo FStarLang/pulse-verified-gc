@@ -156,7 +156,6 @@ let expose_spot_collection_facts
         GC.Gen.HeapInvariant.collection_heap_shape minor major fp /\
         SpecFields.well_formed_heap major /\
         minor_wf minor /\
-        SpecMark.no_pointer_to_blue major /\
         GC.Spec.Fields.well_formed_heap_except major GC.Spec.Fields.no_pending /\
         GC.Gen.HeapInvariant.minor_major_fields_not_freed minor major GC.Spec.Fields.no_pending /\
         UpdatePtrs.ref_table_covers_minor_ptrs major (spot_slots c) 1 /\

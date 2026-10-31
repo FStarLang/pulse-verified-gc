@@ -41,8 +41,8 @@ val free_list_exact_iff (major: heap) (fp: U64.t)
   : Lemma (free_list_exact major fp <==> FL.fl_exact major fp)
 
 /// Major-heap shape needed by both minor collection and the following major GC:
-/// object layout/infix well-formedness, free-list validity, color invariants,
-/// and the no-pointer-to-blue safety condition.
+/// object layout/infix well-formedness (which includes that nothing live points
+/// at a free block), free-list validity and color invariants.
 ///
 /// A *no-scan* object (`tag >= 251`: a string, `Bytes.t`, `Bigarray` payload or
 /// custom block) may hold arbitrary bytes, including words that spell a
@@ -89,13 +89,14 @@ val major_heap_shape (major: heap) (fp: U64.t) : prop
 
 /// Cross-generation safety: any field of an allocated minor object that already
 /// looks like a major-heap pointer must target a live non-blue major object.
-/// This is what lets promotion preserve `Mark.no_pointer_to_blue`.
+/// This is what lets promotion keep part 2 of `well_formed_heap` (no pointer
+/// to a free block).
 ///
 /// Quantified over the *scan window* `GC.Gen.MinorHeap.minor_scan_wosize`, not
 /// the whole body: a tag >= No_scan_tag nursery block holds raw data whose
 /// words routinely look like major addresses, and nothing may be assumed about
 /// them.  That is sound because such a block promotes to a no-scan major
-/// object, whose body `Mark.no_pointer_to_blue` also ignores (it is guarded by
+/// object, whose body part 2 also ignores (it is guarded by
 /// `GC.Spec.Fields.fields_constrained`).
 [@@"opaque_to_smt"]
 val minor_major_fields_no_blue (minor: minor_state) (major: heap) : prop
@@ -128,8 +129,7 @@ val major_heap_shape_intro (major: heap) (fp: U64.t)
                     SweepInv.fp_valid fp major /\
                     GC.Spec.FreeList.fp_in_heap fp major /\
                     Mark.no_black_objects major /\
-                    SweepInv.no_gray_objects major /\
-                    Mark.no_pointer_to_blue major)
+                    SweepInv.no_gray_objects major)
           (ensures major_heap_shape major fp)
 
 val major_heap_shape_elim (major: heap) (fp: U64.t)
@@ -147,8 +147,7 @@ val major_heap_shape_elim (major: heap) (fp: U64.t)
                    SweepInv.fp_valid fp major /\
                    GC.Spec.FreeList.fp_in_heap fp major /\
                    Mark.no_black_objects major /\
-                   SweepInv.no_gray_objects major /\
-                   Mark.no_pointer_to_blue major)
+                   SweepInv.no_gray_objects major)
 
 /// The walk facts of the shape (parts 1 and 4 of well-formedness), which are
 /// all that promotion reads of the major heap.
@@ -177,16 +176,6 @@ val minor_major_fields_no_blue_no_pointer_fields
           j < minor_scan_wosize minor obj ==>
           ~(is_pointer_field (minor_read_field minor obj j))))
       (ensures minor_major_fields_no_blue minor major)
-
-val minor_major_fields_no_blue_elim (minor: minor_state) (major: heap)
-  (obj: U64.t) (j: nat)
-  : Lemma (requires minor_major_fields_no_blue minor major /\
-                     Seq.mem obj (minor_objects minor) /\
-                     j < minor_scan_wosize minor obj /\
-                     is_pointer_field (minor_read_field minor obj j))
-           (ensures Seq.mem ((minor_read_field minor obj j) <: obj_addr)
-                             (objects zero_addr major) /\
-                    ~(is_blue ((minor_read_field minor obj j) <: obj_addr) major))
 
 val collection_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma (requires collection_heap_shape minor major fp)

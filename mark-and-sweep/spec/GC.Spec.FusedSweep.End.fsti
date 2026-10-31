@@ -112,8 +112,7 @@ val sweep_post_white_or_blue (g0 g: heap) (fp: U64.t) (x: obj_addr)
 /// What marking guarantees of the heap it hands the sweep: no grey objects,
 /// black objects point only at black ones.
 let marked (g0: heap) : prop =
-  well_formed_heap g0 /\ Mark.noGreyObjects g0 /\ Mark.tri_color_invariant g0 /\
-  Mark.no_pointer_to_blue g0
+  well_formed_heap g0 /\ Mark.noGreyObjects g0 /\ Mark.tri_color_invariant g0
 
 /// A field of a survivor points at a survivor, resolved the same way in both
 /// heaps.
@@ -128,10 +127,11 @@ val sweep_post_target (g0 g: heap) (fp: U64.t) (src dst: obj_addr)
                    Seq.mem (resolve_object dst g0) (objects zero_addr g0) /\
                    survives g0 g (resolve_object dst g0))
 
-/// The result is well formed, and nothing live points at a free block.
+/// The result is well formed (so, in particular, nothing live points at a
+/// free block).
 val sweep_post_wf (g0 g: heap) (fp: U64.t)
   : Lemma (requires sweep_post g0 g fp /\ marked g0)
-          (ensures well_formed_heap g /\ Mark.no_pointer_to_blue g)
+          (ensures well_formed_heap g)
 
 /// A survivor's fields, as `get_field` reads them, are unchanged.
 val sweep_post_get_field (g0 g: heap) (fp: U64.t) (x: obj_addr) (i: U64.t{U64.v i >= 1})

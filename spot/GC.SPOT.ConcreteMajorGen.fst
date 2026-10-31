@@ -794,28 +794,6 @@ let spot_major_no_gray_objects (r: unit{spot_major_room}) (mp: minor_ptr)
   FStar.Classical.forall_intro proof;
   SweepInv.no_gray_intro major
 
-let spot_major_no_pointer_to_blue (r: unit{spot_major_room}) (mp: minor_ptr)
-  : Lemma (ensures SpecMark.no_pointer_to_blue (spot_major_heap r mp))
-  =
-  let major = spot_major_heap r mp in
-  spot_major_wfh_part1 r mp;
-  let field_no_blue (src: obj_addr) (dst: obj_addr) (j: nat)
-    : Lemma (requires Seq.mem src (SpecFields.objects zero_addr major) /\
-                      ~(SpecObj.is_blue src major) /\
-                      j < U64.v (SpecObj.wosize_of_object src major) /\
-                      U64.v src + j * 8 + 8 <= heap_size /\
-                      SpecFields.is_pointer_to
-                        (read_word major (U64.uint_to_t (U64.v src + j * 8)))
-                        dst)
-            (ensures ~(SpecObj.is_blue (SpecObj.resolve_object dst major) major))
-    =
-    spot_major_field_not_pointer r mp src j;
-    assert (SpecFields.is_pointer_to
-              (read_word major (U64.uint_to_t (U64.v src + j * 8)))
-              dst == false);
-    assert False
-  in
-  SpecMark.no_pointer_to_blue_intro_from_fields major field_no_blue
 
 #pop-options
 
@@ -882,7 +860,6 @@ let spot_major_heap_shape (r: unit{spot_major_room}) (mp: minor_ptr)
   spot_major_fp_in_heap r mp;
   spot_major_no_black_objects r mp;
   spot_major_no_gray_objects r mp;
-  spot_major_no_pointer_to_blue r mp;
   spot_major_wfh_part1 r mp;
   spot_major_wfh_part2 r mp;
   spot_major_fl_complete r mp;
