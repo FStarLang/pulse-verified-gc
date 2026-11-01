@@ -101,7 +101,14 @@ let hA_facts () : Lemma (getWosize hA == 2UL /\ getTag hA == 0UL /\ getColor hA 
     makeHeader_getColor 1UL White 0UL
 
 let vA : obj_addr = U64.uint_to_t (za + 8)
-let vB : U64.t = U64.uint_to_t (za + 32)
+let za_bound () : Lemma (za + 32 < pow2 64)
+  = assert (za < heap_size);
+    assert (heap_size < pow2 57);
+    FStar.Math.Lemmas.pow2_lt_compat 64 57;
+    FStar.Math.Lemmas.pow2_plus 57 7;
+    assert_norm (pow2 7 == 128)
+
+let vB : U64.t = za_bound (); U64.uint_to_t (za + 32)
 
 let g1 : heap = write_word z zero_addr hA
 let g1b : heap =

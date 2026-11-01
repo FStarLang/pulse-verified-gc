@@ -51,6 +51,8 @@ include GC.Spec.MarkPar.Model
 
 module Own = GC.Spec.MarkPar.Own
 module End = GC.Spec.MarkPar.End
+module Roots = GC.Spec.MarkPar.Roots
+module SM = GC.Spec.MarkPar.Seq
 
 /// ---------------------------------------------------------------------------
 /// The statements
@@ -63,7 +65,12 @@ val mark_par_correct (cs: list nat) (g: heap) (roots: list obj_addr) (sched: lis
                     quiescent (run cs g roots sched))
           (ensures (run cs g roots sched).heap == sequential_mark g roots)
 
-let mark_par_correct cs g roots sched = admit ()
+let mark_par_correct cs g roots sched =
+  Roots.graph_pre_holds g roots;
+  End.run_end cs g roots sched;
+  SM.sequential_marked g roots;
+  GC.Spec.MarkPar.Recolour.marked_as_ext g (run cs g roots sched).heap (sequential_mark g roots)
+    (reachable g roots)
 
 /// The same conclusion said without the sequential mark: exactly the objects
 /// reachable from the roots are black, each is the original header made

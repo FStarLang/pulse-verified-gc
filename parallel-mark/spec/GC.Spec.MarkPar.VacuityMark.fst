@@ -307,3 +307,50 @@ let end_lemmas (_: squash big) : unit =
   E.run_end cs1 g2 roots1 sched1;
   MP.mark_par_reachable cs1 g2 roots1 sched1
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// GC.Spec.MarkPar.Seq, the end of GC.Spec.MarkPar.Recolour, and
+/// mark_par_correct
+/// ---------------------------------------------------------------------------
+
+module SM = GC.Spec.MarkPar.Seq
+
+let nothing (x: obj_addr) : prop = False
+
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
+let seq_start (_: squash big) : unit =
+  root_objs_1 (); g2_pre ();
+  objects_g2 (); facts_g2 () vA;
+  recoloured_refl g2;
+  SM.grey_all_facts g2 g2 [vA];
+  SM.no_dups [vA];
+  SM.start_facts g2 roots1
+#pop-options
+
+let seq_mark (_: squash big) : unit =
+  g2_pre ();
+  SM.start_facts g2 roots1;
+  let h = SM.start_heap g2 roots1 in
+  let st = SM.start_stack g2 roots1 in
+  SM.elements_valid h st;
+  SM.mark_step_recoloured g2 h st;
+  SM.mark_aux_recoloured g2 h st heap_words
+
+let seq_push (_: squash big) : unit =
+  heaps ();
+  objects_g2 (); facts_g2 () vA;
+  col vA h2 Black;
+  SM.push_children_recoloured g2 h2 Seq.empty vA 1UL 2UL
+
+let seq_end (_: squash big) : unit =
+  g2_pre ();
+  recoloured_refl g2;
+  SM.sequential_marked g2 roots1;
+  recoloured_marked_as g2 g2 nothing;
+  marked_as_ext g2 g2 g2 nothing
+
+let correct_witness (_: squash big) : unit =
+  g2_pre ();
+  owners ();
+  run1_end ();
+  MP.mark_par_correct cs1 g2 roots1 sched1

@@ -74,7 +74,7 @@ let field_child_facts (h: heap) (x: obj_addr) (i: U64.t{U64.v i >= 1})
 #pop-options
 
 /// From `points_to` to a field.
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 0"
 let rec efp_witness (g: heap) (h: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (target: obj_addr)
   : Ghost U64.t
     (requires well_formed_heap g /\ Seq.mem h (objects zero_addr g) /\

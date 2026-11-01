@@ -5,7 +5,7 @@ Branch `sheera/parallel-mark`, from `origin/main` `5033531`. The approach is the
 **Status.**
 
 - **The model and the theorem are written.** `mark_par_correct` says that every run that ends leaves the heap the sequential mark leaves. Beside it are its restatement in terms of reachability, the ownership lemma and the termination statement (§2). No existing `val` was changed, and no existing file was touched.
-- **Stage 2, the proofs (§5).** `step_writes_own` and `mark_par_reachable` are proved. `mark_par_correct` and `mark_par_terminates` are still `admit`, and are the only `admit`s. Every lemma with a precondition is called once on arguments that meet it (§5, "Vacuity").
+- **Stage 2, the proofs (§5).** `step_writes_own`, `mark_par_reachable` and `mark_par_correct` are proved. `mark_par_terminates` is still `admit`, as asked, and is the only `admit`. Every lemma with a precondition is called once on arguments that meet it (§5, "Vacuity").
 - **Changes after review.** Roots may now repeat and may be infix pointers, as the roots `gen_gc` darkens can be (§1, "Roots"). A termination statement, with its measure, is added and admitted (§2).
 - **Tests: no counterexample.** 27,040 runs of the model over 439 heaps and 4,421 cut lists, with 1, 2, 4 and 8 ranges. Each one ended with the heap the sequential mark gives, byte for byte. No step wrote a colour its worker does not own, and every step lowered the termination measure.
 - **All four broken variants are caught** (§4).
@@ -24,6 +24,7 @@ Everything is new, under `parallel-mark/`. The directory is left out of the root
 | `parallel-mark/spec/GC.Spec.MarkPar.Roots.fst` | The objects the roots name; `mark_pre` gives the graph hypotheses; reachability is closed under edges (§5). |
 | `parallel-mark/spec/GC.Spec.MarkPar.Inv.fst` | The marking invariant and its proof (§5). |
 | `parallel-mark/spec/GC.Spec.MarkPar.End.fst` | What holds when marking has ended; `mark_par_reachable` follows (§5). |
+| `parallel-mark/spec/GC.Spec.MarkPar.Seq.fst` | The sequential mark's heap has the same shape; `mark_par_correct` follows (§5). |
 | `parallel-mark/spec/GC.Spec.MarkPar.Witness.fst` | A concrete heap meeting `mark_pre` (§5, "Vacuity"). |
 | `parallel-mark/spec/GC.Spec.MarkPar.WitnessRun.fst` | Three concrete runs on it, through every kind of step (§5). |
 | `parallel-mark/spec/GC.Spec.MarkPar.Vacuity.fst`, `.VacuityMark.fst` | One satisfying call for every lemma with a precondition (§5). |
@@ -339,6 +340,21 @@ The sequential proof's `black_reach_is_black` then makes every reachable object 
 
 The four parts are opaque to the SMT solver. Each lemma reveals the parts it uses. Each step case has a relation that describes the new state in terms of the old one (`pop_rel`, `scan_rel`, `take_rel`, `deliver_rel`). One lemma per part proves that part from the relation, and `step_mark` connects the relations to `step`. Proved whole, the step cases timed out; split this way, `GC.Spec.MarkPar.Inv` checks in under a minute.
 
+### The sequential mark (`GC.Spec.MarkPar.Seq`): `mark_par_correct`
+
+`GC.Spec.MarkPar.End` shows that the parallel run's heap h has the shape `marked_as g h (reachable g roots)`:
+
+- each reachable object's header is g's header made black;
+- every other word is g's.
+
+`GC.Spec.MarkPar.Seq` shows that `sequential_mark g roots` has the same shape:
+
+- **It only recolours.** Greying the root objects, and every step of `GC.Spec.Mark.mark` (`mark_step`, `push_children`), applies one non-blue colour change to an enumerated non-blue object. So the result is g recoloured (`mark_aux_recoloured`, by induction on `mark_aux`'s fuel, on `push_children`'s fields, and on the root list).
+- **Black exactly when reachable.** The sequential proof's own theorems give this: `mark_reachable_is_black` and `mark_black_is_reachable`. Their preconditions follow from `mark_pre`: the greyed roots form a valid stack with no repeats, and nothing else is grey or black.
+- **Nothing else changes colour.** `mark_no_grey_remains` leaves no grey object. Blue is kept. So an unreachable object keeps g's colour.
+
+Two heaps of the same shape agree on every aligned word, so they are equal (`marked_as_ext`). That is `mark_par_correct`. Its graph hypotheses come from `mark_pre` alone (`graph_pre_holds`), which is why `mark_par_correct` does not need them.
+
 ### Vacuity
 
 `GC.Spec.MarkPar.Vacuity` calls every lemma that has a precondition, once, on arguments that meet it. If a precondition were contradictory, its call would not verify.
@@ -359,11 +375,11 @@ A has two fields so that a worker can be part-way through it with a field still 
 
 So each kind of step, and each outcome of Scan and Take, occurs with a state that meets the invariants. The empty root list gives one more argument: its start state is already quiescent, and A is not reachable from it.
 
-`step_writes_own` is called with the empty schedule and the first Take, whose write to A's header is a real change. `mark_par_reachable` is called on run 1, which is quiescent.
+`step_writes_own` is called with the empty schedule and the first Take, whose write to A's header is a real change. `mark_par_reachable` and `mark_par_correct` are called on run 1, which is quiescent. The lemmas about the sequential mark are called on g2 with root A.
 
 ### Cost
 
-`make verify` checks every module from scratch in 3.5 minutes. The default rlimit is 5. Where a lemma needs more, the case was split first, and no rlimit is above 60.
+`make verify` checks all 15 modules from scratch in under 3 minutes. The default rlimit is 5. Where a lemma needs more, the case was split first, and no rlimit is above 60. With `--query_stats`, no query fails on its first attempt, so nothing depends on the `--retry 3` in the flags.
 
 ## 6. Running it
 
