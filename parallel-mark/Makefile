@@ -1,0 +1,76 @@
+# Parallel mark, Stage 1 (see docs/parallel-mark-phase1.md).
+#
+# Kept out of the root build on purpose: GC.Spec.MarkPar's theorems are
+# stated but closed with `admit` until they are proved.
+#
+#   make verify     Verify the parallel-mark spec modules
+#   make test       Extract to OCaml (Custard) and run random interleavings
+#                   against the sequential mark
+#   make clean
+
+ROOT       := $(abspath ..)
+FSTAR_HOME ?= $(ROOT)/fstar
+FSTAR_EXE  ?= $(FSTAR_HOME)/bin/fstar.exe
+FSTAR_LIB  := $(shell $(FSTAR_EXE) --locate_lib 2>/dev/null)
+
+CACHE_DIR ?= $(ROOT)/_cache
+Z3_VERSION ?= 5.3.0
+RETRY ?= --retry 3
+Z3_TIMEOUT ?= --z3smtopt '(set-option :timeout 300000)'
+
+INCLUDES = \
+  --include $(ROOT)/common/spec --include $(ROOT)/common/lib --include $(ROOT)/common/impl \
+  --include $(ROOT)/mark-and-sweep/spec --include $(ROOT)/mark-and-sweep/impl \
+  --include spec
+
+FSTAR_FLAGS = \
+  $(RETRY) \
+  $(Z3_TIMEOUT) \
+  $(OTHERFLAGS) \
+  --cache_checked_modules \
+  --cache_dir $(CACHE_DIR) \
+  --z3version $(Z3_VERSION) \
+  --warn_error -321 \
+  --report_assumes warn \
+  --already_cached 'Prims FStar Pulse PulseCore' \
+  $(INCLUDES)
+
+FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
+
+SPEC = spec/GC.Spec.MarkPar.Exec.fst spec/GC.Spec.MarkPar.fst spec/GC.Spec.MarkPar.Mutants.fst
+
+.PHONY: verify test clean
+verify:
+	for f in $(SPEC); do $(FSTAR) $$f || exit 1; done
+
+# Custard (--codegen OCaml) extracts a whole program from its entry points,
+# and reads every module from its .checked file, so `verify` must have
+# written them.  The roots are the three parallel-mark modules, plus the spec
+# functions the driver calls directly.  --custard_split writes one .ml per
+# F* module, as the driver expects; GC.Spec.Base.heap is kept by name
+# because the driver's types use it.
+CUSTARD = \
+  --codegen OCaml --custard_split \
+  --custard_no_unfold GC.Spec.Base.heap \
+  --custard_entry_module GC.Spec.MarkPar \
+  --custard_entry_module GC.Spec.MarkPar.Exec \
+  --custard_entry_module GC.Spec.MarkPar.Mutants \
+  --custard_entry GC.Spec.Base.heap_size \
+  --custard_entry GC.Spec.Heap.read_word \
+  --custard_entry GC.Spec.Object.makeHeader \
+  --custard_entry GC.Spec.Object.getTag \
+  --custard_entry GC.Spec.Object.getWosize \
+  --custard_entry GC.Spec.Object.getColor \
+  --custard_entry GC.Spec.Fields.is_pointer_field \
+  --custard_entry FStar.Seq.Base.seq_of_list \
+  --custard_entry FStar.Seq.Base.seq_to_list
+OUT = _build/ml
+
+test: verify
+	rm -rf $(OUT); mkdir -p $(OUT)
+	$(FSTAR) $(CUSTARD) --odir $(OUT) spec/GC.Spec.MarkPar.Mutants.fst
+	./test/build.sh $(OUT) $(FSTAR_LIB)
+	./test/run.sh
+
+clean:
+	rm -rf _build
