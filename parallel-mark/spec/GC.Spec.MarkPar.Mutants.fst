@@ -32,7 +32,7 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.MarkPar.Exec
-open GC.Spec.MarkPar
+open GC.Spec.MarkPar.Model
 
 module HeapGraph = GC.Spec.HeapGraph
 

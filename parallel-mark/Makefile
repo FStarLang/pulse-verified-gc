@@ -37,11 +37,15 @@ FSTAR_FLAGS = \
 
 FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 
-SPEC = spec/GC.Spec.MarkPar.Exec.fst spec/GC.Spec.MarkPar.fst spec/GC.Spec.MarkPar.Mutants.fst
+SPEC = spec/GC.Spec.MarkPar.Exec.fst spec/GC.Spec.MarkPar.Model.fst spec/GC.Spec.MarkPar.fst spec/GC.Spec.MarkPar.Mutants.fst
 
-.PHONY: verify test clean
+.PHONY: verify test check clean
 verify:
 	for f in $(SPEC); do $(FSTAR) $$f || exit 1; done
+
+# One module: gmake check F=spec/GC.Spec.MarkPar.Recolour.fst
+check:
+	$(FSTAR) $(F)
 
 # Custard (--codegen OCaml) extracts a whole program from its entry points,
 # and reads every module from its .checked file, so `verify` must have
@@ -52,7 +56,7 @@ verify:
 CUSTARD = \
   --codegen OCaml --custard_split \
   --custard_no_unfold GC.Spec.Base.heap \
-  --custard_entry_module GC.Spec.MarkPar \
+  --custard_entry_module GC.Spec.MarkPar.Model \
   --custard_entry_module GC.Spec.MarkPar.Exec \
   --custard_entry_module GC.Spec.MarkPar.Mutants \
   --custard_entry GC.Spec.Base.heap_size \

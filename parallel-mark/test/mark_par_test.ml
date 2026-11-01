@@ -15,7 +15,7 @@
 module U64 = Stdint.Uint64
 module Seq = FStar_Seq_Base
 module H = GC_Lib_Header
-module MP = GC_Spec_MarkPar
+module MP = GC_Spec_MarkPar_Model
 module MU = GC_Spec_MarkPar_Mutants
 module X = GC_Spec_MarkPar_Exec
 
@@ -103,7 +103,8 @@ let scannable g x = tag_at g x < 251 && col_at g x <> H.Blue
 let fields g x = List.init (wz_at g x) (fun i -> rw g (x + 8 * i))
 
 (* well_formed_heap parts 1-4, no grey or black object, no pointer to blue,
-   roots enumerated, white and distinct. *)
+   each root names (after resolving) an enumerated white object.  Roots may
+   be infix pointers and may repeat. *)
 let pre_ok g roots =
   let objs = objects g in
   let set = Hashtbl.create 64 in
@@ -129,8 +130,9 @@ let pre_ok g roots =
             end)
           (fields g o))
     objs;
-  List.iter (fun r -> if not (mem r) || col_at g r <> H.White then bad "root") roots;
-  if List.length (List.sort_uniq compare roots) <> List.length roots then bad "duplicate root";
+  List.iter (fun r ->
+      let c = resolve g r in
+      if not (mem c) || col_at g c <> H.White then bad "root") roots;
   !ok
 
 (* Reachability from the roots, by a plain search. *)
@@ -149,7 +151,7 @@ let reach g roots =
           else [] in
         go (kids @ rest)
       end in
-  go roots;
+  go (List.map (resolve g) roots);
   seen
 
 (* ------------------------------------------------------------------ *)
@@ -165,13 +167,17 @@ type stats = {
   mutable infix_split : int;           (* cut sets putting a reachable infix header in another range than its closure *)
   mutable black : int; mutable white_left : int;
   mutable rejected : int;              (* invalid cut lists rejected *)
+  mutable idle_tried : int;            (* steps tried that were not enabled *)
+  mutable max_ratio : float;           (* effective steps / initial measure, at most *)
+  mutable infix_roots : int; mutable repeat_roots : int;
   mut_runs : int array; mut_caught : int array;
   mut_by_heap : int array; mut_by_owner : int array;
 }
 
 let st = { heaps = 0; cutsets = 0; runs = 0; events = 0; runs_k = Array.make 5 0;
            sent = 0; max_net = 0; reordered = 0; infix_split = 0;
-           black = 0; white_left = 0; rejected = 0;
+           black = 0; white_left = 0; rejected = 0; idle_tried = 0; max_ratio = 0.;
+           infix_roots = 0; repeat_roots = 0;
            mut_runs = Array.make 5 0; mut_caught = Array.make 5 0;
            mut_by_heap = Array.make 5 0; mut_by_owner = Array.make 5 0 }
 
@@ -294,6 +300,24 @@ let run_one m strat cs g roots objset =
     let e = choose strat cur en in
     let s' = if m = 0 then MP.step zcs !s e else MU.step_m zm zcs !s e in
     if m = 0 then begin
+      (* termination: an enabled step lowers the measure; a step that is
+         not enabled changes nothing *)
+      let ms = Z.to_int (MP.measure !s) and ms' = Z.to_int (MP.measure s') in
+      if ms' >= ms then
+        fail (Printf.sprintf "%s did not lower the measure (%d -> %d)" (ev_name e) ms ms')
+          g cs roots (List.rev (e :: !sched)) !s.MP.heap s'.MP.heap;
+      if rint 8 = 0 then begin
+        let k = List.length cs + 1 and n = List.length !s.MP.net in
+        let d = match rint 4 with
+          | 0 -> MP.Pop (Z.of_int (rint (k + 1))) | 1 -> MP.Scan (Z.of_int (rint (k + 1)))
+          | 2 -> MP.Take (Z.of_int (rint (k + 1))) | _ -> MP.Deliver (Z.of_int (rint (n + 2))) in
+        if not (List.mem d en) then begin
+          st.idle_tried <- st.idle_tried + 1;
+          if MP.step zcs !s d <> !s then
+            fail (Printf.sprintf "%s is not enabled but changed the state" (ev_name d))
+              g cs roots (List.rev !sched) !s.MP.heap !s.MP.heap
+        end
+      end;
       if MU.step_m zm zcs !s e <> s' then
         fail "step_m 0 differs from step" g cs roots (List.rev (e :: !sched)) g s'.MP.heap;
       let n0 = List.length !s.MP.net and n1 = List.length s'.MP.net in
@@ -317,6 +341,11 @@ let run_one m strat cs g roots objset =
   done;
   if m = 0 then begin
     if MP.enabled !s <> [] then fail "quiescent, but an event is enabled" g cs roots (List.rev !sched) g !s.MP.heap;
+    let m0 = Z.to_int (MP.measure (MP.init zcs g r64)) in
+    if !steps > m0 then fail "more effective steps than the initial measure" g cs roots (List.rev !sched) g !s.MP.heap;
+    if MP.effective_steps zcs (MP.init zcs g r64) (List.rev !sched) <> Z.of_int !steps then
+      fail "effective_steps miscounts" g cs roots (List.rev !sched) g !s.MP.heap;
+    st.max_ratio <- max st.max_ratio (float !steps /. float (max 1 m0));
     st.events <- st.events + !steps
   end;
   (!s.MP.heap, !own, List.rev !sched)
@@ -427,7 +456,10 @@ let run_case g cs roots ~model_runs ~mutant_runs =
 let run_heap objs roots ~cutsets ~model_runs ~mutant_runs ~extra_cuts =
   let g = build objs in
   let hd = hdrs objs in
-  let roots = List.map (fun j -> hd.(j) + 8) roots in
+  let roots = List.map (fun f -> U64.to_int (word_of hd f)) roots in
+  if List.exists (fun r -> tag_at g r = 249) roots then st.infix_roots <- st.infix_roots + 1;
+  if List.length (List.sort_uniq compare (List.map (resolve g) roots)) < List.length roots then
+    st.repeat_roots <- st.repeat_roots + 1;
   if not (pre_ok g roots) then begin
     print_string (describe g [] roots); failwith "generated heap fails the precondition"
   end;
@@ -515,7 +547,11 @@ let gen_heap () =
     else begin
       let sh = List.map snd (List.sort compare (List.map (fun j -> (Random.bits (), j)) live)) in
       let cnt = if rint 10 = 0 then List.length sh else 1 + rint (min 4 (List.length sh)) in
-      List.filteri (fun i _ -> i < cnt) sh
+      let rs = List.map (fun j -> Ptr j) (List.filteri (fun i _ -> i < cnt) sh) in
+      (* an infix pointer as a root, and repeated roots, now and then *)
+      let rs = if infix_targets <> [] && rint 3 = 0
+        then (let (j, k) = pickl infix_targets in Inf (j, k)) :: rs else rs in
+      if rint 3 = 0 then rs @ [pickl rs] else rs
     end in
   (objs, roots)
 
@@ -534,28 +570,28 @@ let pad objs =
   if r < 2 then failwith "hand case too big";
   Array.of_list (objs @ [ o (List.init (r - 1) (fun _ -> i 1)) ])
 
-(* name, objects, roots (by index), cut lists given as functions of the
+(* name, objects, roots, cut lists given as functions of the
    header addresses *)
 let hand_cases = [
   "cycle across two ranges",
-  [ o [Ptr 1]; o [Ptr 0] ], [0],
+  [ o [Ptr 1]; o [Ptr 0] ], [Ptr 0],
   (fun hd -> [ [hd.(1)]; [hd.(1) + 3]; [hd.(1) + 8] ]);
 
   "chain bouncing between ranges",
-  [ o [Ptr 1]; o [Ptr 2]; o [Ptr 3]; o [Ptr 4]; o [Ptr 5]; o [i 1] ], [0],
+  [ o [Ptr 1]; o [Ptr 2]; o [Ptr 3]; o [Ptr 4]; o [Ptr 5]; o [i 1] ], [Ptr 0],
   (fun hd -> [ [hd.(1); hd.(2); hd.(3); hd.(4); hd.(5)]; [hd.(2); hd.(4)]; [hd.(3)] ]);
 
   "infix header in another range than its closure",
-  [ o ~tag:247 [i 1; i 1; Hdr 3; i 1; Ptr 2; i 1]; o [Inf (0, 3); i 1]; o [i 1] ], [1],
+  [ o ~tag:247 [i 1; i 1; Hdr 3; i 1; Ptr 2; i 1]; o [Inf (0, 3); i 1]; o [i 1] ], [Ptr 1],
   (fun hd -> [ [hd.(0) + 8 * 3]; [hd.(0) + 8 * 3; hd.(1)]; [hd.(0) + 8 * 3; hd.(2)];
                [hd.(0) + 8 * 3 + 5]; [hd.(0) + 1] ]);
 
   "two ranges send the same object",
-  [ o [Ptr 1; Ptr 1]; o [i 1]; o [Ptr 1; Ptr 0] ], [0; 2],
+  [ o [Ptr 1; Ptr 1]; o [i 1]; o [Ptr 1; Ptr 0] ], [Ptr 0; Ptr 2],
   (fun hd -> [ [hd.(1); hd.(2)]; [hd.(1)]; [hd.(2)] ]);
 
   "roots in every range; an unreachable cycle across ranges stays white",
-  [ o [Ptr 1]; o [i 1]; o [Ptr 3]; o [Ptr 2]; o [Ptr 5]; o [i 1]; o [i 1] ], [0; 4; 6],
+  [ o [Ptr 1]; o [i 1]; o [Ptr 3]; o [Ptr 2]; o [Ptr 5]; o [i 1]; o [i 1] ], [Ptr 0; Ptr 4; Ptr 6],
   (fun hd -> [ [hd.(2); hd.(3); hd.(4)]; [hd.(3); hd.(6)] ]);
 
   "no roots",
@@ -563,20 +599,25 @@ let hand_cases = [
   (fun hd -> [ [hd.(1)] ]);
 
   "no-scan object in another range holds a pointer-like word",
-  [ o [Ptr 1]; o ~tag:252 [Ptr 2; i 1]; o [i 1] ], [0],
+  [ o [Ptr 1]; o ~tag:252 [Ptr 2; i 1]; o [i 1] ], [Ptr 0],
   (fun hd -> [ [hd.(1)]; [hd.(1); hd.(2)] ]);
 
   "cuts inside a header word and inside fields",
-  [ o [Ptr 1; Ptr 2]; o [Ptr 2; i 1]; o [Ptr 0] ], [0],
+  [ o [Ptr 1; Ptr 2]; o [Ptr 2; i 1]; o [Ptr 0] ], [Ptr 0],
   (fun hd -> [ [hd.(1) + 1]; [hd.(1) - 1]; [hd.(0) + 12; hd.(2) + 7]; [hd.(2) + 4] ]);
 
   "self pointer next to free blocks",
-  [ o ~color:u [i 1; i 1]; o [Ptr 1; Ptr 3]; o ~color:u [i 7]; o [i 1] ], [1],
+  [ o ~color:u [i 1; i 1]; o [Ptr 1; Ptr 3]; o ~color:u [i 7]; o [i 1] ], [Ptr 1],
   (fun hd -> [ [hd.(1)]; [hd.(2)]; [hd.(3)] ]);
 
   "wosize-0 objects and an object with no pointers",
-  [ o []; o [Ptr 0; Ptr 2]; o []; o [i 3; i 5] ], [1; 3],
+  [ o []; o [Ptr 0; Ptr 2]; o []; o [i 3; i 5] ], [Ptr 1; Ptr 3],
   (fun hd -> [ [hd.(1)]; [hd.(2); hd.(3)] ]);
+
+  "infix root across a cut from its closure, and repeated roots",
+  [ o ~tag:247 [i 1; i 1; Hdr 3; Ptr 1; Hdr 5; Ptr 2]; o [i 1]; o [Ptr 3]; o [i 1] ],
+  [Inf (0, 3); Inf (0, 5); Ptr 0; Inf (0, 3); Ptr 3; Ptr 3],
+  (fun hd -> [ [hd.(0) + 8 * 3]; [hd.(0) + 8 * 3; hd.(0) + 8 * 5]; [hd.(0) + 8 * 5; hd.(3)] ]);
 ]
 
 (* ------------------------------------------------------------------ *)
@@ -590,6 +631,9 @@ let report () =
     st.sent st.max_net st.reordered st.infix_split;
   Printf.printf "reference: %d objects black, %d white objects left white; %d invalid cut lists rejected\n"
     st.black st.white_left st.rejected;
+  Printf.printf "roots: %d heaps with an infix root, %d with a repeated root\n" st.infix_roots st.repeat_roots;
+  Printf.printf "termination: every step lowered the measure; %d steps that were not enabled changed nothing; effective steps at most %.2f of the initial measure\n"
+    st.idle_tried st.max_ratio;
   for m = 1 to 4 do
     Printf.printf "mutant %d caught %d of %d (heap differs %d, owner rule broken %d)\n"
       m st.mut_caught.(m) st.mut_runs.(m) st.mut_by_heap.(m) st.mut_by_owner.(m)
