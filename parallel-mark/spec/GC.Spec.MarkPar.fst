@@ -49,6 +49,8 @@ module Mark = GC.Spec.Mark
 
 include GC.Spec.MarkPar.Model
 
+module Own = GC.Spec.MarkPar.Own
+
 
 /// ---------------------------------------------------------------------------
 /// The statements
@@ -95,7 +97,9 @@ val step_writes_own (cs: list nat) (g: heap) (roots: list obj_addr) (sched: list
                      a == hd_address x /\ Seq.mem x (objects zero_addr g) /\
                      owner cs x == actor e)
 
-let step_writes_own cs g roots sched e a = admit ()
+let step_writes_own cs g roots sched e a =
+  Own.run_own cs g roots sched;
+  Own.step_own cs g (run cs g roots sched) e
 
 /// Every run ends: a schedule has at most `measure (init ...)` effective
 /// steps, a step that is not enabled changes nothing, and a run that has
