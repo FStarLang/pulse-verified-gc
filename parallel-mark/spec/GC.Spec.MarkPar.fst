@@ -50,7 +50,7 @@ module Mark = GC.Spec.Mark
 include GC.Spec.MarkPar.Model
 
 module Own = GC.Spec.MarkPar.Own
-
+module End = GC.Spec.MarkPar.End
 
 /// ---------------------------------------------------------------------------
 /// The statements
@@ -83,7 +83,7 @@ val mark_par_reachable (cs: list nat) (g: heap) (roots: list obj_addr) (sched: l
                           a <> hd_address x) ==>
                        read_word h a == read_word g a)))
 
-let mark_par_reachable cs g roots sched = admit ()
+let mark_par_reachable cs g roots sched = End.run_end cs g roots sched
 
 /// Only the owner writes a colour: from any state a run reaches, the next
 /// step changes the heap only in the header of an enumerated object that the

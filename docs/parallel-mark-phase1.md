@@ -5,7 +5,7 @@ Branch `sheera/parallel-mark`, from `origin/main` `5033531`. The approach is the
 **Status.**
 
 - **The model and the theorem are written.** `mark_par_correct` says that every run that ends leaves the heap the sequential mark leaves. Beside it are its restatement in terms of reachability, the ownership lemma and the termination statement (§2). No existing `val` was changed, and no existing file was touched.
-- **Stage 2, the proofs (§5).** `step_writes_own` is proved. `mark_par_reachable`, `mark_par_correct` and `mark_par_terminates` are still `admit`, and are the only `admit`s. Every lemma with a precondition is called once on arguments that meet it (§5, "Vacuity").
+- **Stage 2, the proofs (§5).** `step_writes_own` and `mark_par_reachable` are proved. `mark_par_correct` and `mark_par_terminates` are still `admit`, and are the only `admit`s. Every lemma with a precondition is called once on arguments that meet it (§5, "Vacuity").
 - **Changes after review.** Roots may now repeat and may be infix pointers, as the roots `gen_gc` darkens can be (§1, "Roots"). A termination statement, with its measure, is added and admitted (§2).
 - **Tests: no counterexample.** 27,040 runs of the model over 439 heaps and 4,421 cut lists, with 1, 2, 4 and 8 ranges. Each one ended with the heap the sequential mark gives, byte for byte. No step wrote a colour its worker does not own, and every step lowered the termination measure.
 - **All four broken variants are caught** (§4).
@@ -21,9 +21,12 @@ Everything is new, under `parallel-mark/`. The directory is left out of the root
 | `parallel-mark/spec/GC.Spec.MarkPar.Recolour.fst` | `recoloured g h`: h is g with some objects recoloured. One colour change keeps it (§5). |
 | `parallel-mark/spec/GC.Spec.MarkPar.Field.fst` | A pointer in field i: its target is enumerated, non-blue, and a graph successor (§5). |
 | `parallel-mark/spec/GC.Spec.MarkPar.Own.fst` | The ownership invariant and its proof; `step_writes_own` follows (§5). |
+| `parallel-mark/spec/GC.Spec.MarkPar.Roots.fst` | The objects the roots name; `mark_pre` gives the graph hypotheses; reachability is closed under edges (§5). |
+| `parallel-mark/spec/GC.Spec.MarkPar.Inv.fst` | The marking invariant and its proof (§5). |
+| `parallel-mark/spec/GC.Spec.MarkPar.End.fst` | What holds when marking has ended; `mark_par_reachable` follows (§5). |
 | `parallel-mark/spec/GC.Spec.MarkPar.Witness.fst` | A concrete heap meeting `mark_pre` (§5, "Vacuity"). |
-| `parallel-mark/spec/GC.Spec.MarkPar.WitnessRun.fst` | A concrete run on it, through every kind of step, to the end (§5). |
-| `parallel-mark/spec/GC.Spec.MarkPar.Vacuity.fst` | One satisfying call for every lemma with a precondition (§5). |
+| `parallel-mark/spec/GC.Spec.MarkPar.WitnessRun.fst` | Three concrete runs on it, through every kind of step (§5). |
+| `parallel-mark/spec/GC.Spec.MarkPar.Vacuity.fst`, `.VacuityMark.fst` | One satisfying call for every lemma with a precondition (§5). |
 | `parallel-mark/test/` | The OCaml driver, the build script, the runner, and the `GC.Spec.ZeroAddr` realisation. |
 | `parallel-mark/Makefile` | `make verify` and `make test`. |
 
@@ -308,7 +311,33 @@ The initial state meets it: each root names a white object, and it goes to its o
 
 Each step recolours at most one object, and that object is in the acting worker's range. A step for worker i never touches another worker's record, and everything another worker holds is owned by that worker, so it differs from the object i recolours. `step_writes_own` is this fact, for the step after any run.
 
-Each step case is proved by small lemmas, each with a narrow precondition: one for replacing a worker's record (`replace_worker`), one for greying and pushing (`push_step`), and one for a change with no colour write (`move_step`). Proved whole, the step cases timed out. Split this way, the module checks in under 7 seconds. No rlimit is above 60.
+Each step case is proved by small lemmas, each with a narrow precondition: one for replacing a worker's record (`replace_worker`), one for greying and pushing (`push_step`), and one for a change with no colour write (`move_step`). Proved whole, the step cases timed out. Split this way, the module checks in under 7 seconds.
+
+### Marking (`GC.Spec.MarkPar.Inv`, `.End`): `mark_par_reachable`
+
+On top of the ownership invariant, in every state a run reaches:
+
+- **grey_ok:** every grey object is on its owner's work list.
+- **sound:** every grey or black object is reachable from the root objects, and so is every inbox entry and every message's address.
+- **roots_ok:** every root object is non-white, or pending (in its owner's inbox, or in a message).
+- **black_ok:** take a black scannable object x and a pointer in its field j. The object that pointer names is non-white, or pending, or x's owner is part-way through x and has not reached field j yet.
+
+At the start, nothing is grey or black and every root object is in its owner's inbox. Each step keeps the four parts:
+
+- **Pop** blackens a grey object and starts on its field 1, so all its fields are still to come.
+- **Scan** of field j either greys the named object (it is a successor of a reachable black object, so it is reachable), or finds it non-white, or sends it (now it is pending). Fields after j stay to come.
+- **Take** greys the object taken, if it is white. Either way it is non-white afterwards, which covers the pending entry the Take removed.
+- **Deliver** moves a pending message into the right inbox, so it stays pending.
+
+When marking has ended, nothing is pending, no worker is part-way through an object, and every work list is empty. So:
+
+- no object is grey;
+- every root object is black;
+- no black object points to a white one (`tri_color_invariant`; a `points_to` is turned into a field index with `efp_witness`).
+
+The sequential proof's `black_reach_is_black` then makes every reachable object black, and **sound** makes every black object reachable. An object that is not reachable is not black, not grey, and blue exactly when it was blue in g, so it keeps g's colour. `recoloured_marked_as` turns this into the three conclusions of `mark_par_reachable`.
+
+The four parts are opaque to the SMT solver. Each lemma reveals the parts it uses. Each step case has a relation that describes the new state in terms of the old one (`pop_rel`, `scan_rel`, `take_rel`, `deliver_rel`). One lemma per part proves that part from the relation, and `step_mark` connects the relations to `step`. Proved whole, the step cases timed out; split this way, `GC.Spec.MarkPar.Inv` checks in under a minute.
 
 ### Vacuity
 
@@ -316,15 +345,25 @@ Each step case is proved by small lemmas, each with a narrow precondition: one f
 
 The arguments come from a concrete heap, `GC.Spec.MarkPar.Witness.g2`: the all-zero heap with two objects written into it.
 
-- A, at `zero_addr + 8`, has wosize 1 and tag 0, is white, and its field points to B.
-- B, at `zero_addr + 24`, has a zero header.
+- A, at `zero_addr + 8`, is white with tag 0. It has wosize 2, with fields [B; 0].
+- B, at `zero_addr + 32`, is white with tag 0. It has wosize 1, with field [0].
 - Every later word is zero, which reads as further white objects of wosize 0.
 
-`g2_pre` proves `mark_pre g2 [A]` from these words alone, including well-formedness. `heap_size` is abstract, so the witness assumes the heap has room for A and B (`big`: `zero_addr + 32 <= heap_size`, which holds in the tests for `PS_WORDS >= 4`).
+A has two fields so that a worker can be part-way through it with a field still to come. B has a field so that two workers can be scanning at once. `g2_pre_roots` proves `mark_pre g2 roots` from these words alone, including well-formedness, for any roots among A and B. `heap_size` is abstract, so the witness assumes the heap has room (`big`: `zero_addr + 48 <= heap_size`, which holds in the tests for `PS_WORDS >= 6`).
 
-`GC.Spec.MarkPar.WitnessRun` cuts g2 at B's header, so A is worker 0's and B is worker 1's. It then runs `Take 0; Pop 0; Scan 0; Deliver 0; Take 1; Pop 1` and proves the shape of each state. The run greys and blackens A, sends B to worker 1 when scanning A's field, and greys and blackens B there. So it passes through every kind of step and ends quiescent. Its states are the arguments for the step lemmas.
+`GC.Spec.MarkPar.WitnessRun` proves the shape of every state of three runs. Runs 1 and 2 cut g2 at B's header, so A is worker 0's and B is worker 1's.
 
-`step_writes_own` itself is called with the empty schedule and the first Take, whose write to A's header is a real change.
+- **Run 1**, root A: `Take 0; Pop 0; Scan 0; Scan 0; Deliver 0; Take 1; Pop 1; Scan 1`. It sends B to worker 1 from A's first field, passes A's second field (not a pointer), greys, blackens and scans B, and ends quiescent.
+- **Run 2**, roots A and B: `Take 0; Take 1; Pop 0; Pop 1; Scan 0; Deliver 0; Take 1`. Both workers are part-way through an object at once. The last Take finds B already black.
+- **Run 3**, root A, one range: `Take 0; Pop 0; Scan 0`. The scan greys B in worker 0's own range.
+
+So each kind of step, and each outcome of Scan and Take, occurs with a state that meets the invariants. The empty root list gives one more argument: its start state is already quiescent, and A is not reachable from it.
+
+`step_writes_own` is called with the empty schedule and the first Take, whose write to A's header is a real change. `mark_par_reachable` is called on run 1, which is quiescent.
+
+### Cost
+
+`make verify` checks every module from scratch in 3.5 minutes. The default rlimit is 5. Where a lemma needs more, the case was split first, and no rlimit is above 60.
 
 ## 6. Running it
 

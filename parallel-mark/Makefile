@@ -37,7 +37,7 @@ FSTAR_FLAGS = \
 
 FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 
-SPEC = spec/GC.Spec.MarkPar.Exec.fst spec/GC.Spec.MarkPar.Model.fst spec/GC.Spec.MarkPar.Recolour.fst spec/GC.Spec.MarkPar.Field.fst spec/GC.Spec.MarkPar.Own.fst spec/GC.Spec.MarkPar.fst spec/GC.Spec.MarkPar.Mutants.fst spec/GC.Spec.MarkPar.Witness.fst spec/GC.Spec.MarkPar.WitnessRun.fst spec/GC.Spec.MarkPar.Vacuity.fst
+SPEC = spec/GC.Spec.MarkPar.Exec.fst spec/GC.Spec.MarkPar.Model.fst spec/GC.Spec.MarkPar.Recolour.fst spec/GC.Spec.MarkPar.Field.fst spec/GC.Spec.MarkPar.Own.fst spec/GC.Spec.MarkPar.Roots.fst spec/GC.Spec.MarkPar.Inv.fst spec/GC.Spec.MarkPar.End.fst spec/GC.Spec.MarkPar.fst spec/GC.Spec.MarkPar.Mutants.fst spec/GC.Spec.MarkPar.Witness.fst spec/GC.Spec.MarkPar.WitnessRun.fst spec/GC.Spec.MarkPar.Vacuity.fst spec/GC.Spec.MarkPar.VacuityMark.fst
 
 .PHONY: verify test check clean
 verify:

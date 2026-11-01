@@ -5,11 +5,12 @@
 /// each lemma's precondition.  This module builds them: the all-zero heap
 /// with two objects written into it,
 ///
-///     A  at zero_addr + 8:   wosize 1, tag 0, white; its field points to B
-///     B  at zero_addr + 24:  wosize 0, white (a zero header)
+///     A  at zero_addr + 8:   wosize 2, tag 0, white; fields [B; 0]
+///     B  at zero_addr + 32:  wosize 1, tag 0, white; field  [0]
 ///
 /// and every word after them zero, which reads as further wosize-0 white
-/// objects.  `heap_size` is abstract, so everything here assumes the heap
+/// objects.  A has two fields so that a scan can be part-way through it,
+/// and B has one so that two workers can be scanning at once.  `heap_size` is abstract, so everything here assumes the heap
 /// has room for A and B (`big`).  `g2_pre` proves `mark_pre g2 [A]`.
 /// ---------------------------------------------------------------------------
 module GC.Spec.MarkPar.Witness
@@ -34,7 +35,7 @@ module Mark = GC.Spec.Mark
 
 let za : nat = U64.v zero_addr
 
-let big : prop = za + 32 <= heap_size
+let big : prop = za + 48 <= heap_size
 
 /// ---------------------------------------------------------------------------
 /// The zero heap
@@ -87,34 +88,51 @@ let zero_header ()
 /// A and B
 /// ---------------------------------------------------------------------------
 
-let hA : U64.t = makeHeader 1UL White 0UL
+let hA : U64.t = makeHeader 2UL White 0UL
+let hB : U64.t = makeHeader 1UL White 0UL
 
-let hA_facts () : Lemma (getWosize hA == 1UL /\ getTag hA == 0UL /\ getColor hA == White)
-  = makeHeader_getWosize 1UL White 0UL;
+let hA_facts () : Lemma (getWosize hA == 2UL /\ getTag hA == 0UL /\ getColor hA == White /\
+                         getWosize hB == 1UL /\ getTag hB == 0UL /\ getColor hB == White)
+  = makeHeader_getWosize 2UL White 0UL;
+    makeHeader_getTag 2UL White 0UL;
+    makeHeader_getColor 2UL White 0UL;
+    makeHeader_getWosize 1UL White 0UL;
     makeHeader_getTag 1UL White 0UL;
     makeHeader_getColor 1UL White 0UL
 
 let vA : obj_addr = U64.uint_to_t (za + 8)
-let vB : U64.t = U64.uint_to_t (za + 24)
+let vB : U64.t = U64.uint_to_t (za + 32)
 
 let g1 : heap = write_word z zero_addr hA
-let g2 : heap = write_word g1 vA vB
+let g1b : heap =
+  if za + 24 < heap_size then write_word g1 (U64.uint_to_t (za + 24)) hB else g1
+let g2 : heap = write_word g1b vA vB
 
 let obj_B (_: squash big) : obj_addr = vB
+let hd_B (_: squash big) : hp_addr = U64.uint_to_t (za + 24)
 
 #push-options "--z3rlimit 20"
-let read_g2 (a: hp_addr)
+let read_g2 (_: squash big) (a: hp_addr)
   : Lemma (read_word g2 a ==
-           (if a = zero_addr then hA else if a = vA then vB else 0UL))
-  = read_write_same g1 vA vB;
+           (if a = zero_addr then hA
+            else if a = vA then vB
+            else if U64.v a = za + 24 then hB
+            else 0UL))
+  = let p24 = hd_B () in
+    read_write_same g1b vA vB;
     if a = vA then ()
     else begin
-      read_write_different g1 vA a vB;
-      read_write_same z zero_addr hA;
-      if a = zero_addr then ()
+      read_write_different g1b vA a vB;
+      read_write_same g1 p24 hB;
+      if U64.v a = za + 24 then ()
       else begin
-        read_write_different z zero_addr a hA;
-        read_zero a
+        read_write_different g1 p24 a hB;
+        read_write_same z zero_addr hA;
+        if a = zero_addr then ()
+        else begin
+          read_write_different z zero_addr a hA;
+          read_zero a
+        end
       end
     end
 #pop-options
@@ -158,43 +176,46 @@ let hd_A () : Lemma (hd_address vA == zero_addr) = hd_address_spec vA
 let objects_g2 (_: squash big)
   : Lemma (let b = obj_B () in
            Seq.mem vA (objects zero_addr g2) /\ Seq.mem b (objects zero_addr g2) /\
-           hd_address b == U64.uint_to_t (za + 16) /\
+           hd_address b == hd_B () /\
            (forall (x: obj_addr). Seq.mem x (objects zero_addr g2) ==>
-              x == vA \/ U64.v (hd_address x) >= za + 16))
+              x == vA \/ x == b \/ U64.v (hd_address x) >= za + 40))
   = let b = obj_B () in
     hd_address_spec b;
     hA_facts ();
-    zero_header ();
-    read_g2 zero_addr;
-    let p16 : hp_addr = U64.uint_to_t (za + 16) in
-    let p24 : hp_addr = U64.uint_to_t (za + 24) in
-    read_g2 p16;
+    read_g2 () zero_addr;
+    let p24 = hd_B () in
+    let p40 : hp_addr = U64.uint_to_t (za + 40) in
+    read_g2 () p24;
     f_address_spec zero_addr;
-    f_address_spec p16;
-    assert (objects zero_addr g2 == Seq.cons vA (objects p16 g2));
-    assert (objects p16 g2 == Seq.cons b (objects p24 g2));
-    Seq.mem_cons vA (objects p16 g2);
-    Seq.mem_cons b (objects p24 g2);
+    f_address_spec p24;
+    assert (objects zero_addr g2 == Seq.cons vA (objects p24 g2));
+    assert (objects p24 g2 == Seq.cons b (objects p40 g2));
+    Seq.mem_cons vA (objects p24 g2);
+    Seq.mem_cons b (objects p40 g2);
     let rest (x: obj_addr)
       : Lemma (requires Seq.mem x (objects zero_addr g2))
-              (ensures x == vA \/ U64.v (hd_address x) >= za + 16)
+              (ensures x == vA \/ x == b \/ U64.v (hd_address x) >= za + 40)
       = hd_address_spec x;
-        if x = vA then () else objects_above p16 g2 x
+        if x = vA then ()
+        else if x = b then ()
+        else objects_above p40 g2 x
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires rest)
 #pop-options
 
-/// Every enumerated object's header: A's is hA, every other is zero.
+/// Every enumerated object's header: A's is hA, B's is hB, every other zero.
 let header_g2 (_: squash big) (x: obj_addr)
   : Lemma (requires Seq.mem x (objects zero_addr g2))
-          (ensures read_word g2 (hd_address x) == (if x = vA then hA else 0UL))
+          (ensures read_word g2 (hd_address x) ==
+                   (if x = vA then hA else if x = obj_B () then hB else 0UL))
   = objects_g2 ();
     hd_address_spec x;
-    read_g2 (hd_address x)
+    read_g2 () (hd_address x)
 
 let facts_g2 (_: squash big) (x: obj_addr)
   : Lemma (requires Seq.mem x (objects zero_addr g2))
-          (ensures wosize_of_object x g2 == (if x = vA then 1UL else 0UL) /\
+          (ensures wosize_of_object x g2 ==
+                     (if x = vA then 2UL else if x = obj_B () then 1UL else 0UL) /\
                    tag_of_object x g2 == 0UL /\
                    color_of_object x g2 == White /\
                    is_white x g2 /\ ~(is_gray x g2) /\ ~(is_black x g2) /\ ~(is_blue x g2) /\
@@ -208,12 +229,24 @@ let facts_g2 (_: squash big) (x: obj_addr)
     is_infix_spec x g2; is_no_scan_spec x g2;
     infix_tag_val (); no_scan_tag_val ()
 
+/// The fields of A and B.
+let fields_g2 (_: squash big)
+  : Lemma (let b = obj_B () in
+           HeapGraph.get_field g2 vA 1UL == vB /\ HeapGraph.get_field g2 vA 2UL == 0UL /\
+           HeapGraph.get_field g2 b 1UL == 0UL /\
+           HeapGraph.is_pointer_field vB /\ ~(HeapGraph.is_pointer_field 0UL))
+  = let b = obj_B () in
+    hd_address_spec vA; hd_address_spec b;
+    read_g2 () vA;
+    read_g2 () (U64.uint_to_t (za + 16));
+    read_g2 () (U64.uint_to_t (za + 32))
+
 /// ---------------------------------------------------------------------------
 /// g2 is well formed
 /// ---------------------------------------------------------------------------
 
-/// A's only field points to B; no other object has a field.
-#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+/// The only pointer field is A's first, which points to B.
+#push-options "--z3rlimit 40 --fuel 3 --ifuel 1"
 let efp_g2 (_: squash big) (x dst: obj_addr)
   : Lemma (requires Seq.mem x (objects zero_addr g2) /\
                     U64.v (wosize_of_object x g2) < pow2 54 /\
@@ -221,12 +254,16 @@ let efp_g2 (_: squash big) (x dst: obj_addr)
           (ensures x == vA /\ dst == obj_B ())
   = facts_g2 () x;
     let b = obj_B () in
-    read_g2 vA;
     hd_address_spec b;
     hd_address_spec dst;
     if x = vA then begin
-      assert (U64.add_mod vA (U64.mul_mod 0UL mword) == vA);
-      if hd_address b <> hd_address dst then () else ()
+      read_g2 () vA;
+      read_g2 () (U64.uint_to_t (za + 16));
+      assert (U64.add_mod vA (U64.mul_mod 1UL mword) == U64.uint_to_t (za + 16));
+      assert (U64.add_mod vA (U64.mul_mod 0UL mword) == vA)
+    end else if x = b then begin
+      read_g2 () b;
+      assert (U64.add_mod b (U64.mul_mod 0UL mword) == b)
     end
 #pop-options
 
@@ -264,16 +301,16 @@ let wf_g2 (_: squash big)
     reveal_opaque (`%well_formed_heap) well_formed_heap
 #pop-options
 
-/// The precondition, met.
-#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
-let g2_pre (_: squash big)
-  : Lemma (mark_pre g2 [vA])
+/// The precondition, met, for any roots among A and B.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let g2_pre_roots (_: squash big) (roots: list obj_addr)
+  : Lemma (requires forall (r: obj_addr). L.memP r roots ==> r == vA \/ r == obj_B ())
+          (ensures mark_pre g2 roots)
   = wf_g2 ();
     objects_g2 ();
-    facts_g2 () vA;
-    resolve_non_infix vA g2;
     let b = obj_B () in
-    facts_g2 () b;
+    facts_g2 () vA; facts_g2 () b;
+    resolve_non_infix vA g2;
     resolve_non_infix b g2;
     let col (x: obj_addr) : Lemma (requires Seq.mem x (objects zero_addr g2))
         (ensures ~(is_gray x g2) /\ ~(is_black x g2)) = facts_g2 () x in
@@ -288,7 +325,13 @@ let g2_pre (_: squash big)
     FStar.Classical.forall_intro_2 (fun src dst -> FStar.Classical.move_requires (npb src) dst);
     assert (Mark.no_pointer_to_blue g2);
     assert (Mark.noGreyObjects g2);
-    assert (Mark.no_black_objects g2);
-    assert (forall (r: obj_addr). L.memP r [vA] ==> r == vA);
-    assert (Seq.mem (resolve_object vA g2) (objects zero_addr g2) /\ is_white (resolve_object vA g2) g2)
+    assert (Mark.no_black_objects g2)
+#pop-options
+
+#push-options "--fuel 3 --ifuel 1"
+let g2_pre (_: squash big) : Lemma (mark_pre g2 [vA])
+  = g2_pre_roots () [vA]
+
+let g2_pre2 (_: squash big) : Lemma (mark_pre g2 [vA; obj_B ()])
+  = g2_pre_roots () [vA; obj_B ()]
 #pop-options
