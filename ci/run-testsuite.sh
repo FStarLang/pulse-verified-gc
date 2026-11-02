@@ -8,13 +8,26 @@
 #
 #   sh ci/run-testsuite.sh              the whole suite (~30 min)
 #   sh ci/run-testsuite.sh tests/lib-hashtbl    one directory
+#   VERGC_SWEEP=incremental sh ci/run-testsuite.sh    the incremental sweep
+#
+# VERGC_SWEEP (stw, the default, or incremental) picks the collector's sweep
+# mode and the baseline: incremental adds ci/expected-failures-incremental.txt
+# to ci/expected-failures.txt. The log is testsuite[-incremental].log.
 #
 # Requires ci/build-verified-toolchain.sh to have been run.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TREE=$ROOT/generational/ocaml-integration/ocaml-4.14-verified-gen
-LOG=$ROOT/testsuite.log
+MODE=${VERGC_SWEEP:-stw}
+case $MODE in
+  stw)         LOG=$ROOT/testsuite.log
+               EXPECTED="--expected ci/expected-failures.txt" ;;
+  incremental) LOG=$ROOT/testsuite-incremental.log
+               EXPECTED="--expected ci/expected-failures.txt --expected ci/expected-failures-incremental.txt" ;;
+  *) echo "VERGC_SWEEP must be stw or incremental, not $MODE" >&2; exit 1 ;;
+esac
+export VERGC_SWEEP=$MODE
 SUBDIR=${1:-}
 
 [ -x "$TREE/ocamltest/ocamltest" ] || {
@@ -23,7 +36,7 @@ SUBDIR=${1:-}
 # TIMEOUT=300, not 120: weak-heavy tests are very slow without a weak table
 # (tests/misc/weaktest.ml, 108s native here vs 0.2s on stock), close enough to a
 # 120s budget to flap, and a timeout is reported as a NEW FAILURE.
-echo "=== running the testsuite (both variants per test); log: $LOG"
+echo "=== running the testsuite (both variants per test, VERGC_SWEEP=$MODE); log: $LOG"
 cd "$TREE/testsuite"
 set +e
 if [ -n "$SUBDIR" ]; then
@@ -54,21 +67,22 @@ if [ -n "$SUBDIR" ]; then
 fi
 
 echo
-echo "=== report against ci/expected-failures.txt"
+echo "=== report against the expected failures ($EXPECTED)"
 cd "$ROOT"
 rm -f testsuite-summary.md
 set +e
+# shellcheck disable=SC2086
 python3 ci/testsuite_report.py \
   --log "$LOG" \
-  --expected ci/expected-failures.txt \
+  $EXPECTED \
   --summary testsuite-summary.md \
-  --title "OCaml testsuite — verified GC (local)"
+  --title "OCaml testsuite — verified GC, VERGC_SWEEP=$MODE (local)"
 rc=$?
 set -e
 echo
 if [ $rc -ne 0 ]; then
   echo "NEW failures, not in the baseline. See testsuite-summary.md."
 else
-  echo "No regressions against ci/expected-failures.txt."
+  echo "No regressions against the expected failures for VERGC_SWEEP=$MODE."
 fi
 exit $rc

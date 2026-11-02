@@ -2,8 +2,14 @@
 """Check an OCaml testsuite (ocamltest) log against the expected failures.
 
 Usage:
-    testsuite_report.py --log LOG --expected FILE [--baseline-log LOG]
-                        [--summary OUT.md] [--title TITLE] [--update-expected]
+    testsuite_report.py --log LOG --expected FILE [--expected FILE ...]
+                        [--baseline-log LOG] [--summary OUT.md] [--title TITLE]
+                        [--update-expected]
+
+--expected may be given more than once: the baseline is the union of the
+files (the incremental-sweep job uses ci/expected-failures.txt plus
+ci/expected-failures-incremental.txt). --update-expected rewrites the LAST
+file, with the failures that are not in the earlier ones.
 
 Prints the counts and every new failure. With --summary, also writes a
 markdown summary (for $GITHUB_STEP_SUMMARY) listing every failed test, each
@@ -107,7 +113,7 @@ def read_expected(path):
     return header, entries
 
 
-def summary_md(title, data, observed, expected, new, fixed, stock):
+def summary_md(title, data, observed, expected, new, fixed, stock, files):
     c = data["counts"]
     verdict = ("✅ **No new failures**" if not new
                else f"❌ **{len(new)} new failure{'s' if len(new) != 1 else ''}**")
@@ -117,7 +123,8 @@ def summary_md(title, data, observed, expected, new, fixed, stock):
            f"{c.get('skipped', 0)} skipped · {c.get('considered', 0)} considered"]
     if fixed:
         out += ["", f"{len(fixed)} expected failure{'s' if len(fixed) != 1 else ''} "
-                    "passed this run. If that holds, remove them from `ci/expected-failures.txt`."]
+                    "passed this run. If that holds, remove them from "
+                    + " / ".join(f"`{f}`" for f in files) + "."]
     if not observed and not fixed:
         return "\n".join(out) + "\n"
 
@@ -142,12 +149,13 @@ def summary_md(title, data, observed, expected, new, fixed, stock):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--log", required=True)
-    ap.add_argument("--expected", required=True)
+    ap.add_argument("--expected", required=True, action="append")
     ap.add_argument("--baseline-log", help="the same suite run on stock OCaml")
     ap.add_argument("--summary", help="append a markdown summary to this file")
     ap.add_argument("--title", default="OCaml testsuite — verified GC")
     ap.add_argument("--update-expected", action="store_true",
-                    help="rewrite --expected's entries from this log, keeping its header")
+                    help="rewrite the last --expected file's entries from this log "
+                         "(less those in the earlier files), keeping its header")
     a = ap.parse_args()
 
     data = parse_log(a.log)
@@ -160,12 +168,19 @@ def main():
         b = parse_log(a.baseline_log)
         stock = b["failed"] | b["errors"]
 
-    header, expected = read_expected(a.expected)
+    expected, earlier = set(), set()
+    for i, path in enumerate(a.expected):
+        header, entries = read_expected(path)
+        expected |= entries
+        if i < len(a.expected) - 1:
+            earlier |= entries
     if a.update_expected:
-        with open(a.expected, "w") as fh:
-            fh.writelines(line + "\n" for line in header + sorted(observed))
-        print(f"wrote {len(observed)} entries to {a.expected}")
-        expected = observed
+        last = a.expected[-1]
+        own = sorted(observed - earlier)
+        with open(last, "w") as fh:
+            fh.writelines(line + "\n" for line in header + own)
+        print(f"wrote {len(own)} entries to {last}")
+        expected = earlier | set(own)
 
     new = sorted(observed - expected)
     fixed = sorted(expected - observed)
@@ -181,7 +196,8 @@ def main():
 
     if a.summary:
         with open(a.summary, "a") as fh:
-            fh.write(summary_md(a.title, data, observed, expected, new, fixed, stock))
+            fh.write(summary_md(a.title, data, observed, expected, new, fixed, stock,
+                                a.expected))
 
     return 1 if new else 0
 

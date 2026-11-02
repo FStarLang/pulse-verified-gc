@@ -1,0 +1,16 @@
+# Failures of OCaml 4.14's testsuite particular to VERGC_SWEEP=incremental.
+#
+# The incremental job's baseline is ci/expected-failures.txt PLUS this file:
+# list here only tests that pass stop-the-world and fail incrementally for an
+# inherent reason (e.g. a test asserting on when a collection finishes), each
+# with its reason below. A failure in both modes belongs in
+# ci/expected-failures.txt.
+#
+# Regenerate after an incremental run (keeps this header, and writes only the
+# failures not already in ci/expected-failures.txt):
+#     python3 ci/testsuite_report.py --log testsuite-incremental.log \
+#         --expected ci/expected-failures.txt \
+#         --expected ci/expected-failures-incremental.txt --update-expected
+#
+# Why these fail: (none at present -- every failure of the incremental run is
+# also a failure stop-the-world)
