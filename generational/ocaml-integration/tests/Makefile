@@ -41,7 +41,7 @@ BENCHMARKS = binarytrees fasta quicksort fannkuchredux count_change nbodies spec
 
 # Correctness tests (not benchmarks): run under both runtimes and compared.
 CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior \
-                    alloc_exact_promotion explicit_major
+                    alloc_exact_promotion explicit_major incremental_sweep
 
 # infix_closures needs a small major heap so that real major collections
 # (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
@@ -68,11 +68,22 @@ ALLOC_EXACT_MAJOR_WORDS ?= 4194304
 # explicit_major: Gc.full_major & co. used to run stock's major collector over
 # the verified heap. Small enough a heap that the churn forces collections.
 EXPLICIT_MAJOR_WORDS ?= 4000000
+
+# incremental_sweep: the program running mid-sweep (VERGC_SWEEP=incremental).
+# A small heap, so that cycles are frequent and most of the run is mid-sweep.
+INCREMENTAL_SWEEP_MAJOR_WORDS ?= 4000000
+
+# These two run through run_differential.sh: stock's output is the reference
+# and the verified output must be identical. With VERGC_SWEEP=incremental it
+# runs the verified side under three slice pacings, and (REQUIRE_MID_SWEEP)
+# checks that incremental_sweep really ran mid-sweep.
+DIFF = ./run_differential.sh
 NURSERY_NO_SCAN_MAJOR_WORDS ?= 4000000
 
 BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
              $(addsuffix .byte, $(KNOWN_GAP_TESTS))
-NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS))
+NATIVE_DIFF_TESTS = explicit_major incremental_sweep
+NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS)) $(addsuffix .native, $(NATIVE_DIFF_TESTS))
 BENCH_TARGETS = $(addsuffix .bench, $(BENCHMARKS))
 STATS_TARGETS = $(addsuffix .stats, $(BENCHMARKS))
 MINHEAP_TARGETS = $(addsuffix .minheap, $(BENCHMARKS))
@@ -166,10 +177,10 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	MIN_EXPANSION_WORDSIZE=$(ALLOC_EXACT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS)
 	@echo "--- alloc_exact_promotion (stock OCaml, differential check) ---"
 	$(UNCHANGED_OCAMLRUN) alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS)
-	@echo "--- explicit_major (verified generational GC) ---"
-	MIN_EXPANSION_WORDSIZE=$(EXPLICIT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) explicit_major.byte
-	@echo "--- explicit_major (stock OCaml, differential check) ---"
-	$(UNCHANGED_OCAMLRUN) explicit_major.byte
+	$(DIFF) explicit_major '$(UNCHANGED_OCAMLRUN) explicit_major.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(EXPLICIT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) explicit_major.byte'
+	REQUIRE_MID_SWEEP=1 $(DIFF) incremental_sweep '$(UNCHANGED_OCAMLRUN) incremental_sweep.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_SWEEP_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) incremental_sweep.byte'
 	@echo "=== Correctness tests passed ==="
 
 # ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
@@ -198,7 +209,7 @@ known-gaps: $(addsuffix .byte, $(KNOWN_GAP_TESTS))
 # If this fails but `make test` passes, suspect the young_ptr <-> bump_ref
 # translation before anything else (verified_gc/alloc_gen.c).
 
-test-native: $(NATIVE_FILES)
+test-native: $(NATIVE_FILES) $(addsuffix .byte, $(NATIVE_DIFF_TESTS))
 	@echo "=== Smoke tests, native (verified generational GC) ==="
 	@echo "--- binarytrees ---"
 	MIN_EXPANSION_WORDSIZE=$(BINARYTREES_MAJOR_WORDS) ./binarytrees.native 10
@@ -216,6 +227,10 @@ test-native: $(NATIVE_FILES)
 	MIN_EXPANSION_WORDSIZE=$(SPECTRALNORM_MAJOR_WORDS) ./spectralnorm.native 100
 	@echo "--- mandelbrot ---"
 	MIN_EXPANSION_WORDSIZE=$(MANDELBROT_MAJOR_WORDS) ./mandelbrot.native 100
+	$(DIFF) explicit_major.native '$(UNCHANGED_OCAMLRUN) explicit_major.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(EXPLICIT_MAJOR_WORDS) ./explicit_major.native'
+	REQUIRE_MID_SWEEP=1 $(DIFF) incremental_sweep.native '$(UNCHANGED_OCAMLRUN) incremental_sweep.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_SWEEP_MAJOR_WORDS) ./incremental_sweep.native'
 	@echo "=== All native smoke tests passed ==="
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----
