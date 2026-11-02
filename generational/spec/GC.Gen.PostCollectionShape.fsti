@@ -26,6 +26,21 @@ module GenInv = GC.Gen.HeapInvariant
 module FS = GC.Spec.FusedSweep
 module FLA = GC.Spec.FreeList.Ascending
 
+/// The free-list half of the shape, from an exact ascending list alone: the
+/// allocator's entry conditions, exactness, the head and every free block's
+/// link, and that no live object is on the chain.  It needs nothing of the
+/// colours, so it also holds in the middle of a sweep.
+val free_list_shape_of_ascending (g: heap) (fp: U64.t)
+  : Lemma (requires FLA.fl_ascending g fp)
+          (ensures GC.Spec.Allocator.Lemmas.fl_valid g fp heap_words /\
+                   GC.Spec.Allocator.Lemmas.fl_chain_terminates g fp heap_words /\
+                   GenInv.free_list_exact g fp /\
+                   GC.Gen.FreeListShape.fp_pointer_or_zero fp /\
+                   GC.Gen.FreeListShape.blue_link_fields_valid g /\
+                   GC.Gen.Promote.chain_objects_blue g fp /\
+                   GC.Spec.SweepInv.fp_valid fp g /\
+                   GC.Spec.FreeList.fp_in_heap fp g)
+
 /// **The major collector restores `major_heap_shape`.**
 ///
 /// Given any mark output for a heap whose free list is exact and ascending,
