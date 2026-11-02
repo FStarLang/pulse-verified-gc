@@ -60,7 +60,8 @@ val sweeping_end (g0 g1 g: heap) (fp: U64.t) (st: sweep_state)
 /// **#29 mid-sweep**: an allocation fails only when no free block is big
 /// enough.
 val sweeping_oom_no_fit (g0 g1 g: heap) (fp: U64.t) (st: sweep_state) (wz: nat)
+                          (tag: U64.t{U64.v tag < 256})
   : Lemma (requires sweeping g0 g1 g fp st /\ wz >= 1 /\
-                    (AC.alloc_at g fp wz st.cursor).GC.Spec.Allocator.obj_out == 0UL)
+                    (AC.alloc_at g fp wz tag st.cursor).GC.Spec.Allocator.obj_out == 0UL)
           (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ is_blue x g ==>
                      U64.v (wosize_of_object x g) < wz)

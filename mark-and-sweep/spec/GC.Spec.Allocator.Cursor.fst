@@ -9,11 +9,11 @@ module U64 = FStar.UInt64
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 
-let alloc_at_idle g fp wz = ()
+let alloc_at_idle g fp wz tag = ()
 
 #push-options "--z3rlimit 20"
-let alloc_at_fields g fp wz cursor =
-  let r = alloc_spec g fp wz in
+let alloc_at_fields g fp wz tag cursor =
+  let r = alloc_spec g fp wz tag in
   let w = req_wz wz in
   if r.obj_out <> 0UL && in_front cursor r.obj_out &&
      U64.v r.obj_out < heap_size && U64.v r.obj_out % U64.v mword = 0 && w < pow2 54
@@ -21,29 +21,29 @@ let alloc_at_fields g fp wz cursor =
     let o : obj_addr = r.obj_out in
     hd_address_spec o;
     FStar.Math.Lemmas.pow2_lt_compat 64 54;
-    write_word_locality r.heap_out (hd_address o) (make_header (U64.uint_to_t w) black_bits 0UL)
+    write_word_locality r.heap_out (hd_address o) (make_header (U64.uint_to_t w) black_bits tag)
   end
 #pop-options
 
 /// At a block that fits, the search's result does not depend on its fuel.
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
-private let search_found_fuel (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
+private let search_found_fuel (g: heap) (head prev cur: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}) (fuel: nat)
   : Lemma (requires fuel > 0 /\ fits_at g cur wz)
-          (ensures alloc_search g head prev cur wz fuel == alloc_search g head prev cur wz 1)
+          (ensures alloc_search g head prev cur wz tag fuel == alloc_search g head prev cur wz tag 1)
   = ()
 #pop-options
 
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
-let rec alloc_find_search (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
+let rec alloc_find_search (g: heap) (head prev cur: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}) (fuel: nat)
   : Lemma (ensures (let (p, c) = alloc_find g prev cur wz fuel in
-                    let r = alloc_search g head prev cur wz fuel in
+                    let r = alloc_search g head prev cur wz tag fuel in
                     (c == 0UL ==> r == { heap_out = g; fp_out = head; obj_out = 0UL }) /\
-                    (c <> 0UL ==> fits_at g c wz /\ r == alloc_search g head p c wz 1)))
+                    (c <> 0UL ==> fits_at g c wz /\ r == alloc_search g head p c wz tag 1)))
           (decreases fuel)
-  = if fuel = 0 then alloc_search_fuel_0 g head prev cur wz
+  = if fuel = 0 then alloc_search_fuel_0 g head prev cur wz tag
     else if U64.v cur < U64.v zero_addr + U64.v mword || U64.v cur >= heap_size ||
             U64.v cur % U64.v mword <> 0
-    then alloc_search_invalid g head prev cur wz fuel
+    then alloc_search_invalid g head prev cur wz fuel tag
     else begin
       let obj : obj_addr = cur in
       let hd = hd_address obj in
@@ -51,12 +51,12 @@ let rec alloc_find_search (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
       if bwz >= wz then begin
         let ahn = U64.v hd + (bwz - wz) * 8 in
         if ahn + 8 >= heap_size || ahn >= pow2 64 || ahn % 8 <> 0
-        then alloc_search_found_oob g head prev cur wz fuel
-        else search_found_fuel g head prev cur wz fuel
+        then alloc_search_found_oob g head prev cur wz fuel tag
+        else search_found_fuel g head prev cur wz tag fuel
       end
       else begin
-        alloc_search_advance g head prev cur wz fuel;
-        alloc_find_search g head cur (spec_next_fp g obj) wz (fuel - 1)
+        alloc_search_advance g head prev cur wz fuel tag;
+        alloc_find_search g head cur (spec_next_fp g obj) wz tag (fuel - 1)
       end
     end
 #pop-options

@@ -24,7 +24,7 @@
 /// Both are stated as a layer over `GC.Spec.Allocator.alloc_spec`, whose
 /// first-fit search, block writes and lemmas are reused unchanged:
 ///
-///   * `alloc_at g fp wz cursor` is `alloc_spec g fp wz` with the allocated
+///   * `alloc_at g fp wz tag cursor` is `alloc_spec g fp wz tag` with the allocated
 ///     object's header rewritten black when it lies in front of the cursor;
 ///   * `alloc_find` names the block first-fit takes and its list predecessor,
 ///     step by step alongside `alloc_search`, and `alloc_tail` is the new
@@ -61,27 +61,28 @@ let in_front (cursor: U64.t) (obj: U64.t) : bool =
 
 /// Allocation at sweep cursor `cursor`: first-fit from `fp` as `alloc_spec`,
 /// the object's header black when it lies in front of the cursor.
-let alloc_at (g: heap) (fp: U64.t) (wz: nat) (cursor: U64.t) : GTot alloc_result =
-  let r = alloc_spec g fp wz in
+let alloc_at (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}) (cursor: U64.t)
+  : GTot alloc_result =
+  let r = alloc_spec g fp wz tag in
   let w = req_wz wz in
   if r.obj_out <> 0UL && in_front cursor r.obj_out &&
      U64.v r.obj_out < heap_size && U64.v r.obj_out % U64.v mword = 0 && w < pow2 54
   then begin
     FStar.Math.Lemmas.pow2_lt_compat 64 54;
     { r with heap_out = write_word r.heap_out (hd_address (r.obj_out <: obj_addr))
-                                   (make_header (U64.uint_to_t w) black_bits 0UL) }
+                                   (make_header (U64.uint_to_t w) black_bits tag) }
   end
   else r
 
 /// Not sweeping: the allocator is `alloc_spec`.
-val alloc_at_idle (g: heap) (fp: U64.t) (wz: nat)
-  : Lemma (alloc_at g fp wz idle_cursor == alloc_spec g fp wz)
+val alloc_at_idle (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
+  : Lemma (alloc_at g fp wz tag idle_cursor == alloc_spec g fp wz tag)
 
 /// Only the heap can differ from `alloc_spec`'s, and only at the object's
 /// header.
-val alloc_at_fields (g: heap) (fp: U64.t) (wz: nat) (cursor: U64.t)
-  : Lemma (let r = alloc_spec g fp wz in
-           let r' = alloc_at g fp wz cursor in
+val alloc_at_fields (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}) (cursor: U64.t)
+  : Lemma (let r = alloc_spec g fp wz tag in
+           let r' = alloc_at g fp wz tag cursor in
            r'.fp_out == r.fp_out /\ r'.obj_out == r.obj_out /\
            (r.obj_out == 0UL ==> r'.heap_out == r.heap_out) /\
            (forall (a: hp_addr). U64.v a + 8 <> U64.v r.obj_out ==>
@@ -125,11 +126,11 @@ let rec alloc_find (g: heap) (prev cur: U64.t) (wz: nat) (fuel: nat)
 
 /// The search's result is the one at the block `alloc_find` names: nothing when
 /// it names none, and otherwise the found arm at that block and predecessor.
-val alloc_find_search (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
+val alloc_find_search (g: heap) (head prev cur: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}) (fuel: nat)
   : Lemma (let (p, c) = alloc_find g prev cur wz fuel in
-           let r = alloc_search g head prev cur wz fuel in
+           let r = alloc_search g head prev cur wz tag fuel in
            (c == 0UL ==> r == { heap_out = g; fp_out = head; obj_out = 0UL }) /\
-           (c <> 0UL ==> fits_at g c wz /\ r == alloc_search g head p c wz 1))
+           (c <> 0UL ==> fits_at g c wz /\ r == alloc_search g head p c wz tag 1))
 
 /// Step lemmas, in the shape of `alloc_search`'s (for the loop of the
 /// implementation).

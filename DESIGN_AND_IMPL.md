@@ -753,14 +753,15 @@ or free block carved out of a free block of `g0` (`front_carved`). The plan's
 
 - a write to a field of a block that is not free -- the program's writes,
   the pointer update, promotion's field copies (`GC.Spec.FusedSweep.Edit.write_sweeping`);
-- retagging a new object, keeping its size and colour (`retag_sweeping`);
 - allocation (`GC.Gen.SweepPhase.alloc_sweeping`): in front of the cursor
   `g1` takes the heap's words from the cursor on; behind it, the dead run the
   allocation carved is replaced in `g1` by what the allocation made of it,
   with the new object black (a white object behind the cursor is, to the
   sweep's invariant, a survivor of a black one);
-- promotion of one object (`promote_sweeping`, with `promote_at` =
-  `GC.Gen.Promote.promote_object` outside a sweep, `promote_at_idle`).
+- promotion of one object (`promote_sweeping`): the allocation above with
+  the nursery object's tag, then its field copies, as `promote_object` does
+  (`promote_at`, which is `GC.Gen.Promote.promote_object` outside a sweep,
+  `promote_at_idle`).
 
 **When the sweep phase ends** (`GC.Spec.FusedSweep.PhaseEnd.sweeping_end`), the
 sweep's end lemma applies against the reference heap (it needs only that the

@@ -12,13 +12,9 @@
 ///     reach, all the pointer update after a minor collection rewrites, and
 ///     all promotion writes into the object it has just allocated.  The
 ///     reference heap takes the same write.
-///   * **a retag** (`retag_sweeping`): rewriting the tag of an object
-///     allocated since marking, keeping its size and colour -- what promotion
-///     does to the object it has just filled.  The reference heap takes the
-///     same rewrite, keeping its own colour.
 ///
 /// Allocation is in `GC.Gen.SweepPhase`, which needs the generational
-/// allocator lemmas.  This module also collects the frame facts both use.
+/// allocator lemmas.  This module also collects the frame facts it uses.
 
 module GC.Spec.FusedSweep.Edit
 
@@ -156,27 +152,10 @@ val write_sweeping (g0 g1 g: heap) (fp: U64.t) (st: sweep_state) (a: hp_addr) (v
           (ensures sweeping g0 (write_word g1 a v) (write_word g a v) fp st)
 
 /// ---------------------------------------------------------------------------
-/// Retagging a new object
+/// New objects
 /// ---------------------------------------------------------------------------
-
-/// Rewrite the tag of the object at `obj`, keeping its size and colour.
-let retag (g: heap) (obj: U64.t) (tag: nat) : GTot heap =
-  if tag >= 256 then g
-  else if U64.v obj >= U64.v mword && U64.v obj < heap_size && U64.v obj % U64.v mword = 0 then
-    let hd = hd_address (obj <: obj_addr) in
-    let hdr = read_word g hd in
-    write_word g hd (makeHeader (getWosize hdr) (getColor hdr) (U64.uint_to_t tag))
-  else g
 
 /// An object allocated since marking: black in the reference heap, and not a
 /// block live after marking.
 let new_object (g0 g1: heap) (p: hp_addr) : prop =
   pos g1 p /\ black_at g1 p /\ ~(pos g0 p /\ black_at g0 p)
-
-/// Retagging a new object (with a tag other than the infix tag) keeps the
-/// sweep phase; the reference heap is retagged too.
-val retag_sweeping (g0 g1 g: heap) (fp: U64.t) (st: sweep_state) (obj: obj_addr) (tag: nat)
-  : Lemma (requires sweeping g0 g1 g fp st /\ new_object g0 g1 (hd_address obj) /\
-                    tag < 256 /\ U64.uint_to_t tag <> infix_tag)
-          (ensures sweeping g0 (retag g1 obj tag) (retag g obj tag) fp st /\
-                   new_object g0 (retag g1 obj tag) (hd_address obj))
