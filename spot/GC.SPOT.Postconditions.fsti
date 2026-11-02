@@ -82,7 +82,7 @@ val major_minor_field_rewritten
       (requires
         GC.Gen.HeapInvariant.collection_heap_shape minor major fp /\
         GC.Gen.ReachabilityBridge.major_fields_covered minor major GC.Spec.Fields.no_pending roots /\
-        GC.Gen.Impl.UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+        GC.Gen.RefTable.ref_table_covers_minor_ptrs major slots n /\
         GC.Gen.MinorCollectForwarding.remembered_targets_in_roots major roots slots n /\
         GC.Gen.ReachabilityBridge.roots_not_freed roots major GC.Spec.Fields.no_pending /\
         GC.Gen.CheneyBFS.cheney_no_oom minor major fp roots /\

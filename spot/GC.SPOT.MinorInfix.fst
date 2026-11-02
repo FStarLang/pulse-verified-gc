@@ -65,7 +65,7 @@ let spot_minor_infix_promoted
   let ov = stored_target major c i in
   let par = infix_parent minor ov in
   scenario_classifies minor major fp roots slots n c i;
-  MinorFwd.no_pending_context minor major fp roots slots n;
+  MinorFwd.no_pending_context minor major fp roots;
   // the field is rewritten to the image of the word *as stored*
   MCFE.combined_major_minor_field_forwarded
     minor major fp GC.Spec.Fields.no_pending roots slots n c par i;
@@ -91,7 +91,7 @@ let spot_minor_infix_was_forbidden
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.minor_heap_shape_elim minor;
   GenInv.major_heap_shape_elim major fp;
-  MinorFwd.no_pending_context minor major fp roots slots n;
+  MinorFwd.no_pending_context minor major fp roots;
   RBridge.reachable_never_pending minor major GC.Spec.Fields.no_pending roots;
   assert (Seq.mem c (GC.Spec.Fields.objects zero_addr major));
   assert (~(SpecObj.is_blue c major));

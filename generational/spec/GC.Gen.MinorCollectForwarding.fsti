@@ -41,7 +41,6 @@ open GC.Gen.Cheney
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module Mark = GC.Spec.Mark
-module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module PromUpdate = GC.Gen.PromoteUpdate
 module Cheney = GC.Gen.Cheney
 module CheneyBFS = GC.Gen.CheneyBFS
@@ -56,7 +55,7 @@ module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module MCFE = GC.Gen.MinorCollectForwarding.Edges
 module MCFNE = GC.Gen.MinorCollectForwarding.NormalEdges
 module MCFNP = GC.Gen.MinorCollectForwarding.NonPointerFields
-module TPC = GC.Gen.TwoPassEquiv.Collect
+module RT = GC.Gen.RefTable
 module CE = GC.Gen.CheneyExcept
 let remembered_targets_in_roots
   (major: heap) (roots slots: seq U64.t) (n: nat) : prop =
@@ -189,7 +188,7 @@ val combined_major_minor_field_forwarded
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -234,7 +233,7 @@ val combined_reachable_edge_forwarded_normal
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -437,7 +436,7 @@ val normal_src_edge_preserves_post_minor_reachable
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -459,7 +458,7 @@ val ready_src_reach_image_post_reachable
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots)
@@ -476,7 +475,7 @@ val ready_image_reachable_is_post_reachable
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -491,7 +490,7 @@ val normal_src_reachable_is_ready_src_reachable
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -512,7 +511,7 @@ val normal_image_reachable_is_post_reachable
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -526,7 +525,7 @@ val normal_image_reachable_is_post_reachable_all
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots)
@@ -540,7 +539,7 @@ val post_normal_image_edges_reflect_src
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -595,7 +594,7 @@ val post_minor_reachable_is_normal_image_reachable_all
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       roots_valid_except minor major pf roots /\
       CheneyBFS.cheney_no_oom minor major fp roots)
@@ -608,7 +607,7 @@ val normal_post_reachable_subgraph_isomorphism
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       roots_valid_except minor major pf roots /\
       CheneyBFS.cheney_no_oom minor major fp roots)
@@ -634,7 +633,7 @@ val normal_post_non_pointer_fields_preserved
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       roots_valid_except minor major pf roots /\
       CheneyBFS.cheney_no_oom minor major fp roots)
@@ -654,15 +653,13 @@ val normal_post_non_pointer_fields_preserved_to_result
 /// The stop-the-world context gives the generic one with nothing pending, and
 /// the collection with nothing pending is `cheney_collect_spec`.
 val no_pending_context
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots slots: seq U64.t) (n: nat)
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
     (requires GenInv.collection_heap_shape minor major fp)
     (ensures
       GenInv.collection_shape_except minor major fp no_pending /\
       well_formed_heap_except major no_pending /\
       GenInv.minor_major_fields_not_freed minor major no_pending /\
-      (UpdatePtrs.ref_table_covers_minor_ptrs major slots n ==>
-       TPC.ref_table_covers_except major no_pending slots n) /\
       (roots_valid_for_minor_collection minor major roots ==>
        roots_valid_except minor major no_pending roots /\
        RBridge.roots_not_freed roots major no_pending) /\

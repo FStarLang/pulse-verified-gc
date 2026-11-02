@@ -41,7 +41,6 @@ open GC.Gen.Cheney
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module Mark = GC.Spec.Mark
-module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module PromUpdate = GC.Gen.PromoteUpdate
 module Cheney = GC.Gen.Cheney
 module CheneyBFS = GC.Gen.CheneyBFS
@@ -54,7 +53,7 @@ module HeapGraph = GC.Spec.HeapGraph
 module HeapModel = GC.Spec.HeapModel
 
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
-module TPC = GC.Gen.TwoPassEquiv.Collect
+module RT = GC.Gen.RefTable
 module CE = GC.Gen.CheneyExcept
 open GC.Gen.MinorCollectForwarding.Helpers
 
@@ -172,7 +171,7 @@ val combined_major_minor_field_forwarded
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -205,7 +204,7 @@ val combined_major_minor_edge_forwarded
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\

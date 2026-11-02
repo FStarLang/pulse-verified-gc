@@ -59,7 +59,7 @@ val spot_roots_cases
 
 val spot_slots_singleton_distinct
   : c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size} ->
-    Lemma (GC.Gen.Impl.UpdatePtrs.slots_pairwise_distinct (spot_slots c) 1)
+    Lemma (GC.Gen.RefTable.slots_pairwise_distinct (spot_slots c) 1)
 
 val spot_minor_scenario_pre
   : minor:minor_state -> major:heap -> fp:U64.t ->

@@ -23,7 +23,7 @@ module CG = GC.Gen.CombinedGraph
 module MinorFwd = GC.Gen.MinorCollectForwarding
 module RBridge = GC.Gen.ReachabilityBridge
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
-module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
+module RefTable = GC.Gen.RefTable
 
 let spot_roots (c: obj_addr) : seq U64.t =
   Seq.cons (c <: U64.t)
@@ -158,14 +158,14 @@ let expose_spot_collection_facts
         minor_wf minor /\
         GC.Spec.Fields.well_formed_heap_except major GC.Spec.Fields.no_pending /\
         GC.Gen.HeapInvariant.minor_major_fields_not_freed minor major GC.Spec.Fields.no_pending /\
-        UpdatePtrs.ref_table_covers_minor_ptrs major (spot_slots c) 1 /\
+        RefTable.ref_table_covers_minor_ptrs major (spot_slots c) 1 /\
         MinorFwd.remembered_targets_in_roots major (spot_roots c) (spot_slots c) 1 /\
         RBridge.roots_not_freed (spot_roots c) major GC.Spec.Fields.no_pending /\
         RBridge.major_fields_covered minor major GC.Spec.Fields.no_pending (spot_roots c))
   =
   Preconditions.minor_collect_full_pre_elim
     minor major fp (spot_roots c) farr (spot_slots c) 1;
-  MinorFwd.no_pending_context minor major fp (spot_roots c) (spot_slots c) 1;
+  MinorFwd.no_pending_context minor major fp (spot_roots c);
   MCFH.major_fields_covered_from_slots
     minor major GC.Spec.Fields.no_pending (spot_roots c) (spot_slots c) 1;
   GenInv.collection_heap_shape_elim minor major fp;

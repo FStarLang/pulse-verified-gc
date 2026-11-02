@@ -19,7 +19,6 @@ open GC.Gen.Reachability
 open GC.Gen.Cheney
 
 module Mark = GC.Spec.Mark
-module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module PromUpdate = GC.Gen.PromoteUpdate
 module Cheney = GC.Gen.Cheney
 module CheneyBFS = GC.Gen.CheneyBFS
@@ -33,7 +32,7 @@ module GenInv = GC.Gen.HeapInvariant
 module HeapGraph = GC.Spec.HeapGraph
 module HeapModel = GC.Spec.HeapModel
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
-module TPC = GC.Gen.TwoPassEquiv.Collect
+module RT = GC.Gen.RefTable
 module CE = GC.Gen.CheneyExcept
 module MCFE = GC.Gen.MinorCollectForwarding.Edges
 module MCFNE = GC.Gen.MinorCollectForwarding.NormalEdges

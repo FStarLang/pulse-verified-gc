@@ -19,6 +19,7 @@ module Seq = FStar.Seq
 open GC.Spec.Base
 open GC.Gen.Base
 open GC.Impl.Heap
+open GC.Gen.RefTable
 module PromoteSpec = GC.Gen.Promote
 module SpecObj = GC.Spec.Object
 module SpecHeap = GC.Spec.Heap
@@ -96,21 +97,6 @@ fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
 /// ---------------------------------------------------------------------------
 /// Rewrite heap slots (ref_table entries)
 /// ---------------------------------------------------------------------------
-
-/// Predicate: all slot addresses are valid heap field addresses
-let valid_slot_addrs (slots: Seq.seq U64.t) (n: nat) : prop =
-  n <= Seq.length slots /\
-  (forall (i: nat). i < n ==>
-    (let addr = U64.v (Seq.index slots i) in
-     addr < heap_size /\ addr % 8 == 0))
-
-/// Slots are pairwise distinct (no duplicates in the ref_table).
-/// Required so that rewrite_slots_iter_slot_effect can identify
-/// which slot write is final at a given address.
-let slots_pairwise_distinct (slots: Seq.seq U64.t) (n: nat) : prop =
-  n <= Seq.length slots /\
-  (forall (i j: nat). i < n /\ j < n /\ i <> j ==>
-    U64.v (Seq.index slots i) <> U64.v (Seq.index slots j))
 
 /// Spec: iterate slots[idx..n), rewriting each slot's value via the forwarding map.
 /// Models what rewrite_heap_slots computes.
@@ -308,88 +294,6 @@ fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
     is_heap major ms2 **
     pts_to fwd_arr 'farr **
     pure (ms2 == update_promoted_iter 'ms 'farr fwd 0)
-
-/// ---------------------------------------------------------------------------
-/// Ref-table completeness: sufficient condition for full correctness
-/// ---------------------------------------------------------------------------
-
-/// Client-facing remembered-set completeness.  Every scannable non-blue field
-/// in the ORIGINAL major heap that currently contains a minor pointer has its
-/// address listed in slots[0..n).
-///
-/// This is intentionally independent of the forwarding map produced by Cheney
-/// promotion: the write barrier records old-major fields when they are assigned
-/// young pointers, without knowing which young objects will be live later.
-let ref_table_covers_minor_ptrs (major_pre: heap)
-                               (slots: Seq.seq U64.t) (n: nat) : prop =
-  n <= Seq.length slots /\
-  (forall (obj: GC.Spec.Base.obj_addr) (j: nat).
-    Seq.mem obj (GC.Spec.Fields.objects zero_addr major_pre) /\
-    GC.Spec.Object.is_blue obj major_pre = false /\
-    GC.Spec.Object.is_no_scan obj major_pre = false /\
-    j < U64.v (SpecObj.wosize_of_object obj major_pre) /\
-    U64.v obj + j * 8 + 8 <= heap_size /\
-    (let field_val = GC.Gen.Base.to_minor_offset
-       (SpecHeap.read_word major_pre (U64.uint_to_t (U64.v obj + j * 8))) in
-     PromoteSpec.is_minor_pointer field_val) ==>
-    (exists (i: nat). i < n /\ U64.v (Seq.index slots i) == U64.v obj + j * 8))
-
-/// Internal proof-facing completeness. The ref_table is "complete" w.r.t. the
-/// pre-promotion major heap and a particular forwarding map: every
-/// field (of a scannable, non-blue object) in the ORIGINAL major heap that
-/// holds a forwarded minor pointer has its address listed in slots[0..n).
-///
-/// This is derived inside the implementation from ref_table_covers_minor_ptrs.
-/// After promotion, these same fields still hold minor pointers (promotion adds
-/// new objects but doesn't modify pre-existing object bodies). Combined with
-/// update_promoted_iter (which handles newly-promoted objects' fields), this
-/// ensures ALL forwarded minor pointers in the post-promotion heap get rewritten.
-///
-/// Quantifies over field positions (obj, j) rather than all aligned addresses,
-/// because header words can accidentally look like forwarded minor pointers
-/// (e.g., makeHeader 1 White 0 = 1024, which passes is_minor_pointer).
-let ref_table_complete (major_pre: heap) (fwd: PromoteSpec.forwarding_map)
-                       (slots: Seq.seq U64.t) (n: nat) : prop =
-  n <= Seq.length slots /\
-  (forall (obj: GC.Spec.Base.obj_addr) (j: nat).
-    Seq.mem obj (GC.Spec.Fields.objects zero_addr major_pre) /\
-    GC.Spec.Object.is_blue obj major_pre = false /\
-    GC.Spec.Object.is_no_scan obj major_pre = false /\
-    j < U64.v (SpecObj.wosize_of_object obj major_pre) /\
-    U64.v obj + j * 8 + 8 <= heap_size /\
-    (let field_val = GC.Gen.Base.to_minor_offset
-       (SpecHeap.read_word major_pre (U64.uint_to_t (U64.v obj + j * 8))) in
-     PromoteSpec.is_minor_pointer field_val /\ fwd field_val <> 0UL) ==>
-    (exists (i: nat). i < n /\ U64.v (Seq.index slots i) == U64.v obj + j * 8))
-
-val ref_table_covers_minor_ptrs_implies_complete
-  (major_pre: heap) (fwd: PromoteSpec.forwarding_map)
-  (slots: Seq.seq U64.t) (n: nat)
-  : Lemma (requires ref_table_covers_minor_ptrs major_pre slots n)
-          (ensures ref_table_complete major_pre fwd slots n)
-
-/// Slot soundness: every slot address is a field of a scannable non-blue object
-/// in the original heap. This ensures rewrite_slots_iter only touches addresses
-/// that update_major_pointers would also touch.
-///
-/// The write barrier only records addresses of pointer fields in non-blue,
-/// non-no_scan objects, so this is a natural caller obligation.
-let ref_table_sound (major_pre: heap) (slots: Seq.seq U64.t) (n: nat) : prop =
-  n <= Seq.length slots /\
-  (forall (i: nat). i < n ==>
-    (let addr = U64.v (Seq.index slots i) in
-     addr < heap_size /\ addr % 8 == 0 /\
-     (exists (obj: GC.Spec.Base.obj_addr) (j: nat).
-       Seq.mem obj (GC.Spec.Fields.objects zero_addr major_pre) /\
-       GC.Spec.Object.is_blue obj major_pre = false /\
-       GC.Spec.Object.is_no_scan obj major_pre = false /\
-       j < U64.v (SpecObj.wosize_of_object obj major_pre) /\
-       addr == U64.v obj + j * 8)))
-
-val ref_table_sound_implies_valid_slot_addrs
-  (major_pre: heap) (slots: Seq.seq U64.t) (n: nat)
-  : Lemma (requires ref_table_sound major_pre slots n)
-          (ensures valid_slot_addrs slots n)
 
 /// Forwarding targets don't trigger the minor-pointer condition.
 /// After pass 1 rewrites a field to fwd(offset), the resulting value

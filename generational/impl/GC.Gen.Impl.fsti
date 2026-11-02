@@ -46,7 +46,7 @@ module RBridge = GC.Gen.ReachabilityBridge
 module CheneyBFS = GC.Gen.CheneyBFS
 module SpecHeapModel = GC.Spec.HeapModel
 module MRT = GC.Gen.MajorReachabilityTransfer
-module TPC = GC.Gen.TwoPassEquiv.Collect
+module RT = GC.Gen.RefTable
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -327,10 +327,9 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 /// The ref_table comes from the write barrier: it records addresses of
 /// existing major-heap fields that were assigned minor-heap pointers.  The
 /// caller states it as a pre-promotion property except the pending objects
-/// (`TPC.ref_table_covers_except`: every nursery pointer held by a not-freed
-/// object is at a recorded slot; `TPC.ref_table_sound_except`: slots are fields
-/// of non-free scannable objects, and those of pending objects hold no nursery
-/// pointer).  The recorded slots' nursery targets are among the roots
+/// (`RT.ref_table_covers_except`: every nursery pointer held by a not-freed
+/// object is at a recorded slot; `RT.ref_table_sound_except`: slots are fields
+/// of not-freed scannable objects).  The recorded slots' nursery targets are among the roots
 /// (`remembered_targets_in_roots`), and the roots are valid and not pending
 /// (`roots_valid_except`): roots are reachable, so never pending.
 let minor_collect_pre_except
@@ -339,9 +338,9 @@ let minor_collect_pre_except
   GenInv.collection_shape_except minor_st s fp pf /\
   Seq.length farr == UpdatePtrs.fwd_array_size /\
   (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
-  TPC.ref_table_sound_except s pf sl nslots /\
-  TPC.ref_table_covers_except s pf sl nslots /\
-  UpdatePtrs.slots_pairwise_distinct sl nslots /\
+  RT.ref_table_sound_except s pf sl nslots /\
+  RT.ref_table_covers_except s pf sl nslots /\
+  RT.slots_pairwise_distinct sl nslots /\
   MinorFwd.remembered_targets_in_roots s rs sl nslots /\
   MinorFwd.roots_valid_except minor_st s pf rs
 
@@ -418,9 +417,9 @@ let minor_collect_pre_idle
   GenInv.collection_heap_shape minor_st s fp /\
   Seq.length farr == UpdatePtrs.fwd_array_size /\
   (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
-  UpdatePtrs.ref_table_sound s sl nslots /\
-  UpdatePtrs.ref_table_covers_minor_ptrs s sl nslots /\
-  UpdatePtrs.slots_pairwise_distinct sl nslots /\
+  RT.ref_table_sound s sl nslots /\
+  RT.ref_table_covers_minor_ptrs s sl nslots /\
+  RT.slots_pairwise_distinct sl nslots /\
   MinorFwd.remembered_targets_in_roots s rs sl nslots /\
   MinorFwd.roots_valid_for_minor_collection minor_st s rs
 
@@ -526,9 +525,9 @@ fn gen_gc (gh: gen_heap_t)
                SZ.v nroots == Seq.length 'rs /\
                Seq.length 'farr == UpdatePtrs.fwd_array_size /\
                (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
-               UpdatePtrs.ref_table_sound 's 'sl (SZ.v nslots) /\
-               UpdatePtrs.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
-               UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots) /\
+               RT.ref_table_sound 's 'sl (SZ.v nslots) /\
+               RT.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
+               RT.slots_pairwise_distinct 'sl (SZ.v nslots) /\
                MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
                MinorFwd.roots_valid_for_minor_collection
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)

@@ -9,6 +9,7 @@ open GC.Gen.MinorHeap
 
 module GenInv = GC.Gen.HeapInvariant
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
+module RefTable = GC.Gen.RefTable
 module MinorFwd = GC.Gen.MinorCollectForwarding
 module RBridge = GC.Gen.ReachabilityBridge
 module Cheney = GC.Gen.Cheney
@@ -23,9 +24,9 @@ let minor_collect_full_pre
   (roots farr slots: seq U64.t) (nslots: nat) : prop =
   GenInv.collection_heap_shape minor major fp /\
   zero_forwarding_array farr /\
-  UpdatePtrs.ref_table_sound major slots nslots /\
-  UpdatePtrs.ref_table_covers_minor_ptrs major slots nslots /\
-  UpdatePtrs.slots_pairwise_distinct slots nslots /\
+  RefTable.ref_table_sound major slots nslots /\
+  RefTable.ref_table_covers_minor_ptrs major slots nslots /\
+  RefTable.slots_pairwise_distinct slots nslots /\
   MinorFwd.remembered_targets_in_roots major roots slots nslots /\
   MinorFwd.roots_valid_for_minor_collection minor major roots
 

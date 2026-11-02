@@ -20,7 +20,6 @@ open GC.Gen.Cheney
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module Mark = GC.Spec.Mark
-module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module PromUpdate = GC.Gen.PromoteUpdate
 module Cheney = GC.Gen.Cheney
 module CheneyBFS = GC.Gen.CheneyBFS
@@ -42,7 +41,7 @@ open GC.Gen.MinorCollectForwarding.Helpers
 module MCFE = GC.Gen.MinorCollectForwarding.Edges
 module MCFNE = GC.Gen.MinorCollectForwarding.NormalEdges
 module MCFNP = GC.Gen.MinorCollectForwarding.NonPointerFields
-module TPC = GC.Gen.TwoPassEquiv.Collect
+module RT = GC.Gen.RefTable
 module CE = GC.Gen.CheneyExcept
 module MCFR = GC.Gen.MinorCollectForwarding.Reflection
 module NoBlueUtil = GC.Gen.NoBlueUtil
@@ -65,7 +64,7 @@ private let major_field_target_non_infix
   (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots slots: seq U64.t) (n: nat)
   (obj: obj_addr) (j: nat)
   : Lemma (requires CheneyBFS.cheney_no_oom minor major fp roots /\
-                    TPC.ref_table_covers_except major pf slots n /\
+                    RT.ref_table_covers_except major pf slots n /\
                     remembered_targets_in_roots major roots slots n /\
                     not_freed major pf obj /\ ~(is_no_scan obj major) /\
                     j < U64.v (wosize_of_object obj major) /\
@@ -368,7 +367,7 @@ private let post_root_image_is_normal_image
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       roots_valid_except minor major pf roots /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -509,7 +508,7 @@ private let post_edge_from_major_image_reflects_mem_ce
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -704,7 +703,7 @@ private let post_edge_from_major_image_reflects_target
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -848,7 +847,7 @@ private let post_edge_from_minor_image_reflects_mem_ce
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -872,7 +871,7 @@ private let post_edge_from_minor_image_reflects_target
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -991,7 +990,7 @@ private let post_successor_of_normal_image_reflects
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -1035,7 +1034,7 @@ private let rec post_reach_witness_is_normal_image
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       roots_valid_except minor major pf roots /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -1204,7 +1203,7 @@ let rec ready_src_reach_image_post_reachable
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots)
@@ -1271,7 +1270,7 @@ private let edge_source_normal_vertex_ready
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_freed roots major pf /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
@@ -1594,11 +1593,10 @@ let normal_post_non_pointer_fields_preserved_to_result = MCFNP.normal_post_non_p
 /// Helper Lemmas for SPOT
 /// ---------------------------------------------------------------------------
 
-let no_pending_context minor major fp roots slots n =
+let no_pending_context minor major fp roots =
   GenInv.collection_heap_shape_no_pending minor major fp;
   GenInv.collection_shape_except_elim minor major fp no_pending;
   GenInv.major_shape_except_elim major fp no_pending;
-  FStar.Classical.move_requires (TPC.ref_table_covers_except_no_pending major slots) n;
   FStar.Classical.move_requires (MCFH.roots_valid_no_pending minor major) roots;
   FStar.Classical.move_requires
     (MCFH.roots_valid_except_implies_not_freed minor major no_pending) roots;

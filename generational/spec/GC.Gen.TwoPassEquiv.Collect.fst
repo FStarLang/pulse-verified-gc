@@ -15,6 +15,7 @@ open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
 open GC.Gen.Impl.UpdatePtrs
+open GC.Gen.RefTable
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module CheneySpec = GC.Gen.Cheney
@@ -29,46 +30,6 @@ module Aux = GC.Gen.PromoteUpdate.Aux
 module Inj = GC.Gen.CheneyPreservation.Injectivity
 module CE = GC.Gen.CheneyExcept
 module PromoteSpec = GC.Gen.Promote
-
-let ref_table_covers_except_implies_complete major_pre pf fwd slots n = ()
-
-let ref_table_covers_except_no_pending major_pre slots n = ()
-
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-let ref_table_sound_except_implies_fwd major_pre pf fwd slots n =
-  let aux (i: nat) : Lemma
-    (i < n ==>
-      (let addr = U64.v (Seq.index slots i) in
-       addr < heap_size /\ addr % 8 == 0 /\
-       (exists (obj: obj_addr) (j: nat).
-         Seq.mem obj (objects zero_addr major_pre) /\
-         is_blue obj major_pre = false /\
-         is_no_scan obj major_pre = false /\
-         j < U64.v (wosize_of_object obj major_pre) /\
-         addr == U64.v obj + j * 8 /\
-         (~(pf obj) \/
-          ~(TwoPass.holds_forwarded major_pre fwd (U64.uint_to_t addr))))))
-    = ()
-  in
-  Classical.forall_intro aux
-
-let ref_table_sound_except_no_pending major_pre slots n =
-  let aux (i: nat) : Lemma
-    (i < n ==>
-      (let addr = U64.v (Seq.index slots i) in
-       addr < heap_size /\ addr % 8 == 0 /\
-       (exists (obj: obj_addr) (j: nat).
-         Seq.mem obj (objects zero_addr major_pre) /\
-         is_blue obj major_pre = false /\
-         is_no_scan obj major_pre = false /\
-         j < U64.v (wosize_of_object obj major_pre) /\
-         addr == U64.v obj + j * 8 /\
-         (~(no_pending obj) \/
-          ~(is_minor_pointer (to_minor_offset (read_word major_pre (U64.uint_to_t addr))))))))
-    = ()
-  in
-  Classical.forall_intro aux
-#pop-options
 
 /// Derivation: fwd_valid_or_infix + wfh_part1 + fwd_bounded + represents_fwd
 /// implies promoted_entries_valid_from.
@@ -235,40 +196,29 @@ private let derive_promoted_entries_walked
     Classical.forall_intro aux
 #pop-options
 
-/// A slot is a field of an old non-free object: a field of a not-freed one is
-/// a field of a not-freed object after promotion, and one in a pending object
-/// still holds no forwarded pointer, since promotion does not write old objects.
+/// A slot is a field of a not-freed object, and so it is one after promotion.
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 private let derive_slot_rewrite_walked
   (minor: minor_state) (major_pre: heap) (fp: U64.t) (roots: seq U64.t)
   (pf: obj_addr -> prop) (a: nat) (obj: obj_addr) (j: nat)
   : Lemma
     (requires
-      (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
-       CE.promote_pre minor major_pre fp /\
-       a < heap_size /\ a % 8 == 0 /\
-       Seq.mem obj (objects zero_addr major_pre) /\
-       is_blue obj major_pre = false /\
-       is_no_scan obj major_pre = false /\
-       j < U64.v (wosize_of_object obj major_pre) /\
-       a == U64.v obj + j * 8 /\
-       (~(pf obj) \/ ~(TwoPass.holds_forwarded major_pre prom.fwd_map (U64.uint_to_t a)))))
+      CE.promote_pre minor major_pre fp /\
+      a < heap_size /\ a % 8 == 0 /\
+      not_freed major_pre pf obj /\
+      is_no_scan obj major_pre = false /\
+      j < U64.v (wosize_of_object obj major_pre) /\
+      a == U64.v obj + j * 8)
     (ensures
       (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
-       TwoPass.walked_field_addr prom.major_final (not_freed prom.major_final pf) a \/
-       ~(TwoPass.holds_forwarded prom.major_final prom.fwd_map (U64.uint_to_t a))))
+       TwoPass.walked_field_addr prom.major_final (not_freed prom.major_final pf) a))
   = let prom = CheneySpec.cheney_promote minor major_pre fp roots in
     SpecFields.wfh_part1_obj_bound major_pre obj;
     ML.lemma_mod_plus (U64.v obj) j 8;
     assert (U64.v obj + j * 8 + 8 <= heap_size);
     CheneySpec.cheney_promote_preserves_objects minor major_pre fp roots;
     CheneyPres.cheney_promote_frame_old_header minor major_pre fp roots obj;
-    Aux.header_eq_object_facts prom.major_final major_pre obj;
-    if IndDesc.strong_excluded_middle (pf obj) then begin
-      CheneyPres.cheney_promote_frame_old_fields minor major_pre fp roots obj j;
-      assert (U64.uint_to_t a == U64.uint_to_t (U64.v obj + j * 8))
-    end else
-      assert (TwoPass.walked_field_addr prom.major_final (not_freed prom.major_final pf) a)
+    Aux.header_eq_object_facts prom.major_final major_pre obj
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
@@ -277,9 +227,8 @@ private let derive_slots_rewrite_walked
   (pf: obj_addr -> prop) (slots: seq U64.t) (n: nat)
   : Lemma
     (requires
-      (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
-       CE.promote_pre minor major_pre fp /\
-       ref_table_sound_fwd_except major_pre pf prom.fwd_map slots n))
+      CE.promote_pre minor major_pre fp /\
+      ref_table_sound_except major_pre pf slots n)
     (ensures
       (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
        TwoPass.slots_rewrite_walked prom.major_final
@@ -289,25 +238,20 @@ private let derive_slots_rewrite_walked
       (i < n ==>
         (let a = U64.v (Seq.index slots i) in
          a < heap_size /\ a % 8 == 0 /\
-         (TwoPass.walked_field_addr prom.major_final (not_freed prom.major_final pf) a \/
-          ~(TwoPass.holds_forwarded prom.major_final prom.fwd_map (U64.uint_to_t a)))))
+         TwoPass.walked_field_addr prom.major_final (not_freed prom.major_final pf) a))
     = if i < n then begin
         let a = U64.v (Seq.index slots i) in
         let obj : obj_addr = IndDesc.indefinite_description_ghost obj_addr (fun obj ->
           exists (j: nat).
-            Seq.mem obj (objects zero_addr major_pre) /\
-            is_blue obj major_pre = false /\
+            not_freed major_pre pf obj /\
             is_no_scan obj major_pre = false /\
             j < U64.v (wosize_of_object obj major_pre) /\
-            a == U64.v obj + j * 8 /\
-            (~(pf obj) \/ ~(TwoPass.holds_forwarded major_pre prom.fwd_map (U64.uint_to_t a)))) in
+            a == U64.v obj + j * 8) in
         let j : nat = IndDesc.indefinite_description_ghost nat (fun j ->
-            Seq.mem obj (objects zero_addr major_pre) /\
-            is_blue obj major_pre = false /\
+            not_freed major_pre pf obj /\
             is_no_scan obj major_pre = false /\
             j < U64.v (wosize_of_object obj major_pre) /\
-            a == U64.v obj + j * 8 /\
-            (~(pf obj) \/ ~(TwoPass.holds_forwarded major_pre prom.fwd_map (U64.uint_to_t a)))) in
+            a == U64.v obj + j * 8) in
         derive_slot_rewrite_walked minor major_pre fp roots pf a obj j
       end
     in
@@ -416,15 +360,4 @@ let two_pass_implies_collect_except minor major_pre fp roots pf farr slots n =
   derive_fwd_ptrs_classified_walked minor major_pre fp roots pf farr slots n;
   TwoPass.promoted_plus_slots_eq_walk prom.major_final (not_freed prom.major_final pf)
     prom.fwd_map farr slots n
-#pop-options
-
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let two_pass_implies_full_update minor major_pre fp roots farr slots n =
-  let prom = CheneySpec.cheney_promote minor major_pre fp roots in
-  ref_table_sound_except_no_pending major_pre slots n;
-  ref_table_sound_except_implies_fwd major_pre no_pending prom.fwd_map slots n;
-  assert (ref_table_complete_except major_pre no_pending prom.fwd_map slots n);
-  no_pending_ok major_pre;
-  two_pass_implies_collect_except minor major_pre fp roots no_pending farr slots n;
-  CE.cheney_collect_spec_except_no_pending minor major_pre fp roots
 #pop-options

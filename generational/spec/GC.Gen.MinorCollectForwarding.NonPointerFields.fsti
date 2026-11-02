@@ -21,14 +21,13 @@ open GC.Gen.Reachability
 open GC.Gen.Cheney
 
 module Mark = GC.Spec.Mark
-module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module CheneyBFS = GC.Gen.CheneyBFS
 module CG = GC.Gen.CombinedGraph
 module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
 
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
-module TPC = GC.Gen.TwoPassEquiv.Collect
+module RT = GC.Gen.RefTable
 module CE = GC.Gen.CheneyExcept
 open GC.Gen.MinorCollectForwarding.Helpers
 
@@ -123,7 +122,7 @@ val normal_post_non_pointer_fields_preserved
     (requires
       GenInv.collection_shape_except minor major fp pf /\
       RBridge.major_fields_covered minor major pf roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       roots_valid_except minor major pf roots /\
       CheneyBFS.cheney_no_oom minor major fp roots)

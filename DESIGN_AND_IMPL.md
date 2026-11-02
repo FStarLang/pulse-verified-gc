@@ -901,13 +901,42 @@ are well-formed, but that they cover all major-to-minor pointers relevant to the
 collection:
 
 ```fstar
-UpdatePtrs.ref_table_sound 's 'sl (SZ.v nslots) /\
-UpdatePtrs.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
-UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots) /\
+RT.ref_table_sound 's 'sl (SZ.v nslots) /\
+RT.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
+RT.slots_pairwise_distinct 'sl (SZ.v nslots) /\
 MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots)
 ```
 
-Those facts appear as preconditions of `minor_collect_full`.
+Those facts appear in the preconditions of `gen_gc` and
+`minor_collect_pre_idle`.  The slot predicates live in the spec module
+`GC.Gen.RefTable` (`RT`), stated except a pending set `pf`; the stop-the-world
+forms above are their instances at `no_pending`:
+
+```fstar
+let ref_table_sound_except (major_pre: heap) (pf: obj_addr -> prop)
+                           (slots: seq U64.t) (n: nat) : prop =
+  n <= Seq.length slots /\
+  (forall (i: nat). i < n ==>
+    (let addr = U64.v (Seq.index slots i) in
+     addr < heap_size /\ addr % 8 == 0 /\
+     (exists (obj: obj_addr) (j: nat).
+       not_freed major_pre pf obj /\
+       is_no_scan obj major_pre = false /\
+       j < U64.v (wosize_of_object obj major_pre) /\
+       addr == U64.v obj + j * 8)))
+
+let ref_table_sound (major_pre: heap) (slots: seq U64.t) (n: nat) : prop =
+  ref_table_sound_except major_pre no_pending slots n
+```
+
+`ref_table_covers_except` says every nursery pointer held by a field of a
+`not_freed major_pre pf` scannable object is at a slot.  Soundness says every
+slot is a field of a not-freed scannable object.  It holds because the table is
+emptied at every minor collection and an entry is recorded only when the
+program writes a field, so the object was reachable after the last minor
+collection; such an object is never pending, since marking starts right after
+a minor collection and, under a deletion barrier, anything written during
+marking ends black.
 
 ### Promotion and forwarding
 
@@ -973,9 +1002,8 @@ proved for the walk over any set (`walk_ok`: its members are not free), and the
 The implementation's two passes are proved equal to the walk
 (`GC.Gen.TwoPassEquiv.promoted_plus_slots_eq_walk`), and at a Cheney result,
 with the write barrier's guarantees stated except the pending objects
-(`ref_table_covers_except`, `ref_table_sound_fwd_except`; the caller's form is
-`ref_table_sound_except`: a slot in a pending object holds no nursery pointer),
-to the pointer update of `cheney_collect_spec_except`
+(`GC.Gen.RefTable.ref_table_covers_except`, `ref_table_sound_except`: every
+slot is a field of a not-freed object), to the pointer update of `cheney_collect_spec_except`
 (`GC.Gen.TwoPassEquiv.Collect.two_pass_implies_collect_except`).
 
 ### The minor collection's shape, except the objects pending free

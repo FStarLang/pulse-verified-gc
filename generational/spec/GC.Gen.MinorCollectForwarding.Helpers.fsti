@@ -41,7 +41,6 @@ open GC.Gen.Cheney
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module Mark = GC.Spec.Mark
-module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module PromUpdate = GC.Gen.PromoteUpdate
 module CheneyBFS = GC.Gen.CheneyBFS
 module CheneyCorr = GC.Gen.CheneyCorrectness
@@ -51,7 +50,7 @@ module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
 module HeapGraph = GC.Spec.HeapGraph
 module HeapModel = GC.Spec.HeapModel
-module TPC = GC.Gen.TwoPassEquiv.Collect
+module RT = GC.Gen.RefTable
 
 /// Read the remembered-set slot targets from the pre-collection major heap.
 /// Only valid slots containing minor pointers contribute roots.
@@ -455,7 +454,7 @@ val major_field_target_in_roots
   (major: heap) (pf: obj_addr -> prop) (roots slots: seq U64.t) (n: nat) (src: obj_addr) (j: nat)
   : Lemma
     (requires
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       not_freed major pf src /\
       is_no_scan src major = false /\
@@ -481,7 +480,7 @@ val major_fields_covered_from_slots
   (minor: minor_state) (major: heap) (pf: obj_addr -> prop) (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n)
     (ensures RBridge.major_fields_covered minor major pf roots)
 
@@ -511,7 +510,7 @@ val major_field_infix_target_forwarded
   : Lemma
     (requires
       CheneyBFS.cheney_no_oom minor major fp roots /\
-      TPC.ref_table_covers_except major pf slots n /\
+      RT.ref_table_covers_except major pf slots n /\
       remembered_targets_in_roots major roots slots n /\
       not_freed major pf src /\
       is_no_scan src major = false /\

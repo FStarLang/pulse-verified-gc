@@ -17,6 +17,7 @@ module MinorFwd = GC.Gen.MinorCollectForwarding
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RBridge = GC.Gen.ReachabilityBridge
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
+module RefTable = GC.Gen.RefTable
 module GenImpl = GC.Gen.Impl
 module Preconditions = GC.SPOT.Preconditions
 module Layout = GC.SPOT.Layout
@@ -167,7 +168,7 @@ let spot_mi_collection_heap_shape r =
 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 private let spot_mi_ref_table_sound (r: unit{Major.spot_major_room})
-  : Lemma (UpdatePtrs.ref_table_sound (Major.spot_major_heap r) (spot_mi_slots r) 1)
+  : Lemma (RefTable.ref_table_sound (Major.spot_major_heap r) (spot_mi_slots r) 1)
   =
   let major = Major.spot_major_heap r in
   Major.spot_major_layout_facts r;
@@ -206,7 +207,7 @@ private let spot_mi_ref_table_sound (r: unit{Major.spot_major_room})
 
 #push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
 private let spot_mi_ref_table_covers (r: unit{Major.spot_major_room})
-  : Lemma (UpdatePtrs.ref_table_covers_minor_ptrs
+  : Lemma (RefTable.ref_table_covers_minor_ptrs
              (Major.spot_major_heap r) (spot_mi_slots r) 1)
   =
   let major = Major.spot_major_heap r in

@@ -28,6 +28,7 @@ module MinorFwdHelpers = GC.Gen.MinorCollectForwarding.Helpers
 module RBridge = GC.Gen.ReachabilityBridge
 module PromoteUpdate = GC.Gen.PromoteUpdate
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
+module RefTable = GC.Gen.RefTable
 module GenImpl = GC.Gen.Impl
 module CheneyPres = GC.Gen.CheneyPreservation
 module MajorGC = GC.Impl
@@ -124,7 +125,7 @@ let spot_collection_heap_shape (r: unit{ConcreteMajor.spot_major_room})
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_ref_table_sound (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma (UpdatePtrs.ref_table_sound
+  : Lemma (RefTable.ref_table_sound
              (ConcreteMajor.spot_major_heap r)
              (ThreeObjects.spot_slots (ConcreteMajor.spot_c r)) 1)
   =
@@ -174,7 +175,7 @@ let spot_ref_table_sound (r: unit{ConcreteMajor.spot_major_room})
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_ref_table_covers_minor_ptrs (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma (UpdatePtrs.ref_table_covers_minor_ptrs
+  : Lemma (RefTable.ref_table_covers_minor_ptrs
              (ConcreteMajor.spot_major_heap r)
              (ThreeObjects.spot_slots (ConcreteMajor.spot_c r)) 1)
   =

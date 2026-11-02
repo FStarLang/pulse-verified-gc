@@ -23,6 +23,7 @@ open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
 open GC.Gen.Impl.Promote
 open GC.Gen.Impl.UpdatePtrs
+open GC.Gen.RefTable
 open GC.Gen.Impl.Cheney
 open GC.Impl.Heap
 open GC.Impl.Stack
@@ -417,7 +418,7 @@ let minor_collect_full_isomorphism_post
   : Lemma
     (requires
       GenInv.collection_shape_except minor major fp pf /\
-      TPC.ref_table_covers_except major pf slots n /\
+      ref_table_covers_except major pf slots n /\
       post_major == (CheneySpec.cheney_collect_spec_except minor major fp roots pf).mc_major /\
       post_roots == MCFH.resolve_roots post_major
         (PromoteSpec.rewrite_roots roots
@@ -466,8 +467,8 @@ let minor_collect_except_spec
       GenInv.collection_shape_except minor major fp pf /\
       Seq.length farr == fwd_array_size /\
       represents_fwd farr (CheneySpec.cheney_promote minor major fp roots).fwd_map /\
-      TPC.ref_table_sound_except major pf slots n /\
-      TPC.ref_table_covers_except major pf slots n /\
+      ref_table_sound_except major pf slots n /\
+      ref_table_covers_except major pf slots n /\
       slots_pairwise_distinct slots n)
     (ensures
       (let prom = CheneySpec.cheney_promote minor major fp roots in
@@ -482,8 +483,8 @@ let minor_collect_except_spec
     CheneySpec.cheney_promote_fwd_above_zero_addr minor major fp roots;
     CheneySpec.cheney_promote_fwd_bounded minor major fp roots;
     derive_fwd_targets_stable prom.fwd_map;
-    TPC.ref_table_sound_except_implies_fwd major pf prom.fwd_map slots n;
-    TPC.ref_table_covers_except_implies_complete major pf prom.fwd_map slots n;
+    ref_table_sound_except_implies_valid_slot_addrs major pf slots n;
+    ref_table_covers_except_implies_complete major pf prom.fwd_map slots n;
     CheneySpec.cheney_promote_preserves_wfh_part1 minor major fp roots;
     CheneySpec.cheney_promote_preserves_wfh_part4 minor major fp roots;
     CheneyPres.cheney_promote_fwd_valid_or_infix minor major fp roots;
@@ -547,9 +548,7 @@ fn minor_collect_full (gh: gen_heap_t)
   with farr_post2. assert (pts_to fwd_arr farr_post2);
 
   // Phase 2b: Rewrite ref_table slots
-  TPC.ref_table_sound_except_implies_fwd 's pf
-    (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map
-    'sl (SZ.v nslots);
+  ref_table_sound_except_implies_valid_slot_addrs 's pf 'sl (SZ.v nslots);
   rewrite_heap_slots gh.major fwd_arr slots nslots
     #(hide (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map);
 
@@ -582,8 +581,6 @@ fn minor_collect_full (gh: gen_heap_t)
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let minor_collect_idle_pre minor_st s fp rs farr sl nslots =
   GenInv.collection_heap_shape_no_pending minor_st s fp;
-  TPC.ref_table_sound_except_no_pending s sl nslots;
-  TPC.ref_table_covers_except_no_pending s sl nslots;
   MCFH.roots_valid_no_pending minor_st s rs
 #pop-options
 

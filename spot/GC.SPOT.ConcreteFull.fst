@@ -217,7 +217,7 @@ let post_roots_mem_a_prime
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)
-    roots Seq.empty 0;
+    roots;
   MCFH.fwd_image_resolves
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
@@ -403,7 +403,7 @@ let post_minor_c_wosize
   assert (SpecObj.is_blue c major = false);
   assert (Layout.c_to_a_field_index < U64.v (SpecObj.wosize_of_object c major));
   aligned_plus_mul8 (U64.v c) Layout.c_to_a_field_index;
-  MinorFwd.no_pending_context minor major fp roots Seq.empty 0;
+  MinorFwd.no_pending_context minor major fp roots;
   MinorFwd.cheney_promote_preserves_old_major_field_context
     minor major fp GC.Spec.Fields.no_pending roots c Layout.c_to_a_field_index;
   Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;

@@ -64,12 +64,12 @@ val spot_infix_collection_heap_shape (r: unit{InfixMajor.spot_infix_room})
 
 val spot_infix_ref_table_sound (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
-      GC.Gen.Impl.UpdatePtrs.ref_table_sound
+      GC.Gen.RefTable.ref_table_sound
         (InfixMajor.spot_infix_heap r) spot_infix_slots 0)
 
 val spot_infix_ref_table_covers (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
-      GC.Gen.Impl.UpdatePtrs.ref_table_covers_minor_ptrs
+      GC.Gen.RefTable.ref_table_covers_minor_ptrs
         (InfixMajor.spot_infix_heap r) spot_infix_slots 0)
 
 val spot_infix_remembered_targets_in_roots (r: unit{InfixMajor.spot_infix_room})

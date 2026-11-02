@@ -19,7 +19,7 @@ module CheneyBFS = GC.Gen.CheneyBFS
 module CG = GC.Gen.CombinedGraph
 module MinorFwd = GC.Gen.MinorCollectForwarding
 module RBridge = GC.Gen.ReachabilityBridge
-module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
+module RefTable = GC.Gen.RefTable
 
 /// ---------------------------------------------------------------------------
 /// SPOT: an *interior* pointer into the nursery
@@ -71,7 +71,7 @@ let minor_infix_scenario
   // ---- the standard minor-collection context ------------------------------
   GenInv.collection_heap_shape minor major fp /\
   RBridge.major_fields_covered minor major GC.Spec.Fields.no_pending roots /\
-  UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+  RefTable.ref_table_covers_minor_ptrs major slots n /\
   MinorFwd.remembered_targets_in_roots major roots slots n /\
   RBridge.roots_not_freed roots major GC.Spec.Fields.no_pending /\
   CheneyBFS.cheney_no_oom minor major fp roots /\

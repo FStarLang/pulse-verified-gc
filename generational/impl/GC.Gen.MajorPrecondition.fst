@@ -131,7 +131,7 @@ let post_minor_minor_root_valid
   assert (prom.fwd_map r <> 0UL);
   let t = prom.fwd_map r in
   assert (Promote.rewrite_root r prom.fwd_map == t);
-  GC.Gen.MinorCollectForwarding.no_pending_context minor major fp roots Seq.empty 0;
+  GC.Gen.MinorCollectForwarding.no_pending_context minor major fp roots;
   MinorFwd.fwd_image_resolves minor major fp SpecFields.no_pending roots r;
   let p = prom.fwd_map rv in
   assert (SpecObj.resolve_object (t <: obj_addr) result.mc_major == p);

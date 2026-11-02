@@ -22,6 +22,7 @@ open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
 open GC.Gen.Impl.UpdatePtrs
+open GC.Gen.RefTable
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module PromObj = GC.Gen.PromoteUpdate.Obj
