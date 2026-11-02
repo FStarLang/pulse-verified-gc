@@ -48,7 +48,9 @@ SPEC2 = spec/GC.Spec.MarkPar2.Model.fst spec/GC.Spec.MarkPar2.Mutants.fst \
   spec/GC.Spec.MarkPar2.Act.fst spec/GC.Spec.MarkPar2.Step.fst spec/GC.Spec.MarkPar2.Fix.fst \
   spec/GC.Spec.MarkPar2.Main.fst spec/GC.Spec.MarkPar2.Init.fst spec/GC.Spec.MarkPar2.End.fst \
   spec/GC.Spec.MarkPar2.Count.fst spec/GC.Spec.MarkPar2.Foot.fst spec/GC.Spec.MarkPar2.Weight.fst \
-  spec/GC.Spec.MarkPar2.Meas.fst spec/GC.Spec.MarkPar2.Term.fst spec/GC.Spec.MarkPar2.fst
+  spec/GC.Spec.MarkPar2.Meas.fst spec/GC.Spec.MarkPar2.Term.fst spec/GC.Spec.MarkPar2.fst \
+  spec/GC.Spec.MarkPar2.Witness.fst spec/GC.Spec.MarkPar2.Runs.fst spec/GC.Spec.MarkPar2.RunR1.fst \
+  spec/GC.Spec.MarkPar2.RunR2.fst spec/GC.Spec.MarkPar2.RunR3.fst spec/GC.Spec.MarkPar2.RunR4.fst
 
 .PHONY: verify test test2 check clean
 verify:
