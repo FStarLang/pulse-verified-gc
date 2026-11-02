@@ -167,8 +167,8 @@ private let chain_blue_transfer_step
         heap_words)
     (ensures
       AllocLemmas.chain_avoids
-        (promote_object minor major obj fp wosize).major_out
-        (promote_object minor major obj fp wosize).fp_out
+        (promote_object minor major obj fp wosize Idle).major_out
+        (promote_object minor major obj fp wosize Idle).fp_out
         excl heap_words = true)
   = let fuel = heap_words in
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
@@ -207,18 +207,18 @@ private let chain_blue_proof_for_excl
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
       chain_objects_blue major fp /\
-      (promote_object minor major obj fp wosize).new_addr <> 0UL /\
+      (promote_object minor major obj fp wosize Idle).new_addr <> 0UL /\
       // excl-specific
-      Seq.mem excl (objects zero_addr (promote_object minor major obj fp wosize).major_out) /\
-      is_blue excl (promote_object minor major obj fp wosize).major_out = false /\
+      Seq.mem excl (objects zero_addr (promote_object minor major obj fp wosize Idle).major_out) /\
+      is_blue excl (promote_object minor major obj fp wosize Idle).major_out = false /\
       excl <> (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).obj_out)
     (ensures
       AllocLemmas.chain_avoids
-        (promote_object minor major obj fp wosize).major_out
-        (promote_object minor major obj fp wosize).fp_out
+        (promote_object minor major obj fp wosize Idle).major_out
+        (promote_object minor major obj fp wosize Idle).fp_out
         excl heap_words = true)
   = let fuel = heap_words in
-    let res = promote_object minor major obj fp wosize in
+    let res = promote_object minor major obj fp wosize Idle in
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
     let new_major = alloc_res.heap_out in
     GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize (promoted_tag minor obj);
@@ -289,7 +289,7 @@ let promote_object_preserves_chain_objects_blue
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
   = let fuel = heap_words in
-    let res = promote_object minor major obj fp wosize in
+    let res = promote_object minor major obj fp wosize Idle in
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
     let new_major = alloc_res.heap_out in
     GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize (promoted_tag minor obj);
@@ -342,7 +342,7 @@ let promote_object_preserves_free_list_shape
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
   =
-    let res = promote_object minor major obj fp wosize in
+    let res = promote_object minor major obj fp wosize Idle in
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
     let new_major = alloc_res.heap_out in
     GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize (promoted_tag minor obj);

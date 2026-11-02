@@ -213,7 +213,7 @@ let cheney_forward_normal_preserves_fwd_target_fields_match_state
         fwd_target_fields_match_state_elim minor cs x j field_addr
       end
       else
-        let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+        let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
         if res.new_addr = 0UL then begin
           assert (Seq.mem addr (minor_objects minor));
           assert (cs.cs_fwd addr = 0UL);
@@ -614,7 +614,7 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
         let wz = minor_wosize minor addr in
         assert (not (wz = 0));
         assert (wz > 0);
-        let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+        let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
         if res.new_addr = 0UL then begin
           assert (Seq.mem addr (minor_objects minor));
           assert (cs.cs_fwd addr = 0UL);

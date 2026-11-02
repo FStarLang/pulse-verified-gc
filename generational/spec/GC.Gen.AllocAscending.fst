@@ -80,13 +80,13 @@ private let afb_header (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (a: obj
   : Lemma (requires well_formed_heap_part1 g /\ Seq.mem obj (objects zero_addr g) /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     Seq.mem a (objects zero_addr g) /\ a <> obj)
-          (ensures read_word (fst (alloc_from_block g obj wz tag next)) (hd_address a) ==
+          (ensures read_word (fst (alloc_from_block g obj wz white_color tag next)) (hd_address a) ==
                    read_word g (hd_address a))
   = hd_address_spec a; hd_address_spec obj;
     wosize_of_object_spec obj g;
     if U64.v a < U64.v obj then objects_separated zero_addr g a obj
     else objects_separated zero_addr g obj a;
-    alloc_from_block_read_outside g obj wz next (hd_address a) tag
+    alloc_from_block_read_outside g obj wz next (hd_address a) white_color tag
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -101,7 +101,7 @@ private let afb_obj_facts (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag
                     is_blue obj g /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     U64.v (hd_address obj) + (U64.v (wosize_of_object obj g) - wz) * 8 + 8 < heap_size)
-          (ensures (let g2 = fst (alloc_from_block g obj wz tag next) in
+          (ensures (let g2 = fst (alloc_from_block g obj wz white_color tag next) in
                     let lo = U64.v (wosize_of_object obj g) - wz in
                     let oo = U64.v obj + lo * 8 in
                     oo < heap_size /\ oo % 8 == 0 /\
@@ -120,7 +120,7 @@ private let afb_obj_facts (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag
     aligned_plus_mul8 (U64.v obj) lo;
     let ooa : obj_addr = U64.uint_to_t oo in
     hd_address_spec ooa;
-    let g2 = fst (alloc_from_block g obj wz tag next) in
+    let g2 = fst (alloc_from_block g obj wz white_color tag next) in
     AllocLemmas.alloc_from_block_objects_facts_part1 g obj wz next tag;
     let back (h: obj_addr)
       : Lemma (Seq.mem h (objects zero_addr g2) <==>
@@ -139,7 +139,7 @@ private let afb_obj_facts (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag
     AllocLemmas.make_header_getColor (U64.uint_to_t wz) white_bits tag;
     getColor_raw alloc_hdr;
     if lo = 0 then begin
-      alloc_from_block_exact g obj wz next tag;
+      alloc_from_block_exact g obj wz next white_color tag;
       read_write_same g hd alloc_hdr;
       color_of_object_spec ooa g2;
       is_blue_iff ooa g2
@@ -167,7 +167,7 @@ let found_heap (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (tag: U64.t{U64
   let new_fp = alloc_replacement_fp g obj wz next in
   let gw = if prev = 0UL || not (U64.v prev < heap_size && U64.v prev % U64.v mword = 0)
            then g else write_word g (prev <: hp_addr) new_fp in
-  fst (alloc_from_block gw obj wz tag next)
+  fst (alloc_from_block gw obj wz white_color tag next)
 
 /// Cells after the found arm: the old ones, minus `obj` unless it split.
 #push-options "--z3rlimit 60"
@@ -182,7 +182,7 @@ private let found_cells (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (tag: 
   = let next = read_word g obj in
     let new_fp = alloc_replacement_fp g obj wz next in
     let gw = if prev = 0UL then g else write_word g (prev <: hp_addr) new_fp in
-    let g2 = fst (alloc_from_block gw obj wz tag next) in
+    let g2 = fst (alloc_from_block gw obj wz white_color tag next) in
     cell_elim g (obj <: U64.t);
     hd_address_spec obj;
     let bwz = U64.v (wosize_of_object obj g) in
@@ -287,13 +287,13 @@ private let rec search_asc (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat
   : Lemma (requires well_formed_heap_part1 g /\ FLA.fl_ascending g head /\ wz >= 1 /\
                     ((prev = 0UL /\ cur == head) \/
                      (FL.fl_cell g prev /\ FL.fl_next g prev == cur)))
-          (ensures (let r = alloc_search g head prev cur wz tag fuel in
+          (ensures (let r = alloc_search g head prev cur wz Idle tag fuel in
                     FLA.fl_ascending r.heap_out r.fp_out))
           (decreases fuel)
-  = if fuel = 0 then alloc_search_fuel_0 g head prev cur wz tag
+  = if fuel = 0 then alloc_search_fuel_0 g head prev cur wz Idle tag
     else if U64.v cur < U64.v zero_addr + U64.v mword || U64.v cur >= heap_size ||
             U64.v cur % U64.v mword <> 0
-    then alloc_search_invalid g head prev cur wz fuel tag
+    then alloc_search_invalid g head prev cur wz fuel Idle tag
     else begin
       // cur is a cell: the head, or the link of a cell
       (if prev = 0UL then FLA.fl_ascending_head_cell g head
@@ -307,24 +307,24 @@ private let rec search_asc (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat
       if bwz >= wz then begin
         let ahn = U64.v (hd_address obj) + (bwz - wz) * 8 in
         if ahn + 8 >= heap_size || ahn >= pow2 64 || ahn % 8 <> 0 then
-          alloc_search_found_oob g head prev cur wz fuel tag
+          alloc_search_found_oob g head prev cur wz fuel Idle tag
         else begin
           spec_next_fp_eq g obj;
           if prev = 0UL then begin
-            alloc_search_found_head g head prev cur wz fuel tag;
+            alloc_search_found_head g head prev cur wz fuel Idle tag;
             found_case g head prev obj wz tag
           end else begin
             cell_elim g prev;
             FLA.fl_cell_facts g prev;
             FLA.fl_ascending_next_cell g head prev;
             two_objects_apart g (prev <: obj_addr) obj;
-            alloc_search_found_prev g head prev cur wz fuel tag;
+            alloc_search_found_prev g head prev cur wz fuel Idle tag;
             found_case g head prev obj wz tag
           end
         end
       end
       else begin
-        alloc_search_advance g head prev cur wz fuel tag;
+        alloc_search_advance g head prev cur wz fuel Idle tag;
         spec_next_fp_eq g obj;
         FLA.fl_cell_facts g cur;
         assert (FL.fl_next g cur == read_word g obj);

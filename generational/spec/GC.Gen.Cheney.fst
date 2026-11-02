@@ -64,7 +64,7 @@ private let promote_object_preserves_alloc_invs
   : Lemma (requires well_formed_heap_part1 major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = promote_object minor major obj fp wz in
+          (ensures (let res = promote_object minor major obj fp wz Idle in
                     well_formed_heap_part1 res.major_out /\
                     AllocLemmas.fl_valid res.major_out res.fp_out heap_words /\
                     AllocLemmas.fl_chain_terminates res.major_out res.fp_out heap_words))
@@ -84,7 +84,7 @@ let cheney_forward_normal (minor: minor_state) (cs: cheney_state) (addr: U64.t)
     let wz = minor_wosize minor addr in
     if wz = 0 then cs
     else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then cs  // OOM — leave state unchanged
       else
         { cs_major = res.major_out;
@@ -273,7 +273,7 @@ private let cheney_forward_normal_preserves_wfh_part1
     let wz = minor_wosize minor addr in
     if wz = 0 then ()
     else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then ()
       else begin
         promote_object_preserves_alloc_invs minor cs.cs_major addr cs.cs_fp wz
@@ -407,7 +407,7 @@ private let cheney_forward_normal_preserves_cob
     let wz = minor_wosize minor addr in
     if wz = 0 then ()
     else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then ()
       else
         promote_object_preserves_chain_objects_blue minor cs.cs_major addr cs.cs_fp wz
@@ -546,7 +546,7 @@ private let cheney_forward_normal_preserves_free_list_shape
       let wz = minor_wosize minor addr in
       if wz = 0 then ()
       else
-        let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+        let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
         if res.new_addr = 0UL then ()
         else
           promote_object_preserves_free_list_shape minor cs.cs_major addr cs.cs_fp wz
@@ -677,7 +677,7 @@ private let promote_object_preserves_objects_part1
   : Lemma (requires well_formed_heap_part1 major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = promote_object minor major obj fp wz in
+          (ensures (let res = promote_object minor major obj fp wz Idle in
                     forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
                       Seq.mem x (objects zero_addr res.major_out)))
   =
@@ -715,7 +715,7 @@ private let cheney_forward_normal_preserves_objects
     let wz = minor_wosize minor addr in
     if wz = 0 then ()
     else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then ()
       else
         promote_object_preserves_objects_part1 minor cs.cs_major addr cs.cs_fp wz
@@ -1003,7 +1003,7 @@ private let cheney_forward_normal_preserves_dense
     let wz = minor_wosize minor addr in
     if wz = 0 then ()
     else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then ()
       else
         Dense.promote_object_preserves_dense minor cs.cs_major addr cs.cs_fp wz
@@ -1149,7 +1149,7 @@ private let cheney_forward_normal_preserves_fwd_bounded
     let wz = minor_wosize minor addr in
     if wz = 0 then ()
     else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then ()
       else begin
         AllocProps.alloc_spec_obj_valid cs.cs_major cs.cs_fp wz (promoted_tag minor addr);
@@ -1337,7 +1337,7 @@ private let cheney_forward_normal_preserves_fwd_above_zero
     let wz = minor_wosize minor addr in
     if wz = 0 then ()
     else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then ()
       else begin
         AllocProps.alloc_spec_obj_in_objects_part1 cs.cs_major cs.cs_fp wz (promoted_tag minor addr);
@@ -1512,7 +1512,7 @@ private let cheney_forward_normal_preserves_wfh_part4
       minor_objects_not_infix minor addr;
       Object.infix_tag_val ();
       promote_object_preserves_wfh_part4 minor cs.cs_major addr cs.cs_fp wz;
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then ()
       else ()
     end

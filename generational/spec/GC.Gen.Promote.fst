@@ -19,6 +19,8 @@ open GC.Gen.Reachability
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module WriteBody = GC.Gen.WriteBodyLemmas
 module AllocProps = GC.Gen.AllocProps
+module AC = GC.Spec.Allocator.Cursor
+open GC.Spec.Phase
 
 open GC.Lib.Header
 open GC.Gen.WriteBodyLemmas
@@ -83,6 +85,10 @@ let rec copy_fields_preserves
       copy_fields_preserves minor major' src_obj dst_obj (i + 1) n j
     end
 #pop-options
+
+let promote_object_idle_phase (minor: minor_state) (major: heap) (obj: U64.t)
+                              (fp: U64.t) (wosize: nat{wosize > 0})
+  = AC.alloc_phase_idle major fp wosize (promoted_tag minor obj)
 
 let promote_object_oom (minor: minor_state) (major: heap) (obj: U64.t)
                        (fp: U64.t) (wosize: nat{wosize > 0})
@@ -260,7 +266,7 @@ let promote_preserves_field_at
        alloc_res.obj_out == dst_addr /\
        alloc_res.obj_out <> 0UL))
     (ensures
-      (let res = promote_object minor major obj fp wosize in
+      (let res = promote_object minor major obj fp wosize Idle in
        read_word res.major_out addr == minor_read_field minor obj j))
   = let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
     assert (alloc_res.obj_out == dst_addr);
@@ -286,7 +292,7 @@ let promote_preserves_fields
       // step: postcondition as implication (guards U64.uint_to_t well-formedness)
       let step (j: nat) : Lemma
         (j < wosize ==>
-         (let res = promote_object minor major obj fp wosize in
+         (let res = promote_object minor major obj fp wosize Idle in
           read_word res.major_out (U64.uint_to_t (U64.v res.new_addr + j * 8))
           == minor_read_field minor obj j))
       = if j < wosize then begin

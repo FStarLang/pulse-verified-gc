@@ -27,7 +27,7 @@ val alloc_from_block_preserves_wfh_part1 :
                   wz >= 1 /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
-        (ensures (let (g', _) = alloc_from_block g obj wz tag next_fp in
+        (ensures (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
                   well_formed_heap_part1 g'))
 
 /// **Theorem**: alloc_spec preserves well_formed_heap_part1.
@@ -63,7 +63,7 @@ val alloc_split_fl_transfer_pre_part1
                     U64.v a >= U64.v mword /\
                     U64.v a < heap_size /\
                     U64.v a % U64.v mword = 0)
-          (ensures (let (g', _) = alloc_from_block g obj wz tag next_fp in
+          (ensures (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
                     Seq.mem a (objects zero_addr g') /\
                     (U64.v (wosize_of_object a g) >= 1 ==>
                       U64.v (wosize_of_object a g') >= 1) /\
@@ -82,7 +82,7 @@ val alloc_exact_fl_transfer_pre_part1
                     U64.v a >= U64.v mword /\
                     U64.v a < heap_size /\
                     U64.v a % U64.v mword = 0)
-          (ensures (let (g', _) = alloc_from_block g obj wz tag next_fp in
+          (ensures (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
                     Seq.mem a (objects zero_addr g') /\
                     (U64.v (wosize_of_object a g) >= 1 ==>
                       U64.v (wosize_of_object a g') >= 1) /\
@@ -188,7 +188,7 @@ val alloc_from_block_rem_in_objects_part1 :
                   (let hdr = read_word g (hd_address obj) in
                    let bwz = U64.v (getWosize hdr) in
                    bwz >= wz /\ bwz - wz >= 2))
-        (ensures (let (g', rem_fp) = alloc_from_block g obj wz tag next_fp in
+        (ensures (let (g', rem_fp) = alloc_from_block g obj wz white_color tag next_fp in
                   is_pointer_field rem_fp /\
                   Seq.mem rem_fp (objects zero_addr g')))
 
@@ -201,7 +201,7 @@ val alloc_from_block_preserves_objects_part1 :
                   Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
-        (ensures (let (g', _) = alloc_from_block g obj wz tag next_fp in
+        (ensures (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
                   (forall (h: obj_addr). Seq.mem h (objects zero_addr g) ==> Seq.mem h (objects zero_addr g'))))
 
 /// **Theorem**: Any object in the post-alloc heap that was NOT in the pre-alloc
@@ -271,7 +271,7 @@ val alloc_from_block_objects_backward_part1 :
                    let bwz = U64.v (getWosize (read_word g hd)) in
                    bwz >= wz /\ wz >= 1 /\
                    U64.v hd + (bwz - wz) * 8 + 8 < heap_size) /\
-                  (let (g', _) = alloc_from_block g obj wz tag next_fp in
+                  (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
                    Seq.mem h (objects zero_addr g') /\
                    ~(Seq.mem h (objects zero_addr g))))
         (ensures (let hd = hd_address obj in

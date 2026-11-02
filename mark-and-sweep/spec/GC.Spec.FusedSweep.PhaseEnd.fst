@@ -67,7 +67,7 @@ let sweeping_end g0 g1 g fp st =
 #push-options "--z3rlimit 30"
 let sweeping_oom_no_fit g0 g1 g fp st wz tag =
   sweep_inv_elim g1 g fp st;
-  AC.alloc_at_fields g fp wz tag st.cursor;
+  AC.alloc_phase_fields g fp (GC.Spec.Phase.Sweeping st) wz tag;
   FLA.fl_ascending_valid g fp;
   FLA.fl_ascending_exact g fp;
   GC.Spec.FusedSweep.Edit.part1_holds g;

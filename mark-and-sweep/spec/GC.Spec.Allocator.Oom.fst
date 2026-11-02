@@ -77,7 +77,7 @@ private let rec alloc_search_oom_cells_small
     (requires well_formed_heap_part1 g /\ wz >= 1 /\
               AllocLemmas.fl_valid g cur_fp fuel /\
               AllocLemmas.fl_chain_terminates g cur_fp fuel /\
-              (alloc_search g head_fp prev_fp cur_fp wz tag fuel).obj_out == 0UL /\
+              (alloc_search g head_fp prev_fp cur_fp wz Idle tag fuel).obj_out == 0UL /\
               FL.reachable_on_fl g cur_fp y)
     (ensures U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0 /\
              U64.v (wosize_of_object (y <: obj_addr) g) < wz)

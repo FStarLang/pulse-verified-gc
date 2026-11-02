@@ -28,7 +28,7 @@ val promote_object_frame_old_field_derived
       well_formed_heap_part1 major /\
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
-      (let res = promote_object minor major obj fp wz in
+      (let res = promote_object minor major obj fp wz Idle in
        res.new_addr <> 0UL) /\
       Seq.mem src (objects zero_addr major) /\
       AllocLemmas.chain_avoids major fp src heap_words = true /\
@@ -37,7 +37,7 @@ val promote_object_frame_old_field_derived
       U64.v src + idx * 8 + 8 <= heap_size /\
       (U64.v src + idx * 8) % 8 == 0)
     (ensures
-      (let res = promote_object minor major obj fp wz in
+      (let res = promote_object minor major obj fp wz Idle in
        let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
        read_word res.major_out field_addr == read_word major field_addr))
 
@@ -49,7 +49,7 @@ val promote_object_frame_old_header_derived
       well_formed_heap_part1 major /\
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
-      (let res = promote_object minor major obj fp wz in
+      (let res = promote_object minor major obj fp wz Idle in
        res.new_addr <> 0UL) /\
       Seq.mem src (objects zero_addr major) /\
       // Right-justification splits `obj_out` from the block it came out of:
@@ -59,7 +59,7 @@ val promote_object_frame_old_header_derived
       AllocLemmas.chain_avoids major fp src heap_words = true /\
       (src <> (Allocator.alloc_spec major fp wz (promoted_tag minor obj)).obj_out))
     (ensures
-      (let res = promote_object minor major obj fp wz in
+      (let res = promote_object minor major obj fp wz Idle in
        read_word res.major_out (hd_address src) == read_word major (hd_address src)))
 
 val cheney_forward_normal_preserves_old_nonblue_shape

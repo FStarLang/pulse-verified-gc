@@ -32,10 +32,10 @@ val promote_object_nonblue_other_reflects_pre
       // so a target that is NOT blue afterwards cannot be one -- but that
       // step needs to know the chain is all blue to begin with.
       chain_objects_blue major fp /\
-      (promote_object minor major obj fp wz).new_addr <> 0UL /\
-      Seq.mem target (objects zero_addr (promote_object minor major obj fp wz).major_out) /\
-      is_blue target (promote_object minor major obj fp wz).major_out = false /\
-      target <> (promote_object minor major obj fp wz).new_addr)
+      (promote_object minor major obj fp wz Idle).new_addr <> 0UL /\
+      Seq.mem target (objects zero_addr (promote_object minor major obj fp wz Idle).major_out) /\
+      is_blue target (promote_object minor major obj fp wz Idle).major_out = false /\
+      target <> (promote_object minor major obj fp wz Idle).new_addr)
     (ensures
       Seq.mem target (objects zero_addr major) /\
       is_blue target major = false)

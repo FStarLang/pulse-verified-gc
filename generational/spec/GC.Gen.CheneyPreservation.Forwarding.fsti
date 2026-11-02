@@ -90,7 +90,7 @@ val promote_object_frame_old_header_derived
       well_formed_heap_part1 major /\
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
-      (let res = promote_object minor major obj fp wz in
+      (let res = promote_object minor major obj fp wz Idle in
        res.new_addr <> 0UL) /\
       Seq.mem src (objects zero_addr major) /\
       // Right-justification splits `obj_out` from the block it came out of:
@@ -100,7 +100,7 @@ val promote_object_frame_old_header_derived
       AllocLemmas.chain_avoids major fp src heap_words = true /\
       (src <> (Allocator.alloc_spec major fp wz (promoted_tag minor obj)).obj_out))
     (ensures
-      (let res = promote_object minor major obj fp wz in
+      (let res = promote_object minor major obj fp wz Idle in
        read_word res.major_out (hd_address src) == read_word major (hd_address src)))
 
 val cheney_forward_normal_preserves_cob
@@ -197,7 +197,7 @@ val promote_preserves_is_infix_frame
       U64.v (hd_address target) >= U64.v parent_obj /\
       U64.v (hd_address target) + 8 <= U64.v parent_obj + U64.v (wosize_of_object parent_obj major) * 8)
     (ensures
-      (let res = promote_object minor major obj fp wz in
+      (let res = promote_object minor major obj fp wz Idle in
        is_infix target res.major_out /\
        // The whole header word is framed, so the encoded infix offset --
        // and hence `resolve_object target` -- is unchanged too.
@@ -210,9 +210,9 @@ val promote_object_new_addr_in_objects_not_blue
     (requires well_formed_heap_part1 major /\
               AllocLemmas.fl_valid major fp heap_words /\
               AllocLemmas.fl_chain_terminates major fp heap_words /\
-              (promote_object minor major obj fp wz).new_addr <> 0UL)
+              (promote_object minor major obj fp wz Idle).new_addr <> 0UL)
     (ensures
-      (let res = promote_object minor major obj fp wz in
+      (let res = promote_object minor major obj fp wz Idle in
        U64.v res.new_addr >= U64.v mword /\
        U64.v res.new_addr < heap_size /\
        U64.v res.new_addr % U64.v mword == 0 /\
@@ -230,9 +230,9 @@ val promote_object_new_addr_tag
     (requires well_formed_heap_part1 major /\
               AllocLemmas.fl_valid major fp heap_words /\
               AllocLemmas.fl_chain_terminates major fp heap_words /\
-              (promote_object minor major obj fp wz).new_addr <> 0UL)
+              (promote_object minor major obj fp wz Idle).new_addr <> 0UL)
     (ensures
-      (let res = promote_object minor major obj fp wz in
+      (let res = promote_object minor major obj fp wz Idle in
        U64.v res.new_addr >= U64.v mword /\
        U64.v res.new_addr < heap_size /\
        U64.v res.new_addr % U64.v mword == 0 /\
@@ -246,10 +246,10 @@ val promote_object_new_addr_wosize_eq
     (requires well_formed_heap_part1 major /\
               AllocLemmas.fl_valid major fp heap_words /\
               AllocLemmas.fl_chain_terminates major fp heap_words /\
-              (let res = promote_object minor major obj fp wz in
+              (let res = promote_object minor major obj fp wz Idle in
                res.new_addr <> 0UL /\ dst == res.new_addr))
     (ensures
-      (let res = promote_object minor major obj fp wz in
+      (let res = promote_object minor major obj fp wz Idle in
        U64.v (wosize_of_object dst res.major_out) == wz))
 
 val cheney_forward_normal_preserves_fwd_classified

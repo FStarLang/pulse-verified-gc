@@ -246,11 +246,11 @@ private let fwd_one_bfs_inv_success
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     (promote_object minor cs.cs_major addr cs.cs_fp
-                       (minor_wosize minor addr)).new_addr <> 0UL)
+                       (minor_wosize minor addr) Idle).new_addr <> 0UL)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_normal minor cs addr))
   =
   let wz = minor_wosize minor addr in
-  let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+  let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
   promote_object_new_addr_body_bound minor cs.cs_major addr cs.cs_fp wz;
   minor_objects_not_infix minor addr;
   fwd_infix_closed_extend minor cs.cs_fwd addr res.new_addr;
@@ -318,7 +318,7 @@ private let fwd_normal_preserves_bfs_inv
     if wz = 0 then
       CheneySpec.cheney_forward_normal_noop_wz0 minor cs addr
     else begin
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then
         CheneySpec.cheney_forward_normal_noop_oom minor cs addr
       else

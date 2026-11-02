@@ -54,7 +54,7 @@ private let forward_normal_keeps (minor: minor_state) (cs: cheney_state) (addr: 
     else begin
       let wz = minor_wosize minor addr in
       if wz = 0 then cheney_forward_normal_noop_wz0 minor cs addr
-      else if (promote_object minor cs.cs_major addr cs.cs_fp wz).new_addr = 0UL
+      else if (promote_object minor cs.cs_major addr cs.cs_fp wz Idle).new_addr = 0UL
       then cheney_forward_normal_noop_oom minor cs addr
       else begin
         cheney_forward_normal_success minor cs addr;

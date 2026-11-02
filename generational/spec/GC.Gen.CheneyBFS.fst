@@ -71,7 +71,7 @@ private let cheney_forward_normal_fwd_monotone
     CheneySpec.cheney_forward_normal_noop_wz0 minor cs addr
   else begin
     let wz = minor_wosize minor addr in
-    let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+    let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
     if res.new_addr = 0UL then
       CheneySpec.cheney_forward_normal_noop_oom minor cs addr
     else
@@ -188,7 +188,7 @@ let forward_one_queue_prefix
         CheneySpec.cheney_forward_normal_noop_wz0 minor cs parent
       else begin
         nat_nonzero_pos (minor_wosize minor parent);
-        let res = promote_object minor cs.cs_major parent cs.cs_fp (minor_wosize minor parent) in
+        let res = promote_object minor cs.cs_major parent cs.cs_fp (minor_wosize minor parent) Idle in
         if res.new_addr = 0UL then
           CheneySpec.cheney_forward_normal_noop_oom minor cs parent
         else begin
@@ -204,7 +204,7 @@ let forward_one_queue_prefix
         CheneySpec.cheney_forward_normal_noop_wz0 minor cs addr
       else begin
         nat_nonzero_pos (minor_wosize minor addr);
-        let res = promote_object minor cs.cs_major addr cs.cs_fp (minor_wosize minor addr) in
+        let res = promote_object minor cs.cs_major addr cs.cs_fp (minor_wosize minor addr) Idle in
         if res.new_addr = 0UL then
           CheneySpec.cheney_forward_normal_noop_oom minor cs addr
         else begin

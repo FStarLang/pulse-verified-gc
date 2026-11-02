@@ -27,7 +27,7 @@ module GenInv = GC.Gen.HeapInvariant
 val promote_object_preserves_fl_ascending
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires well_formed_heap_part1 major /\ FLA.fl_ascending major fp /\ wosize < pow2 54)
-          (ensures (let res = Promote.promote_object minor major obj fp wosize in
+          (ensures (let res = Promote.promote_object minor major obj fp wosize Promote.Idle in
                     FLA.fl_ascending res.Promote.major_out res.Promote.fp_out))
 
 val cheney_promote_preserves_fl_ascending

@@ -26,5 +26,5 @@ val promote_object_preserves_dense
                     heap_objects_dense major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = promote_object minor major obj fp wz in
+          (ensures (let res = promote_object minor major obj fp wz Idle in
                     heap_objects_dense res.major_out))

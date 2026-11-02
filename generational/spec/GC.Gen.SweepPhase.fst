@@ -70,15 +70,16 @@ let rec find_linked (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
 /// What first-fit does, under an exact ascending list: nothing when no cell
 /// fits, otherwise the found arm at the cell `alloc_choice` names, whose
 /// predecessor on the list it also names.
-let choice_facts (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t)
+let choice_facts (g: heap) (fp: U64.t) (wz: nat) (ph: SA.gc_phase) (tag: tag_t)
   : Lemma (requires FLA.fl_ascending g fp)
           (ensures (let (p, cur) = AC.alloc_choice g fp wz in
                     let w = AC.req_wz wz in
-                    (cur == 0UL ==> SA.alloc_spec g fp wz tag == { SA.heap_out = g; SA.fp_out = fp; SA.obj_out = 0UL }) /\
+                    let r = fst (AC.alloc_phase g fp ph wz tag) in
+                    (cur == 0UL ==> r == { SA.heap_out = g; SA.fp_out = fp; SA.obj_out = 0UL }) /\
                     (cur <> 0UL ==> FL.fl_cell g cur /\ AC.fits_at g cur w /\ linked_to g fp p cur /\
-                                   SA.alloc_spec g fp wz tag == SA.alloc_search g fp p cur w tag 1)))
+                                   r == SA.alloc_search g fp p cur w ph tag 1)))
   = let w = AC.req_wz wz in
-    AC.alloc_find_search g fp 0UL fp w tag heap_words;
+    AC.alloc_find_search g fp 0UL fp w ph tag heap_words;
     find_linked g fp 0UL fp w heap_words
 
 /// ---------------------------------------------------------------------------
@@ -127,9 +128,6 @@ let rem_header (lo: nat) : U64.t =
     SA.make_header (U64.uint_to_t (lo - 1)) SA.blue_bits 0UL
   end else 0UL
 
-let white_object_header (w: nat{w < pow2 54}) (tag: tag_t) : U64.t =
-  FStar.Math.Lemmas.pow2_lt_compat 64 54;
-  SA.make_header (U64.uint_to_t w) SA.white_bits tag
 
 /// The link rewrite: the predecessor (when there is one) now points past the
 /// cell, unless the cell stays on the list.
@@ -137,14 +135,37 @@ let relinked (g: heap) (p: U64.t) (v: U64.t) : GTot heap =
   if p = 0UL || not (U64.v p < heap_size && U64.v p % U64.v mword = 0) then g
   else write_word g (p <: hp_addr) v
 
-/// The heap after `alloc_spec`.
-let spec_heap (g: heap) (p: U64.t) (cur: U64.t) (w: nat) (tag: tag_t) (pc: piece) : GTot heap =
+/// The header of a new object of `w` fields, colour `col` and tag `tag`.
+let col_header (w: nat) (col: SA.color_bits) (tag: tag_t) : U64.t =
+  if w < pow2 54 then begin
+    FStar.Math.Lemmas.pow2_lt_compat 64 54;
+    SA.make_header (U64.uint_to_t w) col tag
+  end else 0UL
+
+let white_object_header (w: nat{w < pow2 54}) (tag: tag_t) : U64.t =
+  col_header w SA.white_color tag
+
+/// Writing a word twice is writing it once.
+let write_write_same (g: heap) (a: hp_addr) (v v': U64.t)
+  : Lemma (write_word (write_word g a v) a v' == write_word g a v')
+  = write_word_spec g a v;
+    write_word_spec (write_word g a v) a v';
+    write_word_spec g a v';
+    Seq.lemma_eq_intro (write_word (write_word g a v) a v') (write_word g a v')
+
+/// The heap after allocating from the cell with the object's colour `col`.
+let col_heap (g: heap) (p: U64.t) (cur: U64.t) (w: nat) (col: SA.color_bits) (tag: tag_t) (pc: piece)
+  : GTot heap =
   let nf = if pc.lo >= 2 then cur else FL.fl_next g cur in
   let gw = relinked g p nf in
   if pc.lo >= 1 && pc.lo - 1 < pow2 54 && w < pow2 54
-  then write_word (write_word gw pc.hd (rem_header pc.lo)) pc.ah (white_object_header w tag)
-  else if w < pow2 54 then write_word gw pc.hd (white_object_header w tag)
+  then write_word (write_word gw pc.hd (rem_header pc.lo)) pc.ah (col_header w col tag)
+  else if w < pow2 54 then write_word gw pc.hd (col_header w col tag)
   else gw
+
+/// The heap after `alloc_spec`.
+let spec_heap (g: heap) (p: U64.t) (cur: U64.t) (w: nat) (tag: tag_t) (pc: piece) : GTot heap =
+  col_heap g p cur w SA.white_color tag pc
 
 /// The head after `alloc_spec`.
 let spec_fp (g: heap) (fp p cur: U64.t) (pc: piece) : GTot U64.t =
@@ -152,20 +173,21 @@ let spec_fp (g: heap) (fp p cur: U64.t) (pc: piece) : GTot U64.t =
   else if pc.lo >= 2 then cur else FL.fl_next g cur
 
 #push-options "--z3rlimit 40"
-let spec_explicit (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (p cur: U64.t) (pc: piece)
+let spec_explicit (g: heap) (fp: U64.t) (wz: nat) (ph: SA.gc_phase) (tag: tag_t) (p cur: U64.t) (pc: piece)
   : Lemma (requires FLA.fl_ascending g fp /\ FL.fl_cell g cur /\
                     AC.fits_at g cur (AC.req_wz wz) /\ linked_to g fp p cur /\
                     piece_ok g cur (AC.req_wz wz) pc)
           (ensures (let w = AC.req_wz wz in
-                    let r = SA.alloc_search g fp p cur w tag 1 in
-                    r.SA.heap_out == spec_heap g p cur w tag pc /\
+                    let r = SA.alloc_search g fp p cur w ph tag 1 in
+                    r.SA.heap_out == col_heap g p cur w (SA.alloc_color ph g cur w) tag pc /\
                     r.SA.fp_out == spec_fp g fp p cur pc /\
                     U64.v r.SA.obj_out == U64.v pc.ah + 8))
   = let w = AC.req_wz wz in
     let obj : obj_addr = cur in
     let next = SA.spec_next_fp g obj in
     SA.spec_next_fp_eq g obj;
-    SA.alloc_replacement_fp_eq g obj w next tag;
+    let col = SA.alloc_color ph g obj w in
+    SA.alloc_replacement_fp_eq g obj w next col tag;
     FLA.fl_cell_facts g cur;
     (if p <> 0UL then begin
        FLA.fl_cell_facts g p;
@@ -176,18 +198,20 @@ let spec_explicit (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (p cur: U64.t) (p
     let nf = SA.alloc_replacement_fp g obj w next in
     assert (nf == (if pc.lo >= 2 then cur else FL.fl_next g cur));
     let gw = relinked g p nf in
-    (if p = 0UL then SA.alloc_search_found_head g fp p cur w 1 tag
+    (if p = 0UL then SA.alloc_search_found_head g fp p cur w 1 ph tag
      else begin
-       SA.alloc_search_found_prev g fp p cur w 1 tag;
+       SA.alloc_search_found_prev g fp p cur w 1 ph tag;
        read_write_different g (p <: hp_addr) pc.hd nf
      end);
     assert (read_word gw pc.hd == read_word g pc.hd);
-    if pc.lo >= 1 then SA.alloc_from_block_split_normal gw obj w next tag
-    else SA.alloc_from_block_exact gw obj w next tag
+    if pc.lo >= 1 then SA.alloc_from_block_split_normal gw obj w next col tag
+    else SA.alloc_from_block_exact gw obj w next col tag
 #pop-options
 
-/// The heap after `alloc_at`: `alloc_spec`'s, the object black in front of
-/// the cursor.
+/// The heap after allocating during the sweep, as `alloc_spec`'s with the
+/// object's header then rewritten black when it is in front of the cursor.
+/// (The allocator writes the header once, `at_explicit`; this form is the
+/// proofs'.)
 let at_heap (g: heap) (p cur: U64.t) (w: nat) (tag: tag_t) (pc: piece) (c: U64.t) : GTot heap =
   let g2 = spec_heap g p cur w tag pc in
   if U64.v pc.ah >= U64.v c && w < pow2 54 then write_word g2 pc.ah (black_object_header w tag) else g2
@@ -196,21 +220,34 @@ let object_header (w: nat{w < pow2 54}) (tag: tag_t) (front: bool) : U64.t =
   if front then black_object_header w tag else white_object_header w tag
 
 #push-options "--z3rlimit 40"
-let at_explicit (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (c: U64.t) (p cur: U64.t) (pc: piece)
+let at_explicit (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (st: sweep_state) (p cur: U64.t) (pc: piece)
   : Lemma (requires FLA.fl_ascending g fp /\ FL.fl_cell g cur /\
                     AC.fits_at g cur (AC.req_wz wz) /\ linked_to g fp p cur /\
                     piece_ok g cur (AC.req_wz wz) pc /\
-                    SA.alloc_spec g fp wz tag == SA.alloc_search g fp p cur (AC.req_wz wz) tag 1)
+                    fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) ==
+                      SA.alloc_search g fp p cur (AC.req_wz wz) (SA.Sweeping st) tag 1)
           (ensures (let w = AC.req_wz wz in
-                    let r = AC.alloc_at g fp wz tag c in
-                    r.SA.heap_out == at_heap g p cur w tag pc c /\
+                    let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) in
+                    r.SA.heap_out == at_heap g p cur w tag pc st.cursor /\
                     r.SA.fp_out == spec_fp g fp p cur pc /\
                     U64.v r.SA.obj_out == U64.v pc.ah + 8 /\
                     is_obj r.SA.obj_out /\ hd_address (r.SA.obj_out <: obj_addr) == pc.ah))
-  = spec_explicit g fp wz tag p cur pc;
-    let r = SA.alloc_spec g fp wz tag in
+  = let w = AC.req_wz wz in
+    let ph = SA.Sweeping st in
+    spec_explicit g fp wz ph tag p cur pc;
+    let r = fst (AC.alloc_phase g fp ph wz tag) in
     let o : obj_addr = r.SA.obj_out in
-    hd_address_spec o
+    hd_address_spec o;
+    // the colour the phase gives the header at pc.ah
+    assert (SA.alloc_color ph g cur w ==
+            (if U64.v pc.ah >= U64.v st.cursor then SA.black_color else SA.white_color));
+    if U64.v pc.ah >= U64.v st.cursor then begin
+      // one write of the black header is the white one, overwritten
+      let nf = if pc.lo >= 2 then cur else FL.fl_next g cur in
+      let gw = relinked g p nf in
+      let gb = if pc.lo >= 1 then write_word gw pc.hd (rem_header pc.lo) else gw in
+      write_write_same gb pc.ah (white_object_header w tag) (black_object_header w tag)
+    end
 #pop-options
 
 /// Header fields.
@@ -229,16 +266,16 @@ let header_facts (w: nat{w < pow2 54}) (tag: tag_t) (lo: nat{lo >= 1 /\ lo - 1 <
     let ww = U64.uint_to_t w in
     let ll = U64.uint_to_t (lo - 1) in
     ALC.make_header_getColor ww SA.white_bits tag;
-    ALC.make_header_getColor ww AC.black_bits tag;
+    ALC.make_header_getColor ww SA.black_color tag;
     ALC.make_header_getColor ll SA.blue_bits 0UL;
     getColor_raw (white_object_header w tag);
     getColor_raw (black_object_header w tag);
     getColor_raw (rem_header lo);
     ALH.make_header_getWosize ww SA.white_bits tag;
-    ALH.make_header_getWosize ww AC.black_bits tag;
+    ALH.make_header_getWosize ww SA.black_color tag;
     ALH.make_header_getWosize ll SA.blue_bits 0UL;
     ALH.make_header_getTag ww SA.white_bits tag;
-    ALH.make_header_getTag ww AC.black_bits tag;
+    ALH.make_header_getTag ww SA.black_color tag;
     ALH.make_header_getTag ll SA.blue_bits 0UL;
     getTag_bound (white_object_header w tag)
 #pop-options
@@ -474,12 +511,12 @@ let at_cells (g: heap) (fp p cur: U64.t) (w: nat) (tag: tag_t) (pc: piece) (c: U
 let spec_heap_idle (g: heap) (fp p cur: U64.t) (w: nat) (tag: tag_t) (pc: piece)
   : Lemma (requires FLA.fl_ascending g fp /\ FL.fl_cell g cur /\ linked_to g fp p cur /\
                     piece_ok g cur w pc)
-          (ensures at_heap g p cur w tag pc AC.idle_cursor == spec_heap g p cur w tag pc /\
+          (ensures at_heap g p cur w tag pc heap_size_u64 == spec_heap g p cur w tag pc /\
                    W.reaches (spec_heap g p cur w tag pc) zero_addr (U64.v pc.ah) /\
                    (forall (x: U64.t). FL.fl_cell (spec_heap g p cur w tag pc) x <==>
                        (FL.fl_cell g x /\ (x <> cur \/ pc.lo >= 2))))
-  = at_shape g fp p cur w tag pc AC.idle_cursor;
-    at_cells g fp p cur w tag pc AC.idle_cursor
+  = at_shape g fp p cur w tag pc heap_size_u64;
+    at_cells g fp p cur w tag pc heap_size_u64
 #pop-options
 
 #push-options "--z3rlimit 30"
@@ -496,10 +533,10 @@ let at_list (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (c: U64.t) (p cur: U64.
   : Lemma (requires FLA.fl_ascending g fp /\ FL.fl_cell g cur /\
                     AC.fits_at g cur (AC.req_wz wz) /\ linked_to g fp p cur /\
                     piece_ok g cur (AC.req_wz wz) pc /\
-                    SA.alloc_spec g fp wz tag == SA.alloc_search g fp p cur (AC.req_wz wz) tag 1)
+                    SA.alloc_spec g fp wz tag == SA.alloc_search g fp p cur (AC.req_wz wz) SA.Idle tag 1)
           (ensures FLA.fl_ascending (at_heap g p cur (AC.req_wz wz) tag pc c) (spec_fp g fp p cur pc))
   = let w = AC.req_wz wz in
-    spec_explicit g fp wz tag p cur pc;
+    spec_explicit g fp wz SA.Idle tag p cur pc;
     part1_holds g;
     AA.alloc_spec_preserves_fl_ascending g fp wz tag;
     let g2 = spec_heap g p cur w tag pc in
@@ -525,7 +562,7 @@ let found_ctx (g0 g1 g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_
   sweeping g0 g1 g fp st /\ FLA.fl_ascending g fp /\ FL.fl_cell g cur /\
   AC.fits_at g cur (AC.req_wz wz) /\ linked_to g fp p cur /\
   piece_ok g cur (AC.req_wz wz) pc /\
-  SA.alloc_spec g fp wz tag == SA.alloc_search g fp p cur (AC.req_wz wz) tag 1 /\
+  SA.alloc_spec g fp wz tag == SA.alloc_search g fp p cur (AC.req_wz wz) SA.Idle tag 1 /\
   AC.alloc_choice g fp wz == (p, cur) /\ tag <> infix_tag
 
 /// The new `swept_tail`.
@@ -1397,19 +1434,20 @@ let behind_case (g0 g1 g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: ta
 
 /// When nothing fits, nothing changes.
 #push-options "--z3rlimit 30"
-let alloc_none (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (c: U64.t)
-  : Lemma (requires FLA.fl_ascending g fp /\ (AC.alloc_at g fp wz tag c).SA.obj_out == 0UL)
-          (ensures (let r = AC.alloc_at g fp wz tag c in
+let alloc_none (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t)
+  : Lemma (requires FLA.fl_ascending g fp /\
+                    (fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag)).SA.obj_out == 0UL)
+          (ensures (let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) in
                     r.SA.heap_out == g /\ r.SA.fp_out == fp /\
                     snd (AC.alloc_choice g fp wz) == 0UL /\
                     (forall (t: U64.t). AC.alloc_tail g fp wz t == t)))
-  = choice_facts g fp wz tag;
-    AC.alloc_at_fields g fp wz tag c;
+  = choice_facts g fp wz (SA.Sweeping st) tag;
+    AC.alloc_phase_fields g fp (SA.Sweeping st) wz tag;
     let (p, cur) = AC.alloc_choice g fp wz in
     if cur <> 0UL then begin
       let w = AC.req_wz wz in
       let pc = mk_piece g cur w in
-      at_explicit g fp wz tag c p cur pc
+      at_explicit g fp wz tag st p cur pc
     end
 #pop-options
 
@@ -1417,25 +1455,28 @@ let alloc_none (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (c: U64.t)
 let alloc_sweeping g0 g1 g fp st wz tag =
   sweep_inv_elim g1 g fp st;
   let c = st.cursor in
-  let r = AC.alloc_at g fp wz tag c in
-  choice_facts g fp wz tag;
-  AC.alloc_at_fields g fp wz tag c;
-  if r.SA.obj_out = 0UL then alloc_none g fp wz tag c
+  let ph = SA.Sweeping st in
+  let r = fst (AC.alloc_phase g fp ph wz tag) in
+  choice_facts g fp wz ph tag;
+  choice_facts g fp wz SA.Idle tag;
+  AC.alloc_phase_idle g fp wz tag;
+  AC.alloc_phase_fields g fp ph wz tag;
+  if r.SA.obj_out = 0UL then alloc_none g fp st wz tag
   else begin
     let (p, cur) = AC.alloc_choice g fp wz in
     let w = AC.req_wz wz in
     assert (cur <> 0UL);
     let pc = mk_piece g cur w in
-    at_explicit g fp wz tag c p cur pc;
+    at_explicit g fp wz tag st p cur pc;
     let gx = at_heap g p cur w tag pc c in
     assert (r.SA.heap_out == gx);
     assert (AC.block_wz g cur == pc.bwz);
     if U64.v pc.hd >= U64.v c then begin
       front_case g0 g1 g fp st wz tag p cur pc;
-      assert (alloc_ref g1 g fp wz tag c == splice g1 gx (U64.v c) heap_size)
+      assert (alloc_ref g1 g fp st wz tag == splice g1 gx (U64.v c) heap_size)
     end else begin
       behind_case g0 g1 g fp st wz tag p cur pc;
-      assert (alloc_ref g1 g fp wz tag c == behind_ref g1 gx w tag pc)
+      assert (alloc_ref g1 g fp st wz tag == behind_ref g1 gx w tag pc)
     end
   end
 #pop-options
@@ -1498,19 +1539,19 @@ let rec copy_sweeping (g0 g1 g: heap) (fp: U64.t) (st: sweep_state)
     end
 #pop-options
 
-let promote_at_idle minor major obj fp wosize =
-  AC.alloc_at_idle major fp wosize (Promote.promoted_tag minor obj)
-
 #push-options "--z3rlimit 40"
 let promote_sweeping g0 g1 g fp st minor obj wosize =
   let tag = Promote.promoted_tag minor obj in
   sweep_inv_elim g1 g fp st;
   alloc_sweeping g0 g1 g fp st wosize tag;
-  let c = st.cursor in
-  let r = AC.alloc_at g fp wosize tag c in
-  let g1' = alloc_ref g1 g fp wosize tag c in
+  let ph = SA.Sweeping st in
+  let r = fst (AC.alloc_phase g fp ph wosize tag) in
+  let g1' = alloc_ref g1 g fp st wosize tag in
   let st' = alloc_state g fp wosize st in
-  if r.SA.obj_out = 0UL then alloc_none g fp wosize tag c
+  if r.SA.obj_out = 0UL then begin
+    alloc_none g fp st wosize tag;
+    assert (st' == st)
+  end
   else begin
     let dst : obj_addr = r.SA.obj_out in
     copy_sweeping g0 g1' r.SA.heap_out r.SA.fp_out st' minor obj dst 0 wosize

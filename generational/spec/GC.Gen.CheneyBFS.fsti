@@ -454,7 +454,7 @@ let promote_fails_at (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U
   cs.CheneySpec.cs_fwd addr == 0UL /\
   minor_wosize minor addr > 0 /\
   (promote_object minor cs.CheneySpec.cs_major addr cs.CheneySpec.cs_fp
-     (minor_wosize minor addr)).new_addr == 0UL
+     (minor_wosize minor addr) Idle).new_addr == 0UL
 
 /// Forwarding `addr` from `cs` fails for lack of room.  For an ordinary
 /// address that is a failed promotion of `addr` itself; for an interior

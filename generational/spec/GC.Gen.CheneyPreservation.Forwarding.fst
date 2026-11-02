@@ -37,7 +37,7 @@ let promote_object_frame_old_field_derived
       well_formed_heap_part1 major /\
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
-      (let res = promote_object minor major obj fp wz in
+      (let res = promote_object minor major obj fp wz Idle in
        res.new_addr <> 0UL) /\
       Seq.mem src (objects zero_addr major) /\
       AllocLemmas.chain_avoids major fp src heap_words = true /\
@@ -45,7 +45,7 @@ let promote_object_frame_old_field_derived
       idx < U64.v (wosize_of_object src major) /\
       U64.v src + idx * 8 + 8 <= heap_size)
     (ensures
-      (let res = promote_object minor major obj fp wz in
+      (let res = promote_object minor major obj fp wz Idle in
        let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
        read_word res.major_out field_addr == read_word major field_addr))
   =
@@ -243,7 +243,7 @@ let cheney_forward_normal_preserves_cob
       else begin
         assert (wz <> 0);
         assert (wz > 0);
-        let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+        let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then
         begin
           assert (Seq.mem addr (minor_objects minor));
@@ -400,7 +400,7 @@ let promote_preserves_is_infix_frame
     assert (hd_idx < U64.v (wosize_of_object parent_obj major));
     assert (U64.v parent_obj + hd_idx * 8 + 8 <= heap_size);
     promote_object_frame_old_field_derived minor major obj fp wz parent_obj hd_idx;
-    let res = promote_object minor major obj fp wz in
+    let res = promote_object minor major obj fp wz Idle in
     let hd_addr : hp_addr = U64.uint_to_t (U64.v parent_obj + hd_idx * 8) in
     assert (read_word res.major_out hd_addr == read_word major hd_addr);
     assert (hd_addr == hd_address target);
@@ -423,10 +423,10 @@ private let promote_object_new_addr_header
     (requires well_formed_heap_part1 major /\
               AllocLemmas.fl_valid major fp heap_words /\
               AllocLemmas.fl_chain_terminates major fp heap_words /\
-              (promote_object minor major obj fp wz).new_addr <> 0UL)
+              (promote_object minor major obj fp wz Idle).new_addr <> 0UL)
     (ensures
       (let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
-       let res = promote_object minor major obj fp wz in
+       let res = promote_object minor major obj fp wz Idle in
        res.new_addr == alloc_res.obj_out /\
        U64.v res.new_addr >= U64.v mword /\
        U64.v res.new_addr < heap_size /\
@@ -437,7 +437,7 @@ private let promote_object_new_addr_header
           read_word alloc_res.heap_out (hd_address na))))
   =
   let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
-  let res = promote_object minor major obj fp wz in
+  let res = promote_object minor major obj fp wz Idle in
   promote_object_success minor major obj fp wz;
   AllocProps.alloc_spec_obj_valid major fp wz (promoted_tag minor obj);
   AllocProps.alloc_spec_obj_in_objects_part1 major fp wz (promoted_tag minor obj);
@@ -459,7 +459,7 @@ let promote_object_new_addr_in_objects_not_blue
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   =
   let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
-  let res = promote_object minor major obj fp wz in
+  let res = promote_object minor major obj fp wz Idle in
   promote_object_new_addr_header minor major obj fp wz;
   AllocProps.alloc_spec_obj_not_blue_part1 major fp wz (promoted_tag minor obj);
   let dst_obj : obj_addr = alloc_res.obj_out in
@@ -474,7 +474,7 @@ let promote_object_new_addr_tag
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   =
   let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
-  let res = promote_object minor major obj fp wz in
+  let res = promote_object minor major obj fp wz Idle in
   promote_object_new_addr_header minor major obj fp wz;
   AllocProps.alloc_spec_obj_not_blue_part1 major fp wz (promoted_tag minor obj);
   let dst_obj : obj_addr = alloc_res.obj_out in
@@ -491,7 +491,7 @@ let promote_object_new_addr_wosize_eq
   (dst: obj_addr)
   =
   let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
-  let res = promote_object minor major obj fp wz in
+  let res = promote_object minor major obj fp wz Idle in
   promote_object_new_addr_header minor major obj fp wz;
   AllocProps.alloc_spec_obj_valid major fp wz (promoted_tag minor obj);
   AllocProps.alloc_spec_obj_wosize_part1 major fp wz (promoted_tag minor obj);
@@ -515,7 +515,7 @@ let cheney_forward_normal_preserves_fwd_classified
     else begin
       assert (wz <> 0);
       assert (wz > 0);
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then
         begin
           assert (Seq.mem addr (minor_objects minor));
@@ -633,7 +633,7 @@ let cheney_forward_normal_preserves_wfh_part1
     let wz = minor_wosize minor addr in
     if wz = 0 then cheney_forward_normal_noop_wz0 minor cs addr
     else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then
         cheney_forward_normal_noop_oom minor cs addr
       else begin
@@ -690,7 +690,7 @@ let cfn_success_pre (minor: minor_state) (cs: cheney_state) (addr: U64.t) : prop
   cs.cs_fwd addr == 0UL /\
   minor_wosize minor addr > 0 /\
   (promote_object minor cs.cs_major addr cs.cs_fp
-     (minor_wosize minor addr)).new_addr <> 0UL
+     (minor_wosize minor addr) Idle).new_addr <> 0UL
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 [@@"opaque_to_smt"]
@@ -703,7 +703,7 @@ let cheney_forward_normal_infix_ready_one
   =
   assert (infix_fwd_ready_pre minor (cheney_forward_normal minor cs addr) a);
   let wz = minor_wosize minor addr in
-  let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+  let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
   cheney_forward_normal_success minor cs addr;
   promote_object_preserves_objects_part1 minor cs.cs_major addr cs.cs_fp wz;
   AllocProps.alloc_spec_obj_in_objects_part1 cs.cs_major cs.cs_fp wz (promoted_tag minor addr);
@@ -938,7 +938,7 @@ let cheney_forward_normal_preserves_infix_fwd_ready
     else begin
       assert (wz <> 0);
       assert (wz > 0);
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then
         begin
           assert (Seq.mem addr (minor_objects minor));
@@ -1271,7 +1271,7 @@ let cheney_forward_normal_preserves_fwd_noninfix_targets_valid
         cheney_forward_normal_noop_wz0 minor cs addr;
         assert (cs' == cs)
       end else begin
-        let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+        let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
         if res.new_addr = 0UL then begin
           cheney_forward_normal_noop_oom minor cs addr;
           assert (cs' == cs)
@@ -1516,7 +1516,7 @@ private let cheney_forward_normal_preserves_fwd_infix_delta
       let wz = minor_wosize minor addr in
       if wz = 0 then cheney_forward_normal_noop_wz0 minor cs addr
       else begin
-        let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+        let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
         if res.new_addr = 0UL then cheney_forward_normal_noop_oom minor cs addr
         else begin
           cheney_forward_normal_success minor cs addr;

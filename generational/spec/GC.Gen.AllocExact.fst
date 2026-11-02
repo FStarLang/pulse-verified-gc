@@ -362,7 +362,7 @@ let block_frame (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (a: obj_addr) 
                     U64.v (wosize_of_object obj g) >= wz /\
                     Seq.mem a (objects zero_addr g) /\ U64.v (wosize_of_object a g) >= 1 /\
                     (U64.v (wosize_of_object obj g) - wz >= 2 \/ a <> obj))
-          (ensures read_word (fst (alloc_from_block g obj wz tag next)) a == read_word g a)
+          (ensures read_word (fst (alloc_from_block g obj wz white_color tag next)) a == read_word g a)
   = wosize_of_object_spec obj g;
     hd_address_spec a;
     assert (U64.v (hd_address a) + 16 <= heap_size);
@@ -383,7 +383,7 @@ let relinked_frame (g: heap) (prev obj: obj_addr) (wz: nat) (next new_fp: U64.t)
                     Seq.mem a (objects zero_addr g) /\ U64.v (wosize_of_object a g) >= 1 /\
                     (U64.v (wosize_of_object obj g) - wz >= 2 \/ a <> obj))
           (ensures (let gw = write_word g (prev <: hp_addr) new_fp in
-                    let g2 = fst (alloc_from_block gw obj wz tag next) in
+                    let g2 = fst (alloc_from_block gw obj wz white_color tag next) in
                     well_formed_heap_part1 gw /\
                     objects zero_addr gw == objects zero_addr g /\
                     wosize_of_object obj gw == wosize_of_object obj g /\
@@ -488,7 +488,7 @@ let found_head (g: heap) (obj: obj_addr) (wz: nat) (y: obj_addr) (n: nat) (tag: 
                     meets_at g obj (y <: U64.t) n /\ n < heap_words)
           (ensures (let next = read_word g obj in
                     let bwz = U64.v (wosize_of_object obj g) in
-                    let g' = fst (alloc_from_block g obj wz tag next) in
+                    let g' = fst (alloc_from_block g obj wz white_color tag next) in
                     let fp' = alloc_replacement_fp g obj wz next in
                     let obj_out = U64.v obj + (bwz - wz) * 8 in
                     AllocLemmas.chain_avoids g' fp' (y <: U64.t) heap_words = false \/
@@ -500,7 +500,7 @@ let found_head (g: heap) (obj: obj_addr) (wz: nat) (y: obj_addr) (n: nat) (tag: 
     let bwz = U64.v (wosize_of_object obj g) in
     assert (U64.v hd + 8 + bwz * 8 <= heap_size);
     let next = read_word g obj in
-    let g' = fst (alloc_from_block g obj wz tag next) in
+    let g' = fst (alloc_from_block g obj wz white_color tag next) in
     let lo = bwz - wz in
     // the walk is at obj after 0 steps, at next after 1
     AllocChain.walk_chain_zero g (obj <: U64.t);
@@ -566,7 +566,7 @@ let found_rest (g: heap) (head: U64.t) (prev obj: obj_addr) (wz: nat) (fuel: nat
                     let bwz = U64.v (wosize_of_object obj g) in
                     let new_fp = alloc_replacement_fp g obj wz next in
                     let gw = write_word g (prev <: hp_addr) new_fp in
-                    let g2 = fst (alloc_from_block gw obj wz tag next) in
+                    let g2 = fst (alloc_from_block gw obj wz white_color tag next) in
                     let obj_out = U64.v obj + (bwz - wz) * 8 in
                     AllocLemmas.chain_avoids g2 head (y <: U64.t) heap_words = false \/
                     U64.v y == obj_out \/ U64.v (wosize_of_object y g2) = 0))
@@ -581,7 +581,7 @@ let found_rest (g: heap) (head: U64.t) (prev obj: obj_addr) (wz: nat) (fuel: nat
     let lo = bwz - wz in
     let new_fp = alloc_replacement_fp g obj wz next in
     let gw = write_word g (prev <: hp_addr) new_fp in
-    let g2 = fst (alloc_from_block gw obj wz tag next) in
+    let g2 = fst (alloc_from_block gw obj wz white_color tag next) in
     depth_facts g head (prev <: U64.t) (obj <: U64.t) k;
     // links: every object but prev (and, at a one-word leftover, obj) keeps
     // its link word; prev's now holds new_fp
@@ -660,7 +660,7 @@ private let rec search_keeps
                        read_word g (prev <: obj_addr) = cur)) /\
                     at_block g head prev cur (heap_words - fuel) /\
                     meets_at g head (y <: U64.t) n /\ n < heap_words)
-          (ensures (let r = alloc_search g head prev cur wz tag fuel in
+          (ensures (let r = alloc_search g head prev cur wz Idle tag fuel in
                     r.obj_out <> 0UL ==>
                     (AllocLemmas.chain_avoids r.heap_out r.fp_out (y <: U64.t) heap_words = false \/
                      U64.v y == U64.v r.obj_out \/
@@ -898,13 +898,13 @@ let promote_object_preserves_fl_complete (minor: MH.minor_state) (major: heap) (
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     FL.fl_complete major fp /\ wosize < pow2 54 /\
-                    (Promote.promote_object minor major obj fp wosize).new_addr <> 0UL)
-          (ensures (let res = Promote.promote_object minor major obj fp wosize in
+                    (Promote.promote_object minor major obj fp wosize Promote.Idle).new_addr <> 0UL)
+          (ensures (let res = Promote.promote_object minor major obj fp wosize Promote.Idle in
                     FL.fl_complete res.Promote.major_out res.Promote.fp_out))
   = let ar = alloc_spec major fp wosize (Promote.promoted_tag minor obj) in
     let g1 = ar.heap_out in
     let fp1 = ar.fp_out in
-    let res = Promote.promote_object minor major obj fp wosize in
+    let res = Promote.promote_object minor major obj fp wosize Promote.Idle in
     Promote.promote_object_success minor major obj fp wosize;
     AllocProps.alloc_spec_obj_wosize_exact_part1 major fp wosize (Promote.promoted_tag minor obj);
     let dst : obj_addr = ar.obj_out in

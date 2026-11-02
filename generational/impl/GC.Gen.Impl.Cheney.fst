@@ -72,9 +72,9 @@ let not_minor_if_wosize_zero (ms: minor_state) (addr: U64.t)
 /// This matches the promote_one postcondition's use of minor_wosize.
 let promote_one_oom_unchanged (ms: minor_state) (major: heap) (addr: U64.t) (fp: U64.t)
   : Lemma (requires minor_wosize ms addr > 0 /\
-                    (PromoteSpec.promote_object ms major addr fp (minor_wosize ms addr)).new_addr == 0UL)
-          (ensures (PromoteSpec.promote_object ms major addr fp (minor_wosize ms addr)).major_out == major /\
-                   (PromoteSpec.promote_object ms major addr fp (minor_wosize ms addr)).fp_out == fp)
+                    (PromoteSpec.promote_object ms major addr fp (minor_wosize ms addr) PromoteSpec.Idle).new_addr == 0UL)
+          (ensures (PromoteSpec.promote_object ms major addr fp (minor_wosize ms addr) PromoteSpec.Idle).major_out == major /\
+                   (PromoteSpec.promote_object ms major addr fp (minor_wosize ms addr) PromoteSpec.Idle).fp_out == fp)
   = Sim.promote_object_zero_noop ms major addr fp (minor_wosize ms addr)
 
 let minor_tag_infix_not_minor_object (ms: minor_state) (addr: U64.t)
@@ -96,7 +96,7 @@ let infix_fwd_no_overflow (parent_fwd delta: nat)
 
 /// Helper: promote_object.new_addr, when non-zero, is < heap_size
 let promote_new_addr_bound (ms: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
-  : Lemma (ensures (let res = PromoteSpec.promote_object ms major obj fp wz in
+  : Lemma (ensures (let res = PromoteSpec.promote_object ms major obj fp wz PromoteSpec.Idle in
                     res.new_addr <> 0UL ==> U64.v res.new_addr < heap_size))
   = AllocProps.alloc_spec_obj_valid major fp wz (PromoteSpec.promoted_tag ms obj)
 

@@ -88,7 +88,7 @@ private let promote_object_preserves_no_black
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     Mark.no_black_objects major)
-          (ensures (let res = promote_object minor major obj fp wz in
+          (ensures (let res = promote_object minor major obj fp wz Idle in
                     Mark.no_black_objects res.major_out))
   =
   let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
@@ -148,7 +148,7 @@ private let cheney_forward_one_preserves_no_black
       cheney_forward_normal_noop_wz0 minor cs parent
     else begin
       let wz = minor_wosize minor parent in
-      let res = promote_object minor cs.cs_major parent cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major parent cs.cs_fp wz Idle in
       if res.new_addr = 0UL then
         cheney_forward_normal_noop_oom minor cs parent
       else begin
@@ -165,17 +165,17 @@ private let cheney_forward_one_preserves_no_black
       cheney_forward_normal_noop_wz0 minor cs addr
     else begin
       let wz = minor_wosize minor addr in
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then begin
         assert (minor_wosize minor addr > 0);
         assert ((promote_object minor cs.cs_major addr cs.cs_fp
-                  (minor_wosize minor addr)).new_addr = 0UL);
+                  (minor_wosize minor addr) Idle).new_addr = 0UL);
         cheney_forward_normal_noop_oom minor cs addr
       end
       else begin
         assert (minor_wosize minor addr > 0);
         assert ((promote_object minor cs.cs_major addr cs.cs_fp
-                  (minor_wosize minor addr)).new_addr <> 0UL);
+                  (minor_wosize minor addr) Idle).new_addr <> 0UL);
         cheney_forward_normal_success minor cs addr;
         promote_object_preserves_no_black minor cs.cs_major addr cs.cs_fp wz
       end
@@ -483,7 +483,7 @@ private let promote_object_preserves_gray_black_objects_on_stack
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     gray_black_objects_on_stack major st)
-          (ensures (let res = promote_object minor major obj fp wz in
+          (ensures (let res = promote_object minor major obj fp wz Idle in
                     gray_black_objects_on_stack res.major_out st))
   =
   let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
@@ -531,7 +531,7 @@ private let cheney_forward_one_preserves_gray_black_objects_on_stack
       cheney_forward_normal_noop_wz0 minor cs parent
     else begin
       let wz = minor_wosize minor parent in
-      let res = promote_object minor cs.cs_major parent cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major parent cs.cs_fp wz Idle in
       if res.new_addr = 0UL then
         cheney_forward_normal_noop_oom minor cs parent
       else begin
@@ -548,7 +548,7 @@ private let cheney_forward_one_preserves_gray_black_objects_on_stack
       cheney_forward_normal_noop_wz0 minor cs addr
     else begin
       let wz = minor_wosize minor addr in
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then
         cheney_forward_normal_noop_oom minor cs addr
       else begin

@@ -476,7 +476,7 @@ the free-list link is stored in the first field of the free block:
 /// 2. For each blue (free) block, check if wosize >= requested
 /// 3. If leftover >= 2: split -- create remainder block
 /// 4. If leftover < 2: use entire block (no split)
-/// 5. Write the allocated block's header: White, with the caller's tag
+/// 5. Write the allocated block's header: the phase's colour, the caller's tag
 /// 6. Return (updated heap, new free pointer, allocated obj_addr)
 ```
 
@@ -491,10 +491,29 @@ type alloc_result = {
 ```
 
 Like OCaml's `caml_alloc_shr (wosize, tag)`, the allocator takes the header
-tag: the allocated block's header is written once, white, carrying `tag`
-(remainder and fragment headers are blue with tag 0).  Mark-and-sweep callers
-and the C bridge's `verified_allocate` pass 0; promotion passes the minor
-object's tag.
+tag: the allocated block's header is written once, carrying `tag` (remainder
+and fragment headers are blue with tag 0).  Mark-and-sweep callers and the C
+bridge's `verified_allocate` pass 0; promotion passes the minor object's tag.
+
+The header's colour comes from the collector's phase (`GC.Spec.Phase`), as
+OCaml 4.14's `caml_allocation_color` decides it:
+
+```fstar
+type gc_phase = | Idle | Sweeping of sweep_state
+
+let allocation_color (ph: gc_phase) (hd_addr: U64.t) : color_bits =
+  match ph with
+  | Idle -> white_color
+  | Sweeping st -> if U64.v hd_addr >= U64.v st.cursor then black_color else white_color
+```
+
+`alloc_search` takes the phase and writes `allocation_color` of the header
+address it chose, once (`alloc_color`).  `alloc_spec g fp wz tag` is the
+`Idle` instance -- the white allocator every stop-the-world proof uses -- and
+the allocator over any phase is `GC.Spec.Allocator.Cursor.alloc_phase g fp ph
+wz tag`, which also returns the phase after the allocation (below, the sweep
+phase).  At `Idle` it is `(alloc_spec g fp wz tag, Idle)` (`alloc_phase_idle`),
+and the new head and object never depend on the phase (`alloc_phase_fields`).
 
 The key implementation contract is intentionally simple: the Pulse allocator
 returns a heap that is exactly the pure `alloc_spec` result.
@@ -718,16 +737,13 @@ An incremental sweep runs the program between slices of `sweep_step`s
 specified and proved so far; the minor collection mid-sweep, the Pulse
 plumbing and the bridge are not yet done.
 
-**Allocation colour by position** (`GC.Spec.Allocator.Cursor`). The allocator
-takes the sweep cursor: an object allocated in front of it (header at or
-above the cursor) is black, so the sweep keeps it; one behind it is white.
-"Not sweeping" is the cursor at the end of the heap (`idle_cursor`), where
-`alloc_at` is exactly `alloc_spec`. The allocator also maintains
-`swept_tail`: when it takes `swept_tail`'s own cell off the list (an exact
-fit or a one-word leftover), `swept_tail` moves to the cell before it
-(`alloc_tail`; `alloc_find` names the block first-fit takes and its list
-predecessor). Both are stated as a layer over `alloc_spec`, whose lemmas are
-reused unchanged.
+**Allocation at the sweep's phase** (`GC.Spec.Allocator.Cursor.alloc_phase`).
+At `Sweeping st` the allocator colours by position: an object allocated in
+front of the cursor (header at or above it) is black, so the sweep keeps it;
+one behind it is white. It also maintains `swept_tail`: when it takes
+`swept_tail`'s own cell off the list (an exact fit or a one-word leftover),
+`swept_tail` moves to the cell before it (`phase_after_alloc`, by `alloc_tail`;
+`alloc_find` names the block first-fit takes and its list predecessor).
 
 **The reference heap** (`GC.Spec.FusedSweep.Phase`). With the program
 running, the heap in front of the cursor is no longer the post-mark heap `g0`
@@ -758,10 +774,9 @@ or free block carved out of a free block of `g0` (`front_carved`). The plan's
   allocation carved is replaced in `g1` by what the allocation made of it,
   with the new object black (a white object behind the cursor is, to the
   sweep's invariant, a survivor of a black one);
-- promotion of one object (`promote_sweeping`): the allocation above with
-  the nursery object's tag, then its field copies, as `promote_object` does
-  (`promote_at`, which is `GC.Gen.Promote.promote_object` outside a sweep,
-  `promote_at_idle`).
+- promotion of one object (`promote_sweeping`): `promote_object` at the
+  sweep's phase -- the allocation above with the nursery object's tag, then
+  its field copies.
 
 **When the sweep phase ends** (`GC.Spec.FusedSweep.PhaseEnd.sweeping_end`), the
 sweep's end lemma applies against the reference heap (it needs only that the
@@ -1019,21 +1034,25 @@ let extend_forwarding (fwd: forwarding_map) (minor_addr: U64.t) (major_addr: U64
 ```
 
 `promote_object` copies one object.  Promotion is just allocation with the
-minor object's tag, followed by the field copy; the copy's header is written
-once, by the allocator:
+minor object's tag, at the collector's phase, followed by the field copy; the
+copy's header is written once, by the allocator, with the phase's colour:
 
 ```fstar
 let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
-                   (fp: U64.t) (wosize: nat{wosize > 0})
+                   (fp: U64.t) (wosize: nat{wosize > 0}) (ph: gc_phase)
   : GTot promote_one_result =
-  let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
+  let ar = AC.alloc_phase major fp ph wosize (promoted_tag minor obj) in
   ...
   if new_addr = 0UL then
-    { major_out = major; fp_out = fp; new_addr = 0UL }
+    { major_out = major; fp_out = fp; new_addr = 0UL; phase_out = ph }
   else
     let copied_major = copy_fields minor new_major obj new_addr 0 wosize in
-    { major_out = copied_major; fp_out = new_fp; new_addr = new_addr }
+    { major_out = copied_major; fp_out = new_fp; new_addr = new_addr; phase_out = snd ar }
 ```
+
+The minor collection runs at `Idle` (`cheney_collect_spec` passes it), where
+the allocation is `alloc_spec` and the phase stays `Idle`; the lemmas about
+`promote_object` are stated there.
 
 The major allocator is size-exact: the allocated header declares exactly the
 requested `wosize` (`GC.Gen.AllocProps.alloc_spec_obj_wosize_exact_part1`; see
@@ -1158,7 +1177,7 @@ let cheney_forward_normal (minor: minor_state) (cs: cheney_state) (addr: U64.t)
     let wz = minor_wosize minor addr in
     if wz = 0 then cs
     else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then cs
       else
         { cs_major = res.major_out;

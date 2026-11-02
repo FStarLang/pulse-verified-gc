@@ -84,7 +84,7 @@ val cheney_forward_normal_noop_oom (minor: minor_state) (cs: cheney_state) (addr
                     cs.cs_fwd addr = 0UL /\
                     minor_wosize minor addr > 0 /\
                     (promote_object minor cs.cs_major addr cs.cs_fp
-                       (minor_wosize minor addr)).new_addr = 0UL)
+                       (minor_wosize minor addr) Idle).new_addr = 0UL)
           (ensures cheney_forward_normal minor cs addr == cs)
 
 /// Unfold: when addr is valid and successfully forwarded
@@ -93,9 +93,9 @@ val cheney_forward_normal_success (minor: minor_state) (cs: cheney_state) (addr:
                     cs.cs_fwd addr = 0UL /\
                     minor_wosize minor addr > 0 /\
                     (promote_object minor cs.cs_major addr cs.cs_fp
-                       (minor_wosize minor addr)).new_addr <> 0UL)
+                       (minor_wosize minor addr) Idle).new_addr <> 0UL)
           (ensures (let wz = minor_wosize minor addr in
-                    let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+                    let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
                     cheney_forward_normal minor cs addr ==
                     { cs_major = res.major_out;
                       cs_fp    = res.fp_out;

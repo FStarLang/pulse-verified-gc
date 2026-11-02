@@ -172,7 +172,7 @@ private let cheney_forward_normal_preserves_wfh_part4_local
       assert (U64.v GC.Spec.Object.infix_tag == 249);
       assert (minor_tag minor addr <> U64.v GC.Spec.Object.infix_tag);
       promote_object_preserves_wfh_part4 minor cs.cs_major addr cs.cs_fp wz;
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then begin
         cheney_forward_normal_noop_oom minor cs addr;
         assert (cheney_forward_normal minor cs addr == cs)
@@ -277,15 +277,15 @@ private let promote_object_preserves_old_target_not_blue
               AllocLemmas.fl_valid major fp heap_words /\
               AllocLemmas.fl_chain_terminates major fp heap_words /\
               chain_objects_blue major fp /\
-              (promote_object minor major obj fp wz).new_addr <> 0UL /\
+              (promote_object minor major obj fp wz Idle).new_addr <> 0UL /\
               Seq.mem target (objects zero_addr major) /\
               is_blue target major = false)
     (ensures
-      (let res = promote_object minor major obj fp wz in
+      (let res = promote_object minor major obj fp wz Idle in
        Seq.mem target (objects zero_addr res.major_out) /\
        is_blue target res.major_out = false))
   =
-  let res = promote_object minor major obj fp wz in
+  let res = promote_object minor major obj fp wz Idle in
   promote_object_success minor major obj fp wz;
   promote_object_preserves_objects_part1 minor major obj fp wz;
   chain_avoids_from_blue major fp target;
@@ -311,7 +311,7 @@ private let cheney_forward_normal_old_target_preserved
               Seq.mem addr (minor_objects minor) /\
                cs.cs_fwd addr = 0UL /\
                minor_wosize minor addr > 0 /\
-               (promote_object minor cs.cs_major addr cs.cs_fp (minor_wosize minor addr)).new_addr <> 0UL /\
+               (promote_object minor cs.cs_major addr cs.cs_fp (minor_wosize minor addr) Idle).new_addr <> 0UL /\
                x <> addr /\
                is_val_addr (cs.cs_fwd x) /\
                (cheney_forward_normal minor cs addr).cs_fwd x <> 0UL /\
@@ -328,7 +328,7 @@ private let cheney_forward_normal_old_target_preserved
   =
   let wz = minor_wosize minor addr in
   let cs' = cheney_forward_normal minor cs addr in
-  let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+  let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
   cheney_forward_normal_success minor cs addr;
   cheney_forward_normal_other_fwd minor cs addr x;
   promote_object_success minor cs.cs_major addr cs.cs_fp wz;
@@ -405,13 +405,13 @@ private let cheney_forward_normal_preserves_disjoint_inv
       cheney_forward_normal_noop_wz0 minor cs addr;
       assert (cs' == cs)
     end else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then begin
         assert (Seq.mem addr (minor_objects minor));
         assert (cs.cs_fwd addr = 0UL);
         assert (minor_wosize minor addr > 0);
         assert ((promote_object minor cs.cs_major addr cs.cs_fp
-                  (minor_wosize minor addr)).new_addr = 0UL);
+                  (minor_wosize minor addr) Idle).new_addr = 0UL);
         cheney_forward_normal_noop_oom minor cs addr;
         assert (cs' == cs)
       end else begin
@@ -419,7 +419,7 @@ private let cheney_forward_normal_preserves_disjoint_inv
         assert (cs.cs_fwd addr = 0UL);
         assert (minor_wosize minor addr > 0);
         assert ((promote_object minor cs.cs_major addr cs.cs_fp
-                  (minor_wosize minor addr)).new_addr <> 0UL);
+                  (minor_wosize minor addr) Idle).new_addr <> 0UL);
         cheney_forward_normal_success minor cs addr;
         promote_object_success minor cs.cs_major addr cs.cs_fp wz;
         let aux_old (y: obj_addr) : Lemma
@@ -480,7 +480,7 @@ private let cheney_forward_normal_preserves_inj_inv
     if wz = 0 then
       cheney_forward_normal_noop_wz0 minor cs addr
     else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then
         cheney_forward_normal_noop_oom minor cs addr
       else begin
@@ -717,13 +717,13 @@ private let cheney_forward_normal_preserves_source_inv
       cheney_forward_normal_noop_wz0 minor cs addr;
       assert (cs' == cs)
     end else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then begin
         assert (Seq.mem addr (minor_objects minor));
         assert (cs.cs_fwd addr = 0UL);
         assert (minor_wosize minor addr > 0);
         assert ((promote_object minor cs.cs_major addr cs.cs_fp
-                  (minor_wosize minor addr)).new_addr = 0UL);
+                  (minor_wosize minor addr) Idle).new_addr = 0UL);
         cheney_forward_normal_noop_oom minor cs addr;
         assert (cs' == cs)
       end else begin
@@ -731,7 +731,7 @@ private let cheney_forward_normal_preserves_source_inv
         assert (cs.cs_fwd addr = 0UL);
         assert (minor_wosize minor addr > 0);
         assert ((promote_object minor cs.cs_major addr cs.cs_fp
-                  (minor_wosize minor addr)).new_addr <> 0UL);
+                  (minor_wosize minor addr) Idle).new_addr <> 0UL);
         cheney_forward_normal_success minor cs addr;
         let aux (x: U64.t)
           : Lemma

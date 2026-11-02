@@ -49,7 +49,7 @@ private let cheney_forward_normal_preserves_cob
     if wz = 0 then
       cheney_forward_normal_noop_wz0 minor cs addr
     else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then
         cheney_forward_normal_noop_oom minor cs addr
       else begin
@@ -169,7 +169,7 @@ private let cheney_forward_normal_preserves_wfh_part1
     let wz = minor_wosize minor addr in
     if wz = 0 then cheney_forward_normal_noop_wz0 minor cs addr
     else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then
         cheney_forward_normal_noop_oom minor cs addr
       else begin
@@ -187,17 +187,17 @@ private let promote_object_header_from_alloc_frame
       well_formed_heap_part1 major /\
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
-      (promote_object minor major obj fp wz).new_addr <> 0UL /\
+      (promote_object minor major obj fp wz Idle).new_addr <> 0UL /\
       Seq.mem target (objects zero_addr (Allocator.alloc_spec major fp wz (promoted_tag minor obj)).heap_out) /\
       target <> (Allocator.alloc_spec major fp wz (promoted_tag minor obj)).obj_out)
     (ensures
       (let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
-       let res = promote_object minor major obj fp wz in
+       let res = promote_object minor major obj fp wz Idle in
        read_word res.major_out (hd_address target) ==
        read_word alloc_res.heap_out (hd_address target)))
   =
   let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
-  let res = promote_object minor major obj fp wz in
+  let res = promote_object minor major obj fp wz Idle in
   promote_object_success minor major obj fp wz;
   AllocProps.alloc_spec_obj_valid major fp wz (promoted_tag minor obj);
   AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz (promoted_tag minor obj);
@@ -236,7 +236,7 @@ let promote_object_nonblue_other_reflects_pre
   (target: obj_addr)
   =
   let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
-  let res = promote_object minor major obj fp wz in
+  let res = promote_object minor major obj fp wz Idle in
   promote_object_success minor major obj fp wz;
   AllocProps.alloc_spec_obj_valid major fp wz (promoted_tag minor obj);
   AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz (promoted_tag minor obj);
@@ -298,7 +298,7 @@ private let cheney_forward_normal_preserves_nonblue_origin_inv
     if wz = 0 then
       cheney_forward_normal_noop_wz0 minor cs addr
     else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz Idle in
       if res.new_addr = 0UL then
         cheney_forward_normal_noop_oom minor cs addr
       else begin

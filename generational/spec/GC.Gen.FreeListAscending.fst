@@ -37,7 +37,7 @@ let promote_object_preserves_fl_ascending minor major obj fp wosize =
   else begin
     let g1 = ar.GC.Spec.Allocator.heap_out in
     let fp1 = ar.GC.Spec.Allocator.fp_out in
-    let res = promote_object minor major obj fp wosize in
+    let res = promote_object minor major obj fp wosize Idle in
     promote_object_success minor major obj fp wosize;
     AllocProps.alloc_spec_obj_wosize_exact_part1 major fp wosize (promoted_tag minor obj);
     let dst : obj_addr = ar.GC.Spec.Allocator.obj_out in
@@ -116,7 +116,7 @@ private let forward_normal_keeps (minor: minor_state) (cs: cheney_state) (addr: 
     else begin
       let wz = minor_wosize minor addr in
       if wz = 0 then cheney_forward_normal_noop_wz0 minor cs addr
-      else if (promote_object minor cs.cs_major addr cs.cs_fp wz).new_addr = 0UL
+      else if (promote_object minor cs.cs_major addr cs.cs_fp wz Idle).new_addr = 0UL
       then cheney_forward_normal_noop_oom minor cs addr
       else begin
         cheney_forward_normal_success minor cs addr;

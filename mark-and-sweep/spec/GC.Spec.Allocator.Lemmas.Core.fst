@@ -68,7 +68,7 @@ private let rec alloc_search_preserves_objects_part1
                        U64.v prev_fp % U64.v mword = 0 /\
                        Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
-          (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz tag fuel in
+          (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz Idle tag fuel in
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                       Seq.mem x (objects zero_addr r.heap_out))))
           (decreases fuel)

@@ -213,7 +213,7 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
           AllocLemmas.fl_valid ms2 fp2 heap_words /\
           AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
           (wz > 0 ==>
-            (let spec_res = PromoteSpec.promote_object minor_st 'ms obj 'fp wz in
+            (let spec_res = PromoteSpec.promote_object minor_st 'ms obj 'fp wz PromoteSpec.Idle in
              ms2 == spec_res.major_out /\
              fp2 == spec_res.fp_out /\
              new_addr == spec_res.new_addr)) /\

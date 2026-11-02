@@ -221,7 +221,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
            (U64.v vprev >= U64.v mword /\
             U64.v vprev < heap_size /\
             U64.v vprev % U64.v mword == 0)) /\
-          SA.alloc_search 's vhead vprev vcur (U64.v wz) tag (U64.v vfuel) ==
+          SA.alloc_search 's vhead vprev vcur (U64.v wz) SA.Idle tag (U64.v vfuel) ==
             SA.alloc_spec 's fp (U64.v wosize) tag
         else
           (let sr = SA.alloc_spec 's fp (U64.v wosize) tag in
@@ -237,7 +237,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
       let vh = !head_fp;
       let vp = !prev_fp;
       let vc = !cur_fp;
-      SA.alloc_search_fuel_0 's vh vp vc (U64.v wz) tag;
+      SA.alloc_search_fuel_0 's vh vp vc (U64.v wz) SA.Idle tag;
       go := false
     } else {
       fuel_nonzero_lemma vfuel;
@@ -247,7 +247,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
         // Invalid cur_fp — OOM
         let vh = !head_fp;
         let vp = !prev_fp;
-        SA.alloc_search_invalid 's vh vp vcur (U64.v wz) (U64.v vfuel) tag;
+        SA.alloc_search_invalid 's vh vp vcur (U64.v wz) (U64.v vfuel) SA.Idle tag;
         go := false
       } else {
         // vcur is a valid obj_addr — bridge impl/spec symbols
@@ -279,7 +279,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
           if U64.gte alloc_obj heap_size_u64 {
             // The right-justified object would leave the heap.  Unreachable
             // for a well-formed block once wz >= 1, but the spec guards it.
-            SA.alloc_search_found_oob 's vh vp vcur (U64.v wz) (U64.v vfuel) tag;
+            SA.alloc_search_found_oob 's vh vp vcur (U64.v wz) (U64.v vfuel) SA.Idle tag;
             go := false
           } else {
             assert (pure (U64.v alloc_hd_off < heap_size));
@@ -291,7 +291,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
               // leftover = 1 is the empty block, header only) and the object
               // header right-justified above it.  They differ only in what
               // replaces `obj` in the free list.
-              SA.alloc_from_block_split_normal 's (vcur <: obj_addr) (U64.v wz) next tag;
+              SA.alloc_from_block_split_normal 's (vcur <: obj_addr) (U64.v wz) next SA.white_color tag;
               let new_fp = (if U64.gte leftover 2UL then vcur else next);
 
               // `vp = hd_addr` means the predecessor has wosize 0, which a
@@ -303,8 +303,8 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
               // matching the order `alloc_search` fixes.
               let vp_unusable = (if U64.eq vp 0UL then true else U64.eq vp hd_addr);
               if vp_unusable {
-                SA.alloc_search_found_head 's vh vp vcur (U64.v wz) (U64.v vfuel) tag;
-                SA.alloc_from_block_split_normal 's (vcur <: obj_addr) (U64.v wz) next tag;
+                SA.alloc_search_found_head 's vh vp vcur (U64.v wz) (U64.v vfuel) SA.Idle tag;
+                SA.alloc_from_block_split_normal 's (vcur <: obj_addr) (U64.v wz) next SA.white_color tag;
                 let rem_hdr = makeHeader (U64.sub leftover 1UL) blue 0UL;
                 write_word heap hd_addr rem_hdr;
                 let alloc_hdr = makeHeader wz white tag;
@@ -318,11 +318,11 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
                 assert (pure (U64.v vcur >= U64.v mword));
                 assert (pure (U64.v vcur < heap_size));
                 assert (pure (U64.v vcur % U64.v mword == 0));
-                SA.alloc_search_found_prev 's vh vp vcur (U64.v wz) (U64.v vfuel) tag;
+                SA.alloc_search_found_prev 's vh vp vcur (U64.v wz) (U64.v vfuel) SA.Idle tag;
                 write_word heap (vp <: hp_addr) new_fp;
                 prev_write_keeps_header 's (vp <: hp_addr) hd_addr new_fp;
                 SA.alloc_from_block_split_normal
-                  (SH.write_word 's (vp <: hp_addr) new_fp) (vcur <: obj_addr) (U64.v wz) next tag;
+                  (SH.write_word 's (vp <: hp_addr) new_fp) (vcur <: obj_addr) (U64.v wz) next SA.white_color tag;
                 let rem_hdr = makeHeader (U64.sub leftover 1UL) blue 0UL;
                 write_word heap hd_addr rem_hdr;
                 let alloc_hdr = makeHeader wz white tag;
@@ -336,12 +336,12 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
               // Stated here, in a small context: re-deriving it inside the
               // relinked arm below can send Z3 into a long search.
               assert (pure (U64.v leftover == 0 /\ U64.v block_wz == U64.v wz));
-              SA.alloc_from_block_exact 's (vcur <: obj_addr) (U64.v wz) next tag;
+              SA.alloc_from_block_exact 's (vcur <: obj_addr) (U64.v wz) next SA.white_color tag;
               // Same split of cases, and the same ordering, as above.
               let vp_unusable = (if U64.eq vp 0UL then true else U64.eq vp hd_addr);
               if vp_unusable {
-                SA.alloc_search_found_head 's vh vp vcur (U64.v wz) (U64.v vfuel) tag;
-                SA.alloc_from_block_exact 's (vcur <: obj_addr) (U64.v wz) next tag;
+                SA.alloc_search_found_head 's vh vp vcur (U64.v wz) (U64.v vfuel) SA.Idle tag;
+                SA.alloc_from_block_exact 's (vcur <: obj_addr) (U64.v wz) next SA.white_color tag;
                 let alloc_hdr = makeHeader wz white tag;
                 write_word heap hd_addr alloc_hdr;
                 head_fp := next;
@@ -353,7 +353,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
                 assert (pure (U64.v vcur >= U64.v mword));
                 assert (pure (U64.v vcur < heap_size));
                 assert (pure (U64.v vcur % U64.v mword == 0));
-                SA.alloc_search_found_prev 's vh vp vcur (U64.v wz) (U64.v vfuel) tag;
+                SA.alloc_search_found_prev 's vh vp vcur (U64.v wz) (U64.v vfuel) SA.Idle tag;
                 write_word heap (vp <: hp_addr) next;
                 prev_write_keeps_header 's (vp <: hp_addr) hd_addr next;
                 // the link write left the block header where it was, so the
@@ -369,7 +369,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
                 assert (pure (U64.v block_wz == U64.v wz));
                 assert (pure (U64.v (SO.getWosize hdr) == U64.v wz));
                 SA.alloc_from_block_exact
-                  (SH.write_word 's (vp <: hp_addr) next) (vcur <: obj_addr) (U64.v wz) next tag;
+                  (SH.write_word 's (vp <: hp_addr) next) (vcur <: obj_addr) (U64.v wz) next SA.white_color tag;
                 let alloc_hdr = makeHeader wz white tag;
                 write_word heap hd_addr alloc_hdr;
                 result_obj := alloc_obj;
@@ -383,7 +383,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
           let vp = !prev_fp;
           hd_address_eq vcur;
           SH.hd_address_spec (vcur <: obj_addr);
-          SA.alloc_search_advance 's vh vp vcur (U64.v wz) (U64.v vfuel) tag;
+          SA.alloc_search_advance 's vh vp vcur (U64.v wz) (U64.v vfuel) SA.Idle tag;
           prev_fp := vcur;
           cur_fp := next;
           fuel_ref := U64.sub vfuel 1UL;
@@ -453,7 +453,7 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v t
            (U64.v vprev >= U64.v mword /\
             U64.v vprev < heap_size /\
             U64.v vprev % U64.v mword == 0)) /\
-          SA.alloc_search 's vhead vprev vcur (U64.v wz) tag (U64.v vfuel) ==
+          SA.alloc_search 's vhead vprev vcur (U64.v wz) SA.Idle tag (U64.v vfuel) ==
             SA.alloc_spec 's fp (U64.v wosize) tag
         else
           (let sr = SA.alloc_spec 's fp (U64.v wosize) tag in
@@ -468,7 +468,7 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v t
       let vh = !head_fp;
       let vp = !prev_fp;
       let vc = !cur_fp;
-      SA.alloc_search_fuel_0 's vh vp vc (U64.v wz) tag;
+      SA.alloc_search_fuel_0 's vh vp vc (U64.v wz) SA.Idle tag;
       go := false
     } else {
       fuel_nonzero_lemma vfuel;
@@ -477,7 +477,7 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v t
       if not valid {
         let vh = !head_fp;
         let vp = !prev_fp;
-        SA.alloc_search_invalid 's vh vp vcur (U64.v wz) (U64.v vfuel) tag;
+        SA.alloc_search_invalid 's vh vp vcur (U64.v wz) (U64.v vfuel) SA.Idle tag;
         go := false
       } else {
         hd_address_eq vcur;
@@ -507,7 +507,7 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v t
           if U64.gte alloc_obj heap_size_u64 {
             // The right-justified object would leave the heap.  Unreachable
             // for a well-formed block once wz >= 1, but the spec guards it.
-            SA.alloc_search_found_oob 's vh vp vcur (U64.v wz) (U64.v vfuel) tag;
+            SA.alloc_search_found_oob 's vh vp vcur (U64.v wz) (U64.v vfuel) SA.Idle tag;
             go := false
           } else {
             assert (pure (U64.v alloc_hd_off < heap_size));
@@ -519,7 +519,7 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v t
               // leftover = 1 is the empty block, header only) and the object
               // header right-justified above it.  They differ only in what
               // replaces `obj` in the free list.
-              SA.alloc_from_block_split_normal 's (vcur <: obj_addr) (U64.v wz) next tag;
+              SA.alloc_from_block_split_normal 's (vcur <: obj_addr) (U64.v wz) next SA.white_color tag;
               let new_fp = (if U64.gte leftover 2UL then vcur else next);
 
               // `vp = hd_addr` means the predecessor has wosize 0, which a
@@ -531,8 +531,8 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v t
               // matching the order `alloc_search` fixes.
               let vp_unusable = (if U64.eq vp 0UL then true else U64.eq vp hd_addr);
               if vp_unusable {
-                SA.alloc_search_found_head 's vh vp vcur (U64.v wz) (U64.v vfuel) tag;
-                SA.alloc_from_block_split_normal 's (vcur <: obj_addr) (U64.v wz) next tag;
+                SA.alloc_search_found_head 's vh vp vcur (U64.v wz) (U64.v vfuel) SA.Idle tag;
+                SA.alloc_from_block_split_normal 's (vcur <: obj_addr) (U64.v wz) next SA.white_color tag;
                 let rem_hdr = makeHeader (U64.sub leftover 1UL) blue 0UL;
                 write_word heap hd_addr rem_hdr;
                 let alloc_hdr = makeHeader wz white tag;
@@ -546,11 +546,11 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v t
                 assert (pure (U64.v vcur >= U64.v mword));
                 assert (pure (U64.v vcur < heap_size));
                 assert (pure (U64.v vcur % U64.v mword == 0));
-                SA.alloc_search_found_prev 's vh vp vcur (U64.v wz) (U64.v vfuel) tag;
+                SA.alloc_search_found_prev 's vh vp vcur (U64.v wz) (U64.v vfuel) SA.Idle tag;
                 write_word heap (vp <: hp_addr) new_fp;
                 prev_write_keeps_header 's (vp <: hp_addr) hd_addr new_fp;
                 SA.alloc_from_block_split_normal
-                  (SH.write_word 's (vp <: hp_addr) new_fp) (vcur <: obj_addr) (U64.v wz) next tag;
+                  (SH.write_word 's (vp <: hp_addr) new_fp) (vcur <: obj_addr) (U64.v wz) next SA.white_color tag;
                 let rem_hdr = makeHeader (U64.sub leftover 1UL) blue 0UL;
                 write_word heap hd_addr rem_hdr;
                 let alloc_hdr = makeHeader wz white tag;
@@ -564,12 +564,12 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v t
               // Stated here, in a small context: re-deriving it inside the
               // relinked arm below can send Z3 into a long search.
               assert (pure (U64.v leftover == 0 /\ U64.v block_wz == U64.v wz));
-              SA.alloc_from_block_exact 's (vcur <: obj_addr) (U64.v wz) next tag;
+              SA.alloc_from_block_exact 's (vcur <: obj_addr) (U64.v wz) next SA.white_color tag;
               // Same split of cases, and the same ordering, as above.
               let vp_unusable = (if U64.eq vp 0UL then true else U64.eq vp hd_addr);
               if vp_unusable {
-                SA.alloc_search_found_head 's vh vp vcur (U64.v wz) (U64.v vfuel) tag;
-                SA.alloc_from_block_exact 's (vcur <: obj_addr) (U64.v wz) next tag;
+                SA.alloc_search_found_head 's vh vp vcur (U64.v wz) (U64.v vfuel) SA.Idle tag;
+                SA.alloc_from_block_exact 's (vcur <: obj_addr) (U64.v wz) next SA.white_color tag;
                 let alloc_hdr = makeHeader wz white tag;
                 write_word heap hd_addr alloc_hdr;
                 head_fp := next;
@@ -581,7 +581,7 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v t
                 assert (pure (U64.v vcur >= U64.v mword));
                 assert (pure (U64.v vcur < heap_size));
                 assert (pure (U64.v vcur % U64.v mword == 0));
-                SA.alloc_search_found_prev 's vh vp vcur (U64.v wz) (U64.v vfuel) tag;
+                SA.alloc_search_found_prev 's vh vp vcur (U64.v wz) (U64.v vfuel) SA.Idle tag;
                 write_word heap (vp <: hp_addr) next;
                 prev_write_keeps_header 's (vp <: hp_addr) hd_addr next;
                 // the link write left the block header where it was, so the
@@ -597,7 +597,7 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v t
                 assert (pure (U64.v block_wz == U64.v wz));
                 assert (pure (U64.v (SO.getWosize hdr) == U64.v wz));
                 SA.alloc_from_block_exact
-                  (SH.write_word 's (vp <: hp_addr) next) (vcur <: obj_addr) (U64.v wz) next tag;
+                  (SH.write_word 's (vp <: hp_addr) next) (vcur <: obj_addr) (U64.v wz) next SA.white_color tag;
                 let alloc_hdr = makeHeader wz white tag;
                 write_word heap hd_addr alloc_hdr;
                 result_obj := alloc_obj;
@@ -610,7 +610,7 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v t
           let vp = !prev_fp;
           hd_address_eq vcur;
           SH.hd_address_spec (vcur <: obj_addr);
-          SA.alloc_search_advance 's vh vp vcur (U64.v wz) (U64.v vfuel) tag;
+          SA.alloc_search_advance 's vh vp vcur (U64.v wz) (U64.v vfuel) SA.Idle tag;
           prev_fp := vcur;
           cur_fp := next;
           fuel_ref := U64.sub vfuel 1UL;

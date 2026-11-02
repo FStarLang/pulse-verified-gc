@@ -26,10 +26,10 @@ val promote_object_preserves_chain_objects_blue
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
       chain_objects_blue major fp /\
-      (promote_object minor major obj fp wosize).new_addr <> 0UL)
+      (promote_object minor major obj fp wosize Idle).new_addr <> 0UL)
     (ensures
-      chain_objects_blue (promote_object minor major obj fp wosize).major_out
-                         (promote_object minor major obj fp wosize).fp_out)
+      chain_objects_blue (promote_object minor major obj fp wosize Idle).major_out
+                         (promote_object minor major obj fp wosize Idle).fp_out)
 
 val promote_object_preserves_free_list_shape
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
@@ -41,9 +41,9 @@ val promote_object_preserves_free_list_shape
       FreeListShape.fp_pointer_or_zero fp /\
       FreeListShape.blue_link_fields_valid major /\
       chain_objects_blue major fp /\
-      (promote_object minor major obj fp wosize).new_addr <> 0UL)
+      (promote_object minor major obj fp wosize Idle).new_addr <> 0UL)
     (ensures
       FreeListShape.fp_pointer_or_zero
-        (promote_object minor major obj fp wosize).fp_out /\
+        (promote_object minor major obj fp wosize Idle).fp_out /\
       FreeListShape.blue_link_fields_valid
-        (promote_object minor major obj fp wosize).major_out)
+        (promote_object minor major obj fp wosize Idle).major_out)
