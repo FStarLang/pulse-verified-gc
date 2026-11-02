@@ -77,7 +77,7 @@ accept(v):                                   // v - 8 is in my range
     else: work_in_flight += 1; push v on stack[me]
 ```
 
-Every header read or written here is at `v - 8` for a `v` that `route` or the inbox has already shown to be in the worker's own range. Fields are only read, in `scan`.
+Every header read or written here is at `v - 8` for a `v` that `route` or the inbox has already shown to be in the worker's own range, or at `c - 8` for a closure `c` that the `owner(c - 8)` test has just shown to be mine. Fields are only read, in `scan`.
 
 ## Ending a round: `work_in_flight`
 
@@ -91,7 +91,7 @@ A round ends exactly when `work_in_flight` reaches 0, and a 0 is always final, s
 
 **Why a 0 is final.** Only a thread holding counted work ever adds 1. At 0 nobody holds work, so nobody can add 1 again; a thread that reads 0, even late, reads the final 0.
 
-**What it needs.** Atomic add and subtract on the counter, sequentially consistent, which is C11's default. The count never exceeds `k * (S + Q)`, so 32 bits suffice; F\*'s 32-bit CAS is truly atomic since FStar#4812.
+**What it needs.** Atomic add and subtract on the counter, sequentially consistent, which is C11's default. The count never exceeds `k * (S + Q + 1)`: each stack and inbox entry, plus the one item each worker may hold after a pop or a take. So 32 bits suffice; F\*'s 32-bit CAS is truly atomic since FStar#4812.
 
 ## Overflow and the fix-up phase
 
@@ -104,10 +104,10 @@ Overflow never stops a round; after the stop barrier one thread repairs it alone
 
 **Fix-up, on the main thread, after every worker has stopped.**
 
-1. Clear every `overflow[i]`.
+1. Clear every `overflow[i]` and `overflow_main`.
 2. Walk every object from the heap's start.
 3. A grey object: push it on its owner's stack.
-4. A black, scannable object: for each field pointing to a white object, resolving infix pointers, grey that object and push it on its owner's stack.
+4. A black, scannable object: for each field pointing to a white object, resolving infix pointers, grey that object. Push it on its owner's stack only if it lies below the walk's position; one above it is pushed by step 3 when the walk reaches it, so no object is pushed twice.
 5. If that stack is full: leave the object grey and set the main thread's own flag, `overflow_main`.
 6. If anything was pushed: set `work_in_flight` to the number pushed and start a new round. Otherwise marking is done.
 
@@ -115,7 +115,7 @@ Each repair round pushes at least one object, and every pushed object ends black
 
 That argument needs `S` of at least 1; `Q` may be 0, which is slow but still correct.
 
-**Performance trap: repeated overflow.** With a small `Q` and many pointers crossing ranges, every round can overflow again, and each round costs a full heap walk. To limit this, enlarge `S` or `Q` before the next round, and measure how often overflow happens.
+**Performance trap: repeated overflow.** With a small `Q` and many pointers crossing ranges, every round can overflow again, and each round costs a full heap walk. A small `S` does the same: an object with `n` white children in its own range needs about `n / S` rounds, since a round, and the fix-up after it, push at most `S` entries on each stack. To limit this, enlarge `S` or `Q` before the next round, and measure how often overflow happens. OCaml avoids the `S` case by pushing ranges, (object, next field), instead of single children, so one entry stands for many fields.
 
 ## Phases
 
@@ -126,7 +126,7 @@ Setup, main thread: cut the heap into k ranges; grey the roots, push on owners' 
   -> start barrier
   -> parallel round, k workers, until work_in_flight is 0
   -> stop barrier (all k workers arrived)
-  -> any overflow flag set?  yes: fix-up, one thread -> back to start barrier
+  -> any overflow[i] or overflow_main set?  yes: fix-up, one thread -> back to start barrier
   -> no: new ephemeron roots? (later)  yes: push them -> back to start barrier
   -> no: field writes, one thread (later)
   -> sweep
@@ -136,13 +136,14 @@ Both loops return to the start barrier, so a collection may run several parallel
 
 ## Requirements on the implementation
 
-The design is correct only if the implementation meets these five requirements.
+The design is correct only if the implementation meets these six requirements.
 
 1. **The stop barrier is a real barrier.** A worker that reads 0 arrives and waits; the main thread starts the fix-up only after all `k` have arrived. Otherwise a slow worker can start marking again while the fix-up is writing headers in its range.
 2. **The barrier is reusable.** Rounds repeat, so a fast worker must never enter the next round's barrier before a slow one has left the last. Starting threads per round and joining them, as `par_sweep.c` does, is the simplest safe choice; it costs 25 to 100 µs per round.
 3. **The barrier orders memory.** The main thread's counter reset and stack pushes must be visible to workers before they start, and the workers' header writes visible to the main thread before the fix-up. A join gives both.
-4. **The atomics stay sequentially consistent,** or at least release on add and subtract and acquire on reads. Relaxing them could let a worker see a stale count.
-5. **The main thread has its own flag, `overflow_main`,** set when a stack is full during setup or fix-up.
+4. **The atomics stay sequentially consistent,** C11's default. Correctness needs only that each add and subtract is atomic: the count is set before the workers start, never returns to 0 inside a round, and carries no data, since stacks and inboxes are handed over through locks and the barriers. So even a relaxed read cannot see a 0 that is not final; sequential consistency only keeps the argument simple.
+5. **The main thread has its own flag, `overflow_main`,** set when a stack is full during setup or fix-up. The overflow check after each round reads every `overflow[i]` and `overflow_main`, and the fix-up clears all of them.
+6. **Setup darkens the roots as `check_and_darken_bounded_spec` does:** it skips a root that is not a pointer, resolves an infix pointer to its closure, and greys and pushes the object only if it is white. A repeated root is then pushed once, and no infix header is ever coloured.
 
 ## Why it is race-free
 
@@ -174,7 +175,7 @@ The verified GC has neither today; the design leaves room for both by running th
 - **Ephemeron check.** After the overflow check, one thread finds every ephemeron whose key is black and whose data is white. Those data objects are new roots: grey them, push them on their owners' stacks, and run another parallel round. Repeat until none are found.
 - **Field writes.** After the last round, one thread shortcuts pointers to `Forward_tag` blocks, and clears weak entries whose keys are white. This needs a list of weak objects and ephemerons kept by the runtime.
 
-A worker writing a field of its own object during a round would also be race-free, since only the owner reads its fields. What must wait for a phase boundary is touching another owner's object, as following a chain of forward blocks does.
+A worker writing a pointer field of its own object during a round would also be race-free, since only the owner reads its pointer fields. The one exception to "only the owner reads its fields" is an infix header: it is a word of its closure, but the worker that owns its address reads it, in `accept`. Nobody writes infix headers, so this stays race-free. What must wait for a phase boundary is touching another owner's object, as following a chain of forward blocks does.
 
 ## Open questions
 
