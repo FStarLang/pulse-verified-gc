@@ -53,6 +53,8 @@ module Own = GC.Spec.MarkPar.Own
 module End = GC.Spec.MarkPar.End
 module Roots = GC.Spec.MarkPar.Roots
 module SM = GC.Spec.MarkPar.Seq
+module Tm = GC.Spec.MarkPar.Term
+module MI = GC.Spec.MarkPar.Inv
 
 /// ---------------------------------------------------------------------------
 /// The statements
@@ -120,4 +122,12 @@ val mark_par_terminates (cs: list nat) (g: heap) (roots: list obj_addr) (sched: 
                     (forall (e: event). ~(L.mem e (enabled s)) ==> step cs s e == s) /\
                     (enabled s == [] <==> quiescent s)))
 
-let mark_par_terminates cs g roots sched = admit ()
+let mark_par_terminates cs g roots sched =
+  Roots.graph_pre_holds g roots;
+  reveal_opaque (`%MI.ctx) (MI.ctx cs g roots);
+  Own.init_own cs g roots;
+  Tm.effective_le cs g roots (init cs g roots) sched;
+  Own.run_own cs g roots sched;
+  let s = run cs g roots sched in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires (Tm.disabled_same cs s));
+  Tm.enabled_nil s

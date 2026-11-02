@@ -5,7 +5,7 @@
 set -uo pipefail
 B=$(cd "$(dirname "$0")/.." && pwd)/_build
 T=$B/mark_par2_test
-L=$B/logs; rm -rf "$L"; mkdir -p "$L"
+L=$B/logs2; rm -rf "$L"; mkdir -p "$L"
 JOBS=${1:-8}
 
 # "words heaps seed" per job; seeds differ per job.
@@ -41,12 +41,14 @@ cat "$L"/*.log | awk '
   /^ok:/ { h += $2; c += $4; r += $7; e += $10 }
   /^coverage:/ { s += $2; d += $4; sf += $6; su += $13; fw += $18 }
   /^rounds:/ { fx += $2; if ($9 > mr) mr = $9; x += $14 }
-  /^mutant/ { caught[$2] += $4; runs[$2] += $6 }
+  /^mutant/ { caught[$2] += $4; runs[$2] += $6; hp[$2] += $8; stk[$2] += $10; wr[$2] += $12; rd[$2] += $14; cn[$2] += $16 }
+  /^checks:/ { sc += $2; z += $5 }
   END {
     printf "total: %d heaps, %d cut lists, %d model runs, %d events\n", h, c, r, e
     printf "total: %d sends, %d dropped, %d greys left off a full stack, %d setups filled a stack, %d forwards\n", s, d, sf, su, fw
     printf "total: %d fix-ups started a round, at most %d rounds in a run, %d cut lists split a reachable closure from its infix header\n", fx, mr, x
-    for (m = 1; m <= 5; m++) printf "total: mutant %d caught %d of %d\n", m, caught[m], runs[m]
+    printf "total: %d read checks, %d worker steps at count 0\n", sc, z
+    for (m = 1; m <= 5; m++) printf "total: mutant %d caught %d of %d (heap %d, stuck %d, write %d, read %d, count %d)\n", m, caught[m], runs[m], hp[m], stk[m], wr[m], rd[m], cn[m]
   }'
 for m in 1 2 3 4 5; do
   n=$(cat "$L"/*.log | awk -v m=$m '$1 == "mutant" && $2 == m { s += $4 } END { print s + 0 }')

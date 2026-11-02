@@ -12,7 +12,7 @@ Each of k workers runs the ordinary sequential mark on the objects whose header 
 4. **A round ends when `work_in_flight` is 0.** Stacks and inboxes are never inspected to decide this.
 5. **Anything touching several owners' objects runs between rounds, on one thread:** darkening the roots, repairing overflow, and later ephemeron checks and field writes.
 
-**Status.** Checked by reading only: two passes found two races, both fixed below. The design is not yet modelled or proved; the F\* model, random-interleaving tests and ThreadSanitizer come next.
+**Status.** Modelled and proved in F\*, with no `admit` (Stage 3, `GC.Spec.MarkPar2`; see `docs/parallel-mark-stage3.md`). A finished run leaves the sequential mark's heap. A worker step reads and writes only what the race-freedom table allows. `work_in_flight` equals the counted entries, and a 0 is final. Every run ends. 29,000 random-interleaving runs match the sequential mark, and five broken variants are caught. Proving found no flaw in the design. ThreadSanitizer, on a C implementation, comes next.
 
 ## State
 
@@ -185,3 +185,17 @@ A worker writing a pointer field of its own object during a round would also be 
 4. **Cuts:** equal slices of the heap, or slices by live data from the last collection?
 5. **Idle waiting:** spin, or sleep and be woken?
 6. **Pulse support:** an atomic 32-bit counter, a lock per inbox, and two barriers. Which parts stay trusted C, as `par_sweep.c` does for the sweep?
+
+## Statement changes
+
+Stage 3 states the theorems for the model of this design, `GC.Spec.MarkPar2`, beside the Stage 1–2 ones for `GC.Spec.MarkPar`, which are unchanged. Where a statement differs from its Stage 1–2 counterpart, this is what changed and why. None is weaker for the design: each follows what the design does.
+
+1. **The run has ended when the main thread says so.** `mark_par_correct` and `mark_par_reachable` assume `(run k g roots sched).finished` in place of `quiescent (run cs g roots sched)`. In the design a round ends at `work_in_flight = 0`, and marking ends only when the main thread finds no overflow flag set, or the fix-up pushes nothing. That moment is `finished`. A quiescent state of a round can still have work left for the fix-up.
+2. **The configuration includes the capacities.** The cut list becomes a configuration `k = { cs; cap_s; cap_q }`, and `valid_cuts cs` becomes `valid_cfg k`: valid cuts and `S >= 1`. The design needs `S >= 1` ("Overflow and the fix-up phase"), and the theorem is false without it. For example, with `S = 0` and root A, setup greys A but cannot push it, and every later fix-up fails to push it too. The fix-up then pushes nothing, so marking is done with A grey.
+3. **The ownership lemma is about worker steps.** `step_writes_own` takes worker `i`'s step, `W i`, in place of any event with its actor. The main thread writes headers in every range by design, but only between rounds. `main_at_barrier` states that it changes nothing unless every worker has stopped.
+4. **The step lemma also covers reads.** `step_reads_own` is new: a worker step gives the same result on any heap that agrees on the words `readable` allows, which are its own range and the fields of the object it is scanning. `step_race_free` follows from it and `step_writes_own`.
+5. **Termination keeps its form.** "Enabled" now means an event that changes the state. A worker that is idle at the top of its loop while `work_in_flight > 0` is not enabled, because its step changes nothing. The statement still has three parts: at most `measure (init ...)` effective steps, a step that is not enabled changes nothing, and nothing is enabled exactly when marking is done.
+
+One proof lemma's precondition was relaxed, with no theorem affected. `GC.Spec.MarkPar2.Step.scan_unscanned` asked for a pointer field at the later index. Its proof needs only that the index lies within the scan. Asking only that lets the vacuity checks meet it on the witness heap, where no object has two pointer fields.
+
+Roots are object addresses, as in Stage 1. Requirement 6's "skip a root that is not a pointer" is the caller's job. The model resolves an infix root to its closure and greys only white objects.

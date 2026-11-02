@@ -5,7 +5,7 @@ Branch `sheera/parallel-mark`, from `origin/main` `5033531`. The approach is the
 **Status.**
 
 - **The model and the theorem are written.** `mark_par_correct` says that every run that ends leaves the heap the sequential mark leaves. Beside it are its restatement in terms of reachability, the ownership lemma and the termination statement (§2). No existing `val` was changed, and no existing file was touched.
-- **Stage 2, the proofs (§5).** `step_writes_own`, `mark_par_reachable` and `mark_par_correct` are proved. `mark_par_terminates` is still `admit`, as asked, and is the only `admit`. Every lemma with a precondition is called once on arguments that meet it (§5, "Vacuity").
+- **Stage 2, the proofs (§5).** `step_writes_own`, `mark_par_reachable` and `mark_par_correct` are proved. `mark_par_terminates` was left `admit`, as asked; Stage 3 proves it (`GC.Spec.MarkPar.Term`, with its vacuity checks in `GC.Spec.MarkPar.VacuityTerm`), so no `admit` is left. Every lemma with a precondition is called once on arguments that meet it (§5, "Vacuity").
 - **Changes after review.** Roots may now repeat and may be infix pointers, as the roots `gen_gc` darkens can be (§1, "Roots"). A termination statement, with its measure, is added and admitted (§2).
 - **Tests: no counterexample.** 27,040 runs of the model over 439 heaps and 4,421 cut lists, with 1, 2, 4 and 8 ranges. Each one ended with the heap the sequential mark gives, byte for byte. No step wrote a colour its worker does not own, and every step lowered the termination measure.
 - **All four broken variants are caught** (§4).

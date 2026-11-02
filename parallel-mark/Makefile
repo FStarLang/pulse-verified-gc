@@ -1,8 +1,7 @@
 # Parallel mark: Stages 1-2 (docs/parallel-mark-phase1.md) and Stage 3, the
 # model of docs/parallel-mark-design.md (GC.Spec.MarkPar2).
 #
-# Kept out of the root build.  GC.Spec.MarkPar.mark_par_terminates is still
-# admitted (Stage 2); Stage 3 has no admit.
+# Kept out of the root build.  No module has an admit.
 #
 #   make verify     Verify the parallel-mark spec modules (Stage 1-2 and 3)
 #   make test       Extract to OCaml (Custard) and run random interleavings
@@ -40,7 +39,7 @@ FSTAR_FLAGS = \
 
 FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 
-SPEC = spec/GC.Spec.MarkPar.Exec.fst spec/GC.Spec.MarkPar.Model.fst spec/GC.Spec.MarkPar.Recolour.fst spec/GC.Spec.MarkPar.Field.fst spec/GC.Spec.MarkPar.Own.fst spec/GC.Spec.MarkPar.Roots.fst spec/GC.Spec.MarkPar.Inv.fst spec/GC.Spec.MarkPar.End.fst spec/GC.Spec.MarkPar.Seq.fst spec/GC.Spec.MarkPar.fst spec/GC.Spec.MarkPar.Mutants.fst spec/GC.Spec.MarkPar.Witness.fst spec/GC.Spec.MarkPar.WitnessRun.fst spec/GC.Spec.MarkPar.Vacuity.fst spec/GC.Spec.MarkPar.VacuityMark.fst
+SPEC = spec/GC.Spec.MarkPar.Exec.fst spec/GC.Spec.MarkPar.Model.fst spec/GC.Spec.MarkPar.Recolour.fst spec/GC.Spec.MarkPar.Field.fst spec/GC.Spec.MarkPar.Own.fst spec/GC.Spec.MarkPar.Roots.fst spec/GC.Spec.MarkPar.Inv.fst spec/GC.Spec.MarkPar.End.fst spec/GC.Spec.MarkPar.Seq.fst spec/GC.Spec.MarkPar.Term.fst spec/GC.Spec.MarkPar.fst spec/GC.Spec.MarkPar.Mutants.fst spec/GC.Spec.MarkPar.Witness.fst spec/GC.Spec.MarkPar.WitnessRun.fst spec/GC.Spec.MarkPar.Vacuity.fst spec/GC.Spec.MarkPar.VacuityMark.fst spec/GC.Spec.MarkPar.VacuityTerm.fst
 
 # Stage 3, in dependency order.
 SPEC2 = spec/GC.Spec.MarkPar2.Model.fst spec/GC.Spec.MarkPar2.Mutants.fst \
