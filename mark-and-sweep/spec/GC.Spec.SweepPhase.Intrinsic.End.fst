@@ -7,14 +7,16 @@ open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Spec.FusedSweep
 open GC.Spec.FusedSweep.Inv
+open GC.Spec.SweepPhase.Util
 open GC.Spec.SweepPhase.Intrinsic
 
 module U64 = FStar.UInt64
 module W = GC.Spec.Walk
 module FLA = GC.Spec.FreeList.Ascending
 module FSE = GC.Spec.FusedSweep.End
-module PE = GC.Spec.FusedSweep.PhaseEnd
-module Edit = GC.Spec.FusedSweep.Edit
+module Edit = GC.Spec.SweepPhase.Util
+module AC = GC.Spec.Allocator.Cursor
+module Oom = GC.Spec.Allocator.Oom
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 10"
 
@@ -203,7 +205,7 @@ let rec sweep_from_post g0 g fp st
           (ensures (let r = sweep_from g fp st in FSE.sweep_post g0 (fst r) (snd r)))
           (decreases (heap_size - U64.v st.cursor))
   = if U64.v st.cursor + 8 < heap_size then begin
-      sweep_phase_step g fp st (fun _ -> True);
+      sweep_phase_step g fp st;
       sweep_phase_step_stw g0 g fp st;
       let (g', fp', st') = sweep_step g fp st in
       sweep_from_step g fp st;
@@ -219,3 +221,15 @@ let fused_sweep_post_intrinsic g0 fp =
   sweep_from_post g0 g0 fp sweep_start;
   let r = fused_sweep_coalesce g0 fp in
   FSE.sweep_post_wf g0 (fst r) (snd r)
+
+/// ---------------------------------------------------------------------------
+/// #29 mid-sweep
+/// ---------------------------------------------------------------------------
+
+let sweep_phase_oom_no_fit g fp st wz tag =
+  sweep_phase_inv_elim g fp st;
+  AC.alloc_phase_fields g fp (GC.Spec.Phase.Sweeping st) wz tag;
+  FLA.fl_ascending_valid g fp;
+  FLA.fl_ascending_exact g fp;
+  Edit.part1_holds g;
+  Oom.alloc_spec_oom_no_fit g fp wz tag

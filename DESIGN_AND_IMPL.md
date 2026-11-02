@@ -742,11 +742,9 @@ on an ascending list prefers low addresses (OCaml's allocation policy 1).
 ### The sweep phase: the program between sweep steps (incremental sweep, in progress)
 
 An incremental sweep runs the program between slices of `sweep_step`s
-(`incremental-sweep-plan.md`). Three things the program does then are
-specified and proved so far; the minor collection mid-sweep, the sweep slices
-in Pulse and the bridge's scheduling are not yet done. The phase itself is
-already part of the collector's state: `gen_heap_t.phase_ref`, which the
-Pulse allocator reads (above) and the bridge keeps `Idle`.
+(`incremental-sweep-plan.md`). The phase is part of the collector's state:
+`gen_heap_t.phase_ref`, which the Pulse allocator reads (above) and the bridge
+keeps `Idle` until the Pulse slices exist.
 
 **Allocation at the sweep's phase** (`GC.Spec.Allocator.Cursor.alloc_phase`).
 At `Sweeping st` the allocator colours by position: an object allocated in
@@ -756,49 +754,71 @@ one behind it is white. It also maintains `swept_tail`: when it takes
 `swept_tail` moves to the cell before it (`phase_after_alloc`, by `alloc_tail`;
 `alloc_find` names the block first-fit takes and its list predecessor).
 
-**The reference heap** (`GC.Spec.FusedSweep.Phase`). With the program
-running, the heap in front of the cursor is no longer the post-mark heap `g0`
-word for word. Instead of restating `sweep_inv` against a relation, the sweep
-phase keeps a ghost reference heap `g1` -- `g0` as the program has changed it,
-with every new object black -- and the invariant is
+**The invariant is intrinsic** (`GC.Spec.SweepPhase.Intrinsic`): it is about
+the current heap and the sweep state only, with no ghost heap.
 
 ```fstar
-let sweeping (g0 g1 g: heap) (fp: U64.t) (st: sweep_state) : prop =
-  ref_ok g0 g1 (U64.v st.cursor) /\ sweep_inv g1 g fp st
+let pending (g: heap) (st: sweep_state) (x: obj_addr) : prop =
+  Seq.mem x (objects zero_addr g) /\ is_white x g /\ U64.v x > U64.v st.cursor
+
+let sweep_phase_inv (g: heap) (fp: U64.t) (st: sweep_state) : prop =
+  let c = U64.v st.cursor in
+  c % 8 == 0 /\ c <= heap_size /\ W.reaches g zero_addr c /\
+  heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
+  well_formed_heap_except g (pending g st) /\
+  behind_swept g c /\ front_unswept g c /\
+  no_adjacent_free g c /\ ends_free g c (prev_free g st) /\
+  tail_ok g c st.swept_tail /\ frag_ok g c st.last_fragment /\
+  FLA.fl_ascending g fp
 ```
 
-so the step, start and end lemmas apply unchanged (`sweeping_step` keeps `g1`
-fixed), and the stop-the-world sweep is the case `g1 = g0`
-(`sweeping_stw`). `ref_ok` relates `g1` to `g0`: every block live after
-marking is still a block with its header (`keeps_live`); every block that is
-neither black nor free is a block of `g0` with its header (`no_new_garbage`);
-in front of the cursor every block is a `g0` block with its header, or a black
-or free block carved out of a free block of `g0` (`front_carved`). The plan's
-`front_ok` is read back off it (`sweeping_front_ok`).
+The pending objects -- white in front of the cursor -- are exactly the
+minor-collection refactor's `pf`: not-freed objects point only at not-freed
+objects, and a pending object's fields are unconstrained (they may point into
+blocks the sweep has already freed). Everything but the field closure is
+`sweep_shape`: facts about the walk, the headers and the free list, kept by any
+change that keeps the walk and every header on it (`shape_transport`). The
+step lemmas are the stop-the-world ones (`GC.Spec.FusedSweep.Step`), run
+inside the proof against a heap rebuilt from the current one (`ref_of`:
+blacken every white block behind the cursor); nothing carries it.
 
-**The program's actions keep it**, each updating `g1` alongside the heap:
+- `sweep_phase_start`: the heap marking left satisfies it, with every white
+  object pending.
+- `sweep_phase_step`: a step keeps it; it frees only pending objects (the
+  not-freed objects are the same before and after, with the same size, tag and
+  fields) and the pending set only shrinks. `sweep_phase_steps` is the same
+  for up to `k` steps (`sweep_steps`, a slice). That pending objects are among
+  the white objects marking left is a lemma (`pending_within_step`), not
+  carried.
+- `sweep_phase_end` (`.End`): at the end nothing is pending, the heap is well
+  formed and swept clean (`GC.Spec.SweepPhase.Util.swept_clean`); while the
+  sweep runs the list is exact, so an allocation fails only when no free block
+  anywhere is big enough (`sweep_phase_oom_no_fit`, #29 mid-sweep).
+- Stop-the-world the sweep also carries `stw_rel g0 g c` against the marked
+  heap, and `sweep_phase_end_stw` gives `FusedSweep.End.sweep_post`
+  (`fused_sweep_post_intrinsic` re-derives the stop-the-world pass).
 
-- a write to a field of a block that is not free -- the program's writes,
-  the pointer update, promotion's field copies (`GC.Spec.FusedSweep.Edit.write_sweeping`);
-- allocation (`GC.Gen.SweepPhase.alloc_sweeping`): in front of the cursor
-  `g1` takes the heap's words from the cursor on; behind it, the dead run the
-  allocation carved is replaced in `g1` by what the allocation made of it,
-  with the new object black (a white object behind the cursor is, to the
-  sweep's invariant, a survivor of a black one);
-- promotion of one object (`promote_sweeping`): `promote_object` at the
-  sweep's phase -- the allocation above with the nursery object's tag, then
-  its field copies.
+**The program's events keep it** (`GC.Gen.SweepPhase`), each leaving the
+pending set unchanged:
 
-**When the sweep phase ends** (`GC.Spec.FusedSweep.PhaseEnd.sweeping_end`), the
-sweep's end lemma applies against the reference heap (it needs only that the
-reference heap's walk covers the heap and has no infix block), and `ref_ok`
-turns it into facts that mention no reference heap: the walk covers the heap,
-the list is exact and ascending, every object is white or free (no black or
-grey object), none is infix (`swept_clean`); and, the safety theorem, every
-object that was live when marking finished is still an object, white, with
-its size and tag (`live_survive`). While the sweep runs the list stays exact,
-so an allocation fails only when no free block anywhere is big enough
-(`sweeping_oom_no_fit`, #29 mid-sweep).
+- allocation (`alloc_sweep_phase`): first-fit at `Sweeping st`, with the phase
+  it returns. A new object is never pending. Its fields are what the free
+  block held, so the result is the invariant with the new object *fresh*
+  (`fresh_ok`: the field closure holds except it, and nothing points at it);
+  writes into it keep it fresh (`fresh_write`), and once every field holds a
+  storable value it closes (`fresh_close`). The allocation-shape facts behind
+  it (the block first-fit takes, the words it writes, its walk, cells and
+  list) are `GC.Gen.AllocShape`;
+- a program write (`write_sweep_phase`) under `program_write`: a word of a
+  not-freed object that is not a closure, storing a value that is not a
+  pointer or points (resolved) at a not-freed object (`storable`);
+- promotion (`promote_sweep_phase`): `promote_object` at the sweep's phase --
+  the allocation with the nursery object's tag, the copy of its fields (which
+  `minor_fields_ok`, from `minor_major_fields_not_freed`, makes storable), and
+  the close.
+
+The `_shape` forms (`alloc_sweep_shape`, `body_write_shape`,
+`promote_sweep_shape`) state the same about `sweep_shape` alone.
 
 ### Bounded mark stack
 

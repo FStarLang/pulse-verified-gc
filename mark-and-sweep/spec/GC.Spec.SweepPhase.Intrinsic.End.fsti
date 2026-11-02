@@ -23,16 +23,17 @@ open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Spec.FusedSweep
 open GC.Spec.FusedSweep.Inv
+open GC.Spec.SweepPhase.Util
 open GC.Spec.SweepPhase.Intrinsic
 
 module U64 = FStar.UInt64
 module FSE = GC.Spec.FusedSweep.End
-module PE = GC.Spec.FusedSweep.PhaseEnd
+module AC = GC.Spec.Allocator.Cursor
 
 /// **The end of an incremental sweep phase.**
 val sweep_phase_end (g: heap) (fp: U64.t) (st: sweep_state)
   : Lemma (requires sweep_phase_inv g fp st /\ U64.v st.cursor + 8 >= heap_size)
-          (ensures PE.swept_clean g fp /\
+          (ensures swept_clean g fp /\
                    (forall (x: obj_addr). ~(pending g st x)) /\
                    well_formed_heap g)
 
@@ -54,3 +55,12 @@ val fused_sweep_post_intrinsic (g0: heap) (fp: U64.t)
   : Lemma (requires sweep_pre g0 fp /\ FSE.marked g0)
           (ensures (let r = fused_sweep_coalesce g0 fp in
                     FSE.sweep_post g0 (fst r) (snd r) /\ well_formed_heap (fst r)))
+
+/// **#29 mid-sweep**: the free list is exact at every point of the sweep, so
+/// an allocation fails only when no free block anywhere is big enough.
+val sweep_phase_oom_no_fit (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat)
+                           (tag: U64.t{U64.v tag < 256})
+  : Lemma (requires sweep_phase_inv g fp st /\ wz >= 1 /\
+                    (fst (AC.alloc_phase g fp (GC.Spec.Phase.Sweeping st) wz tag)).GC.Spec.Allocator.obj_out == 0UL)
+          (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ is_blue x g ==>
+                     U64.v (wosize_of_object x g) < wz)

@@ -7,16 +7,18 @@ open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Spec.FusedSweep
 open GC.Spec.FusedSweep.Inv
+open GC.Spec.SweepPhase.Util
 
 module U64 = FStar.UInt64
 module Header = GC.Lib.Header
 module W = GC.Spec.Walk
 module FL = GC.Spec.FreeList
+module FreeList = GC.Spec.FreeList
 module FLA = GC.Spec.FreeList.Ascending
 module Mark = GC.Spec.Mark
 module Step = GC.Spec.FusedSweep.Step
-module Edit = GC.Spec.FusedSweep.Edit
-module Phase = GC.Spec.FusedSweep.Phase
+module Edit = GC.Spec.SweepPhase.Util
+module Phase = GC.Spec.SweepPhase.Util
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 10"
 
@@ -38,8 +40,17 @@ let sweep_phase_inv_intro (g: heap) (fp: U64.t) (st: sweep_state)
           (ensures sweep_phase_inv g fp st)
   = reveal_opaque (`%sweep_phase_inv) (sweep_phase_inv g fp st)
 
-let behind_swept_elim g c p
-  = reveal_opaque (`%behind_swept) (behind_swept g c)
+/// ---------------------------------------------------------------------------
+/// The shape
+/// ---------------------------------------------------------------------------
+
+let sweep_phase_inv_iff g fp st =
+  reveal_opaque (`%sweep_phase_inv) (sweep_phase_inv g fp st);
+  reveal_opaque (`%sweep_shape) (sweep_shape g fp st)
+
+let sweep_shape_elim g fp st = reveal_opaque (`%sweep_shape) (sweep_shape g fp st)
+
+let sweep_shape_intro g fp st = reveal_opaque (`%sweep_shape) (sweep_shape g fp st)
 
 let behind_swept_intro (g: heap) (c: nat)
   (pf: (p: hp_addr -> Lemma (requires W.reaches g zero_addr (U64.v p) /\ U64.v p < c)
@@ -59,6 +70,9 @@ let front_unswept_intro (g: heap) (c: nat)
   : Lemma (front_unswept g c)
   = reveal_opaque (`%front_unswept) (front_unswept g c);
     FStar.Classical.forall_intro (FStar.Classical.move_requires pf)
+
+let behind_swept_elim g c p
+  = reveal_opaque (`%behind_swept) (behind_swept g c)
 
 let pending_ok_lemma g st =
   let aux (x: obj_addr)
@@ -432,6 +446,136 @@ let wf_transport g g' pf pf'
     well_formed_heap_part3_except_intro g' pf' (fun src dst -> target_moves g g' pf pf' src dst)
 
 /// ---------------------------------------------------------------------------
+/// Changes that keep the walk and the headers
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 20"
+let same_heads_facts g g' =
+  W.walk_congr g g' zero_addr;
+  let hd (x: obj_addr)
+    : Lemma (Seq.mem x (objects zero_addr g) ==> read_word g' (hd_address x) == read_word g (hd_address x))
+    = obj_pos g x
+  in
+  FStar.Classical.forall_intro hd;
+  let col (x: obj_addr)
+    : Lemma ((is_white x g' <==> is_white x g) \/ ~(Seq.mem x (objects zero_addr g)))
+    = obj_pos g x; colour_of g x; colour_of g' x
+  in
+  FStar.Classical.forall_intro col;
+  let blu (x: obj_addr)
+    : Lemma ((is_blue x g' <==> is_blue x g) \/ ~(Seq.mem x (objects zero_addr g)))
+    = obj_pos g x; colour_of g x; colour_of g' x
+  in
+  FStar.Classical.forall_intro blu;
+  Edit.cells_transfer g g'
+#pop-options
+
+/// The clauses about the sweep state, across a change that keeps the walk and
+/// the headers.
+#push-options "--z3rlimit 20"
+let state_transport (g g': heap) (fp: U64.t) (st: sweep_state)
+  : Lemma (requires sweep_shape g fp st /\ same_heads g g')
+          (ensures (let c = U64.v st.cursor in
+                    prev_free g' st == prev_free g st /\
+                    ends_free g' c (prev_free g' st) /\
+                    tail_ok g' c st.swept_tail /\ frag_ok g' c st.last_fragment))
+  = sweep_shape_elim g fp st;
+    same_heads_facts g g';
+    let c = U64.v st.cursor in
+    let t = st.swept_tail in
+    tail_ok_elim g c t;
+    (if t <> 0UL then begin
+       FLA.fl_cell_facts g t;
+       fl_cell_iff g t;
+       wosize_at_hd g t; wosize_at_hd g' t
+     end);
+    assert (prev_free g' st == prev_free g st);
+    ends_free_intro g' c (prev_free g' st) (fun p -> ends_free_elim g c (prev_free g st) p);
+    tail_ok_intro g' c t
+#pop-options
+
+#push-options "--z3rlimit 20"
+let shape_transport g g' fp st =
+  sweep_shape_elim g fp st;
+  same_heads_facts g g';
+  state_transport g g' fp st;
+  let c = U64.v st.cursor in
+  W.reaches_end_of_dense g;
+  W.reaches_refl g zero_addr;
+  W.dense_of_reaches_end g' (W.walk_end g zero_addr);
+  behind_swept_intro g' c (fun p -> behind_swept_elim g c p);
+  front_unswept_intro g' c (fun p -> front_unswept_elim g c p);
+  let na (p q: hp_addr)
+    : Lemma (requires W.reaches g' zero_addr (U64.v p) /\ W.can_step g' p /\
+                      W.bnext g' p == U64.v q /\ U64.v q < c /\ blue_at g' p)
+            (ensures not (blue_at g' q))
+    = W.reaches_snoc g zero_addr p;
+      no_adjacent_free_elim g c p q
+  in
+  no_adjacent_free_intro g' c na;
+  sweep_shape_intro g' fp st
+#pop-options
+
+let body_word g p a =
+  let aux (x: nat) : Lemma (W.reaches g zero_addr x ==> x <> U64.v a)
+    = if W.reaches g zero_addr x && x = U64.v a then Edit.no_pos_inside g p x in
+  FStar.Classical.forall_intro aux;
+  fl_cell_iff g a;
+  if is_obj a && U64.v a >= U64.v zero_addr + 8 then begin
+    let q = mk_hp_addr (U64.v a - 8) in
+    if W.reaches g zero_addr (U64.v q) && U64.v q > U64.v p then Edit.no_pos_inside g p (U64.v q)
+  end
+
+#push-options "--z3rlimit 20"
+let body_write g fp p a v =
+  body_word g p a;
+  Edit.write_off_walk g a v;
+  let g' = write_word g a v in
+  Edit.cells_transfer g g';
+  let nx (x: U64.t)
+    : Lemma (requires FreeList.fl_cell g x) (ensures FreeList.fl_next g' x == FreeList.fl_next g x)
+    = FLA.fl_cell_facts g x;
+      read_write_different g a (x <: hp_addr) v
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires nx);
+  if FStar.IndefiniteDescription.strong_excluded_middle (FLA.fl_ascending g fp)
+  then FLA.fl_ascending_transfer g g' fp
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Pointer targets across a change
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 20"
+let storable_transfer g g' pf pf' v =
+  if is_pointer v then begin
+    let dst : obj_addr = v in
+    let t = resolve_object dst g in
+    if is_infix dst g then begin
+      infix_addr_wf_elim g (objects zero_addr g) dst;
+      parent_closure_addr_nat_spec dst g;
+      resolve_infix_spec dst g;
+      hd_address_spec dst; hd_address_spec t;
+      colour_of g t;
+      W.bnext_facts g (hd_address t);
+      assert (same_block g g' (hd_address t));
+      assert (read_word g' (hd_address dst) == read_word g (hd_address dst));
+      resolve_object_locality dst g g';
+      resolve_object_locality t g g';
+      colour_of g' t;
+      is_closure_spec t g; is_closure_spec t g';
+      assert (not_freed g' pf' t);
+      infix_addr_wf_transfer g g' (objects zero_addr g) (objects zero_addr g') dst
+    end else begin
+      resolve_non_infix dst g;
+      resolve_object_locality dst g g';
+      resolve_non_infix dst g';
+      infix_addr_wf_non_infix g' (objects zero_addr g') dst
+    end
+  end
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// Start
 /// ---------------------------------------------------------------------------
 
@@ -640,7 +784,7 @@ let step_regions (g: heap) (fp: U64.t) (st: sweep_state)
     in
     front_unswept_intro g' c' front
 
-let sweep_phase_step g fp st pf0 =
+let sweep_phase_step g fp st =
   step_ref g fp st;
   step_dense g fp st;
   step_regions g fp st;
@@ -664,6 +808,53 @@ let sweep_phase_step g fp st pf0 =
   wf_transport g g' (pending g st) (pending g' st');
   sweep_phase_inv_intro g' fp' st';
   FStar.Classical.forall_intro (step_pending g fp st)
+
+let pending_within_step g fp st pf0 =
+  sweep_phase_step g fp st
+
+/// `same_block` composes.
+let same_block_trans (g g' g'': heap) (q: hp_addr)
+  : Lemma (requires same_block g g' q /\ same_block g' g'' q)
+          (ensures same_block g g'' q)
+  = W.bnext_facts g q; W.bnext_facts g' q
+
+#push-options "--fuel 1"
+let sweep_steps_unfold (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
+  : Lemma (sweep_steps g fp st k ==
+           (if k = 0 || sweep_done st || not (can_sweep g st) then (g, fp, st)
+            else (let (g', fp', st') = sweep_step g fp st in sweep_steps g' fp' st' (k - 1))))
+  = ()
+#pop-options
+
+let rec steps_aux (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
+  : Lemma (requires sweep_phase_inv g fp st)
+          (ensures (let (g', fp', st') = sweep_steps g fp st k in
+                    sweep_phase_inv g' fp' st' /\
+                    (forall (x: obj_addr). not_freed g' (pending g' st') x <==> not_freed g (pending g st) x) /\
+                    (forall (x: obj_addr). not_freed g (pending g st) x ==> same_block g g' (hd_address x)) /\
+                    (forall (x: obj_addr). pending g' st' x ==> pending g st x) /\
+                    U64.v st'.cursor >= U64.v st.cursor /\
+                    (st' == st ==> k = 0 \/ sweep_done st)))
+          (decreases k)
+  = sweep_steps_unfold g fp st k;
+    if not (sweep_done st) then sweep_phase_step g fp st;
+    if k = 0 || sweep_done st || not (can_sweep g st) then ()
+    else begin
+      sweep_phase_step g fp st;
+      let (g1, fp1, st1) = sweep_step g fp st in
+      steps_aux g1 fp1 st1 (k - 1);
+      let (g2, fp2, st2) = sweep_steps g1 fp1 st1 (k - 1) in
+      let tr (x: obj_addr)
+        : Lemma (not_freed g (pending g st) x ==> same_block g g2 (hd_address x))
+        = if FStar.IndefiniteDescription.strong_excluded_middle (not_freed g (pending g st) x)
+          then same_block_trans g g1 g2 (hd_address x)
+      in
+      FStar.Classical.forall_intro tr;
+      assert (U64.v st2.cursor > U64.v st.cursor);
+      assert (st2 =!= st)
+    end
+
+let sweep_phase_steps g fp st k = steps_aux g fp st k
 
 /// ---------------------------------------------------------------------------
 /// Step, stop-the-world
