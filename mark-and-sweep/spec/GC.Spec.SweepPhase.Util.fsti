@@ -113,6 +113,40 @@ val front_pos (g0 g: heap) (c: nat) (p: hp_addr)
                    W.bnext g p == W.bnext g0 p)
 
 /// ---------------------------------------------------------------------------
+/// Blackening a set of blocks
+/// ---------------------------------------------------------------------------
+
+/// A header, black, with the same size and tag.
+let black_header (h: U64.t) : U64.t = makeHeader (getWosize h) GC.Lib.Header.Black (getTag h)
+
+val black_header_facts (h: U64.t)
+  : Lemma (getWosize (black_header h) == getWosize h /\
+           getColor (black_header h) == GC.Lib.Header.Black /\
+           getTag (black_header h) == getTag h)
+
+/// Blacken the header of every block of the walk from `p` that `sel` picks.
+/// `sel` is fixed in advance, so it is the heap's walk -- which blackening a
+/// header does not change -- that decides which words are written.
+let rec recolour (sel: hp_addr -> GTot bool) (g: heap) (p: hp_addr)
+  : GTot heap (decreases (heap_size - U64.v p))
+  = if not (W.can_step g p) then g
+    else begin
+      let g1 = if sel p then write_word g p (black_header (read_word g p)) else g in
+      let n = W.bnext g p in
+      if n >= heap_size then g1
+      else begin
+        W.bnext_facts g p;
+        recolour sel g1 (mk_hp_addr n)
+      end
+    end
+
+/// What `recolour` leaves at each word.
+val recolour_read (sel: hp_addr -> GTot bool) (g: heap) (p: hp_addr) (a: hp_addr)
+  : Lemma (read_word (recolour sel g p) a ==
+           (if W.reaches g p (U64.v a) && W.can_step g a && sel a
+            then black_header (read_word g a) else read_word g a))
+
+/// ---------------------------------------------------------------------------
 /// What a sweep leaves
 /// ---------------------------------------------------------------------------
 

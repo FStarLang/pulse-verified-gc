@@ -324,6 +324,25 @@ let cheney_collect_spec_except (minor: minor_state) (major: heap) (fp: U64.t)
       mc_fwd   = prom.fwd_map }
 
 /// ---------------------------------------------------------------------------
+/// Induction over a run
+/// ---------------------------------------------------------------------------
+
+/// The collection at any phase is `GC.Gen.CheneyAt`.
+
+/// **Induction over a run**: a property of the major heap and the free-list
+/// head that every promotion of a nursery object keeps holds after the whole
+/// Cheney promotion.
+val cheney_promote_induction
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (inv: heap -> U64.t -> prop)
+  (step: (g: heap) -> (f: U64.t) -> (obj: U64.t) -> Lemma
+     (requires inv g f /\ Seq.mem obj (minor_objects minor) /\ minor_wosize minor obj > 0)
+     (ensures (let r = promote_object minor g obj f (minor_wosize minor obj) Idle in
+               inv r.major_out r.fp_out)))
+  : Lemma (requires inv major fp)
+          (ensures (let p = cheney_promote minor major fp roots in inv p.major_final p.fp_final))
+
+/// ---------------------------------------------------------------------------
 /// Correctness Properties
 /// ---------------------------------------------------------------------------
 

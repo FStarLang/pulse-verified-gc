@@ -172,3 +172,62 @@ let front_pos g1 g c p
       W.reaches_trans g zero_addr ca (U64.v p)
     end
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Blackening a set of blocks
+/// ---------------------------------------------------------------------------
+
+let black_header_facts h =
+  makeHeader_getWosize (getWosize h) Header.Black (getTag h);
+  makeHeader_getColor (getWosize h) Header.Black (getTag h);
+  makeHeader_getTag (getWosize h) Header.Black (getTag h)
+
+#push-options "--fuel 1 --z3rlimit 20"
+let rec recolour_read_aux (sel: hp_addr -> GTot bool) (g: heap) (p: hp_addr) (a: hp_addr)
+  : Lemma (ensures read_word (recolour sel g p) a ==
+                   (if W.reaches g p (U64.v a) && W.can_step g a && sel a
+                    then black_header (read_word g a) else read_word g a))
+          (decreases (heap_size - U64.v p))
+  = if not (W.can_step g p) then begin
+      if W.reaches g p (U64.v a) then begin
+        W.reaches_bounds g p (U64.v a);
+        if U64.v p < U64.v a then W.reaches_unfold g p (U64.v a)
+      end
+    end else begin
+      let hb = black_header (read_word g p) in
+      let g1 = if sel p then write_word g p hb else g in
+      let n = W.bnext g p in
+      W.bnext_facts g p;
+      let same (w: hp_addr) : Lemma (requires w <> p) (ensures read_word g1 w == read_word g w)
+        = if sel p then read_write_different g p w hb
+      in
+      (if sel p then read_write_same g p hb);
+      if U64.v a < U64.v p then begin
+        if W.reaches g p (U64.v a) then W.reaches_bounds g p (U64.v a)
+      end;
+      if U64.v a > U64.v p && W.reaches g p (U64.v a) then W.reaches_unfold g p (U64.v a);
+      if n >= heap_size then begin
+        if U64.v a <> U64.v p then same a
+      end else begin
+        let nn = mk_hp_addr n in
+        recolour_read_aux sel g1 nn a;
+        let fr (w: hp_addr) : Lemma (requires U64.v w >= U64.v nn) (ensures read_word g1 w == read_word g w)
+          = same w in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires fr);
+        W.walk_frame_from g g1 nn;
+        if U64.v a < n && W.reaches g1 nn (U64.v a) then W.reaches_bounds g1 nn (U64.v a);
+        if U64.v a <> U64.v p then begin
+          same a;
+          if U64.v a > U64.v p then begin
+            W.reaches_refl g nn;
+            if W.reaches g nn (U64.v a) then begin
+              W.reaches_step g p;
+              W.reaches_trans g p nn (U64.v a)
+            end
+          end
+        end
+      end
+    end
+#pop-options
+
+let recolour_read sel g p a = recolour_read_aux sel g p a

@@ -134,16 +134,6 @@ let live_obj (g: heap) (st: sweep_state) (x: obj_addr)
 /// Headers
 /// ---------------------------------------------------------------------------
 
-let black_header (h: U64.t) : U64.t = makeHeader (getWosize h) Header.Black (getTag h)
-
-let black_header_facts (h: U64.t)
-  : Lemma (getWosize (black_header h) == getWosize h /\
-           getColor (black_header h) == Header.Black /\
-           getTag (black_header h) == getTag h)
-  = makeHeader_getWosize (getWosize h) Header.Black (getTag h);
-    makeHeader_getColor (getWosize h) Header.Black (getTag h);
-    makeHeader_getTag (getWosize h) Header.Black (getTag h)
-
 let white_black (h: U64.t)
   : Lemma (requires getColor h == Header.White)
           (ensures white_header (black_header h) == h)
@@ -160,76 +150,15 @@ let white_black (h: U64.t)
 /// one: blacken every white block behind the cursor.  It is built only inside
 /// the step's proof, from the current heap and cursor; nothing carries it.
 
-let rec blacken (g: heap) (p: hp_addr) (c: nat) : GTot heap (decreases (heap_size - U64.v p)) =
-  if U64.v p >= c || not (W.can_step g p) then g
-  else begin
-    let g1 = if white_at g p then write_word g p (black_header (read_word g p)) else g in
-    let n = W.bnext g p in
-    if n >= heap_size then g1
-    else begin
-      W.bnext_facts g p;
-      blacken g1 (mk_hp_addr n) c
-    end
-  end
-
-let blackened (g: heap) (p: hp_addr) (c: nat) (a: hp_addr) : bool =
-  W.reaches g p (U64.v a) && U64.v a < c && W.can_step g a && white_at g a
-
-#push-options "--fuel 1"
-let rec blacken_read (g: heap) (p: hp_addr) (c: nat) (a: hp_addr)
-  : Lemma (ensures read_word (blacken g p c) a ==
-                   (if blackened g p c a then black_header (read_word g a) else read_word g a))
-          (decreases (heap_size - U64.v p))
-  = if U64.v p >= c || not (W.can_step g p) then begin
-      if W.reaches g p (U64.v a) then begin
-        W.reaches_bounds g p (U64.v a);
-        if U64.v p < U64.v a then W.reaches_unfold g p (U64.v a)
-      end
-    end else begin
-      let hb = black_header (read_word g p) in
-      let g1 = if white_at g p then write_word g p hb else g in
-      let n = W.bnext g p in
-      W.bnext_facts g p;
-      let same (w: hp_addr) : Lemma (requires w <> p) (ensures read_word g1 w == read_word g w)
-        = if white_at g p then read_write_different g p w hb
-      in
-      (if white_at g p then read_write_same g p hb);
-      if U64.v a < U64.v p then begin
-        if W.reaches g p (U64.v a) then W.reaches_bounds g p (U64.v a)
-      end;
-      if U64.v a > U64.v p && W.reaches g p (U64.v a) then W.reaches_unfold g p (U64.v a);
-      if n >= heap_size then begin
-        if U64.v a <> U64.v p then same a
-      end else begin
-        let nn = mk_hp_addr n in
-        blacken_read g1 nn c a;
-        let fr (w: hp_addr) : Lemma (requires U64.v w >= U64.v nn) (ensures read_word g1 w == read_word g w)
-          = same w in
-        FStar.Classical.forall_intro (FStar.Classical.move_requires fr);
-        W.walk_frame_from g g1 nn;
-        if U64.v a < n && W.reaches g1 nn (U64.v a) then W.reaches_bounds g1 nn (U64.v a);
-        if U64.v a <> U64.v p then begin
-          same a;
-          if U64.v a > U64.v p then begin
-            W.reaches_refl g nn;
-            if W.reaches g nn (U64.v a) then begin
-              W.reaches_step g p;
-              W.reaches_trans g p nn (U64.v a)
-            end
-          end
-        end
-      end
-    end
-#pop-options
-
 /// The reference heap of the sweep phase at cursor `c`.
-let ref_of (g: heap) (c: nat) : GTot heap = blacken g zero_addr c
+let ref_of (g: heap) (c: nat) : GTot heap =
+  recolour (fun (a: hp_addr) -> U64.v a < c && white_at g a) g zero_addr
 
 let ref_read (g: heap) (c: nat) (a: hp_addr)
   : Lemma (read_word (ref_of g c) a ==
            (if pos g a && U64.v a < c && white_at g a then black_header (read_word g a)
             else read_word g a))
-  = blacken_read g zero_addr c a
+  = recolour_read (fun (a: hp_addr) -> U64.v a < c && white_at g a) g zero_addr a
 
 /// The reference heap has the same walk, and the same sizes everywhere.
 let ref_walk (g: heap) (c: nat)

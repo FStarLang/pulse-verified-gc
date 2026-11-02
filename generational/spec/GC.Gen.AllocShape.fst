@@ -573,3 +573,41 @@ let at_list (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (c: U64.t) (p cur: U64.
     end
 #pop-options
 
+
+/// Every word of the heap after allocating: the object's header, the
+/// remainder's, the predecessor's link, and otherwise the word before.
+#push-options "--z3rlimit 30"
+let at_heap_read (g: heap) (fp p cur: U64.t) (w: nat) (tag: tag_t) (pc: piece) (c: U64.t) (a: hp_addr)
+  : Lemma (requires FLA.fl_ascending g fp /\ FL.fl_cell g cur /\ linked_to g fp p cur /\
+                    piece_ok g cur w pc)
+          (ensures read_word (at_heap g p cur w tag pc c) a ==
+                   (if a = pc.ah then object_header w tag (U64.v pc.ah >= U64.v c)
+                    else if a = pc.hd && pc.lo >= 1 then rem_header pc.lo
+                    else if p <> 0UL && U64.v a = U64.v p then
+                      (if pc.lo >= 2 then cur else FL.fl_next g cur)
+                    else read_word g a))
+  = cell_facts g fp p cur w pc;
+    let nf = if pc.lo >= 2 then cur else FL.fl_next g cur in
+    let gw = relinked g p nf in
+    (if p <> 0UL then begin
+       FLA.fl_cell_facts g p;
+       if U64.v a = U64.v p then read_write_same g (p <: hp_addr) nf
+       else read_write_different g (p <: hp_addr) a nf
+     end);
+    assert (read_word gw a == (if p <> 0UL && U64.v a = U64.v p then nf else read_word g a));
+    let g2 = spec_heap g p cur w tag pc in
+    (if pc.lo >= 1 then begin
+       let g1 = write_word gw pc.hd (rem_header pc.lo) in
+       (if a = pc.hd then read_write_same gw pc.hd (rem_header pc.lo)
+        else read_write_different gw pc.hd a (rem_header pc.lo));
+       (if a = pc.ah then read_write_same g1 pc.ah (white_object_header w tag)
+        else read_write_different g1 pc.ah a (white_object_header w tag))
+     end else begin
+       (if a = pc.hd then read_write_same gw pc.hd (white_object_header w tag)
+        else read_write_different gw pc.hd a (white_object_header w tag))
+     end);
+    if U64.v pc.ah >= U64.v c then begin
+      if a = pc.ah then read_write_same g2 pc.ah (black_object_header w tag)
+      else read_write_different g2 pc.ah a (black_object_header w tag)
+    end
+#pop-options

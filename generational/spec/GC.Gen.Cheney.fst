@@ -247,6 +247,119 @@ let cheney_fuel_eq (minor: minor_state)
   = ()
 
 /// ---------------------------------------------------------------------------
+/// Induction over a run
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
+private let cheney_forward_one_infix_cases (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires cs.cs_fwd addr = 0UL /\ is_infix_in_minor minor addr)
+          (ensures (let r = cheney_forward_one minor cs addr in
+                    let cs' = cheney_forward_normal minor cs (infix_parent minor addr) in
+                    r.cs_major == cs'.cs_major /\ r.cs_fp == cs'.cs_fp))
+  = ()
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+private let forward_normal_ind (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  (inv: heap -> U64.t -> prop)
+  (step: (g: heap) -> (f: U64.t) -> (obj: U64.t) -> Lemma
+     (requires inv g f /\ Seq.mem obj (minor_objects minor) /\ minor_wosize minor obj > 0)
+     (ensures (let r = promote_object minor g obj f (minor_wosize minor obj) Idle in
+               inv r.major_out r.fp_out)))
+  : Lemma (requires inv cs.cs_major cs.cs_fp)
+          (ensures (let cs' = cheney_forward_normal minor cs addr in inv cs'.cs_major cs'.cs_fp))
+  = if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL then
+      cheney_forward_normal_noop minor cs addr
+    else if minor_wosize minor addr = 0 then cheney_forward_normal_noop_wz0 minor cs addr
+    else begin
+      assert (minor_wosize minor addr > 0);
+      step cs.cs_major cs.cs_fp addr;
+      let res = promote_object minor cs.cs_major addr cs.cs_fp (minor_wosize minor addr) Idle in
+      if res.new_addr = 0UL then cheney_forward_normal_noop_oom minor cs addr
+      else cheney_forward_normal_success minor cs addr
+    end
+
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+private let forward_one_ind (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  (inv: heap -> U64.t -> prop)
+  (step: (g: heap) -> (f: U64.t) -> (obj: U64.t) -> Lemma
+     (requires inv g f /\ Seq.mem obj (minor_objects minor) /\ minor_wosize minor obj > 0)
+     (ensures (let r = promote_object minor g obj f (minor_wosize minor obj) Idle in
+               inv r.major_out r.fp_out)))
+  : Lemma (requires inv cs.cs_major cs.cs_fp)
+          (ensures (let cs' = cheney_forward_one minor cs addr in inv cs'.cs_major cs'.cs_fp))
+  = if cs.cs_fwd addr <> 0UL then cheney_forward_one_noop minor cs addr
+    else if is_infix_in_minor minor addr then begin
+      forward_normal_ind minor cs (infix_parent minor addr) inv step;
+      cheney_forward_one_infix_cases minor cs addr
+    end
+    else begin
+      cheney_forward_one_normal minor cs addr;
+      forward_normal_ind minor cs addr inv step
+    end
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+
+private let rec forward_fields_ind (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
+  (inv: heap -> U64.t -> prop)
+  (step: (g: heap) -> (f: U64.t) -> (obj: U64.t) -> Lemma
+     (requires inv g f /\ Seq.mem obj (minor_objects minor) /\ minor_wosize minor obj > 0)
+     (ensures (let r = promote_object minor g obj f (minor_wosize minor obj) Idle in
+               inv r.major_out r.fp_out)))
+  : Lemma (requires inv cs.cs_major cs.cs_fp)
+          (ensures (let cs' = cheney_forward_fields minor cs parent idx wosize in inv cs'.cs_major cs'.cs_fp))
+          (decreases (if idx < wosize then wosize - idx else 0))
+  = if idx >= wosize then ()
+    else begin
+      let fv = to_minor_offset (minor_read_field minor parent idx) in
+      forward_one_ind minor cs fv inv step;
+      forward_fields_ind minor (cheney_forward_one minor cs fv) parent (idx + 1) wosize inv step
+    end
+
+private let rec forward_roots_ind (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
+  (inv: heap -> U64.t -> prop)
+  (step: (g: heap) -> (f: U64.t) -> (obj: U64.t) -> Lemma
+     (requires inv g f /\ Seq.mem obj (minor_objects minor) /\ minor_wosize minor obj > 0)
+     (ensures (let r = promote_object minor g obj f (minor_wosize minor obj) Idle in
+               inv r.major_out r.fp_out)))
+  : Lemma (requires inv cs.cs_major cs.cs_fp)
+          (ensures (let cs' = cheney_forward_roots minor cs roots idx in inv cs'.cs_major cs'.cs_fp))
+          (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
+  = if idx >= Seq.length roots then ()
+    else begin
+      let r = Seq.index roots idx in
+      forward_one_ind minor cs r inv step;
+      forward_roots_ind minor (cheney_forward_one minor cs r) roots (idx + 1) inv step
+    end
+
+private let rec scan_ind (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  (inv: heap -> U64.t -> prop)
+  (step: (g: heap) -> (f: U64.t) -> (obj: U64.t) -> Lemma
+     (requires inv g f /\ Seq.mem obj (minor_objects minor) /\ minor_wosize minor obj > 0)
+     (ensures (let r = promote_object minor g obj f (minor_wosize minor obj) Idle in
+               inv r.major_out r.fp_out)))
+  : Lemma (requires inv cs.cs_major cs.cs_fp)
+          (ensures (let cs' = cheney_scan minor cs scan fuel in inv cs'.cs_major cs'.cs_fp))
+          (decreases fuel)
+  = if fuel < 1 || scan >= Seq.length cs.cs_queue then ()
+    else begin
+      let obj = Seq.index cs.cs_queue scan in
+      let wz = minor_scan_wosize minor obj in
+      forward_fields_ind minor cs obj 0 wz inv step;
+      scan_ind minor (cheney_forward_fields minor cs obj 0 wz) (scan + 1) (fuel - 1) inv step
+    end
+
+let cheney_promote_induction minor major fp roots inv step =
+  let cs0 : cheney_state =
+    { cs_major = major; cs_fp = fp; cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
+  forward_roots_ind minor cs0 roots 0 inv step;
+  scan_ind minor (cheney_forward_roots minor cs0 roots 0) 0 (cheney_fuel minor) inv step
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// Correctness proofs — wfh_part1 preservation
 /// ---------------------------------------------------------------------------
 
