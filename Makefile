@@ -107,6 +107,7 @@ ROOT_MODULES = \
   mark-and-sweep/spec/GC.Spec.FusedSweep.Facts.fst \
   generational/spec/GC.Gen.SweepPhase.fst \
   mark-and-sweep/spec/GC.Spec.FusedSweep.PhaseEnd.fst \
+  mark-and-sweep/spec/GC.Spec.SweepPhase.Intrinsic.End.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst
 
