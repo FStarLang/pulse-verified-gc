@@ -748,11 +748,7 @@ let same_block_trans (g g' g'': heap) (q: hp_addr)
   = W.bnext_facts g q; W.bnext_facts g' q
 
 #push-options "--fuel 1"
-let sweep_steps_unfold (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
-  : Lemma (sweep_steps g fp st k ==
-           (if k = 0 || sweep_done st || not (can_sweep g st) then (g, fp, st)
-            else (let (g', fp', st') = sweep_step g fp st in sweep_steps g' fp' st' (k - 1))))
-  = ()
+let sweep_steps_unfold g fp st k = ()
 #pop-options
 
 let rec steps_aux (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
@@ -843,3 +839,40 @@ let sweep_phase_step_stw g0 g fp st =
   front_same_intro g0 g' c' fs;
   survivors_unchanged_intro g0 g' (fun p -> stw_survivor g0 g fp st p);
   behind_survivors_intro g0 g' c' (fun p -> stw_behind g0 g fp st p)
+
+#push-options "--z3rlimit 20"
+let rec steps_stw_aux (g0 g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
+  : Lemma (requires sweep_phase_inv g fp st /\ stw_rel g0 g (U64.v st.cursor))
+          (ensures (let (g', fp', st') = sweep_steps g fp st k in
+                    stw_rel g0 g' (U64.v st'.cursor)))
+          (decreases k)
+  = sweep_steps_unfold g fp st k;
+    if not (sweep_done st) then sweep_phase_step g fp st;
+    if k = 0 || sweep_done st || not (can_sweep g st) then ()
+    else begin
+      sweep_phase_step_stw g0 g fp st;
+      let (g1, fp1, st1) = sweep_step g fp st in
+      steps_stw_aux g0 g1 fp1 st1 (k - 1)
+    end
+#pop-options
+
+let sweep_phase_steps_stw g0 g fp st k = steps_stw_aux g0 g fp st k
+
+#push-options "--z3rlimit 20"
+let rec steps_done_aux (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
+  : Lemma (requires sweep_phase_inv g fp st /\ k * 8 >= heap_size - U64.v st.cursor)
+          (ensures (let (g', fp', st') = sweep_steps g fp st k in sweep_done st'))
+          (decreases k)
+  = sweep_steps_unfold g fp st k;
+    sweep_phase_inv_elim g fp st;
+    if sweep_done st then ()
+    else begin
+      sweep_phase_step g fp st;
+      let (g1, fp1, st1) = sweep_step g fp st in
+      sweep_phase_inv_elim g1 fp1 st1;
+      assert (U64.v st1.cursor >= U64.v st.cursor + 8);
+      steps_done_aux g1 fp1 st1 (k - 1)
+    end
+#pop-options
+
+let sweep_steps_done g fp st k = steps_done_aux g fp st k

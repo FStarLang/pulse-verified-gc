@@ -462,3 +462,28 @@ lemma states the exact heap words and sweep state after the step:
 The concrete major heaps above (`ConcreteMajorGen`, `InfixMajor`,
 `NoScanMajor`) also prove their single-cell free list ascending, which the
 shape invariant now carries, so the end-to-end SPOTs run the new sweep.
+
+## A mid-sweep heap with a pending object
+
+`GC.SPOT.SweepPhasePending` shows the sweep phase
+(`GC.Spec.SweepPhase.Intrinsic.sweep_phase_inv`) and the minor collection's
+shape (`collection_shape_except`) are satisfiable with a **non-empty** pending
+set, on a heap where a pending object's field points into a block the sweep has
+freed and merged -- the case the `_except` forms exist for.  It is built with
+the sweep phase's own theorems from the concrete heap of `ConcreteMajorGen`:
+
+1. sweep it completely, nothing marked: one free block (`sweep_steps_done`,
+   `nothing_live_one_block`);
+2. at the end of that sweep phase allocate `P`, then `G` (behind the cursor, so
+   white; the allocation succeeds by #29 mid-sweep), initialise them, and store
+   `G` into `P`'s field (`alloc_sweep_phase`, `fresh_write`, `fresh_close`,
+   `write_sweep_phase`);
+3. end the phase and start the next one, nothing marked;
+4. two steps: the free block at the start absorbs `G`.
+
+`sweep_phase_pending_spot`: `P` is pending, `P`'s field is `G`, `G` was an object
+of the heap the sweep started on and is no longer one (its word lies inside the
+merged free block at the start), the heap is in the sweep phase and in
+`collection_shape_except` for that pending set, and the minor collection at the
+sweep's phase (`GC.Gen.CheneyAt.cheney_collect_spec_except_at`) keeps the sweep
+phase with `P` still pending (`GC.Gen.SweepPhase.Minor.minor_keeps_sweep_phase`).

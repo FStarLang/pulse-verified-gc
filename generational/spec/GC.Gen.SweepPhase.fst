@@ -551,6 +551,28 @@ let alloc_sweep_phase g fp st wz tag =
   end
 #pop-options
 
+#push-options "--z3rlimit 30"
+let alloc_carved g fp st wz tag =
+  let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) in
+  let (p, cur, pc) = alloc_found g fp st wz tag in
+  let w = AC.req_wz wz in
+  found_shape g fp st wz tag p cur pc;
+  found_blocks g fp st wz tag p cur pc;
+  cell_facts g fp p cur w pc;
+  at_shape g fp p cur w tag pc st.cursor;
+  let o : obj_addr = r.SA.obj_out in
+  hd_address_spec o;
+  assert (hd_address o == pc.ah);
+  let rd (a: hp_addr)
+    : Lemma (requires W.reaches g zero_addr (U64.v a) /\ (U64.v a < U64.v pc.hd \/ U64.v a >= pc.e))
+            (ensures read_word r.SA.heap_out a == read_word g a)
+    = outside_pos g fp st wz tag p cur pc a
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires rd);
+  assert (carved_from g r.SA.heap_out pc.hd pc.ah)
+#pop-options
+
+
 /// ---------------------------------------------------------------------------
 /// Writes into a body
 /// ---------------------------------------------------------------------------

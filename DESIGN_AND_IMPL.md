@@ -839,6 +839,29 @@ through the pending set, which is the minor collection's `pf`:
   (`promote_sweep_shape`), and the pointer update keeps the walk and every
   header.
 
+**Safety over the phase** (`GC.Gen.SweepPhase.Safety`) is stated on the
+reachable graph, not on a heap the sweep started from.  In the sweep's graph
+(`create_graph_except g (pending g st)`: a pending object has no edges) every
+object reachable from a root that is not freed is a real, not-free, not-pending
+object (`reachable_not_pending`; over the nursery's combined graph
+`reachable_not_pending_combined`).  A sweep step frees only pending objects, so
+it never frees a reachable one and leaves its size, tag and fields alone
+(`step_keeps_reachable`; `steps_keep_reachable` for a slice), and a minor
+collection in between keeps every not-freed object not freed
+(`minor_keeps_not_freed`) and the pending set (step C).  The slice lemmas the
+Pulse sweep will need are in `Intrinsic`: `sweep_phase_steps` (and `_stw`), and
+`sweep_steps_done` (a budget of one step per heap word finishes the sweep).
+
+`GC.SPOT.SweepPhasePending` exercises all of it on a concrete heap: from the
+two-block heap of `GC.SPOT.ConcreteMajorGen` it sweeps everything into one free
+block, allocates `P` and `G` behind the cursor at the end of that sweep phase
+(white), stores `G` into `P` (a program write), ends the phase and starts the
+next one, and takes two steps: the free block at the start absorbs `G`.  Then
+`P` is pending, its field points at `G`, `G` is no longer an object (its word
+lies inside the merged free block), and the heap is in the sweep phase and in
+`collection_shape_except` for that non-empty pending set; the minor collection
+at the sweep's phase keeps the sweep phase with `P` still pending.
+
 ### Bounded mark stack
 
 The earlier verified mark-and-sweep design assumed an unbounded mark stack. That

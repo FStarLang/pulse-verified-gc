@@ -233,3 +233,28 @@ let sweep_phase_oom_no_fit g fp st wz tag =
   FLA.fl_ascending_exact g fp;
   Edit.part1_holds g;
   Oom.alloc_spec_oom_no_fit g fp wz tag
+
+#push-options "--z3rlimit 20"
+let nothing_live_one_block g0 g fp st =
+  sweep_phase_inv_elim g fp st;
+  let c = U64.v st.cursor in
+  W.reaches_refl g zero_addr;
+  behind_swept_elim g c zero_addr;
+  (if not (blue_at g zero_addr) then behind_survivors_elim g0 g c zero_addr);
+  W.reaches_unfold g zero_addr c;
+  let n = W.bnext g zero_addr in
+  W.bnext_facts g zero_addr;
+  (if n < c then begin
+     let nn = mk_hp_addr n in
+     W.reaches_snoc g zero_addr zero_addr;
+     behind_swept_elim g c nn;
+     (if not (blue_at g nn) then behind_survivors_elim g0 g c nn);
+     no_adjacent_free_elim g c zero_addr nn
+   end);
+  let only (x: nat)
+    : Lemma (requires W.reaches g zero_addr x /\ x < c) (ensures x == U64.v zero_addr)
+    = W.reaches_bounds g zero_addr x;
+      if x > U64.v zero_addr then Edit.no_pos_inside g zero_addr x
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires only)
+#pop-options

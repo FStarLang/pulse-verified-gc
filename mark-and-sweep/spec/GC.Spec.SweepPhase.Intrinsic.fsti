@@ -366,6 +366,12 @@ let rec sweep_steps (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
       sweep_steps g' fp' st' (k - 1)
     end
 
+/// One unfolding of `sweep_steps`.
+val sweep_steps_unfold (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
+  : Lemma (sweep_steps g fp st k ==
+           (if k = 0 || sweep_done st || not (can_sweep g st) then (g, fp, st)
+            else (let (g', fp', st') = sweep_step g fp st in sweep_steps g' fp' st' (k - 1))))
+
 /// **`k` steps keep the sweep phase**: the pending set shrinks, the objects
 /// neither free nor pending are the same before and after, the cursor does
 /// not move back, and fewer than `k` steps were taken only if the sweep is
@@ -387,3 +393,14 @@ val sweep_phase_step_stw (g0 g: heap) (fp: U64.t) (st: sweep_state)
           (ensures can_sweep g st /\
                    (let (g', fp', st') = sweep_step g fp st in
                     stw_rel g0 g' (U64.v st'.cursor)))
+
+/// Stop-the-world, `k` steps keep the relation to the marked heap.
+val sweep_phase_steps_stw (g0 g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
+  : Lemma (requires sweep_phase_inv g fp st /\ stw_rel g0 g (U64.v st.cursor))
+          (ensures (let (g', fp', st') = sweep_steps g fp st k in
+                    stw_rel g0 g' (U64.v st'.cursor)))
+
+/// A budget of one step per word of the heap finishes the sweep.
+val sweep_steps_done (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
+  : Lemma (requires sweep_phase_inv g fp st /\ k * 8 >= heap_size - U64.v st.cursor)
+          (ensures (let (g', fp', st') = sweep_steps g fp st k in sweep_done st'))

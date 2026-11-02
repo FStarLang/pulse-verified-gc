@@ -110,6 +110,27 @@ val alloc_sweep_phase (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: ta
                        allocated g r.SA.heap_out st r.SA.obj_out wz tag /\
                        fresh_ok r.SA.heap_out r.SA.fp_out st' (r.SA.obj_out <: obj_addr))))
 
+/// Where an allocation put the new object (header `p`): at the end of a free
+/// block `q` of the heap before; the rest of that block, if any, stays a free
+/// block in front of it; the walk elsewhere is unchanged.
+let carved_from (g g': heap) (q p: hp_addr) : prop =
+  pos g q /\ blue_at g q /\ U64.v q <= U64.v p /\ W.bnext g' p == W.bnext g q /\
+  (forall (x: nat). (x <= U64.v q \/ x >= W.bnext g q) ==>
+     (W.reaches g' zero_addr x <==> W.reaches g zero_addr x)) /\
+  (forall (x: nat). (U64.v q < x /\ x < W.bnext g q) ==>
+     (W.reaches g' zero_addr x <==> x == U64.v p)) /\
+  (forall (a: hp_addr). W.reaches g zero_addr (U64.v a) /\ (U64.v a < U64.v q \/ U64.v a >= W.bnext g q) ==>
+     read_word g' a == read_word g a) /\
+  (U64.v q < U64.v p ==> pos g' q /\ blue_at g' q /\ W.bnext g' q == U64.v p)
+
+val alloc_carved (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t)
+  : Lemma (requires sweep_shape g fp st /\
+                    (fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag)).SA.obj_out <> 0UL)
+          (ensures (let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) in
+                    is_obj r.SA.obj_out /\ U64.v r.SA.obj_out >= U64.v zero_addr + 8 /\
+                    (exists (q: hp_addr). carved_from g r.SA.heap_out q
+                                            (hd_address (r.SA.obj_out <: obj_addr)))))
+
 /// ---------------------------------------------------------------------------
 /// Initialising a fresh object
 /// ---------------------------------------------------------------------------
