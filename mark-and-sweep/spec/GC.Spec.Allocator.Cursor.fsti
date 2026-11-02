@@ -175,3 +175,8 @@ val alloc_phase_fields (g: heap) (fp: U64.t) (ph: gc_phase) (wz: nat) (tag: U64.
            let r0 = alloc_spec g fp wz tag in
            r.fp_out == r0.fp_out /\ r.obj_out == r0.obj_out /\
            (r.obj_out == 0UL ==> r.heap_out == g))
+
+/// A failed allocation leaves the phase alone: it takes no cell off the list.
+val alloc_phase_oom_phase (g: heap) (fp: U64.t) (ph: gc_phase) (wz: nat) (tag: U64.t{U64.v tag < 256})
+  : Lemma (requires (fst (alloc_phase g fp ph wz tag)).obj_out == 0UL)
+          (ensures snd (alloc_phase g fp ph wz tag) == ph)

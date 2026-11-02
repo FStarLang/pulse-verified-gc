@@ -59,7 +59,10 @@ fn call_minor_collect_full_spot
     (SZ.v nslots);
   let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots
              #(hide GC.Spec.Fields.no_pending);
-  with d2 b2 s2 fp2 rs2 farr2 qv2. _;
+  with d2 b2 s2 fp2 rs2 farr2 qv2 ph2. _;
+  minor_collect_post_at_idle ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'sl
+    (SZ.v nslots) GC.Spec.Fields.no_pending ok d2 b2 s2 fp2 rs2 farr2 ph2;
+  rewrite (gen_phase gh ph2) as (gen_phase gh GC.Spec.Phase.Idle);
   minor_collect_idle_post ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots) ok d2 b2 s2 fp2 rs2 farr2;
   assert (pure (s2 ==

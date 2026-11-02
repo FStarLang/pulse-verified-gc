@@ -69,22 +69,21 @@ fn read_minor_scan_wosize (minor: minor_heap_t) (obj: U64.t)
 inline_for_extraction
 fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                (phase: R.ref Alloc.phase_state) (obj: U64.t)
+               (#col: Ghost.erased GC.Gen.Paint.colouring) (#g: Ghost.erased heap)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
            R.pts_to fp_ref 'fp **
-           Alloc.is_phase phase Ph.Idle **
+           Alloc.is_phase phase 'ph **
            pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
                  U64.v obj % 8 == 0 /\
                  U64.v obj + minor_wosize {data='md; bump='mb} obj * 8 <= minor_heap_size /\
-                 GC.Spec.Fields.well_formed_heap_part1 'ms /\
-                 GC.Spec.Allocator.Lemmas.fl_valid 'ms 'fp heap_words /\
-                 GC.Spec.Allocator.Lemmas.fl_chain_terminates 'ms 'fp heap_words)
+                 GC.Gen.Paint.coloured col 'ms g 'fp 'ph)
   returns new_addr: U64.t
-  ensures exists* md2 mb2 ms2 fp2.
+  ensures exists* md2 mb2 ms2 fp2 ph2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
     R.pts_to fp_ref fp2 **
-    Alloc.is_phase phase Ph.Idle **
+    Alloc.is_phase phase ph2 **
     pure (let minor_st = {data='md; bump='mb} in
           let wz = minor_wosize minor_st obj in
           md2 == 'md /\ mb2 == 'mb /\
@@ -92,8 +91,8 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
           GC.Spec.Allocator.Lemmas.fl_valid ms2 fp2 heap_words /\
           GC.Spec.Allocator.Lemmas.fl_chain_terminates ms2 fp2 heap_words /\
           (wz > 0 ==>
-            (let spec_res = PromoteSpec.promote_object minor_st 'ms obj 'fp wz PromoteSpec.Idle in
-             ms2 == spec_res.major_out /\
+            (let spec_res = PromoteSpec.promote_object minor_st g obj 'fp wz PromoteSpec.Idle in
+             GC.Gen.Paint.coloured col ms2 spec_res.major_out fp2 ph2 /\
              fp2 == spec_res.fp_out /\
              new_addr == spec_res.new_addr)) /\
-          (wz == 0 ==> ms2 == 'ms /\ fp2 == 'fp /\ new_addr == 0UL))
+          (wz == 0 ==> ms2 == 'ms /\ fp2 == 'fp /\ ph2 == 'ph /\ new_addr == 0UL))

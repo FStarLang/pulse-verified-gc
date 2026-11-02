@@ -19,6 +19,9 @@ module CheneySpec = GC.Gen.Cheney
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module SimOne = GC.Gen.Cheney.SimOne
 
+let impl_matches_spec_at_facts col ph ms fp farr q bk cs =
+  GC.Gen.Paint.coloured_facts col ms cs.CheneySpec.cs_major fp ph
+
 /// ---------------------------------------------------------------------------
 /// Initial state
 /// ---------------------------------------------------------------------------

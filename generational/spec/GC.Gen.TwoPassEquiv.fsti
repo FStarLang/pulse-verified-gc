@@ -111,6 +111,28 @@ val heap_read_word_extensional_mk (h1 h2: heap)
     (ensures h1 == h2)
 
 /// ---------------------------------------------------------------------------
+/// Interior pointers survive the update of an object
+/// ---------------------------------------------------------------------------
+
+/// An infix header is odd, so never looks like a nursery pointer: rewriting an
+/// object's nursery pointers leaves every interior address interior.
+val update_obj_ptrs_preserves_is_infix
+  (major: heap) (obj: obj_addr) (wosize: nat) (fwd: forwarding_map)
+  (other: obj_addr)
+  : Lemma
+    (requires
+      Seq.mem obj (objects zero_addr major) /\
+      U64.v obj % 8 == 0 /\
+      wosize == U64.v (wosize_of_object obj major) /\
+      wosize > 0 /\
+      U64.v obj + wosize * 8 <= heap_size /\
+      (forall (k:nat). k < wosize ==>
+        (U64.v obj + k * 8 + 8 <= heap_size /\ (U64.v obj + k * 8) % 8 == 0)) /\
+      is_infix other major)
+    (ensures
+      is_infix other (update_object_pointers major obj wosize fwd 0))
+
+/// ---------------------------------------------------------------------------
 /// update_promoted_iter frame: addresses outside promoted objects are unchanged
 /// ---------------------------------------------------------------------------
 

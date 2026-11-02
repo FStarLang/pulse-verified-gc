@@ -29,6 +29,18 @@ module CheneySpec = GC.Gen.Cheney
 module CheneyPres = GC.Gen.CheneyPreservation
 module TwoPass = GC.Gen.TwoPassEquiv
 
+/// The promoted entries are objects of the promoted heap with room for their
+/// bodies, or interior addresses.
+val derive_promoted_entries_valid_from
+  (major: heap) (farr: Seq.seq U64.t) (fwd: forwarding_map)
+  : Lemma (requires
+      Seq.length farr == fwd_array_size /\
+      (forall (i:nat). i < fwd_array_size ==> Seq.index farr i == fwd (U64.uint_to_t (i * 8))) /\
+      CheneyPres.fwd_valid_or_infix fwd major /\
+      CheneySpec.fwd_bounded fwd /\
+      well_formed_heap_part1 major)
+    (ensures promoted_entries_valid_from major farr 0)
+
 /// ---------------------------------------------------------------------------
 /// The two passes are the collection's pointer update
 /// ---------------------------------------------------------------------------

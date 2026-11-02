@@ -680,3 +680,27 @@ let paint_start ph0 g0 fp =
   match ph0 with
   | Ph.Idle -> ()
   | Ph.Sweeping st0 -> paint_self (U64.v st0.cursor) g0
+
+/// ---------------------------------------------------------------------------
+/// The implementation's heap, against the idle one
+/// ---------------------------------------------------------------------------
+
+let coloured_start ph g fp = paint_start ph g fp
+
+#push-options "--z3rlimit 20"
+let coloured_facts col ms g fp ph =
+  part1_holds g; part1_holds ms;
+  FLA.fl_ascending_valid g fp;
+  paint_ph_recoloured col.c_phase col.c_base g;
+  recoloured_fl g ms fp;
+  FLA.fl_ascending_valid ms fp
+#pop-options
+
+let coloured_promote col ms g fp ph minor obj wz =
+  paint_promote col.c_phase col.c_base g fp minor obj wz
+
+let phase_at_heads ph h h' =
+  same_heads_facts h h';
+  match ph with
+  | Ph.Idle -> ()
+  | Ph.Sweeping st -> max_cell_below_congr h h' (U64.v st.swept_tail)

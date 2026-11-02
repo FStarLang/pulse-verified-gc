@@ -820,6 +820,25 @@ pending set unchanged:
 The `_shape` forms (`alloc_sweep_shape`, `body_write_shape`,
 `promote_sweep_shape`) state the same about `sweep_shape` alone.
 
+**A minor collection mid-sweep** (`GC.Gen.SweepPhase.Minor`) meets the sweep
+through the pending set, which is the minor collection's `pf`:
+
+- `sweep_collection_shape` (step B): the sweep phase, with the nursery's shape
+  and `minor_major_fields_not_freed minor g (pending g st)`, is
+  `collection_shape_except minor g fp (pending g st)` (the free-list half from
+  the exact ascending list alone, `PostCollectionShape.free_list_shape_of_ascending`);
+- `minor_keeps_sweep_phase` (step C): for the collection at the sweep's phase,
+  `cheney_collect_spec_except_at (Sweeping st) minor g fp roots (pending g st)`,
+  the result satisfies `sweep_phase_inv` at `state_after st` (same cursor and
+  `last_fragment`, `swept_tail` the last cell at or below where it was), the
+  pending set is the same (new objects are never pending, existing headers do
+  not change), and the result keeps `collection_shape_except` for it.  The field
+  closure is the generic theorem's (`cheney_collect_except_preserves_shape`)
+  through the painting; the shape is by induction over the promotions
+  (`GC.Gen.Cheney.cheney_promote_induction`), each a promotion at the phase
+  (`promote_sweep_shape`), and the pointer update keeps the walk and every
+  header.
+
 ### Bounded mark stack
 
 The earlier verified mark-and-sweep design assumed an unbounded mark stack. That
@@ -1081,9 +1100,19 @@ let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
     { major_out = copied_major; fp_out = new_fp; new_addr = new_addr; phase_out = snd ar }
 ```
 
-The minor collection runs at `Idle` (`cheney_collect_spec` passes it), where
-the allocation is `alloc_spec` and the phase stays `Idle`; the lemmas about
-`promote_object` are stated there.
+The minor collection's specification (`cheney_collect_spec`,
+`cheney_collect_spec_except`) runs at `Idle`, where the allocation is
+`alloc_spec` and the phase stays `Idle`; the lemmas about `promote_object` are
+stated there.  At any other phase the collection is that one with two
+differences, both from the allocator (`GC.Gen.Paint`, `GC.Gen.CheneyAt`): each
+promoted copy in front of the sweep's cursor is black (`paint_ph`: the new
+blocks in front of the cursor blackened), and `swept_tail` is the last list cell
+at or below where it was (`phase_at`).  One promotion at the phase is the idle
+one, painted (`paint_promote`), and painting keeps every colour-blind fact
+(`recoloured`); the pointer update's two passes commute with it
+(`GC.Gen.PaintUpdate`).  `cheney_collect_spec_except_at ph` is the collection
+at phase `ph`; at `Idle` it is `cheney_collect_spec_except` and the phase stays
+`Idle`.
 
 The major allocator is size-exact: the allocated header declares exactly the
 requested `wosize` (`GC.Gen.AllocProps.alloc_spec_obj_wosize_exact_part1`; see
@@ -1514,11 +1543,15 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 ```
 
 The phase is a companion predicate rather than part of `is_gen_heap`: only the
-allocator reads it.  `minor_collect_full` and `gen_gc` require and ensure
-`gen_phase gh Ph.Idle` -- every collection here runs outside a sweep -- and
-promotion (`promote_one`, through the Cheney functions) passes the phase to
-`allocate` with `Alloc.is_phase phase Ph.Idle` framed through its loops.  The
-C bridge allocates the phase record once, idle.
+allocator reads it.  `minor_collect_full` runs at any phase (`gen_phase gh
+'ph` in, the phase after it out); `gen_gc` requires and ensures `gen_phase gh
+Ph.Idle`.  Promotion (`promote_one`, through the Cheney functions) passes the
+phase to `allocate`; the Cheney loops relate the heap and phase they hold to the
+specification's idle state by `Sim.impl_matches_spec_at col ph ms ...`: the
+heap is the idle one painted for the collection's colouring `col` (the phase it
+started in and the heap it started from), and the phase is the one at it
+(`GC.Gen.Paint.coloured`).  At `Idle` the painting is the identity, so the C is
+the same at every phase.  The C bridge allocates the phase record once, idle.
 
 The allocation postcondition is intentionally weak at the top-level interface:
 allocation is an operational service used by the runtime, and the deeper
@@ -1568,6 +1601,14 @@ GenInv.collection_shape_except ({ data = d2; bump = b2 } <: minor_state) s2 fp2 
   MinorFwd.normal_result_non_pointer_fields_preserved_prop
     minor_st s fp pf rs s2)
 ```
+
+That is the contract outside a sweep.  `minor_collect_full` itself runs at any
+phase `'ph` (with `phase_at 'ph 's == 'ph`: during a sweep `swept_tail` is a
+list cell) and ensures `minor_collect_post_except_at 'ph ...`: the facts above
+of the idle result `s2i`, the heap it leaves is `s2i` painted
+(`(fst (cheney_collect_spec_except_at 'ph ...)).mc_major`), the phase it leaves
+is `snd` of the same, and that heap has `collection_shape_except` for the same
+`pf`.  At `Idle` this is the above (`minor_collect_post_at_idle`).
 
 The stop-the-world contract is the instance at `no_pending`:
 `minor_collect_pre_idle` (`collection_heap_shape`, the remembered set over the

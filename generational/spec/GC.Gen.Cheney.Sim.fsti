@@ -49,6 +49,28 @@ let impl_matches_spec
   Seq.length farr == fwd_array_size /\
   (forall (j:nat). j < bk ==> Seq.index q j == Seq.index cs.cs_queue j)
 
+/// At any phase of the major collector the implementation's heap is the spec
+/// state's idle heap painted (`GC.Gen.Paint.coloured`), and the phase it holds
+/// is the one at that heap; the rest of the correspondence is as above, against
+/// the idle heap.  Outside a sweep the painting is the identity.
+let impl_matches_spec_at (col: GC.Gen.Paint.colouring) (ph: gc_phase)
+  (ms: heap) (fp: U64.t)
+  (farr: seq U64.t) (q: seq U64.t) (bk: nat)
+  (cs: CheneySpec.cheney_state) : prop =
+  GC.Gen.Paint.coloured col ms cs.cs_major fp ph /\
+  impl_matches_spec cs.cs_major fp farr q bk cs
+
+/// What the allocator needs of the spec state's heap.
+val impl_matches_spec_at_facts (col: GC.Gen.Paint.colouring) (ph: gc_phase)
+  (ms: heap) (fp: U64.t) (farr: seq U64.t) (q: seq U64.t) (bk: nat) (cs: CheneySpec.cheney_state)
+  : Lemma (requires impl_matches_spec_at col ph ms fp farr q bk cs)
+          (ensures well_formed_heap_part1 cs.cs_major /\
+                   AllocLemmas.fl_valid cs.cs_major fp heap_words /\
+                   AllocLemmas.fl_chain_terminates cs.cs_major fp heap_words /\
+                   well_formed_heap_part1 ms /\
+                   AllocLemmas.fl_valid ms fp heap_words /\
+                   AllocLemmas.fl_chain_terminates ms fp heap_words)
+
 /// ---------------------------------------------------------------------------
 /// Initial state: zeroed fwd_arr ↔ empty_forwarding
 /// ---------------------------------------------------------------------------

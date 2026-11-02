@@ -206,3 +206,54 @@ val paint_promote (ph0: GC.Spec.Phase.gc_phase) (g0 g: heap) (fp: U64.t)
 val paint_start (ph0: GC.Spec.Phase.gc_phase) (g0: heap) (fp: U64.t)
   : Lemma (requires FLA.fl_ascending g0 fp)
           (ensures paint_ok g0 g0 fp /\ paint_ph ph0 g0 g0 == g0)
+
+/// ---------------------------------------------------------------------------
+/// The implementation's heap, against the idle one
+/// ---------------------------------------------------------------------------
+
+/// A minor collection's colouring: the phase it started in and the heap it
+/// started from.
+noeq type colouring = {
+  c_phase: GC.Spec.Phase.gc_phase;
+  c_base: heap;
+}
+
+/// The heap `ms` and phase `ph` the implementation holds, against the idle
+/// heap `g` and free-list head `fp` the specification has reached: `ms` is
+/// `g` painted, `ph` the phase at `g`, and `g` fit to keep painting.
+let coloured (col: colouring) (ms: heap) (g: heap) (fp: U64.t) (ph: GC.Spec.Phase.gc_phase) : prop =
+  ms == paint_ph col.c_phase col.c_base g /\
+  ph == phase_at col.c_phase g /\
+  paint_ok col.c_base g fp
+
+/// The start of a collection: the implementation's heap is the idle one.
+val coloured_start (ph: GC.Spec.Phase.gc_phase) (g: heap) (fp: U64.t)
+  : Lemma (requires FLA.fl_ascending g fp /\ phase_at ph g == ph)
+          (ensures coloured ({ c_phase = ph; c_base = g }) g g fp ph)
+
+/// What the allocator needs, of both heaps.
+val coloured_facts (col: colouring) (ms g: heap) (fp: U64.t) (ph: GC.Spec.Phase.gc_phase)
+  : Lemma (requires coloured col ms g fp ph)
+          (ensures well_formed_heap_part1 g /\ FLA.fl_ascending g fp /\
+                   GC.Spec.Allocator.Lemmas.fl_valid g fp heap_words /\
+                   GC.Spec.Allocator.Lemmas.fl_chain_terminates g fp heap_words /\
+                   well_formed_heap_part1 ms /\ FLA.fl_ascending ms fp /\
+                   GC.Spec.Allocator.Lemmas.fl_valid ms fp heap_words /\
+                   GC.Spec.Allocator.Lemmas.fl_chain_terminates ms fp heap_words /\
+                   recoloured g ms)
+
+/// **One promotion, by the implementation, at the phase it holds**, is the
+/// idle promotion of the specification, painted.
+val coloured_promote (col: colouring) (ms g: heap) (fp: U64.t) (ph: GC.Spec.Phase.gc_phase)
+                     (minor: minor_state) (obj: U64.t) (wz: nat{wz > 0})
+  : Lemma (requires coloured col ms g fp ph /\ wz < pow2 54)
+          (ensures (let r = Promote.promote_object minor g obj fp wz GC.Spec.Phase.Idle in
+                    let r' = Promote.promote_object minor ms obj fp wz ph in
+                    coloured col r'.Promote.major_out r.Promote.major_out r.Promote.fp_out r'.Promote.phase_out /\
+                    r'.Promote.fp_out == r.Promote.fp_out /\
+                    r'.Promote.new_addr == r.Promote.new_addr))
+
+/// The phase depends only on the free-list cells, so a change that keeps the
+/// walk and every header keeps it.
+val phase_at_heads (ph: GC.Spec.Phase.gc_phase) (h h': heap)
+  : Lemma (requires same_heads h h') (ensures phase_at ph h' == phase_at ph h)

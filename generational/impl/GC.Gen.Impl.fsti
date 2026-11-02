@@ -49,6 +49,8 @@ module MRT = GC.Gen.MajorReachabilityTransfer
 module RT = GC.Gen.RefTable
 module Alloc = GC.Impl.Allocator
 module Ph = GC.Spec.Phase
+module Paint = GC.Gen.Paint
+module CA = GC.Gen.CheneyAt
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -63,8 +65,9 @@ type gen_heap_t = {
 }
 
 /// The major collector's phase, held in `gh.phase_ref`.  It is kept apart
-/// from `is_gen_heap`: only the allocator reads it, and every collection in
-/// this file runs outside a sweep (`Ph.Idle`).
+/// from `is_gen_heap`: only the allocator reads it.  `minor_collect_full` runs
+/// at any phase (its promotions are allocated at it); `gen_gc` runs outside a
+/// sweep (`Ph.Idle`).
 let gen_phase (gh: gen_heap_t) (ph: Ph.gc_phase) : slprop =
   Alloc.is_phase gh.phase_ref ph
 
@@ -391,29 +394,61 @@ let minor_collect_post_except
    MinorFwd.normal_result_non_pointer_fields_preserved_prop
      minor_st s fp pf rs s2)
 
+/// What the collection guarantees at the phase `ph` it runs in.  Its work is
+/// the idle collection's (`GC.Gen.CheneyAt`): `minor_collect_post_except` holds
+/// of the idle result `s2i`, the heap it leaves is `s2i` with the promoted
+/// copies in front of the sweep's cursor black, the phase it leaves has
+/// `swept_tail` the last list cell at or below where it was, and the heap it
+/// leaves has the collection's shape for the same pending set.  Outside a
+/// sweep the heap is `s2i` and the phase `Idle` (`minor_collect_post_at_idle`).
+let minor_collect_post_except_at
+  (ph: Ph.gc_phase)
+  (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs sl: Seq.seq U64.t) (nslots: nat)
+  (pf: obj_addr -> prop) (ok: bool)
+  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t)
+  (ph2: Ph.gc_phase) : prop =
+  let s2i = (CheneySpec.cheney_collect_spec_except minor_st s fp rs pf).mc_major in
+  let at = CA.cheney_collect_spec_except_at ph minor_st s fp rs pf in
+  minor_collect_post_except minor_st s fp rs sl nslots pf ok d2 b2 s2i fp2 rs2 farr2 /\
+  s2 == (fst at).mc_major /\
+  ph2 == snd at /\
+  GenInv.collection_shape_except ({ data = d2; bump = b2 } <: minor_state) s2 fp2 pf
+
+val minor_collect_post_at_idle
+  (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs sl: Seq.seq U64.t) (nslots: nat)
+  (pf: obj_addr -> prop) (ok: bool)
+  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t)
+  (ph2: Ph.gc_phase)
+  : Lemma (requires minor_collect_post_except_at Ph.Idle minor_st s fp rs sl nslots pf ok
+                      d2 b2 s2 fp2 rs2 farr2 ph2)
+          (ensures minor_collect_post_except minor_st s fp rs sl nslots pf ok d2 b2 s2 fp2 rs2 farr2 /\
+                   ph2 == Ph.Idle)
+
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
                       (queue: larray U64.t Cheney.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
                       (#pf: erased (obj_addr -> prop))
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh Ph.Idle **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 'ph **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to slots 'sl **
            pure (SZ.v nroots == Seq.length 'rs /\
                  minor_collect_pre_except ({ data = 'd; bump = 'b } <: minor_state) 's 'fp
-                   'rs 'farr 'sl (SZ.v nslots) pf)
+                   'rs 'farr 'sl (SZ.v nslots) pf /\
+                 // during a sweep, `swept_tail` is a list cell (or the sentinel)
+                 Paint.phase_at 'ph 's == 'ph)
   returns ok: bool
-  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
-    is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh Ph.Idle **
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 ph2.
+    is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh ph2 **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
-    pure (minor_collect_post_except ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'sl
-            (SZ.v nslots) pf ok d2 b2 s2 fp2 rs2 farr2)
+    pure (minor_collect_post_except_at 'ph ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'sl
+            (SZ.v nslots) pf ok d2 b2 s2 fp2 rs2 farr2 ph2)
 
 /// --- The stop-the-world instance ---
 
