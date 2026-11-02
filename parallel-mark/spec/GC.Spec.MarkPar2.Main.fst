@@ -345,3 +345,12 @@ let main_inv (k: cfg) (g: heap) (roots: list obj_addr) (s: state)
   : Lemma (requires ctx k g roots /\ inv k g roots s /\ ~s.finished /\ all_stopped s.wks)
           (ensures inv k g roots (main_step k s))
   = if flagged s then main_fix k g roots s else main_done k g roots s
+
+/// One record at the stop barrier.
+let stopped_at (k: cfg) (g: heap) (s: state) (i: nat) (w: wk)
+  : Lemma (requires own_ok k g s /\ count_ok s /\ all_stopped s.wks /\ M1.nth s.wks i == Some w)
+          (ensures w.stack == [] /\ w.inbox == [] /\ w.pc == Stopped)
+  = stopped_empty k g s;
+    LS.all_stopped_nth s.wks i w;
+    reveal_opaque (`%count_ok) (count_ok s);
+    LS.counted_zero s.wks i w

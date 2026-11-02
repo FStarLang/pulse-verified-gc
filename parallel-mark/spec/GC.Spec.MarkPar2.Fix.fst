@@ -80,6 +80,16 @@ let wvis (k: cfg) (g: heap) (f: fx) (r: list obj_addr) (lo: int) : prop =
      ~(L.memP x r) /\ I1.is_field g x j /\ is_black x f.fh ==>
      ~(is_white (I1.field_target g x j) f.fh))
 
+let wbase_heap (k: cfg) (g: heap) (roots: list obj_addr) (f: fx)
+  : Lemma (requires wbase k g roots f) (ensures recoloured g f.fh)
+  = reveal_opaque (`%wbase) (wbase k g roots f)
+
+/// One record of the walk.
+let wbase_at (k: cfg) (g: heap) (roots: list obj_addr) (f: fx) (i: nat) (w: wk)
+  : Lemma (requires wbase k g roots f /\ M1.nth f.fws i == Some w) (ensures wrec_ok k g f.fh i w)
+  = reveal_opaque (`%wbase) (wbase k g roots f);
+    assert (fwk f i == Some w)
+
 /// How the heap moves during the walk: only white objects turn grey.
 let grows (f f': fx) : prop =
   (forall (x: obj_addr). ~(is_white x f.fh) ==> ~(is_white x f'.fh)) /\
@@ -530,10 +540,11 @@ let obj_step (k: cfg) (g: heap) (roots: list obj_addr) (f: fx) (y: obj_addr) (re
 let rec walk_step (k: cfg) (g: heap) (roots: list obj_addr) (f: fx) (r: list obj_addr) (lo: int)
   : Lemma (requires ctx k g roots /\ wbase k g roots f /\ wvis k g f r lo)
           (ensures (let f' = fix_walk k f r in
-                    wbase k g roots f' /\ (exists (lo': int). wvis k g f' [] lo')))
+                    wbase k g roots f' /\ (exists (lo': int). wvis k g f' [] lo') /\ grows f f'))
           (decreases r)
   = match r with
-    | [] -> ()
+    | [] -> grows_refl f
     | y :: rest ->
       obj_step k g roots f y rest lo;
-      walk_step k g roots (fix_obj k f y) rest (U64.v y)
+      walk_step k g roots (fix_obj k f y) rest (U64.v y);
+      grows_trans f (fix_obj k f y) (fix_walk k (fix_obj k f y) rest)
