@@ -16,6 +16,7 @@ This document describes how the verified generational garbage collector
 7. [Allocation Path](#allocation-path)
 8. [Minor GC (Cheney Promotion)](#minor-gc-cheney-promotion)
 9. [Full GC and Major Mark-and-Sweep](#full-gc-and-major-mark-and-sweep)
+   - [The Incremental Sweep (`VERGC_SWEEP`)](#the-incremental-sweep-vergc_sweep)
 10. [Inter-Generational Pointers (ref\_table)](#inter-generational-pointers)
 11. [Root Scanning](#root-scanning)
 12. [OOM Handling](#oom-handling)
@@ -221,12 +222,13 @@ that lets the same verified code work with any heap placement.
 | Function | Called by bridge? | Purpose |
 |----------|-------------------|---------|
 | `minor_alloc(minor, wosize, tag)` | Yes, small-allocation slow path | Bump-allocate in the minor heap after any needed minor collection |
-| `allocate(major, fp, phase, wosize, tag)` | Yes, shared/major allocation path | Allocate from the major free list, writing the header once with the tag and the colour the collector's phase gives it (white: the bridge keeps the phase `Idle`).  The OCaml runtime rewrites the header only to add profinfo bits |
+| `allocate(major, fp, phase, wosize, tag)` | Yes, shared/major allocation path (`VERGC_SWEEP=stw`) | Allocate from the major free list, writing the header once with the tag and the colour the collector's phase gives it (white: stop-the-world the phase is always `Idle`).  The OCaml runtime rewrites the header only to add profinfo bits, keeping the colour |
 | `minor_collect_full(gh, roots, n, fwd_arr, queue, slots, nslots)` | Yes, `do_minor_gc_core` | Verified minor collection: Cheney promotion, promoted-object field rewrite, remembered-slot rewrite, root rewrite, and minor bump reset |
 | `gen_gc(gh, roots, n, fwd_arr, queue, slots, nslots, gray_stack)` | Yes, `do_full_gc` | Verified full collection: first `minor_collect_full`, then root darkening into an initially empty gray stack, then major `collect_with_roots` |
 | `collect_with_roots(major, gray_stack, roots, n, fp)` | Indirectly through `gen_gc` | Mark-and-sweep over the major heap from the post-minor roots, returning the new free-list head |
 | `rewrite_heap_slots(major, fwd_arr, slots, n)` | Indirectly through `minor_collect_full` and `gen_gc` | Rewrite remembered major fields that still point into the minor heap |
 | `allocate(major, fp, phase, wosize, tag)` | Indirectly through `minor_collect_full` | The same free-list allocator; promotion calls it with the minor object's tag, so the copy's header is written once |
+| `gen_gc_start`, `sweep_slice`, `finish_sweep`, `minor_collect_any_phase`, `gen_alloc_major` | Yes, with `VERGC_SWEEP=incremental` | The incremental sweep's entry points: see "The Incremental Sweep" below |
 
 ---
 
@@ -861,6 +863,107 @@ root.
 
 ---
 
+## The Incremental Sweep (`VERGC_SWEEP`)
+
+`VERGC_SWEEP`, read once when the heap is set up, picks how a full
+collection sweeps:
+
+| `VERGC_SWEEP` | full collection | sweep |
+|---|---|---|
+| `stw` (default; anything else warns once and means `stw`) | `gen_gc` | all at once, inside `gen_gc` (the paths above, unchanged) |
+| `incremental` | `gen_gc_start`: minor collection, root darkening, marking; the phase becomes `Sweeping` | in slices (`sweep_slice`), one after each minor collection |
+
+The entry points are `GC.Gen.Impl.Incremental`'s (`gen_gc_start`,
+`sweep_slice`, `finish_sweep`, `minor_collect_any_phase`, `gen_alloc_major`;
+DESIGN_AND_IMPL.md, "The incremental entry points"). The phase lives in
+`gc_gen_heap.phase_ref` (`ps_kind` 0 = Idle, 1 = Sweeping, plus the cursor,
+`swept_tail` and `last_fragment`). Incremental, each event of the program
+does this:
+
+| event | `alloc_gen.c` |
+|---|---|
+| full collection (`do_full_gc`: the proactive trigger, a failed allocation, `caml_trigger_verified_gc`) | mid-sweep, `finish_sweep` first (as 4.14: a full collection requested mid-sweep finishes the sweep); then `gen_gc_start` with `gen_gc`'s roots, gray stack, forwarding array, queue and remembered slots, and `gen_gc`'s post-processing (forwarded roots written back, `ref_table` reset, promotion failure fatal) |
+| minor collection (`do_minor_gc`) | mid-sweep, if the free list holds fewer than twice the nursery's words, `finish_sweep` first (garbage in front of the cursor is not on the free list yet, and a promotion failure is fatal); `minor_collect_any_phase` (the C is `minor_collect_full`'s); then, mid-sweep, `sweep_slice` with the budget below |
+| major allocation (`verified_allocate`) | `gen_alloc_major`: a block in front of the cursor is black, one behind it white. On failure: mid-sweep, `finish_sweep` and retry; then a full collection and its whole sweep, and retry; then `NULL` (`Out_of_memory`), as stop-the-world |
+| `Gc.full_major`, `Gc.major`, `Gc.compact`, `Gc.set` (policy change): stock `caml_finish_major_cycle` | `verified_finish_major_cycle`: the nursery emptied, a full collection, and its whole sweep -- the program sees a finished cycle |
+| `Gc.major_slice`, `caml_gc_dispatch`: stock `caml_major_collection_slice` | `verified_major_collection_slice`: mid-sweep, a slice (of `n` words for `Gc.major_slice n`, `n > 0`); nothing otherwise |
+
+`Gc.quick_stat`'s `major_collections` counts a cycle when its sweep ends, as
+stock does (stop-the-world, when `gen_gc` returns).
+
+### Pacing (decision D3)
+
+`sweep_slice` takes its budget in words: whole sweep steps until the blocks
+swept, headers included, add up to the budget (at most one block over). After
+a minor collection that collected `m` words:
+
+```
+budget = max(VERGC_SWEEP_MIN_WORDS, VERGC_SWEEP_K * m + d)
+```
+
+where `d` is the words allocated directly in the major heap since the last
+slice. Defaults: `VERGC_SWEEP_MIN_WORDS=4096`, `VERGC_SWEEP_K=4`. `m` (the
+nursery's fill) bounds the words promoted from above, and is what the
+proactive trigger counts too, so a sweep of a `W`-word heap is over after
+`W / K` such words, before the trigger (`W / 2`) starts the next cycle.
+Porting 4.14's own pacing (`caml_major_collection_slice`,
+`runtime/major_gc.c` L938-1109: work from the words allocated and promoted,
+`caml_percent_free`, and a work credit smoothed over `caml_major_window`
+slices) is future work.
+
+`VERGC_SWEEP_STATS=1` prints, at exit, one line of counters: cycles, sweeps
+finished, slices, words swept, `finish_sweep` calls by cause (full
+collection, failed allocation, room for promotion, explicit `Gc` call), and
+major allocations made mid-sweep.
+
+### The trusted bridge obligations
+
+Each entry point is a separate C call, so the separation-logic state does not
+survive between calls; `GC.Gen.Impl.Incremental` lists what the runtime must
+keep true in between. How this runtime meets each:
+
+| obligation (`GC.Gen.Impl.Incremental`) | how it is met |
+|---|---|
+| **Allocation mid-sweep**: a new block is *fresh* (`GSP.fresh_ok`), and every field is initialised with a storable value before the next collector call | OCaml's rule for `caml_alloc_shr`: its callers initialise every field (`caml_initialize`, or raw stores of values that are not young) before allocating again -- the interpreter's `CLOSURE`/`CLOSUREREC`/`MAKEBLOCK`, `caml_alloc`, `caml_make_vect`, intern. A value the program holds is reachable, so never pending. (A sweep slice reads no field, so even a slice between allocation and initialisation reads nothing uninitialised.) `tag <> Infix_tag` is asserted in `verified_allocate`. |
+| **The allocation colour is the collector's** | `verified_allocate` writes the final header; the patched `caml_alloc_shr_aux` rewrites only profiling bits (WITH_PROFINFO), keeping the colour; `caml_allocation_color` and `caml_obj_truncate`'s leftover header use the same rule (`vergc_allocation_color`). |
+| **Field writes** (`GSP.program_write`) | `caml_modify` / `caml_initialize`, whose barrier records every major field given a young pointer in `caml_ref_table`. |
+| **Nursery allocation** keeps the nursery's shape and the cross-generation condition | The nursery is allocated only after `gen_gc_start`'s own minor collection, so every nursery object was initialised from reachable values: none points at a pending object. |
+| **The minor collection's arguments** (`minor_slots_ok`) | The forwarding array is zeroed before every call; the remembered set is `caml_ref_table`, reset after every minor collection (so it never names a slot in an object that was unreachable when marking ended); its young targets are added to the roots; the roots come from `caml_do_roots`, which marking used too. |
+| **`phase_ref` is written only by the collector** | `alloc_gen.c` only reads it (`vergc_sweeping`, `vergc_allocation_color`). |
+
+Known holes, shared with stop-the-world (docs/known-issues.md): weak arrays
+and ephemerons are not cleaned, so `Weak.get` can hand back a block the mark
+did not reach -- mid-sweep a pending one -- and header changes the runtime
+makes on live blocks (`Obj.truncate`, `Obj.set_tag`, `Lazy`'s forwarding,
+`caml_update_dummy`) are outside the model of program events.
+
+### The runtime patch and stock's major collector
+
+The patched runtime never runs stock's mark or sweep:
+`caml_major_collection_slice` and `caml_finish_major_cycle` forward to the
+two bridge functions above, `caml_compact_heap(_maybe)` do nothing, and
+`caml_finalise_heap` (`OCAMLRUNPARAM=c`) does nothing. Before this, the
+`Gc` calls ran stock's mark over the verified heap (it is `In_heap` in the
+page table), which left its objects black in an idle heap; the next verified
+mark skipped their children, and the sweep freed live objects
+(`tests/explicit_major.ml`). Stock's own phase, `caml_gc_phase`, therefore
+never leaves `Phase_idle`, so every stock path guarded by it (`caml_darken`
+in `caml_modify`, `weak.c`, `finalise.c`) is dead.
+
+### Testing
+
+`tests/incremental_sweep.ml` and `tests/explicit_major.ml` run through
+`tests/run_differential.sh`, which compares their output with stock OCaml's
+byte for byte. With `VERGC_SWEEP=incremental` it runs them under three
+pacings (the default; `VERGC_SWEEP_K=1`; `VERGC_SWEEP_MIN_WORDS=256
+VERGC_SWEEP_K=0 MINOR_HEAP_WORDS=32768`) and checks, from
+`VERGC_SWEEP_STATS`, that `incremental_sweep` really ran mid-sweep. Every
+integration target (`make test`, `make -C tests correctness`, `test-native`)
+runs in whichever mode the environment selects, and CI runs everything,
+OCaml's own testsuite included, in both.
+
+---
+
 ## Inter-Generational Pointers
 
 ### The Problem
@@ -1018,6 +1121,11 @@ proactive full GC when cumulative promotions reach 50% of heap size:
 if (bytes_promoted_since_major + bump > major_size / 2)
     do_full_gc();
 ```
+
+Mid-sweep (`VERGC_SWEEP=incremental`) a minor collection also finishes the
+sweep first when the free list holds fewer than twice the nursery's words,
+and a failed major allocation finishes the sweep before it runs a full
+collection (see "The Incremental Sweep").
 
 ---
 
@@ -1238,8 +1346,10 @@ verified root-darkening helper, and only then invokes the major mark loop.
 4. **The minor heap is fully evacuated** — after minor GC, the minor
    heap is empty (bump reset to 0).  All live objects are in major.
 
-5. **No incremental/concurrent GC** — both minor and major GC are
-   stop-the-world.  The proactive trigger keeps pause times bounded.
+5. **No concurrent GC** — minor collections and marking are
+   stop-the-world; the sweep is too by default, and in slices between minor
+   collections with `VERGC_SWEEP=incremental` (see "The Incremental
+   Sweep").
 
 6. **Full-GC roots are post-minor roots** — `do_full_gc` gives `gen_gc` a
    separate mutable roots array and an empty gray stack.  The minor phase

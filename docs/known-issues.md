@@ -16,6 +16,67 @@ with `make -C generational/ocaml-integration/tests correctness`.
 ---
 
 
+## Open: the proactive full collection counts only promotion
+
+**Observed by:** writing `tests/explicit_major.ml` (a first draft that
+allocated its churn directly in the major heap died with "promotion failed")
+
+`do_minor_gc` starts a full collection when the words that went through minor
+collections since the last one exceed half the major heap. Words allocated
+directly in the major heap (`caml_alloc_shr`: blocks over `Max_young_wosize`)
+are not counted. A program that allocates mostly large blocks fills the major
+heap with garbage that only a failed major allocation collects; if the next
+minor collection comes first, its promotion finds no room, and promotion
+failure is fatal. Both sweep modes share this (the incremental mode keeps the
+same rule, so that `stw` stays exactly as it was). The fix is to count direct
+major allocation towards the trigger (4.14's `caml_allocated_words`), or to
+run a full collection before a minor collection that may not fit.
+
+---
+
+## Open: runtime paths outside the collector's model of the program
+
+**Observed by:** the runtime audit for the incremental sweep
+
+The verified collector's contracts (`GC.Gen.Impl.Incremental`'s trusted bridge
+obligations) model the program as allocation, field writes through
+`caml_modify` / `caml_initialize`, and nursery allocation. These runtime paths
+change a live major block in other ways; each is safe in both sweep modes for
+the reason given, but none is covered by a proof:
+
+- **`Obj.truncate`** (`caml_obj_truncate`) shrinks a block and writes a header
+  for the leftover. The leftover's colour is `caml_allocation_color`, i.e. the
+  verified allocator's rule (it used to be black, which an idle verified heap
+  does not admit): white idle or behind the sweep cursor, black in front of
+  it. Either way the next sweep to reach it follows a minor collection, which
+  empties the remembered set that may still name slots inside it.
+- **Tag changes**: `Obj.set_tag`, `Lazy` forcing (`Forward_tag`),
+  `caml_update_dummy`. They write the tag byte, never the colour.
+- **Intern** (`Marshal.from_*`): a block of at most `Max_wosize` words is one
+  `caml_alloc_shr` block carved into objects that all get that block's colour.
+  That is the colour the allocator would give each of them, because the sweep
+  does not run during intern, so they are all on the same side of the cursor.
+  A larger one (over 2^54 words, so not in practice) goes to a stock heap
+  chunk outside the verified heap.
+- **Infix headers** (`CLOSUREREC`, `caml_alloc_dummy_infix`) are written inside
+  a closure block; their colour is irrelevant.
+- **Weak arrays and ephemerons** are `Abstract_tag` blocks that nothing cleans
+  (see "finalisers and weak pointers are not run"). `Weak.get` can return a
+  block that marking did not reach: stop-the-world a freed one, mid-sweep a
+  *pending* one (white, in front of the cursor), whose resurrection breaks the
+  sweep phase's invariant. Same class of bug in both modes; the weak and
+  ephemeron tests are expected failures (`regression/pr5233` among them since
+  `Gc.full_major` runs the verified collector).
+- **Stock's major collector, compaction, and heap finalisation** never run:
+  `caml_major_collection_slice` and `caml_finish_major_cycle` forward to the
+  verified collector, and `caml_compact_heap(_maybe)` and `caml_finalise_heap`
+  do nothing (so `Gc.compact` does not compact, and `Gc.set`'s policy change
+  is not honoured). Stock's `caml_gc_phase` therefore stays `Phase_idle`, and
+  every path guarded by it (`caml_darken` in `caml_modify`, `weak.c`,
+  `finalise.c`, `array.c`) is dead.
+
+---
+
 ## Open: every promotion failure is reported as "major heap full"
 
 **Observed by:** instrumenting the pre-fix build while diagnosing the nursery
@@ -54,6 +115,39 @@ against a *control* — a second doomed block with no forged reference — and
 only asserts collection when the control's finaliser fires, so the test
 carries no information on a runtime without finalisers rather than failing
 spuriously.
+
+---
+
+## Fixed: `Gc.full_major` ran stock's major collector over the verified heap
+
+**Regression test:** `tests/explicit_major.ml` (`make correctness`)
+**Fixed in:** `patches/runtime_gen.patch` (`runtime/major_gc.c`,
+`runtime/compact.c`)
+**Severity:** heap corruption -- reachable from safe OCaml
+
+`caml_gc_full_major`, `caml_gc_major`, `caml_gc_compaction` and `Gc.set`'s
+policy change call stock's `caml_finish_major_cycle`, and `caml_gc_dispatch`
+calls `caml_major_collection_slice`; the patch left both alone. So
+`Gc.full_major ()` ran stock's mark and sweep. The verified major heap is
+registered `In_heap` in the page table, so stock's mark darkened every object
+reachable in it, while stock's sweep walks only stock's own (empty) chunks
+and never whitened them. The idle heap was left full of black objects. A
+fresh white block stored into one of them was then invisible to the next
+verified mark (which does not rescan a black object), and the verified sweep
+freed it while it was reachable:
+
+```ocaml
+let a = Array.make 2000 [||] in          (* major *)
+Gc.full_major ();                         (* stock cycle: a is now black *)
+for i = 0 to 1999 do a.(i) <- Array.make 300 i done;
+(* ... allocate until a verified collection runs: a.(i) freed, SIGSEGV *)
+```
+
+Both entry points now forward to the verified collector
+(`verified_finish_major_cycle`: the nursery emptied and a whole verified
+cycle; `verified_major_collection_slice`: a sweep slice when the incremental
+sweep is running), compaction and `caml_finalise_heap` do nothing, and stock's
+`caml_gc_phase` never leaves `Phase_idle`.
 
 ---
 

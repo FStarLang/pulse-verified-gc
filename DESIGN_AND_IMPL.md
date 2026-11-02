@@ -744,9 +744,12 @@ on an ascending list prefers low addresses (OCaml's allocation policy 1).
 An incremental sweep runs the program between slices of `sweep_step`s
 (`incremental-sweep-plan.md`). The phase is part of the collector's state:
 `gen_heap_t.phase_ref`, which the Pulse allocator reads (above) and the
-incremental entry points (below) write. The bridge keeps it `Idle` -- it runs
-the stop-the-world `gen_gc` only -- until its incremental mode
-(`VERGC_SWEEP=incremental`) calls them.
+incremental entry points (below) write. By default (`VERGC_SWEEP=stw`) the
+bridge runs the stop-the-world `gen_gc` only and the phase stays `Idle`; with
+`VERGC_SWEEP=incremental` it calls the incremental entry points
+(`generational/ocaml-integration/verified_gc/OCAML_INTEGRATION.md`, "The
+Incremental Sweep": the policy, the slice budget, and how the bridge meets the
+trusted obligations).
 
 **Allocation at the sweep's phase** (`GC.Spec.Allocator.Cursor.alloc_phase`).
 At `Sweeping st` the allocator colours by position: an object allocated in

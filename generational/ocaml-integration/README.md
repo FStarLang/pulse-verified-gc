@@ -53,9 +53,9 @@ make benchmark
 
 | Component | Lines | Why trusted |
 |-----------|-------|-------------|
-| `alloc_gen.c` | ~250 | Bridge: root scanning, address translation, heap init |
+| `alloc_gen.c` | ~1100 | Bridge: root scanning, address translation, heap init, the sweep mode and its pacing |
 | NULL-base patches | ~20 | 6 patches to GC_Gen_Impl.c for absolute addressing |
-| `runtime_gen.patch` | ~250 | OCaml runtime modifications |
+| `runtime_gen.patch` | ~650 | OCaml runtime modifications |
 | `krmlinit.c` | ~25 | Derived constant initialization |
 | `compat.c` | ~5 | Missing `FStar_UInt64_ne` shim |
 | `caml_ref_table` completeness | — | Same trust as stock OCaml |
@@ -71,13 +71,36 @@ Minor heap size is set at runtime with `MINOR_HEAP_WORDS`.  The default is
 256K words (2MB), matching OCaml's default, with a floor large enough for
 `Max_young_wosize`.
 
+`VERGC_SWEEP` picks the major collector's sweep:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `VERGC_SWEEP` | `stw` | `stw`: a full collection marks and sweeps at once (`gen_gc`). `incremental`: it marks (`gen_gc_start`) and the sweep then runs in slices, one after each minor collection. Any other value warns once and means `stw`. |
+| `VERGC_SWEEP_MIN_WORDS` | 4096 | incremental: the smallest slice, in words |
+| `VERGC_SWEEP_K` | 4 | incremental: a slice sweeps `max(MIN_WORDS, K * words the minor collection collected + words allocated directly in the major heap since the last slice)` words |
+| `VERGC_SWEEP_STATS` | unset | `1`: print the sweep counters (slices, words swept, forced finishes, allocations mid-sweep) to stderr at exit |
+
+A full collection requested mid-sweep finishes the sweep first; a failed
+major allocation mid-sweep finishes the sweep and retries, then runs a full
+collection and retries. `Gc.full_major`, `Gc.major` and `Gc.compact` run a
+whole verified cycle (the runtime patch forwards stock's
+`caml_finish_major_cycle`; stock's own major collector never runs). See
+`verified_gc/OCAML_INTEGRATION.md`, "The Incremental Sweep", for the policy
+and how the bridge meets the trusted obligations of
+`GC.Gen.Impl.Incremental`.
+
 ## Tests
 
 `make test` runs two groups, in this order:
 
 1. **Correctness tests** (`make -C tests correctness`) — assertion-driven
    programs that check specific properties of the collector and exit non-zero
-   on failure.
+   on failure. `explicit_major` (the `Gc` calls drive the verified collector)
+   and `incremental_sweep` (allocation, minor collections, mutation, large
+   blocks, explicit collections, `Obj.truncate`/`Marshal` and a stress mix,
+   all mid-sweep) are compared with stock OCaml's output byte for byte by
+   `tests/run_differential.sh`, under three slice pacings when
+   `VERGC_SWEEP=incremental`.
 2. **Smoke tests** — the eight Computer Language Benchmarks Game programs, run
    once each to confirm the collector survives realistic workloads.
 
@@ -113,9 +136,9 @@ offset`).
 | 12 | 24 interior-pointer roots live **simultaneously**, one per frame of a recursion, with the collections forced at the innermost frame and every frame's value re-checked on the way back out |
 
 Collections are forced the way a real program forces them, by allocating;
-`Gc.quick_stat` confirms they happened. (`Gc.full_major` is *not* wired to the
-verified collector and will crash — the verified collector runs from the
-allocation path.) `MIN_EXPANSION_WORDSIZE` is set small so that major
+`Gc.quick_stat` confirms they happened. (When it was written `Gc.full_major`
+ran stock's collector, not the verified one; it now runs a verified cycle --
+`tests/explicit_major.ml`.) `MIN_EXPANSION_WORDSIZE` is set small so that major
 collections occur quickly.
 
 The same binary is also run under stock OCaml as a differential check; both
