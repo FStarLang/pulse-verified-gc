@@ -53,6 +53,7 @@
 #include "../caml/signals.h" /* for caml_update_young_limit */
 #include "../caml/address_class.h" /* for In_heap, caml_page_table_add */
 #include "../caml/memprof.h" /* for caml_memprof_renew_minor_sample */
+#include "../caml/gc.h"      /* for Caml_white, Caml_black */
 
 /* --- Patched externs from GC_Gen_Impl.c --- */
 #include "GC_Spec_ZeroAddr.h"  /* zero_addr, heap_size_u64 */
@@ -258,6 +259,18 @@ static inline value minor_offset_to_abs(uint64_t off) {
     return (value)((uintptr_t)minor_base + (uintptr_t)off);
 }
 
+/* The colour the verified allocator gives a block whose header is at `hp`
+ * (GC.Spec.Phase.allocation_color, as `allocate` computes it): black
+ * mid-sweep at or above the cursor, white otherwise.  caml_allocation_color
+ * and the patched caml_alloc_shr_aux / caml_obj_truncate use it. */
+color_t vergc_allocation_color(void *hp) {
+    if (!heap_initialized) return Caml_white;
+    uint64_t a = (uint64_t)(uintptr_t)hp;
+    if (a < zero_addr || a >= heap_size_u64) return Caml_white;
+    const phase_state *ph = gc_gen_heap.phase_ref;
+    return (ph->ps_kind != 0 && a >= ph->ps_cursor) ? Caml_black : Caml_white;
+}
+
 /* --- Root scanning callback for minor collection --- */
 
 static void scan_minor_root(value root, value *root_ptr) {
@@ -371,6 +384,7 @@ static void write_back_forwarded_roots(void) {
 /* --- Minor collection --- */
 
 static void do_full_gc(void);       /* forward decl */
+void verified_do_minor_gc(void);     /* forward decl */
 
 /* Core minor GC implementation.  If major heap space is insufficient,
  * promotion will partially fail.  The caller must handle this. */
@@ -758,6 +772,24 @@ CAMLprim value caml_trigger_verified_gc(value v) {
     (void)v;
     do_full_gc();
     return Val_unit;
+}
+
+/* --- Stock's major-GC entry points (runtime/major_gc.c forwards them) --- */
+
+/* caml_major_collection_slice: from caml_gc_dispatch and Gc.major_slice.
+ * The collector is stop-the-world: there is no slice to run. */
+void verified_major_collection_slice(intnat howmuch) {
+    (void)howmuch;
+    ensure_heap();
+}
+
+/* caml_finish_major_cycle: Gc.full_major, Gc.major, Gc.compact, Gc.set's
+ * policy change.  A whole collection: the nursery emptied, then a full
+ * collection. */
+void verified_finish_major_cycle(void) {
+    ensure_heap();
+    verified_do_minor_gc();
+    do_full_gc();
 }
 
 /* Called by caml_minor_collection() in minor_gc.c.

@@ -81,10 +81,10 @@ index b62a579..9fa3887 100644
  libasmrund.$(A): $(libasmrund_OBJECTS)
  	$(call MKLIB,$@, $^)
 diff --git a/runtime/caml/memory.h b/runtime/caml/memory.h
-index d9e58bc..89602c2 100644
+index d9e58bc..bdad33a 100644
 --- a/runtime/caml/memory.h
 +++ b/runtime/caml/memory.h
-@@ -217,6 +217,34 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -217,6 +217,43 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
                                         int nallocs, unsigned char* alloc_lens);
  // Do not call asynchronous callbacks from allocation functions
  #define Alloc_small_origin CAML_FROM_C
@@ -97,6 +97,15 @@ index d9e58bc..89602c2 100644
 +#endif
 +/* Defined in verified_gc/alloc_gen.c. */
 +extern void verified_do_minor_gc (void);
++/* The colour the verified allocator gives a major block whose header is at
++   [hp], at the collector's current phase (GC.Spec.Phase.allocation_color):
++   black mid-sweep at or above the sweep cursor, white otherwise. */
++extern color_t vergc_allocation_color (void *hp);
++/* Stock's major-GC entry points (caml_major_collection_slice,
++   caml_finish_major_cycle) forward to these, so that no stock mark or sweep
++   ever runs over the verified heap. */
++extern void verified_major_collection_slice (intnat howmuch);
++extern void verified_finish_major_cycle (void);
 +extern uint64_t *vergc_minor_bump_ref;
 +extern uint8_t  *vergc_minor_base;
 +extern uint64_t  vergc_minor_size;
@@ -119,7 +128,7 @@ index d9e58bc..89602c2 100644
  #define Alloc_small_aux(result, wosize, tag, profinfo, track) do {     \
    CAMLassert ((wosize) >= 1);                                          \
    CAMLassert ((tag_t) (tag) < 256);                                    \
-@@ -233,6 +261,38 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -233,6 +270,38 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
    (result) = Val_hp (Caml_state_field(young_ptr));                     \
    DEBUG_clear ((result), (wosize));                                    \
  }while(0)
@@ -158,6 +167,36 @@ index d9e58bc..89602c2 100644
  
  #define Alloc_small_with_profinfo(result, wosize, tag, profinfo) \
    Alloc_small_aux(result, wosize, tag, profinfo, CAML_DO_TRACK)
+diff --git a/runtime/compact.c b/runtime/compact.c
+index c4be4d2..0c0cd5c 100644
+--- a/runtime/compact.c
++++ b/runtime/compact.c
+@@ -382,6 +382,14 @@ void caml_compact_heap (intnat new_allocation_policy)
+ {
+   uintnat target_wsz, live;
+ 
++  /* Verified GC: the verified heap is not compacted (objects do not move),
++     and stock's compaction inverts every root pointing into an In_heap page,
++     the verified heap's included. Gc.compact is a full verified cycle
++     (caml_finish_major_cycle) and nothing more; an allocation-policy change
++     is not honoured. */
++  (void) new_allocation_policy;
++  return;
++
+   CAMLassert (Caml_state->young_ptr == Caml_state->young_alloc_end);
+   CAMLassert (Caml_state->ref_table->ptr ==
+               Caml_state->ref_table->base);
+@@ -465,6 +473,10 @@ void caml_compact_heap (intnat new_allocation_policy)
+ 
+ void caml_compact_heap_maybe (double previous_overhead)
+ {
++  /* Verified GC: never (see caml_compact_heap). */
++  (void) previous_overhead;
++  return;
++
+   CAMLassert (caml_gc_phase == Phase_idle);
+   if (caml_percent_max >= 1000000) return;
+   if (Caml_state->stat_major_collections < 3) return;
 diff --git a/runtime/gc_ctrl.c b/runtime/gc_ctrl.c
 index 9c47b91..2601ad1 100644
 --- a/runtime/gc_ctrl.c
@@ -300,11 +339,82 @@ index 9b18f3c..6c90643 100644
        }
        Store_double_flat_field(block, 0, Double_val(accu));
        for (i = 1; i < size; i++){
+diff --git a/runtime/major_gc.c b/runtime/major_gc.c
+index 3da350e..2ab9520 100644
+--- a/runtime/major_gc.c
++++ b/runtime/major_gc.c
+@@ -940,6 +940,17 @@ void caml_major_collection_slice (intnat howmuch)
+   double p, dp, filt_p, spend;
+   intnat computed_work;
+   int i;
++
++  /* Verified GC: stock's major collector must never run. Its mark would
++     darken the verified heap's objects (that heap is In_heap in the page
++     table) and its sweep, which walks only stock's own chunks, would never
++     whiten them again, leaving black objects in an idle heap: the next
++     verified mark then skips their children and frees live objects. Every
++     caller (caml_gc_dispatch, Gc.major_slice) gets the verified collector's
++     slice instead: a sweep slice when it is mid-sweep, nothing otherwise. */
++  verified_major_collection_slice (howmuch);
++  return;
++
+   /*
+      Free memory at the start of the GC cycle (garbage + free list) (assumed):
+                  FM = Caml_state->stat_heap_wsz * caml_percent_free
+@@ -1177,6 +1188,14 @@ void caml_major_collection_slice (intnat howmuch)
+ */
+ void caml_finish_major_cycle (void)
+ {
++  /* Verified GC: a whole verified cycle instead of a stock one (see
++     caml_major_collection_slice above). This is what Gc.full_major,
++     Gc.major, Gc.compact and Gc.set (policy change) reach. */
++  verified_finish_major_cycle ();
++  Caml_state->stat_major_words += caml_allocated_words;
++  caml_allocated_words = 0;
++  return;
++
+   if (caml_gc_phase == Phase_idle){
+     p_backlog = 0.0; /* full major GC cycle, the backlog becomes irrelevant */
+     start_cycle ();
+@@ -1280,6 +1299,12 @@ void caml_set_major_window (int w){
+ 
+ void caml_finalise_heap (void)
+ {
++  /* Verified GC: stock's forced sweep of its own chunks at shutdown
++     (OCAMLRUNPARAM=c) would first run a stock major cycle over the verified
++     heap. The verified heap is not finalised: custom-block finalisers are
++     not run (docs/known-issues.md). */
++  return;
++
+   /* Finishing major cycle (all values become white) */
+   caml_empty_minor_heap ();
+   caml_gc_message (0x1, "Finishing major GC cycle (finalising heap)\n");
 diff --git a/runtime/memory.c b/runtime/memory.c
-index 66d1c50..12be69f 100644
+index 66d1c50..e0acbac 100644
 --- a/runtime/memory.c
 +++ b/runtime/memory.c
-@@ -464,38 +464,28 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
+@@ -449,53 +449,44 @@ void caml_shrink_heap (char *chunk)
+ 
+ CAMLexport color_t caml_allocation_color (void *hp)
+ {
+-  if (caml_gc_phase == Phase_mark || caml_gc_phase == Phase_clean ||
+-      (caml_gc_phase == Phase_sweep && (char *)hp >= (char *)caml_gc_sweep_hp)){
+-    return Caml_black;
+-  }else{
+-    CAMLassert (caml_gc_phase == Phase_idle
+-            || (caml_gc_phase == Phase_sweep
+-                && (char *)hp < (char *)caml_gc_sweep_hp));
+-    return Caml_white;
+-  }
++  /* Verified GC: stock's caml_gc_phase never leaves Phase_idle here (no stock
++     cycle runs: see caml_major_collection_slice), so stock's rule would
++     always say white. Answer with the verified collector's rule instead
++     (black mid-sweep in front of the cursor), so that code writing a major
++     header itself agrees with the verified allocator. */
++  return vergc_allocation_color (hp);
+ }
+ 
+ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
                                        uintnat profinfo)
  {
    header_t *hp;
@@ -339,17 +449,20 @@ index 66d1c50..12be69f 100644
 +  hp = (header_t *) verified_allocate(wosize, (uint8_t)tag);
 +  if (hp == NULL) return 0;
 +  caml_allocated_words += Whsize_wosize(wosize);
-+  /* verified_allocate() has already written this block's header: wosize,
-+     tag, Caml_white (the verified allocator never allocates black, so this
-+     runtime's major allocation colour is always white). Rewrite it only when
-+     the header has profiling bits to carry, as Alloc_small_aux does for the
-+     minor slow path. */
++  /* verified_allocate() has already written this block's header: wosize
++     (a zero wosize rounded up to 1), tag, and the colour the collector's
++     phase gives it (GC.Spec.Phase.allocation_color): white when idle or
++     behind the sweep cursor, BLACK in front of it mid-sweep
++     (VERGC_SWEEP=incremental). That colour must be kept: a white block in
++     front of the cursor is garbage to the sweep, which would free this live
++     object. So rewrite only the profiling bits (WITH_PROFINFO), as
++     Alloc_small_aux does for the minor slow path, never the colour. */
 +#ifdef WITH_PROFINFO
 +  Hd_hp (hp) =
-+    Make_header_with_profinfo (wosize, tag, Caml_white, profinfo);
++    Make_header_with_profinfo (Wosize_hd (Hd_hp (hp)), tag,
++                               Color_hd (Hd_hp (hp)), profinfo);
 +#else
 +  (void) profinfo;
-+  /* (verified_allocate() rounds a zero wosize up to 1.) */
    CAMLassert (Hd_hp (hp)
 -    == Make_header_with_profinfo (wosize, tag, caml_allocation_color (hp),
 -                                  profinfo));
@@ -358,12 +471,13 @@ index 66d1c50..12be69f 100644
 -    CAML_EV_COUNTER (EV_C_REQUEST_MAJOR_ALLOC_SHR, 1);
 -    caml_request_major_slice ();
 -  }
-+              == Make_header (wosize == 0 ? 1 : wosize, tag, Caml_white));
++              == Make_header (wosize == 0 ? 1 : wosize, tag,
++                              vergc_allocation_color (hp)));
 +#endif
  #ifdef DEBUG
    {
      uintnat i;
-@@ -504,8 +494,6 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
+@@ -504,8 +495,6 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
      }
    }
  #endif
@@ -465,6 +579,34 @@ index 18cfe3e..890904a 100644
    return extra_root;
  }
  
+diff --git a/runtime/obj.c b/runtime/obj.c
+index 4530415..ec96b77 100644
+--- a/runtime/obj.c
++++ b/runtime/obj.c
+@@ -187,10 +187,22 @@ CAMLprim value caml_obj_truncate (value v, value newsize)
+   header_t hd = Hd_val (v);
+   tag_t tag = Tag_hd (hd);
+   color_t color = Color_hd (hd);
+-  color_t frag_color = Is_young(v) ? 0 : Caml_black;
++  color_t frag_color;
+   mlsize_t wosize = Wosize_hd (hd);
+   mlsize_t i;
+ 
++  /* Verified GC: stock makes the leftover black so that it is not reused
++     before the ref table is emptied. A black block is wrong here: when the
++     collector is idle the verified invariants admit no black object, and a
++     black block behind the sweep cursor is never whitened. The colour the
++     verified allocator would give a block at that address
++     (caml_allocation_color, i.e. GC.Spec.Phase.allocation_color) gives the
++     same guarantee: white idle or behind the cursor, where the next sweep to
++     reach it follows a minor collection (which empties the ref table); black
++     in front of the cursor, which this sweep keeps. */
++  frag_color = Is_young(v) ? 0
++               : caml_allocation_color ((void *) &Field (v, new_wosize));
++
+   if (tag == Double_array_tag) new_wosize *= Double_wosize;  /* PR#2520 */
+ 
+   if (new_wosize <= 0 || new_wosize > wosize){
 diff --git a/runtime/startup_nat.c b/runtime/startup_nat.c
 index b757325..6de3615 100644
 --- a/runtime/startup_nat.c

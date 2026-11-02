@@ -27,7 +27,8 @@ MANDELBROT_MAJOR_WORDS    ?= $(DEFAULT_MAJOR_WORDS)
 %.byte: %.ml
 	$(OCAMLC) -o $@ $<
 
-%.native: %.ml
+# Relink when the verified runtime changes: the GC is linked in statically.
+%.native: %.ml $(VERGC_NATIVE_RUNTIME_DIR)/libasmrun.a
 	$(OCAMLOPT) -I $(VERGC_NATIVE_RUNTIME_DIR) -o $@ $<
 
 bench_stats.cmo: bench_stats.ml
@@ -40,7 +41,7 @@ BENCHMARKS = binarytrees fasta quicksort fannkuchredux count_change nbodies spec
 
 # Correctness tests (not benchmarks): run under both runtimes and compared.
 CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior \
-                    alloc_exact_promotion
+                    alloc_exact_promotion explicit_major
 
 # infix_closures needs a small major heap so that real major collections
 # (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
@@ -63,6 +64,10 @@ KNOWN_GAP_TESTS =
 # every other block and promotes into the fragments. It was a known-gap
 # reproducer until allocation became size-exact (right-justified).
 ALLOC_EXACT_MAJOR_WORDS ?= 4194304
+
+# explicit_major: Gc.full_major & co. used to run stock's major collector over
+# the verified heap. Small enough a heap that the churn forces collections.
+EXPLICIT_MAJOR_WORDS ?= 4000000
 NURSERY_NO_SCAN_MAJOR_WORDS ?= 4000000
 
 BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
@@ -161,6 +166,10 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	MIN_EXPANSION_WORDSIZE=$(ALLOC_EXACT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS)
 	@echo "--- alloc_exact_promotion (stock OCaml, differential check) ---"
 	$(UNCHANGED_OCAMLRUN) alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS)
+	@echo "--- explicit_major (verified generational GC) ---"
+	MIN_EXPANSION_WORDSIZE=$(EXPLICIT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) explicit_major.byte
+	@echo "--- explicit_major (stock OCaml, differential check) ---"
+	$(UNCHANGED_OCAMLRUN) explicit_major.byte
 	@echo "=== Correctness tests passed ==="
 
 # ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
