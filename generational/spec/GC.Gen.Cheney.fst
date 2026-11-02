@@ -698,9 +698,7 @@ private let promote_object_preserves_objects_part1
     let copied = WriteBody.copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
-    zero_promote_padding_preserves_objects copied dst_obj wz;
-    let padded = zero_promote_padding copied dst_obj wz in
-    set_promoted_tag_preserves_objects padded dst_obj tag
+    set_promoted_tag_preserves_objects copied dst_obj tag
   end
 
 #pop-options

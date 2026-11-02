@@ -79,13 +79,9 @@ let promote_object_frame_old_field_derived
     copy_fields_preserves_other minor alloc_res.heap_out obj dst_obj 0 wz field_addr
   end;
   let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
-  let pad_nat = U64.v dst_obj + wz * U64.v mword in
-  assert (U64.v field_addr <> pad_nat);
-  zero_promote_padding_frame copied dst_obj wz field_addr;
-  let padded = zero_promote_padding copied dst_obj wz in
   let tag = minor_tag minor obj in
   minor_tag_bound minor obj;
-  set_promoted_tag_read_frame padded dst_obj tag field_addr
+  set_promoted_tag_read_frame copied dst_obj tag field_addr
 #pop-options
 
 /// Helper: promote_object preserves header reads of non-alloc'd objects.
@@ -232,18 +228,15 @@ let promote_object_frame_old_header_derived
   let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
   // copy_fields preserves wfh_part1
   copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
-  // zero_promote_padding: use frame_obj_header which needs src in objects(copied)
   assert (Seq.mem src (objects zero_addr alloc_res.heap_out));
   assert (objects zero_addr copied == objects zero_addr alloc_res.heap_out);
   assert (Seq.mem src (objects zero_addr copied));
   assert (Seq.mem dst_obj (objects zero_addr copied));
-  zero_promote_padding_frame_obj_header copied dst_obj src wz;
-  let padded = zero_promote_padding copied dst_obj wz in
   // set_promoted_tag: writes only at hd_address dst_obj, which ≠ hd_address src
   let tag = minor_tag minor obj in
   minor_tag_bound minor obj;
   hd_address_injective src dst_obj;
-  set_promoted_tag_read_frame padded dst_obj tag hd_src
+  set_promoted_tag_read_frame copied dst_obj tag hd_src
 #pop-options
 
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
@@ -445,21 +438,17 @@ let promote_object_new_addr_in_objects_not_blue
   copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wz;
   copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
   let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
-  zero_promote_padding_preserves_objects copied dst_obj wz;
-  zero_promote_padding_preserves_wfh_part1 copied dst_obj wz;
-  let padded = zero_promote_padding copied dst_obj wz in
   let tag = minor_tag minor obj in
   minor_tag_bound minor obj;
-  set_promoted_tag_preserves_objects padded dst_obj tag;
+  set_promoted_tag_preserves_objects copied dst_obj tag;
   assert (Seq.mem dst_obj (objects zero_addr res.major_out));
   hd_address_spec dst_obj;
-  zero_promote_padding_frame copied dst_obj wz (hd_address dst_obj);
-  set_promoted_tag_unfold padded dst_obj tag;
-  let padded_hdr = read_word padded (hd_address dst_obj) in
-  getWosize_bound padded_hdr;
-  let new_hdr = makeHeader (getWosize padded_hdr) White (U64.uint_to_t tag) in
-  read_write_same padded (hd_address dst_obj) new_hdr;
-  makeHeader_getColor (getWosize padded_hdr) White (U64.uint_to_t tag);
+  set_promoted_tag_unfold copied dst_obj tag;
+  let dst_hdr = read_word copied (hd_address dst_obj) in
+  getWosize_bound dst_hdr;
+  let new_hdr = makeHeader (getWosize dst_hdr) White (U64.uint_to_t tag) in
+  read_write_same copied (hd_address dst_obj) new_hdr;
+  makeHeader_getColor (getWosize dst_hdr) White (U64.uint_to_t tag);
   color_of_object_spec dst_obj res.major_out;
   is_blue_iff dst_obj res.major_out
 #pop-options
@@ -492,23 +481,22 @@ let promote_object_new_addr_tag
   AllocProps.alloc_spec_obj_valid major fp wz;
   let alloc_res = Allocator.alloc_spec major fp wz in
   let copied = copy_fields minor alloc_res.heap_out obj alloc_res.obj_out 0 wz in
-  let padded = zero_promote_padding copied alloc_res.obj_out wz in
   let target : obj_addr = alloc_res.obj_out in
   let tag = minor_tag minor obj in
   minor_tag_bound minor obj;
   lt256_lt_pow2_64 tag;
   let tag_u = U64.uint_to_t tag in
-  set_promoted_tag_unfold padded target tag;
+  set_promoted_tag_unfold copied target tag;
   let hdr = hd_address target in
-  let new_hdr = makeHeader (getWosize (read_word padded hdr)) White tag_u in
-  read_write_same padded hdr new_hdr;
+  let new_hdr = makeHeader (getWosize (read_word copied hdr)) White tag_u in
+  read_write_same copied hdr new_hdr;
   tag_of_object_spec target res.major_out;
-  makeHeader_getTag (getWosize (read_word padded hdr)) White tag_u
+  makeHeader_getTag (getWosize (read_word copied hdr)) White tag_u
 #pop-options
 
-/// The freshly promoted object keeps the allocator-provided wosize bound
-/// through copy_fields, zero_promote_padding, and set_promoted_tag.
-let promote_object_new_addr_wosize_ge
+/// The freshly promoted object keeps the allocator-provided (exact) wosize
+/// through copy_fields and set_promoted_tag.
+let promote_object_new_addr_wosize_eq
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (dst: obj_addr)
   =
@@ -517,6 +505,7 @@ let promote_object_new_addr_wosize_ge
   promote_object_success minor major obj fp wz;
   AllocProps.alloc_spec_obj_valid major fp wz;
   AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
+  AllocProps.alloc_spec_obj_wosize_upper_part1 major fp wz;
   AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
   AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
   let dst_obj : obj_addr = alloc_res.obj_out in
@@ -534,11 +523,9 @@ let promote_object_new_addr_wosize_ge
   wosize_of_object_spec dst_obj copied;
   assert (wosize_of_object dst_obj copied ==
           wosize_of_object dst_obj alloc_res.heap_out);
-  zero_promote_padding_preserves_wosize copied dst_obj wz;
-  let padded = zero_promote_padding copied dst_obj wz in
   let tag = minor_tag minor obj in
   minor_tag_bound minor obj;
-  set_promoted_tag_preserves_wosize_self padded dst_obj tag
+  set_promoted_tag_preserves_wosize_self copied dst_obj tag
 #pop-options
 
 /// cheney_forward_normal preserves fwd_classified
@@ -790,7 +777,7 @@ let cheney_forward_normal_infix_ready_one
     wfh_part1_obj_bound res.major_out (res.new_addr <: obj_addr);
     promote_object_success minor cs.cs_major addr cs.cs_fp wz;
     AllocProps.alloc_spec_obj_wosize_part1 cs.cs_major cs.cs_fp wz;
-    promote_object_new_addr_wosize_ge minor cs.cs_major addr cs.cs_fp wz fwd_parent;
+    promote_object_new_addr_wosize_eq minor cs.cs_major addr cs.cs_fp wz fwd_parent;
     assert (U64.v (wosize_of_object fwd_parent res.major_out) >= wz);
     assert (U64.v (wosize_of_object fwd_parent cs'.cs_major) >= wz);
     let wo_new = U64.v (wosize_of_object (res.new_addr <: obj_addr) res.major_out) in

@@ -104,7 +104,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
   requires is_heap major 'ms **
            pts_to fwd_arr 'farr **
            pure (GC.Spec.Fields.well_formed_heap_part1 'ms /\
-                 PromoteSpec.heap_objects_dense 'ms /\
+                 GC.Spec.Fields.heap_objects_dense 'ms /\
                  heap_size > 8 /\
                  Seq.length (GC.Spec.Fields.objects zero_addr 'ms) > 0 /\
                  Seq.length 'farr == fwd_array_size /\
@@ -113,7 +113,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
     is_heap major ms2 **
     pts_to fwd_arr 'farr **
     pure (GC.Spec.Fields.well_formed_heap_part1 ms2 /\
-          PromoteSpec.heap_objects_dense ms2 /\
+          GC.Spec.Fields.heap_objects_dense ms2 /\
           Seq.length (GC.Spec.Fields.objects zero_addr ms2) > 0 /\
           ms2 == PromoteSpec.update_major_pointers 'ms fwd)
 

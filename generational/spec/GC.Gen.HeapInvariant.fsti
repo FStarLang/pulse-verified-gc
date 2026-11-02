@@ -53,16 +53,17 @@ val free_list_exact_iff (major: heap) (fp: U64.t)
 /// object.  `GC.SPOT.NoScanMajor` exhibits a heap that satisfies this shape and
 /// would have been rejected before, so the relaxation is not vacuous.
 ///
-/// The relaxation costs one clause.  `GC.Gen.Promote.blue_fields_closed` used to
-/// follow from part 2 alone; a *blue* no-scan block is now unconstrained, so it
-/// no longer does, and `major_heap_shape` carries `blue_fields_closed major`
-/// outright.  That is not a strengthening --- it was derivable before --- and it
-/// is re-established after a major collection by
-/// `GC.Gen.PostCollectionShape.coalesce_blue_fields_closed`, which reads
-/// `GC.Spec.Fields.blue_blocks_scannable` off `GC.Spec.Coalesce.
-/// coalesce_blue_blocks_scannable`: coalescing gives every free block a fresh
-/// tag-0 header, so a blue no-scan block exists only transiently between sweep
-/// and coalesce.
+/// A *free* (blue) block is unconstrained beyond its free-list link for the
+/// same reason: `fields_constrained` excludes blue sources too, and
+/// `get_pointer_fields` gives them no edges.  Nothing the collector does reads
+/// such a word -- mark scans only grey objects, the pointer update skips blue
+/// ones, and the allocator reads the header and field 0 -- so the sweep leaves
+/// the stale fields of dead objects where they are rather than zeroing them.
+/// The link word is covered by the free-list clauses (`fl_valid`,
+/// `FreeListShape.blue_link_fields_valid`).  A block handed out by the
+/// allocator has all its fields written before anything reads them: promotion
+/// copies every field (`GC.Gen.Promote.copy_fields`), and a direct allocation
+/// is filled by the runtime.
 ///
 /// Interior (infix) pointers in *live* major fields are allowed.  A white, gray
 /// or black object may hold a pointer into the middle of a closure, which is how
@@ -71,35 +72,7 @@ val free_list_exact_iff (major: heap) (fp: U64.t)
 /// `GC.Gen.CombinedGraph.classify_major_field` resolves, so such an edge is
 /// carried by the combined graph rather than silently dropped.
 ///
-/// The one place interior pointers are still ruled out is `blue_fields_non_infix`:
-/// a *free-list cell* may not hold one.  That is not a statement about the
-/// mutator's data; it is what makes `GC.Gen.Promote.blue_fields_closed` --- which
-/// is stated on the raw field value --- derivable from the resolved part 2, via
-/// `GC.Gen.PromoteUpdate.BlueAlloc.wfh_part2_implies_blue_fields_closed`.
-///
-/// How it is established.  It is *not* automatic, and it would be false if the
-/// collector simply threaded dead blocks onto the free list: a dying object may
-/// hold interior pointers, and `GC.Spec.Sweep.sweep_object` rewrites only its
-/// link word, leaving the rest of the corpse intact.  What makes it true is that
-/// the coalescing pass **zeroes** every field of a merged free block above the
-/// link (`Alloc.zero_fields` in `GC.Spec.Coalesce.flush_blue`, extracted as
-/// `zero_fields_loop`), so a blue cell's one pointer-shaped field is its
-/// free-list link -- an object address, never an interior one.  That is proved
-/// by `GC.Spec.Coalesce.coalesce_blue_fields_non_infix` and carried to the top
-/// level by `GC.Spec.Correctness.gc_blue_fields_non_infix_gen`, so
-/// `GC.Impl.collect_with_roots` and hence `GC.Gen.Impl.gen_gc` both return a
-/// heap satisfying it: the invariant is closed across collections.
-///
-/// Across a *minor* collection it is re-established for free: the Cheney
-/// machinery proves raw part 2 for blue objects, which
-/// `blue_fields_non_infix_from_raw` turns straight back into this clause.
-///
-/// Free cells are already idealised by the surrounding model --- part 2 requires
-/// every pointer-shaped word in them to resolve to an enumerated object, garbage
-/// or not --- so this adds nothing to what a heap must already satisfy there.
-///
-/// The nursery side carries no corresponding restriction: a pointer into the
-/// nursery may be interior.  Cheney's forwarding map records an entry for the
+/// A pointer into the nursery may be interior too.  Cheney's forwarding map records an entry for the
 /// interior address as well as for the closure it points into
 /// (`GC.Gen.CheneyBFS.fwd_covers_infix_fields` / `fwd_covers_infix_roots`), so
 /// such a field is rewritten to the corresponding interior address in the
@@ -148,9 +121,7 @@ val major_heap_shape_intro (major: heap) (fp: U64.t)
                     Sweep.fp_in_heap fp major /\
                     Mark.no_black_objects major /\
                     SweepInv.no_gray_objects major /\
-                    Mark.no_pointer_to_blue major /\
-                    blue_fields_closed major /\
-                    blue_fields_non_infix major)
+                    Mark.no_pointer_to_blue major)
           (ensures major_heap_shape major fp)
 
 val major_heap_shape_elim (major: heap) (fp: U64.t)
@@ -168,9 +139,7 @@ val major_heap_shape_elim (major: heap) (fp: U64.t)
                    Sweep.fp_in_heap fp major /\
                    Mark.no_black_objects major /\
                    SweepInv.no_gray_objects major /\
-                   Mark.no_pointer_to_blue major /\
-                   blue_fields_closed major /\
-                   blue_fields_non_infix major)
+                   Mark.no_pointer_to_blue major)
 
 val minor_heap_shape_elim (minor: minor_state)
   : Lemma (requires minor_heap_shape minor)

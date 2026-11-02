@@ -122,5 +122,4 @@ val darken_precondition_after_minor
 /// invariant alone certifies it.
 val major_heap_shape_gc_postcondition (major: heap) (fp: U64.t)
   : Lemma (requires GenInv.major_heap_shape major fp)
-          (ensures SpecGCPost.gc_postcondition major /\
-                   SpecFields.blue_fields_non_infix major)
+          (ensures SpecGCPost.gc_postcondition major)

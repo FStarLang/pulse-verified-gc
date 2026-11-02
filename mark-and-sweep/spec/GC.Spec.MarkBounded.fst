@@ -191,6 +191,7 @@ let rec push_children_bounded_preserves_bsp g st obj i ws cap =
           hd_address_injective child obj;
           color_change_preserves_other_color child obj g Header.Gray;
           is_black_iff obj g';
+          is_blue_iff obj g'; is_blue_iff obj g;
           obj_not_in_cons obj child st;
           set_object_color_preserves_getWosize_at_hd child g Header.Gray;
           wosize_of_object_spec obj g; wosize_of_object_spec obj g';
@@ -214,6 +215,7 @@ let rec push_children_bounded_preserves_bsp g st obj i ws cap =
           hd_address_injective child obj;
           color_change_preserves_other_color child obj g Header.Gray;
           is_black_iff obj g';
+          is_blue_iff obj g'; is_blue_iff obj g;
           set_object_color_preserves_getWosize_at_hd child g Header.Gray;
           wosize_of_object_spec obj g; wosize_of_object_spec obj g';
           color_change_preserves_objects_mem g child Header.Gray obj;

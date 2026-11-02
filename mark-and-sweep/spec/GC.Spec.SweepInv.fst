@@ -54,33 +54,16 @@ let obj_in_objects_head (g: heap)
 /// Heap density
 /// ---------------------------------------------------------------------------
 
-/// The walk from every position where objects > 0 continues at the next position
-/// (provided the next position has room for a header), and the head of the next
-/// position is in the global objects list.
-/// Weakened density: only requires the chain property at positions whose
-/// f_address is in objects zero_addr g (i.e., actual object header positions).
-/// This excludes interior positions of large blocks that have 0UL headers
-/// (phantom wosize-0 objects not in the global enumeration).
-let heap_objects_dense (g: heap) : prop =
-  forall (start: hp_addr).
-    U64.v start + 8 < heap_size ==>
-    Seq.mem (f_address start) (objects zero_addr g) ==>
-    Seq.length (objects start g) > 0 ==>
-    (let wz = getWosize (read_word g start) in
-     let next = U64.v start + ((U64.v wz + 1) * 8) in
-     next + 8 < heap_size ==>
-     Seq.length (objects (U64.uint_to_t next) g) > 0 /\
-     Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr g))
-
 let heap_objects_dense_intro (g: heap)
-  = ()
+  = reveal_opaque (`%heap_objects_dense) heap_objects_dense
 
 let objects_dense_step (start: hp_addr) (g: heap)
-  = ()
+  = reveal_opaque (`%heap_objects_dense) heap_objects_dense
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
 let objects_dense_obj_in (start: hp_addr) (g: heap)
-  = let wz = getWosize (read_word g start) in
+  = reveal_opaque (`%heap_objects_dense) heap_objects_dense;
+    let wz = getWosize (read_word g start) in
     let next = U64.v start + ((U64.v wz + 1) * 8) in
     if next + 8 < heap_size then begin
       // From density: mem (f_address next_hp) (objects zero_addr g)
@@ -116,7 +99,8 @@ let rec objects_eq_from_wosize (start: hp_addr) (g1 g2: heap)
 #pop-options
 
 let heap_objects_dense_transfer (g1 g2: heap)
-  = let aux (start: hp_addr) : Lemma
+  = reveal_opaque (`%heap_objects_dense) heap_objects_dense;
+    let aux (start: hp_addr) : Lemma
       (U64.v start + 8 < heap_size ==>
        Seq.mem (f_address start) (objects zero_addr g2) ==>
        Seq.length (objects start g2) > 0 ==>

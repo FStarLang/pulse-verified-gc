@@ -98,6 +98,7 @@ let coalesce_no_pointer_to_blue g =
       tag_of_object_spec src g';
       is_no_scan_spec src g;
       is_no_scan_spec src g';
+      color_of_header_eq src g g';
       assert (fields_constrained g src);
       wosize_of_object_bound src g;
       FStar.Math.Lemmas.pow2_lt_compat 61 54;

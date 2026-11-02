@@ -15,7 +15,9 @@
 /// After coalescing, merged blue blocks have:
 ///   - Header: correct merged wosize, blue color, tag 0
 ///   - Field 1: free list link
-///   - Fields 2+: zeroed (to maintain well_formed_heap_part2)
+///   - Fields 2+: left as they are.  Nothing reads a free block's body beyond
+///     its link, and `well_formed_heap` does not constrain it
+///     (`GC.Spec.Fields.fields_constrained` excludes blue objects).
 
 module GC.Spec.Coalesce
 
@@ -47,13 +49,13 @@ let post_sweep (g: heap) : prop =
 /// Flush a blue run
 /// ---------------------------------------------------------------------------
 
-/// Flush accumulated blue run: write merged header, link to free list,
-/// zero garbage fields.
+/// Flush accumulated blue run: write merged header and link to free list.
+/// The rest of the body keeps whatever the dead objects left in it.
 ///
 /// - run_words = 0: no pending run, no-op
 /// - run_words = 1: wosize=0 block (just header, no fields) — write header
 ///   but don't link to free list (no room for link pointer)
-/// - run_words >= 2: wosize>=1 block — write header, link field 1, zero rest
+/// - run_words >= 2: wosize>=1 block — write header, link field 1
 ///
 /// Returns (updated_heap, new_free_list_head).
 
@@ -77,12 +79,7 @@ let flush_blue (g: heap) (first_blue: U64.t) (run_words: nat) (fp: U64.t)
         if wz >= 1 && U64.v hd + U64.v mword * 2 <= heap_size then begin
           assert (U64.v (hd_address fb) + U64.v mword * (U64.v 1UL + 1) <= heap_size);
           let g2 = HeapGraph.set_field g1 fb 1UL fp in
-          let zero_start_nat = U64.v fb + U64.v mword in
-          if wz >= 2 && zero_start_nat < pow2 64 then
-            let g3 = Alloc.zero_fields g2 (U64.uint_to_t zero_start_nat) (wz - 1) in
-            (g3, fb)
-          else
-            (g2, fb)
+          (g2, fb)
         end
         else
           (g1, fp)
@@ -263,6 +260,8 @@ let white_addr_outside_all_blue g x addr =
 /// zero_fields helpers
 /// ---------------------------------------------------------------------------
 
+/// No longer used by `flush_blue`, which stopped zeroing free blocks.
+
 /// zero_fields preserves heap length
 let rec zero_fields_preserves_length (g: heap) (addr: U64.t) (n: nat)
   : Lemma (ensures Seq.length (Alloc.zero_fields g addr n) == Seq.length g)
@@ -360,16 +359,7 @@ let flush_blue_preserves_outside g first_blue run_words fp addr =
         let field1_addr : hp_addr = U64.add (hd_address fb) (U64.mul mword 1UL) in
         assert (U64.v field1_addr == U64.v fb);
         assert (field1_addr <> addr);
-        let g2 = HeapGraph.set_field g1 fb 1UL fp in
-        read_write_different g1 field1_addr addr fp;
-        let zero_start_nat = U64.v fb + U64.v mword in
-        if wz >= 2 && zero_start_nat < pow2 64 then begin
-          let zero_start = U64.uint_to_t zero_start_nat in
-          if U64.v addr + U64.v mword <= U64.v zero_start then
-            zero_fields_preserves_before g2 zero_start (wz - 1) addr
-          else
-            zero_fields_preserves_after g2 zero_start (wz - 1) addr
-        end else ()
+        read_write_different g1 field1_addr addr fp
       end
       else ()
     end
@@ -398,12 +388,7 @@ let flush_blue_preserves_length g first_blue run_words fp =
       let hdr = makeHeader wz_u64 Blue 0UL in
       let g1 = write_word g hd hdr in
       if wz >= 1 && U64.v hd + U64.v mword * 2 <= heap_size then begin
-        assert (U64.v (hd_address fb) + U64.v mword * (U64.v 1UL + 1) <= heap_size);
-        let g2 = HeapGraph.set_field g1 fb 1UL fp in
-        let zero_start_nat = U64.v fb + U64.v mword in
-        if wz >= 2 && zero_start_nat < pow2 64 then
-          zero_fields_preserves_length g2 (U64.uint_to_t zero_start_nat) (wz - 1)
-        else ()
+        assert (U64.v (hd_address fb) + U64.v mword * (U64.v 1UL + 1) <= heap_size)
       end
       else ()
     end
@@ -446,13 +431,7 @@ let flush_blue_header_spec g first_blue run_words fp =
     let field1_addr : hp_addr = U64.add (hd_address fb) (U64.mul mword 1UL) in
     assert (U64.v field1_addr == U64.v fb);
     assert (field1_addr <> hd);
-    read_write_different g1 field1_addr hd fp;
-    let zero_start_nat = U64.v fb + U64.v mword in
-    if wz >= 2 && zero_start_nat < pow2 64 then begin
-      let zero_start = U64.uint_to_t zero_start_nat in
-      assert (U64.v hd + U64.v mword <= U64.v zero_start);
-      zero_fields_preserves_before g2 zero_start (wz - 1) hd
-    end else ()
+    read_write_different g1 field1_addr hd fp
   end
   else ()
 #pop-options
@@ -1786,31 +1765,6 @@ val coalesce_preserves_wf (g: heap)
     (requires post_sweep_strong g)
     (ensures well_formed_heap (fst (coalesce g)))
 
-/// Free-list cells hold no interior pointers after coalescing.
-///
-/// This is the *establishment* half of `GC.Spec.Fields.blue_fields_non_infix`,
-/// which `GC.Gen.HeapInvariant.major_heap_shape` carries.  It is true for a
-/// concrete, operational reason rather than by luck: `flush_blue` zeroes every
-/// field of a merged free block above the link word (see `Alloc.zero_fields` in
-/// its definition, extracted as `zero_fields_loop`), so a blue cell's only
-/// pointer-shaped field is its free-list link -- an object address, never an
-/// interior one.
-///
-/// Without the zeroing this would be *false*: a dying object may hold interior
-/// pointers, and sweep alone (`GC.Spec.Sweep.sweep_object`) rewrites only the
-/// link word, leaving the rest of the corpse intact.
-val coalesce_blue_fields_non_infix (g: heap)
-  : Lemma
-    (requires post_sweep_strong g)
-    (ensures blue_fields_non_infix (fst (coalesce g)))
-
-/// Every free block left by the coalescing pass is scannable: `flush_blue`
-/// writes a fresh header with tag 0 for each merged run.
-val coalesce_blue_blocks_scannable (g: heap)
-  : Lemma
-    (requires post_sweep_strong g)
-    (ensures blue_blocks_scannable (fst (coalesce g)))
-
 /// ---------------------------------------------------------------------------
 /// coalesce_preserves_wf proof helpers
 /// ---------------------------------------------------------------------------
@@ -1895,74 +1849,6 @@ private let coalesce_blue_not_infix (g: heap) (obj: obj_addr)
     infix_tag_val ()
 #pop-options
 
-/// zero_fields produces 0 when reading within the zeroed range
-private let rec zero_fields_read_within (g: heap) (start: U64.t) (n: nat) (addr: hp_addr)
-  : Lemma
-    (requires
-      U64.v start + n * U64.v mword <= heap_size /\
-      U64.v start % U64.v mword == 0 /\
-      U64.v addr >= U64.v start /\
-      U64.v addr < U64.v start + n * U64.v mword /\
-      U64.v addr % U64.v mword == 0)
-    (ensures read_word (Alloc.zero_fields g start n) addr == 0UL)
-    (decreases n)
-  = if n = 0 then ()
-    else begin
-      assert (U64.v start + 8 <= heap_size);
-      assert (U64.v start < heap_size);
-      assert (U64.v start % 8 == 0);
-      let g' = write_word g (start <: hp_addr) 0UL in
-      if U64.v addr = U64.v start then begin
-        // addr = start: read from g' at start gives 0UL, then zero_fields preserves it
-        read_write_same g (start <: hp_addr) 0UL;
-        if U64.v start + 8 >= pow2 64 then ()
-        else begin
-          let next = U64.uint_to_t (U64.v start + 8) in
-          zero_fields_preserves_before g' next (n - 1) addr
-        end
-      end else begin
-        // addr > start: recurse
-        assert (U64.v start + 8 < pow2 64);
-        let next = U64.uint_to_t (U64.v start + 8) in
-        read_write_different g (start <: hp_addr) addr 0UL;
-        zero_fields_read_within g' next (n - 1) addr
-      end
-    end
-
-/// flush_blue produces 0 when reading fields 2..wosize of the merged block
-private let flush_blue_field_zero
-  (g: heap) (first_blue: obj_addr) (run_words: nat) (fp: U64.t)
-  (addr: hp_addr)
-  : Lemma
-    (requires
-      run_words >= 3 /\
-      run_words - 1 < pow2 54 /\
-      U64.v (hd_address first_blue) + run_words * U64.v mword <= heap_size /\
-      Seq.length g == heap_size /\
-      U64.v addr >= U64.v first_blue + U64.v mword /\
-      U64.v addr < U64.v first_blue + (run_words - 1) * U64.v mword /\
-      U64.v addr % U64.v mword == 0)
-    (ensures read_word (fst (flush_blue g first_blue run_words fp)) addr == 0UL)
-  = let fb = first_blue in
-    let hd = hd_address fb in
-    hd_address_spec fb;
-    let wz = run_words - 1 in
-    assert (wz >= 2);
-    FStar.Math.Lemmas.pow2_lt_compat 64 54;
-    let wz_u64 : wosize = U64.uint_to_t wz in
-    let hdr = makeHeader wz_u64 Blue 0UL in
-    let g1 = write_word g hd hdr in
-    assert (wz >= 1 /\ U64.v hd + U64.v mword * 2 <= heap_size);
-    assert (U64.v (hd_address fb) + U64.v mword * (U64.v 1UL + 1) <= heap_size);
-    let g2 = HeapGraph.set_field g1 fb 1UL fp in
-    let zero_start_nat = U64.v fb + U64.v mword in
-    assert (zero_start_nat < pow2 64);
-    let zero_start = U64.uint_to_t zero_start_nat in
-    // addr is in the zero_fields range [fb + mword, fb + mword + (wz-1)*mword)
-    assert (U64.v addr >= U64.v zero_start);
-    assert (U64.v addr < U64.v zero_start + (wz - 1) * U64.v mword);
-    zero_fields_read_within g2 zero_start (wz - 1) addr
-
 /// flush_blue field 1 value: after flush with run_words >= 2, field 1 = fp
 /// Exported: `GC.Spec.Coalesce.Descending` needs the link word of a merged
 /// block to establish that the rebuilt free list runs downhill.
@@ -1989,62 +1875,9 @@ let flush_blue_field1_spec
     let field1_addr : hp_addr = U64.add (hd_address fb) (U64.mul mword 1UL) in
     assert (U64.v field1_addr == U64.v fb);
     read_write_different g hd field1_addr hdr;
-    let g2 = HeapGraph.set_field g1 fb 1UL fp in
-    read_write_same g1 field1_addr fp;
-    let zero_start_nat = U64.v fb + U64.v mword in
-    if wz >= 2 && zero_start_nat < pow2 64 then begin
-      let zero_start = U64.uint_to_t zero_start_nat in
-      assert (U64.v field1_addr + U64.v mword <= U64.v zero_start);
-      zero_fields_preserves_before g2 zero_start (wz - 1) field1_addr
-    end else ()
+    read_write_same g1 field1_addr fp
 
-/// efptu elimination for blue objects: if fields 1..wz-1 are 0 and efptu holds,
-/// then field 0 must point to dst (i.e., read_word g' src is a pointer to dst)
-private let rec efptu_blue_elim
-  (g': heap) (src: obj_addr) (wz: U64.t{U64.v wz < pow2 54 /\ wz <> 0UL}) (dst: obj_addr)
-  : Lemma
-    (requires
-      exists_field_pointing_to_unchecked g' src wz dst /\
-      (forall (k: nat{k >= 1 /\ k < U64.v wz}).
-        (let far = U64.add_mod src (U64.mul_mod (U64.uint_to_t k) mword) in
-         U64.v far < heap_size /\ U64.v far % 8 == 0 ==>
-         read_word g' (far <: hp_addr) == 0UL)))
-    (ensures (
-      let far0 = U64.add_mod src (U64.mul_mod 0UL mword) in
-      U64.v far0 < heap_size /\ U64.v far0 % 8 == 0 /\
-      is_pointer_to (read_word g' (far0 <: hp_addr)) dst))
-    (decreases U64.v wz)
-  = let idx = U64.sub wz 1UL in
-    efptu_field_addr_arith src idx;
-    let far = U64.add_mod src (U64.mul_mod idx mword) in
-    if U64.v far >= heap_size || U64.v far % 8 <> 0 then ()
-    else begin
-      let fv = read_word g' (far <: hp_addr) in
-      if is_pointer_to fv dst then begin
-        // This field matched. But if idx >= 1, fv should be 0UL — contradiction
-        if U64.v idx >= 1 then begin
-          assert (read_word g' (far <: hp_addr) == 0UL);
-          // is_pointer_to 0UL dst requires is_pointer_field 0UL
-          // is_pointer_field 0UL = is_pointer 0UL = (0 >= 8 && ...) = false
-          assert (is_pointer_to 0UL dst = false)
-        end
-        else begin
-          // idx = 0: far = src + 0 = src. This is the field 0 case.
-          assert (U64.v idx == 0);
-          assert (U64.v far == U64.v src)
-        end
-      end
-      else begin
-        // Field at idx didn't match, recurse
-        if idx = 0UL then ()  // wz was 1, didn't match, and recursion base: contradiction
-        else begin
-          // Show precondition for recursive call
-          efptu_blue_elim g' src idx dst
-        end
-      end
-    end
-
-/// Walk lemma: blue merged blocks have valid field 0 and zero higher fields.
+/// Walk lemma: blue merged blocks have valid field 0 (the free-list link).
 /// Proven below (after flush_blue_fb_in_walk).
 val coalesce_aux_blue_field0_valid
   (g0 g: heap) (start: hp_addr) (objs all_objs: seq obj_addr)
@@ -2064,15 +1897,11 @@ val coalesce_aux_blue_field0_valid
       let g' = coalesce_heap g0 g objs first_blue run_words fp in
       let sync : hp_addr =
         if run_words > 0 then hd_address (first_blue <: obj_addr) else start in
-      let wz_src = wosize_of_object src g' in
       let fv = read_word g' src in
       (fv == 0UL \/ fv == fp \/
        (U64.v fv >= U64.v mword /\ U64.v fv < heap_size /\
         U64.v fv % U64.v mword == 0 /\
-        Seq.mem (fv <: obj_addr) (objects sync g'))) /\
-      (forall (k: nat). k >= 1 /\ k < U64.v wz_src ==>
-        (U64.v src + k * 8 < heap_size ==>
-         read_word g' (U64.uint_to_t (U64.v src + k * 8) <: hp_addr) == 0UL))))
+        Seq.mem (fv <: obj_addr) (objects sync g')))))
     (decreases Seq.length objs)
 
 /// Helper: prove field 0 of the merged block is preserved through tail walk.
@@ -2108,42 +1937,6 @@ private let merged_block_field0_preserved
       (first_blue <: hp_addr)
 #pop-options
 
-/// Helper: prove zero fields for the merged block are preserved through tail walk.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
-private let merged_block_zero_field_preserved
-  (g0 g_flush: heap) (next: hp_addr) (tail_objs: seq obj_addr)
-  (fp_flush: U64.t)
-  (first_blue: obj_addr) (run_words: nat{run_words >= 3})
-  (fp: U64.t)
-  (g: heap)
-  (k: nat{k >= 1 /\ k < run_words - 1})
-  : Lemma
-    (requires
-      Seq.length g0 == heap_size /\
-      Seq.length g == heap_size /\
-      Seq.length g_flush == heap_size /\
-      tail_objs == objects next g0 /\
-      U64.v first_blue >= U64.v mword /\
-      U64.v first_blue < heap_size /\
-      U64.v first_blue % U64.v mword == 0 /\
-      U64.v (hd_address first_blue) + run_words * U64.v mword <= heap_size /\
-      run_words - 1 < pow2 54 /\
-      U64.v first_blue - U64.v mword + run_words * U64.v mword <= U64.v next /\
-      g_flush == fst (flush_blue g first_blue run_words fp) /\
-      fp_flush == snd (flush_blue g first_blue run_words fp) /\
-      U64.v first_blue + k * U64.v mword < heap_size)
-    (ensures
-      read_word (coalesce_heap g0 g_flush tail_objs 0UL 0 fp_flush)
-        (U64.uint_to_t (U64.v first_blue + k * U64.v mword) <: hp_addr) == 0UL)
-  = let addr : hp_addr = U64.uint_to_t (U64.v first_blue + k * U64.v mword) in
-    assert (U64.v addr >= U64.v first_blue + U64.v mword);
-    assert (U64.v addr < U64.v first_blue + (run_words - 1) * U64.v mword);
-    flush_blue_field_zero g first_blue run_words fp addr;
-    assert (read_word g_flush addr == 0UL);
-    assert (U64.v addr + U64.v mword <= U64.v next);
-    coalesce_heap_preserves_before_run_start g0 g_flush next tail_objs 0UL 0 fp_flush addr
-#pop-options
-
 /// Helper: flush_blue's second component is either fp or first_blue (local copy)
 private let flush_blue_snd_cases_local (g: heap) (first_blue: U64.t) (run_words: nat) (fp: U64.t)
   : Lemma (snd (flush_blue g first_blue run_words fp) == fp \/
@@ -2151,7 +1944,7 @@ private let flush_blue_snd_cases_local (g: heap) (first_blue: U64.t) (run_words:
   = ()
 
 /// Helper: when g' == flush result directly (tail empty, rest >= heap_size),
-/// prove field0 validity and higher fields zero for src = first_blue.
+/// prove field0 validity for src = first_blue.
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let flush_only_blue_fields
   (g0 g g': heap) (start: hp_addr) (objs: seq obj_addr)
@@ -2173,27 +1966,9 @@ private let flush_only_blue_fields
       is_blue src g' /\
       U64.v (wosize_of_object src g') >= 1 /\
       U64.v (wosize_of_object src g') == run_words - 1)
-    (ensures
-      (read_word g' src == fp) /\
-      (forall (k: nat). k >= 1 /\ k < run_words - 1 ==>
-        (U64.v src + k * 8 < heap_size ==>
-         read_word g' (U64.uint_to_t (U64.v src + k * 8) <: hp_addr) == 0UL)))
+    (ensures read_word g' src == fp)
   = hd_address_spec first_blue;
-    flush_blue_field1_spec g first_blue run_words fp;
-    if run_words >= 3 then begin
-      let aux_zero (k: nat{k >= 1 /\ k < run_words - 1})
-        : Lemma (U64.v src + k * 8 < heap_size ==>
-                 read_word g' (U64.uint_to_t (U64.v src + k * 8) <: hp_addr) == 0UL)
-        = if U64.v src + k * 8 < heap_size then begin
-            let addr : hp_addr = U64.uint_to_t (U64.v src + k * 8) in
-            assert (U64.v addr >= U64.v first_blue + U64.v mword);
-            assert (U64.v addr < U64.v first_blue + (run_words - 1) * U64.v mword);
-            assert (U64.v addr % U64.v mword == 0);
-            flush_blue_field_zero g first_blue run_words fp addr
-          end
-      in
-      FStar.Classical.forall_intro (FStar.Classical.move_requires aux_zero)
-    end
+    flush_blue_field1_spec g first_blue run_words fp
 #pop-options
 
 /// Helper: white step, rest >= heap_size (tail empty) case for blue_field0_valid.
@@ -2229,15 +2004,11 @@ private let blue_field0_white_tail_empty
       let g' = coalesce_heap g0 g objs first_blue run_words fp in
       let sync : hp_addr =
         if run_words > 0 then hd_address (first_blue <: obj_addr) else start in
-      let wz_src = wosize_of_object src g' in
       let fv = read_word g' src in
       (fv == 0UL \/ fv == fp \/
        (U64.v fv >= U64.v mword /\ U64.v fv < heap_size /\
         U64.v fv % U64.v mword == 0 /\
-        Seq.mem (fv <: obj_addr) (objects sync g'))) /\
-      (forall (k: nat). k >= 1 /\ k < U64.v wz_src ==>
-        (U64.v src + k * 8 < heap_size ==>
-         read_word g' (U64.uint_to_t (U64.v src + k * 8) <: hp_addr) == 0UL))))
+        Seq.mem (fv <: obj_addr) (objects sync g')))))
   = let g' = coalesce_heap g0 g objs first_blue run_words fp in
     if run_words > 0 then begin
       run_words_bound first_blue run_words start;
@@ -2351,18 +2122,7 @@ let rec coalesce_aux_blue_field0_valid g0 g start objs all_objs first_blue run_w
       assert (src = (first_blue <: obj_addr));
       wosize_of_object_spec src g';
       assert (run_words >= 2);
-      flush_blue_field1_spec g (first_blue <: obj_addr) run_words fp;
-      if run_words >= 3 then begin
-        let aux_zero (k: nat{k >= 1 /\ k < run_words - 1})
-          : Lemma (U64.v src + k * 8 < heap_size ==>
-                   read_word g' (U64.uint_to_t (U64.v src + k * 8) <: hp_addr) == 0UL)
-          = if U64.v src + k * 8 < heap_size then
-              flush_blue_field_zero g (first_blue <: obj_addr) run_words fp
-                (U64.uint_to_t (U64.v src + k * 8) <: hp_addr)
-            else ()
-        in
-        FStar.Classical.forall_intro (FStar.Classical.move_requires aux_zero)
-      end
+      flush_blue_field1_spec g (first_blue <: obj_addr) run_words fp
     end
   end
   else begin
@@ -2438,18 +2198,7 @@ let rec coalesce_aux_blue_field0_valid g0 g start objs all_objs first_blue run_w
         assert (src = (new_first <: obj_addr));
         wosize_of_object_spec src g';
         assert (new_rw >= 2);
-        flush_blue_field1_spec g (new_first <: obj_addr) new_rw fp;
-        if new_rw >= 3 then begin
-          let aux_zero (k: nat{k >= 1 /\ k < new_rw - 1})
-            : Lemma (U64.v src + k * 8 < heap_size ==>
-                     read_word g' (U64.uint_to_t (U64.v src + k * 8) <: hp_addr) == 0UL)
-            = if U64.v src + k * 8 < heap_size then
-                flush_blue_field_zero g (new_first <: obj_addr) new_rw fp
-                  (U64.uint_to_t (U64.v src + k * 8) <: hp_addr)
-              else ()
-          in
-          FStar.Classical.forall_intro (FStar.Classical.move_requires aux_zero)
-        end
+        flush_blue_field1_spec g (new_first <: obj_addr) new_rw fp
       end
     end
     else begin
@@ -2503,18 +2252,7 @@ let rec coalesce_aux_blue_field0_valid g0 g start objs all_objs first_blue run_w
             wosize_of_object_spec src g';
             assert (run_words >= 2);
             merged_block_field0_preserved g0 g_flush next (Seq.tail objs)
-              fp_flush (first_blue <: obj_addr) run_words fp g;
-            if run_words >= 3 then begin
-              let aux_zero (k: nat{k >= 1 /\ k < run_words - 1})
-                : Lemma (U64.v src + k * 8 < heap_size ==>
-                         read_word g' (U64.uint_to_t (U64.v src + k * 8) <: hp_addr) == 0UL)
-                = if U64.v src + k * 8 < heap_size then
-                    merged_block_zero_field_preserved g0 g_flush next (Seq.tail objs)
-                      fp_flush (first_blue <: obj_addr) run_words fp g k
-                  else ()
-              in
-              FStar.Classical.forall_intro (FStar.Classical.move_requires aux_zero)
-            end
+              fp_flush (first_blue <: obj_addr) run_words fp g
           end
           else begin
             // src != first_blue, so src ∈ objects start g'
@@ -2606,58 +2344,6 @@ let rec coalesce_aux_blue_field0_valid g0 g start objs all_objs first_blue run_w
   end
 #pop-options
 
-
-/// Blue source objects after coalescing: if efptu g' src wz dst, then dst in objects g'.
-#push-options "--z3rlimit 25 --fuel 1 --ifuel 1"
-let coalesce_blue_field_closure (g: heap) (src dst: obj_addr)
-  : Lemma
-    (requires
-      post_sweep_strong g /\
-      Seq.mem src (objects zero_addr (fst (coalesce g))) /\
-      is_blue src (fst (coalesce g)) /\
-      (let g' = fst (coalesce g) in
-       let wz = wosize_of_object src g' in
-       U64.v wz < pow2 54 /\
-       exists_field_pointing_to_unchecked g' src wz dst))
-    (ensures Seq.mem dst (objects zero_addr (fst (coalesce g))))
-  = let g' = fst (coalesce g) in
-    let wz = wosize_of_object src g' in
-    coalesce_heap_unfold g g (objects zero_addr g) 0UL 0 0UL;
-    assert (g' == coalesce_heap g g (objects zero_addr g) 0UL 0 0UL);
-    coalesce_preserves_length g;
-    // wz >= 1 since efptu requires a matching field at idx in [0, wz)
-    assert (wz <> 0UL);
-    assert (U64.v wz >= 1);
-    coalesce_aux_blue_field0_valid g g zero_addr (objects zero_addr g) (objects zero_addr g) 0UL 0 0UL src;
-    // fp = 0UL, sync = 0UL, so the disjunct simplifies
-    let fv = read_word g' src in
-    // Bridge zero-field hypothesis to efptu_blue_elim's expected form
-    let zero_fields_hyp (k: nat{k >= 1 /\ k < U64.v wz})
-      : Lemma (let far = U64.add_mod src (U64.mul_mod (U64.uint_to_t k) mword) in
-               U64.v far < heap_size /\ U64.v far % 8 == 0 ==>
-               read_word g' (far <: hp_addr) == 0UL)
-      = efptu_field_addr_arith src (U64.uint_to_t k)
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires zero_fields_hyp);
-    efptu_blue_elim g' src wz dst;
-    // efptu_blue_elim ensures: is_pointer_to (read_word g' (far0 <: hp_addr)) dst
-    // where far0 = src + 0 == src
-    efptu_field_addr_arith src 0UL;
-    let far0 = U64.add_mod src (U64.mul_mod 0UL mword) in
-    assert (U64.v far0 == U64.v src);
-    assert (is_pointer_to (read_word g' (far0 <: hp_addr)) dst);
-    assert (read_word g' (far0 <: hp_addr) == fv);
-    assert (is_pointer_to fv dst);
-    // is_pointer_to fv dst => is_pointer_field fv (so fv >= 8) and hd_address fv = hd_address dst
-    assert (is_pointer_field fv);
-    assert (U64.v fv >= U64.v mword);
-    // fv != 0UL, so from the disjunction: bounds /\ mem fv (objects zero_addr g')
-    assert (Seq.mem (fv <: obj_addr) (objects zero_addr g'));
-    hd_address_spec (fv <: obj_addr);
-    hd_address_spec dst;
-    assert (hd_address fv == hd_address dst);
-    assert (fv == dst)
-#pop-options
 
 /// Helper: if efptu g src wz dst and src is white and dst is blue, contradiction
 /// from post_sweep_strong.
@@ -2966,12 +2652,9 @@ let coalesce_preserves_wf g =
       (ensures Seq.mem (GC.Spec.Object.resolve_object dst g') (objects zero_addr g') /\
                GC.Spec.Object.infix_addr_wf g' (objects zero_addr g') dst)
     = coalesce_all_white_or_blue g;
-      if is_blue src g' then begin
-        coalesce_blue_field_closure g src dst;
-        part4_aux dst;
-        GC.Spec.Object.resolve_non_infix dst g';
-        GC.Spec.Object.infix_addr_wf_intro g' (objects zero_addr g') dst
-      end else begin
+      // A blue source is not `fields_constrained`: a free block's body is
+      // whatever its dead occupants left there, and nothing is demanded of it.
+      begin
         assert (g' == coalesce_heap g g (objects zero_addr g) 0UL 0 0UL);
         coalesce_aux_walk_all_wb g g zero_addr (objects zero_addr g) 0UL 0 0UL (objects zero_addr g) src;
         is_white_iff src g';
@@ -2983,6 +2666,7 @@ let coalesce_preserves_wf g =
         hd_address_spec src;
         is_no_scan_spec src g;
         is_no_scan_spec src g';
+        colors_exhaustive_and_exclusive src g;
         white_src_field_closure g src dst
       end
   in
@@ -3060,39 +2744,4 @@ val coalesce_objects_subset (g: heap) (y: obj_addr)
 let coalesce_objects_subset g y =
   coalesce_heap_unfold g g (objects zero_addr g) 0UL 0 0UL;
   coalesce_aux_objects_subset g g zero_addr (objects zero_addr g) 0UL 0 0UL (objects zero_addr g) y
-#pop-options
-
-#push-options "--z3rlimit 25 --fuel 1 --ifuel 1"
-let coalesce_blue_blocks_scannable g =
-  let g' = fst (coalesce g) in
-  coalesce_preserves_wf g;
-  let pf (obj: obj_addr) : Lemma
-    (requires Seq.mem obj (objects zero_addr g') /\ is_blue obj g')
-    (ensures ~(is_no_scan obj g'))
-    = coalesce_heap_unfold g g (objects zero_addr g) 0UL 0 0UL;
-      assert (g' == coalesce_heap g g (objects zero_addr g) 0UL 0 0UL);
-      coalesce_aux_blue_tag_zero g g zero_addr (objects zero_addr g) 0UL 0 0UL
-        (objects zero_addr g) obj;
-      assert (tag_of_object obj g' == 0UL);
-      is_no_scan_spec obj g';
-      no_scan_tag_val ()
-  in
-  blue_blocks_scannable_intro g' pf
-#pop-options
-
-#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
-let coalesce_blue_fields_non_infix g =
-  let g' = fst (coalesce g) in
-  coalesce_preserves_wf g;
-  wf_parts ();
-  let raw (src dst: obj_addr) : Lemma
-    (requires Seq.mem src (objects zero_addr g') /\
-              is_blue src g' /\
-              (let wz = wosize_of_object src g' in
-               U64.v wz < pow2 54 /\
-               exists_field_pointing_to_unchecked g' src wz dst))
-    (ensures Seq.mem dst (objects zero_addr g'))
-    = coalesce_blue_field_closure g src dst
-  in
-  blue_fields_non_infix_from_raw g' raw
 #pop-options

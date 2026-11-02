@@ -26,6 +26,7 @@ module HeapGraph = GC.Spec.HeapGraph
 module Coalesce = GC.Spec.Coalesce
 module SweepInv = GC.Spec.SweepInv
 module MarkInv = GC.Spec.MarkInv
+module HeapAgree = GC.Spec.HeapAgree
 module U64 = FStar.UInt64
 
 /// ---------------------------------------------------------------------------
@@ -262,8 +263,8 @@ val sweep_preserves_density :
       well_formed_heap g /\
       GC.Spec.Mark.noGreyObjects g /\
       GC.Spec.Sweep.fp_in_heap fp g /\
-      GC.Spec.SweepInv.heap_objects_dense g)
-    (ensures GC.Spec.SweepInv.heap_objects_dense (fst (sweep g fp)))
+      heap_objects_dense g)
+    (ensures heap_objects_dense (fst (sweep g fp)))
 
 /// ---------------------------------------------------------------------------
 /// Coalesce Precondition Bridge
@@ -279,12 +280,12 @@ val coalesce_precondition_bridge :
       well_formed_heap h_mark /\
       noGreyObjects h_mark /\
       fp_in_heap fp h_mark /\
-      GC.Spec.SweepInv.heap_objects_dense h_mark /\
+      heap_objects_dense h_mark /\
       Seq.length (objects zero_addr h_mark) > 0)
     (ensures
       (let h_sweep = fst (sweep h_mark fp) in
        Seq.length (objects zero_addr h_sweep) > 0 /\
-       GC.Spec.SweepInv.heap_objects_dense h_sweep))
+       heap_objects_dense h_sweep))
 
 /// ---------------------------------------------------------------------------
 /// Full GC Correctness Through Coalesce
@@ -333,7 +334,7 @@ val mark_post_intro :
       well_formed_heap h_init /\ well_formed_heap h_mark /\
       noGreyObjects h_mark /\
       objects zero_addr h_mark == objects zero_addr h_init /\
-      SweepInv.heap_objects_dense h_mark /\
+      heap_objects_dense h_mark /\
       Seq.length (objects zero_addr h_mark) > 0 /\
       no_pointer_to_blue h_mark /\
       tri_color_invariant h_mark /\
@@ -370,13 +371,25 @@ val mark_post_elim_graph : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> f
         (ensures create_graph h_mark == create_graph h_init)
 val mark_post_elim_density : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
   Lemma (requires mark_post h_init h_mark roots fp)
-        (ensures SweepInv.heap_objects_dense h_mark)
+        (ensures heap_objects_dense h_mark)
 val mark_post_elim_objects_gt0 : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
   Lemma (requires mark_post h_init h_mark roots fp)
         (ensures Seq.length (objects zero_addr h_mark) > 0)
 val mark_post_elim_fp : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
   Lemma (requires mark_post h_init h_mark roots fp)
         (ensures fp_in_heap fp h_mark)
+val mark_post_elim_black_reachable : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
+  Lemma (requires mark_post h_init h_mark roots fp)
+        (ensures
+          (let g_init = create_graph h_init in
+           let roots' = HeapGraph.coerce_to_vertex_list roots in
+           graph_wf g_init /\ is_vertex_set roots' /\ subset_vertices roots' g_init.vertices ==>
+           (forall (x: obj_addr). mem_graph_vertex g_init x ==>
+             (is_black x h_mark <==> Seq.mem x (reachable_set g_init roots')))))
+val mark_post_elim_wosize : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
+  Lemma (requires mark_post h_init h_mark roots fp)
+        (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr h_init) ==>
+                   wosize_of_object x h_mark == wosize_of_object x h_init)
 
 let heap_reachable (h: heap) (roots: seq obj_addr) (x: obj_addr) : prop =
   let g = create_graph h in
@@ -456,7 +469,7 @@ val coalesce_precondition_bridge_gen :
     (ensures
       (let h_sweep = fst (sweep h_mark fp) in
        Seq.length (objects zero_addr h_sweep) > 0 /\
-       SweepInv.heap_objects_dense h_sweep))
+       heap_objects_dense h_sweep))
 
 /// Generalized full_gc_correctness_through_coalesce
 val full_gc_correctness_through_coalesce_gen :
@@ -487,24 +500,34 @@ val major_gc_unreachable_final_blue_gen :
 
 /// The mark output that produced a given collector result.
 ///
-/// `GC.Impl.collect_with_roots` runs mark, then sweep, then coalesce, and the
-/// intermediate marked heap never escapes.  Downstream clients (notably
+/// `GC.Impl.collect_with_roots` runs mark, then a fused sweep+coalesce pass,
+/// and the intermediate marked heap never escapes.  Downstream clients (notably
 /// `GC.Gen.PostCollectionShape`, which re-establishes the generational shape
 /// invariant on the collector's output) need to know that the returned heap and
-/// free pointer really are `coalesce (sweep h_mark fp)` for *some* heap `h_mark`
+/// free pointer come from `coalesce (sweep h_mark fp)` for *some* heap `h_mark`
 /// satisfying `mark_post`.  This predicate packages that existential so it can
 /// be carried across a Pulse postcondition.
+///
+/// The free pointer is exactly the coalescer's.  The heap agrees with the
+/// coalescer's everywhere except in the bodies of free blocks past their link
+/// word (`GC.Spec.HeapAgree.heaps_agree_mod_free`): the fused pass leaves the
+/// stale headers and fields of dead objects inside a merged free block alone,
+/// whereas `sweep` has already rewritten some of them, and neither pass zeroes
+/// them.  Nothing in the model reads those words.
 let gc_coalesce_source (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) : prop =
   exists (h_mark: heap).
     mark_post h_init h_mark roots fp /\
-    (s2, final_fp) == Coalesce.coalesce (fst (sweep h_mark fp))
+    (let r = Coalesce.coalesce (fst (sweep h_mark fp)) in
+     HeapAgree.heaps_agree_mod_free s2 (fst r) /\ final_fp == snd r)
 
 val gc_coalesce_source_intro :
   (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  (s2: heap) -> (final_fp: U64.t) ->
   Lemma
-    (requires mark_post h_init h_mark roots fp)
-    (ensures (let r = Coalesce.coalesce (fst (sweep h_mark fp)) in
-              gc_coalesce_source h_init (fst r) roots fp (snd r)))
+    (requires mark_post h_init h_mark roots fp /\
+              (let r = Coalesce.coalesce (fst (sweep h_mark fp)) in
+               HeapAgree.heaps_agree_mod_free s2 (fst r) /\ final_fp == snd r))
+    (ensures gc_coalesce_source h_init s2 roots fp final_fp)
 
 /// Generalized gc_postcondition
 val gc_postcondition_gen :
@@ -513,17 +536,18 @@ val gc_postcondition_gen :
     (requires mark_post h_init h_mark roots fp)
     (ensures gc_postcondition (fst (Coalesce.coalesce (fst (sweep h_mark fp)))))
 
-/// Free-list cells hold no interior pointers after a full collection.
-///
-/// Kept separate from `gc_postcondition` on purpose: the *post-sweep* heap does
-/// **not** satisfy this.  A dying object may hold interior pointers and
-/// `GC.Spec.Sweep.sweep_object` rewrites only its link word, so the corpse still
-/// points into the middle of other blocks.  It is the coalescing pass that makes
-/// the property true, by zeroing every field of a merged free block above the
-/// link (`GC.Spec.Coalesce.flush_blue`).  This is the establishment half of the
-/// `blue_fields_non_infix` conjunct of `GC.Gen.HeapInvariant.major_heap_shape`.
-val gc_blue_fields_non_infix_gen :
-  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+/// The collector's theorems hold of any heap that agrees with the coalesced one
+/// modulo free-block bodies -- in particular of the heap the fused
+/// sweep+coalesce pass produces (`GC.Spec.SweepCoalesce.fused_agrees_sweep_coalesce`).
+val gc_result_agree :
+  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) -> (s2: heap) ->
   Lemma
-    (requires mark_post h_init h_mark roots fp)
-    (ensures blue_fields_non_infix (fst (Coalesce.coalesce (fst (sweep h_mark fp)))))
+    (requires mark_post h_init h_mark roots fp /\
+              HeapAgree.heaps_agree_mod_free s2 (fst (Coalesce.coalesce (fst (sweep h_mark fp)))))
+    (ensures gc_postcondition s2 /\
+             full_gc_correctness h_init s2 roots /\
+             ((let g = create_graph h_init in
+               let roots' = HeapGraph.coerce_to_vertex_list roots in
+               graph_wf g /\ is_vertex_set roots' /\ subset_vertices roots' g.vertices) ==>
+              major_gc_live_subgraph_isomorphism h_init s2 roots /\
+              major_gc_unreachable_final_blue h_init s2 roots))

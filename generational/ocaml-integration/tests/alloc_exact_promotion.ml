@@ -37,10 +37,10 @@
  *     block -- the unallocated tail -- and first fit serves every request from
  *     it with a large leftover, never touching a fragment. So the heap is
  *     filled to `fill` first.
- *   - The collection has to actually happen. `Gc.full_major ()` does NOT drive
- *     this collector: caml_gc_full_major calls stock caml_finish_major_cycle.
- *     The verified mark/sweep/coalesce is reachable from the promotion
- *     threshold or from a failed major allocation. This uses the threshold
+ *   - The collection has to actually happen. The verified mark/sweep/coalesce
+ *     runs from the promotion threshold, from a failed major allocation, or
+ *     (since it was wired to the verified collector) from Gc.full_major. This
+ *     uses the threshold
  *     (see force_full_collection below), so it needs no runtime-specific
  *     primitive and runs under stock OCaml as well. Without it the victims
  *     below are never swept and no fragments ever exist.
@@ -56,9 +56,9 @@
  * run on a given (heap, fill).
  *)
 
-(* Force a full collection of whichever collector is running. Gc.full_major
-   drives stock's collector, not the verified one, so instead churn garbage
-   through the nursery: the verified runtime runs its full GC once the words
+(* Force a full collection of whichever collector is running, the way a real
+   program does: churn garbage through the nursery.  The verified runtime runs
+   its full GC once the words
    moved through minor collections exceed half the major heap, and stock
    finishes a major cycle on the same pressure. *)
 let force_full_collection () =

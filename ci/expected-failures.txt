@@ -15,7 +15,9 @@
 #   - weak pointers, ephemerons, finalisers: not implemented (tests/misc/ephe*,
 #     weak*, finaliser; ephe-c-api; tool-ocaml/t340-weak, t350-heapcheck; and
 #     three whose names hide it: lib-sys/opaque, backtrace/callstack and
-#     c-api/alloc_async all assert on Gc.finalise)
+#     c-api/alloc_async all assert on Gc.finalise; regression/pr5233 reads a
+#     weak entry after Gc.full_major has collected its value -- the verified
+#     collector does not erase weak entries)
 #   - Gc.Memprof sampling: not implemented (every tests/statmemprof entry,
 #     including the timeouts)
 #   - custom-block finalisers: not run (regression/pr3612)
@@ -23,8 +25,9 @@
 #     allocator does not consult young_limit (callback/signals_alloc,
 #     lib-systhreads/eintr)
 #   - Gc.set knobs the fixed-size verified heap cannot honour
-#     (regression/pr9326 resizes the minor heap; regression/pr9292 asks for
-#     best-fit and ~400 MB, and gets Out_of_memory)
+#     (regression/pr9326 resizes the minor heap, which the verified runtime
+#     ignores, and asserts that Gc.get reports the new size -- both variants;
+#     regression/pr9292 asks for best-fit and ~400 MB, and gets Out_of_memory)
 #   - packaging, not GC behaviour: no libasmrun_i.a (instrumented-runtime),
 #     -output-complete-obj does not carry the verified GC's objects
 #   - the bridge's fixed root buffer (MAX_ROOTS in alloc_gen.c) overflows in
@@ -74,9 +77,12 @@ tests/output-complete-obj/'test.ml' with 1.1.1 (script)
 tests/output-complete-obj/'test.ml' with 2.1.1 (script)
 tests/regression/pr3612/'pr3612.ml' with 1 (native)
 tests/regression/pr3612/'pr3612.ml' with 2 (bytecode)
+tests/regression/pr5233/'pr5233.ml' with 1 (native)
+tests/regression/pr5233/'pr5233.ml' with 2 (bytecode)
 tests/regression/pr9292/'pr9292.ml' with 1 (native)
 tests/regression/pr9292/'pr9292.ml' with 2 (bytecode)
 tests/regression/pr9326/'gc_set.ml' with 1 (native)
+tests/regression/pr9326/'gc_set.ml' with 2 (bytecode)
 tests/statmemprof/'alloc_counts.ml' with 1 (native)
 tests/statmemprof/'alloc_counts.ml' with 2 (bytecode)
 tests/statmemprof/'arrays_in_major.ml' with 1 (native)

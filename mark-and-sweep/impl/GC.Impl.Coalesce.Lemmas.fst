@@ -82,16 +82,7 @@ let flush_blue_impl_wz0 g fb fp g1 =
 #pop-options
 
 #push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
-let flush_blue_impl_wz1 g fb fp g1 g2 =
+let flush_blue_impl_wz_ge1 g fb wz fp g1 g2 =
   hd_address_spec fb;
   set_field_1_eq_write_word g1 fb fp
-#pop-options
-
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
-let flush_blue_impl_wz_ge2 g fb wz fp g1 g2 g3 =
-  hd_address_spec fb;
-  set_field_1_eq_write_word g1 fb fp;
-  // Show U64.add fb mword == U64.uint_to_t (U64.v fb + U64.v mword)
-  assert (U64.v (U64.add fb mword) = U64.v fb + U64.v mword);
-  U64.v_inj (U64.add fb mword) (U64.uint_to_t (U64.v fb + U64.v mword))
 #pop-options

@@ -1,6 +1,12 @@
 /// ---------------------------------------------------------------------------
-/// TestCombined — Combined induction: fused_aux == coalesce_aux
-///                with separate working heaps agreeing below a bound
+/// GC.Spec.SweepCoalesce.Induction — fused_aux agrees with coalesce_aux
+///
+/// The fused pass and `coalesce (sweep ..)` produce the same free pointer and
+/// heaps that agree along the object walk (`GC.Spec.HeapAgree.walk_agree`):
+/// same headers, same fields of live blocks, same free-list links.  They are
+/// not equal: `sweep` writes a blue header and a link into every dead object,
+/// the fused pass does not, and neither overwrites those words once the dead
+/// objects are merged into a free block.
 /// ---------------------------------------------------------------------------
 
 module GC.Spec.SweepCoalesce.Induction
@@ -17,9 +23,9 @@ open GC.Lib.Header
 
 module SpecCoalesce = GC.Spec.Coalesce
 module SCH = GC.Spec.SweepCoalesce.Helpers
-module SCF = GC.Spec.SweepCoalesce.FlushAgree
 module HeapGraph = GC.Spec.HeapGraph
 module Alloc = GC.Spec.Allocator
+module HA = GC.Spec.HeapAgree
 
 open GC.Spec.SweepCoalesce.Defs
 
@@ -59,7 +65,8 @@ private let contiguous_head (g: heap) (objs: seq obj_addr)
 #pop-options
 
 /// ========================================================================
-/// Helper 1: zero_fields reads 0UL within its range
+/// zero_fields reads 0UL within its range.  No longer used by `flush_blue`,
+/// which stopped zeroing free blocks.
 /// ========================================================================
 
 #push-options "--z3rlimit 10"
@@ -90,110 +97,6 @@ let rec zero_fields_read_within
 #pop-options
 
 /// ========================================================================
-/// Helper 2: flush_blue produces fp at field 1
-/// ========================================================================
-
-#push-options "--z3rlimit 25 --fuel 2"
-private let flush_blue_field1_spec
-    (g: heap) (fb: obj_addr) (rw: nat) (fp: U64.t)
-  : Lemma
-    (requires
-      rw >= 2 /\
-      rw - 1 < pow2 54 /\
-      U64.v (hd_address fb) + rw * 8 <= heap_size /\
-      Seq.length g == heap_size)
-    (ensures read_word (fst (SpecCoalesce.flush_blue g fb rw fp)) fb == fp)
-  = let hd = hd_address fb in
-    hd_address_spec fb;
-    let wz = rw - 1 in
-    ML.pow2_lt_compat 64 54;
-    let wz_u64 : wosize = U64.uint_to_t wz in
-    let hdr = makeHeader wz_u64 Blue 0UL in
-    let g1 = write_word g hd hdr in
-    assert (U64.v hd + U64.v mword * 2 <= heap_size);
-    assert (U64.v (hd_address fb) + U64.v mword * (U64.v 1UL + 1) <= heap_size);
-    let field1_addr : hp_addr = U64.add (hd_address fb) (U64.mul mword 1UL) in
-    assert (U64.v field1_addr == U64.v fb);
-    read_write_different g hd field1_addr hdr;
-    let g2 = HeapGraph.set_field g1 fb 1UL fp in
-    read_write_same g1 field1_addr fp;
-    let zero_start_nat = U64.v fb + 8 in
-    if wz >= 2 && zero_start_nat < pow2 64 then begin
-      let zero_start = U64.uint_to_t zero_start_nat in
-      assert (U64.v field1_addr + U64.v mword <= U64.v zero_start);
-      SpecCoalesce.zero_fields_preserves_before g2 zero_start (wz - 1) field1_addr
-    end else ()
-#pop-options
-
-/// ========================================================================
-/// Helper 3: flush_blue produces 0UL at zero-field positions
-/// ========================================================================
-
-#push-options "--z3rlimit 25 --fuel 2"
-private let flush_blue_zero_spec
-    (g: heap) (fb: obj_addr) (rw: nat) (fp: U64.t) (a: hp_addr)
-  : Lemma
-    (requires
-      rw >= 3 /\
-      rw - 1 < pow2 54 /\
-      U64.v (hd_address fb) + rw * 8 <= heap_size /\
-      Seq.length g == heap_size /\
-      U64.v a >= U64.v fb + 8 /\
-      U64.v a < U64.v fb + (rw - 1) * 8)
-    (ensures read_word (fst (SpecCoalesce.flush_blue g fb rw fp)) a == 0UL)
-  = let hd = hd_address fb in
-    hd_address_spec fb;
-    let wz = rw - 1 in
-    ML.pow2_lt_compat 64 54;
-    let wz_u64 : wosize = U64.uint_to_t wz in
-    let hdr = makeHeader wz_u64 Blue 0UL in
-    let g1 = write_word g hd hdr in
-    assert (U64.v hd + U64.v mword * 2 <= heap_size);
-    assert (U64.v (hd_address fb) + U64.v mword * (U64.v 1UL + 1) <= heap_size);
-    let g2 = HeapGraph.set_field g1 fb 1UL fp in
-    let zero_start_nat = U64.v fb + 8 in
-    assert (zero_start_nat < pow2 64);
-    let zero_start = U64.uint_to_t zero_start_nat in
-    zero_fields_read_within g2 zero_start (wz - 1) a
-#pop-options
-
-/// ========================================================================
-/// Helper 4: flush_blue agrees inside the flush range
-/// ========================================================================
-
-#push-options "--z3rlimit 12 --fuel 2"
-let flush_blue_inside_agree
-    (h1 h2: heap) (fb: obj_addr) (rw: nat) (fp: U64.t) (a: hp_addr)
-  : Lemma
-    (requires
-      rw > 0 /\
-      rw - 1 < pow2 54 /\
-      U64.v (hd_address fb) + rw * 8 <= heap_size /\
-      Seq.length h1 == heap_size /\ Seq.length h2 == heap_size /\
-      U64.v a >= U64.v (hd_address fb) /\
-      U64.v a + 8 <= U64.v (hd_address fb) + rw * 8)
-    (ensures
-      read_word (fst (SpecCoalesce.flush_blue h1 fb rw fp)) a ==
-      read_word (fst (SpecCoalesce.flush_blue h2 fb rw fp)) a)
-  = hd_address_spec fb;
-    let hd = hd_address fb in
-    if U64.v a = U64.v hd then begin
-      SpecCoalesce.flush_blue_header_spec h1 fb rw fp;
-      SpecCoalesce.flush_blue_header_spec h2 fb rw fp
-    end else if U64.v a = U64.v fb then begin
-      assert (rw >= 2);
-      flush_blue_field1_spec h1 fb rw fp;
-      flush_blue_field1_spec h2 fb rw fp
-    end else begin
-      assert (U64.v a >= U64.v fb + 8);
-      assert (rw >= 3);
-      assert (U64.v a < U64.v fb + (rw - 1) * 8);
-      flush_blue_zero_spec h1 fb rw fp a;
-      flush_blue_zero_spec h2 fb rw fp a
-    end
-#pop-options
-
-/// ========================================================================
 /// Helper 5: flush_blue preserves outside for a pair of heaps
 /// ========================================================================
 
@@ -214,265 +117,6 @@ let flush_pair_preserves_outside
     SpecCoalesce.flush_blue_preserves_outside h2 fb rw fp addr
 #pop-options
 
-/// Helper 5b: flush_blue preserves outside — specialized for addresses
-/// above the flush range (addr >= fb + rw * 8). Clean precondition
-/// using literal 8 to avoid quantifier issues in complex caller contexts.
-/// Helper 5c: else-branch proof — address past object body.
-/// Extracted to top-level to avoid quantifier context pollution from
-/// the forall-quantified conditions in black_case_below_ok.
-#push-options "--z3rlimit 12 --fuel 1 --ifuel 1"
-private let black_case_past_body
-    (g: heap) (h_f h_c: heap) (obj: obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
-    (a: hp_addr)
-  : Lemma
-    (requires
-      is_black obj g /\
-      Seq.length h_f == heap_size /\ Seq.length h_c == heap_size /\
-      U64.v a >= U64.v obj + U64.v (wosize_of_object obj g) * 8 /\
-      (rw > 0 ==>
-        (U64.v fb >= U64.v mword /\ U64.v fb < heap_size /\
-         U64.v fb % U64.v mword == 0 /\
-         U64.v obj >= U64.v fb + rw * 8 /\
-         U64.v a >= U64.v fb + rw * 8)) /\
-      read_word h_f a == read_word h_c a /\
-      is_white obj h_c /\
-      getWosize (read_word h_f (hd_address obj)) == getWosize (read_word h_c (hd_address obj)) /\
-      getTag (read_word h_f (hd_address obj)) == getTag (read_word h_c (hd_address obj)))
-    (ensures
-      read_word (makeWhite obj (fst (SpecCoalesce.flush_blue h_f fb rw fp))) a ==
-      read_word (fst (SpecCoalesce.flush_blue h_c fb rw fp)) a)
-  = let hd_obj = hd_address obj in
-    hd_address_spec obj;
-    SpecCoalesce.flush_blue_preserves_outside h_f fb rw fp a;
-    SpecCoalesce.flush_blue_preserves_outside h_c fb rw fp a;
-    SpecCoalesce.flush_blue_preserves_outside h_f fb rw fp hd_obj;
-    let h_f' = fst (SpecCoalesce.flush_blue h_f fb rw fp) in
-    makeWhite_spec obj h_f';
-    SCH.colorHeader_same_wz_tag (read_word h_f hd_obj) (read_word h_c hd_obj) White;
-    is_white_iff obj h_c;
-    color_of_object_spec obj h_c;
-    read_write_different h_f' hd_obj a
-      (colorHeader (read_word h_f' hd_obj) White)
-#pop-options
-
-/// ========================================================================
-/// Black-case helper lemmas — each is pointwise (no forall_intro inside).
-/// The universalization happens in combined_proof via forall_intro on
-/// thin local wrappers that just call these top-level helpers.
-/// ========================================================================
-
-/// Pointwise: for a single address below the new bound, h_f'' and h_c' agree
-#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
-private let black_case_below_ok
-  (g: heap) (h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
-  (a: hp_addr)
-  : Lemma
-    (requires
-      Seq.length objs > 0 /\
-      is_black (Seq.head objs) g /\
-      Seq.length h_f == heap_size /\ Seq.length h_c == heap_size /\
-      (* 4 *) (let bound = if rw > 0 then U64.v fb - 8
-                            else U64.v (hd_address (Seq.head objs)) in
-               forall (a: hp_addr). U64.v a + 8 <= bound ==> read_word h_f a == read_word h_c a) /\
-      (* 5 *) (forall (a: hp_addr).
-                (rw = 0 \/ U64.v a >= U64.v fb - 8 + rw * 8) /\
-                (forall (x: obj_addr). Seq.mem x objs ==>
-                  U64.v a >= U64.v x + U64.v (wosize_of_object x g) * 8) ==>
-                read_word h_f a == read_word h_c a) /\
-      (* 6 *) (forall (x: obj_addr). Seq.mem x objs /\ is_black x g ==>
-                getWosize (read_word h_f (hd_address x)) == getWosize (read_word h_c (hd_address x)) /\
-                getTag (read_word h_f (hd_address x)) == getTag (read_word h_c (hd_address x))) /\
-      (* 7 *) (forall (x: obj_addr) (a: hp_addr).
-                Seq.mem x objs /\ is_black x g /\
-                U64.v a >= U64.v x /\ U64.v a + 8 <= U64.v x + U64.v (wosize_of_object x g) * 8 ==>
-                read_word h_f a == read_word h_c a) /\
-      (* 8 *) (forall (x: obj_addr). Seq.mem x objs /\ is_black x g ==> is_white x h_c) /\
-      (* 9 *) (rw > 0 ==> (forall (x: obj_addr). Seq.mem x objs ==>
-                U64.v x >= U64.v fb + rw * 8)) /\
-      (* 10 *) (rw > 0 ==>
-                (U64.v fb >= U64.v mword /\ U64.v fb < heap_size /\
-                 U64.v fb % U64.v mword == 0 /\ rw - 1 < pow2 54 /\
-                 U64.v fb - 8 + rw * 8 <= heap_size)) /\
-      (* 12 *) objs_contiguous g objs /\
-      (* 13 *) (rw > 0 /\ Seq.length objs > 0 ==>
-                U64.v fb + rw * 8 == U64.v (Seq.head objs)) /\
-      (* 14 *) (forall (x: obj_addr). Seq.mem x objs ==>
-                U64.v x + U64.v (wosize_of_object x g) * 8 <= heap_size) /\
-      (* bound on a *)
-      (let rest = Seq.tail objs in
-       let new_bound = if Seq.length rest > 0
-                       then U64.v (hd_address (Seq.head rest))
-                       else heap_size in
-       U64.v a + 8 <= new_bound))
-    (ensures
-      (let obj = Seq.head objs in
-       read_word (makeWhite obj (fst (SpecCoalesce.flush_blue h_f fb rw fp))) a ==
-       read_word (fst (SpecCoalesce.flush_blue h_c fb rw fp)) a))
-  = let obj = Seq.head objs in
-    hd_address_spec obj;
-    let hd_obj = hd_address obj in
-    let wz_obj = U64.v (wosize_of_object obj g) in
-    // Check "past body" case FIRST in a clean Z3 context (no flush_blue terms yet).
-    // Branches 1-5 all have a < obj + wz * 8, so this cleanly separates branch 6.
-    if U64.v a >= U64.v obj + wz_obj * 8 then begin
-      // Branch 6: a past the body of obj.
-      // When rest is non-empty, this branch is unreachable (contiguity contradiction).
-      // When rest is empty, objs is a singleton and condition 5 applies.
-      let rest = Seq.tail objs in
-      if Seq.length rest > 0 then begin
-        // Derive contradiction: contiguity says next obj starts right after body+header
-        let next_obj = Seq.head rest in
-        // next_obj = obj + (wz + 1) * 8 from objs_contiguous
-        // hd_address(next_obj) = next_obj - 8 = obj + wz * 8
-        // Bound says a + 8 <= hd_address(next_obj) = obj + wz * 8
-        // But we have a >= obj + wz * 8: contradiction
-        hd_address_spec next_obj;
-        // Contiguity gives `next_obj == obj + (wz_obj + 1) * 8`, hence
-        // `hd_address next_obj == obj + wz_obj * 8`, contradicting the bound
-        // `a + 8 <= hd_address next_obj` together with `a >= obj + wz_obj * 8`.
-        contiguous_head g objs;
-        ML.distributivity_add_left wz_obj 1 8;
-        assert (U64.v next_obj == U64.v obj + (wz_obj + 1) * 8);
-        assert (U64.v (hd_address next_obj) == U64.v obj + wz_obj * 8);
-        assert false
-      end
-      else begin
-        // objs is a singleton: head is the only member
-        assert (read_word h_f a == read_word h_c a);
-        black_case_past_body g h_f h_c obj fb rw fp a
-      end
-    end
-    else begin
-      // Branches 1-5: a is within or before the object.
-      // Now safe to introduce heavy flush_blue / makeWhite terms.
-      let h_f' = fst (SpecCoalesce.flush_blue h_f fb rw fp) in
-      let h_c' = fst (SpecCoalesce.flush_blue h_c fb rw fp) in
-      makeWhite_spec obj h_f';
-      let h_f'' = makeWhite obj h_f' in
-      SpecCoalesce.flush_blue_preserves_outside h_f fb rw fp hd_obj;
-      SpecCoalesce.flush_blue_preserves_outside h_c fb rw fp hd_obj;
-      // Header agreement
-      SCH.colorHeader_same_wz_tag (read_word h_f hd_obj) (read_word h_c hd_obj) White;
-      is_white_iff obj h_c;
-      color_of_object_spec obj h_c;
-      SCH.colorHeader_idempotent (read_word h_c hd_obj) White;
-      // Case split on a
-      if rw > 0 && U64.v a + 8 <= U64.v fb - 8 then begin
-        flush_pair_preserves_outside h_f h_c fb rw fp a;
-        read_write_different h_f' hd_obj a
-          (colorHeader (read_word h_f' hd_obj) White)
-      end
-      else if rw = 0 && U64.v a + 8 <= U64.v hd_obj then begin
-        read_write_different h_f' hd_obj a
-          (colorHeader (read_word h_f' hd_obj) White)
-      end
-      else if rw > 0 && U64.v a >= U64.v fb - 8 &&
-              U64.v a + 8 <= U64.v fb - 8 + rw * 8 then begin
-        let fb_obj : obj_addr = fb in
-        hd_address_spec fb_obj;
-        flush_blue_inside_agree h_f h_c fb_obj rw fp a;
-        read_write_different h_f' hd_obj a
-          (colorHeader (read_word h_f' hd_obj) White)
-      end
-      else if U64.v a = U64.v hd_obj then
-        ()
-      else begin
-        // Branch 5: a inside body
-        assert (U64.v a >= U64.v obj /\ U64.v a + 8 <= U64.v obj + wz_obj * 8);
-        (if rw > 0 then
-          flush_pair_preserves_outside h_f h_c fb rw fp a
-        else ());
-        assert (read_word h_f a == read_word h_c a);
-        read_write_different h_f' hd_obj a
-          (colorHeader (read_word h_f' hd_obj) White)
-      end
-    end
-#pop-options
-
-/// Pointwise: for a single address past all rest objects, h_f'' and h_c' agree
-/// Header word of `obj` lies below an address past `obj`'s fields.  Stated in
-/// an empty context: inside `black_case_above_ok` Z3 5.x times out on it.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
-private let hd_word_below (hd o a w: nat)
-  : Lemma (requires hd == o - 8 /\ a > o + w * 8)
-          (ensures hd + U64.v mword <= a)
-  = ()
-#pop-options
-
-#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
-private let black_case_above_ok
-  (g: heap) (h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
-  (a: hp_addr)
-  : Lemma
-    (requires
-      Seq.length objs > 0 /\
-      is_black (Seq.head objs) g /\
-      Seq.length h_f == heap_size /\ Seq.length h_c == heap_size /\
-      (* 5 *) (forall (a: hp_addr).
-                (rw = 0 \/ U64.v a >= U64.v fb - 8 + rw * 8) /\
-                (forall (x: obj_addr). Seq.mem x objs ==>
-                  U64.v a >= U64.v x + U64.v (wosize_of_object x g) * 8) ==>
-                read_word h_f a == read_word h_c a) /\
-      (* 9 *) (rw > 0 ==> (forall (x: obj_addr). Seq.mem x objs ==>
-                U64.v x >= U64.v fb + rw * 8)) /\
-      (* 10 *) (rw > 0 ==>
-                (U64.v fb >= U64.v mword /\ U64.v fb < heap_size /\
-                 U64.v fb % U64.v mword == 0 /\ rw - 1 < pow2 54 /\
-                 U64.v fb - 8 + rw * 8 <= heap_size)) /\
-      (* 11 *) objs_well_separated g objs /\
-      (* 14 *) (forall (x: obj_addr). Seq.mem x objs ==>
-                U64.v x + U64.v (wosize_of_object x g) * 8 <= heap_size) /\
-      (* below_ok result — needed for rest-empty case *)
-      (let obj = Seq.head objs in
-       let rest = Seq.tail objs in
-       let nb = if Seq.length rest > 0
-                then U64.v (hd_address (Seq.head rest))
-                else heap_size in
-       forall (b: hp_addr). U64.v b + 8 <= nb ==>
-         read_word (makeWhite obj (fst (SpecCoalesce.flush_blue h_f fb rw fp))) b ==
-         read_word (fst (SpecCoalesce.flush_blue h_c fb rw fp)) b) /\
-      (* a past rest objects *)
-      (forall (x: obj_addr). Seq.mem x (Seq.tail objs) ==>
-        U64.v a >= U64.v x + U64.v (wosize_of_object x g) * 8))
-    (ensures
-      (let obj = Seq.head objs in
-       read_word (makeWhite obj (fst (SpecCoalesce.flush_blue h_f fb rw fp))) a ==
-       read_word (fst (SpecCoalesce.flush_blue h_c fb rw fp)) a))
-  = let obj = Seq.head objs in
-    let rest = Seq.tail objs in
-    hd_address_spec obj;
-    let hd_obj = hd_address obj in
-    let wz_obj = U64.v (wosize_of_object obj g) in
-    let h_f' = fst (SpecCoalesce.flush_blue h_f fb rw fp) in
-    let h_c' = fst (SpecCoalesce.flush_blue h_c fb rw fp) in
-    makeWhite_spec obj h_f';
-    let h_f'' = makeWhite obj h_f' in
-    SpecCoalesce.flush_blue_preserves_outside h_f fb rw fp hd_obj;
-    SpecCoalesce.flush_blue_preserves_outside h_c fb rw fp hd_obj;
-    if Seq.length rest > 0 then begin
-      let hd_rest = Seq.head rest in
-      assert (Seq.mem hd_rest rest);
-      assert (U64.v a >= U64.v hd_rest + U64.v (wosize_of_object hd_rest g) * 8);
-      assert (U64.v hd_rest > U64.v obj + wz_obj * 8);
-      assert (U64.v a > U64.v obj + wz_obj * 8)
-    end else ();
-    (if Seq.length rest > 0 then begin
-      assert (U64.v a > U64.v obj + wz_obj * 8);
-      assert (forall (x:obj_addr). Seq.mem x objs ==>
-        U64.v a >= U64.v x + U64.v (wosize_of_object x g) * 8)
-    end else ());
-    (if Seq.length rest > 0 then begin
-      (if rw > 0 then begin
-        assert (U64.v obj >= U64.v fb + rw * 8);
-        assert (U64.v a >= U64.v fb - 8 + rw * 8);
-        flush_pair_preserves_outside h_f h_c fb rw fp a
-      end else ());
-      assert (U64.v a > U64.v obj + wz_obj * 8);
-      hd_word_below (U64.v hd_obj) (U64.v obj) (U64.v a) wz_obj;
-      read_write_different h_f' hd_obj a
-        (colorHeader (read_word h_f' hd_obj) White)
-    end else ())
-#pop-options
 
 /// Pointwise: for a single black rest object, header match + white in h_c'
 #push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
@@ -659,37 +303,10 @@ private let nonblack_case_geo_ok
 #pop-options
 
 /// ========================================================================
-/// Black case concluder: combines IH with one-step unfolding in a clean context
-/// ========================================================================
-#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
-private let black_case_conclude
-    (g gs h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
-  : Lemma
-    (requires
-      Seq.length objs > 0 /\
-      is_black (Seq.head objs) g /\
-      ~(is_blue (Seq.head objs) gs) /\
-      wosize_of_object (Seq.head objs) g == wosize_of_object (Seq.head objs) gs /\
-      (let obj = Seq.head objs in
-       let rest = Seq.tail objs in
-       let h_f' = fst (SpecCoalesce.flush_blue h_f fb rw fp) in
-       let h_c' = fst (SpecCoalesce.flush_blue h_c fb rw fp) in
-       let fp' = snd (SpecCoalesce.flush_blue h_f fb rw fp) in
-       let h_f'' = makeWhite obj h_f' in
-       fp' == snd (SpecCoalesce.flush_blue h_c fb rw fp) /\
-       fused_aux g h_f'' rest 0UL 0 fp' ==
-       SpecCoalesce.coalesce_aux gs h_c' rest 0UL 0 fp'))
-    (ensures
-      fused_aux g h_f objs fb rw fp ==
-      SpecCoalesce.coalesce_aux gs h_c objs fb rw fp)
-  = ()
-#pop-options
-
-/// ========================================================================
-/// Small arithmetic / termination facts used by `combined_proof`.
+/// Small arithmetic / termination facts used by `walk_proof`.
 ///
 /// Query splitting makes every leaf goal carry the whole (very large)
-/// precondition of `combined_proof`, so even these trivial facts time out when
+/// precondition of `walk_proof`, so even these trivial facts time out when
 /// left to the SMT solver inline. Proving them here, in an empty context, and
 /// applying them as lemmas removes the SMT call at the use site.
 /// ========================================================================
@@ -721,270 +338,489 @@ private let tail_len_lt (#a: Type) (s: Seq.seq a)
 #pop-options
 
 /// ========================================================================
-/// Main theorem
+/// Walk agreement from a position (`n >= heap_size` is the end of the walk)
 /// ========================================================================
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 2"
+let wa (n: nat) (h1 h2: heap) : prop =
+  if n >= heap_size then True
+  else if n % 8 = 0 then HA.walk_agree (U64.uint_to_t n) h1 h2
+  else False
 
-let rec combined_proof
-  (g gs h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
-  : Lemma
-    (requires
-      (* 1. Sizes *)
-      Seq.length h_f == heap_size /\ Seq.length h_c == heap_size /\
+/// Heaps equal from `n` on agree along the walk from `n`.
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+private let wa_of_equal_from (n: nat) (h1 h2: heap)
+  : Lemma (requires n % 8 == 0 /\
+                    (forall (a: hp_addr). U64.v a >= n ==> read_word h1 a == read_word h2 a))
+          (ensures wa n h1 h2)
+  = if n >= heap_size then () else HA.walk_agree_of_equal_from (U64.uint_to_t n) h1 h2
+#pop-options
 
-      (* 2. Color correspondence *)
-      (forall (x: obj_addr). Seq.mem x objs ==>
-        (is_black x g <==> ~(is_blue x gs))) /\
+/// A merged free block followed by an agreeing walk.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+private let wa_run_step (f c: heap) (fb: obj_addr) (rw: pos) (start: nat)
+  : Lemma (requires rw - 1 < pow2 54 /\
+                    U64.v fb - 8 + rw * 8 == start /\ start <= heap_size /\
+                    read_word f (hd_address fb) == makeHeader (U64.uint_to_t (rw - 1)) Blue 0UL /\
+                    read_word c (hd_address fb) == makeHeader (U64.uint_to_t (rw - 1)) Blue 0UL /\
+                    (rw >= 2 ==> read_word f fb == read_word c fb) /\
+                    wa start f c)
+          (ensures wa (U64.v fb - 8) f c)
+  = hd_address_spec fb;
+    let wz : wosize = U64.uint_to_t (rw - 1) in
+    makeHeader_getWosize wz Blue 0UL;
+    makeHeader_getColor wz Blue 0UL;
+    color_of_object_spec fb c;
+    is_blue_iff fb c;
+    wosize_of_object_spec fb c;
+    f_address_spec (hd_address fb);
+    hd_f_roundtrip (hd_address fb);
+    f_hd_roundtrip fb;
+    HA.walk_agree_step (hd_address fb) f c
+#pop-options
 
-      (* 3. Wosize correspondence *)
-      (forall (x: obj_addr). Seq.mem x objs ==>
-        wosize_of_object x g == wosize_of_object x gs) /\
+/// A live block followed by an agreeing walk.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+private let wa_survivor_step (f c: heap) (obj: obj_addr) (next: nat)
+  : Lemma (requires read_word f (hd_address obj) == read_word c (hd_address obj) /\
+                    U64.v obj + U64.v (getWosize (read_word c (hd_address obj))) * 8 == next /\
+                    next <= heap_size /\
+                    ~(is_blue obj c) /\
+                    (forall (a: hp_addr). U64.v a >= U64.v obj /\ U64.v a + 8 <= next ==>
+                       read_word f a == read_word c a) /\
+                    wa next f c)
+          (ensures wa (U64.v obj - 8) f c)
+  = hd_address_spec obj;
+    wosize_of_object_spec obj c;
+    f_address_spec (hd_address obj);
+    hd_f_roundtrip (hd_address obj);
+    f_hd_roundtrip obj;
+    HA.walk_agree_step (hd_address obj) f c
+#pop-options
 
-      (* 4. Agree below bound *)
-      (let bound = if rw > 0 then U64.v fb - 8
-                   else if Seq.length objs > 0 then U64.v (hd_address (Seq.head objs))
-                   else heap_size in
-       forall (a: hp_addr). U64.v a + 8 <= bound ==> read_word h_f a == read_word h_c a) /\
+/// ========================================================================
+/// The rest of the walk leaves lower addresses alone
+/// ========================================================================
 
-      (* 5. Agree above *)
-      (forall (a: hp_addr).
-        (rw = 0 \/ U64.v a >= U64.v fb - 8 + rw * 8) /\
-        (forall (x: obj_addr). Seq.mem x objs ==>
-          U64.v a >= U64.v x + U64.v (wosize_of_object x g) * 8) ==>
-        read_word h_f a == read_word h_c a) /\
-
-      (* 6. Black header wosize/tag match *)
-      (forall (x: obj_addr). Seq.mem x objs /\ is_black x g ==>
-        getWosize (read_word h_f (hd_address x)) == getWosize (read_word h_c (hd_address x)) /\
-        getTag (read_word h_f (hd_address x)) == getTag (read_word h_c (hd_address x))) /\
-
-      (* 7. Black bodies agree *)
-      (forall (x: obj_addr) (a: hp_addr).
-        Seq.mem x objs /\ is_black x g /\
-        U64.v a >= U64.v x /\ U64.v a + 8 <= U64.v x + U64.v (wosize_of_object x g) * 8 ==>
-        read_word h_f a == read_word h_c a) /\
-
-      (* 8. Black objects white in h_c *)
-      (forall (x: obj_addr). Seq.mem x objs /\ is_black x g ==>
-        is_white x h_c) /\
-
-      (* 9. Geometric *)
-      (rw > 0 ==> (forall (x: obj_addr). Seq.mem x objs ==>
-        U64.v x >= U64.v fb + rw * 8)) /\
-
-      (* 10. fb validity *)
-      (rw > 0 ==>
-        (U64.v fb >= U64.v mword /\
-         U64.v fb < heap_size /\
-         U64.v fb % U64.v mword == 0 /\
-         rw - 1 < pow2 54 /\
-         U64.v fb - 8 + rw * 8 <= heap_size)) /\
-
-      (* 11. Well-separated *)
-      objs_well_separated g objs /\
-
-      (* 12. Contiguous *)
-      objs_contiguous g objs /\
-
-      (* 13. Run-object contiguity *)
-      (rw > 0 /\ Seq.length objs > 0 ==>
-        U64.v fb + rw * 8 == U64.v (Seq.head objs)) /\
-
-      (* 14. Objects fit *)
-      (forall (x: obj_addr). Seq.mem x objs ==>
-        U64.v x + U64.v (wosize_of_object x g) * 8 <= heap_size))
-
-    (ensures
-      fused_aux g h_f objs fb rw fp ==
-      SpecCoalesce.coalesce_aux gs h_c objs fb rw fp)
-
-    (decreases Seq.length objs)
-
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+private let rec fused_aux_preserves_low
+    (g h: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t) (a: hp_addr)
+  : Lemma (requires
+             (rw > 0 ==> U64.v fb >= U64.v mword /\ U64.v fb < heap_size /\
+                         U64.v fb % U64.v mword == 0 /\ U64.v a + 8 <= U64.v fb - 8) /\
+             (forall (x: obj_addr). Seq.mem x objs ==> U64.v a + 8 <= U64.v x - 8))
+          (ensures read_word (fst (fused_aux g h objs fb rw fp)) a == read_word h a)
+          (decreases Seq.length objs)
   = if Seq.length objs = 0 then begin
-      // ============================================================
-      // BASE CASE: both sides reduce to flush_blue
-      // ============================================================
-      if rw = 0 then begin
-        let aux (a: hp_addr) : Lemma (read_word h_f a == read_word h_c a) = () in
-        FStar.Classical.forall_intro aux;
-        SCF.heaps_word_agree_implies_equal h_f h_c
-      end else begin
-        let aux (a: hp_addr)
-          : Lemma
-            (requires rw = 0 \/
-                      U64.v a + U64.v mword <= U64.v fb - U64.v mword \/
-                      U64.v a >= U64.v fb - U64.v mword + rw * U64.v mword)
-            (ensures read_word h_f a == read_word h_c a)
-          = ()
-        in
-        FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
-        SCF.flush_blue_pair_agree h_f h_c fb rw fp
-      end
-
+      if rw > 0 then SpecCoalesce.flush_blue_preserves_outside h fb rw fp a
     end else begin
       let obj = Seq.head objs in
       let rest = Seq.tail objs in
-      tail_len_lt objs;
-      assert (Seq.length rest < Seq.length objs);
-
+      Seq.Properties.cons_head_tail objs;
+      GC.Spec.Fields.mem_cons_lemma obj obj rest;
+      let sub (x: obj_addr) : Lemma (Seq.mem x rest ==> Seq.mem x objs)
+        = GC.Spec.Fields.mem_cons_lemma x obj rest
+      in
+      FStar.Classical.forall_intro sub;
+      hd_address_spec obj;
       if is_black obj g then begin
-        // ============================================================
-        // BLACK CASE — thin wrappers calling top-level helpers
-        // ============================================================
-        assert (~(is_blue obj gs));
-
-        hd_address_spec obj;
-
-        let h_f' = fst (SpecCoalesce.flush_blue h_f fb rw fp) in
-        let h_c' = fst (SpecCoalesce.flush_blue h_c fb rw fp) in
-        let fp'_f = snd (SpecCoalesce.flush_blue h_f fb rw fp) in
-        let fp'_c = snd (SpecCoalesce.flush_blue h_c fb rw fp) in
-
-        SCH.flush_blue_snd_heap_independent h_f h_c fb rw fp;
-        assert (fp'_f == fp'_c);
-        let fp' = fp'_f in
-
-        SpecCoalesce.flush_blue_preserves_length h_f fb rw fp;
-        SpecCoalesce.flush_blue_preserves_length h_c fb rw fp;
-
-        let h_f'' = makeWhite obj h_f' in
-
-        // Cond 4: Agree below new bound — thin wrapper over top-level helper
-        let below_ok (a: hp_addr)
-          : Lemma
-            (requires
-              (let nb = if Seq.length rest > 0
-                        then U64.v (hd_address (Seq.head rest))
-                        else heap_size in
-               U64.v a + 8 <= nb))
-            (ensures read_word h_f'' a == read_word h_c' a)
-          = black_case_below_ok g h_f h_c objs fb rw fp a
-        in
-        FStar.Classical.forall_intro (FStar.Classical.move_requires below_ok);
-
-        // Cond 5: Agree above — thin wrapper over top-level helper
-        let above_ok (a: hp_addr)
-          : Lemma
-            (requires
-              (forall (x: obj_addr). Seq.mem x rest ==>
-                U64.v a >= U64.v x + U64.v (wosize_of_object x g) * 8))
-            (ensures read_word h_f'' a == read_word h_c' a)
-          = black_case_above_ok g h_f h_c objs fb rw fp a
-        in
-        FStar.Classical.forall_intro (FStar.Classical.move_requires above_ok);
-
-        // Conds 6,8: header match + white in h_c' for rest
-        let rest_hdr (x: obj_addr)
-          : Lemma
-            (requires Seq.mem x rest /\ is_black x g)
-            (ensures
-              getWosize (read_word h_f'' (hd_address x)) == getWosize (read_word h_c' (hd_address x)) /\
-              getTag (read_word h_f'' (hd_address x)) == getTag (read_word h_c' (hd_address x)) /\
-              is_white x h_c')
-          = black_case_rest_headers g h_f h_c objs fb rw fp x
-        in
-        FStar.Classical.forall_intro (FStar.Classical.move_requires rest_hdr);
-
-        // Cond 7: black bodies agree in h_f'' and h_c' for rest
-        let body_ok (x: obj_addr)
-          : Lemma
-            (requires Seq.mem x rest /\ is_black x g)
-            (ensures forall (a: hp_addr).
-              U64.v a >= U64.v x /\ U64.v a + 8 <= U64.v x + U64.v (wosize_of_object x g) * 8 ==>
-              read_word h_f'' a == read_word h_c' a)
-          = black_case_body_agree g h_f h_c objs fb rw fp x
-        in
-        FStar.Classical.forall_intro (FStar.Classical.move_requires body_ok);
-
-        // IH + concluder
-        combined_proof g gs h_f'' h_c' rest 0UL 0 fp';
-        black_case_conclude g gs h_f h_c objs fb rw fp
-
+        let h' = fst (SpecCoalesce.flush_blue h fb rw fp) in
+        let fp' = snd (SpecCoalesce.flush_blue h fb rw fp) in
+        (if rw > 0 then SpecCoalesce.flush_blue_preserves_outside h fb rw fp a);
+        makeWhite_spec obj h';
+        read_write_different h' (hd_address obj) a (colorHeader (read_word h' (hd_address obj)) White);
+        fused_aux_preserves_low g (makeWhite obj h') rest 0UL 0 fp' a
       end else begin
-        // ============================================================
-        // NON-BLACK CASE
-        // ============================================================
-        assert (is_blue obj gs);
-
         let ws = U64.v (wosize_of_object obj g) in
         let new_fb : U64.t = if rw = 0 then obj else fb in
-        let new_rw = rw + ws + 1 in
-
-        hd_address_spec obj;
-
-        // Geometric for rest — thin wrapper over top-level helper
-        let geo_ok (x: obj_addr)
-          : Lemma
-            (requires Seq.mem x rest)
-            (ensures U64.v x >= U64.v new_fb + new_rw * 8)
-          = nonblack_case_geo_ok g objs fb rw x
-        in
-        FStar.Classical.forall_intro (FStar.Classical.move_requires geo_ok);
-
-        // fb validity for new run
-        assert (new_rw > 0);
-        (if rw = 0 then begin
-          assert (U64.v obj >= U64.v mword);
-          assert (U64.v obj < heap_size);
-          assert (U64.v obj % U64.v mword == 0);
-          assert (ws * 8 <= heap_size);
-          ML.lemma_div_le (ws * 8) heap_size 8;
-          ML.cancel_mul_div ws 8;
-          assert (ws <= heap_size / 8);
-          // new_rw - 1 = ws, need ws < pow2 54
-          // heap_size < pow2 57 so heap_size / pow2 3 < pow2 54
-          ML.lemma_div_lt_nat heap_size 57 3;
-          assert_norm (pow2 3 == 8);
-          assert_norm (57 - 3 == 54);
-          assert (heap_size / 8 < pow2 54);
-          assert (ws < pow2 54);
-          // also need: new_fb - 8 + new_rw * 8 <= heap_size
-          // new_fb = obj, new_rw = ws + 1
-          ML.distributivity_add_left ws 1 8;
-          rw0_run_bound (U64.v obj) ws;
-          assert (U64.v obj - 8 + new_rw * 8 == U64.v obj + ws * 8);
-          ()
-        end else begin
-          assert (U64.v fb + rw * 8 == U64.v obj);
-          assert (U64.v obj + ws * 8 <= heap_size);
-          ML.distributivity_add_left rw (ws + 1) 8;
-          rwpos_run_bound (U64.v fb) (U64.v obj) rw ws;
-          assert (U64.v fb - 8 + new_rw * 8 == U64.v obj + ws * 8);
-          assert (U64.v fb - 8 + new_rw * 8 <= heap_size);
-          // new_rw - 1 = rw + ws, need rw + ws < pow2 54
-          // new_fb = fb, fb >= 8, so new_rw * 8 <= heap_size
-          assert (U64.v fb >= 8);
-          assert (new_rw * 8 <= heap_size);
-          ML.lemma_div_le (new_rw * 8) heap_size 8;
-          ML.cancel_mul_div new_rw 8;
-          assert (new_rw <= heap_size / 8);
-          ML.lemma_div_lt_nat heap_size 57 3;
-          assert_norm (pow2 3 == 8);
-          assert_norm (57 - 3 == 54);
-          assert (heap_size / 8 < pow2 54);
-          assert (new_rw - 1 < pow2 54);
-          ()
-        end);
-
-        // Cond 13 for rest: run-object contiguity
-        (if Seq.length rest > 0 then begin
-          if rw = 0 then begin
-            ML.distributivity_add_left ws 1 8;
-            rw0_run_bound (U64.v obj) ws;
-            assert (U64.v new_fb + new_rw * 8 == U64.v obj + (ws + 1) * 8)
-          end else begin
-            assert (U64.v fb + rw * 8 == U64.v obj);
-            ML.distributivity_add_left rw (ws + 1) 8;
-            rwpos_run_contig (U64.v fb) rw ws;
-            assert (U64.v new_fb + new_rw * 8 == U64.v obj + (ws + 1) * 8)
-          end
-        end else ());
-
-        // IH
-        combined_proof g gs h_f h_c rest new_fb new_rw fp
-
+        fused_aux_preserves_low g h rest new_fb (rw + ws + 1) fp a
       end
     end
+#pop-options
 
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+private let rec coalesce_aux_preserves_low
+    (g0 h: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t) (a: hp_addr)
+  : Lemma (requires
+             (rw > 0 ==> U64.v fb >= U64.v mword /\ U64.v fb < heap_size /\
+                         U64.v fb % U64.v mword == 0 /\ U64.v a + 8 <= U64.v fb - 8) /\
+             (forall (x: obj_addr). Seq.mem x objs ==> U64.v a + 8 <= U64.v x - 8))
+          (ensures read_word (fst (SpecCoalesce.coalesce_aux g0 h objs fb rw fp)) a == read_word h a)
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then begin
+      if rw > 0 then SpecCoalesce.flush_blue_preserves_outside h fb rw fp a
+    end else begin
+      let obj = Seq.head objs in
+      let rest = Seq.tail objs in
+      Seq.Properties.cons_head_tail objs;
+      GC.Spec.Fields.mem_cons_lemma obj obj rest;
+      let sub (x: obj_addr) : Lemma (Seq.mem x rest ==> Seq.mem x objs)
+        = GC.Spec.Fields.mem_cons_lemma x obj rest
+      in
+      FStar.Classical.forall_intro sub;
+      if is_blue obj g0 then begin
+        let ws = U64.v (wosize_of_object obj g0) in
+        let new_fb : U64.t = if rw = 0 then obj else fb in
+        coalesce_aux_preserves_low g0 h rest new_fb (rw + ws + 1) fp a
+      end else begin
+        let h' = fst (SpecCoalesce.flush_blue h fb rw fp) in
+        let fp' = snd (SpecCoalesce.flush_blue h fb rw fp) in
+        (if rw > 0 then SpecCoalesce.flush_blue_preserves_outside h fb rw fp a);
+        coalesce_aux_preserves_low g0 h' rest 0UL 0 fp' a
+      end
+    end
+#pop-options
+
+/// Every later object starts at least a word past the end of the head.
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
+private let tail_beyond_head (g: heap) (objs: seq obj_addr) (x: obj_addr)
+  : Lemma (requires Seq.length objs > 0 /\ objs_well_separated g objs /\ Seq.mem x (Seq.tail objs))
+          (ensures U64.v x >= U64.v (Seq.head objs) + U64.v (wosize_of_object (Seq.head objs) g) * 8 + 8)
+  = let o = Seq.head objs in
+    let w = U64.v (wosize_of_object o g) in
+    assert (U64.v x > U64.v o + w * 8);
+    ML.lemma_mod_plus_distr_l (U64.v o) (w * 8) 8;
+    ML.cancel_mul_mod w 8
+#pop-options
+
+/// ========================================================================
+/// The step cases
+/// ========================================================================
+
+/// The common shape of the induction's hypotheses.
+let walk_hyps (g gs h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (start: nat) : prop =
+  Seq.length h_f == heap_size /\ Seq.length h_c == heap_size /\
+  (forall (x: obj_addr). Seq.mem x objs ==> (is_black x g <==> ~(is_blue x gs))) /\
+  (forall (x: obj_addr). Seq.mem x objs ==> wosize_of_object x g == wosize_of_object x gs) /\
+  (forall (a: hp_addr).
+     U64.v a >= start /\
+     (forall (x: obj_addr). Seq.mem x objs ==>
+        U64.v a >= U64.v x + U64.v (wosize_of_object x g) * 8) ==>
+     read_word h_f a == read_word h_c a) /\
+  (forall (x: obj_addr). Seq.mem x objs /\ is_black x g ==>
+     getWosize (read_word h_f (hd_address x)) == getWosize (read_word h_c (hd_address x)) /\
+     getTag (read_word h_f (hd_address x)) == getTag (read_word h_c (hd_address x)) /\
+     U64.v (getWosize (read_word h_c (hd_address x))) == U64.v (wosize_of_object x g)) /\
+  (forall (x: obj_addr) (a: hp_addr).
+     Seq.mem x objs /\ is_black x g /\
+     U64.v a >= U64.v x /\ U64.v a + 8 <= U64.v x + U64.v (wosize_of_object x g) * 8 ==>
+     read_word h_f a == read_word h_c a) /\
+  (forall (x: obj_addr). Seq.mem x objs /\ is_black x g ==> is_white x h_c) /\
+  (rw > 0 ==> (forall (x: obj_addr). Seq.mem x objs ==> U64.v x >= U64.v fb + rw * 8)) /\
+  (rw > 0 ==>
+    (U64.v fb >= U64.v mword /\ U64.v fb < heap_size /\ U64.v fb % U64.v mword == 0 /\
+     rw - 1 < pow2 54 /\ U64.v fb - 8 + rw * 8 <= heap_size)) /\
+  objs_well_separated g objs /\
+  objs_contiguous g objs /\
+  (rw > 0 /\ Seq.length objs > 0 ==> U64.v fb + rw * 8 == U64.v (Seq.head objs)) /\
+  (forall (x: obj_addr). Seq.mem x objs ==> U64.v x + U64.v (wosize_of_object x g) * 8 <= heap_size) /\
+  start % 8 == 0 /\ start <= heap_size /\
+  (Seq.length objs > 0 ==> U64.v (Seq.head objs) == start + 8) /\
+  (rw > 0 ==> U64.v fb - 8 + rw * 8 == start)
+
+let walk_goal (g gs h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
+    (start: nat) : prop =
+  let rf = fused_aux g h_f objs fb rw fp in
+  let rc = SpecCoalesce.coalesce_aux gs h_c objs fb rw fp in
+  snd rf == snd rc /\
+  wa (if rw > 0 && U64.v fb >= 8 then U64.v fb - 8 else start) (fst rf) (fst rc)
+
+/// A pending run that is flushed: the walk from its header agrees provided
+/// the flushed heaps agree along the walk from the run's end.
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+private let flushed_run_step (h_f h_c f c: heap) (fb: U64.t) (rw: pos) (fp: U64.t) (start: nat)
+  : Lemma (requires
+             U64.v fb >= U64.v mword /\ U64.v fb < heap_size /\ U64.v fb % U64.v mword == 0 /\
+             rw - 1 < pow2 54 /\ U64.v fb - 8 + rw * 8 == start /\ start <= heap_size /\
+             (let fbo : obj_addr = fb in
+              read_word f (hd_address fbo) ==
+                read_word (fst (SpecCoalesce.flush_blue h_f fb rw fp)) (hd_address fbo) /\
+              read_word c (hd_address fbo) ==
+                read_word (fst (SpecCoalesce.flush_blue h_c fb rw fp)) (hd_address fbo) /\
+              (rw >= 2 ==>
+                read_word f fbo == read_word (fst (SpecCoalesce.flush_blue h_f fb rw fp)) fbo /\
+                read_word c fbo == read_word (fst (SpecCoalesce.flush_blue h_c fb rw fp)) fbo)) /\
+             wa start f c)
+          (ensures wa (U64.v fb - 8) f c)
+  = let fbo : obj_addr = fb in
+    hd_address_spec fbo;
+    SpecCoalesce.flush_blue_header_spec h_f fbo rw fp;
+    SpecCoalesce.flush_blue_header_spec h_c fbo rw fp;
+    if rw >= 2 then begin
+      SpecCoalesce.flush_blue_field1_spec h_f fbo rw fp;
+      SpecCoalesce.flush_blue_field1_spec h_c fbo rw fp
+    end;
+    wa_run_step f c fbo rw start
+#pop-options
+
+/// Base case: nothing left to walk.
+#push-options "--z3rlimit 30 --fuel 1 --ifuel 1"
+private let walk_base (g gs h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
+    (start: nat)
+  : Lemma (requires walk_hyps g gs h_f h_c objs fb rw start /\ Seq.length objs == 0)
+          (ensures walk_goal g gs h_f h_c objs fb rw fp start)
+  = SCH.flush_blue_snd_heap_independent h_f h_c fb rw fp;
+    let f = fst (SpecCoalesce.flush_blue h_f fb rw fp) in
+    let c = fst (SpecCoalesce.flush_blue h_c fb rw fp) in
+    assert (fused_aux g h_f objs fb rw fp == SpecCoalesce.flush_blue h_f fb rw fp);
+    assert (SpecCoalesce.coalesce_aux gs h_c objs fb rw fp == SpecCoalesce.flush_blue h_c fb rw fp);
+    let eq (a: hp_addr) : Lemma (U64.v a >= start ==> read_word f a == read_word c a)
+      = if U64.v a >= start && rw > 0 then flush_pair_preserves_outside h_f h_c fb rw fp a
+    in
+    FStar.Classical.forall_intro eq;
+    wa_of_equal_from start f c;
+    if rw > 0 then flushed_run_step h_f h_c f c fb rw fp start
+#pop-options
+
+/// Black head: the hypotheses carry over to the rest of the walk.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+private let walk_black_hyps (g gs h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat)
+    (fp: U64.t) (start: nat)
+  : Lemma (requires walk_hyps g gs h_f h_c objs fb rw start /\
+                    Seq.length objs > 0 /\ is_black (Seq.head objs) g)
+          (ensures (let obj = Seq.head objs in
+                    let h_f'' = makeWhite obj (fst (SpecCoalesce.flush_blue h_f fb rw fp)) in
+                    let h_c' = fst (SpecCoalesce.flush_blue h_c fb rw fp) in
+                    walk_hyps g gs h_f'' h_c' (Seq.tail objs) 0UL 0
+                      (U64.v obj + U64.v (wosize_of_object obj g) * 8)))
+  = let obj = Seq.head objs in
+    let rest = Seq.tail objs in
+    let wz = U64.v (wosize_of_object obj g) in
+    let next = U64.v obj + wz * 8 in
+    let h_f' = fst (SpecCoalesce.flush_blue h_f fb rw fp) in
+    let h_c' = fst (SpecCoalesce.flush_blue h_c fb rw fp) in
+    let h_f'' = makeWhite obj h_f' in
+    SpecCoalesce.flush_blue_preserves_length h_f fb rw fp;
+    SpecCoalesce.flush_blue_preserves_length h_c fb rw fp;
+    Seq.Properties.cons_head_tail objs;
+    GC.Spec.Fields.mem_cons_lemma obj obj rest;
+    let sub (x: obj_addr) : Lemma (Seq.mem x rest ==> Seq.mem x objs)
+      = GC.Spec.Fields.mem_cons_lemma x obj rest
+    in
+    FStar.Classical.forall_intro sub;
+    hd_address_spec obj;
+    makeWhite_spec obj h_f';
+    let hd_obj = hd_address obj in
+    // above the head object nothing was written
+    let high (a: hp_addr)
+      : Lemma (requires U64.v a >= next)
+              (ensures read_word h_f'' a == read_word h_f a /\ read_word h_c' a == read_word h_c a)
+      = (if rw > 0 then flush_pair_preserves_outside h_f h_c fb rw fp a);
+        read_write_different h_f' hd_obj a (colorHeader (read_word h_f' hd_obj) White)
+    in
+    let c5 (a: hp_addr)
+      : Lemma (requires U64.v a >= next /\
+                        (forall (x: obj_addr). Seq.mem x rest ==>
+                           U64.v a >= U64.v x + U64.v (wosize_of_object x g) * 8))
+              (ensures read_word h_f'' a == read_word h_c' a)
+      = high a
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires c5);
+    let c6 (x: obj_addr)
+      : Lemma (requires Seq.mem x rest /\ is_black x g)
+              (ensures
+                getWosize (read_word h_f'' (hd_address x)) == getWosize (read_word h_c' (hd_address x)) /\
+                getTag (read_word h_f'' (hd_address x)) == getTag (read_word h_c' (hd_address x)) /\
+                U64.v (getWosize (read_word h_c' (hd_address x))) == U64.v (wosize_of_object x g) /\
+                is_white x h_c')
+      = black_case_rest_headers g h_f h_c objs fb rw fp x;
+        tail_beyond_head g objs x;
+        hd_address_spec x;
+        high (hd_address x)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires c6);
+    let c7 (x: obj_addr)
+      : Lemma (requires Seq.mem x rest /\ is_black x g)
+              (ensures forall (a: hp_addr).
+                 U64.v a >= U64.v x /\ U64.v a + 8 <= U64.v x + U64.v (wosize_of_object x g) * 8 ==>
+                 read_word h_f'' a == read_word h_c' a)
+      = black_case_body_agree g h_f h_c objs fb rw fp x
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires c7);
+    ML.lemma_mod_plus_distr_l (U64.v obj) (wz * 8) 8;
+    ML.cancel_mul_mod wz 8;
+    if Seq.length rest > 0 then begin
+      contiguous_head g objs;
+      ML.distributivity_add_left wz 1 8
+    end
+#pop-options
+
+/// Black head: the conclusion for the whole walk from the rest's.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+private let walk_black_conclude (g gs h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat)
+    (fp: U64.t) (start: nat)
+  : Lemma (requires walk_hyps g gs h_f h_c objs fb rw start /\
+                    Seq.length objs > 0 /\ is_black (Seq.head objs) g /\
+                    (let obj = Seq.head objs in
+                     let h_f'' = makeWhite obj (fst (SpecCoalesce.flush_blue h_f fb rw fp)) in
+                     let h_c' = fst (SpecCoalesce.flush_blue h_c fb rw fp) in
+                     let fp' = snd (SpecCoalesce.flush_blue h_f fb rw fp) in
+                     walk_goal g gs h_f'' h_c' (Seq.tail objs) 0UL 0 fp'
+                       (U64.v obj + U64.v (wosize_of_object obj g) * 8)))
+          (ensures walk_goal g gs h_f h_c objs fb rw fp start)
+  = let obj = Seq.head objs in
+    let rest = Seq.tail objs in
+    let wz = U64.v (wosize_of_object obj g) in
+    let next = U64.v obj + wz * 8 in
+    let h_f' = fst (SpecCoalesce.flush_blue h_f fb rw fp) in
+    let h_c' = fst (SpecCoalesce.flush_blue h_c fb rw fp) in
+    let fp' = snd (SpecCoalesce.flush_blue h_f fb rw fp) in
+    let h_f'' = makeWhite obj h_f' in
+    SCH.flush_blue_snd_heap_independent h_f h_c fb rw fp;
+    SpecCoalesce.flush_blue_preserves_length h_f fb rw fp;
+    SpecCoalesce.flush_blue_preserves_length h_c fb rw fp;
+    Seq.Properties.cons_head_tail objs;
+    GC.Spec.Fields.mem_cons_lemma obj obj rest;
+    assert (~(is_blue obj gs));
+    // one step of each walk
+    assert (fused_aux g h_f objs fb rw fp == fused_aux g h_f'' rest 0UL 0 fp');
+    assert (SpecCoalesce.coalesce_aux gs h_c objs fb rw fp ==
+            SpecCoalesce.coalesce_aux gs h_c' rest 0UL 0 fp');
+    let f = fst (fused_aux g h_f'' rest 0UL 0 fp') in
+    let c = fst (SpecCoalesce.coalesce_aux gs h_c' rest 0UL 0 fp') in
+    hd_address_spec obj;
+    let hd_obj = hd_address obj in
+    makeWhite_spec obj h_f';
+    // below `next`, the rest of the walk wrote nothing
+    let low (a: hp_addr)
+      : Lemma (requires U64.v a + 8 <= next)
+              (ensures read_word f a == read_word h_f'' a /\ read_word c a == read_word h_c' a)
+      = let beyond (x: obj_addr) : Lemma (Seq.mem x rest ==> U64.v a + 8 <= U64.v x - 8)
+          = if Seq.mem x rest then tail_beyond_head g objs x
+        in
+        FStar.Classical.forall_intro beyond;
+        fused_aux_preserves_low g h_f'' rest 0UL 0 fp' a;
+        coalesce_aux_preserves_low gs h_c' rest 0UL 0 fp' a
+    in
+    // the survivor's own header and body
+    low hd_obj;
+    (if rw > 0 then flush_pair_preserves_outside h_f h_c fb rw fp hd_obj);
+    read_write_same h_f' hd_obj (colorHeader (read_word h_f' hd_obj) White);
+    SCH.colorHeader_same_wz_tag (read_word h_f hd_obj) (read_word h_c hd_obj) White;
+    is_white_iff obj h_c;
+    color_of_object_spec obj h_c;
+    SCH.colorHeader_idempotent (read_word h_c hd_obj) White;
+    assert (read_word f hd_obj == read_word c hd_obj);
+    color_of_header_eq obj c h_c;
+    GC.Spec.Fields.colors_exhaustive_and_exclusive obj h_c;
+    let body (a: hp_addr)
+      : Lemma (requires U64.v a >= U64.v obj /\ U64.v a + 8 <= next)
+              (ensures read_word f a == read_word c a)
+      = low a;
+        (if rw > 0 then flush_pair_preserves_outside h_f h_c fb rw fp a);
+        read_write_different h_f' hd_obj a (colorHeader (read_word h_f' hd_obj) White)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires body);
+    wa_survivor_step f c obj next;
+    // and the run flushed in front of it
+    if rw > 0 then begin
+      let fbo : obj_addr = fb in
+      hd_address_spec fbo;
+      low (hd_address fbo);
+      read_write_different h_f' hd_obj (hd_address fbo) (colorHeader (read_word h_f' hd_obj) White);
+      if rw >= 2 then begin
+        low fbo;
+        read_write_different h_f' hd_obj fbo (colorHeader (read_word h_f' hd_obj) White)
+      end;
+      flushed_run_step h_f h_c f c fb rw fp start
+    end
+#pop-options
+
+/// Dead head: it joins the pending run.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+private let walk_dead_hyps (g gs h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat)
+    (start: nat)
+  : Lemma (requires walk_hyps g gs h_f h_c objs fb rw start /\
+                    Seq.length objs > 0 /\ ~(is_black (Seq.head objs) g))
+          (ensures (let obj = Seq.head objs in
+                    let ws = U64.v (wosize_of_object obj g) in
+                    let new_fb : U64.t = if rw = 0 then obj else fb in
+                    walk_hyps g gs h_f h_c (Seq.tail objs) new_fb (rw + ws + 1)
+                      (U64.v obj + ws * 8)))
+  = let obj = Seq.head objs in
+    let rest = Seq.tail objs in
+    let ws = U64.v (wosize_of_object obj g) in
+    let new_fb : U64.t = if rw = 0 then obj else fb in
+    let new_rw = rw + ws + 1 in
+    let next = U64.v obj + ws * 8 in
+    Seq.Properties.cons_head_tail objs;
+    GC.Spec.Fields.mem_cons_lemma obj obj rest;
+    let sub (x: obj_addr) : Lemma (Seq.mem x rest ==> Seq.mem x objs)
+      = GC.Spec.Fields.mem_cons_lemma x obj rest
+    in
+    FStar.Classical.forall_intro sub;
+    hd_address_spec obj;
+    let geo (x: obj_addr) : Lemma (requires Seq.mem x rest)
+                                  (ensures U64.v x >= U64.v new_fb + new_rw * 8)
+      = tail_beyond_head g objs x;
+        nonblack_case_geo_ok g objs fb rw x
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires geo);
+    ML.lemma_mod_plus_distr_l (U64.v obj) (ws * 8) 8;
+    ML.cancel_mul_mod ws 8;
+    (if rw = 0 then rw0_run_bound (U64.v obj) ws
+     else rwpos_run_bound (U64.v fb) (U64.v obj) rw ws);
+    // new_rw - 1 < pow2 54
+    assert (new_rw * 8 <= heap_size);
+    ML.lemma_div_le (new_rw * 8) heap_size 8;
+    ML.cancel_mul_div new_rw 8;
+    ML.lemma_div_lt_nat heap_size 57 3;
+    assert_norm (pow2 3 == 8);
+    if Seq.length rest > 0 then begin
+      contiguous_head g objs;
+      ML.distributivity_add_left ws 1 8;
+      (if rw = 0 then begin
+         ML.distributivity_add_left ws 1 8;
+         rw0_run_bound (U64.v obj) ws
+       end else rwpos_run_contig (U64.v fb) rw ws)
+    end
+#pop-options
+
+#push-options "--z3rlimit 30 --fuel 1 --ifuel 1"
+private let walk_dead_conclude (g gs h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat)
+    (fp: U64.t) (start: nat)
+  : Lemma (requires walk_hyps g gs h_f h_c objs fb rw start /\
+                    Seq.length objs > 0 /\ ~(is_black (Seq.head objs) g) /\
+                    (let obj = Seq.head objs in
+                     let ws = U64.v (wosize_of_object obj g) in
+                     let new_fb : U64.t = if rw = 0 then obj else fb in
+                     walk_goal g gs h_f h_c (Seq.tail objs) new_fb (rw + ws + 1) fp
+                       (U64.v obj + ws * 8)))
+          (ensures walk_goal g gs h_f h_c objs fb rw fp start)
+  = let obj = Seq.head objs in
+    Seq.Properties.cons_head_tail objs;
+    GC.Spec.Fields.mem_cons_lemma obj obj (Seq.tail objs);
+    assert (is_blue obj gs);
+    hd_address_spec obj
+#pop-options
+
+/// ========================================================================
+/// Main theorem
+/// ========================================================================
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let rec walk_proof
+  (g gs h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t) (start: nat)
+  : Lemma (requires walk_hyps g gs h_f h_c objs fb rw start)
+          (ensures walk_goal g gs h_f h_c objs fb rw fp start)
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then walk_base g gs h_f h_c objs fb rw fp start
+    else begin
+      let obj = Seq.head objs in
+      let rest = Seq.tail objs in
+      tail_len_lt objs;
+      let wz = U64.v (wosize_of_object obj g) in
+      if is_black obj g then begin
+        let h_f'' = makeWhite obj (fst (SpecCoalesce.flush_blue h_f fb rw fp)) in
+        let h_c' = fst (SpecCoalesce.flush_blue h_c fb rw fp) in
+        let fp' = snd (SpecCoalesce.flush_blue h_f fb rw fp) in
+        walk_black_hyps g gs h_f h_c objs fb rw fp start;
+        walk_proof g gs h_f'' h_c' rest 0UL 0 fp' (U64.v obj + wz * 8);
+        walk_black_conclude g gs h_f h_c objs fb rw fp start
+      end else begin
+        let new_fb : U64.t = if rw = 0 then obj else fb in
+        walk_dead_hyps g gs h_f h_c objs fb rw start;
+        walk_proof g gs h_f h_c rest new_fb (rw + wz + 1) fp (U64.v obj + wz * 8);
+        walk_dead_conclude g gs h_f h_c objs fb rw fp start
+      end
+    end
 #pop-options

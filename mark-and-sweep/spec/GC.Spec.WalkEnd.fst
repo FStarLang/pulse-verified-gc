@@ -2,7 +2,7 @@ module GC.Spec.WalkEnd
 
 /// The heap walk as a scalar.
 ///
-/// `GC.Spec.SweepInv.heap_objects_dense` says that the object walk tiles the
+/// `heap_objects_dense` says that the object walk tiles the
 /// heap: it stops only when there is no room left for another header, never
 /// because a block claims more space than the heap has.  Stated as a quantifier
 /// over walk positions it is awkward to *transport* across a phase that changes
@@ -167,7 +167,7 @@ let dense_from_walk_end (g: heap)
   : Lemma
     (requires Seq.length (objects zero_addr g) > 0 /\
               walk_end g zero_addr + 8 >= heap_size)
-    (ensures SweepInv.heap_objects_dense g)
+    (ensures heap_objects_dense g)
   = let aux (start: hp_addr)
       : Lemma
         (ensures
@@ -192,7 +192,7 @@ let dense_from_walk_end (g: heap)
 let rec walk_end_of_dense (g: heap) (p: hp_addr)
   : Lemma
     (requires U64.v p + 8 < heap_size /\
-              SweepInv.heap_objects_dense g /\
+              heap_objects_dense g /\
               Seq.mem (f_address p) (objects zero_addr g) /\
               Seq.length (objects p g) > 0)
     (ensures walk_end g p + 8 >= heap_size)
@@ -218,7 +218,7 @@ let rec walk_end_of_dense (g: heap) (p: hp_addr)
 /// end of the heap".
 let walk_end_of_dense_top (g: heap)
   : Lemma
-    (requires SweepInv.heap_objects_dense g /\
+    (requires heap_objects_dense g /\
               Seq.length (objects zero_addr g) > 0)
     (ensures walk_end g zero_addr + 8 >= heap_size)
   = walk_head g zero_addr;

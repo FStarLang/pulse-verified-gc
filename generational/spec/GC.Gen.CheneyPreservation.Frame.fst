@@ -60,13 +60,9 @@ let promote_object_frame_old_field_derived
     copy_fields_preserves_other minor alloc_res.heap_out obj dst_obj 0 wz field_addr
   end;
   let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
-  let pad_nat = U64.v dst_obj + wz * U64.v mword in
-  assert (U64.v field_addr <> pad_nat);
-  zero_promote_padding_frame copied dst_obj wz field_addr;
-  let padded = zero_promote_padding copied dst_obj wz in
   let tag = minor_tag minor obj in
   minor_tag_bound minor obj;
-  set_promoted_tag_read_frame padded dst_obj tag field_addr
+  set_promoted_tag_read_frame copied dst_obj tag field_addr
 #pop-options
 
 private let aligned_gap (a b: nat)
@@ -117,12 +113,10 @@ let promote_object_frame_old_header_derived
   assert (objects zero_addr copied == objects zero_addr alloc_res.heap_out);
   assert (Seq.mem src (objects zero_addr copied));
   assert (Seq.mem dst_obj (objects zero_addr copied));
-  zero_promote_padding_frame_obj_header copied dst_obj src wz;
-  let padded = zero_promote_padding copied dst_obj wz in
   let tag = minor_tag minor obj in
   minor_tag_bound minor obj;
   hd_address_injective src dst_obj;
-  set_promoted_tag_read_frame padded dst_obj tag hd_src
+  set_promoted_tag_read_frame copied dst_obj tag hd_src
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0"

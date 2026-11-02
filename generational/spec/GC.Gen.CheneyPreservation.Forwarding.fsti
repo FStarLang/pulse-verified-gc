@@ -239,7 +239,7 @@ val promote_object_new_addr_tag
         (let na : obj_addr = res.new_addr in
          U64.v (tag_of_object na res.major_out) == minor_tag minor obj)))
 
-val promote_object_new_addr_wosize_ge
+val promote_object_new_addr_wosize_eq
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (dst: obj_addr)
   : Lemma
@@ -250,7 +250,7 @@ val promote_object_new_addr_wosize_ge
                res.new_addr <> 0UL /\ dst == res.new_addr))
     (ensures
       (let res = promote_object minor major obj fp wz in
-       U64.v (wosize_of_object dst res.major_out) >= wz))
+       U64.v (wosize_of_object dst res.major_out) == wz))
 
 val cheney_forward_normal_preserves_fwd_classified
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)

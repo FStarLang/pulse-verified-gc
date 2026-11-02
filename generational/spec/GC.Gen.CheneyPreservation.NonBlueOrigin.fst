@@ -228,12 +228,10 @@ private let promote_object_header_from_alloc_frame
   copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst 0 wz;
   assert (Seq.mem target (objects zero_addr copied));
   assert (Seq.mem dst (objects zero_addr copied));
-  zero_promote_padding_frame_obj_header copied dst target wz;
-  let padded = zero_promote_padding copied dst wz in
   let tag = minor_tag minor obj in
   minor_tag_bound minor obj;
   hd_address_injective target dst;
-  set_promoted_tag_read_frame padded dst tag hd
+  set_promoted_tag_read_frame copied dst tag hd
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
@@ -252,11 +250,9 @@ let promote_object_nonblue_other_reflects_pre
   copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst 0 wz;
   let copied = copy_fields minor alloc_res.heap_out obj dst 0 wz in
   copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst wz;
-  zero_promote_padding_preserves_objects copied dst wz;
-  let padded = zero_promote_padding copied dst wz in
   let tag = minor_tag minor obj in
   minor_tag_bound minor obj;
-  set_promoted_tag_preserves_objects padded dst tag;
+  set_promoted_tag_preserves_objects copied dst tag;
   assert (Seq.mem target (objects zero_addr alloc_res.heap_out));
   assert (target <> dst);
   promote_object_header_from_alloc_frame minor major obj fp wz target;

@@ -89,7 +89,8 @@ private let update_object_pointers_preserves_density
                     U64.v obj + wz * 8 <= heap_size /\
                     wz == U64.v (wosize_of_object obj major))
           (ensures heap_objects_dense (update_object_pointers major obj wz fwd 0))
-  = let major' = update_object_pointers major obj wz fwd 0 in
+  = reveal_opaque (`%heap_objects_dense) heap_objects_dense;
+    let major' = update_object_pointers major obj wz fwd 0 in
     let field_bounds_helper () : Lemma
       (forall (j:nat). j < wz ==>
         (U64.v obj + j * 8 + 8 <= heap_size /\ (U64.v obj + j * 8) % 8 == 0))
@@ -261,6 +262,7 @@ let update_all_objects_positional_step
     end;
     // Step 6: Density at next position
     if next_nat + 8 < heap_size then begin
+      reveal_opaque (`%heap_objects_dense) heap_objects_dense;
       let next_hp : hp_addr = U64.uint_to_t next_nat in
       next_hp_past_fields pos obj next_hp wz;
       update_object_pointers_preserves_objects_above major obj wz fwd next_hp;
@@ -284,7 +286,8 @@ let update_all_objects_positional_step
 #push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let update_all_objects_positional_step_blue
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
-  = let obj : obj_addr = f_address pos in
+  = reveal_opaque (`%heap_objects_dense) heap_objects_dense;
+    let obj : obj_addr = f_address pos in
     objects_nonempty_head_fits pos major;
     wfh_part1_obj_bound major obj;
     f_address_spec pos;
@@ -314,7 +317,8 @@ let update_all_objects_positional_step_blue
 #push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let update_all_objects_positional_step_no_scan
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
-  = let obj : obj_addr = f_address pos in
+  = reveal_opaque (`%heap_objects_dense) heap_objects_dense;
+    let obj : obj_addr = f_address pos in
     objects_nonempty_head_fits pos major;
     wfh_part1_obj_bound major obj;
     f_address_spec pos;

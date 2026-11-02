@@ -221,7 +221,6 @@ let darken_precondition_after_minor minor major fp roots cap
   CheneyPres.cheney_collect_preserves_collection_heap_shape minor major fp roots;
   GenInv.collection_heap_shape_elim result.mc_minor result.mc_major result.mc_fp;
   GenInv.major_heap_shape_elim result.mc_major result.mc_fp;
-  SweepInv.heap_objects_dense_intro result.mc_major;
   gray_objects_on_stack_of_no_gray result.mc_major;
   empty_bounded_stack_props result.mc_major;
   MarkBoundedInv.bounded_mark_inv_intro result.mc_major Seq.empty cap;

@@ -211,6 +211,13 @@ for a worse model.
 
 ## 5. Phased plan
 
+> **Superseded.**  `blue_fields_closed`, `blue_fields_non_infix` and
+> `blue_blocks_scannable` no longer exist: free (blue) blocks are now
+> unconstrained beyond their free-list link (`GC.Spec.Fields.fields_constrained`
+> excludes them), and `GC.Spec.Coalesce.flush_blue` no longer zeroes them.  The
+> text below records how the clauses were used before that change.
+
+
 Each phase ends at a green `make -k -j24 verify`. Phases 1–3 touch no
 extractable code, so `generational/snapshot/` must stay byte-identical
 throughout; phase 4 is the only one that changes C.
@@ -422,7 +429,7 @@ Everything else in the Cheney/allocator layer was restated in resolved form:
 feeds it) breaks `promote_object_preserves_bfc_close`: it must transport
 `Seq.mem (resolve_object v new_major) (objects new_major)` to
 `Seq.mem (resolve_object v g') (objects g')`, where `g'` is `new_major` after
-`copy_fields`, `zero_promote_padding` and `set_promoted_tag` on the freshly
+`copy_fields` and `set_promoted_tag` on the freshly
 carved block `dst_obj`.  The case `resolve_object v new_major == dst_obj` with
 `v` strictly interior to `dst_obj` is not dischargeable: `dst_obj`'s fields still
 hold stale garbage in `new_major`, so a different blue object could point into

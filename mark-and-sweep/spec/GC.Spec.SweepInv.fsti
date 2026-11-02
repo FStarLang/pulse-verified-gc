@@ -79,11 +79,8 @@ val obj_in_objects_head : (g: heap) ->
 /// Heap density: walk continues at every interior position
 /// ---------------------------------------------------------------------------
 
-/// Abstract: the objects walk never stops early due to oversized wosize.
-/// At every walk position where objects > 0, if the next position has room
-/// for a header (next + 8 < heap_size), the walk continues there and
-/// the head object is in the global objects list.
-val heap_objects_dense : heap -> prop
+/// `heap_objects_dense` (the objects walk never stops early) is defined in
+/// `GC.Spec.Fields`, shared with the generational collector.
 
 /// Introduction lemma for heap_objects_dense: prove it from the universal property
 val heap_objects_dense_intro : (g: heap) ->

@@ -213,9 +213,8 @@ val gen_gc_named_root_in_stack
 ///
 /// This is **not** an independent fact: every conjunct is a consequence of
 /// `GC.Gen.HeapInvariant.collection_heap_shape`, which is what `gen_gc` actually
-/// promises.  `blue_fields_non_infix` is verbatim one of `major_heap_shape`'s
-/// fifteen conjuncts, and `gc_postcondition` -- well-formedness plus "every
-/// object is white or blue" -- follows from three more of them
+/// promises: `gc_postcondition` -- well-formedness plus "every object is white
+/// or blue" -- follows from three of `major_heap_shape`'s conjuncts
 /// (`well_formed_heap`, `no_black_objects`, `no_gray_objects`) by colour
 /// exhaustiveness.  `gen_gc_heap_shape_post_intro` below is that derivation.
 ///
@@ -226,8 +225,7 @@ let gen_gc_heap_shape_post
   (minor_data: minor_heap) (minor_bump: U64.t)
   (final_major: heap) : prop =
   U64.v minor_bump == 0 /\
-  SpecGCPost.gc_postcondition final_major /\
-  SpecFields.blue_fields_non_infix final_major
+  SpecGCPost.gc_postcondition final_major
 
 /// Recover the projection from the invariant `gen_gc` returns.
 val gen_gc_heap_shape_post_intro
@@ -475,7 +473,7 @@ fn gen_gc (gh: gen_heap_t)
       // The minor half is vacuous -- the nursery returned is
       // `GC.Gen.MinorHeap.minor_reset`, i.e. zeroed -- so the content of the
       // claim is `GC.Gen.HeapInvariant.major_heap_shape` of the major heap and
-      // free-list head, all fifteen conjuncts of it, supplied by
+      // free-list head, every conjunct of it, supplied by
       // `GC.Gen.PostCollectionShape.major_gc_restores_major_heap_shape`.
       GenInv.collection_heap_shape minor_st_out s2 (fst res) /\
       gen_gc_reachable_subgraph_isomorphism_post

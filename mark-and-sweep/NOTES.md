@@ -27,10 +27,11 @@ the repository (`mark-and-sweep`, `common`, `generational`) references
 `coalesce_correct` or any of the 8 target lemmas. The coalescing
 correctness proof actually used by the rest of the codebase lives in
 `GC.Spec.SweepCoalesce.*` and `GC.Impl.Coalesce*`. That proof fuses sweep
-and coalesce into one pass and shows the fused pass produces the same
-heap bytes as `coalesce` composed with sweep, using a heap-byte-equality
-argument (`FlushAgree.fst`'s `heaps_word_agree_implies_equal`), not the
-`objects`-membership argument used in this file. This file's proof is
+and coalesce into one pass and shows the fused pass produces the same free
+pointer as `coalesce` composed with sweep, and a heap that agrees with it
+along the object walk except inside free blocks
+(`GC.Spec.HeapAgree.heaps_agree_mod_free`), not the `objects`-membership
+argument used in this file. This file's proof is
 still worth having: `coalesce_correct`'s statement is meaningful on its
 own.
 
@@ -46,11 +47,11 @@ own.
 - `run_words = 2` (`wz = 1`): writes the header at `hd`, and writes
   field 1 (address `hd + 2*mword == fb`) to `fp`. Returns `(g2, fb)`;
   `fb` becomes the new free-list head.
-- `run_words >= 3` (`wz >= 2`): writes the header at `hd`, field 1
-  (`fb`) to `fp`, and zeroes `[fb + mword, fb + wz*mword)`. Returns
-  `(g3, fb)`.
+- `run_words >= 3` (`wz >= 2`): as for `run_words = 2`; the rest of the
+  block, `[fb + mword, fb + wz*mword)`, is left as it was. (It used to be
+  zeroed.)
 
-For `run_words > 0` the union of writes is exactly
+For `run_words > 0` every write lies in
 `[hd, run_end)` where `run_end = hd + run_words*mword`. Nothing outside
 that range is written. This is what the already-proven
 `flush_blue_preserves_outside` states, and it underlies the
@@ -140,11 +141,11 @@ the white-exclusion hypothesis, since `t` is inside `[H, run_end)`), with
 a size such that the real walk, continuing past `t`, reaches a genuine
 white object `y` with `hd_address y >= run_end`.
 
-`flush_blue g first_blue run_words fp` rewrites every word of
-`[H, run_end)`, not just its edges (see the write-set section above). So
-position `t`, strictly inside that range, reads back either zero or the
-unconstrained `fp` value in the flushed heap `g1`, not the real header
-that was there in `g`. The flushed heap's walk from `zero_addr` reaches
+`flush_blue g first_blue run_words fp` rewrites the words at the start of
+`[H, run_end)` (see the write-set section above; it used to rewrite every
+word of the range). So position `t`, inside that range, may read back the
+unconstrained `fp` value (or, formerly, zero) in the flushed heap `g1`,
+not the real header that was there in `g`. The flushed heap's walk from `zero_addr` reaches
 `t` the same way `g`'s walk does (identical below `H`), then reads
 garbage there instead of continuing to `y`. Nothing forces it to recover
 and reach `y` again. `y` is white and a member of `objects zero_addr g`,

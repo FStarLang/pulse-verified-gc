@@ -47,6 +47,7 @@ module Corr = GC.Spec.Correctness
 module SC = GC.Spec.SweepCoalesce
 module SCD = GC.Spec.SweepCoalesce.Defs
 module SpecSweep = GC.Spec.Sweep
+module HA = GC.Spec.HeapAgree
 module Promote = GC.Gen.Promote
 module WB = GC.Gen.WriteBodyLemmas
 module MH = GC.Gen.MinorHeap
@@ -884,21 +885,27 @@ let fused_entry (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
     (requires
       Corr.mark_post h_init h_mark roots fp /\
       well_formed_heap h_mark /\
-      SI.heap_objects_dense h_mark /\
+      heap_objects_dense h_mark /\
       SpecSweep.fp_in_heap fp h_mark /\
       (forall (x: obj_addr). Seq.mem x (objects zero_addr h_mark) ==> ~(is_gray x h_mark)))
     (ensures (let r = SCD.fused_sweep_coalesce h_mark in alloc_entry (fst r) (snd r)))
-  = SC.fused_eq_sweep_coalesce h_mark fp;
+  = SC.fused_agrees_sweep_coalesce h_mark fp;
     Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    coalesce_entry (fst (SpecSweep.sweep h_mark fp))
+    let rc = Coalesce.coalesce (fst (SpecSweep.sweep h_mark fp)) in
+    let f = fst (SCD.fused_sweep_coalesce h_mark) in
+    coalesce_entry (fst (SpecSweep.sweep h_mark fp));
+    HA.agree_wfh_part1 f (fst rc);
+    HA.agree_fl_valid f (fst rc) (snd rc) heap_words;
+    HA.agree_fl_chain_terminates f (fst rc) (snd rc) heap_words;
+    HA.agree_fl_exact f (fst rc) (snd rc)
 #pop-options
 
 /// ---------------------------------------------------------------------------
 /// Promotion keeps the free list complete
 /// ---------------------------------------------------------------------------
 
-/// Promotion writes only inside the promoted object's block: its fields, its
-/// padding (none, now that allocation is exact) and its header.
+/// Promotion writes only inside the promoted object's block: its fields and
+/// its header.
 #push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
 let promote_writes_frame (minor: MH.minor_state) (g1: heap) (obj: U64.t)
   (dst: obj_addr) (wosize: nat{wosize > 0}) (tag: nat{tag < 256}) (w: hp_addr)
@@ -906,14 +913,12 @@ let promote_writes_frame (minor: MH.minor_state) (g1: heap) (obj: U64.t)
                     U64.v dst + wosize * 8 <= heap_size /\
                     (U64.v w + 8 <= U64.v (hd_address dst) \/ U64.v dst + wosize * 8 <= U64.v w))
           (ensures (let copied = WB.copy_fields minor g1 obj dst 0 wosize in
-                    let padded = Promote.zero_promote_padding copied dst wosize in
-                    read_word (Promote.set_promoted_tag padded dst tag) w == read_word g1 w))
+                    read_word (Promote.set_promoted_tag copied dst tag) w == read_word g1 w))
   = hd_address_spec dst;
     let copied = WB.copy_fields minor g1 obj dst 0 wosize in
     WB.copy_fields_preserves_other minor g1 obj (dst <: U64.t) 0 wosize w;
     WB.copy_fields_preserves_other minor g1 obj (dst <: U64.t) 0 wosize (hd_address dst);
     wosize_of_object_spec dst g1; wosize_of_object_spec dst copied;
-    assert (Promote.zero_promote_padding copied dst wosize == copied);
     Promote.set_promoted_tag_read_frame copied dst tag w
 #pop-options
 
@@ -954,7 +959,6 @@ let promote_object_preserves_fl_complete (minor: MH.minor_state) (major: heap) (
     assert (U64.v (hd_address dst) + 8 + wosize * 8 <= heap_size);
     WB.copy_fields_preserves_other minor g1 obj (dst <: U64.t) 0 wosize (hd_address dst);
     wosize_of_object_spec dst copied;
-    assert (Promote.zero_promote_padding copied dst wosize == copied);
     Promote.set_promoted_tag_preserves_objects copied dst tag;
     assert (objects zero_addr res.Promote.major_out == objects zero_addr g1);
     let fr (a: obj_addr) : Lemma

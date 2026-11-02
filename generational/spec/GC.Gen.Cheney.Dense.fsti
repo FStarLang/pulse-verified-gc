@@ -19,15 +19,6 @@ open GC.Gen.Promote
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
-/// alloc_spec preserves heap_objects_dense under well_formed_heap_part1.
-val alloc_spec_preserves_dense_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    heap_objects_dense g /\
-                    AllocLemmas.fl_valid g fp heap_words /\
-                    AllocLemmas.fl_chain_terminates g fp heap_words)
-          (ensures (let r = GC.Spec.Allocator.alloc_spec g fp requested_wz in
-                    heap_objects_dense r.heap_out))
-
 /// promote_object preserves heap_objects_dense.
 val promote_object_preserves_dense
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})

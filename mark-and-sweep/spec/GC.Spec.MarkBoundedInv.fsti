@@ -19,7 +19,7 @@ module SweepInv = GC.Spec.SweepInv
 let bounded_mark_inv (g: heap) (st: seq obj_addr) (cap: nat) : prop =
   well_formed_heap g /\ bounded_stack_props g st /\
   Seq.length (objects zero_addr g) > 0 /\
-  SweepInv.heap_objects_dense g /\
+  heap_objects_dense g /\
   Seq.length st <= cap /\
   cap > 0
 
@@ -27,7 +27,7 @@ let bounded_mark_inv (g: heap) (st: seq obj_addr) (cap: nat) : prop =
 val bounded_mark_inv_intro (g: heap) (st: seq obj_addr) (cap: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
                    Seq.length (objects zero_addr g) > 0 /\
-                   SweepInv.heap_objects_dense g /\
+                   heap_objects_dense g /\
                    Seq.length st <= cap /\ cap > 0)
           (ensures bounded_mark_inv g st cap)
 
@@ -46,7 +46,7 @@ val bounded_mark_inv_elim_objects (g: heap) (st: seq obj_addr) (cap: nat)
 
 val bounded_mark_inv_elim_density (g: heap) (st: seq obj_addr) (cap: nat)
   : Lemma (requires bounded_mark_inv g st cap)
-          (ensures SweepInv.heap_objects_dense g)
+          (ensures heap_objects_dense g)
 
 val bounded_mark_inv_elim_cap (g: heap) (st: seq obj_addr) (cap: nat)
   : Lemma (requires bounded_mark_inv g st cap)

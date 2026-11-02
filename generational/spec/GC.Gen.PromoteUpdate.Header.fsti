@@ -48,11 +48,3 @@ val update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map
   : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
     (ensures well_formed_heap_part4 (update_major_pointers major fwd))
 
-/// Instantiate the blue_fields_closed opaque predicate for a specific object and field
-val blue_fields_closed_inst (major: heap) (src: obj_addr) (j: nat)
-  : Lemma (requires blue_fields_closed major /\
-                    Seq.mem src (objects zero_addr major) /\ is_blue src major /\
-                    j < U64.v (wosize_of_object src major) /\
-                    U64.v src + j * 8 + 8 <= heap_size)
-          (ensures (let v = read_word major (U64.uint_to_t (U64.v src + j * 8)) in
-                    is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr major)))

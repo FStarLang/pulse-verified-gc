@@ -238,6 +238,3 @@ let update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map
 /// ---------------------------------------------------------------------------
 /// Minor collection correctness (strengthened)
 /// ---------------------------------------------------------------------------
-/// Instantiate the blue_fields_closed opaque predicate
-let blue_fields_closed_inst (major: heap) (src: obj_addr) (j: nat)
-  = reveal_opaque (`%blue_fields_closed) blue_fields_closed

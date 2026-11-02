@@ -210,26 +210,6 @@ static void flush_blue_write_link(heap_t heap, uint64_t addr, uint64_t v)
   write_word(heap, addr, v);
 }
 
-static void zero_fields_loop(heap_t heap, uint64_t start_addr, uint64_t n)
-{
-  uint64_t idx = 0ULL;
-  uint64_t addr = start_addr;
-  uint64_t __anf0 = idx;
-  bool cond = __anf0 < n;
-  while (cond)
-  {
-    uint64_t cur_a = addr;
-    uint64_t cur_i = idx;
-    write_word(heap, cur_a, 0ULL);
-    uint64_t next_a = cur_a + 8ULL;
-    uint64_t next_i = cur_i + 1ULL;
-    addr = next_a;
-    idx = next_i;
-    uint64_t __anf0 = idx;
-    cond = __anf0 < n;
-  }
-}
-
 static FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
 flush_blue_impl(heap_t heap, uint64_t fb, uint64_t rw, uint64_t fp)
 {
@@ -242,15 +222,7 @@ flush_blue_impl(heap_t heap, uint64_t fb, uint64_t rw, uint64_t fp)
     if (wz > 0ULL)
     {
       flush_blue_write_link(heap, fb, fp);
-      if (wz > 1ULL)
-      {
-        uint64_t zero_start = fb + 8ULL;
-        uint64_t n_zero = wz - 1ULL;
-        zero_fields_loop(heap, zero_start, n_zero);
-        return ((FStar_Pervasives_Native_tuple2__uint64_t_uint64_t){ ._1 = 0ULL, ._2 = fb });
-      }
-      else
-        return ((FStar_Pervasives_Native_tuple2__uint64_t_uint64_t){ ._1 = 0ULL, ._2 = fb });
+      return ((FStar_Pervasives_Native_tuple2__uint64_t_uint64_t){ ._1 = 0ULL, ._2 = fb });
     }
     else
       return ((FStar_Pervasives_Native_tuple2__uint64_t_uint64_t){ ._1 = 0ULL, ._2 = fp });
@@ -732,14 +704,6 @@ forward_if_minor_infix(
       else
       {
         copy_fields_loop(minor, major, parent, new_obj, wosize1);
-        uint64_t hdr_addr2 = new_obj - 8ULL;
-        uint64_t hdr2 = read_word(major, hdr_addr2);
-        uint64_t actual_wz = getWosize(hdr2);
-        if (actual_wz > wosize1)
-        {
-          uint64_t pad_addr = new_obj + wosize1 * 8ULL;
-          write_word(major, pad_addr, 0ULL);
-        }
         uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
         uint64_t tag = getTag(minor_hdr);
         uint64_t major_hdr_addr = new_obj - 8ULL;
@@ -832,14 +796,6 @@ forward_if_minor(
                 else
                 {
                   copy_fields_loop(minor, major, parent, new_obj, wosize1);
-                  uint64_t hdr_addr3 = new_obj - 8ULL;
-                  uint64_t hdr3 = read_word(major, hdr_addr3);
-                  uint64_t actual_wz = getWosize(hdr3);
-                  if (actual_wz > wosize1)
-                  {
-                    uint64_t pad_addr = new_obj + wosize1 * 8ULL;
-                    write_word(major, pad_addr, 0ULL);
-                  }
                   uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
                   uint64_t tag1 = getTag(minor_hdr);
                   uint64_t major_hdr_addr = new_obj - 8ULL;
@@ -895,14 +851,6 @@ forward_if_minor(
                   else
                   {
                     copy_fields_loop(minor, major, addr, new_obj, wosize1);
-                    uint64_t hdr_addr3 = new_obj - 8ULL;
-                    uint64_t hdr3 = read_word(major, hdr_addr3);
-                    uint64_t actual_wz = getWosize(hdr3);
-                    if (actual_wz > wosize1)
-                    {
-                      uint64_t pad_addr = new_obj + wosize1 * 8ULL;
-                      write_word(major, pad_addr, 0ULL);
-                    }
                     uint64_t minor_hdr = minor_read(minor, addr - 8ULL);
                     uint64_t tag1 = getTag(minor_hdr);
                     uint64_t major_hdr_addr = new_obj - 8ULL;
@@ -1005,14 +953,6 @@ forward_roots(
                   else
                   {
                     copy_fields_loop(minor, major, parent, new_obj, wosize1);
-                    uint64_t hdr_addr3 = new_obj - 8ULL;
-                    uint64_t hdr3 = read_word(major, hdr_addr3);
-                    uint64_t actual_wz = getWosize(hdr3);
-                    if (actual_wz > wosize1)
-                    {
-                      uint64_t pad_addr = new_obj + wosize1 * 8ULL;
-                      write_word(major, pad_addr, 0ULL);
-                    }
                     uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
                     uint64_t tag1 = getTag(minor_hdr);
                     uint64_t major_hdr_addr = new_obj - 8ULL;
@@ -1068,14 +1008,6 @@ forward_roots(
                     else
                     {
                       copy_fields_loop(minor, major, r, new_obj, wosize1);
-                      uint64_t hdr_addr3 = new_obj - 8ULL;
-                      uint64_t hdr3 = read_word(major, hdr_addr3);
-                      uint64_t actual_wz = getWosize(hdr3);
-                      if (actual_wz > wosize1)
-                      {
-                        uint64_t pad_addr = new_obj + wosize1 * 8ULL;
-                        write_word(major, pad_addr, 0ULL);
-                      }
                       uint64_t minor_hdr = minor_read(minor, r - 8ULL);
                       uint64_t tag1 = getTag(minor_hdr);
                       uint64_t major_hdr_addr = new_obj - 8ULL;
@@ -1217,14 +1149,6 @@ scan_loop(
                         else
                         {
                           copy_fields_loop(minor, major, parent, new_obj, wosize2);
-                          uint64_t hdr_addr4 = new_obj - 8ULL;
-                          uint64_t hdr4 = read_word(major, hdr_addr4);
-                          uint64_t actual_wz = getWosize(hdr4);
-                          if (actual_wz > wosize2)
-                          {
-                            uint64_t pad_addr = new_obj + wosize2 * 8ULL;
-                            write_word(major, pad_addr, 0ULL);
-                          }
                           uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
                           uint64_t tag2 = getTag(minor_hdr);
                           uint64_t major_hdr_addr = new_obj - 8ULL;
@@ -1280,14 +1204,6 @@ scan_loop(
                           else
                           {
                             copy_fields_loop(minor, major, child, new_obj, wosize2);
-                            uint64_t hdr_addr4 = new_obj - 8ULL;
-                            uint64_t hdr4 = read_word(major, hdr_addr4);
-                            uint64_t actual_wz = getWosize(hdr4);
-                            if (actual_wz > wosize2)
-                            {
-                              uint64_t pad_addr = new_obj + wosize2 * 8ULL;
-                              write_word(major, pad_addr, 0ULL);
-                            }
                             uint64_t minor_hdr = minor_read(minor, child - 8ULL);
                             uint64_t tag2 = getTag(minor_hdr);
                             uint64_t major_hdr_addr = new_obj - 8ULL;

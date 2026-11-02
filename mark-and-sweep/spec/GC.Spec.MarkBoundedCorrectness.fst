@@ -565,7 +565,7 @@ let mark_step_bounded_gray_becomes_black g st cap x =
 let rec mark_inner_loop_gray_or_black_preserved g st cap fuel x
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
                   Seq.length (objects zero_addr g) > 0 /\
-                  SweepInv.heap_objects_dense g /\
+                  heap_objects_dense g /\
                   Seq.mem x (objects zero_addr g) /\
                   (is_gray x g \/ is_black x g))
         (ensures (let g' = fst (mark_inner_loop g st cap fuel) in
@@ -586,7 +586,7 @@ let rec mark_inner_loop_gray_or_black_preserved g st cap fuel x
 let rec mark_bounded_gray_or_black_preserved g cap fuel x
   : Lemma (requires well_formed_heap g /\
                   Seq.length (objects zero_addr g) > 0 /\
-                  SweepInv.heap_objects_dense g /\
+                  heap_objects_dense g /\
                   Seq.mem x (objects zero_addr g) /\
                   (is_gray x g \/ is_black x g))
         (ensures (let g' = mark_bounded g cap fuel in
@@ -716,7 +716,7 @@ val push_children_bounded_stack_reachable :
              is_vertex_set roots' /\ subset_vertices roots' graph.vertices /\
              Seq.mem obj (reachable_set graph roots') /\
              (forall y. Seq.mem y st ==> Seq.mem y (reachable_set graph roots')) /\
-             ~(is_no_scan obj g) /\ HeapGraph.object_fits_in_heap obj g)
+             ~(is_no_scan obj g) /\ ~(is_blue obj g) /\ HeapGraph.object_fits_in_heap obj g)
     (ensures (forall y. Seq.mem y (snd (push_children_bounded g st obj i ws cap)) ==>
                         Seq.mem y (reachable_set graph roots')))
     (decreases (U64.v ws - U64.v i))
@@ -786,7 +786,7 @@ val push_children_newly_gray_is_child :
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) ->
   Lemma
     (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
-             ~(is_no_scan obj g) /\
+             ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
              ws == wosize_of_object obj g /\
              U64.v (wosize_of_object obj g) < pow2 54 /\
              graph_wf (create_graph g) /\
@@ -916,7 +916,7 @@ private let mark_step_bounded_preserves_gbr_gen
   : Lemma
     (requires well_formed_heap g /\ bounded_stack_props g st /\
              Seq.length (objects zero_addr g) > 0 /\
-             SweepInv.heap_objects_dense g /\
+             heap_objects_dense g /\
              mark_color_inv h_init g /\
              graph == create_graph h_init /\ graph_wf graph /\
              is_vertex_set roots' /\ subset_vertices roots' graph.vertices /\
@@ -1000,7 +1000,7 @@ val mark_inner_loop_gray_or_black_backward :
   Lemma
     (requires well_formed_heap g /\ bounded_stack_props g st /\
              Seq.length (objects zero_addr g) > 0 /\
-             SweepInv.heap_objects_dense g /\
+             heap_objects_dense g /\
              mark_color_inv h_init g /\
              graph == create_graph h_init /\ graph_wf graph /\
              is_vertex_set roots' /\ subset_vertices roots' graph.vertices /\
@@ -1074,7 +1074,7 @@ val mark_bounded_backward_inv :
   Lemma
     (requires well_formed_heap g /\
              Seq.length (objects zero_addr g) > 0 /\
-             SweepInv.heap_objects_dense g /\
+             heap_objects_dense g /\
              mark_color_inv h_init g /\
              graph == create_graph h_init /\ graph_wf graph /\
              is_vertex_set roots' /\ subset_vertices roots' graph.vertices /\
@@ -1115,7 +1115,7 @@ let mark_bounded_black_is_reachable
     (requires
       well_formed_heap h_init /\
       Seq.length (objects zero_addr h_init) > 0 /\
-      SweepInv.heap_objects_dense h_init /\
+      heap_objects_dense h_init /\
       root_props h_init roots /\
       no_black_objects h_init /\
       mark_color_inv h_init h_init /\
@@ -1271,7 +1271,7 @@ let mark_post_from_bounded_mark
     // From mark_color_inv
     assert (well_formed_heap h_mark);
     assert (objects zero_addr h_mark == objects zero_addr h_init);
-    assert (SweepInv.heap_objects_dense h_mark);
+    assert (heap_objects_dense h_mark);
     assert (Seq.length (objects zero_addr h_mark) > 0);
     assert (no_pointer_to_blue h_mark);
     assert (tri_color_invariant h_mark);

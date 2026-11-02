@@ -30,8 +30,8 @@ module GenInv = GC.Gen.HeapInvariant
 ///
 /// Given a heap satisfying the shape invariant and any mark output for it, the
 /// heap and free pointer produced by `coalesce (sweep ...)` -- which is what
-/// `GC.Impl.FusedSweepCoalesce.fused_sweep_coalesce` computes -- satisfy the
-/// shape invariant again.
+/// `GC.Impl.FusedSweepCoalesce.fused_sweep_coalesce` computes, up to the bodies
+/// of free blocks -- satisfy the shape invariant again.
 ///
 /// This is what makes the generational invariant *inductive* rather than merely
 /// assumed: composed with `collection_heap_shape_after_minor_reset` it gives

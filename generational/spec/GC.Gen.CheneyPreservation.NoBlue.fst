@@ -107,7 +107,9 @@ let cheney_promote_preserves_no_pointer_to_blue_from_shape
         Fields.cheney_promote_fwd_target_no_scan_iff_minor_tag minor major fp roots x;
         assert (minor_tag minor x < 251);
         minor_scan_wosize_cases minor x;
-        if j < minor_scan_wosize minor x then begin
+        // Promotion is size-exact, so `j` lies inside the copied scan window.
+        assert (j < minor_scan_wosize minor x);
+        begin
           Fields.cheney_promote_fwd_target_fields_match minor major fp roots x j;
           assert (read_word prom.major_final field_addr ==
                   minor_read_field minor x j);
@@ -127,10 +129,6 @@ let cheney_promote_preserves_no_pointer_to_blue_from_shape
           assert (well_formed_heap_part4 prom.major_final);
           assert (~(is_infix dst prom.major_final));
           resolve_non_infix dst prom.major_final
-        end else begin
-          Fields.cheney_promote_fwd_target_extra_field_not_pointer minor major fp roots x j;
-          assert (~(is_pointer_field field_val));
-          assert False
         end
       in
       FStar.Classical.exists_elim goal #U64.t

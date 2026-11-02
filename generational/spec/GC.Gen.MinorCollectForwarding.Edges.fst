@@ -308,6 +308,7 @@ let combined_reachable_major_edge_forwarded
     assert (read_word updated field_addr == old_raw);
     PromUpdate.update_major_pointers_preserves_header prom.major_final prom.fwd_map src;
     assert (read_word updated (hd_address src) == read_word prom.major_final (hd_address src));
+    color_of_header_eq src major updated;
     wosize_of_object_spec src updated;
     assert (wosize_of_object src updated == wosize_of_object src major);
     is_no_scan_spec src updated;
@@ -409,6 +410,7 @@ let combined_major_minor_edge_forwarded
     cheney_promote_preserves_old_major_field_context minor major fp roots src i;
     PromUpdate.update_major_pointers_preserves_header prom.major_final prom.fwd_map src;
     header_eq_preserves_wosize_no_scan prom.major_final updated src;
+    color_of_header_eq src prom.major_final updated;
     CheneyPres.cheney_collect_preserves_wfh_from_shape minor major fp roots;
     CheneyCorr.cheney_collect_preserves_objects minor major fp roots;
     assert (Seq.mem src (objects zero_addr updated));
@@ -486,6 +488,13 @@ let promoted_minor_major_edge_forwarded
     SpecBase.is_val_addr_spec dst;
     RBridge.aligned_gt_ge_plus_mword (U64.v dst) (U64.v zero_addr);
     assert (HeapGraph.is_pointer_field dst);
+    // the promoted copy is live
+    GenInv.minor_heap_shape_elim minor;
+    CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
+    wf_objects_non_infix res.mc_major fwd_src_obj;
+    resolve_object_locality fwd_src_obj prom.major_final res.mc_major;
+    SpecBase.is_val_addr_spec fwd_src;
+    color_of_header_eq fwd_src_obj prom.major_final res.mc_major;
     heap_field_points_to_graph_edge res.mc_major fwd_src_obj dst j;
     wf_objects_non_infix res.mc_major (dst <: obj_addr);
     resolve_non_infix (dst <: obj_addr) res.mc_major;
@@ -564,6 +573,12 @@ let promoted_minor_minor_edge_forwarded
     assert (resolve_minor minor ov == dst);
     MCFH.fwd_image_resolves minor major fp roots ov;
     assert (HeapGraph.is_pointer_field (prom.fwd_map ov));
+    // the promoted copy is live
+    CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
+    wf_objects_non_infix res.mc_major fwd_src_obj;
+    resolve_object_locality fwd_src_obj prom.major_final res.mc_major;
+    SpecBase.is_val_addr_spec fwd_src;
+    color_of_header_eq fwd_src_obj prom.major_final res.mc_major;
     heap_field_points_to_graph_edge res.mc_major fwd_src_obj (prom.fwd_map ov) j;
     assert (resolve_object ((prom.fwd_map ov) <: obj_addr) res.mc_major == prom.fwd_map dst)
 #pop-options

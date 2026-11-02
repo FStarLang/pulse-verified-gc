@@ -26,7 +26,7 @@ module Correctness = GC.Spec.Correctness
 let mark_color_inv (h_init h_cur: heap) : prop =
   well_formed_heap h_cur /\
   Seq.length (objects zero_addr h_cur) > 0 /\
-  SweepInv.heap_objects_dense h_cur /\
+  heap_objects_dense h_cur /\
   objects zero_addr h_cur == objects zero_addr h_init /\
   tri_color_invariant h_cur /\
   no_pointer_to_blue h_cur /\
@@ -150,7 +150,7 @@ val mark_inner_loop_gray_or_black_preserved :
   (g: heap) -> (st: seq obj_addr) -> (cap: nat) -> (fuel: nat) -> (x: obj_addr) ->
   Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
                   Seq.length (objects zero_addr g) > 0 /\
-                  SweepInv.heap_objects_dense g /\
+                  heap_objects_dense g /\
                   Seq.mem x (objects zero_addr g) /\
                   (is_gray x g \/ is_black x g))
         (ensures (let g' = fst (mark_inner_loop g st cap fuel) in
@@ -160,7 +160,7 @@ val mark_bounded_gray_or_black_preserved :
   (g: heap) -> (cap: nat{cap > 0}) -> (fuel: nat) -> (x: obj_addr) ->
   Lemma (requires well_formed_heap g /\
                   Seq.length (objects zero_addr g) > 0 /\
-                  SweepInv.heap_objects_dense g /\
+                  heap_objects_dense g /\
                   Seq.mem x (objects zero_addr g) /\
                   (is_gray x g \/ is_black x g))
         (ensures (let g' = mark_bounded g cap fuel in
@@ -177,7 +177,7 @@ val mark_bounded_reachable_is_black
     (requires
       well_formed_heap h_init /\
       Seq.length (objects zero_addr h_init) > 0 /\
-      SweepInv.heap_objects_dense h_init /\
+      heap_objects_dense h_init /\
       root_props h_init roots /\
       mark_color_inv h_init h_init /\
       fuel >= count_non_black h_init /\
@@ -196,7 +196,7 @@ val mark_color_inv_init (h_init: heap)
   : Lemma
     (requires well_formed_heap h_init /\
              Seq.length (objects zero_addr h_init) > 0 /\
-             SweepInv.heap_objects_dense h_init /\
+             heap_objects_dense h_init /\
              no_black_objects h_init /\
              no_pointer_to_blue h_init)
     (ensures mark_color_inv h_init h_init)
@@ -208,7 +208,7 @@ val mark_bounded_satisfies_mark_post
     (requires
       well_formed_heap h_init /\
       Seq.length (objects zero_addr h_init) > 0 /\
-      SweepInv.heap_objects_dense h_init /\
+      heap_objects_dense h_init /\
       root_props h_init roots /\
       GC.Spec.Sweep.fp_in_heap fp h_init /\
       no_black_objects h_init /\
@@ -260,7 +260,7 @@ val mark_step_bounded_preserves_gbr
   : Lemma
     (requires well_formed_heap g /\ bounded_stack_props g st /\
              Seq.length (objects zero_addr g) > 0 /\
-             SweepInv.heap_objects_dense g /\
+             heap_objects_dense g /\
              mark_color_inv h_init g /\
              gray_black_reachable h_init g roots /\
              (forall x. Seq.mem x st ==> Seq.mem x (reachable_set (create_graph h_init) (HeapGraph.coerce_to_vertex_list roots))))
