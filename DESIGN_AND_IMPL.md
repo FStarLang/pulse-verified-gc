@@ -912,7 +912,10 @@ The end of the sweep is the stop-the-world shape again
 facts from the ascending list, no black or grey object, and with nothing
 pending the cross-generation condition is the idle one), so `gen_gc` or
 `gen_gc_start` can follow. A full collection requested mid-sweep calls
-`finish_sweep` first (D4).
+`finish_sweep` first (D4). `GC.SPOT.IncrementalCycle` checks that the
+contracts compose: from `gen_gc`'s precondition alone, `gen_gc_start`, a
+slice and `finish_sweep` end idle in `collection_heap_shape`, with nothing
+supplied in between.
 
 **What the bridge supplies** (trusted, documented in the interface). Each
 entry point is a separate C call, so `gc_state`'s pure half is re-supplied at
