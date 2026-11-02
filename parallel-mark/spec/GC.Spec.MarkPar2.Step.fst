@@ -236,7 +236,8 @@ let scan_unscanned (k: cfg) (g: heap) (s s0: state) (i: nat) (sc: M1.scanning)
   : Lemma (requires unscanned k s y (U64.v j) /\ own k sc.M1.sobj == i /\ pc_of s i == Scan sc /\
                     pc_of s0 i == next_pc sc /\ sc.M1.sws == wosize_of_object sc.M1.sobj g /\
                     (forall (j: nat). j <> i ==> pc_of s0 j == pc_of s j) /\
-                    I1.is_field g y j /\ ~(y == sc.M1.sobj /\ U64.v j == U64.v sc.M1.snext))
+                    (y == sc.M1.sobj ==> U64.v j <= U64.v sc.M1.sws) /\
+                    ~(y == sc.M1.sobj /\ U64.v j == U64.v sc.M1.snext))
           (ensures unscanned k s0 y (U64.v j))
   = ()
 
