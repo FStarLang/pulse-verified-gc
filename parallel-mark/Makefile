@@ -1,7 +1,8 @@
-# Parallel mark, Stage 1 (see docs/parallel-mark-phase1.md).
+# Parallel mark: Stages 1-2 (docs/parallel-mark-phase1.md) and Stage 3, the
+# model of docs/parallel-mark-design.md (GC.Spec.MarkPar2).
 #
-# Kept out of the root build on purpose: GC.Spec.MarkPar's theorems are
-# stated but closed with `admit` until they are proved.
+# Kept out of the root build.  GC.Spec.MarkPar.mark_par_terminates is still
+# admitted (Stage 2); Stage 3 has no admit.
 #
 #   make verify     Verify the parallel-mark spec modules (Stage 1-2 and 3)
 #   make test       Extract to OCaml (Custard) and run random interleavings
@@ -47,7 +48,7 @@ SPEC2 = spec/GC.Spec.MarkPar2.Model.fst spec/GC.Spec.MarkPar2.Mutants.fst \
   spec/GC.Spec.MarkPar2.Act.fst spec/GC.Spec.MarkPar2.Step.fst spec/GC.Spec.MarkPar2.Fix.fst \
   spec/GC.Spec.MarkPar2.Main.fst spec/GC.Spec.MarkPar2.Init.fst spec/GC.Spec.MarkPar2.End.fst \
   spec/GC.Spec.MarkPar2.Count.fst spec/GC.Spec.MarkPar2.Foot.fst spec/GC.Spec.MarkPar2.Weight.fst \
-  spec/GC.Spec.MarkPar2.Meas.fst spec/GC.Spec.MarkPar2.Term.fst
+  spec/GC.Spec.MarkPar2.Meas.fst spec/GC.Spec.MarkPar2.Term.fst spec/GC.Spec.MarkPar2.fst
 
 .PHONY: verify test test2 check clean
 verify:
