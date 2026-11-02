@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Build the Stage 1 test driver from the Custard-extracted OCaml.
 #
-#   build.sh <extracted-ml-dir> <fstar --locate_lib>
+#   build.sh <extracted-ml-dir> <fstar --locate_lib> [driver]
+#
+# The driver is test/<driver>.ml, mark_par_test by default.
 #
 # The F* OCaml runtime shipped with ./fstar was compiled with OCaml 5.3, so
 # its .cmx files cannot be linked here (OCaml 4.14, opam switch fstar-gc).
@@ -13,6 +15,7 @@ set -euo pipefail
 ML=$(cd "$1" && pwd)
 RT_ROOT=$2/lib
 HERE=$(cd "$(dirname "$0")" && pwd)
+DRIVER=${3:-mark_par_test}
 B=$(cd "$HERE/.." && pwd)/_build
 OBJ=$B/obj
 rm -rf "$OBJ"; mkdir -p "$OBJ"
@@ -41,7 +44,7 @@ fi
 
 # Runtime modules reachable from the extracted code.
 seen=" "
-todo=$(for f in "$OBJ"/*.ml "$HERE/mark_par_test.ml"; do deps_of "$f"; done | sort -u)
+todo=$(for f in "$OBJ"/*.ml "$HERE/$DRIVER.ml"; do deps_of "$f"; done | sort -u)
 while [ -n "$todo" ]; do
   next=""
   for m in $todo; do
@@ -55,9 +58,11 @@ while [ -n "$todo" ]; do
   todo=$next
 done
 
-cp "$HERE/mark_par_test.ml" "$OBJ/"
+cp "$HERE/$DRIVER.ml" "$OBJ/"
+# The Stage 3 test speeds up two F* library modules (see fast_rt.sh).
+if [ "$DRIVER" = mark_par2_test ]; then "$HERE/fast_rt.sh" "$OBJ"; fi
 cd "$OBJ"
 order=$(ocamlfind ocamldep -sort *.ml)
-ocamlfind ocamlopt -O3 -package $PKGS -linkpkg -w -a -g $order -o "$B/mark_par_test" 2>/dev/null \
-  || ocamlfind ocamlopt -package $PKGS -linkpkg -w -a -g $order -o "$B/mark_par_test"
-echo "built $B/mark_par_test"
+ocamlfind ocamlopt -O3 -package $PKGS -linkpkg -w -a -g $order -o "$B/$DRIVER" 2>/dev/null \
+  || ocamlfind ocamlopt -package $PKGS -linkpkg -w -a -g $order -o "$B/$DRIVER"
+echo "built $B/$DRIVER"

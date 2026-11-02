@@ -3,9 +3,11 @@
 # Kept out of the root build on purpose: GC.Spec.MarkPar's theorems are
 # stated but closed with `admit` until they are proved.
 #
-#   make verify     Verify the parallel-mark spec modules
+#   make verify     Verify the parallel-mark spec modules (Stage 1-2 and 3)
 #   make test       Extract to OCaml (Custard) and run random interleavings
-#                   against the sequential mark
+#                   against the sequential mark (Stage 1 model)
+#   make test2      The same for the Stage 3 model, GC.Spec.MarkPar2
+#                   (docs/parallel-mark-design.md)
 #   make clean
 
 ROOT       := $(abspath ..)
@@ -39,9 +41,13 @@ FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 
 SPEC = spec/GC.Spec.MarkPar.Exec.fst spec/GC.Spec.MarkPar.Model.fst spec/GC.Spec.MarkPar.Recolour.fst spec/GC.Spec.MarkPar.Field.fst spec/GC.Spec.MarkPar.Own.fst spec/GC.Spec.MarkPar.Roots.fst spec/GC.Spec.MarkPar.Inv.fst spec/GC.Spec.MarkPar.End.fst spec/GC.Spec.MarkPar.Seq.fst spec/GC.Spec.MarkPar.fst spec/GC.Spec.MarkPar.Mutants.fst spec/GC.Spec.MarkPar.Witness.fst spec/GC.Spec.MarkPar.WitnessRun.fst spec/GC.Spec.MarkPar.Vacuity.fst spec/GC.Spec.MarkPar.VacuityMark.fst
 
-.PHONY: verify test check clean
+# Stage 3, in dependency order.
+SPEC2 = spec/GC.Spec.MarkPar2.Model.fst spec/GC.Spec.MarkPar2.Mutants.fst \
+  spec/GC.Spec.MarkPar2.Lists.fst spec/GC.Spec.MarkPar2.Inv.fst spec/GC.Spec.MarkPar2.Upd.fst
+
+.PHONY: verify test test2 check clean
 verify:
-	for f in $(SPEC); do $(FSTAR) $$f || exit 1; done
+	for f in $(SPEC) $(SPEC2); do $(FSTAR) $$f || exit 1; done
 
 # One module: gmake check F=spec/GC.Spec.MarkPar.Recolour.fst
 check:
@@ -75,6 +81,30 @@ test: verify
 	$(FSTAR) $(CUSTARD) --odir $(OUT) spec/GC.Spec.MarkPar.Mutants.fst
 	./test/build.sh $(OUT) $(FSTAR_LIB)
 	./test/run.sh
+
+CUSTARD2 = \
+  --codegen OCaml --custard_split \
+  --custard_no_unfold GC.Spec.Base.heap \
+  --custard_entry_module GC.Spec.MarkPar.Model \
+  --custard_entry_module GC.Spec.MarkPar.Exec \
+  --custard_entry_module GC.Spec.MarkPar2.Model \
+  --custard_entry_module GC.Spec.MarkPar2.Mutants \
+  --custard_entry GC.Spec.Base.heap_size \
+  --custard_entry GC.Spec.Heap.read_word \
+  --custard_entry GC.Spec.Object.makeHeader \
+  --custard_entry GC.Spec.Object.getTag \
+  --custard_entry GC.Spec.Object.getWosize \
+  --custard_entry GC.Spec.Object.getColor \
+  --custard_entry GC.Spec.Fields.is_pointer_field \
+  --custard_entry FStar.Seq.Base.seq_of_list \
+  --custard_entry FStar.Seq.Base.seq_to_list
+OUT2 = _build/ml2
+
+test2: verify
+	rm -rf $(OUT2); mkdir -p $(OUT2)
+	$(FSTAR) $(CUSTARD2) --odir $(OUT2) spec/GC.Spec.MarkPar2.Mutants.fst
+	./test/build.sh $(OUT2) $(FSTAR_LIB) mark_par2_test
+	./test/run2.sh
 
 clean:
 	rm -rf _build
