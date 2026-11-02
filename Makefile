@@ -110,7 +110,9 @@ ROOT_MODULES = \
   generational/spec/GC.Gen.SweepPhase.Safety.fst \
   mark-and-sweep/spec/GC.Spec.SweepPhase.Intrinsic.End.fst \
   generational/impl/GC.Gen.Impl.fsti \
-  generational/impl/GC.Gen.Impl.fst
+  generational/impl/GC.Gen.Impl.fst \
+  generational/impl/GC.Gen.Impl.Incremental.fsti \
+  generational/impl/GC.Gen.Impl.Incremental.fst
 
 # All sources (for pattern rules and clean targets)
 COMMON_SRC = $(wildcard common/spec/*.fst common/spec/*.fsti \
@@ -351,7 +353,7 @@ DEPGRAPH_OCAMLPATH ?= $(FSTAR_HOME)/lib
 DEPGRAPH_IFACE_ROOTS = \
   GC.Impl GC.Impl.Allocator GC.Impl.MarkBounded \
   GC.Gen.Impl GC.Gen.Impl.Cheney GC.Gen.Impl.MinorHeap GC.Gen.Impl.UpdatePtrs \
-  GC.Gen.Impl.Promote
+  GC.Gen.Impl.Promote GC.Gen.Impl.Incremental
 
 # The top-level theorems.  These are results, so nothing refers to them; they
 # have to be named explicitly or the whole proof development looks dead.

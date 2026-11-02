@@ -739,12 +739,14 @@ address, an exact fit unlinks the block from its unique predecessor), and so
 do promotion and the pointer rewrite (`GC.Gen.FreeListAscending`). First-fit
 on an ascending list prefers low addresses (OCaml's allocation policy 1).
 
-### The sweep phase: the program between sweep steps (incremental sweep, in progress)
+### The sweep phase: the program between sweep steps (incremental sweep)
 
 An incremental sweep runs the program between slices of `sweep_step`s
 (`incremental-sweep-plan.md`). The phase is part of the collector's state:
-`gen_heap_t.phase_ref`, which the Pulse allocator reads (above) and the bridge
-keeps `Idle` until the Pulse slices exist.
+`gen_heap_t.phase_ref`, which the Pulse allocator reads (above) and the
+incremental entry points (below) write. The bridge keeps it `Idle` -- it runs
+the stop-the-world `gen_gc` only -- until its incremental mode
+(`VERGC_SWEEP=incremental`) calls them.
 
 **Allocation at the sweep's phase** (`GC.Spec.Allocator.Cursor.alloc_phase`).
 At `Sweeping st` the allocator colours by position: an object allocated in
@@ -848,9 +850,9 @@ object (`reachable_not_pending`; over the nursery's combined graph
 it never frees a reachable one and leaves its size, tag and fields alone
 (`step_keeps_reachable`; `steps_keep_reachable` for a slice), and a minor
 collection in between keeps every not-freed object not freed
-(`minor_keeps_not_freed`) and the pending set (step C).  The slice lemmas the
-Pulse sweep will need are in `Intrinsic`: `sweep_phase_steps` (and `_stw`), and
-`sweep_steps_done` (a budget of one step per heap word finishes the sweep).
+(`minor_keeps_not_freed`) and the pending set (step C).  The slice lemmas are
+in `Intrinsic`: `sweep_phase_steps` (and `_stw`), and `sweep_steps_done` (a
+budget of one step per heap word finishes the sweep).
 
 `GC.SPOT.SweepPhasePending` exercises all of it on a concrete heap: from the
 two-block heap of `GC.SPOT.ConcreteMajorGen` it sweeps everything into one free
@@ -861,6 +863,74 @@ next one, and takes two steps: the free block at the start absorbs `G`.  Then
 lies inside the merged free block), and the heap is in the sweep phase and in
 `collection_shape_except` for that non-empty pending set; the minor collection
 at the sweep's phase keeps the sweep phase with `P` still pending.
+
+#### The incremental entry points
+
+`GC.Gen.Impl.Incremental` is the Pulse side. The stop-the-world `gen_gc` is
+untouched (same code, contract and C); the incremental mode uses five new
+entry points, all extracted into `GC_Gen_Impl.{c,h}`.
+
+**The collector's state** is one predicate, indexed by the phase
+(`GC.Gen.Incremental.phase_shape`):
+
+```fstar
+let gc_state gh d b s fp ph : slprop =
+  is_gen_heap gh d b s fp ** gen_phase gh ph **
+  pure (GI.phase_shape ({ data = d; bump = b }) s fp ph)
+
+phase_shape minor g fp Idle         = collection_heap_shape minor g fp
+phase_shape minor g fp (Sweeping st) =
+  sweep_phase_inv g fp st /\ minor_heap_shape minor /\
+  minor_major_fields_not_freed minor g (pending g st)
+```
+
+(`phase_shape` is opaque, with `phase_shape_idle` / `phase_shape_sweeping`
+to open it.) The objects pending at a phase are `phase_pending g ph`:
+`no_pending` idle, `pending g st` mid-sweep.
+
+**A slice** is whole sweep steps until the swept blocks -- headers included --
+add up to at least the budget in words, or the sweep is finished
+(`GC.Spec.SweepPhase.Slice.sweep_slice`; it overshoots by at most one block,
+as 4.14's `sweep_slice`). A slice is some number of steps (`slice_is_steps`),
+so it keeps the sweep phase (`sweep_slice_phase`), and a budget of more words
+than the heap has finishes it. `phase_slice g fp ph budget` is the slice at
+the phase: nothing idle, and idle again once the cursor reaches the end. The
+Pulse loop is `GC.Impl.FusedSweepCoalesce.sweep_slice_impl`, over the same
+`sweep_step_impl` the stop-the-world pass runs, with step safety from
+`Intrinsic.sweep_phase_ready`.
+
+| entry point | requires | ensures |
+|---|---|---|
+| `gen_gc_start gh roots .. slots .. st` | `gc_state .. Idle`, and `gen_gc`'s argument facts (stack budget, zeroed forwarding array, remembered set sound/covering/distinct, remembered targets among the roots, roots valid) | `gen_gc`'s minor collection, root darkening and marking; the heap is the marked one (`mark_post` of the darkened heap), the phase `Sweeping sweep_start`, `gc_state` at it; the rewritten roots and the minor isomorphism as `gen_gc`'s; out of memory: the major phase skipped, still `Idle` |
+| `sweep_slice gh budget` | `gc_state .. ph` | `(s2, fp2, ph2) == phase_slice s fp ph budget`, `gc_state` at `ph2`; returns `Idle? ph2` |
+| `finish_sweep gh` | `gc_state .. ph` | a slice with budget `2^64 - 1`: `gc_state .. Idle`, `collection_heap_shape` |
+| `minor_collect_any_phase gh roots .. slots ..` | `gc_state .. ph`, `minor_slots_ok ph` (the remembered set and roots for `phase_pending s ph`) | `minor_collect_full`'s contract at the phase for `phase_pending s ph`, `gc_state` at the phase it leaves (idle stays idle; mid-sweep the cursor and pending set are kept, `GI.minor_keeps_phase_shape`) |
+| `gen_alloc_major gh wosize tag` | the heap and phase, `wosize >= 1` | `AC.alloc_phase`'s result; mid-sweep with `gc_state` and `tag <> infix_tag`: the phase moved by the allocation, and either nothing changed or the object is `allocated` and `fresh_ok` |
+
+The end of the sweep is the stop-the-world shape again
+(`GI.sweep_end_shape`: `sweep_phase_end`'s swept-clean heap, the free-list
+facts from the ascending list, no black or grey object, and with nothing
+pending the cross-generation condition is the idle one), so `gen_gc` or
+`gen_gc_start` can follow. A full collection requested mid-sweep calls
+`finish_sweep` first (D4).
+
+**What the bridge supplies** (trusted, documented in the interface). Each
+entry point is a separate C call, so `gc_state`'s pure half is re-supplied at
+every call, as `collection_heap_shape` is for `gen_gc`. It holds because every
+collector call returns it and the program's events in between keep it:
+
+- a block the program allocates mid-sweep is fresh; the runtime initialises
+  every field with a storable value (an integer, or a pointer to a not-freed,
+  not-pending object -- a reachable one) before the next collector call
+  (`fresh_write`, `fresh_close`);
+- every field write is a `program_write`, and the write barrier records every
+  major field that gets a nursery pointer;
+- nursery allocation keeps the nursery's shape and the cross-generation
+  condition for the pending set;
+- `minor_slots_ok`: the forwarding array zeroed, the remembered set sound and
+  covering except the pending objects, distinct slots, the remembered targets
+  among the roots, the roots valid and not pending;
+- only the collector writes `phase_ref`.
 
 ### Bounded mark stack
 

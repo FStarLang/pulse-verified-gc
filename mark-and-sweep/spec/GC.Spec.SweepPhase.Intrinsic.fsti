@@ -404,3 +404,19 @@ val sweep_phase_steps_stw (g0 g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
 val sweep_steps_done (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
   : Lemma (requires sweep_phase_inv g fp st /\ k * 8 >= heap_size - U64.v st.cursor)
           (ensures (let (g', fp', st') = sweep_steps g fp st k in sweep_done st'))
+
+/// What a step needs to be safe to run on the heap itself (the Pulse step
+/// reads the header at the cursor, `swept_tail`'s and `last_fragment`'s
+/// blocks, and writes a merged header): the facts the stop-the-world
+/// invariant gives (`GC.Spec.FusedSweep.Inv.sweep_inv_facts`), from the sweep
+/// phase.
+val sweep_phase_ready (g: heap) (fp: U64.t) (st: sweep_state)
+  : Lemma (requires sweep_phase_inv g fp st /\ U64.v st.cursor + 8 < heap_size)
+          (ensures can_sweep g st /\
+                   (st.swept_tail == 0UL \/ is_obj st.swept_tail) /\
+                   (st.last_fragment == 0UL \/ is_obj st.last_fragment) /\
+                   (prev_free g st ==>
+                     (let p = if st.last_fragment <> 0UL then st.last_fragment else st.swept_tail in
+                      is_obj p /\
+                      wosize_at g p + U64.v (getWosize (read_word g (st.cursor <: hp_addr))) + 1
+                        < pow2 54)))

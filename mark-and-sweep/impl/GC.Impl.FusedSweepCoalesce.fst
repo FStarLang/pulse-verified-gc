@@ -23,12 +23,12 @@ module Header = GC.Lib.Header
 module FS = GC.Spec.FusedSweep
 module FSI = GC.Spec.FusedSweep.Inv
 module FStep = GC.Spec.FusedSweep.Step
+module SPI = GC.Spec.SweepPhase.Intrinsic
+module SL = GC.Spec.SweepPhase.Slice
 
 /// ---------------------------------------------------------------------------
 /// Pure helpers
 /// ---------------------------------------------------------------------------
-
-let mk_st (c t f: U64.t) : FS.sweep_state = { FS.cursor = c; FS.swept_tail = t; FS.last_fragment = f }
 
 /// The implementation's header constructor is the spec's.
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
@@ -231,5 +231,85 @@ fn fused_sweep_coalesce (heap: heap_t) (fp: U64.t)
   with s. assert (is_heap heap s);
   stop_facts 's s !head c t f;
   !head
+}
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// A slice of the incremental sweep
+/// ---------------------------------------------------------------------------
+
+/// What the slice's loop needs at a step, from the sweep phase.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+let slice_step_facts (g: heap_state) (fp: U64.t) (c t f c0: U64.t) (budget: nat)
+  : Lemma (requires SPI.sweep_phase_inv g fp (mk_st c t f) /\ U64.v c + 8 < heap_size /\
+                    U64.v c0 <= U64.v c /\ (U64.v c - U64.v c0) / 8 < budget)
+          (ensures step_ready g (mk_st c t f) /\
+                   (let (g', fp', st') = step_total g fp (mk_st c t f) in
+                    SPI.sweep_phase_inv g' fp' st' /\
+                    U64.v st'.FS.cursor > U64.v c /\ U64.v st'.FS.cursor <= heap_size /\
+                    SL.slice_from g fp (mk_st c t f) c0 budget == SL.slice_from g' fp' st' c0 budget))
+  = SPI.sweep_phase_ready g fp (mk_st c t f);
+    SPI.sweep_phase_step g fp (mk_st c t f);
+    SL.slice_from_unfold g fp (mk_st c t f) c0 budget
+#pop-options
+
+/// The slice stops when the sweep is finished or the budget is spent.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+let slice_stop_facts (g: heap_state) (fp: U64.t) (c t f c0: U64.t) (budget: nat)
+  : Lemma (requires U64.v c0 <= U64.v c /\
+                    (U64.v c + 8 >= heap_size \/ (U64.v c - U64.v c0) / 8 >= budget))
+          (ensures SL.slice_from g fp (mk_st c t f) c0 budget == (g, fp, mk_st c t f))
+  = SL.slice_from_unfold g fp (mk_st c t f) c0 budget
+#pop-options
+
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
+fn sweep_slice_impl (heap: heap_t) (c0 t0 f0 fp budget: U64.t)
+  requires is_heap heap 's ** pure (SPI.sweep_phase_inv 's fp (mk_st c0 t0 f0))
+  returns r: (U64.t & U64.t & U64.t & U64.t)
+  ensures exists* s2. is_heap heap s2 ** pure (slice_matches 's fp c0 t0 f0 budget s2 r)
+{
+  SPI.sweep_phase_inv_elim 's fp (mk_st c0 t0 f0);
+  pow2_facts ();
+  let mut cursor = c0;
+  let mut tail = t0;
+  let mut frag = f0;
+  let mut head = fp;
+  while (
+    let c = !cursor;
+    (U64.lt (U64.add c mword) heap_size_u64 && U64.lt (U64.div (U64.sub c c0) 8UL) budget)
+  )
+    invariant exists* c t f h s.
+      pts_to cursor c ** pts_to tail t ** pts_to frag f ** pts_to head h **
+      is_heap heap s **
+      pure (U64.v c0 <= U64.v c /\ U64.v c <= heap_size /\
+            SPI.sweep_phase_inv s h (mk_st c t f) /\
+            SL.slice_from s h (mk_st c t f) c0 (U64.v budget) ==
+              SL.sweep_slice 's fp (mk_st c0 t0 f0) (U64.v budget))
+    decreases (heap_size - U64.v !cursor)
+  {
+    let c = !cursor;
+    let t = !tail;
+    let f = !frag;
+    let h = !head;
+    with s. assert (is_heap heap s);
+    slice_step_facts s h c t f c0 (U64.v budget);
+    pow2_facts ();
+    let r = sweep_step_impl heap c t f h;
+    match r {
+      (c', t', f', h') -> {
+        cursor := c';
+        tail := t';
+        frag := f';
+        head := h'
+      }
+    }
+  };
+  let c = !cursor;
+  let t = !tail;
+  let f = !frag;
+  let h = !head;
+  with s. assert (is_heap heap s);
+  slice_stop_facts s h c t f c0 (U64.v budget);
+  (c, t, f, h)
 }
 #pop-options

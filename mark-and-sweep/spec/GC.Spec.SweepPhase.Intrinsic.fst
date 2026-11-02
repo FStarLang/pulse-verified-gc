@@ -876,3 +876,7 @@ let rec steps_done_aux (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
 #pop-options
 
 let sweep_steps_done g fp st k = steps_done_aux g fp st k
+
+let sweep_phase_ready g fp st =
+  to_ref g fp st;
+  sweep_inv_facts (ref_of g (U64.v st.cursor)) g fp st
