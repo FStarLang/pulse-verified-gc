@@ -92,6 +92,7 @@ fn read_minor_scan_wosize (minor: minor_heap_t) (obj: U64.t)
 /// Postcondition: the output heap equals the spec's copy_fields result.
 /// This spec refinement enables callers to apply spec-level preservation lemmas.
 module PromoteSpec = GC.Gen.Promote
+module Ph = GC.Spec.Phase
 module WBL = GC.Gen.WriteBodyLemmas
 
 let field_in_bounds (limit obj_addr wosize jv: nat)
@@ -189,10 +190,11 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
-               (obj: U64.t)
+               (phase: R.ref Alloc.phase_state) (obj: U64.t)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
            R.pts_to fp_ref 'fp **
+           Alloc.is_phase phase Ph.Idle **
            pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
                  U64.v obj % 8 == 0 /\
                  // Minor object body within bounds (from minor_objects_wosize_bound)
@@ -206,6 +208,7 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     is_minor minor md2 mb2 **
     is_heap major ms2 **
     R.pts_to fp_ref fp2 **
+    Alloc.is_phase phase Ph.Idle **
     pure (let minor_st = {data='md; bump='mb} in
           let wz = minor_wosize minor_st obj in
           md2 == 'md /\ mb2 == 'mb /\
@@ -235,7 +238,13 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     assert (pure (tag == PromoteSpec.promoted_tag {data='md; bump='mb} obj));
     // Allocate space in major heap (using weak precondition variant)
     let fp = R.op_Bang fp_ref;
-    let res = Alloc.allocate_part1 major fp wosize tag;
+    // Promotion runs outside a sweep: at `Idle` the allocation is
+    // `alloc_spec` and the phase stays `Idle` (`alloc_phase_idle`).
+    let res = Alloc.allocate major fp phase wosize tag;
+    GC.Spec.Allocator.Cursor.alloc_phase_idle 'ms fp (U64.v wosize) tag;
+    rewrite (Alloc.is_phase phase
+               (snd (GC.Spec.Allocator.Cursor.alloc_phase 'ms fp Ph.Idle (U64.v wosize) tag)))
+         as (Alloc.is_phase phase Ph.Idle);
     let new_fp = fst res;
     let new_obj = snd res;
     R.op_Colon_Equals fp_ref new_fp;

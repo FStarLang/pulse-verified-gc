@@ -22,6 +22,8 @@ open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
 open GC.Impl.Heap
 module PromoteSpec = GC.Gen.Promote
+module Alloc = GC.Impl.Allocator
+module Ph = GC.Spec.Phase
 
 /// ---------------------------------------------------------------------------
 /// Read wosize from a minor heap object header
@@ -66,10 +68,11 @@ fn read_minor_scan_wosize (minor: minor_heap_t) (obj: U64.t)
 
 inline_for_extraction
 fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
-               (obj: U64.t)
+               (phase: R.ref Alloc.phase_state) (obj: U64.t)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
            R.pts_to fp_ref 'fp **
+           Alloc.is_phase phase Ph.Idle **
            pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
                  U64.v obj % 8 == 0 /\
                  U64.v obj + minor_wosize {data='md; bump='mb} obj * 8 <= minor_heap_size /\
@@ -81,6 +84,7 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     is_minor minor md2 mb2 **
     is_heap major ms2 **
     R.pts_to fp_ref fp2 **
+    Alloc.is_phase phase Ph.Idle **
     pure (let minor_st = {data='md; bump='mb} in
           let wz = minor_wosize minor_st obj in
           md2 == 'md /\ mb2 == 'mb /\

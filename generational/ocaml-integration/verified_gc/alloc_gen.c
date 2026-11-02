@@ -140,6 +140,15 @@ static void ensure_heap(void) {
     *fp_ref = initial_fp;
     gc_gen_heap.fp_ref = fp_ref;
 
+    /* phase_ref: the major collector's phase, which the verified allocator
+     * reads to colour a new object (GC.Spec.Phase.allocation_color).  This
+     * collector is stop-the-world, so the phase is always Idle (ps_kind 0)
+     * and every major allocation is white; the sweep fields are unused. */
+    phase_state *phase_ref = (phase_state *)calloc(1, sizeof(phase_state));
+    if (!phase_ref) caml_fatal_error("verified gen GC: malloc phase_ref");
+    phase_ref->ps_kind = 0;  /* Idle */
+    gc_gen_heap.phase_ref = phase_ref;
+
     /* --- Minor heap --- */
     /* Override the verified constant (2048B) with a production-sized minor heap.
      * OCaml default is 256K words = 2MB.  We match that default, overridable
@@ -677,9 +686,10 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     if (wosize == 0) wosize = 1;
 
     /* The verified allocator writes the object's final header: `wosize`,
-     * `tag`, colour white (the only colour the patched caml_alloc_shr_aux
-     * uses). The runtime therefore rewrites the header only when it has
-     * profiling bits to add (WITH_PROFINFO).
+     * `tag`, and the colour the collector's phase gives it -- white, since
+     * the phase is always Idle here (the only colour the patched
+     * caml_alloc_shr_aux uses). The runtime therefore rewrites the header
+     * only when it has profiling bits to add (WITH_PROFINFO).
      *
      * GC.Spec.Allocator's alloc_spec_preserves_wfh_part4 requires
      * `tag <> infix_tag`: an Infix header inside a free block would break the
@@ -689,7 +699,7 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     CAMLassert(tag != Infix_tag);
     PROF_START(major_alloc);
     uint64_t fp = *gc_gen_heap.fp_ref;
-    FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize, (uint64_t)tag);
+    FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate(gc_gen_heap.major, fp, gc_gen_heap.phase_ref, (uint64_t)wosize, (uint64_t)tag);
     *gc_gen_heap.fp_ref = res._1;
     uint64_t result = res._2;
     PROF_END(major_alloc);
@@ -698,7 +708,7 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
         do_full_gc();
         PROF_START(major_alloc);
         fp = *gc_gen_heap.fp_ref;
-        res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize, (uint64_t)tag);
+        res = allocate(gc_gen_heap.major, fp, gc_gen_heap.phase_ref, (uint64_t)wosize, (uint64_t)tag);
         *gc_gen_heap.fp_ref = res._1;
         result = res._2;
         PROF_END(major_alloc);

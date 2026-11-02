@@ -516,36 +516,45 @@ phase).  At `Idle` it is `(alloc_spec g fp wz tag, Idle)` (`alloc_phase_idle`),
 and the new head and object never depend on the phase (`alloc_phase_fields`).
 
 The key implementation contract is intentionally simple: the Pulse allocator
-returns a heap that is exactly the pure `alloc_spec` result.
+returns a heap that is exactly the pure `alloc_phase` result, at the phase it
+reads from the collector's state.
 
 ```fstar
-fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
-  requires is_heap heap 's **
-           pure (SpecFields.well_formed_heap 's)
+type phase_state = {            // GC.Impl.Allocator: the phase as C holds it
+  ps_kind: U64.t;               // 0 idle, otherwise sweeping
+  ps_cursor: U64.t; ps_swept_tail: U64.t; ps_last_fragment: U64.t;
+}
+let is_phase (r: R.ref phase_state) (ph: gc_phase) : slprop =
+  exists* v. R.pts_to r v ** pure (phase_of v == ph)
+
+fn allocate (heap: heap_t) (fp: U64.t) (phase: R.ref phase_state)
+            (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
+  requires is_heap heap 's ** is_phase phase 'ph ** pure (U64.v wosize >= 1)
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
-    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) tag in
+    is_phase phase (snd (AC.alloc_phase 's fp 'ph (U64.v wosize) tag)) **
+    pure (let spec_res = fst (AC.alloc_phase 's fp 'ph (U64.v wosize) tag) in
           s2 == spec_res.heap_out /\
           fst res == spec_res.fp_out /\
           snd res == spec_res.obj_out)
 ```
 
-There is also a weaker `allocate_part1` contract used during promotion:
+`allocate` reads the phase once, computes the colour of the header address it
+chose (white when idle; while sweeping, black at or above the cursor) and
+writes the header once with it; while sweeping, an allocation that takes
+`swept_tail`'s cell off the list stores the new `swept_tail` (one store, only
+then).  At `Idle` the postcondition is `alloc_spec`'s and the phase stays
+`Idle` (`alloc_phase_idle`, an SMT pattern).
 
-```fstar
-fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
-  requires is_heap heap 's **
-           pure (SpecFields.well_formed_heap_part1 's /\
-                 AllocLemmas.fl_valid 's fp (heap_size / U64.v mword) /\
-                 AllocLemmas.fl_chain_terminates 's fp (heap_size / U64.v mword))
-```
-
-This weaker precondition is important. During minor-to-major promotion, the
-major heap is temporarily not fully pointer-closed: fields may still contain old
-minor pointers until the update pass rewrites them. The allocator does not need
-pointer closure. It only reads headers and free-list links. Factoring the
-contract this way lets promotion allocate into a temporarily intermediate major
-heap without pretending the entire generational invariant already holds.
+The precondition asks nothing of the heap. The allocator only reads headers
+and free-list links and checks every address it follows, so it does not need
+pointer closure -- which matters during minor-to-major promotion, when the
+major heap is temporarily not pointer-closed (fields may still hold old minor
+pointers until the update pass rewrites them). The facts the callers need
+afterwards (free-list validity, object bounds, ...) come from the allocator
+lemmas about `alloc_spec`, under their own hypotheses.  (There used to be a
+second function, `allocate_part1`, with the same body under part 1 of
+well-formedness and the free-list facts; it is merged into this one.)
 
 The allocator proof establishes the facts one expects from a systems allocator:
 
@@ -734,8 +743,10 @@ on an ascending list prefers low addresses (OCaml's allocation policy 1).
 
 An incremental sweep runs the program between slices of `sweep_step`s
 (`incremental-sweep-plan.md`). Three things the program does then are
-specified and proved so far; the minor collection mid-sweep, the Pulse
-plumbing and the bridge are not yet done.
+specified and proved so far; the minor collection mid-sweep, the sweep slices
+in Pulse and the bridge's scheduling are not yet done. The phase itself is
+already part of the collector's state: `gen_heap_t.phase_ref`, which the
+Pulse allocator reads (above) and the bridge keeps `Idle`.
 
 **Allocation at the sweep's phase** (`GC.Spec.Allocator.Cursor.alloc_phase`).
 At `Sweeping st` the allocator colours by position: an object allocated in
@@ -1456,7 +1467,11 @@ noeq type gen_heap_t = {
   minor : minor_heap_t;
   major : heap_t;
   fp_ref : R.ref U64.t;    // major heap free-list head
+  phase_ref : R.ref Alloc.phase_state;  // the major collector's phase
 }
+
+let gen_phase (gh: gen_heap_t) (ph: Ph.gc_phase) : slprop =
+  Alloc.is_phase gh.phase_ref ph
 
 let is_gen_heap (gh: gen_heap_t) (d: minor_heap) (b: U64.t)
                 (s: heap_state) (fp: U64.t) : slprop =
@@ -1470,13 +1485,20 @@ objects to the major heap:
 
 ```fstar
 fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
-  requires is_gen_heap gh 'd 'b 's 'fp **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 'ph **
            pure (U64.v wosize > 0 /\
                  U64.v tag < 256 /\
                  SpecFields.well_formed_heap 's)
   returns obj: U64.t
-  ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2
+  ensures exists* d2 b2 s2 fp2 ph2. is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh ph2
 ```
+
+The phase is a companion predicate rather than part of `is_gen_heap`: only the
+allocator reads it.  `minor_collect_full` and `gen_gc` require and ensure
+`gen_phase gh Ph.Idle` -- every collection here runs outside a sweep -- and
+promotion (`promote_one`, through the Cheney functions) passes the phase to
+`allocate` with `Alloc.is_phase phase Ph.Idle` framed through its loops.  The
+C bridge allocates the phase record once, idle.
 
 The allocation postcondition is intentionally weak at the top-level interface:
 allocation is an operational service used by the runtime, and the deeper
@@ -2443,7 +2465,9 @@ required `full_heap_shape`. Instead, the development factors shape predicates:
 - `major_stack_shape` for major marking;
 - `full_heap_shape` only when the full generational cycle needs both.
 
-This factoring is why `allocate_part1` can be used during promotion.
+This factoring is why promotion can call the allocator in the middle of a
+collection: `allocate` asks nothing of the heap, and the allocator lemmas need
+only part 1 and the free-list facts.
 
 ### Hide large predicates from SMT and expose intro/elim lemmas
 

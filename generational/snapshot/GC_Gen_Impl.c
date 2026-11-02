@@ -411,7 +411,8 @@ uint64_t gen_alloc(gen_heap_t gh, uint64_t wosize, uint64_t tag)
     if (obj == 0ULL)
     {
       uint64_t fp = gh.fp_ref[0U];
-      FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate(gh.major, fp, wosize, tag);
+      FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
+      res = allocate(gh.major, fp, gh.phase_ref, wosize, tag);
       gh.fp_ref[0U] = res._1;
       return res._2;
     }
@@ -421,7 +422,8 @@ uint64_t gen_alloc(gen_heap_t gh, uint64_t wosize, uint64_t tag)
   else
   {
     uint64_t fp = gh.fp_ref[0U];
-    FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate(gh.major, fp, wosize, tag);
+    FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
+    res = allocate(gh.major, fp, gh.phase_ref, wosize, tag);
     gh.fp_ref[0U] = res._1;
     return res._2;
   }
@@ -438,7 +440,16 @@ minor_collect_full(
   size_t nslots
 )
 {
-  bool ok = cheney_promote_phase(gh.minor, gh.major, gh.fp_ref, fwd_arr, queue, roots, nroots);
+  bool
+  ok =
+    cheney_promote_phase(gh.minor,
+      gh.major,
+      gh.fp_ref,
+      gh.phase_ref,
+      fwd_arr,
+      queue,
+      roots,
+      nroots);
   update_promoted_objects(gh.major, fwd_arr);
   rewrite_heap_slots(gh.major, fwd_arr, slots, nslots);
   size_t i = (size_t)0U;
@@ -780,6 +791,7 @@ forward_if_minor_infix(
   minor_heap_t minor,
   heap_t major,
   uint64_t *fp_ref,
+  phase_state *phase,
   uint64_t *fwd_arr,
   uint64_t *queue,
   size_t *back,
@@ -818,7 +830,7 @@ forward_if_minor_infix(
       uint64_t tag = getTag(minor_hdr);
       uint64_t fp = fp_ref[0U];
       FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-      res = allocate_part1(major, fp, wosize1, tag);
+      res = allocate(major, fp, phase, wosize1, tag);
       uint64_t new_fp = res._1;
       uint64_t new_obj = res._2;
       fp_ref[0U] = new_fp;
@@ -854,6 +866,7 @@ forward_if_minor(
   minor_heap_t minor,
   heap_t major,
   uint64_t *fp_ref,
+  phase_state *phase,
   uint64_t *fwd_arr,
   uint64_t *queue,
   size_t *back,
@@ -905,7 +918,7 @@ forward_if_minor(
                 uint64_t tag1 = getTag(minor_hdr);
                 uint64_t fp = fp_ref[0U];
                 FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                res = allocate_part1(major, fp, wosize1, tag1);
+                res = allocate(major, fp, phase, wosize1, tag1);
                 uint64_t new_fp = res._1;
                 uint64_t new_obj = res._2;
                 fp_ref[0U] = new_fp;
@@ -955,7 +968,7 @@ forward_if_minor(
                   uint64_t tag1 = getTag(minor_hdr);
                   uint64_t fp = fp_ref[0U];
                   FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                  res = allocate_part1(major, fp, wosize1, tag1);
+                  res = allocate(major, fp, phase, wosize1, tag1);
                   uint64_t new_fp = res._1;
                   uint64_t new_obj = res._2;
                   fp_ref[0U] = new_fp;
@@ -993,6 +1006,7 @@ forward_roots(
   minor_heap_t minor,
   heap_t major,
   uint64_t *fp_ref,
+  phase_state *phase,
   uint64_t *fwd_arr,
   uint64_t *queue,
   size_t *back,
@@ -1052,7 +1066,7 @@ forward_roots(
                   uint64_t tag1 = getTag(minor_hdr);
                   uint64_t fp = fp_ref[0U];
                   FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                  res = allocate_part1(major, fp, wosize1, tag1);
+                  res = allocate(major, fp, phase, wosize1, tag1);
                   uint64_t new_fp = res._1;
                   uint64_t new_obj = res._2;
                   fp_ref[0U] = new_fp;
@@ -1102,7 +1116,7 @@ forward_roots(
                     uint64_t tag1 = getTag(minor_hdr);
                     uint64_t fp = fp_ref[0U];
                     FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                    res = allocate_part1(major, fp, wosize1, tag1);
+                    res = allocate(major, fp, phase, wosize1, tag1);
                     uint64_t new_fp = res._1;
                     uint64_t new_obj = res._2;
                     fp_ref[0U] = new_fp;
@@ -1144,6 +1158,7 @@ scan_loop(
   minor_heap_t minor,
   heap_t major,
   uint64_t *fp_ref,
+  phase_state *phase,
   uint64_t *fwd_arr,
   uint64_t *queue,
   size_t *back,
@@ -1238,7 +1253,7 @@ scan_loop(
                         uint64_t tag2 = getTag(minor_hdr);
                         uint64_t fp = fp_ref[0U];
                         FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                        res = allocate_part1(major, fp, wosize2, tag2);
+                        res = allocate(major, fp, phase, wosize2, tag2);
                         uint64_t new_fp = res._1;
                         uint64_t new_obj = res._2;
                         fp_ref[0U] = new_fp;
@@ -1288,7 +1303,7 @@ scan_loop(
                           uint64_t tag2 = getTag(minor_hdr);
                           uint64_t fp = fp_ref[0U];
                           FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                          res = allocate_part1(major, fp, wosize2, tag2);
+                          res = allocate(major, fp, phase, wosize2, tag2);
                           uint64_t new_fp = res._1;
                           uint64_t new_obj = res._2;
                           fp_ref[0U] = new_fp;
@@ -1352,6 +1367,7 @@ cheney_promote_phase(
   minor_heap_t minor,
   heap_t major,
   uint64_t *fp_ref,
+  phase_state *phase,
   uint64_t *fwd_arr,
   uint64_t *queue,
   uint64_t *roots,
@@ -1361,8 +1377,8 @@ cheney_promote_phase(
   fill__uint64_t(queue_size_sz, queue, 0ULL);
   size_t back = (size_t)0U;
   bool oom = false;
-  forward_roots(minor, major, fp_ref, fwd_arr, queue, &back, &oom, roots, nroots);
-  scan_loop(minor, major, fp_ref, fwd_arr, queue, &back, &oom);
+  forward_roots(minor, major, fp_ref, phase, fwd_arr, queue, &back, &oom, roots, nroots);
+  scan_loop(minor, major, fp_ref, phase, fwd_arr, queue, &back, &oom);
   bool oom_val = oom;
   return !oom_val;
 }
@@ -1555,8 +1571,9 @@ bool is_valid_fp(uint64_t v)
 }
 
 FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-allocate(heap_t heap, uint64_t fp, uint64_t wosize, uint64_t tag)
+allocate(heap_t heap, uint64_t fp, phase_state *phase, uint64_t wosize, uint64_t tag)
 {
+  phase_state pv = phase[0U];
   uint64_t head_fp = fp;
   uint64_t prev_fp = 0ULL;
   uint64_t cur_fp = fp;
@@ -1588,144 +1605,56 @@ allocate(heap_t heap, uint64_t fp, uint64_t wosize, uint64_t tag)
           uint64_t alloc_obj = alloc_hd_off + 8ULL;
           if (alloc_obj >= heap_size_u640)
             go = false;
-          else if (leftover >= 1ULL)
-          {
-            uint64_t new_fp = leftover >= 2ULL ? vcur : next;
-            bool vp_unusable = vp == 0ULL || vp == hd_addr;
-            if (vp_unusable)
-            {
-              uint64_t rem_hdr = makeHeader(leftover - 1ULL, blue, 0ULL);
-              write_word(heap, hd_addr, rem_hdr);
-              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
-              write_word(heap, alloc_hd_off, alloc_hdr);
-              head_fp = new_fp;
-              result_obj = alloc_obj;
-              go = false;
-            }
-            else
-            {
-              write_word(heap, vp, new_fp);
-              uint64_t rem_hdr = makeHeader(leftover - 1ULL, blue, 0ULL);
-              write_word(heap, hd_addr, rem_hdr);
-              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
-              write_word(heap, alloc_hd_off, alloc_hdr);
-              result_obj = alloc_obj;
-              go = false;
-            }
-          }
           else
           {
-            bool vp_unusable = vp == 0ULL || vp == hd_addr;
-            if (vp_unusable)
+            if (!(pv.ps_kind == 0ULL) && vcur == pv.ps_swept_tail && leftover < 2ULL)
+              phase->ps_swept_tail = vp;
+            bool b = !(pv.ps_kind == 0ULL) && alloc_hd_off >= pv.ps_cursor;
+            color_sem col = b ? black : white;
+            if (leftover >= 1ULL)
             {
-              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
-              write_word(heap, hd_addr, alloc_hdr);
-              head_fp = next;
-              result_obj = alloc_obj;
-              go = false;
+              uint64_t new_fp = leftover >= 2ULL ? vcur : next;
+              bool vp_unusable = vp == 0ULL || vp == hd_addr;
+              if (vp_unusable)
+              {
+                uint64_t rem_hdr = makeHeader(leftover - 1ULL, blue, 0ULL);
+                write_word(heap, hd_addr, rem_hdr);
+                uint64_t alloc_hdr = makeHeader(wosize, col, tag);
+                write_word(heap, alloc_hd_off, alloc_hdr);
+                head_fp = new_fp;
+                result_obj = alloc_obj;
+                go = false;
+              }
+              else
+              {
+                write_word(heap, vp, new_fp);
+                uint64_t rem_hdr = makeHeader(leftover - 1ULL, blue, 0ULL);
+                write_word(heap, hd_addr, rem_hdr);
+                uint64_t alloc_hdr = makeHeader(wosize, col, tag);
+                write_word(heap, alloc_hd_off, alloc_hdr);
+                result_obj = alloc_obj;
+                go = false;
+              }
             }
             else
             {
-              write_word(heap, vp, next);
-              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
-              write_word(heap, hd_addr, alloc_hdr);
-              result_obj = alloc_obj;
-              go = false;
-            }
-          }
-        }
-        else
-        {
-          prev_fp = vcur;
-          cur_fp = next;
-          fuel_ref = vfuel - 1ULL;
-        }
-      }
-    }
-  }
-  uint64_t final_fp = head_fp;
-  uint64_t final_obj = result_obj;
-  return
-    ((FStar_Pervasives_Native_tuple2__uint64_t_uint64_t){ ._1 = final_fp, ._2 = final_obj });
-}
-
-FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize, uint64_t tag)
-{
-  uint64_t head_fp = fp;
-  uint64_t prev_fp = 0ULL;
-  uint64_t cur_fp = fp;
-  uint64_t result_obj = 0ULL;
-  bool go = true;
-  uint64_t fuel_ref = heap_size_u640 / 8ULL;
-  while (go)
-  {
-    uint64_t vfuel = fuel_ref;
-    if (vfuel == 0ULL)
-      go = false;
-    else
-    {
-      uint64_t vcur = cur_fp;
-      bool valid = is_valid_fp(vcur);
-      if (!valid)
-        go = false;
-      else
-      {
-        uint64_t hd_addr = hd_address(vcur);
-        uint64_t hdr = read_word(heap, hd_addr);
-        uint64_t block_wz = getWosize(hdr);
-        uint64_t next = read_word(heap, vcur);
-        if (block_wz >= wosize)
-        {
-          uint64_t leftover = block_wz - wosize;
-          uint64_t vp = prev_fp;
-          uint64_t alloc_hd_off = hd_addr + leftover * 8ULL;
-          uint64_t alloc_obj = alloc_hd_off + 8ULL;
-          if (alloc_obj >= heap_size_u640)
-            go = false;
-          else if (leftover >= 1ULL)
-          {
-            uint64_t new_fp = leftover >= 2ULL ? vcur : next;
-            bool vp_unusable = vp == 0ULL || vp == hd_addr;
-            if (vp_unusable)
-            {
-              uint64_t rem_hdr = makeHeader(leftover - 1ULL, blue, 0ULL);
-              write_word(heap, hd_addr, rem_hdr);
-              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
-              write_word(heap, alloc_hd_off, alloc_hdr);
-              head_fp = new_fp;
-              result_obj = alloc_obj;
-              go = false;
-            }
-            else
-            {
-              write_word(heap, vp, new_fp);
-              uint64_t rem_hdr = makeHeader(leftover - 1ULL, blue, 0ULL);
-              write_word(heap, hd_addr, rem_hdr);
-              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
-              write_word(heap, alloc_hd_off, alloc_hdr);
-              result_obj = alloc_obj;
-              go = false;
-            }
-          }
-          else
-          {
-            bool vp_unusable = vp == 0ULL || vp == hd_addr;
-            if (vp_unusable)
-            {
-              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
-              write_word(heap, hd_addr, alloc_hdr);
-              head_fp = next;
-              result_obj = alloc_obj;
-              go = false;
-            }
-            else
-            {
-              write_word(heap, vp, next);
-              uint64_t alloc_hdr = makeHeader(wosize, white, tag);
-              write_word(heap, hd_addr, alloc_hdr);
-              result_obj = alloc_obj;
-              go = false;
+              bool vp_unusable = vp == 0ULL || vp == hd_addr;
+              if (vp_unusable)
+              {
+                uint64_t alloc_hdr = makeHeader(wosize, col, tag);
+                write_word(heap, hd_addr, alloc_hdr);
+                head_fp = next;
+                result_obj = alloc_obj;
+                go = false;
+              }
+              else
+              {
+                write_word(heap, vp, next);
+                uint64_t alloc_hdr = makeHeader(wosize, col, tag);
+                write_word(heap, hd_addr, alloc_hdr);
+                result_obj = alloc_obj;
+                go = false;
+              }
             }
           }
         }

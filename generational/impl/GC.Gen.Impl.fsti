@@ -47,6 +47,8 @@ module CheneyBFS = GC.Gen.CheneyBFS
 module SpecHeapModel = GC.Spec.HeapModel
 module MRT = GC.Gen.MajorReachabilityTransfer
 module RT = GC.Gen.RefTable
+module Alloc = GC.Impl.Allocator
+module Ph = GC.Spec.Phase
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -57,7 +59,14 @@ type gen_heap_t = {
   minor : minor_heap_t;
   major : heap_t;
   fp_ref : R.ref U64.t;    // major heap free-list head
+  phase_ref : R.ref Alloc.phase_state;  // the major collector's phase
 }
+
+/// The major collector's phase, held in `gh.phase_ref`.  It is kept apart
+/// from `is_gen_heap`: only the allocator reads it, and every collection in
+/// this file runs outside a sweep (`Ph.Idle`).
+let gen_phase (gh: gen_heap_t) (ph: Ph.gc_phase) : slprop =
+  Alloc.is_phase gh.phase_ref ph
 
 /// Combined slprop for the generational heap:
 ///   is_minor — ownership of minor heap array + bump pointer
@@ -291,7 +300,7 @@ let gen_gc_unreachable_final_blue_post
 /// Allocate an object. Small objects go to minor heap, large ones to major.
 /// Returns 0UL on failure (both heaps full).
 fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
-  requires is_gen_heap gh 'd 'b 's 'fp **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 'ph **
            pure (
              // Object body size is at least 1 word (no zero-length objects)
              U64.v wosize > 0 /\
@@ -305,7 +314,7 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
   returns obj: U64.t
   // Heap ownership is returned; internal state may change (bump pointer
   // advanced, or a free-list node consumed)
-  ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2
+  ensures exists* d2 b2 s2 fp2 ph2. is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh ph2
 
 /// ---------------------------------------------------------------------------
 /// Full minor collection with ref_table
@@ -388,7 +397,7 @@ fn minor_collect_full (gh: gen_heap_t)
                       (queue: larray U64.t Cheney.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
                       (#pf: erased (obj_addr -> prop))
-  requires is_gen_heap gh 'd 'b 's 'fp **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh Ph.Idle **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
@@ -398,7 +407,7 @@ fn minor_collect_full (gh: gen_heap_t)
                    'rs 'farr 'sl (SZ.v nslots) pf)
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
-    is_gen_heap gh d2 b2 s2 fp2 **
+    is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh Ph.Idle **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
@@ -505,7 +514,7 @@ fn gen_gc (gh: gen_heap_t)
            (queue: larray U64.t Cheney.queue_size)
            (slots: array U64.t) (nslots: SZ.t)
            (st: gray_stack)
-  requires is_gen_heap gh 'd 'b 's 'fp **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh Ph.Idle **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
@@ -533,7 +542,7 @@ fn gen_gc (gh: gen_heap_t)
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns res: (U64.t & bool)
   ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
-    is_gen_heap gh d2 b2 s2 (fst res) **
+    is_gen_heap gh d2 b2 s2 (fst res) ** gen_phase gh Ph.Idle **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **

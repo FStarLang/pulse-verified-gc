@@ -43,7 +43,7 @@ fn call_gen_gc_infix
   (queue: larray U64.t CheneyImpl.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
   (st: gray_stack)
-  requires is_gen_heap gh 'd 'b 's 'fp **
+  requires gen_phase gh GC.Spec.Phase.Idle ** is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
@@ -62,7 +62,7 @@ fn call_gen_gc_infix
                  stack_capacity st >= 1)
   returns res: (U64.t & bool)
   ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
-    is_gen_heap gh d2 b2 s2 (fst res) **
+    gen_phase gh GC.Spec.Phase.Idle ** is_gen_heap gh d2 b2 s2 (fst res) **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **

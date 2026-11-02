@@ -490,7 +490,7 @@ not be conflated:
   described above.  Preferred for new code: same guarantee, and it leaves *no* runtime
   residue.  The extracted C is just
   `while (go) { if (is_empty(st)) go = false; else mark_step_bounded_impl(heap, st); }`.
-* **Load-bearing fuel** — `GC.Impl.Allocator.allocate` / `.allocate_part1`.  Here the
+* **Load-bearing fuel** — `GC.Impl.Allocator.allocate`.  Here the
   counter *is* tested at runtime (`if (vfuel == 0ULL)` appears in `GC_Impl.c`) and
   running out returns OOM.  This is faithful to the spec, because `alloc_spec` is itself
   defined as `alloc_search g fp 0UL fp wz heap_words` — the budget is part of the
@@ -512,12 +512,11 @@ not be conflated:
   still reachable.
 
   The hypothesis `fl_chain_terminates g fp heap_words` ("the free-list chain reaches a
-  terminal within `heap_words` steps") is not a new assumption: `GC.Impl.Allocator.
-  allocate_part1` already requires it, and `GC.Gen.Impl.Cheney` carries it as a loop
-  invariant.  So clients of `allocate_part1` can invoke the corollary directly with no
-  interface change.  Plain `allocate` cannot yet: it is guarded by `well_formed_heap`,
-  which constrains object layout and pointer closure but says *nothing* about the free
-  list, so it would need `fl_chain_terminates` added to its precondition.
+  terminal within `heap_words` steps") is not a new assumption: `GC.Gen.Impl.Promote.
+  promote_one` requires it, and `GC.Gen.Impl.Cheney` carries it as a loop invariant, so
+  promotion can invoke the corollary directly.  `allocate` itself requires nothing of
+  the heap (it checks every address it follows); a caller wanting the no-spurious-OOM
+  fact supplies `fl_chain_terminates` to the corollary.
 
   Note where the bound really comes from.  `heap_words` is not a safety margin: an acyclic
   free list has at most one node per distinct 8-aligned heap address, i.e. at most

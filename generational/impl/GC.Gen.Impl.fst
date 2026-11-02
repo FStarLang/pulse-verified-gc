@@ -30,6 +30,7 @@ open GC.Impl.Stack
 module SpecFields = GC.Spec.Fields
 module SpecObj = GC.Spec.Object
 module Alloc = GC.Impl.Allocator
+module Ph = GC.Spec.Phase
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module CheneySpec = GC.Gen.Cheney
 module ML = FStar.Math.Lemmas
@@ -129,33 +130,37 @@ let gen_gc_heap_shape_post_intro minor_data minor_bump final_major final_fp
 /// Allocate: try minor first (if small enough), fall back to major.
 #push-options "--z3rlimit 10"
 fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
-  requires is_gen_heap gh 'd 'b 's 'fp **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 'ph **
            pure (U64.v wosize > 0 /\ U64.v tag < 256 /\
                  SpecFields.well_formed_heap 's)
   returns obj: U64.t
-  ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2
+  ensures exists* d2 b2 s2 fp2 ph2. is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh ph2
 {
   unfold is_gen_heap;
+  unfold gen_phase;
   if U64.lte wosize max_young_wosize_u64 {
     // Small object → try minor heap
     let obj = minor_alloc gh.minor wosize tag;
     if U64.eq obj 0UL {
       // Minor full — allocate directly from major
       let fp = R.op_Bang gh.fp_ref;
-      let res = Alloc.allocate gh.major fp wosize tag;
+      let res = Alloc.allocate gh.major fp gh.phase_ref wosize tag;
       R.op_Colon_Equals gh.fp_ref (fst res);
       fold (is_gen_heap gh _ _ _ _);
+      fold (gen_phase gh _);
       snd res
     } else {
       fold (is_gen_heap gh _ _ _ _);
+      fold (gen_phase gh 'ph);
       obj
     }
   } else {
     // Large object → major heap directly
     let fp = R.op_Bang gh.fp_ref;
-    let res = Alloc.allocate gh.major fp wosize tag;
+    let res = Alloc.allocate gh.major fp gh.phase_ref wosize tag;
     R.op_Colon_Equals gh.fp_ref (fst res);
     fold (is_gen_heap gh _ _ _ _);
+    fold (gen_phase gh _);
     snd res
   }
 }
@@ -242,10 +247,10 @@ let add_bytes_advances (p tw tb: U64.t)
 /// Records forwarding: fwd_arr[obj/8] := new_major_addr.
 #push-options "--z3rlimit 12 --fuel 4 --ifuel 1"
 fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
-                 (fwd_arr: array U64.t)
+                 (phase: R.ref Alloc.phase_state) (fwd_arr: array U64.t)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
-           R.pts_to fp_ref 'fp **
+           R.pts_to fp_ref 'fp ** Alloc.is_phase phase Ph.Idle **
            pts_to fwd_arr 'farr **
            pure (SpecFields.well_formed_heap_part1 'ms /\
                  AllocLemmas.fl_valid 'ms 'fp heap_words /\
@@ -255,7 +260,7 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   ensures exists* md2 mb2 ms2 fp2 farr2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
-    R.pts_to fp_ref fp2 **
+    R.pts_to fp_ref fp2 ** Alloc.is_phase phase Ph.Idle **
     pts_to fwd_arr farr2 **
     pure (md2 == 'md /\ mb2 == 'mb /\
           SpecFields.well_formed_heap_part1 ms2 /\
@@ -272,7 +277,7 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     invariant exists* md_i mb_i ms_i fp_i farr_i p_i.
       is_minor minor md_i mb_i **
       is_heap major ms_i **
-      R.pts_to fp_ref fp_i **
+      R.pts_to fp_ref fp_i ** Alloc.is_phase phase Ph.Idle **
       pts_to fwd_arr farr_i **
       R.pts_to pos p_i **
       pure (U64.v p_i <= U64.v bump /\
@@ -317,7 +322,7 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
             // so obj_addr = p+8 < p + total_bytes <= bump <= minor_heap_size
             // and obj_addr + wosize * 8 = (p+8) + wosize*8
             //   = p + (wosize+1)*8 = p + total_bytes <= bump <= minor_heap_size
-            let new_addr = promote_one minor major fp_ref obj_addr;
+            let new_addr = promote_one minor major fp_ref phase obj_addr;
             with farr_pre. assert (pts_to fwd_arr farr_pre);
             fwd_index_bound obj_addr;
             let idx = SZ.uint64_to_sizet (U64.div obj_addr 8UL);
@@ -503,7 +508,7 @@ fn minor_collect_full (gh: gen_heap_t)
                       (queue: larray U64.t Cheney.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
                       (#pf: erased (obj_addr -> prop))
-  requires is_gen_heap gh 'd 'b 's 'fp **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh Ph.Idle **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
@@ -513,7 +518,7 @@ fn minor_collect_full (gh: gen_heap_t)
                    'rs 'farr 'sl (SZ.v nslots) pf)
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
-    is_gen_heap gh d2 b2 s2 fp2 **
+    is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh Ph.Idle **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
@@ -527,7 +532,9 @@ fn minor_collect_full (gh: gen_heap_t)
   GenInv.minor_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state);
 
   // Phase 1: Cheney BFS promotion (forward roots + scan)
-  let ok = cheney_promote_phase gh.minor gh.major gh.fp_ref fwd_arr queue roots nroots;
+  unfold gen_phase;
+  let ok = cheney_promote_phase gh.minor gh.major gh.fp_ref gh.phase_ref fwd_arr queue roots nroots;
+  fold (gen_phase gh Ph.Idle);
 
   // Extract ghost state from promote phase
   with ms_post. assert (is_heap gh.major ms_post);
@@ -608,7 +615,7 @@ fn gen_gc (gh: gen_heap_t)
            (queue: larray U64.t Cheney.queue_size)
            (slots: array U64.t) (nslots: SZ.t)
            (st: gray_stack)
-  requires is_gen_heap gh 'd 'b 's 'fp **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh Ph.Idle **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
@@ -629,7 +636,7 @@ fn gen_gc (gh: gen_heap_t)
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns res: (U64.t & bool)
   ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
-    is_gen_heap gh d2 b2 s2 (fst res) **
+    is_gen_heap gh d2 b2 s2 (fst res) ** gen_phase gh Ph.Idle **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **

@@ -57,12 +57,19 @@ int main(void)
     minor_heap_t minor = { .data = minor_data, .size = minor_bytes, .bump_ref = bump_ref };
 
     /* ---- Free-list head reference ---- */
+    phase_state *phase_ref = NULL;
     uint64_t *fp_ref = calloc(1, sizeof(uint64_t));
     if (!fp_ref) { perror("calloc fp_ref"); goto cleanup; }
     *fp_ref = fp;
 
+    /* ---- The collector's phase: Idle (stop-the-world) ---- */
+    phase_ref = calloc(1, sizeof(phase_state));
+    if (!phase_ref) { perror("calloc phase_ref"); goto cleanup; }
+    phase_ref->ps_kind = 0;  /* Idle */
+
     /* ---- Construct gen_heap ---- */
-    gen_heap_t gh = { .minor = minor, .major = major_heap, .fp_ref = fp_ref };
+    gen_heap_t gh = { .minor = minor, .major = major_heap, .fp_ref = fp_ref,
+                      .phase_ref = phase_ref };
 
     /* ---- Forwarding array ---- */
     size_t fwd_entries = (size_t)fwd_arr_size_sz;
@@ -164,6 +171,7 @@ int main(void)
     free(gray_storage);
     free(queue);
     free(fwd_arr);
+    free(phase_ref);
     free(fp_ref);
     free(bump_ref);
     free(minor_data);
@@ -175,6 +183,7 @@ cleanup_queue:
 cleanup_fwd:
     free(fwd_arr);
 cleanup:
+    if (phase_ref) free(phase_ref);
     if (fp_ref) free(fp_ref);
     if (bump_ref) free(bump_ref);
     free(minor_data);

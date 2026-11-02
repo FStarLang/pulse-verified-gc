@@ -42,11 +42,14 @@ typedef struct FStar_Pervasives_Native_tuple4__uint64_t_uint64_t_uint64_t_uint64
 }
 FStar_Pervasives_Native_tuple4__uint64_t_uint64_t_uint64_t_uint64_t;
 
+typedef struct phase_state_s phase_state;
+
 typedef struct gen_heap_t_s
 {
   minor_heap_t minor;
   heap_t major;
   uint64_t *fp_ref;
+  phase_state *phase_ref;
 }
 gen_heap_t;
 
@@ -127,6 +130,7 @@ forward_if_minor_infix(
   minor_heap_t minor,
   heap_t major,
   uint64_t *fp_ref,
+  phase_state *phase,
   uint64_t *fwd_arr,
   uint64_t *queue,
   size_t *back,
@@ -139,6 +143,7 @@ forward_if_minor(
   minor_heap_t minor,
   heap_t major,
   uint64_t *fp_ref,
+  phase_state *phase,
   uint64_t *fwd_arr,
   uint64_t *queue,
   size_t *back,
@@ -151,6 +156,7 @@ forward_roots(
   minor_heap_t minor,
   heap_t major,
   uint64_t *fp_ref,
+  phase_state *phase,
   uint64_t *fwd_arr,
   uint64_t *queue,
   size_t *back,
@@ -164,6 +170,7 @@ scan_loop(
   minor_heap_t minor,
   heap_t major,
   uint64_t *fp_ref,
+  phase_state *phase,
   uint64_t *fwd_arr,
   uint64_t *queue,
   size_t *back,
@@ -175,6 +182,7 @@ cheney_promote_phase(
   minor_heap_t minor,
   heap_t major,
   uint64_t *fp_ref,
+  phase_state *phase,
   uint64_t *fwd_arr,
   uint64_t *queue,
   uint64_t *roots,
@@ -195,13 +203,19 @@ uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp);
 
 uint64_t init_heap(heap_t heap);
 
+typedef struct phase_state_s
+{
+  uint64_t ps_kind;
+  uint64_t ps_cursor;
+  uint64_t ps_swept_tail;
+  uint64_t ps_last_fragment;
+}
+phase_state;
+
 bool is_valid_fp(uint64_t v);
 
 FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-allocate(heap_t heap, uint64_t fp, uint64_t wosize, uint64_t tag);
-
-FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize, uint64_t tag);
+allocate(heap_t heap, uint64_t fp, phase_state *phase, uint64_t wosize, uint64_t tag);
 
 void darken_write_gray(heap_t heap, uint64_t h_addr, uint64_t obj);
 
