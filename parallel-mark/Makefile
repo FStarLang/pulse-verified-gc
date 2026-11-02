@@ -44,7 +44,8 @@ SPEC = spec/GC.Spec.MarkPar.Exec.fst spec/GC.Spec.MarkPar.Model.fst spec/GC.Spec
 # Stage 3, in dependency order.
 SPEC2 = spec/GC.Spec.MarkPar2.Model.fst spec/GC.Spec.MarkPar2.Mutants.fst \
   spec/GC.Spec.MarkPar2.Lists.fst spec/GC.Spec.MarkPar2.Inv.fst spec/GC.Spec.MarkPar2.Upd.fst \
-  spec/GC.Spec.MarkPar2.Act.fst spec/GC.Spec.MarkPar2.Step.fst
+  spec/GC.Spec.MarkPar2.Act.fst spec/GC.Spec.MarkPar2.Step.fst spec/GC.Spec.MarkPar2.Fix.fst \
+  spec/GC.Spec.MarkPar2.Main.fst spec/GC.Spec.MarkPar2.Init.fst spec/GC.Spec.MarkPar2.End.fst
 
 .PHONY: verify test test2 check clean
 verify:
