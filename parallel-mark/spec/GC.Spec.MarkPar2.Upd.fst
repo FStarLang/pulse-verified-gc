@@ -14,6 +14,7 @@ open FStar.Seq
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module L = FStar.List.Tot
+open FStar.List.Tot { (@) }
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -58,6 +59,38 @@ let own_upd (k: cfg) (g: heap) (t: state) (i: nat) (w': wk) (h': heap) (n: nat)
   = reveal_opaque (`%own_ok) (own_ok k g t);
     reveal_opaque (`%own_ok) (own_ok k g (upd t i w' h' n));
     upd_wk t i w' h' n
+
+/// The heap unchanged: recoloured comes from own_ok itself.
+let own_upd_same (k: cfg) (g: heap) (t: state) (i: nat) (w': wk) (n: nat)
+  : Lemma (requires own_ok k g t /\ i < L.length t.wks /\ wk_ok k g t.heap i w' /\
+                    (forall (j: nat) (w: wk). j <> i /\ wk_of t j == Some w ==> wk_ok k g t.heap j w))
+          (ensures own_ok k g (upd t i w' t.heap n))
+  = reveal_opaque (`%own_ok) (own_ok k g t);
+    own_upd k g t i w' t.heap n
+
+/// Every other record, as own_ok gives it.
+let own_others (k: cfg) (g: heap) (t: state) (i: nat)
+  : Lemma (requires own_ok k g t)
+          (ensures forall (j: nat) (w: wk). j <> i /\ wk_of t j == Some w ==> wk_ok k g t.heap j w)
+  = reveal_opaque (`%own_ok) (own_ok k g t)
+
+let own_rec (k: cfg) (g: heap) (t: state) (i: nat) (w: wk)
+  : Lemma (requires own_ok k g t /\ wk_of t i == Some w) (ensures wk_ok k g t.heap i w)
+  = reveal_opaque (`%own_ok) (own_ok k g t)
+
+let own_len (k: cfg) (g: heap) (t: state)
+  : Lemma (requires own_ok k g t) (ensures L.length t.wks == nr k)
+  = reveal_opaque (`%own_ok) (own_ok k g t)
+
+let own_heap (k: cfg) (g: heap) (t: state)
+  : Lemma (requires own_ok k g t) (ensures recoloured g t.heap)
+  = reveal_opaque (`%own_ok) (own_ok k g t)
+
+let size_append (w: wk) (v: obj_addr)
+  : Lemma (LS.size ({ w with inbox = w.inbox @ [v] }) == LS.size w + 1 /\
+           (forall (u: obj_addr). L.memP u (w.inbox @ [v]) <==> L.memP u w.inbox \/ u == v))
+  = L.append_length w.inbox [v];
+    FStar.Classical.forall_intro (L.append_memP w.inbox [v])
 
 /// ---------------------------------------------------------------------------
 /// count_ok
