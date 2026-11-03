@@ -37,6 +37,10 @@
  *   VGC_PAR_RACE_CONTROL=1  deliberately read the counter non-atomically
  *                           (a data race TSan must report)
  *   VGC_MARK_STATS=1        print mark-time statistics to stderr at exit
+ *   VGC_PAR_PROF=1          with VGC_MARK_STATS: also time, with rdtsc, each
+ *                           worker's lock waits and holds, counter atomics
+ *                           and idle polling (adds overhead; for the
+ *                           breakdown only, not for timings)
  *
  * Colour encoding and heap walk as GC_Gen_Impl.c: header = wosize << 10 |
  * colour << 8 | tag, colour 0 white, 1 gray, 2 blue, 3 black; objects are
@@ -51,6 +55,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/sysctl.h>
+#include <x86intrin.h>
 
 #include "GC_Gen_Impl.h"
 #include "GC_Spec_ZeroAddr.h"
@@ -108,6 +114,8 @@ static size_t dedup;          /* VGC_PAR_DEDUP: per-worker sent-cache entries, p
 static size_t batch;          /* VGC_PAR_BATCH: per-destination send buffer; 0 = off */
 static int cut_live;          /* VGC_PAR_CUT=live */
 static int local_count, spin_locks, check_mode, check_control, race_control, stats;
+static int prof;              /* VGC_PAR_PROF */
+static inline uint64_t tsc(void) { return __rdtsc(); }
 static uint64_t slice;        /* bytes per range; owner(a) = (a - zero_addr) / slice */
 
 typedef struct {
@@ -130,6 +138,10 @@ typedef struct {
   /* statistics, private */
   uint64_t scanned, accepted, sent, dropped, stack_ovf, idle_spins, taken, deduped;
   double t_start, t_end;
+  /* VGC_PAR_PROF, private; cycles.  Disjoint: a failed poll (empty take,
+   * counter read, pause) counts only as idle. */
+  uint64_t lk_n, lk_cont, lk_wait, lk_hold, cnt_n, cnt_cyc, idle_cyc, idle_n, tot_cyc;
+  uint64_t lk_t0, lk_cnt0;
 } worker_t;
 
 static inbox_t inbox[MAXK];
@@ -146,6 +158,7 @@ static struct {
   double cut_us; uint64_t flushes;
   uint64_t scanned, accepted, sent, dropped, stack_ovf, idle_spins, taken, deduped;
   uint64_t per_worker_scanned[MAXK];
+  uint64_t lk_n, lk_cont, lk_wait, lk_hold, cnt_n, cnt_cyc, idle_cyc, idle_n, tot_cyc, max_tot_cyc;
   long checked;
   double check_seq_us;
 } st;
@@ -169,7 +182,7 @@ static inline unsigned owner(uint64_t hd)
 /* ------------------------------------------------------------------ */
 /* Inboxes                                                             */
 
-static inline void ib_lock(inbox_t *b)
+static inline void ib_lock_raw(inbox_t *b)
 {
   if (spin_locks) {
     for (;;) {
@@ -180,31 +193,58 @@ static inline void ib_lock(inbox_t *b)
     pthread_mutex_lock(&b->mu);
 }
 
-static inline void ib_unlock(inbox_t *b)
+static inline void ib_unlock_raw(inbox_t *b)
 {
   if (spin_locks) atomic_store_explicit(&b->spin, 0, memory_order_release);
   else pthread_mutex_unlock(&b->mu);
 }
+
+/* With VGC_PAR_PROF: count acquisitions and contended ones (a failed
+ * trylock), and time the wait, and the hold less the counter atomics done
+ * while holding. */
+static inline void ib_lock(worker_t *w, inbox_t *b)
+{
+  if (!prof) { ib_lock_raw(b); return; }
+  uint64_t t = tsc();
+  w->lk_n++;
+  if (spin_locks || pthread_mutex_trylock(&b->mu) != 0) {
+    w->lk_cont++;
+    ib_lock_raw(b);
+  }
+  w->lk_t0 = tsc();
+  w->lk_wait += w->lk_t0 - t;
+  w->lk_cnt0 = w->cnt_cyc;
+}
+
+static inline void ib_unlock(worker_t *w, inbox_t *b)
+{
+  if (prof) w->lk_hold += (tsc() - w->lk_t0) - (w->cnt_cyc - w->lk_cnt0);
+  ib_unlock_raw(b);
+}
+
+/* A counter atomic, timed with VGC_PAR_PROF. */
+#define CNT(w, op) do { if (prof) { uint64_t t_ = tsc(); op; (w)->cnt_cyc += tsc() - t_; (w)->cnt_n++; } \
+                        else { op; } } while (0)
 
 /* send(j, v): full test, counter increment and append under inbox[j]'s lock. */
 static inline int send_msg(worker_t *w, unsigned j, uint64_t v)
 {
   inbox_t *b = &inbox[j];
   int ok = 0;
-  ib_lock(b);
+  ib_lock(w, b);
   if (b->count == Q) {
     w->overflow = 1;
     w->dropped++;
   } else {
     ok = 1;
-    atomic_fetch_add(&work_in_flight, 1);
+    CNT(w, atomic_fetch_add(&work_in_flight, 1));
     size_t tail = b->head + b->count;
     if (tail >= Q) tail -= Q;
     b->buf[tail] = v;
     b->count++;
     w->sent++;
   }
-  ib_unlock(b);
+  ib_unlock(w, b);
   return ok;
 }
 
@@ -218,10 +258,10 @@ static void flush_one(worker_t *w, unsigned j)
   size_t n = w->outn[j];
   if (n == 0) return;
   inbox_t *b = &inbox[j];
-  ib_lock(b);
+  ib_lock(w, b);
   size_t room = Q - b->count, m = n < room ? n : room;
   if (m) {
-    atomic_fetch_add(&work_in_flight, (long)m);
+    CNT(w, atomic_fetch_add(&work_in_flight, (long)m));
     for (size_t i = 0; i < m; i++) {
       size_t tail = b->head + b->count;
       if (tail >= Q) tail -= Q;
@@ -229,7 +269,7 @@ static void flush_one(worker_t *w, unsigned j)
       b->count++;
     }
   }
-  ib_unlock(b);
+  ib_unlock(w, b);
   w->sent += m;
   if (m < n) { w->overflow = 1; w->dropped += n - m; }
   w->outn[j] = 0;
@@ -255,14 +295,14 @@ static inline int try_take(worker_t *w, uint64_t *out)
 {
   inbox_t *b = &inbox[w->id];
   int got = 0;
-  ib_lock(b);
+  ib_lock(w, b);
   if (b->count != 0) {
     *out = b->buf[b->head];
     b->head = b->head + 1 == Q ? 0 : b->head + 1;
     b->count--;
     got = 1;
   }
-  ib_unlock(b);
+  ib_unlock(w, b);
   return got;
 }
 
@@ -272,9 +312,9 @@ static inline int try_take(worker_t *w, uint64_t *out)
 static inline void push_own(worker_t *w, uint64_t v)
 {
   if (local_count) {
-    if (!w->token) { atomic_fetch_add(&work_in_flight, 1); w->token = 1; }
+    if (!w->token) { CNT(w, atomic_fetch_add(&work_in_flight, 1)); w->token = 1; }
   } else
-    atomic_fetch_add(&work_in_flight, 1);
+    CNT(w, atomic_fetch_add(&work_in_flight, 1));
   w->stack[w->top++] = v;
 }
 
@@ -331,34 +371,46 @@ static void *worker_main(void *arg)
 {
   worker_t *w = arg;
   if (stats) w->t_start = now_us();
+  uint64_t c0 = prof ? tsc() : 0;
   for (;;) {
     if (w->top != 0) {
       uint64_t x = w->stack[--w->top];
       scan(w, x);
       if (batch && w->top == 0) flush_all(w);
       if (local_count) {
-        if (w->top == 0 && w->token) { atomic_fetch_sub(&work_in_flight, 1); w->token = 0; }
+        if (w->top == 0 && w->token) { CNT(w, atomic_fetch_sub(&work_in_flight, 1)); w->token = 0; }
       } else
-        atomic_fetch_sub(&work_in_flight, 1);
+        CNT(w, atomic_fetch_sub(&work_in_flight, 1));
     } else {
       uint64_t v;
+      /* A failed poll counts only as idle: undo its lock and counter
+       * profile below. */
+      uint64_t p0 = 0, s_n = w->lk_n, s_c = w->lk_cont, s_w = w->lk_wait, s_h = w->lk_hold,
+               s_cn = w->cnt_n, s_cc = w->cnt_cyc;
+      if (prof) p0 = tsc();
       if (try_take(w, &v)) {
         w->taken++;
         accept(w, v);
         if (batch && w->top == 0) flush_all(w);
-        atomic_fetch_sub(&work_in_flight, 1);
+        CNT(w, atomic_fetch_sub(&work_in_flight, 1));
       } else {
         long c;
         if (race_control)
           c = *(volatile long *)(void *)&work_in_flight;   /* deliberate race */
         else
           c = atomic_load(&work_in_flight);
-        if (c == 0) break;
+        if (prof) {
+          w->lk_n = s_n; w->lk_cont = s_c; w->lk_wait = s_w; w->lk_hold = s_h;
+          w->cnt_n = s_cn; w->cnt_cyc = s_cc;
+        }
+        if (c == 0) { if (prof) { w->idle_cyc += tsc() - p0; w->idle_n++; } break; }
         w->idle_spins++;
         cpu_relax();
+        if (prof) { w->idle_cyc += tsc() - p0; w->idle_n++; }
       }
     }
   }
+  if (prof) w->tot_cyc += tsc() - c0;
   if (stats) w->t_end = now_us();
   return NULL;
 }
@@ -549,6 +601,18 @@ static void print_stats(void)
             (unsigned long long)st.taken, (unsigned long long)st.idle_spins,
             (unsigned long long)st.deduped);
     fprintf(stderr, "vgc-mark-stats: flushes %llu cut_us %.0f\n", (unsigned long long)st.flushes, st.cut_us);
+    if (prof) {
+      uint64_t hz = 0; size_t len = sizeof hz;
+      sysctlbyname("machdep.tsc.frequency", &hz, &len, NULL, 0);
+      double us = hz ? 1e6 / (double)hz : 0;
+      fprintf(stderr,
+              "vgc-mark-prof: tsc_hz %llu worker_us %.0f max_worker_us %.0f lock_n %llu lock_contended %llu "
+              "lock_wait_us %.0f lock_hold_us %.0f cnt_n %llu cnt_us %.0f idle_n %llu idle_us %.0f\n",
+              (unsigned long long)hz, st.tot_cyc * us, st.max_tot_cyc * us,
+              (unsigned long long)st.lk_n, (unsigned long long)st.lk_cont, st.lk_wait * us,
+              st.lk_hold * us, (unsigned long long)st.cnt_n, st.cnt_cyc * us,
+              (unsigned long long)st.idle_n, st.idle_cyc * us);
+    }
     fprintf(stderr, "vgc-mark-stats: per_worker_scanned");
     for (int i = 0; i < K; i++) fprintf(stderr, " %llu", (unsigned long long)st.per_worker_scanned[i]);
     fprintf(stderr, "\n");
@@ -581,6 +645,7 @@ int vergc_par_mark_setup(void)
   race_control = getenv("VGC_PAR_RACE_CONTROL") != NULL;
   local_count = getenv("VGC_PAR_LOCAL") != NULL;
   spin_locks = getenv("VGC_PAR_SPIN") != NULL;
+  prof = stats && getenv("VGC_PAR_PROF") != NULL;
   if (K == 0 && !stats) return done = 0;
   if (K > 0) {
     size_t heap_bytes = (size_t)(heap_size_u64 - zero_addr);
@@ -654,6 +719,9 @@ vergc_gen_gc_split(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_
     for (int i = 0; i < K; i++)
       wk[i].scanned = wk[i].accepted = wk[i].sent = wk[i].dropped = wk[i].stack_ovf =
         wk[i].idle_spins = wk[i].taken = wk[i].deduped = wk[i].flushes = 0;
+    for (int i = 0; i < K; i++)
+      wk[i].lk_n = wk[i].lk_cont = wk[i].lk_wait = wk[i].lk_hold = wk[i].cnt_n = wk[i].cnt_cyc =
+        wk[i].idle_cyc = wk[i].idle_n = wk[i].tot_cyc = 0;
     double t0 = now_us();
     par_mark(roots, nroots);
     st.mark_us += now_us() - t0;
@@ -663,6 +731,17 @@ vergc_gen_gc_split(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_
       st.idle_spins += wk[i].idle_spins; st.taken += wk[i].taken; st.deduped += wk[i].deduped;
       st.flushes += wk[i].flushes;
       st.per_worker_scanned[i] += wk[i].scanned;
+    }
+    if (prof) {
+      uint64_t mx = 0;
+      for (int i = 0; i < K; i++) {
+        worker_t *w = &wk[i];
+        st.lk_n += w->lk_n; st.lk_cont += w->lk_cont; st.lk_wait += w->lk_wait; st.lk_hold += w->lk_hold;
+        st.cnt_n += w->cnt_n; st.cnt_cyc += w->cnt_cyc; st.idle_cyc += w->idle_cyc; st.idle_n += w->idle_n;
+        st.tot_cyc += w->tot_cyc;
+        if (w->tot_cyc > mx) mx = w->tot_cyc;
+      }
+      st.max_tot_cyc += mx;
     }
     if (check_mode) {
       uint64_t *par = malloc(nobj * sizeof(uint64_t));

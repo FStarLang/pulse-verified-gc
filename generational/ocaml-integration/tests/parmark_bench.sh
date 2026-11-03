@@ -3,7 +3,8 @@
 #   ./parmark_bench.sh OUT.csv RUNS BENCH CONFIG...
 # BENCH is one of bt16 bt18 livemap livegraph.  CONFIG is a name and a
 # comma-separated list of VGC_* settings, as name:VAR=val,VAR=val, or
-# "unset" for the unchanged sequential path (no statistics).  Each run
+# "unset" for the unchanged sequential path (no statistics).  TMO=seconds
+# kills a run that takes longer (exit 124 in the log, no statistics).  Each run
 # appends one CSV row: wall time (seconds) and the vgc-mark-stats counters.
 set -u
 cd "$(dirname "$0")"
@@ -16,7 +17,7 @@ case $B in
   livegraph) W=16777216; P="livegraph.byte 1000000 4 4" ;;
   *) echo "unknown bench $B"; exit 1 ;;
 esac
-[ -f "$OUT" ] || echo "bench,config,run,wall_s,majors,mark_us,seq_inner_us,seq_rescan_us,rounds,fixups,setup_us,round_us,fixup_us,create_us,start_lat_us,join_lat_us,roots_pushed,fixup_pushed,scanned,sent,dropped,stack_ovf,idle_spins,deduped,flushes,cut_us,per_worker_scanned,load1_before" >"$OUT"
+[ -f "$OUT" ] || echo "bench,config,run,wall_s,majors,mark_us,seq_inner_us,seq_rescan_us,rounds,fixups,setup_us,round_us,fixup_us,create_us,start_lat_us,join_lat_us,roots_pushed,fixup_pushed,scanned,sent,dropped,stack_ovf,idle_spins,deduped,flushes,cut_us,per_worker_scanned,load1_before,worker_us,max_worker_us,lock_n,lock_contended,lock_wait_us,lock_hold_us,cnt_n,cnt_us,idle_n,idle_us" >"$OUT"
 num() { grep -aoE "(^| )$1 [0-9.]+" "$2" | head -1 | awk '{print $2}'; }
 for cfg in "$@"; do
   name=${cfg%%:*}; vars=${cfg#*:}
@@ -30,7 +31,7 @@ for cfg in "$@"; do
     while ps aux | grep -E 'mark_par2_test|fstar.exe|z3|parmark_check' | grep -v grep >/dev/null; do sleep 20; done
     e=$(mktemp)
     load=$(sysctl -n vm.loadavg | awk '{print $2}')
-    wall=$(perl -MTime::HiRes=time -e '$t=time; open(STDOUT,">/dev/null"); open(STDERR,">'"$e"'"); $rc=system(@ARGV); printf STDOUT ""; open(T,">&3"); printf T "%.3f %d\n", time-$t, $rc>>8' -- env "${envs[@]}" $R $P 3>&1)
+    wall=$(perl -MTime::HiRes=time -e '$t=time; open(STDOUT,">/dev/null"); open(STDERR,">'"$e"'"); $rc=system(@ARGV); printf STDOUT ""; open(T,">&3"); printf T "%.3f %d\n", time-$t, $rc>>8' -- ${TMO:+timeout $TMO} env "${envs[@]}" $R $P 3>&1)
     rc=${wall#* }; wall=${wall% *}
     if [ "$rc" != 0 ]; then echo "$B $name run $r: exit $rc" >&2; cat "$e" >&2; fi
     pw=$(grep -a 'per_worker_scanned' "$e" | sed 's/.*per_worker_scanned //' | tr ' ' '/')
@@ -38,7 +39,11 @@ for cfg in "$@"; do
     for f in majors mark_us inner_us rescan_us rounds fixups setup_us round_us fixup_us create_us start_lat_us join_lat_us roots_pushed fixup_pushed scanned sent dropped stack_ovf idle_spins deduped flushes cut_us; do
       row="$row,$(num $f "$e")"
     done
-    echo "$row,$pw,$load" >>"$OUT"
+    prow=""
+    for f in worker_us max_worker_us lock_n lock_contended lock_wait_us lock_hold_us cnt_n cnt_us idle_n idle_us; do
+      prow="$prow,$(num $f "$e")"
+    done
+    echo "$row,$pw,$load$prow" >>"$OUT"
     echo "$row" >&2
     rm -f "$e"
   done
