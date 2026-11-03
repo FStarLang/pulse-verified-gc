@@ -569,6 +569,12 @@ void vergc_native_run_minor_collection(void) {
 
 /* --- Full GC (minor + major) --- */
 
+/* Prototype parallel mark (par_mark.c). */
+int vergc_par_mark_setup(void);
+FStar_Pervasives_Native_tuple2__uint64_t_bool
+vergc_gen_gc_split(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_arr,
+                   uint64_t *queue, uint64_t *slots, size_t nslots, gray_stack_rec gst);
+
 static int full_gc_count = 0;
 
 static void do_full_gc(void) {
@@ -648,8 +654,13 @@ static void do_full_gc(void) {
         size_t n_slots = (size_t)(tbl->ptr - tbl->base);
         _Static_assert(sizeof(value *) == sizeof(uint64_t),
             "ref_table optimization requires LP64 (sizeof(value*)==8)");
+        /* Prototype (par_mark.c): VGC_PAR_MARK / VGC_MARK_STATS run gen_gc's
+         * steps one by one, with the mark parallel and/or timed. */
         FStar_Pervasives_Native_tuple2__uint64_t_bool result =
-            gen_gc(gc_gen_heap, roots_for_gc, (size_t)root_count, gc_fwd_arr,
+            vergc_par_mark_setup()
+            ? vergc_gen_gc_split(gc_gen_heap, roots_for_gc, (size_t)root_count, gc_fwd_arr,
+                   gc_queue, (uint64_t *)tbl->base, n_slots, gc_stack)
+            : gen_gc(gc_gen_heap, roots_for_gc, (size_t)root_count, gc_fwd_arr,
                    gc_queue, (uint64_t *)tbl->base, n_slots, gc_stack);
         if (!result._2) {
             free(roots_for_gc);

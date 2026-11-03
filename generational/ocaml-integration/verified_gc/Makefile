@@ -22,8 +22,10 @@ NATIVE_CFLAGS  = $(CFLAGS) -DNATIVE_CODE
 # VPATH lets make find .c files in the snapshot directory
 VPATH = $(SNAPSHOT)
 
-OBJECTS = GC_Gen_Impl.o GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.o \
-          krmlinit.o compat.o alloc_gen.o
+# Prototype: gc_gen_impl_proto.c includes GC_Gen_Impl.c unchanged and adds
+# a sweep wrapper; par_mark.c is the unverified parallel mark.
+OBJECTS = gc_gen_impl_proto.o GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.o \
+          krmlinit.o compat.o alloc_gen.o par_mark.o
 NATIVE_OBJECTS = $(OBJECTS:.o=.n.o)
 
 all: libvergc_gen.a libvergc_gen_native.a
