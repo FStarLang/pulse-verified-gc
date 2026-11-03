@@ -486,6 +486,25 @@ fn collect_correct
   final_fp
 }
 
+/// `gc_correct` at `GC.Impl.collect`, the entry point the generational
+/// collector (`GC.Gen.Impl.gen_gc`) calls.  `collect` is `collect_with_roots`
+/// with the gray stack as the root set, so its precondition is
+/// `gc_precondition_with_roots 's 'st 'st` and its postcondition is
+/// `collect_post` at roots `'st`: `gc_correct` applies unchanged.
+fn collect_stack_correct
+    (heap: IH.heap_t) (st: IS.gray_stack) (fp: U64.t)
+  requires IH.is_heap heap 's ** IS.is_gray_stack st 'st **
+           pure (Impl.gc_precondition 's 'st fp (IS.stack_capacity st))
+  returns final_fp: U64.t
+  ensures exists* s2 st2. IH.is_heap heap s2 ** IS.is_gray_stack st st2 **
+          pure (gc_safe 's s2 'st final_fp /\ gc_live 's s2 'st fp final_fp)
+{
+  let final_fp = Impl.collect heap st fp;
+  with s2 st2. assert (IH.is_heap heap s2 ** IS.is_gray_stack st st2);
+  gc_correct 's s2 'st 'st fp final_fp (IS.stack_capacity st);
+  final_fp
+}
+
 /// ---------------------------------------------------------------------------
 /// Vacuity checks
 /// ---------------------------------------------------------------------------

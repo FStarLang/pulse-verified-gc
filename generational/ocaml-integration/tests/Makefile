@@ -56,7 +56,8 @@ BT18_MAJOR_WORDS      ?= 536870912
 
 # Correctness tests (not benchmarks): run under both runtimes and compared.
 CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior \
-                    alloc_exact_promotion tiny_globals gc_explicit large_alloc_garbage
+                    alloc_exact_promotion tiny_globals gc_explicit large_alloc_garbage \
+                    gray_overflow
 
 # infix_closures needs a small major heap so that real major collections
 # (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
@@ -89,9 +90,16 @@ NURSERY_NO_SCAN_MAJOR_WORDS ?= 4000000
 LARGE_ALLOC_MAJOR_WORDS ?= 4000000
 LARGE_ALLOC_LEAVE_FREE  ?= 100000
 
+# gray_overflow holds heap_words / 5 live refs in one array, more than the
+# heap_words / 8-entry gray stack, so the major mark overflows and must rescan.
+# tools/mutation-ov-never-set.sh checks that it fails when the rescan is
+# skipped after an overflow.
+GRAY_OVERFLOW_MAJOR_WORDS ?= 2000000
+
 BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
              $(addsuffix .byte, $(KNOWN_GAP_TESTS)) $(addsuffix .byte, $(MARK_BENCHMARKS))
-NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS)) gc_explicit.native large_alloc_garbage.native
+NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS)) gc_explicit.native large_alloc_garbage.native \
+               gray_overflow.native
 BENCH_TARGETS = $(addsuffix .bench, $(BENCHMARKS))
 STATS_TARGETS = $(addsuffix .stats, $(BENCHMARKS))
 MINHEAP_TARGETS = $(addsuffix .minheap, $(BENCHMARKS))
@@ -199,6 +207,10 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	MIN_EXPANSION_WORDSIZE=$(LARGE_ALLOC_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) large_alloc_garbage.byte $(LARGE_ALLOC_MAJOR_WORDS) $(LARGE_ALLOC_LEAVE_FREE)
 	@echo "--- large_alloc_garbage (stock OCaml, differential check) ---"
 	$(UNCHANGED_OCAMLRUN) large_alloc_garbage.byte $(LARGE_ALLOC_MAJOR_WORDS) $(LARGE_ALLOC_LEAVE_FREE)
+	@echo "--- gray_overflow (verified generational GC; gray stack overflows) ---"
+	MIN_EXPANSION_WORDSIZE=$(GRAY_OVERFLOW_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) gray_overflow.byte $(GRAY_OVERFLOW_MAJOR_WORDS)
+	@echo "--- gray_overflow (stock OCaml, differential check) ---"
+	$(UNCHANGED_OCAMLRUN) gray_overflow.byte $(GRAY_OVERFLOW_MAJOR_WORDS)
 	@echo "=== Correctness tests passed ==="
 
 # ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
@@ -249,6 +261,8 @@ test-native: $(NATIVE_FILES)
 	GC_EXPLICIT_RUNTIME=verified MIN_EXPANSION_WORDSIZE=$(GC_EXPLICIT_MAJOR_WORDS) ./gc_explicit.native
 	@echo "--- large_alloc_garbage (issue #34) ---"
 	MIN_EXPANSION_WORDSIZE=$(LARGE_ALLOC_MAJOR_WORDS) ./large_alloc_garbage.native $(LARGE_ALLOC_MAJOR_WORDS) $(LARGE_ALLOC_LEAVE_FREE)
+	@echo "--- gray_overflow (gray stack overflows, so the rescan runs) ---"
+	MIN_EXPANSION_WORDSIZE=$(GRAY_OVERFLOW_MAJOR_WORDS) ./gray_overflow.native $(GRAY_OVERFLOW_MAJOR_WORDS)
 	@echo "=== All native smoke tests passed ==="
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----
