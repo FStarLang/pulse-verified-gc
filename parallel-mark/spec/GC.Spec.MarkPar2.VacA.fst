@@ -141,9 +141,9 @@ let vac_weight (_: squash big) : unit =
   W.entry_w_rec k1 g g vA;
   W.pc_w_rec k1 g g Loop;
   W.inbox_w_rec k1 g g [];
-  W.wks_w_rec k1 g g [];
-  W.wks_w_restart k1 g [];
-  W.wks_w_stopped k1 g [];
+  W.wks_w_rec k1 g g 0 [];
+  W.wks_w_restart k1 g 0 [];
+  W.wks_w_stopped k1 g 0 [];
   W.fields_rec g g vA;
   W.objs_w_mono k1 g g [] [] [];
   W.objs_w_drop k1 g g [blank] [blank] [vA] vA 0

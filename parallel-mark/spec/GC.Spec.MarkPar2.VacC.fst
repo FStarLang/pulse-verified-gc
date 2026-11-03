@@ -210,6 +210,7 @@ let one_loop (x: wk) (i: nat) (w: wk)
 let s6_one (_: squash big) (i: nat) (w: wk)
   : Lemma (requires M1.nth (s6 ()).wks i == Some w) (ensures w.pc == Loop)
   = s6_eq ();
+    assert_norm ((wk_of_l [obj_B ()] Loop).pc == Loop);
     one_loop (wk_of_l [obj_B ()] Loop) i w
 
 let s6_loop (_: squash big)

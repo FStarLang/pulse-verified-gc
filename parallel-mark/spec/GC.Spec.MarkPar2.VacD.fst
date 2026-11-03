@@ -46,7 +46,7 @@ module VC = GC.Spec.MarkPar2.VacC
 let wA : wk = wk_of_l [vA] Loop
 
 let sched4 : list event = [W 0; W 0; W 0; W 0]
-let sched5 : list event = [W 0; W 0; W 0; W 0; W 0]
+let sched5 : list event = [W 0; W 0; W 0; W 0; W 0; W 0]
 
 let run4_eq (_: squash big) : Lemma (run k1 (g5 ()) (roots1 ()) sched4 == s4 ())
   = assert (run k1 (g5 ()) (roots1 ()) sched4 == s4 ())
@@ -56,7 +56,7 @@ let run4_eq (_: squash big) : Lemma (run k1 (g5 ()) (roots1 ()) sched4 == s4 ())
 
 let run5_eq (_: squash big) : Lemma (run k1 (g5 ()) (roots1 ()) sched5 == s5 ())
   = assert (run k1 (g5 ()) (roots1 ()) sched5 == s5 ())
-      by (FStar.Tactics.V2.norm [delta_only [`%run; `%run_from; `%sched5; `%s0; `%s1; `%s2; `%s3; `%s4; `%s5];
+      by (FStar.Tactics.V2.norm [delta_only [`%run; `%run_from; `%sched5; `%s0; `%s1; `%s2; `%s3; `%s4; `%s4i; `%s5];
                                   zeta; iota];
           FStar.Tactics.V2.trefl ())
 
@@ -114,19 +114,22 @@ let vac_count (_: squash big) : unit =
 #push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
 let vac_term1 (_: squash big) : unit =
   let g = g5 () in let r = roots1 () in
-  inv1 (); ctx1 (); s0_eq (); s1_eq (); s3_eq (); s4_eq (); s5_eq (); s10_eq (); s11_eq ();
-  T.disabled_same k1 (s11 ()) Main;
+  inv1 (); ctx1 (); s0_eq (); s1_eq (); s3_eq (); s4_eq (); s4i_eq (); s5_eq (); s10_eq (); s11_eq ();
+  T.disabled_spin k1 g r (s11 ()) Main;
+  T.set_same [wA] 0 wA;
   T.counted_some [wA];
   T.busy_enabled k1 g (s0 ()) 0 wA;
   T.enabled_nil k1 g r (s0 ());
   T.measure_of k1 g r (s0 ());
   T.om_rec k1 g (s0 ()) 0 wA wA 1;
+  U.own_len k1 g (s4i ()); U.old_eq (s4i ()) 0;
+  assert (U.upd (s4i ()) 0 (wk_of_l [] Stopped) (h3 ()) 0 == s5 ());
+  T.drop_rec k1 g r (s4i ()) 0 (wk_of_l [] Idle) (wk_of_l [] Stopped) 0;
+  T.drop_idle k1 g r (s4i ()) 0 (wk_of_l [] Idle);
   U.own_len k1 g (s4 ()); U.old_eq (s4 ()) 0;
-  assert (U.upd (s4 ()) 0 (wk_of_l [] Stopped) (h3 ()) 0 == s5 ());
-  T.drop_rec k1 g r (s4 ()) 0 (wk_of_l [] Loop) (wk_of_l [] Stopped) 0;
   U.own_len k1 g (s0 ()); U.old_eq (s0 ()) 0;
   T.drop_pop k1 g r (s0 ()) 0 wA vA [];
-  T.drop_stop k1 g r (s4 ()) 0 (wk_of_l [] Loop);
+  T.drop_empty k1 g r (s4 ()) 0 (wk_of_l [] Loop);
   U.own_len k1 g (s3 ()); U.old_eq (s3 ()) 0;
   T.drop_finish k1 g r (s3 ()) 0 (wk_of_l [] Finish);
   U.own_len k1 g (s1 ()); U.old_eq (s1 ()) 0;
@@ -192,4 +195,11 @@ let vac_statements (_: squash big) : unit =
   assert (run (k2 ()) g rootsA [] == t0 ());
   assert (step (k2 ()) (t0 ()) (W 0) == t1 ());
   MP.step_race_free (k2 ()) g rootsA [] 1 0 (hd_address vA)
+#pop-options
+
+/// A spin step: in R2's t8, W0 has nothing to do while the counter is 1.
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+let vac_spin (_: squash big) : unit =
+  t8_eq ();
+  T.spin_same (k2 ()) (t8 ()) 0 (w [] [] Loop) Idle
 #pop-options

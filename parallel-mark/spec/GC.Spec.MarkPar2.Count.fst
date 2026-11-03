@@ -50,7 +50,7 @@ let stopped_zero (k: cfg) (g: heap) (roots: list obj_addr) (sched: list event) (
 /// At 0, every record is empty and holds nothing.
 let zero_empty (s: state) (i: nat) (w: wk)
   : Lemma (requires count_ok s /\ s.count == 0 /\ wk_of s i == Some w)
-          (ensures w.stack == [] /\ w.inbox == [] /\ (w.pc == Loop \/ w.pc == Stopped))
+          (ensures w.stack == [] /\ w.inbox == [] /\ (w.pc == Loop \/ w.pc == Idle \/ w.pc == Stopped))
   = reveal_opaque (`%count_ok) (count_ok s);
     LS.counted_zero s.wks i w
 

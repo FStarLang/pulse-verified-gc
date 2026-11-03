@@ -23,11 +23,10 @@
 /// is a Loop step (pop, blacken), one Scan step per field (route the
 /// field), and a Finish step (subtract 1).  try_take is a Loop step that
 /// moves the head of the inbox to `Got v`; accept(v) is the Got step; the
-/// subtraction is again a Finish step.  A Loop step that finds the stack and
-/// the inbox empty reads the counter: at 0 the worker stops, otherwise
-/// nothing changes (it looks again later).  Reading the inbox and the
-/// counter in one step is sound: the read can only give 0 when no message
-/// exists, and every other outcome changes nothing.
+/// subtraction is again a Finish step.  A try_take that finds the inbox
+/// empty is a Loop step of its own, to `Idle`; the atomic read of the
+/// counter is the Idle step after it: at 0 the worker stops, otherwise it
+/// goes back to Loop and looks again.  A message may arrive between the two.
 ///
 /// `Main` is the main thread between rounds.  It runs only when every worker
 /// has stopped (the stop barrier).  It checks every overflow flag; if none
@@ -86,6 +85,7 @@ type pc =
   | Loop                              (* at the top of the loop *)
   | Scan of M1.scanning               (* x popped and black; field snext next *)
   | Got of obj_addr                   (* taken from the inbox, not yet accepted *)
+  | Idle                              (* found the inbox empty; reads the counter next *)
   | Finish                            (* handled; work_in_flight -= 1 next *)
   | Stopped                           (* read 0; waiting at the stop barrier *)
 
@@ -173,9 +173,9 @@ let wstep (k: cfg) (s: state) (i: nat) : state =
        | [] ->
          (match w.inbox with
           | v :: rest -> { s with wks = M1.set_nth s.wks i { w with inbox = rest; pc = Got v } }
-          | [] ->
-            if s.count = 0 then { s with wks = M1.set_nth s.wks i { w with pc = Stopped } }
-            else s))
+          | [] -> { s with wks = M1.set_nth s.wks i { w with pc = Idle } }))
+    | Idle ->
+      { s with wks = M1.set_nth s.wks i { w with pc = if s.count = 0 then Stopped else Loop } }
     | Scan sc ->
       let pc' = match M1.next_field sc with Some sc' -> Scan sc' | None -> Finish in
       let s0 = { s with wks = M1.set_nth s.wks i { w with pc = pc' } } in
@@ -345,10 +345,13 @@ let readable (k: cfg) (s: state) (i: nat) (a: hp_addr) : bool = in_range k i a |
 /// Termination
 /// ---------------------------------------------------------------------------
 
+/// A worker with nothing to do, while the counter is not 0, spins between
+/// Loop and Idle; those steps are not enabled.
 let wk_enabled (s: state) (w: wk) : bool =
   match w.pc with
   | Stopped -> false
   | Loop -> Cons? w.stack || Cons? w.inbox || s.count = 0
+  | Idle -> Cons? w.inbox || s.count = 0
   | _ -> true
 
 let rec worker_events (s: state) (i: nat) (ws: list wk) : Tot (list event) (decreases ws) =
@@ -364,33 +367,42 @@ let enabled (s: state) : list event =
 /// An inbox entry, or a taken one, that accept will send on.
 let fwd (k: cfg) (h: heap) (v: obj_addr) : bool = own k (resolve_x v h) <> own k v
 
-let entry_w (k: cfg) (h: heap) (v: obj_addr) : nat = if fwd k h v then 6 else 3
+let entry_w (k: cfg) (h: heap) (v: obj_addr) : nat = if fwd k h v then 7 else 3
 
 let pc_w (k: cfg) (h: heap) (p: pc) : nat =
   match p with
-  | Loop -> 1
+  | Loop -> 2
+  | Idle -> 1
   | Stopped -> 0
-  | Finish -> 2
-  | Got v -> entry_w k h v
+  | Finish -> 3
+  | Got v -> entry_w k h v + 1
   | Scan sc ->
     if U64.v sc.M1.snext <= U64.v sc.M1.sws
-    then 7 * (U64.v sc.M1.sws - U64.v sc.M1.snext + 1) + 2 else 2
+    then 9 * (U64.v sc.M1.sws - U64.v sc.M1.snext + 1) + 3 else 3
+
+/// Idle weighs as much as Loop while the counter is not 0, so spinning
+/// keeps the measure; one more with a message waiting, so going back to
+/// Loop for it lowers the measure.
+let idle_w (c: nat) (w: wk) : nat =
+  if Idle? w.pc then (if c > 0 then 1 else 0) + (if Cons? w.inbox then 1 else 0) else 0
 
 let rec inbox_w (k: cfg) (h: heap) (l: list obj_addr) : Tot nat (decreases l) =
   match l with [] -> 0 | v :: rest -> entry_w k h v + inbox_w k h rest
 
-let rec wks_w (k: cfg) (h: heap) (ws: list wk) : Tot nat (decreases ws) =
-  match ws with [] -> 0 | w :: rest -> inbox_w k h w.inbox + pc_w k h w.pc + wks_w k h rest
+let rec wks_w (k: cfg) (h: heap) (c: nat) (ws: list wk) : Tot nat (decreases ws) =
+  match ws with
+  | [] -> 0
+  | w :: rest -> inbox_w k h w.inbox + pc_w k h w.pc + idle_w c w + wks_w k h c rest
 
 let on_stack (k: cfg) (ws: list wk) (x: obj_addr) : bool =
   match M1.nth ws (own k x) with Some w -> L.mem x w.stack | None -> false
 
-/// The work an object still needs: white (nr + 3), grey on its owner's
-/// stack (2), grey and off it (nr + 3); plus 7 per field to scan.
+/// The work an object still needs: white (2 nr + 3), grey on its owner's
+/// stack (2), grey and off it (2 nr + 3); plus 9 per field to scan.
 let obj_w (k: cfg) (h: heap) (ws: list wk) (x: obj_addr) : nat =
-  let f = 7 * M1.fields_to_scan x h in
-  if is_white_x x h then nr k + 3 + f
-  else if is_gray_x x h then (if on_stack k ws x then 2 else nr k + 3) + f
+  let f = 9 * M1.fields_to_scan x h in
+  if is_white_x x h then 2 * nr k + 3 + f
+  else if is_gray_x x h then (if on_stack k ws x then 2 else 2 * nr k + 3) + f
   else 0
 
 let rec objs_w (k: cfg) (h: heap) (ws: list wk) (l: list obj_addr) : Tot nat (decreases l) =
@@ -398,7 +410,18 @@ let rec objs_w (k: cfg) (h: heap) (ws: list wk) (l: list obj_addr) : Tot nat (de
 
 /// Every effective step lowers it by at least one (`GC.Spec.MarkPar2`).
 let measure (k: cfg) (s: state) : nat =
-  objs_w k s.heap s.wks (objs_list s.heap) + wks_w k s.heap s.wks + (if s.finished then 0 else 1)
+  objs_w k s.heap s.wks (objs_list s.heap) + wks_w k s.heap s.count s.wks + (if s.finished then 0 else 1)
+
+/// A spin step: worker i, with nothing to do while the counter is not 0,
+/// moves between Loop and Idle.
+let spin (s: state) (e: event) : bool =
+  match e with
+  | W i ->
+    (match M1.nth s.wks i with
+     | Some w -> not s.finished && Nil? w.stack && Nil? w.inbox && s.count > 0 &&
+                (Loop? w.pc || Idle? w.pc)
+     | None -> false)
+  | Main -> false
 
 let rec effective_steps (k: cfg) (s: state) (sched: list event) : Tot nat (decreases sched) =
   match sched with

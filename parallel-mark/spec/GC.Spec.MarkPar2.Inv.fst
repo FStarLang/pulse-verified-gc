@@ -6,6 +6,7 @@
 ///             repeats; each inbox entry, and a taken one, has its header
 ///             word in the worker's range and names an enumerated non-blue
 ///             object; a worker scanning holds a black object of its own;
+///             an idle worker's stack is empty;
 ///             the heap is g recoloured
 ///   count_ok  the counter equals the counted entries, and is 0 if any
 ///             worker has stopped
@@ -100,7 +101,8 @@ let pc_ok (k: cfg) (g h: heap) (i: nat) (p: pc) : prop =
 let wk_ok (k: cfg) (g h: heap) (i: nat) (w: wk) : prop =
   stack_ok k g h i w.stack /\
   (forall (v: obj_addr). L.memP v w.inbox ==> entry_ok k g i v) /\
-  pc_ok k g h i w.pc
+  pc_ok k g h i w.pc /\
+  (Idle? w.pc ==> w.stack == [])
 
 [@@"opaque_to_smt"]
 let own_ok (k: cfg) (g: heap) (s: state) : prop =

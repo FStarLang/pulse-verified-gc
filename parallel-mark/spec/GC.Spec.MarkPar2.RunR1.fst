@@ -5,10 +5,11 @@
 ///   s0  setup: A pushed; B greyed, the stack full: overflow_main
 ///   s1  W0 pops A (black)            s2  W0 scans A's field 1, B: grey
 ///   s3  W0 scans field 2, not a pointer                s4  W0 subtracts
-///   s5  W0 stops at 0
+///   s4i W0 finds its inbox empty       s5  W0 reads 0 and stops
 ///   s6  Main: overflow_main set; the fix-up pushes B; a new round
 ///   s7  W0 pops B (black)            s8  W0 scans B's field, A: black
-///   s9  W0 subtracts                 s10 W0 stops
+///   s9  W0 subtracts                 s9i W0 finds its inbox empty
+///   s10 W0 reads 0 and stops
 ///   s11 Main: no flag: done
 /// ---------------------------------------------------------------------------
 module GC.Spec.MarkPar2.RunR1
@@ -81,15 +82,17 @@ let s1 (_: squash big) : state = step k1 (s0 ()) (W 0)
 let s2 (_: squash big) : state = step k1 (s1 ()) (W 0)
 let s3 (_: squash big) : state = step k1 (s2 ()) (W 0)
 let s4 (_: squash big) : state = step k1 (s3 ()) (W 0)
-let s5 (_: squash big) : state = step k1 (s4 ()) (W 0)
+let s4i (_: squash big) : state = step k1 (s4 ()) (W 0)
+let s5 (_: squash big) : state = step k1 (s4i ()) (W 0)
 let s6 (_: squash big) : state = step k1 (s5 ()) Main
 let s7 (_: squash big) : state = step k1 (s6 ()) (W 0)
 let s8 (_: squash big) : state = step k1 (s7 ()) (W 0)
 let s9 (_: squash big) : state = step k1 (s8 ()) (W 0)
-let s10 (_: squash big) : state = step k1 (s9 ()) (W 0)
+let s9i (_: squash big) : state = step k1 (s9 ()) (W 0)
+let s10 (_: squash big) : state = step k1 (s9i ()) (W 0)
 let s11 (_: squash big) : state = step k1 (s10 ()) Main
 
-let sched1 : list event = [W 0; W 0; W 0; W 0; W 0; Main; W 0; W 0; W 0; W 0; Main]
+let sched1 : list event = [W 0; W 0; W 0; W 0; W 0; W 0; Main; W 0; W 0; W 0; W 0; W 0; Main]
 
 #push-options "--z3rlimit 40 --fuel 4 --ifuel 2"
 let s0_eq (_: squash big)
@@ -125,9 +128,13 @@ let s4_eq (_: squash big)
   : Lemma (s4 () == { heap = h3 (); wks = [wk_of_l [] Loop]; count = 0; ovf_main = true; finished = false })
   = s3_eq ()
 
+let s4i_eq (_: squash big)
+  : Lemma (s4i () == { heap = h3 (); wks = [wk_of_l [] Idle]; count = 0; ovf_main = true; finished = false })
+  = s4_eq ()
+
 let s5_eq (_: squash big)
   : Lemma (s5 () == { heap = h3 (); wks = [wk_of_l [] Stopped]; count = 0; ovf_main = true; finished = false })
-  = s4_eq ()
+  = s4i_eq ()
 #pop-options
 
 /// The fix-up of the first Main.
@@ -174,9 +181,13 @@ let s9_eq (_: squash big)
   : Lemma (s9 () == { heap = h4 (); wks = [wk_of_l [] Loop]; count = 0; ovf_main = false; finished = false })
   = s8_eq ()
 
+let s9i_eq (_: squash big)
+  : Lemma (s9i () == { heap = h4 (); wks = [wk_of_l [] Idle]; count = 0; ovf_main = false; finished = false })
+  = s9_eq ()
+
 let s10_eq (_: squash big)
   : Lemma (s10 () == { heap = h4 (); wks = [wk_of_l [] Stopped]; count = 0; ovf_main = false; finished = false })
-  = s9_eq ()
+  = s9i_eq ()
 
 let s11_eq (_: squash big)
   : Lemma (s11 () == { heap = h4 (); wks = [wk_of_l [] Stopped]; count = 0; ovf_main = false; finished = true })
@@ -186,7 +197,7 @@ let s11_eq (_: squash big)
 let run1_eq (_: squash big)
   : Lemma (run k1 (g5 ()) (roots1 ()) sched1 == s11 ())
   = assert (run k1 (g5 ()) (roots1 ()) sched1 == s11 ())
-      by (FStar.Tactics.V2.norm [delta_only [`%run; `%run_from; `%sched1; `%s0; `%s1; `%s2; `%s3; `%s4;
-                                               `%s5; `%s6; `%s7; `%s8; `%s9; `%s10; `%s11];
+      by (FStar.Tactics.V2.norm [delta_only [`%run; `%run_from; `%sched1; `%s0; `%s1; `%s2; `%s3; `%s4; `%s4i;
+                                               `%s5; `%s6; `%s7; `%s8; `%s9; `%s9i; `%s10; `%s11];
                                   zeta; iota];
           FStar.Tactics.V2.trefl ())

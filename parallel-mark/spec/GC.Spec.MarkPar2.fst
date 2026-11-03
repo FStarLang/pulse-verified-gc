@@ -22,8 +22,9 @@
 ///   count_exact          work_in_flight equals the counted entries
 ///   zero_final           from 0, every worker step leaves it 0
 ///   mark_par_terminates  every schedule has at most measure (init ...)
-///                        effective steps, and a run that has not finished
-///                        always has one
+///                        effective steps, the others are no-ops or spin
+///                        steps, and a run that has not finished always
+///                        has an effective one
 /// ---------------------------------------------------------------------------
 module GC.Spec.MarkPar2
 
@@ -181,14 +182,21 @@ let zero_final k g roots sched i = ctx_of k g roots; C.zero_final k g roots sche
 /// ---------------------------------------------------------------------------
 
 /// Every run ends: a schedule has at most `measure (init ...)` effective
-/// steps, a step that is not enabled changes nothing, and nothing is enabled
-/// exactly when marking is done.  So any schedule that keeps taking enabled
-/// steps finishes within that many.
+/// steps; a step that is not enabled changes nothing, or is a spin step (a
+/// worker with nothing to do, while the counter is not 0, moves between
+/// Loop and Idle), which keeps the measure and which that worker's next
+/// step undoes; and nothing is enabled exactly when marking is done.  So
+/// any schedule that keeps taking enabled steps finishes within that many,
+/// and the only way to run for ever is for some workers to spin while
+/// others are never scheduled.
 val mark_par_terminates (k: cfg) (g: heap) (roots: list obj_addr) (sched: list event)
   : Lemma (requires pre k g roots)
           (ensures (let s = run k g roots sched in
                     effective_steps k (init k g roots) sched <= measure k (init k g roots) /\
-                    (forall (e: event). ~(L.mem e (enabled s)) ==> step k s e == s) /\
+                    (forall (e: event). ~(L.mem e (enabled s)) ==>
+                       step k s e == s \/
+                       (spin s e /\ measure k (step k s e) == measure k s /\
+                        step k (step k s e) e == s)) /\
                     (enabled s == [] <==> s.finished)))
 
 let mark_par_terminates k g roots sched =
@@ -197,5 +205,5 @@ let mark_par_terminates k g roots sched =
   T.effective_le k g roots (init k g roots) sched;
   E.run_inv k g roots sched;
   let s = run k g roots sched in
-  FStar.Classical.forall_intro (FStar.Classical.move_requires (T.disabled_same k s));
+  FStar.Classical.forall_intro (FStar.Classical.move_requires (T.disabled_spin k g roots s));
   T.enabled_nil k g roots s

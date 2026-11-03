@@ -170,7 +170,7 @@ let grey_heap (k: cfg) (g: heap) (t: state) (c: obj_addr)
     I1.others_keep t.heap c Gray
 let push_record (k: cfg) (g h: heap) (me: nat) (w: wk) (c: obj_addr)
   : Lemma (requires wk_ok k g h me w /\ ~(L.memP c w.stack) /\ Seq.mem c (objs g) /\
-                    own k c == me /\ is_gray c h)
+                    own k c == me /\ is_gray c h /\ ~(Idle? w.pc))
           (ensures wk_ok k g h me { w with stack = c :: w.stack } /\ wk_ok k g h me { w with ovf = true })
   = ()
 
@@ -184,7 +184,7 @@ let grey_ctx (k: cfg) (g: heap) (roots: list obj_addr) (t: state) (me: nat) (c0:
      is_gray x h' == is_gray x t.heap /\ is_black x h' == is_black x t.heap /\
      is_white x h' == is_white x t.heap) /\
   (forall (i: nat) (wi: wk). wk_of t i == Some wi ==> wk_ok k g h' i wi /\ ~(L.memP c wi.stack)) /\
-  t.count >= 1 /\ ~(Stopped? w.pc)
+  t.count >= 1 /\ ~(Stopped? w.pc) /\ ~(Idle? w.pc)
 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 let grey_push_case (k: cfg) (g: heap) (roots: list obj_addr) (t: state) (me: nat)

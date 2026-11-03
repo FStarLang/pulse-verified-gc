@@ -3,7 +3,10 @@
 ///
 /// From any state a run reaches:
 ///   * an enabled event lowers the measure by at least 1 (`enabled_drops`);
-///   * an event that is not enabled changes nothing (`disabled_same`);
+///   * an event that is not enabled changes nothing, or is a spin step: a
+///     worker with nothing to do, while the counter is not 0, moves between
+///     Loop and Idle, which keeps the measure, and its next step undoes it
+///     (`disabled_spin`);
 ///   * nothing is enabled exactly when marking is done (`enabled_nil`): if
 ///     marking is not done and some worker has not stopped, the counter
 ///     names a worker that can move; if every worker has stopped, the main
@@ -12,10 +15,10 @@
 /// measure (`effective_le`).
 ///
 /// The fix-up is the one step that raises a part of the measure: it moves
-/// every worker from Stopped (weight 0) to Loop (1).  It also pushes at
+/// every worker from Stopped (weight 0) to Loop (2).  It also pushes at
 /// least one object, white or grey and off every stack before, which costs
-/// nr + 3 + 7f and costs 2 + 7f after; so it lowers the measure by at least
-/// 1 too.
+/// 2 nr + 3 + 9f and costs 2 + 9f after; so it lowers the measure by at
+/// least 1 too.
 /// ---------------------------------------------------------------------------
 module GC.Spec.MarkPar2.Term
 
@@ -76,9 +79,58 @@ let mem_enabled (s: state) (e: event)
       mem_worker_events s 0 s.wks e
     end
 
-let disabled_same (k: cfg) (s: state) (e: event)
-  : Lemma (requires ~(L.mem e (enabled s))) (ensures step k s e == s)
-  = mem_enabled s e
+let rec set_set (#a: Type) (l: list a) (i: nat) (x y: a)
+  : Lemma (ensures M1.set_nth (M1.set_nth l i x) i y == M1.set_nth l i y) (decreases l)
+  = match l with [] -> () | _ :: r -> if i = 0 then () else set_set r (i - 1) x y
+
+let rec set_same (#a: Type) (l: list a) (i: nat) (x: a)
+  : Lemma (requires M1.nth l i == Some x) (ensures M1.set_nth l i x == l) (decreases l)
+  = match l with [] -> () | _ :: r -> if i = 0 then () else set_same r (i - 1) x
+
+/// A spin step keeps the measure, and the worker's next step undoes it.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let spin_same (k: cfg) (s: state) (i: nat) (w: wk) (p: pc)
+  : Lemma (requires M1.nth s.wks i == Some w /\ w.stack == [] /\ w.inbox == [] /\ s.count > 0 /\
+                    (w.pc == Loop /\ p == Idle \/ w.pc == Idle /\ p == Loop))
+          (ensures (let w' = { w with pc = p } in
+                    let s' = { s with wks = M1.set_nth s.wks i w' } in
+                    let w'' = { w' with pc = w.pc } in
+                    measure k s' == measure k s /\
+                    M1.nth s'.wks i == Some w' /\
+                    ({ s' with wks = M1.set_nth s'.wks i w'' }) == s))
+  = let w' = { w with pc = p } in
+    let s' = { s with wks = M1.set_nth s.wks i w' } in
+    Own.nth_lt s.wks i;
+    Ms.set_same_stacks s.wks i w';
+    Ms.om_same k s.heap s s';
+    W.wks_w_set k s.heap s.count s.wks i w';
+    Own.nth_set_nth s.wks i i w';
+    set_set s.wks i w' w;
+    assert ({ w' with pc = w.pc } == w);
+    set_same s.wks i w
+#pop-options
+
+let disabled_spin (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (e: event)
+  : Lemma (requires inv k g roots s /\ ~(L.mem e (enabled s)))
+          (ensures step k s e == s \/
+                   (spin s e /\ measure k (step k s e) == measure k s /\
+                    step k (step k s e) e == s))
+  = mem_enabled s e;
+    match e with
+    | Main -> ()
+    | W i ->
+      if s.finished then ()
+      else match M1.nth s.wks i with
+        | None -> ()
+        | Some w ->
+          match w.pc with
+          | Loop -> if Nil? w.stack && Nil? w.inbox then spin_same k s i w Idle
+          | Idle ->
+            reveal_opaque (`%own_ok) (own_ok k g s);
+            assert (wk_of s i == Some w);
+            assert (wk_ok k g s.heap i w);
+            spin_same k s i w Loop
+          | _ -> ()
 
 /// Some record has something counted.
 let rec counted_some (ws: list wk)
@@ -98,9 +150,11 @@ let rec counted_some (ws: list wk)
 
 /// A worker with something counted, in a running state, can move.
 let busy_enabled (k: cfg) (g: heap) (s: state) (i: nat) (w: wk)
-  : Lemma (requires count_ok s /\ wk_of s i == Some w /\ LS.size w > 0)
+  : Lemma (requires count_ok s /\ own_ok k g s /\ wk_of s i == Some w /\ LS.size w > 0)
           (ensures wk_enabled s w)
   = reveal_opaque (`%count_ok) (count_ok s);
+    reveal_opaque (`%own_ok) (own_ok k g s);
+    assert (wk_ok k g s.heap i w);
     LS.counted_ge s.wks i
 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
@@ -119,7 +173,7 @@ let enabled_nil (k: cfg) (g: heap) (roots: list obj_addr) (s: state)
       let Some w = M1.nth s.wks i in
       if wk_enabled s w then mem_enabled s (W i)
       else begin
-        // w is at Loop with nothing, and the counter is not 0.
+        // w is at Loop or Idle with nothing, and the counter is not 0.
         assert (s.count > 0);
         counted_some s.wks;
         let j = FStar.IndefiniteDescription.indefinite_description_ghost nat
@@ -154,17 +208,19 @@ let om_rec (k: cfg) (g: heap) (s: state) (i: nat) (w w': wk) (n: nat)
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 let drop_rec (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat) (w w': wk) (n: nat)
   : Lemma (requires mpre k g roots s i w /\ w'.stack == w.stack /\
-                    W.wkw k g w' + 1 <= W.wkw k g w /\
+                    W.wkw k g s.count w' + 1 <= W.wkw k g s.count w /\
+                    (n > 0 ==> s.count > 0) /\
                     inv k g roots (U.upd s i w' s.heap n))
           (ensures measure k (U.upd s i w' s.heap n) < measure k s)
   = let s' = U.upd s i w' s.heap n in
     measure_of k g roots s;
     measure_of k g roots s';
     om_rec k g s i w w' n;
-    W.wks_w_set k g s.wks i w'
+    W.wks_w_set k g s.count s.wks i w';
+    W.wks_w_count k g n s.count s'.wks
 #pop-options
 
-/// Pop: x's weight, 2 + 7f, goes; the program counter gains 7f + 1.
+/// Pop: x's weight, 2 + 9f, goes; the program counter gains 9f + 1.
 #push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
 let drop_pop (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat) (w: wk)
     (x: obj_addr) (rest: list obj_addr)
@@ -180,7 +236,7 @@ let drop_pop (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat) (w: w
     assert (wstep k s i == s');
     measure_of k g roots s;
     measure_of k g roots s';
-    W.wks_w_set k g s.wks i w';
+    W.wks_w_set k g s.count s.wks i w';
     LS.objs_list_mem g x;
     W.fields_rec g s.heap x;
     W.fields_rec g h' x;
@@ -198,7 +254,7 @@ let drop_pop (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat) (w: w
       end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
-    W.objs_w_drop k s.heap h' s.wks s'.wks (objs_list g) x (2 + 7 * M1.fields_to_scan x s.heap)
+    W.objs_w_drop k s.heap h' s.wks s'.wks (objs_list g) x (2 + 9 * M1.fields_to_scan x s.heap)
 #pop-options
 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
@@ -213,11 +269,22 @@ let drop_take (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat) (w: 
 #pop-options
 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
-let drop_stop (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat) (w: wk)
+let drop_empty (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat) (w: wk)
   : Lemma (requires mpre k g roots s i w /\ w.pc == Loop /\ w.stack == [] /\ w.inbox == [] /\ s.count == 0)
           (ensures measure k (wstep k s i) < measure k s)
-  = let w' = { w with pc = Stopped } in
-    St.step_stop k g roots s i w;
+  = let w' = { w with pc = Idle } in
+    St.step_empty k g roots s i w;
+    assert (wstep k s i == U.upd s i w' s.heap s.count);
+    drop_rec k g roots s i w w' s.count
+#pop-options
+
+/// Idle, with the counter at 0 or a message waiting.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let drop_idle (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat) (w: wk)
+  : Lemma (requires mpre k g roots s i w /\ w.pc == Idle /\ (s.count == 0 \/ Cons? w.inbox))
+          (ensures measure k (wstep k s i) < measure k s)
+  = let w' = { w with pc = if s.count = 0 then Stopped else Loop } in
+    St.step_idle k g roots s i w;
     assert (wstep k s i == U.upd s i w' s.heap s.count);
     drop_rec k g roots s i w w' s.count
 #pop-options
@@ -241,11 +308,11 @@ let mid_parts (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat) (w: 
   : Lemma (requires mpre k g roots s i w)
           (ensures (let s0 = U.upd s i { w with pc = p } s.heap s.count in
                     Ms.om k g s0 == Ms.om k g s /\
-                    Ms.wm k g s0 + pc_w k g w.pc == Ms.wm k g s + pc_w k g p /\
+                    Ms.wm k g s0 + W.wkw k g s.count w == Ms.wm k g s + W.wkw k g s.count { w with pc = p } /\
                     recoloured g s0.heap /\ L.length s0.wks == nr k /\ i < L.length s0.wks))
   = let w' = { w with pc = p } in
     om_rec k g s i w w' s.count;
-    W.wks_w_set k g s.wks i w';
+    W.wks_w_set k g s.count s.wks i w';
     U.own_heap k g s;
     Own.length_set_nth s.wks i w'
 #pop-options
@@ -258,6 +325,8 @@ let drop_scan (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat) (w: 
     let s0 = U.upd s i { w with pc = p } s.heap s.count in
     St.step_scan k g roots s i w sc;
     St.scan_field k g s i w sc;
+    U.own_rec k g s i w;
+    U.count_pos s i;
     mid_parts k g roots s i w p;
     measure_of k g roots s;
     measure_of k g roots (wstep k s i);
@@ -278,6 +347,7 @@ let drop_got (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat) (w: w
   = let s0 = U.upd s i { w with pc = Finish } s.heap s.count in
     St.step_got k g roots s i w v;
     U.own_rec k g s i w;
+    U.count_pos s i;
     mid_parts k g roots s i w Finish;
     measure_of k g roots s;
     measure_of k g roots (wstep k s i);
@@ -301,7 +371,8 @@ let wstep_drops (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat)
        | [] ->
          (match w.inbox with
           | v :: rest -> drop_take k g roots s i w v rest
-          | [] -> drop_stop k g roots s i w))
+          | [] -> drop_empty k g roots s i w))
+    | Idle -> drop_idle k g roots s i w
     | Scan sc -> drop_scan k g roots s i w sc
     | Got v -> drop_got k g roots s i w v
     | Finish -> drop_finish k g roots s i w
@@ -329,11 +400,11 @@ let x_weight (k: cfg) (h1 h2: heap) (ws1 ws2: list wk) (x: obj_addr)
                     (~(is_white x h1) ==> ~(is_white x h2)) /\ (is_black x h2 <==> is_black x h1) /\
                     (is_gray x h1 ==> is_gray x h2) /\ (is_blue x h1 <==> is_blue x h2))
           (ensures obj_w k h2 ws2 x <= obj_w k h1 ws1 x /\
-                   (on_stack k ws2 x /\ is_gray x h2 ==> obj_w k h2 ws2 x + nr k + 1 <= obj_w k h1 ws1 x))
+                   (on_stack k ws2 x /\ is_gray x h2 ==> obj_w k h2 ws2 x + 2 * nr k + 1 <= obj_w k h1 ws1 x))
   = colors x h1; colors x h2
 
 /// The walk only greys, and only adds to stacks that start empty: no object
-/// gains weight, and an object on a stack at the end lost nr + 1.
+/// gains weight, and an object on a stack at the end lost 2 nr + 1.
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 let walk_weights (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (f: fx) (ws': list wk)
   : Lemma (requires inv k g roots s /\ all_stopped s.wks /\ FX.grows (Mn.start_fx s) f /\
@@ -341,13 +412,13 @@ let walk_weights (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (f: fx) (w
           (ensures (forall (x: obj_addr). L.memP x (objs_list g) ==>
                       obj_w k f.fh ws' x <= obj_w k s.heap s.wks x) /\
                    (forall (x: obj_addr). L.memP x (objs_list g) /\ on_stack k ws' x /\ is_gray x f.fh ==>
-                      obj_w k f.fh ws' x + nr k + 1 <= obj_w k s.heap s.wks x))
+                      obj_w k f.fh ws' x + 2 * nr k + 1 <= obj_w k s.heap s.wks x))
   = Mn.stopped_empty k g s;
     U.own_heap k g s;
     FX.wbase_heap k g roots f;
     let aux (x: obj_addr) : Lemma (requires L.memP x (objs_list g))
         (ensures obj_w k f.fh ws' x <= obj_w k s.heap s.wks x /\
-                 (on_stack k ws' x /\ is_gray x f.fh ==> obj_w k f.fh ws' x + nr k + 1 <= obj_w k s.heap s.wks x)) =
+                 (on_stack k ws' x /\ is_gray x f.fh ==> obj_w k f.fh ws' x + 2 * nr k + 1 <= obj_w k s.heap s.wks x)) =
       LS.objs_list_mem g x;
       W.fields_rec g s.heap x; W.fields_rec g f.fh x;
       recoloured_blue g s.heap x; recoloured_blue g f.fh x;
@@ -384,7 +455,7 @@ let main_fix_drops (k: cfg) (g: heap) (roots: list obj_addr) (s: state)
     Mn.stopped_empty k g s;
     introduce forall (i: nat) (w: wk). M1.nth s.wks i == Some w ==> w.inbox == [] /\ w.pc == Stopped
     with introduce _ ==> _ with Mn.stopped_at k g s i w;
-    W.wks_w_stopped k g s.wks;
+    W.wks_w_stopped k g s.count s.wks;
     Ms.measure_parts k g s;
     reveal_opaque (`%FX.wbase) (FX.wbase k g roots f);
     Mn.like_walk k g roots f;
@@ -394,7 +465,7 @@ let main_fix_drops (k: cfg) (g: heap) (roots: list obj_addr) (s: state)
       Ms.measure_parts k g s';
       introduce forall (i: nat) (w: wk). M1.nth f.fws i == Some w ==> w.inbox == [] /\ w.pc == Stopped
       with introduce _ ==> _ with FX.wbase_at k g roots f i w;
-      W.wks_w_stopped k g f.fws;
+      W.wks_w_stopped k g s.count f.fws;
       assert (Ms.same_stacks f.fws f.fws);
       walk_weights k g roots s f f.fws;
       W.objs_w_mono k s.heap f.fh s.wks f.fws (objs_list g)
@@ -405,7 +476,7 @@ let main_fix_drops (k: cfg) (g: heap) (roots: list obj_addr) (s: state)
       Ms.measure_parts k g s';
       introduce forall (i: nat) (w: wk). M1.nth f.fws i == Some w ==> w.inbox == []
       with introduce _ ==> _ with Mn.like_at k g f f.fws i w;
-      W.wks_w_restart k g f.fws;
+      W.wks_w_restart k g f.fn f.fws;
       LS.length_restart f.fws;
       FStar.Classical.forall_intro (LS.nth_restart f.fws);
       assert (Ms.same_stacks f.fws ws');
@@ -414,7 +485,7 @@ let main_fix_drops (k: cfg) (g: heap) (roots: list obj_addr) (s: state)
       let c = FStar.IndefiniteDescription.indefinite_description_ghost obj_addr
                 (fun x -> L.memP x (objs_list g) /\ on_stack k f.fws x /\ is_gray x f.fh) in
       Ms.on_stack_same k f.fws ws' c;
-      W.objs_w_drop k s.heap f.fh s.wks ws' (objs_list g) c (nr k + 1)
+      W.objs_w_drop k s.heap f.fh s.wks ws' (objs_list g) c (2 * nr k + 1)
     end
 #pop-options
 
@@ -445,4 +516,4 @@ let rec effective_le (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (sched
       E.step_inv k g roots s e;
       effective_le k g roots (step k s e) rest;
       if L.mem e (enabled s) then enabled_drops k g roots s e
-      else disabled_same k s e
+      else disabled_spin k g roots s e

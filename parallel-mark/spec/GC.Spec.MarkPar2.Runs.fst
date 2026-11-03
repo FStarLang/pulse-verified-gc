@@ -7,9 +7,9 @@
 ///
 /// Run R1: one range, S = 1, Q = 0, roots [A; B].
 ///     setup: A pushed; B greyed, the stack full: overflow_main
-///     W0 pop A; W0 scan B (grey: nothing); W0 scan 0; W0 finish; W0 stop
+///     W0 pop A; W0 scan B (grey: nothing); W0 scan 0; W0 finish; W0 idle; W0 stop
 ///     Main: overflow_main set; the fix-up pushes B (grey); a new round
-///     W0 pop B; W0 scan A (black: nothing); W0 finish; W0 stop
+///     W0 pop B; W0 scan A (black: nothing); W0 finish; W0 idle; W0 stop
 ///     Main: no flag: done
 /// ---------------------------------------------------------------------------
 module GC.Spec.MarkPar2.Runs

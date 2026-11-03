@@ -4,7 +4,9 @@
 /// Two ranges, cut at B's header; S = 1, Q = 0; root B.
 ///   z0  setup: B pushed on stack 1
 ///   z1  W1 pops B           z2  W1 scans A: inbox 0 full, dropped, flag 1
-///   z3  W1 subtracts        z4  W1 stops        z5  W0 stops
+///   z3  W1 subtracts
+///   z3i, z4  W1 finds its inbox empty, reads 0, stops
+///   z4i, z5  W0 the same
 ///   z6  Main: flag 1 set; the walk passes A (white), reaches B (black),
 ///       whose field names A, white and below B: A is greyed and pushed
 /// ---------------------------------------------------------------------------
@@ -58,8 +60,10 @@ let z0 (_: squash big) : state = init (k3 ()) (g5 ()) (rootsB ())
 let z1 (_: squash big) : state = step (k3 ()) (z0 ()) (W 1)
 let z2 (_: squash big) : state = step (k3 ()) (z1 ()) (W 1)
 let z3 (_: squash big) : state = step (k3 ()) (z2 ()) (W 1)
-let z4 (_: squash big) : state = step (k3 ()) (z3 ()) (W 1)
-let z5 (_: squash big) : state = step (k3 ()) (z4 ()) (W 0)
+let z3i (_: squash big) : state = step (k3 ()) (z3 ()) (W 1)
+let z4 (_: squash big) : state = step (k3 ()) (z3i ()) (W 1)
+let z4i (_: squash big) : state = step (k3 ()) (z4 ()) (W 0)
+let z5 (_: squash big) : state = step (k3 ()) (z4i ()) (W 0)
 let z6 (_: squash big) : state = step (k3 ()) (z5 ()) Main
 
 #push-options "--z3rlimit 40 --fuel 4 --ifuel 2"
@@ -95,11 +99,17 @@ let z2_eq (_: squash big) : Lemma (z2 () == st (hB2 ()) [blank0; wf [] [] Finish
 let z3_eq (_: squash big) : Lemma (z3 () == st (hB2 ()) [blank0; wf [] [] Loop true] 0)
   = z2_eq ()
 
-let z4_eq (_: squash big) : Lemma (z4 () == st (hB2 ()) [blank0; wf [] [] Stopped true] 0)
+let z3i_eq (_: squash big) : Lemma (z3i () == st (hB2 ()) [blank0; wf [] [] Idle true] 0)
   = z3_eq ()
 
-let z5_eq (_: squash big) : Lemma (z5 () == st (hB2 ()) [w [] [] Stopped; wf [] [] Stopped true] 0)
+let z4_eq (_: squash big) : Lemma (z4 () == st (hB2 ()) [blank0; wf [] [] Stopped true] 0)
+  = z3i_eq ()
+
+let z4i_eq (_: squash big) : Lemma (z4i () == st (hB2 ()) [w [] [] Idle; wf [] [] Stopped true] 0)
   = z4_eq ()
+
+let z5_eq (_: squash big) : Lemma (z5 () == st (hB2 ()) [w [] [] Stopped; wf [] [] Stopped true] 0)
+  = z4i_eq ()
 #pop-options
 
 /// The fix-up: A is white (passed), B is black and its field names A,

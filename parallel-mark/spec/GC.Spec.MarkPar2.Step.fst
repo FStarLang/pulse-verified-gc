@@ -1,7 +1,8 @@
 /// ---------------------------------------------------------------------------
 /// GC.Spec.MarkPar2.Step — every worker step keeps the invariant
 ///
-/// One lemma per case of `wstep`: a pop, a take, a stop, a field scanned, a
+/// One lemma per case of `wstep`: a pop, a take, a take that finds the
+/// inbox empty, a counter read (stop or look again), a field scanned, a
 /// taken entry accepted, and the subtraction at the end.  A scan and an
 /// accept go through an intermediate state, in which the worker has moved
 /// on but not yet routed the entry; there `black_ok_but (Some c0)` holds,
@@ -184,12 +185,23 @@ let step_take (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat) (w: 
     step_rec k g roots s i w w' s.count
 #pop-options
 
+/// try_take found the inbox empty.
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
-let step_stop (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat) (w: wk)
-  : Lemma (requires step_pre k g roots s i w /\ w.pc == Loop /\ w.stack == [] /\ w.inbox == [] /\
-                    s.count == 0)
+let step_empty (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat) (w: wk)
+  : Lemma (requires step_pre k g roots s i w /\ w.pc == Loop /\ w.stack == [] /\ w.inbox == [])
           (ensures inv k g roots (wstep k s i))
-  = let w' = { w with pc = Stopped } in
+  = let w' = { w with pc = Idle } in
+    U.own_rec k g s i w;
+    assert (wstep k s i == U.upd s i w' s.heap s.count);
+    step_rec k g roots s i w w' s.count
+#pop-options
+
+/// The counter read: at 0 stop, otherwise look again.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let step_idle (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat) (w: wk)
+  : Lemma (requires step_pre k g roots s i w /\ w.pc == Idle)
+          (ensures inv k g roots (wstep k s i))
+  = let w' = { w with pc = if s.count = 0 then Stopped else Loop } in
     U.own_rec k g s i w;
     assert (wstep k s i == U.upd s i w' s.heap s.count);
     step_rec k g roots s i w w' s.count
@@ -407,7 +419,8 @@ let wstep_inv (k: cfg) (g: heap) (roots: list obj_addr) (s: state) (i: nat)
          | [] ->
            (match w.inbox with
             | v :: rest -> step_take k g roots s i w v rest
-            | [] -> if s.count = 0 then step_stop k g roots s i w else ()))
+            | [] -> step_empty k g roots s i w))
+      | Idle -> step_idle k g roots s i w
       | Scan sc -> step_scan k g roots s i w sc
       | Got v -> step_got k g roots s i w v
       | Finish -> step_finish k g roots s i w

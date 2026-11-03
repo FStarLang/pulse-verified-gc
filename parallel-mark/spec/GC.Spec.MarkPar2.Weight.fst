@@ -2,9 +2,11 @@
 /// GC.Spec.MarkPar2.Weight — the parts of the termination measure
 ///
 /// `measure` is the objects' weight (`objs_w`), the workers' weight
-/// (`wks_w`: inbox entries and program counters), and 1 until marking is
-/// done.  These lemmas say how each part moves:
-///   * wks_w under one record replaced, and an inbox entry appended;
+/// (`wks_w`: inbox entries, program counters, and the extra weight of an
+/// idle worker), and 1 until marking is done.  These lemmas say how each
+/// part moves:
+///   * wks_w under one record replaced, an inbox entry appended, and the
+///     counter changed (only whether it is 0 matters);
 ///   * wks_w and fields_to_scan do not depend on colours, only on the heap's
 ///     layout, so they are the same in every recoloured heap;
 ///   * objs_w is monotone in the objects' weights, and drops by at least d
@@ -33,25 +35,38 @@ module Own = GC.Spec.MarkPar.Own
 /// The workers' weight
 /// ---------------------------------------------------------------------------
 
-let wkw (k: cfg) (h: heap) (w: wk) : nat = inbox_w k h w.inbox + pc_w k h w.pc
-
-let rec wks_w_set (k: cfg) (h: heap) (ws: list wk) (i: nat) (w: wk)
-  : Lemma (ensures (match M1.nth ws i with
-                    | Some w0 -> wks_w k h (M1.set_nth ws i w) + wkw k h w0 == wks_w k h ws + wkw k h w
-                    | None -> wks_w k h (M1.set_nth ws i w) == wks_w k h ws))
-          (decreases ws)
-  = match ws with [] -> () | _ :: r -> if i = 0 then () else wks_w_set k h r (i - 1) w
-
-let rec wks_w_ge (k: cfg) (h: heap) (ws: list wk) (i: nat)
-  : Lemma (ensures (match M1.nth ws i with Some w -> wkw k h w <= wks_w k h ws | None -> True))
-          (decreases ws)
-  = match ws with [] -> () | _ :: r -> if i = 0 then () else wks_w_ge k h r (i - 1)
-
 let rec inbox_w_append (k: cfg) (h: heap) (l: list obj_addr) (v: obj_addr)
   : Lemma (ensures inbox_w k h (l @ [v]) == inbox_w k h l + entry_w k h v) (decreases l)
   = match l with [] -> () | _ :: r -> inbox_w_append k h r v
 
-let entry_w_le (k: cfg) (h: heap) (v: obj_addr) : Lemma (entry_w k h v <= 6 /\ entry_w k h v >= 3) = ()
+let wkw (k: cfg) (h: heap) (c: nat) (w: wk) : nat = inbox_w k h w.inbox + pc_w k h w.pc + idle_w c w
+
+let rec wks_w_set (k: cfg) (h: heap) (c: nat) (ws: list wk) (i: nat) (w: wk)
+  : Lemma (ensures (match M1.nth ws i with
+                    | Some w0 -> wks_w k h c (M1.set_nth ws i w) + wkw k h c w0 == wks_w k h c ws + wkw k h c w
+                    | None -> wks_w k h c (M1.set_nth ws i w) == wks_w k h c ws))
+          (decreases ws)
+  = match ws with [] -> () | _ :: r -> if i = 0 then () else wks_w_set k h c r (i - 1) w
+
+let rec wks_w_ge (k: cfg) (h: heap) (c: nat) (ws: list wk) (i: nat)
+  : Lemma (ensures (match M1.nth ws i with Some w -> wkw k h c w <= wks_w k h c ws | None -> True))
+          (decreases ws)
+  = match ws with [] -> () | _ :: r -> if i = 0 then () else wks_w_ge k h c r (i - 1)
+
+/// Only whether the counter is 0 matters, and 0 weighs least.
+let rec wks_w_count (k: cfg) (h: heap) (c1 c2: nat) (ws: list wk)
+  : Lemma (ensures ((c1 > 0 <==> c2 > 0) ==> wks_w k h c1 ws == wks_w k h c2 ws) /\
+                   (c1 == 0 ==> wks_w k h c1 ws <= wks_w k h c2 ws))
+          (decreases ws)
+  = match ws with [] -> () | _ :: r -> wks_w_count k h c1 c2 r
+
+/// An entry appended to an inbox: its weight, and 1 more if the worker is
+/// idle and the inbox was empty.
+let wkw_append (k: cfg) (h: heap) (c: nat) (w: wk) (v: obj_addr)
+  : Lemma (wkw k h c { w with inbox = w.inbox @ [v] } <= wkw k h c w + entry_w k h v + 1)
+  = inbox_w_append k h w.inbox v
+
+let entry_w_le (k: cfg) (h: heap) (v: obj_addr) : Lemma (entry_w k h v <= 7 /\ entry_w k h v >= 3) = ()
 
 /// Recolouring keeps resolution, so it keeps every entry's weight.
 let entry_w_rec (k: cfg) (g h: heap) (v: obj_addr)
@@ -66,15 +81,15 @@ let rec inbox_w_rec (k: cfg) (g h: heap) (l: list obj_addr)
   : Lemma (requires recoloured g h) (ensures inbox_w k h l == inbox_w k g l) (decreases l)
   = match l with [] -> () | v :: r -> entry_w_rec k g h v; inbox_w_rec k g h r
 
-let rec wks_w_rec (k: cfg) (g h: heap) (ws: list wk)
-  : Lemma (requires recoloured g h) (ensures wks_w k h ws == wks_w k g ws) (decreases ws)
+let rec wks_w_rec (k: cfg) (g h: heap) (c: nat) (ws: list wk)
+  : Lemma (requires recoloured g h) (ensures wks_w k h c ws == wks_w k g c ws) (decreases ws)
   = match ws with
     | [] -> ()
-    | w :: r -> inbox_w_rec k g h w.inbox; pc_w_rec k g h w.pc; wks_w_rec k g h r
+    | w :: r -> inbox_w_rec k g h w.inbox; pc_w_rec k g h w.pc; wks_w_rec k g h c r
 
-let rec wks_w_restart (k: cfg) (h: heap) (ws: list wk)
+let rec wks_w_restart (k: cfg) (h: heap) (c: nat) (ws: list wk)
   : Lemma (requires forall (i: nat) (w: wk). M1.nth ws i == Some w ==> w.inbox == [])
-          (ensures wks_w k h (restart ws) == L.length ws) (decreases ws)
+          (ensures wks_w k h c (restart ws) == 2 * L.length ws) (decreases ws)
   = match ws with
     | [] -> ()
     | w :: r ->
@@ -83,11 +98,11 @@ let rec wks_w_restart (k: cfg) (h: heap) (ws: list wk)
         assert (M1.nth ws (i + 1) == Some w') in
       introduce forall (i: nat) (w': wk). M1.nth r i == Some w' ==> w'.inbox == []
       with introduce _ ==> _ with aux i w';
-      wks_w_restart k h r
+      wks_w_restart k h c r
 
-let rec wks_w_stopped (k: cfg) (h: heap) (ws: list wk)
+let rec wks_w_stopped (k: cfg) (h: heap) (c: nat) (ws: list wk)
   : Lemma (requires forall (i: nat) (w: wk). M1.nth ws i == Some w ==> w.inbox == [] /\ w.pc == Stopped)
-          (ensures wks_w k h ws == 0) (decreases ws)
+          (ensures wks_w k h c ws == 0) (decreases ws)
   = match ws with
     | [] -> ()
     | w :: r ->
@@ -96,7 +111,7 @@ let rec wks_w_stopped (k: cfg) (h: heap) (ws: list wk)
         assert (M1.nth ws (i + 1) == Some w') in
       introduce forall (i: nat) (w': wk). M1.nth r i == Some w' ==> w'.inbox == [] /\ w'.pc == Stopped
       with introduce _ ==> _ with aux i w';
-      wks_w_stopped k h r
+      wks_w_stopped k h c r
 
 /// ---------------------------------------------------------------------------
 /// The objects' weight

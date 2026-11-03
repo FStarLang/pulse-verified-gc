@@ -18,6 +18,9 @@
 ///                    sender's flag.
 ///   5 early_subtract a worker subtracts 1 as soon as it pops or takes an
 ///                    item, before adding the work that item creates.
+///   6 no_count_read  a worker that finds its stack and inbox empty stops
+///                    without reading the counter, so a message sent to it
+///                    later is never taken.
 ///
 /// Mutant 0 is the model itself, written again here; the test checks it
 /// agrees with `GC.Spec.MarkPar2.Model.step` and `init`.
@@ -82,9 +85,9 @@ let wstep_m (m: nat) (k: cfg) (s: state) (i: nat) : state =
          (match w.inbox with
           | v :: rest -> { s with count = dec m s.count;
                                   wks = M1.set_nth s.wks i { w with inbox = rest; pc = Got v } }
-          | [] ->
-            if s.count = 0 then { s with wks = M1.set_nth s.wks i { w with pc = Stopped } }
-            else s))
+          | [] -> { s with wks = M1.set_nth s.wks i { w with pc = Idle } }))
+    | Idle ->
+      { s with wks = M1.set_nth s.wks i { w with pc = if m = 6 || s.count = 0 then Stopped else Loop } }
     | Scan sc ->
       let pc' = match M1.next_field sc with Some sc' -> Scan sc' | None -> Finish in
       let s0 = { s with wks = M1.set_nth s.wks i { w with pc = pc' } } in

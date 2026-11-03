@@ -8,9 +8,15 @@
 ///   s3  W0 scans field 2               s4  W0 subtracts
 ///   s5  W1 takes B                     s6  W1 accepts B: greys, pushes
 ///   s7  W1 subtracts                   s8  W1 pops B
-///   s9  W1 scans A: sends it to 0      s10 W1 subtracts
+///   s8i W0 finds its inbox empty (a spin step: the counter is 1)
+///   s9  W1 scans A: sends it to 0, which is idle
+///   s10 W1 subtracts
+///   s10i W0 reads 1: back to Loop, with A waiting (a message that came
+///       in between its take and its read)
 ///   s11 W0 takes A                     s12 W0 accepts A: black, nothing
-///   s13 W0 subtracts                   s14 W0 stops   s15 W1 stops
+///   s13 W0 subtracts
+///   s13i W0 finds its inbox empty      s14 W0 reads 0 and stops
+///   s14i W1 finds its inbox empty      s15 W1 reads 0 and stops
 ///   s16 Main: no flag: done
 /// ---------------------------------------------------------------------------
 module GC.Spec.MarkPar2.RunR2
@@ -93,13 +99,17 @@ let t5 (_: squash big) : state = step (k2 ()) (t4 ()) (W 1)
 let t6 (_: squash big) : state = step (k2 ()) (t5 ()) (W 1)
 let t7 (_: squash big) : state = step (k2 ()) (t6 ()) (W 1)
 let t8 (_: squash big) : state = step (k2 ()) (t7 ()) (W 1)
-let t9 (_: squash big) : state = step (k2 ()) (t8 ()) (W 1)
+let t8i (_: squash big) : state = step (k2 ()) (t8 ()) (W 0)
+let t9 (_: squash big) : state = step (k2 ()) (t8i ()) (W 1)
 let t10 (_: squash big) : state = step (k2 ()) (t9 ()) (W 1)
-let t11 (_: squash big) : state = step (k2 ()) (t10 ()) (W 0)
+let t10i (_: squash big) : state = step (k2 ()) (t10 ()) (W 0)
+let t11 (_: squash big) : state = step (k2 ()) (t10i ()) (W 0)
 let t12 (_: squash big) : state = step (k2 ()) (t11 ()) (W 0)
 let t13 (_: squash big) : state = step (k2 ()) (t12 ()) (W 0)
-let t14 (_: squash big) : state = step (k2 ()) (t13 ()) (W 0)
-let t15 (_: squash big) : state = step (k2 ()) (t14 ()) (W 1)
+let t13i (_: squash big) : state = step (k2 ()) (t13 ()) (W 0)
+let t14 (_: squash big) : state = step (k2 ()) (t13i ()) (W 0)
+let t14i (_: squash big) : state = step (k2 ()) (t14 ()) (W 1)
+let t15 (_: squash big) : state = step (k2 ()) (t14i ()) (W 1)
 let t16 (_: squash big) : state = step (k2 ()) (t15 ()) Main
 
 let blank0 : wk = w [] [] Loop
@@ -149,23 +159,29 @@ let t7_eq (_: squash big) : Lemma (t7 () == st (hA3 ()) [w [] [] Loop; w [obj_B 
 let t8_eq (_: squash big) : Lemma (t8 () == st (hA4 ()) [w [] [] Loop; w [] [] (Scan (scB1 ()))] 1)
   = heapsA (); view () (hA3 ()); t7_eq ()
 
+let t8i_eq (_: squash big) : Lemma (t8i () == st (hA4 ()) [w [] [] Idle; w [] [] (Scan (scB1 ()))] 1)
+  = t8_eq ()
+
 let send9 (_: squash big)
-  : Lemma (send (k2 ()) (st (hA4 ()) [w [] [] Loop; w [] [] Finish] 1) 1 0 vA ==
-           st (hA4 ()) [w [] [vA] Loop; w [] [] Finish] 2)
+  : Lemma (send (k2 ()) (st (hA4 ()) [w [] [] Idle; w [] [] Finish] 1) 1 0 vA ==
+           st (hA4 ()) [w [] [vA] Idle; w [] [] Finish] 2)
   = ()
 
-let t9_eq (_: squash big) : Lemma (t9 () == st (hA4 ()) [w [] [vA] Loop; w [] [] Finish] 2)
-  = heapsA (); own2 (); view () (hA4 ()); t8_eq ();
-    let s0' = st (hA4 ()) [w [] [] Loop; w [] [] Finish] 1 in
+let t9_eq (_: squash big) : Lemma (t9 () == st (hA4 ()) [w [] [vA] Idle; w [] [] Finish] 2)
+  = heapsA (); own2 (); view () (hA4 ()); t8i_eq ();
+    let s0' = st (hA4 ()) [w [] [] Idle; w [] [] Finish] 1 in
     assert (M1.next_field (scB1 ()) == None);
     send9 ();
     assert (route (k2 ()) s0' 1 vA == send (k2 ()) s0' 1 0 vA)
 
-let t10_eq (_: squash big) : Lemma (t10 () == st (hA4 ()) [w [] [vA] Loop; w [] [] Loop] 1)
+let t10_eq (_: squash big) : Lemma (t10 () == st (hA4 ()) [w [] [vA] Idle; w [] [] Loop] 1)
   = t9_eq ()
 
-let t11_eq (_: squash big) : Lemma (t11 () == st (hA4 ()) [w [] [] (Got vA); w [] [] Loop] 1)
+let t10i_eq (_: squash big) : Lemma (t10i () == st (hA4 ()) [w [] [vA] Loop; w [] [] Loop] 1)
   = t10_eq ()
+
+let t11_eq (_: squash big) : Lemma (t11 () == st (hA4 ()) [w [] [] (Got vA); w [] [] Loop] 1)
+  = t10i_eq ()
 
 let t12_eq (_: squash big) : Lemma (t12 () == st (hA4 ()) [w [] [] Finish; w [] [] Loop] 1)
   = heapsA (); own2 (); view () (hA4 ()); t11_eq ();
@@ -177,11 +193,17 @@ let t12_eq (_: squash big) : Lemma (t12 () == st (hA4 ()) [w [] [] Finish; w [] 
 let t13_eq (_: squash big) : Lemma (t13 () == st (hA4 ()) [w [] [] Loop; w [] [] Loop] 0)
   = t12_eq ()
 
-let t14_eq (_: squash big) : Lemma (t14 () == st (hA4 ()) [w [] [] Stopped; w [] [] Loop] 0)
+let t13i_eq (_: squash big) : Lemma (t13i () == st (hA4 ()) [w [] [] Idle; w [] [] Loop] 0)
   = t13_eq ()
 
-let t15_eq (_: squash big) : Lemma (t15 () == st (hA4 ()) [w [] [] Stopped; w [] [] Stopped] 0)
+let t14_eq (_: squash big) : Lemma (t14 () == st (hA4 ()) [w [] [] Stopped; w [] [] Loop] 0)
+  = t13i_eq ()
+
+let t14i_eq (_: squash big) : Lemma (t14i () == st (hA4 ()) [w [] [] Stopped; w [] [] Idle] 0)
   = t14_eq ()
+
+let t15_eq (_: squash big) : Lemma (t15 () == st (hA4 ()) [w [] [] Stopped; w [] [] Stopped] 0)
+  = t14i_eq ()
 
 #pop-options
 

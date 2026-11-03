@@ -2,12 +2,13 @@
 /// GC.Spec.MarkPar2.Meas — how each action moves the measure
 ///
 /// With om the objects' weight and wm the workers' weight (both computed
-/// against g's layout, which recolouring keeps):
-///   send       om unchanged; wm up by the entry's weight (at most 6), or 0
-///              if the inbox was full
+/// against g's layout, which recolouring keeps), from a state whose counter
+/// is not 0 (the acting worker holds an item):
+///   send       om unchanged; wm up by the entry's weight (at most 7) plus 1
+///              (an idle target), or 0 if the inbox was full
 ///   grey_push  om not up (white -> grey); wm unchanged
-///   accept     om not up; wm up by 3 if it sends the closure on, else 0
-///   route      om not up; wm up by at most 6
+///   accept     om not up; wm up by 4 if it sends the closure on, else 0
+///   route      om not up; wm up by at most 8
 /// ---------------------------------------------------------------------------
 module GC.Spec.MarkPar2.Meas
 
@@ -35,12 +36,12 @@ module U = GC.Spec.MarkPar2.Upd
 module W = GC.Spec.MarkPar2.Weight
 
 let om (k: cfg) (g: heap) (s: state) : nat = objs_w k s.heap s.wks (objs_list g)
-let wm (k: cfg) (g: heap) (s: state) : nat = wks_w k g s.wks
+let wm (k: cfg) (g: heap) (s: state) : nat = wks_w k g s.count s.wks
 
 let measure_parts (k: cfg) (g: heap) (s: state)
   : Lemma (requires recoloured g s.heap)
           (ensures measure k s == om k g s + wm k g s + (if s.finished then 0 else 1))
-  = W.wks_w_rec k g s.heap s.wks
+  = W.wks_w_rec k g s.heap s.count s.wks
 
 /// ---------------------------------------------------------------------------
 /// Stacks and object weights
@@ -80,22 +81,24 @@ let set_same_stacks (ws: list wk) (i: nat) (w': wk)
 /// ---------------------------------------------------------------------------
 
 let send_m (k: cfg) (g: heap) (t: state) (me j: nat) (v: obj_addr)
-  : Lemma (requires me < L.length t.wks /\ j < L.length t.wks)
+  : Lemma (requires me < L.length t.wks /\ j < L.length t.wks /\ t.count > 0)
           (ensures om k g (send k t me j v) == om k g t /\
-                   wm k g (send k t me j v) <= wm k g t + entry_w k g v)
+                   wm k g (send k t me j v) <= wm k g t + entry_w k g v + 1 /\
+                   (send k t me j v).count > 0)
   = let t' = send k t me j v in
     Own.nth_lt t.wks j; Own.nth_lt t.wks me;
     let Some wj = M1.nth t.wks j in
     let Some wm0 = M1.nth t.wks me in
     if L.length wj.inbox >= k.cap_q then begin
       set_same_stacks t.wks me { wm0 with ovf = true };
-      W.wks_w_set k g t.wks me { wm0 with ovf = true };
+      W.wks_w_set k g t.count t.wks me { wm0 with ovf = true };
       om_same k g t t'
     end else begin
       let wj' = { wj with inbox = wj.inbox @ [v] } in
       set_same_stacks t.wks j wj';
-      W.wks_w_set k g t.wks j wj';
-      W.inbox_w_append k g wj.inbox v;
+      W.wks_w_set k g t.count t.wks j wj';
+      W.wkw_append k g t.count wj v;
+      W.wks_w_count k g t.count (t.count + 1) t'.wks;
       om_same k g t t'
     end
 
@@ -119,9 +122,9 @@ let push_self (k: cfg) (ws: list wk) (me: nat) (w: wk) (c: obj_addr)
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 let grey_push_m (k: cfg) (g: heap) (t: state) (me: nat) (c: obj_addr)
   : Lemma (requires recoloured g t.heap /\ me < L.length t.wks /\ own k c == me /\
-                    Seq.mem c (objs g) /\ ~(is_blue c g))
+                    Seq.mem c (objs g) /\ ~(is_blue c g) /\ t.count > 0)
           (ensures om k g (grey_push k t me c) <= om k g t /\
-                   wm k g (grey_push k t me c) == wm k g t)
+                   wm k g (grey_push k t me c) == wm k g t /\ (grey_push k t me c).count > 0)
   = let t' = grey_push k t me c in
     Own.nth_lt t.wks me;
     let Some w = M1.nth t.wks me in
@@ -134,7 +137,8 @@ let grey_push_m (k: cfg) (g: heap) (t: state) (me: nat) (c: obj_addr)
       colors c t.heap; colors c h';
       let full = L.length w.stack >= k.cap_s in
       let w' = if full then { w with ovf = true } else { w with stack = c :: w.stack } in
-      W.wks_w_set k g t.wks me w';
+      W.wks_w_set k g t.count t.wks me w';
+      W.wks_w_count k g t.count t'.count t'.wks;
       let aux (x: obj_addr)
         : Lemma (requires L.memP x (objs_list g))
                 (ensures obj_w k t'.heap t'.wks x <= obj_w k t.heap t.wks x)
@@ -159,9 +163,10 @@ let grey_push_m (k: cfg) (g: heap) (t: state) (me: nat) (c: obj_addr)
 let accept_m (k: cfg) (g: heap) (t: state) (me: nat) (v: obj_addr)
   : Lemma (requires recoloured g t.heap /\ well_formed_heap g /\ me < L.length t.wks /\
                     L.length t.wks == nr k /\ own k v == me /\
-                    Seq.mem (resolve_object v g) (objs g) /\ ~(is_blue (resolve_object v g) g))
+                    Seq.mem (resolve_object v g) (objs g) /\ ~(is_blue (resolve_object v g) g) /\
+                    t.count > 0)
           (ensures om k g (accept k t me v) <= om k g t /\
-                   wm k g (accept k t me v) <= wm k g t + (if fwd k g v then 3 else 0))
+                   wm k g (accept k t me v) <= wm k g t + (if fwd k g v then 4 else 0))
   = let c = resolve_x v t.heap in
     assert (c == resolve_object v g);
     own_lt k c;
@@ -174,8 +179,9 @@ let accept_m (k: cfg) (g: heap) (t: state) (me: nat) (v: obj_addr)
 let route_m (k: cfg) (g: heap) (t: state) (me: nat) (v: obj_addr)
   : Lemma (requires recoloured g t.heap /\ well_formed_heap g /\ me < L.length t.wks /\
                     L.length t.wks == nr k /\
-                    Seq.mem (resolve_object v g) (objs g) /\ ~(is_blue (resolve_object v g) g))
-          (ensures om k g (route k t me v) <= om k g t /\ wm k g (route k t me v) <= wm k g t + 6)
+                    Seq.mem (resolve_object v g) (objs g) /\ ~(is_blue (resolve_object v g) g) /\
+                    t.count > 0)
+          (ensures om k g (route k t me v) <= om k g t /\ wm k g (route k t me v) <= wm k g t + 8)
   = own_lt k v;
     if own k v = me then accept_m k g t me v
     else begin send_m k g t me (own k v) v; W.entry_w_le k g v end

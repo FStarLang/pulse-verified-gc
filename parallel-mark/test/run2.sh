@@ -43,14 +43,16 @@ cat "$L"/*.log | awk '
   /^rounds:/ { fx += $2; if ($9 > mr) mr = $9; x += $14 }
   /^mutant/ { caught[$2] += $4; runs[$2] += $6; hp[$2] += $8; stk[$2] += $10; wr[$2] += $12; rd[$2] += $14; cn[$2] += $16 }
   /^checks:/ { sc += $2; z += $5 }
+  /^idle:/ { sp += $2; lm += $9; is += $15 }
   END {
     printf "total: %d heaps, %d cut lists, %d model runs, %d events\n", h, c, r, e
     printf "total: %d sends, %d dropped, %d greys left off a full stack, %d setups filled a stack, %d forwards\n", s, d, sf, su, fw
     printf "total: %d fix-ups started a round, at most %d rounds in a run, %d cut lists split a reachable closure from its infix header\n", fx, mr, x
     printf "total: %d read checks, %d worker steps at count 0\n", sc, z
-    for (m = 1; m <= 5; m++) printf "total: mutant %d caught %d of %d (heap %d, stuck %d, write %d, read %d, count %d)\n", m, caught[m], runs[m], hp[m], stk[m], wr[m], rd[m], cn[m]
+    printf "total: %d spin steps, %d Idle steps found a message had come in, %d Idle steps read 0 and stopped\n", sp, lm, is
+    for (m = 1; m <= 6; m++) printf "total: mutant %d caught %d of %d (heap %d, stuck %d, write %d, read %d, count %d)\n", m, caught[m], runs[m], hp[m], stk[m], wr[m], rd[m], cn[m]
   }'
-for m in 1 2 3 4 5; do
+for m in 1 2 3 4 5 6; do
   n=$(cat "$L"/*.log | awk -v m=$m '$1 == "mutant" && $2 == m { s += $4 } END { print s + 0 }')
   if [ "$n" -eq 0 ]; then echo "FAIL  mutant $m was never caught"; fail=1; fi
 done

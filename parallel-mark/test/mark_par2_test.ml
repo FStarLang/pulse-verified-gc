@@ -14,8 +14,13 @@
               may not read (GC.Spec.MarkPar2.Model.readable) is scrambled
      counter  count equals the counted entries; a worker step from count 0
               leaves it 0
-     measure  an enabled step lowers it, a step that is not enabled changes
-              nothing, and nothing is enabled exactly when marking is done.
+     measure  an enabled step lowers it; a step that is not enabled changes
+              nothing, or is a spin step (Loop <-> Idle with nothing to do
+              while count > 0) that keeps it and that the worker's next
+              step undoes; nothing is enabled exactly when marking is done.
+   The scheduler takes spin steps too, so a worker can sit in Idle, between
+   finding its inbox empty and reading the counter, while a message
+   arrives.
    The heap size is fixed per process (PS_WORDS, see GC_Spec_ZeroAddr.ml).
    The first failure of the model stops the run with exit 1.  The mutants
    (GC.Spec.MarkPar2.Mutants) run on the same cases; "mutant M caught C of
@@ -168,7 +173,7 @@ let reach g roots =
 (* Statistics                                                          *)
 (* ------------------------------------------------------------------ *)
 
-let nmut = 5
+let nmut = 6
 
 type stats = {
   mutable heaps : int; mutable cutsets : int; mutable runs : int; mutable events : int;
@@ -186,6 +191,9 @@ type stats = {
   mutable black : int; mutable white_left : int;
   mutable rejected : int;
   mutable idle_tried : int;
+  mutable spins : int;                 (* spin steps taken *)
+  mutable late_msgs : int;             (* Idle steps that found a message come in *)
+  mutable idle_stops : int;            (* Idle steps that read 0 and stopped *)
   mutable max_ratio : float;
   mutable infix_roots : int; mutable repeat_roots : int;
   mut_runs : int array; mut_caught : int array;
@@ -196,7 +204,7 @@ type stats = {
 let st = { heaps = 0; cutsets = 0; runs = 0; events = 0; runs_k = Array.make 5 0;
            sent = 0; dropped = 0; stack_full = 0; setup_full = 0; fixups = 0; max_rounds = 0;
            forwards = 0; zero_reads = 0; scrambles = 0; infix_split = 0;
-           black = 0; white_left = 0; rejected = 0; idle_tried = 0; max_ratio = 0.;
+           black = 0; white_left = 0; rejected = 0; idle_tried = 0; spins = 0; late_msgs = 0; idle_stops = 0; max_ratio = 0.;
            infix_roots = 0; repeat_roots = 0;
            mut_runs = Array.make (nmut + 1) 0; mut_caught = Array.make (nmut + 1) 0;
            mut_by_heap = Array.make (nmut + 1) 0; mut_by_write = Array.make (nmut + 1) 0;
@@ -359,6 +367,8 @@ let run_one m strat k cs g roots objset =
   let step = if m = 0 then MP.step k else MU.step_m zm k in
   let sched = ref [] in
   let steps = ref 0 in
+  let spins = ref 0 in
+  let nw = List.length cs + 1 in
   let wr = ref true and rd = ref true and cn = ref true in
   let cur = ref 0 in
   let slow = rint (List.length cs + 1) in
@@ -372,7 +382,9 @@ let run_one m strat k cs g roots objset =
       if m = 0 then fail "nothing enabled, but marking is not done" g k cs roots (List.rev !sched) g !s.MP.heap;
       stuck := true
     end else begin
-      let e = choose strat cur slow en in
+      let sp = List.filter (fun e -> MP.spin !s e) (List.init nw (fun i -> MP.W (Z.of_int i))) in
+      let e = if sp <> [] && rint 3 = 0 then pickl sp else choose strat cur slow en in
+      let is_spin = not (List.mem e en) in
       let s' = step !s e in
       (* writes; Main only at the stop barrier *)
       (match e with
@@ -395,12 +407,17 @@ let run_one m strat k cs g roots objset =
         cn := false; if m = 0 then fl "count differs from the counted entries" s' e end;
       if m = 0 then begin
         let ms = Z.to_int (MP.measure k !s) and ms' = Z.to_int (MP.measure k s') in
-        if ms' >= ms then fl (Printf.sprintf "%s did not lower the measure (%d -> %d)" (ev_name e) ms ms') s' e;
+        if is_spin then begin
+          if ms' <> ms then fl (Printf.sprintf "spin %s changed the measure (%d -> %d)" (ev_name e) ms ms') s' e;
+          if step s' e <> !s then fl (Printf.sprintf "spin %s was not undone by the next step" (ev_name e)) s' e
+        end else if ms' >= ms then fl (Printf.sprintf "%s did not lower the measure (%d -> %d)" (ev_name e) ms ms') s' e;
         if rint 8 = 0 then begin
           let d = if rint 4 = 0 then MP.Main else MP.W (Z.of_int (rint (List.length cs + 2))) in
           if not (List.mem d en) then begin
             st.idle_tried <- st.idle_tried + 1;
-            if MP.step k !s d <> !s then fl (Printf.sprintf "%s is not enabled but changed the state" (ev_name d)) s' e
+            let t = MP.step k !s d in
+            if t <> !s && not (MP.spin !s d && MP.measure k t = MP.measure k !s && MP.step k t d = !s) then
+              fl (Printf.sprintf "%s is not enabled, changed the state, and is not a spin" (ev_name d)) s' e
           end
         end;
         if MU.step_m zm k !s e <> s' then fl "step_m 0 differs from step" s' e;
@@ -420,13 +437,16 @@ let run_one m strat k cs g roots objset =
            end;
            (match w.MP.pc with
             | MP.Got v -> if MP.fwd k !s.MP.heap v then st.forwards <- st.forwards + 1
+            | MP.Idle ->
+              if !s.MP.count = Z.zero then st.idle_stops <- st.idle_stops + 1
+              else if w.MP.inbox <> [] then st.late_msgs <- st.late_msgs + 1
             | _ -> ())
          | MP.Main -> ())
       end;
       s := s';
       sched := e :: !sched;
-      incr steps;
-      if !steps > limit then begin
+      if is_spin then (incr spins; if m = 0 then st.spins <- st.spins + 1) else incr steps;
+      if !steps + !spins > limit then begin
         if m = 0 then fail "no end after the step limit" g k cs roots [] g !s.MP.heap;
         stuck := true
       end
@@ -756,8 +776,10 @@ let report () =
   Printf.printf "reference: %d objects black, %d white objects left white; %d invalid configurations rejected\n"
     st.black st.white_left st.rejected;
   Printf.printf "roots: %d heaps with an infix root, %d with a repeated root\n" st.infix_roots st.repeat_roots;
-  Printf.printf "termination: every step lowered the measure; %d steps that were not enabled changed nothing; effective steps at most %.2f of the initial measure\n"
+  Printf.printf "termination: every enabled step lowered the measure; %d steps that were not enabled changed nothing or spun; effective steps at most %.2f of the initial measure\n"
     st.idle_tried st.max_ratio;
+  Printf.printf "idle: %d spin steps, each kept the measure and was undone; %d Idle steps found a message had come in; %d Idle steps read 0 and stopped\n"
+    st.spins st.late_msgs st.idle_stops;
   for m = 1 to nmut do
     Printf.printf "mutant %d caught %d of %d (heap %d, stuck %d, write %d, read %d, count %d)\n"
       m st.mut_caught.(m) st.mut_runs.(m) st.mut_by_heap.(m) st.mut_by_stuck.(m)

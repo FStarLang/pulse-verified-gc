@@ -138,7 +138,10 @@ let vac_step1 (_: squash big) : unit =
   U.own_rec k1 g (s0 ()) 0 wA;
   St.step_rec k1 g r (s0 ()) 0 wA wA 1;
   U.own_len k1 g (s4 ()); U.old_eq (s4 ()) 0;
-  St.step_stop k1 g r (s4 ()) 0 (wk_of_l [] Loop);
+  St.step_empty k1 g r (s4 ()) 0 (wk_of_l [] Loop);
+  s4i_eq ();
+  U.own_len k1 g (s4i ()); U.old_eq (s4i ()) 0;
+  St.step_idle k1 g r (s4i ()) 0 (wk_of_l [] Idle);
   U.own_len k1 g (s3 ()); U.old_eq (s3 ()) 0;
   St.step_finish k1 g r (s3 ()) 0 (wk_of_l [] Finish)
 #pop-options
@@ -171,6 +174,10 @@ let vac_step3 (_: squash big) : unit =
   let g = g5 () in
   let k = k2 () in
   inv2 (); ctx2 (); own2 (); t4_eq (); t5_eq (); heapsA ();
+  // R2's late message: W0 is idle, with A come in, and reads 1.
+  t10_eq ();
+  U.own_len k g (t10 ()); U.old_eq (t10 ()) 0;
+  St.step_idle k g rootsA (t10 ()) 0 (w [] [vA] Idle);
   U.own_len k g (t4 ()); U.old_eq (t4 ()) 1;
   St.step_take k g rootsA (t4 ()) 1 (w [] [obj_B ()] Loop) (obj_B ()) [];
   U.own_len k g (t5 ()); U.old_eq (t5 ()) 1;

@@ -4,11 +4,15 @@
 /// Two ranges, cut at B's header; S = 1, Q = 0; root A.
 ///   u0  setup: A pushed on stack 0
 ///   u1  W0 pops A           u2  W0 scans B: inbox 1 full, dropped, flag 0
-///   u3  W0 scans field 2    u4  W0 subtracts    u5  W0 stops   u6  W1 stops
+///   u3  W0 scans field 2    u4  W0 subtracts
+///   u4i, u5  W0 finds its inbox empty, reads 0, stops
+///   u5i, u6  W1 the same
 ///   u7  Main: flag 0 set; the fix-up greys B (above A, so not pushed),
 ///       then reaches B and pushes it; a new round
 ///   u8  W1 pops B           u9  W1 scans A: inbox 0 full, dropped, flag 1
-///   u10 W1 subtracts        u11 W1 stops        u12 W0 stops
+///   u10 W1 subtracts
+///   u10i, u11  W1 finds its inbox empty, reads 0, stops
+///   u11i, u12  W0 the same
 ///   u13 Main: flag 1 set; the fix-up finds nothing to push: done
 /// ---------------------------------------------------------------------------
 module GC.Spec.MarkPar2.RunR3
@@ -47,14 +51,18 @@ let u1 (_: squash big) : state = step (k3 ()) (u0 ()) (W 0)
 let u2 (_: squash big) : state = step (k3 ()) (u1 ()) (W 0)
 let u3 (_: squash big) : state = step (k3 ()) (u2 ()) (W 0)
 let u4 (_: squash big) : state = step (k3 ()) (u3 ()) (W 0)
-let u5 (_: squash big) : state = step (k3 ()) (u4 ()) (W 0)
-let u6 (_: squash big) : state = step (k3 ()) (u5 ()) (W 1)
+let u4i (_: squash big) : state = step (k3 ()) (u4 ()) (W 0)
+let u5 (_: squash big) : state = step (k3 ()) (u4i ()) (W 0)
+let u5i (_: squash big) : state = step (k3 ()) (u5 ()) (W 1)
+let u6 (_: squash big) : state = step (k3 ()) (u5i ()) (W 1)
 let u7 (_: squash big) : state = step (k3 ()) (u6 ()) Main
 let u8 (_: squash big) : state = step (k3 ()) (u7 ()) (W 1)
 let u9 (_: squash big) : state = step (k3 ()) (u8 ()) (W 1)
 let u10 (_: squash big) : state = step (k3 ()) (u9 ()) (W 1)
-let u11 (_: squash big) : state = step (k3 ()) (u10 ()) (W 1)
-let u12 (_: squash big) : state = step (k3 ()) (u11 ()) (W 0)
+let u10i (_: squash big) : state = step (k3 ()) (u10 ()) (W 1)
+let u11 (_: squash big) : state = step (k3 ()) (u10i ()) (W 1)
+let u11i (_: squash big) : state = step (k3 ()) (u11 ()) (W 0)
+let u12 (_: squash big) : state = step (k3 ()) (u11i ()) (W 0)
 let u13 (_: squash big) : state = step (k3 ()) (u12 ()) Main
 
 #push-options "--z3rlimit 40 --fuel 4 --ifuel 2"
@@ -91,11 +99,17 @@ let u3_eq (_: squash big) : Lemma (u3 () == st (hA2 ()) [wf [] [] Finish true; b
 let u4_eq (_: squash big) : Lemma (u4 () == st (hA2 ()) [wf [] [] Loop true; blank0] 0)
   = u3_eq ()
 
-let u5_eq (_: squash big) : Lemma (u5 () == st (hA2 ()) [wf [] [] Stopped true; blank0] 0)
+let u4i_eq (_: squash big) : Lemma (u4i () == st (hA2 ()) [wf [] [] Idle true; blank0] 0)
   = u4_eq ()
 
-let u6_eq (_: squash big) : Lemma (u6 () == st (hA2 ()) [wf [] [] Stopped true; w [] [] Stopped] 0)
+let u5_eq (_: squash big) : Lemma (u5 () == st (hA2 ()) [wf [] [] Stopped true; blank0] 0)
+  = u4i_eq ()
+
+let u5i_eq (_: squash big) : Lemma (u5i () == st (hA2 ()) [wf [] [] Stopped true; w [] [] Idle] 0)
   = u5_eq ()
+
+let u6_eq (_: squash big) : Lemma (u6 () == st (hA2 ()) [wf [] [] Stopped true; w [] [] Stopped] 0)
+  = u5i_eq ()
 #pop-options
 
 /// The first fix-up: A is black and its first field names B, white and
@@ -153,11 +167,17 @@ let u9_eq (_: squash big) : Lemma (u9 () == st (hA4 ()) [w [] [] Loop; wf [] [] 
 let u10_eq (_: squash big) : Lemma (u10 () == st (hA4 ()) [w [] [] Loop; wf [] [] Loop true] 0)
   = u9_eq ()
 
-let u11_eq (_: squash big) : Lemma (u11 () == st (hA4 ()) [w [] [] Loop; wf [] [] Stopped true] 0)
+let u10i_eq (_: squash big) : Lemma (u10i () == st (hA4 ()) [w [] [] Loop; wf [] [] Idle true] 0)
   = u10_eq ()
 
-let u12_eq (_: squash big) : Lemma (u12 () == st (hA4 ()) [w [] [] Stopped; wf [] [] Stopped true] 0)
+let u11_eq (_: squash big) : Lemma (u11 () == st (hA4 ()) [w [] [] Loop; wf [] [] Stopped true] 0)
+  = u10i_eq ()
+
+let u11i_eq (_: squash big) : Lemma (u11i () == st (hA4 ()) [w [] [] Idle; wf [] [] Stopped true] 0)
   = u11_eq ()
+
+let u12_eq (_: squash big) : Lemma (u12 () == st (hA4 ()) [w [] [] Stopped; wf [] [] Stopped true] 0)
+  = u11i_eq ()
 #pop-options
 
 /// The second fix-up: A and B are black and point to each other; nothing
