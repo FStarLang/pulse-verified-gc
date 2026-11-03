@@ -1,0 +1,110 @@
+# Sandmark benchmarks that build with the stock 4.14 ocamlc and run correctly on the verified runtime
+# (see README.md).  name|binary|heap_words|args|notes.  Run with sandmark/bin as the working directory.
+binarytrees5|binarytrees5|88080384|21|
+fasta3|fasta3|4194304|25_000_000|
+fasta6|fasta6|224395264|25_000_000|
+knucleotide|knucleotide|36700160||input fasta3 2_500_000 (Sandmark 25_000_000)
+knucleotide3|knucleotide3|168820736||input fasta3 2_500_000 (Sandmark 25_000_000)
+mandelbrot6|mandelbrot6|4194304|3000|Sandmark 16_000
+nbody|nbody|4194304|5_000_000|Sandmark 50_000_000
+revcomp2|revcomp2|11534336||input fasta3 2_500_000 (Sandmark 25_000_000)
+spectralnorm2|spectralnorm2|4194304|2_500|Sandmark 5_500
+almabench|almabench|4194304||
+bdd|bdd|9437184|26|
+kb|kb|4194304||
+kb_no_exc|kb_no_exc|4194304||
+lexifi-g2pp|lexifi-g2pp|4194304||
+sequence_cps|sequence_cps|4194304|10000|
+hamming|hamming|16777216|10_000|
+soli|soli|4194304|200|
+minilight|minilight|4194304|roomfront5.ml.txt|Sandmark roomfront.ml.txt (100 passes); 5 passes
+kronecker|kronecker|11534336|12 10|
+kernel1_run|kernel1_run|171966464|edges.data|edges from gen -scale 17 (Sandmark scale 21)
+LU_decomposition|LU_decomposition|19922944|1024|
+floyd_warshall|floyd_warshall|9437184|512|
+game_of_life|game_of_life|9437184|64|Sandmark 256
+evolutionary_algorithm|evolutionary_algorithm|16777216|1000 1000|Sandmark 10000 10000
+nqueens|nqueens|4194304|13|Sandmark byte 15
+mergesort|mergesort|148897792|16777216|Sandmark 67108864
+matrix_multiplication|matrix_multiplication|14680064|1024|
+quicksort|quicksort|36700160|4000000|
+grammatrix|grammatrix|14680064|1 data/1k.csv|Sandmark default input tox21 (>5 min)
+durand-kerner-aberth|durand-kerner-aberth|4194304|75|Sandmark default (=100)
+fft|fft|116391936||
+levinson-durbin|levinson-durbin|4194304||
+crout-decomposition|crout-decomposition|33554432||
+naive-multilayer|naive-multilayer|4194304||
+qr-decomposition|qr-decomposition|4194304||
+alloc|alloc|4194304|200_000|
+morestacks|morestacks|4194304|1_000|
+lazy_primes|lazy_primes|202375168|5000|not in run_config; micro_multicore.json 1000..10000
+markbench|markbench|424673280|5|
+lists.int-option-array_100000|lists|16777216|int-option-array 100000|
+lists.string_100000|lists|8388608|string 100000|
+lists.record_100000|lists|13631488|record 100000|
+lists.float-array_100000|lists|16777216|float-array 100000|
+lists.float-tuple_100000|lists|12582912|float-tuple 100000|
+stress.10000_10|stress|4194304|10000 10|
+stress.100000_100|stress|4194304|100000 100|
+stress.1_100|stress|4194304|1 100|
+stress.100000_10|stress|4194304|100000 10|
+stress.10000_100|stress|4194304|10000 100|
+stress.1_10|stress|4194304|1 10|
+stacks.100000_ints-small|stacks|4194304|100000 ints-small|
+stacks.20000_ints-large|stacks|4194304|20000 ints-large|
+weakretain.25_1000|weakretain|4194304|25 1000|
+weakretain.25_100000|weakretain|4194304|25 100000|
+weakretain.25_10000000|weakretain|89128960|25 10000000|
+weakretain.50_1000|weakretain|4194304|50 1000|
+weakretain.50_100000|weakretain|4194304|50 100000|
+weakretain.50_10000000|weakretain|89128960|50 10000000|
+weakretain.75_1000|weakretain|4194304|75 1000|
+weakretain.75_100000|weakretain|4194304|75 100000|
+weakretain.75_10000000|weakretain|89128960|75 10000000|
+weakretain.100_1000|weakretain|4194304|100 1000|
+weakretain.100_100000|weakretain|4194304|100 100000|
+weakretain.100_10000000|weakretain|89128960|100 10000000|
+stack_bench.stack_push_pop_100000000|stack_bench|4194304|stack_push_pop 100000000|
+array_bench.array_forall_1000_100000|array_bench|4194304|array_forall 1000 100000|
+array_bench.array_fold_1000_100000|array_bench|4194304|array_fold 1000 100000|
+array_bench.array_iter_1000_100000|array_bench|4194304|array_iter 1000 100000|
+bytes_bench.bytes_map_1000000|bytes_bench|4194304|bytes_map 1000000|
+bytes_bench.bytes_uppercase_ascii_1000000|bytes_bench|4194304|bytes_uppercase_ascii 1000000|
+bytes_bench.bytes_contains_100000000|bytes_bench|4194304|bytes_contains 100000000|
+bytes_bench.bytes_iter_1000000|bytes_bench|4194304|bytes_iter 1000000|
+bytes_bench.bytes_get_100000000|bytes_bench|4194304|bytes_get 100000000|
+bytes_bench.bytes_sub_100000000|bytes_bench|4194304|bytes_sub 100000000|
+set_bench.set_fold_1000000|set_bench|4194304|set_fold 1000000|
+set_bench.set_add_rem_20000000|set_bench|4194304|set_add_rem 20000000|
+set_bench.set_mem_50000000|set_bench|4194304|set_mem 50000000|
+hashtbl_bench.int_replace1_10000|hashtbl_bench|4194304|int_replace1 10000|
+hashtbl_bench.hashtbl_remove_4000000|hashtbl_bench|4194304|hashtbl_remove 4000000|
+hashtbl_bench.hashtbl_find_6000000|hashtbl_bench|4194304|hashtbl_find 6000000|
+hashtbl_bench.int_find1_20000|hashtbl_bench|4194304|int_find1 20000|
+hashtbl_bench.caml_hash_int_200000|hashtbl_bench|4194304|caml_hash_int 200000|
+hashtbl_bench.caml_hash_tuple_100000|hashtbl_bench|4194304|caml_hash_tuple 100000|
+hashtbl_bench.int_replace2_100000|hashtbl_bench|4194304|int_replace2 100000|
+hashtbl_bench.int_find2_300000|hashtbl_bench|4194304|int_find2 300000|
+hashtbl_bench.hashtbl_iter_200000|hashtbl_bench|4194304|hashtbl_iter 200000|
+hashtbl_bench.hashtbl_fold_200000|hashtbl_bench|4194304|hashtbl_fold 200000|
+hashtbl_bench.hashtbl_add_resizing_4000000|hashtbl_bench|78643200|hashtbl_add_resizing 4000000|
+hashtbl_bench.hashtbl_add_sized_6000000|hashtbl_bench|130023424|hashtbl_add_sized 6000000|
+hashtbl_bench.hashtbl_add_duplicate_2000000|hashtbl_bench|81788928|hashtbl_add_duplicate 2000000|
+hashtbl_bench.hashtbl_filter_map_100000|hashtbl_bench|4194304|hashtbl_filter_map 100000|
+string_bench.string_sub_50000000|string_bench|4194304|string_sub 50000000|
+string_bench.string_concat_20000000|string_bench|4194304|string_concat 20000000|
+string_bench.string_iter_1000000|string_bench|4194304|string_iter 1000000|
+string_bench.string_uppercase_ascii_1000000|string_bench|4194304|string_uppercase_ascii 1000000|
+string_bench.string_split_on_char_500000|string_bench|4194304|string_split_on_char 500000|
+string_bench.string_compare_10000|string_bench|4194304|string_compare 10000|
+string_bench.string_equal_25000|string_bench|4194304|string_equal 25000|
+pervasives_bench.pervasives_compare_lists_100000000|pervasives_bench|4194304|pervasives_compare_lists 100000000|
+pervasives_bench.pervasives_compare_ints_1000000000|pervasives_bench|4194304|pervasives_compare_ints 1000000000|
+pervasives_bench.pervasives_equal_floats_1000000000|pervasives_bench|4194304|pervasives_equal_floats 1000000000|
+pervasives_bench.pervasives_equal_strings_20000000|pervasives_bench|4194304|pervasives_equal_strings 20000000|
+pervasives_bench.pervasives_compare_strings_20000000|pervasives_bench|4194304|pervasives_compare_strings 20000000|
+map_bench.map_map_10000|map_bench|4194304|map_map 10000|
+big_array_bench.big_array_int_rev_1024_50000|big_array_bench|4194304|big_array_int_rev 1024 50000|
+big_array_bench.big_array_int32_rev_1024_50000|big_array_bench|4194304|big_array_int32_rev 1024 50000|
+str_bench.str_search_forward_5000000|str_bench|4194304|str_search_forward 5000000|Str (dllcamlstr.so)
+str_bench.str_split_2000000|str_bench|4194304|str_split 2000000|Str (dllcamlstr.so)

@@ -29,6 +29,8 @@
  *   VGC_PAR_CUT=live        variant: cut each collection's ranges at equal
  *                           shares of the previous collection's black words
  *                           (first collection: equal slices)
+ *   VGC_PAR_VARIANT=v       with VGC_PAR_MARK=k: mark with par_mark2.c's
+ *                           variant v (AP, AS, BP or BS) instead
  *   VGC_PAR_MARK_CHECK=1    at every major GC, also run the verified
  *                           sequential mark on the same pre-mark heap and
  *                           abort unless every header is equal
@@ -64,10 +66,20 @@
 /* Non-static functions of GC_Gen_Impl.c used to run the sequential mark in
  * pieces, and the sweep wrapper of gc_gen_impl_proto.c. */
 void darken_roots_bounded(heap_t heap, gray_stack_rec st, uint64_t *roots, size_t nroots);
-void mark_inner_loop_impl(heap_t heap, gray_stack_rec st);
+bool mark_inner_loop_impl(heap_t heap, gray_stack_rec st, bool ov_in);
 void rescan_heap_impl(heap_t heap, gray_stack_rec st);
-void mark_loop_bounded(heap_t heap, gray_stack_rec st);
+void mark_loop_bounded_flagged(heap_t heap, gray_stack_rec st, bool ov);
 uint64_t vergc_fused_sweep_coalesce(heap_t heap);
+
+/* par_mark2.c: the variants after established designs (VGC_PAR_VARIANT). */
+int vergc_par2_setup(int k, int stats, int prof, int race);
+void vergc_par2_mark(uint64_t *roots, size_t n);
+uint64_t vergc_par2_sweep(void);
+int vergc_par2_bitmap(void);
+int vergc_par2_marked(uint64_t hd);
+void vergc_par2_flip(uint64_t hd);
+uint64_t vergc_par2_bits_set(void);
+void vergc_par2_print_stats(void);
 
 #define WHITE 0ULL
 #define GRAY  1ULL
@@ -161,7 +173,12 @@ static struct {
   uint64_t lk_n, lk_cont, lk_wait, lk_hold, cnt_n, cnt_cyc, idle_cyc, idle_n, tot_cyc, max_tot_cyc;
   long checked;
   double check_seq_us;
+  /* whole collections: vergc_gen_gc_split's steps, and do_full_gc */
+  double minor_us, sweep_us, split_us, full_gc_us;
+  long full_gcs;
 } st;
+
+static int par2;              /* VGC_PAR_VARIANT set: par_mark2.c marks */
 
 static uint64_t slice_inv;    /* UINT64_MAX / slice: owner() without a divide */
 static uint64_t cuts[MAXK + 1];   /* VGC_PAR_CUT=live: range i is [cuts[i], cuts[i+1]) */
@@ -583,7 +600,12 @@ static void print_stats(void)
   fprintf(stderr, "vgc-mark-stats: mode %s k %d S %zu Q %zu local %d spin %d dedup %zu batch %zu cut %s\n",
           K ? "par" : "seq", K, S, Q, local_count, spin_locks, dedup, batch, cut_live ? "live" : "equal");
   fprintf(stderr, "vgc-mark-stats: majors %ld mark_us %.0f\n", st.majors, st.mark_us);
-  if (K == 0) {
+  fprintf(stderr, "vgc-coll-stats: coll_minor_us %.0f coll_sweep_us %.0f coll_split_us %.0f "
+          "full_gcs %ld full_gc_us %.0f\n", st.minor_us, st.sweep_us, st.split_us, st.full_gcs,
+          st.full_gc_us);
+  if (par2) {
+    vergc_par2_print_stats();
+  } else if (K == 0) {
     fprintf(stderr, "vgc-mark-stats: seq inner_us %.0f rescan_us %.0f rescans %ld\n",
             st.seq_inner_us, st.seq_rescan_us, st.seq_rescans);
   } else {
@@ -618,8 +640,8 @@ static void print_stats(void)
     fprintf(stderr, "\n");
   }
   if (check_mode)
-    fprintf(stderr, "vgc-par-mark-check: %ld collections, every header equal to the sequential mark's\n",
-            st.checked);
+    fprintf(stderr, "vgc-par-mark-check: %ld collections, every header equal to the sequential mark's%s\n",
+            st.checked, par2 && vergc_par2_bitmap() ? "; bitmap sweep equal to the verified sweep" : "");
 }
 
 static size_t env_size(const char *name, size_t dflt)
@@ -628,6 +650,13 @@ static size_t env_size(const char *name, size_t dflt)
   if (!e || !*e) return dflt;
   long long v = atoll(e);
   return v > 0 ? (size_t)v : dflt;
+}
+
+/* alloc_gen.c: the time of one whole do_full_gc. */
+void vergc_par_note_full_gc(double us)
+{
+  st.full_gcs++;
+  st.full_gc_us += us;
 }
 
 /* Returns 1 if gen_gc must be split (par mark or stats), else 0. */
@@ -647,7 +676,8 @@ int vergc_par_mark_setup(void)
   spin_locks = getenv("VGC_PAR_SPIN") != NULL;
   prof = stats && getenv("VGC_PAR_PROF") != NULL;
   if (K == 0 && !stats) return done = 0;
-  if (K > 0) {
+  par2 = vergc_par2_setup(K, stats, prof, race_control);
+  if (K > 0 && !par2) {
     size_t heap_bytes = (size_t)(heap_size_u64 - zero_addr);
     size_t gray_cap = heap_bytes / 64;
     if (gray_cap < 4096) gray_cap = 4096;
@@ -684,26 +714,33 @@ FStar_Pervasives_Native_tuple2__uint64_t_bool
 vergc_gen_gc_split(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_arr,
                    uint64_t *queue, uint64_t *slots, size_t nslots, gray_stack_rec gst)
 {
+  double s0 = now_us();
   bool ok = minor_collect_full(gh, roots, nroots, fwd_arr, queue, slots, nslots);
   uint64_t fp_val = gh.fp_ref[0U];
+  st.minor_us += now_us() - s0;
   if (!ok) return (FStar_Pervasives_Native_tuple2__uint64_t_bool){ ._1 = fp_val, ._2 = ok };
   st.majors++;
+  int bm = par2 && vergc_par2_bitmap();   /* B: marks in the bitmap, read by the sweep */
+  int swept = 0;                          /* the check already swept */
+  uint64_t final_fp = 0;
 
   if (K == 0) {
-    /* The sequential mark, exactly as mark_loop_bounded, in timed pieces. */
+    /* The sequential mark, exactly as gen_gc's (collect, that is
+     * mark_loop_bounded_flagged with ov = false: no rescan unless the gray
+     * stack overflowed), in timed pieces. */
     double t0 = now_us();
     darken_roots_bounded(gh.major, gst, roots, nroots);
-    mark_inner_loop_impl(gh.major, gst);
+    bool ov = mark_inner_loop_impl(gh.major, gst, false);
     double t1 = now_us();
     st.seq_inner_us += t1 - t0;
-    for (;;) {
+    while (ov) {
       double r0 = now_us();
       rescan_heap_impl(gh.major, gst);
       st.seq_rescans++;
       st.seq_rescan_us += now_us() - r0;
       if (*gst.top == gst.cap) break;
       double i0 = now_us();
-      mark_inner_loop_impl(gh.major, gst);
+      mark_inner_loop_impl(gh.major, gst, true);
       st.seq_inner_us += now_us() - i0;
     }
     st.mark_us += now_us() - t0;
@@ -723,16 +760,17 @@ vergc_gen_gc_split(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_
       wk[i].lk_n = wk[i].lk_cont = wk[i].lk_wait = wk[i].lk_hold = wk[i].cnt_n = wk[i].cnt_cyc =
         wk[i].idle_cyc = wk[i].idle_n = wk[i].tot_cyc = 0;
     double t0 = now_us();
-    par_mark(roots, nroots);
+    if (par2) vergc_par2_mark(roots, nroots);
+    else par_mark(roots, nroots);
     st.mark_us += now_us() - t0;
-    for (int i = 0; i < K; i++) {
+    for (int i = 0; i < K && !par2; i++) {
       st.scanned += wk[i].scanned; st.accepted += wk[i].accepted; st.sent += wk[i].sent;
       st.dropped += wk[i].dropped; st.stack_ovf += wk[i].stack_ovf;
       st.idle_spins += wk[i].idle_spins; st.taken += wk[i].taken; st.deduped += wk[i].deduped;
       st.flushes += wk[i].flushes;
       st.per_worker_scanned[i] += wk[i].scanned;
     }
-    if (prof) {
+    if (prof && !par2) {
       uint64_t mx = 0;
       for (int i = 0; i < K; i++) {
         worker_t *w = &wk[i];
@@ -747,11 +785,32 @@ vergc_gen_gc_split(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_
       uint64_t *par = malloc(nobj * sizeof(uint64_t));
       if (!par) { fprintf(stderr, "par_mark check: out of memory\n"); abort(); }
       save_headers(par);
-      if (check_control && nobj > 0) par[nobj / 2] ^= (1ULL << 8);
+      if (bm) {
+        /* B leaves headers alone: read its marks from the bitmap. */
+        size_t i = 0, marked = 0;
+        if (check_control && nobj > 0) {
+          uint64_t cur = zero_addr;
+          for (size_t j = 0; j < nobj / 2; j++) cur += (wosize_of(HDR(cur)) + 1) * 8;
+          vergc_par2_flip(cur);
+        }
+        for (uint64_t cur = zero_addr; cur + 8 < heap_size_u64; cur += (wosize_of(HDR(cur)) + 1) * 8, i++) {
+          if (par[i] != pre[i]) {
+            fprintf(stderr, "par_mark check: B wrote header of object %zu\n", i);
+            abort();
+          }
+          if (vergc_par2_marked(cur)) { par[i] = with_colour(par[i], BLACK); marked++; }
+        }
+        if (vergc_par2_bits_set() != marked) {
+          fprintf(stderr, "par_mark check: %llu bitmap bits set, %zu on object headers\n",
+                  (unsigned long long)vergc_par2_bits_set(), marked);
+          abort();
+        }
+      } else if (check_control && nobj > 0)
+        par[nobj / 2] ^= (1ULL << 8);
       restore_headers(pre);
       double c0 = now_us();
       darken_roots_bounded(gh.major, gst, roots, nroots);
-      mark_loop_bounded(gh.major, gst);
+      mark_loop_bounded_flagged(gh.major, gst, false);
       st.check_seq_us += now_us() - c0;
       uint64_t *seq = pre;     /* reuse */
       save_headers(seq);
@@ -770,12 +829,38 @@ vergc_gen_gc_split(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_
         abort();
       }
       /* The heap now holds the sequential result, which equals the parallel one. */
+      if (bm) {
+        /* Check the bitmap sweep too: from the pre-mark headers and the
+         * bitmap, it must leave the heap and free pointer that the verified
+         * sweep leaves from the sequential mark's headers. */
+        size_t hb = (size_t)(heap_size_u64 - zero_addr);
+        uint8_t *hseq = malloc(hb), *hbit = malloc(hb);
+        if (!hseq || !hbit) { fprintf(stderr, "par_mark check: out of memory\n"); abort(); }
+        memcpy(hseq, (void *)(uintptr_t)zero_addr, hb);
+        restore_headers(par);                 /* par: pre-mark headers, B's marks as black */
+        for (uint64_t cur = zero_addr; cur + 8 < heap_size_u64; cur += (wosize_of(HDR(cur)) + 1) * 8)
+          if (colour_of(HDR(cur)) == BLACK) HDR(cur) = with_colour(HDR(cur), WHITE);
+        uint64_t fp_b = vergc_par2_sweep();
+        if (vergc_par2_bits_set() != 0) { fprintf(stderr, "par_mark check: bitmap not clear after sweep\n"); abort(); }
+        memcpy(hbit, (void *)(uintptr_t)zero_addr, hb);
+        memcpy((void *)(uintptr_t)zero_addr, hseq, hb);
+        uint64_t fp_s = vergc_fused_sweep_coalesce(gh.major);
+        if (fp_b != fp_s || memcmp(hbit, (void *)(uintptr_t)zero_addr, hb) != 0) {
+          fprintf(stderr, "par_mark check: collection %ld: bitmap sweep DIFFERS from the verified sweep "
+                  "(fp %#llx vs %#llx)\n", st.checked, (unsigned long long)fp_b, (unsigned long long)fp_s);
+          abort();
+        }
+        free(hseq);
+        free(hbit);
+        final_fp = fp_s;
+        swept = 1;
+      }
       free(par);
       free(pre);
     }
   }
 
-  if (K > 0 && cut_live) {
+  if (K > 0 && cut_live && !par2) {
     /* VGC_PAR_CUT=live: cut the next collection's ranges at equal shares of
      * this collection's black words.  A separate walk here, timed apart from
      * the mark (cut_us); a real implementation would fuse it with the sweep. */
@@ -801,7 +886,12 @@ vergc_gen_gc_split(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_
     st.cut_us += now_us() - c0;
   }
 
-  uint64_t final_fp = vergc_fused_sweep_coalesce(gh.major);
+  if (!swept) {
+    double w0 = now_us();
+    final_fp = bm ? vergc_par2_sweep() : vergc_fused_sweep_coalesce(gh.major);
+    st.sweep_us += now_us() - w0;
+  }
   gh.fp_ref[0U] = final_fp;
+  st.split_us += now_us() - s0;
   return (FStar_Pervasives_Native_tuple2__uint64_t_bool){ ._1 = final_fp, ._2 = ok };
 }

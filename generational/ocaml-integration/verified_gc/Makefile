@@ -25,7 +25,7 @@ VPATH = $(SNAPSHOT)
 # Prototype: gc_gen_impl_proto.c includes GC_Gen_Impl.c unchanged and adds
 # a sweep wrapper; par_mark.c is the unverified parallel mark.
 OBJECTS = gc_gen_impl_proto.o GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.o \
-          krmlinit.o compat.o alloc_gen.o par_mark.o
+          krmlinit.o compat.o alloc_gen.o par_mark.o par_mark2.o
 NATIVE_OBJECTS = $(OBJECTS:.o=.n.o)
 
 all: libvergc_gen.a libvergc_gen_native.a

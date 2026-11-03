@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ThreadSanitizer bytecode runtime for the prototype parallel mark
-# (verified_gc/par_mark.c), after parallel-sweep/rt/build_tsan.sh on
+# (verified_gc/par_mark.c and par_mark2.c), after parallel-sweep/rt/build_tsan.sh on
 # sheera/parallel-sweep: the whole runtime, the collector, the bridge and
 # par_mark.c instrumented, built out of tree in _build/tsan/.  Needs a
 # TSan-capable clang (Apple clang 12's TSan runtime crashes on this macOS).
@@ -15,7 +15,8 @@ W="-Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function
 GEN_INC="-include $SNAP/compat.h -I$SNAP -I$SNAP/internal -I$SNAP/krmllib -I$SNAP/krmllib/krml
          -I$SNAP/krmllib/krml/internal -I$GI -I$OC/runtime -I$OC"
 GEN_SRC="$GI/verified_gc/gc_gen_impl_proto.c $SNAP/GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.c
-         $SNAP/krmlinit.c $SNAP/compat.c $GI/verified_gc/alloc_gen.c $GI/verified_gc/par_mark.c"
+         $SNAP/krmlinit.c $SNAP/compat.c $GI/verified_gc/alloc_gen.c $GI/verified_gc/par_mark.c
+         $GI/verified_gc/par_mark2.c"
 mkdir -p $B
 
 T=$B/ocaml-tsan

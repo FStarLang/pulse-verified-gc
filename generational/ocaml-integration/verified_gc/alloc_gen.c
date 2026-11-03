@@ -41,6 +41,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 
 #ifndef CAML_INTERNALS
 #define CAML_INTERNALS
@@ -574,12 +575,16 @@ int vergc_par_mark_setup(void);
 FStar_Pervasives_Native_tuple2__uint64_t_bool
 vergc_gen_gc_split(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_arr,
                    uint64_t *queue, uint64_t *slots, size_t nslots, gray_stack_rec gst);
+void vergc_par_note_full_gc(double us);
 
 static int full_gc_count = 0;
 
 static void do_full_gc(void) {
     ensure_heap();
     in_full_gc = 1;
+    /* Prototype: time the whole collection for par_mark.c's statistics. */
+    struct timespec fg0, fg1;
+    clock_gettime(CLOCK_MONOTONIC, &fg0);
 
     #ifdef NATIVE_CODE
         /* A full GC can be entered without passing through
@@ -688,6 +693,8 @@ static void do_full_gc(void) {
         vergc_native_reset_young_ptr();
     #endif
 
+    clock_gettime(CLOCK_MONOTONIC, &fg1);
+    vergc_par_note_full_gc((fg1.tv_sec - fg0.tv_sec) * 1e6 + (fg1.tv_nsec - fg0.tv_nsec) / 1e3);
     in_full_gc = 0;
 }
 

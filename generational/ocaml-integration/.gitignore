@@ -10,3 +10,4 @@ tests/results/
 verified_gc/*.o
 verified_gc/*.a
 _build/
+tests/sandmark/bin/
