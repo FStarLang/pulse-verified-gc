@@ -20,7 +20,7 @@
 ///
 /// 1. **Object survival**: all pre-existing major-heap objects survive
 ///    (promotion only appends into free-list nodes; never removes objects)
-/// 2. **Heap well-formedness (part 1)**: every object's header+body fits
+/// 2. **Heap well-formedness (`blocks_fit`)**: every object's header+body fits
 ///    within the heap byte array after promotion
 /// 3. **Minor reset**: minor heap bump pointer reset to 0
 /// 4. **Root rewriting**: roots pointwise rewritten through the forwarding map
@@ -52,8 +52,8 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 /// ---------------------------------------------------------------------------
 
 /// Every object address present in objects(0, major) before collection is
-/// still present in objects(0, mc_major) after collection (for any set `pf` of
-/// objects pending free; the pointer update writes no header). Cheney promotion
+/// still present in objects(0, mc_major) after collection (for any view `v`;
+/// the pointer update writes no header). Cheney promotion
 /// consumes free-list nodes to hold promoted objects, but never overwrites
 /// or removes any existing allocated object.
 ///
@@ -61,16 +61,16 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 /// is valid and terminates. These ensure promote_object writes only into
 /// legitimate free-list nodes.
 val cheney_collect_preserves_objects
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
   : Lemma
     (requires
       // Major heap has valid OCaml object layout
-      well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+      blocks_fit major /\ no_infix_block major /\
       // Free-list from fp: each node is a valid blue object with wosize >= 1
       AllocLemmas.fl_valid major fp heap_words /\
       // Free-list traversal terminates (no cycles)
       AllocLemmas.fl_chain_terminates major fp heap_words)
-    (ensures (let res = cheney_collect_spec_except minor major fp roots pf in
+    (ensures (let res = cheney_collect_spec_view v minor major fp roots in
               // Every pre-existing object address is still in the post-collection object list
               forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
                 Seq.mem x (objects zero_addr res.mc_major)))
@@ -80,25 +80,25 @@ val cheney_collect_preserves_objects
 /// ---------------------------------------------------------------------------
 
 /// After collection, every object in the post-collection heap still has its
-/// header+body fitting within the heap byte array. This is the "part 1"
+/// header+body fitting within the heap byte array. This is the `blocks_fit`
 /// sub-invariant of well_formed_heap (the weakest component, but sufficient
 /// for safe object traversal).
 ///
-/// Note: full well_formed_heap (parts 1-4) is NOT preserved unconditionally
-/// because promotion may violate pointer-closure (part 2) if the forwarding
-/// map introduces dangling minor-heap references. Part 1 alone is always safe.
+/// Note: full well_formed_heap is NOT preserved unconditionally because
+/// promotion may violate `pointers_stay_in` if the forwarding map introduces
+/// dangling minor-heap references. `blocks_fit` alone is always safe.
 val cheney_collect_preserves_wfh_part1
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
   : Lemma
     (requires
       // Major heap well-formed
-      well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+      blocks_fit major /\ no_infix_block major /\
       // Free-list valid and terminating
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words)
     (ensures
       // Every object's header+body fits within the post-collection heap byte array
-      well_formed_heap_part1 (cheney_collect_spec_except minor major fp roots pf).mc_major)
+      blocks_fit (cheney_collect_spec_view v minor major fp roots).mc_major)
 
 /// ---------------------------------------------------------------------------
 /// Property 3: Minor heap is properly reset
@@ -151,7 +151,7 @@ val cheney_gc_correct
   : Lemma
     (requires
       // Major heap has valid OCaml object layout (all 4 well-formedness parts)
-      well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+      blocks_fit major /\ no_infix_block major /\
       // Free-list from fp: each node is a valid blue object, wosize >= 1,
       // and the next-pointer chain is valid
       AllocLemmas.fl_valid major fp heap_words /\
@@ -171,7 +171,7 @@ val cheney_gc_correct
 
               // Property 2 — Size-bounds invariant: every post-collection
               // object's header+body fits within the heap byte array
-              well_formed_heap_part1 res.mc_major /\
+              blocks_fit res.mc_major /\
 
               // Property 3a — Post-collection free-list validity: the new
               // free-list head (res.mc_fp) leads through valid blue objects

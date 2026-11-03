@@ -35,7 +35,7 @@ let pos_behind (g: heap) (fp: U64.t) (st: sweep_state) (p: hp_addr)
 
 let end_obj (g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
   : Lemma (requires at_end g fp st /\ Seq.mem x (objects zero_addr g))
-          (ensures (is_white x g \/ is_blue x g) /\ ~(pending g st x))
+          (ensures (is_white x g \/ is_blue x g) /\ not (condemned st g x))
   = sweep_phase_inv_elim g fp st;
     obj_pos g x; colour_of g x;
     pos_behind g fp st (hd_address x);
@@ -46,11 +46,11 @@ let sweep_phase_end g fp st =
   let objs (x: obj_addr) : Lemma (Seq.mem x (objects zero_addr g) ==> (is_white x g \/ is_blue x g))
     = if Seq.mem x (objects zero_addr g) then end_obj g fp st x in
   FStar.Classical.forall_intro objs;
-  let none (x: obj_addr) : Lemma (~(pending g st x))
+  let none (x: obj_addr) : Lemma (not (condemned st g x) /\ surviving st g x == allocated g x)
     = if Seq.mem x (objects zero_addr g) then end_obj g fp st x in
   FStar.Classical.forall_intro none;
-  wf_except_parts ();
-  wf_transport g g (pending g st) no_pending
+  wf_view_parts ();
+  well_formed_view_congr (surviving st) allocated g
 
 /// ---------------------------------------------------------------------------
 /// Stop-the-world
@@ -122,7 +122,7 @@ let not_infix_at (g0 g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
   : Lemma (requires at_end_stw g0 g fp st /\ Seq.mem x (objects zero_addr g))
           (ensures ~(is_infix x g))
   = sweep_phase_inv_elim g fp st;
-    wf_except_parts ()
+    wf_view_parts ()
 
 let no_adjacent_at (g0 g: heap) (fp: U64.t) (st: sweep_state) (x y: obj_addr)
   : Lemma (requires at_end_stw g0 g fp st /\ Seq.mem x (objects zero_addr g) /\

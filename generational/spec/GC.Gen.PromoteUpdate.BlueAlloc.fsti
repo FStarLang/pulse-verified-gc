@@ -19,7 +19,7 @@ module FreeListShape = GC.Gen.FreeListShape
 
 val alloc_spec_preserves_fp_pointer_or_zero
   (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words /\
                     FreeListShape.blue_link_fields_valid g /\
@@ -32,7 +32,7 @@ val alloc_spec_preserves_fp_pointer_or_zero
 
 val alloc_spec_preserves_blue_link_fields_valid
   (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words /\
                     FreeListShape.blue_link_fields_valid g /\

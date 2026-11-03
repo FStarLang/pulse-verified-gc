@@ -144,7 +144,7 @@ fn forward_if_minor_infix
            R.pts_to back 'bk **
            R.pts_to oom_ref 'oom_in **
            pure (let minor_st : minor_state = {data='md; bump='mb} in
-                 SF.well_formed_heap_part1 'ms /\
+                 SF.blocks_fit 'ms /\
                  AllocLemmas.fl_valid 'ms 'fp heap_words /\
                  AllocLemmas.fl_chain_terminates 'ms 'fp heap_words /\
                  Seq.length 'farr == fwd_array_size /\
@@ -171,7 +171,7 @@ fn forward_if_minor_infix
     pure (let minor_st : minor_state = {data='md; bump='mb} in
           let cs_post = CheneySpec.cheney_forward_one minor_st cs_pre addr in
           md2 == 'md /\ mb2 == 'mb /\
-          SF.well_formed_heap_part1 ms2 /\
+          SF.blocks_fit ms2 /\
           AllocLemmas.fl_valid ms2 fp2 heap_words /\
           AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
           Seq.length farr2 == fwd_array_size /\
@@ -314,7 +314,7 @@ fn forward_if_minor
            R.pts_to back 'bk **
            R.pts_to oom_ref 'oom_in **
            pure (let minor_st : minor_state = {data='md; bump='mb} in
-                 SF.well_formed_heap_part1 'ms /\
+                 SF.blocks_fit 'ms /\
                  AllocLemmas.fl_valid 'ms 'fp heap_words /\
                  AllocLemmas.fl_chain_terminates 'ms 'fp heap_words /\
                  Seq.length 'farr == fwd_array_size /\
@@ -337,7 +337,7 @@ fn forward_if_minor
     pure (let minor_st : minor_state = {data='md; bump='mb} in
           let cs_post = CheneySpec.cheney_forward_one minor_st cs_pre addr in
           md2 == 'md /\ mb2 == 'mb /\
-          SF.well_formed_heap_part1 ms2 /\
+          SF.blocks_fit ms2 /\
           AllocLemmas.fl_valid ms2 fp2 heap_words /\
           AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
           Seq.length farr2 == fwd_array_size /\
@@ -503,7 +503,7 @@ fn forward_roots
            R.pts_to oom_ref 'oom_in **
            pts_to roots 'rs **
            pure (let minor_st : minor_state = {data='md; bump='mb} in
-                 SF.well_formed_heap_part1 'ms /\
+                 SF.blocks_fit 'ms /\
                  AllocLemmas.fl_valid 'ms 'fp heap_words /\
                  AllocLemmas.fl_chain_terminates 'ms 'fp heap_words /\
                  Seq.length 'farr == fwd_array_size /\
@@ -528,7 +528,7 @@ fn forward_roots
     pure (let minor_st : minor_state = {data='md; bump='mb} in
           let cs1 = CheneySpec.cheney_forward_roots minor_st cs0 'rs 0 in
           md2 == 'md /\ mb2 == 'mb /\
-          SF.well_formed_heap_part1 ms2 /\
+          SF.blocks_fit ms2 /\
           AllocLemmas.fl_valid ms2 fp2 heap_words /\
           AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
           Seq.length farr2 == fwd_array_size /\
@@ -564,7 +564,7 @@ fn forward_roots
       pure (let minor_st : minor_state = {data='md; bump='mb} in
             SZ.v iv <= SZ.v nroots /\
             md_i == 'md /\ mb_i == 'mb /\
-            SF.well_formed_heap_part1 ms_i /\
+            SF.blocks_fit ms_i /\
             AllocLemmas.fl_valid ms_i fp_i heap_words /\
             AllocLemmas.fl_chain_terminates ms_i fp_i heap_words /\
             Seq.length farr_i == fwd_array_size /\
@@ -662,7 +662,7 @@ fn scan_loop
            R.pts_to back 'bk **
            R.pts_to oom_ref 'oom_in **
            pure (let minor_st : minor_state = {data='md; bump='mb} in
-                 SF.well_formed_heap_part1 'ms /\
+                 SF.blocks_fit 'ms /\
                  AllocLemmas.fl_valid 'ms 'fp heap_words /\
                  AllocLemmas.fl_chain_terminates 'ms 'fp heap_words /\
                  Seq.length 'farr == fwd_array_size /\
@@ -685,7 +685,7 @@ fn scan_loop
     pure (let minor_st : minor_state = {data='md; bump='mb} in
           let cs_final = CheneySpec.cheney_scan minor_st cs1 0 (CheneySpec.cheney_fuel minor_st) in
           md2 == 'md /\ mb2 == 'mb /\
-          SF.well_formed_heap_part1 ms2 /\
+          SF.blocks_fit ms2 /\
           AllocLemmas.fl_valid ms2 fp2 heap_words /\
           AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
           Seq.length farr2 == fwd_array_size /\
@@ -721,7 +721,7 @@ fn scan_loop
             SZ.v sv <= SZ.v bk_i /\
             SZ.v bk_i <= queue_size /\
             md_i == 'md /\ mb_i == 'mb /\
-            SF.well_formed_heap_part1 ms_i /\
+            SF.blocks_fit ms_i /\
             AllocLemmas.fl_valid ms_i fp_i heap_words /\
             AllocLemmas.fl_chain_terminates ms_i fp_i heap_words /\
             Seq.length farr_i == fwd_array_size /\
@@ -810,7 +810,7 @@ fn scan_loop
                 U64.v fi <= U64.v wosize /\
                 SZ.v bk_f <= queue_size /\
                 md_f == 'md /\ mb_f == 'mb /\
-                SF.well_formed_heap_part1 ms_f /\
+                SF.blocks_fit ms_f /\
                 AllocLemmas.fl_valid ms_f fp_f heap_words /\
                 AllocLemmas.fl_chain_terminates ms_f fp_f heap_words /\
                 Seq.length farr_f == fwd_array_size /\
@@ -925,8 +925,8 @@ fn cheney_promote_phase
            pts_to queue 'qv **
            pts_to roots 'rs **
            pure (let minor_st : minor_state = {data='md; bump='mb} in
-                 SF.well_formed_heap_part1 'ms /\
-                 SF.well_formed_heap_part4 'ms /\
+                 SF.blocks_fit 'ms /\
+                 SF.no_infix_block 'ms /\
                  AllocLemmas.fl_valid 'ms 'fp heap_words /\
                  AllocLemmas.fl_chain_terminates 'ms 'fp heap_words /\
                  FLA.fl_ascending 'ms 'fp /\
@@ -956,7 +956,7 @@ fn cheney_promote_phase
           Paint.paint_ok 'ms prom.major_final fp2 /\
           fp2 == prom.fp_final /\
           represents_fwd farr2 prom.fwd_map /\
-          SF.well_formed_heap_part1 prom.major_final /\
+          SF.blocks_fit prom.major_final /\
           AllocLemmas.fl_valid prom.major_final fp2 heap_words /\
           AllocLemmas.fl_chain_terminates prom.major_final fp2 heap_words /\
           GC.Spec.Fields.heap_objects_dense prom.major_final /\

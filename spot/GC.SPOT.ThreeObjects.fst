@@ -156,18 +156,18 @@ let expose_spot_collection_facts
         GC.Gen.HeapInvariant.collection_heap_shape minor major fp /\
         SpecFields.well_formed_heap major /\
         minor_wf minor /\
-        GC.Spec.Fields.well_formed_heap_except major GC.Spec.Fields.no_pending /\
-        GC.Gen.HeapInvariant.minor_major_fields_not_freed minor major GC.Spec.Fields.no_pending /\
+        GC.Spec.Fields.well_formed_view GC.Spec.Fields.allocated major /\
+        GC.Gen.HeapInvariant.minor_major_fields_in_view GC.Spec.Fields.allocated minor major /\
         RefTable.ref_table_covers_minor_ptrs major (spot_slots c) 1 /\
         MinorFwd.remembered_targets_in_roots major (spot_roots c) (spot_slots c) 1 /\
-        RBridge.roots_not_freed (spot_roots c) major GC.Spec.Fields.no_pending /\
-        RBridge.major_fields_covered minor major GC.Spec.Fields.no_pending (spot_roots c))
+        RBridge.roots_in_view GC.Spec.Fields.allocated (spot_roots c) major /\
+        RBridge.major_fields_covered minor major GC.Spec.Fields.allocated (spot_roots c))
   =
   Preconditions.minor_collect_full_pre_elim
     minor major fp (spot_roots c) farr (spot_slots c) 1;
-  MinorFwd.no_pending_context minor major fp (spot_roots c);
+  MinorFwd.stop_the_world_context minor major fp (spot_roots c);
   MCFH.major_fields_covered_from_slots
-    minor major GC.Spec.Fields.no_pending (spot_roots c) (spot_slots c) 1;
+    minor major GC.Spec.Fields.allocated (spot_roots c) (spot_slots c) 1;
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
   GenInv.minor_heap_shape_elim minor
@@ -179,10 +179,10 @@ let spot_c_reachable_root
   =
   spot_roots_mem_c c;
   CG.classify_roots_major_mem minor (spot_roots c) (c <: U64.t);
-  CG.major_vertex_char minor major GC.Spec.Fields.no_pending c;
-  assert (CG.mem_cv (CG.MajorV c) (CG.build_combined_graph minor major GC.Spec.Fields.no_pending));
+  CG.major_vertex_char minor major GC.Spec.Fields.allocated c;
+  assert (CG.mem_cv (CG.MajorV c) (CG.build_combined_graph minor major GC.Spec.Fields.allocated));
   CG.combined_reachable_root
-    (CG.build_combined_graph minor major GC.Spec.Fields.no_pending)
+    (CG.build_combined_graph minor major GC.Spec.Fields.allocated)
     (CG.classify_roots minor (spot_roots c))
     (CG.MajorV c)
 
@@ -201,11 +201,11 @@ let spot_a_reachable_root
   GenInv.minor_heap_shape_elim minor;
   minor_objects_not_infix minor Layout.a_minor;
   CG.classify_roots_minor_mem_raw minor (spot_roots c) Layout.a_minor;
-  CG.minor_vertex_char minor major GC.Spec.Fields.no_pending Layout.a_minor;
+  CG.minor_vertex_char minor major GC.Spec.Fields.allocated Layout.a_minor;
   assert (CG.mem_cv (CG.MinorV Layout.a_minor)
-    (CG.build_combined_graph minor major GC.Spec.Fields.no_pending));
+    (CG.build_combined_graph minor major GC.Spec.Fields.allocated));
   CG.combined_reachable_root
-    (CG.build_combined_graph minor major GC.Spec.Fields.no_pending)
+    (CG.build_combined_graph minor major GC.Spec.Fields.allocated)
     (CG.classify_roots minor (spot_roots c))
     (CG.MinorV Layout.a_minor)
 
@@ -217,7 +217,7 @@ let spot_a_promoted
   expose_spot_collection_facts minor major fp c farr;
   spot_a_reachable_root minor major fp c farr;
   MinorFwd.combined_reachable_minor_has_fwd
-    minor major fp GC.Spec.Fields.no_pending (spot_roots c);
+    minor major fp GC.Spec.Fields.allocated (spot_roots c);
   assert ((Cheney.cheney_promote minor major fp (spot_roots c)).fwd_map
     Layout.a_minor <> 0UL);
   Postconditions.promoted_image_from_forwarding

@@ -22,7 +22,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 /// promote_object preserves heap_objects_dense.
 val promote_object_preserves_dense
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
-  : Lemma (requires well_formed_heap_part1 major /\
+  : Lemma (requires blocks_fit major /\
                     heap_objects_dense major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words)

@@ -97,9 +97,9 @@ val paint_recoloured (c: nat) (g0 g: heap) : Lemma (recoloured g (paint c g0 g))
 
 val paint_ph_recoloured (ph: GC.Spec.Phase.gc_phase) (g0 g: heap) : Lemma (recoloured g (paint_ph ph g0 g))
 
-/// What recolouring keeps: the objects, which of them are free, their sizes,
-/// tags and fields, the free-list cells and links, and the not-freed objects
-/// for any fixed pending set.
+/// What recolouring keeps: the objects, which of them are free (so the
+/// allocated ones), their sizes, tags and fields, and the free-list cells and
+/// links.
 val recoloured_facts (g g': heap)
   : Lemma (requires recoloured g g')
           (ensures objects zero_addr g' == objects zero_addr g /\
@@ -108,26 +108,46 @@ val recoloured_facts (g g': heap)
                       wosize_of_object x g' == wosize_of_object x g /\
                       tag_of_object x g' == tag_of_object x g /\
                       same_block g g' (hd_address x)) /\
-                   (forall (x: obj_addr) (pf: obj_addr -> prop). not_freed g' pf x <==> not_freed g pf x) /\
+                   (forall (x: obj_addr). allocated g' x == allocated g x) /\
                    (forall (x: U64.t). FL.fl_cell g' x <==> FL.fl_cell g x) /\
                    (forall (x: U64.t). FL.fl_cell g x ==> FL.fl_next g' x == FL.fl_next g x) /\
                    (heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 ==>
                       heap_objects_dense g' /\ Seq.length (objects zero_addr g') > 0) /\
-                   (well_formed_heap_part4 g ==> well_formed_heap_part4 g'))
+                   (no_infix_block g ==> no_infix_block g'))
 
-/// The field closure for a fixed pending set, and an ascending list.
-val recoloured_wf (g g': heap) (pf: obj_addr -> prop)
-  : Lemma (requires recoloured g g' /\ well_formed_heap_except g pf)
-          (ensures well_formed_heap_except g' pf)
+/// Well-formedness, on a view `v'` that counts after the recolouring the
+/// blocks `v` counted before; and an ascending list.
+val recoloured_wf (g g': heap) (v v': view)
+  : Lemma (requires recoloured g g' /\ well_formed_view v g /\ view_ok v /\ view_ok v' /\
+                    (forall (x: obj_addr). v' g' x == v g x))
+          (ensures well_formed_view v' g')
 
 val recoloured_fl (g g': heap) (fp: U64.t)
   : Lemma (requires recoloured g g' /\ FLA.fl_ascending g fp)
           (ensures FLA.fl_ascending g' fp)
 
-/// The major half of the minor collection's shape, for a fixed pending set.
-val recoloured_major_shape (g g': heap) (fp: U64.t) (pf: obj_addr -> prop)
-  : Lemma (requires recoloured g g' /\ GenInv.major_shape_except g fp pf)
-          (ensures GenInv.major_shape_except g' fp pf)
+/// The major half of the minor collection's shape, on a view the recolouring
+/// does not change.
+val recoloured_major_shape (g g': heap) (fp: U64.t) (v: view)
+  : Lemma (requires recoloured g g' /\ GenInv.major_shape_view v g fp /\
+                    (forall (x: obj_addr). v g' x == v g x))
+          (ensures GenInv.major_shape_view v g' fp)
+
+/// A view that recolouring does not change: it reads which blocks are free,
+/// not the colours of the others.  `allocated` is one, and so is a sweep's
+/// view with what is condemned fixed (`surviving_from`); the sweep's own view
+/// (`surviving`) is not, since it reads white.
+let colour_blind (v: view) : prop =
+  forall (g g': heap) (x: obj_addr). recoloured g g' ==> v g' x == v g x
+
+val colour_blind_elim (v: view) (g g': heap)
+  : Lemma (requires colour_blind v /\ recoloured g g')
+          (ensures forall (x: obj_addr). v g' x == v g x)
+
+val allocated_colour_blind (_: unit) : Lemma (colour_blind allocated)
+
+val surviving_from_colour_blind (st: sweep_state) (g0: heap)
+  : Lemma (colour_blind (surviving_from st g0))
 
 /// ---------------------------------------------------------------------------
 /// Writes off the walk
@@ -188,6 +208,10 @@ val phase_at_self (ph: GC.Spec.Phase.gc_phase) (g: heap)
 /// blocks the collection started with, and its list is ascending.
 let paint_ok (g0 g: heap) (fp: U64.t) : prop = kept g0 g /\ FLA.fl_ascending g fp
 
+/// A change that keeps the walk and every header keeps the blocks of `g0`.
+val kept_heads (g0 g g': heap)
+  : Lemma (requires kept g0 g /\ same_heads g g') (ensures kept g0 g')
+
 /// **One promotion at the phase is the idle one, painted**, with the phase
 /// at the idle result; and it keeps `paint_ok`.  `ph0` is the phase the
 /// collection started in, and the promotion runs at `phase_at ph0 g`.
@@ -201,6 +225,18 @@ val paint_promote (ph0: GC.Spec.Phase.gc_phase) (g0 g: heap) (fp: U64.t)
                     r'.Promote.new_addr == r.Promote.new_addr /\
                     r'.Promote.phase_out == phase_at ph0 r.Promote.major_out /\
                     paint_ok g0 r.Promote.major_out r.Promote.fp_out))
+
+/// **Painting makes the new blocks in front of the cursor surviving**: on a
+/// heap that kept every block of `g0`, the sweep's view of the painted heap
+/// is the view of the heap with what is condemned read at `g0`.  A block of
+/// `g0` keeps its header, so it is condemned exactly when it was; a new block
+/// in front of the cursor is painted black, and one behind it is not in front
+/// of the cursor, so neither is condemned.  This is `allocation_color` at
+/// work: a white copy in front of the cursor would be condemned, and freed by
+/// the sweep while reachable.
+val paint_surviving (st: sweep_state) (g0 h: heap) (x: obj_addr)
+  : Lemma (requires kept g0 h /\ U64.v st.cursor % 8 == 0)
+          (ensures surviving st (paint (U64.v st.cursor) g0 h) x == surviving_from st g0 h x)
 
 /// At the start of a collection there is nothing to paint.
 val paint_start (ph0: GC.Spec.Phase.gc_phase) (g0: heap) (fp: U64.t)
@@ -234,10 +270,10 @@ val coloured_start (ph: GC.Spec.Phase.gc_phase) (g: heap) (fp: U64.t)
 /// What the allocator needs, of both heaps.
 val coloured_facts (col: colouring) (ms g: heap) (fp: U64.t) (ph: GC.Spec.Phase.gc_phase)
   : Lemma (requires coloured col ms g fp ph)
-          (ensures well_formed_heap_part1 g /\ FLA.fl_ascending g fp /\
+          (ensures blocks_fit g /\ FLA.fl_ascending g fp /\
                    GC.Spec.Allocator.Lemmas.fl_valid g fp heap_words /\
                    GC.Spec.Allocator.Lemmas.fl_chain_terminates g fp heap_words /\
-                   well_formed_heap_part1 ms /\ FLA.fl_ascending ms fp /\
+                   blocks_fit ms /\ FLA.fl_ascending ms fp /\
                    GC.Spec.Allocator.Lemmas.fl_valid ms fp heap_words /\
                    GC.Spec.Allocator.Lemmas.fl_chain_terminates ms fp heap_words /\
                    recoloured g ms)

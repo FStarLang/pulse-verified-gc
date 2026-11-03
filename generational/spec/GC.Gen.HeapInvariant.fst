@@ -187,13 +187,13 @@ let collection_heap_shape_after_minor_reset
 /// ---------------------------------------------------------------------------
 
 /// ---------------------------------------------------------------------------
-/// The collection's shape, except the objects pending free
+/// The collection's shape on a view
 /// ---------------------------------------------------------------------------
 
 [@@"opaque_to_smt"]
-let major_shape_except (major: heap) (fp: U64.t) (pf: obj_addr -> prop) : prop =
-  pending_ok major pf /\
-  well_formed_heap_except major pf /\
+let major_shape_view (v: view) (major: heap) (fp: U64.t) : prop =
+  view_ok v /\
+  well_formed_view v major /\
   AllocLemmas.fl_valid major fp heap_words /\
   AllocLemmas.fl_chain_terminates major fp heap_words /\
   free_list_exact major fp /\
@@ -206,30 +206,31 @@ let major_shape_except (major: heap) (fp: U64.t) (pf: obj_addr -> prop) : prop =
   SweepInv.fp_valid fp major /\
   GC.Spec.FreeList.fp_in_heap fp major
 
-let major_shape_except_intro major fp pf =
-  reveal_opaque (`%major_shape_except) (major_shape_except major fp pf)
+let major_shape_view_intro v major fp =
+  reveal_opaque (`%major_shape_view) (major_shape_view v major fp)
 
-let major_shape_except_elim major fp pf =
-  reveal_opaque (`%major_shape_except) (major_shape_except major fp pf);
-  wf_except_parts ()
+let major_shape_view_elim v major fp =
+  reveal_opaque (`%major_shape_view) (major_shape_view v major fp);
+  view_ok_elim v;
+  wf_view_parts ()
 
 #push-options "--fuel 0 --ifuel 0"
 [@@"opaque_to_smt"]
-let minor_major_fields_not_freed (minor: minor_state) (major: heap) (pf: obj_addr -> prop) : prop =
+let minor_major_fields_in_view (v: view) (minor: minor_state) (major: heap) : prop =
   forall (obj: U64.t) (j: nat).
     Seq.mem obj (minor_objects minor) /\
     j < minor_scan_wosize minor obj /\
     is_pointer_field (minor_read_field minor obj j) ==>
-    not_freed major pf ((minor_read_field minor obj j) <: obj_addr)
+    v major ((minor_read_field minor obj j) <: obj_addr)
 #pop-options
 
-let minor_major_fields_not_freed_intro minor major pf h =
-  reveal_opaque (`%minor_major_fields_not_freed) (minor_major_fields_not_freed minor major pf);
+let minor_major_fields_in_view_intro v minor major h =
+  reveal_opaque (`%minor_major_fields_in_view) (minor_major_fields_in_view v minor major);
   let aux (obj: U64.t) (j: nat) : Lemma
     (Seq.mem obj (minor_objects minor) /\
      j < minor_scan_wosize minor obj /\
      is_pointer_field (minor_read_field minor obj j) ==>
-     not_freed major pf ((minor_read_field minor obj j) <: obj_addr))
+     v major ((minor_read_field minor obj j) <: obj_addr))
     = if Seq.mem obj (minor_objects minor) &&
          j < minor_scan_wosize minor obj &&
          is_pointer_field (minor_read_field minor obj j)
@@ -237,48 +238,48 @@ let minor_major_fields_not_freed_intro minor major pf h =
   in
   FStar.Classical.forall_intro_2 aux
 
-let minor_major_fields_not_freed_elim minor major pf obj j =
-  reveal_opaque (`%minor_major_fields_not_freed) (minor_major_fields_not_freed minor major pf)
+let minor_major_fields_in_view_elim v minor major obj j =
+  reveal_opaque (`%minor_major_fields_in_view) (minor_major_fields_in_view v minor major)
 
-let minor_major_fields_not_freed_no_pending minor major =
-  reveal_opaque (`%minor_major_fields_not_freed) (minor_major_fields_not_freed minor major no_pending);
+let minor_major_fields_in_view_allocated minor major =
+  reveal_opaque (`%minor_major_fields_in_view) (minor_major_fields_in_view allocated minor major);
   reveal_opaque (`%minor_major_fields_no_blue) (minor_major_fields_no_blue minor major)
 
 [@@"opaque_to_smt"]
-let collection_shape_except (minor: minor_state) (major: heap) (fp: U64.t)
-  (pf: obj_addr -> prop) : prop =
-  major_shape_except major fp pf /\
+let collection_shape_view (v: view) (minor: minor_state) (major: heap)
+  (fp: U64.t) : prop =
+  major_shape_view v major fp /\
   minor_heap_shape minor /\
-  minor_major_fields_not_freed minor major pf
+  minor_major_fields_in_view v minor major
 
-let collection_shape_except_intro minor major fp pf =
-  reveal_opaque (`%collection_shape_except) (collection_shape_except minor major fp pf)
+let collection_shape_view_intro v minor major fp =
+  reveal_opaque (`%collection_shape_view) (collection_shape_view v minor major fp)
 
-let collection_shape_except_elim minor major fp pf =
-  reveal_opaque (`%collection_shape_except) (collection_shape_except minor major fp pf)
+let collection_shape_view_elim v minor major fp =
+  reveal_opaque (`%collection_shape_view) (collection_shape_view v minor major fp)
 
-let major_heap_shape_no_pending major fp =
+let major_heap_shape_as_view major fp =
   major_heap_shape_elim major fp;
-  no_pending_ok major;
-  major_shape_except_intro major fp no_pending
+  allocated_view_ok ();
+  major_shape_view_intro allocated major fp
 
-let major_heap_shape_of_no_pending major fp =
-  major_shape_except_elim major fp no_pending;
+let major_heap_shape_of_view major fp =
+  major_shape_view_elim allocated major fp;
   major_heap_shape_intro major fp
 
-let collection_heap_shape_no_pending minor major fp =
+let collection_heap_shape_as_view minor major fp =
   collection_heap_shape_elim minor major fp;
-  major_heap_shape_no_pending major fp;
-  minor_major_fields_not_freed_no_pending minor major;
-  collection_shape_except_intro minor major fp no_pending
+  major_heap_shape_as_view major fp;
+  minor_major_fields_in_view_allocated minor major;
+  collection_shape_view_intro allocated minor major fp
 
-let collection_heap_shape_of_no_pending minor major fp =
-  collection_shape_except_elim minor major fp no_pending;
-  major_heap_shape_of_no_pending major fp;
-  minor_major_fields_not_freed_no_pending minor major;
+let collection_heap_shape_of_view minor major fp =
+  collection_shape_view_elim allocated minor major fp;
+  major_heap_shape_of_view major fp;
+  minor_major_fields_in_view_allocated minor major;
   collection_heap_shape_intro minor major fp
 
-let collection_shape_except_after_minor_reset minor major fp pf =
+let collection_shape_view_after_minor_reset v minor major fp =
   let reset = minor_reset minor in
   minor_reset_heap_shape minor;
   minor_reset_objects_empty minor;
@@ -286,8 +287,8 @@ let collection_shape_except_after_minor_reset minor major fp pf =
     (requires Seq.mem obj (minor_objects reset) /\
               j < minor_scan_wosize reset obj /\
               is_pointer_field (minor_read_field reset obj j))
-    (ensures not_freed major pf ((minor_read_field reset obj j) <: obj_addr))
+    (ensures v major ((minor_read_field reset obj j) <: obj_addr))
     = minor_reset_objects_not_mem minor obj
   in
-  minor_major_fields_not_freed_intro reset major pf h;
-  collection_shape_except_intro reset major fp pf
+  minor_major_fields_in_view_intro v reset major h;
+  collection_shape_view_intro v reset major fp

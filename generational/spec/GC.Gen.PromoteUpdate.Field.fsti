@@ -19,10 +19,10 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 /// A field of a rewritten scannable object on the walk is rewritten exactly when it
 /// holds a forwarded nursery pointer.
 val update_walk_field_effect
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       Seq.mem obj (objects zero_addr major) /\
       j < U64.v (wosize_of_object obj major) /\
       U64.v obj + j * 8 + 8 <= heap_size /\
@@ -43,7 +43,7 @@ val update_major_pointers_field_effect
   (major: heap) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       Seq.mem obj (objects zero_addr major) /\
       j < U64.v (wosize_of_object obj major) /\
       U64.v obj + j * 8 + 8 <= heap_size /\

@@ -93,7 +93,7 @@ let promote_object_preserves_fl_ascending minor major obj fp wosize =
 /// ---------------------------------------------------------------------------
 
 let asc_inv (cs: cheney_state) : prop =
-  well_formed_heap_part1 cs.cs_major /\ FLA.fl_ascending cs.cs_major cs.cs_fp
+  blocks_fit cs.cs_major /\ FLA.fl_ascending cs.cs_major cs.cs_fp
 
 private let minor_wosize_bound (minor: minor_state) (obj: U64.t)
   : Lemma (minor_wosize minor obj < pow2 54)
@@ -227,7 +227,7 @@ let update_walk_preserves_fl_ascending major upd fwd fp =
 #pop-options
 
 let update_major_pointers_preserves_fl_ascending major fwd fp =
-  update_walk_preserves_fl_ascending major (not_freed major no_pending) fwd fp
+  update_walk_preserves_fl_ascending major (allocated major) fwd fp
 
 
 /// ---------------------------------------------------------------------------

@@ -134,7 +134,7 @@ let rec push_children (g: heap) (st: seq obj_addr) (obj: obj_addr) (i: U64.t{U64
 /// Well-Formedness Preservation
 /// ---------------------------------------------------------------------------
 
-/// Blueness is what `fields_constrained` and the graph look at, and mark never
+/// Blueness is what `allocated` and the graph look at, and mark never
 /// creates or removes it.  These two facts let the many colour-change sites in
 /// the mark proofs see that without a lemma call each.
 val is_blue_exclusive (x: obj_addr) (g: heap)
@@ -147,9 +147,10 @@ val set_color_keeps_not_blue (obj x: obj_addr) (g: heap) (c: color)
           [SMTPat (is_blue x (set_object_color obj g c))]
 
 /// A colour change among white, grey and black.  Blue is excluded at both ends:
-/// a free block's body is unconstrained (`fields_constrained`), so taking a
+/// a free block's body is unconstrained (it is not `allocated`), so taking a
 /// block out of blue would make its stale fields obligations, and nothing may
-/// point at a free block, so turning a block blue could break part 2.  Mark
+/// point at a free block, so turning a block blue could break
+/// `pointers_stay_in`.  Mark
 /// never does either; the sweep and the allocator, which do, have their own
 /// lemmas.
 val color_change_preserves_wf : (g: heap) -> (obj: obj_addr) -> (c: color) ->
@@ -159,8 +160,8 @@ val color_change_preserves_wf : (g: heap) -> (obj: obj_addr) -> (c: color) ->
 
 val push_children_preserves_wf : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
                                   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
-                  fields_constrained g obj /\
+  Lemma (requires well_formed_heap g /\ allocated g obj /\
+                  ~(is_no_scan obj g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures well_formed_heap (fst (push_children g st obj i ws)))
@@ -168,8 +169,8 @@ val push_children_preserves_wf : (g: heap) -> (st: seq obj_addr) -> (obj: obj_ad
 val push_children_preserves_stack_props :
   (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\
-                  is_black obj g /\ Seq.mem obj (objects zero_addr g) /\
-                  fields_constrained g obj /\
+                  is_black obj g /\ allocated g obj /\
+                  ~(is_no_scan obj g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ~(Seq.mem obj st))
@@ -301,14 +302,14 @@ val push_children_no_new_white : (g: heap) -> (st: seq obj_addr) -> (obj: obj_ad
   Lemma (requires ~(is_white x g) /\ Seq.mem x (objects zero_addr g) /\ 
                   well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures ~(is_white x (fst (push_children g st obj i ws))))
 
 val push_children_obj_children_non_white : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (child: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
-                  fields_constrained g obj /\
+  Lemma (requires well_formed_heap g /\ allocated g obj /\
+                  ~(is_no_scan obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   points_to g obj child)
         (ensures (let ws = wosize_of_object obj g in
@@ -320,7 +321,7 @@ val push_children_preserves_points_to : (g: heap) -> (st: seq obj_addr) -> (obj:
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem b (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   points_to g' b child == points_to g b child))
@@ -329,7 +330,7 @@ val push_children_black_backward : (g: heap) -> (st: seq obj_addr) -> (obj: obj_
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (b: obj_addr) ->
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   is_black b (fst (push_children g st obj i ws)))
         (ensures is_black b g)
@@ -339,7 +340,7 @@ val push_children_preserves_is_no_scan : (g: heap) -> (st: seq obj_addr) -> (obj
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem b (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   is_no_scan b g' == is_no_scan b g))
@@ -348,7 +349,7 @@ val push_children_preserves_objects : (g: heap) -> (st: seq obj_addr) -> (obj: o
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   objects zero_addr g' == objects zero_addr g))
@@ -369,7 +370,7 @@ val push_children_preserves_resolve : (g: heap) -> (st: seq obj_addr) -> (obj: o
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (addr: obj_addr) ->
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   resolve_object addr g' == resolve_object addr g))
@@ -391,7 +392,7 @@ val push_children_no_new_blue : (g: heap) -> (st: seq obj_addr) -> (obj: obj_add
   Lemma (requires well_formed_heap g /\ ~(is_blue x g) /\
                   Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures ~(is_blue x (fst (push_children g st obj i ws))))
 
@@ -400,7 +401,7 @@ val push_children_preserves_blue : (g: heap) -> (st: seq obj_addr) -> (obj: obj_
   Lemma (requires well_formed_heap g /\ is_blue x g /\
                   Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures is_blue x (fst (push_children g st obj i ws)))
 
@@ -449,7 +450,7 @@ val push_children_preserves_create_graph : (g: heap{well_formed_heap g}) -> (st:
                                            (obj: obj_addr{Seq.mem obj (objects zero_addr g)}) ->
                                            (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
   Lemma (requires U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures create_graph (fst (push_children g st obj i ws)) == create_graph g)
 
@@ -472,7 +473,7 @@ val push_children_preserves_wosize : (g: heap) -> (st: seq obj_addr) -> (obj: ob
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) ->
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem x (objects zero_addr g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ws == wosize_of_object obj g /\
                   HeapGraph.object_fits_in_heap obj g)
@@ -482,7 +483,7 @@ val push_children_preserves_get_field : (g: heap) -> (st: seq obj_addr) -> (obj:
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) -> (j: U64.t{U64.v j >= 1}) ->
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem x (objects zero_addr g) /\ U64.v j <= U64.v (wosize_of_object x g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ws == wosize_of_object obj g /\
                   HeapGraph.object_fits_in_heap obj g)
@@ -563,8 +564,8 @@ val mark_black_is_reachable : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj
 /// check_and_darken_field preserves well_formed_heap
 val check_and_darken_field_preserves_wf :
   (g: heap) -> (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> (wz: U64.t) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
-                  fields_constrained g obj /\
+  Lemma (requires well_formed_heap g /\ allocated g obj /\
+                  ~(is_no_scan obj g) /\
                   U64.v wz <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   Seq.length g == heap_size /\

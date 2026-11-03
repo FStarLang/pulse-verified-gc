@@ -29,10 +29,10 @@ let minor_collect_full_post
   post_major == res.mc_major /\
   post_roots == res.mc_roots /\
   (ok ==> MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-             minor major fp GC.Spec.Fields.no_pending roots post_major
+             minor major fp GC.Spec.Fields.allocated roots post_major
              (MCFH.resolve_roots post_major post_roots) /\
            MinorFwd.normal_result_non_pointer_fields_preserved_prop
-             minor major fp GC.Spec.Fields.no_pending roots post_major)
+             minor major fp GC.Spec.Fields.allocated roots post_major)
 
 let promoted_image
   (minor: minor_state) (major: heap) (fp: U64.t)
@@ -74,9 +74,9 @@ let major_minor_field_rewritten
   (roots slots: seq U64.t) (n: nat)
   (src: obj_addr) (dst: U64.t) (i: nat)
   =
-  MinorFwd.no_pending_context minor major fp roots;
+  MinorFwd.stop_the_world_context minor major fp roots;
   MinorFwd.combined_major_minor_field_forwarded
-    minor major fp SpecFields.no_pending roots slots n src dst i;
+    minor major fp SpecFields.allocated roots slots n src dst i;
   promoted_image_from_forwarding minor major fp roots dst
     ((Cheney.cheney_promote minor major fp roots).fwd_map dst)
 

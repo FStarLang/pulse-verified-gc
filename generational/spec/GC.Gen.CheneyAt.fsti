@@ -9,7 +9,14 @@
 /// `swept_tail` is the last list cell at or below where it was (`phase_at`).
 /// So the collection at phase `ph` is the idle one, painted, with the phase
 /// after it.  At `Idle` both are the identity: these are today's collection
-/// (`cheney_collect_spec_except_at_idle`).
+/// (`cheney_collect_spec_view_at_idle`).
+///
+/// The view `v` is the idle collection's: it is read on the idle heaps the
+/// specification passes through, where a promoted copy is white wherever it
+/// is.  Mid-sweep that is the sweep's view with what is condemned fixed at
+/// the heap the collection starts from
+/// (`GC.Spec.SweepPhase.Intrinsic.surviving_from`); painted, it is the
+/// sweep's own view (`GC.Gen.Paint.paint_surviving`).
 
 module GC.Gen.CheneyAt
 
@@ -32,15 +39,15 @@ let cheney_promote_at (ph: gc_phase) (minor: minor_state) (major: heap) (fp: U64
     ({ prom with major_final = Paint.paint_ph ph major prom.major_final },
      Paint.phase_at ph prom.major_final)
 
-/// The collection at phase `ph`, except the objects pending free.
-let cheney_collect_spec_except_at (ph: gc_phase) (minor: minor_state) (major: heap) (fp: U64.t)
-    (roots: seq U64.t) (pf: obj_addr -> prop) : GTot (minor_collect_result & gc_phase)
-  = let res = cheney_collect_spec_except minor major fp roots pf in
+/// The collection at phase `ph`, on the view `v`.
+let cheney_collect_spec_view_at (ph: gc_phase) (v: view) (minor: minor_state) (major: heap)
+    (fp: U64.t) (roots: seq U64.t) : GTot (minor_collect_result & gc_phase)
+  = let res = cheney_collect_spec_view v minor major fp roots in
     ({ res with mc_major = Paint.paint_ph ph major res.mc_major },
      Paint.phase_at ph res.mc_major)
 
 /// Outside a sweep they are the idle collection.
-val cheney_collect_spec_except_at_idle
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (pf: obj_addr -> prop)
-  : Lemma (cheney_collect_spec_except_at Idle minor major fp roots pf ==
-           (cheney_collect_spec_except minor major fp roots pf, Idle))
+val cheney_collect_spec_view_at_idle
+  (v: view) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (cheney_collect_spec_view_at Idle v minor major fp roots ==
+           (cheney_collect_spec_view v minor major fp roots, Idle))

@@ -26,9 +26,9 @@ val objects_nonempty_from_header (g1 g2: heap) (start: hp_addr)
                     Seq.length (objects start g1) > 0)
           (ensures Seq.length (objects start g2) > 0)
 
-/// alloc_spec preserves heap_objects_dense under well_formed_heap_part1.
+/// alloc_spec preserves heap_objects_dense under blocks_fit.
 val alloc_spec_preserves_dense_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     heap_objects_dense g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words)

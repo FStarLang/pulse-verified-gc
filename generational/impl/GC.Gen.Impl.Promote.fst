@@ -217,7 +217,7 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     pure (let minor_st = {data='md; bump='mb} in
           let wz = minor_wosize minor_st obj in
           md2 == 'md /\ mb2 == 'mb /\
-          GC.Spec.Fields.well_formed_heap_part1 ms2 /\
+          GC.Spec.Fields.blocks_fit ms2 /\
           GC.Spec.Allocator.Lemmas.fl_valid ms2 fp2 heap_words /\
           GC.Spec.Allocator.Lemmas.fl_chain_terminates ms2 fp2 heap_words /\
           (wz > 0 ==>

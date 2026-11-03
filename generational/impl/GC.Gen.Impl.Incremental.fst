@@ -41,7 +41,7 @@ module AC = GC.Spec.Allocator.Cursor
 module SA = GC.Spec.Allocator
 module FSC = GC.Impl.FusedSweepCoalesce
 module CA = GC.Gen.CheneyAt
-module CE = GC.Gen.CheneyExcept
+module CV = GC.Gen.CheneyView
 module CheneyPres = GC.Gen.CheneyPreservation
 module PromoteSpec = GC.Gen.Promote
 module SPM = GC.Gen.SweepPhase.Minor
@@ -162,9 +162,11 @@ fn finish_sweep (gh: gen_heap_t)
 let any_phase_pre (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
     (rs farr sl: Seq.seq U64.t) (n: nat)
   : Lemma (requires GI.phase_shape minor s fp ph /\ minor_slots_ok ph minor s rs farr sl n)
-          (ensures minor_collect_pre_except minor s fp rs farr sl n (GI.phase_pending s ph) /\
-                   GC.Gen.Paint.phase_at ph s == ph)
-  = GI.phase_shape_collection minor s fp ph
+          (ensures minor_collect_pre_view (GI.phase_view s ph) minor s fp rs farr sl n /\
+                   GC.Gen.Paint.phase_at ph s == ph /\
+                   (Ph.Idle? ph \/ GC.Gen.Paint.colour_blind (GI.phase_view s ph)))
+  = GI.phase_shape_collection minor s fp ph;
+    GI.phase_view_ok minor s fp rs ph
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
@@ -172,21 +174,21 @@ let any_phase_post (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
     (rs sl: Seq.seq U64.t) (n: nat) (ok: bool)
     (d2: minor_heap) (b2: U64.t) (s2: heap) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t) (ph2: Ph.gc_phase)
   : Lemma (requires GI.phase_shape minor s fp ph /\
-                    minor_collect_post_except_at ph minor s fp rs sl n (GI.phase_pending s ph)
+                    minor_collect_post_view_at ph (GI.phase_view s ph) minor s fp rs sl n
                       ok d2 b2 s2 fp2 rs2 farr2 ph2)
           (ensures GI.phase_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 ph2 /\
                    Ph.Idle? ph2 == Ph.Idle? ph)
   = match ph with
     | Ph.Idle ->
-        GI.phase_pending_idle s;
-        minor_collect_post_at_idle minor s fp rs sl n SpecFields.no_pending ok
+        GI.phase_view_idle s;
+        minor_collect_post_at_idle SpecFields.allocated minor s fp rs sl n ok
           d2 b2 s2 fp2 rs2 farr2 ph2;
-        CE.cheney_collect_spec_except_no_pending minor s fp rs;
+        CV.cheney_collect_spec_view_allocated minor s fp rs;
         GI.phase_shape_idle minor s fp;
         CheneyPres.cheney_collect_preserves_collection_heap_shape minor s fp rs;
         GI.phase_shape_idle ({ data = d2; bump = b2 } <: minor_state) s2 fp2
     | Ph.Sweeping st ->
-        GI.phase_pending_sweeping s st;
+        GI.phase_view_sweeping s st;
         GI.minor_keeps_phase_shape minor s fp st rs
 #pop-options
 
@@ -211,14 +213,14 @@ fn minor_collect_any_phase (gh: gen_heap_t)
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
-    pure (minor_collect_post_except_at 'ph ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'sl
-            (SZ.v nslots) (GI.phase_pending 's 'ph) ok d2 b2 s2 fp2 rs2 farr2 ph2 /\
+    pure (minor_collect_post_view_at 'ph (GI.phase_view 's 'ph) ({ data = 'd; bump = 'b } <: minor_state)
+            's 'fp 'rs 'sl (SZ.v nslots) ok d2 b2 s2 fp2 rs2 farr2 ph2 /\
           Ph.Idle? ph2 == Ph.Idle? 'ph)
 {
   unfold gc_state;
   any_phase_pre ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'ph 'rs 'farr 'sl (SZ.v nslots);
   let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots
-             #(hide (GI.phase_pending 's 'ph));
+             #(hide (GI.phase_view 's 'ph));
   with d2 b2 s2 fp2. assert (is_gen_heap gh d2 b2 s2 fp2);
   with rs2. assert (pts_to roots rs2);
   with farr2. assert (pts_to fwd_arr farr2);
@@ -250,7 +252,7 @@ let alloc_major_post_intro (ph: Ph.gc_phase) (minor: minor_state) (s: heap) (fp:
                         (r.SA.obj_out == 0UL ==> r.SA.heap_out == s /\ r.SA.fp_out == fp /\ st' == st /\
                            GI.phase_shape minor r.SA.heap_out r.SA.fp_out (snd ar)) /\
                         (r.SA.obj_out <> 0UL ==>
-                           GSP.allocated s r.SA.heap_out st r.SA.obj_out wz tag /\
+                           GSP.new_block s r.SA.heap_out st r.SA.obj_out wz tag /\
                            GSP.fresh_ok r.SA.heap_out r.SA.fp_out st' (r.SA.obj_out <: obj_addr))))
       = GI.phase_shape_sweeping minor s fp st;
         GSP.alloc_sweep_phase s fp st wz tag
@@ -363,18 +365,18 @@ fn gen_gc_start (gh: gen_heap_t)
   GenInv.major_heap_shape_walk 's 'fp;
   GenInv.minor_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state);
 
-  // The minor collection, with nothing pending free (as in `gen_gc`).
+  // The minor collection, on the `allocated` view (as in `gen_gc`).
   minor_collect_idle_pre ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots);
   let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots
-             #(hide SpecFields.no_pending);
+             #(hide SpecFields.allocated);
 
   with d_mid b_mid ms_updated fp_mid. assert (is_gen_heap gh d_mid b_mid ms_updated fp_mid);
   with rs_mid. assert (pts_to roots rs_mid);
   with farr_mid. assert (pts_to fwd_arr farr_mid);
   with ph_mid. assert (gen_phase gh ph_mid);
-  minor_collect_post_at_idle ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'sl
-    (SZ.v nslots) SpecFields.no_pending ok d_mid b_mid ms_updated fp_mid rs_mid farr_mid ph_mid;
+  minor_collect_post_at_idle SpecFields.allocated ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'sl
+    (SZ.v nslots) ok d_mid b_mid ms_updated fp_mid rs_mid farr_mid ph_mid;
   rewrite (gen_phase gh ph_mid) as (gen_phase gh Ph.Idle);
   minor_collect_idle_post ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots) ok d_mid b_mid ms_updated fp_mid rs_mid farr_mid;

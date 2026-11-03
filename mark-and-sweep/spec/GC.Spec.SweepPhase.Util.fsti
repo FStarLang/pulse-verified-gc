@@ -43,7 +43,7 @@ val header_eq (h h': U64.t)
 
 /// Every block of the walk fits in the heap, so the size clause of
 /// well-formedness always holds.
-val part1_holds (g: heap) : Lemma (well_formed_heap_part1 g)
+val part1_holds (g: heap) : Lemma (blocks_fit g)
 
 /// ---------------------------------------------------------------------------
 /// The walk

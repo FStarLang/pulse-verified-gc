@@ -88,33 +88,95 @@ let graph_vertices_mem (g: heap) (x: obj_addr)
 /// ---------------------------------------------------------------------------
 
 /// ---------------------------------------------------------------------------
-/// The Graph Except the Objects Pending Free
+/// The Graph of a View
 /// ---------------------------------------------------------------------------
+///
+/// A free (blue) block is a vertex with no outgoing edges
+/// (`HeapGraph.get_pointer_fields`).  A block outside the view --- garbage
+/// left in place, whose fields may name blocks a sweep has already merged ---
+/// is treated the same way: it stays a vertex but contributes no edges, so no
+/// edge dangles mid-sweep
+/// (`GC.Gen.MinorCollectForwarding.Helpers.create_graph_view_wf`).  At
+/// `allocated` this is `create_graph` (`create_graph_view_allocated`).
 
-/// The heap graph except the objects pending free (`pf`): the same vertices,
-/// but a pending object, like a free block, has no outgoing edges.  So no edge
-/// dangles mid-sweep (`GC.Gen.MinorCollectForwarding.Helpers.create_graph_except_wf`).
-let create_graph_except (g: heap) (pf: obj_addr -> prop) : GTot graph_state =
+let get_pointer_fields_view (v: view) (g: heap) (h_addr: obj_addr) : GTot (seq vertex_id) =
+  if v g h_addr then HeapGraph.get_pointer_fields g h_addr else Seq.empty
+
+let object_edges_view (v: view) (g: heap) (h_addr: obj_addr) : GTot edge_list =
+  HeapGraph.make_edges h_addr (get_pointer_fields_view v g h_addr)
+
+let rec all_edges_view (v: view) (g: heap) (objs: seq obj_addr)
+  : GTot edge_list (decreases Seq.length objs)
+  = if Seq.length objs = 0 then Seq.empty
+    else Seq.append (object_edges_view v g (Seq.head objs))
+                    (all_edges_view v g (Seq.tail objs))
+
+/// The edges out of the view are the edges whose source is in the view.
+#push-options "--z3rlimit 15 --fuel 1 --ifuel 1"
+let rec all_edges_view_mem (v: view) (g: heap) (objs: seq obj_addr)
+    (src: obj_addr) (dst: vertex_id)
+  : Lemma (ensures Seq.mem (src, dst) (all_edges_view v g objs) <==>
+                   Seq.mem (src, dst) (HeapGraph.all_edges g objs) /\ v g src)
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let hd = Seq.head objs in
+      let tl = Seq.tail objs in
+      Seq.lemma_mem_append (object_edges_view v g hd) (all_edges_view v g tl);
+      Seq.lemma_mem_append (HeapGraph.object_edges g hd) (HeapGraph.all_edges g tl);
+      if Seq.mem (src, dst) (HeapGraph.object_edges g hd)
+      then HeapGraph.make_edges_mem_inv src dst hd (HeapGraph.get_pointer_fields g hd);
+      if Seq.mem (src, dst) (object_edges_view v g hd)
+      then HeapGraph.make_edges_mem_inv src dst hd (get_pointer_fields_view v g hd);
+      all_edges_view_mem v g tl src dst
+    end
+
+/// Every edge out of the view is an edge.
+let rec all_edges_view_subset (v: view) (g: heap) (objs: seq obj_addr) (e: edge)
+  : Lemma (ensures Seq.mem e (all_edges_view v g objs) ==> Seq.mem e (HeapGraph.all_edges g objs))
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let hd = Seq.head objs in
+      let tl = Seq.tail objs in
+      Seq.lemma_mem_append (object_edges_view v g hd) (all_edges_view v g tl);
+      Seq.lemma_mem_append (HeapGraph.object_edges g hd) (HeapGraph.all_edges g tl);
+      all_edges_view_subset v g tl e
+    end
+
+/// At `allocated`, the edges are `all_edges`: a blue block has none anyway.
+let rec all_edges_view_allocated (g: heap) (objs: seq obj_addr)
+  : Lemma (requires forall (x: obj_addr). Seq.mem x objs ==> Seq.mem x (objects zero_addr g))
+          (ensures all_edges_view allocated g objs == HeapGraph.all_edges g objs)
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      Seq.mem_cons (Seq.head objs) (Seq.tail objs);
+      Seq.lemma_tl (Seq.head objs) (Seq.tail objs);
+      all_edges_view_allocated g (Seq.tail objs)
+    end
+#pop-options
+
+let create_graph_view (v: view) (g: heap) : GTot graph_state =
   objects_is_vertex_set g;
   { vertices = HeapGraph.coerce_to_vertex_list (objects zero_addr g);
-    edges = HeapGraph.all_edges_except g pf (objects zero_addr g) }
+    edges = all_edges_view v g (objects zero_addr g) }
 
-/// With nothing pending it is `create_graph`.
-let create_graph_except_no_pending (g: heap)
-  : Lemma (create_graph_except g no_pending == create_graph g)
-  = HeapGraph.all_edges_except_none g no_pending (objects zero_addr g)
+let create_graph_view_allocated (g: heap)
+  : Lemma (create_graph_view allocated g == create_graph g)
+  = all_edges_view_allocated g (objects zero_addr g)
 
-let create_graph_except_vertices (g: heap) (pf: obj_addr -> prop)
-  : Lemma ((create_graph_except g pf).vertices == (create_graph g).vertices)
+let create_graph_view_vertices (v: view) (g: heap)
+  : Lemma ((create_graph_view v g).vertices == (create_graph g).vertices)
   = ()
 
-/// Its edges are those of `create_graph` out of the objects not pending.
-let create_graph_except_edge (g: heap) (pf: obj_addr -> prop) (src: obj_addr) (dst: vertex_id)
-  : Lemma (mem_graph_edge (create_graph_except g pf) src dst <==>
-           mem_graph_edge (create_graph g) src dst /\ ~(pf src))
-  = HeapGraph.all_edges_except_mem g pf (objects zero_addr g) src dst
+/// Its edges are those of `create_graph` out of the blocks of the view.
+let create_graph_view_edge (v: view) (g: heap) (src: obj_addr) (dst: vertex_id)
+  : Lemma (mem_graph_edge (create_graph_view v g) src dst <==>
+           mem_graph_edge (create_graph g) src dst /\ v g src)
+  = all_edges_view_mem v g (objects zero_addr g) src dst
 
-let create_graph_except_edge_subset (g: heap) (pf: obj_addr -> prop) (src dst: vertex_id)
-  : Lemma (mem_graph_edge (create_graph_except g pf) src dst ==>
+let create_graph_view_edge_subset (v: view) (g: heap) (src dst: vertex_id)
+  : Lemma (mem_graph_edge (create_graph_view v g) src dst ==>
            mem_graph_edge (create_graph g) src dst)
-  = HeapGraph.all_edges_except_subset g pf (objects zero_addr g) (src, dst)
+  = all_edges_view_subset v g (objects zero_addr g) (src, dst)

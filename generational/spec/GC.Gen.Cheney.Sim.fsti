@@ -64,10 +64,10 @@ let impl_matches_spec_at (col: GC.Gen.Paint.colouring) (ph: gc_phase)
 val impl_matches_spec_at_facts (col: GC.Gen.Paint.colouring) (ph: gc_phase)
   (ms: heap) (fp: U64.t) (farr: seq U64.t) (q: seq U64.t) (bk: nat) (cs: CheneySpec.cheney_state)
   : Lemma (requires impl_matches_spec_at col ph ms fp farr q bk cs)
-          (ensures well_formed_heap_part1 cs.cs_major /\
+          (ensures blocks_fit cs.cs_major /\
                    AllocLemmas.fl_valid cs.cs_major fp heap_words /\
                    AllocLemmas.fl_chain_terminates cs.cs_major fp heap_words /\
-                   well_formed_heap_part1 ms /\
+                   blocks_fit ms /\
                    AllocLemmas.fl_valid ms fp heap_words /\
                    AllocLemmas.fl_chain_terminates ms fp heap_words)
 

@@ -386,9 +386,9 @@ Both halves are proved of the same heap:
 - `spot_ns_violates_no_scan_invariant` — the heap refutes
   `GC.Spec.Fields.no_scan_invariant`, so it was inadmissible before;
 - `spot_ns_major_heap_shape` — the heap nevertheless satisfies every conjunct of
-  `GC.Gen.HeapInvariant.major_heap_shape`, including `well_formed_heap` (parts 2
-  and 3 are now guarded by `fields_constrained`, which skips `S` entirely),
-  and `no_pointer_to_blue` (likewise).  The clause that briefly replaced
+  `GC.Gen.HeapInvariant.major_heap_shape`, including `well_formed_heap` (a
+  no-scan block has no pointers, `has_pointer_to`, so its pointer clauses skip
+  `S` entirely), and `no_pointer_to_blue` (likewise).  The clause that briefly replaced
   `no_scan_invariant`, `GC.Gen.Promote.blue_fields_closed`, is gone too: free
   blocks are no longer constrained beyond their link.
 
@@ -463,13 +463,14 @@ The concrete major heaps above (`ConcreteMajorGen`, `InfixMajor`,
 `NoScanMajor`) also prove their single-cell free list ascending, which the
 shape invariant now carries, so the end-to-end SPOTs run the new sweep.
 
-## A mid-sweep heap with a pending object
+## A mid-sweep heap with a condemned object
 
-`GC.SPOT.SweepPhasePending` shows the sweep phase
-(`GC.Spec.SweepPhase.Intrinsic.sweep_phase_inv`) and the minor collection's
-shape (`collection_shape_except`) are satisfiable with a **non-empty** pending
-set, on a heap where a pending object's field points into a block the sweep has
-freed and merged -- the case the `_except` forms exist for.  It is built with
+`GC.SPOT.SweepPhaseCondemned` shows the sweep phase
+(`GC.Spec.SweepPhase.Intrinsic.sweep_phase_inv`, well-formedness on the sweep's
+view `surviving`) and the minor collection's shape (`collection_shape_view`)
+are satisfiable with a **non-empty** condemned set, on a heap where a condemned
+object's field points into a block the sweep has freed and merged -- the case
+views smaller than `allocated` exist for.  It is built with
 the sweep phase's own theorems from the concrete heap of `ConcreteMajorGen`:
 
 1. sweep it completely, nothing marked: one free block (`sweep_steps_done`,
@@ -481,9 +482,10 @@ the sweep phase's own theorems from the concrete heap of `ConcreteMajorGen`:
 3. end the phase and start the next one, nothing marked;
 4. two steps: the free block at the start absorbs `G`.
 
-`sweep_phase_pending_spot`: `P` is pending, `P`'s field is `G`, `G` was an object
-of the heap the sweep started on and is no longer one (its word lies inside the
-merged free block at the start), the heap is in the sweep phase and in
-`collection_shape_except` for that pending set, and the minor collection at the
-sweep's phase (`GC.Gen.CheneyAt.cheney_collect_spec_except_at`) keeps the sweep
-phase with `P` still pending (`GC.Gen.SweepPhase.Minor.minor_keeps_sweep_phase`).
+`sweep_phase_condemned_spot`: `P` is condemned, `P`'s field is `G`, `G` was an
+object of the heap the sweep started on and is no longer one (its word lies
+inside the merged free block at the start), the heap is in the sweep phase and
+in `collection_shape_view` on the collection's view (`surviving_from`), and the
+minor collection at the sweep's phase
+(`GC.Gen.CheneyAt.cheney_collect_spec_view_at`) keeps the sweep phase with `P`
+still condemned (`GC.Gen.SweepPhase.Minor.minor_keeps_sweep_phase`).

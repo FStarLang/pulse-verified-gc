@@ -136,7 +136,7 @@ private let rec write_header_same_wosize_preserves_objects_aux
 /// leftover = 0 versus leftover = 1 rather than lumping them together.
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 private let alloc_from_block_exact_objects_eq_part1 (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     (let bwz = U64.v (getWosize (read_word g (hd_address obj))) in
                      bwz == wz) /\
@@ -176,7 +176,7 @@ private let alloc_from_block_exact_objects_eq_part1 (g: heap) (obj: obj_addr) (w
 /// started -- so density is preserved by construction.
 private let alloc_from_block_split_dense
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     heap_objects_dense g /\
                     Seq.mem obj (objects zero_addr g) /\
                     wz >= 1 /\
@@ -313,7 +313,7 @@ private let alloc_from_block_split_dense
 
 private let alloc_from_block_exact_dense
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     heap_objects_dense g /\
                     Seq.mem obj (objects zero_addr g) /\
                     wz >= 1 /\
@@ -399,7 +399,7 @@ private let alloc_from_block_exact_dense
 
 private let alloc_from_block_preserves_dense
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     heap_objects_dense g /\
                     Seq.mem obj (objects zero_addr g) /\
                     wz >= 1 /\
@@ -423,7 +423,7 @@ private let alloc_from_block_preserves_dense
 
 private let write_field_preserves_dense
   (g: heap) (obj: obj_addr) (v: U64.t)
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     heap_objects_dense g /\
                     Seq.mem obj (objects zero_addr g) /\
                     U64.v (wosize_of_object obj g) >= 1)
@@ -494,7 +494,7 @@ private let write_field_preserves_dense
 private let alloc_search_found_prev_dense
   (g: heap) (obj: obj_addr) (prev_fp: obj_addr) (wz: nat) (next_fp: U64.t)
   (new_fp: U64.t) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     heap_objects_dense g /\
                     Seq.mem obj (objects zero_addr g) /\
                     Seq.mem prev_fp (objects zero_addr g) /\
@@ -535,7 +535,7 @@ private let alloc_search_found_prev_dense
 private let rec alloc_search_preserves_dense
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
-    (requires well_formed_heap_part1 g /\
+    (requires blocks_fit g /\
              heap_objects_dense g /\
              AllocLemmas.fl_valid g cur_fp fuel /\
              AllocLemmas.fl_chain_terminates g cur_fp fuel /\

@@ -5,8 +5,8 @@
 ///
 /// `GC.SPOT.NoScanMajor` is the major-heap version of this witness: a live
 /// `String_tag` block whose bytes happen to spell a heap address, admitted by
-/// `major_heap_shape` because `well_formed_heap` parts 2 and 3 are guarded by
-/// `GC.Spec.Fields.fields_constrained`.
+/// `major_heap_shape` because a no-scan block has no pointers
+/// (`GC.Spec.Fields.has_pointer_to`).
 ///
 /// This module is the nursery version, and it took longer to arrive because the
 /// nursery half of the same relaxation was a *real bug*, not just proof debt.

@@ -6,7 +6,7 @@
 /// exactly the blue blocks that can carry a link.  This module shows that
 /// everything that changes the major heap keeps it that way -- allocation,
 /// promotion, the pointer rewrite after a minor collection, and the program's
-/// own field writes to not-freed objects -- and concludes that an allocation
+/// own field writes to live objects -- and concludes that an allocation
 /// succeeds whenever some free block is big enough
 /// (`alloc_succeeds_when_a_block_fits`).  `fl_exact` is part of the
 /// collector's invariant `GC.Gen.HeapInvariant.major_heap_shape`, which both
@@ -358,7 +358,7 @@ private let two_objects_apart (g: heap) (a b: obj_addr)
 /// other object's link word, and at a split not even `obj`'s.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let block_frame (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (a: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\ Seq.mem obj (objects zero_addr g) /\ wz >= 1 /\
+  : Lemma (requires blocks_fit g /\ Seq.mem obj (objects zero_addr g) /\ wz >= 1 /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     Seq.mem a (objects zero_addr g) /\ U64.v (wosize_of_object a g) >= 1 /\
                     (U64.v (wosize_of_object obj g) - wz >= 2 \/ a <> obj))
@@ -376,7 +376,7 @@ let block_frame (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (a: obj_addr) 
 /// `new_fp`, and -- at a one-word leftover -- `obj`'s.
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
 let relinked_frame (g: heap) (prev obj: obj_addr) (wz: nat) (next new_fp: U64.t) (a: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\ Seq.mem obj (objects zero_addr g) /\ wz >= 1 /\
+  : Lemma (requires blocks_fit g /\ Seq.mem obj (objects zero_addr g) /\ wz >= 1 /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     Seq.mem prev (objects zero_addr g) /\ U64.v (wosize_of_object prev g) >= 1 /\
                     prev <> obj /\
@@ -384,7 +384,7 @@ let relinked_frame (g: heap) (prev obj: obj_addr) (wz: nat) (next new_fp: U64.t)
                     (U64.v (wosize_of_object obj g) - wz >= 2 \/ a <> obj))
           (ensures (let gw = write_word g (prev <: hp_addr) new_fp in
                     let g2 = fst (alloc_from_block gw obj wz white_color tag next) in
-                    well_formed_heap_part1 gw /\
+                    blocks_fit gw /\
                     objects zero_addr gw == objects zero_addr g /\
                     wosize_of_object obj gw == wosize_of_object obj g /\
                     read_word g2 (prev <: hp_addr) == new_fp /\
@@ -481,7 +481,7 @@ let unlinked (g': heap) (obj_out: U64.t) (y: obj_addr) : prop =
 /// The search allocates from the head of the list (`prev = 0`).
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
 let found_head (g: heap) (obj: obj_addr) (wz: nat) (y: obj_addr) (n: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\ wz >= 1 /\
+  : Lemma (requires blocks_fit g /\ wz >= 1 /\
                     AllocLemmas.fl_valid g obj heap_words /\
                     AllocLemmas.fl_chain_terminates g obj heap_words /\
                     U64.v (wosize_of_object obj g) >= wz /\
@@ -548,7 +548,7 @@ let found_head (g: heap) (obj: obj_addr) (wz: nat) (y: obj_addr) (n: nat) (tag: 
 /// The search allocates from a block past the head, relinking `prev` first.
 #push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let found_rest (g: heap) (head: U64.t) (prev obj: obj_addr) (wz: nat) (fuel: nat) (y: obj_addr) (n: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\ wz >= 1 /\
+  : Lemma (requires blocks_fit g /\ wz >= 1 /\
                     fuel > 0 /\ fuel < heap_words /\
                     AllocLemmas.fl_valid g obj fuel /\
                     AllocLemmas.fl_chain_terminates g obj fuel /\
@@ -644,7 +644,7 @@ let found_rest (g: heap) (head: U64.t) (prev obj: obj_addr) (wz: nat) (fuel: nat
 #push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
 private let rec search_keeps
   (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat) (y: obj_addr) (n: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\ wz >= 1 /\
+  : Lemma (requires blocks_fit g /\ wz >= 1 /\
                     AllocLemmas.fl_valid g cur fuel /\
                     AllocLemmas.fl_chain_terminates g cur fuel /\
                     AllocLemmas.fl_valid g head heap_words /\
@@ -714,7 +714,7 @@ private let rec search_keeps
 /// **Allocation keeps everything on the chain except the block it unlinks.**
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 let alloc_spec_keeps (g: heap) (fp: U64.t) (wz: nat) (y: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\ wz >= 1 /\
+  : Lemma (requires blocks_fit g /\ wz >= 1 /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words /\
                     AllocLemmas.chain_avoids g fp (y <: U64.t) heap_words = false)
@@ -736,7 +736,7 @@ let alloc_spec_keeps (g: heap) (fp: U64.t) (wz: nat) (y: obj_addr) (tag: U64.t{U
 
 /// The allocator's entry conditions, as every lemma below assumes them.
 let alloc_pre (g: heap) (fp: U64.t) (wz: nat) : prop =
-  well_formed_heap_part1 g /\ wz >= 1 /\
+  blocks_fit g /\ wz >= 1 /\
   AllocLemmas.fl_valid g fp heap_words /\
   AllocLemmas.fl_chain_terminates g fp heap_words
 
@@ -828,7 +828,7 @@ let alloc_spec_preserves_fl_exact (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U6
 /// What every allocation needs of the heap, and keeps: the allocator's entry
 /// conditions and an exact free list.
 let alloc_entry (g: heap) (fp: U64.t) : prop =
-  well_formed_heap_part1 g /\
+  blocks_fit g /\
   AllocLemmas.fl_valid g fp heap_words /\
   AllocLemmas.fl_chain_terminates g fp heap_words /\
   FL.fl_exact g fp
@@ -894,7 +894,7 @@ let promote_writes_frame (minor: MH.minor_state) (g1: heap) (obj: U64.t)
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
 let promote_object_preserves_fl_complete (minor: MH.minor_state) (major: heap) (obj: U64.t)
   (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires well_formed_heap_part1 major /\
+  : Lemma (requires blocks_fit major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     FL.fl_complete major fp /\ wosize < pow2 54 /\
@@ -1016,8 +1016,8 @@ let rec meeting_transfer_blue (g g': heap) (fp y: U64.t) (n: nat)
 /// rewritten objects only, never a header and never a field of a blue block.
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
 let update_walk_preserves_fl_complete
-  (major: heap) (upd: obj_addr -> prop) (fwd: Promote.forwarding_map) (fp: U64.t)
-  : Lemma (requires well_formed_heap_part1 major /\
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: Promote.forwarding_map) (fp: U64.t)
+  : Lemma (requires blocks_fit major /\
                     Promote.walk_ok major upd /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
@@ -1059,13 +1059,13 @@ let update_walk_preserves_fl_complete
 #pop-options
 
 let update_major_pointers_preserves_fl_complete (major: heap) (fwd: Promote.forwarding_map) (fp: U64.t)
-  : Lemma (requires well_formed_heap_part1 major /\
+  : Lemma (requires blocks_fit major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     Promote.chain_objects_blue major fp /\
                     FL.fl_complete major fp)
           (ensures FL.fl_complete (Promote.update_major_pointers major fwd) fp)
-  = update_walk_preserves_fl_complete major (not_freed major no_pending) fwd fp
+  = update_walk_preserves_fl_complete major (allocated major) fwd fp
 
 
 /// ---------------------------------------------------------------------------
@@ -1076,7 +1076,7 @@ let update_major_pointers_preserves_fl_complete (major: heap) (fwd: Promote.forw
 /// cell's link word.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 private let body_word_apart (g: heap) (a b: obj_addr) (w: hp_addr)
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem a (objects zero_addr g) /\ Seq.mem b (objects zero_addr g) /\
                     U64.v w >= U64.v a /\
                     U64.v w < U64.v a + U64.v (wosize_of_object a g) * 8)
@@ -1089,7 +1089,7 @@ private let body_word_apart (g: heap) (a b: obj_addr) (w: hp_addr)
 #pop-options
 
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
-/// **A write to a field of a not-freed object keeps the free list
+/// **A write to a field of a live object keeps the free list
 /// exact**, and the allocator's other entry conditions with it.
 let field_write_preserves_entry (g: heap) (fp: U64.t) (a: obj_addr) (w: hp_addr) (v: U64.t)
   : Lemma (requires alloc_entry g fp /\
@@ -1187,12 +1187,12 @@ let major_heap_shape_gives_entry (major: heap) (fp: U64.t)
     wf_parts ()
 
 /// What the program may do to the major heap between collections: allocate,
-/// or write a field of a not-freed object.
+/// or write a field of a live object.
 noeq type event =
   | EAlloc : wz:pos -> tag:U64.t{U64.v tag < 256} -> event
   | EWrite : a:obj_addr -> w:hp_addr -> v:U64.t -> event
 
-/// A write is only to a field of a not-freed object -- the runtime's side
+/// A write is only to a field of a live object -- the runtime's side
 /// of the contract; allocation is always allowed.
 let event_ok (g: heap) (e: event) : prop =
   match e with
@@ -1231,7 +1231,7 @@ let rec run_preserves_entry (g: heap) (fp: U64.t) (es: list event)
 
 /// **An allocation succeeds whenever some free block is big enough** -- from
 /// any heap with an exact free list, and after any run of allocations and
-/// field writes to not-freed objects.
+/// field writes to live objects.
 ///
 /// Where an exact free list comes from: `fused_entry` (the pass the collector
 /// runs), and

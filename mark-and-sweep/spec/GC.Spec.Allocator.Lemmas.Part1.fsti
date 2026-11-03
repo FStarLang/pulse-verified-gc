@@ -2,7 +2,7 @@
    GC.Spec.Allocator.Lemmas.Part1 — Interface for Section P1 proofs.
 
    alloc_spec / alloc_from_block preserve object membership under
-   well_formed_heap_part1 (weaker precondition than well_formed_heap).
+   blocks_fit (weaker precondition than well_formed_heap).
 *)
 module GC.Spec.Allocator.Lemmas.Part1
 
@@ -22,7 +22,7 @@ module Seq = FStar.Seq
 val alloc_split_facts_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    let block_wz = U64.v (getWosize hdr) in
@@ -68,7 +68,7 @@ val alloc_split_facts_part1 :
 val alloc_split_g3_agrees_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) -> (p: hp_addr) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   Seq.mem obj (objects zero_addr g) /\
                   (let hd = hd_address obj in
                    let hdr = read_word g hd in
@@ -86,7 +86,7 @@ val alloc_split_g3_agrees_part1 :
 val alloc_split_old_in_new_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) -> (h: obj_addr) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    let block_wz = U64.v (getWosize hdr) in
@@ -99,7 +99,7 @@ val alloc_split_old_in_new_part1 :
 val alloc_from_block_objects_facts_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
@@ -117,24 +117,24 @@ val write_body_preserves_objects_local :
     (ensures objects start (write_word g addr v) == objects start g)
     (decreases (Seq.length g - U64.v start))
 
-/// Writing within an object body preserves well_formed_heap_part1: the write
+/// Writing within an object body preserves blocks_fit: the write
 /// lands strictly above `hd_address obj`, so no header moves and the objects
 /// enumeration -- hence every size bound -- is unchanged.
 val write_body_preserves_wfh_part1 :
   (g: heap) -> (obj: obj_addr) -> (addr: hp_addr) -> (v: U64.t) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   Seq.mem obj (objects zero_addr g) /\
                   U64.v addr >= U64.v obj /\
                   U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
                   U64.v addr % 8 = 0)
-        (ensures well_formed_heap_part1 (write_word g addr v))
+        (ensures blocks_fit (write_word g addr v))
 
 /// **Theorem**: alloc_from_block preserves object membership under just
-/// well_formed_heap_part1. (Public wrapper for internal part1 proof.)
+/// blocks_fit. (Public wrapper for internal part1 proof.)
 val alloc_from_block_preserves_objects_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
@@ -143,7 +143,7 @@ val alloc_from_block_preserves_objects_part1 :
 
 /// **Theorem**: In the split case (block_wz - wz >= 2), the remainder fp
 /// returned by alloc_from_block is a valid pointer AND is in objects of
-/// the output heap. Requires only well_formed_heap_part1.
+/// the output heap. Requires only blocks_fit.
 /// The ALLOCATED block is an object of the output heap.
 ///
 /// Under right-justification the allocated piece is the newly created block --
@@ -154,7 +154,7 @@ val alloc_from_block_preserves_objects_part1 :
 val alloc_from_block_alloc_in_objects_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   Seq.mem obj (objects zero_addr g) /\
                   (let hd = hd_address obj in
                    let bwz = U64.v (getWosize (read_word g hd)) in
@@ -173,7 +173,7 @@ val alloc_from_block_alloc_in_objects_part1 :
 val alloc_from_block_rem_in_objects_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    let bwz = U64.v (getWosize hdr) in

@@ -23,6 +23,43 @@ module Phase = GC.Spec.SweepPhase.Util
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 10"
 
 /// ---------------------------------------------------------------------------
+/// The sweep's view
+/// ---------------------------------------------------------------------------
+
+let surviving_view_ok st =
+  reveal_opaque (`%view_ok) view_ok;
+  let aux (g g': heap) (x: obj_addr) : Lemma
+    ((Seq.mem x (objects zero_addr g) <==> Seq.mem x (objects zero_addr g')) /\
+     read_word g (hd_address x) == read_word g' (hd_address x) ==>
+     surviving st g x == surviving st g' x)
+    = FStar.Classical.move_requires (color_of_header_eq x g) g'
+  in
+  FStar.Classical.forall_intro_3 aux
+
+let surviving_from_view_ok st g0 =
+  reveal_opaque (`%view_ok) view_ok;
+  let aux (g g': heap) (x: obj_addr) : Lemma
+    ((Seq.mem x (objects zero_addr g) <==> Seq.mem x (objects zero_addr g')) /\
+     read_word g (hd_address x) == read_word g' (hd_address x) ==>
+     surviving_from st g0 g x == surviving_from st g0 g' x)
+    = FStar.Classical.move_requires (color_of_header_eq x g) g'
+  in
+  FStar.Classical.forall_intro_3 aux
+
+let surviving_from_fresh st g0 g = ()
+
+let well_formed_view_congr v v' g =
+  wf_view_parts ();
+  let one (v v': view)
+    : Lemma (requires (forall (x: obj_addr). v' g x == v g x) /\ well_formed_view v g)
+            (ensures well_formed_view v' g)
+    = pointers_stay_in_intro v' g (fun src dst -> pointers_stay_in_elim v g src dst);
+      interior_pointers_valid_intro v' g (fun src dst -> interior_pointers_valid_elim v g src dst)
+  in
+  FStar.Classical.move_requires (one v) v';
+  FStar.Classical.move_requires (one v') v
+
+/// ---------------------------------------------------------------------------
 /// Opening and closing the clauses
 /// ---------------------------------------------------------------------------
 
@@ -32,7 +69,7 @@ let sweep_phase_inv_intro (g: heap) (fp: U64.t) (st: sweep_state)
   : Lemma (requires (let c = U64.v st.cursor in
                      c % 8 == 0 /\ c <= heap_size /\ W.reaches g zero_addr c /\
                      heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
-                     well_formed_heap_except g (pending g st) /\
+                     well_formed_view (surviving st) g /\
                      behind_swept g c /\ front_unswept g c /\
                      no_adjacent_free g c /\ ends_free g c (prev_free g st) /\
                      tail_ok g c st.swept_tail /\ frag_ok g c st.last_fragment /\
@@ -74,13 +111,6 @@ let front_unswept_intro (g: heap) (c: nat)
 let behind_swept_elim g c p
   = reveal_opaque (`%behind_swept) (behind_swept g c)
 
-let pending_ok_lemma g st =
-  let aux (x: obj_addr)
-    : Lemma (pending g st x ==> Seq.mem x (objects zero_addr g) /\ ~(is_blue x g))
-    = Mark.colors_exclusive x g
-  in
-  FStar.Classical.forall_intro aux
-
 let survivors_unchanged_elim g0 g p = reveal_opaque (`%survivors_unchanged) (survivors_unchanged g0 g)
 
 let survivors_unchanged_intro (g0 g: heap)
@@ -121,13 +151,13 @@ let obj_pos g x
 let obj_of_facts q
   = f_address_spec q; hd_f_roundtrip q
 
-/// A block not free and not pending free, at its header.
+/// A surviving block, at its header.
 let live_pos (g: heap) (c: nat) (q: hp_addr) : bool =
   pos g q && not (blue_at g q) && not (white_at g q && U64.v q >= c)
 
 let live_obj (g: heap) (st: sweep_state) (x: obj_addr)
   : Lemma (requires U64.v st.cursor % 8 == 0)
-          (ensures not_freed g (pending g st) x <==> live_pos g (U64.v st.cursor) (hd_address x))
+          (ensures surviving st g x == live_pos g (U64.v st.cursor) (hd_address x))
   = obj_pos g x; colour_of g x
 
 /// ---------------------------------------------------------------------------
@@ -175,7 +205,7 @@ let ref_walk (g: heap) (c: nat)
     FStar.Classical.forall_intro sz;
     W.walk_congr g r zero_addr
 
-/// A block that is not free and not pending is black in the reference heap,
+/// A surviving block is black in the reference heap,
 /// and the reference heap has the same block there.
 let ref_block (g: heap) (fp: U64.t) (st: sweep_state) (q: hp_addr)
   : Lemma (requires sweep_phase_inv g fp st)
@@ -245,7 +275,7 @@ let to_ref (g: heap) (fp: U64.t) (st: sweep_state)
 
 /// Against a reference heap `r`, a heap `g'` that satisfies the
 /// stop-the-world invariant at `c'` keeps exactly the blocks black in `r`
-/// (and no others) as not-freed blocks, with their contents.
+/// (and no others) as surviving blocks, with their contents.
 let after_live (r g': heap) (c': nat) (q: hp_addr)
   : Lemma (requires W.reaches r zero_addr c' /\ W.reaches g' zero_addr c' /\
                     front_same r g' c' /\ behind_ok r g' c' /\ front_unswept r c')
@@ -329,21 +359,19 @@ let src_fields (g g': heap) (src dst: obj_addr)
     efptu_congr g' g src (wosize_of_object src g) dst
 
 /// The target of a field of a source that stayed, resolved, stays too.
-let target_moves (g g': heap) (pf pf': obj_addr -> prop) (src dst: obj_addr)
-  : Lemma (requires well_formed_heap_except g pf /\
-                    (forall (x: obj_addr). not_freed g' pf' x <==> not_freed g pf x) /\
-                    (forall (x: obj_addr). not_freed g pf x ==> same_block g g' (hd_address x)) /\
-                    not_freed g' pf' src /\ fields_constrained g' src /\
-                    (let wz = wosize_of_object src g' in
-                     U64.v wz < pow2 54 /\ exists_field_pointing_to_unchecked g' src wz dst))
-          (ensures not_freed g' pf' (resolve_object dst g') /\
+let target_moves (g g': heap) (v v': view) (src dst: obj_addr)
+  : Lemma (requires well_formed_view v g /\ view_ok v' /\
+                    (forall (x: obj_addr). v' g' x == v g x) /\
+                    (forall (x: obj_addr). v g x ==> same_block g g' (hd_address x)) /\
+                    v' g' src /\ has_pointer_to g' src dst)
+          (ensures v' g' (resolve_object dst g') /\
                    infix_addr_wf g' (objects zero_addr g') dst)
-  = assert (not_freed g pf src);
+  = assert (v g src);
     src_fields g g' src dst;
     colour_of g src; colour_of g' src;
-    wf_except_parts ();
-    wfh_part2_except_elim g pf src dst;
-    wfh_part3_except_elim g pf src dst;
+    wosize_of_object_bound src g';
+    assert (has_pointer_to g src dst);
+    points_to_target_in_view v g src dst;
     let t = resolve_object dst g in
     if is_infix dst g then begin
       infix_addr_wf_elim g (objects zero_addr g) dst;
@@ -356,6 +384,7 @@ let target_moves (g g': heap) (pf pf': obj_addr -> prop) (src dst: obj_addr)
       resolve_object_locality dst g g';
       colour_of g' t;
       is_closure_spec t g; is_closure_spec t g';
+      view_ok_within_allocated v' g' t;
       infix_addr_wf_transfer g g' (objects zero_addr g) (objects zero_addr g') dst
     end else begin
       resolve_non_infix dst g;
@@ -365,14 +394,14 @@ let target_moves (g g': heap) (pf pf': obj_addr -> prop) (src dst: obj_addr)
       infix_addr_wf_non_infix g' (objects zero_addr g') dst
     end
 
-/// **Well-formedness except the pending objects, transported**: a change
-/// that keeps the same not-freed objects, with the same size, tag and
-/// fields, keeps the field closure.
-let wf_transport g g' pf pf'
-  = wf_except_parts ();
+/// **Well-formedness on a view, transported**: a change after which the view
+/// `v'` counts the blocks `v` counted before, with the same size, tag and
+/// fields, keeps the pointer clauses.
+let wf_transport g g' v v'
+  = wf_view_parts ();
     Edit.part1_holds g';
-    well_formed_heap_part2_except_intro g' pf' (fun src dst -> target_moves g g' pf pf' src dst);
-    well_formed_heap_part3_except_intro g' pf' (fun src dst -> target_moves g g' pf pf' src dst)
+    pointers_stay_in_intro v' g' (fun src dst -> target_moves g g' v v' src dst);
+    interior_pointers_valid_intro v' g' (fun src dst -> target_moves g g' v v' src dst)
 
 /// ---------------------------------------------------------------------------
 /// Changes that keep the walk and the headers
@@ -396,6 +425,14 @@ let same_heads_facts g g' =
     = obj_pos g x; colour_of g x; colour_of g' x
   in
   FStar.Classical.forall_intro blu;
+  let vw (x: obj_addr) (v: view)
+    : Lemma (view_ok v ==> v g' x == v g x)
+    = if FStar.IndefiniteDescription.strong_excluded_middle (view_ok v) then begin
+        view_ok_elim v;
+        if Seq.mem x (objects zero_addr g) then view_ok_header_determined v g g' x
+      end
+  in
+  FStar.Classical.forall_intro_2 vw;
   Edit.cells_transfer g g'
 #pop-options
 
@@ -476,9 +513,9 @@ let body_write g fp p a v =
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 20"
-let storable_transfer g g' pf pf' v =
-  if is_pointer v then begin
-    let dst : obj_addr = v in
+let storable_transfer g g' v v' w =
+  if is_pointer w then begin
+    let dst : obj_addr = w in
     let t = resolve_object dst g in
     if is_infix dst g then begin
       infix_addr_wf_elim g (objects zero_addr g) dst;
@@ -493,7 +530,8 @@ let storable_transfer g g' pf pf' v =
       resolve_object_locality t g g';
       colour_of g' t;
       is_closure_spec t g; is_closure_spec t g';
-      assert (not_freed g' pf' t);
+      assert (v' g' t);
+      view_ok_within_allocated v' g' t;
       infix_addr_wf_transfer g g' (objects zero_addr g) (objects zero_addr g') dst
     end else begin
       resolve_non_infix dst g;
@@ -510,17 +548,13 @@ let storable_transfer g g' pf pf' v =
 
 let start_target (g0: heap) (src dst: obj_addr)
   : Lemma (requires well_formed_heap g0 /\ Mark.noGreyObjects g0 /\ Mark.tri_color_invariant g0 /\
-                    not_freed g0 (pending g0 sweep_start) src /\ fields_constrained g0 src /\
-                    (let wz = wosize_of_object src g0 in
-                     U64.v wz < pow2 54 /\ exists_field_pointing_to_unchecked g0 src wz dst))
-          (ensures not_freed g0 (pending g0 sweep_start) (resolve_object dst g0) /\
+                    surviving sweep_start g0 src /\ has_pointer_to g0 src dst)
+          (ensures surviving sweep_start g0 (resolve_object dst g0) /\
                    infix_addr_wf g0 (objects zero_addr g0) dst)
-  = wf_parts ();
-    W.objects_mem_iff g0 zero_addr src;
+  = W.objects_mem_iff g0 zero_addr src;
     Mark.color_exhaustive src g0; Mark.colors_exclusive src g0;
     assert (is_black src g0);
-    wfh_part2_elim g0 src dst;
-    wfh_part3_elim g0 src dst;
+    points_to_target_in_view allocated g0 src dst;
     let t = resolve_object dst g0 in
     assert (points_to g0 src dst);
     assert (~(is_white t g0));
@@ -542,9 +576,9 @@ let sweep_phase_start g0 fp =
   in
   front_unswept_intro g0 c front;
   wf_parts ();
-  wf_except_parts ();
-  well_formed_heap_part2_except_intro g0 (pending g0 sweep_start) (fun src dst -> start_target g0 src dst);
-  well_formed_heap_part3_except_intro g0 (pending g0 sweep_start) (fun src dst -> start_target g0 src dst);
+  wf_view_parts ();
+  pointers_stay_in_intro (surviving sweep_start) g0 (fun src dst -> start_target g0 src dst);
+  interior_pointers_valid_intro (surviving sweep_start) g0 (fun src dst -> start_target g0 src dst);
   sweep_phase_inv_intro g0 fp sweep_start;
   W.reaches_refl g0 zero_addr;
   front_same_intro g0 g0 c (fun _ -> ());
@@ -583,7 +617,7 @@ let step_ref (g: heap) (fp: U64.t) (st: sweep_state)
     in
     front_unswept_intro r c' front
 
-/// One step's effect on the blocks: not-freed before iff after, same contents.
+/// One step's effect on the blocks: surviving before iff after, same contents.
 let step_live (g: heap) (fp: U64.t) (st: sweep_state) (q: hp_addr)
   : Lemma (requires sweep_phase_inv g fp st /\ U64.v st.cursor + 8 < heap_size)
           (ensures can_sweep g st /\
@@ -614,7 +648,7 @@ let step_part4 (g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
     let c' = U64.v st'.cursor in
     sweep_inv_elim r g' fp' st';
     ref_walk g c;
-    wf_except_parts ();
+    wf_view_parts ();
     obj_pos g' x; obj_pos g x;
     colour_of g' x; colour_of g x;
     is_infix_spec x g'; is_infix_spec x g;
@@ -632,12 +666,12 @@ let step_part4 (g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
       end
     end
 
-/// The pending set after a step is part of the one before.
-let step_pending (g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
+/// The condemned set after a step is part of the one before.
+let step_condemned (g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
   : Lemma (requires sweep_phase_inv g fp st /\ U64.v st.cursor + 8 < heap_size)
           (ensures can_sweep g st /\
                    (let (g', fp', st') = sweep_step g fp st in
-                    pending g' st' x ==> pending g st x))
+                    condemned st' g' x ==> condemned st g x))
   = step_ref g fp st;
     let c = U64.v st.cursor in
     let r = ref_of g c in
@@ -724,21 +758,22 @@ let sweep_phase_step g fp st =
   let c' = U64.v st'.cursor in
   sweep_inv_elim r g' fp' st';
   W.bnext_facts g st.cursor;
-  // well formed except the (smaller) pending set
+  // well formed on the view, with the (smaller) condemned set
   let keep (x: obj_addr)
-    : Lemma ((not_freed g' (pending g' st') x <==> not_freed g (pending g st) x) /\
-             (not_freed g (pending g st) x ==> same_block g g' (hd_address x)))
+    : Lemma ((surviving st' g' x == surviving st g x) /\
+             (surviving st g x ==> same_block g g' (hd_address x)))
     = live_obj g st x; live_obj g' st' x;
       step_live g fp st (hd_address x)
   in
   FStar.Classical.forall_intro keep;
-  wf_except_parts ();
+  wf_view_parts ();
   FStar.Classical.forall_intro (step_part4 g fp st);
-  wf_transport g g' (pending g st) (pending g' st');
+  surviving_view_ok st';
+  wf_transport g g' (surviving st) (surviving st');
   sweep_phase_inv_intro g' fp' st';
-  FStar.Classical.forall_intro (step_pending g fp st)
+  FStar.Classical.forall_intro (step_condemned g fp st)
 
-let pending_within_step g fp st pf0 =
+let condemned_within_step g fp st dead =
   sweep_phase_step g fp st
 
 /// `same_block` composes.
@@ -755,9 +790,9 @@ let rec steps_aux (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
   : Lemma (requires sweep_phase_inv g fp st)
           (ensures (let (g', fp', st') = sweep_steps g fp st k in
                     sweep_phase_inv g' fp' st' /\
-                    (forall (x: obj_addr). not_freed g' (pending g' st') x <==> not_freed g (pending g st) x) /\
-                    (forall (x: obj_addr). not_freed g (pending g st) x ==> same_block g g' (hd_address x)) /\
-                    (forall (x: obj_addr). pending g' st' x ==> pending g st x) /\
+                    (forall (x: obj_addr). surviving st' g' x == surviving st g x) /\
+                    (forall (x: obj_addr). surviving st g x ==> same_block g g' (hd_address x)) /\
+                    (forall (x: obj_addr). condemned st' g' x ==> condemned st g x) /\
                     U64.v st'.cursor >= U64.v st.cursor /\
                     (st' == st ==> k = 0 \/ sweep_done st)))
           (decreases k)
@@ -770,9 +805,8 @@ let rec steps_aux (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
       steps_aux g1 fp1 st1 (k - 1);
       let (g2, fp2, st2) = sweep_steps g1 fp1 st1 (k - 1) in
       let tr (x: obj_addr)
-        : Lemma (not_freed g (pending g st) x ==> same_block g g2 (hd_address x))
-        = if FStar.IndefiniteDescription.strong_excluded_middle (not_freed g (pending g st) x)
-          then same_block_trans g g1 g2 (hd_address x)
+        : Lemma (surviving st g x ==> same_block g g2 (hd_address x))
+        = if surviving st g x then same_block_trans g g1 g2 (hd_address x)
       in
       FStar.Classical.forall_intro tr;
       assert (U64.v st2.cursor > U64.v st.cursor);

@@ -131,12 +131,12 @@ let post_minor_minor_root_valid
   assert (prom.fwd_map r <> 0UL);
   let t = prom.fwd_map r in
   assert (Promote.rewrite_root r prom.fwd_map == t);
-  GC.Gen.MinorCollectForwarding.no_pending_context minor major fp roots;
-  MinorFwd.fwd_image_resolves minor major fp SpecFields.no_pending roots r;
+  GC.Gen.MinorCollectForwarding.stop_the_world_context minor major fp roots;
+  MinorFwd.fwd_image_resolves minor major fp SpecFields.allocated roots r;
   let p = prom.fwd_map rv in
   assert (SpecObj.resolve_object (t <: obj_addr) result.mc_major == p);
   assert (Seq.mem (p <: obj_addr) (SpecFields.objects zero_addr prom.major_final));
-  // `well_formed_heap_part4` says no member of the objects list is infix,
+  // `no_infix_block` says no member of the objects list is infix,
   // which is exactly the side condition `fwd_targets_not_blue` guards on.
   Cheney.cheney_promote_preserves_wfh_part4 minor major fp roots;
   assert (SpecObj.is_infix p prom.major_final = false);
@@ -164,7 +164,7 @@ let post_minor_major_root_valid minor major fp roots r
   assert (Promote.rewrite_root r prom.fwd_map == r);
   assert (is_val_addr r);
   assert (Seq.mem (r <: obj_addr) (SpecFields.objects zero_addr major));
-  CheneyCorr.cheney_collect_preserves_objects minor major fp SpecFields.no_pending roots;
+  CheneyCorr.cheney_collect_preserves_objects minor major fp SpecFields.allocated roots;
   CheneyFrame.cheney_promote_frame_old_header minor major fp roots r;
   Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
   PromUpdAux.update_major_pointers_preserves_objects prom.major_final prom.fwd_map;

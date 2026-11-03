@@ -28,7 +28,7 @@ module AE = GC.Gen.AllocExact
 
 /// What every rung needs of the major heap, and keeps.
 let fl_inv (cs: cheney_state) : prop =
-  well_formed_heap_part1 cs.cs_major /\
+  blocks_fit cs.cs_major /\
   AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
   AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
   FL.fl_complete cs.cs_major cs.cs_fp
@@ -130,7 +130,7 @@ private let rec scan_keeps (minor: minor_state) (cs: cheney_state) (scan: nat) (
 /// **Cheney promotion keeps the free list complete.**
 let cheney_promote_preserves_fl_complete
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap_part1 major /\
+  : Lemma (requires blocks_fit major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     FL.fl_complete major fp)

@@ -143,11 +143,11 @@ val chain_avoids_transfer_excl2 (g g': heap) (fp excl excl2: U64.t) (fuel: nat)
                           read_word g' (a <: obj_addr) == read_word g (a <: obj_addr))))
           (ensures chain_avoids g' fp excl fuel = true)
 
-/// **Theorem**: alloc_spec preserves object membership under just well_formed_heap_part1.
+/// **Theorem**: alloc_spec preserves object membership under just blocks_fit.
 /// (Weaker precondition than alloc_spec_preserves_objects.)
 val alloc_spec_preserves_objects_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   fl_valid g fp heap_words /\
                   fl_chain_terminates g fp heap_words)
         (ensures (let r = alloc_spec g fp requested_wz tag in

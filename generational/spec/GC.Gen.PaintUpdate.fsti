@@ -55,10 +55,10 @@ val paint_rsi (c: nat) (g0 h: heap) (fwd: Promote.forwarding_map) (slots: seq U6
                    UP.rewrite_slots_iter (Paint.paint c g0 h) fwd slots n idx ==
                    Paint.paint c g0 (UP.rewrite_slots_iter h fwd slots n idx))
 
-/// The remembered slots are fields of objects the collection keeps, so not
-/// positions of its walk.
-val slots_off_walk_of_sound (s: heap) (pf: obj_addr -> prop) (slots: seq U64.t) (n: nat) (h: heap)
-  : Lemma (requires RT.ref_table_sound_except s pf slots n /\ Paint.kept s h)
+/// The remembered slots are fields of blocks of the view, which the
+/// collection keeps, so not positions of its walk.
+val slots_off_walk_of_sound (v: view) (s: heap) (slots: seq U64.t) (n: nat) (h: heap)
+  : Lemma (requires RT.ref_table_sound_view v s slots n /\ view_ok v /\ Paint.kept s h)
           (ensures slots_off_walk h slots n)
 
 /// **Both passes, at a phase.**

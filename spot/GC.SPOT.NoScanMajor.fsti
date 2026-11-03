@@ -18,7 +18,8 @@
 /// write any bytes it likes into a `Bytes.t`.
 ///
 /// Before the relaxation this heap was *inadmissible*: both
-/// `well_formed_heap_part2` (every pointer-shaped field targets an object) and
+/// the old part 2 of `well_formed_heap` (every pointer-shaped field targets an
+/// object) and
 /// `GC.Spec.Fields.no_scan_invariant` (a live no-scan block contains no
 /// pointer-shaped word) rejected it, so `gen_gc` could not be called on any
 /// heap containing a string with unlucky contents.  `spot_ns_violates_no_scan_invariant`

@@ -28,7 +28,7 @@ module GenInv = GC.Gen.HeapInvariant
 
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RT = GC.Gen.RefTable
-module CE = GC.Gen.CheneyExcept
+module CE = GC.Gen.CheneyView
 open GC.Gen.MinorCollectForwarding.Helpers
 
 /// Statement well-formedness here involves `U64.uint_to_t (v x + j * 8)`
@@ -48,19 +48,19 @@ let normal_vertex_ready
     is_infix (prom.fwd_map x) prom.major_final = false
 
 let normal_src_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
   (u: CG.combined_vertex) : prop =
-  let cg = CG.build_combined_graph minor major pf in
+  let cg = CG.build_combined_graph minor major v in
   let combined_roots = CG.classify_roots minor roots in
   CG.combined_reachable cg combined_roots u /\
   normal_vertex_ready minor major fp roots u
 
 let normal_post_non_pointer_fields_preserved_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t) : prop =
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
-  let res = cheney_collect_spec_except minor major fp roots pf in
+  let res = cheney_collect_spec_view v minor major fp roots in
   forall (u: CG.combined_vertex).
-    normal_src_reachable minor major fp pf roots u ==>
+    normal_src_reachable minor major fp v roots u ==>
     (match u with
     | CG.MajorV src ->
       is_val_addr src ==>
@@ -86,11 +86,11 @@ let normal_post_non_pointer_fields_preserved_prop
     | _ -> True)
 
 let normal_result_non_pointer_fields_preserved_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
   (post_major: heap) : prop =
   let prom = cheney_promote minor major fp roots in
   forall (u: CG.combined_vertex).
-    normal_src_reachable minor major fp pf roots u ==>
+    normal_src_reachable minor major fp v roots u ==>
     (match u with
     | CG.MajorV src ->
       is_val_addr src ==>
@@ -116,26 +116,26 @@ let normal_result_non_pointer_fields_preserved_prop
     | _ -> True)
 
 val normal_post_non_pointer_fields_preserved
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view)
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_except minor major fp pf /\
-      RBridge.major_fields_covered minor major pf roots /\
-      RT.ref_table_covers_except major pf slots n /\
+      GenInv.collection_shape_view v minor major fp /\ CE.promotion_in_view v minor major fp roots /\
+      RBridge.major_fields_covered minor major v roots /\
+      RT.ref_table_covers_view v major slots n /\
       remembered_targets_in_roots major roots slots n /\
-      roots_valid_except minor major pf roots /\
+      roots_valid_view v minor major roots /\
       CheneyBFS.cheney_no_oom minor major fp roots)
-    (ensures normal_post_non_pointer_fields_preserved_prop minor major fp pf roots)
+    (ensures normal_post_non_pointer_fields_preserved_prop minor major fp v roots)
 
 val normal_post_non_pointer_fields_preserved_to_result
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
   (post_major: heap)
   : Lemma
     (requires
-      post_major == (cheney_collect_spec_except minor major fp roots pf).mc_major /\
-      normal_post_non_pointer_fields_preserved_prop minor major fp pf roots)
+      post_major == (cheney_collect_spec_view v minor major fp roots).mc_major /\
+      normal_post_non_pointer_fields_preserved_prop minor major fp v roots)
     (ensures
       normal_result_non_pointer_fields_preserved_prop
-        minor major fp pf roots post_major)
+        minor major fp v roots post_major)
 #pop-options

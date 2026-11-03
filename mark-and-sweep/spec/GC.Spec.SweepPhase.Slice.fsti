@@ -11,8 +11,8 @@
 ///
 /// A slice is some number of steps (`slice_is_steps`), so the sweep phase's
 /// step theorems (`GC.Spec.SweepPhase.Intrinsic.sweep_phase_steps`) apply to
-/// it: it keeps the sweep phase, frees only pending objects, and the pending
-/// set shrinks (`sweep_slice_phase`).  It stops early only when the sweep is
+/// it: it keeps the sweep phase, frees only condemned objects, and the
+/// condemned set shrinks (`sweep_slice_phase`).  It stops early only when the sweep is
 /// finished, and a budget larger than the heap always finishes it.
 ///
 /// `phase_slice` is the slice at the collector's phase: nothing to do when
@@ -74,18 +74,18 @@ let rec slice_count (g: heap) (fp: U64.t) (st: sweep_state) (c0: U64.t) (budget:
 val slice_is_steps (g: heap) (fp: U64.t) (st: sweep_state) (c0: U64.t) (budget: nat)
   : Lemma (slice_from g fp st c0 budget == sweep_steps g fp st (slice_count g fp st c0 budget))
 
-/// **A slice keeps the sweep phase**: the pending set shrinks, the objects
-/// neither free nor pending are the same before and after (with the same
-/// size, tag and fields), the cursor does not move back, and the slice stops
+/// **A slice keeps the sweep phase**: the condemned set shrinks, the
+/// surviving objects are the same before and after (with the same size, tag
+/// and fields), the cursor does not move back, and the slice stops
 /// only when the sweep is finished or the budget is spent.  A budget of more
 /// words than the heap has finishes the sweep.
 val sweep_slice_phase (g: heap) (fp: U64.t) (st: sweep_state) (budget: nat)
   : Lemma (requires sweep_phase_inv g fp st)
           (ensures (let (g', fp', st') = sweep_slice g fp st budget in
                     sweep_phase_inv g' fp' st' /\
-                    (forall (x: obj_addr). not_freed g' (pending g' st') x <==> not_freed g (pending g st) x) /\
-                    (forall (x: obj_addr). not_freed g (pending g st) x ==> same_block g g' (hd_address x)) /\
-                    (forall (x: obj_addr). pending g' st' x ==> pending g st x) /\
+                    (forall (x: obj_addr). surviving st' g' x == surviving st g x) /\
+                    (forall (x: obj_addr). surviving st g x ==> same_block g g' (hd_address x)) /\
+                    (forall (x: obj_addr). condemned st' g' x ==> condemned st g x) /\
                     U64.v st'.cursor >= U64.v st.cursor /\
                     (sweep_done st' \/ swept_words st.cursor st' >= budget) /\
                     (budget > heap_words ==> sweep_done st')))

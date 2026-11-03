@@ -97,7 +97,7 @@ private let header_separated_from_fields
 private let copy_fields_preserves_dense
   (minor: minor_state) (major: heap)
   (src_obj: U64.t) (dst_obj: obj_addr) (n: nat)
-  : Lemma (requires well_formed_heap_part1 major /\
+  : Lemma (requires blocks_fit major /\
                     heap_objects_dense major /\
                     Seq.mem dst_obj (objects zero_addr major) /\
                     U64.v dst_obj % 8 == 0 /\

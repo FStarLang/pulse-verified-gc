@@ -96,7 +96,7 @@ val sweep_post_elim (g0 g: heap) (fp: U64.t)
 /// lemmas are run against inside `GC.Spec.SweepPhase.Intrinsic` (`ref_of`)
 /// has garbage that may point into blocks the sweep has already freed.
 val sweep_done_post (g0 g: heap) (fp: U64.t)
-  : Lemma (requires well_formed_heap_part4 g0 /\ sweep_g0 g0 /\ sweep_done g0 g fp)
+  : Lemma (requires no_infix_block g0 /\ sweep_g0 g0 /\ sweep_done g0 g fp)
           (ensures sweep_post g0 g fp)
 
 /// The fused sweep, from the heap marking left.

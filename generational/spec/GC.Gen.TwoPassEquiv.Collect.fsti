@@ -5,9 +5,9 @@
 /// The implementation rewrites the promoted objects' fields
 /// (`update_promoted_iter`) and then the remembered slots
 /// (`rewrite_slots_iter`).  This module proves that this is the pointer update
-/// of `cheney_collect_spec_except` for a set `pf` of objects pending free in
-/// the pre-collection heap, given the write barrier's guarantees stated over
-/// the not-freed objects (`GC.Gen.RefTable`).
+/// of `cheney_collect_spec_view` for a view `v` of the pre-collection heap,
+/// given the write barrier's guarantees stated over the view
+/// (`GC.Gen.RefTable`).
 
 module GC.Gen.TwoPassEquiv.Collect
 
@@ -38,16 +38,16 @@ val derive_promoted_entries_valid_from
       (forall (i:nat). i < fwd_array_size ==> Seq.index farr i == fwd (U64.uint_to_t (i * 8))) /\
       CheneyPres.fwd_valid_or_infix fwd major /\
       CheneySpec.fwd_bounded fwd /\
-      well_formed_heap_part1 major)
+      blocks_fit major)
     (ensures promoted_entries_valid_from major farr 0)
 
 /// ---------------------------------------------------------------------------
 /// The two passes are the collection's pointer update
 /// ---------------------------------------------------------------------------
 
-val two_pass_implies_collect_except
-  (minor: minor_state) (major_pre: heap) (fp: U64.t) (roots: seq U64.t)
-  (pf: obj_addr -> prop)
+val two_pass_implies_collect_view
+  (v: view) (minor: minor_state) (major_pre: heap) (fp: U64.t)
+  (roots: seq U64.t)
   (farr: seq U64.t) (slots: seq U64.t) (n: nat)
   : Lemma
     (requires
@@ -57,15 +57,16 @@ val two_pass_implies_collect_except
        CheneyPres.fwd_valid_or_infix prom.fwd_map prom.major_final /\
        CheneyPres.fwd_normal_injective prom.fwd_map prom.major_final /\
        CheneySpec.fwd_bounded prom.fwd_map /\
-       well_formed_heap_part4 prom.major_final /\
+       no_infix_block prom.major_final /\
        valid_slot_addrs slots n /\
        slots_pairwise_distinct slots n /\
-       pending_ok major_pre pf /\
-       ref_table_sound_except major_pre pf slots n /\
-       ref_table_complete_except major_pre pf prom.fwd_map slots n /\
+       view_ok v /\
+       GC.Gen.CheneyView.promotion_in_view v minor major_pre fp roots /\
+       ref_table_sound_view v major_pre slots n /\
+       ref_table_complete_view v major_pre prom.fwd_map slots n /\
        fwd_targets_stable prom.fwd_map /\
-       well_formed_heap_part1 prom.major_final /\
-       well_formed_heap_part1 major_pre /\ well_formed_heap_part4 major_pre /\
+       blocks_fit prom.major_final /\
+       blocks_fit major_pre /\ no_infix_block major_pre /\
        minor_infix_wf minor /\
        minor_wf minor /\
        chain_objects_blue major_pre fp /\
@@ -76,4 +77,4 @@ val two_pass_implies_collect_except
        rewrite_slots_iter
          (update_promoted_iter prom.major_final farr prom.fwd_map 0)
          prom.fwd_map slots n 0
-       == (CheneySpec.cheney_collect_spec_except minor major_pre fp roots pf).mc_major))
+       == (CheneySpec.cheney_collect_spec_view v minor major_pre fp roots).mc_major))

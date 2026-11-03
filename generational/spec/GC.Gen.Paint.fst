@@ -89,10 +89,10 @@ let recoloured_obj (g g': heap) (x: obj_addr)
 let recoloured_facts g g' =
   W.walk_congr g g' zero_addr;
   FStar.Classical.forall_intro (FStar.Classical.move_requires (recoloured_obj g g'));
-  let nf (x: obj_addr) (pf: obj_addr -> prop) : Lemma (not_freed g' pf x <==> not_freed g pf x)
+  let nf (x: obj_addr) : Lemma (allocated g' x == allocated g x)
     = if Seq.mem x (objects zero_addr g) then recoloured_obj g g' x
   in
-  FStar.Classical.forall_intro_2 nf;
+  FStar.Classical.forall_intro nf;
   let cell (x: U64.t) : Lemma (FL.fl_cell g' x <==> FL.fl_cell g x)
     = fl_cell_iff g x; fl_cell_iff g' x
   in
@@ -111,32 +111,43 @@ let recoloured_facts g g' =
      W.dense_of_reaches_end g' (W.walk_end g zero_addr)
    end);
   let p4 (x: obj_addr)
-    : Lemma (requires well_formed_heap_part4 g /\ Seq.mem x (objects zero_addr g'))
+    : Lemma (requires no_infix_block g /\ Seq.mem x (objects zero_addr g'))
             (ensures ~(is_infix x g'))
     = recoloured_obj g g' x; is_infix_spec x g; is_infix_spec x g'
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires p4)
 #pop-options
 
-let recoloured_wf g g' pf =
+let recoloured_wf g g' v v' =
   recoloured_facts g g';
-  wf_except_parts ();
-  wf_transport g g' pf pf
+  view_ok_elim v;
+  wf_view_parts ();
+  wf_transport g g' v v'
 
 let recoloured_fl g g' fp =
   recoloured_facts g g';
   FLA.fl_ascending_transfer g g' fp
 
 #push-options "--z3rlimit 20"
-let recoloured_major_shape g g' fp pf =
-  GenInv.major_shape_except_elim g fp pf;
+let recoloured_major_shape g g' fp v =
+  GenInv.major_shape_view_elim v g fp;
   recoloured_facts g g';
-  recoloured_wf g g' pf;
+  recoloured_wf g g' v v;
   recoloured_fl g g' fp;
   PCS.free_list_shape_of_ascending g' fp;
-  wf_except_parts ();
-  GenInv.major_shape_except_intro g' fp pf
+  wf_view_parts ();
+  GenInv.major_shape_view_intro v g' fp
 #pop-options
+
+let colour_blind_elim v g g' = ()
+
+let allocated_colour_blind () =
+  let aux (g g': heap) (x: obj_addr) : Lemma (recoloured g g' ==> allocated g' x == allocated g x)
+    = if FStar.IndefiniteDescription.strong_excluded_middle (recoloured g g') then recoloured_facts g g'
+  in
+  FStar.Classical.forall_intro_3 aux
+
+let surviving_from_colour_blind st g0 = allocated_colour_blind ()
 
 /// ---------------------------------------------------------------------------
 /// Writes off the walk
@@ -675,6 +686,20 @@ let paint_promote ph0 g0 g fp minor obj wz =
   match ph0 with
   | Ph.Idle -> ()
   | Ph.Sweeping st0 -> paint_promote_sweeping st0 g0 g fp minor obj wz
+
+#push-options "--z3rlimit 20"
+let paint_surviving st g0 h x =
+  let c = U64.v st.cursor in
+  let h' = paint c g0 h in
+  paint_recoloured c g0 h;
+  recoloured_facts h h';
+  let q = hd_address x in
+  obj_pos h x; obj_pos g0 x; obj_pos h' x;
+  colour_of h x; colour_of h' x; colour_of g0 x;
+  paint_read c g0 h q;
+  black_header_facts (read_word h q);
+  hd_address_spec x
+#pop-options
 
 let paint_start ph0 g0 fp =
   match ph0 with

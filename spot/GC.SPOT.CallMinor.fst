@@ -58,10 +58,10 @@ fn call_minor_collect_full_spot
   minor_collect_idle_pre ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots);
   let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots
-             #(hide GC.Spec.Fields.no_pending);
+             #(hide GC.Spec.Fields.allocated);
   with d2 b2 s2 fp2 rs2 farr2 qv2 ph2. _;
-  minor_collect_post_at_idle ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'sl
-    (SZ.v nslots) GC.Spec.Fields.no_pending ok d2 b2 s2 fp2 rs2 farr2 ph2;
+  minor_collect_post_at_idle GC.Spec.Fields.allocated ({ data = 'd; bump = 'b } <: minor_state)
+    's 'fp 'rs 'sl (SZ.v nslots) ok d2 b2 s2 fp2 rs2 farr2 ph2;
   rewrite (gen_phase gh ph2) as (gen_phase gh GC.Spec.Phase.Idle);
   minor_collect_idle_post ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots) ok d2 b2 s2 fp2 rs2 farr2;
@@ -76,16 +76,16 @@ fn call_minor_collect_full_spot
     (CheneySpec.cheney_collect_spec ({ data = 'd; bump = 'b } <: minor_state)
       's 'fp 'rs).mc_roots));
   assert (pure (ok ==> MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.no_pending 'rs s2
+    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.allocated 'rs s2
     (MCFH.resolve_roots s2 rs2)));
   assert (pure (ok ==> MinorFwd.normal_result_non_pointer_fields_preserved_prop
-    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.no_pending 'rs s2));
+    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.allocated 'rs s2));
   assert (pure (U64.v b2 == 0));
   assert (pure (ok ==> MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.no_pending 'rs s2
+    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.allocated 'rs s2
     (MCFH.resolve_roots s2 rs2) /\
     MinorFwd.normal_result_non_pointer_fields_preserved_prop
-      ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.no_pending 'rs s2));
+      ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.allocated 'rs s2));
   Postconditions.minor_collect_full_post_intro
     ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs ok s2 rs2;
   assert (pure (Postconditions.minor_collect_full_post

@@ -33,7 +33,7 @@ let heap_fuel : nat = heap_words
 /// ---------------------------------------------------------------------------
 
 /// The addresses the walk may rewrite: fields of rewritten scannable objects.
-let walked_field_addr (major: heap) (upd: obj_addr -> prop) (a: nat) : prop =
+let walked_field_addr (major: heap) (upd: obj_addr -> GTot bool) (a: nat) : prop =
   exists (obj: obj_addr) (j: nat).
     Seq.mem obj (objects zero_addr major) /\
     upd obj /\
@@ -49,7 +49,7 @@ let holds_forwarded (major: heap) (fwd: forwarding_map) (a: hp_addr) : prop =
   is_minor_pointer v /\ fwd v <> 0UL
 
 /// The promoted entries (non-zero, non-infix) are rewritten by the walk.
-let promoted_entries_walked (major: heap) (upd: obj_addr -> prop) (farr: seq U64.t) : prop =
+let promoted_entries_walked (major: heap) (upd: obj_addr -> GTot bool) (farr: seq U64.t) : prop =
   Seq.length farr == fwd_array_size /\
   (forall (i: nat). i < fwd_array_size ==>
     (let obj = Seq.index farr i in
@@ -63,7 +63,7 @@ let promoted_entries_walked (major: heap) (upd: obj_addr -> prop) (farr: seq U64
 /// Every slot either is a field of a rewritten scannable object, or holds no
 /// forwarded nursery pointer (so rewriting it is a no-op).  The second case is
 /// a slot recorded in an object that has since become garbage.
-let slots_rewrite_walked (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
+let slots_rewrite_walked (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
                        (slots: seq U64.t) (n: nat) : prop =
   n <= Seq.length slots /\
   (forall (i: nat). i < n ==>
@@ -75,7 +75,7 @@ let slots_rewrite_walked (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_
 /// scannable objects: each is in a promoted object or at a slot.  Stated over
 /// field positions rather than addresses, since a header word can look like a
 /// forwarded nursery pointer.
-let fwd_ptrs_classified_walked (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
+let fwd_ptrs_classified_walked (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
                              (farr: seq U64.t) (slots: seq U64.t) (n: nat) : prop =
   Seq.length farr == fwd_array_size /\
   n <= Seq.length slots /\
@@ -139,7 +139,7 @@ val update_obj_ptrs_preserves_is_infix
 /// Frame precondition: addr is outside all promoted object bodies from idx onward
 let promoted_iter_frame_pre (major: heap) (farr: seq U64.t) (idx: nat) (addr: hp_addr) : prop =
   Seq.length farr == fwd_array_size /\
-  well_formed_heap_part1 major /\
+  blocks_fit major /\
   (forall (i: nat). i >= idx /\ i < fwd_array_size ==>
     (let obj = Seq.index farr i in
      obj = 0UL \/
@@ -175,7 +175,7 @@ val update_promoted_iter_promoted_field
   : Lemma
     (requires
       Seq.length farr == fwd_array_size /\
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       pi < fwd_array_size /\
       (let obj = Seq.index farr pi in
        obj <> 0UL /\
@@ -262,12 +262,12 @@ val rewrite_slots_iter_slot_effect
 /// Rewriting the promoted objects' fields, then the slots, is the pointer
 /// update over that set.
 val promoted_plus_slots_eq_walk
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
   (farr: seq U64.t) (slots: seq U64.t) (n: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
-      well_formed_heap_part4 major /\
+      blocks_fit major /\
+      no_infix_block major /\
       Seq.length farr == fwd_array_size /\
       promoted_entries_valid_from major farr 0 /\
       promoted_entries_disjoint major farr /\
