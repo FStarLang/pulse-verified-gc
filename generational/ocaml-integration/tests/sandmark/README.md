@@ -55,7 +55,7 @@ only.
 | kb_no_exc | (none) | 4194304 | 79 | 0.03 | 0.2 | 14.816 | 14.118 |  |  |
 | lexifi-g2pp | (none) | 4194304 | 6136 | 0.64 | 0.6 | 112.043 | 74.688 |  |  |
 | sequence_cps | 10000 | 4194304 | 551 | 0.01 | 0.1 | 11.530 | 8.950 |  |  |
-| hamming | 10_000 | 16777216 | 1 | 0.02 | 0.0 | 148.646 | .301 |  | <3 majors; verified runtime ~500x slower than stock: not investigated |
+| hamming | 10_000 | 16777216 | 1 | 0.02 | 0.0 | 148.646 | .301 |  | <3 majors; verified runtime ~230x slower than stock (98.1 s against 0.42 s, rerun awake): first-fit promotion walks every 1-2 word hole, see docs/sandmark-failures.md |
 | soli | 200 | 4194304 | - | - | - | 10.411 | 10.097 | |  |
 | minilight | roomfront5.ml.txt | 4194304 | 987 | 1.20 | 4.5 | 26.699 | 17.774 | yes | Sandmark roomfront.ml.txt (100 passes); 5 passes |
 | kronecker | 12 10 | 11534336 | 7146 | 0.20 | 0.6 | 33.195 | 35.842 |  |  |
@@ -156,16 +156,16 @@ doubled up to four times):
 
 | benchmark | error |
 |---|---|
-| zdd | `Out_of_memory` at every heap up to 671M words (stock peak 21M words): not investigated |
-| stacks.100000_floats-small | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c), e.g. a deep stack |
-| stacks.20000_floats-large | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c), e.g. a deep stack |
-| lazylist.100000_100 | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c), e.g. a deep stack |
-| finalise.50 | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c), e.g. a deep stack |
-| finalise.60 | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c), e.g. a deep stack |
-| finalise.70 | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c), e.g. a deep stack |
-| finalise.80 | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c), e.g. a deep stack |
-| finalise.90 | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c), e.g. a deep stack |
-| finalise.100 | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c), e.g. a deep stack |
+| zdd | `Out_of_memory` at every heap up to 671M words (stock peak 21M words). Not memory growth (live set 0.25M words): `Weak.get_copy` reads a weak key left dangling by the minor GC, which ignores `ephe_ref_table`; see docs/sandmark-failures.md |
+| stacks.100000_floats-small | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c): 268K stack slots; see docs/sandmark-failures.md |
+| stacks.20000_floats-large | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c): 304K stack slots; see docs/sandmark-failures.md |
+| lazylist.100000_100 | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c): 279K stack slots (deep `add_lazy` recursion); see docs/sandmark-failures.md |
+| finalise.50 | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c): the finaliser table, which never empties because finalisers are not run; see docs/sandmark-failures.md |
+| finalise.60 | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c): the finaliser table, which never empties because finalisers are not run; see docs/sandmark-failures.md |
+| finalise.70 | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c): the finaliser table, which never empties because finalisers are not run; see docs/sandmark-failures.md |
+| finalise.80 | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c): the finaliser table, which never empties because finalisers are not run; see docs/sandmark-failures.md |
+| finalise.90 | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c): the finaliser table, which never empties because finalisers are not run; see docs/sandmark-failures.md |
+| finalise.100 | `Fatal error: verified gen GC: root overflow`: more than MAX_ROOTS (2^18) roots at one collection (alloc_gen.c): the finaliser table, which never empties because finalisers are not run; see docs/sandmark-failures.md |
 
 Not built:
 
