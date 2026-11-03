@@ -43,7 +43,7 @@ cat "$L"/*.log | awk '
   /^rounds:/ { fx += $2; if ($9 > mr) mr = $9; x += $14 }
   /^mutant/ { caught[$2] += $4; runs[$2] += $6; hp[$2] += $8; stk[$2] += $10; wr[$2] += $12; rd[$2] += $14; cn[$2] += $16 }
   /^checks:/ { sc += $2; z += $5 }
-  /^idle:/ { sp += $2; lm += $9; is += $15 }
+  /^idle:/ { sp += $2; lm += $12; is += $21 }
   END {
     printf "total: %d heaps, %d cut lists, %d model runs, %d events\n", h, c, r, e
     printf "total: %d sends, %d dropped, %d greys left off a full stack, %d setups filled a stack, %d forwards\n", s, d, sf, su, fw
