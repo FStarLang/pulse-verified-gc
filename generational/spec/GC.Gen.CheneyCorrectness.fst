@@ -31,7 +31,7 @@ let cheney_collect_preserves_objects
   GC.Gen.PromoteUpdate.update_walk_preserves_objects prom.major_final (not_freed prom.major_final pf) prom.fwd_map
 
 /// ---------------------------------------------------------------------------
-/// Property 2: well_formed_heap_part1
+/// Property 2: blocks_fit
 /// ---------------------------------------------------------------------------
 
 let cheney_collect_preserves_wfh_part1

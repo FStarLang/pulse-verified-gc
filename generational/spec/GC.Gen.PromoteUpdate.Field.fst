@@ -153,7 +153,7 @@ private let rec update_walk_aux_after_preserves_field
   (idx: nat) (obj: obj_addr) (j: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       objs == objects zero_addr major /\
       Seq.mem obj objs /\
       j < U64.v (wosize_of_object obj major) /\
@@ -197,7 +197,7 @@ private let rec update_walk_aux_field_effect
   (idx: nat) (obj: obj_addr) (j: nat) (pos: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       objs == objects zero_addr major /\
       Seq.mem obj objs /\
       pos < Seq.length objs /\ Seq.index objs pos == obj /\

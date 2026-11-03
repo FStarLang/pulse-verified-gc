@@ -45,15 +45,15 @@ val two_pass_implies_collect_except
        CheneyPres.fwd_valid_or_infix prom.fwd_map prom.major_final /\
        CheneyPres.fwd_normal_injective prom.fwd_map prom.major_final /\
        CheneySpec.fwd_bounded prom.fwd_map /\
-       well_formed_heap_part4 prom.major_final /\
+       no_infix_block prom.major_final /\
        valid_slot_addrs slots n /\
        slots_pairwise_distinct slots n /\
        pending_ok major_pre pf /\
        ref_table_sound_except major_pre pf slots n /\
        ref_table_complete_except major_pre pf prom.fwd_map slots n /\
        fwd_targets_stable prom.fwd_map /\
-       well_formed_heap_part1 prom.major_final /\
-       well_formed_heap_part1 major_pre /\ well_formed_heap_part4 major_pre /\
+       blocks_fit prom.major_final /\
+       blocks_fit major_pre /\ no_infix_block major_pre /\
        minor_infix_wf minor /\
        minor_wf minor /\
        chain_objects_blue major_pre fp /\

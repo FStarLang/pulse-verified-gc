@@ -28,7 +28,7 @@ private let rec update_walk_aux_preserves_header
   (major: heap) (objs: seq obj_addr) (upd: obj_addr -> prop) (fwd: forwarding_map)
   (idx: nat) (h: obj_addr)
   : Lemma (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       objs == objects zero_addr major /\
       Seq.mem h objs)
     (ensures read_word (update_walk_aux major objs upd fwd idx) (hd_address h) ==
@@ -61,7 +61,7 @@ private let rec update_walk_aux_preserves_skipped_field
   (major: heap) (objs: seq obj_addr) (upd: obj_addr -> prop) (fwd: forwarding_map)
   (idx: nat) (h: obj_addr) (j: nat)
   : Lemma (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       objs == objects zero_addr major /\
       Seq.mem h objs /\
       (~(upd h) \/ is_no_scan h major) /\

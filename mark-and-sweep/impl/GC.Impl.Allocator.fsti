@@ -67,7 +67,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
           fst res == spec_res.fp_out /\
           snd res == spec_res.obj_out)
 
-/// Allocate with weaker precondition: only requires well_formed_heap_part1
+/// Allocate with weaker precondition: only requires blocks_fit
 /// + fl_valid + fl_chain_terminates. Suitable for use during promotion where
 /// full well_formed_heap (part2: pointer closure) may be temporarily violated.
 ///
@@ -76,7 +76,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
 
 fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
   requires is_heap heap 's **
-           pure (SpecFields.well_formed_heap_part1 's /\
+           pure (SpecFields.blocks_fit 's /\
                  AllocLemmas.fl_valid 's fp SpecBase.heap_words /\
                  AllocLemmas.fl_chain_terminates 's fp SpecBase.heap_words /\
                  U64.v wosize >= 1)

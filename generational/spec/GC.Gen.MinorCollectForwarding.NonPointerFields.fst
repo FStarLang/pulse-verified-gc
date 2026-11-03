@@ -45,7 +45,7 @@ private let combined_vertex_cases (v: CG.combined_vertex)
 
 /// Helper: if ~(is_infix_in_minor minor x) and (cheney_promote ...).fwd_map x <> 0,
 /// then x must be in minor_objects minor.
-/// This chains fwd_noninfix_targets_valid -> well_formed_heap_part4 ->
+/// This chains fwd_noninfix_targets_valid -> no_infix_block ->
 /// fwd_noninfix_sources_in_minor_objects in a clean, isolated context so that
 /// the three forall instantiations run cheaply at low rlimit.
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"

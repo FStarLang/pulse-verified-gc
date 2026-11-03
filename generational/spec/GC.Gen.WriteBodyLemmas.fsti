@@ -220,15 +220,15 @@ val copy_fields_preserves_other
     (ensures
       read_word (copy_fields minor major src_obj dst_obj i n) a == read_word major a)
 
-/// copy_fields preserves well_formed_heap_part1.
+/// copy_fields preserves blocks_fit.
 val copy_fields_preserves_wfh_part1
   (minor: minor_state) (major: heap)
   (src_obj: U64.t) (dst_obj: obj_addr) (n: nat)
   : Lemma (requires
-             well_formed_heap_part1 major /\
+             blocks_fit major /\
              Seq.mem dst_obj (objects zero_addr major) /\
              U64.v dst_obj % 8 == 0 /\
              U64.v (wosize_of_object dst_obj major) >= n /\
              n > 0)
           (ensures
-             well_formed_heap_part1 (copy_fields minor major src_obj dst_obj 0 n))
+             blocks_fit (copy_fields minor major src_obj dst_obj 0 n))

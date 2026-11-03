@@ -153,7 +153,7 @@ val major_heap_shape_elim (major: heap) (fp: U64.t)
 /// all that promotion reads of the major heap.
 val major_heap_shape_walk (major: heap) (fp: U64.t)
   : Lemma (requires major_heap_shape major fp)
-          (ensures well_formed_heap_part1 major /\ well_formed_heap_part4 major)
+          (ensures blocks_fit major /\ no_infix_block major)
 
 val minor_heap_shape_elim (minor: minor_state)
   : Lemma (requires minor_heap_shape minor)
@@ -246,8 +246,8 @@ val major_shape_except_elim (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
   : Lemma (requires major_shape_except major fp pf)
           (ensures pending_ok major pf /\
                    well_formed_heap_except major pf /\
-                   well_formed_heap_part1 major /\
-                   well_formed_heap_part4 major /\
+                   blocks_fit major /\
+                   no_infix_block major /\
                    AllocLemmas.fl_valid major fp heap_words /\
                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                    free_list_exact major fp /\

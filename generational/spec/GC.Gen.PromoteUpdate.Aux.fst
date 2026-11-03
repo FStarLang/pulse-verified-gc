@@ -68,11 +68,11 @@ let update_object_pointers_step (major: heap) (obj: obj_addr) (fwd: forwarding_m
 private let rec update_walk_aux_preserves_objects_wfh
   (major: heap) (objs: seq obj_addr) (upd: obj_addr -> prop) (fwd: forwarding_map) (idx: nat)
   : Lemma (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       objs == objects zero_addr major)
     (ensures (let major' = update_walk_aux major objs upd fwd idx in
               objects zero_addr major' == objs /\
-              well_formed_heap_part1 major'))
+              blocks_fit major'))
     (decreases (Seq.length objs - idx)) =
   if idx >= Seq.length objs then ()
   else begin
@@ -101,7 +101,7 @@ let update_walk_preserves_wfh_part1 major upd fwd =
 let update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map) =
   update_walk_preserves_objects major (not_freed major no_pending) fwd
 
-/// update_major_pointers preserves well_formed_heap_part1.
+/// update_major_pointers preserves blocks_fit.
 let update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map) =
   update_walk_preserves_wfh_part1 major (not_freed major no_pending) fwd
 

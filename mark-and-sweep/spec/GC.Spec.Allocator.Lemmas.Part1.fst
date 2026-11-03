@@ -2,7 +2,7 @@
    GC.Spec.Allocator.Lemmas.Part1 — Section P1 proofs.
 
    alloc_spec / alloc_from_block preserve object membership under
-   well_formed_heap_part1 (weaker precondition than well_formed_heap).
+   blocks_fit (weaker precondition than well_formed_heap).
 *)
 module GC.Spec.Allocator.Lemmas.Part1
 
@@ -127,11 +127,11 @@ private let rec objects_later_in_earlier
     end
 #pop-options
 
-/// Part1 variant: same as split_next_hd_objects_eq but only requires well_formed_heap_part1
+/// Part1 variant: same as split_next_hd_objects_eq but only requires blocks_fit
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let split_next_hd_objects_eq_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
@@ -174,7 +174,7 @@ private let split_next_hd_objects_eq_part1
 #pop-options
 
 /// ===========================================================================
-/// Section P1: alloc_spec_preserves_objects under well_formed_heap_part1
+/// Section P1: alloc_spec_preserves_objects under blocks_fit
 /// ===========================================================================
 
 /// ---------------------------------------------------------------------------
@@ -198,7 +198,7 @@ private let rec split_old_mem_in_new_part1
   (h: obj_addr)
   : Lemma (requires
       Seq.length g3 == Seq.length g /\
-      well_formed_heap_part1 g /\
+      blocks_fit g /\
       Seq.mem obj (objects zero_addr g) /\
       (let hd = hd_address obj in
        let hdr = read_word g hd in
@@ -521,12 +521,12 @@ let rec write_body_preserves_objects_local
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let write_body_preserves_wfh_part1
   (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     U64.v addr >= U64.v obj /\
                     U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
                     U64.v addr % 8 = 0)
-          (ensures well_formed_heap_part1 (write_word g addr v))
+          (ensures blocks_fit (write_word g addr v))
   = // write_body doesn't change headers (addr >= obj > hd_address(obj))
     // so objects walk is unchanged, and all bounds remain valid
     write_body_preserves_objects_local zero_addr g obj addr v;

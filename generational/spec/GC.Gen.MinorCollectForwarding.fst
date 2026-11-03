@@ -390,7 +390,7 @@ private let post_root_image_is_normal_image
     // is interior.  This is what rules out the wrong disjunct in each branch.
     MCFH.post_shape_except minor major fp pf roots;
     wf_except_parts ();
-    assert (well_formed_heap_part4 res.mc_major);
+    assert (no_infix_block res.mc_major);
     FStar.Classical.exists_intro
       (fun (witness: vertex_id{mem_graph_vertex post_g witness}) -> witness == r)
       r;
@@ -1307,7 +1307,7 @@ private let edge_source_normal_vertex_ready
       assert (is_val_addr (prom.fwd_map src));
       assert (Seq.mem ((prom.fwd_map src) <: obj_addr) (objects zero_addr prom.major_final));
       Cheney.cheney_promote_preserves_wfh_part4 minor major fp roots;
-      assert (well_formed_heap_part4 prom.major_final);
+      assert (no_infix_block prom.major_final);
       assert (~(is_infix (prom.fwd_map src) prom.major_final));
       assert (is_infix (prom.fwd_map src) prom.major_final = false)
 

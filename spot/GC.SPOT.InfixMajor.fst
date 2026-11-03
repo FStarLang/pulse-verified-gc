@@ -561,7 +561,7 @@ let spot_infix_field_pointer_cases (r: unit{spot_infix_room}) (src: obj_addr) (j
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let spot_infix_wfh_part1 (r: unit{spot_infix_room})
-  : Lemma (ensures SpecFields.well_formed_heap_part1 (spot_infix_heap r))
+  : Lemma (ensures SpecFields.blocks_fit (spot_infix_heap r))
   =
   let g = spot_infix_heap r in
   spot_infix_layout_facts r;
@@ -579,7 +579,7 @@ let spot_infix_wfh_part1 (r: unit{spot_infix_room})
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
 let spot_infix_wfh_part4 (r: unit{spot_infix_room})
-  : Lemma (ensures SpecFields.well_formed_heap_part4 (spot_infix_heap r))
+  : Lemma (ensures SpecFields.no_infix_block (spot_infix_heap r))
   =
   let g = spot_infix_heap r in
   let aux (h: obj_addr)

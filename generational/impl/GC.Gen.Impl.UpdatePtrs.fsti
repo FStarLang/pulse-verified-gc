@@ -250,7 +250,7 @@ let valid_fwd_entries (farr: Seq.seq U64.t) : prop =
 /// Needed for the two-pass equivalence proof (preservation at non-fwd addresses).
 let promoted_entries_valid_from (major: heap) (farr: Seq.seq U64.t) (idx: nat) : prop =
   Seq.length farr == fwd_array_size /\
-  GC.Spec.Fields.well_formed_heap_part1 major /\
+  GC.Spec.Fields.blocks_fit major /\
   (forall (i: nat). i >= idx /\ i < fwd_array_size ==>
     (let obj = Seq.index farr i in
      obj = 0UL \/

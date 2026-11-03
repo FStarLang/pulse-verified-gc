@@ -97,7 +97,7 @@ val cheney_bfs_inv_has_room (minor: minor_state) (cs: CheneySpec.cheney_state)
 val fwd_one_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
   : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor /\
-                    well_formed_heap_part1 cs.CheneySpec.cs_major /\
+                    blocks_fit cs.CheneySpec.cs_major /\
                     AllocLemmas.fl_valid cs.CheneySpec.cs_major cs.CheneySpec.cs_fp heap_words /\
                     AllocLemmas.fl_chain_terminates cs.CheneySpec.cs_major
                       cs.CheneySpec.cs_fp heap_words)

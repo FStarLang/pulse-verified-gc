@@ -43,7 +43,7 @@ let derive_promoted_entries_valid_from
       (forall (i:nat). i < fwd_array_size ==> Seq.index farr i == fwd (U64.uint_to_t (i * 8))) /\
       CheneyPres.fwd_valid_or_infix fwd major /\
       CheneySpec.fwd_bounded fwd /\
-      SpecFields.well_formed_heap_part1 major)
+      SpecFields.blocks_fit major)
     (ensures promoted_entries_valid_from major farr 0)
   =
   let aux (i: nat{i < fwd_array_size}) : Lemma
@@ -75,7 +75,7 @@ let derive_promoted_entries_valid_from
   Classical.forall_intro aux
 #pop-options
 
-/// Derivation: fwd_valid_or_infix + wfh_part1 + well_formed_heap_part4
+/// Derivation: fwd_valid_or_infix + wfh_part1 + no_infix_block
 /// implies promoted_entries_disjoint.
 /// Non-infix entries are in objects (by exclusion from fwd_valid_or_infix + part4),
 /// and objects_separated gives body disjointness.
@@ -88,7 +88,7 @@ let derive_promoted_entries_disjoint
       CheneyPres.fwd_valid_or_infix fwd major /\
       CheneyPres.fwd_normal_injective fwd major /\
       CheneySpec.fwd_bounded fwd /\
-      SpecFields.well_formed_heap_part1 major)
+      SpecFields.blocks_fit major)
     (ensures promoted_entries_disjoint major farr)
   =
   let aux (i1 i2: nat) : Lemma

@@ -407,7 +407,7 @@ let spot_major_field_not_pointer
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_major_wfh_part1 (r: unit{spot_major_room}) (mp: minor_ptr)
-  : Lemma (ensures SpecFields.well_formed_heap_part1 (spot_major_heap r mp))
+  : Lemma (ensures SpecFields.blocks_fit (spot_major_heap r mp))
   =
   let major = spot_major_heap r mp in
   spot_major_objects r mp;
@@ -438,7 +438,7 @@ let spot_major_wfh_part1 (r: unit{spot_major_room}) (mp: minor_ptr)
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
 let spot_major_wfh_part4 (r: unit{spot_major_room}) (mp: minor_ptr)
-  : Lemma (ensures SpecFields.well_formed_heap_part4 (spot_major_heap r mp))
+  : Lemma (ensures SpecFields.no_infix_block (spot_major_heap r mp))
   =
   let major = spot_major_heap r mp in
   let aux (h: obj_addr)

@@ -34,7 +34,7 @@ let promote_object_frame_old_field_derived
   (src: obj_addr) (idx: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
       (let res = promote_object minor major obj fp wz in
@@ -286,7 +286,7 @@ let rec cheney_forward_fields_preserves_cob
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (i: nat) (wosize: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 cs.cs_major /\
+      blocks_fit cs.cs_major /\
       AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
       AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
       chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -313,7 +313,7 @@ let rec cheney_forward_roots_preserves_cob
   (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (ridx: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 cs.cs_major /\
+      blocks_fit cs.cs_major /\
       AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
       AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
       chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -420,7 +420,7 @@ let promote_preserves_is_infix_frame
 private let promote_object_new_addr_header
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   : Lemma
-    (requires well_formed_heap_part1 major /\
+    (requires blocks_fit major /\
               AllocLemmas.fl_valid major fp heap_words /\
               AllocLemmas.fl_chain_terminates major fp heap_words /\
               (promote_object minor major obj fp wz).new_addr <> 0UL)
@@ -647,11 +647,11 @@ let cheney_forward_normal_preserves_wfh_part1
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 let rec cheney_forward_roots_preserves_wfh_part1
   (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
-  : Lemma (requires well_formed_heap_part1 cs.cs_major /\
+  : Lemma (requires blocks_fit cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words)
           (ensures (let cs' = cheney_forward_roots minor cs roots idx in
-                    well_formed_heap_part1 cs'.cs_major /\
+                    blocks_fit cs'.cs_major /\
                     AllocLemmas.fl_valid cs'.cs_major cs'.cs_fp heap_words /\
                     AllocLemmas.fl_chain_terminates cs'.cs_major cs'.cs_fp heap_words))
           (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
@@ -681,7 +681,7 @@ private let infix_delta_is_wosize (ms: minor_state) (a: U64.t)
 let cfn_success_pre (minor: minor_state) (cs: cheney_state) (addr: U64.t) : prop =
   infix_fwd_ready minor cs /\
   fwd_classified cs /\
-  well_formed_heap_part1 cs.cs_major /\
+  blocks_fit cs.cs_major /\
   AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
   AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
   chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -1123,7 +1123,7 @@ let rec cheney_forward_fields_preserves_fwd_classified
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (i: nat) (wosize: nat)
   : Lemma (requires fwd_classified cs /\
                     infix_fwd_ready minor cs /\
-                    well_formed_heap_part1 cs.cs_major /\
+                    blocks_fit cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -1153,7 +1153,7 @@ let rec cheney_forward_roots_preserves_fwd_classified
   (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (ridx: nat)
   : Lemma (requires fwd_classified cs /\
                     infix_fwd_ready minor cs /\
-                    well_formed_heap_part1 cs.cs_major /\
+                    blocks_fit cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -1183,7 +1183,7 @@ let rec cheney_scan_preserves_fwd_classified
   (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
   : Lemma (requires fwd_classified cs /\
                     infix_fwd_ready minor cs /\
-                    well_formed_heap_part1 cs.cs_major /\
+                    blocks_fit cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -1245,7 +1245,7 @@ let fwd_noninfix_targets_valid_initial (minor: minor_state) (major: heap) (fp: U
 let cheney_forward_normal_preserves_fwd_noninfix_targets_valid
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires fwd_noninfix_targets_valid_state minor cs /\
-                    well_formed_heap_part1 cs.cs_major /\
+                    blocks_fit cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     minor_wf minor)
@@ -1300,7 +1300,7 @@ let cheney_forward_normal_preserves_fwd_noninfix_targets_valid
 let cheney_forward_one_preserves_fwd_noninfix_targets_valid
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires fwd_noninfix_targets_valid_state minor cs /\
-                    well_formed_heap_part1 cs.cs_major /\
+                    blocks_fit cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -1354,7 +1354,7 @@ let cheney_forward_one_preserves_fwd_noninfix_targets_valid
 let rec cheney_forward_fields_preserves_fwd_noninfix_targets_valid
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (i wosize: nat)
   : Lemma (requires fwd_noninfix_targets_valid_state minor cs /\
-                    well_formed_heap_part1 cs.cs_major /\
+                    blocks_fit cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -1379,7 +1379,7 @@ let rec cheney_forward_fields_preserves_fwd_noninfix_targets_valid
 let rec cheney_forward_roots_preserves_fwd_noninfix_targets_valid
   (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
   : Lemma (requires fwd_noninfix_targets_valid_state minor cs /\
-                    well_formed_heap_part1 cs.cs_major /\
+                    blocks_fit cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -1404,7 +1404,7 @@ let rec cheney_forward_roots_preserves_fwd_noninfix_targets_valid
 let rec cheney_scan_preserves_fwd_noninfix_targets_valid
   (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
   : Lemma (requires fwd_noninfix_targets_valid_state minor cs /\
-                    well_formed_heap_part1 cs.cs_major /\
+                    blocks_fit cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\

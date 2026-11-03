@@ -117,7 +117,7 @@ val heap_read_word_extensional_mk (h1 h2: heap)
 /// Frame precondition: addr is outside all promoted object bodies from idx onward
 let promoted_iter_frame_pre (major: heap) (farr: seq U64.t) (idx: nat) (addr: hp_addr) : prop =
   Seq.length farr == fwd_array_size /\
-  well_formed_heap_part1 major /\
+  blocks_fit major /\
   (forall (i: nat). i >= idx /\ i < fwd_array_size ==>
     (let obj = Seq.index farr i in
      obj = 0UL \/
@@ -153,7 +153,7 @@ val update_promoted_iter_promoted_field
   : Lemma
     (requires
       Seq.length farr == fwd_array_size /\
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       pi < fwd_array_size /\
       (let obj = Seq.index farr pi in
        obj <> 0UL /\
@@ -244,8 +244,8 @@ val promoted_plus_slots_eq_walk
   (farr: seq U64.t) (slots: seq U64.t) (n: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
-      well_formed_heap_part4 major /\
+      blocks_fit major /\
+      no_infix_block major /\
       Seq.length farr == fwd_array_size /\
       promoted_entries_valid_from major farr 0 /\
       promoted_entries_disjoint major farr /\

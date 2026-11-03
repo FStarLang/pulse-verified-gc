@@ -18,7 +18,7 @@ module Mark = GC.Spec.Mark
 val field_pointer_points_to_nat
   (g: heap) (src dst: obj_addr) (j: nat)
   : Lemma
-    (requires well_formed_heap_part1 g /\
+    (requires blocks_fit g /\
               Seq.mem src (objects zero_addr g) /\
               j < U64.v (wosize_of_object src g) /\
               U64.v src + j * U64.v mword + U64.v mword <= heap_size /\

@@ -108,11 +108,11 @@ val promote_object_success (minor: minor_state) (major: heap) (obj: U64.t)
 val promote_object_preserves_alloc_invariants
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires
-             well_formed_heap_part1 major /\
+             blocks_fit major /\
              AllocLemmas.fl_valid major fp heap_words /\
              AllocLemmas.fl_chain_terminates major fp heap_words)
           (ensures (let res = promote_object minor major obj fp wosize in
-                    well_formed_heap_part1 res.major_out /\
+                    blocks_fit res.major_out /\
                     AllocLemmas.fl_valid res.major_out res.fp_out heap_words /\
                     AllocLemmas.fl_chain_terminates res.major_out res.fp_out heap_words))
 
@@ -127,7 +127,7 @@ val promote_object_preserves_alloc_invariants
 val promote_object_new_addr_body_bound
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires
-             well_formed_heap_part1 major /\
+             blocks_fit major /\
              AllocLemmas.fl_valid major fp heap_words /\
              AllocLemmas.fl_chain_terminates major fp heap_words)
           (ensures (let res = promote_object minor major obj fp wosize in
@@ -385,31 +385,31 @@ val promote_preserves_fields
 /// objects pending free (`GC.Spec.Fields.well_formed_heap_except`).
 val wfh_walk_facts (g: heap)
   : Lemma (requires well_formed_heap g)
-          (ensures well_formed_heap_part1 g /\ well_formed_heap_part4 g)
+          (ensures blocks_fit g /\ no_infix_block g)
 
 /// promote_object preserves objects (part1 version — no full well_formed_heap needed)
 val promote_object_preserves_objects_part1
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires
-             well_formed_heap_part1 major /\
+             blocks_fit major /\
              GC.Spec.Allocator.Lemmas.fl_valid major fp heap_words /\
              GC.Spec.Allocator.Lemmas.fl_chain_terminates major fp heap_words)
           (ensures
              (let res = promote_object minor major obj fp wosize in
               (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
                 Seq.mem x (objects zero_addr res.major_out))))
-/// promote_object preserves well_formed_heap_part4 (no infix objects) when the
+/// promote_object preserves no_infix_block (no infix objects) when the
 /// promoted minor object has a non-infix tag (tag <> 249).
 val promote_object_preserves_wfh_part4
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires
-             well_formed_heap_part1 major /\
-             well_formed_heap_part4 major /\
+             blocks_fit major /\
+             no_infix_block major /\
              AllocLemmas.fl_valid major fp heap_words /\
              AllocLemmas.fl_chain_terminates major fp heap_words /\
              minor_tag minor obj <> U64.v GC.Spec.Object.infix_tag)
            (ensures (let res = promote_object minor major obj fp wosize in
-                     well_formed_heap_part4 res.major_out))
+                     no_infix_block res.major_out))
 
 /// `heap_objects_dense` is `GC.Spec.Fields.heap_objects_dense`.
 

@@ -35,7 +35,7 @@ module FreeListShape = GC.Gen.FreeListShape
 /// free-list headers, never coloring an object black).
 val cheney_promote_preserves_no_black
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+  : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     Mark.no_black_objects major /\
@@ -45,7 +45,7 @@ val cheney_promote_preserves_no_black
 
 val cheney_collect_preserves_no_black
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+  : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     Mark.no_black_objects major /\
@@ -72,7 +72,7 @@ let gray_black_objects_on_stack (g: heap) (st: seq obj_addr) : prop =
 val cheney_promote_preserves_gray_black_objects_on_stack
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (st: seq obj_addr)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+  : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
@@ -83,14 +83,14 @@ val cheney_promote_preserves_gray_black_objects_on_stack
 
 val update_major_pointers_preserves_gray_black_objects_on_stack
   (major: heap) (fwd: forwarding_map) (st: seq obj_addr)
-  : Lemma (requires well_formed_heap_part1 major /\
+  : Lemma (requires blocks_fit major /\
                     gray_black_objects_on_stack major st)
           (ensures gray_black_objects_on_stack (update_major_pointers major fwd) st)
 
 val cheney_collect_preserves_gray_black_objects_on_stack
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (st: seq obj_addr)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+  : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
@@ -125,7 +125,7 @@ let fwd_valid_or_infix (fwd: forwarding_map) (g: heap) : prop =
 
 val cheney_promote_fwd_valid_or_infix
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+  : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
@@ -147,7 +147,7 @@ val cheney_promote_fwd_valid_or_infix
 val cheney_promote_frame_old_fields
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr) (j: nat)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+  : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
@@ -172,7 +172,7 @@ val cheney_promote_frame_old_fields
 val cheney_promote_frame_old_header
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+  : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
@@ -222,7 +222,7 @@ let fwd_normal_targets_disjoint_from_old_nonblue
 
 val cheney_promote_fwd_normal_injective
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+  : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
@@ -233,7 +233,7 @@ val cheney_promote_fwd_normal_injective
 
 val cheney_promote_fwd_targets_not_blue
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+  : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
@@ -244,7 +244,7 @@ val cheney_promote_fwd_targets_not_blue
 
 val cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+  : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
@@ -270,7 +270,7 @@ val cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
 val cheney_promote_nonblue_origin
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+  : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\

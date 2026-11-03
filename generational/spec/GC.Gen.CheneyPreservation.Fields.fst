@@ -179,7 +179,7 @@ let cheney_forward_normal_preserves_fwd_target_fields_match_state
   : Lemma
       (requires
         fwd_target_fields_match_state minor cs /\
-        well_formed_heap_part1 cs.cs_major /\
+        blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -283,7 +283,7 @@ let cheney_forward_one_preserves_fwd_target_fields_match_state
   : Lemma
       (requires
         fwd_target_fields_match_state minor cs /\
-        well_formed_heap_part1 cs.cs_major /\
+        blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -358,7 +358,7 @@ let rec cheney_forward_fields_preserves_fwd_target_fields_match_state
   : Lemma
       (requires
         fwd_target_fields_match_state minor cs /\
-        well_formed_heap_part1 cs.cs_major /\
+        blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -388,7 +388,7 @@ let rec cheney_forward_roots_preserves_fwd_target_fields_match_state
   : Lemma
       (requires
         fwd_target_fields_match_state minor cs /\
-        well_formed_heap_part1 cs.cs_major /\
+        blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -417,7 +417,7 @@ let rec cheney_scan_preserves_fwd_target_fields_match_state
   : Lemma
       (requires
         fwd_target_fields_match_state minor cs /\
-        well_formed_heap_part1 cs.cs_major /\
+        blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -580,7 +580,7 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
   : Lemma
       (requires
         fwd_target_not_no_scan_state minor cs /\
-        well_formed_heap_part1 cs.cs_major /\
+        blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -671,7 +671,7 @@ let cheney_forward_one_preserves_fwd_target_not_no_scan_state
   : Lemma
       (requires
         fwd_target_not_no_scan_state minor cs /\
-        well_formed_heap_part1 cs.cs_major /\
+        blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -727,7 +727,7 @@ let rec cheney_forward_fields_preserves_fwd_target_not_no_scan_state
   : Lemma
       (requires
         fwd_target_not_no_scan_state minor cs /\
-        well_formed_heap_part1 cs.cs_major /\
+        blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -764,7 +764,7 @@ let rec cheney_forward_roots_preserves_fwd_target_not_no_scan_state
   : Lemma
       (requires
         fwd_target_not_no_scan_state minor cs /\
-        well_formed_heap_part1 cs.cs_major /\
+        blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -800,7 +800,7 @@ let rec cheney_forward_roots_preserves_infix_ready_local
       (requires
         Forwarding.fwd_classified cs /\
         Forwarding.infix_fwd_ready minor cs /\
-        well_formed_heap_part1 cs.cs_major /\
+        blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -832,7 +832,7 @@ let rec cheney_scan_preserves_fwd_target_not_no_scan_state
   : Lemma
       (requires
         fwd_target_not_no_scan_state minor cs /\
-        well_formed_heap_part1 cs.cs_major /\
+        blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
         chain_objects_blue cs.cs_major cs.cs_fp /\

@@ -321,7 +321,7 @@ let update_walk_frame_target_header g upd fwd h =
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 private let update_pointers_except_transfer_target
   (g: heap) (pf: obj_addr -> prop) (fwd: forwarding_map) (dst: obj_addr)
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     not_freed g pf (resolve_object dst g) /\
                     infix_addr_wf g (objects zero_addr g) dst)
           (ensures (let updated = update_pointers_except g pf fwd in
@@ -435,7 +435,7 @@ let cheney_promote_fwd_targets_not_freed minor major fp roots pf =
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 private let update_walk_preserves_blue_link_fields_valid
   (g: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 g /\ walk_ok g upd /\
+  : Lemma (requires blocks_fit g /\ walk_ok g upd /\
                     FreeListShape.blue_link_fields_valid g)
           (ensures FreeListShape.blue_link_fields_valid (update_walk g upd fwd))
   = let updated = update_walk g upd fwd in
@@ -471,7 +471,7 @@ private let objects_nonempty_from_header (g1 g2: heap) (start: hp_addr)
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let update_walk_preserves_dense
   (g: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 g /\ heap_objects_dense g)
+  : Lemma (requires blocks_fit g /\ heap_objects_dense g)
           (ensures heap_objects_dense (update_walk g upd fwd))
   = reveal_opaque (`%heap_objects_dense) heap_objects_dense;
     let updated = update_walk g upd fwd in
@@ -509,7 +509,7 @@ private let update_walk_preserves_dense
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 private let update_walk_preserves_chain_objects_blue
   (g: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (fp: U64.t)
-  : Lemma (requires well_formed_heap_part1 g /\ walk_ok g upd /\
+  : Lemma (requires blocks_fit g /\ walk_ok g upd /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     chain_objects_blue g fp)
           (ensures chain_objects_blue (update_walk g upd fwd) fp)

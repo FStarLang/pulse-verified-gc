@@ -146,7 +146,7 @@ private let chain_blue_transfer_step
   (wosize: nat{wosize > 0})
   (excl: obj_addr)
   : Lemma (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
       (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).obj_out <> 0UL /\
@@ -203,7 +203,7 @@ private let chain_blue_proof_for_excl
   (wosize: nat{wosize > 0})
   (excl: obj_addr)
   : Lemma (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
       chain_objects_blue major fp /\
@@ -320,7 +320,7 @@ let promote_object_preserves_chain_objects_blue
               (ensures AllocLemmas.chain_avoids res.major_out res.fp_out excl fuel = true)
       = if excl = dst_obj then ()
         else begin
-          assert (well_formed_heap_part1 major);
+          assert (blocks_fit major);
           assert (AllocLemmas.fl_valid major fp fuel);
           assert (AllocLemmas.fl_chain_terminates major fp fuel);
           assert (chain_objects_blue major fp);
@@ -356,7 +356,7 @@ let promote_object_preserves_free_list_shape
     AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize (promoted_tag minor obj);
     assert (FreeListShape.fp_pointer_or_zero res.fp_out);
     assert (FreeListShape.blue_link_fields_valid new_major);
-    assert (well_formed_heap_part1 new_major);
+    assert (blocks_fit new_major);
 
     // Objects are unchanged from new_major to final.
     GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize (promoted_tag minor obj);

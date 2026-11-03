@@ -65,7 +65,7 @@ val cheney_collect_preserves_objects
   : Lemma
     (requires
       // Major heap has valid OCaml object layout
-      well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+      blocks_fit major /\ no_infix_block major /\
       // Free-list from fp: each node is a valid blue object with wosize >= 1
       AllocLemmas.fl_valid major fp heap_words /\
       // Free-list traversal terminates (no cycles)
@@ -92,13 +92,13 @@ val cheney_collect_preserves_wfh_part1
   : Lemma
     (requires
       // Major heap well-formed
-      well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+      blocks_fit major /\ no_infix_block major /\
       // Free-list valid and terminating
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words)
     (ensures
       // Every object's header+body fits within the post-collection heap byte array
-      well_formed_heap_part1 (cheney_collect_spec_except minor major fp roots pf).mc_major)
+      blocks_fit (cheney_collect_spec_except minor major fp roots pf).mc_major)
 
 /// ---------------------------------------------------------------------------
 /// Property 3: Minor heap is properly reset
@@ -151,7 +151,7 @@ val cheney_gc_correct
   : Lemma
     (requires
       // Major heap has valid OCaml object layout (all 4 well-formedness parts)
-      well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+      blocks_fit major /\ no_infix_block major /\
       // Free-list from fp: each node is a valid blue object, wosize >= 1,
       // and the next-pointer chain is valid
       AllocLemmas.fl_valid major fp heap_words /\
@@ -171,7 +171,7 @@ val cheney_gc_correct
 
               // Property 2 — Size-bounds invariant: every post-collection
               // object's header+body fits within the heap byte array
-              well_formed_heap_part1 res.mc_major /\
+              blocks_fit res.mc_major /\
 
               // Property 3a — Post-collection free-list validity: the new
               // free-list head (res.mc_fp) leads through valid blue objects

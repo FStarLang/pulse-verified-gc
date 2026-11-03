@@ -245,7 +245,7 @@ let rec alloc_search_obj_in_objects_post_part1
   (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
   (cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
-    (requires well_formed_heap_part1 g /\ AllocLemmas.fl_valid g cur_fp fuel /\
+    (requires blocks_fit g /\ AllocLemmas.fl_valid g cur_fp fuel /\
               // carried so the prev-link write can be shown to leave the
               // enumeration alone; discharged for cur_fp on each recursive step
               (prev_fp = 0UL \/
@@ -323,7 +323,7 @@ let rec alloc_search_obj_in_objects_post_part1
            end;
            read_write_different g (prev <: hp_addr) hd new_fp
          end else ());
-        assert (well_formed_heap_part1 base);
+        assert (blocks_fit base);
         assert (objects zero_addr base == objects zero_addr g);
         assert (read_word base hd == hdr);
         assert (U64.v (getWosize (read_word base hd)) == block_wz);
@@ -357,7 +357,7 @@ let rec alloc_search_obj_in_objects_post_part1
 
 /// After alloc, obj_out is in objects of the output heap (part1 only)
 let alloc_spec_obj_in_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words)
           (ensures (let r = alloc_spec g fp requested_wz tag in
@@ -383,7 +383,7 @@ let alloc_spec_obj_in_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (t
 /// heap's well-formedness says exactly that.
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 let alloc_spec_obj_body_within_heap (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words)
           (ensures (let r = alloc_spec g fp requested_wz tag in
@@ -595,7 +595,7 @@ let alloc_spec_obj_wosize_exact_part1 (g: heap) (fp: U64.t) (requested_wz: nat) 
 let rec alloc_search_obj_ne_excl
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (excl: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma
-    (requires well_formed_heap_part1 g /\
+    (requires blocks_fit g /\
               AllocLemmas.fl_valid g cur_fp fuel /\
               AllocLemmas.chain_avoids g cur_fp excl fuel = true /\
               wz >= 1 /\
@@ -619,7 +619,7 @@ let rec alloc_search_obj_ne_excl
     // cur_fp is a valid obj_addr with fuel > 0
     AllocLemmas.fl_valid_elim g cur_fp fuel;
     // fl_valid_elim gives: Seq.mem cur_fp (objects zero_addr g), wosize >= 1
-    // From well_formed_heap_part1 + wosize >= 1: hd + 16 <= heap_size
+    // From blocks_fit + wosize >= 1: hd + 16 <= heap_size
     let obj : obj_addr = cur_fp in
     hd_address_spec obj;
     let hd = hd_address obj in
@@ -659,7 +659,7 @@ let rec alloc_search_obj_ne_excl
 
 /// Top-level: if chain_avoids g fp excl fuel = true, then alloc_spec obj_out ≠ excl
 let alloc_spec_obj_ne_excl (g: heap) (fp: U64.t) (requested_wz: nat) (excl: U64.t) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.chain_avoids g fp excl heap_words = true /\
                     // see alloc_search_obj_ne_excl: with the allocation
@@ -756,7 +756,7 @@ let alloc_spec_oom_unchanged (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64
 #restart-solver
 #push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 let alloc_from_block_obj_not_blue (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     (let hd = hd_address obj in
                      let bwz = U64.v (getWosize (read_word g hd)) in
@@ -834,7 +834,7 @@ let write_preserves_color (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let alloc_from_block_read_frame (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
                                 (addr: hp_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     U64.v (getWosize (read_word g (hd_address obj))) >= wz /\
                     wz >= 1 /\
@@ -859,7 +859,7 @@ let alloc_from_block_read_frame (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U6
 let rec alloc_search_obj_not_blue
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
-    (requires well_formed_heap_part1 g /\
+    (requires blocks_fit g /\
              AllocLemmas.fl_valid g cur_fp fuel /\
              AllocLemmas.fl_chain_terminates g cur_fp fuel /\
              wz >= 1)
@@ -898,7 +898,7 @@ let rec alloc_search_obj_not_blue
 let rec alloc_search_obj_white
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
-    (requires well_formed_heap_part1 g /\
+    (requires blocks_fit g /\
              AllocLemmas.fl_valid g cur_fp fuel /\
              AllocLemmas.fl_chain_terminates g cur_fp fuel /\
              wz >= 1 /\
@@ -1001,7 +1001,7 @@ let rec alloc_search_obj_white
 
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let alloc_spec_obj_not_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words)
           (ensures (let r = alloc_spec g fp requested_wz tag in
@@ -1031,7 +1031,7 @@ let alloc_spec_obj_not_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (tag
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let alloc_from_block_preserves_blue
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     Seq.mem (h <: U64.t) (objects zero_addr g) /\
                     is_blue h g = true /\
@@ -1097,7 +1097,7 @@ let alloc_from_block_preserves_blue
 #push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_blue
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (h: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     AllocLemmas.fl_valid g cur_fp fuel /\
                     AllocLemmas.fl_chain_terminates g cur_fp fuel /\
                     wz >= 1 /\
@@ -1193,7 +1193,7 @@ private let rec alloc_search_preserves_blue
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let alloc_spec_preserves_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (h: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words /\
                     requested_wz >= 1 /\
@@ -1212,7 +1212,7 @@ let alloc_spec_preserves_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (h
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 private let alloc_from_block_read_header_other
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (excl: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     Seq.mem excl (objects zero_addr g) /\
                     (obj <: U64.t) <> (excl <: U64.t) /\
@@ -1253,7 +1253,7 @@ private let alloc_from_block_read_header_other
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let rec alloc_search_read_header_other
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (excl: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     AllocLemmas.fl_valid g cur_fp fuel /\
                     AllocLemmas.fl_chain_terminates g cur_fp fuel /\
                     wz >= 1 /\
@@ -1363,7 +1363,7 @@ private let rec alloc_search_read_header_other
 /// Top-level: alloc_spec preserves the header of other objects.
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let alloc_spec_read_header_other_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (excl: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words /\
                     Seq.mem excl (objects zero_addr g) /\

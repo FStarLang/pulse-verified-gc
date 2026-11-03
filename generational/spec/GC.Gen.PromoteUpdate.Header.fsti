@@ -23,7 +23,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 /// The walk preserves the header word of every object on the walk.
 val update_walk_preserves_header
   (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (h: obj_addr)
-  : Lemma (requires well_formed_heap_part1 major /\ Seq.mem h (objects zero_addr major))
+  : Lemma (requires blocks_fit major /\ Seq.mem h (objects zero_addr major))
     (ensures read_word (update_walk major upd fwd) (hd_address h) ==
              read_word major (hd_address h))
 
@@ -31,7 +31,7 @@ val update_walk_preserves_header
 /// in the rewritten set, or is no-scan.
 val update_walk_preserves_skipped_field
   (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (h: obj_addr) (j: nat)
-  : Lemma (requires well_formed_heap_part1 major /\
+  : Lemma (requires blocks_fit major /\
                     Seq.mem h (objects zero_addr major) /\
                     (~(upd h) \/ is_no_scan h major) /\
                     j < U64.v (wosize_of_object h major) /\
@@ -43,21 +43,21 @@ val update_walk_preserves_skipped_field
 
 val update_walk_preserves_wfh_part4
   (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
-    (ensures well_formed_heap_part4 (update_walk major upd fwd))
+  : Lemma (requires blocks_fit major /\ no_infix_block major)
+    (ensures no_infix_block (update_walk major upd fwd))
 
 /// ---------------------------------------------------------------------------
 /// The idle instances
 /// ---------------------------------------------------------------------------
 
 val update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (h: obj_addr)
-  : Lemma (requires well_formed_heap_part1 major /\ Seq.mem h (objects zero_addr major))
+  : Lemma (requires blocks_fit major /\ Seq.mem h (objects zero_addr major))
     (ensures read_word (update_major_pointers major fwd) (hd_address h) ==
              read_word major (hd_address h))
 
 val update_major_pointers_preserves_blue_field
   (major: heap) (fwd: forwarding_map) (h: obj_addr) (j: nat)
-  : Lemma (requires well_formed_heap_part1 major /\
+  : Lemma (requires blocks_fit major /\
                     Seq.mem h (objects zero_addr major) /\
                     is_blue h major /\
                     j < U64.v (wosize_of_object h major) /\
@@ -69,7 +69,7 @@ val update_major_pointers_preserves_blue_field
 
 val update_major_pointers_preserves_no_scan_field
   (major: heap) (fwd: forwarding_map) (h: obj_addr) (j: nat)
-  : Lemma (requires well_formed_heap_part1 major /\
+  : Lemma (requires blocks_fit major /\
                     Seq.mem h (objects zero_addr major) /\
                     is_no_scan h major /\
                     ~(is_blue h major) /\
@@ -81,5 +81,5 @@ val update_major_pointers_preserves_no_scan_field
               read_word major field_addr))
 
 val update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
-    (ensures well_formed_heap_part4 (update_major_pointers major fwd))
+  : Lemma (requires blocks_fit major /\ no_infix_block major)
+    (ensures no_infix_block (update_major_pointers major fwd))

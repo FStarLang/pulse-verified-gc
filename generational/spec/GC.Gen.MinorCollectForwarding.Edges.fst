@@ -278,7 +278,7 @@ let combined_major_edge_forwarded
     wosize_of_object_spec src prom.major_final;
     assert (wosize_of_object src prom.major_final == wosize_of_object src major);
     assert (read_word prom.major_final field_addr == old_raw);
-    assert (well_formed_heap_part1 prom.major_final);
+    assert (blocks_fit prom.major_final);
     PromUpdate.update_walk_field_effect prom.major_final (not_freed prom.major_final pf) prom.fwd_map src i;
     assert (updated == update_walk prom.major_final (not_freed prom.major_final pf) prom.fwd_map);
     assert (~(is_minor_pointer (to_minor_offset (read_word prom.major_final field_addr)) /\

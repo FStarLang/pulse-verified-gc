@@ -466,7 +466,7 @@ let spot_ns_field_read (r: unit{spot_ns_room}) (src: obj_addr) (j: nat)
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let spot_ns_wfh_part1 (r: unit{spot_ns_room})
-  : Lemma (ensures SpecFields.well_formed_heap_part1 (spot_ns_heap r))
+  : Lemma (ensures SpecFields.blocks_fit (spot_ns_heap r))
   =
   let g = spot_ns_heap r in
   spot_ns_layout_facts r;
@@ -483,7 +483,7 @@ let spot_ns_wfh_part1 (r: unit{spot_ns_room})
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
 let spot_ns_wfh_part4 (r: unit{spot_ns_room})
-  : Lemma (ensures SpecFields.well_formed_heap_part4 (spot_ns_heap r))
+  : Lemma (ensures SpecFields.no_infix_block (spot_ns_heap r))
   =
   let g = spot_ns_heap r in
   let aux (h: obj_addr)

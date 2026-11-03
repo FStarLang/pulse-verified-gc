@@ -403,7 +403,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
 /// ---------------------------------------------------------------------------
 /// Weak-precondition allocation (for use during promotion)
 /// ---------------------------------------------------------------------------
-/// Same implementation as `allocate` but only requires well_formed_heap_part1
+/// Same implementation as `allocate` but only requires blocks_fit
 /// + fl_valid + fl_chain_terminates. The allocator logic only reads headers
 /// and free-list link pointers — it never inspects object pointer fields,
 /// so well_formed_heap_part2 (pointer closure) is not needed.
@@ -411,7 +411,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
 #push-options "--z3rlimit 60"
 fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
   requires is_heap heap 's **
-           pure (SF.well_formed_heap_part1 's /\
+           pure (SF.blocks_fit 's /\
                  AllocLemmas.fl_valid 's fp SpecBase.heap_words /\
                  AllocLemmas.fl_chain_terminates 's fp SpecBase.heap_words /\
                  U64.v wosize >= 1)

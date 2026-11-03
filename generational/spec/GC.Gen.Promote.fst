@@ -337,22 +337,22 @@ let promote_object_preserves_objects_part1
   end
 #pop-options
 
-/// promote_all preserves well_formed_heap_part1
-/// copy_fields preserves well_formed_heap_part4 (no infix objects).
+/// promote_all preserves blocks_fit
+/// copy_fields preserves no_infix_block (no infix objects).
 /// Since copy_fields only writes to field addresses (>= dst_obj), no headers change.
 #push-options "--z3rlimit 10 --fuel 0"
 private let copy_fields_preserves_wfh_part4
   (minor: minor_state) (major: heap)
   (src_obj: U64.t) (dst_obj: obj_addr) (n: nat)
   : Lemma (requires
-             well_formed_heap_part1 major /\
-             well_formed_heap_part4 major /\
+             blocks_fit major /\
+             no_infix_block major /\
              Seq.mem dst_obj (objects zero_addr major) /\
              U64.v dst_obj % 8 == 0 /\
              U64.v (wosize_of_object dst_obj major) >= n /\
              n > 0)
           (ensures
-             well_formed_heap_part4 (copy_fields minor major src_obj dst_obj 0 n)) =
+             no_infix_block (copy_fields minor major src_obj dst_obj 0 n)) =
   let g' = copy_fields minor major src_obj dst_obj 0 n in
   copy_fields_preserves_objects_aux minor major src_obj dst_obj 0 n;
   assert (objects zero_addr g' == objects zero_addr major);
@@ -379,7 +379,7 @@ private let copy_fields_preserves_wfh_part4
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-/// promote_object preserves well_formed_heap_part4 when tag is not infix_tag.
+/// promote_object preserves no_infix_block when tag is not infix_tag.
 /// The copy is allocated with the minor tag, so the allocator's part4 lemma
 /// applies directly; copy_fields writes no headers.
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
@@ -407,8 +407,8 @@ let promote_object_preserves_wfh_part4
     end
 #pop-options
 
-/// promote_all_aux preserves well_formed_heap_part4 (no infix objects).
-/// Top-level: promote_all_spec preserves well_formed_heap_part4
+/// promote_all_aux preserves no_infix_block (no infix objects).
+/// Top-level: promote_all_spec preserves no_infix_block
 /// ---------------------------------------------------------------------------
 /// fields_match_minor intro/elim lemmas (predicate is opaque_to_smt, recursive)
 /// ---------------------------------------------------------------------------

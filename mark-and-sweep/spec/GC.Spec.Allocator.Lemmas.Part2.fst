@@ -1,7 +1,7 @@
 (*
    GC.Spec.Allocator.Lemmas.Part2 — Section P2-P5 proofs.
 
-   alloc_spec preserves well_formed_heap_part1, fl_valid, fl_chain_terminates,
+   alloc_spec preserves blocks_fit, fl_valid, fl_chain_terminates,
    and various framing properties under the weaker part1 precondition.
 *)
 module GC.Spec.Allocator.Lemmas.Part2
@@ -107,7 +107,7 @@ private let rem_hd_ne (g: heap) (obj other: obj_addr) (rem_hd: U64.t) (hd: hp_ad
 /// the allocated address a word below that.
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 private let alloc_obj_interior (g: heap) (obj a: obj_addr) (block_wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem (obj <: U64.t) (objects zero_addr g) /\
                     U64.v (getWosize (read_word g (hd_address obj))) == block_wz /\
                     U64.v a > U64.v obj /\
@@ -227,7 +227,7 @@ private let make_header_color_blue (wz: U64.t{U64.v wz < pow2 54})
 #pop-options
 
 /// ===========================================================================
-/// Section P2: alloc_spec preserves well_formed_heap_part1
+/// Section P2: alloc_spec preserves blocks_fit
 /// ===========================================================================
 
 /// ---------------------------------------------------------------------------
@@ -242,7 +242,7 @@ private let rec split_new_mem_in_old_or_rem_part1
   (h: obj_addr)
   : Lemma (requires
       Seq.length g3 == Seq.length g /\
-      well_formed_heap_part1 g /\
+      blocks_fit g /\
       Seq.mem obj (objects zero_addr g) /\
       (let hd = hd_address obj in
        let hdr = read_word g hd in
@@ -404,7 +404,7 @@ private let rec split_new_mem_in_old_or_rem_part1
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let alloc_split_wf_part1_v2
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     // wz >= 1 is what makes the allocated OBJECT address
                     // (hd + leftover*8 + 8) land strictly inside the heap
@@ -413,7 +413,7 @@ private let alloc_split_wf_part1_v2
                      let block_wz = U64.v (getWosize hdr) in
                      block_wz >= wz /\ block_wz - wz >= 1))
           (ensures (let (g3, _) = alloc_from_block g obj wz tag next_fp in
-                    well_formed_heap_part1 g3))
+                    blocks_fit g3))
   = alloc_split_facts_part1 g obj wz next_fp tag;
     let hd = hd_address obj in
     let hdr = read_word g hd in
@@ -486,7 +486,7 @@ private let alloc_split_wf_part1_v2
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 private let alloc_exact_preserves_wfh_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
@@ -494,7 +494,7 @@ private let alloc_exact_preserves_wfh_part1
                      // so the split lemma covers that case instead
                      block_wz == wz))
           (ensures (let (g', _) = alloc_from_block g obj wz tag next_fp in
-                    well_formed_heap_part1 g'))
+                    blocks_fit g'))
   = let hd = hd_address obj in
     let hdr = read_word g hd in
     let block_wz = U64.v (getWosize hdr) in
@@ -560,7 +560,7 @@ let alloc_from_block_preserves_wfh_part1
 #push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_wfh_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     fl_valid g cur_fp fuel /\
                     fl_chain_terminates g cur_fp fuel /\
                     // the right-justified object address needs it
@@ -573,7 +573,7 @@ private let rec alloc_search_preserves_wfh_part1
                        Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
           (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz tag fuel in
-                    well_formed_heap_part1 r.heap_out))
+                    blocks_fit r.heap_out))
           (decreases fuel)
   = if fuel = 0 then ()
     else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
@@ -657,14 +657,14 @@ let alloc_spec_preserves_wfh_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (ta
 
 /// ---------------------------------------------------------------------------
 /// P2g: alloc_split_fl_transfer_pre_part1 — split case fl_valid_transfer
-///      under well_formed_heap_part1 only
+///      under blocks_fit only
 /// ---------------------------------------------------------------------------
 
 #restart-solver
 #push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let alloc_split_fl_transfer_pre_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (a: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
@@ -739,14 +739,14 @@ let alloc_split_fl_transfer_pre_part1
 
 /// ---------------------------------------------------------------------------
 /// P2h: alloc_exact_fl_transfer_pre_part1 — exact-fit case fl_valid_transfer
-///      under well_formed_heap_part1 only
+///      under blocks_fit only
 /// ---------------------------------------------------------------------------
 
 #restart-solver
 #push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let alloc_exact_fl_transfer_pre_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (a: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
@@ -798,7 +798,7 @@ let alloc_exact_fl_transfer_pre_part1
 
 /// ---------------------------------------------------------------------------
 /// P2h2: fl_valid_field_write_part1 — like fl_valid_field_write but only needs
-///       well_formed_heap_part1 (not full well_formed_heap)
+///       blocks_fit (not full well_formed_heap)
 /// ---------------------------------------------------------------------------
 
 #restart-solver
@@ -807,7 +807,7 @@ private let rec fl_valid_field_write_part1
   (g: heap) (p: obj_addr) (v: U64.t) (fp: U64.t) (fuel tail_fuel: nat)
   : Lemma
     (requires fl_valid g fp fuel /\
-              well_formed_heap_part1 g /\
+              blocks_fit g /\
               Seq.mem p (objects zero_addr g) /\
               U64.v (wosize_of_object p g) >= 1 /\
               v <> p /\
@@ -874,13 +874,13 @@ private let rec fl_valid_field_write_part1
 #pop-options
 
 /// fl_valid_field_write_tail_part1: establishes fl_valid g' v fuel
-/// where g' = write_word g p v, using only well_formed_heap_part1.
+/// where g' = write_word g p v, using only blocks_fit.
 #restart-solver
 #push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 private let rec fl_valid_field_write_tail_part1
   (g: heap) (p: obj_addr) (v: U64.t) (fuel: nat)
   : Lemma
-    (requires well_formed_heap_part1 g /\
+    (requires blocks_fit g /\
               Seq.mem p (objects zero_addr g) /\
               U64.v (wosize_of_object p g) >= 1 /\
               v <> p /\
@@ -967,7 +967,7 @@ private let rec fl_valid_field_write_tail_part1
 private let chain_avoids_after_relink
   (g: heap) (prev_obj: obj_addr) (cur_fp next_fp head_fp: U64.t) (fuel big_fuel: nat)
   : Lemma
-    (requires well_formed_heap_part1 g /\
+    (requires blocks_fit g /\
               fl_valid g cur_fp fuel /\
               fl_chain_terminates g cur_fp fuel /\
               fl_valid g head_fp big_fuel /\
@@ -1050,14 +1050,14 @@ private let chain_avoids_after_relink
 
 /// ---------------------------------------------------------------------------
 /// P2i: alloc_search_preserves_fl_valid_part1 — recursive proof that alloc_search
-///      preserves fl_valid under well_formed_heap_part1 only
+///      preserves fl_valid under blocks_fit only
 /// ---------------------------------------------------------------------------
 
 #restart-solver
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_fl_valid_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     fl_valid g cur_fp fuel /\
                     fl_chain_terminates g cur_fp fuel /\
                     fl_valid g head_fp heap_words /\
@@ -1104,7 +1104,7 @@ private let rec alloc_search_preserves_fl_valid_part1
       assert (U64.v (wosize_of_object obj g) >= 1);
       wosize_of_object_spec obj g;
       wosize_of_object_bound obj g;
-      // Use well_formed_heap_part1 to get the size bound (replaces wf_object_size_bound)
+      // Use blocks_fit to get the size bound (replaces wf_object_size_bound)
       assert (U64.v hd + 8 + block_wz * 8 <= heap_size);
       getWosize_bound hdr;
       let next_fp =
@@ -1405,14 +1405,14 @@ let alloc_spec_preserves_fl_valid_part1 (g: heap) (fp: U64.t) (requested_wz: nat
 
 /// ---------------------------------------------------------------------------
 /// P2k: alloc_search_preserves_fl_chain_terminates_part1 — recursive proof that
-///      alloc_search preserves fl_chain_terminates under well_formed_heap_part1 only
+///      alloc_search preserves fl_chain_terminates under blocks_fit only
 /// ---------------------------------------------------------------------------
 
 #restart-solver
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_fl_chain_terminates_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     fl_valid g cur_fp fuel /\
                     fl_chain_terminates g cur_fp fuel /\
                     fl_valid g head_fp heap_words /\
@@ -1456,7 +1456,7 @@ private let rec alloc_search_preserves_fl_chain_terminates_part1
       assert (U64.v (wosize_of_object obj g) >= 1);
       wosize_of_object_spec obj g;
       wosize_of_object_bound obj g;
-      // Use well_formed_heap_part1 to get the size bound (replaces wf_object_size_bound)
+      // Use blocks_fit to get the size bound (replaces wf_object_size_bound)
       assert (U64.v hd + 8 + block_wz * 8 <= heap_size);
       getWosize_bound hdr;
       let next_fp =
@@ -1742,12 +1742,12 @@ let alloc_spec_preserves_fl_chain_terminates_part1 (g: heap) (fp: U64.t) (reques
     alloc_search_preserves_fl_chain_terminates_part1 g fp 0UL fp wz heap_words tag
 
 /// ===========================================================================
-/// Section P3: alloc_spec_obj_not_in_chain under well_formed_heap_part1
+/// Section P3: alloc_spec_obj_not_in_chain under blocks_fit
 /// ===========================================================================
 
 /// ---------------------------------------------------------------------------
 /// P3a: alloc_search_obj_not_in_chain_part1 — recursive proof that alloc_search
-///      removes obj_out from the chain, under well_formed_heap_part1 only.
+///      removes obj_out from the chain, under blocks_fit only.
 ///      Mirrors alloc_search_obj_not_in_chain but uses part1 helpers.
 /// ---------------------------------------------------------------------------
 
@@ -1755,7 +1755,7 @@ let alloc_spec_preserves_fl_chain_terminates_part1 (g: heap) (fp: U64.t) (reques
 #push-options "--z3rlimit 150 --fuel 1 --ifuel 0"
 private let rec alloc_search_obj_not_in_chain_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     fl_valid g cur_fp fuel /\
                     fl_chain_terminates g cur_fp fuel /\
                     fl_valid g head_fp heap_words /\
@@ -1799,7 +1799,7 @@ private let rec alloc_search_obj_not_in_chain_part1
       assert (U64.v (wosize_of_object obj g) >= 1);
       wosize_of_object_spec obj g;
       wosize_of_object_bound obj g;
-      // Use well_formed_heap_part1 to get size bound (replaces wf_object_size_bound)
+      // Use blocks_fit to get size bound (replaces wf_object_size_bound)
       assert (U64.v hd + 8 + block_wz * 8 <= heap_size);
       getWosize_bound hdr;
       let next_fp =
@@ -2059,7 +2059,7 @@ let alloc_spec_obj_not_in_chain_part1 (g: heap) (fp: U64.t) (requested_wz: nat) 
 private let rec alloc_search_read_other
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   (other: obj_addr) (addr: hp_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     fl_valid g cur_fp fuel /\
                     wz >= 1 /\
                     Seq.mem other (objects zero_addr g) /\
@@ -2188,7 +2188,7 @@ let alloc_spec_read_other (g: heap) (fp: U64.t) (requested_wz: nat)
 private let rec alloc_search_preserves_chain_avoids_other
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   (excl: U64.t) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     fl_valid g cur_fp fuel /\
                     fl_chain_terminates g cur_fp fuel /\
                     fl_valid g head_fp heap_words /\
@@ -2558,7 +2558,7 @@ let alloc_spec_preserves_chain_avoids_other (g: heap) (fp: U64.t) (requested_wz:
 #pop-options
 
 /// ===========================================================================
-/// Section P4: alloc_spec preserves well_formed_heap_part4 (no infix objects)
+/// Section P4: alloc_spec preserves no_infix_block (no infix objects)
 /// ===========================================================================
 
 /// ---------------------------------------------------------------------------
@@ -2569,15 +2569,15 @@ let alloc_spec_preserves_chain_avoids_other (g: heap) (fp: U64.t) (requested_wz:
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let alloc_from_block_preserves_wfh_part4
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
-                    well_formed_heap_part4 g /\
+  : Lemma (requires blocks_fit g /\
+                    no_infix_block g /\
                     tag <> infix_tag /\
                     Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      U64.v (getWosize hdr) >= wz) /\
                     wz >= 1)
           (ensures (let (g', _) = alloc_from_block g obj wz tag next_fp in
-                    well_formed_heap_part4 g'))
+                    no_infix_block g'))
   = let hd = hd_address obj in
     let hdr = read_word g hd in
     let block_wz = U64.v (getWosize hdr) in
@@ -2676,13 +2676,13 @@ private let alloc_from_block_preserves_wfh_part4
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 private let write_body_preserves_wfh_part4
   (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    well_formed_heap_part4 g /\
+  : Lemma (requires blocks_fit g /\
+                    no_infix_block g /\
                     Seq.mem obj (objects zero_addr g) /\
                     U64.v addr >= U64.v obj /\
                     U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
                     U64.v addr % 8 = 0)
-          (ensures well_formed_heap_part4 (write_word g addr v))
+          (ensures no_infix_block (write_word g addr v))
   = write_body_preserves_objects_local zero_addr g obj addr v;
     let g' = write_word g addr v in
     assert (objects zero_addr g' == objects zero_addr g);
@@ -2718,8 +2718,8 @@ private let write_body_preserves_wfh_part4
 #push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_wfh_part4
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
-                    well_formed_heap_part4 g /\
+  : Lemma (requires blocks_fit g /\
+                    no_infix_block g /\
                     tag <> infix_tag /\
                     fl_valid g cur_fp fuel /\
                     fl_chain_terminates g cur_fp fuel /\
@@ -2732,7 +2732,7 @@ private let rec alloc_search_preserves_wfh_part4
                        Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
           (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz tag fuel in
-                    well_formed_heap_part4 r.heap_out))
+                    no_infix_block r.heap_out))
           (decreases fuel)
   = if fuel = 0 then ()
     else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
@@ -2845,7 +2845,7 @@ let alloc_from_block_preserves_objects_part1 = alloc_from_block_preserves_object
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 private let alloc_from_block_no_new_objects_exact
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
@@ -2872,7 +2872,7 @@ private let alloc_from_block_no_new_objects_exact
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let alloc_from_block_only_new_is_alloc
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     (let hd = hd_address obj in
                      let block_wz = U64.v (getWosize (read_word g hd)) in
@@ -2912,7 +2912,7 @@ private let alloc_from_block_only_new_is_alloc
 #push-options "--z3rlimit 75 --fuel 1 --ifuel 0"
 private let rec alloc_search_new_objects_blue_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     fl_valid g cur_fp fuel /\
                     fl_chain_terminates g cur_fp fuel /\
                     wz >= 1 /\
@@ -3104,7 +3104,7 @@ private let field_write_preserves_no_black_part1
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// alloc_from_block preserves no_black_objects under well_formed_heap_part1.
+/// alloc_from_block preserves no_black_objects under blocks_fit.
 /// ---------------------------------------------------------------------------
 
 #restart-solver
@@ -3112,7 +3112,7 @@ private let field_write_preserves_no_black_part1
 private let alloc_from_block_preserves_no_black_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires GC.Spec.Mark.no_black_objects g /\
-                    well_formed_heap_part1 g /\
+                    blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      U64.v (getWosize hdr) >= wz /\ wz >= 1))
@@ -3222,7 +3222,7 @@ private let alloc_from_block_preserves_no_black_part1
 private let rec alloc_search_preserves_no_black_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires GC.Spec.Mark.no_black_objects g /\
-                    well_formed_heap_part1 g /\
+                    blocks_fit g /\
                     wz >= 1 /\
                     fl_valid g cur_fp fuel /\
                     fl_chain_terminates g cur_fp fuel /\

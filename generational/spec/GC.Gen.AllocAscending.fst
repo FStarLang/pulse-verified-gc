@@ -77,7 +77,7 @@ private let prev_write_header (g: heap) (prev: U64.t) (v: U64.t) (a: obj_addr)
 /// Allocating from `obj` leaves the header of every other object alone.
 #push-options "--z3rlimit 40"
 private let afb_header (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (a: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\ Seq.mem obj (objects zero_addr g) /\
+  : Lemma (requires blocks_fit g /\ Seq.mem obj (objects zero_addr g) /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     Seq.mem a (objects zero_addr g) /\ a <> obj)
           (ensures read_word (fst (alloc_from_block g obj wz tag next)) (hd_address a) ==
@@ -97,7 +97,7 @@ private let afb_header (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (a: obj
 /// still blue, with `leftover - 1` fields.
 #push-options "--z3rlimit 60"
 private let afb_obj_facts (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\ Seq.mem obj (objects zero_addr g) /\ wz >= 1 /\
+  : Lemma (requires blocks_fit g /\ Seq.mem obj (objects zero_addr g) /\ wz >= 1 /\
                     is_blue obj g /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     U64.v (hd_address obj) + (U64.v (wosize_of_object obj g) - wz) * 8 + 8 < heap_size)
@@ -172,7 +172,7 @@ let found_heap (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (tag: U64.t{U64
 /// Cells after the found arm: the old ones, minus `obj` unless it split.
 #push-options "--z3rlimit 60"
 private let found_cells (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (tag: U64.t{U64.v tag < 256}) (x: U64.t)
-  : Lemma (requires well_formed_heap_part1 g /\ FL.fl_cell g (obj <: U64.t) /\ wz >= 1 /\
+  : Lemma (requires blocks_fit g /\ FL.fl_cell g (obj <: U64.t) /\ wz >= 1 /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     U64.v (hd_address obj) + (U64.v (wosize_of_object obj g) - wz) * 8 + 8 < heap_size /\
                     (prev = 0UL \/ (FL.fl_cell g prev /\ prev <> (obj <: U64.t))))
@@ -195,7 +195,7 @@ private let found_cells (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (tag: 
        prev_write_header g prev new_fp obj
      end);
     assert (objects zero_addr gw == objects zero_addr g);
-    assert (well_formed_heap_part1 gw);
+    assert (blocks_fit gw);
     assert (read_word gw (hd_address obj) == read_word g (hd_address obj));
     wosize_of_object_spec obj g; wosize_of_object_spec obj gw;
     color_of_object_spec obj g; color_of_object_spec obj gw;
@@ -224,7 +224,7 @@ private let found_cells (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (tag: 
 /// The found arm keeps the list ascending.
 #push-options "--z3rlimit 60"
 private let found_case (g: heap) (head prev: U64.t) (obj: obj_addr) (wz: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\ FLA.fl_ascending g head /\
+  : Lemma (requires blocks_fit g /\ FLA.fl_ascending g head /\
                     FL.fl_cell g (obj <: U64.t) /\ wz >= 1 /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     U64.v (hd_address obj) + (U64.v (wosize_of_object obj g) - wz) * 8 + 8 < heap_size /\
@@ -284,7 +284,7 @@ private let found_case (g: heap) (head prev: U64.t) (obj: obj_addr) (wz: nat) (t
 
 #push-options "--z3rlimit 40 --fuel 1"
 private let rec search_asc (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\ FLA.fl_ascending g head /\ wz >= 1 /\
+  : Lemma (requires blocks_fit g /\ FLA.fl_ascending g head /\ wz >= 1 /\
                     ((prev = 0UL /\ cur == head) \/
                      (FL.fl_cell g prev /\ FL.fl_next g prev == cur)))
           (ensures (let r = alloc_search g head prev cur wz tag fuel in

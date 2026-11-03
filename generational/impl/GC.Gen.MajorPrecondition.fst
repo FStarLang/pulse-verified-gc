@@ -136,7 +136,7 @@ let post_minor_minor_root_valid
   let p = prom.fwd_map rv in
   assert (SpecObj.resolve_object (t <: obj_addr) result.mc_major == p);
   assert (Seq.mem (p <: obj_addr) (SpecFields.objects zero_addr prom.major_final));
-  // `well_formed_heap_part4` says no member of the objects list is infix,
+  // `no_infix_block` says no member of the objects list is infix,
   // which is exactly the side condition `fwd_targets_not_blue` guards on.
   Cheney.cheney_promote_preserves_wfh_part4 minor major fp roots;
   assert (SpecObj.is_infix p prom.major_final = false);

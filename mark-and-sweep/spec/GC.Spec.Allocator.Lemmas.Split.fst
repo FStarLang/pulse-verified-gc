@@ -42,7 +42,7 @@ module Seq = FStar.Seq
 
 /// After the three writes (at hd, rem_hd, rem_obj), all of which are < next_hd,
 /// the objects walk from next_hd is unchanged.
-/// Part1 variant: same as split_next_hd_objects_eq but only requires well_formed_heap_part1
+/// Part1 variant: same as split_next_hd_objects_eq but only requires blocks_fit
 /// ---------------------------------------------------------------------------
 
 /// If objects(start, g) is non-empty (contains any h), then f_address start

@@ -182,7 +182,7 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
 /// Promote one minor-heap object to the major heap.
 /// Returns the new address in major heap (0UL on OOM).
 ///
-/// Preconditions only require well_formed_heap_part1 (not full wfh) because
+/// Preconditions only require blocks_fit (not full wfh) because
 /// during a promotion loop, pointer closure (part2) is temporarily violated
 /// (minor pointers are written into the major heap body). The allocator only
 /// needs part1 + fl_valid + fl_chain_terminates to function correctly.
@@ -198,7 +198,7 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                  // Minor object body within bounds (from minor_objects_wosize_bound)
                  U64.v obj + minor_wosize {data='md; bump='mb} obj * 8 <= minor_heap_size /\
                  // Major heap structural well-formedness (weaker than full wfh)
-                 SF.well_formed_heap_part1 'ms /\
+                 SF.blocks_fit 'ms /\
                  AllocLemmas.fl_valid 'ms 'fp heap_words /\
                  AllocLemmas.fl_chain_terminates 'ms 'fp heap_words)
   returns new_addr: U64.t
@@ -209,7 +209,7 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     pure (let minor_st = {data='md; bump='mb} in
           let wz = minor_wosize minor_st obj in
           md2 == 'md /\ mb2 == 'mb /\
-          SF.well_formed_heap_part1 ms2 /\
+          SF.blocks_fit ms2 /\
           AllocLemmas.fl_valid ms2 fp2 heap_words /\
           AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
           (wz > 0 ==>

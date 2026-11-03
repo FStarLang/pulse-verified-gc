@@ -247,7 +247,7 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
            is_heap major 'ms **
            R.pts_to fp_ref 'fp **
            pts_to fwd_arr 'farr **
-           pure (SpecFields.well_formed_heap_part1 'ms /\
+           pure (SpecFields.blocks_fit 'ms /\
                  AllocLemmas.fl_valid 'ms 'fp heap_words /\
                  AllocLemmas.fl_chain_terminates 'ms 'fp heap_words /\
                  Seq.length 'farr == fwd_array_size /\
@@ -258,7 +258,7 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     R.pts_to fp_ref fp2 **
     pts_to fwd_arr farr2 **
     pure (md2 == 'md /\ mb2 == 'mb /\
-          SpecFields.well_formed_heap_part1 ms2 /\
+          SpecFields.blocks_fit ms2 /\
           AllocLemmas.fl_valid ms2 fp2 heap_words /\
           AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
           Seq.length farr2 == fwd_array_size)
@@ -280,7 +280,7 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
             U64.v bump <= minor_heap_size /\
             U64.v bump % 8 == 0 /\
             md_i == 'md /\ mb_i == bump /\
-            SpecFields.well_formed_heap_part1 ms_i /\
+            SpecFields.blocks_fit ms_i /\
             AllocLemmas.fl_valid ms_i fp_i heap_words /\
             AllocLemmas.fl_chain_terminates ms_i fp_i heap_words /\
             Seq.length farr_i == Seq.length 'farr)
@@ -338,7 +338,7 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
 /// Helper: extract wfh_part1 from well_formed_heap
 let wfh_implies_part1 (g: heap_state)
   : Lemma (requires SpecFields.well_formed_heap g)
-          (ensures SpecFields.well_formed_heap_part1 g)
+          (ensures SpecFields.blocks_fit g)
   = SpecFields.wf_parts ()
 
 /// Lemma: unfold cheney_collect_spec in terms of cheney_promote
@@ -722,8 +722,8 @@ fn gen_gc (gh: gen_heap_t)
   GenInv.major_heap_shape_elim ms_updated fp_val;
   assert (pure (SpecFields.well_formed_heap ms_updated));
   wfh_implies_part1 ms_updated;
-  assert (pure (SpecFields.well_formed_heap_part1 ms_updated));
-  assert (pure (SpecFields.well_formed_heap_part1
+  assert (pure (SpecFields.blocks_fit ms_updated));
+  assert (pure (SpecFields.blocks_fit
     (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major));
   // Phase 2: Major collection, but only if the minor collection succeeded.
   //

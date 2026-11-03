@@ -442,8 +442,8 @@ let sweep_post_wf (g0 g: heap) (fp: U64.t) =
       end
   in
   FStar.Classical.forall_intro p1;
-  assert (well_formed_heap_part1 g);
-  assert (well_formed_heap_part4 g);
+  assert (blocks_fit g);
+  assert (no_infix_block g);
   let facts (src dst: obj_addr)
     : Lemma (requires Seq.mem src objs /\ fields_constrained g src /\
                       (let wz = wosize_of_object src g in

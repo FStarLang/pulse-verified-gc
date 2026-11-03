@@ -55,7 +55,7 @@ val major_edge_points_to
   (minor: minor_state) (major: heap) (src: obj_addr) (dst: U64.t) (i: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       Seq.mem src (objects zero_addr major) /\
       i < U64.v (wosize_of_object src major) /\
       U64.v src + i * 8 + 8 <= heap_size /\

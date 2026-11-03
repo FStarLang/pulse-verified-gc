@@ -32,7 +32,7 @@ module WriteBody = GC.Gen.WriteBodyLemmas
 /// Z3 will not find it; discharged here where the context is empty.
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
 private let block_prev_separated (g: heap) (obj prev: obj_addr) (bwz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem (obj <: U64.t) (objects zero_addr g) /\
                     Seq.mem (prev <: U64.t) (objects zero_addr g) /\
                     (prev <: U64.t) <> (obj <: U64.t) /\
@@ -55,7 +55,7 @@ private let block_prev_separated (g: heap) (obj prev: obj_addr) (bwz: nat)
 /// and link both sit a full word below the block's header.
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
 private let block_prev_separated_body (g: heap) (obj prev: obj_addr) (bwz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem (obj <: U64.t) (objects zero_addr g) /\
                     Seq.mem (prev <: U64.t) (objects zero_addr g) /\
                     (prev <: U64.t) <> (obj <: U64.t) /\
@@ -78,7 +78,7 @@ private let block_prev_separated_body (g: heap) (obj prev: obj_addr) (bwz: nat)
 private let alloc_from_block_fp_pointer_or_zero
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires
-      well_formed_heap_part1 g /\
+      blocks_fit g /\
       Seq.mem obj (objects zero_addr g) /\
       is_blue obj g /\
       FreeListShape.blue_link_fields_valid g /\
@@ -107,7 +107,7 @@ private let alloc_from_block_fp_pointer_or_zero
 private let rec alloc_search_fp_pointer_or_zero
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires
-      well_formed_heap_part1 g /\
+      blocks_fit g /\
       AllocLemmas.fl_valid g cur_fp fuel /\
       AllocLemmas.fl_chain_terminates g cur_fp fuel /\
       FreeListShape.blue_link_fields_valid g /\
@@ -192,7 +192,7 @@ private let rec alloc_search_preserves_blfv
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires
-      well_formed_heap_part1 g /\
+      blocks_fit g /\
       AllocLemmas.fl_valid g cur_fp fuel /\
       AllocLemmas.fl_chain_terminates g cur_fp fuel /\
       FreeListShape.blue_link_fields_valid g /\
@@ -263,7 +263,7 @@ private let rec alloc_search_preserves_blfv
              zero_addr g prev_obj (prev_obj <: hp_addr) new_rem_fp;
            read_write_different g (prev_obj <: hp_addr) hd new_rem_fp
          end else ());
-        assert (well_formed_heap_part1 base);
+        assert (blocks_fit base);
         assert (objects zero_addr base == objects zero_addr g);
         assert (read_word base hd == hdr);
         let heap_out = fst (alloc_from_block base obj wz tag next_fp) in

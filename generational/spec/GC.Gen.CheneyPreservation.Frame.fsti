@@ -25,7 +25,7 @@ val promote_object_frame_old_field_derived
   (src: obj_addr) (idx: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
       (let res = promote_object minor major obj fp wz in
@@ -46,7 +46,7 @@ val promote_object_frame_old_header_derived
   (src: obj_addr)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
       (let res = promote_object minor major obj fp wz in
@@ -67,7 +67,7 @@ val cheney_forward_normal_preserves_old_nonblue_shape
   (src: obj_addr)
   : Lemma
       (requires
-        well_formed_heap_part1 cs.cs_major /\
+        blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -85,7 +85,7 @@ val cheney_forward_one_preserves_old_nonblue_shape
   (src: obj_addr)
   : Lemma
       (requires
-        well_formed_heap_part1 cs.cs_major /\
+        blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -104,7 +104,7 @@ val cheney_forward_normal_frame_field
   (src: obj_addr) (idx: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 cs.cs_major /\
+      blocks_fit cs.cs_major /\
       AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
       AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
       chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -123,7 +123,7 @@ val cheney_forward_one_frame_field
   (src: obj_addr) (idx: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 cs.cs_major /\
+      blocks_fit cs.cs_major /\
       AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
       AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
       chain_objects_blue cs.cs_major cs.cs_fp /\
@@ -141,7 +141,7 @@ val cheney_forward_one_frame_field
 val cheney_promote_frame_old_fields
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr) (j: nat)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+  : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
@@ -157,7 +157,7 @@ val cheney_promote_frame_old_fields
 val cheney_promote_frame_old_header
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+  : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
@@ -179,7 +179,7 @@ val cheney_promote_frame_target_header
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (h: obj_addr)
   : Lemma
-    (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+    (requires blocks_fit major /\ no_infix_block major /\
               AllocLemmas.fl_valid major fp heap_words /\
               AllocLemmas.fl_chain_terminates major fp heap_words /\
               chain_objects_blue major fp /\

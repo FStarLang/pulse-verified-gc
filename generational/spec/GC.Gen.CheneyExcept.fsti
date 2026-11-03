@@ -48,7 +48,7 @@ module GenInv = GC.Gen.HeapInvariant
 /// What a minor collection assumes of the major heap and the nursery for the
 /// facts below (the promotion-side part of `collection_heap_shape`).
 let promote_pre (minor: minor_state) (major: heap) (fp: U64.t) : prop =
-  well_formed_heap_part1 major /\ well_formed_heap_part4 major /\
+  blocks_fit major /\ no_infix_block major /\
   AllocLemmas.fl_valid major fp heap_words /\
   AllocLemmas.fl_chain_terminates major fp heap_words /\
   chain_objects_blue major fp /\
@@ -69,12 +69,12 @@ val cheney_collect_spec_except_no_pending
 /// the not-freed objects and the pending set's admissibility.
 val update_walk_not_freed
   (major: heap) (upd pf: obj_addr -> prop) (fwd: forwarding_map) (x: obj_addr)
-  : Lemma (requires well_formed_heap_part1 major)
+  : Lemma (requires blocks_fit major)
           (ensures not_freed (update_walk major upd fwd) pf x <==> not_freed major pf x)
 
 val update_walk_preserves_pending_ok
   (major: heap) (upd pf: obj_addr -> prop) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major /\ pending_ok major pf)
+  : Lemma (requires blocks_fit major /\ pending_ok major pf)
           (ensures pending_ok (update_walk major upd fwd) pf)
 
 /// Promotion keeps every not-freed object not freed.
@@ -128,7 +128,7 @@ val wfh_except_from_field_closure (g: heap) (pf: obj_addr -> prop)
                     is_pointer v ==>
                     not_freed g pf (resolve_object (v <: obj_addr) g) /\
                     infix_addr_wf g (objects zero_addr g) (v <: obj_addr))))
-  : Lemma (requires well_formed_heap_part1 g)
+  : Lemma (requires blocks_fit g)
           (ensures well_formed_heap_part2_except g pf /\
                    well_formed_heap_part3_except g pf)
 
@@ -180,7 +180,7 @@ val update_walk_frame_target_header
   (g: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (h: obj_addr)
   : Lemma
     (requires
-      well_formed_heap_part1 g /\
+      blocks_fit g /\
       (~(is_infix h g) ==> Seq.mem h (objects zero_addr g)) /\
       (is_infix h g ==>
         (let w = U64.v (wosize_of_object h g) in

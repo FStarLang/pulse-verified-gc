@@ -307,7 +307,7 @@ let post_edge_from_minor_image_reflects_mem_ce
           assert (Seq.mem ((prom.fwd_map rv) <: obj_addr)
             (objects zero_addr prom.major_final));
           Cheney.cheney_promote_preserves_wfh_part4 minor major fp roots;
-          assert (well_formed_heap_part4 prom.major_final);
+          assert (no_infix_block prom.major_final);
           CheneyInj.cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
             minor major fp roots;
           assert (CheneyInj.fwd_normal_targets_disjoint_from_old_nonblue

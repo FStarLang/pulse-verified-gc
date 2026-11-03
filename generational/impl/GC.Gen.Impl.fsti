@@ -369,7 +369,7 @@ let minor_collect_post_except
   UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
   UpdatePtrs.valid_fwd_entries farr2 /\
   Seq.length farr2 == UpdatePtrs.fwd_array_size /\
-  SpecFields.well_formed_heap_part1 prom.major_final /\
+  SpecFields.blocks_fit prom.major_final /\
   // The shape is kept, for the same pending set
   GenInv.collection_shape_except ({ data = d2; bump = b2 } <: minor_state) s2 fp2 pf /\
   // If promotion succeeds, the collection is a reachable-subgraph isomorphism
@@ -450,7 +450,7 @@ let minor_collect_post_idle
   UpdatePtrs.valid_fwd_entries farr2 /\
   Seq.length farr2 == UpdatePtrs.fwd_array_size /\
   // Well-formedness preserved through promotion
-  SpecFields.well_formed_heap_part1 prom.major_final /\
+  SpecFields.blocks_fit prom.major_final /\
   // Strong correctness: the result equals cheney_collect_spec
   // (single-pass full update of all pointer fields in the major heap).
   s2 == (CheneySpec.cheney_collect_spec minor_st s fp rs).mc_major /\

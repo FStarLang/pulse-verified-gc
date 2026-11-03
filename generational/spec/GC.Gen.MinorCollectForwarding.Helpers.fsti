@@ -275,7 +275,7 @@ val update_preserves_major_target_field
   (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (src dst: obj_addr) (j: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       Seq.mem src (objects zero_addr major) /\
       Seq.mem dst (objects zero_addr major) /\
       j < U64.v (wosize_of_object src major) /\
@@ -293,7 +293,7 @@ val heap_field_points_to_graph_edge
   (g: heap) (pf: obj_addr -> prop) (src: obj_addr) (dst: U64.t) (j: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 g /\
+      blocks_fit g /\
       not_freed g pf src /\
       ~(is_no_scan src g) /\
       j < U64.v (wosize_of_object src g) /\
@@ -359,7 +359,7 @@ val mem_graph_vertex_at_is_obj_addr
 /// part 4 forbids an enumerated object from carrying an infix header.
 val vertex_resolves_to_itself (h: heap) (pf: obj_addr -> prop) (w: U64.t)
   : Lemma
-    (requires well_formed_heap_part4 h /\
+    (requires no_infix_block h /\
               mem_graph_vertex_at (HeapModel.create_graph_except h pf) w)
     (ensures HeapGraph.resolve_field h w == w)
 
@@ -532,12 +532,12 @@ val post_shape_except
     (ensures (
       let res = cheney_collect_spec_except minor major fp roots pf in
       well_formed_heap_except res.mc_major pf /\
-      well_formed_heap_part1 res.mc_major /\
-      well_formed_heap_part4 res.mc_major))
+      blocks_fit res.mc_major /\
+      no_infix_block res.mc_major))
 
 /// Part 4 at one object.
 val part4_non_infix (g: heap) (h: obj_addr)
-  : Lemma (requires well_formed_heap_part4 g /\ Seq.mem h (objects zero_addr g))
+  : Lemma (requires no_infix_block g /\ Seq.mem h (objects zero_addr g))
           (ensures ~(is_infix h g))
 
 /// The image of a promoted nursery object is not freed, after promotion and

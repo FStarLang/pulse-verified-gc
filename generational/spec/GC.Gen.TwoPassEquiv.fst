@@ -156,7 +156,7 @@ private let update_object_pointers_preserves_frame_pre
     // 1. objects list is preserved
     PromObj.update_object_pointers_preserves_objects major obj wz fwd 0;
     assert (objects zero_addr major' == objects zero_addr major);
-    // 2. well_formed_heap_part1 major'
+    // 2. blocks_fit major'
     //    Same argument as in PromoteUpdate.Aux: all headers preserved
     let aux_wfh (h: obj_addr) : Lemma
       (requires Seq.mem h (objects zero_addr major'))
@@ -177,7 +177,7 @@ private let update_object_pointers_preserves_frame_pre
       end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_wfh);
-    assert (well_formed_heap_part1 major');
+    assert (blocks_fit major');
     // 3. For each i > idx with non-zero farr[i]:
     //    - Either is_infix (preserved by update_obj_ptrs_preserves_is_infix)
     //    - Or: Seq.mem (farr[i]) (objects zero_addr major') — from (1)
@@ -343,7 +343,7 @@ private let update_object_pointers_preserves_promoted_field_pre
   : Lemma
     (requires
       Seq.length farr == fwd_array_size /\
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       pi < fwd_array_size /\ idx < pi /\
       (let obj = Seq.index farr pi in
        obj <> 0UL /\
@@ -395,7 +395,7 @@ private let update_object_pointers_preserves_promoted_field_pre
        // Field is preserved
        read_word major' field_addr == read_word major field_addr /\
        // Precondition transfers to major' at idx+1
-       well_formed_heap_part1 major' /\
+       blocks_fit major' /\
        Seq.mem obj (objects zero_addr major') /\
        wosize_of_object obj major' == wosize_of_object obj major /\
        read_word major' (hd_address obj) == read_word major (hd_address obj) /\
@@ -455,7 +455,7 @@ private let update_object_pointers_preserves_promoted_field_pre
     hd_address_spec obj_o;
     wosize_of_object_spec obj_o major;
     wosize_of_object_spec obj_o major';
-    // well_formed_heap_part1 major' (same pattern as update_object_pointers_preserves_frame_pre)
+    // blocks_fit major' (same pattern as update_object_pointers_preserves_frame_pre)
     let aux_wfh (h: obj_addr) : Lemma
       (requires Seq.mem h (objects zero_addr major'))
       (ensures U64.v (hd_address h) + 8 + (U64.v (wosize_of_object h major') * 8) <= Seq.length major')
@@ -531,7 +531,7 @@ private let rec update_promoted_iter_promoted_field_aux
   : Lemma
     (requires
       Seq.length farr == fwd_array_size /\
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       pi < fwd_array_size /\ idx <= pi /\
       (let obj = Seq.index farr pi in
        obj <> 0UL /\
@@ -633,7 +633,7 @@ private let rec update_promoted_iter_promoted_field_aux
         end
       in
       FStar.Classical.forall_intro (FStar.Classical.move_requires aux_suffix);
-      // Establish well_formed_heap_part1 for major'
+      // Establish blocks_fit for major'
       let aux_wfh (h: obj_addr) : Lemma
         (requires Seq.mem h (objects zero_addr major'))
         (ensures U64.v (hd_address h) + 8 + (U64.v (wosize_of_object h major') * 8) <= Seq.length major')
@@ -979,7 +979,7 @@ private let update_obj_ptrs_preserves_entries_valid
     let major' = update_object_pointers major obj wz fwd 0 in
     PromObj.update_object_pointers_preserves_objects major obj wz fwd 0;
     assert (objects zero_addr major' == objects zero_addr major);
-    // Show well_formed_heap_part1 major'
+    // Show blocks_fit major'
     let aux_wfh (h: obj_addr) : Lemma
       (requires Seq.mem h (objects zero_addr major'))
       (ensures U64.v (hd_address h) + 8 + (U64.v (wosize_of_object h major') * 8) <= Seq.length major')
@@ -1342,13 +1342,13 @@ let rec update_promoted_iter_preserves_non_field
 /// - different aligned addresses don't interfere
 /// - no step creates a forwarded minor ptr where none existed
 
-/// Helper: maintains well_formed_heap_part1 after update_object_pointers.
+/// Helper: maintains blocks_fit after update_object_pointers.
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 private let update_obj_ptrs_preserves_wfh
   (major: heap) (obj: obj_addr) (wz: nat) (fwd: forwarding_map)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       Seq.mem obj (objects zero_addr major) /\
       U64.v obj % 8 == 0 /\
       wz == U64.v (wosize_of_object obj major) /\
@@ -1357,7 +1357,7 @@ private let update_obj_ptrs_preserves_wfh
         (U64.v obj + k * 8 + 8 <= heap_size /\ (U64.v obj + k * 8) % 8 == 0)))
     (ensures
       (let major' = update_object_pointers major obj wz fwd 0 in
-       well_formed_heap_part1 major' /\
+       blocks_fit major' /\
        objects zero_addr major' == objects zero_addr major))
   = let major' = update_object_pointers major obj wz fwd 0 in
     PromObj.update_object_pointers_preserves_objects major obj wz fwd 0;
@@ -1389,7 +1389,7 @@ private let rec update_walk_aux_preserves_non_fwd
   (addr: hp_addr)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       objs == objects zero_addr major /\
       (let old_val = to_minor_offset (read_word major addr) in
        ~(is_minor_pointer old_val /\ fwd old_val <> 0UL)))
@@ -1409,7 +1409,7 @@ private let rec update_walk_aux_preserves_non_fwd
         // Scannable: process this object
         let wz = U64.v (wosize_of_object obj major) in
         let major' = update_object_pointers major obj wz fwd 0 in
-        // Establish field bounds from well_formed_heap_part1
+        // Establish field bounds from blocks_fit
         wosize_of_object_spec obj major;
         hd_address_spec obj;
         assert (U64.v obj + wz * 8 <= heap_size);
@@ -1440,7 +1440,7 @@ let update_walk_preserves_non_fwd
   (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (addr: hp_addr)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       (let old_val = to_minor_offset (read_word major addr) in
        ~(is_minor_pointer old_val /\ fwd old_val <> 0UL)))
     (ensures
@@ -1456,7 +1456,7 @@ private let rec update_walk_aux_preserves_non_field
   (addr: hp_addr)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       objs == objects zero_addr major /\
       ~(walked_field_addr major upd (U64.v addr)))
     (ensures
@@ -1506,7 +1506,7 @@ let update_walk_preserves_non_field
   (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (addr: hp_addr)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       ~(walked_field_addr major upd (U64.v addr)))
     (ensures
       read_word (update_walk major upd fwd) addr == read_word major addr)
@@ -1554,7 +1554,7 @@ let if_branch_rhs
   (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (obj: obj_addr) (j: nat) (addr: hp_addr)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       Seq.mem obj (objects zero_addr major) /\
       upd obj /\
       is_no_scan obj major = false /\
@@ -1583,7 +1583,7 @@ let if_branch_lhs_promoted
   (n: nat) (pi: nat) (addr: hp_addr)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       Seq.length farr == fwd_array_size /\
       promoted_entries_valid_from major farr 0 /\
       promoted_entries_disjoint major farr /\
@@ -1648,7 +1648,7 @@ let if_branch_lhs_slot
   (n: nat) (si: nat) (addr: hp_addr)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       Seq.length farr == fwd_array_size /\
       promoted_entries_valid_from major farr 0 /\
       valid_slot_addrs slots n /\
@@ -1690,7 +1690,7 @@ let field_not_in_other_obj
   (major: heap) (obj obj_pi: obj_addr) (j: nat) (addr: hp_addr)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       Seq.mem obj (objects zero_addr major) /\
       Seq.mem obj_pi (objects zero_addr major) /\
       j < U64.v (wosize_of_object obj major) /\
@@ -1723,7 +1723,7 @@ let field_not_in_any_promoted_body
   (major: heap) (farr: seq U64.t) (obj: obj_addr) (j: nat) (addr: hp_addr)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       Seq.length farr == fwd_array_size /\
       promoted_entries_valid_from major farr 0 /\
       Seq.mem obj (objects zero_addr major) /\
@@ -1770,11 +1770,11 @@ let if_branch_field_eq
   (obj: obj_addr) (j: nat) (addr: hp_addr)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       Seq.length farr == fwd_array_size /\
       promoted_entries_valid_from major farr 0 /\
       promoted_entries_disjoint major farr /\
-      well_formed_heap_part4 major /\
+      no_infix_block major /\
       valid_slot_addrs slots n /\
       slots_pairwise_distinct slots n /\
       fwd_targets_stable fwd /\
@@ -1883,8 +1883,8 @@ private let two_pass_pointwise
   (a: nat{a < heap_size /\ a % U64.v mword == 0})
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
-      well_formed_heap_part4 major /\
+      blocks_fit major /\
+      no_infix_block major /\
       Seq.length farr == fwd_array_size /\
       promoted_entries_valid_from major farr 0 /\
       promoted_entries_walked_from major upd farr 0 /\

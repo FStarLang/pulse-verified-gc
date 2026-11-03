@@ -1,7 +1,7 @@
 (*
    GC.Spec.Allocator.Lemmas.Part2 — Interface for P2-P5 proofs.
 
-   alloc_spec preserves well_formed_heap_part1, fl_valid, fl_chain_terminates,
+   alloc_spec preserves blocks_fit, fl_valid, fl_chain_terminates,
    and various framing properties under the weaker part1 precondition.
 *)
 module GC.Spec.Allocator.Lemmas.Part2
@@ -16,11 +16,11 @@ open GC.Spec.Allocator.Lemmas.Chain
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
-/// alloc_from_block preserves well_formed_heap_part1.
+/// alloc_from_block preserves blocks_fit.
 val alloc_from_block_preserves_wfh_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   Seq.mem obj (objects zero_addr g) /\
                   // needed so the right-justified object address lands
                   // strictly inside the heap
@@ -28,16 +28,16 @@ val alloc_from_block_preserves_wfh_part1 :
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
         (ensures (let (g', _) = alloc_from_block g obj wz tag next_fp in
-                  well_formed_heap_part1 g'))
+                  blocks_fit g'))
 
-/// **Theorem**: alloc_spec preserves well_formed_heap_part1.
+/// **Theorem**: alloc_spec preserves blocks_fit.
 val alloc_spec_preserves_wfh_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   fl_valid g fp heap_words /\
                   fl_chain_terminates g fp heap_words)
         (ensures (let r = alloc_spec g fp requested_wz tag in
-                  well_formed_heap_part1 r.heap_out))
+                  blocks_fit r.heap_out))
 
 /// ---------------------------------------------------------------------------
 /// Frame facts for one block's allocation: every other object keeps its
@@ -47,7 +47,7 @@ val alloc_spec_preserves_wfh_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: 
 
 val alloc_split_fl_transfer_pre_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (a: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
@@ -73,7 +73,7 @@ val alloc_split_fl_transfer_pre_part1
 
 val alloc_exact_fl_transfer_pre_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (a: obj_addr) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires well_formed_heap_part1 g /\
+  : Lemma (requires blocks_fit g /\
                     Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
@@ -91,28 +91,28 @@ val alloc_exact_fl_transfer_pre_part1
                       read_word g' a == read_word g a)))
 
 
-/// **Theorem**: alloc_spec preserves fl_valid under well_formed_heap_part1.
+/// **Theorem**: alloc_spec preserves fl_valid under blocks_fit.
 val alloc_spec_preserves_fl_valid_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   fl_valid g fp heap_words /\
                   fl_chain_terminates g fp heap_words)
         (ensures (let r = alloc_spec g fp requested_wz tag in
                   fl_valid r.heap_out r.fp_out heap_words))
 
-/// **Theorem**: alloc_spec preserves fl_chain_terminates under well_formed_heap_part1.
+/// **Theorem**: alloc_spec preserves fl_chain_terminates under blocks_fit.
 val alloc_spec_preserves_fl_chain_terminates_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   fl_valid g fp heap_words /\
                   fl_chain_terminates g fp heap_words)
         (ensures (let r = alloc_spec g fp requested_wz tag in
                   fl_chain_terminates r.heap_out r.fp_out heap_words))
 
-/// **Theorem**: alloc_spec removes obj_out from the chain, under well_formed_heap_part1.
+/// **Theorem**: alloc_spec removes obj_out from the chain, under blocks_fit.
 val alloc_spec_obj_not_in_chain_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   fl_valid g fp heap_words /\
                   fl_chain_terminates g fp heap_words /\
                   requested_wz >= 1 /\
@@ -130,7 +130,7 @@ val alloc_spec_obj_not_in_chain_part1 : (g: heap) -> (fp: U64.t) -> (requested_w
 val alloc_spec_read_other : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
                             (other: obj_addr) -> (addr: hp_addr) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   fl_valid g fp heap_words /\
                   fl_chain_terminates g fp heap_words /\
                   requested_wz >= 1 /\
@@ -148,7 +148,7 @@ val alloc_spec_read_other : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
 val alloc_spec_preserves_chain_avoids_other : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
                                               (excl: U64.t) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   fl_valid g fp heap_words /\
                   fl_chain_terminates g fp heap_words /\
                   requested_wz >= 1 /\
@@ -159,31 +159,31 @@ val alloc_spec_preserves_chain_avoids_other : (g: heap) -> (fp: U64.t) -> (reque
         (ensures (let r = alloc_spec g fp requested_wz tag in
                   chain_avoids r.heap_out r.fp_out excl heap_words = true))
 
-/// **Theorem**: alloc_spec preserves well_formed_heap_part4 (no infix objects).
-/// Under just well_formed_heap_part1, fl_valid, fl_chain_terminates.
+/// **Theorem**: alloc_spec preserves no_infix_block (no infix objects).
+/// Under just blocks_fit, fl_valid, fl_chain_terminates.
 /// The remainder header has tag 0 and the allocated block carries `tag`, so
 /// neither is infix as long as the caller does not ask for `infix_tag`.
 /// Existing non-free-list objects have unchanged headers.
 val alloc_spec_preserves_wfh_part4 : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
-                  well_formed_heap_part4 g /\
+  Lemma (requires blocks_fit g /\
+                  no_infix_block g /\
                   tag <> infix_tag /\
                   fl_valid g fp heap_words /\
                   fl_chain_terminates g fp heap_words)
         (ensures (let r = alloc_spec g fp requested_wz tag in
-                  well_formed_heap_part4 r.heap_out))
+                  no_infix_block r.heap_out))
 
 /// ---------------------------------------------------------------------------
 /// Allocation framing: field reads for non-allocated objects
 /// ---------------------------------------------------------------------------
 /// **Theorem**: In the split case (block_wz - wz >= 2), the remainder fp
 /// returned by alloc_from_block is a valid pointer AND is in objects of
-/// the output heap. Requires only well_formed_heap_part1.
+/// the output heap. Requires only blocks_fit.
 val alloc_from_block_rem_in_objects_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    let bwz = U64.v (getWosize hdr) in
@@ -193,11 +193,11 @@ val alloc_from_block_rem_in_objects_part1 :
                   Seq.mem rem_fp (objects zero_addr g')))
 
 /// **Theorem**: alloc_from_block preserves object membership under just
-/// well_formed_heap_part1. (Public wrapper for internal part1 proof.)
+/// blocks_fit. (Public wrapper for internal part1 proof.)
 val alloc_from_block_preserves_objects_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
@@ -220,7 +220,7 @@ val alloc_from_block_preserves_objects_part1 :
 val alloc_spec_new_objects_blue_part1 :
   (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   fl_valid g fp heap_words /\
                   fl_chain_terminates g fp heap_words /\
                   requested_wz >= 1 /\
@@ -246,7 +246,7 @@ val alloc_spec_new_objects_blue_part1 :
 val alloc_spec_only_new_is_obj_out_part1 :
   (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   fl_valid g fp heap_words /\
                   fl_chain_terminates g fp heap_words /\
                   requested_wz >= 1 /\
@@ -265,7 +265,7 @@ val alloc_spec_only_new_is_obj_out_part1 :
 val alloc_from_block_objects_backward_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) -> (h: obj_addr) ->
   (tag: U64.t{U64.v tag < 256}) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   Seq.mem obj (objects zero_addr g) /\
                   (let hd = hd_address obj in
                    let bwz = U64.v (getWosize (read_word g hd)) in
@@ -278,7 +278,7 @@ val alloc_from_block_objects_backward_part1 :
                   let bwz = U64.v (getWosize (read_word g hd)) in
                   U64.v h == U64.v hd + (bwz - wz) * 8 + 8))
 
-/// **Theorem**: alloc_spec preserves no_black_objects under well_formed_heap_part1.
+/// **Theorem**: alloc_spec preserves no_black_objects under blocks_fit.
 ///
 /// Proof sketch: For each object h in the post-alloc heap:
 /// - If h is new (not in pre-alloc): alloc_spec_new_objects_blue_part1 → blue → not black
@@ -287,7 +287,7 @@ val alloc_from_block_objects_backward_part1 :
 val alloc_spec_preserves_no_black_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   (tag: U64.t{U64.v tag < 256}) ->
   Lemma (requires GC.Spec.Mark.no_black_objects g /\
-                  well_formed_heap_part1 g /\
+                  blocks_fit g /\
                   fl_valid g fp heap_words /\
                   fl_chain_terminates g fp heap_words)
         (ensures (let r = alloc_spec g fp requested_wz tag in

@@ -499,12 +499,12 @@ let points_to (g: heap) (src dst: obj_addr) : GTot bool =
 
 /// The property "all pointer targets >= 8" follows from (2) + objects_addresses_ge_8
 /// Note: We use exists_field_pointing_to_unchecked to avoid circular dependency with well_formed_object
-let well_formed_heap_part1 (g: heap) : prop =
+let blocks_fit (g: heap) : prop =
   (forall (h: obj_addr). Seq.mem h (objects zero_addr g) ==>
     (let wz = wosize_of_object h g in
      U64.v (hd_address h) + 8 + (U64.v wz * 8) <= Seq.length g))
 
-let well_formed_heap_part4 (g: heap) : prop =
+let no_infix_block (g: heap) : prop =
   (forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(GC.Spec.Object.is_infix obj g))
 
 /// The sources whose fields the collector is obliged to keep well formed.
@@ -686,7 +686,7 @@ let well_formed_heap_part2_intro_raw (g: heap)
                        U64.v wz < pow2 54 /\
                        exists_field_pointing_to_unchecked g src wz dst))
             (ensures Seq.mem dst (objects zero_addr g) /\ ~(is_blue dst g)))
-  : Lemma (requires well_formed_heap_part4 g)
+  : Lemma (requires no_infix_block g)
           (ensures well_formed_heap_part2 g)
   = let pf' (src: obj_addr) (dst: obj_addr) : Lemma
       (requires Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
@@ -870,18 +870,18 @@ let well_formed_heap_part2_3_transport (g: heap) (g': heap)
 /// for `well_formed_heap`).
 [@@"opaque_to_smt"]
 let well_formed_heap_except (g: heap) (pf: obj_addr -> prop) : prop =
-  well_formed_heap_part1 g /\
+  blocks_fit g /\
   well_formed_heap_part2_except g pf /\
   well_formed_heap_part3_except g pf /\
-  well_formed_heap_part4 g
+  no_infix_block g
 
 let wf_except_parts (_: unit) : Lemma
   (ensures forall (g: heap) (pf: obj_addr -> prop).
              well_formed_heap_except g pf <==>
-             (well_formed_heap_part1 g /\
+             (blocks_fit g /\
               well_formed_heap_part2_except g pf /\
               well_formed_heap_part3_except g pf /\
-              well_formed_heap_part4 g))
+              no_infix_block g))
   = reveal_opaque (`%well_formed_heap_except) well_formed_heap_except
 
 /// Well-formedness: the `no_pending` instance.  Stop-the-world, idle and
@@ -915,10 +915,10 @@ let points_to_target_except (g: heap) (pf: obj_addr -> prop) (src dst: obj_addr)
 let wf_parts (_: unit) : Lemma
   (ensures forall (g: heap).
              well_formed_heap g <==>
-             (well_formed_heap_part1 g /\
+             (blocks_fit g /\
               well_formed_heap_part2 g /\
               well_formed_heap_part3 g /\
-              well_formed_heap_part4 g))
+              no_infix_block g))
   = wf_except_parts ()
 
 /// ---------------------------------------------------------------------------
@@ -1020,10 +1020,10 @@ let wf_object_bound (g: heap) (h: obj_addr) : Lemma
   = wf_parts ();
     hd_address_spec h
 
-/// Extract part 1 from well_formed_heap_part1 only (no full wfh needed).
+/// Extract part 1 from blocks_fit only (no full wfh needed).
 /// Since hd_address h = h - 8 for obj_addr h, part1 gives: h + wosize*8 <= heap_size.
 let wfh_part1_obj_bound (g: heap) (h: obj_addr) : Lemma
-  (requires well_formed_heap_part1 g /\ Seq.mem h (objects zero_addr g))
+  (requires blocks_fit g /\ Seq.mem h (objects zero_addr g))
   (ensures U64.v h + op_Star (U64.v (wosize_of_object h g)) 8 <= Seq.length g)
   = hd_address_spec h
 
@@ -1163,7 +1163,7 @@ let no_infix_field_targets_from_raw (g: heap)
                        U64.v wz < pow2 54 /\
                        exists_field_pointing_to_unchecked g src wz dst))
             (ensures Seq.mem dst (objects zero_addr g)))
-  : Lemma (requires well_formed_heap_part4 g)
+  : Lemma (requires no_infix_block g)
           (ensures no_infix_field_targets g)
   = let pf (src: obj_addr) (dst: obj_addr) : Lemma
       (requires Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
@@ -1227,7 +1227,7 @@ let well_formed_heap_part2_from_field_closure (g: heap)
             (ensures (let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
                       is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr g) /\
                                        ~(is_blue (v <: obj_addr) g))))
-  : Lemma (requires well_formed_heap_part1 g /\ well_formed_heap_part4 g)
+  : Lemma (requires blocks_fit g /\ no_infix_block g)
     (ensures well_formed_heap_part2 g /\ well_formed_heap_part3 g /\
              no_infix_field_targets g)
   = let aux (src dst: obj_addr)
@@ -1320,7 +1320,7 @@ let well_formed_heap_part2_3_from_resolved_field_closure (g: heap)
                       ~(is_blue (GC.Spec.Object.resolve_object (v <: obj_addr) g) g) /\
                       GC.Spec.Object.infix_addr_wf g (objects zero_addr g)
                               (v <: obj_addr))))
-  : Lemma (requires well_formed_heap_part1 g /\ well_formed_heap_part4 g)
+  : Lemma (requires blocks_fit g /\ no_infix_block g)
     (ensures well_formed_heap_part2 g /\ well_formed_heap_part3 g)
   = let contra (src: obj_addr) (dst: obj_addr)
     : Lemma (requires Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
@@ -1737,10 +1737,10 @@ val write_word_preserves_objects : (g: heap) -> (obj: obj_addr) -> (addr: hp_add
 
 let write_word_preserves_objects g obj addr v =
   write_word_preserves_objects_aux zero_addr g obj addr v
-/// Field write preserves objects — variant requiring only well_formed_heap_part1.
+/// Field write preserves objects — variant requiring only blocks_fit.
 /// Same proof as write_word_preserves_objects but with weaker precondition.
 val write_word_preserves_objects_part1 : (g: heap) -> (obj: obj_addr) -> (addr: hp_addr) -> (v: U64.t) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  Lemma (requires blocks_fit g /\
                   Seq.mem obj (objects zero_addr g) /\
                   U64.v addr >= U64.v obj /\
                   U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
