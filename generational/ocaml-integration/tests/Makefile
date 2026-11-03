@@ -46,6 +46,14 @@ bench_stats.cmo: bench_stats.ml
 
 BENCHMARKS = binarytrees fasta quicksort fannkuchredux count_change nbodies spectralnorm mandelbrot
 
+# Large-live-set programs for timing the major mark (`make bench-mark`); not
+# part of the smoke tests.
+MARK_BENCHMARKS = livemap livegraph
+LIVEMAP_MAJOR_WORDS   ?= 25165824
+LIVEGRAPH_MAJOR_WORDS ?= 16777216
+BT16_MAJOR_WORDS      ?= 67108864
+BT18_MAJOR_WORDS      ?= 536870912
+
 # Correctness tests (not benchmarks): run under both runtimes and compared.
 CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior \
                     alloc_exact_promotion tiny_globals gc_explicit large_alloc_garbage
@@ -82,7 +90,7 @@ LARGE_ALLOC_MAJOR_WORDS ?= 4000000
 LARGE_ALLOC_LEAVE_FREE  ?= 100000
 
 BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
-             $(addsuffix .byte, $(KNOWN_GAP_TESTS))
+             $(addsuffix .byte, $(KNOWN_GAP_TESTS)) $(addsuffix .byte, $(MARK_BENCHMARKS))
 NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS)) gc_explicit.native large_alloc_garbage.native
 BENCH_TARGETS = $(addsuffix .bench, $(BENCHMARKS))
 STATS_TARGETS = $(addsuffix .stats, $(BENCHMARKS))
@@ -387,6 +395,14 @@ mandelbrot.minheap: mandelbrot.stats.byte | results
 	rm -f results/$@.csv
 	./bench_min_heap.sh results/$@.csv mandelbrot $(MANDELBROT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) $(UNCHANGED_OCAMLRUN) $< 1000
 
+# Mark-heavy programs: binarytrees at depths 16 and 18, livemap, livegraph.
+bench-mark: binarytrees.byte livemap.byte livegraph.byte | results
+	hyperfine --export-csv results/$@.csv \
+		--command-name 'binarytrees-16' 'MIN_EXPANSION_WORDSIZE=$(BT16_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) binarytrees.byte 16' \
+		--command-name 'binarytrees-18' 'MIN_EXPANSION_WORDSIZE=$(BT18_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) binarytrees.byte 18' \
+		--command-name 'livemap'        'MIN_EXPANSION_WORDSIZE=$(LIVEMAP_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) livemap.byte 1000000 1' \
+		--command-name 'livegraph'      'MIN_EXPANSION_WORDSIZE=$(LIVEGRAPH_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) livegraph.byte 1000000 4 4'
+
 bench-all: $(BENCH_TARGETS)
 	$(MAKE) bench-stats
 
@@ -397,7 +413,7 @@ bench-min-heaps: $(MINHEAP_TARGETS)
 	head -n 1 results/binarytrees.minheap.csv > results/min_heaps.csv
 	tail -n +2 -q $(MINHEAP_CSVS) >> results/min_heaps.csv
 
-.PHONY: all test test-native correctness known-gaps benchmark bench-all bench-stats bench-min-heaps clean
+.PHONY: bench-mark all test test-native correctness known-gaps benchmark bench-all bench-stats bench-min-heaps clean
 
 clean:
 	rm -f *.byte *.cmi *.cmo *.o gc_explicit.native gc_explicit.cmx \
