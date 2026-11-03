@@ -25,7 +25,7 @@ module WriteBody = GC.Gen.WriteBodyLemmas
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 private let rec update_walk_aux_preserves_header
-  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> prop) (fwd: forwarding_map)
+  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
   (idx: nat) (h: obj_addr)
   : Lemma (requires
       blocks_fit major /\
@@ -38,7 +38,7 @@ private let rec update_walk_aux_preserves_header
   else begin
     let obj = Seq.index objs idx in
     assert (Seq.mem obj objs);
-    if not (FStar.IndefiniteDescription.strong_excluded_middle (upd obj)) then
+    if not (upd obj) then
       update_walk_aux_preserves_header major objs upd fwd (idx + 1) h
     else if is_no_scan obj major then
       update_walk_aux_preserves_header major objs upd fwd (idx + 1) h
@@ -58,7 +58,7 @@ let update_walk_preserves_header major upd fwd h =
 /// from it, and object bodies are separated.
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let rec update_walk_aux_preserves_skipped_field
-  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> prop) (fwd: forwarding_map)
+  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
   (idx: nat) (h: obj_addr) (j: nat)
   : Lemma (requires
       blocks_fit major /\
@@ -76,7 +76,7 @@ private let rec update_walk_aux_preserves_skipped_field
   else begin
     let obj = Seq.index objs idx in
     assert (Seq.mem obj objs);
-    if not (FStar.IndefiniteDescription.strong_excluded_middle (upd obj)) then
+    if not (upd obj) then
       update_walk_aux_preserves_skipped_field major objs upd fwd (idx + 1) h j
     else if is_no_scan obj major then
       update_walk_aux_preserves_skipped_field major objs upd fwd (idx + 1) h j
@@ -119,15 +119,15 @@ let update_walk_preserves_wfh_part4 major upd fwd =
 /// --- The idle instances ---
 
 let update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (h: obj_addr) =
-  update_walk_preserves_header major (not_freed major no_pending) fwd h
+  update_walk_preserves_header major (allocated major) fwd h
 
 let update_major_pointers_preserves_blue_field
   (major: heap) (fwd: forwarding_map) (h: obj_addr) (j: nat) =
-  update_walk_preserves_skipped_field major (not_freed major no_pending) fwd h j
+  update_walk_preserves_skipped_field major (allocated major) fwd h j
 
 let update_major_pointers_preserves_no_scan_field
   (major: heap) (fwd: forwarding_map) (h: obj_addr) (j: nat) =
-  update_walk_preserves_skipped_field major (not_freed major no_pending) fwd h j
+  update_walk_preserves_skipped_field major (allocated major) fwd h j
 
 let update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map) =
-  update_walk_preserves_wfh_part4 major (not_freed major no_pending) fwd
+  update_walk_preserves_wfh_part4 major (allocated major) fwd

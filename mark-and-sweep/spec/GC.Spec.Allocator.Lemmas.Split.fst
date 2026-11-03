@@ -165,28 +165,28 @@ let rec objects_later_in_earlier
 
 #restart-solver
 /// ---------------------------------------------------------------------------
-/// 6h: wf Part 1: size bounds in g3
+/// 6h: blocks_fit: size bounds in g3
 /// ---------------------------------------------------------------------------
 
 #restart-solver
 /// ---------------------------------------------------------------------------
-/// 6i: wf Part 2 for obj: pointer targets of obj in g3
+/// 6i: pointers_stay_in for obj: pointer targets of obj in g3
 /// ---------------------------------------------------------------------------
 
 #restart-solver
 /// ---------------------------------------------------------------------------
-/// 6j: wf Part 2 for rem_obj: pointer targets of rem_obj in g3
+/// 6j: pointers_stay_in for rem_obj: pointer targets of rem_obj in g3
 /// ---------------------------------------------------------------------------
 
 #restart-solver
 #restart-solver
 /// ---------------------------------------------------------------------------
-/// 6k: wf Part 2 for other objects
+/// 6k: pointers_stay_in for other objects
 /// ---------------------------------------------------------------------------
 
 #restart-solver
 /// ---------------------------------------------------------------------------
-/// 6l: wf Part 4: no infix objects in g3
+/// 6l: no_infix_block: no infix objects in g3
 /// ---------------------------------------------------------------------------
 
 #restart-solver

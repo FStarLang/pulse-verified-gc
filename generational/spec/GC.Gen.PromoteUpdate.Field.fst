@@ -149,7 +149,7 @@ private let objects_above_after (g: heap) (obj: obj_addr) (pos: nat)
 /// those objects are at higher addresses, so their bodies don't overlap it.
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let rec update_walk_aux_after_preserves_field
-  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> prop) (fwd: forwarding_map)
+  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
   (idx: nat) (obj: obj_addr) (j: nat)
   : Lemma
     (requires
@@ -170,7 +170,7 @@ private let rec update_walk_aux_after_preserves_field
   else begin
     let other = Seq.index objs idx in
     assert (U64.v other > U64.v obj);
-    if not (FStar.IndefiniteDescription.strong_excluded_middle (upd other)) then
+    if not (upd other) then
       update_walk_aux_after_preserves_field major objs upd fwd (idx + 1) obj j
     else if is_no_scan other major then
       update_walk_aux_after_preserves_field major objs upd fwd (idx + 1) obj j
@@ -193,7 +193,7 @@ private let rec update_walk_aux_after_preserves_field
 /// Main induction: the walk computes the expected field effect.
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0 --z3refresh"
 private let rec update_walk_aux_field_effect
-  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> prop) (fwd: forwarding_map)
+  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
   (idx: nat) (obj: obj_addr) (j: nat) (pos: nat)
   : Lemma
     (requires
@@ -233,7 +233,7 @@ private let rec update_walk_aux_field_effect
     // idx < pos: an object before obj (lower address)
     let other = Seq.index objs idx in
     assert (U64.v other < U64.v obj);
-    if not (FStar.IndefiniteDescription.strong_excluded_middle (upd other)) then
+    if not (upd other) then
       update_walk_aux_field_effect major objs upd fwd (idx + 1) obj j pos
     else if is_no_scan other major then
       update_walk_aux_field_effect major objs upd fwd (idx + 1) obj j pos
@@ -261,4 +261,4 @@ let update_walk_field_effect major upd fwd obj j =
 /// The idle instance.
 let update_major_pointers_field_effect
   (major: heap) (fwd: forwarding_map) (obj: obj_addr) (j: nat) =
-  update_walk_field_effect major (not_freed major no_pending) fwd obj j
+  update_walk_field_effect major (allocated major) fwd obj j

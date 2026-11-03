@@ -232,7 +232,7 @@ let mark_step_bounded_preserves_tri_color g st cap =
         assert (~(is_no_scan b g));
         assert (~(is_white rc g));
         wosize_of_object_bound b g;
-        points_to_target_in_objects g b child;
+        points_to_target_allocated g b child;
         assert (Seq.mem rc (objects zero_addr g));
         if rc = obj then begin
           push_children_preserves_parent_black g1 st' obj 1UL ws;

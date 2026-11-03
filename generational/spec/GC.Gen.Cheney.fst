@@ -857,7 +857,7 @@ let cheney_promote_preserves_objects
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 
 private let rec update_preserves_fl_valid_aux
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (fp: U64.t) (fuel: nat)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (fp: U64.t) (fuel: nat)
   : Lemma
     (requires
       blocks_fit major /\
@@ -951,7 +951,7 @@ private let rec update_preserves_fl_valid_aux
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 
 let update_walk_preserves_fl_valid
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (fp: U64.t)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (fp: U64.t)
   =
   let fuel = heap_words in
   reveal_opaque (`%chain_objects_blue) chain_objects_blue;
@@ -960,7 +960,7 @@ let update_walk_preserves_fl_valid
 let update_major_pointers_preserves_fl_valid
   (major: heap) (fwd: forwarding_map) (fp: U64.t)
   =
-  update_walk_preserves_fl_valid major (not_freed major no_pending) fwd fp
+  update_walk_preserves_fl_valid major (allocated major) fwd fp
 
 #pop-options
 

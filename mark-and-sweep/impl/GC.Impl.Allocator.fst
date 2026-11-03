@@ -406,7 +406,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 2
 /// Same implementation as `allocate` but only requires blocks_fit
 /// + fl_valid + fl_chain_terminates. The allocator logic only reads headers
 /// and free-list link pointers — it never inspects object pointer fields,
-/// so well_formed_heap_part2 (pointer closure) is not needed.
+/// so the pointer clauses of well-formedness are not needed.
 
 #push-options "--z3rlimit 60"
 fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t) (tag: U64.t{U64.v tag < 256})

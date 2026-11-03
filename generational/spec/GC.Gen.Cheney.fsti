@@ -303,20 +303,19 @@ let cheney_collect_spec (minor: minor_state) (major: heap) (fp: U64.t) (roots: s
       mc_roots = rewrite_roots roots prom.fwd_map;
       mc_fwd   = prom.fwd_map }
 
-/// The minor collection, except the major heap's objects pending free.
+/// The minor collection on a view of the major heap.
 ///
-/// `pf` is the set of major objects known dead but not yet reclaimed, supplied
-/// by whoever holds the heap invariant.  Promotion allocates in free blocks, so
-/// it never makes an object pending, and `pf` is the same before and after the
-/// collection.  The pointer update rewrites the fields of the not-freed objects
-/// of the promoted heap (old or promoted) and never reads a free or
-/// pending-free block.  Everything else is as in `cheney_collect_spec`, which
-/// is the instance `pf = no_pending` (by definition of `update_major_pointers`).
-let cheney_collect_spec_except (minor: minor_state) (major: heap) (fp: U64.t)
-    (roots: seq U64.t) (pf: obj_addr -> prop)
+/// `v` says which major blocks the heap invariant counts as objects, supplied
+/// by whoever holds the invariant (`GC.Spec.Fields.view`).  The pointer update
+/// rewrites the fields of the blocks of the view in the promoted heap (old or
+/// promoted) and never reads any other block.  Everything else is as in
+/// `cheney_collect_spec`, which is the instance `v = allocated` (by definition
+/// of `update_major_pointers`).
+let cheney_collect_spec_view (v: view) (minor: minor_state) (major: heap)
+    (fp: U64.t) (roots: seq U64.t)
   : GTot minor_collect_result
   = let prom = cheney_promote minor major fp roots in
-    let updated = update_pointers_except prom.major_final pf prom.fwd_map in
+    let updated = update_pointers_view v prom.major_final prom.fwd_map in
     { mc_major = updated;
       mc_fp    = prom.fp_final;
       mc_minor = minor_reset minor;
@@ -408,7 +407,7 @@ val cheney_promote_preserves_objects
 /// (`walk_ok`), so the free-list headers and next-pointers (field 0 of blue
 /// objects) are unchanged, leaving the free-chain structure intact.
 val update_walk_preserves_fl_valid
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (fp: U64.t)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (fp: U64.t)
   : Lemma (requires blocks_fit major /\
                     walk_ok major upd /\
                     AllocLemmas.fl_valid major fp heap_words /\

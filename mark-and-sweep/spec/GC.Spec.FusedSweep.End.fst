@@ -347,10 +347,8 @@ let sweep_post_target (g0 g: heap) (fp: U64.t) (src dst: obj_addr) =
   wf_parts ();
   let objs0 = objects zero_addr g0 in
   Mark.colors_exclusive src g0;
-  assert (fields_constrained g0 src);
-  wosize_of_object_bound src g0;
-  wfh_part2_elim g0 src dst;
-  wfh_part3_elim g0 src dst;
+  pointers_stay_in_elim allocated g0 src dst;
+  interior_pointers_valid_elim allocated g0 src dst;
   let r = resolve_object dst g0 in
   // the target is black: not white (tri-colour), not grey, not blue
   assert (~(is_white r g0));
@@ -419,8 +417,7 @@ let survivor_points_to (g0 g: heap) (fp: U64.t) (src dst: obj_addr)
 let live_source (g0 g: heap) (fp: U64.t) (src: obj_addr)
   : Lemma (requires sweep_post g0 g fp /\ Seq.mem src (objects zero_addr g) /\ ~(is_blue src g))
           (ensures Seq.mem src (objects zero_addr g0) /\ is_black src g0 /\ survives g0 g src /\
-                   (fields_constrained g src == not (is_no_scan src g0)) /\
-                   (fields_constrained g0 src == not (is_no_scan src g0)))
+                   is_no_scan src g == is_no_scan src g0)
   = sweep_post_elim g0 g fp;
     Mark.colors_exclusive src g0;
     Mark.colors_exclusive src g
@@ -445,20 +442,15 @@ let sweep_post_wf (g0 g: heap) (fp: U64.t) =
   assert (blocks_fit g);
   assert (no_infix_block g);
   let facts (src dst: obj_addr)
-    : Lemma (requires Seq.mem src objs /\ fields_constrained g src /\
-                      (let wz = wosize_of_object src g in
-                       U64.v wz < pow2 54 /\ exists_field_pointing_to_unchecked g src wz dst))
-            (ensures Seq.mem (resolve_object dst g) objs /\
-                     ~(is_blue (resolve_object dst g) g) /\
-                     infix_addr_wf g objs dst)
+    : Lemma (requires allocated g src /\ has_pointer_to g src dst)
+            (ensures allocated g (resolve_object dst g) /\ infix_addr_wf g objs dst)
     = live_source g0 g fp src;
       survivor_points_to g0 g fp src dst;
       sweep_post_target g0 g fp src dst;
       let r = resolve_object dst g0 in
       assert (survives g0 g r);
       Mark.colors_exclusive r g;
-      wosize_of_object_bound src g0;
-      wfh_part3_elim g0 src dst;
+      interior_pointers_valid_elim allocated g0 src dst;
       if is_infix dst g0 then begin
         infix_addr_wf_elim g0 objs0 dst;
         parent_closure_addr_nat_spec dst g0;
@@ -467,8 +459,8 @@ let sweep_post_wf (g0 g: heap) (fp: U64.t) =
       end;
       infix_addr_wf_transfer g0 g objs0 objs dst
   in
-  well_formed_heap_part2_intro g (fun src dst -> facts src dst);
-  well_formed_heap_part3_intro g (fun src dst -> facts src dst)
+  pointers_stay_in_intro allocated g (fun src dst -> facts src dst);
+  interior_pointers_valid_intro allocated g (fun src dst -> facts src dst)
 #pop-options
 
 #push-options "--z3rlimit 40"

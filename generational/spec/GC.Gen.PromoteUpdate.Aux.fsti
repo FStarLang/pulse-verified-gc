@@ -1,5 +1,5 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.PromoteUpdate.Aux — the pointer-update walk: objects, part 1, extensionality in the rewritten set
+/// GC.Gen.PromoteUpdate.Aux — the pointer-update walk: objects, `blocks_fit`, extensionality in the rewritten set
 /// ---------------------------------------------------------------------------
 
 module GC.Gen.PromoteUpdate.Aux
@@ -31,7 +31,7 @@ val header_eq_object_facts (g1 g2: heap) (h: obj_addr)
                    is_infix h g1 == is_infix h g2)
 
 /// One step of either walk rewrites only field words of `obj`: the object list,
-/// part 1 and every object's header are unchanged.
+/// `blocks_fit` and every object's header are unchanged.
 val update_object_pointers_step (major: heap) (obj: obj_addr) (fwd: forwarding_map)
   : Lemma (requires blocks_fit major /\ Seq.mem obj (objects zero_addr major))
     (ensures (let wz = U64.v (wosize_of_object obj major) in
@@ -49,12 +49,12 @@ val update_object_pointers_step (major: heap) (obj: obj_addr) (fwd: forwarding_m
 /// ---------------------------------------------------------------------------
 
 val update_walk_preserves_objects
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
   : Lemma (requires blocks_fit major)
     (ensures objects zero_addr (update_walk major upd fwd) == objects zero_addr major)
 
 val update_walk_preserves_wfh_part1
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
   : Lemma (requires blocks_fit major)
     (ensures blocks_fit (update_walk major upd fwd))
 

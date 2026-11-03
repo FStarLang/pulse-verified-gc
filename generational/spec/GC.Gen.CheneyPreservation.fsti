@@ -285,9 +285,9 @@ val cheney_promote_nonblue_origin
                      exists (x: U64.t). res.fwd_map x == obj /\ is_minor_pointer x))
 
 /// **The stop-the-world collection keeps the stop-the-world shape.**  The
-/// `no_pending` instance of `GC.Gen.CheneyExcept.cheney_collect_except_preserves_shape`,
+/// `allocated` instance of `GC.Gen.CheneyView.cheney_collect_view_preserves_shape`,
 /// plus the two colour facts (no black, no gray objects) that
-/// `collection_heap_shape` adds to the shape at `no_pending`.
+/// `collection_heap_shape` adds to the shape at `allocated`.
 val cheney_collect_preserves_collection_heap_shape
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires GenInv.collection_heap_shape minor major fp)

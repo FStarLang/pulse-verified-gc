@@ -4,7 +4,7 @@
 ///
 /// The major heap changes between major collections through promotion (an
 /// allocation, then writes confined to the new object) and the pointer
-/// rewrite after a minor collection (field writes to not-freed objects).  Neither
+/// rewrite after a minor collection (field writes to live objects).  Neither
 /// changes which blocks are free cells or what they link to, beyond what the
 /// allocator itself does (`GC.Gen.AllocAscending`), so the free list stays
 /// ascending (`GC.Spec.FreeList.Ascending.fl_ascending`) -- which is what the
@@ -40,7 +40,7 @@ val cheney_promote_preserves_fl_ascending
 /// The pointer update over a fixed set of objects keeps the free list ascending: it never
 /// writes a blue block, since rewritten objects are not blue (`walk_ok`).
 val update_walk_preserves_fl_ascending
-  (major: heap) (upd: obj_addr -> prop) (fwd: Promote.forwarding_map) (fp: U64.t)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: Promote.forwarding_map) (fp: U64.t)
   : Lemma (requires blocks_fit major /\ Promote.walk_ok major upd /\ FLA.fl_ascending major fp)
           (ensures FLA.fl_ascending (Promote.update_walk major upd fwd) fp)
 

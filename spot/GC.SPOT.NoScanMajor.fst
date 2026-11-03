@@ -465,7 +465,7 @@ let spot_ns_field_read (r: unit{spot_ns_room}) (src: obj_addr) (j: nat)
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
-let spot_ns_wfh_part1 (r: unit{spot_ns_room})
+let spot_ns_blocks_fit (r: unit{spot_ns_room})
   : Lemma (ensures SpecFields.blocks_fit (spot_ns_heap r))
   =
   let g = spot_ns_heap r in
@@ -482,7 +482,7 @@ let spot_ns_wfh_part1 (r: unit{spot_ns_room})
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
-let spot_ns_wfh_part4 (r: unit{spot_ns_room})
+let spot_ns_no_infix_block (r: unit{spot_ns_room})
   : Lemma (ensures SpecFields.no_infix_block (spot_ns_heap r))
   =
   let g = spot_ns_heap r in
@@ -501,23 +501,21 @@ let spot_ns_wfh_part4 (r: unit{spot_ns_room})
 /// field closure is demanded only of *scannable* sources, and S is not one, so
 /// the raw word never has to target an object.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
-let spot_ns_wfh_part2_3 (r: unit{spot_ns_room})
-  : Lemma (ensures SpecFields.well_formed_heap_part2 (spot_ns_heap r) /\
-                   SpecFields.well_formed_heap_part3 (spot_ns_heap r))
+let spot_ns_pointer_clauses (r: unit{spot_ns_room})
+  : Lemma (ensures SpecFields.pointers_stay_in SpecFields.allocated (spot_ns_heap r) /\
+                   SpecFields.interior_pointers_valid SpecFields.allocated (spot_ns_heap r))
   =
   let g = spot_ns_heap r in
-  spot_ns_wfh_part1 r;
-  spot_ns_wfh_part4 r;
+  spot_ns_blocks_fit r;
+  spot_ns_no_infix_block r;
   let field_closure (src: obj_addr) (j: nat)
     : Lemma (requires Seq.mem src (SpecFields.objects zero_addr g) /\
-                      SpecFields.fields_constrained g src /\
+                      ~(SpecObj.is_no_scan src g) /\
                       j < U64.v (SpecObj.wosize_of_object src g) /\
                       U64.v src + j * 8 + 8 <= heap_size)
             (ensures (let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
                       SpecFields.is_pointer v ==>
-                      Seq.mem (SpecObj.resolve_object (v <: obj_addr) g)
-                              (SpecFields.objects zero_addr g) /\
-                      ~(SpecObj.is_blue (SpecObj.resolve_object (v <: obj_addr) g) g) /\
+                      SpecFields.allocated g (SpecObj.resolve_object (v <: obj_addr) g) /\
                       SpecObj.infix_addr_wf g (SpecFields.objects zero_addr g)
                               (v <: obj_addr)))
     =
@@ -528,14 +526,15 @@ let spot_ns_wfh_part2_3 (r: unit{spot_ns_room})
     // scannable, so this case is unreachable.
     spot_ns_field_read r src j
   in
-  SpecFields.well_formed_heap_part2_3_from_resolved_field_closure g field_closure
+  SpecFields.pointer_clauses_from_field_closure SpecFields.allocated g
+    (fun src j -> field_closure src j)
 
 let spot_ns_well_formed_heap (r: unit{spot_ns_room})
   : Lemma (ensures SpecFields.well_formed_heap (spot_ns_heap r))
   =
-  spot_ns_wfh_part1 r;
-  spot_ns_wfh_part2_3 r;
-  spot_ns_wfh_part4 r;
+  spot_ns_blocks_fit r;
+  spot_ns_pointer_clauses r;
+  spot_ns_no_infix_block r;
   SpecFields.wf_parts ()
 #pop-options
 
@@ -838,8 +837,8 @@ let spot_ns_major_heap_shape (r: unit{spot_ns_room})
   spot_ns_fp_in_heap r;
   spot_ns_no_black_objects r;
   spot_ns_no_gray_objects r;
-  spot_ns_wfh_part1 r;
-  spot_ns_wfh_part2_3 r;
+  spot_ns_blocks_fit r;
+  spot_ns_pointer_clauses r;
   spot_ns_fl_complete r;
   spot_ns_fl_ascending r;
   GC.Gen.AllocExact.fl_valid_cob_gives_sound g fp;

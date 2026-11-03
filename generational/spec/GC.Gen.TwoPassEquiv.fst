@@ -751,7 +751,7 @@ let rec rewrite_slots_iter_frame
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 private let slots_frame_from_non_field
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
   (slots: seq U64.t) (n: nat) (addr: hp_addr)
   : Lemma
     (requires
@@ -1040,7 +1040,7 @@ private let update_obj_ptrs_preserves_entries_valid
 /// update was already a scannable-field witness before the update.
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 private let update_obj_ptrs_reflects_walked_field_addr
-  (major: heap) (upd: obj_addr -> prop) (obj: obj_addr) (wz: nat) (fwd: forwarding_map) (addr: hp_addr)
+  (major: heap) (upd: obj_addr -> GTot bool) (obj: obj_addr) (wz: nat) (fwd: forwarding_map) (addr: hp_addr)
   : Lemma
     (requires
       Seq.mem obj (objects zero_addr major) /\
@@ -1094,7 +1094,7 @@ private let update_obj_ptrs_reflects_walked_field_addr
     assert (walked_field_addr major upd (U64.v addr))
 
 private let update_obj_ptrs_preserves_not_walked_field_addr
-  (major: heap) (upd: obj_addr -> prop) (obj: obj_addr) (wz: nat) (fwd: forwarding_map) (addr: hp_addr)
+  (major: heap) (upd: obj_addr -> GTot bool) (obj: obj_addr) (wz: nat) (fwd: forwarding_map) (addr: hp_addr)
   : Lemma
     (requires
       Seq.mem obj (objects zero_addr major) /\
@@ -1112,7 +1112,7 @@ private let update_obj_ptrs_preserves_not_walked_field_addr
     end
 #pop-options
 
-private let promoted_entries_walked_from (major: heap) (upd: obj_addr -> prop)
+private let promoted_entries_walked_from (major: heap) (upd: obj_addr -> GTot bool)
                                        (farr: seq U64.t) (idx: nat) : prop =
   Seq.length farr == fwd_array_size /\
   (forall (i: nat). i >= idx /\ i < fwd_array_size ==>
@@ -1128,7 +1128,7 @@ private let promoted_entries_walked_from (major: heap) (upd: obj_addr -> prop)
 /// heap, and that is preserved.
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
 private let update_obj_ptrs_preserves_entries_live_from
-  (major: heap) (upd: obj_addr -> prop) (farr: seq U64.t) (fwd: forwarding_map) (idx: nat)
+  (major: heap) (upd: obj_addr -> GTot bool) (farr: seq U64.t) (fwd: forwarding_map) (idx: nat)
   : Lemma
     (requires
       promoted_entries_valid_from major farr idx /\
@@ -1254,7 +1254,7 @@ let rec update_promoted_iter_preserves_non_fwd
 /// walk would skip.
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
 let rec update_promoted_iter_preserves_non_field
-  (major: heap) (upd: obj_addr -> prop) (farr: seq U64.t) (fwd: forwarding_map)
+  (major: heap) (upd: obj_addr -> GTot bool) (farr: seq U64.t) (fwd: forwarding_map)
   (idx: nat) (addr: hp_addr)
   : Lemma
     (requires
@@ -1385,7 +1385,7 @@ private let update_obj_ptrs_preserves_wfh
 /// Recursive helper: the walk preserves non-fwd addresses.
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 private let rec update_walk_aux_preserves_non_fwd
-  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> prop) (fwd: forwarding_map) (idx: nat)
+  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (idx: nat)
   (addr: hp_addr)
   : Lemma
     (requires
@@ -1401,7 +1401,7 @@ private let rec update_walk_aux_preserves_non_fwd
       let obj = Seq.index objs idx in
       // Seq.mem obj (objects zero_addr major) from indexing
       assert (Seq.mem obj objs);
-      if not (IndDesc.strong_excluded_middle (upd obj)) then
+      if not (upd obj) then
         update_walk_aux_preserves_non_fwd major objs upd fwd (idx + 1) addr
       else if is_no_scan obj major then
         update_walk_aux_preserves_non_fwd major objs upd fwd (idx + 1) addr
@@ -1437,7 +1437,7 @@ private let rec update_walk_aux_preserves_non_fwd
 
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let update_walk_preserves_non_fwd
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (addr: hp_addr)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (addr: hp_addr)
   : Lemma
     (requires
       blocks_fit major /\
@@ -1452,7 +1452,7 @@ let update_walk_preserves_non_fwd
 /// any rewritten scannable object, irrespective of the word stored at that address.
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 private let rec update_walk_aux_preserves_non_field
-  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> prop) (fwd: forwarding_map) (idx: nat)
+  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (idx: nat)
   (addr: hp_addr)
   : Lemma
     (requires
@@ -1466,7 +1466,7 @@ private let rec update_walk_aux_preserves_non_field
     else begin
       let obj = Seq.index objs idx in
       assert (Seq.mem obj objs);
-      if not (IndDesc.strong_excluded_middle (upd obj)) then
+      if not (upd obj) then
         update_walk_aux_preserves_non_field major objs upd fwd (idx + 1) addr
       else if is_no_scan obj major then
         update_walk_aux_preserves_non_field major objs upd fwd (idx + 1) addr
@@ -1503,7 +1503,7 @@ private let rec update_walk_aux_preserves_non_field
     end
 
 let update_walk_preserves_non_field
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (addr: hp_addr)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (addr: hp_addr)
   : Lemma
     (requires
       blocks_fit major /\
@@ -1551,7 +1551,7 @@ let fwd_targets_not_minor_ptr
 /// walk rewrites the field to fwd(to_minor_offset(old)).
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let if_branch_rhs
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (obj: obj_addr) (j: nat) (addr: hp_addr)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (obj: obj_addr) (j: nat) (addr: hp_addr)
   : Lemma
     (requires
       blocks_fit major /\
@@ -1766,7 +1766,7 @@ let field_not_in_any_promoted_body
 /// arbitrary aligned address is not enough to recover a field witness.
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 let if_branch_field_eq
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (farr: seq U64.t) (slots: seq U64.t) (n: nat)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (farr: seq U64.t) (slots: seq U64.t) (n: nat)
   (obj: obj_addr) (j: nat) (addr: hp_addr)
   : Lemma
     (requires
@@ -1833,7 +1833,7 @@ let if_branch_field_eq
 /// which Z3 4.15.3 instantiated a million times before giving up.
 /// ---------------------------------------------------------------------------
 #push-options "--fuel 0 --ifuel 0"
-private let walked_field_witness (major: heap) (upd: obj_addr -> prop) (a: nat)
+private let walked_field_witness (major: heap) (upd: obj_addr -> GTot bool) (a: nat)
   : Ghost (obj_addr & nat)
     (requires walked_field_addr major upd a)
     (ensures fun r ->
@@ -1878,7 +1878,7 @@ private let walked_field_witness (major: heap) (upd: obj_addr -> prop) (a: nat)
 /// and `fwd` keeps the query small.
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let two_pass_pointwise
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
   (farr: seq U64.t) (slots: seq U64.t) (n: nat)
   (a: nat{a < heap_size /\ a % U64.v mword == 0})
   : Lemma
@@ -1929,7 +1929,7 @@ private let two_pass_pointwise
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let promoted_plus_slots_eq_walk
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
   (farr: seq U64.t) (slots: seq U64.t) (n: nat)
   = let intermediate = update_promoted_iter major farr fwd 0 in
     let lhs = rewrite_slots_iter intermediate fwd slots n 0 in

@@ -560,7 +560,7 @@ let spot_infix_field_pointer_cases (r: unit{spot_infix_room}) (src: obj_addr) (j
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
-let spot_infix_wfh_part1 (r: unit{spot_infix_room})
+let spot_infix_blocks_fit (r: unit{spot_infix_room})
   : Lemma (ensures SpecFields.blocks_fit (spot_infix_heap r))
   =
   let g = spot_infix_heap r in
@@ -578,7 +578,7 @@ let spot_infix_wfh_part1 (r: unit{spot_infix_room})
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
-let spot_infix_wfh_part4 (r: unit{spot_infix_room})
+let spot_infix_no_infix_block (r: unit{spot_infix_room})
   : Lemma (ensures SpecFields.no_infix_block (spot_infix_heap r))
   =
   let g = spot_infix_heap r in
@@ -629,22 +629,20 @@ let spot_infix_h_addr_wf (r: unit{spot_infix_room})
 #pop-options
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
-let spot_infix_wfh_part2_3 (r: unit{spot_infix_room})
-  : Lemma (ensures SpecFields.well_formed_heap_part2 (spot_infix_heap r) /\
-                   SpecFields.well_formed_heap_part3 (spot_infix_heap r))
+let spot_infix_pointer_clauses (r: unit{spot_infix_room})
+  : Lemma (ensures SpecFields.pointers_stay_in SpecFields.allocated (spot_infix_heap r) /\
+                   SpecFields.interior_pointers_valid SpecFields.allocated (spot_infix_heap r))
   =
   let g = spot_infix_heap r in
-  spot_infix_wfh_part1 r;
-  spot_infix_wfh_part4 r;
+  spot_infix_blocks_fit r;
+  spot_infix_no_infix_block r;
   let field_closure (src: obj_addr) (j: nat)
     : Lemma (requires Seq.mem src (SpecFields.objects zero_addr g) /\
                       j < U64.v (SpecObj.wosize_of_object src g) /\
                       U64.v src + j * 8 + 8 <= heap_size)
             (ensures (let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
                       SpecFields.is_pointer v ==>
-                      Seq.mem (SpecObj.resolve_object (v <: obj_addr) g)
-                              (SpecFields.objects zero_addr g) /\
-                      ~(SpecObj.is_blue (SpecObj.resolve_object (v <: obj_addr) g) g) /\
+                      SpecFields.allocated g (SpecObj.resolve_object (v <: obj_addr) g) /\
                       SpecObj.infix_addr_wf g (SpecFields.objects zero_addr g)
                               (v <: obj_addr)))
     =
@@ -660,13 +658,14 @@ let spot_infix_wfh_part2_3 (r: unit{spot_infix_room})
       spot_infix_p_reads r
     end
   in
-  SpecFields.well_formed_heap_part2_3_from_resolved_field_closure g field_closure
+  SpecFields.pointer_clauses_from_field_closure SpecFields.allocated g
+    (fun src j -> field_closure src j)
 
 let spot_infix_well_formed_heap (r: unit{spot_infix_room})
   =
-  spot_infix_wfh_part1 r;
-  spot_infix_wfh_part2_3 r;
-  spot_infix_wfh_part4 r;
+  spot_infix_blocks_fit r;
+  spot_infix_pointer_clauses r;
+  spot_infix_no_infix_block r;
   SpecFields.wf_parts ()
 #pop-options
 
@@ -1034,8 +1033,8 @@ let spot_infix_major_heap_shape (r: unit{spot_infix_room})
   spot_infix_fp_in_heap r;
   spot_infix_no_black_objects r;
   spot_infix_no_gray_objects r;
-  spot_infix_wfh_part1 r;
-  spot_infix_wfh_part2_3 r;
+  spot_infix_blocks_fit r;
+  spot_infix_pointer_clauses r;
   spot_infix_fl_complete r;
   spot_infix_fl_ascending r;
   GC.Gen.AllocExact.fl_valid_cob_gives_sound g fp;

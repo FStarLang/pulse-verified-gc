@@ -379,7 +379,7 @@ let alloc_spec_obj_in_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (t
 /// interior pointer needs the stronger statement: the promoted copy of an
 /// enclosing closure has to have room for every byte of the closure, because
 /// the interior address is `obj_out + offset` for some offset inside the body.
-/// Membership in `objects zero_addr r.heap_out` plus part 1 of the target
+/// Membership in `objects zero_addr r.heap_out` plus `blocks_fit` of the target
 /// heap's well-formedness says exactly that.
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 let alloc_spec_obj_body_within_heap (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})

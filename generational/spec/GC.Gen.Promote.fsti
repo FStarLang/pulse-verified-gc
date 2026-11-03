@@ -122,7 +122,7 @@ val promote_object_preserves_alloc_invariants
 /// address a byte *inside* the copy --- forwarding an interior pointer lands at
 /// `new_addr + delta` for some `delta` below `wosize * 8` --- needs the body to
 /// fit as well.  It does: the block is an object of the resulting heap, and
-/// part 1 of well-formedness is exactly the statement that an object's body
+/// `blocks_fit` is exactly the statement that an object's body
 /// lies within the heap.
 val promote_object_new_addr_body_bound
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
@@ -213,25 +213,22 @@ val update_object_pointers_done (major: heap) (obj: U64.t) (wosize: nat)
           (ensures update_object_pointers major obj wosize fwd i == major)
 
 /// ---------------------------------------------------------------------------
-/// The pointer update, except the objects pending free
+/// The pointer update over a view
 /// ---------------------------------------------------------------------------
 
 /// The walk over the major heap, over a set `upd` of objects fixed for the
 /// whole walk: it rewrites the fields of the objects `x` with `upd x` (and
 /// scannable) and skips every other object without reading its fields.  It
-/// reads every header, so it needs only the walk facts of the heap (parts 1
-/// and 4).
-///
-/// `upd` is a proposition, so the test goes through `strong_excluded_middle`;
-/// this is a ghost specification function.  The minor collection runs it over
-/// the not-freed objects (`update_pointers_except`).
-let rec update_walk_aux (major: heap) (objs: seq obj_addr) (upd: obj_addr -> prop)
+/// reads every header, so it needs only the walk facts of the heap
+/// (`blocks_fit`, `no_infix_block`).  The minor collection runs it over the
+/// blocks of a view (`update_pointers_view`).
+let rec update_walk_aux (major: heap) (objs: seq obj_addr) (upd: obj_addr -> GTot bool)
                         (fwd: forwarding_map) (idx: nat)
   : GTot heap (decreases (Seq.length objs - idx)) =
   if idx >= Seq.length objs then major
   else
     let obj = Seq.index objs idx in
-    if not (FStar.IndefiniteDescription.strong_excluded_middle (upd obj)) then
+    if not (upd obj) then
       update_walk_aux major objs upd fwd (idx + 1)
     else if is_no_scan obj major then
       update_walk_aux major objs upd fwd (idx + 1)
@@ -241,24 +238,24 @@ let rec update_walk_aux (major: heap) (objs: seq obj_addr) (upd: obj_addr -> pro
       update_walk_aux major' objs upd fwd (idx + 1)
 
 /// Rewrite the nursery pointers held by the objects `upd` of the major heap.
-let update_walk (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
+let update_walk (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
   : GTot heap =
   update_walk_aux major (objects zero_addr major) upd fwd 0
 
 /// The objects a walk rewrites are real, non-free blocks.
-let walk_ok (major: heap) (upd: obj_addr -> prop) : prop =
+let walk_ok (major: heap) (upd: obj_addr -> GTot bool) : prop =
   forall (x: obj_addr). upd x ==> Seq.mem x (objects zero_addr major) /\ ~(is_blue x major)
 
-/// The minor collection's pointer update, except the objects pending free: it
-/// rewrites the fields of the not-freed scannable objects and never reads a
-/// field of a free or pending-free block.
-let update_pointers_except (major: heap) (pf: obj_addr -> prop) (fwd: forwarding_map)
+/// The minor collection's pointer update over a view: it rewrites the fields
+/// of the scannable blocks of the view and never reads a field of any other
+/// block.
+let update_pointers_view (v: view) (major: heap) (fwd: forwarding_map)
   : GTot heap =
-  update_walk major (not_freed major pf) fwd
+  update_walk major (v major) fwd
 
-/// The stop-the-world pointer update: nothing is pending free.
+/// The stop-the-world pointer update: the `allocated` instance.
 let update_major_pointers (major: heap) (fwd: forwarding_map) : GTot heap =
-  update_pointers_except major no_pending fwd
+  update_pointers_view allocated major fwd
 
 /// ---------------------------------------------------------------------------
 /// Root Rewriting
@@ -379,10 +376,10 @@ val promote_preserves_fields
                 minor_read_field minor obj j)))
 #pop-options
 
-/// The walk facts of a well-formed heap: parts 1 and 4, which are all of
-/// well-formedness that promotion reads.  The promotion lemmas ask for these
-/// alone, so they also apply to a heap that is well formed only except the
-/// objects pending free (`GC.Spec.Fields.well_formed_heap_except`).
+/// The walk facts of a well-formed heap (`blocks_fit`, `no_infix_block`),
+/// which are all of well-formedness that promotion reads.  The promotion
+/// lemmas ask for these alone, so they also apply to a heap that is well
+/// formed only on a smaller view (`GC.Spec.Fields.well_formed_view`).
 val wfh_walk_facts (g: heap)
   : Lemma (requires well_formed_heap g)
           (ensures blocks_fit g /\ no_infix_block g)

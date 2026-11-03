@@ -31,27 +31,27 @@ open GC.Gen.Promote
 ///
 /// The walk rewrites the fields of the scannable objects in its set `upd` and
 /// nothing else.  Each `update_major_pointers_*` lemma below is the instance
-/// at `not_freed major no_pending` (`update_major_pointers` is defined so),
+/// at `allocated major` (`update_major_pointers` is defined so),
 /// with `is_blue x` read as "`x` is not rewritten".
 
 val update_walk_preserves_objects
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
   : Lemma (requires blocks_fit major)
     (ensures objects zero_addr (update_walk major upd fwd) == objects zero_addr major)
 
 val update_walk_preserves_wfh_part1
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
   : Lemma (requires blocks_fit major)
     (ensures blocks_fit (update_walk major upd fwd))
 
 val update_walk_preserves_header
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (h: obj_addr)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (h: obj_addr)
   : Lemma (requires blocks_fit major /\ Seq.mem h (objects zero_addr major))
     (ensures read_word (update_walk major upd fwd) (hd_address h) ==
              read_word major (hd_address h))
 
 val update_walk_preserves_skipped_field
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (h: obj_addr) (j: nat)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (h: obj_addr) (j: nat)
   : Lemma (requires blocks_fit major /\
                     Seq.mem h (objects zero_addr major) /\
                     (~(upd h) \/ is_no_scan h major) /\
@@ -63,12 +63,12 @@ val update_walk_preserves_skipped_field
               read_word major field_addr))
 
 val update_walk_preserves_wfh_part4
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
   : Lemma (requires blocks_fit major /\ no_infix_block major)
     (ensures no_infix_block (update_walk major upd fwd))
 
 val update_walk_field_effect
-  (major: heap) (upd: obj_addr -> prop) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
   : Lemma
     (requires
       blocks_fit major /\

@@ -42,7 +42,7 @@ let field_pointer_points_to_nat
   field_read_implies_exists_pointing g src wz k dst
 #pop-options
 
-let field_pointer_target_not_freed_nat g pf src dst j =
-  wf_except_parts ();
+let field_pointer_target_in_view_nat v g src dst j =
+  wf_view_parts ();
   field_pointer_points_to_nat g src dst j;
-  points_to_target_except g pf src dst
+  points_to_target_in_view v g src dst

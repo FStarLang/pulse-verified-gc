@@ -412,39 +412,40 @@ module TPC = GC.Gen.TwoPassEquiv.Collect
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let minor_collect_full_isomorphism_post
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: SpecFields.view)
   (roots slots: Seq.seq U64.t) (n: nat) (ok: bool)
   (post_major: heap) (post_roots: Seq.seq U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_except minor major fp pf /\
-      ref_table_covers_except major pf slots n /\
-      post_major == (CheneySpec.cheney_collect_spec_except minor major fp roots pf).mc_major /\
+      GenInv.collection_shape_view v minor major fp /\
+      GC.Gen.CheneyView.promotion_in_view v minor major fp roots /\
+      ref_table_covers_view v major slots n /\
+      post_major == (CheneySpec.cheney_collect_spec_view v minor major fp roots).mc_major /\
       post_roots == MCFH.resolve_roots post_major
         (PromoteSpec.rewrite_roots roots
           (CheneySpec.cheney_promote minor major fp roots).fwd_map) /\
       MinorFwd.remembered_targets_in_roots major roots slots n /\
-      MinorFwd.roots_valid_except minor major pf roots /\
+      MinorFwd.roots_valid_view v minor major roots /\
       (ok ==> CheneyBFS.cheney_no_oom minor major fp roots))
     (ensures
       (ok ==>
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-         minor major fp pf roots post_major post_roots /\
+         minor major fp v roots post_major post_roots /\
        MinorFwd.normal_result_non_pointer_fields_preserved_prop
-         minor major fp pf roots post_major))
+         minor major fp v roots post_major))
   =
     if ok
     then begin
-      MCFH.roots_valid_except_implies_not_freed minor major pf roots;
-      MCFH.major_fields_covered_from_slots minor major pf roots slots n;
+      MCFH.roots_valid_view_implies_in_view v minor major roots;
+      MCFH.major_fields_covered_from_slots minor major v roots slots n;
       MinorFwd.normal_post_reachable_subgraph_isomorphism
-        minor major fp pf roots slots n;
+        minor major fp v roots slots n;
       MinorFwd.normal_post_reachable_subgraph_isomorphism_to_result
-        minor major fp pf roots post_major post_roots;
+        minor major fp v roots post_major post_roots;
       MinorFwd.normal_post_non_pointer_fields_preserved
-        minor major fp pf roots slots n;
+        minor major fp v roots slots n;
       MinorFwd.normal_post_non_pointer_fields_preserved_to_result
-        minor major fp pf roots post_major
+        minor major fp v roots post_major
     end
 #pop-options
 
@@ -452,65 +453,66 @@ let minor_collect_full_isomorphism_post
 /// minor_collect_full: includes ref_table rewriting for full correctness
 /// ---------------------------------------------------------------------------
 
-module CE = GC.Gen.CheneyExcept
+module CE = GC.Gen.CheneyView
 
-/// The spec half of the minor collection except the pending objects: the two
-/// passes over a Cheney result are the collection's pointer update
-/// (`TPC.two_pass_implies_collect_except`), and that collection keeps the shape
-/// (`CE.cheney_collect_except_preserves_shape`).
+/// The spec half of the minor collection on a view: the two passes over a
+/// Cheney result are the collection's pointer update
+/// (`TPC.two_pass_implies_collect_view`), and that collection keeps the shape
+/// (`CE.cheney_collect_view_preserves_shape`).
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let minor_collect_except_spec
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
-  (pf: obj_addr -> prop) (farr slots: Seq.seq U64.t) (n: nat)
+let minor_collect_view_spec
+  (v: SpecFields.view) (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (farr slots: Seq.seq U64.t) (n: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_except minor major fp pf /\
+      GenInv.collection_shape_view v minor major fp /\
+      CE.promotion_in_view v minor major fp roots /\
       Seq.length farr == fwd_array_size /\
       represents_fwd farr (CheneySpec.cheney_promote minor major fp roots).fwd_map /\
-      ref_table_sound_except major pf slots n /\
-      ref_table_covers_except major pf slots n /\
+      ref_table_sound_view v major slots n /\
+      ref_table_covers_view v major slots n /\
       slots_pairwise_distinct slots n)
     (ensures
       (let prom = CheneySpec.cheney_promote minor major fp roots in
-       let res = CheneySpec.cheney_collect_spec_except minor major fp roots pf in
+       let res = CheneySpec.cheney_collect_spec_view v minor major fp roots in
        rewrite_slots_iter (update_promoted_iter prom.major_final farr prom.fwd_map 0)
          prom.fwd_map slots n 0 == res.mc_major /\
-       GenInv.collection_shape_except (minor_reset minor) res.mc_major prom.fp_final pf))
+       GenInv.collection_shape_view v (minor_reset minor) res.mc_major prom.fp_final))
   = let prom = CheneySpec.cheney_promote minor major fp roots in
-    GenInv.collection_shape_except_elim minor major fp pf;
-    GenInv.major_shape_except_elim major fp pf;
+    GenInv.collection_shape_view_elim v minor major fp;
+    GenInv.major_shape_view_elim v major fp;
     GenInv.minor_heap_shape_elim minor;
     CheneySpec.cheney_promote_fwd_above_zero_addr minor major fp roots;
     CheneySpec.cheney_promote_fwd_bounded minor major fp roots;
     derive_fwd_targets_stable prom.fwd_map;
-    ref_table_sound_except_implies_valid_slot_addrs major pf slots n;
-    ref_table_covers_except_implies_complete major pf prom.fwd_map slots n;
+    ref_table_sound_view_implies_valid_slot_addrs v major slots n;
+    ref_table_covers_view_implies_complete v major prom.fwd_map slots n;
     CheneySpec.cheney_promote_preserves_wfh_part1 minor major fp roots;
     CheneySpec.cheney_promote_preserves_wfh_part4 minor major fp roots;
     CheneyPres.cheney_promote_fwd_valid_or_infix minor major fp roots;
     CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
-    TPC.two_pass_implies_collect_except minor major fp roots pf farr slots n;
-    CE.cheney_collect_except_preserves_shape minor major fp roots pf
+    TPC.two_pass_implies_collect_view v minor major fp roots farr slots n;
+    CE.cheney_collect_view_preserves_shape v minor major fp roots
 #pop-options
 
 /// Compose all phases into a single verified call.  The proof is over the
-/// caller's pending set throughout: nothing here reads or assumes anything of
-/// a pending-free block.
+/// caller's view throughout: nothing here reads or assumes anything of a
+/// block outside it.
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
                       (queue: larray U64.t Cheney.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
-                      (#pf: erased (obj_addr -> prop))
+                      (#v: erased SpecFields.view)
   requires is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to slots 'sl **
            pure (SZ.v nroots == Seq.length 'rs /\
-                 minor_collect_pre_except ({ data = 'd; bump = 'b } <: minor_state) 's 'fp
-                   'rs 'farr 'sl (SZ.v nslots) pf)
+                 minor_collect_pre_view v ({ data = 'd; bump = 'b } <: minor_state) 's
+                   'fp 'rs 'farr 'sl (SZ.v nslots))
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
     is_gen_heap gh d2 b2 s2 fp2 **
@@ -518,12 +520,12 @@ fn minor_collect_full (gh: gen_heap_t)
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
-    pure (minor_collect_post_except ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'sl
-            (SZ.v nslots) pf ok d2 b2 s2 fp2 rs2 farr2)
+    pure (minor_collect_post_view v ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs
+            'sl (SZ.v nslots) ok d2 b2 s2 fp2 rs2 farr2)
 {
   unfold is_gen_heap;
-  GenInv.collection_shape_except_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp pf;
-  GenInv.major_shape_except_elim 's 'fp pf;
+  GenInv.collection_shape_view_elim v ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
+  GenInv.major_shape_view_elim v 's 'fp;
   GenInv.minor_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state);
 
   // Phase 1: Cheney BFS promotion (forward roots + scan)
@@ -548,7 +550,7 @@ fn minor_collect_full (gh: gen_heap_t)
   with farr_post2. assert (pts_to fwd_arr farr_post2);
 
   // Phase 2b: Rewrite ref_table slots
-  ref_table_sound_except_implies_valid_slot_addrs 's pf 'sl (SZ.v nslots);
+  ref_table_sound_view_implies_valid_slot_addrs v 's 'sl (SZ.v nslots);
   rewrite_heap_slots gh.major fwd_arr slots nslots
     #(hide (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map);
 
@@ -565,10 +567,10 @@ fn minor_collect_full (gh: gen_heap_t)
   minor_heap_reset gh.minor;
 
   // The two passes are the collection's update, which keeps the shape.
-  minor_collect_except_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs pf
+  minor_collect_view_spec v ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs
     farr_post3 'sl (SZ.v nslots);
   // ... and is a reachable-subgraph isomorphism.
-  minor_collect_full_isomorphism_post ({data = 'd; bump = 'b} <: minor_state) 's 'fp pf
+  minor_collect_full_isomorphism_post ({data = 'd; bump = 'b} <: minor_state) 's 'fp v
     'rs 'sl (SZ.v nslots) ok ms_final (MCFH.resolve_roots ms_final rs_out);
 
   fold (is_gen_heap gh _ 0UL _ _);
@@ -580,8 +582,9 @@ fn minor_collect_full (gh: gen_heap_t)
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let minor_collect_idle_pre minor_st s fp rs farr sl nslots =
-  GenInv.collection_heap_shape_no_pending minor_st s fp;
-  MCFH.roots_valid_no_pending minor_st s rs
+  GenInv.collection_heap_shape_as_view minor_st s fp;
+  CE.allocated_promotion_in_view minor_st s fp rs;
+  MCFH.roots_valid_view_allocated minor_st s rs
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
@@ -590,8 +593,8 @@ let minor_collect_idle_post minor_st s fp rs farr sl nslots ok d2 b2 s2 fp2 rs2 
   GenInv.major_heap_shape_elim s fp;
   GenInv.major_heap_shape_walk s fp;
   GenInv.minor_heap_shape_elim minor_st;
-  // the collection at `no_pending` is the stop-the-world one ...
-  CE.cheney_collect_spec_except_no_pending minor_st s fp rs;
+  // the collection at `allocated` is the stop-the-world one ...
+  CE.cheney_collect_spec_view_allocated minor_st s fp rs;
   // ... which keeps the stop-the-world shape.
   CheneyPres.cheney_collect_preserves_collection_heap_shape minor_st s fp rs
 #pop-options
@@ -672,11 +675,11 @@ fn gen_gc (gh: gen_heap_t)
   GenInv.minor_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state);
 
   // Phase 1: Full minor collection, including remembered-set slot rewriting,
-  // with nothing pending free.
+  // on the `allocated` view.
   minor_collect_idle_pre ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots);
   let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots
-             #(hide SpecFields.no_pending);
+             #(hide SpecFields.allocated);
 
   with d_mid b_mid ms_updated fp_mid. assert (is_gen_heap gh d_mid b_mid ms_updated fp_mid);
   with rs_mid. assert (pts_to roots rs_mid);
@@ -696,7 +699,7 @@ fn gen_gc (gh: gen_heap_t)
     (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_fp));
   cheney_collect_spec_unfold ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
   CheneyCorr.cheney_collect_preserves_objects
-    ({data = 'd; bump = 'b} <: minor_state) 's 'fp SpecFields.no_pending 'rs;
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp SpecFields.allocated 'rs;
   assert (pure (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr 's) ==>
     Seq.mem x (SpecFields.objects zero_addr ms_updated)));
   assert (pure (GenInv.collection_heap_shape

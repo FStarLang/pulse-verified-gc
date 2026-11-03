@@ -187,13 +187,13 @@ let check_and_darken_bounded_preserves_inv (g: heap_state) (st: Seq.seq obj_addr
                     U64.v wz <= U64.v (wosize_of_object obj g) /\
                     U64.v (wosize_of_object obj g) < pow2 54 /\
                     Seq.length g == heap_size /\
-                    SpecFields.fields_constrained g obj /\
+                    ~(SpecObject.is_no_scan obj g) /\ ~(SpecObject.is_blue obj g) /\
                     U64.v i <= U64.v wz /\
                     v == HeapGraph.get_field g obj i)
           (ensures (let (g', _) = check_and_darken_bounded_spec g st v cap in
                     well_formed_heap g' /\
-                    Seq.mem obj (objects zero_addr g') /\
-                    SpecFields.fields_constrained g' obj /\
+                    SpecFields.allocated g' obj /\
+                    ~(SpecObject.is_no_scan obj g') /\
                     U64.v wz <= U64.v (wosize_of_object obj g') /\
                     U64.v (wosize_of_object obj g') < pow2 54))
   = is_pointer_eq v;
@@ -1133,13 +1133,13 @@ fn push_step_body_bounded (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
                  Seq.length 'st <= cap /\
                  stack_capacity st == cap /\
                  well_formed_heap 's /\ in_objects obj 's /\
-                 SpecFields.fields_constrained 's obj /\
+                 ~(SpecObject.is_no_scan obj 's) /\ ~(SpecObject.is_blue obj 's) /\
                  U64.v wz <= U64.v (wosize_of_object obj 's) /\
                  U64.v (wosize_of_object obj 's) < pow2 54)
   ensures exists* s' st'. is_heap heap s' ** is_gray_stack st st' **
     pure (Seq.length s' == heap_size /\
           well_formed_heap s' /\ in_objects obj s' /\
-          SpecFields.fields_constrained s' obj /\
+          ~(SpecObject.is_no_scan obj s') /\ ~(SpecObject.is_blue obj s') /\
           U64.v wz <= U64.v (wosize_of_object obj s') /\
           U64.v (wosize_of_object obj s') < pow2 54 /\
           Seq.length st' <= cap /\
@@ -1174,7 +1174,7 @@ fn push_children_bounded_impl (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
                  Seq.length 'st <= cap /\
                  stack_capacity st == cap /\
                  well_formed_heap 's /\ in_objects (f_address h_addr) 's /\
-                 SpecFields.fields_constrained 's (f_address h_addr) /\
+                 ~(SpecObject.is_no_scan (f_address h_addr) 's) /\ ~(SpecObject.is_blue (f_address h_addr) 's) /\
                  U64.v wz <= U64.v (wosize_of_object (f_address h_addr) 's) /\
                  U64.v (wosize_of_object (f_address h_addr) 's) < pow2 54)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
@@ -1197,7 +1197,7 @@ fn push_children_bounded_impl (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
             Seq.length s == heap_size /\
             Seq.length st_cur <= cap /\
             well_formed_heap s /\ in_objects obj s /\
-            SpecFields.fields_constrained s obj /\
+            ~(SpecObject.is_no_scan obj s) /\ ~(SpecObject.is_blue obj s) /\
             U64.v wz <= U64.v (wosize_of_object obj s) /\
             U64.v (wosize_of_object obj s) < pow2 54 /\
             SpecMarkBounded.push_children_bounded s st_cur obj vi wz cap ==

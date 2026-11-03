@@ -227,7 +227,7 @@ let update_walk_preserves_fl_ascending major upd fwd fp =
 #pop-options
 
 let update_major_pointers_preserves_fl_ascending major fwd fp =
-  update_walk_preserves_fl_ascending major (not_freed major no_pending) fwd fp
+  update_walk_preserves_fl_ascending major (allocated major) fwd fp
 
 
 /// ---------------------------------------------------------------------------

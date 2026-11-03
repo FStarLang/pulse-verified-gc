@@ -34,7 +34,7 @@ module HeapModel = GC.Spec.HeapModel
 
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RT = GC.Gen.RefTable
-module CE = GC.Gen.CheneyExcept
+module CE = GC.Gen.CheneyView
 open GC.Gen.MinorCollectForwarding.Helpers
 module MCFE = GC.Gen.MinorCollectForwarding.Edges
 open GC.Gen.MinorCollectForwarding.Edges
@@ -73,33 +73,33 @@ let normal_edge_forward_ready
     is_minor_pointer dst
 
 val combined_reachable_edge_forwarded_normal
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view)
   (roots slots: seq U64.t) (n: nat)
-  (u v: CG.combined_vertex)
+  (u w: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_except minor major fp pf /\
-      RBridge.major_fields_covered minor major pf roots /\
-      RT.ref_table_covers_except major pf slots n /\
+      GenInv.collection_shape_view v minor major fp /\ CE.promotion_in_view v minor major fp roots /\
+      RBridge.major_fields_covered minor major v roots /\
+      RT.ref_table_covers_view v major slots n /\
       remembered_targets_in_roots major roots slots n /\
-      RBridge.roots_not_freed roots major pf /\
+      RBridge.roots_in_view v roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
-      (let cg = CG.build_combined_graph minor major pf in
+      (let cg = CG.build_combined_graph minor major v in
        let combined_roots = CG.classify_roots minor roots in
        CG.combined_reachable cg combined_roots u /\
-       CG.combined_reachable cg combined_roots v /\
-       CG.mem_ce (u, v) cg) /\
-      normal_edge_forward_ready minor major fp roots u v)
+       CG.combined_reachable cg combined_roots w /\
+       CG.mem_ce (u, w) cg) /\
+      normal_edge_forward_ready minor major fp roots u w)
     (ensures (
       let prom = cheney_promote minor major fp roots in
-      let res = cheney_collect_spec_except minor major fp roots pf in
-      mem_graph_edge_at (HeapModel.create_graph_except res.mc_major pf)
+      let res = cheney_collect_spec_view v minor major fp roots in
+      mem_graph_edge_at (HeapModel.create_graph_view v res.mc_major)
         (CG.fwd_morphism prom.fwd_map u)
-        (CG.fwd_morphism prom.fwd_map v)))
+        (CG.fwd_morphism prom.fwd_map w)))
 
 let fwd_disjoint_reachable_major
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t) : prop =
-  let cg = CG.build_combined_graph minor major pf in
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t) : prop =
+  let cg = CG.build_combined_graph minor major v in
   let combined_roots = CG.classify_roots minor roots in
   let prom = cheney_promote minor major fp roots in
   forall (x y: U64.t).
@@ -111,20 +111,20 @@ let fwd_disjoint_reachable_major
     prom.fwd_map x <> y
 
 val fwd_disjoint_reachable_major_intro
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_except minor major fp pf /\
-      RBridge.roots_not_freed roots major pf)
-    (ensures fwd_disjoint_reachable_major minor major fp pf roots)
+      GenInv.collection_shape_view v minor major fp /\ CE.promotion_in_view v minor major fp roots /\
+      RBridge.roots_in_view v roots major)
+    (ensures fwd_disjoint_reachable_major minor major fp v roots)
 
 val minor_source_edge_not_no_scan
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view)
   (src: U64.t) (dst: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_except minor major fp pf /\
-      CG.mem_ce (CG.MinorV src, dst) (CG.build_combined_graph minor major pf))
+      GenInv.collection_shape_view v minor major fp /\
+      CG.mem_ce (CG.MinorV src, dst) (CG.build_combined_graph minor major v))
     (ensures minor_tag minor src < 251)
 
 let normal_vertex_ready
@@ -139,66 +139,66 @@ let normal_vertex_ready
     is_infix (prom.fwd_map x) prom.major_final = false
 
 let normal_src_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
   (u: CG.combined_vertex) : prop =
-  let cg = CG.build_combined_graph minor major pf in
+  let cg = CG.build_combined_graph minor major v in
   let combined_roots = CG.classify_roots minor roots in
   CG.combined_reachable cg combined_roots u /\
   normal_vertex_ready minor major fp roots u
 
 let combined_reachable_normal_injective_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t) : prop =
-  let cg = CG.build_combined_graph minor major pf in
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t) : prop =
+  let cg = CG.build_combined_graph minor major v in
   let combined_roots = CG.classify_roots minor roots in
   let prom = cheney_promote minor major fp roots in
-  forall (u v: CG.combined_vertex).
+  forall (u w: CG.combined_vertex).
     CG.combined_reachable cg combined_roots u /\
-    CG.combined_reachable cg combined_roots v /\
+    CG.combined_reachable cg combined_roots w /\
     (match u with
      | CG.MinorV x ->
        prom.fwd_map x <> 0UL /\
        is_val_addr (prom.fwd_map x) /\
        is_infix (prom.fwd_map x) prom.major_final = false
      | CG.MajorV _ -> True) /\
-    (match v with
+    (match w with
      | CG.MinorV x ->
        prom.fwd_map x <> 0UL /\
        is_val_addr (prom.fwd_map x) /\
        is_infix (prom.fwd_map x) prom.major_final = false
      | CG.MajorV _ -> True) /\
-    CG.fwd_morphism prom.fwd_map u == CG.fwd_morphism prom.fwd_map v ==> u == v
+    CG.fwd_morphism prom.fwd_map u == CG.fwd_morphism prom.fwd_map w ==> u == w
 
 val combined_reachable_normal_injective
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_except minor major fp pf /\
-      RBridge.roots_not_freed roots major pf /\
-      fwd_disjoint_reachable_major minor major fp pf roots)
-    (ensures combined_reachable_normal_injective_prop minor major fp pf roots)
+      GenInv.collection_shape_view v minor major fp /\ CE.promotion_in_view v minor major fp roots /\
+      RBridge.roots_in_view v roots major /\
+      fwd_disjoint_reachable_major minor major fp v roots)
+    (ensures combined_reachable_normal_injective_prop minor major fp v roots)
 
 val normal_edge_forward_ready_intro
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view)
   (roots: seq U64.t)
-  (u v: CG.combined_vertex)
+  (u w: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_except minor major fp pf /\
-      RBridge.roots_not_freed roots major pf /\
-      normal_src_reachable minor major fp pf roots u /\
-      normal_src_reachable minor major fp pf roots v /\
-      CG.mem_ce (u, v) (CG.build_combined_graph minor major pf))
-    (ensures normal_edge_forward_ready minor major fp roots u v)
+      GenInv.collection_shape_view v minor major fp /\ CE.promotion_in_view v minor major fp roots /\
+      RBridge.roots_in_view v roots major /\
+      normal_src_reachable minor major fp v roots u /\
+      normal_src_reachable minor major fp v roots w /\
+      CG.mem_ce (u, w) (CG.build_combined_graph minor major v))
+    (ensures normal_edge_forward_ready minor major fp roots u w)
 
 val normal_src_images_injective
-  (minor: minor_state) (major: heap) (fp: U64.t) (pf: obj_addr -> prop)
-  (roots: seq U64.t) (u v: CG.combined_vertex)
+  (minor: minor_state) (major: heap) (fp: U64.t) (v: view)
+  (roots: seq U64.t) (u w: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_except minor major fp pf /\
-      RBridge.roots_not_freed roots major pf /\
-      normal_src_reachable minor major fp pf roots u /\
-      normal_src_reachable minor major fp pf roots v /\
+      GenInv.collection_shape_view v minor major fp /\ CE.promotion_in_view v minor major fp roots /\
+      RBridge.roots_in_view v roots major /\
+      normal_src_reachable minor major fp v roots u /\
+      normal_src_reachable minor major fp v roots w /\
       (let prom = cheney_promote minor major fp roots in
-       CG.fwd_morphism prom.fwd_map u == CG.fwd_morphism prom.fwd_map v))
-    (ensures u == v)
+       CG.fwd_morphism prom.fwd_map u == CG.fwd_morphism prom.fwd_map w))
+    (ensures u == w)

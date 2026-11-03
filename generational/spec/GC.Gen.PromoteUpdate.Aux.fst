@@ -1,5 +1,5 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.PromoteUpdate.Aux — the pointer-update walk: objects, part 1, extensionality in the rewritten set
+/// GC.Gen.PromoteUpdate.Aux — the pointer-update walk: objects, `blocks_fit`, extensionality in the rewritten set
 /// ---------------------------------------------------------------------------
 
 module GC.Gen.PromoteUpdate.Aux
@@ -63,10 +63,10 @@ let update_object_pointers_step (major: heap) (obj: obj_addr) (fwd: forwarding_m
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux_wfh)
 #pop-options
 
-/// The walk keeps the object list and part 1: each step does.
+/// The walk keeps the object list and `blocks_fit`: each step does.
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 private let rec update_walk_aux_preserves_objects_wfh
-  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> prop) (fwd: forwarding_map) (idx: nat)
+  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (idx: nat)
   : Lemma (requires
       blocks_fit major /\
       objs == objects zero_addr major)
@@ -78,7 +78,7 @@ private let rec update_walk_aux_preserves_objects_wfh
   else begin
     let obj = Seq.index objs idx in
     assert (Seq.mem obj objs);
-    if not (FStar.IndefiniteDescription.strong_excluded_middle (upd obj)) then
+    if not (upd obj) then
       update_walk_aux_preserves_objects_wfh major objs upd fwd (idx + 1)
     else if is_no_scan obj major then
       update_walk_aux_preserves_objects_wfh major objs upd fwd (idx + 1)
@@ -99,9 +99,9 @@ let update_walk_preserves_wfh_part1 major upd fwd =
 
 /// update_major_pointers preserves the objects walk.
 let update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map) =
-  update_walk_preserves_objects major (not_freed major no_pending) fwd
+  update_walk_preserves_objects major (allocated major) fwd
 
 /// update_major_pointers preserves blocks_fit.
 let update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map) =
-  update_walk_preserves_wfh_part1 major (not_freed major no_pending) fwd
+  update_walk_preserves_wfh_part1 major (allocated major) fwd
 

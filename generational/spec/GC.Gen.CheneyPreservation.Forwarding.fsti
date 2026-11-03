@@ -390,7 +390,7 @@ val cheney_promote_fwd_infix_delta
 
 /// Every infix forwarding target is a well-formed interior pointer of the final
 /// major heap: it resolves to an enumerated closure that contains it.  This is
-/// exactly what `well_formed_heap_part2`/`part3` demand of a field value, and
+/// exactly what `pointers_stay_in`/`interior_pointers_valid` demand of a field value, and
 /// it is the reason minor-heap infix pointers need no longer be forbidden.
 let fwd_infix_targets_wf (minor: minor_state) (fwd: forwarding_map) (g: heap) : prop =
   forall (x: U64.t).
