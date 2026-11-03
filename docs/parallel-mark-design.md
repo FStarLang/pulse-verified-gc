@@ -12,7 +12,7 @@ Each of k workers runs the ordinary sequential mark on the objects whose header 
 4. **A round ends when `work_in_flight` is 0.** Stacks and inboxes are never inspected to decide this.
 5. **Anything touching several owners' objects runs between rounds, on one thread:** darkening the roots, repairing overflow, and later ephemeron checks and field writes.
 
-**Status.** Modelled and proved in F\*, with no `admit` (Stage 3, `GC.Spec.MarkPar2`; see `docs/parallel-mark-stage3.md`). A finished run leaves the sequential mark's heap. A worker step reads and writes only what the race-freedom table allows. `work_in_flight` equals the counted entries, and a 0 is final. Every run ends. 29,000 random-interleaving runs match the sequential mark, and five broken variants are caught. Proving found no flaw in the design. ThreadSanitizer, on a C implementation, comes next.
+**Status.** Modelled and proved in F\*, with no `admit` (Stage 3, `GC.Spec.MarkPar2`; see `docs/parallel-mark-stage3.md`). The model takes try_take and the counter read as two steps, as real code does them. A finished run leaves the sequential mark's heap. A worker step reads and writes only what the race-freedom table allows. `work_in_flight` equals the counted entries, and a 0 is final. Every run ends. Random-interleaving runs match the sequential mark, and six broken variants are caught. Proving found no flaw in the design. "Atomicity in the model" lists what the C code must keep atomic. An unverified C prototype, for measurement only, is reported in `docs/parallel-mark-prototype.md`.
 
 ## State
 
@@ -145,6 +145,37 @@ The design is correct only if the implementation meets these six requirements.
 5. **The main thread has its own flag, `overflow_main`,** set when a stack is full during setup or fix-up. The overflow check after each round reads every `overflow[i]` and `overflow_main`, and the fix-up clears all of them.
 6. **Setup darkens the roots as `check_and_darken_bounded_spec` does:** it skips a root that is not a pointer, resolves an infix pointer to its closure, and greys and pushes the object only if it is white. A repeated root is then pushed once, and no infix header is ever coloured.
 
+## Atomicity in the model
+
+The F\* model (`GC.Spec.MarkPar2.Model`) runs each worker as a sequence of steps, and treats each step as one indivisible event. A real worker's step is several machine operations. So the model is sound only if every interleaving of real operations gives the same result as some order of whole steps. That holds when each step does at most one shared action, and every other operation in it touches only state no other thread reads or writes during a round. The private operations then commute with anything another thread does, so the step can be taken to happen at the instant of its shared action.
+
+The shared actions are a critical section on one inbox's lock, and one atomic operation on `work_in_flight`. Each row below is a model step, the real operations it stands for, and why treating them as one is sound. The last column is what the C code must do so that it stays sound.
+
+| Model step | Real operations, in order | Why one step is sound | Requirement on the C code |
+| --- | --- | --- | --- |
+| **Pop** (`Loop`, stack not empty) | Test own stack; pop x; read x's header (size, tag); write x's colour black | Stack and x's header are private: x is in my range, and during a round only the owner touches a header (rule 1) | A1 |
+| **Take** (`Loop`, stack empty, inbox not empty) | Test own stack; lock own inbox; test it; remove the oldest entry; unlock | Stack test private; the rest is one critical section | A2 |
+| **Empty take** (`Loop` → `Idle`) | Test own stack; lock own inbox; find it empty; unlock | Stack test private; one critical section | A2 |
+| **Counter read** (`Idle` → `Stopped` or `Loop`) | One atomic load of `work_in_flight`; at 0, return from the thread function | One atomic action. A message may arrive between the empty take and this read; the model has them as two steps, so it covers that | A3 |
+| **Scan one field** (`Scan`) | Read field j of x; test whether it is a heap pointer; `route`: compute the owner, then `accept` (own range) or `send` (other range) | The field is read-only during a round (rule 2), so when it is read does not matter. `route`'s owner test is arithmetic. `accept` and `send` are below | A4, and those of accept and send |
+| **Accept** (`Got v`, or inside a scan) | Read header at v − 8; if infix, compute the closure c and test its owner; if another's, `send`; else read c's colour; if white: write grey, then either set own flag (stack full) or add 1 to `work_in_flight` and push c | Headers at v − 8 and c − 8 are mine (the owner test comes first), the stack and flag are mine. The one shared action is the atomic add, or the `send` | A1, A5, A6 |
+| **Send**, part of a scan or accept step | Lock inbox j; test full; if full set own flag; else add 1 to `work_in_flight` and append v; unlock | One critical section. The add happens inside it but is not protected by it, so another thread may see the higher count before the append. That is harmless: the sender still holds a counted item, so the count was already at least 1, and a reader only tells 0 from not-0. The owner cannot take v before the unlock | A5, A6 |
+| **Finish** | One atomic subtract of 1 from `work_in_flight` | One atomic action | A3, A6 |
+| **Main**: overflow check, fix-up, counter reset, restart | Read every flag; clear them; walk the heap, greying and pushing; set `work_in_flight`; start k threads | No worker thread exists between the join and the next create, so nothing observes the main thread | A7 |
+| **Setup** (`init`) | Darken the roots; set `work_in_flight`; start k threads | As for Main: it runs before any worker exists | A7 |
+
+A step may hold several private operations and one shared one, as Accept does, or a field read and a send, as Scan does. Two shared actions are never in one step: try_take and the counter read used to be one step, and are now two (`Loop` → `Idle` → `Stopped` or `Loop`).
+
+**Requirements on the C code.** These add to "Requirements on the implementation" above.
+
+- **A1. Headers are written whole and only by their owner.** A colour change reads the header word, changes the colour bits, and writes the word back, with no other thread reading or writing that word during a round. The header is one aligned 8-byte word (assumption 6), and the store is an 8-byte store of that word only. No atomic is needed.
+- **A2. try_take is one critical section,** with the empty test and the removal under the same hold of `inbox[me]`'s lock. The stack test before it needs no lock, because only `me` pushes to `stack[me]`.
+- **A3. The counter read is a separate atomic load,** made after try_take has released the lock, and the worker stops only on a 0 from that load. The worker never stops on its own stack and inbox being empty. Mutant 6 in the tests does that, and is caught.
+- **A4. Fields are read with plain loads,** and nobody writes them during a round. If marking ever writes fields (see Later phases), this step is no longer one event.
+- **A5. send is one critical section on `inbox[j]`,** holding the full test, the flag or the append, and the add to `work_in_flight`. The full test and the append must not be split: a split could overfill the inbox, or drop a message without setting a flag.
+- **A6. Order of counter updates.** The add for a new item comes before the item is visible to anyone: before the unlock in `send`, and before the push in `accept`. The subtract for an item comes after everything its handling adds (Finish is the last step). Every update is one atomic read-modify-write.
+- **A7. Main and setup run only with no worker thread alive:** after joining all k threads and before creating the next k. Thread create and join supply the memory ordering for the stacks, flags, headers and the counter reset (requirements 1–3).
+
 ## Why it is race-free
 
 During a round, every word is either written by one thread only and read by no other, or read-only, or reached through a lock or an atomic; between rounds one thread runs alone.
@@ -194,7 +225,7 @@ Stage 3 states the theorems for the model of this design, `GC.Spec.MarkPar2`, be
 2. **The configuration includes the capacities.** The cut list becomes a configuration `k = { cs; cap_s; cap_q }`, and `valid_cuts cs` becomes `valid_cfg k`: valid cuts and `S >= 1`. The design needs `S >= 1` ("Overflow and the fix-up phase"), and the theorem is false without it. For example, with `S = 0` and root A, setup greys A but cannot push it, and every later fix-up fails to push it too. The fix-up then pushes nothing, so marking is done with A grey.
 3. **The ownership lemma is about worker steps.** `step_writes_own` takes worker `i`'s step, `W i`, in place of any event with its actor. The main thread writes headers in every range by design, but only between rounds. `main_at_barrier` states that it changes nothing unless every worker has stopped.
 4. **The step lemma also covers reads.** `step_reads_own` is new: a worker step gives the same result on any heap that agrees on the words `readable` allows, which are its own range and the fields of the object it is scanning. `step_race_free` follows from it and `step_writes_own`.
-5. **Termination keeps its form.** "Enabled" now means an event that changes the state. A worker that is idle at the top of its loop while `work_in_flight > 0` is not enabled, because its step changes nothing. The statement still has three parts: at most `measure (init ...)` effective steps, a step that is not enabled changes nothing, and nothing is enabled exactly when marking is done.
+5. **Termination allows spinning.** "Enabled" now means an event that makes progress. try_take and the counter read are separate steps (`Loop` → `Idle` → `Loop`, `Stopped`), so a worker with nothing to do, while `work_in_flight > 0`, spins between `Loop` and `Idle`. Those spin steps change the state but are not enabled. The statement has three parts. First, at most `measure (init ...)` effective steps. Second, a step that is not enabled changes nothing, or is a spin step that keeps the measure and that the same worker's next step undoes. Third, nothing is enabled exactly when marking is done. So a schedule runs for ever only if some workers spin while the ones with work are never scheduled. An `Idle` worker is enabled when the counter is 0 or a message has come into its inbox. To make spinning keep the measure, an `Idle` worker's weight depends on whether the counter is 0 (`idle_w`).
 
 One proof lemma's precondition was relaxed, with no theorem affected. `GC.Spec.MarkPar2.Step.scan_unscanned` asked for a pointer field at the later index. Its proof needs only that the index lies within the scan. Asking only that lets the vacuity checks meet it on the witness heap, where no object has two pointer fields.
 
