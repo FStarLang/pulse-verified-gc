@@ -13,8 +13,8 @@
  * `tag >= no_scan_tag` both stop at the tag, so those words are never read.
  *
  * That is the empirical claim the specification change rests on:
- * `GC.Spec.Fields.fields_constrained` now guards parts 2 and 3 of
- * `well_formed_heap` and `GC.Spec.Mark.no_pointer_to_blue`, and the whole-heap
+ * a no-scan block has no pointers (`GC.Spec.Fields.has_pointer_to`), so the
+ * pointer clauses of `well_formed_heap` say nothing about its body, and the whole-heap
  * precondition `no_scan_invariant` — which asserted that a live no-scan object
  * contains no pointer-shaped word — is gone.  `spot/GC.SPOT.NoScanMajor` is
  * the machine-checked witness that the relaxed precondition admits such a

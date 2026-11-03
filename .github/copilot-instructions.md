@@ -174,7 +174,7 @@ skipped during marking and during Cheney scanning.
 2. Promotion — surviving minor objects are allocated in the major heap
    (`GC.Gen.Promote`, `GC.Gen.PromoteUpdate.*`).
 3. Remembered set — major→minor edges recorded by the write barrier
-   (the slot table; `ref_table_covers_except` / `ref_table_sound_except` in
+   (the slot table; `ref_table_covers_view` / `ref_table_sound_view` in
    `GC.Gen.RefTable`).
 4. Major collection — reuses the mark-and-sweep major heap machinery.
 
