@@ -836,7 +836,8 @@ blacken every white block behind the cursor); nothing carries it.
   sweep runs the list is exact, so an allocation fails only when no free block
   anywhere is big enough (`sweep_phase_oom_no_fit`, #29 mid-sweep).
 - Stop-the-world the sweep also carries `stw_rel g0 g c` against the marked
-  heap, and `sweep_phase_end_stw` gives `FusedSweep.End.sweep_post`
+  heap (the blocks black in `g0` are unchanged, `marked_unchanged`, and every
+  non-free block behind the cursor was black, `behind_marked`), and `sweep_phase_end_stw` gives `FusedSweep.End.sweep_post`
   (`fused_sweep_post_intrinsic` re-derives the stop-the-world pass).
 
 **The program's events keep it** (`GC.Gen.SweepPhase`), each leaving the

@@ -127,7 +127,7 @@ let swept_block_kinds g1 g p =
   W.bnext_facts g p;
   white_header_facts (read_word g1 p);
   if black_at g1 p then begin
-    if not (survivor g1 g p) then dead_run_first g1 p (W.bnext g p)
+    if not (marked_block g1 g p) then dead_run_first g1 p (W.bnext g p)
   end
   else dead_run_first g1 p (W.bnext g p)
 

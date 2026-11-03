@@ -72,21 +72,21 @@ let sub_at (g0 g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
     obj_pos g x; obj_pos g0 x;
     let q = hd_address x in
     pos_behind g fp st q;
-    if not (blue_at g q) then behind_survivors_elim g0 g c q
+    if not (blue_at g q) then behind_marked_elim g0 g c q
     else begin
       W.reaches_bounds g zero_addr (U64.v q);
       let q0 = W.block_at g0 zero_addr c (U64.v q) in
       if U64.v q0 <> U64.v q then begin
         W.reaches_bounds g0 zero_addr (U64.v q0);
         if black_at g0 q0 then begin
-          survivors_unchanged_elim g0 g q0;
+          marked_unchanged_elim g0 g q0;
           Edit.no_pos_inside g q0 (U64.v q)
         end else begin
           let s = W.last_block g zero_addr (U64.v q) in
           if blue_at g s then no_adjacent_free_elim g c s q
           else begin
-            behind_survivors_elim g0 g c s;
-            survivors_unchanged_elim g0 g s;
+            behind_marked_elim g0 g c s;
+            marked_unchanged_elim g0 g s;
             if U64.v s < U64.v q0 then Edit.no_pos_inside g0 s (U64.v q0)
             else if U64.v s > U64.v q0 then Edit.no_pos_inside g0 q0 (U64.v s)
           end
@@ -101,7 +101,7 @@ let survives_at (g0 g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
   = sweep_phase_inv_elim g fp st;
     obj_pos g0 x; colour_of g0 x;
     let q = hd_address x in
-    survivors_unchanged_elim g0 g q;
+    marked_unchanged_elim g0 g q;
     obj_pos g x; colour_of g x;
     pos_behind g fp st q;
     behind_swept_elim g (U64.v st.cursor) q;
@@ -116,7 +116,7 @@ let dead_is_free (g0 g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
   = obj_pos g x; colour_of g x; colour_of g0 x;
     pos_behind g fp st (hd_address x);
     if not (blue_at g (hd_address x)) then
-      behind_survivors_elim g0 g (U64.v st.cursor) (hd_address x)
+      behind_marked_elim g0 g (U64.v st.cursor) (hd_address x)
 
 let not_infix_at (g0 g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
   : Lemma (requires at_end_stw g0 g fp st /\ Seq.mem x (objects zero_addr g))
@@ -148,8 +148,8 @@ let covered_at (g0 g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
     W.reaches_bounds g0 zero_addr (U64.v q);
     let p = W.block_at g zero_addr c (U64.v q) in
     if not (blue_at g p) then begin
-      behind_survivors_elim g0 g c p;
-      survivors_unchanged_elim g0 g p;
+      behind_marked_elim g0 g c p;
+      marked_unchanged_elim g0 g p;
       if U64.v p < U64.v q then Edit.no_pos_inside g0 p (U64.v q);
       assert False
     end else begin
@@ -161,7 +161,7 @@ let covered_at (g0 g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
         let nn = mk_hp_addr n in
         W.reaches_block_before g zero_addr nn c;
         no_adjacent_free_elim g c p nn;
-        behind_survivors_elim g0 g c nn;
+        behind_marked_elim g0 g c nn;
         W.reaches_block_before g0 zero_addr q n
       end;
       let y = obj_of p in
@@ -179,7 +179,7 @@ let free_holds_dead (g0 g: heap) (fp: U64.t) (st: sweep_state) (x y: obj_addr)
   = obj_pos g y; colour_of g y;
     obj_pos g0 x; colour_of g0 x;
     if is_black x g0 then begin
-      survivors_unchanged_elim g0 g (hd_address x);
+      marked_unchanged_elim g0 g (hd_address x);
       if U64.v (hd_address x) <> U64.v (hd_address y) then
         Edit.no_pos_inside g (hd_address y) (U64.v (hd_address x))
     end
@@ -240,7 +240,7 @@ let nothing_live_one_block g0 g fp st =
   let c = U64.v st.cursor in
   W.reaches_refl g zero_addr;
   behind_swept_elim g c zero_addr;
-  (if not (blue_at g zero_addr) then behind_survivors_elim g0 g c zero_addr);
+  (if not (blue_at g zero_addr) then behind_marked_elim g0 g c zero_addr);
   W.reaches_unfold g zero_addr c;
   let n = W.bnext g zero_addr in
   W.bnext_facts g zero_addr;
@@ -248,7 +248,7 @@ let nothing_live_one_block g0 g fp st =
      let nn = mk_hp_addr n in
      W.reaches_snoc g zero_addr zero_addr;
      behind_swept_elim g c nn;
-     (if not (blue_at g nn) then behind_survivors_elim g0 g c nn);
+     (if not (blue_at g nn) then behind_marked_elim g0 g c nn);
      no_adjacent_free_elim g c zero_addr nn
    end);
   let only (x: nat)

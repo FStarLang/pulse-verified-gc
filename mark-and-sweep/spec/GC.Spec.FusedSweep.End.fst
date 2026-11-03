@@ -55,12 +55,12 @@ let dead_run_first (g0: heap) (a: hp_addr) (b: nat)
 let swept_cases (g0 g: heap) (p: hp_addr)
   : Lemma (requires swept_block g0 g p)
           (ensures W.can_step g p /\ W.can_step g0 p /\
-                   (black_at g0 p ==> survivor g0 g p /\ W.bnext g0 p == W.bnext g p) /\
+                   (black_at g0 p ==> marked_block g0 g p /\ W.bnext g0 p == W.bnext g p) /\
                    (not (black_at g0 p) ==> free_run g0 g p))
   = W.bnext_facts g p;
     white_header_facts (read_word g0 p);
     if black_at g0 p then begin
-      if not (survivor g0 g p) then dead_run_first g0 p (W.bnext g p)
+      if not (marked_block g0 g p) then dead_run_first g0 p (W.bnext g p)
     end
     else dead_run_first g0 p (W.bnext g p)
 

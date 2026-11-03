@@ -94,7 +94,7 @@ val cells_transfer (g g': heap)
 val swept_block_kinds (g0 g: heap) (p: hp_addr)
   : Lemma (requires swept_block g0 g p)
           (ensures W.can_step g p /\ W.can_step g0 p /\
-                   (black_at g0 p ==> survivor g0 g p /\ W.bnext g0 p == W.bnext g p) /\
+                   (black_at g0 p ==> marked_block g0 g p /\ W.bnext g0 p == W.bnext g p) /\
                    (not (black_at g0 p) ==> free_run g0 g p))
 
 /// Behind the cursor, every block of the current heap's walk is at a position

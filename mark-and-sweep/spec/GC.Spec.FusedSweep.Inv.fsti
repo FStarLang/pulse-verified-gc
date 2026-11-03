@@ -7,11 +7,11 @@
 /// Writing `c` for the cursor:
 ///
 ///   1. *Behind the cursor* (`behind_ok`): every block of `g`'s walk below `c`
-///      is either a survivor -- black in `g0`, now white, same size, tag and
-///      fields -- or a free (blue) block covering a run of blocks that were
-///      dead (white or blue) in `g0`.  No two free blocks are adjacent
-///      (`no_adjacent_free`), and the block ending at `c` is free exactly
-///      when `prev_free` says so (`ends_free`).
+///      is either a marked block (`marked_block`: black in `g0`, now white,
+///      same size, tag and fields) or a free (blue) block covering a run of
+///      blocks that were dead (white or blue) in `g0`.  No two free blocks
+///      are adjacent (`no_adjacent_free`), and the block ending at `c` is
+///      free exactly when `prev_free` says so (`ends_free`).
 ///   2. *In front of the cursor* (`front_same`): `g` is word for word `g0`.
 ///   3. *The free list* (`FLA.fl_ascending g fp`): every cell of the whole
 ///      heap, in ascending order.
@@ -104,9 +104,9 @@ val dead_run_mem (g0: heap) (a: hp_addr) (b: nat) (q: hp_addr)
 /// Blocks behind the cursor
 /// ---------------------------------------------------------------------------
 
-/// A survivor: black in `g0`; white in `g` with the same size and tag; the
+/// A marked block: black in `g0`; white in `g` with the same size and tag; the
 /// same fields.
-let survivor (g0 g: heap) (p: hp_addr) : prop =
+let marked_block (g0 g: heap) (p: hp_addr) : prop =
   black_at g0 p /\
   read_word g p == white_header (read_word g0 p) /\
   (forall (a: hp_addr). U64.v p < U64.v a /\ U64.v a < W.bnext g p ==>
@@ -120,7 +120,7 @@ let free_run (g0 g: heap) (p: hp_addr) : prop =
   (read_word g p == read_word g0 p \/ getTag (read_word g p) == 0UL)
 
 let swept_block (g0 g: heap) (p: hp_addr) : prop =
-  W.can_step g p /\ (survivor g0 g p \/ free_run g0 g p)
+  W.can_step g p /\ (marked_block g0 g p \/ free_run g0 g p)
 
 /// A swept block depends only on its own words of `g` (and on `g0`).
 val swept_block_frame (g0 g g': heap) (p: hp_addr)

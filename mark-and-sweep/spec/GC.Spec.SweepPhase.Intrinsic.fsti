@@ -34,8 +34,8 @@
 /// for those the sweep carries `stw_rel g0 g c`: the walk of `g0` reaches the
 /// cursor, `g` is `g0` from the cursor on (`front_same`), every block black
 /// in `g0` is still a block of `g` with the same size, tag and fields
-/// (`survivors_unchanged`), and every non-free block behind the cursor was
-/// black in `g0` (`behind_survivors`).
+/// (`marked_unchanged`), and every non-free block behind the cursor was
+/// black in `g0` (`behind_marked`).
 
 module GC.Spec.SweepPhase.Intrinsic
 
@@ -202,7 +202,7 @@ let white_after_mark (g0: heap) (x: obj_addr) : prop =
 /// Every block black in `g0` is still a block, not free, with the same size,
 /// tag and fields; only its colour may differ.
 [@@"opaque_to_smt"]
-let survivors_unchanged (g0 g: heap) : prop =
+let marked_unchanged (g0 g: heap) : prop =
   forall (p: hp_addr). pos g0 p /\ black_at g0 p ==>
     pos g p /\ not (blue_at g p) /\ wz_at g p == wz_at g0 p /\
     getTag (read_word g p) == getTag (read_word g0 p) /\
@@ -211,22 +211,22 @@ let survivors_unchanged (g0 g: heap) : prop =
 
 /// Every block behind the cursor that is not free was black in `g0`.
 [@@"opaque_to_smt"]
-let behind_survivors (g0 g: heap) (c: nat) : prop =
+let behind_marked (g0 g: heap) (c: nat) : prop =
   forall (p: hp_addr). pos g p /\ U64.v p < c /\ not (blue_at g p) ==> pos g0 p /\ black_at g0 p
 
 let stw_rel (g0 g: heap) (c: nat) : prop =
   W.reaches g0 zero_addr c /\ front_same g0 g c /\
-  survivors_unchanged g0 g /\ behind_survivors g0 g c
+  marked_unchanged g0 g /\ behind_marked g0 g c
 
-val survivors_unchanged_elim (g0 g: heap) (p: hp_addr)
-  : Lemma (requires survivors_unchanged g0 g /\ pos g0 p /\ black_at g0 p)
+val marked_unchanged_elim (g0 g: heap) (p: hp_addr)
+  : Lemma (requires marked_unchanged g0 g /\ pos g0 p /\ black_at g0 p)
           (ensures pos g p /\ not (blue_at g p) /\ wz_at g p == wz_at g0 p /\
                    getTag (read_word g p) == getTag (read_word g0 p) /\
                    (forall (a: hp_addr). U64.v p < U64.v a /\ U64.v a < W.bnext g0 p ==>
                       read_word g a == read_word g0 a))
 
-val behind_survivors_elim (g0 g: heap) (c: nat) (p: hp_addr)
-  : Lemma (requires behind_survivors g0 g c /\ pos g p /\ U64.v p < c /\ not (blue_at g p))
+val behind_marked_elim (g0 g: heap) (c: nat) (p: hp_addr)
+  : Lemma (requires behind_marked g0 g c /\ pos g p /\ U64.v p < c /\ not (blue_at g p))
           (ensures pos g0 p /\ black_at g0 p)
 
 /// ---------------------------------------------------------------------------
