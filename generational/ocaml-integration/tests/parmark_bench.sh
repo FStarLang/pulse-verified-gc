@@ -26,6 +26,8 @@ for cfg in "$@"; do
     IFS=, read -ra kv <<<"$vars"; for x in "${kv[@]}"; do [ -n "$x" ] && envs+=("$x"); done
   fi
   for r in $(seq 1 "$RUNS"); do
+    # Wait until no proof or model-test job is running (another session's).
+    while ps aux | grep -E 'mark_par2_test|fstar.exe|z3|parmark_check' | grep -v grep >/dev/null; do sleep 20; done
     e=$(mktemp)
     load=$(sysctl -n vm.loadavg | awk '{print $2}')
     wall=$(perl -MTime::HiRes=time -e '$t=time; open(STDOUT,">/dev/null"); open(STDERR,">'"$e"'"); $rc=system(@ARGV); printf STDOUT ""; open(T,">&3"); printf T "%.3f %d\n", time-$t, $rc>>8' -- env "${envs[@]}" $R $P 3>&1)
