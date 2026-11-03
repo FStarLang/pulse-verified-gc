@@ -16,7 +16,7 @@ case $B in
   livegraph) W=16777216; P="livegraph.byte 1000000 4 4" ;;
   *) echo "unknown bench $B"; exit 1 ;;
 esac
-[ -f "$OUT" ] || echo "bench,config,run,wall_s,majors,mark_us,seq_inner_us,seq_rescan_us,rounds,fixups,setup_us,round_us,fixup_us,create_us,start_lat_us,join_lat_us,roots_pushed,fixup_pushed,scanned,sent,dropped,stack_ovf,idle_spins,deduped,flushes,cut_us,per_worker_scanned" >"$OUT"
+[ -f "$OUT" ] || echo "bench,config,run,wall_s,majors,mark_us,seq_inner_us,seq_rescan_us,rounds,fixups,setup_us,round_us,fixup_us,create_us,start_lat_us,join_lat_us,roots_pushed,fixup_pushed,scanned,sent,dropped,stack_ovf,idle_spins,deduped,flushes,cut_us,per_worker_scanned,load1_before" >"$OUT"
 num() { grep -aoE "(^| )$1 [0-9.]+" "$2" | head -1 | awk '{print $2}'; }
 for cfg in "$@"; do
   name=${cfg%%:*}; vars=${cfg#*:}
@@ -27,6 +27,7 @@ for cfg in "$@"; do
   fi
   for r in $(seq 1 "$RUNS"); do
     e=$(mktemp)
+    load=$(sysctl -n vm.loadavg | awk '{print $2}')
     wall=$(perl -MTime::HiRes=time -e '$t=time; open(STDOUT,">/dev/null"); open(STDERR,">'"$e"'"); $rc=system(@ARGV); printf STDOUT ""; open(T,">&3"); printf T "%.3f %d\n", time-$t, $rc>>8' -- env "${envs[@]}" $R $P 3>&1)
     rc=${wall#* }; wall=${wall% *}
     if [ "$rc" != 0 ]; then echo "$B $name run $r: exit $rc" >&2; cat "$e" >&2; fi
@@ -35,7 +36,7 @@ for cfg in "$@"; do
     for f in majors mark_us inner_us rescan_us rounds fixups setup_us round_us fixup_us create_us start_lat_us join_lat_us roots_pushed fixup_pushed scanned sent dropped stack_ovf idle_spins deduped flushes cut_us; do
       row="$row,$(num $f "$e")"
     done
-    echo "$row,$pw" >>"$OUT"
+    echo "$row,$pw,$load" >>"$OUT"
     echo "$row" >&2
     rm -f "$e"
   done
