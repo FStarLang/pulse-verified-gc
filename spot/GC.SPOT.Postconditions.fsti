@@ -25,11 +25,11 @@ val minor_collect_full_post_intro
         post_major == res.mc_major /\
         post_roots == res.mc_roots /\
         (ok ==> GC.Gen.MinorCollectForwarding.normal_result_reachable_subgraph_isomorphism_prop
-                   minor major fp GC.Spec.Fields.allocated roots post_major
+                   minor major fp GC.Spec.Fields.free_stw roots post_major
                    (GC.Gen.MinorCollectForwarding.Helpers.resolve_roots
                       post_major post_roots) /\
                  GC.Gen.MinorCollectForwarding.normal_result_non_pointer_fields_preserved_prop
-                   minor major fp GC.Spec.Fields.allocated roots post_major)))
+                   minor major fp GC.Spec.Fields.free_stw roots post_major)))
       (ensures minor_collect_full_post minor major fp roots ok post_major post_roots)
 
 /// Recover the concrete identity of the post-minor heap and roots from the
@@ -46,11 +46,11 @@ val minor_collect_full_post_elim
         post_major == res.mc_major /\
         post_roots == res.mc_roots /\
         (ok ==> GC.Gen.MinorCollectForwarding.normal_result_reachable_subgraph_isomorphism_prop
-                   minor major fp GC.Spec.Fields.allocated roots post_major
+                   minor major fp GC.Spec.Fields.free_stw roots post_major
                    (GC.Gen.MinorCollectForwarding.Helpers.resolve_roots
                       post_major post_roots) /\
                  GC.Gen.MinorCollectForwarding.normal_result_non_pointer_fields_preserved_prop
-                   minor major fp GC.Spec.Fields.allocated roots post_major)))
+                   minor major fp GC.Spec.Fields.free_stw roots post_major)))
 
 val promoted_image_from_forwarding
   : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
@@ -81,12 +81,12 @@ val major_minor_field_rewritten
     Lemma
       (requires
         GC.Gen.HeapInvariant.collection_heap_shape minor major fp /\
-        GC.Gen.ReachabilityBridge.major_fields_covered minor major GC.Spec.Fields.allocated roots /\
+        GC.Gen.ReachabilityBridge.major_fields_covered minor major GC.Spec.Fields.free_stw roots /\
         GC.Gen.RefTable.ref_table_covers_minor_ptrs major slots n /\
         GC.Gen.MinorCollectForwarding.remembered_targets_in_roots major roots slots n /\
-        GC.Gen.ReachabilityBridge.roots_in_view GC.Spec.Fields.allocated roots major /\
+        GC.Gen.ReachabilityBridge.roots_not_free GC.Spec.Fields.free_stw roots major /\
         GC.Gen.CheneyBFS.cheney_no_oom minor major fp roots /\
-        (let cg = GC.Gen.CombinedGraph.build_combined_graph minor major GC.Spec.Fields.allocated in
+        (let cg = GC.Gen.CombinedGraph.build_combined_graph minor major GC.Spec.Fields.free_stw in
          let combined_roots = GC.Gen.CombinedGraph.classify_roots minor roots in
          GC.Gen.CombinedGraph.combined_reachable cg combined_roots
            (GC.Gen.CombinedGraph.MajorV src) /\

@@ -273,95 +273,103 @@ let get_pointer_fields (g: heap) (h_addr: obj_addr) : GTot (seq vertex_id) =
 A free (blue) block is a vertex with no outgoing edges, and so is a no-scan
 block.
 
-#### Views: which blocks count as objects
-
-The heap invariant is stated on a **view**: the blocks it counts as objects.
-
-```fstar
-type view = heap -> obj_addr -> GTot bool
-
-let allocated : view = fun g x -> Seq.mem x (objects zero_addr g) && not (is_blue x g)
-```
-
-`allocated` -- every block on the walk that is not free -- is the stop-the-world
-view, used while the collector is idle or marking and everywhere in the
-mark-and-sweep proofs.  A collector phase that leaves dead blocks in place (a
-sweep in progress) supplies a smaller view, and the generic theorems of the
-minor collection hold for any view (see below).  A block outside the view is
-garbage left in place: nothing constrains its fields, and nothing reads them.
-The view is a function of the heap, so a block the allocator hands out is
-counted as soon as its header is written.
-
-The graph of a view (`GC.Spec.HeapModel.create_graph_view v g`) has the
-vertices of `create_graph g` but only the edges out of blocks of the view
-(`create_graph_view_edge`); at `allocated` it is `create_graph`
-(`create_graph_view_allocated`), so mark-and-sweep never sees the difference.
-
 #### Well-formedness
 
 The main heap well-formedness predicate lives in
-`common/spec/GC.Spec.Fields.fst`, in four named clauses:
+`common/spec/GC.Spec.Fields.fst`, in four named clauses.  Part 2 is the one
+that matters for collection, and it reads like its English sentence:
+
+> every non-free, scannable block's pointer-like fields point to a non-free
+> real block.
+
+What counts as *free* is a parameter, so the same definition serves the
+stop-the-world collector and a sweep in progress:
 
 ```fstar
-(* no-scan blocks have no pointer fields *)
-let has_pointer_to (g: heap) (src dst: obj_addr) : prop =
-  ~(is_no_scan src g) /\ points_to g src dst
+(* What counts as free for well-formedness. Physically free blocks are blue;
+   a definition may also count blocks that are about to be freed. *)
+type free_def = heap -> obj_addr -> GTot bool
 
-let blocks_fit (g: heap) : prop =
+let is_block (g: heap) (x: obj_addr) : GTot bool = Seq.mem x (objects zero_addr g)   (* a real block *)
+let scannable (g: heap) (x: obj_addr) : GTot bool = not (is_no_scan x g)
+
+let blocks_fit (g: heap) : prop =                                         (* part 1 *)
   forall (h: obj_addr). Seq.mem h (objects zero_addr g) ==>
     U64.v (hd_address h) + 8 + U64.v (wosize_of_object h g) * 8 <= Seq.length g
 
-let pointers_stay_in (v: view) (g: heap) : prop =
-  forall (src dst: obj_addr). v g src /\ has_pointer_to g src dst ==>
-    v g (resolve_object dst g)
+let pointers_lead_to_non_free (free: free_def) (g: heap) : prop =          (* part 2 *)
+  forall (src dst: obj_addr).
+    is_block g src /\ not (free g src) /\ scannable g src /\ points_to g src dst ==>
+    is_block g (resolve_object dst g) /\ not (free g (resolve_object dst g))
 
-let interior_pointers_valid (v: view) (g: heap) : prop =
-  forall (src dst: obj_addr). v g src /\ has_pointer_to g src dst ==>
+let interior_pointers_valid (free: free_def) (g: heap) : prop =            (* part 3, same sources *)
+  forall (src dst: obj_addr).
+    is_block g src /\ not (free g src) /\ scannable g src /\ points_to g src dst ==>
     infix_addr_wf g (objects zero_addr g) dst
 
-let no_infix_block (g: heap) : prop =
+let no_infix_block (g: heap) : prop =                                     (* part 4 *)
   forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_infix obj g)
 
-let well_formed_view (v: view) (g: heap) : prop =
-  blocks_fit g /\ pointers_stay_in v g /\ interior_pointers_valid v g /\ no_infix_block g
+let well_formed_heap_with (free: free_def) (g: heap) : prop =
+  blocks_fit g /\ pointers_lead_to_non_free free g /\ interior_pointers_valid free g /\ no_infix_block g
 
-let well_formed_heap (g: heap) : prop = well_formed_view allocated g
+let free_stw : free_def = fun g x -> is_blue x g
+let well_formed_heap (g: heap) : prop = well_formed_heap_with free_stw g
 ```
 
 In words:
 
 1. **Blocks fit**: every block on the walk fits in the heap.
-2. **Pointers stay in the view**: every pointer out of a block of the view
-   leads (after resolving an interior pointer to its enclosing closure) to a
-   block of the view.  At `allocated`: nothing live points at a free block.
-3. **Interior pointers are valid**: an interior pointer out of a block of the
-   view has a valid enclosing closure.
+2. **Pointers lead to non-free blocks**: every non-free, scannable block's
+   pointer-like fields point (after resolving an interior pointer to its
+   enclosing closure) to a non-free real block.  At `free_stw`: nothing live
+   points at a blue block.
+3. **Interior pointers are valid**: an interior pointer out of a non-free,
+   scannable block has a valid enclosing closure.
 4. **No infix block**: the walk enumerates whole blocks; an infix header lives
    inside its closure, never on the walk.
 
-A *pointer* is `has_pointer_to`: a no-scan block --- a `string`, a `Bytes.t`,
-a `Bigarray` payload, a `Custom` block --- holds arbitrary bytes, eight of which
-may spell an in-range address, so it has no pointers.  This matches the
-collector, which never reads such a word, and `get_pointer_fields`, which gives
-the block no edges.  `points_to` hides the `wosize < 2^54` typing guard of the
-raw field search.
+Stop-the-world -- while the collector is idle or marking, and everywhere in
+the mark-and-sweep proofs -- free means blue (`free_stw`).  A collector phase
+that leaves dead blocks in place also counts the blocks it is about to free: a
+sweep in progress counts the white blocks in front of its cursor, and the
+generic theorems of the minor collection hold for any admissible definition of
+free (see below).  A free block is garbage left in place: nothing constrains
+its fields, and nothing reads them.  Free is a function of the heap, so a
+block the allocator hands out stops being free as soon as its header is
+written.  Proofs abbreviate "a non-free real block" as
+`in_use free g x = is_block g x && not (free g x)`.
 
-`well_formed_view` and the two pointer clauses are `opaque_to_smt`; clients
-cross the boundary with `wf_view_parts` (`wf_parts` for `well_formed_heap`) and
-the intro/elim lemmas (`pointers_stay_in_intro`/`_elim`,
-`interior_pointers_valid_intro`/`_elim`, `points_to_target_in_view`).
+A *pointer* needs a scannable source: a no-scan block --- a `string`, a
+`Bytes.t`, a `Bigarray` payload, a `Custom` block --- holds arbitrary bytes,
+eight of which may spell an in-range address, so it has no pointers.  This
+matches the collector, which never reads such a word, and
+`get_pointer_fields`, which gives the block no edges.  `points_to` hides the
+`wosize < 2^54` typing guard of the raw field search.
+
+`well_formed_heap_with` and the two pointer clauses are `opaque_to_smt`;
+clients cross the boundary with `wf_with_parts` (`wf_parts` for
+`well_formed_heap`) and the intro/elim lemmas
+(`pointers_lead_to_non_free_intro`/`_elim`,
+`interior_pointers_valid_intro`/`_elim`, `points_to_target_not_free`).
 Marking keeps `well_formed_heap` because it only recolours among white, grey
 and black (`Mark.color_change_preserves_wf` requires a non-blue colour and a
-non-blue object, so `allocated` is unchanged); the sweep proves it of its
+non-blue object, so what is free is unchanged); the sweep proves it of its
 result in `FusedSweep.End.sweep_post_wf`.
+
+The graph given what counts as free
+(`GC.Spec.HeapModel.create_graph_with free g`) has the vertices of
+`create_graph g` but only the edges out of non-free blocks
+(`create_graph_with_edge`); at `free_stw` it is `create_graph`
+(`create_graph_with_stw`), so mark-and-sweep never sees the difference.
 
 #### Interior (infix) pointers in major fields
 
 The pointer clauses are stated on the **resolved** target, not on the raw
 field value.  `resolve_object` is the identity on an ordinary pointer and maps
 an interior pointer to the head of the closure that contains it.  So
-`pointers_stay_in` says *the enclosing block of every pointer target is in the
-view*, which is exactly OCaml's rule, and `interior_pointers_valid`
+`pointers_lead_to_non_free` says *the enclosing block of every pointer target
+is a non-free block*, which is exactly OCaml's rule, and `interior_pointers_valid`
 (`infix_addr_wf`) is the non-vacuous side condition that makes the mapping
 well defined: an infix header carries the offset back to its parent, that
 parent is itself an enumerated object, and it has `Closure_tag`.
@@ -394,7 +402,7 @@ Consequences of the resolved formulation:
 
 Both collectors handle interior pointers out of *live* objects in full
 generality.  Free (blue) blocks are not constrained at all beyond their
-free-list link: a blue block is outside every view (`allocated` excludes it),
+free-list link: a blue block is free under every definition (`blue_is_free`),
 and `GC.Spec.HeapGraph.get_pointer_fields` gives it no edges.  Nothing in the
 collector reads such a word -- mark scans only grey objects, sweep and coalesce
 read headers and colours, the generational pointer update skips blue objects,
@@ -590,7 +598,7 @@ and the free-list facts; it is merged into this one.)
 The allocator proof establishes the facts one expects from a systems allocator:
 
 - the object returned on success came from a blue block;
-- the returned object is fresh with respect to the allocated-object view;
+- the returned object is fresh: it was not an allocated object before;
 - the free list remains valid and terminating;
 - split blocks are formed with valid headers and links;
 - exact-fit and leftover-one cases consume the whole block safely;
@@ -791,142 +799,146 @@ one behind it is white. It also maintains `swept_tail`: when it takes
 `alloc_find` names the block first-fit takes and its list predecessor).
 
 **The invariant is intrinsic** (`GC.Spec.SweepPhase.Intrinsic`): it is about
-the current heap and the sweep state only, with no ghost heap.
+the current heap and the sweep state only, with no ghost heap.  During the
+sweep, what counts as free is the blue blocks and the blocks *pending free*:
 
 ```fstar
-let condemned (st: sweep_state) (g: heap) (x: obj_addr) : GTot bool =
-  allocated g x && is_white x g && U64.v x > U64.v st.cursor
+(* white in front of the cursor: will be freed by this sweep *)
+let pending_free (st: sweep_state) (g: heap) (x: obj_addr) : GTot bool =
+  is_block g x && is_white x g && U64.v x > U64.v st.cursor
 
-let surviving (st: sweep_state) : view = fun g x -> allocated g x && not (condemned st g x)
+let free_incremental (st: sweep_state) : free_def =
+  fun g x -> is_blue x g || pending_free st g x
 
 let sweep_phase_inv (g: heap) (fp: U64.t) (st: sweep_state) : prop =
   let c = U64.v st.cursor in
   c % 8 == 0 /\ c <= heap_size /\ W.reaches g zero_addr c /\
   heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
-  well_formed_view (surviving st) g /\
+  well_formed_heap_with (free_incremental st) g /\
   behind_swept g c /\ front_unswept g c /\
   no_adjacent_free g c /\ ends_free g c (prev_free g st) /\
   tail_ok g c st.swept_tail /\ frag_ok g c st.last_fragment /\
   FLA.fl_ascending g fp
 ```
 
-The condemned objects -- white in front of the cursor (`x > cursor` on the
+The blocks pending free -- white in front of the cursor (`x > cursor` on the
 object address is "header at or above the cursor") -- are dead but not yet
-freed. The sweep's view, `surviving st`, is the allocated blocks that are not
-condemned: surviving objects point only at surviving objects, and a condemned
-object's fields are unconstrained (they may point into blocks the sweep has
-already freed). `surviving st` is an admissible view (`surviving_view_ok`:
-inside `allocated`, read off the walk and the headers). Everything but
-well-formedness is `sweep_shape`: facts about the walk, the headers and the free list, kept by any
-change that keeps the walk and every header on it (`shape_transport`). The
-step lemmas are the stop-the-world ones (`GC.Spec.FusedSweep.Step`), run
+freed.  So part 2 of well-formedness reads, mid-sweep: every block that is
+neither blue nor pending free points only at blocks that are neither; the
+fields of a block pending free are unconstrained (they may point into blocks
+the sweep has already freed).  `free_incremental st` is an admissible
+definition of free (`free_incremental_ok`: blue blocks are free, and it is
+read off the walk and the headers).  Everything but well-formedness is
+`sweep_shape`: facts about the walk, the headers and the free list, kept by
+any change that keeps the walk and every header on it (`shape_transport`).
+The step lemmas are the stop-the-world ones (`GC.Spec.FusedSweep.Step`), run
 inside the proof against a heap rebuilt from the current one (`ref_of`:
 blacken every white block behind the cursor); nothing carries it.
 
 - `sweep_phase_start`: the heap marking left satisfies it, with every white
-  object condemned.
-- `sweep_phase_step`: a step keeps it; it frees only condemned objects (the
-  surviving objects are the same before and after, with the same size, tag and
-  fields) and the condemned set only shrinks. `sweep_phase_steps` is the same
-  for up to `k` steps (`sweep_steps`, a slice). That condemned objects are
-  among the white objects marking left is a lemma (`condemned_within_step`),
-  not carried.
-- `sweep_phase_end` (`.End`): at the end nothing is condemned, the heap is well
-  formed and swept clean (`GC.Spec.SweepPhase.Util.swept_clean`); while the
-  sweep runs the list is exact, so an allocation fails only when no free block
-  anywhere is big enough (`sweep_phase_oom_no_fit`, #29 mid-sweep).
+  object pending free.
+- `sweep_phase_step`: a step keeps it; it frees only blocks pending free (the
+  non-free blocks are the same before and after, with the same size, tag and
+  fields) and the pending-free set only shrinks.  `sweep_phase_steps` is the
+  same for up to `k` steps (`sweep_steps`, a slice).  That the blocks pending
+  free are among the white objects marking left is a lemma
+  (`pending_free_within_step`), not carried.
+- `sweep_phase_end` (`.End`): at the end nothing is pending free, the heap is
+  well formed and swept clean (`GC.Spec.SweepPhase.Util.swept_clean`); while
+  the sweep runs the list is exact, so an allocation fails only when no free
+  block anywhere is big enough (`sweep_phase_oom_no_fit`, #29 mid-sweep).
 - Stop-the-world the sweep also carries `stw_rel g0 g c` against the marked
   heap (the blocks black in `g0` are unchanged, `marked_unchanged`, and every
-  non-free block behind the cursor was black, `behind_marked`), and `sweep_phase_end_stw` gives `FusedSweep.End.sweep_post`
+  non-free block behind the cursor was black, `behind_marked`), and
+  `sweep_phase_end_stw` gives `FusedSweep.End.sweep_post`
   (`fused_sweep_post_intrinsic` re-derives the stop-the-world pass).
 
 **The program's events keep it** (`GC.Gen.SweepPhase`), each leaving the
-condemned set unchanged:
+pending-free set unchanged:
 
 - allocation (`alloc_sweep_phase`): first-fit at `Sweeping st`, with the phase
-  it returns. A new object is never condemned (`new_block`: black in front of
-  the cursor, white behind it). Its fields are what the free block held, so
-  the result is the invariant with the new object *fresh* (`fresh_ok`: the
-  heap is well formed on the view without it, `surviving_but st obj`, so
-  nothing points at it);
+  it returns.  A new object is never pending free (`new_block`: black in front
+  of the cursor, white behind it).  Its fields are what the free block held,
+  so the result is the invariant with the new object *fresh* (`fresh_ok`: the
+  heap is well formed when the new object also counts as free,
+  `free_or_fresh st obj`, so nothing points at it);
   writes into it keep it fresh (`fresh_write`), and once every field holds a
-  storable value it closes (`fresh_close`). The allocation-shape facts behind
+  storable value it closes (`fresh_close`).  The allocation-shape facts behind
   it (the block first-fit takes, the words it writes, its walk, cells and
   list) are `GC.Gen.AllocShape`;
-- a program write (`write_sweep_phase`) under `program_write (surviving st)`:
-  a word of a surviving object that is not a closure, storing a value that is
-  not a pointer or points (resolved) at a surviving object (`storable`);
+- a program write (`write_sweep_phase`) under
+  `program_write (free_incremental st)`: a word of a non-free object that is
+  not a closure, storing a value that is not a pointer or points (resolved)
+  at a non-free object (`storable`);
 - promotion (`promote_sweep_phase`): `promote_object` at the sweep's phase --
   the allocation with the nursery object's tag, the copy of its fields (which
-  `minor_fields_ok`, from `minor_major_fields_in_view`, makes storable), and
+  `minor_fields_ok`, from `minor_major_fields_not_free`, makes storable), and
   the close.
 
 The `_shape` forms (`alloc_sweep_shape`, `body_write_shape`,
 `promote_sweep_shape`) state the same about `sweep_shape` alone.
 
 **A minor collection mid-sweep** (`GC.Gen.SweepPhase.Minor`) meets the sweep
-through its view.  The generic theorems (`GC.Gen.CheneyView`) are about the
-idle collection, whose promoted copies are white wherever they land, and the
-painting turns it into the collection at the phase (`GC.Gen.Paint`).  On the
-idle heaps a white copy in front of the cursor would look condemned, so the
-view the collection runs on is the sweep's with what is condemned fixed at
+through its definition of free.  The generic theorems (`GC.Gen.CheneyWith`)
+are about the idle collection, whose promoted copies are white wherever they
+land, and the painting turns it into the collection at the phase
+(`GC.Gen.Paint`).  On the idle heaps a white copy in front of the cursor would
+look pending free, so the collection runs with what is pending free fixed at
 the heap `g` it starts from:
 
 ```fstar
-let surviving_from (st: sweep_state) (g0: heap) : view =
-  fun g x -> allocated g x && not (condemned st g0 x)
+let free_incremental_from (st: sweep_state) (g0: heap) : free_def =
+  fun g x -> is_blue x g || pending_free st g0 x
 ```
 
-It is admissible (`surviving_from_view_ok`), counts every promoted copy, since
-none was allocated in `g` (`surviving_from_fresh`, the `promotion_in_view`
-hypothesis), and painting does not change it (`Paint.colour_blind`).  At `g`
-it is `surviving st`; on the painted result it is `surviving st` again,
-because `allocation_color` makes a copy in front of the cursor black
-(`Paint.paint_surviving`) -- a white one there would be condemned, and freed
-by the sweep while reachable.
+It is admissible (`free_incremental_from_ok`), makes no promoted copy free,
+since none was a block of `g` (`free_incremental_from_fresh`, the
+`promotion_not_free` hypothesis), and painting does not change it
+(`Paint.colour_blind`).  At `g` it is `free_incremental st`; on the painted
+result it is `free_incremental st` again, because `allocation_color` makes a
+copy in front of the cursor black (`Paint.paint_in_use`) -- a white one there
+would be pending free, and freed by the sweep while reachable.
 
 - `sweep_collection_shape` (step B): the sweep phase, with the nursery's shape
-  and `minor_major_fields_in_view (surviving st) minor g`, is
-  `collection_shape_view (surviving_from st g) minor g fp` (the free-list half
-  from the exact ascending list alone,
+  and `minor_major_fields_not_free (free_incremental st) minor g`, is
+  `collection_shape_with (free_incremental_from st g) minor g fp` (the
+  free-list half from the exact ascending list alone,
   `PostCollectionShape.free_list_shape_of_ascending`);
 - `minor_keeps_sweep_phase` (step C): for the collection at the sweep's phase,
-  `cheney_collect_spec_view_at (Sweeping st) (surviving_from st g) minor g fp roots`,
+  `cheney_collect_spec_with_at (Sweeping st) (free_incremental_from st g) minor g fp roots`,
   the result satisfies `sweep_phase_inv` at `state_after st` (same cursor and
   `last_fragment`, `swept_tail` the last cell at or below where it was), the
-  condemned set is the same (new objects are never condemned, existing headers
-  do not change), and the result keeps `collection_shape_view` on the
-  collection's view.  Well-formedness is the generic theorem's
-  (`cheney_collect_view_preserves_shape`) through the painting
-  (`Paint.recoloured_wf`, `paint_surviving`); the shape is by induction over
-  the promotions
-  (`GC.Gen.Cheney.cheney_promote_induction`), each a promotion at the phase
-  (`promote_sweep_shape`), and the pointer update keeps the walk and every
-  header.
+  pending-free set is the same, and the result keeps `collection_shape_with`
+  for the collection's definition of free.  Well-formedness is the generic
+  theorem's (`cheney_collect_with_preserves_shape`) through the painting
+  (`Paint.recoloured_wf`, `paint_in_use`); the shape is by induction over the
+  promotions (`GC.Gen.Cheney.cheney_promote_induction`), each a promotion at
+  the phase (`promote_sweep_shape`), and the pointer update keeps the walk and
+  every header.
 
 **Safety over the phase** (`GC.Gen.SweepPhase.Safety`) is stated on the
 reachable graph, not on a heap the sweep started from.  In the sweep's graph
-(`create_graph_view (surviving st) g`: a condemned object has no edges) every
-object reachable from a surviving root is surviving -- a real, not-free,
-not-condemned object (`reachable_surviving`; over the nursery's combined graph
-`reachable_surviving_combined`).  A sweep step frees only condemned objects,
-so it never frees a reachable one and leaves its size, tag and fields alone
-(`step_keeps_reachable`; `steps_keep_reachable` for a slice), and a minor
-collection in between keeps every surviving object surviving
-(`minor_keeps_surviving`) and the condemned set (step C).  The slice lemmas are
-in `Intrinsic`: `sweep_phase_steps` (and `_stw`), and `sweep_steps_done` (a
-budget of one step per heap word finishes the sweep).
+(`create_graph_with (free_incremental st) g`: a block pending free has no
+edges) every object reachable from a non-free root is non-free -- a real
+object that is neither blue nor pending free (`reachable_not_free`; over the
+nursery's combined graph `reachable_not_free_combined`).  A sweep step frees
+only blocks pending free, so it never frees a reachable one and leaves its
+size, tag and fields alone (`step_keeps_reachable`; `steps_keep_reachable` for
+a slice), and a minor collection in between keeps every non-free object
+non-free (`minor_keeps_not_free`) and the pending-free set (step C).  The
+slice lemmas are in `Intrinsic`: `sweep_phase_steps` (and `_stw`), and
+`sweep_steps_done` (a budget of one step per heap word finishes the sweep).
 
-`GC.SPOT.SweepPhaseCondemned` exercises all of it on a concrete heap: from the
-two-block heap of `GC.SPOT.ConcreteMajorGen` it sweeps everything into one free
-block, allocates `P` and `G` behind the cursor at the end of that sweep phase
-(white), stores `G` into `P` (a program write), ends the phase and starts the
-next one, and takes two steps: the free block at the start absorbs `G`.  Then
-`P` is condemned, its field points at `G`, `G` is no longer an object (its
-word lies inside the merged free block), and the heap is in the sweep phase
-and in `collection_shape_view` with that non-empty condemned set; the minor
-collection at the sweep's phase keeps the sweep phase with `P` still
-condemned.
+`GC.SPOT.SweepPhasePendingFree` exercises all of it on a concrete heap: from
+the two-block heap of `GC.SPOT.ConcreteMajorGen` it sweeps everything into one
+free block, allocates `P` and `G` behind the cursor at the end of that sweep
+phase (white), stores `G` into `P` (a program write), ends the phase and
+starts the next one, and takes two steps: the free block at the start absorbs
+`G`.  Then `P` is pending free, its field points at `G`, `G` is no longer an
+object (its word lies inside the merged free block), and the heap is in the
+sweep phase and in `collection_shape_with` with that non-empty pending-free
+set; the minor collection at the sweep's phase keeps the sweep phase with `P`
+still pending free.
 
 #### The incremental entry points
 
@@ -945,12 +957,12 @@ let gc_state gh d b s fp ph : slprop =
 phase_shape minor g fp Idle         = collection_heap_shape minor g fp
 phase_shape minor g fp (Sweeping st) =
   sweep_phase_inv g fp st /\ minor_heap_shape minor /\
-  minor_major_fields_in_view (surviving st) minor g
+  minor_major_fields_not_free (free_incremental st) minor g
 ```
 
 (`phase_shape` is opaque, with `phase_shape_idle` / `phase_shape_sweeping`
-to open it.) The view a minor collection from `g` runs on at a phase is
-`phase_view g ph`: `allocated` idle, `surviving_from st g` mid-sweep.
+to open it.) What counts as free for a minor collection from `g` at a phase
+is `phase_free g ph`: `free_stw` idle, `free_incremental_from st g` mid-sweep.
 
 **A slice** is whole sweep steps until the swept blocks -- headers included --
 add up to at least the budget in words, or the sweep is finished
@@ -968,13 +980,13 @@ Pulse loop is `GC.Impl.FusedSweepCoalesce.sweep_slice_impl`, over the same
 | `gen_gc_start gh roots .. slots .. st` | `gc_state .. Idle`, and `gen_gc`'s argument facts (stack budget, zeroed forwarding array, remembered set sound/covering/distinct, remembered targets among the roots, roots valid) | `gen_gc`'s minor collection, root darkening and marking; the heap is the marked one (`mark_post` of the darkened heap), the phase `Sweeping sweep_start`, `gc_state` at it; the rewritten roots and the minor isomorphism as `gen_gc`'s; out of memory: the major phase skipped, still `Idle` |
 | `sweep_slice gh budget` | `gc_state .. ph` | `(s2, fp2, ph2) == phase_slice s fp ph budget`, `gc_state` at `ph2`; returns `Idle? ph2` |
 | `finish_sweep gh` | `gc_state .. ph` | a slice with budget `2^64 - 1`: `gc_state .. Idle`, `collection_heap_shape` |
-| `minor_collect_any_phase gh roots .. slots ..` | `gc_state .. ph`, `minor_slots_ok ph` (the remembered set and roots on `phase_view s ph`) | `minor_collect_full`'s contract at the phase on `phase_view s ph`, `gc_state` at the phase it leaves (idle stays idle; mid-sweep the cursor and condemned set are kept, `GI.minor_keeps_phase_shape`) |
+| `minor_collect_any_phase gh roots .. slots ..` | `gc_state .. ph`, `minor_slots_ok ph` (the remembered set and roots for `phase_free s ph`) | `minor_collect_full`'s contract at the phase for `phase_free s ph`, `gc_state` at the phase it leaves (idle stays idle; mid-sweep the cursor and pending-free set are kept, `GI.minor_keeps_phase_shape`) |
 | `gen_alloc_major gh wosize tag` | the heap and phase, `wosize >= 1` | `AC.alloc_phase`'s result; mid-sweep with `gc_state` and `tag <> infix_tag`: the phase moved by the allocation, and either nothing changed or the object is a `new_block` and `fresh_ok` |
 
 The end of the sweep is the stop-the-world shape again
 (`GI.sweep_end_shape`: `sweep_phase_end`'s swept-clean heap, the free-list
 facts from the ascending list, no black or grey object, and with nothing
-condemned the cross-generation condition is the idle one), so `gen_gc` or
+pending free the cross-generation condition is the idle one), so `gen_gc` or
 `gen_gc_start` can follow. A full collection requested mid-sweep calls
 `finish_sweep` first (D4). `GC.SPOT.IncrementalCycle` checks that the
 contracts compose: from `gen_gc`'s precondition alone, `gen_gc_start`, a
@@ -987,16 +999,17 @@ every call, as `collection_heap_shape` is for `gen_gc`. It holds because every
 collector call returns it and the program's events in between keep it:
 
 - a block the program allocates mid-sweep is fresh; the runtime initialises
-  every field with a storable value (an integer, or a pointer to a surviving
+  every field with a storable value (an integer, or a pointer to a non-free
   object -- a reachable one) before the next collector call
   (`fresh_write`, `fresh_close`);
 - every field write is a `program_write`, and the write barrier records every
   major field that gets a nursery pointer;
 - nursery allocation keeps the nursery's shape and the cross-generation
-  condition on the sweep's view;
+  condition for `free_incremental st`;
 - `minor_slots_ok`: the forwarding array zeroed, the remembered set sound and
-  covering on the phase's view, distinct slots, the remembered targets among
-  the roots, the roots valid and in the view (never condemned);
+  covering for the phase's definition of free, distinct slots, the
+  remembered targets among the roots, the roots valid and not free (never
+  pending free);
 - only the collector writes `phase_ref`.
 
 ### Bounded mark stack
@@ -1197,32 +1210,32 @@ MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots)
 
 Those facts appear in the preconditions of `gen_gc` and
 `minor_collect_pre_idle`.  The slot predicates live in the spec module
-`GC.Gen.RefTable` (`RT`), stated on a view; the stop-the-world forms above are
-their instances at `allocated`:
+`GC.Gen.RefTable` (`RT`), stated for any definition of free; the stop-the-world
+forms above are their instances at `free_stw`:
 
 ```fstar
-let ref_table_sound_view (v: view) (major_pre: heap)
+let ref_table_sound_with (free: free_def) (major_pre: heap)
                          (slots: seq U64.t) (n: nat) : prop =
   n <= Seq.length slots /\
   (forall (i: nat). i < n ==>
     (let addr = U64.v (Seq.index slots i) in
      addr < heap_size /\ addr % 8 == 0 /\
      (exists (obj: obj_addr) (j: nat).
-       v major_pre obj /\
-       is_no_scan obj major_pre = false /\
+       is_block major_pre obj /\ not (free major_pre obj) /\
+       scannable major_pre obj /\
        j < U64.v (wosize_of_object obj major_pre) /\
        addr == U64.v obj + j * 8)))
 
 let ref_table_sound (major_pre: heap) (slots: seq U64.t) (n: nat) : prop =
-  ref_table_sound_view allocated major_pre slots n
+  ref_table_sound_with free_stw major_pre slots n
 ```
 
-`ref_table_covers_view v` says every nursery pointer held by a field of a
-scannable block of the view is at a slot.  Soundness says every slot is a field
-of a scannable block of the view.  It holds because the table is emptied at
+`ref_table_covers_with free` says every nursery pointer held by a field of a
+non-free, scannable block is at a slot.  Soundness says every slot is a field
+of a non-free, scannable block.  It holds because the table is emptied at
 every minor collection and an entry is recorded only when the program writes a
 field, so the object was reachable after the last minor collection; such an
-object is never left out of the view, since marking starts right after a minor
+object is never about to be freed, since marking starts right after a minor
 collection and, under a deletion barrier, anything written during marking ends
 black.
 
@@ -1261,7 +1274,7 @@ let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
 ```
 
 The minor collection's specification (`cheney_collect_spec`,
-`cheney_collect_spec_view`) runs at `Idle`, where the allocation is
+`cheney_collect_spec_with`) runs at `Idle`, where the allocation is
 `alloc_spec` and the phase stays `Idle`; the lemmas about `promote_object` are
 stated there.  At any other phase the collection is that one with two
 differences, both from the allocator (`GC.Gen.Paint`, `GC.Gen.CheneyAt`): each
@@ -1270,8 +1283,8 @@ blocks in front of the cursor blackened), and `swept_tail` is the last list cell
 at or below where it was (`phase_at`).  One promotion at the phase is the idle
 one, painted (`paint_promote`), and painting keeps every colour-blind fact
 (`recoloured`); the pointer update's two passes commute with it
-(`GC.Gen.PaintUpdate`).  `cheney_collect_spec_view_at ph v` is the collection
-at phase `ph` on the view `v`; at `Idle` it is `cheney_collect_spec_view v` and
+(`GC.Gen.PaintUpdate`).  `cheney_collect_spec_with_at ph free` is the collection
+at phase `ph` for `free`; at `Idle` it is `cheney_collect_spec_with free` and
 the phase stays `Idle`.
 
 The major allocator is size-exact: the allocated header declares exactly the
@@ -1279,128 +1292,133 @@ requested `wosize` (`GC.Gen.AllocProps.alloc_spec_obj_wosize_exact_part1`; see
 `docs/allocator-exactness.md`), so the copied fields fill the promoted object
 and there is no extra word to account for.
 
-### The pointer update over a view
+### The pointer update, given what counts as free
 
 The pointer update is a walk over the major heap's objects that rewrites the
 nursery pointers held by a fixed set of objects:
 `GC.Gen.Promote.update_walk major upd fwd` rewrites the fields of the objects
 `x` with `upd x` (scannable ones) and never reads anything else.  The minor
-collection runs it over the blocks of a view,
-`update_pointers_view v major fwd = update_walk major (v major) fwd`.  The
-stop-the-world update is the `allocated` instance: `update_major_pointers
-major fwd` is *defined* as `update_pointers_view allocated major fwd`, so there
-is one walk.  `GC.Gen.Cheney.cheney_collect_spec_view v minor major fp roots`
-is the collection whose pointer update is `update_pointers_view v` over the
-promoted heap; at `allocated` it is `cheney_collect_spec`.  The
+collection runs it over the non-free blocks,
+`update_pointers_with free major fwd = update_walk major (in_use free major) fwd`.
+The stop-the-world update is the `free_stw` instance: `update_major_pointers
+major fwd` is *defined* as `update_pointers_with free_stw major fwd`, so there
+is one walk.  `GC.Gen.Cheney.cheney_collect_spec_with free minor major fp roots`
+is the collection whose pointer update is `update_pointers_with free` over the
+promoted heap; at `free_stw` it is `cheney_collect_spec`.  The
 `PromoteUpdate` lemmas and the free-list preservation lemmas are proved for the
 walk over any set (`walk_ok`: its members are not free), and the
 `update_major_pointers` forms are their stop-the-world instances.
 
 The implementation's two passes are proved equal to the walk
 (`GC.Gen.TwoPassEquiv.promoted_plus_slots_eq_walk`), and at a Cheney result,
-with the write barrier's guarantees stated on the view
-(`GC.Gen.RefTable.ref_table_covers_view`, `ref_table_sound_view`: every slot is
-a field of a block of the view), to the pointer update of
-`cheney_collect_spec_view` (`GC.Gen.TwoPassEquiv.Collect.two_pass_implies_collect_view`).
+with the write barrier's guarantees stated for the same definition of free
+(`GC.Gen.RefTable.ref_table_covers_with`, `ref_table_sound_with`: every slot is
+a field of a non-free block), to the pointer update of
+`cheney_collect_spec_with` (`GC.Gen.TwoPassEquiv.Collect.two_pass_implies_collect_with`).
 
-### The minor collection on any view
+### The minor collection, for any definition of free
 
-The minor collection's theorems are stated for any view the caller supplies.
-They assume three things of it, all trivially true of `allocated`:
+The minor collection's theorems are stated for any definition of free the
+caller supplies.  They assume three things of it, all trivially true of
+`free_stw`:
 
 ```fstar
-(* the view counts only allocated blocks, and is read off walk membership and
-   the block's header, so field writes do not change it *)
-let view_within_allocated (v: view) : prop =
-  forall (g: heap) (x: obj_addr). v g x ==> allocated g x
-let view_header_determined (v: view) : prop =
+(* blue blocks are free, and what is free is read off walk membership and the
+   block's header, so field writes do not change it *)
+let blue_is_free (free: free_def) : prop =
+  forall (g: heap) (x: obj_addr). is_block g x /\ is_blue x g ==> free g x
+let free_header_determined (free: free_def) : prop =
   forall (g g': heap) (x: obj_addr).
-    (Seq.mem x (objects zero_addr g) <==> Seq.mem x (objects zero_addr g')) /\
-    read_word g (hd_address x) == read_word g' (hd_address x) ==> v g x == v g' x
-let view_ok (v: view) : prop = view_within_allocated v /\ view_header_determined v
+    (is_block g x <==> is_block g' x) /\
+    read_word g (hd_address x) == read_word g' (hd_address x) ==> free g x == free g' x
+let free_def_ok (free: free_def) : prop = blue_is_free free /\ free_header_determined free
 
-(* the blocks an operation creates are in the view *)
-let fresh_in_view (v: view) (g g': heap) : prop =
-  forall (x: obj_addr). allocated g' x /\ not (allocated g x) ==> v g' x
-let promotion_in_view v minor major fp roots : prop =       (* GC.Gen.CheneyView *)
-  fresh_in_view v major (cheney_promote minor major fp roots).major_final
+(* the blocks an operation allocates are not free *)
+let fresh_not_free (free: free_def) (g g': heap) : prop =
+  forall (x: obj_addr).
+    is_block g' x /\ not (is_blue x g') /\ ~(is_block g x /\ not (is_blue x g)) ==> not (free g' x)
+let promotion_not_free free minor major fp roots : prop =       (* GC.Gen.CheneyWith *)
+  fresh_not_free free major (cheney_promote minor major fp roots).major_final
 ```
 
-`allocated_view_ok`, `allocated_fresh_in_view` and
-`CheneyView.allocated_promotion_in_view` are the `allocated` instances.  For a
-mid-sweep view the third one is where the allocation colour matters: a block
-promoted in front of the sweep cursor must be coloured so that the view counts
-it.
+`free_stw_ok`, `free_stw_fresh_not_free` and
+`CheneyWith.free_stw_promotion_not_free` are the `free_stw` instances.  For a
+sweep in progress the third one is where the allocation colour matters: a
+block promoted in front of the sweep cursor must be coloured so that it does
+not count as about to be freed.
 
-`GC.Gen.HeapInvariant.collection_shape_view v minor major fp` is what a minor
-collection needs of the heaps:
+`GC.Gen.HeapInvariant.collection_shape_with free minor major fp` is what a
+minor collection needs of the heaps:
 
-- `major_shape_view v major fp`: `view_ok v`, `well_formed_view v major` (the
-  walk clauses, and the pointer clauses on the view), and the free-list facts
-  of `major_heap_shape` (valid, terminating, exact, ascending, its link words,
-  density, `chain_objects_blue`);
+- `major_shape_with free major fp`: `free_def_ok free`,
+  `well_formed_heap_with free major` (the walk clauses, and the pointer clauses
+  of the non-free blocks), and the free-list facts of `major_heap_shape`
+  (valid, terminating, exact, ascending, its link words, density,
+  `chain_objects_blue`);
 - the nursery's shape, as before;
-- `minor_major_fields_in_view v`: a nursery field that looks like a major
-  pointer targets a block of the view.
+- `minor_major_fields_not_free free`: a nursery field that looks like a major
+  pointer targets a non-free block.
 
-A block outside the view is unconstrained: its fields may point anywhere, free
-blocks included, and the collection never reads them.  At `allocated` this is
+A free block is unconstrained: its fields may point anywhere, blue blocks
+included, and the collection never reads them.  At `free_stw` this is
 `collection_heap_shape` without its two colour facts
-(`collection_heap_shape_as_view`, `collection_heap_shape_of_view`):
-`well_formed_heap` *is* `well_formed_view allocated`.
+(`collection_heap_shape_as_free_stw`, `collection_heap_shape_of_free_stw`):
+`well_formed_heap` *is* `well_formed_heap_with free_stw`.
 
-`GC.Gen.CheneyView` proves it is kept, event by event: promotion keeps every
-block of the view in it (`cheney_promote_keeps_view`, by
-`view_header_determined`), puts the images of the promoted nursery objects in
-it (`cheney_promote_image_in_view`, by `promotion_in_view`), and keeps
-`well_formed_view v` (`cheney_promote_preserves_wf_view`: an old block is
-untouched, a promoted one holds its nursery source's fields); the walk keeps
-the view and keeps `well_formed_view v` when every forwarding target is in the
-view (`update_walk_keeps_view`, `update_pointers_view_preserves_wf_view`,
-`cheney_promote_fwd_targets_in_view`).  With the free-list facts this gives
-`cheney_collect_view_preserves_shape`: `collection_shape_view v` of the input
-and `promotion_in_view v` imply `collection_shape_view v` of
-`cheney_collect_spec_view v`'s result.  The promotion lemmas only ask for the
-walk facts of the major heap (`blocks_fit`, `no_infix_block`), not
-`well_formed_heap`.  The stop-the-world
+`GC.Gen.CheneyWith` proves it is kept, event by event: promotion keeps every
+non-free block non-free (`cheney_promote_keeps_in_use`, by
+`free_header_determined`), makes the images of the promoted nursery objects
+non-free blocks (`cheney_promote_image_not_free`, by `promotion_not_free`),
+and keeps `well_formed_heap_with free` (`cheney_promote_preserves_wf_with`: an
+old block is untouched, a promoted one holds its nursery source's fields); the
+walk keeps what is free and keeps `well_formed_heap_with free` when every
+forwarding target is a non-free block (`update_walk_keeps_in_use`,
+`update_pointers_with_preserves_wf`, `cheney_promote_fwd_targets_not_free`).
+With the free-list facts this gives `cheney_collect_with_preserves_shape`:
+`collection_shape_with free` of the input and `promotion_not_free free` imply
+`collection_shape_with free` of `cheney_collect_spec_with free`'s result.  The
+promotion lemmas only ask for the walk facts of the major heap (`blocks_fit`,
+`no_infix_block`), not `well_formed_heap`.  The stop-the-world
 `cheney_collect_preserves_collection_heap_shape` is the instance at
-`allocated`, plus the colour facts (no black, no gray objects).
+`free_stw`, plus the colour facts (no black, no gray objects).
 
 The reachable-subgraph isomorphism (`GC.Gen.MinorCollectForwarding`) is
-stated and proved on the view as well, over graphs in which a block outside the
-view, like a free block, stays a vertex but has no outgoing edges.  Mid-sweep
-its fields may name blocks already merged into the free list, so this is what
-keeps every edge pointing at a vertex.  The pre-collection graph is
-`CombinedGraph.build_combined_graph minor major v` (only a major block of the
-view has major-side edges; it is well formed for any heaps,
+stated and proved for any definition of free as well, over graphs in which a
+free block stays a vertex but has no outgoing edges.  Mid-sweep the fields of
+a block about to be freed may name blocks already merged into the free list,
+so this is what keeps every edge pointing at a vertex.  The pre-collection
+graph is `CombinedGraph.build_combined_graph minor major free` (only a
+non-free major block has major-side edges; it is well formed for any heaps,
 `build_combined_graph_wf`); the post-collection graph is
-`HeapModel.create_graph_view v post`, well formed whenever the heap is well
-formed on the view (`MinorCollectForwarding.Helpers.create_graph_view_wf`).
-An edge of either graph therefore leaves a block of the view
-(`CG.major_edge_elim`, `Helpers.heap_graph_edge_to_pointer_field`), which is
-what most proofs used to derive from reachability: the remembered-set bridge
+`HeapModel.create_graph_with free post`, well formed whenever
+`well_formed_heap_with free post` holds
+(`MinorCollectForwarding.Helpers.create_graph_with_wf`).  An edge of either
+graph therefore leaves a non-free block (`CG.major_edge_elim`,
+`Helpers.heap_graph_edge_to_pointer_field`), which is what most proofs used to
+derive from reachability: the remembered-set bridge
 (`ReachabilityBridge.reachability_bridge`) needs only the nursery's
 well-formedness and the remembered set's coverage, and a major-to-major edge
 survives the collection whether or not its source is reachable
-(`Edges.combined_major_edge_forwarded`).  Facts about a reachable *vertex* (in
-the view, so its image or its fields are what the theorems say) still come
-from `ReachabilityBridge.reachable_in_view`: the roots are in the view
-(`roots_valid_view`), and a block of the view points only into it
-(`pointers_stay_in`, `minor_major_fields_in_view`).  The stop-the-world
-theorems are the instances at `allocated`
+(`Edges.combined_major_edge_forwarded`).  Facts about a reachable *vertex* (a
+non-free block, so its image or its fields are what the theorems say) still
+come from `ReachabilityBridge.reachable_not_free`: the roots are not free
+(`roots_valid_with`), and a non-free block points only to non-free blocks
+(`pointers_lead_to_non_free`, `minor_major_fields_not_free`).  The
+stop-the-world theorems are the instances at `free_stw`
 (`MinorCollectForwarding.stop_the_world_context` turns the stop-the-world
 hypotheses into the generic ones), where the post-collection graph is
-`HeapModel.create_graph` (`Helpers.result_post_allocated`).
+`HeapModel.create_graph` (`Helpers.result_post_stw`).
 
 `minor_collect_full`'s contract is generic, isomorphism included:
-`minor_collect_pre_view v minor s fp rs farr slots n` (the shape on `v`,
-`promotion_in_view v`, the write barrier's guarantees on `v`, the remembered
-targets in the roots, valid roots in the view) and `minor_collect_post_view v`
-(the heap is the two-pass result and `cheney_collect_spec_view v`'s, the shape
-on `v` is kept, and on success the result is a reachable-subgraph isomorphism
-with the non-pointer fields preserved).  `minor_collect_pre_idle` /
-`minor_collect_post_idle` are the stop-the-world instance with the colour facts
-of `collection_heap_shape`; `gen_gc` uses them, and its contract is unchanged.
+`minor_collect_pre_with free minor s fp rs farr slots n` (the shape,
+`promotion_not_free free`, the write barrier's guarantees, the remembered
+targets in the roots, valid non-free roots, all for `free`) and
+`minor_collect_post_with free` (the heap is the two-pass result and
+`cheney_collect_spec_with free`'s, the shape for `free` is kept, and on
+success the result is a reachable-subgraph isomorphism with the non-pointer
+fields preserved).  `minor_collect_pre_idle` / `minor_collect_post_idle` are
+the stop-the-world instance with the colour facts of `collection_heap_shape`;
+`gen_gc` uses them, and its contract is unchanged.
 
 ### Cheney BFS
 
@@ -1554,14 +1572,14 @@ isomorphism to the actual Cheney promotion result:
 
 ```fstar
 let normal_result_reachable_subgraph_isomorphism_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (v: view)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
   (roots: seq U64.t) (post_major: heap) (post_roots: seq U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   CG.reachable_subgraph_isomorphism
-    (normal_src_reachable minor major fp v roots)
-    (result_post_reachable post_major v post_roots)
-    (normal_src_edge minor major fp v roots)
-    (result_post_edge post_major v)
+    (normal_src_reachable minor major fp free roots)
+    (result_post_reachable post_major free post_roots)
+    (normal_src_edge minor major fp free roots)
+    (result_post_edge post_major free)
     prom.fwd_map
 ```
 
@@ -1578,11 +1596,11 @@ the original minor word:
 
 ```fstar
 let normal_result_non_pointer_fields_preserved_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (v: view)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
   (roots: seq U64.t) (post_major: heap) : prop =
   let prom = cheney_promote minor major fp roots in
   forall (u: CG.combined_vertex).
-    normal_src_reachable minor major fp v roots u ==>
+    normal_src_reachable minor major fp free roots u ==>
     (match u with
     | CG.MajorV src ->
       is_val_addr src ==>
@@ -1677,10 +1695,10 @@ let end_to_end_isomorphism
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (final_major: heap) (final_roots: seq U64.t) : prop =
   CG.reachable_subgraph_isomorphism
-    (MinorFwd.normal_src_reachable minor major fp allocated roots)
-    (MCFH.result_post_reachable final_major allocated final_roots)
-    (MinorFwd.normal_src_edge minor major fp allocated roots)
-    (MCFH.result_post_edge final_major allocated)
+    (MinorFwd.normal_src_reachable minor major fp free_stw roots)
+    (MCFH.result_post_reachable final_major free_stw final_roots)
+    (MinorFwd.normal_src_edge minor major fp free_stw roots)
+    (MCFH.result_post_edge final_major free_stw)
     (cheney_promote minor major fp roots).fwd_map
 ```
 
@@ -1744,8 +1762,8 @@ entry points are much stronger.
 
 `minor_collect_full` is the verified minor-collection boundary used by the C
 bridge. It takes roots, a forwarding array, a BFS queue, and remembered slots,
-and -- as a ghost argument, erased in the C -- a view of the major heap
-(which blocks count as objects):
+and -- as a ghost argument, erased in the C -- a definition of what counts as
+free in the major heap:
 
 ```fstar
 fn minor_collect_full (gh: gen_heap_t)
@@ -1753,48 +1771,49 @@ fn minor_collect_full (gh: gen_heap_t)
                       (fwd_arr: array U64.t)
                       (queue: larray U64.t Cheney.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
-                      (#v: erased SpecFields.view)
+                      (#free: erased SpecFields.free_def)
 ```
 
-The precondition (`minor_collect_pre_view v`) is:
+The precondition (`minor_collect_pre_with free`) is:
 
-- `collection_shape_view v` for the minor and major heap, and
-  `promotion_in_view v` (the view counts the blocks promotion creates);
+- `collection_shape_with free` for the minor and major heap, and
+  `promotion_not_free free` (the blocks promotion creates are not free);
 - root-array length consistency and a zeroed forwarding array of the expected size;
-- remembered slot soundness and coverage on the view
-  (`ref_table_sound_view`, `ref_table_covers_view`), and distinctness;
-- the remembered targets are among the roots, and the roots are valid and in
-  the view (`remembered_targets_in_roots`, `roots_valid_view`).
+- remembered slot soundness and coverage for `free`
+  (`ref_table_sound_with`, `ref_table_covers_with`), and distinctness;
+- the remembered targets are among the roots, and the roots are valid and not
+  free (`remembered_targets_in_roots`, `roots_valid_with`).
 
-The postcondition (`minor_collect_post_view v`) states, among other facts:
+The postcondition (`minor_collect_post_with free`) states, among other facts:
 
 ```fstar
 s2 == UpdatePtrs.rewrite_slots_iter
         (UpdatePtrs.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
         prom.fwd_map sl nslots 0 /\
-s2 == (CheneySpec.cheney_collect_spec_view v minor_st s fp rs).mc_major /\
+s2 == (CheneySpec.cheney_collect_spec_with free minor_st s fp rs).mc_major /\
 fp2 == prom.fp_final /\
 rs2 == PromoteSpec.rewrite_roots rs prom.fwd_map /\
 U64.v b2 == 0 /\
 UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
-GenInv.collection_shape_view v ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
+GenInv.collection_shape_with free ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
 (ok ==>
   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-    minor_st s fp v rs s2 (MCFH.resolve_roots s2 rs2) /\
+    minor_st s fp free rs s2 (MCFH.resolve_roots s2 rs2) /\
   MinorFwd.normal_result_non_pointer_fields_preserved_prop
-    minor_st s fp v rs s2)
+    minor_st s fp free rs s2)
 ```
 
 That is the contract outside a sweep.  `minor_collect_full` itself runs at any
 phase `'ph` (with `phase_at 'ph 's == 'ph`: during a sweep `swept_tail` is a
-list cell; and, during a sweep, a view that painting does not change,
-`Paint.colour_blind v`) and ensures `minor_collect_post_view_at 'ph v ...`: the
-facts above of the idle result `s2i`, the heap it leaves is `s2i` painted
-(`(fst (cheney_collect_spec_view_at 'ph v ...)).mc_major`), the phase it leaves
-is `snd` of the same, and that heap has `collection_shape_view` on the same
-view.  At `Idle` this is the above (`minor_collect_post_at_idle`).
+list cell; and, during a sweep, a definition of free that painting does not
+change, `Paint.colour_blind free`) and ensures
+`minor_collect_post_with_at 'ph free ...`: the facts above of the idle result
+`s2i`, the heap it leaves is `s2i` painted
+(`(fst (cheney_collect_spec_with_at 'ph free ...)).mc_major`), the phase it
+leaves is `snd` of the same, and that heap has `collection_shape_with` for the
+same `free`.  At `Idle` this is the above (`minor_collect_post_at_idle`).
 
-The stop-the-world contract is the instance at `allocated`:
+The stop-the-world contract is the instance at `free_stw`:
 `minor_collect_pre_idle` (`collection_heap_shape`, the remembered set over the
 whole heap, the root-set facts) and `minor_collect_post_idle`, which adds
 
@@ -1804,9 +1823,10 @@ GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2
 ```
 
 `minor_collect_idle_pre` / `minor_collect_idle_post` connect the two; `gen_gc`
-calls `minor_collect_full` with `#(hide allocated)` and uses them.  The
-isomorphism is over the graphs of the view (`CG.build_combined_graph minor s
-v`, `HeapModel.create_graph_view v s2`); at `allocated` the latter is
+calls `minor_collect_full` with `#(hide free_stw)` and uses them.  The
+isomorphism is over the graphs given what counts as free
+(`CG.build_combined_graph minor s free`, `HeapModel.create_graph_with free s2`);
+at `free_stw` the latter is
 `create_graph`, the graph the major collection's own isomorphism speaks of, which
 is how `MajorReachabilityTransfer.end_to_end_isomorphism_intro` chains the two.
 
@@ -2726,8 +2746,8 @@ The project becomes tractable when heap operations are related to graph
 operations:
 
 - `HeapGraph.get_pointer_fields` explains how fields become successors.
-- `HeapModel.create_graph` gives a graph for a heap (`create_graph_view v`
-  keeps only the edges out of the blocks of a view).
+- `HeapModel.create_graph` gives a graph for a heap (`create_graph_with free`
+  keeps only the edges out of the non-free blocks).
 - mark-and-sweep correctness is stated over reachability in that graph.
 - generational correctness uses a combined graph and a forwarding morphism.
 

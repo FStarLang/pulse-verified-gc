@@ -1,14 +1,14 @@
 /// ---------------------------------------------------------------------------
-/// GC.SPOT.SweepPhaseCondemned - a mid-sweep heap with a condemned object
+/// GC.SPOT.SweepPhasePendingFree - a mid-sweep heap with an object pending free
 /// ---------------------------------------------------------------------------
 ///
-/// The sweep phase is stated on the sweep's view (`surviving`): a condemned
-/// object (white, in front of the cursor) is outside it, and its fields may
+/// The sweep phase is stated for `free_incremental`: an object pending free
+/// (white, in front of the cursor) counts as free, and its fields may
 /// point into blocks the sweep has already freed and merged.  This SPOT
 /// builds such a heap from the concrete two-block heap of
 /// `GC.SPOT.ConcreteMajorGen` with the program's events and the sweep's
 /// steps, and shows that the sweep phase and the minor collection's shape
-/// hold of it with a non-empty condemned set, and that a minor collection
+/// hold of it with a non-empty pending-free set, and that a minor collection
 /// then keeps both:
 ///
 ///   1. sweep the concrete heap completely (nothing is marked): one free block;
@@ -17,13 +17,13 @@
 ///   3. end that sweep phase, and start the next one (nothing is marked);
 ///   4. two steps: the free block at the start of the heap absorbs `G`.
 ///
-/// Then `P` is condemned, its field points at `G`, and `G` is no longer an
+/// Then `P` is pending free, its field points at `G`, and `G` is no longer an
 /// object: its word lies inside the merged free block at the start of the
-/// heap (`sweep_phase_condemned_spot`).  The heap is in the sweep phase and in
-/// the minor collection's shape on its view, and the minor collection at the
-/// sweep's phase keeps the sweep phase with `P` still condemned.
+/// heap (`sweep_phase_pending_free_spot`).  The heap is in the sweep phase and in
+/// the minor collection's shape for its definition of free, and the minor
+/// collection at the sweep's phase keeps the sweep phase with `P` still pending free.
 
-module GC.SPOT.SweepPhaseCondemned
+module GC.SPOT.SweepPhasePendingFree
 
 open FStar.Seq
 open GC.Spec.Base
@@ -409,7 +409,7 @@ let stage4 (r: unit{room})
     is_infix_spec q g; infix_tag_val ();
     resolve_non_infix q g;
     infix_addr_wf_non_infix g (objects zero_addr g) q;
-    assert (GSP.program_write (surviving (st3 r)) g p (p <: hp_addr) q);
+    assert (GSP.program_write (free_incremental (st3 r)) g p (p <: hp_addr) q);
     GSP.write_sweep_phase g (fp3 r) (st3 r) p (p <: hp_addr) q;
     sweep_phase_inv_iff g (fp3 r) (st3 r);
     GSP.body_write_shape g (fp3 r) (st3 r) p (p <: hp_addr) q;
@@ -499,7 +499,7 @@ let stage6 (r: unit{room})
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// The heap: P condemned, pointing into the merged free block
+/// The heap: P pending free, pointing into the merged free block
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 20"
@@ -508,7 +508,7 @@ let stage7 (r: unit{room})
            let st = st5 r in
            let p = pp r in
            let q = gg r in
-           condemned st g p /\
+           pending_free st g p /\
            read_word g (p <: hp_addr) == (q <: U64.t) /\
            ~(Seq.mem q (objects zero_addr g)) /\
            pos g zero_addr /\ blue_at g zero_addr /\
@@ -530,42 +530,43 @@ let stage7 (r: unit{room})
     obj_pos g q
 #pop-options
 
-/// **The SPOT.**  A heap in the sweep phase with a condemned object `P` whose
+/// **The SPOT.**  A heap in the sweep phase with an object pending free, `P`, whose
 /// field points at `G`, an object of the heap the sweep started on, which the
 /// sweep has merged into the free block at the start of the heap.  The minor
-/// collection's shape holds on the collection's view (`surviving_from`), and
+/// collection's shape holds for the collection's definition of free
+/// (`free_incremental_from`), and
 /// the minor collection at the sweep's phase keeps the sweep phase, with `P`
-/// still condemned.
+/// still pending free.
 #push-options "--z3rlimit 20"
-let sweep_phase_condemned_spot (r: unit{room}) (m: minor_state) (roots: seq U64.t)
+let sweep_phase_pending_free_spot (r: unit{room}) (m: minor_state) (roots: seq U64.t)
   : Lemma (let g = g5 r in
            let fp = fp5 r in
            let st = st5 r in
            let p = pp r in
            let q = gg r in
            sweep_phase_inv g fp st /\
-           condemned st g p /\
+           pending_free st g p /\
            Seq.mem q (objects zero_addr (g4 r)) /\
            read_word g (p <: hp_addr) == (q <: U64.t) /\
            ~(Seq.mem q (objects zero_addr g)) /\
            pos g zero_addr /\ blue_at g zero_addr /\
            U64.v zero_addr < U64.v q /\ U64.v q < W.bnext g zero_addr /\
-           GenInv.collection_shape_view (surviving_from st g) (minor_reset m) g fp /\
-           (let v = surviving_from st g in
-            let (res, ph') = CA.cheney_collect_spec_view_at (Ph.Sweeping st) v (minor_reset m) g fp roots in
+           GenInv.collection_shape_with (free_incremental_from st g) (minor_reset m) g fp /\
+           (let free = free_incremental_from st g in
+            let (res, ph') = CA.cheney_collect_spec_with_at (Ph.Sweeping st) free (minor_reset m) g fp roots in
             let st' = SPM.state_after st
-                        (GC.Gen.Cheney.cheney_collect_spec_view v (minor_reset m) g fp roots).Promote.mc_major in
+                        (GC.Gen.Cheney.cheney_collect_spec_with free (minor_reset m) g fp roots).Promote.mc_major in
             ph' == Ph.Sweeping st' /\
             sweep_phase_inv res.Promote.mc_major res.Promote.mc_fp st' /\
-            condemned st' res.Promote.mc_major p))
+            pending_free st' res.Promote.mc_major p))
   = stage5 r; stage6 r; stage7 r;
     let g = g5 r in
     let fp = fp5 r in
     let st = st5 r in
     SPM.sweep_major_shape g fp st;
-    GenInv.collection_shape_view_after_minor_reset (surviving st) m g fp;
-    GenInv.collection_shape_view_elim (surviving st) (minor_reset m) g fp;
-    GenInv.collection_shape_view_after_minor_reset (surviving_from st g) m g fp;
+    GenInv.collection_shape_with_after_minor_reset (free_incremental st) m g fp;
+    GenInv.collection_shape_with_elim (free_incremental st) (minor_reset m) g fp;
+    GenInv.collection_shape_with_after_minor_reset (free_incremental_from st g) m g fp;
     GenInv.minor_reset_heap_shape m;
     SPM.minor_keeps_sweep_phase (minor_reset m) g fp st roots
 #pop-options

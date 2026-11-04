@@ -174,7 +174,7 @@ val push_children_bounded_preserves_bsp :
   (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (cap: nat) ->
   Lemma (requires well_formed_heap g /\ is_black obj g /\
-                  allocated g obj /\
+                  in_use free_stw g obj /\
                   ~(is_no_scan obj g) /\
                   bounded_stack_props g st /\
                   ~(Seq.mem obj st) /\

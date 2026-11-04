@@ -132,7 +132,7 @@ let post_minor_minor_root_valid
   let t = prom.fwd_map r in
   assert (Promote.rewrite_root r prom.fwd_map == t);
   GC.Gen.MinorCollectForwarding.stop_the_world_context minor major fp roots;
-  MinorFwd.fwd_image_resolves minor major fp SpecFields.allocated roots r;
+  MinorFwd.fwd_image_resolves minor major fp SpecFields.free_stw roots r;
   let p = prom.fwd_map rv in
   assert (SpecObj.resolve_object (t <: obj_addr) result.mc_major == p);
   assert (Seq.mem (p <: obj_addr) (SpecFields.objects zero_addr prom.major_final));
@@ -164,7 +164,7 @@ let post_minor_major_root_valid minor major fp roots r
   assert (Promote.rewrite_root r prom.fwd_map == r);
   assert (is_val_addr r);
   assert (Seq.mem (r <: obj_addr) (SpecFields.objects zero_addr major));
-  CheneyCorr.cheney_collect_preserves_objects minor major fp SpecFields.allocated roots;
+  CheneyCorr.cheney_collect_preserves_objects minor major fp SpecFields.free_stw roots;
   CheneyFrame.cheney_promote_frame_old_header minor major fp roots r;
   Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
   PromUpdAux.update_major_pointers_preserves_objects prom.major_final prom.fwd_map;

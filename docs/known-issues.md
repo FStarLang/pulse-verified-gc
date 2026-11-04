@@ -63,7 +63,7 @@ the reason given, but none is covered by a proof:
 - **Weak arrays and ephemerons** are `Abstract_tag` blocks that nothing cleans
   (see "finalisers and weak pointers are not run"). `Weak.get` can return a
   block that marking did not reach: stop-the-world a freed one, mid-sweep a
-  *condemned* one (white, in front of the cursor), whose resurrection breaks the
+  one *pending free* (white, in front of the cursor), whose resurrection breaks the
   sweep phase's invariant. Same class of bug in both modes; the weak and
   ephemeron tests are expected failures (`regression/pr5233` among them since
   `Gc.full_major` runs the verified collector).

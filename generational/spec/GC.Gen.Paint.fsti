@@ -11,7 +11,7 @@
 /// collection does at any phase:
 ///
 ///   * **the heap is the idle one, painted** (`paint_ph ph g0 g`): every block
-///     of `g` that is new -- not free, and not a not-free block of the heap the
+///     of `g` that is new -- not blue, and not a non-blue block of the heap the
 ///     collection started from, `g0` -- and in front of the cursor has its
 ///     header blackened (`recolour`).  At `Idle` nothing is painted;
 ///   * **`swept_tail` is the last cell of the list at or below where it was**
@@ -108,46 +108,47 @@ val recoloured_facts (g g': heap)
                       wosize_of_object x g' == wosize_of_object x g /\
                       tag_of_object x g' == tag_of_object x g /\
                       same_block g g' (hd_address x)) /\
-                   (forall (x: obj_addr). allocated g' x == allocated g x) /\
+                   (forall (x: obj_addr). in_use free_stw g' x == in_use free_stw g x) /\
                    (forall (x: U64.t). FL.fl_cell g' x <==> FL.fl_cell g x) /\
                    (forall (x: U64.t). FL.fl_cell g x ==> FL.fl_next g' x == FL.fl_next g x) /\
                    (heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 ==>
                       heap_objects_dense g' /\ Seq.length (objects zero_addr g') > 0) /\
                    (no_infix_block g ==> no_infix_block g'))
 
-/// Well-formedness, on a view `v'` that counts after the recolouring the
-/// blocks `v` counted before; and an ascending list.
-val recoloured_wf (g g': heap) (v v': view)
-  : Lemma (requires recoloured g g' /\ well_formed_view v g /\ view_ok v /\ view_ok v' /\
-                    (forall (x: obj_addr). v' g' x == v g x))
-          (ensures well_formed_view v' g')
+/// Well-formedness, for a definition of free `free'` under which, after the
+/// recolouring, the non-free blocks are those non-free under `free` before;
+/// and an ascending list.
+val recoloured_wf (g g': heap) (free free': free_def)
+  : Lemma (requires recoloured g g' /\ well_formed_heap_with free g /\ free_def_ok free /\ free_def_ok free' /\
+                    (forall (x: obj_addr). in_use free' g' x == in_use free g x))
+          (ensures well_formed_heap_with free' g')
 
 val recoloured_fl (g g': heap) (fp: U64.t)
   : Lemma (requires recoloured g g' /\ FLA.fl_ascending g fp)
           (ensures FLA.fl_ascending g' fp)
 
-/// The major half of the minor collection's shape, on a view the recolouring
-/// does not change.
-val recoloured_major_shape (g g': heap) (fp: U64.t) (v: view)
-  : Lemma (requires recoloured g g' /\ GenInv.major_shape_view v g fp /\
-                    (forall (x: obj_addr). v g' x == v g x))
-          (ensures GenInv.major_shape_view v g' fp)
+/// The major half of the minor collection's shape, for a definition of free
+/// the recolouring does not change.
+val recoloured_major_shape (g g': heap) (fp: U64.t) (free: free_def)
+  : Lemma (requires recoloured g g' /\ GenInv.major_shape_with free g fp /\
+                    (forall (x: obj_addr). in_use free g' x == in_use free g x))
+          (ensures GenInv.major_shape_with free g' fp)
 
-/// A view that recolouring does not change: it reads which blocks are free,
-/// not the colours of the others.  `allocated` is one, and so is a sweep's
-/// view with what is condemned fixed (`surviving_from`); the sweep's own view
-/// (`surviving`) is not, since it reads white.
-let colour_blind (v: view) : prop =
-  forall (g g': heap) (x: obj_addr). recoloured g g' ==> v g' x == v g x
+/// A definition of free that recolouring does not change: it reads which
+/// blocks are blue, not the colours of the others.  `free_stw` is one, and so
+/// is the sweep's with what is pending free fixed (`free_incremental_from`);
+/// the sweep's own (`free_incremental`) is not, since it reads white.
+let colour_blind (free: free_def) : prop =
+  forall (g g': heap) (x: obj_addr). recoloured g g' ==> in_use free g' x == in_use free g x
 
-val colour_blind_elim (v: view) (g g': heap)
-  : Lemma (requires colour_blind v /\ recoloured g g')
-          (ensures forall (x: obj_addr). v g' x == v g x)
+val colour_blind_elim (free: free_def) (g g': heap)
+  : Lemma (requires colour_blind free /\ recoloured g g')
+          (ensures forall (x: obj_addr). in_use free g' x == in_use free g x)
 
-val allocated_colour_blind (_: unit) : Lemma (colour_blind allocated)
+val free_stw_colour_blind (_: unit) : Lemma (colour_blind free_stw)
 
-val surviving_from_colour_blind (st: sweep_state) (g0: heap)
-  : Lemma (colour_blind (surviving_from st g0))
+val free_incremental_from_colour_blind (st: sweep_state) (g0: heap)
+  : Lemma (colour_blind (free_incremental_from st g0))
 
 /// ---------------------------------------------------------------------------
 /// Writes off the walk
@@ -226,17 +227,18 @@ val paint_promote (ph0: GC.Spec.Phase.gc_phase) (g0 g: heap) (fp: U64.t)
                     r'.Promote.phase_out == phase_at ph0 r.Promote.major_out /\
                     paint_ok g0 r.Promote.major_out r.Promote.fp_out))
 
-/// **Painting makes the new blocks in front of the cursor surviving**: on a
-/// heap that kept every block of `g0`, the sweep's view of the painted heap
-/// is the view of the heap with what is condemned read at `g0`.  A block of
-/// `g0` keeps its header, so it is condemned exactly when it was; a new block
+/// **Painting makes the new blocks in front of the cursor non-free**: on a
+/// heap that kept every block of `g0`, what is non-free in the painted heap
+/// for `free_incremental` is what is non-free in the heap with what is
+/// pending free read at `g0` (`free_incremental_from`).  A block of
+/// `g0` keeps its header, so it is pending free exactly when it was; a new block
 /// in front of the cursor is painted black, and one behind it is not in front
-/// of the cursor, so neither is condemned.  This is `allocation_color` at
-/// work: a white copy in front of the cursor would be condemned, and freed by
+/// of the cursor, so neither is pending free.  This is `allocation_color` at
+/// work: a white copy in front of the cursor would be pending free, and freed by
 /// the sweep while reachable.
-val paint_surviving (st: sweep_state) (g0 h: heap) (x: obj_addr)
+val paint_in_use (st: sweep_state) (g0 h: heap) (x: obj_addr)
   : Lemma (requires kept g0 h /\ U64.v st.cursor % 8 == 0)
-          (ensures surviving st (paint (U64.v st.cursor) g0 h) x == surviving_from st g0 h x)
+          (ensures in_use (free_incremental st) (paint (U64.v st.cursor) g0 h) x == in_use (free_incremental_from st g0) h x)
 
 /// At the start of a collection there is nothing to paint.
 val paint_start (ph0: GC.Spec.Phase.gc_phase) (g0: heap) (fp: U64.t)

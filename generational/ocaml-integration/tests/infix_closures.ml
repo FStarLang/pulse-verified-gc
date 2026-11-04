@@ -11,7 +11,7 @@
  * recognise it, walk back to the enclosing closure, and mark *that*.
  *
  * This is the concrete counterpart of the specification change in
- * `GC.Spec.Fields.pointers_stay_in`, which is stated on
+ * `GC.Spec.Fields.pointers_lead_to_non_free`, which is stated on
  * `resolve_object dst g` rather than on the raw field value, and of
  * `GC.Spec.Object.infix_addr_conds`, which pins down the parent-address
  * formula.  Every numeric relation asserted below is one of those clauses,

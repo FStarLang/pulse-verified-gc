@@ -387,8 +387,7 @@ Both halves are proved of the same heap:
   `GC.Spec.Fields.no_scan_invariant`, so it was inadmissible before;
 - `spot_ns_major_heap_shape` — the heap nevertheless satisfies every conjunct of
   `GC.Gen.HeapInvariant.major_heap_shape`, including `well_formed_heap` (a
-  no-scan block has no pointers, `has_pointer_to`, so its pointer clauses skip
-  `S` entirely), and `no_pointer_to_blue` (likewise).  The clause that briefly replaced
+  no-scan block is not `scannable`, so its pointer clauses skip `S` entirely), and `no_pointer_to_blue` (likewise).  The clause that briefly replaced
   `no_scan_invariant`, `GC.Gen.Promote.blue_fields_closed`, is gone too: free
   blocks are no longer constrained beyond their link.
 
@@ -463,14 +462,14 @@ The concrete major heaps above (`ConcreteMajorGen`, `InfixMajor`,
 `NoScanMajor`) also prove their single-cell free list ascending, which the
 shape invariant now carries, so the end-to-end SPOTs run the new sweep.
 
-## A mid-sweep heap with a condemned object
+## A mid-sweep heap with an object pending free
 
-`GC.SPOT.SweepPhaseCondemned` shows the sweep phase
-(`GC.Spec.SweepPhase.Intrinsic.sweep_phase_inv`, well-formedness on the sweep's
-view `surviving`) and the minor collection's shape (`collection_shape_view`)
-are satisfiable with a **non-empty** condemned set, on a heap where a condemned
-object's field points into a block the sweep has freed and merged -- the case
-views smaller than `allocated` exist for.  It is built with
+`GC.SPOT.SweepPhasePendingFree` shows the sweep phase
+(`GC.Spec.SweepPhase.Intrinsic.sweep_phase_inv`, well-formedness for
+`free_incremental`) and the minor collection's shape (`collection_shape_with`)
+are satisfiable with a **non-empty** pending-free set, on a heap where the
+field of an object pending free points into a block the sweep has freed and
+merged -- the case that definitions of free beyond blue exist for.  It is built with
 the sweep phase's own theorems from the concrete heap of `ConcreteMajorGen`:
 
 1. sweep it completely, nothing marked: one free block (`sweep_steps_done`,
@@ -482,10 +481,11 @@ the sweep phase's own theorems from the concrete heap of `ConcreteMajorGen`:
 3. end the phase and start the next one, nothing marked;
 4. two steps: the free block at the start absorbs `G`.
 
-`sweep_phase_condemned_spot`: `P` is condemned, `P`'s field is `G`, `G` was an
+`sweep_phase_pending_free_spot`: `P` is pending free, `P`'s field is `G`, `G` was an
 object of the heap the sweep started on and is no longer one (its word lies
 inside the merged free block at the start), the heap is in the sweep phase and
-in `collection_shape_view` on the collection's view (`surviving_from`), and the
+in `collection_shape_with` for the collection's definition of free
+(`free_incremental_from`), and the
 minor collection at the sweep's phase
-(`GC.Gen.CheneyAt.cheney_collect_spec_view_at`) keeps the sweep phase with `P`
-still condemned (`GC.Gen.SweepPhase.Minor.minor_keeps_sweep_phase`).
+(`GC.Gen.CheneyAt.cheney_collect_spec_with_at`) keeps the sweep phase with `P`
+still pending free (`GC.Gen.SweepPhase.Minor.minor_keeps_sweep_phase`).

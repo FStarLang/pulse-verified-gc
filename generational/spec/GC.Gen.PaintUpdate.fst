@@ -191,7 +191,7 @@ let rec rsi_aux (c: nat) (g0 h: heap) (fwd: Promote.forwarding_map) (slots: seq 
 let paint_rsi c g0 h fwd slots n idx = rsi_aux c g0 h fwd slots n idx
 
 #push-options "--z3rlimit 20"
-let slots_off_walk_of_sound v s slots n h =
+let slots_off_walk_of_sound free s slots n h =
   assert (n <= Seq.length slots);
   let one (i: nat)
     : Lemma (requires i < n /\ n <= Seq.length slots)
@@ -199,10 +199,10 @@ let slots_off_walk_of_sound v s slots n h =
                       a < heap_size /\ a % 8 == 0 /\ ~(W.reaches h zero_addr a)))
     = let a = U64.v (Seq.index slots i) in
       eliminate exists (obj: obj_addr) (j: nat).
-        v s obj /\ is_no_scan obj s = false /\
+        in_use free s obj /\ is_no_scan obj s = false /\
         j < U64.v (wosize_of_object obj s) /\ a == U64.v obj + j * 8
       with begin
-        view_ok_within_allocated v s obj;
+        in_use_not_blue free s obj;
         obj_pos s obj; colour_of s obj;
         hd_address_spec obj;
         let q = hd_address obj in

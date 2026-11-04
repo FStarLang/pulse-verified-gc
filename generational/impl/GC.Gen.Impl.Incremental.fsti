@@ -64,8 +64,8 @@ module SA = GC.Spec.Allocator
 ///     heap and the free-list head -- what `gen_gc` demands and restores;
 ///   * `Ph.Sweeping st`: the sweep phase (`SPI.sweep_phase_inv s fp st`), the
 ///     nursery's shape, and that the nursery's major pointers point at
-///     surviving objects (`GenInv.minor_major_fields_in_view` for the sweep's
-///     view `SPI.surviving st`: allocated, and not condemned -- white in
+///     non-free objects (`GenInv.minor_major_fields_not_free` for
+///     `SPI.free_incremental st`: free is blue, or pending free -- white in
 ///     front of the cursor).
 let gc_state (gh: gen_heap_t) (d: minor_heap) (b: U64.t) (s: heap_state) (fp: U64.t)
              (ph: Ph.gc_phase) : slprop =
@@ -86,37 +86,37 @@ let gc_state (gh: gen_heap_t) (d: minor_heap) (b: U64.t) (s: heap_state) (fp: U6
 ///     directly): the new object is *fresh* (`GSP.fresh_ok`: the sweep phase
 ///     except that its fields are uninitialised and nothing points at it).
 ///     The runtime initialises every field of a block it allocates with a
-///     storable value (an integer, or a pointer to a surviving object --
-///     reachable objects are never condemned) before the
+///     storable value (an integer, or a pointer to a non-free object --
+///     reachable objects are never pending free) before the
 ///     next collector call; `GSP.fresh_write` and `GSP.fresh_close` then give
 ///     back the sweep phase.  Idle, the obligation is today's: the fields are
 ///     initialised before the next collection.
 ///   * **Field writes** (`caml_modify`, `caml_initialize`): `GSP.program_write`
-///     -- a word of the body of a surviving object that is not a closure, and
-///     a value that is not a pointer or points at a surviving object.
+///     -- a word of the body of a non-free object that is not a closure, and
+///     a value that is not a pointer or points at a non-free object.
 ///     `GSP.write_sweep_phase` keeps the sweep phase.  The write barrier
 ///     records every major field that gets a nursery pointer (the remembered
 ///     set below).
 ///   * **Nursery allocation** keeps the nursery's shape and the
-///     cross-generation condition (as today, mid-sweep on the sweep's view).
+///     cross-generation condition (as today, mid-sweep for `free_incremental`).
 ///   * **The minor collection's arguments** (`minor_slots_ok`): the
-///     forwarding array zeroed, the remembered set sound and covering on the
-///     phase's view (`RT.ref_table_sound_view`, `RT.ref_table_covers_view`
-///     for `GI.phase_view`), its slots distinct, the remembered targets among
-///     the roots, and the roots valid and in the view (never condemned).
+///     forwarding array zeroed, the remembered set sound and covering for the
+///     phase's definition of free (`RT.ref_table_sound_with`,
+///     `RT.ref_table_covers_with` for `GI.phase_free`), its slots distinct,
+///     the remembered targets among the roots, and the roots valid and not free (never pending free).
 ///   * **The phase record** (`gh.phase_ref`) is written only by the collector.
 
-/// The minor collection's arguments, on the phase's view.
+/// The minor collection's arguments, for the phase's definition of free.
 let minor_slots_ok (ph: Ph.gc_phase) (minor_st: minor_state) (s: heap_state)
     (rs farr sl: Seq.seq U64.t) (nslots: nat) : prop =
-  let v = GI.phase_view s ph in
+  let free = GI.phase_free s ph in
   Seq.length farr == UpdatePtrs.fwd_array_size /\
   (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
-  RT.ref_table_sound_view v s sl nslots /\
-  RT.ref_table_covers_view v s sl nslots /\
+  RT.ref_table_sound_with free s sl nslots /\
+  RT.ref_table_covers_with free s sl nslots /\
   RT.slots_pairwise_distinct sl nslots /\
   MinorFwd.remembered_targets_in_roots s rs sl nslots /\
-  MinorFwd.roots_valid_view v minor_st s rs
+  MinorFwd.roots_valid_with free minor_st s rs
 
 /// ---------------------------------------------------------------------------
 /// Sweeping
@@ -151,10 +151,10 @@ fn finish_sweep (gh: gen_heap_t)
 /// A minor collection at either phase
 /// ---------------------------------------------------------------------------
 
-/// **`minor_collect_full` at the collector's phase**, on the phase's view
-/// (`GI.phase_view`): its contract (`minor_collect_post_view_at`), and the
+/// **`minor_collect_full` at the collector's phase**, for the phase's
+/// definition of free (`GI.phase_free`): its contract (`minor_collect_post_with_at`), and the
 /// collector's state at the phase it leaves -- idle stays idle; mid-sweep the
-/// sweep keeps its cursor and the objects condemned
+/// sweep keeps its cursor and the objects pending free
 /// (`GI.minor_keeps_phase_shape`).  The C is
 /// `minor_collect_full`'s.
 fn minor_collect_any_phase (gh: gen_heap_t)
@@ -177,7 +177,7 @@ fn minor_collect_any_phase (gh: gen_heap_t)
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
-    pure (minor_collect_post_view_at 'ph (GI.phase_view 's 'ph) ({ data = 'd; bump = 'b } <: minor_state)
+    pure (minor_collect_post_with_at 'ph (GI.phase_free 's 'ph) ({ data = 'd; bump = 'b } <: minor_state)
             's 'fp 'rs 'sl (SZ.v nslots) ok d2 b2 s2 fp2 rs2 farr2 ph2 /\
           Ph.Idle? ph2 == Ph.Idle? 'ph)
 
@@ -238,10 +238,10 @@ let gen_gc_start_post
    ph2 == Ph.Sweeping FS.sweep_start /\
    SpecGCPost.mark_post (fst prepared) s2 (snd prepared) fp2 /\
    MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-     minor major fp SpecFields.allocated roots result.mc_major
+     minor major fp SpecFields.free_stw roots result.mc_major
      (MCFH.resolve_roots result.mc_major roots_out) /\
    MinorFwd.normal_result_non_pointer_fields_preserved_prop
-     minor major fp SpecFields.allocated roots result.mc_major)
+     minor major fp SpecFields.free_stw roots result.mc_major)
 
 /// **Start a major collection**: `gen_gc`'s minor collection, root darkening
 /// and marking, and then -- instead of sweeping -- the start of the sweep

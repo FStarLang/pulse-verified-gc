@@ -732,16 +732,16 @@ let cheney_promote_nonblue_origin
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// The stop-the-world shape, from the shape on a view
+/// The stop-the-world shape, from the shape given what counts as free
 /// ---------------------------------------------------------------------------
 ///
-/// `collection_heap_shape` is the shape on `allocated` plus two colour
-/// facts (`GenInv.collection_heap_shape_as_view`).  The shape part is
-/// `GC.Gen.CheneyView.cheney_collect_view_preserves_shape` at `allocated`,
+/// `collection_heap_shape` is the shape at `free_stw` plus two colour
+/// facts (`GenInv.collection_heap_shape_as_free_stw`).  The shape part is
+/// `GC.Gen.CheneyWith.cheney_collect_with_preserves_shape` at `free_stw`,
 /// which is `cheney_collect_spec`; the colour facts are proved directly
 /// (promotion allocates white objects and the pointer update writes no header).
 
-module CE = GC.Gen.CheneyView
+module CE = GC.Gen.CheneyWith
 
 /// With no gray and no black objects, the empty stack trivially carries every
 /// gray-or-black object -- and conversely.
@@ -781,21 +781,21 @@ let cheney_collect_preserves_collection_heap_shape
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   =
   let res = cheney_collect_spec minor major fp roots in
-  GenInv.collection_heap_shape_as_view minor major fp;
+  GenInv.collection_heap_shape_as_free_stw minor major fp;
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
   GenInv.major_heap_shape_walk major fp;
   GenInv.minor_heap_shape_elim minor;
-  // the shape on `allocated` ...
-  CE.cheney_collect_view_preserves_shape allocated minor major fp roots;
-  CE.cheney_collect_spec_view_allocated minor major fp roots;
+  // the shape at `free_stw` ...
+  CE.cheney_collect_with_preserves_shape free_stw minor major fp roots;
+  CE.cheney_collect_spec_with_stw minor major fp roots;
   // ... and the colour facts: nothing is black, and (the empty stack carrying
   // every gray-or-black object before, and so after) nothing is gray
   cheney_collect_preserves_no_black minor major fp roots;
   no_gray_and_no_black_is_empty_stack major;
   cheney_collect_preserves_gray_black_objects_on_stack minor major fp roots Seq.empty;
   no_empty_stack_implies_no_gray res.mc_major;
-  GenInv.collection_heap_shape_of_view res.mc_minor res.mc_major res.mc_fp
+  GenInv.collection_heap_shape_of_free_stw res.mc_minor res.mc_major res.mc_fp
 #pop-options
 
 let cheney_collect_preserves_wfh_from_shape

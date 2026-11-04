@@ -630,8 +630,8 @@ let spot_infix_h_addr_wf (r: unit{spot_infix_room})
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 let spot_infix_pointer_clauses (r: unit{spot_infix_room})
-  : Lemma (ensures SpecFields.pointers_stay_in SpecFields.allocated (spot_infix_heap r) /\
-                   SpecFields.interior_pointers_valid SpecFields.allocated (spot_infix_heap r))
+  : Lemma (ensures SpecFields.pointers_lead_to_non_free SpecFields.free_stw (spot_infix_heap r) /\
+                   SpecFields.interior_pointers_valid SpecFields.free_stw (spot_infix_heap r))
   =
   let g = spot_infix_heap r in
   spot_infix_blocks_fit r;
@@ -642,7 +642,7 @@ let spot_infix_pointer_clauses (r: unit{spot_infix_room})
                       U64.v src + j * 8 + 8 <= heap_size)
             (ensures (let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
                       SpecFields.is_pointer v ==>
-                      SpecFields.allocated g (SpecObj.resolve_object (v <: obj_addr) g) /\
+                      SpecFields.in_use SpecFields.free_stw g (SpecObj.resolve_object (v <: obj_addr) g) /\
                       SpecObj.infix_addr_wf g (SpecFields.objects zero_addr g)
                               (v <: obj_addr)))
     =
@@ -658,7 +658,7 @@ let spot_infix_pointer_clauses (r: unit{spot_infix_room})
       spot_infix_p_reads r
     end
   in
-  SpecFields.pointer_clauses_from_field_closure SpecFields.allocated g
+  SpecFields.pointer_clauses_from_field_closure SpecFields.free_stw g
     (fun src j -> field_closure src j)
 
 let spot_infix_well_formed_heap (r: unit{spot_infix_room})

@@ -4,20 +4,20 @@
 ///
 /// Safety over the whole sweep phase, stated on the reachable graph rather
 /// than on a heap the sweep started from.  The objects the program can reach
-/// are those reachable from its roots in the heap graph on the sweep's view
-/// (`GC.Spec.HeapModel.create_graph_view (surviving st)`: a condemned object,
-/// like a free block, has no edges):
+/// are those reachable from its roots in the heap graph for `free_incremental`
+/// (`GC.Spec.HeapModel.create_graph_with (free_incremental st)`: an object
+/// pending free, like a blue block, has no edges):
 ///
-///   * every such object is surviving -- a real, not-free, not-condemned
-///     object (`reachable_surviving`, and with the nursery
-///     `reachable_surviving_combined`): the roots are surviving, and
-///     well-formedness on the view (`well_formed_view (surviving st)`) takes
-///     surviving objects only to surviving objects;
-///   * a sweep step, and so a slice of `k` steps, frees only condemned
-///     objects, so it never frees a reachable one, and leaves its size, tag
+///   * every such object is not free -- a real object, neither blue nor
+///     pending free (`reachable_not_free`, and with the nursery
+///     `reachable_not_free_combined`): the roots are not free, and
+///     well-formedness (`well_formed_heap_with (free_incremental st)`) takes
+///     non-free objects only to non-free objects;
+///   * a sweep step, and so a slice of `k` steps, frees only objects pending
+///     free, so it never frees a reachable one, and leaves its size, tag
 ///     and fields alone (`step_keeps_reachable`, `steps_keep_reachable`);
-///   * a minor collection in between keeps every surviving object surviving
-///     (`minor_keeps_surviving`), and the condemned set (step C).
+///   * a minor collection in between keeps every non-free object non-free
+///     (`minor_keeps_not_free`), and the pending-free set (step C).
 
 module GC.Gen.SweepPhase.Safety
 
@@ -40,10 +40,10 @@ module CA = GC.Gen.CheneyAt
 module Cheney = GC.Gen.Cheney
 module Ph = GC.Spec.Phase
 
-/// The heap graph during the sweep, on the sweep's view: the condemned
-/// objects have no edges.
+/// The heap graph during the sweep, for `free_incremental`: the objects
+/// pending free have no edges.
 let sweep_graph (g: heap) (st: sweep_state) : GTot Graph.graph_state =
-  HeapModel.create_graph_view (surviving st) g
+  HeapModel.create_graph_with (free_incremental st) g
 
 /// `x` is reachable from the root `r` in the sweep's graph.
 let reachable_from (g: heap) (st: sweep_state) (r x: obj_addr) : prop =
@@ -51,48 +51,48 @@ let reachable_from (g: heap) (st: sweep_state) (r x: obj_addr) : prop =
   Graph.mem_graph_vertex (sweep_graph g st) x /\
   Graph.reachable (sweep_graph g st) r x
 
-/// **Safety: a reachable object is surviving**: a real, not-free,
-/// not-condemned object.
-val reachable_surviving (g: heap) (fp: U64.t) (st: sweep_state) (r x: obj_addr)
-  : Lemma (requires sweep_phase_inv g fp st /\ surviving st g r /\
+/// **Safety: a reachable object is not free**: a real object, neither blue
+/// nor pending free.
+val reachable_not_free (g: heap) (fp: U64.t) (st: sweep_state) (r x: obj_addr)
+  : Lemma (requires sweep_phase_inv g fp st /\ in_use (free_incremental st) g r /\
                     reachable_from g st r x)
-          (ensures surviving st g x)
+          (ensures in_use (free_incremental st) g x)
 
 /// The same over the combined graph of the nursery and the major heap, from
-/// the program's roots (`GC.Gen.ReachabilityBridge.reachable_in_view`).
-val reachable_surviving_combined (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep_state)
+/// the program's roots (`GC.Gen.ReachabilityBridge.reachable_not_free`).
+val reachable_not_free_combined (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep_state)
                                  (roots: seq U64.t) (a: U64.t)
   : Lemma (requires sweep_phase_inv g fp st /\ minor_wf minor /\
-                    GenInv.minor_major_fields_in_view (surviving st) minor g /\
-                    RBridge.roots_in_view (surviving st) roots g /\
-                    CG.combined_reachable (CG.build_combined_graph minor g (surviving st))
+                    GenInv.minor_major_fields_not_free (free_incremental st) minor g /\
+                    RBridge.roots_not_free (free_incremental st) roots g /\
+                    CG.combined_reachable (CG.build_combined_graph minor g (free_incremental st))
                       (CG.classify_roots minor roots) (CG.MajorV a))
-          (ensures is_obj a /\ surviving st g (a <: obj_addr))
+          (ensures is_obj a /\ in_use (free_incremental st) g (a <: obj_addr))
 
 /// **A sweep step never frees a reachable object**, and leaves its size, tag
 /// and fields alone.
 val step_keeps_reachable (g: heap) (fp: U64.t) (st: sweep_state) (r x: obj_addr)
   : Lemma (requires sweep_phase_inv g fp st /\ U64.v st.cursor + 8 < heap_size /\
-                    surviving st g r /\ reachable_from g st r x)
+                    in_use (free_incremental st) g r /\ reachable_from g st r x)
           (ensures can_sweep g st /\
                    (let (g', fp', st') = sweep_step g fp st in
-                    surviving st' g' x /\ same_block g g' (hd_address x)))
+                    in_use (free_incremental st') g' x /\ same_block g g' (hd_address x)))
 
 /// Nor does a slice of `k` steps.
 val steps_keep_reachable (g: heap) (fp: U64.t) (st: sweep_state) (k: nat) (r x: obj_addr)
-  : Lemma (requires sweep_phase_inv g fp st /\ surviving st g r /\ reachable_from g st r x)
+  : Lemma (requires sweep_phase_inv g fp st /\ in_use (free_incremental st) g r /\ reachable_from g st r x)
           (ensures (let (g', fp', st') = sweep_steps g fp st k in
-                    surviving st' g' x /\ same_block g g' (hd_address x)))
+                    in_use (free_incremental st') g' x /\ same_block g g' (hd_address x)))
 
-/// A minor collection at the sweep's phase keeps every surviving object
-/// surviving (in the heap it leaves, at the state after it).
-val minor_keeps_surviving (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep_state)
+/// A minor collection at the sweep's phase keeps every non-free object
+/// non-free (in the heap it leaves, at the state after it).
+val minor_keeps_not_free (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep_state)
                           (roots: seq U64.t) (x: obj_addr)
   : Lemma (requires sweep_phase_inv g fp st /\ GenInv.minor_heap_shape minor /\
-                    GenInv.minor_major_fields_in_view (surviving st) minor g /\
-                    surviving st g x)
-          (ensures (let v = surviving_from st g in
-                    let (res, ph') = CA.cheney_collect_spec_view_at (Ph.Sweeping st) v minor g fp roots in
+                    GenInv.minor_major_fields_not_free (free_incremental st) minor g /\
+                    in_use (free_incremental st) g x)
+          (ensures (let free = free_incremental_from st g in
+                    let (res, ph') = CA.cheney_collect_spec_with_at (Ph.Sweeping st) free minor g fp roots in
                     let st' = GC.Gen.SweepPhase.Minor.state_after st
-                                (Cheney.cheney_collect_spec_view v minor g fp roots).GC.Gen.Promote.mc_major in
-                    surviving st' res.GC.Gen.Promote.mc_major x))
+                                (Cheney.cheney_collect_spec_with free minor g fp roots).GC.Gen.Promote.mc_major in
+                    in_use (free_incremental st') res.GC.Gen.Promote.mc_major x))

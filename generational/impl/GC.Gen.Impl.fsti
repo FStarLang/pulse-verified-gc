@@ -47,7 +47,7 @@ module CheneyBFS = GC.Gen.CheneyBFS
 module SpecHeapModel = GC.Spec.HeapModel
 module MRT = GC.Gen.MajorReachabilityTransfer
 module RT = GC.Gen.RefTable
-module CV = GC.Gen.CheneyView
+module CV = GC.Gen.CheneyWith
 module Alloc = GC.Impl.Allocator
 module Ph = GC.Spec.Phase
 module Paint = GC.Gen.Paint
@@ -267,7 +267,7 @@ val gen_gc_heap_shape_post_intro
 /// is now discharged once, inside `GC.Gen.MajorReachabilityTransfer`.
 ///
 /// The two intermediate facts are kept because they say things the composition
-/// cannot: the minor step says *where* each surviving object went, and the
+/// cannot: the minor step says *where* each non-free object went, and the
 /// major step says the survivors did not move again and are white.
 let gen_gc_reachable_subgraph_isomorphism_post
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
@@ -279,10 +279,10 @@ let gen_gc_reachable_subgraph_isomorphism_post
    MRT.end_to_end_isomorphism minor major fp roots final_major
      (MCFH.resolve_roots result.mc_major roots_out) /\
    MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-     minor major fp SpecFields.allocated roots result.mc_major
+     minor major fp SpecFields.free_stw roots result.mc_major
      (MCFH.resolve_roots result.mc_major roots_out) /\
    MinorFwd.normal_result_non_pointer_fields_preserved_prop
-     minor major fp SpecFields.allocated roots result.mc_major /\
+     minor major fp SpecFields.free_stw roots result.mc_major /\
    SpecGCPost.major_gc_live_subgraph_isomorphism
      (fst prepared) final_major (snd prepared))
 
@@ -329,40 +329,40 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 /// (Cheney BFS), rewrites the promoted objects' fields and the remembered
 /// slots, rewrites the roots and resets the nursery.
 ///
-/// The contract is stated on a **view** `v` of the major heap
-/// (`GC.Spec.Fields.view`): the blocks the invariant counts as objects,
-/// supplied by the caller as a ghost argument.  The blocks of the view point
-/// only into the view (`GenInv.collection_shape_view`); a block outside it is
-/// garbage left in place, never read or written.  The view must count the
-/// blocks promotion creates (`CV.promotion_in_view`).  The stop-the-world
-/// collector passes `allocated`; `minor_collect_pre_idle` /
+/// The contract is stated for a definition `free` of what counts as free in
+/// the major heap (`GC.Spec.Fields.free_def`), supplied by the caller as a
+/// ghost argument.  The non-free blocks point only to non-free blocks
+/// (`GenInv.collection_shape_with`); a free block is garbage left in place,
+/// never read or written.  The blocks promotion creates must not count as
+/// free (`CV.promotion_not_free`).  The stop-the-world
+/// collector passes `free_stw`; `minor_collect_pre_idle` /
 /// `minor_collect_post_idle` below are that instance, with the colour facts
 /// of `collection_heap_shape` added.
 ///
 /// The ref_table comes from the write barrier: it records addresses of
 /// existing major-heap fields that were assigned minor-heap pointers.  The
-/// caller states it as a pre-promotion property on the view
-/// (`RT.ref_table_covers_view`: every nursery pointer held by a block of the
-/// view is at a recorded slot; `RT.ref_table_sound_view`: slots are fields of
-/// scannable blocks of the view).  The recorded slots' nursery targets are
+/// caller states it as a pre-promotion property given what counts as free
+/// (`RT.ref_table_covers_with`: every nursery pointer held by a non-free
+/// block is at a recorded slot; `RT.ref_table_sound_with`: slots are fields of
+/// scannable non-free blocks).  The recorded slots' nursery targets are
 /// among the roots (`remembered_targets_in_roots`), and the roots are valid
-/// and in the view (`roots_valid_view`): roots are reachable, so never
+/// and not free (`roots_valid_with`): roots are reachable, so never
 /// garbage.
-let minor_collect_pre_view (v: SpecFields.view)
+let minor_collect_pre_with (free: SpecFields.free_def)
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
   (rs farr sl: Seq.seq U64.t) (nslots: nat) : prop =
-  GenInv.collection_shape_view v minor_st s fp /\
-  CV.promotion_in_view v minor_st s fp rs /\
+  GenInv.collection_shape_with free minor_st s fp /\
+  CV.promotion_not_free free minor_st s fp rs /\
   Seq.length farr == UpdatePtrs.fwd_array_size /\
   (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
-  RT.ref_table_sound_view v s sl nslots /\
-  RT.ref_table_covers_view v s sl nslots /\
+  RT.ref_table_sound_with free s sl nslots /\
+  RT.ref_table_covers_with free s sl nslots /\
   RT.slots_pairwise_distinct sl nslots /\
   MinorFwd.remembered_targets_in_roots s rs sl nslots /\
-  MinorFwd.roots_valid_view v minor_st s rs
+  MinorFwd.roots_valid_with free minor_st s rs
 
-/// What the collection guarantees, on the view.
-let minor_collect_post_view (v: SpecFields.view)
+/// What the collection guarantees, given what counts as free.
+let minor_collect_post_with (free: SpecFields.free_def)
   (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs sl: Seq.seq U64.t)
   (nslots: nat) (ok: bool)
   (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t) : prop =
@@ -371,8 +371,8 @@ let minor_collect_post_view (v: SpecFields.view)
   s2 == UpdatePtrs.rewrite_slots_iter
           (UpdatePtrs.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
           prom.fwd_map sl nslots 0 /\
-  // ... which is the pointer update of the collection on `v`
-  s2 == (CheneySpec.cheney_collect_spec_view v minor_st s fp rs).mc_major /\
+  // ... which is the pointer update of the collection for `free`
+  s2 == (CheneySpec.cheney_collect_spec_with free minor_st s fp rs).mc_major /\
   // Free pointer from promotion phase
   fp2 == prom.fp_final /\
   // Roots rewritten via forwarding map
@@ -387,54 +387,55 @@ let minor_collect_post_view (v: SpecFields.view)
   UpdatePtrs.valid_fwd_entries farr2 /\
   Seq.length farr2 == UpdatePtrs.fwd_array_size /\
   SpecFields.blocks_fit prom.major_final /\
-  // The shape is kept, on the same view
-  GenInv.collection_shape_view v ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
+  // The shape is kept, with the same definition of free
+  GenInv.collection_shape_with free ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
   // If promotion succeeds, the collection is a reachable-subgraph isomorphism
-  // over the graphs of the view, where a block outside it has no outgoing edges.
+  // over the graphs in which a free block has no outgoing edges.
   (not ok ==> CheneyBFS.cheney_oom minor_st s fp rs) /\
   (ok ==>
    CheneyBFS.cheney_no_oom minor_st s fp rs /\
    MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-     minor_st s fp v rs s2 (MCFH.resolve_roots s2 rs2) /\
+     minor_st s fp free rs s2 (MCFH.resolve_roots s2 rs2) /\
    MinorFwd.normal_result_non_pointer_fields_preserved_prop
-     minor_st s fp v rs s2)
+     minor_st s fp free rs s2)
 
 /// What the collection guarantees at the phase `ph` it runs in.  Its work is
-/// the idle collection's (`GC.Gen.CheneyAt`): `minor_collect_post_view` holds
+/// the idle collection's (`GC.Gen.CheneyAt`): `minor_collect_post_with` holds
 /// of the idle result `s2i`, the heap it leaves is `s2i` with the promoted
 /// copies in front of the sweep's cursor black, the phase it leaves has
 /// `swept_tail` the last list cell at or below where it was, and the heap it
-/// leaves has the collection's shape on the same view.  Outside a sweep the
+/// leaves has the collection's shape with the same definition of free.  Outside a sweep the
 /// heap is `s2i` and the phase `Idle` (`minor_collect_post_at_idle`).
 ///
-/// The view is the idle collection's, read on heaps where every promoted copy
-/// is white.  During a sweep `minor_collect_full` asks that painting the
-/// copies black does not change it (`Paint.colour_blind`): the incremental
-/// entry point passes the sweep's view with what is condemned fixed at `s`
-/// (`GC.Gen.Incremental.phase_view`), and the sweep phase it gets back is on
-/// the sweep's own view (`GC.Gen.Incremental.minor_keeps_phase_shape`).
-let minor_collect_post_view_at
-  (ph: Ph.gc_phase) (v: SpecFields.view)
+/// The definition of free is the idle collection's, read on heaps where
+/// every promoted copy is white.  During a sweep `minor_collect_full` asks
+/// that painting the copies black does not change it (`Paint.colour_blind`): the incremental
+/// entry point passes `free_incremental` with what is pending free fixed at `s`
+/// (`GC.Gen.Incremental.phase_free`), and the sweep phase it gets back is
+/// for the sweep's own `free_incremental`
+/// (`GC.Gen.Incremental.minor_keeps_phase_shape`).
+let minor_collect_post_with_at
+  (ph: Ph.gc_phase) (free: SpecFields.free_def)
   (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs sl: Seq.seq U64.t) (nslots: nat)
   (ok: bool)
   (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t)
   (ph2: Ph.gc_phase) : prop =
-  let s2i = (CheneySpec.cheney_collect_spec_view v minor_st s fp rs).mc_major in
-  let at = CA.cheney_collect_spec_view_at ph v minor_st s fp rs in
-  minor_collect_post_view v minor_st s fp rs sl nslots ok d2 b2 s2i fp2 rs2 farr2 /\
+  let s2i = (CheneySpec.cheney_collect_spec_with free minor_st s fp rs).mc_major in
+  let at = CA.cheney_collect_spec_with_at ph free minor_st s fp rs in
+  minor_collect_post_with free minor_st s fp rs sl nslots ok d2 b2 s2i fp2 rs2 farr2 /\
   s2 == (fst at).mc_major /\
   ph2 == snd at /\
-  GenInv.collection_shape_view v ({ data = d2; bump = b2 } <: minor_state) s2 fp2
+  GenInv.collection_shape_with free ({ data = d2; bump = b2 } <: minor_state) s2 fp2
 
 val minor_collect_post_at_idle
-  (v: SpecFields.view)
+  (free: SpecFields.free_def)
   (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs sl: Seq.seq U64.t) (nslots: nat)
   (ok: bool)
   (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t)
   (ph2: Ph.gc_phase)
-  : Lemma (requires minor_collect_post_view_at Ph.Idle v minor_st s fp rs sl nslots ok
+  : Lemma (requires minor_collect_post_with_at Ph.Idle free minor_st s fp rs sl nslots ok
                       d2 b2 s2 fp2 rs2 farr2 ph2)
-          (ensures minor_collect_post_view v minor_st s fp rs sl nslots ok d2 b2 s2 fp2 rs2 farr2 /\
+          (ensures minor_collect_post_with free minor_st s fp rs sl nslots ok d2 b2 s2 fp2 rs2 farr2 /\
                    ph2 == Ph.Idle)
 
 fn minor_collect_full (gh: gen_heap_t)
@@ -442,19 +443,19 @@ fn minor_collect_full (gh: gen_heap_t)
                       (fwd_arr: array U64.t)
                       (queue: larray U64.t Cheney.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
-                      (#v: erased SpecFields.view)
+                      (#free: erased SpecFields.free_def)
   requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 'ph **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to slots 'sl **
            pure (SZ.v nroots == Seq.length 'rs /\
-                 minor_collect_pre_view v ({ data = 'd; bump = 'b } <: minor_state) 's
+                 minor_collect_pre_with free ({ data = 'd; bump = 'b } <: minor_state) 's
                    'fp 'rs 'farr 'sl (SZ.v nslots) /\
                  // during a sweep, `swept_tail` is a list cell (or the sentinel),
-                 // and painting the promoted copies black does not change the view
+                 // and painting the promoted copies black does not change the definition of free
                  Paint.phase_at 'ph 's == 'ph /\
-                 (Ph.Idle? 'ph \/ Paint.colour_blind v))
+                 (Ph.Idle? 'ph \/ Paint.colour_blind free))
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 ph2.
     is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh ph2 **
@@ -462,7 +463,7 @@ fn minor_collect_full (gh: gen_heap_t)
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
-    pure (minor_collect_post_view_at 'ph v ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'sl
+    pure (minor_collect_post_with_at 'ph free ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'sl
             (SZ.v nslots) ok d2 b2 s2 fp2 rs2 farr2 ph2)
 
 /// --- The stop-the-world instance ---
@@ -520,25 +521,25 @@ let minor_collect_post_idle
   (ok ==>
    CheneyBFS.cheney_no_oom minor_st s fp rs /\
    MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-     minor_st s fp SpecFields.allocated rs s2 (MCFH.resolve_roots s2 rs2) /\
+     minor_st s fp SpecFields.free_stw rs s2 (MCFH.resolve_roots s2 rs2) /\
    MinorFwd.normal_result_non_pointer_fields_preserved_prop
-     minor_st s fp SpecFields.allocated rs s2)
+     minor_st s fp SpecFields.free_stw rs s2)
 
-/// The stop-the-world precondition is the general one at `allocated` ...
+/// The stop-the-world precondition is the general one at `free_stw` ...
 val minor_collect_idle_pre
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
   (rs farr sl: Seq.seq U64.t) (nslots: nat)
   : Lemma (requires minor_collect_pre_idle minor_st s fp rs farr sl nslots)
-          (ensures minor_collect_pre_view SpecFields.allocated minor_st s fp rs farr sl nslots)
+          (ensures minor_collect_pre_with SpecFields.free_stw minor_st s fp rs farr sl nslots)
 
-/// ... and the general postcondition at `allocated` gives the
+/// ... and the general postcondition at `free_stw` gives the
 /// stop-the-world one.
 val minor_collect_idle_post
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
   (rs farr sl: Seq.seq U64.t) (nslots: nat) (ok: bool)
   (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t)
   : Lemma (requires minor_collect_pre_idle minor_st s fp rs farr sl nslots /\
-                    minor_collect_post_view SpecFields.allocated minor_st s fp rs sl nslots
+                    minor_collect_post_with SpecFields.free_stw minor_st s fp rs sl nslots
                       ok d2 b2 s2 fp2 rs2 farr2)
           (ensures minor_collect_post_idle minor_st s fp rs sl nslots ok d2 b2 s2 fp2 rs2 farr2)
 

@@ -89,7 +89,7 @@ let recoloured_obj (g g': heap) (x: obj_addr)
 let recoloured_facts g g' =
   W.walk_congr g g' zero_addr;
   FStar.Classical.forall_intro (FStar.Classical.move_requires (recoloured_obj g g'));
-  let nf (x: obj_addr) : Lemma (allocated g' x == allocated g x)
+  let nf (x: obj_addr) : Lemma (in_use free_stw g' x == in_use free_stw g x)
     = if Seq.mem x (objects zero_addr g) then recoloured_obj g g' x
   in
   FStar.Classical.forall_intro nf;
@@ -118,36 +118,46 @@ let recoloured_facts g g' =
   FStar.Classical.forall_intro (FStar.Classical.move_requires p4)
 #pop-options
 
-let recoloured_wf g g' v v' =
+let recoloured_wf g g' free free' =
   recoloured_facts g g';
-  view_ok_elim v;
-  wf_view_parts ();
-  wf_transport g g' v v'
+  free_def_ok_elim free;
+  wf_with_parts ();
+  wf_transport g g' free free'
 
 let recoloured_fl g g' fp =
   recoloured_facts g g';
   FLA.fl_ascending_transfer g g' fp
 
 #push-options "--z3rlimit 20"
-let recoloured_major_shape g g' fp v =
-  GenInv.major_shape_view_elim v g fp;
+let recoloured_major_shape g g' fp free =
+  GenInv.major_shape_with_elim free g fp;
   recoloured_facts g g';
-  recoloured_wf g g' v v;
+  recoloured_wf g g' free free;
   recoloured_fl g g' fp;
   PCS.free_list_shape_of_ascending g' fp;
-  wf_view_parts ();
-  GenInv.major_shape_view_intro v g' fp
+  wf_with_parts ();
+  GenInv.major_shape_with_intro free g' fp
 #pop-options
 
-let colour_blind_elim v g g' = ()
+let colour_blind_elim free g g' = ()
 
-let allocated_colour_blind () =
-  let aux (g g': heap) (x: obj_addr) : Lemma (recoloured g g' ==> allocated g' x == allocated g x)
+let free_stw_colour_blind () =
+  let aux (g g': heap) (x: obj_addr) : Lemma (recoloured g g' ==> in_use free_stw g' x == in_use free_stw g x)
     = if FStar.IndefiniteDescription.strong_excluded_middle (recoloured g g') then recoloured_facts g g'
   in
   FStar.Classical.forall_intro_3 aux
 
-let surviving_from_colour_blind st g0 = allocated_colour_blind ()
+let free_incremental_from_colour_blind st g0 =
+  free_stw_colour_blind ();
+  let aux (g g': heap) (x: obj_addr) : Lemma
+    (recoloured g g' ==>
+     in_use (free_incremental_from st g0) g' x == in_use (free_incremental_from st g0) g x)
+    = assert (in_use (free_incremental_from st g0) g' x ==
+              (in_use free_stw g' x && not (pending_free st g0 x)));
+      assert (in_use (free_incremental_from st g0) g x ==
+              (in_use free_stw g x && not (pending_free st g0 x)))
+  in
+  FStar.Classical.forall_intro_3 aux
 
 /// ---------------------------------------------------------------------------
 /// Writes off the walk
@@ -688,7 +698,7 @@ let paint_promote ph0 g0 g fp minor obj wz =
   | Ph.Sweeping st0 -> paint_promote_sweeping st0 g0 g fp minor obj wz
 
 #push-options "--z3rlimit 20"
-let paint_surviving st g0 h x =
+let paint_in_use st g0 h x =
   let c = U64.v st.cursor in
   let h' = paint c g0 h in
   paint_recoloured c g0 h;

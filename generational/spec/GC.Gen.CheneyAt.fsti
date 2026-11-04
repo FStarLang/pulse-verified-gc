@@ -9,14 +9,14 @@
 /// `swept_tail` is the last list cell at or below where it was (`phase_at`).
 /// So the collection at phase `ph` is the idle one, painted, with the phase
 /// after it.  At `Idle` both are the identity: these are today's collection
-/// (`cheney_collect_spec_view_at_idle`).
+/// (`cheney_collect_spec_with_at_idle`).
 ///
-/// The view `v` is the idle collection's: it is read on the idle heaps the
-/// specification passes through, where a promoted copy is white wherever it
-/// is.  Mid-sweep that is the sweep's view with what is condemned fixed at
-/// the heap the collection starts from
-/// (`GC.Spec.SweepPhase.Intrinsic.surviving_from`); painted, it is the
-/// sweep's own view (`GC.Gen.Paint.paint_surviving`).
+/// The definition of free `free` is the idle collection's: it is read on the
+/// idle heaps the specification passes through, where a promoted copy is
+/// white wherever it is.  Mid-sweep it is `free_incremental` with what is
+/// pending free fixed at the heap the collection starts from
+/// (`GC.Spec.SweepPhase.Intrinsic.free_incremental_from`); painted, it is the
+/// sweep's own `free_incremental` (`GC.Gen.Paint.paint_in_use`).
 
 module GC.Gen.CheneyAt
 
@@ -39,15 +39,15 @@ let cheney_promote_at (ph: gc_phase) (minor: minor_state) (major: heap) (fp: U64
     ({ prom with major_final = Paint.paint_ph ph major prom.major_final },
      Paint.phase_at ph prom.major_final)
 
-/// The collection at phase `ph`, on the view `v`.
-let cheney_collect_spec_view_at (ph: gc_phase) (v: view) (minor: minor_state) (major: heap)
+/// The collection at phase `ph`, given what counts as free (`free`).
+let cheney_collect_spec_with_at (ph: gc_phase) (free: free_def) (minor: minor_state) (major: heap)
     (fp: U64.t) (roots: seq U64.t) : GTot (minor_collect_result & gc_phase)
-  = let res = cheney_collect_spec_view v minor major fp roots in
+  = let res = cheney_collect_spec_with free minor major fp roots in
     ({ res with mc_major = Paint.paint_ph ph major res.mc_major },
      Paint.phase_at ph res.mc_major)
 
 /// Outside a sweep they are the idle collection.
-val cheney_collect_spec_view_at_idle
-  (v: view) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (cheney_collect_spec_view_at Idle v minor major fp roots ==
-           (cheney_collect_spec_view v minor major fp roots, Idle))
+val cheney_collect_spec_with_at_idle
+  (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (cheney_collect_spec_with_at Idle free minor major fp roots ==
+           (cheney_collect_spec_with free minor major fp roots, Idle))

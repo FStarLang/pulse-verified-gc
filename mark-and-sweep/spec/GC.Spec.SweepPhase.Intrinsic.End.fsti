@@ -5,7 +5,7 @@
 /// When the cursor reaches the end of the heap:
 ///
 ///   * *incremental* (`sweep_phase_end`): from the sweep phase alone, nothing is
-///     condemned, the heap is well formed, and it is swept clean (dense, exact
+///     pending free, the heap is well formed, and it is swept clean (dense, exact
 ///     ascending free list, every object white or free, none infix);
 ///   * *stop-the-world* (`sweep_phase_end_stw`): with the relation to the
 ///     marked heap (`stw_rel`), the result satisfies the stop-the-world sweep's
@@ -35,7 +35,7 @@ module W = GC.Spec.Walk
 val sweep_phase_end (g: heap) (fp: U64.t) (st: sweep_state)
   : Lemma (requires sweep_phase_inv g fp st /\ U64.v st.cursor + 8 >= heap_size)
           (ensures swept_clean g fp /\
-                   (forall (x: obj_addr). not (condemned st g x)) /\
+                   (forall (x: obj_addr). not (pending_free st g x)) /\
                    well_formed_heap g)
 
 /// **The end of a stop-the-world sweep**, from the intrinsic invariant and

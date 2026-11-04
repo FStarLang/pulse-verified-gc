@@ -28,13 +28,13 @@ val field_pointer_points_to_nat
                 dst)
     (ensures points_to g src dst)
 
-/// The pointer clauses at a field: a pointer field of a scannable block of
-/// the view targets a block of the view.
-val field_pointer_target_in_view_nat
-  (v: view) (g: heap) (src dst: obj_addr) (j: nat)
+/// The pointer clauses at a field: a pointer field of a non-free, scannable
+/// block targets a non-free block.
+val field_pointer_target_not_free_nat
+  (free: free_def) (g: heap) (src dst: obj_addr) (j: nat)
   : Lemma
-    (requires well_formed_view v g /\
-              v g src /\ Seq.mem src (objects zero_addr g) /\
+    (requires well_formed_heap_with free g /\
+              in_use free g src /\ Seq.mem src (objects zero_addr g) /\
               ~(is_no_scan src g) /\
               j < U64.v (wosize_of_object src g) /\
               U64.v src + j * U64.v mword + U64.v mword <= heap_size /\
@@ -42,5 +42,5 @@ val field_pointer_target_in_view_nat
               is_pointer_to
                 (read_word g (U64.uint_to_t (U64.v src + j * U64.v mword)))
                 dst)
-    (ensures v g (resolve_object dst g) /\
+    (ensures in_use free g (resolve_object dst g) /\
              infix_addr_wf g (objects zero_addr g) dst)

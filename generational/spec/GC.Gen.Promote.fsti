@@ -227,7 +227,7 @@ val update_object_pointers_done (major: heap) (obj: U64.t) (wosize: nat)
           (ensures update_object_pointers major obj wosize fwd i == major)
 
 /// ---------------------------------------------------------------------------
-/// The pointer update over a view
+/// The pointer update given what counts as free
 /// ---------------------------------------------------------------------------
 
 /// The walk over the major heap, over a set `upd` of objects fixed for the
@@ -235,7 +235,7 @@ val update_object_pointers_done (major: heap) (obj: U64.t) (wosize: nat)
 /// scannable) and skips every other object without reading its fields.  It
 /// reads every header, so it needs only the walk facts of the heap
 /// (`blocks_fit`, `no_infix_block`).  The minor collection runs it over the
-/// blocks of a view (`update_pointers_view`).
+/// non-free blocks (`update_pointers_with`).
 let rec update_walk_aux (major: heap) (objs: seq obj_addr) (upd: obj_addr -> GTot bool)
                         (fwd: forwarding_map) (idx: nat)
   : GTot heap (decreases (Seq.length objs - idx)) =
@@ -260,16 +260,16 @@ let update_walk (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
 let walk_ok (major: heap) (upd: obj_addr -> GTot bool) : prop =
   forall (x: obj_addr). upd x ==> Seq.mem x (objects zero_addr major) /\ ~(is_blue x major)
 
-/// The minor collection's pointer update over a view: it rewrites the fields
-/// of the scannable blocks of the view and never reads a field of any other
+/// The minor collection's pointer update given what counts as free: it rewrites the fields
+/// of the scannable non-free blocks and never reads a field of any other
 /// block.
-let update_pointers_view (v: view) (major: heap) (fwd: forwarding_map)
+let update_pointers_with (free: free_def) (major: heap) (fwd: forwarding_map)
   : GTot heap =
-  update_walk major (v major) fwd
+  update_walk major (in_use free major) fwd
 
-/// The stop-the-world pointer update: the `allocated` instance.
+/// The stop-the-world pointer update: the `free_stw` instance.
 let update_major_pointers (major: heap) (fwd: forwarding_map) : GTot heap =
-  update_pointers_view allocated major fwd
+  update_pointers_with free_stw major fwd
 
 /// ---------------------------------------------------------------------------
 /// Root Rewriting
@@ -393,7 +393,7 @@ val promote_preserves_fields
 /// The walk facts of a well-formed heap (`blocks_fit`, `no_infix_block`),
 /// which are all of well-formedness that promotion reads.  The promotion
 /// lemmas ask for these alone, so they also apply to a heap that is well
-/// formed only on a smaller view (`GC.Spec.Fields.well_formed_view`).
+/// formed only for a larger definition of free (`GC.Spec.Fields.well_formed_heap_with`).
 val wfh_walk_facts (g: heap)
   : Lemma (requires well_formed_heap g)
           (ensures blocks_fit g /\ no_infix_block g)

@@ -261,4 +261,4 @@ let update_walk_field_effect major upd fwd obj j =
 /// The idle instance.
 let update_major_pointers_field_effect
   (major: heap) (fwd: forwarding_map) (obj: obj_addr) (j: nat) =
-  update_walk_field_effect major (allocated major) fwd obj j
+  update_walk_field_effect major (in_use free_stw major) fwd obj j

@@ -21,13 +21,13 @@ module WB = GC.Gen.WriteBodyLemmas
 module FL = GC.Spec.FreeList
 module FLA = GC.Spec.FreeList.Ascending
 module Header = GC.Lib.Header
-module CV = GC.Gen.CheneyView
+module CV = GC.Gen.CheneyWith
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 
-let surviving_but_view_ok st obj =
-  surviving_view_ok st;
-  reveal_opaque (`%view_ok) view_ok
+let free_or_fresh_ok st obj =
+  free_incremental_ok st;
+  reveal_opaque (`%free_def_ok) free_def_ok
 
 /// ---------------------------------------------------------------------------
 /// The found case: the walk around the allocated block
@@ -373,7 +373,7 @@ let found_shape (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t) (
                     let st' = alloc_state g fp wz st in
                     let obj = U64.uint_to_t (U64.v pc.ah + 8) in
                     sweep_shape gx (spec_fp g fp p cur pc) st' /\
-                    (forall (x: obj_addr). condemned st' gx x == condemned st g x) /\
+                    (forall (x: obj_addr). pending_free st' gx x == pending_free st g x) /\
                     new_block g gx st obj wz tag))
   = let w = AC.req_wz wz in
     let gx = gx_of g st wz tag p cur pc in
@@ -396,8 +396,8 @@ let found_shape (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t) (
     assert (hd_address o == pc.ah);
     obj_pos gx o; colour_of gx o;
     found_obj g fp st wz tag p cur pc o;
-    // condemned
-    let pd (x: obj_addr) : Lemma (condemned st' gx x == condemned st g x)
+    // pending free
+    let pd (x: obj_addr) : Lemma (pending_free st' gx x == pending_free st g x)
       = found_obj g fp st wz tag p cur pc x;
         if hd_address x = pc.ah then begin
           hd_address_spec x;
@@ -519,14 +519,14 @@ let found_same_block (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag
     FStar.Classical.forall_intro (FStar.Classical.move_requires body)
 #pop-options
 
-/// The surviving objects, but the new one, are those of the heap before.
+/// The non-free objects, but the new one, are those of the heap before.
 #push-options "--z3rlimit 30"
-let found_surviving (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t) (p cur: U64.t) (pc: piece) (x: obj_addr)
+let found_in_use (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t) (p cur: U64.t) (pc: piece) (x: obj_addr)
   : Lemma (requires found g fp st wz tag p cur pc)
           (ensures (let gx = gx_of g st wz tag p cur pc in
                     let st' = alloc_state g fp wz st in
                     let obj = U64.uint_to_t (U64.v pc.ah + 8) in
-                    surviving_but st' obj gx x == surviving st g x))
+                    in_use (free_or_fresh st' obj) gx x == in_use (free_incremental st) g x))
   = let gx = gx_of g st wz tag p cur pc in
     let st' = alloc_state g fp wz st in
     found_shape g fp st wz tag p cur pc;
@@ -547,12 +547,12 @@ let alloc_sweep_phase g fp st wz tag =
     let gx = gx_of g st wz tag p cur pc in
     let st' = alloc_state g fp wz st in
     let obj : obj_addr = r.SA.obj_out in
-    wf_view_parts ();
+    wf_with_parts ();
     found_part4 g fp st wz tag p cur pc;
-    FStar.Classical.forall_intro (found_surviving g fp st wz tag p cur pc);
+    FStar.Classical.forall_intro (found_in_use g fp st wz tag p cur pc);
     FStar.Classical.forall_intro (FStar.Classical.move_requires (found_same_block g fp st wz tag p cur pc));
-    surviving_but_view_ok st' obj;
-    wf_transport g gx (surviving st) (surviving_but st' obj)
+    free_or_fresh_ok st' obj;
+    wf_transport g gx (free_incremental st) (free_or_fresh st' obj)
   end
 #pop-options
 
@@ -638,7 +638,7 @@ let fresh_write g fp st obj a v =
   body_write_shape g fp st obj a v;
   same_heads_facts g g';
   let kept (y: obj_addr)
-    : Lemma (requires surviving_but st obj g y)
+    : Lemma (requires in_use (free_or_fresh st obj) g y)
             (ensures same_block g g' (hd_address y))
     = other_body g obj y a;
       obj_pos g y;
@@ -650,10 +650,10 @@ let fresh_write g fp st obj a v =
       FStar.Classical.forall_intro (FStar.Classical.move_requires body)
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires kept);
-  wf_view_parts ();
+  wf_with_parts ();
   same_heads_part4 g g';
-  surviving_but_view_ok st obj;
-  wf_transport g g' (surviving_but st obj) (surviving_but st obj)
+  free_or_fresh_ok st obj;
+  wf_transport g g' (free_or_fresh st obj) (free_or_fresh st obj)
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -662,24 +662,24 @@ let fresh_write g fp st obj a v =
 
 #push-options "--z3rlimit 20"
 let fresh_close g fp st obj =
-  let v = surviving st in
-  let vo = surviving_but st obj in
-  wf_view_parts ();
-  surviving_view_ok st;
-  surviving_but_view_ok st obj;
-  view_ok_elim v;
+  let free = free_incremental st in
+  let fresh_free = free_or_fresh st obj in
+  wf_with_parts ();
+  free_incremental_ok st;
+  free_or_fresh_ok st obj;
+  free_def_ok_elim free;
   let closure (src: obj_addr) (j: nat)
-    : Lemma (requires v g src /\ ~(is_no_scan src g) /\
+    : Lemma (requires in_use free g src /\ ~(is_no_scan src g) /\
                       j < U64.v (wosize_of_object src g) /\ U64.v src + j * 8 + 8 <= heap_size)
             (ensures (let w = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
                       is_pointer w ==>
-                      v g (resolve_object (w <: obj_addr) g) /\
+                      in_use free g (resolve_object (w <: obj_addr) g) /\
                       infix_addr_wf g (objects zero_addr g) (w <: obj_addr)))
     = let w = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
-      if src = obj then assert (storable v g (field_val g obj j))
-      else if is_pointer w then CV.wf_view_field vo g src j
+      if src = obj then assert (storable free g (field_val g obj j))
+      else if is_pointer w then CV.wf_with_field fresh_free g src j
   in
-  pointer_clauses_from_field_closure v g closure;
+  pointer_clauses_from_field_closure free g closure;
   sweep_phase_inv_iff g fp st
 #pop-options
 
@@ -690,19 +690,19 @@ let fresh_close g fp st obj =
 #push-options "--z3rlimit 30"
 let write_sweep_phase g fp st x a v =
   let g' = write_word g a v in
-  let sv = surviving st in
+  let free = free_incremental st in
   sweep_phase_inv_iff g fp st;
   sweep_phase_inv_iff g' fp st;
   body_write_shape g fp st x a v;
   same_heads_facts g g';
-  surviving_view_ok st;
-  view_ok_elim sv;
-  wf_view_parts ();
+  free_incremental_ok st;
+  free_def_ok_elim free;
+  wf_with_parts ();
   same_heads_part4 g g';
   part1_holds g';
-  // the surviving objects keep their headers, and closures their blocks
+  // the non-free objects keep their headers, and closures their blocks
   let kept (y: obj_addr)
-    : Lemma (requires sv g y)
+    : Lemma (requires in_use free g y)
             (ensures read_word g' (hd_address y) == read_word g (hd_address y) /\
                      (is_closure y g ==> same_block g g' (hd_address y)))
     = if is_closure y g then begin
@@ -717,13 +717,13 @@ let write_sweep_phase g fp st x a v =
       end
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires kept);
-  assert (heads_kept sv g g');
+  assert (heads_kept free g g');
   let closure (src: obj_addr) (j: nat)
-    : Lemma (requires sv g' src /\ ~(is_no_scan src g') /\
+    : Lemma (requires in_use free g' src /\ ~(is_no_scan src g') /\
                       j < U64.v (wosize_of_object src g') /\ U64.v src + j * 8 + 8 <= heap_size)
             (ensures (let w = read_word g' (U64.uint_to_t (U64.v src + j * 8)) in
                       is_pointer w ==>
-                      sv g' (resolve_object (w <: obj_addr) g') /\
+                      in_use free g' (resolve_object (w <: obj_addr) g') /\
                       infix_addr_wf g' (objects zero_addr g') (w <: obj_addr)))
     = let b : hp_addr = U64.uint_to_t (U64.v src + j * 8) in
       let w = read_word g' b in
@@ -736,16 +736,16 @@ let write_sweep_phase g fp st x a v =
            in_body_block g' src b;
            other_body g x src a
          end);
-        storable_transfer g g' sv sv v
+        storable_transfer g g' free free v
       end else begin
         read_write_different g a b v;
         if is_pointer w then begin
-          CV.wf_view_field sv g src j;
-          storable_transfer g g' sv sv w
+          CV.wf_with_field free g src j;
+          storable_transfer g g' free free w
         end
       end
   in
-  pointer_clauses_from_field_closure sv g' closure
+  pointer_clauses_from_field_closure free g' closure
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -753,15 +753,15 @@ let write_sweep_phase g fp st x a v =
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 20"
-let minor_fields_ok_of v minor obj g =
+let minor_fields_ok_of free minor obj g =
   let one (j: nat)
     : Lemma (requires j < minor_scan_wosize minor obj)
-            (ensures storable v g (minor_read_field minor obj j))
+            (ensures storable free g (minor_read_field minor obj j))
     = let w = minor_read_field minor obj j in
       if is_pointer w then begin
-        GC.Gen.HeapInvariant.minor_major_fields_in_view_elim v minor g obj j;
+        GC.Gen.HeapInvariant.minor_major_fields_not_free_elim free minor g obj j;
         let t : obj_addr = w in
-        view_ok_within_allocated v g t;
+        in_use_not_blue free g t;
         assert (~(is_infix t g));
         resolve_non_infix t g;
         infix_addr_wf_non_infix g (objects zero_addr g) t
@@ -770,26 +770,26 @@ let minor_fields_ok_of v minor obj g =
   FStar.Classical.forall_intro (FStar.Classical.move_requires one)
 #pop-options
 
-/// The allocation keeps every surviving object, with its block.
+/// The allocation keeps every non-free object, with its block.
 #push-options "--z3rlimit 30"
 let alloc_keeps (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t) (y: obj_addr)
-  : Lemma (requires sweep_shape g fp st /\ surviving st g y /\
+  : Lemma (requires sweep_shape g fp st /\ in_use (free_incremental st) g y /\
                     (fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag)).SA.obj_out <> 0UL)
           (ensures (let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) in
                     let st' = alloc_state g fp wz st in
                     same_block g r.SA.heap_out (hd_address y) /\
                     read_word r.SA.heap_out (hd_address y) == read_word g (hd_address y) /\
-                    surviving st' r.SA.heap_out y /\
+                    in_use (free_incremental st') r.SA.heap_out y /\
                     y <> r.SA.obj_out))
   = let (p, cur, pc) = alloc_found g fp st wz tag in
     found_same_block g fp st wz tag p cur pc y;
     found_obj g fp st wz tag p cur pc y;
     (if hd_address y = pc.ah then inside_pos g fp st wz tag p cur pc pc.ah);
-    found_surviving g fp st wz tag p cur pc y;
+    found_in_use g fp st wz tag p cur pc y;
     found_shape g fp st wz tag p cur pc
 #pop-options
 
-/// The copy into a not-free object keeps the shape, the walk and the
+/// The copy into a non-blue object keeps the shape, the walk and the
 /// headers, and keeps a fresh object fresh.
 #push-options "--z3rlimit 20"
 let rec copy_shape (g: heap) (fp: U64.t) (st: sweep_state) (minor: minor_state)
@@ -798,7 +798,7 @@ let rec copy_shape (g: heap) (fp: U64.t) (st: sweep_state) (minor: minor_state)
                     n <= U64.v (wosize_of_object dst g))
           (ensures (let g' = WB.copy_fields minor g src dst i n in
                     sweep_shape g' fp st /\ same_heads g g' /\
-                    (forall (y: obj_addr). condemned st g' y == condemned st g y) /\
+                    (forall (y: obj_addr). pending_free st g' y == pending_free st g y) /\
                     (fresh_ok g fp st dst ==> fresh_ok g' fp st dst)))
           (decreases (n - i))
   = if i >= n then begin
@@ -873,28 +873,28 @@ let copy_keeps (g1: heap) (minor: minor_state) (src: U64.t) (dst: obj_addr) (n: 
 
 /// The copied fields are storable.
 #push-options "--z3rlimit 20"
-let copy_storable_one (g g2: heap) (v v2: view) (minor: minor_state) (obj: U64.t) (dst: obj_addr)
+let copy_storable_one (g g2: heap) (free free2: free_def) (minor: minor_state) (obj: U64.t) (dst: obj_addr)
                       (i: nat{U64.v dst + i * 8 + 8 <= heap_size})
-  : Lemma (requires minor_fields_ok v minor obj g /\
-                    no_infix_block g /\ no_infix_block g2 /\ view_ok v2 /\
-                    heads_kept v g g2 /\ (forall (y: obj_addr). v g y ==> v2 g2 y) /\
+  : Lemma (requires minor_fields_ok free minor obj g /\
+                    no_infix_block g /\ no_infix_block g2 /\ free_def_ok free2 /\
+                    heads_kept free g g2 /\ (forall (y: obj_addr). in_use free g y ==> in_use free2 g2 y) /\
                     i < minor_scan_wosize minor obj /\
                     field_val g2 dst i == minor_read_field minor obj i)
-          (ensures storable v2 g2 (field_val g2 dst i))
-  = storable_transfer g g2 v v2 (minor_read_field minor obj i)
+          (ensures storable free2 g2 (field_val g2 dst i))
+  = storable_transfer g g2 free free2 (minor_read_field minor obj i)
 #pop-options
 
 #push-options "--z3rlimit 20"
-let copy_storable (g g2: heap) (v v2: view) (minor: minor_state) (obj: U64.t) (dst: obj_addr)
+let copy_storable (g g2: heap) (free free2: free_def) (minor: minor_state) (obj: U64.t) (dst: obj_addr)
                   (wosize: nat{wosize > 0})
-  : Lemma (requires minor_fields_ok v minor obj g /\ wosize == minor_wosize minor obj /\
-                    no_infix_block g /\ no_infix_block g2 /\ view_ok v2 /\
-                    heads_kept v g g2 /\ (forall (y: obj_addr). v g y ==> v2 g2 y) /\
+  : Lemma (requires minor_fields_ok free minor obj g /\ wosize == minor_wosize minor obj /\
+                    no_infix_block g /\ no_infix_block g2 /\ free_def_ok free2 /\
+                    heads_kept free g g2 /\ (forall (y: obj_addr). in_use free g y ==> in_use free2 g2 y) /\
                     U64.v (wosize_of_object dst g2) == wosize /\
                     tag_of_object dst g2 == Promote.promoted_tag minor obj /\
                     (forall (j: nat). j < wosize /\ U64.v dst + j * 8 + 8 <= heap_size ==>
                        field_val g2 dst j == minor_read_field minor obj j))
-          (ensures fields_storable v2 g2 dst)
+          (ensures fields_storable free2 g2 dst)
   = is_no_scan_spec dst g2;
     no_scan_tag_val ();
     minor_scan_wosize_cases minor obj;
@@ -903,9 +903,9 @@ let copy_storable (g g2: heap) (v v2: view) (minor: minor_state) (obj: U64.t) (d
       assert (minor_scan_wosize minor obj == wosize);
       let sto (i: nat)
         : Lemma (i < U64.v (wosize_of_object dst g2) /\ U64.v dst + i * 8 + 8 <= heap_size ==>
-                 storable v2 g2 (field_val g2 dst i))
+                 storable free2 g2 (field_val g2 dst i))
         = if i < U64.v (wosize_of_object dst g2) && U64.v dst + i * 8 + 8 <= heap_size
-          then copy_storable_one g g2 v v2 minor obj dst i
+          then copy_storable_one g g2 free free2 minor obj dst i
       in
       FStar.Classical.forall_intro sto
     end
@@ -914,7 +914,7 @@ let copy_storable (g g2: heap) (v v2: view) (minor: minor_state) (obj: U64.t) (d
 #push-options "--z3rlimit 20"
 let promote_sweep_phase g fp st minor obj wosize =
   let tag = Promote.promoted_tag minor obj in
-  let sv = surviving st in
+  let free = free_incremental st in
   sweep_phase_inv_iff g fp st;
   alloc_sweep_phase g fp st wosize tag;
   let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wosize tag) in
@@ -935,10 +935,10 @@ let promote_sweep_phase g fp st minor obj wosize =
     assert (forall (j: nat). j < wosize /\ U64.v dst + j * 8 + 8 <= heap_size ==>
               field_val g2 dst j == minor_read_field minor obj j);
     let kept (y: obj_addr)
-      : Lemma (requires sv g y)
+      : Lemma (requires in_use free g y)
               (ensures read_word g2 (hd_address y) == read_word g (hd_address y) /\
                        (is_closure y g ==> same_block g g2 (hd_address y)) /\
-                       surviving st' g2 y)
+                       in_use (free_incremental st') g2 y)
       = alloc_keeps g fp st wosize tag y;
         obj_pos g1 y;
         assert (read_word g2 (hd_address y) == read_word g1 (hd_address y));
@@ -948,10 +948,10 @@ let promote_sweep_phase g fp st minor obj wosize =
         end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires kept);
-    wf_view_parts ();
+    wf_with_parts ();
     same_heads_part4 g1 g2;
-    surviving_view_ok st';
-    copy_storable g g2 sv (surviving st') minor obj dst wosize;
+    free_incremental_ok st';
+    copy_storable g g2 free (free_incremental st') minor obj dst wosize;
     fresh_close g2 r.SA.fp_out st' dst
   end
 #pop-options

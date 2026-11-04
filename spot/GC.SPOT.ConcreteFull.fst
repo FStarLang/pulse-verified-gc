@@ -222,7 +222,7 @@ let post_roots_mem_a_prime
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)
-    GC.Spec.Fields.allocated roots Layout.a_minor;
+    GC.Spec.Fields.free_stw roots Layout.a_minor;
   assert (is_val_addr img);
   assert (SpecObj.resolve_object (img <: obj_addr) res.mc_major == img);
   GenImpl.gen_gc_named_root_in_stack
@@ -405,7 +405,7 @@ let post_minor_c_wosize
   aligned_plus_mul8 (U64.v c) Layout.c_to_a_field_index;
   MinorFwd.stop_the_world_context minor major fp roots;
   MinorFwd.cheney_promote_preserves_old_major_field_context
-    minor major fp GC.Spec.Fields.allocated roots c Layout.c_to_a_field_index;
+    minor major fp GC.Spec.Fields.free_stw roots c Layout.c_to_a_field_index;
   Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
   PromoteUpdate.update_major_pointers_preserves_header prom.major_final prom.fwd_map c;
   MCFH.header_eq_preserves_wosize_no_scan result.mc_major prom.major_final c;

@@ -166,7 +166,7 @@ let rec push_children_bounded_preserves_bsp g st obj i ws cap =
         HeapGraph.get_field_addr_eq g obj i;
         wf_object_size_bound g obj;
         field_read_implies_exists_pointing g obj wz (U64.sub i 1UL) child_raw;
-        points_to_target_allocated g obj child_raw;
+        points_to_target_not_blue g obj child_raw;
 
         color_change_preserves_wf g child Header.Gray;
         color_change_preserves_objects g child Header.Gray;

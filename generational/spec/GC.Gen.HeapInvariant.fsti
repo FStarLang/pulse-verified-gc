@@ -47,13 +47,13 @@ val free_list_exact_iff (major: heap) (fp: U64.t)
 /// A *no-scan* object (`tag >= 251`: a string, `Bytes.t`, `Bigarray` payload or
 /// custom block) may hold arbitrary bytes, including words that spell a
 /// perfectly well-formed heap address.  Such an object has no pointers
-/// (`GC.Spec.Fields.has_pointer_to`), so nothing is demanded of those words -- matching the extracted collector, which never reads them, and
+/// (it is not `GC.Spec.Fields.scannable`), so nothing is demanded of those words -- matching the extracted collector, which never reads them, and
 /// `GC.Spec.HeapGraph.get_pointer_fields`, which returns `Seq.empty` for such an
 /// object.  `GC.SPOT.NoScanMajor` exhibits a heap that satisfies this shape and
 /// would have been rejected before, so the relaxation is not vacuous.
 ///
 /// A *free* (blue) block is unconstrained beyond its free-list link for the
-/// same reason: it is outside the view (`GC.Spec.Fields.allocated`), and
+/// same reason: it is free (`GC.Spec.Fields.free_stw`), and
 /// `get_pointer_fields` gives it no edges.  Nothing the collector does reads
 /// such a word -- mark scans only grey objects, the pointer update skips blue
 /// ones, and the allocator reads the header and field 0 -- so the sweep leaves
@@ -88,14 +88,14 @@ val major_heap_shape (major: heap) (fp: U64.t) : prop
 
 /// Cross-generation safety: any field of an allocated minor object that already
 /// looks like a major-heap pointer must target a live non-blue major object.
-/// This is what lets promotion keep `pointers_stay_in` (no pointer to a free
+/// This is what lets promotion keep `pointers_lead_to_non_free` (no pointer to a free
 /// block).
 ///
 /// Quantified over the *scan window* `GC.Gen.MinorHeap.minor_scan_wosize`, not
 /// the whole body: a tag >= No_scan_tag nursery block holds raw data whose
 /// words routinely look like major addresses, and nothing may be assumed about
 /// them.  That is sound because such a block promotes to a no-scan major
-/// object, which has no pointers (`GC.Spec.Fields.has_pointer_to`).
+/// object, which has no pointers (it is not `GC.Spec.Fields.scannable`).
 [@@"opaque_to_smt"]
 val minor_major_fields_no_blue (minor: minor_state) (major: heap) : prop
 
@@ -106,7 +106,7 @@ val minor_major_fields_no_blue (minor: minor_state) (major: heap) : prop
 /// `GC.Gen.MinorHeap.minor_scan_wosize`, which is 0 on a tag >= No_scan_tag
 /// object, so the collector never reads a raw-data body and nothing needs to be
 /// assumed about its contents -- exactly mirroring the major heap, where a
-/// no-scan block has no pointers (`GC.Spec.Fields.has_pointer_to`).
+/// no-scan block has no pointers (it is not `GC.Spec.Fields.scannable`).
 [@@"opaque_to_smt"]
 val minor_heap_shape (minor: minor_state) : prop
 /// Non-stack combined heap shape used by minor collection.
@@ -200,30 +200,31 @@ val collection_heap_shape_after_minor_reset
           (ensures collection_heap_shape (minor_reset minor) major fp)
 
 /// ---------------------------------------------------------------------------
-/// The collection's shape on a view
+/// The collection's shape given what counts as free
 /// ---------------------------------------------------------------------------
 ///
 /// `collection_heap_shape` is the stop-the-world shape: the whole major heap is
 /// well formed, nothing is black or gray, and nothing points at a free block.
 /// A minor collection needs much less of the major heap: a sound walk, an exact
-/// ascending free list, and that the blocks of a view point only into the view
-/// (`GC.Spec.Fields.well_formed_view`).  A block outside the view is garbage
+/// ascending free list, and that the non-free blocks point only to non-free blocks
+/// (`GC.Spec.Fields.well_formed_heap_with`).  A free block is garbage
 /// left in place, supplied by whoever holds the invariant: its fields may point
 /// anywhere, free blocks included, and the collection never reads them.
 ///
-/// Stop-the-world the view is `allocated`, and a sweep in progress supplies a
-/// smaller one.  At `allocated` this is `collection_heap_shape` without its two
-/// colour facts (`collection_heap_shape_as_view`,
-/// `collection_heap_shape_of_view`).
+/// Stop-the-world free means blue (`free_stw`); a sweep in progress also
+/// counts the blocks it is about to free.  At `free_stw` this is `collection_heap_shape` without its two
+/// colour facts (`collection_heap_shape_as_free_stw`,
+/// `collection_heap_shape_of_free_stw`).
 
-/// The major half: the view is admissible (`view_ok`), and the walk, the free
-/// list and the pointer clauses on the view hold.
+/// The major half: the definition of free is admissible (`free_def_ok`), and
+/// the walk, the free list and the pointer clauses of the non-free blocks
+/// hold.
 [@@"opaque_to_smt"]
-val major_shape_view (v: view) (major: heap) (fp: U64.t) : prop
+val major_shape_with (free: free_def) (major: heap) (fp: U64.t) : prop
 
-val major_shape_view_intro (v: view) (major: heap) (fp: U64.t)
-  : Lemma (requires view_ok v /\
-                    well_formed_view v major /\
+val major_shape_with_intro (free: free_def) (major: heap) (fp: U64.t)
+  : Lemma (requires free_def_ok free /\
+                    well_formed_heap_with free major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     free_list_exact major fp /\
@@ -235,14 +236,14 @@ val major_shape_view_intro (v: view) (major: heap) (fp: U64.t)
                     Seq.length (objects zero_addr major) > 0 /\
                     SweepInv.fp_valid fp major /\
                     GC.Spec.FreeList.fp_in_heap fp major)
-          (ensures major_shape_view v major fp)
+          (ensures major_shape_with free major fp)
 
-val major_shape_view_elim (v: view) (major: heap) (fp: U64.t)
-  : Lemma (requires major_shape_view v major fp)
-          (ensures view_ok v /\
-                   (forall (g: heap) (x: obj_addr). {:pattern (v g x)}
-                      v g x ==> Seq.mem x (objects zero_addr g) /\ ~(is_blue x g)) /\
-                   well_formed_view v major /\
+val major_shape_with_elim (free: free_def) (major: heap) (fp: U64.t)
+  : Lemma (requires major_shape_with free major fp)
+          (ensures free_def_ok free /\
+                   (forall (g: heap) (x: obj_addr). {:pattern (in_use free g x)}
+                      in_use free g x ==> Seq.mem x (objects zero_addr g) /\ ~(is_blue x g)) /\
+                   well_formed_heap_with free major /\
                    blocks_fit major /\
                    no_infix_block major /\
                    AllocLemmas.fl_valid major fp heap_words /\
@@ -257,81 +258,81 @@ val major_shape_view_elim (v: view) (major: heap) (fp: U64.t)
                    SweepInv.fp_valid fp major /\
                    GC.Spec.FreeList.fp_in_heap fp major)
 
-/// Cross-generation condition on a view: a nursery field (in the scan window)
-/// that looks like a major pointer targets a block of the view.  Nursery pointers lie below `zero_addr`, so they
-/// never look like one.  At `allocated` this is
+/// Cross-generation condition given what counts as free: a nursery field (in the scan window)
+/// that looks like a major pointer targets a non-free block.  Nursery pointers lie below `zero_addr`, so they
+/// never look like one.  At `free_stw` this is
 /// `minor_major_fields_no_blue minor major`.
 [@@"opaque_to_smt"]
-val minor_major_fields_in_view (v: view) (minor: minor_state) (major: heap) : prop
+val minor_major_fields_not_free (free: free_def) (minor: minor_state) (major: heap) : prop
 
-val minor_major_fields_in_view_intro (v: view) (minor: minor_state) (major: heap)
+val minor_major_fields_not_free_intro (free: free_def) (minor: minor_state) (major: heap)
   (h: (obj: U64.t) -> (j: nat) ->
        Lemma (requires Seq.mem obj (minor_objects minor) /\
                        j < minor_scan_wosize minor obj /\
                        is_pointer_field (minor_read_field minor obj j))
-             (ensures v major ((minor_read_field minor obj j) <: obj_addr)))
-  : Lemma (minor_major_fields_in_view v minor major)
+             (ensures in_use free major ((minor_read_field minor obj j) <: obj_addr)))
+  : Lemma (minor_major_fields_not_free free minor major)
 
-val minor_major_fields_in_view_elim (v: view) (minor: minor_state) (major: heap)
+val minor_major_fields_not_free_elim (free: free_def) (minor: minor_state) (major: heap)
   (obj: U64.t) (j: nat)
-  : Lemma (requires minor_major_fields_in_view v minor major /\
+  : Lemma (requires minor_major_fields_not_free free minor major /\
                     Seq.mem obj (minor_objects minor) /\
                     j < minor_scan_wosize minor obj /\
                     is_pointer_field (minor_read_field minor obj j))
-          (ensures v major ((minor_read_field minor obj j) <: obj_addr))
+          (ensures in_use free major ((minor_read_field minor obj j) <: obj_addr))
 
-val minor_major_fields_in_view_allocated (minor: minor_state) (major: heap)
-  : Lemma (minor_major_fields_in_view allocated minor major <==>
+val minor_major_fields_not_free_stw (minor: minor_state) (major: heap)
+  : Lemma (minor_major_fields_not_free free_stw minor major <==>
            minor_major_fields_no_blue minor major)
 
-/// The minor collection's entry shape on a view.
+/// The minor collection's entry shape given what counts as free.
 [@@"opaque_to_smt"]
-val collection_shape_view (v: view) (minor: minor_state) (major: heap)
+val collection_shape_with (free: free_def) (minor: minor_state) (major: heap)
   (fp: U64.t) : prop
 
-val collection_shape_view_intro (v: view) (minor: minor_state) (major: heap)
+val collection_shape_with_intro (free: free_def) (minor: minor_state) (major: heap)
   (fp: U64.t)
-  : Lemma (requires major_shape_view v major fp /\
+  : Lemma (requires major_shape_with free major fp /\
                     minor_heap_shape minor /\
-                    minor_major_fields_in_view v minor major)
-          (ensures collection_shape_view v minor major fp)
+                    minor_major_fields_not_free free minor major)
+          (ensures collection_shape_with free minor major fp)
 
-val collection_shape_view_elim (v: view) (minor: minor_state) (major: heap)
+val collection_shape_with_elim (free: free_def) (minor: minor_state) (major: heap)
   (fp: U64.t)
-  : Lemma (requires collection_shape_view v minor major fp)
-          (ensures major_shape_view v major fp /\
+  : Lemma (requires collection_shape_with free minor major fp)
+          (ensures major_shape_with free major fp /\
                    minor_heap_shape minor /\
-                   minor_major_fields_in_view v minor major)
+                   minor_major_fields_not_free free minor major)
 
 /// --- The stop-the-world instance ---
 
-/// `major_heap_shape` is the `allocated` shape plus the two colour facts.
-val major_heap_shape_as_view (major: heap) (fp: U64.t)
+/// `major_heap_shape` is the `free_stw` shape plus the two colour facts.
+val major_heap_shape_as_free_stw (major: heap) (fp: U64.t)
   : Lemma (requires major_heap_shape major fp)
-          (ensures major_shape_view allocated major fp /\
+          (ensures major_shape_with free_stw major fp /\
                    Mark.no_black_objects major /\
                    SweepInv.no_gray_objects major)
 
-val major_heap_shape_of_view (major: heap) (fp: U64.t)
-  : Lemma (requires major_shape_view allocated major fp /\
+val major_heap_shape_of_free_stw (major: heap) (fp: U64.t)
+  : Lemma (requires major_shape_with free_stw major fp /\
                     Mark.no_black_objects major /\
                     SweepInv.no_gray_objects major)
           (ensures major_heap_shape major fp)
 
-val collection_heap_shape_as_view (minor: minor_state) (major: heap) (fp: U64.t)
+val collection_heap_shape_as_free_stw (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma (requires collection_heap_shape minor major fp)
-          (ensures collection_shape_view allocated minor major fp /\
+          (ensures collection_shape_with free_stw minor major fp /\
                    Mark.no_black_objects major /\
                    SweepInv.no_gray_objects major)
 
-val collection_heap_shape_of_view (minor: minor_state) (major: heap) (fp: U64.t)
-  : Lemma (requires collection_shape_view allocated minor major fp /\
+val collection_heap_shape_of_free_stw (minor: minor_state) (major: heap) (fp: U64.t)
+  : Lemma (requires collection_shape_with free_stw minor major fp /\
                     Mark.no_black_objects major /\
                     SweepInv.no_gray_objects major)
           (ensures collection_heap_shape minor major fp)
 
-/// The reset nursery makes the minor half vacuous, for any view.
-val collection_shape_view_after_minor_reset
-  (v: view) (minor: minor_state) (major: heap) (fp: U64.t)
-  : Lemma (requires major_shape_view v major fp)
-          (ensures collection_shape_view v (minor_reset minor) major fp)
+/// The reset nursery makes the minor half vacuous, for any definition of free.
+val collection_shape_with_after_minor_reset
+  (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t)
+  : Lemma (requires major_shape_with free major fp)
+          (ensures collection_shape_with free (minor_reset minor) major fp)
