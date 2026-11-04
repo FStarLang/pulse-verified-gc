@@ -278,12 +278,16 @@ let test_major_interior_forgery () =
 (* If the collector scanned the payload it would keep the target alive, and
    the target's finaliser would not run.
  *
- * Finalisers are not wired to the verified runtime (`Gc.finalise` registers,
- * but nothing runs the callbacks), so the assertion is made *conditional on a
- * control*: a second, identical doomed block with no forged pointer anywhere.
- * If the control's finaliser does not run either, this runtime simply does not
- * run finalisers and the comparison carries no information.  If the control
- * runs and the forged one does not, that is a real failure. *)
+ * The verified runtime does not implement finalisers, and `Gc.finalise` stops
+ * the program there (issue #42), so the finalisers are registered only when
+ * NO_SCAN_RUNTIME is not "verified": under stock OCaml, as the differential
+ * check.  Even there the assertion is made *conditional on a control*: a
+ * second, identical doomed block with no forged pointer anywhere.  If the
+ * control's finaliser does not run either, finalisers did not run and the
+ * comparison carries no information.  If the control runs and the forged one
+ * does not, that is a real failure. *)
+let finalisers = Sys.getenv_opt "NO_SCAN_RUNTIME" <> Some "verified"
+
 let test_forged_pointer_to_garbage () =
   section "4. a forged pointer does not keep its target alive";
   let forged_collected = ref 0 in
@@ -291,7 +295,7 @@ let test_forged_pointer_to_garbage () =
   let b = Bytes.make major_bytes_len '\000' in
   let forged =
     let doomed = Array.make 32 0 in
-    Gc.finalise (fun _ -> incr forged_collected) doomed;
+    if finalisers then Gc.finalise (fun _ -> incr forged_collected) doomed;
     let a = addr_of_value (Obj.repr doomed) in
     Bytes.set_int64_ne b 0 (Int64.of_nativeint a);
     Bytes.set_int64_ne b 256 (Int64.of_nativeint a);
@@ -300,7 +304,7 @@ let test_forged_pointer_to_garbage () =
   (* The control: same shape, same lifetime, but no forged reference. *)
   let () =
     let control = Array.make 32 0 in
-    Gc.finalise (fun _ -> incr control_collected) control;
+    if finalisers then Gc.finalise (fun _ -> incr control_collected) control;
     ignore (Sys.opaque_identity control)
   in
   (* Both are now unreachable; the first only "reachable" through no-scan bytes. *)
@@ -311,7 +315,7 @@ let test_forged_pointer_to_garbage () =
       (!forged_collected > 0)
   else
     Printf.printf
-      "  (finalisers are not run by this runtime; liveness check skipped)\n%!";
+      "  (no finaliser ran or none was registered; liveness check skipped)\n%!";
   (* These hold unconditionally, and are the real content of the section. *)
   check_eq64 "the forged word itself is untouched" (Bytes.get_int64_ne b 0) forged;
   check_eq "reachable_words unaffected"

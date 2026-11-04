@@ -18,6 +18,15 @@
 #     c-api/alloc_async all assert on Gc.finalise; regression/pr5233 reads a
 #     weak entry after Gc.full_major has collected its value -- the verified
 #     collector does not erase weak entries)
+#   - weak arrays, ephemerons and Gc.finalise now fail early (issues #42, #43):
+#     creating a weak array or ephemeron, or registering a finaliser, stops
+#     with "Fatal error: ... not supported by the verified GC".  Tests that
+#     used to pass while using one of them only incidentally now stop there:
+#       misc/weaktest (Weak.Make), lib-bigarray/weak_bigarray (Weak.create),
+#       basic/opt_variants (a Weak.Make set among other stdlib checks),
+#       lib-hashtbl/htbl (Ephemeron.K1/K2.Make tables alongside Hashtbl),
+#       backtrace/backtraces_and_finalizers (Gc.finalise; native only),
+#       lib-marshal/intern_final (Gc.create_alarm, which uses Gc.finalise)
 #   - Gc.Memprof sampling: not implemented (every tests/statmemprof entry,
 #     including the timeouts)
 #   - custom-block finalisers: not run (regression/pr3612)
@@ -30,23 +39,28 @@
 #     regression/pr9292 asks for best-fit and ~400 MB, and gets Out_of_memory)
 #   - packaging, not GC behaviour: no libasmrun_i.a (instrumented-runtime),
 #     -output-complete-obj does not carry the verified GC's objects
-#   - the bridge's fixed root buffer (MAX_ROOTS in alloc_gen.c) overflows in
-#     large compiler runs ("verified gen GC: root overflow":
-#     typing-modules/merge_constraint, unboxed-primitive-args)
 #
-# Do NOT add tests/misc/'weaktest.ml': it is slow here (~108s native against
-# 0.2s on stock, no weak table) but passes within TIMEOUT=300. If it times
+# lib-systhreads/eintr's timing-sensitive variants are slow here: if one times
 # out, the collector or the runner got slower -- investigate rather than
-# baseline it. The same goes for lib-systhreads/eintr's timing-sensitive
-# variants.
+# baseline it.  (tests/misc/'weaktest.ml' carried the same warning until
+# Weak.Make started failing early; see above.)
+tests/backtrace/'backtraces_and_finalizers.ml' with 1 (native)
 tests/backtrace/'callstack.ml' with 1.1.1 (native)
 tests/backtrace/'callstack.ml' with 1.1.2 (bytecode)
+tests/basic/'opt_variants.ml' with 1 (native)
+tests/basic/'opt_variants.ml' with 2 (bytecode)
 tests/c-api/'alloc_async.ml' with 1 (native)
 tests/c-api/'alloc_async.ml' with 2 (bytecode)
 tests/callback/'signals_alloc.ml' with 1.1 (bytecode)
 tests/ephe-c-api/'test.ml' with 1 (native)
 tests/ephe-c-api/'test.ml' with 2 (bytecode)
 tests/instrumented-runtime/'main.ml' with 1.1 (native)
+tests/lib-bigarray/'weak_bigarray.ml' with 1 (native)
+tests/lib-bigarray/'weak_bigarray.ml' with 2 (bytecode)
+tests/lib-hashtbl/'htbl.ml' with 1 (native)
+tests/lib-hashtbl/'htbl.ml' with 2 (bytecode)
+tests/lib-marshal/'intern_final.ml' with 1 (native)
+tests/lib-marshal/'intern_final.ml' with 2 (bytecode)
 tests/lib-sys/'opaque.ml' with 1 (native)
 tests/lib-sys/'opaque.ml' with 2 (bytecode)
 tests/lib-systhreads/'eintr.ml' with 1.1.1 (bytecode)
@@ -73,6 +87,8 @@ tests/misc/'weaklifetime.ml' with 1 (native)
 tests/misc/'weaklifetime.ml' with 2 (bytecode)
 tests/misc/'weaklifetime2.ml' with 1 (native)
 tests/misc/'weaklifetime2.ml' with 2 (bytecode)
+tests/misc/'weaktest.ml' with 1 (native)
+tests/misc/'weaktest.ml' with 2 (bytecode)
 tests/output-complete-obj/'test.ml' with 1.1.1 (script)
 tests/output-complete-obj/'test.ml' with 2.1.1 (script)
 tests/regression/pr3612/'pr3612.ml' with 1 (native)
@@ -109,5 +125,3 @@ tests/statmemprof/'moved_while_blocking.ml' with 1.2 (native)
 tests/statmemprof/'thread_exit_in_callback.ml' with 1.1 (bytecode)
 tests/tool-ocaml/'t340-weak.ml' with 1.1 (ocaml)
 tests/tool-ocaml/'t350-heapcheck.ml' with 1.1 (ocaml)
-tests/typing-modules/'merge_constraint.ml' with 1 (expect)
-tests/unboxed-primitive-args/'test.ml' with 1.1.1.1 (ocamlopt.byte)

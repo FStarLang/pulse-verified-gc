@@ -80,11 +80,38 @@ uintnat vergc_minor_words_current(void) {
     return (uintnat)(*gc_gen_heap.minor.bump_ref / sizeof(value));
 }
 
-/* Root scanning: parallel arrays for roots and writeback locations */
-#define MAX_ROOTS  (1 << 18)  /* 256K root slots */
-static uint64_t   root_values[MAX_ROOTS];
-static value      *root_locs[MAX_ROOTS];
+/* Root scanning: parallel arrays for roots and writeback locations.
+ * They grow on demand: a deep stack can hold more pointer slots than any
+ * fixed bound (issue #41).  The full collection sizes its gray stack from
+ * root_count after scanning, which keeps gen_gc_stack_budget
+ * (nroots <= stack capacity) satisfied however large the buffer grows. */
+#define INITIAL_ROOT_CAP  ((size_t)1 << 12)
+static uint64_t   *root_values;
+static value     **root_locs;
 static size_t      root_count;
+static size_t      root_cap;
+
+static void grow_roots(void) {
+    size_t new_cap = root_cap == 0 ? INITIAL_ROOT_CAP : root_cap * 2;
+    if (new_cap <= root_cap || new_cap > SIZE_MAX / sizeof(uint64_t))
+        caml_fatal_error("verified gen GC: root buffer size overflow");
+    uint64_t *vals = (uint64_t *)realloc(root_values, new_cap * sizeof(uint64_t));
+    if (!vals)
+        caml_fatal_error("verified gen GC: cannot grow root buffer");
+    root_values = vals;
+    value **locs = (value **)realloc(root_locs, new_cap * sizeof(value *));
+    if (!locs)
+        caml_fatal_error("verified gen GC: cannot grow root buffer");
+    root_locs = locs;
+    root_cap = new_cap;
+}
+
+static inline void push_root(uint64_t v, value *loc) {
+    if (root_count >= root_cap) grow_roots();
+    root_values[root_count] = v;
+    root_locs[root_count] = loc;
+    root_count++;
+}
 
 /* Track total bytes promoted or allocated directly in the major heap
  * (verified_allocate) since the last major GC.  When this approaches the
@@ -255,9 +282,6 @@ static inline value minor_offset_to_abs(uint64_t off) {
 /* --- Root scanning callback for minor collection --- */
 
 static void scan_minor_root(value root, value *root_ptr) {
-    if (root_count >= MAX_ROOTS)
-        caml_fatal_error("verified gen GC: root overflow");
-
     /* Only collect block roots (not integers) */
     if (!Is_block(root)) return;
 
@@ -278,13 +302,12 @@ static void scan_minor_root(value root, value *root_ptr) {
         translated = (uint64_t)(uintptr_t)root;
     }
 
-    root_values[root_count] = translated;
-    root_locs[root_count] = root_ptr;
-    root_count++;
+    push_root(translated, root_ptr);
 }
 
 static void collect_minor_roots_and_refs(void) {
     root_count = 0;
+    if (root_cap == 0) grow_roots();  /* never hand the collector NULL */
     caml_do_roots(scan_minor_root, 1);
 
     /* Inter-generational pointers (ref_table entries) are absolute
@@ -301,11 +324,7 @@ static void collect_minor_roots_and_refs(void) {
             uint64_t v64 = (uint64_t)(uintptr_t)v;
             if (is_minor_absolute((value)v64)) {
                 uint64_t off = v64 - (uint64_t)(uintptr_t)minor_base;
-                if (root_count >= MAX_ROOTS)
-                    caml_fatal_error("verified gen GC: root overflow (ref_table)");
-                root_values[root_count] = off;
-                root_locs[root_count] = NULL;
-                root_count++;
+                push_root(off, NULL);
             }
         }
     }
@@ -609,6 +628,8 @@ static void do_full_gc(void) {
      * bridge matches the verified separation-logic model. */
     size_t gray_cap = gc_gen_heap.major.size / 64;
     if (gray_cap < 4096) gray_cap = 4096;
+    /* gen_gc_stack_budget: nroots <= stack capacity.  root_count is not
+     * bounded (the root buffer grows), so the capacity follows it. */
     if (gray_cap < root_count) gray_cap = root_count;
     if (gray_cap == 0) gray_cap = 1;
 

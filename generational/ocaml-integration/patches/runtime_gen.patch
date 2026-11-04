@@ -184,10 +184,10 @@ index d9e58bc..da87b62 100644
  #define Alloc_small_with_profinfo(result, wosize, tag, profinfo) \
    Alloc_small_aux(result, wosize, tag, profinfo, CAML_DO_TRACK)
 diff --git a/runtime/caml/misc.h b/runtime/caml/misc.h
-index c605f87..054cb21 100644
+index c605f87..94445ab 100644
 --- a/runtime/caml/misc.h
 +++ b/runtime/caml/misc.h
-@@ -251,6 +251,13 @@ CAMLextern void caml_fatal_error (char *, ...)
+@@ -251,6 +251,21 @@ CAMLextern void caml_fatal_error (char *, ...)
  #endif
  CAMLnoreturn_end;
  
@@ -197,6 +197,14 @@ index c605f87..054cb21 100644
 +#define VERGC_STOCK_GC_UNREACHABLE() \
 +  caml_fatal_error ("verified GC: stock %s must not run under the verified " \
 +                    "collector", __func__)
++
++/* Verified GC: features the verified collector does not implement yet.
++   Their entry points call this, so a program that uses one stops at once
++   with a clear message instead of running on with wrong or unsafe results
++   (weak keys left dangling, finalisers that never run). */
++#define VERGC_UNSUPPORTED(what) \
++  caml_fatal_error ("%s not supported by the verified GC (%s)", \
++                    what, __func__)
 +
  /* Detection of available C built-in functions, the Clang way. */
  
@@ -221,6 +229,20 @@ index c4be4d2..48d67d1 100644
    CAMLassert (caml_gc_phase == Phase_idle);
    if (caml_percent_max >= 1000000) return;
    if (Caml_state->stat_major_collections < 3) return;
+diff --git a/runtime/finalise.c b/runtime/finalise.c
+index a1e26cf..b1a7121 100644
+--- a/runtime/finalise.c
++++ b/runtime/finalise.c
+@@ -364,6 +364,9 @@ static void generic_final_register (struct finalisable *final, value f, value v)
+       || Tag_val (v) == Forward_tag) {
+     caml_invalid_argument ("Gc.finalise");
+   }
++  /* The verified collector never runs finalisers, so the table would only
++     grow (issue #42). */
++  VERGC_UNSUPPORTED ("Gc.finalise is");
+   CAMLassert (final->old <= final->young);
+ 
+   if (final->young >= final->size){
 diff --git a/runtime/gc_ctrl.c b/runtime/gc_ctrl.c
 index 9c47b91..c6edb1d 100644
 --- a/runtime/gc_ctrl.c
@@ -806,3 +828,17 @@ index b757325..6de3615 100644
    init_static();
    caml_init_signals();
  #ifdef _WIN32
+diff --git a/runtime/weak.c b/runtime/weak.c
+index dc0d061..645801b 100644
+--- a/runtime/weak.c
++++ b/runtime/weak.c
+@@ -118,6 +118,9 @@ CAMLexport value caml_ephemeron_create (mlsize_t len)
+   size = len + CAML_EPHE_FIRST_KEY;
+   if (size < CAML_EPHE_FIRST_KEY || size > Max_wosize)
+     caml_invalid_argument ("Weak.create");
++  /* The verified collector neither updates nor clears weak and ephemeron
++     keys, so a key can be left pointing at freed memory (issue #43). */
++  VERGC_UNSUPPORTED ("Weak arrays and ephemerons are");
+   res = caml_alloc_shr (size, Abstract_tag);
+   for (i = 1; i < size; i++) Field (res, i) = caml_ephe_none;
+   Field (res, CAML_EPHE_LINK_OFFSET) = caml_ephe_list_head;
