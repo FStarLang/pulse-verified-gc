@@ -25,6 +25,37 @@ module CV = GC.Gen.CheneyGeneric
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 
+/// ---------------------------------------------------------------------------
+/// The allocator's new block
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 30"
+let alloc_phase_new_block g fp st wz tag =
+  let ph = SA.Sweeping st in
+  let r = GC.Gen.AllocPhase.alloc_at ph g fp wz tag in
+  FLA.fl_ascending_valid g fp;
+  part1_holds g;
+  GC.Gen.AllocPhase.alloc_at_recoloured ph g fp wz tag;
+  GC.Gen.AllocPhase.alloc_at_obj_wosize ph g fp wz tag;
+  if r.SA.obj_out <> 0UL then begin
+    let x : obj_addr = r.SA.obj_out in
+    let g' = r.SA.heap_out in
+    let q = hd_address x in
+    hd_address_spec x;
+    obj_pos g' x; colour_of g' x;
+    W.bnext_facts g' q;
+    objects_addresses_gt_start zero_addr g' x;
+    // the object was not a non-free block: the list holds only cells
+    (if FStar.IndefiniteDescription.strong_excluded_middle
+          (Seq.mem x (objects zero_addr g) /\ ~(is_blue x g)) then begin
+       fl_cell_iff g x; obj_pos g x; colour_of g x;
+       FLA.fl_ascending_avoids g fp x heap_words;
+       GC.Gen.AllocPhase.alloc_at_obj_ne_excl ph g fp wz x tag
+     end);
+    assert (is_white x g' ==> U64.v q < U64.v st.cursor)
+  end
+#pop-options
+
 let free_or_uninitialised_ok st obj =
   free_incremental_ok st;
   reveal_opaque (`%free_def_ok) free_def_ok

@@ -53,6 +53,7 @@ module AC = GC.Spec.Allocator.Cursor
 module SA = GC.Spec.Allocator
 module Promote = GC.Gen.Promote
 module WB = GC.Gen.WriteBodyLemmas
+module FLA = GC.Spec.FreeList.Ascending
 
 /// A header tag.
 let tag_t = t: U64.t{U64.v t < 256}
@@ -79,6 +80,17 @@ let new_block (g g': heap) (st: sweep_state) (obj: U64.t) (wz: nat) (tag: tag_t)
    (U64.v p >= U64.v st.cursor ==> is_black x g') /\
    (U64.v p < U64.v st.cursor ==> is_white x g') /\
    not (pending_free st g' x))
+
+/// **The allocator's new block.**  An allocation at a sweep's phase from an
+/// exact ascending free list hands back a `new_block`: what the allocator
+/// itself guarantees, without the sweep phase.  The block it takes is a list
+/// cell, so the object was not a non-free block before; its header is the one
+/// the allocator writes, with the requested size and tag and the colour the
+/// phase gives its position; and so it is not pending free.
+val alloc_phase_new_block (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t)
+  : Lemma (requires FLA.fl_ascending g fp /\ U64.v st.cursor % 8 == 0)
+          (ensures (let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) in
+                    r.SA.obj_out <> 0UL ==> new_block g r.SA.heap_out st r.SA.obj_out wz tag))
 
 /// What counts as free during the sweep, and also the one object `obj` just
 /// allocated and not yet initialised: it is treated as free until the runtime
