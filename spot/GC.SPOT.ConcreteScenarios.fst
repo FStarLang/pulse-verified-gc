@@ -43,8 +43,9 @@ module SpecGraph = GC.Spec.Graph
 module MBP = GC.Impl.MarkBoundedPrecondition
 module GMP = GC.Gen.MajorPrecondition
 
+module FA = GC.Gen.ForwardingArray
 let spot_fwd_array : seq U64.t =
-  Seq.create UpdatePtrs.fwd_array_size 0UL
+  Seq.create FA.fwd_array_size 0UL
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let zero_not_minor_pointer ()
@@ -61,14 +62,14 @@ let zero_not_major_pointer ()
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_fwd_array_zero ()
   =
-  FStar.Seq.Base.lemma_create_len UpdatePtrs.fwd_array_size 0UL;
-  assert (Seq.length spot_fwd_array == UpdatePtrs.fwd_array_size);
+  FStar.Seq.Base.lemma_create_len FA.fwd_array_size 0UL;
+  assert (Seq.length spot_fwd_array == FA.fwd_array_size);
   let aux (i: nat)
     : Lemma (ensures i < Seq.length spot_fwd_array ==> Seq.index spot_fwd_array i == 0UL)
     =
     if i < Seq.length spot_fwd_array then begin
-      assert (i < UpdatePtrs.fwd_array_size);
-      FStar.Seq.Base.lemma_index_create UpdatePtrs.fwd_array_size 0UL i
+      assert (i < FA.fwd_array_size);
+      FStar.Seq.Base.lemma_index_create FA.fwd_array_size 0UL i
     end
   in
   FStar.Classical.forall_intro aux;

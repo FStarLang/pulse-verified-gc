@@ -21,6 +21,7 @@ module GenInv = GC.Gen.HeapInvariant
 module InfixMajor = GC.SPOT.InfixMajor
 module InfixPre = GC.SPOT.InfixPre
 
+module FA = GC.Gen.ForwardingArray
 /// Running the real collector on a heap that contains a genuine OCaml interior
 /// pointer.
 ///
@@ -40,7 +41,7 @@ fn call_gen_gc_infix
   (gh: gen_heap_t)
   (roots: array U64.t) (nroots: SZ.t)
   (fwd_arr: array U64.t)
-  (queue: larray U64.t CheneyImpl.queue_size)
+  (queue: larray U64.t FA.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
   (st: gray_stack)
   requires is_gen_heap gh 'd 'b 's 'fp **

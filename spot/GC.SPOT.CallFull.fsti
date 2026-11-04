@@ -18,11 +18,12 @@ open GC.Impl.Stack
 
 module CheneyImpl = GC.Gen.Impl.Cheney
 
+module FA = GC.Gen.ForwardingArray
 fn call_gen_gc_spot
   (gh: gen_heap_t)
   (roots: array U64.t) (nroots: SZ.t)
   (fwd_arr: array U64.t)
-  (queue: larray U64.t CheneyImpl.queue_size)
+  (queue: larray U64.t FA.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
   (st: gray_stack)
   requires is_gen_heap gh 'd 'b 's 'fp **

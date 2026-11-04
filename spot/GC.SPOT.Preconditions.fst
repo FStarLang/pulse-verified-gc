@@ -15,8 +15,9 @@ module RBridge = GC.Gen.ReachabilityBridge
 module Cheney = GC.Gen.Cheney
 module GenImpl = GC.Gen.Impl
 
+module FA = GC.Gen.ForwardingArray
 let zero_forwarding_array (farr: seq U64.t) : prop =
-  Seq.length farr == UpdatePtrs.fwd_array_size /\
+  Seq.length farr == FA.fwd_array_size /\
   (forall (i:nat). i < Seq.length farr ==> Seq.index farr i == 0UL)
 
 let minor_collect_full_pre

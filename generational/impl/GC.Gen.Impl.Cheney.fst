@@ -33,6 +33,7 @@ open GC.Gen.Impl.MinorHeap
 open GC.Gen.Impl.Promote
 open GC.Impl.Heap
 open GC.Gen.Impl.UpdatePtrs
+open GC.Gen.ForwardingArray
 module Alloc = GC.Impl.Allocator
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module SF = GC.Spec.Fields
@@ -44,11 +45,6 @@ module Sim = GC.Gen.Cheney.Sim
 module SimOne = GC.Gen.Cheney.SimOne
 module GR = Pulse.Lib.GhostReference
 module AllocProps = GC.Gen.AllocProps
-
-/// Max queue size = max minor objects = fwd_array_size
-/// Spec-only: used in ghost assertions. Not extracted.
-noextract
-let queue_size : pos = fwd_array_size
 
 /// Queue size as SizeT (uses uint64_to_sizet for clean C extraction)
 let queue_size_sz : n:SZ.t{SZ.v n == queue_size} =

@@ -49,6 +49,7 @@ module MRT = GC.Gen.MajorReachabilityTransfer
 module RT = GC.Gen.RefTable
 module CV = GC.Gen.CheneyGeneric
 
+module FA = GC.Gen.ForwardingArray
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
 /// ---------------------------------------------------------------------------
@@ -327,7 +328,7 @@ let minor_collect_pre_with (free: SpecFields.free_def)
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
   (rs farr sl: Seq.seq U64.t) (nslots: nat) : prop =
   GenInv.collection_shape_with free minor_st s fp /\
-  Seq.length farr == UpdatePtrs.fwd_array_size /\
+  Seq.length farr == FA.fwd_array_size /\
   (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
   RT.ref_table_sound_with free s sl nslots /\
   RT.ref_table_covers_with free s sl nslots /\
@@ -342,8 +343,8 @@ let minor_collect_post_with (free: SpecFields.free_def)
   (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t) : prop =
   let prom = CheneySpec.cheney_promote minor_st s fp rs in
   // Heap is the two-pass result (update promoted + rewrite slots) ...
-  s2 == UpdatePtrs.rewrite_slots_iter
-          (UpdatePtrs.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
+  s2 == FA.rewrite_slots_iter
+          (FA.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
           prom.fwd_map sl nslots 0 /\
   // ... which is the pointer update of the collection for `free`
   s2 == (CheneySpec.cheney_collect_spec_with free minor_st s fp rs).mc_major /\
@@ -357,9 +358,9 @@ let minor_collect_post_with (free: SpecFields.free_def)
   U64.v b2 == 0 /\
   ({ data = d2; bump = b2 } <: minor_state) == minor_reset minor_st /\
   // Forwarding array represents the spec-level forwarding map
-  UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
-  UpdatePtrs.valid_fwd_entries farr2 /\
-  Seq.length farr2 == UpdatePtrs.fwd_array_size /\
+  FA.represents_fwd farr2 prom.fwd_map /\
+  FA.valid_fwd_entries farr2 /\
+  Seq.length farr2 == FA.fwd_array_size /\
   SpecFields.blocks_fit prom.major_final /\
   // The shape is kept, with the same definition of free
   GenInv.collection_shape_with free ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
@@ -376,7 +377,7 @@ let minor_collect_post_with (free: SpecFields.free_def)
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
-                      (queue: larray U64.t Cheney.queue_size)
+                      (queue: larray U64.t FA.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
                       (#free: erased SpecFields.free_def)
   requires is_gen_heap gh 'd 'b 's 'fp **
@@ -406,7 +407,7 @@ let minor_collect_pre_idle
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
   (rs farr sl: Seq.seq U64.t) (nslots: nat) : prop =
   GenInv.collection_heap_shape minor_st s fp /\
-  Seq.length farr == UpdatePtrs.fwd_array_size /\
+  Seq.length farr == FA.fwd_array_size /\
   (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
   RT.ref_table_sound s sl nslots /\
   RT.ref_table_covers_minor_ptrs s sl nslots /\
@@ -421,8 +422,8 @@ let minor_collect_post_idle
   (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t) : prop =
   let prom = CheneySpec.cheney_promote minor_st s fp rs in
   // Heap is the two-pass result (update promoted + rewrite slots)
-  s2 == UpdatePtrs.rewrite_slots_iter
-          (UpdatePtrs.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
+  s2 == FA.rewrite_slots_iter
+          (FA.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
           prom.fwd_map sl nslots 0 /\
   // Free pointer from promotion phase
   fp2 == prom.fp_final /\
@@ -436,10 +437,10 @@ let minor_collect_post_idle
   U64.v b2 == 0 /\
   ({ data = d2; bump = b2 } <: minor_state) == minor_reset minor_st /\
   // Forwarding array represents the spec-level forwarding map
-  UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
+  FA.represents_fwd farr2 prom.fwd_map /\
   // Forwarding entries are valid
-  UpdatePtrs.valid_fwd_entries farr2 /\
-  Seq.length farr2 == UpdatePtrs.fwd_array_size /\
+  FA.valid_fwd_entries farr2 /\
+  Seq.length farr2 == FA.fwd_array_size /\
   // Well-formedness preserved through promotion
   SpecFields.blocks_fit prom.major_final /\
   // Strong correctness: the result equals cheney_collect_spec
@@ -493,7 +494,7 @@ val minor_collect_idle_post
 fn gen_gc (gh: gen_heap_t)
            (roots: array U64.t) (nroots: SZ.t)
            (fwd_arr: array U64.t)
-           (queue: larray U64.t Cheney.queue_size)
+           (queue: larray U64.t FA.queue_size)
            (slots: array U64.t) (nslots: SZ.t)
            (st: gray_stack)
   requires is_gen_heap gh 'd 'b 's 'fp **
@@ -514,7 +515,7 @@ fn gen_gc (gh: gen_heap_t)
 
                // Operational array preconditions.
                SZ.v nroots == Seq.length 'rs /\
-               Seq.length 'farr == UpdatePtrs.fwd_array_size /\
+               Seq.length 'farr == FA.fwd_array_size /\
                (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                RT.ref_table_sound 's 'sl (SZ.v nslots) /\
                RT.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\

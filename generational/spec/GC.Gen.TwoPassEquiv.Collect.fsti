@@ -22,7 +22,7 @@ open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
-open GC.Gen.Impl.UpdatePtrs
+open GC.Gen.ForwardingArray
 open GC.Gen.RefTable
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas

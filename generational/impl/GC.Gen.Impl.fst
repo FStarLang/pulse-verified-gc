@@ -23,6 +23,7 @@ open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
 open GC.Gen.Impl.Promote
 open GC.Gen.Impl.UpdatePtrs
+open GC.Gen.ForwardingArray
 open GC.Gen.RefTable
 open GC.Gen.Impl.Cheney
 open GC.Impl.Heap
@@ -290,6 +291,7 @@ let minor_collect_full_isomorphism_post
 
 module CE = GC.Gen.CheneyGeneric
 
+module FA = GC.Gen.ForwardingArray
 /// The spec half of the minor collection given what counts as free: the two passes over a
 /// Cheney result are the collection's pointer update
 /// (`TPC.two_pass_implies_collect_with`), and that collection keeps the shape
@@ -336,7 +338,7 @@ let minor_collect_with_spec
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
-                      (queue: larray U64.t Cheney.queue_size)
+                      (queue: larray U64.t FA.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
                       (#free: erased SpecFields.free_def)
   requires is_gen_heap gh 'd 'b 's 'fp **
@@ -441,7 +443,7 @@ let minor_collect_idle_post minor_st s fp rs farr sl nslots ok d2 b2 s2 fp2 rs2 
 fn gen_gc (gh: gen_heap_t)
            (roots: array U64.t) (nroots: SZ.t)
            (fwd_arr: array U64.t)
-           (queue: larray U64.t Cheney.queue_size)
+           (queue: larray U64.t FA.queue_size)
            (slots: array U64.t) (nslots: SZ.t)
            (st: gray_stack)
   requires is_gen_heap gh 'd 'b 's 'fp **

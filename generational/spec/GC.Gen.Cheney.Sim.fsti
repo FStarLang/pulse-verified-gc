@@ -17,7 +17,7 @@ open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
-open GC.Gen.Impl.UpdatePtrs
+open GC.Gen.ForwardingArray
 
 module CheneySpec = GC.Gen.Cheney
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -26,9 +26,6 @@ module SimOne = GC.Gen.Cheney.SimOne
 /// ---------------------------------------------------------------------------
 /// Connection predicate: relates impl state to spec cheney_state
 /// ---------------------------------------------------------------------------
-
-/// Queue capacity = fwd_array_size = minor_heap_size / 8
-let queue_size : pos = fwd_array_size
 
 /// The impl state (heap, fp, fwd_arr, queue, back) corresponds to the spec
 /// cheney_state when:
