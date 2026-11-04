@@ -226,20 +226,7 @@ let update_walk_preserves_fl_ascending major upd fwd fp =
   FLA.fl_ascending_transfer major m' fp
 #pop-options
 
-let update_major_pointers_preserves_fl_ascending major fwd fp =
-  update_walk_preserves_fl_ascending major (in_use free_stw major) fwd fp
-
 
 /// ---------------------------------------------------------------------------
 /// A whole minor collection
 /// ---------------------------------------------------------------------------
-
-#push-options "--z3rlimit 40"
-let cheney_collect_preserves_fl_ascending minor major fp roots =
-  GenInv.collection_heap_shape_elim minor major fp;
-  GenInv.major_heap_shape_elim major fp;
-  wf_parts ();
-  let prom = cheney_promote minor major fp roots in
-  cheney_promote_preserves_fl_ascending minor major fp roots;
-  update_major_pointers_preserves_fl_ascending prom.major_final prom.fwd_map prom.fp_final
-#pop-options

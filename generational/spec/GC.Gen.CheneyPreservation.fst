@@ -31,18 +31,6 @@ module NonBlueOrigin = GC.Gen.CheneyPreservation.NonBlueOrigin
 module CPF = GC.Gen.CheneyPreservation.Fields
 
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let cheney_collect_preserves_fp_pointer_or_zero
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  =
-    GenInv.collection_heap_shape_elim minor major fp;
-    GenInv.major_heap_shape_elim major fp;
-    GenInv.major_heap_shape_walk major fp;
-    cheney_promote_preserves_free_list_shape minor major fp roots;
-    let prom = cheney_promote minor major fp roots in
-    assert ((cheney_collect_spec minor major fp roots).mc_fp == prom.fp_final)
-#pop-options
-
 
 /// ---------------------------------------------------------------------------
 /// Delegated preservation families

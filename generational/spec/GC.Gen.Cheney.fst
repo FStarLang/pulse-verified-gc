@@ -957,23 +957,7 @@ let update_walk_preserves_fl_valid
   reveal_opaque (`%chain_objects_blue) chain_objects_blue;
   update_preserves_fl_valid_aux major upd fwd fp fuel
 
-let update_major_pointers_preserves_fl_valid
-  (major: heap) (fwd: forwarding_map) (fp: U64.t)
-  =
-  update_walk_preserves_fl_valid major (in_use free_stw major) fwd fp
-
 #pop-options
-
-/// Full Cheney collection preserves fl_valid
-let cheney_collect_preserves_fl_valid
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  =
-  // Promotion preserves fl_valid and chain_objects_blue
-  cheney_promote_preserves_wfh_part1 minor major fp roots;
-  cheney_promote_preserves_cob minor major fp roots;
-  let prom = cheney_promote minor major fp roots in
-  // update_major_pointers preserves fl_valid
-  update_major_pointers_preserves_fl_valid prom.major_final prom.fwd_map prom.fp_final
 
 /// ---------------------------------------------------------------------------
 /// cheney_promote_preserves_dense

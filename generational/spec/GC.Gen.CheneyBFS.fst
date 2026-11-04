@@ -282,10 +282,6 @@ let addr_covered_infix_step
     CheneySpec.cheney_forward_one_infix_fwd minor cs addr parent;
     addr_covered_intro_infix minor (CheneySpec.cheney_forward_one minor cs addr) addr
 
-let addr_covered_elim
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  = reveal_opaque (`%addr_covered) (addr_covered minor cs addr)
-
 let addr_covered_elim_resolved
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
   = reveal_opaque (`%addr_covered) (addr_covered minor cs addr)

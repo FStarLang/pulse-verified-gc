@@ -97,13 +97,6 @@ let classify_major_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x
   = is_val_addr_spec v
 #pop-options
 
-#push-options "--z3rlimit 10"
-let classify_major_field_inv_major_raw (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
-  = is_val_addr_spec v;
-    classify_major_field_inv_major ms major v x;
-    resolve_non_infix (v <: obj_addr) major
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// Edge Construction Helpers
 /// ---------------------------------------------------------------------------

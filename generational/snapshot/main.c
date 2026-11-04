@@ -2,8 +2,8 @@
  *
  * Tests: init → minor allocs → minor_collect_full → major GC → reuse.
  *
- * NOTE: alloc_minor_heap() as extracted uses VLA (returns stack pointers),
- * so we construct minor_heap_t manually with heap-allocated storage.
+ * The verified code does not allocate the nursery, so we construct
+ * minor_heap_t manually with heap-allocated storage.
  */
 
 #include <stdio.h>
@@ -47,7 +47,7 @@ int main(void)
     uint64_t fp = init_heap(major_heap);
     printf("init_heap returned fp = %llu\n", (unsigned long long)fp);
 
-    /* ---- Allocate minor heap (manually, not via alloc_minor_heap) ---- */
+    /* ---- Allocate minor heap (manually) ---- */
     size_t minor_bytes = (size_t)minor_heap_size_sz;
     uint8_t *minor_data = calloc(minor_bytes, 1);
     if (!minor_data) { perror("calloc minor"); free(major_data); return 1; }
@@ -65,7 +65,7 @@ int main(void)
     gen_heap_t gh = { .minor = minor, .major = major_heap, .fp_ref = fp_ref };
 
     /* ---- Forwarding array ---- */
-    size_t fwd_entries = (size_t)fwd_arr_size_sz;
+    size_t fwd_entries = (size_t)minor_heap_size_sz / 8;  /* one entry per word */
     uint64_t *fwd_arr = calloc(fwd_entries, sizeof(uint64_t));
     if (!fwd_arr) { perror("calloc fwd"); goto cleanup; }
     uint64_t *queue = calloc((size_t)queue_size_sz, sizeof(uint64_t));

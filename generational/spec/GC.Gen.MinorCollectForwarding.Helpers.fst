@@ -185,9 +185,6 @@ let rec resolve_roots_mem_inv h rts e =
       (fun (rr: U64.t) -> Seq.mem rr rts /\ HeapGraph.resolve_field h rr == e) rr
   end
 
-let rec resolve_roots_congr h1 h2 rts =
-  if Seq.length rts = 0 then ()
-  else resolve_roots_congr h1 h2 (Seq.tail rts)
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"

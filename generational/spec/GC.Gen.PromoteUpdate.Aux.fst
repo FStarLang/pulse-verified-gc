@@ -101,7 +101,3 @@ let update_walk_preserves_wfh_part1 major upd fwd =
 let update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map) =
   update_walk_preserves_objects major (in_use free_stw major) fwd
 
-/// update_major_pointers preserves blocks_fit.
-let update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map) =
-  update_walk_preserves_wfh_part1 major (in_use free_stw major) fwd
-

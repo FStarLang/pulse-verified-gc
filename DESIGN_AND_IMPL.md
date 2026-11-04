@@ -415,8 +415,8 @@ promotion copies all of them (`copy_fields`), and a direct allocation is filled
 by the runtime.
 
 Infix addresses survive as **roots** for both collectors, and inside Cheney's
-promotion machinery, which is what `find_infix_parents` and
-`synthesize_infix_forwarding` operate on in the extracted C.
+promotion machinery, which forwards an interior pointer as its closure's copy
+plus the offset (`cheney_forward_one`).
 
 Getting here removed two obstructions.  The first was the graph model:
 `GC.Gen.CombinedGraph.classify_major_field` now resolves, returning
@@ -2102,9 +2102,8 @@ After collection, roots are written back to OCaml's actual root locations:
 
 The bridge does not eagerly scan the entire minor heap to translate every
 absolute minor pointer into an offset before collection. Earlier versions had a
-`translate_minor_fields` pass for that, and the helper is still extractable, but
-the active bridge no longer calls it. It is unnecessary for correctness and
-wasteful for performance.
+`translate_minor_fields` pass for that; it was unnecessary for correctness and
+wasteful for performance, and has been removed.
 
 Only values that cross the OCaml/verified boundary need up-front normalization:
 root entries and remembered-slot targets are converted from absolute minor

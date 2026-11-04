@@ -40,18 +40,6 @@ let represents_fwd (farr: Seq.seq U64.t) (fwd: PromoteSpec.forwarding_map) : pro
   (forall (i: nat). i < fwd_array_size ==>
     Seq.index farr i == fwd (U64.uint_to_t (i * 8)))
 
-/// Construct a ghost forwarding map from a concrete array
-let ghost_fwd_of (farr: Seq.seq U64.t{Seq.length farr == fwd_array_size})
-  : PromoteSpec.forwarding_map =
-  fun (a: U64.t) ->
-    if U64.v a % 8 = 0 && U64.v a / 8 < fwd_array_size
-    then Seq.index farr (U64.v a / 8)
-    else 0UL
-
-/// ghost_fwd_of establishes represents_fwd
-val ghost_fwd_of_represents (farr: Seq.seq U64.t{Seq.length farr == fwd_array_size})
-  : Lemma (represents_fwd farr (ghost_fwd_of farr))
-
 /// ---------------------------------------------------------------------------
 /// Rewrite roots
 /// ---------------------------------------------------------------------------

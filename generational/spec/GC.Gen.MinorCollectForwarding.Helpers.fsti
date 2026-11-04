@@ -176,16 +176,6 @@ val resolve_roots_mem_inv (h: heap) (rts: seq U64.t) (e: U64.t)
                      Seq.mem rr rts /\ HeapGraph.resolve_field h rr == e)
           (decreases Seq.length rts)
 
-/// Two heaps that resolve every root alike produce the same resolved sequence.
-/// Root darkening is such a pair, which is how the post-minor statement is
-/// carried to the heap the major collection actually starts from.
-val resolve_roots_congr (h1 h2: heap) (rts: seq U64.t)
-  : Lemma
-    (requires forall (v: U64.t).
-                HeapGraph.resolve_field h1 v == HeapGraph.resolve_field h2 v)
-    (ensures resolve_roots h1 rts == resolve_roots h2 rts)
-    (decreases Seq.length rts)
-
 /// `w` is reachable in `post_g` from a vertex among `post_roots`.
 let reachable_from_roots (post_g: graph_state) (post_roots: seq U64.t) (w: U64.t) : prop =
   exists (rr: U64.t)

@@ -43,14 +43,3 @@ val update_walk_preserves_fl_ascending
   (major: heap) (upd: obj_addr -> GTot bool) (fwd: Promote.forwarding_map) (fp: U64.t)
   : Lemma (requires blocks_fit major /\ Promote.walk_ok major upd /\ FLA.fl_ascending major fp)
           (ensures FLA.fl_ascending (Promote.update_walk major upd fwd) fp)
-
-val update_major_pointers_preserves_fl_ascending
-  (major: heap) (fwd: Promote.forwarding_map) (fp: U64.t)
-  : Lemma (requires blocks_fit major /\ FLA.fl_ascending major fp)
-          (ensures FLA.fl_ascending (Promote.update_major_pointers major fwd) fp)
-
-val cheney_collect_preserves_fl_ascending
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires GenInv.collection_heap_shape minor major fp /\ FLA.fl_ascending major fp)
-          (ensures (let res = Cheney.cheney_collect_spec minor major fp roots in
-                    FLA.fl_ascending res.Promote.mc_major res.Promote.mc_fp))

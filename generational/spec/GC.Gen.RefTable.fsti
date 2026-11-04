@@ -97,8 +97,5 @@ val ref_table_sound_with_implies_valid_slot_addrs
 let ref_table_covers_minor_ptrs (major_pre: heap) (slots: seq U64.t) (n: nat) : prop =
   ref_table_covers_with free_stw major_pre slots n
 
-let ref_table_complete (major_pre: heap) (fwd: forwarding_map) (slots: seq U64.t) (n: nat) : prop =
-  ref_table_complete_with free_stw major_pre fwd slots n
-
 let ref_table_sound (major_pre: heap) (slots: seq U64.t) (n: nat) : prop =
   ref_table_sound_with free_stw major_pre slots n

@@ -473,11 +473,6 @@ let depth_facts (g: heap) (head prev cur: U64.t) (k: nat)
     end
 #pop-options
 
-/// The two disjuncts that excuse a node from staying on the chain: it is the
-/// allocated object, or the one-word fragment the allocation leaves behind.
-let unlinked (g': heap) (obj_out: U64.t) (y: obj_addr) : prop =
-  (y <: U64.t) == obj_out \/ U64.v (wosize_of_object y g') = 0
-
 /// The search allocates from the head of the list (`prev = 0`).
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
 let found_head (g: heap) (obj: obj_addr) (wz: nat) (y: obj_addr) (n: nat) (tag: U64.t{U64.v tag < 256})

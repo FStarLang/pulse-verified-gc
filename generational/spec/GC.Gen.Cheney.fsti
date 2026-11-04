@@ -417,28 +417,6 @@ val update_walk_preserves_fl_valid
                     AllocLemmas.fl_valid m' fp heap_words /\
                     AllocLemmas.fl_chain_terminates m' fp heap_words))
 
-/// The idle instance.
-val update_major_pointers_preserves_fl_valid
-  (major: heap) (fwd: forwarding_map) (fp: U64.t)
-  : Lemma (requires blocks_fit major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp)
-          (ensures (let m' = update_major_pointers major fwd in
-                    AllocLemmas.fl_valid m' fp heap_words /\
-                    AllocLemmas.fl_chain_terminates m' fp heap_words))
-
-/// Full Cheney collection preserves fl_valid.
-val cheney_collect_preserves_fl_valid
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires blocks_fit major /\ no_infix_block major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp)
-          (ensures (let res = cheney_collect_spec minor major fp roots in
-                    AllocLemmas.fl_valid res.mc_major res.mc_fp heap_words /\
-                    AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp heap_words))
-
 /// --- Density preservation ---
 
 /// Cheney promote preserves heap_objects_dense.

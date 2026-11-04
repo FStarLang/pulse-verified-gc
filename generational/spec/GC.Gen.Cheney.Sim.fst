@@ -106,17 +106,6 @@ let not_minor_if_wosize_bounds_fail (minor: minor_state) (addr: U64.t)
   // Contrapositive of minor_object_passes_guards
   FStar.Classical.move_requires (minor_objects_body_bound minor) addr
 
-let promote_object_zero_noop
-  (minor_st: minor_state) (ms: heap) (addr: U64.t) (fp: U64.t) (wz: nat)
-  =
-  let alloc_out = (GC.Spec.Allocator.alloc_spec ms fp wz (promoted_tag minor_st addr)).obj_out in
-  if alloc_out = 0UL then
-    GC.Gen.Promote.promote_object_oom minor_st ms addr fp wz
-  else begin
-    GC.Gen.Promote.promote_object_success minor_st ms addr fp wz;
-    assert false
-  end
-
 #pop-options
 /// ---------------------------------------------------------------------------
 /// Queue validity through forward_fields and forward_roots (induction)

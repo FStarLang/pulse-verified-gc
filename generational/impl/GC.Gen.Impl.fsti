@@ -83,20 +83,6 @@ let roots_match_stack (g: heap) (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) : 
      Seq.mem (SpecObject.resolve_object r g) st) /\
   (forall (r: obj_addr). Seq.mem r st ==> MBP.root_named g roots r)
 
-let roots_match_stack_root_is_val_addr
-  (g: heap) (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) (r: U64.t)
-  : Lemma
-      (requires roots_match_stack g roots st /\ Seq.mem r roots)
-      (ensures is_val_addr r)
-  = ()
-
-let roots_match_stack_root_in_stack
-  (g: heap) (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) (r: obj_addr)
-  : Lemma
-      (requires roots_match_stack g roots st /\ Seq.mem (r <: U64.t) roots)
-      (ensures Seq.mem (SpecObject.resolve_object r g) st)
-  = ()
-
 let gen_gc_prepared_state
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
   (st: Seq.seq obj_addr) (cap: nat) : GTot (heap & Seq.seq obj_addr) =

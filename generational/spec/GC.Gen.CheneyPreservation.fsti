@@ -27,12 +27,6 @@ module GenInv = GC.Gen.HeapInvariant
 module FreeListShape = GC.Gen.FreeListShape
 module CE = GC.Gen.CheneyGeneric
 
-val cheney_collect_preserves_fp_pointer_or_zero
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires GenInv.collection_heap_shape minor major fp)
-          (ensures FreeListShape.fp_pointer_or_zero
-            (cheney_collect_spec minor major fp roots).mc_fp)
-
 /// ---------------------------------------------------------------------------
 /// Forwarding targets classification: in objects or infix
 /// ---------------------------------------------------------------------------

@@ -22,19 +22,6 @@ module AllocProps = GC.Gen.AllocProps
 
 open GC.Lib.Header
 open GC.Gen.WriteBodyLemmas
-/// Headers of two distinct 8-aligned objects are 8 bytes apart.
-///
-/// Proved in an empty context: under the enclosing well-formed-heap and
-/// free-list hypotheses, combining `U64.v` injectivity with the alignment
-/// facts sends Z3 into a matching loop.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
-private let hdr_pair_disjoint (s d: U64.t) (hs hd_v: nat) : Lemma
-  (requires U64.v s % 8 == 0 /\ U64.v d % 8 == 0 /\ ~(s == d) /\
-            hs == U64.v s - 8 /\ hd_v == U64.v d - 8)
-  (ensures hs + U64.v mword <= hd_v \/ hd_v + U64.v mword <= hs)
-  = ()
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// Promote a single object: copy fields from minor to major
 /// ---------------------------------------------------------------------------
@@ -325,8 +312,6 @@ let promote_preserves_fields
     end else ()
   end
 #pop-options
-
-let wfh_walk_facts (g: heap) = wf_parts ()
 
 
 /// ---------------------------------------------------------------------------

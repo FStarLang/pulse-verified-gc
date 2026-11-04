@@ -31,47 +31,7 @@ let cheney_collect_preserves_objects
   GC.Gen.PromoteUpdate.update_walk_preserves_objects prom.major_final (in_use free prom.major_final) prom.fwd_map
 
 /// ---------------------------------------------------------------------------
-/// Property 2: blocks_fit
-/// ---------------------------------------------------------------------------
-
-let cheney_collect_preserves_wfh_part1
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
-  =
-  cheney_promote_preserves_wfh_part1 minor major fp roots;
-  let prom = cheney_promote minor major fp roots in
-  GC.Gen.PromoteUpdate.update_walk_preserves_wfh_part1 prom.major_final (in_use free prom.major_final) prom.fwd_map
-
-/// ---------------------------------------------------------------------------
-/// Property 3: Minor reset
-/// ---------------------------------------------------------------------------
-
-let cheney_collect_resets_minor
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  = ()
-
-/// ---------------------------------------------------------------------------
-/// Property 4: Root rewriting
-/// ---------------------------------------------------------------------------
-
-let cheney_collect_rewrites_roots
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  = ()
-
-/// ---------------------------------------------------------------------------
-/// Main theorem (properties 1-4, unconditional)
-/// ---------------------------------------------------------------------------
-
-let cheney_gc_correct
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  =
-  cheney_collect_preserves_objects minor major fp free_stw roots;
-  cheney_collect_preserves_wfh_part1 minor major fp free_stw roots;
-  cheney_collect_resets_minor minor major fp roots;
-  cheney_collect_rewrites_roots minor major fp roots;
-  cheney_collect_preserves_fl_valid minor major fp roots
-
-/// ---------------------------------------------------------------------------
-/// Property 6: BFS completeness (conditional)
+/// Property 2: BFS completeness (conditional)
 /// ---------------------------------------------------------------------------
 
 open GC.Gen.Reachability

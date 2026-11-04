@@ -120,14 +120,3 @@ let update_walk_preserves_wfh_part4 major upd fwd =
 
 let update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (h: obj_addr) =
   update_walk_preserves_header major (in_use free_stw major) fwd h
-
-let update_major_pointers_preserves_blue_field
-  (major: heap) (fwd: forwarding_map) (h: obj_addr) (j: nat) =
-  update_walk_preserves_skipped_field major (in_use free_stw major) fwd h j
-
-let update_major_pointers_preserves_no_scan_field
-  (major: heap) (fwd: forwarding_map) (h: obj_addr) (j: nat) =
-  update_walk_preserves_skipped_field major (in_use free_stw major) fwd h j
-
-let update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map) =
-  update_walk_preserves_wfh_part4 major (in_use free_stw major) fwd

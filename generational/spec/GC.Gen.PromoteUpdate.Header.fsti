@@ -54,32 +54,3 @@ val update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (
   : Lemma (requires blocks_fit major /\ Seq.mem h (objects zero_addr major))
     (ensures read_word (update_major_pointers major fwd) (hd_address h) ==
              read_word major (hd_address h))
-
-val update_major_pointers_preserves_blue_field
-  (major: heap) (fwd: forwarding_map) (h: obj_addr) (j: nat)
-  : Lemma (requires blocks_fit major /\
-                    Seq.mem h (objects zero_addr major) /\
-                    is_blue h major /\
-                    j < U64.v (wosize_of_object h major) /\
-                    U64.v h + j * 8 + 8 <= heap_size /\
-                    (U64.v h + j * 8) % 8 == 0)
-    (ensures (let field_addr = U64.uint_to_t (U64.v h + j * 8) in
-              read_word (update_major_pointers major fwd) field_addr ==
-              read_word major field_addr))
-
-val update_major_pointers_preserves_no_scan_field
-  (major: heap) (fwd: forwarding_map) (h: obj_addr) (j: nat)
-  : Lemma (requires blocks_fit major /\
-                    Seq.mem h (objects zero_addr major) /\
-                    is_no_scan h major /\
-                    ~(is_blue h major) /\
-                    j < U64.v (wosize_of_object h major) /\
-                    U64.v h + j * 8 + 8 <= heap_size /\
-                    (U64.v h + j * 8) % 8 == 0)
-    (ensures (let field_addr = U64.uint_to_t (U64.v h + j * 8) in
-              read_word (update_major_pointers major fwd) field_addr ==
-              read_word major field_addr))
-
-val update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map)
-  : Lemma (requires blocks_fit major /\ no_infix_block major)
-    (ensures no_infix_block (update_major_pointers major fwd))

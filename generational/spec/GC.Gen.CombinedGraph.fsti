@@ -195,15 +195,6 @@ val classify_major_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x
                    (let vr = resolve_minor ms (to_minor_offset v) in
                     ~(is_minor_pointer (to_minor_offset v) /\ Seq.mem vr (minor_objects ms))))
 
-/// Inversion specialized to non-interior targets, where resolution is the
-/// identity and the pre-resolution conclusion `v == x` is recovered verbatim.
-val classify_major_field_inv_major_raw (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
-  : Lemma (requires classify_major_field ms major v == Some (MajorV x) /\
-                    is_val_addr v /\ ~(is_infix (v <: obj_addr) major))
-          (ensures v == x /\ Seq.mem (v <: obj_addr) (objects zero_addr major) /\
-                   (let vr = resolve_minor ms (to_minor_offset v) in
-                    ~(is_minor_pointer (to_minor_offset v) /\ Seq.mem vr (minor_objects ms))))
-
 /// ---------------------------------------------------------------------------
 /// Graph Construction
 /// ---------------------------------------------------------------------------

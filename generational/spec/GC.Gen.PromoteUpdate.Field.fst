@@ -257,8 +257,3 @@ let update_walk_field_effect major upd fwd obj j =
   let pos = seq_index_of objs obj in
   objects_below_before major obj pos;
   update_walk_aux_field_effect major objs upd fwd 0 obj j pos
-
-/// The idle instance.
-let update_major_pointers_field_effect
-  (major: heap) (fwd: forwarding_map) (obj: obj_addr) (j: nat) =
-  update_walk_field_effect major (in_use free_stw major) fwd obj j

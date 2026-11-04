@@ -26,25 +26,6 @@ module SpecHeap = GC.Spec.Heap
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 /// ---------------------------------------------------------------------------
-/// ghost_fwd_of_represents proof
-/// ---------------------------------------------------------------------------
-
-#push-options "--z3rlimit 25"
-let ghost_fwd_of_represents (farr: Seq.seq U64.t{Seq.length farr == fwd_array_size})
-  : Lemma (represents_fwd farr (ghost_fwd_of farr))
-  = let fwd = ghost_fwd_of farr in
-    let aux (i: nat{i < fwd_array_size})
-      : Lemma (Seq.index farr i == fwd (U64.uint_to_t (i * 8)))
-      = FStar.Math.Lemmas.lemma_mod_mul_distr_r i 8 8;
-        assert (i * 8 % 8 == 0);
-        assert (i * 8 / 8 == i);
-        assert (i * 8 < minor_heap_size);
-        assert (i * 8 < pow2 64)
-    in
-    FStar.Classical.forall_intro aux
-#pop-options
-
-/// ---------------------------------------------------------------------------
 /// Pure helper: compute rewrite for a single value
 /// ---------------------------------------------------------------------------
 

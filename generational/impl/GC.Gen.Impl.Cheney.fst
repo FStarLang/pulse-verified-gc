@@ -68,15 +68,6 @@ let not_minor_if_wosize_zero (ms: minor_state) (addr: U64.t)
           (ensures ~(Seq.mem addr (minor_objects ms)))
   = FStar.Classical.move_requires (minor_objects_body_bound ms) addr
 
-/// Helper: when promote_object returns 0 (using minor_wosize as arg), heap/fp unchanged.
-/// This matches the promote_one postcondition's use of minor_wosize.
-let promote_one_oom_unchanged (ms: minor_state) (major: heap) (addr: U64.t) (fp: U64.t)
-  : Lemma (requires minor_wosize ms addr > 0 /\
-                    (PromoteSpec.promote_object ms major addr fp (minor_wosize ms addr)).new_addr == 0UL)
-          (ensures (PromoteSpec.promote_object ms major addr fp (minor_wosize ms addr)).major_out == major /\
-                   (PromoteSpec.promote_object ms major addr fp (minor_wosize ms addr)).fp_out == fp)
-  = Sim.promote_object_zero_noop ms major addr fp (minor_wosize ms addr)
-
 let minor_tag_infix_not_minor_object (ms: minor_state) (addr: U64.t)
   : Lemma (requires minor_wf ms /\ minor_tag ms addr == 249)
           (ensures ~(Seq.mem addr (minor_objects ms)))

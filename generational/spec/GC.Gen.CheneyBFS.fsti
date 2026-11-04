@@ -195,12 +195,6 @@ val addr_covered_infix_step
                      U64.v (cs'.cs_fwd parent) + minor_wosize minor parent * 8 <= heap_size))
           (ensures addr_covered minor (CheneySpec.cheney_forward_one minor cs addr) addr)
 
-val addr_covered_elim
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires addr_covered minor cs addr /\
-                    Seq.mem addr (minor_objects minor) /\ minor_wosize minor addr > 0)
-          (ensures cs.cs_fwd addr <> 0UL)
-
 /// Coverage also names the object an interior pointer keeps alive.
 val addr_covered_elim_resolved
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)

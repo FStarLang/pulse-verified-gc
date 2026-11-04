@@ -95,71 +95,12 @@ val update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map)
   : Lemma (requires blocks_fit major)
     (ensures objects zero_addr (update_major_pointers major fwd) == objects zero_addr major)
 
-/// update_major_pointers preserves blocks_fit
-val update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map)
-  : Lemma (requires blocks_fit major)
-    (ensures blocks_fit (update_major_pointers major fwd))
 /// update_major_pointers preserves object headers
 val update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (h: obj_addr)
   : Lemma (requires blocks_fit major /\ Seq.mem h (objects zero_addr major))
     (ensures read_word (update_major_pointers major fwd) (hd_address h) ==
              read_word major (hd_address h))
 
-/// update_major_pointers preserves all fields of blue objects
-val update_major_pointers_preserves_blue_field
-  (major: heap) (fwd: forwarding_map) (h: obj_addr) (j: nat)
-  : Lemma (requires blocks_fit major /\
-                    Seq.mem h (objects zero_addr major) /\
-                    is_blue h major /\
-                    j < U64.v (wosize_of_object h major) /\
-                    U64.v h + j * 8 + 8 <= heap_size /\
-                    (U64.v h + j * 8) % 8 == 0)
-    (ensures (let field_addr = U64.uint_to_t (U64.v h + j * 8) in
-              read_word (update_major_pointers major fwd) field_addr ==
-              read_word major field_addr))
-
-/// update_major_pointers preserves all fields of no-scan objects
-val update_major_pointers_preserves_no_scan_field
-  (major: heap) (fwd: forwarding_map) (h: obj_addr) (j: nat)
-  : Lemma (requires blocks_fit major /\
-                    Seq.mem h (objects zero_addr major) /\
-                    is_no_scan h major /\
-                    ~(is_blue h major) /\
-                    j < U64.v (wosize_of_object h major) /\
-                    U64.v h + j * 8 + 8 <= heap_size /\
-                    (U64.v h + j * 8) % 8 == 0)
-    (ensures (let field_addr = U64.uint_to_t (U64.v h + j * 8) in
-              read_word (update_major_pointers major fwd) field_addr ==
-              read_word major field_addr))
-
-/// update_major_pointers preserves no_infix_block (no infix objects)
-val update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map)
-  : Lemma (requires blocks_fit major /\ no_infix_block major)
-    (ensures no_infix_block (update_major_pointers major fwd))
-
-/// Specifies the effect of update_major_pointers on a single field:
-/// After the update, field j of object obj is either:
-///   - fwd(old_value) if the old value was a minor pointer with valid forwarding
-///   - the old value otherwise
-val update_major_pointers_field_effect
-  (major: heap) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
-  : Lemma
-    (requires
-      blocks_fit major /\
-      Seq.mem obj (objects zero_addr major) /\
-      j < U64.v (wosize_of_object obj major) /\
-      U64.v obj + j * 8 + 8 <= heap_size /\
-      (U64.v obj + j * 8) % 8 == 0 /\
-      is_blue obj major = false /\
-      is_no_scan obj major = false)
-    (ensures
-      (let updated = update_major_pointers major fwd in
-       let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
-       let old_raw = read_word major field_addr in
-       let old_val = to_minor_offset old_raw in
-       let new_val = read_word updated field_addr in
-       (is_minor_pointer old_val /\ fwd old_val <> 0UL ==> new_val == fwd old_val) /\
-       (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> new_val == old_raw)))
 /// promote_object preserves chain_objects_blue
 val promote_object_preserves_chain_objects_blue
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)

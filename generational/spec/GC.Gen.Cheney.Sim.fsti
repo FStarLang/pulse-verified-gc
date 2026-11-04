@@ -110,14 +110,6 @@ val not_minor_if_wosize_bounds_fail (minor: minor_state) (addr: U64.t)
                      U64.v addr + minor_wosize minor addr * 8 > minor_heap_size))
           (ensures ~(Seq.mem addr (minor_objects minor)))
 
-/// When promote_object returns new_addr=0, heap and fp are unchanged
-val promote_object_zero_noop
-  (minor_st: minor_state) (ms: heap) (addr: U64.t) (fp: U64.t) (wz: nat)
-  : Lemma (requires wz > 0 /\
-                    (GC.Gen.Promote.promote_object minor_st ms addr fp wz).new_addr == 0UL)
-          (ensures (GC.Gen.Promote.promote_object minor_st ms addr fp wz).major_out == ms /\
-                   (GC.Gen.Promote.promote_object minor_st ms addr fp wz).fp_out == fp)
-
 /// ---------------------------------------------------------------------------
 /// Queue length bounds: bounded by |minor_objects| via BFS invariant
 /// ---------------------------------------------------------------------------

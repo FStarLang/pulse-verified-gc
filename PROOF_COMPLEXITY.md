@@ -194,9 +194,9 @@ that is the hinge on which most of the generational proof's weight hangs (§5.2)
 
 The generational theorem comes in two tiers:
 
-- **`cheney_gc_correct`** (`CheneyCorrectness.fsti:154-197`) — unconditional: survival,
-  `well_formed_heap_part1`, free-list re-validity, minor reset, roots rewritten. Holds
-  *even under OOM*, because every forwarding step is either a success or a no-op.
+- **`cheney_collect_preserves_objects`** (`CheneyCorrectness.fsti`) — unconditional:
+  survival. Holds *even under OOM*, because every forwarding step is either a success or
+  a no-op; the shape the collection keeps is `CheneyGeneric.cheney_collect_with_preserves_shape`.
 - **`cheney_promotes_all_reachable`** (`CheneyCorrectness.fsti:217-234`) — conditional on
   `cheney_no_oom`: every reachable minor object was forwarded.
 
@@ -565,7 +565,7 @@ MinorHeap's, this module's cost is real proof difficulty rather than fuel escala
 The reference spec `update_major_pointers` rescans the whole major heap. The
 implementation scans only the just-promoted objects plus the remembered-set slots — which
 is the entire point of a generational collector, since a full rescan would make minor GC
-cost O(major heap). Proving these equal needs `ref_table_complete`,
+cost O(major heap). Proving these equal needs `ref_table_complete_with`,
 `slots_pairwise_distinct`, `promoted_entries_disjoint`, `fwd_ptrs_classified`,
 `heap_objects_dense`, a frame lemma and an effect-at-index lemma for each of the two
 passes, and disjointness reasoning across them.
