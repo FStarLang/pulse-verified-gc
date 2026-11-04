@@ -28,7 +28,7 @@ module IndDesc = FStar.IndefiniteDescription
 module Classical = FStar.Classical
 module Aux = GC.Gen.PromoteUpdate.Aux
 module Inj = GC.Gen.CheneyPreservation.Injectivity
-module CE = GC.Gen.CheneyWith
+module CE = GC.Gen.CheneyGeneric
 module PromoteSpec = GC.Gen.Promote
 
 /// Derivation: fwd_valid_or_infix + wfh_part1 + fwd_bounded + represents_fwd

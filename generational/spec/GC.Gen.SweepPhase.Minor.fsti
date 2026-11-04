@@ -3,7 +3,7 @@
 /// ---------------------------------------------------------------------------
 ///
 /// The sweep phase meets the minor collection through what counts as free.
-/// The generic minor-collection theorems (`GC.Gen.CheneyWith`) are stated for
+/// The generic minor-collection theorems (`GC.Gen.CheneyGeneric`) are stated for
 /// the idle collection, whose promoted copies are white wherever they land;
 /// the definition of free they run on is the sweep's with what is pending
 /// free fixed at the heap `g` the collection starts from
@@ -21,7 +21,7 @@
 ///     last cell at or below where it was, and the same pending-free set: new
 ///     objects are never pending free and no existing header changes.
 ///     Well-formedness comes from the generic theorem
-///     (`GC.Gen.CheneyWith.cheney_collect_with_preserves_shape`) through the
+///     (`GC.Gen.CheneyGeneric.cheney_collect_with_preserves_shape`) through the
 ///     painting: a promoted copy in front of the cursor is painted black,
 ///     so what is non-free in the painted heap for `free_incremental` is what
 ///     is non-free in the idle one for the collection's definition of free

@@ -39,7 +39,7 @@ module HeapModel = GC.Spec.HeapModel
 
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RT = GC.Gen.RefTable
-module CE = GC.Gen.CheneyWith
+module CE = GC.Gen.CheneyGeneric
 open GC.Gen.MinorCollectForwarding.Helpers
 
 /// `U64.v mword = 8 <> 0`.  Trivial, but the well-typedness obligation for `%`

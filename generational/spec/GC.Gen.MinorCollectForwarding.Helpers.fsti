@@ -51,7 +51,7 @@ module GenInv = GC.Gen.HeapInvariant
 module HeapGraph = GC.Spec.HeapGraph
 module HeapModel = GC.Spec.HeapModel
 module RT = GC.Gen.RefTable
-module CV = GC.Gen.CheneyWith
+module CV = GC.Gen.CheneyGeneric
 
 /// Read the remembered-set slot targets from the pre-collection major heap.
 /// Only valid slots containing minor pointers contribute roots.
@@ -525,7 +525,7 @@ val major_field_infix_target_forwarded
         (to_minor_offset (read_word major (U64.uint_to_t (U64.v src + j * 8)))) <> 0UL)
 
 /// The post-collection major heap is well formed with the same definition of free
-/// (`GC.Gen.CheneyWith.cheney_collect_with_preserves_shape`).
+/// (`GC.Gen.CheneyGeneric.cheney_collect_with_preserves_shape`).
 val post_shape_with
   (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma

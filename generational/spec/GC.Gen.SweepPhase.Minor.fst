@@ -43,7 +43,7 @@ module Promote = GC.Gen.Promote
 module PUO = GC.Gen.PromoteUpdate.Obj
 module W = GC.Spec.Walk
 module FLA = GC.Spec.FreeList.Ascending
-module CV = GC.Gen.CheneyWith
+module CV = GC.Gen.CheneyGeneric
 module Cheney = GC.Gen.Cheney
 module GSP = GC.Gen.SweepPhase
 open GC.Spec.SweepPhase.Util

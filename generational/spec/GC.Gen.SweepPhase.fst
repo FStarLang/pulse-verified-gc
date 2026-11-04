@@ -21,7 +21,7 @@ module WB = GC.Gen.WriteBodyLemmas
 module FL = GC.Spec.FreeList
 module FLA = GC.Spec.FreeList.Ascending
 module Header = GC.Lib.Header
-module CV = GC.Gen.CheneyWith
+module CV = GC.Gen.CheneyGeneric
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 

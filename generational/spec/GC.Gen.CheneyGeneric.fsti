@@ -1,5 +1,5 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.CheneyWith -- the minor collection keeps its shape given what counts as free
+/// GC.Gen.CheneyGeneric -- the minor collection keeps its shape given what counts as free
 /// ---------------------------------------------------------------------------
 ///
 /// `free` says which major blocks count as free (`GC.Spec.Fields.free_def`).
@@ -27,7 +27,7 @@
 /// (`GC.Gen.CheneyPreservation.cheney_collect_preserves_collection_heap_shape`)
 /// is its instance at `free_stw`.
 
-module GC.Gen.CheneyWith
+module GC.Gen.CheneyGeneric
 
 open FStar.Seq
 module U64 = FStar.UInt64

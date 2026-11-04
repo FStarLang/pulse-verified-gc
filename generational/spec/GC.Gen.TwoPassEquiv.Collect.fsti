@@ -62,7 +62,7 @@ val two_pass_implies_collect_with
        valid_slot_addrs slots n /\
        slots_pairwise_distinct slots n /\
        free_def_ok free /\
-       GC.Gen.CheneyWith.promotion_not_free free minor major_pre fp roots /\
+       GC.Gen.CheneyGeneric.promotion_not_free free minor major_pre fp roots /\
        ref_table_sound_with free major_pre slots n /\
        ref_table_complete_with free major_pre prom.fwd_map slots n /\
        fwd_targets_stable prom.fwd_map /\

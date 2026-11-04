@@ -35,7 +35,7 @@ module SpecBase = GC.Spec.Base
 module HeapGraph = GC.Spec.HeapGraph
 module HeapModel = GC.Spec.HeapModel
 module Frame = GC.Gen.CheneyPreservation.Frame
-module CE = GC.Gen.CheneyWith
+module CE = GC.Gen.CheneyGeneric
 module SpecFields = GC.Spec.Fields
 module SpecObject = GC.Spec.Object
 

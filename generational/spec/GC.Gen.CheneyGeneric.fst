@@ -1,8 +1,8 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.CheneyWith -- Implementation
+/// GC.Gen.CheneyGeneric -- Implementation
 /// ---------------------------------------------------------------------------
 
-module GC.Gen.CheneyWith
+module GC.Gen.CheneyGeneric
 
 open FStar.Seq
 module U64 = FStar.UInt64

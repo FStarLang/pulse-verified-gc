@@ -256,7 +256,7 @@ let minor_collect_full_isomorphism_post
   : Lemma
     (requires
       GenInv.collection_shape_with free minor major fp /\
-      GC.Gen.CheneyWith.promotion_not_free free minor major fp roots /\
+      GC.Gen.CheneyGeneric.promotion_not_free free minor major fp roots /\
       ref_table_covers_with free major slots n /\
       post_major == (CheneySpec.cheney_collect_spec_with free minor major fp roots).mc_major /\
       post_roots == MCFH.resolve_roots post_major
@@ -291,7 +291,7 @@ let minor_collect_full_isomorphism_post
 /// minor_collect_full: includes ref_table rewriting for full correctness
 /// ---------------------------------------------------------------------------
 
-module CE = GC.Gen.CheneyWith
+module CE = GC.Gen.CheneyGeneric
 
 /// The spec half of the minor collection given what counts as free: the two passes over a
 /// Cheney result are the collection's pointer update

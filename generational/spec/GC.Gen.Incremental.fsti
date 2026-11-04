@@ -40,7 +40,7 @@ module Paint = GC.Gen.Paint
 module Cheney = GC.Gen.Cheney
 module Promote = GC.Gen.Promote
 module SPM = GC.Gen.SweepPhase.Minor
-module CV = GC.Gen.CheneyWith
+module CV = GC.Gen.CheneyGeneric
 
 /// What counts as free for a minor collection from `g` at a phase: blue
 /// (`free_stw`) when idle; mid-sweep, blue or pending free in `g`

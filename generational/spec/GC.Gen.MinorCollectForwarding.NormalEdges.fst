@@ -32,7 +32,7 @@ module HeapModel = GC.Spec.HeapModel
 
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RT = GC.Gen.RefTable
-module CE = GC.Gen.CheneyWith
+module CE = GC.Gen.CheneyGeneric
 open GC.Gen.MinorCollectForwarding.Helpers
 module MCFE = GC.Gen.MinorCollectForwarding.Edges
 open GC.Gen.MinorCollectForwarding.Edges
