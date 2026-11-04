@@ -21,7 +21,7 @@ open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
-open GC.Gen.Impl.UpdatePtrs
+open GC.Gen.ForwardingArray
 open GC.Gen.RefTable
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -76,7 +76,7 @@ private let infix_header_not_minor_pointer (hdr: U64.t)
 /// Helper: update_object_pointers preserves is_infix status because
 /// infix header values are not minor pointers and thus are never rewritten.
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
-let update_obj_ptrs_preserves_is_infix
+private let update_obj_ptrs_preserves_is_infix
   (major: heap) (obj: obj_addr) (wosize: nat) (fwd: forwarding_map)
   (other: obj_addr)
   : Lemma

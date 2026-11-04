@@ -11,8 +11,8 @@
 /// `at_new_blocks`), its cells (`at_cells`) and its list (`at_list`).
 ///
 /// These are the facts the sweep phase's allocation lemmas
-/// (`GC.Gen.SweepPhase`) and the colouring of a minor collection's promotions
-/// (`GC.Gen.Paint`) are proved from.
+/// (`GC.Gen.SweepPhase`) and the `swept_tail` a minor collection's promotions
+/// leave (`GC.Gen.SweptTail`) are proved from.
 
 module GC.Gen.AllocShape
 

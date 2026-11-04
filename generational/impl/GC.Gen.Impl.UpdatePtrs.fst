@@ -24,51 +24,7 @@ module PromoteSpec = GC.Gen.Promote
 open GC.Gen.PromoteUpdate
 module SpecHeap = GC.Spec.Heap
 module AllocLemmas = GC.Spec.Allocator.Lemmas
-
-/// ---------------------------------------------------------------------------
-/// ghost_fwd_of_represents proof
-/// ---------------------------------------------------------------------------
-
-#push-options "--z3rlimit 25"
-let ghost_fwd_of_represents (farr: Seq.seq U64.t{Seq.length farr == fwd_array_size})
-  : Lemma (represents_fwd farr (ghost_fwd_of farr))
-  = let fwd = ghost_fwd_of farr in
-    let aux (i: nat{i < fwd_array_size})
-      : Lemma (Seq.index farr i == fwd (U64.uint_to_t (i * 8)))
-      = FStar.Math.Lemmas.lemma_mod_mul_distr_r i 8 8;
-        assert (i * 8 % 8 == 0);
-        assert (i * 8 / 8 == i);
-        assert (i * 8 < minor_heap_size);
-        assert (i * 8 < pow2 64)
-    in
-    FStar.Classical.forall_intro aux
-#pop-options
-
-/// ---------------------------------------------------------------------------
-/// Pure helper: compute rewrite for a single value
-/// ---------------------------------------------------------------------------
-
-/// Compute what rewrite_root does, purely in terms of the array contents
-let rewrite_root_arr (farr: Seq.seq U64.t) (v: U64.t) : GTot U64.t =
-  if Seq.length farr = fwd_array_size &&
-     U64.v v >= 8 && U64.v v < minor_heap_size && U64.v v % 8 = 0 then
-    let idx = U64.v v / 8 in
-    let fv = Seq.index farr idx in
-    if fv <> 0UL then fv else v
-  else v
-
-/// Connection lemma: rewrite_root_arr matches rewrite_root when represents_fwd holds
-let rewrite_root_arr_spec (farr: Seq.seq U64.t)
-                          (fwd: PromoteSpec.forwarding_map) (v: U64.t)
-  : Lemma (requires Seq.length farr == fwd_array_size /\ represents_fwd farr fwd)
-          (ensures rewrite_root_arr farr v == PromoteSpec.rewrite_root v fwd) =
-  ()
-
-/// Safe wrapper: compute the result of rewriting at a given index
-let rewrite_at_spec (rs: Seq.seq U64.t) (farr: Seq.seq U64.t) (iv: nat) : GTot (Seq.seq U64.t) =
-  if iv < Seq.length rs && Seq.length farr = fwd_array_size
-  then Seq.upd rs iv (rewrite_root_arr farr (Seq.index rs iv))
-  else rs
+open GC.Gen.ForwardingArray
 
 /// ---------------------------------------------------------------------------
 /// Rewrite one root at a given index (factored out for clean branch merging)
@@ -272,20 +228,6 @@ fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
 /// Rewrite heap slots (ref_table entries)
 /// ---------------------------------------------------------------------------
 
-/// Spec for one slot rewrite: given a heap and slot address, compute the
-/// result of reading the value, checking minor pointer + forwarding, writing if needed.
-let rewrite_one_slot_spec (major: heap) (fwd: PromoteSpec.forwarding_map) (slot_addr: U64.t)
-  : GTot heap =
-  if U64.v slot_addr >= heap_size || U64.v slot_addr % 8 <> 0 then major
-  else
-    let field_val = GC.Gen.Base.to_minor_offset (SpecHeap.read_word major slot_addr) in
-    if PromoteSpec.is_minor_pointer field_val then
-      let new_val = fwd field_val in
-      if new_val <> 0UL then
-        SpecHeap.write_word major slot_addr new_val
-      else major
-    else major
-
 /// Factored-out helper: handle one heap slot.
 /// Reads from heap at the given address, checks if it's a forwarded minor
 /// pointer, and rewrites if so.
@@ -322,42 +264,6 @@ fn rewrite_one_heap_slot
   }
 }
 #pop-options
-
-/// Unfold lemma: rewrite_slots_iter at idx >= n is identity
-let rewrite_slots_iter_done (major: heap) (fwd: PromoteSpec.forwarding_map)
-                            (slots: Seq.seq U64.t) (n: nat) (idx: nat)
-  : Lemma (requires idx >= n)
-          (ensures rewrite_slots_iter major fwd slots n idx == major)
-  = ()
-
-/// Unfold lemma: one step of rewrite_slots_iter
-let rewrite_slots_iter_step (major: heap) (fwd: PromoteSpec.forwarding_map)
-                            (slots: Seq.seq U64.t) (n: nat) (idx: nat)
-  : Lemma (requires idx < n /\ idx < Seq.length slots /\
-                    valid_slot_addrs slots n)
-          (ensures rewrite_slots_iter major fwd slots n idx ==
-                   rewrite_slots_iter (rewrite_one_slot_spec major fwd (Seq.index slots idx))
-                                     fwd slots n (idx + 1))
-  = ()
-
-/// "Snoc" lemma: processing n+1 slots from 'ms equals processing n slots
-/// then processing one more step on the result.
-/// rewrite_slots_iter ms fwd sl (n+1) 0 ==
-///   rewrite_one_slot_spec (rewrite_slots_iter ms fwd sl n 0) fwd sl[n]
-let rec rewrite_slots_iter_snoc (major: heap) (fwd: PromoteSpec.forwarding_map)
-                                (slots: Seq.seq U64.t) (n: nat) (idx: nat)
-  : Lemma (requires n < Seq.length slots /\ valid_slot_addrs slots (n + 1) /\ idx <= n)
-          (ensures rewrite_slots_iter major fwd slots (n + 1) idx ==
-                   rewrite_one_slot_spec (rewrite_slots_iter major fwd slots n idx)
-                                        fwd (Seq.index slots n))
-          (decreases (n - idx))
-  = if idx >= n then ()
-    else begin
-      rewrite_slots_iter_step major fwd slots (n + 1) idx;
-      rewrite_slots_iter_step major fwd slots n idx;
-      rewrite_slots_iter_snoc (rewrite_one_slot_spec major fwd (Seq.index slots idx))
-                              fwd slots n (idx + 1)
-    end
 
 /// Rewrite heap slots loop
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
@@ -413,75 +319,11 @@ fn rewrite_heap_slots
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// Update promoted objects (fwd_arr iteration) — lemma proofs and implementation
+/// Update promoted objects (fwd_arr iteration)
 /// ---------------------------------------------------------------------------
 
 module SpecObj = GC.Spec.Object
 module SpecHeapM = GC.Spec.Heap
-
-/// Unfold lemma proofs — these are trivial by computation
-let update_promoted_iter_zero (major: heap) (farr: Seq.seq U64.t)
-                              (fwd: PromoteSpec.forwarding_map) (idx: nat)
-  : Lemma (requires idx < fwd_array_size /\
-                    Seq.length farr == fwd_array_size /\
-                    Seq.index farr idx == 0UL)
-          (ensures update_promoted_iter major farr fwd idx ==
-                   update_promoted_iter major farr fwd (idx + 1))
-  = ()
-
-let update_promoted_iter_scan (major: heap) (farr: Seq.seq U64.t)
-                              (fwd: PromoteSpec.forwarding_map) (idx: nat)
-  : Lemma (requires idx < fwd_array_size /\
-                    Seq.length farr == fwd_array_size /\
-                    (let major_addr = Seq.index farr idx in
-                     major_addr <> 0UL /\
-                     U64.v major_addr >= 8 /\ U64.v major_addr % 8 == 0 /\
-                     (let hdr_addr = U64.v major_addr - 8 in
-                      hdr_addr + 8 <= heap_size /\ hdr_addr % 8 == 0 /\
-                      (let hdr = SpecHeapM.read_word major (U64.uint_to_t hdr_addr) in
-                       let wosize = U64.v (SpecObj.getWosize hdr) in
-                       let tag = SpecObj.getTag hdr in
-                       wosize > 0 /\ U64.lt tag SpecObj.no_scan_tag /\
-                       tag <> SpecObj.infix_tag /\
-                       U64.v major_addr + wosize * 8 <= heap_size))))
-          (ensures (let major_addr = Seq.index farr idx in
-                    let hdr_addr = U64.v major_addr - 8 in
-                    let hdr = SpecHeapM.read_word major (U64.uint_to_t hdr_addr) in
-                    let wosize = U64.v (SpecObj.getWosize hdr) in
-                    let major' = PromoteSpec.update_object_pointers major major_addr wosize fwd 0 in
-                    update_promoted_iter major farr fwd idx ==
-                    update_promoted_iter major' farr fwd (idx + 1)))
-  = ()
-
-let update_promoted_iter_skip (major: heap) (farr: Seq.seq U64.t)
-                              (fwd: PromoteSpec.forwarding_map) (idx: nat)
-  : Lemma (requires idx < fwd_array_size /\
-                    Seq.length farr == fwd_array_size /\
-                    (let major_addr = Seq.index farr idx in
-                     major_addr <> 0UL /\
-                     (let hdr_addr = U64.v major_addr - 8 in
-                      hdr_addr + 8 > heap_size \/ hdr_addr % 8 <> 0 \/
-                      (hdr_addr + 8 <= heap_size /\ hdr_addr % 8 == 0 /\
-                       (let hdr = SpecHeapM.read_word major (U64.uint_to_t hdr_addr) in
-                        let wosize = U64.v (SpecObj.getWosize hdr) in
-                        let tag = SpecObj.getTag hdr in
-                        ~(wosize > 0 /\ U64.lt tag SpecObj.no_scan_tag /\ tag <> SpecObj.infix_tag) \/
-                        U64.v major_addr + wosize * 8 > heap_size)))))
-          (ensures update_promoted_iter major farr fwd idx ==
-                   update_promoted_iter major farr fwd (idx + 1))
-  = ()
-
-let update_promoted_iter_done (major: heap) (farr: Seq.seq U64.t)
-                              (fwd: PromoteSpec.forwarding_map) (idx: nat)
-  : Lemma (requires idx >= fwd_array_size)
-          (ensures update_promoted_iter major farr fwd idx == major)
-  = ()
-
-/// Helper: header address from object address (obj - 8) is well-formed
-let hdr_addr_wf (obj: U64.t)
-  : Lemma (requires U64.v obj >= 8 /\ U64.v obj % 8 == 0 /\ U64.v obj <= heap_size)
-          (ensures (U64.v obj - 8) % 8 == 0 /\ U64.v obj - 8 + 8 <= heap_size)
-  = ()
 
 /// The main loop implementation
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 0"

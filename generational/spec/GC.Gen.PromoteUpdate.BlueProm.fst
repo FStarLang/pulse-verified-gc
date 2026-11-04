@@ -6,6 +6,7 @@ module GC.Gen.PromoteUpdate.BlueProm
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module AP = GC.Gen.AllocPhase
 module U8 = FStar.UInt8
 
 open GC.Spec.Base
@@ -141,7 +142,7 @@ private let copy_fields_other_hdr_precond
 /// Helper: transfer chain_avoids from new_major to res.major_out via read preservation.
 /// Separated to keep the Z3 context small.
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
-private let chain_blue_transfer_step
+private let chain_blue_transfer_step (ph: gc_phase)
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
   (excl: obj_addr)
@@ -149,36 +150,36 @@ private let chain_blue_transfer_step
       blocks_fit major /\
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
-      (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).obj_out <> 0UL /\
-      excl <> (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).obj_out /\
+      (AP.alloc_at ph major fp wosize (promoted_tag minor obj)).obj_out <> 0UL /\
+      excl <> (AP.alloc_at ph major fp wosize (promoted_tag minor obj)).obj_out /\
       // chain_avoids on new_major is known
       AllocLemmas.chain_avoids
-        (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).heap_out
-        (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).fp_out
+        (AP.alloc_at ph major fp wosize (promoted_tag minor obj)).heap_out
+        (AP.alloc_at ph major fp wosize (promoted_tag minor obj)).fp_out
         excl heap_words = true /\
       AllocLemmas.chain_avoids
-        (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).heap_out
-        (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).fp_out
-        (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).obj_out
+        (AP.alloc_at ph major fp wosize (promoted_tag minor obj)).heap_out
+        (AP.alloc_at ph major fp wosize (promoted_tag minor obj)).fp_out
+        (AP.alloc_at ph major fp wosize (promoted_tag minor obj)).obj_out
         heap_words = true /\
       AllocLemmas.fl_valid
-        (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).heap_out
-        (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).fp_out
+        (AP.alloc_at ph major fp wosize (promoted_tag minor obj)).heap_out
+        (AP.alloc_at ph major fp wosize (promoted_tag minor obj)).fp_out
         heap_words)
     (ensures
       AllocLemmas.chain_avoids
-        (promote_object minor major obj fp wosize Idle).major_out
-        (promote_object minor major obj fp wosize Idle).fp_out
+        (promote_object minor major obj fp wosize ph).major_out
+        (promote_object minor major obj fp wosize ph).fp_out
         excl heap_words = true)
   = let fuel = heap_words in
-    let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
+    let alloc_res = AP.alloc_at ph major fp wosize (promoted_tag minor obj) in
     let new_major = alloc_res.heap_out in
-    GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_valid ph major fp wosize (promoted_tag minor obj);
     let dst_obj : obj_addr = alloc_res.obj_out in
     let final = copy_fields minor new_major obj dst_obj 0 wosize in
-    promote_object_success minor major obj fp wosize;
-    GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize (promoted_tag minor obj);
-    GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize (promoted_tag minor obj);
+    promote_object_success minor major obj fp wosize ph;
+    AP.alloc_at_obj_in_objects ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_wosize ph major fp wosize (promoted_tag minor obj);
     let read_pres (ao: obj_addr)
       : Lemma (requires Seq.mem ao (objects zero_addr new_major) /\
                         (ao <: U64.t) <> (excl <: U64.t) /\
@@ -198,7 +199,7 @@ private let chain_blue_transfer_step
 /// the destination still avoid the free-list chain. Extracted as a standalone helper
 /// to give Z3 a clean context (no inherited let-bindings from the outer proof).
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
-private let chain_blue_proof_for_excl
+private let chain_blue_proof_for_excl (ph: gc_phase)
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
   (excl: obj_addr)
@@ -207,29 +208,29 @@ private let chain_blue_proof_for_excl
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
       chain_objects_blue major fp /\
-      (promote_object minor major obj fp wosize Idle).new_addr <> 0UL /\
+      (promote_object minor major obj fp wosize ph).new_addr <> 0UL /\
       // excl-specific
-      Seq.mem excl (objects zero_addr (promote_object minor major obj fp wosize Idle).major_out) /\
-      is_blue excl (promote_object minor major obj fp wosize Idle).major_out = false /\
-      excl <> (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).obj_out)
+      Seq.mem excl (objects zero_addr (promote_object minor major obj fp wosize ph).major_out) /\
+      is_blue excl (promote_object minor major obj fp wosize ph).major_out = false /\
+      excl <> (AP.alloc_at ph major fp wosize (promoted_tag minor obj)).obj_out)
     (ensures
       AllocLemmas.chain_avoids
-        (promote_object minor major obj fp wosize Idle).major_out
-        (promote_object minor major obj fp wosize Idle).fp_out
+        (promote_object minor major obj fp wosize ph).major_out
+        (promote_object minor major obj fp wosize ph).fp_out
         excl heap_words = true)
   = let fuel = heap_words in
-    let res = promote_object minor major obj fp wosize Idle in
-    let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
+    let res = promote_object minor major obj fp wosize ph in
+    let alloc_res = AP.alloc_at ph major fp wosize (promoted_tag minor obj) in
     let new_major = alloc_res.heap_out in
-    GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_valid ph major fp wosize (promoted_tag minor obj);
     let dst_obj : obj_addr = alloc_res.obj_out in
-    promote_object_success minor major obj fp wosize;
+    promote_object_success minor major obj fp wosize ph;
     // Key alloc properties
-    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize (promoted_tag minor obj);
-    AllocLemmas.alloc_spec_preserves_objects_part1 major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_alloc_ok ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_preserves_objects ph major fp wosize (promoted_tag minor obj);
     assert (dst_obj <> 0UL);
-    GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize (promoted_tag minor obj);
-    GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_in_objects ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_wosize ph major fp wosize (promoted_tag minor obj);
     assert (Seq.mem dst_obj (objects zero_addr new_major));
     assert (U64.v (wosize_of_object dst_obj new_major) >= wosize);
     copy_fields_preserves_objects_aux minor new_major obj dst_obj 0 wosize;
@@ -238,8 +239,8 @@ private let chain_blue_proof_for_excl
     assert (Seq.mem excl (objects zero_addr new_major));
     headers_disjoint_from_separation new_major excl dst_obj;
     // 2. excl must be in objects(major) (new objects are blue → contradiction)
-    AllocLemmas.alloc_spec_new_objects_blue_part1 major fp wosize (promoted_tag minor obj);
-    AllocLemmas.alloc_spec_only_new_is_obj_out_part1 major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_only_new_is_obj_out ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_only_new_is_obj_out ph major fp wosize (promoted_tag minor obj);
     if not (Seq.mem excl (objects zero_addr major)) then begin
       assert (is_blue excl new_major = true);
       copy_fields_other_hdr_precond new_major excl dst_obj wosize;
@@ -252,8 +253,8 @@ private let chain_blue_proof_for_excl
     // dst_obj is an object of the OUTPUT heap, not the input one: with the
     // allocation right-justified it is the piece split off from the free
     // block, so the separation facts have to be taken in new_major.
-    GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize (promoted_tag minor obj);
-    GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_in_objects ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_wosize ph major fp wosize (promoted_tag minor obj);
     // 4. Header of excl preserved → derive non-blue in major
     copy_fields_other_hdr_precond new_major excl dst_obj wosize;
     copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (hd_address excl);
@@ -265,44 +266,44 @@ private let chain_blue_proof_for_excl
     reveal_opaque (`%chain_objects_blue) chain_objects_blue;
     (if AllocLemmas.chain_avoids major fp (excl <: U64.t) heap_words = false then begin
        assert (is_blue excl major = true);
-       GC.Gen.AllocProps.alloc_spec_preserves_blue_part1 major fp wosize excl (promoted_tag minor obj);
+       AP.alloc_at_preserves_blue ph major fp wosize excl (promoted_tag minor obj);
        is_blue_iff excl new_major;
        is_blue_iff excl res.major_out;
        assert False
      end else ());
-    GC.Gen.AllocProps.alloc_spec_read_header_other_part1 major fp wosize excl (promoted_tag minor obj);
+    AP.alloc_at_read_header_other ph major fp wosize excl (promoted_tag minor obj);
     color_of_header_eq excl new_major major;
     assert (is_blue excl major = false);
     // 5. chain_objects_blue → chain_avoids(major, fp, excl, fuel)
     reveal_opaque (`%chain_objects_blue) chain_objects_blue;
     // 6. alloc_spec preserves chain_avoids for excl
-    AllocLemmas.alloc_spec_preserves_chain_avoids_other major fp wosize excl (promoted_tag minor obj);
+    AP.alloc_at_preserves_chain_avoids_other ph major fp wosize excl (promoted_tag minor obj);
     // 7. Transfer through copy_fields
-    AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wosize (promoted_tag minor obj);
-    AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wosize (promoted_tag minor obj);
-    chain_blue_transfer_step minor major obj fp wosize excl
+    AP.alloc_at_obj_not_in_chain ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_alloc_ok ph major fp wosize (promoted_tag minor obj);
+    chain_blue_transfer_step ph minor major obj fp wosize excl
 #pop-options
 
 /// After alloc_spec + copy_fields, non-blue objects still avoid the chain.
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0 --z3refresh"
 let promote_object_preserves_chain_objects_blue
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
-  (wosize: nat{wosize > 0})
+  (wosize: nat{wosize > 0}) (ph: gc_phase)
   = let fuel = heap_words in
-    let res = promote_object minor major obj fp wosize Idle in
-    let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
+    let res = promote_object minor major obj fp wosize ph in
+    let alloc_res = AP.alloc_at ph major fp wosize (promoted_tag minor obj) in
     let new_major = alloc_res.heap_out in
-    GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_valid ph major fp wosize (promoted_tag minor obj);
     let dst_obj : obj_addr = alloc_res.obj_out in
-    promote_object_success minor major obj fp wosize;
+    promote_object_success minor major obj fp wosize ph;
     // Key properties of alloc
-    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize (promoted_tag minor obj);
-    AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wosize (promoted_tag minor obj);
-    AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wosize (promoted_tag minor obj);
-    AllocLemmas.alloc_spec_preserves_objects_part1 major fp wosize (promoted_tag minor obj);
-    AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wosize (promoted_tag minor obj);
-    GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize (promoted_tag minor obj);
-    GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_alloc_ok ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_alloc_ok ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_alloc_ok ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_preserves_objects ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_not_in_chain ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_in_objects ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_wosize ph major fp wosize (promoted_tag minor obj);
     // copy_fields preserves objects
     copy_fields_preserves_objects_aux minor new_major obj dst_obj 0 wosize;
     // Establish not_in_fl_chain from chain_avoids
@@ -326,12 +327,32 @@ let promote_object_preserves_chain_objects_blue
           assert (chain_objects_blue major fp);
           assert (res.new_addr <> 0UL);
           assert (excl <> dst_obj);
-          assert (dst_obj == (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).obj_out);
-          chain_blue_proof_for_excl minor major obj fp wosize excl
+          assert (dst_obj == (AP.alloc_at ph major fp wosize (promoted_tag minor obj)).obj_out);
+          chain_blue_proof_for_excl ph minor major obj fp wosize excl
         end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires full_proof);
     reveal_opaque (`%chain_objects_blue) chain_objects_blue
+#pop-options
+
+/// Recolouring keeps the blue blocks and their link fields.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+private let recoloured_blfv (g g': heap)
+  : Lemma (requires AP.recoloured g g' /\ FreeListShape.blue_link_fields_valid g)
+          (ensures FreeListShape.blue_link_fields_valid g')
+  = AP.recoloured_facts g g';
+    let proof (src: obj_addr)
+      : Lemma (requires Seq.mem src (objects zero_addr g') /\
+                        is_blue src g' /\
+                        U64.v (wosize_of_object src g') >= 1 /\
+                        U64.v (hd_address src) + 16 <= heap_size)
+              (ensures (let v = read_word g' src in
+                        v = 0UL \/ GC.Spec.HeapGraph.is_pointer_field v))
+      = FreeListShape.blue_link_fields_valid_elim g src;
+        hd_address_spec src;
+        AP.recoloured_read g g' src src
+    in
+    FreeListShape.blue_link_fields_valid_intro g' proof
 #pop-options
 
 /// A successful promotion preserves the shape of the free-list head and blue
@@ -340,41 +361,42 @@ let promote_object_preserves_chain_objects_blue
 #push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
 let promote_object_preserves_free_list_shape
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
-  (wosize: nat{wosize > 0})
+  (wosize: nat{wosize > 0}) (ph: gc_phase)
   =
-    let res = promote_object minor major obj fp wosize Idle in
-    let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
+    let res = promote_object minor major obj fp wosize ph in
+    let alloc_res = AP.alloc_at ph major fp wosize (promoted_tag minor obj) in
     let new_major = alloc_res.heap_out in
-    GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_valid ph major fp wosize (promoted_tag minor obj);
     let dst_obj : obj_addr = alloc_res.obj_out in
-    promote_object_success minor major obj fp wosize;
+    promote_object_success minor major obj fp wosize ph;
     let final = copy_fields minor new_major obj dst_obj 0 wosize in
     assert (res.major_out == final);
     // Allocation establishes both shape components on new_major / alloc_res.fp_out.
     GC.Gen.PromoteUpdate.BlueAlloc.alloc_spec_preserves_fp_pointer_or_zero major fp wosize (promoted_tag minor obj);
     GC.Gen.PromoteUpdate.BlueAlloc.alloc_spec_preserves_blue_link_fields_valid major fp wosize (promoted_tag minor obj);
-    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_fields ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_recoloured ph major fp wosize (promoted_tag minor obj);
+    recoloured_blfv (GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj)).GC.Spec.Allocator.heap_out new_major;
+    AP.alloc_at_alloc_ok ph major fp wosize (promoted_tag minor obj);
     assert (FreeListShape.fp_pointer_or_zero res.fp_out);
     assert (FreeListShape.blue_link_fields_valid new_major);
     assert (blocks_fit new_major);
 
     // Objects are unchanged from new_major to final.
-    GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize (promoted_tag minor obj);
-    GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_in_objects ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_wosize ph major fp wosize (promoted_tag minor obj);
     copy_fields_preserves_objects_aux minor new_major obj dst_obj 0 wosize;
     copy_fields_preserves_wfh_part1 minor new_major obj dst_obj wosize;
 
     // The promoted destination is white in the final heap, so it is not a blue
     // free-list node whose link field must be considered: the allocator wrote
     // a white header, and copy_fields leaves it alone.
-    GC.Gen.AllocProps.alloc_spec_obj_not_blue_part1 major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_not_blue ph major fp wosize (promoted_tag minor obj);
     hd_address_spec dst_obj;
     wfh_part1_obj_bound new_major dst_obj;
     dst_fields_valid_from_obj new_major dst_obj wosize;
     copy_fields_frame minor new_major obj dst_obj 0 wosize (hd_address dst_obj);
-    color_of_object_spec dst_obj new_major;
-    color_of_object_spec dst_obj final;
-    GC.Spec.Object.is_blue_iff dst_obj final;
+    color_of_header_eq dst_obj new_major final;
     assert (is_blue dst_obj final = false);
 
     let blfv_proof (src: obj_addr)

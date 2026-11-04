@@ -180,3 +180,27 @@ val alloc_phase_fields (g: heap) (fp: U64.t) (ph: gc_phase) (wz: nat) (tag: U64.
 val alloc_phase_oom_phase (g: heap) (fp: U64.t) (ph: gc_phase) (wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires (fst (alloc_phase g fp ph wz tag)).obj_out == 0UL)
           (ensures snd (alloc_phase g fp ph wz tag) == ph)
+
+/// The header of a new object of `w` fields, colour `col` and tag `tag`.
+let new_header (w: nat) (col: color_bits) (tag: U64.t{U64.v tag < 256}) : U64.t =
+  if w < pow2 54 then begin
+    FStar.Math.Lemmas.pow2_lt_compat 64 54;
+    make_header (U64.uint_to_t w) col tag
+  end else 0UL
+
+/// **The heap depends on the phase only through the new header's colour**:
+/// it is `alloc_spec`'s heap, whose new header is white, with that header
+/// rewritten in the colour the phase gives its address.
+val alloc_phase_heap (g: heap) (fp: U64.t) (ph: gc_phase) (wz: nat) (tag: U64.t{U64.v tag < 256})
+  : Lemma (let r = fst (alloc_phase g fp ph wz tag) in
+           let r0 = alloc_spec g fp wz tag in
+           r.obj_out <> 0UL ==>
+             (is_obj r.obj_out /\ req_wz wz < pow2 54 /\
+              (let hd = hd_address (r.obj_out <: obj_addr) in
+               read_word r0.heap_out hd == new_header (req_wz wz) white_color tag /\
+               r.heap_out == write_word r0.heap_out hd (new_header (req_wz wz) (allocation_color ph hd) tag))))
+
+/// Phases that colour alike allocate alike.
+val alloc_phase_colour_congr (g: heap) (fp: U64.t) (ph ph': gc_phase) (wz: nat) (tag: U64.t{U64.v tag < 256})
+  : Lemma (requires forall (a: U64.t). allocation_color ph a == allocation_color ph' a)
+          (ensures fst (alloc_phase g fp ph wz tag) == fst (alloc_phase g fp ph' wz tag))

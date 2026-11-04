@@ -13,14 +13,15 @@ open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
-open GC.Gen.Impl.UpdatePtrs
+open GC.Gen.ForwardingArray
 
 module CheneySpec = GC.Gen.Cheney
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module SimOne = GC.Gen.Cheney.SimOne
 
-let impl_matches_spec_at_facts col ph ms fp farr q bk cs =
-  GC.Gen.Paint.coloured_facts col ms cs.CheneySpec.cs_major fp ph
+let impl_matches_spec_at_facts ph ms fp farr q bk cs =
+  GC.Spec.SweepPhase.Util.part1_holds ms;
+  GC.Spec.FreeList.Ascending.fl_ascending_valid ms fp
 
 /// ---------------------------------------------------------------------------
 /// Initial state
@@ -108,17 +109,6 @@ let not_minor_if_wosize_bounds_fail (minor: minor_state) (addr: U64.t)
   =
   // Contrapositive of minor_object_passes_guards
   FStar.Classical.move_requires (minor_objects_body_bound minor) addr
-
-let promote_object_zero_noop
-  (minor_st: minor_state) (ms: heap) (addr: U64.t) (fp: U64.t) (wz: nat)
-  =
-  let alloc_out = (GC.Spec.Allocator.alloc_spec ms fp wz (promoted_tag minor_st addr)).obj_out in
-  if alloc_out = 0UL then
-    GC.Gen.Promote.promote_object_oom minor_st ms addr fp wz
-  else begin
-    GC.Gen.Promote.promote_object_success minor_st ms addr fp wz;
-    assert false
-  end
 
 #pop-options
 /// ---------------------------------------------------------------------------

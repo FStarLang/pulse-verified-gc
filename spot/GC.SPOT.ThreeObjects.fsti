@@ -5,6 +5,7 @@ module Seq = FStar.Seq
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -86,7 +87,7 @@ val spot_minor_scenario_pre_intro_from_c_to_a
         Seq.mem GC.SPOT.Layout.b_minor (minor_objects minor) /\
         minor_wosize minor GC.SPOT.Layout.a_minor > 0 /\
         minor_wosize minor GC.SPOT.Layout.b_minor > 0 /\
-        GC.Gen.CheneyBFS.cheney_no_oom minor major fp (spot_roots c))
+        GC.Gen.CheneyBFS.cheney_no_oom Idle minor major fp (spot_roots c))
       (ensures spot_minor_scenario_pre minor major fp c farr)
 
 val spot_full_scenario_pre
@@ -125,7 +126,7 @@ val spot_a_promoted
     Lemma
       (requires spot_minor_scenario_pre minor major fp c farr)
       (ensures (
-        let prom = GC.Gen.Cheney.cheney_promote minor major fp (spot_roots c) in
+        let prom = GC.Gen.Cheney.cheney_promote Idle minor major fp (spot_roots c) in
         GC.SPOT.Postconditions.promoted_image
           minor major fp (spot_roots c) GC.SPOT.Layout.a_minor
           (prom.fwd_map GC.SPOT.Layout.a_minor)))
@@ -137,7 +138,7 @@ val spot_c_field_rewritten_to_a_prime
     Lemma
       (requires spot_minor_scenario_pre minor major fp c farr)
       (ensures (
-        let prom = GC.Gen.Cheney.cheney_promote minor major fp (spot_roots c) in
+        let prom = GC.Gen.Cheney.cheney_promote Idle minor major fp (spot_roots c) in
         let res = GC.Gen.Cheney.cheney_collect_spec minor major fp (spot_roots c) in
         GC.SPOT.Postconditions.promoted_image
           minor major fp (spot_roots c) GC.SPOT.Layout.a_minor
@@ -149,7 +150,7 @@ val spot_b_not_promoted_from_forwarding_zero
   : minor:minor_state -> major:heap -> fp:U64.t -> c:obj_addr ->
     Lemma
       (requires
-        (GC.Gen.Cheney.cheney_promote minor major fp (spot_roots c)).fwd_map
+        (GC.Gen.Cheney.cheney_promote Idle minor major fp (spot_roots c)).fwd_map
           GC.SPOT.Layout.b_minor == 0UL)
       (ensures
         GC.SPOT.Postconditions.minor_not_promoted

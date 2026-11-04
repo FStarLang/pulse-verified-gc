@@ -9,6 +9,7 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
@@ -33,7 +34,7 @@ let spot_gen_gc_success_post
   (r: unit{ConcreteMajor.spot_major_room})
   (ok: bool) (final_major: heap) : prop =
   let prom =
-    CheneySpec.cheney_promote
+    CheneySpec.cheney_promote Idle
       ConcreteMinor.spot_minor2
       (ConcreteMajor.spot_major_heap r)
       (ConcreteMajor.spot_major_fp r)

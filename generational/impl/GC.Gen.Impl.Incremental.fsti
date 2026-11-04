@@ -27,6 +27,7 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
@@ -109,8 +110,8 @@ let gc_state (gh: gen_heap_t) (d: minor_heap) (b: U64.t) (s: heap_state) (fp: U6
 /// The minor collection's arguments, for the phase's definition of free.
 let minor_slots_ok (ph: Ph.gc_phase) (minor_st: minor_state) (s: heap_state)
     (rs farr sl: Seq.seq U64.t) (nslots: nat) : prop =
-  let free = GI.phase_free s ph in
-  Seq.length farr == UpdatePtrs.fwd_array_size /\
+  let free = GI.phase_free ph in
+  Seq.length farr == GC.Gen.ForwardingArray.fwd_array_size /\
   (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
   RT.ref_table_sound_with free s sl nslots /\
   RT.ref_table_covers_with free s sl nslots /\
@@ -152,15 +153,15 @@ fn finish_sweep (gh: gen_heap_t)
 /// ---------------------------------------------------------------------------
 
 /// **`minor_collect_full` at the collector's phase**, for the phase's
-/// definition of free (`GI.phase_free`): its contract (`minor_collect_post_with_at`), and the
-/// collector's state at the phase it leaves -- idle stays idle; mid-sweep the
-/// sweep keeps its cursor and the objects pending free
-/// (`GI.minor_keeps_phase_shape`).  The C is
-/// `minor_collect_full`'s.
+/// definition of free (`GI.phase_free`: `free_stw` idle, `free_incremental st`
+/// mid-sweep): its contract (`minor_collect_post_with`, at the phase), and
+/// the collector's state at the phase the allocator leaves -- idle stays
+/// idle; mid-sweep the sweep keeps its cursor and the objects pending free
+/// (`GI.minor_keeps_phase_shape`).  The C is `minor_collect_full`'s.
 fn minor_collect_any_phase (gh: gen_heap_t)
                            (roots: array U64.t) (nroots: SZ.t)
                            (fwd_arr: array U64.t)
-                           (queue: larray U64.t Cheney.queue_size)
+                           (queue: larray U64.t GC.Gen.ForwardingArray.queue_size)
                            (slots: array U64.t) (nslots: SZ.t)
   requires gc_state gh 'd 'b 's 'fp 'ph **
            pts_to roots 'rs **
@@ -171,15 +172,15 @@ fn minor_collect_any_phase (gh: gen_heap_t)
                  minor_slots_ok 'ph ({ data = 'd; bump = 'b } <: minor_state) 's
                    'rs 'farr 'sl (SZ.v nslots))
   returns ok: bool
-  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 ph2.
-    gc_state gh d2 b2 s2 fp2 ph2 **
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
+    gc_state gh d2 b2 s2 fp2 (GC.Gen.SweptTail.phase_at 'ph s2) **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
-    pure (minor_collect_post_with_at 'ph (GI.phase_free 's 'ph) ({ data = 'd; bump = 'b } <: minor_state)
-            's 'fp 'rs 'sl (SZ.v nslots) ok d2 b2 s2 fp2 rs2 farr2 ph2 /\
-          Ph.Idle? ph2 == Ph.Idle? 'ph)
+    pure (minor_collect_post_with 'ph (GI.phase_free 'ph) ({ data = 'd; bump = 'b } <: minor_state)
+            's 'fp 'rs ok d2 b2 s2 fp2 rs2 /\
+          Ph.Idle? (GC.Gen.SweptTail.phase_at 'ph s2) == Ph.Idle? 'ph)
 
 /// ---------------------------------------------------------------------------
 /// Major allocation at either phase
@@ -233,14 +234,14 @@ let gen_gc_start_post
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
   let prepared = gen_gc_prepared_state minor major fp roots st cap in
   fp2 == result.mc_fp /\
-  (not ok ==> CheneyBFS.cheney_oom minor major fp roots /\ s2 == result.mc_major /\ ph2 == Ph.Idle) /\
+  (not ok ==> CheneyBFS.cheney_oom Idle minor major fp roots /\ s2 == result.mc_major /\ ph2 == Ph.Idle) /\
   (ok ==>
    ph2 == Ph.Sweeping FS.sweep_start /\
    SpecGCPost.mark_post (fst prepared) s2 (snd prepared) fp2 /\
-   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop Idle
      minor major fp SpecFields.free_stw roots result.mc_major
      (MCFH.resolve_roots result.mc_major roots_out) /\
-   MinorFwd.normal_result_non_pointer_fields_preserved_prop
+   MinorFwd.normal_result_non_pointer_fields_preserved_prop Idle
      minor major fp SpecFields.free_stw roots result.mc_major)
 
 /// **Start a major collection**: `gen_gc`'s minor collection, root darkening
@@ -250,7 +251,7 @@ let gen_gc_start_post
 fn gen_gc_start (gh: gen_heap_t)
                 (roots: array U64.t) (nroots: SZ.t)
                 (fwd_arr: array U64.t)
-                (queue: larray U64.t Cheney.queue_size)
+                (queue: larray U64.t GC.Gen.ForwardingArray.queue_size)
                 (slots: array U64.t) (nslots: SZ.t)
                 (st: gray_stack)
   requires gc_state gh 'd 'b 's 'fp Ph.Idle **
@@ -261,7 +262,7 @@ fn gen_gc_start (gh: gen_heap_t)
            is_gray_stack st 'st **
            pure (gen_gc_stack_budget 'rs 'st (stack_capacity st) /\
                  SZ.v nroots == Seq.length 'rs /\
-                 Seq.length 'farr == UpdatePtrs.fwd_array_size /\
+                 Seq.length 'farr == GC.Gen.ForwardingArray.fwd_array_size /\
                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                  RT.ref_table_sound 's 'sl (SZ.v nslots) /\
                  RT.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\

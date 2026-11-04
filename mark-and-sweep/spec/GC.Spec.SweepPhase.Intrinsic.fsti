@@ -75,21 +75,8 @@ let pending_free (st: sweep_state) (g: heap) (x: obj_addr) : GTot bool =
 let free_incremental (st: sweep_state) : free_def =
   fun g x -> is_blue x g || pending_free st g x
 
-/// The same, with what is pending free read at a fixed heap `g0`: across a
-/// change that frees nothing and makes nothing newly pending free (a minor
-/// collection), a block is free when it is blue now or was pending free in
-/// `g0`; so every block allocated since is not free.
-let free_incremental_from (st: sweep_state) (g0: heap) : free_def =
-  fun g x -> is_blue x g || pending_free st g0 x
-
-/// Both are definitions of free a generic theorem may take.
+/// It is a definition of free a generic theorem may take.
 val free_incremental_ok (st: sweep_state) : Lemma (free_def_ok (free_incremental st))
-
-val free_incremental_from_ok (st: sweep_state) (g0: heap) : Lemma (free_def_ok (free_incremental_from st g0))
-
-/// A block allocated by a change from `g0` was not pending free in `g0`.
-val free_incremental_from_fresh (st: sweep_state) (g0 g: heap)
-  : Lemma (fresh_not_free (free_incremental_from st g0) g0 g)
 
 /// Definitions of free that agree on the non-free blocks of a heap give the
 /// same well-formedness of it.

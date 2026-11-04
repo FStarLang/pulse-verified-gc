@@ -2,6 +2,7 @@ module GC.Gen.FreeListAscending
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module AP = GC.Gen.AllocPhase
 open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
@@ -11,6 +12,7 @@ open GC.Gen.MinorHeap
 open GC.Gen.Promote
 open GC.Gen.Cheney
 
+open GC.Gen.Cheney.Induction
 module FL = GC.Spec.FreeList
 module FLA = GC.Spec.FreeList.Ascending
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -28,26 +30,41 @@ module GenInv = GC.Gen.HeapInvariant
 /// Promotion
 /// ---------------------------------------------------------------------------
 
+/// The allocator at any phase keeps the list ascending: it is the idle one,
+/// recoloured.
+private let alloc_at_preserves_fl_ascending (ph: gc_phase) (g: heap) (fp: U64.t) (wz: nat)
+    (tag: U64.t{U64.v tag < 256})
+  : Lemma (requires blocks_fit g /\ FLA.fl_ascending g fp)
+          (ensures (let r = AP.alloc_at ph g fp wz tag in
+                    FLA.fl_ascending r.GC.Spec.Allocator.heap_out r.GC.Spec.Allocator.fp_out))
+  = FLA.fl_ascending_valid g fp;
+    AA.alloc_spec_preserves_fl_ascending g fp wz tag;
+    AP.alloc_at_fields ph g fp wz tag;
+    AP.alloc_at_recoloured ph g fp wz tag;
+    let r = AP.alloc_at ph g fp wz tag in
+    AP.recoloured_fl (GC.Spec.Allocator.alloc_spec g fp wz tag).GC.Spec.Allocator.heap_out
+      r.GC.Spec.Allocator.heap_out r.GC.Spec.Allocator.fp_out
+
 #push-options "--z3rlimit 40"
-let promote_object_preserves_fl_ascending minor major obj fp wosize =
-  let ar = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
+let promote_object_preserves_fl_ascending minor major obj fp wosize ph =
+  let ar = AP.alloc_at ph major fp wosize (promoted_tag minor obj) in
   FLA.fl_ascending_valid major fp;
-  AA.alloc_spec_preserves_fl_ascending major fp wosize (promoted_tag minor obj);
-  if ar.GC.Spec.Allocator.obj_out = 0UL then promote_object_oom minor major obj fp wosize
+  alloc_at_preserves_fl_ascending ph major fp wosize (promoted_tag minor obj);
+  if ar.GC.Spec.Allocator.obj_out = 0UL then promote_object_oom minor major obj fp wosize ph
   else begin
     let g1 = ar.GC.Spec.Allocator.heap_out in
     let fp1 = ar.GC.Spec.Allocator.fp_out in
-    let res = promote_object minor major obj fp wosize Idle in
-    promote_object_success minor major obj fp wosize;
-    AllocProps.alloc_spec_obj_wosize_exact_part1 major fp wosize (promoted_tag minor obj);
+    let res = promote_object minor major obj fp wosize ph in
+    promote_object_success minor major obj fp wosize ph;
+    AP.alloc_at_obj_wosize ph major fp wosize (promoted_tag minor obj);
     let dst : obj_addr = ar.GC.Spec.Allocator.obj_out in
-    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize (promoted_tag minor obj);
-    AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wosize (promoted_tag minor obj);
-    AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wosize (promoted_tag minor obj);
-    AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize (promoted_tag minor obj);
-    AllocProps.alloc_spec_obj_not_blue_part1 major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_alloc_ok ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_alloc_ok ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_alloc_ok ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_in_objects ph major fp wosize (promoted_tag minor obj);
+    AP.alloc_at_obj_not_blue ph major fp wosize (promoted_tag minor obj);
     is_blue_iff dst g1;
-    Fwd.promote_object_new_addr_in_objects_not_blue minor major obj fp wosize;
+    Fwd.promote_object_new_addr_in_objects_not_blue minor major obj fp wosize ph;
     let copied = WB.copy_fields minor g1 obj dst 0 wosize in
     WB.copy_fields_preserves_objects_aux minor g1 obj dst 0 wosize;
     wosize_of_object_spec dst g1;
@@ -89,112 +106,17 @@ let promote_object_preserves_fl_ascending minor major obj fp wosize =
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// The Cheney ladder (as in `GC.Gen.CheneyFlComplete`)
+/// The Cheney run
 /// ---------------------------------------------------------------------------
 
-let asc_inv (cs: cheney_state) : prop =
-  blocks_fit cs.cs_major /\ FLA.fl_ascending cs.cs_major cs.cs_fp
+private let asc_p (g: heap) (fp: U64.t) : prop = FLA.fl_ascending g fp
 
-private let minor_wosize_bound (minor: minor_state) (obj: U64.t)
-  : Lemma (minor_wosize minor obj < pow2 54)
-  = if U64.v obj >= 8 && U64.v obj < minor_heap_size then begin
-      let hdr_addr = U64.v obj - 8 in
-      if hdr_addr + 8 <= minor_heap_size && hdr_addr % 8 = 0 then begin
-        let hdr = minor_read_word minor.data (U64.uint_to_t hdr_addr) in
-        FStar.UInt.shift_right_value_lemma #64 (U64.v hdr) 10;
-        FStar.Math.Lemmas.lemma_div_lt_nat (U64.v hdr) 64 10
-      end
-    end
+private let promote_step (ph: gc_phase) (minor: minor_state) : promote_keeps minor ph asc_p =
+  fun major fp obj wz -> promote_object_preserves_fl_ascending minor major obj fp wz ph
 
-#push-options "--z3rlimit 40"
-private let forward_normal_keeps (minor: minor_state) (cs: cheney_state) (addr: U64.t)
-  : Lemma (requires asc_inv cs)
-          (ensures (let cs' = cheney_forward_normal minor cs addr in
-                    FLA.fl_ascending cs'.cs_major cs'.cs_fp))
-  = if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL
-    then cheney_forward_normal_noop minor cs addr
-    else begin
-      let wz = minor_wosize minor addr in
-      if wz = 0 then cheney_forward_normal_noop_wz0 minor cs addr
-      else if (promote_object minor cs.cs_major addr cs.cs_fp wz Idle).new_addr = 0UL
-      then cheney_forward_normal_noop_oom minor cs addr
-      else begin
-        cheney_forward_normal_success minor cs addr;
-        minor_wosize_bound minor addr;
-        promote_object_preserves_fl_ascending minor cs.cs_major addr cs.cs_fp wz
-      end
-    end
-
-private let forward_one_keeps (minor: minor_state) (cs: cheney_state) (addr: U64.t)
-  : Lemma (requires asc_inv cs)
-          (ensures asc_inv (cheney_forward_one minor cs addr))
-  = FLA.fl_ascending_valid cs.cs_major cs.cs_fp;
-    cheney_forward_one_preserves_wfh_part1 minor cs addr;
-    if cs.cs_fwd addr <> 0UL ||
-       (not (Seq.mem addr (minor_objects minor)) && not (is_infix_in_minor minor addr))
-    then cheney_forward_one_noop minor cs addr
-    else if not (is_infix_in_minor minor addr) then begin
-      cheney_forward_one_normal minor cs addr;
-      forward_normal_keeps minor cs addr
-    end
-    else begin
-      let parent = infix_parent minor addr in
-      let cs' = cheney_forward_normal minor cs parent in
-      forward_normal_keeps minor cs parent;
-      if cs'.cs_fwd parent <> 0UL &&
-         U64.v addr >= U64.v parent &&
-         U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < heap_size
-      then cheney_forward_one_infix_guard_pass minor cs addr
-      else cheney_forward_one_infix_guard_fail minor cs addr
-    end
-#pop-options
-
-#push-options "--z3rlimit 40 --fuel 1"
-private let rec forward_fields_keeps (minor: minor_state) (cs: cheney_state)
-  (parent: U64.t) (idx: nat) (wosize: nat)
-  : Lemma (requires asc_inv cs)
-          (ensures asc_inv (cheney_forward_fields minor cs parent idx wosize))
-          (decreases (if idx < wosize then wosize - idx else 0))
-  = if idx >= wosize then cheney_forward_fields_base minor cs parent idx wosize
-    else begin
-      cheney_forward_fields_step minor cs parent idx wosize;
-      let field_val = to_minor_offset (minor_read_field minor parent idx) in
-      forward_one_keeps minor cs field_val;
-      forward_fields_keeps minor (cheney_forward_one minor cs field_val) parent (idx + 1) wosize
-    end
-
-private let rec forward_roots_keeps (minor: minor_state) (cs: cheney_state)
-  (roots: seq U64.t) (idx: nat)
-  : Lemma (requires asc_inv cs)
-          (ensures asc_inv (cheney_forward_roots minor cs roots idx))
-          (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
-  = if idx >= Seq.length roots then cheney_forward_roots_base minor cs roots idx
-    else begin
-      cheney_forward_roots_step minor cs roots idx;
-      let r = Seq.index roots idx in
-      forward_one_keeps minor cs r;
-      forward_roots_keeps minor (cheney_forward_one minor cs r) roots (idx + 1)
-    end
-
-private let rec scan_keeps (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
-  : Lemma (requires asc_inv cs)
-          (ensures asc_inv (cheney_scan minor cs scan fuel))
-          (decreases fuel)
-  = if fuel = 0 || scan >= Seq.length cs.cs_queue then cheney_scan_base minor cs scan fuel
-    else begin
-      cheney_scan_step minor cs scan fuel;
-      let obj = Seq.index cs.cs_queue scan in
-      let wz = minor_scan_wosize minor obj in
-      forward_fields_keeps minor cs obj 0 wz;
-      scan_keeps minor (cheney_forward_fields minor cs obj 0 wz) (scan + 1) (fuel - 1)
-    end
-#pop-options
-
-let cheney_promote_preserves_fl_ascending minor major fp roots =
-  let cs0 : cheney_state =
-    { cs_major = major; cs_fp = fp; cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
-  forward_roots_keeps minor cs0 roots 0;
-  scan_keeps minor (cheney_forward_roots minor cs0 roots 0) 0 (cheney_fuel minor)
+let cheney_promote_preserves_fl_ascending ph minor major fp roots =
+  FLA.fl_ascending_valid major fp;
+  cheney_promote_keeps minor ph asc_p (promote_step ph minor) major fp roots
 
 /// ---------------------------------------------------------------------------
 /// The pointer rewrite
@@ -226,20 +148,7 @@ let update_walk_preserves_fl_ascending major upd fwd fp =
   FLA.fl_ascending_transfer major m' fp
 #pop-options
 
-let update_major_pointers_preserves_fl_ascending major fwd fp =
-  update_walk_preserves_fl_ascending major (in_use free_stw major) fwd fp
-
 
 /// ---------------------------------------------------------------------------
 /// A whole minor collection
 /// ---------------------------------------------------------------------------
-
-#push-options "--z3rlimit 40"
-let cheney_collect_preserves_fl_ascending minor major fp roots =
-  GenInv.collection_heap_shape_elim minor major fp;
-  GenInv.major_heap_shape_elim major fp;
-  wf_parts ();
-  let prom = cheney_promote minor major fp roots in
-  cheney_promote_preserves_fl_ascending minor major fp roots;
-  update_major_pointers_preserves_fl_ascending prom.major_final prom.fwd_map prom.fp_final
-#pop-options

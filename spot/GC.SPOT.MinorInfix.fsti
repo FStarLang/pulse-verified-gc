@@ -5,6 +5,7 @@ module Seq = FStar.Seq
 
 open FStar.Seq
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -74,7 +75,7 @@ let minor_infix_scenario
   RefTable.ref_table_covers_minor_ptrs major slots n /\
   MinorFwd.remembered_targets_in_roots major roots slots n /\
   RBridge.roots_not_free GC.Spec.Fields.free_stw roots major /\
-  CheneyBFS.cheney_no_oom minor major fp roots /\
+  CheneyBFS.cheney_no_oom Idle minor major fp roots /\
   ~(SpecObj.is_no_scan c major) /\
   i < U64.v (SpecObj.wosize_of_object c major) /\
   (let cg = CG.build_combined_graph minor major GC.Spec.Fields.free_stw in
@@ -86,7 +87,7 @@ let minor_infix_scenario
   is_infix_in_minor minor (stored_target major c i) /\
   minor_wosize minor (infix_parent minor (stored_target major c i)) > 0 /\
   HeapGraph.is_pointer_field
-    ((Cheney.cheney_promote minor major fp roots).fwd_map
+    ((Cheney.cheney_promote Idle minor major fp roots).fwd_map
       (infix_parent minor (stored_target major c i)))
 
 /// The nursery interior pointer is admissible: the scenario really does satisfy
@@ -129,7 +130,7 @@ val spot_minor_infix_promoted
     Lemma
       (requires minor_infix_scenario minor major fp roots slots n c i)
       (ensures (
-        let prom = Cheney.cheney_promote minor major fp roots in
+        let prom = Cheney.cheney_promote Idle minor major fp roots in
         let post = (Cheney.cheney_collect_spec minor major fp roots).mc_major in
         let ov = stored_target major c i in
         let par = infix_parent minor ov in

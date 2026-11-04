@@ -4,6 +4,7 @@ open FStar.Seq
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -15,6 +16,7 @@ module SpecCorrectness = GC.Spec.Correctness
 module Cheney = GC.Gen.Cheney
 module CheneyBFS = GC.Gen.CheneyBFS
 module MinorFwd = GC.Gen.MinorCollectForwarding
+module MCFEdges = GC.Gen.MinorCollectForwarding.Edges
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
@@ -28,22 +30,22 @@ let minor_collect_full_post
   let res = Cheney.cheney_collect_spec minor major fp roots in
   post_major == res.mc_major /\
   post_roots == res.mc_roots /\
-  (ok ==> MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+  (ok ==> MinorFwd.normal_result_reachable_subgraph_isomorphism_prop Idle
              minor major fp GC.Spec.Fields.free_stw roots post_major
              (MCFH.resolve_roots post_major post_roots) /\
-           MinorFwd.normal_result_non_pointer_fields_preserved_prop
+           MinorFwd.normal_result_non_pointer_fields_preserved_prop Idle
              minor major fp GC.Spec.Fields.free_stw roots post_major)
 
 let promoted_image
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t) (old img: U64.t) : prop =
   img <> 0UL /\
-  (Cheney.cheney_promote minor major fp roots).fwd_map old == img
+  (Cheney.cheney_promote Idle minor major fp roots).fwd_map old == img
 
 let minor_not_promoted
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t) (old: U64.t) : prop =
-  (Cheney.cheney_promote minor major fp roots).fwd_map old == 0UL
+  (Cheney.cheney_promote Idle minor major fp roots).fwd_map old == 0UL
 
 let minor_collect_full_post_intro
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
@@ -75,10 +77,11 @@ let major_minor_field_rewritten
   (src: obj_addr) (dst: U64.t) (i: nat)
   =
   MinorFwd.stop_the_world_context minor major fp roots;
-  MinorFwd.combined_major_minor_field_forwarded
+  GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw minor major fp roots;
+  MCFEdges.combined_major_minor_field_forwarded Idle
     minor major fp SpecFields.free_stw roots slots n src dst i;
   promoted_image_from_forwarding minor major fp roots dst
-    ((Cheney.cheney_promote minor major fp roots).fwd_map dst)
+    ((Cheney.cheney_promote Idle minor major fp roots).fwd_map dst)
 
 let final_major_survives_from_gen_gc_post
   (minor: minor_state) (major: heap) (fp: U64.t)

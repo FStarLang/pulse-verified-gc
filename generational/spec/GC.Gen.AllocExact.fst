@@ -473,11 +473,6 @@ let depth_facts (g: heap) (head prev cur: U64.t) (k: nat)
     end
 #pop-options
 
-/// The two disjuncts that excuse a node from staying on the chain: it is the
-/// allocated object, or the one-word fragment the allocation leaves behind.
-let unlinked (g': heap) (obj_out: U64.t) (y: obj_addr) : prop =
-  (y <: U64.t) == obj_out \/ U64.v (wosize_of_object y g') = 0
-
 /// The search allocates from the head of the list (`prev = 0`).
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
 let found_head (g: heap) (obj: obj_addr) (wz: nat) (y: obj_addr) (n: nat) (tag: U64.t{U64.v tag < 256})
@@ -905,7 +900,7 @@ let promote_object_preserves_fl_complete (minor: MH.minor_state) (major: heap) (
     let g1 = ar.heap_out in
     let fp1 = ar.fp_out in
     let res = Promote.promote_object minor major obj fp wosize Promote.Idle in
-    Promote.promote_object_success minor major obj fp wosize;
+    Promote.promote_object_success minor major obj fp wosize Promote.Idle;
     AllocProps.alloc_spec_obj_wosize_exact_part1 major fp wosize (Promote.promoted_tag minor obj);
     let dst : obj_addr = ar.obj_out in
     // the allocation alone keeps the list complete (stage 4) ...
@@ -916,8 +911,8 @@ let promote_object_preserves_fl_complete (minor: MH.minor_state) (major: heap) (
     AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wosize (Promote.promoted_tag minor obj);
     AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize (Promote.promoted_tag minor obj);
     // ... and the writes that follow stay inside the promoted object
-    Promote.promote_object_preserves_alloc_invariants minor major obj fp wosize;
-    Fwd.promote_object_new_addr_in_objects_not_blue minor major obj fp wosize;
+    Promote.promote_object_preserves_alloc_invariants minor major obj fp wosize Promote.Idle;
+    Fwd.promote_object_new_addr_in_objects_not_blue minor major obj fp wosize Promote.Idle;
     let copied = WB.copy_fields minor g1 obj dst 0 wosize in
     WB.copy_fields_preserves_objects_aux minor g1 obj dst 0 wosize;
     wosize_of_object_spec dst g1;
@@ -1057,16 +1052,6 @@ let update_walk_preserves_fl_complete
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
-
-let update_major_pointers_preserves_fl_complete (major: heap) (fwd: Promote.forwarding_map) (fp: U64.t)
-  : Lemma (requires blocks_fit major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    Promote.chain_objects_blue major fp /\
-                    FL.fl_complete major fp)
-          (ensures FL.fl_complete (Promote.update_major_pointers major fwd) fp)
-  = update_walk_preserves_fl_complete major (in_use free_stw major) fwd fp
-
 
 /// ---------------------------------------------------------------------------
 /// The program's field writes keep the entry conditions

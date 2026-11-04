@@ -27,6 +27,7 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -59,7 +60,7 @@ val post_minor_major_root_valid
       MinorFwd.roots_valid_for_minor_collection minor major roots /\
       Seq.mem r roots /\ ~(Promote.is_minor_pointer r))
     (ensures (
-      let prom = Cheney.cheney_promote minor major fp roots in
+      let prom = Cheney.cheney_promote Idle minor major fp roots in
       let result = Cheney.cheney_collect_spec minor major fp roots in
       MBP.root_valid_for_darkening result.mc_major
         (Promote.rewrite_root r prom.fwd_map) /\
@@ -85,7 +86,7 @@ val post_minor_roots_valid_for_darkening
     (requires
       GenInv.collection_heap_shape minor major fp /\
       MinorFwd.roots_valid_for_minor_collection minor major roots /\
-      CheneyBFS.cheney_no_oom minor major fp roots)
+      CheneyBFS.cheney_no_oom Idle minor major fp roots)
     (ensures (
       let result = Cheney.cheney_collect_spec minor major fp roots in
       forall (i: nat). i < Seq.length result.mc_roots ==>
@@ -105,7 +106,7 @@ val darken_precondition_after_minor
     (requires
       GenInv.collection_heap_shape minor major fp /\
       MinorFwd.roots_valid_for_minor_collection minor major roots /\
-      CheneyBFS.cheney_no_oom minor major fp roots /\
+      CheneyBFS.cheney_no_oom Idle minor major fp roots /\
       Seq.length roots <= cap /\ cap > 0)
     (ensures (
       let result = Cheney.cheney_collect_spec minor major fp roots in

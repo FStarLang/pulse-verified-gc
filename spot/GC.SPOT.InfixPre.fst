@@ -23,6 +23,7 @@ module Header = GC.Lib.Header
 module Preconditions = GC.SPOT.Preconditions
 module InfixMajor = GC.SPOT.InfixMajor
 
+module FA = GC.Gen.ForwardingArray
 #set-options "--z3rlimit 30 --fuel 1 --ifuel 1"
 
 let spot_infix_minor : minor_state =
@@ -70,18 +71,18 @@ let spot_infix_roots_cases (r: unit{InfixMajor.spot_infix_room}) (root: U64.t)
 let spot_infix_slots : seq U64.t = Seq.empty
 
 let spot_infix_fwd_array : seq U64.t =
-  Seq.create UpdatePtrs.fwd_array_size 0UL
+  Seq.create FA.fwd_array_size 0UL
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let spot_infix_fwd_array_zero ()
   =
-  FStar.Seq.Base.lemma_create_len UpdatePtrs.fwd_array_size 0UL;
+  FStar.Seq.Base.lemma_create_len FA.fwd_array_size 0UL;
   let aux (i: nat)
     : Lemma (ensures i < Seq.length spot_infix_fwd_array ==>
                      Seq.index spot_infix_fwd_array i == 0UL)
     =
     if i < Seq.length spot_infix_fwd_array then
-      FStar.Seq.Base.lemma_index_create UpdatePtrs.fwd_array_size 0UL i
+      FStar.Seq.Base.lemma_index_create FA.fwd_array_size 0UL i
   in
   FStar.Classical.forall_intro aux;
   Preconditions.zero_forwarding_array_intro spot_infix_fwd_array

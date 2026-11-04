@@ -5,6 +5,7 @@ module Seq = FStar.Seq
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -21,6 +22,7 @@ module Cheney = GC.Gen.Cheney
 module CheneyBFS = GC.Gen.CheneyBFS
 module CG = GC.Gen.CombinedGraph
 module MinorFwd = GC.Gen.MinorCollectForwarding
+module MCFEdges = GC.Gen.MinorCollectForwarding.Edges
 module RBridge = GC.Gen.ReachabilityBridge
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RefTable = GC.Gen.RefTable
@@ -108,7 +110,7 @@ let spot_minor_scenario_pre
   Seq.mem Layout.b_minor (minor_objects minor) /\
   minor_wosize minor Layout.a_minor > 0 /\
   minor_wosize minor Layout.b_minor > 0 /\
-  CheneyBFS.cheney_no_oom minor major fp (spot_roots c)
+  CheneyBFS.cheney_no_oom Idle minor major fp (spot_roots c)
 
 let spot_minor_scenario_pre_intro_from_c_to_a
   (minor: minor_state) (major: heap) (fp: U64.t)
@@ -166,6 +168,7 @@ let expose_spot_collection_facts
   Preconditions.minor_collect_full_pre_elim
     minor major fp (spot_roots c) farr (spot_slots c) 1;
   MinorFwd.stop_the_world_context minor major fp (spot_roots c);
+  GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw minor major fp (spot_roots c);
   MCFH.major_fields_covered_from_slots
     minor major GC.Spec.Fields.free_stw (spot_roots c) (spot_slots c) 1;
   GenInv.collection_heap_shape_elim minor major fp;
@@ -216,13 +219,13 @@ let spot_a_promoted
   =
   expose_spot_collection_facts minor major fp c farr;
   spot_a_reachable_root minor major fp c farr;
-  MinorFwd.combined_reachable_minor_has_fwd
+  MCFEdges.combined_reachable_minor_has_fwd Idle
     minor major fp GC.Spec.Fields.free_stw (spot_roots c);
-  assert ((Cheney.cheney_promote minor major fp (spot_roots c)).fwd_map
+  assert ((Cheney.cheney_promote Idle minor major fp (spot_roots c)).fwd_map
     Layout.a_minor <> 0UL);
   Postconditions.promoted_image_from_forwarding
     minor major fp (spot_roots c) Layout.a_minor
-    ((Cheney.cheney_promote minor major fp (spot_roots c)).fwd_map Layout.a_minor)
+    ((Cheney.cheney_promote Idle minor major fp (spot_roots c)).fwd_map Layout.a_minor)
 
 /// The c->a slot as the field address `c + idx * 8`, aligned.  Stated in an
 /// empty context: Z3 5.x times out on these facts inside the proof below.

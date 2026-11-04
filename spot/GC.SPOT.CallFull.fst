@@ -9,6 +9,7 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
@@ -24,11 +25,12 @@ module MinorFwd = GC.Gen.MinorCollectForwarding
 module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
 
+module FA = GC.Gen.ForwardingArray
 fn call_gen_gc_spot
   (gh: gen_heap_t)
   (roots: array U64.t) (nroots: SZ.t)
   (fwd_arr: array U64.t)
-  (queue: larray U64.t CheneyImpl.queue_size)
+  (queue: larray U64.t FA.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
   (st: gray_stack)
   requires gen_phase gh GC.Spec.Phase.Idle ** is_gen_heap gh 'd 'b 's 'fp **

@@ -9,6 +9,7 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
@@ -26,11 +27,12 @@ module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
 
+module FA = GC.Gen.ForwardingArray
 fn call_minor_collect_full_spot
   (gh: gen_heap_t)
   (roots: array U64.t) (nroots: SZ.t)
   (fwd_arr: array U64.t)
-  (queue: larray U64.t CheneyImpl.queue_size)
+  (queue: larray U64.t FA.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
   requires gen_phase gh GC.Spec.Phase.Idle ** is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
@@ -59,32 +61,31 @@ fn call_minor_collect_full_spot
     (SZ.v nslots);
   let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots
              #(hide GC.Spec.Fields.free_stw);
-  with d2 b2 s2 fp2 rs2 farr2 qv2 ph2. _;
-  minor_collect_post_at_idle GC.Spec.Fields.free_stw ({ data = 'd; bump = 'b } <: minor_state)
-    's 'fp 'rs 'sl (SZ.v nslots) ok d2 b2 s2 fp2 rs2 farr2 ph2;
-  rewrite (gen_phase gh ph2) as (gen_phase gh GC.Spec.Phase.Idle);
+  with d2 b2 s2 fp2 rs2 farr2 qv2. _;
+  rewrite (gen_phase gh (GC.Gen.SweptTail.phase_at GC.Spec.Phase.Idle s2))
+       as (gen_phase gh GC.Spec.Phase.Idle);
   minor_collect_idle_post ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl
-    (SZ.v nslots) ok d2 b2 s2 fp2 rs2 farr2;
+    (SZ.v nslots) ok d2 b2 s2 fp2 rs2;
   assert (pure (s2 ==
     (CheneySpec.cheney_collect_spec ({ data = 'd; bump = 'b } <: minor_state)
       's 'fp 'rs).mc_major));
   assert (pure (rs2 ==
     PromoteSpec.rewrite_roots 'rs
-      (CheneySpec.cheney_promote ({ data = 'd; bump = 'b } <: minor_state)
+      (CheneySpec.cheney_promote Idle ({ data = 'd; bump = 'b } <: minor_state)
         's 'fp 'rs).fwd_map));
   assert (pure (rs2 ==
     (CheneySpec.cheney_collect_spec ({ data = 'd; bump = 'b } <: minor_state)
       's 'fp 'rs).mc_roots));
-  assert (pure (ok ==> MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+  assert (pure (ok ==> MinorFwd.normal_result_reachable_subgraph_isomorphism_prop Idle
     ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.free_stw 'rs s2
     (MCFH.resolve_roots s2 rs2)));
-  assert (pure (ok ==> MinorFwd.normal_result_non_pointer_fields_preserved_prop
+  assert (pure (ok ==> MinorFwd.normal_result_non_pointer_fields_preserved_prop Idle
     ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.free_stw 'rs s2));
   assert (pure (U64.v b2 == 0));
-  assert (pure (ok ==> MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+  assert (pure (ok ==> MinorFwd.normal_result_reachable_subgraph_isomorphism_prop Idle
     ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.free_stw 'rs s2
     (MCFH.resolve_roots s2 rs2) /\
-    MinorFwd.normal_result_non_pointer_fields_preserved_prop
+    MinorFwd.normal_result_non_pointer_fields_preserved_prop Idle
       ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.Fields.free_stw 'rs s2));
   Postconditions.minor_collect_full_post_intro
     ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs ok s2 rs2;

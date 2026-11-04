@@ -4,7 +4,7 @@
 ///
 /// Proves that promote_object (= alloc_spec + copy_fields) preserves
 /// heap_objects_dense. This is used by cheney_promote_preserves_dense
-/// in GC.Gen.Cheney.fst.
+/// in GC.Gen.Cheney.Steps.
 
 module GC.Gen.Cheney.Dense
 
@@ -21,10 +21,10 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 /// promote_object preserves heap_objects_dense.
 val promote_object_preserves_dense
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0}) (ph: gc_phase)
   : Lemma (requires blocks_fit major /\
                     heap_objects_dense major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = promote_object minor major obj fp wz Idle in
+          (ensures (let res = promote_object minor major obj fp wz ph in
                     heap_objects_dense res.major_out))

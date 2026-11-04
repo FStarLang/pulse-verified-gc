@@ -17,10 +17,8 @@ module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
 module RBridge = GC.Gen.ReachabilityBridge
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
-module CA = GC.Gen.CheneyAt
 module Cheney = GC.Gen.Cheney
 module CV = GC.Gen.CheneyGeneric
-module Paint = GC.Gen.Paint
 module Promote = GC.Gen.Promote
 module SPM = GC.Gen.SweepPhase.Minor
 module Ph = GC.Spec.Phase
@@ -86,20 +84,5 @@ let steps_keep_reachable g fp st k r x =
   reachable_not_free g fp st r x;
   sweep_phase_steps g fp st k
 
-#push-options "--z3rlimit 20"
 let minor_keeps_not_free minor g fp st roots x =
-  let free = free_incremental_from st g in
-  SPM.minor_keeps_sweep_phase minor g fp st roots;
-  SPM.sweep_collection_shape minor g fp st;
-  GenInv.collection_shape_with_elim free minor g fp;
-  GenInv.major_shape_with_elim free g fp;
-  GenInv.minor_heap_shape_elim minor;
-  CV.cheney_promote_keeps_in_use free minor g fp roots x;
-  let prom = Cheney.cheney_promote minor g fp roots in
-  let res = Cheney.cheney_collect_spec_with free minor g fp roots in
-  Cheney.cheney_promote_preserves_wfh_part1 minor g fp roots;
-  CV.update_walk_keeps_in_use free prom.Promote.major_final (in_use free prom.Promote.major_final)
-    prom.Promote.fwd_map x;
-  Paint.paint_ph_recoloured (Ph.Sweeping st) g res.Promote.mc_major;
-  Paint.recoloured_facts res.Promote.mc_major (Paint.paint_ph (Ph.Sweeping st) g res.Promote.mc_major)
-#pop-options
+  SPM.minor_keeps_blocks minor g fp st roots x

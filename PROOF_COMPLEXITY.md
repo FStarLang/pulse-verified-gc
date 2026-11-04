@@ -194,26 +194,26 @@ that is the hinge on which most of the generational proof's weight hangs (§5.2)
 
 The generational theorem comes in two tiers:
 
-- **`cheney_gc_correct`** (`CheneyCorrectness.fsti:154-197`) — unconditional: survival,
-  `well_formed_heap_part1`, free-list re-validity, minor reset, roots rewritten. Holds
-  *even under OOM*, because every forwarding step is either a success or a no-op.
-- **`cheney_promotes_all_reachable`** (`CheneyCorrectness.fsti:217-234`) — conditional on
+- **`cheney_collect_preserves_objects`** (`CheneyCorrectness.fsti`) — unconditional:
+  survival. Holds *even under OOM*, because every forwarding step is either a success or
+  a no-op; the shape the collection keeps is `CheneyGeneric.cheney_collect_with_preserves_shape`.
+- **`cheney_promotes_all_reachable`** (`CheneyBFS.fsti`) — conditional on
   `cheney_no_oom`: every reachable minor object was forwarded.
 
 Note what is *not* preserved: full `well_formed_heap`. Pointer closure (part2) is broken
 by promotion — a promoted object's fields still point into the nursery — and is only
-restored by step 3 (`CheneyCorrectness.fsti:56-61`).
+restored by step 3 (`CheneyGeneric.cheney_collect_with_preserves_shape`).
 
 ### 2.8 Composition
 
 There is no single "minor-then-major" theorem in `generational/spec/`. The two halves
 are:
 
-- `GC.Gen.CheneyCorrectness` — the minor collector is correct;
-- `GC.Gen.CheneyPreservation.*` (≈6,500 lines, 7 modules) — the minor collector leaves
-  every conjunct of the *major* collector's precondition intact (`no_black_objects`,
-  `gray_black_objects_on_stack`,
-  `collection_heap_shape`, `no_pointer_to_blue`).
+- `GC.Gen.CheneyGeneric`, `GC.Gen.CheneyBFS` — the minor collector is correct;
+- `GC.Gen.Cheney.Steps`, `GC.Gen.CheneyPreservation.*` — the minor collector leaves
+  every conjunct of the *major* collector's precondition intact
+  (`collection_heap_shape`, whose colour facts -- no black, no gray objects --
+  follow from `cheney_collect_block_origin`).
 
 They are stitched together in Pulse, at `generational/impl/GC.Gen.Impl.fst:1146`, which
 asserts `full_gc_correctness prepared_major s_final prepared_st` after running both
@@ -549,23 +549,28 @@ never applied: line 13 sets `--z3rlimit 25`, and everything after inherits that.
 verifies identically with `--z3rlimit 1` on the command line. Its 25 local `#push-options`
 blocks, ranging 10–100, are the settings that actually bind.
 
-### 5.4 `GC.Gen.Cheney.fst` — 577 s, the slowest module in the repository
+### 5.4 `GC.Gen.Cheney.fst` — formerly 577 s, the slowest module in the repository
 
-1,637 lines that verify in nearly ten minutes. This is the confluence point: BFS
+It was 1,637 lines that verified in nearly ten minutes: the confluence point where BFS
 traversal, allocator interaction, infix forwarding, OOM handling, and free-list
-invariants all meet in `cheney_forward_one`/`cheney_forward_normal`. Every one of the
-five generational complexity drivers (§4.5) is present in one module.
+invariants all meet in `cheney_forward_one`/`cheney_forward_normal`, with one
+hand-written fields/roots/scan/promote induction per invariant.
 
-(This claim was false when first written — `GC.Gen.Impl.MinorHeap` was then 802 s, and had
-been missed. It is true again now that §6.4 has brought that module down to 33 s. Unlike
-MinorHeap's, this module's cost is real proof difficulty rather than fuel escalation.)
+(November 2026.)  It now holds only the definitions and their unfolding lemmas.  The
+induction over a run is proved once, in `GC.Gen.Cheney.Induction`
+(`cheney_promote_induction` for an invariant of the Cheney state given the
+`cheney_forward_one` step, `cheney_promote_keeps` for an invariant of the major heap given
+the `promote_object` step), and every former ladder -- in `Cheney`, the
+`CheneyPreservation.*` family, `CheneyFlComplete`, `FreeListAscending`, `CheneyBFS` -- is
+an instance of it; the instances `Cheney` used to export are in `GC.Gen.Cheney.Steps`.
+This is §6.1's lever applied to the Cheney run, and it removed about 2,300 lines.
 
 ### 5.5 `GC.Gen.TwoPassEquiv.fst` (1,947 lines) — paying for a performance requirement
 
 The reference spec `update_major_pointers` rescans the whole major heap. The
 implementation scans only the just-promoted objects plus the remembered-set slots — which
 is the entire point of a generational collector, since a full rescan would make minor GC
-cost O(major heap). Proving these equal needs `ref_table_complete`,
+cost O(major heap). Proving these equal needs `ref_table_complete_with`,
 `slots_pairwise_distinct`, `promoted_entries_disjoint`, `fwd_ptrs_classified`,
 `heap_objects_dense`, a frame lemma and an effect-at-index lemma for each of the two
 passes, and disjointness reasoning across them.
@@ -762,11 +767,10 @@ Recorded so they are not re-nominated:
 - **`well_formed_heap`'s four-way split with `wf_*` extraction lemmas (§4.4).** Standard
   practice for F\* developments at this scale. Removing it would regress verification
   times, not simplify anything.
-- **The `CheneyPreservation` seven-module split.** The source states the reason outright
-  (`CheneyPreservation.fsti:4-7`): *"Separated from GC.Gen.Cheney to avoid Z3 context
-  pollution: adding val declarations to Cheney.fsti causes GC.Gen.Impl.Cheney.fst to fail
-  verification."* Merging reintroduces exactly the problem the split solved. A genuine
-  local optimum.
+- **The `CheneyPreservation` module split, and `Cheney.Steps` beside `Cheney`.** Adding
+  val declarations to `Cheney.fsti` was observed to make `GC.Gen.Impl.Cheney.fst` fail
+  verification, so the facts about a run live in separate modules (`GC.Gen.Cheney.Steps`,
+  `GC.Gen.CheneyPreservation.*`).  Merging them back into `Cheney` risks exactly that.
 - **`SweepCoalesce`'s ~2,300-line fusion proof.** If the implementation must be
   single-pass, you need either this equivalence or an equally large direct proof of the
   fused pass's own five pillars. The current architecture — reuse `Sweep`'s and

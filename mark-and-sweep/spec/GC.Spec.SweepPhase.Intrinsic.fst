@@ -36,18 +36,6 @@ let free_incremental_ok st =
   in
   FStar.Classical.forall_intro_3 aux
 
-let free_incremental_from_ok st g0 =
-  reveal_opaque (`%free_def_ok) free_def_ok;
-  let aux (g g': heap) (x: obj_addr) : Lemma
-    ((is_block g x <==> is_block g' x) /\
-     read_word g (hd_address x) == read_word g' (hd_address x) ==>
-     free_incremental_from st g0 g x == free_incremental_from st g0 g' x)
-    = FStar.Classical.move_requires (color_of_header_eq x g) g'
-  in
-  FStar.Classical.forall_intro_3 aux
-
-let free_incremental_from_fresh st g0 g = ()
-
 let well_formed_heap_with_congr free free' g =
   wf_with_parts ();
   let one (free free': free_def)
@@ -429,7 +417,7 @@ let same_heads_facts g g' =
     : Lemma (free_def_ok free ==> in_use free g' x == in_use free g x)
     = if FStar.IndefiniteDescription.strong_excluded_middle (free_def_ok free) then begin
         free_def_ok_elim free;
-        if Seq.mem x (objects zero_addr g) then in_use_header_determined free g g' x
+        if Seq.mem x (objects zero_addr g) then in_use_is_determined_from_header free g g' x
       end
   in
   FStar.Classical.forall_intro_2 vw;

@@ -3,33 +3,30 @@
 /// ---------------------------------------------------------------------------
 ///
 /// The sweep phase meets the minor collection through what counts as free.
-/// The generic minor-collection theorems (`GC.Gen.CheneyGeneric`) are stated for
-/// the idle collection, whose promoted copies are white wherever they land;
-/// the definition of free they run on is the sweep's with what is pending
-/// free fixed at the heap `g` the collection starts from
-/// (`free_incremental_from st g`: blue, or pending free in `g`).  No promoted
-/// copy is free under it, since none was a block of `g`
-/// (`free_incremental_from_fresh`), and at `g` it is `free_incremental st`.
+/// The minor collection mid-sweep runs at the sweep's phase `Sweeping st`
+/// (its promotions are allocated there: black in front of the cursor, white
+/// behind it), with the sweep's own definition of free, `free_incremental st`
+/// (blue, or white in front of the cursor: pending free).  The generic
+/// theorem (`GC.Gen.CheneyGeneric`) applies to it directly:
 ///
+///   * **The allocator's blocks are not free** at the sweep's phase
+///     (`free_incremental_allocations_not_free`): a block allocated in front
+///     of the cursor is black, one behind it is not in front of the cursor,
+///     and neither is blue -- so none is pending free.  This is
+///     `allocation_color` at work: a white copy in front of the cursor would
+///     be pending free, and freed by the sweep while reachable.
 ///   * **Step B** (`sweep_collection_shape`): the sweep phase, with the
-///     nursery's shape and the cross-generation condition for
-///     `free_incremental st`, is the minor collection's entry shape,
-///     `collection_shape_with (free_incremental_from st g)`.
-///   * **Step C** (`minor_keeps_sweep_phase`): the collection at the sweep's
-///     phase (`GC.Gen.CheneyAt.cheney_collect_spec_with_at`) keeps the sweep
-///     phase, with the same cursor and `last_fragment` and `swept_tail` the
-///     last cell at or below where it was, and the same pending-free set: new
-///     objects are never pending free and no existing header changes.
-///     Well-formedness comes from the generic theorem
-///     (`GC.Gen.CheneyGeneric.cheney_collect_with_preserves_shape`) through the
-///     painting: a promoted copy in front of the cursor is painted black,
-///     so what is non-free in the painted heap for `free_incremental` is what
-///     is non-free in the idle one for the collection's definition of free
-///     (`GC.Gen.Paint.paint_in_use`).  Its block-level facts are
-///     `minor_keeps_pending_free` and `minor_keeps_blocks`.  The shape comes by
-///     induction over the promotions (`GC.Gen.Cheney.cheney_promote_induction`),
-///     each one a promotion at the phase (`GC.Gen.SweepPhase.promote_sweep_shape`),
-///     and the pointer update keeps the walk and every header.
+///     nursery's shape and the cross-generation condition, is the minor
+///     collection's entry shape at that phase and for that definition of free.
+///   * **Step C** (`minor_keeps_sweep_phase`): the collection keeps the sweep
+///     phase, with the same cursor and `last_fragment`, `swept_tail` the last
+///     cell at or below where it was (`state_after`), and the same
+///     pending-free set: new objects are never pending free and no existing
+///     header changes.  Well-formedness is the generic theorem's; the shape is
+///     by induction over the promotions (`GC.Gen.Cheney.Induction`), each one a
+///     promotion at the phase (`GC.Gen.SweepPhase.promote_sweep_shape`), and
+///     the pointer update keeps the walk and every header.  Its block-level
+///     facts are `minor_keeps_pending_free` and `minor_keeps_blocks`.
 
 module GC.Gen.SweepPhase.Minor
 
@@ -44,62 +41,67 @@ open GC.Gen.MinorHeap
 
 module U64 = FStar.UInt64
 module GenInv = GC.Gen.HeapInvariant
-module CA = GC.Gen.CheneyAt
-module Paint = GC.Gen.Paint
 module Ph = GC.Spec.Phase
+module ST = GC.Gen.SweptTail
+module Cheney = GC.Gen.Cheney
+module Promote = GC.Gen.Promote
 
-/// The major half alone, for `free_incremental` and for the collection's
-/// definition of free.
+/// **The allocator at the sweep's phase hands out no block pending free.**
+val free_incremental_allocations_not_free (st: sweep_state)
+  : Lemma (requires U64.v st.cursor % 8 == 0)
+          (ensures Promote.allocations_not_free (Ph.Sweeping st) (free_incremental st))
+
+/// The major half alone.
 val sweep_major_shape (g: heap) (fp: U64.t) (st: sweep_state)
   : Lemma (requires sweep_phase_inv g fp st)
-          (ensures GenInv.major_shape_with (free_incremental st) g fp /\
-                   GenInv.major_shape_with (free_incremental_from st g) g fp)
+          (ensures GenInv.major_shape_with (Ph.Sweeping st) (free_incremental st) g fp)
 
-/// **Step B: the sweep phase is the minor collection's shape**, for the
-/// collection's definition of free.
+/// **Step B: the sweep phase is the minor collection's shape** at the
+/// sweep's phase.
 val sweep_collection_shape (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep_state)
   : Lemma (requires sweep_phase_inv g fp st /\
                     GenInv.minor_heap_shape minor /\
                     GenInv.minor_major_fields_not_free (free_incremental st) minor g)
-          (ensures GenInv.collection_shape_with (free_incremental_from st g) minor g fp)
-
+          (ensures GenInv.collection_shape_with (Ph.Sweeping st) (free_incremental st) minor g fp)
 
 /// The sweep state after a minor collection that left the heap `g'`: the
 /// same cursor and `last_fragment`, and `swept_tail` the last list cell at or
-/// below where it was.
+/// below where it was.  It is the phase the allocator leaves
+/// (`GC.Gen.SweptTail.phase_at`).
 let state_after (st: sweep_state) (g': heap) : GTot sweep_state =
-  { st with swept_tail = Paint.max_cell_below g' (U64.v st.swept_tail) }
+  { st with swept_tail = ST.max_cell_below g' (U64.v st.swept_tail) }
+
+/// The collection at the sweep's phase.
+let collect_at (st: sweep_state) (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
+  : GTot Promote.minor_collect_result
+  = Cheney.cheney_collect_spec_with (Ph.Sweeping st) (free_incremental st) minor g fp roots
 
 /// **Step C: a minor collection mid-sweep keeps the sweep phase**, with the
-/// same pending-free set, and keeps the minor collection's shape for its
-/// definition of free.
+/// same pending-free set, and keeps the minor collection's shape.
 val minor_keeps_sweep_phase (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep_state)
                             (roots: seq U64.t)
   : Lemma (requires sweep_phase_inv g fp st /\
                     GenInv.minor_heap_shape minor /\
                     GenInv.minor_major_fields_not_free (free_incremental st) minor g)
-          (ensures (let free = free_incremental_from st g in
-                    let (res, ph') = CA.cheney_collect_spec_with_at (Ph.Sweeping st) free minor g fp roots in
-                    let st' = state_after st (GC.Gen.Cheney.cheney_collect_spec_with free minor g fp roots).GC.Gen.Promote.mc_major in
-                    ph' == Ph.Sweeping st' /\
+          (ensures (let res = collect_at st minor g fp roots in
+                    let st' = state_after st res.Promote.mc_major in
+                    ST.phase_at (Ph.Sweeping st) res.Promote.mc_major == Ph.Sweeping st' /\
                     st'.cursor == st.cursor /\ st'.last_fragment == st.last_fragment /\
-                    sweep_phase_inv res.GC.Gen.Promote.mc_major res.GC.Gen.Promote.mc_fp st' /\
-                    (forall (x: obj_addr). pending_free st' res.GC.Gen.Promote.mc_major x == pending_free st g x) /\
-                    GenInv.collection_shape_with free res.GC.Gen.Promote.mc_minor res.GC.Gen.Promote.mc_major
-                                                 res.GC.Gen.Promote.mc_fp))
+                    sweep_phase_inv res.Promote.mc_major res.Promote.mc_fp st' /\
+                    (forall (x: obj_addr). pending_free st' res.Promote.mc_major x == pending_free st g x) /\
+                    GenInv.collection_shape_with (Ph.Sweeping st) (free_incremental st)
+                      res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp))
 
-/// **Step C, block by block.**  For the collection at the sweep's phase from
-/// `g` to `g'`, with the cursor unchanged: what is pending free is unchanged
-/// (a new object is never pending free, and no existing header changes) ...
+/// **Step C, block by block.**  For the collection from `g` to `g'`: what is
+/// pending free is unchanged (a new object is never pending free, and no
+/// existing header changes) ...
 val minor_keeps_pending_free (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep_state)
                              (roots: seq U64.t) (x: obj_addr)
   : Lemma (requires sweep_phase_inv g fp st /\
                     GenInv.minor_heap_shape minor /\
                     GenInv.minor_major_fields_not_free (free_incremental st) minor g)
-          (ensures (let free = free_incremental_from st g in
-                    let (res, _) = CA.cheney_collect_spec_with_at (Ph.Sweeping st) free minor g fp roots in
-                    let g' = res.GC.Gen.Promote.mc_major in
-                    let st' = state_after st (GC.Gen.Cheney.cheney_collect_spec_with free minor g fp roots).GC.Gen.Promote.mc_major in
+          (ensures (let g' = (collect_at st minor g fp roots).Promote.mc_major in
+                    let st' = state_after st g' in
                     st'.cursor == st.cursor /\
                     (pending_free st g x <==> pending_free st' g' x)))
 
@@ -111,14 +113,12 @@ val minor_keeps_blocks (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep_sta
   : Lemma (requires sweep_phase_inv g fp st /\
                     GenInv.minor_heap_shape minor /\
                     GenInv.minor_major_fields_not_free (free_incremental st) minor g)
-          (ensures (let free = free_incremental_from st g in
-                    let (res, _) = CA.cheney_collect_spec_with_at (Ph.Sweeping st) free minor g fp roots in
-                    let g' = res.GC.Gen.Promote.mc_major in
-                    let st' = state_after st (GC.Gen.Cheney.cheney_collect_spec_with free minor g fp roots).GC.Gen.Promote.mc_major in
+          (ensures (let g' = (collect_at st minor g fp roots).Promote.mc_major in
+                    let st' = state_after st g' in
                     (is_block g x /\ not (free_incremental st g x) ==>
                        is_block g' x /\ not (free_incremental st' g' x) /\
                        read_word g' (hd_address x) == read_word g (hd_address x)) /\
                     (is_block g' x /\ not (free_incremental st' g' x) /\
                      ~(is_block g x /\ not (free_incremental st g x)) ==>
                        (exists (m: U64.t). Seq.mem m (minor_objects minor) /\
-                          (GC.Gen.Cheney.cheney_promote minor g fp roots).GC.Gen.Promote.fwd_map m == x))))
+                          (Cheney.cheney_promote (Ph.Sweeping st) minor g fp roots).Promote.fwd_map m == x))))

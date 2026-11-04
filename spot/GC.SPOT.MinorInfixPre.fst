@@ -25,6 +25,7 @@ module Major = GC.SPOT.ConcreteMajorInfix
 module Nursery = GC.SPOT.MinorInfixHeap
 module MinorInfix = GC.SPOT.MinorInfix
 
+module FA = GC.Gen.ForwardingArray
 #set-options "--fuel 1 --ifuel 1 --z3rlimit 30"
 
 let spot_mi_roots (r: unit{Major.spot_major_room})
@@ -47,7 +48,7 @@ let spot_mi_slots (r: unit{Major.spot_major_room})
 let spot_mi_slots_index r = ()
 
 let spot_mi_fwd_array : seq U64.t =
-  Seq.create UpdatePtrs.fwd_array_size 0UL
+  Seq.create FA.fwd_array_size 0UL
 
 /// Case analysis on the two roots.
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
@@ -75,13 +76,13 @@ private let zero_not_minor_pointer ()
 private let spot_mi_fwd_array_zero ()
   : Lemma (ensures Preconditions.zero_forwarding_array spot_mi_fwd_array)
   =
-  FStar.Seq.Base.lemma_create_len UpdatePtrs.fwd_array_size 0UL;
+  FStar.Seq.Base.lemma_create_len FA.fwd_array_size 0UL;
   let aux (i: nat)
     : Lemma (ensures i < Seq.length spot_mi_fwd_array ==>
                      Seq.index spot_mi_fwd_array i == 0UL)
     =
     if i < Seq.length spot_mi_fwd_array then
-      FStar.Seq.Base.lemma_index_create UpdatePtrs.fwd_array_size 0UL i
+      FStar.Seq.Base.lemma_index_create FA.fwd_array_size 0UL i
   in
   FStar.Classical.forall_intro aux;
   Preconditions.zero_forwarding_array_intro spot_mi_fwd_array

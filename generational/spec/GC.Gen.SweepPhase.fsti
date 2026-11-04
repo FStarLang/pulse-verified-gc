@@ -220,7 +220,6 @@ val promote_sweep_shape (g: heap) (fp: U64.t) (st: sweep_state)
   : Lemma (requires sweep_shape g fp st)
           (ensures (let r = Promote.promote_object minor g obj fp wosize (SA.Sweeping st) in
                     let st' = alloc_state g fp wosize st in
-                    r.Promote.phase_out == SA.Sweeping st' /\
                     sweep_shape r.Promote.major_out r.Promote.fp_out st' /\
                     (forall (x: obj_addr). pending_free st' r.Promote.major_out x == pending_free st g x)))
 
@@ -233,6 +232,5 @@ val promote_sweep_phase (g: heap) (fp: U64.t) (st: sweep_state)
                     minor_fields_ok (free_incremental st) minor obj g)
           (ensures (let r = Promote.promote_object minor g obj fp wosize (SA.Sweeping st) in
                     let st' = alloc_state g fp wosize st in
-                    r.Promote.phase_out == SA.Sweeping st' /\
                     sweep_phase_inv r.Promote.major_out r.Promote.fp_out st' /\
                     (forall (x: obj_addr). pending_free st' r.Promote.major_out x == pending_free st g x)))

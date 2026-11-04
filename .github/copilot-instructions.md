@@ -19,9 +19,12 @@ Verified OCaml garbage collector formalized in **F\*** and **Pulse** (concurrent
   extraction target of its own: the generational collector runs this code for its
   major collections, so `generational/snapshot/` is the only checked-in C.
 - **generational/** — Minor/major generational GC with Cheney copying collection.
-  `spec/` = `GC.Gen.Base`, `GC.Gen.MinorHeap`, `GC.Gen.Cheney*`,
-  `GC.Gen.CheneyPreservation.*`, `GC.Gen.Promote*`, `GC.Gen.MinorCollectForwarding.*`,
-  `GC.Gen.Reachability*`, `GC.Gen.TwoPassEquiv*`, `GC.Gen.HeapInvariant`.
+  `spec/` = `GC.Gen.Base`, `GC.Gen.MinorHeap`, `GC.Gen.Cheney*` (definitions in
+  `GC.Gen.Cheney`, the induction over a run in `GC.Gen.Cheney.Induction`, what a run
+  keeps in `GC.Gen.Cheney.Steps`), `GC.Gen.CheneyPreservation.*`, `GC.Gen.CheneyGeneric`,
+  `GC.Gen.Promote*`, `GC.Gen.MinorCollectForwarding.*`, `GC.Gen.Reachability*`,
+  `GC.Gen.ForwardingArray` (the forwarding array and the two update passes),
+  `GC.Gen.TwoPassEquiv*`, `GC.Gen.HeapInvariant`.  No spec module imports `GC.Gen.Impl.*`.
   `impl/` = `GC.Gen.Impl`, `GC.Gen.Impl.MinorHeap`, `GC.Gen.Impl.Cheney`,
   `GC.Gen.Impl.Promote`, `GC.Gen.Impl.UpdatePtrs`. Also `ocaml-integration/` + `snapshot/`.
 - **spot/** — Small concrete "spot check" scenarios (`GC.SPOT.*`) that instantiate the
@@ -178,9 +181,15 @@ skipped during marking and during Cheney scanning.
    `GC.Gen.RefTable`).
 4. Major collection — reuses the mark-and-sweep major heap machinery.
 
-`GC.Gen.TwoPassEquiv` proves the single-pass implementation equals the two-pass
-(copy then patch) specification; `GC.Gen.CheneyCorrectness` and
-`GC.Gen.CheneyPreservation.*` carry the preservation invariants.
+`GC.Gen.TwoPassEquiv` proves the implementation's two passes (promoted objects, then
+remembered slots) equal the single pointer-update walk of the specification.  Facts
+about a Cheney run are instances of `GC.Gen.Cheney.Induction.cheney_promote_induction`
+(an invariant of the Cheney state, given the `cheney_forward_one` step) or
+`cheney_promote_keeps` (an invariant of the major heap, given the `promote_object`
+step): write the step lemma and apply the combinator rather than a new
+fields/roots/scan ladder.  `GC.Gen.Cheney.Steps` and `GC.Gen.CheneyPreservation.*`
+hold the instances; `GC.Gen.CheneyGeneric` proves the collection keeps
+`collection_shape_with free`.
 
 ### End-to-End Correctness (mark-and-sweep/)
 `GC.Spec.Correctness` proves five pillars: well-formedness preservation,
@@ -352,7 +361,7 @@ the first three already wired into every Makefile:
   - `aligned_plus_mul8 base k` — `(base + k * 8) % 8 == 0` from `base % 8 == 0`
 
   Goal shapes that reliably blow up, and their fixes:
-  1. `n - 1 >= 0` / `n - 1 << n` at a recursive call → a helper carrying the facts in its *result type*, e.g. `dec_fuel (fuel: nat{fuel >= 1}) : (r: nat{r == fuel - 1 /\ r << fuel})` (`GC.Gen.Cheney`), or `dec_field_idx` (`GC.Gen.CheneyPreservation.Fields`) for an `if i < n then n - i else 0` measure.
+  1. `n - 1 >= 0` / `n - 1 << n` at a recursive call → a helper carrying the facts in its *result type*, e.g. `dec_fuel (fuel: nat{fuel >= 1}) : (r: nat{r == fuel - 1 /\ r << fuel})`.  (Over a Cheney run, use `GC.Gen.Cheney.Induction` instead: its recursions run in an empty context, which is what these helpers worked around.)
   2. `UInt.size a 64` for `U64.uint_to_t a` → `GC.Spec.Base.mk_hp_addr`, or a module-local `Pure` wrapper such as `mk_u64_lt_heap`.
   3. `(base + k * 8) % 8 == 0` → `GC.Spec.Base.aligned_plus_mul8`; an `SMTPat`-carrying module-local wrapper works well when the coercion appears many times (`aligned_step`/`aligned_step8` in `GC.Spec.Allocator.Dense`). Note `(x + 8)` does *not* match a pattern written `(base + k * 8)`, so both variants are needed.
   4. Two distinct aligned addresses being at least a word apart → an `aligned_distinct`/`aligned_apart` helper, needed before nearly every `read_write_different`.

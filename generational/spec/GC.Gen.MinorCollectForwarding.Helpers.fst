@@ -18,6 +18,8 @@ open GC.Gen.Promote
 open GC.Gen.Reachability
 open GC.Gen.Cheney
 
+open GC.Gen.Cheney.Induction
+open GC.Gen.Cheney.Steps
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module Mark = GC.Spec.Mark
 module PromUpdate = GC.Gen.PromoteUpdate
@@ -185,9 +187,6 @@ let rec resolve_roots_mem_inv h rts e =
       (fun (rr: U64.t) -> Seq.mem rr rts /\ HeapGraph.resolve_field h rr == e) rr
   end
 
-let rec resolve_roots_congr h1 h2 rts =
-  if Seq.length rts = 0 then ()
-  else resolve_roots_congr h1 h2 (Seq.tail rts)
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
@@ -213,12 +212,12 @@ let result_post_reachable_refl_resolved post_major free rts rr w =
   resolve_roots_mem post_major rts rr;
   result_post_reachable_refl_direct post_major free (resolve_roots post_major rts) w
 
-let post_minor_reachable_refl_from_root
+let post_minor_reachable_refl_from_root (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
   (roots: seq U64.t) (rr: U64.t) (w: U64.t)
   =
-    let prom = cheney_promote minor major fp roots in
-    let res = cheney_collect_spec_with free minor major fp roots in
+    let prom = cheney_promote ph minor major fp roots in
+    let res = cheney_collect_spec_with ph free minor major fp roots in
     result_post_reachable_refl_resolved res.mc_major free
       (rewrite_roots roots prom.fwd_map) rr w
 #pop-options
@@ -513,17 +512,17 @@ let vertex_resolves_to_itself h free w =
   SpecObject.resolve_non_infix (w <: obj_addr) h
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
-let cheney_promote_preserves_old_major_field_context
+let cheney_promote_preserves_old_major_field_context (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
   (roots: seq U64.t) (src: obj_addr) (j: nat)
   =
-    GenInv.collection_shape_with_elim free minor major fp;
-    GenInv.major_shape_with_elim free major fp;
+    GenInv.collection_shape_with_elim ph free minor major fp;
+    GenInv.major_shape_with_elim ph free major fp;
     GenInv.minor_heap_shape_elim minor;
-    let prom = cheney_promote minor major fp roots in
-    cheney_promote_preserves_objects minor major fp roots;
-    CheneyPres.cheney_promote_frame_old_header minor major fp roots src;
-    CheneyPres.cheney_promote_frame_old_fields minor major fp roots src j;
+    let prom = cheney_promote ph minor major fp roots in
+    cheney_promote_preserves_objects ph minor major fp roots;
+    Frame.cheney_promote_frame_old_header ph minor major fp roots src;
+    Frame.cheney_promote_frame_old_fields ph minor major fp roots src j;
     color_of_header_eq src major prom.major_final;
     wosize_of_object_spec src major;
     wosize_of_object_spec src prom.major_final;
@@ -558,25 +557,25 @@ private let infix_wosize_lt_parent (h p w wp: int)
 #pop-options
 
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
-let fwd_image_resolves
+let fwd_image_resolves (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
   (roots: seq U64.t) (x: U64.t)
   =
-    let prom = cheney_promote minor major fp roots in
+    let prom = cheney_promote ph minor major fp roots in
     let g = prom.major_final in
-    let updated = (cheney_collect_spec_with free minor major fp roots).mc_major in
+    let updated = (cheney_collect_spec_with ph free minor major fp roots).mc_major in
     let rv = resolve_minor minor x in
-    GenInv.collection_shape_with_elim free minor major fp;
-    GenInv.major_shape_with_elim free major fp;
+    GenInv.collection_shape_with_elim ph free minor major fp;
+    GenInv.major_shape_with_elim ph free major fp;
     GenInv.minor_heap_shape_elim minor;
-    cheney_promote_preserves_wfh_part1 minor major fp roots;
-    cheney_promote_preserves_wfh_part4 minor major fp roots;
-    Forwarding.cheney_promote_fwd_noninfix_targets_valid minor major fp roots;
-    Forwarding.cheney_promote_fwd_valid_or_infix minor major fp roots;
+    cheney_promote_preserves_wfh_part1 ph minor major fp roots;
+    cheney_promote_preserves_wfh_part4 ph minor major fp roots;
+    Forwarding.cheney_promote_fwd_noninfix_targets_valid ph minor major fp roots;
+    Forwarding.cheney_promote_fwd_valid_or_infix ph minor major fp roots;
     let t : obj_addr = prom.fwd_map x in
     if is_infix_in_minor minor x then begin
-      Forwarding.cheney_promote_fwd_infix_targets_wf minor major fp roots;
-      Forwarding.cheney_promote_fwd_infix_delta minor major fp roots;
+      Forwarding.cheney_promote_fwd_infix_targets_wf ph minor major fp roots;
+      Forwarding.cheney_promote_fwd_infix_delta ph minor major fp roots;
       infix_parent_in_minor_objects minor x;
       minor_objects_not_infix minor rv;
       assert (rv == infix_parent minor x);
@@ -598,7 +597,7 @@ let fwd_image_resolves
         (U64.v (wosize_of_object (U64.uint_to_t (U64.v t - U64.v (wosize_of_object t g) * 8)) g))
     end else begin
       resolve_minor_non_infix minor x;
-      CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots;
+      CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects ph minor major fp roots;
       assert (~(is_infix t g));
       resolve_non_infix t g;
       objects_addresses_gt_start zero_addr g t;
@@ -671,42 +670,42 @@ let major_fields_covered_from_slots minor major free roots slots n =
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
-let minor_field_infix_target_forwarded
+let minor_field_infix_target_forwarded (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src: U64.t) (j: nat)
   = assert (CheneyBFS.fwd_covers_infix_fields minor
-              (cheney_promote minor major fp roots).fwd_map)
+              (cheney_promote ph minor major fp roots).fwd_map)
 
-let major_field_infix_target_forwarded
+let major_field_infix_target_forwarded (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
   (roots slots: seq U64.t) (n: nat) (src: obj_addr) (j: nat)
   = major_field_target_in_roots major free roots slots n src j;
     assert (CheneyBFS.fwd_covers_infix_roots minor
-              (cheney_promote minor major fp roots).fwd_map roots)
+              (cheney_promote ph minor major fp roots).fwd_map roots)
 #pop-options
 
-let post_shape_with free minor major fp roots =
-  let res = cheney_collect_spec_with free minor major fp roots in
-  CE.cheney_collect_with_preserves_shape free minor major fp roots;
-  GenInv.collection_shape_with_elim free res.mc_minor res.mc_major res.mc_fp;
-  GenInv.major_shape_with_elim free res.mc_major res.mc_fp
+let post_shape_with ph free minor major fp roots =
+  let res = cheney_collect_spec_with ph free minor major fp roots in
+  CE.cheney_collect_with_preserves_shape ph free minor major fp roots;
+  GenInv.collection_shape_with_elim ph free res.mc_minor res.mc_major res.mc_fp;
+  GenInv.major_shape_with_elim ph free res.mc_major res.mc_fp
 
 let part4_non_infix g h = ()
 
-let image_not_free free minor major fp roots m x =
-  let prom = cheney_promote minor major fp roots in
-  GenInv.collection_shape_with_elim free minor major fp;
-  GenInv.major_shape_with_elim free major fp;
+let image_not_free ph free minor major fp roots m x =
+  let prom = cheney_promote ph minor major fp roots in
+  GenInv.collection_shape_with_elim ph free minor major fp;
+  GenInv.major_shape_with_elim ph free major fp;
   GenInv.minor_heap_shape_elim minor;
-  CE.cheney_promote_image_not_free free minor major fp roots m x;
-  cheney_promote_preserves_wfh_part1 minor major fp roots;
+  CE.cheney_promote_image_not_free ph free minor major fp roots m x;
+  cheney_promote_preserves_wfh_part1 ph minor major fp roots;
   CE.update_walk_keeps_in_use free prom.major_final (in_use free prom.major_final) prom.fwd_map x
 
-let old_not_free free minor major fp roots x =
-  let prom = cheney_promote minor major fp roots in
-  GenInv.collection_shape_with_elim free minor major fp;
-  GenInv.major_shape_with_elim free major fp;
+let old_not_free ph free minor major fp roots x =
+  let prom = cheney_promote ph minor major fp roots in
+  GenInv.collection_shape_with_elim ph free minor major fp;
+  GenInv.major_shape_with_elim ph free major fp;
   GenInv.minor_heap_shape_elim minor;
-  CE.cheney_promote_keeps_in_use free minor major fp roots x;
-  cheney_promote_preserves_wfh_part1 minor major fp roots;
+  CE.cheney_promote_keeps_in_use ph free minor major fp roots x;
+  cheney_promote_preserves_wfh_part1 ph minor major fp roots;
   CE.update_walk_keeps_in_use free prom.major_final (in_use free prom.major_final) prom.fwd_map x

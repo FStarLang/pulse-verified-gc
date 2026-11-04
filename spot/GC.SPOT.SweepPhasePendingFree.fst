@@ -27,6 +27,7 @@ module GC.SPOT.SweepPhasePendingFree
 
 open FStar.Seq
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
@@ -49,7 +50,6 @@ module SPM = GC.Gen.SweepPhase.Minor
 module AC = GC.Spec.Allocator.Cursor
 module SA = GC.Spec.Allocator
 module Ph = GC.Spec.Phase
-module CA = GC.Gen.CheneyAt
 module Promote = GC.Gen.Promote
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
@@ -533,10 +533,10 @@ let stage7 (r: unit{room})
 /// **The SPOT.**  A heap in the sweep phase with an object pending free, `P`, whose
 /// field points at `G`, an object of the heap the sweep started on, which the
 /// sweep has merged into the free block at the start of the heap.  The minor
-/// collection's shape holds for the collection's definition of free
-/// (`free_incremental_from`), and
-/// the minor collection at the sweep's phase keeps the sweep phase, with `P`
-/// still pending free.
+/// collection's shape holds at the sweep's phase for the sweep's definition
+/// of free (`free_incremental`), and the minor collection at the sweep's
+/// phase keeps the sweep phase, with `P` still pending free, and leaves the
+/// phase the allocator holds at the sweep state after it.
 #push-options "--z3rlimit 20"
 let sweep_phase_pending_free_spot (r: unit{room}) (m: minor_state) (roots: seq U64.t)
   : Lemma (let g = g5 r in
@@ -551,12 +551,10 @@ let sweep_phase_pending_free_spot (r: unit{room}) (m: minor_state) (roots: seq U
            ~(Seq.mem q (objects zero_addr g)) /\
            pos g zero_addr /\ blue_at g zero_addr /\
            U64.v zero_addr < U64.v q /\ U64.v q < W.bnext g zero_addr /\
-           GenInv.collection_shape_with (free_incremental_from st g) (minor_reset m) g fp /\
-           (let free = free_incremental_from st g in
-            let (res, ph') = CA.cheney_collect_spec_with_at (Ph.Sweeping st) free (minor_reset m) g fp roots in
-            let st' = SPM.state_after st
-                        (GC.Gen.Cheney.cheney_collect_spec_with free (minor_reset m) g fp roots).Promote.mc_major in
-            ph' == Ph.Sweeping st' /\
+           GenInv.collection_shape_with (Ph.Sweeping st) (free_incremental st) (minor_reset m) g fp /\
+           (let res = SPM.collect_at st (minor_reset m) g fp roots in
+            let st' = SPM.state_after st res.Promote.mc_major in
+            GC.Gen.SweptTail.phase_at (Ph.Sweeping st) res.Promote.mc_major == Ph.Sweeping st' /\
             sweep_phase_inv res.Promote.mc_major res.Promote.mc_fp st' /\
             pending_free st' res.Promote.mc_major p))
   = stage5 r; stage6 r; stage7 r;
@@ -564,9 +562,8 @@ let sweep_phase_pending_free_spot (r: unit{room}) (m: minor_state) (roots: seq U
     let fp = fp5 r in
     let st = st5 r in
     SPM.sweep_major_shape g fp st;
-    GenInv.collection_shape_with_after_minor_reset (free_incremental st) m g fp;
-    GenInv.collection_shape_with_elim (free_incremental st) (minor_reset m) g fp;
-    GenInv.collection_shape_with_after_minor_reset (free_incremental_from st g) m g fp;
+    GenInv.collection_shape_with_after_minor_reset (Ph.Sweeping st) (free_incremental st) m g fp;
+    GenInv.collection_shape_with_elim (Ph.Sweeping st) (free_incremental st) (minor_reset m) g fp;
     GenInv.minor_reset_heap_shape m;
     SPM.minor_keeps_sweep_phase (minor_reset m) g fp st roots
 #pop-options

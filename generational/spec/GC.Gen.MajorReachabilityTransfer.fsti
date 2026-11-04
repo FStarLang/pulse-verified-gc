@@ -49,6 +49,7 @@ val reachable_transfer (g1 g2: graph_state) (live: vertex_id -> prop)
 /// ---------------------------------------------------------------------------
 
 open GC.Spec.Base
+open GC.Spec.Phase
 module HM = GC.Spec.HeapModel
 module HG = GC.Spec.HeapGraph
 module MS = GC.Spec.Correctness
@@ -109,11 +110,11 @@ let end_to_end_isomorphism
   (minor: GC.Gen.MinorHeap.minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
   (final_major: heap) (final_roots: Seq.seq U64.t) : prop =
   CG.reachable_subgraph_isomorphism
-    (MinorFwd.normal_src_reachable minor major fp SF.free_stw roots)
+    (MCFH.normal_src_reachable Idle minor major fp SF.free_stw roots)
     (MCFH.result_post_reachable final_major SF.free_stw final_roots)
-    (MinorFwd.normal_src_edge minor major fp SF.free_stw roots)
+    (MinorFwd.normal_src_edge Idle minor major fp SF.free_stw roots)
     (MCFH.result_post_edge final_major SF.free_stw)
-    (GC.Gen.Cheney.cheney_promote minor major fp roots).fwd_map
+    (GC.Gen.Cheney.cheney_promote Idle minor major fp roots).fwd_map
 
 /// Compose the minor collector's isomorphism with the major collection.
 /// `darkened` is the heap the major collection actually starts from -- the
@@ -125,7 +126,7 @@ val end_to_end_isomorphism_intro
   (darkened: heap) (droots: Seq.seq obj_addr) (final_major: heap)
   : Lemma
       (requires
-        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop Idle
           minor major fp SF.free_stw roots post_major post_roots /\
         HM.create_graph darkened == HM.create_graph post_major /\
         major_transfer_hyp darkened final_major droots /\

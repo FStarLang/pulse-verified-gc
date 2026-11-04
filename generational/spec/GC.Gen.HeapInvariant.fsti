@@ -216,14 +216,16 @@ val collection_heap_shape_after_minor_reset
 /// colour facts (`collection_heap_shape_as_free_stw`,
 /// `collection_heap_shape_of_free_stw`).
 
-/// The major half: the definition of free is admissible (`free_def_ok`), and
-/// the walk, the free list and the pointer clauses of the non-free blocks
+/// The major half: the definition of free is admissible (`free_def_ok`, and
+/// the blocks the allocator creates are not free: `allocations_not_free`),
+/// and the walk, the free list and the pointer clauses of the non-free blocks
 /// hold.
 [@@"opaque_to_smt"]
-val major_shape_with (free: free_def) (major: heap) (fp: U64.t) : prop
+val major_shape_with (ph: gc_phase) (free: free_def) (major: heap) (fp: U64.t) : prop
 
-val major_shape_with_intro (free: free_def) (major: heap) (fp: U64.t)
+val major_shape_with_intro (ph: gc_phase) (free: free_def) (major: heap) (fp: U64.t)
   : Lemma (requires free_def_ok free /\
+                    allocations_not_free ph free /\
                     well_formed_heap_with free major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
@@ -236,11 +238,12 @@ val major_shape_with_intro (free: free_def) (major: heap) (fp: U64.t)
                     Seq.length (objects zero_addr major) > 0 /\
                     SweepInv.fp_valid fp major /\
                     GC.Spec.FreeList.fp_in_heap fp major)
-          (ensures major_shape_with free major fp)
+          (ensures major_shape_with ph free major fp)
 
-val major_shape_with_elim (free: free_def) (major: heap) (fp: U64.t)
-  : Lemma (requires major_shape_with free major fp)
+val major_shape_with_elim (ph: gc_phase) (free: free_def) (major: heap) (fp: U64.t)
+  : Lemma (requires major_shape_with ph free major fp)
           (ensures free_def_ok free /\
+                   allocations_not_free ph free /\
                    (forall (g: heap) (x: obj_addr). {:pattern (in_use free g x)}
                       in_use free g x ==> Seq.mem x (objects zero_addr g) /\ ~(is_blue x g)) /\
                    well_formed_heap_with free major /\
@@ -287,20 +290,20 @@ val minor_major_fields_not_free_stw (minor: minor_state) (major: heap)
 
 /// The minor collection's entry shape given what counts as free.
 [@@"opaque_to_smt"]
-val collection_shape_with (free: free_def) (minor: minor_state) (major: heap)
+val collection_shape_with (ph: gc_phase) (free: free_def) (minor: minor_state) (major: heap)
   (fp: U64.t) : prop
 
-val collection_shape_with_intro (free: free_def) (minor: minor_state) (major: heap)
+val collection_shape_with_intro (ph: gc_phase) (free: free_def) (minor: minor_state) (major: heap)
   (fp: U64.t)
-  : Lemma (requires major_shape_with free major fp /\
+  : Lemma (requires major_shape_with ph free major fp /\
                     minor_heap_shape minor /\
                     minor_major_fields_not_free free minor major)
-          (ensures collection_shape_with free minor major fp)
+          (ensures collection_shape_with ph free minor major fp)
 
-val collection_shape_with_elim (free: free_def) (minor: minor_state) (major: heap)
+val collection_shape_with_elim (ph: gc_phase) (free: free_def) (minor: minor_state) (major: heap)
   (fp: U64.t)
-  : Lemma (requires collection_shape_with free minor major fp)
-          (ensures major_shape_with free major fp /\
+  : Lemma (requires collection_shape_with ph free minor major fp)
+          (ensures major_shape_with ph free major fp /\
                    minor_heap_shape minor /\
                    minor_major_fields_not_free free minor major)
 
@@ -309,30 +312,30 @@ val collection_shape_with_elim (free: free_def) (minor: minor_state) (major: hea
 /// `major_heap_shape` is the `free_stw` shape plus the two colour facts.
 val major_heap_shape_as_free_stw (major: heap) (fp: U64.t)
   : Lemma (requires major_heap_shape major fp)
-          (ensures major_shape_with free_stw major fp /\
+          (ensures major_shape_with Idle free_stw major fp /\
                    Mark.no_black_objects major /\
                    SweepInv.no_gray_objects major)
 
 val major_heap_shape_of_free_stw (major: heap) (fp: U64.t)
-  : Lemma (requires major_shape_with free_stw major fp /\
+  : Lemma (requires major_shape_with Idle free_stw major fp /\
                     Mark.no_black_objects major /\
                     SweepInv.no_gray_objects major)
           (ensures major_heap_shape major fp)
 
 val collection_heap_shape_as_free_stw (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma (requires collection_heap_shape minor major fp)
-          (ensures collection_shape_with free_stw minor major fp /\
+          (ensures collection_shape_with Idle free_stw minor major fp /\
                    Mark.no_black_objects major /\
                    SweepInv.no_gray_objects major)
 
 val collection_heap_shape_of_free_stw (minor: minor_state) (major: heap) (fp: U64.t)
-  : Lemma (requires collection_shape_with free_stw minor major fp /\
+  : Lemma (requires collection_shape_with Idle free_stw minor major fp /\
                     Mark.no_black_objects major /\
                     SweepInv.no_gray_objects major)
           (ensures collection_heap_shape minor major fp)
 
 /// The reset nursery makes the minor half vacuous, for any definition of free.
 val collection_shape_with_after_minor_reset
-  (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t)
-  : Lemma (requires major_shape_with free major fp)
-          (ensures collection_shape_with free (minor_reset minor) major fp)
+  (ph: gc_phase) (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t)
+  : Lemma (requires major_shape_with ph free major fp)
+          (ensures collection_shape_with ph free (minor_reset minor) major fp)

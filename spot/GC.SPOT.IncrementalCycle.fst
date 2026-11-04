@@ -20,6 +20,7 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
@@ -40,7 +41,7 @@ fn incremental_cycle_spot
   (gh: gen_heap_t)
   (roots: array U64.t) (nroots: SZ.t)
   (fwd_arr: array U64.t)
-  (queue: larray U64.t CheneyImpl.queue_size)
+  (queue: larray U64.t GC.Gen.ForwardingArray.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
   (st: gray_stack)
   requires gc_state gh 'd 'b 's 'fp Ph.Idle **
@@ -51,7 +52,7 @@ fn incremental_cycle_spot
            is_gray_stack st 'st **
            pure (gen_gc_stack_budget 'rs 'st (stack_capacity st) /\
                  SZ.v nroots == Seq.length 'rs /\
-                 Seq.length 'farr == UpdatePtrs.fwd_array_size /\
+                 Seq.length 'farr == GC.Gen.ForwardingArray.fwd_array_size /\
                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                  RT.ref_table_sound 's 'sl (SZ.v nslots) /\
                  RT.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\

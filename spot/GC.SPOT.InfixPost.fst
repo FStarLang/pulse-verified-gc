@@ -5,6 +5,7 @@ module Seq = FStar.Seq
 
 open FStar.Seq
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -53,7 +54,7 @@ private let post_roots_mem_q
   =
   let q = InfixMajor.spot_q r in
   let roots = InfixPre.spot_infix_roots r in
-  let prom = Cheney.cheney_promote
+  let prom = Cheney.cheney_promote Idle
     InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
     (InfixMajor.spot_infix_fp r) roots in
   let res = Cheney.cheney_collect_spec

@@ -5,6 +5,7 @@ module Seq = FStar.Seq
 
 open FStar.Seq
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -137,7 +138,7 @@ let spot_promote_a_success (r: unit{ConcreteMajor.spot_major_room})
   assert (U64.v ((SpecAlloc.alloc_spec major fp 1 (Promote.promoted_tag ConcreteMinor.spot_minor2 Layout.a_minor)).SpecAlloc.obj_out) >= U64.v fp);
   assert (fp <> 0UL);
   Promote.promote_object_success
-    ConcreteMinor.spot_minor2 major Layout.a_minor fp 1;
+    ConcreteMinor.spot_minor2 major Layout.a_minor fp 1 Idle;
   assert ((Promote.promote_object
     ConcreteMinor.spot_minor2 major Layout.a_minor fp 1 Promote.Idle).Promote.new_addr ==
     (SpecAlloc.alloc_spec major fp 1 (Promote.promoted_tag ConcreteMinor.spot_minor2 Layout.a_minor)).SpecAlloc.obj_out)
@@ -187,7 +188,7 @@ let spot_promote_a_to_free_obj (r: unit{ConcreteMajor.spot_major_room})
   assert (U64.v ((SpecAlloc.alloc_spec major fp 1 (Promote.promoted_tag ConcreteMinor.spot_minor2 Layout.a_minor)).SpecAlloc.obj_out)
           == U64.v fp + (ConcreteMajor.spot_free_wosize r - 1) * 8);
   Promote.promote_object_success
-    ConcreteMinor.spot_minor2 major Layout.a_minor fp 1;
+    ConcreteMinor.spot_minor2 major Layout.a_minor fp 1 Idle;
   assert ((Promote.promote_object
     ConcreteMinor.spot_minor2 major Layout.a_minor fp 1 Promote.Idle).Promote.new_addr ==
     (SpecAlloc.alloc_spec major fp 1 (Promote.promoted_tag ConcreteMinor.spot_minor2 Layout.a_minor)).SpecAlloc.obj_out);
@@ -201,7 +202,7 @@ let forward_a_from_initial_nonzero (r: unit{ConcreteMajor.spot_major_room})
         { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
           Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
           Cheney.cs_fwd = Promote.empty_forwarding;
-          Cheney.cs_queue = Seq.empty } in
+          Cheney.cs_queue = Seq.empty; Cheney.cs_phase = Idle } in
        (Cheney.cheney_forward_one
           ConcreteMinor.spot_minor2 cs0 Layout.a_minor).Cheney.cs_fwd
           Layout.a_minor <> 0UL))
@@ -212,7 +213,7 @@ let forward_a_from_initial_nonzero (r: unit{ConcreteMajor.spot_major_room})
     { Cheney.cs_major = major;
       Cheney.cs_fp = fp;
       Cheney.cs_fwd = Promote.empty_forwarding;
-      Cheney.cs_queue = Seq.empty } in
+      Cheney.cs_queue = Seq.empty; Cheney.cs_phase = Idle } in
   ConcreteMinor.spot_minor_two_object_layout ();
   ConcreteMinor.spot_minor_a_not_infix ();
   assert (cs0.Cheney.cs_fwd Layout.a_minor == 0UL);
@@ -237,7 +238,7 @@ let forward_roots_a_nonzero (r: unit{ConcreteMajor.spot_major_room})
         { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
           Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
           Cheney.cs_fwd = Promote.empty_forwarding;
-          Cheney.cs_queue = Seq.empty } in
+          Cheney.cs_queue = Seq.empty; Cheney.cs_phase = Idle } in
        let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
        (Cheney.cheney_forward_roots
           ConcreteMinor.spot_minor2 cs0 roots 0).Cheney.cs_fwd
@@ -249,7 +250,7 @@ let forward_roots_a_nonzero (r: unit{ConcreteMajor.spot_major_room})
     { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
       Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
       Cheney.cs_fwd = Promote.empty_forwarding;
-      Cheney.cs_queue = Seq.empty } in
+      Cheney.cs_queue = Seq.empty; Cheney.cs_phase = Idle } in
   ThreeObjects.spot_roots_len c;
   ThreeObjects.spot_roots_index_c c;
   ThreeObjects.spot_roots_index_a c;
@@ -272,7 +273,7 @@ let forward_roots_cover_concrete_roots (r: unit{ConcreteMajor.spot_major_room})
         { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
           Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
           Cheney.cs_fwd = Promote.empty_forwarding;
-          Cheney.cs_queue = Seq.empty } in
+          Cheney.cs_queue = Seq.empty; Cheney.cs_phase = Idle } in
        let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
        CheneyBFS.fwd_covers_roots ConcreteMinor.spot_minor2
          (Cheney.cheney_forward_roots
@@ -287,7 +288,7 @@ let forward_roots_cover_concrete_roots (r: unit{ConcreteMajor.spot_major_room})
     { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
       Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
       Cheney.cs_fwd = Promote.empty_forwarding;
-      Cheney.cs_queue = Seq.empty } in
+      Cheney.cs_queue = Seq.empty; Cheney.cs_phase = Idle } in
   let cs1 = Cheney.cheney_forward_roots ConcreteMinor.spot_minor2 cs0 roots 0 in
   forward_roots_a_nonzero r;
   let aux (root: U64.t)
@@ -374,7 +375,7 @@ let scan_fwd_closed_concrete (r: unit{ConcreteMajor.spot_major_room})
         { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
           Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
           Cheney.cs_fwd = Promote.empty_forwarding;
-          Cheney.cs_queue = Seq.empty } in
+          Cheney.cs_queue = Seq.empty; Cheney.cs_phase = Idle } in
        let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
        let cs1 = Cheney.cheney_forward_roots ConcreteMinor.spot_minor2 cs0 roots 0 in
        CheneyBFS.fwd_closed ConcreteMinor.spot_minor2
@@ -390,7 +391,7 @@ let scan_fwd_closed_concrete (r: unit{ConcreteMajor.spot_major_room})
     { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
       Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
       Cheney.cs_fwd = Promote.empty_forwarding;
-      Cheney.cs_queue = Seq.empty } in
+      Cheney.cs_queue = Seq.empty; Cheney.cs_phase = Idle } in
   let cs1 = Cheney.cheney_forward_roots ConcreteMinor.spot_minor2 cs0 roots 0 in
   let cs2 = Cheney.cheney_scan ConcreteMinor.spot_minor2 cs1 0
     (Cheney.cheney_fuel ConcreteMinor.spot_minor2) in
@@ -431,7 +432,7 @@ let spot_concrete_no_oom (r: unit{ConcreteMajor.spot_major_room})
   GenInv.minor_heap_shape_elim ConcreteMinor.spot_minor2;
   forward_roots_cover_concrete_roots r;
   scan_fwd_closed_concrete r;
-  CheneyBFS.cheney_no_oom_from_loop_posts
+  CheneyBFS.cheney_no_oom_from_loop_posts Idle
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)
@@ -443,7 +444,7 @@ let forward_roots_b_zero (r: unit{ConcreteMajor.spot_major_room})
         { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
           Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
           Cheney.cs_fwd = Promote.empty_forwarding;
-          Cheney.cs_queue = Seq.empty } in
+          Cheney.cs_queue = Seq.empty; Cheney.cs_phase = Idle } in
        let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
        (Cheney.cheney_forward_roots
           ConcreteMinor.spot_minor2 cs0 roots 0).Cheney.cs_fwd
@@ -455,7 +456,7 @@ let forward_roots_b_zero (r: unit{ConcreteMajor.spot_major_room})
     { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
       Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
       Cheney.cs_fwd = Promote.empty_forwarding;
-      Cheney.cs_queue = Seq.empty } in
+      Cheney.cs_queue = Seq.empty; Cheney.cs_phase = Idle } in
   ThreeObjects.spot_roots_len c;
   ThreeObjects.spot_roots_index_c c;
   ThreeObjects.spot_roots_index_a c;
@@ -480,7 +481,7 @@ let scan_after_roots_b_zero (r: unit{ConcreteMajor.spot_major_room})
         { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
           Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
           Cheney.cs_fwd = Promote.empty_forwarding;
-          Cheney.cs_queue = Seq.empty } in
+          Cheney.cs_queue = Seq.empty; Cheney.cs_phase = Idle } in
        let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
        let cs_roots =
          Cheney.cheney_forward_roots ConcreteMinor.spot_minor2 cs0 roots 0 in
@@ -496,7 +497,7 @@ let scan_after_roots_b_zero (r: unit{ConcreteMajor.spot_major_room})
     { Cheney.cs_major = major;
       Cheney.cs_fp = fp;
       Cheney.cs_fwd = Promote.empty_forwarding;
-      Cheney.cs_queue = Seq.empty } in
+      Cheney.cs_queue = Seq.empty; Cheney.cs_phase = Idle } in
   ThreeObjects.spot_roots_len c;
   ThreeObjects.spot_roots_index_c c;
   ThreeObjects.spot_roots_index_a c;
@@ -574,7 +575,7 @@ let spot_concrete_a_forwarding_free_obj
     { Cheney.cs_major = major;
       Cheney.cs_fp = fp;
       Cheney.cs_fwd = Promote.empty_forwarding;
-      Cheney.cs_queue = Seq.empty } in
+      Cheney.cs_queue = Seq.empty; Cheney.cs_phase = Idle } in
   ThreeObjects.spot_roots_len c;
   ThreeObjects.spot_roots_index_c c;
   ThreeObjects.spot_roots_index_a c;
@@ -637,7 +638,7 @@ let spot_concrete_a_forwarding_free_obj
     Layout.a_minor) ==
     U64.v (ConcreteMajor.spot_free_obj r)
       + (ConcreteMajor.spot_free_wosize r - 1) * 8);
-  assert (U64.v ((Cheney.cheney_promote
+  assert (U64.v ((Cheney.cheney_promote Idle
     ConcreteMinor.spot_minor2 major fp roots).fwd_map Layout.a_minor) ==
     U64.v (ConcreteMajor.spot_free_obj r)
       + (ConcreteMajor.spot_free_wosize r - 1) * 8)

@@ -20,6 +20,7 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
@@ -50,9 +51,9 @@ module RT = GC.Gen.RefTable
 module CV = GC.Gen.CheneyGeneric
 module Alloc = GC.Impl.Allocator
 module Ph = GC.Spec.Phase
-module Paint = GC.Gen.Paint
-module CA = GC.Gen.CheneyAt
+module ST = GC.Gen.SweptTail
 
+module FA = GC.Gen.ForwardingArray
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
 /// ---------------------------------------------------------------------------
@@ -94,20 +95,6 @@ let roots_match_stack (g: heap) (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) : 
   (forall (r: obj_addr). Seq.mem (r <: U64.t) roots ==>
      Seq.mem (SpecObject.resolve_object r g) st) /\
   (forall (r: obj_addr). Seq.mem r st ==> MBP.root_named g roots r)
-
-let roots_match_stack_root_is_val_addr
-  (g: heap) (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) (r: U64.t)
-  : Lemma
-      (requires roots_match_stack g roots st /\ Seq.mem r roots)
-      (ensures is_val_addr r)
-  = ()
-
-let roots_match_stack_root_in_stack
-  (g: heap) (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) (r: obj_addr)
-  : Lemma
-      (requires roots_match_stack g roots st /\ Seq.mem (r <: U64.t) roots)
-      (ensures Seq.mem (SpecObject.resolve_object r g) st)
-  = ()
 
 let gen_gc_prepared_state
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
@@ -159,7 +146,7 @@ val gen_gc_major_precondition_elim
       (requires
         GenInv.collection_heap_shape minor major fp /\
         MinorFwd.roots_valid_for_minor_collection minor major roots /\
-        CheneyBFS.cheney_no_oom minor major fp roots /\
+        CheneyBFS.cheney_no_oom Idle minor major fp roots /\
         gen_gc_stack_budget roots st cap)
       (ensures
         (let result = CheneySpec.cheney_collect_spec minor major fp roots in
@@ -278,10 +265,10 @@ let gen_gc_reachable_subgraph_isomorphism_post
   (ok ==>
    MRT.end_to_end_isomorphism minor major fp roots final_major
      (MCFH.resolve_roots result.mc_major roots_out) /\
-   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop Idle
      minor major fp SpecFields.free_stw roots result.mc_major
      (MCFH.resolve_roots result.mc_major roots_out) /\
-   MinorFwd.normal_result_non_pointer_fields_preserved_prop
+   MinorFwd.normal_result_non_pointer_fields_preserved_prop Idle
      minor major fp SpecFields.free_stw roots result.mc_major /\
    SpecGCPost.major_gc_live_subgraph_isomorphism
      (fst prepared) final_major (snd prepared))
@@ -329,15 +316,19 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 /// (Cheney BFS), rewrites the promoted objects' fields and the remembered
 /// slots, rewrites the roots and resets the nursery.
 ///
-/// The contract is stated for a definition `free` of what counts as free in
-/// the major heap (`GC.Spec.Fields.free_def`), supplied by the caller as a
-/// ghost argument.  The non-free blocks point only to non-free blocks
+/// The contract is stated for the collector's phase `ph` the collection runs
+/// at -- its promotions are allocated there, with the colour the phase gives
+/// a new object -- and a definition `free` of what counts as free in the
+/// major heap (`GC.Spec.Fields.free_def`), both supplied by the caller as
+/// ghost arguments.  The non-free blocks point only to non-free blocks
 /// (`GenInv.collection_shape_with`); a free block is garbage left in place,
-/// never read or written.  The blocks promotion creates must not count as
-/// free (`CV.promotion_not_free`).  The stop-the-world
-/// collector passes `free_stw`; `minor_collect_pre_idle` /
-/// `minor_collect_post_idle` below are that instance, with the colour facts
-/// of `collection_heap_shape` added.
+/// never read or written.  The shape includes that the blocks the allocator
+/// creates at `ph` do not count as free (`allocations_not_free ph free`), so no
+/// promoted copy is free.  The stop-the-world collector runs at `Idle` with
+/// `free_stw`; `minor_collect_pre_idle` / `minor_collect_post_idle` below are
+/// that instance, with the colour facts of `collection_heap_shape` added.
+/// The incremental sweep's minor collection runs at `Sweeping st` with
+/// `free_incremental st` (`GC.Gen.Impl.Incremental.minor_collect_any_phase`).
 ///
 /// The ref_table comes from the write barrier: it records addresses of
 /// existing major-heap fields that were assigned minor-heap pointers.  The
@@ -348,12 +339,11 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 /// among the roots (`remembered_targets_in_roots`), and the roots are valid
 /// and not free (`roots_valid_with`): roots are reachable, so never
 /// garbage.
-let minor_collect_pre_with (free: SpecFields.free_def)
+let minor_collect_pre_with (ph: Ph.gc_phase) (free: SpecFields.free_def)
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
   (rs farr sl: Seq.seq U64.t) (nslots: nat) : prop =
-  GenInv.collection_shape_with free minor_st s fp /\
-  CV.promotion_not_free free minor_st s fp rs /\
-  Seq.length farr == UpdatePtrs.fwd_array_size /\
+  GenInv.collection_shape_with ph free minor_st s fp /\
+  Seq.length farr == FA.fwd_array_size /\
   (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
   RT.ref_table_sound_with free s sl nslots /\
   RT.ref_table_covers_with free s sl nslots /\
@@ -361,18 +351,17 @@ let minor_collect_pre_with (free: SpecFields.free_def)
   MinorFwd.remembered_targets_in_roots s rs sl nslots /\
   MinorFwd.roots_valid_with free minor_st s rs
 
-/// What the collection guarantees, given what counts as free.
-let minor_collect_post_with (free: SpecFields.free_def)
-  (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs sl: Seq.seq U64.t)
-  (nslots: nat) (ok: bool)
-  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t) : prop =
-  let prom = CheneySpec.cheney_promote minor_st s fp rs in
-  // Heap is the two-pass result (update promoted + rewrite slots) ...
-  s2 == UpdatePtrs.rewrite_slots_iter
-          (UpdatePtrs.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
-          prom.fwd_map sl nslots 0 /\
-  // ... which is the pointer update of the collection for `free`
-  s2 == (CheneySpec.cheney_collect_spec_with free minor_st s fp rs).mc_major /\
+/// What the collection guarantees, at the phase it runs at and given what
+/// counts as free.
+let minor_collect_post_with (ph: Ph.gc_phase) (free: SpecFields.free_def)
+  (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs: Seq.seq U64.t) (ok: bool)
+  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2: Seq.seq U64.t) : prop =
+  let prom = CheneySpec.cheney_promote ph minor_st s fp rs in
+  // The major heap is the collection's, at `ph` and for `free`.  (`gen_gc`
+  // and the SPOT instances reason about the result through
+  // `cheney_collect_spec`; see DESIGN_AND_IMPL.md, "The contract of
+  // minor_collect_full".)
+  s2 == (CheneySpec.cheney_collect_spec_with ph free minor_st s fp rs).mc_major /\
   // Free pointer from promotion phase
   fp2 == prom.fp_final /\
   // Roots rewritten via forwarding map
@@ -382,66 +371,27 @@ let minor_collect_post_with (free: SpecFields.free_def)
   // `GC.Gen.MinorHeap.minor_reset`.
   U64.v b2 == 0 /\
   ({ data = d2; bump = b2 } <: minor_state) == minor_reset minor_st /\
-  // Forwarding array represents the spec-level forwarding map
-  UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
-  UpdatePtrs.valid_fwd_entries farr2 /\
-  Seq.length farr2 == UpdatePtrs.fwd_array_size /\
-  SpecFields.blocks_fit prom.major_final /\
-  // The shape is kept, with the same definition of free
-  GenInv.collection_shape_with free ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
+  // The shape is kept, with the same phase and definition of free
+  GenInv.collection_shape_with ph free ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
   // If promotion succeeds, the collection is a reachable-subgraph isomorphism
   // over the graphs in which a free block has no outgoing edges.
-  (not ok ==> CheneyBFS.cheney_oom minor_st s fp rs) /\
+  (not ok ==> CheneyBFS.cheney_oom ph minor_st s fp rs) /\
   (ok ==>
-   CheneyBFS.cheney_no_oom minor_st s fp rs /\
-   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+   CheneyBFS.cheney_no_oom ph minor_st s fp rs /\
+   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop ph
      minor_st s fp free rs s2 (MCFH.resolve_roots s2 rs2) /\
-   MinorFwd.normal_result_non_pointer_fields_preserved_prop
+   MinorFwd.normal_result_non_pointer_fields_preserved_prop ph
      minor_st s fp free rs s2)
 
-/// What the collection guarantees at the phase `ph` it runs in.  Its work is
-/// the idle collection's (`GC.Gen.CheneyAt`): `minor_collect_post_with` holds
-/// of the idle result `s2i`, the heap it leaves is `s2i` with the promoted
-/// copies in front of the sweep's cursor black, the phase it leaves has
-/// `swept_tail` the last list cell at or below where it was, and the heap it
-/// leaves has the collection's shape with the same definition of free.  Outside a sweep the
-/// heap is `s2i` and the phase `Idle` (`minor_collect_post_at_idle`).
-///
-/// The definition of free is the idle collection's, read on heaps where
-/// every promoted copy is white.  During a sweep `minor_collect_full` asks
-/// that painting the copies black does not change it (`Paint.colour_blind`): the incremental
-/// entry point passes `free_incremental` with what is pending free fixed at `s`
-/// (`GC.Gen.Incremental.phase_free`), and the sweep phase it gets back is
-/// for the sweep's own `free_incremental`
-/// (`GC.Gen.Incremental.minor_keeps_phase_shape`).
-let minor_collect_post_with_at
-  (ph: Ph.gc_phase) (free: SpecFields.free_def)
-  (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs sl: Seq.seq U64.t) (nslots: nat)
-  (ok: bool)
-  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t)
-  (ph2: Ph.gc_phase) : prop =
-  let s2i = (CheneySpec.cheney_collect_spec_with free minor_st s fp rs).mc_major in
-  let at = CA.cheney_collect_spec_with_at ph free minor_st s fp rs in
-  minor_collect_post_with free minor_st s fp rs sl nslots ok d2 b2 s2i fp2 rs2 farr2 /\
-  s2 == (fst at).mc_major /\
-  ph2 == snd at /\
-  GenInv.collection_shape_with free ({ data = d2; bump = b2 } <: minor_state) s2 fp2
-
-val minor_collect_post_at_idle
-  (free: SpecFields.free_def)
-  (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs sl: Seq.seq U64.t) (nslots: nat)
-  (ok: bool)
-  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t)
-  (ph2: Ph.gc_phase)
-  : Lemma (requires minor_collect_post_with_at Ph.Idle free minor_st s fp rs sl nslots ok
-                      d2 b2 s2 fp2 rs2 farr2 ph2)
-          (ensures minor_collect_post_with free minor_st s fp rs sl nslots ok d2 b2 s2 fp2 rs2 farr2 /\
-                   ph2 == Ph.Idle)
-
+/// The collection runs at the phase the allocator holds (`gh.phase_ref`),
+/// whose `swept_tail` is a list cell or the sentinel; it hands back the phase
+/// the allocator leaves: the same, with `swept_tail` the last list cell at or
+/// below where it was (`GC.Gen.SweptTail.phase_at`).  Outside a sweep that is
+/// `Idle` again.
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
-                      (queue: larray U64.t Cheney.queue_size)
+                      (queue: larray U64.t FA.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
                       (#free: erased SpecFields.free_def)
   requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 'ph **
@@ -450,21 +400,18 @@ fn minor_collect_full (gh: gen_heap_t)
            pts_to queue 'qv **
            pts_to slots 'sl **
            pure (SZ.v nroots == Seq.length 'rs /\
-                 minor_collect_pre_with free ({ data = 'd; bump = 'b } <: minor_state) 's
+                 minor_collect_pre_with 'ph free ({ data = 'd; bump = 'b } <: minor_state) 's
                    'fp 'rs 'farr 'sl (SZ.v nslots) /\
-                 // during a sweep, `swept_tail` is a list cell (or the sentinel),
-                 // and painting the promoted copies black does not change the definition of free
-                 Paint.phase_at 'ph 's == 'ph /\
-                 (Ph.Idle? 'ph \/ Paint.colour_blind free))
+                 ST.phase_at 'ph 's == 'ph)
   returns ok: bool
-  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 ph2.
-    is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh ph2 **
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
+    is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh (ST.phase_at 'ph s2) **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
-    pure (minor_collect_post_with_at 'ph free ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'sl
-            (SZ.v nslots) ok d2 b2 s2 fp2 rs2 farr2 ph2)
+    pure (minor_collect_post_with 'ph free ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs
+            ok d2 b2 s2 fp2 rs2)
 
 /// --- The stop-the-world instance ---
 
@@ -475,7 +422,7 @@ let minor_collect_pre_idle
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
   (rs farr sl: Seq.seq U64.t) (nslots: nat) : prop =
   GenInv.collection_heap_shape minor_st s fp /\
-  Seq.length farr == UpdatePtrs.fwd_array_size /\
+  Seq.length farr == FA.fwd_array_size /\
   (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
   RT.ref_table_sound s sl nslots /\
   RT.ref_table_covers_minor_ptrs s sl nslots /\
@@ -485,14 +432,9 @@ let minor_collect_pre_idle
 
 /// The stop-the-world postcondition.
 let minor_collect_post_idle
-  (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs sl: Seq.seq U64.t) (nslots: nat)
-  (ok: bool)
-  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t) : prop =
-  let prom = CheneySpec.cheney_promote minor_st s fp rs in
-  // Heap is the two-pass result (update promoted + rewrite slots)
-  s2 == UpdatePtrs.rewrite_slots_iter
-          (UpdatePtrs.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
-          prom.fwd_map sl nslots 0 /\
+  (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs: Seq.seq U64.t) (ok: bool)
+  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2: Seq.seq U64.t) : prop =
+  let prom = CheneySpec.cheney_promote Idle minor_st s fp rs in
   // Free pointer from promotion phase
   fp2 == prom.fp_final /\
   // Roots rewritten via forwarding map
@@ -504,25 +446,17 @@ let minor_collect_post_idle
   // the collector's output.
   U64.v b2 == 0 /\
   ({ data = d2; bump = b2 } <: minor_state) == minor_reset minor_st /\
-  // Forwarding array represents the spec-level forwarding map
-  UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
-  // Forwarding entries are valid
-  UpdatePtrs.valid_fwd_entries farr2 /\
-  Seq.length farr2 == UpdatePtrs.fwd_array_size /\
-  // Well-formedness preserved through promotion
-  SpecFields.blocks_fit prom.major_final /\
-  // Strong correctness: the result equals cheney_collect_spec
-  // (single-pass full update of all pointer fields in the major heap).
+  // The major heap is the stop-the-world collection's.
   s2 == (CheneySpec.cheney_collect_spec minor_st s fp rs).mc_major /\
   GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
   // If promotion succeeds, minor collection is a concrete reachable
   // subgraph isomorphism over the actual post-minor heap graph.
-  (not ok ==> CheneyBFS.cheney_oom minor_st s fp rs) /\
+  (not ok ==> CheneyBFS.cheney_oom Idle minor_st s fp rs) /\
   (ok ==>
-   CheneyBFS.cheney_no_oom minor_st s fp rs /\
-   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+   CheneyBFS.cheney_no_oom Idle minor_st s fp rs /\
+   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop Idle
      minor_st s fp SpecFields.free_stw rs s2 (MCFH.resolve_roots s2 rs2) /\
-   MinorFwd.normal_result_non_pointer_fields_preserved_prop
+   MinorFwd.normal_result_non_pointer_fields_preserved_prop Idle
      minor_st s fp SpecFields.free_stw rs s2)
 
 /// The stop-the-world precondition is the general one at `free_stw` ...
@@ -530,18 +464,18 @@ val minor_collect_idle_pre
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
   (rs farr sl: Seq.seq U64.t) (nslots: nat)
   : Lemma (requires minor_collect_pre_idle minor_st s fp rs farr sl nslots)
-          (ensures minor_collect_pre_with SpecFields.free_stw minor_st s fp rs farr sl nslots)
+          (ensures minor_collect_pre_with Ph.Idle SpecFields.free_stw minor_st s fp rs farr sl nslots)
 
 /// ... and the general postcondition at `free_stw` gives the
 /// stop-the-world one.
 val minor_collect_idle_post
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
   (rs farr sl: Seq.seq U64.t) (nslots: nat) (ok: bool)
-  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t)
+  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2: Seq.seq U64.t)
   : Lemma (requires minor_collect_pre_idle minor_st s fp rs farr sl nslots /\
-                    minor_collect_post_with SpecFields.free_stw minor_st s fp rs sl nslots
-                      ok d2 b2 s2 fp2 rs2 farr2)
-          (ensures minor_collect_post_idle minor_st s fp rs sl nslots ok d2 b2 s2 fp2 rs2 farr2)
+                    minor_collect_post_with Ph.Idle SpecFields.free_stw minor_st s fp rs
+                      ok d2 b2 s2 fp2 rs2)
+          (ensures minor_collect_post_idle minor_st s fp rs ok d2 b2 s2 fp2 rs2)
 
 /// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)
@@ -552,17 +486,19 @@ val minor_collect_idle_post
 /// 2. Major collection (mark-and-sweep): reclaim unreachable major objects
 ///
 /// Postcondition provides:
-/// - Major GC correctness (5 pillars of mark-and-sweep) on post-minor heap
+/// - the end-to-end reachable-subgraph isomorphism and the unreachable-blocks-
+///   freed facts, from the heap handed in to the heap handed back
 /// - Minor collection properties (roots rewritten, minor heap reset)
-/// - The post-minor `GenInv.full_heap_shape` used to justify the major GC call
+/// - `GenInv.collection_heap_shape` of the returned state: the precondition
+///   is restored
 ///
-/// The caller provides full heap shape plus the remembered-set table needed by
-/// `minor_collect_full`. The implementation derives the post-minor major-GC
-/// precondition before invoking mark-and-sweep.
+/// The caller provides `collection_heap_shape` plus the remembered-set table
+/// needed by `minor_collect_full`. The implementation derives the post-minor
+/// major-GC precondition before invoking mark-and-sweep.
 fn gen_gc (gh: gen_heap_t)
            (roots: array U64.t) (nroots: SZ.t)
            (fwd_arr: array U64.t)
-           (queue: larray U64.t Cheney.queue_size)
+           (queue: larray U64.t FA.queue_size)
            (slots: array U64.t) (nslots: SZ.t)
            (st: gray_stack)
   requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh Ph.Idle **
@@ -583,7 +519,7 @@ fn gen_gc (gh: gen_heap_t)
 
                // Operational array preconditions.
                SZ.v nroots == Seq.length 'rs /\
-               Seq.length 'farr == UpdatePtrs.fwd_array_size /\
+               Seq.length 'farr == FA.fwd_array_size /\
                (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                RT.ref_table_sound 's 'sl (SZ.v nslots) /\
                RT.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
@@ -605,7 +541,7 @@ fn gen_gc (gh: gen_heap_t)
       let ok = snd res in
       // Failure is reported only for a concrete out-of-memory event: an object
       // the major free list had no room for, at a point of this collection.
-      (not ok ==> CheneyBFS.cheney_oom minor_st 's 'fp 'rs) /\
+      (not ok ==> CheneyBFS.cheney_oom Idle minor_st 's 'fp 'rs) /\
       gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok 'st (stack_capacity st) /\
       // The nursery handed back is the zeroed one, `GC.Gen.MinorHeap.minor_reset`.
       // This is the only heap-shape fact in the postcondition that does *not*

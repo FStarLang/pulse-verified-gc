@@ -70,6 +70,7 @@ let reachable_transfer g1 g2 live r w =
 /// ---------------------------------------------------------------------------
 
 open GC.Spec.Base
+open GC.Spec.Phase
 module HM = GC.Spec.HeapModel
 module HG = GC.Spec.HeapGraph
 module MS = GC.Spec.Correctness
@@ -238,12 +239,12 @@ let end_to_end_isomorphism_intro
     MCFH.result_post_stw darkened post_roots;
     MCFH.result_post_stw post_major post_roots;
     iso_dst_swap
-      (MinorFwd.normal_src_reachable minor major fp SF.free_stw roots)
+      (MCFH.normal_src_reachable Idle minor major fp SF.free_stw roots)
       (MCFH.result_post_reachable post_major SF.free_stw post_roots)
       (MCFH.result_post_reachable final_major SF.free_stw post_roots)
-      (MinorFwd.normal_src_edge minor major fp SF.free_stw roots)
+      (MinorFwd.normal_src_edge Idle minor major fp SF.free_stw roots)
       (MCFH.result_post_edge post_major SF.free_stw)
       (MCFH.result_post_edge final_major SF.free_stw)
-      (GC.Gen.Cheney.cheney_promote minor major fp roots).fwd_map
+      (GC.Gen.Cheney.cheney_promote Idle minor major fp roots).fwd_map
 
 #pop-options

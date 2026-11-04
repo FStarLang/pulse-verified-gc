@@ -24,6 +24,10 @@ open GC.Impl.Heap
 module Alloc = GC.Impl.Allocator
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module AllocProps = GC.Gen.AllocProps
+module AP = GC.Gen.AllocPhase
+module ST = GC.Gen.SweptTail
+module FLA = GC.Spec.FreeList.Ascending
+module FLAsc = GC.Gen.FreeListAscending
 module SF = GC.Spec.Fields
 module Obj = GC.Impl.Object
 module SpecObj = GC.Spec.Object
@@ -189,17 +193,17 @@ let wz_small (obj wz: nat)
 /// Promote one minor-heap object to the major heap, at the collector's phase.
 /// Returns the new address in major heap (0UL on OOM).
 ///
-/// The specification runs the idle promotion on the idle heap `g`; the heap
-/// the implementation holds is `g` painted (`GC.Gen.Paint.coloured`), and the
-/// allocation at the phase is the idle one, painted
-/// (`GC.Gen.Paint.coloured_promote`).  Nothing of pointer closure is needed:
+/// The specification's promotion runs at the collection's phase `ph0`; the
+/// allocator holds that phase with `swept_tail` where its allocations have
+/// moved it (`GC.Gen.SweptTail.phase_at ph0`), which colours alike
+/// (`GC.Gen.SweptTail.promote_phase_at`).  Nothing of pointer closure is needed:
 /// during a promotion loop it is temporarily violated (minor pointers are
 /// written into the major heap body).
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                (phase: R.ref Alloc.phase_state) (obj: U64.t)
-               (#col: Ghost.erased GC.Gen.Paint.colouring) (#g: Ghost.erased heap)
+               (#ph0: Ghost.erased Ph.gc_phase)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
            R.pts_to fp_ref 'fp **
@@ -207,7 +211,8 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
            pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
                  U64.v obj % 8 == 0 /\
                  U64.v obj + minor_wosize {data='md; bump='mb} obj * 8 <= minor_heap_size /\
-                 GC.Gen.Paint.coloured col 'ms g 'fp 'ph)
+                 FLA.fl_ascending 'ms 'fp /\
+                 'ph == ST.phase_at ph0 'ms)
   returns new_addr: U64.t
   ensures exists* md2 mb2 ms2 fp2 ph2.
     is_minor minor md2 mb2 **
@@ -220,14 +225,17 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
           GC.Spec.Fields.blocks_fit ms2 /\
           GC.Spec.Allocator.Lemmas.fl_valid ms2 fp2 heap_words /\
           GC.Spec.Allocator.Lemmas.fl_chain_terminates ms2 fp2 heap_words /\
+          FLA.fl_ascending ms2 fp2 /\
+          ph2 == ST.phase_at ph0 ms2 /\
           (wz > 0 ==>
-            (let spec_res = PromoteSpec.promote_object minor_st g obj 'fp wz PromoteSpec.Idle in
-             GC.Gen.Paint.coloured col ms2 spec_res.major_out fp2 ph2 /\
+            (let spec_res = PromoteSpec.promote_object minor_st 'ms obj 'fp wz ph0 in
+             ms2 == spec_res.major_out /\
              fp2 == spec_res.fp_out /\
              new_addr == spec_res.new_addr)) /\
           (wz == 0 ==> ms2 == 'ms /\ fp2 == 'fp /\ ph2 == 'ph /\ new_addr == 0UL))
 {
-  GC.Gen.Paint.coloured_facts col 'ms g 'fp 'ph;
+  GC.Spec.SweepPhase.Util.part1_holds 'ms;
+  FLA.fl_ascending_valid 'ms 'fp;
   // Read the wosize from the minor object header
   let wosize = read_minor_wosize minor obj;
   if U64.eq wosize 0UL {
@@ -243,39 +251,32 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     assert (pure (U64.v tag == minor_tag {data='md; bump='mb} obj));
     assert (pure (tag == PromoteSpec.promoted_tag {data='md; bump='mb} obj));
     let fp = R.op_Bang fp_ref;
-    // The allocation at the collector's phase: the idle allocation of the
-    // specification, painted (`GC.Gen.Paint`).
+    // The allocation at the phase the allocator holds is the one at the
+    // collection's phase, and leaves the phase at the promoted heap.
+    wz_small (U64.v obj) (U64.v wosize);
+    ST.promote_phase_at ph0 'ms fp {data='md; bump='mb} obj (U64.v wosize);
+    FLAsc.promote_object_preserves_fl_ascending {data='md; bump='mb} 'ms obj fp (U64.v wosize) ph0;
+    PromoteSpec.promote_object_preserves_alloc_invariants {data='md; bump='mb} 'ms obj fp (U64.v wosize) ph0;
     let res = Alloc.allocate major fp phase wosize tag;
-    GC.Spec.Allocator.Cursor.alloc_phase_fields 'ms fp 'ph (U64.v wosize) tag;
+    AP.alloc_at_fields ph0 'ms fp (U64.v wosize) tag;
     let new_fp = fst res;
     let new_obj = snd res;
     R.op_Colon_Equals fp_ref new_fp;
-    wz_small (U64.v obj) (U64.v wosize);
-    GC.Gen.Paint.coloured_promote col 'ms g 'fp 'ph {data='md; bump='mb} obj (U64.v wosize);
     if U64.eq new_obj 0UL {
-      // OOM: nothing changes, the phase included
-      GC.Spec.Allocator.Cursor.alloc_phase_oom_phase 'ms fp 'ph (U64.v wosize) tag;
-      AllocProps.alloc_spec_oom_unchanged 'ms fp (U64.v wosize) tag;
+      // OOM: nothing changes
+      PromoteSpec.promote_object_oom {data='md; bump='mb} 'ms obj fp (U64.v wosize) ph0;
       0UL
     } else {
       // Derive bounds from allocator postconditions:
-      AllocProps.alloc_spec_obj_in_objects_part1 'ms fp (U64.v wosize) tag;
+      AP.alloc_at_obj_body_within_heap ph0 'ms fp (U64.v wosize) tag;
+      AP.alloc_at_obj_wosize ph0 'ms fp (U64.v wosize) tag;
       assert (pure (U64.v new_obj >= U64.v mword /\
                     U64.v new_obj < heap_size /\
                     U64.v new_obj % U64.v mword == 0));
-      AllocLemmas.alloc_spec_preserves_wfh_part1 'ms fp (U64.v wosize) tag;
-      AllocProps.alloc_spec_obj_wosize_part1 'ms fp (U64.v wosize) tag;
-      SF.wfh_part1_obj_bound
-        (GC.Spec.Allocator.alloc_spec 'ms fp (U64.v wosize) tag).heap_out
-        (new_obj <: obj_addr);
       assert (pure (U64.v new_obj + U64.v wosize * 8 <= heap_size));
+      PromoteSpec.promote_object_success {data='md; bump='mb} 'ms obj fp (U64.v wosize) ph0;
       // Copy all fields (0..wosize-1) from minor to major
       copy_fields_loop minor major obj new_obj wosize;
-      with ms2. assert (is_heap major ms2);
-      GC.Gen.Paint.coloured_facts col ms2
-        (PromoteSpec.promote_object {data='md; bump='mb} g obj 'fp (U64.v wosize) PromoteSpec.Idle).major_out
-        new_fp
-        (snd (GC.Spec.Allocator.Cursor.alloc_phase 'ms fp 'ph (U64.v wosize) tag));
       new_obj
     }
   }

@@ -5,6 +5,7 @@ module Seq = FStar.Seq
 
 open FStar.Seq
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -26,7 +27,7 @@ val spot_infix_ok
     Lemma
       (requires
         not ok ==>
-        GC.Gen.CheneyBFS.cheney_oom
+        GC.Gen.CheneyBFS.cheney_oom Idle
           InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
           (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r))
       (ensures ok == true)

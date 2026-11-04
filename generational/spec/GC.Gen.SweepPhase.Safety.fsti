@@ -36,7 +36,6 @@ module HeapModel = GC.Spec.HeapModel
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
 module RBridge = GC.Gen.ReachabilityBridge
-module CA = GC.Gen.CheneyAt
 module Cheney = GC.Gen.Cheney
 module Ph = GC.Spec.Phase
 
@@ -91,8 +90,6 @@ val minor_keeps_not_free (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep_s
   : Lemma (requires sweep_phase_inv g fp st /\ GenInv.minor_heap_shape minor /\
                     GenInv.minor_major_fields_not_free (free_incremental st) minor g /\
                     in_use (free_incremental st) g x)
-          (ensures (let free = free_incremental_from st g in
-                    let (res, ph') = CA.cheney_collect_spec_with_at (Ph.Sweeping st) free minor g fp roots in
-                    let st' = GC.Gen.SweepPhase.Minor.state_after st
-                                (Cheney.cheney_collect_spec_with free minor g fp roots).GC.Gen.Promote.mc_major in
+          (ensures (let res = GC.Gen.SweepPhase.Minor.collect_at st minor g fp roots in
+                    let st' = GC.Gen.SweepPhase.Minor.state_after st res.GC.Gen.Promote.mc_major in
                     in_use (free_incremental st') res.GC.Gen.Promote.mc_major x))

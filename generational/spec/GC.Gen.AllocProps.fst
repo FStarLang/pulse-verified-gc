@@ -186,46 +186,6 @@ let alloc_from_block_wosize_lemma
   end
 #pop-options
 
-/// After alloc_search finds a block and returns obj_out, the output heap
-/// has a write_word to prev_fp (if non-zero). This doesn't affect hd_address(obj),
-/// provided prev_fp and hd_address(obj) are separated (which holds in alloc_search
-/// because prev_fp is a different free-list node than cur_fp/obj).
-#push-options "--z3rlimit 12 --fuel 1 --ifuel 1"
-/// The write lands on a different word than [obj]'s header, so the header --- and
-/// hence the wosize --- is unchanged.  Stating this as an equality subsumes both
-/// the lower- and upper-bound forms the callers below need.
-private let write_prev_preserves_wosize
-  (g_after_alloc: heap) (obj: obj_addr) (prev_fp: U64.t) (val_fp: U64.t)
-  : Lemma (requires prev_fp <> 0UL /\
-                    U64.v prev_fp >= U64.v mword /\
-                    U64.v prev_fp < heap_size /\
-                    U64.v prev_fp % U64.v mword = 0 /\
-                    prev_fp <> hd_address obj)
-          (ensures (let g2 = write_word g_after_alloc (prev_fp <: hp_addr) val_fp in
-                    wosize_of_object obj g2 == wosize_of_object obj g_after_alloc))
-  =
-  let hd = hd_address obj in
-  hd_address_spec obj;
-  hd_address_bounds obj;
-  let g2 = write_word g_after_alloc (prev_fp <: hp_addr) val_fp in
-  wosize_of_object_spec obj g2;
-  wosize_of_object_spec obj g_after_alloc;
-  let p = U64.v (prev_fp <: hp_addr) in
-  let h = U64.v hd in
-  FStar.Math.Lemmas.lemma_div_exact p 8;
-  FStar.Math.Lemmas.lemma_div_exact h 8;
-  let kp = p / 8 in
-  let kh = h / 8 in
-  if kp > kh then begin
-    FStar.Math.Lemmas.lemma_mult_le_right 8 (kh + 1) kp;
-    FStar.Math.Lemmas.distributivity_add_left kh 1 8
-  end else begin
-    FStar.Math.Lemmas.lemma_mult_le_right 8 (kp + 1) kh;
-    FStar.Math.Lemmas.distributivity_add_left kp 1 8
-  end;
-  read_write_different g_after_alloc (prev_fp <: hp_addr) hd val_fp
-#pop-options
-
 /// Main recursive proof
 /// ---------------------------------------------------------------------------
 /// Part1-only versions: weaker preconditions (no full well_formed_heap)

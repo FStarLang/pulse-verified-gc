@@ -142,25 +142,6 @@ extern size_t minor_heap_size_sz;
 
 void minor_heap_reset(minor_heap_t mh);
 
-minor_heap_t alloc_minor_heap(void);
-
-void
-translate_object_fields(
-  minor_heap_t mh,
-  uint64_t minor_base_addr,
-  uint64_t bump,
-  uint64_t obj_addr,
-  uint64_t wosize
-);
-
-void translate_minor_fields(minor_heap_t mh, uint64_t minor_base_addr);
-
-extern size_t fwd_arr_size_sz;
-
-void synthesize_infix_forwarding(minor_heap_t mh, uint64_t *fwd_arr);
-
-size_t find_infix_parents(minor_heap_t mh, uint64_t *roots, size_t nroots, size_t cap);
-
 extern size_t queue_size_sz;
 
 void

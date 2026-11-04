@@ -36,31 +36,12 @@ open GC.Gen.MinorCollectForwarding.Helpers
 /// `FStar.UInt.to_vec` definitions reachable from the context and times out.
 /// None of the statements below need recursive unfolding.
 #push-options "--fuel 0 --ifuel 1"
-let normal_vertex_ready
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (u: CG.combined_vertex) : prop =
-  let prom = cheney_promote minor major fp roots in
-  match u with
-  | CG.MajorV _ -> True
-  | CG.MinorV x ->
-    prom.fwd_map x <> 0UL /\
-    is_val_addr (prom.fwd_map x) /\
-    is_infix (prom.fwd_map x) prom.major_final = false
-
-let normal_src_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
-  (u: CG.combined_vertex) : prop =
-  let cg = CG.build_combined_graph minor major free in
-  let combined_roots = CG.classify_roots minor roots in
-  CG.combined_reachable cg combined_roots u /\
-  normal_vertex_ready minor major fp roots u
-
-let normal_post_non_pointer_fields_preserved_prop
+let normal_post_non_pointer_fields_preserved_prop (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t) : prop =
-  let prom = cheney_promote minor major fp roots in
-  let res = cheney_collect_spec_with free minor major fp roots in
+  let prom = cheney_promote ph minor major fp roots in
+  let res = cheney_collect_spec_with ph free minor major fp roots in
   forall (u: CG.combined_vertex).
-    normal_src_reachable minor major fp free roots u ==>
+    normal_src_reachable ph minor major fp free roots u ==>
     (match u with
     | CG.MajorV src ->
       is_val_addr src ==>
@@ -85,12 +66,12 @@ let normal_post_non_pointer_fields_preserved_prop
         minor_read_field minor src j
     | _ -> True)
 
-let normal_result_non_pointer_fields_preserved_prop
+let normal_result_non_pointer_fields_preserved_prop (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   (post_major: heap) : prop =
-  let prom = cheney_promote minor major fp roots in
+  let prom = cheney_promote ph minor major fp roots in
   forall (u: CG.combined_vertex).
-    normal_src_reachable minor major fp free roots u ==>
+    normal_src_reachable ph minor major fp free roots u ==>
     (match u with
     | CG.MajorV src ->
       is_val_addr src ==>
@@ -115,27 +96,27 @@ let normal_result_non_pointer_fields_preserved_prop
         minor_read_field minor src j
     | _ -> True)
 
-val normal_post_non_pointer_fields_preserved
+val normal_post_non_pointer_fields_preserved (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with ph free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
       roots_valid_with free minor major roots /\
-      CheneyBFS.cheney_no_oom minor major fp roots)
-    (ensures normal_post_non_pointer_fields_preserved_prop minor major fp free roots)
+      CheneyBFS.cheney_no_oom ph minor major fp roots)
+    (ensures normal_post_non_pointer_fields_preserved_prop ph minor major fp free roots)
 
-val normal_post_non_pointer_fields_preserved_to_result
+val normal_post_non_pointer_fields_preserved_to_result (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   (post_major: heap)
   : Lemma
     (requires
-      post_major == (cheney_collect_spec_with free minor major fp roots).mc_major /\
-      normal_post_non_pointer_fields_preserved_prop minor major fp free roots)
+      post_major == (cheney_collect_spec_with ph free minor major fp roots).mc_major /\
+      normal_post_non_pointer_fields_preserved_prop ph minor major fp free roots)
     (ensures
-      normal_result_non_pointer_fields_preserved_prop
+      normal_result_non_pointer_fields_preserved_prop ph
         minor major fp free roots post_major)
 #pop-options

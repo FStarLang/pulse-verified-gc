@@ -22,7 +22,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 /// the original minor wosize is the corresponding minor-heap field.  The lemma
 /// deliberately excludes infix forwarding targets: those are interior pointers
 /// into an already-promoted parent rather than standalone copied objects.
-val cheney_promote_fwd_target_fields_match
+val cheney_promote_fwd_target_fields_match (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t) (j: nat)
   : Lemma
@@ -32,7 +32,7 @@ val cheney_promote_fwd_target_fields_match
               chain_objects_blue major fp /\
               minor_wf minor /\
               minor_infix_wf minor /\
-              (let prom = cheney_promote minor major fp roots in
+              (let prom = cheney_promote ph minor major fp roots in
                prom.fwd_map x <> 0UL /\
                Seq.mem x (minor_objects minor) /\
                is_val_addr (prom.fwd_map x) /\
@@ -41,7 +41,7 @@ val cheney_promote_fwd_target_fields_match
                U64.v (prom.fwd_map x) + j * 8 + 8 <= heap_size /\
                (U64.v (prom.fwd_map x) + j * 8) % 8 == 0))
     (ensures
-      (let prom = cheney_promote minor major fp roots in
+      (let prom = cheney_promote ph minor major fp roots in
         read_word prom.major_final
           (U64.uint_to_t (U64.v (prom.fwd_map x) + j * 8))
         == minor_read_field minor x j))
@@ -49,7 +49,7 @@ val cheney_promote_fwd_target_fields_match
 /// The scannability of a normally-forwarded minor object's image in the final
 /// promoted heap is exactly the scannability of its nursery source.  Infix
 /// forwarding targets are excluded by the `is_infix = false` premise.
-val cheney_promote_fwd_target_no_scan_iff_minor_tag
+val cheney_promote_fwd_target_no_scan_iff_minor_tag (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t)
   : Lemma
@@ -59,13 +59,13 @@ val cheney_promote_fwd_target_no_scan_iff_minor_tag
               chain_objects_blue major fp /\
               minor_wf minor /\
               minor_infix_wf minor /\
-              (let prom = cheney_promote minor major fp roots in
+              (let prom = cheney_promote ph minor major fp roots in
                prom.fwd_map x <> 0UL /\
                Seq.mem x (minor_objects minor) /\
                is_val_addr (prom.fwd_map x) /\
                is_infix (prom.fwd_map x) prom.major_final = false))
     (ensures
-      (let prom = cheney_promote minor major fp roots in
+      (let prom = cheney_promote ph minor major fp roots in
        let target : obj_addr = prom.fwd_map x in
        Seq.mem target (objects zero_addr prom.major_final) /\
        is_blue target prom.major_final = false /\
@@ -77,3 +77,28 @@ val cheney_promote_fwd_target_no_scan_iff_minor_tag
        is_no_scan target prom.major_final = (minor_tag minor x >= 251) /\
        // Promotion is size-exact: the image declares exactly the source's wosize.
        U64.v (wosize_of_object target prom.major_final) == minor_wosize minor x))
+
+/// The image of a normally-forwarded minor object is not free, for any
+/// definition of free under which the allocator's blocks are not free
+/// (`allocations_not_free`): it is not free when it is allocated, and its
+/// header and walk membership never change afterwards.
+val cheney_promote_fwd_target_not_free (ph: gc_phase)
+  (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (x: U64.t)
+  : Lemma
+    (requires blocks_fit major /\ no_infix_block major /\
+              AllocLemmas.fl_valid major fp heap_words /\
+              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              chain_objects_blue major fp /\
+              minor_wf minor /\
+              minor_infix_wf minor /\
+              free_def_ok free /\ allocations_not_free ph free /\
+              (let prom = cheney_promote ph minor major fp roots in
+               prom.fwd_map x <> 0UL /\
+               Seq.mem x (minor_objects minor)))
+    (ensures
+      (let prom = cheney_promote ph minor major fp roots in
+       is_val_addr (prom.fwd_map x) /\
+       (let target : obj_addr = prom.fwd_map x in
+        Seq.mem target (objects zero_addr prom.major_final) /\
+        not (free prom.major_final target))))

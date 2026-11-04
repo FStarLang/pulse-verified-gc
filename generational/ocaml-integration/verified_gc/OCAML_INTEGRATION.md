@@ -1217,7 +1217,6 @@ void krmlinit_globals(void) {
     zero_addr0 = zero_addr;
     zero_addr1 = zero_addr0;
     minor_heap_size_sz = (size_t)minor_heap_size_u64;
-    fwd_arr_size_sz = (size_t)(minor_heap_size_u64 / 8ULL);
     queue_size_sz = (size_t)(minor_heap_size_u64 / 8ULL);
 }
 ```

@@ -5,6 +5,7 @@ module Seq = FStar.Seq
 
 open FStar.Seq
 open GC.Spec.Base
+open GC.Spec.Phase
 
 module Cheney = GC.Gen.Cheney
 module CheneyBFS = GC.Gen.CheneyBFS
@@ -13,7 +14,7 @@ module ConcreteMajor = GC.SPOT.ConcreteMajor
 val spot_concrete_no_oom
   : r:unit{ConcreteMajor.spot_major_room} ->
     Lemma (ensures
-      CheneyBFS.cheney_no_oom
+      CheneyBFS.cheney_no_oom Idle
         GC.SPOT.ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
         (ConcreteMajor.spot_major_fp r)
@@ -22,7 +23,7 @@ val spot_concrete_no_oom
 val spot_concrete_b_forwarding_zero
   : r:unit{ConcreteMajor.spot_major_room} ->
     Lemma (ensures
-      (Cheney.cheney_promote
+      (Cheney.cheney_promote Idle
         GC.SPOT.ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
         (ConcreteMajor.spot_major_fp r)
@@ -32,7 +33,7 @@ val spot_concrete_b_forwarding_zero
 val spot_concrete_a_forwarding_free_obj
   : r:unit{ConcreteMajor.spot_major_room} ->
     Lemma (ensures
-      U64.v ((Cheney.cheney_promote
+      U64.v ((Cheney.cheney_promote Idle
         GC.SPOT.ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
         (ConcreteMajor.spot_major_fp r)

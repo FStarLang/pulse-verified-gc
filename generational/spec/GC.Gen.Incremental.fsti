@@ -16,8 +16,10 @@
 /// Every collector event keeps it: the start of the sweep phase
 /// (`phase_shape_start`), a slice (`phase_slice_shape`, which at the end of
 /// the sweep gives back the idle shape), and a minor collection at either
-/// phase (`phase_shape_collection` for its entry shape for the phase's
-/// definition of free `phase_free`, `minor_keeps_phase_shape` mid-sweep).
+/// phase, which runs at that phase with the phase's definition of free
+/// (`phase_free`: `free_stw` idle, `free_incremental st` mid-sweep):
+/// `phase_shape_collection` for its entry shape, `minor_keeps_phase_shape`
+/// for what it leaves mid-sweep.
 /// The program's events (allocation and its initialisation, field writes) are `GC.Gen.SweepPhase`'s.
 
 module GC.Gen.Incremental
@@ -35,22 +37,17 @@ module U64 = FStar.UInt64
 module Ph = GC.Spec.Phase
 module GenInv = GC.Gen.HeapInvariant
 module SL = GC.Spec.SweepPhase.Slice
-module CA = GC.Gen.CheneyAt
-module Paint = GC.Gen.Paint
+module ST = GC.Gen.SweptTail
 module Cheney = GC.Gen.Cheney
 module Promote = GC.Gen.Promote
 module SPM = GC.Gen.SweepPhase.Minor
-module CV = GC.Gen.CheneyGeneric
 
-/// What counts as free for a minor collection from `g` at a phase: blue
-/// (`free_stw`) when idle; mid-sweep, blue or pending free in `g`
-/// (`free_incremental_from st g`), under which the copies the collection
-/// promotes are not free and which, painted, is `free_incremental` of the
-/// heap it leaves.
-let phase_free (g: heap) (ph: Ph.gc_phase) : free_def =
+/// What counts as free for a minor collection at a phase: blue (`free_stw`)
+/// when idle; mid-sweep, blue or pending free (`free_incremental st`).
+let phase_free (ph: Ph.gc_phase) : free_def =
   match ph with
   | Ph.Idle -> free_stw
-  | Ph.Sweeping st -> free_incremental_from st g
+  | Ph.Sweeping st -> free_incremental st
 
 /// **The collector's state at its phase.**
 [@@"opaque_to_smt"]
@@ -69,20 +66,13 @@ val phase_shape_sweeping (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep_s
            (sweep_phase_inv g fp st /\ GenInv.minor_heap_shape minor /\
             GenInv.minor_major_fields_not_free (free_incremental st) minor g))
 
-/// At any phase the state is the minor collection's entry shape for the
-/// phase's definition of free, and the phase is the one the collection starts
-/// from
-/// (`swept_tail` is a list cell or the sentinel).
+/// At any phase the state is the minor collection's entry shape at the
+/// phase for the phase's definition of free, and the phase is the one the
+/// allocator holds (`swept_tail` is a list cell or the sentinel).
 val phase_shape_collection (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase)
   : Lemma (requires phase_shape minor g fp ph)
-          (ensures GenInv.collection_shape_with (phase_free g ph) minor g fp /\
-                   Paint.phase_at ph g == ph)
-
-/// The phase's definition of free makes no copy a collection from `g`
-/// promotes free, and painting them does not change it.
-val phase_free_ok (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t) (ph: Ph.gc_phase)
-  : Lemma (CV.promotion_not_free (phase_free g ph) minor g fp roots /\
-           Paint.colour_blind (phase_free g ph))
+          (ensures GenInv.collection_shape_with ph (phase_free ph) minor g fp /\
+                   ST.phase_at ph g == ph)
 
 /// **The start of the sweep phase**, after the minor collection that emptied
 /// the nursery and marking.
@@ -109,14 +99,14 @@ val phase_slice_finishes (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_p
           (ensures (let (_, _, ph') = SL.phase_slice g fp ph budget in ph' == Ph.Idle))
 
 /// **A minor collection mid-sweep keeps the collector's state**: the phase
-/// it leaves is the sweep with the same cursor and `last_fragment`, and the
-/// same objects pending free.
+/// it leaves (the one the allocator holds after it) is the sweep with the
+/// same cursor and `last_fragment`, and the same objects pending free.
 val minor_keeps_phase_shape (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep_state)
                             (roots: seq U64.t)
   : Lemma (requires phase_shape minor g fp (Ph.Sweeping st))
-          (ensures (let free = free_incremental_from st g in
-                    let (res, ph') = CA.cheney_collect_spec_with_at (Ph.Sweeping st) free minor g fp roots in
-                    let st' = SPM.state_after st (Cheney.cheney_collect_spec_with free minor g fp roots).Promote.mc_major in
+          (ensures (let res = SPM.collect_at st minor g fp roots in
+                    let ph' = ST.phase_at (Ph.Sweeping st) res.Promote.mc_major in
+                    let st' = SPM.state_after st res.Promote.mc_major in
                     ph' == Ph.Sweeping st' /\
                     st'.cursor == st.cursor /\ st'.last_fragment == st.last_fragment /\
                     (forall (x: obj_addr). pending_free st' res.Promote.mc_major x == pending_free st g x) /\
@@ -125,7 +115,7 @@ val minor_keeps_phase_shape (minor: minor_state) (g: heap) (fp: U64.t) (st: swee
 
 /// `phase_free` at each phase, as an equation (the SMT encoding does not
 /// unfold a definition whose value is a function).
-val phase_free_idle (g: heap) : Lemma (phase_free g Ph.Idle == free_stw)
+val phase_free_idle (_: unit) : Lemma (phase_free Ph.Idle == free_stw)
 
-val phase_free_sweeping (g: heap) (st: sweep_state)
-  : Lemma (phase_free g (Ph.Sweeping st) == free_incremental_from st g)
+val phase_free_sweeping (st: sweep_state)
+  : Lemma (phase_free (Ph.Sweeping st) == free_incremental st)

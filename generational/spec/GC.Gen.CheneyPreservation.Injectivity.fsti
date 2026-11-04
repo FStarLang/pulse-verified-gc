@@ -48,7 +48,7 @@ let fwd_normal_targets_disjoint_from_old_nonblue
     is_blue y major0 = false ==>
     fwd x <> y
 
-val cheney_promote_fwd_normal_injective
+val cheney_promote_fwd_normal_injective (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
@@ -56,10 +56,10 @@ val cheney_promote_fwd_normal_injective
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor)
-           (ensures fwd_normal_injective (cheney_promote minor major fp roots).fwd_map
-                                         (cheney_promote minor major fp roots).major_final)
+           (ensures fwd_normal_injective (cheney_promote ph minor major fp roots).fwd_map
+                                         (cheney_promote ph minor major fp roots).major_final)
 
-val cheney_promote_fwd_targets_not_blue
+val cheney_promote_fwd_targets_not_blue (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
@@ -67,10 +67,10 @@ val cheney_promote_fwd_targets_not_blue
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor)
-          (ensures fwd_targets_not_blue (cheney_promote minor major fp roots).fwd_map
-                                        (cheney_promote minor major fp roots).major_final)
+          (ensures fwd_targets_not_blue (cheney_promote ph minor major fp roots).fwd_map
+                                        (cheney_promote ph minor major fp roots).major_final)
 
-val cheney_promote_fwd_noninfix_sources_in_minor_objects
+val cheney_promote_fwd_noninfix_sources_in_minor_objects (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
@@ -80,10 +80,10 @@ val cheney_promote_fwd_noninfix_sources_in_minor_objects
                     minor_wf minor)
           (ensures fwd_noninfix_sources_in_minor_objects
                      minor
-                     (cheney_promote minor major fp roots).fwd_map
-                     (cheney_promote minor major fp roots).major_final)
+                     (cheney_promote ph minor major fp roots).fwd_map
+                     (cheney_promote ph minor major fp roots).major_final)
 
-val cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
+val cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
@@ -92,6 +92,6 @@ val cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
                     minor_infix_wf minor /\
                     minor_wf minor)
           (ensures fwd_normal_targets_disjoint_from_old_nonblue
-                     (cheney_promote minor major fp roots).fwd_map
-                     (cheney_promote minor major fp roots).major_final
+                     (cheney_promote ph minor major fp roots).fwd_map
+                     (cheney_promote ph minor major fp roots).major_final
                      major)

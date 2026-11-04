@@ -5,6 +5,7 @@ module Seq = FStar.Seq
 
 open FStar.Seq
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -77,7 +78,7 @@ val spot_concrete_a_prime_final_survives
           ok final_major roots_out st cap))
       (ensures (
         let prom =
-          Cheney.cheney_promote
+          Cheney.cheney_promote Idle
             ConcreteMinor.spot_minor2
             (ConcreteMajor.spot_major_heap r)
             (ConcreteMajor.spot_major_fp r)
@@ -118,7 +119,7 @@ val spot_concrete_c_field_final_points_to_a_prime
           ok final_major roots_out st cap))
       (ensures (
         let prom =
-          Cheney.cheney_promote
+          Cheney.cheney_promote Idle
             ConcreteMinor.spot_minor2
             (ConcreteMajor.spot_major_heap r)
             (ConcreteMajor.spot_major_fp r)

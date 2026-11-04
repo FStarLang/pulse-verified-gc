@@ -9,6 +9,7 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
@@ -27,6 +28,7 @@ module ThreeObjects = GC.SPOT.ThreeObjects
 module CallMinor = GC.SPOT.CallMinor
 module ConcreteSetup = GC.SPOT.ConcreteSetup
 
+module FA = GC.Gen.ForwardingArray
 let spot_minor_collect_full_success_post_from_call_post
   (r: unit{ConcreteMajor.spot_major_room})
   (post_major: heap)
@@ -50,7 +52,7 @@ fn call_concrete_minor_collect_full_spot_borrowed
   (gh: gen_heap_t)
   (roots: array U64.t) (nroots: SZ.t)
   (fwd_arr: array U64.t)
-  (queue: larray U64.t CheneyImpl.queue_size)
+  (queue: larray U64.t FA.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
   requires gen_phase gh GC.Spec.Phase.Idle ** is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
              (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r) **

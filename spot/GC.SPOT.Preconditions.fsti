@@ -10,6 +10,7 @@ open GC.Gen.MinorHeap
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module RefTable = GC.Gen.RefTable
 
+module FA = GC.Gen.ForwardingArray
 val zero_forwarding_array : seq U64.t -> prop
 
 val minor_collect_full_pre
@@ -22,12 +23,12 @@ val gen_gc_pre
 val zero_forwarding_array_elim
   : farr:seq U64.t ->
     Lemma (requires zero_forwarding_array farr)
-          (ensures Seq.length farr == UpdatePtrs.fwd_array_size /\
+          (ensures Seq.length farr == FA.fwd_array_size /\
                    (forall (i:nat). i < Seq.length farr ==> Seq.index farr i == 0UL))
 
 val zero_forwarding_array_intro
   : farr:seq U64.t ->
-    Lemma (requires Seq.length farr == UpdatePtrs.fwd_array_size /\
+    Lemma (requires Seq.length farr == FA.fwd_array_size /\
                    (forall (i:nat). i < Seq.length farr ==> Seq.index farr i == 0UL))
           (ensures zero_forwarding_array farr)
 
@@ -42,7 +43,7 @@ val minor_collect_full_pre_elim
     Lemma (requires minor_collect_full_pre minor major fp roots farr slots nslots)
           (ensures
             GC.Gen.HeapInvariant.collection_heap_shape minor major fp /\
-            Seq.length farr == UpdatePtrs.fwd_array_size /\
+            Seq.length farr == FA.fwd_array_size /\
             (forall (i:nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
             RefTable.ref_table_sound major slots nslots /\
             RefTable.ref_table_covers_minor_ptrs major slots nslots /\

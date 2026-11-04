@@ -18,6 +18,7 @@ open GC.Spec.Base
 open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
+open GC.Spec.Phase
 
 module FLA = GC.Spec.FreeList.Ascending
 module Promote = GC.Gen.Promote
@@ -25,15 +26,15 @@ module Cheney = GC.Gen.Cheney
 module GenInv = GC.Gen.HeapInvariant
 
 val promote_object_preserves_fl_ascending
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0}) (ph: gc_phase)
   : Lemma (requires blocks_fit major /\ FLA.fl_ascending major fp /\ wosize < pow2 54)
-          (ensures (let res = Promote.promote_object minor major obj fp wosize Promote.Idle in
+          (ensures (let res = Promote.promote_object minor major obj fp wosize ph in
                     FLA.fl_ascending res.Promote.major_out res.Promote.fp_out))
 
-val cheney_promote_preserves_fl_ascending
+val cheney_promote_preserves_fl_ascending (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires blocks_fit major /\ FLA.fl_ascending major fp)
-          (ensures (let prom = Cheney.cheney_promote minor major fp roots in
+          (ensures (let prom = Cheney.cheney_promote ph minor major fp roots in
                     blocks_fit prom.Promote.major_final /\
                     FLA.fl_ascending prom.Promote.major_final prom.Promote.fp_final))
 
@@ -43,14 +44,3 @@ val update_walk_preserves_fl_ascending
   (major: heap) (upd: obj_addr -> GTot bool) (fwd: Promote.forwarding_map) (fp: U64.t)
   : Lemma (requires blocks_fit major /\ Promote.walk_ok major upd /\ FLA.fl_ascending major fp)
           (ensures FLA.fl_ascending (Promote.update_walk major upd fwd) fp)
-
-val update_major_pointers_preserves_fl_ascending
-  (major: heap) (fwd: Promote.forwarding_map) (fp: U64.t)
-  : Lemma (requires blocks_fit major /\ FLA.fl_ascending major fp)
-          (ensures FLA.fl_ascending (Promote.update_major_pointers major fwd) fp)
-
-val cheney_collect_preserves_fl_ascending
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires GenInv.collection_heap_shape minor major fp /\ FLA.fl_ascending major fp)
-          (ensures (let res = Cheney.cheney_collect_spec minor major fp roots in
-                    FLA.fl_ascending res.Promote.mc_major res.Promote.mc_fp))

@@ -17,7 +17,7 @@ open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
-open GC.Gen.Impl.UpdatePtrs
+open GC.Gen.ForwardingArray
 
 module CheneySpec = GC.Gen.Cheney
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -26,9 +26,6 @@ module SimOne = GC.Gen.Cheney.SimOne
 /// ---------------------------------------------------------------------------
 /// Connection predicate: relates impl state to spec cheney_state
 /// ---------------------------------------------------------------------------
-
-/// Queue capacity = fwd_array_size = minor_heap_size / 8
-let queue_size : pos = fwd_array_size
 
 /// The impl state (heap, fp, fwd_arr, queue, back) corresponds to the spec
 /// cheney_state when:
@@ -49,25 +46,24 @@ let impl_matches_spec
   Seq.length farr == fwd_array_size /\
   (forall (j:nat). j < bk ==> Seq.index q j == Seq.index cs.cs_queue j)
 
-/// At any phase of the major collector the implementation's heap is the spec
-/// state's idle heap painted (`GC.Gen.Paint.coloured`), and the phase it holds
-/// is the one at that heap; the rest of the correspondence is as above, against
-/// the idle heap.  Outside a sweep the painting is the identity.
-let impl_matches_spec_at (col: GC.Gen.Paint.colouring) (ph: gc_phase)
+/// The same, with the phase the implementation's allocator holds: the run's
+/// phase with `swept_tail` the last cell at or below where it was
+/// (`GC.Gen.SweptTail.phase_at`); and the free list is ascending, which
+/// keeps `swept_tail` where the allocator puts it.  Outside a sweep the phase
+/// is `Idle` throughout.
+let impl_matches_spec_at (ph: gc_phase)
   (ms: heap) (fp: U64.t)
   (farr: seq U64.t) (q: seq U64.t) (bk: nat)
   (cs: CheneySpec.cheney_state) : prop =
-  GC.Gen.Paint.coloured col ms cs.cs_major fp ph /\
-  impl_matches_spec cs.cs_major fp farr q bk cs
+  GC.Spec.FreeList.Ascending.fl_ascending ms fp /\
+  ph == GC.Gen.SweptTail.phase_at cs.CheneySpec.cs_phase ms /\
+  impl_matches_spec ms fp farr q bk cs
 
-/// What the allocator needs of the spec state's heap.
-val impl_matches_spec_at_facts (col: GC.Gen.Paint.colouring) (ph: gc_phase)
+/// What the allocator needs of the heap.
+val impl_matches_spec_at_facts (ph: gc_phase)
   (ms: heap) (fp: U64.t) (farr: seq U64.t) (q: seq U64.t) (bk: nat) (cs: CheneySpec.cheney_state)
-  : Lemma (requires impl_matches_spec_at col ph ms fp farr q bk cs)
-          (ensures blocks_fit cs.cs_major /\
-                   AllocLemmas.fl_valid cs.cs_major fp heap_words /\
-                   AllocLemmas.fl_chain_terminates cs.cs_major fp heap_words /\
-                   blocks_fit ms /\
+  : Lemma (requires impl_matches_spec_at ph ms fp farr q bk cs)
+          (ensures blocks_fit ms /\
                    AllocLemmas.fl_valid ms fp heap_words /\
                    AllocLemmas.fl_chain_terminates ms fp heap_words)
 
@@ -131,14 +127,6 @@ val not_minor_if_wosize_bounds_fail (minor: minor_state) (addr: U64.t)
                     (minor_wosize minor addr >= minor_heap_size \/
                      U64.v addr + minor_wosize minor addr * 8 > minor_heap_size))
           (ensures ~(Seq.mem addr (minor_objects minor)))
-
-/// When promote_object returns new_addr=0, heap and fp are unchanged
-val promote_object_zero_noop
-  (minor_st: minor_state) (ms: heap) (addr: U64.t) (fp: U64.t) (wz: nat)
-  : Lemma (requires wz > 0 /\
-                    (GC.Gen.Promote.promote_object minor_st ms addr fp wz GC.Gen.Promote.Idle).new_addr == 0UL)
-          (ensures (GC.Gen.Promote.promote_object minor_st ms addr fp wz GC.Gen.Promote.Idle).major_out == ms /\
-                   (GC.Gen.Promote.promote_object minor_st ms addr fp wz GC.Gen.Promote.Idle).fp_out == fp)
 
 /// ---------------------------------------------------------------------------
 /// Queue length bounds: bounded by |minor_objects| via BFS invariant

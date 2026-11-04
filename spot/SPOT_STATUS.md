@@ -133,6 +133,15 @@ allocation.
   when its forwarding entry is zero, and final `gen_gc` reachability implies
   survival in the final major heap.
 
+The SPOTs name the spec where it is defined: the forwarding array and queue
+size (`fwd_array_size`, `represents_fwd`, `queue_size`, ...) are in
+`GC.Gen.ForwardingArray`; the Cheney-run facts in `GC.Gen.Cheney.Steps`,
+`GC.Gen.MinorCollectForwarding.{Helpers,Edges}`; and the equation between
+the collection at `free_stw` and `cheney_collect_spec` is
+`GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw`, called next to
+`MinorCollectForwarding.stop_the_world_context`.  `minor_collect_full`'s
+postcondition says nothing about the forwarding array it hands back.
+
 ## What This Proves
 
 The cleaned campaign now validates the collector proof surface directly:

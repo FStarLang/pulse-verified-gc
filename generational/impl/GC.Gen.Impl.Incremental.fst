@@ -12,8 +12,10 @@ module R = Pulse.Lib.Reference
 module SZ = FStar.SizeT
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
+module ST = GC.Gen.SweptTail
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
@@ -40,7 +42,6 @@ module GSP = GC.Gen.SweepPhase
 module AC = GC.Spec.Allocator.Cursor
 module SA = GC.Spec.Allocator
 module FSC = GC.Impl.FusedSweepCoalesce
-module CA = GC.Gen.CheneyAt
 module CV = GC.Gen.CheneyGeneric
 module CheneyPres = GC.Gen.CheneyPreservation
 module PromoteSpec = GC.Gen.Promote
@@ -162,33 +163,28 @@ fn finish_sweep (gh: gen_heap_t)
 let any_phase_pre (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
     (rs farr sl: Seq.seq U64.t) (n: nat)
   : Lemma (requires GI.phase_shape minor s fp ph /\ minor_slots_ok ph minor s rs farr sl n)
-          (ensures minor_collect_pre_with (GI.phase_free s ph) minor s fp rs farr sl n /\
-                   GC.Gen.Paint.phase_at ph s == ph /\
-                   (Ph.Idle? ph \/ GC.Gen.Paint.colour_blind (GI.phase_free s ph)))
-  = GI.phase_shape_collection minor s fp ph;
-    GI.phase_free_ok minor s fp rs ph
+          (ensures minor_collect_pre_with ph (GI.phase_free ph) minor s fp rs farr sl n /\
+                   ST.phase_at ph s == ph)
+  = GI.phase_shape_collection minor s fp ph
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let any_phase_post (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
-    (rs sl: Seq.seq U64.t) (n: nat) (ok: bool)
-    (d2: minor_heap) (b2: U64.t) (s2: heap) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t) (ph2: Ph.gc_phase)
+    (rs: Seq.seq U64.t) (ok: bool)
+    (d2: minor_heap) (b2: U64.t) (s2: heap) (fp2: U64.t) (rs2: Seq.seq U64.t)
   : Lemma (requires GI.phase_shape minor s fp ph /\
-                    minor_collect_post_with_at ph (GI.phase_free s ph) minor s fp rs sl n
-                      ok d2 b2 s2 fp2 rs2 farr2 ph2)
-          (ensures GI.phase_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 ph2 /\
-                   Ph.Idle? ph2 == Ph.Idle? ph)
+                    minor_collect_post_with ph (GI.phase_free ph) minor s fp rs ok d2 b2 s2 fp2 rs2)
+          (ensures GI.phase_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 (ST.phase_at ph s2) /\
+                   Ph.Idle? (ST.phase_at ph s2) == Ph.Idle? ph)
   = match ph with
     | Ph.Idle ->
-        GI.phase_free_idle s;
-        minor_collect_post_at_idle SpecFields.free_stw minor s fp rs sl n ok
-          d2 b2 s2 fp2 rs2 farr2 ph2;
+        GI.phase_free_idle ();
         CV.cheney_collect_spec_with_stw minor s fp rs;
         GI.phase_shape_idle minor s fp;
         CheneyPres.cheney_collect_preserves_collection_heap_shape minor s fp rs;
         GI.phase_shape_idle ({ data = d2; bump = b2 } <: minor_state) s2 fp2
     | Ph.Sweeping st ->
-        GI.phase_free_sweeping s st;
+        GI.phase_free_sweeping st;
         GI.minor_keeps_phase_shape minor s fp st rs
 #pop-options
 
@@ -196,7 +192,7 @@ let any_phase_post (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
 fn minor_collect_any_phase (gh: gen_heap_t)
                            (roots: array U64.t) (nroots: SZ.t)
                            (fwd_arr: array U64.t)
-                           (queue: larray U64.t Cheney.queue_size)
+                           (queue: larray U64.t GC.Gen.ForwardingArray.queue_size)
                            (slots: array U64.t) (nslots: SZ.t)
   requires gc_state gh 'd 'b 's 'fp 'ph **
            pts_to roots 'rs **
@@ -207,27 +203,25 @@ fn minor_collect_any_phase (gh: gen_heap_t)
                  minor_slots_ok 'ph ({ data = 'd; bump = 'b } <: minor_state) 's
                    'rs 'farr 'sl (SZ.v nslots))
   returns ok: bool
-  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 ph2.
-    gc_state gh d2 b2 s2 fp2 ph2 **
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
+    gc_state gh d2 b2 s2 fp2 (ST.phase_at 'ph s2) **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
-    pure (minor_collect_post_with_at 'ph (GI.phase_free 's 'ph) ({ data = 'd; bump = 'b } <: minor_state)
-            's 'fp 'rs 'sl (SZ.v nslots) ok d2 b2 s2 fp2 rs2 farr2 ph2 /\
-          Ph.Idle? ph2 == Ph.Idle? 'ph)
+    pure (minor_collect_post_with 'ph (GI.phase_free 'ph) ({ data = 'd; bump = 'b } <: minor_state)
+            's 'fp 'rs ok d2 b2 s2 fp2 rs2 /\
+          Ph.Idle? (ST.phase_at 'ph s2) == Ph.Idle? 'ph)
 {
   unfold gc_state;
   any_phase_pre ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'ph 'rs 'farr 'sl (SZ.v nslots);
   let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots
-             #(hide (GI.phase_free 's 'ph));
+             #(hide (GI.phase_free 'ph));
   with d2 b2 s2 fp2. assert (is_gen_heap gh d2 b2 s2 fp2);
   with rs2. assert (pts_to roots rs2);
-  with farr2. assert (pts_to fwd_arr farr2);
-  with ph2. assert (gen_phase gh ph2);
-  any_phase_post ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'ph 'rs 'sl (SZ.v nslots) ok
-    d2 b2 s2 fp2 rs2 farr2 ph2;
-  fold (gc_state gh d2 b2 s2 fp2 ph2);
+  any_phase_post ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'ph 'rs ok
+    d2 b2 s2 fp2 rs2;
+  fold (gc_state gh d2 b2 s2 fp2 (ST.phase_at 'ph s2));
   ok
 }
 #pop-options
@@ -326,7 +320,7 @@ let start_after_mark (minor: minor_state) (h: heap) (h_mark: heap)
 fn gen_gc_start (gh: gen_heap_t)
                 (roots: array U64.t) (nroots: SZ.t)
                 (fwd_arr: array U64.t)
-                (queue: larray U64.t Cheney.queue_size)
+                (queue: larray U64.t GC.Gen.ForwardingArray.queue_size)
                 (slots: array U64.t) (nslots: SZ.t)
                 (st: gray_stack)
   requires gc_state gh 'd 'b 's 'fp Ph.Idle **
@@ -337,7 +331,7 @@ fn gen_gc_start (gh: gen_heap_t)
            is_gray_stack st 'st **
            pure (gen_gc_stack_budget 'rs 'st (stack_capacity st) /\
                  SZ.v nroots == Seq.length 'rs /\
-                 Seq.length 'farr == UpdatePtrs.fwd_array_size /\
+                 Seq.length 'farr == GC.Gen.ForwardingArray.fwd_array_size /\
                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                  RT.ref_table_sound 's 'sl (SZ.v nslots) /\
                  RT.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
@@ -375,16 +369,16 @@ fn gen_gc_start (gh: gen_heap_t)
   with rs_mid. assert (pts_to roots rs_mid);
   with farr_mid. assert (pts_to fwd_arr farr_mid);
   with ph_mid. assert (gen_phase gh ph_mid);
-  minor_collect_post_at_idle SpecFields.free_stw ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'sl
-    (SZ.v nslots) ok d_mid b_mid ms_updated fp_mid rs_mid farr_mid ph_mid;
+  // outside a sweep the phase stays idle
+  assert (pure (ph_mid == ST.phase_at Ph.Idle ms_updated));
   rewrite (gen_phase gh ph_mid) as (gen_phase gh Ph.Idle);
   minor_collect_idle_post ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'farr 'sl
-    (SZ.v nslots) ok d_mid b_mid ms_updated fp_mid rs_mid farr_mid;
+    (SZ.v nslots) ok d_mid b_mid ms_updated fp_mid rs_mid;
 
   unfold is_gen_heap;
   let fp_val = R.op_Bang gh.fp_ref;
   PromoteSpec.rewrite_roots_length 'rs
-    (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map;
+    (CheneySpec.cheney_promote Idle ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map;
   assert (pure (SZ.v nroots == Seq.length rs_mid));
   if ok {
     // Root darkening and marking, as `gen_gc` does them.

@@ -191,8 +191,9 @@ let collection_heap_shape_after_minor_reset
 /// ---------------------------------------------------------------------------
 
 [@@"opaque_to_smt"]
-let major_shape_with (free: free_def) (major: heap) (fp: U64.t) : prop =
+let major_shape_with (ph: gc_phase) (free: free_def) (major: heap) (fp: U64.t) : prop =
   free_def_ok free /\
+  allocations_not_free ph free /\
   well_formed_heap_with free major /\
   AllocLemmas.fl_valid major fp heap_words /\
   AllocLemmas.fl_chain_terminates major fp heap_words /\
@@ -206,11 +207,11 @@ let major_shape_with (free: free_def) (major: heap) (fp: U64.t) : prop =
   SweepInv.fp_valid fp major /\
   GC.Spec.FreeList.fp_in_heap fp major
 
-let major_shape_with_intro free major fp =
-  reveal_opaque (`%major_shape_with) (major_shape_with free major fp)
+let major_shape_with_intro ph free major fp =
+  reveal_opaque (`%major_shape_with) (major_shape_with ph free major fp)
 
-let major_shape_with_elim free major fp =
-  reveal_opaque (`%major_shape_with) (major_shape_with free major fp);
+let major_shape_with_elim ph free major fp =
+  reveal_opaque (`%major_shape_with) (major_shape_with ph free major fp);
   free_def_ok_elim free;
   wf_with_parts ()
 
@@ -246,40 +247,41 @@ let minor_major_fields_not_free_stw minor major =
   reveal_opaque (`%minor_major_fields_no_blue) (minor_major_fields_no_blue minor major)
 
 [@@"opaque_to_smt"]
-let collection_shape_with (free: free_def) (minor: minor_state) (major: heap)
+let collection_shape_with (ph: gc_phase) (free: free_def) (minor: minor_state) (major: heap)
   (fp: U64.t) : prop =
-  major_shape_with free major fp /\
+  major_shape_with ph free major fp /\
   minor_heap_shape minor /\
   minor_major_fields_not_free free minor major
 
-let collection_shape_with_intro free minor major fp =
-  reveal_opaque (`%collection_shape_with) (collection_shape_with free minor major fp)
+let collection_shape_with_intro ph free minor major fp =
+  reveal_opaque (`%collection_shape_with) (collection_shape_with ph free minor major fp)
 
-let collection_shape_with_elim free minor major fp =
-  reveal_opaque (`%collection_shape_with) (collection_shape_with free minor major fp)
+let collection_shape_with_elim ph free minor major fp =
+  reveal_opaque (`%collection_shape_with) (collection_shape_with ph free minor major fp)
 
 let major_heap_shape_as_free_stw major fp =
   major_heap_shape_elim major fp;
   free_stw_ok ();
-  major_shape_with_intro free_stw major fp
+  free_stw_allocations_not_free Idle;
+  major_shape_with_intro Idle free_stw major fp
 
 let major_heap_shape_of_free_stw major fp =
-  major_shape_with_elim free_stw major fp;
+  major_shape_with_elim Idle free_stw major fp;
   major_heap_shape_intro major fp
 
 let collection_heap_shape_as_free_stw minor major fp =
   collection_heap_shape_elim minor major fp;
   major_heap_shape_as_free_stw major fp;
   minor_major_fields_not_free_stw minor major;
-  collection_shape_with_intro free_stw minor major fp
+  collection_shape_with_intro Idle free_stw minor major fp
 
 let collection_heap_shape_of_free_stw minor major fp =
-  collection_shape_with_elim free_stw minor major fp;
+  collection_shape_with_elim Idle free_stw minor major fp;
   major_heap_shape_of_free_stw major fp;
   minor_major_fields_not_free_stw minor major;
   collection_heap_shape_intro minor major fp
 
-let collection_shape_with_after_minor_reset free minor major fp =
+let collection_shape_with_after_minor_reset ph free minor major fp =
   let reset = minor_reset minor in
   minor_reset_heap_shape minor;
   minor_reset_objects_empty minor;
@@ -291,4 +293,4 @@ let collection_shape_with_after_minor_reset free minor major fp =
     = minor_reset_objects_not_mem minor obj
   in
   minor_major_fields_not_free_intro free reset major h;
-  collection_shape_with_intro free reset major fp
+  collection_shape_with_intro ph free reset major fp

@@ -5,6 +5,7 @@ module Seq = FStar.Seq
 
 open FStar.Seq
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -102,7 +103,7 @@ val spot_infix_gen_gc_pre (r: unit{InfixMajor.spot_infix_room}) (cap: nat{cap >=
 /// preconditions are stated against.
 val spot_infix_cheney_no_oom (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
-      CheneyBFS.cheney_no_oom
+      CheneyBFS.cheney_no_oom Idle
         spot_infix_minor (InfixMajor.spot_infix_heap r)
         (InfixMajor.spot_infix_fp r) (spot_infix_roots r))
 
@@ -111,6 +112,6 @@ val spot_infix_cheney_no_oom (r: unit{InfixMajor.spot_infix_room})
 /// success flag to `true`.
 val spot_infix_no_oom (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
-      ~(CheneyBFS.cheney_oom
+      ~(CheneyBFS.cheney_oom Idle
           spot_infix_minor (InfixMajor.spot_infix_heap r)
           (InfixMajor.spot_infix_fp r) (spot_infix_roots r)))

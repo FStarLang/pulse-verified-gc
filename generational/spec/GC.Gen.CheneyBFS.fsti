@@ -195,12 +195,6 @@ val addr_covered_infix_step
                      U64.v (cs'.cs_fwd parent) + minor_wosize minor parent * 8 <= heap_size))
           (ensures addr_covered minor (CheneySpec.cheney_forward_one minor cs addr) addr)
 
-val addr_covered_elim
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires addr_covered minor cs addr /\
-                    Seq.mem addr (minor_objects minor) /\ minor_wosize minor addr > 0)
-          (ensures cs.cs_fwd addr <> 0UL)
-
 /// Coverage also names the object an interior pointer keeps alive.
 val addr_covered_elim_resolved
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
@@ -392,16 +386,16 @@ val scanned_exhausted_implies_fwd_closed_oom
 /// This precondition says "roots are forwarded AND forwarding is closed
 /// under successors." The conclusion follows by graph-theoretic induction
 /// (fwd_well_formed_covers_reachable), which is non-trivial.
-let cheney_no_oom (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
-  fwd_well_formed minor (CheneySpec.cheney_promote minor major fp roots).fwd_map roots
+let cheney_no_oom (ph: gc_phase) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  fwd_well_formed minor (CheneySpec.cheney_promote ph minor major fp roots).fwd_map roots
 
-val cheney_no_oom_from_loop_posts
+val cheney_no_oom_from_loop_posts (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (oom_roots oom_final: bool)
   : Lemma (requires minor_infix_wf minor /\
                     (let cs0 : CheneySpec.cheney_state =
                        { CheneySpec.cs_major = major; CheneySpec.cs_fp = fp;
-                         CheneySpec.cs_fwd = empty_forwarding; CheneySpec.cs_queue = Seq.empty } in
+                         CheneySpec.cs_fwd = empty_forwarding; CheneySpec.cs_queue = Seq.empty; CheneySpec.cs_phase = ph } in
                      let cs1 = CheneySpec.cheney_forward_roots minor cs0 roots 0 in
                      let cs2 = CheneySpec.cheney_scan minor cs1 0 (CheneySpec.cheney_fuel minor) in
                      (oom_roots == true ==> oom_final == true) /\
@@ -409,7 +403,7 @@ val cheney_no_oom_from_loop_posts
                                          fwd_covers_infix_roots minor cs1.CheneySpec.cs_fwd roots)) /\
                      (not oom_final ==> (fwd_closed minor cs2.CheneySpec.cs_fwd /\
                                          fwd_covers_infix_fields minor cs2.CheneySpec.cs_fwd))))
-          (ensures not oom_final ==> cheney_no_oom minor major fp roots)
+          (ensures not oom_final ==> cheney_no_oom ph minor major fp roots)
 
 /// ---------------------------------------------------------------------------
 /// Main theorem: BFS completeness under no-OOM
@@ -418,10 +412,10 @@ val cheney_no_oom_from_loop_posts
 /// All reachable minor objects with positive wosize are forwarded by
 /// cheney_promote, provided no OOM occurred (the forwarding map covers
 /// roots and is successor-closed).
-val cheney_promotes_all_reachable
+val cheney_promotes_all_reachable (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires cheney_no_oom minor major fp roots)
-          (ensures (let prom = CheneySpec.cheney_promote minor major fp roots in
+  : Lemma (requires cheney_no_oom ph minor major fp roots)
+          (ensures (let prom = CheneySpec.cheney_promote ph minor major fp roots in
                     forall (x: U64.t).
                       Seq.mem x (minor_reachable minor roots) /\
                       minor_wosize minor x > 0 ==>
@@ -454,7 +448,7 @@ let promote_fails_at (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U
   cs.CheneySpec.cs_fwd addr == 0UL /\
   minor_wosize minor addr > 0 /\
   (promote_object minor cs.CheneySpec.cs_major addr cs.CheneySpec.cs_fp
-     (minor_wosize minor addr) Idle).new_addr == 0UL
+     (minor_wosize minor addr) cs.cs_phase).new_addr == 0UL
 
 /// Forwarding `addr` from `cs` fails for lack of room.  For an ordinary
 /// address that is a failed promotion of `addr` itself; for an interior
@@ -495,17 +489,17 @@ let cheney_oom_reaching (minor: minor_state) (final: CheneySpec.cheney_state) : 
     cheney_attempts minor cs final addr /\ promote_fails_for minor cs addr
 
 /// The state `cheney_promote` ends in (its result is this state's projection).
-let cheney_promote_state (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+let cheney_promote_state (ph: gc_phase) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : GTot CheneySpec.cheney_state
   = let cs0 : CheneySpec.cheney_state =
       { CheneySpec.cs_major = major; CheneySpec.cs_fp = fp;
-        CheneySpec.cs_fwd = empty_forwarding; CheneySpec.cs_queue = Seq.empty } in
+        CheneySpec.cs_fwd = empty_forwarding; CheneySpec.cs_queue = Seq.empty; CheneySpec.cs_phase = ph } in
     CheneySpec.cheney_scan minor
       (CheneySpec.cheney_forward_roots minor cs0 roots 0) 0 (CheneySpec.cheney_fuel minor)
 
 /// `cheney_promote minor major fp roots` ran out of major-heap room.
-let cheney_oom (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
-  cheney_oom_reaching minor (cheney_promote_state minor major fp roots)
+let cheney_oom (ph: gc_phase) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  cheney_oom_reaching minor (cheney_promote_state ph minor major fp roots)
 
 /// Introduction from the root loop: the collector was about to forward
 /// `roots[ridx]` and the out-of-memory flag went up while it did so.

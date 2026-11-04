@@ -5,6 +5,7 @@ module Seq = FStar.Seq
 
 open FStar.Seq
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 
 module Cheney = GC.Gen.Cheney
@@ -115,7 +116,7 @@ val spot_concrete_a_promoted_from_no_oom
     Lemma
       (ensures (
         let prom =
-          Cheney.cheney_promote
+          Cheney.cheney_promote Idle
             ConcreteMinor.spot_minor2
             (ConcreteMajor.spot_major_heap r)
             (ConcreteMajor.spot_major_fp r)
@@ -133,7 +134,7 @@ val spot_concrete_c_field_rewritten_from_no_oom
     Lemma
       (ensures (
         let prom =
-          Cheney.cheney_promote
+          Cheney.cheney_promote Idle
             ConcreteMinor.spot_minor2
             (ConcreteMajor.spot_major_heap r)
             (ConcreteMajor.spot_major_fp r)
