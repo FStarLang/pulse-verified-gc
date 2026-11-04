@@ -21,6 +21,8 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module CheneySpec = GC.Gen.Cheney
 module CheneySteps = GC.Gen.Cheney.Steps
 module CheneyPres = GC.Gen.CheneyPreservation
+module CPForwarding = GC.Gen.CheneyPreservation.Forwarding
+module CPFrame = GC.Gen.CheneyPreservation.Frame
 module TwoPass = GC.Gen.TwoPassEquiv
 module SpecFields = GC.Spec.Fields
 module SpecObj = GC.Spec.Object
@@ -42,7 +44,7 @@ let derive_promoted_entries_valid_from
   : Lemma (requires
       Seq.length farr == fwd_array_size /\
       (forall (i:nat). i < fwd_array_size ==> Seq.index farr i == fwd (U64.uint_to_t (i * 8))) /\
-      CheneyPres.fwd_valid_or_infix fwd major /\
+      CPForwarding.fwd_valid_or_infix fwd major /\
       CheneySpec.fwd_bounded fwd /\
       SpecFields.blocks_fit major)
     (ensures promoted_entries_valid_from major farr 0)
@@ -86,8 +88,8 @@ let derive_promoted_entries_disjoint
   : Lemma (requires
       Seq.length farr == fwd_array_size /\
       (forall (i:nat). i < fwd_array_size ==> Seq.index farr i == fwd (U64.uint_to_t (i * 8))) /\
-      CheneyPres.fwd_valid_or_infix fwd major /\
-      CheneyPres.fwd_normal_injective fwd major /\
+      CPForwarding.fwd_valid_or_infix fwd major /\
+      Inj.fwd_normal_injective fwd major /\
       CheneySpec.fwd_bounded fwd /\
       SpecFields.blocks_fit major)
     (ensures promoted_entries_disjoint major farr)
@@ -219,7 +221,7 @@ private let derive_slot_rewrite_walked
     ML.lemma_mod_plus (U64.v obj) j 8;
     assert (U64.v obj + j * 8 + 8 <= heap_size);
     CheneySteps.cheney_promote_preserves_objects minor major_pre fp roots;
-    CheneyPres.cheney_promote_frame_old_header minor major_pre fp roots obj;
+    CPFrame.cheney_promote_frame_old_header minor major_pre fp roots obj;
     Aux.header_eq_object_facts prom.major_final major_pre obj;
     CE.cheney_promote_keeps_in_use free minor major_pre fp roots obj
 #pop-options
@@ -297,9 +299,9 @@ private let derive_fwd_classified_pointwise
     if in_use free major_pre obj then begin
       // An old non-free block: its header and field are those of major_pre.
       in_use_not_blue free major_pre obj;
-      CheneyPres.cheney_promote_frame_old_header minor major_pre fp roots obj;
+      CPFrame.cheney_promote_frame_old_header minor major_pre fp roots obj;
       Aux.header_eq_object_facts prom.major_final major_pre obj;
-      CheneyPres.cheney_promote_frame_old_fields minor major_pre fp roots obj j
+      CPFrame.cheney_promote_frame_old_fields minor major_pre fp roots obj j
     end else begin
       // The image of a nursery object: it is in the forwarding array.
       let m = IndDesc.indefinite_description_ghost U64.t

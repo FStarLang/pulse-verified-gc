@@ -127,25 +127,6 @@ val minor_source_edge_not_no_scan
       CG.mem_ce (CG.MinorV src, dst) (CG.build_combined_graph minor major free))
     (ensures minor_tag minor src < 251)
 
-let normal_vertex_ready
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (u: CG.combined_vertex) : prop =
-  let prom = cheney_promote minor major fp roots in
-  match u with
-  | CG.MajorV _ -> True
-  | CG.MinorV x ->
-    prom.fwd_map x <> 0UL /\
-    is_val_addr (prom.fwd_map x) /\
-    is_infix (prom.fwd_map x) prom.major_final = false
-
-let normal_src_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
-  (u: CG.combined_vertex) : prop =
-  let cg = CG.build_combined_graph minor major free in
-  let combined_roots = CG.classify_roots minor roots in
-  CG.combined_reachable cg combined_roots u /\
-  normal_vertex_ready minor major fp roots u
-
 let combined_reachable_normal_injective_prop
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t) : prop =
   let cg = CG.build_combined_graph minor major free in

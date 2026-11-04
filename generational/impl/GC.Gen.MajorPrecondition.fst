@@ -19,13 +19,13 @@ module Promote = GC.Gen.Promote
 module Cheney = GC.Gen.Cheney
 module CheneySteps = GC.Gen.Cheney.Steps
 module CheneyPres = GC.Gen.CheneyPreservation
+module CPInj = GC.Gen.CheneyPreservation.Injectivity
 module CheneyFwd = GC.Gen.CheneyPreservation.Forwarding
 module CheneyFrame = GC.Gen.CheneyPreservation.Frame
 module CheneyCorr = GC.Gen.CheneyCorrectness
 module CheneyBFS = GC.Gen.CheneyBFS
 module Reach = GC.Gen.Reachability
 module PromUpd = GC.Gen.PromoteUpdate
-module PromUpdAux = GC.Gen.PromoteUpdate.Aux
 module MinorFwd = GC.Gen.MinorCollectForwarding.Helpers
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module MBP = GC.Impl.MarkBoundedPrecondition
@@ -121,7 +121,7 @@ let post_minor_minor_root_valid
   // The object the root names is a live nursery object, hence reachable, hence
   // forwarded.
   Reach.minor_reachable_roots minor roots;
-  CheneyCorr.cheney_promotes_all_reachable minor major fp roots;
+  CheneyBFS.cheney_promotes_all_reachable minor major fp roots;
   assert (prom.fwd_map rv <> 0UL);
   // The root address itself is forwarded: an ordinary root is its own
   // resolution, and an interior one is covered by `fwd_covers_infix_roots`,
@@ -133,6 +133,7 @@ let post_minor_minor_root_valid
   let t = prom.fwd_map r in
   assert (Promote.rewrite_root r prom.fwd_map == t);
   GC.Gen.MinorCollectForwarding.stop_the_world_context minor major fp roots;
+  GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw minor major fp roots;
   MinorFwd.fwd_image_resolves minor major fp SpecFields.free_stw roots r;
   let p = prom.fwd_map rv in
   assert (SpecObj.resolve_object (t <: obj_addr) result.mc_major == p);
@@ -141,12 +142,12 @@ let post_minor_minor_root_valid
   // which is exactly the side condition `fwd_targets_not_blue` guards on.
   CheneySteps.cheney_promote_preserves_wfh_part4 minor major fp roots;
   assert (SpecObj.is_infix p prom.major_final = false);
-  CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
+  CPInj.cheney_promote_fwd_targets_not_blue minor major fp roots;
   assert (SpecObj.is_blue (p <: obj_addr) prom.major_final = false);
   // Rewriting the major heap's pointers moves neither objects nor headers.
   CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
-  PromUpdAux.update_major_pointers_preserves_objects prom.major_final prom.fwd_map;
-  PromUpd.update_major_pointers_preserves_header prom.major_final prom.fwd_map p;
+  PromUpd.update_walk_preserves_objects prom.major_final (SpecFields.in_use SpecFields.free_stw prom.major_final) prom.fwd_map;
+  PromUpd.update_walk_preserves_header prom.major_final (SpecFields.in_use SpecFields.free_stw prom.major_final) prom.fwd_map p;
   SpecObj.color_of_header_eq p prom.major_final result.mc_major;
   SpecFields.objects_addresses_gt_start zero_addr result.mc_major t
 #pop-options
@@ -168,8 +169,8 @@ let post_minor_major_root_valid minor major fp roots r
   CheneyCorr.cheney_collect_preserves_objects minor major fp SpecFields.free_stw roots;
   CheneyFrame.cheney_promote_frame_old_header minor major fp roots r;
   CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
-  PromUpdAux.update_major_pointers_preserves_objects prom.major_final prom.fwd_map;
-  PromUpd.update_major_pointers_preserves_header prom.major_final prom.fwd_map r;
+  PromUpd.update_walk_preserves_objects prom.major_final (SpecFields.in_use SpecFields.free_stw prom.major_final) prom.fwd_map;
+  PromUpd.update_walk_preserves_header prom.major_final (SpecFields.in_use SpecFields.free_stw prom.major_final) prom.fwd_map r;
   SpecObj.color_of_header_eq r major result.mc_major;
   SpecFields.objects_addresses_gt_start zero_addr major r;
   // A major root is an enumerated object, and well-formedness forbids an

@@ -79,218 +79,6 @@ let roots_valid_with
 let mem_graph_edge_at (g: graph_state) (src dst: U64.t) : prop =
   MCFH.mem_graph_edge_at g src dst
 
-let mem_graph_vertex_at (g: graph_state) (w: U64.t) : prop =
-  MCFH.mem_graph_vertex_at g w
-
-let post_minor_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
-  (w: U64.t) : prop =
-  MCFH.post_minor_reachable minor major fp free roots w
-
-let post_minor_edge
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
-  (x y: U64.t) : prop =
-  MCFH.post_minor_edge minor major fp free roots x y
-
-/// Result-indexed post-minor reachability: unlike `post_minor_reachable`, this
-/// names the concrete heap and rewritten roots exposed by an implementation
-/// postcondition.
-let result_post_reachable
-  (post_major: heap) (free: free_def) (post_roots: seq U64.t) (w: U64.t) : prop =
-  MCFH.result_post_reachable post_major free post_roots w
-
-let result_post_edge (post_major: heap) (free: free_def) (x y: U64.t) : prop =
-  MCFH.result_post_edge post_major free x y
-
-/// A rewritten root that names `w` --- either directly, or, when the root is an
-/// interior pointer, by resolving to it --- makes `w` post-reachable.
-val post_minor_reachable_refl_from_root
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
-  (roots: seq U64.t) (rr: U64.t) (w: U64.t)
-  : Lemma
-    (requires (
-      let prom = cheney_promote minor major fp roots in
-      let res = cheney_collect_spec_with free minor major fp roots in
-      Seq.mem rr (rewrite_roots roots prom.fwd_map) /\
-      HeapGraph.resolve_field res.mc_major rr == w /\
-      mem_graph_vertex_at (HeapModel.create_graph_with free res.mc_major) w))
-    (ensures post_minor_reachable minor major fp free roots w)
-
-val heap_graph_edge_to_field_read
-  (g: heap) (free: free_def) (src dst: obj_addr)
-  : Lemma
-    (requires mem_graph_edge (HeapModel.create_graph_with free g) src dst /\
-              free_def_ok free /\ well_formed_heap_with free g)
-    (ensures
-      in_use free g src /\ in_use free g dst /\
-      Seq.mem src (objects zero_addr g) /\
-      is_no_scan src g = false /\
-      HeapGraph.is_pointer_field dst /\
-      (exists (j: nat).
-        j < U64.v (wosize_of_object src g) /\
-        U64.v src + j * 8 + 8 <= heap_size /\
-        (U64.v src + j * 8) % 8 == 0 /\
-        HeapGraph.is_pointer_field
-          (read_word g (U64.uint_to_t (U64.v src + j * 8))) /\
-        HeapGraph.resolve_field g
-          (read_word g (U64.uint_to_t (U64.v src + j * 8))) == dst))
-
-/// Cheney promotion preserves the header-derived facts and body field of a
-/// pre-existing non-blue major object.
-val cheney_promote_preserves_old_major_field_context
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
-  (src: obj_addr) (j: nat)
-  : Lemma
-    (requires
-      GenInv.collection_shape_with free minor major fp /\
-      Seq.mem src (objects zero_addr major) /\
-      is_blue src major = false /\
-      j < U64.v (wosize_of_object src major) /\
-      U64.v src + j * 8 + 8 <= heap_size /\
-      (U64.v src + j * 8) % 8 == 0)
-    (ensures (
-      let prom = cheney_promote minor major fp roots in
-      Seq.mem src (objects zero_addr prom.major_final) /\
-      is_blue src prom.major_final = false /\
-      is_no_scan src prom.major_final == is_no_scan src major /\
-      wosize_of_object src prom.major_final == wosize_of_object src major /\
-      read_word prom.major_final (U64.uint_to_t (U64.v src + j * 8)) ==
-      read_word major (U64.uint_to_t (U64.v src + j * 8))))
-/// Combined-reachable minor vertices have forwarding images when promotion does
-/// not run out of space and every nursery pointer in a scannable major field is
-/// in the Cheney roots.
-val combined_reachable_minor_has_fwd
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
-  : Lemma
-    (requires
-      RBridge.major_fields_covered minor major free roots /\
-      well_formed_heap_with free major /\
-      minor_wf minor /\
-      GenInv.minor_major_fields_not_free free minor major /\
-      RBridge.roots_not_free free roots major /\
-      CheneyBFS.cheney_no_oom minor major fp roots)
-    (ensures (
-      let cg = CG.build_combined_graph minor major free in
-      let combined_roots = CG.classify_roots minor roots in
-      let fwd = (cheney_promote minor major fp roots).fwd_map in
-      forall (v: U64.t).
-        CG.combined_reachable cg combined_roots (CG.MinorV v) /\
-        minor_wosize minor v > 0 ==> fwd v <> 0UL))
-
-/// Field-level MajorV -> MinorV edge-forwarding lemma: if an old major field
-/// points to a reachable positive-size minor object, the post-minor heap stores
-/// the target's forwarding address in that field.
-val combined_major_minor_field_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
-  (roots slots: seq U64.t) (n: nat)
-  (src: obj_addr) (dst: U64.t) (i: nat)
-  : Lemma
-    (requires
-      GenInv.collection_shape_with free minor major fp /\
-      RBridge.major_fields_covered minor major free roots /\
-      RT.ref_table_covers_with free major slots n /\
-      remembered_targets_in_roots major roots slots n /\
-      RBridge.roots_not_free free roots major /\
-      CheneyBFS.cheney_no_oom minor major fp roots /\
-      (let cg = CG.build_combined_graph minor major free in
-       let combined_roots = CG.classify_roots minor roots in
-       CG.combined_reachable cg combined_roots (CG.MajorV src) /\
-       CG.combined_reachable cg combined_roots (CG.MinorV dst)) /\
-      ~(is_no_scan src major) /\
-      i < U64.v (wosize_of_object src major) /\
-      U64.v src + i * 8 + 8 <= heap_size /\
-      (U64.v src + i * 8) % 8 == 0 /\
-      CG.classify_major_field minor major
-        (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (CG.MinorV dst) /\
-      minor_wosize minor dst > 0)
-    (ensures (
-      // `field_addr_fits`: see `GC.Gen.MinorCollectForwarding.Edges`.
-      let fa = (MCFE.field_addr_fits src i; U64.uint_to_t (U64.v src + i * 8)) in
-      let prom = cheney_promote minor major fp roots in
-      let res = cheney_collect_spec_with free minor major fp roots in
-      let ov = to_minor_offset (read_word major fa) in
-      prom.fwd_map dst <> 0UL /\
-      prom.fwd_map ov <> 0UL /\
-      resolve_minor minor ov == dst /\
-      read_word res.mc_major fa == prom.fwd_map ov))
-
-/// Side condition for the normal-object edge-forwarding theorem.  Minor-source
-/// cases require the source image to be a normal promoted object; minor-target
-/// cases require the target image to be pointer-shaped.
-let normal_edge_forward_ready
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (u v: CG.combined_vertex) : prop =
-  MCFNE.normal_edge_forward_ready minor major fp roots u v
-
-/// Composed forward-edge theorem for the normal reachable subgraph: any
-/// reachable combined edge satisfying `normal_edge_forward_ready` maps to a
-/// concrete edge in the post-minor major heap graph.
-val combined_reachable_edge_forwarded_normal
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
-  (roots slots: seq U64.t) (n: nat)
-  (u w: CG.combined_vertex)
-  : Lemma
-    (requires
-      GenInv.collection_shape_with free minor major fp /\
-      RBridge.major_fields_covered minor major free roots /\
-      RT.ref_table_covers_with free major slots n /\
-      remembered_targets_in_roots major roots slots n /\
-      RBridge.roots_not_free free roots major /\
-      CheneyBFS.cheney_no_oom minor major fp roots /\
-      (let cg = CG.build_combined_graph minor major free in
-       let combined_roots = CG.classify_roots minor roots in
-       CG.combined_reachable cg combined_roots u /\
-       CG.combined_reachable cg combined_roots w /\
-       CG.mem_ce (u, w) cg) /\
-      normal_edge_forward_ready minor major fp roots u w)
-    (ensures (
-      let prom = cheney_promote minor major fp roots in
-      let res = cheney_collect_spec_with free minor major fp roots in
-      mem_graph_edge_at (HeapModel.create_graph_with free res.mc_major)
-        (CG.fwd_morphism prom.fwd_map u)
-        (CG.fwd_morphism prom.fwd_map w)))
-
-/// Disjointness assumption needed for cross-generation injectivity: normal
-/// forwarding targets are not old non-blue major objects.
-let fwd_disjoint_reachable_major
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t) : prop =
-  MCFNE.fwd_disjoint_reachable_major minor major fp free roots
-
-val fwd_disjoint_reachable_major_intro
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
-  : Lemma
-    (requires
-      GenInv.collection_shape_with free minor major fp /\
-      RBridge.roots_not_free free roots major)
-    (ensures fwd_disjoint_reachable_major minor major fp free roots)
-
-let combined_reachable_normal_injective_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t) : prop =
-  MCFNE.combined_reachable_normal_injective_prop minor major fp free roots
-
-let normal_vertex_ready
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (u: CG.combined_vertex) : prop =
-  MCFNE.normal_vertex_ready minor major fp roots u
-
-let normal_src_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
-  (u: CG.combined_vertex) : prop =
-  MCFNE.normal_src_reachable minor major fp free roots u
-
-val normal_edge_forward_ready_intro
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
-  (roots: seq U64.t)
-  (u w: CG.combined_vertex)
-  : Lemma
-    (requires
-      GenInv.collection_shape_with free minor major fp /\
-      RBridge.roots_not_free free roots major /\
-      normal_src_reachable minor major fp free roots u /\
-      normal_src_reachable minor major fp free roots w /\
-      CG.mem_ce (u, w) (CG.build_combined_graph minor major free))
-    (ensures normal_edge_forward_ready minor major fp roots u w)
-
 /// The image of a classified root is named by a rewritten root --- either
 /// directly, or, when the root is an interior nursery pointer, as the
 /// *resolution* of one.
@@ -310,7 +98,7 @@ val normal_classified_root_image_in_rewrite_roots
       GenInv.collection_shape_with free minor major fp /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
       Seq.mem u (CG.classify_roots minor roots) /\
-      normal_vertex_ready minor major fp roots u)
+      MCFH.normal_vertex_ready minor major fp roots u)
     (ensures (
       let prom = cheney_promote minor major fp roots in
       let res = cheney_collect_spec_with free minor major fp roots in
@@ -324,10 +112,10 @@ let normal_src_edge
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   (u w: CG.combined_vertex) : prop =
   let cg = CG.build_combined_graph minor major free in
-  normal_src_reachable minor major fp free roots u /\
-  normal_src_reachable minor major fp free roots w /\
+  MCFH.normal_src_reachable minor major fp free roots u /\
+  MCFH.normal_src_reachable minor major fp free roots w /\
   CG.mem_ce (u, w) cg /\
-  normal_edge_forward_ready minor major fp roots u w
+  MCFNE.normal_edge_forward_ready minor major fp roots u w
 
 noeq type ready_src_reach
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
@@ -336,7 +124,7 @@ noeq type ready_src_reach
       u:CG.combined_vertex ->
       (Seq.mem u (CG.classify_roots minor roots) /\
        CG.mem_cv u (CG.build_combined_graph minor major free) /\
-       normal_vertex_ready minor major fp roots u) ->
+       MCFH.normal_vertex_ready minor major fp roots u) ->
       ready_src_reach minor major fp free roots u
   | ReadyStep :
       u:CG.combined_vertex ->
@@ -358,14 +146,6 @@ let ready_image_reachable
     ready_src_reachable minor major fp free roots u /\
     CG.fwd_morphism prom.fwd_map u == w
 
-let normal_image_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
-  (w: U64.t) : prop =
-  let prom = cheney_promote minor major fp roots in
-  exists (u: CG.combined_vertex).
-    normal_src_reachable minor major fp free roots u /\
-    CG.fwd_morphism prom.fwd_map u == w
-
 let normal_image_edge
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   (x y: U64.t) : prop =
@@ -381,10 +161,10 @@ val normal_image_vertex_is_post_vertex
   : Lemma
     (requires
       GenInv.collection_shape_with free minor major fp /\
-      normal_image_reachable minor major fp free roots w)
+      MCFH.normal_image_reachable minor major fp free roots w)
     (ensures (
       let res = cheney_collect_spec_with free minor major fp roots in
-      mem_graph_vertex_at (HeapModel.create_graph_with free res.mc_major) w))
+      MCFH.mem_graph_vertex_at (HeapModel.create_graph_with free res.mc_major) w))
 
 val normal_classified_root_image_post_reachable
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
@@ -394,30 +174,21 @@ val normal_classified_root_image_post_reachable
       GenInv.collection_shape_with free minor major fp /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
       Seq.mem u (CG.classify_roots minor roots) /\
-      normal_src_reachable minor major fp free roots u)
+      MCFH.normal_src_reachable minor major fp free roots u)
     (ensures (
       let prom = cheney_promote minor major fp roots in
-      post_minor_reachable minor major fp free roots
+      MCFH.post_minor_reachable minor major fp free roots
         (CG.fwd_morphism prom.fwd_map u)))
 
 let normal_image_reachable_subgraph_isomorphism_prop
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   CG.reachable_subgraph_isomorphism
-    (normal_src_reachable minor major fp free roots)
-    (normal_image_reachable minor major fp free roots)
+    (MCFH.normal_src_reachable minor major fp free roots)
+    (MCFH.normal_image_reachable minor major fp free roots)
     (normal_src_edge minor major fp free roots)
     (normal_image_edge minor major fp free roots)
     prom.fwd_map
-
-val combined_reachable_normal_injective
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
-  : Lemma
-    (requires
-      GenInv.collection_shape_with free minor major fp /\
-      RBridge.roots_not_free free roots major /\
-      fwd_disjoint_reachable_major minor major fp free roots)
-    (ensures combined_reachable_normal_injective_prop minor major fp free roots)
 
 val normal_image_reachable_subgraph_isomorphism
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
@@ -425,7 +196,7 @@ val normal_image_reachable_subgraph_isomorphism
     (requires
       GenInv.collection_shape_with free minor major fp /\
       RBridge.roots_not_free free roots major /\
-      fwd_disjoint_reachable_major minor major fp free roots)
+      MCFNE.fwd_disjoint_reachable_major minor major fp free roots)
     (ensures normal_image_reachable_subgraph_isomorphism_prop minor major fp free roots)
 
 val normal_src_edge_preserves_post_minor_reachable
@@ -442,11 +213,11 @@ val normal_src_edge_preserves_post_minor_reachable
       CheneyBFS.cheney_no_oom minor major fp roots /\
       normal_src_edge minor major fp free roots u w /\
       (let prom = cheney_promote minor major fp roots in
-       post_minor_reachable minor major fp free roots
+       MCFH.post_minor_reachable minor major fp free roots
          (CG.fwd_morphism prom.fwd_map u)))
     (ensures (
       let prom = cheney_promote minor major fp roots in
-      post_minor_reachable minor major fp free roots
+      MCFH.post_minor_reachable minor major fp free roots
         (CG.fwd_morphism prom.fwd_map w)))
 
 val ready_src_reach_image_post_reachable
@@ -464,7 +235,7 @@ val ready_src_reach_image_post_reachable
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
       let prom = cheney_promote minor major fp roots in
-      post_minor_reachable minor major fp free roots
+      MCFH.post_minor_reachable minor major fp free roots
         (CG.fwd_morphism prom.fwd_map u)))
 
 val ready_image_reachable_is_post_reachable
@@ -480,7 +251,7 @@ val ready_image_reachable_is_post_reachable
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
       ready_image_reachable minor major fp free roots w)
-    (ensures post_minor_reachable minor major fp free roots w)
+    (ensures MCFH.post_minor_reachable minor major fp free roots w)
 
 val normal_src_reachable_is_ready_src_reachable
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
@@ -494,14 +265,14 @@ val normal_src_reachable_is_ready_src_reachable
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
-      normal_src_reachable minor major fp free roots u)
+      MCFH.normal_src_reachable minor major fp free roots u)
     (ensures ready_src_reachable minor major fp free roots u)
 
 let normal_image_reachable_is_post_reachable_prop
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t) : prop =
   forall (w: U64.t).
-    normal_image_reachable minor major fp free roots w ==>
-    post_minor_reachable minor major fp free roots w
+    MCFH.normal_image_reachable minor major fp free roots w ==>
+    MCFH.post_minor_reachable minor major fp free roots w
 
 val normal_image_reachable_is_post_reachable
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
@@ -515,8 +286,8 @@ val normal_image_reachable_is_post_reachable
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
-      normal_image_reachable minor major fp free roots w)
-    (ensures post_minor_reachable minor major fp free roots w)
+      MCFH.normal_image_reachable minor major fp free roots w)
+    (ensures MCFH.post_minor_reachable minor major fp free roots w)
 
 val normal_image_reachable_is_post_reachable_all
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
@@ -543,10 +314,10 @@ val post_normal_image_edges_reflect_src
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
-      normal_src_reachable minor major fp free roots u /\
-      normal_src_reachable minor major fp free roots w /\
+      MCFH.normal_src_reachable minor major fp free roots u /\
+      MCFH.normal_src_reachable minor major fp free roots w /\
       (let prom = cheney_promote minor major fp roots in
-       post_minor_edge minor major fp free roots
+       MCFH.post_minor_edge minor major fp free roots
          (CG.fwd_morphism prom.fwd_map u)
          (CG.fwd_morphism prom.fwd_map w)))
     (ensures normal_src_edge minor major fp free roots u w)
@@ -554,17 +325,17 @@ val post_normal_image_edges_reflect_src
 let post_minor_reachable_is_normal_image_reachable_prop
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t) : prop =
   forall (w: U64.t).
-    post_minor_reachable minor major fp free roots w ==>
-    normal_image_reachable minor major fp free roots w
+    MCFH.post_minor_reachable minor major fp free roots w ==>
+    MCFH.normal_image_reachable minor major fp free roots w
 
 let normal_post_reachable_subgraph_isomorphism_prop
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   CG.reachable_subgraph_isomorphism
-    (normal_src_reachable minor major fp free roots)
-    (post_minor_reachable minor major fp free roots)
+    (MCFH.normal_src_reachable minor major fp free roots)
+    (MCFH.post_minor_reachable minor major fp free roots)
     (normal_src_edge minor major fp free roots)
-    (post_minor_edge minor major fp free roots)
+    (MCFH.post_minor_edge minor major fp free roots)
     prom.fwd_map
 
 let normal_result_reachable_subgraph_isomorphism_prop
@@ -572,10 +343,10 @@ let normal_result_reachable_subgraph_isomorphism_prop
   (post_major: heap) (post_roots: seq U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   CG.reachable_subgraph_isomorphism
-    (normal_src_reachable minor major fp free roots)
-    (result_post_reachable post_major free post_roots)
+    (MCFH.normal_src_reachable minor major fp free roots)
+    (MCFH.result_post_reachable post_major free post_roots)
     (normal_src_edge minor major fp free roots)
-    (result_post_edge post_major free)
+    (MCFH.result_post_edge post_major free)
     prom.fwd_map
 
 let normal_post_non_pointer_fields_preserved_prop
@@ -650,8 +421,9 @@ val normal_post_non_pointer_fields_preserved_to_result
       normal_result_non_pointer_fields_preserved_prop
         minor major fp free roots post_major)
 
-/// The stop-the-world context gives the generic one at `free_stw`, and the
-/// collection at `free_stw` is `cheney_collect_spec`.
+/// The stop-the-world context gives the generic one at `free_stw`.  (The
+/// collection at `free_stw` is `cheney_collect_spec`:
+/// `GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw`.)
 val stop_the_world_context
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
@@ -662,6 +434,4 @@ val stop_the_world_context
       GenInv.minor_major_fields_not_free free_stw minor major /\
       (roots_valid_for_minor_collection minor major roots ==>
        roots_valid_with free_stw minor major roots /\
-       RBridge.roots_not_free free_stw roots major) /\
-      cheney_collect_spec_with free_stw minor major fp roots ==
-      cheney_collect_spec minor major fp roots)
+       RBridge.roots_not_free free_stw roots major))

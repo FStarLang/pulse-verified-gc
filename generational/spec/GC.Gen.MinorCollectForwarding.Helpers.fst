@@ -521,8 +521,8 @@ let cheney_promote_preserves_old_major_field_context
     GenInv.minor_heap_shape_elim minor;
     let prom = cheney_promote minor major fp roots in
     cheney_promote_preserves_objects minor major fp roots;
-    CheneyPres.cheney_promote_frame_old_header minor major fp roots src;
-    CheneyPres.cheney_promote_frame_old_fields minor major fp roots src j;
+    Frame.cheney_promote_frame_old_header minor major fp roots src;
+    Frame.cheney_promote_frame_old_fields minor major fp roots src j;
     color_of_header_eq src major prom.major_final;
     wosize_of_object_spec src major;
     wosize_of_object_spec src prom.major_final;

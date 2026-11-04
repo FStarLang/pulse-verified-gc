@@ -40,8 +40,6 @@ module MCFNE = GC.Gen.MinorCollectForwarding.NormalEdges
 module Frame = GC.Gen.CheneyPreservation.Frame
 
 let remembered_targets_in_roots = MCFH.remembered_targets_in_roots
-let normal_vertex_ready = MCFNE.normal_vertex_ready
-let normal_src_reachable = MCFNE.normal_src_reachable
 let post_minor_edge = MCFH.post_minor_edge
 let mem_graph_vertex_at = MCFH.mem_graph_vertex_at
 
@@ -145,7 +143,7 @@ private let normal_src_image_is_val_addr
   : Lemma
     (requires
       GenInv.collection_shape_with free minor major fp /\
-      normal_src_reachable minor major fp free roots u)
+      MCFH.normal_src_reachable minor major fp free roots u)
     (ensures (
       let prom = cheney_promote minor major fp roots in
       is_val_addr (CG.fwd_morphism prom.fwd_map u)))
@@ -162,7 +160,7 @@ private let normal_src_image_is_val_addr
       assert (U64.v x % U64.v mword == 0);
       is_val_addr_spec x
     | CG.MinorV x ->
-      assert (normal_vertex_ready minor major fp roots (CG.MinorV x));
+      assert (MCFH.normal_vertex_ready minor major fp roots (CG.MinorV x));
       assert (is_val_addr (prom.fwd_map x))
 
 private let post_minor_edge_to_mem_graph_edge
@@ -215,7 +213,7 @@ let post_edge_from_minor_image_reflects_mem_ce
     assert (fwd_src <> 0UL);
     assert (is_val_addr fwd_src);
     assert (is_infix fwd_src prom.major_final = false);
-    CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
+    CheneyInj.cheney_promote_fwd_targets_not_blue minor major fp roots;
     RBridge.reachability_bridge minor major free roots;
     minor_reachable_subset minor roots;
     assert (Seq.mem src (minor_objects minor));
@@ -237,7 +235,7 @@ let post_edge_from_minor_image_reflects_mem_ce
     assert (HeapGraph.resolve_field updated
               (read_word updated field_addr) == target_img);
     CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
-    CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
+    CheneyInj.cheney_promote_fwd_normal_injective minor major fp roots;
     CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots;
     PromUpdate.update_walk_preserves_header prom.major_final (in_use free prom.major_final) prom.fwd_map fwd_src_obj;
     assert (read_word updated (hd_address fwd_src_obj) ==
@@ -288,7 +286,7 @@ let post_edge_from_minor_image_reflects_mem_ce
           assert (is_val_addr (prom.fwd_map dst));
           assert (is_infix (prom.fwd_map dst) prom.major_final = false);
           assert (is_infix (prom.fwd_map rv) prom.major_final = false);
-          assert (CheneyPres.fwd_normal_injective prom.fwd_map prom.major_final);
+          assert (CheneyInj.fwd_normal_injective prom.fwd_map prom.major_final);
           assert (rv == dst);
           assert (Seq.mem dst (minor_objects minor));
           assert (is_minor_addr dst);
@@ -411,7 +409,7 @@ let post_edge_from_minor_image_reflects_target
     assert (fwd_src <> 0UL);
     assert (is_val_addr fwd_src);
     assert (is_infix fwd_src prom.major_final = false);
-    CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
+    CheneyInj.cheney_promote_fwd_targets_not_blue minor major fp roots;
     assert (Seq.mem src (minor_objects minor));
     let fwd_src_obj : obj_addr = fwd_src in
     assert (Seq.mem fwd_src_obj (objects zero_addr prom.major_final));
@@ -430,7 +428,7 @@ let post_edge_from_minor_image_reflects_target
     assert (HeapGraph.is_pointer_field (read_word updated field_addr));
     assert (HeapGraph.resolve_field updated (read_word updated field_addr) == y);
     CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
-    CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
+    CheneyInj.cheney_promote_fwd_normal_injective minor major fp roots;
     CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots;
     PromUpdate.update_walk_preserves_header prom.major_final (in_use free prom.major_final) prom.fwd_map fwd_src_obj;
     assert (read_word updated (hd_address fwd_src_obj) ==
@@ -480,10 +478,10 @@ let post_edge_from_minor_image_reflects_target
           Some (CG.MinorV rv));
         CG.minor_field_edge_intro minor major free src j (CG.MinorV rv);
         CG.combined_reachable_step cg combined_roots (CG.MinorV src) (CG.MinorV rv);
-        assert (normal_vertex_ready minor major fp roots (CG.MinorV rv));
+        assert (MCFH.normal_vertex_ready minor major fp roots (CG.MinorV rv));
         FStar.Classical.exists_intro
           (fun (u: CG.combined_vertex) ->
-            normal_src_reachable minor major fp free roots u /\
+            MCFH.normal_src_reachable minor major fp free roots u /\
             CG.fwd_morphism prom.fwd_map u == y)
           (CG.MinorV rv)
       end else begin
@@ -536,10 +534,10 @@ let post_edge_from_minor_image_reflects_target
             Some (CG.MajorV old_raw));
           CG.minor_field_edge_intro minor major free src j (CG.MajorV old_raw);
           CG.combined_reachable_step cg combined_roots (CG.MinorV src) (CG.MajorV old_raw);
-          assert (normal_src_reachable minor major fp free roots (CG.MajorV old_raw));
+          assert (MCFH.normal_src_reachable minor major fp free roots (CG.MajorV old_raw));
           FStar.Classical.exists_intro
             (fun (u: CG.combined_vertex) ->
-              normal_src_reachable minor major fp free roots u /\
+              MCFH.normal_src_reachable minor major fp free roots u /\
               CG.fwd_morphism prom.fwd_map u == y)
             (CG.MajorV old_raw)
         end

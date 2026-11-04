@@ -25,6 +25,7 @@ module CheneySteps = GC.Gen.Cheney.Steps
 module CheneyBFS = GC.Gen.CheneyBFS
 module CheneyFields = GC.Gen.CheneyPreservation.Fields
 module CheneyPres = GC.Gen.CheneyPreservation
+module CPInj = GC.Gen.CheneyPreservation.Injectivity
 module CG = GC.Gen.CombinedGraph
 module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
@@ -144,7 +145,7 @@ private let fwd_disjoint_reachable_major_at
     GenInv.collection_shape_with_elim free minor major fp;
     GenInv.major_shape_with_elim free major fp;
     GenInv.minor_heap_shape_elim minor;
-    CheneyPres.cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
+    CPInj.cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
       minor major fp roots;
     RBridge.reachable_not_free free minor major roots;
     assert (CG.combined_reachable cg combined_roots (CG.MajorV y));
@@ -153,7 +154,7 @@ private let fwd_disjoint_reachable_major_at
     assert (U64.v y % U64.v mword == 0);
     assert (Seq.mem (y <: obj_addr) (objects zero_addr major));
     assert (is_blue (y <: obj_addr) major = false);
-    assert (CheneyPres.fwd_normal_targets_disjoint_from_old_nonblue
+    assert (CPInj.fwd_normal_targets_disjoint_from_old_nonblue
       prom.fwd_map prom.major_final major);
     assert (prom.fwd_map x <> y)
 
@@ -202,7 +203,7 @@ let combined_reachable_normal_injective
     GenInv.collection_shape_with_elim free minor major fp;
     GenInv.major_shape_with_elim free major fp;
     GenInv.minor_heap_shape_elim minor;
-    CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
+    CPInj.cheney_promote_fwd_normal_injective minor major fp roots;
     RBridge.reachable_not_free free minor major roots;
     let prom = cheney_promote minor major fp roots in
     let aux (u w: CG.combined_vertex) : Lemma
@@ -232,7 +233,7 @@ let combined_reachable_normal_injective
       | CG.MajorV x, CG.MajorV y -> ()
       | CG.MinorV x, CG.MinorV y ->
         assert (prom.fwd_map x == prom.fwd_map y);
-        assert (CheneyPres.fwd_normal_injective prom.fwd_map prom.major_final);
+        assert (CPInj.fwd_normal_injective prom.fwd_map prom.major_final);
         assert (prom.fwd_map x <> 0UL);
         assert (prom.fwd_map y <> 0UL);
         assert (is_val_addr (prom.fwd_map x));
@@ -299,7 +300,7 @@ private let normal_minor_source_ready_intro
     assert (is_infix fwd_src prom.major_final = false);
     CG.edge_source_decomposition minor major free (CG.MinorV src, dst);
     assert (Seq.mem src (minor_objects minor));
-    CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
+    CPInj.cheney_promote_fwd_targets_not_blue minor major fp roots;
     assert (Seq.mem (fwd_src <: obj_addr) (objects zero_addr prom.major_final));
     assert (is_blue (fwd_src <: obj_addr) prom.major_final = false);
     minor_source_edge_not_no_scan minor major fp free src dst;
@@ -341,7 +342,7 @@ let normal_edge_forward_ready_intro
     GenInv.minor_heap_shape_elim minor;
     assert (minor_wf minor);
     assert (minor_infix_wf minor);
-    CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
+    CPInj.cheney_promote_fwd_targets_not_blue minor major fp roots;
     CG.build_combined_graph_wf minor major free;
     assert (CG.combined_graph_wf (CG.build_combined_graph minor major free));
     assert (CG.mem_cv u (CG.build_combined_graph minor major free));
@@ -398,14 +399,14 @@ let normal_src_images_injective
     GenInv.collection_shape_with_elim free minor major fp;
     GenInv.major_shape_with_elim free major fp;
     GenInv.minor_heap_shape_elim minor;
-    CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
+    CPInj.cheney_promote_fwd_normal_injective minor major fp roots;
     match u, w with
     | CG.MajorV x, CG.MajorV y -> ()
     | CG.MinorV x, CG.MinorV y ->
       assert (normal_vertex_ready minor major fp roots (CG.MinorV x));
       assert (normal_vertex_ready minor major fp roots (CG.MinorV y));
       assert (prom.fwd_map x == prom.fwd_map y);
-      assert (CheneyPres.fwd_normal_injective prom.fwd_map prom.major_final);
+      assert (CPInj.fwd_normal_injective prom.fwd_map prom.major_final);
       assert (prom.fwd_map x <> 0UL);
       assert (prom.fwd_map y <> 0UL);
       assert (is_val_addr (prom.fwd_map x));

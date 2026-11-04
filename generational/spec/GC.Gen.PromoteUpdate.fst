@@ -44,14 +44,7 @@ let update_walk_preserves_wfh_part4 =
 let update_walk_field_effect =
   GC.Gen.PromoteUpdate.Field.update_walk_field_effect
 
-let update_major_pointers_preserves_objects =
-  GC.Gen.PromoteUpdate.Aux.update_major_pointers_preserves_objects
-
 /// --- From GC.Gen.PromoteUpdate.Header ---
-
-let update_major_pointers_preserves_header =
-  GC.Gen.PromoteUpdate.Header.update_major_pointers_preserves_header
-
 
 /// --- From GC.Gen.PromoteUpdate.BlueProm ---
 

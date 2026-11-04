@@ -238,7 +238,7 @@ let end_to_end_isomorphism_intro
     MCFH.result_post_stw darkened post_roots;
     MCFH.result_post_stw post_major post_roots;
     iso_dst_swap
-      (MinorFwd.normal_src_reachable minor major fp SF.free_stw roots)
+      (MCFH.normal_src_reachable minor major fp SF.free_stw roots)
       (MCFH.result_post_reachable post_major SF.free_stw post_roots)
       (MCFH.result_post_reachable final_major SF.free_stw post_roots)
       (MinorFwd.normal_src_edge minor major fp SF.free_stw roots)

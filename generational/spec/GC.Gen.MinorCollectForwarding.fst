@@ -26,6 +26,7 @@ module CheneySteps = GC.Gen.Cheney.Steps
 module CheneyBFS = GC.Gen.CheneyBFS
 module CheneyCorr = GC.Gen.CheneyCorrectness
 module CheneyPres = GC.Gen.CheneyPreservation
+module CPFrame = GC.Gen.CheneyPreservation.Frame
 module CheneyFields = GC.Gen.CheneyPreservation.Fields
 module CheneyInj = GC.Gen.CheneyPreservation.Injectivity
 module Forwarding = GC.Gen.CheneyPreservation.Forwarding
@@ -46,16 +47,6 @@ module RT = GC.Gen.RefTable
 module CE = GC.Gen.CheneyGeneric
 module MCFR = GC.Gen.MinorCollectForwarding.Reflection
 module NoBlueUtil = GC.Gen.NoBlueUtil
-let post_minor_reachable_refl_from_root = MCFH.post_minor_reachable_refl_from_root
-let heap_graph_edge_to_field_read = MCFH.heap_graph_edge_to_field_read
-let cheney_promote_preserves_old_major_field_context = MCFH.cheney_promote_preserves_old_major_field_context
-let mem_graph_vertex_at_is_obj_addr = MCFH.mem_graph_vertex_at_is_obj_addr
-let combined_reachable_minor_has_fwd = MCFE.combined_reachable_minor_has_fwd
-let combined_major_minor_field_forwarded = MCFE.combined_major_minor_field_forwarded
-let combined_reachable_edge_forwarded_normal = MCFNE.combined_reachable_edge_forwarded_normal
-let fwd_disjoint_reachable_major_intro = MCFNE.fwd_disjoint_reachable_major_intro
-let normal_edge_forward_ready_intro = MCFNE.normal_edge_forward_ready_intro
-
 /// An *unforwarded* nursery target of a major field cannot be interior: the
 /// write barrier files every nursery pointer stored in a major field --- in the
 /// exact, possibly interior, form in which it is stored --- as a Cheney root,
@@ -304,7 +295,7 @@ let normal_image_vertex_is_post_vertex
     GenInv.major_shape_with_elim free major fp;
     GenInv.minor_heap_shape_elim minor;
     CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
-    CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
+    CheneyInj.cheney_promote_fwd_targets_not_blue minor major fp roots;
     PromUpdate.update_walk_preserves_objects prom.major_final (in_use free prom.major_final) prom.fwd_map;
     assert (res.mc_major == update_walk prom.major_final (in_use free prom.major_final) prom.fwd_map);
     let goal = mem_graph_vertex_at post_g w in
@@ -333,7 +324,7 @@ let normal_image_vertex_is_post_vertex
         assert (prom.fwd_map a <> 0UL);
         assert (is_val_addr (prom.fwd_map a));
         assert (is_infix (prom.fwd_map a) prom.major_final = false);
-        assert (CheneyPres.fwd_targets_not_blue prom.fwd_map prom.major_final);
+        assert (CheneyInj.fwd_targets_not_blue prom.fwd_map prom.major_final);
         assert (Seq.mem ((prom.fwd_map a) <: obj_addr)
           (objects zero_addr prom.major_final));
         assert (Seq.mem ((prom.fwd_map a) <: obj_addr)
@@ -415,7 +406,7 @@ private let post_root_image_is_normal_image
         (CG.build_combined_graph minor major free)
         (CG.classify_roots minor roots)
         (CG.MinorV rv);
-      combined_reachable_minor_has_fwd minor major fp free roots;
+      MCFE.combined_reachable_minor_has_fwd minor major fp free roots;
       assert (prom.fwd_map rv <> 0UL);
       // Every live nursery root is forwarded: a non-interior one is its own
       // resolution, an interior one by `fwd_covers_infix_roots`.
@@ -498,7 +489,6 @@ let normal_classified_root_image_post_reachable
     end
 #pop-options
 
-let combined_reachable_normal_injective = MCFNE.combined_reachable_normal_injective
 private let normal_src_images_injective = MCFNE.normal_src_images_injective
 
 #push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
@@ -558,9 +548,9 @@ private let post_edge_from_major_image_reflects_mem_ce
     CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     CheneySteps.cheney_promote_preserves_wfh_part4 minor major fp roots;
     CheneySteps.cheney_promote_preserves_objects minor major fp roots;
-    CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
+    CheneyInj.cheney_promote_fwd_normal_injective minor major fp roots;
     CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots;
-    CheneyPres.cheney_promote_frame_old_header minor major fp roots src_obj;
+    CPFrame.cheney_promote_frame_old_header minor major fp roots src_obj;
     assert (Seq.mem src_obj (objects zero_addr prom.major_final));
     PromUpdate.update_walk_preserves_header prom.major_final (in_use free prom.major_final) prom.fwd_map src_obj;
     assert (read_word updated (hd_address src_obj) == read_word major (hd_address src_obj));
@@ -603,7 +593,7 @@ private let post_edge_from_major_image_reflects_mem_ce
         assert (is_val_addr (prom.fwd_map dst));
         assert (is_infix (prom.fwd_map dst) prom.major_final = false);
         assert (is_infix (prom.fwd_map rv) prom.major_final = false);
-        assert (CheneyPres.fwd_normal_injective prom.fwd_map prom.major_final);
+        assert (CheneyInj.fwd_normal_injective prom.fwd_map prom.major_final);
         assert (rv == dst);
         assert (Seq.mem dst (minor_objects minor));
         assert (to_minor_offset (read_word major field_addr) == old_val);
@@ -628,8 +618,8 @@ private let post_edge_from_major_image_reflects_mem_ce
         CG.major_field_edge_intro minor major free src_obj j (CG.MinorV rv);
         CG.combined_reachable_step cg combined_roots (CG.MajorV src) (CG.MinorV rv);
         assert (CG.combined_reachable cg combined_roots (CG.MinorV rv));
-        fwd_disjoint_reachable_major_intro minor major fp free roots;
-        assert (fwd_disjoint_reachable_major minor major fp free roots);
+        MCFNE.fwd_disjoint_reachable_major_intro minor major fp free roots;
+        assert (MCFNE.fwd_disjoint_reachable_major minor major fp free roots);
         assert (prom.fwd_map rv == dst);
         assert (prom.fwd_map rv <> 0UL);
         assert (normal_src_reachable minor major fp free roots (CG.MajorV dst));
@@ -661,7 +651,7 @@ private let post_edge_from_major_image_reflects_mem_ce
         minor_objects_body_bound minor old_val;
         assert (CG.combined_reachable cg combined_roots (CG.MinorV old_val));
         assert (minor_wosize minor old_val > 0);
-        combined_reachable_minor_has_fwd minor major fp free roots;
+        MCFE.combined_reachable_minor_has_fwd minor major fp free roots;
         assert (prom.fwd_map old_val <> 0UL);
         assert False
       end else begin
@@ -754,7 +744,7 @@ private let post_edge_from_major_image_reflects_target
     CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     CheneySteps.cheney_promote_preserves_wfh_part4 minor major fp roots;
     CheneySteps.cheney_promote_preserves_objects minor major fp roots;
-    CheneyPres.cheney_promote_frame_old_header minor major fp roots src_obj;
+    CPFrame.cheney_promote_frame_old_header minor major fp roots src_obj;
     assert (Seq.mem src_obj (objects zero_addr prom.major_final));
     PromUpdate.update_walk_preserves_header prom.major_final (in_use free prom.major_final) prom.fwd_map src_obj;
     assert (read_word updated (hd_address src_obj) == read_word major (hd_address src_obj));
@@ -812,7 +802,7 @@ private let post_edge_from_major_image_reflects_target
         CG.major_field_edge_intro minor major free src_obj j (CG.MinorV old_val);
         CG.combined_reachable_step cg combined_roots (CG.MajorV src) (CG.MinorV old_val);
         minor_objects_body_bound minor old_val;
-        combined_reachable_minor_has_fwd minor major fp free roots;
+        MCFE.combined_reachable_minor_has_fwd minor major fp free roots;
         assert (prom.fwd_map old_val <> 0UL);
         assert False
       end else begin
@@ -903,9 +893,9 @@ let normal_image_reachable_subgraph_isomorphism
     GenInv.collection_shape_with_elim free minor major fp;
     GenInv.major_shape_with_elim free major fp;
     GenInv.minor_heap_shape_elim minor;
-    combined_reachable_normal_injective minor major fp free roots;
-    CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
-    assert (combined_reachable_normal_injective_prop minor major fp free roots);
+    MCFNE.combined_reachable_normal_injective minor major fp free roots;
+    CheneyInj.cheney_promote_fwd_normal_injective minor major fp roots;
+    assert (MCFNE.combined_reachable_normal_injective_prop minor major fp free roots);
     let image_valid (u: CG.combined_vertex) : Lemma
       (requires normal_src_reachable minor major fp free roots u)
       (ensures normal_image_reachable minor major fp free roots (CG.fwd_morphism prom.fwd_map u))
@@ -921,7 +911,7 @@ let normal_image_reachable_subgraph_isomorphism
       | CG.MajorV x, CG.MajorV y -> ()
       | CG.MinorV x, CG.MinorV y ->
         assert (prom.fwd_map x == prom.fwd_map y);
-        assert (CheneyPres.fwd_normal_injective prom.fwd_map prom.major_final);
+        assert (CheneyInj.fwd_normal_injective prom.fwd_map prom.major_final);
         assert (prom.fwd_map x <> 0UL);
         assert (prom.fwd_map y <> 0UL);
         assert (is_val_addr (prom.fwd_map x));
@@ -931,14 +921,14 @@ let normal_image_reachable_subgraph_isomorphism
         assert (x == y)
       | CG.MinorV x, CG.MajorV y ->
         assert (prom.fwd_map x == y);
-        assert (fwd_disjoint_reachable_major minor major fp free roots);
+        assert (MCFNE.fwd_disjoint_reachable_major minor major fp free roots);
         assert (normal_src_reachable minor major fp free roots (CG.MinorV x));
         assert (normal_src_reachable minor major fp free roots (CG.MajorV y));
         assert (prom.fwd_map x <> y);
         assert False
       | CG.MajorV y, CG.MinorV x ->
         assert (y == prom.fwd_map x);
-        assert (fwd_disjoint_reachable_major minor major fp free roots);
+        assert (MCFNE.fwd_disjoint_reachable_major minor major fp free roots);
         assert (normal_src_reachable minor major fp free roots (CG.MinorV x));
         assert (normal_src_reachable minor major fp free roots (CG.MajorV y));
         assert (prom.fwd_map x <> y);
@@ -1108,7 +1098,7 @@ let normal_src_edge_preserves_post_minor_reachable
         mem_graph_edge_at post_g
           (CG.fwd_morphism prom.fwd_map a)
           (CG.fwd_morphism prom.fwd_map b))
-    = combined_reachable_edge_forwarded_normal minor major fp free roots slots n a b
+    = MCFNE.combined_reachable_edge_forwarded_normal minor major fp free roots slots n a b
     in
     post_edge_aux u w;
     assert (mem_graph_edge_at post_g fu fv);
@@ -1301,7 +1291,7 @@ private let edge_source_normal_vertex_ready
       assert (AllocLemmas.fl_chain_terminates major fp heap_words);
       assert (chain_objects_blue major fp);
       major_fields_covered_from_slots minor major free roots slots n;
-      combined_reachable_minor_has_fwd minor major fp free roots;
+      MCFE.combined_reachable_minor_has_fwd minor major fp free roots;
       CG.minor_edge_elim minor major free src w;
       assert (Seq.mem src (minor_objects minor));
       let i = FStar.IndefiniteDescription.indefinite_description_ghost nat
@@ -1356,7 +1346,7 @@ let normal_src_reachable_is_ready_src_reachable
         CG.combined_reachable_step cg combined_roots src dst;
         assert (CG.combined_reachable cg combined_roots dst);
         assert (normal_src_reachable minor major fp free roots dst);
-        normal_edge_forward_ready_intro minor major fp free roots src dst;
+        MCFNE.normal_edge_forward_ready_intro minor major fp free roots src dst;
         let r_src = FStar.IndefiniteDescription.indefinite_description_ghost
           (ready_src_reach minor major fp free roots src)
           (fun _ -> True) in
@@ -1424,11 +1414,11 @@ let post_normal_image_edges_reflect_src
     | CG.MajorV src ->
       post_edge_from_major_image_reflects_mem_ce
         minor major fp free roots slots n src w;
-      normal_edge_forward_ready_intro minor major fp free roots (CG.MajorV src) w
+      MCFNE.normal_edge_forward_ready_intro minor major fp free roots (CG.MajorV src) w
     | CG.MinorV src ->
       post_edge_from_minor_image_reflects_mem_ce
         minor major fp free roots slots n src w;
-      normal_edge_forward_ready_intro minor major fp free roots (CG.MinorV src) w
+      MCFNE.normal_edge_forward_ready_intro minor major fp free roots (CG.MinorV src) w
 #pop-options
 
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
@@ -1480,7 +1470,7 @@ let normal_post_reachable_subgraph_isomorphism
     let prom = cheney_promote minor major fp roots in
     GenInv.collection_shape_with_elim free minor major fp;
     GenInv.minor_heap_shape_elim minor;
-    fwd_disjoint_reachable_major_intro minor major fp free roots;
+    MCFNE.fwd_disjoint_reachable_major_intro minor major fp free roots;
     normal_image_reachable_subgraph_isomorphism minor major fp free roots;
     normal_image_reachable_is_post_reachable_all minor major fp free roots slots n;
     post_minor_reachable_is_normal_image_reachable_all minor major fp free roots slots n;
@@ -1523,7 +1513,7 @@ let normal_post_reachable_subgraph_isomorphism
                   (CG.fwd_morphism prom.fwd_map w)))
     =
       if normal_src_edge minor major fp free roots u w then begin
-        combined_reachable_edge_forwarded_normal minor major fp free roots slots n u w;
+        MCFNE.combined_reachable_edge_forwarded_normal minor major fp free roots slots n u w;
         let res = cheney_collect_spec_with free minor major fp roots in
         assert (mem_graph_edge_at (HeapModel.create_graph_with free res.mc_major)
           (CG.fwd_morphism prom.fwd_map u)
@@ -1609,5 +1599,4 @@ let stop_the_world_context minor major fp roots =
   GenInv.major_shape_with_elim free_stw major fp;
   FStar.Classical.move_requires (MCFH.roots_valid_with_stw minor major) roots;
   FStar.Classical.move_requires
-    (MCFH.roots_valid_with_implies_not_free free_stw minor major) roots;
-  CE.cheney_collect_spec_with_stw minor major fp roots
+    (MCFH.roots_valid_with_implies_not_free free_stw minor major) roots

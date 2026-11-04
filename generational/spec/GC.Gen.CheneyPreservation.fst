@@ -31,42 +31,8 @@ module Frame = GC.Gen.CheneyPreservation.Frame
 module Forwarding = GC.Gen.CheneyPreservation.Forwarding
 module NonBlueOrigin = GC.Gen.CheneyPreservation.NonBlueOrigin
 module CPF = GC.Gen.CheneyPreservation.Fields
-
-
-
-/// ---------------------------------------------------------------------------
-/// Delegated preservation families
-/// ---------------------------------------------------------------------------
-
 module Injectivity = GC.Gen.CheneyPreservation.Injectivity
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let cheney_promote_fwd_valid_or_infix
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  = Forwarding.cheney_promote_fwd_valid_or_infix minor major fp roots
-
-let cheney_promote_frame_old_fields = Frame.cheney_promote_frame_old_fields
-
-let cheney_promote_frame_old_header = Frame.cheney_promote_frame_old_header
-
-let cheney_promote_fwd_normal_injective
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  = Injectivity.cheney_promote_fwd_normal_injective minor major fp roots
-
-let cheney_promote_fwd_targets_not_blue
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  = Injectivity.cheney_promote_fwd_targets_not_blue minor major fp roots
-
-let cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  = Injectivity.cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
-      minor major fp roots
-
-let cheney_promote_nonblue_origin
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (obj: obj_addr)
-  = NonBlueOrigin.cheney_promote_nonblue_origin minor major fp roots obj
-#pop-options
 
 /// ---------------------------------------------------------------------------
 /// The stop-the-world shape, from the shape given what counts as free
@@ -124,10 +90,10 @@ let cheney_collect_block_origin
   assert (g' == update_major_pointers prom.major_final prom.fwd_map);
   cheney_promote_preserves_wfh_part1 minor major fp roots;
   cheney_promote_preserves_wfh_part4 minor major fp roots;
-  update_major_pointers_preserves_objects prom.major_final prom.fwd_map;
+  update_walk_preserves_objects prom.major_final (in_use free_stw prom.major_final) prom.fwd_map;
   free_stw_ok ();
   if in_use free_stw g' x then begin
-    update_major_pointers_preserves_header prom.major_final prom.fwd_map x;
+    update_walk_preserves_header prom.major_final (in_use free_stw prom.major_final) prom.fwd_map x;
     color_of_header_eq x prom.major_final g';
     assert (in_use free_stw prom.major_final x);
     CE.cheney_promote_in_use_origin free_stw minor major fp roots x;

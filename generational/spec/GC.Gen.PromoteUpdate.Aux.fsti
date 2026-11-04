@@ -61,8 +61,3 @@ val update_walk_preserves_wfh_part1
 /// ---------------------------------------------------------------------------
 /// The stop-the-world instances
 /// ---------------------------------------------------------------------------
-
-val update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map)
-  : Lemma (requires blocks_fit major)
-    (ensures objects zero_addr (update_major_pointers major fwd) == objects zero_addr major)
-

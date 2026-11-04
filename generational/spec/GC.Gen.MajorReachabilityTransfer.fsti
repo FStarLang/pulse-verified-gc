@@ -109,7 +109,7 @@ let end_to_end_isomorphism
   (minor: GC.Gen.MinorHeap.minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
   (final_major: heap) (final_roots: Seq.seq U64.t) : prop =
   CG.reachable_subgraph_isomorphism
-    (MinorFwd.normal_src_reachable minor major fp SF.free_stw roots)
+    (MCFH.normal_src_reachable minor major fp SF.free_stw roots)
     (MCFH.result_post_reachable final_major SF.free_stw final_roots)
     (MinorFwd.normal_src_edge minor major fp SF.free_stw roots)
     (MCFH.result_post_edge final_major SF.free_stw)

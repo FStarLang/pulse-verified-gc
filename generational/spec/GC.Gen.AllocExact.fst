@@ -1053,16 +1053,6 @@ let update_walk_preserves_fl_complete
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-let update_major_pointers_preserves_fl_complete (major: heap) (fwd: Promote.forwarding_map) (fp: U64.t)
-  : Lemma (requires blocks_fit major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    Promote.chain_objects_blue major fp /\
-                    FL.fl_complete major fp)
-          (ensures FL.fl_complete (Promote.update_major_pointers major fwd) fp)
-  = update_walk_preserves_fl_complete major (in_use free_stw major) fwd fp
-
-
 /// ---------------------------------------------------------------------------
 /// The program's field writes keep the entry conditions
 /// ---------------------------------------------------------------------------

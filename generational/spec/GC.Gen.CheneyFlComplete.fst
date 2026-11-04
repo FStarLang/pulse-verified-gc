@@ -6,7 +6,7 @@
 /// (`cheney_promote`, one `promote_object` per surviving nursery object) and
 /// the pointer rewrite that follows (`update_major_pointers`).  Each keeps
 /// `fl_complete` -- `GC.Gen.AllocExact.promote_object_preserves_fl_complete`
-/// and `update_major_pointers_preserves_fl_complete` -- and this module
+/// and `update_walk_preserves_fl_complete` -- and this module
 /// carries the first through the Cheney traversal
 /// (`GC.Gen.Cheney.Induction.cheney_promote_keeps`).
 

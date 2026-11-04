@@ -31,14 +31,6 @@ module RT = GC.Gen.RefTable
 module CE = GC.Gen.CheneyGeneric
 module MCFNE = GC.Gen.MinorCollectForwarding.NormalEdges
 
-let normal_image_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
-  (w: U64.t) : prop =
-  let prom = cheney_promote minor major fp roots in
-  exists (u: CG.combined_vertex).
-    MCFNE.normal_src_reachable minor major fp free roots u /\
-    CG.fwd_morphism prom.fwd_map u == w
-
 val post_edge_from_minor_image_reflects_mem_ce
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
   (roots slots: seq U64.t) (n: nat)
@@ -51,8 +43,8 @@ val post_edge_from_minor_image_reflects_mem_ce
       MCFH.remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
-      MCFNE.normal_src_reachable minor major fp free roots (CG.MinorV src) /\
-      MCFNE.normal_src_reachable minor major fp free roots w /\
+      MCFH.normal_src_reachable minor major fp free roots (CG.MinorV src) /\
+      MCFH.normal_src_reachable minor major fp free roots w /\
       (let prom = cheney_promote minor major fp roots in
        MCFH.post_minor_edge minor major fp free roots (prom.fwd_map src)
          (CG.fwd_morphism prom.fwd_map w)))
@@ -70,9 +62,9 @@ val post_edge_from_minor_image_reflects_target
       MCFH.remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
-      MCFNE.normal_src_reachable minor major fp free roots (CG.MinorV src) /\
+      MCFH.normal_src_reachable minor major fp free roots (CG.MinorV src) /\
       (let prom = cheney_promote minor major fp roots in
        MCFH.post_minor_edge minor major fp free roots (prom.fwd_map src) y) /\
       (let res = cheney_collect_spec_with free minor major fp roots in
        MCFH.mem_graph_vertex_at (HeapModel.create_graph_with free res.mc_major) y))
-    (ensures normal_image_reachable minor major fp free roots y)
+    (ensures MCFH.normal_image_reachable minor major fp free roots y)

@@ -96,8 +96,3 @@ let update_walk_preserves_objects major upd fwd =
 
 let update_walk_preserves_wfh_part1 major upd fwd =
   update_walk_aux_preserves_objects_wfh major (objects zero_addr major) upd fwd 0
-
-/// update_major_pointers preserves the objects walk.
-let update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map) =
-  update_walk_preserves_objects major (in_use free_stw major) fwd
-

@@ -15,6 +15,7 @@ module SpecCorrectness = GC.Spec.Correctness
 module Cheney = GC.Gen.Cheney
 module CheneyBFS = GC.Gen.CheneyBFS
 module MinorFwd = GC.Gen.MinorCollectForwarding
+module MCFEdges = GC.Gen.MinorCollectForwarding.Edges
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
@@ -75,7 +76,8 @@ let major_minor_field_rewritten
   (src: obj_addr) (dst: U64.t) (i: nat)
   =
   MinorFwd.stop_the_world_context minor major fp roots;
-  MinorFwd.combined_major_minor_field_forwarded
+  GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw minor major fp roots;
+  MCFEdges.combined_major_minor_field_forwarded
     minor major fp SpecFields.free_stw roots slots n src dst i;
   promoted_image_from_forwarding minor major fp roots dst
     ((Cheney.cheney_promote minor major fp roots).fwd_map dst)

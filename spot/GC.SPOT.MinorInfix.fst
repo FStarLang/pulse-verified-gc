@@ -66,6 +66,7 @@ let spot_minor_infix_promoted
   let par = infix_parent minor ov in
   scenario_classifies minor major fp roots slots n c i;
   MinorFwd.stop_the_world_context minor major fp roots;
+  GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw minor major fp roots;
   // the field is rewritten to the image of the word *as stored*
   MCFE.combined_major_minor_field_forwarded
     minor major fp GC.Spec.Fields.free_stw roots slots n c par i;
@@ -92,6 +93,7 @@ let spot_minor_infix_was_forbidden
   GenInv.minor_heap_shape_elim minor;
   GenInv.major_heap_shape_elim major fp;
   MinorFwd.stop_the_world_context minor major fp roots;
+  GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw minor major fp roots;
   RBridge.reachable_not_free GC.Spec.Fields.free_stw minor major roots;
   assert (Seq.mem c (GC.Spec.Fields.objects zero_addr major));
   assert (~(SpecObj.is_blue c major));

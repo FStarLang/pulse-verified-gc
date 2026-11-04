@@ -46,11 +46,3 @@ val update_walk_preserves_wfh_part4
   : Lemma (requires blocks_fit major /\ no_infix_block major)
     (ensures no_infix_block (update_walk major upd fwd))
 
-/// ---------------------------------------------------------------------------
-/// The idle instances
-/// ---------------------------------------------------------------------------
-
-val update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (h: obj_addr)
-  : Lemma (requires blocks_fit major /\ Seq.mem h (objects zero_addr major))
-    (ensures read_word (update_major_pointers major fwd) (hd_address h) ==
-             read_word major (hd_address h))

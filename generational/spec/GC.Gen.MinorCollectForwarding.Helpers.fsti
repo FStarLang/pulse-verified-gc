@@ -551,3 +551,40 @@ val old_not_free
     (requires GenInv.collection_shape_with free minor major fp /\ in_use free major x)
     (ensures in_use free (cheney_promote minor major fp roots).major_final x /\
              in_use free (cheney_collect_spec_with free minor major fp roots).mc_major x)
+
+/// ---------------------------------------------------------------------------
+/// Vertices whose image is a normal (non-infix) forwarding target
+/// ---------------------------------------------------------------------------
+
+#push-options "--fuel 0 --ifuel 1"
+/// A nursery vertex was forwarded to an ordinary (non-infix) block; a major
+/// vertex always is its own image.
+let normal_vertex_ready
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (u: CG.combined_vertex) : prop =
+  let prom = cheney_promote minor major fp roots in
+  match u with
+  | CG.MajorV _ -> True
+  | CG.MinorV x ->
+    prom.fwd_map x <> 0UL /\
+    is_val_addr (prom.fwd_map x) /\
+    is_infix (prom.fwd_map x) prom.major_final = false
+
+/// Reachable in the combined graph, with a normal image.
+let normal_src_reachable
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
+  (u: CG.combined_vertex) : prop =
+  let cg = CG.build_combined_graph minor major free in
+  let combined_roots = CG.classify_roots minor roots in
+  CG.combined_reachable cg combined_roots u /\
+  normal_vertex_ready minor major fp roots u
+
+/// The image of such a vertex.
+let normal_image_reachable
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
+  (w: U64.t) : prop =
+  let prom = cheney_promote minor major fp roots in
+  exists (u: CG.combined_vertex).
+    normal_src_reachable minor major fp free roots u /\
+    CG.fwd_morphism prom.fwd_map u == w
+#pop-options

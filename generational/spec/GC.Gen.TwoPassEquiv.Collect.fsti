@@ -28,6 +28,8 @@ open GC.Gen.RefTable
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module CheneySpec = GC.Gen.Cheney
 module CheneyPres = GC.Gen.CheneyPreservation
+module CPForwarding = GC.Gen.CheneyPreservation.Forwarding
+module CPInj = GC.Gen.CheneyPreservation.Injectivity
 module TwoPass = GC.Gen.TwoPassEquiv
 
 /// ---------------------------------------------------------------------------
@@ -43,8 +45,8 @@ val two_pass_implies_collect_with
       (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
        Seq.length farr == fwd_array_size /\
        represents_fwd farr prom.fwd_map /\
-       CheneyPres.fwd_valid_or_infix prom.fwd_map prom.major_final /\
-       CheneyPres.fwd_normal_injective prom.fwd_map prom.major_final /\
+       CPForwarding.fwd_valid_or_infix prom.fwd_map prom.major_final /\
+       CPInj.fwd_normal_injective prom.fwd_map prom.major_final /\
        CheneySpec.fwd_bounded prom.fwd_map /\
        no_infix_block prom.major_final /\
        valid_slot_addrs slots n /\

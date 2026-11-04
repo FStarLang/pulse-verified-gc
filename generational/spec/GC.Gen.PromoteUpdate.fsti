@@ -30,9 +30,9 @@ open GC.Gen.Promote
 /// ---------------------------------------------------------------------------
 ///
 /// The walk rewrites the fields of the scannable objects in its set `upd` and
-/// nothing else.  Each `update_major_pointers_*` lemma below is the instance
-/// at `allocated major` (`update_major_pointers` is defined so),
-/// with `is_blue x` read as "`x` is not rewritten".
+/// nothing else.  The minor collection's update is the walk over the
+/// non-free blocks (`update_pointers_with free`, and `update_major_pointers`
+/// at `free_stw`), so these are stated for the walk.
 
 val update_walk_preserves_objects
   (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
@@ -88,18 +88,8 @@ val update_walk_field_effect
        (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> new_val == old_raw)))
 
 /// ---------------------------------------------------------------------------
-/// The idle walk (`update_major_pointers`)
+/// Promotion
 /// ---------------------------------------------------------------------------
-
-val update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map)
-  : Lemma (requires blocks_fit major)
-    (ensures objects zero_addr (update_major_pointers major fwd) == objects zero_addr major)
-
-/// update_major_pointers preserves object headers
-val update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (h: obj_addr)
-  : Lemma (requires blocks_fit major /\ Seq.mem h (objects zero_addr major))
-    (ensures read_word (update_major_pointers major fwd) (hd_address h) ==
-             read_word major (hd_address h))
 
 /// promote_object preserves chain_objects_blue
 val promote_object_preserves_chain_objects_blue

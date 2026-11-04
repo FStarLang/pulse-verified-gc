@@ -242,6 +242,8 @@ let derive_fwd_targets_stable (fwd: PromoteSpec.forwarding_map)
   Classical.forall_intro (Classical.move_requires aux)
 
 module CheneyPres = GC.Gen.CheneyPreservation
+module CPForwarding = GC.Gen.CheneyPreservation.Forwarding
+module CPInj = GC.Gen.CheneyPreservation.Injectivity
 module TPC = GC.Gen.TwoPassEquiv.Collect
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
@@ -321,8 +323,8 @@ let minor_collect_with_spec
     ref_table_covers_with_implies_complete free major prom.fwd_map slots n;
     CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     CheneySteps.cheney_promote_preserves_wfh_part4 minor major fp roots;
-    CheneyPres.cheney_promote_fwd_valid_or_infix minor major fp roots;
-    CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
+    CPForwarding.cheney_promote_fwd_valid_or_infix minor major fp roots;
+    CPInj.cheney_promote_fwd_normal_injective minor major fp roots;
     TPC.two_pass_implies_collect_with free minor major fp roots farr slots n;
     CE.cheney_collect_with_preserves_shape free minor major fp roots
 #pop-options

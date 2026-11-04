@@ -21,6 +21,7 @@ module Cheney = GC.Gen.Cheney
 module CheneyBFS = GC.Gen.CheneyBFS
 module CG = GC.Gen.CombinedGraph
 module MinorFwd = GC.Gen.MinorCollectForwarding
+module MCFEdges = GC.Gen.MinorCollectForwarding.Edges
 module RBridge = GC.Gen.ReachabilityBridge
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RefTable = GC.Gen.RefTable
@@ -166,6 +167,7 @@ let expose_spot_collection_facts
   Preconditions.minor_collect_full_pre_elim
     minor major fp (spot_roots c) farr (spot_slots c) 1;
   MinorFwd.stop_the_world_context minor major fp (spot_roots c);
+  GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw minor major fp (spot_roots c);
   MCFH.major_fields_covered_from_slots
     minor major GC.Spec.Fields.free_stw (spot_roots c) (spot_slots c) 1;
   GenInv.collection_heap_shape_elim minor major fp;
@@ -216,7 +218,7 @@ let spot_a_promoted
   =
   expose_spot_collection_facts minor major fp c farr;
   spot_a_reachable_root minor major fp c farr;
-  MinorFwd.combined_reachable_minor_has_fwd
+  MCFEdges.combined_reachable_minor_has_fwd
     minor major fp GC.Spec.Fields.free_stw (spot_roots c);
   assert ((Cheney.cheney_promote minor major fp (spot_roots c)).fwd_map
     Layout.a_minor <> 0UL);

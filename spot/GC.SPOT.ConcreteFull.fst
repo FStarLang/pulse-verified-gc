@@ -34,6 +34,7 @@ module CheneySteps = GC.Gen.Cheney.Steps
 module CheneyBFS = GC.Gen.CheneyBFS
 module GenImpl = GC.Gen.Impl
 module MinorFwd = GC.Gen.MinorCollectForwarding
+module MCFHelpers = GC.Gen.MinorCollectForwarding.Helpers
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module MajorGC = GC.Impl
@@ -219,6 +220,7 @@ let post_roots_mem_a_prime
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)
     roots;
+  GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw ConcreteMinor.spot_minor2 (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r) roots;
   MCFH.fwd_image_resolves
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
@@ -405,10 +407,11 @@ let post_minor_c_wosize
   assert (Layout.c_to_a_field_index < U64.v (SpecObj.wosize_of_object c major));
   aligned_plus_mul8 (U64.v c) Layout.c_to_a_field_index;
   MinorFwd.stop_the_world_context minor major fp roots;
-  MinorFwd.cheney_promote_preserves_old_major_field_context
+  GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw minor major fp roots;
+  MCFHelpers.cheney_promote_preserves_old_major_field_context
     minor major fp GC.Spec.Fields.free_stw roots c Layout.c_to_a_field_index;
   CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
-  PromoteUpdate.update_major_pointers_preserves_header prom.major_final prom.fwd_map c;
+  PromoteUpdate.update_walk_preserves_header prom.major_final (SpecFields.in_use SpecFields.free_stw prom.major_final) prom.fwd_map c;
   MCFH.header_eq_preserves_wosize_no_scan result.mc_major prom.major_final c;
   assert (SpecObj.wosize_of_object c prom.major_final ==
           SpecObj.wosize_of_object c major);
