@@ -357,7 +357,7 @@ fn minor_collect_full (gh: gen_heap_t)
     pts_to queue qv2 **
     pts_to slots 'sl **
     pure (minor_collect_post_with free ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs
-            'sl (SZ.v nslots) ok d2 b2 s2 fp2 rs2 farr2)
+            ok d2 b2 s2 fp2 rs2)
 {
   unfold is_gen_heap;
   GenInv.collection_shape_with_elim free ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
@@ -423,7 +423,7 @@ let minor_collect_idle_pre minor_st s fp rs farr sl nslots =
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let minor_collect_idle_post minor_st s fp rs farr sl nslots ok d2 b2 s2 fp2 rs2 farr2 =
+let minor_collect_idle_post minor_st s fp rs farr sl nslots ok d2 b2 s2 fp2 rs2 =
   GenInv.collection_heap_shape_elim minor_st s fp;
   GenInv.major_heap_shape_elim s fp;
   GenInv.major_heap_shape_walk s fp;
@@ -522,7 +522,7 @@ fn gen_gc (gh: gen_heap_t)
   with qv_mid. assert (pts_to queue qv_mid);
   assert (pts_to slots 'sl);
   minor_collect_idle_post ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'farr 'sl
-    (SZ.v nslots) ok d_mid b_mid ms_updated fp_mid rs_mid farr_mid;
+    (SZ.v nslots) ok d_mid b_mid ms_updated fp_mid rs_mid;
 
   unfold is_gen_heap;
   let fp_val = R.op_Bang gh.fp_ref;

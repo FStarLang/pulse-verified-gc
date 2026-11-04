@@ -338,15 +338,12 @@ let minor_collect_pre_with (free: SpecFields.free_def)
 
 /// What the collection guarantees, given what counts as free.
 let minor_collect_post_with (free: SpecFields.free_def)
-  (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs sl: Seq.seq U64.t)
-  (nslots: nat) (ok: bool)
-  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t) : prop =
+  (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs: Seq.seq U64.t) (ok: bool)
+  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2: Seq.seq U64.t) : prop =
   let prom = CheneySpec.cheney_promote minor_st s fp rs in
-  // Heap is the two-pass result (update promoted + rewrite slots) ...
-  s2 == FA.rewrite_slots_iter
-          (FA.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
-          prom.fwd_map sl nslots 0 /\
-  // ... which is the pointer update of the collection for `free`
+  // The major heap is the collection's, for `free`.  (`gen_gc` and the SPOT
+  // instances reason about the result through `cheney_collect_spec`; see
+  // DESIGN_AND_IMPL.md, "The contract of minor_collect_full".)
   s2 == (CheneySpec.cheney_collect_spec_with free minor_st s fp rs).mc_major /\
   // Free pointer from promotion phase
   fp2 == prom.fp_final /\
@@ -357,11 +354,6 @@ let minor_collect_post_with (free: SpecFields.free_def)
   // `GC.Gen.MinorHeap.minor_reset`.
   U64.v b2 == 0 /\
   ({ data = d2; bump = b2 } <: minor_state) == minor_reset minor_st /\
-  // Forwarding array represents the spec-level forwarding map
-  FA.represents_fwd farr2 prom.fwd_map /\
-  FA.valid_fwd_entries farr2 /\
-  Seq.length farr2 == FA.fwd_array_size /\
-  SpecFields.blocks_fit prom.major_final /\
   // The shape is kept, with the same definition of free
   GenInv.collection_shape_with free ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
   // If promotion succeeds, the collection is a reachable-subgraph isomorphism
@@ -396,7 +388,7 @@ fn minor_collect_full (gh: gen_heap_t)
     pts_to queue qv2 **
     pts_to slots 'sl **
     pure (minor_collect_post_with free ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs
-            'sl (SZ.v nslots) ok d2 b2 s2 fp2 rs2 farr2)
+            ok d2 b2 s2 fp2 rs2)
 
 /// --- The stop-the-world instance ---
 
@@ -417,14 +409,9 @@ let minor_collect_pre_idle
 
 /// The stop-the-world postcondition.
 let minor_collect_post_idle
-  (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs sl: Seq.seq U64.t) (nslots: nat)
-  (ok: bool)
-  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t) : prop =
+  (minor_st: minor_state) (s: heap_state) (fp: U64.t) (rs: Seq.seq U64.t) (ok: bool)
+  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2: Seq.seq U64.t) : prop =
   let prom = CheneySpec.cheney_promote minor_st s fp rs in
-  // Heap is the two-pass result (update promoted + rewrite slots)
-  s2 == FA.rewrite_slots_iter
-          (FA.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
-          prom.fwd_map sl nslots 0 /\
   // Free pointer from promotion phase
   fp2 == prom.fp_final /\
   // Roots rewritten via forwarding map
@@ -436,15 +423,7 @@ let minor_collect_post_idle
   // the collector's output.
   U64.v b2 == 0 /\
   ({ data = d2; bump = b2 } <: minor_state) == minor_reset minor_st /\
-  // Forwarding array represents the spec-level forwarding map
-  FA.represents_fwd farr2 prom.fwd_map /\
-  // Forwarding entries are valid
-  FA.valid_fwd_entries farr2 /\
-  Seq.length farr2 == FA.fwd_array_size /\
-  // Well-formedness preserved through promotion
-  SpecFields.blocks_fit prom.major_final /\
-  // Strong correctness: the result equals cheney_collect_spec
-  // (single-pass full update of all pointer fields in the major heap).
+  // The major heap is the stop-the-world collection's.
   s2 == (CheneySpec.cheney_collect_spec minor_st s fp rs).mc_major /\
   GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
   // If promotion succeeds, minor collection is a concrete reachable
@@ -469,11 +448,11 @@ val minor_collect_idle_pre
 val minor_collect_idle_post
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
   (rs farr sl: Seq.seq U64.t) (nslots: nat) (ok: bool)
-  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2 farr2: Seq.seq U64.t)
+  (d2: minor_heap) (b2: U64.t) (s2: heap_state) (fp2: U64.t) (rs2: Seq.seq U64.t)
   : Lemma (requires minor_collect_pre_idle minor_st s fp rs farr sl nslots /\
-                    minor_collect_post_with SpecFields.free_stw minor_st s fp rs sl nslots
-                      ok d2 b2 s2 fp2 rs2 farr2)
-          (ensures minor_collect_post_idle minor_st s fp rs sl nslots ok d2 b2 s2 fp2 rs2 farr2)
+                    minor_collect_post_with SpecFields.free_stw minor_st s fp rs
+                      ok d2 b2 s2 fp2 rs2)
+          (ensures minor_collect_post_idle minor_st s fp rs ok d2 b2 s2 fp2 rs2)
 
 /// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)
