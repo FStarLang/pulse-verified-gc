@@ -493,8 +493,9 @@ the sweep phase's own theorems from the concrete heap of `ConcreteMajorGen`:
 `sweep_phase_pending_free_spot`: `P` is pending free, `P`'s field is `G`, `G` was an
 object of the heap the sweep started on and is no longer one (its word lies
 inside the merged free block at the start), the heap is in the sweep phase and
-in `collection_shape_with` for the collection's definition of free
-(`free_incremental_from`), and the
-minor collection at the sweep's phase
-(`GC.Gen.CheneyAt.cheney_collect_spec_with_at`) keeps the sweep phase with `P`
-still pending free (`GC.Gen.SweepPhase.Minor.minor_keeps_sweep_phase`).
+in `collection_shape_with (Sweeping st) (free_incremental st)` (the minor
+collection's shape at the sweep's phase, for the sweep's definition of free),
+and the minor collection at the sweep's phase
+(`GC.Gen.SweepPhase.Minor.collect_at`) keeps the sweep phase with `P` still
+pending free, leaving the allocator's phase record at the derived sweep state
+(`GC.Gen.SweepPhase.Minor.minor_keeps_sweep_phase`).

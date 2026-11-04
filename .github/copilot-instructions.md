@@ -24,9 +24,14 @@ Verified OCaml garbage collector formalized in **F\*** and **Pulse** (concurrent
   keeps in `GC.Gen.Cheney.Steps`), `GC.Gen.CheneyPreservation.*`, `GC.Gen.CheneyGeneric`,
   `GC.Gen.Promote*`, `GC.Gen.MinorCollectForwarding.*`, `GC.Gen.Reachability*`,
   `GC.Gen.ForwardingArray` (the forwarding array and the two update passes),
-  `GC.Gen.TwoPassEquiv*`, `GC.Gen.HeapInvariant`.  No spec module imports `GC.Gen.Impl.*`.
+  `GC.Gen.TwoPassEquiv*`, `GC.Gen.HeapInvariant`, `GC.Gen.AllocPhase` (the allocator at a
+  collector phase, from the idle one), and the incremental sweep's `GC.Gen.SweepPhase*`
+  (the program's events, a minor collection mid-sweep, safety), `GC.Gen.SweptTail`
+  (`swept_tail` across a minor collection) and `GC.Gen.Incremental` (the collector's state
+  by phase).  No spec module imports `GC.Gen.Impl.*`.
   `impl/` = `GC.Gen.Impl`, `GC.Gen.Impl.MinorHeap`, `GC.Gen.Impl.Cheney`,
-  `GC.Gen.Impl.Promote`, `GC.Gen.Impl.UpdatePtrs`. Also `ocaml-integration/` + `snapshot/`.
+  `GC.Gen.Impl.Promote`, `GC.Gen.Impl.UpdatePtrs`, `GC.Gen.Impl.Incremental` (the
+  incremental sweep's entry points). Also `ocaml-integration/` + `snapshot/`.
 - **spot/** — Small concrete "spot check" scenarios (`GC.SPOT.*`) that instantiate the
   specs on tiny fixed heaps to sanity-check pre/post-conditions. Flat layout, one `.fsti`
   per `.fst`. See `spot/SPOT_STATUS.md`.
