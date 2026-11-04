@@ -170,18 +170,18 @@ let rec objects_later_in_earlier
 
 #restart-solver
 /// ---------------------------------------------------------------------------
-/// 6i: pointers_stay_in for obj: pointer targets of obj in g3
+/// 6i: pointers_lead_to_non_free for obj: pointer targets of obj in g3
 /// ---------------------------------------------------------------------------
 
 #restart-solver
 /// ---------------------------------------------------------------------------
-/// 6j: pointers_stay_in for rem_obj: pointer targets of rem_obj in g3
+/// 6j: pointers_lead_to_non_free for rem_obj: pointer targets of rem_obj in g3
 /// ---------------------------------------------------------------------------
 
 #restart-solver
 #restart-solver
 /// ---------------------------------------------------------------------------
-/// 6k: pointers_stay_in for other objects
+/// 6k: pointers_lead_to_non_free for other objects
 /// ---------------------------------------------------------------------------
 
 #restart-solver

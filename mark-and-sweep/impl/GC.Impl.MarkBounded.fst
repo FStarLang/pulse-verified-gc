@@ -192,7 +192,7 @@ let check_and_darken_bounded_preserves_inv (g: heap_state) (st: Seq.seq obj_addr
                     v == HeapGraph.get_field g obj i)
           (ensures (let (g', _) = check_and_darken_bounded_spec g st v cap in
                     well_formed_heap g' /\
-                    SpecFields.allocated g' obj /\
+                    SpecFields.in_use SpecFields.free_stw g' obj /\
                     ~(SpecObject.is_no_scan obj g') /\
                     U64.v wz <= U64.v (wosize_of_object obj g') /\
                     U64.v (wosize_of_object obj g') < pow2 54))

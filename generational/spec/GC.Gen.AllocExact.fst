@@ -1065,7 +1065,7 @@ let update_major_pointers_preserves_fl_complete (major: heap) (fwd: Promote.forw
                     Promote.chain_objects_blue major fp /\
                     FL.fl_complete major fp)
           (ensures FL.fl_complete (Promote.update_major_pointers major fwd) fp)
-  = update_walk_preserves_fl_complete major (allocated major) fwd fp
+  = update_walk_preserves_fl_complete major (in_use free_stw major) fwd fp
 
 
 /// ---------------------------------------------------------------------------

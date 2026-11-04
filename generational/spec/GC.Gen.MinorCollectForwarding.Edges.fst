@@ -39,7 +39,7 @@ module HeapModel = GC.Spec.HeapModel
 
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RT = GC.Gen.RefTable
-module CE = GC.Gen.CheneyView
+module CE = GC.Gen.CheneyWith
 open GC.Gen.MinorCollectForwarding.Helpers
 
 /// `U64.v mword = 8 <> 0`.  Trivial, but the well-typedness obligation for `%`
@@ -59,10 +59,10 @@ private let header_eq_preserves_infix (g1 g2: heap) (obj: obj_addr)
 #pop-options
 
 let combined_reachable_minor_has_fwd
-  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
-  = let cg = CG.build_combined_graph minor major v in
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
+  = let cg = CG.build_combined_graph minor major free in
     let combined_roots = CG.classify_roots minor roots in
-    RBridge.reachability_bridge minor major v roots;
+    RBridge.reachability_bridge minor major free roots;
     CheneyCorr.cheney_promotes_all_reachable minor major fp roots;
     let aux (v: U64.t) : Lemma
       (requires CG.combined_reachable cg combined_roots (CG.MinorV v) /\
@@ -75,29 +75,29 @@ let combined_reachable_minor_has_fwd
 /// The two halves of `combined_reachable_images_valid_or_infix_prop`, proved
 /// separately: the combined query diverges under Z3 4.15.3.
 private let combined_reachable_images_valid_or_infix_major
-  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_view v minor major fp /\ CE.promotion_in_view v minor major fp roots /\
-      RBridge.major_fields_covered minor major v roots /\
-      RBridge.roots_in_view v roots major /\
+      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      RBridge.major_fields_covered minor major free roots /\
+      RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
-      let cg = CG.build_combined_graph minor major v in
+      let cg = CG.build_combined_graph minor major free in
       let combined_roots = CG.classify_roots minor roots in
-      let res = cheney_collect_spec_view v minor major fp roots in
+      let res = cheney_collect_spec_with free minor major fp roots in
       forall (v: U64.t).
         CG.combined_reachable cg combined_roots (CG.MajorV v) ==>
         U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
         Seq.mem (v <: obj_addr) (objects zero_addr res.mc_major)))
-  = let cg = CG.build_combined_graph minor major v in
+  = let cg = CG.build_combined_graph minor major free in
     let combined_roots = CG.classify_roots minor roots in
-    let res = cheney_collect_spec_view v minor major fp roots in
-    GenInv.collection_shape_view_elim v minor major fp;
-    GenInv.major_shape_view_elim v major fp;
+    let res = cheney_collect_spec_with free minor major fp roots in
+    GenInv.collection_shape_with_elim free minor major fp;
+    GenInv.major_shape_with_elim free major fp;
     GenInv.minor_heap_shape_elim minor;
-    RBridge.reachable_major_valid minor major v roots;
-    CheneyCorr.cheney_collect_preserves_objects minor major fp v roots;
+    RBridge.reachable_major_valid minor major free roots;
+    CheneyCorr.cheney_collect_preserves_objects minor major fp free roots;
     mword_nonzero ();
     let major_aux (v: U64.t) : Lemma
       (requires CG.combined_reachable cg combined_roots (CG.MajorV v))
@@ -109,15 +109,15 @@ private let combined_reachable_images_valid_or_infix_major
     Classical.forall_intro (Classical.move_requires major_aux)
 
 private let combined_reachable_images_valid_or_infix_minor
-  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_view v minor major fp /\ CE.promotion_in_view v minor major fp roots /\
-      RBridge.major_fields_covered minor major v roots /\
-      RBridge.roots_in_view v roots major /\
+      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      RBridge.major_fields_covered minor major free roots /\
+      RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
-      let cg = CG.build_combined_graph minor major v in
+      let cg = CG.build_combined_graph minor major free in
       let combined_roots = CG.classify_roots minor roots in
       let prom = cheney_promote minor major fp roots in
       let fwd = prom.fwd_map in
@@ -130,14 +130,14 @@ private let combined_reachable_images_valid_or_infix_minor
         U64.v (fwd v) % U64.v mword == 0 /\
         (Seq.mem ((fwd v) <: obj_addr) (objects zero_addr prom.major_final) \/
          is_infix (fwd v) prom.major_final)))
-  = let cg = CG.build_combined_graph minor major v in
+  = let cg = CG.build_combined_graph minor major free in
     let combined_roots = CG.classify_roots minor roots in
     let prom = cheney_promote minor major fp roots in
     let fwd = prom.fwd_map in
-    GenInv.collection_shape_view_elim v minor major fp;
-    GenInv.major_shape_view_elim v major fp;
+    GenInv.collection_shape_with_elim free minor major fp;
+    GenInv.major_shape_with_elim free major fp;
     GenInv.minor_heap_shape_elim minor;
-    combined_reachable_minor_has_fwd minor major fp v roots;
+    combined_reachable_minor_has_fwd minor major fp free roots;
     CheneyPres.cheney_promote_fwd_valid_or_infix minor major fp roots;
     mword_nonzero ();
     let minor_aux (v: U64.t) : Lemma
@@ -155,9 +155,9 @@ private let combined_reachable_images_valid_or_infix_minor
     Classical.forall_intro (Classical.move_requires minor_aux)
 
 let combined_reachable_images_valid_or_infix
-  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
-  = combined_reachable_images_valid_or_infix_major minor major fp v roots;
-    combined_reachable_images_valid_or_infix_minor minor major fp v roots
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
+  = combined_reachable_images_valid_or_infix_major minor major fp free roots;
+    combined_reachable_images_valid_or_infix_minor minor major fp free roots
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 /// Composite: a live major object's field target keeps its header word --- and
@@ -169,10 +169,10 @@ let combined_reachable_images_valid_or_infix
 /// header is untouched, so it still resolves to `dst`.
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
 let cheney_collect_frame_target_header
-  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   (h: obj_addr)
   : Lemma
-    (requires well_formed_view v major /\
+    (requires well_formed_heap_with free major /\
               AllocLemmas.fl_valid major fp heap_words /\
               AllocLemmas.fl_chain_terminates major fp heap_words /\
               chain_objects_blue major fp /\
@@ -180,14 +180,14 @@ let cheney_collect_frame_target_header
               GC.Spec.Object.infix_addr_wf major (objects zero_addr major) h /\
               Seq.mem (GC.Spec.Object.resolve_object h major) (objects zero_addr major) /\
               is_blue (GC.Spec.Object.resolve_object h major) major = false)
-    (ensures (let res = cheney_collect_spec_view v minor major fp roots in
+    (ensures (let res = cheney_collect_spec_with free minor major fp roots in
               read_word res.mc_major (hd_address h) == read_word major (hd_address h) /\
               GC.Spec.Object.resolve_object h res.mc_major ==
                 GC.Spec.Object.resolve_object h major))
   = let prom = cheney_promote minor major fp roots in
-    let res = cheney_collect_spec_view v minor major fp roots in
+    let res = cheney_collect_spec_with free minor major fp roots in
     let pm = prom.major_final in
-    wf_view_parts ();
+    wf_with_parts ();
     Frame.cheney_promote_frame_target_header minor major fp roots h;
     assert (read_word pm (hd_address h) == read_word major (hd_address h));
     GC.Spec.Object.resolve_object_locality h major pm;
@@ -208,29 +208,29 @@ let cheney_collect_frame_target_header
     end
     else
       GC.Spec.Object.resolve_non_infix h major;
-    CE.update_walk_frame_target_header pm (v pm) prom.fwd_map h;
-    assert (res.mc_major == update_walk pm (v pm) prom.fwd_map);
+    CE.update_walk_frame_target_header pm (in_use free pm) prom.fwd_map h;
+    assert (res.mc_major == update_walk pm (in_use free pm) prom.fwd_map);
     GC.Spec.Object.resolve_object_locality h major res.mc_major
 #pop-options
 
 let combined_major_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   (src dst: obj_addr)
   =
-    let cg = CG.build_combined_graph minor major v in
+    let cg = CG.build_combined_graph minor major free in
     let combined_roots = CG.classify_roots minor roots in
     let prom = cheney_promote minor major fp roots in
-    let res = cheney_collect_spec_view v minor major fp roots in
+    let res = cheney_collect_spec_with free minor major fp roots in
     let updated = res.mc_major in
-    GenInv.collection_shape_view_elim v minor major fp;
-    GenInv.major_shape_view_elim v major fp;
+    GenInv.collection_shape_with_elim free minor major fp;
+    GenInv.major_shape_with_elim free major fp;
     GenInv.minor_heap_shape_elim minor;
     assert (minor_wf minor);
     assert (minor_infix_wf minor);
     assert (AllocLemmas.fl_valid major fp heap_words);
     assert (AllocLemmas.fl_chain_terminates major fp heap_words);
     assert (chain_objects_blue major fp);
-    CG.major_edge_elim minor major v src (CG.MajorV dst);
+    CG.major_edge_elim minor major free src (CG.MajorV dst);
     let i = FStar.IndefiniteDescription.indefinite_description_ghost nat
       (fun i -> i < U64.v (wosize_of_object src major) /\
         U64.v src + i * 8 + 8 <= heap_size /\
@@ -249,11 +249,11 @@ let combined_major_edge_forwarded
     SpecBase.is_val_addr_spec old_raw;
     RBridge.major_edge_points_to minor major src dst i;
     assert (points_to major src (old_raw <: obj_addr));
-    assert (v major src);
-    // `pointers_stay_in` concludes about the *resolved* target,
+    assert (in_use free major src);
+    // `pointers_lead_to_non_free` concludes about the *resolved* target,
     // so it gives `v major dst` with no no-infix side condition.
-    GC.Spec.Fields.points_to_target_in_view v major src (old_raw <: obj_addr);
-    assert (v major dst);
+    GC.Spec.Fields.points_to_target_not_free free major src (old_raw <: obj_addr);
+    assert (in_use free major dst);
     // The raw value lies above the nursery, so the pointer-update pass never
     // mistakes it for a minor pointer and leaves the field alone.
     zero_addr_above_minor ();
@@ -279,13 +279,13 @@ let combined_major_edge_forwarded
     assert (wosize_of_object src prom.major_final == wosize_of_object src major);
     assert (read_word prom.major_final field_addr == old_raw);
     assert (blocks_fit prom.major_final);
-    CE.cheney_promote_keeps_view v minor major fp roots src;
-    PromUpdate.update_walk_field_effect prom.major_final (v prom.major_final) prom.fwd_map src i;
-    assert (updated == update_walk prom.major_final (v prom.major_final) prom.fwd_map);
+    CE.cheney_promote_keeps_in_use free minor major fp roots src;
+    PromUpdate.update_walk_field_effect prom.major_final (in_use free prom.major_final) prom.fwd_map src i;
+    assert (updated == update_walk prom.major_final (in_use free prom.major_final) prom.fwd_map);
     assert (~(is_minor_pointer (to_minor_offset (read_word prom.major_final field_addr)) /\
               prom.fwd_map (to_minor_offset (read_word prom.major_final field_addr)) <> 0UL));
     assert (read_word updated field_addr == old_raw);
-    PromUpdate.update_walk_preserves_header prom.major_final (v prom.major_final) prom.fwd_map src;
+    PromUpdate.update_walk_preserves_header prom.major_final (in_use free prom.major_final) prom.fwd_map src;
     assert (read_word updated (hd_address src) == read_word prom.major_final (hd_address src));
     color_of_header_eq src major updated;
     wosize_of_object_spec src updated;
@@ -294,8 +294,8 @@ let combined_major_edge_forwarded
     tag_of_object_spec src updated;
     assert (tag_of_object src updated == tag_of_object src major);
     assert (is_no_scan src updated == is_no_scan src major);
-    MCFH.post_shape_view v minor major fp roots;
-    CheneyCorr.cheney_collect_preserves_objects minor major fp v roots;
+    MCFH.post_shape_with free minor major fp roots;
+    CheneyCorr.cheney_collect_preserves_objects minor major fp free roots;
     assert (Seq.mem src (objects zero_addr updated));
     wfh_part1_obj_bound updated src;
     HeapGraph.object_fits_from_bound src updated;
@@ -316,29 +316,29 @@ let combined_major_edge_forwarded
     // The target's header --- and hence its resolution --- survives collection,
     // so the post-collection graph carries the edge `src -> dst` even though the
     // stored word is the interior pointer `old_raw`.
-    cheney_collect_frame_target_header minor major fp v roots (old_raw <: obj_addr);
+    cheney_collect_frame_target_header minor major fp free roots (old_raw <: obj_addr);
     assert (GC.Spec.Object.resolve_object (old_raw <: obj_addr) updated == dst);
     HeapGraph.pointer_field_is_graph_edge updated (objects zero_addr updated) src j;
-    CE.update_walk_keeps_view v prom.major_final (v prom.major_final) prom.fwd_map src;
-    HeapModel.create_graph_view_edge v updated src dst
+    CE.update_walk_keeps_in_use free prom.major_final (in_use free prom.major_final) prom.fwd_map src;
+    HeapModel.create_graph_with_edge free updated src dst
 #pop-options
 
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
 let combined_major_minor_field_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (v: view)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
   (roots slots: seq U64.t) (n: nat)
   (src: obj_addr) (dst: U64.t) (i: nat)
   =
-    let cg = CG.build_combined_graph minor major v in
+    let cg = CG.build_combined_graph minor major free in
     let combined_roots = CG.classify_roots minor roots in
     let prom = cheney_promote minor major fp roots in
-    let res = cheney_collect_spec_view v minor major fp roots in
+    let res = cheney_collect_spec_with free minor major fp roots in
     let updated = res.mc_major in
     let field_addr = U64.uint_to_t (U64.v src + i * 8) in
-    GenInv.collection_shape_view_elim v minor major fp;
-    GenInv.major_shape_view_elim v major fp;
+    GenInv.collection_shape_with_elim free minor major fp;
+    GenInv.major_shape_with_elim free major fp;
     GenInv.minor_heap_shape_elim minor;
-    RBridge.reachable_in_view v minor major roots;
+    RBridge.reachable_not_free free minor major roots;
     assert (~(is_blue src major));
     CG.classify_major_field_inv_minor minor major (read_word major field_addr) dst;
     let old_raw = read_word major field_addr in
@@ -346,11 +346,11 @@ let combined_major_minor_field_forwarded
     assert (resolve_minor minor ov == dst);
     assert (is_minor_pointer dst);
     assert (Seq.mem dst (minor_objects minor));
-    combined_reachable_minor_has_fwd minor major fp v roots;
+    combined_reachable_minor_has_fwd minor major fp free roots;
     assert (prom.fwd_map dst <> 0UL);
     // the stored word may be interior; either way its *raw* form is forwarded
     if is_infix_in_minor minor ov then
-      MCFH.major_field_infix_target_forwarded minor major fp v roots slots n src i
+      MCFH.major_field_infix_target_forwarded minor major fp free roots slots n src i
     else begin
       CG.classify_major_field_inv_minor_raw minor major old_raw dst;
       assert (ov == dst)
@@ -358,43 +358,43 @@ let combined_major_minor_field_forwarded
     assert (prom.fwd_map ov <> 0UL);
     Cheney.cheney_promote_preserves_objects minor major fp roots;
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
-    cheney_promote_preserves_old_major_field_context minor major fp v roots src i;
+    cheney_promote_preserves_old_major_field_context minor major fp free roots src i;
     assert (Seq.mem src (objects zero_addr prom.major_final));
     assert (is_blue src prom.major_final = false);
     assert (is_no_scan src prom.major_final = false);
     assert (wosize_of_object src prom.major_final == wosize_of_object src major);
     assert (read_word prom.major_final field_addr == old_raw);
     assert (to_minor_offset (read_word prom.major_final field_addr) == ov);
-    CE.cheney_promote_keeps_view v minor major fp roots src;
-    PromUpdate.update_walk_field_effect prom.major_final (v prom.major_final) prom.fwd_map src i;
-    assert (updated == update_walk prom.major_final (v prom.major_final) prom.fwd_map);
+    CE.cheney_promote_keeps_in_use free minor major fp roots src;
+    PromUpdate.update_walk_field_effect prom.major_final (in_use free prom.major_final) prom.fwd_map src i;
+    assert (updated == update_walk prom.major_final (in_use free prom.major_final) prom.fwd_map);
     assert (read_word updated field_addr == prom.fwd_map ov)
 #pop-options
 
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
 let combined_major_minor_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (v: view)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
   (roots slots: seq U64.t) (n: nat)
   (src: obj_addr) (dst: U64.t) (i: nat)
   =
     let prom = cheney_promote minor major fp roots in
-    let res = cheney_collect_spec_view v minor major fp roots in
+    let res = cheney_collect_spec_with free minor major fp roots in
     let updated = res.mc_major in
-    combined_major_minor_field_forwarded minor major fp v roots slots n src dst i;
+    combined_major_minor_field_forwarded minor major fp free roots slots n src dst i;
     let ov = to_minor_offset (read_word major (U64.uint_to_t (U64.v src + i * 8))) in
     assert (read_word updated (U64.uint_to_t (U64.v src + i * 8)) == prom.fwd_map ov);
-    GenInv.collection_shape_view_elim v minor major fp;
-    GenInv.major_shape_view_elim v major fp;
+    GenInv.collection_shape_with_elim free minor major fp;
+    GenInv.major_shape_with_elim free major fp;
     GenInv.minor_heap_shape_elim minor;
-    RBridge.reachable_in_view v minor major roots;
+    RBridge.reachable_not_free free minor major roots;
     assert (~(is_blue src major));
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
-    cheney_promote_preserves_old_major_field_context minor major fp v roots src i;
-    PromUpdate.update_walk_preserves_header prom.major_final (v prom.major_final) prom.fwd_map src;
+    cheney_promote_preserves_old_major_field_context minor major fp free roots src i;
+    PromUpdate.update_walk_preserves_header prom.major_final (in_use free prom.major_final) prom.fwd_map src;
     header_eq_preserves_wosize_no_scan prom.major_final updated src;
     color_of_header_eq src prom.major_final updated;
-    MCFH.post_shape_view v minor major fp roots;
-    CheneyCorr.cheney_collect_preserves_objects minor major fp v roots;
+    MCFH.post_shape_with free minor major fp roots;
+    CheneyCorr.cheney_collect_preserves_objects minor major fp free roots;
     assert (Seq.mem src (objects zero_addr updated));
     assert (is_no_scan src updated == is_no_scan src major);
     assert (~(is_no_scan src updated));
@@ -405,25 +405,25 @@ let combined_major_minor_edge_forwarded
     CG.classify_major_field_inv_minor minor major
       (read_word major (U64.uint_to_t (U64.v src + i * 8))) dst;
     assert (resolve_minor minor ov == dst);
-    MCFH.fwd_image_resolves minor major fp v roots ov;
+    MCFH.fwd_image_resolves minor major fp free roots ov;
     assert (HeapGraph.is_pointer_field (prom.fwd_map ov));
-    MCFH.old_in_view v minor major fp roots src;
-    heap_field_points_to_graph_edge updated v src (prom.fwd_map ov) i;
+    MCFH.old_not_free free minor major fp roots src;
+    heap_field_points_to_graph_edge updated free src (prom.fwd_map ov) i;
     assert (resolve_object ((prom.fwd_map ov) <: obj_addr) updated == prom.fwd_map dst)
 #pop-options
 
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
 let promoted_minor_major_field_preserved
-  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   =
     let prom = cheney_promote minor major fp roots in
     let fwd_src = prom.fwd_map src in
     let fwd_src_obj : obj_addr = fwd_src in
-    let res = cheney_collect_spec_view v minor major fp roots in
+    let res = cheney_collect_spec_with free minor major fp roots in
     let field_addr = U64.uint_to_t (U64.v fwd_src + j * 8) in
-    GenInv.collection_shape_view_elim v minor major fp;
-    GenInv.major_shape_view_elim v major fp;
+    GenInv.collection_shape_with_elim free minor major fp;
+    GenInv.major_shape_with_elim free major fp;
     GenInv.minor_heap_shape_elim minor;
     CG.classify_minor_field_inv_major minor major (minor_read_field minor src j) dst;
     assert (minor_read_field minor src j == dst);
@@ -436,26 +436,26 @@ let promoted_minor_major_field_preserved
     RBridge.major_object_not_minor_pointer major (dst <: obj_addr);
     assert (to_minor_offset dst == dst);
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
-    update_preserves_major_target_field prom.major_final (v prom.major_final) prom.fwd_map fwd_src_obj (dst <: obj_addr) j;
-    assert (res.mc_major == update_walk prom.major_final (v prom.major_final) prom.fwd_map)
+    update_preserves_major_target_field prom.major_final (in_use free prom.major_final) prom.fwd_map fwd_src_obj (dst <: obj_addr) j;
+    assert (res.mc_major == update_walk prom.major_final (in_use free prom.major_final) prom.fwd_map)
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let promoted_minor_major_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   =
     let prom = cheney_promote minor major fp roots in
     let fwd_src = prom.fwd_map src in
     let fwd_src_obj : obj_addr = fwd_src in
-    let res = cheney_collect_spec_view v minor major fp roots in
-    GenInv.collection_shape_view_elim v minor major fp;
-    GenInv.major_shape_view_elim v major fp;
-    promoted_minor_major_field_preserved minor major fp v roots src dst j;
-    MCFH.post_shape_view v minor major fp roots;
+    let res = cheney_collect_spec_with free minor major fp roots in
+    GenInv.collection_shape_with_elim free minor major fp;
+    GenInv.major_shape_with_elim free major fp;
+    promoted_minor_major_field_preserved minor major fp free roots src dst j;
+    MCFH.post_shape_with free minor major fp roots;
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
-    PromUpdate.update_walk_preserves_objects prom.major_final (v prom.major_final) prom.fwd_map;
-    PromUpdate.update_walk_preserves_header prom.major_final (v prom.major_final) prom.fwd_map fwd_src_obj;
+    PromUpdate.update_walk_preserves_objects prom.major_final (in_use free prom.major_final) prom.fwd_map;
+    PromUpdate.update_walk_preserves_header prom.major_final (in_use free prom.major_final) prom.fwd_map fwd_src_obj;
     header_eq_preserves_wosize_no_scan prom.major_final res.mc_major fwd_src_obj;
     assert (Seq.mem fwd_src_obj (objects zero_addr res.mc_major));
     assert (is_no_scan fwd_src_obj res.mc_major == is_no_scan fwd_src_obj prom.major_final);
@@ -465,7 +465,7 @@ let promoted_minor_major_edge_forwarded
     assert (Seq.mem (dst <: obj_addr) (objects zero_addr major));
     Cheney.cheney_promote_preserves_objects minor major fp roots;
     assert (Seq.mem (dst <: obj_addr) (objects zero_addr prom.major_final));
-    PromUpdate.update_walk_preserves_objects prom.major_final (v prom.major_final) prom.fwd_map;
+    PromUpdate.update_walk_preserves_objects prom.major_final (in_use free prom.major_final) prom.fwd_map;
     assert (Seq.mem (dst <: obj_addr) (objects zero_addr res.mc_major));
     objects_addresses_gt_start zero_addr res.mc_major (dst <: obj_addr);
     SpecBase.is_val_addr_spec dst;
@@ -478,26 +478,26 @@ let promoted_minor_major_edge_forwarded
     resolve_object_locality fwd_src_obj prom.major_final res.mc_major;
     SpecBase.is_val_addr_spec fwd_src;
     color_of_header_eq fwd_src_obj prom.major_final res.mc_major;
-    MCFH.image_in_view v minor major fp roots src fwd_src_obj;
-    heap_field_points_to_graph_edge res.mc_major v fwd_src_obj dst j;
+    MCFH.image_not_free free minor major fp roots src fwd_src_obj;
+    heap_field_points_to_graph_edge res.mc_major free fwd_src_obj dst j;
     MCFH.part4_non_infix res.mc_major (dst <: obj_addr);
     resolve_non_infix (dst <: obj_addr) res.mc_major;
     let dst_hp : hp_addr = dst in
-    assert (mem_graph_edge_at (HeapModel.create_graph_view v res.mc_major) (prom.fwd_map src) dst)
+    assert (mem_graph_edge_at (HeapModel.create_graph_with free res.mc_major) (prom.fwd_map src) dst)
 #pop-options
 
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
 let promoted_minor_minor_field_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   =
     let prom = cheney_promote minor major fp roots in
     let fwd_src = prom.fwd_map src in
     let fwd_src_obj : obj_addr = fwd_src in
-    let res = cheney_collect_spec_view v minor major fp roots in
+    let res = cheney_collect_spec_with free minor major fp roots in
     let field_addr = U64.uint_to_t (U64.v fwd_src + j * 8) in
-    GenInv.collection_shape_view_elim v minor major fp;
-    GenInv.major_shape_view_elim v major fp;
+    GenInv.collection_shape_with_elim free minor major fp;
+    GenInv.major_shape_with_elim free major fp;
     GenInv.minor_heap_shape_elim minor;
     CG.classify_minor_field_inv_minor minor major (minor_read_field minor src j) dst;
     let ov = to_minor_offset (minor_read_field minor src j) in
@@ -523,27 +523,27 @@ let promoted_minor_minor_field_forwarded
     assert (is_minor_pointer dst);
     assert (to_minor_offset (read_word prom.major_final field_addr) == ov);
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
-    CE.cheney_promote_image_in_view v minor major fp roots src fwd_src_obj;
-    PromUpdate.update_walk_field_effect prom.major_final (v prom.major_final) prom.fwd_map fwd_src_obj j;
-    assert (res.mc_major == update_walk prom.major_final (v prom.major_final) prom.fwd_map)
+    CE.cheney_promote_image_not_free free minor major fp roots src fwd_src_obj;
+    PromUpdate.update_walk_field_effect prom.major_final (in_use free prom.major_final) prom.fwd_map fwd_src_obj j;
+    assert (res.mc_major == update_walk prom.major_final (in_use free prom.major_final) prom.fwd_map)
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let promoted_minor_minor_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (v: view) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   =
     let prom = cheney_promote minor major fp roots in
     let fwd_src = prom.fwd_map src in
     let fwd_src_obj : obj_addr = fwd_src in
-    let res = cheney_collect_spec_view v minor major fp roots in
-    GenInv.collection_shape_view_elim v minor major fp;
-    GenInv.major_shape_view_elim v major fp;
-    promoted_minor_minor_field_forwarded minor major fp v roots src dst j;
-    MCFH.post_shape_view v minor major fp roots;
+    let res = cheney_collect_spec_with free minor major fp roots in
+    GenInv.collection_shape_with_elim free minor major fp;
+    GenInv.major_shape_with_elim free major fp;
+    promoted_minor_minor_field_forwarded minor major fp free roots src dst j;
+    MCFH.post_shape_with free minor major fp roots;
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
-    PromUpdate.update_walk_preserves_objects prom.major_final (v prom.major_final) prom.fwd_map;
-    PromUpdate.update_walk_preserves_header prom.major_final (v prom.major_final) prom.fwd_map fwd_src_obj;
+    PromUpdate.update_walk_preserves_objects prom.major_final (in_use free prom.major_final) prom.fwd_map;
+    PromUpdate.update_walk_preserves_header prom.major_final (in_use free prom.major_final) prom.fwd_map fwd_src_obj;
     header_eq_preserves_wosize_no_scan prom.major_final res.mc_major fwd_src_obj;
     assert (Seq.mem fwd_src_obj (objects zero_addr res.mc_major));
     assert (is_no_scan fwd_src_obj res.mc_major == is_no_scan fwd_src_obj prom.major_final);
@@ -556,7 +556,7 @@ let promoted_minor_minor_edge_forwarded
     CG.classify_minor_field_inv_minor minor major (minor_read_field minor src j) dst;
     let ov = to_minor_offset (minor_read_field minor src j) in
     assert (resolve_minor minor ov == dst);
-    MCFH.fwd_image_resolves minor major fp v roots ov;
+    MCFH.fwd_image_resolves minor major fp free roots ov;
     assert (HeapGraph.is_pointer_field (prom.fwd_map ov));
     // the promoted copy is live
     CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
@@ -564,7 +564,7 @@ let promoted_minor_minor_edge_forwarded
     resolve_object_locality fwd_src_obj prom.major_final res.mc_major;
     SpecBase.is_val_addr_spec fwd_src;
     color_of_header_eq fwd_src_obj prom.major_final res.mc_major;
-    MCFH.image_in_view v minor major fp roots src fwd_src_obj;
-    heap_field_points_to_graph_edge res.mc_major v fwd_src_obj (prom.fwd_map ov) j;
+    MCFH.image_not_free free minor major fp roots src fwd_src_obj;
+    heap_field_points_to_graph_edge res.mc_major free fwd_src_obj (prom.fwd_map ov) j;
     assert (resolve_object ((prom.fwd_map ov) <: obj_addr) res.mc_major == prom.fwd_map dst)
 #pop-options

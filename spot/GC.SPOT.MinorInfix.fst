@@ -68,18 +68,18 @@ let spot_minor_infix_promoted
   MinorFwd.stop_the_world_context minor major fp roots;
   // the field is rewritten to the image of the word *as stored*
   MCFE.combined_major_minor_field_forwarded
-    minor major fp GC.Spec.Fields.allocated roots slots n c par i;
+    minor major fp GC.Spec.Fields.free_stw roots slots n c par i;
   // that image is an interior pointer of the post heap resolving to `fwd par`
-  MCFH.fwd_image_resolves minor major fp GC.Spec.Fields.allocated roots ov;
+  MCFH.fwd_image_resolves minor major fp GC.Spec.Fields.free_stw roots ov;
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.minor_heap_shape_elim minor;
   infix_parent_in_minor_objects minor ov;
   assert (resolve_minor minor ov == par);
   // and the graph edge still names the promoted closure
   MCFE.combined_major_minor_edge_forwarded
-    minor major fp GC.Spec.Fields.allocated roots slots n c par i;
-  // at `allocated`, the post graph is `create_graph`
-  HeapModel.create_graph_view_allocated
+    minor major fp GC.Spec.Fields.free_stw roots slots n c par i;
+  // at `free_stw`, the post graph is `create_graph`
+  HeapModel.create_graph_with_stw
     (Cheney.cheney_collect_spec minor major fp roots).mc_major
 #pop-options
 
@@ -92,7 +92,7 @@ let spot_minor_infix_was_forbidden
   GenInv.minor_heap_shape_elim minor;
   GenInv.major_heap_shape_elim major fp;
   MinorFwd.stop_the_world_context minor major fp roots;
-  RBridge.reachable_in_view GC.Spec.Fields.allocated minor major roots;
+  RBridge.reachable_not_free GC.Spec.Fields.free_stw minor major roots;
   assert (Seq.mem c (GC.Spec.Fields.objects zero_addr major));
   assert (~(SpecObj.is_blue c major));
   assert (deleted_major_minor_fields_no_infix_targets minor major);

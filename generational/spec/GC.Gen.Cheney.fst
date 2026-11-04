@@ -960,7 +960,7 @@ let update_walk_preserves_fl_valid
 let update_major_pointers_preserves_fl_valid
   (major: heap) (fwd: forwarding_map) (fp: U64.t)
   =
-  update_walk_preserves_fl_valid major (allocated major) fwd fp
+  update_walk_preserves_fl_valid major (in_use free_stw major) fwd fp
 
 #pop-options
 

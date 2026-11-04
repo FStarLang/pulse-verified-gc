@@ -134,7 +134,7 @@ let rec push_children (g: heap) (st: seq obj_addr) (obj: obj_addr) (i: U64.t{U64
 /// Well-Formedness Preservation
 /// ---------------------------------------------------------------------------
 
-/// Blueness is what `allocated` and the graph look at, and mark never
+/// Blueness is what `free_stw` and the graph look at, and mark never
 /// creates or removes it.  These two facts let the many colour-change sites in
 /// the mark proofs see that without a lemma call each.
 val is_blue_exclusive (x: obj_addr) (g: heap)
@@ -147,10 +147,10 @@ val set_color_keeps_not_blue (obj x: obj_addr) (g: heap) (c: color)
           [SMTPat (is_blue x (set_object_color obj g c))]
 
 /// A colour change among white, grey and black.  Blue is excluded at both ends:
-/// a free block's body is unconstrained (it is not `allocated`), so taking a
+/// a free block's body is unconstrained (it is free under `free_stw`), so taking a
 /// block out of blue would make its stale fields obligations, and nothing may
 /// point at a free block, so turning a block blue could break
-/// `pointers_stay_in`.  Mark
+/// `pointers_lead_to_non_free`.  Mark
 /// never does either; the sweep and the allocator, which do, have their own
 /// lemmas.
 val color_change_preserves_wf : (g: heap) -> (obj: obj_addr) -> (c: color) ->
@@ -160,7 +160,7 @@ val color_change_preserves_wf : (g: heap) -> (obj: obj_addr) -> (c: color) ->
 
 val push_children_preserves_wf : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
                                   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
-  Lemma (requires well_formed_heap g /\ allocated g obj /\
+  Lemma (requires well_formed_heap g /\ in_use free_stw g obj /\
                   ~(is_no_scan obj g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
@@ -169,7 +169,7 @@ val push_children_preserves_wf : (g: heap) -> (st: seq obj_addr) -> (obj: obj_ad
 val push_children_preserves_stack_props :
   (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\
-                  is_black obj g /\ allocated g obj /\
+                  is_black obj g /\ in_use free_stw g obj /\
                   ~(is_no_scan obj g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
@@ -308,7 +308,7 @@ val push_children_no_new_white : (g: heap) -> (st: seq obj_addr) -> (obj: obj_ad
 
 val push_children_obj_children_non_white : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (child: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ allocated g obj /\
+  Lemma (requires well_formed_heap g /\ in_use free_stw g obj /\
                   ~(is_no_scan obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   points_to g obj child)
@@ -564,7 +564,7 @@ val mark_black_is_reachable : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj
 /// check_and_darken_field preserves well_formed_heap
 val check_and_darken_field_preserves_wf :
   (g: heap) -> (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> (wz: U64.t) ->
-  Lemma (requires well_formed_heap g /\ allocated g obj /\
+  Lemma (requires well_formed_heap g /\ in_use free_stw g obj /\
                   ~(is_no_scan obj g) /\
                   U64.v wz <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\

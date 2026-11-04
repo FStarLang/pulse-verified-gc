@@ -70,14 +70,14 @@ let minor_infix_scenario
   (U64.v c + i * 8) % 8 == 0 /\
   // ---- the standard minor-collection context ------------------------------
   GenInv.collection_heap_shape minor major fp /\
-  RBridge.major_fields_covered minor major GC.Spec.Fields.allocated roots /\
+  RBridge.major_fields_covered minor major GC.Spec.Fields.free_stw roots /\
   RefTable.ref_table_covers_minor_ptrs major slots n /\
   MinorFwd.remembered_targets_in_roots major roots slots n /\
-  RBridge.roots_in_view GC.Spec.Fields.allocated roots major /\
+  RBridge.roots_not_free GC.Spec.Fields.free_stw roots major /\
   CheneyBFS.cheney_no_oom minor major fp roots /\
   ~(SpecObj.is_no_scan c major) /\
   i < U64.v (SpecObj.wosize_of_object c major) /\
-  (let cg = CG.build_combined_graph minor major GC.Spec.Fields.allocated in
+  (let cg = CG.build_combined_graph minor major GC.Spec.Fields.free_stw in
    let combined_roots = CG.classify_roots minor roots in
    CG.combined_reachable cg combined_roots (CG.MajorV c) /\
    CG.combined_reachable cg combined_roots

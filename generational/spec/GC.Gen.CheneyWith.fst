@@ -1,8 +1,8 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.CheneyView -- Implementation
+/// GC.Gen.CheneyWith -- Implementation
 /// ---------------------------------------------------------------------------
 
-module GC.Gen.CheneyView
+module GC.Gen.CheneyWith
 
 open FStar.Seq
 module U64 = FStar.UInt64
@@ -32,45 +32,45 @@ module HeapGraph = GC.Spec.HeapGraph
 module FLAsc = GC.Gen.FreeListAscending
 module AllocExact = GC.Gen.AllocExact
 
-let allocated_promotion_in_view minor major fp roots =
-  allocated_fresh_in_view major (cheney_promote minor major fp roots).major_final
+let free_stw_promotion_not_free minor major fp roots =
+  free_stw_fresh_not_free major (cheney_promote minor major fp roots).major_final
 
-let cheney_collect_spec_view_allocated minor major fp roots = ()
+let cheney_collect_spec_with_stw minor major fp roots = ()
 
 /// ---------------------------------------------------------------------------
-/// The view across the two events
+/// What is free across the two events
 /// ---------------------------------------------------------------------------
 
-let update_walk_keeps_view v major upd fwd x =
+let update_walk_keeps_in_use free major upd fwd x =
   PU.update_walk_preserves_objects major upd fwd;
   if Seq.mem x (objects zero_addr major) then begin
     PU.update_walk_preserves_header major upd fwd x;
-    view_ok_header_determined v major (update_walk major upd fwd) x
+    in_use_header_determined free major (update_walk major upd fwd) x
   end
   else begin
-    if v major x then view_ok_within_allocated v major x;
-    if v (update_walk major upd fwd) x then
-      view_ok_within_allocated v (update_walk major upd fwd) x
+    if in_use free major x then in_use_not_blue free major x;
+    if in_use free (update_walk major upd fwd) x then
+      in_use_not_blue free (update_walk major upd fwd) x
   end
 
 /// An old allocated block stays allocated through promotion, with its header.
-private let old_allocated_kept
+private let old_in_use_kept
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (x: obj_addr)
-  : Lemma (requires promote_pre minor major fp /\ allocated major x)
+  : Lemma (requires promote_pre minor major fp /\ in_use free_stw major x)
           (ensures (let g = (cheney_promote minor major fp roots).major_final in
-                    allocated g x /\
+                    in_use free_stw g x /\
                     read_word g (hd_address x) == read_word major (hd_address x)))
   = cheney_promote_preserves_objects minor major fp roots;
     Frame.cheney_promote_frame_old_header minor major fp roots x;
     Aux.header_eq_object_facts (cheney_promote minor major fp roots).major_final major x
 
-let cheney_promote_keeps_view v minor major fp roots x =
-  view_ok_within_allocated v major x;
-  old_allocated_kept minor major fp roots x;
-  view_ok_header_determined v major (cheney_promote minor major fp roots).major_final x
+let cheney_promote_keeps_in_use free minor major fp roots x =
+  in_use_not_blue free major x;
+  old_in_use_kept minor major fp roots x;
+  in_use_header_determined free major (cheney_promote minor major fp roots).major_final x
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-let cheney_promote_image_in_view v minor major fp roots m x =
+let cheney_promote_image_not_free free minor major fp roots m x =
   let prom = cheney_promote minor major fp roots in
   minor_objects_not_infix minor m;
   Fwd.cheney_promote_fwd_noninfix_targets_valid minor major fp roots;
@@ -79,16 +79,16 @@ let cheney_promote_image_in_view v minor major fp roots m x =
   assert (~(is_infix x prom.major_final));
   Inj.cheney_promote_fwd_targets_not_blue minor major fp roots;
   Inj.cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue minor major fp roots;
-  assert (allocated prom.major_final x /\ not (allocated major x))
+  assert (in_use free_stw prom.major_final x /\ not (in_use free_stw major x))
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-let cheney_promote_view_origin v minor major fp roots x =
+let cheney_promote_in_use_origin free minor major fp roots x =
   let prom = cheney_promote minor major fp roots in
-  view_ok_within_allocated v prom.major_final x;
-  if allocated major x then begin
-    old_allocated_kept minor major fp roots x;
-    view_ok_header_determined v major prom.major_final x
+  in_use_not_blue free prom.major_final x;
+  if in_use free_stw major x then begin
+    old_in_use_kept minor major fp roots x;
+    in_use_header_determined free major prom.major_final x
   end
   else begin
     NBO.cheney_promote_nonblue_origin minor major fp roots x;
@@ -99,29 +99,29 @@ let cheney_promote_view_origin v minor major fp roots x =
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let wf_view_field v g src j =
-  wf_view_parts ();
+let wf_with_field free g src j =
+  wf_with_parts ();
   let w : obj_addr = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
   assert (is_pointer_to (read_word g (U64.uint_to_t (U64.v src + j * U64.v mword))) w);
-  view_ok_within_allocated v g src;
+  in_use_not_blue free g src;
   NoBlueUtil.field_pointer_points_to_nat g src w j;
-  points_to_target_in_view v g src w
+  points_to_target_not_free free g src w
 #pop-options
 
 /// ---------------------------------------------------------------------------
 /// Event 1: promotion
 /// ---------------------------------------------------------------------------
 
-/// A field of an old block of the view: untouched by promotion, and so is its
+/// A field of an old non-free block: untouched by promotion, and so is its
 /// target.
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 private let promoted_old_field
-  (v: view) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src: obj_addr) (j: nat)
   : Lemma
-    (requires view_ok v /\ promote_pre minor major fp /\
-              well_formed_view v major /\
-              v major src /\
+    (requires free_def_ok free /\ promote_pre minor major fp /\
+              well_formed_heap_with free major /\
+              in_use free major src /\
               (let g = (cheney_promote minor major fp roots).major_final in
                ~(is_no_scan src g) /\
                j < U64.v (wosize_of_object src g) /\
@@ -129,31 +129,31 @@ private let promoted_old_field
                is_pointer (read_word g (U64.uint_to_t (U64.v src + j * 8)))))
     (ensures (let g = (cheney_promote minor major fp roots).major_final in
               let w : obj_addr = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
-              v g (resolve_object w g) /\
+              in_use free g (resolve_object w g) /\
               infix_addr_wf g (objects zero_addr g) w))
   = let g = (cheney_promote minor major fp roots).major_final in
     let field_addr = U64.uint_to_t (U64.v src + j * 8) in
-    view_ok_within_allocated v major src;
+    in_use_not_blue free major src;
     Frame.cheney_promote_frame_old_header minor major fp roots src;
     Aux.header_eq_object_facts g major src;
     Frame.cheney_promote_frame_old_fields minor major fp roots src j;
     assert (read_word g field_addr == read_word major field_addr);
-    wf_view_field v major src j;
+    wf_with_field free major src j;
     let w : obj_addr = read_word major field_addr in
-    view_ok_within_allocated v major (resolve_object w major);
+    in_use_not_blue free major (resolve_object w major);
     Frame.cheney_promote_frame_target_header minor major fp roots w;
-    cheney_promote_keeps_view v minor major fp roots (resolve_object w major)
+    cheney_promote_keeps_in_use free minor major fp roots (resolve_object w major)
 #pop-options
 
 /// A field of a promoted object: it is its nursery source's field, which
-/// points into the view (or into the nursery, not a major pointer).
+/// points to a non-free block (or into the nursery, not a major pointer).
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 private let promoted_new_field
-  (v: view) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t) (src: obj_addr) (j: nat)
   : Lemma
-    (requires view_ok v /\ promote_pre minor major fp /\
-              GenInv.minor_major_fields_in_view v minor major /\
+    (requires free_def_ok free /\ promote_pre minor major fp /\
+              GenInv.minor_major_fields_not_free free minor major /\
               Seq.mem x (minor_objects minor) /\
               (let prom = cheney_promote minor major fp roots in
                let g = prom.major_final in
@@ -165,7 +165,7 @@ private let promoted_new_field
                is_pointer (read_word g (U64.uint_to_t (U64.v src + j * 8)))))
     (ensures (let g = (cheney_promote minor major fp roots).major_final in
               let w : obj_addr = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
-              v g (resolve_object w g) /\
+              in_use free g (resolve_object w g) /\
               infix_addr_wf g (objects zero_addr g) w))
   = let prom = cheney_promote minor major fp roots in
     let g = prom.major_final in
@@ -179,51 +179,51 @@ private let promoted_new_field
     CPF.cheney_promote_fwd_target_fields_match minor major fp roots x j;
     let w = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
     assert (w == minor_read_field minor x j);
-    GenInv.minor_major_fields_in_view_elim v minor major x j;
-    cheney_promote_keeps_view v minor major fp roots (w <: obj_addr);
-    view_ok_within_allocated v major (w <: obj_addr);
+    GenInv.minor_major_fields_not_free_elim free minor major x j;
+    cheney_promote_keeps_in_use free minor major fp roots (w <: obj_addr);
+    in_use_not_blue free major (w <: obj_addr);
     assert (Seq.mem (w <: obj_addr) (objects zero_addr g));
     assert (~(is_infix (w <: obj_addr) g));
     resolve_non_infix (w <: obj_addr) g;
     infix_addr_wf_non_infix g (objects zero_addr g) (w <: obj_addr)
 #pop-options
 
-/// Every block of a view is on the walk.
-private let view_on_walk (v: view) (g: heap)
-  : Lemma (requires view_ok v)
-          (ensures forall (x: obj_addr). v g x ==> Seq.mem x (objects zero_addr g))
-  = FStar.Classical.forall_intro (FStar.Classical.move_requires (view_ok_within_allocated v g))
+/// Every non-free block is on the walk.
+private let in_use_on_walk (free: free_def) (g: heap)
+  : Lemma (requires free_def_ok free)
+          (ensures forall (x: obj_addr). in_use free g x ==> Seq.mem x (objects zero_addr g))
+  = FStar.Classical.forall_intro (FStar.Classical.move_requires (in_use_not_blue free g))
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let cheney_promote_preserves_wf_view v minor major fp roots =
-  wf_view_parts ();
+let cheney_promote_preserves_wf_with free minor major fp roots =
+  wf_with_parts ();
   let prom = cheney_promote minor major fp roots in
   let g = prom.major_final in
   cheney_promote_preserves_wfh_part1 minor major fp roots;
   cheney_promote_preserves_wfh_part4 minor major fp roots;
   let field_closure (src: obj_addr) (j: nat) : Lemma
-    (requires v g src /\ ~(is_no_scan src g) /\
+    (requires in_use free g src /\ ~(is_no_scan src g) /\
               j < U64.v (wosize_of_object src g) /\
               U64.v src + j * 8 + 8 <= heap_size)
     (ensures (let w = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
               is_pointer w ==>
-              v g (resolve_object (w <: obj_addr) g) /\
+              in_use free g (resolve_object (w <: obj_addr) g) /\
               infix_addr_wf g (objects zero_addr g) (w <: obj_addr)))
     = let w = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
       if is_pointer w then begin
-        cheney_promote_view_origin v minor major fp roots src;
-        view_ok_within_allocated v g src;
-        if v major src
-        then promoted_old_field v minor major fp roots src j
+        cheney_promote_in_use_origin free minor major fp roots src;
+        in_use_not_blue free g src;
+        if in_use free major src
+        then promoted_old_field free minor major fp roots src j
         else begin
           let x = IndDesc.indefinite_description_ghost U64.t
             (fun x -> Seq.mem x (minor_objects minor) /\ prom.fwd_map x == src) in
-          promoted_new_field v minor major fp roots x src j
+          promoted_new_field free minor major fp roots x src j
         end
       end
   in
-  view_on_walk v g;
-  pointer_clauses_from_field_closure v g field_closure
+  in_use_on_walk free g;
+  pointer_clauses_from_field_closure free g field_closure
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -250,18 +250,18 @@ let update_walk_frame_target_header g upd fwd h =
     PU.update_walk_preserves_header g upd fwd h
 #pop-options
 
-/// A well-formed target in the view in the walked heap is one in the updated
+/// A well-formed non-free target in the walked heap is one in the updated
 /// heap.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
-private let update_pointers_view_transfer_target
-  (v: view) (g: heap) (fwd: forwarding_map) (dst: obj_addr)
-  : Lemma (requires view_ok v /\ blocks_fit g /\
-                    v g (resolve_object dst g) /\
+private let update_pointers_with_transfer_target
+  (free: free_def) (g: heap) (fwd: forwarding_map) (dst: obj_addr)
+  : Lemma (requires free_def_ok free /\ blocks_fit g /\
+                    in_use free g (resolve_object dst g) /\
                     infix_addr_wf g (objects zero_addr g) dst)
-          (ensures (let updated = update_pointers_view v g fwd in
-                    v updated (resolve_object dst updated) /\
+          (ensures (let updated = update_pointers_with free g fwd in
+                    in_use free updated (resolve_object dst updated) /\
                     infix_addr_wf updated (objects zero_addr updated) dst))
-  = let upd = v g in
+  = let upd = in_use free g in
     let updated = update_walk g upd fwd in
     PU.update_walk_preserves_objects g upd fwd;
     if is_infix dst g then begin
@@ -277,33 +277,33 @@ private let update_pointers_view_transfer_target
     end
     else begin
       resolve_non_infix dst g;
-      view_ok_within_allocated v g dst;
+      in_use_not_blue free g dst;
       assert (Seq.mem dst (objects zero_addr g))
     end;
     update_walk_frame_target_header g upd fwd dst;
     resolve_object_locality dst g updated;
-    update_walk_keeps_view v g upd fwd (resolve_object dst g);
+    update_walk_keeps_in_use free g upd fwd (resolve_object dst g);
     infix_addr_wf_transfer g updated (objects zero_addr g) (objects zero_addr updated) dst
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
-let update_pointers_view_preserves_wf_view v g fwd =
-  wf_view_parts ();
-  let upd = v g in
+let update_pointers_with_preserves_wf free g fwd =
+  wf_with_parts ();
+  let upd = in_use free g in
   let updated = update_walk g upd fwd in
   PU.update_walk_preserves_objects g upd fwd;
   PU.update_walk_preserves_wfh_part1 g upd fwd;
   PU.update_walk_preserves_wfh_part4 g upd fwd;
   let field_closure (src: obj_addr) (j: nat) : Lemma
-    (requires v updated src /\ ~(is_no_scan src updated) /\
+    (requires in_use free updated src /\ ~(is_no_scan src updated) /\
               j < U64.v (wosize_of_object src updated) /\
               U64.v src + j * 8 + 8 <= heap_size)
     (ensures (let w = read_word updated (U64.uint_to_t (U64.v src + j * 8)) in
               is_pointer w ==>
-              v updated (resolve_object (w <: obj_addr) updated) /\
+              in_use free updated (resolve_object (w <: obj_addr) updated) /\
               infix_addr_wf updated (objects zero_addr updated) (w <: obj_addr)))
-    = update_walk_keeps_view v g upd fwd src;
-      view_ok_within_allocated v g src;
+    = update_walk_keeps_in_use free g upd fwd src;
+      in_use_not_blue free g src;
       PU.update_walk_preserves_header g upd fwd src;
       Aux.header_eq_object_facts updated g src;
       assert (~(is_no_scan src g));
@@ -312,28 +312,28 @@ let update_pointers_view_preserves_wf_view v g fwd =
       let old_raw = read_word g field_addr in
       let old_val = to_minor_offset old_raw in
       if is_minor_pointer old_val && fwd old_val <> 0UL then
-        update_pointers_view_transfer_target v g fwd ((fwd old_val) <: obj_addr)
+        update_pointers_with_transfer_target free g fwd ((fwd old_val) <: obj_addr)
       else if is_pointer old_raw then begin
-        wf_view_field v g src j;
-        update_pointers_view_transfer_target v g fwd (old_raw <: obj_addr)
+        wf_with_field free g src j;
+        update_pointers_with_transfer_target free g fwd (old_raw <: obj_addr)
       end
   in
-  view_on_walk v updated;
-  pointer_clauses_from_field_closure v updated field_closure
+  in_use_on_walk free updated;
+  pointer_clauses_from_field_closure free updated field_closure
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
-private let fwd_target_in_view
-  (v: view) (minor: minor_state) (major: heap) (fp: U64.t)
+private let fwd_target_not_free
+  (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t) (m: U64.t)
-  : Lemma (requires promote_pre minor major fp /\ promotion_in_view v minor major fp roots /\
+  : Lemma (requires promote_pre minor major fp /\ promotion_not_free free minor major fp roots /\
                     (cheney_promote minor major fp roots).fwd_map m <> 0UL)
           (ensures (let prom = cheney_promote minor major fp roots in
                     let t = prom.fwd_map m in
                     U64.v t >= U64.v mword /\
                     U64.v t < heap_size /\
                     U64.v t % U64.v mword == 0 /\
-                    v prom.major_final (resolve_object (t <: obj_addr) prom.major_final) /\
+                    in_use free prom.major_final (resolve_object (t <: obj_addr) prom.major_final) /\
                     infix_addr_wf prom.major_final (objects zero_addr prom.major_final) (t <: obj_addr)))
   = let prom = cheney_promote minor major fp roots in
     let g = prom.major_final in
@@ -345,7 +345,7 @@ private let fwd_target_in_view
       let parent = infix_parent minor m in
       assert (Seq.mem parent (minor_objects minor));
       assert (resolve_object t g == prom.fwd_map parent);
-      cheney_promote_image_in_view v minor major fp roots parent (resolve_object t g)
+      cheney_promote_image_not_free free minor major fp roots parent (resolve_object t g)
     end
     else begin
       Fwd.cheney_promote_fwd_noninfix_targets_valid minor major fp roots;
@@ -355,14 +355,14 @@ private let fwd_target_in_view
       Inj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots;
       assert (Seq.mem m (minor_objects minor));
       resolve_non_infix t g;
-      cheney_promote_image_in_view v minor major fp roots m t;
+      cheney_promote_image_not_free free minor major fp roots m t;
       infix_addr_wf_non_infix g (objects zero_addr g) t
     end
 #pop-options
 
-let cheney_promote_fwd_targets_in_view v minor major fp roots =
+let cheney_promote_fwd_targets_not_free free minor major fp roots =
   FStar.Classical.forall_intro
-    (FStar.Classical.move_requires (fwd_target_in_view v minor major fp roots))
+    (FStar.Classical.move_requires (fwd_target_not_free free minor major fp roots))
 
 /// ---------------------------------------------------------------------------
 /// Free-list facts across the pointer update
@@ -486,14 +486,14 @@ private let update_walk_preserves_chain_objects_blue
 
 /// The free-list half of the shape after promotion and the update.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-private let cheney_collect_view_free_list
-  (v: view) (minor: minor_state) (major: heap) (fp: U64.t)
+private let cheney_collect_with_free_list
+  (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t)
   : Lemma
     (requires promote_pre minor major fp /\
-              GenInv.major_shape_view v major fp)
+              GenInv.major_shape_with free major fp)
     (ensures (let prom = cheney_promote minor major fp roots in
-              let m = update_pointers_view v prom.major_final prom.fwd_map in
+              let m = update_pointers_with free prom.major_final prom.fwd_map in
               let fp' = prom.fp_final in
               AllocLemmas.fl_valid m fp' heap_words /\
               AllocLemmas.fl_chain_terminates m fp' heap_words /\
@@ -506,11 +506,11 @@ private let cheney_collect_view_free_list
               Seq.length (objects zero_addr m) > 0 /\
               GC.Spec.SweepInv.fp_valid fp' m /\
               GC.Spec.FreeList.fp_in_heap fp' m))
-  = GenInv.major_shape_view_elim v major fp;
+  = GenInv.major_shape_with_elim free major fp;
     let prom = cheney_promote minor major fp roots in
     let g = prom.major_final in
     let fp' = prom.fp_final in
-    let upd = v g in
+    let upd = in_use free g in
     let m = update_walk g upd prom.fwd_map in
     // promotion
     cheney_promote_preserves_wfh_part1 minor major fp roots;
@@ -521,7 +521,7 @@ private let cheney_collect_view_free_list
     GC.Gen.CheneyFlComplete.cheney_promote_preserves_fl_complete minor major fp roots;
     FLAsc.cheney_promote_preserves_fl_ascending minor major fp roots;
     // the update
-    FStar.Classical.forall_intro (FStar.Classical.move_requires (view_ok_within_allocated v g));
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (in_use_not_blue free g));
     assert (walk_ok g upd);
     PU.update_walk_preserves_objects g upd prom.fwd_map;
     update_walk_preserves_fl_valid g upd prom.fwd_map fp';
@@ -537,25 +537,25 @@ private let cheney_collect_view_free_list
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let cheney_collect_view_preserves_shape v minor major fp roots =
-  GenInv.collection_shape_view_elim v minor major fp;
-  GenInv.major_shape_view_elim v major fp;
+let cheney_collect_with_preserves_shape free minor major fp roots =
+  GenInv.collection_shape_with_elim free minor major fp;
+  GenInv.major_shape_with_elim free major fp;
   GenInv.minor_heap_shape_elim minor;
   let prom = cheney_promote minor major fp roots in
   let g = prom.major_final in
-  let res = cheney_collect_spec_view v minor major fp roots in
-  let m = update_pointers_view v g prom.fwd_map in
+  let res = cheney_collect_spec_with free minor major fp roots in
+  let m = update_pointers_with free g prom.fwd_map in
   assert (res.mc_major == m);
   assert (res.mc_fp == prom.fp_final);
   assert (res.mc_minor == minor_reset minor);
   assert (promote_pre minor major fp);
-  // well-formedness on the view: promotion, then the update
+  // well-formedness given what counts as free: promotion, then the update
   cheney_promote_preserves_wfh_part1 minor major fp roots;
-  cheney_promote_preserves_wf_view v minor major fp roots;
-  cheney_promote_fwd_targets_in_view v minor major fp roots;
-  update_pointers_view_preserves_wf_view v g prom.fwd_map;
+  cheney_promote_preserves_wf_with free minor major fp roots;
+  cheney_promote_fwd_targets_not_free free minor major fp roots;
+  update_pointers_with_preserves_wf free g prom.fwd_map;
   // the free list
-  cheney_collect_view_free_list v minor major fp roots;
-  GenInv.major_shape_view_intro v m prom.fp_final;
-  GenInv.collection_shape_view_after_minor_reset v minor m prom.fp_final
+  cheney_collect_with_free_list free minor major fp roots;
+  GenInv.major_shape_with_intro free m prom.fp_final;
+  GenInv.collection_shape_with_after_minor_reset free minor m prom.fp_final
 #pop-options

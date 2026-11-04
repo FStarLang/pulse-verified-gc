@@ -485,32 +485,41 @@ let points_to (g: heap) (src dst: obj_addr) : GTot bool =
   wosize_of_object_bound src g;
   exists_field_pointing_to_unchecked g src wz dst
 /// ---------------------------------------------------------------------------
-/// Views, and well-formedness on a view
+/// Well-formedness, given what counts as free
 /// ---------------------------------------------------------------------------
 ///
-/// A *view* says which blocks the heap invariant counts as objects.  Every
-/// clause that constrains fields is stated for the blocks of a view; a block
-/// outside the view is garbage left in place, whose fields are never read.
-///
-/// Stop-the-world --- and while idle or marking --- the view is `allocated`:
-/// every block on the walk that is not free (blue).  A collector phase that
-/// leaves dead blocks in place (a sweep in progress) supplies a smaller view.
-/// The view is a function of the heap, so a block the allocator hands out is
-/// counted as soon as its header is written.
-type view = heap -> obj_addr -> GTot bool
+/// Part 2 of well-formedness reads: every non-free, scannable block's
+/// pointer-like fields point to a non-free real block.  What counts as
+/// *free* is a parameter.  Stop-the-world --- and while idle or marking ---
+/// the free blocks are the blue ones (`free_stw`).  A collector phase that
+/// leaves dead blocks in place (a sweep in progress) also counts the blocks it
+/// is about to free.  A free block is garbage left in place: no clause reads
+/// its fields.  "Free" is a function of the heap, so a block the allocator
+/// hands out stops being free as soon as its header is written.
 
-/// The stop-the-world view: the blocks on the walk that are not free.
-let allocated : view = fun g x -> Seq.mem x (objects zero_addr g) && not (is_blue x g)
+(* What counts as free for well-formedness. Physically free blocks are blue;
+   a definition may also count blocks that are about to be freed. *)
+type free_def = heap -> obj_addr -> GTot bool
 
-/// A pointer from `src` to `dst`.  A no-scan block --- a `string`, a
-/// `Bytes.t`, a `Bigarray` payload, a `Custom` block --- holds arbitrary bytes,
-/// eight of which may spell an 8-aligned in-range address; neither the
+/// A real block: one on the heap walk (an infix object is not one).
+let is_block (g: heap) (x: obj_addr) : GTot bool = Seq.mem x (objects zero_addr g)
+
+/// A block whose fields the collector scans.  A no-scan block --- a `string`,
+/// a `Bytes.t`, a `Bigarray` payload, a `Custom` block --- holds arbitrary
+/// bytes, eight of which may spell an 8-aligned in-range address; neither the
 /// extracted C nor the graph model reads such a word (`is_scannable` in the
 /// implementation and `GC.Spec.HeapGraph.get_pointer_fields` both stop at the
-/// tag), so it has no pointer fields.  `points_to` hides the `wosize < 2^54`
-/// typing guard of the raw field search.
-let has_pointer_to (g: heap) (src dst: obj_addr) : prop =
-  ~(is_no_scan src g) /\ points_to g src dst
+/// tag), so it has no pointer fields.  (`points_to` hides the
+/// `wosize < 2^54` typing guard of the raw field search.)
+let scannable (g: heap) (x: obj_addr) : GTot bool = not (is_no_scan x g)
+
+/// The stop-the-world definition: a block is free when it is blue.
+let free_stw : free_def = fun g x -> is_blue x g
+
+/// Shorthand used in proofs: a non-free real block.  Top-level statements
+/// spell the conjunction out where it helps them read as English.
+let in_use (free: free_def) (g: heap) (x: obj_addr) : GTot bool =
+  is_block g x && not (free g x)
 
 /// The well-formedness clauses.
 ///
@@ -525,10 +534,9 @@ let blocks_fit (g: heap) : prop =
 let no_infix_block (g: heap) : prop =
   (forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(GC.Spec.Object.is_infix obj g))
 
-/// **Pointers stay in the view.**  Every pointer out of a block of the view
-/// leads (after resolving an interior pointer to its enclosing closure) to a
-/// block of the view.  At `allocated` this says nothing live points at a free
-/// block.
+/// **Pointers lead to non-free blocks** (part 2).  Every non-free, scannable
+/// block's pointer-like fields point to a non-free real block.  At
+/// `free_stw` this says nothing live points at a blue block.
 ///
 /// The clause is stated on the *resolved* target.  A field may hold an
 /// interior pointer to an infix object embedded in a closure --- that is how
@@ -543,90 +551,94 @@ let no_infix_block (g: heap) : prop =
 /// Sealed: a change to its shape breaks the accessor lemmas below rather than
 /// silently reshaping proof obligations across the client modules.
 [@@"opaque_to_smt"]
-let pointers_stay_in (v: view) (g: heap) : prop =
+let pointers_lead_to_non_free (free: free_def) (g: heap) : prop =
   forall (src dst: obj_addr).
-    v g src /\ has_pointer_to g src dst ==> v g (GC.Spec.Object.resolve_object dst g)
+    is_block g src /\ not (free g src) /\ scannable g src /\ points_to g src dst ==>
+    is_block g (GC.Spec.Object.resolve_object dst g) /\
+    not (free g (GC.Spec.Object.resolve_object dst g))
 
-/// **Interior pointers valid.**  Every pointer out of a block of the view that
-/// is an interior (infix) pointer has a valid enclosing closure.
+/// **Interior pointers valid** (part 3, same sources).  Every pointer out of a
+/// non-free, scannable block that is an interior (infix) pointer has a valid
+/// enclosing closure.
 ///
 /// `resolve_object` computes the parent from a mutable heap word, so a model
 /// that resolved without validating the parent would be trusting an arbitrary
 /// field of the object graph.
 [@@"opaque_to_smt"]
-let interior_pointers_valid (v: view) (g: heap) : prop =
+let interior_pointers_valid (free: free_def) (g: heap) : prop =
   forall (src dst: obj_addr).
-    v g src /\ has_pointer_to g src dst ==> GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst
+    is_block g src /\ not (free g src) /\ scannable g src /\ points_to g src dst ==>
+    GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst
 
-let pointers_stay_in_elim (v: view) (g: heap) (src dst: obj_addr) : Lemma
-  (requires pointers_stay_in v g /\ v g src /\ has_pointer_to g src dst)
-  (ensures v g (GC.Spec.Object.resolve_object dst g))
-  = reveal_opaque (`%pointers_stay_in) pointers_stay_in
+let pointers_lead_to_non_free_elim (free: free_def) (g: heap) (src dst: obj_addr) : Lemma
+  (requires pointers_lead_to_non_free free g /\ in_use free g src /\ scannable g src /\ points_to g src dst)
+  (ensures in_use free g (GC.Spec.Object.resolve_object dst g))
+  = reveal_opaque (`%pointers_lead_to_non_free) pointers_lead_to_non_free
 
-let pointers_stay_in_intro (v: view) (g: heap)
+let pointers_lead_to_non_free_intro (free: free_def) (g: heap)
     (h: (src: obj_addr) -> (dst: obj_addr) ->
-      Lemma (requires v g src /\ has_pointer_to g src dst)
-            (ensures v g (GC.Spec.Object.resolve_object dst g)))
-  : Lemma (pointers_stay_in v g)
-  = reveal_opaque (`%pointers_stay_in) pointers_stay_in;
+      Lemma (requires in_use free g src /\ scannable g src /\ points_to g src dst)
+            (ensures in_use free g (GC.Spec.Object.resolve_object dst g)))
+  : Lemma (pointers_lead_to_non_free free g)
+  = reveal_opaque (`%pointers_lead_to_non_free) pointers_lead_to_non_free;
     let aux (src: obj_addr) : Lemma
-      (forall (dst: obj_addr). v g src /\ has_pointer_to g src dst ==>
-                          v g (GC.Spec.Object.resolve_object dst g))
+      (forall (dst: obj_addr). in_use free g src /\ scannable g src /\ points_to g src dst ==>
+                          in_use free g (GC.Spec.Object.resolve_object dst g))
       = FStar.Classical.forall_intro (FStar.Classical.move_requires (h src))
     in
     FStar.Classical.forall_intro aux
 
-let interior_pointers_valid_elim (v: view) (g: heap) (src dst: obj_addr) : Lemma
-  (requires interior_pointers_valid v g /\ v g src /\ has_pointer_to g src dst)
+let interior_pointers_valid_elim (free: free_def) (g: heap) (src dst: obj_addr) : Lemma
+  (requires interior_pointers_valid free g /\ in_use free g src /\ scannable g src /\ points_to g src dst)
   (ensures GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst)
   = reveal_opaque (`%interior_pointers_valid) interior_pointers_valid
 
-let interior_pointers_valid_intro (v: view) (g: heap)
+let interior_pointers_valid_intro (free: free_def) (g: heap)
     (h: (src: obj_addr) -> (dst: obj_addr) ->
-      Lemma (requires v g src /\ has_pointer_to g src dst)
+      Lemma (requires in_use free g src /\ scannable g src /\ points_to g src dst)
             (ensures GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst))
-  : Lemma (interior_pointers_valid v g)
+  : Lemma (interior_pointers_valid free g)
   = reveal_opaque (`%interior_pointers_valid) interior_pointers_valid;
     let aux (src: obj_addr) : Lemma
-      (forall (dst: obj_addr). v g src /\ has_pointer_to g src dst ==>
+      (forall (dst: obj_addr). in_use free g src /\ scannable g src /\ points_to g src dst ==>
                           GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst)
       = FStar.Classical.forall_intro (FStar.Classical.move_requires (h src))
     in
     FStar.Classical.forall_intro aux
 
-/// Convenience intro at `allocated`: if every pointer target is *itself* an
-/// allocated block, pointers stay in.  Sound because `no_infix_block` keeps
+/// Convenience intro at `free_stw`: if every pointer target is *itself* a
+/// non-blue block, pointers lead to non-free blocks.  Sound because `no_infix_block` keeps
 /// infix objects off the walk, so such a target resolves to itself.
-let pointers_stay_in_intro_raw (g: heap)
+let pointers_lead_to_non_free_intro_raw (g: heap)
     (h: (src: obj_addr) -> (dst: obj_addr) ->
-      Lemma (requires allocated g src /\ has_pointer_to g src dst)
-            (ensures allocated g dst))
+      Lemma (requires in_use free_stw g src /\ scannable g src /\ points_to g src dst)
+            (ensures in_use free_stw g dst))
   : Lemma (requires no_infix_block g)
-          (ensures pointers_stay_in allocated g)
+          (ensures pointers_lead_to_non_free free_stw g)
   = let h' (src: obj_addr) (dst: obj_addr) : Lemma
-      (requires allocated g src /\ has_pointer_to g src dst)
-      (ensures allocated g (GC.Spec.Object.resolve_object dst g))
+      (requires in_use free_stw g src /\ scannable g src /\ points_to g src dst)
+      (ensures in_use free_stw g (GC.Spec.Object.resolve_object dst g))
       = h src dst;
         GC.Spec.Object.resolve_non_infix dst g
     in
-    pointers_stay_in_intro allocated g h'
+    pointers_lead_to_non_free_intro free_stw g h'
 
 /// Convenience intro for heaps with no infix pointer targets at all:
 /// `interior_pointers_valid` is then vacuous.
-let interior_pointers_valid_intro_no_infix (v: view) (g: heap)
+let interior_pointers_valid_intro_no_infix (free: free_def) (g: heap)
     (h: (src: obj_addr) -> (dst: obj_addr) ->
-      Lemma (requires v g src /\ has_pointer_to g src dst)
+      Lemma (requires in_use free g src /\ scannable g src /\ points_to g src dst)
             (ensures ~(GC.Spec.Object.is_infix dst g)))
-  : Lemma (interior_pointers_valid v g)
+  : Lemma (interior_pointers_valid free g)
   = let h' (src: obj_addr) (dst: obj_addr) : Lemma
-      (requires v g src /\ has_pointer_to g src dst)
+      (requires in_use free g src /\ scannable g src /\ points_to g src dst)
       (ensures GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst)
       = h src dst;
         GC.Spec.Object.infix_addr_wf_non_infix g (objects zero_addr g) dst
     in
-    interior_pointers_valid_intro v g h'
+    interior_pointers_valid_intro free g h'
 
-/// Transport the two pointer clauses at `allocated` across a heap change that
+/// Transport the two pointer clauses at `free_stw` across a heap change that
 /// keeps the walk and every header interpretation, blueness included.  Colour
 /// changes among white, grey and black, and tag rewrites, are the canonical
 /// instances: they leave `objects`, `is_infix`, `is_closure`, `is_blue`,
@@ -634,9 +646,9 @@ let interior_pointers_valid_intro_no_infix (v: view) (g: heap)
 /// over verbatim once the pointers are transported by `fields`.
 let pointer_clauses_transport (g: heap) (g': heap)
     (fields: (src: obj_addr) -> (dst: obj_addr) ->
-      Lemma (requires allocated g' src /\ has_pointer_to g' src dst)
-            (ensures has_pointer_to g src dst))
-  : Lemma (requires pointers_stay_in allocated g /\ interior_pointers_valid allocated g /\
+      Lemma (requires in_use free_stw g' src /\ scannable g' src /\ points_to g' src dst)
+            (ensures scannable g src /\ points_to g src dst))
+  : Lemma (requires pointers_lead_to_non_free free_stw g /\ interior_pointers_valid free_stw g /\
                     objects zero_addr g' == objects zero_addr g /\
                     (forall (h: obj_addr).
                        GC.Spec.Object.is_infix h g' == GC.Spec.Object.is_infix h g /\
@@ -645,50 +657,50 @@ let pointer_clauses_transport (g: heap) (g': heap)
                        GC.Spec.Object.is_blue h g' == GC.Spec.Object.is_blue h g /\
                        GC.Spec.Object.wosize_of_object h g' == GC.Spec.Object.wosize_of_object h g /\
                        GC.Spec.Object.resolve_object h g' == GC.Spec.Object.resolve_object h g))
-          (ensures pointers_stay_in allocated g' /\ interior_pointers_valid allocated g')
+          (ensures pointers_lead_to_non_free free_stw g' /\ interior_pointers_valid free_stw g')
   = let pf2 (src: obj_addr) (dst: obj_addr) : Lemma
-      (requires allocated g' src /\ has_pointer_to g' src dst)
-      (ensures allocated g' (GC.Spec.Object.resolve_object dst g'))
+      (requires in_use free_stw g' src /\ scannable g' src /\ points_to g' src dst)
+      (ensures in_use free_stw g' (GC.Spec.Object.resolve_object dst g'))
       = fields src dst;
-        pointers_stay_in_elim allocated g src dst
+        pointers_lead_to_non_free_elim free_stw g src dst
     in
-    pointers_stay_in_intro allocated g' pf2;
+    pointers_lead_to_non_free_intro free_stw g' pf2;
     let pf3 (src: obj_addr) (dst: obj_addr) : Lemma
-      (requires allocated g' src /\ has_pointer_to g' src dst)
+      (requires in_use free_stw g' src /\ scannable g' src /\ points_to g' src dst)
       (ensures GC.Spec.Object.infix_addr_wf g' (objects zero_addr g') dst)
       = fields src dst;
-        interior_pointers_valid_elim allocated g src dst;
+        interior_pointers_valid_elim free_stw g src dst;
         GC.Spec.Object.infix_addr_wf_congr g g' (objects zero_addr g) dst
     in
-    interior_pointers_valid_intro allocated g' pf3
+    interior_pointers_valid_intro free_stw g' pf3
 
-/// **Well-formedness on a view.**  The walk clauses (`blocks_fit`,
-/// `no_infix_block`) are about every block; the pointer clauses constrain only
-/// the fields of the blocks of the view.  Sealed; cross the boundary with
-/// `wf_view_parts` (or `wf_parts` for `well_formed_heap`).
+/// **Well-formedness, given what counts as free.**  The walk clauses
+/// (`blocks_fit`, `no_infix_block`) are about every block; the pointer
+/// clauses constrain only the fields of non-free blocks.  Sealed; cross the
+/// boundary with `wf_with_parts` (or `wf_parts` for `well_formed_heap`).
 [@@"opaque_to_smt"]
-let well_formed_view (v: view) (g: heap) : prop =
-  blocks_fit g /\ pointers_stay_in v g /\ interior_pointers_valid v g /\ no_infix_block g
+let well_formed_heap_with (free: free_def) (g: heap) : prop =
+  blocks_fit g /\ pointers_lead_to_non_free free g /\ interior_pointers_valid free g /\ no_infix_block g
 
-let wf_view_parts (_: unit) : Lemma
-  (ensures forall (v: view) (g: heap).
-             well_formed_view v g <==>
-             (blocks_fit g /\ pointers_stay_in v g /\ interior_pointers_valid v g /\
+let wf_with_parts (_: unit) : Lemma
+  (ensures forall (free: free_def) (g: heap).
+             well_formed_heap_with free g <==>
+             (blocks_fit g /\ pointers_lead_to_non_free free g /\ interior_pointers_valid free g /\
               no_infix_block g))
-  = reveal_opaque (`%well_formed_view) well_formed_view
+  = reveal_opaque (`%well_formed_heap_with) well_formed_heap_with
 
-/// **Well-formedness**: the stop-the-world instance.
-let well_formed_heap (g: heap) : prop = well_formed_view allocated g
+/// **Well-formedness**: the stop-the-world instance, where free means blue.
+let well_formed_heap (g: heap) : prop = well_formed_heap_with free_stw g
 
-/// The pointer clauses at one pointer: a target of a block of the view is in
-/// the view, and a valid interior pointer if it is one.
-let points_to_target_in_view (v: view) (g: heap) (src dst: obj_addr) : Lemma
-  (requires well_formed_view v g /\ v g src /\ has_pointer_to g src dst)
-  (ensures v g (GC.Spec.Object.resolve_object dst g) /\
+/// The pointer clauses at one pointer: the target of a non-free block is a
+/// non-free block, and a valid interior pointer if it is one.
+let points_to_target_not_free (free: free_def) (g: heap) (src dst: obj_addr) : Lemma
+  (requires well_formed_heap_with free g /\ in_use free g src /\ scannable g src /\ points_to g src dst)
+  (ensures in_use free g (GC.Spec.Object.resolve_object dst g) /\
            GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst)
-  = wf_view_parts ();
-    pointers_stay_in_elim v g src dst;
-    interior_pointers_valid_elim v g src dst
+  = wf_with_parts ();
+    pointers_lead_to_non_free_elim free g src dst;
+    interior_pointers_valid_elim free g src dst
 
 /// The single sanctioned way to cross the `well_formed_heap` abstraction
 /// boundary.  A biconditional, so it serves both directions: decomposing a
@@ -696,69 +708,71 @@ let points_to_target_in_view (v: view) (g: heap) (src dst: obj_addr) : Lemma
 let wf_parts (_: unit) : Lemma
   (ensures forall (g: heap).
              well_formed_heap g <==>
-             (blocks_fit g /\ pointers_stay_in allocated g /\
-              interior_pointers_valid allocated g /\ no_infix_block g))
-  = wf_view_parts ()
+             (blocks_fit g /\ pointers_lead_to_non_free free_stw g /\
+              interior_pointers_valid free_stw g /\ no_infix_block g))
+  = wf_with_parts ()
 
 /// ---------------------------------------------------------------------------
-/// What a generic theorem may assume of a view
+/// What a generic theorem may assume of a definition of free
 /// ---------------------------------------------------------------------------
 ///
-/// The generic (minor-collection) theorems hold for any view that
-///   - counts only allocated blocks (`view_within_allocated`), and
+/// The generic (minor-collection) theorems hold for any definition of free
+/// that
+///   - counts every blue block as free (`blue_is_free`), and
 ///   - is read off the walk membership and the header of the block alone
-///     (`view_header_determined`), so field writes do not change it;
-/// together `view_ok`.  An operation that allocates also needs its fresh
-/// blocks counted (`fresh_in_view`, stated for the heaps before and after it).
-/// `allocated` has all three (`allocated_view_ok`, `allocated_fresh_in_view`).
+///     (`free_header_determined`), so field writes do not change it;
+/// together `free_def_ok`.  An operation that allocates also needs its fresh
+/// blocks not free (`fresh_not_free`, stated for the heaps before and after
+/// it).  `free_stw` has all three (`free_stw_ok`, `free_stw_fresh_not_free`).
 
-let view_within_allocated (v: view) : prop =
-  forall (g: heap) (x: obj_addr). v g x ==> allocated g x
+let blue_is_free (free: free_def) : prop =
+  forall (g: heap) (x: obj_addr). is_block g x /\ is_blue x g ==> free g x
 
-let view_header_determined (v: view) : prop =
+let free_header_determined (free: free_def) : prop =
   forall (g g': heap) (x: obj_addr).
-    (Seq.mem x (objects zero_addr g) <==> Seq.mem x (objects zero_addr g')) /\
-    read_word g (hd_address x) == read_word g' (hd_address x) ==> v g x == v g' x
+    (is_block g x <==> is_block g' x) /\
+    read_word g (hd_address x) == read_word g' (hd_address x) ==> free g x == free g' x
 
 [@@"opaque_to_smt"]
-let view_ok (v: view) : prop = view_within_allocated v /\ view_header_determined v
+let free_def_ok (free: free_def) : prop = blue_is_free free /\ free_header_determined free
 
-/// A block that is allocated after an operation but was not before it is
-/// counted by the view.
-let fresh_in_view (v: view) (g g': heap) : prop =
-  forall (x: obj_addr). allocated g' x /\ not (allocated g x) ==> v g' x
+/// A block that is a non-blue block after an operation but was not before it
+/// (a freshly allocated block) is not free.
+let fresh_not_free (free: free_def) (g g': heap) : prop =
+  forall (x: obj_addr).
+    is_block g' x /\ not (is_blue x g') /\ ~(is_block g x /\ not (is_blue x g)) ==> not (free g' x)
 
-let view_ok_within_allocated (v: view) (g: heap) (x: obj_addr) : Lemma
-  (requires view_ok v /\ v g x)
+let in_use_not_blue (free: free_def) (g: heap) (x: obj_addr) : Lemma
+  (requires free_def_ok free /\ in_use free g x)
   (ensures Seq.mem x (objects zero_addr g) /\ ~(is_blue x g))
-  = reveal_opaque (`%view_ok) view_ok
+  = reveal_opaque (`%free_def_ok) free_def_ok
 
-let view_ok_header_determined (v: view) (g g': heap) (x: obj_addr) : Lemma
-  (requires view_ok v /\
+let in_use_header_determined (free: free_def) (g g': heap) (x: obj_addr) : Lemma
+  (requires free_def_ok free /\
             (Seq.mem x (objects zero_addr g) <==> Seq.mem x (objects zero_addr g')) /\
             read_word g (hd_address x) == read_word g' (hd_address x))
-  (ensures v g x == v g' x)
-  = reveal_opaque (`%view_ok) view_ok
+  (ensures in_use free g x == in_use free g' x)
+  = reveal_opaque (`%free_def_ok) free_def_ok
 
-/// The first half of `view_ok` as a quantifier the SMT solver instantiates
-/// on each `v g x` it sees.
-let view_ok_elim (v: view) : Lemma
-  (requires view_ok v)
-  (ensures forall (g: heap) (x: obj_addr). {:pattern (v g x)}
-             v g x ==> Seq.mem x (objects zero_addr g) /\ ~(is_blue x g))
-  = reveal_opaque (`%view_ok) view_ok
+/// The first half of `free_def_ok` as a quantifier the SMT solver instantiates
+/// on each `in_use free g x` it sees.
+let free_def_ok_elim (free: free_def) : Lemma
+  (requires free_def_ok free)
+  (ensures forall (g: heap) (x: obj_addr). {:pattern (in_use free g x)}
+             in_use free g x ==> Seq.mem x (objects zero_addr g) /\ ~(is_blue x g))
+  = reveal_opaque (`%free_def_ok) free_def_ok
 
-let allocated_view_ok (_: unit) : Lemma (view_ok allocated)
-  = reveal_opaque (`%view_ok) view_ok;
+let free_stw_ok (_: unit) : Lemma (free_def_ok free_stw)
+  = reveal_opaque (`%free_def_ok) free_def_ok;
     let aux (g g': heap) (x: obj_addr) : Lemma
-      ((Seq.mem x (objects zero_addr g) <==> Seq.mem x (objects zero_addr g')) /\
+      ((is_block g x <==> is_block g' x) /\
        read_word g (hd_address x) == read_word g' (hd_address x) ==>
-       allocated g x == allocated g' x)
+       free_stw g x == free_stw g' x)
       = FStar.Classical.move_requires (color_of_header_eq x g) g'
     in
     FStar.Classical.forall_intro_3 aux
 
-let allocated_fresh_in_view (g g': heap) : Lemma (fresh_in_view allocated g g') = ()
+let free_stw_fresh_not_free (g g': heap) : Lemma (fresh_not_free free_stw g g') = ()
 
 /// ---------------------------------------------------------------------------
 /// No-Scan Invariant
@@ -777,12 +791,12 @@ let allocated_fresh_in_view (g g': heap) : Lemma (fresh_in_view allocated g g') 
 /// In short: it is not needed to justify tracing.  The graph model already
 /// agrees with the collector that a no-scan object has no out-edges ---
 /// `GC.Spec.HeapGraph.get_pointer_fields` returns `Seq.empty` for it --- and
-/// so does well-formedness, whose pointer clauses go through `has_pointer_to`.
+/// so does well-formedness, whose pointer clauses only read `scannable` sources.
 ///
 /// The invariant is restricted to non-blue objects because blue (free-list)
 /// objects have their first field repurposed as the free-list pointer, and the
 /// rest of a free block's body is not part of the model at all (a free block
-/// is outside every view): the sweep
+/// is free under every admissible definition): the sweep
 /// (`GC.Spec.FusedSweep`) leaves a dead object's stale words in the free block
 /// that absorbs it.
 ///
@@ -868,14 +882,14 @@ let wf_objects_non_infix (g: heap) (h: obj_addr) : Lemma
   (ensures ~(GC.Spec.Object.is_infix h g))
   = wf_parts ()
 
-/// At `allocated`: the *resolved* target of a pointer of an allocated block
-/// is allocated.  The target itself need not be on the walk: it may be an
+/// At `free_stw`: the *resolved* target of a pointer of a non-blue block is a
+/// non-blue block.  The target itself need not be on the walk: it may be an
 /// interior pointer to an infix object inside a closure, whose enclosing
 /// closure is what is on the walk.
-let points_to_target_allocated (g: heap) (src dst: obj_addr) : Lemma
-  (requires well_formed_heap g /\ allocated g src /\ has_pointer_to g src dst)
-  (ensures allocated g (GC.Spec.Object.resolve_object dst g))
-  = points_to_target_in_view allocated g src dst
+let points_to_target_not_blue (g: heap) (src dst: obj_addr) : Lemma
+  (requires well_formed_heap g /\ in_use free_stw g src /\ scannable g src /\ points_to g src dst)
+  (ensures in_use free_stw g (GC.Spec.Object.resolve_object dst g))
+  = points_to_target_not_free free_stw g src dst
 
 /// A heap in which no pointer of an allocated block is an interior (infix)
 /// pointer.
@@ -892,22 +906,22 @@ let points_to_target_allocated (g: heap) (src dst: obj_addr) : Lemma
 [@@"opaque_to_smt"]
 let no_infix_field_targets (g: heap) : prop =
   forall (src: obj_addr) (dst: obj_addr).
-    allocated g src /\ has_pointer_to g src dst ==> ~(GC.Spec.Object.is_infix dst g)
+    in_use free_stw g src /\ scannable g src /\ points_to g src dst ==> ~(GC.Spec.Object.is_infix dst g)
 
 let no_infix_field_targets_elim (g: heap) (src: obj_addr) (dst: obj_addr) : Lemma
-  (requires no_infix_field_targets g /\ allocated g src /\ has_pointer_to g src dst)
+  (requires no_infix_field_targets g /\ in_use free_stw g src /\ scannable g src /\ points_to g src dst)
   (ensures ~(GC.Spec.Object.is_infix dst g))
   = reveal_opaque (`%no_infix_field_targets) no_infix_field_targets
 
 let no_infix_field_targets_intro (g: heap)
     (h: (src: obj_addr) -> (dst: obj_addr) ->
-      Lemma (requires allocated g src /\ has_pointer_to g src dst)
+      Lemma (requires in_use free_stw g src /\ scannable g src /\ points_to g src dst)
             (ensures ~(GC.Spec.Object.is_infix dst g)))
   : Lemma (no_infix_field_targets g)
   = reveal_opaque (`%no_infix_field_targets) no_infix_field_targets;
     let aux (src: obj_addr) : Lemma
       (forall (dst: obj_addr).
-        allocated g src /\ has_pointer_to g src dst ==> ~(GC.Spec.Object.is_infix dst g))
+        in_use free_stw g src /\ scannable g src /\ points_to g src dst ==> ~(GC.Spec.Object.is_infix dst g))
       = FStar.Classical.forall_intro (FStar.Classical.move_requires (h src))
     in
     FStar.Classical.forall_intro aux
@@ -960,25 +974,25 @@ let pointer_from_field (g: heap) (src dst: obj_addr) (q: obj_addr -> prop)
 
 /// The introduction rule for producers that walk the fields index by index
 /// (promotion, the minor collection's pointer update): if every
-/// pointer-valued field of a scannable block of the view resolves into the
-/// view and is a valid interior pointer, the two pointer clauses hold.
-let pointer_clauses_from_field_closure (v: view) (g: heap)
+/// pointer-valued field of a non-free, scannable block resolves to a non-free
+/// block and is a valid interior pointer, the two pointer clauses hold.
+let pointer_clauses_from_field_closure (free: free_def) (g: heap)
     (field_closure: (src: obj_addr) -> (j: nat) ->
-      Lemma (requires v g src /\ ~(is_no_scan src g) /\
+      Lemma (requires in_use free g src /\ ~(is_no_scan src g) /\
                       j < U64.v (wosize_of_object src g) /\
                       U64.v src + j * 8 + 8 <= heap_size)
             (ensures (let w = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
                       is_pointer w ==>
-                      v g (GC.Spec.Object.resolve_object (w <: obj_addr) g) /\
+                      in_use free g (GC.Spec.Object.resolve_object (w <: obj_addr) g) /\
                       GC.Spec.Object.infix_addr_wf g (objects zero_addr g) (w <: obj_addr))))
-  : Lemma (requires blocks_fit g /\ (forall (x: obj_addr). v g x ==> Seq.mem x (objects zero_addr g)))
-          (ensures pointers_stay_in v g /\ interior_pointers_valid v g)
+  : Lemma (requires blocks_fit g /\ (forall (x: obj_addr). in_use free g x ==> Seq.mem x (objects zero_addr g)))
+          (ensures pointers_lead_to_non_free free g /\ interior_pointers_valid free g)
   = let q (src: obj_addr) (dst: obj_addr) : prop =
-      v g (GC.Spec.Object.resolve_object dst g) /\
+      in_use free g (GC.Spec.Object.resolve_object dst g) /\
       GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst
     in
     let aux (src dst: obj_addr) : Lemma
-      (requires v g src /\ has_pointer_to g src dst) (ensures q src dst)
+      (requires in_use free g src /\ scannable g src /\ points_to g src dst) (ensures q src dst)
       = let field (j: nat) : Lemma
           (requires j < U64.v (wosize_of_object src g) /\ U64.v src + j * 8 + 8 <= heap_size)
           (ensures (let w = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
@@ -987,40 +1001,40 @@ let pointer_clauses_from_field_closure (v: view) (g: heap)
         in
         pointer_from_field g src dst (q src) field
     in
-    pointers_stay_in_intro v g (fun src dst -> aux src dst);
-    interior_pointers_valid_intro v g (fun src dst -> aux src dst)
+    pointers_lead_to_non_free_intro free g (fun src dst -> aux src dst);
+    interior_pointers_valid_intro free g (fun src dst -> aux src dst)
 
-/// The raw form at `allocated`: if every pointer-valued field holds an
-/// allocated block (not merely resolves to one), the pointer clauses hold and
+/// The raw form at `free_stw`: if every pointer-valued field holds a
+/// non-blue block (not merely resolves to one), the pointer clauses hold and
 /// no pointer is an interior one.  Sound because `no_infix_block` keeps infix
 /// objects off the walk.
 let pointer_clauses_from_raw_field_closure (g: heap)
     (field_closure: (src: obj_addr) -> (j: nat) ->
-      Lemma (requires allocated g src /\ ~(is_no_scan src g) /\
+      Lemma (requires in_use free_stw g src /\ ~(is_no_scan src g) /\
                       j < U64.v (wosize_of_object src g) /\
                       U64.v src + j * 8 + 8 <= heap_size)
             (ensures (let w = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
-                      is_pointer w ==> allocated g (w <: obj_addr))))
+                      is_pointer w ==> in_use free_stw g (w <: obj_addr))))
   : Lemma (requires blocks_fit g /\ no_infix_block g)
-          (ensures pointers_stay_in allocated g /\ interior_pointers_valid allocated g /\
+          (ensures pointers_lead_to_non_free free_stw g /\ interior_pointers_valid free_stw g /\
                    no_infix_field_targets g)
   = let aux (src dst: obj_addr) : Lemma
-      (requires allocated g src /\ has_pointer_to g src dst) (ensures allocated g dst)
+      (requires in_use free_stw g src /\ scannable g src /\ points_to g src dst) (ensures in_use free_stw g dst)
       = let field (j: nat) : Lemma
           (requires j < U64.v (wosize_of_object src g) /\ U64.v src + j * 8 + 8 <= heap_size)
           (ensures (let w = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
-                    is_pointer w ==> allocated g (w <: obj_addr)))
+                    is_pointer w ==> in_use free_stw g (w <: obj_addr)))
           = field_closure src j
         in
-        pointer_from_field g src dst (fun w -> b2t (allocated g w)) field
+        pointer_from_field g src dst (fun w -> b2t (in_use free_stw g w)) field
     in
-    pointers_stay_in_intro_raw g (fun src dst -> aux src dst);
+    pointers_lead_to_non_free_intro_raw g (fun src dst -> aux src dst);
     let non_infix (src dst: obj_addr) : Lemma
-      (requires allocated g src /\ has_pointer_to g src dst)
+      (requires in_use free_stw g src /\ scannable g src /\ points_to g src dst)
       (ensures ~(GC.Spec.Object.is_infix dst g))
       = aux src dst
     in
-    interior_pointers_valid_intro_no_infix allocated g non_infix;
+    interior_pointers_valid_intro_no_infix free_stw g non_infix;
     no_infix_field_targets_intro g non_infix
 
 /// When objects start g is nonempty, the first object fits in heap:

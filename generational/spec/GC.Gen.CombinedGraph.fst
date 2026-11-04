@@ -147,11 +147,11 @@ let rec major_field_edges (ms: minor_state) (major: heap) (src: obj_addr)
         | Some dst -> Seq.cons (MajorV src, dst) rest
         | None -> rest
 
-/// Build edges from a single major object: none for a no-scan one, a free
-/// block outside the view
-let major_object_edges (ms: minor_state) (major: heap) (vw: view) (obj: obj_addr)
+/// Build edges from a single major object: none for a no-scan one or a free
+/// one.
+let major_object_edges (ms: minor_state) (major: heap) (free: free_def) (obj: obj_addr)
   : GTot (seq combined_edge)
-  = if is_no_scan obj major || not (vw major obj)
+  = if is_no_scan obj major || not (in_use free major obj)
     then Seq.empty
     else
       let wz = U64.v (wosize_of_object obj major) in
@@ -170,14 +170,14 @@ let rec all_minor_edges (ms: minor_state) (major: heap) (objs: seq U64.t)
       Seq.append (minor_object_edges ms major obj)
                  (all_minor_edges ms major objs (idx + 1))
 
-let rec all_major_edges (ms: minor_state) (major: heap) (vw: view) (objs: seq obj_addr)
+let rec all_major_edges (ms: minor_state) (major: heap) (free: free_def) (objs: seq obj_addr)
                         (idx: nat)
   : GTot (seq combined_edge) (decreases (Seq.length objs - idx))
   = if idx >= Seq.length objs then Seq.empty
     else
       let obj = Seq.index objs idx in
-      Seq.append (major_object_edges ms major vw obj)
-                 (all_major_edges ms major vw objs (idx + 1))
+      Seq.append (major_object_edges ms major free obj)
+                 (all_major_edges ms major free objs (idx + 1))
 
 /// ---------------------------------------------------------------------------
 /// Vertex Construction
@@ -197,12 +197,12 @@ let rec tag_major (objs: seq obj_addr) (idx: nat)
 /// Graph Construction
 /// ---------------------------------------------------------------------------
 
-let build_combined_graph (ms: minor_state) (major: heap) (vw: view)
+let build_combined_graph (ms: minor_state) (major: heap) (free: free_def)
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
     let verts = Seq.append (tag_minor minor_objs 0) (tag_major major_objs 0) in
     let edges = Seq.append (all_minor_edges ms major minor_objs 0)
-                           (all_major_edges ms major vw major_objs 0) in
+                           (all_major_edges ms major free major_objs 0) in
     { cg_vertices = verts; cg_edges = edges }
 
 /// ---------------------------------------------------------------------------
@@ -264,8 +264,8 @@ let rec tag_minor_no_major (objs: seq U64.t) (idx: nat) (a: U64.t)
 /// ---------------------------------------------------------------------------
 
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
-let minor_vertex_char (ms: minor_state) (major: heap) (vw: view) (a: U64.t)
-  = let g = build_combined_graph ms major vw in
+let minor_vertex_char (ms: minor_state) (major: heap) (free: free_def) (a: U64.t)
+  = let g = build_combined_graph ms major free in
     let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
     tag_minor_mem minor_objs 0 a;
@@ -278,8 +278,8 @@ let minor_vertex_char (ms: minor_state) (major: heap) (vw: view) (a: U64.t)
 #pop-options
 
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
-let major_vertex_char (ms: minor_state) (major: heap) (vw: view) (a: obj_addr)
-  = let g = build_combined_graph ms major vw in
+let major_vertex_char (ms: minor_state) (major: heap) (free: free_def) (a: obj_addr)
+  = let g = build_combined_graph ms major free in
     let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
     tag_major_mem major_objs 0 a;
@@ -312,7 +312,7 @@ private let rec tag_major_valid (objs: seq obj_addr) (idx: nat) (v: U64.t)
 #pop-options
 
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
-let major_vertex_valid (ms: minor_state) (major: heap) (vw: view) (v: U64.t)
+let major_vertex_valid (ms: minor_state) (major: heap) (free: free_def) (v: U64.t)
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
     tag_minor_no_major minor_objs 0 v;
@@ -326,10 +326,10 @@ let major_vertex_valid (ms: minor_state) (major: heap) (vw: view) (v: U64.t)
 
 /// Any classified vertex is in the combined graph's vertex set
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
-private let classify_minor_in_graph (ms: minor_state) (major: heap) (vw: view)
+private let classify_minor_in_graph (ms: minor_state) (major: heap) (free: free_def)
   (v: U64.t)
   : Lemma (ensures (
-      let g = build_combined_graph ms major vw in
+      let g = build_combined_graph ms major free in
       match classify_minor_field ms major v with
       | Some cv -> mem_cv cv g
       | None -> True))
@@ -353,10 +353,10 @@ private let classify_minor_in_graph (ms: minor_state) (major: heap) (vw: view)
 #pop-options
 
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
-private let classify_major_in_graph (ms: minor_state) (major: heap) (vw: view)
+private let classify_major_in_graph (ms: minor_state) (major: heap) (free: free_def)
   (v: U64.t)
   : Lemma (ensures (
-      let g = build_combined_graph ms major vw in
+      let g = build_combined_graph ms major free in
       match classify_major_field ms major v with
       | Some cv -> mem_cv cv g
       | None -> True))
@@ -382,11 +382,11 @@ private let classify_major_in_graph (ms: minor_state) (major: heap) (vw: view)
 
 /// Every edge from minor_field_edges has endpoints in the combined graph
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
-private let rec minor_field_edges_wf (ms: minor_state) (major: heap) (vw: view)
+private let rec minor_field_edges_wf (ms: minor_state) (major: heap) (free: free_def)
   (src: U64.t) (wz: nat) (i: nat) (e: combined_edge)
   : Lemma (requires Seq.mem src (minor_objects ms))
           (ensures Seq.mem e (minor_field_edges ms major src wz i) ==>
-                   (let g = build_combined_graph ms major vw in
+                   (let g = build_combined_graph ms major free in
                     mem_cv (fst e) g /\ mem_cv (snd e) g))
           (decreases (wz - i))
   = if i >= wz then ()
@@ -397,23 +397,23 @@ private let rec minor_field_edges_wf (ms: minor_state) (major: heap) (vw: view)
       | Some dst ->
         Seq.mem_cons (MinorV src, dst) rest;
         if Seq.mem e rest then
-          minor_field_edges_wf ms major vw src wz (i + 1) e
+          minor_field_edges_wf ms major free src wz (i + 1) e
         else begin
           // e = (MinorV src, dst)
-          minor_vertex_char ms major vw src;
-          classify_minor_in_graph ms major vw v
+          minor_vertex_char ms major free src;
+          classify_minor_in_graph ms major free v
         end
-      | None -> minor_field_edges_wf ms major vw src wz (i + 1) e
+      | None -> minor_field_edges_wf ms major free src wz (i + 1) e
     end
 #pop-options
 
 /// Every edge from major_field_edges has endpoints in the combined graph
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
-private let rec major_field_edges_wf (ms: minor_state) (major: heap) (vw: view)
+private let rec major_field_edges_wf (ms: minor_state) (major: heap) (free: free_def)
   (src: obj_addr) (wz: nat) (i: nat) (e: combined_edge)
   : Lemma (requires Seq.mem src (objects zero_addr major))
           (ensures Seq.mem e (major_field_edges ms major src wz i) ==>
-                   (let g = build_combined_graph ms major vw in
+                   (let g = build_combined_graph ms major free in
                     mem_cv (fst e) g /\ mem_cv (snd e) g))
           (decreases (wz - i))
   = if i >= wz then ()
@@ -427,23 +427,23 @@ private let rec major_field_edges_wf (ms: minor_state) (major: heap) (vw: view)
         | Some dst ->
           Seq.mem_cons (MajorV src, dst) rest;
           if Seq.mem e rest then
-            major_field_edges_wf ms major vw src wz (i + 1) e
+            major_field_edges_wf ms major free src wz (i + 1) e
           else begin
-            major_vertex_char ms major vw src;
-            classify_major_in_graph ms major vw v
+            major_vertex_char ms major free src;
+            classify_major_in_graph ms major free v
           end
-        | None -> major_field_edges_wf ms major vw src wz (i + 1) e
+        | None -> major_field_edges_wf ms major free src wz (i + 1) e
       end
     end
 #pop-options
 
 /// Every edge from all_minor_edges has endpoints in the combined graph
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
-private let rec all_minor_edges_wf (ms: minor_state) (major: heap) (vw: view)
+private let rec all_minor_edges_wf (ms: minor_state) (major: heap) (free: free_def)
   (objs: seq U64.t) (idx: nat) (e: combined_edge)
   : Lemma (requires objs == minor_objects ms)
           (ensures Seq.mem e (all_minor_edges ms major objs idx) ==>
-                   (let g = build_combined_graph ms major vw in
+                   (let g = build_combined_graph ms major free in
                     mem_cv (fst e) g /\ mem_cv (snd e) g))
           (decreases (Seq.length objs - idx))
   = if idx >= Seq.length objs then ()
@@ -453,38 +453,38 @@ private let rec all_minor_edges_wf (ms: minor_state) (major: heap) (vw: view)
                            (all_minor_edges ms major objs (idx + 1));
       if Seq.mem e (minor_object_edges ms major obj) then begin
         assert (Seq.mem obj objs);
-        minor_field_edges_wf ms major vw obj (minor_wosize ms obj) 0 e
+        minor_field_edges_wf ms major free obj (minor_wosize ms obj) 0 e
       end
       else
-        all_minor_edges_wf ms major vw objs (idx + 1) e
+        all_minor_edges_wf ms major free objs (idx + 1) e
     end
 #pop-options
 
 /// Every edge from all_major_edges has endpoints in the combined graph
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
-private let rec all_major_edges_wf (ms: minor_state) (major: heap) (vw: view)
+private let rec all_major_edges_wf (ms: minor_state) (major: heap) (free: free_def)
   (objs: seq obj_addr) (idx: nat) (e: combined_edge)
   : Lemma (requires objs == objects zero_addr major)
-          (ensures Seq.mem e (all_major_edges ms major vw objs idx) ==>
-                   (let g = build_combined_graph ms major vw in
+          (ensures Seq.mem e (all_major_edges ms major free objs idx) ==>
+                   (let g = build_combined_graph ms major free in
                     mem_cv (fst e) g /\ mem_cv (snd e) g))
           (decreases (Seq.length objs - idx))
   = if idx >= Seq.length objs then ()
     else begin
       let obj = Seq.index objs idx in
-      let me = major_object_edges ms major vw obj in
-      Seq.lemma_mem_append me (all_major_edges ms major vw objs (idx + 1));
+      let me = major_object_edges ms major free obj in
+      Seq.lemma_mem_append me (all_major_edges ms major free objs (idx + 1));
       if Seq.mem e me then begin
         assert (Seq.mem obj objs);
-        if is_no_scan obj major || not (vw major obj)
+        if is_no_scan obj major || not (in_use free major obj)
         then ()
         else begin
           let wz = U64.v (wosize_of_object obj major) in
-          major_field_edges_wf ms major vw obj wz 0 e
+          major_field_edges_wf ms major free obj wz 0 e
         end
       end
       else
-        all_major_edges_wf ms major vw objs (idx + 1) e
+        all_major_edges_wf ms major free objs (idx + 1) e
     end
 #pop-options
 
@@ -493,18 +493,18 @@ private let rec all_major_edges_wf (ms: minor_state) (major: heap) (vw: view)
 /// ---------------------------------------------------------------------------
 
 #push-options "--fuel 0 --ifuel 1 --z3rlimit 10"
-let build_combined_graph_wf (ms: minor_state) (major: heap) (vw: view)
+let build_combined_graph_wf (ms: minor_state) (major: heap) (free: free_def)
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
-    let g = build_combined_graph ms major vw in
+    let g = build_combined_graph ms major free in
     let aux (e: combined_edge)
       : Lemma (requires mem_ce e g)
               (ensures mem_cv (fst e) g /\ mem_cv (snd e) g)
       = // e is in either all_minor_edges or all_major_edges
         Seq.lemma_mem_append (all_minor_edges ms major minor_objs 0)
-                             (all_major_edges ms major vw major_objs 0);
-        all_minor_edges_wf ms major vw minor_objs 0 e;
-        all_major_edges_wf ms major vw major_objs 0 e
+                             (all_major_edges ms major free major_objs 0);
+        all_minor_edges_wf ms major free minor_objs 0 e;
+        all_major_edges_wf ms major free major_objs 0 e
     in
     Classical.forall_intro (Classical.move_requires aux)
 #pop-options
@@ -609,7 +609,7 @@ private let all_minor_edges_includes_object
 
 /// Main edge introduction lemma for minor fields
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
-let minor_field_edge_intro (ms: minor_state) (major: heap) (vw: view)
+let minor_field_edge_intro (ms: minor_state) (major: heap) (free: free_def)
   (src: U64.t) (i: nat) (dst: combined_vertex)
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
@@ -625,7 +625,7 @@ let minor_field_edge_intro (ms: minor_state) (major: heap) (vw: view)
     all_minor_edges_includes_object ms major minor_objs src k (MinorV src, dst);
     // Step 5: all_minor_edges subset cg_edges
     Seq.lemma_mem_append (all_minor_edges ms major minor_objs 0)
-                         (all_major_edges ms major vw major_objs 0)
+                         (all_major_edges ms major free major_objs 0)
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -689,18 +689,18 @@ private let rec find_index_from_obj (objs: seq obj_addr) (src: obj_addr) (idx: n
 /// If e is in all_major_edges from some index k, then e is in all_major_edges from 0
 #push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
 private let rec all_major_edges_suffix
-  (ms: minor_state) (major: heap) (vw: view)
+  (ms: minor_state) (major: heap) (free: free_def)
   (objs: seq obj_addr) (idx: nat) (e: combined_edge)
   : Lemma (requires idx <= Seq.length objs /\
-                    Seq.mem e (all_major_edges ms major vw objs idx))
-          (ensures Seq.mem e (all_major_edges ms major vw objs 0))
+                    Seq.mem e (all_major_edges ms major free objs idx))
+          (ensures Seq.mem e (all_major_edges ms major free objs 0))
           (decreases idx)
   = if idx = 0 then ()
     else begin
       let prev : nat = idx - 1 in
-      Seq.lemma_mem_append (major_object_edges ms major vw (Seq.index objs prev))
-                           (all_major_edges ms major vw objs idx);
-      all_major_edges_suffix ms major vw objs prev e
+      Seq.lemma_mem_append (major_object_edges ms major free (Seq.index objs prev))
+                           (all_major_edges ms major free objs idx);
+      all_major_edges_suffix ms major free objs prev e
     end
 #pop-options
 
@@ -708,21 +708,21 @@ private let rec all_major_edges_suffix
 /// then e is in all_major_edges from 0
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let all_major_edges_includes_object
-  (ms: minor_state) (major: heap) (vw: view)
+  (ms: minor_state) (major: heap) (free: free_def)
   (objs: seq obj_addr) (src: obj_addr) (k: nat)
   (e: combined_edge)
   : Lemma (requires k < Seq.length objs /\
                     Seq.index objs k == src /\
-                    Seq.mem e (major_object_edges ms major vw src))
-          (ensures Seq.mem e (all_major_edges ms major vw objs 0))
-  = Seq.lemma_mem_append (major_object_edges ms major vw (Seq.index objs k))
-                         (all_major_edges ms major vw objs (k + 1));
-    all_major_edges_suffix ms major vw objs k e
+                    Seq.mem e (major_object_edges ms major free src))
+          (ensures Seq.mem e (all_major_edges ms major free objs 0))
+  = Seq.lemma_mem_append (major_object_edges ms major free (Seq.index objs k))
+                         (all_major_edges ms major free objs (k + 1));
+    all_major_edges_suffix ms major free objs k e
 #pop-options
 
 /// Main edge introduction lemma for major fields
 #push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
-let major_field_edge_intro (ms: minor_state) (major: heap) (vw: view)
+let major_field_edge_intro (ms: minor_state) (major: heap) (free: free_def)
   (src: obj_addr) (i: nat) (dst: combined_vertex)
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
@@ -730,15 +730,15 @@ let major_field_edge_intro (ms: minor_state) (major: heap) (vw: view)
     // Step 1: edge is in major_field_edges from index 0
     major_field_edge_later ms major src wz 0 i dst;
     // Step 2: major_field_edges from 0 == major_object_edges (since not no_scan)
-    assert (major_object_edges ms major vw src == major_field_edges ms major src wz 0);
+    assert (major_object_edges ms major free src == major_field_edges ms major src wz 0);
     // Step 3: find src's index in major_objs
     Classical.move_requires (Seq.mem_index src) major_objs;
     let k = find_index_from_obj major_objs src 0 in
     // Step 4: edge is in all_major_edges from 0
-    all_major_edges_includes_object ms major vw major_objs src k (MajorV src, dst);
+    all_major_edges_includes_object ms major free major_objs src k (MajorV src, dst);
     // Step 5: all_major_edges subset cg_edges (right side of append)
     Seq.lemma_mem_append (all_minor_edges ms major minor_objs 0)
-                         (all_major_edges ms major vw major_objs 0)
+                         (all_major_edges ms major free major_objs 0)
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -815,18 +815,18 @@ private let rec all_minor_edges_to_object
 /// Helper: edges from all_major_edges can be traced to a specific object
 #push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
 private let rec all_major_edges_to_object
-  (ms: minor_state) (major: heap) (vw: view)
+  (ms: minor_state) (major: heap) (free: free_def)
   (objs: seq obj_addr) (idx: nat) (e: combined_edge)
-  : Lemma (requires Seq.mem e (all_major_edges ms major vw objs idx))
+  : Lemma (requires Seq.mem e (all_major_edges ms major free objs idx))
           (ensures exists (k: nat). idx <= k /\ k < Seq.length objs /\
-                    Seq.mem e (major_object_edges ms major vw (Seq.index objs k)))
+                    Seq.mem e (major_object_edges ms major free (Seq.index objs k)))
           (decreases (Seq.length objs - idx))
   = if idx >= Seq.length objs then ()
     else begin
-      Seq.lemma_mem_append (major_object_edges ms major vw (Seq.index objs idx))
-                           (all_major_edges ms major vw objs (idx + 1));
-      if Seq.mem e (major_object_edges ms major vw (Seq.index objs idx)) then ()
-      else all_major_edges_to_object ms major vw objs (idx + 1) e
+      Seq.lemma_mem_append (major_object_edges ms major free (Seq.index objs idx))
+                           (all_major_edges ms major free objs (idx + 1));
+      if Seq.mem e (major_object_edges ms major free (Seq.index objs idx)) then ()
+      else all_major_edges_to_object ms major free objs (idx + 1) e
     end
 #pop-options
 
@@ -852,26 +852,26 @@ private let rec major_field_edges_no_minor (ms: minor_state) (major: heap)
 
 /// Helper: major_object_edges never has MinorV source
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
-private let major_object_edges_no_minor (ms: minor_state) (major: heap) (vw: view)
+private let major_object_edges_no_minor (ms: minor_state) (major: heap) (free: free_def)
   (obj: obj_addr) (a: U64.t) (dst: combined_vertex)
-  : Lemma (ensures ~(Seq.mem (MinorV a, dst) (major_object_edges ms major vw obj)))
-  = if is_no_scan obj major || not (vw major obj)
+  : Lemma (ensures ~(Seq.mem (MinorV a, dst) (major_object_edges ms major free obj)))
+  = if is_no_scan obj major || not (in_use free major obj)
     then ()
     else major_field_edges_no_minor ms major obj (U64.v (wosize_of_object obj major)) 0 a dst
 #pop-options
 
 /// Helper: all_major_edges never has MinorV source
 #push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
-private let rec all_major_edges_no_minor (ms: minor_state) (major: heap) (vw: view)
+private let rec all_major_edges_no_minor (ms: minor_state) (major: heap) (free: free_def)
   (objs: seq obj_addr) (idx: nat) (a: U64.t) (dst: combined_vertex)
-  : Lemma (ensures ~(Seq.mem (MinorV a, dst) (all_major_edges ms major vw objs idx)))
+  : Lemma (ensures ~(Seq.mem (MinorV a, dst) (all_major_edges ms major free objs idx)))
           (decreases (Seq.length objs - idx))
   = if idx >= Seq.length objs then ()
     else begin
-      major_object_edges_no_minor ms major vw (Seq.index objs idx) a dst;
-      all_major_edges_no_minor ms major vw objs (idx + 1) a dst;
-      Seq.lemma_mem_append (major_object_edges ms major vw (Seq.index objs idx))
-                           (all_major_edges ms major vw objs (idx + 1))
+      major_object_edges_no_minor ms major free (Seq.index objs idx) a dst;
+      all_major_edges_no_minor ms major free objs (idx + 1) a dst;
+      Seq.lemma_mem_append (major_object_edges ms major free (Seq.index objs idx))
+                           (all_major_edges ms major free objs (idx + 1))
     end
 #pop-options
 
@@ -921,15 +921,15 @@ private let rec all_minor_edges_no_major (ms: minor_state) (major: heap)
 
 /// Source decomposition
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
-let edge_source_decomposition (ms: minor_state) (major: heap) (vw: view)
+let edge_source_decomposition (ms: minor_state) (major: heap) (free: free_def)
   (e: combined_edge)
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
     Seq.lemma_mem_append (all_minor_edges ms major minor_objs 0)
-                         (all_major_edges ms major vw major_objs 0);
+                         (all_major_edges ms major free major_objs 0);
     match fst e with
     | MinorV src ->
-      all_major_edges_no_minor ms major vw major_objs 0 src (snd e);
+      all_major_edges_no_minor ms major free major_objs 0 src (snd e);
       assert (Seq.mem e (all_minor_edges ms major minor_objs 0));
       all_minor_edges_to_object ms major minor_objs 0 e;
       let open FStar.IndefiniteDescription in
@@ -946,22 +946,22 @@ let edge_source_decomposition (ms: minor_state) (major: heap) (vw: view)
       Seq.mem_index obj minor_objs
     | MajorV src ->
       all_minor_edges_no_major ms major minor_objs 0 src (snd e);
-      assert (Seq.mem e (all_major_edges ms major vw major_objs 0));
-      all_major_edges_to_object ms major vw major_objs 0 e;
+      assert (Seq.mem e (all_major_edges ms major free major_objs 0));
+      all_major_edges_to_object ms major free major_objs 0 e;
       let open FStar.IndefiniteDescription in
       let k = indefinite_description_ghost nat
         (fun k -> 0 <= k /\ k < Seq.length major_objs /\
-                  Seq.mem e (major_object_edges ms major vw (Seq.index major_objs k))) in
+                  Seq.mem e (major_object_edges ms major free (Seq.index major_objs k))) in
       let obj = Seq.index major_objs k in
       // major_object_edges is non-empty only if ~(is_no_scan), and uses major_field_edges
-      assert (Seq.mem e (major_object_edges ms major vw obj));
+      assert (Seq.mem e (major_object_edges ms major free obj));
       // If is_no_scan, major_object_edges is empty -- contradiction with membership
       // Need fuel to see the `if is_no_scan ... then Seq.empty else ...` branch
       let wz = U64.v (wosize_of_object obj major) in
       // The following assertion helps: if is_no_scan, then edges = empty, but e is in it
-      if is_no_scan obj major || not (vw major obj)
+      if is_no_scan obj major || not (in_use free major obj)
       then begin
-        assert (major_object_edges ms major vw obj == Seq.empty);
+        assert (major_object_edges ms major free obj == Seq.empty);
         assert (Seq.mem e Seq.empty);
         // This is a contradiction -- Seq.mem in empty is false
         ()
@@ -975,14 +975,14 @@ let edge_source_decomposition (ms: minor_state) (major: heap) (vw: view)
 
 /// Minor edge elimination
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
-let minor_edge_elim (ms: minor_state) (major: heap) (vw: view)
+let minor_edge_elim (ms: minor_state) (major: heap) (free: free_def)
   (src: U64.t) (dst: combined_vertex)
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
     let e = (MinorV src, dst) in
     Seq.lemma_mem_append (all_minor_edges ms major minor_objs 0)
-                         (all_major_edges ms major vw major_objs 0);
-    all_major_edges_no_minor ms major vw major_objs 0 src dst;
+                         (all_major_edges ms major free major_objs 0);
+    all_major_edges_no_minor ms major free major_objs 0 src dst;
     assert (Seq.mem e (all_minor_edges ms major minor_objs 0));
     all_minor_edges_to_object ms major minor_objs 0 e;
     let open FStar.IndefiniteDescription in
@@ -998,23 +998,23 @@ let minor_edge_elim (ms: minor_state) (major: heap) (vw: view)
 
 /// Major edge elimination
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
-let major_edge_elim (ms: minor_state) (major: heap) (vw: view)
+let major_edge_elim (ms: minor_state) (major: heap) (free: free_def)
   (src: obj_addr) (dst: combined_vertex)
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
     let e = (MajorV src, dst) in
     Seq.lemma_mem_append (all_minor_edges ms major minor_objs 0)
-                         (all_major_edges ms major vw major_objs 0);
+                         (all_major_edges ms major free major_objs 0);
     all_minor_edges_no_major ms major minor_objs 0 src dst;
-    assert (Seq.mem e (all_major_edges ms major vw major_objs 0));
-    all_major_edges_to_object ms major vw major_objs 0 e;
+    assert (Seq.mem e (all_major_edges ms major free major_objs 0));
+    all_major_edges_to_object ms major free major_objs 0 e;
     let open FStar.IndefiniteDescription in
     let k = indefinite_description_ghost nat
       (fun k -> 0 <= k /\ k < Seq.length major_objs /\
-                Seq.mem e (major_object_edges ms major vw (Seq.index major_objs k))) in
+                Seq.mem e (major_object_edges ms major free (Seq.index major_objs k))) in
     let obj = Seq.index major_objs k in
     assert (~(is_no_scan obj major));
-    assert (vw major obj);
+    assert (in_use free major obj);
     let wz = U64.v (wosize_of_object obj major) in
     major_field_edges_source ms major obj wz 0 e;
     assert (src == obj);

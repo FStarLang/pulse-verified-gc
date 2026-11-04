@@ -303,19 +303,19 @@ let cheney_collect_spec (minor: minor_state) (major: heap) (fp: U64.t) (roots: s
       mc_roots = rewrite_roots roots prom.fwd_map;
       mc_fwd   = prom.fwd_map }
 
-/// The minor collection on a view of the major heap.
+/// The minor collection, given what counts as free in the major heap.
 ///
-/// `v` says which major blocks the heap invariant counts as objects, supplied
-/// by whoever holds the invariant (`GC.Spec.Fields.view`).  The pointer update
-/// rewrites the fields of the blocks of the view in the promoted heap (old or
+/// `free` says which major blocks count as free, supplied by whoever holds
+/// the invariant (`GC.Spec.Fields.free_def`).  The pointer update
+/// rewrites the fields of the non-free blocks in the promoted heap (old or
 /// promoted) and never reads any other block.  Everything else is as in
-/// `cheney_collect_spec`, which is the instance `v = allocated` (by definition
+/// `cheney_collect_spec`, which is the instance `free = free_stw` (by definition
 /// of `update_major_pointers`).
-let cheney_collect_spec_view (v: view) (minor: minor_state) (major: heap)
+let cheney_collect_spec_with (free: free_def) (minor: minor_state) (major: heap)
     (fp: U64.t) (roots: seq U64.t)
   : GTot minor_collect_result
   = let prom = cheney_promote minor major fp roots in
-    let updated = update_pointers_view v prom.major_final prom.fwd_map in
+    let updated = update_pointers_with free prom.major_final prom.fwd_map in
     { mc_major = updated;
       mc_fp    = prom.fp_final;
       mc_minor = minor_reset minor;

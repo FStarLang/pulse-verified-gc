@@ -452,8 +452,8 @@ let spot_major_no_infix_block (r: unit{spot_major_room}) (mp: minor_ptr)
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
 let spot_major_pointer_clauses (r: unit{spot_major_room}) (mp: minor_ptr)
-  : Lemma (ensures SpecFields.pointers_stay_in SpecFields.allocated (spot_major_heap r mp) /\
-                   SpecFields.interior_pointers_valid SpecFields.allocated (spot_major_heap r mp) /\
+  : Lemma (ensures SpecFields.pointers_lead_to_non_free SpecFields.free_stw (spot_major_heap r mp) /\
+                   SpecFields.interior_pointers_valid SpecFields.free_stw (spot_major_heap r mp) /\
                    SpecFields.no_infix_field_targets (spot_major_heap r mp))
   =
   let major = spot_major_heap r mp in
@@ -464,7 +464,7 @@ let spot_major_pointer_clauses (r: unit{spot_major_room}) (mp: minor_ptr)
                       j < U64.v (SpecObj.wosize_of_object src major) /\
                       U64.v src + j * 8 + 8 <= heap_size)
             (ensures (let v = read_word major (U64.uint_to_t (U64.v src + j * 8)) in
-                      SpecFields.is_pointer v ==> SpecFields.allocated major (v <: obj_addr)))
+                      SpecFields.is_pointer v ==> SpecFields.in_use SpecFields.free_stw major (v <: obj_addr)))
     =
     spot_major_field_not_pointer r mp src j
   in

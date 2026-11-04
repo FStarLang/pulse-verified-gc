@@ -174,7 +174,7 @@ val spot_infix_object_cases
           (ensures obj == spot_q r \/ obj == spot_p r \/ obj == spot_free_obj r)
 
 /// The infix object is *not* enumerated, which is why `no_infix_block` holds and why the
-/// raw formulation of `pointers_stay_in` would reject this heap.
+/// raw formulation of `pointers_lead_to_non_free` would reject this heap.
 val spot_infix_h_not_enumerated
   : r:unit{spot_infix_room} ->
     Lemma (ensures

@@ -502,8 +502,8 @@ let spot_ns_no_infix_block (r: unit{spot_ns_room})
 /// the raw word never has to target an object.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 let spot_ns_pointer_clauses (r: unit{spot_ns_room})
-  : Lemma (ensures SpecFields.pointers_stay_in SpecFields.allocated (spot_ns_heap r) /\
-                   SpecFields.interior_pointers_valid SpecFields.allocated (spot_ns_heap r))
+  : Lemma (ensures SpecFields.pointers_lead_to_non_free SpecFields.free_stw (spot_ns_heap r) /\
+                   SpecFields.interior_pointers_valid SpecFields.free_stw (spot_ns_heap r))
   =
   let g = spot_ns_heap r in
   spot_ns_blocks_fit r;
@@ -515,7 +515,7 @@ let spot_ns_pointer_clauses (r: unit{spot_ns_room})
                       U64.v src + j * 8 + 8 <= heap_size)
             (ensures (let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
                       SpecFields.is_pointer v ==>
-                      SpecFields.allocated g (SpecObj.resolve_object (v <: obj_addr) g) /\
+                      SpecFields.in_use SpecFields.free_stw g (SpecObj.resolve_object (v <: obj_addr) g) /\
                       SpecObj.infix_addr_wf g (SpecFields.objects zero_addr g)
                               (v <: obj_addr)))
     =
@@ -526,7 +526,7 @@ let spot_ns_pointer_clauses (r: unit{spot_ns_room})
     // scannable, so this case is unreachable.
     spot_ns_field_read r src j
   in
-  SpecFields.pointer_clauses_from_field_closure SpecFields.allocated g
+  SpecFields.pointer_clauses_from_field_closure SpecFields.free_stw g
     (fun src j -> field_closure src j)
 
 let spot_ns_well_formed_heap (r: unit{spot_ns_room})
