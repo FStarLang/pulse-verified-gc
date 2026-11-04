@@ -194,10 +194,10 @@ let cheney_fuel_eq (minor: minor_state)
   = ()
 
 /// ---------------------------------------------------------------------------
-/// update_major_pointers_preserves_fl_valid
+/// update_walk_preserves_fl_valid
 /// ---------------------------------------------------------------------------
 
-/// Key insight: update_major_pointers only modifies field data of non-blue objects.
+/// Key insight: the pointer update only modifies field data of non-blue objects.
 /// Blue objects (free-list entries) are skipped entirely by the update.
 /// Therefore, free-list structure (headers + next pointers in field 0 of blue objects)
 /// is unchanged, preserving fl_valid.

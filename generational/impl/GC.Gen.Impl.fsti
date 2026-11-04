@@ -463,13 +463,15 @@ val minor_collect_idle_post
 /// 2. Major collection (mark-and-sweep): reclaim unreachable major objects
 ///
 /// Postcondition provides:
-/// - Major GC correctness (5 pillars of mark-and-sweep) on post-minor heap
+/// - the end-to-end reachable-subgraph isomorphism and the unreachable-blocks-
+///   freed facts, from the heap handed in to the heap handed back
 /// - Minor collection properties (roots rewritten, minor heap reset)
-/// - The post-minor `GenInv.full_heap_shape` used to justify the major GC call
+/// - `GenInv.collection_heap_shape` of the returned state: the precondition
+///   is restored
 ///
-/// The caller provides full heap shape plus the remembered-set table needed by
-/// `minor_collect_full`. The implementation derives the post-minor major-GC
-/// precondition before invoking mark-and-sweep.
+/// The caller provides `collection_heap_shape` plus the remembered-set table
+/// needed by `minor_collect_full`. The implementation derives the post-minor
+/// major-GC precondition before invoking mark-and-sweep.
 fn gen_gc (gh: gen_heap_t)
            (roots: array U64.t) (nroots: SZ.t)
            (fwd_arr: array U64.t)

@@ -870,56 +870,46 @@ let minor_alloc_spec (ms: minor_state)
 ```
 
 The generational heap invariant is centralized in
-`generational/spec/GC.Gen.HeapInvariant.fst`:
+`generational/spec/GC.Gen.HeapInvariant.fst` (all three predicates are opaque,
+with intro/elim lemmas in the interface):
 
 ```fstar
 let major_heap_shape (major: heap) (fp: U64.t) : prop =
   well_formed_heap major /\
-  AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-  AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+  AllocLemmas.fl_valid major fp heap_words /\
+  AllocLemmas.fl_chain_terminates major fp heap_words /\
+  free_list_exact major fp /\          // the free list is exactly the blue blocks
+  FLA.fl_ascending major fp /\         // ... in address order
   FreeListShape.fp_pointer_or_zero fp /\
   FreeListShape.blue_link_fields_valid major /\
   heap_objects_dense major /\
   chain_objects_blue major fp /\
   Seq.length (objects zero_addr major) > 0 /\
   SweepInv.fp_valid fp major /\
-  Sweep.fp_in_heap fp major /\
+  GC.Spec.FreeList.fp_in_heap fp major /\
   Mark.no_black_objects major /\
-  no_scan_invariant major
+  SweepInv.no_gray_objects major
 
 let minor_heap_shape (minor: minor_state) : prop =
   minor_wf minor /\
   minor_guards_complete minor /\
-  minor_infix_wf minor /\
-  minor_no_scan_invariant minor /\
-  minor_fields_no_infix_targets minor
+  minor_infix_wf minor
 
 let collection_heap_shape (minor: minor_state) (major: heap) (fp: U64.t) : prop =
   major_heap_shape major fp /\
   minor_heap_shape minor /\
-  minor_major_fields_no_blue minor major /\
-  major_minor_fields_no_infix_targets minor major
-
-let full_heap_shape (minor: minor_state) (major: heap) (fp: U64.t)
-                    (st: seq obj_addr) (cap: nat) : prop =
-  collection_heap_shape minor major fp /\
-  major_stack_shape major st cap
+  minor_major_fields_no_blue minor major
 ```
 
-`collection_heap_shape` is the pre-minor-collection invariant. `full_heap_shape`
-adds the major mark-stack facts needed when a full generational cycle will run a
-major collection after the minor collection.
-
-Two infix-related clauses are easy to overlook:
-
-- `minor_fields_no_infix_targets` says minor pointer fields do not point directly
-  at minor infix sub-objects.
-- `major_minor_fields_no_infix_targets` says major fields containing minor
-  pointers also do not target minor infix sub-objects.
-
-The collector itself can forward infix addresses, but the public heap-shape
-invariant rules out the confusing case where regular object fields point at
-minor infix interiors. This keeps the graph model clean.
+`collection_heap_shape` is the stop-the-world invariant: `gen_gc` requires it
+and restores it.  Its generic form, for a definition of free, is
+`collection_shape_with free` (below).  Interior (infix) pointers are allowed
+in live fields of both heaps: the pointer clauses of `well_formed_heap` are
+stated on the resolved target, and Cheney forwards an interior nursery
+address to the corresponding interior address of the promoted closure
+(`GC.Gen.CheneyBFS.fwd_covers_infix_fields`).  There is no no-scan clause:
+the nursery scan window (`minor_scan_wosize`) is 0 on a no-scan block, and a
+no-scan major block is not `scannable`, so nothing is assumed about raw data.
 
 ### Remembered slots
 
@@ -1030,10 +1020,16 @@ is one walk.  `GC.Gen.Cheney.cheney_collect_spec_with free minor major fp roots`
 is the collection whose pointer update is `update_pointers_with free` over the
 promoted heap; at `free_stw` it is `cheney_collect_spec`.  The
 `PromoteUpdate` lemmas and the free-list preservation lemmas are proved for the
-walk over any set (`walk_ok`: its members are not free), and the
-`update_major_pointers` forms are their stop-the-world instances.
+walk over any set (`walk_ok`: its members are not free); a stop-the-world
+caller applies them at `in_use free_stw`.
 
-The implementation's two passes are proved equal to the walk
+The implementation runs the update in two passes, over the promoted objects
+(found through the forwarding array) and over the remembered slots.  Their
+ghost specifications, and the array's representation of the forwarding map,
+are in the spec module `GC.Gen.ForwardingArray` (`represents_fwd`,
+`update_promoted_iter`, `rewrite_slots_iter`, `fwd_targets_stable`, ...); the
+Pulse functions in `GC.Gen.Impl.UpdatePtrs` refine them.  The two passes are
+proved equal to the walk
 (`GC.Gen.TwoPassEquiv.promoted_plus_slots_eq_walk`), and at a Cheney result,
 with the write barrier's guarantees stated for the same definition of free
 (`GC.Gen.RefTable.ref_table_covers_with`, `ref_table_sound_with`: every slot is
@@ -1114,8 +1110,8 @@ promotion lemmas only ask for the walk facts of the major heap (`blocks_fit`,
 `free_stw`, plus the colour facts (no black, no gray objects).  These are not
 carried through the Cheney run: `CheneyPreservation.cheney_collect_block_origin`
 says a non-blue block of the result is an old non-blue block with the same
-header (the frame facts `cheney_promote_frame_old_header` and
-`update_major_pointers_preserves_header`) or a promoted copy, which the idle
+header (the frame facts `CheneyPreservation.Frame.cheney_promote_frame_old_header`
+and `PromoteUpdate.update_walk_preserves_header`) or a promoted copy, which the idle
 allocator wrote white: `cheney_promote_fwd_target_not_free` at the definition
 "free means not white", which the allocator's white blocks satisfy.  So a
 collection creates no grey or black block.
@@ -1151,11 +1147,11 @@ hypotheses into the generic ones), where the post-collection graph is
 `minor_collect_pre_with free minor s fp rs farr slots n` (the shape, the
 write barrier's guarantees, the remembered
 targets in the roots, valid non-free roots, all for `free`) and
-`minor_collect_post_with free` (the heap is the two-pass result and
-`cheney_collect_spec_with free`'s, the shape for `free` is kept, and on
-success the result is a reachable-subgraph isomorphism with the non-pointer
-fields preserved).  `minor_collect_pre_idle` / `minor_collect_post_idle` are
-the stop-the-world instance with the colour facts of `collection_heap_shape`;
+`minor_collect_post_with free` (the heap is `cheney_collect_spec_with
+free`'s, the shape for `free` is kept, and on success the result is a
+reachable-subgraph isomorphism with the non-pointer fields preserved).
+`minor_collect_pre_idle` / `minor_collect_post_idle` are the stop-the-world
+instance with the colour facts of `collection_heap_shape`;
 `gen_gc` uses them, and its contract is unchanged.
 
 ### Cheney BFS
@@ -1247,6 +1243,68 @@ val fwd_well_formed_covers_reachable :
 The rest of the module proves that `forward_roots` establishes root coverage,
 that each scan step preserves forwarding monotonicity, and that scanning the
 queue establishes successor closure when promotion does not run out of memory.
+
+### What a Cheney run keeps
+
+Every fact about a run is an invariant of the Cheney state carried through
+roots, scan, and the fields of each scanned object, one `cheney_forward_one`
+at a time.  `GC.Gen.Cheney.Induction` does that induction once:
+
+```fstar
+let one_keeps (minor: minor_state) (inv: cheney_state -> prop) =
+  cs: cheney_state -> addr: U64.t ->
+  Lemma (requires alloc_ok cs.cs_major cs.cs_fp /\ inv cs)
+        (ensures inv (cheney_forward_one minor cs addr))
+
+val cheney_promote_induction
+  (minor: minor_state) (inv: cheney_state -> prop) (one: one_keeps minor inv)
+  (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires alloc_ok major fp /\ inv (cheney_init major fp))
+          (ensures (let cs = cheney_run minor major fp roots in
+                    let prom = cheney_promote minor major fp roots in
+                    alloc_ok cs.cs_major cs.cs_fp /\ inv cs /\
+                    prom.major_final == cs.cs_major /\
+                    prom.fp_final == cs.cs_fp /\ prom.fwd_map == cs.cs_fwd))
+
+(* for an invariant p of the major heap and free pointer alone, the step is
+   one successful promote_object; the infix and no-op cases are done here *)
+val cheney_promote_keeps
+  (minor: minor_state) (p: heap -> U64.t -> prop) (step: promote_keeps minor p)
+  (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires alloc_ok major fp /\ p major fp)
+          (ensures (let prom = cheney_promote minor major fp roots in
+                    alloc_ok prom.major_final prom.fp_final /\
+                    p prom.major_final prom.fp_final))
+```
+
+`alloc_ok` is the allocator's invariant (blocks fit, the free list is valid
+and terminates), which every step needs and every step keeps, so the
+combinator carries it; `cheney_promote_induction_plain` is the variant for an
+invariant that needs nothing of the allocator, and the fields, roots and scan
+levels are exported too.  An invariant that relates the run to its start
+(an old block keeps its header, a forwarded address stays forwarded) is an
+`inv` with the starting value as a parameter.
+
+The modules, in dependency order:
+
+| Module | What it says about the run |
+| --- | --- |
+| `GC.Gen.Cheney` | the definitions (`cheney_forward_{normal,one,fields,roots}`, `cheney_scan`, `cheney_promote`, `cheney_collect_spec(_with)`) and their unfolding lemmas |
+| `GC.Gen.Cheney.Induction` | the induction above, and the allocator's invariant at each level |
+| `GC.Gen.Cheney.Steps` | the heap invariants a run keeps (free chain blue, free-list shape, objects, density, no infix block, forwarding targets bounded and above `zero_addr`), at each level, and the frame of one promotion |
+| `GC.Gen.CheneyPreservation.Frame` | old non-free blocks keep their header and fields |
+| `GC.Gen.CheneyPreservation.Forwarding` | the forwarding targets are classified (an object, or an interior pointer of a promoted closure) |
+| `GC.Gen.CheneyPreservation.Injectivity` | normal targets are pairwise distinct, not blue, and fresh |
+| `GC.Gen.CheneyPreservation.NonBlueOrigin` | a new non-blue block is a forwarding target |
+| `GC.Gen.CheneyPreservation.Fields` | a promoted copy holds its source's fields and tag, and is not free |
+| `GC.Gen.CheneyFlComplete`, `GC.Gen.FreeListAscending` | the free list stays exact and ascending |
+| `GC.Gen.CheneyBFS` | completeness: every reachable nursery object is forwarded unless the major heap ran out of room |
+| `GC.Gen.CheneyGeneric` | the collection keeps `collection_shape_with free` |
+| `GC.Gen.CheneyPreservation` | the stop-the-world instance (`cheney_collect_preserves_collection_heap_shape`, `cheney_collect_block_origin`) |
+
+The run-level facts are kept out of `GC.Gen.Cheney.fsti` itself: its
+definitions are what `GC.Gen.Impl.Cheney` refines, and extra vals there
+disturb that proof.
 
 ## Reachable subgraph isomorphism
 
@@ -1364,7 +1422,7 @@ This is the generational counterpart of the mark-and-sweep "five pillars":
 
 | Mark-and-sweep pillar | Generational analogue |
 | --- | --- |
-| Final heap well-formedness | `collection_heap_shape` / `full_heap_shape` preservation, followed by the major collector's `gc_postcondition`. |
+| Final heap well-formedness | `collection_heap_shape` preservation, followed by the major collector's `gc_postcondition`; `gen_gc` restores `collection_heap_shape`. |
 | Reachability-based survival | The isomorphism's totality and surjectivity over reachable source/destination vertices. |
 | Successor preservation | The isomorphism's edge preservation/reflection clause. |
 | Color reset | The post-minor heap shape plus the major collector's postcondition; after full `gen_gc`, final major objects satisfy the major GC color/free-list discipline. |
@@ -1492,7 +1550,7 @@ free in the major heap:
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
-                      (queue: larray U64.t Cheney.queue_size)
+                      (queue: larray U64.t FA.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
                       (#free: erased SpecFields.free_def)
 ```
@@ -1507,24 +1565,31 @@ The precondition (`minor_collect_pre_with free`) is:
 - the remembered targets are among the roots, and the roots are valid and not
   free (`remembered_targets_in_roots`, `roots_valid_with`).
 
-The postcondition (`minor_collect_post_with free`) states, among other facts:
+The postcondition is `minor_collect_post_with free minor_st s fp rs ok d2 b2
+s2 fp2 rs2`, in full:
 
 ```fstar
-s2 == UpdatePtrs.rewrite_slots_iter
-        (UpdatePtrs.update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
-        prom.fwd_map sl nslots 0 /\
+let prom = CheneySpec.cheney_promote minor_st s fp rs in
 s2 == (CheneySpec.cheney_collect_spec_with free minor_st s fp rs).mc_major /\
 fp2 == prom.fp_final /\
 rs2 == PromoteSpec.rewrite_roots rs prom.fwd_map /\
 U64.v b2 == 0 /\
-UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
+({ data = d2; bump = b2 } <: minor_state) == minor_reset minor_st /\
 GenInv.collection_shape_with free ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
+(not ok ==> CheneyBFS.cheney_oom minor_st s fp rs) /\
 (ok ==>
+  CheneyBFS.cheney_no_oom minor_st s fp rs /\
   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
     minor_st s fp free rs s2 (MCFH.resolve_roots s2 rs2) /\
   MinorFwd.normal_result_non_pointer_fields_preserved_prop
     minor_st s fp free rs s2)
 ```
+
+Nothing is said of the forwarding array or the queue the call hands back:
+no caller reads them.  The two-pass equation that the implementation
+establishes along the way (`s2 == rewrite_slots_iter (update_promoted_iter
+...)`) is internal to `minor_collect_full` too; `minor_collect_with_spec`
+turns it into the equation with `cheney_collect_spec_with`.
 
 The stop-the-world contract is the instance at `free_stw`:
 `minor_collect_pre_idle` (`collection_heap_shape`, the remembered set over the
@@ -1543,10 +1608,24 @@ at `free_stw` the latter is
 `create_graph`, the graph the major collection's own isomorphism speaks of, which
 is how `MajorReachabilityTransfer.end_to_end_isomorphism_intro` chains the two.
 
-The equality with `cheney_collect_spec` is the strongest operational statement:
-the imperative code implements the pure full minor-collection spec, including
-promotion, promoted-object field rewriting, remembered-slot rewriting, root
-rewriting, and minor heap reset.
+#### The contract of `minor_collect_full`
+
+The postcondition is a set of properties of the result (the shape, the
+isomorphism, the non-pointer fields) plus one equation,
+`s2 == (cheney_collect_spec_with free ...).mc_major`.  The equation stays in
+the contract.  `gen_gc`'s major-phase helpers (`gen_gc_prepared_state`,
+`gen_gc_major_precondition_elim`), `GC.Gen.MajorPrecondition` and the SPOT
+postconditions (`GC.SPOT.Postconditions.minor_collect_full_post`,
+`GC.SPOT.ConcreteFull`) are stated over `cheney_collect_spec`, and a Pulse
+postcondition is the only way `gen_gc` learns anything about `s2`: a separate
+ghost lemma cannot recover the equation from a property-only contract.
+Dropping it means restating those helpers and SPOTs in property form, which
+is a larger change than the cleanup, so it was not done.
+
+The equality is also the strongest operational statement: the imperative code
+implements the pure full minor-collection spec, including promotion,
+promoted-object field rewriting, remembered-slot rewriting, root rewriting, and
+minor heap reset.
 
 The `ok` flag captures promotion success. If the major heap does not have enough
 space for all live minor objects, the isomorphism theorem is conditional on
@@ -1562,7 +1641,7 @@ mark-and-sweep collector:
 fn gen_gc (gh: gen_heap_t)
           (roots: array U64.t) (nroots: SZ.t)
           (fwd_arr: array U64.t)
-          (queue: larray U64.t Cheney.queue_size)
+          (queue: larray U64.t FA.queue_size)
           (slots: array U64.t) (nslots: SZ.t)
           (st: gray_stack)
   ...
@@ -2434,13 +2513,15 @@ the algorithm once as a pure function, then prove the Pulse code refines it.
 ### Split heap shape into just enough pieces
 
 The generational collector would be much harder to prove if every function
-required `full_heap_shape`. Instead, the development factors shape predicates:
+required the whole invariant. Instead, the development factors shape predicates:
 
-- `blocks_fit` for object bounds;
+- `blocks_fit` for object bounds (and `no_infix_block`: the walk facts are all
+  promotion reads of the major heap);
 - free-list validity and termination for allocation;
-- `collection_heap_shape` for minor collection;
-- `major_stack_shape` for major marking;
-- `full_heap_shape` only when the full generational cycle needs both.
+- `collection_shape_with free` for a minor collection, for any definition of
+  free, and `collection_heap_shape` for the stop-the-world collector;
+- the major collector's own precondition, derived from the post-minor heap
+  inside `gen_gc` (`GC.Gen.MajorPrecondition`).
 
 This factoring is why `allocate_part1` can be used during promotion.
 
@@ -2521,7 +2602,8 @@ For a first pass through the code, read in this order:
    `mark-and-sweep/impl/GC.Impl.MarkBounded.*` for bounded marking.
 7. `generational/spec/GC.Gen.HeapInvariant.fst` for the generational invariant.
 8. `generational/spec/GC.Gen.MinorHeap.fst`,
-   `GC.Gen.Promote.fsti`, `GC.Gen.Cheney.fst`, and
+   `GC.Gen.Promote.fsti`, `GC.Gen.Cheney.fsti`, `GC.Gen.Cheney.Induction.fsti`,
+   `GC.Gen.Cheney.Steps.fsti`, `GC.Gen.CheneyGeneric.fsti`, and
    `GC.Gen.CheneyBFS.fsti` for minor collection.
 9. `generational/spec/GC.Gen.CombinedGraph.fsti` and
    `GC.Gen.MinorCollectForwarding.fsti` for isomorphism correctness.
