@@ -62,7 +62,7 @@ val fused_sweep_post_intrinsic (g0: heap) (fp: U64.t)
 val sweep_phase_oom_no_fit (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat)
                            (tag: U64.t{U64.v tag < 256})
   : Lemma (requires sweep_phase_inv g fp st /\ wz >= 1 /\
-                    (fst (AC.alloc_phase g fp (GC.Spec.Phase.Sweeping st) wz tag)).GC.Spec.Allocator.obj_out == 0UL)
+                    (AC.alloc_phase g fp (GC.Spec.Phase.Sweeping st) wz tag).GC.Spec.Allocator.obj_out == 0UL)
           (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ is_blue x g ==>
                      U64.v (wosize_of_object x g) < wz)
 

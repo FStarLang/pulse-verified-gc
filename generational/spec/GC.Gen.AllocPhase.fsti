@@ -43,7 +43,7 @@ let tag_t = t: U64.t{U64.v t < 256}
 
 /// First-fit at phase `ph`: the heap, the new head and the object.
 let alloc_at (ph: gc_phase) (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) : GTot SA.alloc_result =
-  fst (AC.alloc_phase g fp ph wz tag)
+  AC.alloc_phase g fp ph wz tag
 
 /// Outside a sweep it is `alloc_spec`.
 val alloc_at_idle (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t)

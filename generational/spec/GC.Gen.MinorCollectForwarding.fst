@@ -738,6 +738,7 @@ private let post_edge_from_major_image_reflects_target (ph: gc_phase)
           (read_word updated (U64.uint_to_t (U64.v src + j * 8))) /\
         HeapGraph.resolve_field updated
           (read_word updated (U64.uint_to_t (U64.v src + j * 8))) == y) in
+    assert (U64.v src + j * 8 + 8 <= heap_size);
     let field_addr = U64.uint_to_t (U64.v src + j * 8) in
     assert (HeapGraph.is_pointer_field (read_word updated field_addr));
     assert (HeapGraph.resolve_field updated (read_word updated field_addr) == y);

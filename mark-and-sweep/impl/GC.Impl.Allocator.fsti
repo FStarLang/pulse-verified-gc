@@ -88,7 +88,9 @@ fn init_heap (heap: heap_t)
 /// address it follows, so it needs nothing of the heap: in particular not
 /// pointer closure, which promotion temporarily breaks.  The postcondition
 /// ties the result to the pure spec `alloc_phase`; at `Idle` that is
-/// `alloc_spec` and the phase stays `Idle` (`AC.alloc_phase_idle`).
+/// `alloc_spec` (`AC.alloc_phase_idle`).  The phase record's cached
+/// `swept_tail` is updated in place (`AC.phase_after_alloc`); idle, the phase
+/// stays `Idle`.
 fn allocate (heap: heap_t) (fp: U64.t) (phase: R.ref phase_state)
             (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
   requires is_heap heap 's ** is_phase phase 'ph **
@@ -103,8 +105,8 @@ fn allocate (heap: heap_t) (fp: U64.t) (phase: R.ref phase_state)
            pure (U64.v wosize >= 1)
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
-    is_phase phase (snd (AC.alloc_phase 's fp 'ph (U64.v wosize) tag)) **
-    pure (let spec_res = fst (AC.alloc_phase 's fp 'ph (U64.v wosize) tag) in
+    is_phase phase (AC.phase_after_alloc 's fp (U64.v wosize) 'ph) **
+    pure (let spec_res = AC.alloc_phase 's fp 'ph (U64.v wosize) tag in
           s2 == spec_res.heap_out /\
           fst res == spec_res.fp_out /\
           snd res == spec_res.obj_out)

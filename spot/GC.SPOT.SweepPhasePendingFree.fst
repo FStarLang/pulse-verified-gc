@@ -159,7 +159,7 @@ let before (g: heap) (fp: U64.t) (st: sweep_state) (e: nat) : prop =
   (forall (q: hp_addr). pos g q /\ blue_at g q ==> q == zero_addr)
 
 let ar (g: heap) (fp: U64.t) (st: sweep_state) : GTot SA.alloc_result =
-  fst (AC.alloc_phase g fp (SA.Sweeping st) 1 0UL)
+  AC.alloc_phase g fp (SA.Sweeping st) 1 0UL
 
 let new_obj (g: heap) (fp: U64.t) (st: sweep_state) : GTot U64.t = (ar g fp st).SA.obj_out
 

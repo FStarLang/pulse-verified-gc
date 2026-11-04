@@ -195,8 +195,8 @@ fn minor_collect_any_phase (gh: gen_heap_t)
 let alloc_major_post (ph: Ph.gc_phase) (minor: minor_state) (s: heap_state) (fp: U64.t)
     (wz: nat) (tag: GSP.tag_t) (obj: U64.t) (s2: heap_state) (fp2: U64.t) (ph2: Ph.gc_phase) : prop =
   let ar = AC.alloc_phase s fp ph wz tag in
-  s2 == (fst ar).SA.heap_out /\ fp2 == (fst ar).SA.fp_out /\ obj == (fst ar).SA.obj_out /\
-  ph2 == snd ar /\
+  s2 == ar.SA.heap_out /\ fp2 == ar.SA.fp_out /\ obj == ar.SA.obj_out /\
+  ph2 == AC.phase_after_alloc s fp wz ph /\
   (forall (st: FS.sweep_state).
      ph == Ph.Sweeping st /\ GI.phase_shape minor s fp ph /\ tag <> GC.Spec.Object.infix_tag ==>
      (let st' = GSP.alloc_state s fp wz st in

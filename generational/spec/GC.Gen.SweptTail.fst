@@ -30,28 +30,6 @@ module PUO = GC.Gen.PromoteUpdate.Obj
 /// The last cell below a point
 /// ---------------------------------------------------------------------------
 
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
-let rec max_cell_below_spec g x =
-  if x = 0 then begin
-    let aux (y: U64.t) : Lemma (~(FL.fl_cell g y /\ U64.v y <= 0)) = () in
-    FStar.Classical.forall_intro aux
-  end else begin
-    max_cell_below_spec g (x - 1);
-    if x < heap_size && FStar.IndefiniteDescription.strong_excluded_middle (FL.fl_cell g (U64.uint_to_t x))
-    then ()
-    else begin
-      let aux (y: U64.t) : Lemma (FL.fl_cell g y /\ U64.v y <= x ==> U64.v y <= x - 1)
-        = if U64.v y = x && x >= heap_size then () in
-      FStar.Classical.forall_intro aux
-    end
-  end
-#pop-options
-
-#push-options "--fuel 1 --ifuel 1"
-let rec max_cell_below_congr g g' x =
-  if x = 0 then () else max_cell_below_congr g g' (x - 1)
-#pop-options
-
 /// The spec pins `max_cell_below` down.
 let max_cell_unique (g: heap) (x: nat) (m: U64.t)
   : Lemma (requires (m == 0UL \/ (FL.fl_cell g m /\ U64.v m <= x)) /\
@@ -59,23 +37,16 @@ let max_cell_unique (g: heap) (x: nat) (m: U64.t)
           (ensures max_cell_below g x == m)
   = max_cell_below_spec g x
 
-#push-options "--fuel 1 --ifuel 1"
 let phase_at_self ph g =
   match ph with
   | Idle -> ()
-  | Sweeping st ->
-    if st.swept_tail = 0UL then ()
-    else begin
-      max_cell_below_spec g (U64.v st.swept_tail);
-      FLA.fl_cell_facts g st.swept_tail
-    end
-#pop-options
+  | Sweeping st -> ()
 
 let phase_at_heads ph h h' =
   same_heads_facts h h';
   match ph with
   | Idle -> ()
-  | Sweeping st -> max_cell_below_congr h h' (U64.v st.swept_tail)
+  | Sweeping st -> if U64.v st.cursor > 0 then max_cell_below_congr h h' (U64.v st.cursor - 1)
 
 /// ---------------------------------------------------------------------------
 /// One allocation
@@ -130,33 +101,40 @@ let tail_step (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (p cur: U64.t) (pc: p
     max_cell_unique gI t0 m
 #pop-options
 
-/// The tail after the allocation, for a sweep that started at `st0`.
+/// The derived tail after the allocation is the cached one updated.
 #push-options "--z3rlimit 30"
 let alloc_tail_at (st0: sweep_state) (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t)
   : Lemma (requires FLA.fl_ascending g fp)
-          (ensures (let t0 = U64.v st0.swept_tail in
+          (ensures (let c = U64.v st0.cursor in
                     let g' = (AP.alloc_at (Sweeping st0) g fp wz tag).SA.heap_out in
-                    AC.alloc_tail g fp wz (max_cell_below g t0) == max_cell_below g' t0))
-  = let t0 = U64.v st0.swept_tail in
+                    AC.alloc_tail g fp wz (last_cell_behind g c) == last_cell_behind g' c))
+  = let c = U64.v st0.cursor in
     let ph0 = Sweeping st0 in
-    let tn = max_cell_below g t0 in
     choice_facts g fp wz SA.Idle tag;
     AP.alloc_at_fields ph0 g fp wz tag;
     AC.alloc_phase_idle g fp wz tag;
     FLA.fl_ascending_valid g fp;
     part1_holds g;
-    if snd (AC.alloc_choice g fp wz) = 0UL then begin
-      assert (AC.alloc_tail g fp wz tn == tn);
-      choice_facts g fp wz ph0 tag
+    if c = 0 then begin
+      let (p, cur) = AC.alloc_choice g fp wz in
+      assert (AC.alloc_tail g fp wz 0UL == 0UL)
     end
     else begin
-      let (p, cur, pc) = alloc_found_at g fp wz tag in
-      tail_step g fp wz tag p cur pc t0;
-      AP.alloc_at_recoloured ph0 g fp wz tag;
-      let gI = (SA.alloc_spec g fp wz tag).SA.heap_out in
-      let g' = (AP.alloc_at ph0 g fp wz tag).SA.heap_out in
-      AP.recoloured_facts gI g';
-      max_cell_below_congr gI g' t0
+      let t0 = c - 1 in
+      let tn = max_cell_below g t0 in
+      if snd (AC.alloc_choice g fp wz) = 0UL then begin
+        assert (AC.alloc_tail g fp wz tn == tn);
+        choice_facts g fp wz ph0 tag
+      end
+      else begin
+        let (p, cur, pc) = alloc_found_at g fp wz tag in
+        tail_step g fp wz tag p cur pc t0;
+        AP.alloc_at_recoloured ph0 g fp wz tag;
+        let gI = (SA.alloc_spec g fp wz tag).SA.heap_out in
+        let g' = (AP.alloc_at ph0 g fp wz tag).SA.heap_out in
+        AP.recoloured_facts gI g';
+        max_cell_below_congr gI g' t0
+      end
     end
 #pop-options
 
@@ -165,7 +143,7 @@ let alloc_phase_at ph0 g fp wz tag =
   match ph0 with
   | Idle -> AC.alloc_phase_idle g fp wz tag
   | Sweeping st0 ->
-    let st = { st0 with swept_tail = max_cell_below g (U64.v st0.swept_tail) } in
+    let st = { st0 with swept_tail = last_cell_behind g (U64.v st0.cursor) } in
     AP.alloc_at_cursor st st0 g fp wz tag;
     alloc_tail_at st0 g fp wz tag
 #pop-options

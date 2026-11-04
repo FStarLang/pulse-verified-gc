@@ -234,17 +234,17 @@ fn minor_collect_any_phase (gh: gen_heap_t)
 let alloc_major_post_intro (ph: Ph.gc_phase) (minor: minor_state) (s: heap) (fp: U64.t)
     (wz: nat) (tag: GSP.tag_t)
   : Lemma (let ar = AC.alloc_phase s fp ph wz tag in
-           alloc_major_post ph minor s fp wz tag (fst ar).SA.obj_out (fst ar).SA.heap_out
-             (fst ar).SA.fp_out (snd ar))
+           alloc_major_post ph minor s fp wz tag ar.SA.obj_out ar.SA.heap_out
+             ar.SA.fp_out (AC.phase_after_alloc s fp wz ph))
   = let ar = AC.alloc_phase s fp ph wz tag in
     let aux (st: FS.sweep_state)
       : Lemma (requires ph == Ph.Sweeping st /\ GI.phase_shape minor s fp ph /\
                         tag <> GC.Spec.Object.infix_tag)
               (ensures (let st' = GSP.alloc_state s fp wz st in
-                        let r = fst ar in
-                        snd ar == Ph.Sweeping st' /\
+                        let r = ar in
+                        AC.phase_after_alloc s fp wz ph == Ph.Sweeping st' /\
                         (r.SA.obj_out == 0UL ==> r.SA.heap_out == s /\ r.SA.fp_out == fp /\ st' == st /\
-                           GI.phase_shape minor r.SA.heap_out r.SA.fp_out (snd ar)) /\
+                           GI.phase_shape minor r.SA.heap_out r.SA.fp_out (AC.phase_after_alloc s fp wz ph)) /\
                         (r.SA.obj_out <> 0UL ==>
                            GSP.new_block s r.SA.heap_out st r.SA.obj_out wz tag /\
                            GSP.fresh_ok r.SA.heap_out r.SA.fp_out st' (r.SA.obj_out <: obj_addr))))
@@ -269,7 +269,7 @@ fn gen_alloc_major (gh: gen_heap_t) (wosize: U64.t) (tag: GSP.tag_t)
   let res = Alloc.allocate gh.major fp gh.phase_ref wosize tag;
   R.op_Colon_Equals gh.fp_ref (fst res);
   alloc_major_post_intro 'ph ({ data = 'd; bump = 'b } <: minor_state) 's 'fp (U64.v wosize) tag;
-  fold (gen_phase gh (snd (AC.alloc_phase 's 'fp 'ph (U64.v wosize) tag)));
+  fold (gen_phase gh (AC.phase_after_alloc 's 'fp (U64.v wosize) 'ph));
   fold (is_gen_heap gh 'd 'b _ _);
   snd res
 }

@@ -11,20 +11,22 @@
 ///     sweep keeps it and whitens it when it gets there) and white behind it.
 ///
 ///   * **`swept_tail`.**  The sweep appends after `swept_tail`, the last list
-///     cell behind its cursor (`GC.Spec.FusedSweep`).  If an allocation takes
-///     that very cell off the list -- an exact fit, or a one-word leftover --
-///     `swept_tail` moves back to the cell before it on the list (or to 0, the
-///     list-head sentinel).  A split keeps the cell, and allocation never
+///     cell behind its cursor (`GC.Spec.FusedSweep`) -- a cache of the heap
+///     and the cursor (`GC.Spec.SweepPhase.Intrinsic.last_cell_behind`) that
+///     the phase record holds.  If an allocation takes that very cell off the
+///     list -- an exact fit, or a one-word leftover -- the cache moves back to
+///     the cell before it on the list (or to 0, the list-head sentinel):
+///     `phase_after_alloc`.  A split keeps the cell, and allocation never
 ///     touches `last_fragment`, which is never on the list.
 ///
-/// `alloc_phase g fp ph wz tag` is both: the first-fit allocation at phase
-/// `ph`, and the phase after it (`phase_after_alloc`, with the new
-/// `swept_tail`).  `alloc_find` names the block first-fit takes and its list
-/// predecessor, step by step alongside `alloc_search`.
+/// `alloc_phase g fp ph wz tag` is the first-fit allocation at phase `ph`; it
+/// reads only the colour rule of the phase.  `alloc_find` names the block
+/// first-fit takes and its list predecessor, step by step alongside
+/// `alloc_search`.
 ///
 /// `alloc_phase_idle` is the stop-the-world case: at `Idle` the allocator is
-/// exactly `alloc_spec`, and the phase stays `Idle`.  Only the header colour
-/// depends on the phase (`alloc_phase_fields`).
+/// exactly `alloc_spec`.  Only the header colour depends on the phase
+/// (`alloc_phase_fields`, `alloc_phase_heap`).
 
 module GC.Spec.Allocator.Cursor
 
@@ -149,37 +151,42 @@ let alloc_tail (g: heap) (fp: U64.t) (wz: nat) (t: U64.t) : GTot U64.t =
 /// The allocator over the phase
 /// ---------------------------------------------------------------------------
 
-/// The phase after an allocation of `wz` words from the list at `fp`: the
-/// sweep state with its new `swept_tail`.
+/// The phase record after an allocation of `wz` words from the list at `fp`:
+/// the cached `swept_tail` updated in place, as `caml_fl_merge` is when the
+/// allocator takes its cell (`alloc_tail`).  The allocation itself reads only
+/// the colour rule of the phase (`alloc_phase`); this is the implementation's
+/// cache maintenance, which keeps the cache the derived one
+/// (`GC.Gen.SweptTail.alloc_phase_at`).
 let phase_after_alloc (g: heap) (fp: U64.t) (wz: nat) (ph: gc_phase) : GTot gc_phase =
   match ph with
   | Idle -> Idle
   | Sweeping st -> Sweeping { st with swept_tail = alloc_tail g fp wz st.swept_tail }
 
 /// Allocate `wz` words with tag `tag` at phase `ph`: first-fit from `fp`, the
-/// header written once with the phase's colour; and the phase after.
+/// header written once with the colour the phase gives it.
 let alloc_phase (g: heap) (fp: U64.t) (ph: gc_phase) (wz: nat) (tag: U64.t{U64.v tag < 256})
-  : GTot (alloc_result & gc_phase) =
-  (alloc_search g fp 0UL fp (req_wz wz) ph tag heap_words, phase_after_alloc g fp wz ph)
+  : GTot alloc_result =
+  alloc_search g fp 0UL fp (req_wz wz) ph tag heap_words
 
-/// Not sweeping: the allocator is `alloc_spec`, and the phase stays `Idle`.
+/// Not sweeping: the allocator is `alloc_spec`.
 val alloc_phase_idle (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (alloc_phase g fp Idle wz tag == (alloc_spec g fp wz tag, Idle))
+  : Lemma (alloc_phase g fp Idle wz tag == alloc_spec g fp wz tag)
           [SMTPat (alloc_phase g fp Idle wz tag)]
 
 /// Only the heap depends on the phase -- and only through the new object's
 /// colour -- so the new head and the object are `alloc_spec`'s, and a failed
 /// allocation changes nothing.
 val alloc_phase_fields (g: heap) (fp: U64.t) (ph: gc_phase) (wz: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (let r = fst (alloc_phase g fp ph wz tag) in
+  : Lemma (let r = alloc_phase g fp ph wz tag in
            let r0 = alloc_spec g fp wz tag in
            r.fp_out == r0.fp_out /\ r.obj_out == r0.obj_out /\
            (r.obj_out == 0UL ==> r.heap_out == g))
 
-/// A failed allocation leaves the phase alone: it takes no cell off the list.
+/// A failed allocation leaves the phase record alone: it takes no cell off
+/// the list.
 val alloc_phase_oom_phase (g: heap) (fp: U64.t) (ph: gc_phase) (wz: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires (fst (alloc_phase g fp ph wz tag)).obj_out == 0UL)
-          (ensures snd (alloc_phase g fp ph wz tag) == ph)
+  : Lemma (requires (alloc_phase g fp ph wz tag).obj_out == 0UL)
+          (ensures phase_after_alloc g fp wz ph == ph)
 
 /// The header of a new object of `w` fields, colour `col` and tag `tag`.
 let new_header (w: nat) (col: color_bits) (tag: U64.t{U64.v tag < 256}) : U64.t =
@@ -192,7 +199,7 @@ let new_header (w: nat) (col: color_bits) (tag: U64.t{U64.v tag < 256}) : U64.t 
 /// it is `alloc_spec`'s heap, whose new header is white, with that header
 /// rewritten in the colour the phase gives its address.
 val alloc_phase_heap (g: heap) (fp: U64.t) (ph: gc_phase) (wz: nat) (tag: U64.t{U64.v tag < 256})
-  : Lemma (let r = fst (alloc_phase g fp ph wz tag) in
+  : Lemma (let r = alloc_phase g fp ph wz tag in
            let r0 = alloc_spec g fp wz tag in
            r.obj_out <> 0UL ==>
              (is_obj r.obj_out /\ req_wz wz < pow2 54 /\
@@ -203,4 +210,4 @@ val alloc_phase_heap (g: heap) (fp: U64.t) (ph: gc_phase) (wz: nat) (tag: U64.t{
 /// Phases that colour alike allocate alike.
 val alloc_phase_colour_congr (g: heap) (fp: U64.t) (ph ph': gc_phase) (wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires forall (a: U64.t). allocation_color ph a == allocation_color ph' a)
-          (ensures fst (alloc_phase g fp ph wz tag) == fst (alloc_phase g fp ph' wz tag))
+          (ensures alloc_phase g fp ph wz tag == alloc_phase g fp ph' wz tag)

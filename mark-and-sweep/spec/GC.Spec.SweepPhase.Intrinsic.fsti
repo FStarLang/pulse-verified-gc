@@ -61,6 +61,70 @@ module FreeList = GC.Spec.FreeList
 let white_at (g: heap) (p: hp_addr) : bool = getColor (read_word g p) = Header.White
 
 /// ---------------------------------------------------------------------------
+/// The sweep's caches, derived
+/// ---------------------------------------------------------------------------
+///
+/// `swept_tail` and `last_fragment` are caches: both are functions of the
+/// heap and the cursor.  The implementation stores them in the phase record
+/// and updates them in place (the sweep step, and the allocator's
+/// `caml_fl_merge` update); the sweep phase says the stored values are the
+/// derived ones.
+
+/// The last cell at or below `x` (0 when there is none).
+let rec max_cell_below (g: heap) (x: nat) : GTot U64.t (decreases x) =
+  if x = 0 then 0UL
+  else if x < heap_size && FStar.IndefiniteDescription.strong_excluded_middle (FreeList.fl_cell g (U64.uint_to_t x))
+  then U64.uint_to_t x
+  else max_cell_below g (x - 1)
+
+val max_cell_below_spec (g: heap) (x: nat)
+  : Lemma (let m = max_cell_below g x in
+           (m == 0UL \/ (FreeList.fl_cell g m /\ U64.v m <= x)) /\
+           (forall (y: U64.t). FreeList.fl_cell g y /\ U64.v y <= x ==> m <> 0UL /\ U64.v y <= U64.v m))
+
+/// Heaps with the same cells have the same last cells.
+val max_cell_below_congr (g g': heap) (x: nat)
+  : Lemma (requires forall (y: U64.t). FreeList.fl_cell g' y <==> FreeList.fl_cell g y)
+          (ensures max_cell_below g' x == max_cell_below g x)
+
+/// **`swept_tail`, derived**: the last free-list cell behind the cursor `c`
+/// (its block ends at or before `c`), or 0, the list-head sentinel.
+let last_cell_behind (g: heap) (c: nat) : GTot U64.t =
+  if c = 0 then 0UL else max_cell_below g (c - 1)
+
+/// **`last_fragment`, derived**: `c` when the block ending at the cursor `c`
+/// is a free block with no field (a one-word fragment, too small for a link),
+/// otherwise 0.
+let frag_at (g: heap) (c: nat) : GTot U64.t =
+  if c >= U64.v zero_addr + 8 && c < heap_size && c % 8 = 0 &&
+     W.reaches g zero_addr (c - 8) && W.can_step g (mk_hp_addr (c - 8)) &&
+     blue_at g (mk_hp_addr (c - 8)) && wz_at g (mk_hp_addr (c - 8)) = 0
+  then U64.uint_to_t c
+  else 0UL
+
+/// The sweep state at cursor `c` on `g`: the caches derived.
+let state_at (g: heap) (c: U64.t) : GTot sweep_state =
+  { cursor = c; swept_tail = last_cell_behind g (U64.v c); last_fragment = frag_at g (U64.v c) }
+
+/// `tail_ok` (`GC.Spec.FusedSweep.Inv`) pins `swept_tail` down: at a walk
+/// position it says exactly that it is the derived one.
+val tail_ok_iff (g: heap) (c: nat) (t: U64.t)
+  : Lemma (requires W.reaches g zero_addr c)
+          (ensures tail_ok g c t <==> t == last_cell_behind g c)
+
+/// So does `frag_ok`, given `swept_tail` and that the block before the cursor
+/// is free exactly when one of the two says so (`ends_free`).
+val frag_ok_derived (g: heap) (st: sweep_state)
+  : Lemma (requires W.reaches g zero_addr (U64.v st.cursor) /\
+                    tail_ok g (U64.v st.cursor) st.swept_tail /\
+                    ends_free g (U64.v st.cursor) (prev_free g st) /\
+                    frag_ok g (U64.v st.cursor) st.last_fragment)
+          (ensures st.last_fragment == frag_at g (U64.v st.cursor))
+
+/// The derived fragment is a fragment.
+val frag_at_ok (g: heap) (c: nat) : Lemma (frag_ok g c (frag_at g c))
+
+/// ---------------------------------------------------------------------------
 /// The invariant
 /// ---------------------------------------------------------------------------
 
@@ -105,12 +169,13 @@ let sweep_phase_inv (g: heap) (fp: U64.t) (st: sweep_state) : prop =
   well_formed_heap_with (free_incremental st) g /\
   behind_swept g c /\ front_unswept g c /\
   no_adjacent_free g c /\ ends_free g c (prev_free g st) /\
-  tail_ok g c st.swept_tail /\ frag_ok g c st.last_fragment /\
+  st == state_at g st.cursor /\
   FLA.fl_ascending g fp
 
 val sweep_phase_inv_elim (g: heap) (fp: U64.t) (st: sweep_state)
   : Lemma (requires sweep_phase_inv g fp st)
-          (ensures (let c = U64.v st.cursor in
+          (ensures st == state_at g st.cursor /\
+                   (let c = U64.v st.cursor in
                     c % 8 == 0 /\ c <= heap_size /\ W.reaches g zero_addr c /\
                     heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
                     well_formed_heap_with (free_incremental st) g /\
@@ -130,7 +195,7 @@ let sweep_shape (g: heap) (fp: U64.t) (st: sweep_state) : prop =
   heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
   behind_swept g c /\ front_unswept g c /\
   no_adjacent_free g c /\ ends_free g c (prev_free g st) /\
-  tail_ok g c st.swept_tail /\ frag_ok g c st.last_fragment /\
+  st == state_at g st.cursor /\
   FLA.fl_ascending g fp
 
 /// The sweep phase is its shape and well-formedness for `free_incremental`.
@@ -140,7 +205,8 @@ val sweep_phase_inv_iff (g: heap) (fp: U64.t) (st: sweep_state)
 
 val sweep_shape_elim (g: heap) (fp: U64.t) (st: sweep_state)
   : Lemma (requires sweep_shape g fp st)
-          (ensures (let c = U64.v st.cursor in
+          (ensures st == state_at g st.cursor /\
+                   (let c = U64.v st.cursor in
                     c % 8 == 0 /\ c <= heap_size /\ W.reaches g zero_addr c /\
                     heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
                     behind_swept g c /\ front_unswept g c /\

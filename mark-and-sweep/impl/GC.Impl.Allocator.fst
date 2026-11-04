@@ -229,8 +229,8 @@ fn allocate (heap: heap_t) (fp: U64.t) (phase: R.ref phase_state)
            pure (U64.v wosize >= 1)
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
-    is_phase phase (snd (AC.alloc_phase 's fp 'ph (U64.v wosize) tag)) **
-    pure (let spec_res = fst (AC.alloc_phase 's fp 'ph (U64.v wosize) tag) in
+    is_phase phase (AC.phase_after_alloc 's fp (U64.v wosize) 'ph) **
+    pure (let spec_res = AC.alloc_phase 's fp 'ph (U64.v wosize) tag in
           s2 == spec_res.heap_out /\
           fst res == spec_res.fp_out /\
           snd res == spec_res.obj_out)
@@ -274,15 +274,15 @@ fn allocate (heap: heap_t) (fp: U64.t) (phase: R.ref phase_state)
             U64.v vprev < heap_size /\
             U64.v vprev % U64.v mword == 0)) /\
           SA.alloc_search 's vhead vprev vcur (U64.v wz) (phase_of pv) tag (U64.v vfuel) ==
-            fst (AC.alloc_phase 's fp (phase_of pv) (U64.v wosize) tag) /\
+            AC.alloc_phase 's fp (phase_of pv) (U64.v wosize) tag /\
           AC.alloc_find 's vprev vcur (U64.v wz) (U64.v vfuel) ==
             AC.alloc_choice 's fp (U64.v wosize)
         else
           (let sr = AC.alloc_phase 's fp (phase_of pv) (U64.v wosize) tag in
-           s_cur == (fst sr).heap_out /\
-           vhead == (fst sr).fp_out /\
-           vresult == (fst sr).obj_out /\
-           phase_of vph == snd sr))
+           s_cur == sr.heap_out /\
+           vhead == sr.fp_out /\
+           vresult == sr.obj_out /\
+           phase_of vph == AC.phase_after_alloc 's fp (U64.v wosize) (phase_of pv)))
       )
     decreases (U64.v !fuel_ref + (if !go then 1 else 0))
   {
@@ -467,7 +467,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (phase: R.ref phase_state)
   // Post-loop: invariant with go=false gives us spec correspondence
   let final_fp = !head_fp;
   let final_obj = !result_obj;
-  fold (is_phase phase (snd (AC.alloc_phase 's fp 'ph (U64.v wosize) tag)));
+  fold (is_phase phase (AC.phase_after_alloc 's fp (U64.v wosize) 'ph));
   (final_fp, final_obj)
 }
 #pop-options

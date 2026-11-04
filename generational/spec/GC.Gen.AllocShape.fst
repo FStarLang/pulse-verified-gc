@@ -94,7 +94,7 @@ let choice_facts (g: heap) (fp: U64.t) (wz: nat) (ph: SA.gc_phase) (tag: tag_t)
   : Lemma (requires FLA.fl_ascending g fp)
           (ensures (let (p, cur) = AC.alloc_choice g fp wz in
                     let w = AC.req_wz wz in
-                    let r = fst (AC.alloc_phase g fp ph wz tag) in
+                    let r = AC.alloc_phase g fp ph wz tag in
                     (cur == 0UL ==> r == { SA.heap_out = g; SA.fp_out = fp; SA.obj_out = 0UL }) /\
                     (cur <> 0UL ==> FL.fl_cell g cur /\ AC.fits_at g cur w /\ linked_to g fp p cur /\
                                    r == SA.alloc_search g fp p cur w ph tag 1)))
@@ -244,10 +244,10 @@ let at_explicit (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (st: sweep_state) (
   : Lemma (requires FLA.fl_ascending g fp /\ FL.fl_cell g cur /\
                     AC.fits_at g cur (AC.req_wz wz) /\ linked_to g fp p cur /\
                     piece_ok g cur (AC.req_wz wz) pc /\
-                    fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) ==
+                    AC.alloc_phase g fp (SA.Sweeping st) wz tag ==
                       SA.alloc_search g fp p cur (AC.req_wz wz) (SA.Sweeping st) tag 1)
           (ensures (let w = AC.req_wz wz in
-                    let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) in
+                    let r = AC.alloc_phase g fp (SA.Sweeping st) wz tag in
                     r.SA.heap_out == at_heap g p cur w tag pc st.cursor /\
                     r.SA.fp_out == spec_fp g fp p cur pc /\
                     U64.v r.SA.obj_out == U64.v pc.ah + 8 /\
@@ -255,7 +255,7 @@ let at_explicit (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (st: sweep_state) (
   = let w = AC.req_wz wz in
     let ph = SA.Sweeping st in
     spec_explicit g fp wz ph tag p cur pc;
-    let r = fst (AC.alloc_phase g fp ph wz tag) in
+    let r = AC.alloc_phase g fp ph wz tag in
     let o : obj_addr = r.SA.obj_out in
     hd_address_spec o;
     // the colour the phase gives the header at pc.ah

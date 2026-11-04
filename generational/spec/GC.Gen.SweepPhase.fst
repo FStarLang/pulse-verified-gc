@@ -445,8 +445,8 @@ let found_shape (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t) (
 #push-options "--z3rlimit 30"
 let alloc_none (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t)
   : Lemma (requires FLA.fl_ascending g fp /\
-                    (fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag)).SA.obj_out == 0UL)
-          (ensures (let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) in
+                    (AC.alloc_phase g fp (SA.Sweeping st) wz tag).SA.obj_out == 0UL)
+          (ensures (let r = AC.alloc_phase g fp (SA.Sweeping st) wz tag in
                     r.SA.heap_out == g /\ r.SA.fp_out == fp /\
                     snd (AC.alloc_choice g fp wz) == 0UL /\
                     (forall (t: U64.t). AC.alloc_tail g fp wz t == t)))
@@ -466,9 +466,9 @@ let alloc_none (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t)
 let alloc_found (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t)
   : Ghost (U64.t & U64.t & piece)
       (requires sweep_shape g fp st /\
-                (fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag)).SA.obj_out <> 0UL)
+                (AC.alloc_phase g fp (SA.Sweeping st) wz tag).SA.obj_out <> 0UL)
       (ensures fun (p, cur, pc) ->
-         (let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) in
+         (let r = AC.alloc_phase g fp (SA.Sweeping st) wz tag in
           found g fp st wz tag p cur pc /\
           r.SA.heap_out == gx_of g st wz tag p cur pc /\
           r.SA.fp_out == spec_fp g fp p cur pc /\
@@ -489,7 +489,7 @@ let alloc_found (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t)
 #push-options "--z3rlimit 30"
 let alloc_sweep_shape g fp st wz tag =
   sweep_shape_elim g fp st;
-  let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) in
+  let r = AC.alloc_phase g fp (SA.Sweeping st) wz tag in
   if r.SA.obj_out = 0UL then alloc_none g fp st wz tag
   else begin
     let (p, cur, pc) = alloc_found g fp st wz tag in
@@ -572,7 +572,7 @@ let found_in_use (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t) 
 let alloc_sweep_phase g fp st wz tag =
   sweep_phase_inv_iff g fp st;
   alloc_sweep_shape g fp st wz tag;
-  let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) in
+  let r = AC.alloc_phase g fp (SA.Sweeping st) wz tag in
   if r.SA.obj_out <> 0UL then begin
     let (p, cur, pc) = alloc_found g fp st wz tag in
     let gx = gx_of g st wz tag p cur pc in
@@ -589,7 +589,7 @@ let alloc_sweep_phase g fp st wz tag =
 
 #push-options "--z3rlimit 30"
 let alloc_carved g fp st wz tag =
-  let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) in
+  let r = AC.alloc_phase g fp (SA.Sweeping st) wz tag in
   let (p, cur, pc) = alloc_found g fp st wz tag in
   let w = AC.req_wz wz in
   found_shape g fp st wz tag p cur pc;
@@ -805,8 +805,8 @@ let minor_fields_ok_of free minor obj g =
 #push-options "--z3rlimit 30"
 let alloc_keeps (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t) (y: obj_addr)
   : Lemma (requires sweep_shape g fp st /\ in_use (free_incremental st) g y /\
-                    (fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag)).SA.obj_out <> 0UL)
-          (ensures (let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) in
+                    (AC.alloc_phase g fp (SA.Sweeping st) wz tag).SA.obj_out <> 0UL)
+          (ensures (let r = AC.alloc_phase g fp (SA.Sweeping st) wz tag in
                     let st' = alloc_state g fp wz st in
                     same_block g r.SA.heap_out (hd_address y) /\
                     read_word r.SA.heap_out (hd_address y) == read_word g (hd_address y) /\
@@ -858,7 +858,7 @@ let rec copy_shape (g: heap) (fp: U64.t) (st: sweep_state) (minor: minor_state)
 let promote_sweep_shape g fp st minor obj wosize =
   let tag = Promote.promoted_tag minor obj in
   alloc_sweep_shape g fp st wosize tag;
-  let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wosize tag) in
+  let r = AC.alloc_phase g fp (SA.Sweeping st) wosize tag in
   if r.SA.obj_out <> 0UL then begin
     let st' = alloc_state g fp wosize st in
     let dst : obj_addr = r.SA.obj_out in
@@ -948,7 +948,7 @@ let promote_sweep_phase g fp st minor obj wosize =
   let free = free_incremental st in
   sweep_phase_inv_iff g fp st;
   alloc_sweep_phase g fp st wosize tag;
-  let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wosize tag) in
+  let r = AC.alloc_phase g fp (SA.Sweeping st) wosize tag in
   if r.SA.obj_out <> 0UL then begin
     let st' = alloc_state g fp wosize st in
     let g1 = r.SA.heap_out in

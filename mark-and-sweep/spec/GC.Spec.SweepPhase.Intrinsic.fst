@@ -23,6 +23,101 @@ module Phase = GC.Spec.SweepPhase.Util
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 10"
 
 /// ---------------------------------------------------------------------------
+/// The sweep's caches, derived
+/// ---------------------------------------------------------------------------
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+let rec max_cell_below_spec g x =
+  if x = 0 then begin
+    let aux (y: U64.t) : Lemma (~(FL.fl_cell g y /\ U64.v y <= 0)) = () in
+    FStar.Classical.forall_intro aux
+  end else begin
+    max_cell_below_spec g (x - 1);
+    if x < heap_size && FStar.IndefiniteDescription.strong_excluded_middle (FL.fl_cell g (U64.uint_to_t x))
+    then ()
+    else begin
+      let aux (y: U64.t) : Lemma (FL.fl_cell g y /\ U64.v y <= x ==> U64.v y <= x - 1)
+        = if U64.v y = x && x >= heap_size then () in
+      FStar.Classical.forall_intro aux
+    end
+  end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1"
+let rec max_cell_below_congr g g' x =
+  if x = 0 then () else max_cell_below_congr g g' (x - 1)
+#pop-options
+
+/// The spec pins `max_cell_below` down.
+private let max_cell_unique (g: heap) (x: nat) (m: U64.t)
+  : Lemma (requires (m == 0UL \/ (FL.fl_cell g m /\ U64.v m <= x)) /\
+                    (forall (y: U64.t). FL.fl_cell g y /\ U64.v y <= x ==> m <> 0UL /\ U64.v y <= U64.v m))
+          (ensures max_cell_below g x == m)
+  = max_cell_below_spec g x
+
+/// A cell's block ends at or before any walk position above the cell.
+#push-options "--z3rlimit 20"
+private let cell_end_before (g: heap) (x: U64.t) (c: nat)
+  : Lemma (requires FL.fl_cell g x /\ W.reaches g zero_addr c /\ U64.v x < c)
+          (ensures U64.v x + wosize_at g x * 8 <= c /\ wosize_at g x >= 1)
+  = fl_cell_iff g x;
+    wosize_at_hd g x;
+    let q = mk_hp_addr (U64.v x - 8) in
+    W.bnext_facts g q;
+    if c < W.bnext g q then no_pos_inside g q c
+#pop-options
+
+#push-options "--z3rlimit 20"
+let tail_ok_iff g c t =
+  let m = last_cell_behind g c in
+  (if c > 0 then max_cell_below_spec g (c - 1));
+  let fwd () : Lemma (requires tail_ok g c t) (ensures t == m)
+    = tail_ok_elim g c t;
+      (if t <> 0UL then begin fl_cell_iff g t; wosize_at_hd g t end);
+      if c > 0 then begin
+        let aux (y: U64.t) : Lemma (FL.fl_cell g y /\ U64.v y <= c - 1 ==> t <> 0UL /\ U64.v y <= U64.v t)
+          = () in
+        FStar.Classical.forall_intro aux;
+        max_cell_unique g (c - 1) t
+      end
+  in
+  let bwd () : Lemma (requires t == m) (ensures tail_ok g c t)
+    = (if t <> 0UL then cell_end_before g t c);
+      tail_ok_intro g c t
+  in
+  FStar.Classical.move_requires fwd ();
+  FStar.Classical.move_requires bwd ()
+#pop-options
+
+/// A fragment ending at `c` is no cell's block: two blocks of the walk do not
+/// end at the same position.
+#push-options "--z3rlimit 30"
+let frag_ok_derived g st =
+  let c = U64.v st.cursor in
+  let f = st.last_fragment in
+  if f <> 0UL then ()
+  else if c >= U64.v zero_addr + 8 && c < heap_size && c % 8 = 0 &&
+          W.reaches g zero_addr (c - 8) && W.can_step g (mk_hp_addr (c - 8)) &&
+          blue_at g (mk_hp_addr (c - 8)) && wz_at g (mk_hp_addr (c - 8)) = 0
+  then begin
+    // the fragment's block is free, so the block before the cursor is, so
+    // `swept_tail`'s block ends at the cursor -- around the fragment
+    let p = mk_hp_addr (c - 8) in
+    ends_free_elim g c (prev_free g st) p;
+    let t = st.swept_tail in
+    tail_ok_elim g c t;
+    assert (t <> 0UL);
+    fl_cell_iff g t;
+    wosize_at_hd g t;
+    let q = mk_hp_addr (U64.v t - 8) in
+    W.bnext_facts g q;
+    no_pos_inside g q (c - 8)
+  end
+#pop-options
+
+let frag_at_ok g c = ()
+
+/// ---------------------------------------------------------------------------
 /// What counts as free during the sweep
 /// ---------------------------------------------------------------------------
 
@@ -51,7 +146,20 @@ let well_formed_heap_with_congr free free' g =
 /// Opening and closing the clauses
 /// ---------------------------------------------------------------------------
 
-let sweep_phase_inv_elim g fp st = reveal_opaque (`%sweep_phase_inv) (sweep_phase_inv g fp st)
+/// The caches are derived exactly when `tail_ok` and `frag_ok` hold.
+private let caches_derived (g: heap) (st: sweep_state)
+  : Lemma (requires W.reaches g zero_addr (U64.v st.cursor) /\
+                    ends_free g (U64.v st.cursor) (prev_free g st))
+          (ensures (st == state_at g st.cursor <==>
+                    tail_ok g (U64.v st.cursor) st.swept_tail /\ frag_ok g (U64.v st.cursor) st.last_fragment))
+  = let c = U64.v st.cursor in
+    tail_ok_iff g c st.swept_tail;
+    frag_at_ok g c;
+    FStar.Classical.move_requires (frag_ok_derived g) st
+
+let sweep_phase_inv_elim g fp st =
+  reveal_opaque (`%sweep_phase_inv) (sweep_phase_inv g fp st);
+  caches_derived g st
 
 let sweep_phase_inv_intro (g: heap) (fp: U64.t) (st: sweep_state)
   : Lemma (requires (let c = U64.v st.cursor in
@@ -63,7 +171,8 @@ let sweep_phase_inv_intro (g: heap) (fp: U64.t) (st: sweep_state)
                      tail_ok g c st.swept_tail /\ frag_ok g c st.last_fragment /\
                      FLA.fl_ascending g fp))
           (ensures sweep_phase_inv g fp st)
-  = reveal_opaque (`%sweep_phase_inv) (sweep_phase_inv g fp st)
+  = caches_derived g st;
+    reveal_opaque (`%sweep_phase_inv) (sweep_phase_inv g fp st)
 
 /// ---------------------------------------------------------------------------
 /// The shape
@@ -73,9 +182,13 @@ let sweep_phase_inv_iff g fp st =
   reveal_opaque (`%sweep_phase_inv) (sweep_phase_inv g fp st);
   reveal_opaque (`%sweep_shape) (sweep_shape g fp st)
 
-let sweep_shape_elim g fp st = reveal_opaque (`%sweep_shape) (sweep_shape g fp st)
+let sweep_shape_elim g fp st =
+  reveal_opaque (`%sweep_shape) (sweep_shape g fp st);
+  caches_derived g st
 
-let sweep_shape_intro g fp st = reveal_opaque (`%sweep_shape) (sweep_shape g fp st)
+let sweep_shape_intro g fp st =
+  caches_derived g st;
+  reveal_opaque (`%sweep_shape) (sweep_shape g fp st)
 
 let behind_swept_intro (g: heap) (c: nat)
   (pf: (p: hp_addr -> Lemma (requires W.reaches g zero_addr (U64.v p) /\ U64.v p < c)

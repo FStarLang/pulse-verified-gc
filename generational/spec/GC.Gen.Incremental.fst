@@ -51,7 +51,6 @@ let phase_shape_collection minor g fp ph =
       phase_shape_sweeping minor g fp st;
       SPM.sweep_collection_shape minor g fp st;
       sweep_phase_inv_elim g fp st;
-      FSI.tail_ok_elim g (U64.v st.cursor) st.swept_tail;
       ST.phase_at_self ph g;
       assert_norm (phase_free (Ph.Sweeping st) == free_incremental st)
 

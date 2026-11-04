@@ -12,8 +12,9 @@
 /// not free (`free_incremental`).
 ///
 ///   * **Allocation** (`alloc_sweep_phase`) is first-fit at the sweep's phase
-///     (`GC.Spec.Allocator.Cursor.alloc_phase`), with the phase it returns
-///     (`swept_tail` moves back when its cell leaves the list).  Its fields
+///     (`GC.Spec.Allocator.Cursor.alloc_phase`), with the phase record it
+///     leaves (`phase_after_alloc`: the cached `swept_tail` moves back when
+///     its cell leaves the list, so it stays the derived one).  Its fields
 ///     are what the free block held, so the new object is not yet bound by
 ///     the pointer clauses: the result is the sweep phase with the new object
 ///     *fresh* (`fresh_ok`: the heap is well formed when it also counts as
@@ -89,7 +90,7 @@ let new_block (g g': heap) (st: sweep_state) (obj: U64.t) (wz: nat) (tag: tag_t)
 /// phase gives its position; and so it is not pending free.
 val alloc_phase_new_block (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t)
   : Lemma (requires FLA.fl_ascending g fp /\ U64.v st.cursor % 8 == 0)
-          (ensures (let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) in
+          (ensures (let r = AC.alloc_phase g fp (SA.Sweeping st) wz tag in
                     r.SA.obj_out <> 0UL ==> new_block g r.SA.heap_out st r.SA.obj_out wz tag))
 
 /// What counts as free during the sweep, and also the one object `obj` just
@@ -110,10 +111,9 @@ let fresh_ok (g: heap) (fp: U64.t) (st: sweep_state) (obj: obj_addr) : prop =
 /// **Allocation keeps the sweep shape**, and the pending-free set.
 val alloc_sweep_shape (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t)
   : Lemma (requires sweep_shape g fp st)
-          (ensures (let ar = AC.alloc_phase g fp (SA.Sweeping st) wz tag in
-                    let r = fst ar in
+          (ensures (let r = AC.alloc_phase g fp (SA.Sweeping st) wz tag in
                     let st' = alloc_state g fp wz st in
-                    snd ar == SA.Sweeping st' /\
+                    AC.phase_after_alloc g fp wz (SA.Sweeping st) == SA.Sweeping st' /\
                     sweep_shape r.SA.heap_out r.SA.fp_out st' /\
                     (forall (x: obj_addr). pending_free st' r.SA.heap_out x == pending_free st g x) /\
                     (r.SA.obj_out == 0UL ==> r.SA.heap_out == g /\ r.SA.fp_out == fp /\ st' == st) /\
@@ -122,10 +122,9 @@ val alloc_sweep_shape (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: ta
 /// **Allocation keeps the sweep phase**, with the new object fresh.
 val alloc_sweep_phase (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t)
   : Lemma (requires sweep_phase_inv g fp st /\ tag <> infix_tag)
-          (ensures (let ar = AC.alloc_phase g fp (SA.Sweeping st) wz tag in
-                    let r = fst ar in
+          (ensures (let r = AC.alloc_phase g fp (SA.Sweeping st) wz tag in
                     let st' = alloc_state g fp wz st in
-                    snd ar == SA.Sweeping st' /\
+                    AC.phase_after_alloc g fp wz (SA.Sweeping st) == SA.Sweeping st' /\
                     (forall (x: obj_addr). pending_free st' r.SA.heap_out x == pending_free st g x) /\
                     (r.SA.obj_out == 0UL ==> r.SA.heap_out == g /\ r.SA.fp_out == fp /\ st' == st) /\
                     (r.SA.obj_out <> 0UL ==>
@@ -147,8 +146,8 @@ let carved_from (g g': heap) (q p: hp_addr) : prop =
 
 val alloc_carved (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t)
   : Lemma (requires sweep_shape g fp st /\
-                    (fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag)).SA.obj_out <> 0UL)
-          (ensures (let r = fst (AC.alloc_phase g fp (SA.Sweeping st) wz tag) in
+                    (AC.alloc_phase g fp (SA.Sweeping st) wz tag).SA.obj_out <> 0UL)
+          (ensures (let r = AC.alloc_phase g fp (SA.Sweeping st) wz tag in
                     is_obj r.SA.obj_out /\ U64.v r.SA.obj_out >= U64.v zero_addr + 8 /\
                     (exists (q: hp_addr). carved_from g r.SA.heap_out q
                                             (hd_address (r.SA.obj_out <: obj_addr)))))

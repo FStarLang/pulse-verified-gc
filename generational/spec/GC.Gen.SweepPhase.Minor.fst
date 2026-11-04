@@ -152,7 +152,7 @@ let run_facts (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep_state) (root
     CI.cheney_promote_keeps minor ph (run_p st g) (run_step minor st g) g fp roots;
     ST.update_heads pm free prom.Promote.fwd_map;
     same_heads_facts pm rm;
-    ST.max_cell_below_congr pm rm (U64.v st.swept_tail)
+    ST.phase_at_heads (Ph.Sweeping st) pm rm
 #pop-options
 
 /// ---------------------------------------------------------------------------

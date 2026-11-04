@@ -19,8 +19,8 @@
 ///     nursery's shape and the cross-generation condition, is the minor
 ///     collection's entry shape at that phase and for that definition of free.
 ///   * **Step C** (`minor_keeps_sweep_phase`): the collection keeps the sweep
-///     phase, with the same cursor and `last_fragment`, `swept_tail` the last
-///     cell at or below where it was (`state_after`), and the same
+///     phase, with the same cursor and `last_fragment`, `swept_tail` the one
+///     derived from the heap it leaves (`state_after`), and the same
 ///     pending-free set: new objects are never pending free and no existing
 ///     header changes.  Well-formedness is the generic theorem's; the shape is
 ///     by induction over the promotions (`GC.Gen.Cheney.Induction`), each one a
@@ -65,11 +65,11 @@ val sweep_collection_shape (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep
           (ensures GenInv.collection_shape_with (Ph.Sweeping st) (free_incremental st) minor g fp)
 
 /// The sweep state after a minor collection that left the heap `g'`: the
-/// same cursor and `last_fragment`, and `swept_tail` the last list cell at or
-/// below where it was.  It is the phase the allocator leaves
-/// (`GC.Gen.SweptTail.phase_at`).
+/// same cursor and `last_fragment`, and `swept_tail` the one derived from
+/// `g'` (the last list cell behind the cursor).  It is the phase the
+/// allocator leaves (`GC.Gen.SweptTail.phase_at`).
 let state_after (st: sweep_state) (g': heap) : GTot sweep_state =
-  { st with swept_tail = ST.max_cell_below g' (U64.v st.swept_tail) }
+  { st with swept_tail = last_cell_behind g' (U64.v st.cursor) }
 
 /// The collection at the sweep's phase.
 let collect_at (st: sweep_state) (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)

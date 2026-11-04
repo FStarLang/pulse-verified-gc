@@ -29,7 +29,11 @@ open GC.Spec.FusedSweep
 module U64 = FStar.UInt64
 
 /// The major collector's phase.  `Sweeping st`: a sweep is under way, in state
-/// `st` (its cursor, `swept_tail` and `last_fragment`, `GC.Spec.FusedSweep`).
+/// `st` (`GC.Spec.FusedSweep`): its cursor, and the two caches the
+/// implementation keeps beside it, `swept_tail` and `last_fragment`, which are
+/// functions of the heap and the cursor
+/// (`GC.Spec.SweepPhase.Intrinsic.state_at`; the sweep phase says the stored
+/// ones are the derived ones).  Only the cursor colours a new object.
 type gc_phase =
   | Idle
   | Sweeping of sweep_state
