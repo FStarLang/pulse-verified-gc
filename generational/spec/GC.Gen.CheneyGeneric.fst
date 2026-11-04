@@ -42,7 +42,7 @@ let update_walk_keeps_in_use free major upd fwd x =
   PU.update_walk_preserves_objects major upd fwd;
   if Seq.mem x (objects zero_addr major) then begin
     PU.update_walk_preserves_header major upd fwd x;
-    in_use_header_determined free major (update_walk major upd fwd) x
+    in_use_is_determined_from_header free major (update_walk major upd fwd) x
   end
   else begin
     if in_use free major x then in_use_not_blue free major x;
@@ -64,7 +64,7 @@ private let old_in_use_kept
 let cheney_promote_keeps_in_use free minor major fp roots x =
   in_use_not_blue free major x;
   old_in_use_kept minor major fp roots x;
-  in_use_header_determined free major (cheney_promote minor major fp roots).major_final x
+  in_use_is_determined_from_header free major (cheney_promote minor major fp roots).major_final x
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let cheney_promote_image_not_free free minor major fp roots m x =
@@ -77,7 +77,7 @@ let cheney_promote_in_use_origin free minor major fp roots x =
   in_use_not_blue free prom.major_final x;
   if in_use free_stw major x then begin
     old_in_use_kept minor major fp roots x;
-    in_use_header_determined free major prom.major_final x
+    in_use_is_determined_from_header free major prom.major_final x
   end
   else begin
     NBO.cheney_promote_nonblue_origin minor major fp roots x;

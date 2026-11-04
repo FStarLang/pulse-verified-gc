@@ -494,7 +494,7 @@ let promote_object_new_addr_not_free
   AllocProps.alloc_spec_obj_in_objects_part1 major fp wz tag;
   let na : obj_addr = res.new_addr in
   allocations_not_free_elim free major fp wz tag na;
-  in_use_header_determined free alloc_res.heap_out res.major_out na
+  in_use_is_determined_from_header free alloc_res.heap_out res.major_out na
 #pop-options
 
 /// The freshly promoted object keeps the allocator-provided (exact) wosize

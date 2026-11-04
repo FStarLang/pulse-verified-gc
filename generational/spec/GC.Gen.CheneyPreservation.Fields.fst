@@ -661,7 +661,7 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
             let target : obj_addr = cs.cs_fwd x in
             assert (U64.v (wosize_of_object target cs.cs_major) == minor_wosize minor x);
             Frame.cheney_forward_normal_preserves_old_nonblue_shape minor cs addr target;
-            in_use_header_determined free cs.cs_major cs'.cs_major target;
+            in_use_is_determined_from_header free cs.cs_major cs'.cs_major target;
             assert (is_no_scan target cs'.cs_major == is_no_scan target cs.cs_major);
             assert (is_no_scan target cs'.cs_major = (minor_tag minor x >= 251));
             assert (wosize_of_object target cs'.cs_major == wosize_of_object target cs.cs_major);

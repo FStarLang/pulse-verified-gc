@@ -1050,11 +1050,11 @@ caller supplies.  They assume three things of it, all true of `free_stw`:
    block's header, so field writes do not change it *)
 let blue_is_free (free: free_def) : prop =
   forall (g: heap) (x: obj_addr). is_block g x /\ is_blue x g ==> free g x
-let free_header_determined (free: free_def) : prop =
+let free_is_determined_from_header (free: free_def) : prop =
   forall (g g': heap) (x: obj_addr).
     (is_block g x <==> is_block g' x) /\
     read_word g (hd_address x) == read_word g' (hd_address x) ==> free g x == free g' x
-let free_def_ok (free: free_def) : prop = blue_is_free free /\ free_header_determined free
+let free_def_ok (free: free_def) : prop = blue_is_free free /\ free_is_determined_from_header free
 
 (* the blocks the allocator creates are not free           (GC.Gen.Promote) *)
 let allocations_not_free (free: free_def) : prop =
@@ -1070,7 +1070,7 @@ is a property of the definition of free and of the allocator promotion runs,
 not of a particular collection; the generic theorems derive from it that no
 promoted copy is free (`CheneyPreservation.Fields.cheney_promote_fwd_target_not_free`:
 the copy is not free when it is allocated, and its header and walk membership
-never change afterwards, so by `free_header_determined` it stays so).  It is
+never change afterwards, so by `free_is_determined_from_header` it stays so).  It is
 part of the shape (`major_shape_with`), so it does not appear in the
 statements.  For a sweep in progress this is where the allocation colour
 matters: the allocator at the sweeping phase colours a block in front of the
@@ -1098,7 +1098,7 @@ included, and the collection never reads them.  At `free_stw` this is
 
 `GC.Gen.CheneyGeneric` proves it is kept, event by event: promotion keeps every
 non-free block non-free (`cheney_promote_keeps_in_use`, by
-`free_header_determined`), makes the images of the promoted nursery objects
+`free_is_determined_from_header`), makes the images of the promoted nursery objects
 non-free blocks (`cheney_promote_image_not_free`, by `allocations_not_free`),
 and keeps `well_formed_heap_with free` (`cheney_promote_preserves_wf_with`: an
 old block is untouched, a promoted one holds its nursery source's fields); the

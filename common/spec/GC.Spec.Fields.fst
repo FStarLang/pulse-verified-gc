@@ -720,7 +720,7 @@ let wf_parts (_: unit) : Lemma
 /// that
 ///   - counts every blue block as free (`blue_is_free`), and
 ///   - is read off the walk membership and the header of the block alone
-///     (`free_header_determined`), so field writes do not change it;
+///     (`free_is_determined_from_header`), so field writes do not change it;
 /// together `free_def_ok`.  `free_stw` has both (`free_stw_ok`).  A minor
 /// collection also needs the blocks the allocator creates not to be free
 /// (`GC.Gen.Promote.allocations_not_free`).
@@ -728,20 +728,20 @@ let wf_parts (_: unit) : Lemma
 let blue_is_free (free: free_def) : prop =
   forall (g: heap) (x: obj_addr). is_block g x /\ is_blue x g ==> free g x
 
-let free_header_determined (free: free_def) : prop =
+let free_is_determined_from_header (free: free_def) : prop =
   forall (g g': heap) (x: obj_addr).
     (is_block g x <==> is_block g' x) /\
     read_word g (hd_address x) == read_word g' (hd_address x) ==> free g x == free g' x
 
 [@@"opaque_to_smt"]
-let free_def_ok (free: free_def) : prop = blue_is_free free /\ free_header_determined free
+let free_def_ok (free: free_def) : prop = blue_is_free free /\ free_is_determined_from_header free
 
 let in_use_not_blue (free: free_def) (g: heap) (x: obj_addr) : Lemma
   (requires free_def_ok free /\ in_use free g x)
   (ensures Seq.mem x (objects zero_addr g) /\ ~(is_blue x g))
   = reveal_opaque (`%free_def_ok) free_def_ok
 
-let in_use_header_determined (free: free_def) (g g': heap) (x: obj_addr) : Lemma
+let in_use_is_determined_from_header (free: free_def) (g g': heap) (x: obj_addr) : Lemma
   (requires free_def_ok free /\
             (Seq.mem x (objects zero_addr g) <==> Seq.mem x (objects zero_addr g')) /\
             read_word g (hd_address x) == read_word g' (hd_address x))
