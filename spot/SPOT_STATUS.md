@@ -387,8 +387,7 @@ Both halves are proved of the same heap:
   `GC.Spec.Fields.no_scan_invariant`, so it was inadmissible before;
 - `spot_ns_major_heap_shape` — the heap nevertheless satisfies every conjunct of
   `GC.Gen.HeapInvariant.major_heap_shape`, including `well_formed_heap` (a
-  no-scan block has no pointers, `has_pointer_to`, so its pointer clauses skip
-  `S` entirely), and `no_pointer_to_blue` (likewise).  The clause that briefly replaced
+  no-scan block is not `scannable`, so its pointer clauses skip `S` entirely), and `no_pointer_to_blue` (likewise).  The clause that briefly replaced
   `no_scan_invariant`, `GC.Gen.Promote.blue_fields_closed`, is gone too: free
   blocks are no longer constrained beyond their link.
 

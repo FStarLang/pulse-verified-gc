@@ -13,7 +13,7 @@
  * `tag >= no_scan_tag` both stop at the tag, so those words are never read.
  *
  * That is the empirical claim the specification change rests on:
- * a no-scan block has no pointers (`GC.Spec.Fields.has_pointer_to`), so the
+ * a no-scan block has no pointers (it is not `GC.Spec.Fields.scannable`), so the
  * pointer clauses of `well_formed_heap` say nothing about its body, and the whole-heap
  * precondition `no_scan_invariant` — which asserted that a live no-scan object
  * contains no pointer-shaped word — is gone.  `spot/GC.SPOT.NoScanMajor` is
