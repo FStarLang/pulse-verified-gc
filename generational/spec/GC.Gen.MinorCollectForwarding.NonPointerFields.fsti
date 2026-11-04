@@ -120,7 +120,7 @@ val normal_post_non_pointer_fields_preserved
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\

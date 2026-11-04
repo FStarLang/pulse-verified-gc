@@ -76,6 +76,29 @@ val cheney_promote_fwd_target_no_scan_iff_minor_tag
        // `minor_scan_wosize == minor_wosize` -- from an edge out of the image.
        is_no_scan target prom.major_final = (minor_tag minor x >= 251) /\
        // Promotion is size-exact: the image declares exactly the source's wosize.
-       U64.v (wosize_of_object target prom.major_final) == minor_wosize minor x /\
-       // The idle allocator writes a white header, and nothing rewrites it.
-       is_white target prom.major_final))
+       U64.v (wosize_of_object target prom.major_final) == minor_wosize minor x))
+
+/// The image of a normally-forwarded minor object is not free, for any
+/// definition of free under which the allocator's blocks are not free
+/// (`allocations_not_free`): it is not free when it is allocated, and its
+/// header and walk membership never change afterwards.
+val cheney_promote_fwd_target_not_free
+  (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (x: U64.t)
+  : Lemma
+    (requires blocks_fit major /\ no_infix_block major /\
+              AllocLemmas.fl_valid major fp heap_words /\
+              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              chain_objects_blue major fp /\
+              minor_wf minor /\
+              minor_infix_wf minor /\
+              free_def_ok free /\ allocations_not_free free /\
+              (let prom = cheney_promote minor major fp roots in
+               prom.fwd_map x <> 0UL /\
+               Seq.mem x (minor_objects minor)))
+    (ensures
+      (let prom = cheney_promote minor major fp roots in
+       is_val_addr (prom.fwd_map x) /\
+       (let target : obj_addr = prom.fwd_map x in
+        Seq.mem target (objects zero_addr prom.major_final) /\
+        not (free prom.major_final target))))

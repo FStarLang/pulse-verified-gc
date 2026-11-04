@@ -483,7 +483,7 @@ let fwd_target_not_no_scan_pre (minor: minor_state) (cs: cheney_state)
   cs.cs_fwd x <> 0UL /\
   Seq.mem x (minor_objects minor)
 
-let fwd_target_not_no_scan_match (minor: minor_state) (cs: cheney_state)
+let fwd_target_not_no_scan_match (free: free_def) (minor: minor_state) (cs: cheney_state)
                                  (x: U64.t) : prop =
   fwd_target_not_no_scan_pre minor cs x ==>
   is_val_addr (cs.cs_fwd x) /\
@@ -492,16 +492,16 @@ let fwd_target_not_no_scan_match (minor: minor_state) (cs: cheney_state)
    is_blue target cs.cs_major = false /\
    is_no_scan target cs.cs_major = (minor_tag minor x >= 251) /\
    U64.v (wosize_of_object target cs.cs_major) == minor_wosize minor x /\
-       is_white target cs.cs_major)
+       not (free cs.cs_major target))
 
-let fwd_target_not_no_scan_state (minor: minor_state) (cs: cheney_state) : prop =
-  forall (x: U64.t). fwd_target_not_no_scan_match minor cs x
+let fwd_target_not_no_scan_state (free: free_def) (minor: minor_state) (cs: cheney_state) : prop =
+  forall (x: U64.t). fwd_target_not_no_scan_match free minor cs x
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let fwd_target_not_no_scan_state_elim
-  (minor: minor_state) (cs: cheney_state) (x: U64.t)
+  (free: free_def) (minor: minor_state) (cs: cheney_state) (x: U64.t)
   : Lemma
-    (requires fwd_target_not_no_scan_state minor cs /\
+    (requires fwd_target_not_no_scan_state free minor cs /\
               fwd_target_not_no_scan_pre minor cs x)
     (ensures
       is_val_addr (cs.cs_fwd x) /\
@@ -510,8 +510,8 @@ let fwd_target_not_no_scan_state_elim
         is_blue target cs.cs_major = false /\
         is_no_scan target cs.cs_major = (minor_tag minor x >= 251) /\
         U64.v (wosize_of_object target cs.cs_major) == minor_wosize minor x /\
-       is_white target cs.cs_major))
-  = assert (fwd_target_not_no_scan_match minor cs x)
+       not (free cs.cs_major target)))
+  = assert (fwd_target_not_no_scan_match free minor cs x)
 #pop-options
 
 /// Z3 4.15.3 helper: extending a forwarding map at an *infix* minor address
@@ -521,15 +521,15 @@ let fwd_target_not_no_scan_state_elim
 /// states so the proof runs in an empty hypothesis context.
 private
 let fwd_state_extend_infix
-  (minor: minor_state) (cs' r: cheney_state) (addr sum: U64.t)
+  (free: free_def) (minor: minor_state) (cs' r: cheney_state) (addr sum: U64.t)
   : Lemma
       (requires
-        fwd_target_not_no_scan_state minor cs' /\
+        fwd_target_not_no_scan_state free minor cs' /\
         minor_wf minor /\
         is_infix_in_minor minor addr /\
         r.cs_major == cs'.cs_major /\
         r.cs_fwd == extend_forwarding cs'.cs_fwd addr sum)
-      (ensures fwd_target_not_no_scan_state minor r)
+      (ensures fwd_target_not_no_scan_state free minor r)
   =
   let aux (x: U64.t) : Lemma
     (requires fwd_target_not_no_scan_pre minor r x)
@@ -540,21 +540,21 @@ let fwd_state_extend_infix
        is_blue target r.cs_major = false /\
        is_no_scan target r.cs_major = (minor_tag minor x >= 251) /\
        U64.v (wosize_of_object target r.cs_major) == minor_wosize minor x /\
-       is_white target r.cs_major))
+       not (free r.cs_major target)))
     = if x = addr then begin
         minor_objects_not_infix minor addr;
         assert False
       end else begin
         assert (r.cs_fwd x == cs'.cs_fwd x);
-        fwd_target_not_no_scan_state_elim minor cs' x
+        fwd_target_not_no_scan_state_elim free minor cs' x
       end
   in
   Classical.forall_intro (Classical.move_requires aux)
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-let fwd_target_not_no_scan_initial (minor: minor_state) (major: heap) (fp: U64.t)
+let fwd_target_not_no_scan_initial (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma
-    (ensures fwd_target_not_no_scan_state minor
+    (ensures fwd_target_not_no_scan_state free minor
       { cs_major = major; cs_fp = fp;
         cs_fwd = empty_forwarding; cs_queue = Seq.empty })
   =
@@ -570,7 +570,7 @@ let fwd_target_not_no_scan_initial (minor: minor_state) (major: heap) (fp: U64.t
        is_blue target cs0.cs_major = false /\
        is_no_scan target cs0.cs_major = (minor_tag minor x >= 251) /\
        U64.v (wosize_of_object target cs0.cs_major) == minor_wosize minor x /\
-       is_white target cs0.cs_major))
+       not (free cs0.cs_major target)))
   =
     assert (cs0.cs_fwd x == 0UL);
     assert False
@@ -580,17 +580,18 @@ let fwd_target_not_no_scan_initial (minor: minor_state) (major: heap) (fp: U64.t
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
-  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  (free: free_def) (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma
       (requires
-        fwd_target_not_no_scan_state minor cs /\
+        fwd_target_not_no_scan_state free minor cs /\
+        free_def_ok free /\ allocations_not_free free /\
         blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
         minor_wf minor /\
         minor_infix_wf minor)
-      (ensures fwd_target_not_no_scan_state minor
+      (ensures fwd_target_not_no_scan_state free minor
         (cheney_forward_normal minor cs addr))
   =
   let cs' = cheney_forward_normal minor cs addr in
@@ -603,17 +604,17 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
        is_blue target cs'.cs_major = false /\
        is_no_scan target cs'.cs_major = (minor_tag minor x >= 251) /\
        U64.v (wosize_of_object target cs'.cs_major) == minor_wosize minor x /\
-       is_white target cs'.cs_major))
+       not (free cs'.cs_major target)))
   =
     if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL then begin
       cheney_forward_normal_noop minor cs addr;
-      fwd_target_not_no_scan_state_elim minor cs x
+      fwd_target_not_no_scan_state_elim free minor cs x
     end
     else
       if minor_wosize minor addr < 1 then begin
         lt1_eq0 (minor_wosize minor addr);
         cheney_forward_normal_noop_wz0 minor cs addr;
-        fwd_target_not_no_scan_state_elim minor cs x
+        fwd_target_not_no_scan_state_elim free minor cs x
       end
       else begin
         let wz = minor_wosize minor addr in
@@ -625,7 +626,7 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
           assert (cs.cs_fwd addr = 0UL);
           assert (wz > 0);
           cheney_forward_normal_noop_oom minor cs addr;
-          fwd_target_not_no_scan_state_elim minor cs x
+          fwd_target_not_no_scan_state_elim free minor cs x
         end
         else begin
           cheney_forward_normal_success minor cs addr;
@@ -637,7 +638,7 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
             let target : obj_addr = res.new_addr in
             Forwarding.promote_object_new_addr_wosize_eq minor cs.cs_major addr cs.cs_fp wz target;
             Forwarding.promote_object_new_addr_tag minor cs.cs_major addr cs.cs_fp wz;
-            Forwarding.promote_object_new_addr_white minor cs.cs_major addr cs.cs_fp wz;
+            Forwarding.promote_object_new_addr_not_free free minor cs.cs_major addr cs.cs_fp wz;
             let tag = minor_tag minor addr in
             no_scan_tag_val ();
             assert_norm (251 < pow2 64);
@@ -656,11 +657,11 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
           else begin
             assert (cs'.cs_fwd x == cs.cs_fwd x);
             assert (fwd_target_not_no_scan_pre minor cs x);
-            fwd_target_not_no_scan_state_elim minor cs x;
+            fwd_target_not_no_scan_state_elim free minor cs x;
             let target : obj_addr = cs.cs_fwd x in
             assert (U64.v (wosize_of_object target cs.cs_major) == minor_wosize minor x);
             Frame.cheney_forward_normal_preserves_old_nonblue_shape minor cs addr target;
-            color_of_header_eq target cs.cs_major cs'.cs_major;
+            in_use_header_determined free cs.cs_major cs'.cs_major target;
             assert (is_no_scan target cs'.cs_major == is_no_scan target cs.cs_major);
             assert (is_no_scan target cs'.cs_major = (minor_tag minor x >= 251));
             assert (wosize_of_object target cs'.cs_major == wosize_of_object target cs.cs_major);
@@ -674,10 +675,11 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let cheney_forward_one_preserves_fwd_target_not_no_scan_state
-  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  (free: free_def) (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma
       (requires
-        fwd_target_not_no_scan_state minor cs /\
+        fwd_target_not_no_scan_state free minor cs /\
+        free_def_ok free /\ allocations_not_free free /\
         blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
@@ -686,20 +688,20 @@ let cheney_forward_one_preserves_fwd_target_not_no_scan_state
         minor_infix_wf minor /\
         Forwarding.fwd_classified cs /\
         Forwarding.infix_fwd_ready minor cs)
-      (ensures fwd_target_not_no_scan_state minor
+      (ensures fwd_target_not_no_scan_state free minor
         (cheney_forward_one minor cs addr))
   =
   let r = cheney_forward_one minor cs addr in
   if cs.cs_fwd addr <> 0UL then begin
     cheney_forward_one_noop minor cs addr;
     assert (r == cs);
-    assert (fwd_target_not_no_scan_state minor r)
+    assert (fwd_target_not_no_scan_state free minor r)
   end else if is_infix_in_minor minor addr then begin
     reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
     infix_addr_ge_parent minor addr;
     cheney_forward_one_infix minor cs addr;
     let parent = infix_parent minor addr in
-    cheney_forward_normal_preserves_fwd_target_not_no_scan_state minor cs parent;
+    cheney_forward_normal_preserves_fwd_target_not_no_scan_state free minor cs parent;
     Forwarding.cheney_forward_normal_preserves_wfh_part1 minor cs parent;
     Forwarding.cheney_forward_normal_preserves_cob minor cs parent;
     Forwarding.cheney_forward_normal_preserves_fwd_classified minor cs parent;
@@ -710,7 +712,7 @@ let cheney_forward_one_preserves_fwd_target_not_no_scan_state
             U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < heap_size) then begin
       cheney_forward_one_infix_guard_fail minor cs addr;
       assert (r == cs');
-      assert (fwd_target_not_no_scan_state minor r)
+      assert (fwd_target_not_no_scan_state free minor r)
     end else begin
       cheney_forward_one_infix_guard_pass minor cs addr;
       let delta = U64.v addr - U64.v parent in
@@ -718,22 +720,23 @@ let cheney_forward_one_preserves_fwd_target_not_no_scan_state
       assert (r.cs_fwd == extend_forwarding cs'.cs_fwd addr sum);
       assert (r.cs_major == cs'.cs_major);
       assert (is_infix_in_minor minor addr);
-      fwd_state_extend_infix minor cs' r addr sum;
-      assert (fwd_target_not_no_scan_state minor r)
+      fwd_state_extend_infix free minor cs' r addr sum;
+      assert (fwd_target_not_no_scan_state free minor r)
     end
   end else begin
     cheney_forward_one_normal minor cs addr;
-    cheney_forward_normal_preserves_fwd_target_not_no_scan_state minor cs addr;
-    assert (fwd_target_not_no_scan_state minor r)
+    cheney_forward_normal_preserves_fwd_target_not_no_scan_state free minor cs addr;
+    assert (fwd_target_not_no_scan_state free minor r)
   end
 #pop-options
 
 #push-options "--z3rlimit 15 --fuel 1 --ifuel 0"
 let rec cheney_forward_fields_preserves_fwd_target_not_no_scan_state
-  (minor: minor_state) (cs: cheney_state) (parent: U64.t) (i: nat) (wosize: nat)
+  (free: free_def) (minor: minor_state) (cs: cheney_state) (parent: U64.t) (i: nat) (wosize: nat)
   : Lemma
       (requires
-        fwd_target_not_no_scan_state minor cs /\
+        fwd_target_not_no_scan_state free minor cs /\
+        free_def_ok free /\ allocations_not_free free /\
         blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
@@ -742,35 +745,36 @@ let rec cheney_forward_fields_preserves_fwd_target_not_no_scan_state
         minor_infix_wf minor /\
         Forwarding.fwd_classified cs /\
         Forwarding.infix_fwd_ready minor cs)
-      (ensures fwd_target_not_no_scan_state minor
+      (ensures fwd_target_not_no_scan_state free minor
         (cheney_forward_fields minor cs parent i wosize))
       (decreases (if i < wosize then wosize - i else 0))
   =
   if i >= wosize then begin
     cheney_forward_fields_base minor cs parent i wosize;
-    assert (fwd_target_not_no_scan_state minor
+    assert (fwd_target_not_no_scan_state free minor
               (cheney_forward_fields minor cs parent i wosize))
   end
   else begin
     assert (i < wosize);
     cheney_forward_fields_step minor cs parent i wosize;
     let field_val = to_minor_offset (minor_read_field minor parent i) in
-    cheney_forward_one_preserves_fwd_target_not_no_scan_state minor cs field_val;
+    cheney_forward_one_preserves_fwd_target_not_no_scan_state free minor cs field_val;
     cheney_forward_one_preserves_wfh_part1 minor cs field_val;
     Forwarding.cheney_forward_one_preserves_cob minor cs field_val;
     Forwarding.cheney_forward_one_preserves_fwd_classified minor cs field_val;
     Forwarding.cheney_forward_one_preserves_infix_fwd_ready minor cs field_val;
     let cs' = cheney_forward_one minor cs field_val in
-    cheney_forward_fields_preserves_fwd_target_not_no_scan_state minor cs' parent (dec_field_idx i wosize) wosize;
-    assert (fwd_target_not_no_scan_state minor
+    cheney_forward_fields_preserves_fwd_target_not_no_scan_state free minor cs' parent (dec_field_idx i wosize) wosize;
+    assert (fwd_target_not_no_scan_state free minor
               (cheney_forward_fields minor cs parent i wosize))
   end
 
 let rec cheney_forward_roots_preserves_fwd_target_not_no_scan_state
-  (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (ridx: nat)
+  (free: free_def) (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (ridx: nat)
   : Lemma
       (requires
-        fwd_target_not_no_scan_state minor cs /\
+        fwd_target_not_no_scan_state free minor cs /\
+        free_def_ok free /\ allocations_not_free free /\
         blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
@@ -779,26 +783,26 @@ let rec cheney_forward_roots_preserves_fwd_target_not_no_scan_state
         minor_infix_wf minor /\
         Forwarding.fwd_classified cs /\
         Forwarding.infix_fwd_ready minor cs)
-      (ensures fwd_target_not_no_scan_state minor
+      (ensures fwd_target_not_no_scan_state free minor
         (cheney_forward_roots minor cs roots ridx))
       (decreases (if ridx < Seq.length roots then Seq.length roots - ridx else 0))
   =
   if ridx >= Seq.length roots then begin
     cheney_forward_roots_base minor cs roots ridx;
-    assert (fwd_target_not_no_scan_state minor (cheney_forward_roots minor cs roots ridx))
+    assert (fwd_target_not_no_scan_state free minor (cheney_forward_roots minor cs roots ridx))
   end
   else begin
     assert (ridx < Seq.length roots);
     cheney_forward_roots_step minor cs roots ridx;
     let r = Seq.index roots ridx in
-    cheney_forward_one_preserves_fwd_target_not_no_scan_state minor cs r;
+    cheney_forward_one_preserves_fwd_target_not_no_scan_state free minor cs r;
     cheney_forward_one_preserves_wfh_part1 minor cs r;
     Forwarding.cheney_forward_one_preserves_cob minor cs r;
     Forwarding.cheney_forward_one_preserves_fwd_classified minor cs r;
     Forwarding.cheney_forward_one_preserves_infix_fwd_ready minor cs r;
     let cs' = cheney_forward_one minor cs r in
-    cheney_forward_roots_preserves_fwd_target_not_no_scan_state minor cs' roots (dec_root_idx ridx (Seq.length roots));
-    assert (fwd_target_not_no_scan_state minor (cheney_forward_roots minor cs roots ridx))
+    cheney_forward_roots_preserves_fwd_target_not_no_scan_state free minor cs' roots (dec_root_idx ridx (Seq.length roots));
+    assert (fwd_target_not_no_scan_state free minor (cheney_forward_roots minor cs roots ridx))
   end
 
 let rec cheney_forward_roots_preserves_infix_ready_local
@@ -835,10 +839,11 @@ let rec cheney_forward_roots_preserves_infix_ready_local
   end
 
 let rec cheney_scan_preserves_fwd_target_not_no_scan_state
-  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  (free: free_def) (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
   : Lemma
       (requires
-        fwd_target_not_no_scan_state minor cs /\
+        fwd_target_not_no_scan_state free minor cs /\
+        free_def_ok free /\ allocations_not_free free /\
         blocks_fit cs.cs_major /\
         AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
         AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
@@ -847,56 +852,88 @@ let rec cheney_scan_preserves_fwd_target_not_no_scan_state
         minor_infix_wf minor /\
         Forwarding.fwd_classified cs /\
         Forwarding.infix_fwd_ready minor cs)
-      (ensures fwd_target_not_no_scan_state minor
+      (ensures fwd_target_not_no_scan_state free minor
         (cheney_scan minor cs scan fuel))
       (decreases fuel)
   =
   if fuel_is_zero fuel then begin
     cheney_scan_base minor cs scan fuel;
-    assert (fwd_target_not_no_scan_state minor (cheney_scan minor cs scan fuel))
+    assert (fwd_target_not_no_scan_state free minor (cheney_scan minor cs scan fuel))
   end
   else if scan >= Seq.length cs.cs_queue then begin
     assert (scan >= Seq.length cs.cs_queue);
     cheney_scan_base minor cs scan fuel;
-    assert (fwd_target_not_no_scan_state minor (cheney_scan minor cs scan fuel))
+    assert (fwd_target_not_no_scan_state free minor (cheney_scan minor cs scan fuel))
   end
   else begin
     assert (fuel >= 1);
     cheney_scan_step minor cs scan fuel;
     let obj = Seq.index cs.cs_queue scan in
     let wz = minor_scan_wosize minor obj in
-    cheney_forward_fields_preserves_fwd_target_not_no_scan_state minor cs obj 0 wz;
+    cheney_forward_fields_preserves_fwd_target_not_no_scan_state free minor cs obj 0 wz;
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     Forwarding.cheney_forward_fields_preserves_cob minor cs obj 0 wz;
     Forwarding.cheney_forward_fields_preserves_fwd_classified minor cs obj 0 wz;
     let cs' = cheney_forward_fields minor cs obj 0 wz in
-    cheney_scan_preserves_fwd_target_not_no_scan_state minor cs' (scan + 1) (dec_fuel fuel);
-    assert (fwd_target_not_no_scan_state minor (cheney_scan minor cs scan fuel))
+    cheney_scan_preserves_fwd_target_not_no_scan_state free minor cs' (scan + 1) (dec_fuel fuel);
+    assert (fwd_target_not_no_scan_state free minor (cheney_scan minor cs scan fuel))
   end
 #pop-options
 
+/// The image facts at the end of the run, for one definition of free.
 #push-options "--z3rlimit 15 --fuel 0 --ifuel 0"
-let cheney_promote_fwd_target_no_scan_iff_minor_tag
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+private let cheney_promote_fwd_target_facts
+  (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t)
+  : Lemma
+    (requires blocks_fit major /\ no_infix_block major /\
+              AllocLemmas.fl_valid major fp heap_words /\
+              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              chain_objects_blue major fp /\
+              minor_wf minor /\
+              minor_infix_wf minor /\
+              free_def_ok free /\ allocations_not_free free /\
+              (let prom = cheney_promote minor major fp roots in
+               prom.fwd_map x <> 0UL /\
+               Seq.mem x (minor_objects minor)))
+    (ensures
+      (let prom = cheney_promote minor major fp roots in
+       let cs2 : cheney_state =
+         { cs_major = prom.major_final; cs_fp = prom.fp_final;
+           cs_fwd = prom.fwd_map; cs_queue = Seq.empty } in
+       fwd_target_not_no_scan_match free minor cs2 x))
   =
   wf_parts ();
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
-  fwd_target_not_no_scan_initial minor major fp;
+  fwd_target_not_no_scan_initial free minor major fp;
   assert (Forwarding.fwd_classified cs0);
   assert (Forwarding.infix_fwd_ready minor cs0);
-  cheney_forward_roots_preserves_fwd_target_not_no_scan_state minor cs0 roots 0;
+  cheney_forward_roots_preserves_fwd_target_not_no_scan_state free minor cs0 roots 0;
   Forwarding.cheney_forward_roots_preserves_wfh_part1 minor cs0 roots 0;
   Forwarding.cheney_forward_roots_preserves_cob minor cs0 roots 0;
   Forwarding.cheney_forward_roots_preserves_fwd_classified minor cs0 roots 0;
   cheney_forward_roots_preserves_infix_ready_local minor cs0 roots 0;
   let cs1 = cheney_forward_roots minor cs0 roots 0 in
-  cheney_scan_preserves_fwd_target_not_no_scan_state minor cs1 0 (cheney_fuel minor);
+  cheney_scan_preserves_fwd_target_not_no_scan_state free minor cs1 0 (cheney_fuel minor);
   let cs2 = cheney_scan minor cs1 0 (cheney_fuel minor) in
   assert ((cheney_promote minor major fp roots).fwd_map == cs2.cs_fwd);
   assert ((cheney_promote minor major fp roots).major_final == cs2.cs_major);
   assert (fwd_target_not_no_scan_pre minor cs2 x);
-  fwd_target_not_no_scan_state_elim minor cs2 x
+  fwd_target_not_no_scan_state_elim free minor cs2 x
 #pop-options
+
+let cheney_promote_fwd_target_no_scan_iff_minor_tag
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (x: U64.t)
+  =
+  free_stw_ok ();
+  free_stw_allocations_not_free ();
+  cheney_promote_fwd_target_facts free_stw minor major fp roots x
+
+let cheney_promote_fwd_target_not_free
+  (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (x: U64.t)
+  =
+  cheney_promote_fwd_target_facts free minor major fp roots x

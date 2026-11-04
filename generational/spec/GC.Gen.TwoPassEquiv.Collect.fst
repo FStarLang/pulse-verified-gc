@@ -161,7 +161,7 @@ private let derive_promoted_entries_walked
     (requires
       (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
        CE.promote_pre minor major_pre fp /\
-       CE.promotion_not_free free minor major_pre fp roots /\
+       free_def_ok free /\ GC.Gen.Promote.allocations_not_free free /\
        Seq.length farr == fwd_array_size /\
        represents_fwd farr prom.fwd_map))
     (ensures

@@ -108,7 +108,7 @@ val combined_reachable_images_valid_or_infix
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots)
@@ -145,7 +145,7 @@ val combined_major_edge_forwarded
   (src dst: obj_addr)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       CG.mem_ce (CG.MajorV src, CG.MajorV dst) (CG.build_combined_graph minor major free))
     (ensures
       (let res = cheney_collect_spec_with free minor major fp roots in
@@ -168,7 +168,7 @@ val combined_major_minor_field_forwarded
   (src: obj_addr) (dst: U64.t) (i: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -201,7 +201,7 @@ val combined_major_minor_edge_forwarded
   (src: obj_addr) (dst: U64.t) (i: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -233,7 +233,7 @@ val promoted_minor_major_field_preserved
   (src dst: U64.t) (j: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       (let prom = cheney_promote minor major fp roots in
        let fwd_src = prom.fwd_map src in
        fwd_src <> 0UL /\
@@ -260,7 +260,7 @@ val promoted_minor_major_edge_forwarded
   (src dst: U64.t) (j: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       (let prom = cheney_promote minor major fp roots in
        let fwd_src = prom.fwd_map src in
        fwd_src <> 0UL /\
@@ -292,7 +292,7 @@ val promoted_minor_minor_field_forwarded
   (src dst: U64.t) (j: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       (let prom = cheney_promote minor major fp roots in
        let fwd_src = prom.fwd_map src in
        fwd_src <> 0UL /\
@@ -326,7 +326,7 @@ val promoted_minor_minor_edge_forwarded
   (src dst: U64.t) (j: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       (let prom = cheney_promote minor major fp roots in
        let fwd_src = prom.fwd_map src in
        fwd_src <> 0UL /\

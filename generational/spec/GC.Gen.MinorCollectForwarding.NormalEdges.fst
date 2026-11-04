@@ -123,7 +123,7 @@ private let fwd_disjoint_reachable_major_at
   (x y: U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.roots_not_free free roots major /\
       (let cg = CG.build_combined_graph minor major free in
        let combined_roots = CG.classify_roots minor roots in
@@ -263,7 +263,7 @@ private let normal_minor_source_ready_intro
   (roots: seq U64.t) (src: U64.t) (dst: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       normal_src_reachable minor major fp free roots (CG.MinorV src) /\
       CG.mem_ce (CG.MinorV src, dst) (CG.build_combined_graph minor major free))
     (ensures (

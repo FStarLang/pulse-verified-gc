@@ -32,9 +32,6 @@ module HeapGraph = GC.Spec.HeapGraph
 module FLAsc = GC.Gen.FreeListAscending
 module AllocExact = GC.Gen.AllocExact
 
-let free_stw_promotion_not_free minor major fp roots =
-  free_stw_fresh_not_free major (cheney_promote minor major fp roots).major_final
-
 let cheney_collect_spec_with_stw minor major fp roots = ()
 
 /// ---------------------------------------------------------------------------
@@ -71,15 +68,7 @@ let cheney_promote_keeps_in_use free minor major fp roots x =
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let cheney_promote_image_not_free free minor major fp roots m x =
-  let prom = cheney_promote minor major fp roots in
-  minor_objects_not_infix minor m;
-  Fwd.cheney_promote_fwd_noninfix_targets_valid minor major fp roots;
-  assert (Seq.mem x (objects zero_addr prom.major_final));
-  cheney_promote_preserves_wfh_part4 minor major fp roots;
-  assert (~(is_infix x prom.major_final));
-  Inj.cheney_promote_fwd_targets_not_blue minor major fp roots;
-  Inj.cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue minor major fp roots;
-  assert (in_use free_stw prom.major_final x /\ not (in_use free_stw major x))
+  CPF.cheney_promote_fwd_target_not_free free minor major fp roots m
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
@@ -326,7 +315,7 @@ let update_pointers_with_preserves_wf free g fwd =
 private let fwd_target_not_free
   (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t) (m: U64.t)
-  : Lemma (requires promote_pre minor major fp /\ promotion_not_free free minor major fp roots /\
+  : Lemma (requires free_def_ok free /\ allocations_not_free free /\ promote_pre minor major fp /\
                     (cheney_promote minor major fp roots).fwd_map m <> 0UL)
           (ensures (let prom = cheney_promote minor major fp roots in
                     let t = prom.fwd_map m in

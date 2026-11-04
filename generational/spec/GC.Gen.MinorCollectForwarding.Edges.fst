@@ -78,7 +78,7 @@ private let combined_reachable_images_valid_or_infix_major
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots)
@@ -112,7 +112,7 @@ private let combined_reachable_images_valid_or_infix_minor
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots)

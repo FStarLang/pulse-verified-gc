@@ -239,12 +239,14 @@ val promote_object_new_addr_tag
         (let na : obj_addr = res.new_addr in
          U64.v (tag_of_object na res.major_out) == minor_tag minor obj)))
 
-/// The promoted copy is white: the idle allocator writes a white header, and
-/// `copy_fields` writes only fields.
-val promote_object_new_addr_white
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+/// The promoted copy is not free, for any definition of free under which the
+/// allocator's blocks are not free: its header is the one the allocator wrote,
+/// since `copy_fields` writes only fields.
+val promote_object_new_addr_not_free
+  (free: free_def) (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   : Lemma
-    (requires blocks_fit major /\
+    (requires free_def_ok free /\ allocations_not_free free /\
+              blocks_fit major /\
               AllocLemmas.fl_valid major fp heap_words /\
               AllocLemmas.fl_chain_terminates major fp heap_words /\
               (promote_object minor major obj fp wz).new_addr <> 0UL)
@@ -254,7 +256,7 @@ val promote_object_new_addr_white
        U64.v res.new_addr < heap_size /\
        U64.v res.new_addr % U64.v mword == 0 /\
         (let na : obj_addr = res.new_addr in
-         is_white na res.major_out)))
+         not (free res.major_out na))))
 
 val promote_object_new_addr_wosize_eq
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})

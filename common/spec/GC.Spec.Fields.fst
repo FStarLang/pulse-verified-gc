@@ -721,9 +721,9 @@ let wf_parts (_: unit) : Lemma
 ///   - counts every blue block as free (`blue_is_free`), and
 ///   - is read off the walk membership and the header of the block alone
 ///     (`free_header_determined`), so field writes do not change it;
-/// together `free_def_ok`.  An operation that allocates also needs its fresh
-/// blocks not free (`fresh_not_free`, stated for the heaps before and after
-/// it).  `free_stw` has all three (`free_stw_ok`, `free_stw_fresh_not_free`).
+/// together `free_def_ok`.  `free_stw` has both (`free_stw_ok`).  A minor
+/// collection also needs the blocks the allocator creates not to be free
+/// (`GC.Gen.Promote.allocations_not_free`).
 
 let blue_is_free (free: free_def) : prop =
   forall (g: heap) (x: obj_addr). is_block g x /\ is_blue x g ==> free g x
@@ -735,12 +735,6 @@ let free_header_determined (free: free_def) : prop =
 
 [@@"opaque_to_smt"]
 let free_def_ok (free: free_def) : prop = blue_is_free free /\ free_header_determined free
-
-/// A block that is a non-blue block after an operation but was not before it
-/// (a freshly allocated block) is not free.
-let fresh_not_free (free: free_def) (g g': heap) : prop =
-  forall (x: obj_addr).
-    is_block g' x /\ not (is_blue x g') /\ ~(is_block g x /\ not (is_blue x g)) ==> not (free g' x)
 
 let in_use_not_blue (free: free_def) (g: heap) (x: obj_addr) : Lemma
   (requires free_def_ok free /\ in_use free g x)
@@ -771,8 +765,6 @@ let free_stw_ok (_: unit) : Lemma (free_def_ok free_stw)
       = FStar.Classical.move_requires (color_of_header_eq x g) g'
     in
     FStar.Classical.forall_intro_3 aux
-
-let free_stw_fresh_not_free (g g': heap) : Lemma (fresh_not_free free_stw g g') = ()
 
 /// ---------------------------------------------------------------------------
 /// No-Scan Invariant

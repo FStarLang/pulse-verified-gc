@@ -5,8 +5,9 @@
 /// `free` says which major blocks count as free (`GC.Spec.Fields.free_def`).
 /// The theorems below hold for any admissible definition of free
 /// (`free_def_ok`: blue blocks are free, and what is free is read off the walk
-/// and the headers) under which the blocks promotion creates are not free
-/// (`promotion_not_free`).
+/// and the headers) under which the blocks the allocator creates are not free
+/// (`GC.Gen.Promote.allocations_not_free`); they derive that no promoted copy
+/// is free.
 ///
 /// In major-heap terms a minor collection is two kinds of event, and each
 /// keeps `well_formed_heap_with free`:
@@ -54,15 +55,6 @@ let promote_pre (minor: minor_state) (major: heap) (fp: U64.t) : prop =
   minor_infix_wf minor /\
   minor_wf minor
 
-/// The blocks promotion creates are not free.
-let promotion_not_free (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t)
-  (roots: seq U64.t) : prop =
-  fresh_not_free free major (cheney_promote minor major fp roots).major_final
-
-val free_stw_promotion_not_free
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (promotion_not_free free_stw minor major fp roots)
-
 /// The stop-the-world collection is the `free_stw` instance.
 val cheney_collect_spec_with_stw
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
@@ -87,11 +79,13 @@ val cheney_promote_keeps_in_use
   : Lemma (requires free_def_ok free /\ promote_pre minor major fp /\ in_use free major x)
           (ensures in_use free (cheney_promote minor major fp roots).major_final x)
 
-/// The image of a promoted nursery object is not free: it is a fresh block.
+/// The image of a promoted nursery object is not free: it is a block the
+/// allocator created (`allocations_not_free`), and nothing rewrites its
+/// header afterwards.
 val cheney_promote_image_not_free
   (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t) (m: U64.t) (x: obj_addr)
-  : Lemma (requires promote_pre minor major fp /\ promotion_not_free free minor major fp roots /\
+  : Lemma (requires free_def_ok free /\ allocations_not_free free /\ promote_pre minor major fp /\
                     Seq.mem m (minor_objects minor) /\
                     (cheney_promote minor major fp roots).fwd_map m == x)
           (ensures in_use free (cheney_promote minor major fp roots).major_final x)
@@ -176,7 +170,7 @@ val update_pointers_with_preserves_wf
 val cheney_promote_fwd_targets_not_free
   (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t)
-  : Lemma (requires promote_pre minor major fp /\ promotion_not_free free minor major fp roots)
+  : Lemma (requires free_def_ok free /\ allocations_not_free free /\ promote_pre minor major fp)
           (ensures (let prom = cheney_promote minor major fp roots in
                     fwd_targets_not_free free prom.major_final prom.fwd_map))
 
@@ -185,13 +179,12 @@ val cheney_promote_fwd_targets_not_free
 /// ---------------------------------------------------------------------------
 
 /// **The minor collection keeps its shape given what counts as free.**  For
-/// any definition of free the caller vouches for (`collection_shape_with`)
-/// under which the promoted blocks are not free, the collection leaves a heap of the same shape with the same definition of free,
+/// any definition of free the caller vouches for (`collection_shape_with`,
+/// which includes `allocations_not_free`), the collection leaves a heap of the same shape with the same definition of free,
 /// with an empty nursery.
 val cheney_collect_with_preserves_shape
   (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t)
-  : Lemma (requires GenInv.collection_shape_with free minor major fp /\
-                    promotion_not_free free minor major fp roots)
+  : Lemma (requires GenInv.collection_shape_with free minor major fp)
           (ensures (let res = cheney_collect_spec_with free minor major fp roots in
                     GenInv.collection_shape_with free res.mc_minor res.mc_major res.mc_fp))

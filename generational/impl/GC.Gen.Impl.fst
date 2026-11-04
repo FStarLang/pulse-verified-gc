@@ -418,7 +418,6 @@ let minor_collect_full_isomorphism_post
   : Lemma
     (requires
       GenInv.collection_shape_with free minor major fp /\
-      GC.Gen.CheneyGeneric.promotion_not_free free minor major fp roots /\
       ref_table_covers_with free major slots n /\
       post_major == (CheneySpec.cheney_collect_spec_with free minor major fp roots).mc_major /\
       post_roots == MCFH.resolve_roots post_major
@@ -466,7 +465,6 @@ let minor_collect_with_spec
   : Lemma
     (requires
       GenInv.collection_shape_with free minor major fp /\
-      CE.promotion_not_free free minor major fp roots /\
       Seq.length farr == fwd_array_size /\
       represents_fwd farr (CheneySpec.cheney_promote minor major fp roots).fwd_map /\
       ref_table_sound_with free major slots n /\
@@ -583,7 +581,6 @@ fn minor_collect_full (gh: gen_heap_t)
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let minor_collect_idle_pre minor_st s fp rs farr sl nslots =
   GenInv.collection_heap_shape_as_free_stw minor_st s fp;
-  CE.free_stw_promotion_not_free minor_st s fp rs;
   MCFH.roots_valid_with_stw minor_st s rs
 #pop-options
 

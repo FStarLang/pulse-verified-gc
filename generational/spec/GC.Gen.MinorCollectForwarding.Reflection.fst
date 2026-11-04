@@ -143,7 +143,7 @@ private let normal_src_image_is_val_addr
   (roots: seq U64.t) (u: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       normal_src_reachable minor major fp free roots u)
     (ensures (
       let prom = cheney_promote minor major fp roots in

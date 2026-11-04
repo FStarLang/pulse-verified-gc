@@ -321,8 +321,9 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 /// the major heap (`GC.Spec.Fields.free_def`), supplied by the caller as a
 /// ghost argument.  The non-free blocks point only to non-free blocks
 /// (`GenInv.collection_shape_with`); a free block is garbage left in place,
-/// never read or written.  The blocks promotion creates must not count as
-/// free (`CV.promotion_not_free`).  The stop-the-world
+/// never read or written.  The shape includes that the blocks the allocator
+/// creates do not count as free (`allocations_not_free`), so no promoted copy
+/// is free.  The stop-the-world
 /// collector passes `free_stw`; `minor_collect_pre_idle` /
 /// `minor_collect_post_idle` below are that instance, with the colour facts
 /// of `collection_heap_shape` added.
@@ -340,7 +341,6 @@ let minor_collect_pre_with (free: SpecFields.free_def)
   (minor_st: minor_state) (s: heap_state) (fp: U64.t)
   (rs farr sl: Seq.seq U64.t) (nslots: nat) : prop =
   GenInv.collection_shape_with free minor_st s fp /\
-  CV.promotion_not_free free minor_st s fp rs /\
   Seq.length farr == UpdatePtrs.fwd_array_size /\
   (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
   RT.ref_table_sound_with free s sl nslots /\

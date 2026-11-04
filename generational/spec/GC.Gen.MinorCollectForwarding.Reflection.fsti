@@ -45,7 +45,7 @@ val post_edge_from_minor_image_reflects_mem_ce
   (src: U64.t) (w: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       MCFH.remembered_targets_in_roots major roots slots n /\
@@ -64,7 +64,7 @@ val post_edge_from_minor_image_reflects_target
   (src y: U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       MCFH.remembered_targets_in_roots major roots slots n /\

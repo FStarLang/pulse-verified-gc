@@ -193,6 +193,7 @@ let collection_heap_shape_after_minor_reset
 [@@"opaque_to_smt"]
 let major_shape_with (free: free_def) (major: heap) (fp: U64.t) : prop =
   free_def_ok free /\
+  allocations_not_free free /\
   well_formed_heap_with free major /\
   AllocLemmas.fl_valid major fp heap_words /\
   AllocLemmas.fl_chain_terminates major fp heap_words /\
@@ -261,6 +262,7 @@ let collection_shape_with_elim free minor major fp =
 let major_heap_shape_as_free_stw major fp =
   major_heap_shape_elim major fp;
   free_stw_ok ();
+  free_stw_allocations_not_free ();
   major_shape_with_intro free_stw major fp
 
 let major_heap_shape_of_free_stw major fp =

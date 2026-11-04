@@ -86,6 +86,50 @@ let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
     let copied_major = copy_fields minor new_major obj new_addr 0 wosize in
     { major_out = copied_major; fp_out = new_fp; new_addr = new_addr }
 
+/// **The blocks the allocator creates are not free.**  What a minor
+/// collection assumes of a definition of free, beyond `free_def_ok`: a block
+/// the allocator promotion runs hands out is not free in the heap it returns.
+/// It is a property of the definition of free (and of the allocator), not of
+/// a particular run; the minor collection's theorems derive from it that no
+/// promoted copy is free.
+///
+/// Promotion runs the idle allocator `alloc_spec`, which writes a white
+/// header, so `free_stw` has it (`free_stw_allocations_not_free`).  An
+/// allocator that runs at a collector phase colours the new block for that
+/// phase -- black in front of a sweep's cursor -- and the same statement over
+/// that allocator (`alloc_spec` replaced by the allocator at the phase) is
+/// what a definition of free that counts the white blocks in front of the
+/// cursor satisfies.
+[@@"opaque_to_smt"]
+let allocations_not_free (free: free_def) : prop =
+  forall (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}) (x: obj_addr).
+    blocks_fit g /\
+    AllocLemmas.fl_valid g fp heap_words /\
+    AllocLemmas.fl_chain_terminates g fp heap_words /\
+    (GC.Spec.Allocator.alloc_spec g fp wz tag).obj_out == x ==>
+    not (free (GC.Spec.Allocator.alloc_spec g fp wz tag).heap_out x)
+
+val allocations_not_free_intro (free: free_def)
+  (prf: (g: heap) -> (fp: U64.t) -> (wz: nat) -> (tag: U64.t{U64.v tag < 256}) -> (x: obj_addr) ->
+        Lemma (requires blocks_fit g /\
+                        AllocLemmas.fl_valid g fp heap_words /\
+                        AllocLemmas.fl_chain_terminates g fp heap_words /\
+                        (GC.Spec.Allocator.alloc_spec g fp wz tag).obj_out == x)
+              (ensures not (free (GC.Spec.Allocator.alloc_spec g fp wz tag).heap_out x)))
+  : Lemma (allocations_not_free free)
+
+val allocations_not_free_elim (free: free_def)
+  (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}) (x: obj_addr)
+  : Lemma (requires allocations_not_free free /\
+                    blocks_fit g /\
+                    AllocLemmas.fl_valid g fp heap_words /\
+                    AllocLemmas.fl_chain_terminates g fp heap_words /\
+                    (GC.Spec.Allocator.alloc_spec g fp wz tag).obj_out == x)
+          (ensures not (free (GC.Spec.Allocator.alloc_spec g fp wz tag).heap_out x))
+
+/// The idle allocator writes white blocks, so they are not blue.
+val free_stw_allocations_not_free (_: unit) : Lemma (allocations_not_free free_stw)
+
 /// Unfold: when alloc fails (OOM), promote_object returns original heap/fp unchanged.
 val promote_object_oom (minor: minor_state) (major: heap) (obj: U64.t)
                        (fp: U64.t) (wosize: nat{wosize > 0})

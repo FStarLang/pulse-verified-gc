@@ -142,7 +142,7 @@ val cheney_promote_preserves_old_major_field_context
   (src: obj_addr) (j: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       Seq.mem src (objects zero_addr major) /\
       is_blue src major = false /\
       j < U64.v (wosize_of_object src major) /\
@@ -186,7 +186,7 @@ val combined_major_minor_field_forwarded
   (src: obj_addr) (dst: U64.t) (i: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -231,7 +231,7 @@ val combined_reachable_edge_forwarded_normal
   (u w: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -260,7 +260,7 @@ val fwd_disjoint_reachable_major_intro
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.roots_not_free free roots major)
     (ensures fwd_disjoint_reachable_major minor major fp free roots)
 
@@ -284,7 +284,7 @@ val normal_edge_forward_ready_intro
   (u w: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.roots_not_free free roots major /\
       normal_src_reachable minor major fp free roots u /\
       normal_src_reachable minor major fp free roots w /\
@@ -307,7 +307,7 @@ val normal_classified_root_image_in_rewrite_roots
   (roots: seq U64.t) (u: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
       Seq.mem u (CG.classify_roots minor roots) /\
       normal_vertex_ready minor major fp roots u)
@@ -380,7 +380,7 @@ val normal_image_vertex_is_post_vertex
   (w: U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       normal_image_reachable minor major fp free roots w)
     (ensures (
       let res = cheney_collect_spec_with free minor major fp roots in
@@ -391,7 +391,7 @@ val normal_classified_root_image_post_reachable
   (roots: seq U64.t) (u: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       CheneyBFS.cheney_no_oom minor major fp roots /\
       Seq.mem u (CG.classify_roots minor roots) /\
       normal_src_reachable minor major fp free roots u)
@@ -414,7 +414,7 @@ val combined_reachable_normal_injective
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.roots_not_free free roots major /\
       fwd_disjoint_reachable_major minor major fp free roots)
     (ensures combined_reachable_normal_injective_prop minor major fp free roots)
@@ -423,7 +423,7 @@ val normal_image_reachable_subgraph_isomorphism
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.roots_not_free free roots major /\
       fwd_disjoint_reachable_major minor major fp free roots)
     (ensures normal_image_reachable_subgraph_isomorphism_prop minor major fp free roots)
@@ -434,7 +434,7 @@ val normal_src_edge_preserves_post_minor_reachable
   (u w: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -456,7 +456,7 @@ val ready_src_reach_image_post_reachable
   (r: ready_src_reach minor major fp free roots u)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -473,7 +473,7 @@ val ready_image_reachable_is_post_reachable
   (w: U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -488,7 +488,7 @@ val normal_src_reachable_is_ready_src_reachable
   (u: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -509,7 +509,7 @@ val normal_image_reachable_is_post_reachable
   (w: U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -523,7 +523,7 @@ val normal_image_reachable_is_post_reachable_all
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -537,7 +537,7 @@ val post_normal_image_edges_reflect_src
   (u w: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -592,7 +592,7 @@ val post_minor_reachable_is_normal_image_reachable_all
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -605,7 +605,7 @@ val normal_post_reachable_subgraph_isomorphism
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -631,7 +631,7 @@ val normal_post_non_pointer_fields_preserved
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\

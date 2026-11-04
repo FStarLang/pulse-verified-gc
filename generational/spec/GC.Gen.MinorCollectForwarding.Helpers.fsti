@@ -371,7 +371,7 @@ val cheney_promote_preserves_old_major_field_context
   (roots: seq U64.t) (src: obj_addr) (j: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CV.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       Seq.mem src (objects zero_addr major) /\
       is_blue src major = false /\
       j < U64.v (wosize_of_object src major) /\
@@ -420,7 +420,7 @@ val fwd_image_resolves
   (roots: seq U64.t) (x: U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CV.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       (cheney_promote minor major fp roots).fwd_map x <> 0UL)
     (ensures (
       let prom = cheney_promote minor major fp roots in
@@ -529,7 +529,7 @@ val major_field_infix_target_forwarded
 val post_shape_with
   (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
-    (requires GenInv.collection_shape_with free minor major fp /\ CV.promotion_not_free free minor major fp roots)
+    (requires GenInv.collection_shape_with free minor major fp)
     (ensures (
       let res = cheney_collect_spec_with free minor major fp roots in
       well_formed_heap_with free res.mc_major /\
@@ -547,8 +547,7 @@ val image_not_free
   (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (m: U64.t) (x: obj_addr)
   : Lemma
-    (requires GenInv.collection_shape_with free minor major fp /\ CV.promotion_not_free free minor major fp roots /\
-              CV.promotion_not_free free minor major fp roots /\
+    (requires GenInv.collection_shape_with free minor major fp /\
               Seq.mem m (minor_objects minor) /\
               (cheney_promote minor major fp roots).fwd_map m == x)
     (ensures in_use free (cheney_promote minor major fp roots).major_final x /\
@@ -559,6 +558,6 @@ val old_not_free
   (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: obj_addr)
   : Lemma
-    (requires GenInv.collection_shape_with free minor major fp /\ CV.promotion_not_free free minor major fp roots /\ in_use free major x)
+    (requires GenInv.collection_shape_with free minor major fp /\ in_use free major x)
     (ensures in_use free (cheney_promote minor major fp roots).major_final x /\
              in_use free (cheney_collect_spec_with free minor major fp roots).mc_major x)

@@ -90,6 +90,37 @@ let cheney_promote_nonblue_origin
 
 module CE = GC.Gen.CheneyGeneric
 
+/// "Not white" as a definition of free: blue blocks count, and so would grey
+/// and black ones.  The allocator's blocks are white, so the generic
+/// image-not-free fact at this definition says a promoted copy stays white.
+private let free_not_white : free_def = fun g x -> not (is_white x g)
+
+private let free_not_white_ok (_: unit)
+  : Lemma (free_def_ok free_not_white /\ allocations_not_free free_not_white)
+  = reveal_opaque (`%free_def_ok) free_def_ok;
+    let blue (g: heap) (x: obj_addr)
+      : Lemma (is_block g x /\ is_blue x g ==> free_not_white g x)
+      = is_blue_iff x g; is_white_iff x g
+    in
+    let hdr (g g': heap) (x: obj_addr)
+      : Lemma ((is_block g x <==> is_block g' x) /\
+               read_word g (hd_address x) == read_word g' (hd_address x) ==>
+               free_not_white g x == free_not_white g' x)
+      = FStar.Classical.move_requires (color_of_header_eq x g) g'
+    in
+    FStar.Classical.forall_intro_2 blue;
+    FStar.Classical.forall_intro_3 hdr;
+    let alloc (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}) (x: obj_addr)
+      : Lemma (requires blocks_fit g /\
+                        AllocLemmas.fl_valid g fp heap_words /\
+                        AllocLemmas.fl_chain_terminates g fp heap_words /\
+                        (Allocator.alloc_spec g fp wz tag).obj_out == x)
+              (ensures not (free_not_white (Allocator.alloc_spec g fp wz tag).heap_out x))
+      = AllocProps.alloc_spec_obj_not_blue_part1 g fp wz tag;
+        is_white_iff x (Allocator.alloc_spec g fp wz tag).heap_out
+    in
+    allocations_not_free_intro free_not_white alloc
+
 /// The colour of a block of the result: an old non-free block keeps its
 /// header (promotion only allocates from the free list and writes the new
 /// blocks, the pointer update writes no header), and any other non-free block
@@ -115,9 +146,8 @@ let cheney_collect_block_origin
     else begin
       eliminate exists (m: U64.t). Seq.mem m (minor_objects minor) /\ prom.fwd_map m == x
       with begin
-        is_val_addr_spec (x <: U64.t);
-        assert (~(is_infix x prom.major_final));
-        CPF.cheney_promote_fwd_target_no_scan_iff_minor_tag minor major fp roots m
+        free_not_white_ok ();
+        CPF.cheney_promote_fwd_target_not_free free_not_white minor major fp roots m
       end
     end
   end

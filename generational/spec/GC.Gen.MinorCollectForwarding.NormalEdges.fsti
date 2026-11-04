@@ -78,7 +78,7 @@ val combined_reachable_edge_forwarded_normal
   (u w: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -114,7 +114,7 @@ val fwd_disjoint_reachable_major_intro
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.roots_not_free free roots major)
     (ensures fwd_disjoint_reachable_major minor major fp free roots)
 
@@ -172,7 +172,7 @@ val combined_reachable_normal_injective
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.roots_not_free free roots major /\
       fwd_disjoint_reachable_major minor major fp free roots)
     (ensures combined_reachable_normal_injective_prop minor major fp free roots)
@@ -183,7 +183,7 @@ val normal_edge_forward_ready_intro
   (u w: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.roots_not_free free roots major /\
       normal_src_reachable minor major fp free roots u /\
       normal_src_reachable minor major fp free roots w /\
@@ -195,7 +195,7 @@ val normal_src_images_injective
   (roots: seq U64.t) (u w: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.roots_not_free free roots major /\
       normal_src_reachable minor major fp free roots u /\
       normal_src_reachable minor major fp free roots w /\

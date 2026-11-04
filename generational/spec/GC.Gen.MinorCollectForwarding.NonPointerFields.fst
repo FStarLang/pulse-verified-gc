@@ -54,7 +54,7 @@ private let fwd_minor_source_in_minor_objects
   (x: U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       ~(is_infix_in_minor minor x) /\
       (cheney_promote minor major fp roots).fwd_map x <> 0UL)
     (ensures
@@ -82,7 +82,7 @@ private let fwd_source_resolves_in_minor_objects
   (x: U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       (cheney_promote minor major fp roots).fwd_map x <> 0UL)
     (ensures
       Seq.mem (resolve_minor minor x) (minor_objects minor) /\
@@ -106,7 +106,7 @@ private let major_non_pointer_field_preserved
   (src: obj_addr) (j: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       Seq.mem src (objects zero_addr major) /\
       is_blue src major = false /\
       j < U64.v (wosize_of_object src major) /\
@@ -152,7 +152,7 @@ private let minor_non_pointer_field_preserved
   (src: U64.t) (j: nat)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       (let prom = cheney_promote minor major fp roots in
        let img = prom.fwd_map src in
        img <> 0UL /\

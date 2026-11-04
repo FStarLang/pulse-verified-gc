@@ -84,6 +84,32 @@ let rec copy_fields_preserves
     end
 #pop-options
 
+let allocations_not_free_intro free prf =
+  reveal_opaque (`%allocations_not_free) (allocations_not_free free);
+  introduce forall (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}) (x: obj_addr).
+    blocks_fit g /\
+    AllocLemmas.fl_valid g fp heap_words /\
+    AllocLemmas.fl_chain_terminates g fp heap_words /\
+    (GC.Spec.Allocator.alloc_spec g fp wz tag).obj_out == x ==>
+    not (free (GC.Spec.Allocator.alloc_spec g fp wz tag).heap_out x)
+  with introduce _ ==> _
+  with prf g fp wz tag x
+
+let allocations_not_free_elim free g fp wz tag x =
+  reveal_opaque (`%allocations_not_free) (allocations_not_free free)
+
+let free_stw_allocations_not_free () =
+  let prf (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}) (x: obj_addr)
+    : Lemma (requires blocks_fit g /\
+                      AllocLemmas.fl_valid g fp heap_words /\
+                      AllocLemmas.fl_chain_terminates g fp heap_words /\
+                      (GC.Spec.Allocator.alloc_spec g fp wz tag).obj_out == x)
+            (ensures not (free_stw (GC.Spec.Allocator.alloc_spec g fp wz tag).heap_out x))
+    = AllocProps.alloc_spec_obj_not_blue_part1 g fp wz tag;
+      is_blue_iff x (GC.Spec.Allocator.alloc_spec g fp wz tag).heap_out
+  in
+  allocations_not_free_intro free_stw prf
+
 let promote_object_oom (minor: minor_state) (major: heap) (obj: U64.t)
                        (fp: U64.t) (wosize: nat{wosize > 0})
                     = ()

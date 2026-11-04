@@ -216,14 +216,16 @@ val collection_heap_shape_after_minor_reset
 /// colour facts (`collection_heap_shape_as_free_stw`,
 /// `collection_heap_shape_of_free_stw`).
 
-/// The major half: the definition of free is admissible (`free_def_ok`), and
-/// the walk, the free list and the pointer clauses of the non-free blocks
+/// The major half: the definition of free is admissible (`free_def_ok`, and
+/// the blocks the allocator creates are not free: `allocations_not_free`),
+/// and the walk, the free list and the pointer clauses of the non-free blocks
 /// hold.
 [@@"opaque_to_smt"]
 val major_shape_with (free: free_def) (major: heap) (fp: U64.t) : prop
 
 val major_shape_with_intro (free: free_def) (major: heap) (fp: U64.t)
   : Lemma (requires free_def_ok free /\
+                    allocations_not_free free /\
                     well_formed_heap_with free major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
@@ -241,6 +243,7 @@ val major_shape_with_intro (free: free_def) (major: heap) (fp: U64.t)
 val major_shape_with_elim (free: free_def) (major: heap) (fp: U64.t)
   : Lemma (requires major_shape_with free major fp)
           (ensures free_def_ok free /\
+                   allocations_not_free free /\
                    (forall (g: heap) (x: obj_addr). {:pattern (in_use free g x)}
                       in_use free g x ==> Seq.mem x (objects zero_addr g) /\ ~(is_blue x g)) /\
                    well_formed_heap_with free major /\

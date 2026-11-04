@@ -87,7 +87,7 @@ private let normal_src_image_is_val_addr
   (roots: seq U64.t) (u: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       normal_src_reachable minor major fp free roots u)
     (ensures (
       let prom = cheney_promote minor major fp roots in
@@ -366,7 +366,7 @@ private let post_root_image_is_normal_image
   (r: vertex_id{mem_graph_vertex (HeapModel.create_graph_with free (cheney_collect_spec_with free minor major fp roots).mc_major) r})
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -507,7 +507,7 @@ private let post_edge_from_major_image_reflects_mem_ce
   (src: U64.t) (w: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -706,7 +706,7 @@ private let post_edge_from_major_image_reflects_target
   (src y: U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -854,7 +854,7 @@ private let post_edge_from_minor_image_reflects_mem_ce
   (src: U64.t) (w: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -878,7 +878,7 @@ private let post_edge_from_minor_image_reflects_target
   (src y: U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -997,7 +997,7 @@ private let post_successor_of_normal_image_reflects
   (x y: U64.t)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -1041,7 +1041,7 @@ private let rec post_reach_witness_is_normal_image
   (rx: reach (HeapModel.create_graph_with free (cheney_collect_spec_with free minor major fp roots).mc_major) r x)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -1210,7 +1210,7 @@ let rec ready_src_reach_image_post_reachable
   (r: ready_src_reach minor major fp free roots u)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
@@ -1277,7 +1277,7 @@ private let edge_source_normal_vertex_ready
   (u w: CG.combined_vertex)
   : Lemma
     (requires
-      GenInv.collection_shape_with free minor major fp /\ CE.promotion_not_free free minor major fp roots /\
+      GenInv.collection_shape_with free minor major fp /\
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\

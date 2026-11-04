@@ -1043,8 +1043,7 @@ a field of a non-free block), to the pointer update of
 ### The minor collection, for any definition of free
 
 The minor collection's theorems are stated for any definition of free the
-caller supplies.  They assume three things of it, all trivially true of
-`free_stw`:
+caller supplies.  They assume three things of it, all true of `free_stw`:
 
 ```fstar
 (* blue blocks are free, and what is free is read off walk membership and the
@@ -1057,25 +1056,33 @@ let free_header_determined (free: free_def) : prop =
     read_word g (hd_address x) == read_word g' (hd_address x) ==> free g x == free g' x
 let free_def_ok (free: free_def) : prop = blue_is_free free /\ free_header_determined free
 
-(* the blocks an operation allocates are not free *)
-let fresh_not_free (free: free_def) (g g': heap) : prop =
-  forall (x: obj_addr).
-    is_block g' x /\ not (is_blue x g') /\ ~(is_block g x /\ not (is_blue x g)) ==> not (free g' x)
-let promotion_not_free free minor major fp roots : prop =       (* GC.Gen.CheneyGeneric *)
-  fresh_not_free free major (cheney_promote minor major fp roots).major_final
+(* the blocks the allocator creates are not free           (GC.Gen.Promote) *)
+let allocations_not_free (free: free_def) : prop =
+  forall (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}) (x: obj_addr).
+    blocks_fit g /\ fl_valid g fp heap_words /\ fl_chain_terminates g fp heap_words /\
+    (alloc_spec g fp wz tag).obj_out == x ==>
+    not (free (alloc_spec g fp wz tag).heap_out x)
 ```
 
-`free_stw_ok`, `free_stw_fresh_not_free` and
-`CheneyGeneric.free_stw_promotion_not_free` are the `free_stw` instances.  For a
-sweep in progress the third one is where the allocation colour matters: a
-block promoted in front of the sweep cursor must be coloured so that it does
-not count as about to be freed.
+`free_stw_ok` and `free_stw_allocations_not_free` are the `free_stw`
+instances (the idle allocator writes a white header).  The third assumption
+is a property of the definition of free and of the allocator promotion runs,
+not of a particular collection; the generic theorems derive from it that no
+promoted copy is free (`CheneyPreservation.Fields.cheney_promote_fwd_target_not_free`:
+the copy is not free when it is allocated, and its header and walk membership
+never change afterwards, so by `free_header_determined` it stays so).  It is
+part of the shape (`major_shape_with`), so it does not appear in the
+statements.  For a sweep in progress this is where the allocation colour
+matters: the allocator at the sweeping phase colours a block in front of the
+cursor black, so a definition of free that counts the white blocks in front
+of the cursor satisfies the same statement with `alloc_spec` replaced by the
+allocator at that phase.
 
 `GC.Gen.HeapInvariant.collection_shape_with free minor major fp` is what a
 minor collection needs of the heaps:
 
 - `major_shape_with free major fp`: `free_def_ok free`,
-  `well_formed_heap_with free major` (the walk clauses, and the pointer clauses
+  `allocations_not_free free`, `well_formed_heap_with free major` (the walk clauses, and the pointer clauses
   of the non-free blocks), and the free-list facts of `major_heap_shape`
   (valid, terminating, exact, ascending, its link words, density,
   `chain_objects_blue`);
@@ -1092,15 +1099,15 @@ included, and the collection never reads them.  At `free_stw` this is
 `GC.Gen.CheneyGeneric` proves it is kept, event by event: promotion keeps every
 non-free block non-free (`cheney_promote_keeps_in_use`, by
 `free_header_determined`), makes the images of the promoted nursery objects
-non-free blocks (`cheney_promote_image_not_free`, by `promotion_not_free`),
+non-free blocks (`cheney_promote_image_not_free`, by `allocations_not_free`),
 and keeps `well_formed_heap_with free` (`cheney_promote_preserves_wf_with`: an
 old block is untouched, a promoted one holds its nursery source's fields); the
 walk keeps what is free and keeps `well_formed_heap_with free` when every
 forwarding target is a non-free block (`update_walk_keeps_in_use`,
 `update_pointers_with_preserves_wf`, `cheney_promote_fwd_targets_not_free`).
 With the free-list facts this gives `cheney_collect_with_preserves_shape`:
-`collection_shape_with free` of the input and `promotion_not_free free` imply
-`collection_shape_with free` of `cheney_collect_spec_with free`'s result.  The
+`collection_shape_with free` of the input implies `collection_shape_with free`
+of `cheney_collect_spec_with free`'s result.  The
 promotion lemmas only ask for the walk facts of the major heap (`blocks_fit`,
 `no_infix_block`), not `well_formed_heap`.  The stop-the-world
 `cheney_collect_preserves_collection_heap_shape` is the instance at
@@ -1109,9 +1116,9 @@ carried through the Cheney run: `CheneyPreservation.cheney_collect_block_origin`
 says a non-blue block of the result is an old non-blue block with the same
 header (the frame facts `cheney_promote_frame_old_header` and
 `update_major_pointers_preserves_header`) or a promoted copy, which the idle
-allocator wrote white (`Fields.cheney_promote_fwd_target_no_scan_iff_minor_tag`
-records the copy's header facts, colour included).  So a collection creates no
-grey or black block.
+allocator wrote white: `cheney_promote_fwd_target_not_free` at the definition
+"free means not white", which the allocator's white blocks satisfy.  So a
+collection creates no grey or black block.
 
 The reachable-subgraph isomorphism (`GC.Gen.MinorCollectForwarding`) is
 stated and proved for any definition of free as well, over graphs in which a
@@ -1141,8 +1148,8 @@ hypotheses into the generic ones), where the post-collection graph is
 `HeapModel.create_graph` (`Helpers.result_post_stw`).
 
 `minor_collect_full`'s contract is generic, isomorphism included:
-`minor_collect_pre_with free minor s fp rs farr slots n` (the shape,
-`promotion_not_free free`, the write barrier's guarantees, the remembered
+`minor_collect_pre_with free minor s fp rs farr slots n` (the shape, the
+write barrier's guarantees, the remembered
 targets in the roots, valid non-free roots, all for `free`) and
 `minor_collect_post_with free` (the heap is the two-pass result and
 `cheney_collect_spec_with free`'s, the shape for `free` is kept, and on
@@ -1492,8 +1499,8 @@ fn minor_collect_full (gh: gen_heap_t)
 
 The precondition (`minor_collect_pre_with free`) is:
 
-- `collection_shape_with free` for the minor and major heap, and
-  `promotion_not_free free` (the blocks promotion creates are not free);
+- `collection_shape_with free` for the minor and major heap (which includes
+  `allocations_not_free free`: the blocks the allocator creates are not free);
 - root-array length consistency and a zeroed forwarding array of the expected size;
 - remembered slot soundness and coverage for `free`
   (`ref_table_sound_with`, `ref_table_covers_with`), and distinctness;
