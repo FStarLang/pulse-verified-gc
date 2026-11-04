@@ -737,11 +737,11 @@ let cheney_promote_nonblue_origin
 ///
 /// `collection_heap_shape` is the shape at `free_stw` plus two colour
 /// facts (`GenInv.collection_heap_shape_as_free_stw`).  The shape part is
-/// `GC.Gen.CheneyWith.cheney_collect_with_preserves_shape` at `free_stw`,
+/// `GC.Gen.CheneyGeneric.cheney_collect_with_preserves_shape` at `free_stw`,
 /// which is `cheney_collect_spec`; the colour facts are proved directly
 /// (promotion allocates white objects and the pointer update writes no header).
 
-module CE = GC.Gen.CheneyWith
+module CE = GC.Gen.CheneyGeneric
 
 /// With no gray and no black objects, the empty stack trivially carries every
 /// gray-or-black object -- and conversely.

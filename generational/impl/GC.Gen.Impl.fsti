@@ -47,7 +47,7 @@ module CheneyBFS = GC.Gen.CheneyBFS
 module SpecHeapModel = GC.Spec.HeapModel
 module MRT = GC.Gen.MajorReachabilityTransfer
 module RT = GC.Gen.RefTable
-module CV = GC.Gen.CheneyWith
+module CV = GC.Gen.CheneyGeneric
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state

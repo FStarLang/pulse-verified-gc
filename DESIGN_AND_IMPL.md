@@ -1061,12 +1061,12 @@ let free_def_ok (free: free_def) : prop = blue_is_free free /\ free_header_deter
 let fresh_not_free (free: free_def) (g g': heap) : prop =
   forall (x: obj_addr).
     is_block g' x /\ not (is_blue x g') /\ ~(is_block g x /\ not (is_blue x g)) ==> not (free g' x)
-let promotion_not_free free minor major fp roots : prop =       (* GC.Gen.CheneyWith *)
+let promotion_not_free free minor major fp roots : prop =       (* GC.Gen.CheneyGeneric *)
   fresh_not_free free major (cheney_promote minor major fp roots).major_final
 ```
 
 `free_stw_ok`, `free_stw_fresh_not_free` and
-`CheneyWith.free_stw_promotion_not_free` are the `free_stw` instances.  For a
+`CheneyGeneric.free_stw_promotion_not_free` are the `free_stw` instances.  For a
 sweep in progress the third one is where the allocation colour matters: a
 block promoted in front of the sweep cursor must be coloured so that it does
 not count as about to be freed.
@@ -1089,7 +1089,7 @@ included, and the collection never reads them.  At `free_stw` this is
 (`collection_heap_shape_as_free_stw`, `collection_heap_shape_of_free_stw`):
 `well_formed_heap` *is* `well_formed_heap_with free_stw`.
 
-`GC.Gen.CheneyWith` proves it is kept, event by event: promotion keeps every
+`GC.Gen.CheneyGeneric` proves it is kept, event by event: promotion keeps every
 non-free block non-free (`cheney_promote_keeps_in_use`, by
 `free_header_determined`), makes the images of the promoted nursery objects
 non-free blocks (`cheney_promote_image_not_free`, by `promotion_not_free`),

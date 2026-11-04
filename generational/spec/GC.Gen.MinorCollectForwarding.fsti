@@ -55,7 +55,7 @@ module MCFE = GC.Gen.MinorCollectForwarding.Edges
 module MCFNE = GC.Gen.MinorCollectForwarding.NormalEdges
 module MCFNP = GC.Gen.MinorCollectForwarding.NonPointerFields
 module RT = GC.Gen.RefTable
-module CE = GC.Gen.CheneyWith
+module CE = GC.Gen.CheneyGeneric
 let remembered_targets_in_roots
   (major: heap) (roots slots: seq U64.t) (n: nat) : prop =
   MCFH.remembered_targets_in_roots major roots slots n
