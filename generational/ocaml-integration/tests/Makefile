@@ -59,7 +59,8 @@ BT18_MAJOR_WORDS      ?= 536870912
 CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior \
                     alloc_exact_promotion tiny_globals gc_explicit large_alloc_garbage \
                     gray_overflow explicit_major incremental_sweep obj_truncate \
-                    write_barrier incremental_mark mark_scanned_writes
+                    write_barrier incremental_mark mark_scanned_writes \
+                    deep_stack unsupported_features
 
 # infix_closures needs a small major heap so that real major collections
 # (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
@@ -142,11 +143,24 @@ LARGE_ALLOC_LEAVE_FREE  ?= 100000
 # skipped after an overflow.
 GRAY_OVERFLOW_MAJOR_WORDS ?= 2000000
 
+# deep_stack (issue #41) keeps over 300K roots on the stack, more than the old
+# fixed root buffer (2^18).  At 2M words the full collection's gray stack
+# (heap_words / 8 = 250K) is also smaller than the root count, so the bridge
+# must size it from the roots (gen_gc_stack_budget).
+DEEP_STACK_MAJOR_WORDS ?= 2000000
+
+# unsupported_features (issues #42, #43): creating a weak array or ephemeron,
+# or registering a finaliser, stops with "Fatal error: ... not supported by the
+# verified GC"; check_unsupported.sh checks the exit code and messages.
+WEAK_MSG     = Weak arrays and ephemerons are
+FINALISE_MSG = Gc.finalise is
+
 BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
              $(addsuffix .byte, $(KNOWN_GAP_TESTS)) $(addsuffix .byte, $(MARK_BENCHMARKS))
 NATIVE_DIFF_TESTS = explicit_major incremental_sweep write_barrier incremental_mark mark_scanned_writes
 NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS)) gc_explicit.native large_alloc_garbage.native \
-               gray_overflow.native obj_truncate.native $(addsuffix .native, $(NATIVE_DIFF_TESTS))
+               gray_overflow.native obj_truncate.native deep_stack.native \
+               unsupported_features.native $(addsuffix .native, $(NATIVE_DIFF_TESTS))
 BENCH_TARGETS = $(addsuffix .bench, $(BENCHMARKS))
 STATS_TARGETS = $(addsuffix .stats, $(BENCHMARKS))
 MINHEAP_TARGETS = $(addsuffix .minheap, $(BENCHMARKS))
@@ -225,7 +239,7 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	@echo "--- infix_closures (stock OCaml, differential check) ---"
 	$(UNCHANGED_OCAMLRUN) infix_closures.byte
 	@echo "--- no_scan (verified generational GC) ---"
-	MIN_EXPANSION_WORDSIZE=$(NO_SCAN_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) no_scan.byte
+	NO_SCAN_RUNTIME=verified MIN_EXPANSION_WORDSIZE=$(NO_SCAN_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) no_scan.byte
 	@echo "--- no_scan (stock OCaml, differential check) ---"
 	$(UNCHANGED_OCAMLRUN) no_scan.byte
 	@echo "--- make_vect_barrier (verified generational GC) ---"
@@ -274,6 +288,19 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_MARK_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) incremental_mark.byte $(INCREMENTAL_MARK_REPS)'
 	REQUIRE_MID_MARK=1 REQUIRE_MARKS_ENDED=1 $(DIFF) mark_scanned_writes '$(UNCHANGED_OCAMLRUN) mark_scanned_writes.byte' \
 	  'MIN_EXPANSION_WORDSIZE=$(MARK_SCANNED_WRITES_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) mark_scanned_writes.byte'
+	@echo "--- deep_stack (verified generational GC; issue #41) ---"
+	MIN_EXPANSION_WORDSIZE=$(DEEP_STACK_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) deep_stack.byte
+	@echo "--- deep_stack (stock OCaml, differential check) ---"
+	$(UNCHANGED_OCAMLRUN) deep_stack.byte
+	@echo "--- unsupported_features (verified generational GC: must stop; issues #42, #43) ---"
+	./check_unsupported.sh "$(WEAK_MSG)" $(VERIFIED_GEN_OCAMLRUN) unsupported_features.byte weak
+	./check_unsupported.sh "$(WEAK_MSG)" $(VERIFIED_GEN_OCAMLRUN) unsupported_features.byte ephemeron
+	./check_unsupported.sh "$(FINALISE_MSG)" $(VERIFIED_GEN_OCAMLRUN) unsupported_features.byte finalise
+	./check_unsupported.sh "$(FINALISE_MSG)" $(VERIFIED_GEN_OCAMLRUN) unsupported_features.byte finalise_last
+	@echo "--- unsupported_features (stock OCaml, differential check: runs through) ---"
+	for m in weak ephemeron finalise finalise_last; do \
+	    $(UNCHANGED_OCAMLRUN) unsupported_features.byte $$m | grep -qx after || exit 1; \
+	done
 	@echo "=== Correctness tests passed ==="
 
 # ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
@@ -339,6 +366,13 @@ test-native: $(NATIVE_FILES) $(addsuffix .byte, $(NATIVE_DIFF_TESTS))
 	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_MARK_MAJOR_WORDS) ./incremental_mark.native $(INCREMENTAL_MARK_REPS)'
 	REQUIRE_MID_MARK=1 REQUIRE_MARKS_ENDED=1 $(DIFF) mark_scanned_writes.native '$(UNCHANGED_OCAMLRUN) mark_scanned_writes.byte' \
 	  'MIN_EXPANSION_WORDSIZE=$(MARK_SCANNED_WRITES_MAJOR_WORDS) ./mark_scanned_writes.native'
+	@echo "--- deep_stack (issue #41: more roots than the old fixed buffer) ---"
+	MIN_EXPANSION_WORDSIZE=$(DEEP_STACK_MAJOR_WORDS) ./deep_stack.native
+	@echo "--- unsupported_features (issues #42, #43: must stop) ---"
+	./check_unsupported.sh "$(WEAK_MSG)" ./unsupported_features.native weak
+	./check_unsupported.sh "$(WEAK_MSG)" ./unsupported_features.native ephemeron
+	./check_unsupported.sh "$(FINALISE_MSG)" ./unsupported_features.native finalise
+	./check_unsupported.sh "$(FINALISE_MSG)" ./unsupported_features.native finalise_last
 	@echo "=== All native smoke tests passed ==="
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----
