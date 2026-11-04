@@ -17,8 +17,9 @@
 ///     are what the free block held, so the new object is not yet bound by
 ///     the pointer clauses: the result is the sweep phase with the new object
 ///     *fresh* (`fresh_ok`: the heap is well formed when it also counts as
-///     free, `free_or_fresh`, so nothing points at it).  Writes into a fresh object keep it fresh (`fresh_write`); once
-///     every field holds a storable value it is closed (`fresh_close`).  The
+///     free, `free_or_uninitialised`, so nothing points at it).  Writes into
+///     a fresh object keep it fresh (`fresh_write`); once every field holds
+///     a storable value it is closed (`fresh_close`).  The
 ///     runtime initialises a block it allocates before the next collection
 ///     event, so this is the allocation event with its initialisation.
 ///   * **A field write** (`write_sweep_phase`) into a non-free object, of a
@@ -79,19 +80,20 @@ let new_block (g g': heap) (st: sweep_state) (obj: U64.t) (wz: nat) (tag: tag_t)
    (U64.v p < U64.v st.cursor ==> is_white x g') /\
    not (pending_free st g' x))
 
-/// What counts as free during the sweep, and also the fresh object `obj`
-/// (whose fields are not initialised yet).
-let free_or_fresh (st: sweep_state) (obj: obj_addr) : free_def =
+/// What counts as free during the sweep, and also the one object `obj` just
+/// allocated and not yet initialised: it is treated as free until the runtime
+/// writes its fields.
+let free_or_uninitialised (st: sweep_state) (obj: obj_addr) : free_def =
   fun g x -> free_incremental st g x || x = obj
 
-val free_or_fresh_ok (st: sweep_state) (obj: obj_addr) : Lemma (free_def_ok (free_or_fresh st obj))
+val free_or_uninitialised_ok (st: sweep_state) (obj: obj_addr) : Lemma (free_def_ok (free_or_uninitialised st obj))
 
 /// The sweep phase with the object `obj` *fresh*: every clause, but
 /// well-formedness counts `obj` as free (its fields are not yet initialised,
 /// and nothing points at it); `obj` itself is a non-free block.
 let fresh_ok (g: heap) (fp: U64.t) (st: sweep_state) (obj: obj_addr) : prop =
   sweep_shape g fp st /\ in_use (free_incremental st) g obj /\
-  well_formed_heap_with (free_or_fresh st obj) g
+  well_formed_heap_with (free_or_uninitialised st obj) g
 
 /// **Allocation keeps the sweep shape**, and the pending-free set.
 val alloc_sweep_shape (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t)

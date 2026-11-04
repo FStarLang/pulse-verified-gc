@@ -25,7 +25,7 @@ module CV = GC.Gen.CheneyGeneric
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 
-let free_or_fresh_ok st obj =
+let free_or_uninitialised_ok st obj =
   free_incremental_ok st;
   reveal_opaque (`%free_def_ok) free_def_ok
 
@@ -526,7 +526,7 @@ let found_in_use (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat) (tag: tag_t) 
           (ensures (let gx = gx_of g st wz tag p cur pc in
                     let st' = alloc_state g fp wz st in
                     let obj = U64.uint_to_t (U64.v pc.ah + 8) in
-                    in_use (free_or_fresh st' obj) gx x == in_use (free_incremental st) g x))
+                    in_use (free_or_uninitialised st' obj) gx x == in_use (free_incremental st) g x))
   = let gx = gx_of g st wz tag p cur pc in
     let st' = alloc_state g fp wz st in
     found_shape g fp st wz tag p cur pc;
@@ -551,8 +551,8 @@ let alloc_sweep_phase g fp st wz tag =
     found_part4 g fp st wz tag p cur pc;
     FStar.Classical.forall_intro (found_in_use g fp st wz tag p cur pc);
     FStar.Classical.forall_intro (FStar.Classical.move_requires (found_same_block g fp st wz tag p cur pc));
-    free_or_fresh_ok st' obj;
-    wf_transport g gx (free_incremental st) (free_or_fresh st' obj)
+    free_or_uninitialised_ok st' obj;
+    wf_transport g gx (free_incremental st) (free_or_uninitialised st' obj)
   end
 #pop-options
 
@@ -638,7 +638,7 @@ let fresh_write g fp st obj a v =
   body_write_shape g fp st obj a v;
   same_heads_facts g g';
   let kept (y: obj_addr)
-    : Lemma (requires in_use (free_or_fresh st obj) g y)
+    : Lemma (requires in_use (free_or_uninitialised st obj) g y)
             (ensures same_block g g' (hd_address y))
     = other_body g obj y a;
       obj_pos g y;
@@ -652,8 +652,8 @@ let fresh_write g fp st obj a v =
   FStar.Classical.forall_intro (FStar.Classical.move_requires kept);
   wf_with_parts ();
   same_heads_part4 g g';
-  free_or_fresh_ok st obj;
-  wf_transport g g' (free_or_fresh st obj) (free_or_fresh st obj)
+  free_or_uninitialised_ok st obj;
+  wf_transport g g' (free_or_uninitialised st obj) (free_or_uninitialised st obj)
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -663,10 +663,10 @@ let fresh_write g fp st obj a v =
 #push-options "--z3rlimit 20"
 let fresh_close g fp st obj =
   let free = free_incremental st in
-  let fresh_free = free_or_fresh st obj in
+  let fresh_free = free_or_uninitialised st obj in
   wf_with_parts ();
   free_incremental_ok st;
-  free_or_fresh_ok st obj;
+  free_or_uninitialised_ok st obj;
   free_def_ok_elim free;
   let closure (src: obj_addr) (j: nat)
     : Lemma (requires in_use free g src /\ ~(is_no_scan src g) /\

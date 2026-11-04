@@ -861,7 +861,7 @@ pending-free set unchanged:
   of the cursor, white behind it).  Its fields are what the free block held,
   so the result is the invariant with the new object *fresh* (`fresh_ok`: the
   heap is well formed when the new object also counts as free,
-  `free_or_fresh st obj`, so nothing points at it);
+  `free_or_uninitialised st obj`, so nothing points at it);
   writes into it keep it fresh (`fresh_write`), and once every field holds a
   storable value it closes (`fresh_close`).  The allocation-shape facts behind
   it (the block first-fit takes, the words it writes, its walk, cells and
