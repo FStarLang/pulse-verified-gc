@@ -19,6 +19,7 @@ open GC.Gen.RefTable
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module CheneySpec = GC.Gen.Cheney
+module CheneySteps = GC.Gen.Cheney.Steps
 module CheneyPres = GC.Gen.CheneyPreservation
 module TwoPass = GC.Gen.TwoPassEquiv
 module SpecFields = GC.Spec.Fields
@@ -217,7 +218,7 @@ private let derive_slot_rewrite_walked
     SpecFields.wfh_part1_obj_bound major_pre obj;
     ML.lemma_mod_plus (U64.v obj) j 8;
     assert (U64.v obj + j * 8 + 8 <= heap_size);
-    CheneySpec.cheney_promote_preserves_objects minor major_pre fp roots;
+    CheneySteps.cheney_promote_preserves_objects minor major_pre fp roots;
     CheneyPres.cheney_promote_frame_old_header minor major_pre fp roots obj;
     Aux.header_eq_object_facts prom.major_final major_pre obj;
     CE.cheney_promote_keeps_in_use free minor major_pre fp roots obj

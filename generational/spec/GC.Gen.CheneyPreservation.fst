@@ -16,6 +16,8 @@ open GC.Gen.MinorHeap
 open GC.Gen.Promote
 open GC.Gen.PromoteUpdate
 open GC.Gen.Cheney
+open GC.Gen.Cheney.Induction
+open GC.Gen.Cheney.Steps
 open GC.Gen.WriteBodyLemmas
 open GC.Lib.Header
 

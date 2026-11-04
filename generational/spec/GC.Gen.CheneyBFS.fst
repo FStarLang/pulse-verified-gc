@@ -15,6 +15,7 @@ open GC.Gen.Reachability
 
 module CheneySpec = GC.Gen.Cheney
 module SimOne = GC.Gen.Cheney.SimOne
+module Induction = GC.Gen.Cheney.Induction
 
 /// ---------------------------------------------------------------------------
 /// Graph lemma: fwd_well_formed ⟹ all reachable forwarded
@@ -101,41 +102,21 @@ let forward_one_fwd_monotone
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 
-let rec forward_fields_fwd_monotone
-  (minor: minor_state) (cs: CheneySpec.cheney_state)
-  (parent: U64.t) (idx: nat) (wosize: nat) (x: U64.t)
-  : Lemma (requires cs.cs_fwd x <> 0UL /\ minor_infix_wf minor)
-          (ensures (CheneySpec.cheney_forward_fields minor cs parent idx wosize).cs_fwd x <> 0UL)
-          (decreases (if idx < wosize then wosize - idx else 0))
-  =
-  if idx >= wosize then
-    CheneySpec.cheney_forward_fields_base minor cs parent idx wosize
-  else begin
-    CheneySpec.cheney_forward_fields_step minor cs parent idx wosize;
-    let field_val = to_minor_offset (minor_read_field minor parent idx) in
-    let cs' = CheneySpec.cheney_forward_one minor cs field_val in
-    forward_one_fwd_monotone minor cs field_val x;
-    forward_fields_fwd_monotone minor cs' parent (idx + 1) wosize x
-  end
+/// `x` stays forwarded.
+private let fwd_set_inv (minor: minor_state) (x: U64.t) (cs: CheneySpec.cheney_state) : prop =
+  cs.cs_fwd x <> 0UL /\ minor_infix_wf minor
 
-let rec scan_fwd_monotone
-  (minor: minor_state) (cs: CheneySpec.cheney_state)
-  (scan: nat) (fuel: nat) (x: U64.t)
-  : Lemma (requires cs.cs_fwd x <> 0UL /\ minor_infix_wf minor)
-          (ensures (CheneySpec.cheney_scan minor cs scan fuel).cs_fwd x <> 0UL)
-          (decreases fuel)
-  =
-  if fuel = 0 || scan >= Seq.length cs.cs_queue then
-    CheneySpec.cheney_scan_base minor cs scan fuel
-  else begin
-    assert (fuel > 0);
-    CheneySpec.cheney_scan_step minor cs scan fuel;
-    let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_scan_wosize minor obj in
-    let cs' = CheneySpec.cheney_forward_fields minor cs obj 0 wz in
-    forward_fields_fwd_monotone minor cs obj 0 wz x;
-    scan_fwd_monotone minor cs' (scan + 1) (fuel - 1) x
-  end
+private let fwd_set_one (minor: minor_state) (x: U64.t)
+  : Induction.one_keeps_plain minor (fwd_set_inv minor x)
+  = fun cs addr -> forward_one_fwd_monotone minor cs addr x
+
+let forward_fields_fwd_monotone minor cs parent idx wosize x =
+  Induction.cheney_forward_fields_induction_plain minor (fwd_set_inv minor x)
+    (fwd_set_one minor x) cs parent idx wosize
+
+let scan_fwd_monotone minor cs scan fuel x =
+  Induction.cheney_scan_induction_plain minor (fwd_set_inv minor x)
+    (fwd_set_one minor x) cs scan fuel
 
 let scan_preserves_fwd_covers_roots
   (minor: minor_state) (cs: CheneySpec.cheney_state)
@@ -214,25 +195,17 @@ let forward_one_queue_prefix
       end
     end
 
-let rec forward_fields_queue_prefix
-  (minor: minor_state) (cs: CheneySpec.cheney_state)
-  (parent: U64.t) (idx: nat) (wosize: nat) (k: nat)
-  : Lemma (requires k < Seq.length cs.cs_queue)
-          (ensures k < Seq.length (CheneySpec.cheney_forward_fields minor cs parent idx wosize).cs_queue /\
-                   Seq.index (CheneySpec.cheney_forward_fields minor cs parent idx wosize).cs_queue k ==
-                   Seq.index cs.cs_queue k)
-          (decreases (if idx < wosize then wosize - idx else 0))
-  =
-    if idx >= wosize then
-      CheneySpec.cheney_forward_fields_base minor cs parent idx wosize
-    else begin
-      CheneySpec.cheney_forward_fields_step minor cs parent idx wosize;
-      let child = to_minor_offset (minor_read_field minor parent idx) in
-      let cs' = CheneySpec.cheney_forward_one minor cs child in
-      forward_one_queue_prefix minor cs child k;
-      assert (k < Seq.length cs'.cs_queue);
-      forward_fields_queue_prefix minor cs' parent (idx + 1) wosize k
-    end
+/// Queue entry `k` stays `v`.
+private let queue_at_inv (k: nat) (v: U64.t) (cs: CheneySpec.cheney_state) : prop =
+  k < Seq.length cs.cs_queue /\ Seq.index cs.cs_queue k == v
+
+private let queue_at_one (minor: minor_state) (k: nat) (v: U64.t)
+  : Induction.one_keeps_plain minor (queue_at_inv k v)
+  = fun cs addr -> forward_one_queue_prefix minor cs addr k
+
+let forward_fields_queue_prefix minor cs parent idx wosize k =
+  Induction.cheney_forward_fields_induction_plain minor (queue_at_inv k (Seq.index cs.cs_queue k))
+    (queue_at_one minor k (Seq.index cs.cs_queue k)) cs parent idx wosize
 #pop-options
 
 [@@"opaque_to_smt"]

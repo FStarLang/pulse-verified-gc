@@ -38,6 +38,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module SF = GC.Spec.Fields
 module PromoteSpec = GC.Gen.Promote
 module CheneySpec = GC.Gen.Cheney
+module CheneySteps = GC.Gen.Cheney.Steps
 module CheneyBFS = GC.Gen.CheneyBFS
 module Sim = GC.Gen.Cheney.Sim
 module SimOne = GC.Gen.Cheney.SimOne
@@ -983,9 +984,9 @@ fn cheney_promote_phase
   // Ghost: establish derived properties via spec preservation lemmas
   // cs_final == cheney_scan ... (cheney_forward_roots ... cs0 ... 0) 0 (cheney_fuel ...)
   // which is exactly cheney_promote's definition
-  CheneySpec.cheney_promote_preserves_dense ({data='md; bump='mb} <: minor_state) 'ms 'fp 'rs;
-  CheneySpec.cheney_promote_preserves_cob ({data='md; bump='mb} <: minor_state) 'ms 'fp 'rs;
-  CheneySpec.cheney_promote_preserves_wfh_part1 ({data='md; bump='mb} <: minor_state) 'ms 'fp 'rs;
+  CheneySteps.cheney_promote_preserves_dense ({data='md; bump='mb} <: minor_state) 'ms 'fp 'rs;
+  CheneySteps.cheney_promote_preserves_cob ({data='md; bump='mb} <: minor_state) 'ms 'fp 'rs;
+  CheneySteps.cheney_promote_preserves_wfh_part1 ({data='md; bump='mb} <: minor_state) 'ms 'fp 'rs;
 
   // Return success (no OOM detected)
   let oom_val = !oom;

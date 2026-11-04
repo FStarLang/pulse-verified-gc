@@ -16,6 +16,8 @@ open GC.Gen.MinorHeap
 open GC.Gen.Promote
 open GC.Gen.Cheney
 
+open GC.Gen.Cheney.Induction
+open GC.Gen.Cheney.Steps
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module GenInv = GC.Gen.HeapInvariant
 module PU = GC.Gen.PromoteUpdate

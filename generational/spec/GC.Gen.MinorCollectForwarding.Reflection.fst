@@ -21,6 +21,7 @@ open GC.Gen.Cheney
 module Mark = GC.Spec.Mark
 module PromUpdate = GC.Gen.PromoteUpdate
 module Cheney = GC.Gen.Cheney
+module CheneySteps = GC.Gen.Cheney.Steps
 module CheneyBFS = GC.Gen.CheneyBFS
 module CheneyPres = GC.Gen.CheneyPreservation
 module CheneyFields = GC.Gen.CheneyPreservation.Fields
@@ -235,7 +236,7 @@ let post_edge_from_minor_image_reflects_mem_ce
     assert (HeapGraph.is_pointer_field (read_word updated field_addr));
     assert (HeapGraph.resolve_field updated
               (read_word updated field_addr) == target_img);
-    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
     CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots;
     PromUpdate.update_walk_preserves_header prom.major_final (in_use free prom.major_final) prom.fwd_map fwd_src_obj;
@@ -307,7 +308,7 @@ let post_edge_from_minor_image_reflects_mem_ce
           assert (prom.fwd_map rv <> 0UL);
           assert (Seq.mem ((prom.fwd_map rv) <: obj_addr)
             (objects zero_addr prom.major_final));
-          Cheney.cheney_promote_preserves_wfh_part4 minor major fp roots;
+          CheneySteps.cheney_promote_preserves_wfh_part4 minor major fp roots;
           assert (no_infix_block prom.major_final);
           CheneyInj.cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
             minor major fp roots;
@@ -349,7 +350,7 @@ let post_edge_from_minor_image_reflects_mem_ce
           Frame.cheney_promote_frame_old_header minor major fp roots
             (old_raw <: obj_addr);
           header_eq_preserves_infix major prom.major_final (old_raw <: obj_addr);
-          Cheney.cheney_promote_preserves_objects minor major fp roots;
+          CheneySteps.cheney_promote_preserves_objects minor major fp roots;
           PromUpdate.update_walk_preserves_header
             prom.major_final (in_use free prom.major_final) prom.fwd_map (old_raw <: obj_addr);
           header_eq_preserves_infix prom.major_final updated (old_raw <: obj_addr);
@@ -428,7 +429,7 @@ let post_edge_from_minor_image_reflects_target
     let field_addr : hp_addr = mk_field_addr fwd_src j in
     assert (HeapGraph.is_pointer_field (read_word updated field_addr));
     assert (HeapGraph.resolve_field updated (read_word updated field_addr) == y);
-    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
     CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots;
     PromUpdate.update_walk_preserves_header prom.major_final (in_use free prom.major_final) prom.fwd_map fwd_src_obj;
@@ -515,7 +516,7 @@ let post_edge_from_minor_image_reflects_target
           Frame.cheney_promote_frame_old_header minor major fp roots
             (old_raw <: obj_addr);
           header_eq_preserves_infix major prom.major_final (old_raw <: obj_addr);
-          Cheney.cheney_promote_preserves_objects minor major fp roots;
+          CheneySteps.cheney_promote_preserves_objects minor major fp roots;
           PromUpdate.update_walk_preserves_header
             prom.major_final (in_use free prom.major_final) prom.fwd_map (old_raw <: obj_addr);
           header_eq_preserves_infix prom.major_final updated (old_raw <: obj_addr);

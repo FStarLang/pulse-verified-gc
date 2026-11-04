@@ -17,6 +17,7 @@ module MarkBoundedInv = GC.Spec.MarkBoundedInv
 module GenInv = GC.Gen.HeapInvariant
 module Promote = GC.Gen.Promote
 module Cheney = GC.Gen.Cheney
+module CheneySteps = GC.Gen.Cheney.Steps
 module CheneyPres = GC.Gen.CheneyPreservation
 module CheneyFwd = GC.Gen.CheneyPreservation.Forwarding
 module CheneyFrame = GC.Gen.CheneyPreservation.Frame
@@ -138,12 +139,12 @@ let post_minor_minor_root_valid
   assert (Seq.mem (p <: obj_addr) (SpecFields.objects zero_addr prom.major_final));
   // `no_infix_block` says no member of the objects list is infix,
   // which is exactly the side condition `fwd_targets_not_blue` guards on.
-  Cheney.cheney_promote_preserves_wfh_part4 minor major fp roots;
+  CheneySteps.cheney_promote_preserves_wfh_part4 minor major fp roots;
   assert (SpecObj.is_infix p prom.major_final = false);
   CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
   assert (SpecObj.is_blue (p <: obj_addr) prom.major_final = false);
   // Rewriting the major heap's pointers moves neither objects nor headers.
-  Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+  CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
   PromUpdAux.update_major_pointers_preserves_objects prom.major_final prom.fwd_map;
   PromUpd.update_major_pointers_preserves_header prom.major_final prom.fwd_map p;
   SpecObj.color_of_header_eq p prom.major_final result.mc_major;
@@ -166,7 +167,7 @@ let post_minor_major_root_valid minor major fp roots r
   assert (Seq.mem (r <: obj_addr) (SpecFields.objects zero_addr major));
   CheneyCorr.cheney_collect_preserves_objects minor major fp SpecFields.free_stw roots;
   CheneyFrame.cheney_promote_frame_old_header minor major fp roots r;
-  Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+  CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
   PromUpdAux.update_major_pointers_preserves_objects prom.major_final prom.fwd_map;
   PromUpd.update_major_pointers_preserves_header prom.major_final prom.fwd_map r;
   SpecObj.color_of_header_eq r major result.mc_major;

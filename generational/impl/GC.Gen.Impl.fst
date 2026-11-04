@@ -32,6 +32,7 @@ module SpecObj = GC.Spec.Object
 module Alloc = GC.Impl.Allocator
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module CheneySpec = GC.Gen.Cheney
+module CheneySteps = GC.Gen.Cheney.Steps
 module ML = FStar.Math.Lemmas
 module MajorGC = GC.Impl
 module MarkBoundedImpl = GC.Impl.MarkBounded
@@ -313,13 +314,13 @@ let minor_collect_with_spec
     GenInv.collection_shape_with_elim free minor major fp;
     GenInv.major_shape_with_elim free major fp;
     GenInv.minor_heap_shape_elim minor;
-    CheneySpec.cheney_promote_fwd_above_zero_addr minor major fp roots;
-    CheneySpec.cheney_promote_fwd_bounded minor major fp roots;
+    CheneySteps.cheney_promote_fwd_above_zero_addr minor major fp roots;
+    CheneySteps.cheney_promote_fwd_bounded minor major fp roots;
     derive_fwd_targets_stable prom.fwd_map;
     ref_table_sound_with_implies_valid_slot_addrs free major slots n;
     ref_table_covers_with_implies_complete free major prom.fwd_map slots n;
-    CheneySpec.cheney_promote_preserves_wfh_part1 minor major fp roots;
-    CheneySpec.cheney_promote_preserves_wfh_part4 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part4 minor major fp roots;
     CheneyPres.cheney_promote_fwd_valid_or_infix minor major fp roots;
     CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
     TPC.two_pass_implies_collect_with free minor major fp roots farr slots n;
@@ -368,7 +369,7 @@ fn minor_collect_full (gh: gen_heap_t)
   with fp_post. assert (R.pts_to gh.fp_ref fp_post);
 
   // Phase 2: Update promoted objects' fields only (efficient path)
-  CheneySpec.cheney_promote_fwd_bounded
+  CheneySteps.cheney_promote_fwd_bounded
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
   fwd_bounded_implies_valid_fwd_entries farr_post
     (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map;

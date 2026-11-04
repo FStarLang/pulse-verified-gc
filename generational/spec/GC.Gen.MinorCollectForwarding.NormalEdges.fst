@@ -21,6 +21,7 @@ open GC.Gen.Cheney
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module Mark = GC.Spec.Mark
 module Cheney = GC.Gen.Cheney
+module CheneySteps = GC.Gen.Cheney.Steps
 module CheneyBFS = GC.Gen.CheneyBFS
 module CheneyFields = GC.Gen.CheneyPreservation.Fields
 module CheneyPres = GC.Gen.CheneyPreservation
@@ -304,7 +305,7 @@ private let normal_minor_source_ready_intro
     minor_source_edge_not_no_scan minor major fp free src dst;
     CheneyFields.cheney_promote_fwd_target_no_scan_iff_minor_tag
       minor major fp roots src;
-    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     assert (is_no_scan (fwd_src <: obj_addr) prom.major_final = false);
     assert (U64.v (wosize_of_object (fwd_src <: obj_addr) prom.major_final) >=
       minor_wosize minor src);

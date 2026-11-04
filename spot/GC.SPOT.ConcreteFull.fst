@@ -30,6 +30,7 @@ module GenInv = GC.Gen.HeapInvariant
 module Promote = GC.Gen.Promote
 module PromoteUpdate = GC.Gen.PromoteUpdate
 module Cheney = GC.Gen.Cheney
+module CheneySteps = GC.Gen.Cheney.Steps
 module CheneyBFS = GC.Gen.CheneyBFS
 module GenImpl = GC.Gen.Impl
 module MinorFwd = GC.Gen.MinorCollectForwarding
@@ -406,7 +407,7 @@ let post_minor_c_wosize
   MinorFwd.stop_the_world_context minor major fp roots;
   MinorFwd.cheney_promote_preserves_old_major_field_context
     minor major fp GC.Spec.Fields.free_stw roots c Layout.c_to_a_field_index;
-  Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+  CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
   PromoteUpdate.update_major_pointers_preserves_header prom.major_final prom.fwd_map c;
   MCFH.header_eq_preserves_wosize_no_scan result.mc_major prom.major_final c;
   assert (SpecObj.wosize_of_object c prom.major_final ==

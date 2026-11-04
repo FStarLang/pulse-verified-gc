@@ -15,6 +15,8 @@ open GC.Gen.Promote
 open GC.Gen.PromoteUpdate
 open GC.Gen.Cheney
 
+open GC.Gen.Cheney.Induction
+open GC.Gen.Cheney.Steps
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 /// ---------------------------------------------------------------------------

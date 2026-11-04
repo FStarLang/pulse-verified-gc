@@ -22,6 +22,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module Mark = GC.Spec.Mark
 module PromUpdate = GC.Gen.PromoteUpdate
 module Cheney = GC.Gen.Cheney
+module CheneySteps = GC.Gen.Cheney.Steps
 module CheneyBFS = GC.Gen.CheneyBFS
 module CheneyCorr = GC.Gen.CheneyCorrectness
 module CheneyPres = GC.Gen.CheneyPreservation
@@ -191,8 +192,8 @@ let cheney_collect_frame_target_header
     Frame.cheney_promote_frame_target_header minor major fp roots h;
     assert (read_word pm (hd_address h) == read_word major (hd_address h));
     GC.Spec.Object.resolve_object_locality h major pm;
-    Cheney.cheney_promote_preserves_objects minor major fp roots;
-    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_objects minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     // transport the infix-shape obligations from `major` to `v`
     if GC.Spec.Object.is_infix h major then begin
       GC.Spec.Object.infix_addr_wf_elim major (objects zero_addr major) h;
@@ -260,8 +261,8 @@ let combined_major_edge_forwarded
     assert (U64.v old_raw >= U64.v zero_addr + U64.v mword);
     to_minor_offset_stable_above_minor old_raw;
     assert (to_minor_offset old_raw == old_raw);
-    Cheney.cheney_promote_preserves_objects minor major fp roots;
-    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_objects minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     CheneyPres.cheney_promote_frame_old_header minor major fp roots src;
     CheneyPres.cheney_promote_frame_old_fields minor major fp roots src i;
     assert (Seq.mem src (objects zero_addr prom.major_final));
@@ -356,8 +357,8 @@ let combined_major_minor_field_forwarded
       assert (ov == dst)
     end;
     assert (prom.fwd_map ov <> 0UL);
-    Cheney.cheney_promote_preserves_objects minor major fp roots;
-    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_objects minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     cheney_promote_preserves_old_major_field_context minor major fp free roots src i;
     assert (Seq.mem src (objects zero_addr prom.major_final));
     assert (is_blue src prom.major_final = false);
@@ -388,7 +389,7 @@ let combined_major_minor_edge_forwarded
     GenInv.minor_heap_shape_elim minor;
     RBridge.reachable_not_free free minor major roots;
     assert (~(is_blue src major));
-    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     cheney_promote_preserves_old_major_field_context minor major fp free roots src i;
     PromUpdate.update_walk_preserves_header prom.major_final (in_use free prom.major_final) prom.fwd_map src;
     header_eq_preserves_wosize_no_scan prom.major_final updated src;
@@ -431,11 +432,11 @@ let promoted_minor_major_field_preserved
     assert (Seq.mem (dst <: obj_addr) (objects zero_addr major));
     CheneyFields.cheney_promote_fwd_target_fields_match minor major fp roots src j;
     assert (read_word prom.major_final field_addr == dst);
-    Cheney.cheney_promote_preserves_objects minor major fp roots;
+    CheneySteps.cheney_promote_preserves_objects minor major fp roots;
     assert (Seq.mem (dst <: obj_addr) (objects zero_addr prom.major_final));
     RBridge.major_object_not_minor_pointer major (dst <: obj_addr);
     assert (to_minor_offset dst == dst);
-    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     update_preserves_major_target_field prom.major_final (in_use free prom.major_final) prom.fwd_map fwd_src_obj (dst <: obj_addr) j;
     assert (res.mc_major == update_walk prom.major_final (in_use free prom.major_final) prom.fwd_map)
 #pop-options
@@ -453,7 +454,7 @@ let promoted_minor_major_edge_forwarded
     GenInv.major_shape_with_elim free major fp;
     promoted_minor_major_field_preserved minor major fp free roots src dst j;
     MCFH.post_shape_with free minor major fp roots;
-    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     PromUpdate.update_walk_preserves_objects prom.major_final (in_use free prom.major_final) prom.fwd_map;
     PromUpdate.update_walk_preserves_header prom.major_final (in_use free prom.major_final) prom.fwd_map fwd_src_obj;
     header_eq_preserves_wosize_no_scan prom.major_final res.mc_major fwd_src_obj;
@@ -463,7 +464,7 @@ let promoted_minor_major_edge_forwarded
     assert (wosize_of_object fwd_src_obj res.mc_major == wosize_of_object fwd_src_obj prom.major_final);
     CG.classify_minor_field_inv_major minor major (minor_read_field minor src j) dst;
     assert (Seq.mem (dst <: obj_addr) (objects zero_addr major));
-    Cheney.cheney_promote_preserves_objects minor major fp roots;
+    CheneySteps.cheney_promote_preserves_objects minor major fp roots;
     assert (Seq.mem (dst <: obj_addr) (objects zero_addr prom.major_final));
     PromUpdate.update_walk_preserves_objects prom.major_final (in_use free prom.major_final) prom.fwd_map;
     assert (Seq.mem (dst <: obj_addr) (objects zero_addr res.mc_major));
@@ -522,7 +523,7 @@ let promoted_minor_minor_field_forwarded
     assert (read_word prom.major_final field_addr == minor_read_field minor src j);
     assert (is_minor_pointer dst);
     assert (to_minor_offset (read_word prom.major_final field_addr) == ov);
-    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     CE.cheney_promote_image_not_free free minor major fp roots src fwd_src_obj;
     PromUpdate.update_walk_field_effect prom.major_final (in_use free prom.major_final) prom.fwd_map fwd_src_obj j;
     assert (res.mc_major == update_walk prom.major_final (in_use free prom.major_final) prom.fwd_map)
@@ -541,7 +542,7 @@ let promoted_minor_minor_edge_forwarded
     GenInv.major_shape_with_elim free major fp;
     promoted_minor_minor_field_forwarded minor major fp free roots src dst j;
     MCFH.post_shape_with free minor major fp roots;
-    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     PromUpdate.update_walk_preserves_objects prom.major_final (in_use free prom.major_final) prom.fwd_map;
     PromUpdate.update_walk_preserves_header prom.major_final (in_use free prom.major_final) prom.fwd_map fwd_src_obj;
     header_eq_preserves_wosize_no_scan prom.major_final res.mc_major fwd_src_obj;

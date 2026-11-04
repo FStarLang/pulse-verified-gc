@@ -4,7 +4,7 @@
 ///
 /// Proves that promote_object (= alloc_spec + copy_fields) preserves
 /// heap_objects_dense. This is used by cheney_promote_preserves_dense
-/// in GC.Gen.Cheney.fst.
+/// in GC.Gen.Cheney.Steps.
 
 module GC.Gen.Cheney.Dense
 

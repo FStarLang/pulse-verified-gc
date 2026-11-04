@@ -21,6 +21,7 @@ open GC.Gen.Cheney
 module Mark = GC.Spec.Mark
 module PromUpdate = GC.Gen.PromoteUpdate
 module Cheney = GC.Gen.Cheney
+module CheneySteps = GC.Gen.Cheney.Steps
 module CheneyBFS = GC.Gen.CheneyBFS
 module CheneyFields = GC.Gen.CheneyPreservation.Fields
 module CheneyInj = GC.Gen.CheneyPreservation.Injectivity
@@ -67,7 +68,7 @@ private let fwd_minor_source_in_minor_objects
     GenInv.minor_heap_shape_elim minor;
     Forwarding.cheney_promote_fwd_noninfix_targets_valid minor major fp roots;
     assert (Seq.mem (fx <: obj_addr) (objects zero_addr prom.major_final));
-    Cheney.cheney_promote_preserves_wfh_part4 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part4 minor major fp roots;
     assert (~(is_infix fx prom.major_final));
     CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots
 
@@ -127,7 +128,7 @@ private let major_non_pointer_field_preserved
     GenInv.major_shape_with_elim free major fp;
     GenInv.minor_heap_shape_elim minor;
     MCFH.cheney_promote_preserves_old_major_field_context minor major fp free roots src j;
-    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     assert (read_word prom.major_final field_addr == read_word major field_addr);
     if is_no_scan src prom.major_final ||
        not ((in_use free prom.major_final src))
@@ -184,7 +185,7 @@ private let minor_non_pointer_field_preserved
     GenInv.minor_heap_shape_elim minor;
     CheneyFields.cheney_promote_fwd_target_fields_match minor major fp roots src j;
     assert (read_word prom.major_final field_addr == minor_read_field minor src j);
-    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    CheneySteps.cheney_promote_preserves_wfh_part1 minor major fp roots;
     if is_no_scan img_obj prom.major_final ||
        not ((in_use free prom.major_final img_obj))
     then

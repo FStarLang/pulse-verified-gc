@@ -323,83 +323,9 @@ let cheney_collect_spec_with (free: free_def) (minor: minor_state) (major: heap)
       mc_fwd   = prom.fwd_map }
 
 /// ---------------------------------------------------------------------------
-/// Correctness Properties
+/// Properties (the run's invariants are in GC.Gen.Cheney.Steps)
 /// ---------------------------------------------------------------------------
 
-/// --- wfh_part1 preservation ---
-
-/// cheney_forward_one preserves blocks_fit
-val cheney_forward_one_preserves_wfh_part1
-  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
-  : Lemma (requires blocks_fit cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words)
-          (ensures (let cs' = cheney_forward_one minor cs addr in
-                    blocks_fit cs'.cs_major /\
-                    AllocLemmas.fl_valid cs'.cs_major cs'.cs_fp heap_words /\
-                    AllocLemmas.fl_chain_terminates cs'.cs_major cs'.cs_fp heap_words))
-
-/// cheney_forward_fields preserves wfh_part1
-val cheney_forward_fields_preserves_wfh_part1
-  (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
-  : Lemma (requires blocks_fit cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words)
-          (ensures (let cs' = cheney_forward_fields minor cs parent idx wosize in
-                    blocks_fit cs'.cs_major /\
-                    AllocLemmas.fl_valid cs'.cs_major cs'.cs_fp heap_words /\
-                    AllocLemmas.fl_chain_terminates cs'.cs_major cs'.cs_fp heap_words))
-
-/// Cheney promote preserves wfh_part1 + allocator invariants
-val cheney_promote_preserves_wfh_part1
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires blocks_fit major /\ no_infix_block major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = cheney_promote minor major fp roots in
-                    blocks_fit res.major_final /\
-                    AllocLemmas.fl_valid res.major_final res.fp_final heap_words /\
-                    AllocLemmas.fl_chain_terminates res.major_final res.fp_final heap_words))
-
-/// --- chain_objects_blue preservation ---
-
-/// Cheney promote preserves chain_objects_blue.
-/// Promotion allocates from the free-list (blue objects), but the allocated
-/// blocks leave the chain — the remaining chain stays blue.
-val cheney_promote_preserves_cob
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires blocks_fit major /\ no_infix_block major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp)
-          (ensures (let res = cheney_promote minor major fp roots in
-                    chain_objects_blue res.major_final res.fp_final))
-
-val cheney_promote_preserves_free_list_shape
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires blocks_fit major /\ no_infix_block major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    FreeListShape.fp_pointer_or_zero fp /\
-                    FreeListShape.blue_link_fields_valid major /\
-                    chain_objects_blue major fp)
-          (ensures (let res = cheney_promote minor major fp roots in
-                    FreeListShape.fp_pointer_or_zero res.fp_final /\
-                    FreeListShape.blue_link_fields_valid res.major_final))
-
-/// --- Object preservation ---
-
-/// All original major-heap objects survive Cheney promotion
-val cheney_promote_preserves_objects
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires blocks_fit major /\ no_infix_block major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = cheney_promote minor major fp roots in
-                    forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
-                      Seq.mem x (objects zero_addr res.major_final)))
-
-/// --- Full well_formed_heap after collection ---
 /// --- Allocator (fl_valid) preservation through full collection ---
 
 /// The pointer update preserves fl_valid.
@@ -417,21 +343,6 @@ val update_walk_preserves_fl_valid
                     AllocLemmas.fl_valid m' fp heap_words /\
                     AllocLemmas.fl_chain_terminates m' fp heap_words))
 
-/// --- Density preservation ---
-
-/// Cheney promote preserves heap_objects_dense.
-/// Since promote only allocates new objects (extending the objects list),
-/// the density structure is maintained.
-val cheney_promote_preserves_dense
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires blocks_fit major /\ no_infix_block major /\
-                    heap_objects_dense major /\
-                    Seq.length (objects zero_addr major) > 0 /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = cheney_promote minor major fp roots in
-                    heap_objects_dense res.major_final /\
-                    Seq.length (objects zero_addr res.major_final) > 0))
 
 /// --- fwd_bounded: all forwarding targets are valid major addresses ---
 
@@ -443,17 +354,6 @@ let fwd_bounded (fwd: forwarding_map) : prop =
      U64.v (fwd x) < heap_size /\
      U64.v (fwd x) % U64.v mword == 0)
 
-/// Cheney promote produces a bounded forwarding map.
-/// Proof: each successful cheney_forward_one extends fwd via alloc_spec,
-/// which (by alloc_spec_obj_valid) returns addresses >= mword, < heap_size,
-/// and mword-aligned. Infix-derived entries are offset within the parent.
-val cheney_promote_fwd_bounded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires blocks_fit major /\ no_infix_block major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    minor_infix_wf minor)
-          (ensures fwd_bounded (cheney_promote minor major fp roots).fwd_map)
 
 /// --- fwd_above_zero_addr: all forwarding targets are above zero_addr ---
 
@@ -464,29 +364,3 @@ let fwd_above_zero_addr (fwd: forwarding_map) : prop =
   forall (x: U64.t). fwd x <> 0UL ==>
     U64.v (fwd x) > U64.v zero_addr
 
-/// Cheney promote produces a forwarding map with targets above zero_addr.
-/// Proof: normal entries come from alloc_spec, which returns addresses in
-/// objects zero_addr major (hence > zero_addr). Infix entries are
-/// parent_fwd + delta where parent_fwd > zero_addr and delta >= 0.
-val cheney_promote_fwd_above_zero_addr
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires blocks_fit major /\ no_infix_block major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    minor_infix_wf minor)
-          (ensures fwd_above_zero_addr (cheney_promote minor major fp roots).fwd_map)
-
-/// --- no_infix_block preservation ---
-
-/// Cheney promote preserves no_infix_block (no infix objects in the
-/// objects list). Proof: cheney_forward_normal only promotes objects from
-/// minor_objects, which have tag <> infix_tag (by minor_objects_not_infix).
-/// Promotion allocates with that non-infix tag, which preserves part4.
-val cheney_promote_preserves_wfh_part4
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires blocks_fit major /\ no_infix_block major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    minor_wf minor /\
-                    minor_infix_wf minor)
-          (ensures no_infix_block (cheney_promote minor major fp roots).major_final)

@@ -16,6 +16,8 @@ open GC.Gen.MinorHeap
 open GC.Gen.Promote
 open GC.Gen.PromoteUpdate
 open GC.Gen.Cheney
+open GC.Gen.Cheney.Induction
+open GC.Gen.Cheney.Steps
 open GC.Gen.WriteBodyLemmas
 open GC.Lib.Header
 
@@ -31,152 +33,6 @@ let nonblue_origin_inv (major0: heap) (cs: cheney_state) : prop =
     is_blue obj cs.cs_major = false /\
     ~(Seq.mem obj (objects zero_addr major0) /\ is_blue obj major0 = false) ==>
     exists (x: U64.t). cs.cs_fwd x == obj /\ is_minor_pointer x
-
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
-private let cheney_forward_normal_preserves_cob
-  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
-  : Lemma (requires blocks_fit cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
-                    chain_objects_blue cs.cs_major cs.cs_fp)
-          (ensures (let cs' = cheney_forward_normal minor cs addr in
-                    chain_objects_blue cs'.cs_major cs'.cs_fp))
-  =
-  if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL then
-    cheney_forward_normal_noop minor cs addr
-  else
-    let wz = minor_wosize minor addr in
-    if wz = 0 then
-      cheney_forward_normal_noop_wz0 minor cs addr
-    else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
-      if res.new_addr = 0UL then
-        cheney_forward_normal_noop_oom minor cs addr
-      else begin
-        cheney_forward_normal_success minor cs addr;
-        promote_object_preserves_chain_objects_blue minor cs.cs_major addr cs.cs_fp wz
-      end
-
-private let cheney_forward_one_preserves_cob
-  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
-  : Lemma (requires blocks_fit cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
-                    chain_objects_blue cs.cs_major cs.cs_fp /\
-                    minor_infix_wf minor)
-          (ensures (let cs' = cheney_forward_one minor cs addr in
-                    chain_objects_blue cs'.cs_major cs'.cs_fp))
-  =
-  if cs.cs_fwd addr <> 0UL then
-    cheney_forward_one_noop minor cs addr
-  else if is_infix_in_minor minor addr then begin
-    reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
-    cheney_forward_one_infix minor cs addr;
-    let parent = infix_parent minor addr in
-    cheney_forward_normal_preserves_cob minor cs parent
-  end
-  else begin
-    cheney_forward_one_normal minor cs addr;
-    cheney_forward_normal_preserves_cob minor cs addr
-  end
-
-private let rec cheney_forward_fields_preserves_cob
-  (minor: minor_state) (cs: cheney_state) (parent: U64.t) (i: nat) (wosize: nat)
-  : Lemma
-    (requires
-      blocks_fit cs.cs_major /\
-      AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
-      chain_objects_blue cs.cs_major cs.cs_fp /\
-      minor_infix_wf minor)
-    (ensures
-      (let cs' = cheney_forward_fields minor cs parent i wosize in
-       chain_objects_blue cs'.cs_major cs'.cs_fp))
-    (decreases (if i < wosize then wosize - i else 0))
-  =
-  if i >= wosize then
-    cheney_forward_fields_base minor cs parent i wosize
-  else begin
-    cheney_forward_fields_step minor cs parent i wosize;
-    let field_val = to_minor_offset (minor_read_field minor parent i) in
-    cheney_forward_one_preserves_cob minor cs field_val;
-    cheney_forward_one_preserves_wfh_part1 minor cs field_val;
-    let cs' = cheney_forward_one minor cs field_val in
-    cheney_forward_fields_preserves_cob minor cs' parent (i + 1) wosize
-  end
-
-private let rec cheney_forward_roots_preserves_cob
-  (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (ridx: nat)
-  : Lemma
-    (requires
-      blocks_fit cs.cs_major /\
-      AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
-      chain_objects_blue cs.cs_major cs.cs_fp /\
-      minor_infix_wf minor)
-    (ensures
-      (let cs' = cheney_forward_roots minor cs roots ridx in
-       chain_objects_blue cs'.cs_major cs'.cs_fp))
-    (decreases (if ridx < Seq.length roots then Seq.length roots - ridx else 0))
-  =
-  if ridx >= Seq.length roots then
-    cheney_forward_roots_base minor cs roots ridx
-  else begin
-    cheney_forward_roots_step minor cs roots ridx;
-    let r = Seq.index roots ridx in
-    cheney_forward_one_preserves_cob minor cs r;
-    cheney_forward_one_preserves_wfh_part1 minor cs r;
-    let cs' = cheney_forward_one minor cs r in
-    cheney_forward_roots_preserves_cob minor cs' roots (ridx + 1)
-  end
-
-private let rec cheney_forward_roots_preserves_wfh_part1
-  (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (ridx: nat)
-  : Lemma (requires blocks_fit cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words)
-          (ensures (let cs' = cheney_forward_roots minor cs roots ridx in
-                    blocks_fit cs'.cs_major /\
-                    AllocLemmas.fl_valid cs'.cs_major cs'.cs_fp heap_words /\
-                    AllocLemmas.fl_chain_terminates cs'.cs_major cs'.cs_fp heap_words))
-          (decreases (if ridx < Seq.length roots then Seq.length roots - ridx else 0))
-  =
-  if ridx >= Seq.length roots then
-    cheney_forward_roots_base minor cs roots ridx
-  else begin
-    cheney_forward_roots_step minor cs roots ridx;
-    let r = Seq.index roots ridx in
-    cheney_forward_one_preserves_wfh_part1 minor cs r;
-    let cs' = cheney_forward_one minor cs r in
-    cheney_forward_roots_preserves_wfh_part1 minor cs' roots (ridx + 1)
-  end
-#pop-options
-
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
-private let cheney_forward_normal_preserves_wfh_part1
-  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
-  : Lemma (requires blocks_fit cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words)
-          (ensures (let cs' = cheney_forward_normal minor cs addr in
-                    blocks_fit cs'.cs_major /\
-                    AllocLemmas.fl_valid cs'.cs_major cs'.cs_fp heap_words /\
-                    AllocLemmas.fl_chain_terminates cs'.cs_major cs'.cs_fp heap_words))
-  =
-  if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL
-  then cheney_forward_normal_noop minor cs addr
-  else
-    let wz = minor_wosize minor addr in
-    if wz = 0 then cheney_forward_normal_noop_wz0 minor cs addr
-    else
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
-      if res.new_addr = 0UL then
-        cheney_forward_normal_noop_oom minor cs addr
-      else begin
-        cheney_forward_normal_success minor cs addr;
-        promote_object_preserves_alloc_invariants minor cs.cs_major addr cs.cs_fp wz
-      end
-#pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 private let promote_object_header_from_alloc_frame
@@ -424,101 +280,26 @@ private let cheney_forward_one_preserves_nonblue_origin_inv
     cheney_forward_normal_preserves_nonblue_origin_inv major0 minor cs addr
   end
 
-private let rec cheney_forward_fields_preserves_nonblue_origin_inv
-  (major0: heap) (minor: minor_state) (cs: cheney_state)
-  (parent: U64.t) (i: nat) (wosize: nat)
-  : Lemma
-    (requires
-      nonblue_origin_inv major0 cs /\
-      blocks_fit cs.cs_major /\
-      AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
-      chain_objects_blue cs.cs_major cs.cs_fp /\
-      minor_infix_wf minor)
-    (ensures nonblue_origin_inv major0 (cheney_forward_fields minor cs parent i wosize))
-    (decreases (if i < wosize then wosize - i else 0))
-  =
-  if i >= wosize then
-    cheney_forward_fields_base minor cs parent i wosize
-  else begin
-    cheney_forward_fields_step minor cs parent i wosize;
-    let field_val = to_minor_offset (minor_read_field minor parent i) in
-    cheney_forward_one_preserves_nonblue_origin_inv major0 minor cs field_val;
-    cheney_forward_one_preserves_wfh_part1 minor cs field_val;
-    cheney_forward_one_preserves_cob minor cs field_val;
-    let cs' = cheney_forward_one minor cs field_val in
-    cheney_forward_fields_preserves_nonblue_origin_inv major0 minor cs' parent (i + 1) wosize
-  end
-
-private let rec cheney_forward_roots_preserves_nonblue_origin_inv
-  (major0: heap) (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (ridx: nat)
-  : Lemma
-    (requires
-      nonblue_origin_inv major0 cs /\
-      blocks_fit cs.cs_major /\
-      AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
-      chain_objects_blue cs.cs_major cs.cs_fp /\
-      minor_infix_wf minor)
-    (ensures nonblue_origin_inv major0 (cheney_forward_roots minor cs roots ridx))
-    (decreases (if ridx < Seq.length roots then Seq.length roots - ridx else 0))
-  =
-  if ridx >= Seq.length roots then
-    cheney_forward_roots_base minor cs roots ridx
-  else begin
-    cheney_forward_roots_step minor cs roots ridx;
-    let r = Seq.index roots ridx in
-    cheney_forward_one_preserves_nonblue_origin_inv major0 minor cs r;
-    cheney_forward_one_preserves_wfh_part1 minor cs r;
-    cheney_forward_one_preserves_cob minor cs r;
-    let cs' = cheney_forward_one minor cs r in
-    cheney_forward_roots_preserves_nonblue_origin_inv major0 minor cs' roots (ridx + 1)
-  end
-
-private let rec cheney_scan_preserves_nonblue_origin_inv
-  (major0: heap) (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
-  : Lemma
-    (requires
-      nonblue_origin_inv major0 cs /\
-      blocks_fit cs.cs_major /\
-      AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
-      chain_objects_blue cs.cs_major cs.cs_fp /\
-      minor_infix_wf minor)
-    (ensures nonblue_origin_inv major0 (cheney_scan minor cs scan fuel))
-    (decreases fuel)
-  =
-  if fuel = 0 then
-    cheney_scan_base minor cs scan fuel
-  else if scan >= Seq.length cs.cs_queue then
-    cheney_scan_base minor cs scan fuel
-  else begin
-    cheney_scan_step minor cs scan fuel;
-    let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_scan_wosize minor obj in
-    cheney_forward_fields_preserves_nonblue_origin_inv major0 minor cs obj 0 wz;
-    cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
-    cheney_forward_fields_preserves_cob minor cs obj 0 wz;
-    let cs' = cheney_forward_fields minor cs obj 0 wz in
-    assert (fuel > 0);
-    assert (fuel - 1 < fuel);
-    cheney_scan_preserves_nonblue_origin_inv major0 minor cs' (scan + 1) (fuel - 1)
-  end
 #pop-options
 
+/// What the run keeps: the free chain is blue, and every new non-blue block
+/// is a forwarding target.
+private let origin_inv (major0: heap) (minor: minor_state) (cs: cheney_state) : prop =
+  minor_infix_wf minor /\
+  chain_objects_blue cs.cs_major cs.cs_fp /\
+  nonblue_origin_inv major0 cs
+
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+private let origin_one (major0: heap) (minor: minor_state)
+  : one_keeps minor (origin_inv major0 minor)
+  = fun cs addr ->
+    cheney_forward_one_preserves_nonblue_origin_inv major0 minor cs addr;
+    cheney_forward_one_preserves_cob minor cs addr
+
 let cheney_promote_nonblue_origin
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr)
   =
-  wf_parts ();
-  let cs0 : cheney_state =
-    { cs_major = major; cs_fp = fp;
-      cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
-  assert (nonblue_origin_inv major cs0);
-  cheney_forward_roots_preserves_nonblue_origin_inv major minor cs0 roots 0;
-  cheney_forward_roots_preserves_wfh_part1 minor cs0 roots 0;
-  cheney_forward_roots_preserves_cob minor cs0 roots 0;
-  let cs1 = cheney_forward_roots minor cs0 roots 0 in
-  cheney_scan_preserves_nonblue_origin_inv major minor cs1 0 (cheney_fuel minor)
+  assert (nonblue_origin_inv major (cheney_init major fp));
+  cheney_promote_induction minor (origin_inv major minor) (origin_one major minor) major fp roots
 #pop-options
