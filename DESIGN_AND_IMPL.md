@@ -1104,7 +1104,14 @@ With the free-list facts this gives `cheney_collect_with_preserves_shape`:
 promotion lemmas only ask for the walk facts of the major heap (`blocks_fit`,
 `no_infix_block`), not `well_formed_heap`.  The stop-the-world
 `cheney_collect_preserves_collection_heap_shape` is the instance at
-`free_stw`, plus the colour facts (no black, no gray objects).
+`free_stw`, plus the colour facts (no black, no gray objects).  These are not
+carried through the Cheney run: `CheneyPreservation.cheney_collect_block_origin`
+says a non-blue block of the result is an old non-blue block with the same
+header (the frame facts `cheney_promote_frame_old_header` and
+`update_major_pointers_preserves_header`) or a promoted copy, which the idle
+allocator wrote white (`Fields.cheney_promote_fwd_target_no_scan_iff_minor_tag`
+records the copy's header facts, colour included).  So a collection creates no
+grey or black block.
 
 The reachable-subgraph isomorphism (`GC.Gen.MinorCollectForwarding`) is
 stated and proved for any definition of free as well, over graphs in which a

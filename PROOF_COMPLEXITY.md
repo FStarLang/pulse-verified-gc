@@ -211,9 +211,9 @@ are:
 
 - `GC.Gen.CheneyCorrectness` — the minor collector is correct;
 - `GC.Gen.CheneyPreservation.*` (≈6,500 lines, 7 modules) — the minor collector leaves
-  every conjunct of the *major* collector's precondition intact (`no_black_objects`,
-  `gray_black_objects_on_stack`,
-  `collection_heap_shape`, `no_pointer_to_blue`).
+  every conjunct of the *major* collector's precondition intact
+  (`collection_heap_shape`, whose colour facts -- no black, no gray objects --
+  follow from `cheney_collect_block_origin`).
 
 They are stitched together in Pulse, at `generational/impl/GC.Gen.Impl.fst:1146`, which
 asserts `full_gc_correctness prepared_major s_final prepared_st` after running both

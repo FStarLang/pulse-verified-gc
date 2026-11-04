@@ -239,6 +239,23 @@ val promote_object_new_addr_tag
         (let na : obj_addr = res.new_addr in
          U64.v (tag_of_object na res.major_out) == minor_tag minor obj)))
 
+/// The promoted copy is white: the idle allocator writes a white header, and
+/// `copy_fields` writes only fields.
+val promote_object_new_addr_white
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  : Lemma
+    (requires blocks_fit major /\
+              AllocLemmas.fl_valid major fp heap_words /\
+              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              (promote_object minor major obj fp wz).new_addr <> 0UL)
+    (ensures
+      (let res = promote_object minor major obj fp wz in
+       U64.v res.new_addr >= U64.v mword /\
+       U64.v res.new_addr < heap_size /\
+       U64.v res.new_addr % U64.v mword == 0 /\
+        (let na : obj_addr = res.new_addr in
+         is_white na res.major_out)))
+
 val promote_object_new_addr_wosize_eq
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (dst: obj_addr)

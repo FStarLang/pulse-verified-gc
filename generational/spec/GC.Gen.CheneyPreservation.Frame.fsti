@@ -78,7 +78,8 @@ val cheney_forward_normal_preserves_old_nonblue_shape
          Seq.mem src (objects zero_addr cs'.cs_major) /\
          is_blue src cs'.cs_major = false /\
          is_no_scan src cs'.cs_major == is_no_scan src cs.cs_major /\
-         wosize_of_object src cs'.cs_major == wosize_of_object src cs.cs_major))
+         wosize_of_object src cs'.cs_major == wosize_of_object src cs.cs_major /\
+         read_word cs'.cs_major (hd_address src) == read_word cs.cs_major (hd_address src)))
 
 val cheney_forward_one_preserves_old_nonblue_shape
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
@@ -97,7 +98,8 @@ val cheney_forward_one_preserves_old_nonblue_shape
          Seq.mem src (objects zero_addr cs'.cs_major) /\
          is_blue src cs'.cs_major = false /\
          is_no_scan src cs'.cs_major == is_no_scan src cs.cs_major /\
-         wosize_of_object src cs'.cs_major == wosize_of_object src cs.cs_major))
+         wosize_of_object src cs'.cs_major == wosize_of_object src cs.cs_major /\
+         read_word cs'.cs_major (hd_address src) == read_word cs.cs_major (hd_address src)))
 
 val cheney_forward_normal_frame_field
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)

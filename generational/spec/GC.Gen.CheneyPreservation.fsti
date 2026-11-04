@@ -23,81 +23,15 @@ open GC.Gen.PromoteUpdate
 open GC.Gen.Cheney
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
-module Mark = GC.Spec.Mark
-module MarkBounded = GC.Spec.MarkBounded
 module GenInv = GC.Gen.HeapInvariant
 module FreeListShape = GC.Gen.FreeListShape
-
-/// Cheney promotion preserves no_black_objects.
-///
-/// Promoted objects get white_bits headers; pre-existing objects' colors are
-/// unchanged (alloc_spec and copy_fields only modify the allocated block and
-/// free-list headers, never coloring an object black).
-val cheney_promote_preserves_no_black
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires blocks_fit major /\ no_infix_block major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    Mark.no_black_objects major /\
-                    minor_infix_wf minor)
-           (ensures (let res = cheney_promote minor major fp roots in
-                     Mark.no_black_objects res.major_final))
-
-val cheney_collect_preserves_no_black
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires blocks_fit major /\ no_infix_block major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    Mark.no_black_objects major /\
-                    minor_infix_wf minor)
-          (ensures Mark.no_black_objects
-            (cheney_collect_spec minor major fp roots).mc_major)
+module CE = GC.Gen.CheneyGeneric
 
 val cheney_collect_preserves_fp_pointer_or_zero
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires GenInv.collection_heap_shape minor major fp)
           (ensures FreeListShape.fp_pointer_or_zero
             (cheney_collect_spec minor major fp roots).mc_fp)
-
-/// All gray/black objects are present in the major gray stack.
-///
-/// This is the color-stack conjunct of MajorGC.gc_precondition, named so
-/// Cheney promotion and the post-promotion pointer update can preserve it
-/// without forcing clients to reason about Cheney's result.
-let gray_black_objects_on_stack (g: heap) (st: seq obj_addr) : prop =
-  forall (obj: obj_addr).
-    Seq.mem obj (objects zero_addr g) /\
-    (is_gray obj g \/ is_black obj g) ==> Seq.mem obj st
-
-val cheney_promote_preserves_gray_black_objects_on_stack
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (st: seq obj_addr)
-  : Lemma (requires blocks_fit major /\ no_infix_block major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp /\
-                    gray_black_objects_on_stack major st /\
-                    minor_infix_wf minor)
-          (ensures (let res = cheney_promote minor major fp roots in
-                    gray_black_objects_on_stack res.major_final st))
-
-val update_major_pointers_preserves_gray_black_objects_on_stack
-  (major: heap) (fwd: forwarding_map) (st: seq obj_addr)
-  : Lemma (requires blocks_fit major /\
-                    gray_black_objects_on_stack major st)
-          (ensures gray_black_objects_on_stack (update_major_pointers major fwd) st)
-
-val cheney_collect_preserves_gray_black_objects_on_stack
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (st: seq obj_addr)
-  : Lemma (requires blocks_fit major /\ no_infix_block major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp /\
-                    gray_black_objects_on_stack major st /\
-                    minor_infix_wf minor)
-          (ensures (let res = cheney_collect_spec minor major fp roots in
-                    gray_black_objects_on_stack res.mc_major st))
 
 /// ---------------------------------------------------------------------------
 /// Forwarding targets classification: in objects or infix
@@ -284,10 +218,25 @@ val cheney_promote_nonblue_origin
            (ensures (let res = cheney_promote minor major fp roots in
                      exists (x: U64.t). res.fwd_map x == obj /\ is_minor_pointer x))
 
+/// **A block of a stop-the-world collection's result** is, if not blue, an
+/// old non-blue block with the same header, or a promoted copy -- which the
+/// idle allocator wrote white.  Promotion allocates from the free list and
+/// writes only the new blocks; the pointer update writes no header.  So the
+/// collection creates no grey or black block.
+val cheney_collect_block_origin
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (x: obj_addr)
+  : Lemma (requires CE.promote_pre minor major fp)
+          (ensures (let g' = (cheney_collect_spec minor major fp roots).mc_major in
+                    in_use free_stw g' x ==>
+                    (in_use free_stw major x /\
+                     read_word g' (hd_address x) == read_word major (hd_address x)) \/
+                    is_white x g'))
+
 /// **The stop-the-world collection keeps the stop-the-world shape.**  The
 /// `free_stw` instance of `GC.Gen.CheneyGeneric.cheney_collect_with_preserves_shape`,
 /// plus the two colour facts (no black, no gray objects) that
-/// `collection_heap_shape` adds to the shape at `free_stw`.
+/// `collection_heap_shape` adds to the shape at `free_stw`
+/// (`cheney_collect_block_origin`).
 val cheney_collect_preserves_collection_heap_shape
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires GenInv.collection_heap_shape minor major fp)

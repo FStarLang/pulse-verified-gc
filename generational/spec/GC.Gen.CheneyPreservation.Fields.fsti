@@ -76,4 +76,6 @@ val cheney_promote_fwd_target_no_scan_iff_minor_tag
        // `minor_scan_wosize == minor_wosize` -- from an edge out of the image.
        is_no_scan target prom.major_final = (minor_tag minor x >= 251) /\
        // Promotion is size-exact: the image declares exactly the source's wosize.
-       U64.v (wosize_of_object target prom.major_final) == minor_wosize minor x))
+       U64.v (wosize_of_object target prom.major_final) == minor_wosize minor x /\
+       // The idle allocator writes a white header, and nothing rewrites it.
+       is_white target prom.major_final))

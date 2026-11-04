@@ -483,6 +483,19 @@ let promote_object_new_addr_tag
   minor_tag_bound minor obj
 #pop-options
 
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+let promote_object_new_addr_white
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  =
+  let alloc_res = Allocator.alloc_spec major fp wz (promoted_tag minor obj) in
+  let res = promote_object minor major obj fp wz in
+  promote_object_new_addr_header minor major obj fp wz;
+  AllocProps.alloc_spec_obj_not_blue_part1 major fp wz (promoted_tag minor obj);
+  let dst_obj : obj_addr = alloc_res.obj_out in
+  color_of_header_eq dst_obj alloc_res.heap_out res.major_out;
+  is_white_iff dst_obj alloc_res.heap_out
+#pop-options
+
 /// The freshly promoted object keeps the allocator-provided (exact) wosize
 /// through copy_fields.
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"

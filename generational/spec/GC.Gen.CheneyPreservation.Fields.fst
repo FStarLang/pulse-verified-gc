@@ -491,7 +491,8 @@ let fwd_target_not_no_scan_match (minor: minor_state) (cs: cheney_state)
    Seq.mem target (objects zero_addr cs.cs_major) /\
    is_blue target cs.cs_major = false /\
    is_no_scan target cs.cs_major = (minor_tag minor x >= 251) /\
-   U64.v (wosize_of_object target cs.cs_major) == minor_wosize minor x)
+   U64.v (wosize_of_object target cs.cs_major) == minor_wosize minor x /\
+       is_white target cs.cs_major)
 
 let fwd_target_not_no_scan_state (minor: minor_state) (cs: cheney_state) : prop =
   forall (x: U64.t). fwd_target_not_no_scan_match minor cs x
@@ -508,7 +509,8 @@ let fwd_target_not_no_scan_state_elim
         Seq.mem target (objects zero_addr cs.cs_major) /\
         is_blue target cs.cs_major = false /\
         is_no_scan target cs.cs_major = (minor_tag minor x >= 251) /\
-        U64.v (wosize_of_object target cs.cs_major) == minor_wosize minor x))
+        U64.v (wosize_of_object target cs.cs_major) == minor_wosize minor x /\
+       is_white target cs.cs_major))
   = assert (fwd_target_not_no_scan_match minor cs x)
 #pop-options
 
@@ -537,7 +539,8 @@ let fwd_state_extend_infix
        Seq.mem target (objects zero_addr r.cs_major) /\
        is_blue target r.cs_major = false /\
        is_no_scan target r.cs_major = (minor_tag minor x >= 251) /\
-       U64.v (wosize_of_object target r.cs_major) == minor_wosize minor x))
+       U64.v (wosize_of_object target r.cs_major) == minor_wosize minor x /\
+       is_white target r.cs_major))
     = if x = addr then begin
         minor_objects_not_infix minor addr;
         assert False
@@ -566,7 +569,8 @@ let fwd_target_not_no_scan_initial (minor: minor_state) (major: heap) (fp: U64.t
        Seq.mem target (objects zero_addr cs0.cs_major) /\
        is_blue target cs0.cs_major = false /\
        is_no_scan target cs0.cs_major = (minor_tag minor x >= 251) /\
-       U64.v (wosize_of_object target cs0.cs_major) == minor_wosize minor x))
+       U64.v (wosize_of_object target cs0.cs_major) == minor_wosize minor x /\
+       is_white target cs0.cs_major))
   =
     assert (cs0.cs_fwd x == 0UL);
     assert False
@@ -598,7 +602,8 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
        Seq.mem target (objects zero_addr cs'.cs_major) /\
        is_blue target cs'.cs_major = false /\
        is_no_scan target cs'.cs_major = (minor_tag minor x >= 251) /\
-       U64.v (wosize_of_object target cs'.cs_major) == minor_wosize minor x))
+       U64.v (wosize_of_object target cs'.cs_major) == minor_wosize minor x /\
+       is_white target cs'.cs_major))
   =
     if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL then begin
       cheney_forward_normal_noop minor cs addr;
@@ -632,6 +637,7 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
             let target : obj_addr = res.new_addr in
             Forwarding.promote_object_new_addr_wosize_eq minor cs.cs_major addr cs.cs_fp wz target;
             Forwarding.promote_object_new_addr_tag minor cs.cs_major addr cs.cs_fp wz;
+            Forwarding.promote_object_new_addr_white minor cs.cs_major addr cs.cs_fp wz;
             let tag = minor_tag minor addr in
             no_scan_tag_val ();
             assert_norm (251 < pow2 64);
@@ -654,6 +660,7 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
             let target : obj_addr = cs.cs_fwd x in
             assert (U64.v (wosize_of_object target cs.cs_major) == minor_wosize minor x);
             Frame.cheney_forward_normal_preserves_old_nonblue_shape minor cs addr target;
+            color_of_header_eq target cs.cs_major cs'.cs_major;
             assert (is_no_scan target cs'.cs_major == is_no_scan target cs.cs_major);
             assert (is_no_scan target cs'.cs_major = (minor_tag minor x >= 251));
             assert (wosize_of_object target cs'.cs_major == wosize_of_object target cs.cs_major);
