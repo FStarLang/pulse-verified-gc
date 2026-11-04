@@ -914,7 +914,13 @@ would be pending free, and freed by the sweep while reachable.
   (`Paint.recoloured_wf`, `paint_in_use`); the shape is by induction over the
   promotions (`GC.Gen.Cheney.cheney_promote_induction`), each a promotion at
   the phase (`promote_sweep_shape`), and the pointer update keeps the walk and
-  every header.
+  every header.  Its two block-level facts are exported on their own, for the
+  collection from `g` to `g'`:
+  - `minor_keeps_pending_free`: `pending_free st g x <==> pending_free st' g' x`
+    (new objects are never pending free, existing headers do not change);
+  - `minor_keeps_blocks`: every non-free block of `g` is a block of `g'` with
+    the same header, and a non-free block of `g'` that was not one of `g` is a
+    promoted copy (the image of a nursery object).
 
 **Safety over the phase** (`GC.Gen.SweepPhase.Safety`) is stated on the
 reachable graph, not on a heap the sweep started from.  In the sweep's graph

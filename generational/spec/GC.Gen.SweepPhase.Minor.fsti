@@ -25,7 +25,8 @@
 ///     painting: a promoted copy in front of the cursor is painted black,
 ///     so what is non-free in the painted heap for `free_incremental` is what
 ///     is non-free in the idle one for the collection's definition of free
-///     (`GC.Gen.Paint.paint_in_use`).  The shape comes by
+///     (`GC.Gen.Paint.paint_in_use`).  Its block-level facts are
+///     `minor_keeps_pending_free` and `minor_keeps_blocks`.  The shape comes by
 ///     induction over the promotions (`GC.Gen.Cheney.cheney_promote_induction`),
 ///     each one a promotion at the phase (`GC.Gen.SweepPhase.promote_sweep_shape`),
 ///     and the pointer update keeps the walk and every header.
@@ -87,3 +88,37 @@ val minor_keeps_sweep_phase (minor: minor_state) (g: heap) (fp: U64.t) (st: swee
                     GenInv.collection_shape_with free res.GC.Gen.Promote.mc_minor res.GC.Gen.Promote.mc_major
                                                  res.GC.Gen.Promote.mc_fp))
 
+/// **Step C, block by block.**  For the collection at the sweep's phase from
+/// `g` to `g'`, with the cursor unchanged: what is pending free is unchanged
+/// (a new object is never pending free, and no existing header changes) ...
+val minor_keeps_pending_free (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep_state)
+                             (roots: seq U64.t) (x: obj_addr)
+  : Lemma (requires sweep_phase_inv g fp st /\
+                    GenInv.minor_heap_shape minor /\
+                    GenInv.minor_major_fields_not_free (free_incremental st) minor g)
+          (ensures (let free = free_incremental_from st g in
+                    let (res, _) = CA.cheney_collect_spec_with_at (Ph.Sweeping st) free minor g fp roots in
+                    let g' = res.GC.Gen.Promote.mc_major in
+                    let st' = state_after st (GC.Gen.Cheney.cheney_collect_spec_with free minor g fp roots).GC.Gen.Promote.mc_major in
+                    st'.cursor == st.cursor /\
+                    (pending_free st g x <==> pending_free st' g' x)))
+
+/// ... every non-free block of `g` is a block of `g'` with the same header,
+/// so still not free; and the only non-free blocks of `g'` that were not
+/// non-free blocks of `g` are promoted copies.
+val minor_keeps_blocks (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep_state)
+                       (roots: seq U64.t) (x: obj_addr)
+  : Lemma (requires sweep_phase_inv g fp st /\
+                    GenInv.minor_heap_shape minor /\
+                    GenInv.minor_major_fields_not_free (free_incremental st) minor g)
+          (ensures (let free = free_incremental_from st g in
+                    let (res, _) = CA.cheney_collect_spec_with_at (Ph.Sweeping st) free minor g fp roots in
+                    let g' = res.GC.Gen.Promote.mc_major in
+                    let st' = state_after st (GC.Gen.Cheney.cheney_collect_spec_with free minor g fp roots).GC.Gen.Promote.mc_major in
+                    (is_block g x /\ not (free_incremental st g x) ==>
+                       is_block g' x /\ not (free_incremental st' g' x) /\
+                       read_word g' (hd_address x) == read_word g (hd_address x)) /\
+                    (is_block g' x /\ not (free_incremental st' g' x) /\
+                     ~(is_block g x /\ not (free_incremental st g x)) ==>
+                       (exists (m: U64.t). Seq.mem m (minor_objects minor) /\
+                          (GC.Gen.Cheney.cheney_promote minor g fp roots).GC.Gen.Promote.fwd_map m == x))))

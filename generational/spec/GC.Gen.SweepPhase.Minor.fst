@@ -224,3 +224,72 @@ let minor_keeps_sweep_phase minor g fp st roots =
 let minor_keeps_pending_free minor g fp st roots x =
   minor_keeps_sweep_phase minor g fp st roots
 
+/// An old non-free block keeps its header through the update and the painting.
+#push-options "--z3rlimit 20"
+private let old_block_kept (g rm: heap) (c: nat) (x: obj_addr)
+  : Lemma (requires Paint.kept g rm /\ is_block g x /\ not (is_blue x g))
+          (ensures is_block (Paint.paint c g rm) x /\
+                   read_word (Paint.paint c g rm) (hd_address x) == read_word g (hd_address x))
+  = let rp = Paint.paint c g rm in
+    obj_pos g x; colour_of g x; obj_pos rm x;
+    Paint.paint_read c g rm (hd_address x);
+    Paint.paint_recoloured c g rm;
+    Paint.recoloured_facts rm rp;
+    obj_pos rp x
+#pop-options
+
+/// The idle collection, its painted heap, and the facts the block lemmas read.
+#push-options "--z3rlimit 30"
+private let collection_facts (minor: minor_state) (g: heap) (fp: U64.t) (st: sweep_state)
+                             (roots: seq U64.t)
+  : Lemma (requires sweep_phase_inv g fp st /\
+                    GenInv.minor_heap_shape minor /\
+                    GenInv.minor_major_fields_not_free (free_incremental st) minor g)
+          (ensures (let free = free_incremental_from st g in
+                    let prom = Cheney.cheney_promote minor g fp roots in
+                    let pm = prom.Promote.major_final in
+                    let rm = (Cheney.cheney_collect_spec_with free minor g fp roots).Promote.mc_major in
+                    free_def_ok free /\ CV.promote_pre minor g fp /\ blocks_fit pm /\
+                    rm == Promote.update_walk pm (in_use free pm) prom.Promote.fwd_map /\
+                    Paint.kept g rm))
+  = let free = free_incremental_from st g in
+    sweep_major_shape g fp st;
+    GenInv.major_shape_with_elim free g fp;
+    GenInv.minor_heap_shape_elim minor;
+    free_incremental_from_ok st g;
+    let prom = Cheney.cheney_promote minor g fp roots in
+    let pm = prom.Promote.major_final in
+    let rm = (Cheney.cheney_collect_spec_with free minor g fp roots).Promote.mc_major in
+    run_start g fp st;
+    Cheney.cheney_promote_induction minor g fp roots (run_inv g st) (run_step minor g st);
+    assert (run_inv g st pm prom.Promote.fp_final);
+    update_heads pm free prom.Promote.fwd_map;
+    Paint.kept_heads g pm rm;
+    sweep_collection_shape minor g fp st;
+    GenInv.collection_shape_with_elim free minor g fp;
+    CV.cheney_promote_preserves_wf_with free minor g fp roots;
+    wf_with_parts ()
+#pop-options
+
+#push-options "--z3rlimit 20"
+let minor_keeps_blocks minor g fp st roots x =
+  let free = free_incremental_from st g in
+  let c = U64.v st.cursor in
+  let prom = Cheney.cheney_promote minor g fp roots in
+  let pm = prom.Promote.major_final in
+  let rm = (Cheney.cheney_collect_spec_with free minor g fp roots).Promote.mc_major in
+  let st' = st_at st rm in
+  collection_facts minor g fp st roots;
+  sweep_phase_inv_elim g fp st;
+  // what is non-free in the painted heap is what is non-free in `pm` for `free`
+  painted_in_use g st st' rm x;
+  CV.update_walk_keeps_in_use free pm (in_use free pm) prom.Promote.fwd_map x;
+  assert (in_use (free_incremental st') (Paint.paint c g rm) x == in_use free pm x);
+  // an old non-free block
+  (if is_block g x && not (free_incremental st g x) then begin
+     old_block_kept g rm c x;
+     CV.cheney_promote_keeps_in_use free minor g fp roots x
+   end);
+  // a new one
+  FStar.Classical.move_requires (CV.cheney_promote_in_use_origin free minor g fp roots) x
+#pop-options
