@@ -360,6 +360,8 @@ let mg_wosize (g g': heap) (ph c: hp_addr) (w: U64.t)
     wosize_at_hd g' (U64.add ph mword);
     assert (mk_hp_addr (U64.v (U64.add ph mword) - 8) == ph)
 
+#push-options "--z3rlimit 10"
+
 /// ---------------------------------------------------------------------------
 /// The sweep invariant's own clauses, across a step
 /// ---------------------------------------------------------------------------
@@ -545,6 +547,8 @@ let mg_no_infix (g g': heap) (ph c: hp_addr) (w: U64.t)
         end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// The free list around the cursor
@@ -1159,6 +1163,8 @@ let case_merge_frag (g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr)
 #pop-options
 
 
+#push-options "--z3rlimit 10"
+
 /// ---------------------------------------------------------------------------
 /// One step
 /// ---------------------------------------------------------------------------
@@ -1423,3 +1429,5 @@ let rec steps_done_aux (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
     end
 
 let sweep_steps_done g fp c k = steps_done_aux g fp (state_at g c) k
+
+#pop-options

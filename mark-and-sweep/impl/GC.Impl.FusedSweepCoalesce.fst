@@ -177,7 +177,6 @@ let sweep_at (g: heap_state) (fp: U64.t) (c t f: U64.t) : prop =
   SPI.sweep_inv_incremental g fp c /\ mk_st c t f == SPI.state_at g c
 
 /// What the loop needs at a step, from the invariant.
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let step_facts (g: heap_state) (fp: U64.t) (c t f: U64.t)
   : Lemma (requires sweep_at g fp c t f /\ U64.v c + 8 < heap_size)
           (ensures step_ready g (mk_st c t f) /\
@@ -188,7 +187,6 @@ let step_facts (g: heap_state) (fp: U64.t) (c t f: U64.t)
   = FStep.sweep_inv_incremental_ready g fp c;
     FStep.sweep_inv_incremental_step g fp c;
     FS.sweep_from_step g fp (mk_st c t f)
-#pop-options
 
 /// The pass stops at the end of the heap.
 let stop_facts (g: heap_state) (fp: U64.t) (c t f: U64.t)

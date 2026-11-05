@@ -530,7 +530,6 @@ let start_target (g0: heap) (src dst: obj_addr)
     assert (~(is_white t g0));
     Mark.color_exhaustive t g0; Mark.colors_exclusive t g0
 
-#push-options "--z3rlimit 20"
 let sweep_inv_incremental_start g0 fp =
   let c = U64.v zero_addr in
   W.reaches_refl g0 zero_addr;
@@ -561,7 +560,6 @@ let sweep_inv_incremental_start g0 fp =
   pointers_lead_to_non_free_intro (free_incremental sweep_start.cursor) g0 (fun src dst -> start_target g0 src dst);
   interior_pointers_valid_intro (free_incremental sweep_start.cursor) g0 (fun src dst -> start_target g0 src dst);
   sweep_inv_incremental_intro g0 fp sweep_start
-#pop-options
 
 let sweep_inv_stw_start g0 fp =
   let c = U64.v zero_addr in
