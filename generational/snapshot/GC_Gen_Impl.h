@@ -170,6 +170,8 @@ void rewrite_heap_slots(heap_t major, uint64_t *fwd_arr, uint64_t *slots, size_t
 
 void update_promoted_objects(heap_t major, uint64_t *fwd_arr);
 
+uint64_t collect_core(heap_t heap, gray_stack_rec st, uint64_t fp, bool ov);
+
 uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp);
 
 uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp);
@@ -211,13 +213,15 @@ void push_children_bounded_impl(heap_t heap, gray_stack_rec st, uint64_t h_addr,
 
 void mark_step_bounded_impl(heap_t heap, gray_stack_rec st);
 
-void mark_inner_loop_impl(heap_t heap, gray_stack_rec st);
+bool mark_inner_loop_impl(heap_t heap, gray_stack_rec st, bool ov_in);
 
 bool is_gray_check(heap_t heap, uint64_t h_addr);
 
 void rescan_push_if_gray(heap_t heap, gray_stack_rec st, uint64_t h_addr);
 
 void rescan_heap_impl(heap_t heap, gray_stack_rec st);
+
+void mark_loop_bounded_flagged(heap_t heap, gray_stack_rec st, bool ov);
 
 void mark_loop_bounded(heap_t heap, gray_stack_rec st);
 
