@@ -12,7 +12,7 @@ module AllocCommon = GC.Spec.Allocator.Lemmas.Common
 module AllocChain = GC.Spec.Allocator.Lemmas.Chain
 /// getWosize of make_header returns the original wosize
 val make_header_getWosize : (wz: U64.t{U64.v wz < pow2 54}) ->
-                            (c: U64.t{U64.v c < 4}) ->
+                            (c: color) ->
                             (t: U64.t{U64.v t < 256}) ->
   Lemma (getWosize (make_header wz c t) == wz)
 
@@ -124,11 +124,11 @@ val chain_avoids_transfer_on_chain (g g': heap) (fp excl: U64.t) (fuel: nat)
                         read_word g' a == read_word g a))
           (ensures chain_avoids g' fp excl fuel = true)
 
-/// get_color of make_header returns the original color bits
+/// get_color of make_header returns the packed colour
 val make_header_getColor : (wz: U64.t{U64.v wz < pow2 54}) ->
-                           (c: U64.t{U64.v c < 4}) ->
+                           (c: color) ->
                            (t: U64.t{U64.v t < 256}) ->
-  Lemma (Header.get_color (U64.v (make_header wz c t)) == U64.v c)
+  Lemma (Header.get_color (U64.v (make_header wz c t)) == Header.pack_color c)
 
 /// chain_avoids_transfer_excl2: transfer chain_avoids when reads preserved except at excl or excl2.
 val chain_avoids_transfer_excl2 (g g': heap) (fp excl excl2: U64.t) (fuel: nat)

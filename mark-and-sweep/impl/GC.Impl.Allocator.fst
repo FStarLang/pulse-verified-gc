@@ -184,13 +184,12 @@ let alloc_col_eq (pv: phase_state) (g: SpecBase.heap) (obj: obj_addr) (wz: nat) 
   : Lemma (requires U64.v ah == U64.v (SH.hd_address obj) +
                                 (U64.v (SO.getWosize (SH.read_word g (SH.hd_address obj))) - wz) * 8)
           (ensures SA.alloc_color (phase_of pv) g obj wz ==
-                   (if alloc_col pv ah then black_color else white_color))
+                   (if alloc_col pv ah then black else white))
   = ()
 
 /// The header the implementation writes is the spec's.
-let alloc_header_eq (wz: wosize) (b: bool) (tag: U64.t{U64.v tag < 256})
-  : Lemma (makeHeader wz (if b then black else white) tag ==
-           SA.make_header wz (if b then black_color else white_color) tag)
+let alloc_header_eq (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
+  : Lemma (makeHeader wz c tag == SA.make_header wz c tag)
   = ()
 
 /// `swept_tail` after taking the cell `cur` (predecessor `prev`) with
@@ -351,7 +350,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (phase: R.ref phase_state)
             let b = alloc_col pv alloc_hd_off;
             alloc_col_eq pv 's (vcur <: obj_addr) (U64.v wz) alloc_hd_off;
             let col = (if b then black else white);
-            alloc_header_eq wz b tag;
+            alloc_header_eq wz col tag;
 
             if U64.gte leftover 1UL {
               // Split, or a one-word leftover: both write the same two words,

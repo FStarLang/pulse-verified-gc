@@ -24,9 +24,11 @@
 
 module GC.Spec.Phase
 
+open GC.Spec.Object
 open GC.Spec.FusedSweep
 
 module U64 = FStar.UInt64
+module Header = GC.Lib.Header
 
 /// The major collector's phase.  `Sweeping st`: a sweep is under way, in state
 /// `st` (`GC.Spec.FusedSweep`): its cursor, and the two caches the
@@ -38,14 +40,8 @@ type gc_phase =
   | Idle
   | Sweeping of sweep_state
 
-/// The colour field of a header, as its two-bit value.
-let color_bits = c: U64.t{U64.v c < 4}
-
-let white_color : color_bits = 0UL
-let black_color : color_bits = 3UL
-
 /// The colour of a new object whose header is at `hd_addr`.
-let allocation_color (ph: gc_phase) (hd_addr: U64.t) : color_bits =
+let allocation_color (ph: gc_phase) (hd_addr: U64.t) : color =
   match ph with
-  | Idle -> white_color
-  | Sweeping st -> if U64.v hd_addr >= U64.v st.cursor then black_color else white_color
+  | Idle -> Header.White
+  | Sweeping st -> if U64.v hd_addr >= U64.v st.cursor then Header.Black else Header.White

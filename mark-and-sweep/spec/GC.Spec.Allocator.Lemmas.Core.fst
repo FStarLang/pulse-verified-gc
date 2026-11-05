@@ -175,20 +175,20 @@ open GC.Spec.Mark
 
 #push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let make_header_getColor (wz: U64.t{U64.v wz < pow2 54})
-                                  (c: U64.t{U64.v c < 4})
+                                  (c: color)
                                   (t: U64.t{U64.v t < 256})
   = let hdr = make_header wz c t in
     make_header_value wz c t;
     Header.get_color_val (U64.v hdr);
     FStar.UInt.shift_right_value_lemma #64 (U64.v hdr) 8;
     assert_norm (pow2 8 = 256);
-    FStar.Math.Lemmas.lemma_div_plus (U64.v c * 256 + U64.v t) (U64.v wz * 4) 256;
-    FStar.Math.Lemmas.lemma_div_plus (U64.v t) (U64.v c) 256;
+    FStar.Math.Lemmas.lemma_div_plus (Header.pack_color c * 256 + U64.v t) (U64.v wz * 4) 256;
+    FStar.Math.Lemmas.lemma_div_plus (U64.v t) (Header.pack_color c) 256;
     FStar.Math.Lemmas.small_div (U64.v t) 256;
-    FStar.UInt.logand_mask #64 (U64.v wz * 4 + U64.v c) 2;
+    FStar.UInt.logand_mask #64 (U64.v wz * 4 + Header.pack_color c) 2;
     assert_norm (pow2 2 - 1 = 3);
-    FStar.Math.Lemmas.lemma_mod_plus (U64.v c) (U64.v wz) 4;
-    FStar.Math.Lemmas.small_mod (U64.v c) 4
+    FStar.Math.Lemmas.lemma_mod_plus (Header.pack_color c) (U64.v wz) 4;
+    FStar.Math.Lemmas.small_mod (Header.pack_color c) 4
 #pop-options
 
 /// ---------------------------------------------------------------------------

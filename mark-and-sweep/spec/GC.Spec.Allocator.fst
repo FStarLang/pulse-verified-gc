@@ -35,17 +35,18 @@ open GC.Spec.Phase
 /// Bridge: make_header == GC.Impl.Object.makeHeader (for extraction)
 /// ---------------------------------------------------------------------------
 
-/// The spec's make_header with blue_bits matches GC.Impl.Object.makeHeader with blue
-/// because pack_color Blue = 2 = blue_bits.
+/// The spec's make_header shifts in `pack_color c`, as GC.Impl.Object.makeHeader
+/// does, so the two agree on every colour (GC.Impl.Allocator.alloc_header_eq).
 /// This is needed to connect the Pulse implementation to the pure spec.
 
 module ImplObject = GC.Spec.Object
+module Header = GC.Lib.Header
 
 /// ---------------------------------------------------------------------------
 /// Step lemmas for alloc_search (for loop correspondence proofs)
 /// ---------------------------------------------------------------------------
 
-let alloc_replacement_fp_eq (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+let alloc_replacement_fp_eq (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (col: color) (tag: U64.t{U64.v tag < 256})
   = hd_address_spec obj; hd_address_bounds obj;
     reveal_opaque (`%alloc_from_block) alloc_from_block
 
@@ -95,21 +96,21 @@ let spec_next_fp_eq (g: heap) (obj: obj_addr)
 
 /// Exact fit: leftover = 0
 #push-options "--z3rlimit 25"
-let alloc_from_block_exact (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+let alloc_from_block_exact (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color) (tag: U64.t{U64.v tag < 256})
   = hd_address_spec obj; hd_address_bounds obj;
     reveal_opaque (`%alloc_from_block) alloc_from_block
 #pop-options
 
 /// Split, normal: all bounds pass
 #push-options "--z3rlimit 25 --fuel 1"
-let alloc_from_block_split_normal (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+let alloc_from_block_split_normal (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color) (tag: U64.t{U64.v tag < 256})
   = hd_address_spec obj; hd_address_bounds obj;
     reveal_opaque (`%alloc_from_block) alloc_from_block
 #pop-options
 
 /// The right-justified object header would fall outside the heap
 #push-options "--z3rlimit 25"
-let alloc_from_block_oob (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+let alloc_from_block_oob (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color) (tag: U64.t{U64.v tag < 256})
   = hd_address_spec obj; hd_address_bounds obj;
     reveal_opaque (`%alloc_from_block) alloc_from_block
 #pop-options
@@ -126,7 +127,7 @@ let alloc_from_block_oob (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col:
 #push-options "--z3rlimit 60 --fuel 1"
 /// Writes stay inside the block, so a disjoint address is untouched.
 let alloc_from_block_read_outside
-  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr) (col: color) (tag: U64.t{U64.v tag < 256})
   = hd_address_spec obj; hd_address_bounds obj;
     reveal_opaque (`%alloc_from_block) alloc_from_block;
     let hd = hd_address obj in
@@ -139,11 +140,11 @@ let alloc_from_block_read_outside
       let ah : hp_addr = U64.uint_to_t ahn in
       let ahdr = make_header (U64.uint_to_t wz) col tag in
       if leftover >= 2 then begin
-        let rhdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
+        let rhdr = make_header (U64.uint_to_t (leftover - 1)) Header.Blue 0UL in
         read_write_different g hd addr rhdr;
         read_write_different (write_word g hd rhdr) ah addr ahdr
       end else if leftover = 1 then begin
-        let frag = make_header 0UL blue_bits 0UL in
+        let frag = make_header 0UL Header.Blue 0UL in
         read_write_different g hd addr frag;
         read_write_different (write_word g hd frag) ah addr ahdr
       end else
@@ -153,13 +154,13 @@ let alloc_from_block_read_outside
 
 #push-options "--z3rlimit 25 --fuel 1"
 /// The remainder keeps hd; the object header is written above it.
-let alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+let alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color) (tag: U64.t{U64.v tag < 256})
   = alloc_from_block_split_normal g obj wz next col tag;
     hd_address_spec obj; hd_address_bounds obj;
     let hd = hd_address obj in
     let bwz = U64.v (getWosize (read_word g hd)) in
     let leftover = bwz - wz in
-    let rhdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
+    let rhdr = make_header (U64.uint_to_t (leftover - 1)) Header.Blue 0UL in
     let g1 = write_word g hd rhdr in
     let ahn = U64.v hd + leftover * 8 in
     let ah : hp_addr = U64.uint_to_t ahn in
@@ -171,13 +172,13 @@ let alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U6
 
 #push-options "--z3rlimit 25 --fuel 1"
 /// Neither write touches obj = hd + 8, so the cell's link survives.
-let alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+let alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color) (tag: U64.t{U64.v tag < 256})
   = alloc_from_block_split_normal g obj wz next col tag;
     hd_address_spec obj; hd_address_bounds obj;
     let hd = hd_address obj in
     let bwz = U64.v (getWosize (read_word g hd)) in
     let leftover = bwz - wz in
-    let rhdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
+    let rhdr = make_header (U64.uint_to_t (leftover - 1)) Header.Blue 0UL in
     let g1 = write_word g hd rhdr in
     let ahn = U64.v hd + leftover * 8 in
     let ah : hp_addr = U64.uint_to_t ahn in
@@ -189,13 +190,13 @@ let alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next:
 
 #push-options "--z3rlimit 25 --fuel 1"
 /// Only two words are written.
-let alloc_split_normal_read_other (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+let alloc_split_normal_read_other (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr) (col: color) (tag: U64.t{U64.v tag < 256})
   = alloc_from_block_split_normal g obj wz next col tag;
     hd_address_spec obj; hd_address_bounds obj;
     let hd = hd_address obj in
     let bwz = U64.v (getWosize (read_word g hd)) in
     let leftover = bwz - wz in
-    let rhdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
+    let rhdr = make_header (U64.uint_to_t (leftover - 1)) Header.Blue 0UL in
     let g1 = write_word g hd rhdr in
     let ahn = U64.v hd + leftover * 8 in
     let ah : hp_addr = U64.uint_to_t ahn in

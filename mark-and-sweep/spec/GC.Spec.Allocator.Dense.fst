@@ -141,19 +141,19 @@ private let alloc_from_block_exact_objects_eq_part1 (g: heap) (obj: obj_addr) (w
                     (let bwz = U64.v (getWosize (read_word g (hd_address obj))) in
                      bwz == wz) /\
                     wz >= 1)
-          (ensures (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
+          (ensures (let (g', _) = alloc_from_block g obj wz White tag next_fp in
                     objects zero_addr g' == objects zero_addr g))
   = let hd = hd_address obj in
     let hdr = read_word g hd in
     let bwz = U64.v (getWosize hdr) in
     hd_address_spec obj;
     hd_address_bounds obj;
-    SA.alloc_from_block_exact g obj wz next_fp SA.white_color tag;
-    let ahdr = make_header (U64.uint_to_t wz) white_bits tag in
+    SA.alloc_from_block_exact g obj wz next_fp White tag;
+    let ahdr = make_header (U64.uint_to_t wz) White tag in
     let g1 = write_word g hd ahdr in
-    assert (alloc_from_block g obj wz white_color tag next_fp == (g1, next_fp));
+    assert (alloc_from_block g obj wz White tag next_fp == (g1, next_fp));
     getWosize_bound hdr;
-    AllocLemmas.make_header_getWosize (U64.uint_to_t wz) white_bits tag;
+    AllocLemmas.make_header_getWosize (U64.uint_to_t wz) White tag;
     assert (getWosize ahdr == getWosize hdr);
     write_header_same_wosize_preserves_objects_aux zero_addr g hd ahdr
 #pop-options
@@ -183,7 +183,7 @@ private let alloc_from_block_split_dense
                     (let hdr = read_word g (hd_address obj) in
                      let bwz = U64.v (getWosize hdr) in
                      bwz >= wz /\ bwz - wz >= 1))
-          (ensures (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
+          (ensures (let (g', _) = alloc_from_block g obj wz White tag next_fp in
                     heap_objects_dense g'))
   = reveal_opaque (`%heap_objects_dense) heap_objects_dense;
     let hd_obj = hd_address obj in
@@ -201,16 +201,16 @@ private let alloc_from_block_split_dense
     assert (ahn + 8 + wz * 8 == U64.v hd_obj + 8 + bwz * 8);
     assert (ahn + 8 < heap_size);
 
-    SA.alloc_from_block_split_normal g obj wz next_fp SA.white_color tag;
-    let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
+    SA.alloc_from_block_split_normal g obj wz next_fp White tag;
+    let rhdr = make_header (U64.uint_to_t rw) Blue 0UL in
     let g1 = write_word g hd_obj rhdr in
     let ah : hp_addr = U64.uint_to_t ahn in
-    let ahdr = make_header (U64.uint_to_t wz) white_bits tag in
+    let ahdr = make_header (U64.uint_to_t wz) White tag in
     let g2 = write_word g1 ah ahdr in
     let g' = g2 in
 
-    AllocLemmas.make_header_getWosize (U64.uint_to_t wz) white_bits tag;
-    AllocLemmas.make_header_getWosize (U64.uint_to_t rw) blue_bits 0UL;
+    AllocLemmas.make_header_getWosize (U64.uint_to_t wz) White tag;
+    AllocLemmas.make_header_getWosize (U64.uint_to_t rw) Blue 0UL;
 
     // the allocated block is an object of g'
     Part1.alloc_from_block_alloc_in_objects_part1 g obj wz next_fp tag;
@@ -320,18 +320,18 @@ private let alloc_from_block_exact_dense
                     (let hdr = read_word g (hd_address obj) in
                      let bwz = U64.v (getWosize hdr) in
                      bwz == wz))
-          (ensures (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
+          (ensures (let (g', _) = alloc_from_block g obj wz White tag next_fp in
                     heap_objects_dense g'))
   = reveal_opaque (`%heap_objects_dense) heap_objects_dense;
-    let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
+    let (g', _) = alloc_from_block g obj wz White tag next_fp in
     alloc_from_block_exact_objects_eq_part1 g obj wz next_fp tag;
     let hdr = read_word g (hd_address obj) in
     let bwz = U64.v (getWosize hdr) in
-    SA.alloc_from_block_exact g obj wz next_fp SA.white_color tag;
+    SA.alloc_from_block_exact g obj wz next_fp White tag;
     hd_address_spec obj;
     hd_address_bounds obj;
-    let ahdr = make_header (U64.uint_to_t wz) white_bits tag in
-    AllocLemmas.make_header_getWosize (U64.uint_to_t wz) white_bits tag;
+    let ahdr = make_header (U64.uint_to_t wz) White tag in
+    AllocLemmas.make_header_getWosize (U64.uint_to_t wz) White tag;
     // All wosizes preserved (only hd_address(obj) written, same wosize)
     let hd_obj = hd_address obj in
     let aux_wz (p: hp_addr) : Lemma (getWosize (read_word g' p) == getWosize (read_word g p))
@@ -404,7 +404,7 @@ private let alloc_from_block_preserves_dense
                     Seq.mem obj (objects zero_addr g) /\
                     wz >= 1 /\
                     U64.v (getWosize (read_word g (hd_address obj))) >= wz)
-          (ensures (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
+          (ensures (let (g', _) = alloc_from_block g obj wz White tag next_fp in
                     heap_objects_dense g'))
   = let hdr = read_word g (hd_address obj) in
     let bwz = U64.v (getWosize hdr) in
@@ -505,7 +505,7 @@ private let alloc_search_found_prev_dense
                     (let bwz = U64.v (getWosize (read_word g (hd_address obj))) in
                      bwz >= wz))
           (ensures (let gw = write_word g (prev_fp <: hp_addr) new_fp in
-                    heap_objects_dense (fst (alloc_from_block gw obj wz white_color tag next_fp))))
+                    heap_objects_dense (fst (alloc_from_block gw obj wz White tag next_fp))))
   = let gw = write_word g (prev_fp <: hp_addr) new_fp in
     hd_address_spec prev_fp;
     hd_address_bounds prev_fp;

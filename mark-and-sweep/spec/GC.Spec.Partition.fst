@@ -390,7 +390,7 @@ let alloc_from_block_accounting
     (ensures (let hd = hd_address obj in
               let bwz = U64.v (getWosize (read_word g hd)) in
               let leftover = bwz - wz in
-              let g' = fst (Alloc.alloc_from_block g obj wz Alloc.white_color tag next) in
+              let g' = fst (Alloc.alloc_from_block g obj wz White tag next) in
               let ah : hp_addr = U64.uint_to_t (U64.v hd + leftover * 8) in
               // the block at `hd` is still a block, and it is exactly `wz + 1`
               // words smaller than it was
@@ -406,24 +406,24 @@ let alloc_from_block_accounting
   = let hd = hd_address obj in
     let bwz = U64.v (getWosize (read_word g hd)) in
     let leftover = bwz - wz in
-    Alloc.alloc_from_block_split_normal g obj wz next Alloc.white_color tag;
-    let rhdr = Alloc.make_header (U64.uint_to_t (leftover - 1)) Alloc.blue_bits 0UL in
+    Alloc.alloc_from_block_split_normal g obj wz next White tag;
+    let rhdr = Alloc.make_header (U64.uint_to_t (leftover - 1)) Blue 0UL in
     let g1 = write_word g hd rhdr in
     let ahn = U64.v hd + leftover * 8 in
     let ah : hp_addr = U64.uint_to_t ahn in
-    let ahdr = Alloc.make_header (U64.uint_to_t wz) Alloc.white_bits tag in
+    let ahdr = Alloc.make_header (U64.uint_to_t wz) White tag in
     let g2 = write_word g1 ah ahdr in
     // the allocated header: written last, so read it back directly
     read_write_same g1 ah ahdr;
-    ACore.make_header_getWosize (U64.uint_to_t wz) Alloc.white_bits tag;
+    ACore.make_header_getWosize (U64.uint_to_t wz) White tag;
     // the remainder header: written first, and `ah <> hd` because leftover >= 1
     read_write_different g1 ah hd ahdr;
     read_write_same g hd rhdr;
-    ACore.make_header_getWosize (U64.uint_to_t (leftover - 1)) Alloc.blue_bits 0UL;
+    ACore.make_header_getWosize (U64.uint_to_t (leftover - 1)) Blue 0UL;
     // colours: the header bits decode to the classes
-    ACore.make_header_getColor (U64.uint_to_t wz) Alloc.white_bits tag;
+    ACore.make_header_getColor (U64.uint_to_t wz) White tag;
     getColor_raw ahdr;
-    ACore.make_header_getColor (U64.uint_to_t (leftover - 1)) Alloc.blue_bits 0UL;
+    ACore.make_header_getColor (U64.uint_to_t (leftover - 1)) Blue 0UL;
     getColor_raw rhdr
 #pop-options
 
@@ -442,13 +442,13 @@ let alloc_from_block_accounting_exact
     (requires (let bwz = U64.v (getWosize (read_word g (hd_address obj))) in
                bwz == wz /\ wz < pow2 54))
     (ensures (let hd = hd_address obj in
-              let g' = fst (Alloc.alloc_from_block g obj wz Alloc.white_color tag next) in
+              let g' = fst (Alloc.alloc_from_block g obj wz White tag next) in
               U64.v (getWosize (read_word g' hd)) == wz))
   = let hd = hd_address obj in
-    Alloc.alloc_from_block_exact g obj wz next Alloc.white_color tag;
-    let ahdr = Alloc.make_header (U64.uint_to_t wz) Alloc.white_bits tag in
+    Alloc.alloc_from_block_exact g obj wz next White tag;
+    let ahdr = Alloc.make_header (U64.uint_to_t wz) White tag in
     read_write_same g hd ahdr;
-    ACore.make_header_getWosize (U64.uint_to_t wz) Alloc.white_bits tag
+    ACore.make_header_getWosize (U64.uint_to_t wz) White tag
 #pop-options
 
 /// Both arms together: however the block is carved, the object the allocator
@@ -466,7 +466,7 @@ let alloc_from_block_gives_requested_size
                U64.v hd + (bwz - wz) * 8 < heap_size))
     (ensures (let hd = hd_address obj in
               let bwz = U64.v (getWosize (read_word g hd)) in
-              let g' = fst (Alloc.alloc_from_block g obj wz Alloc.white_color tag next) in
+              let g' = fst (Alloc.alloc_from_block g obj wz White tag next) in
               let ah : hp_addr = U64.uint_to_t (U64.v hd + (bwz - wz) * 8) in
               U64.v (getWosize (read_word g' ah)) == wz))
   = let hd = hd_address obj in
@@ -562,13 +562,13 @@ let alloc_from_block_white_grows
                ~(is_white obj g) /\
                U64.v hd + (bwz + 1) * 8 < heap_size))
     (ensures (let hd = hd_address obj in
-              let g' = fst (Alloc.alloc_from_block g obj wz Alloc.white_color tag next) in
+              let g' = fst (Alloc.alloc_from_block g obj wz White tag next) in
               white_whsize g' (objects hd g')
                 == white_whsize g (objects hd g) + (wz + 1)))
   = let hd = hd_address obj in
     let bwz = U64.v (getWosize (read_word g hd)) in
     let leftover = bwz - wz in
-    let g' = fst (Alloc.alloc_from_block g obj wz Alloc.white_color tag next) in
+    let g' = fst (Alloc.alloc_from_block g obj wz White tag next) in
     let ahn = U64.v hd + leftover * 8 in
     let ah : hp_addr = U64.uint_to_t ahn in
     let aftn = U64.v hd + (bwz + 1) * 8 in
@@ -579,7 +579,7 @@ let alloc_from_block_white_grows
     let frame (a: hp_addr) : Lemma
       (requires U64.v a >= aftn)
       (ensures read_word g' a == read_word g a)
-      = Alloc.alloc_from_block_read_outside g obj wz next a Alloc.white_color tag
+      = Alloc.alloc_from_block_read_outside g obj wz next a White tag
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires frame);
     walk_white_agree g g' aft;

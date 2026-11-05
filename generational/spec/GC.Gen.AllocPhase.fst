@@ -194,15 +194,15 @@ let recoloured_fl_complete g g' fp =
 
 /// The fields of a new header.
 #push-options "--z3rlimit 30"
-let new_header_facts (w: nat) (col: color_bits) (tag: tag_t)
+let new_header_facts (w: nat) (col: color) (tag: tag_t)
   : Lemma (requires w < pow2 54)
           (ensures (let h = AC.new_header w col tag in
                     U64.v (getWosize h) == w /\ getTag h == tag /\
-                    (col == white_color ==> getColor h == Header.White) /\
-                    (col == black_color ==> getColor h == Header.Black)))
+                    getColor h == col))
   = FStar.Math.Lemmas.pow2_lt_compat 64 54;
     let ww = U64.uint_to_t w in
     ALC.make_header_getColor ww col tag;
+    Header.pack_unpack_color col;
     getColor_raw (AC.new_header w col tag);
     ALH.make_header_getWosize ww col tag;
     ALH.make_header_getTag ww col tag
@@ -210,7 +210,7 @@ let new_header_facts (w: nat) (col: color_bits) (tag: tag_t)
 
 #push-options "--ifuel 1"
 let allocation_color_cases (ph: gc_phase) (a: U64.t)
-  : Lemma (allocation_color ph a == white_color \/ allocation_color ph a == black_color)
+  : Lemma (allocation_color ph a == Header.White \/ allocation_color ph a == Header.Black)
   = match ph with
     | Idle -> ()
     | Sweeping st -> ()
@@ -239,7 +239,7 @@ let alloc_at_recoloured ph g fp wz tag =
     assert (h == write_word h0 hd nh);
     AllocProps.alloc_spec_obj_in_objects_part1 g fp wz tag;
     obj_pos h0 x;
-    new_header_facts w white_color tag;
+    new_header_facts w Header.White tag;
     new_header_facts w col tag;
     assert (getColor (read_word h0 hd) == Header.White);
     assert (getColor nh == Header.White \/ getColor nh == Header.Black);

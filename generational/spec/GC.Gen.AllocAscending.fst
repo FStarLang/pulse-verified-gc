@@ -80,13 +80,13 @@ private let afb_header (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (a: obj
   : Lemma (requires blocks_fit g /\ Seq.mem obj (objects zero_addr g) /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     Seq.mem a (objects zero_addr g) /\ a <> obj)
-          (ensures read_word (fst (alloc_from_block g obj wz white_color tag next)) (hd_address a) ==
+          (ensures read_word (fst (alloc_from_block g obj wz Header.White tag next)) (hd_address a) ==
                    read_word g (hd_address a))
   = hd_address_spec a; hd_address_spec obj;
     wosize_of_object_spec obj g;
     if U64.v a < U64.v obj then objects_separated zero_addr g a obj
     else objects_separated zero_addr g obj a;
-    alloc_from_block_read_outside g obj wz next (hd_address a) white_color tag
+    alloc_from_block_read_outside g obj wz next (hd_address a) Header.White tag
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -101,7 +101,7 @@ private let afb_obj_facts (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag
                     is_blue obj g /\
                     U64.v (wosize_of_object obj g) >= wz /\
                     U64.v (hd_address obj) + (U64.v (wosize_of_object obj g) - wz) * 8 + 8 < heap_size)
-          (ensures (let g2 = fst (alloc_from_block g obj wz white_color tag next) in
+          (ensures (let g2 = fst (alloc_from_block g obj wz Header.White tag next) in
                     let lo = U64.v (wosize_of_object obj g) - wz in
                     let oo = U64.v obj + lo * 8 in
                     oo < heap_size /\ oo % 8 == 0 /\
@@ -120,7 +120,7 @@ private let afb_obj_facts (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag
     aligned_plus_mul8 (U64.v obj) lo;
     let ooa : obj_addr = U64.uint_to_t oo in
     hd_address_spec ooa;
-    let g2 = fst (alloc_from_block g obj wz white_color tag next) in
+    let g2 = fst (alloc_from_block g obj wz Header.White tag next) in
     AllocLemmas.alloc_from_block_objects_facts_part1 g obj wz next tag;
     let back (h: obj_addr)
       : Lemma (Seq.mem h (objects zero_addr g2) <==>
@@ -135,11 +135,11 @@ private let afb_obj_facts (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (tag
         end
     in
     FStar.Classical.forall_intro back;
-    let alloc_hdr = make_header (U64.uint_to_t wz) white_bits tag in
-    AllocLemmas.make_header_getColor (U64.uint_to_t wz) white_bits tag;
+    let alloc_hdr = make_header (U64.uint_to_t wz) Header.White tag in
+    AllocLemmas.make_header_getColor (U64.uint_to_t wz) Header.White tag;
     getColor_raw alloc_hdr;
     if lo = 0 then begin
-      alloc_from_block_exact g obj wz next white_color tag;
+      alloc_from_block_exact g obj wz next Header.White tag;
       read_write_same g hd alloc_hdr;
       color_of_object_spec ooa g2;
       is_blue_iff ooa g2
@@ -167,7 +167,7 @@ let found_heap (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (tag: U64.t{U64
   let new_fp = alloc_replacement_fp g obj wz next in
   let gw = if prev = 0UL || not (U64.v prev < heap_size && U64.v prev % U64.v mword = 0)
            then g else write_word g (prev <: hp_addr) new_fp in
-  fst (alloc_from_block gw obj wz white_color tag next)
+  fst (alloc_from_block gw obj wz Header.White tag next)
 
 /// Cells after the found arm: the old ones, minus `obj` unless it split.
 #push-options "--z3rlimit 60"
@@ -182,7 +182,7 @@ private let found_cells (g: heap) (prev: U64.t) (obj: obj_addr) (wz: nat) (tag: 
   = let next = read_word g obj in
     let new_fp = alloc_replacement_fp g obj wz next in
     let gw = if prev = 0UL then g else write_word g (prev <: hp_addr) new_fp in
-    let g2 = fst (alloc_from_block gw obj wz white_color tag next) in
+    let g2 = fst (alloc_from_block gw obj wz Header.White tag next) in
     cell_elim g (obj <: U64.t);
     hd_address_spec obj;
     let bwz = U64.v (wosize_of_object obj g) in

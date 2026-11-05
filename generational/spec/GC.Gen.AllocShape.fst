@@ -44,7 +44,7 @@ let tag_t = t: U64.t{U64.v t < 256}
 /// The black header of a new object of `w` fields and tag `tag`.
 let black_object_header (w: nat{w < pow2 54}) (tag: tag_t) : U64.t =
   FStar.Math.Lemmas.pow2_lt_compat 64 54;
-  SA.make_header (U64.uint_to_t w) SA.black_color tag
+  SA.make_header (U64.uint_to_t w) Header.Black tag
 
 /// ---------------------------------------------------------------------------
 /// The block first-fit takes
@@ -145,7 +145,7 @@ let mk_piece (g: heap) (cur: U64.t) (w: nat)
 let rem_header (lo: nat) : U64.t =
   if lo >= 1 && lo - 1 < pow2 54 then begin
     FStar.Math.Lemmas.pow2_lt_compat 64 54;
-    SA.make_header (U64.uint_to_t (lo - 1)) SA.blue_bits 0UL
+    SA.make_header (U64.uint_to_t (lo - 1)) Header.Blue 0UL
   end else 0UL
 
 
@@ -156,14 +156,14 @@ let relinked (g: heap) (p: U64.t) (v: U64.t) : GTot heap =
   else write_word g (p <: hp_addr) v
 
 /// The header of a new object of `w` fields, colour `col` and tag `tag`.
-let col_header (w: nat) (col: SA.color_bits) (tag: tag_t) : U64.t =
+let col_header (w: nat) (col: color) (tag: tag_t) : U64.t =
   if w < pow2 54 then begin
     FStar.Math.Lemmas.pow2_lt_compat 64 54;
     SA.make_header (U64.uint_to_t w) col tag
   end else 0UL
 
 let white_object_header (w: nat{w < pow2 54}) (tag: tag_t) : U64.t =
-  col_header w SA.white_color tag
+  col_header w Header.White tag
 
 /// Writing a word twice is writing it once.
 let write_write_same (g: heap) (a: hp_addr) (v v': U64.t)
@@ -174,7 +174,7 @@ let write_write_same (g: heap) (a: hp_addr) (v v': U64.t)
     Seq.lemma_eq_intro (write_word (write_word g a v) a v') (write_word g a v')
 
 /// The heap after allocating from the cell with the object's colour `col`.
-let col_heap (g: heap) (p: U64.t) (cur: U64.t) (w: nat) (col: SA.color_bits) (tag: tag_t) (pc: piece)
+let col_heap (g: heap) (p: U64.t) (cur: U64.t) (w: nat) (col: color) (tag: tag_t) (pc: piece)
   : GTot heap =
   let nf = if pc.lo >= 2 then cur else FL.fl_next g cur in
   let gw = relinked g p nf in
@@ -185,7 +185,7 @@ let col_heap (g: heap) (p: U64.t) (cur: U64.t) (w: nat) (col: SA.color_bits) (ta
 
 /// The heap after `alloc_spec`.
 let spec_heap (g: heap) (p: U64.t) (cur: U64.t) (w: nat) (tag: tag_t) (pc: piece) : GTot heap =
-  col_heap g p cur w SA.white_color tag pc
+  col_heap g p cur w Header.White tag pc
 
 /// The head after `alloc_spec`.
 let spec_fp (g: heap) (fp p cur: U64.t) (pc: piece) : GTot U64.t =
@@ -260,7 +260,7 @@ let at_explicit (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (st: sweep_state) (
     hd_address_spec o;
     // the colour the phase gives the header at pc.ah
     assert (SA.alloc_color ph g cur w ==
-            (if U64.v pc.ah >= U64.v st.cursor then SA.black_color else SA.white_color));
+            (if U64.v pc.ah >= U64.v st.cursor then Header.Black else Header.White));
     if U64.v pc.ah >= U64.v st.cursor then begin
       // one write of the black header is the white one, overwritten
       let nf = if pc.lo >= 2 then cur else FL.fl_next g cur in
@@ -285,18 +285,18 @@ let header_facts (w: nat{w < pow2 54}) (tag: tag_t) (lo: nat{lo >= 1 /\ lo - 1 <
   = FStar.Math.Lemmas.pow2_lt_compat 64 54;
     let ww = U64.uint_to_t w in
     let ll = U64.uint_to_t (lo - 1) in
-    ALC.make_header_getColor ww SA.white_bits tag;
-    ALC.make_header_getColor ww SA.black_color tag;
-    ALC.make_header_getColor ll SA.blue_bits 0UL;
+    ALC.make_header_getColor ww Header.White tag;
+    ALC.make_header_getColor ww Header.Black tag;
+    ALC.make_header_getColor ll Header.Blue 0UL;
     getColor_raw (white_object_header w tag);
     getColor_raw (black_object_header w tag);
     getColor_raw (rem_header lo);
-    ALH.make_header_getWosize ww SA.white_bits tag;
-    ALH.make_header_getWosize ww SA.black_color tag;
-    ALH.make_header_getWosize ll SA.blue_bits 0UL;
-    ALH.make_header_getTag ww SA.white_bits tag;
-    ALH.make_header_getTag ww SA.black_color tag;
-    ALH.make_header_getTag ll SA.blue_bits 0UL;
+    ALH.make_header_getWosize ww Header.White tag;
+    ALH.make_header_getWosize ww Header.Black tag;
+    ALH.make_header_getWosize ll Header.Blue 0UL;
+    ALH.make_header_getTag ww Header.White tag;
+    ALH.make_header_getTag ww Header.Black tag;
+    ALH.make_header_getTag ll Header.Blue 0UL;
     getTag_bound (white_object_header w tag)
 #pop-options
 

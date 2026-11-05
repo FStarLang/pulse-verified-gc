@@ -23,6 +23,7 @@ open GC.Gen.PromoteUpdate.Header
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module FreeListShape = GC.Gen.FreeListShape
 module WriteBody = GC.Gen.WriteBodyLemmas
+module Header = GC.Lib.Header
 
 /// The allocator's output free-list head is null or a syntactically valid heap
 /// pointer when all blue free-list link fields have that same value shape.
@@ -89,7 +90,7 @@ private let alloc_from_block_fp_pointer_or_zero
       U64.v (hd_address obj) + 16 <= heap_size)
     (ensures
       FreeListShape.fp_pointer_or_zero
-        (snd (GC.Spec.Allocator.alloc_from_block g obj wz GC.Spec.Allocator.white_color tag next_fp)))
+        (snd (GC.Spec.Allocator.alloc_from_block g obj wz Header.White tag next_fp)))
   = let hd = hd_address obj in
     hd_address_spec obj;
     hd_address_bounds obj;
@@ -98,7 +99,7 @@ private let alloc_from_block_fp_pointer_or_zero
     // the free list is either the block ITSELF -- still a perfectly good
     // object address, since the remainder keeps it -- or the old link, which
     // the hypothesis already covers.
-    GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp GC.Spec.Allocator.white_color tag;
+    GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp Header.White tag;
     objects_addresses_gt_start zero_addr g obj;
     assert (FreeListShape.fp_pointer_or_zero (obj <: U64.t))
 #pop-options
@@ -158,7 +159,7 @@ private let rec alloc_search_fp_pointer_or_zero
         // `prev_fp = 0` alone: an unusable predecessor takes the same arm.
         FreeListShape.blue_link_fields_valid_elim g obj;
         assert (FreeListShape.fp_pointer_or_zero next_fp);
-        GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp GC.Spec.Allocator.white_color tag;
+        GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp Header.White tag;
         alloc_from_block_fp_pointer_or_zero g obj wz next_fp tag
       end else begin
         AllocLemmas.fl_chain_terminates_elim g cur_fp fuel;
@@ -246,7 +247,7 @@ private let rec alloc_search_preserves_blfv
         wosize_of_object_spec obj g;
         wfh_part1_obj_bound g obj;
         let new_rem_fp = GC.Spec.Allocator.alloc_replacement_fp g obj wz next_fp in
-        GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp GC.Spec.Allocator.white_color tag;
+        GC.Spec.Allocator.alloc_replacement_fp_eq g obj wz next_fp Header.White tag;
         let prev_usable =
           prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
           U64.v prev_fp % U64.v mword = 0 && U64.v prev_fp <> U64.v hd in
@@ -266,7 +267,7 @@ private let rec alloc_search_preserves_blfv
         assert (blocks_fit base);
         assert (objects zero_addr base == objects zero_addr g);
         assert (read_word base hd == hdr);
-        let heap_out = fst (alloc_from_block base obj wz white_color tag next_fp) in
+        let heap_out = fst (alloc_from_block base obj wz Header.White tag next_fp) in
         assert (heap_out == (alloc_search g head_fp prev_fp cur_fp wz Idle tag fuel).heap_out);
         FreeListShape.blue_link_fields_valid_elim g obj;
         assert (FreeListShape.fp_pointer_or_zero next_fp);
@@ -300,9 +301,9 @@ private let rec alloc_search_preserves_blfv
               // the hypotheses -- so it is the blue remainder, and its link
               // word is the one the allocation deliberately leaves alone.
               (if leftover = 0 then begin
-                 GC.Spec.Allocator.alloc_from_block_exact base obj wz next_fp GC.Spec.Allocator.white_color tag;
-                 let ahdr0 = make_header (U64.uint_to_t wz) white_bits tag in
-                 AllocLemmas.make_header_getColor (U64.uint_to_t wz) white_bits tag;
+                 GC.Spec.Allocator.alloc_from_block_exact base obj wz next_fp Header.White tag;
+                 let ahdr0 = make_header (U64.uint_to_t wz) Header.White tag in
+                 AllocLemmas.make_header_getColor (U64.uint_to_t wz) Header.White tag;
                  getColor_raw ahdr0;
                  read_write_same base hd ahdr0;
                  color_of_object_spec src heap_out;
@@ -310,16 +311,16 @@ private let rec alloc_search_preserves_blfv
                  assert False
                end else ());
               assert (leftover >= 1);
-              GC.Spec.Allocator.alloc_from_block_split_normal base obj wz next_fp GC.Spec.Allocator.white_color tag;
-              let rhdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
-              let ahdr = make_header (U64.uint_to_t wz) white_bits tag in
+              GC.Spec.Allocator.alloc_from_block_split_normal base obj wz next_fp Header.White tag;
+              let rhdr = make_header (U64.uint_to_t (leftover - 1)) Header.Blue 0UL in
+              let ahdr = make_header (U64.uint_to_t wz) Header.White tag in
               let b1 = write_word base hd rhdr in
               let ah : hp_addr = U64.uint_to_t ahn in
               assert (heap_out == write_word b1 ah ahdr);
               read_write_different b1 ah hd ahdr;
               read_write_same base hd rhdr;
               AllocLemmas.make_header_getWosize
-                (U64.uint_to_t (leftover - 1)) blue_bits 0UL;
+                (U64.uint_to_t (leftover - 1)) Header.Blue 0UL;
               wosize_of_object_spec src heap_out;
               assert (U64.v (wosize_of_object src heap_out) == leftover - 1);
               assert (leftover >= 2);

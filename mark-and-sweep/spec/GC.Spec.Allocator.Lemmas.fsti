@@ -19,7 +19,7 @@ module AllocCommon = GC.Spec.Allocator.Lemmas.Common
 module AllocChain = GC.Spec.Allocator.Lemmas.Chain
 /// getWosize of make_header returns the original wosize
 val make_header_getWosize : (wz: U64.t{U64.v wz < pow2 54}) ->
-                            (c: U64.t{U64.v c < 4}) ->
+                            (c: color) ->
                             (t: U64.t{U64.v t < 256}) ->
   Lemma (getWosize (make_header wz c t) == wz)
 
@@ -168,11 +168,11 @@ val chain_avoids_transfer_on_chain (g g': heap) (fp excl: U64.t) (fuel: nat)
                       chain_avoids g fp a fuel = false ==>
                         read_word g' a == read_word g a))
           (ensures chain_avoids g' fp excl fuel = true)
-/// get_color of make_header returns the original color bits
+/// get_color of make_header returns the packed colour
 val make_header_getColor : (wz: U64.t{U64.v wz < pow2 54}) ->
-                           (c: U64.t{U64.v c < 4}) ->
+                           (c: color) ->
                            (t: U64.t{U64.v t < 256}) ->
-  Lemma (Header.get_color (U64.v (make_header wz c t)) == U64.v c)
+  Lemma (Header.get_color (U64.v (make_header wz c t)) == Header.pack_color c)
 
 /// chain_avoids_transfer_excl2: transfer chain_avoids when reads preserved except at excl or excl2.
 val chain_avoids_transfer_excl2 (g g': heap) (fp excl excl2: U64.t) (fuel: nat)
@@ -321,7 +321,7 @@ val alloc_from_block_objects_facts_part1 :
                   Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
-        (ensures (let (g', rem_fp) = alloc_from_block g obj wz white_color tag next_fp in
+        (ensures (let (g', rem_fp) = alloc_from_block g obj wz Header.White tag next_fp in
                   (forall (h: obj_addr). Seq.mem h (objects zero_addr g) ==> Seq.mem h (objects zero_addr g'))))
 
 /// **Theorem**: the ALLOCATED block is an object of the output heap.  Under
@@ -339,7 +339,7 @@ val alloc_from_block_alloc_in_objects_part1 :
         (ensures (let hd = hd_address obj in
                   let bwz = U64.v (getWosize (read_word g hd)) in
                   let ahn = U64.v hd + (bwz - wz) * 8 in
-                  let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
+                  let (g', _) = alloc_from_block g obj wz Header.White tag next_fp in
                   ahn % U64.v mword == 0 /\ ahn + 8 < heap_size /\
                   Seq.mem (f_address (U64.uint_to_t ahn <: hp_addr))
                           (objects zero_addr g')))
@@ -355,7 +355,7 @@ val alloc_from_block_rem_in_objects_part1 :
                   (let hdr = read_word g (hd_address obj) in
                    let bwz = U64.v (getWosize hdr) in
                    bwz >= wz /\ bwz - wz >= 2))
-        (ensures (let (g', rem_fp) = alloc_from_block g obj wz white_color tag next_fp in
+        (ensures (let (g', rem_fp) = alloc_from_block g obj wz Header.White tag next_fp in
                   is_pointer_field rem_fp /\
                   Seq.mem rem_fp (objects zero_addr g')))
 
@@ -368,7 +368,7 @@ val alloc_from_block_preserves_objects_part1 :
                   Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
-        (ensures (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
+        (ensures (let (g', _) = alloc_from_block g obj wz Header.White tag next_fp in
                   (forall (h: obj_addr). Seq.mem h (objects zero_addr g) ==> Seq.mem h (objects zero_addr g'))))
 
 /// **Theorem**: Any object in the post-alloc heap that was NOT in the pre-alloc
@@ -426,7 +426,7 @@ val alloc_from_block_objects_backward_part1 :
                    let bwz = U64.v (getWosize (read_word g hd)) in
                    bwz >= wz /\ wz >= 1 /\
                    U64.v hd + (bwz - wz) * 8 + 8 < heap_size) /\
-                  (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
+                  (let (g', _) = alloc_from_block g obj wz Header.White tag next_fp in
                    Seq.mem h (objects zero_addr g') /\
                    ~(Seq.mem h (objects zero_addr g))))
         (ensures (let hd = hd_address obj in

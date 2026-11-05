@@ -13,6 +13,7 @@ open GC.Spec.Fields
 open GC.Spec.Allocator
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
+module Header = GC.Lib.Header
 
 /// Helper: establish all common facts from split precondition under part1
 /// (fuel 0: the well-formedness goals of this signature are pure arithmetic;
@@ -45,14 +46,14 @@ val alloc_split_facts_part1 :
                   next_hd_nat < pow2 64 /\
                   wz < pow2 54 /\
                   rem_wz < pow2 54 /\
-                  getWosize (make_header (U64.uint_to_t wz) white_bits tag) == U64.uint_to_t wz /\
-                  getWosize (make_header (U64.uint_to_t rem_wz) blue_bits 0UL) == U64.uint_to_t rem_wz /\
-                  (let rem_hdr = make_header (U64.uint_to_t rem_wz) blue_bits 0UL in
+                  getWosize (make_header (U64.uint_to_t wz) Header.White tag) == U64.uint_to_t wz /\
+                  getWosize (make_header (U64.uint_to_t rem_wz) Header.Blue 0UL) == U64.uint_to_t rem_wz /\
+                  (let rem_hdr = make_header (U64.uint_to_t rem_wz) Header.Blue 0UL in
                    let g1 = write_word g hd rem_hdr in
                    let ah : hp_addr = U64.uint_to_t ahn in
-                   let alloc_hdr = make_header (U64.uint_to_t wz) white_bits tag in
+                   let alloc_hdr = make_header (U64.uint_to_t wz) Header.White tag in
                    let g2 = write_word g1 ah alloc_hdr in
-                   alloc_from_block g obj wz white_color tag next_fp ==
+                   alloc_from_block g obj wz Header.White tag next_fp ==
                      (g2, (if leftover >= 2 then (obj <: U64.t) else next_fp)) /\
                    Seq.length g2 == Seq.length g /\
                    read_word g2 hd == rem_hdr /\
@@ -79,7 +80,7 @@ val alloc_split_g3_agrees_part1 :
                    (let ahn = U64.v hd + (block_wz - wz) * 8 in
                     U64.v p <> U64.v hd /\
                     U64.v p <> ahn)))
-        (ensures (let (g3, _) = alloc_from_block g obj wz white_color tag next_fp in
+        (ensures (let (g3, _) = alloc_from_block g obj wz Header.White tag next_fp in
                   read_word g3 p == read_word g p))
 
 /// Old objects are in new objects after split (part1 variant)
@@ -92,7 +93,7 @@ val alloc_split_old_in_new_part1 :
                    let block_wz = U64.v (getWosize hdr) in
                    block_wz >= wz /\ block_wz - wz >= 1) /\
                   Seq.mem h (objects zero_addr g))
-        (ensures (let (g3, _) = alloc_from_block g obj wz white_color tag next_fp in
+        (ensures (let (g3, _) = alloc_from_block g obj wz Header.White tag next_fp in
                   Seq.mem h (objects zero_addr g3)))
 
 /// alloc_from_block preserves objects membership under part1
@@ -103,7 +104,7 @@ val alloc_from_block_objects_facts_part1 :
                   Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
-        (ensures (let (g', rem_fp) = alloc_from_block g obj wz white_color tag next_fp in
+        (ensures (let (g', rem_fp) = alloc_from_block g obj wz Header.White tag next_fp in
                   (forall (h: obj_addr). Seq.mem h (objects zero_addr g) ==> Seq.mem h (objects zero_addr g'))))
 
 /// Writing within an object body preserves the objects enumeration
@@ -138,7 +139,7 @@ val alloc_from_block_preserves_objects_part1 :
                   Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
-        (ensures (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
+        (ensures (let (g', _) = alloc_from_block g obj wz Header.White tag next_fp in
                   (forall (h: obj_addr). Seq.mem h (objects zero_addr g) ==> Seq.mem h (objects zero_addr g'))))
 
 /// **Theorem**: In the split case (block_wz - wz >= 2), the remainder fp
@@ -165,7 +166,7 @@ val alloc_from_block_alloc_in_objects_part1 :
         (ensures (let hd = hd_address obj in
                   let bwz = U64.v (getWosize (read_word g hd)) in
                   let ahn = U64.v hd + (bwz - wz) * 8 in
-                  let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
+                  let (g', _) = alloc_from_block g obj wz Header.White tag next_fp in
                   ahn % U64.v mword == 0 /\ ahn + 8 < heap_size /\
                   Seq.mem (f_address (U64.uint_to_t ahn <: hp_addr))
                           (objects zero_addr g')))
@@ -180,6 +181,6 @@ val alloc_from_block_rem_in_objects_part1 :
                    // Only the true split keeps a cell: at leftover = 1 the
                    // replacement is `next_fp`, not a block in this heap.
                    bwz >= wz /\ bwz - wz >= 2))
-        (ensures (let (g', rem_fp) = alloc_from_block g obj wz white_color tag next_fp in
+        (ensures (let (g', rem_fp) = alloc_from_block g obj wz Header.White tag next_fp in
                   is_pointer_field rem_fp /\
                   Seq.mem rem_fp (objects zero_addr g')))

@@ -540,10 +540,10 @@ OCaml 4.14's `caml_allocation_color` decides it:
 ```fstar
 type gc_phase = | Idle | Sweeping of sweep_state
 
-let allocation_color (ph: gc_phase) (hd_addr: U64.t) : color_bits =
+let allocation_color (ph: gc_phase) (hd_addr: U64.t) : color =
   match ph with
-  | Idle -> white_color
-  | Sweeping st -> if U64.v hd_addr >= U64.v st.cursor then black_color else white_color
+  | Idle -> Header.White
+  | Sweeping st -> if U64.v hd_addr >= U64.v st.cursor then Header.Black else Header.White
 ```
 
 `alloc_search` takes the phase and writes `allocation_color` of the header

@@ -15,6 +15,7 @@ open GC.Spec.Allocator.Lemmas.Common
 open GC.Spec.Allocator.Lemmas.Chain
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
+module Header = GC.Lib.Header
 
 /// alloc_from_block preserves blocks_fit.
 val alloc_from_block_preserves_wfh_part1 :
@@ -27,7 +28,7 @@ val alloc_from_block_preserves_wfh_part1 :
                   wz >= 1 /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
-        (ensures (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
+        (ensures (let (g', _) = alloc_from_block g obj wz Header.White tag next_fp in
                   blocks_fit g'))
 
 /// **Theorem**: alloc_spec preserves blocks_fit.
@@ -63,7 +64,7 @@ val alloc_split_fl_transfer_pre_part1
                     U64.v a >= U64.v mword /\
                     U64.v a < heap_size /\
                     U64.v a % U64.v mword = 0)
-          (ensures (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
+          (ensures (let (g', _) = alloc_from_block g obj wz Header.White tag next_fp in
                     Seq.mem a (objects zero_addr g') /\
                     (U64.v (wosize_of_object a g) >= 1 ==>
                       U64.v (wosize_of_object a g') >= 1) /\
@@ -82,7 +83,7 @@ val alloc_exact_fl_transfer_pre_part1
                     U64.v a >= U64.v mword /\
                     U64.v a < heap_size /\
                     U64.v a % U64.v mword = 0)
-          (ensures (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
+          (ensures (let (g', _) = alloc_from_block g obj wz Header.White tag next_fp in
                     Seq.mem a (objects zero_addr g') /\
                     (U64.v (wosize_of_object a g) >= 1 ==>
                       U64.v (wosize_of_object a g') >= 1) /\
@@ -188,7 +189,7 @@ val alloc_from_block_rem_in_objects_part1 :
                   (let hdr = read_word g (hd_address obj) in
                    let bwz = U64.v (getWosize hdr) in
                    bwz >= wz /\ bwz - wz >= 2))
-        (ensures (let (g', rem_fp) = alloc_from_block g obj wz white_color tag next_fp in
+        (ensures (let (g', rem_fp) = alloc_from_block g obj wz Header.White tag next_fp in
                   is_pointer_field rem_fp /\
                   Seq.mem rem_fp (objects zero_addr g')))
 
@@ -201,7 +202,7 @@ val alloc_from_block_preserves_objects_part1 :
                   Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
-        (ensures (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
+        (ensures (let (g', _) = alloc_from_block g obj wz Header.White tag next_fp in
                   (forall (h: obj_addr). Seq.mem h (objects zero_addr g) ==> Seq.mem h (objects zero_addr g'))))
 
 /// **Theorem**: Any object in the post-alloc heap that was NOT in the pre-alloc
@@ -271,7 +272,7 @@ val alloc_from_block_objects_backward_part1 :
                    let bwz = U64.v (getWosize (read_word g hd)) in
                    bwz >= wz /\ wz >= 1 /\
                    U64.v hd + (bwz - wz) * 8 + 8 < heap_size) /\
-                  (let (g', _) = alloc_from_block g obj wz white_color tag next_fp in
+                  (let (g', _) = alloc_from_block g obj wz Header.White tag next_fp in
                    Seq.mem h (objects zero_addr g') /\
                    ~(Seq.mem h (objects zero_addr g))))
         (ensures (let hd = hd_address obj in
@@ -282,7 +283,7 @@ val alloc_from_block_objects_backward_part1 :
 ///
 /// Proof sketch: For each object h in the post-alloc heap:
 /// - If h is new (not in pre-alloc): alloc_spec_new_objects_blue_part1 → blue → not black
-/// - If h == obj_out (the allocated block): header is make_header wz white_bits → not black
+/// - If h == obj_out (the allocated block): header is make_header wz White → not black
 /// - If h is a pre-existing object != obj_out: header unchanged by alloc → not black
 val alloc_spec_preserves_no_black_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   (tag: U64.t{U64.v tag < 256}) ->

@@ -7,6 +7,7 @@ open GC.Spec.Allocator
 open GC.Spec.FusedSweep
 
 module U64 = FStar.UInt64
+module Header = GC.Lib.Header
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 
@@ -145,7 +146,7 @@ private let write_write_same (g: heap) (a: hp_addr) (v v': U64.t)
 
 /// `alloc_from_block` at a colour is the white one with the header rewritten.
 #push-options "--z3rlimit 20"
-private let from_block_colour (g: heap) (obj: obj_addr) (w: nat) (col: color_bits)
+private let from_block_colour (g: heap) (obj: obj_addr) (w: nat) (col: color)
                               (tag: U64.t{U64.v tag < 256}) (next: U64.t)
   : Lemma (requires (let hd = hd_address obj in
                      let bwz = U64.v (getWosize (read_word g hd)) in
@@ -153,9 +154,9 @@ private let from_block_colour (g: heap) (obj: obj_addr) (w: nat) (col: color_bit
           (ensures (let hd = hd_address obj in
                     let bwz = U64.v (getWosize (read_word g hd)) in
                     let ah : hp_addr = U64.uint_to_t (U64.v hd + (bwz - w) * 8) in
-                    let gw = fst (alloc_from_block g obj w white_color tag next) in
+                    let gw = fst (alloc_from_block g obj w Header.White tag next) in
                     w < pow2 54 /\
-                    read_word gw ah == new_header w white_color tag /\
+                    read_word gw ah == new_header w Header.White tag /\
                     fst (alloc_from_block g obj w col tag next) == write_word gw ah (new_header w col tag)))
   = let hd = hd_address obj in
     hd_address_spec obj;
@@ -163,16 +164,16 @@ private let from_block_colour (g: heap) (obj: obj_addr) (w: nat) (col: color_bit
     let bwz = U64.v (getWosize (read_word g hd)) in
     let ah : hp_addr = U64.uint_to_t (U64.v hd + (bwz - w) * 8) in
     if bwz - w >= 1 then begin
-      alloc_from_block_split_normal g obj w next white_color tag;
+      alloc_from_block_split_normal g obj w next Header.White tag;
       alloc_from_block_split_normal g obj w next col tag;
-      let g1 = write_word g hd (make_header (U64.uint_to_t (bwz - w - 1)) blue_bits 0UL) in
-      read_write_same g1 ah (new_header w white_color tag);
-      write_write_same g1 ah (new_header w white_color tag) (new_header w col tag)
+      let g1 = write_word g hd (make_header (U64.uint_to_t (bwz - w - 1)) Header.Blue 0UL) in
+      read_write_same g1 ah (new_header w Header.White tag);
+      write_write_same g1 ah (new_header w Header.White tag) (new_header w col tag)
     end else begin
-      alloc_from_block_exact g obj w next white_color tag;
+      alloc_from_block_exact g obj w next Header.White tag;
       alloc_from_block_exact g obj w next col tag;
-      read_write_same g hd (new_header w white_color tag);
-      write_write_same g hd (new_header w white_color tag) (new_header w col tag)
+      read_write_same g hd (new_header w Header.White tag);
+      write_write_same g hd (new_header w Header.White tag) (new_header w col tag)
     end
 #pop-options
 
@@ -184,7 +185,7 @@ private let found_heap (g: heap) (head prev cur: U64.t) (w: nat) (ph: gc_phase) 
                     let r0 = alloc_search g head prev cur w Idle tag 1 in
                     r.obj_out == r0.obj_out /\ is_obj r.obj_out /\ w < pow2 54 /\
                     (let hd = hd_address (r.obj_out <: obj_addr) in
-                     read_word r0.heap_out hd == new_header w white_color tag /\
+                     read_word r0.heap_out hd == new_header w Header.White tag /\
                      r.heap_out == write_word r0.heap_out hd (new_header w (allocation_color ph hd) tag))))
   = let obj : obj_addr = cur in
     let hd = hd_address obj in

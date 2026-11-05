@@ -37,6 +37,7 @@ open GC.Spec.Allocator
 open GC.Spec.FusedSweep
 
 module U64 = FStar.UInt64
+module Header = GC.Lib.Header
 
 /// The size the search looks for: a request of 0 words is served as 1.
 let req_wz (wz: nat) : nat = if wz = 0 then 1 else wz
@@ -189,7 +190,7 @@ val alloc_phase_oom_phase (g: heap) (fp: U64.t) (ph: gc_phase) (wz: nat) (tag: U
           (ensures phase_after_alloc g fp wz ph == ph)
 
 /// The header of a new object of `w` fields, colour `col` and tag `tag`.
-let new_header (w: nat) (col: color_bits) (tag: U64.t{U64.v tag < 256}) : U64.t =
+let new_header (w: nat) (col: color) (tag: U64.t{U64.v tag < 256}) : U64.t =
   if w < pow2 54 then begin
     FStar.Math.Lemmas.pow2_lt_compat 64 54;
     make_header (U64.uint_to_t w) col tag
@@ -204,7 +205,7 @@ val alloc_phase_heap (g: heap) (fp: U64.t) (ph: gc_phase) (wz: nat) (tag: U64.t{
            r.obj_out <> 0UL ==>
              (is_obj r.obj_out /\ req_wz wz < pow2 54 /\
               (let hd = hd_address (r.obj_out <: obj_addr) in
-               read_word r0.heap_out hd == new_header (req_wz wz) white_color tag /\
+               read_word r0.heap_out hd == new_header (req_wz wz) Header.White tag /\
                r.heap_out == write_word r0.heap_out hd (new_header (req_wz wz) (allocation_color ph hd) tag))))
 
 /// Phases that colour alike allocate alike.

@@ -14,21 +14,22 @@ open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Spec.Allocator
 module U64 = FStar.UInt64
+module Header = GC.Lib.Header
 
 /// Section 1: make_header arithmetic
 
 val make_header_value : (wz: U64.t{U64.v wz < pow2 54}) ->
-                        (c: U64.t{U64.v c < 4}) ->
+                        (c: color) ->
                         (t: U64.t{U64.v t < 256}) ->
-  Lemma (U64.v (make_header wz c t) == U64.v wz * 1024 + U64.v c * 256 + U64.v t)
+  Lemma (U64.v (make_header wz c t) == U64.v wz * 1024 + Header.pack_color c * 256 + U64.v t)
 
 val make_header_getWosize : (wz: U64.t{U64.v wz < pow2 54}) ->
-                            (c: U64.t{U64.v c < 4}) ->
+                            (c: color) ->
                             (t: U64.t{U64.v t < 256}) ->
   Lemma (getWosize (make_header wz c t) == wz)
 
 val make_header_getTag : (wz: U64.t{U64.v wz < pow2 54}) ->
-                         (c: U64.t{U64.v c < 4}) ->
+                         (c: color) ->
                          (t: U64.t{U64.v t < 256}) ->
   Lemma (U64.v (getTag (make_header wz c t)) == U64.v t)
 

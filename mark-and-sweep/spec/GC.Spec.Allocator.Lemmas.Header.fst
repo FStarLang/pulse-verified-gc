@@ -14,6 +14,7 @@ open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Spec.Allocator
 module U64 = FStar.UInt64
+module Header = GC.Lib.Header
 module Seq = FStar.Seq
 
 /// Module-level default
@@ -26,11 +27,11 @@ module Seq = FStar.Seq
 /// Arithmetic characterization of make_header:
 #push-options "--z3rlimit 100"
 let make_header_value (wz: U64.t{U64.v wz < pow2 54})
-                      (c: U64.t{U64.v c < 4})
+                      (c: color)
                       (t: U64.t{U64.v t < 256})
   = let open FStar.UInt in
     let w = U64.v wz in
-    let cv = U64.v c in
+    let cv = Header.pack_color c in
     let tv = U64.v t in
     shift_left_value_lemma #64 w 10;
     assert_norm (pow2 10 = 1024);
@@ -52,12 +53,12 @@ let make_header_value (wz: U64.t{U64.v wz < pow2 54})
 /// getWosize of make_header returns the original wosize
 #push-options "--z3rlimit 100"
 let make_header_getWosize (wz: U64.t{U64.v wz < pow2 54})
-                          (c: U64.t{U64.v c < 4})
+                          (c: color)
                           (t: U64.t{U64.v t < 256})
   = let hdr = make_header wz c t in
     getWosize_spec hdr;
     make_header_value wz c t;
-    let rest = U64.v c * 256 + U64.v t in
+    let rest = Header.pack_color c * 256 + U64.v t in
     assert (rest < 1024);
     assert_norm (pow2 10 = 1024);
     FStar.Math.Lemmas.lemma_div_plus rest (U64.v wz) 1024;
@@ -68,15 +69,15 @@ let make_header_getWosize (wz: U64.t{U64.v wz < pow2 54})
 /// getTag of make_header returns the original tag
 #push-options "--z3rlimit 100"
 let make_header_getTag (wz: U64.t{U64.v wz < pow2 54})
-                       (c: U64.t{U64.v c < 4})
+                       (c: color)
                        (t: U64.t{U64.v t < 256})
   = getTag_spec (make_header wz c t);
     make_header_value wz c t;
     FStar.UInt.logand_mask #64 (U64.v (make_header wz c t)) 8;
     assert_norm (pow2 8 - 1 = 255);
     assert_norm (U64.v 0xFFUL = 255);
-    FStar.Math.Lemmas.lemma_mod_plus (U64.v t) (U64.v c) 256;
-    FStar.Math.Lemmas.lemma_mod_plus (U64.v c * 256 + U64.v t) (U64.v wz * 4) 256;
+    FStar.Math.Lemmas.lemma_mod_plus (U64.v t) (Header.pack_color c) 256;
+    FStar.Math.Lemmas.lemma_mod_plus (Header.pack_color c * 256 + U64.v t) (U64.v wz * 4) 256;
     FStar.Math.Lemmas.small_mod (U64.v t) 256
 #pop-options
 

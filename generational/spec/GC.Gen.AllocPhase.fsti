@@ -34,6 +34,7 @@ module FLA = GC.Spec.FreeList.Ascending
 module SA = GC.Spec.Allocator
 module AC = GC.Spec.Allocator.Cursor
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module Header = GC.Lib.Header
 
 let tag_t = t: U64.t{U64.v t < 256}
 
@@ -165,8 +166,8 @@ val alloc_at_recoloured (ph: gc_phase) (g: heap) (fp: U64.t) (wz: nat) (tag: tag
                        Seq.mem x (objects zero_addr r.SA.heap_out) /\
                        ~(is_blue x r.SA.heap_out) /\
                        tag_of_object x r.SA.heap_out == tag /\
-                       (is_black x r.SA.heap_out <==> allocation_color ph (hd_address x) == black_color) /\
-                       (is_white x r.SA.heap_out <==> allocation_color ph (hd_address x) == white_color)))))
+                       (is_black x r.SA.heap_out <==> allocation_color ph (hd_address x) == Header.Black) /\
+                       (is_white x r.SA.heap_out <==> allocation_color ph (hd_address x) == Header.White)))))
 
 /// ---------------------------------------------------------------------------
 /// The idle allocator's facts, at a phase

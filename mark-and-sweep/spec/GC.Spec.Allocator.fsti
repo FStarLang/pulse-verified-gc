@@ -30,22 +30,17 @@ open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Spec.HeapGraph
 include GC.Spec.Phase
+module Header = GC.Lib.Header
 
 /// ---------------------------------------------------------------------------
 /// Header Construction (pure, for spec use)
 /// ---------------------------------------------------------------------------
 
-/// Build a header word from wosize, color (as 2-bit value), and tag
-let make_header (wz: U64.t{U64.v wz < pow2 54}) (color_bits: U64.t{U64.v color_bits < 4}) (tag: U64.t{U64.v tag < 256}) : U64.t =
+/// Build a header word from wosize, color, and tag
+let make_header (wz: U64.t{U64.v wz < pow2 54}) (c: color) (tag: U64.t{U64.v tag < 256}) : U64.t =
   let wz_shifted = U64.shift_left wz 10ul in
-  let c_shifted = U64.shift_left color_bits 8ul in
+  let c_shifted = U64.shift_left (U64.uint_to_t (Header.pack_color c)) 8ul in
   U64.logor wz_shifted (U64.logor c_shifted tag)
-
-/// White color bits = 0
-let white_bits : U64.t = 0UL
-
-/// Blue color bits = 2
-let blue_bits : U64.t = 2UL
 
 /// ---------------------------------------------------------------------------
 /// Zero a range of fields in the heap (pure spec)
@@ -107,7 +102,7 @@ type alloc_result = {
 /// passes the minor object's tag, so the copy's header is written once.
 [@@"opaque_to_smt"]
 let alloc_from_block (g: heap) (obj: obj_addr) (requested_wz: nat)
-                     (col: color_bits) (tag: U64.t{U64.v tag < 256}) (next_fp: U64.t)
+                     (col: color) (tag: U64.t{U64.v tag < 256}) (next_fp: U64.t)
   : GTot (heap & U64.t)
   = let hd = hd_address obj in
     let hdr = read_word g hd in
@@ -140,7 +135,7 @@ let alloc_from_block (g: heap) (obj: obj_addr) (requested_wz: nat)
         // demands wosize >= 1) correctly excludes it and the whole block
         // leaves the list.  The next fused sweep absorbs it into an adjacent
         // run.
-        let rem_hdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
+        let rem_hdr = make_header (U64.uint_to_t (leftover - 1)) Header.Blue 0UL in
         let g1 = write_word g hd rem_hdr in
         let g2 = write_word g1 alloc_hd alloc_hdr in
         (g2, (if leftover >= 2 then (obj <: U64.t) else next_fp))
@@ -176,20 +171,20 @@ let alloc_replacement_fp (g: heap) (obj: obj_addr) (requested_wz: nat) (next_fp:
       else (obj <: U64.t)
 
 /// The mirror is faithful.
-val alloc_replacement_fp_eq (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+val alloc_replacement_fp_eq (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (col: color) (tag: U64.t{U64.v tag < 256})
   : Lemma (snd (alloc_from_block g obj wz col tag next_fp) ==
            alloc_replacement_fp g obj wz next_fp)
 
 /// The colour of the object allocated from the block at `obj`: the one the
 /// phase gives its header, which is right-justified in the block.
-let alloc_color (ph: gc_phase) (g: heap) (obj: obj_addr) (requested_wz: nat) : color_bits =
+let alloc_color (ph: gc_phase) (g: heap) (obj: obj_addr) (requested_wz: nat) : color =
   let hd = hd_address obj in
   let n = U64.v hd + (U64.v (getWosize (read_word g hd)) - requested_wz) * 8 in
-  if 0 <= n && n < pow2 64 then allocation_color ph (U64.uint_to_t n) else white_color
+  if 0 <= n && n < pow2 64 then allocation_color ph (U64.uint_to_t n) else Header.White
 
 /// Outside a sweep every new object is white.
 val alloc_color_idle (g: heap) (obj: obj_addr) (requested_wz: nat)
-  : Lemma (alloc_color Idle g obj requested_wz == white_color)
+  : Lemma (alloc_color Idle g obj requested_wz == Header.White)
           [SMTPat (alloc_color Idle g obj requested_wz)]
 
 /// ---------------------------------------------------------------------------
@@ -303,7 +298,7 @@ let init_heap_spec (g: heap) : GTot (heap & U64.t) =
   else
     let wz = total_words - 1 in
     // Header at offset 0: wosize=wz, color=blue(2), tag=0
-    let hdr = make_header (U64.uint_to_t wz) blue_bits 0UL in
+    let hdr = make_header (U64.uint_to_t wz) Header.Blue 0UL in
     let g1 = write_word g zero_addr hdr in
     // First field (at offset 8) = 0 (end of free list)
     let obj_addr_nat = U64.v mword in
@@ -437,7 +432,7 @@ val spec_next_fp_eq (g: heap) (obj: obj_addr)
 /// Exact fit: leftover < 2
 /// Exact fit (leftover = 0): the block is handed over whole, and since
 /// bwz = wz the header already declares exactly the request.
-val alloc_from_block_exact (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+val alloc_from_block_exact (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires (let hdr = read_word g (hd_address obj) in
                      let bwz = U64.v (getWosize hdr) in
                      bwz == wz))
@@ -450,7 +445,7 @@ val alloc_from_block_exact (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (co
 /// `hd`.  At leftover >= 2 its address and its link at hd + 8 are untouched and
 /// the free list is unchanged; at leftover = 1 the remainder is the empty block
 /// and the whole block leaves the list.  The two cases write the same heap.
-val alloc_from_block_split_normal (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+val alloc_from_block_split_normal (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires (let hd = hd_address obj in
                      let bwz = U64.v (getWosize (read_word g hd)) in
                      bwz - wz >= 1 /\
@@ -458,7 +453,7 @@ val alloc_from_block_split_normal (g: heap) (obj: obj_addr) (wz: nat) (next: U64
           (ensures (let hd = hd_address obj in
                     let bwz = U64.v (getWosize (read_word g hd)) in
                     let leftover = bwz - wz in
-                    let rhdr = make_header (U64.uint_to_t (leftover - 1)) blue_bits 0UL in
+                    let rhdr = make_header (U64.uint_to_t (leftover - 1)) Header.Blue 0UL in
                     let g1 = write_word g hd rhdr in
                     let ahn = U64.v hd + leftover * 8 in
                     let ah : hp_addr = U64.uint_to_t ahn in
@@ -472,7 +467,7 @@ val alloc_from_block_split_normal (g: heap) (obj: obj_addr) (wz: nat) (next: U64
 /// but the definition guards it.  Replaces the old `_split_rem_hd_oob` /
 /// `_split_rem_obj_oob` pair, which described a high-end remainder that the
 /// right-justified layout no longer has.
-val alloc_from_block_oob (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+val alloc_from_block_oob (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires (let hd = hd_address obj in
                      let bwz = U64.v (getWosize (read_word g hd)) in
                      bwz >= wz /\
@@ -497,11 +492,11 @@ let alloc_split_normal_pre (g: heap) (obj: obj_addr) (wz: nat) =
   U64.v hd + (bwz - wz) * 8 < heap_size
 
 /// Result heap and fp for the normal split case
-let alloc_split_normal_result (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color_bits) (tag: U64.t{U64.v tag < 256}) : GTot (heap & U64.t) =
+let alloc_split_normal_result (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color) (tag: U64.t{U64.v tag < 256}) : GTot (heap & U64.t) =
   alloc_from_block g obj wz col tag next
 
 /// Result heap shorthand
-let alloc_split_normal_heap (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color_bits) (tag: U64.t{U64.v tag < 256}) : GTot heap =
+let alloc_split_normal_heap (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color) (tag: U64.t{U64.v tag < 256}) : GTot heap =
   fst (alloc_split_normal_result g obj wz next col tag)
 
 /// Allocation only ever writes inside the free block it was given: the header
@@ -514,7 +509,7 @@ let alloc_split_normal_heap (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (c
 /// is large enough that even `bwz - wz == 1` does not discharge, whereas this
 /// lemma's own proof runs in a tiny context.
 val alloc_from_block_read_outside
-  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+  (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr) (col: color) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires (let hd = hd_address obj in
                      let bwz = U64.v (getWosize (read_word g hd)) in
                      bwz >= wz /\
@@ -524,19 +519,19 @@ val alloc_from_block_read_outside
                     read_word g' addr == read_word g addr))
 
 /// The remainder keeps `hd`; its header is shrunk to `leftover - 1`, blue.
-val alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+val alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires alloc_split_normal_pre g obj wz)
           (ensures (let g' = alloc_split_normal_heap g obj wz next col tag in
                     let hd = hd_address obj in
                     let bwz = U64.v (getWosize (read_word g hd)) in
-                    read_word g' hd == make_header (U64.uint_to_t (bwz - wz - 1)) blue_bits 0UL))
+                    read_word g' hd == make_header (U64.uint_to_t (bwz - wz - 1)) Header.Blue 0UL))
 
 /// The remainder's link word is at `obj` (= hd + 8) and is NOT written: the
 /// cell keeps the successor it already had, which is what makes the free list
 /// bit-identical across a split.  (Under the old low-end layout this lemma
 /// said the fresh remainder's field was set to `next`; right-justification
 /// makes it a preservation fact instead.)
-val alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+val alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (col: color) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires alloc_split_normal_pre g obj wz)
           (ensures (let g' = alloc_split_normal_heap g obj wz next col tag in
                     read_word g' (obj <: hp_addr) == read_word g (obj <: hp_addr)))
@@ -544,7 +539,7 @@ val alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next:
 /// Reading an unwritten address: result equals original.  Only two words are
 /// written now -- the remainder header at `hd` and the object header at
 /// `hd + leftover * 8`.
-val alloc_split_normal_read_other (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr) (col: color_bits) (tag: U64.t{U64.v tag < 256})
+val alloc_split_normal_read_other (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr) (col: color) (tag: U64.t{U64.v tag < 256})
   : Lemma (requires alloc_split_normal_pre g obj wz /\
                     (let hd = hd_address obj in
                      let bwz = U64.v (getWosize (read_word g hd)) in
