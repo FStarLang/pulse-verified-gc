@@ -69,7 +69,40 @@ Set `MIN_EXPANSION_WORDSIZE` environment variable to control major heap size
 
 Minor heap size is set at runtime with `MINOR_HEAP_WORDS`.  The default is
 256K words (2MB), matching OCaml's default, with a floor large enough for
-`Max_young_wosize`.
+`Max_young_wosize`.  `Gc.set` cannot change it: a new `minor_heap_size` is
+ignored, and `Gc.get` keeps reporting the size in use.
+
+## Stock collector entry points
+
+Once the verified collector owns the heap, the stock collector must never
+run.  In the verified build each stock entry point calls `caml_fatal_error`
+naming itself ("verified GC: stock *f* must not run under the verified
+collector"), so a path that still reaches one fails at that call rather than
+corrupting the heap and failing somewhere unrelated later: `caml_darken`,
+automatic compaction (`caml_compact_heap_maybe`) and `caml_shrink_heap`, the stock free list (`caml_fl_allocate`,
+`caml_fl_merge_block`, `caml_fl_add_blocks`), heap expansion
+(`caml_add_to_heap`, `expand_heap`), `caml_gc_dispatch`, the stock minor
+collector (`caml_oldify_one`, `caml_oldify_mopup`) and, after startup,
+`caml_set_minor_heap_size`.
+
+The runtime paths that used to reach them now use the verified collector:
+
+| Path | Now |
+|---|---|
+| Bytecode startup ("ensure that the globals are in the major heap") | The verified minor collection, when the globals are young (`tests/tiny_globals.ml`) |
+| `Gc.major`, `Gc.full_major`, `Gc.compact` | One whole verified collection (`verified_do_full_gc`: the nursery emptied, a full collection and, incremental, its whole sweep); the verified heap is non-moving, so nothing is compacted (`tests/gc_explicit.ml`, `tests/explicit_major.ml`) |
+| `Gc.set` with a new allocation policy (stock `caml_finish_major_cycle`, `caml_compact_heap`) | The same whole verified collection; the policy is not honoured and nothing is compacted |
+| `Gc.major_slice` (stock `caml_major_collection_slice`) | Incremental and mid-sweep, a verified sweep slice; otherwise nothing |
+| `caml_shutdown` (`OCAMLRUNPARAM=c`) | Nothing: the stock major cycle and sweep are skipped |
+| `Gc.set` with a new `minor_heap_size` | Ignored |
+| Memprof's minor-heap refill | The verified minor collection |
+
+Finalisers (`Gc.finalise`, custom-block finalisers), weak references and
+ephemerons are not implemented by the verified collector yet; this is a
+known limitation, and the tests that exercise them are listed in
+`ci/expected-failures.txt`.  Skipping the stock major cycle and sweep at
+exit is consistent with it: finalisers run neither during the program nor
+at exit.
 
 `VERGC_SWEEP` picks the major collector's sweep:
 
@@ -83,8 +116,8 @@ Minor heap size is set at runtime with `MINOR_HEAP_WORDS`.  The default is
 A full collection requested mid-sweep finishes the sweep first; a failed
 major allocation mid-sweep finishes the sweep and retries, then runs a full
 collection and retries. `Gc.full_major`, `Gc.major` and `Gc.compact` run a
-whole verified cycle (the runtime patch forwards stock's
-`caml_finish_major_cycle`; stock's own major collector never runs). See
+whole verified cycle, its sweep included, and `Gc.major_slice` a sweep slice
+(see "Stock collector entry points" above). See
 `verified_gc/OCAML_INTEGRATION.md`, "The Incremental Sweep", for the policy
 and how the bridge meets the trusted obligations of
 `GC.Gen.Impl.Incremental`.
@@ -136,9 +169,9 @@ offset`).
 | 12 | 24 interior-pointer roots live **simultaneously**, one per frame of a recursion, with the collections forced at the innermost frame and every frame's value re-checked on the way back out |
 
 Collections are forced the way a real program forces them, by allocating;
-`Gc.quick_stat` confirms they happened. (When it was written `Gc.full_major`
-ran stock's collector, not the verified one; it now runs a verified cycle --
-`tests/explicit_major.ml`.) `MIN_EXPANSION_WORDSIZE` is set small so that major
+`Gc.quick_stat` confirms they happened. (`Gc.full_major`, `Gc.major` and
+`Gc.compact` also run the verified collector, as one full collection; see
+`tests/gc_explicit.ml` and `tests/explicit_major.ml`.) `MIN_EXPANSION_WORDSIZE` is set small so that major
 collections occur quickly.
 
 The same binary is also run under stock OCaml as a differential check; both

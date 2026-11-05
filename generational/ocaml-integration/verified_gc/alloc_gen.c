@@ -87,6 +87,7 @@
 #include "../caml/address_class.h" /* for In_heap, caml_page_table_add */
 #include "../caml/memprof.h" /* for caml_memprof_renew_minor_sample */
 #include "../caml/gc.h"      /* for Caml_white, Caml_black */
+#include "../caml/major_gc.h" /* for caml_allocated_words */
 
 /* --- Patched externs from GC_Gen_Impl.c --- */
 #include "GC_Spec_ZeroAddr.h"  /* zero_addr, heap_size_u64 */
@@ -99,6 +100,7 @@ static uint64_t    *gc_fwd_arr;
 static uint64_t    *gc_queue;         /* BFS queue for Cheney promotion (heap-allocated) */
 static uint8_t     *minor_base;      /* absolute address of minor heap buffer */
 static int          heap_initialized = 0;
+static uint64_t    *minor_snapshot;   /* do_full_gc: minor heap before gen_gc */
 
 /* Inline minor-allocation fast-path state for Alloc_small_aux (memory.h).
  * The fast path reserves bytes by updating the same verified bump counter;
@@ -118,8 +120,9 @@ static uint64_t   root_values[MAX_ROOTS];
 static value      *root_locs[MAX_ROOTS];
 static size_t      root_count;
 
-/* Track total bytes promoted since last major GC.  When this approaches
- * the major heap size, we trigger a major GC to avoid promotion failures. */
+/* Track total bytes promoted or allocated directly in the major heap
+ * (verified_allocate) since the last major GC.  When this approaches the
+ * major heap size, we trigger a major GC to avoid promotion failures. */
 static uint64_t   bytes_promoted_since_major = 0;
 static int        in_full_gc = 0;  /* re-entrancy guard */
 
@@ -535,6 +538,38 @@ static void fatal_promotion_failed(void) {
     caml_fatal_error("verified gen GC: out of memory (major heap too small)");
 }
 
+/* Words promoted by the collection that just ran.  gc_fwd_arr maps the minor
+ * offset of each promoted object to its major copy, so index i is the object
+ * whose header is minor word i - 1.  An entry whose header is Infix_tag is an
+ * interior pointer into a closure counted under its parent: skip it.
+ *
+ * The minor heap is zeroized by the collection, so headers come either from
+ * the major copies (snapshot == NULL: valid only when nothing has swept
+ * the major heap since promotion) or from a pre-collection copy of the minor
+ * heap. */
+static uint64_t promoted_words(const uint64_t *snapshot) {
+    uint64_t words = 0;
+    size_t i;
+    for (i = 1; i < queue_size_sz; i++) {
+        uint64_t fwd = gc_fwd_arr[i];
+        header_t hd;
+        if (fwd == 0) continue;
+        hd = snapshot != NULL ? (header_t)snapshot[i - 1]
+                              : Hd_val((value)(uintptr_t)fwd);
+        if (Tag_hd(hd) == Infix_tag) continue;
+        words += Whsize_hd(hd);
+    }
+    return words;
+}
+
+/* Stock promotes through caml_alloc_shr_for_minor_gc, which counts promoted
+ * words in caml_allocated_words (and so in major_words) as well as in
+ * promoted_words.  Do the same so minor + major - promoted stays the total. */
+static void count_promoted_words(uint64_t words) {
+    Caml_state->_stat_promoted_words += (double)words;
+    caml_allocated_words += (uintnat)words;
+}
+
 static void write_back_rewritten_roots(const uint64_t *rewritten_roots) {
     uint64_t minor_limit = minor_heap_size_u64;
     size_t i;
@@ -641,6 +676,10 @@ static void do_minor_gc_core(void) {
         fatal_promotion_failed();
     }
 
+    /* No sweep has run since promotion, so the major copies' headers are
+     * intact. */
+    count_promoted_words(promoted_words(NULL));
+
     /* 6. Write back rewritten roots to OCaml stack/globals.
      *
      * At this point all roots have been successfully rewritten to major
@@ -681,7 +720,6 @@ static void do_minor_gc(void) {
         }
     }
 
-    uint64_t fp_before = *gc_gen_heap.fp_ref;
     uint64_t bump_before = *gc_gen_heap.minor.bump_ref;
     Caml_state->_stat_minor_collections++;
     Caml_state->_stat_minor_words += (double)(bump_before / sizeof(value));
@@ -745,15 +783,19 @@ static void vergc_sync_bump_ref_from_young_ptr(void) {
     *gc_gen_heap.minor.bump_ref = used_bytes;
 }
 
-void vergc_native_run_minor_collection(void) {
-    vergc_sync_bump_ref_from_young_ptr(); /* do_minor_gc uses bump_ref to check if collection is needed */
-    do_minor_gc();
-
+/* After a collection has emptied the minor heap (bump_ref == 0), move
+ * young_ptr back to match. */
+static void vergc_native_reset_young_ptr(void) {
     Caml_state->_young_ptr = Caml_state->_young_alloc_end; /* reset minor heap to empty */
     Caml_state->_young_trigger = Caml_state->_young_alloc_start; /* ensures young_trigger remains start of the heap */
     caml_update_young_limit(); /* set the young_limit, which is actually used by native code to check if heap is full 
                                 * can be different from young_trigger if there is memory profiling */
+}
 
+void vergc_native_run_minor_collection(void) {
+    vergc_sync_bump_ref_from_young_ptr(); /* do_minor_gc uses bump_ref to check if collection is needed */
+    do_minor_gc();
+    vergc_native_reset_young_ptr();
 }
 
 #endif
@@ -822,6 +864,17 @@ static void do_full_gc(void) {
     if (root_count > 0)
         memcpy(roots_for_gc, root_values, root_count * sizeof(uint64_t));
 
+    /* gen_gc sweeps after promoting, and a promoted copy reachable only
+     * through a dead remembered slot can be swept and coalesced, so its major
+     * header cannot be read afterwards.  It also zeroizes the minor heap, so
+     * keep a copy of the minor headers for promoted_words. */
+    if (minor_snapshot == NULL) {
+        minor_snapshot = (uint64_t *)malloc((size_t)minor_heap_size_u64);
+        if (!minor_snapshot)
+            caml_fatal_error("verified gen GC: cannot allocate minor snapshot");
+    }
+    memcpy(minor_snapshot, minor_base, (size_t)minor_heap_size_u64);
+
     size_t gray_top = gray_cap;
 
     gray_stack_rec gc_stack;
@@ -866,6 +919,13 @@ static void do_full_gc(void) {
     free(roots_for_gc);
     free(gray_storage);
     PROF_END(major_gc);
+
+    #ifdef NATIVE_CODE
+        /* gen_gc emptied the minor heap.  Without this young_ptr keeps its
+         * old value: the next collection would count those words in
+         * minor_words a second time, and the space would not be reused. */
+        vergc_native_reset_young_ptr();
+    #endif
 
     in_full_gc = 0;
 }
@@ -995,7 +1055,26 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
      * caml_alloc_shr_aux) is never called with Infix_tag -- infix headers are
      * only ever written inside a Closure_tag block -- so assert it. */
     CAMLassert(tag != Infix_tag);
-    if (sweep_incremental) return verified_allocate_incremental(wosize, tag);
+
+    /* Proactive full GC, on the same 50% threshold as do_minor_gc(), in both
+     * modes.  Direct major allocations count toward bytes_promoted_since_major
+     * (below), so a heap filled by large blocks that are then dropped still
+     * triggers a full collection before the next minor collection has to
+     * promote into it (issue #34).  Incremental, do_full_gc finishes any
+     * sweep still running and starts a new cycle, as from do_minor_gc. */
+    uint64_t alloc_bytes = ((uint64_t)wosize + 1) * 8;
+    if (!in_full_gc) {
+        uint64_t major_size = heap_size_u64 - zero_addr;
+        if (bytes_promoted_since_major + alloc_bytes > major_size / 2)
+            do_full_gc();
+    }
+
+    if (sweep_incremental) {
+        /* sweep_direct_words (the sweep's budget) counts it as well. */
+        void *hp = verified_allocate_incremental(wosize, tag);
+        if (hp != NULL) bytes_promoted_since_major += alloc_bytes;
+        return hp;
+    }
     uint64_t result = allocate_timed(wosize, tag);
 
     if (result == 0) {
@@ -1021,6 +1100,7 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     }
 
     PROF_INC(major_alloc_count);
+    bytes_promoted_since_major += alloc_bytes;
 
     /* allocate returns an absolute object address (first field = header + 8)
      * via the major heap's NULL-base trick.  The OCaml runtime finalizes the
@@ -1036,12 +1116,12 @@ CAMLprim value caml_trigger_verified_gc(value v) {
     return Val_unit;
 }
 
-/* --- Stock's major-GC entry points (runtime/major_gc.c forwards them) --- */
+/* --- Stock's major-GC entry points (runtime/major_gc.c, gc_ctrl.c) --- */
 
-/* caml_major_collection_slice: from caml_gc_dispatch and Gc.major_slice.
- * Incremental and mid-sweep, a slice of `howmuch` words when positive
- * (stock: "enough work to free n words"), else the default budget; nothing
- * otherwise -- a cycle starts only from do_full_gc. */
+/* caml_major_collection_slice: Gc.major_slice.  Incremental and mid-sweep, a
+ * slice of `howmuch` words when positive (stock: "enough work to free n
+ * words"), else the default budget; nothing otherwise -- a cycle starts only
+ * from do_full_gc. */
 void verified_major_collection_slice(intnat howmuch) {
     ensure_heap();
     if (!sweep_incremental || !vergc_sweeping()) return;
@@ -1051,11 +1131,13 @@ void verified_major_collection_slice(intnat howmuch) {
     run_sweep_slice(budget);
 }
 
-/* caml_finish_major_cycle: Gc.full_major, Gc.major, Gc.compact, Gc.set's
- * policy change.  A whole collection: the nursery emptied, then a full
- * collection, and (incremental) its whole sweep, so that the program
- * observes a finished cycle as it does on stock. */
-void verified_finish_major_cycle(void) {
+/* Gc.major, Gc.full_major and Gc.compact (runtime/gc_ctrl.c), in place of the
+ * stock major cycle and compaction, and caml_finish_major_cycle (Gc.set's
+ * policy change).  A whole collection: the nursery emptied, then a full
+ * collection of both generations, and (incremental) its whole sweep, so that
+ * the program observes a finished cycle as it does on stock -- one major
+ * collection counted. */
+void verified_do_full_gc(void) {
     ensure_heap();
     verified_do_minor_gc();
     do_full_gc();

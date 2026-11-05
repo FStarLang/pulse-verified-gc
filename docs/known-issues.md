@@ -68,9 +68,10 @@ the reason given, but none is covered by a proof:
   ephemeron tests are expected failures (`regression/pr5233` among them since
   `Gc.full_major` runs the verified collector).
 - **Stock's major collector, compaction, and heap finalisation** never run:
-  `caml_major_collection_slice` and `caml_finish_major_cycle` forward to the
-  verified collector, and `caml_compact_heap(_maybe)` and `caml_finalise_heap`
-  do nothing (so `Gc.compact` does not compact, and `Gc.set`'s policy change
+  `Gc.major`, `Gc.full_major` and `Gc.compact` call the verified collector
+  directly, `caml_major_collection_slice` and `caml_finish_major_cycle` forward
+  to it, `caml_compact_heap` and `caml_finalise_heap` do nothing, and the
+  remaining stock entry points are fatal (`VERGC_STOCK_GC_UNREACHABLE`) (so `Gc.compact` does not compact, and `Gc.set`'s policy change
   is not honoured). Stock's `caml_gc_phase` therefore stays `Phase_idle`, and
   every path guarded by it (`caml_darken` in `caml_modify`, `weak.c`,
   `finalise.c`, `array.c`) is dead.
@@ -143,11 +144,12 @@ for i = 0 to 1999 do a.(i) <- Array.make 300 i done;
 (* ... allocate until a verified collection runs: a.(i) freed, SIGSEGV *)
 ```
 
-Both entry points now forward to the verified collector
-(`verified_finish_major_cycle`: the nursery emptied and a whole verified
-cycle; `verified_major_collection_slice`: a sweep slice when the incremental
-sweep is running), compaction and `caml_finalise_heap` do nothing, and stock's
-`caml_gc_phase` never leaves `Phase_idle`.
+The `Gc` calls now run the verified collector (`verified_do_full_gc`: the
+nursery emptied and a whole verified cycle, called from `runtime/gc_ctrl.c` and
+from `caml_finish_major_cycle`; `verified_major_collection_slice`: a sweep
+slice when the incremental sweep is running), compaction and
+`caml_finalise_heap` do nothing, and stock's `caml_gc_phase` never leaves
+`Phase_idle`.
 
 ---
 

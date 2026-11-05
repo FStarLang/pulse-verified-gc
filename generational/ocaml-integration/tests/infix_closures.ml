@@ -94,10 +94,8 @@ let make_handles base =
 (* Forcing real collections                                             *)
 (* ------------------------------------------------------------------ *)
 
-(* `Gc.full_major` was not wired to the verified collector when this was
-   written (it is now: explicit_major.ml), and `Gc.compact` does not compact
-   for it.  Collections are driven the way a real
-   program drives them: by allocating.  `Gc.quick_stat` reads the counters
+(* Collections are driven the way a real program drives them: by
+   allocating.  `Gc.quick_stat` reads the counters
    that `alloc_gen.c` bumps, so we can see them happen. *)
 
 let majors () = (Gc.quick_stat ()).Gc.major_collections

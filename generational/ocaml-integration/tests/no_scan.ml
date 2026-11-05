@@ -114,9 +114,7 @@ let check_anchors label n (get : int -> int array) (len : int) =
 (* Driving the collector                                                *)
 (* ------------------------------------------------------------------ *)
 
-(* `Gc.full_major` was not wired to the verified collector when this was
-   written (it is now: explicit_major.ml).  Collections are
-   driven the way a real program drives them: by allocating. *)
+(* Collections are driven the way a real program drives them: by allocating. *)
 
 let majors () = (Gc.quick_stat ()).Gc.major_collections
 let minors () = (Gc.quick_stat ()).Gc.minor_collections

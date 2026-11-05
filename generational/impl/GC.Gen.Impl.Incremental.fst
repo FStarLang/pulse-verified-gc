@@ -342,7 +342,11 @@ fn gen_gc_start (gh: gen_heap_t)
       ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st);
     assert (pure (MajorGC.gc_precondition_with_roots
       prepared_major prepared_st prepared_st fp_val (stack_capacity st)));
-    MarkBoundedImpl.mark_loop_bounded gh.major st prepared_st;
+    // The ghost root set is the darkened stack itself, so every gray object
+    // is on the stack and the mark may skip its heap rescan when the stack
+    // never overflows (as `MajorGC.collect` does for `gen_gc`).
+    GC.Spec.MarkBoundedNoOverflow.gray_on_stack_of_roots_eq_stack prepared_major prepared_st;
+    MarkBoundedImpl.mark_loop_bounded_flagged gh.major st prepared_st false;
     with s_mark st_mark. assert (is_heap gh.major s_mark ** is_gray_stack st st_mark);
     start_after_mark ({data = 'd; bump = 'b} <: minor_state) prepared_major s_mark
       prepared_st prepared_st fp_val (stack_capacity st);

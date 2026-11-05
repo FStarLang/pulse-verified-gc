@@ -890,8 +890,8 @@ does this:
 | full collection (`do_full_gc`: the proactive trigger, a failed allocation, `caml_trigger_verified_gc`) | mid-sweep, `finish_sweep` first (as 4.14: a full collection requested mid-sweep finishes the sweep); then `gen_gc_start` with `gen_gc`'s roots, gray stack, forwarding array, queue and remembered slots, and `gen_gc`'s post-processing (forwarded roots written back, `ref_table` reset, promotion failure fatal) |
 | minor collection (`do_minor_gc`) | mid-sweep, if the free list holds fewer than twice the nursery's words, `finish_sweep` first (garbage in front of the cursor is not on the free list yet, and a promotion failure is fatal); `minor_collect_any_phase` (the C is `minor_collect_full`'s); then, mid-sweep, `sweep_slice` with the budget below |
 | major allocation (`verified_allocate`) | `allocate` at the phase: a block in front of the cursor is black, one behind it white. On failure: mid-sweep, `finish_sweep` and retry; then a full collection and its whole sweep, and retry; then `NULL` (`Out_of_memory`), as stop-the-world |
-| `Gc.full_major`, `Gc.major`, `Gc.compact`, `Gc.set` (policy change): stock `caml_finish_major_cycle` | `verified_finish_major_cycle`: the nursery emptied, a full collection, and its whole sweep -- the program sees a finished cycle |
-| `Gc.major_slice`, `caml_gc_dispatch`: stock `caml_major_collection_slice` | `verified_major_collection_slice`: mid-sweep, a slice (of `n` words for `Gc.major_slice n`, `n > 0`); nothing otherwise |
+| `Gc.full_major`, `Gc.major`, `Gc.compact` (`runtime/gc_ctrl.c`), `Gc.set` (policy change, through stock `caml_finish_major_cycle`) | `verified_do_full_gc`: the nursery emptied, a full collection, and its whole sweep -- the program sees a finished cycle |
+| `Gc.major_slice`: stock `caml_major_collection_slice` | `verified_major_collection_slice`: mid-sweep, a slice (of `n` words for `Gc.major_slice n`, `n > 0`); nothing otherwise |
 
 `Gc.quick_stat`'s `major_collections` counts a cycle when its sweep ends, as
 stock does (stop-the-world, when `gen_gc` returns).
@@ -944,10 +944,16 @@ makes on live blocks (`Obj.truncate`, `Obj.set_tag`, `Lazy`'s forwarding,
 
 ### The runtime patch and stock's major collector
 
-The patched runtime never runs stock's mark or sweep:
-`caml_major_collection_slice` and `caml_finish_major_cycle` forward to the
-two bridge functions above, `caml_compact_heap(_maybe)` do nothing, and
-`caml_finalise_heap` (`OCAMLRUNPARAM=c`) does nothing. Before this, the
+The patched runtime never runs stock's mark or sweep: `Gc.major`,
+`Gc.full_major` and `Gc.compact` call `verified_do_full_gc` directly,
+`caml_major_collection_slice` and `caml_finish_major_cycle` forward to the two
+bridge functions above, `caml_compact_heap` (reached only from `Gc.set`'s
+policy change) does nothing, and `caml_finalise_heap` (`OCAMLRUNPARAM=c`) does
+nothing. Every other stock collector entry point (`caml_gc_dispatch`,
+`caml_darken`, `caml_compact_heap_maybe`, the stock free list and heap
+expansion, the stock minor collector) calls `caml_fatal_error`
+(`VERGC_STOCK_GC_UNREACHABLE`; see the README, "Stock collector entry
+points"). Before this, the
 `Gc` calls ran stock's mark over the verified heap (it is `In_heap` in the
 page table), which left its objects black in an idle heap; the next verified
 mark skipped their children, and the sweep freed live objects
@@ -1126,6 +1132,14 @@ proactive full GC when cumulative promotions reach 50% of heap size:
 if (bytes_promoted_since_major + bump > major_size / 2)
     do_full_gc();
 ```
+
+Direct major allocations (`verified_allocate`, blocks larger than
+`Max_young_wosize`) add their size to `bytes_promoted_since_major`, and
+`verified_allocate` checks the same threshold against the requested size
+before allocating. Without this, a heap filled by large blocks that are then
+dropped never triggered a full collection, and the next minor collection
+failed to promote (issue #34). Both sweep modes count them; incremental, they also
+feed the next sweep slice's budget (`sweep_direct_words`).
 
 Mid-sweep (`VERGC_SWEEP=incremental`) a minor collection also finishes the
 sweep first when the free list holds fewer than twice the nursery's words,

@@ -518,7 +518,7 @@ gen_gc(
   if (ok)
   {
     darken_roots_bounded(gh.major, st, roots, nroots);
-    uint64_t final_fp = collect_with_roots(gh.major, st, fp_val);
+    uint64_t final_fp = collect(gh.major, st, fp_val);
     gh.fp_ref[0U] = final_fp;
     return ((FStar_Pervasives_Native_tuple2__uint64_t_bool){ ._1 = final_fp, ._2 = ok });
   }
@@ -591,7 +591,7 @@ gen_gc_start(
   if (ok)
   {
     darken_roots_bounded(gh.major, st, roots, nroots);
-    mark_loop_bounded(gh.major, st);
+    mark_loop_bounded_flagged(gh.major, st, false);
     gh.phase_ref[0U] =
       (
         (phase_state){
@@ -1369,15 +1369,20 @@ void update_promoted_objects(heap_t major, uint64_t *fwd_arr)
   }
 }
 
+uint64_t collect_core(heap_t heap, gray_stack_rec st, uint64_t fp, bool ov)
+{
+  mark_loop_bounded_flagged(heap, st, ov);
+  return fused_sweep_coalesce(heap, fp);
+}
+
 uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp)
 {
-  mark_loop_bounded(heap, st);
-  return fused_sweep_coalesce(heap, fp);
+  return collect_core(heap, st, fp, true);
 }
 
 uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp)
 {
-  return collect_with_roots(heap, st, fp);
+  return collect_core(heap, st, fp, false);
 }
 
 uint64_t init_heap(heap_t heap)
@@ -1624,17 +1629,24 @@ void mark_step_bounded_impl(heap_t heap, gray_stack_rec st)
     push_children_bounded_impl(heap, st, h_addr_raw, wz);
 }
 
-void mark_inner_loop_impl(heap_t heap, gray_stack_rec st)
+bool mark_inner_loop_impl(heap_t heap, gray_stack_rec st, bool ov_in)
 {
   bool go = true;
+  bool ovr = ov_in;
   while (go)
   {
     bool empty = is_empty(st);
     if (empty)
       go = false;
     else
+    {
       mark_step_bounded_impl(heap, st);
+      bool full = is_full(st);
+      bool o = ovr;
+      ovr = o || full;
+    }
   }
+  return ovr;
 }
 
 bool is_gray_check(heap_t heap, uint64_t h_addr)
@@ -1680,10 +1692,10 @@ void rescan_heap_impl(heap_t heap, gray_stack_rec st)
   }
 }
 
-void mark_loop_bounded(heap_t heap, gray_stack_rec st)
+void mark_loop_bounded_flagged(heap_t heap, gray_stack_rec st, bool ov)
 {
-  mark_inner_loop_impl(heap, st);
-  bool go = true;
+  bool ov1 = mark_inner_loop_impl(heap, st, ov);
+  bool go = ov1;
   while (go)
   {
     rescan_heap_impl(heap, st);
@@ -1691,7 +1703,15 @@ void mark_loop_bounded(heap_t heap, gray_stack_rec st)
     if (empty)
       go = false;
     else
-      mark_inner_loop_impl(heap, st);
+    {
+      bool discarded = mark_inner_loop_impl(heap, st, true);
+      KRML_MAYBE_UNUSED_VAR(discarded);
+    }
   }
+}
+
+void mark_loop_bounded(heap_t heap, gray_stack_rec st)
+{
+  mark_loop_bounded_flagged(heap, st, true);
 }
 

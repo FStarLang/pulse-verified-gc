@@ -12,8 +12,8 @@
    rescan a black object), and the verified sweep freed it while it was still
    reachable.
 
-   The runtime patch now forwards both entry points to the verified collector
-   (runtime/major_gc.c -> verified_finish_major_cycle /
+   The runtime patch now runs the verified collector instead
+   (runtime/gc_ctrl.c and runtime/major_gc.c -> verified_do_full_gc /
    verified_major_collection_slice in verified_gc/alloc_gen.c).
 
    Each section calls an explicit collection, then stores fresh major
