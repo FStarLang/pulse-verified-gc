@@ -121,3 +121,31 @@ val minor_keeps_field_dark (minor: minor_state) (g: heap) (fp: U64.t) (roots: se
                     ~(is_no_scan y g) /\ U64.v k <= U64.v (wosize_of_object y g) /\
                     GC.Spec.MarkPhase.Slice.field_dark g y k)
           (ensures GC.Spec.MarkPhase.Slice.field_dark (collect_marking minor g fp roots).Promote.mc_major y k)
+
+/// **The collection keeps well-formedness for any admissible definition of
+/// free** whose allocations while marking are not free (a promoted copy is
+/// black), given that the nursery's major pointers are not free for it.
+/// (`GC.Gen.MarkPhase.Completeness` uses it for the cycle's account.)
+val minor_keeps_wf_with (un: free_def) (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\ free_def_ok un /\
+                    Promote.allocations_not_free Ph.Marking un /\
+                    well_formed_heap_with un g /\ GenInv.minor_major_fields_not_free un minor g)
+          (ensures well_formed_heap_with un (collect_marking minor g fp roots).Promote.mc_major)
+
+/// **Every block the collection makes non-free is a promoted copy, black.**
+val minor_new_block_black (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t) (y: obj_addr)
+  : Lemma (requires GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\
+                    in_use free_stw (collect_marking minor g fp roots).Promote.mc_major y /\
+                    ~(in_use free_stw g y))
+          (ensures is_black y (collect_marking minor g fp roots).Promote.mc_major)
+
+/// **... and its fields that point into the major heap** (a nursery pointer
+/// never looks like one); the other pointer fields are rewritten to the
+/// promoted copies (the forwarding map, `GC.Gen.Promote`).
+val minor_keeps_major_field (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t) (y: obj_addr) (j: nat)
+  : Lemma (requires GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\ in_use free_stw g y /\
+                    j < U64.v (wosize_of_object y g) /\ U64.v y + j * 8 + 8 <= heap_size /\
+                    is_pointer (read_word g (U64.uint_to_t (U64.v y + j * 8))))
+          (ensures (let g' = (collect_marking minor g fp roots).Promote.mc_major in
+                    read_word g' (U64.uint_to_t (U64.v y + j * 8)) ==
+                    read_word g (U64.uint_to_t (U64.v y + j * 8))))

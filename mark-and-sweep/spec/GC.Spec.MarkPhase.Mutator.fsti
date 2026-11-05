@@ -105,7 +105,12 @@ val write_heads (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
                       is_closure y (write_word g a v) == is_closure y g))
 
 /// The write keeps well-formedness (`SPM.program_write`: the new value is
-/// storable if `x` is scannable).
+/// storable if `x` is scannable), for any admissible definition of free ...
+val write_wf_with (free: free_def) (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires free_def_ok free /\ well_formed_heap_with free g /\ SPM.program_write free g x a v)
+          (ensures well_formed_heap_with free (write_word g a v))
+
+/// ... in particular for `free_stw`.
 val write_wf (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
   : Lemma (requires well_formed_heap g /\ SPM.program_write free_stw g x a v)
           (ensures well_formed_heap (write_word g a v))

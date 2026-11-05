@@ -290,24 +290,22 @@ let unreached_allocations (g0: heap) : Lemma (Promote.allocations_not_free Ph.Ma
     in
     Promote.allocations_not_free_intro Ph.Marking (MP.unreached g0) prf
 
-/// **The heap after is well formed for `unreached g`.**
-#push-options "--z3rlimit 40"
-let unreached_wf_after (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires pre minor g fp /\ MP.marking_inv g (marking_held minor g roots))
-          (ensures well_formed_heap_with (MP.unreached g) (collect_marking minor g fp roots).Promote.mc_major)
-  = let un = MP.unreached g in
-    let p = prom minor g fp roots in
+/// **The heap after is well formed for any admissible definition of free**
+/// whose allocations while marking are not free, if the heap before is and
+/// the nursery's major pointers are not free for it.
+#push-options "--z3rlimit 20"
+let wf_after_with (un: free_def) (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires pre minor g fp /\ free_def_ok un /\ Promote.allocations_not_free Ph.Marking un /\
+                    well_formed_heap_with un g /\ GenInv.minor_major_fields_not_free un minor g)
+          (ensures well_formed_heap_with un (collect_marking minor g fp roots).Promote.mc_major)
+  = let p = prom minor g fp roots in
     let pm = p.Promote.major_final in
     let fwd = p.Promote.fwd_map in
     let res = collect_marking minor g fp roots in
     let g' = res.Promote.mc_major in
     pre_facts minor g fp;
     GenInv.major_shape_with_elim Ph.Marking free_stw g fp;
-    MP.unreached_ok g;
-    MP.marking_inv_unreached g (marking_held minor g roots);
-    unreached_allocations g;
     GenInv.major_shape_with_intro Ph.Marking un g fp;
-    nursery_not_unreached minor g fp roots;
     GenInv.collection_shape_with_intro Ph.Marking un minor g fp;
     // the generic theorem, for `unreached g`
     CV.cheney_collect_with_preserves_shape Ph.Marking un minor g fp roots;
@@ -333,6 +331,18 @@ let unreached_wf_after (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U6
     FStar.Classical.forall_intro iu;
     FStar.Classical.forall_intro (FStar.Classical.move_requires (update_agrees pm un fwd));
     SPI.wf_transport gS g' un un
+#pop-options
+
+/// **The heap after is well formed for `unreached g`.**
+#push-options "--z3rlimit 20"
+let unreached_wf_after (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires pre minor g fp /\ MP.marking_inv g (marking_held minor g roots))
+          (ensures well_formed_heap_with (MP.unreached g) (collect_marking minor g fp roots).Promote.mc_major)
+  = MP.unreached_ok g;
+    MP.marking_inv_unreached g (marking_held minor g roots);
+    unreached_allocations g;
+    nursery_not_unreached minor g fp roots;
+    wf_after_with (MP.unreached g) minor g fp roots
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -574,3 +584,13 @@ let minor_keeps_field_dark minor g fp roots y k =
     end
   end
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// For completeness
+/// ---------------------------------------------------------------------------
+
+let minor_keeps_wf_with un minor g fp roots = wf_after_with un minor g fp roots
+
+let minor_new_block_black minor g fp roots y = new_block_black minor g fp roots y
+
+let minor_keeps_major_field minor g fp roots y j = old_pointer_field minor g fp roots y j

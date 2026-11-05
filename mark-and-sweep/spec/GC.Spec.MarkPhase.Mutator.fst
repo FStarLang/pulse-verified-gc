@@ -117,12 +117,11 @@ let write_heads g x a v =
   FStar.Classical.forall_intro f
 
 #push-options "--z3rlimit 30"
-let write_wf g x a v =
+let write_wf_with free g x a v =
   let g' = write_word g a v in
-  let free = free_stw in
+  free_def_ok_elim free;
   write_heads g x a v;
   SPI.same_heads_facts g g';
-  free_stw_ok ();
   free_def_ok_elim free;
   wf_with_parts ();
   SPM.same_heads_part4 g g';
@@ -174,6 +173,10 @@ let write_wf g x a v =
   in
   pointer_clauses_from_field_closure free g' closure
 #pop-options
+
+let write_wf g x a v =
+  free_stw_ok ();
+  write_wf_with free_stw g x a v
 
 /// A field of a block other than `x` is not the written word.
 let other_field (g: heap) (x u: obj_addr) (a: hp_addr) (j: nat)
