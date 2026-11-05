@@ -52,6 +52,7 @@ module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module MCFE = GC.Gen.MinorCollectForwarding.Edges
 module MCFNE = GC.Gen.MinorCollectForwarding.NormalEdges
 module MCFNP = GC.Gen.MinorCollectForwarding.NonPointerFields
+module FLs = GC.Spec.FreeLists
 let remembered_targets_in_roots
   (major: heap) (roots slots: seq U64.t) (n: nat) : prop =
   MCFH.remembered_targets_in_roots major roots slots n
@@ -74,12 +75,12 @@ let mem_graph_vertex_at (g: graph_state) (w: U64.t) : prop =
   MCFH.mem_graph_vertex_at g w
 
 let post_minor_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (w: U64.t) : prop =
   MCFH.post_minor_reachable minor major fp roots w
 
 let post_minor_edge
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (x y: U64.t) : prop =
   MCFH.post_minor_edge minor major fp roots x y
 
@@ -96,7 +97,7 @@ let result_post_edge (post_major: heap) (x y: U64.t) : prop =
 /// A rewritten root that names `w` --- either directly, or, when the root is an
 /// interior pointer, by resolving to it --- makes `w` post-reachable.
 val post_minor_reachable_refl_from_root
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t) (rr: U64.t) (w: U64.t)
   : Lemma
     (requires (
@@ -137,7 +138,7 @@ val heap_graph_edge_to_field_read
 /// Cheney promotion preserves the header-derived facts and body field of a
 /// pre-existing non-blue major object.
 val cheney_promote_preserves_old_major_field_context
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src: obj_addr) (j: nat)
   : Lemma
     (requires
@@ -159,7 +160,7 @@ val cheney_promote_preserves_old_major_field_context
 /// not run out of space and scan-derived remembered roots are included in the
 /// Cheney roots.
 val combined_reachable_minor_has_fwd
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires
       RBridge.major_field_zero_covered minor major roots /\
@@ -180,7 +181,7 @@ val combined_reachable_minor_has_fwd
 
 /// Slot-table-facing form of `combined_reachable_minor_has_fwd`.
 val combined_reachable_minor_has_fwd_from_slots
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
@@ -205,7 +206,7 @@ val combined_reachable_minor_has_fwd_from_slots
 /// points to a reachable positive-size minor object, the post-minor heap stores
 /// the target's forwarding address in that field.
 val combined_major_minor_field_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (src: obj_addr) (dst: U64.t) (i: nat)
   : Lemma
@@ -244,7 +245,7 @@ val combined_major_minor_field_forwarded
 /// cases require the source image to be a normal promoted object; minor-target
 /// cases require the target image to be pointer-shaped.
 let normal_edge_forward_ready
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (u v: CG.combined_vertex) : prop =
   MCFNE.normal_edge_forward_ready minor major fp roots u v
 
@@ -252,7 +253,7 @@ let normal_edge_forward_ready
 /// reachable combined edge satisfying `normal_edge_forward_ready` maps to a
 /// concrete edge in the post-minor major heap graph.
 val combined_reachable_edge_forwarded_normal
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (u v: CG.combined_vertex)
   : Lemma
@@ -281,11 +282,11 @@ val combined_reachable_edge_forwarded_normal
 /// Disjointness assumption needed for cross-generation injectivity: normal
 /// forwarding targets are not old non-blue major objects.
 let fwd_disjoint_reachable_major
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) : prop =
   MCFNE.fwd_disjoint_reachable_major minor major fp roots
 
 val fwd_disjoint_reachable_major_intro
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
@@ -295,21 +296,21 @@ val fwd_disjoint_reachable_major_intro
     (ensures fwd_disjoint_reachable_major minor major fp roots)
 
 let combined_reachable_normal_injective_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) : prop =
   MCFNE.combined_reachable_normal_injective_prop minor major fp roots
 
 let normal_vertex_ready
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (u: CG.combined_vertex) : prop =
   MCFNE.normal_vertex_ready minor major fp roots u
 
 let normal_src_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (u: CG.combined_vertex) : prop =
   MCFNE.normal_src_reachable minor major fp roots u
 
 val normal_edge_forward_ready_intro
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t)
   (u v: CG.combined_vertex)
   : Lemma
@@ -335,7 +336,7 @@ val normal_edge_forward_ready_intro
 /// `MCFH.fwd_image_resolves` says that address resolves to `fwd v`, which is
 /// exactly `fwd_morphism fwd u`.
 val normal_classified_root_image_in_rewrite_roots
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t) (u: CG.combined_vertex)
   : Lemma
     (requires
@@ -353,7 +354,7 @@ val normal_classified_root_image_in_rewrite_roots
          HeapGraph.resolve_field res.mc_major rr == img)))
 
 let normal_src_edge
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (u v: CG.combined_vertex) : prop =
   let cg = CG.build_combined_graph minor major in
   normal_src_reachable minor major fp roots u /\
@@ -362,7 +363,7 @@ let normal_src_edge
   normal_edge_forward_ready minor major fp roots u v
 
 noeq type ready_src_reach
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : CG.combined_vertex -> Type =
   | ReadyRoot :
       u:CG.combined_vertex ->
@@ -378,12 +379,12 @@ noeq type ready_src_reach
       ready_src_reach minor major fp roots v
 
 let ready_src_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (u: CG.combined_vertex) : prop =
   exists (_: ready_src_reach minor major fp roots u). True
 
 let ready_image_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (w: U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   exists (u: CG.combined_vertex).
@@ -391,7 +392,7 @@ let ready_image_reachable
     CG.fwd_morphism prom.fwd_map u == w
 
 let normal_image_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (w: U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   exists (u: CG.combined_vertex).
@@ -399,7 +400,7 @@ let normal_image_reachable
     CG.fwd_morphism prom.fwd_map u == w
 
 let normal_image_edge
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (x y: U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   exists (u v: CG.combined_vertex).
@@ -408,7 +409,7 @@ let normal_image_edge
     CG.fwd_morphism prom.fwd_map v == y
 
 val normal_image_vertex_is_post_vertex
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (w: U64.t)
   : Lemma
     (requires
@@ -419,7 +420,7 @@ val normal_image_vertex_is_post_vertex
       mem_graph_vertex_at (HeapModel.create_graph res.mc_major) w))
 
 val normal_classified_root_image_post_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t) (u: CG.combined_vertex)
   : Lemma
     (requires
@@ -433,7 +434,7 @@ val normal_classified_root_image_post_reachable
         (CG.fwd_morphism prom.fwd_map u)))
 
 let normal_image_reachable_subgraph_isomorphism_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   CG.reachable_subgraph_isomorphism
     (normal_src_reachable minor major fp roots)
@@ -443,7 +444,7 @@ let normal_image_reachable_subgraph_isomorphism_prop
     prom.fwd_map
 
 val combined_reachable_normal_injective
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
@@ -454,7 +455,7 @@ val combined_reachable_normal_injective
     (ensures combined_reachable_normal_injective_prop minor major fp roots)
 
 val normal_image_reachable_subgraph_isomorphism
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
@@ -465,7 +466,7 @@ val normal_image_reachable_subgraph_isomorphism
     (ensures normal_image_reachable_subgraph_isomorphism_prop minor major fp roots)
 
 val normal_src_edge_preserves_post_minor_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (u v: CG.combined_vertex)
   : Lemma
@@ -488,7 +489,7 @@ val normal_src_edge_preserves_post_minor_reachable
         (CG.fwd_morphism prom.fwd_map v)))
 
 val ready_src_reach_image_post_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (u: CG.combined_vertex)
   (r: ready_src_reach minor major fp roots u)
@@ -508,7 +509,7 @@ val ready_src_reach_image_post_reachable
         (CG.fwd_morphism prom.fwd_map u)))
 
 val ready_image_reachable_is_post_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (w: U64.t)
   : Lemma
@@ -525,7 +526,7 @@ val ready_image_reachable_is_post_reachable
     (ensures post_minor_reachable minor major fp roots w)
 
 val normal_src_reachable_is_ready_src_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (u: CG.combined_vertex)
   : Lemma
@@ -542,13 +543,13 @@ val normal_src_reachable_is_ready_src_reachable
     (ensures ready_src_reachable minor major fp roots u)
 
 let normal_image_reachable_is_post_reachable_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) : prop =
   forall (w: U64.t).
     normal_image_reachable minor major fp roots w ==>
     post_minor_reachable minor major fp roots w
 
 val normal_image_reachable_is_post_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (w: U64.t)
   : Lemma
@@ -565,7 +566,7 @@ val normal_image_reachable_is_post_reachable
     (ensures post_minor_reachable minor major fp roots w)
 
 val normal_image_reachable_is_post_reachable_all
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
@@ -580,7 +581,7 @@ val normal_image_reachable_is_post_reachable_all
     (ensures normal_image_reachable_is_post_reachable_prop minor major fp roots)
 
 val post_normal_image_edges_reflect_src
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (u v: CG.combined_vertex)
   : Lemma
@@ -602,13 +603,13 @@ val post_normal_image_edges_reflect_src
     (ensures normal_src_edge minor major fp roots u v)
 
 let post_minor_reachable_is_normal_image_reachable_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) : prop =
   forall (w: U64.t).
     post_minor_reachable minor major fp roots w ==>
     normal_image_reachable minor major fp roots w
 
 let normal_post_reachable_subgraph_isomorphism_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   CG.reachable_subgraph_isomorphism
     (normal_src_reachable minor major fp roots)
@@ -618,7 +619,7 @@ let normal_post_reachable_subgraph_isomorphism_prop
     prom.fwd_map
 
 let normal_result_reachable_subgraph_isomorphism_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (post_major: heap) (post_roots: seq U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   CG.reachable_subgraph_isomorphism
@@ -629,16 +630,16 @@ let normal_result_reachable_subgraph_isomorphism_prop
     prom.fwd_map
 
 let normal_post_non_pointer_fields_preserved_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) : prop =
   MCFNP.normal_post_non_pointer_fields_preserved_prop minor major fp roots
 
 let normal_result_non_pointer_fields_preserved_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (post_major: heap) : prop =
   MCFNP.normal_result_non_pointer_fields_preserved_prop
     minor major fp roots post_major
 val post_minor_reachable_is_normal_image_reachable_all
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
@@ -654,7 +655,7 @@ val post_minor_reachable_is_normal_image_reachable_all
     (ensures post_minor_reachable_is_normal_image_reachable_prop minor major fp roots)
 
 val normal_post_reachable_subgraph_isomorphism
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
@@ -670,7 +671,7 @@ val normal_post_reachable_subgraph_isomorphism
     (ensures normal_post_reachable_subgraph_isomorphism_prop minor major fp roots)
 
 val normal_post_reachable_subgraph_isomorphism_to_result
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (post_major: heap) (post_roots: seq U64.t)
   : Lemma
     (requires
@@ -683,7 +684,7 @@ val normal_post_reachable_subgraph_isomorphism_to_result
         minor major fp roots post_major post_roots)
 
 val normal_post_non_pointer_fields_preserved
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
@@ -699,7 +700,7 @@ val normal_post_non_pointer_fields_preserved
     (ensures normal_post_non_pointer_fields_preserved_prop minor major fp roots)
 
 val normal_post_non_pointer_fields_preserved_to_result
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (post_major: heap)
   : Lemma
     (requires

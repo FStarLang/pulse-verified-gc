@@ -11,6 +11,9 @@ module GC.Gen.Impl.Promote
 open Pulse.Lib.Pervasives
 open Pulse.Lib.Array.PtsTo
 module R = Pulse.Lib.Reference
+module FLs = GC.Spec.FreeLists
+module AK = GC.Gen.AllocLists
+module SAL = GC.Spec.Allocator.Lists
 module SZ = FStar.SizeT
 module U8 = FStar.UInt8
 module U64 = FStar.UInt64
@@ -188,30 +191,30 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
 /// needs part1 + fl_valid + fl_chain_terminates to function correctly.
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 inline_for_extraction
-fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
+fn promote_one (minor: minor_heap_t) (major: heap_t) (heads: array U64.t)
                (obj: U64.t)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
-           R.pts_to fp_ref 'fp **
+           pts_to heads 'fp **
            pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
                  U64.v obj % 8 == 0 /\
                  // Minor object body within bounds (from minor_objects_wosize_bound)
                  U64.v obj + minor_wosize {data='md; bump='mb} obj * 8 <= minor_heap_size /\
                  // Major heap structural well-formedness (weaker than full wfh)
                  SF.well_formed_heap_part1 'ms /\
-                 AllocLemmas.fl_valid 'ms 'fp heap_words /\
-                 AllocLemmas.fl_chain_terminates 'ms 'fp heap_words)
+                 FLs.fls_valid 'ms 'fp /\
+                 FLs.fls_terminates 'ms 'fp)
   returns new_addr: U64.t
   ensures exists* md2 mb2 ms2 fp2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
-    R.pts_to fp_ref fp2 **
+    pts_to heads fp2 **
     pure (let minor_st = {data='md; bump='mb} in
           let wz = minor_wosize minor_st obj in
           md2 == 'md /\ mb2 == 'mb /\
           SF.well_formed_heap_part1 ms2 /\
-          AllocLemmas.fl_valid ms2 fp2 heap_words /\
-          AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
+          FLs.fls_valid ms2 fp2 /\
+          FLs.fls_terminates ms2 fp2 /\
           (wz > 0 ==>
             (let spec_res = PromoteSpec.promote_object minor_st 'ms obj 'fp wz in
              ms2 == spec_res.major_out /\
@@ -226,35 +229,32 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     0UL
   } else {
     // Allocate space in major heap (using weak precondition variant)
-    let fp = R.op_Bang fp_ref;
-    let res = Alloc.allocate_part1 major fp wosize;
-    let new_fp = fst res;
-    let new_obj = snd res;
-    R.op_Colon_Equals fp_ref new_fp;
+    FLs.fls_valid_elim 'ms 'fp;
+    let new_obj = Alloc.allocate_part1 major heads wosize;
     if U64.eq new_obj 0UL {
       // OOM — alloc_spec with obj_out=0 returns heap unchanged
-      AllocLemmas.alloc_spec_preserves_wfh_part1 'ms fp (U64.v wosize);
-      AllocLemmas.alloc_spec_preserves_fl_valid_part1 'ms fp (U64.v wosize);
-      AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 'ms fp (U64.v wosize);
+      AK.alloc_lists_preserves_wfh_part1 'ms 'fp (U64.v wosize);
+      AK.alloc_lists_preserves_fls_valid_part1 'ms 'fp (U64.v wosize);
+      AK.alloc_lists_preserves_fls_terminates_part1 'ms 'fp (U64.v wosize);
       // Spec refinement for OOM: promote_object returns {major_out='ms; fp_out='fp; new_addr=0UL}
-      AllocProps.alloc_spec_oom_unchanged 'ms fp (U64.v wosize);
+      AK.alloc_lists_oom_unchanged 'ms 'fp (U64.v wosize);
       PromoteSpec.promote_object_oom {data='md; bump='mb} 'ms obj 'fp (U64.v wosize);
       0UL
     } else {
       // Derive bounds from allocator postconditions:
-      AllocProps.alloc_spec_obj_in_objects_part1 'ms fp (U64.v wosize);
+      AK.alloc_lists_obj_in_objects_part1 'ms 'fp (U64.v wosize);
       assert (pure (U64.v new_obj >= U64.v mword /\
                     U64.v new_obj < heap_size /\
                     U64.v new_obj % U64.v mword == 0));
-      AllocLemmas.alloc_spec_preserves_wfh_part1 'ms fp (U64.v wosize);
-      AllocLemmas.alloc_spec_preserves_fl_valid_part1 'ms fp (U64.v wosize);
-      AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 'ms fp (U64.v wosize);
-      AllocProps.alloc_spec_obj_wosize_part1 'ms fp (U64.v wosize);
+      AK.alloc_lists_preserves_wfh_part1 'ms 'fp (U64.v wosize);
+      AK.alloc_lists_preserves_fls_valid_part1 'ms 'fp (U64.v wosize);
+      AK.alloc_lists_preserves_fls_terminates_part1 'ms 'fp (U64.v wosize);
+      AK.alloc_lists_obj_wosize_part1 'ms 'fp (U64.v wosize);
       SF.wfh_part1_obj_bound
-        (GC.Spec.Allocator.alloc_spec 'ms fp (U64.v wosize)).heap_out
+        (SAL.alloc_lists_spec 'ms 'fp (U64.v wosize)).heap_out
         (new_obj <: obj_addr);
       assert (pure (U64.v new_obj + U64.v wosize * 8 <= heap_size));
-      AllocLemmas.alloc_spec_obj_not_in_chain_part1 'ms fp (U64.v wosize);
+      AK.alloc_lists_obj_not_in_lists_part1 'ms 'fp (U64.v wosize);
       // Copy all fields (0..wosize-1) from minor to major
       copy_fields_loop minor major obj new_obj wosize;
       // Bind the existential witnesses from copy_fields_loop

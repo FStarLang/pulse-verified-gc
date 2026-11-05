@@ -22,6 +22,7 @@ open GC.Gen.Impl.UpdatePtrs
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module CheneySpec = GC.Gen.Cheney
+module FLs = GC.Spec.FreeLists
 
 let heap_fuel : nat = heap_words
 
@@ -170,7 +171,7 @@ val rewrite_slots_iter_slot_effect
 /// ---------------------------------------------------------------------------
 
 val promoted_plus_slots_eq_full_update
-  (minor: minor_state) (major_pre: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major_pre: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (farr: seq U64.t) (slots: seq U64.t) (n: nat)
   : Lemma
     (requires
@@ -191,8 +192,8 @@ val promoted_plus_slots_eq_full_update
        heap_objects_dense prom.major_final /\
        Seq.length (objects zero_addr prom.major_final) > 0 /\
        well_formed_heap major_pre /\
-       AllocLemmas.fl_valid major_pre fp heap_fuel /\
-       AllocLemmas.fl_chain_terminates major_pre fp heap_fuel))
+       FLs.fls_valid major_pre fp /\
+       FLs.fls_terminates major_pre fp))
     (ensures
       (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
        rewrite_slots_iter

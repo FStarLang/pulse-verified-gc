@@ -30,6 +30,7 @@ module GenInv = GC.Gen.HeapInvariant
 
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 open GC.Gen.MinorCollectForwarding.Helpers
+module FLs = GC.Spec.FreeLists
 
 /// Statement well-formedness here involves `U64.uint_to_t (v x + j * 8)`
 /// side conditions (`FStar.UInt.size ... 64`); with fuel, Z3 5.x unrolls the
@@ -37,7 +38,7 @@ open GC.Gen.MinorCollectForwarding.Helpers
 /// None of the statements below need recursive unfolding.
 #push-options "--fuel 0 --ifuel 1"
 let normal_vertex_ready
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (u: CG.combined_vertex) : prop =
   let prom = cheney_promote minor major fp roots in
   match u with
@@ -48,7 +49,7 @@ let normal_vertex_ready
     is_infix (prom.fwd_map x) prom.major_final = false
 
 let normal_src_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (u: CG.combined_vertex) : prop =
   let cg = CG.build_combined_graph minor major in
   let combined_roots = CG.classify_roots minor roots in
@@ -56,7 +57,7 @@ let normal_src_reachable
   normal_vertex_ready minor major fp roots u
 
 let normal_post_non_pointer_fields_preserved_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   let res = cheney_collect_spec minor major fp roots in
   forall (u: CG.combined_vertex).
@@ -86,7 +87,7 @@ let normal_post_non_pointer_fields_preserved_prop
     | _ -> True)
 
 let normal_result_non_pointer_fields_preserved_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (post_major: heap) : prop =
   let prom = cheney_promote minor major fp roots in
   forall (u: CG.combined_vertex).
@@ -116,7 +117,7 @@ let normal_result_non_pointer_fields_preserved_prop
     | _ -> True)
 
 val normal_post_non_pointer_fields_preserved
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
@@ -132,7 +133,7 @@ val normal_post_non_pointer_fields_preserved
     (ensures normal_post_non_pointer_fields_preserved_prop minor major fp roots)
 
 val normal_post_non_pointer_fields_preserved_to_result
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (post_major: heap)
   : Lemma
     (requires

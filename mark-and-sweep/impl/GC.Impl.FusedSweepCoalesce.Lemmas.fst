@@ -12,6 +12,8 @@ open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
 module Defs = GC.Spec.SweepCoalesce.Defs
+module SCL = GC.Spec.SweepCoalesce.Lists
+module FLs = GC.Spec.FreeLists
 module SpecCoalesce = GC.Spec.Coalesce
 module Alloc = GC.Spec.Allocator
 module HeapGraph = GC.Spec.HeapGraph
@@ -106,7 +108,7 @@ private let objects_advance (start: hp_addr) (g: heap)
   = CoalLemmas.objects_advance start g
 
 private let fused_step_nonblack_helper (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
-  (first_blue: U64.t) (run_words: nat) (fp: U64.t)
+  (first_blue: U64.t) (run_words: nat) (fp: FLs.fl_state)
   : Lemma
     (requires
       Seq.length objs > 0 /\
@@ -124,8 +126,8 @@ private let fused_step_nonblack_helper (g0 g: heap) (start: hp_addr) (objs: seq 
         Seq.equal (Seq.tail objs) (objects (U64.uint_to_t next_nat) g0)) /\
       (next_nat >= heap_size ==>
         Seq.equal (Seq.tail objs) Seq.empty) /\
-      Defs.fused_aux g0 g objs first_blue run_words fp ==
-        Defs.fused_aux g0 g (Seq.tail objs) new_first (run_words + ws + 1) fp))
+      SCL.fused_aux_lists g0 g objs first_blue run_words fp ==
+        SCL.fused_aux_lists g0 g (Seq.tail objs) new_first (run_words + ws + 1) fp))
   = objects_advance start g0;
     let obj = Seq.head objs in
     f_address_spec start;
@@ -135,7 +137,7 @@ private let fused_step_nonblack_helper (g0 g: heap) (start: hp_addr) (objs: seq 
     assert (wosize_of_object obj g0 == getWosize (read_word g0 start))
 
 private let fused_step_black_helper (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
-  (first_blue: U64.t) (run_words: nat) (fp: U64.t)
+  (first_blue: U64.t) (run_words: nat) (fp: FLs.fl_state)
   : Lemma
     (requires
       Seq.length objs > 0 /\
@@ -146,7 +148,7 @@ private let fused_step_black_helper (g0 g: heap) (start: hp_addr) (objs: seq obj
       let obj = Seq.head objs in
       let wz = getWosize (read_word g0 start) in
       let ws = U64.v wz in
-      let (g', fp') = SpecCoalesce.flush_blue g first_blue run_words fp in
+      let (g', fp') = SCL.flush_blue_lists g first_blue run_words fp in
       let g'' = makeWhite obj g' in
       let next_nat = U64.v start + (ws + 1) * U64.v mword in
       next_nat <= heap_size /\
@@ -154,8 +156,8 @@ private let fused_step_black_helper (g0 g: heap) (start: hp_addr) (objs: seq obj
         Seq.equal (Seq.tail objs) (objects (U64.uint_to_t next_nat) g0)) /\
       (next_nat >= heap_size ==>
         Seq.equal (Seq.tail objs) Seq.empty) /\
-      Defs.fused_aux g0 g objs first_blue run_words fp ==
-        Defs.fused_aux g0 g'' (Seq.tail objs) 0UL 0 fp'))
+      SCL.fused_aux_lists g0 g objs first_blue run_words fp ==
+        SCL.fused_aux_lists g0 g'' (Seq.tail objs) 0UL 0 fp'))
   = objects_advance start g0;
     let obj = Seq.head objs in
     f_address_spec start;
@@ -178,8 +180,8 @@ let nonblack_step_fused_aux_eq g0 g start first_blue run_words fp =
   let new_rw = run_words + ws + 1 in
   let next_nat = U64.v start + (ws + 1) * U64.v mword in
   let tail_objs = Seq.tail (objects start g0) in
-  assert (Defs.fused_aux g0 g tail_objs new_first new_rw fp ==
-          Defs.fused_sweep_coalesce g0);
+  assert (SCL.fused_aux_lists g0 g tail_objs new_first new_rw fp ==
+          SCL.fused_sweep_coalesce_lists g0);
   FStar.Math.Lemmas.lemma_mod_plus (U64.v start) (ws + 1) (U64.v mword);
   f_address_spec start;
   assert (U64.v obj == U64.v start + U64.v mword);
@@ -229,7 +231,7 @@ let nonblack_step_fused_aux_eq g0 g start first_blue run_words fp =
 
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 private let flush_blue_suffix_chain
-  (g0 g: heap) (first_blue: U64.t) (run_words: nat) (fp: U64.t)
+  (g0 g: heap) (first_blue: U64.t) (run_words: nat) (fp: FLs.fl_state)
   (start_val: nat) (addr: hp_addr)
   : Lemma
     (requires
@@ -243,10 +245,11 @@ private let flush_blue_suffix_chain
         U64.v first_blue % U64.v mword == 0 /\
         U64.v first_blue - U64.v mword + run_words * U64.v mword == start_val))
     (ensures (
-      let (g', _) = SpecCoalesce.flush_blue g first_blue run_words fp in
+      let (g', _) = SCL.flush_blue_lists g first_blue run_words fp in
       read_word g' addr == read_word g0 addr))
-  = SpecCoalesce.flush_blue_preserves_outside g first_blue run_words fp addr;
-    assert (read_word (fst (SpecCoalesce.flush_blue g first_blue run_words fp)) addr ==
+  = SpecCoalesce.flush_blue_preserves_outside g first_blue run_words
+      (FLs.fls_head fp (SCL.run_class run_words)) addr;
+    assert (read_word (fst (SCL.flush_blue_lists g first_blue run_words fp)) addr ==
             read_word g addr)
 #pop-options
 
@@ -260,14 +263,15 @@ let black_step_fused_aux_eq g0 g start first_blue run_words fp =
   let wz = getWosize (read_word g0 start) in
   let ws = U64.v wz in
   let obj = f_address start in
-  let (g', fp') = SpecCoalesce.flush_blue g first_blue run_words fp in
+  let (g', fp') = SCL.flush_blue_lists g first_blue run_words fp in
   let g'' = makeWhite obj g' in
   let next_nat = U64.v start + (ws + 1) * U64.v mword in
   let tail_objs = Seq.tail (objects start g0) in
-  assert (Defs.fused_aux g0 g'' tail_objs 0UL 0 fp' ==
-          Defs.fused_sweep_coalesce g0);
+  assert (SCL.fused_aux_lists g0 g'' tail_objs 0UL 0 fp' ==
+          SCL.fused_sweep_coalesce_lists g0);
   FStar.Math.Lemmas.lemma_mod_plus (U64.v start) (ws + 1) (U64.v mword);
-  SpecCoalesce.flush_blue_preserves_length g first_blue run_words fp;
+  SpecCoalesce.flush_blue_preserves_length g first_blue run_words
+    (FLs.fls_head fp (SCL.run_class run_words));
   assert (Seq.length g' == heap_size);
   makeWhite_length g' obj;
   assert (Seq.length g'' == heap_size);

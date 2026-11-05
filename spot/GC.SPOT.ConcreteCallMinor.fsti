@@ -33,19 +33,19 @@ let spot_minor_collect_full_success_post
     CheneySpec.cheney_promote
       ConcreteMinor.spot_minor2
       (ConcreteMajor.spot_major_heap r)
-      (ConcreteMajor.spot_major_fp r)
+      (ConcreteMajor.spot_major_fls r)
       roots in
   let result =
     CheneySpec.cheney_collect_spec
       ConcreteMinor.spot_minor2
       (ConcreteMajor.spot_major_heap r)
-      (ConcreteMajor.spot_major_fp r)
+      (ConcreteMajor.spot_major_fls r)
       roots in
   post_major == result.mc_major /\
   Postconditions.promoted_image
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
+    (ConcreteMajor.spot_major_fls r)
     roots
     Layout.a_minor
     (prom.fwd_map Layout.a_minor) /\
@@ -54,7 +54,7 @@ let spot_minor_collect_full_success_post
   Postconditions.minor_not_promoted
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
+    (ConcreteMajor.spot_major_fls r)
     roots
     Layout.b_minor
 
@@ -62,7 +62,7 @@ fn call_concrete_minor_collect_full_spot
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)
   requires is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
-            (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r)
+            (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fls r)
   returns ok: bool
   ensures exists* d2 b2 post_major fp2.
     is_gen_heap gh d2 b2 post_major fp2 **

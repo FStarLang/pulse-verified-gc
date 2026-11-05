@@ -17,15 +17,16 @@ open GC.Gen.WriteBodyLemmas
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module FreeListShape = GC.Gen.FreeListShape
+module FLs = GC.Spec.FreeLists
 
 /// promote_object preserves chain_objects_blue
 val promote_object_preserves_chain_objects_blue
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: FLs.fl_state)
   (wosize: nat{wosize > 0})
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp heap_words /\
-      AllocLemmas.fl_chain_terminates major fp heap_words /\
+      FLs.fls_valid major fp /\
+      FLs.fls_terminates major fp /\
       chain_objects_blue major fp /\
       (promote_object minor major obj fp wosize).new_addr <> 0UL)
     (ensures
@@ -33,18 +34,18 @@ val promote_object_preserves_chain_objects_blue
                          (promote_object minor major obj fp wosize).fp_out)
 
 val promote_object_preserves_free_list_shape
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: FLs.fl_state)
   (wosize: nat{wosize > 0})
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp heap_words /\
-      AllocLemmas.fl_chain_terminates major fp heap_words /\
-      FreeListShape.fp_pointer_or_zero fp /\
+      FLs.fls_valid major fp /\
+      FLs.fls_terminates major fp /\
+      FreeListShape.fls_pointer_or_zero fp /\
       FreeListShape.blue_link_fields_valid major /\
       chain_objects_blue major fp /\
       (promote_object minor major obj fp wosize).new_addr <> 0UL)
     (ensures
-      FreeListShape.fp_pointer_or_zero
+      FreeListShape.fls_pointer_or_zero
         (promote_object minor major obj fp wosize).fp_out /\
       FreeListShape.blue_link_fields_valid
         (promote_object minor major obj fp wosize).major_out)

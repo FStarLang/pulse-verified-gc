@@ -22,8 +22,14 @@ open GC.Gen.PromoteUpdate.Aux
 open GC.Gen.PromoteUpdate.Header
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module FLs = GC.Spec.FreeLists
+module AK = GC.Gen.AllocLists
+module SAL = GC.Spec.Allocator.Lists
+module SC = GC.Spec.SizeClass
 module FreeListShape = GC.Gen.FreeListShape
 module WriteBody = GC.Gen.WriteBodyLemmas
+module HeapGraph = GC.Spec.HeapGraph
+module AP = GC.Gen.AllocProps
 
 /// The allocator's output free-list head is null or a syntactically valid heap
 /// pointer when all blue free-list link fields have that same value shape.
@@ -175,16 +181,21 @@ private let rec alloc_search_fp_pointer_or_zero
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-let alloc_spec_preserves_fp_pointer_or_zero
+private let alloc_spec_preserves_fp_pointer_or_zero_one
   (g: heap) (fp: U64.t) (wz: nat)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    AllocLemmas.fl_valid g fp heap_words /\
+                    AllocLemmas.fl_chain_terminates g fp heap_words /\
+                    FreeListShape.blue_link_fields_valid g /\
+                    wz >= 1 /\
+                    FreeListShape.fp_pointer_or_zero fp /\
+                    (GC.Spec.Allocator.alloc_spec g fp wz).obj_out <> 0UL /\
+                    (forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) /\ is_blue obj g = false ==>
+                       AllocLemmas.chain_avoids g fp obj heap_words = true))
+          (ensures FreeListShape.fp_pointer_or_zero
+                     (GC.Spec.Allocator.alloc_spec g fp wz).fp_out)
   =
     let fuel = heap_words in
-    let chain_avoids_non_blue (obj: obj_addr)
-      : Lemma (requires Seq.mem obj (objects zero_addr g) /\ is_blue obj g = false)
-              (ensures AllocLemmas.chain_avoids g fp obj fuel = true)
-      = reveal_opaque (`%chain_objects_blue) chain_objects_blue
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires chain_avoids_non_blue);
     alloc_search_fp_pointer_or_zero g fp 0UL fp wz fuel
 #pop-options
 
@@ -400,16 +411,136 @@ private let rec alloc_search_preserves_blfv
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-let alloc_spec_preserves_blue_link_fields_valid
+private let alloc_spec_preserves_blue_link_fields_valid_one
   (g: heap) (fp: U64.t) (wz: nat)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    AllocLemmas.fl_valid g fp heap_words /\
+                    AllocLemmas.fl_chain_terminates g fp heap_words /\
+                    FreeListShape.blue_link_fields_valid g /\
+                    wz >= 1 /\
+                    (GC.Spec.Allocator.alloc_spec g fp wz).obj_out <> 0UL /\
+                    (forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) /\ is_blue obj g = false ==>
+                       AllocLemmas.chain_avoids g fp obj heap_words = true))
+          (ensures FreeListShape.blue_link_fields_valid
+                     (GC.Spec.Allocator.alloc_spec g fp wz).heap_out)
   =
     let fuel = heap_words in
     AllocLemmas.alloc_spec_preserves_objects_part1 g fp wz;
-    let chain_avoids_non_blue (obj: obj_addr)
-      : Lemma (requires Seq.mem obj (objects zero_addr g) /\ is_blue obj g = false)
-              (ensures AllocLemmas.chain_avoids g fp obj fuel = true)
-      = reveal_opaque (`%chain_objects_blue) chain_objects_blue
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires chain_avoids_non_blue);
     alloc_search_preserves_blfv g fp 0UL fp wz fuel
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// The free lists
+/// ---------------------------------------------------------------------------
+
+/// The list allocated from, at its head: the entry conditions and the
+/// blue-chain condition, from the state's.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+private let at_list (g: heap) (fp: FLs.fl_state) (j: nat)
+  : Lemma (requires FLs.fls_valid g fp /\ FLs.fls_terminates g fp /\ chain_objects_blue g fp /\
+                    j < SC.n_lists)
+          (ensures (let f = FLs.fls_head fp j in
+                    AllocLemmas.fl_valid g f heap_words /\
+                    AllocLemmas.fl_chain_terminates g f heap_words /\
+                    (forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) /\ is_blue obj g = false ==>
+                       AllocLemmas.chain_avoids g f obj heap_words = true)))
+  = FLs.fls_valid_elim g fp;
+    FLs.fls_terminates_elim g fp;
+    reveal_opaque (`%chain_objects_blue) (chain_objects_blue g fp);
+    let aux (obj: obj_addr)
+      : Lemma (Seq.mem obj (objects zero_addr g) /\ is_blue obj g = false ==>
+               AllocLemmas.chain_avoids g (FLs.fls_head fp j) obj heap_words = true)
+      = FLs.fls_avoids_iff g fp (obj <: U64.t)
+    in
+    FStar.Classical.forall_intro aux
+#pop-options
+
+/// The list allocated from is the single-list allocation's at the request
+/// or, when the remainder moves, at the block's size; every other head is
+/// kept, or becomes the moved block.
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
+let alloc_spec_preserves_fp_pointer_or_zero (g: heap) (fp: FLs.fl_state) (wz: nat) =
+  AK.alloc_lists_struct g fp wz;
+  let j = SAL.alloc_lists_list g fp wz in
+  let f = FLs.fls_head fp j in
+  assert (SAL.req_wz wz == wz);
+  let w = SAL.first_fit_size g f wz heap_words in
+  let rl = SAL.relists j w wz in
+  let wz' : pos = if rl then w else wz in
+  let rS = GC.Spec.Allocator.alloc_spec g f wz' in
+  let r = SAL.alloc_lists_spec g fp wz in
+  at_list g fp j;
+  FreeListShape.fls_pointer_or_zero_iff fp;
+  alloc_spec_preserves_fp_pointer_or_zero_one g f wz';
+  let head (k: nat)
+    : Lemma (k < SC.n_lists ==> FreeListShape.fp_pointer_or_zero (FLs.fls_head r.SAL.fls_out k))
+    = if k < SC.n_lists && k <> j then begin
+        if FLs.fls_head r.SAL.fls_out k = FLs.fls_head fp k then ()
+        else begin
+          assert (rl /\ FLs.fls_head r.SAL.fls_out k == rS.GC.Spec.Allocator.obj_out);
+          let c : obj_addr = rS.GC.Spec.Allocator.obj_out in
+          objects_addresses_gt_start zero_addr g c;
+          GC.Spec.ZeroAddr.zero_addr_ok ();
+          assert (HeapGraph.is_pointer_field rS.GC.Spec.Allocator.obj_out)
+        end
+      end
+  in
+  FStar.Classical.forall_intro head;
+  FreeListShape.fls_pointer_or_zero_iff r.fls_out
+#pop-options
+
+/// A relist links the moved block to the old head of its new list; every
+/// other link is the single-list allocation's at the block's size.
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+let alloc_spec_preserves_blue_link_fields_valid (g: heap) (fp: FLs.fl_state) (wz: nat) =
+  AK.alloc_lists_struct g fp wz;
+  let j = SAL.alloc_lists_list g fp wz in
+  let f = FLs.fls_head fp j in
+  assert (SAL.req_wz wz == wz);
+  let w = SAL.first_fit_size g f wz heap_words in
+  let rl = SAL.relists j w wz in
+  let wz' : pos = if rl then w else wz in
+  let rS = GC.Spec.Allocator.alloc_spec g f wz' in
+  let r = SAL.alloc_lists_spec g fp wz in
+  at_list g fp j;
+  alloc_spec_preserves_blue_link_fields_valid_one g f wz';
+  if rl then begin
+    let c : obj_addr = rS.GC.Spec.Allocator.obj_out in
+    AllocLemmas.alloc_spec_preserves_objects_part1 g f wz';
+    AK.alloc_lists_only_new_is_obj_out_part1 g fp wz;
+    AK.alloc_lists_obj_not_blue_part1 g fp wz;
+    FreeListShape.fls_pointer_or_zero_iff fp;
+    let link (src: obj_addr)
+      : Lemma (requires Seq.mem src (objects zero_addr r.SAL.heap_out) /\
+                        is_blue src r.SAL.heap_out /\
+                        U64.v (wosize_of_object src r.SAL.heap_out) >= 1 /\
+                        U64.v (hd_address src) + 16 <= heap_size)
+              (ensures (let v = read_word r.SAL.heap_out src in
+                        v = 0UL \/ HeapGraph.is_pointer_field v))
+      = if src = c then
+          SC.size_class_lt (w - wz - 1)
+        else begin
+          is_blue_iff src r.SAL.heap_out;
+          is_white_iff src r.SAL.heap_out;
+          assert ((src <: U64.t) <> r.SAL.obj_out);
+          assert (Seq.mem src (objects zero_addr g));
+          // its header and its link are the whole-block allocation's
+          let gS = rS.GC.Spec.Allocator.heap_out in
+          color_of_object_spec src r.SAL.heap_out; color_of_object_spec src gS;
+          wosize_of_object_spec src r.SAL.heap_out; wosize_of_object_spec src gS;
+          is_blue_iff src gS;
+          hd_address_spec src;
+          (if read_word r.SAL.heap_out (src <: hp_addr) <> read_word gS (src <: hp_addr) then begin
+             // the block has the same extent in gS, where src is another object
+             SAL.first_fit_same_block g f 0UL f wz heap_words;
+             wosize_of_object_spec c g;
+             AP.alloc_spec_obj_wosize_exact_part1 g f w;
+             AP.alloc_spec_obj_in_objects_part1 g f w;
+             AK.extents_apart gS src c (U64.v src) (U64.v src)
+           end);
+          FreeListShape.blue_link_fields_valid_elim gS src
+        end
+    in
+    FreeListShape.blue_link_fields_valid_intro r.SAL.heap_out link
+  end
 #pop-options

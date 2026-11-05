@@ -6,6 +6,7 @@ module GC.Gen.HeapInvariant
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -26,26 +27,26 @@ module HeapGraph = GC.Spec.HeapGraph
 module Graph = GC.Spec.Graph
 module FreeListShape = GC.Gen.FreeListShape
 
-let free_list_exact (major: heap) (fp: U64.t) : prop = FL.fl_exact major fp
+let free_list_exact (major: heap) (fp: FLs.fl_state) : prop = FLs.fls_exact major fp
 
-let free_list_exact_iff (major: heap) (fp: U64.t) = ()
+let free_list_exact_iff (major: heap) (fp: FLs.fl_state) = ()
 
 [@@"opaque_to_smt"]
-let major_heap_shape (major: heap) (fp: U64.t) : prop =
+let major_heap_shape (major: heap) (fp: FLs.fl_state) : prop =
   well_formed_heap major /\
-  AllocLemmas.fl_valid major fp heap_words /\
-  AllocLemmas.fl_chain_terminates major fp heap_words /\
+  FLs.fls_valid major fp /\
+  FLs.fls_terminates major fp /\
   // The free list is exactly the blue blocks that can hold a link -- so an
   // allocation fails only when no free block is big enough
   // (GC.Gen.AllocExact.alloc_succeeds_when_a_block_fits).
   free_list_exact major fp /\
-  FreeListShape.fp_pointer_or_zero fp /\
+  FreeListShape.fls_pointer_or_zero fp /\
   FreeListShape.blue_link_fields_valid major /\
   heap_objects_dense major /\
   chain_objects_blue major fp /\
   Seq.length (objects zero_addr major) > 0 /\
-  SweepInv.fp_valid fp major /\
-  Sweep.fp_in_heap fp major /\
+  FreeListShape.fls_fp_valid fp major /\
+  FreeListShape.fls_in_heap fp major /\
   Mark.no_black_objects major /\
   SweepInv.no_gray_objects major /\
   Mark.no_pointer_to_blue major
@@ -66,14 +67,14 @@ let minor_heap_shape (minor: minor_state) : prop =
   minor_guards_complete minor /\
   minor_infix_wf minor
 [@@"opaque_to_smt"]
-let collection_heap_shape (minor: minor_state) (major: heap) (fp: U64.t) : prop =
+let collection_heap_shape (minor: minor_state) (major: heap) (fp: FLs.fl_state) : prop =
   major_heap_shape major fp /\
   minor_heap_shape minor /\
   minor_major_fields_no_blue minor major
-let major_heap_shape_intro (major: heap) (fp: U64.t)
+let major_heap_shape_intro (major: heap) (fp: FLs.fl_state)
   = reveal_opaque (`%major_heap_shape) (major_heap_shape major fp)
 
-let major_heap_shape_elim (major: heap) (fp: U64.t)
+let major_heap_shape_elim (major: heap) (fp: FLs.fl_state)
   = reveal_opaque (`%major_heap_shape) (major_heap_shape major fp)
 
 let minor_heap_shape_elim (minor: minor_state)
@@ -93,11 +94,11 @@ let minor_major_fields_no_blue_elim (minor: minor_state) (major: heap)
   = reveal_opaque (`%minor_major_fields_no_blue)
       (minor_major_fields_no_blue minor major)
 
-let collection_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
+let collection_heap_shape_elim (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   = reveal_opaque (`%collection_heap_shape)
       (collection_heap_shape minor major fp)
 
-let collection_heap_shape_intro (minor: minor_state) (major: heap) (fp: U64.t)
+let collection_heap_shape_intro (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   = reveal_opaque (`%collection_heap_shape)
       (collection_heap_shape minor major fp)
 
@@ -172,7 +173,7 @@ let minor_reset_minor_major_fields_no_blue (minor: minor_state) (major: heap)
   FStar.Classical.forall_intro_2 aux
 
 let collection_heap_shape_after_minor_reset
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   =
   let reset = minor_reset minor in
   minor_reset_heap_shape minor;

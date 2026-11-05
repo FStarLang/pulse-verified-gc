@@ -30,15 +30,16 @@ module HeapModel = GC.Spec.HeapModel
 module HeapGraph = GC.Spec.HeapGraph
 module Graph = GC.Spec.Graph
 module FreeListShape = GC.Gen.FreeListShape
+module FLs = GC.Spec.FreeLists
 
 /// The free list is exact: it holds exactly the blue blocks that can carry a
 /// link (`GC.Spec.FreeList.fl_exact`).  Abstract here so that the many proofs
 /// that unpack `major_heap_shape` without needing the free list do not carry
 /// its quantifiers; `free_list_exact_iff` opens it where it is needed.
-val free_list_exact (major: heap) (fp: U64.t) : prop
+val free_list_exact (major: heap) (fp: FLs.fl_state) : prop
 
-val free_list_exact_iff (major: heap) (fp: U64.t)
-  : Lemma (free_list_exact major fp <==> FL.fl_exact major fp)
+val free_list_exact_iff (major: heap) (fp: FLs.fl_state)
+  : Lemma (free_list_exact major fp <==> FLs.fls_exact major fp)
 
 /// Major-heap shape needed by both minor collection and the following major GC:
 /// object layout/infix well-formedness, free-list validity, color invariants,
@@ -78,7 +79,7 @@ val free_list_exact_iff (major: heap) (fp: U64.t)
 /// such a field is rewritten to the corresponding interior address in the
 /// promoted copy.
 [@@"opaque_to_smt"]
-val major_heap_shape (major: heap) (fp: U64.t) : prop
+val major_heap_shape (major: heap) (fp: FLs.fl_state) : prop
 
 /// Cross-generation safety: any field of an allocated minor object that already
 /// looks like a major-heap pointer must target a live non-blue major object.
@@ -106,37 +107,37 @@ val minor_major_fields_no_blue (minor: minor_state) (major: heap) : prop
 val minor_heap_shape (minor: minor_state) : prop
 /// Non-stack combined heap shape used by minor collection.
 [@@"opaque_to_smt"]
-val collection_heap_shape (minor: minor_state) (major: heap) (fp: U64.t) : prop
-val major_heap_shape_intro (major: heap) (fp: U64.t)
+val collection_heap_shape (minor: minor_state) (major: heap) (fp: FLs.fl_state) : prop
+val major_heap_shape_intro (major: heap) (fp: FLs.fl_state)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    FLs.fls_valid major fp /\
+                    FLs.fls_terminates major fp /\
                     free_list_exact major fp /\
-                    FreeListShape.fp_pointer_or_zero fp /\
+                    FreeListShape.fls_pointer_or_zero fp /\
                     FreeListShape.blue_link_fields_valid major /\
                     heap_objects_dense major /\
                     chain_objects_blue major fp /\
                     Seq.length (objects zero_addr major) > 0 /\
-                    SweepInv.fp_valid fp major /\
-                    Sweep.fp_in_heap fp major /\
+                    FreeListShape.fls_fp_valid fp major /\
+                    FreeListShape.fls_in_heap fp major /\
                     Mark.no_black_objects major /\
                     SweepInv.no_gray_objects major /\
                     Mark.no_pointer_to_blue major)
           (ensures major_heap_shape major fp)
 
-val major_heap_shape_elim (major: heap) (fp: U64.t)
+val major_heap_shape_elim (major: heap) (fp: FLs.fl_state)
   : Lemma (requires major_heap_shape major fp)
           (ensures well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    FLs.fls_valid major fp /\
+                    FLs.fls_terminates major fp /\
                     free_list_exact major fp /\
-                    FreeListShape.fp_pointer_or_zero fp /\
+                    FreeListShape.fls_pointer_or_zero fp /\
                     FreeListShape.blue_link_fields_valid major /\
                     heap_objects_dense major /\
                     chain_objects_blue major fp /\
                    Seq.length (objects zero_addr major) > 0 /\
-                   SweepInv.fp_valid fp major /\
-                   Sweep.fp_in_heap fp major /\
+                   FreeListShape.fls_fp_valid fp major /\
+                   FreeListShape.fls_in_heap fp major /\
                    Mark.no_black_objects major /\
                    SweepInv.no_gray_objects major /\
                    Mark.no_pointer_to_blue major)
@@ -173,13 +174,13 @@ val minor_major_fields_no_blue_elim (minor: minor_state) (major: heap)
                              (objects zero_addr major) /\
                     ~(is_blue ((minor_read_field minor obj j) <: obj_addr) major))
 
-val collection_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
+val collection_heap_shape_elim (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   : Lemma (requires collection_heap_shape minor major fp)
            (ensures major_heap_shape major fp /\
                      minor_heap_shape minor /\
                      minor_major_fields_no_blue minor major)
 
-val collection_heap_shape_intro (minor: minor_state) (major: heap) (fp: U64.t)
+val collection_heap_shape_intro (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   : Lemma (requires major_heap_shape major fp /\
                     minor_heap_shape minor /\
                     minor_major_fields_no_blue minor major)
@@ -194,6 +195,6 @@ val minor_reset_minor_major_fields_no_blue (minor: minor_state) (major: heap)
   : Lemma (ensures minor_major_fields_no_blue (minor_reset minor) major)
 
 val collection_heap_shape_after_minor_reset
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   : Lemma (requires major_heap_shape major fp)
           (ensures collection_heap_shape (minor_reset minor) major fp)

@@ -6,6 +6,7 @@ module GC.Gen.CheneyPreservation.NoBlue
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -29,7 +30,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let cheney_promote_preserves_no_pointer_to_blue_from_shape
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   =
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;

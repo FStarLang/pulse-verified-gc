@@ -17,18 +17,19 @@ open GC.Gen.Promote
 open GC.Gen.Cheney
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module FLs = GC.Spec.FreeLists
 
 /// If Cheney forwards a normal minor object `x`, every copied body field within
 /// the original minor wosize is the corresponding minor-heap field.  The lemma
 /// deliberately excludes infix forwarding targets: those are interior pointers
 /// into an already-promoted parent rather than standalone copied objects.
 val cheney_promote_fwd_target_fields_match
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (x: U64.t) (j: nat)
   : Lemma
     (requires well_formed_heap major /\
-              AllocLemmas.fl_valid major fp heap_words /\
-              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              FLs.fls_valid major fp /\
+              FLs.fls_terminates major fp /\
               chain_objects_blue major fp /\
               minor_wf minor /\
               minor_infix_wf minor /\
@@ -50,12 +51,12 @@ val cheney_promote_fwd_target_fields_match
 /// promoted heap is exactly the scannability of its nursery source.  Infix
 /// forwarding targets are excluded by the `is_infix = false` premise.
 val cheney_promote_fwd_target_no_scan_iff_minor_tag
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (x: U64.t)
   : Lemma
     (requires well_formed_heap major /\
-              AllocLemmas.fl_valid major fp heap_words /\
-              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              FLs.fls_valid major fp /\
+              FLs.fls_terminates major fp /\
               chain_objects_blue major fp /\
               minor_wf minor /\
               minor_infix_wf minor /\

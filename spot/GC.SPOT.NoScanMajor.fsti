@@ -28,6 +28,7 @@
 module GC.SPOT.NoScanMajor
 
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 module Seq = FStar.Seq
 
 open GC.Spec.Base
@@ -57,8 +58,14 @@ val spot_free_obj (r: unit{spot_ns_room}) : obj_addr
 /// the free block's body and therefore not an enumerated object.
 val spot_ns_raw (r: unit{spot_ns_room}) : v:U64.t{SpecFields.is_pointer_field v}
 
+/// The free block's wosize.
+val spot_free_wosize (r: unit{spot_ns_room}) : n:nat{n < pow2 54}
+
 val spot_ns_heap (r: unit{spot_ns_room}) : heap
 val spot_ns_fp (r: unit{spot_ns_room}) : U64.t
+
+/// The free-list state: the one free block, on the list of its class.
+let spot_ns_fls (r: unit{spot_ns_room}) : FLs.fl_state = FLs.fls_one (GC.Spec.SizeClass.size_class (spot_free_wosize r)) (spot_ns_fp r)
 
 /// S's body word is pointer-shaped.
 val spot_ns_raw_is_pointer_shaped (r: unit{spot_ns_room})
@@ -91,4 +98,4 @@ val spot_ns_violates_no_scan_invariant (r: unit{spot_ns_room})
 
 /// The positive half: it *does* satisfy `gen_gc`'s major-heap precondition.
 val spot_ns_major_heap_shape (r: unit{spot_ns_room})
-  : Lemma (ensures GenInv.major_heap_shape (spot_ns_heap r) (spot_ns_fp r))
+  : Lemma (ensures GenInv.major_heap_shape (spot_ns_heap r) (spot_ns_fls r))

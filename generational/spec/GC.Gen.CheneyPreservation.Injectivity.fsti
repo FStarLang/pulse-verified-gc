@@ -17,6 +17,7 @@ open GC.Gen.Promote
 open GC.Gen.Cheney
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module FLs = GC.Spec.FreeLists
 
 let fwd_normal_injective (fwd: forwarding_map) (g: heap) : prop =
   forall (x y: U64.t). fwd x <> 0UL /\ fwd y <> 0UL /\
@@ -49,10 +50,10 @@ let fwd_normal_targets_disjoint_from_old_nonblue
     fwd x <> y
 
 val cheney_promote_fwd_normal_injective
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    FLs.fls_valid major fp /\
+                    FLs.fls_terminates major fp /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor)
@@ -60,10 +61,10 @@ val cheney_promote_fwd_normal_injective
                                          (cheney_promote minor major fp roots).major_final)
 
 val cheney_promote_fwd_targets_not_blue
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    FLs.fls_valid major fp /\
+                    FLs.fls_terminates major fp /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor)
@@ -71,10 +72,10 @@ val cheney_promote_fwd_targets_not_blue
                                         (cheney_promote minor major fp roots).major_final)
 
 val cheney_promote_fwd_noninfix_sources_in_minor_objects
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    FLs.fls_valid major fp /\
+                    FLs.fls_terminates major fp /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor)
@@ -84,10 +85,10 @@ val cheney_promote_fwd_noninfix_sources_in_minor_objects
                      (cheney_promote minor major fp roots).major_final)
 
 val cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    FLs.fls_valid major fp /\
+                    FLs.fls_terminates major fp /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor)

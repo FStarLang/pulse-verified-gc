@@ -6,6 +6,7 @@ module GC.Gen.CheneyCorrectness
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 open GC.Spec.Fields
@@ -22,7 +23,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 /// ---------------------------------------------------------------------------
 
 let cheney_collect_preserves_objects
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   =
   cheney_promote_preserves_objects minor major fp roots;
   let prom = cheney_promote minor major fp roots in
@@ -35,7 +36,7 @@ let cheney_collect_preserves_objects
 /// ---------------------------------------------------------------------------
 
 let cheney_collect_preserves_wfh_part1
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   =
   cheney_promote_preserves_wfh_part1 minor major fp roots;
   let prom = cheney_promote minor major fp roots in
@@ -46,7 +47,7 @@ let cheney_collect_preserves_wfh_part1
 /// ---------------------------------------------------------------------------
 
 let cheney_collect_resets_minor
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   = ()
 
 /// ---------------------------------------------------------------------------
@@ -54,7 +55,7 @@ let cheney_collect_resets_minor
 /// ---------------------------------------------------------------------------
 
 let cheney_collect_rewrites_roots
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   = ()
 
 /// ---------------------------------------------------------------------------
@@ -62,7 +63,7 @@ let cheney_collect_rewrites_roots
 /// ---------------------------------------------------------------------------
 
 let cheney_gc_correct
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   =
   cheney_collect_preserves_objects minor major fp roots;
   cheney_collect_preserves_wfh_part1 minor major fp roots;
@@ -87,7 +88,7 @@ private let disj_of_imp (w: nat) (b: bool) : Lemma (requires w > 0 ==> b) (ensur
 #pop-options
 
 let cheney_promotes_all_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   =
   BFS.cheney_promotes_all_reachable minor major fp roots;
   // BFS ensures: reachable /\ wosize > 0 ==> fwd <> 0

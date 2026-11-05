@@ -8,10 +8,12 @@
 ///   - live:   everything unreachable is reclaimed and reusable (`gc_live`).
 ///
 /// Every clause is stated of `s2` itself, the heap the fused sweep+coalesce
-/// pass leaves.  The collector's postcondition relates `s2` to the spec heap
-/// `coalesce (sweep h_mark fp)` only up to `heaps_agree_mod_free` (equal
-/// headers, live fields and free links; free-block bodies not compared), so
-/// the coalescing theorems are carried across that relation.
+/// pass leaves, and of the free lists it builds, one per size class.  The
+/// collector's postcondition relates `s2` to the spec heap `coalesce (sweep
+/// h_mark 0UL)` only up to `heaps_agree_mod_free_links` (equal headers and
+/// live fields; free blocks' bodies and link words not compared), so the
+/// coalescing theorems are carried across that relation, and its lists are
+/// the coalescer's one list split by class (`GC.Spec.CollectLists`).
 ///
 /// Fully proved, no admits.  See docs/gc-correct.md for each clause in plain
 /// words, the lemmas it rests on, and the vacuity checks at the end of this
@@ -46,6 +48,10 @@ module HeapGraph = GC.Spec.HeapGraph
 module Graph = GC.Spec.Graph
 module Mark = GC.Spec.Mark
 module IndDesc = FStar.IndefiniteDescription
+module SC = GC.Spec.SizeClass
+module FLs = GC.Spec.FreeLists
+module CL = GC.Spec.CollectLists
+module PL = GC.Spec.Partition.Lists
 
 /// ---------------------------------------------------------------------------
 /// The collector's postcondition
@@ -55,69 +61,53 @@ module IndDesc = FStar.IndefiniteDescription
 /// `collect_correct` below checks the match: it calls the real function and
 /// discharges `gc_correct`'s hypothesis from what that call returns.
 let collect_post
-  (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) : prop =
+  (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state) : prop =
   Corr.gc_postcondition s2 /\
   Corr.full_gc_correctness h_init s2 roots /\
   Corr.major_gc_live_subgraph_isomorphism h_init s2 roots /\
   Corr.major_gc_unreachable_final_blue h_init s2 roots /\
-  Corr.gc_coalesce_source h_init s2 roots fp final_fp
+  CL.gc_coalesce_source_lists h_init s2 roots fls
 
 /// ---------------------------------------------------------------------------
 /// The marked heap behind `s2`
 /// ---------------------------------------------------------------------------
 
-/// `gc_coalesce_source`'s body, at a given witness.
+/// `gc_coalesce_source_lists`'s body, at a given witness.
 let source_at
-  (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) (h_mark: heap) : prop =
-  Corr.mark_post h_init h_mark roots fp /\
-  (let r = SpecCoalesce.coalesce (fst (SpecSweep.sweep h_mark fp)) in
-   HA.heaps_agree_mod_free s2 (fst r) /\ final_fp == snd r)
+  (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state) (h_mark: heap) : prop =
+  CL.source_at h_init s2 roots fls h_mark
 
-/// Name the witness of `gc_coalesce_source`, so each clause below can be
+/// Name the witness of `gc_coalesce_source_lists`, so each clause below can be
 /// proved about one fixed marked heap.
 let source_mark
-  (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t)
+  (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state)
   : Ghost heap
-    (requires Corr.gc_coalesce_source h_init s2 roots fp final_fp)
-    (ensures fun h_mark -> source_at h_init s2 roots fp final_fp h_mark)
+    (requires CL.gc_coalesce_source_lists h_init s2 roots fls)
+    (ensures fun h_mark -> source_at h_init s2 roots fls h_mark)
   = IndDesc.indefinite_description_ghost heap
-      (fun h_mark -> source_at h_init s2 roots fp final_fp h_mark)
-
-/// The free list from `final_fp` is exactly the free blocks of `s2` that have
-/// a field: `coalesce_exact` on the swept heap, carried to `s2`.
-let s2_fl_exact
-  (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) (h_mark: heap)
-  : Lemma
-    (requires source_at h_init s2 roots fp final_fp h_mark)
-    (ensures FL.fl_exact s2 final_fp)
-  = let hs = fst (SpecSweep.sweep h_mark fp) in
-    Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    Complete.coalesce_exact hs;
-    HA.agree_fl_exact s2 (fst (SpecCoalesce.coalesce hs)) final_fp
+      (fun h_mark -> source_at h_init s2 roots fls h_mark)
 
 /// ---------------------------------------------------------------------------
 /// 1. Safety: nothing reachable is lost
 /// ---------------------------------------------------------------------------
 
-/// The last conjunct is `fl_sound`: every block on the free list from
-/// `final_fp` is a free block of `s2`, so the allocator never hands out a
-/// live object.
-let gc_safe (h_init s2: heap) (roots: seq obj_addr) (final_fp: U64.t) : prop =
+/// The last conjunct is `fls_sound`: every block on every free list is a free
+/// block of `s2`, so the allocator never hands out a live object.
+let gc_safe (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state) : prop =
   well_formed_heap s2 /\
   Corr.full_gc_correctness h_init s2 roots /\
   Corr.major_gc_live_subgraph_isomorphism h_init s2 roots /\
-  FL.fl_sound s2 final_fp
+  FLs.fls_sound s2 fls
 
 val gc_safe_of_post
-  (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t)
+  (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state)
   : Lemma
-    (requires collect_post h_init s2 roots fp final_fp)
-    (ensures gc_safe h_init s2 roots final_fp)
+    (requires collect_post h_init s2 roots fls)
+    (ensures gc_safe h_init s2 roots fls)
 
-let gc_safe_of_post h_init s2 roots fp final_fp =
+let gc_safe_of_post h_init s2 roots fls =
   Corr.gc_postcondition_elim s2;
-  let h_mark = source_mark h_init s2 roots fp final_fp in
-  s2_fl_exact h_init s2 roots fp final_fp h_mark
+  CL.gc_coalesce_source_lists_facts h_init s2 roots fls
 
 /// ---------------------------------------------------------------------------
 /// 2. Liveness: everything unreachable is reclaimed and reusable
@@ -133,10 +123,10 @@ let unreachable_reclaimed (h_init s2: heap) (roots: seq obj_addr) : prop =
     CC.blue_covered s2 p
 
 /// (b) Every free block of `s2` with at least one field is on the free list
-///     from `final_fp`.  A wosize-0 block (a fragment) cannot hold a link and
-///     is excepted.  This is `GC.Spec.FreeList.fl_complete`.
-let free_blocks_listed (s2: heap) (final_fp: U64.t) : prop =
-  FL.fl_complete s2 final_fp
+///     of its size class.  A wosize-0 block (a fragment) cannot hold a link
+///     and is excepted.  This is `GC.Spec.FreeLists.fls_complete`.
+let free_blocks_listed (s2: heap) (fls: FLs.fl_state) : prop =
+  FLs.fls_complete s2 fls
 
 /// What `GC.Spec.Coalesce.Correct.coalesce_correct` says of coalescing `hs`
 /// into `g'`, verbatim.
@@ -151,35 +141,38 @@ let coalesce_correct_post (hs g': heap) : prop =
      Seq.mem x (objects zero_addr g') /\ is_white x g' /\
      wosize_of_object x g' == wosize_of_object x hs)
 
-/// (c1) `s2` is, modulo free-block bodies, the coalescing of the swept heap
-///      of a correct mark, and what `coalesce_correct` says of that coalescing
-///      holds with `s2` as its output: no free space or coverage lost.
+/// (c1) `s2` is, modulo free blocks' bodies and link words, the coalescing of
+///      the swept heap of a correct mark; its lists are the coalescer's one
+///      list split by class, in the same order; and what `coalesce_correct`
+///      says of that coalescing holds with `s2` as its output: no free space
+///      or coverage lost.  The sweep starts from an empty list: the collector
+///      rebuilds every list.
 let coalescing_lossless
-  (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) : prop =
+  (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state) : prop =
   exists (h_mark: heap).
-    Corr.mark_post h_init h_mark roots fp /\
-    (let hs = fst (SpecSweep.sweep h_mark fp) in
+    Corr.mark_post h_init h_mark roots 0UL /\
+    (let hs = fst (SpecSweep.sweep h_mark 0UL) in
      let r = SpecCoalesce.coalesce hs in
-     HA.heaps_agree_mod_free s2 (fst r) /\
-     final_fp == snd r /\
+     HA.heaps_agree_mod_free_links s2 (fst r) /\
+     CL.fls_of_chain s2 fls (fst r) (snd r) /\
      coalesce_correct_post hs s2)
 
-/// (c2) `s2` splits into live objects, the free list from `final_fp` and
-///      fragments, with no fourth class: `heap_partition_strong` at `s2`, the
-///      statement of `fused_partition`.
-let heap_partitioned (s2: heap) (final_fp: U64.t) : prop =
+/// (c2) `s2` splits into live objects, the blocks on the free lists and
+///      fragments, with no fourth class.  A block on two lists would be counted
+///      twice, so this also says the lists are disjoint.
+let heap_partitioned (s2: heap) (fls: FLs.fl_state) : prop =
   let objs = objects zero_addr s2 in
   U64.v zero_addr
   + (Part.white_whsize s2 objs
-     + Part.onchain_whsize s2 final_fp objs
+     + PL.onchain_whsize_lists s2 fls objs 0
      + Part.frag_whsize s2 objs) * U64.v mword
   == WE.walk_end s2 zero_addr
 
-let gc_live (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) : prop =
+let gc_live (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state) : prop =
   unreachable_reclaimed h_init s2 roots /\
-  free_blocks_listed s2 final_fp /\
-  coalescing_lossless h_init s2 roots fp final_fp /\
-  heap_partitioned s2 final_fp
+  free_blocks_listed s2 fls /\
+  coalescing_lossless h_init s2 roots fls /\
+  heap_partitioned s2 fls
 
 /// ---------------------------------------------------------------------------
 /// Sweep keeps every object's size
@@ -241,30 +234,30 @@ let sweep_preserves_wosize_all
 /// ---------------------------------------------------------------------------
 
 /// Every conjunct of `coalesce_correct_post` reads only the object walk and
-/// each object's header word, and `heaps_agree_mod_free` keeps both.
+/// each object's header word, and `heaps_agree_mod_free_links` keeps both.
 let agree_headers (s2 g': heap)
   : Lemma
-    (requires HA.heaps_agree_mod_free s2 g')
+    (requires HA.heaps_agree_mod_free_links s2 g')
     (ensures objects zero_addr s2 == objects zero_addr g' /\
              (forall (x: obj_addr). Seq.mem x (objects zero_addr g') ==>
                 read_word s2 (hd_address x) == read_word g' (hd_address x)))
-  = HA.agree_objects s2 g';
+  = HA.agree_objects_links s2 g';
     introduce forall (x: obj_addr).
       Seq.mem x (objects zero_addr g') ==>
       read_word s2 (hd_address x) == read_word g' (hd_address x)
     with introduce _ ==> _
-    with HA.agree_block s2 g' x
+    with HA.agree_block_links s2 g' x
 
 let transfer_free_space (s2 g': heap)
   : Lemma
-    (requires HA.heaps_agree_mod_free s2 g')
+    (requires HA.heaps_agree_mod_free_links s2 g')
     (ensures CC.total_free_space s2 == CC.total_free_space g')
   = agree_headers s2 g';
     CC.free_space_agree s2 g' (objects zero_addr g')
 
 let transfer_blue_covered (s2 g': heap) (p: nat)
   : Lemma
-    (requires HA.heaps_agree_mod_free s2 g')
+    (requires HA.heaps_agree_mod_free_links s2 g')
     (ensures CC.blue_covered s2 p <==> CC.blue_covered g' p)
   = agree_headers s2 g';
     let aux (x: obj_addr)
@@ -277,7 +270,7 @@ let transfer_blue_covered (s2 g': heap) (p: nat)
 
 let transfer_no_adjacent_blue (s2 g': heap)
   : Lemma
-    (requires HA.heaps_agree_mod_free s2 g' /\
+    (requires HA.heaps_agree_mod_free_links s2 g' /\
               (forall (x y: obj_addr).
                  Seq.mem x (objects zero_addr g') /\ Seq.mem y (objects zero_addr g') /\
                  is_blue x g' /\ is_blue y g' /\ CC.adjacent g' x y ==> False))
@@ -293,7 +286,7 @@ let transfer_no_adjacent_blue (s2 g': heap)
 
 let transfer_white (hs s2 g': heap)
   : Lemma
-    (requires HA.heaps_agree_mod_free s2 g' /\
+    (requires HA.heaps_agree_mod_free_links s2 g' /\
               (forall (x: obj_addr).
                  Seq.mem x (objects zero_addr hs) /\ is_white x hs ==>
                  Seq.mem x (objects zero_addr g') /\ is_white x g' /\
@@ -307,11 +300,11 @@ let transfer_white (hs s2 g': heap)
       Seq.mem x (objects zero_addr s2) /\ is_white x s2 /\
       wosize_of_object x s2 == wosize_of_object x hs
     with introduce _ ==> _
-    with HA.agree_block s2 g' x
+    with HA.agree_block_links s2 g' x
 
 let coalesce_correct_transfer (hs s2 g': heap)
   : Lemma
-    (requires HA.heaps_agree_mod_free s2 g' /\ coalesce_correct_post hs g')
+    (requires HA.heaps_agree_mod_free_links s2 g' /\ coalesce_correct_post hs g')
     (ensures coalesce_correct_post hs s2)
   = transfer_free_space s2 g';
     introduce forall (p: nat). p < heap_size ==>
@@ -326,38 +319,61 @@ let coalesce_correct_transfer (hs s2 g': heap)
 /// ---------------------------------------------------------------------------
 
 let live_b
-  (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) (h_mark: heap)
+  (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state)
   : Lemma
-    (requires source_at h_init s2 roots fp final_fp h_mark)
-    (ensures free_blocks_listed s2 final_fp)
-  = s2_fl_exact h_init s2 roots fp final_fp h_mark
+    (requires CL.gc_coalesce_source_lists h_init s2 roots fls)
+    (ensures free_blocks_listed s2 fls)
+  = CL.gc_coalesce_source_lists_facts h_init s2 roots fls
 
 let live_c2
-  (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) (h_mark: heap)
+  (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state)
   : Lemma
-    (requires source_at h_init s2 roots fp final_fp h_mark /\ Corr.gc_postcondition s2)
-    (ensures heap_partitioned s2 final_fp)
+    (requires CL.gc_coalesce_source_lists h_init s2 roots fls /\ Corr.gc_postcondition s2)
+    (ensures heap_partitioned s2 fls)
   = Corr.gc_postcondition_elim s2;
-    s2_fl_exact h_init s2 roots fp final_fp h_mark;
-    Part.heap_partition_strong s2 final_fp
+    CL.gc_coalesce_source_lists_facts h_init s2 roots fls;
+    let objs = objects zero_addr s2 in
+    let own (x: obj_addr)
+      : Lemma (Seq.mem x objs ==> PL.on_own_list s2 fls x)
+      = if Seq.mem x objs && Part.is_cellish s2 x then begin
+          let k = SC.size_class (U64.v (wosize_of_object x s2)) in
+          SC.size_class_lt (U64.v (wosize_of_object x s2));
+          assert (FL.reachable_on_fl s2 (FLs.fls_head fls k) (x <: U64.t));
+          let one (i: nat{i < SC.n_lists})
+            : Lemma (Part.on_chain s2 (FLs.fls_head fls i) x <==> k == i)
+            = if i <> k && FL.reachable_on_fl s2 (FLs.fls_head fls i) (x <: U64.t) then begin
+                // x would be on a list not of its class
+                FLs.fls_avoids_iff s2 fls (x <: U64.t);
+                FLs.fls_valid_elim s2 fls;
+                FLs.fls_terminates_elim s2 fls;
+                CL.reachable_iff_met s2 (FLs.fls_head fls i) (x <: U64.t);
+                assert (FLs.chain_class s2 (FLs.fls_head fls i) i)
+              end
+          in
+          FStar.Classical.forall_intro one
+        end
+    in
+    FStar.Classical.forall_intro own;
+    PL.onchain_lists_cell s2 fls objs;
+    Part.heap_partition_swept s2
 
 let live_c1
-  (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) (h_mark: heap)
+  (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state) (h_mark: heap)
   : Lemma
-    (requires source_at h_init s2 roots fp final_fp h_mark)
-    (ensures coalescing_lossless h_init s2 roots fp final_fp)
-  = let hs = fst (SpecSweep.sweep h_mark fp) in
+    (requires source_at h_init s2 roots fls h_mark)
+    (ensures coalescing_lossless h_init s2 roots fls)
+  = let hs = fst (SpecSweep.sweep h_mark 0UL) in
     let r = SpecCoalesce.coalesce hs in
-    Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    Corr.coalesce_precondition_bridge_gen h_init h_mark roots fp;
+    Corr.sweep_post_sweep_strong_gen h_init h_mark roots 0UL;
+    Corr.coalesce_precondition_bridge_gen h_init h_mark roots 0UL;
     CC.coalesce_correct hs;
     coalesce_correct_transfer hs s2 (fst r);
     introduce exists (h: heap).
-      Corr.mark_post h_init h roots fp /\
-      (let hs = fst (SpecSweep.sweep h fp) in
+      Corr.mark_post h_init h roots 0UL /\
+      (let hs = fst (SpecSweep.sweep h 0UL) in
        let r = SpecCoalesce.coalesce hs in
-       HA.heaps_agree_mod_free s2 (fst r) /\
-       final_fp == snd r /\
+       HA.heaps_agree_mod_free_links s2 (fst r) /\
+       CL.fls_of_chain s2 fls (fst r) (snd r) /\
        coalesce_correct_post hs s2)
     with h_mark and ()
 
@@ -399,16 +415,17 @@ let extent_in_heap (g: heap) (x: obj_addr) (p: nat)
 /// coverage (`coalesce_correct` 3a), and agreement carries it to `s2`.
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 let live_a_word
-  (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) (h_mark: heap)
+  (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state) (h_mark: heap)
   (x: obj_addr) (p: nat)
   : Lemma
-    (requires source_at h_init s2 roots fp final_fp h_mark /\
+    (requires source_at h_init s2 roots fls h_mark /\
               graph_pre h_init roots /\
               Seq.mem x (objects zero_addr h_init) /\
               ~(Corr.heap_reachable h_init roots x) /\
               CC.in_extent h_init x p)
     (ensures CC.blue_covered s2 p)
-  = let hs = fst (SpecSweep.sweep h_mark fp) in
+  = let fp = 0UL in
+    let hs = fst (SpecSweep.sweep h_mark fp) in
     let g' = fst (SpecCoalesce.coalesce hs) in
     Corr.mark_post_elim_wfh h_init h_mark roots fp;
     Corr.mark_post_elim_no_grey h_init h_mark roots fp;
@@ -431,11 +448,11 @@ let live_a_word
 #pop-options
 
 let live_a
-  (h_init s2: heap) (st roots: seq obj_addr) (fp final_fp: U64.t) (cap: nat) (h_mark: heap)
+  (h_init s2: heap) (st roots: seq obj_addr) (fls: FLs.fl_state) (cap: nat) (h_mark: heap)
   : Lemma
-    (requires Impl.gc_precondition_with_roots h_init st roots fp cap /\
-              collect_post h_init s2 roots fp final_fp /\
-              source_at h_init s2 roots fp final_fp h_mark)
+    (requires Impl.gc_precondition_with_roots h_init st roots cap /\
+              collect_post h_init s2 roots fls /\
+              source_at h_init s2 roots fls h_mark)
     (ensures unreachable_reclaimed h_init s2 roots)
   = introduce forall (x: obj_addr) (p: nat).
       Seq.mem x (objects zero_addr h_init) /\
@@ -443,7 +460,7 @@ let live_a
       CC.in_extent h_init x p ==>
       CC.blue_covered s2 p
     with introduce _ ==> _
-    with live_a_word h_init s2 roots fp final_fp h_mark x p
+    with live_a_word h_init s2 roots fls h_mark x p
 
 /// ---------------------------------------------------------------------------
 /// 3. The top-level theorem
@@ -453,37 +470,40 @@ let live_a
 /// (a) speaks of reachability in the *initial* heap, and relating that to the
 /// mark bits takes the graph well-formedness facts the precondition carries.
 val gc_correct
-  (h_init s2: heap) (st roots: seq obj_addr) (fp final_fp: U64.t) (cap: nat)
+  (h_init s2: heap) (st roots: seq obj_addr) (fls: FLs.fl_state) (cap: nat)
   : Lemma
-    (requires Impl.gc_precondition_with_roots h_init st roots fp cap /\
-              collect_post h_init s2 roots fp final_fp)
-    (ensures gc_safe h_init s2 roots final_fp /\
-             gc_live h_init s2 roots fp final_fp)
+    (requires Impl.gc_precondition_with_roots h_init st roots cap /\
+              collect_post h_init s2 roots fls)
+    (ensures gc_safe h_init s2 roots fls /\
+             gc_live h_init s2 roots fls)
 
-let gc_correct h_init s2 st roots fp final_fp cap =
-  gc_safe_of_post h_init s2 roots fp final_fp;
-  let h_mark = source_mark h_init s2 roots fp final_fp in
-  live_a h_init s2 st roots fp final_fp cap h_mark;
-  live_b h_init s2 roots fp final_fp h_mark;
-  live_c1 h_init s2 roots fp final_fp h_mark;
-  live_c2 h_init s2 roots fp final_fp h_mark
+let gc_correct h_init s2 st roots fls cap =
+  gc_safe_of_post h_init s2 roots fls;
+  let h_mark = source_mark h_init s2 roots fls in
+  live_a h_init s2 st roots fls cap h_mark;
+  live_b h_init s2 roots fls;
+  live_c1 h_init s2 roots fls h_mark;
+  live_c2 h_init s2 roots fls
 
 /// `gc_correct` at the collector itself: calls `collect_with_roots` and
 /// returns its result.  Its body checks that `collect_post` is exactly what
 /// `collect_with_roots` ensures.
 fn collect_correct
     (heap: IH.heap_t) (st: IS.gray_stack)
-    (roots: Ghost.erased (Seq.seq obj_addr)) (fp: U64.t)
-  requires IH.is_heap heap 's ** IS.is_gray_stack st 'st **
-           pure (Impl.gc_precondition_with_roots 's 'st roots fp (IS.stack_capacity st))
-  returns final_fp: U64.t
-  ensures exists* s2 st2. IH.is_heap heap s2 ** IS.is_gray_stack st st2 **
-          pure (gc_safe 's s2 roots final_fp /\ gc_live 's s2 roots fp final_fp)
+    (roots: Ghost.erased (Seq.seq obj_addr)) (heads: array U64.t)
+  requires IH.is_heap heap 's ** IS.is_gray_stack st 'st ** pts_to heads 'fls **
+           pure (Impl.gc_precondition_with_roots 's 'st roots (IS.stack_capacity st) /\
+                 Seq.length 'fls == SC.n_lists)
+  ensures exists* s2 st2 fls2. IH.is_heap heap s2 ** IS.is_gray_stack st st2 **
+          pts_to heads fls2 **
+          pure (gc_safe 's s2 roots fls2 /\ gc_live 's s2 roots fls2)
 {
-  let final_fp = Impl.collect_with_roots heap st roots fp;
-  with s2 st2. assert (IH.is_heap heap s2 ** IS.is_gray_stack st st2);
-  gc_correct 's s2 'st roots fp final_fp (IS.stack_capacity st);
-  final_fp
+  Impl.collect_with_roots heap st roots heads;
+  with s2 st2 fls2. assert (IH.is_heap heap s2 ** IS.is_gray_stack st st2 ** pts_to heads fls2);
+  assert (pure (collect_post 's s2 roots fls2));
+  gc_correct 's s2 'st roots fls2 (IS.stack_capacity st);
+  assert (pure (gc_safe 's s2 roots fls2));
+  assert (pure (gc_live 's s2 roots fls2))
 }
 
 /// `gc_correct` at `GC.Impl.collect`, the entry point the generational
@@ -492,17 +512,20 @@ fn collect_correct
 /// `gc_precondition_with_roots 's 'st 'st` and its postcondition is
 /// `collect_post` at roots `'st`: `gc_correct` applies unchanged.
 fn collect_stack_correct
-    (heap: IH.heap_t) (st: IS.gray_stack) (fp: U64.t)
-  requires IH.is_heap heap 's ** IS.is_gray_stack st 'st **
-           pure (Impl.gc_precondition 's 'st fp (IS.stack_capacity st))
-  returns final_fp: U64.t
-  ensures exists* s2 st2. IH.is_heap heap s2 ** IS.is_gray_stack st st2 **
-          pure (gc_safe 's s2 'st final_fp /\ gc_live 's s2 'st fp final_fp)
+    (heap: IH.heap_t) (st: IS.gray_stack) (heads: array U64.t)
+  requires IH.is_heap heap 's ** IS.is_gray_stack st 'st ** pts_to heads 'fls **
+           pure (Impl.gc_precondition 's 'st (IS.stack_capacity st) /\
+                 Seq.length 'fls == SC.n_lists)
+  ensures exists* s2 st2 fls2. IH.is_heap heap s2 ** IS.is_gray_stack st st2 **
+          pts_to heads fls2 **
+          pure (gc_safe 's s2 'st fls2 /\ gc_live 's s2 'st fls2)
 {
-  let final_fp = Impl.collect heap st fp;
-  with s2 st2. assert (IH.is_heap heap s2 ** IS.is_gray_stack st st2);
-  gc_correct 's s2 'st 'st fp final_fp (IS.stack_capacity st);
-  final_fp
+  Impl.collect heap st heads;
+  with s2 st2 fls2. assert (IH.is_heap heap s2 ** IS.is_gray_stack st st2 ** pts_to heads fls2);
+  assert (pure (collect_post 's s2 'st fls2));
+  gc_correct 's s2 'st 'st fls2 (IS.stack_capacity st);
+  assert (pure (gc_safe 's s2 'st fls2));
+  assert (pure (gc_live 's s2 'st fls2))
 }
 
 /// ---------------------------------------------------------------------------
@@ -518,10 +541,10 @@ fn collect_stack_correct
 #push-options "--z3rlimit 5 --fuel 1 --ifuel 1"
 [@@expect_failure [19]]
 let gc_correct_hyps_not_false
-  (h_init s2: heap) (st roots: seq obj_addr) (fp final_fp: U64.t) (cap: nat)
+  (h_init s2: heap) (st roots: seq obj_addr) (fls: FLs.fl_state) (cap: nat)
   : Lemma
-    (requires Impl.gc_precondition_with_roots h_init st roots fp cap /\
-              collect_post h_init s2 roots fp final_fp)
+    (requires Impl.gc_precondition_with_roots h_init st roots cap /\
+              collect_post h_init s2 roots fls)
     (ensures False)
   = ()
 
@@ -529,10 +552,10 @@ let gc_correct_hyps_not_false
 /// add nothing to `gc_safe`.
 [@@expect_failure [19]]
 let gc_live_not_from_safe
-  (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t)
+  (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state)
   : Lemma
-    (requires gc_safe h_init s2 roots final_fp)
-    (ensures gc_live h_init s2 roots fp final_fp)
+    (requires gc_safe h_init s2 roots fls)
+    (ensures gc_live h_init s2 roots fls)
   = ()
 #pop-options
 

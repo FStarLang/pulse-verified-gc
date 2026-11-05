@@ -6,6 +6,8 @@ module GC.Gen.CheneyPreservation.Fields
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
+module SAL = GC.Spec.Allocator.Lists
 module Classical = FStar.Classical
 
 open GC.Spec.Base
@@ -133,7 +135,7 @@ let fwd_target_fields_match_state_elim (minor: minor_state) (cs: cheney_state)
   assert (fwd_target_field_match minor cs x j field_addr)
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-let fwd_target_fields_match_initial (minor: minor_state) (major: heap) (fp: U64.t)
+let fwd_target_fields_match_initial (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   : Lemma
     (ensures fwd_target_fields_match_state minor
       { cs_major = major; cs_fp = fp;
@@ -184,8 +186,8 @@ let cheney_forward_normal_preserves_fwd_target_fields_match_state
       (requires
         fwd_target_fields_match_state minor cs /\
         well_formed_heap_part1 cs.cs_major /\
-        AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-        AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+        FLs.fls_valid cs.cs_major cs.cs_fp /\
+        FLs.fls_terminates cs.cs_major cs.cs_fp /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
         minor_wf minor /\
         minor_infix_wf minor)
@@ -288,8 +290,8 @@ let cheney_forward_one_preserves_fwd_target_fields_match_state
       (requires
         fwd_target_fields_match_state minor cs /\
         well_formed_heap_part1 cs.cs_major /\
-        AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-        AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+        FLs.fls_valid cs.cs_major cs.cs_fp /\
+        FLs.fls_terminates cs.cs_major cs.cs_fp /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
         minor_wf minor /\
         minor_infix_wf minor)
@@ -363,8 +365,8 @@ let rec cheney_forward_fields_preserves_fwd_target_fields_match_state
       (requires
         fwd_target_fields_match_state minor cs /\
         well_formed_heap_part1 cs.cs_major /\
-        AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-        AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+        FLs.fls_valid cs.cs_major cs.cs_fp /\
+        FLs.fls_terminates cs.cs_major cs.cs_fp /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
         minor_wf minor /\
         minor_infix_wf minor)
@@ -393,8 +395,8 @@ let rec cheney_forward_roots_preserves_fwd_target_fields_match_state
       (requires
         fwd_target_fields_match_state minor cs /\
         well_formed_heap_part1 cs.cs_major /\
-        AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-        AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+        FLs.fls_valid cs.cs_major cs.cs_fp /\
+        FLs.fls_terminates cs.cs_major cs.cs_fp /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
         minor_wf minor /\
         minor_infix_wf minor)
@@ -422,8 +424,8 @@ let rec cheney_scan_preserves_fwd_target_fields_match_state
       (requires
         fwd_target_fields_match_state minor cs /\
         well_formed_heap_part1 cs.cs_major /\
-        AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-        AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+        FLs.fls_valid cs.cs_major cs.cs_fp /\
+        FLs.fls_terminates cs.cs_major cs.cs_fp /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
         minor_wf minor /\
         minor_infix_wf minor)
@@ -454,7 +456,7 @@ let rec cheney_scan_preserves_fwd_target_fields_match_state
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let cheney_promote_fwd_target_fields_match
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (x: U64.t) (j: nat)
   =
   wf_parts ();
@@ -553,7 +555,7 @@ let fwd_state_extend_infix
   Classical.forall_intro (Classical.move_requires aux)
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-let fwd_target_not_no_scan_initial (minor: minor_state) (major: heap) (fp: U64.t)
+let fwd_target_not_no_scan_initial (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   : Lemma
     (ensures fwd_target_not_no_scan_state minor
       { cs_major = major; cs_fp = fp;
@@ -585,8 +587,8 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
       (requires
         fwd_target_not_no_scan_state minor cs /\
         well_formed_heap_part1 cs.cs_major /\
-        AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-        AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+        FLs.fls_valid cs.cs_major cs.cs_fp /\
+        FLs.fls_terminates cs.cs_major cs.cs_fp /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
         minor_wf minor /\
         minor_infix_wf minor)
@@ -635,7 +637,7 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
             Forwarding.promote_object_new_addr_in_objects_not_blue minor cs.cs_major addr cs.cs_fp wz;
             let target : obj_addr = res.new_addr in
             Forwarding.promote_object_new_addr_wosize_eq minor cs.cs_major addr cs.cs_fp wz target;
-            let alloc_res = GC.Spec.Allocator.alloc_spec cs.cs_major cs.cs_fp wz in
+            let alloc_res = SAL.alloc_lists_spec cs.cs_major cs.cs_fp wz in
             let copied = WriteBody.copy_fields minor alloc_res.heap_out addr alloc_res.obj_out 0 wz in
             let tag = minor_tag minor addr in
             minor_tag_bound minor addr;
@@ -690,8 +692,8 @@ let cheney_forward_one_preserves_fwd_target_not_no_scan_state
       (requires
         fwd_target_not_no_scan_state minor cs /\
         well_formed_heap_part1 cs.cs_major /\
-        AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-        AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+        FLs.fls_valid cs.cs_major cs.cs_fp /\
+        FLs.fls_terminates cs.cs_major cs.cs_fp /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
         minor_wf minor /\
         minor_infix_wf minor /\
@@ -746,8 +748,8 @@ let rec cheney_forward_fields_preserves_fwd_target_not_no_scan_state
       (requires
         fwd_target_not_no_scan_state minor cs /\
         well_formed_heap_part1 cs.cs_major /\
-        AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-        AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+        FLs.fls_valid cs.cs_major cs.cs_fp /\
+        FLs.fls_terminates cs.cs_major cs.cs_fp /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
         minor_wf minor /\
         minor_infix_wf minor /\
@@ -783,8 +785,8 @@ let rec cheney_forward_roots_preserves_fwd_target_not_no_scan_state
       (requires
         fwd_target_not_no_scan_state minor cs /\
         well_formed_heap_part1 cs.cs_major /\
-        AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-        AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+        FLs.fls_valid cs.cs_major cs.cs_fp /\
+        FLs.fls_terminates cs.cs_major cs.cs_fp /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
         minor_wf minor /\
         minor_infix_wf minor /\
@@ -819,8 +821,8 @@ let rec cheney_forward_roots_preserves_infix_ready_local
         Forwarding.fwd_classified cs /\
         Forwarding.infix_fwd_ready minor cs /\
         well_formed_heap_part1 cs.cs_major /\
-        AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-        AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+        FLs.fls_valid cs.cs_major cs.cs_fp /\
+        FLs.fls_terminates cs.cs_major cs.cs_fp /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
         minor_wf minor /\
         minor_infix_wf minor)
@@ -851,8 +853,8 @@ let rec cheney_scan_preserves_fwd_target_not_no_scan_state
       (requires
         fwd_target_not_no_scan_state minor cs /\
         well_formed_heap_part1 cs.cs_major /\
-        AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-        AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+        FLs.fls_valid cs.cs_major cs.cs_fp /\
+        FLs.fls_terminates cs.cs_major cs.cs_fp /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
         minor_wf minor /\
         minor_infix_wf minor /\
@@ -888,7 +890,7 @@ let rec cheney_scan_preserves_fwd_target_not_no_scan_state
 
 #push-options "--z3rlimit 15 --fuel 0 --ifuel 0"
 let cheney_promote_fwd_target_no_scan_iff_minor_tag
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (x: U64.t)
   =
   wf_parts ();

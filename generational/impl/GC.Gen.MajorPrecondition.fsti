@@ -42,6 +42,7 @@ module CheneyBFS = GC.Gen.CheneyBFS
 module MinorFwd = GC.Gen.MinorCollectForwarding.Helpers
 module MBP = GC.Impl.MarkBoundedPrecondition
 module SpecGCPost = GC.Spec.Correctness
+module FLs = GC.Spec.FreeLists
 
 /// A root that was already a major pointer is left alone by root rewriting and
 /// still names itself after the minor collection.
@@ -52,7 +53,7 @@ module SpecGCPost = GC.Spec.Correctness
 /// major root is ruled out by `roots_valid_for_minor_collection`, which asks a
 /// non-nursery root to be an enumerated object.
 val post_minor_major_root_valid
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (r: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) (r: U64.t)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
@@ -80,7 +81,7 @@ val post_minor_major_root_valid
 /// copy: an interior nursery root is rewritten to an interior major pointer,
 /// because `rewrite_root` must preserve the offset the mutator sees.
 val post_minor_roots_valid_for_darkening
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
@@ -100,7 +101,7 @@ val post_minor_roots_valid_for_darkening
 /// space, and both real clients (SPOT and the OCaml runtime bridge) pass an
 /// empty one.
 val darken_precondition_after_minor
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (cap: nat)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) (cap: nat)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
@@ -110,7 +111,7 @@ val darken_precondition_after_minor
     (ensures (
       let result = Cheney.cheney_collect_spec minor major fp roots in
       MBP.darken_precondition
-        result.mc_major Seq.empty result.mc_roots result.mc_fp cap))
+        result.mc_major Seq.empty result.mc_roots cap))
 
 /// A heap between collections already satisfies the major-GC postcondition.
 ///
@@ -120,6 +121,6 @@ val darken_precondition_after_minor
 /// the path where the minor collection ran out of memory and the major phase is
 /// therefore skipped: the heap it returns is the post-minor heap, and the shape
 /// invariant alone certifies it.
-val major_heap_shape_gc_postcondition (major: heap) (fp: U64.t)
+val major_heap_shape_gc_postcondition (major: heap) (fp: FLs.fl_state)
   : Lemma (requires GenInv.major_heap_shape major fp)
           (ensures SpecGCPost.gc_postcondition major)

@@ -22,6 +22,10 @@ open GC.Impl.Object
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module Defs = GC.Spec.SweepCoalesce.Defs
+module SCL = GC.Spec.SweepCoalesce.Lists
+module FLs = GC.Spec.FreeLists
+module SC = GC.Spec.SizeClass
+module SZ = FStar.SizeT
 module SpecCoalesce = GC.Spec.Coalesce
 module SpecFields = GC.Spec.Fields
 module SpecObject = GC.Spec.Object
@@ -52,7 +56,7 @@ ghost fn fused_heap_length (h: heap_t)
 
 /// Mirrors coalesce_spec_inv but for fused_aux / fused_sweep_coalesce
 let fused_spec_inv (g0: heap_state) (g: heap_state)
-  (v_nat: nat) (fb: U64.t) (rw_nat: nat) (fv: U64.t) : prop =
+  (v_nat: nat) (fb: U64.t) (rw_nat: nat) (fv: FLs.fl_state) : prop =
   if v_nat < heap_size && v_nat % 8 = 0 then
     let start : hp_addr = U64.uint_to_t v_nat in
     let objs = SpecFields.objects start g0 in
@@ -60,26 +64,62 @@ let fused_spec_inv (g0: heap_state) (g: heap_state)
       Seq.length objs > 0 /\
       SI.obj_in_objects (U64.uint_to_t (v_nat + U64.v mword)) g0
     else True) /\
-    Defs.fused_aux g0 g objs fb rw_nat fv == Defs.fused_sweep_coalesce g0
+    SCL.fused_aux_lists g0 g objs fb rw_nat fv == SCL.fused_sweep_coalesce_lists g0
   else
-    Defs.fused_aux g0 g Seq.empty fb rw_nat fv == Defs.fused_sweep_coalesce g0
+    SCL.fused_aux_lists g0 g Seq.empty fb rw_nat fv == SCL.fused_sweep_coalesce_lists g0
 
 /// ---------------------------------------------------------------------------
 /// Main entry point
 /// ---------------------------------------------------------------------------
 
+/// The list a run of `rw` words goes on (`GC.Spec.SweepCoalesce.Lists.run_class`).
+inline_for_extraction
+let run_class (rw: U64.t) : (c: SZ.t{SZ.v c == SCL.run_class (U64.v rw) /\ SZ.v c < SC.n_lists}) =
+  SC.n_small_u64_v ();
+  if U64.gte rw 2UL && U64.lte (U64.sub rw 1UL) SC.n_small_u64
+  then begin
+    SC.size_class_lt (U64.v rw - 1);
+    FStar.SizeT.fits_at_least_16 (U64.v rw - 1);
+    SZ.uint64_to_sizet (U64.sub rw 1UL)
+  end
+  else 0sz
+
+/// Flush a pending run on the list of its class.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+fn flush_blue_lists_impl (heap: heap_t) (heads: array U64.t) (fb: U64.t) (rw: U64.t)
+  requires is_heap heap 's ** pts_to heads 'fls **
+           pure (Seq.length 's == heap_size /\
+                 Seq.length 'fls == SC.n_lists /\
+                 (U64.v rw > 0 ==>
+                   U64.v rw < pow2 54 /\
+                   U64.v fb >= U64.v mword /\
+                   U64.v fb < heap_size /\
+                   U64.v fb % U64.v mword == 0 /\
+                   U64.v fb - U64.v mword + U64.v rw * U64.v mword <= heap_size))
+  ensures exists* s2 fls2. is_heap heap s2 ** pts_to heads fls2 **
+           pure ((s2, fls2) == SCL.flush_blue_lists 's fb (U64.v rw) 'fls /\
+                 Seq.length s2 == heap_size /\
+                 Seq.length fls2 == SC.n_lists)
+{
+  let c = run_class rw;
+  let old = heads.(c);
+  let res = Coalesce.flush_blue_impl heap fb rw old;
+  heads.(c) <- snd res
+}
+#pop-options
+
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
-fn fused_sweep_coalesce (heap: heap_t)
-  requires is_heap heap 's **
+fn fused_sweep_coalesce (heap: heap_t) (heads: array U64.t)
+  requires is_heap heap 's ** pts_to heads 'fls **
            pure (SpecFields.well_formed_heap 's /\
                  Seq.length (SpecFields.objects zero_addr 's) > 0 /\
                  GC.Spec.Fields.heap_objects_dense 's /\
                  (forall (x: obj_addr).
                    Seq.mem x (SpecFields.objects zero_addr 's) ==>
-                   ~(SpecObject.is_gray x 's)))
-  returns new_fp: U64.t
-  ensures exists* s2. is_heap heap s2 **
-    pure ((s2, new_fp) == Defs.fused_sweep_coalesce 's)
+                   ~(SpecObject.is_gray x 's)) /\
+                 Seq.length 'fls == SC.n_lists)
+  ensures exists* s2 fls2. is_heap heap s2 ** pts_to heads fls2 **
+    pure ((s2, fls2) == SCL.fused_sweep_coalesce_lists 's)
 {
   // Establish initial facts
   fused_heap_length heap;
@@ -88,19 +128,22 @@ fn fused_sweep_coalesce (heap: heap_t)
   SI.obj_in_objects_intro (SpecHeap.f_address zero_addr) 's;
   SpecHeap.f_address_spec zero_addr;
 
+  // Every list starts empty.
+  GC.Impl.FreeLists.clear_heads heads;
+
   let mut current = (zero_addr <: U64.t);
   let mut fb_ref = 0UL;
   let mut rw_ref = 0UL;
-  let mut fp_ref = 0UL;
 
   while (U64.lt (U64.add !current mword) heap_size_u64)
     invariant exists* v fb rw fv s.
       pts_to current v **
       pts_to fb_ref fb **
       pts_to rw_ref rw **
-      pts_to fp_ref fv **
+      pts_to heads fv **
       is_heap heap s **
-      pure (U64.v v % 8 == 0 /\
+      pure (Seq.length fv == SC.n_lists /\
+            U64.v v % 8 == 0 /\
             U64.v v <= heap_size /\
             U64.v v + 8 < pow2 64 /\
             Seq.length s == heap_size /\
@@ -121,7 +164,7 @@ fn fused_sweep_coalesce (heap: heap_t)
     let cur = !current;
     let cur_fb = !fb_ref;
     let cur_rw = !rw_ref;
-    let cur_fv = !fp_ref;
+    with cur_fv. assert (pts_to heads cur_fv);
     with s. assert (is_heap heap s);
 
     // Read header from current heap (same bytes as original via suffix preservation)
@@ -169,16 +212,16 @@ fn fused_sweep_coalesce (heap: heap_t)
       FusedLemmas.black_step_fused_aux_eq 's s cur
         cur_fb (U64.v cur_rw) cur_fv;
 
-      // 2. Flush any pending blue run
-      let res = Coalesce.flush_blue_impl heap cur_fb cur_rw cur_fv;
-      let new_rw = fst res;
-      let new_fv = snd res;
-      with s_flush. assert (is_heap heap s_flush);
+      // 2. Flush any pending blue run onto the list of its class
+      flush_blue_lists_impl heap heads cur_fb cur_rw;
+      let new_rw = 0UL;
+      with s_flush new_fv. assert (is_heap heap s_flush ** pts_to heads new_fv);
 
       // 2a. flush_blue suffix preservation: reads at cur and beyond are unchanged
-      CoalLemmas.flush_blue_suffix_preserved s cur_fb (U64.v cur_rw) cur_fv (U64.v cur);
+      CoalLemmas.flush_blue_suffix_preserved s cur_fb (U64.v cur_rw)
+        (FLs.fls_head cur_fv (SCL.run_class (U64.v cur_rw))) (U64.v cur);
       // Connect s_flush to fst of flush_blue
-      assert (pure (s_flush == fst (SpecCoalesce.flush_blue s cur_fb (U64.v cur_rw) cur_fv)));
+      assert (pure (s_flush == fst (SCL.flush_blue_lists s cur_fb (U64.v cur_rw) cur_fv)));
       // Chain: s_flush preserves reads at cur from s, and s preserves from 's
       assert (pure (SpecHeap.read_word s_flush (SpecHeap.hd_address obj) ==
                     SpecHeap.read_word 's (SpecHeap.hd_address obj)));
@@ -210,7 +253,6 @@ fn fused_sweep_coalesce (heap: heap_t)
       current := next;
       fb_ref := 0UL;
       rw_ref := new_rw;
-      fp_ref := new_fv;
 
       // Arithmetic facts
       assert (pure (U64.v next % 8 == 0));
@@ -229,13 +271,13 @@ fn fused_sweep_coalesce (heap: heap_t)
       // Spec equivalence from black_step bridge lemma
       assert (pure (
         U64.v next < heap_size ==>
-          Defs.fused_aux 's s_white
+          SCL.fused_aux_lists 's s_white
             (SpecFields.objects (U64.uint_to_t (U64.v next)) 's)
-            0UL 0 new_fv == Defs.fused_sweep_coalesce 's));
+            0UL 0 new_fv == SCL.fused_sweep_coalesce_lists 's));
       assert (pure (
         U64.v next >= heap_size ==>
-          Defs.fused_aux 's s_white Seq.empty
-            0UL 0 new_fv == Defs.fused_sweep_coalesce 's));
+          SCL.fused_aux_lists 's s_white Seq.empty
+            0UL 0 new_fv == SCL.fused_sweep_coalesce_lists 's));
       ()
     } else {
       // =====================================================
@@ -276,13 +318,13 @@ fn fused_sweep_coalesce (heap: heap_t)
       // Spec equivalence from nonblack_step bridge lemma
       assert (pure (
         U64.v next < heap_size ==>
-          Defs.fused_aux 's s
+          SCL.fused_aux_lists 's s
             (SpecFields.objects (U64.uint_to_t (U64.v next)) 's)
-            new_fb (U64.v new_rw) cur_fv == Defs.fused_sweep_coalesce 's));
+            new_fb (U64.v new_rw) cur_fv == SCL.fused_sweep_coalesce_lists 's));
       assert (pure (
         U64.v next >= heap_size ==>
-          Defs.fused_aux 's s Seq.empty
-            new_fb (U64.v new_rw) cur_fv == Defs.fused_sweep_coalesce 's));
+          SCL.fused_aux_lists 's s Seq.empty
+            new_fb (U64.v new_rw) cur_fv == SCL.fused_sweep_coalesce_lists 's));
       ()
     }
   };
@@ -292,16 +334,12 @@ fn fused_sweep_coalesce (heap: heap_t)
   // =====================================================
   let final_fb = !fb_ref;
   let final_rw = !rw_ref;
-  let final_fv = !fp_ref;
+  with final_fv. assert (pts_to heads final_fv);
   with s_exit. assert (is_heap heap s_exit);
 
-  // Bridge: fused_aux with Seq.empty == flush_blue
+  // Bridge: fused_aux_lists with Seq.empty == flush_blue_lists
   FusedLemmas.fused_step_empty 's s_exit final_fb (U64.v final_rw) final_fv;
 
-  let res = Coalesce.flush_blue_impl heap final_fb final_rw final_fv;
-  let result_fp = snd res;
-  with s2. assert (is_heap heap s2);
-
-  result_fp
+  flush_blue_lists_impl heap heads final_fb final_rw
 }
 #pop-options

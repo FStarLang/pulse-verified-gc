@@ -16,25 +16,28 @@ open GC.Impl.Object
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module Defs = GC.Spec.SweepCoalesce.Defs
+module SCL = GC.Spec.SweepCoalesce.Lists
+module SC = GC.Spec.SizeClass
 module SpecFields = GC.Spec.Fields
 module SpecObject = GC.Spec.Object
 module SI = GC.Spec.SweepInv
 
 /// Fused sweep+coalesce pass: walk all objects, whiten survivors,
-/// merge adjacent free blocks, and build a fresh free list.
-/// Returns the new free list head pointer.
+/// merge adjacent free blocks, and push each merged block on the free list
+/// of its size class.  Every list is rebuilt from empty, so the heads handed
+/// in do not matter.
 ///
 /// Precondition: well_formed heap, no gray objects (mark phase complete),
 ///               objects list is non-empty + dense
-/// Postcondition: result matches the fused_sweep_coalesce spec
-fn fused_sweep_coalesce (heap: heap_t)
-  requires is_heap heap 's **
+/// Postcondition: result matches the fused_sweep_coalesce_lists spec
+fn fused_sweep_coalesce (heap: heap_t) (heads: array U64.t)
+  requires is_heap heap 's ** pts_to heads 'fls **
            pure (SpecFields.well_formed_heap 's /\
                  Seq.length (SpecFields.objects zero_addr 's) > 0 /\
                  GC.Spec.Fields.heap_objects_dense 's /\
                  (forall (x: obj_addr).
                    Seq.mem x (SpecFields.objects zero_addr 's) ==>
-                   ~(SpecObject.is_gray x 's)))
-  returns new_fp: U64.t
-  ensures exists* s2. is_heap heap s2 **
-    pure ((s2, new_fp) == Defs.fused_sweep_coalesce 's)
+                   ~(SpecObject.is_gray x 's)) /\
+                 Seq.length 'fls == SC.n_lists)
+  ensures exists* s2 fls2. is_heap heap s2 ** pts_to heads fls2 **
+    pure ((s2, fls2) == SCL.fused_sweep_coalesce_lists 's)

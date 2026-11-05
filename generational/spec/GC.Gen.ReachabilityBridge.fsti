@@ -25,6 +25,7 @@ open GC.Gen.CombinedGraph
 
 module Mark = GC.Spec.Mark
 module GenInv = GC.Gen.HeapInvariant
+module FLs = GC.Spec.FreeLists
 
 /// If a minor object has a field pointing to the major heap, the target is a
 /// non-blue allocated object.
@@ -46,7 +47,7 @@ val aligned_gt_ge_plus_mword (x z: nat)
 /// `GenInv.minor_major_fields_no_blue` condition; expose this bridge predicate
 /// as a derived fact so clients do not need to carry it as an extra assumption.
 val minor_no_pointer_to_blue_from_collection_shape
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   : Lemma (requires GenInv.collection_heap_shape minor major fp)
           (ensures minor_no_pointer_to_blue minor major)
 

@@ -55,6 +55,10 @@ module Fwd = GC.Gen.CheneyPreservation.Forwarding
 module PU = GC.Gen.PromoteUpdate
 module Cheney = GC.Gen.Cheney
 module GenInv = GC.Gen.HeapInvariant
+module FLs = GC.Spec.FreeLists
+module AK = GC.Gen.AllocLists
+module SAL = GC.Spec.Allocator.Lists
+module SCl = GC.Spec.SizeClass
 
 /// ---------------------------------------------------------------------------
 /// Bridge: reachable_on_fl <=> the walk meets the address
@@ -837,7 +841,7 @@ let alloc_spec_preserves_fl_exact (g: heap) (fp: U64.t) (wz: nat)
 
 /// What every allocation needs of the heap, and keeps: the allocator's entry
 /// conditions and an exact free list.
-let alloc_entry (g: heap) (fp: U64.t) : prop =
+let alloc_entry_one (g: heap) (fp: U64.t) : prop =
   well_formed_heap_part1 g /\
   AllocLemmas.fl_valid g fp heap_words /\
   AllocLemmas.fl_chain_terminates g fp heap_words /\
@@ -846,7 +850,7 @@ let alloc_entry (g: heap) (fp: U64.t) : prop =
 /// With an exact free list, an allocation succeeds whenever some free block
 /// is big enough.
 let alloc_spec_fits_succeeds (g: heap) (fp: U64.t) (wz: nat) (x: obj_addr)
-  : Lemma (requires alloc_entry g fp /\ wz >= 1 /\
+  : Lemma (requires alloc_entry_one g fp /\ wz >= 1 /\
                     Seq.mem x (objects zero_addr g) /\ is_blue x g /\
                     U64.v (wosize_of_object x g) >= wz)
           (ensures (alloc_spec g fp wz).obj_out <> 0UL)
@@ -855,8 +859,8 @@ let alloc_spec_fits_succeeds (g: heap) (fp: U64.t) (wz: nat) (x: obj_addr)
 /// Every allocation, successful or not, keeps the entry conditions.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let alloc_spec_preserves_entry (g: heap) (fp: U64.t) (wz: nat)
-  : Lemma (requires alloc_entry g fp /\ wz >= 1)
-          (ensures (let r = alloc_spec g fp wz in alloc_entry r.heap_out r.fp_out))
+  : Lemma (requires alloc_entry_one g fp /\ wz >= 1)
+          (ensures (let r = alloc_spec g fp wz in alloc_entry_one r.heap_out r.fp_out))
   = let r = alloc_spec g fp wz in
     if r.obj_out = 0UL then AllocProps.alloc_spec_oom_unchanged g fp wz
     else begin
@@ -871,7 +875,7 @@ let alloc_spec_preserves_entry (g: heap) (fp: U64.t) (wz: nat)
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let coalesce_entry (g: heap)
   : Lemma (requires Coalesce.post_sweep_strong g)
-          (ensures (let r = Coalesce.coalesce g in alloc_entry (fst r) (snd r)))
+          (ensures (let r = Coalesce.coalesce g in alloc_entry_one (fst r) (snd r)))
   = Coalesce.coalesce_preserves_wf g;
     wf_parts ();
     CD.coalesce_fl_entry g;
@@ -888,7 +892,7 @@ let fused_entry (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
       heap_objects_dense h_mark /\
       SpecSweep.fp_in_heap fp h_mark /\
       (forall (x: obj_addr). Seq.mem x (objects zero_addr h_mark) ==> ~(is_gray x h_mark)))
-    (ensures (let r = SCD.fused_sweep_coalesce h_mark in alloc_entry (fst r) (snd r)))
+    (ensures (let r = SCD.fused_sweep_coalesce h_mark in alloc_entry_one (fst r) (snd r)))
   = SC.fused_agrees_sweep_coalesce h_mark fp;
     Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
     let rc = Coalesce.coalesce (fst (SpecSweep.sweep h_mark fp)) in
@@ -898,6 +902,236 @@ let fused_entry (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
     HA.agree_fl_valid f (fst rc) (snd rc) heap_words;
     HA.agree_fl_chain_terminates f (fst rc) (snd rc) heap_words;
     HA.agree_fl_exact f (fst rc) (snd rc)
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// The free lists
+/// ---------------------------------------------------------------------------
+///
+/// Everything above is about one chain.  The allocator's state is the heads of
+/// the size-class lists (`GC.Spec.FreeLists`), and exactness is per class:
+/// every cell of every list is a free block (`fls_sound`), and every free
+/// block with a link word is on the list of its class (`fls_complete`).
+
+/// The allocator's entry conditions, and exact lists.
+let alloc_entry (g: heap) (fls: FLs.fl_state) : prop =
+  well_formed_heap_part1 g /\
+  FLs.fls_valid g fls /\
+  FLs.fls_terminates g fls /\
+  FLs.fls_exact g fls
+
+/// With an exact state, an allocation succeeds whenever some free block is big
+/// enough: the block is on the list of its class, the search tries that list
+/// (a small list at least as large as the request, or list 0), and first fit
+/// on a list fails only when every cell of it is too small.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+let alloc_lists_fits_succeeds (g: heap) (fls: FLs.fl_state) (wz: nat) (x: obj_addr)
+  : Lemma (requires alloc_entry g fls /\ wz >= 1 /\
+                    Seq.mem x (objects zero_addr g) /\ is_blue x g /\
+                    U64.v (wosize_of_object x g) >= wz)
+          (ensures (SAL.alloc_lists_spec g fls wz).obj_out <> 0UL)
+  = if (SAL.alloc_lists_spec g fls wz).obj_out = 0UL then begin
+      let cx = SCl.size_class (U64.v (wosize_of_object x g)) in
+      SCl.size_class_lt (U64.v (wosize_of_object x g));
+      SCl.size_class_lt wz;
+      FLs.fls_valid_elim g fls;
+      FLs.fls_terminates_elim g fls;
+      // the block is on its list ...
+      assert (FL.reachable_on_fl g (FLs.fls_head fls cx) (x <: U64.t));
+      // ... which the search tried ...
+      SAL.alloc_from_fails g fls wz (SCl.size_class wz) cx;
+      // ... where first fit found nothing, so every cell is too small
+      if (alloc_spec g (FLs.fls_head fls cx) wz).obj_out <> 0UL then
+        AK.alloc_on_succeeds g fls cx wz
+      else Oom.alloc_spec_oom_cells_small g (FLs.fls_head fls cx) wz (x <: U64.t)
+    end
+#pop-options
+
+/// Some list visits every address no list avoids.
+let on_some_list (g: heap) (fls: FLs.fl_state) (y: U64.t)
+  : Lemma (requires ~(FLs.fls_avoids g fls y))
+          (ensures exists (k: nat). k < SCl.n_lists /\
+                     AllocLemmas.chain_avoids g (FLs.fls_head fls k) y heap_words = false)
+  = FLs.fls_avoids_iff g fls y
+
+/// An allocation keeps every cell of every list blue.
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
+let alloc_lists_preserves_fls_sound (g: heap) (fls: FLs.fl_state) (wz: nat)
+  : Lemma (requires AK.alloc_lists_pre g fls /\ wz >= 1 /\ FLs.fls_sound g fls)
+          (ensures (let r = SAL.alloc_lists_spec g fls wz in FLs.fls_sound r.heap_out r.fls_out))
+  = let r = SAL.alloc_lists_spec g fls wz in
+    AK.alloc_lists_oom_unchanged g fls wz;
+    if r.obj_out = 0UL then ()
+    else begin
+      AK.alloc_lists_preserves_fls_valid_part1 g fls wz;
+      AK.alloc_lists_preserves_fls_terminates_part1 g fls wz;
+      AK.alloc_lists_obj_not_in_lists_part1 g fls wz;
+      AK.alloc_lists_only_new_is_obj_out_part1 g fls wz;
+      FLs.fls_valid_elim r.heap_out r.fls_out;
+      FLs.fls_terminates_elim r.heap_out r.fls_out;
+      FLs.fls_terminates_elim g fls;
+      let cell (k: nat) (y: U64.t)
+        : Lemma (requires k < SCl.n_lists /\ FL.reachable_on_fl r.heap_out (FLs.fls_head r.fls_out k) y)
+                (ensures FL.fl_node y /\
+                         (U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0) /\
+                         Seq.mem (y <: obj_addr) (objects zero_addr r.heap_out) /\
+                         is_blue (y <: obj_addr) r.heap_out /\
+                         U64.v (wosize_of_object (y <: obj_addr) r.heap_out) >= 1)
+        = let hk = FLs.fls_head r.fls_out k in
+          reachable_valid_cell r.heap_out hk y;
+          reachable_iff_met r.heap_out hk y;
+          let yo : obj_addr = y in
+          // a cell of the new lists is not the allocated object ...
+          FLs.fls_avoids_iff r.heap_out r.fls_out r.obj_out;
+          assert (y <> r.obj_out);
+          // ... so it was an object, on some list: a list-free object stays off them
+          assert (Seq.mem yo (objects zero_addr g));
+          FLs.fls_avoids_iff r.heap_out r.fls_out y;
+          FStar.Classical.move_requires (AK.alloc_lists_preserves_avoids_other g fls wz) y;
+          on_some_list g fls y;
+          eliminate exists (k0: nat). k0 < SCl.n_lists /\
+                      AllocLemmas.chain_avoids g (FLs.fls_head fls k0) y heap_words = false
+          with begin
+            reachable_iff_met g (FLs.fls_head fls k0) y;
+            // so it was blue, and it still is
+            AK.alloc_lists_preserves_blue_part1 g fls wz yo
+          end
+      in
+      let cell' (k: nat) (y: U64.t)
+        : Lemma (k < SCl.n_lists /\ FL.reachable_on_fl r.heap_out (FLs.fls_head r.fls_out k) y ==>
+                 FL.fl_node y /\
+                 (U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0) /\
+                 Seq.mem (y <: obj_addr) (objects zero_addr r.heap_out) /\
+                 is_blue (y <: obj_addr) r.heap_out /\
+                 U64.v (wosize_of_object (y <: obj_addr) r.heap_out) >= 1)
+        = FStar.Classical.move_requires (cell k) y
+      in
+      FStar.Classical.forall_intro_2 cell'
+    end
+#pop-options
+
+/// An allocation keeps the lists complete: a free block other than the one
+/// handed out stays on a list -- on the list it was on, or, for a block whose
+/// remainder moves, on the list of the remainder's class -- and a list holds
+/// only its class.
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+let alloc_lists_preserves_fls_complete (g: heap) (fls: FLs.fl_state) (wz: nat)
+  : Lemma (requires AK.alloc_lists_pre g fls /\ wz >= 1 /\ FLs.fls_complete g fls /\
+                    (SAL.alloc_lists_spec g fls wz).obj_out <> 0UL)
+          (ensures (let r = SAL.alloc_lists_spec g fls wz in FLs.fls_complete r.heap_out r.fls_out))
+  = let r = SAL.alloc_lists_spec g fls wz in
+    AK.alloc_lists_struct g fls wz;
+    AK.alloc_lists_preserves_wfh_part1 g fls wz;
+    AK.alloc_lists_preserves_fls_valid_part1 g fls wz;
+    AK.alloc_lists_preserves_fls_terminates_part1 g fls wz;
+    AK.alloc_lists_only_new_is_obj_out_part1 g fls wz;
+    AK.alloc_lists_obj_not_blue_part1 g fls wz;
+    FLs.fls_valid_elim g fls;
+    FLs.fls_terminates_elim g fls;
+    FLs.fls_valid_elim r.heap_out r.fls_out;
+    FLs.fls_terminates_elim r.heap_out r.fls_out;
+    let j = SAL.alloc_lists_list g fls wz in
+    let fp = FLs.fls_head fls j in
+    let w = SAL.first_fit_size g fp wz heap_words in
+    let rl = SAL.relists j w wz in
+    let wz' : pos = if rl then w else wz in
+    let rS = alloc_spec g fp wz' in
+    let aux (x: obj_addr)
+      : Lemma (requires Seq.mem x (objects zero_addr r.heap_out) /\ is_blue x r.heap_out /\
+                        U64.v (wosize_of_object x r.heap_out) >= 1)
+              (ensures FL.reachable_on_fl r.heap_out
+                         (FLs.fls_head r.fls_out (SCl.size_class (U64.v (wosize_of_object x r.heap_out))))
+                         (x <: U64.t))
+      = is_blue_iff x r.heap_out;
+        is_white_iff x r.heap_out;
+        assert ((x <: U64.t) <> r.obj_out);
+        assert (Seq.mem x (objects zero_addr g));
+        // x was on a list: had it been on none, its header would be unchanged,
+        // so it would have been a free block, which is on its class's list
+        (if FLs.fls_avoids g fls (x <: U64.t) then begin
+           AK.alloc_lists_read_header_other_part1 g fls wz x;
+           color_of_object_spec x g; color_of_object_spec x r.heap_out;
+           wosize_of_object_spec x g; wosize_of_object_spec x r.heap_out;
+           is_blue_iff x g;
+           let cx = SCl.size_class (U64.v (wosize_of_object x g)) in
+           SCl.size_class_lt (U64.v (wosize_of_object x g));
+           reachable_iff_met g (FLs.fls_head fls cx) (x <: U64.t);
+           FLs.fls_avoids_iff g fls (x <: U64.t)
+         end);
+        on_some_list g fls (x <: U64.t);
+        // so it is on a list now
+        let listed (_: unit) : Lemma (~(FLs.fls_avoids r.heap_out r.fls_out (x <: U64.t)))
+          = eliminate exists (k0: nat). k0 < SCl.n_lists /\
+                        AllocLemmas.chain_avoids g (FLs.fls_head fls k0) (x <: U64.t) heap_words = false
+            with begin
+              FLs.fls_avoids_iff r.heap_out r.fls_out (x <: U64.t);
+              if k0 <> j then ()
+              else if rl && (x <: U64.t) = rS.obj_out then ()
+              else begin
+                alloc_spec_keeps g fp wz' x;
+                wosize_of_object_spec x r.heap_out;
+                wosize_of_object_spec x rS.heap_out
+              end
+            end
+        in
+        listed ();
+        // on the list of its class
+        on_some_list r.heap_out r.fls_out (x <: U64.t);
+        eliminate exists (k1: nat). k1 < SCl.n_lists /\
+                    AllocLemmas.chain_avoids r.heap_out (FLs.fls_head r.fls_out k1) (x <: U64.t) heap_words = false
+        with begin
+          hd_address_spec x;
+          assert (U64.v (hd_address x) + 8 + U64.v (wosize_of_object x r.heap_out) * 8 <= heap_size);
+          reachable_iff_met r.heap_out (FLs.fls_head r.fls_out k1) (x <: U64.t)
+        end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// Every allocation, successful or not, keeps the entry conditions.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+let alloc_lists_preserves_entry (g: heap) (fls: FLs.fl_state) (wz: nat)
+  : Lemma (requires alloc_entry g fls /\ wz >= 1)
+          (ensures (let r = SAL.alloc_lists_spec g fls wz in alloc_entry r.heap_out r.fls_out))
+  = let r = SAL.alloc_lists_spec g fls wz in
+    AK.alloc_lists_oom_unchanged g fls wz;
+    if r.obj_out = 0UL then ()
+    else begin
+      AK.alloc_lists_preserves_wfh_part1 g fls wz;
+      AK.alloc_lists_preserves_fls_valid_part1 g fls wz;
+      AK.alloc_lists_preserves_fls_terminates_part1 g fls wz;
+      alloc_lists_preserves_fls_sound g fls wz;
+      alloc_lists_preserves_fls_complete g fls wz
+    end
+#pop-options
+
+/// A list's walk, at a cell it meets: on a terminating list, reachability is
+/// the same as being met within `heap_words` steps (`reachable_iff_met`), so
+/// a heap in which the walk visits the same nodes reaches the same cells.
+let reachable_transfer (g g': heap) (fp y: U64.t)
+  : Lemma (requires AllocLemmas.fl_chain_terminates g fp heap_words /\
+                    AllocLemmas.fl_chain_terminates g' fp heap_words /\
+                    AllocLemmas.chain_avoids g' fp y heap_words ==
+                    AllocLemmas.chain_avoids g fp y heap_words)
+          (ensures FL.reachable_on_fl g' fp y <==> FL.reachable_on_fl g fp y)
+  = reachable_iff_met g fp y;
+    reachable_iff_met g' fp y
+
+/// A non-blue object is on no list of a state whose cells are all blue.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+let sound_avoids (g: heap) (fls: FLs.fl_state) (a: obj_addr)
+  : Lemma (requires FLs.fls_terminates g fls /\ FLs.fls_sound g fls /\
+                    Seq.mem a (objects zero_addr g) /\ is_blue a g = false)
+          (ensures FLs.fls_avoids g fls (a <: U64.t))
+  = FLs.fls_terminates_elim g fls;
+    let one (i: nat{i < SCl.n_lists})
+      : Lemma (AllocLemmas.chain_avoids g (FLs.fls_head fls i) (a <: U64.t) heap_words = true)
+      = hd_address_spec a;
+        if not (AllocLemmas.chain_avoids g (FLs.fls_head fls i) (a <: U64.t) heap_words)
+        then reachable_iff_met g (FLs.fls_head fls i) (a <: U64.t)
+    in
+    FStar.Classical.forall_intro one;
+    FLs.fls_avoids_iff g fls (a <: U64.t)
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -922,35 +1156,34 @@ let promote_writes_frame (minor: MH.minor_state) (g1: heap) (obj: U64.t)
     Promote.set_promoted_tag_read_frame copied dst tag w
 #pop-options
 
-/// **One promotion keeps the free list complete.**
+/// **One promotion keeps the lists complete.**
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
 let promote_object_preserves_fl_complete (minor: MH.minor_state) (major: heap) (obj: U64.t)
-  (fp: U64.t) (wosize: nat{wosize > 0})
+  (fp: FLs.fl_state) (wosize: nat{wosize > 0})
   : Lemma (requires well_formed_heap_part1 major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    FL.fl_complete major fp /\ wosize < pow2 54 /\
+                    FLs.fls_valid major fp /\
+                    FLs.fls_terminates major fp /\
+                    FLs.fls_complete major fp /\ wosize < pow2 54 /\
                     (Promote.promote_object minor major obj fp wosize).new_addr <> 0UL)
           (ensures (let res = Promote.promote_object minor major obj fp wosize in
-                    FL.fl_complete res.Promote.major_out res.Promote.fp_out))
-  = let ar = alloc_spec major fp wosize in
+                    FLs.fls_complete res.Promote.major_out res.Promote.fp_out))
+  = let ar = SAL.alloc_lists_spec major fp wosize in
     let g1 = ar.heap_out in
-    let fp1 = ar.fp_out in
+    let fp1 = ar.fls_out in
     let res = Promote.promote_object minor major obj fp wosize in
     Promote.promote_object_success minor major obj fp wosize;
-    AllocProps.alloc_spec_obj_wosize_exact_part1 major fp wosize;
+    AK.alloc_lists_obj_wosize_exact_part1 major fp wosize;
     let dst : obj_addr = ar.obj_out in
     MH.minor_tag_bound minor obj;
     let tag = MH.minor_tag minor obj in
-    // the allocation alone keeps the list complete (stage 4) ...
-    alloc_spec_preserves_fl_complete major fp wosize;
-    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
-    AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wosize;
-    AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wosize;
-    AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wosize;
-    AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
+    // the allocation alone keeps the lists complete ...
+    alloc_lists_preserves_fls_complete major fp wosize;
+    AK.alloc_lists_preserves_wfh_part1 major fp wosize;
+    AK.alloc_lists_preserves_fls_valid_part1 major fp wosize;
+    AK.alloc_lists_preserves_fls_terminates_part1 major fp wosize;
+    AK.alloc_lists_obj_not_in_lists_part1 major fp wosize;
+    AK.alloc_lists_obj_in_objects_part1 major fp wosize;
     // ... and the writes that follow stay inside the promoted object
-    Promote.promote_object_preserves_alloc_invariants minor major obj fp wosize;
     Fwd.promote_object_new_addr_in_objects_not_blue minor major obj fp wosize;
     let copied = WB.copy_fields minor g1 obj dst 0 wosize in
     WB.copy_fields_preserves_objects_aux minor g1 obj dst 0 wosize;
@@ -961,17 +1194,23 @@ let promote_object_preserves_fl_complete (minor: MH.minor_state) (major: heap) (
     wosize_of_object_spec dst copied;
     Promote.set_promoted_tag_preserves_objects copied dst tag;
     assert (objects zero_addr res.Promote.major_out == objects zero_addr g1);
+    let ext (w: hp_addr) : Lemma
+      (requires U64.v w + U64.v mword <= U64.v (hd_address dst) \/
+                U64.v w >= U64.v dst + U64.v (wosize_of_object dst g1) * U64.v mword)
+      (ensures read_word res.Promote.major_out w == read_word g1 w)
+      = promote_writes_frame minor g1 obj dst wosize tag w
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires ext);
+    FLs.fls_frame_extent g1 res.Promote.major_out fp1 dst;
+    FLs.fls_terminates_elim g1 fp1;
+    FLs.fls_terminates_elim res.Promote.major_out fp1;
     let fr (a: obj_addr) : Lemma
       (requires Seq.mem a (objects zero_addr g1) /\ (a <: U64.t) <> (dst <: U64.t))
-      (ensures (U64.v (wosize_of_object a g1) >= 1 ==>
-                  read_word res.Promote.major_out a == read_word g1 a) /\
-               read_word res.Promote.major_out (hd_address a) == read_word g1 (hd_address a))
+      (ensures read_word res.Promote.major_out (hd_address a) == read_word g1 (hd_address a))
       = hd_address_spec a;
         wosize_of_object_spec a g1;
         (if U64.v a < U64.v dst then objects_separated zero_addr g1 a dst
          else objects_separated zero_addr g1 dst a);
-        (if U64.v (wosize_of_object a g1) >= 1
-         then promote_writes_frame minor g1 obj dst wosize tag (a <: hp_addr));
         promote_writes_frame minor g1 obj dst wosize tag (hd_address a)
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires fr);
@@ -979,20 +1218,19 @@ let promote_object_preserves_fl_complete (minor: MH.minor_state) (major: heap) (
       : Lemma (requires Seq.mem x (objects zero_addr res.Promote.major_out) /\
                         is_blue x res.Promote.major_out /\
                         U64.v (wosize_of_object x res.Promote.major_out) >= 1)
-              (ensures FL.reachable_on_fl res.Promote.major_out res.Promote.fp_out x)
+              (ensures FL.reachable_on_fl res.Promote.major_out
+                         (FLs.fls_head res.Promote.fp_out
+                            (SCl.size_class (U64.v (wosize_of_object x res.Promote.major_out))))
+                         x)
       = assert ((x <: U64.t) <> (dst <: U64.t));
         fr x;
         color_of_object_spec x g1; color_of_object_spec x res.Promote.major_out;
         is_blue_iff x g1; is_blue_iff x res.Promote.major_out;
         wosize_of_object_spec x g1; wosize_of_object_spec x res.Promote.major_out;
-        FL.fl_complete_elim g1 fp1 x;
-        reachable_iff_met g1 fp1 (x <: U64.t);
-        let n = first_meeting g1 fp1 (x <: U64.t) heap_words in
-        AllocChain.chain_avoids_weaken g1 fp1 (dst <: U64.t) heap_words n;
-        meets_transfer_within g1 res.Promote.major_out fp1 (x <: U64.t)
-          (dst <: U64.t) (dst <: U64.t) n heap_words;
-        hd_address_spec x;
-        reachable_iff_met res.Promote.major_out res.Promote.fp_out (x <: U64.t)
+        let c = SCl.size_class (U64.v (wosize_of_object x g1)) in
+        SCl.size_class_lt (U64.v (wosize_of_object x g1));
+        assert (FL.reachable_on_fl g1 (FLs.fls_head fp1 c) x);
+        reachable_transfer g1 res.Promote.major_out (FLs.fls_head fp1 c) (x <: U64.t)
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
@@ -1050,19 +1288,23 @@ let rec meeting_transfer_blue (g g': heap) (fp y: U64.t) (n: nat)
     end
 #pop-options
 
-/// **Pointer updates keep the free list complete**: they rewrite fields of
-/// live objects only, never a header and never a field of a blue block.
+/// **Pointer updates keep the lists complete**: they rewrite fields of live
+/// objects only, never a header and never a field of a blue block.
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
-let update_major_pointers_preserves_fl_complete (major: heap) (fwd: Promote.forwarding_map) (fp: U64.t)
+let update_major_pointers_preserves_fl_complete (major: heap) (fwd: Promote.forwarding_map)
+  (fp: FLs.fl_state)
   : Lemma (requires well_formed_heap_part1 major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    FLs.fls_valid major fp /\
+                    FLs.fls_terminates major fp /\
                     Promote.chain_objects_blue major fp /\
-                    FL.fl_complete major fp)
-          (ensures FL.fl_complete (Promote.update_major_pointers major fwd) fp)
+                    FLs.fls_complete major fp)
+          (ensures FLs.fls_complete (Promote.update_major_pointers major fwd) fp)
   = let m' = Promote.update_major_pointers major fwd in
     PU.update_major_pointers_preserves_objects major fwd;
     Cheney.update_major_pointers_preserves_fl_valid major fwd fp;
+    FLs.fls_valid_elim major fp;
+    FLs.fls_terminates_elim major fp;
+    FLs.fls_terminates_elim m' fp;
     reveal_opaque (`%Promote.chain_objects_blue) (Promote.chain_objects_blue major fp);
     let bf (a: obj_addr) : Lemma
       (requires Seq.mem a (objects zero_addr major) /\ is_blue a major /\
@@ -1074,24 +1316,29 @@ let update_major_pointers_preserves_fl_complete (major: heap) (fwd: Promote.forw
     let aux (x: obj_addr)
       : Lemma (requires Seq.mem x (objects zero_addr m') /\ is_blue x m' /\
                         U64.v (wosize_of_object x m') >= 1)
-              (ensures FL.reachable_on_fl m' fp x)
+              (ensures FL.reachable_on_fl m'
+                         (FLs.fls_head fp (SCl.size_class (U64.v (wosize_of_object x m')))) x)
       = PU.update_major_pointers_preserves_header major fwd x;
         color_of_object_spec x major; color_of_object_spec x m';
         is_blue_iff x major; is_blue_iff x m';
         wosize_of_object_spec x major; wosize_of_object_spec x m';
-        FL.fl_complete_elim major fp x;
-        reachable_iff_met major fp (x <: U64.t);
-        let n = first_meeting major fp (x <: U64.t) heap_words in
-        GC.Spec.Allocator.Lemmas.Common.fl_valid_weaken major fp heap_words (n + 1);
+        let c = SCl.size_class (U64.v (wosize_of_object x major)) in
+        SCl.size_class_lt (U64.v (wosize_of_object x major));
+        let fpc = FLs.fls_head fp c in
+        assert (FL.reachable_on_fl major fpc x);
+        reachable_iff_met major fpc (x <: U64.t);
+        let n = first_meeting major fpc (x <: U64.t) heap_words in
+        GC.Spec.Allocator.Lemmas.Common.fl_valid_weaken major fpc heap_words (n + 1);
         let av (o: obj_addr) : Lemma
           (requires Seq.mem o (objects zero_addr major) /\ is_blue o major = false)
-          (ensures AllocLemmas.chain_avoids major fp (o <: U64.t) (n + 1) = true)
-          = AllocChain.chain_avoids_weaken major fp (o <: U64.t) heap_words (n + 1) in
+          (ensures AllocLemmas.chain_avoids major fpc (o <: U64.t) (n + 1) = true)
+          = FLs.fls_avoids_iff major fp (o <: U64.t);
+            AllocChain.chain_avoids_weaken major fpc (o <: U64.t) heap_words (n + 1) in
         FStar.Classical.forall_intro (FStar.Classical.move_requires av);
-        meeting_transfer_blue major m' fp (x <: U64.t) n;
-        meets_at_within m' fp (x <: U64.t) n heap_words;
+        meeting_transfer_blue major m' fpc (x <: U64.t) n;
+        meets_at_within m' fpc (x <: U64.t) n heap_words;
         hd_address_spec x;
-        reachable_iff_met m' fp (x <: U64.t)
+        reachable_iff_met m' fpc (x <: U64.t)
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
@@ -1117,9 +1364,9 @@ private let body_word_apart (g: heap) (a b: obj_addr) (w: hp_addr)
 #pop-options
 
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
-/// **A write to a field of a live (non-blue) object keeps the free list
-/// exact**, and the allocator's other entry conditions with it.
-let field_write_preserves_entry (g: heap) (fp: U64.t) (a: obj_addr) (w: hp_addr) (v: U64.t)
+/// **A write to a field of a live (non-blue) object keeps the lists exact**,
+/// and the allocator's other entry conditions with them.
+let field_write_preserves_entry (g: heap) (fp: FLs.fl_state) (a: obj_addr) (w: hp_addr) (v: U64.t)
   : Lemma (requires alloc_entry g fp /\
                     Seq.mem a (objects zero_addr g) /\ is_blue a g = false /\
                     U64.v w >= U64.v a /\
@@ -1130,12 +1377,9 @@ let field_write_preserves_entry (g: heap) (fp: U64.t) (a: obj_addr) (w: hp_addr)
     P1.write_body_preserves_wfh_part1 g a w v;
     let hdr (b: obj_addr) : Lemma
       (requires Seq.mem b (objects zero_addr g))
-      (ensures read_word g' (hd_address b) == read_word g (hd_address b) /\
-               ((b <> a /\ U64.v (wosize_of_object b g) >= 1) ==> read_word g' b == read_word g b))
+      (ensures read_word g' (hd_address b) == read_word g (hd_address b))
       = body_word_apart g a b w;
-        read_write_different g w (hd_address b) v;
-        if b <> a && U64.v (wosize_of_object b g) >= 1
-        then read_write_different g w (b <: hp_addr) v
+        read_write_different g w (hd_address b) v
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires hdr);
     let same_sz (b: obj_addr) : Lemma
@@ -1147,42 +1391,50 @@ let field_write_preserves_entry (g: heap) (fp: U64.t) (a: obj_addr) (w: hp_addr)
         is_blue_iff b g; is_blue_iff b g'
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires same_sz);
-    // a is not on the chain: it is not blue, and every cell is
-    hd_address_spec a;
-    (if not (AllocLemmas.chain_avoids g fp (a <: U64.t) heap_words) then
-       reachable_iff_met g fp (a <: U64.t));
-    assert (AllocLemmas.chain_avoids g fp (a <: U64.t) heap_words = true);
-    AllocChain.fl_valid_transfer_excl g g' fp (a <: U64.t) heap_words;
-    AllocChain.fl_chain_terminates_transfer_excl g g' fp (a <: U64.t) heap_words;
-    // soundness: anything on the new chain was on the old one
-    let snd (y: U64.t) : Lemma
-      (requires FL.reachable_on_fl g' fp y)
+    // a is on no list: it is not blue, and every cell is
+    sound_avoids g fp a;
+    let ext (u: hp_addr) : Lemma
+      (requires U64.v u + U64.v mword <= U64.v (hd_address a) \/
+                U64.v u >= U64.v a + U64.v (wosize_of_object a g) * U64.v mword)
+      (ensures read_word g' u == read_word g u)
+      = hd_address_spec a;
+        read_write_different g w u v
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires ext);
+    FLs.fls_frame_extent g g' fp a;
+    FLs.fls_terminates_elim g fp;
+    FLs.fls_terminates_elim g' fp;
+    // soundness: anything on a new list was on the old one
+    let snd (i: nat{i < SCl.n_lists}) (y: U64.t) : Lemma
+      (requires FL.reachable_on_fl g' (FLs.fls_head fp i) y)
       (ensures FL.fl_node y /\
                (U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0) /\
                Seq.mem (y <: obj_addr) (objects zero_addr g') /\
                is_blue (y <: obj_addr) g' /\
                U64.v (wosize_of_object (y <: obj_addr) g') >= 1)
-      = FL.reachable_is_node g' fp y;
-        reachable_iff_met g' fp y;
-        (if AllocLemmas.chain_avoids g fp y heap_words then
-           AllocChain.chain_avoids_transfer_excl2 g g' fp y (a <: U64.t) heap_words);
-        reachable_iff_met g fp y;
+      = reachable_transfer g g' (FLs.fls_head fp i) y;
+        assert (FL.fl_sound g (FLs.fls_head fp i));
         same_sz (y <: obj_addr)
     in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires snd);
-    // completeness: every blue cell is still met
+    introduce forall (i: nat) (y: U64.t).
+      i < SCl.n_lists /\ FL.reachable_on_fl g' (FLs.fls_head fp i) y ==>
+      (FL.fl_node y /\
+       (U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0) /\
+       Seq.mem (y <: obj_addr) (objects zero_addr g') /\
+       is_blue (y <: obj_addr) g' /\
+       U64.v (wosize_of_object (y <: obj_addr) g') >= 1)
+    with introduce _ ==> _ with snd i y;
+    assert (FLs.fls_sound g' fp);
+    // completeness: every blue cell is still on the list of its class
     let cmp (x: obj_addr) : Lemma
       (requires Seq.mem x (objects zero_addr g') /\ is_blue x g' /\
                 U64.v (wosize_of_object x g') >= 1)
-      (ensures FL.reachable_on_fl g' fp x)
+      (ensures FL.reachable_on_fl g'
+                 (FLs.fls_head fp (SCl.size_class (U64.v (wosize_of_object x g')))) x)
       = same_sz x;
-        FL.fl_complete_elim g fp x;
-        reachable_iff_met g fp (x <: U64.t);
-        let n = first_meeting g fp (x <: U64.t) heap_words in
-        AllocChain.chain_avoids_weaken g fp (a <: U64.t) heap_words n;
-        meets_transfer_within g g' fp (x <: U64.t) (a <: U64.t) (a <: U64.t) n heap_words;
-        hd_address_spec x;
-        reachable_iff_met g' fp (x <: U64.t)
+        let c = SCl.size_class (U64.v (wosize_of_object x g)) in
+        SCl.size_class_lt (U64.v (wosize_of_object x g));
+        reachable_transfer g g' (FLs.fls_head fp c) (x <: U64.t)
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires cmp)
 #pop-options
@@ -1192,16 +1444,16 @@ let field_write_preserves_entry (g: heap) (fp: U64.t) (a: obj_addr) (w: hp_addr)
 /// ---------------------------------------------------------------------------
 
 /// A valid free list whose cells are all blue is sound: `fl_valid` gives
-/// membership and room for a link, `chain_objects_blue` the colour.  Used
-/// where the collector re-establishes `fl_exact` from those two.
+/// membership and room for a link, `chain_objects_blue` the colour.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-let fl_valid_cob_gives_sound (g: heap) (fp: U64.t)
+let fl_valid_cob_gives_sound_one (g: heap) (fp: U64.t)
   : Lemma (requires AllocLemmas.fl_valid g fp heap_words /\
                     AllocLemmas.fl_chain_terminates g fp heap_words /\
-                    Promote.chain_objects_blue g fp)
+                    (forall (obj: obj_addr).
+                       Seq.mem obj (objects zero_addr g) /\ ~(is_blue obj g) ==>
+                       AllocLemmas.chain_avoids g fp obj heap_words = true))
           (ensures FL.fl_sound g fp)
-  = reveal_opaque (`%Promote.chain_objects_blue) (Promote.chain_objects_blue g fp);
-    let snd (y: U64.t) : Lemma
+  = let snd (y: U64.t) : Lemma
       (requires FL.reachable_on_fl g fp y)
       (ensures FL.fl_node y /\
                (U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0) /\
@@ -1214,9 +1466,32 @@ let fl_valid_cob_gives_sound (g: heap) (fp: U64.t)
     FStar.Classical.forall_intro (FStar.Classical.move_requires snd)
 #pop-options
 
+/// The same for every list: valid lists whose cells are all blue are sound.
+/// Used where the collector re-establishes `fls_exact` from those two.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+let fl_valid_cob_gives_sound (g: heap) (fp: FLs.fl_state)
+  : Lemma (requires FLs.fls_valid g fp /\
+                    FLs.fls_terminates g fp /\
+                    Promote.chain_objects_blue g fp)
+          (ensures FLs.fls_sound g fp)
+  = reveal_opaque (`%Promote.chain_objects_blue) (Promote.chain_objects_blue g fp);
+    FLs.fls_valid_elim g fp;
+    FLs.fls_terminates_elim g fp;
+    let one (i: nat{i < SCl.n_lists}) : Lemma (FL.fl_sound g (FLs.fls_head fp i))
+      = let av (obj: obj_addr) : Lemma
+          (requires Seq.mem obj (objects zero_addr g) /\ ~(is_blue obj g))
+          (ensures AllocLemmas.chain_avoids g (FLs.fls_head fp i) obj heap_words = true)
+          = FLs.fls_avoids_iff g fp obj
+        in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires av);
+        fl_valid_cob_gives_sound_one g (FLs.fls_head fp i)
+    in
+    FStar.Classical.forall_intro one
+#pop-options
+
 /// Every heap the collector hands back satisfies the entry conditions:
-/// `major_heap_shape` carries `fl_exact`.
-let major_heap_shape_gives_entry (major: heap) (fp: U64.t)
+/// `major_heap_shape` carries `fls_exact`.
+let major_heap_shape_gives_entry (major: heap) (fp: FLs.fl_state)
   : Lemma (requires GenInv.major_heap_shape major fp)
           (ensures alloc_entry major fp)
   = GenInv.major_heap_shape_elim major fp;
@@ -1238,22 +1513,23 @@ let event_ok (g: heap) (e: event) : prop =
     Seq.mem a (objects zero_addr g) /\ is_blue a g = false /\
     U64.v w >= U64.v a /\ U64.v w < U64.v a + U64.v (wosize_of_object a g) * 8
 
-let step (g: heap) (fp: U64.t) (e: event) : GTot (heap & U64.t) =
+let step (g: heap) (fp: FLs.fl_state) (e: event) : GTot (heap & FLs.fl_state) =
   match e with
-  | EAlloc wz -> let r = alloc_spec g fp wz in (r.heap_out, r.fp_out)
+  | EAlloc wz -> let r = SAL.alloc_lists_spec g fp wz in (r.heap_out, r.fls_out)
   | EWrite _ w v -> (write_word g w v, fp)
 
-let rec run (g: heap) (fp: U64.t) (es: list event) : GTot (heap & U64.t) (decreases es) =
+let rec run (g: heap) (fp: FLs.fl_state) (es: list event)
+  : GTot (heap & FLs.fl_state) (decreases es) =
   match es with
   | [] -> (g, fp)
   | e :: rest -> let s = step g fp e in run (fst s) (snd s) rest
 
-let rec run_ok (g: heap) (fp: U64.t) (es: list event) : Tot prop (decreases es) =
+let rec run_ok (g: heap) (fp: FLs.fl_state) (es: list event) : Tot prop (decreases es) =
   match es with
   | [] -> True
   | e :: rest -> event_ok g e /\ (let s = step g fp e in run_ok (fst s) (snd s) rest)
 
-let rec run_preserves_entry (g: heap) (fp: U64.t) (es: list event)
+let rec run_preserves_entry (g: heap) (fp: FLs.fl_state) (es: list event)
   : Lemma (requires alloc_entry g fp /\ run_ok g fp es)
           (ensures (let r = run g fp es in alloc_entry (fst r) (snd r)))
           (decreases es)
@@ -1261,28 +1537,26 @@ let rec run_preserves_entry (g: heap) (fp: U64.t) (es: list event)
     | [] -> ()
     | e :: rest ->
       (match e with
-       | EAlloc wz -> alloc_spec_preserves_entry g fp wz
+       | EAlloc wz -> alloc_lists_preserves_entry g fp wz
        | EWrite a w v -> field_write_preserves_entry g fp a w v);
       let s = step g fp e in
       run_preserves_entry (fst s) (snd s) rest
 
 /// **An allocation succeeds whenever some free block is big enough** -- from
-/// any heap with an exact free list, and after any run of allocations and
+/// any heap with exact free lists, and after any run of allocations and
 /// field writes to live objects.
 ///
-/// Where an exact free list comes from: `coalesce_entry` (a coalesced swept
-/// heap), `fused_entry` (the pass the collector runs), and
-/// `major_heap_shape_gives_entry` (any heap satisfying the collector's
-/// invariant, i.e. anything `gen_gc` or `minor_collect_full` returns).  So
-/// the retry after a collection in `verified_allocate` is needed only when no
-/// single free block fits.
+/// Where exact lists come from: `major_heap_shape_gives_entry` (any heap
+/// satisfying the collector's invariant, i.e. anything `gen_gc` or
+/// `minor_collect_full` returns).  So the retry after a collection in
+/// `verified_allocate` is needed only when no single free block fits.
 let alloc_succeeds_when_a_block_fits
-  (g: heap) (fp: U64.t) (es: list event) (wz: pos) (x: obj_addr)
+  (g: heap) (fp: FLs.fl_state) (es: list event) (wz: pos) (x: obj_addr)
   : Lemma (requires alloc_entry g fp /\ run_ok g fp es /\
                     (let r = run g fp es in
                      Seq.mem x (objects zero_addr (fst r)) /\ is_blue x (fst r) /\
                      U64.v (wosize_of_object x (fst r)) >= wz))
-          (ensures (let r = run g fp es in (alloc_spec (fst r) (snd r) wz).obj_out <> 0UL))
+          (ensures (let r = run g fp es in (SAL.alloc_lists_spec (fst r) (snd r) wz).obj_out <> 0UL))
   = run_preserves_entry g fp es;
     let r = run g fp es in
-    alloc_spec_fits_succeeds (fst r) (snd r) wz x
+    alloc_lists_fits_succeeds (fst r) (snd r) wz x

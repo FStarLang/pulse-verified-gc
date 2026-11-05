@@ -1,9 +1,9 @@
 (*
    Pulse GC - Allocator Module Interface
 
-   First-fit free-list allocator for the verified GC.
-   Takes the heap and current free-list head, returns updated heap
-   and new free-list head along with the allocated object address.
+   Free-list allocator for the verified GC.
+   Takes the heap and the array of free-list heads (one per size class),
+   updates both, and returns the allocated object address.
 *)
 
 module GC.Impl.Allocator
@@ -21,33 +21,33 @@ module SpecFields = GC.Spec.Fields
 module SpecObject = GC.Spec.Object
 module SI = GC.Spec.SweepInv
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module SAL = GC.Spec.Allocator.Lists
+module FLs = GC.Spec.FreeLists
+module SC = GC.Spec.SizeClass
 
-/// Initialize the heap as one large free block.
+/// Initialize the heap as one large free block, on the list of its class.
 ///
 /// The entire heap becomes a single blue object with wosize = (heap_size/8) - 1.
-/// Its first field is set to 0 (end of free list).
-///
-/// Returns the initial free-list pointer (= mword = 8).
-fn init_heap (heap: heap_t)
-  requires is_heap heap 's
-  returns fp: U64.t
-  ensures exists* s2. is_heap heap s2 **
-    pure ((s2, fp) == SpecAlloc.init_heap_spec 's)
+/// Its first field is set to 0 (end of free list); every other list is empty.
+fn init_heap (heap: heap_t) (heads: array U64.t)
+  requires is_heap heap 's ** pts_to heads 'fls **
+           pure (Seq.length 'fls == SC.n_lists)
+  ensures exists* s2 fls2. is_heap heap s2 ** pts_to heads fls2 **
+    pure ((s2, fls2) == SAL.init_heap_lists_spec 's)
 
-/// Allocate an object of wosize words from the free list.
+/// Allocate an object of wosize words from the free lists.
 ///
 /// Parameters:
 ///   heap: mutable heap array
-///   fp: current free-list head (obj_addr of first free block, or 0UL)
-///   wosize: number of words needed (bumped to 1 if 0)
+///   heads: the free-list heads, one per size class (GC.Spec.FreeLists);
+///          updated in place
+///   wosize: number of words needed
 ///
-/// Returns: (new_fp, obj_addr)
-///   new_fp: updated free-list head
-///   obj_addr: allocated object address, or 0UL if out of memory
+/// Returns the allocated object address, or 0UL if out of memory.
 ///
-/// Postcondition ties the result to the pure spec alloc_spec.
-fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
-  requires is_heap heap 's **
+/// Postcondition ties the result to the pure spec alloc_lists_spec.
+fn allocate (heap: heap_t) (heads: array U64.t) (wosize: U64.t)
+  requires is_heap heap 's ** pts_to heads 'fls **
            // The allocator is never asked for a zero-word block: `gen_alloc`
            // requires wosize > 0, `promote_one` guards `wosize = 0` before
            // calling, and the C bridge's major path maps a request of 0 to 1
@@ -57,31 +57,32 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
            // which was a compare-and-select on every major allocation for a
            // case that cannot occur.
            pure (SpecFields.well_formed_heap 's /\
-                 U64.v wosize >= 1)
-  returns res: (U64.t & U64.t)
-  ensures exists* s2. is_heap heap s2 **
-    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in
+                 U64.v wosize >= 1 /\
+                 Seq.length 'fls == SC.n_lists)
+  returns obj: U64.t
+  ensures exists* s2 fls2. is_heap heap s2 ** pts_to heads fls2 **
+    pure (let spec_res = SAL.alloc_lists_spec 's 'fls (U64.v wosize) in
           s2 == spec_res.heap_out /\
-          fst res == spec_res.fp_out /\
-          snd res == spec_res.obj_out)
+          fls2 == spec_res.fls_out /\
+          obj == spec_res.obj_out)
 
 /// Allocate with weaker precondition: only requires well_formed_heap_part1
-/// + fl_valid + fl_chain_terminates. Suitable for use during promotion where
+/// + valid, terminating free lists. Suitable for use during promotion where
 /// full well_formed_heap (part2: pointer closure) may be temporarily violated.
 ///
 /// The implementation is identical to `allocate` — the allocator only reads
 /// headers and free-list links, never inspecting object pointer fields.
 
-fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
-  requires is_heap heap 's **
+fn allocate_part1 (heap: heap_t) (heads: array U64.t) (wosize: U64.t)
+  requires is_heap heap 's ** pts_to heads 'fls **
            pure (SpecFields.well_formed_heap_part1 's /\
-                 AllocLemmas.fl_valid 's fp SpecBase.heap_words /\
-                 AllocLemmas.fl_chain_terminates 's fp SpecBase.heap_words /\
-                 U64.v wosize >= 1)
-  returns res: (U64.t & U64.t)
-  ensures exists* s2. is_heap heap s2 **
-    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in
+                 FLs.fls_valid 's 'fls /\
+                 FLs.fls_terminates 's 'fls /\
+                 U64.v wosize >= 1 /\
+                 Seq.length 'fls == SC.n_lists)
+  returns obj: U64.t
+  ensures exists* s2 fls2. is_heap heap s2 ** pts_to heads fls2 **
+    pure (let spec_res = SAL.alloc_lists_spec 's 'fls (U64.v wosize) in
           s2 == spec_res.heap_out /\
-          fst res == spec_res.fp_out /\
-          snd res == spec_res.obj_out)
-
+          fls2 == spec_res.fls_out /\
+          obj == spec_res.obj_out)

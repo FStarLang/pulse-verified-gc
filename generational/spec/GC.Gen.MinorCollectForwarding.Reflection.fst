@@ -6,6 +6,7 @@ module GC.Gen.MinorCollectForwarding.Reflection
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -49,7 +50,7 @@ let mem_graph_vertex_at = MCFH.mem_graph_vertex_at
 /// queued object (`GC.Gen.CheneyBFS.fwd_covers_infix_fields`).  This is what
 /// replaced the old blanket ban on interior nursery field targets.
 private let minor_field_target_non_infix
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src: U64.t) (j: nat)
   : Lemma (requires CheneyBFS.cheney_no_oom minor major fp roots /\
                     Seq.mem src (minor_objects minor) /\
@@ -139,7 +140,7 @@ private let resolve_field_resolve (g: heap) (v: obj_addr)
 #pop-options
 
 private let normal_src_image_is_val_addr
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t) (u: CG.combined_vertex)
   : Lemma
     (requires
@@ -165,7 +166,7 @@ private let normal_src_image_is_val_addr
       assert (is_val_addr (prom.fwd_map x))
 
 private let post_minor_edge_to_mem_graph_edge
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t) (x y: U64.t)
   : Lemma
     (requires
@@ -194,7 +195,7 @@ private let post_minor_edge_to_mem_graph_edge
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
 let post_edge_from_minor_image_reflects_mem_ce
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (src: U64.t) (v: CG.combined_vertex)
   =
@@ -390,7 +391,7 @@ let post_edge_from_minor_image_reflects_mem_ce
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
 let post_edge_from_minor_image_reflects_target
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (src y: U64.t)
   =

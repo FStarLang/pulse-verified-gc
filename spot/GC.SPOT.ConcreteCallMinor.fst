@@ -36,7 +36,7 @@ let spot_minor_collect_full_success_post_from_call_post
           (CheneySpec.cheney_collect_spec
             ConcreteMinor.spot_minor2
             (ConcreteMajor.spot_major_heap r)
-            (ConcreteMajor.spot_major_fp r)
+            (ConcreteMajor.spot_major_fls r)
             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))).mc_major)
       (ensures spot_minor_collect_full_success_post r post_major)
   =
@@ -53,7 +53,7 @@ fn call_concrete_minor_collect_full_spot_borrowed
   (queue: larray U64.t CheneyImpl.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
   requires is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
-             (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r) **
+             (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fls r) **
            pts_to roots (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) **
            pts_to fwd_arr ConcreteScenarios.spot_fwd_array **
            pts_to queue 'qv **
@@ -73,7 +73,7 @@ fn call_concrete_minor_collect_full_spot_borrowed
       Postconditions.minor_collect_full_post
         ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
-        (ConcreteMajor.spot_major_fp r)
+        (ConcreteMajor.spot_major_fls r)
         (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
         ok post_major roots_out /\
       spot_minor_collect_full_success_post r post_major)
@@ -92,7 +92,7 @@ fn call_concrete_minor_collect_full_spot_borrowed
   Postconditions.minor_collect_full_post_elim
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
+    (ConcreteMajor.spot_major_fls r)
     (ThreeObjects.spot_roots c)
     ok post_major roots_out;
   spot_minor_collect_full_success_post_from_call_post r post_major;
@@ -104,7 +104,7 @@ fn call_concrete_minor_collect_full_spot
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)
   requires is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
-             (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r)
+             (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fls r)
   returns ok: bool
   ensures exists* d2 b2 post_major fp2.
     is_gen_heap gh d2 b2 post_major fp2 **

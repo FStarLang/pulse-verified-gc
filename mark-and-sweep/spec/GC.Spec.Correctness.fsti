@@ -537,6 +537,22 @@ val gc_postcondition_gen :
     (ensures gc_postcondition (fst (Coalesce.coalesce (fst (sweep h_mark fp)))))
 
 /// The collector's theorems hold of any heap that agrees with the coalesced one
+/// modulo free blocks' bodies and link words -- in particular of the heap the
+/// size-class sweep produces (`GC.Spec.CollectLists`).
+val gc_result_agree_links :
+  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) -> (s2: heap) ->
+  Lemma
+    (requires mark_post h_init h_mark roots fp /\
+              HeapAgree.heaps_agree_mod_free_links s2 (fst (Coalesce.coalesce (fst (sweep h_mark fp)))))
+    (ensures gc_postcondition s2 /\
+             full_gc_correctness h_init s2 roots /\
+             ((let g = create_graph h_init in
+               let roots' = HeapGraph.coerce_to_vertex_list roots in
+               graph_wf g /\ is_vertex_set roots' /\ subset_vertices roots' g.vertices) ==>
+              major_gc_live_subgraph_isomorphism h_init s2 roots /\
+              major_gc_unreachable_final_blue h_init s2 roots))
+
+/// The collector's theorems hold of any heap that agrees with the coalesced one
 /// modulo free-block bodies -- in particular of the heap the fused
 /// sweep+coalesce pass produces (`GC.Spec.SweepCoalesce.fused_agrees_sweep_coalesce`).
 val gc_result_agree :

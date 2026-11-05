@@ -12,6 +12,9 @@ module GC.Gen.Cheney.Dense
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
+module AK = GC.Gen.AllocLists
+module SAL = GC.Spec.Allocator.Lists
 module U8 = FStar.UInt8
 
 open GC.Spec.Base
@@ -248,15 +251,15 @@ private let set_promoted_tag_preserves_dense
 #push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 
 let promote_object_preserves_dense
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
-  = let alloc_res = alloc_spec major fp wz in
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: FLs.fl_state) (wz: nat{wz > 0})
+  = let alloc_res = SAL.alloc_lists_spec major fp wz in
     if alloc_res.obj_out = 0UL then
       promote_object_oom minor major obj fp wz
     else begin
-      AD.alloc_spec_preserves_dense_part1 major fp wz;
-      AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
-      AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
-      AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
+      AK.alloc_lists_preserves_dense_part1 major fp wz;
+      AK.alloc_lists_preserves_wfh_part1 major fp wz;
+      AK.alloc_lists_obj_in_objects_part1 major fp wz;
+      AK.alloc_lists_obj_wosize_part1 major fp wz;
       promote_object_success minor major obj fp wz;
       let dst_obj : obj_addr = alloc_res.obj_out in
       // Step 1: copy_fields preserves density

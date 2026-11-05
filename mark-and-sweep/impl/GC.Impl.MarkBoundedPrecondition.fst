@@ -261,7 +261,7 @@ let bsp_root_props (g: heap) (st: Seq.seq obj_addr)
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
-let darken_roots_match_stack g st roots fp cap
+let darken_roots_match_stack g st roots cap
   = let n = Seq.length roots in
     prefix_pushes_roots g st roots n cap;
     prefix_preserves_stack_roots g st roots n cap;
@@ -281,7 +281,7 @@ let darken_roots_match_stack g st roots fp cap
 #pop-options
 
 #push-options "--z3rlimit 60 --fuel 2 --ifuel 1"
-let darken_establishes_precondition g st roots fp cap
+let darken_establishes_precondition g st roots cap
   = let n = Seq.length roots in
     let g' = fst (MB.darken_roots_bounded_spec g st roots cap) in
     let st' = snd (MB.darken_roots_bounded_spec g st roots cap) in
@@ -296,8 +296,6 @@ let darken_establishes_precondition g st roots fp cap
     MarkBoundedInv.bounded_mark_inv_elim_bsp g' st' cap;
     bsp_root_props g' st';
     // 2, 4. free-list facts survive because `objects` is unchanged
-    MB.darken_roots_bounded_spec_preserves_fp_valid g st roots cap fp;
-    MB.darken_roots_bounded_spec_preserves_fp_in_heap g st roots cap fp;
     // 5, 6, 7. colour and shape invariants
     MB.darken_roots_bounded_spec_preserves_no_black g st roots cap;
     MB.darken_roots_bounded_spec_preserves_no_pointer_to_blue g st roots cap;
@@ -311,7 +309,7 @@ let darken_establishes_precondition g st roots fp cap
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let darken_preserves_create_graph g st roots fp cap
+let darken_preserves_create_graph g st roots cap
   = let points_to (i: nat) : Lemma
       (i < Seq.length roots ==> MB.root_points_to_object g (Seq.index roots i))
     = if i < Seq.length roots

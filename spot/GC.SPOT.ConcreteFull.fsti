@@ -25,7 +25,7 @@ val spot_concrete_c_final_survives
           Cheney.cheney_collect_spec
             ConcreteMinor.spot_minor2
             (ConcreteMajor.spot_major_heap r)
-            (ConcreteMajor.spot_major_fp r)
+            (ConcreteMajor.spot_major_fls r)
             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
         ok /\
         GenImpl.gen_gc_stack_budget
@@ -33,14 +33,14 @@ val spot_concrete_c_final_survives
         GenImpl.gen_gc_roots_post
           ConcreteMinor.spot_minor2
           (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
+          (ConcreteMajor.spot_major_fls r)
           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
           roots_out ok st cap /\
         GenImpl.gen_gc_heap_shape_post d2 b2 final_major /\
         GenImpl.gen_gc_reachable_subgraph_isomorphism_post
           ConcreteMinor.spot_minor2
           (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
+          (ConcreteMajor.spot_major_fls r)
           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
           ok final_major roots_out st cap))
       (ensures Seq.mem (ConcreteMajor.spot_c r)
@@ -57,7 +57,7 @@ val spot_concrete_a_prime_final_survives
           Cheney.cheney_collect_spec
             ConcreteMinor.spot_minor2
             (ConcreteMajor.spot_major_heap r)
-            (ConcreteMajor.spot_major_fp r)
+            (ConcreteMajor.spot_major_fls r)
             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
         ok /\
         GenImpl.gen_gc_stack_budget
@@ -65,14 +65,14 @@ val spot_concrete_a_prime_final_survives
         GenImpl.gen_gc_roots_post
           ConcreteMinor.spot_minor2
           (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
+          (ConcreteMajor.spot_major_fls r)
           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
           roots_out ok st cap /\
         GenImpl.gen_gc_heap_shape_post d2 b2 final_major /\
         GenImpl.gen_gc_reachable_subgraph_isomorphism_post
           ConcreteMinor.spot_minor2
           (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
+          (ConcreteMajor.spot_major_fls r)
           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
           ok final_major roots_out st cap))
       (ensures (
@@ -80,7 +80,7 @@ val spot_concrete_a_prime_final_survives
           Cheney.cheney_promote
             ConcreteMinor.spot_minor2
             (ConcreteMajor.spot_major_heap r)
-            (ConcreteMajor.spot_major_fp r)
+            (ConcreteMajor.spot_major_fls r)
             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
         exists (a_prime:obj_addr).
           a_prime == prom.fwd_map GC.SPOT.Layout.a_minor /\
@@ -98,7 +98,7 @@ val spot_concrete_c_field_final_points_to_a_prime
           Cheney.cheney_collect_spec
             ConcreteMinor.spot_minor2
             (ConcreteMajor.spot_major_heap r)
-            (ConcreteMajor.spot_major_fp r)
+            (ConcreteMajor.spot_major_fls r)
             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
         ok /\
         GenImpl.gen_gc_stack_budget
@@ -106,14 +106,14 @@ val spot_concrete_c_field_final_points_to_a_prime
         GenImpl.gen_gc_roots_post
           ConcreteMinor.spot_minor2
           (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
+          (ConcreteMajor.spot_major_fls r)
           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
           roots_out ok st cap /\
         GenImpl.gen_gc_heap_shape_post d2 b2 final_major /\
         GenImpl.gen_gc_reachable_subgraph_isomorphism_post
           ConcreteMinor.spot_minor2
           (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
+          (ConcreteMajor.spot_major_fls r)
           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
           ok final_major roots_out st cap))
       (ensures (
@@ -121,7 +121,7 @@ val spot_concrete_c_field_final_points_to_a_prime
           Cheney.cheney_promote
             ConcreteMinor.spot_minor2
             (ConcreteMajor.spot_major_heap r)
-            (ConcreteMajor.spot_major_fp r)
+            (ConcreteMajor.spot_major_fls r)
             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
         Seq.mem (ConcreteMajor.spot_c r)
           (GC.Spec.Fields.objects zero_addr final_major) /\

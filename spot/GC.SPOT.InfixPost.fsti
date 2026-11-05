@@ -28,7 +28,7 @@ val spot_infix_ok
         not ok ==>
         GC.Gen.CheneyBFS.cheney_oom
           InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
-          (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r))
+          (InfixMajor.spot_infix_fls r) (InfixPre.spot_infix_roots r))
       (ensures ok == true)
 
 /// The root survives collection: `Q`, the object that holds the interior
@@ -41,11 +41,11 @@ val spot_infix_q_survives
         GenImpl.gen_gc_stack_budget (InfixPre.spot_infix_roots r) st cap /\
         GenImpl.gen_gc_roots_post
           InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
-          (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r)
+          (InfixMajor.spot_infix_fls r) (InfixPre.spot_infix_roots r)
           roots_out true st cap /\
         GenImpl.gen_gc_reachable_subgraph_isomorphism_post
           InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
-          (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r)
+          (InfixMajor.spot_infix_fls r) (InfixPre.spot_infix_roots r)
           true final_major roots_out st cap)
       (ensures
         Seq.mem (InfixMajor.spot_q r <: U64.t) roots_out /\

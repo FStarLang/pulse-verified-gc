@@ -47,6 +47,7 @@ module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
 module HeapGraph = GC.Spec.HeapGraph
 module HeapModel = GC.Spec.HeapModel
+module FLs = GC.Spec.FreeLists
 
 /// Read the remembered-set slot targets from the pre-collection major heap.
 /// Only valid slots containing minor pointers contribute roots.
@@ -212,7 +213,7 @@ let result_post_reachable
 /// heap, and transporting a witness between two such copies across a
 /// propositional heap equality is not something the solver manages.
 let post_minor_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (w: U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   let res = cheney_collect_spec minor major fp roots in
@@ -220,7 +221,7 @@ let post_minor_reachable
     (resolve_roots res.mc_major (rewrite_roots roots prom.fwd_map)) w
 
 let post_minor_edge
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (x y: U64.t) : prop =
   let res = cheney_collect_spec minor major fp roots in
   mem_graph_edge_at (HeapModel.create_graph res.mc_major) x y
@@ -253,7 +254,7 @@ val result_post_reachable_refl_resolved
 /// A rewritten root that names `w` --- either directly, or, when the root is an
 /// interior pointer, by resolving to it --- makes `w` post-reachable.
 val post_minor_reachable_refl_from_root
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t) (rr: U64.t) (w: U64.t)
   : Lemma
     (requires (
@@ -361,7 +362,7 @@ val vertex_resolves_to_itself (h: heap) (w: U64.t)
 /// Cheney promotion preserves the header-derived facts and body field of a
 /// pre-existing non-blue major object.
 val cheney_promote_preserves_old_major_field_context
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src: obj_addr) (j: nat)
   : Lemma
     (requires
@@ -410,7 +411,7 @@ val header_eq_preserves_wosize_no_scan
 /// rewritten interior field into the combined-graph edge
 /// `MinorV (resolve_minor minor x)`.
 val fwd_image_resolves
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (x: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) (x: U64.t)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
@@ -466,7 +467,7 @@ val major_field_target_in_roots
 /// the forwarding map.  This is `fwd_covers_infix_fields`, which the scan loop
 /// establishes for every queued object.
 val minor_field_infix_target_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src: U64.t) (j: nat)
   : Lemma
     (requires
@@ -483,7 +484,7 @@ val minor_field_infix_target_forwarded
 /// remembered set files it as a Cheney root, and `fwd_covers_infix_roots`
 /// forwards every interior root.
 val major_field_infix_target_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots slots: seq U64.t) (n: nat)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots slots: seq U64.t) (n: nat)
   (src: obj_addr) (j: nat)
   : Lemma
     (requires

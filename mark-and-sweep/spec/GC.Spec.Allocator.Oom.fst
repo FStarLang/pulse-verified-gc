@@ -128,6 +128,21 @@ private let rec alloc_search_oom_cells_small
   end
 #pop-options
 
+/// Layer 1 at the head: when `alloc_spec` returns no object, every cell of
+/// the list is too small.  With several lists, each list's cells.
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+let alloc_spec_oom_cells_small (g: heap) (fp: U64.t) (wz: nat) (y: U64.t)
+  : Lemma
+    (requires well_formed_heap_part1 g /\ wz >= 1 /\
+              AllocLemmas.fl_valid g fp heap_words /\
+              AllocLemmas.fl_chain_terminates g fp heap_words /\
+              (alloc_spec g fp wz).obj_out == 0UL /\
+              FL.reachable_on_fl g fp y)
+    (ensures U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0 /\
+             U64.v (wosize_of_object (y <: obj_addr) g) < wz)
+  = alloc_search_oom_cells_small g fp 0UL fp wz heap_words y
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Layer 2: with a complete free list, no blue block fits
 /// ---------------------------------------------------------------------------

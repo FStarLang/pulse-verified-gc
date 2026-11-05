@@ -2,6 +2,7 @@ module GC.SPOT.ThreeObjects
 
 open FStar.Seq
 module Seq = FStar.Seq
+module FLs = GC.Spec.FreeLists
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
@@ -89,7 +90,7 @@ let spot_slots_singleton_distinct
   = Preconditions.singleton_slots_pairwise_distinct (spot_slots c) 1
 
 let spot_minor_scenario_pre
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
   (farr: seq U64.t) : prop =
   Preconditions.minor_collect_full_pre
@@ -111,7 +112,7 @@ let spot_minor_scenario_pre
   CheneyBFS.cheney_no_oom minor major fp (spot_roots c)
 
 let spot_minor_scenario_pre_intro_from_c_to_a
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
   (farr: seq U64.t)
   =
@@ -139,7 +140,7 @@ let spot_minor_scenario_pre_intro_from_c_to_a
           Some (CG.MinorV Layout.a_minor))
 
 let spot_full_scenario_pre
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
   (farr: seq U64.t) (st: seq obj_addr) (cap: nat) : prop =
   spot_minor_scenario_pre minor major fp c farr /\
@@ -147,7 +148,7 @@ let spot_full_scenario_pre
     minor major fp (spot_roots c) farr (spot_slots c) 1 st cap
 
 let expose_spot_collection_facts
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
   (farr: seq U64.t)
   : Lemma
@@ -174,7 +175,7 @@ let expose_spot_collection_facts
   RBridge.minor_no_pointer_to_blue_from_collection_shape minor major fp
 
 let spot_c_reachable_root
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
   (farr: seq U64.t)
   =
@@ -188,7 +189,7 @@ let spot_c_reachable_root
     (CG.MajorV c)
 
 let spot_a_reachable_root
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
   (farr: seq U64.t)
   =
@@ -210,7 +211,7 @@ let spot_a_reachable_root
     (CG.MinorV Layout.a_minor)
 
 let spot_a_promoted
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
   (farr: seq U64.t)
   =
@@ -238,7 +239,7 @@ private let c_to_a_slot_field_addr
 #pop-options
 
 let spot_c_field_rewritten_to_a_prime
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
   (farr: seq U64.t)
   =
@@ -254,12 +255,12 @@ let spot_c_field_rewritten_to_a_prime
     (to_minor_offset (SpecHeap.read_word major (spot_c_to_a_slot c)))
 
 let spot_b_not_promoted_from_forwarding_zero
-  (minor: minor_state) (major: heap) (fp: U64.t) (c: obj_addr)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (c: obj_addr)
   = Postconditions.not_promoted_from_zero_forwarding
       minor major fp (spot_roots c) Layout.b_minor
 
 let spot_final_survives_from_gen_gc_post
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
   (roots_out: seq U64.t) (ok: bool) (final_major: heap)
   (st: seq obj_addr) (cap: nat) (x: obj_addr)

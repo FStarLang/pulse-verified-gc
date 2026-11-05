@@ -6,6 +6,7 @@ module GC.Gen.MinorCollectForwarding.Edges
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -59,7 +60,7 @@ private let header_eq_preserves_infix (g1 g2: heap) (obj: obj_addr)
 #pop-options
 
 let combined_reachable_minor_has_fwd
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   = let cg = CG.build_combined_graph minor major in
     let combined_roots = CG.classify_roots minor roots in
     RBridge.combined_minor_reachable_in_minor_reachable minor major roots;
@@ -73,7 +74,7 @@ let combined_reachable_minor_has_fwd
     Classical.forall_intro (Classical.move_requires aux)
 
 let combined_reachable_minor_has_fwd_from_slots
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   =
     remembered_roots_in_roots_from_slots major roots slots n;
@@ -82,7 +83,7 @@ let combined_reachable_minor_has_fwd_from_slots
 /// The two halves of `combined_reachable_images_valid_or_infix_prop`, proved
 /// separately: the combined query diverges under Z3 4.15.3.
 private let combined_reachable_images_valid_or_infix_major
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
@@ -119,7 +120,7 @@ private let combined_reachable_images_valid_or_infix_major
     Classical.forall_intro (Classical.move_requires major_aux)
 
 private let combined_reachable_images_valid_or_infix_minor
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
@@ -168,12 +169,12 @@ private let combined_reachable_images_valid_or_infix_minor
     Classical.forall_intro (Classical.move_requires minor_aux)
 
 let combined_reachable_images_valid_or_infix
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   = combined_reachable_images_valid_or_infix_major minor major fp roots;
     combined_reachable_images_valid_or_infix_minor minor major fp roots
 
 let combined_reachable_images_valid_or_infix_from_slots
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   =
     remembered_roots_in_roots_from_slots major roots slots n;
@@ -189,12 +190,12 @@ let combined_reachable_images_valid_or_infix_from_slots
 /// header is untouched, so it still resolves to `dst`.
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
 let cheney_collect_frame_target_header
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (h: obj_addr)
   : Lemma
     (requires well_formed_heap major /\
-              AllocLemmas.fl_valid major fp heap_words /\
-              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              FLs.fls_valid major fp /\
+              FLs.fls_terminates major fp /\
               chain_objects_blue major fp /\
               minor_infix_wf minor /\
               GC.Spec.Object.infix_addr_wf major (objects zero_addr major) h /\
@@ -233,7 +234,7 @@ let cheney_collect_frame_target_header
 #pop-options
 
 let combined_reachable_major_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src dst: obj_addr)
   =
     let cg = CG.build_combined_graph minor major in
@@ -247,8 +248,8 @@ let combined_reachable_major_edge_forwarded
     assert (well_formed_heap major);
     assert (minor_wf minor);
     assert (minor_infix_wf minor);
-    assert (AllocLemmas.fl_valid major fp heap_words);
-    assert (AllocLemmas.fl_chain_terminates major fp heap_words);
+    assert (FLs.fls_valid major fp);
+    assert (FLs.fls_terminates major fp);
     assert (chain_objects_blue major fp);
     RBridge.reachable_major_valid_nonblue minor major roots;
     CG.major_edge_elim minor major src (CG.MajorV dst);
@@ -344,7 +345,7 @@ let combined_reachable_major_edge_forwarded
 
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
 let combined_major_minor_field_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (src: obj_addr) (dst: U64.t) (i: nat)
   =
@@ -391,7 +392,7 @@ let combined_major_minor_field_forwarded
 
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
 let combined_major_minor_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (src: obj_addr) (dst: U64.t) (i: nat)
   =
@@ -431,7 +432,7 @@ let combined_major_minor_edge_forwarded
 
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
 let promoted_minor_major_field_preserved
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   =
     let prom = cheney_promote minor major fp roots in
@@ -459,7 +460,7 @@ let promoted_minor_major_field_preserved
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let promoted_minor_major_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   =
     let prom = cheney_promote minor major fp roots in
@@ -504,7 +505,7 @@ let promoted_minor_major_edge_forwarded
 
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
 let promoted_minor_minor_field_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   =
     let prom = cheney_promote minor major fp roots in
@@ -545,7 +546,7 @@ let promoted_minor_minor_field_forwarded
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let promoted_minor_minor_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   =
     let prom = cheney_promote minor major fp roots in

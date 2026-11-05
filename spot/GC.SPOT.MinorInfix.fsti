@@ -1,6 +1,7 @@
 module GC.SPOT.MinorInfix
 
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 module Seq = FStar.Seq
 
 open FStar.Seq
@@ -63,7 +64,7 @@ let stored_target
 /// `cheney_collect_spec` already has to supply; only the last three conjuncts
 /// are specific to this SPOT.
 let minor_infix_scenario
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (c: obj_addr) (i: nat) : prop =
   U64.v c + i * 8 + 8 <= heap_size /\
@@ -97,7 +98,7 @@ let minor_infix_scenario
 /// `major_minor_fields_no_infix_targets`, which contradicts the last group of
 /// clauses above.)
 val spot_minor_infix_admissible
-  : minor:minor_state -> major:heap -> fp:U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state ->
     roots:seq U64.t -> slots:seq U64.t -> n:nat ->
     c:obj_addr -> i:nat ->
     Lemma
@@ -125,7 +126,7 @@ val spot_minor_infix_admissible
 ///   * and the post-collection heap graph nevertheless carries the edge
 ///     `c -> promoted closure`, because the graph resolves interior pointers.
 val spot_minor_infix_promoted
-  : minor:minor_state -> major:heap -> fp:U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state ->
     roots:seq U64.t -> slots:seq U64.t -> n:nat ->
     c:obj_addr -> i:nat ->
     Lemma
@@ -178,7 +179,7 @@ let deleted_major_minor_fields_no_infix_targets
 
 /// The scenario is exactly what the deleted clause forbade.
 val spot_minor_infix_was_forbidden
-  : minor:minor_state -> major:heap -> fp:U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state ->
     roots:seq U64.t -> slots:seq U64.t -> n:nat ->
     c:obj_addr -> i:nat ->
     Lemma

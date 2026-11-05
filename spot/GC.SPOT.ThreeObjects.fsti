@@ -2,6 +2,7 @@ module GC.SPOT.ThreeObjects
 
 open FStar.Seq
 module Seq = FStar.Seq
+module FLs = GC.Spec.FreeLists
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
@@ -62,12 +63,12 @@ val spot_slots_singleton_distinct
     Lemma (GC.Gen.Impl.UpdatePtrs.slots_pairwise_distinct (spot_slots c) 1)
 
 val spot_minor_scenario_pre
-  : minor:minor_state -> major:heap -> fp:U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state ->
     c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size} ->
     farr:seq U64.t -> Tot prop
 
 val spot_minor_scenario_pre_intro_from_c_to_a
-  : minor:minor_state -> major:heap -> fp:U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state ->
     c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size} ->
     farr:seq U64.t ->
     Lemma
@@ -90,12 +91,12 @@ val spot_minor_scenario_pre_intro_from_c_to_a
       (ensures spot_minor_scenario_pre minor major fp c farr)
 
 val spot_full_scenario_pre
-  : minor:minor_state -> major:heap -> fp:U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state ->
     c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size} ->
     farr:seq U64.t -> st:seq obj_addr -> cap:nat -> Tot prop
 
 val spot_c_reachable_root
-  : minor:minor_state -> major:heap -> fp:U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state ->
     c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size} ->
     farr:seq U64.t ->
     Lemma
@@ -107,7 +108,7 @@ val spot_c_reachable_root
           (GC.Gen.CombinedGraph.MajorV c)))
 
 val spot_a_reachable_root
-  : minor:minor_state -> major:heap -> fp:U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state ->
     c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size} ->
     farr:seq U64.t ->
     Lemma
@@ -119,7 +120,7 @@ val spot_a_reachable_root
           (GC.Gen.CombinedGraph.MinorV GC.SPOT.Layout.a_minor)))
 
 val spot_a_promoted
-  : minor:minor_state -> major:heap -> fp:U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state ->
     c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size} ->
     farr:seq U64.t ->
     Lemma
@@ -131,7 +132,7 @@ val spot_a_promoted
           (prom.fwd_map GC.SPOT.Layout.a_minor)))
 
 val spot_c_field_rewritten_to_a_prime
-  : minor:minor_state -> major:heap -> fp:U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state ->
     c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size} ->
     farr:seq U64.t ->
     Lemma
@@ -146,7 +147,7 @@ val spot_c_field_rewritten_to_a_prime
           prom.fwd_map GC.SPOT.Layout.a_minor))
 
 val spot_b_not_promoted_from_forwarding_zero
-  : minor:minor_state -> major:heap -> fp:U64.t -> c:obj_addr ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state -> c:obj_addr ->
     Lemma
       (requires
         (GC.Gen.Cheney.cheney_promote minor major fp (spot_roots c)).fwd_map
@@ -156,7 +157,7 @@ val spot_b_not_promoted_from_forwarding_zero
           minor major fp (spot_roots c) GC.SPOT.Layout.b_minor)
 
 val spot_final_survives_from_gen_gc_post
-  : minor:minor_state -> major:heap -> fp:U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state ->
     c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size} ->
     roots_out:seq U64.t -> ok:bool -> final_major:heap -> st:seq obj_addr ->
     cap:nat -> x:obj_addr ->

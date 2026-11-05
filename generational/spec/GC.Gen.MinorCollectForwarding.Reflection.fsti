@@ -30,9 +30,10 @@ module GenInv = GC.Gen.HeapInvariant
 module HeapModel = GC.Spec.HeapModel
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module MCFNE = GC.Gen.MinorCollectForwarding.NormalEdges
+module FLs = GC.Spec.FreeLists
 
 let normal_image_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (w: U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   exists (u: CG.combined_vertex).
@@ -40,7 +41,7 @@ let normal_image_reachable
     CG.fwd_morphism prom.fwd_map u == w
 
 val post_edge_from_minor_image_reflects_mem_ce
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (src: U64.t) (v: CG.combined_vertex)
   : Lemma
@@ -61,7 +62,7 @@ val post_edge_from_minor_image_reflects_mem_ce
     (ensures CG.mem_ce (CG.MinorV src, v) (CG.build_combined_graph minor major))
 
 val post_edge_from_minor_image_reflects_target
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (src y: U64.t)
   : Lemma

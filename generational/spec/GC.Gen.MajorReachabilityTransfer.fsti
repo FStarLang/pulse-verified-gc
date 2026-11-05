@@ -18,6 +18,7 @@ module GC.Gen.MajorReachabilityTransfer
 open FStar.Seq
 open GC.Spec.Graph
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 module Seq = FStar.Seq
 
 /// `g1` and `g2` agree on `live`, and `live` is closed under `g1`-successors.
@@ -104,7 +105,7 @@ module MinorFwd = GC.Gen.MinorCollectForwarding
 /// the minor collector's forwarding map: the major collection does not move
 /// anything, so it contributes the identity.
 let end_to_end_isomorphism
-  (minor: GC.Gen.MinorHeap.minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  (minor: GC.Gen.MinorHeap.minor_state) (major: heap) (fp: FLs.fl_state) (roots: Seq.seq U64.t)
   (final_major: heap) (final_roots: Seq.seq U64.t) : prop =
   CG.reachable_subgraph_isomorphism
     (MinorFwd.normal_src_reachable minor major fp roots)
@@ -118,7 +119,7 @@ let end_to_end_isomorphism
 /// post-minor heap with the roots greyed -- which is why the caller only has
 /// to know that darkening leaves the object graph alone.
 val end_to_end_isomorphism_intro
-  (minor: GC.Gen.MinorHeap.minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  (minor: GC.Gen.MinorHeap.minor_state) (major: heap) (fp: FLs.fl_state) (roots: Seq.seq U64.t)
   (post_major: heap) (post_roots: Seq.seq U64.t)
   (darkened: heap) (droots: Seq.seq obj_addr) (final_major: heap)
   : Lemma

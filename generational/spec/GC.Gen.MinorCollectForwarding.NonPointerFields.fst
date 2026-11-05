@@ -6,6 +6,7 @@ module GC.Gen.MinorCollectForwarding.NonPointerFields
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -50,7 +51,7 @@ private let combined_vertex_cases (v: CG.combined_vertex)
 /// the three forall instantiations run cheaply at low rlimit.
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 private let fwd_minor_source_in_minor_objects
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (x: U64.t)
   : Lemma
     (requires
@@ -78,7 +79,7 @@ private let fwd_minor_source_in_minor_objects
 /// that half.  Either way the resolved address is an enumerated minor object,
 /// which is exactly the hypothesis the resolution-aware classifiers want.
 private let fwd_source_resolves_in_minor_objects
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (x: U64.t)
   : Lemma
     (requires
@@ -102,7 +103,7 @@ private let fwd_source_resolves_in_minor_objects
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 private let major_non_pointer_field_preserved
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src: obj_addr) (j: nat)
   : Lemma
     (requires
@@ -146,7 +147,7 @@ private let major_non_pointer_field_preserved
     end
 
 private let minor_non_pointer_field_preserved
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src: U64.t) (j: nat)
   : Lemma
     (requires
@@ -200,7 +201,7 @@ private let minor_non_pointer_field_preserved
     end
 
 let normal_post_non_pointer_fields_preserved
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   =
     let prom = cheney_promote minor major fp roots in
@@ -315,7 +316,7 @@ let normal_post_non_pointer_fields_preserved
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let normal_post_non_pointer_fields_preserved_to_result
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (post_major: heap)
   =
     let prom = cheney_promote minor major fp roots in
