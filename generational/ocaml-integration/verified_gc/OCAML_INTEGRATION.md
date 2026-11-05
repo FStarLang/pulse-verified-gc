@@ -425,7 +425,9 @@ Step                  (bridge logic)                      (verified)
 minor offsets become major value addresses using `gc_fwd_arr`; entries that
 were already major values remain unchanged.  Ref-table entries are also
 rewritten by the verified call because the bridge passes the actual table
-slots (`tbl->base`, `nslots`) as `slots`.
+slots (`tbl->base`, `nslots`) as `slots`.  An entry may repeat; the second
+rewrite of a slot finds a major pointer and leaves it alone, and the
+contract does not ask for distinct slots.
 
 ### Forwarding Array
 
@@ -943,7 +945,7 @@ keep true in between. How this runtime meets each:
 | **The allocation colour is the collector's** | `verified_allocate` writes the final header; the patched `caml_alloc_shr_aux` rewrites only profiling bits (WITH_PROFINFO), keeping the colour; `caml_allocation_color` uses the same rule (`vergc_allocation_color`), for C stubs that ask. `Obj.truncate` is not supported: `caml_obj_truncate` raises `Invalid_argument`, so no leftover header is written. |
 | **Field writes** (`GC.Spec.SweepPhase.Mutator.program_write`) | `caml_modify` / `caml_initialize`, whose barrier records every major field given a young pointer in `caml_ref_table`. |
 | **Nursery allocation** keeps the nursery's shape and the cross-generation condition | The nursery is allocated only after the cycle's own minor collection (before `start_cycle`), so every nursery object was initialised from reachable values: none points at an object pending free. |
-| **The minor collection's arguments** (`minor_slots_ok`) | The forwarding array is zeroed before every call; the remembered set is `caml_ref_table`, reset after every minor collection (so it never names a slot in an object that was unreachable when marking ended); its young targets are added to the roots; the roots come from `caml_do_roots`, which marking used too. |
+| **The minor collection's arguments** (`minor_slots_ok`) | The forwarding array is zeroed before every call; the remembered set is `caml_ref_table`, reset after every minor collection (so it never names a slot in an object that was unreachable when marking ended); its young targets are added to the roots; the roots come from `caml_do_roots`, which marking used too. The table may list a field more than once (`caml_modify` adds it again after young -> immediate -> young); the contract allows repeats, so the bridge does not deduplicate. |
 | **`phase_ref` is written only by the collector** | `alloc_gen.c` only reads it (`vergc_sweeping`, `vergc_allocation_color`). |
 
 Known holes, shared with stop-the-world (docs/known-issues.md): weak arrays

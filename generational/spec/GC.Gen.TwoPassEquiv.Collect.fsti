@@ -50,7 +50,6 @@ val two_pass_implies_collect_with (ph: gc_phase)
        CheneySpec.fwd_bounded prom.fwd_map /\
        no_infix_block prom.major_final /\
        valid_slot_addrs slots n /\
-       slots_pairwise_distinct slots n /\
        free_def_ok free /\
        GC.Gen.Promote.allocations_not_free ph free /\
        ref_table_sound_with free major_pre slots n /\

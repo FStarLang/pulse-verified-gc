@@ -32,11 +32,6 @@ val zero_forwarding_array_intro
                    (forall (i:nat). i < Seq.length farr ==> Seq.index farr i == 0UL))
           (ensures zero_forwarding_array farr)
 
-val singleton_slots_pairwise_distinct
-  : slots:seq U64.t -> n:nat ->
-    Lemma (requires n <= 1 /\ n <= Seq.length slots)
-          (ensures RefTable.slots_pairwise_distinct slots n)
-
 val minor_collect_full_pre_elim
   : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
     farr:seq U64.t -> slots:seq U64.t -> nslots:nat ->
@@ -47,7 +42,6 @@ val minor_collect_full_pre_elim
             (forall (i:nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
             RefTable.ref_table_sound major slots nslots /\
             RefTable.ref_table_covers_minor_ptrs major slots nslots /\
-            RefTable.slots_pairwise_distinct slots nslots /\
             GC.Gen.MinorCollectForwarding.remembered_targets_in_roots major roots slots nslots /\
             GC.Gen.MinorCollectForwarding.roots_valid_for_minor_collection minor major roots)
 
@@ -60,7 +54,6 @@ val minor_collect_full_pre_intro
         zero_forwarding_array farr /\
         RefTable.ref_table_sound major slots nslots /\
         RefTable.ref_table_covers_minor_ptrs major slots nslots /\
-        RefTable.slots_pairwise_distinct slots nslots /\
         GC.Gen.MinorCollectForwarding.remembered_targets_in_roots major roots slots nslots /\
         GC.Gen.MinorCollectForwarding.roots_valid_for_minor_collection minor major roots)
       (ensures minor_collect_full_pre minor major fp roots farr slots nslots)

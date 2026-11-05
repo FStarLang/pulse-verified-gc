@@ -120,6 +120,26 @@ spuriously.
 
 ---
 
+## Fixed: the minor collection assumed distinct remembered slots
+
+**Checked by:** `spot/GC.SPOT.DuplicateSlot` (proof, no runtime test)
+**Fixed in:** `GC.Gen.TwoPassEquiv` (the precondition was dropped)
+
+The minor collection's contract used to require `slots_pairwise_distinct`:
+no field listed twice in the remembered set. Stock `caml_modify` does not
+guarantee that. A field written young -> immediate -> young is recorded twice,
+because the second write sees an immediate old value, and the bridge passes
+`caml_ref_table` through without deduplicating. The obligation was unmet, not
+just unchecked.
+
+No bug came of it, because rewriting a slot twice does nothing the second time.
+The first rewrite forwards the slot to a major copy, and a forwarding target is
+never a forwarded nursery pointer (`fwd_targets_stable`). The proof now shows
+this (`rewrite_slots_iter_slot_effect` holds for any slot sequence), and the
+precondition is gone from `minor_collect`, `minor_collect_with` and `full_gc`.
+
+---
+
 ## Fixed: `Gc.full_major` ran stock's major collector over the verified heap
 
 **Regression test:** `tests/explicit_major.ml` (`make correctness`)

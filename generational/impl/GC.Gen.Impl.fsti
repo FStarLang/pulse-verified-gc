@@ -346,7 +346,9 @@ let gen_gc_unreachable_final_blue_post
 /// caller states it as a pre-promotion property given what counts as free
 /// (`RT.ref_table_covers_with`: every nursery pointer held by a non-free
 /// block is at a recorded slot; `RT.ref_table_sound_with`: slots are fields of
-/// scannable non-free blocks).  The recorded slots' nursery targets are
+/// scannable non-free blocks).  A slot may be recorded more than once
+/// (`caml_modify` after young -> immediate -> young); the second rewrite of
+/// it is a no-op, so the bridge need not deduplicate.  The recorded slots' nursery targets are
 /// among the roots (`remembered_targets_in_roots`), and the roots are valid
 /// and not free (`roots_valid_with`): roots are reachable, so never
 /// garbage.
@@ -358,7 +360,6 @@ let minor_collect_pre_with (ph: Ph.gc_phase) (free: SpecFields.free_def)
   (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
   RT.ref_table_sound_with free s sl nslots /\
   RT.ref_table_covers_with free s sl nslots /\
-  RT.slots_pairwise_distinct sl nslots /\
   MinorFwd.remembered_targets_in_roots s rs sl nslots /\
   MinorFwd.roots_valid_with free minor_st s rs
 
@@ -434,7 +435,6 @@ let minor_collect_pre_idle
   (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
   RT.ref_table_sound s sl nslots /\
   RT.ref_table_covers_minor_ptrs s sl nslots /\
-  RT.slots_pairwise_distinct sl nslots /\
   MinorFwd.remembered_targets_in_roots s rs sl nslots /\
   MinorFwd.roots_valid_for_minor_collection minor_st s rs
 
@@ -517,8 +517,8 @@ val minor_collect_idle_post
 ///   * **The minor collection's arguments** (`minor_slots_ok`): the
 ///     forwarding array zeroed, the remembered set sound and covering for the
 ///     phase's definition of free (`RT.ref_table_sound_with`,
-///     `RT.ref_table_covers_with` for `GI.phase_free`), its slots distinct,
-///     the remembered targets among the roots, and the roots valid and not free (never pending free).
+///     `RT.ref_table_covers_with` for `GI.phase_free`; repeated slots are
+///     allowed), the remembered targets among the roots, and the roots valid and not free (never pending free).
 ///   * **The phase record** (`gh.phase_ref`) is written only by the collector
 ///     and the allocator.
 
@@ -534,7 +534,6 @@ let minor_slots_ok (ph: Ph.gc_phase) (minor_st: minor_state) (s: heap_state)
   (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
   RT.ref_table_sound_with free s sl nslots /\
   RT.ref_table_covers_with free s sl nslots /\
-  RT.slots_pairwise_distinct sl nslots /\
   MinorFwd.remembered_targets_in_roots s rs sl nslots /\
   MinorFwd.roots_valid_with free minor_st s rs
 
@@ -682,7 +681,6 @@ fn full_gc (gh: gen_heap_t)
                (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                RT.ref_table_sound 's 'sl (SZ.v nslots) /\
                RT.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
-               RT.slots_pairwise_distinct 'sl (SZ.v nslots) /\
                MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
                MinorFwd.roots_valid_for_minor_collection
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)

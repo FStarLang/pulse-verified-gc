@@ -112,7 +112,6 @@ fn incremental_cycle_spot
                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                  RT.ref_table_sound 's 'sl (SZ.v nslots) /\
                  RT.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
-                 RT.slots_pairwise_distinct 'sl (SZ.v nslots) /\
                  MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
                  MinorFwd.roots_valid_for_minor_collection
                    ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)

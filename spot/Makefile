@@ -84,6 +84,7 @@ SPOT_SRC = \
   GC.SPOT.CallMinor.fst \
   GC.SPOT.ConcreteCallMinor.fsti \
   GC.SPOT.ConcreteCallMinor.fst \
+  GC.SPOT.DuplicateSlot.fst \
   GC.SPOT.CallFull.fsti \
   GC.SPOT.CallFull.fst \
   GC.SPOT.ConcreteCallFull.fsti \

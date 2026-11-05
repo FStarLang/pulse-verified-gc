@@ -86,10 +86,6 @@ let spot_roots_cases (c: obj_addr) (root: U64.t)
     assert False
   end
 
-let spot_slots_singleton_distinct
-  (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
-  = Preconditions.singleton_slots_pairwise_distinct (spot_slots c) 1
-
 let spot_minor_scenario_pre
   (minor: minor_state) (major: heap) (fp: U64.t)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})

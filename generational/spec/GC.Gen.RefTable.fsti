@@ -28,12 +28,10 @@ let valid_slot_addrs (slots: seq U64.t) (n: nat) : prop =
     (let addr = U64.v (Seq.index slots i) in
      addr < heap_size /\ addr % 8 == 0))
 
-/// No slot is recorded twice, so the last write at an address is identified
-/// by a single slot (`GC.Gen.TwoPassEquiv`).
-let slots_pairwise_distinct (slots: seq U64.t) (n: nat) : prop =
-  n <= Seq.length slots /\
-  (forall (i j: nat). i < n /\ j < n /\ i <> j ==>
-    U64.v (Seq.index slots i) <> U64.v (Seq.index slots j))
+/// Slots may repeat: `caml_modify` records a field again when it goes from a
+/// nursery pointer to an immediate and back.  Rewriting a slot a second time
+/// is a no-op (`GC.Gen.TwoPassEquiv.rewrite_slots_iter_slot_effect`), so no
+/// distinctness is assumed.
 
 /// Coverage: every nursery pointer held by a field of a non-free, scannable
 /// block is at a recorded slot.  The write barrier records old-major fields

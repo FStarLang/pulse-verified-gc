@@ -343,7 +343,6 @@ let spot_mi_minor_collect_full_pre r =
   spot_mi_fwd_array_zero ();
   spot_mi_ref_table_sound r;
   spot_mi_ref_table_covers r;
-  Preconditions.singleton_slots_pairwise_distinct (spot_mi_slots r) 1;
   spot_mi_remembered_targets r;
   spot_mi_roots_valid r;
   Preconditions.minor_collect_full_pre_intro

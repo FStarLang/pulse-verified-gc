@@ -47,7 +47,6 @@ fn full_gc_from_shape
                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                  GC.Gen.RefTable.ref_table_sound 's 'sl (SZ.v nslots) /\
                  GC.Gen.RefTable.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
-                 GC.Gen.RefTable.slots_pairwise_distinct 'sl (SZ.v nslots) /\
                  GC.Gen.MinorCollectForwarding.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
                  GC.Gen.MinorCollectForwarding.roots_valid_for_minor_collection
                    ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)

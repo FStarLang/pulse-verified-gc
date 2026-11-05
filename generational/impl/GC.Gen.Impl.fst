@@ -254,8 +254,7 @@ let minor_collect_with_spec (ph: Ph.gc_phase)
       Seq.length farr == fwd_array_size /\
       represents_fwd farr (CheneySpec.cheney_promote ph minor major fp roots).fwd_map /\
       ref_table_sound_with free major slots n /\
-      ref_table_covers_with free major slots n /\
-      slots_pairwise_distinct slots n)
+      ref_table_covers_with free major slots n)
     (ensures
       (let prom = CheneySpec.cheney_promote ph minor major fp roots in
        let res = CheneySpec.cheney_collect_spec_with ph free minor major fp roots in
@@ -759,7 +758,6 @@ fn full_gc (gh: gen_heap_t)
                (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                ref_table_sound 's 'sl (SZ.v nslots) /\
                ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
-               slots_pairwise_distinct 'sl (SZ.v nslots) /\
                MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
                MinorFwd.roots_valid_for_minor_collection
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)

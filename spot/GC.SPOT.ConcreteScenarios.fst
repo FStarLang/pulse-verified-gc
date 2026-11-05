@@ -342,7 +342,6 @@ let spot_concrete_minor_collect_full_pre (r: unit{ConcreteMajor.spot_major_room}
   spot_fwd_array_zero ();
   spot_ref_table_sound r;
   spot_ref_table_covers_minor_ptrs r;
-  ThreeObjects.spot_slots_singleton_distinct (ConcreteMajor.spot_c r);
   spot_remembered_targets_in_roots r;
   spot_roots_valid_for_minor_collection r;
   Preconditions.minor_collect_full_pre_intro

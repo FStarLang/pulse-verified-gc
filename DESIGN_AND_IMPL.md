@@ -1091,7 +1091,7 @@ Pulse loop is `GC.Impl.FusedSweepCoalesce.sweep_slice_impl`, over the same
 | `minor_collect gh roots .. slots ..` | `gc_state .. ph`, `minor_slots_ok ph` (the remembered set and roots for `phase_free ph`) | `minor_collect_with`'s contract at `ph` for `phase_free ph` (`minor_collect_post_with ph (phase_free ph) ..`), `gc_state` at the same phase `ph` (idle stays idle; mid-sweep the cursor and the pending-free set are kept, `GI.minor_keeps_phase_shape`); returns whether promotion succeeded |
 | `start_cycle gh roots nroots st` | `gc_state .. Idle`, `nursery_empty d b` (right after a minor collection), `start_cycle_pre s rs st cap` (the stack empty and able to hold the roots, every root a darkenable major object) | `start_cycle_post`: with `prepared` the darkened heap and stack, the stack holds the objects the roots name (`roots_match_stack`) and the heap is the marked one (`mark_post` of the darkened heap); `gc_state` at `Sweeping zero_addr`; nursery, free-list head and roots unchanged |
 | `major_slice gh budget` | `gc_state .. ph` | `(s2, fp2, ph2) == major_slice_spec s fp ph budget` (idle: nothing; mid-sweep: `phase_slice`), `gc_state` at `ph2`; returns `Idle? ph2` |
-| `full_gc gh roots .. slots .. st` | `gc_state .. Idle`, the stack budget, and the stop-the-world minor-collection arguments (zeroed forwarding array, remembered set sound/covering/distinct, remembered targets among the roots, roots valid) | the stop-the-world contract (below): out of memory reported only for a concrete OOM, rewritten roots, `minor_reset`, `collection_heap_shape` restored, the end-to-end isomorphism, unreachable objects freed; `gc_state .. Idle`; returns whether promotion succeeded |
+| `full_gc gh roots .. slots .. st` | `gc_state .. Idle`, the stack budget, and the stop-the-world minor-collection arguments (zeroed forwarding array, remembered set sound and covering, remembered targets among the roots, roots valid) | the stop-the-world contract (below): out of memory reported only for a concrete OOM, rewritten roots, `minor_reset`, `collection_heap_shape` restored, the end-to-end isomorphism, unreachable objects freed; `gc_state .. Idle`; returns whether promotion succeeded |
 
 Major allocation, at either phase, is the allocator itself
 (`GC.Impl.Allocator.allocate` on the heap's free-list head and phase record):
@@ -1125,8 +1125,8 @@ collector call returns it and the program's events in between keep it:
 - nursery allocation keeps the nursery's shape and the cross-generation
   condition for `free_incremental c`;
 - `minor_slots_ok`: the forwarding array zeroed, the remembered set sound and
-  covering for the phase's definition of free, distinct slots, the
-  remembered targets among the roots, the roots valid and not free (never
+  covering for the phase's definition of free (a slot may be listed more
+  than once), the remembered targets among the roots, the roots valid and not free (never
   pending free);
 - only the collector writes `phase_ref`.
 
@@ -1312,7 +1312,6 @@ collection:
 ```fstar
 RT.ref_table_sound 's 'sl (SZ.v nslots) /\
 RT.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
-RT.slots_pairwise_distinct 'sl (SZ.v nslots) /\
 MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots)
 ```
 
@@ -1346,6 +1345,16 @@ field, so the object was reachable after the last minor collection; such an
 object is never about to be freed, since marking starts right after a minor
 collection and, under a deletion barrier, anything written during marking ends
 black.
+
+The slots need not be distinct.  `caml_modify` records a field again when it
+goes from a nursery pointer to an immediate and back (the second write sees an
+immediate old value), and nothing deduplicates the table.  Repeats are
+harmless: the slot rewrite forwards a slot only if it holds a forwarded
+nursery pointer, and the value it writes is a major address that is not one
+(`fwd_targets_stable`), so every later occurrence of the same slot leaves it
+alone.  `GC.Gen.TwoPassEquiv.rewrite_slots_iter_slot_effect` states this for an
+arbitrary slot sequence; `spot/GC.SPOT.DuplicateSlot` runs `minor_collect`
+with a table that lists the same field twice.
 
 ### Promotion and forwarding
 
@@ -1977,7 +1986,7 @@ allocator holds) is:
   not free);
 - root-array length consistency and a zeroed forwarding array of the expected size;
 - remembered slot soundness and coverage for `free`
-  (`ref_table_sound_with`, `ref_table_covers_with`), and distinctness;
+  (`ref_table_sound_with`, `ref_table_covers_with`); slots may repeat;
 - the remembered targets are among the roots, and the roots are valid and not
   free (`remembered_targets_in_roots`, `roots_valid_with`).
 

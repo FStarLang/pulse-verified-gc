@@ -121,6 +121,12 @@ allocation.
   precondition, calls it through `GC.SPOT.CallMinor`, and immediately proves
   the useful concrete consequences: A has a promoted image, C.field1 contains
   that image in the post-minor heap, and B has no promoted image.
+- `GC.SPOT.DuplicateSlot`: the same minor collection with the remembered
+  table `[C.field1; C.field1]` -- one field recorded twice, as stock
+  `caml_modify` does for young -> immediate -> young. It shows the
+  `minor_collect` contract holds for the doubled table (the contract no
+  longer asks for distinct slots), calls `minor_collect` through
+  `GC.SPOT.CallMinor`, and proves C.field1 holds A's promoted copy afterwards.
 - `GC.SPOT.CallFull`: a Pulse wrapper that calls the real `full_gc`, through
   `full_gc_from_shape`: `full_gc` stated in the scenarios' vocabulary (the
   heap, the idle phase and `collection_heap_shape` instead of the idle

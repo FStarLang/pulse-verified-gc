@@ -200,7 +200,6 @@ let spot_infix_minor_collect_full_pre (r: unit{InfixMajor.spot_infix_room})
   spot_infix_fwd_array_zero ();
   spot_infix_ref_table_sound r;
   spot_infix_ref_table_covers r;
-  Preconditions.singleton_slots_pairwise_distinct spot_infix_slots 0;
   spot_infix_remembered_targets_in_roots r;
   spot_infix_roots_valid r;
   Preconditions.minor_collect_full_pre_intro

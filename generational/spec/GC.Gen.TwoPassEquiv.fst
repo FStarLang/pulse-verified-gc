@@ -852,97 +852,56 @@ let rec rewrite_slots_iter_preserves_non_fwd
 /// ---------------------------------------------------------------------------
 
 /// Effect: the slot at index si gets its minor pointer rewritten.
-/// Proof: induction on idx. Steps before si don't modify slot_addr (distinct
-/// aligned addresses → frame). At step si, the write (or no-op) produces the
-/// expected result. Steps after si also don't modify slot_addr (frame again).
+/// Proof: induction on idx <= si.  Steps at other addresses don't modify
+/// slot_addr (aligned, distinct -> frame).  At the first step whose slot is
+/// slot_addr (si itself, or an earlier duplicate of it) the rewrite produces
+/// the expected value; that value is not a forwarded nursery pointer
+/// (`fwd_targets_stable`), so every remaining step -- including later
+/// duplicates of slot_addr -- preserves it (`rewrite_slots_iter_preserves_non_fwd`).
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let rec rewrite_slots_iter_slot_effect_aux
   (major: heap) (fwd: forwarding_map) (slots: seq U64.t) (n: nat) (si: nat) (idx: nat)
   : Lemma
     (requires
-      si < n /\ n <= Seq.length slots /\ idx <= n /\
+      si < n /\ n <= Seq.length slots /\ idx <= si /\
       (forall (i: nat). i < n ==>
         (let sa = U64.v (Seq.index slots i) in
          sa < heap_size /\ sa % 8 == 0)) /\
-      (forall (i: nat). i < n /\ i <> si ==>
-        U64.v (Seq.index slots i) <> U64.v (Seq.index slots si)))
+      fwd_targets_stable fwd)
     (ensures
       (let slot_addr = Seq.index slots si in
        let old_raw = read_word major slot_addr in
        let old_val = to_minor_offset old_raw in
-       // After steps 0..idx-1, the value at slot_addr is still old_raw
-       // (because none of those steps wrote to slot_addr)
-       // After step si writes (or doesn't), the result is the expected value
-       // After steps si+1..n-1, the result is preserved
        let result = read_word (rewrite_slots_iter major fwd slots n idx) slot_addr in
-       if idx <= si then
-         // Steps idx..si-1 haven't touched slot_addr yet
-         // Step si applies the rewrite
-         // Steps si+1..n-1 preserve
-         (is_minor_pointer old_val /\ fwd old_val <> 0UL ==> result == fwd old_val) /\
-         (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> result == old_raw)
-       else
-         // Already past si; previous step wrote (or didn't) to slot_addr
-         // Steps idx..n-1 won't touch slot_addr → value is preserved from major
-         result == read_word major slot_addr))
+       (is_minor_pointer old_val /\ fwd old_val <> 0UL ==> result == fwd old_val) /\
+       (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> result == old_raw)))
     (decreases (n - idx))
   = let slot_addr = Seq.index slots si in
-    if idx >= n then ()
-    else if idx >= Seq.length slots then ()
-    else begin
-      let cur_slot = Seq.index slots idx in
-      if U64.v cur_slot >= heap_size || U64.v cur_slot % 8 <> 0 then
+    let cur_slot = Seq.index slots idx in
+    let field_val = to_minor_offset (read_word major cur_slot) in
+    if U64.v cur_slot = U64.v slot_addr then begin
+      // First occurrence of slot_addr at or before si.
+      assert (cur_slot == slot_addr);
+      if is_minor_pointer field_val && fwd field_val <> 0UL then begin
+        let new_val = fwd field_val in
+        let major' = write_word major slot_addr new_val in
+        read_write_same major slot_addr new_val;
+        reveal_opaque (`%fwd_targets_stable) (fwd_targets_stable fwd);
+        assert (~(is_minor_pointer (to_minor_offset new_val) /\
+                  fwd (to_minor_offset new_val) <> 0UL));
+        rewrite_slots_iter_preserves_non_fwd major' fwd slots n (idx + 1) slot_addr
+      end else
+        rewrite_slots_iter_preserves_non_fwd major fwd slots n (idx + 1) slot_addr
+    end else begin
+      // Another address: the step frames slot_addr, and idx < si.
+      assert (U64.v cur_slot % 8 == 0 /\ U64.v slot_addr % 8 == 0);
+      if is_minor_pointer field_val && fwd field_val <> 0UL then begin
+        let new_val = fwd field_val in
+        let major' = write_word major cur_slot new_val in
+        read_write_different major cur_slot slot_addr new_val;
+        rewrite_slots_iter_slot_effect_aux major' fwd slots n si (idx + 1)
+      end else
         rewrite_slots_iter_slot_effect_aux major fwd slots n si (idx + 1)
-      else begin
-        let field_val = to_minor_offset (read_word major cur_slot) in
-        if idx < si then begin
-          // idx != si, so cur_slot != slot_addr (distinct addresses)
-          // Both are aligned, so they differ by at least 8
-          assert (U64.v cur_slot <> U64.v slot_addr);
-          assert (U64.v cur_slot % 8 == 0 /\ U64.v slot_addr % 8 == 0);
-          if is_minor_pointer field_val then
-            let new_val = fwd field_val in
-            if new_val <> 0UL then begin
-              let major' = write_word major cur_slot new_val in
-              // Write at cur_slot doesn't affect slot_addr
-              read_write_different major cur_slot slot_addr new_val;
-              rewrite_slots_iter_slot_effect_aux major' fwd slots n si (idx + 1)
-            end else
-              rewrite_slots_iter_slot_effect_aux major fwd slots n si (idx + 1)
-          else
-            rewrite_slots_iter_slot_effect_aux major fwd slots n si (idx + 1)
-        end else if idx = si then begin
-          // This is the key step: processing slot_addr itself
-          if is_minor_pointer field_val then begin
-            let new_val = fwd field_val in
-            if new_val <> 0UL then begin
-              let major' = write_word major slot_addr new_val in
-              read_write_same major slot_addr new_val;
-              // After writing, major' at slot_addr == new_val == fwd old_val
-              // Now show remaining steps (si+1..n-1) preserve this
-              rewrite_slots_iter_frame major' fwd slots n (idx + 1) slot_addr
-            end else
-              // No write, value stays as old_raw
-              rewrite_slots_iter_frame major fwd slots n (idx + 1) slot_addr
-          end else
-            // Not a minor pointer, no write
-            rewrite_slots_iter_frame major fwd slots n (idx + 1) slot_addr
-        end else begin
-          // idx > si: shouldn't happen when called from slot_effect
-          // but we handle it: slot_addr is distinct from cur_slot
-          assert (U64.v cur_slot <> U64.v slot_addr);
-          if is_minor_pointer field_val then
-            let new_val = fwd field_val in
-            if new_val <> 0UL then begin
-              let major' = write_word major cur_slot new_val in
-              read_write_different major cur_slot slot_addr new_val;
-              rewrite_slots_iter_slot_effect_aux major' fwd slots n si (idx + 1)
-            end else
-              rewrite_slots_iter_slot_effect_aux major fwd slots n si (idx + 1)
-          else
-            rewrite_slots_iter_slot_effect_aux major fwd slots n si (idx + 1)
-        end
-      end
     end
 #pop-options
 
@@ -1661,9 +1620,7 @@ let if_branch_lhs_slot
          is_infix obj_pi major \/
          U64.v addr < U64.v obj_pi \/
          U64.v addr >= U64.v obj_pi + U64.v (wosize_of_object obj_pi major) * 8)) /\
-      // Slots are pairwise distinct
-      (forall (i: nat). i < n /\ i <> si ==>
-        U64.v (Seq.index slots i) <> U64.v addr) /\
+      fwd_targets_stable fwd /\
       (let old_val = to_minor_offset (read_word major addr) in
        is_minor_pointer old_val /\ fwd old_val <> 0UL))
     (ensures
@@ -1776,7 +1733,6 @@ let if_branch_field_eq
       promoted_entries_disjoint major farr /\
       no_infix_block major /\
       valid_slot_addrs slots n /\
-      slots_pairwise_distinct slots n /\
       fwd_targets_stable fwd /\
       fwd_ptrs_classified_walked major upd fwd farr slots n /\
       Seq.mem obj (objects zero_addr major) /\
@@ -1829,7 +1785,7 @@ let if_branch_field_eq
 ///
 /// Kept out of `two_pass_pointwise`: there, the refinements of the chosen
 /// witnesses had to be recovered in the presence of that lemma's quantified
-/// requires (notably the pairwise quantifier of `slots_pairwise_distinct`),
+/// requires (notably a pairwise quantifier over the slots, since removed),
 /// which Z3 4.15.3 instantiated a million times before giving up.
 /// ---------------------------------------------------------------------------
 #push-options "--fuel 0 --ifuel 0"
@@ -1890,7 +1846,6 @@ private let two_pass_pointwise
       promoted_entries_walked_from major upd farr 0 /\
       promoted_entries_disjoint major farr /\
       valid_slot_addrs slots n /\
-      slots_pairwise_distinct slots n /\
       slots_rewrite_walked major upd fwd slots n /\
       fwd_targets_stable fwd /\
       fwd_ptrs_classified_walked major upd fwd farr slots n)

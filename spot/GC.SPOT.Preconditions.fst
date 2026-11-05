@@ -27,7 +27,6 @@ let minor_collect_full_pre
   zero_forwarding_array farr /\
   RefTable.ref_table_sound major slots nslots /\
   RefTable.ref_table_covers_minor_ptrs major slots nslots /\
-  RefTable.slots_pairwise_distinct slots nslots /\
   MinorFwd.remembered_targets_in_roots major roots slots nslots /\
   MinorFwd.roots_valid_for_minor_collection minor major roots
 
@@ -43,9 +42,6 @@ let zero_forwarding_array_elim (farr: seq U64.t)
   = ()
 
 let zero_forwarding_array_intro (farr: seq U64.t)
-  = ()
-
-let singleton_slots_pairwise_distinct (slots: seq U64.t) (n: nat)
   = ()
 
 let minor_collect_full_pre_elim

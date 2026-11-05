@@ -574,7 +574,7 @@ The reference spec `update_major_pointers` rescans the whole major heap. The
 implementation scans only the just-promoted objects plus the remembered-set slots — which
 is the entire point of a generational collector, since a full rescan would make minor GC
 cost O(major heap). Proving these equal needs `ref_table_complete_with`,
-`slots_pairwise_distinct`, `promoted_entries_disjoint`, `fwd_ptrs_classified`,
+`promoted_entries_disjoint`, `fwd_ptrs_classified`,
 `heap_objects_dense`, a frame lemma and an effect-at-index lemma for each of the two
 passes, and disjointness reasoning across them.
 

@@ -215,6 +215,11 @@ val rewrite_slots_iter_frame
 /// rewrite_slots_iter effect on a slot address
 /// ---------------------------------------------------------------------------
 
+/// The slots may repeat (the write barrier records a field again when it is
+/// assigned a nursery pointer after holding an immediate): the first
+/// occurrence forwards the slot to a major address, which by
+/// `fwd_targets_stable` is not a forwarded nursery pointer, so every later
+/// occurrence leaves it alone.
 val rewrite_slots_iter_slot_effect
   (major: heap) (fwd: forwarding_map) (slots: seq U64.t) (n: nat) (si: nat)
   : Lemma
@@ -223,8 +228,7 @@ val rewrite_slots_iter_slot_effect
       (forall (i: nat). i < n ==>
         (let sa = U64.v (Seq.index slots i) in
          sa < heap_size /\ sa % 8 == 0)) /\
-      (forall (i: nat). i < n /\ i <> si ==>
-        U64.v (Seq.index slots i) <> U64.v (Seq.index slots si)))
+      fwd_targets_stable fwd)
     (ensures
       (let slot_addr = Seq.index slots si in
        let old_raw = read_word major slot_addr in
@@ -251,7 +255,6 @@ val promoted_plus_slots_eq_walk
       promoted_entries_disjoint major farr /\
       promoted_entries_walked major upd farr /\
       valid_slot_addrs slots n /\
-      slots_pairwise_distinct slots n /\
       slots_rewrite_walked major upd fwd slots n /\
       fwd_targets_stable fwd /\
       fwd_ptrs_classified_walked major upd fwd farr slots n)
