@@ -46,17 +46,16 @@ let impl_matches_spec
   Seq.length farr == fwd_array_size /\
   (forall (j:nat). j < bk ==> Seq.index q j == Seq.index cs.cs_queue j)
 
-/// The same, with the phase the implementation's allocator holds: the run's
-/// phase with `swept_tail` the last cell at or below where it was
-/// (`GC.Gen.SweptTail.phase_at`); and the free list is ascending, which
-/// keeps `swept_tail` where the allocator puts it.  Outside a sweep the phase
-/// is `Idle` throughout.
+/// The same, with the phase the implementation's allocator holds -- the
+/// run's phase -- and the free list ascending, which the allocator needs to
+/// keep the phase record's caches the derived ones
+/// (`GC.Gen.SweptTail.alloc_caches`).
 let impl_matches_spec_at (ph: gc_phase)
   (ms: heap) (fp: U64.t)
   (farr: seq U64.t) (q: seq U64.t) (bk: nat)
   (cs: CheneySpec.cheney_state) : prop =
   GC.Spec.FreeList.Ascending.fl_ascending ms fp /\
-  ph == GC.Gen.SweptTail.phase_at cs.CheneySpec.cs_phase ms /\
+  ph == cs.CheneySpec.cs_phase /\
   impl_matches_spec ms fp farr q bk cs
 
 /// What the allocator needs of the heap.

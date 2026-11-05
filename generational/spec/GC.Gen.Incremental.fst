@@ -13,7 +13,6 @@ module U64 = FStar.UInt64
 module Ph = GC.Spec.Phase
 module GenInv = GC.Gen.HeapInvariant
 module SL = GC.Spec.SweepPhase.Slice
-module ST = GC.Gen.SweptTail
 module Cheney = GC.Gen.Cheney
 module Promote = GC.Gen.Promote
 module SPM = GC.Gen.SweepPhase.Minor
@@ -28,8 +27,8 @@ module Util = GC.Spec.SweepPhase.Util
 
 let phase_shape_idle minor g fp = reveal_opaque (`%phase_shape) (phase_shape minor g fp Ph.Idle)
 
-let phase_shape_sweeping minor g fp st =
-  reveal_opaque (`%phase_shape) (phase_shape minor g fp (Ph.Sweeping st))
+let phase_shape_sweeping minor g fp c =
+  reveal_opaque (`%phase_shape) (phase_shape minor g fp (Ph.Sweeping c))
 
 /// The cross-generation condition carries over to a heap in which every block
 /// non-free under `free` before is non-free under `free'`.
@@ -45,25 +44,23 @@ let phase_shape_collection minor g fp ph =
   | Ph.Idle ->
       phase_shape_idle minor g fp;
       GenInv.collection_heap_shape_as_free_stw minor g fp;
-      assert_norm (phase_free Ph.Idle == free_stw);
-      assert (ST.phase_at ph g == ph)
-  | Ph.Sweeping st ->
-      phase_shape_sweeping minor g fp st;
-      SPM.sweep_collection_shape minor g fp st;
-      sweep_phase_inv_elim g fp st;
-      ST.phase_at_self ph g;
-      assert_norm (phase_free (Ph.Sweeping st) == free_incremental st)
+      assert_norm (phase_free Ph.Idle == free_stw)
+  | Ph.Sweeping c ->
+      phase_shape_sweeping minor g fp c;
+      SPM.sweep_collection_shape minor g fp c;
+      assert_norm (phase_free (Ph.Sweeping c) == free_incremental c)
 
 let phase_shape_start minor g fp =
-  SPM.sweep_major_shape g fp sweep_start;
-  GenInv.collection_shape_with_after_minor_reset (Ph.Sweeping sweep_start) (free_incremental sweep_start) minor g fp;
-  GenInv.collection_shape_with_elim (Ph.Sweeping sweep_start) (free_incremental sweep_start) (minor_reset minor) g fp;
-  phase_shape_sweeping (minor_reset minor) g fp sweep_start
+  let c = sweep_start.cursor in
+  SPM.sweep_major_shape g fp c;
+  GenInv.collection_shape_with_after_minor_reset (Ph.Sweeping c) (free_incremental c) minor g fp;
+  GenInv.collection_shape_with_elim (Ph.Sweeping c) (free_incremental c) (minor_reset minor) g fp;
+  phase_shape_sweeping (minor_reset minor) g fp c
 
 #push-options "--z3rlimit 20"
-let sweep_end_shape minor g fp st =
-  phase_shape_sweeping minor g fp st;
-  SPE.sweep_phase_end g fp st;
+let sweep_end_shape minor g fp c =
+  phase_shape_sweeping minor g fp c;
+  SPE.sweep_phase_end g fp c;
   PCS.free_list_shape_of_ascending g fp;
   let col (x: obj_addr)
     : Lemma (Seq.mem x (objects zero_addr g) ==> ~(is_black x g) /\ ~(is_gray x g))
@@ -73,7 +70,7 @@ let sweep_end_shape minor g fp st =
   SweepInv.no_gray_intro g;
   GenInv.major_heap_shape_intro g fp;
   // nothing is pending free, so the cross-generation condition is the idle one
-  fields_not_free_transport minor g g (free_incremental st) free_stw;
+  fields_not_free_transport minor g g (free_incremental c) free_stw;
   GenInv.minor_major_fields_not_free_stw minor g;
   GenInv.collection_heap_shape_intro minor g fp
 #pop-options
@@ -82,14 +79,14 @@ let sweep_end_shape minor g fp st =
 let phase_slice_shape minor g fp ph budget =
   match ph with
   | Ph.Idle -> ()
-  | Ph.Sweeping st ->
-      phase_shape_sweeping minor g fp st;
-      SL.sweep_slice_phase g fp st budget;
-      let (g', fp', st') = SL.sweep_slice g fp st budget in
-      fields_not_free_transport minor g g' (free_incremental st) (free_incremental st');
-      phase_shape_sweeping minor g' fp' st';
-      if sweep_done st' then begin
-        sweep_end_shape minor g' fp' st';
+  | Ph.Sweeping c ->
+      phase_shape_sweeping minor g fp c;
+      SL.sweep_slice_phase g fp c budget;
+      let (g', fp', st') = SL.sweep_slice g fp (state_at g c) budget in
+      fields_not_free_transport minor g g' (free_incremental c) (free_incremental st'.cursor);
+      phase_shape_sweeping minor g' fp' st'.cursor;
+      if sweep_done st'.cursor then begin
+        sweep_end_shape minor g' fp' st'.cursor;
         phase_shape_idle minor g' fp'
       end
 #pop-options
@@ -97,23 +94,20 @@ let phase_slice_shape minor g fp ph budget =
 let phase_slice_finishes minor g fp ph budget =
   match ph with
   | Ph.Idle -> ()
-  | Ph.Sweeping st ->
-      phase_shape_sweeping minor g fp st;
-      SL.sweep_slice_phase g fp st budget
+  | Ph.Sweeping c ->
+      phase_shape_sweeping minor g fp c;
+      SL.sweep_slice_phase g fp c budget
 
 #push-options "--z3rlimit 20"
-let minor_keeps_phase_shape minor g fp st roots =
-  phase_shape_sweeping minor g fp st;
-  SPM.minor_keeps_sweep_phase minor g fp st roots;
-  let free = free_incremental st in
-  let res = SPM.collect_at st minor g fp roots in
-  let st' = SPM.state_after st res.Promote.mc_major in
-  GenInv.collection_shape_with_elim (Ph.Sweeping st) free res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp;
-  fields_not_free_transport res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_major
-    free (free_incremental st');
-  phase_shape_sweeping res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp st'
+let minor_keeps_phase_shape minor g fp c roots =
+  phase_shape_sweeping minor g fp c;
+  SPM.minor_keeps_sweep_phase minor g fp c roots;
+  let free = free_incremental c in
+  let res = SPM.collect_at c minor g fp roots in
+  GenInv.collection_shape_with_elim (Ph.Sweeping c) free res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp;
+  phase_shape_sweeping res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp c
 #pop-options
 
 let phase_free_idle () = assert_norm (phase_free Ph.Idle == free_stw)
 
-let phase_free_sweeping st = assert_norm (phase_free (Ph.Sweeping st) == free_incremental st)
+let phase_free_sweeping c = assert_norm (phase_free (Ph.Sweeping c) == free_incremental c)

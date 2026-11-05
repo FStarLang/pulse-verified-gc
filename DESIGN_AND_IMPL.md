@@ -538,12 +538,12 @@ The header's colour comes from the collector's phase (`GC.Spec.Phase`), as
 OCaml 4.14's `caml_allocation_color` decides it:
 
 ```fstar
-type gc_phase = | Idle | Sweeping of sweep_state
+type gc_phase = | Idle | Sweeping of U64.t    (* the sweep's cursor *)
 
 let allocation_color (ph: gc_phase) (hd_addr: U64.t) : color =
   match ph with
   | Idle -> Header.White
-  | Sweeping st -> if U64.v hd_addr >= U64.v st.cursor then Header.Black else Header.White
+  | Sweeping c -> if U64.v hd_addr >= U64.v c then Header.Black else Header.White
 ```
 
 `alloc_search` takes the phase and writes `allocation_color` of the header
@@ -556,29 +556,31 @@ depend on the phase (`alloc_phase_fields`), and the heap is `alloc_spec`'s
 with the new header recoloured (`alloc_phase_heap`) -- which is how every
 idle-allocator fact holds at any phase (`GC.Gen.AllocPhase`, below).
 
-During a sweep the phase record also caches `swept_tail` (below), and an
-allocation that takes the cached cell off the list moves the cache back:
-`phase_after_alloc g fp wz ph`, the record the allocator leaves.
+The phase is the cursor alone, and allocation leaves it as it is.  During a
+sweep the phase *record* also caches `swept_tail` and `last_fragment`
+(below), functions of the heap and the cursor; an allocation that takes the
+cached cell off the list moves the cache back: `record_after_alloc g fp wz
+v`, the record the allocator leaves.
 
 The key implementation contract is intentionally simple: the Pulse allocator
-returns a heap that is exactly the pure `alloc_phase` result, at the phase it
-reads from the collector's state.
+returns a heap that is exactly the pure `alloc_phase` result, at the phase of
+the record it reads.
 
 ```fstar
 type phase_state = {            // GC.Impl.Allocator: the phase as C holds it
   ps_kind: U64.t;               // 0 idle, otherwise sweeping
   ps_cursor: U64.t; ps_swept_tail: U64.t; ps_last_fragment: U64.t;
 }
-let is_phase (r: R.ref phase_state) (ph: gc_phase) : slprop =
-  exists* v. R.pts_to r v ** pure (phase_of v == ph)
+let phase_of (v: phase_state) : gc_phase =
+  if v.ps_kind = 0UL then Idle else Sweeping v.ps_cursor
 
 fn allocate (heap: heap_t) (fp: U64.t) (phase: R.ref phase_state)
             (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
-  requires is_heap heap 's ** is_phase phase 'ph ** pure (U64.v wosize >= 1)
+  requires is_heap heap 's ** R.pts_to phase 'v ** pure (U64.v wosize >= 1)
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
-    is_phase phase (AC.phase_after_alloc 's fp (U64.v wosize) 'ph) **
-    pure (let spec_res = AC.alloc_phase 's fp 'ph (U64.v wosize) tag in
+    R.pts_to phase (record_after_alloc 's fp (U64.v wosize) 'v) **
+    pure (let spec_res = AC.alloc_phase 's fp (phase_of 'v) (U64.v wosize) tag in
           s2 == spec_res.heap_out /\
           fst res == spec_res.fp_out /\
           snd res == spec_res.obj_out)
@@ -589,7 +591,17 @@ chose (white when idle; while sweeping, black at or above the cursor) and
 writes the header once with it; while sweeping, an allocation that takes
 `swept_tail`'s cell off the list stores the new `swept_tail` (one store, only
 then).  At `Idle` the postcondition is `alloc_spec`'s (`alloc_phase_idle`, an
-SMT pattern) and the phase stays `Idle`.
+SMT pattern).
+
+The phase predicate relates the stored record to the spec's phase *and the
+heap*: `is_phase r g ph` says the record holds `ph`, and while sweeping its
+cursor is a position of `g`'s walk and its caches are the ones derived from
+`g` (`phase_rel`: the stored sweep state is `state_at g cursor`, below).  The
+allocator at `is_phase` is `GC.Gen.Impl.Promote.allocate_at_phase`: from an
+exact ascending free list (while sweeping), `record_after_alloc`'s cache is
+the derived one of the heap the allocation leaves
+(`GC.Gen.SweptTail.alloc_caches`), so `is_phase phase 's ph` becomes
+`is_phase phase s2 ph` -- the same phase.
 
 The precondition asks nothing of the heap. The allocator only reads headers
 and free-list links and checks every address it follows, so it does not need
@@ -716,7 +728,9 @@ list splits at the cursor: behind it the blocks already swept, ending at
 cursor, so appending a new free block costs one link write, and unlinking a
 block that gets merged costs one.
 
-The specification is `GC.Spec.FusedSweep`. Its state between steps is
+The specification is `GC.Spec.FusedSweep`. Its state between steps (the
+loop state of the pass; the incremental sweep's phase is only its cursor,
+the rest being derived, below) is
 
 ```fstar
 type sweep_state = {
@@ -797,45 +811,54 @@ Incremental Sweep": the policy, the slice budget, and how the bridge meets the
 trusted obligations).
 
 **Allocation at the sweep's phase** (`GC.Spec.Allocator.Cursor.alloc_phase`).
-At `Sweeping st` the allocator colours by position: an object allocated in
+At `Sweeping c` the allocator colours by position: an object allocated in
 front of the cursor (header at or above it) is black, so the sweep keeps it;
 one behind it is white.  The block it hands back is a `new_block`
 (`GC.Gen.SweepPhase.alloc_phase_new_block`, from an exact ascending list
 alone): not a non-free block before, of the requested size and tag, black at
 or in front of the cursor and white behind it, so never pending free.
 
-**The sweep's caches are derived.**  `swept_tail` (the last free-list cell
-behind the cursor) and `last_fragment` (the cursor, when the block ending at
-it is a one-word free block) are functions of the heap and the cursor:
+**The sweep's caches are derived, so the phase is the cursor.**
+`swept_tail` (the last free-list cell behind the cursor) and `last_fragment`
+(the cursor, when the block ending at it is a one-word free block) are
+functions of the heap and the cursor:
 `GC.Spec.SweepPhase.Intrinsic.last_cell_behind g c`, `frag_at g c`, and
-`state_at g c` the sweep state with both.  The implementation stores them in
+`state_at g c` the sweep state with both.  So the spec's phase is
+`Sweeping c` and the spec carries no cache: the clauses the stop-the-world
+invariant states of the caches hold of the derived state at any position of
+the walk -- `tail_ok_iff`, `frag_at_ok`, and `ends_free_derived` (the block
+ending at `c` is free exactly when `prev_free g (state_at g c)`: a free block
+ending there is a fragment, or a cell and then the last cell behind `c`; and
+only one block of the walk ends at `c`).  A sweep step is the stop-the-world
+step run from `state_at g c`, and the state it leaves is the derived one of
+the new heap (`sweep_phase_step`).  The implementation stores the caches in
 the phase record and updates them in place -- the sweep step, and the
-allocator when it takes the cached cell off the list (`phase_after_alloc`,
-by `alloc_tail`; `alloc_find` names the block first-fit takes and its list
-predecessor) -- and the sweep phase says the stored values are the derived
-ones (`st == state_at g st.cursor`).  `tail_ok` and `frag_ok`, which the
-sweep step's proofs use, follow (`tail_ok_iff`, `frag_ok_derived`).
+allocator when it takes the cached cell off the list
+(`GC.Impl.Allocator.record_after_alloc`; `alloc_choice` names the block
+first-fit takes and its list predecessor) -- and its phase predicate says the
+stored values are the derived ones (`is_phase`, above; kept by allocation,
+`GC.Gen.SweptTail.alloc_caches`, and by anything that keeps the walk and the
+headers, `state_at_heads`).
 
 **The invariant is intrinsic** (`GC.Spec.SweepPhase.Intrinsic`): it is about
-the current heap and the sweep state only, with no ghost heap.  During the
+the current heap and the cursor only, with no ghost heap.  During the
 sweep, what counts as free is the blue blocks and the blocks *pending free*:
 
 ```fstar
 (* white in front of the cursor: will be freed by this sweep *)
-let pending_free (st: sweep_state) (g: heap) (x: obj_addr) : GTot bool =
-  is_block g x && is_white x g && U64.v x > U64.v st.cursor
+let pending_free (c: U64.t) (g: heap) (x: obj_addr) : GTot bool =
+  is_block g x && is_white x g && U64.v x > U64.v c
 
-let free_incremental (st: sweep_state) : free_def =
-  fun g x -> is_blue x g || pending_free st g x
+let free_incremental (c: U64.t) : free_def =
+  fun g x -> is_blue x g || pending_free c g x
 
-let sweep_phase_inv (g: heap) (fp: U64.t) (st: sweep_state) : prop =
-  let c = U64.v st.cursor in
-  c % 8 == 0 /\ c <= heap_size /\ W.reaches g zero_addr c /\
+let sweep_phase_inv (g: heap) (fp: U64.t) (c: U64.t) : prop =
+  let n = U64.v c in
+  n % 8 == 0 /\ n <= heap_size /\ W.reaches g zero_addr n /\
   heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
-  well_formed_heap_with (free_incremental st) g /\
-  behind_swept g c /\ front_unswept g c /\
-  no_adjacent_free g c /\ ends_free g c (prev_free g st) /\
-  st == state_at g st.cursor /\
+  well_formed_heap_with (free_incremental c) g /\
+  behind_swept g n /\ front_unswept g n /\
+  no_adjacent_free g n /\
   FLA.fl_ascending g fp
 ```
 
@@ -844,7 +867,7 @@ object address is "header at or above the cursor") -- are dead but not yet
 freed.  So part 2 of well-formedness reads, mid-sweep: every block that is
 neither blue nor pending free points only at blocks that are neither; the
 fields of a block pending free are unconstrained (they may point into blocks
-the sweep has already freed).  `free_incremental st` is an admissible
+the sweep has already freed).  `free_incremental c` is an admissible
 definition of free (`free_incremental_ok`: blue blocks are free, and it is
 read off the walk and the headers).  Everything but well-formedness is
 `sweep_shape`: facts about the walk, the headers and the free list, kept by
@@ -855,7 +878,8 @@ blacken every white block behind the cursor); nothing carries it.
 
 - `sweep_phase_start`: the heap marking left satisfies it, with every white
   object pending free.
-- `sweep_phase_step`: a step keeps it; it frees only blocks pending free (the
+- `sweep_phase_step`: a step from `state_at g c` keeps it at the new cursor,
+  leaving the derived state; it frees only blocks pending free (the
   non-free blocks are the same before and after, with the same size, tag and
   fields) and the pending-free set only shrinks.  `sweep_phase_steps` is the
   same for up to `k` steps (`sweep_steps`, a slice).  That the blocks pending
@@ -874,19 +898,18 @@ blacken every white block behind the cursor); nothing carries it.
 **The program's events keep it** (`GC.Gen.SweepPhase`), each leaving the
 pending-free set unchanged:
 
-- allocation (`alloc_sweep_phase`): first-fit at `Sweeping st`, with the
-  phase record it leaves (`phase_after_alloc`: the cached `swept_tail` stays
-  the derived one).  A new object is never pending free (`new_block`, by
+- allocation (`alloc_sweep_phase`): first-fit at `Sweeping c`; the phase stays
+  `Sweeping c`.  A new object is never pending free (`new_block`, by
   `alloc_phase_new_block`: black in front of the cursor, white behind it).  Its fields are what the free block held,
   so the result is the invariant with the new object *fresh* (`fresh_ok`: the
   heap is well formed when the new object also counts as free,
-  `free_or_uninitialised st obj`, so nothing points at it);
+  `free_or_uninitialised c obj`, so nothing points at it);
   writes into it keep it fresh (`fresh_write`), and once every field holds a
   storable value it closes (`fresh_close`).  The allocation-shape facts behind
   it (the block first-fit takes, the words it writes, its walk, cells and
   list) are `GC.Gen.AllocShape`;
 - a program write (`write_sweep_phase`) under
-  `program_write (free_incremental st)`: a word of a non-free object that is
+  `program_write (free_incremental c)`: a word of a non-free object that is
   not a closure, storing a value that is not a pointer or points (resolved)
   at a non-free object (`storable`);
 - promotion (`promote_sweep_phase`): `promote_object` at the sweep's phase --
@@ -898,37 +921,34 @@ The `_shape` forms (`alloc_sweep_shape`, `body_write_shape`,
 `promote_sweep_shape`) state the same about `sweep_shape` alone.
 
 **A minor collection mid-sweep** (`GC.Gen.SweepPhase.Minor`) runs at the
-sweep's phase, `Sweeping st` -- every promoted copy is allocated there, black
+sweep's phase, `Sweeping c` -- every promoted copy is allocated there, black
 in front of the cursor and white behind it -- with the sweep's own definition
-of free, `free_incremental st`, and the generic theorems
+of free, `free_incremental c`, and the generic theorems
 (`GC.Gen.CheneyGeneric`, "The minor collection, for any definition of free")
 apply to it directly.  What they ask of the definition of free beyond
 admissibility is that the allocator at the phase hands out no free block
-(`allocations_not_free (Sweeping st) (free_incremental st)`), and that is
+(`allocations_not_free (Sweeping c) (free_incremental c)`), and that is
 `allocation_color` at work (`free_incremental_allocations_not_free`): a copy
 in front of the cursor is black, so not pending free, one behind it is not in
 front of the cursor, and neither is blue.  A white copy in front of the cursor
 would be pending free, and freed by the sweep while reachable.
 
 - `sweep_collection_shape` (step B): the sweep phase, with the nursery's shape
-  and `minor_major_fields_not_free (free_incremental st) minor g`, is
-  `collection_shape_with (Sweeping st) (free_incremental st) minor g fp` (the
+  and `minor_major_fields_not_free (free_incremental c) minor g`, is
+  `collection_shape_with (Sweeping c) (free_incremental c) minor g fp` (the
   free-list half from the exact ascending list alone,
   `PostCollectionShape.free_list_shape_of_ascending`);
 - `minor_keeps_sweep_phase` (step C): for the collection at the sweep's phase,
-  `collect_at st minor g fp roots = cheney_collect_spec_with (Sweeping st)
-  (free_incremental st) minor g fp roots`, the result satisfies
-  `sweep_phase_inv` at `state_after st` (same cursor and `last_fragment`,
-  `swept_tail` the one derived from the heap it leaves -- the phase the
-  allocator leaves, `GC.Gen.SweptTail.phase_at`), the pending-free set is the
+  `collect_at c minor g fp roots = cheney_collect_spec_with (Sweeping c)
+  (free_incremental c) minor g fp roots`, the result satisfies
+  `sweep_phase_inv` at the same cursor `c`, the pending-free set is the
   same, and the result keeps `collection_shape_with`.  Well-formedness is the
   generic theorem's (`cheney_collect_with_preserves_shape`); the shape is by
   induction over the promotions (`GC.Gen.Cheney.Induction.cheney_promote_keeps`),
-  each a promotion at the phase (`promote_sweep_shape`, at the state the
-  allocations have left, which colours alike), and the pointer update keeps
+  each a promotion at the phase (`promote_sweep_shape`), and the pointer update keeps
   the walk and every header.  Its two block-level facts are exported on their
   own, for the collection from `g` to `g'`:
-  - `minor_keeps_pending_free`: `pending_free st g x <==> pending_free st' g' x`
+  - `minor_keeps_pending_free`: `pending_free c g x <==> pending_free c g' x`
     (new objects are never pending free, existing headers do not change);
   - `minor_keeps_blocks`: every non-free block of `g` is a block of `g'` with
     the same header, and a non-free block of `g'` that was not one of `g` is a
@@ -936,7 +956,7 @@ would be pending free, and freed by the sweep while reachable.
 
 **Safety over the phase** (`GC.Gen.SweepPhase.Safety`) is stated on the
 reachable graph, not on a heap the sweep started from.  In the sweep's graph
-(`create_graph_with (free_incremental st) g`: a block pending free has no
+(`create_graph_with (free_incremental c) g`: a block pending free has no
 edges) every object reachable from a non-free root is non-free -- a real
 object that is neither blue nor pending free (`reachable_not_free`; over the
 nursery's combined graph `reachable_not_free_combined`).  A sweep step frees
@@ -969,21 +989,21 @@ entry points, all extracted into `GC_Gen_Impl.{c,h}`.
 
 ```fstar
 let gc_state gh d b s fp ph : slprop =
-  is_gen_heap gh d b s fp ** gen_phase gh ph **
+  is_gen_heap gh d b s fp ** gen_phase gh s ph **
   pure (GI.phase_shape ({ data = d; bump = b }) s fp ph)
 
 phase_shape minor g fp Idle         = collection_heap_shape minor g fp
-phase_shape minor g fp (Sweeping st) =
-  sweep_phase_inv g fp st /\ minor_heap_shape minor /\
-  minor_major_fields_not_free (free_incremental st) minor g
+phase_shape minor g fp (Sweeping c) =
+  sweep_phase_inv g fp c /\ minor_heap_shape minor /\
+  minor_major_fields_not_free (free_incremental c) minor g
 ```
 
 (`phase_shape` is opaque, with `phase_shape_idle` / `phase_shape_sweeping`
-to open it.)  Mid-sweep it is where the stored caches meet the heap: the
-phase record holds `swept_tail` and `last_fragment`, and `sweep_phase_inv`
-says they are `state_at g cursor`'s.  What counts as free for a minor
-collection at a phase is `phase_free ph`: `free_stw` idle,
-`free_incremental st` mid-sweep; the collection runs at that phase.
+to open it.)  `gen_phase gh s ph` is where the stored caches meet the heap:
+the phase record holds `swept_tail` and `last_fragment` beside the cursor,
+and `Alloc.is_phase` says they are `state_at s cursor`'s.  What counts as
+free for a minor collection at a phase is `phase_free ph`: `free_stw` idle,
+`free_incremental c` mid-sweep; the collection runs at that phase.
 
 **A slice** is whole sweep steps until the swept blocks -- headers included --
 add up to at least the budget in words, or the sweep is finished
@@ -991,18 +1011,19 @@ add up to at least the budget in words, or the sweep is finished
 as 4.14's `sweep_slice`). A slice is some number of steps (`slice_is_steps`),
 so it keeps the sweep phase (`sweep_slice_phase`), and a budget of more words
 than the heap has finishes it. `phase_slice g fp ph budget` is the slice at
-the phase: nothing idle, and idle again once the cursor reaches the end. The
+the phase: nothing idle; mid-sweep the slice from `state_at g c`, the phase
+it leaves its new cursor, and idle again once the cursor reaches the end. The
 Pulse loop is `GC.Impl.FusedSweepCoalesce.sweep_slice_impl`, over the same
 `sweep_step_impl` the stop-the-world pass runs, with step safety from
 `Intrinsic.sweep_phase_ready`.
 
 | entry point | requires | ensures |
 |---|---|---|
-| `gen_gc_start gh roots .. slots .. st` | `gc_state .. Idle`, and `gen_gc`'s argument facts (stack budget, zeroed forwarding array, remembered set sound/covering/distinct, remembered targets among the roots, roots valid) | `gen_gc`'s minor collection, root darkening and marking; the heap is the marked one (`mark_post` of the darkened heap), the phase `Sweeping sweep_start`, `gc_state` at it; the rewritten roots and the minor isomorphism as `gen_gc`'s; out of memory: the major phase skipped, still `Idle` |
+| `gen_gc_start gh roots .. slots .. st` | `gc_state .. Idle`, and `gen_gc`'s argument facts (stack budget, zeroed forwarding array, remembered set sound/covering/distinct, remembered targets among the roots, roots valid) | `gen_gc`'s minor collection, root darkening and marking; the heap is the marked one (`mark_post` of the darkened heap), the phase `Sweeping zero_addr`, `gc_state` at it; the rewritten roots and the minor isomorphism as `gen_gc`'s; out of memory: the major phase skipped, still `Idle` |
 | `sweep_slice gh budget` | `gc_state .. ph` | `(s2, fp2, ph2) == phase_slice s fp ph budget`, `gc_state` at `ph2`; returns `Idle? ph2` |
 | `finish_sweep gh` | `gc_state .. ph` | a slice with budget `2^64 - 1`: `gc_state .. Idle`, `collection_heap_shape` |
-| `minor_collect_any_phase gh roots .. slots ..` | `gc_state .. ph`, `minor_slots_ok ph` (the remembered set and roots for `phase_free ph`) | `minor_collect_full`'s contract at `ph` for `phase_free ph` (`minor_collect_post_with ph (phase_free ph) ..`), `gc_state` at the phase the allocator leaves, `phase_at ph s2` (idle stays idle; mid-sweep the cursor, `last_fragment` and pending-free set are kept and `swept_tail` is the derived one, `GI.minor_keeps_phase_shape`) |
-| `gen_alloc_major gh wosize tag` | the heap and phase, `wosize >= 1` | `AC.alloc_phase`'s result and the record `phase_after_alloc` leaves; mid-sweep with `gc_state` and `tag <> infix_tag`: either nothing changed or the object is a `new_block` and `fresh_ok` |
+| `minor_collect_any_phase gh roots .. slots ..` | `gc_state .. ph`, `minor_slots_ok ph` (the remembered set and roots for `phase_free ph`) | `minor_collect_full`'s contract at `ph` for `phase_free ph` (`minor_collect_post_with ph (phase_free ph) ..`), `gc_state` at the same phase `ph` (idle stays idle; mid-sweep the cursor and the pending-free set are kept, `GI.minor_keeps_phase_shape`) |
+| `gen_alloc_major gh wosize tag` | the heap and phase, `wosize >= 1`, mid-sweep an exact ascending free list | `AC.alloc_phase`'s result at the same phase (the record's `swept_tail` kept derived); mid-sweep with `gc_state` and `tag <> infix_tag`: either nothing changed or the object is a `new_block` and `fresh_ok` |
 
 The end of the sweep is the stop-the-world shape again
 (`GI.sweep_end_shape`: `sweep_phase_end`'s swept-clean heap, the free-list
@@ -1026,7 +1047,7 @@ collector call returns it and the program's events in between keep it:
 - every field write is a `program_write`, and the write barrier records every
   major field that gets a nursery pointer;
 - nursery allocation keeps the nursery's shape and the cross-generation
-  condition for `free_incremental st`;
+  condition for `free_incremental c`;
 - `minor_slots_ok`: the forwarding array zeroed, the remembered set sound and
   covering for the phase's definition of free, distinct slots, the
   remembered targets among the roots, the roots valid and not free (never
@@ -1356,8 +1377,8 @@ let allocations_not_free (ph: gc_phase) (free: free_def) : prop =
 
 `free_stw_ok` and `free_stw_allocations_not_free ph` are the `free_stw`
 instances (the allocator never writes a blue header, at any phase); mid-sweep
-`free_incremental_allocations_not_free st` gives it for `free_incremental st`
-at `Sweeping st` (a block in front of the cursor is black).  The third
+`free_incremental_allocations_not_free c` gives it for `free_incremental c`
+at `Sweeping c` (a block in front of the cursor is black).  The third
 assumption is a property of the definition of free and of the allocator at the
 phase promotion runs at, not of a particular collection; the generic theorems
 derive from it that no
@@ -1817,8 +1838,8 @@ noeq type gen_heap_t = {
   phase_ref : R.ref Alloc.phase_state;  // the major collector's phase
 }
 
-let gen_phase (gh: gen_heap_t) (ph: Ph.gc_phase) : slprop =
-  Alloc.is_phase gh.phase_ref ph
+let gen_phase (gh: gen_heap_t) (g: heap_state) (ph: Ph.gc_phase) : slprop =
+  Alloc.is_phase gh.phase_ref g ph
 
 let is_gen_heap (gh: gen_heap_t) (d: minor_heap) (b: U64.t)
                 (s: heap_state) (fp: U64.t) : slprop =
@@ -1832,27 +1853,30 @@ objects to the major heap:
 
 ```fstar
 fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 'ph **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph **
            pure (U64.v wosize > 0 /\
                  U64.v tag < 256 /\
-                 SpecFields.well_formed_heap 's)
+                 SpecFields.well_formed_heap 's /\
+                 (Ph.Sweeping? 'ph ==> FLA.fl_ascending 's 'fp))
   returns obj: U64.t
-  ensures exists* d2 b2 s2 fp2 ph2. is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh ph2
+  ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh s2 'ph
 ```
 
 The phase is a companion predicate rather than part of `is_gen_heap`: only the
-allocator reads it.  `minor_collect_full` runs at any phase (`gen_phase gh
-'ph` in, `gen_phase gh (phase_at 'ph s2)` out); `gen_gc` requires and ensures
-`gen_phase gh Ph.Idle`.  Promotion (`promote_one`, through the Cheney
-functions) passes the phase record to `allocate`; the specification's run is
-at `'ph` throughout, and the Cheney loops relate the heap and record they hold
-to the specification's state by `Sim.impl_matches_spec_at ph ms ...`: the
-heap is the specification's, its free list ascending, and the record is the
-run's phase with the cached `swept_tail` the one derived from the current
-heap (`GC.Gen.SweptTail.phase_at`; `promote_phase_at`: the allocation at the
-record is the one at the run's phase -- only the cursor colours -- and the
-record it leaves is the derived one again).  At `Idle` both are trivial, so
-the C is the same at every phase.  The C bridge allocates the phase record once, idle.
+allocator and the sweep read it.  It is indexed by the major heap, because
+while sweeping it says the record's caches are the ones derived from that
+heap (`Alloc.is_phase`); keeping them so across a major allocation needs the
+free list exact and ascending, hence `gen_alloc`'s mid-sweep precondition.
+`minor_collect_full` runs at any phase (`gen_phase gh 's 'ph` in,
+`gen_phase gh s2 'ph` out); `gen_gc` requires and ensures `gen_phase gh _
+Ph.Idle`.  Promotion (`promote_one`, through the Cheney functions) allocates
+with `allocate_at_phase`, which keeps `is_phase` from the heap before to the
+heap after (`GC.Gen.SweptTail.alloc_caches`), and the copy of the fields
+writes no header (`promote_heads`); the specification's run is at `'ph`
+throughout, and the Cheney loops relate the heap and record they hold to the
+specification's state by `Sim.impl_matches_spec_at ph ms ...`: the heap is the
+specification's, its free list ascending, and the phase the run's.  At
+`Idle` all of it is trivial, so the C is the same at every phase.  The C bridge allocates the phase record once, idle.
 
 The allocation postcondition is intentionally weak at the top-level interface:
 allocation is an operational service used by the runtime, and the deeper
@@ -1913,12 +1937,11 @@ establishes along the way (`s2 == rewrite_slots_iter (update_promoted_iter
 ...)`) is internal to `minor_collect_full` too; `minor_collect_with_spec`
 turns it into the equation with `cheney_collect_spec_with`.
 
-The collection runs at the phase `'ph` the allocator holds (`gen_phase gh 'ph`,
-with `phase_at 'ph 's == 'ph`: during a sweep `swept_tail` is the last list
-cell behind the cursor), and every promoted copy is allocated there; the phase
-it hands back is `phase_at 'ph s2` (`GC.Gen.SweptTail`: the same cursor and
-`last_fragment`, with `swept_tail` the last list cell behind the cursor in
-`s2`).  Outside a sweep that is `Idle`.
+The collection runs at the phase `'ph` the allocator holds (`gen_phase gh 's
+'ph`), and every promoted copy is allocated there; it hands back the same
+phase, `gen_phase gh s2 'ph`: the promotions keep the record's caches
+derived, and the pointer update writes no header (`GC.Gen.SweptTail.
+update_heads`, `GC.Gen.Impl.Promote.phase_heads`).
 
 The stop-the-world contract is the instance at `free_stw`:
 `minor_collect_pre_idle` (`collection_heap_shape`, the remembered set over the

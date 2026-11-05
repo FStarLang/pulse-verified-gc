@@ -38,13 +38,19 @@ let slice_matches (g: GC.Spec.Base.heap) (fp: U64.t) (c t f: U64.t) (budget: U64
   let (c', t', f', fp') = r in
   SL.sweep_slice g fp (mk_st c t f) (U64.v budget) == (g', fp', mk_st c' t' f')
 
+/// The heap is in the sweep phase at cursor `c`
+/// (`GC.Spec.SweepPhase.Intrinsic.sweep_phase_inv`), and `t`, `f` are the
+/// caches derived from it (`SPI.state_at`).
+let slice_pre (g: GC.Spec.Base.heap) (fp: U64.t) (c t f: U64.t) : prop =
+  SPI.sweep_phase_inv g fp c /\ mk_st c t f == SPI.state_at g c
+
 /// **One slice of the incremental sweep**: whole steps from the sweep state
 /// `(c, t, f)` until the blocks swept add up to at least `budget` words
 /// (headers included), or the cursor reaches the end of the heap.  The heap
-/// is in the sweep phase (`GC.Spec.SweepPhase.Intrinsic.sweep_phase_inv`).
-/// The result is exactly the spec's slice; the step is the one the
-/// stop-the-world pass runs.
+/// is in the sweep phase at `c`, and `t`, `f` are its derived caches.  The
+/// result is exactly the spec's slice; the step is the one the stop-the-world
+/// pass runs.
 fn sweep_slice_impl (heap: heap_t) (c t f fp budget: U64.t)
-  requires is_heap heap 's ** pure (SPI.sweep_phase_inv 's fp (mk_st c t f))
+  requires is_heap heap 's ** pure (slice_pre 's fp c t f)
   returns r: (U64.t & U64.t & U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 ** pure (slice_matches 's fp c t f budget s2 r)

@@ -37,17 +37,6 @@ let max_cell_unique (g: heap) (x: nat) (m: U64.t)
           (ensures max_cell_below g x == m)
   = max_cell_below_spec g x
 
-let phase_at_self ph g =
-  match ph with
-  | Idle -> ()
-  | Sweeping st -> ()
-
-let phase_at_heads ph h h' =
-  same_heads_facts h h';
-  match ph with
-  | Idle -> ()
-  | Sweeping st -> if U64.v st.cursor > 0 then max_cell_below_congr h h' (U64.v st.cursor - 1)
-
 /// ---------------------------------------------------------------------------
 /// One allocation
 /// ---------------------------------------------------------------------------
@@ -84,13 +73,12 @@ let alloc_found_at (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t)
 #pop-options
 
 /// The last cell at or below `t0`, after the allocation.
-#push-options "--z3rlimit 20"
 let tail_step (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (p cur: U64.t) (pc: piece) (t0: nat)
   : Lemma (requires found_at g fp wz tag p cur pc)
           (ensures (let gI = at_heap g p cur (AC.req_wz wz) tag pc heap_size_u64 in
                     let tn = max_cell_below g t0 in
                     max_cell_below gI t0 == (if cur = tn && pc.lo < 2 then p else tn) /\
-                    AC.alloc_tail g fp wz tn == (if cur = tn && pc.lo < 2 then p else tn)))
+                    (cur = tn && AC.takes_off g cur wz <==> cur = tn && pc.lo < 2)))
   = let w = AC.req_wz wz in
     let gI = at_heap g p cur w tag pc heap_size_u64 in
     let tn = max_cell_below g t0 in
@@ -99,54 +87,76 @@ let tail_step (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (p cur: U64.t) (pc: p
     max_cell_below_spec g t0;
     let m = if cur = tn && pc.lo < 2 then p else tn in
     max_cell_unique gI t0 m
-#pop-options
 
-/// The derived tail after the allocation is the cached one updated.
-#push-options "--z3rlimit 30"
-let alloc_tail_at (st0: sweep_state) (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t)
-  : Lemma (requires FLA.fl_ascending g fp)
-          (ensures (let c = U64.v st0.cursor in
-                    let g' = (AP.alloc_at (Sweeping st0) g fp wz tag).SA.heap_out in
-                    AC.alloc_tail g fp wz (last_cell_behind g c) == last_cell_behind g' c))
-  = let c = U64.v st0.cursor in
-    let ph0 = Sweeping st0 in
-    choice_facts g fp wz SA.Idle tag;
-    AP.alloc_at_fields ph0 g fp wz tag;
-    AC.alloc_phase_idle g fp wz tag;
-    FLA.fl_ascending_valid g fp;
-    part1_holds g;
-    if c = 0 then begin
-      let (p, cur) = AC.alloc_choice g fp wz in
-      assert (AC.alloc_tail g fp wz 0UL == 0UL)
-    end
-    else begin
-      let t0 = c - 1 in
-      let tn = max_cell_below g t0 in
-      if snd (AC.alloc_choice g fp wz) = 0UL then begin
-        assert (AC.alloc_tail g fp wz tn == tn);
-        choice_facts g fp wz ph0 tag
-      end
-      else begin
-        let (p, cur, pc) = alloc_found_at g fp wz tag in
-        tail_step g fp wz tag p cur pc t0;
-        AP.alloc_at_recoloured ph0 g fp wz tag;
-        let gI = (SA.alloc_spec g fp wz tag).SA.heap_out in
-        let g' = (AP.alloc_at ph0 g fp wz tag).SA.heap_out in
-        AP.recoloured_facts gI g';
-        max_cell_below_congr gI g' t0
-      end
-    end
-#pop-options
+/// The fragment at `n` is read off the walk position `n - 8` and its header.
+let frag_at_congr (g g': heap) (n: nat)
+  : Lemma (requires (n >= 8 ==>
+                      (W.reaches g' zero_addr (n - 8) <==> W.reaches g zero_addr (n - 8))) /\
+                    (n >= 8 /\ n < heap_size /\ n % 8 = 0 /\ W.reaches g zero_addr (n - 8) ==>
+                      getWosize (read_word g' (mk_hp_addr (n - 8))) ==
+                        getWosize (read_word g (mk_hp_addr (n - 8))) /\
+                      blue_at g' (mk_hp_addr (n - 8)) == blue_at g (mk_hp_addr (n - 8))))
+          (ensures frag_at g' n == frag_at g n)
+  = ()
 
-#push-options "--z3rlimit 20"
-let alloc_phase_at ph0 g fp wz tag =
-  match ph0 with
-  | Idle -> AC.alloc_phase_idle g fp wz tag
-  | Sweeping st0 ->
-    let st = { st0 with swept_tail = last_cell_behind g (U64.v st0.cursor) } in
-    AP.alloc_at_cursor st st0 g fp wz tag;
-    alloc_tail_at st0 g fp wz tag
-#pop-options
+/// A recolouring keeps the derived state.
+let recoloured_state (g g': heap) (c: U64.t)
+  : Lemma (requires AP.recoloured g g')
+          (ensures state_at g' c == state_at g c /\
+                   (W.reaches g' zero_addr (U64.v c) <==> W.reaches g zero_addr (U64.v c)))
+  = AP.recoloured_facts g g';
+    (if U64.v c > 0 then max_cell_below_congr g g' (U64.v c - 1));
+    frag_at_congr g g' (U64.v c)
+
+/// The fragment at the cursor, and the cursor, across the idle allocation's
+/// writes: they are inside the cell's block, and the cursor is not.
+let frag_step (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (p cur: U64.t) (pc: piece) (c: U64.t)
+  : Lemma (requires found_at g fp wz tag p cur pc /\ W.reaches g zero_addr (U64.v c))
+          (ensures (let gI = at_heap g p cur (AC.req_wz wz) tag pc heap_size_u64 in
+                    W.reaches gI zero_addr (U64.v c) /\ frag_at gI (U64.v c) == frag_at g (U64.v c)))
+  = let w = AC.req_wz wz in
+    let gI = at_heap g p cur w tag pc heap_size_u64 in
+    let n = U64.v c in
+    cell_facts g fp p cur w pc;
+    at_shape g fp p cur w tag pc heap_size_u64;
+    W.bnext_facts g pc.hd;
+    (if U64.v pc.hd < n && n < pc.e then no_pos_inside g pc.hd n);
+    if n >= 8 then begin
+      let q = n - 8 in
+      if U64.v pc.hd < q && q < pc.e then begin
+        // the cursor ends the cell's block, and nothing of either walk ends
+        // at it inside the block
+        (if W.reaches g zero_addr q then no_pos_inside g pc.hd q);
+        assert (~(W.reaches gI zero_addr q))
+      end else if n >= U64.v zero_addr + 8 && n < heap_size && n % 8 = 0 then begin
+        let qa = mk_hp_addr q in
+        if p <> 0UL && U64.v p = q then assert (~(W.reaches g zero_addr q))
+        else ()
+      end
+    end;
+    frag_at_congr g gI n
+
+/// The derived state after the allocation is the one before, with the
+/// in-place update.
+let alloc_caches g fp c wz tag =
+  let n = U64.v c in
+  let ph0 = Sweeping c in
+  choice_facts g fp wz SA.Idle tag;
+  AP.alloc_at_fields ph0 g fp wz tag;
+  AC.alloc_phase_idle g fp wz tag;
+  FLA.fl_ascending_valid g fp;
+  part1_holds g;
+  if snd (AC.alloc_choice g fp wz) = 0UL then
+    choice_facts g fp wz ph0 tag
+  else begin
+    let (p, cur, pc) = alloc_found_at g fp wz tag in
+    (if n > 0 then tail_step g fp wz tag p cur pc (n - 1));
+    frag_step g fp wz tag p cur pc c;
+    AP.alloc_at_recoloured ph0 g fp wz tag;
+    let gI = (SA.alloc_spec g fp wz tag).SA.heap_out in
+    let g' = (AP.alloc_at ph0 g fp wz tag).SA.heap_out in
+    recoloured_state gI g' c
+  end
 
 /// ---------------------------------------------------------------------------
 /// Copying keeps the walk and the headers
@@ -181,9 +191,8 @@ let rec copy_heads (g: heap) (minor: minor_state) (src: U64.t) (dst: obj_addr) (
 #pop-options
 
 #push-options "--z3rlimit 20"
-let promote_phase_at ph0 g fp minor obj wz =
+let promote_heads ph0 g fp minor obj wz =
   let tag = Promote.promoted_tag minor obj in
-  alloc_phase_at ph0 g fp wz tag;
   let ar = AP.alloc_at ph0 g fp wz tag in
   FLA.fl_ascending_valid g fp;
   part1_holds g;
@@ -196,8 +205,7 @@ let promote_phase_at ph0 g fp minor obj wz =
     AP.alloc_at_recoloured ph0 g fp wz tag;
     AP.alloc_at_obj_wosize ph0 g fp wz tag;
     let dst : obj_addr = ar.SA.obj_out in
-    copy_heads ar.SA.heap_out minor obj dst 0 wz;
-    phase_at_heads ph0 ar.SA.heap_out (WB.copy_fields minor ar.SA.heap_out obj dst 0 wz)
+    copy_heads ar.SA.heap_out minor obj dst 0 wz
   end
 #pop-options
 

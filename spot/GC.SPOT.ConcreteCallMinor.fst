@@ -54,7 +54,7 @@ fn call_concrete_minor_collect_full_spot_borrowed
   (fwd_arr: array U64.t)
   (queue: larray U64.t FA.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
-  requires gen_phase gh GC.Spec.Phase.Idle ** is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
+  requires gen_phase gh (ConcreteMajor.spot_major_heap r) GC.Spec.Phase.Idle ** is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
              (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r) **
            pts_to roots (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) **
            pts_to fwd_arr ConcreteScenarios.spot_fwd_array **
@@ -65,7 +65,7 @@ fn call_concrete_minor_collect_full_spot_borrowed
              SZ.v nslots == 1)
   returns ok: bool
   ensures exists* d2 b2 post_major fp2 roots_out farr_out qv_out.
-    gen_phase gh GC.Spec.Phase.Idle ** is_gen_heap gh d2 b2 post_major fp2 **
+    gen_phase gh post_major GC.Spec.Phase.Idle ** is_gen_heap gh d2 b2 post_major fp2 **
     pts_to roots roots_out **
     pts_to fwd_arr farr_out **
     pts_to queue qv_out **
@@ -105,11 +105,11 @@ fn call_concrete_minor_collect_full_spot_borrowed
 fn call_concrete_minor_collect_full_spot
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)
-  requires gen_phase gh GC.Spec.Phase.Idle ** is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
+  requires gen_phase gh (ConcreteMajor.spot_major_heap r) GC.Spec.Phase.Idle ** is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
              (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r)
   returns ok: bool
   ensures exists* d2 b2 post_major fp2.
-    gen_phase gh GC.Spec.Phase.Idle ** is_gen_heap gh d2 b2 post_major fp2 **
+    gen_phase gh post_major GC.Spec.Phase.Idle ** is_gen_heap gh d2 b2 post_major fp2 **
     pure (
       U64.v b2 == 0 /\
       spot_minor_collect_full_success_post r post_major)

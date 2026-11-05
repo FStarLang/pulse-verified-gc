@@ -105,34 +105,6 @@ private let rec search_fields (g: heap) (head prev cur: U64.t) (wz: nat) (ph: gc
 let alloc_phase_fields g fp ph wz tag =
   search_fields g fp 0UL fp (req_wz wz) ph tag heap_words
 
-/// At a block that fits, the search hands out an object.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
-private let found_nonzero (g: heap) (head prev cur: U64.t) (wz: nat) (ph: gc_phase) (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires fits_at g cur wz)
-          (ensures (alloc_search g head prev cur wz ph tag 1).obj_out <> 0UL)
-  = let obj : obj_addr = cur in
-    let hd = hd_address obj in
-    hd_address_spec obj;
-    if prev = 0UL || U64.v prev < U64.v mword || U64.v prev >= heap_size ||
-       U64.v prev % U64.v mword <> 0 || U64.v prev = U64.v hd
-    then alloc_search_found_head g head prev cur wz 1 ph tag
-    else alloc_search_found_prev g head prev cur wz 1 ph tag
-#pop-options
-
-#push-options "--ifuel 1"
-let alloc_phase_oom_phase g fp ph wz tag =
-  let w = req_wz wz in
-  alloc_find_search g fp 0UL fp w ph tag heap_words;
-  let (p, c) = alloc_find g 0UL fp w heap_words in
-  if c <> 0UL then found_nonzero g fp p c w ph tag
-  else begin
-    assert (forall (t: U64.t). alloc_tail g fp wz t == t);
-    match ph with
-    | Idle -> ()
-    | Sweeping st -> assert ({ st with swept_tail = st.swept_tail } == st)
-  end
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// The heap at a phase against the idle heap
 /// ---------------------------------------------------------------------------
@@ -222,18 +194,3 @@ let alloc_phase_heap g fp ph wz tag =
   alloc_find_search g fp 0UL fp w Idle tag heap_words;
   let (p, c) = alloc_find g 0UL fp w heap_words in
   if c <> 0UL then found_heap g fp p c w ph tag
-
-#push-options "--ifuel 1"
-let alloc_phase_colour_congr g fp ph ph' wz tag =
-  let w = req_wz wz in
-  alloc_phase_fields g fp ph wz tag;
-  alloc_phase_fields g fp ph' wz tag;
-  alloc_find_search g fp 0UL fp w ph tag heap_words;
-  alloc_find_search g fp 0UL fp w ph' tag heap_words;
-  alloc_find_search g fp 0UL fp w Idle tag heap_words;
-  let (p, c) = alloc_find g 0UL fp w heap_words in
-  if c <> 0UL then begin
-    found_heap g fp p c w ph tag;
-    found_heap g fp p c w ph' tag
-  end
-#pop-options

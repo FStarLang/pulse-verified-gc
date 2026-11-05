@@ -125,7 +125,7 @@ fn forward_if_minor_infix
   (#cs_pre: Ghost.erased CheneySpec.cheney_state)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
-           R.pts_to fp_ref 'fp ** Alloc.is_phase phase 'ph **
+           R.pts_to fp_ref 'fp ** Alloc.is_phase phase 'ms 'ph **
            pts_to fwd_arr 'farr **
            pts_to queue 'q **
            R.pts_to back 'bk **
@@ -150,7 +150,7 @@ fn forward_if_minor_infix
   ensures exists* md2 mb2 ms2 fp2 farr2 q2 bk2 oom_out ph2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
-    R.pts_to fp_ref fp2 ** Alloc.is_phase phase ph2 **
+    R.pts_to fp_ref fp2 ** Alloc.is_phase phase ms2 ph2 **
     pts_to fwd_arr farr2 **
     pts_to queue q2 **
     R.pts_to back bk2 **
@@ -219,7 +219,7 @@ fn forward_if_minor_infix
     }
   } else {
     // Parent not yet forwarded: need to promote it
-    let new_parent_addr = promote_one minor major fp_ref phase parent #(cs_pre.CheneySpec.cs_phase);
+    let new_parent_addr = promote_one minor major fp_ref phase parent;
     if U64.eq new_parent_addr 0UL {
       // OOM: promote failed
       CheneySpec.cheney_forward_normal_noop_oom ({data='md; bump='mb} <: minor_state) cs_pre parent;
@@ -294,7 +294,7 @@ fn forward_if_minor
   (#cs_pre: Ghost.erased CheneySpec.cheney_state)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
-           R.pts_to fp_ref 'fp ** Alloc.is_phase phase 'ph **
+           R.pts_to fp_ref 'fp ** Alloc.is_phase phase 'ms 'ph **
            pts_to fwd_arr 'farr **
            pts_to queue 'q **
            R.pts_to back 'bk **
@@ -315,7 +315,7 @@ fn forward_if_minor
   ensures exists* md2 mb2 ms2 fp2 farr2 q2 bk2 oom_out ph2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
-    R.pts_to fp_ref fp2 ** Alloc.is_phase phase ph2 **
+    R.pts_to fp_ref fp2 ** Alloc.is_phase phase ms2 ph2 **
     pts_to fwd_arr farr2 **
     pts_to queue q2 **
     R.pts_to back bk2 **
@@ -407,7 +407,7 @@ fn forward_if_minor
         SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr
       } else {
       // All guards pass — promote
-      let new_addr = promote_one minor major fp_ref phase addr #(cs_pre.CheneySpec.cs_phase);
+      let new_addr = promote_one minor major fp_ref phase addr;
       if U64.eq new_addr 0UL {
         // OOM or wosize=0: promote returned 0 → spec is noop
         if U64.eq wosize 0UL {
@@ -481,7 +481,7 @@ fn forward_roots
   (#cs0: Ghost.erased CheneySpec.cheney_state)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
-           R.pts_to fp_ref 'fp ** Alloc.is_phase phase 'ph **
+           R.pts_to fp_ref 'fp ** Alloc.is_phase phase 'ms 'ph **
            pts_to fwd_arr 'farr **
            pts_to queue 'q **
            R.pts_to back 'bk **
@@ -504,7 +504,7 @@ fn forward_roots
   ensures exists* md2 mb2 ms2 fp2 farr2 q2 bk2 rs2 oom_out ph2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
-    R.pts_to fp_ref fp2 ** Alloc.is_phase phase ph2 **
+    R.pts_to fp_ref fp2 ** Alloc.is_phase phase ms2 ph2 **
     pts_to fwd_arr farr2 **
     pts_to queue q2 **
     R.pts_to back bk2 **
@@ -538,7 +538,7 @@ fn forward_roots
     invariant exists* md_i mb_i ms_i fp_i farr_i q_i bk_i rs_i iv cs_i oom_i ph_i.
       is_minor minor md_i mb_i **
       is_heap major ms_i **
-      R.pts_to fp_ref fp_i ** Alloc.is_phase phase ph_i **
+      R.pts_to fp_ref fp_i ** Alloc.is_phase phase ms_i ph_i **
       pts_to fwd_arr farr_i **
       pts_to queue q_i **
       R.pts_to back bk_i **
@@ -640,7 +640,7 @@ fn scan_loop
   (#cs1: Ghost.erased CheneySpec.cheney_state)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
-           R.pts_to fp_ref 'fp ** Alloc.is_phase phase 'ph **
+           R.pts_to fp_ref 'fp ** Alloc.is_phase phase 'ms 'ph **
            pts_to fwd_arr 'farr **
            pts_to queue 'q **
            R.pts_to back 'bk **
@@ -661,7 +661,7 @@ fn scan_loop
   ensures exists* md2 mb2 ms2 fp2 farr2 q2 bk2 oom_out ph2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
-    R.pts_to fp_ref fp2 ** Alloc.is_phase phase ph2 **
+    R.pts_to fp_ref fp2 ** Alloc.is_phase phase ms2 ph2 **
     pts_to fwd_arr farr2 **
     pts_to queue q2 **
     R.pts_to back bk2 **
@@ -694,7 +694,7 @@ fn scan_loop
     invariant exists* md_i mb_i ms_i fp_i farr_i q_i bk_i sv cs_s oom_s ph_i.
       is_minor minor md_i mb_i **
       is_heap major ms_i **
-      R.pts_to fp_ref fp_i ** Alloc.is_phase phase ph_i **
+      R.pts_to fp_ref fp_i ** Alloc.is_phase phase ms_i ph_i **
       pts_to fwd_arr farr_i **
       pts_to queue q_i **
       R.pts_to back bk_i **
@@ -782,7 +782,7 @@ fn scan_loop
         invariant exists* md_f mb_f ms_f fp_f farr_f q_f bk_f fi cs_f oom_f ph_f.
           is_minor minor md_f mb_f **
           is_heap major ms_f **
-          R.pts_to fp_ref fp_f ** Alloc.is_phase phase ph_f **
+          R.pts_to fp_ref fp_f ** Alloc.is_phase phase ms_f ph_f **
           pts_to fwd_arr farr_f **
           pts_to queue q_f **
           R.pts_to back bk_f **
@@ -904,7 +904,7 @@ fn cheney_promote_phase
   (roots: array U64.t) (nroots: SZ.t)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
-           R.pts_to fp_ref 'fp ** Alloc.is_phase phase 'ph **
+           R.pts_to fp_ref 'fp ** Alloc.is_phase phase 'ms 'ph **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to roots 'rs **
@@ -914,7 +914,6 @@ fn cheney_promote_phase
                  AllocLemmas.fl_valid 'ms 'fp heap_words /\
                  AllocLemmas.fl_chain_terminates 'ms 'fp heap_words /\
                  FLA.fl_ascending 'ms 'fp /\
-                 ST.phase_at 'ph 'ms == 'ph /\
                  GC.Spec.Fields.heap_objects_dense 'ms /\
                  PromoteSpec.chain_objects_blue 'ms 'fp /\
                  Seq.length 'farr == fwd_array_size /\
@@ -928,7 +927,7 @@ fn cheney_promote_phase
   ensures exists* md2 mb2 ms2 fp2 farr2 rs2 qv2 ph2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
-    R.pts_to fp_ref fp2 ** Alloc.is_phase phase ph2 **
+    R.pts_to fp_ref fp2 ** Alloc.is_phase phase ms2 ph2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to roots rs2 **
@@ -936,7 +935,7 @@ fn cheney_promote_phase
           let prom = CheneySpec.cheney_promote 'ph minor_st 'ms 'fp 'rs in
           md2 == 'md /\ mb2 == 'mb /\
           ms2 == prom.major_final /\
-          ph2 == ST.phase_at 'ph prom.major_final /\
+          ph2 == 'ph /\
           FLA.fl_ascending prom.major_final fp2 /\
           fp2 == prom.fp_final /\
           represents_fwd farr2 prom.fwd_map /\

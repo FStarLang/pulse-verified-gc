@@ -73,7 +73,7 @@ fn incremental_cycle_spot
   let ok = gen_gc_start gh roots nroots fwd_arr queue slots nslots st;
   with d1 b1 s1 fp1 ph1. assert (gc_state gh d1 b1 s1 fp1 ph1);
   // on success the collector is sweeping the marked heap
-  assert (pure (ok ==> ph1 == Ph.Sweeping GC.Spec.FusedSweep.sweep_start));
+  assert (pure (ok ==> ph1 == Ph.Sweeping zero_addr));
   let fin = sweep_slice gh 64UL;
   with s2 fp2 ph2. assert (gc_state gh d1 b1 s2 fp2 ph2);
   assert (pure ((s2, fp2, ph2) == SL.phase_slice s1 fp1 ph1 64));

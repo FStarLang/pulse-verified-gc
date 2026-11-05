@@ -224,19 +224,18 @@ fn update_tail (phase: R.ref phase_state) (#pv: erased phase_state) (pvc: phase_
 #push-options "--z3rlimit 60"
 fn allocate (heap: heap_t) (fp: U64.t) (phase: R.ref phase_state)
             (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
-  requires is_heap heap 's ** is_phase phase 'ph **
+  requires is_heap heap 's ** R.pts_to phase 'v **
            pure (U64.v wosize >= 1)
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
-    is_phase phase (AC.phase_after_alloc 's fp (U64.v wosize) 'ph) **
-    pure (let spec_res = AC.alloc_phase 's fp 'ph (U64.v wosize) tag in
+    R.pts_to phase (record_after_alloc 's fp (U64.v wosize) 'v) **
+    pure (let spec_res = AC.alloc_phase 's fp (phase_of 'v) (U64.v wosize) tag in
           s2 == spec_res.heap_out /\
           fst res == spec_res.fp_out /\
           snd res == spec_res.obj_out)
 {
   // wosize >= 1 by precondition; `alloc_spec`'s 0 -> 1 bump is the identity.
   let wz : U64.t = wosize;
-  unfold (is_phase phase 'ph);
   let pv = !phase;
 
   // Mutable state for the search loop
@@ -281,7 +280,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (phase: R.ref phase_state)
            s_cur == sr.heap_out /\
            vhead == sr.fp_out /\
            vresult == sr.obj_out /\
-           phase_of vph == AC.phase_after_alloc 's fp (U64.v wosize) (phase_of pv)))
+           vph == record_after_alloc 's fp (U64.v wosize) pv))
       )
     decreases (U64.v !fuel_ref + (if !go then 1 else 0))
   {
@@ -466,7 +465,6 @@ fn allocate (heap: heap_t) (fp: U64.t) (phase: R.ref phase_state)
   // Post-loop: invariant with go=false gives us spec correspondence
   let final_fp = !head_fp;
   let final_obj = !result_obj;
-  fold (is_phase phase (AC.phase_after_alloc 's fp (U64.v wosize) 'ph));
   (final_fp, final_obj)
 }
 #pop-options

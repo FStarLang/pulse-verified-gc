@@ -241,15 +241,15 @@ fn fused_sweep_coalesce (heap: heap_t) (fp: U64.t)
 /// What the slice's loop needs at a step, from the sweep phase.
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let slice_step_facts (g: heap_state) (fp: U64.t) (c t f c0: U64.t) (budget: nat)
-  : Lemma (requires SPI.sweep_phase_inv g fp (mk_st c t f) /\ U64.v c + 8 < heap_size /\
+  : Lemma (requires slice_pre g fp c t f /\ U64.v c + 8 < heap_size /\
                     U64.v c0 <= U64.v c /\ (U64.v c - U64.v c0) / 8 < budget)
           (ensures step_ready g (mk_st c t f) /\
                    (let (g', fp', st') = step_total g fp (mk_st c t f) in
-                    SPI.sweep_phase_inv g' fp' st' /\
+                    slice_pre g' fp' st'.FS.cursor st'.FS.swept_tail st'.FS.last_fragment /\
                     U64.v st'.FS.cursor > U64.v c /\ U64.v st'.FS.cursor <= heap_size /\
                     SL.slice_from g fp (mk_st c t f) c0 budget == SL.slice_from g' fp' st' c0 budget))
-  = SPI.sweep_phase_ready g fp (mk_st c t f);
-    SPI.sweep_phase_step g fp (mk_st c t f);
+  = SPI.sweep_phase_ready g fp c;
+    SPI.sweep_phase_step g fp c;
     SL.slice_from_unfold g fp (mk_st c t f) c0 budget
 #pop-options
 
@@ -264,11 +264,11 @@ let slice_stop_facts (g: heap_state) (fp: U64.t) (c t f c0: U64.t) (budget: nat)
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 fn sweep_slice_impl (heap: heap_t) (c0 t0 f0 fp budget: U64.t)
-  requires is_heap heap 's ** pure (SPI.sweep_phase_inv 's fp (mk_st c0 t0 f0))
+  requires is_heap heap 's ** pure (slice_pre 's fp c0 t0 f0)
   returns r: (U64.t & U64.t & U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 ** pure (slice_matches 's fp c0 t0 f0 budget s2 r)
 {
-  SPI.sweep_phase_inv_elim 's fp (mk_st c0 t0 f0);
+  SPI.sweep_phase_inv_elim 's fp c0;
   pow2_facts ();
   let mut cursor = c0;
   let mut tail = t0;
@@ -282,7 +282,7 @@ fn sweep_slice_impl (heap: heap_t) (c0 t0 f0 fp budget: U64.t)
       pts_to cursor c ** pts_to tail t ** pts_to frag f ** pts_to head h **
       is_heap heap s **
       pure (U64.v c0 <= U64.v c /\ U64.v c <= heap_size /\
-            SPI.sweep_phase_inv s h (mk_st c t f) /\
+            slice_pre s h c t f /\
             SL.slice_from s h (mk_st c t f) c0 (U64.v budget) ==
               SL.sweep_slice 's fp (mk_st c0 t0 f0) (U64.v budget))
     decreases (heap_size - U64.v !cursor)

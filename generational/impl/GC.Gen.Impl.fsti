@@ -66,12 +66,14 @@ type gen_heap_t = {
   phase_ref : R.ref Alloc.phase_state;  // the major collector's phase
 }
 
-/// The major collector's phase, held in `gh.phase_ref`.  It is kept apart
-/// from `is_gen_heap`: only the allocator reads it.  `minor_collect_full` runs
-/// at any phase (its promotions are allocated at it); `gen_gc` runs outside a
-/// sweep (`Ph.Idle`).
-let gen_phase (gh: gen_heap_t) (ph: Ph.gc_phase) : slprop =
-  Alloc.is_phase gh.phase_ref ph
+/// The major collector's phase, held in `gh.phase_ref`, with the sweep's
+/// caches beside the cursor the ones derived from the major heap `g`
+/// (`Alloc.is_phase`).  It is kept apart from `is_gen_heap`: only the
+/// allocator and the sweep read it.  `minor_collect_full` runs at any phase
+/// (its promotions are allocated at it); `gen_gc` runs outside a sweep
+/// (`Ph.Idle`).
+let gen_phase (gh: gen_heap_t) (g: heap_state) (ph: Ph.gc_phase) : slprop =
+  Alloc.is_phase gh.phase_ref g ph
 
 /// Combined slprop for the generational heap:
 ///   is_minor — ownership of minor heap array + bump pointer
@@ -291,7 +293,7 @@ let gen_gc_unreachable_final_blue_post
 /// Allocate an object. Small objects go to minor heap, large ones to major.
 /// Returns 0UL on failure (both heaps full).
 fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 'ph **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph **
            pure (
              // Object body size is at least 1 word (no zero-length objects)
              U64.v wosize > 0 /\
@@ -301,11 +303,14 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
              // wosize/color/tag, objects don't overlap, sizes fit within
              // heap bounds, pointer fields target valid objects, and infix
              // structure is correct
-             SpecFields.well_formed_heap 's)
+             SpecFields.well_formed_heap 's /\
+             // Mid-sweep, the free list is exact and ascending, which keeps
+             // the phase record's caches derived across a major allocation
+             (Ph.Sweeping? 'ph ==> GC.Spec.FreeList.Ascending.fl_ascending 's 'fp))
   returns obj: U64.t
   // Heap ownership is returned; internal state may change (bump pointer
-  // advanced, or a free-list node consumed)
-  ensures exists* d2 b2 s2 fp2 ph2. is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh ph2
+  // advanced, or a free-list node consumed); the phase is the same
+  ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh s2 'ph
 
 /// ---------------------------------------------------------------------------
 /// Full minor collection with ref_table
@@ -327,8 +332,8 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 /// promoted copy is free.  The stop-the-world collector runs at `Idle` with
 /// `free_stw`; `minor_collect_pre_idle` / `minor_collect_post_idle` below are
 /// that instance, with the colour facts of `collection_heap_shape` added.
-/// The incremental sweep's minor collection runs at `Sweeping st` with
-/// `free_incremental st` (`GC.Gen.Impl.Incremental.minor_collect_any_phase`).
+/// The incremental sweep's minor collection runs at `Sweeping c` with
+/// `free_incremental c` (`GC.Gen.Impl.Incremental.minor_collect_any_phase`).
 ///
 /// The ref_table comes from the write barrier: it records addresses of
 /// existing major-heap fields that were assigned minor-heap pointers.  The
@@ -384,28 +389,25 @@ let minor_collect_post_with (ph: Ph.gc_phase) (free: SpecFields.free_def)
      minor_st s fp free rs s2)
 
 /// The collection runs at the phase the allocator holds (`gh.phase_ref`),
-/// whose `swept_tail` is a list cell or the sentinel; it hands back the phase
-/// the allocator leaves: the same, with `swept_tail` the last list cell at or
-/// below where it was (`GC.Gen.SweptTail.phase_at`).  Outside a sweep that is
-/// `Idle` again.
+/// and hands it back: the same phase, its caches derived from the heap the
+/// collection leaves.
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
                       (queue: larray U64.t FA.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
                       (#free: erased SpecFields.free_def)
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 'ph **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to slots 'sl **
            pure (SZ.v nroots == Seq.length 'rs /\
                  minor_collect_pre_with 'ph free ({ data = 'd; bump = 'b } <: minor_state) 's
-                   'fp 'rs 'farr 'sl (SZ.v nslots) /\
-                 ST.phase_at 'ph 's == 'ph)
+                   'fp 'rs 'farr 'sl (SZ.v nslots))
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
-    is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh (ST.phase_at 'ph s2) **
+    is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh s2 'ph **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
@@ -501,7 +503,7 @@ fn gen_gc (gh: gen_heap_t)
            (queue: larray U64.t FA.queue_size)
            (slots: array U64.t) (nslots: SZ.t)
            (st: gray_stack)
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh Ph.Idle **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's Ph.Idle **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
@@ -529,7 +531,7 @@ fn gen_gc (gh: gen_heap_t)
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns res: (U64.t & bool)
   ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
-    is_gen_heap gh d2 b2 s2 (fst res) ** gen_phase gh Ph.Idle **
+    is_gen_heap gh d2 b2 s2 (fst res) ** gen_phase gh s2 Ph.Idle **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **

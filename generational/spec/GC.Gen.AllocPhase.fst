@@ -36,9 +36,6 @@ let alloc_at_fields ph g fp wz tag =
   AC.alloc_phase_fields g fp ph wz tag;
   AllocProps.alloc_spec_oom_unchanged g fp wz tag
 
-let alloc_at_cursor st st' g fp wz tag =
-  AC.alloc_phase_colour_congr g fp (Sweeping st) (Sweeping st') wz tag
-
 /// ---------------------------------------------------------------------------
 /// Recoloured heaps
 /// ---------------------------------------------------------------------------
@@ -213,7 +210,7 @@ let allocation_color_cases (ph: gc_phase) (a: U64.t)
   : Lemma (allocation_color ph a == Header.White \/ allocation_color ph a == Header.Black)
   = match ph with
     | Idle -> ()
-    | Sweeping st -> ()
+    | Sweeping _ -> ()
 #pop-options
 
 #push-options "--z3rlimit 40"

@@ -877,7 +877,8 @@ The entry points are `GC.Gen.Impl.Incremental`'s (`gen_gc_start`,
 `sweep_slice`, `finish_sweep`, `minor_collect_any_phase`, `gen_alloc_major`;
 DESIGN_AND_IMPL.md, "The incremental entry points"). The phase lives in
 `gc_gen_heap.phase_ref` (`ps_kind` 0 = Idle, 1 = Sweeping, plus the cursor,
-`swept_tail` and `last_fragment`). Incremental, each event of the program
+and the sweep's two caches `swept_tail` and `last_fragment`, which the
+proofs say are functions of the heap and the cursor). Incremental, each event of the program
 does this:
 
 | event | `alloc_gen.c` |

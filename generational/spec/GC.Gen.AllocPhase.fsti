@@ -59,12 +59,6 @@ val alloc_at_fields (ph: gc_phase) (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t)
            r.SA.fp_out == r0.SA.fp_out /\ r.SA.obj_out == r0.SA.obj_out /\
            (r.SA.obj_out == 0UL ==> r.SA.heap_out == g /\ r.SA.fp_out == fp))
 
-/// Phases that colour alike allocate alike: a sweep's `swept_tail` and
-/// `last_fragment` do not matter, only its cursor.
-val alloc_at_cursor (st st': sweep_state) (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t)
-  : Lemma (requires st.cursor == st'.cursor)
-          (ensures alloc_at (Sweeping st) g fp wz tag == alloc_at (Sweeping st') g fp wz tag)
-
 /// ---------------------------------------------------------------------------
 /// Recoloured heaps
 /// ---------------------------------------------------------------------------

@@ -32,23 +32,24 @@ module AC = GC.Spec.Allocator.Cursor
 module W = GC.Spec.Walk
 
 /// **The end of an incremental sweep phase.**
-val sweep_phase_end (g: heap) (fp: U64.t) (st: sweep_state)
-  : Lemma (requires sweep_phase_inv g fp st /\ U64.v st.cursor + 8 >= heap_size)
+val sweep_phase_end (g: heap) (fp: U64.t) (c: U64.t)
+  : Lemma (requires sweep_phase_inv g fp c /\ U64.v c + 8 >= heap_size)
           (ensures swept_clean g fp /\
-                   (forall (x: obj_addr). not (pending_free st g x)) /\
+                   (forall (x: obj_addr). not (pending_free c g x)) /\
                    well_formed_heap g)
 
 /// **The end of a stop-the-world sweep**, from the intrinsic invariant and
 /// the relation to the marked heap.
-val sweep_phase_end_stw (g0 g: heap) (fp: U64.t) (st: sweep_state)
-  : Lemma (requires sweep_phase_inv g fp st /\ stw_rel g0 g (U64.v st.cursor) /\
-                    U64.v st.cursor + 8 >= heap_size)
+val sweep_phase_end_stw (g0 g: heap) (fp: U64.t) (c: U64.t)
+  : Lemma (requires sweep_phase_inv g fp c /\ stw_rel g0 g (U64.v c) /\
+                    U64.v c + 8 >= heap_size)
           (ensures FSE.sweep_post g0 g fp)
 
-/// The whole pass keeps the invariant and ends in `sweep_post`.
-val sweep_from_post (g0 g: heap) (fp: U64.t) (st: sweep_state)
-  : Lemma (requires sweep_phase_inv g fp st /\ stw_rel g0 g (U64.v st.cursor))
-          (ensures (let r = sweep_from g fp st in FSE.sweep_post g0 (fst r) (snd r)))
+/// The whole pass from the derived state keeps the invariant and ends in
+/// `sweep_post`.
+val sweep_from_post (g0 g: heap) (fp: U64.t) (c: U64.t)
+  : Lemma (requires sweep_phase_inv g fp c /\ stw_rel g0 g (U64.v c))
+          (ensures (let r = sweep_from g fp (state_at g c) in FSE.sweep_post g0 (fst r) (snd r)))
 
 /// The fused sweep from the heap marking left, through the intrinsic
 /// invariant: `sweep_post`, and so a well-formed result.
@@ -59,20 +60,20 @@ val fused_sweep_post_intrinsic (g0: heap) (fp: U64.t)
 
 /// **#29 mid-sweep**: the free list is exact at every point of the sweep, so
 /// an allocation fails only when no free block anywhere is big enough.
-val sweep_phase_oom_no_fit (g: heap) (fp: U64.t) (st: sweep_state) (wz: nat)
+val sweep_phase_oom_no_fit (g: heap) (fp: U64.t) (c: U64.t) (wz: nat)
                            (tag: U64.t{U64.v tag < 256})
-  : Lemma (requires sweep_phase_inv g fp st /\ wz >= 1 /\
-                    (AC.alloc_phase g fp (GC.Spec.Phase.Sweeping st) wz tag).GC.Spec.Allocator.obj_out == 0UL)
+  : Lemma (requires sweep_phase_inv g fp c /\ wz >= 1 /\
+                    (AC.alloc_phase g fp (GC.Spec.Phase.Sweeping c) wz tag).GC.Spec.Allocator.obj_out == 0UL)
           (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ is_blue x g ==>
                      U64.v (wosize_of_object x g) < wz)
 
 /// Stop-the-world, when nothing was live after marking, everything behind the
 /// cursor is one free block.
-val nothing_live_one_block (g0 g: heap) (fp: U64.t) (st: sweep_state)
-  : Lemma (requires sweep_phase_inv g fp st /\ stw_rel g0 g (U64.v st.cursor) /\
+val nothing_live_one_block (g0 g: heap) (fp: U64.t) (c: U64.t)
+  : Lemma (requires sweep_phase_inv g fp c /\ stw_rel g0 g (U64.v c) /\
                     (forall (p: hp_addr). pos g0 p ==> not (black_at g0 p)) /\
-                    U64.v zero_addr < U64.v st.cursor)
+                    U64.v zero_addr < U64.v c)
           (ensures pos g zero_addr /\ blue_at g zero_addr /\
-                   W.bnext g zero_addr == U64.v st.cursor /\
-                   (forall (x: nat). W.reaches g zero_addr x /\ x < U64.v st.cursor ==>
+                   W.bnext g zero_addr == U64.v c /\
+                   (forall (x: nat). W.reaches g zero_addr x /\ x < U64.v c ==>
                       x == U64.v zero_addr))

@@ -27,7 +27,7 @@ Verified OCaml garbage collector formalized in **F\*** and **Pulse** (concurrent
   `GC.Gen.TwoPassEquiv*`, `GC.Gen.HeapInvariant`, `GC.Gen.AllocPhase` (the allocator at a
   collector phase, from the idle one), and the incremental sweep's `GC.Gen.SweepPhase*`
   (the program's events, a minor collection mid-sweep, safety), `GC.Gen.SweptTail`
-  (`swept_tail` across a minor collection) and `GC.Gen.Incremental` (the collector's state
+  (the sweep's caches kept derived across allocation and promotion) and `GC.Gen.Incremental` (the collector's state
   by phase).  No spec module imports `GC.Gen.Impl.*`.
   `impl/` = `GC.Gen.Impl`, `GC.Gen.Impl.MinorHeap`, `GC.Gen.Impl.Cheney`,
   `GC.Gen.Impl.Promote`, `GC.Gen.Impl.UpdatePtrs`, `GC.Gen.Impl.Incremental` (the

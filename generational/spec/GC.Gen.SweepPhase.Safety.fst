@@ -41,48 +41,48 @@ let rec coerce_mem_obj (s: seq obj_addr) (v: Graph.vertex_id)
     end
 #pop-options
 
-let vertex_obj (g: heap) (st: sweep_state) (v: Graph.vertex_id)
-  : Lemma (requires Graph.mem_graph_vertex (sweep_graph g st) v)
+let vertex_obj (g: heap) (c: U64.t) (v: Graph.vertex_id)
+  : Lemma (requires Graph.mem_graph_vertex (sweep_graph g c) v)
           (ensures U64.v v >= U64.v mword /\ Seq.mem (v <: obj_addr) (objects zero_addr g))
-  = HeapModel.create_graph_with_vertices (free_incremental st) g;
+  = HeapModel.create_graph_with_vertices (free_incremental c) g;
     HeapModel.objects_is_vertex_set g;
     coerce_mem_obj (objects zero_addr g) v
 
 #push-options "--z3rlimit 20"
-let rec reach_aux (g: heap) (fp: U64.t) (st: sweep_state)
-                  (r: Graph.vertex_id{Graph.mem_graph_vertex (sweep_graph g st) r})
-                  (x: Graph.vertex_id{Graph.mem_graph_vertex (sweep_graph g st) x})
-                  (w: Graph.reach (sweep_graph g st) r x)
-  : Lemma (requires sweep_phase_inv g fp st /\ U64.v r >= U64.v mword /\
-                    in_use (free_incremental st) g (r <: obj_addr))
-          (ensures U64.v x >= U64.v mword /\ in_use (free_incremental st) g (x <: obj_addr))
+let rec reach_aux (g: heap) (fp: U64.t) (c: U64.t)
+                  (r: Graph.vertex_id{Graph.mem_graph_vertex (sweep_graph g c) r})
+                  (x: Graph.vertex_id{Graph.mem_graph_vertex (sweep_graph g c) x})
+                  (w: Graph.reach (sweep_graph g c) r x)
+  : Lemma (requires sweep_phase_inv g fp c /\ U64.v r >= U64.v mword /\
+                    in_use (free_incremental c) g (r <: obj_addr))
+          (ensures U64.v x >= U64.v mword /\ in_use (free_incremental c) g (x <: obj_addr))
           (decreases w)
-  = vertex_obj g st x;
+  = vertex_obj g c x;
     match w with
     | Graph.ReachRefl _ -> ()
     | Graph.ReachTrans _ y _ w' ->
-      reach_aux g fp st r y w';
-      sweep_phase_inv_iff g fp st;
-      free_incremental_ok st;
-      MCFH.heap_graph_edge_to_field_read g (free_incremental st) (y <: obj_addr) (x <: obj_addr)
+      reach_aux g fp c r y w';
+      sweep_phase_inv_iff g fp c;
+      free_incremental_ok c;
+      MCFH.heap_graph_edge_to_field_read g (free_incremental c) (y <: obj_addr) (x <: obj_addr)
 #pop-options
 
-let reachable_not_free g fp st r x =
-  let gr = sweep_graph g st in
+let reachable_not_free g fp c r x =
+  let gr = sweep_graph g c in
   eliminate exists (w: Graph.reach gr r x). True
-  with reach_aux g fp st r x w
+  with reach_aux g fp c r x w
 
-let reachable_not_free_combined minor g fp st roots a =
-  sweep_phase_inv_iff g fp st;
-  RBridge.reachable_not_free (free_incremental st) minor g roots
+let reachable_not_free_combined minor g fp c roots a =
+  sweep_phase_inv_iff g fp c;
+  RBridge.reachable_not_free (free_incremental c) minor g roots
 
-let step_keeps_reachable g fp st r x =
-  reachable_not_free g fp st r x;
-  sweep_phase_step g fp st
+let step_keeps_reachable g fp c r x =
+  reachable_not_free g fp c r x;
+  sweep_phase_step g fp c
 
-let steps_keep_reachable g fp st k r x =
-  reachable_not_free g fp st r x;
-  sweep_phase_steps g fp st k
+let steps_keep_reachable g fp c k r x =
+  reachable_not_free g fp c r x;
+  sweep_phase_steps g fp c k
 
-let minor_keeps_not_free minor g fp st roots x =
-  SPM.minor_keeps_blocks minor g fp st roots x
+let minor_keeps_not_free minor g fp c roots x =
+  SPM.minor_keeps_blocks minor g fp c roots x

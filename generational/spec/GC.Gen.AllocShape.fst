@@ -11,8 +11,8 @@
 /// `at_new_blocks`), its cells (`at_cells`) and its list (`at_list`).
 ///
 /// These are the facts the sweep phase's allocation lemmas
-/// (`GC.Gen.SweepPhase`) and the `swept_tail` a minor collection's promotions
-/// leave (`GC.Gen.SweptTail`) are proved from.
+/// (`GC.Gen.SweepPhase`) and the sweep's caches after an allocation
+/// (`GC.Gen.SweptTail`) are proved from.
 
 module GC.Gen.AllocShape
 
@@ -240,28 +240,28 @@ let object_header (w: nat{w < pow2 54}) (tag: tag_t) (front: bool) : U64.t =
   if front then black_object_header w tag else white_object_header w tag
 
 #push-options "--z3rlimit 40"
-let at_explicit (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (st: sweep_state) (p cur: U64.t) (pc: piece)
+let at_explicit (g: heap) (fp: U64.t) (wz: nat) (tag: tag_t) (c: U64.t) (p cur: U64.t) (pc: piece)
   : Lemma (requires FLA.fl_ascending g fp /\ FL.fl_cell g cur /\
                     AC.fits_at g cur (AC.req_wz wz) /\ linked_to g fp p cur /\
                     piece_ok g cur (AC.req_wz wz) pc /\
-                    AC.alloc_phase g fp (SA.Sweeping st) wz tag ==
-                      SA.alloc_search g fp p cur (AC.req_wz wz) (SA.Sweeping st) tag 1)
+                    AC.alloc_phase g fp (SA.Sweeping c) wz tag ==
+                      SA.alloc_search g fp p cur (AC.req_wz wz) (SA.Sweeping c) tag 1)
           (ensures (let w = AC.req_wz wz in
-                    let r = AC.alloc_phase g fp (SA.Sweeping st) wz tag in
-                    r.SA.heap_out == at_heap g p cur w tag pc st.cursor /\
+                    let r = AC.alloc_phase g fp (SA.Sweeping c) wz tag in
+                    r.SA.heap_out == at_heap g p cur w tag pc c /\
                     r.SA.fp_out == spec_fp g fp p cur pc /\
                     U64.v r.SA.obj_out == U64.v pc.ah + 8 /\
                     is_obj r.SA.obj_out /\ hd_address (r.SA.obj_out <: obj_addr) == pc.ah))
   = let w = AC.req_wz wz in
-    let ph = SA.Sweeping st in
+    let ph = SA.Sweeping c in
     spec_explicit g fp wz ph tag p cur pc;
     let r = AC.alloc_phase g fp ph wz tag in
     let o : obj_addr = r.SA.obj_out in
     hd_address_spec o;
     // the colour the phase gives the header at pc.ah
     assert (SA.alloc_color ph g cur w ==
-            (if U64.v pc.ah >= U64.v st.cursor then Header.Black else Header.White));
-    if U64.v pc.ah >= U64.v st.cursor then begin
+            (if U64.v pc.ah >= U64.v c then Header.Black else Header.White));
+    if U64.v pc.ah >= U64.v c then begin
       // one write of the black header is the white one, overwritten
       let nf = if pc.lo >= 2 then cur else FL.fl_next g cur in
       let gw = relinked g p nf in

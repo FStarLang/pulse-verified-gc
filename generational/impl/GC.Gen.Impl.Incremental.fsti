@@ -58,19 +58,20 @@ module SA = GC.Spec.Allocator
 /// The collector's state
 /// ---------------------------------------------------------------------------
 
-/// The generational heap, the collector's phase, and the collector's state
-/// at that phase (`GI.phase_shape`):
+/// The generational heap, the collector's phase (its record's caches derived
+/// from the major heap, `gen_phase`), and the collector's state at that phase
+/// (`GI.phase_shape`):
 ///
 ///   * `Ph.Idle`: `GenInv.collection_heap_shape` of the nursery, the major
 ///     heap and the free-list head -- what `gen_gc` demands and restores;
-///   * `Ph.Sweeping st`: the sweep phase (`SPI.sweep_phase_inv s fp st`), the
-///     nursery's shape, and that the nursery's major pointers point at
-///     non-free objects (`GenInv.minor_major_fields_not_free` for
-///     `SPI.free_incremental st`: free is blue, or pending free -- white in
-///     front of the cursor).
+///   * `Ph.Sweeping c`: the sweep phase at the cursor `c`
+///     (`SPI.sweep_phase_inv s fp c`), the nursery's shape, and that the
+///     nursery's major pointers point at non-free objects
+///     (`GenInv.minor_major_fields_not_free` for `SPI.free_incremental c`:
+///     free is blue, or pending free -- white in front of the cursor).
 let gc_state (gh: gen_heap_t) (d: minor_heap) (b: U64.t) (s: heap_state) (fp: U64.t)
              (ph: Ph.gc_phase) : slprop =
-  is_gen_heap gh d b s fp ** gen_phase gh ph **
+  is_gen_heap gh d b s fp ** gen_phase gh s ph **
   pure (GI.phase_shape ({ data = d; bump = b } <: minor_state) s fp ph)
 
 /// ---------------------------------------------------------------------------
@@ -105,7 +106,8 @@ let gc_state (gh: gen_heap_t) (d: minor_heap) (b: U64.t) (s: heap_state) (fp: U6
 ///     phase's definition of free (`RT.ref_table_sound_with`,
 ///     `RT.ref_table_covers_with` for `GI.phase_free`), its slots distinct,
 ///     the remembered targets among the roots, and the roots valid and not free (never pending free).
-///   * **The phase record** (`gh.phase_ref`) is written only by the collector.
+///   * **The phase record** (`gh.phase_ref`) is written only by the collector
+///     and the allocator.
 
 /// The minor collection's arguments, for the phase's definition of free.
 let minor_slots_ok (ph: Ph.gc_phase) (minor_st: minor_state) (s: heap_state)
@@ -153,10 +155,10 @@ fn finish_sweep (gh: gen_heap_t)
 /// ---------------------------------------------------------------------------
 
 /// **`minor_collect_full` at the collector's phase**, for the phase's
-/// definition of free (`GI.phase_free`: `free_stw` idle, `free_incremental st`
+/// definition of free (`GI.phase_free`: `free_stw` idle, `free_incremental c`
 /// mid-sweep): its contract (`minor_collect_post_with`, at the phase), and
-/// the collector's state at the phase the allocator leaves -- idle stays
-/// idle; mid-sweep the sweep keeps its cursor and the objects pending free
+/// the collector's state at the same phase -- idle stays idle; mid-sweep the
+/// sweep keeps its cursor and the objects pending free
 /// (`GI.minor_keeps_phase_shape`).  The C is `minor_collect_full`'s.
 fn minor_collect_any_phase (gh: gen_heap_t)
                            (roots: array U64.t) (nroots: SZ.t)
@@ -173,14 +175,13 @@ fn minor_collect_any_phase (gh: gen_heap_t)
                    'rs 'farr 'sl (SZ.v nslots))
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
-    gc_state gh d2 b2 s2 fp2 (GC.Gen.SweptTail.phase_at 'ph s2) **
+    gc_state gh d2 b2 s2 fp2 'ph **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
     pure (minor_collect_post_with 'ph (GI.phase_free 'ph) ({ data = 'd; bump = 'b } <: minor_state)
-            's 'fp 'rs ok d2 b2 s2 fp2 rs2 /\
-          Ph.Idle? (GC.Gen.SweptTail.phase_at 'ph s2) == Ph.Idle? 'ph)
+            's 'fp 'rs ok d2 b2 s2 fp2 rs2)
 
 /// ---------------------------------------------------------------------------
 /// Major allocation at either phase
@@ -188,32 +189,32 @@ fn minor_collect_any_phase (gh: gen_heap_t)
 
 /// What a major allocation gives: the allocator's spec at the phase
 /// (`AC.alloc_phase`; idle, `alloc_spec`), and mid-sweep, from the collector's
-/// state: the phase moved by the allocation (`GSP.alloc_state`), and either
-/// nothing changed (no block fits) or the new object is `GSP.new_block` and
-/// *fresh* (`GSP.fresh_ok`): the runtime initialises its fields before the
-/// next collector call (see above).
+/// state: either nothing changed (no block fits) or the new object is
+/// `GSP.new_block` and *fresh* (`GSP.fresh_ok`) at the same cursor: the
+/// runtime initialises its fields before the next collector call (see above).
 let alloc_major_post (ph: Ph.gc_phase) (minor: minor_state) (s: heap_state) (fp: U64.t)
-    (wz: nat) (tag: GSP.tag_t) (obj: U64.t) (s2: heap_state) (fp2: U64.t) (ph2: Ph.gc_phase) : prop =
+    (wz: nat) (tag: GSP.tag_t) (obj: U64.t) (s2: heap_state) (fp2: U64.t) : prop =
   let ar = AC.alloc_phase s fp ph wz tag in
   s2 == ar.SA.heap_out /\ fp2 == ar.SA.fp_out /\ obj == ar.SA.obj_out /\
-  ph2 == AC.phase_after_alloc s fp wz ph /\
-  (forall (st: FS.sweep_state).
-     ph == Ph.Sweeping st /\ GI.phase_shape minor s fp ph /\ tag <> GC.Spec.Object.infix_tag ==>
-     (let st' = GSP.alloc_state s fp wz st in
-      ph2 == Ph.Sweeping st' /\
-      (obj == 0UL ==> s2 == s /\ fp2 == fp /\ st' == st /\ GI.phase_shape minor s2 fp2 ph2) /\
-      (obj <> 0UL ==> GSP.new_block s s2 st obj wz tag /\ GSP.fresh_ok s2 fp2 st' (obj <: obj_addr))))
+  (forall (c: U64.t).
+     ph == Ph.Sweeping c /\ GI.phase_shape minor s fp ph /\ tag <> GC.Spec.Object.infix_tag ==>
+     (obj == 0UL ==> s2 == s /\ fp2 == fp /\ GI.phase_shape minor s2 fp2 ph) /\
+     (obj <> 0UL ==> GSP.new_block s s2 c obj wz tag /\ GSP.fresh_ok s2 fp2 c (obj <: obj_addr)))
 
 /// **Allocate in the major heap** at the collector's phase (`caml_alloc_shr`):
-/// the free-list head is updated in place.  Returns the object, or 0 when no
-/// free block fits.
+/// the free-list head is updated in place, and the phase stays as it is (its
+/// record's cached `swept_tail` follows the allocation).  Mid-sweep the free
+/// list is exact and ascending (as `GSP.fresh_ok` and the sweep phase say).
+/// Returns the object, or 0 when no free block fits.
 fn gen_alloc_major (gh: gen_heap_t) (wosize: U64.t) (tag: GSP.tag_t)
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 'ph ** pure (U64.v wosize >= 1)
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph **
+           pure (U64.v wosize >= 1 /\
+                 (Ph.Sweeping? 'ph ==> GC.Spec.FreeList.Ascending.fl_ascending 's 'fp))
   returns obj: U64.t
-  ensures exists* s2 fp2 ph2.
-    is_gen_heap gh 'd 'b s2 fp2 ** gen_phase gh ph2 **
+  ensures exists* s2 fp2.
+    is_gen_heap gh 'd 'b s2 fp2 ** gen_phase gh s2 'ph **
     pure (alloc_major_post 'ph ({ data = 'd; bump = 'b } <: minor_state) 's 'fp
-            (U64.v wosize) tag obj s2 fp2 ph2)
+            (U64.v wosize) tag obj s2 fp2)
 
 /// ---------------------------------------------------------------------------
 /// Starting the sweep phase
@@ -236,7 +237,7 @@ let gen_gc_start_post
   fp2 == result.mc_fp /\
   (not ok ==> CheneyBFS.cheney_oom Idle minor major fp roots /\ s2 == result.mc_major /\ ph2 == Ph.Idle) /\
   (ok ==>
-   ph2 == Ph.Sweeping FS.sweep_start /\
+   ph2 == Ph.Sweeping zero_addr /\
    SpecGCPost.mark_post (fst prepared) s2 (snd prepared) fp2 /\
    MinorFwd.normal_result_reachable_subgraph_isomorphism_prop Idle
      minor major fp SpecFields.free_stw roots result.mc_major
@@ -246,8 +247,8 @@ let gen_gc_start_post
 
 /// **Start a major collection**: `gen_gc`'s minor collection, root darkening
 /// and marking, and then -- instead of sweeping -- the start of the sweep
-/// phase (`phase = Sweeping sweep_start`).  The arguments and their
-/// preconditions are `gen_gc`'s.
+/// phase (`phase = Sweeping zero_addr`, the cursor at the first block).  The
+/// arguments and their preconditions are `gen_gc`'s.
 fn gen_gc_start (gh: gen_heap_t)
                 (roots: array U64.t) (nroots: SZ.t)
                 (fwd_arr: array U64.t)

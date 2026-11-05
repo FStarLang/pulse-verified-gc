@@ -123,28 +123,30 @@ let s1 (r: unit{room}) : GTot (heap & U64.t & sweep_state) =
 let g1 (r: unit{room}) : GTot heap = Mktuple3?._1 (s1 r)
 let fp1 (r: unit{room}) : GTot U64.t = Mktuple3?._2 (s1 r)
 let st1 (r: unit{room}) : GTot sweep_state = Mktuple3?._3 (s1 r)
-let c1 (r: unit{room}) : GTot nat = U64.v (st1 r).cursor
+let cur1 (r: unit{room}) : GTot U64.t = (st1 r).cursor
+let c1 (r: unit{room}) : GTot nat = U64.v (cur1 r)
 
 #push-options "--z3rlimit 20"
 let stage1 (r: unit{room})
-  : Lemma (sweep_phase_inv (g1 r) (fp1 r) (st1 r) /\ sweep_done (st1 r) /\
+  : Lemma (sweep_phase_inv (g1 r) (fp1 r) (cur1 r) /\ sweep_done (cur1 r) /\
            c1 r <= heap_size /\ U64.v zero_addr + 120 <= c1 r /\
            W.reaches (g1 r) zero_addr (c1 r) /\
            only_block (g1 r) (c1 r))
   = stage0 r;
+    state_at_start (g0 r);
     sweep_phase_start (g0 r) (fp0 r);
-    sweep_phase_steps (g0 r) (fp0 r) sweep_start heap_words;
-    sweep_phase_steps_stw (g0 r) (g0 r) (fp0 r) sweep_start heap_words;
+    sweep_phase_steps (g0 r) (fp0 r) sweep_start.cursor heap_words;
+    sweep_phase_steps_stw (g0 r) (g0 r) (fp0 r) sweep_start.cursor heap_words;
     assert (heap_words * 8 == heap_size);
-    sweep_steps_done (g0 r) (fp0 r) sweep_start heap_words;
-    sweep_phase_inv_elim (g1 r) (fp1 r) (st1 r);
-    SPE.nothing_live_one_block (g0 r) (g1 r) (fp1 r) (st1 r)
+    sweep_steps_done (g0 r) (fp0 r) sweep_start.cursor heap_words;
+    sweep_phase_inv_elim (g1 r) (fp1 r) (cur1 r);
+    SPE.nothing_live_one_block (g0 r) (g1 r) (fp1 r) (cur1 r)
 #pop-options
 
 /// The end of the first sweep, with its bounds.
 let cend (r: unit{room}) : GTot (c: nat{c % 8 == 0 /\ U64.v zero_addr + 120 <= c /\ c <= heap_size}) =
   stage1 r;
-  sweep_phase_inv_elim (g1 r) (fp1 r) (st1 r);
+  sweep_phase_inv_elim (g1 r) (fp1 r) (cur1 r);
   c1 r
 
 /// ---------------------------------------------------------------------------
@@ -153,23 +155,23 @@ let cend (r: unit{room}) : GTot (c: nat{c % 8 == 0 /\ U64.v zero_addr + 120 <= c
 
 /// The heap before: in the sweep phase, finished; one free block at the start
 /// ending at `e`, and no other free block.
-let before (g: heap) (fp: U64.t) (st: sweep_state) (e: nat) : prop =
-  sweep_phase_inv g fp st /\ sweep_done st /\ U64.v zero_addr + 64 <= e /\ e <= U64.v st.cursor /\
+let before (g: heap) (fp: U64.t) (cur: U64.t) (e: nat) : prop =
+  sweep_phase_inv g fp cur /\ sweep_done cur /\ U64.v zero_addr + 64 <= e /\ e <= U64.v cur /\
   only_block g e /\
   (forall (q: hp_addr). pos g q /\ blue_at g q ==> q == zero_addr)
 
-let ar (g: heap) (fp: U64.t) (st: sweep_state) : GTot SA.alloc_result =
-  AC.alloc_phase g fp (SA.Sweeping st) 1 0UL
+let ar (g: heap) (fp: U64.t) (cur: U64.t) : GTot SA.alloc_result =
+  AC.alloc_phase g fp (SA.Sweeping cur) 1 0UL
 
-let new_obj (g: heap) (fp: U64.t) (st: sweep_state) : GTot U64.t = (ar g fp st).SA.obj_out
+let new_obj (g: heap) (fp: U64.t) (cur: U64.t) : GTot U64.t = (ar g fp cur).SA.obj_out
 
 /// The allocation succeeds: the free block at the start is big enough
 /// (`sweep_phase_oom_no_fit`, #29 mid-sweep).
 #push-options "--z3rlimit 20"
-let alloc_ok (g: heap) (fp: U64.t) (st: sweep_state) (e: nat)
-  : Lemma (requires before g fp st e) (ensures new_obj g fp st <> 0UL)
-  = if new_obj g fp st = 0UL then begin
-      SPE.sweep_phase_oom_no_fit g fp st 1 0UL;
+let alloc_ok (g: heap) (fp: U64.t) (cur: U64.t) (e: nat)
+  : Lemma (requires before g fp cur e) (ensures new_obj g fp cur <> 0UL)
+  = if new_obj g fp cur = 0UL then begin
+      SPE.sweep_phase_oom_no_fit g fp cur 1 0UL;
       let x = obj_of zero_addr in
       obj_of_facts zero_addr;
       obj_pos g x; colour_of g x;
@@ -180,28 +182,28 @@ let alloc_ok (g: heap) (fp: U64.t) (st: sweep_state) (e: nat)
 
 /// Where it lands: at the end of the free block at the start.
 #push-options "--z3rlimit 30"
-let alloc_where (g: heap) (fp: U64.t) (st: sweep_state) (e: nat)
-  : Lemma (requires before g fp st e)
-          (ensures (let g' = (ar g fp st).SA.heap_out in
-                    let o = new_obj g fp st in
+let alloc_where (g: heap) (fp: U64.t) (cur: U64.t) (e: nat)
+  : Lemma (requires before g fp cur e)
+          (ensures (let g' = (ar g fp cur).SA.heap_out in
+                    let o = new_obj g fp cur in
                     is_obj o /\ U64.v o == e - 8 /\
-                    GSP.new_block g g' st o 1 0UL /\
-                    sweep_shape g' (ar g fp st).SA.fp_out (GSP.alloc_state g fp 1 st) /\
+                    GSP.new_block g g' cur o 1 0UL /\
+                    sweep_shape g' (ar g fp cur).SA.fp_out cur /\
                     pos g' zero_addr /\ blue_at g' zero_addr /\ W.bnext g' zero_addr == e - 16 /\
                     (forall (x: nat). W.reaches g' zero_addr x /\ x < e - 16 ==> x == U64.v zero_addr) /\
                     (forall (x: nat). x >= e ==> (W.reaches g' zero_addr x <==> W.reaches g zero_addr x)) /\
                     (forall (a: hp_addr). W.reaches g zero_addr (U64.v a) /\ U64.v a >= e ==>
                        read_word g' a == read_word g a) /\
                     (forall (x: nat). e - 16 < x /\ x < e ==> ~(W.reaches g' zero_addr x))))
-  = alloc_ok g fp st e;
-    sweep_phase_inv_iff g fp st;
-    GSP.alloc_sweep_shape g fp st 1 0UL;
-    GSP.alloc_carved g fp st 1 0UL;
-    let g' = (ar g fp st).SA.heap_out in
-    let o : obj_addr = new_obj g fp st in
+  = alloc_ok g fp cur e;
+    sweep_phase_inv_iff g fp cur;
+    GSP.alloc_sweep_shape g fp cur 1 0UL;
+    GSP.alloc_carved g fp cur 1 0UL;
+    let g' = (ar g fp cur).SA.heap_out in
+    let o : obj_addr = new_obj g fp cur in
     let p = hd_address o in
     hd_address_spec o;
-    sweep_phase_inv_elim g fp st;
+    sweep_phase_inv_elim g fp cur;
     eliminate exists (q: hp_addr). GSP.carved_from g g' q p
     with begin
       // the block it came from is the one at the start
@@ -213,21 +215,32 @@ let alloc_where (g: heap) (fp: U64.t) (st: sweep_state) (e: nat)
 #pop-options
 
 /// The heap after the allocation and its initialisation (field 0 := 0).
-let init_heap (g: heap) (fp: U64.t) (st: sweep_state) : GTot heap =
-  let o = new_obj g fp st in
-  if is_obj o then write_word (ar g fp st).SA.heap_out (o <: hp_addr) 0UL
-  else (ar g fp st).SA.heap_out
+let init_heap (g: heap) (fp: U64.t) (cur: U64.t) : GTot heap =
+  let o = new_obj g fp cur in
+  if is_obj o then write_word (ar g fp cur).SA.heap_out (o <: hp_addr) 0UL
+  else (ar g fp cur).SA.heap_out
+
+/// An object of one field holding 0 has storable fields.
+let one_field_storable (free: free_def) (g: heap) (x: obj_addr)
+  : Lemma (requires U64.v (wosize_of_object x g) == 1 /\ U64.v x + 8 <= heap_size /\
+                    GSP.field_val g x 0 == 0UL)
+          (ensures GSP.fields_storable free g x)
+  = let one (i: nat)
+      : Lemma (i < U64.v (wosize_of_object x g) /\ U64.v x + i * 8 + 8 <= heap_size ==>
+               storable free g (GSP.field_val g x i))
+      = ()
+    in
+    FStar.Classical.forall_intro one
 
 #push-options "--z3rlimit 30"
-let alloc_init (g: heap) (fp: U64.t) (st: sweep_state) (e: nat)
-  : Lemma (requires before g fp st e)
-          (ensures is_obj (new_obj g fp st) /\
-                   (let g'' = init_heap g fp st in
-                    let fp' = (ar g fp st).SA.fp_out in
-                    let st' = GSP.alloc_state g fp 1 st in
-                    let o : obj_addr = new_obj g fp st in
+let alloc_init (g: heap) (fp: U64.t) (cur: U64.t) (e: nat)
+  : Lemma (requires before g fp cur e)
+          (ensures is_obj (new_obj g fp cur) /\
+                   (let g'' = init_heap g fp cur in
+                    let fp' = (ar g fp cur).SA.fp_out in
+                    let o : obj_addr = new_obj g fp cur in
                     U64.v o == e - 8 /\
-                    sweep_phase_inv g'' fp' st' /\ st'.cursor == st.cursor /\
+                    sweep_phase_inv g'' fp' cur /\
                     pos g'' zero_addr /\ blue_at g'' zero_addr /\ W.bnext g'' zero_addr == e - 16 /\
                     (forall (x: nat). W.reaches g'' zero_addr x /\ x < e - 16 ==> x == U64.v zero_addr) /\
                     (forall (x: nat). x >= e ==> (W.reaches g'' zero_addr x <==> W.reaches g zero_addr x)) /\
@@ -238,23 +251,23 @@ let alloc_init (g: heap) (fp: U64.t) (st: sweep_state) (e: nat)
                     wz_at g'' (hd_address o) == 1 /\ getTag (read_word g'' (hd_address o)) == 0UL /\
                     Seq.mem o (objects zero_addr g'') /\ is_white o g'' /\
                     ~(is_closure o g'') /\ ~(is_infix o g'')))
-  = alloc_where g fp st e;
+  = alloc_where g fp cur e;
     infix_tag_val ();
-    GSP.alloc_sweep_phase g fp st 1 0UL;
-    let g' = (ar g fp st).SA.heap_out in
-    let fp' = (ar g fp st).SA.fp_out in
-    let st' = GSP.alloc_state g fp 1 st in
-    let o : obj_addr = new_obj g fp st in
+    GSP.alloc_sweep_phase g fp cur 1 0UL;
+    let g' = (ar g fp cur).SA.heap_out in
+    let fp' = (ar g fp cur).SA.fp_out in
+    let o : obj_addr = new_obj g fp cur in
     let a : hp_addr = o in
     colour_of g' o;
     assert (GSP.in_body g' o a);
-    GSP.fresh_write g' fp' st' o a 0UL;
+    GSP.fresh_write g' fp' cur o a 0UL;
     let g'' = write_word g' a 0UL in
     same_heads_facts g' g'';
     colour_of g'' o;
     read_write_same g' a 0UL;
     assert (GSP.field_val g'' o 0 == 0UL);
-    GSP.fresh_close g'' fp' st' o;
+    one_field_storable (free_incremental cur) g'' o;
+    GSP.fresh_close g'' fp' cur o;
     is_closure_spec o g''; closure_tag_val ();
     is_infix_spec o g''; infix_tag_val ()
 #pop-options
@@ -265,28 +278,27 @@ let alloc_init (g: heap) (fp: U64.t) (st: sweep_state) (e: nat)
 
 #push-options "--z3rlimit 20"
 let stage1_before (r: unit{room})
-  : Lemma (before (g1 r) (fp1 r) (st1 r) (c1 r))
+  : Lemma (before (g1 r) (fp1 r) (cur1 r) (c1 r))
   = stage1 r;
-    sweep_phase_inv_elim (g1 r) (fp1 r) (st1 r);
+    sweep_phase_inv_elim (g1 r) (fp1 r) (cur1 r);
     let bl (q: hp_addr) : Lemma (requires pos (g1 r) q /\ blue_at (g1 r) q) (ensures q == zero_addr)
       = W.reaches_stuck (g1 r) zero_addr (c1 r) (U64.v q)
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires bl)
 #pop-options
 
-let g2 (r: unit{room}) : GTot heap = init_heap (g1 r) (fp1 r) (st1 r)
-let fp2 (r: unit{room}) : GTot U64.t = (ar (g1 r) (fp1 r) (st1 r)).SA.fp_out
-let st2 (r: unit{room}) : GTot sweep_state = GSP.alloc_state (g1 r) (fp1 r) 1 (st1 r)
-let spot_p (r: unit{room}) : GTot U64.t = new_obj (g1 r) (fp1 r) (st1 r)
+let g2 (r: unit{room}) : GTot heap = init_heap (g1 r) (fp1 r) (cur1 r)
+let fp2 (r: unit{room}) : GTot U64.t = (ar (g1 r) (fp1 r) (cur1 r)).SA.fp_out
+let spot_p (r: unit{room}) : GTot U64.t = new_obj (g1 r) (fp1 r) (cur1 r)
 
 /// What one allocation and its initialisation leave, as the next one needs it.
 #push-options "--z3rlimit 20"
-let after_before (g: heap) (fp: U64.t) (st: sweep_state) (e: nat)
-  : Lemma (requires before g fp st e /\ U64.v zero_addr + 80 <= e /\
-                    (forall (q: hp_addr). pos g q ==> U64.v q < e \/ U64.v q + 8 >= U64.v st.cursor + 8))
-          (ensures before (init_heap g fp st) (ar g fp st).SA.fp_out (GSP.alloc_state g fp 1 st) (e - 16))
-  = alloc_init g fp st e;
-    let g'' = init_heap g fp st in
+let after_before (g: heap) (fp: U64.t) (cur: U64.t) (e: nat)
+  : Lemma (requires before g fp cur e /\ U64.v zero_addr + 80 <= e /\
+                    (forall (q: hp_addr). pos g q ==> U64.v q < e \/ U64.v q + 8 >= U64.v cur + 8))
+          (ensures before (init_heap g fp cur) (ar g fp cur).SA.fp_out cur (e - 16))
+  = alloc_init g fp cur e;
+    let g'' = init_heap g fp cur in
     let bl (q: hp_addr) : Lemma (requires pos g'' q /\ blue_at g'' q) (ensures q == zero_addr)
       = if U64.v q >= e then begin
           assert (W.reaches g zero_addr (U64.v q));
@@ -310,12 +322,12 @@ let stage1_end (r: unit{room})
 
 #push-options "--z3rlimit 20"
 let stage2 (r: unit{room})
-  : Lemma (before (g2 r) (fp2 r) (st2 r) (cend r - 16) /\
-           U64.v (spot_p r) == cend r - 8 /\ (st2 r).cursor == (st1 r).cursor)
+  : Lemma (before (g2 r) (fp2 r) (cur1 r) (cend r - 16) /\
+           U64.v (spot_p r) == cend r - 8)
   = stage1_before r;
     stage1_end r;
-    alloc_init (g1 r) (fp1 r) (st1 r) (cend r);
-    after_before (g1 r) (fp1 r) (st1 r) (cend r)
+    alloc_init (g1 r) (fp1 r) (cur1 r) (cend r);
+    after_before (g1 r) (fp1 r) (cur1 r) (cend r)
 #pop-options
 
 /// In the second heap the blocks at or beyond the free block's end are `P`'s.
@@ -324,7 +336,7 @@ let stage2_end (r: unit{room})
   : Lemma (forall (q: hp_addr). pos (g2 r) q ==> U64.v q < cend r - 16 \/ U64.v q == cend r - 16)
   = stage1_end r;
     stage1_before r;
-    alloc_init (g1 r) (fp1 r) (st1 r) (cend r);
+    alloc_init (g1 r) (fp1 r) (cur1 r) (cend r);
     let one (q: hp_addr)
       : Lemma (requires pos (g2 r) q) (ensures U64.v q < cend r - 16 \/ U64.v q == cend r - 16)
       = if U64.v q >= cend r then assert (pos (g1 r) q)
@@ -332,10 +344,9 @@ let stage2_end (r: unit{room})
     FStar.Classical.forall_intro (FStar.Classical.move_requires one)
 #pop-options
 
-let g3 (r: unit{room}) : GTot heap = init_heap (g2 r) (fp2 r) (st2 r)
-let fp3 (r: unit{room}) : GTot U64.t = (ar (g2 r) (fp2 r) (st2 r)).SA.fp_out
-let st3 (r: unit{room}) : GTot sweep_state = GSP.alloc_state (g2 r) (fp2 r) 1 (st2 r)
-let spot_g (r: unit{room}) : GTot U64.t = new_obj (g2 r) (fp2 r) (st2 r)
+let g3 (r: unit{room}) : GTot heap = init_heap (g2 r) (fp2 r) (cur1 r)
+let fp3 (r: unit{room}) : GTot U64.t = (ar (g2 r) (fp2 r) (cur1 r)).SA.fp_out
+let spot_g (r: unit{room}) : GTot U64.t = new_obj (g2 r) (fp2 r) (cur1 r)
 
 /// `P`'s block, in the second heap.
 #push-options "--z3rlimit 20"
@@ -345,7 +356,7 @@ let p_block2 (r: unit{room})
            getTag (read_word (g2 r) q) == 0UL /\
            (forall (x: nat). cend r - 16 < x /\ x < cend r ==> ~(W.reaches (g2 r) zero_addr x)))
   = stage1_before r;
-    alloc_init (g1 r) (fp1 r) (st1 r) (cend r);
+    alloc_init (g1 r) (fp1 r) (cur1 r) (cend r);
     hd_address_spec (spot_p r <: obj_addr)
 #pop-options
 
@@ -354,7 +365,7 @@ let p_block2 (r: unit{room})
 let stage3 (r: unit{room})
   : Lemma (let g = g3 r in
            let c = cend r in
-           sweep_phase_inv g (fp3 r) (st3 r) /\ sweep_done (st3 r) /\ U64.v (st3 r).cursor == c /\
+           sweep_phase_inv g (fp3 r) (cur1 r) /\ sweep_done (cur1 r) /\ U64.v (cur1 r) == c /\
            U64.v (spot_g r) == c - 24 /\
            only_block g (c - 32) /\
            pos g (mk_hp_addr (c - 32)) /\ white_at g (mk_hp_addr (c - 32)) /\
@@ -362,7 +373,7 @@ let stage3 (r: unit{room})
            (forall (x: nat). c - 32 < x /\ x < c - 16 ==> ~(W.reaches g zero_addr x)))
   = stage1 r;
     stage2 r;
-    alloc_init (g2 r) (fp2 r) (st2 r) (cend r - 16);
+    alloc_init (g2 r) (fp2 r) (cur1 r) (cend r - 16);
     hd_address_spec (spot_g r <: obj_addr)
 #pop-options
 
@@ -375,7 +386,7 @@ let p_block3 (r: unit{room})
            (forall (x: nat). cend r - 16 < x /\ x < cend r ==> ~(W.reaches (g3 r) zero_addr x)))
   = stage2 r;
     p_block2 r;
-    alloc_init (g2 r) (fp2 r) (st2 r) (cend r - 16);
+    alloc_init (g2 r) (fp2 r) (cur1 r) (cend r - 16);
     let q = mk_hp_addr (cend r - 16) in
     assert (W.reaches (g3 r) zero_addr (cend r - 16));
     assert (read_word (g3 r) q == read_word (g2 r) q)
@@ -395,7 +406,7 @@ let g4 (r: unit{room}) : GTot heap = write_word (g3 r) (pp r <: hp_addr) (gg r)
 let stage4 (r: unit{room})
   : Lemma (let g = g4 r in
            let c = cend r in
-           sweep_phase_inv g (fp3 r) (st3 r) /\ same_heads (g3 r) g /\
+           sweep_phase_inv g (fp3 r) (cur1 r) /\ same_heads (g3 r) g /\
            read_word g (pp r <: hp_addr) == (gg r <: U64.t))
   = stage2 r; stage3 r; p_block3 r;
     let c = cend r in
@@ -409,10 +420,10 @@ let stage4 (r: unit{room})
     is_infix_spec q g; infix_tag_val ();
     resolve_non_infix q g;
     infix_addr_wf_non_infix g (objects zero_addr g) q;
-    assert (GSP.program_write (free_incremental (st3 r)) g p (p <: hp_addr) q);
-    GSP.write_sweep_phase g (fp3 r) (st3 r) p (p <: hp_addr) q;
-    sweep_phase_inv_iff g (fp3 r) (st3 r);
-    GSP.body_write_shape g (fp3 r) (st3 r) p (p <: hp_addr) q;
+    assert (GSP.program_write (free_incremental (cur1 r)) g p (p <: hp_addr) q);
+    GSP.write_sweep_phase g (fp3 r) (cur1 r) p (p <: hp_addr) q;
+    sweep_phase_inv_iff g (fp3 r) (cur1 r);
+    GSP.body_write_shape g (fp3 r) (cur1 r) p (p <: hp_addr) q;
     read_write_same g (p <: hp_addr) q
 #pop-options
 
@@ -424,7 +435,7 @@ let stage4 (r: unit{room})
 let stage5 (r: unit{room})
   : Lemma (let g = g4 r in
            let c = cend r in
-           sweep_phase_inv g (fp3 r) sweep_start /\ stw_rel g g (U64.v zero_addr) /\
+           sweep_phase_inv g (fp3 r) sweep_start.cursor /\ stw_rel g g (U64.v zero_addr) /\
            no_black_pos g /\
            only_block g (c - 32) /\
            pos g (mk_hp_addr (c - 32)) /\ wz_at g (mk_hp_addr (c - 32)) == 1 /\
@@ -434,10 +445,11 @@ let stage5 (r: unit{room})
   = stage3 r; stage4 r; p_block3 r;
     let g = g4 r in
     same_heads_facts (g3 r) g;
-    sweep_phase_inv_elim g (fp3 r) (st3 r);
-    SPE.sweep_phase_end g (fp3 r) (st3 r);
+    sweep_phase_inv_elim g (fp3 r) (cur1 r);
+    SPE.sweep_phase_end g (fp3 r) (cur1 r);
     can_start g (fp3 r);
     sweep_phase_start g (fp3 r);
+    state_at_start g;
     hd_address_spec (gg r);
     obj_pos g (gg r)
 #pop-options
@@ -452,7 +464,7 @@ let fp5 (r: unit{room}) : GTot U64.t = Mktuple3?._2 (s5 r)
 let st5 (r: unit{room}) : GTot sweep_state = Mktuple3?._3 (s5 r)
 
 let sa_ok (r: unit{room}) : Lemma (can_sweep (g4 r) sweep_start) =
-  stage5 r; sweep_phase_step (g4 r) (fp3 r) sweep_start
+  stage5 r; state_at_start (g4 r); sweep_phase_step (g4 r) (fp3 r) sweep_start.cursor
 
 let sa (r: unit{room}) : GTot (heap & U64.t & sweep_state) =
   sa_ok r; sweep_step (g4 r) (fp3 r) sweep_start
@@ -461,34 +473,36 @@ let sa (r: unit{room}) : GTot (heap & U64.t & sweep_state) =
 #push-options "--z3rlimit 20"
 let step_a (r: unit{room})
   : Lemma (let (ga, fpa, sta) = sa r in
-           sweep_phase_inv ga fpa sta /\ U64.v sta.cursor == cend r - 32 /\
-           stw_rel (g4 r) ga (cend r - 32) /\ not (sweep_done sweep_start) /\
+           sweep_phase_inv ga fpa sta.cursor /\ sta == state_at ga sta.cursor /\
+           U64.v sta.cursor == cend r - 32 /\
+           stw_rel (g4 r) ga (cend r - 32) /\ not (sweep_done sweep_start.cursor) /\
            can_sweep (g4 r) sweep_start)
   = stage5 r;
-    sweep_phase_step (g4 r) (fp3 r) sweep_start;
-    sweep_phase_step_stw (g4 r) (g4 r) (fp3 r) sweep_start
+    state_at_start (g4 r);
+    sweep_phase_step (g4 r) (fp3 r) sweep_start.cursor;
+    sweep_phase_step_stw (g4 r) (g4 r) (fp3 r) sweep_start.cursor
 #pop-options
 
 /// The second step: `G` is garbage next to a free block, which absorbs it.
 #push-options "--z3rlimit 20"
 let step_b (r: unit{room})
   : Lemma (let (ga, fpa, sta) = sa r in
-           can_sweep ga sta /\ not (sweep_done sta) /\
+           can_sweep ga sta /\ not (sweep_done sta.cursor) /\
            (let (gb, fpb, stb) = sweep_step ga fpa sta in
-            sweep_phase_inv gb fpb stb /\ U64.v stb.cursor == cend r - 16 /\
+            sweep_phase_inv gb fpb stb.cursor /\ U64.v stb.cursor == cend r - 16 /\
             stw_rel (g4 r) gb (cend r - 16)))
   = stage5 r;
     step_a r;
     let (ga, fpa, sta) = sa r in
     let q = mk_hp_addr (cend r - 32) in
     front_same_elim (g4 r) ga (cend r - 32) q;
-    sweep_phase_step ga fpa sta;
-    sweep_phase_step_stw (g4 r) ga fpa sta
+    sweep_phase_step ga fpa sta.cursor;
+    sweep_phase_step_stw (g4 r) ga fpa sta.cursor
 #pop-options
 
 #push-options "--z3rlimit 20"
 let stage6 (r: unit{room})
-  : Lemma (sweep_phase_inv (g5 r) (fp5 r) (st5 r) /\ U64.v (st5 r).cursor == cend r - 16 /\
+  : Lemma (sweep_phase_inv (g5 r) (fp5 r) (st5 r).cursor /\ U64.v (st5 r).cursor == cend r - 16 /\
            stw_rel (g4 r) (g5 r) (cend r - 16))
   = step_a r; step_b r; sa_ok r;
     let (ga, fpa, sta) = sa r in
@@ -505,28 +519,28 @@ let stage6 (r: unit{room})
 #push-options "--z3rlimit 20"
 let stage7 (r: unit{room})
   : Lemma (let g = g5 r in
-           let st = st5 r in
+           let cur = (st5 r).cursor in
            let p = pp r in
            let q = gg r in
-           pending_free st g p /\
+           pending_free cur g p /\
            read_word g (p <: hp_addr) == (q <: U64.t) /\
            ~(Seq.mem q (objects zero_addr g)) /\
            pos g zero_addr /\ blue_at g zero_addr /\
            U64.v zero_addr < U64.v q /\ U64.v q < W.bnext g zero_addr)
   = stage5 r; stage6 r;
     let g = g5 r in
-    let st = st5 r in
+    let cur = (st5 r).cursor in
     let c = cend r in
     let p = pp r in
     let q = gg r in
-    sweep_phase_inv_elim g (fp5 r) st;
+    sweep_phase_inv_elim g (fp5 r) cur;
     let hp = mk_hp_addr (c - 16) in
     hd_address_spec p; hd_address_spec q;
     front_same_elim (g4 r) g (c - 16) hp;
     front_same_elim (g4 r) g (c - 16) (p <: hp_addr);
     obj_pos g p; colour_of g p;
     obj_pos (g4 r) p; colour_of (g4 r) p;
-    SPE.nothing_live_one_block (g4 r) g (fp5 r) st;
+    SPE.nothing_live_one_block (g4 r) g (fp5 r) cur;
     obj_pos g q
 #pop-options
 
@@ -535,35 +549,33 @@ let stage7 (r: unit{room})
 /// sweep has merged into the free block at the start of the heap.  The minor
 /// collection's shape holds at the sweep's phase for the sweep's definition
 /// of free (`free_incremental`), and the minor collection at the sweep's
-/// phase keeps the sweep phase, with `P` still pending free, and leaves the
-/// phase the allocator holds at the sweep state after it.
+/// phase keeps the sweep phase at the same cursor, with `P` still pending
+/// free.
 #push-options "--z3rlimit 20"
 let sweep_phase_pending_free_spot (r: unit{room}) (m: minor_state) (roots: seq U64.t)
   : Lemma (let g = g5 r in
            let fp = fp5 r in
-           let st = st5 r in
+           let cur = (st5 r).cursor in
            let p = pp r in
            let q = gg r in
-           sweep_phase_inv g fp st /\
-           pending_free st g p /\
+           sweep_phase_inv g fp cur /\
+           pending_free cur g p /\
            Seq.mem q (objects zero_addr (g4 r)) /\
            read_word g (p <: hp_addr) == (q <: U64.t) /\
            ~(Seq.mem q (objects zero_addr g)) /\
            pos g zero_addr /\ blue_at g zero_addr /\
            U64.v zero_addr < U64.v q /\ U64.v q < W.bnext g zero_addr /\
-           GenInv.collection_shape_with (Ph.Sweeping st) (free_incremental st) (minor_reset m) g fp /\
-           (let res = SPM.collect_at st (minor_reset m) g fp roots in
-            let st' = SPM.state_after st res.Promote.mc_major in
-            GC.Gen.SweptTail.phase_at (Ph.Sweeping st) res.Promote.mc_major == Ph.Sweeping st' /\
-            sweep_phase_inv res.Promote.mc_major res.Promote.mc_fp st' /\
-            pending_free st' res.Promote.mc_major p))
+           GenInv.collection_shape_with (Ph.Sweeping cur) (free_incremental cur) (minor_reset m) g fp /\
+           (let res = SPM.collect_at cur (minor_reset m) g fp roots in
+            sweep_phase_inv res.Promote.mc_major res.Promote.mc_fp cur /\
+            pending_free cur res.Promote.mc_major p))
   = stage5 r; stage6 r; stage7 r;
     let g = g5 r in
     let fp = fp5 r in
-    let st = st5 r in
-    SPM.sweep_major_shape g fp st;
-    GenInv.collection_shape_with_after_minor_reset (Ph.Sweeping st) (free_incremental st) m g fp;
-    GenInv.collection_shape_with_elim (Ph.Sweeping st) (free_incremental st) (minor_reset m) g fp;
+    let cur = (st5 r).cursor in
+    SPM.sweep_major_shape g fp cur;
+    GenInv.collection_shape_with_after_minor_reset (Ph.Sweeping cur) (free_incremental cur) m g fp;
+    GenInv.collection_shape_with_elim (Ph.Sweeping cur) (free_incremental cur) (minor_reset m) g fp;
     GenInv.minor_reset_heap_shape m;
-    SPM.minor_keeps_sweep_phase (minor_reset m) g fp st roots
+    SPM.minor_keeps_sweep_phase (minor_reset m) g fp cur roots
 #pop-options

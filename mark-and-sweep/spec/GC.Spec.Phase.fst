@@ -25,23 +25,21 @@
 module GC.Spec.Phase
 
 open GC.Spec.Object
-open GC.Spec.FusedSweep
 
 module U64 = FStar.UInt64
 module Header = GC.Lib.Header
 
-/// The major collector's phase.  `Sweeping st`: a sweep is under way, in state
-/// `st` (`GC.Spec.FusedSweep`): its cursor, and the two caches the
-/// implementation keeps beside it, `swept_tail` and `last_fragment`, which are
-/// functions of the heap and the cursor
-/// (`GC.Spec.SweepPhase.Intrinsic.state_at`; the sweep phase says the stored
-/// ones are the derived ones).  Only the cursor colours a new object.
+/// The major collector's phase.  `Sweeping c`: a sweep is under way, with its
+/// cursor at `c`, the header address of the next block it visits.  The rest
+/// of the sweep's state -- `swept_tail` and `last_fragment` -- is a function of
+/// the heap and the cursor (`GC.Spec.SweepPhase.Intrinsic.state_at`): caches
+/// the implementation keeps beside the cursor, not part of the phase.
 type gc_phase =
   | Idle
-  | Sweeping of sweep_state
+  | Sweeping of U64.t
 
 /// The colour of a new object whose header is at `hd_addr`.
 let allocation_color (ph: gc_phase) (hd_addr: U64.t) : color =
   match ph with
   | Idle -> Header.White
-  | Sweeping st -> if U64.v hd_addr >= U64.v st.cursor then Header.Black else Header.White
+  | Sweeping c -> if U64.v hd_addr >= U64.v c then Header.Black else Header.White

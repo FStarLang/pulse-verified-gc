@@ -21,57 +21,57 @@ module Oom = GC.Spec.Allocator.Oom
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 10"
 
 /// At the end, every block is behind the cursor.
-let at_end (g: heap) (fp: U64.t) (st: sweep_state) : prop =
-  sweep_phase_inv g fp st /\ U64.v st.cursor + 8 >= heap_size
+let at_end (g: heap) (fp: U64.t) (c0: U64.t) : prop =
+  sweep_phase_inv g fp c0 /\ U64.v c0 + 8 >= heap_size
 
-let pos_behind (g: heap) (fp: U64.t) (st: sweep_state) (p: hp_addr)
-  : Lemma (requires at_end g fp st /\ pos g p) (ensures U64.v p < U64.v st.cursor)
-  = sweep_phase_inv_elim g fp st;
-    W.reaches_stuck g zero_addr (U64.v st.cursor) (U64.v p)
+let pos_behind (g: heap) (fp: U64.t) (c0: U64.t) (p: hp_addr)
+  : Lemma (requires at_end g fp c0 /\ pos g p) (ensures U64.v p < U64.v c0)
+  = sweep_phase_inv_elim g fp c0;
+    W.reaches_stuck g zero_addr (U64.v c0) (U64.v p)
 
 /// ---------------------------------------------------------------------------
 /// Incremental
 /// ---------------------------------------------------------------------------
 
-let end_obj (g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
-  : Lemma (requires at_end g fp st /\ Seq.mem x (objects zero_addr g))
-          (ensures (is_white x g \/ is_blue x g) /\ not (pending_free st g x))
-  = sweep_phase_inv_elim g fp st;
+let end_obj (g: heap) (fp: U64.t) (c0: U64.t) (x: obj_addr)
+  : Lemma (requires at_end g fp c0 /\ Seq.mem x (objects zero_addr g))
+          (ensures (is_white x g \/ is_blue x g) /\ not (pending_free c0 g x))
+  = sweep_phase_inv_elim g fp c0;
     obj_pos g x; colour_of g x;
-    pos_behind g fp st (hd_address x);
-    behind_swept_elim g (U64.v st.cursor) (hd_address x)
+    pos_behind g fp c0 (hd_address x);
+    behind_swept_elim g (U64.v c0) (hd_address x)
 
-let sweep_phase_end g fp st =
-  sweep_phase_inv_elim g fp st;
+let sweep_phase_end g fp c0 =
+  sweep_phase_inv_elim g fp c0;
   let objs (x: obj_addr) : Lemma (Seq.mem x (objects zero_addr g) ==> (is_white x g \/ is_blue x g))
-    = if Seq.mem x (objects zero_addr g) then end_obj g fp st x in
+    = if Seq.mem x (objects zero_addr g) then end_obj g fp c0 x in
   FStar.Classical.forall_intro objs;
-  let none (x: obj_addr) : Lemma (not (pending_free st g x) /\ in_use (free_incremental st) g x == in_use free_stw g x)
-    = if Seq.mem x (objects zero_addr g) then end_obj g fp st x in
+  let none (x: obj_addr) : Lemma (not (pending_free c0 g x) /\ in_use (free_incremental c0) g x == in_use free_stw g x)
+    = if Seq.mem x (objects zero_addr g) then end_obj g fp c0 x in
   FStar.Classical.forall_intro none;
   wf_with_parts ();
-  well_formed_heap_with_congr (free_incremental st) free_stw g
+  well_formed_heap_with_congr (free_incremental c0) free_stw g
 
 /// ---------------------------------------------------------------------------
 /// Stop-the-world
 /// ---------------------------------------------------------------------------
 
-let at_end_stw (g0 g: heap) (fp: U64.t) (st: sweep_state) : prop =
-  at_end g fp st /\ stw_rel g0 g (U64.v st.cursor)
+let at_end_stw (g0 g: heap) (fp: U64.t) (c0: U64.t) : prop =
+  at_end g fp c0 /\ stw_rel g0 g (U64.v c0)
 
-let pos0_behind (g0 g: heap) (fp: U64.t) (st: sweep_state) (p: hp_addr)
-  : Lemma (requires at_end_stw g0 g fp st /\ pos g0 p) (ensures U64.v p < U64.v st.cursor)
-  = W.reaches_stuck g0 zero_addr (U64.v st.cursor) (U64.v p)
+let pos0_behind (g0 g: heap) (fp: U64.t) (c0: U64.t) (p: hp_addr)
+  : Lemma (requires at_end_stw g0 g fp c0 /\ pos g0 p) (ensures U64.v p < U64.v c0)
+  = W.reaches_stuck g0 zero_addr (U64.v c0) (U64.v p)
 
 /// The blocks of the result are blocks of the marked heap.
-let sub_at (g0 g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
-  : Lemma (requires at_end_stw g0 g fp st /\ Seq.mem x (objects zero_addr g))
+let sub_at (g0 g: heap) (fp: U64.t) (c0: U64.t) (x: obj_addr)
+  : Lemma (requires at_end_stw g0 g fp c0 /\ Seq.mem x (objects zero_addr g))
           (ensures Seq.mem x (objects zero_addr g0))
-  = sweep_phase_inv_elim g fp st;
-    let c = U64.v st.cursor in
+  = sweep_phase_inv_elim g fp c0;
+    let c = U64.v c0 in
     obj_pos g x; obj_pos g0 x;
     let q = hd_address x in
-    pos_behind g fp st q;
+    pos_behind g fp c0 q;
     if not (blue_at g q) then behind_marked_elim g0 g c q
     else begin
       W.reaches_bounds g zero_addr (U64.v q);
@@ -95,56 +95,56 @@ let sub_at (g0 g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
     end
 
 /// A block live after marking survives, white, with its size, tag and fields.
-let survives_at (g0 g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
-  : Lemma (requires at_end_stw g0 g fp st /\ Seq.mem x (objects zero_addr g0) /\ is_black x g0)
+let survives_at (g0 g: heap) (fp: U64.t) (c0: U64.t) (x: obj_addr)
+  : Lemma (requires at_end_stw g0 g fp c0 /\ Seq.mem x (objects zero_addr g0) /\ is_black x g0)
           (ensures FSE.survives g0 g x)
-  = sweep_phase_inv_elim g fp st;
+  = sweep_phase_inv_elim g fp c0;
     obj_pos g0 x; colour_of g0 x;
     let q = hd_address x in
     marked_unchanged_elim g0 g q;
     obj_pos g x; colour_of g x;
-    pos_behind g fp st q;
-    behind_swept_elim g (U64.v st.cursor) q;
+    pos_behind g fp c0 q;
+    behind_swept_elim g (U64.v c0) q;
     is_no_scan_spec x g; is_no_scan_spec x g0;
     U64.v_inj (wosize_of_object x g) (wosize_of_object x g0);
     white_header_facts (read_word g0 q);
     Edit.header_eq (read_word g q) (white_header (read_word g0 q))
 
-let dead_is_free (g0 g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
-  : Lemma (requires at_end_stw g0 g fp st /\ Seq.mem x (objects zero_addr g) /\ ~(is_black x g0))
+let dead_is_free (g0 g: heap) (fp: U64.t) (c0: U64.t) (x: obj_addr)
+  : Lemma (requires at_end_stw g0 g fp c0 /\ Seq.mem x (objects zero_addr g) /\ ~(is_black x g0))
           (ensures is_blue x g)
   = obj_pos g x; colour_of g x; colour_of g0 x;
-    pos_behind g fp st (hd_address x);
+    pos_behind g fp c0 (hd_address x);
     if not (blue_at g (hd_address x)) then
-      behind_marked_elim g0 g (U64.v st.cursor) (hd_address x)
+      behind_marked_elim g0 g (U64.v c0) (hd_address x)
 
-let not_infix_at (g0 g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
-  : Lemma (requires at_end_stw g0 g fp st /\ Seq.mem x (objects zero_addr g))
+let not_infix_at (g0 g: heap) (fp: U64.t) (c0: U64.t) (x: obj_addr)
+  : Lemma (requires at_end_stw g0 g fp c0 /\ Seq.mem x (objects zero_addr g))
           (ensures ~(is_infix x g))
-  = sweep_phase_inv_elim g fp st;
+  = sweep_phase_inv_elim g fp c0;
     wf_with_parts ()
 
-let no_adjacent_at (g0 g: heap) (fp: U64.t) (st: sweep_state) (x y: obj_addr)
-  : Lemma (requires at_end_stw g0 g fp st /\ Seq.mem x (objects zero_addr g) /\
+let no_adjacent_at (g0 g: heap) (fp: U64.t) (c0: U64.t) (x y: obj_addr)
+  : Lemma (requires at_end_stw g0 g fp c0 /\ Seq.mem x (objects zero_addr g) /\
                     Seq.mem y (objects zero_addr g) /\ is_blue x g /\ is_blue y g)
           (ensures ~(FSE.adjacent g x y))
-  = sweep_phase_inv_elim g fp st;
+  = sweep_phase_inv_elim g fp c0;
     obj_pos g x; obj_pos g y;
     colour_of g x; colour_of g y;
-    pos_behind g fp st (hd_address y);
+    pos_behind g fp c0 (hd_address y);
     if U64.v x + U64.v (wosize_of_object x g) * 8 = U64.v y - 8 then
-      no_adjacent_free_elim g (U64.v st.cursor) (hd_address x) (hd_address y)
+      no_adjacent_free_elim g (U64.v c0) (hd_address x) (hd_address y)
 
 /// Every dead block of the marked heap lies inside a free block of the result.
-let covered_at (g0 g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
-  : Lemma (requires at_end_stw g0 g fp st /\ Seq.mem x (objects zero_addr g0) /\ ~(is_black x g0))
+let covered_at (g0 g: heap) (fp: U64.t) (c0: U64.t) (x: obj_addr)
+  : Lemma (requires at_end_stw g0 g fp c0 /\ Seq.mem x (objects zero_addr g0) /\ ~(is_black x g0))
           (ensures exists (y: obj_addr). Seq.mem y (objects zero_addr g) /\ is_blue y g /\
                                          FSE.inside g0 g x y)
-  = sweep_phase_inv_elim g fp st;
-    let c = U64.v st.cursor in
+  = sweep_phase_inv_elim g fp c0;
+    let c = U64.v c0 in
     obj_pos g0 x; colour_of g0 x;
     let q = hd_address x in
-    pos0_behind g0 g fp st q;
+    pos0_behind g0 g fp c0 q;
     W.reaches_bounds g0 zero_addr (U64.v q);
     let p = W.block_at g zero_addr c (U64.v q) in
     if not (blue_at g p) then begin
@@ -172,8 +172,8 @@ let covered_at (g0 g: heap) (fp: U64.t) (st: sweep_state) (x: obj_addr)
     end
 
 /// A free block of the result holds only blocks that were dead.
-let free_holds_dead (g0 g: heap) (fp: U64.t) (st: sweep_state) (x y: obj_addr)
-  : Lemma (requires at_end_stw g0 g fp st /\ Seq.mem y (objects zero_addr g) /\ is_blue y g /\
+let free_holds_dead (g0 g: heap) (fp: U64.t) (c0: U64.t) (x y: obj_addr)
+  : Lemma (requires at_end_stw g0 g fp c0 /\ Seq.mem y (objects zero_addr g) /\ is_blue y g /\
                     Seq.mem x (objects zero_addr g0) /\ FSE.inside g0 g x y)
           (ensures ~(is_black x g0))
   = obj_pos g y; colour_of g y;
@@ -184,15 +184,15 @@ let free_holds_dead (g0 g: heap) (fp: U64.t) (st: sweep_state) (x y: obj_addr)
         Edit.no_pos_inside g (hd_address y) (U64.v (hd_address x))
     end
 
-let sweep_phase_end_stw g0 g fp st =
-  sweep_phase_inv_elim g fp st;
-  FStar.Classical.forall_intro (FStar.Classical.move_requires (sub_at g0 g fp st));
-  FStar.Classical.forall_intro (FStar.Classical.move_requires (survives_at g0 g fp st));
-  FStar.Classical.forall_intro (FStar.Classical.move_requires (dead_is_free g0 g fp st));
-  FStar.Classical.forall_intro (FStar.Classical.move_requires (not_infix_at g0 g fp st));
-  FStar.Classical.forall_intro_2 (fun x -> FStar.Classical.move_requires (no_adjacent_at g0 g fp st x));
-  FStar.Classical.forall_intro (FStar.Classical.move_requires (covered_at g0 g fp st));
-  FStar.Classical.forall_intro_2 (fun x -> FStar.Classical.move_requires (free_holds_dead g0 g fp st x));
+let sweep_phase_end_stw g0 g fp c0 =
+  sweep_phase_inv_elim g fp c0;
+  FStar.Classical.forall_intro (FStar.Classical.move_requires (sub_at g0 g fp c0));
+  FStar.Classical.forall_intro (FStar.Classical.move_requires (survives_at g0 g fp c0));
+  FStar.Classical.forall_intro (FStar.Classical.move_requires (dead_is_free g0 g fp c0));
+  FStar.Classical.forall_intro (FStar.Classical.move_requires (not_infix_at g0 g fp c0));
+  FStar.Classical.forall_intro_2 (fun x -> FStar.Classical.move_requires (no_adjacent_at g0 g fp c0 x));
+  FStar.Classical.forall_intro (FStar.Classical.move_requires (covered_at g0 g fp c0));
+  FStar.Classical.forall_intro_2 (fun x -> FStar.Classical.move_requires (free_holds_dead g0 g fp c0 x));
   reveal_opaque (`%FSE.sweep_post) (FSE.sweep_post g0 g fp)
 
 /// ---------------------------------------------------------------------------
@@ -200,25 +200,29 @@ let sweep_phase_end_stw g0 g fp st =
 /// ---------------------------------------------------------------------------
 
 #push-options "--fuel 1"
-let rec sweep_from_post g0 g fp st
-  : Lemma (requires sweep_phase_inv g fp st /\ stw_rel g0 g (U64.v st.cursor))
+let rec from_post_st (g0 g: heap) (fp: U64.t) (st: sweep_state)
+  : Lemma (requires sweep_phase_inv g fp st.cursor /\ st == state_at g st.cursor /\
+                    stw_rel g0 g (U64.v st.cursor))
           (ensures (let r = sweep_from g fp st in FSE.sweep_post g0 (fst r) (snd r)))
           (decreases (heap_size - U64.v st.cursor))
   = if U64.v st.cursor + 8 < heap_size then begin
-      sweep_phase_step g fp st;
-      sweep_phase_step_stw g0 g fp st;
+      sweep_phase_step g fp st.cursor;
+      sweep_phase_step_stw g0 g fp st.cursor;
       let (g', fp', st') = sweep_step g fp st in
       sweep_from_step g fp st;
-      sweep_from_post g0 g' fp' st'
+      from_post_st g0 g' fp' st'
     end else begin
       sweep_from_stop g fp st;
-      sweep_phase_end_stw g0 g fp st
+      sweep_phase_end_stw g0 g fp st.cursor
     end
 #pop-options
 
+let sweep_from_post g0 g fp c = from_post_st g0 g fp (state_at g c)
+
 let fused_sweep_post_intrinsic g0 fp =
   sweep_phase_start g0 fp;
-  sweep_from_post g0 g0 fp sweep_start;
+  state_at_start g0;
+  sweep_from_post g0 g0 fp sweep_start.cursor;
   let r = fused_sweep_coalesce g0 fp in
   FSE.sweep_post_wf g0 (fst r) (snd r)
 
@@ -226,18 +230,18 @@ let fused_sweep_post_intrinsic g0 fp =
 /// #29 mid-sweep
 /// ---------------------------------------------------------------------------
 
-let sweep_phase_oom_no_fit g fp st wz tag =
-  sweep_phase_inv_elim g fp st;
-  AC.alloc_phase_fields g fp (GC.Spec.Phase.Sweeping st) wz tag;
+let sweep_phase_oom_no_fit g fp c0 wz tag =
+  sweep_phase_inv_elim g fp c0;
+  AC.alloc_phase_fields g fp (GC.Spec.Phase.Sweeping c0) wz tag;
   FLA.fl_ascending_valid g fp;
   FLA.fl_ascending_exact g fp;
   Edit.part1_holds g;
   Oom.alloc_spec_oom_no_fit g fp wz tag
 
 #push-options "--z3rlimit 20"
-let nothing_live_one_block g0 g fp st =
-  sweep_phase_inv_elim g fp st;
-  let c = U64.v st.cursor in
+let nothing_live_one_block g0 g fp c0 =
+  sweep_phase_inv_elim g fp c0;
+  let c = U64.v c0 in
   W.reaches_refl g zero_addr;
   behind_swept_elim g c zero_addr;
   (if not (blue_at g zero_addr) then behind_marked_elim g0 g c zero_addr);

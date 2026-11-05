@@ -24,7 +24,6 @@ open GC.Impl.Heap
 module PromoteSpec = GC.Gen.Promote
 module Alloc = GC.Impl.Allocator
 module Ph = GC.Spec.Phase
-module ST = GC.Gen.SweptTail
 module FLA = GC.Spec.FreeList.Ascending
 
 /// ---------------------------------------------------------------------------
@@ -59,6 +58,40 @@ fn read_minor_scan_wosize (minor: minor_heap_t) (obj: U64.t)
           pure (U64.v wosize == minor_scan_wosize {data='md; bump='mb} obj)
 
 /// ---------------------------------------------------------------------------
+/// The allocator at the collector's phase
+/// ---------------------------------------------------------------------------
+
+/// **Allocate at the phase the record holds**, keeping its caches the ones
+/// derived from the heap (`Alloc.is_phase`): `Alloc.allocate`, whose in-place
+/// update of `swept_tail` (`Alloc.record_after_alloc`) is the derived one
+/// after the allocation (`GC.Gen.SweptTail.alloc_caches`) -- which needs the
+/// free list exact and ascending while sweeping.  The phase stays as it is.
+inline_for_extraction
+fn allocate_at_phase (heap: heap_t) (fp: U64.t) (phase: R.ref Alloc.phase_state)
+                     (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
+  requires is_heap heap 's ** Alloc.is_phase phase 's 'ph **
+           pure (U64.v wosize >= 1 /\ (Ph.Sweeping? 'ph ==> FLA.fl_ascending 's fp))
+  returns res: (U64.t & U64.t)
+  ensures exists* s2. is_heap heap s2 ** Alloc.is_phase phase s2 'ph **
+    pure (let spec_res = GC.Spec.Allocator.Cursor.alloc_phase 's fp 'ph (U64.v wosize) tag in
+          s2 == spec_res.GC.Spec.Allocator.heap_out /\
+          fst res == spec_res.GC.Spec.Allocator.fp_out /\
+          snd res == spec_res.GC.Spec.Allocator.obj_out)
+
+/// A change that keeps the walk and every header keeps the phase record's
+/// caches derived.
+ghost
+fn phase_heads (phase: R.ref Alloc.phase_state) (g': heap)
+  requires Alloc.is_phase phase 'g 'ph ** pure (GC.Spec.SweepPhase.Intrinsic.same_heads 'g g')
+  ensures Alloc.is_phase phase g' 'ph
+
+/// Idle, the record holds the phase whatever the heap.
+ghost
+fn phase_idle (phase: R.ref Alloc.phase_state) (g': heap)
+  requires Alloc.is_phase phase 'g Ph.Idle
+  ensures Alloc.is_phase phase g' Ph.Idle
+
+/// ---------------------------------------------------------------------------
 /// Promote a single object from minor heap to major heap.
 ///
 /// 1. Read wosize from minor object header
@@ -71,22 +104,20 @@ fn read_minor_scan_wosize (minor: minor_heap_t) (obj: U64.t)
 inline_for_extraction
 fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                (phase: R.ref Alloc.phase_state) (obj: U64.t)
-               (#ph0: Ghost.erased Ph.gc_phase)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
            R.pts_to fp_ref 'fp **
-           Alloc.is_phase phase 'ph **
+           Alloc.is_phase phase 'ms 'ph **
            pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
                  U64.v obj % 8 == 0 /\
                  U64.v obj + minor_wosize {data='md; bump='mb} obj * 8 <= minor_heap_size /\
-                 FLA.fl_ascending 'ms 'fp /\
-                 'ph == ST.phase_at ph0 'ms)
+                 FLA.fl_ascending 'ms 'fp)
   returns new_addr: U64.t
-  ensures exists* md2 mb2 ms2 fp2 ph2.
+  ensures exists* md2 mb2 ms2 fp2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
     R.pts_to fp_ref fp2 **
-    Alloc.is_phase phase ph2 **
+    Alloc.is_phase phase ms2 'ph **
     pure (let minor_st = {data='md; bump='mb} in
           let wz = minor_wosize minor_st obj in
           md2 == 'md /\ mb2 == 'mb /\
@@ -94,10 +125,9 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
           GC.Spec.Allocator.Lemmas.fl_valid ms2 fp2 heap_words /\
           GC.Spec.Allocator.Lemmas.fl_chain_terminates ms2 fp2 heap_words /\
           FLA.fl_ascending ms2 fp2 /\
-          ph2 == ST.phase_at ph0 ms2 /\
           (wz > 0 ==>
-            (let spec_res = PromoteSpec.promote_object minor_st 'ms obj 'fp wz ph0 in
+            (let spec_res = PromoteSpec.promote_object minor_st 'ms obj 'fp wz 'ph in
              ms2 == spec_res.major_out /\
              fp2 == spec_res.fp_out /\
              new_addr == spec_res.new_addr)) /\
-          (wz == 0 ==> ms2 == 'ms /\ fp2 == 'fp /\ ph2 == 'ph /\ new_addr == 0UL))
+          (wz == 0 ==> ms2 == 'ms /\ fp2 == 'fp /\ new_addr == 0UL))

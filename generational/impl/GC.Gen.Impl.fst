@@ -134,11 +134,12 @@ let gen_gc_heap_shape_post_intro minor_data minor_bump final_major final_fp
 /// Allocate: try minor first (if small enough), fall back to major.
 #push-options "--z3rlimit 10"
 fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 'ph **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph **
            pure (U64.v wosize > 0 /\ U64.v tag < 256 /\
-                 SpecFields.well_formed_heap 's)
+                 SpecFields.well_formed_heap 's /\
+                 (Ph.Sweeping? 'ph ==> GC.Spec.FreeList.Ascending.fl_ascending 's 'fp))
   returns obj: U64.t
-  ensures exists* d2 b2 s2 fp2 ph2. is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh ph2
+  ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh s2 'ph
 {
   unfold is_gen_heap;
   unfold gen_phase;
@@ -148,23 +149,23 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
     if U64.eq obj 0UL {
       // Minor full — allocate directly from major
       let fp = R.op_Bang gh.fp_ref;
-      let res = Alloc.allocate gh.major fp gh.phase_ref wosize tag;
+      let res = allocate_at_phase gh.major fp gh.phase_ref wosize tag;
       R.op_Colon_Equals gh.fp_ref (fst res);
       fold (is_gen_heap gh _ _ _ _);
-      fold (gen_phase gh _);
+      fold (gen_phase gh _ 'ph);
       snd res
     } else {
       fold (is_gen_heap gh _ _ _ _);
-      fold (gen_phase gh 'ph);
+      fold (gen_phase gh 's 'ph);
       obj
     }
   } else {
     // Large object → major heap directly
     let fp = R.op_Bang gh.fp_ref;
-    let res = Alloc.allocate gh.major fp gh.phase_ref wosize tag;
+    let res = allocate_at_phase gh.major fp gh.phase_ref wosize tag;
     R.op_Colon_Equals gh.fp_ref (fst res);
     fold (is_gen_heap gh _ _ _ _);
-    fold (gen_phase gh _);
+    fold (gen_phase gh _ 'ph);
     snd res
   }
 }
@@ -321,11 +322,9 @@ let minor_collect_with_spec (ph: Ph.gc_phase)
        rewrite_slots_iter (update_promoted_iter prom.major_final farr prom.fwd_map 0)
          prom.fwd_map slots n 0 == res.mc_major /\
        GenInv.collection_shape_with ph free (minor_reset minor) res.mc_major prom.fp_final /\
-       ST.phase_at ph res.mc_major == ST.phase_at ph prom.major_final))
+       GC.Spec.SweepPhase.Intrinsic.same_heads prom.major_final res.mc_major))
   = let prom = CheneySpec.cheney_promote ph minor major fp roots in
     ST.update_heads prom.major_final free prom.fwd_map;
-    ST.phase_at_heads ph prom.major_final
-      (CheneySpec.cheney_collect_spec_with ph free minor major fp roots).mc_major;
     GenInv.collection_shape_with_elim ph free minor major fp;
     GenInv.major_shape_with_elim ph free major fp;
     GenInv.minor_heap_shape_elim minor;
@@ -352,18 +351,17 @@ fn minor_collect_full (gh: gen_heap_t)
                       (queue: larray U64.t FA.queue_size)
                       (slots: array U64.t) (nslots: SZ.t)
                       (#free: erased SpecFields.free_def)
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 'ph **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to slots 'sl **
            pure (SZ.v nroots == Seq.length 'rs /\
                  minor_collect_pre_with 'ph free ({ data = 'd; bump = 'b } <: minor_state) 's
-                   'fp 'rs 'farr 'sl (SZ.v nslots) /\
-                 ST.phase_at 'ph 's == 'ph)
+                   'fp 'rs 'farr 'sl (SZ.v nslots))
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
-    is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh (ST.phase_at 'ph s2) **
+    is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh s2 'ph **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
@@ -380,7 +378,7 @@ fn minor_collect_full (gh: gen_heap_t)
   // phase: every copy is allocated with the colour the phase gives it.
   unfold gen_phase;
   let ok = cheney_promote_phase gh.minor gh.major gh.fp_ref gh.phase_ref fwd_arr queue roots nroots;
-  with ph_post. assert (Alloc.is_phase gh.phase_ref ph_post);
+  with ms_prom ph_post. assert (Alloc.is_phase gh.phase_ref ms_prom ph_post);
 
   // Extract ghost state from promote phase
   with ms_post. assert (is_heap gh.major ms_post);
@@ -425,9 +423,12 @@ fn minor_collect_full (gh: gen_heap_t)
   minor_collect_full_isomorphism_post 'ph ({data = 'd; bump = 'b} <: minor_state) 's 'fp free
     'rs 'sl (SZ.v nslots) ok ms_final (MCFH.resolve_roots ms_final rs_out);
 
-  rewrite (Alloc.is_phase gh.phase_ref ph_post)
-       as (Alloc.is_phase gh.phase_ref (ST.phase_at 'ph ms_final));
-  fold (gen_phase gh (ST.phase_at 'ph ms_final));
+  // the phase is the same, its caches derived from the heap the pointer
+  // update leaves: the update writes no header
+  rewrite (Alloc.is_phase gh.phase_ref ms_prom ph_post)
+       as (Alloc.is_phase gh.phase_ref ms_prom 'ph);
+  phase_heads gh.phase_ref ms_final;
+  fold (gen_phase gh ms_final 'ph);
   fold (is_gen_heap gh _ 0UL _ _);
   ok
 }
@@ -465,7 +466,7 @@ fn gen_gc (gh: gen_heap_t)
            (queue: larray U64.t FA.queue_size)
            (slots: array U64.t) (nslots: SZ.t)
            (st: gray_stack)
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh Ph.Idle **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's Ph.Idle **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
@@ -486,7 +487,7 @@ fn gen_gc (gh: gen_heap_t)
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns res: (U64.t & bool)
   ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
-    is_gen_heap gh d2 b2 s2 (fst res) ** gen_phase gh Ph.Idle **
+    is_gen_heap gh d2 b2 s2 (fst res) ** gen_phase gh s2 Ph.Idle **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
@@ -539,11 +540,7 @@ fn gen_gc (gh: gen_heap_t)
   with rs_mid. assert (pts_to roots rs_mid);
   with farr_mid. assert (pts_to fwd_arr farr_mid);
   with qv_mid. assert (pts_to queue qv_mid);
-  with ph_mid. assert (gen_phase gh ph_mid);
   assert (pts_to slots 'sl);
-  // outside a sweep the phase stays idle
-  assert (pure (ph_mid == ST.phase_at Ph.Idle ms_updated));
-  rewrite (gen_phase gh ph_mid) as (gen_phase gh Ph.Idle);
   minor_collect_idle_post ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots) ok d_mid b_mid ms_updated fp_mid rs_mid;
 
@@ -671,6 +668,10 @@ fn gen_gc (gh: gen_heap_t)
 
     // Phase 6: Update free-list pointer and re-fold gen heap
     R.op_Colon_Equals gh.fp_ref final_fp;
+    // outside a sweep the phase is idle whatever the heap
+    unfold gen_phase;
+    phase_idle gh.phase_ref s_final;
+    fold (gen_phase gh s_final Ph.Idle);
 
     fold (is_gen_heap gh d_mid b_mid s_final final_fp);    (final_fp, ok)
   } else {

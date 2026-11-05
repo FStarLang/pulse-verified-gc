@@ -12,7 +12,6 @@ module R = Pulse.Lib.Reference
 module SZ = FStar.SizeT
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
-module ST = GC.Gen.SweptTail
 
 open GC.Spec.Base
 open GC.Spec.Phase
@@ -57,37 +56,42 @@ let slice_record (fin: bool) (c t f: U64.t) : Alloc.phase_state =
   { Alloc.ps_kind = (if fin then 0UL else 1UL);
     Alloc.ps_cursor = c; Alloc.ps_swept_tail = t; Alloc.ps_last_fragment = f }
 
-/// The slice in the spec, from the implementation's.
+/// The slice in the spec, from the implementation's, and the record it
+/// leaves holds the phase it leaves.
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let slice_result (minor: minor_state) (g: heap) (fp: U64.t) (v: Alloc.phase_state)
     (budget: U64.t) (g': heap) (c' t' f' fp': U64.t)
   : Lemma (requires v.Alloc.ps_kind <> 0UL /\
+                    Alloc.phase_rel g v (Alloc.phase_of v) /\
                     GI.phase_shape minor g fp (Alloc.phase_of v) /\
                     FSC.slice_matches g fp v.Alloc.ps_cursor v.Alloc.ps_swept_tail
                       v.Alloc.ps_last_fragment budget g' (c', t', f', fp'))
           (ensures (let fin = not (U64.v c' + 8 < heap_size) in
+                    let v' = slice_record fin c' t' f' in
                     U64.v c' <= heap_size /\
-                    (g', fp', Alloc.phase_of (slice_record fin c' t' f')) ==
+                    (g', fp', Alloc.phase_of v') ==
                       SL.phase_slice g fp (Alloc.phase_of v) (U64.v budget) /\
-                    GI.phase_shape minor g' fp' (Alloc.phase_of (slice_record fin c' t' f'))))
-  = GI.phase_slice_shape minor g fp (Alloc.phase_of v) (U64.v budget);
-    let st = FSC.mk_st v.Alloc.ps_cursor v.Alloc.ps_swept_tail v.Alloc.ps_last_fragment in
-    GI.phase_shape_sweeping minor g fp st;
-    SL.sweep_slice_phase g fp st (U64.v budget);
-    let (g1, fp1, st1) = SL.sweep_slice g fp st (U64.v budget) in
-    SPI.sweep_phase_inv_elim g1 fp1 st1
+                    GI.phase_shape minor g' fp' (Alloc.phase_of v') /\
+                    Alloc.phase_rel g' v' (Alloc.phase_of v')))
+  = let c = v.Alloc.ps_cursor in
+    GI.phase_slice_shape minor g fp (Alloc.phase_of v) (U64.v budget);
+    GI.phase_shape_sweeping minor g fp c;
+    SL.sweep_slice_phase g fp c (U64.v budget);
+    let (g1, fp1, st1) = SL.sweep_slice g fp (SPI.state_at g c) (U64.v budget) in
+    SPI.sweep_phase_inv_elim g1 fp1 st1.FS.cursor
 #pop-options
 
 let bounds () : Lemma (heap_size == GC.Spec.Base.heap_size /\ heap_size < pow2 57 /\
                        U64.v mword == 8 /\ pow2 57 * 2 <= pow2 64)
   = assert_norm (pow2 57 * 2 <= pow2 64)
 
-/// The phase as the sweep state a record holds.
-let sweeping_of (v: Alloc.phase_state)
-  : Lemma (requires v.Alloc.ps_kind <> 0UL)
-          (ensures Alloc.phase_of v ==
-                   Ph.Sweeping (FSC.mk_st v.Alloc.ps_cursor v.Alloc.ps_swept_tail v.Alloc.ps_last_fragment))
-  = ()
+/// What the slice needs, from the record and the sweep phase.
+let slice_ready (minor: minor_state) (g: heap) (fp: U64.t) (v: Alloc.phase_state)
+  : Lemma (requires v.Alloc.ps_kind <> 0UL /\
+                    Alloc.phase_rel g v (Alloc.phase_of v) /\
+                    GI.phase_shape minor g fp (Alloc.phase_of v))
+          (ensures FSC.slice_pre g fp v.Alloc.ps_cursor v.Alloc.ps_swept_tail v.Alloc.ps_last_fragment)
+  = GI.phase_shape_sweeping minor g fp v.Alloc.ps_cursor
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 fn sweep_slice (gh: gen_heap_t) (budget: U64.t)
@@ -104,15 +108,13 @@ fn sweep_slice (gh: gen_heap_t) (budget: U64.t)
   unfold Alloc.is_phase;
   let v = R.op_Bang gh.phase_ref;
   if (U64.eq v.Alloc.ps_kind 0UL) {
-    fold (Alloc.is_phase gh.phase_ref 'ph);
-    fold (gen_phase gh 'ph);
+    fold (Alloc.is_phase gh.phase_ref 's 'ph);
+    fold (gen_phase gh 's 'ph);
     fold (is_gen_heap gh 'd 'b 's 'fp);
     fold (gc_state gh 'd 'b 's 'fp 'ph);
     true
   } else {
-    sweeping_of v;
-    GI.phase_shape_sweeping ({ data = 'd; bump = 'b } <: minor_state) 's 'fp
-      (FSC.mk_st v.Alloc.ps_cursor v.Alloc.ps_swept_tail v.Alloc.ps_last_fragment);
+    slice_ready ({ data = 'd; bump = 'b } <: minor_state) 's 'fp v;
     let fp = R.op_Bang gh.fp_ref;
     let r = FSC.sweep_slice_impl gh.major v.Alloc.ps_cursor v.Alloc.ps_swept_tail
               v.Alloc.ps_last_fragment fp budget;
@@ -124,8 +126,8 @@ fn sweep_slice (gh: gen_heap_t) (budget: U64.t)
         let fin = not (U64.lt (U64.add c' mword) heap_size_u64);
         R.op_Colon_Equals gh.phase_ref (slice_record fin c' t' f');
         R.op_Colon_Equals gh.fp_ref fp';
-        fold (Alloc.is_phase gh.phase_ref (Alloc.phase_of (slice_record fin c' t' f')));
-        fold (gen_phase gh (Alloc.phase_of (slice_record fin c' t' f')));
+        fold (Alloc.is_phase gh.phase_ref s2 (Alloc.phase_of (slice_record fin c' t' f')));
+        fold (gen_phase gh s2 (Alloc.phase_of (slice_record fin c' t' f')));
         fold (is_gen_heap gh 'd 'b s2 fp');
         fold (gc_state gh 'd 'b s2 fp' (Alloc.phase_of (slice_record fin c' t' f')));
         fin
@@ -150,7 +152,7 @@ fn finish_sweep (gh: gen_heap_t)
   with s2 fp2 ph2. assert (gc_state gh 'd 'b s2 fp2 ph2);
   unfold gc_state;
   GI.phase_shape_idle ({ data = 'd; bump = 'b } <: minor_state) s2 fp2;
-  rewrite (gen_phase gh ph2) as (gen_phase gh Ph.Idle);
+  rewrite (gen_phase gh s2 ph2) as (gen_phase gh s2 Ph.Idle);
   fold (gc_state gh 'd 'b s2 fp2 Ph.Idle);
 }
 #pop-options
@@ -163,8 +165,7 @@ fn finish_sweep (gh: gen_heap_t)
 let any_phase_pre (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
     (rs farr sl: Seq.seq U64.t) (n: nat)
   : Lemma (requires GI.phase_shape minor s fp ph /\ minor_slots_ok ph minor s rs farr sl n)
-          (ensures minor_collect_pre_with ph (GI.phase_free ph) minor s fp rs farr sl n /\
-                   ST.phase_at ph s == ph)
+          (ensures minor_collect_pre_with ph (GI.phase_free ph) minor s fp rs farr sl n)
   = GI.phase_shape_collection minor s fp ph
 #pop-options
 
@@ -174,8 +175,7 @@ let any_phase_post (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
     (d2: minor_heap) (b2: U64.t) (s2: heap) (fp2: U64.t) (rs2: Seq.seq U64.t)
   : Lemma (requires GI.phase_shape minor s fp ph /\
                     minor_collect_post_with ph (GI.phase_free ph) minor s fp rs ok d2 b2 s2 fp2 rs2)
-          (ensures GI.phase_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 (ST.phase_at ph s2) /\
-                   Ph.Idle? (ST.phase_at ph s2) == Ph.Idle? ph)
+          (ensures GI.phase_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 ph)
   = match ph with
     | Ph.Idle ->
         GI.phase_free_idle ();
@@ -183,9 +183,9 @@ let any_phase_post (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
         GI.phase_shape_idle minor s fp;
         CheneyPres.cheney_collect_preserves_collection_heap_shape minor s fp rs;
         GI.phase_shape_idle ({ data = d2; bump = b2 } <: minor_state) s2 fp2
-    | Ph.Sweeping st ->
-        GI.phase_free_sweeping st;
-        GI.minor_keeps_phase_shape minor s fp st rs
+    | Ph.Sweeping c ->
+        GI.phase_free_sweeping c;
+        GI.minor_keeps_phase_shape minor s fp c rs
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
@@ -204,14 +204,13 @@ fn minor_collect_any_phase (gh: gen_heap_t)
                    'rs 'farr 'sl (SZ.v nslots))
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
-    gc_state gh d2 b2 s2 fp2 (ST.phase_at 'ph s2) **
+    gc_state gh d2 b2 s2 fp2 'ph **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
     pure (minor_collect_post_with 'ph (GI.phase_free 'ph) ({ data = 'd; bump = 'b } <: minor_state)
-            's 'fp 'rs ok d2 b2 s2 fp2 rs2 /\
-          Ph.Idle? (ST.phase_at 'ph s2) == Ph.Idle? 'ph)
+            's 'fp 'rs ok d2 b2 s2 fp2 rs2)
 {
   unfold gc_state;
   any_phase_pre ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'ph 'rs 'farr 'sl (SZ.v nslots);
@@ -221,7 +220,7 @@ fn minor_collect_any_phase (gh: gen_heap_t)
   with rs2. assert (pts_to roots rs2);
   any_phase_post ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'ph 'rs ok
     d2 b2 s2 fp2 rs2;
-  fold (gc_state gh d2 b2 s2 fp2 (ST.phase_at 'ph s2));
+  fold (gc_state gh d2 b2 s2 fp2 'ph);
   ok
 }
 #pop-options
@@ -234,42 +233,41 @@ fn minor_collect_any_phase (gh: gen_heap_t)
 let alloc_major_post_intro (ph: Ph.gc_phase) (minor: minor_state) (s: heap) (fp: U64.t)
     (wz: nat) (tag: GSP.tag_t)
   : Lemma (let ar = AC.alloc_phase s fp ph wz tag in
-           alloc_major_post ph minor s fp wz tag ar.SA.obj_out ar.SA.heap_out
-             ar.SA.fp_out (AC.phase_after_alloc s fp wz ph))
+           alloc_major_post ph minor s fp wz tag ar.SA.obj_out ar.SA.heap_out ar.SA.fp_out)
   = let ar = AC.alloc_phase s fp ph wz tag in
-    let aux (st: FS.sweep_state)
-      : Lemma (requires ph == Ph.Sweeping st /\ GI.phase_shape minor s fp ph /\
+    let aux (c: U64.t)
+      : Lemma (requires ph == Ph.Sweeping c /\ GI.phase_shape minor s fp ph /\
                         tag <> GC.Spec.Object.infix_tag)
-              (ensures (let st' = GSP.alloc_state s fp wz st in
-                        let r = ar in
-                        AC.phase_after_alloc s fp wz ph == Ph.Sweeping st' /\
-                        (r.SA.obj_out == 0UL ==> r.SA.heap_out == s /\ r.SA.fp_out == fp /\ st' == st /\
-                           GI.phase_shape minor r.SA.heap_out r.SA.fp_out (AC.phase_after_alloc s fp wz ph)) /\
+              (ensures (let r = ar in
+                        (r.SA.obj_out == 0UL ==> r.SA.heap_out == s /\ r.SA.fp_out == fp /\
+                           GI.phase_shape minor r.SA.heap_out r.SA.fp_out ph) /\
                         (r.SA.obj_out <> 0UL ==>
-                           GSP.new_block s r.SA.heap_out st r.SA.obj_out wz tag /\
-                           GSP.fresh_ok r.SA.heap_out r.SA.fp_out st' (r.SA.obj_out <: obj_addr))))
-      = GI.phase_shape_sweeping minor s fp st;
-        GSP.alloc_sweep_phase s fp st wz tag
+                           GSP.new_block s r.SA.heap_out c r.SA.obj_out wz tag /\
+                           GSP.fresh_ok r.SA.heap_out r.SA.fp_out c (r.SA.obj_out <: obj_addr))))
+      = GI.phase_shape_sweeping minor s fp c;
+        GSP.alloc_sweep_phase s fp c wz tag
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 fn gen_alloc_major (gh: gen_heap_t) (wosize: U64.t) (tag: GSP.tag_t)
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 'ph ** pure (U64.v wosize >= 1)
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph **
+           pure (U64.v wosize >= 1 /\
+                 (Ph.Sweeping? 'ph ==> GC.Spec.FreeList.Ascending.fl_ascending 's 'fp))
   returns obj: U64.t
-  ensures exists* s2 fp2 ph2.
-    is_gen_heap gh 'd 'b s2 fp2 ** gen_phase gh ph2 **
+  ensures exists* s2 fp2.
+    is_gen_heap gh 'd 'b s2 fp2 ** gen_phase gh s2 'ph **
     pure (alloc_major_post 'ph ({ data = 'd; bump = 'b } <: minor_state) 's 'fp
-            (U64.v wosize) tag obj s2 fp2 ph2)
+            (U64.v wosize) tag obj s2 fp2)
 {
   unfold is_gen_heap;
   unfold gen_phase;
   let fp = R.op_Bang gh.fp_ref;
-  let res = Alloc.allocate gh.major fp gh.phase_ref wosize tag;
+  let res = GC.Gen.Impl.Promote.allocate_at_phase gh.major fp gh.phase_ref wosize tag;
   R.op_Colon_Equals gh.fp_ref (fst res);
   alloc_major_post_intro 'ph ({ data = 'd; bump = 'b } <: minor_state) 's 'fp (U64.v wosize) tag;
-  fold (gen_phase gh (AC.phase_after_alloc 's 'fp (U64.v wosize) 'ph));
+  fold (gen_phase gh _ 'ph);
   fold (is_gen_heap gh 'd 'b _ _);
   snd res
 }
@@ -292,7 +290,12 @@ let start_record : Alloc.phase_state =
   { Alloc.ps_kind = 1UL; Alloc.ps_cursor = zero_addr;
     Alloc.ps_swept_tail = 0UL; Alloc.ps_last_fragment = 0UL }
 
-let start_record_phase () : Lemma (Alloc.phase_of start_record == Ph.Sweeping FS.sweep_start) = ()
+/// It holds the start of the sweep phase, on any heap: the cursor at the
+/// first block, no cell or fragment behind it.
+let start_record_rel (g: heap)
+  : Lemma (Alloc.phase_rel g start_record (Ph.Sweeping zero_addr))
+  = GC.Spec.Walk.reaches_refl g zero_addr;
+    SPI.state_at_start g
 
 /// Marking leaves the heap `mark_post` describes, from which the sweep
 /// phase starts.
@@ -307,7 +310,7 @@ let start_after_mark (minor: minor_state) (h: heap) (h_mark: heap)
                     MarkCorr.gray_black_reachable h h_mark roots /\
                     MarkCorr.gray_stays h h_mark)
           (ensures SpecGCPost.mark_post h h_mark roots fp /\
-                   GI.phase_shape (minor_reset minor) h_mark fp (Ph.Sweeping FS.sweep_start))
+                   GI.phase_shape (minor_reset minor) h_mark fp (Ph.Sweeping zero_addr))
   = MarkCorr.mark_post_from_bounded_mark h h_mark roots fp;
     SpecGCPost.mark_post_sweep_pre h h_mark roots fp;
     SpecGCPost.mark_post_elim_no_grey h h_mark roots fp;
@@ -368,10 +371,6 @@ fn gen_gc_start (gh: gen_heap_t)
   with d_mid b_mid ms_updated fp_mid. assert (is_gen_heap gh d_mid b_mid ms_updated fp_mid);
   with rs_mid. assert (pts_to roots rs_mid);
   with farr_mid. assert (pts_to fwd_arr farr_mid);
-  with ph_mid. assert (gen_phase gh ph_mid);
-  // outside a sweep the phase stays idle
-  assert (pure (ph_mid == ST.phase_at Ph.Idle ms_updated));
-  rewrite (gen_phase gh ph_mid) as (gen_phase gh Ph.Idle);
   minor_collect_idle_post ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots) ok d_mid b_mid ms_updated fp_mid rs_mid;
 
@@ -400,11 +399,11 @@ fn gen_gc_start (gh: gen_heap_t)
     unfold gen_phase;
     unfold Alloc.is_phase;
     R.op_Colon_Equals gh.phase_ref start_record;
-    start_record_phase ();
-    fold (Alloc.is_phase gh.phase_ref (Ph.Sweeping FS.sweep_start));
-    fold (gen_phase gh (Ph.Sweeping FS.sweep_start));
+    start_record_rel s_mark;
+    fold (Alloc.is_phase gh.phase_ref s_mark (Ph.Sweeping zero_addr));
+    fold (gen_phase gh s_mark (Ph.Sweeping zero_addr));
     fold (is_gen_heap gh d_mid b_mid s_mark fp_val);
-    fold (gc_state gh d_mid b_mid s_mark fp_val (Ph.Sweeping FS.sweep_start));
+    fold (gc_state gh d_mid b_mid s_mark fp_val (Ph.Sweeping zero_addr));
     ok
   } else {
     // Out of memory: as `gen_gc`, the major phase is skipped and the
