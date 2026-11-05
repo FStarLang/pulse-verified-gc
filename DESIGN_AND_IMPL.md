@@ -1150,6 +1150,12 @@ collector call returns it and the program's events in between keep it:
   pending free);
 - only the collector writes `phase_ref`.
 
+The cycle's completeness theorem (below, "The cycle's theorems (M6)") takes
+one more obligation as a hypothesis, nothing at runtime depends on it: while
+marking, the program writes into an object it can reach a value it holds,
+against the cycle's start (`MPC.cycle_write`), and the nursery holds only
+such values.
+
 ### Bounded mark stack
 
 The earlier verified mark-and-sweep design assumed an unbounded mark stack. That
@@ -1220,9 +1226,10 @@ uses the bounded variant in the top-level `collect` contract.
 Incremental marking runs the mark step a few objects at a time with the
 program running in between. The spec core (milestone M1 of the
 incremental-mark plan) comes first; the `Marking` phase and black allocation
-(M2), the verified write barrier (M3), the mark slices in Pulse (M4) and
+(M2), the verified write barrier (M3), the mark slices in Pulse (M4),
 allocation while marking with the bridge that interleaves the slices with the
-program (M5) follow below. The mark stack stays an
+program (M5), and the cycle's completeness and safety theorems (M6) follow
+below. The mark stack stays an
 implementation cache: the spec state is the heap's colours alone.
 
 **The step at any grey object** (`GC.Spec.MarkPhase.mark_step_at g x`):
@@ -1650,6 +1657,115 @@ barrier calls, between each two (`VERGC_MAJOR_STATS`).  Disabling the
 barrier's darkening in the bridge makes it fail.
 
 **Measurements.**  stop-the-world against incremental on binarytrees 16/18, livemap and livegraph: OCAML_INTEGRATION.md, "The Major Mode", "Measurements".  The largest mark or sweep slice is 1-4 ms on binarytrees (stop-the-world collections: 45-495 ms), 14 ms on livemap (191 ms), 64 ms on livegraph (232 ms, few minor collections, so large slices); wall time +0-10% on binarytrees, +7-16% on livemap, +27-37% on livegraph (7 cycles against 4).
+
+#### The cycle's theorems (M6)
+
+Two statements about a whole incremental cycle -- `start_cycle`, mark
+slices, the hand-over to the sweep, sweep slices, and the program's events
+in between -- the incremental counterparts of the stop-the-world end-to-end
+theorems.  Spec only: no entry point's contract changes.
+
+**Completeness** (`GC.Spec.MarkPhase.Completeness`, and
+`GC.Gen.MarkPhase.Completeness` for the generational events): *an object
+unreachable from the roots when the cycle starts is freed by the end of the
+sweep, unless its address was handed out again since* (an allocation, or a
+minor collection's promotion).  The marking invariant is intrinsic and says
+nothing about the heap marking started from, so completeness is carried
+separately, as an **account** indexed by a ghost set `s` of addresses: those
+reachable when the cycle started (`MPC.reachable g held`: along
+`MP.field_edge` from what the roots hold), and those allocated or promoted
+since.  While marking (`MPC.mark_account s g`):
+
+- every grey or black object is in `s` (`dark_accounted`);
+- the heap is well formed for the definition of free `unaccounted s` (blue,
+  or white and outside `s`): a non-free block that is dark or in `s` points
+  only at blocks that are dark or in `s`.  This is the closure of `s` under
+  the heap's edges, stated as well-formedness so that the minor collection's
+  generic theorem keeps it (as M2d's `MP.unreached`).
+
+So an object outside `s` is never greyed: a mark step greys targets of
+fields of grey objects (dark, so accounted), and the barrier greys the old
+value of a field of the object the program writes, which the program can
+reach (accounted).  Each event keeps the account, a per-event family like
+the sweep's `survivor_or_new_*`:
+
+| event | lemma | `s` afterwards |
+|---|---|---|
+| root darkening (`start_cycle`) | `GMC.cycle_start`, from `MPC.account_start` | the objects reachable from the roots in the heap `start_cycle` starts from (`GMC.reachable_at_start`) |
+| mark moves (a mark slice) | `MPC.account_move`, `account_steps` | unchanged |
+| the barrier write while marking | `MPC.account_barrier` (darken the old value, `account_darken`; then the write, `account_write`) | unchanged |
+| allocation while marking | `MPC.account_alloc`, `account_fresh_write`, `account_fresh_close` | the new object added (`SPC.with_new`) |
+| minor collection while marking | `GMC.account_minor` (`GMM.minor_keeps_wf_with`, the generalised `unreached_wf_after`) | the promoted copies added (`with_new_blocks`: the blocks that were not blocks before, black by `GMM.minor_new_block_black`) |
+| hand-over (nothing grey) | `MPC.cycle_handover` | unchanged: every block not free at the start of the sweep is black, so in `s` |
+| sweep slices | `MPC.cycle_sweep_slice` | unchanged |
+| allocation / write mid-sweep | `MPC.cycle_sweep_alloc`, `cycle_sweep_write` | the new object added |
+| minor collection mid-sweep | `GMC.sweep_minor` | the promoted copies added (`GSC.with_promoted`) |
+
+At the collector's phase this is `MPC.cycle_account s g ph`: the mark account
+while marking; mid-sweep `sweep_accounted` (every block not free for
+`free_incremental c` is in `s` -- the sweep's `survivor_or_new` with the
+survivors of marking folded into `s`); idle, every block that is not blue is
+in `s`.  At the entry points: `GMC.cycle_slice` (any `major_slice`, from
+`GI.major_slice_post`), `GMC.cycle_modify` (the barrier at every phase).
+The theorem is the idle form (`MPC.cycle_complete`,
+`GMC.cycle_frees_unreachable`): every address outside `s` -- unreachable
+when the cycle started and not allocated or promoted since -- is freed
+(`SPC.freed`: no block there, or a free block).
+
+**The trusted obligation it adds.**  The account needs the program's writes
+to stay inside `s`: `MPC.cycle_write s g x a v` -- `SPM.program_write` at
+`unaccounted s` (the program writes a body word of an object it can reach,
+and stores a value it holds: both in `s` or dark) and `x` scannable.  This
+is the marking invariant's roots obligation (the plan's option (a)) read
+against the cycle's start: OCaml's type safety -- the program obtains
+pointers only from its roots, by loading fields of objects it holds
+(`MPC.account_load`: a field of an accounted object is accounted), and by
+allocating (added to `s`).  It is not in `GB.modify_ok`: the completeness
+theorem takes it as a hypothesis (`GMC.modify_accounted`) of the writes it
+covers, as it takes the nursery half for minor collections while marking
+(`minor_major_fields_not_free (unaccounted s)`: what the nursery holds is
+accounted for).  Nothing at runtime depends on it.
+
+**Safety** (`GC.Gen.MarkPhase.Safety`), stated once for every phase
+(`GI.phase_shape`, with `GI.phase_free ph`: blue idle or marking, blue or
+pending free mid-sweep):
+
+- `cycle_reachable_not_free`: every object reachable from the roots through
+  the nursery and the major heap (the combined graph at `phase_free ph`) is
+  a real block, not free at the phase -- the sweep's
+  `reachable_not_free_combined` at every phase, via the generic
+  `RBridge.reachable_not_free`.  The roots must be non-free at the phase;
+  across the hand-over they are (`handover_roots`: with nothing grey every
+  root is black, as the roots are held);
+- the collector's own moves leave the blocks alone: root darkening is a
+  recolouring (`start_keeps_blocks`), a major slice keeps every non-free
+  block with its size, tag and fields and non-free at the phase it leaves,
+  except the white blocks the hand-over finds (pending free: unreachable)
+  (`cycle_slice_keeps`, from `MPC.mark_steps_keep_blocks` and
+  `SL.sweep_slice_phase`), so a slice never changes a reachable object
+  (`slice_keeps_reachable`); a minor collection while marking keeps every
+  non-free block's header and its fields pointing into the major heap
+  (`GMM.minor_keeps_block`, `GMM.minor_keeps_major_field`) and rewrites the
+  nursery pointers through the forwarding map (the isomorphism of
+  `minor_collect_post_with`);
+- a program write through the barrier changes only the written word: every
+  other non-free block keeps its size, tag and fields, stays non-free and
+  does not become white (`modify_keeps_others`).
+
+**The SPOT** (`GC.SPOT.IncrementalCycleTheorems`, on the heap of
+`GC.SPOT.CycleHeap`: `A -> B`, `B`, `U -> A`, `C`, roots `[A; C]`, an empty
+nursery, the idle state proved for it): `minor_collect` (the empty nursery
+changes nothing), `start_cycle`, a 64-word slice, a barrier write of an
+immediate into `A`'s field (cutting `A -> B`), and two unbounded slices to
+`Idle`; then `U`, unreachable at the start, is freed, and `C` survives with
+its size, tag and field.
+
+**Not done**: an event-list theorem (induction over the program's and the
+collector's events between collector calls, with the obligations as
+hypotheses on the list).  It needs the nursery's own events (allocation and
+writes into nursery objects, which the spec does not model as events) to
+state the minor collection's obligation, so the per-event lemmas are
+composed by hand, as the SPOT does.
 
 ## The minor collector
 

@@ -625,3 +625,37 @@ remembered set `[field1]`.
 3. **A young value over a young one** (`young_over_young`, `C.field1 := A`):
    the barrier says not to remember the slot, and `[field1]` still covers --
    the slot is in the table already, as 4.14's early return assumes.
+
+## The incremental cycle's theorems on a concrete heap
+
+`GC.SPOT.IncrementalCycleTheorems` applies the cycle's completeness and safety
+theorems (`GC.Gen.MarkPhase.Completeness`, `GC.Gen.MarkPhase.Safety`, M6) to
+the Pulse entry points, on the heap of `GC.SPOT.CycleHeap`: the four one-field
+objects of `GC.SPOT.MarkPhaseHeap`, all white, then a free block to the end of
+the heap, an empty nursery, and the roots `[A; C]`:
+
+    A -> B      B      U -> A      C
+
+`CycleHeap.shape` proves the heap is in the idle collector's state
+(`collection_heap_shape`, as `GC.SPOT.InfixMajor` does for its heap), so the
+SPOT's precondition is not vacuous; `CycleHeap.minor_pre` the minor
+collection's precondition with no remembered slot; `collect_empty` that
+collecting the empty nursery changes nothing (heap, free-list head, roots);
+`no_oom` that it cannot fail; `u_unreachable` that `U` is unreachable from the
+roots (`A`, `B`, `C` contain them and are closed under the edges,
+`MPC.reachable_closed`).
+
+The run, with no fact supplied between the calls: `minor_collect`,
+`start_cycle`, a 64-word `major_slice`, a program write through the barrier
+(`modify_field`: `A`'s field, which pointed at `B`, overwritten with an
+immediate -- under the completeness obligation `MPC.cycle_write`, `A` being a
+root), and two unbounded `major_slice`s, ending idle.  Along the way it
+carries the cycle's account (`MPC.cycle_account`, from `GMC.cycle_start`,
+`cycle_slice`, `cycle_modify`) and `C` kept (`GMS.start_keeps_blocks`,
+`cycle_slice_keeps`, `modify_keeps_others`).  `cycle_post`, at the end:
+
+- `U` is freed (`SPC.freed`): it was unreachable when the cycle started, and
+  nothing was allocated or promoted, so the account's set is exactly what was
+  reachable then (`MPC.cycle_complete`);
+- `C` is a non-free block with the size, tag and field it had before the
+  cycle (`SPI.same_block`).
