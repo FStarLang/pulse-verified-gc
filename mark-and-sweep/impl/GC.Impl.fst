@@ -50,12 +50,17 @@ module FS = GC.Spec.FusedSweep
 /// Postcondition:
 /// - gc_postcondition: well_formed_heap preserved, all objects white or blue
 /// - full_gc_correctness: reachable objects survive with preserved data
+///
+/// `ov = false` additionally promises that every gray object is on the stack,
+/// which lets the mark phase skip its heap rescan when no child is dropped
+/// (`mark_loop_bounded_flagged`).
 #push-options "--z3rlimit 50"
-fn collect_with_roots
+fn collect_core
     (heap: heap_t) (st: gray_stack)
-    (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr)) (fp: U64.t)
+    (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr)) (fp: U64.t) (ov: bool)
   requires is_heap heap 's ** is_gray_stack st 'st **
-           pure (gc_precondition_with_roots 's 'st roots fp (stack_capacity st))
+           pure (gc_precondition_with_roots 's 'st roots fp (stack_capacity st) /\
+                 (not ov ==> SpecMark.gray_objects_on_stack 's 'st))
   returns final_fp: U64.t
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecGCPost.gc_postcondition s2 /\
@@ -65,7 +70,7 @@ fn collect_with_roots
                SpecGCPost.gc_coalesce_source 's s2 roots fp final_fp)
 {
   // Mark phase: bounded-stack mark with overflow handling
-  mark_loop_bounded heap st roots;
+  mark_loop_bounded_flagged heap st roots ov;
   
   // Bind existentials
   with s_mark st_mark. assert (is_heap heap s_mark ** is_gray_stack st st_mark);
@@ -92,6 +97,25 @@ fn collect_with_roots
   final_fp
 }
 
+fn collect_with_roots
+    (heap: heap_t) (st: gray_stack)
+    (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr)) (fp: U64.t)
+  requires is_heap heap 's ** is_gray_stack st 'st **
+           pure (gc_precondition_with_roots 's 'st roots fp (stack_capacity st))
+  returns final_fp: U64.t
+  ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
+          pure (SpecGCPost.gc_postcondition s2 /\
+               SpecGCPost.full_gc_correctness 's s2 roots /\
+               SpecGCPost.major_gc_live_subgraph_isomorphism 's s2 roots /\
+               SpecGCPost.major_gc_unreachable_final_blue 's s2 roots /\
+               SpecGCPost.gc_coalesce_source 's s2 roots fp final_fp)
+{
+  // General roots: nothing says the grays are on the stack, so rescan.
+  collect_core heap st roots fp true
+}
+
+/// With the stack as the root set, "gray or black ==> root" says every gray
+/// object is on the stack, so the mark phase may skip its rescan.
 fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   requires is_heap heap 's ** is_gray_stack st 'st **
             pure (gc_precondition 's 'st fp (stack_capacity st))
@@ -103,6 +127,7 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
                 SpecGCPost.major_gc_unreachable_final_blue 's s2 'st /\
                 SpecGCPost.gc_coalesce_source 's s2 'st fp final_fp)
 {
-  collect_with_roots heap st 'st fp
+  GC.Spec.MarkBoundedNoOverflow.gray_on_stack_of_roots_eq_stack 's 'st;
+  collect_core heap st 'st fp false
 }
 #pop-options

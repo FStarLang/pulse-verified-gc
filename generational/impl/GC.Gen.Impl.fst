@@ -1267,8 +1267,13 @@ fn gen_gc (gh: gen_heap_t)
       (CheneySpec.cheney_collect_spec
          ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major
       rs_mid prepared_st));
-    // Phase 2: Major collection (mark + sweep + coalesce)
-    let final_fp = MajorGC.collect_with_roots gh.major st prepared_st fp_val;
+    // Phase 2: Major collection (mark + sweep + coalesce).  The ghost root set
+    // is the darkened stack itself, which is exactly `MajorGC.collect`: the
+    // same obligation and the same postcondition as
+    // `collect_with_roots gh.major st prepared_st`, but it also tells the mark
+    // phase that every gray object is on the stack, so the heap rescan is
+    // skipped when the stack never overflows.
+    let final_fp = MajorGC.collect gh.major st fp_val;
 
     with s_final st_final. assert (
       is_heap gh.major s_final **

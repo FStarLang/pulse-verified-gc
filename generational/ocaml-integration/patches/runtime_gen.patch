@@ -80,11 +80,35 @@ index b62a579..9fa3887 100644
  
  libasmrund.$(A): $(libasmrund_OBJECTS)
  	$(call MKLIB,$@, $^)
+diff --git a/runtime/caml/freelist.h b/runtime/caml/freelist.h
+index 1735d77..29ae9fa 100644
+--- a/runtime/caml/freelist.h
++++ b/runtime/caml/freelist.h
+@@ -37,16 +37,16 @@ extern void (*caml_fl_p_check) (void);
+ #endif
+ 
+ Caml_inline header_t *caml_fl_allocate (mlsize_t wo_sz)
+-  { return (*caml_fl_p_allocate) (wo_sz); }
++  { VERGC_STOCK_GC_UNREACHABLE (); return (*caml_fl_p_allocate) (wo_sz); }
+ 
+ Caml_inline void caml_fl_init_merge (void)
+   { (*caml_fl_p_init_merge) (); }
+ 
+ Caml_inline header_t *caml_fl_merge_block (value bp, char *limit)
+-  { return (*caml_fl_p_merge_block) (bp, limit); }
++  { VERGC_STOCK_GC_UNREACHABLE (); return (*caml_fl_p_merge_block) (bp, limit); }
+ 
+ Caml_inline void caml_fl_add_blocks (value bp)
+-  { (*caml_fl_p_add_blocks) (bp); }
++  { VERGC_STOCK_GC_UNREACHABLE (); (*caml_fl_p_add_blocks) (bp); }
+ 
+ Caml_inline void caml_make_free_blocks
+   (value *p, mlsize_t size, int do_merge, int color)
 diff --git a/runtime/caml/memory.h b/runtime/caml/memory.h
-index d9e58bc..89602c2 100644
+index d9e58bc..da87b62 100644
 --- a/runtime/caml/memory.h
 +++ b/runtime/caml/memory.h
-@@ -217,6 +217,34 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -217,6 +217,35 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
                                         int nallocs, unsigned char* alloc_lens);
  // Do not call asynchronous callbacks from allocation functions
  #define Alloc_small_origin CAML_FROM_C
@@ -97,6 +121,7 @@ index d9e58bc..89602c2 100644
 +#endif
 +/* Defined in verified_gc/alloc_gen.c. */
 +extern void verified_do_minor_gc (void);
++extern void verified_do_full_gc (void);
 +extern uint64_t *vergc_minor_bump_ref;
 +extern uint8_t  *vergc_minor_base;
 +extern uint64_t  vergc_minor_size;
@@ -119,7 +144,7 @@ index d9e58bc..89602c2 100644
  #define Alloc_small_aux(result, wosize, tag, profinfo, track) do {     \
    CAMLassert ((wosize) >= 1);                                          \
    CAMLassert ((tag_t) (tag) < 256);                                    \
-@@ -233,6 +261,38 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -233,6 +262,38 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
    (result) = Val_hp (Caml_state_field(young_ptr));                     \
    DEBUG_clear ((result), (wosize));                                    \
  }while(0)
@@ -158,8 +183,46 @@ index d9e58bc..89602c2 100644
  
  #define Alloc_small_with_profinfo(result, wosize, tag, profinfo) \
    Alloc_small_aux(result, wosize, tag, profinfo, CAML_DO_TRACK)
+diff --git a/runtime/caml/misc.h b/runtime/caml/misc.h
+index c605f87..054cb21 100644
+--- a/runtime/caml/misc.h
++++ b/runtime/caml/misc.h
+@@ -251,6 +251,13 @@ CAMLextern void caml_fatal_error (char *, ...)
+ #endif
+ CAMLnoreturn_end;
+ 
++/* Verified GC: the stock collector must never run once the verified one owns
++   the heap. Its entry points call this so a missed path fails loudly here
++   instead of corrupting the heap and crashing somewhere unrelated later. */
++#define VERGC_STOCK_GC_UNREACHABLE() \
++  caml_fatal_error ("verified GC: stock %s must not run under the verified " \
++                    "collector", __func__)
++
+ /* Detection of available C built-in functions, the Clang way. */
+ 
+ #ifdef __has_builtin
+diff --git a/runtime/compact.c b/runtime/compact.c
+index c4be4d2..48d67d1 100644
+--- a/runtime/compact.c
++++ b/runtime/compact.c
+@@ -381,6 +381,7 @@ uintnat caml_percent_max;  /* used in gc_ctrl.c and memory.c */
+ void caml_compact_heap (intnat new_allocation_policy)
+ {
+   uintnat target_wsz, live;
++  VERGC_STOCK_GC_UNREACHABLE ();
+ 
+   CAMLassert (Caml_state->young_ptr == Caml_state->young_alloc_end);
+   CAMLassert (Caml_state->ref_table->ptr ==
+@@ -465,6 +466,7 @@ void caml_compact_heap (intnat new_allocation_policy)
+ 
+ void caml_compact_heap_maybe (double previous_overhead)
+ {
++  VERGC_STOCK_GC_UNREACHABLE ();
+   CAMLassert (caml_gc_phase == Phase_idle);
+   if (caml_percent_max >= 1000000) return;
+   if (Caml_state->stat_major_collections < 3) return;
 diff --git a/runtime/gc_ctrl.c b/runtime/gc_ctrl.c
-index 9c47b91..2601ad1 100644
+index 9c47b91..c6edb1d 100644
 --- a/runtime/gc_ctrl.c
 +++ b/runtime/gc_ctrl.c
 @@ -49,6 +49,7 @@ extern uintnat caml_allocation_policy;    /*        see freelist.c */
@@ -210,6 +273,113 @@ index 9c47b91..2601ad1 100644
    double prowords = Caml_state->stat_promoted_words;
    double majwords =
      Caml_state->stat_major_words + (double) caml_allocated_words;
+@@ -516,11 +521,18 @@ CAMLprim value caml_gc_set(value v)
+                      ARCH_INTNAT_PRINTF_FORMAT "u\n", newpolicy);
+   }
+ 
+-  /* Minor heap size comes last because it can raise [Out_of_memory]. */
++  /* Verified GC: the minor heap belongs to the verified collector, and its
++     size is fixed when the collector initialises it (MINOR_HEAP_WORDS; the
++     forwarding array and queue are sized from it).  A new size is ignored,
++     not rejected: Gc.set { (Gc.get ()) with minor_heap_size = n } is an
++     ordinary tuning call and must not fail.  Gc.get keeps reporting the
++     size actually in use. */
+   if (newminwsz != Caml_state->minor_heap_wsz){
+-    caml_gc_message (0x20, "New minor heap size: %"
+-                     ARCH_SIZET_PRINTF_FORMAT "uk words\n", newminwsz / 1024);
+-    caml_set_minor_heap_size (Bsize_wsize (newminwsz));
++    caml_gc_message (0x20, "Minor heap size not changed (verified GC): "
++                     "requested %" ARCH_SIZET_PRINTF_FORMAT "uk words, "
++                     "keeping %" ARCH_SIZET_PRINTF_FORMAT "uk words\n",
++                     newminwsz / 1024,
++                     (asize_t) Caml_state->minor_heap_wsz / 1024);
+   }
+   CAML_EV_END(EV_EXPLICIT_GC_SET);
+ 
+@@ -544,21 +556,6 @@ CAMLprim value caml_gc_minor(value v)
+   return Val_unit;
+ }
+ 
+-static void test_and_compact (void)
+-{
+-  double fp;
+-
+-  fp = 100.0 * caml_fl_cur_wsz / (Caml_state->stat_heap_wsz - caml_fl_cur_wsz);
+-  if (fp > 999999.0) fp = 999999.0;
+-  caml_gc_message (0x200, "Estimated overhead (lower bound) = %"
+-                          ARCH_INTNAT_PRINTF_FORMAT "u%%\n",
+-                   (uintnat) fp);
+-  if (fp >= caml_percent_max){
+-    caml_gc_message (0x200, "Automatic compaction triggered.\n");
+-    caml_compact_heap (-1);
+-  }
+-}
+-
+ CAMLprim value caml_gc_major(value v)
+ {
+   value exn;
+@@ -566,9 +563,9 @@ CAMLprim value caml_gc_major(value v)
+   CAML_EV_BEGIN(EV_EXPLICIT_GC_MAJOR);
+   CAMLassert (v == Val_unit);
+   caml_gc_message (0x1, "Finishing major GC cycle (requested by user)\n");
+-  caml_empty_minor_heap ();
+-  caml_finish_major_cycle ();
+-  test_and_compact ();
++  /* Verified GC: one stop-the-world collection of both generations replaces
++     the stock major cycle; the verified heap is never compacted. */
++  verified_do_full_gc ();
+   // call finalisers
+   exn = caml_process_pending_actions_exn();
+   CAML_EV_END(EV_EXPLICIT_GC_MAJOR);
+@@ -583,19 +580,14 @@ CAMLprim value caml_gc_full_major(value v)
+   CAML_EV_BEGIN(EV_EXPLICIT_GC_FULL_MAJOR);
+   CAMLassert (v == Val_unit);
+   caml_gc_message (0x1, "Full major GC cycle (requested by user)\n");
+-  caml_empty_minor_heap ();
+-  caml_finish_major_cycle ();
+-  // call finalisers
+-  exn = caml_process_pending_actions_exn();
+-  if (Is_exception_result(exn)) goto cleanup;
+-  caml_empty_minor_heap ();
+-  caml_finish_major_cycle ();
++  /* Verified GC: stock runs two cycles because its incremental marking
++     leaves floating garbage; one stop-the-world verified collection leaves
++     none.  It is still one forced major collection. */
++  verified_do_full_gc ();
+   ++ Caml_state->stat_forced_major_collections;
+-  test_and_compact ();
+   // call finalisers
+   exn = caml_process_pending_actions_exn();
+ 
+-cleanup:
+   CAML_EV_END(EV_EXPLICIT_GC_FULL_MAJOR);
+   caml_raise_if_exception(exn);
+ 
+@@ -629,20 +621,15 @@ CAMLprim value caml_gc_compaction(value v)
+   CAML_EV_BEGIN(EV_EXPLICIT_GC_COMPACT);
+   CAMLassert (v == Val_unit);
+   caml_gc_message (0x10, "Heap compaction requested\n");
+-  caml_empty_minor_heap ();
+   caml_gc_message (0x1, "Full major GC cycle (compaction)\n");
+-  caml_finish_major_cycle ();
+-  // call finalisers
+-  exn = caml_process_pending_actions_exn();
+-  if (Is_exception_result(exn)) goto cleanup;
+-  caml_empty_minor_heap ();
+-  caml_finish_major_cycle ();
++  /* Verified GC: a full collection, as for Gc.full_major.  The verified
++     heap is non-moving, so there is no compaction, and stat_compactions is
++     not incremented. */
++  verified_do_full_gc ();
+   ++ Caml_state->stat_forced_major_collections;
+-  caml_compact_heap (-1);
+   // call finalisers
+   exn = caml_process_pending_actions_exn();
+ 
+- cleanup:
+   CAML_EV_END(EV_EXPLICIT_GC_COMPACT);
+   caml_raise_if_exception(exn);
+   return Val_unit;
 diff --git a/runtime/gen_primitives.sh b/runtime/gen_primitives.sh
 index a727d5c..331a07d 100755
 --- a/runtime/gen_primitives.sh
@@ -300,11 +470,88 @@ index 9b18f3c..6c90643 100644
        }
        Store_double_flat_field(block, 0, Double_val(accu));
        for (i = 1; i < size; i++){
+diff --git a/runtime/major_gc.c b/runtime/major_gc.c
+index 3da350e..2b31dae 100644
+--- a/runtime/major_gc.c
++++ b/runtime/major_gc.c
+@@ -277,6 +277,7 @@ static void is_naked_pointer_safe (value v, value *p);
+ 
+ void caml_darken (value v, value *p)
+ {
++  VERGC_STOCK_GC_UNREACHABLE ();
+ #ifdef NO_NAKED_POINTERS
+   if (Is_block(v) && !Is_young (v)) {
+ #else
+@@ -940,6 +941,7 @@ void caml_major_collection_slice (intnat howmuch)
+   double p, dp, filt_p, spend;
+   intnat computed_work;
+   int i;
++  VERGC_STOCK_GC_UNREACHABLE ();
+   /*
+      Free memory at the start of the GC cycle (garbage + free list) (assumed):
+                  FM = Caml_state->stat_heap_wsz * caml_percent_free
+@@ -1177,6 +1179,7 @@ void caml_major_collection_slice (intnat howmuch)
+ */
+ void caml_finish_major_cycle (void)
+ {
++  VERGC_STOCK_GC_UNREACHABLE ();
+   if (caml_gc_phase == Phase_idle){
+     p_backlog = 0.0; /* full major GC cycle, the backlog becomes irrelevant */
+     start_cycle ();
+@@ -1280,19 +1283,11 @@ void caml_set_major_window (int w){
+ 
+ void caml_finalise_heap (void)
+ {
+-  /* Finishing major cycle (all values become white) */
+-  caml_empty_minor_heap ();
+-  caml_gc_message (0x1, "Finishing major GC cycle (finalising heap)\n");
+-  caml_finish_major_cycle ();
+-  CAMLassert (caml_gc_phase == Phase_idle);
+-
+-  /* Finalising all values (by means of forced sweeping) */
+-  caml_fl_init_merge ();
+-  caml_gc_phase = Phase_sweep;
+-  sweep_chunk = caml_heap_start;
+-  caml_gc_sweep_hp = sweep_chunk;
+-  while (caml_gc_phase == Phase_sweep)
+-    sweep_slice (LONG_MAX);
++  /* Verified GC: stock finishes a major cycle and sweeps the stock heap so
++     that every custom block's finaliser runs at shutdown.  The verified
++     collector does not implement finalisers, weak references or ephemerons
++     yet (a known limitation), so, consistently with the rest of the run,
++     the stock major cycle and sweep are skipped here. */
+ }
+ 
+ #if defined(NAKED_POINTERS_CHECKER) && defined(NATIVE_CODE)
 diff --git a/runtime/memory.c b/runtime/memory.c
-index 66d1c50..c11d87e 100644
+index 66d1c50..19ffeec 100644
 --- a/runtime/memory.c
 +++ b/runtime/memory.c
-@@ -464,38 +464,16 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
+@@ -311,6 +311,7 @@ void caml_free_for_heap (char *mem)
+ */
+ int caml_add_to_heap (char *m)
+ {
++  VERGC_STOCK_GC_UNREACHABLE ();
+ #ifdef DEBUG
+   /* Should check the contents of the block. */
+ #endif /* DEBUG */
+@@ -360,6 +361,7 @@ static value *expand_heap (mlsize_t request)
+   /* these point to headers, but we do arithmetic on them, hence [value *]. */
+   value *mem, *hp, *prev;
+   asize_t over_request, malloc_request, remain;
++  VERGC_STOCK_GC_UNREACHABLE ();
+ 
+   CAMLassert (request <= Max_wosize);
+   over_request = request + request / 100 * caml_percent_free;
+@@ -409,6 +411,7 @@ static value *expand_heap (mlsize_t request)
+ void caml_shrink_heap (char *chunk)
+ {
+   char **cp;
++  VERGC_STOCK_GC_UNREACHABLE ();
+ 
+   /* Never deallocate the first chunk, because caml_heap_start is both the
+      first block and the base address for page numbers, and we don't
+@@ -464,38 +467,16 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
                                        uintnat profinfo)
  {
    header_t *hp;
@@ -352,7 +599,7 @@ index 66d1c50..c11d87e 100644
  #ifdef DEBUG
    {
      uintnat i;
-@@ -504,8 +482,6 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
+@@ -504,8 +485,6 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
      }
    }
  #endif
@@ -361,11 +608,55 @@ index 66d1c50..c11d87e 100644
    return Val_hp (hp);
  }
  
+diff --git a/runtime/memprof.c b/runtime/memprof.c
+index 1f6d9cb..54b6729 100644
+--- a/runtime/memprof.c
++++ b/runtime/memprof.c
+@@ -907,7 +907,10 @@ void caml_memprof_track_young(uintnat wosize, int from_caml,
+        [Alloc_small_aux]. */
+     if (Caml_state->young_ptr - whsize < Caml_state->young_trigger) {
+       CAML_EV_COUNTER(EV_C_FORCE_MINOR_MEMPROF, 1);
+-      caml_gc_dispatch();
++      /* Verified GC: empty the minor heap with the verified collector
++         instead of the stock caml_gc_dispatch (which would also run a
++         stock major slice). */
++      verified_do_minor_gc();
+     }
+ 
+     /* Re-allocate the blocks in the minor heap. We should not call the
 diff --git a/runtime/minor_gc.c b/runtime/minor_gc.c
-index 18cfe3e..890904a 100644
+index 18cfe3e..e13323a 100644
 --- a/runtime/minor_gc.c
 +++ b/runtime/minor_gc.c
-@@ -351,7 +351,12 @@ void caml_oldify_mopup (void)
+@@ -141,6 +141,11 @@ void caml_set_minor_heap_size (asize_t bsz)
+   char *new_heap;
+   void *new_heap_base;
+ 
++  /* The first call, from caml_init_gc, runs before the verified collector
++     takes over the minor heap. Any later call (Gc.set) would swap the young
++     area out from under it. */
++  if (Caml_state->young_start != NULL) VERGC_STOCK_GC_UNREACHABLE ();
++
+   CAMLassert (bsz >= Bsize_wsize(Minor_heap_min));
+   CAMLassert (bsz <= Bsize_wsize(Minor_heap_max));
+   CAMLassert (bsz % Page_size == 0);
+@@ -192,6 +197,7 @@ void caml_oldify_one (value v, value *p)
+   header_t hd;
+   mlsize_t sz, i;
+   tag_t tag;
++  VERGC_STOCK_GC_UNREACHABLE ();
+ 
+  tail_call:
+   if (Is_block (v) && Is_young (v)){
+@@ -299,6 +305,7 @@ void caml_oldify_mopup (void)
+   mlsize_t i;
+   struct caml_ephe_ref_elt *re;
+   int redo;
++  VERGC_STOCK_GC_UNREACHABLE ();
+ 
+   again:
+   redo = 0;
+@@ -351,7 +358,12 @@ void caml_oldify_mopup (void)
  /* Make sure the minor heap is empty by performing a minor collection
     if needed.
  */
@@ -379,7 +670,7 @@ index 18cfe3e..890904a 100644
  {
    value **r;
    struct caml_custom_elt *elt;
-@@ -449,6 +454,7 @@ void caml_empty_minor_heap (void)
+@@ -449,6 +461,7 @@ void caml_empty_minor_heap (void)
    }
  #endif
  }
@@ -387,7 +678,15 @@ index 18cfe3e..890904a 100644
  
  #ifdef CAML_INSTR
  extern uintnat caml_instr_alloc_jump;
-@@ -536,7 +542,11 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -460,6 +473,7 @@ extern uintnat caml_instr_alloc_jump;
+ */
+ void caml_gc_dispatch (void)
+ {
++  VERGC_STOCK_GC_UNREACHABLE ();
+   CAML_EVENTLOG_DO({
+     CAML_EV_COUNTER(EV_C_ALLOC_JUMP, caml_instr_alloc_jump);
+     caml_instr_alloc_jump =  0;
+@@ -536,7 +550,13 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
      /* If not, then empty the minor heap, and check again for async
         callbacks. */
      CAML_EV_COUNTER (EV_C_FORCE_MINOR_ALLOC_SMALL, 1);
@@ -395,12 +694,14 @@ index 18cfe3e..890904a 100644
 +    #ifdef NATIVE_CODE
 +      vergc_native_run_minor_collection();
 +    #else
-+      caml_gc_dispatch ();
++      /* Not reached in practice: bytecode allocates through the patched
++         Alloc_small, which never moves young_ptr. */
++      verified_do_minor_gc ();
 +    #endif
    }
  
    /* Re-do the allocation: we now have enough space in the minor heap. */
-@@ -562,19 +572,46 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -562,19 +582,46 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
  /* Exported for backward compatibility with Lablgtk: do a minor
     collection to ensure that the minor heap is empty.
  */
@@ -454,6 +755,44 @@ index 18cfe3e..890904a 100644
    return extra_root;
  }
  
+diff --git a/runtime/startup_byt.c b/runtime/startup_byt.c
+index de75497..cbe58be 100644
+--- a/runtime/startup_byt.c
++++ b/runtime/startup_byt.c
+@@ -571,9 +571,13 @@ CAMLexport void caml_main(char_os **argv)
+   Unlock(chan);
+   caml_close_channel(chan); /* this also closes fd */
+   caml_stat_free(trail.section);
+-  /* Ensure that the globals are in the major heap. */
+-  caml_oldify_one (caml_global_data, &caml_global_data);
+-  caml_oldify_mopup ();
++  /* Ensure that the globals are in the major heap.  The verified minor
++     collection treats caml_global_data as a root (caml_do_roots), so it
++     promotes them and rewrites caml_global_data; the stock
++     caml_oldify_one / caml_oldify_mopup must not run.  The globals are
++     young only when the DATA section is at most Max_young_wosize words. */
++  if (Is_block (caml_global_data) && Is_young (caml_global_data))
++    caml_minor_collection ();
+   /* Initialize system libraries */
+   caml_sys_init(exe_name, argv + pos);
+   /* Load debugging info, if b>=2 */
+@@ -661,9 +665,13 @@ CAMLexport value caml_startup_code_exn(
+   caml_build_primitive_table_builtin();
+   /* Load the globals */
+   caml_global_data = caml_input_value_from_block(data, data_size);
+-  /* Ensure that the globals are in the major heap. */
+-  caml_oldify_one (caml_global_data, &caml_global_data);
+-  caml_oldify_mopup ();
++  /* Ensure that the globals are in the major heap.  The verified minor
++     collection treats caml_global_data as a root (caml_do_roots), so it
++     promotes them and rewrites caml_global_data; the stock
++     caml_oldify_one / caml_oldify_mopup must not run.  The globals are
++     young only when the DATA section is at most Max_young_wosize words. */
++  if (Is_block (caml_global_data) && Is_young (caml_global_data))
++    caml_minor_collection ();
+   /* Record the sections (for caml_get_section_table in meta.c) */
+   caml_section_table = section_table;
+   caml_section_table_size = section_table_size;
 diff --git a/runtime/startup_nat.c b/runtime/startup_nat.c
 index b757325..6de3615 100644
 --- a/runtime/startup_nat.c

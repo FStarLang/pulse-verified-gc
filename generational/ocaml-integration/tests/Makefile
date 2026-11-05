@@ -30,6 +30,14 @@ MANDELBROT_MAJOR_WORDS    ?= $(DEFAULT_MAJOR_WORDS)
 %.native: %.ml
 	$(OCAMLOPT) -I $(VERGC_NATIVE_RUNTIME_DIR) -o $@ $<
 
+# tiny_globals is linked without the stdlib (and against an empty std_exit,
+# since the stdlib's pulls in all of Stdlib) so that its DATA section fits in
+# the minor heap and bytecode startup has to promote its globals.  `-I
+# $(OCAMLC) -where` comes last and only supplies camlheader.
+tiny_globals.byte: tiny_globals.ml tiny_globals/std_exit.ml
+	$(OCAMLC) -nostdlib -nopervasives -c -o tiny_globals/std_exit.cmo tiny_globals/std_exit.ml
+	$(OCAMLC) -nostdlib -nopervasives -I tiny_globals -I "$$($(OCAMLC) -where)" -o $@ tiny_globals.ml
+
 bench_stats.cmo: bench_stats.ml
 	$(OCAMLC) -c $<
 
@@ -38,9 +46,18 @@ bench_stats.cmo: bench_stats.ml
 
 BENCHMARKS = binarytrees fasta quicksort fannkuchredux count_change nbodies spectralnorm mandelbrot
 
+# Large-live-set programs for timing the major mark (`make bench-mark`); not
+# part of the smoke tests.
+MARK_BENCHMARKS = livemap livegraph
+LIVEMAP_MAJOR_WORDS   ?= 25165824
+LIVEGRAPH_MAJOR_WORDS ?= 16777216
+BT16_MAJOR_WORDS      ?= 67108864
+BT18_MAJOR_WORDS      ?= 536870912
+
 # Correctness tests (not benchmarks): run under both runtimes and compared.
 CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior \
-                    alloc_exact_promotion
+                    alloc_exact_promotion tiny_globals gc_explicit large_alloc_garbage \
+                    gray_overflow
 
 # infix_closures needs a small major heap so that real major collections
 # (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
@@ -63,11 +80,26 @@ KNOWN_GAP_TESTS =
 # every other block and promotes into the fragments. It was a known-gap
 # reproducer until allocation became size-exact (right-justified).
 ALLOC_EXACT_MAJOR_WORDS ?= 4194304
+
+# gc_explicit calls Gc.major / Gc.full_major / Gc.compact; it needs little room.
+GC_EXPLICIT_MAJOR_WORDS ?= 4000000
 NURSERY_NO_SCAN_MAJOR_WORDS ?= 4000000
 
+# large_alloc_garbage (issue #34) fills a 4M-word major heap with dead large
+# arrays, leaving 100K words free, then promotes a 180K-word young live set.
+LARGE_ALLOC_MAJOR_WORDS ?= 4000000
+LARGE_ALLOC_LEAVE_FREE  ?= 100000
+
+# gray_overflow holds heap_words / 5 live refs in one array, more than the
+# heap_words / 8-entry gray stack, so the major mark overflows and must rescan.
+# tools/mutation-ov-never-set.sh checks that it fails when the rescan is
+# skipped after an overflow.
+GRAY_OVERFLOW_MAJOR_WORDS ?= 2000000
+
 BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
-             $(addsuffix .byte, $(KNOWN_GAP_TESTS))
-NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS))
+             $(addsuffix .byte, $(KNOWN_GAP_TESTS)) $(addsuffix .byte, $(MARK_BENCHMARKS))
+NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS)) gc_explicit.native large_alloc_garbage.native \
+               gray_overflow.native
 BENCH_TARGETS = $(addsuffix .bench, $(BENCHMARKS))
 STATS_TARGETS = $(addsuffix .stats, $(BENCHMARKS))
 MINHEAP_TARGETS = $(addsuffix .minheap, $(BENCHMARKS))
@@ -161,6 +193,24 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	MIN_EXPANSION_WORDSIZE=$(ALLOC_EXACT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS)
 	@echo "--- alloc_exact_promotion (stock OCaml, differential check) ---"
 	$(UNCHANGED_OCAMLRUN) alloc_exact_promotion.byte $(ALLOC_EXACT_MAJOR_WORDS)
+	@echo "--- tiny_globals (verified generational GC) ---"
+	TINY_GLOBALS_RUNTIME=verified $(VERIFIED_GEN_OCAMLRUN) tiny_globals.byte
+	@echo "--- tiny_globals (stock OCaml, differential check) ---"
+	$(UNCHANGED_OCAMLRUN) tiny_globals.byte
+	@echo "--- gc_explicit (verified generational GC) ---"
+	GC_EXPLICIT_RUNTIME=verified MIN_EXPANSION_WORDSIZE=$(GC_EXPLICIT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) gc_explicit.byte
+	@echo "--- gc_explicit (stock OCaml, differential check) ---"
+	$(UNCHANGED_OCAMLRUN) gc_explicit.byte
+	@echo "--- gc_explicit with OCAMLRUNPARAM=c (caml_shutdown at exit) ---"
+	OCAMLRUNPARAM=c GC_EXPLICIT_RUNTIME=verified MIN_EXPANSION_WORDSIZE=$(GC_EXPLICIT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) gc_explicit.byte
+	@echo "--- large_alloc_garbage (verified generational GC) ---"
+	MIN_EXPANSION_WORDSIZE=$(LARGE_ALLOC_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) large_alloc_garbage.byte $(LARGE_ALLOC_MAJOR_WORDS) $(LARGE_ALLOC_LEAVE_FREE)
+	@echo "--- large_alloc_garbage (stock OCaml, differential check) ---"
+	$(UNCHANGED_OCAMLRUN) large_alloc_garbage.byte $(LARGE_ALLOC_MAJOR_WORDS) $(LARGE_ALLOC_LEAVE_FREE)
+	@echo "--- gray_overflow (verified generational GC; gray stack overflows) ---"
+	MIN_EXPANSION_WORDSIZE=$(GRAY_OVERFLOW_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) gray_overflow.byte $(GRAY_OVERFLOW_MAJOR_WORDS)
+	@echo "--- gray_overflow (stock OCaml, differential check) ---"
+	$(UNCHANGED_OCAMLRUN) gray_overflow.byte $(GRAY_OVERFLOW_MAJOR_WORDS)
 	@echo "=== Correctness tests passed ==="
 
 # ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
@@ -207,6 +257,12 @@ test-native: $(NATIVE_FILES)
 	MIN_EXPANSION_WORDSIZE=$(SPECTRALNORM_MAJOR_WORDS) ./spectralnorm.native 100
 	@echo "--- mandelbrot ---"
 	MIN_EXPANSION_WORDSIZE=$(MANDELBROT_MAJOR_WORDS) ./mandelbrot.native 100
+	@echo "--- gc_explicit (correctness; native keeps the nursery in young_ptr) ---"
+	GC_EXPLICIT_RUNTIME=verified MIN_EXPANSION_WORDSIZE=$(GC_EXPLICIT_MAJOR_WORDS) ./gc_explicit.native
+	@echo "--- large_alloc_garbage (issue #34) ---"
+	MIN_EXPANSION_WORDSIZE=$(LARGE_ALLOC_MAJOR_WORDS) ./large_alloc_garbage.native $(LARGE_ALLOC_MAJOR_WORDS) $(LARGE_ALLOC_LEAVE_FREE)
+	@echo "--- gray_overflow (gray stack overflows, so the rescan runs) ---"
+	MIN_EXPANSION_WORDSIZE=$(GRAY_OVERFLOW_MAJOR_WORDS) ./gray_overflow.native $(GRAY_OVERFLOW_MAJOR_WORDS)
 	@echo "=== All native smoke tests passed ==="
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----
@@ -353,6 +409,14 @@ mandelbrot.minheap: mandelbrot.stats.byte | results
 	rm -f results/$@.csv
 	./bench_min_heap.sh results/$@.csv mandelbrot $(MANDELBROT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) $(UNCHANGED_OCAMLRUN) $< 1000
 
+# Mark-heavy programs: binarytrees at depths 16 and 18, livemap, livegraph.
+bench-mark: binarytrees.byte livemap.byte livegraph.byte | results
+	hyperfine --export-csv results/$@.csv \
+		--command-name 'binarytrees-16' 'MIN_EXPANSION_WORDSIZE=$(BT16_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) binarytrees.byte 16' \
+		--command-name 'binarytrees-18' 'MIN_EXPANSION_WORDSIZE=$(BT18_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) binarytrees.byte 18' \
+		--command-name 'livemap'        'MIN_EXPANSION_WORDSIZE=$(LIVEMAP_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) livemap.byte 1000000 1' \
+		--command-name 'livegraph'      'MIN_EXPANSION_WORDSIZE=$(LIVEGRAPH_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) livegraph.byte 1000000 4 4'
+
 bench-all: $(BENCH_TARGETS)
 	$(MAKE) bench-stats
 
@@ -363,8 +427,9 @@ bench-min-heaps: $(MINHEAP_TARGETS)
 	head -n 1 results/binarytrees.minheap.csv > results/min_heaps.csv
 	tail -n +2 -q $(MINHEAP_CSVS) >> results/min_heaps.csv
 
-.PHONY: all test test-native correctness known-gaps benchmark bench-all bench-stats bench-min-heaps clean
+.PHONY: bench-mark all test test-native correctness known-gaps benchmark bench-all bench-stats bench-min-heaps clean
 
 clean:
-	rm -f *.byte *.cmi *.cmo *.o
+	rm -f *.byte *.cmi *.cmo *.o gc_explicit.native gc_explicit.cmx \
+	      tiny_globals/*.cmi tiny_globals/*.cmo
 	rm -rf results
