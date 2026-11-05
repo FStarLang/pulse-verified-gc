@@ -318,6 +318,11 @@ let mark_move_keeps_blocks g g' =
     end
   end
 
+let grey_keeps_blocks g t =
+  makeGray_eq t g;
+  recolour g t Header.Gray;
+  AP.recoloured_facts g (makeGray t g)
+
 let mark_steps_keep_blocks g g' =
   let p (h: heap) : prop =
     well_formed_heap h /\ objects zero_addr h == objects zero_addr g /\

@@ -185,6 +185,15 @@ val mark_move_keeps_blocks (g g': heap)
                    (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                       SPI.same_block g g' (hd_address x) /\ (is_blue x g' <==> is_blue x g)))
 
+/// Greying a block that is not blue keeps every block (size, tag, fields),
+/// which blocks are blue, and every other header.
+val grey_keeps_blocks (g: heap) (t: obj_addr)
+  : Lemma (requires Seq.mem t (objects zero_addr g) /\ ~(is_blue t g))
+          (ensures objects zero_addr (makeGray t g) == objects zero_addr g /\
+                   (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
+                      SPI.same_block g (makeGray t g) (hd_address x) /\ (is_blue x (makeGray t g) <==> is_blue x g)) /\
+                   (forall (y: obj_addr). y <> t ==> read_word (makeGray t g) (hd_address y) == read_word g (hd_address y)))
+
 val mark_steps_keep_blocks (g g': heap)
   : Lemma (requires well_formed_heap g /\ S.mark_steps g g')
           (ensures objects zero_addr g' == objects zero_addr g /\

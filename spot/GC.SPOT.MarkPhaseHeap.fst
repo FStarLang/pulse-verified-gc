@@ -247,3 +247,71 @@ let wf r col tg =
   in
   pointer_clauses_from_raw_field_closure h field_closure;
   wf_parts ()
+
+/// ---------------------------------------------------------------------------
+/// The walk and the free block
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 20"
+let zero_major_read_word (addr: hp_addr)
+  : Lemma (requires U64.v addr + 8 <= heap_size)
+          (ensures read_word zero_major addr == 0UL)
+  = read_word_spec zero_major addr;
+    assert (Seq.index zero_major (U64.v addr) == 0uy);
+    assert (Seq.index zero_major (U64.v addr + 1) == 0uy);
+    assert (Seq.index zero_major (U64.v addr + 2) == 0uy);
+    assert (Seq.index zero_major (U64.v addr + 3) == 0uy);
+    assert (Seq.index zero_major (U64.v addr + 4) == 0uy);
+    assert (Seq.index zero_major (U64.v addr + 5) == 0uy);
+    assert (Seq.index zero_major (U64.v addr + 6) == 0uy);
+    assert (Seq.index zero_major (U64.v addr + 7) == 0uy);
+    assert_norm (combine_bytes 0uy 0uy 0uy 0uy 0uy 0uy 0uy 0uy == 0UL)
+#pop-options
+
+#push-options "--z3rlimit 20"
+let objects_from r col tg k =
+  let h = heap4 r col tg in
+  objects_eq r col tg;
+  f_at r k;
+  reads r col tg k;
+  if k < 8 then begin
+    hdr_facts (col (k / 2 + 1));
+    let step (k: nat{k <= 6 /\ k % 2 == 0})
+      : Lemma (objects (at r k) h == Seq.cons (at r (k + 1)) (objects (at r (k + 2)) h))
+      = reads r col tg k;
+        hdr_facts (col (k / 2 + 1));
+        f_at r k;
+        objects_cons_step_to (at r k) h (at r (k + 2))
+    in
+    step k
+  end else begin
+    fhdr_facts r;
+    objects_cons_end (at r 8) h
+  end
+#pop-options
+
+#push-options "--z3rlimit 20"
+let free_block r col tg =
+  let h = heap4 r col tg in
+  hd_free r;
+  free_header r col tg;
+  let g1 = write_word zero_major (at r 0) (hdr (col 1)) in
+  let g2 = write_word g1 (at r 1) (fv r (tg 1)) in
+  let g3 = write_word g2 (at r 2) (hdr (col 2)) in
+  let g4 = write_word g3 (at r 3) (fv r (tg 2)) in
+  let g5 = write_word g4 (at r 4) (hdr (col 3)) in
+  let g6 = write_word g5 (at r 5) (fv r (tg 3)) in
+  let g7 = write_word g6 (at r 6) (hdr (col 4)) in
+  let g8 = write_word g7 (at r 7) (fv r (tg 4)) in
+  let a = free_obj r in
+  rw g8 (at r 8) (fhdr r) a;
+  rw g7 (at r 7) (fv r (tg 4)) a;
+  rw g6 (at r 6) (hdr (col 4)) a;
+  rw g5 (at r 5) (fv r (tg 3)) a;
+  rw g4 (at r 4) (hdr (col 3)) a;
+  rw g3 (at r 3) (fv r (tg 2)) a;
+  rw g2 (at r 2) (hdr (col 2)) a;
+  rw g1 (at r 1) (fv r (tg 1)) a;
+  rw zero_major (at r 0) (hdr (col 1)) a;
+  zero_major_read_word a
+#pop-options

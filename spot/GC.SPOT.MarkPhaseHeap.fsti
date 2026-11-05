@@ -84,3 +84,26 @@ val field_edge_iff (r: unit{room}) (col: idx -> ccol) (tg: idx -> tgt) (i: idx) 
 
 val wf (r: unit{room}) (col: idx -> ccol) (tg: idx -> tgt)
   : Lemma (well_formed_heap (heap4 r col tg))
+
+/// ---------------------------------------------------------------------------
+/// The walk and the free block (for the shape: `GC.SPOT.CycleHeap`)
+/// ---------------------------------------------------------------------------
+
+/// Each header position of the walk starts a non-empty walk, at the next
+/// header position (the free block's runs to the end of the heap).
+val objects_from (r: unit{room}) (col: idx -> ccol) (tg: idx -> tgt) (k: nat{k <= 8 /\ k % 2 == 0})
+  : Lemma (let h = heap4 r col tg in
+           Seq.length (objects (at r k) h) > 0 /\
+           U64.v (at r k) + 8 < heap_size /\ f_address (at r k) == at r (k + 1) /\
+           (k < 8 ==> U64.v (at r k) + (U64.v (getWosize (read_word h (at r k))) + 1) * 8 == U64.v (at r (k + 2))) /\
+           (k == 8 ==> U64.v (at r k) + (U64.v (getWosize (read_word h (at r k))) + 1) * 8 == heap_size))
+
+/// The free block: at least one word, running to the end of the heap, its
+/// link word 0 (the list ends there).
+val free_block (r: unit{room}) (col: idx -> ccol) (tg: idx -> tgt)
+  : Lemma (let h = heap4 r col tg in
+           hd_address (free_obj r) == at r 8 /\
+           U64.v (wosize_of_object (free_obj r) h) >= 1 /\
+           U64.v (hd_address (free_obj r)) + 8 + U64.v (wosize_of_object (free_obj r) h) * 8 == heap_size /\
+           U64.v (hd_address (free_obj r)) + 16 <= heap_size /\
+           read_word h (free_obj r) == 0UL)

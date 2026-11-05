@@ -69,3 +69,19 @@ let mark_start_shape minor g fp rs =
   MP.marking_inv_start g' (GMM.nursery_held minor);
   GI.phase_shape_marking minor g' fp
 #pop-options
+
+#push-options "--z3rlimit 20"
+let darkened_roots_dark minor g fp rs w =
+  let cap = Seq.length rs + 1 in
+  GMP.darken_precondition_of_shape minor g fp rs cap;
+  let r = MB.darken_roots_bounded_spec g Seq.empty rs cap in
+  let g' = fst r in
+  MBP.darken_establishes_precondition g Seq.empty rs fp cap;
+  MBP.darken_roots_match_stack g Seq.empty rs fp cap;
+  eliminate exists (q: U64.t). Seq.mem q rs /\ is_pointer q /\ resolve_object (q <: obj_addr) g' == w
+  with begin
+    MB.darken_roots_bounded_spec_preserves_resolve g Seq.empty rs cap (q <: obj_addr);
+    assert (Seq.mem w (snd r));
+    Mark.colors_exclusive w g'
+  end
+#pop-options

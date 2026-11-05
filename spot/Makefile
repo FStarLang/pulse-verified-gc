@@ -123,6 +123,8 @@ SPOT_SRC = \
   GC.SPOT.MarkPhaseUnreached.fst \
   GC.SPOT.MarkPhaseSlice.fst \
   GC.SPOT.WriteBarrier.fst \
+  GC.SPOT.CycleHeap.fst \
+  GC.SPOT.IncrementalCycleTheorems.fst \
   GC.SPOT.GcCorrect.fsti \
   GC.SPOT.GcCorrect.fst
 

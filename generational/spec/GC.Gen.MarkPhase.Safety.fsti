@@ -47,6 +47,10 @@ module GMM = GC.Gen.MarkPhase.Minor
 module SPI = GC.Spec.SweepPhase.Intrinsic
 module CG = GC.Gen.CombinedGraph
 module RBridge = GC.Gen.ReachabilityBridge
+module GenInv = GC.Gen.HeapInvariant
+module GB = GC.Gen.Barrier
+module MStart = GC.Gen.MarkPhase.Start
+module MBP = GC.Impl.MarkBoundedPrecondition
 
 /// **At every phase, what the roots reach is not free.**
 val cycle_reachable_not_free (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase)
@@ -75,6 +79,7 @@ val cycle_slice_keeps (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phas
                     in_use (GI.phase_free ph) g x)
           (ensures SPI.same_block g g' (hd_address x) /\
                    Seq.mem x (objects zero_addr g') /\ ~(is_blue x g') /\
+                   (Ph.Marking? ph /\ ~(is_white x g) ==> ~(is_white x g')) /\
                    (~(Ph.Marking? ph) \/ Ph.Marking? ph' \/ ~(is_white x g') ==>
                       in_use (GI.phase_free ph') g' x))
 
@@ -88,3 +93,24 @@ val slice_keeps_reachable (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_
           (ensures GC.Spec.FusedSweep.is_obj a /\
                    SPI.same_block g g' (hd_address (a <: obj_addr)) /\
                    Seq.mem (a <: obj_addr) (objects zero_addr g') /\ ~(is_blue (a <: obj_addr) g'))
+
+/// **Starting the cycle is a recolouring**: root darkening keeps every block
+/// with its size, tag and fields, and which blocks are blue.
+val start_keeps_blocks (minor: minor_state) (g: heap) (fp: U64.t) (rs: seq U64.t)
+  : Lemma (requires GenInv.collection_heap_shape minor g fp /\
+                    (forall (i: nat). i < Seq.length rs ==> MBP.root_valid_for_darkening g (Seq.index rs i)))
+          (ensures (let g' = MStart.darkened g rs in
+                    objects zero_addr g' == objects zero_addr g /\
+                    (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
+                       SPI.same_block g g' (hd_address x) /\ (is_blue x g' <==> is_blue x g))))
+
+/// **A program write changes only the word it writes**: through the barrier
+/// (`GB.modify_heap`), every other non-free block keeps its size, tag and
+/// fields, stays non-free at the phase, and does not become white.
+val modify_keeps_others (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.t)
+                        (x: obj_addr) (a: hp_addr) (v: U64.t) (y: obj_addr)
+  : Lemma (requires GI.phase_shape minor g fp ph /\ GB.modify_ok ph minor g x a v /\
+                    in_use (GI.phase_free ph) g y /\ y <> x)
+          (ensures (let g' = GB.modify_heap ph g a v in
+                    SPI.same_block g g' (hd_address y) /\ in_use (GI.phase_free ph) g' y /\
+                    (~(is_white y g) ==> ~(is_white y g'))))
