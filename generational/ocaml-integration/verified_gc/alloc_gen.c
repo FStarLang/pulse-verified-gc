@@ -17,7 +17,7 @@
  *   sweep_slice()             — one slice of the sweep (a budget in words)
  *   finish_sweep()            — the rest of the sweep at once
  *   minor_collect_any_phase() — minor_collect_full at either phase
- *   gen_alloc_major()         — major allocation at the current phase
+ * and allocate() at the current phase, as stop-the-world.
  *
  * Sweep mode (VERGC_SWEEP, read once at start-up):
  *   stw (default) — every full collection is gen_gc: mark and sweep at once.
@@ -259,15 +259,14 @@ static void ensure_heap(void) {
     /* Override the verified constant (2048B) with a production-sized minor heap.
      * OCaml default is 256K words = 2MB.  We match that default, overridable
      * via environment variable. */
-    max_young_wosize_u64 = 256ULL;  /* match OCaml's Max_young_wosize */
     size_t minor_words = 256 * 1024;  /* 2 MB / 8 = 256K words (matches OCaml default) */
     const char *minor_env = getenv("MINOR_HEAP_WORDS");
     if (minor_env) {
         size_t w = (size_t)atoll(minor_env);
         if (w > 0) minor_words = w;
     }
-    if (minor_words < (size_t)max_young_wosize_u64 + 1)
-        minor_words = (size_t)max_young_wosize_u64 + 1;
+    if (minor_words < (size_t)Max_young_wosize + 1)
+        minor_words = (size_t)Max_young_wosize + 1;
     size_t minor_sz = minor_words * 8;
     minor_heap_size_u64 = (uint64_t)minor_sz;
 
@@ -876,7 +875,7 @@ static void do_full_gc(void) {
 void *verified_allocate_minor(mlsize_t wosize, uint8_t tag) {
     ensure_heap();
 
-    if ((uint64_t)wosize == 0 || (uint64_t)wosize > max_young_wosize_u64)
+    if ((uint64_t)wosize == 0 || (uint64_t)wosize > (uint64_t)Max_young_wosize)
         caml_fatal_error("verified gen GC: non-minor allocation on minor path");
 
     uint64_t needed = ((uint64_t)wosize + 1) * 8;
@@ -927,16 +926,19 @@ static void major_heap_exhausted_hint(void) {
     }
 }
 
-static uint64_t gen_alloc_major_timed(mlsize_t wosize, uint8_t tag) {
+/* The verified allocator, at the collector's phase: the free-list head and
+ * the phase record (its cached swept_tail) are updated in place. */
+static uint64_t allocate_timed(mlsize_t wosize, uint8_t tag) {
     PROF_START(major_alloc);
-    uint64_t r = gen_alloc_major(gc_gen_heap, (uint64_t)wosize, (uint64_t)tag);
+    uint64_t r = allocate(gc_gen_heap.major, gc_gen_heap.fp_ref, gc_gen_heap.phase_ref,
+                          (uint64_t)wosize, (uint64_t)tag);
     PROF_END(major_alloc);
     return r;
 }
 
-/* verified_allocate, VERGC_SWEEP=incremental.  gen_alloc_major allocates at
- * the collector's phase: mid-sweep a block in front of the cursor is black
- * (the sweep keeps it), one behind it white.  On failure:
+/* verified_allocate, VERGC_SWEEP=incremental.  allocate allocates at the
+ * collector's phase: mid-sweep a block in front of the cursor is black (the
+ * sweep keeps it), one behind it white.  On failure:
  *   1. mid-sweep, finish the sweep (the garbage in front of the cursor is not
  *      on the free list yet) and retry;
  *   2. then a full collection, with its whole sweep, and retry -- what
@@ -944,15 +946,15 @@ static uint64_t gen_alloc_major_timed(mlsize_t wosize, uint8_t tag) {
  *   3. then fail: Out_of_memory, as stop-the-world. */
 static void *verified_allocate_incremental(mlsize_t wosize, uint8_t tag) {
     if (vergc_sweeping()) stat_alloc_mid_sweep++;
-    uint64_t result = gen_alloc_major_timed(wosize, tag);
+    uint64_t result = allocate_timed(wosize, tag);
     if (result == 0 && vergc_sweeping()) {
         finish_sweep_now(&stat_finish_alloc);
-        result = gen_alloc_major_timed(wosize, tag);
+        result = allocate_timed(wosize, tag);
     }
     if (result == 0) {
         do_full_gc();
         finish_sweep_now(&stat_finish_alloc);
-        result = gen_alloc_major_timed(wosize, tag);
+        result = allocate_timed(wosize, tag);
     }
     if (result == 0) {
         /* As stop-the-world: the heap is the one a full collection and its
@@ -994,21 +996,11 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
      * only ever written inside a Closure_tag block -- so assert it. */
     CAMLassert(tag != Infix_tag);
     if (sweep_incremental) return verified_allocate_incremental(wosize, tag);
-    PROF_START(major_alloc);
-    uint64_t fp = *gc_gen_heap.fp_ref;
-    FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate(gc_gen_heap.major, fp, gc_gen_heap.phase_ref, (uint64_t)wosize, (uint64_t)tag);
-    *gc_gen_heap.fp_ref = res._1;
-    uint64_t result = res._2;
-    PROF_END(major_alloc);
+    uint64_t result = allocate_timed(wosize, tag);
 
     if (result == 0) {
         do_full_gc();
-        PROF_START(major_alloc);
-        fp = *gc_gen_heap.fp_ref;
-        res = allocate(gc_gen_heap.major, fp, gc_gen_heap.phase_ref, (uint64_t)wosize, (uint64_t)tag);
-        *gc_gen_heap.fp_ref = res._1;
-        result = res._2;
-        PROF_END(major_alloc);
+        result = allocate_timed(wosize, tag);
     }
 
     if (result == 0) {

@@ -128,50 +128,6 @@ let gen_gc_heap_shape_post_intro minor_data minor_bump final_major final_fp
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// Allocation
-/// ---------------------------------------------------------------------------
-
-/// Allocate: try minor first (if small enough), fall back to major.
-#push-options "--z3rlimit 10"
-fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph **
-           pure (U64.v wosize > 0 /\ U64.v tag < 256 /\
-                 SpecFields.well_formed_heap 's /\
-                 (Ph.Sweeping? 'ph ==> GC.Spec.FreeList.Ascending.fl_ascending 's 'fp))
-  returns obj: U64.t
-  ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh s2 'ph
-{
-  unfold is_gen_heap;
-  unfold gen_phase;
-  if U64.lte wosize max_young_wosize_u64 {
-    // Small object → try minor heap
-    let obj = minor_alloc gh.minor wosize tag;
-    if U64.eq obj 0UL {
-      // Minor full — allocate directly from major
-      let fp = R.op_Bang gh.fp_ref;
-      let res = allocate_at_phase gh.major fp gh.phase_ref wosize tag;
-      R.op_Colon_Equals gh.fp_ref (fst res);
-      fold (is_gen_heap gh _ _ _ _);
-      fold (gen_phase gh _ 'ph);
-      snd res
-    } else {
-      fold (is_gen_heap gh _ _ _ _);
-      fold (gen_phase gh 's 'ph);
-      obj
-    }
-  } else {
-    // Large object → major heap directly
-    let fp = R.op_Bang gh.fp_ref;
-    let res = allocate_at_phase gh.major fp gh.phase_ref wosize tag;
-    R.op_Colon_Equals gh.fp_ref (fst res);
-    fold (is_gen_heap gh _ _ _ _);
-    fold (gen_phase gh _ 'ph);
-    snd res
-  }
-}
-#pop-options
-
-/// ---------------------------------------------------------------------------
 /// Minor Collection — Full Implementation
 /// ---------------------------------------------------------------------------
 

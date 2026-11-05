@@ -14,7 +14,8 @@
 ///     as it is.  The sweep's caches (`swept_tail`, `last_fragment`) are
 ///     the implementation's, which updates `swept_tail` in place when an
 ///     allocation takes its cell off the list (`caml_fl_merge`;
-///     `GC.Impl.Allocator.record_after_alloc`).  `alloc_choice` and
+///     `GC.Impl.Allocator.allocate`, kept derived by
+///     `GC.Spec.Allocator.Caches.alloc_caches`).  `alloc_choice` and
 ///     `takes_off` name what it needs: the block first-fit takes, its
 ///     predecessor on the list, and whether the block leaves the list.
 ///

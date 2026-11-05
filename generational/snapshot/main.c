@@ -4,6 +4,9 @@
  *        an incremental collection (gen_gc_start, sweep slices, a major
  *        allocation and a minor collection mid-sweep).
  *
+ * Small objects go to the nursery (`minor_alloc`), major ones to the free
+ * list at the collector's phase (`allocate`), as the OCaml bridge does.
+ *
  * The verified code does not allocate the nursery, so we construct
  * minor_heap_t manually with heap-allocated storage.
  */
@@ -36,7 +39,6 @@ int main(void)
     printf("=== Verified Generational GC Test ===\n");
     printf("minor_heap_size = %lld bytes\n", (long long)minor_heap_size_sz);
     printf("minor_heap_size_u64 = %llu\n", (unsigned long long)minor_heap_size_u64);
-    printf("max_young_wosize_u64 = %llu\n", (unsigned long long)max_young_wosize_u64);
     printf("heap_size_u64 (major) = %llu\n", (unsigned long long)heap_size_u64);
 
     /* ---- Allocate major heap ---- */
@@ -84,16 +86,16 @@ int main(void)
     /* ---- Phase 1: Minor allocations ---- */
     printf("\n--- Phase 1: Minor allocations ---\n");
 
-    uint64_t obj1 = gen_alloc(gh, 2, 0);  /* 2-word object, tag=0 */
-    printf("gen_alloc(2, tag=0) = %llu (bump=%llu)\n",
+    uint64_t obj1 = minor_alloc(minor, 2, 0);  /* 2-word object, tag=0 */
+    printf("minor_alloc(2, tag=0) = %llu (bump=%llu)\n",
            (unsigned long long)obj1, (unsigned long long)*bump_ref);
 
-    uint64_t obj2 = gen_alloc(gh, 3, 0);  /* 3-word object */
-    printf("gen_alloc(3, tag=0) = %llu (bump=%llu)\n",
+    uint64_t obj2 = minor_alloc(minor, 3, 0);  /* 3-word object */
+    printf("minor_alloc(3, tag=0) = %llu (bump=%llu)\n",
            (unsigned long long)obj2, (unsigned long long)*bump_ref);
 
-    uint64_t obj3 = gen_alloc(gh, 1, 0);  /* 1-word object */
-    printf("gen_alloc(1, tag=0) = %llu (bump=%llu)\n",
+    uint64_t obj3 = minor_alloc(minor, 1, 0);  /* 1-word object */
+    printf("minor_alloc(1, tag=0) = %llu (bump=%llu)\n",
            (unsigned long long)obj3, (unsigned long long)*bump_ref);
 
     if (obj1 == 0 || obj2 == 0 || obj3 == 0) {
@@ -133,8 +135,8 @@ int main(void)
     /* ---- Phase 3: More minor allocations + full GC ---- */
     printf("\n--- Phase 3: Full GC (minor + major) ---\n");
 
-    uint64_t obj4 = gen_alloc(gh, 2, 0);
-    printf("gen_alloc(2, tag=0) = %llu\n", (unsigned long long)obj4);
+    uint64_t obj4 = minor_alloc(minor, 2, 0);
+    printf("minor_alloc(2, tag=0) = %llu\n", (unsigned long long)obj4);
 
     /* Gray stack for major collection */
     size_t gray_cap = major_bytes / 64;
@@ -160,8 +162,8 @@ int main(void)
     printf("\n--- Phase 4: Post-GC allocation ---\n");
     *fp_ref = result_fp;
 
-    uint64_t obj5 = gen_alloc(gh, 1, 0);
-    printf("gen_alloc(1, tag=0) after GC = %llu\n", (unsigned long long)obj5);
+    uint64_t obj5 = minor_alloc(minor, 1, 0);
+    printf("minor_alloc(1, tag=0) after GC = %llu\n", (unsigned long long)obj5);
 
     if (obj5 == 0) {
         printf("FAIL: allocation after GC failed\n");
@@ -175,8 +177,8 @@ int main(void)
     /* Some garbage and a live object in the major heap, the live one rooted. */
     uint64_t live = 0;
     for (int i = 0; i < 64; i++) {
-        uint64_t o = gen_alloc_major(gh, 4, 0);
-        if (o == 0) { printf("FAIL: gen_alloc_major\n"); free(gray_storage); goto cleanup_queue; }
+        uint64_t o = allocate(major_heap, fp_ref, phase_ref, 4, 0);
+        if (o == 0) { printf("FAIL: allocate\n"); free(gray_storage); goto cleanup_queue; }
         for (int j = 0; j < 4; j++) *(uint64_t *)(major_data + o + 8 * j) = 1;  /* integers */
         if (i == 17) live = o;
     }
@@ -200,11 +202,11 @@ int main(void)
     bool fin = false;
     while (!fin && slices < 4) { fin = sweep_slice(gh, 16); slices++; }
     if (!fin) {
-        uint64_t o = gen_alloc_major(gh, 2, 0);
+        uint64_t o = allocate(major_heap, fp_ref, phase_ref, 2, 0);
         if (o != 0) { *(uint64_t *)(major_data + o) = 1; *(uint64_t *)(major_data + o + 8) = 1; }
-        printf("mid-sweep gen_alloc_major = %llu (cursor %llu)\n",
+        printf("mid-sweep allocate = %llu (cursor %llu)\n",
                (unsigned long long)o, (unsigned long long)phase_ref->ps_cursor);
-        uint64_t y = gen_alloc(gh, 2, 0);
+        uint64_t y = minor_alloc(minor, 2, 0);
         uint64_t yroots[1] = { y };
         memset(fwd_arr, 0, fwd_entries * sizeof(uint64_t));
         minor_collect_any_phase(gh, yroots, 1, fwd_arr, queue, empty_slots, 0);
@@ -222,7 +224,7 @@ int main(void)
         free(gray_storage);
         goto cleanup_queue;
     }
-    if (gen_alloc_major(gh, 1, 0) == 0) {
+    if (allocate(major_heap, fp_ref, phase_ref, 1, 0) == 0) {
         printf("FAIL: allocation after the incremental collection failed\n");
         free(gray_storage);
         goto cleanup_queue;

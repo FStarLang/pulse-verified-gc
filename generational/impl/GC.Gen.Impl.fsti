@@ -2,8 +2,7 @@
    Pulse GC (Generational) - Top-Level Entry Point Interface
 
    Provides:
-   - gen_alloc: Allocate an object (routes to minor or major by size)
-    - minor_collect_full: full Cheney minor collection with ref_table rewriting
+   - minor_collect_full: full Cheney minor collection with ref_table rewriting
    - gen_gc: Full generational GC (minor + major collection)
 *)
 
@@ -285,32 +284,6 @@ let gen_gc_unreachable_final_blue_post
   let prepared = gen_gc_prepared_state minor major fp roots st cap in
   ok ==>
   SpecGCPost.major_gc_unreachable_final_blue (fst prepared) final_major (snd prepared)
-
-/// ---------------------------------------------------------------------------
-/// Allocation
-/// ---------------------------------------------------------------------------
-
-/// Allocate an object. Small objects go to minor heap, large ones to major.
-/// Returns 0UL on failure (both heaps full).
-fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph **
-           pure (
-             // Object body size is at least 1 word (no zero-length objects)
-             U64.v wosize > 0 /\
-             // Tag fits in the 8-bit OCaml header field (0..255)
-             U64.v tag < 256 /\
-             // Major heap has valid OCaml object layout: headers have valid
-             // wosize/color/tag, objects don't overlap, sizes fit within
-             // heap bounds, pointer fields target valid objects, and infix
-             // structure is correct
-             SpecFields.well_formed_heap 's /\
-             // Mid-sweep, the free list is exact and ascending, which keeps
-             // the phase record's caches derived across a major allocation
-             (Ph.Sweeping? 'ph ==> GC.Spec.FreeList.Ascending.fl_ascending 's 'fp))
-  returns obj: U64.t
-  // Heap ownership is returned; internal state may change (bump pointer
-  // advanced, or a free-list node consumed); the phase is the same
-  ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh s2 'ph
 
 /// ---------------------------------------------------------------------------
 /// Full minor collection with ref_table

@@ -71,7 +71,8 @@ ALL_SRC  = $(filter-out $(SPOT_SRC),$(SPEC_SRC) $(IMPL_SRC))
 checked = $(addprefix $(CACHE_DIR)/,$(addsuffix .checked,$(notdir $(1))))
 
 # GC.Gen.Impl.Incremental is the incremental sweep's entry points.
-# GC.Gen.SweepPhase (the sweep phase's program events),
+# GC.Gen.SweepPhase (promotion mid-sweep; the program's own events are
+# GC.Spec.SweepPhase.Mutator, reached through it),
 # GC.Gen.SweepPhase.Minor (a minor collection mid-sweep) and
 # GC.Gen.SweepPhase.Safety (safety over the sweep phase) are theorems about
 # it; the first two are also reached through it, Safety only as a root.

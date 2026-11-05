@@ -486,8 +486,8 @@ concrete heap of `ConcreteMajorGen`:
    `nothing_live_one_block`);
 2. at the end of that sweep phase allocate `P`, then `G` (behind the cursor, so
    white; the allocation succeeds by #29 mid-sweep), initialise them, and store
-   `G` into `P`'s field (`alloc_sweep_phase`, `fresh_write`, `fresh_close`,
-   `write_sweep_phase`);
+   `G` into `P`'s field (`GC.Spec.SweepPhase.Mutator`'s `alloc_sweep_phase`,
+   `fresh_write`, `fresh_close`, `write_sweep_phase`);
 3. end the phase and start the next one, nothing marked;
 4. two steps: the free block at the start absorbs `G`.
 

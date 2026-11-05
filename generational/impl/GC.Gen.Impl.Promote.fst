@@ -185,37 +185,8 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// The allocator at the collector's phase
+/// The phase record across a promotion
 /// ---------------------------------------------------------------------------
-
-/// The record after an allocation holds the phase of the heap it leaves.
-let alloc_phase_rel (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
-                    (v: Alloc.phase_state) (ph: Ph.gc_phase)
-  : Lemma (requires Alloc.phase_rel g v ph /\ (Ph.Sweeping? ph ==> FLA.fl_ascending g fp))
-          (ensures Alloc.phase_rel (GC.Spec.Allocator.Cursor.alloc_phase g fp ph wz tag).GC.Spec.Allocator.heap_out
-                     (Alloc.record_after_alloc g fp wz v) ph)
-  = if v.Alloc.ps_kind <> 0UL then GC.Spec.Allocator.Caches.alloc_caches g fp v.Alloc.ps_cursor wz tag
-
-inline_for_extraction
-fn allocate_at_phase (heap: heap_t) (fp: U64.t) (phase: R.ref Alloc.phase_state)
-                     (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
-  requires is_heap heap 's ** Alloc.is_phase phase 's 'ph **
-           pure (U64.v wosize >= 1 /\ (Ph.Sweeping? 'ph ==> FLA.fl_ascending 's fp))
-  returns res: (U64.t & U64.t)
-  ensures exists* s2. is_heap heap s2 ** Alloc.is_phase phase s2 'ph **
-    pure (let spec_res = GC.Spec.Allocator.Cursor.alloc_phase 's fp 'ph (U64.v wosize) tag in
-          s2 == spec_res.GC.Spec.Allocator.heap_out /\
-          fst res == spec_res.GC.Spec.Allocator.fp_out /\
-          snd res == spec_res.GC.Spec.Allocator.obj_out)
-{
-  unfold (Alloc.is_phase phase 's 'ph);
-  with v. assert (R.pts_to phase v);
-  let res = Alloc.allocate heap fp phase wosize tag;
-  alloc_phase_rel 's fp (U64.v wosize) tag v 'ph;
-  with s2. assert (is_heap heap s2);
-  fold (Alloc.is_phase phase s2 'ph);
-  res
-}
 
 /// The caches across a change that keeps the walk and every header.
 let phase_rel_heads (g g': heap) (v: Alloc.phase_state) (ph: Ph.gc_phase)
@@ -253,7 +224,7 @@ let wz_small (obj wz: nat)
 /// Returns the new address in major heap (0UL on OOM).
 ///
 /// The promotion runs at the phase the record holds, which it keeps derived
-/// from the heap: the allocation does (`allocate_at_phase`), and the copy of
+/// from the heap: the allocation does (`Alloc.allocate`), and the copy of
 /// the fields writes no header (`GC.Gen.SweptTail.promote_heads`).  Nothing
 /// of pointer closure is needed: during a promotion loop it is temporarily
 /// violated (minor pointers are written into the major heap body).
@@ -305,31 +276,27 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     minor_tag_bound {data='md; bump='mb} obj;
     assert (pure (U64.v tag == minor_tag {data='md; bump='mb} obj));
     assert (pure (tag == PromoteSpec.promoted_tag {data='md; bump='mb} obj));
-    let fp = R.op_Bang fp_ref;
     // The allocation is at the phase the record holds, and keeps its caches
     // derived; the copy below writes no header.
     wz_small (U64.v obj) (U64.v wosize);
-    ST.promote_heads 'ph 'ms fp {data='md; bump='mb} obj (U64.v wosize);
-    FLAsc.promote_object_preserves_fl_ascending {data='md; bump='mb} 'ms obj fp (U64.v wosize) 'ph;
-    PromoteSpec.promote_object_preserves_alloc_invariants {data='md; bump='mb} 'ms obj fp (U64.v wosize) 'ph;
-    let res = allocate_at_phase major fp phase wosize tag;
-    AP.alloc_at_fields 'ph 'ms fp (U64.v wosize) tag;
-    let new_fp = fst res;
-    let new_obj = snd res;
-    R.op_Colon_Equals fp_ref new_fp;
+    ST.promote_heads 'ph 'ms 'fp {data='md; bump='mb} obj (U64.v wosize);
+    FLAsc.promote_object_preserves_fl_ascending {data='md; bump='mb} 'ms obj 'fp (U64.v wosize) 'ph;
+    PromoteSpec.promote_object_preserves_alloc_invariants {data='md; bump='mb} 'ms obj 'fp (U64.v wosize) 'ph;
+    let new_obj = Alloc.allocate major fp_ref phase wosize tag;
+    AP.alloc_at_fields 'ph 'ms 'fp (U64.v wosize) tag;
     if U64.eq new_obj 0UL {
       // OOM: nothing changes
-      PromoteSpec.promote_object_oom {data='md; bump='mb} 'ms obj fp (U64.v wosize) 'ph;
+      PromoteSpec.promote_object_oom {data='md; bump='mb} 'ms obj 'fp (U64.v wosize) 'ph;
       0UL
     } else {
       // Derive bounds from allocator postconditions:
-      AP.alloc_at_obj_body_within_heap 'ph 'ms fp (U64.v wosize) tag;
-      AP.alloc_at_obj_wosize 'ph 'ms fp (U64.v wosize) tag;
+      AP.alloc_at_obj_body_within_heap 'ph 'ms 'fp (U64.v wosize) tag;
+      AP.alloc_at_obj_wosize 'ph 'ms 'fp (U64.v wosize) tag;
       assert (pure (U64.v new_obj >= U64.v mword /\
                     U64.v new_obj < heap_size /\
                     U64.v new_obj % U64.v mword == 0));
       assert (pure (U64.v new_obj + U64.v wosize * 8 <= heap_size));
-      PromoteSpec.promote_object_success {data='md; bump='mb} 'ms obj fp (U64.v wosize) 'ph;
+      PromoteSpec.promote_object_success {data='md; bump='mb} 'ms obj 'fp (U64.v wosize) 'ph;
       // Copy all fields (0..wosize-1) from minor to major
       copy_fields_loop minor major obj new_obj wosize;
       with ms2. assert (is_heap major ms2);

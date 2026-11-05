@@ -501,32 +501,6 @@ minor_collect_full(
   return ok;
 }
 
-uint64_t gen_alloc(gen_heap_t gh, uint64_t wosize, uint64_t tag)
-{
-  if (wosize <= max_young_wosize_u64)
-  {
-    uint64_t obj = minor_alloc(gh.minor, wosize, tag);
-    if (obj == 0ULL)
-    {
-      uint64_t fp = gh.fp_ref[0U];
-      FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-      res = allocate(gh.major, fp, gh.phase_ref, wosize, tag);
-      gh.fp_ref[0U] = res._1;
-      return res._2;
-    }
-    else
-      return obj;
-  }
-  else
-  {
-    uint64_t fp = gh.fp_ref[0U];
-    FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-    res = allocate(gh.major, fp, gh.phase_ref, wosize, tag);
-    gh.fp_ref[0U] = res._1;
-    return res._2;
-  }
-}
-
 FStar_Pervasives_Native_tuple2__uint64_t_bool
 gen_gc(
   gen_heap_t gh,
@@ -599,15 +573,6 @@ minor_collect_any_phase(
 )
 {
   return minor_collect_full(gh, roots, nroots, fwd_arr, queue, slots, nslots);
-}
-
-uint64_t gen_alloc_major(gen_heap_t gh, uint64_t wosize, uint64_t tag)
-{
-  uint64_t fp = gh.fp_ref[0U];
-  FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-  res = allocate(gh.major, fp, gh.phase_ref, wosize, tag);
-  gh.fp_ref[0U] = res._1;
-  return res._2;
 }
 
 bool
@@ -728,12 +693,7 @@ forward_if_minor_infix(
     {
       uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
       uint64_t tag = getTag(minor_hdr);
-      uint64_t fp = fp_ref[0U];
-      FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-      res = allocate(major, fp, phase, wosize1, tag);
-      uint64_t new_fp = res._1;
-      uint64_t new_obj = res._2;
-      fp_ref[0U] = new_fp;
+      uint64_t new_obj = allocate(major, fp_ref, phase, wosize1, tag);
       if (new_obj == 0ULL)
         new_parent_addr = 0ULL;
       else
@@ -816,12 +776,7 @@ forward_if_minor(
               {
                 uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
                 uint64_t tag1 = getTag(minor_hdr);
-                uint64_t fp = fp_ref[0U];
-                FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                res = allocate(major, fp, phase, wosize1, tag1);
-                uint64_t new_fp = res._1;
-                uint64_t new_obj = res._2;
-                fp_ref[0U] = new_fp;
+                uint64_t new_obj = allocate(major, fp_ref, phase, wosize1, tag1);
                 if (new_obj == 0ULL)
                   new_parent_addr = 0ULL;
                 else
@@ -866,12 +821,7 @@ forward_if_minor(
                 {
                   uint64_t minor_hdr = minor_read(minor, addr - 8ULL);
                   uint64_t tag1 = getTag(minor_hdr);
-                  uint64_t fp = fp_ref[0U];
-                  FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                  res = allocate(major, fp, phase, wosize1, tag1);
-                  uint64_t new_fp = res._1;
-                  uint64_t new_obj = res._2;
-                  fp_ref[0U] = new_fp;
+                  uint64_t new_obj = allocate(major, fp_ref, phase, wosize1, tag1);
                   if (new_obj == 0ULL)
                     new_addr = 0ULL;
                   else
@@ -964,12 +914,7 @@ forward_roots(
                 {
                   uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
                   uint64_t tag1 = getTag(minor_hdr);
-                  uint64_t fp = fp_ref[0U];
-                  FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                  res = allocate(major, fp, phase, wosize1, tag1);
-                  uint64_t new_fp = res._1;
-                  uint64_t new_obj = res._2;
-                  fp_ref[0U] = new_fp;
+                  uint64_t new_obj = allocate(major, fp_ref, phase, wosize1, tag1);
                   if (new_obj == 0ULL)
                     new_parent_addr = 0ULL;
                   else
@@ -1014,12 +959,7 @@ forward_roots(
                   {
                     uint64_t minor_hdr = minor_read(minor, r - 8ULL);
                     uint64_t tag1 = getTag(minor_hdr);
-                    uint64_t fp = fp_ref[0U];
-                    FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                    res = allocate(major, fp, phase, wosize1, tag1);
-                    uint64_t new_fp = res._1;
-                    uint64_t new_obj = res._2;
-                    fp_ref[0U] = new_fp;
+                    uint64_t new_obj = allocate(major, fp_ref, phase, wosize1, tag1);
                     if (new_obj == 0ULL)
                       new_addr = 0ULL;
                     else
@@ -1151,12 +1091,7 @@ scan_loop(
                       {
                         uint64_t minor_hdr = minor_read(minor, parent - 8ULL);
                         uint64_t tag2 = getTag(minor_hdr);
-                        uint64_t fp = fp_ref[0U];
-                        FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                        res = allocate(major, fp, phase, wosize2, tag2);
-                        uint64_t new_fp = res._1;
-                        uint64_t new_obj = res._2;
-                        fp_ref[0U] = new_fp;
+                        uint64_t new_obj = allocate(major, fp_ref, phase, wosize2, tag2);
                         if (new_obj == 0ULL)
                           new_parent_addr = 0ULL;
                         else
@@ -1201,12 +1136,7 @@ scan_loop(
                         {
                           uint64_t minor_hdr = minor_read(minor, child - 8ULL);
                           uint64_t tag2 = getTag(minor_hdr);
-                          uint64_t fp = fp_ref[0U];
-                          FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-                          res = allocate(major, fp, phase, wosize2, tag2);
-                          uint64_t new_fp = res._1;
-                          uint64_t new_obj = res._2;
-                          fp_ref[0U] = new_fp;
+                          uint64_t new_obj = allocate(major, fp_ref, phase, wosize2, tag2);
                           if (new_obj == 0ULL)
                             new_addr = 0ULL;
                           else
@@ -1470,9 +1400,10 @@ bool is_valid_fp(uint64_t v)
   return v >= zero_addr1 + 8ULL && v < heap_size_u640 && v % 8ULL == 0ULL;
 }
 
-FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-allocate(heap_t heap, uint64_t fp, phase_state *phase, uint64_t wosize, uint64_t tag)
+uint64_t
+allocate(heap_t heap, uint64_t *fp_ref, phase_state *phase, uint64_t wosize, uint64_t tag)
 {
+  uint64_t fp = fp_ref[0U];
   phase_state pv = phase[0U];
   uint64_t head_fp = fp;
   uint64_t prev_fp = 0ULL;
@@ -1569,8 +1500,8 @@ allocate(heap_t heap, uint64_t fp, phase_state *phase, uint64_t wosize, uint64_t
   }
   uint64_t final_fp = head_fp;
   uint64_t final_obj = result_obj;
-  return
-    ((FStar_Pervasives_Native_tuple2__uint64_t_uint64_t){ ._1 = final_fp, ._2 = final_obj });
+  fp_ref[0U] = final_fp;
+  return final_obj;
 }
 
 void darken_write_gray(heap_t heap, uint64_t h_addr, uint64_t obj)

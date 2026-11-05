@@ -559,12 +559,13 @@ idle-allocator fact holds at any phase (`GC.Spec.Allocator.Phase`, below).
 The phase is the cursor alone, and allocation leaves it as it is.  During a
 sweep the phase *record* also caches `swept_tail` and `last_fragment`
 (below), functions of the heap and the cursor; an allocation that takes the
-cached cell off the list moves the cache back: `record_after_alloc g fp wz
-v`, the record the allocator leaves.
+cached cell off the list moves the cache back, to the cell before it on the
+list (`caml_fl_merge`).
 
 The key implementation contract is intentionally simple: the Pulse allocator
-returns a heap that is exactly the pure `alloc_phase` result, at the phase of
-the record it reads.
+returns a heap, a free-list head and an object that are exactly the pure
+`alloc_phase` result, at the phase the record holds, and the record holds
+that phase of the new heap.
 
 ```fstar
 type phase_state = {            // GC.Impl.Allocator: the phase as C holds it
@@ -574,19 +575,19 @@ type phase_state = {            // GC.Impl.Allocator: the phase as C holds it
 let phase_of (v: phase_state) : gc_phase =
   if v.ps_kind = 0UL then Idle else Sweeping v.ps_cursor
 
-fn allocate (heap: heap_t) (fp: U64.t) (phase: R.ref phase_state)
+fn allocate (heap: heap_t) (fp_ref: R.ref U64.t) (phase: R.ref phase_state)
             (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
-  requires is_heap heap 's ** R.pts_to phase 'v ** pure (U64.v wosize >= 1)
-  returns res: (U64.t & U64.t)
-  ensures exists* s2. is_heap heap s2 **
-    R.pts_to phase (record_after_alloc 's fp (U64.v wosize) 'v) **
-    pure (let spec_res = AC.alloc_phase 's fp (phase_of 'v) (U64.v wosize) tag in
+  requires is_heap heap 's ** R.pts_to fp_ref 'fp ** is_phase phase 's 'ph **
+           pure (U64.v wosize >= 1 /\ (Sweeping? 'ph ==> FLA.fl_ascending 's 'fp))
+  returns obj: U64.t
+  ensures exists* s2 fp2. is_heap heap s2 ** R.pts_to fp_ref fp2 ** is_phase phase s2 'ph **
+    pure (let spec_res = AC.alloc_phase 's 'fp 'ph (U64.v wosize) tag in
           s2 == spec_res.heap_out /\
-          fst res == spec_res.fp_out /\
-          snd res == spec_res.obj_out)
+          fp2 == spec_res.fp_out /\
+          obj == spec_res.obj_out)
 ```
 
-`allocate` reads the phase once, computes the colour of the header address it
+`allocate` updates the free-list head in place, reads the phase once, computes the colour of the header address it
 chose (white when idle; while sweeping, black at or above the cursor) and
 writes the header once with it; while sweeping, an allocation that takes
 `swept_tail`'s cell off the list stores the new `swept_tail` (one store, only
@@ -597,13 +598,16 @@ The phase predicate relates the stored record to the spec's phase *and the
 heap*: `is_phase r g ph` says the record holds `ph`, and while sweeping its
 cursor is a position of `g`'s walk and its caches are the ones derived from
 `g` (`phase_rel`: the stored sweep state is `state_at g cursor`, below).  The
-allocator at `is_phase` is `GC.Gen.Impl.Promote.allocate_at_phase`: from an
-exact ascending free list (while sweeping), `record_after_alloc`'s cache is
-the derived one of the heap the allocation leaves
+allocator keeps it: from an ascending free list (while sweeping), the cache it
+moves back is the derived one of the heap the allocation leaves
 (`GC.Spec.Allocator.Caches.alloc_caches`), so `is_phase phase 's ph` becomes
-`is_phase phase s2 ph` -- the same phase.
+`is_phase phase s2 ph` -- the same phase.  What an allocation mid-sweep does to
+the sweep phase (the new object a `new_block`, *fresh* until initialised) is a
+lemma about the same `alloc_phase` (`GC.Spec.SweepPhase.Mutator.alloc_sweep_phase`,
+below), not part of the contract: the allocator knows the phase record, not the
+sweep's invariant, and its callers that need the invariant hold it beside.
 
-The precondition asks nothing of the heap. The allocator only reads headers
+The precondition asks nothing of the heap but, mid-sweep, an ascending list. The allocator only reads headers
 and free-list links and checks every address it follows, so it does not need
 pointer closure -- which matters during minor-to-major promotion, when the
 major heap is temporarily not pointer-closed (fields may still hold old minor
@@ -841,8 +845,8 @@ step run from `state_at g c`, and the state it leaves is the derived one of
 the new heap (`sweep_inv_incremental_step`).  The implementation stores the
 caches in the phase record and updates them in place -- the sweep step, and the
 allocator when it takes the cached cell off the list
-(`GC.Impl.Allocator.record_after_alloc`; `alloc_choice` names the block
-first-fit takes and its list predecessor) -- and its phase predicate says the
+(`GC.Impl.Allocator.allocate`; `alloc_choice` names the block first-fit takes
+and its list predecessor) -- and its phase predicate says the
 stored values are the derived ones (`is_phase`, above; kept by allocation,
 `GC.Spec.Allocator.Caches.alloc_caches`, and by anything that keeps the walk and the
 headers, `state_at_heads`).
@@ -1033,7 +1037,14 @@ Pulse loop is `GC.Impl.FusedSweepCoalesce.sweep_slice_impl`, over the same
 | `sweep_slice gh budget` | `gc_state .. ph` | `(s2, fp2, ph2) == phase_slice s fp ph budget`, `gc_state` at `ph2`; returns `Idle? ph2` |
 | `finish_sweep gh` | `gc_state .. ph` | a slice with budget `2^64 - 1`: `gc_state .. Idle`, `collection_heap_shape` |
 | `minor_collect_any_phase gh roots .. slots ..` | `gc_state .. ph`, `minor_slots_ok ph` (the remembered set and roots for `phase_free ph`) | `minor_collect_full`'s contract at `ph` for `phase_free ph` (`minor_collect_post_with ph (phase_free ph) ..`), `gc_state` at the same phase `ph` (idle stays idle; mid-sweep the cursor and the pending-free set are kept, `GI.minor_keeps_phase_shape`) |
-| `gen_alloc_major gh wosize tag` | the heap and phase, `wosize >= 1`, mid-sweep an exact ascending free list | `AC.alloc_phase`'s result at the same phase (the record's `swept_tail` kept derived); mid-sweep with `gc_state` and `tag <> infix_tag`: either nothing changed or the object is a `new_block` and `fresh_ok` |
+
+Major allocation, at either phase, is the allocator itself
+(`GC.Impl.Allocator.allocate` on the heap's free-list head and phase record):
+`AC.alloc_phase`'s result at the record's phase, which it keeps (the cached
+`swept_tail` kept derived).  Mid-sweep, from the sweep phase and
+`tag <> infix_tag`, `GC.Spec.SweepPhase.Mutator.alloc_sweep_phase` says what
+that result is: either nothing changed or the object is a `new_block` and
+`fresh_ok`.
 
 The end of the sweep is the stop-the-world shape again
 (`GI.sweep_end_shape`: `sweep_inv_incremental_end`'s swept-clean heap, the
@@ -1858,29 +1869,20 @@ let is_gen_heap (gh: gen_heap_t) (d: minor_heap) (b: U64.t)
   R.pts_to gh.fp_ref fp
 ```
 
-The allocation entry point routes small objects to the minor heap and large
-objects to the major heap:
-
-```fstar
-fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph **
-           pure (U64.v wosize > 0 /\
-                 U64.v tag < 256 /\
-                 SpecFields.well_formed_heap 's /\
-                 (Ph.Sweeping? 'ph ==> FLA.fl_ascending 's 'fp))
-  returns obj: U64.t
-  ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2 ** gen_phase gh s2 'ph
-```
+There is no generational allocation entry point: the runtime allocates small
+objects in the minor heap (`GC.Gen.Impl.MinorHeap.minor_alloc` on `gh.minor`)
+and the rest in the major heap (`GC.Impl.Allocator.allocate` on `gh.major`,
+`gh.fp_ref` and `gh.phase_ref`), as the C bridge does.
 
 The phase is a companion predicate rather than part of `is_gen_heap`: only the
 allocator and the sweep read it.  It is indexed by the major heap, because
 while sweeping it says the record's caches are the ones derived from that
 heap (`Alloc.is_phase`); keeping them so across a major allocation needs the
-free list exact and ascending, hence `gen_alloc`'s mid-sweep precondition.
+free list ascending, hence `allocate`'s mid-sweep precondition.
 `minor_collect_full` runs at any phase (`gen_phase gh 's 'ph` in,
 `gen_phase gh s2 'ph` out); `gen_gc` requires and ensures `gen_phase gh _
 Ph.Idle`.  Promotion (`promote_one`, through the Cheney functions) allocates
-with `allocate_at_phase`, which keeps `is_phase` from the heap before to the
+with `allocate` (on the same `fp_ref`), which keeps `is_phase` from the heap before to the
 heap after (`GC.Spec.Allocator.Caches.alloc_caches`), and the copy of the fields
 writes no header (`promote_heads`); the specification's run is at `'ph`
 throughout, and the Cheney loops relate the heap and record they hold to the

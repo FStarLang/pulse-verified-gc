@@ -31,6 +31,7 @@ module SpecFields = GC.Spec.Fields
 module SpecObject = GC.Spec.Object
 module AC = GC.Spec.Allocator.Cursor
 module FS = GC.Spec.FusedSweep
+module FLA = GC.Spec.FreeList.Ascending
 open GC.Spec.Phase
 
 /// ---------------------------------------------------------------------------
@@ -217,23 +218,45 @@ fn update_tail (phase: R.ref phase_state) (#pv: erased phase_state) (pvc: phase_
   }
 }
 
+/// The record after an allocation of `wz` words from the list at `fp`: while
+/// sweeping, when the allocation takes `swept_tail`'s own cell off the list
+/// (`AC.takes_off`), `swept_tail` moves to the cell before it on the list, as
+/// `caml_fl_merge` does; nothing else changes.
+noextract
+let record_after_alloc (g: SpecBase.heap) (fp: U64.t) (wz: nat) (v: phase_state) : GTot phase_state =
+  let (p, c) = AC.alloc_choice g fp wz in
+  { v with ps_swept_tail =
+      (if v.ps_kind <> 0UL && c = v.ps_swept_tail && AC.takes_off g c wz then p
+       else v.ps_swept_tail) }
+
+/// The record after an allocation holds the phase of the heap it leaves: the
+/// derived caches after it are `record_after_alloc`'s.
+let alloc_phase_rel (g: SpecBase.heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
+                    (v: phase_state) (ph: gc_phase)
+  : Lemma (requires phase_rel g v ph /\ (Sweeping? ph ==> FLA.fl_ascending g fp))
+          (ensures phase_rel (AC.alloc_phase g fp ph wz tag).SA.heap_out
+                     (record_after_alloc g fp wz v) ph)
+  = if v.ps_kind <> 0UL then GC.Spec.Allocator.Caches.alloc_caches g fp v.ps_cursor wz tag
+
 /// ---------------------------------------------------------------------------
 /// Main allocation function (fully proved — 0 admits)
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 60"
-fn allocate (heap: heap_t) (fp: U64.t) (phase: R.ref phase_state)
+fn allocate (heap: heap_t) (fp_ref: R.ref U64.t) (phase: R.ref phase_state)
             (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
-  requires is_heap heap 's ** R.pts_to phase 'v **
-           pure (U64.v wosize >= 1)
-  returns res: (U64.t & U64.t)
-  ensures exists* s2. is_heap heap s2 **
-    R.pts_to phase (record_after_alloc 's fp (U64.v wosize) 'v) **
-    pure (let spec_res = AC.alloc_phase 's fp (phase_of 'v) (U64.v wosize) tag in
+  requires is_heap heap 's ** R.pts_to fp_ref 'fp ** is_phase phase 's 'ph **
+           pure (U64.v wosize >= 1 /\ (Sweeping? 'ph ==> FLA.fl_ascending 's 'fp))
+  returns obj: U64.t
+  ensures exists* s2 fp2. is_heap heap s2 ** R.pts_to fp_ref fp2 ** is_phase phase s2 'ph **
+    pure (let spec_res = AC.alloc_phase 's 'fp 'ph (U64.v wosize) tag in
           s2 == spec_res.heap_out /\
-          fst res == spec_res.fp_out /\
-          snd res == spec_res.obj_out)
+          fp2 == spec_res.fp_out /\
+          obj == spec_res.obj_out)
 {
+  unfold (is_phase phase 's 'ph);
+  with v0. assert (R.pts_to phase v0);
+  let fp = !fp_ref;
   // wosize >= 1 by precondition; `alloc_spec`'s 0 -> 1 bump is the identity.
   let wz : U64.t = wosize;
   let pv = !phase;
@@ -465,6 +488,10 @@ fn allocate (heap: heap_t) (fp: U64.t) (phase: R.ref phase_state)
   // Post-loop: invariant with go=false gives us spec correspondence
   let final_fp = !head_fp;
   let final_obj = !result_obj;
-  (final_fp, final_obj)
+  fp_ref := final_fp;
+  alloc_phase_rel 's fp (U64.v wosize) tag v0 'ph;
+  with s2. assert (is_heap heap s2);
+  fold (is_phase phase s2 'ph);
+  final_obj
 }
 #pop-options

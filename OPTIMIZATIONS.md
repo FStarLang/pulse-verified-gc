@@ -14,7 +14,7 @@ collection, and retries minor allocation instead of falling back to the major
 heap.  Shared/large allocations continue to use `verified_allocate()` and the
 verified major free list.
 
-This removes the per-object call into extracted `gen_alloc` on the common
+This removes the per-object call into extracted `gen_alloc` (since removed) on the common
 allocation path and writes each fast-path object header once.  Slow minor
 allocations reuse the extracted header when `WITH_PROFINFO` is disabled; the
 runtime still finalizes headers for profiling builds and shared/major

@@ -226,54 +226,6 @@ fn minor_collect_any_phase (gh: gen_heap_t)
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// Major allocation at either phase
-/// ---------------------------------------------------------------------------
-
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
-let alloc_major_post_intro (ph: Ph.gc_phase) (minor: minor_state) (s: heap) (fp: U64.t)
-    (wz: nat) (tag: Mut.tag_t)
-  : Lemma (let ar = AC.alloc_phase s fp ph wz tag in
-           alloc_major_post ph minor s fp wz tag ar.SA.obj_out ar.SA.heap_out ar.SA.fp_out)
-  = let ar = AC.alloc_phase s fp ph wz tag in
-    let aux (c: U64.t)
-      : Lemma (requires ph == Ph.Sweeping c /\ GI.phase_shape minor s fp ph /\
-                        tag <> GC.Spec.Object.infix_tag)
-              (ensures (let r = ar in
-                        (r.SA.obj_out == 0UL ==> r.SA.heap_out == s /\ r.SA.fp_out == fp /\
-                           GI.phase_shape minor r.SA.heap_out r.SA.fp_out ph) /\
-                        (r.SA.obj_out <> 0UL ==>
-                           Mut.new_block s r.SA.heap_out c r.SA.obj_out wz tag /\
-                           Mut.fresh_ok r.SA.heap_out r.SA.fp_out c (r.SA.obj_out <: obj_addr))))
-      = GI.phase_shape_sweeping minor s fp c;
-        Mut.alloc_sweep_phase s fp c wz tag
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-#pop-options
-
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
-fn gen_alloc_major (gh: gen_heap_t) (wosize: U64.t) (tag: Mut.tag_t)
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph **
-           pure (U64.v wosize >= 1 /\
-                 (Ph.Sweeping? 'ph ==> GC.Spec.FreeList.Ascending.fl_ascending 's 'fp))
-  returns obj: U64.t
-  ensures exists* s2 fp2.
-    is_gen_heap gh 'd 'b s2 fp2 ** gen_phase gh s2 'ph **
-    pure (alloc_major_post 'ph ({ data = 'd; bump = 'b } <: minor_state) 's 'fp
-            (U64.v wosize) tag obj s2 fp2)
-{
-  unfold is_gen_heap;
-  unfold gen_phase;
-  let fp = R.op_Bang gh.fp_ref;
-  let res = GC.Gen.Impl.Promote.allocate_at_phase gh.major fp gh.phase_ref wosize tag;
-  R.op_Colon_Equals gh.fp_ref (fst res);
-  alloc_major_post_intro 'ph ({ data = 'd; bump = 'b } <: minor_state) 's 'fp (U64.v wosize) tag;
-  fold (gen_phase gh _ 'ph);
-  fold (is_gen_heap gh 'd 'b _ _);
-  snd res
-}
-#pop-options
-
-/// ---------------------------------------------------------------------------
 /// Starting the sweep phase
 /// ---------------------------------------------------------------------------
 

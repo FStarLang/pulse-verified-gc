@@ -2,10 +2,8 @@
    Pulse GC - Allocator Module Interface
 
    First-fit free-list allocator for the verified GC.
-   Takes the heap, the current free-list head and the collector's phase
-   record, returns updated heap and new free-list head along with the
-   allocated object address; the record's cached `swept_tail` is updated in
-   place.
+   Takes the heap, the free-list head and the collector's phase record, both
+   updated in place, and returns the allocated object address.
 *)
 
 module GC.Impl.Allocator
@@ -28,6 +26,7 @@ module FS = GC.Spec.FusedSweep
 module SPI = GC.Spec.SweepPhase.Intrinsic
 module W = GC.Spec.Walk
 module R = Pulse.Lib.Reference
+module FLA = GC.Spec.FreeList.Ascending
 open GC.Spec.Phase
 
 /// ---------------------------------------------------------------------------
@@ -69,18 +68,6 @@ let phase_rel (g: SpecBase.heap) (v: phase_state) (ph: gc_phase) : prop =
 let is_phase (r: R.ref phase_state) (g: SpecBase.heap) (ph: gc_phase) : slprop =
   exists* (v: phase_state). R.pts_to r v ** pure (phase_rel g v ph)
 
-/// The record after an allocation of `wz` words from the list at `fp`: while
-/// sweeping, when the allocation takes `swept_tail`'s own cell off the list
-/// (`AC.takes_off`), `swept_tail` moves to the cell before it on the list, as
-/// `caml_fl_merge` does; nothing else changes.  That this keeps the caches
-/// the derived ones is `GC.Spec.Allocator.Caches.alloc_caches`.
-noextract
-let record_after_alloc (g: SpecBase.heap) (fp: U64.t) (wz: nat) (v: phase_state) : GTot phase_state =
-  let (p, c) = AC.alloc_choice g fp wz in
-  { v with ps_swept_tail =
-      (if v.ps_kind <> 0UL && c = v.ps_swept_tail && AC.takes_off g c wz then p
-       else v.ps_swept_tail) }
-
 /// Initialize the heap as one large free block.
 ///
 /// The entire heap becomes a single blue object with wosize = (heap_size/8) - 1.
@@ -98,45 +85,50 @@ fn init_heap (heap: heap_t)
 ///
 /// Parameters:
 ///   heap: mutable heap array
-///   fp: current free-list head (obj_addr of first free block, or 0UL)
-///   phase: the collector's phase record.  The header's colour is the one the
-///          phase (`phase_of`) gives the address the search chose
-///          (`caml_allocation_color`): white when idle; while sweeping, black
-///          in front of the cursor and white behind it.  While sweeping, an
-///          allocation that takes `swept_tail`'s own cell off the list moves
-///          `swept_tail` back (`record_after_alloc`).
+///   fp_ref: the free-list head (obj_addr of the first free block, or 0UL),
+///           updated in place
+///   phase: the collector's phase record, which holds the phase `'ph` with
+///          its caches derived from the heap (`is_phase`), before and after.
+///          The header's colour is the one the phase gives the address the
+///          search chose (`caml_allocation_color`): white when idle; while
+///          sweeping, black in front of the cursor and white behind it.
+///          While sweeping, an allocation that takes `swept_tail`'s own cell
+///          off the list moves `swept_tail` back to the cell before it, as
+///          `caml_fl_merge` does; that this is the derived one after the
+///          allocation is `GC.Spec.Allocator.Caches.alloc_caches`, which
+///          needs the free list ascending.
 ///   wosize: number of words needed
 ///   tag: the allocated header's tag (`caml_alloc_shr (wosize, tag)`); the
 ///        header is written once, with the colour and this tag
 ///
-/// Returns: (new_fp, obj_addr)
-///   new_fp: updated free-list head
-///   obj_addr: allocated object address, or 0UL if out of memory
+/// Returns: the allocated object's address, or 0UL if no free block fits.
 ///
 /// The allocator reads only headers and free-list links, and checks every
-/// address it follows, so it needs nothing of the heap: in particular not
-/// pointer closure, which promotion temporarily breaks.  The postcondition
-/// ties the result to the pure spec `alloc_phase` at the record's phase; at
-/// `Idle` that is `alloc_spec` (`AC.alloc_phase_idle`).  The record's cached
-/// `swept_tail` is updated in place (`record_after_alloc`).  (The phase
-/// predicate `is_phase` over the allocation is
-/// `GC.Gen.Impl.Promote.allocate_at_phase`.)
-fn allocate (heap: heap_t) (fp: U64.t) (phase: R.ref phase_state)
+/// address it follows, so it needs nothing of the heap but, mid-sweep, the
+/// list ascending: in particular not pointer closure, which promotion
+/// temporarily breaks.  The postcondition ties the result to the pure spec
+/// `alloc_phase` at the phase; at `Idle` that is `alloc_spec`
+/// (`AC.alloc_phase_idle`).  What an allocation mid-sweep keeps of the sweep
+/// phase -- the new object a `new_block`, *fresh* until initialised -- is
+/// `GC.Spec.SweepPhase.Mutator.alloc_sweep_phase`, of the same `alloc_phase`.
+fn allocate (heap: heap_t) (fp_ref: R.ref U64.t) (phase: R.ref phase_state)
             (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
-  requires is_heap heap 's ** R.pts_to phase 'v **
-           // The allocator is never asked for a zero-word block: `gen_alloc`
-           // requires wosize > 0, `promote_one` guards `wosize = 0` before
-           // calling, and the C bridge's major path maps a request of 0 to 1
-           // before calling (verified_gc/alloc_gen.c) -- OCaml represents a
-           // zero-length block as a static Atom, never a heap allocation.
-           // Stating it here lets the implementation drop the 0 -> 1 bump,
-           // which was a compare-and-select on every major allocation for a
-           // case that cannot occur.
-           pure (U64.v wosize >= 1)
-  returns res: (U64.t & U64.t)
-  ensures exists* s2. is_heap heap s2 **
-    R.pts_to phase (record_after_alloc 's fp (U64.v wosize) 'v) **
-    pure (let spec_res = AC.alloc_phase 's fp (phase_of 'v) (U64.v wosize) tag in
+  requires is_heap heap 's ** R.pts_to fp_ref 'fp ** is_phase phase 's 'ph **
+           // The allocator is never asked for a zero-word block:
+           // `promote_one` guards `wosize = 0` before calling, and the C
+           // bridge maps a request of 0 to 1 before calling
+           // (verified_gc/alloc_gen.c) -- OCaml represents a zero-length
+           // block as a static Atom, never a heap allocation.  Stating it
+           // here lets the implementation drop the 0 -> 1 bump, which was a
+           // compare-and-select on every major allocation for a case that
+           // cannot occur.
+           pure (U64.v wosize >= 1 /\
+                 // mid-sweep the list is ascending, which keeps the record's
+                 // caches derived (the sweep phase, `sweep_shape`, has it)
+                 (Sweeping? 'ph ==> FLA.fl_ascending 's 'fp))
+  returns obj: U64.t
+  ensures exists* s2 fp2. is_heap heap s2 ** R.pts_to fp_ref fp2 ** is_phase phase s2 'ph **
+    pure (let spec_res = AC.alloc_phase 's 'fp 'ph (U64.v wosize) tag in
           s2 == spec_res.heap_out /\
-          fst res == spec_res.fp_out /\
-          snd res == spec_res.obj_out)
+          fp2 == spec_res.fp_out /\
+          obj == spec_res.obj_out)

@@ -58,25 +58,8 @@ fn read_minor_scan_wosize (minor: minor_heap_t) (obj: U64.t)
           pure (U64.v wosize == minor_scan_wosize {data='md; bump='mb} obj)
 
 /// ---------------------------------------------------------------------------
-/// The allocator at the collector's phase
+/// The phase record across a promotion
 /// ---------------------------------------------------------------------------
-
-/// **Allocate at the phase the record holds**, keeping its caches the ones
-/// derived from the heap (`Alloc.is_phase`): `Alloc.allocate`, whose in-place
-/// update of `swept_tail` (`Alloc.record_after_alloc`) is the derived one
-/// after the allocation (`GC.Spec.Allocator.Caches.alloc_caches`) -- which needs the
-/// free list exact and ascending while sweeping.  The phase stays as it is.
-inline_for_extraction
-fn allocate_at_phase (heap: heap_t) (fp: U64.t) (phase: R.ref Alloc.phase_state)
-                     (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
-  requires is_heap heap 's ** Alloc.is_phase phase 's 'ph **
-           pure (U64.v wosize >= 1 /\ (Ph.Sweeping? 'ph ==> FLA.fl_ascending 's fp))
-  returns res: (U64.t & U64.t)
-  ensures exists* s2. is_heap heap s2 ** Alloc.is_phase phase s2 'ph **
-    pure (let spec_res = GC.Spec.Allocator.Cursor.alloc_phase 's fp 'ph (U64.v wosize) tag in
-          s2 == spec_res.GC.Spec.Allocator.heap_out /\
-          fst res == spec_res.GC.Spec.Allocator.fp_out /\
-          snd res == spec_res.GC.Spec.Allocator.obj_out)
 
 /// A change that keeps the walk and every header keeps the phase record's
 /// caches derived.

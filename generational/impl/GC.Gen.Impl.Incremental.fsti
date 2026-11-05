@@ -5,7 +5,7 @@
    marking (`gen_gc_start`), after which the sweep runs in slices
    (`sweep_slice`) between program steps; a minor collection may run in
    between (`minor_collect_any_phase`), and so may major allocation
-   (`gen_alloc_major`).  `finish_sweep` runs the rest of the sweep at once:
+   (`GC.Impl.Allocator.allocate`, at the record's phase).  `finish_sweep` runs the rest of the sweep at once:
    before a full collection (a full collection requested mid-sweep finishes
    the sweep first) and on allocation failure.  The stop-the-world collector
    (`GC.Gen.Impl.gen_gc`) is unchanged.
@@ -84,9 +84,12 @@ let gc_state (gh: gen_heap_t) (d: minor_heap) (b: U64.t) (s: heap_state) (fp: U6
 /// `gen_gc` today.  What justifies it is that every collector call returns
 /// it, and the program's events in between keep it:
 ///
-///   * **Allocation mid-sweep** (`gen_alloc_major`, or the allocator called
-///     directly): the new object is *fresh* (`Mut.fresh_ok`: the sweep phase
-///     except that its fields are uninitialised and nothing points at it).
+///   * **Allocation mid-sweep** (`GC.Impl.Allocator.allocate`, which keeps
+///     the record's phase and caches; what it does to the sweep phase is
+///     `Mut.alloc_sweep_phase`, of the same `alloc_phase`): either nothing
+///     changed (no block fits) or the new object is a `Mut.new_block` and
+///     *fresh* (`Mut.fresh_ok`: the sweep phase except that its fields are
+///     uninitialised and nothing points at it).
 ///     The runtime initialises every field of a block it allocates with a
 ///     storable value (an integer, or a pointer to a non-free object --
 ///     reachable objects are never pending free) before the
@@ -182,39 +185,6 @@ fn minor_collect_any_phase (gh: gen_heap_t)
     pts_to slots 'sl **
     pure (minor_collect_post_with 'ph (GI.phase_free 'ph) ({ data = 'd; bump = 'b } <: minor_state)
             's 'fp 'rs ok d2 b2 s2 fp2 rs2)
-
-/// ---------------------------------------------------------------------------
-/// Major allocation at either phase
-/// ---------------------------------------------------------------------------
-
-/// What a major allocation gives: the allocator's spec at the phase
-/// (`AC.alloc_phase`; idle, `alloc_spec`), and mid-sweep, from the collector's
-/// state: either nothing changed (no block fits) or the new object is
-/// `Mut.new_block` and *fresh* (`Mut.fresh_ok`) at the same cursor: the
-/// runtime initialises its fields before the next collector call (see above).
-let alloc_major_post (ph: Ph.gc_phase) (minor: minor_state) (s: heap_state) (fp: U64.t)
-    (wz: nat) (tag: Mut.tag_t) (obj: U64.t) (s2: heap_state) (fp2: U64.t) : prop =
-  let ar = AC.alloc_phase s fp ph wz tag in
-  s2 == ar.SA.heap_out /\ fp2 == ar.SA.fp_out /\ obj == ar.SA.obj_out /\
-  (forall (c: U64.t).
-     ph == Ph.Sweeping c /\ GI.phase_shape minor s fp ph /\ tag <> GC.Spec.Object.infix_tag ==>
-     (obj == 0UL ==> s2 == s /\ fp2 == fp /\ GI.phase_shape minor s2 fp2 ph) /\
-     (obj <> 0UL ==> Mut.new_block s s2 c obj wz tag /\ Mut.fresh_ok s2 fp2 c (obj <: obj_addr)))
-
-/// **Allocate in the major heap** at the collector's phase (`caml_alloc_shr`):
-/// the free-list head is updated in place, and the phase stays as it is (its
-/// record's cached `swept_tail` follows the allocation).  Mid-sweep the free
-/// list is exact and ascending (as `Mut.fresh_ok` and the sweep phase say).
-/// Returns the object, or 0 when no free block fits.
-fn gen_alloc_major (gh: gen_heap_t) (wosize: U64.t) (tag: Mut.tag_t)
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph **
-           pure (U64.v wosize >= 1 /\
-                 (Ph.Sweeping? 'ph ==> GC.Spec.FreeList.Ascending.fl_ascending 's 'fp))
-  returns obj: U64.t
-  ensures exists* s2 fp2.
-    is_gen_heap gh 'd 'b s2 fp2 ** gen_phase gh s2 'ph **
-    pure (alloc_major_post 'ph ({ data = 'd; bump = 'b } <: minor_state) 's 'fp
-            (U64.v wosize) tag obj s2 fp2)
 
 /// ---------------------------------------------------------------------------
 /// Starting the sweep phase

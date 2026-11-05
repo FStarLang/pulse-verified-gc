@@ -209,9 +209,12 @@ extern uint64_t heap_size_u64;     // major heap end address
 
 // From internal headers — minor heap configuration:
 extern uint64_t minor_heap_size_u64;   // minor heap size in bytes
-extern uint64_t max_young_wosize_u64;  // max object size for minor alloc
 extern uint64_t minor_base_addr;       // absolute address of minor buffer
 ```
+
+(The largest nursery object is OCaml's own `Max_young_wosize`: the bridge
+routes by it, and the verified code no longer has an allocation entry point
+that does.)
 
 These are **abstract** in the F\* spec (`val zero_addr : U64.t`) and
 instantiated by the bridge at runtime.  This is the key design decision
@@ -222,13 +225,13 @@ that lets the same verified code work with any heap placement.
 | Function | Called by bridge? | Purpose |
 |----------|-------------------|---------|
 | `minor_alloc(minor, wosize, tag)` | Yes, small-allocation slow path | Bump-allocate in the minor heap after any needed minor collection |
-| `allocate(major, fp, phase, wosize, tag)` | Yes, shared/major allocation path (`VERGC_SWEEP=stw`) | Allocate from the major free list, writing the header once with the tag and the colour the collector's phase gives it (white: stop-the-world the phase is always `Idle`).  The OCaml runtime rewrites the header only to add profinfo bits, keeping the colour |
+| `allocate(major, fp_ref, phase, wosize, tag)` | Yes, shared/major allocation path, in both sweep modes | Allocate from the major free list (its head `*fp_ref` updated in place), writing the header once with the tag and the colour the collector's phase gives it (white when `Idle`, always so stop-the-world; mid-sweep black in front of the cursor, white behind it).  The OCaml runtime rewrites the header only to add profinfo bits, keeping the colour |
 | `minor_collect_full(gh, roots, n, fwd_arr, queue, slots, nslots)` | Yes, `do_minor_gc_core` | Verified minor collection: Cheney promotion, promoted-object field rewrite, remembered-slot rewrite, root rewrite, and minor bump reset |
 | `gen_gc(gh, roots, n, fwd_arr, queue, slots, nslots, gray_stack)` | Yes, `do_full_gc` | Verified full collection: first `minor_collect_full`, then root darkening into an initially empty gray stack, then major `collect_with_roots` |
 | `collect_with_roots(major, gray_stack, roots, n, fp)` | Indirectly through `gen_gc` | Mark-and-sweep over the major heap from the post-minor roots, returning the new free-list head |
 | `rewrite_heap_slots(major, fwd_arr, slots, n)` | Indirectly through `minor_collect_full` and `gen_gc` | Rewrite remembered major fields that still point into the minor heap |
-| `allocate(major, fp, phase, wosize, tag)` | Indirectly through `minor_collect_full` | The same free-list allocator; promotion calls it with the minor object's tag, so the copy's header is written once |
-| `gen_gc_start`, `sweep_slice`, `finish_sweep`, `minor_collect_any_phase`, `gen_alloc_major` | Yes, with `VERGC_SWEEP=incremental` | The incremental sweep's entry points: see "The Incremental Sweep" below |
+| `allocate(major, fp_ref, phase, wosize, tag)` | Indirectly through `minor_collect_full` | The same free-list allocator; promotion calls it with the minor object's tag, so the copy's header is written once |
+| `gen_gc_start`, `sweep_slice`, `finish_sweep`, `minor_collect_any_phase` | Yes, with `VERGC_SWEEP=incremental` | The incremental sweep's entry points: see "The Incremental Sweep" below |
 
 ---
 
@@ -874,8 +877,9 @@ collection sweeps:
 | `incremental` | `gen_gc_start`: minor collection, root darkening, marking; the phase becomes `Sweeping` | in slices (`sweep_slice`), one after each minor collection |
 
 The entry points are `GC.Gen.Impl.Incremental`'s (`gen_gc_start`,
-`sweep_slice`, `finish_sweep`, `minor_collect_any_phase`, `gen_alloc_major`;
-DESIGN_AND_IMPL.md, "The incremental entry points"). The phase lives in
+`sweep_slice`, `finish_sweep`, `minor_collect_any_phase`;
+DESIGN_AND_IMPL.md, "The incremental entry points"), and major allocation is
+`allocate` at the record's phase, as stop-the-world. The phase lives in
 `gc_gen_heap.phase_ref` (`ps_kind` 0 = Idle, 1 = Sweeping, plus the cursor,
 and the sweep's two caches `swept_tail` and `last_fragment`, which the
 proofs say are functions of the heap and the cursor). Incremental, each event of the program
@@ -885,7 +889,7 @@ does this:
 |---|---|
 | full collection (`do_full_gc`: the proactive trigger, a failed allocation, `caml_trigger_verified_gc`) | mid-sweep, `finish_sweep` first (as 4.14: a full collection requested mid-sweep finishes the sweep); then `gen_gc_start` with `gen_gc`'s roots, gray stack, forwarding array, queue and remembered slots, and `gen_gc`'s post-processing (forwarded roots written back, `ref_table` reset, promotion failure fatal) |
 | minor collection (`do_minor_gc`) | mid-sweep, if the free list holds fewer than twice the nursery's words, `finish_sweep` first (garbage in front of the cursor is not on the free list yet, and a promotion failure is fatal); `minor_collect_any_phase` (the C is `minor_collect_full`'s); then, mid-sweep, `sweep_slice` with the budget below |
-| major allocation (`verified_allocate`) | `gen_alloc_major`: a block in front of the cursor is black, one behind it white. On failure: mid-sweep, `finish_sweep` and retry; then a full collection and its whole sweep, and retry; then `NULL` (`Out_of_memory`), as stop-the-world |
+| major allocation (`verified_allocate`) | `allocate` at the phase: a block in front of the cursor is black, one behind it white. On failure: mid-sweep, `finish_sweep` and retry; then a full collection and its whole sweep, and retry; then `NULL` (`Out_of_memory`), as stop-the-world |
 | `Gc.full_major`, `Gc.major`, `Gc.compact`, `Gc.set` (policy change): stock `caml_finish_major_cycle` | `verified_finish_major_cycle`: the nursery emptied, a full collection, and its whole sweep -- the program sees a finished cycle |
 | `Gc.major_slice`, `caml_gc_dispatch`: stock `caml_major_collection_slice` | `verified_major_collection_slice`: mid-sweep, a slice (of `n` words for `Gc.major_slice n`, `n > 0`); nothing otherwise |
 
@@ -925,9 +929,9 @@ keep true in between. How this runtime meets each:
 
 | obligation (`GC.Gen.Impl.Incremental`) | how it is met |
 |---|---|
-| **Allocation mid-sweep**: a new block is *fresh* (`GSP.fresh_ok`), and every field is initialised with a storable value before the next collector call | OCaml's rule for `caml_alloc_shr`: its callers initialise every field (`caml_initialize`, or raw stores of values that are not young) before allocating again -- the interpreter's `CLOSURE`/`CLOSUREREC`/`MAKEBLOCK`, `caml_alloc`, `caml_make_vect`, intern. A value the program holds is reachable, so never pending free. (A sweep slice reads no field, so even a slice between allocation and initialisation reads nothing uninitialised.) `tag <> Infix_tag` is asserted in `verified_allocate`. |
+| **Allocation mid-sweep**: a new block is *fresh* (`GC.Spec.SweepPhase.Mutator.fresh_ok`), and every field is initialised with a storable value before the next collector call | OCaml's rule for `caml_alloc_shr`: its callers initialise every field (`caml_initialize`, or raw stores of values that are not young) before allocating again -- the interpreter's `CLOSURE`/`CLOSUREREC`/`MAKEBLOCK`, `caml_alloc`, `caml_make_vect`, intern. A value the program holds is reachable, so never pending free. (A sweep slice reads no field, so even a slice between allocation and initialisation reads nothing uninitialised.) `tag <> Infix_tag` is asserted in `verified_allocate`. |
 | **The allocation colour is the collector's** | `verified_allocate` writes the final header; the patched `caml_alloc_shr_aux` rewrites only profiling bits (WITH_PROFINFO), keeping the colour; `caml_allocation_color` and `caml_obj_truncate`'s leftover header use the same rule (`vergc_allocation_color`). |
-| **Field writes** (`GSP.program_write`) | `caml_modify` / `caml_initialize`, whose barrier records every major field given a young pointer in `caml_ref_table`. |
+| **Field writes** (`GC.Spec.SweepPhase.Mutator.program_write`) | `caml_modify` / `caml_initialize`, whose barrier records every major field given a young pointer in `caml_ref_table`. |
 | **Nursery allocation** keeps the nursery's shape and the cross-generation condition | The nursery is allocated only after `gen_gc_start`'s own minor collection, so every nursery object was initialised from reachable values: none points at an object pending free. |
 | **The minor collection's arguments** (`minor_slots_ok`) | The forwarding array is zeroed before every call; the remembered set is `caml_ref_table`, reset after every minor collection (so it never names a slot in an object that was unreachable when marking ended); its young targets are added to the roots; the roots come from `caml_do_roots`, which marking used too. |
 | **`phase_ref` is written only by the collector** | `alloc_gen.c` only reads it (`vergc_sweeping`, `vergc_allocation_color`). |

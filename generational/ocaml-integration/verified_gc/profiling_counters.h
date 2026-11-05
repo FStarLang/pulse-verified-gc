@@ -25,8 +25,8 @@ static uint64_t prof_fields_translated = 0;
 static uint64_t prof_fields_updated = 0;
 
 /* Timing accumulators (nanoseconds) */
-static uint64_t prof_t_minor_alloc = 0;    /* gen_alloc for minor */
-static uint64_t prof_t_major_alloc = 0;    /* gen_alloc for major (free-list) */
+static uint64_t prof_t_minor_alloc = 0;    /* minor_alloc */
+static uint64_t prof_t_major_alloc = 0;    /* allocate (major free list) */
 static uint64_t prof_t_root_scan = 0;      /* caml_do_roots + root processing */
 static uint64_t prof_t_fwd_arr_zero = 0;   /* memset gc_fwd_arr */
 static uint64_t prof_t_translate = 0;      /* legacy translate_minor_fields pass (removed; stays 0) */
@@ -59,7 +59,7 @@ static void gc_print_profile(void) {
     fprintf(stderr, "  fields translated: %12lu\n", (unsigned long)prof_fields_translated);
     fprintf(stderr, "  fields updated:    %12lu\n", (unsigned long)prof_fields_updated);
     fprintf(stderr, "\nTiming (ms):\n");
-    fprintf(stderr, "  minor alloc (gen_alloc):   %8.1f ms (%5.1f%%)\n",
+    fprintf(stderr, "  minor alloc (minor_alloc): %8.1f ms (%5.1f%%)\n",
         prof_t_minor_alloc/1e6, 100.0*prof_t_minor_alloc/total);
     fprintf(stderr, "  major alloc (free-list):    %8.1f ms (%5.1f%%)\n",
         prof_t_major_alloc/1e6, 100.0*prof_t_major_alloc/total);

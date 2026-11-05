@@ -64,15 +64,6 @@ minor_collect_full(
   size_t nslots
 );
 
-typedef struct FStar_Pervasives_Native_tuple2__uint64_t_uint64_t_s
-{
-  uint64_t _1;
-  uint64_t _2;
-}
-FStar_Pervasives_Native_tuple2__uint64_t_uint64_t;
-
-uint64_t gen_alloc(gen_heap_t gh, uint64_t wosize, uint64_t tag);
-
 typedef struct FStar_Pervasives_Native_tuple2__uint64_t_bool_s
 {
   uint64_t _1;
@@ -115,8 +106,6 @@ minor_collect_any_phase(
   uint64_t *slots,
   size_t nslots
 );
-
-uint64_t gen_alloc_major(gen_heap_t gh, uint64_t wosize, uint64_t tag);
 
 bool
 gen_gc_start(
@@ -224,8 +213,8 @@ uint64_t init_heap(heap_t heap);
 
 bool is_valid_fp(uint64_t v);
 
-FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-allocate(heap_t heap, uint64_t fp, phase_state *phase, uint64_t wosize, uint64_t tag);
+uint64_t
+allocate(heap_t heap, uint64_t *fp_ref, phase_state *phase, uint64_t wosize, uint64_t tag);
 
 void darken_write_gray(heap_t heap, uint64_t h_addr, uint64_t obj);
 
@@ -234,6 +223,13 @@ void darken_if_white_bounded(heap_t heap, gray_stack_rec st, uint64_t h_addr);
 void check_and_darken_bounded(heap_t heap, gray_stack_rec st, uint64_t v);
 
 void darken_roots_bounded(heap_t heap, gray_stack_rec st, uint64_t *roots, size_t nroots);
+
+typedef struct FStar_Pervasives_Native_tuple2__uint64_t_uint64_t_s
+{
+  uint64_t _1;
+  uint64_t _2;
+}
+FStar_Pervasives_Native_tuple2__uint64_t_uint64_t;
 
 FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
 mark_read_header(heap_t heap, uint64_t h_addr);
