@@ -981,6 +981,47 @@ slice lemmas are in `FusedSweep.Step`: `sweep_inv_incremental_steps` (and
 `sweep_inv_stw_steps`), and `sweep_steps_done` (a budget of one step per heap
 word finishes the sweep).
 
+**Completeness over the phase** (`GC.Spec.SweepPhase.Completeness`, and
+`GC.Gen.SweepPhase.Completeness` for the minor collection) is the incremental
+counterpart of `major_gc_unreachable_final_blue`: *when the sweep ends, every
+block that was dead when marking ended has been freed* -- it is no longer a
+non-free block (merged into a free block, or a free block itself) -- unless its
+address was handed out again since, in which case the block there is a new
+object.  Objects that die during the sweep are floating garbage for the next
+cycle and are not covered.  It is carried as an account of the non-free blocks,
+`survivor_or_new g0 since g c`: every block not free for `free_incremental c`
+was black in the marked heap `g0` (`survived_mark`) or its address is in
+`since`, a ghost set of addresses allocated since marking ended.  The account
+holds from the marked heap with nothing allocated (`survivor_or_new_start`,
+needing only that nothing is grey), and every event keeps it:
+
+- sweep steps and slices (`survivor_or_new_steps`, `survivor_or_new_slice`):
+  a step never makes a block non-free;
+- an allocation (`survivor_or_new_alloc`), with the new object added to
+  `since` (`with_new`); it makes no other block non-free
+  (`GC.Spec.SweepPhase.Mutator.alloc_in_use`);
+- a write into the body of a non-blue block, i.e. a program write or the
+  initialisation of a fresh object (`survivor_or_new_body_write`): it keeps
+  the walk and every header;
+- a minor collection (`GC.Gen.SweepPhase.Completeness.survivor_or_new_minor`),
+  with its promoted copies added to `since` (`with_promoted`), from
+  `minor_keeps_blocks`.
+
+At the end nothing is pending free, so `freed_by_end` reads the account off
+the blue blocks: every non-blue block is a survivor or new, and every object
+white in the marked heap is `freed` or in `since`.  Marking leaves white
+exactly the non-free objects unreachable from the roots
+(`GC.Spec.Correctness.mark_post_white_iff_unreachable`, `dead_at_mark_white`),
+which gives the reachability form `unreachable_freed_by_end` (under the same
+graph hypotheses as the stop-the-world theorem, `roots_in_graph`).  At the
+collector's phase, `phase_account` (the sweep phase and the account
+mid-sweep; the end form when idle) is kept by `SL.phase_slice`
+(`phase_account_slice`), so it composes with the `sweep_slice` and
+`finish_sweep` contracts directly.  The "survivor or new" form was chosen over
+a per-object "dead ones are pending free or freed" invariant because every
+event already states what it does to the non-free blocks, and it says more:
+the non-free blocks at the end are exactly accounted for.
+
 `GC.SPOT.SweepPhasePendingFree` exercises all of it on a concrete heap: from
 the two-block heap of `GC.SPOT.ConcreteMajorGen` it sweeps everything into one
 free block, allocates `P` and `G` behind the cursor at the end of that sweep
@@ -991,6 +1032,13 @@ object (its word lies inside the merged free block), and the heap is in the
 sweep phase and in `collection_shape_with` with that non-empty pending-free
 set; the minor collection at the sweep's phase keeps the sweep phase with `P`
 still pending free.
+`GC.SPOT.SweepPhaseFreedByEnd` continues it as a cycle for completeness: from
+that marked heap, the two-step slice, a minor collection of an empty nursery,
+and the rest of the sweep keep the account, and at the end both dead-at-mark
+objects, `G` and `P`, are freed (`freed_by_end_spot`).
+`GC.SPOT.IncrementalCycle.cycle_frees_dead` applies it to the Pulse entry
+points: after `gen_gc_start`, `sweep_slice` and `finish_sweep`, every object
+white in the marked heap is freed.
 
 #### The incremental entry points
 

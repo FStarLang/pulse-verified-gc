@@ -254,6 +254,19 @@ let major_gc_unreachable_final_blue
     ~(heap_reachable h_final roots x) ==>
     is_blue x h_final
 
+/// **After marking, white means unreachable**: an object of the marked heap
+/// that is not free is white exactly when it is not reachable from the roots
+/// in the heap marking started from.
+val mark_post_white_iff_unreachable :
+  (h_init: heap) -> (h_mark: heap) -> (roots: seq obj_addr) -> (fp: U64.t) -> (x: obj_addr) ->
+  Lemma
+    (requires mark_post h_init h_mark roots fp /\
+              (let g = create_graph h_init in
+               let roots' = HeapGraph.coerce_to_vertex_list roots in
+               graph_wf g /\ is_vertex_set roots' /\ subset_vertices roots' g.vertices) /\
+              Seq.mem x (objects zero_addr h_mark) /\ ~(is_blue x h_mark))
+    (ensures is_white x h_mark <==> ~(heap_reachable h_init roots x))
+
 /// `mark h_init st` satisfies mark_post under the standard GC preconditions
 val mark_satisfies_mark_post :
   (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->

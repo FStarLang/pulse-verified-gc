@@ -233,3 +233,11 @@ val alloc_keeps (g: heap) (fp: U64.t) (c0: U64.t) (wz: nat) (tag: tag_t) (y: obj
                     in_use (free_incremental c0) r.SA.heap_out y /\
                     y <> r.SA.obj_out))
 
+
+/// The non-free objects after an allocation are those before, and the new
+/// object: an allocation makes no other block non-free.
+val alloc_in_use (g: heap) (fp: U64.t) (c0: U64.t) (wz: nat) (tag: tag_t) (y: obj_addr)
+  : Lemma (requires sweep_shape g fp c0)
+          (ensures (let r = AC.alloc_phase g fp (SA.Sweeping c0) wz tag in
+                    in_use (free_incremental c0) r.SA.heap_out y ==
+                      (in_use (free_incremental c0) g y || (r.SA.obj_out <> 0UL && y = r.SA.obj_out))))

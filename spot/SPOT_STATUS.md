@@ -500,3 +500,31 @@ and the minor collection at the sweep's phase
 (`GC.Gen.SweepPhase.Minor.collect_at`) keeps the sweep phase at the same
 cursor with `P` still pending free
 (`GC.Gen.SweepPhase.Minor.minor_keeps_sweep_phase`).
+
+## A sweep cycle frees what marking left dead
+
+`GC.SPOT.SweepPhaseFreedByEnd` applies the sweep phase's completeness
+(`GC.Spec.SweepPhase.Completeness`) to a concrete cycle.  The marked heap is
+`SweepPhasePendingFree`'s heap after stage 3 (nothing marked; `G` and `P`
+white, so dead at mark):
+
+1. start the sweep: every non-free block is a survivor of marking, nothing is
+   new (`survivor_or_new_start`);
+2. a slice of two steps, in which the free block at the start absorbs `G`
+   (`survivor_or_new_steps`);
+3. a minor collection at the sweep's phase of an empty nursery
+   (`GC.Gen.SweepPhase.Completeness.survivor_or_new_minor`; it promotes
+   nothing, `nothing_promoted_after_reset`);
+4. the rest of the sweep, one step per heap word (`sweep_steps_done`).
+
+`freed_by_end_spot`: the sweep is finished and both `G` and `P` are `freed`
+(`freed_by_end`); `P` was still pending free after the minor collection, so it
+is the finishing sweep that frees it.  No allocation runs, so no address is
+new and the conclusion is unconditional.
+
+`GC.SPOT.IncrementalCycle` composes the Pulse entry points `gen_gc_start`,
+`sweep_slice` and `finish_sweep`; on success `cycle_frees_dead` shows every
+object white in the marked heap is freed at the end
+(`phase_account_slice`, `phase_account_idle`), and, given the graph
+hypotheses (`roots_in_graph`, which `gen_gc_start`'s postcondition does not
+carry), every object unreachable from the roots at mark time.

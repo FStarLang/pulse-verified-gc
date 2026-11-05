@@ -161,6 +161,11 @@ let mark_post_elim_fp h_init h_mark roots fp =
 
 let mark_post_elim_blue h_init h_mark roots fp = ()
 
+let mark_post_white_iff_unreachable h_init h_mark roots fp x =
+  graph_vertices_mem h_init x;
+  color_exhaustive x h_mark;
+  colors_exclusive x h_mark
+
 /// `mark h_init st` satisfies mark_post
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let mark_satisfies_mark_post h_init st roots fp =

@@ -113,6 +113,7 @@ SPOT_SRC = \
   GC.SPOT.NoScanMinor.fst \
   GC.SPOT.FusedSweepSteps.fst \
   GC.SPOT.SweepPhasePendingFree.fst \
+  GC.SPOT.SweepPhaseFreedByEnd.fst \
   GC.SPOT.IncrementalCycle.fst
 
 # All checked files land in one shared cache, so targets are derived from the

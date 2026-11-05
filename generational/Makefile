@@ -74,9 +74,11 @@ checked = $(addprefix $(CACHE_DIR)/,$(addsuffix .checked,$(notdir $(1))))
 # GC.Gen.SweepPhase (promotion mid-sweep; the program's own events are
 # GC.Spec.SweepPhase.Mutator, reached through it),
 # GC.Gen.SweepPhase.Minor (a minor collection mid-sweep) and
-# GC.Gen.SweepPhase.Safety (safety over the sweep phase) are theorems about
-# it; the first two are also reached through it, Safety only as a root.
-ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst impl/GC.Gen.Impl.Incremental.fsti impl/GC.Gen.Impl.Incremental.fst spec/GC.Gen.SweepPhase.fst spec/GC.Gen.SweepPhase.Minor.fst spec/GC.Gen.SweepPhase.Safety.fst
+# GC.Gen.SweepPhase.Safety (safety over the sweep phase) and
+# GC.Gen.SweepPhase.Completeness (a minor collection mid-sweep, for the sweep
+# phase's completeness) are theorems about it; the first two are also reached
+# through it, Safety and Completeness only as roots.
+ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst impl/GC.Gen.Impl.Incremental.fsti impl/GC.Gen.Impl.Incremental.fst spec/GC.Gen.SweepPhase.fst spec/GC.Gen.SweepPhase.Minor.fst spec/GC.Gen.SweepPhase.Safety.fst spec/GC.Gen.SweepPhase.Completeness.fst
 ROOT_CHECKED = $(call checked,$(ROOT_SRC))
 ALL_CHECKED  = $(call checked,$(ALL_SRC))
 

@@ -665,3 +665,13 @@ let alloc_keeps (g: heap) (fp: U64.t) (c0: U64.t) (wz: nat) (tag: tag_t) (y: obj
     found_in_use g fp c0 wz tag p cur pc y;
     found_shape g fp c0 wz tag p cur pc
 #pop-options
+
+let alloc_in_use g fp c0 wz tag y =
+  sweep_shape_elim g fp c0;
+  let r = AC.alloc_phase g fp (SA.Sweeping c0) wz tag in
+  if r.SA.obj_out = 0UL then alloc_none g fp c0 wz tag
+  else begin
+    let (p, cur, pc) = alloc_found g fp c0 wz tag in
+    found_in_use g fp c0 wz tag p cur pc y;
+    found_shape g fp c0 wz tag p cur pc
+  end
