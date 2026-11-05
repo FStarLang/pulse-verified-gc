@@ -1309,8 +1309,31 @@ the other half of `held`; they are not part of the collector's state
 `Marking` yet, and `minor_collect` is not called at it (`minor_slots_ok`
 excludes it until M2d).  Nothing enters `Marking`.
 
-**Left for M2**: black allocation's fresh objects, and minor collection at
-`Marking`.
+**Allocation while marking** (`GC.Spec.MarkPhase.Alloc`, M2c).  A new
+object is black, and its fields are what the free block held until the
+runtime initialises them.  As the sweep's `fresh_ok`, the invariant then
+holds with the object *fresh* (`marking_fresh g held obj`): well-formedness
+counts it as free (`free_or_new obj`: nothing points at it, its fields are
+unconstrained) and the weak tri-colour clause skips it as a source
+(`fresh_tri_color`); being black, it lies on no path the marker follows, so
+its fields do not affect what the marker will reach.
+
+- `marking_alloc`: first-fit at `Marking` from an ascending list leaves the
+  invariant with the new object fresh; it frees nothing (`keeps_blocks`:
+  every non-free block keeps its header and fields), keeps the list
+  ascending, and the new object was not a non-free block before.
+- `marking_fresh_write`: writes into the fresh object's body keep it fresh.
+- `marking_fresh_close`: once every field is storable and its target not
+  white, held, or one the marker will reach (`fields_ok`; a value the program
+  holds), `marking_inv` holds.
+- For the minor collection's generic theorem, a block allocated at `Marking`
+  is not free under `free_stw` (`GC.Gen.Promote.free_stw_allocations_not_free`,
+  any phase: black is not blue).
+
+The frame lemmas `keeps_blocks_resolve`/`_edges`/`_reach` are about any change
+that keeps every non-free block, for any admissible definition of free.
+
+**Left for M2**: minor collection at `Marking`.
 
 ## The minor collector
 

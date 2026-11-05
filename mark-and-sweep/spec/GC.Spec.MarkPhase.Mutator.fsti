@@ -45,6 +45,35 @@ module SPI = GC.Spec.SweepPhase.Intrinsic
 module SPM = GC.Spec.SweepPhase.Mutator
 
 /// ---------------------------------------------------------------------------
+/// Headers and edges
+/// ---------------------------------------------------------------------------
+
+/// Everything read off a header is the same when the header is.
+val header_kept_facts (g g': heap) (y: obj_addr)
+  : Lemma (requires read_word g' (hd_address y) == read_word g (hd_address y))
+          (ensures (is_black y g' <==> is_black y g) /\ (is_white y g' <==> is_white y g) /\
+                   (is_gray y g' <==> is_gray y g) /\ (is_blue y g' <==> is_blue y g) /\
+                   is_no_scan y g' == is_no_scan y g /\ is_closure y g' == is_closure y g /\
+                   wosize_of_object y g' == wosize_of_object y g)
+
+/// An edge of `s` in `g'` is one in `g`, or ends where `q` holds, when every
+/// pointer field of `s` in `g'` is the same in `g` (with the same resolution)
+/// or resolves where `q` holds.
+val field_edge_transfer (g g': heap) (s: obj_addr) (q: obj_addr -> prop) (t: obj_addr)
+  : Lemma (requires blocks_fit g /\ blocks_fit g' /\
+                    Seq.mem s (objects zero_addr g) /\ Seq.mem s (objects zero_addr g') /\
+                    read_word g' (hd_address s) == read_word g (hd_address s) /\
+                    field_edge g' s t /\
+                    (~(is_no_scan s g) ==>
+                     (forall (j: nat). j < U64.v (wosize_of_object s g) /\ U64.v s + j * 8 + 8 <= heap_size ==>
+                       (let w = read_word g' (U64.uint_to_t (U64.v s + j * 8)) in
+                        is_pointer w ==>
+                        (read_word g (U64.uint_to_t (U64.v s + j * 8)) == w /\
+                         resolve_object (w <: obj_addr) g == resolve_object (w <: obj_addr) g') \/
+                        q (resolve_object (w <: obj_addr) g')))))
+          (ensures field_edge g s t \/ q t)
+
+/// ---------------------------------------------------------------------------
 /// What a write changes
 /// ---------------------------------------------------------------------------
 
