@@ -49,7 +49,7 @@ let impl_matches_spec
 /// The same, with the phase the implementation's allocator holds -- the
 /// run's phase -- and the free list ascending, which the allocator needs to
 /// keep the phase record's caches the derived ones
-/// (`GC.Gen.SweptTail.alloc_caches`).
+/// (`GC.Spec.Allocator.Caches.alloc_caches`).
 let impl_matches_spec_at (ph: gc_phase)
   (ms: heap) (fp: U64.t)
   (farr: seq U64.t) (q: seq U64.t) (bk: nat)

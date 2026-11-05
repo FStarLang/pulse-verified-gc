@@ -13,7 +13,7 @@ module GC.Gen.Cheney.Steps
 
 open FStar.Seq
 module U64 = FStar.UInt64
-module AP = GC.Gen.AllocPhase
+module AP = GC.Spec.Allocator.Phase
 
 open GC.Spec.Base
 open GC.Spec.Heap

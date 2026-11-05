@@ -34,7 +34,7 @@ open GC.Gen.WriteBodyLemmas
 include GC.Spec.Phase
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
-module AP = GC.Gen.AllocPhase
+module AP = GC.Spec.Allocator.Phase
 
 /// ---------------------------------------------------------------------------
 /// Forwarding Map
@@ -75,11 +75,11 @@ let promoted_tag (minor: minor_state) (obj: U64.t) : GTot (t:U64.t{U64.v t < 256
 ///    OCaml's `caml_alloc_shr (wosize, tag)` does: the header is written once,
 ///    with the colour the phase gives it -- white outside a sweep; during one,
 ///    black in front of the cursor and white behind it -- carrying the tag
-///    (`GC.Gen.AllocPhase.alloc_at`)
+///    (`GC.Spec.Allocator.Phase.alloc_at`)
 /// 2. Copy field data from minor to major
 ///
 /// If major allocation fails (OOM), returns new_addr = 0.  At `Idle` the
-/// allocation is `alloc_spec` (`GC.Gen.AllocPhase.alloc_at_idle`).
+/// allocation is `alloc_spec` (`GC.Spec.Allocator.Phase.alloc_at_idle`).
 let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
                    (fp: U64.t) (wosize: nat{wosize > 0}) (ph: gc_phase)
   : GTot promote_one_result =

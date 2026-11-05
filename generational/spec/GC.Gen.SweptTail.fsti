@@ -1,24 +1,17 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.SweptTail - the sweep's caches across allocation and promotion
+/// GC.Gen.SweptTail - the sweep's caches across promotion
 /// ---------------------------------------------------------------------------
 ///
 /// The phase is the sweep's cursor alone; the implementation keeps the
 /// sweep's two caches beside it in the phase record, and its phase predicate
 /// says they are the ones derived from the current heap
 /// (`GC.Spec.SweepPhase.Intrinsic.state_at`, `GC.Impl.Allocator.is_phase`).
-/// This module is what keeps them so:
-///
-///   * **An allocation** (`alloc_caches`) only takes cells off the list or
-///     shrinks them in place, inside the block it takes, so the cursor stays a
-///     position of the walk and the fragment ending at it is the same.  When
-///     it takes the last cell behind the cursor -- `swept_tail`'s own -- the
-///     last cell behind the cursor is the cell before it on the ascending
-///     list: the allocator's in-place update (`caml_fl_merge`,
-///     `GC.Impl.Allocator.record_after_alloc`).
-///   * **The rest of a promotion** (the copy of the fields, `promote_heads`)
-///     and the pointer update after the promotions (`update_heads`) write
-///     no header, so they keep the walk and every header, and with them the
-///     derived caches (`GC.Spec.SweepPhase.Intrinsic.state_at_heads`).
+/// The allocation of a promotion keeps them so
+/// (`GC.Spec.Allocator.Caches.alloc_caches`, inside `GC.Impl.Allocator.allocate`);
+/// the rest of a promotion (the copy of the fields, `promote_heads`) and the
+/// pointer update after the promotions (`update_heads`) write no header, so
+/// they keep the walk and every header, and with them the derived caches
+/// (`GC.Spec.SweepPhase.Intrinsic.state_at_heads`).
 
 module GC.Gen.SweptTail
 
@@ -36,25 +29,8 @@ module U64 = FStar.UInt64
 module W = GC.Spec.Walk
 module FL = GC.Spec.FreeList
 module FLA = GC.Spec.FreeList.Ascending
-module AC = GC.Spec.Allocator.Cursor
-module AP = GC.Gen.AllocPhase
+module AP = GC.Spec.Allocator.Phase
 module Promote = GC.Gen.Promote
-
-/// **One allocation keeps the caches derived**: from an exact ascending free
-/// list, with the cursor `c` a position of the walk, the cursor is a
-/// position of the new walk, and the derived state after it is the one
-/// before with `swept_tail` moved back to the list predecessor of the block
-/// taken when that block was `swept_tail`'s own and leaves the list.
-val alloc_caches (g: heap) (fp: U64.t) (c: U64.t) (wz: nat) (tag: AP.tag_t)
-  : Lemma (requires FLA.fl_ascending g fp /\ W.reaches g zero_addr (U64.v c))
-          (ensures (let g' = (AC.alloc_phase g fp (Sweeping c) wz tag).GC.Spec.Allocator.heap_out in
-                    let (p, cur) = AC.alloc_choice g fp wz in
-                    let st = state_at g c in
-                    W.reaches g' zero_addr (U64.v c) /\
-                    state_at g' c ==
-                      { st with swept_tail =
-                          (if cur = st.swept_tail && AC.takes_off g cur wz then p
-                           else st.swept_tail) }))
 
 /// **The copy of a promotion** keeps the walk and every header of the heap
 /// the allocation left (and a failed promotion changes nothing).

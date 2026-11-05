@@ -27,7 +27,7 @@ module Fwd = GC.Gen.CheneyPreservation.Forwarding
 module Inj = GC.Gen.CheneyPreservation.Injectivity
 module NBO = GC.Gen.CheneyPreservation.NonBlueOrigin
 module CPF = GC.Gen.CheneyPreservation.Fields
-module NoBlueUtil = GC.Gen.NoBlueUtil
+module FieldTarget = GC.Spec.FieldTarget
 module IndDesc = FStar.IndefiniteDescription
 module FreeListShape = GC.Gen.FreeListShape
 module HeapGraph = GC.Spec.HeapGraph
@@ -89,16 +89,6 @@ let cheney_promote_in_use_origin ph free minor major fp roots x =
   end
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let wf_with_field free g src j =
-  wf_with_parts ();
-  let w : obj_addr = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
-  assert (is_pointer_to (read_word g (U64.uint_to_t (U64.v src + j * U64.v mword))) w);
-  in_use_not_blue free g src;
-  NoBlueUtil.field_pointer_points_to_nat g src w j;
-  points_to_target_not_free free g src w
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// Event 1: promotion
 /// ---------------------------------------------------------------------------
@@ -129,7 +119,7 @@ private let promoted_old_field (ph: gc_phase)
     Aux.header_eq_object_facts g major src;
     Frame.cheney_promote_frame_old_fields ph minor major fp roots src j;
     assert (read_word g field_addr == read_word major field_addr);
-    wf_with_field free major src j;
+    FieldTarget.wf_with_field free major src j;
     let w : obj_addr = read_word major field_addr in
     in_use_not_blue free major (resolve_object w major);
     Frame.cheney_promote_frame_target_header ph minor major fp roots w;
@@ -305,7 +295,7 @@ let update_pointers_with_preserves_wf free g fwd =
       if is_minor_pointer old_val && fwd old_val <> 0UL then
         update_pointers_with_transfer_target free g fwd ((fwd old_val) <: obj_addr)
       else if is_pointer old_raw then begin
-        wf_with_field free g src j;
+        FieldTarget.wf_with_field free g src j;
         update_pointers_with_transfer_target free g fwd (old_raw <: obj_addr)
       end
   in

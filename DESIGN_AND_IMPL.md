@@ -554,7 +554,7 @@ wz tag`: only the phase's colour rule enters it.  At `Idle` it is
 `alloc_spec g fp wz tag` (`alloc_phase_idle`); the new head and object never
 depend on the phase (`alloc_phase_fields`), and the heap is `alloc_spec`'s
 with the new header recoloured (`alloc_phase_heap`) -- which is how every
-idle-allocator fact holds at any phase (`GC.Gen.AllocPhase`, below).
+idle-allocator fact holds at any phase (`GC.Spec.Allocator.Phase`, below).
 
 The phase is the cursor alone, and allocation leaves it as it is.  During a
 sweep the phase *record* also caches `swept_tail` and `last_fragment`
@@ -600,7 +600,7 @@ cursor is a position of `g`'s walk and its caches are the ones derived from
 allocator at `is_phase` is `GC.Gen.Impl.Promote.allocate_at_phase`: from an
 exact ascending free list (while sweeping), `record_after_alloc`'s cache is
 the derived one of the heap the allocation leaves
-(`GC.Gen.SweptTail.alloc_caches`), so `is_phase phase 's ph` becomes
+(`GC.Spec.Allocator.Caches.alloc_caches`), so `is_phase phase 's ph` becomes
 `is_phase phase s2 ph` -- the same phase.
 
 The precondition asks nothing of the heap. The allocator only reads headers
@@ -800,7 +800,7 @@ the result is exactly `fused_sweep_coalesce h_mark fp`.
 Because the list is kept, the collector needs it ascending and exact on entry.
 `gc_precondition_with_roots` asks for it, root darkening keeps it, and the
 generational invariant `major_heap_shape` carries it: the allocator keeps it
-(`GC.Gen.AllocAscending`: a right-justified split keeps the remainder's
+(`GC.Spec.Allocator.Ascending`: a right-justified split keeps the remainder's
 address, an exact fit unlinks the block from its unique predecessor), and so
 do promotion and the pointer rewrite (`GC.Gen.FreeListAscending`). First-fit
 on an ascending list prefers low addresses (OCaml's allocation policy 1).
@@ -821,7 +821,7 @@ trusted obligations).
 At `Sweeping c` the allocator colours by position: an object allocated in
 front of the cursor (header at or above it) is black, so the sweep keeps it;
 one behind it is white.  The block it hands back is a `new_block`
-(`GC.Gen.SweepPhase.alloc_phase_new_block`, from an exact ascending list
+(`GC.Spec.SweepPhase.Mutator.alloc_phase_new_block`, from an exact ascending list
 alone): not a non-free block before, of the requested size and tag, black at
 or in front of the cursor and white behind it, so never pending free.
 
@@ -844,7 +844,7 @@ allocator when it takes the cached cell off the list
 (`GC.Impl.Allocator.record_after_alloc`; `alloc_choice` names the block
 first-fit takes and its list predecessor) -- and its phase predicate says the
 stored values are the derived ones (`is_phase`, above; kept by allocation,
-`GC.Gen.SweptTail.alloc_caches`, and by anything that keeps the walk and the
+`GC.Spec.Allocator.Caches.alloc_caches`, and by anything that keeps the walk and the
 headers, `state_at_heads`).
 
 **The invariant is intrinsic** (`GC.Spec.SweepPhase.Intrinsic`): it is about
@@ -904,8 +904,8 @@ the same blocks with the same contents, so well-formedness carries over
   marked heap), and `sweep_inv_stw_end` gives `FusedSweep.End.sweep_post`
   (`fused_sweep_post` for the whole pass).
 
-**The program's events keep it** (`GC.Gen.SweepPhase`), each leaving the
-pending-free set unchanged:
+**The program's events keep it** (`GC.Spec.SweepPhase.Mutator`; promotion,
+`GC.Gen.SweepPhase`), each leaving the pending-free set unchanged:
 
 - allocation (`alloc_sweep_phase`): first-fit at `Sweeping c`; the phase stays
   `Sweeping c`.  A new object is never pending free (`new_block`, by
@@ -916,7 +916,7 @@ pending-free set unchanged:
   writes into it keep it fresh (`fresh_write`), and once every field holds a
   storable value it closes (`fresh_close`).  The allocation-shape facts behind
   it (the block first-fit takes, the words it writes, its walk, cells and
-  list) are `GC.Gen.AllocShape`;
+  list) are `GC.Spec.Allocator.Shape`;
 - a program write (`write_sweep_phase`) under
   `program_write (free_incremental c)`: a word of a non-free object that is
   not a closure, storing a value that is not a pointer or points (resolved)
@@ -1320,13 +1320,13 @@ The whole minor collection takes the phase: the Cheney state carries it
 `ph`, and the stop-the-world `cheney_collect_spec` is the `Idle` instance for
 `free_stw`.  The lemmas about `promote_object` hold at any phase: the phase
 changes nothing but the new header's colour (`AC.alloc_phase_heap`), so
-`GC.Gen.AllocPhase` states the idle allocator's facts at any phase
+`GC.Spec.Allocator.Phase` states the idle allocator's facts at any phase
 (`alloc_at_*`, from `recoloured`: the same walk, sizes, tags, free blocks and
 every other word), and `promote_object_recoloured` says the same of a whole
 promotion.  At `Idle`, `AP.alloc_at Idle` is `alloc_spec` (an SMT pattern).
 
 The major allocator is size-exact: the allocated header declares exactly the
-requested `wosize` (`GC.Gen.AllocProps.alloc_spec_obj_wosize_exact_part1`; see
+requested `wosize` (`GC.Spec.Allocator.Props.alloc_spec_obj_wosize_exact_part1`; see
 `docs/allocator-exactness.md`), so the copied fields fill the promoted object
 and there is no extra word to account for.
 
@@ -1881,7 +1881,7 @@ free list exact and ascending, hence `gen_alloc`'s mid-sweep precondition.
 `gen_phase gh s2 'ph` out); `gen_gc` requires and ensures `gen_phase gh _
 Ph.Idle`.  Promotion (`promote_one`, through the Cheney functions) allocates
 with `allocate_at_phase`, which keeps `is_phase` from the heap before to the
-heap after (`GC.Gen.SweptTail.alloc_caches`), and the copy of the fields
+heap after (`GC.Spec.Allocator.Caches.alloc_caches`), and the copy of the fields
 writes no header (`promote_heads`); the specification's run is at `'ph`
 throughout, and the Cheney loops relate the heap and record they hold to the
 specification's state by `Sim.impl_matches_spec_at ph ms ...`: the heap is the
@@ -2180,7 +2180,7 @@ exact, ascending input list, all read off the sweep's end lemma
 **The free list is kept, so it must be invariant.**  The sweep needs the list
 it is handed to be exact and ascending, which is why the shape invariant
 carries `fl_ascending` and why every operation between collections must keep it:
-allocation (`GC.Gen.AllocAscending`), promotion and the pointer rewrite
+allocation (`GC.Spec.Allocator.Ascending`), promotion and the pointer rewrite
 (`GC.Gen.FreeListAscending`), and root darkening
 (`GC.Impl.MarkBoundedPrecondition`).  An ascending list is acyclic and bounded
 by the number of 8-aligned heap addresses, which discharges the allocator's two

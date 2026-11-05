@@ -1,5 +1,5 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.AllocAscending - allocation keeps the free list ascending
+/// GC.Spec.Allocator.Ascending - allocation keeps the free list ascending
 /// ---------------------------------------------------------------------------
 ///
 /// First-fit allocation walks the list from its head and takes the first block
@@ -9,10 +9,10 @@
 /// cell) is relinked to its successor.  Either way the cells stay linked in
 /// address order (`GC.Spec.FreeList.Ascending.fl_ascending`).
 ///
-/// This lives with the generational code because it reuses the allocator frame
-/// lemmas of `GC.Gen.AllocExact` and `GC.Gen.AllocProps`.
+/// It reuses the allocator frame lemmas of `GC.Spec.Allocator.Exact` and
+/// `GC.Spec.Allocator.Props`.
 
-module GC.Gen.AllocAscending
+module GC.Spec.Allocator.Ascending
 
 open GC.Spec.Base
 open GC.Spec.Fields

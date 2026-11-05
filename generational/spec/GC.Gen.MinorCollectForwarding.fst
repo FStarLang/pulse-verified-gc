@@ -46,7 +46,7 @@ module MCFNP = GC.Gen.MinorCollectForwarding.NonPointerFields
 module RT = GC.Gen.RefTable
 module CE = GC.Gen.CheneyGeneric
 module MCFR = GC.Gen.MinorCollectForwarding.Reflection
-module NoBlueUtil = GC.Gen.NoBlueUtil
+module FieldTarget = GC.Spec.FieldTarget
 /// An *unforwarded* nursery target of a major field cannot be interior: the
 /// write barrier files every nursery pointer stored in a major field --- in the
 /// exact, possibly interior, form in which it is stored --- as a Cheney root,
@@ -164,7 +164,7 @@ private let old_major_field_pointer_target_not_free
     assert (U64.v far == U64.v src + j * 8);
     assert (far == U64.uint_to_t (U64.v src + j * 8));
     assert (is_pointer_to (read_word major (far <: hp_addr)) target);
-    NoBlueUtil.field_pointer_target_not_free_nat free major src target j
+    FieldTarget.field_pointer_target_not_free_nat free major src target j
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0"

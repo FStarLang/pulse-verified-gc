@@ -1,4 +1,4 @@
-module GC.Gen.AllocAscending
+module GC.Spec.Allocator.Ascending
 
 open FStar.Seq
 open GC.Spec.Base
@@ -11,8 +11,8 @@ module U64 = FStar.UInt64
 module FL = GC.Spec.FreeList
 module FLA = GC.Spec.FreeList.Ascending
 module AllocLemmas = GC.Spec.Allocator.Lemmas
-module AE = GC.Gen.AllocExact
-module AP = GC.Gen.AllocProps
+module AE = GC.Spec.Allocator.Exact
+module AP = GC.Spec.Allocator.Props
 module P1 = GC.Spec.Allocator.Lemmas.Part1
 module Header = GC.Lib.Header
 
@@ -39,21 +39,6 @@ private let cell_same_header (g g': heap) (x: obj_addr)
     is_blue_iff x g; is_blue_iff x g';
     wosize_of_object_spec x g; wosize_of_object_spec x g'
 
-/// Two distinct heap objects: neither's address is the other's header word,
-/// and their link words are a whole word apart.  (As in `GC.Gen.AllocExact`.)
-#push-options "--z3rlimit 40"
-private let two_objects_apart (g: heap) (a b: obj_addr)
-  : Lemma (requires Seq.mem a (objects zero_addr g) /\ Seq.mem b (objects zero_addr g) /\
-                    a <> b /\ U64.v (wosize_of_object a g) >= 1)
-          (ensures (U64.v a <> U64.v (hd_address b)) /\
-                   (U64.v a + U64.v mword <= U64.v b \/ U64.v b + U64.v mword <= U64.v a) /\
-                   (U64.v a + U64.v mword <= U64.v (hd_address b) \/
-                    U64.v (hd_address b) + U64.v mword <= U64.v a))
-  = hd_address_spec a; hd_address_spec b;
-    if U64.v a < U64.v b then objects_separated zero_addr g a b
-    else objects_separated zero_addr g b a
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// The found arm: headers
 /// ---------------------------------------------------------------------------
@@ -69,7 +54,7 @@ private let prev_write_header (g: heap) (prev: U64.t) (v: U64.t) (a: obj_addr)
     hd_address_spec a; hd_address_spec p;
     if a = p then read_write_different g (prev <: hp_addr) (hd_address a) v
     else begin
-      two_objects_apart g p a;
+      AE.two_objects_apart g p a;
       read_write_different g (prev <: hp_addr) (hd_address a) v
     end
 #pop-options
@@ -317,7 +302,7 @@ private let rec search_asc (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat
             cell_elim g prev;
             FLA.fl_cell_facts g prev;
             FLA.fl_ascending_next_cell g head prev;
-            two_objects_apart g (prev <: obj_addr) obj;
+            AE.two_objects_apart g (prev <: obj_addr) obj;
             alloc_search_found_prev g head prev cur wz fuel Idle tag;
             found_case g head prev obj wz tag
           end

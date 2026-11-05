@@ -6,7 +6,7 @@ module GC.Gen.PromoteUpdate.BlueProm
 
 open FStar.Seq
 module U64 = FStar.UInt64
-module AP = GC.Gen.AllocPhase
+module AP = GC.Spec.Allocator.Phase
 module U8 = FStar.UInt8
 
 open GC.Spec.Base

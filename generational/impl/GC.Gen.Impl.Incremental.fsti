@@ -50,7 +50,7 @@ module FS = GC.Spec.FusedSweep
 module SPI = GC.Spec.SweepPhase.Intrinsic
 module SL = GC.Spec.SweepPhase.Slice
 module GI = GC.Gen.Incremental
-module GSP = GC.Gen.SweepPhase
+module Mut = GC.Spec.SweepPhase.Mutator
 module AC = GC.Spec.Allocator.Cursor
 module SA = GC.Spec.Allocator
 
@@ -85,18 +85,18 @@ let gc_state (gh: gen_heap_t) (d: minor_heap) (b: U64.t) (s: heap_state) (fp: U6
 /// it, and the program's events in between keep it:
 ///
 ///   * **Allocation mid-sweep** (`gen_alloc_major`, or the allocator called
-///     directly): the new object is *fresh* (`GSP.fresh_ok`: the sweep phase
+///     directly): the new object is *fresh* (`Mut.fresh_ok`: the sweep phase
 ///     except that its fields are uninitialised and nothing points at it).
 ///     The runtime initialises every field of a block it allocates with a
 ///     storable value (an integer, or a pointer to a non-free object --
 ///     reachable objects are never pending free) before the
-///     next collector call; `GSP.fresh_write` and `GSP.fresh_close` then give
+///     next collector call; `Mut.fresh_write` and `Mut.fresh_close` then give
 ///     back the sweep phase.  Idle, the obligation is today's: the fields are
 ///     initialised before the next collection.
-///   * **Field writes** (`caml_modify`, `caml_initialize`): `GSP.program_write`
+///   * **Field writes** (`caml_modify`, `caml_initialize`): `Mut.program_write`
 ///     -- a word of the body of a non-free object that is not a closure, and
 ///     a value that is not a pointer or points at a non-free object.
-///     `GSP.write_sweep_phase` keeps the sweep phase.  The write barrier
+///     `Mut.write_sweep_phase` keeps the sweep phase.  The write barrier
 ///     records every major field that gets a nursery pointer (the remembered
 ///     set below).
 ///   * **Nursery allocation** keeps the nursery's shape and the
@@ -190,23 +190,23 @@ fn minor_collect_any_phase (gh: gen_heap_t)
 /// What a major allocation gives: the allocator's spec at the phase
 /// (`AC.alloc_phase`; idle, `alloc_spec`), and mid-sweep, from the collector's
 /// state: either nothing changed (no block fits) or the new object is
-/// `GSP.new_block` and *fresh* (`GSP.fresh_ok`) at the same cursor: the
+/// `Mut.new_block` and *fresh* (`Mut.fresh_ok`) at the same cursor: the
 /// runtime initialises its fields before the next collector call (see above).
 let alloc_major_post (ph: Ph.gc_phase) (minor: minor_state) (s: heap_state) (fp: U64.t)
-    (wz: nat) (tag: GSP.tag_t) (obj: U64.t) (s2: heap_state) (fp2: U64.t) : prop =
+    (wz: nat) (tag: Mut.tag_t) (obj: U64.t) (s2: heap_state) (fp2: U64.t) : prop =
   let ar = AC.alloc_phase s fp ph wz tag in
   s2 == ar.SA.heap_out /\ fp2 == ar.SA.fp_out /\ obj == ar.SA.obj_out /\
   (forall (c: U64.t).
      ph == Ph.Sweeping c /\ GI.phase_shape minor s fp ph /\ tag <> GC.Spec.Object.infix_tag ==>
      (obj == 0UL ==> s2 == s /\ fp2 == fp /\ GI.phase_shape minor s2 fp2 ph) /\
-     (obj <> 0UL ==> GSP.new_block s s2 c obj wz tag /\ GSP.fresh_ok s2 fp2 c (obj <: obj_addr)))
+     (obj <> 0UL ==> Mut.new_block s s2 c obj wz tag /\ Mut.fresh_ok s2 fp2 c (obj <: obj_addr)))
 
 /// **Allocate in the major heap** at the collector's phase (`caml_alloc_shr`):
 /// the free-list head is updated in place, and the phase stays as it is (its
 /// record's cached `swept_tail` follows the allocation).  Mid-sweep the free
-/// list is exact and ascending (as `GSP.fresh_ok` and the sweep phase say).
+/// list is exact and ascending (as `Mut.fresh_ok` and the sweep phase say).
 /// Returns the object, or 0 when no free block fits.
-fn gen_alloc_major (gh: gen_heap_t) (wosize: U64.t) (tag: GSP.tag_t)
+fn gen_alloc_major (gh: gen_heap_t) (wosize: U64.t) (tag: Mut.tag_t)
   requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph **
            pure (U64.v wosize >= 1 /\
                  (Ph.Sweeping? 'ph ==> GC.Spec.FreeList.Ascending.fl_ascending 's 'fp))

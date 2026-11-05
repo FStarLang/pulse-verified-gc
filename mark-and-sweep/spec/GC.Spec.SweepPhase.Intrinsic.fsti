@@ -30,8 +30,9 @@
 /// Everything but well-formedness is `sweep_shape`: facts about the walk,
 /// the headers and the free list, which any change that keeps the walk and
 /// the headers keeps (`shape_transport`).  The program's events are in
-/// `GC.Gen.SweepPhase`, a minor collection mid-sweep in
-/// `GC.Gen.SweepPhase.Minor`, and safety in `GC.Gen.SweepPhase.Safety`.
+/// `GC.Spec.SweepPhase.Mutator`, promotion in `GC.Gen.SweepPhase`, a minor
+/// collection mid-sweep in `GC.Gen.SweepPhase.Minor`, and safety in
+/// `GC.Gen.SweepPhase.Safety`.
 ///
 /// A sweep step frees only blocks pending free and the pending-free set only
 /// shrinks.  That the blocks pending free are among the white objects marking

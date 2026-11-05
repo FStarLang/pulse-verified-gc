@@ -1,5 +1,5 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.AllocShape - what one first-fit allocation does to the heap
+/// GC.Spec.Allocator.Shape - what one first-fit allocation does to the heap
 /// ---------------------------------------------------------------------------
 ///
 /// Under an exact ascending free list, the allocation at any phase
@@ -11,10 +11,10 @@
 /// `at_new_blocks`), its cells (`at_cells`) and its list (`at_list`).
 ///
 /// These are the facts the sweep phase's allocation lemmas
-/// (`GC.Gen.SweepPhase`) and the sweep's caches after an allocation
-/// (`GC.Gen.SweptTail`) are proved from.
+/// (`GC.Spec.SweepPhase.Mutator`) and the sweep's caches after an allocation
+/// (`GC.Spec.Allocator.Caches`) are proved from.
 
-module GC.Gen.AllocShape
+module GC.Spec.Allocator.Shape
 
 open FStar.Seq
 open GC.Spec.Base
@@ -31,7 +31,7 @@ module AC = GC.Spec.Allocator.Cursor
 module SA = GC.Spec.Allocator
 module FL = GC.Spec.FreeList
 module FLA = GC.Spec.FreeList.Ascending
-module AA = GC.Gen.AllocAscending
+module AA = GC.Spec.Allocator.Ascending
 module ALH = GC.Spec.Allocator.Lemmas.Header
 module ALC = GC.Spec.Allocator.Lemmas.Core
 module Header = GC.Lib.Header

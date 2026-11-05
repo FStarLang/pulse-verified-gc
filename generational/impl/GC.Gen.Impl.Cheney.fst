@@ -45,7 +45,7 @@ module CheneyBFS = GC.Gen.CheneyBFS
 module Sim = GC.Gen.Cheney.Sim
 module SimOne = GC.Gen.Cheney.SimOne
 module GR = Pulse.Lib.GhostReference
-module AllocProps = GC.Gen.AllocProps
+module AllocProps = GC.Spec.Allocator.Props
 module ST = GC.Gen.SweptTail
 module FLA = GC.Spec.FreeList.Ascending
 
@@ -89,7 +89,7 @@ let infix_fwd_no_overflow (parent_fwd delta: nat)
 let promote_new_addr_bound (ms: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0}) (ph: GC.Spec.Phase.gc_phase)
   : Lemma (ensures (let res = PromoteSpec.promote_object ms major obj fp wz ph in
                     res.new_addr <> 0UL ==> U64.v res.new_addr < heap_size))
-  = GC.Gen.AllocPhase.alloc_at_obj_valid ph major fp wz (PromoteSpec.promoted_tag ms obj)
+  = GC.Spec.Allocator.Phase.alloc_at_obj_valid ph major fp wz (PromoteSpec.promoted_tag ms obj)
 
 /// ---------------------------------------------------------------------------
 /// forward_if_minor: forward a single potential minor pointer

@@ -12,7 +12,7 @@ module GC.Gen.Cheney.Dense
 
 open FStar.Seq
 module U64 = FStar.UInt64
-module AP = GC.Gen.AllocPhase
+module AP = GC.Spec.Allocator.Phase
 module U8 = FStar.UInt8
 
 open GC.Spec.Base
@@ -27,7 +27,7 @@ open GC.Gen.Promote
 open GC.Gen.WriteBodyLemmas
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
-module AllocProps = GC.Gen.AllocProps
+module AllocProps = GC.Spec.Allocator.Props
 module AD = GC.Spec.Allocator.Dense
 module SA = GC.Spec.Allocator
 module Part1 = GC.Spec.Allocator.Lemmas.Part1

@@ -21,7 +21,7 @@
 /// (`phase_free`: `free_stw` idle, `free_incremental c` mid-sweep):
 /// `phase_shape_collection` for its entry shape, `minor_keeps_phase_shape`
 /// for what it leaves mid-sweep.
-/// The program's events (allocation and its initialisation, field writes) are `GC.Gen.SweepPhase`'s.
+/// The program's events (allocation and its initialisation, field writes) are `GC.Spec.SweepPhase.Mutator`'s.
 
 module GC.Gen.Incremental
 

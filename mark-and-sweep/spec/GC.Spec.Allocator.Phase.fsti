@@ -1,5 +1,5 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.AllocPhase - the allocator at a phase, against the idle allocator
+/// GC.Spec.Allocator.Phase - the allocator at a phase, against the idle allocator
 /// ---------------------------------------------------------------------------
 ///
 /// A minor collection allocates its promoted copies at the collector's phase
@@ -14,7 +14,7 @@
 /// the idle ones and `recoloured` (a heap with some non-free headers
 /// recoloured: the same walk, sizes, tags, free blocks and every other word).
 
-module GC.Gen.AllocPhase
+module GC.Spec.Allocator.Phase
 
 open FStar.Seq
 open GC.Spec.Base

@@ -73,7 +73,7 @@ let is_phase (r: R.ref phase_state) (g: SpecBase.heap) (ph: gc_phase) : slprop =
 /// sweeping, when the allocation takes `swept_tail`'s own cell off the list
 /// (`AC.takes_off`), `swept_tail` moves to the cell before it on the list, as
 /// `caml_fl_merge` does; nothing else changes.  That this keeps the caches
-/// the derived ones is `GC.Gen.SweptTail.alloc_caches`.
+/// the derived ones is `GC.Spec.Allocator.Caches.alloc_caches`.
 noextract
 let record_after_alloc (g: SpecBase.heap) (fp: U64.t) (wz: nat) (v: phase_state) : GTot phase_state =
   let (p, c) = AC.alloc_choice g fp wz in

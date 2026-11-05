@@ -47,7 +47,7 @@ module Mark = GC.Spec.Mark
 module SweepInv = GC.Spec.SweepInv
 module SPE = GC.Spec.SweepPhase.Intrinsic.End
 module Oom = GC.Spec.Allocator.Oom
-module GSP = GC.Gen.SweepPhase
+module Mut = GC.Spec.SweepPhase.Mutator
 module SPM = GC.Gen.SweepPhase.Minor
 module AC = GC.Spec.Allocator.Cursor
 module SA = GC.Spec.Allocator
@@ -189,7 +189,7 @@ let alloc_where (g: heap) (fp: U64.t) (cur: U64.t) (e: nat)
           (ensures (let g' = (ar g fp cur).SA.heap_out in
                     let o = new_obj g fp cur in
                     is_obj o /\ U64.v o == e - 8 /\
-                    GSP.new_block g g' cur o 1 0UL /\
+                    Mut.new_block g g' cur o 1 0UL /\
                     sweep_shape g' (ar g fp cur).SA.fp_out cur /\
                     pos g' zero_addr /\ blue_at g' zero_addr /\ W.bnext g' zero_addr == e - 16 /\
                     (forall (x: nat). W.reaches g' zero_addr x /\ x < e - 16 ==> x == U64.v zero_addr) /\
@@ -199,14 +199,14 @@ let alloc_where (g: heap) (fp: U64.t) (cur: U64.t) (e: nat)
                     (forall (x: nat). e - 16 < x /\ x < e ==> ~(W.reaches g' zero_addr x))))
   = alloc_ok g fp cur e;
     sweep_inv_incremental_iff g fp cur;
-    GSP.alloc_sweep_shape g fp cur 1 0UL;
-    GSP.alloc_carved g fp cur 1 0UL;
+    Mut.alloc_sweep_shape g fp cur 1 0UL;
+    Mut.alloc_carved g fp cur 1 0UL;
     let g' = (ar g fp cur).SA.heap_out in
     let o : obj_addr = new_obj g fp cur in
     let p = hd_address o in
     hd_address_spec o;
     sweep_inv_incremental_elim g fp cur;
-    eliminate exists (q: hp_addr). GSP.carved_from g g' q p
+    eliminate exists (q: hp_addr). Mut.carved_from g g' q p
     with begin
       // the block it came from is the one at the start
       assert (q == zero_addr);
@@ -225,11 +225,11 @@ let init_heap (g: heap) (fp: U64.t) (cur: U64.t) : GTot heap =
 /// An object of one field holding 0 has storable fields.
 let one_field_storable (free: free_def) (g: heap) (x: obj_addr)
   : Lemma (requires U64.v (wosize_of_object x g) == 1 /\ U64.v x + 8 <= heap_size /\
-                    GSP.field_val g x 0 == 0UL)
-          (ensures GSP.fields_storable free g x)
+                    Mut.field_val g x 0 == 0UL)
+          (ensures Mut.fields_storable free g x)
   = let one (i: nat)
       : Lemma (i < U64.v (wosize_of_object x g) /\ U64.v x + i * 8 + 8 <= heap_size ==>
-               storable free g (GSP.field_val g x i))
+               storable free g (Mut.field_val g x i))
       = ()
     in
     FStar.Classical.forall_intro one
@@ -255,21 +255,21 @@ let alloc_init (g: heap) (fp: U64.t) (cur: U64.t) (e: nat)
                     ~(is_closure o g'') /\ ~(is_infix o g'')))
   = alloc_where g fp cur e;
     infix_tag_val ();
-    GSP.alloc_sweep_phase g fp cur 1 0UL;
+    Mut.alloc_sweep_phase g fp cur 1 0UL;
     let g' = (ar g fp cur).SA.heap_out in
     let fp' = (ar g fp cur).SA.fp_out in
     let o : obj_addr = new_obj g fp cur in
     let a : hp_addr = o in
     colour_of g' o;
-    assert (GSP.in_body g' o a);
-    GSP.fresh_write g' fp' cur o a 0UL;
+    assert (Mut.in_body g' o a);
+    Mut.fresh_write g' fp' cur o a 0UL;
     let g'' = write_word g' a 0UL in
     same_heads_facts g' g'';
     colour_of g'' o;
     read_write_same g' a 0UL;
-    assert (GSP.field_val g'' o 0 == 0UL);
+    assert (Mut.field_val g'' o 0 == 0UL);
     one_field_storable (free_incremental cur) g'' o;
-    GSP.fresh_close g'' fp' cur o;
+    Mut.fresh_close g'' fp' cur o;
     is_closure_spec o g''; closure_tag_val ();
     is_infix_spec o g''; infix_tag_val ()
 #pop-options
@@ -422,10 +422,10 @@ let stage4 (r: unit{room})
     is_infix_spec q g; infix_tag_val ();
     resolve_non_infix q g;
     infix_addr_wf_non_infix g (objects zero_addr g) q;
-    assert (GSP.program_write (free_incremental (cur1 r)) g p (p <: hp_addr) q);
-    GSP.write_sweep_phase g (fp3 r) (cur1 r) p (p <: hp_addr) q;
+    assert (Mut.program_write (free_incremental (cur1 r)) g p (p <: hp_addr) q);
+    Mut.write_sweep_phase g (fp3 r) (cur1 r) p (p <: hp_addr) q;
     sweep_inv_incremental_iff g (fp3 r) (cur1 r);
-    GSP.body_write_shape g (fp3 r) (cur1 r) p (p <: hp_addr) q;
+    Mut.body_write_shape g (fp3 r) (cur1 r) p (p <: hp_addr) q;
     read_write_same g (p <: hp_addr) q
 #pop-options
 

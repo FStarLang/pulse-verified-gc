@@ -13,7 +13,11 @@ Verified OCaml garbage collector formalized in **F\*** and **Pulse** (concurrent
   ZeroAddr, Stack, ArrayWord.
 - **mark-and-sweep/** — Sequential stop-the-world GC. `spec/` = `GC.Spec.Mark*`,
   `GC.Spec.FusedSweep*` (the sweep, its invariant and end lemma), `GC.Spec.Walk`,
-  `GC.Spec.FreeList*`, the `GC.Spec.Allocator*` family, and `GC.Spec.Correctness`.
+  `GC.Spec.FreeList*`, the `GC.Spec.Allocator*` family (with `GC.Spec.Allocator.Phase`,
+  the allocator at a collector phase from the idle one, and `GC.Spec.Allocator.Caches`,
+  the sweep's caches kept derived across an allocation), the sweep phase's
+  `GC.Spec.SweepPhase.*` (its invariant, and `Mutator`: the program's allocations and
+  writes mid-sweep), and `GC.Spec.Correctness`.
   `impl/` = the Pulse implementation (`GC.Impl`, `GC.Impl.MarkBounded`,
   `GC.Impl.Allocator`, `GC.Impl.FusedSweepCoalesce`, `GC.Impl.Fields`).  It has no
   extraction target of its own: the generational collector runs this code for its
@@ -24,11 +28,10 @@ Verified OCaml garbage collector formalized in **F\*** and **Pulse** (concurrent
   keeps in `GC.Gen.Cheney.Steps`), `GC.Gen.CheneyPreservation.*`, `GC.Gen.CheneyGeneric`,
   `GC.Gen.Promote*`, `GC.Gen.MinorCollectForwarding.*`, `GC.Gen.Reachability*`,
   `GC.Gen.ForwardingArray` (the forwarding array and the two update passes),
-  `GC.Gen.TwoPassEquiv*`, `GC.Gen.HeapInvariant`, `GC.Gen.AllocPhase` (the allocator at a
-  collector phase, from the idle one), and the incremental sweep's `GC.Gen.SweepPhase*`
-  (the program's events, a minor collection mid-sweep, safety), `GC.Gen.SweptTail`
-  (the sweep's caches kept derived across allocation and promotion) and `GC.Gen.Incremental` (the collector's state
-  by phase).  No spec module imports `GC.Gen.Impl.*`.
+  `GC.Gen.TwoPassEquiv*`, `GC.Gen.HeapInvariant`, and the incremental sweep's
+  `GC.Gen.SweepPhase*` (promotion mid-sweep, a minor collection mid-sweep, safety),
+  `GC.Gen.SweptTail` (the sweep's caches kept derived across promotion) and
+  `GC.Gen.Incremental` (the collector's state by phase).  No spec module imports `GC.Gen.Impl.*`.
   `impl/` = `GC.Gen.Impl`, `GC.Gen.Impl.MinorHeap`, `GC.Gen.Impl.Cheney`,
   `GC.Gen.Impl.Promote`, `GC.Gen.Impl.UpdatePtrs`, `GC.Gen.Impl.Incremental` (the
   incremental sweep's entry points). Also `ocaml-integration/` + `snapshot/`.

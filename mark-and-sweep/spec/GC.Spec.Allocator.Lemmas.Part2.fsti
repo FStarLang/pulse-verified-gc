@@ -43,7 +43,7 @@ val alloc_spec_preserves_wfh_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: 
 /// ---------------------------------------------------------------------------
 /// Frame facts for one block's allocation: every other object keeps its
 /// membership, its wosize >= 1, and its link word.  Exported for the
-/// free-list exactness proof in GC.Gen.AllocExact.
+/// free-list exactness proof in GC.Spec.Allocator.Exact.
 /// ---------------------------------------------------------------------------
 
 val alloc_split_fl_transfer_pre_part1

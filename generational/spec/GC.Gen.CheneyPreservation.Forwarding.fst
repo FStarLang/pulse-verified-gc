@@ -6,7 +6,7 @@ module GC.Gen.CheneyPreservation.Forwarding
 
 open FStar.Seq
 module U64 = FStar.UInt64
-module AP = GC.Gen.AllocPhase
+module AP = GC.Spec.Allocator.Phase
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -24,7 +24,7 @@ open GC.Lib.Header
 
 module Allocator = GC.Spec.Allocator
 module AllocLemmas = GC.Spec.Allocator.Lemmas
-module AllocProps = GC.Gen.AllocProps
+module AllocProps = GC.Spec.Allocator.Props
 
 /// ---------------------------------------------------------------------------
 /// Shared helpers

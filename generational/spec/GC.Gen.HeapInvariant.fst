@@ -37,7 +37,7 @@ let major_heap_shape (major: heap) (fp: U64.t) : prop =
   AllocLemmas.fl_chain_terminates major fp heap_words /\
   // The free list is exactly the blue blocks that can hold a link -- so an
   // allocation fails only when no free block is big enough
-  // (GC.Gen.AllocExact.alloc_succeeds_when_a_block_fits).
+  // (GC.Spec.Allocator.Exact.alloc_succeeds_when_a_block_fits).
   free_list_exact major fp /\
   // ... and in address order: the next fused sweep edits it in place
   // (GC.Spec.FreeList.Ascending, GC.Spec.FusedSweep).

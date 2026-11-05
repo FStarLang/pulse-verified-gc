@@ -6,7 +6,7 @@
 /// allocation, then writes confined to the new object) and the pointer
 /// rewrite after a minor collection (field writes to live objects).  Neither
 /// changes which blocks are free cells or what they link to, beyond what the
-/// allocator itself does (`GC.Gen.AllocAscending`), so the free list stays
+/// allocator itself does (`GC.Spec.Allocator.Ascending`), so the free list stays
 /// ascending (`GC.Spec.FreeList.Ascending.fl_ascending`) -- which is what the
 /// next fused sweep needs of it.
 

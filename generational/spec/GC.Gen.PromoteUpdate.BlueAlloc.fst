@@ -284,7 +284,7 @@ private let rec alloc_search_preserves_blfv
           = // the only object allocation creates is the allocated block, and
             // that one is white, so a BLUE `src` was already there
             (if not (Seq.mem (src <: U64.t) (objects zero_addr base)) then begin
-               GC.Gen.AllocProps.alloc_from_block_obj_not_blue base obj wz next_fp tag;
+               GC.Spec.Allocator.Props.alloc_from_block_obj_not_blue base obj wz next_fp tag;
                AllocLemmas.alloc_from_block_objects_backward_part1 base obj wz next_fp src tag;
                f_address_spec (mk_hp_addr ahn);
                is_blue_iff src heap_out;
@@ -343,7 +343,7 @@ private let rec alloc_search_preserves_blfv
               // block-level lemma above.
               wosize_of_object_bound src g;
               block_prev_separated g obj src bwz;
-              GC.Gen.AllocProps.alloc_from_block_read_frame
+              GC.Spec.Allocator.Props.alloc_from_block_read_frame
                 base obj wz next_fp (hd_address src) tag;
               (if prev_usable then begin
                  let prev_obj : obj_addr = prev_fp in
@@ -366,7 +366,7 @@ private let rec alloc_search_preserves_blfv
               // with a field of its own, `src`'s link word is a full word
               // clear of the block, so the header writes miss it too
               block_prev_separated_body g obj src bwz;
-              GC.Gen.AllocProps.alloc_from_block_read_frame base obj wz next_fp (src <: hp_addr) tag;
+              GC.Spec.Allocator.Props.alloc_from_block_read_frame base obj wz next_fp (src <: hp_addr) tag;
               if prev_usable && (src <: U64.t) = prev_fp then begin
                 read_write_same g (prev_fp <: hp_addr) new_rem_fp;
                 assert (read_word heap_out src == new_rem_fp)

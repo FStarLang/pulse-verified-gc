@@ -40,7 +40,7 @@ private let promote_step (ph: gc_phase) (minor: minor_state) : promote_keeps min
     promote_object_recoloured minor major obj fp wz ph;
     promote_object_preserves_alloc_invariants minor major obj fp wz Idle;
     let r0 = promote_object minor major obj fp wz Idle in
-    GC.Gen.AllocPhase.recoloured_fl_complete r0.major_out
+    GC.Spec.Allocator.Phase.recoloured_fl_complete r0.major_out
       (promote_object minor major obj fp wz ph).major_out r0.fp_out
 
 /// **Cheney promotion keeps the free list complete.**

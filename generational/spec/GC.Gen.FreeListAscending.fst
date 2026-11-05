@@ -2,7 +2,7 @@ module GC.Gen.FreeListAscending
 
 open FStar.Seq
 module U64 = FStar.UInt64
-module AP = GC.Gen.AllocPhase
+module AP = GC.Spec.Allocator.Phase
 open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
@@ -16,8 +16,8 @@ open GC.Gen.Cheney.Induction
 module FL = GC.Spec.FreeList
 module FLA = GC.Spec.FreeList.Ascending
 module AllocLemmas = GC.Spec.Allocator.Lemmas
-module AllocProps = GC.Gen.AllocProps
-module AA = GC.Gen.AllocAscending
+module AllocProps = GC.Spec.Allocator.Props
+module AA = GC.Spec.Allocator.Ascending
 module AE = GC.Gen.AllocExact
 module WB = GC.Gen.WriteBodyLemmas
 module Fwd = GC.Gen.CheneyPreservation.Forwarding

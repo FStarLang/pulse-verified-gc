@@ -64,7 +64,7 @@ fn read_minor_scan_wosize (minor: minor_heap_t) (obj: U64.t)
 /// **Allocate at the phase the record holds**, keeping its caches the ones
 /// derived from the heap (`Alloc.is_phase`): `Alloc.allocate`, whose in-place
 /// update of `swept_tail` (`Alloc.record_after_alloc`) is the derived one
-/// after the allocation (`GC.Gen.SweptTail.alloc_caches`) -- which needs the
+/// after the allocation (`GC.Spec.Allocator.Caches.alloc_caches`) -- which needs the
 /// free list exact and ascending while sweeping.  The phase stays as it is.
 inline_for_extraction
 fn allocate_at_phase (heap: heap_t) (fp: U64.t) (phase: R.ref Alloc.phase_state)

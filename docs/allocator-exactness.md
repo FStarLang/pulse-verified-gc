@@ -139,7 +139,7 @@ past (objects lie at least a word above `zero_addr`), and bailing on bounds
 ## 8. Allocation keeps the free list exact
 
 A full collection leaves the free list exact (`fused_exact`).
-`GC.Gen.AllocExact` shows allocation keeps it that way:
+`GC.Spec.Allocator.Exact` (formerly `GC.Gen.AllocExact`) shows allocation keeps it that way:
 
 | lemma | says |
 |---|---|
@@ -175,7 +175,7 @@ An exact free list comes from:
 | starting point | lemma |
 |---|---|
 | the pass the collector runs | `fused_entry` |
-| any heap satisfying the collector's invariant, i.e. anything `gen_gc` or `minor_collect_full` returns | `major_heap_shape_gives_entry` |
+| any heap satisfying the collector's invariant, i.e. anything `gen_gc` or `minor_collect_full` returns | `major_heap_shape_gives_entry` (`GC.Gen.AllocExact`, with the promotion and pointer-rewrite lemmas below) |
 
 The last needs the invariant to carry it: `major_heap_shape`
 (`GC.Gen.HeapInvariant`) now includes `fl_exact`, and both collections
@@ -183,7 +183,7 @@ re-establish it:
 
 | who changes the major heap | why the free list stays exact |
 |---|---|
-| full collection (`gen_gc`) | the fused sweep's end lemma (`GC.Gen.PostCollectionShape`); the sweep needs, and keeps, the list ascending, which the allocator (`GC.Gen.AllocAscending`) and the minor collection (`GC.Gen.FreeListAscending`) also keep |
+| full collection (`gen_gc`) | the fused sweep's end lemma (`GC.Gen.PostCollectionShape`); the sweep needs, and keeps, the list ascending, which the allocator (`GC.Spec.Allocator.Ascending`) and the minor collection (`GC.Gen.FreeListAscending`) also keep |
 | minor collection: promotion | each `promote_object` is an allocation (§8) followed by writes inside the promoted object (`promote_object_preserves_fl_complete`), carried through the Cheney traversal by `GC.Gen.CheneyFlComplete` |
 | minor collection: pointer rewrite | it changes no header and no field of a blue block (`update_major_pointers_preserves_fl_complete`) |
 | direct allocation | §8 (`alloc_spec_preserves_entry`) |

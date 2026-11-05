@@ -31,7 +31,7 @@ module CheneyInj = GC.Gen.CheneyPreservation.Injectivity
 module Forwarding = GC.Gen.CheneyPreservation.Forwarding
 module CG = GC.Gen.CombinedGraph
 module RBridge = GC.Gen.ReachabilityBridge
-module NoBlueUtil = GC.Gen.NoBlueUtil
+module FieldTarget = GC.Spec.FieldTarget
 module GenInv = GC.Gen.HeapInvariant
 module SpecBase = GC.Spec.Base
 module HeapGraph = GC.Spec.HeapGraph
@@ -356,7 +356,7 @@ let heap_graph_edge_to_pointer_field
         assert (U64.v src + jn * U64.v mword + U64.v mword <= heap_size);
         assert ((U64.v src + jn * U64.v mword) % U64.v mword == 0);
         assert (read_word g (U64.uint_to_t (U64.v src + jn * U64.v mword)) == w);
-        NoBlueUtil.field_pointer_target_not_free_nat free g src (w <: obj_addr) jn;
+        FieldTarget.field_pointer_target_not_free_nat free g src (w <: obj_addr) jn;
         assert (dst == resolve_object (w <: obj_addr) g);
         assert (Seq.mem dst (objects zero_addr g));
         objects_addresses_gt_start zero_addr g dst;

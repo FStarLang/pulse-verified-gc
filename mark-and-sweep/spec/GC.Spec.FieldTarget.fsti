@@ -1,8 +1,12 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.NoBlueUtil -- small field-level no-blue helpers
+/// GC.Spec.FieldTarget -- what a pointer field of a non-free block targets
 /// ---------------------------------------------------------------------------
+///
+/// Field-level forms of the pointer clauses of well-formedness
+/// (`GC.Spec.Fields.points_to_target_not_free`): a concrete field read that
+/// is a pointer witnesses `points_to`, so its target, resolved, is not free.
 
-module GC.Gen.NoBlueUtil
+module GC.Spec.FieldTarget
 
 open FStar.Seq
 module U64 = FStar.UInt64
@@ -44,3 +48,13 @@ val field_pointer_target_not_free_nat
                 dst)
     (ensures in_use free g (resolve_object dst g) /\
              infix_addr_wf g (objects zero_addr g) dst)
+
+/// The pointer clauses at a single field.
+val wf_with_field (free: free_def) (g: heap) (src: obj_addr) (j: nat)
+  : Lemma (requires free_def_ok free /\ well_formed_heap_with free g /\ in_use free g src /\ ~(is_no_scan src g) /\
+                    j < U64.v (wosize_of_object src g) /\
+                    U64.v src + j * 8 + 8 <= heap_size /\
+                    is_pointer (read_word g (U64.uint_to_t (U64.v src + j * 8))))
+          (ensures (let w : obj_addr = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
+                    in_use free g (resolve_object w g) /\
+                    infix_addr_wf g (objects zero_addr g) w))

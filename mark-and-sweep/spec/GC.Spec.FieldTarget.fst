@@ -1,8 +1,8 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.NoBlueUtil -- proofs
+/// GC.Spec.FieldTarget -- proofs
 /// ---------------------------------------------------------------------------
 
-module GC.Gen.NoBlueUtil
+module GC.Spec.FieldTarget
 
 open FStar.Seq
 module U64 = FStar.UInt64
@@ -46,3 +46,13 @@ let field_pointer_target_not_free_nat free g src dst j =
   wf_with_parts ();
   field_pointer_points_to_nat g src dst j;
   points_to_target_not_free free g src dst
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let wf_with_field free g src j =
+  wf_with_parts ();
+  let w : obj_addr = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
+  assert (is_pointer_to (read_word g (U64.uint_to_t (U64.v src + j * U64.v mword))) w);
+  in_use_not_blue free g src;
+  field_pointer_points_to_nat g src w j;
+  points_to_target_not_free free g src w
+#pop-options

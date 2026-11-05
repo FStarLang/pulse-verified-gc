@@ -6,7 +6,7 @@ module GC.Gen.CheneyPreservation.Frame
 
 open FStar.Seq
 module U64 = FStar.UInt64
-module AP = GC.Gen.AllocPhase
+module AP = GC.Spec.Allocator.Phase
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -25,7 +25,7 @@ open GC.Lib.Header
 module Allocator = GC.Spec.Allocator
 module PromUpdate = GC.Gen.PromoteUpdate
 module AllocLemmas = GC.Spec.Allocator.Lemmas
-module AllocProps = GC.Gen.AllocProps
+module AllocProps = GC.Spec.Allocator.Props
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let cheney_forward_normal_preserves_old_nonblue_shape

@@ -1,11 +1,11 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.AllocProps — Properties of alloc_spec needed for promotion proofs
+/// GC.Spec.Allocator.Props — Properties of alloc_spec needed for promotion proofs
 /// ---------------------------------------------------------------------------
 ///
 /// Wrapper lemmas that derive needed allocator properties from
 /// existing GC.Spec.Allocator.Lemmas infrastructure.
 
-module GC.Gen.AllocProps
+module GC.Spec.Allocator.Props
 
 open FStar.Seq
 module U64 = FStar.UInt64

@@ -37,7 +37,7 @@ module FS = GC.Spec.FusedSweep
 module SPI = GC.Spec.SweepPhase.Intrinsic
 module SL = GC.Spec.SweepPhase.Slice
 module GI = GC.Gen.Incremental
-module GSP = GC.Gen.SweepPhase
+module Mut = GC.Spec.SweepPhase.Mutator
 module AC = GC.Spec.Allocator.Cursor
 module SA = GC.Spec.Allocator
 module FSC = GC.Impl.FusedSweepCoalesce
@@ -231,7 +231,7 @@ fn minor_collect_any_phase (gh: gen_heap_t)
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let alloc_major_post_intro (ph: Ph.gc_phase) (minor: minor_state) (s: heap) (fp: U64.t)
-    (wz: nat) (tag: GSP.tag_t)
+    (wz: nat) (tag: Mut.tag_t)
   : Lemma (let ar = AC.alloc_phase s fp ph wz tag in
            alloc_major_post ph minor s fp wz tag ar.SA.obj_out ar.SA.heap_out ar.SA.fp_out)
   = let ar = AC.alloc_phase s fp ph wz tag in
@@ -242,16 +242,16 @@ let alloc_major_post_intro (ph: Ph.gc_phase) (minor: minor_state) (s: heap) (fp:
                         (r.SA.obj_out == 0UL ==> r.SA.heap_out == s /\ r.SA.fp_out == fp /\
                            GI.phase_shape minor r.SA.heap_out r.SA.fp_out ph) /\
                         (r.SA.obj_out <> 0UL ==>
-                           GSP.new_block s r.SA.heap_out c r.SA.obj_out wz tag /\
-                           GSP.fresh_ok r.SA.heap_out r.SA.fp_out c (r.SA.obj_out <: obj_addr))))
+                           Mut.new_block s r.SA.heap_out c r.SA.obj_out wz tag /\
+                           Mut.fresh_ok r.SA.heap_out r.SA.fp_out c (r.SA.obj_out <: obj_addr))))
       = GI.phase_shape_sweeping minor s fp c;
-        GSP.alloc_sweep_phase s fp c wz tag
+        Mut.alloc_sweep_phase s fp c wz tag
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
-fn gen_alloc_major (gh: gen_heap_t) (wosize: U64.t) (tag: GSP.tag_t)
+fn gen_alloc_major (gh: gen_heap_t) (wosize: U64.t) (tag: Mut.tag_t)
   requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph **
            pure (U64.v wosize >= 1 /\
                  (Ph.Sweeping? 'ph ==> GC.Spec.FreeList.Ascending.fl_ascending 's 'fp))

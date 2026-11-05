@@ -81,7 +81,7 @@ val free_list_exact_iff (major: heap) (fp: U64.t)
 /// collection's fused sweep (`GC.Spec.FusedSweep`) keeps the list across
 /// cycles and edits it in place as it walks the heap upwards, so it needs the
 /// list it is handed to run the same way.  Allocation, promotion and the
-/// pointer rewrite keep it so (`GC.Gen.AllocAscending`,
+/// pointer rewrite keep it so (`GC.Spec.Allocator.Ascending`,
 /// `GC.Gen.FreeListAscending`).
 [@@"opaque_to_smt"]
 val major_heap_shape (major: heap) (fp: U64.t) : prop

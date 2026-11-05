@@ -18,8 +18,8 @@ open GC.Gen.Reachability
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module WriteBody = GC.Gen.WriteBodyLemmas
-module AllocProps = GC.Gen.AllocProps
-module AP = GC.Gen.AllocPhase
+module AllocProps = GC.Spec.Allocator.Props
+module AP = GC.Spec.Allocator.Phase
 open GC.Spec.Phase
 module SA = GC.Spec.Allocator
 

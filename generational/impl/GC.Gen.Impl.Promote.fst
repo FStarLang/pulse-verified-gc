@@ -23,8 +23,8 @@ open GC.Gen.Impl.MinorHeap
 open GC.Impl.Heap
 module Alloc = GC.Impl.Allocator
 module AllocLemmas = GC.Spec.Allocator.Lemmas
-module AllocProps = GC.Gen.AllocProps
-module AP = GC.Gen.AllocPhase
+module AllocProps = GC.Spec.Allocator.Props
+module AP = GC.Spec.Allocator.Phase
 module ST = GC.Gen.SweptTail
 module FLA = GC.Spec.FreeList.Ascending
 module FLAsc = GC.Gen.FreeListAscending
@@ -194,7 +194,7 @@ let alloc_phase_rel (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}
   : Lemma (requires Alloc.phase_rel g v ph /\ (Ph.Sweeping? ph ==> FLA.fl_ascending g fp))
           (ensures Alloc.phase_rel (GC.Spec.Allocator.Cursor.alloc_phase g fp ph wz tag).GC.Spec.Allocator.heap_out
                      (Alloc.record_after_alloc g fp wz v) ph)
-  = if v.Alloc.ps_kind <> 0UL then ST.alloc_caches g fp v.Alloc.ps_cursor wz tag
+  = if v.Alloc.ps_kind <> 0UL then GC.Spec.Allocator.Caches.alloc_caches g fp v.Alloc.ps_cursor wz tag
 
 inline_for_extraction
 fn allocate_at_phase (heap: heap_t) (fp: U64.t) (phase: R.ref Alloc.phase_state)

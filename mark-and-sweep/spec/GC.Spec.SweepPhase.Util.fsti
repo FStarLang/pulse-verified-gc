@@ -4,8 +4,8 @@
 ///
 /// Small facts about the heap's walk and headers, shared by the sweep phase
 /// (`GC.Spec.SweepPhase.Intrinsic`), its program events
-/// (`GC.Gen.SweepPhase`) and the allocator's shape lemmas
-/// (`GC.Gen.AllocShape`):
+/// (`GC.Spec.SweepPhase.Mutator`) and the allocator's shape lemmas
+/// (`GC.Spec.Allocator.Shape`):
 ///
 ///   * headers: a header is its size, colour and tag (`header_eq`); part 1 of
 ///     well-formedness always holds (`part1_holds`);

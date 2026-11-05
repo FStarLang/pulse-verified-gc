@@ -1,4 +1,4 @@
-module GC.Gen.AllocPhase
+module GC.Spec.Allocator.Phase
 
 open FStar.Seq
 open GC.Spec.Base
@@ -21,7 +21,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module ALC = GC.Spec.Allocator.Lemmas.Core
 module ALH = GC.Spec.Allocator.Lemmas.Header
 module ALCh = GC.Spec.Allocator.Lemmas.Chain
-module AllocProps = GC.Gen.AllocProps
+module AllocProps = GC.Spec.Allocator.Props
 module Header = GC.Lib.Header
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 10"
