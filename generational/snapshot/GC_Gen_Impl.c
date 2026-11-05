@@ -251,6 +251,7 @@ resume_cur(
   bool *ovr,
   uint64_t *curr,
   uint64_t *fldr,
+  uint64_t *mw,
   bool unlimited,
   uint64_t rem
 )
@@ -265,6 +266,8 @@ resume_cur(
     scan_fields(heap, stk, ovr, c, f, n);
     uint64_t hdr1 = read_word(heap, hd_of(c));
     blacken(heap, c, hdr1);
+    uint64_t __anf0 = mw[0U];
+    mw[0U] = __anf0 + (n + 1ULL);
     curr[0U] = 0ULL;
     fldr[0U] = n + 1ULL;
     return avail;
@@ -285,6 +288,7 @@ pop_entry(
   bool *ovr,
   uint64_t *curr,
   uint64_t *fldr,
+  uint64_t *mw,
   bool unlimited,
   uint64_t rem
 )
@@ -298,6 +302,8 @@ pop_entry(
     if (getTag(hdr) >= no_scan_tag || n == 0ULL)
     {
       blacken(heap, x, hdr);
+      uint64_t __anf0 = mw[0U];
+      mw[0U] = __anf0 + (n + 1ULL);
       return 1ULL;
     }
     else if (unlimited || n < rem)
@@ -305,6 +311,8 @@ pop_entry(
       scan_fields(heap, stk, ovr, x, 1ULL, n);
       uint64_t hdr1 = read_word(heap, hd_of(x));
       blacken(heap, x, hdr1);
+      uint64_t __anf0 = mw[0U];
+      mw[0U] = __anf0 + (n + 1ULL);
       return n + 1ULL;
     }
     else
@@ -376,6 +384,7 @@ mark_slice(
   uint64_t *curr,
   uint64_t *fldr,
   uint64_t *rcr,
+  uint64_t *mw,
   uint64_t budget
 )
 {
@@ -392,7 +401,7 @@ mark_slice(
     uint64_t c = curr[0U];
     if (c != 0ULL)
     {
-      uint64_t cost = resume_cur(heap, stk, ovr, curr, fldr, unlimited, vrem);
+      uint64_t cost = resume_cur(heap, stk, ovr, curr, fldr, mw, unlimited, vrem);
       if (!unlimited)
         rem = vrem - cost;
     }
@@ -401,7 +410,7 @@ mark_slice(
       bool empty = is_empty(stk);
       if (!empty)
       {
-        uint64_t cost = pop_entry(heap, stk, ovr, curr, fldr, unlimited, vrem);
+        uint64_t cost = pop_entry(heap, stk, ovr, curr, fldr, mw, unlimited, vrem);
         if (!unlimited)
           rem = vrem - cost;
       }
@@ -761,6 +770,7 @@ void start_cycle(gen_heap_t gh, uint64_t *roots, size_t nroots)
   bool full = is_full(gh.mark_stack);
   gh.mark_overflow[0U] = full;
   gh.mark_field[0U] = 1ULL;
+  gh.mark_words[0U] = 0ULL;
   gh.phase_ref[0U] =
     (
       (phase_state){
@@ -782,6 +792,7 @@ bool mark_slice_at(gen_heap_t gh, uint64_t budget)
       gh.mark_cur,
       gh.mark_field,
       gh.mark_rescan,
+      gh.mark_words,
       budget);
   if (fin)
   {

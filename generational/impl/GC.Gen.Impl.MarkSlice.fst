@@ -225,15 +225,16 @@ let progress (g: heap) (st: Seq.seq obj_addr) (ov: bool) (p: MS.mark_pos)
 /// spent.
 #push-options "--z3rlimit 20"
 fn resume_cur (heap: heap_t) (stk: gray_stack) (ovr: R.ref bool) (curr fldr: R.ref U64.t)
+              (mw: R.ref U64.t)
               (r: erased U64.t) (s0: erased heap_state) (unlimited: bool) (rem: U64.t)
   requires is_heap heap 's ** is_gray_stack stk 'st ** R.pts_to ovr 'ov **
-           R.pts_to curr 'c ** R.pts_to fldr 'f **
+           R.pts_to curr 'c ** R.pts_to fldr 'f ** R.pts_to mw 'm **
            pure (slice_inv s0 's 'st 'ov (pos 'c 'f r) /\ reveal 'c <> 0UL /\
                  (unlimited \/ U64.v rem >= 1))
   returns cost: U64.t
-  ensures exists* s2 st2 ov2 c2 f2.
+  ensures exists* s2 st2 ov2 c2 f2 m2.
     is_heap heap s2 ** is_gray_stack stk st2 ** R.pts_to ovr ov2 **
-    R.pts_to curr c2 ** R.pts_to fldr f2 **
+    R.pts_to curr c2 ** R.pts_to fldr f2 ** R.pts_to mw m2 **
     pure (slice_inv s0 s2 st2 ov2 (pos c2 f2 r) /\
           progress 's 'st 'ov (pos 'c 'f r) s2 st2 ov2 (pos c2 f2 r) (stack_capacity stk) /\
           (not unlimited ==> U64.v cost <= U64.v rem))
@@ -254,6 +255,7 @@ fn resume_cur (heap: heap_t) (stk: gray_stack) (ovr: R.ref bool) (curr fldr: R.r
     MSl.slice_blacken_cur s1 st1 ov1 (pos x (U64.add n 1UL) r);
     let hdr1 = read_hdr heap x;
     blacken heap x hdr1;
+    R.op_Colon_Equals mw (U64.add_mod (R.op_Bang mw) (U64.add n 1UL));
     R.op_Colon_Equals curr 0UL;
     S.mark_steps_snoc s0 s1 (SpecObj.makeBlack x s1);
     S.mark_move_darker s1 (SpecObj.makeBlack x s1);
@@ -286,15 +288,16 @@ let cache_no_cur (g: heap) (st: Seq.seq obj_addr) (ov: bool) (f f' r: U64.t)
 /// words spent.
 #push-options "--z3rlimit 20"
 fn pop_entry (heap: heap_t) (stk: gray_stack) (ovr: R.ref bool) (curr fldr: R.ref U64.t)
+             (mw: R.ref U64.t)
              (r: erased U64.t) (s0: erased heap_state) (unlimited: bool) (rem: U64.t)
   requires is_heap heap 's ** is_gray_stack stk 'st ** R.pts_to ovr 'ov **
-           R.pts_to curr 'c ** R.pts_to fldr 'f **
+           R.pts_to curr 'c ** R.pts_to fldr 'f ** R.pts_to mw 'm **
            pure (slice_inv s0 's 'st 'ov (pos 'c 'f r) /\ 'c == 0UL /\ Seq.length 'st > 0 /\
                  (unlimited \/ U64.v rem >= 1))
   returns cost: U64.t
-  ensures exists* s2 st2 ov2 c2 f2.
+  ensures exists* s2 st2 ov2 c2 f2 m2.
     is_heap heap s2 ** is_gray_stack stk st2 ** R.pts_to ovr ov2 **
-    R.pts_to curr c2 ** R.pts_to fldr f2 **
+    R.pts_to curr c2 ** R.pts_to fldr f2 ** R.pts_to mw m2 **
     pure (slice_inv s0 s2 st2 ov2 (pos c2 f2 r) /\
           progress 's 'st 'ov (pos 'c 'f r) s2 st2 ov2 (pos c2 f2 r) (stack_capacity stk) /\
           (not unlimited ==> U64.v cost <= U64.v rem))
@@ -312,6 +315,7 @@ fn pop_entry (heap: heap_t) (stk: gray_stack) (ovr: R.ref bool) (curr fldr: R.re
     if (U64.gte (getTag hdr) no_scan_tag || n = 0UL) {
       MSl.slice_pop_blacken 's x tl 'ov (pos 'c 'f r);
       blacken heap x hdr;
+      R.op_Colon_Equals mw (U64.add_mod (R.op_Bang mw) (U64.add n 1UL));
       S.mark_steps_snoc s0 's (SpecObj.makeBlack x 's);
       S.mark_move_darker 's (SpecObj.makeBlack x 's);
       assert (pure (Seq.length 'st == Seq.length tl + 1));
@@ -329,6 +333,7 @@ fn pop_entry (heap: heap_t) (stk: gray_stack) (ovr: R.ref bool) (curr fldr: R.re
         MSl.slice_blacken_cur s1 st1 ov1 (pos x (U64.add n 1UL) r);
         let hdr1 = read_hdr heap x;
         blacken heap x hdr1;
+        R.op_Colon_Equals mw (U64.add_mod (R.op_Bang mw) (U64.add n 1UL));
         S.mark_steps_snoc s0 s1 (SpecObj.makeBlack x s1);
         S.mark_move_darker s1 (SpecObj.makeBlack x s1);
         cache_no_cur (SpecObj.makeBlack x s1) st1 ov1 (U64.add n 1UL) 'f r;
@@ -451,14 +456,14 @@ let unlimited_eq (budget: U64.t)
 
 #push-options "--z3rlimit 20"
 fn mark_slice (heap: heap_t) (stk: gray_stack) (ovr: R.ref bool)
-              (curr fldr rcr: R.ref U64.t) (budget: U64.t)
+              (curr fldr rcr: R.ref U64.t) (mw: R.ref U64.t) (budget: U64.t)
   requires is_heap heap 's ** is_gray_stack stk 'st ** R.pts_to ovr 'ov **
-           R.pts_to curr 'c ** R.pts_to fldr 'f ** R.pts_to rcr 'r **
+           R.pts_to curr 'c ** R.pts_to fldr 'f ** R.pts_to rcr 'r ** R.pts_to mw 'm **
            pure (MS.marking_cache 's 'st 'ov (pos 'c 'f 'r) /\ heap_ok 's)
   returns fin: bool
-  ensures exists* s2 st2 ov2 c2 f2 r2.
+  ensures exists* s2 st2 ov2 c2 f2 r2 m2.
     is_heap heap s2 ** is_gray_stack stk st2 ** R.pts_to ovr ov2 **
-    R.pts_to curr c2 ** R.pts_to fldr f2 ** R.pts_to rcr r2 **
+    R.pts_to curr c2 ** R.pts_to fldr f2 ** R.pts_to rcr r2 ** R.pts_to mw m2 **
     pure (MS.marking_cache s2 st2 ov2 (pos c2 f2 r2) /\ heap_ok s2 /\ S.mark_steps 's s2 /\
           (fin ==> MS.cache_off st2 ov2 (pos c2 f2 r2) /\ Mark.noGreyObjects s2) /\
           (GI.unbounded (U64.v budget) ==> fin))
@@ -472,9 +477,9 @@ fn mark_slice (heap: heap_t) (stk: gray_stack) (ovr: R.ref bool)
   let mut fin = false;
   let gm = GR.alloc #nat (MSl.slice_measure 's 'st 'ov (pos 'c 'f 'r) (stack_capacity stk));
   while (!go && (unlimited || U64.gt !rem 0UL))
-    invariant exists* s st ov c f r vrem vgo vfin (m: nat).
+    invariant exists* s st ov c f r vm vrem vgo vfin (m: nat).
       is_heap heap s ** is_gray_stack stk st ** R.pts_to ovr ov **
-      R.pts_to curr c ** R.pts_to fldr f ** R.pts_to rcr r **
+      R.pts_to curr c ** R.pts_to fldr f ** R.pts_to rcr r ** R.pts_to mw vm **
       R.pts_to rem vrem ** R.pts_to go vgo ** R.pts_to fin vfin ** GR.pts_to gm m **
       pure (slice_inv 's s st ov (pos c f r) /\ Seq.length st <= stack_capacity stk /\
             m == MSl.slice_measure s st ov (pos c f r) (stack_capacity stk) /\
@@ -487,7 +492,7 @@ fn mark_slice (heap: heap_t) (stk: gray_stack) (ovr: R.ref bool)
     let vrem = !rem;
     let c = R.op_Bang curr;
     if (c <> 0UL) {
-      let cost = resume_cur heap stk ovr curr fldr r0 's unlimited vrem;
+      let cost = resume_cur heap stk ovr curr fldr mw r0 's unlimited vrem;
       if (not unlimited) { rem := U64.sub vrem cost };
       with s2 st2 ov2 c2 f2. assert (is_heap heap s2 ** is_gray_stack stk st2 ** R.pts_to ovr ov2 **
                                      R.pts_to curr c2 ** R.pts_to fldr f2);
@@ -496,7 +501,7 @@ fn mark_slice (heap: heap_t) (stk: gray_stack) (ovr: R.ref bool)
     } else {
       let empty = is_empty stk;
       if (not empty) {
-        let cost = pop_entry heap stk ovr curr fldr r0 's unlimited vrem;
+        let cost = pop_entry heap stk ovr curr fldr mw r0 's unlimited vrem;
         if (not unlimited) { rem := U64.sub vrem cost };
         with s2 st2 ov2 c2 f2. assert (is_heap heap s2 ** is_gray_stack stk st2 ** R.pts_to ovr ov2 **
                                        R.pts_to curr c2 ** R.pts_to fldr f2);

@@ -4,32 +4,44 @@
 #
 #   run_differential.sh NAME 'STOCK COMMAND' 'VERIFIED COMMAND'
 #
-# The verified command runs once per pacing when VERGC_SWEEP=incremental --
-# the default slice budget, VERGC_SWEEP_K=1 (a sweep spans the next cycle's
-# trigger, so full collections are requested mid-sweep) and tiny slices with a
-# small nursery (VERGC_SWEEP_MIN_WORDS=256 VERGC_SWEEP_K=0
-# MINOR_HEAP_WORDS=32768: a sweep spans thousands of minor collections) --
-# and once otherwise. With REQUIRE_MID_SWEEP=1, an incremental run must also
-# show (VERGC_SWEEP_STATS) that slices ran and that major allocations happened
-# mid-sweep, i.e. that the test exercised what it is about.
+# The major mode is VERGC_MAJOR (VERGC_SWEEP is an alias).  Incremental, the
+# verified command runs once per pacing --
+#   - the default (4.14's pacing);
+#   - small slices, often (VERGC_SLICE_MIN_WORDS=64
+#     MINOR_HEAP_WORDS=32768): marking and the sweep each span many minor
+#     collections, so the program runs mid-mark for long stretches;
+#   - a tiny mark stack and back-to-back cycles
+#     (VERGC_SLICE_MIN_WORDS=256 VERGC_MARK_STACK=8 VERGC_TRIGGER_MIN_WORDS=0):
+#     root darkening and the barrier overflow the stack, so the slices rescan
+#     the heap, and full collections are often requested mid-cycle
+# -- and once otherwise.
+#
+# With REQUIRE_MID_SWEEP=1 / REQUIRE_MID_MARK=1, every incremental run but the
+# default-paced one must also show (VERGC_MAJOR_STATS) that the test exercised
+# what it is about: sweep slices ran and major allocations happened mid-sweep
+# / marking spanned several slices and the program ran in between (minor
+# collections, major allocations or barrier calls while marking).
 set -eu
 name=$1; stock=$2; verified=$3
 out=${TMPDIR:-/tmp}/vergc-diff.$$
 trap 'rm -f "$out".*' EXIT
+mode=${VERGC_MAJOR:-${VERGC_SWEEP:-stw}}
 
 sh -c "$stock" > "$out.expected"
 
-if [ "${VERGC_SWEEP:-stw}" = incremental ]; then
-  set -- "" "VERGC_SWEEP_K=1" \
-         "VERGC_SWEEP_MIN_WORDS=256 VERGC_SWEEP_K=0 MINOR_HEAP_WORDS=32768"
+if [ "$mode" = incremental ]; then
+  set -- "" "VERGC_SLICE_MIN_WORDS=64 MINOR_HEAP_WORDS=32768" \
+         "VERGC_SLICE_MIN_WORDS=256 VERGC_MARK_STACK=8 VERGC_TRIGGER_MIN_WORDS=0"
 else
   set -- ""
 fi
 
+stat() { echo "$1" | sed -n "s/.* $2=\([0-9]*\).*/\1/p"; }
+
 for pacing in "$@"; do
-  label="$name (VERGC_SWEEP=${VERGC_SWEEP:-stw}${pacing:+ $pacing})"
+  label="$name (VERGC_MAJOR=$mode${pacing:+ $pacing})"
   echo "--- $label"
-  if ! env $pacing VERGC_SWEEP_STATS=1 sh -c "$verified" > "$out.actual" 2> "$out.err"; then
+  if ! env $pacing VERGC_MAJOR=$mode VERGC_MAJOR_STATS=1 sh -c "$verified" > "$out.actual" 2> "$out.err"; then
     cat "$out.actual" "$out.err"
     echo "FAIL: $label exited non-zero" >&2
     exit 1
@@ -39,15 +51,24 @@ for pacing in "$@"; do
     echo "FAIL: $label differs from stock OCaml" >&2
     exit 1
   fi
-  stats=$(grep '^vergc-sweep:' "$out.err" || true)
-  grep -v '^vergc-sweep:' "$out.err" >&2 || true
+  stats=$(grep '^vergc-major:' "$out.err" || true)
+  grep -v '^vergc-major:\|^vergc-pauses:' "$out.err" >&2 || true
   echo "    $stats"
-  if [ "${VERGC_SWEEP:-stw}" = incremental ] && [ "${REQUIRE_MID_SWEEP:-0}" = 1 ]; then
-    slices=$(echo "$stats" | sed -n 's/.* slices=\([0-9]*\).*/\1/p')
-    mid=$(echo "$stats" | sed -n 's/.* alloc_mid_sweep=\([0-9]*\).*/\1/p')
-    if [ "${slices:-0}" -eq 0 ] || [ "${mid:-0}" -eq 0 ]; then
-      echo "FAIL: $label never ran mid-sweep (slices=${slices:-?} alloc_mid_sweep=${mid:-?})" >&2
-      exit 1
+  if [ "$mode" = incremental ] && [ -n "$pacing" ]; then
+    if [ "${REQUIRE_MID_SWEEP:-0}" = 1 ]; then
+      slices=$(stat "$stats" sweep_slices); mid=$(stat "$stats" alloc_mid_sweep)
+      if [ "${slices:-0}" -eq 0 ] || [ "${mid:-0}" -eq 0 ]; then
+        echo "FAIL: $label never ran mid-sweep (sweep_slices=${slices:-?} alloc_mid_sweep=${mid:-?})" >&2
+        exit 1
+      fi
+    fi
+    if [ "${REQUIRE_MID_MARK:-0}" = 1 ]; then
+      spanned=$(stat "$stats" marks_spanned)
+      steps=$(( $(stat "$stats" minor_mid_mark) + $(stat "$stats" alloc_mid_mark) + $(stat "$stats" modify_mid_mark) ))
+      if [ "${spanned:-0}" -eq 0 ] || [ "$steps" -eq 0 ]; then
+        echo "FAIL: $label never ran mid-mark (marks_spanned=${spanned:-?} program steps=$steps)" >&2
+        exit 1
+      fi
     fi
   fi
 done

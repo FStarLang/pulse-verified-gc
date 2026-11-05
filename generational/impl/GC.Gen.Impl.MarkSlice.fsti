@@ -22,7 +22,9 @@
      down), marking is over: nothing is grey.
 
    The budget counts words: a header for each entry popped and each block
-   the rescan walks, a word for each field scanned.  `UINT64_MAX` is
+   the rescan walks, a word for each field scanned.  The words of every block
+   blackened (header and fields) are added to the counter `mw` (modulo
+   2^64; statistics, nothing is claimed of it).  `UINT64_MAX` is
    unbounded: the slice runs until marking is over (it always terminates:
    `GC.Gen.MarkSlice.slice_measure`).
 *)
@@ -58,14 +60,14 @@ let heap_ok (g: heap) : prop =
 /// the cache holds of it; when it returns true, marking is over: the cache is
 /// empty and nothing is grey.  With an unbounded budget it returns true.
 fn mark_slice (heap: heap_t) (stk: gray_stack) (ovr: R.ref bool)
-              (curr fldr rcr: R.ref U64.t) (budget: U64.t)
+              (curr fldr rcr: R.ref U64.t) (mw: R.ref U64.t) (budget: U64.t)
   requires is_heap heap 's ** is_gray_stack stk 'st ** R.pts_to ovr 'ov **
-           R.pts_to curr 'c ** R.pts_to fldr 'f ** R.pts_to rcr 'r **
+           R.pts_to curr 'c ** R.pts_to fldr 'f ** R.pts_to rcr 'r ** R.pts_to mw 'm **
            pure (MS.marking_cache 's 'st 'ov (pos 'c 'f 'r) /\ heap_ok 's)
   returns fin: bool
-  ensures exists* s2 st2 ov2 c2 f2 r2.
+  ensures exists* s2 st2 ov2 c2 f2 r2 m2.
     is_heap heap s2 ** is_gray_stack stk st2 ** R.pts_to ovr ov2 **
-    R.pts_to curr c2 ** R.pts_to fldr f2 ** R.pts_to rcr r2 **
+    R.pts_to curr c2 ** R.pts_to fldr f2 ** R.pts_to rcr r2 ** R.pts_to mw m2 **
     pure (MS.marking_cache s2 st2 ov2 (pos c2 f2 r2) /\ heap_ok s2 /\ S.mark_steps 's s2 /\
           (fin ==> MS.cache_off st2 ov2 (pos c2 f2 r2) /\ Mark.noGreyObjects s2) /\
           (GI.unbounded (U64.v budget) ==> fin))

@@ -452,7 +452,7 @@ fn mark_state_off (gh: gen_heap_t) (s s': heap_state) (ph ph': Ph.gc_phase)
   ensures mark_state gh s' ph'
 {
   unfold mark_state;
-  with st ov c f r. _;
+  with st ov c f r mw. _;
   MS.mark_cache_off s s' ph ph' st ov (MSI.pos c f r);
   fold (mark_state gh s' ph')
 }
@@ -480,7 +480,7 @@ fn mark_state_minor (gh: gen_heap_t) (minor: minor_state) (s: heap_state) (fp: U
   ensures mark_state gh s2 ph
 {
   unfold mark_state;
-  with st ov c f r. _;
+  with st ov c f r mw. _;
   mark_cache_minor_at minor s fp ph rs s2 st ov (MSI.pos c f r);
   fold (mark_state gh s2 ph)
 }
@@ -597,7 +597,7 @@ fn start_cycle (gh: gen_heap_t) (roots: array U64.t) (nroots: SZ.t)
   nursery_empty_reset 'd 'b;
   unfold is_gen_heap;
   unfold mark_state;
-  with st ov c f r. _;
+  with st ov c f r mw. _;
   MS.mark_cache_not_marking 's Ph.Idle st ov (MSI.pos c f r);
   stack_facts gh.mark_stack;
   Seq.lemma_empty st;
@@ -609,6 +609,7 @@ fn start_cycle (gh: gen_heap_t) (roots: array U64.t) (nroots: SZ.t)
   let full = is_full gh.mark_stack;
   R.op_Colon_Equals gh.mark_overflow full;
   R.op_Colon_Equals gh.mark_field 1UL;
+  R.op_Colon_Equals gh.mark_words 0UL;
   MS.mark_cache_marking s2 st2 full (MSI.pos 0UL 1UL 0UL);
   // The darkened heap is the collector's state while marking.
   MSl.darken_roots_heap 's Seq.empty Seq.empty 'rs (stack_capacity gh.mark_stack) (prepared_cap 'rs);
@@ -693,10 +694,10 @@ fn mark_slice_at (gh: gen_heap_t) (budget: U64.t)
   marking_heap_ok ({ data = 'd; bump = 'b } <: minor_state) 's 'fp;
   unfold is_gen_heap;
   unfold mark_state;
-  with st ov c f r. _;
+  with st ov c f r mw. _;
   MS.mark_cache_marking 's st ov (MSI.pos c f r);
   let fin = MSI.mark_slice gh.major gh.mark_stack gh.mark_overflow gh.mark_cur gh.mark_field
-              gh.mark_rescan budget;
+              gh.mark_rescan gh.mark_words budget;
   with s2 st2 ov2 c2 f2 r2. assert (is_heap gh.major s2 ** is_gray_stack gh.mark_stack st2 **
     R.pts_to gh.mark_overflow ov2 ** R.pts_to gh.mark_cur c2 ** R.pts_to gh.mark_field f2 **
     R.pts_to gh.mark_rescan r2);

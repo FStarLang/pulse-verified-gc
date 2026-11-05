@@ -519,7 +519,7 @@ index 9b18f3c..6c90643 100644
        Store_double_flat_field(block, 0, Double_val(accu));
        for (i = 1; i < size; i++){
 diff --git a/runtime/major_gc.c b/runtime/major_gc.c
-index 3da350e..9ebb07f 100644
+index 3da350e..77d1a88 100644
 --- a/runtime/major_gc.c
 +++ b/runtime/major_gc.c
 @@ -277,6 +277,7 @@ static void is_naked_pointer_safe (value v, value *p);
@@ -530,7 +530,7 @@ index 3da350e..9ebb07f 100644
  #ifdef NO_NAKED_POINTERS
    if (Is_block(v) && !Is_young (v)) {
  #else
-@@ -940,6 +941,18 @@ void caml_major_collection_slice (intnat howmuch)
+@@ -940,6 +941,20 @@ void caml_major_collection_slice (intnat howmuch)
    double p, dp, filt_p, spend;
    intnat computed_work;
    int i;
@@ -540,16 +540,18 @@ index 3da350e..9ebb07f 100644
 +     table) and its sweep, which walks only stock's own chunks, would never
 +     whiten them again, leaving black objects in an idle heap: the next
 +     verified mark then skips their children and frees live objects.
-+     Gc.major_slice gets the verified collector's slice instead: a sweep
-+     slice when it is mid-sweep, nothing otherwise.  (The other caller,
-+     caml_gc_dispatch, is unreachable: runtime/minor_gc.c.) */
++     Any caller gets the verified collector's slice instead
++     (verified_major_collection_slice: with VERGC_MAJOR=incremental a paced
++     slice, or the start of a cycle when idle; nothing stop-the-world).
++     Gc.major_slice calls that directly (runtime/gc_ctrl.c), and the other
++     caller, caml_gc_dispatch, is unreachable: runtime/minor_gc.c. */
 +  verified_major_collection_slice (howmuch);
 +  return;
 +
    /*
       Free memory at the start of the GC cycle (garbage + free list) (assumed):
                   FM = Caml_state->stat_heap_wsz * caml_percent_free
-@@ -1177,6 +1190,15 @@ void caml_major_collection_slice (intnat howmuch)
+@@ -1177,6 +1192,15 @@ void caml_major_collection_slice (intnat howmuch)
  */
  void caml_finish_major_cycle (void)
  {
@@ -565,7 +567,7 @@ index 3da350e..9ebb07f 100644
    if (caml_gc_phase == Phase_idle){
      p_backlog = 0.0; /* full major GC cycle, the backlog becomes irrelevant */
      start_cycle ();
-@@ -1280,19 +1302,11 @@ void caml_set_major_window (int w){
+@@ -1280,19 +1304,11 @@ void caml_set_major_window (int w){
  
  void caml_finalise_heap (void)
  {
@@ -591,7 +593,7 @@ index 3da350e..9ebb07f 100644
  
  #if defined(NAKED_POINTERS_CHECKER) && defined(NATIVE_CODE)
 diff --git a/runtime/memory.c b/runtime/memory.c
-index 66d1c50..be58b6e 100644
+index 66d1c50..4a23e5e 100644
 --- a/runtime/memory.c
 +++ b/runtime/memory.c
 @@ -311,6 +311,7 @@ void caml_free_for_heap (char *mem)
@@ -618,7 +620,7 @@ index 66d1c50..be58b6e 100644
  
    /* Never deallocate the first chunk, because caml_heap_start is both the
       first block and the base address for page numbers, and we don't
-@@ -449,53 +452,44 @@ void caml_shrink_heap (char *chunk)
+@@ -449,53 +452,45 @@ void caml_shrink_heap (char *chunk)
  
  CAMLexport color_t caml_allocation_color (void *hp)
  {
@@ -677,10 +679,11 @@ index 66d1c50..be58b6e 100644
 +  /* verified_allocate() has already written this block's header: wosize
 +     (a zero wosize rounded up to 1), tag, and the colour the collector's
 +     phase gives it (GC.Spec.Phase.allocation_color): white when idle or
-+     behind the sweep cursor, BLACK in front of it mid-sweep
-+     (VERGC_SWEEP=incremental). That colour must be kept: a white block in
-+     front of the cursor is garbage to the sweep, which would free this live
-+     object. So rewrite only the profiling bits (WITH_PROFINFO), as
++     behind the sweep cursor, BLACK while marking and in front of the cursor
++     mid-sweep (VERGC_MAJOR=incremental). That colour must be kept: a white
++     block in front of the cursor is garbage to the sweep, which would free
++     this live object, and so is a white block allocated while marking (the
++     marker never reaches it). So rewrite only the profiling bits (WITH_PROFINFO), as
 +     Alloc_small_aux does for the minor slow path, never the colour. */
 +#ifdef WITH_PROFINFO
 +  Hd_hp (hp) =
@@ -702,7 +705,7 @@ index 66d1c50..be58b6e 100644
  #ifdef DEBUG
    {
      uintnat i;
-@@ -504,8 +498,6 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
+@@ -504,8 +499,6 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
      }
    }
  #endif
@@ -711,7 +714,7 @@ index 66d1c50..be58b6e 100644
    return Val_hp (hp);
  }
  
-@@ -597,8 +589,13 @@ CAMLexport void caml_adjust_gc_speed (mlsize_t res, mlsize_t max)
+@@ -597,8 +590,13 @@ CAMLexport void caml_adjust_gc_speed (mlsize_t res, mlsize_t max)
  CAMLexport CAMLweakdef void caml_initialize (value *fp, value val)
  {
    CAMLassert(Is_in_heap_or_young(fp));
@@ -727,7 +730,7 @@ index 66d1c50..be58b6e 100644
      add_to_ref_table (Caml_state->ref_table, fp);
    }
  }
-@@ -629,31 +626,22 @@ CAMLexport CAMLweakdef void caml_modify (value *fp, value val)
+@@ -629,31 +627,22 @@ CAMLexport CAMLweakdef void caml_modify (value *fp, value val)
       avoid repeated calls to caml_modify and repeated tests on the
       values.  Don't forget to update caml_array_fill if the logic
       below changes!
@@ -786,7 +789,7 @@ index 1f6d9cb..54b6729 100644
  
      /* Re-allocate the blocks in the minor heap. We should not call the
 diff --git a/runtime/minor_gc.c b/runtime/minor_gc.c
-index 18cfe3e..e13323a 100644
+index 18cfe3e..a4c0aef 100644
 --- a/runtime/minor_gc.c
 +++ b/runtime/minor_gc.c
 @@ -141,6 +141,11 @@ void caml_set_minor_heap_size (asize_t bsz)
@@ -862,7 +865,7 @@ index 18cfe3e..e13323a 100644
    }
  
    /* Re-do the allocation: we now have enough space in the minor heap. */
-@@ -562,19 +582,46 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -562,19 +582,47 @@ void caml_alloc_small_dispatch (intnat wosize, int flags,
  /* Exported for backward compatibility with Lablgtk: do a minor
     collection to ensure that the minor heap is empty.
  */
@@ -909,9 +912,10 @@ index 18cfe3e..e13323a 100644
 +     verified_do_minor_gc();
 +     CAMLdrop;
 +   }
-+  /* We have no incremental major slice: major pressure is handled by
-+     do_minor_gc()'s proactive threshold and by verified_allocate() running a
-+     full GC and retrying. Clear the flag rather than let it accumulate. */
++  /* Major slices run after the verified minor collections and from
++     verified_allocate() (verified_gc/alloc_gen.c), which paces them itself,
++     so a requested slice needs nothing here. Clear the flag rather than let
++     it accumulate. */
 +  Caml_state->requested_major_slice = 0;
    return extra_root;
  }

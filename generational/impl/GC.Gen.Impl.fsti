@@ -83,6 +83,7 @@ type gen_heap_t = {
   mark_cur : R.ref U64.t;               // the partly scanned object (0: none)
   mark_field : R.ref U64.t;             // its next field
   mark_rescan : R.ref U64.t;            // the rescan cursor (0: no rescan)
+  mark_words : R.ref U64.t;             // words the mark slices blackened (statistics)
 }
 
 /// The major collector's phase, held in `gh.phase_ref`, with the sweep's
@@ -105,11 +106,15 @@ let gen_phase (gh: gen_heap_t) (g: heap_state) (ph: Ph.gc_phase) : slprop =
 /// up; at any other phase the stack is empty, the flag down and the
 /// positions 0.  `start_cycle` darkens the roots onto it, the write barrier
 /// pushes onto it (`GC.Gen.Impl.Barrier.modify_field`), and `major_slice`
-/// drains it while marking (`GC.Gen.Impl.MarkSlice.mark_slice`).
+/// drains it while marking (`GC.Gen.Impl.MarkSlice.mark_slice`).  Beside it,
+/// a counter (`gh.mark_words`) of the words the mark slices blackened since
+/// `start_cycle` zeroed it: statistics for the bridge (its pacing estimates
+/// the live words from it), about which nothing is claimed.
 let mark_state (gh: gen_heap_t) (g: heap_state) (ph: Ph.gc_phase) : slprop =
-  exists* (st: Seq.seq obj_addr) (ov: bool) (c f r: U64.t).
+  exists* (st: Seq.seq obj_addr) (ov: bool) (c f r mw: U64.t).
     is_gray_stack gh.mark_stack st ** R.pts_to gh.mark_overflow ov **
     R.pts_to gh.mark_cur c ** R.pts_to gh.mark_field f ** R.pts_to gh.mark_rescan r **
+    R.pts_to gh.mark_words mw **
     pure (MS.mark_cache_ok g ph st ov (MSI.pos c f r))
 
 /// Combined slprop for the generational heap:
@@ -529,6 +534,23 @@ val minor_collect_idle_post
 ///     next collector call; `Mut.fresh_write` and `Mut.fresh_close` then give
 ///     back the sweep phase.  Idle, the obligation is today's: the fields are
 ///     initialised before the next collection.
+///   * **Allocation while marking** (the same `allocate`, at `Ph.Marking`:
+///     the new block is black) is `GC.Gen.MarkPhase.Alloc`: from
+///     `GI.phase_shape ... Ph.Marking`, either nothing changed or the new
+///     block is *fresh* (`marking_alloc_shape`: `fresh_shape`, the
+///     generational shape and the marking invariant with the block's fields
+///     exempt, as `GC.Spec.MarkPhase.Alloc.marking_fresh`), and the mark
+///     cache is kept (`alloc_mark_cache`).  The runtime initialises every
+///     field before the next collector call (`initialize_field`, or a raw
+///     store; `fresh_shape_write`, `fresh_mark_cache_write`) with values that
+///     are storable and, if white, held by the program
+///     (`GC.Spec.MarkPhase.Alloc.fields_ok`, met by the roots obligation
+///     below); `fresh_shape_close` then gives back `phase_shape ...
+///     Ph.Marking`, its `collection_shape_with Ph.Marking free_stw` included.
+///     Until then the leftover fields bind nothing, the remembered set's
+///     coverage included: they are overwritten before the next minor
+///     collection.  Trusted, as at the other phases: nothing else happens to
+///     the major heap between the allocation and the last initialising write.
 ///   * **Field writes into the major heap** go through the verified barrier
 ///     (`GC.Gen.Impl.Barrier.modify_field` for `caml_modify` and
 ///     `caml_array_fill`, `initialize_field` for `caml_initialize`), whose
@@ -559,10 +581,19 @@ val minor_collect_idle_post
 ///     phase's definition of free (`RT.ref_table_sound_with`,
 ///     `RT.ref_table_covers_with` for `GI.phase_free`; repeated slots are
 ///     allowed), the remembered targets among the roots, and the roots valid and not free (never pending free).
+///   * **The roots while marking**: every white object the program holds is
+///     one the marker will reach (`MP.held_reached` of the roots, which
+///     `minor_collect` asks at `Ph.Marking`).  `start_cycle` establishes it
+///     for the roots it darkens; between collector calls the program obtains
+///     values only by allocating (black) or loading fields of what it holds
+///     (`GC.Spec.MarkPhase.Mutator.marking_load`): OCaml's type safety, as
+///     4.14 relies on (incremental-mark-plan.md section 3, option (a)).
 ///   * **The phase record** (`gh.phase_ref`) is written only by the collector
 ///     and the allocator; **the mark state** (`gh.mark_stack`,
-///     `gh.mark_overflow`) only by the collector and the barrier, and the
-///     bridge sets it up empty with the flag down.
+///     `gh.mark_overflow`, the positions) only by the collector and the
+///     barrier, and the bridge sets it up empty with the flag down.  The
+///     bridge reads the mark counter (`gh.mark_words`) and nothing depends on
+///     its value.
 
 /// ---------------------------------------------------------------------------
 /// The minor collection

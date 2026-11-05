@@ -59,7 +59,7 @@ BT18_MAJOR_WORDS      ?= 536870912
 CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior \
                     alloc_exact_promotion tiny_globals gc_explicit large_alloc_garbage \
                     gray_overflow explicit_major incremental_sweep obj_truncate \
-                    write_barrier
+                    write_barrier incremental_mark
 
 # infix_closures needs a small major heap so that real major collections
 # (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
@@ -90,19 +90,30 @@ GC_EXPLICIT_MAJOR_WORDS ?= 4000000
 # the verified heap. Small enough a heap that the churn forces collections.
 EXPLICIT_MAJOR_WORDS ?= 4000000
 
-# incremental_sweep: the program running mid-sweep (VERGC_SWEEP=incremental).
+# incremental_sweep: the program running mid-sweep (VERGC_MAJOR=incremental).
 # A small heap, so that cycles are frequent and most of the run is mid-sweep.
 INCREMENTAL_SWEEP_MAJOR_WORDS ?= 4000000
+
+# incremental_mark: heavy mutation while marking (VERGC_MAJOR=incremental):
+# fields of black and white objects overwritten, the only path to a subtree
+# cut and the subtree stored elsewhere, young into old, a large array
+# rewritten while a slice is half way through it, Lazy, Hashtbl.  A small
+# heap so that cycles are frequent; the sections run INCREMENTAL_MARK_REPS
+# times.
+INCREMENTAL_MARK_MAJOR_WORDS ?= 1000000
+INCREMENTAL_MARK_REPS ?= 3
 
 # write_barrier: stores into old blocks in every pattern the verified write
 # barrier (caml_modify / caml_initialize / caml_array_fill) distinguishes,
 # with collections in between; differential against stock.
 WRITE_BARRIER_MAJOR_WORDS ?= 4000000
 
-# These two run through run_differential.sh: stock's output is the reference
-# and the verified output must be identical. With VERGC_SWEEP=incremental it
-# runs the verified side under three slice pacings, and (REQUIRE_MID_SWEEP)
-# checks that incremental_sweep really ran mid-sweep.
+# These run through run_differential.sh: stock's output is the reference and
+# the verified output must be identical. With VERGC_MAJOR=incremental it runs
+# the verified side under three pacings (the default, tiny slices with a small
+# nursery, small slices with a tiny mark stack and back-to-back cycles), and
+# checks (REQUIRE_MID_SWEEP, REQUIRE_MID_MARK) that incremental_sweep really
+# ran mid-sweep and incremental_mark mid-mark.
 DIFF = ./run_differential.sh
 NURSERY_NO_SCAN_MAJOR_WORDS ?= 4000000
 
@@ -125,7 +136,7 @@ GRAY_OVERFLOW_MAJOR_WORDS ?= 2000000
 
 BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
              $(addsuffix .byte, $(KNOWN_GAP_TESTS)) $(addsuffix .byte, $(MARK_BENCHMARKS))
-NATIVE_DIFF_TESTS = explicit_major incremental_sweep write_barrier
+NATIVE_DIFF_TESTS = explicit_major incremental_sweep write_barrier incremental_mark
 NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS)) gc_explicit.native large_alloc_garbage.native \
                gray_overflow.native obj_truncate.native $(addsuffix .native, $(NATIVE_DIFF_TESTS))
 BENCH_TARGETS = $(addsuffix .bench, $(BENCHMARKS))
@@ -251,6 +262,8 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_SWEEP_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) incremental_sweep.byte'
 	$(DIFF) write_barrier '$(UNCHANGED_OCAMLRUN) write_barrier.byte' \
 	  'MIN_EXPANSION_WORDSIZE=$(WRITE_BARRIER_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) write_barrier.byte'
+	REQUIRE_MID_MARK=1 $(DIFF) incremental_mark '$(UNCHANGED_OCAMLRUN) incremental_mark.byte $(INCREMENTAL_MARK_REPS)' \
+	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_MARK_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) incremental_mark.byte $(INCREMENTAL_MARK_REPS)'
 	@echo "=== Correctness tests passed ==="
 
 # ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
@@ -312,6 +325,8 @@ test-native: $(NATIVE_FILES) $(addsuffix .byte, $(NATIVE_DIFF_TESTS))
 	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_SWEEP_MAJOR_WORDS) ./incremental_sweep.native'
 	$(DIFF) write_barrier.native '$(UNCHANGED_OCAMLRUN) write_barrier.byte' \
 	  'MIN_EXPANSION_WORDSIZE=$(WRITE_BARRIER_MAJOR_WORDS) ./write_barrier.native'
+	REQUIRE_MID_MARK=1 $(DIFF) incremental_mark.native '$(UNCHANGED_OCAMLRUN) incremental_mark.byte $(INCREMENTAL_MARK_REPS)' \
+	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_MARK_MAJOR_WORDS) ./incremental_mark.native $(INCREMENTAL_MARK_REPS)'
 	@echo "=== All native smoke tests passed ==="
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----

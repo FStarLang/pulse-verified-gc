@@ -115,7 +115,7 @@ fn modify_at (ghr: R.ref gen_heap_t) (gh: gen_heap_t) (slot: hp_addr) (v: U64.t)
   GB.modify_heap_facts 'ph minor 's 'fp x slot v;
   unfold is_gen_heap;
   unfold mark_state;
-  with st ov c f r. _;
+  with st ov c f r mw. _;
   stack_facts gh.mark_stack;
   GB.modify_mark_cache 'ph minor 's 'fp x slot v st ov (MSI.pos c f r) (stack_capacity gh.mark_stack);
   let old = read_word gh.major slot;
@@ -186,7 +186,7 @@ fn initialize_at (gh: gen_heap_t) (slot: hp_addr) (v: U64.t) (#x: erased obj_add
   PromoteImpl.phase_heads gh.phase_ref (SpecHeap.write_word 's slot v);
   fold (gen_phase gh (SpecHeap.write_word 's slot v) 'ph);
   unfold mark_state;
-  with st ov c f r. _;
+  with st ov c f r mw. _;
   MS.mark_cache_write 's 'ph st ov (MSI.pos c f r) x slot v;
   fold (mark_state gh (SpecHeap.write_word 's slot v) 'ph);
   young v

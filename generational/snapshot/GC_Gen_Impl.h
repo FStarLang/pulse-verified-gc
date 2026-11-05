@@ -55,6 +55,7 @@ typedef struct gen_heap_t_s
   uint64_t *mark_cur;
   uint64_t *mark_field;
   uint64_t *mark_rescan;
+  uint64_t *mark_words;
 }
 gen_heap_t;
 
