@@ -23,8 +23,6 @@
    allocation, so its contents change and the check fails (or the program
    crashes).  Deterministic: a fixed PRNG seed, no timing dependence. *)
 
-[@@@ocaml.warning "-3"]   (* Obj.truncate is deprecated *)
-
 let failures = ref 0
 
 let check name ok =
@@ -174,9 +172,10 @@ let section_explicit () =
   done;
   Printf.printf "explicit: ok\n%!"
 
-(* 6. Obj.truncate (its leftover header takes the allocation colour) and
-   Marshal (intern carves one major block into many objects with the colour
-   the block got) mid-sweep. *)
+(* 6. Shrinking blocks (a shorter copy replaces the block: Obj.truncate is
+   not supported by the verified GC, see obj_truncate.ml) and Marshal (intern
+   carves one major block into many objects with the colour the block got)
+   mid-sweep. *)
 let section_truncate_intern () =
   let n = 100 in
   let tbl = Array.init n (fun i -> big i 400) in
@@ -188,23 +187,23 @@ let section_truncate_intern () =
     let i = rand n in
     if lens.(i) > 300 then begin
       let l = 300 + rand (lens.(i) - 300) in
-      Obj.truncate (Obj.repr tbl.(i)) l; lens.(i) <- l
+      tbl.(i) <- Array.sub tbl.(i) 0 l; lens.(i) <- l
     end else begin
       tbl.(i) <- big (round * n + i) 400; lens.(i) <- 400
     end;
     interned.(rand 8) <- (Marshal.from_string blob 0 : (int * string * int array) list);
     churn 20_000;
     Array.iteri (fun i a ->
-        if Array.length a <> lens.(i) then check "truncate: length" false
+        if Array.length a <> lens.(i) then check "shrink: length" false
         else begin
           let key = a.(0) / 1000 in
           for j = 0 to lens.(i) - 1 do
-            if a.(j) <> key * 1000 + j then check "truncate: payload" false
+            if a.(j) <> key * 1000 + j then check "shrink: payload" false
           done
         end) tbl;
     Array.iter (fun d -> if d <> data then check "intern: data" false) interned
   done;
-  Printf.printf "truncate/intern: ok\n%!"
+  Printf.printf "shrink/intern: ok\n%!"
 
 (* 7. Stress: a random mix of everything above against a model. *)
 let section_stress () =

@@ -940,7 +940,7 @@ keep true in between. How this runtime meets each:
 | obligation (`GC.Gen.Impl`) | how it is met |
 |---|---|
 | **Allocation mid-sweep**: a new block is *fresh* (`GC.Spec.SweepPhase.Mutator.fresh_ok`), and every field is initialised with a storable value before the next collector call | OCaml's rule for `caml_alloc_shr`: its callers initialise every field (`caml_initialize`, or raw stores of values that are not young) before allocating again -- the interpreter's `CLOSURE`/`CLOSUREREC`/`MAKEBLOCK`, `caml_alloc`, `caml_make_vect`, intern. A value the program holds is reachable, so never pending free. (A sweep slice reads no field, so even a slice between allocation and initialisation reads nothing uninitialised.) `tag <> Infix_tag` is asserted in `verified_allocate`. |
-| **The allocation colour is the collector's** | `verified_allocate` writes the final header; the patched `caml_alloc_shr_aux` rewrites only profiling bits (WITH_PROFINFO), keeping the colour; `caml_allocation_color` and `caml_obj_truncate`'s leftover header use the same rule (`vergc_allocation_color`). |
+| **The allocation colour is the collector's** | `verified_allocate` writes the final header; the patched `caml_alloc_shr_aux` rewrites only profiling bits (WITH_PROFINFO), keeping the colour; `caml_allocation_color` uses the same rule (`vergc_allocation_color`), for C stubs that ask. `Obj.truncate` is not supported: `caml_obj_truncate` raises `Invalid_argument`, so no leftover header is written. |
 | **Field writes** (`GC.Spec.SweepPhase.Mutator.program_write`) | `caml_modify` / `caml_initialize`, whose barrier records every major field given a young pointer in `caml_ref_table`. |
 | **Nursery allocation** keeps the nursery's shape and the cross-generation condition | The nursery is allocated only after the cycle's own minor collection (before `start_cycle`), so every nursery object was initialised from reachable values: none points at an object pending free. |
 | **The minor collection's arguments** (`minor_slots_ok`) | The forwarding array is zeroed before every call; the remembered set is `caml_ref_table`, reset after every minor collection (so it never names a slot in an object that was unreachable when marking ended); its young targets are added to the roots; the roots come from `caml_do_roots`, which marking used too. |
@@ -949,7 +949,7 @@ keep true in between. How this runtime meets each:
 Known holes, shared with stop-the-world (docs/known-issues.md): weak arrays
 and ephemerons are not cleaned, so `Weak.get` can hand back a block the mark
 did not reach -- mid-sweep one pending free -- and header changes the runtime
-makes on live blocks (`Obj.truncate`, `Obj.set_tag`, `Lazy`'s forwarding,
+makes on live blocks (`Obj.set_tag`, `Lazy`'s forwarding,
 `caml_update_dummy`) are outside the model of program events.
 
 ### The runtime patch and stock's major collector

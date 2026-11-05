@@ -829,33 +829,33 @@ index 18cfe3e..e13323a 100644
  }
  
 diff --git a/runtime/obj.c b/runtime/obj.c
-index 4530415..ec96b77 100644
+index 4530415..9514c37 100644
 --- a/runtime/obj.c
 +++ b/runtime/obj.c
-@@ -187,10 +187,22 @@ CAMLprim value caml_obj_truncate (value v, value newsize)
+@@ -183,6 +183,15 @@ CAMLprim value caml_obj_dup(value arg)
+ */
+ CAMLprim value caml_obj_truncate (value v, value newsize)
+ {
++  /* Verified GC: Obj.truncate is not supported; it raises Invalid_argument
++     whatever the block (OCaml 5 removed it).  Shrinking a block in place
++     leaves a leftover block the verified collector's invariants have no
++     account of: stock makes it black so that it is not reused before the
++     ref table is emptied, but an idle verified heap admits no black object,
++     and a block behind the sweep cursor is never whitened. */
++  (void) v; (void) newsize;
++  caml_invalid_argument ("Obj.truncate: not supported by the verified GC");
++#if 0
+   mlsize_t new_wosize = Long_val (newsize);
    header_t hd = Hd_val (v);
    tag_t tag = Tag_hd (hd);
-   color_t color = Color_hd (hd);
--  color_t frag_color = Is_young(v) ? 0 : Caml_black;
-+  color_t frag_color;
-   mlsize_t wosize = Wosize_hd (hd);
-   mlsize_t i;
+@@ -216,6 +225,7 @@ CAMLprim value caml_obj_truncate (value v, value newsize)
+   Hd_val (v) =
+     Make_header_with_profinfo (new_wosize, tag, color, Profinfo_val(v));
+   return Val_unit;
++#endif
+ }
  
-+  /* Verified GC: stock makes the leftover black so that it is not reused
-+     before the ref table is emptied. A black block is wrong here: when the
-+     collector is idle the verified invariants admit no black object, and a
-+     black block behind the sweep cursor is never whitened. The colour the
-+     verified allocator would give a block at that address
-+     (caml_allocation_color, i.e. GC.Spec.Phase.allocation_color) gives the
-+     same guarantee: white idle or behind the cursor, where the next sweep to
-+     reach it follows a minor collection (which empties the ref table); black
-+     in front of the cursor, which this sweep keeps. */
-+  frag_color = Is_young(v) ? 0
-+               : caml_allocation_color ((void *) &Field (v, new_wosize));
-+
-   if (tag == Double_array_tag) new_wosize *= Double_wosize;  /* PR#2520 */
- 
-   if (new_wosize <= 0 || new_wosize > wosize){
+ CAMLprim value caml_obj_add_offset (value v, value offset)
 diff --git a/runtime/startup_byt.c b/runtime/startup_byt.c
 index de75497..cbe58be 100644
 --- a/runtime/startup_byt.c

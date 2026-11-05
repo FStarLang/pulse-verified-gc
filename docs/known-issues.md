@@ -44,12 +44,13 @@ obligations) model the program as allocation, field writes through
 change a live major block in other ways; each is safe in both sweep modes for
 the reason given, but none is covered by a proof:
 
-- **`Obj.truncate`** (`caml_obj_truncate`) shrinks a block and writes a header
-  for the leftover. The leftover's colour is `caml_allocation_color`, i.e. the
-  verified allocator's rule (it used to be black, which an idle verified heap
-  does not admit): white idle or behind the sweep cursor, black in front of
-  it. Either way the next sweep to reach it follows a minor collection, which
-  empties the remembered set that may still name slots inside it.
+- **`Obj.truncate` is unsupported**: `caml_obj_truncate` raises
+  `Invalid_argument "Obj.truncate: not supported by the verified GC"` for
+  every block and changes nothing (OCaml 5 removed it). Shrinking a block in
+  place leaves a leftover block the collector's invariants have no account
+  of, so it is ruled out rather than argued safe
+  (`generational/ocaml-integration/tests/obj_truncate.ml`). Neither the stdlib
+  nor OCaml's own testsuite calls it.
 - **Tag changes**: `Obj.set_tag`, `Lazy` forcing (`Forward_tag`),
   `caml_update_dummy`. They write the tag byte, never the colour.
 - **Intern** (`Marshal.from_*`): a block of at most `Max_wosize` words is one

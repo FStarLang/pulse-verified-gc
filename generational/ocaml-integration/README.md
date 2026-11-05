@@ -100,7 +100,9 @@ The runtime paths that used to reach them now use the verified collector:
 Finalisers (`Gc.finalise`, custom-block finalisers), weak references and
 ephemerons are not implemented by the verified collector yet; this is a
 known limitation, and the tests that exercise them are listed in
-`ci/expected-failures.txt`.  Skipping the stock major cycle and sweep at
+`ci/expected-failures.txt`.  `Obj.truncate` is not supported: it raises
+`Invalid_argument "Obj.truncate: not supported by the verified GC"` (OCaml 5
+removed it; `tests/obj_truncate.ml`).  Skipping the stock major cycle and sweep at
 exit is consistent with it: finalisers run neither during the program nor
 at exit.
 
@@ -131,7 +133,7 @@ and how the bridge meets the trusted obligations listed in
    programs that check specific properties of the collector and exit non-zero
    on failure. `explicit_major` (the `Gc` calls drive the verified collector)
    and `incremental_sweep` (allocation, minor collections, mutation, large
-   blocks, explicit collections, `Obj.truncate`/`Marshal` and a stress mix,
+   blocks, explicit collections, shrinking blocks and `Marshal`, and a stress mix,
    all mid-sweep) are compared with stock OCaml's output byte for byte by
    `tests/run_differential.sh`, under three slice pacings when
    `VERGC_SWEEP=incremental`.
