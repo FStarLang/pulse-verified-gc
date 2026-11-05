@@ -166,9 +166,9 @@ bytecode runtime by `generational/ocaml-integration/verified_gc/alloc_gen.c`.
 The current full-GC bridge uses a separate mutable `roots_for_gc` buffer and a
 separate initially empty gray stack; verified `full_gc` performs minor
 collection, verified root darkening and marking (`start_cycle`), and then the
-sweep (`major_slice` until idle).  With `VERGC_SWEEP=incremental` the bridge
-calls `minor_collect` and `start_cycle` itself and runs `major_slice` after
-each minor collection.
+sweep (`major_slice` until idle).  With `VERGC_MAJOR=incremental` the bridge
+calls `minor_collect` and `start_cycle` itself and runs a paced `major_slice`
+(marking, then sweeping) after each minor collection, as OCaml 4.14 does.
 
 ```bash
 make extract

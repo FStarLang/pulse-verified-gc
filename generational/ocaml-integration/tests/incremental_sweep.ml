@@ -1,22 +1,22 @@
-(* The incremental sweep (VERGC_SWEEP=incremental), from the program's side.
+(* The incremental sweep (VERGC_MAJOR=incremental), from the program's side.
    =========================================================================
 
-   With VERGC_SWEEP=incremental a full collection marks and then sweeps the
-   major heap in slices, one after each minor collection, so the program runs
-   -- allocates, mutates, collects -- while the sweep is half done.  The
+   With VERGC_MAJOR=incremental a major cycle marks and then sweeps the major
+   heap in slices, one after each minor collection, so the program runs --
+   allocates, mutates, collects -- while the sweep is half done.  The
    collector colours a block allocated in front of the sweep cursor black (the
    sweep keeps it) and one behind it white; a minor collection mid-sweep keeps
    the sweep where it is; a full collection requested mid-sweep finishes the
    sweep first; a failed allocation mid-sweep finishes the sweep and retries.
+   (Marking with the program running is tests/incremental_mark.ml's subject.)
 
    Nothing here can see the phase -- this file runs unchanged on stock OCaml,
    and the Makefile compares the two outputs byte for byte.  Instead every
    section runs long enough, against a small major heap, that most of it
-   happens mid-sweep, and the Makefile checks (VERGC_SWEEP_STATS) that it did:
-   slices were run, and major allocations happened while sweeping.  It runs
-   with two pacings: the default, and tiny slices (VERGC_SWEEP_MIN_WORDS=256,
-   VERGC_SWEEP_K=0), where a sweep spans thousands of minor collections and
-   most full collections are requested mid-sweep.
+   happens mid-sweep, and the Makefile checks (VERGC_MAJOR_STATS) that it did:
+   sweep slices were run, and major allocations happened while sweeping.  It
+   runs under three pacings (tests/run_differential.sh), with small slices
+   and a small nursery among them, where a sweep spans many minor collections.
 
    Each section keeps a model of what it stored and checks every live object
    against it.  An object the sweep freed while live is reused by a later

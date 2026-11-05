@@ -822,13 +822,14 @@ on an ascending list prefers low addresses (OCaml's allocation policy 1).
 An incremental sweep runs the program between slices of `sweep_step`s
 (`incremental-sweep-plan.md`). The phase is part of the collector's state:
 `gen_heap_t.phase_ref`, which the Pulse allocator reads (above) and the
-major collector's entry points (below) write. By default (`VERGC_SWEEP=stw`)
-the bridge runs every full collection as `full_gc`, which runs the cycle to
+major collector's entry points (below) write. By default (`VERGC_MAJOR=stw`)
+the bridge runs every major collection as `full_gc`, which runs the cycle to
 its end, so between collections the phase is `Idle`; with
-`VERGC_SWEEP=incremental` it runs the cycle in slices between program steps
+`VERGC_MAJOR=incremental` it runs the cycle -- marking, then the sweep -- in
+slices between program steps
 (`generational/ocaml-integration/verified_gc/OCAML_INTEGRATION.md`, "The
-Incremental Sweep": the policy, the slice budget, and how the bridge meets the
-trusted obligations).
+Major Mode": the trigger, the pacing, and how the bridge meets the trusted
+obligations; below, "The bridge (M5)").
 
 **Allocation at the sweep's phase** (`GC.Spec.Allocator.Cursor.alloc_phase`).
 At `Sweeping c` the allocator colours by position: an object allocated in
@@ -1219,8 +1220,9 @@ uses the bounded variant in the top-level `collect` contract.
 Incremental marking runs the mark step a few objects at a time with the
 program running in between. The spec core (milestone M1 of the
 incremental-mark plan) comes first; the `Marking` phase and black allocation
-(M2), the verified write barrier (M3) and the mark slices in Pulse (M4) follow
-below. The mark stack stays an
+(M2), the verified write barrier (M3), the mark slices in Pulse (M4) and
+allocation while marking with the bridge that interleaves the slices with the
+program (M5) follow below. The mark stack stays an
 implementation cache: the spec state is the heap's colours alone.
 
 **The step at any grey object** (`GC.Spec.MarkPhase.mark_step_at g x`):
@@ -1591,6 +1593,63 @@ went through the partly-scanned cells and a second loop iteration, and every
 field called the darkening and `is_full`.  The slice now scans and blackens a
 popped object at once when the budget covers it, tests `is_pointer` before
 calling the darkening, and has the darkening report a drop itself.
+
+#### Allocation while marking, and the bridge (M5)
+
+**Allocation while marking** (`GC.Gen.MarkPhase.Alloc`).  The bridge
+allocates in the major heap with `GC.Impl.Allocator.allocate` at the
+record's phase, whose postcondition is `AC.alloc_phase g fp ph wz tag`; at
+`Marking` the new block is black.  `GC.Spec.MarkPhase.Alloc` said what that
+does to the marking invariant; M5 carries it up to the collector's state
+`GI.phase_shape ... Marking`, which also holds the generational shape
+`collection_shape_with Marking free_stw` (left open in M2):
+
+- `marking_alloc_shape`: from `phase_shape ... Marking`, either nothing
+  changed or the new block, of the requested size and tag, is *fresh*:
+  `fresh_shape minor g fp obj` -- the nursery's shape, the cross-generation
+  condition, density, the ascending list, and `MPA.marking_fresh` (the
+  marking invariant with `obj` black and its fields exempt: well-formedness
+  counts it as free, the weak tri-colour clause skips it as a source);
+- `fresh_shape_write`: writes into its body keep it fresh;
+- `fresh_shape_close`: once its fields are storable and, if white, held
+  (`MPA.fields_ok`), `phase_shape ... Marking` holds again;
+- `alloc_mark_cache`, `fresh_mark_cache_write`: the mark cache is kept --
+  the allocation splits only free blocks and keeps every non-free one with
+  its header and fields (`MPA.alloc_in_use`,
+  `GC.Gen.MarkState.mark_cache_keeps_blocks`), and the new block is black, so
+  the grey objects, the stack's entries, the partly scanned object's dark
+  fields and the rescan cursor are as they were.
+
+The trusted part is the same "fresh block initialised before the next
+collector call" obligation as at the other phases (GC.Gen.Impl's trust
+boundary): the runtime initialises every field with a value it holds before
+anything else touches the heap.  Until then the leftover fields bind nothing,
+the remembered set's coverage included.
+
+**The bridge.**  `VERGC_MAJOR=incremental` (OCAML_INTEGRATION.md, "The Major
+Mode") follows 4.14: after each minor collection, at Idle `start_cycle` when
+the trigger fires (the nursery is empty right then), otherwise one
+`major_slice`.  The trigger matters only at Idle (space_overhead on an
+estimate of the live words, a heap-fraction safety net, and a slow
+minor-allocation clock); mid-cycle, memory pressure makes slices bigger, and
+a cycle is finished at once only for a full collection, a failed allocation,
+or a minor collection that might not find room to promote.  The pacing ports
+`caml_major_collection_slice`: the share of the cycle a slice does is the
+words allocated since the last slice over two thirds of the free memory when
+the cycle started (capped at 0.3, with a backlog, smoothed over
+`caml_major_window`), 40% of the cycle marking the words in use and 60%
+sweeping the heap.  The live-words estimate needs the words the cycle
+marked: the mark slice adds the size of every block it blackens to a counter
+(`gen_heap_t.mark_words`, in `mark_state`, zeroed by `start_cycle`), an
+unspecified number for the bridge -- nothing is claimed of it.
+
+**Testing.**  `tests/incremental_mark.ml` mutates heavily while marking and
+is compared with stock OCaml byte for byte under three pacings; with small
+slices marking spans about a thousand slices with a minor collection, and
+barrier calls, between each two (`VERGC_MAJOR_STATS`).  Disabling the
+barrier's darkening in the bridge makes it fail.
+
+**Measurements.**  stop-the-world against incremental on binarytrees 16/18, livemap and livegraph: OCAML_INTEGRATION.md, "The Major Mode", "Measurements".  The largest mark or sweep slice is 1-4 ms on binarytrees (stop-the-world collections: 45-495 ms), 14 ms on livemap (191 ms), 64 ms on livegraph (232 ms, few minor collections, so large slices); wall time +0-10% on binarytrees, +7-16% on livemap, +27-37% on livegraph (7 cycles against 4).
 
 ## The minor collector
 
@@ -3167,45 +3226,39 @@ the root set.
 
 ### Full GC roots and the persistent mark stack
 
-The full-GC bridge calls the extracted verified `full_gc` entry point
-(stop-the-world), or `minor_collect` and then `start_cycle` (incremental,
-after finishing any cycle still running).  The root buffer is a separate
-allocation; the mark stack is the collector's own, allocated once at heap
-set-up with the rest of the mark state (`gen_heap_t.mark_stack`,
-`mark_overflow`, `mark_cur`, `mark_field`, `mark_rescan`):
+Stop-the-world, a major collection calls the extracted verified `full_gc`.
+Incremental, a cycle starts right after a minor collection: `start_cycle`
+darkens the roots that minor collection just rewrote (`root_values`, still
+holding them), so the nursery is empty and the roots are post-minor, as
+`start_cycle` asks.  The mark stack is the collector's own, allocated once at
+heap set-up with the rest of the mark state (`gen_heap_t.mark_stack`,
+`mark_overflow`, `mark_cur`, `mark_field`, `mark_rescan`, and the counter
+`mark_words`):
 
 ```c
-uint64_t *roots_for_gc = calloc(root_count == 0 ? 1 : root_count, sizeof(uint64_t));
-if (root_count > 0)
-    memcpy(roots_for_gc, root_values, root_count * sizeof(uint64_t));
+/* stw: do_full_gc_stw */
+ok = full_gc(gc_gen_heap, roots_for_gc, root_count, gc_fwd_arr,
+             gc_queue, (uint64_t *)tbl->base, n_slots);
 
-if (sweep_incremental) {
-    ok = minor_collect(gc_gen_heap, roots_for_gc, root_count, gc_fwd_arr,
-                       gc_queue, (uint64_t *)tbl->base, n_slots);
-    if (ok) {
-        start_cycle(gc_gen_heap, roots_for_gc, root_count);
-        while (gc_gen_heap.phase_ref->ps_kind == 2)   /* marking, at once for now */
-            major_slice(gc_gen_heap, UINT64_MAX);
-    }
-} else {
-    ok = full_gc(gc_gen_heap, roots_for_gc, root_count, gc_fwd_arr,
-                 gc_queue, (uint64_t *)tbl->base, n_slots);
-}
+/* incremental: do_minor_gc, at Idle when the trigger fires */
+promoted = do_minor_gc_core();          /* minor_collect, roots rewritten in root_values */
+start_cycle(gc_gen_heap, root_values, root_count);   /* the phase becomes Marking */
+/* ... and after every later minor collection, until Idle: */
+major_slice(gc_gen_heap, budget);       /* marks, then sweeps */
 ```
 
 The verified protocol is:
 
-1. `minor_collect` rewrites `roots_for_gc` in place and rewrites the
+1. `minor_collect` rewrites the roots array in place and rewrites the
    remembered major slots.
 2. `start_cycle` darkens the rewritten post-minor roots (`darken_roots_bounded`:
    it greys the root objects and pushes them onto the persistent mark stack
    while it has room; the overflow flag goes up when the stack ends full) and
    enters `Marking`.
-3. `major_slice` marks while marking (one unbounded slice finishes it and
-   starts the sweep phase), then sweeps in slices until the collector is
-   idle; `full_gc` does all of it with unbounded budgets, the incremental
-   bridge marks at once and sweeps a slice after each minor collection.
-   Mark slices between program steps are milestone M5.
+3. `major_slice` marks while marking (handing over to the sweep when nothing
+   is grey), then sweeps, until the collector is idle; `full_gc` does all of
+   it with unbounded budgets, the incremental bridge runs a paced slice after
+   each minor collection, with the program running in between.
 
 The capacity of the mark stack is `max(heap_bytes / 64, 4096)`, or
 `VERGC_MARK_STACK` entries (a testing knob: `tests/gray_overflow.ml` runs with

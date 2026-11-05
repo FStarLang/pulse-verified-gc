@@ -16,7 +16,7 @@ with `make -C generational/ocaml-integration/tests correctness`.
 ---
 
 
-## Open: the proactive full collection counts only promotion
+## Fixed: the proactive full collection counted only promotion
 
 **Observed by:** writing `tests/explicit_major.ml` (a first draft that
 allocated its churn directly in the major heap died with "promotion failed")
@@ -27,10 +27,12 @@ directly in the major heap (`caml_alloc_shr`: blocks over `Max_young_wosize`)
 are not counted. A program that allocates mostly large blocks fills the major
 heap with garbage that only a failed major allocation collects; if the next
 minor collection comes first, its promotion finds no room, and promotion
-failure is fatal. Both sweep modes share this (the incremental mode keeps the
-same rule, so that `stw` stays exactly as it was). The fix is to count direct
-major allocation towards the trigger (4.14's `caml_allocated_words`), or to
-run a full collection before a minor collection that may not fit.
+failure is fatal. Fixed by counting direct major allocation towards the
+trigger (4.14's `caml_allocated_words`): stop-the-world in
+`bytes_promoted_since_major` (issue #34, `tests/large_alloc_garbage.ml`);
+with `VERGC_MAJOR=incremental` the trigger and the pacing count the words
+promoted and allocated directly, and a minor collection mid-cycle that may
+not fit finishes the cycle first.
 
 ---
 
@@ -43,7 +45,7 @@ obligations) model the program as allocation, field writes through
 `caml_modify` / `caml_initialize` (since M3 the verified barrier,
 `GC.Gen.Impl.Barrier`, whose precondition `GC.Gen.Barrier.modify_ok` is the
 trusted part), and nursery allocation. These runtime paths
-change a live major block in other ways; each is safe in both sweep modes for
+change a live major block in other ways; each is safe in both major modes for
 the reason given, but none is covered by a proof:
 
 - **`Obj.truncate` is unsupported**: `caml_obj_truncate` raises
@@ -68,14 +70,17 @@ the reason given, but none is covered by a proof:
 - **Slots outside the verified heap**: `caml_modify` / `caml_initialize` of a
   slot that is neither in the nursery nor in the verified major heap (native
   code's static data) take the stock logic in the bridge (`vergc_modify`,
-  without darkening), not the verified barrier. If such a slot gets a young
+  without darkening), not the verified barrier. While marking that needs no
+  darkening: such a slot is a root (a module block's field), and what a root
+  held when the cycle started was darkened by `start_cycle`. If such a slot gets a young
   value it goes into the ref table, which `ref_table_sound_with` does not
   allow; the minor collection's slot rewrite (`rewrite_one_slot`, which only
   checks `slot < heap_size`) rewrites it as stock would.
 - **Intern** (`Marshal.from_*`): a block of at most `Max_wosize` words is one
   `caml_alloc_shr` block carved into objects that all get that block's colour.
   That is the colour the allocator would give each of them, because the sweep
-  does not run during intern, so they are all on the same side of the cursor.
+  does not run during intern, so they are all on the same side of the cursor
+  (and while marking all are black, as each would be).
   A larger one (over 2^54 words, so not in practice) goes to a stock heap
   chunk outside the verified heap.
 - **Infix headers** (`CLOSUREREC`, `caml_alloc_dummy_infix`) are written inside
@@ -123,6 +128,26 @@ This is a diagnostics defect, not a soundness one — the collector correctly
 declines and aborts rather than proceeding. Fixing it means widening the failure
 channel (an enum, or at minimum distinguishing "allocator returned null" from
 "refused a malformed object") and having `alloc_gen.c` print accordingly.
+
+---
+
+## Open: incremental marking restarts a partly scanned object on a write
+
+**Observed by:** the design of the mark slice (M4); see DESIGN_AND_IMPL.md,
+"The mark slice"
+
+With `VERGC_MAJOR=incremental` a mark slice scans a large object a budget's
+worth of fields at a time, and a write into a field it has already scanned
+restarts the object's scan (the object is grey and its scanned fields must
+stay dark; 4.14 blackens first and needs no restart).  A program that keeps
+writing into a large array the marker is half way through can therefore
+keep that cycle's marking from ending in slices; it then ends when memory
+runs short (a minor collection without room finishes the cycle: one long
+pause) or at the next full collection.  Not observed in the tests or
+benchmarks (`tests/incremental_mark.ml` writes into a 60000-element array
+mid-scan and its cycles end in slices), but nothing bounds it.  The fix
+would be 4.14's: resume after the written field rather than from the start,
+which needs a different cache invariant.
 
 ---
 
@@ -187,8 +212,8 @@ for i = 0 to 1999 do a.(i) <- Array.make 300 i done;
 
 The `Gc` calls now run the verified collector (`verified_do_full_gc`: the
 nursery emptied and a whole verified cycle, called from `runtime/gc_ctrl.c` and
-from `caml_finish_major_cycle`; `verified_major_collection_slice`: a sweep
-slice when the incremental sweep is running), compaction and
+from `caml_finish_major_cycle`; `verified_major_collection_slice`: with
+`VERGC_MAJOR=incremental` a slice, or the start of a cycle when idle), compaction and
 `caml_finalise_heap` do nothing, and stock's `caml_gc_phase` never leaves
 `Phase_idle`.
 

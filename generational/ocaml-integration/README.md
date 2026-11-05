@@ -54,7 +54,7 @@ make benchmark
 
 | Component | Lines | Why trusted |
 |-----------|-------|-------------|
-| `alloc_gen.c` | ~1200 | Bridge: root scanning, address translation, heap init (including the persistent mark stack), the sweep mode and its pacing, the barrier's slot classification |
+| `alloc_gen.c` | ~1600 | Bridge: root scanning, address translation, heap init (including the persistent mark stack), the major mode, its trigger and pacing, the barrier's slot classification |
 | NULL-base patches | ~20 | 6 patches to GC_Gen_Impl.c for absolute addressing |
 | `runtime_gen.patch` | ~1000 | OCaml runtime modifications (allocation, collection entry points, the write barrier's calls) |
 | `krmlinit.c` | ~25 | Derived constant initialization |
@@ -107,24 +107,26 @@ removed it; `tests/obj_truncate.ml`).  Skipping the stock major cycle and sweep 
 exit is consistent with it: finalisers run neither during the program nor
 at exit.
 
-`VERGC_SWEEP` picks the major collector's sweep:
+`VERGC_MAJOR` picks how the major collector runs:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `VERGC_SWEEP` | `stw` | `stw`: a full collection marks and sweeps at once (`full_gc`). `incremental`: it marks at once (`minor_collect`, `start_cycle`, then one unbounded mark slice, `major_slice`) and the sweep then runs in slices (`major_slice`), one after each minor collection. Any other value warns once and means `stw`. |
+| `VERGC_MAJOR` | `stw` | `stw`: every major collection marks and sweeps at once (`full_gc`). `incremental`: 4.14's rhythm -- after each minor collection, at Idle `start_cycle` when the trigger fires, otherwise one `major_slice` that marks or sweeps, its budget paced as 4.14's `caml_major_collection_slice`. Any other value warns once and means `stw`. `VERGC_SWEEP` is an alias. |
 | `VERGC_MARK_STACK` | `max(heap bytes / 64, 4096)` | Capacity of the persistent mark stack, in entries (testing: a small stack makes root darkening and marking overflow, so the mark slices rescan). |
-| `VERGC_SWEEP_MIN_WORDS` | 4096 | incremental: the smallest slice, in words |
-| `VERGC_SWEEP_K` | 4 | incremental: a slice sweeps `max(MIN_WORDS, K * words the minor collection collected + words allocated directly in the major heap since the last slice)` words |
-| `VERGC_SWEEP_STATS` | unset | `1`: print the sweep counters (slices, words swept, forced finishes, allocations mid-sweep) to stderr at exit |
+| `VERGC_SLICE_MIN_WORDS` | 4096 | incremental: the smallest automatic slice, in words (`VERGC_SWEEP_MIN_WORDS` is an alias) |
+| `VERGC_SLICE_WORDS` | 0 | incremental, testing: a fixed budget for every automatic slice instead of the paced one (0: paced) |
+| `VERGC_TRIGGER_MIN_WORDS` | heap / 8 | incremental: the least major allocation between two cycles |
+| `VERGC_MAJOR_STATS` | unset | `1`: print the major collector's counters and pause times to stderr at exit (`VERGC_SWEEP_STATS` is an alias) |
 
-A full collection requested mid-sweep finishes the cycle first (`major_slice`
-with an unbounded budget until idle); a failed major allocation mid-sweep
-finishes the cycle and retries, then runs a full collection and retries.
-`Gc.full_major`, `Gc.major` and `Gc.compact` run a whole verified cycle, its
-sweep included, and `Gc.major_slice` a `major_slice`
-(see "Stock collector entry points" above). See
-`verified_gc/OCAML_INTEGRATION.md`, "The Incremental Sweep", for the policy
-and how the bridge meets the trusted obligations listed in
+The pacing also reads `space_overhead` (`o`) and `window_size` (`w`), set by
+`Gc.set` or `OCAMLRUNPARAM` as usual.  A cycle in progress is finished at
+once only for a full collection, a failed major allocation (finish and
+retry, then a full collection and retry), or a minor collection that might
+not find room to promote into.  `Gc.full_major`, `Gc.major` and `Gc.compact`
+run a whole verified cycle, and `Gc.major_slice` starts a cycle when idle or
+runs a slice (see "Stock collector entry points" above). See
+`verified_gc/OCAML_INTEGRATION.md`, "The Major Mode", for the trigger, the
+pacing and how the bridge meets the trusted obligations listed in
 `GC.Gen.Impl`.
 
 ## Tests
@@ -133,12 +135,15 @@ and how the bridge meets the trusted obligations listed in
 
 1. **Correctness tests** (`make -C tests correctness`) — assertion-driven
    programs that check specific properties of the collector and exit non-zero
-   on failure. `explicit_major` (the `Gc` calls drive the verified collector)
-   and `incremental_sweep` (allocation, minor collections, mutation, large
+   on failure. `explicit_major` (the `Gc` calls drive the verified collector),
+   `incremental_sweep` (allocation, minor collections, mutation, large
    blocks, explicit collections, shrinking blocks and `Marshal`, and a stress mix,
-   all mid-sweep) are compared with stock OCaml's output byte for byte by
-   `tests/run_differential.sh`, under three slice pacings when
-   `VERGC_SWEEP=incremental`.
+   all mid-sweep), `incremental_mark` (heavy mutation while marking: paths
+   cut and restored, black and white objects overwritten, young into old, a
+   large array rewritten mid-scan, `Lazy`, `Hashtbl`) and `write_barrier` are
+   compared with stock OCaml's output byte for byte by
+   `tests/run_differential.sh`, under three pacings when
+   `VERGC_MAJOR=incremental`.
 2. **Smoke tests** — the eight Computer Language Benchmarks Game programs, run
    once each to confirm the collector survives realistic workloads.
 

@@ -16,7 +16,7 @@ This document describes how the verified generational garbage collector
 7. [Allocation Path](#allocation-path)
 8. [Minor GC (Cheney Promotion)](#minor-gc-cheney-promotion)
 9. [Full GC and Major Mark-and-Sweep](#full-gc-and-major-mark-and-sweep)
-   - [The Incremental Sweep (`VERGC_SWEEP`)](#the-incremental-sweep-vergc_sweep)
+   - [The Major Mode (`VERGC_MAJOR`)](#the-major-mode-vergc_major)
 10. [Inter-Generational Pointers (ref\_table)](#inter-generational-pointers)
 11. [Root Scanning](#root-scanning)
 12. [OOM Handling](#oom-handling)
@@ -906,64 +906,148 @@ root.
 
 ---
 
-## The Incremental Sweep (`VERGC_SWEEP`)
+## The Major Mode (`VERGC_MAJOR`)
 
-`VERGC_SWEEP`, read once when the heap is set up, picks how a full
-collection sweeps:
+`VERGC_MAJOR`, read once when the heap is set up, picks how the major
+collector runs (`VERGC_SWEEP` is an alias, from when only the sweep was
+incremental; `VERGC_MAJOR` wins when both are set):
 
-| `VERGC_SWEEP` | full collection | sweep |
-|---|---|---|
-| `stw` (default; anything else warns once and means `stw`) | `full_gc` | all at once, inside `full_gc` (`major_slice` with an unbounded budget) |
-| `incremental` | `minor_collect`, then `start_cycle` (root darkening; the phase becomes `Marking`) and one unbounded mark slice (the phase becomes `Sweeping`) | in slices (`major_slice`), one after each minor collection |
+| `VERGC_MAJOR` | a major collection | marking | sweep |
+|---|---|---|---|
+| `stw` (default; anything else warns once and means `stw`) | `full_gc` | all at once, inside `full_gc` | all at once, inside `full_gc` |
+| `incremental` | `start_cycle` after a minor collection (root darkening; the phase becomes `Marking`) | in slices (`major_slice`), one after each minor collection | in slices, one after each minor collection |
 
 The entry points are `GC.Gen.Impl`'s (`minor_collect`, `start_cycle`,
 `major_slice`, `full_gc`; DESIGN_AND_IMPL.md, "The entry points"), shaped
 like OCaml 4.14's `runtime/major_gc.c`; finishing a cycle (4.14's
-`caml_finish_major_cycle`) is `major_slice(UINT64_MAX)` until it reports
-idle (`finish_cycle_now`).  Major allocation is
-`allocate` at the record's phase, as stop-the-world. The phase lives in
-`gc_gen_heap.phase_ref` (`ps_kind` 0 = Idle, 1 = Sweeping, 2 = Marking --
-entered by `start_cycle` and, for now, left before `do_full_gc` returns; a new
-object is black while marking -- plus the cursor,
-and the sweep's two caches `swept_tail` and `last_fragment`, which the
-proofs say are functions of the heap and the cursor). Incremental, each event of the program
-does this:
+`caml_finish_major_cycle`) is `major_slice(UINT64_MAX)` until it reports idle
+(`finish_cycle_now`: one slice finishes marking, one sweeps).  Major
+allocation is `allocate` at the record's phase. The phase lives in
+`gc_gen_heap.phase_ref` (`ps_kind` 0 = Idle, 1 = Sweeping, 2 = Marking,
+plus the cursor and the sweep's two caches `swept_tail` and
+`last_fragment`, which the proofs say are functions of the heap and the
+cursor); a new object is black while marking and in front of the sweep
+cursor, white otherwise.
+
+### The rhythm (incremental)
+
+4.14's: after every minor collection, at Idle, `start_cycle` when the
+trigger fires -- the nursery is empty right then, as `start_cycle` needs --
+and otherwise one `major_slice`, which marks while marking (handing over to
+the sweep when nothing is grey) and sweeps while sweeping.  Each event:
 
 | event | `alloc_gen.c` |
 |---|---|
-| full collection (`do_full_gc`: the proactive trigger, a failed allocation, `caml_trigger_verified_gc`) | mid-sweep, the cycle finished first (as 4.14: a full collection requested mid-sweep finishes the cycle); then `minor_collect` and, unless promotion ran out of memory, `start_cycle` and an unbounded mark slice, with `full_gc`'s roots, forwarding array, queue and remembered slots, and the same post-processing (forwarded roots written back, `ref_table` reset, promotion failure fatal) |
-| minor collection (`do_minor_gc`) | mid-sweep, if the free list holds fewer than twice the nursery's words, the cycle finished first (garbage in front of the cursor is not on the free list yet, and a promotion failure is fatal); `minor_collect`; then, mid-sweep, `major_slice` with the budget below |
-| major allocation (`verified_allocate`) | `allocate` at the phase: a block in front of the cursor is black, one behind it white. On failure: mid-sweep, finish the cycle and retry; then a full collection, finished, and retry; then `NULL` (`Out_of_memory`), as stop-the-world |
-| `Gc.full_major`, `Gc.major`, `Gc.compact` (`runtime/gc_ctrl.c`), `Gc.set` (policy change, through stock `caml_finish_major_cycle`) | `verified_do_full_gc`: the nursery emptied, a full collection, and its whole sweep -- the program sees a finished cycle |
-| `Gc.major_slice`: stock `caml_major_collection_slice` | `verified_major_collection_slice`: mid-sweep, a slice (of `n` words for `Gc.major_slice n`, `n > 0`); nothing otherwise |
+| minor collection (`do_minor_gc`) | mid-cycle, if the heap may not have room for twice the nursery's words, the cycle finished first (below); `minor_collect` at the phase (while marking, promoted copies are black); then at Idle the trigger (`start_major_cycle`: `start_cycle` with the roots the minor collection just rewrote), otherwise a paced slice (`paced_slice(-1)`) |
+| major allocation (`verified_allocate`) | at Idle the trigger (a minor collection and `start_cycle`, `begin_cycle_now`); mid-cycle, once a nursery's worth of words has been allocated since the last slice, a paced slice (4.14 requests one there); then `allocate` at the phase.  On failure: mid-cycle, finish the cycle and retry; then a full collection, finished, and retry; then `NULL` (`Out_of_memory`), as stop-the-world |
+| `Gc.full_major`, `Gc.major`, `Gc.compact` (`runtime/gc_ctrl.c`), `Gc.set` (policy change, through stock `caml_finish_major_cycle`), `caml_trigger_verified_gc` | `do_full_gc`: any cycle in progress finished, then a minor collection, `start_cycle`, and that cycle finished too -- the program sees a finished cycle |
+| `Gc.major_slice n` (`runtime/gc_ctrl.c` calls `verified_major_collection_slice` directly; stock's own test of its phase is always "idle") | at Idle, start a cycle (as 4.14); otherwise a slice with 4.14's reading of `n` (0: the next bucket's work; `n > 0`: the work to free about `n` words) |
 
-`Gc.quick_stat`'s `major_collections` counts a cycle when its sweep ends, as
-stock does (stop-the-world, when `full_gc` returns).
+**The trigger, at Idle only.**  Incremental mode never starts a cycle in the
+middle of one: mid-cycle, memory pressure makes the slices bigger (the
+pacing), it never finishes the cycle.  A cycle starts when, since the last one
+ended,
 
-### Pacing (decision D3)
+- the words allocated in the major heap (promoted, or allocated directly)
+  exceed `caml_percent_free` percent (`space_overhead`, `o`, default 120) of
+  the words in use when it ended, and at least `VERGC_TRIGGER_MIN_WORDS`
+  (default: an eighth of the heap) -- 4.14's steady state, on a heap of fixed
+  size;
+- or the words in use (estimated from above) reach half the heap -- the
+  safety net #39 had, now on the estimate: a cycle needs free memory to run
+  in;
+- or the nursery has allocated as many words as the heap has -- a slow clock
+  standing in for 4.14's back-to-back cycles, so that a program whose garbage
+  all dies young still sees major cycles.
 
-`major_slice` takes its budget in words: mid-sweep, whole sweep steps until the blocks
-swept, headers included, add up to the budget (at most one block over). After
-a minor collection that collected `m` words:
+The words in use when a cycle ends are estimated as the words it marked (the
+mark slice counts them: `gc_gen_heap.mark_words`) plus the words allocated
+during the cycle; every block that survives a sweep was marked or allocated
+during the cycle, so the estimate is an upper bound, and so is "that plus
+what was allocated since" for the words in use now.
+
+### Pacing (incremental): 4.14's `caml_major_collection_slice`
+
+`major_slice` takes its budget in words: while marking, a header for each
+object popped or block rescanned and a word for each field scanned (an object
+larger than what is left is scanned in parts); while sweeping, the words of
+the blocks swept (at most one block over).  `paced_slice` ports
+`runtime/major_gc.c` L938-1109:
 
 ```
-budget = max(VERGC_SWEEP_MIN_WORDS, VERGC_SWEEP_K * m + d)
+FM = free memory when the cycle started    G = 2 * FM / 3
+P  = words allocated since the last slice / G      (>= caml_extra_heap_resources)
+P += backlog; if P > 0.3 then backlog = P - 0.3, P = 0.3
+spread P over the ring of caml_major_window buckets (the clock: the
+nursery's fill), take the current bucket minus the work credit
+(Gc.major_slice adds to the credit)
+mark slice:  P * MW / 0.4 words        sweep slice:  P * heap / 0.6 words
 ```
 
-where `d` is the words allocated directly in the major heap since the last
-slice. Defaults: `VERGC_SWEEP_MIN_WORDS=4096`, `VERGC_SWEEP_K=4`. `m` (the
-nursery's fill) bounds the words promoted from above, and is what the
-proactive trigger counts too, so a sweep of a `W`-word heap is over after
-`W / K` such words, before the trigger (`W / 2`) starts the next cycle.
-Porting 4.14's own pacing (`caml_major_collection_slice`,
-`runtime/major_gc.c` L938-1109: work from the words allocated and promoted,
-`caml_percent_free`, and a work credit smoothed over `caml_major_window`
-slices) is future work.
+so the cycle ends after about `G` words are allocated: 40% of the time
+marking `MW` words, 60% sweeping the heap.  4.14 takes `FM = heap * o / (100
++ o)` and `MW = heap * 100 / (100 + o)`, its heap growing to make that true.
+Ours is fixed, so `FM` is also bounded by what is free (from below: the heap
+minus the words in use, estimated from above; at least a 64th of the heap) and
+`MW` is the words in use when the cycle started.  A slice is at least
+`VERGC_SLICE_MIN_WORDS` (default 4096; `VERGC_SWEEP_MIN_WORDS` is an alias)
+words; `VERGC_SLICE_WORDS=n` replaces the computed budget by `n` (testing).
+`VERGC_SWEEP_K`, the incremental sweep's multiplier, is gone: the pacing
+supersedes it.
 
-`VERGC_SWEEP_STATS=1` prints, at exit, one line of counters: cycles, sweeps
-finished, slices, words swept, cycles finished early by cause (full
-collection, failed allocation, room for promotion, explicit `Gc` call), and
-major allocations made mid-sweep.
+**Finishing early.**  A cycle in progress is finished at once only where the
+program needs a finished cycle or memory now: a full collection (above), a
+failed allocation, and a minor collection mid-cycle that might not find room
+to promote into -- a promotion failure is fatal, and garbage is not on the free
+list until the sweep reaches it.  That check first compares the heap minus the
+words in use (estimated) with twice the nursery's words, then walks the free
+list; if it holds less, the cycle is finished -- marking and the sweep:
+finishing only the marking frees nothing.
+
+### Statistics
+
+`VERGC_MAJOR_STATS=1` (alias `VERGC_SWEEP_STATS=1`) prints two lines at exit.
+`vergc-major:` counts cycles started and finished; mark and sweep slices
+(budgeted ones; finishes are not slices); cycles whose marking spanned more
+than one slice; words marked and swept; cycles finished early by reason
+(`finish_full`, `finish_alloc`, `finish_promote`, and of those
+`finish_mid_mark`); whole collections by reason (`full_explicit`,
+`full_alloc`, `full_other`); cycles started by each trigger; the program's
+steps while marking (minor collections, major allocations, barrier calls on
+major slots) and major allocations while sweeping; barrier darkenings (the
+mark stack grew or its overflow flag went up); overflows of the mark stack and
+rescans the slices started.  `vergc-pauses:` gives count/mean/max in
+microseconds of minor collections, `start_cycle`, mark slices, sweep slices,
+finishes and whole collections.
+
+### Measurements
+
+Wall time (three runs, seconds) and pauses (`VERGC_MAJOR_STATS`, max in
+milliseconds: stop-the-world a whole collection; incremental the largest mark
+slice / sweep slice / `start_cycle`), on a loaded 16-core machine, heaps as in
+`make bench-mark`; no cycle was finished early in any incremental run:
+
+| program | build | stw time | incr. time | stw max pause | incr. max mark / sweep / start | cycles stw / incr. | mark slices per cycle |
+|---|---|---|---|---|---|---|---|
+| binarytrees 16 | native | 6.39 6.81 6.43 | 6.99 6.69 7.31 | 45.1 | 3.3 / 1.8 / 0.004 | 58 / 66 | 40 |
+| binarytrees 16 | bytecode | 8.49 8.36 8.56 | 9.27 9.52 9.73 | 94.4 | 9.5 / 1.8 / 0.003 | 58 / 66 | 40 |
+| binarytrees 18 | native | 29.4 28.3 27.4 | 29.6 28.5 27.7 | 259.1 | 1.0 / 3.2 / 0.005 | 33 / 30 | 275 |
+| binarytrees 18 | bytecode | 33.6 34.6 34.1 | 35.1 35.0 35.2 | 494.7 | 3.6 / 1.2 / 0.003 | 33 / 30 | 275 |
+| livemap 1000000 1 | native | 10.6 10.9 11.3 | 11.5 11.9 11.4 | 191.4 | 14.7 / 1.0 / 0.03 | 14 / 14 | 12 |
+| livemap 1000000 1 | bytecode | 12.0 12.1 12.0 | 14.1 14.4 13.6 | 187.5 | 13.8 / 0.9 / 0.03 | 14 / 14 | 12 |
+| livegraph 1000000 4 4 | native | 1.81 1.79 1.80 | 2.46 2.47 2.50 | 231.8 | 63.9 / 2.0 / 0.18 | 4 / 7 | 9 |
+| livegraph 1000000 4 4 | bytecode | 3.28 3.27 3.22 | 4.03 4.04 3.96 | 227.7 | 62.4 / 2.0 / 0.47 | 4 / 7 | 9 |
+
+Slices are bounded by the pacing: on binarytrees the largest slice is about
+the largest minor collection (2-4 ms), against 45-495 ms for a stop-the-world
+collection.  On livemap the minor collections themselves pause up to 200-390
+ms in both modes (a large young live set promoted at once), so the program's
+worst pause does not change.  livegraph has a large live set and few minor
+collections (about 146), so each slice carries a large share of its cycle (up
+to 4.14's cap of 0.3), and its slices reach 64 ms; it also runs 7 cycles
+against stop-the-world's 4 (the space_overhead trigger on its live set),
+which with the slices' bookkeeping costs 27-37% wall time.  Elsewhere the
+incremental mode costs 0-10% (bytecode livemap 16%).
 
 ### The trusted bridge obligations
 
@@ -973,20 +1057,22 @@ keep true in between. How this runtime meets each:
 
 | obligation (`GC.Gen.Impl`) | how it is met |
 |---|---|
-| **Allocation mid-sweep**: a new block is *fresh* (`GC.Spec.SweepPhase.Mutator.fresh_ok`), and every field is initialised with a storable value before the next collector call | OCaml's rule for `caml_alloc_shr`: its callers initialise every field (`caml_initialize`, or raw stores of values that are not young) before allocating again -- the interpreter's `CLOSURE`/`CLOSUREREC`/`MAKEBLOCK`, `caml_alloc`, `caml_make_vect`, intern. A value the program holds is reachable, so never pending free. (A sweep slice reads no field, so even a slice between allocation and initialisation reads nothing uninitialised.) `tag <> Infix_tag` is asserted in `verified_allocate`. |
+| **Allocation mid-cycle**: a new block is *fresh* (mid-sweep `GC.Spec.SweepPhase.Mutator.fresh_ok`; while marking `GC.Gen.MarkPhase.Alloc.fresh_shape`: black, its fields exempt), and every field is initialised before the next collector call with a storable value (while marking: one the program holds, `fields_ok`) | OCaml's rule for `caml_alloc_shr`: its callers initialise every field (`caml_initialize`, or raw stores of values that are not young) before allocating again -- the interpreter's `CLOSURE`/`CLOSUREREC`/`MAKEBLOCK`, `caml_alloc`, `caml_make_vect`, intern. A value the program holds is reachable, so never pending free, and while marking it is one the marker will reach (the roots obligation). (Neither a sweep slice nor a mark slice reads the fields of a black block, so even a slice between allocation and initialisation reads nothing uninitialised.) `tag <> Infix_tag` is asserted in `verified_allocate`. |
 | **The allocation colour is the collector's** | `verified_allocate` writes the final header; the patched `caml_alloc_shr_aux` rewrites only profiling bits (WITH_PROFINFO), keeping the colour; `caml_allocation_color` uses the same rule (`vergc_allocation_color`), for C stubs that ask. `Obj.truncate` is not supported: `caml_obj_truncate` raises `Invalid_argument`, so no leftover header is written. |
 | **Field writes** (`GC.Gen.Barrier.modify_ok`: a body word of a non-free, scannable, non-closure block; a storable value; while marking, a value the program holds) | Every major-field write goes through `caml_modify` / `caml_initialize` / `caml_array_fill`, which call the verified barrier (`modify_field` / `initialize_field`); OCaml's type safety gives the rest (the program stores only values it holds, into fields of blocks it holds). A write into a nursery object is made directly, with no barrier. |
 | **The remembered set: append iff the barrier returned true** | The patched `caml_modify` / `caml_initialize` call `add_to_ref_table` exactly when `modify_field` / `initialize_field` return true (`GC.Gen.Barrier.modify_ref_table` then keeps the table covering and sound); a block allocated in the major heap has every field initialised (through `caml_initialize`, or a raw store of a value that is not young) before the next minor collection. |
-| **The mark state** (`gc_gen_heap.mark_stack`, `mark_overflow`) | Allocated once in `ensure_heap`, empty with the flag down; only the extracted collector and barrier touch it. |
+| **The mark state** (`gc_gen_heap.mark_stack`, `mark_overflow`, the positions, the counter `mark_words`) | Allocated once in `ensure_heap`, empty with the flag down; only the extracted collector and barrier write it (the bridge reads the stack's length, the flag and the counter, for the statistics and the pacing). |
+| **The roots while marking**: every white object the program holds is one the marker will reach (`MP.held_reached` of the roots) | `start_cycle` darkens all roots at once (the roots of the minor collection just run, the remembered slots' targets included); between collector calls OCaml code obtains values only by allocating (black) or by loading fields of values it holds, as 4.14's snapshot relies on. A root slot overwritten without a barrier (a stack slot, a register, a field of a module block in native static data, which `vergc_modify` writes without darkening) needs none: what it held was darkened when the cycle started. |
 | **Nursery allocation** keeps the nursery's shape and the cross-generation condition | The nursery is allocated only after the cycle's own minor collection (before `start_cycle`), so every nursery object was initialised from reachable values: none points at an object pending free. |
 | **The minor collection's arguments** (`minor_slots_ok`) | The forwarding array is zeroed before every call; the remembered set is `caml_ref_table`, reset after every minor collection (so it never names a slot in an object that was unreachable when marking ended); its young targets are added to the roots; the roots come from `caml_do_roots`, which marking used too. The table may list a field more than once (`caml_modify` adds it again after young -> immediate -> young); the contract allows repeats, so the bridge does not deduplicate. |
-| **`phase_ref` is written only by the collector** | `alloc_gen.c` only reads it (`vergc_sweeping`, `vergc_allocation_color`). |
+| **`phase_ref` is written only by the collector** | `alloc_gen.c` only reads it (`vergc_idle`, `vergc_marking`, `vergc_sweeping`, `vergc_allocation_color`). |
 
 Known holes, shared with stop-the-world (docs/known-issues.md): weak arrays
 and ephemerons are not cleaned, so `Weak.get` can hand back a block the mark
 did not reach -- mid-sweep one pending free -- and header changes the runtime
 makes on live blocks (`Obj.set_tag`, `Lazy`'s forwarding,
-`caml_update_dummy`) are outside the model of program events.
+`caml_update_dummy`) are outside the model of program events (they keep the
+colour bits; `tests/incremental_mark.ml` forces lazy values mid-mark).
 
 ### The runtime patch and stock's major collector
 
@@ -1010,15 +1096,27 @@ their darkening is the verified barrier's, at the verified collector's phase.
 
 ### Testing
 
-`tests/incremental_sweep.ml` and `tests/explicit_major.ml` run through
+`tests/incremental_sweep.ml`, `tests/incremental_mark.ml`,
+`tests/write_barrier.ml` and `tests/explicit_major.ml` run through
 `tests/run_differential.sh`, which compares their output with stock OCaml's
-byte for byte. With `VERGC_SWEEP=incremental` it runs them under three
-pacings (the default; `VERGC_SWEEP_K=1`; `VERGC_SWEEP_MIN_WORDS=256
-VERGC_SWEEP_K=0 MINOR_HEAP_WORDS=32768`) and checks, from
-`VERGC_SWEEP_STATS`, that `incremental_sweep` really ran mid-sweep. Every
-integration target (`make test`, `make -C tests correctness`, `test-native`)
-runs in whichever mode the environment selects, and CI runs everything,
-OCaml's own testsuite included, in both.
+byte for byte. With `VERGC_MAJOR=incremental` it runs them under three
+pacings -- the default; small slices, often (`VERGC_SLICE_MIN_WORDS=64
+MINOR_HEAP_WORDS=32768`); a tiny mark stack and back-to-back cycles
+(`VERGC_SLICE_MIN_WORDS=256 VERGC_MARK_STACK=8 VERGC_TRIGGER_MIN_WORDS=0`,
+so root darkening and the barrier overflow the stack and the slices rescan)
+-- and checks, from `VERGC_MAJOR_STATS`, that `incremental_sweep` ran
+mid-sweep and `incremental_mark` mid-mark (marking spanned slices, with minor
+collections, allocations and barrier calls in between).  `incremental_mark`
+mutates heavily while marking: it overwrites fields of black and white
+objects, cuts the only path to a subtree and stores the subtree elsewhere
+after the program has allocated, stores young values into old blocks, drops
+references, swaps elements of a 60000-element array a slice is half way
+through, forces lazy values and mutates and resizes a hash table, checking
+every object against a model without pointers.  With the barrier's
+darkening disabled it fails (a corrupted node, then an exception or a
+crash).  Every integration target (`make test`, `make -C tests correctness`,
+`test-native`) runs in whichever mode the environment selects, and CI runs
+everything, OCaml's own testsuite included, in both.
 
 ---
 
@@ -1188,13 +1286,14 @@ Direct major allocations (`verified_allocate`, blocks larger than
 `verified_allocate` checks the same threshold against the requested size
 before allocating. Without this, a heap filled by large blocks that are then
 dropped never triggered a full collection, and the next minor collection
-failed to promote (issue #34). Both sweep modes count them; incremental, they also
-feed the next sweep slice's budget (`sweep_direct_words`).
+failed to promote (issue #34). That is stop-the-world's trigger; incremental
+(`VERGC_MAJOR=incremental`) has its own, at Idle only, and the words
+allocated directly feed it and the pacing (see "The Major Mode").
 
-Mid-sweep (`VERGC_SWEEP=incremental`) a minor collection also finishes the
-sweep first when the free list holds fewer than twice the nursery's words,
-and a failed major allocation finishes the sweep before it runs a full
-collection (see "The Incremental Sweep").
+Mid-cycle (`VERGC_MAJOR=incremental`) a minor collection also finishes the
+cycle first when the heap may not hold twice the nursery's words, and a
+failed major allocation finishes the cycle before it runs a full collection
+(see "The Major Mode").
 
 ---
 
@@ -1414,10 +1513,10 @@ verified root-darkening helper (`start_cycle`), and then marks and sweeps
 4. **The minor heap is fully evacuated** — after minor GC, the minor
    heap is empty (bump reset to 0).  All live objects are in major.
 
-5. **No concurrent GC** — minor collections and marking are
-   stop-the-world; the sweep is too by default, and in slices between minor
-   collections with `VERGC_SWEEP=incremental` (see "The Incremental
-   Sweep").
+5. **No concurrent GC** — minor collections are stop-the-world; the major
+   cycle is too by default, and in slices between minor collections
+   (marking, then the sweep) with `VERGC_MAJOR=incremental` (see "The Major
+   Mode").
 
 6. **Full-GC roots are post-minor roots** — `do_full_gc` gives `full_gc` a
    separate mutable roots array.  The minor phase rewrites the roots array,
