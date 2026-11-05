@@ -11,9 +11,10 @@
 ///   * `Marking`: the minor collection's shape at `free_stw` (marking frees
 ///     nothing) and the marking invariant
 ///     (`GC.Spec.MarkPhase.marking_inv`) with what the nursery's fields
-///     point at held (`nursery_held`).  The program's roots are the other
-///     half of what is held; they are not part of the collector's state, so
-///     the entry points that take them state it of them;
+///     point at held (`GC.Gen.MarkPhase.Minor.nursery_held`).  The program's
+///     roots are the other half of what is held; they are not part of the
+///     collector's state, so the entry points that take them state it of
+///     them (`MP.held_reached g (GMM.roots_held g roots)`);
 ///   * `Sweeping c`: the sweep phase at the cursor `c`
 ///     (`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental g fp c`), the
 ///     nursery's shape, and the cross-generation condition for
@@ -22,12 +23,12 @@
 ///
 /// Every collector event keeps it: the start of the sweep phase
 /// (`phase_shape_start`), a slice (`phase_slice_shape`, which at the end of
-/// the sweep gives back the idle shape), and a minor collection at either
+/// the sweep gives back the idle shape), and a minor collection at any
 /// phase, which runs at that phase with the phase's definition of free
 /// (`phase_free`: `free_stw` idle or marking, `free_incremental c`
 /// mid-sweep):
 /// `phase_shape_collection` for its entry shape, `minor_keeps_phase_shape`
-/// for what it leaves mid-sweep.
+/// for what it leaves mid-sweep, `minor_keeps_marking_shape` while marking.
 /// The program's events (allocation and its initialisation, field writes) are `GC.Spec.SweepPhase.Mutator`'s.
 
 module GC.Gen.Incremental
@@ -49,6 +50,8 @@ module Cheney = GC.Gen.Cheney
 module Promote = GC.Gen.Promote
 module SPM = GC.Gen.SweepPhase.Minor
 module MP = GC.Spec.MarkPhase
+module GMM = GC.Gen.MarkPhase.Minor
+module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 
 /// What counts as free for a minor collection at a phase: blue (`free_stw`)
 /// when idle or marking; mid-sweep, blue or pending free
@@ -58,15 +61,6 @@ let phase_free (ph: Ph.gc_phase) : free_def =
   | Ph.Idle | Ph.Marking -> free_stw
   | Ph.Sweeping c -> free_incremental c
 
-/// What the nursery holds in the major heap: a major pointer in the scan
-/// window of a nursery object points at `w` (such a pointer is never
-/// interior: `minor_major_fields_not_free` makes it a block).
-let nursery_held (minor: minor_state) (w: obj_addr) : prop =
-  exists (obj: U64.t) (j: nat).
-    Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
-    is_pointer_field (minor_read_field minor obj j) /\
-    minor_read_field minor obj j == (w <: U64.t)
-
 /// **The collector's state at its phase.**
 [@@"opaque_to_smt"]
 let phase_shape (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) : prop =
@@ -74,7 +68,7 @@ let phase_shape (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) : p
   | Ph.Idle -> GenInv.collection_heap_shape minor g fp
   | Ph.Marking ->
       GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\
-      MP.marking_inv g (nursery_held minor)
+      MP.marking_inv g (GMM.nursery_held minor)
   | Ph.Sweeping c ->
       sweep_inv_incremental g fp c /\ GenInv.minor_heap_shape minor /\
       GenInv.minor_major_fields_not_free (free_incremental c) minor g
@@ -85,7 +79,7 @@ val phase_shape_idle (minor: minor_state) (g: heap) (fp: U64.t)
 val phase_shape_marking (minor: minor_state) (g: heap) (fp: U64.t)
   : Lemma (phase_shape minor g fp Ph.Marking <==>
            (GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\
-            MP.marking_inv g (nursery_held minor)))
+            MP.marking_inv g (GMM.nursery_held minor)))
 
 val phase_shape_sweeping (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
   : Lemma (phase_shape minor g fp (Ph.Sweeping c) <==>
@@ -143,6 +137,20 @@ val minor_keeps_phase_shape (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t
                     (forall (x: obj_addr). pending_free c res.Promote.mc_major x == pending_free c g x) /\
                     res.Promote.mc_minor == minor_reset minor /\
                     phase_shape res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp (Ph.Sweeping c)))
+
+/// **A minor collection while marking keeps the collector's state**, given
+/// that the program's roots are held (`MP.held_reached`: each white object a
+/// root points at is one the marker will reach); it leaves the same of the
+/// rewritten roots.
+val minor_keeps_marking_shape (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires phase_shape minor g fp Ph.Marking /\
+                    MCFH.roots_valid_for_minor_collection minor g roots /\
+                    MP.held_reached g (GMM.roots_held g roots))
+          (ensures (let res = GMM.collect_marking minor g fp roots in
+                    res.Promote.mc_minor == minor_reset minor /\
+                    phase_shape res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp Ph.Marking /\
+                    MP.held_reached res.Promote.mc_major
+                      (GMM.roots_held res.Promote.mc_major res.Promote.mc_roots)))
 
 /// `phase_free` at each phase, as an equation (the SMT encoding does not
 /// unfold a definition whose value is a function).

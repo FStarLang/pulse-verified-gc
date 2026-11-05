@@ -22,6 +22,9 @@ module PCS = GC.Gen.PostCollectionShape
 module Mark = GC.Spec.Mark
 module SweepInv = GC.Spec.SweepInv
 module Util = GC.Spec.SweepPhase.Util
+module MP = GC.Spec.MarkPhase
+module GMM = GC.Gen.MarkPhase.Minor
+module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 10"
 
@@ -112,6 +115,17 @@ let minor_keeps_phase_shape minor g fp c roots =
   let res = SPM.collect_at c minor g fp roots in
   GenInv.collection_shape_with_elim (Ph.Sweeping c) free res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp;
   phase_shape_sweeping res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp c
+#pop-options
+
+#push-options "--z3rlimit 20"
+let minor_keeps_marking_shape minor g fp roots =
+  phase_shape_marking minor g fp;
+  assert (MP.marking_inv g (GMM.marking_held minor g roots));
+  GMM.minor_keeps_marking_inv minor g fp roots;
+  let res = GMM.collect_marking minor g fp roots in
+  FStar.Classical.forall_intro (GMM.nursery_held_reset minor);
+  assert (MP.marking_inv res.Promote.mc_major (GMM.nursery_held res.Promote.mc_minor));
+  phase_shape_marking res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp
 #pop-options
 
 let phase_free_idle () = assert_norm (phase_free Ph.Idle == free_stw)

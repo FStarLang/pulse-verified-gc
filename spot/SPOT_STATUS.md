@@ -574,3 +574,13 @@ overwrites G's only field with an immediate, cutting G -> W1.
    `write_ok` checks).  `unbarriered_write_breaks`: the same write without the
    barrier breaks it -- G, the only grey object, has no edge left
    (`g_no_edge`), so the marker will reach nothing, yet W1 is white and held.
+
+`GC.SPOT.MarkPhaseUnreached` checks the reading of the invariant as
+well-formedness that the minor collection at `Marking` uses
+(`GC.Spec.MarkPhase.unreached g`: free = blue, or white and not reached).
+
+4. **The reading tells the two heaps apart.**  `mid_unreached_wf`: the
+   mid-mark heap of case 1 is well formed for `unreached`
+   (`marking_inv_unreached`); `through_black_not_unreached_wf`: the heap of
+   case 2 (G -> B -> W, W not reached) is not, since B is not free for it and
+   points at W, which is.

@@ -463,3 +463,56 @@ let marking_inv_grey g held w =
 let marker_will_reach_grey g w u =
   grey_setup g w;
   reach_change g (makeGray w g) u
+
+/// ---------------------------------------------------------------------------
+/// The invariant as well-formedness
+/// ---------------------------------------------------------------------------
+
+let header_colours (g g': heap) (x: obj_addr)
+  : Lemma (requires read_word g (hd_address x) == read_word g' (hd_address x))
+          (ensures is_blue x g == is_blue x g' /\ is_white x g == is_white x g')
+  = color_of_object_spec x g; color_of_object_spec x g';
+    is_blue_iff x g; is_blue_iff x g'; is_white_iff x g; is_white_iff x g'
+
+let unreached_ok g0 =
+  reveal_opaque (`%free_def_ok) free_def_ok;
+  let det (g g': heap) (x: obj_addr)
+    : Lemma ((is_block g x <==> is_block g' x) /\ read_word g (hd_address x) == read_word g' (hd_address x) ==>
+             unreached g0 g x == unreached g0 g' x)
+    = if read_word g (hd_address x) = read_word g' (hd_address x) then header_colours g g' x
+  in
+  FStar.Classical.forall_intro_3 det
+
+#push-options "--z3rlimit 20"
+let marking_inv_unreached g held =
+  let un = unreached g in
+  wf_with_parts ();
+  let tgt (src dst: obj_addr)
+    : Lemma (requires in_use un g src /\ scannable g src /\ points_to g src dst)
+            (ensures in_use un g (resolve_object dst g) /\
+                     infix_addr_wf g (objects zero_addr g) dst)
+    = points_to_target_not_free free_stw g src dst;
+      let t = resolve_object dst g in
+      assert (field_edge g src t);
+      Mark.colors_exclusive src g;
+      Mark.color_exhaustive src g;
+      if is_white t g then begin
+        Mark.colors_exclusive t g;
+        if is_gray src g then reach_within_edge (field_edge g) (grey_or_white g) src t
+        else if is_white src g then begin
+          eliminate exists (x: obj_addr). is_gray x g /\ reach_within (field_edge g) (grey_or_white g) x src
+          with begin
+            reach_within_edge (field_edge g) (grey_or_white g) src t;
+            reach_within_trans (field_edge g) (grey_or_white g) x src t
+          end
+        end
+      end
+  in
+  pointers_lead_to_non_free_intro un g tgt;
+  interior_pointers_valid_intro un g tgt
+#pop-options
+
+let unreached_black_edge g0 g b t =
+  Mark.colors_exclusive b g;
+  eliminate exists (c: obj_addr). points_to g b c /\ resolve_object c g == t
+  with points_to_target_not_free (unreached g0) g b c

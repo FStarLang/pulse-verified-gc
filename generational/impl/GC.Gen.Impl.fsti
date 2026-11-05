@@ -62,6 +62,8 @@ module ST = GC.Gen.SweptTail
 
 module FA = GC.Gen.ForwardingArray
 module GI = GC.Gen.Incremental
+module MP = GC.Spec.MarkPhase
+module GMM = GC.Gen.MarkPhase.Minor
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -540,10 +542,10 @@ let minor_slots_ok (ph: Ph.gc_phase) (minor_st: minor_state) (s: heap_state)
   RT.ref_table_covers_with free s sl nslots /\
   MinorFwd.remembered_targets_in_roots s rs sl nslots /\
   MinorFwd.roots_valid_with free minor_st s rs /\
-  // A minor collection while marking keeps the marking invariant only with
-  // the program's roots held; that is still to come (incremental-mark-plan.md,
-  // M2d), and nothing enters `Marking` yet.
-  ~(Ph.Marking? ph)
+  // While marking, the program's roots are held: every white object a root
+  // points at is one the marker will reach (the program's obligation,
+  // incremental-mark-plan.md section 3 clause 3, option (a)).
+  (Ph.Marking? ph ==> MP.held_reached s (GMM.roots_held s rs))
 
 /// **The minor collection**, at the collector's phase, for the phase's
 /// definition of free (`GI.phase_free`: `free_stw` idle, `free_incremental c`
@@ -572,7 +574,8 @@ fn minor_collect (gh: gen_heap_t)
     pts_to queue qv2 **
     pts_to slots 'sl **
     pure (minor_collect_post_with 'ph (GI.phase_free 'ph) ({ data = 'd; bump = 'b } <: minor_state)
-            's 'fp 'rs ok d2 b2 s2 fp2 rs2)
+            's 'fp 'rs ok d2 b2 s2 fp2 rs2 /\
+          (Ph.Marking? 'ph ==> MP.held_reached s2 (GMM.roots_held s2 rs2)))
 
 /// ---------------------------------------------------------------------------
 /// The major collector: starting a cycle, and its slices

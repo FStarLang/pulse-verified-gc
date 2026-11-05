@@ -222,3 +222,32 @@ val marker_will_reach_grey (g: heap) (w u: obj_addr)
   : Lemma (requires well_formed_heap g /\ Seq.mem w (objects zero_addr g) /\ is_white w g /\
                     marker_will_reach g u)
           (ensures marker_will_reach (makeGray w g) u)
+
+/// ---------------------------------------------------------------------------
+/// The invariant as well-formedness
+/// ---------------------------------------------------------------------------
+
+/// What the marker leaves free, as of the heap `g0`: blue blocks, and white
+/// blocks it will not reach.  A function of the header alone (the set it
+/// reads off `g0` is fixed), so an admissible definition of free.
+let unreached (g0: heap) : free_def =
+  fun g x -> is_blue x g ||
+          (is_white x g && not (FStar.IndefiniteDescription.strong_excluded_middle (marker_will_reach g0 x)))
+
+val unreached_ok (g0: heap) : Lemma (free_def_ok (unreached g0))
+
+/// **The invariant makes the heap well formed for `unreached g`**: no grey or
+/// black block, and no white one the marker will reach, points at a white
+/// block the marker will not reach.  So whatever keeps well-formedness for
+/// every admissible definition of free -- the minor collection's generic
+/// theorem -- keeps that too.
+val marking_inv_unreached (g: heap) (held: obj_addr -> prop)
+  : Lemma (requires marking_inv g held)
+          (ensures well_formed_heap_with (unreached g) g)
+
+/// And back: in a heap well formed for `unreached g0`, a black object's
+/// white target is one the marker would reach in `g0`.
+val unreached_black_edge (g0 g: heap) (b t: obj_addr)
+  : Lemma (requires well_formed_heap_with (unreached g0) g /\ Seq.mem b (objects zero_addr g) /\
+                    is_black b g /\ field_edge g b t /\ is_white t g)
+          (ensures marker_will_reach g0 t)

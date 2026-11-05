@@ -1301,13 +1301,12 @@ From these, as an instance of `marking_inv_change`:
 allocation; the record's `ps_kind` is 2 (the C bridge's `vergc_sweeping()` is
 `ps_kind == 1`, and `vergc_allocation_color` is black while marking).  At
 `Marking`, `GC.Gen.Incremental.phase_shape` is the minor collection's shape at
-`free_stw` (marking frees nothing) and `marking_inv g (nursery_held minor)`:
+`free_stw` (marking frees nothing) and `marking_inv g (GC.Gen.MarkPhase.Minor.nursery_held minor)`:
 what the nursery's major pointers point at is held.  The program's roots are
 the other half of `held`; they are not part of the collector's state
 (`gc_state` has no roots), so the entry points that take roots will state
 `held_reached` of them (the plan's option (a)).  `major_slice` does nothing at
-`Marking` yet, and `minor_collect` is not called at it (`minor_slots_ok`
-excludes it until M2d).  Nothing enters `Marking`.
+`Marking` yet.  Nothing enters `Marking`.
 
 **Allocation while marking** (`GC.Spec.MarkPhase.Alloc`, M2c).  A new
 object is black, and its fields are what the free block held until the
@@ -1333,7 +1332,45 @@ its fields do not affect what the marker will reach.
 The frame lemmas `keeps_blocks_resolve`/`_edges`/`_reach` are about any change
 that keeps every non-free block, for any admissible definition of free.
 
-**Left for M2**: minor collection at `Marking`.
+**Minor collection while marking** (`GC.Gen.MarkPhase.Minor`, M2d).  At
+`Marking` the collection runs with `free_stw`; its promoted copies are black.
+Before it, `held` is the roots and the nursery's major pointers
+(`marking_held minor g roots`); after it, with the nursery empty, the
+rewritten roots (`roots_held g' roots'`).  `minor_keeps_marking_inv` is an
+instance of `marking_inv_change`:
+
+- every non-free block stays with its header (`old_block`) and its pointer
+  fields -- the update rewrites only nursery pointers, which never look like
+  major pointers (`old_pointer_field`) -- and their targets keep their
+  resolution (`old_target`); so no edge between grey or white blocks is cut,
+  and no colour changes;
+- every other non-free block is a promoted copy, black (`new_block_black`,
+  via the generic theorem at the definition of free "not black", whose
+  allocations at `Marking` are not free);
+- a black object's white target is one the marker would reach.  This is the
+  invariant read as well-formedness: `GC.Spec.MarkPhase.unreached g` (free =
+  blue, or white and not reached) is an admissible definition of free, and
+  `marking_inv g held` makes `g` well formed for it (`marking_inv_unreached`)
+  when the nursery's pointers are held.  The generic theorem keeps
+  well-formedness for it (its allocations are black), and the pointer update
+  at `free_stw` agrees with the one at `unreached g` on every block the
+  latter keeps (`update_agrees`), so the heap after is well formed for
+  `unreached g` (`unreached_wf_after`), which is the condition
+  (`unreached_black_edge`).  This covers the copies' fields and the
+  remembered slots without looking at them;
+- a rewritten root is the old one, held before, or a forwarded copy, black
+  (`rewritten_root`).
+
+`GC.Gen.Incremental.minor_keeps_marking_shape` lifts it to `phase_shape` at
+`Marking`, and `minor_collect` runs at `Marking`: `minor_slots_ok` asks, at
+`Marking`, that the roots be held (`MP.held_reached s (GMM.roots_held s
+rs)`), and `minor_collect` gives the same of the rewritten roots.
+
+**Left** (M3/M4): the Pulse barrier and allocation entry points that would
+carry `marking_write_barrier` and `marking_alloc`/`_fresh_*` to the
+implementation, with the generational shape (`collection_shape_with`) across
+a direct major allocation; the mark slices, `start_cycle` entering
+`Marking`, and the hand-over to the sweep.
 
 ## The minor collector
 

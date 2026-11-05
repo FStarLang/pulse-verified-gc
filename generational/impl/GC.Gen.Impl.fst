@@ -59,6 +59,8 @@ module Cheney = GC.Gen.Impl.Cheney
 module SpecHeapModel = GC.Spec.HeapModel
 module MRT = GC.Gen.MajorReachabilityTransfer
 module GI = GC.Gen.Incremental
+module MP = GC.Spec.MarkPhase
+module GMM = GC.Gen.MarkPhase.Minor
 
 /// Two transports in one: `GC.Gen.MajorPrecondition` carries the pre-minor facts
 /// across the minor collection to `darken_precondition`, and
@@ -409,9 +411,12 @@ let minor_collect_pre (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phas
 let minor_collect_keeps_shape (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
     (rs: Seq.seq U64.t) (ok: bool)
     (d2: minor_heap) (b2: U64.t) (s2: heap) (fp2: U64.t) (rs2: Seq.seq U64.t)
-  : Lemma (requires GI.phase_shape minor s fp ph /\ ~(Ph.Marking? ph) /\
+  : Lemma (requires GI.phase_shape minor s fp ph /\
+                    MCFH.roots_valid_for_minor_collection minor s rs /\
+                    (Ph.Marking? ph ==> MP.held_reached s (GMM.roots_held s rs)) /\
                     minor_collect_post_with ph (GI.phase_free ph) minor s fp rs ok d2 b2 s2 fp2 rs2)
-          (ensures GI.phase_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 ph)
+          (ensures GI.phase_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 ph /\
+                   (Ph.Marking? ph ==> MP.held_reached s2 (GMM.roots_held s2 rs2)))
   = match ph with
     | Ph.Idle ->
         GI.phase_free_idle ();
@@ -419,6 +424,9 @@ let minor_collect_keeps_shape (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph
         GI.phase_shape_idle minor s fp;
         CheneyPres.cheney_collect_preserves_collection_heap_shape minor s fp rs;
         GI.phase_shape_idle ({ data = d2; bump = b2 } <: minor_state) s2 fp2
+    | Ph.Marking ->
+        GI.phase_free_marking ();
+        GI.minor_keeps_marking_shape minor s fp rs
     | Ph.Sweeping c ->
         GI.phase_free_sweeping c;
         GI.minor_keeps_phase_shape minor s fp c rs
@@ -446,7 +454,8 @@ fn minor_collect (gh: gen_heap_t)
     pts_to queue qv2 **
     pts_to slots 'sl **
     pure (minor_collect_post_with 'ph (GI.phase_free 'ph) ({ data = 'd; bump = 'b } <: minor_state)
-            's 'fp 'rs ok d2 b2 s2 fp2 rs2)
+            's 'fp 'rs ok d2 b2 s2 fp2 rs2 /\
+          (Ph.Marking? 'ph ==> MP.held_reached s2 (GMM.roots_held s2 rs2)))
 {
   unfold gc_state;
   minor_collect_pre ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'ph 'rs 'farr 'sl (SZ.v nslots);
