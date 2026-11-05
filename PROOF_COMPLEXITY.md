@@ -247,7 +247,7 @@ cheney_scan minor_st cs_s (SZ.v sv) (fuel - SZ.v sv) == cheney_scan minor_st cs1
 (`generational/impl/GC.Gen.Impl.Cheney.fst:660-684`).
 
 Because the correspondence is exact, the imperative postconditions can be exact too. The
-strongest is `minor_collect_full` (`GC.Gen.Impl.fsti:302-325`), which proves the
+strongest is `minor_collect_with` (`GC.Gen.Impl.fsti`, `minor_collect_post_with`), which proves the
 resulting C-visible byte sequence *equal* to `cheney_collect_spec`'s output.
 
 ---
@@ -804,6 +804,8 @@ avoids it. Recorded as the largest lever, at prohibitive cost.
 
 ### 6.9 Entry-contract hygiene — **done**
 
+(`gen_gc` and `minor_collect_full` are the entry points as they were then; they are now `full_gc`, which keeps `gen_gc`'s contract, and `minor_collect_with` / `minor_collect`.)
+
 **What was wrong.** `GC.Gen.Impl.fsti`'s `gen_gc` contract leaked four internal facts to
 its callers:
 
@@ -1114,6 +1116,8 @@ generational proof now admits.
 ---
 
 ### 6.11 Closing the invariant: `gen_gc` restores `collection_heap_shape` — **done**
+
+(`gen_gc` and `minor_collect_full` are the entry points as they were then; they are now `full_gc`, which keeps `gen_gc`'s contract, and `minor_collect_with` / `minor_collect`.)
 
 The entry-contract work of §6.9 made `gen_gc`'s precondition callable.  It did
 not make it *re-*callable.  `gen_gc` demanded

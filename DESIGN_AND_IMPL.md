@@ -47,7 +47,7 @@ At a high level, the development proceeds in stages:
    collection is isomorphic to the live graph after collection under the
    forwarding map.
 6. Compose minor collection with the mark-and-sweep major collector into a
-   verified generational `gen_gc`.
+   verified generational `full_gc`.
 7. Audit the public contracts with SPOTs: small proof-oriented tests that build a
    concrete heap and prove client-visible consequences.
 8. Extract the verified code with KaRaMeL and connect it to the OCaml 4.14
@@ -92,7 +92,7 @@ verified code and the OCaml runtime.
         |                +---------------+-------------------+
         +--------------->| generational/                     |
                          | minor heap, Cheney promotion,     |
-                         | remembered slots, gen_gc          |
+                         | remembered slots, full_gc         |
                          +---------------+-------------------+
                                          |
                                          v
@@ -440,7 +440,7 @@ and then segfaults, so it is a genuine regression test and not a smoke test.
 
 The heaps it builds hold interior pointers in major fields.  Since
 `no_infix_field_targets` was dropped from the invariant, they are inside
-`GC.Gen.HeapInvariant.major_heap_shape` and the composed `gen_gc` theorem applies
+`GC.Gen.HeapInvariant.major_heap_shape` and the composed `full_gc` theorem applies
 to them: the generational reachability argument, not just the mark-and-sweep
 proofs, covers what the test stresses.
 
@@ -814,9 +814,10 @@ on an ascending list prefers low addresses (OCaml's allocation policy 1).
 An incremental sweep runs the program between slices of `sweep_step`s
 (`incremental-sweep-plan.md`). The phase is part of the collector's state:
 `gen_heap_t.phase_ref`, which the Pulse allocator reads (above) and the
-incremental entry points (below) write. By default (`VERGC_SWEEP=stw`) the
-bridge runs the stop-the-world `gen_gc` only and the phase stays `Idle`; with
-`VERGC_SWEEP=incremental` it calls the incremental entry points
+major collector's entry points (below) write. By default (`VERGC_SWEEP=stw`)
+the bridge runs every full collection as `full_gc`, which runs the cycle to
+its end, so between collections the phase is `Idle`; with
+`VERGC_SWEEP=incremental` it runs the cycle in slices between program steps
 (`generational/ocaml-integration/verified_gc/OCAML_INTEGRATION.md`, "The
 Incremental Sweep": the policy, the slice budget, and how the bridge meets the
 trusted obligations).
@@ -1016,8 +1017,8 @@ which gives the reachability form `unreachable_freed_by_end` (under the same
 graph hypotheses as the stop-the-world theorem, `roots_in_graph`).  At the
 collector's phase, `phase_account` (the sweep phase and the account
 mid-sweep; the end form when idle) is kept by `SL.phase_slice`
-(`phase_account_slice`), so it composes with the `sweep_slice` and
-`finish_sweep` contracts directly.  The "survivor or new" form was chosen over
+(`phase_account_slice`), so it composes with the `major_slice` contract
+directly.  The "survivor or new" form was chosen over
 a per-object "dead ones are pending free or freed" invariant because every
 event already states what it does to the non-free blocks, and it says more:
 the non-free blocks at the end are exactly accounted for.
@@ -1037,14 +1038,20 @@ that marked heap, the two-step slice, a minor collection of an empty nursery,
 and the rest of the sweep keep the account, and at the end both dead-at-mark
 objects, `G` and `P`, are freed (`freed_by_end_spot`).
 `GC.SPOT.IncrementalCycle.cycle_frees_dead` applies it to the Pulse entry
-points: after `gen_gc_start`, `sweep_slice` and `finish_sweep`, every object
-white in the marked heap is freed.
+points: after `minor_collect`, `start_cycle`, a 64-word `major_slice` and
+an unbounded one, every object white in the marked heap is freed.
 
-#### The incremental entry points
+#### The entry points
 
-`GC.Gen.Impl.Incremental` is the Pulse side. The stop-the-world `gen_gc` is
-untouched (same code, contract and C); the incremental mode uses five new
-entry points, all extracted into `GC_Gen_Impl.{c,h}`.
+`GC.Gen.Impl` is the Pulse side, shaped like OCaml 4.14's major GC
+(`runtime/major_gc.c`): a cycle starts idle right after a minor collection
+(`start_cycle`, as 4.14's `start_cycle`) and runs in slices (`major_slice`, as
+`caml_major_collection_slice`) until it is idle again; finishing a cycle
+(4.14's `caml_finish_major_cycle`) is slices with an unbounded budget until
+`major_slice` reports idle.  Marking still runs to completion inside
+`start_cycle`; the slices are the sweep's.  Both modes use the same entry
+points, all extracted into `GC_Gen_Impl.{c,h}`: stop-the-world is `full_gc`,
+which is `minor_collect`, `start_cycle` and slices until idle in one call.
 
 **The collector's state** is one predicate, indexed by the phase
 (`GC.Gen.Incremental.phase_shape`):
@@ -1081,10 +1088,10 @@ Pulse loop is `GC.Impl.FusedSweepCoalesce.sweep_slice_impl`, over the same
 
 | entry point | requires | ensures |
 |---|---|---|
-| `gen_gc_start gh roots .. slots .. st` | `gc_state .. Idle`, and `gen_gc`'s argument facts (stack budget, zeroed forwarding array, remembered set sound/covering/distinct, remembered targets among the roots, roots valid) | `gen_gc`'s minor collection, root darkening and marking; the heap is the marked one (`mark_post` of the darkened heap), the phase `Sweeping zero_addr`, `gc_state` at it; the rewritten roots and the minor isomorphism as `gen_gc`'s; out of memory: the major phase skipped, still `Idle` |
-| `sweep_slice gh budget` | `gc_state .. ph` | `(s2, fp2, ph2) == phase_slice s fp ph budget`, `gc_state` at `ph2`; returns `Idle? ph2` |
-| `finish_sweep gh` | `gc_state .. ph` | a slice with budget `2^64 - 1`: `gc_state .. Idle`, `collection_heap_shape` |
-| `minor_collect_any_phase gh roots .. slots ..` | `gc_state .. ph`, `minor_slots_ok ph` (the remembered set and roots for `phase_free ph`) | `minor_collect_full`'s contract at `ph` for `phase_free ph` (`minor_collect_post_with ph (phase_free ph) ..`), `gc_state` at the same phase `ph` (idle stays idle; mid-sweep the cursor and the pending-free set are kept, `GI.minor_keeps_phase_shape`) |
+| `minor_collect gh roots .. slots ..` | `gc_state .. ph`, `minor_slots_ok ph` (the remembered set and roots for `phase_free ph`) | `minor_collect_with`'s contract at `ph` for `phase_free ph` (`minor_collect_post_with ph (phase_free ph) ..`), `gc_state` at the same phase `ph` (idle stays idle; mid-sweep the cursor and the pending-free set are kept, `GI.minor_keeps_phase_shape`); returns whether promotion succeeded |
+| `start_cycle gh roots nroots st` | `gc_state .. Idle`, `nursery_empty d b` (right after a minor collection), `start_cycle_pre s rs st cap` (the stack empty and able to hold the roots, every root a darkenable major object) | `start_cycle_post`: with `prepared` the darkened heap and stack, the stack holds the objects the roots name (`roots_match_stack`) and the heap is the marked one (`mark_post` of the darkened heap); `gc_state` at `Sweeping zero_addr`; nursery, free-list head and roots unchanged |
+| `major_slice gh budget` | `gc_state .. ph` | `(s2, fp2, ph2) == major_slice_spec s fp ph budget` (idle: nothing; mid-sweep: `phase_slice`), `gc_state` at `ph2`; returns `Idle? ph2` |
+| `full_gc gh roots .. slots .. st` | `gc_state .. Idle`, the stack budget, and the stop-the-world minor-collection arguments (zeroed forwarding array, remembered set sound/covering/distinct, remembered targets among the roots, roots valid) | the stop-the-world contract (below): out of memory reported only for a concrete OOM, rewritten roots, `minor_reset`, `collection_heap_shape` restored, the end-to-end isomorphism, unreachable objects freed; `gc_state .. Idle`; returns whether promotion succeeded |
 
 Major allocation, at either phase, is the allocator itself
 (`GC.Impl.Allocator.allocate` on the heap's free-list head and phase record):
@@ -1097,16 +1104,16 @@ that result is: either nothing changed or the object is a `new_block` and
 The end of the sweep is the stop-the-world shape again
 (`GI.sweep_end_shape`: `sweep_inv_incremental_end`'s swept-clean heap, the
 free-list facts from the ascending list, no black or grey object, and with nothing
-pending free the cross-generation condition is the idle one), so `gen_gc` or
-`gen_gc_start` can follow. A full collection requested mid-sweep calls
-`finish_sweep` first (D4). `GC.SPOT.IncrementalCycle` checks that the
-contracts compose: from `gen_gc`'s precondition alone, `gen_gc_start`, a
-slice and `finish_sweep` end idle in `collection_heap_shape`, with nothing
-supplied in between.
+pending free the cross-generation condition is the idle one), so a new
+cycle can follow. A full collection requested mid-sweep finishes the cycle
+first (D4). `GC.SPOT.IncrementalCycle` checks that the contracts compose:
+from `full_gc`'s precondition alone, `minor_collect`, `start_cycle`, a
+64-word slice and an unbounded slice end idle in `collection_heap_shape`,
+with nothing supplied in between.
 
 **What the bridge supplies** (trusted, documented in the interface). Each
 entry point is a separate C call, so `gc_state`'s pure half is re-supplied at
-every call, as `collection_heap_shape` is for `gen_gc`. It holds because every
+every call. It holds because every
 collector call returns it and the program's events in between keep it:
 
 - a block the program allocates mid-sweep is fresh; the runtime initialises
@@ -1274,7 +1281,7 @@ let collection_heap_shape (minor: minor_state) (major: heap) (fp: U64.t) : prop 
   minor_major_fields_no_blue minor major
 ```
 
-`collection_heap_shape` is the stop-the-world invariant: `gen_gc` requires it
+`collection_heap_shape` is the stop-the-world invariant: `full_gc` requires it
 and restores it.  Its generic form, for a definition of free, is
 `collection_shape_with ph free` (below).  Interior (infix) pointers are allowed
 in live fields of both heaps: the pointer clauses of `well_formed_heap` are
@@ -1309,7 +1316,7 @@ RT.slots_pairwise_distinct 'sl (SZ.v nslots) /\
 MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots)
 ```
 
-Those facts appear in the preconditions of `gen_gc` and
+Those facts appear in the preconditions of `full_gc` and
 `minor_collect_pre_idle`.  The slot predicates live in the spec module
 `GC.Gen.RefTable` (`RT`), stated for any definition of free; the stop-the-world
 forms above are their instances at `free_stw`:
@@ -1529,7 +1536,7 @@ stop-the-world theorems are the instances at `free_stw`
 hypotheses into the generic ones), where the post-collection graph is
 `HeapModel.create_graph` (`Helpers.result_post_stw`).
 
-`minor_collect_full`'s contract is generic, isomorphism included:
+`minor_collect_with`'s contract is generic, isomorphism included:
 `minor_collect_pre_with free minor s fp rs farr slots n` (the shape, the
 write barrier's guarantees, the remembered
 targets in the roots, valid non-free roots, all for `free`) and
@@ -1538,7 +1545,7 @@ free`'s, the shape for `free` is kept, and on success the result is a
 reachable-subgraph isomorphism with the non-pointer fields preserved).
 `minor_collect_pre_idle` / `minor_collect_post_idle` are the stop-the-world
 instance with the colour facts of `collection_heap_shape`;
-`gen_gc` uses them, and its contract is unchanged.
+`full_gc` uses them.
 
 ### Cheney BFS
 
@@ -1814,10 +1821,10 @@ This is the generational counterpart of the mark-and-sweep "five pillars":
 
 | Mark-and-sweep pillar | Generational analogue |
 | --- | --- |
-| Final heap well-formedness | `collection_heap_shape` preservation, followed by the major collector's `gc_postcondition`; `gen_gc` restores `collection_heap_shape`. |
+| Final heap well-formedness | `collection_heap_shape` preservation, followed by the major collector's `gc_postcondition`; `full_gc` restores `collection_heap_shape`. |
 | Reachability-based survival | The isomorphism's totality and surjectivity over reachable source/destination vertices. |
 | Successor preservation | The isomorphism's edge preservation/reflection clause. |
-| Color reset | The post-minor heap shape plus the major collector's postcondition; after full `gen_gc`, final major objects satisfy the major GC color/free-list discipline. |
+| Color reset | The post-minor heap shape plus the major collector's postcondition; after `full_gc`, final major objects satisfy the major GC color/free-list discipline. |
 | Field data preservation | `normal_result_non_pointer_fields_preserved_prop` for scalar fields, together with isomorphism for pointer fields. |
 
 Together with heap-invariant preservation, the isomorphism theorem subsumes the
@@ -1832,7 +1839,7 @@ addresses.
 
 ### One isomorphism, end to end
 
-`gen_gc` runs a minor collection followed by a major one, and each phase proves
+`full_gc` runs a minor collection followed by a major one, and each phase proves
 its own isomorphism. For a while the top-level postcondition simply exposed
 both halves and left the caller to chain them:
 
@@ -1876,7 +1883,7 @@ All three are now handled inside the collector.
 
   instantiates it at the major collection, and composes the halves.
 
-The result is a single conjunct in `gen_gc`'s postcondition:
+The result is a single conjunct in `full_gc`'s postcondition:
 
 ```fstar
 let end_to_end_isomorphism
@@ -1923,13 +1930,14 @@ and the rest in the major heap (`GC.Impl.Allocator.allocate` on `gh.major`,
 `gh.fp_ref` and `gh.phase_ref`), as the C bridge does.
 
 The phase is a companion predicate rather than part of `is_gen_heap`: only the
-allocator and the sweep read it.  It is indexed by the major heap, because
+allocator and the major collector read it.  It is indexed by the major heap, because
 while sweeping it says the record's caches are the ones derived from that
 heap (`Alloc.is_phase`); keeping them so across a major allocation needs the
 free list ascending, hence `allocate`'s mid-sweep precondition.
-`minor_collect_full` runs at any phase (`gen_phase gh 's 'ph` in,
-`gen_phase gh s2 'ph` out); `gen_gc` requires and ensures `gen_phase gh _
-Ph.Idle`.  Promotion (`promote_one`, through the Cheney functions) allocates
+`minor_collect_with` runs at any phase (`gen_phase gh 's 'ph` in,
+`gen_phase gh s2 'ph` out), and so does `minor_collect`; `start_cycle` and
+`full_gc` require `Ph.Idle`.  The entry points take the heap and the phase
+together, with the collector's state at the phase, as `gc_state` (above).  Promotion (`promote_one`, through the Cheney functions) allocates
 with `allocate` (on the same `fp_ref`), which keeps `is_phase` from the heap before to the
 heap after (`GC.Spec.Allocator.Caches.alloc_caches`), and the copy of the fields
 writes no header (`promote_heads`); the specification's run is at `'ph`
@@ -1943,15 +1951,17 @@ allocation is an operational service used by the runtime, and the deeper
 allocator/minor-heap contracts carry the precise shape facts. The collection
 entry points are much stronger.
 
-### `minor_collect_full`
+### `minor_collect_with` and `minor_collect`
 
-`minor_collect_full` is the verified minor-collection boundary used by the C
-bridge. It takes roots, a forwarding array, a BFS queue, and remembered slots,
-and -- as a ghost argument, erased in the C -- a definition of what counts as
-free in the major heap:
+`minor_collect_with` is the verified minor collection, generic in the phase
+and in what counts as free; `minor_collect` (below) is the entry point the C
+bridge calls, its instance at the collector's phase.  `minor_collect_with`
+takes roots, a forwarding array, a BFS queue, and remembered slots, and -- as
+a ghost argument, erased in the C -- a definition of what counts as free in
+the major heap:
 
 ```fstar
-fn minor_collect_full (gh: gen_heap_t)
+fn minor_collect_with (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
                       (queue: larray U64.t FA.queue_size)
@@ -1994,7 +2004,7 @@ GenInv.collection_shape_with ph free ({ data = d2; bump = b2 } <: minor_state) s
 Nothing is said of the forwarding array or the queue the call hands back:
 no caller reads them.  The two-pass equation that the implementation
 establishes along the way (`s2 == rewrite_slots_iter (update_promoted_iter
-...)`) is internal to `minor_collect_full` too; `minor_collect_with_spec`
+...)`) is internal to `minor_collect_with` too; `minor_collect_with_spec`
 turns it into the equation with `cheney_collect_spec_with`.
 
 The collection runs at the phase `'ph` the allocator holds (`gen_phase gh 's
@@ -2012,24 +2022,48 @@ s2 == (CheneySpec.cheney_collect_spec minor_st s fp rs).mc_major /\
 GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2
 ```
 
-`minor_collect_idle_pre` / `minor_collect_idle_post` connect the two; `gen_gc`
-calls `minor_collect_full` with `#(hide free_stw)` and uses them.  The
+`minor_collect_idle_pre` / `minor_collect_idle_post` connect the two; `full_gc`
+calls `minor_collect` idle (where `phase_free Idle == free_stw`) and uses them.
+The
 isomorphism is over the graphs given what counts as free
 (`CG.build_combined_graph minor s free`, `HeapModel.create_graph_with free s2`);
 at `free_stw` the latter is
 `create_graph`, the graph the major collection's own isomorphism speaks of, which
 is how `MajorReachabilityTransfer.end_to_end_isomorphism_intro` chains the two.
 
-#### The contract of `minor_collect_full`
+**`minor_collect`** is the entry point, in both modes: `minor_collect_with`
+at the collector's phase, for the phase's definition of free
+(`GI.phase_free`), stated over `gc_state`:
+
+```fstar
+fn minor_collect (gh: gen_heap_t) (roots: array U64.t) (nroots: SZ.t)
+                 (fwd_arr: array U64.t) (queue: larray U64.t FA.queue_size)
+                 (slots: array U64.t) (nslots: SZ.t)
+  requires gc_state gh 'd 'b 's 'fp 'ph ** pts_to roots 'rs ** ... **
+           pure (SZ.v nroots == Seq.length 'rs /\
+                 minor_slots_ok 'ph ({ data = 'd; bump = 'b }) 's 'rs 'farr 'sl (SZ.v nslots))
+  returns ok: bool
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
+    gc_state gh d2 b2 s2 fp2 'ph ** pts_to roots rs2 ** ... **
+    pure (minor_collect_post_with 'ph (GI.phase_free 'ph) ({ data = 'd; bump = 'b })
+            's 'fp 'rs ok d2 b2 s2 fp2 rs2)
+```
+
+Idle the collector stays in the stop-the-world shape
+(`cheney_collect_preserves_collection_heap_shape`); mid-sweep the sweep keeps
+its cursor and the objects pending free (`GI.minor_keeps_phase_shape`).  The
+C is `minor_collect_with`'s.
+
+#### The contract of `minor_collect_with`
 
 The postcondition is a set of properties of the result (the shape, the
 isomorphism, the non-pointer fields) plus one equation,
 `s2 == (cheney_collect_spec_with ph free ...).mc_major`.  The equation stays in
-the contract.  `gen_gc`'s major-phase helpers (`gen_gc_prepared_state`,
+the contract.  `full_gc`'s major-phase helpers (`gen_gc_prepared_state`,
 `gen_gc_major_precondition_elim`), `GC.Gen.MajorPrecondition` and the SPOT
 postconditions (`GC.SPOT.Postconditions.minor_collect_full_post`,
 `GC.SPOT.ConcreteFull`) are stated over `cheney_collect_spec`, and a Pulse
-postcondition is the only way `gen_gc` learns anything about `s2`: a separate
+postcondition is the only way `full_gc` learns anything about `s2`: a separate
 ghost lemma cannot recover the equation from a property-only contract.
 Dropping it means restating those helpers and SPOTs in property form, which
 is a larger change than the cleanup, so it was not done.
@@ -2044,27 +2078,44 @@ space for all live minor objects, the isomorphism theorem is conditional on
 `ok`; the OCaml bridge treats `ok = false` as fatal out-of-memory for the current
 fixed-size heap.
 
-### `gen_gc`
+### `full_gc`
 
-The full generational GC composes minor collection with the major
-mark-and-sweep collector:
+The full generational GC composes the minor collection with a whole major
+cycle, from the entry points above:
 
 ```fstar
-fn gen_gc (gh: gen_heap_t)
-          (roots: array U64.t) (nroots: SZ.t)
-          (fwd_arr: array U64.t)
-          (queue: larray U64.t FA.queue_size)
-          (slots: array U64.t) (nslots: SZ.t)
-          (st: gray_stack)
-  ...
-  returns res: (U64.t & bool)
+fn full_gc (gh: gen_heap_t)
+           (roots: array U64.t) (nroots: SZ.t)
+           (fwd_arr: array U64.t)
+           (queue: larray U64.t FA.queue_size)
+           (slots: array U64.t) (nslots: SZ.t)
+           (st: gray_stack)
+  requires gc_state gh 'd 'b 's 'fp Ph.Idle ** ...
+  returns ok: bool
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 st2.
+    gc_state gh d2 b2 s2 fp2 Ph.Idle ** ...
+```
+
+Its body is `minor_collect`; then, unless promotion ran out of memory,
+`start_cycle` and `major_slice` with an unbounded budget until the collector
+is idle again:
+
+```pulse
+  let ok = minor_collect gh roots nroots fwd_arr queue slots nslots;
+  if ok {
+    start_cycle gh roots nroots st;
+    let mut busy = true;
+    while (!busy) ... { let idle = major_slice gh 0xFFFFFFFFFFFFFFFFUL; busy := not idle; };
+    ok
+  } else { ok }
 ```
 
 Its precondition speaks only about the state the caller can observe on entry --
-the pre-minor heap, the nursery, and the arrays being passed in:
+the pre-minor heap, the nursery, and the arrays being passed in; the idle
+`gc_state` carries the shape:
 
 ```fstar
-GenInv.collection_heap_shape minor_st 's 'fp /\
+gc_state gh 'd 'b 's 'fp Ph.Idle   (* GenInv.collection_heap_shape minor_st 's 'fp *)
 MinorFwd.roots_valid_for_minor_collection minor_st 's 'rs /\
 gen_gc_stack_budget 'rs 'st (stack_capacity st) /\
 ...
@@ -2093,31 +2144,51 @@ let gen_gc_stack_budget roots st cap =
 Both are decidable by inspection of the arguments being passed.  There is
 deliberately nothing else.
 
+### How `full_gc`'s contract is proved
+
+The contract is `gen_gc`'s (the stop-the-world entry point before the
+restructure), and the proof reuses its end lemmas unchanged.  The only new
+fact is that slices from the start of the sweep phase until idle leave exactly
+what the stop-the-world sweep leaves.  `GC.Spec.SweepPhase.Slice.phase_rest g
+fp ph` is what the rest of the sweep leaves from the collector's phase: idle,
+`(g, fp)`; mid-sweep, the stop-the-world pass `sweep_from g fp (state_at g c)`.
+The loop invariant is
+
+```fstar
+gc_state gh d_mid b_mid s_i fp_i ph_i ** R.pts_to busy vb **
+pure (vb == not (Ph.Idle? ph_i) /\
+      SL.phase_rest s_i fp_i ph_i == FS.fused_sweep_coalesce s_mark fp_mid)
+```
+
+with `s_mark` the heap `start_cycle` leaves.  `phase_rest_start` establishes
+it (at `Sweeping zero_addr` the rest of the sweep is `fused_sweep_coalesce`),
+and every slice keeps it (`phase_rest_slice`: a slice is some number of steps,
+`slice_is_steps`, and the pass from a state is the pass from where the steps
+leave it).  At the exit `ph_i` is `Idle`, so the heap and free-list head are
+exactly `fused_sweep_coalesce s_mark fp_mid`, with `s_mark` the `mark_post`
+of the darkened heap (`start_cycle_post`).  That is the situation
+`GC.Impl.collect` is in after its fused sweep, so `full_gc_major_post` applies
+the same lemmas `gen_gc` did: `SpecGCPost.gc_result_fused` for the major
+theorems and `MRT.end_to_end_isomorphism_intro` for the end-to-end
+isomorphism.  `collection_heap_shape` of the result is the idle `gc_state` the
+last slice leaves (`GI.sweep_end_shape`).  The loop terminates: one slice with
+an unbounded budget finishes the sweep (`GI.phase_slice_finishes`), which is
+the loop's `decreases`.
+
 ### Out-of-memory is a runtime fact, not a proof obligation
 
 An intermediate version of this contract also required `cheney_no_oom` — "the
 nursery's live set fits in the major free list".  That was indefensible.
 `cheney_no_oom` is a statement about the outcome of the entire Cheney BFS; no
-caller can discharge it without simulating the collector, and `gen_gc` already
+caller can discharge it without simulating the collector, and `full_gc` already
 reports promotion failure through the `ok` component of its result.  Demanding
-it up front made `gen_gc` un-callable in exactly the situation its own return
+it up front made `full_gc` un-callable in exactly the situation its own return
 type exists to describe.
 
 The fix is to consume the flag instead of the predicate.  `GC.Gen.Impl.Cheney`
-already proves `ok ==> cheney_no_oom` about its BFS loop; `minor_collect_full`
-now re-exports that, and `gen_gc` branches on it:
-
-```pulse
-  let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots;
-  ...
-  if ok {
-    darken_roots_bounded gh.major st roots nroots (stack_capacity st);
-    let final_fp = MajorGC.collect_with_roots gh.major st prepared_st fp_val;
-    ...
-  } else {
-    // hand back the post-minor heap untouched
-  }
-```
+already proves `ok ==> cheney_no_oom` about its BFS loop; `minor_collect`
+re-exports that, and `full_gc` branches on it (above): the cycle starts only
+when `ok`; otherwise the post-minor heap is handed back untouched.
 
 Skipping the major phase on the out-of-memory path is not merely convenient, it
 is the only correct thing to do: when promotion fails, `rewrite_root` leaves the
@@ -2138,7 +2209,7 @@ satisfies `gc_postcondition` on its own
 ### What failure means
 
 Reporting failure through a boolean is only honest if the boolean means
-something.  `gen_gc` therefore also carries a postcondition on the failure side:
+something.  `full_gc` therefore also carries a postcondition on the failure side:
 
 ```fstar
 not ok ==> CheneyBFS.cheney_oom minor_st 's 'fp 'rs
@@ -2181,9 +2252,9 @@ in terms of the object being scanned — and converts it to the run-level witnes
 once, on the way out, where the enclosing scan step's residual equation is in
 scope.  All of it is ghost: the extracted C is unchanged.
 
-### The invariant is inductive: `gen_gc` restores its own precondition
+### The invariant is inductive: `full_gc` restores its own precondition
 
-`gen_gc` demands `GC.Gen.HeapInvariant.collection_heap_shape` of the heap it is
+`full_gc` demands `GC.Gen.HeapInvariant.collection_heap_shape` of the heap it is
 handed.  For a long time it promised nothing of the heap it returned, which made
 that predicate an *assumption* rather than an invariant: a runtime driving a
 second collection had no way to satisfy the precondition again.  It is now a
@@ -2192,16 +2263,15 @@ names the very predicate the `requires` names, so the two can be read against
 each other:
 
 ```fstar
-  requires ... pure (
-    let minor_st : minor_state = { data = 'd; bump = 'b } in
-    GenInv.collection_heap_shape minor_st 's 'fp /\ ... )
-  ensures exists* d2 b2 s2 ... pure (
+  requires gc_state gh 'd 'b 's 'fp Ph.Idle ** ...
+           (* GI.phase_shape at Idle: GenInv.collection_heap_shape minor_st 's 'fp *)
+  ensures exists* d2 b2 s2 fp2 ... gc_state gh d2 b2 s2 fp2 Ph.Idle ** ... ** pure (
     let minor_st_out : minor_state = { data = d2; bump = b2 } in
     ...
-    GenInv.collection_heap_shape minor_st_out s2 (fst res) /\ ... )
+    GenInv.collection_heap_shape minor_st_out s2 fp2 /\ ... )
 ```
 
-The minor half is vacuous.  `minor_collect_full` finishes by calling
+The minor half is vacuous.  `minor_collect_with` finishes by calling
 `minor_heap_reset`, which clears the nursery *bytes* as well as the bump pointer,
 so the state it hands back is literally `GC.Gen.MinorHeap.minor_reset` — a fact
 the implementation always had and simply never stated.  With it,
@@ -2245,10 +2315,14 @@ end of the heap, so the result is dense.
 
 The Pulse entry point `GC.Impl.collect_with_roots` does not expose the marked
 heap, so it exposes `GC.Spec.Correctness.gc_coalesce_source` instead — "some
-marked heap satisfying `mark_post` produced this result".
-`major_gc_restores_major_heap_shape_of_source` discharges that existential, which
-is what `gen_gc` actually calls.  On the out-of-memory path nothing runs after
-the minor collection, so the invariant is the post-minor one, which
+marked heap satisfying `mark_post` produced this result", and
+`major_gc_restores_major_heap_shape_of_source` discharges that existential.
+`full_gc` no longer goes through it: its heap is the end of the sweep phase,
+and the idle `gc_state` the last slice leaves already carries
+`collection_heap_shape`, proved from the sweep invariant at the end of the heap
+(`GI.sweep_end_shape`, from `sweep_inv_incremental_end` and the same
+free-list facts).  On the out-of-memory path nothing runs after the minor
+collection, so the invariant is the post-minor one, which
 `GC.Gen.CheneyPreservation.cheney_collect_preserves_collection_heap_shape`
 already provides.
 
@@ -2298,14 +2372,14 @@ val darken_precondition_after_minor minor major fp roots cap
                result.mc_major Seq.empty result.mc_roots result.mc_fp cap)
 ```
 
-Note where the hypotheses live: the first two are already `gen_gc` preconditions
+Note where the hypotheses live: the first two are already `full_gc` preconditions
 for entirely independent reasons, the third is the runtime success flag, and the
 last is `gen_gc_stack_budget`.  There is no `..._intro` counterpart any more —
 there is nothing left for a caller to introduce.
 
 One conjunct deserves a note.  With an empty stack, `gray_objects_on_stack`
 reduces to "the major heap has no gray objects", which is a property of the
-pre-minor heap that `gen_gc` should not have to ask about separately.  It is
+pre-minor heap that `full_gc` should not have to ask about separately.  It is
 therefore folded into `GC.Gen.HeapInvariant.major_heap_shape` (as
 `SweepInv.no_gray_objects`), where the rest of the major heap's well-formedness
 already lives, and `GC.Gen.CheneyPreservation` re-establishes it after the
@@ -2374,7 +2448,7 @@ There is deliberately no `gc_postcondition` conjunct here even though clients
 want one.  It is a *consequence* of the shape invariant -- `well_formed_heap`
 plus `no_black_objects` plus `no_gray_objects` gives "every object is white or
 blue" by colour exhaustiveness -- so restating it would be redundant, and a
-redundant conjunct is both an extra obligation inside `gen_gc` and extra SMT
+redundant conjunct is both an extra obligation inside `full_gc` and extra SMT
 context at every call site.  `gen_gc_heap_shape_post` packages that consequence
 for clients who want it without threading a free-list head, and
 `gen_gc_heap_shape_post_intro` is the one-line derivation.
@@ -2417,21 +2491,21 @@ The active modules are structured as follows:
 | `GC.SPOT.Layout` | Names the concrete addresses: `A` and `B` are minor offsets (`8` and `24`) and proves basic distinctness/pointer facts. |
 | `GC.SPOT.ConcreteMinor` | Constructs the two-object minor heap using the real minor allocation spec and packages `minor_heap_shape`. |
 | `GC.SPOT.ConcreteMajor` | Constructs the major heap with `C` plus one blue free-list block and proves `major_heap_shape`. |
-| `GC.SPOT.Preconditions` | Packages the real `minor_collect_full` and `gen_gc` precondition bundles behind named predicates and elimination lemmas. |
+| `GC.SPOT.Preconditions` | Packages the real minor-collection and `full_gc` precondition bundles behind named predicates and elimination lemmas. |
 | `GC.SPOT.Postconditions` | Packages the useful consequences of post-minor and post-full collection. |
 | `GC.SPOT.ConcreteForwarding` | Proves that unreachable `B` keeps forwarding entry `0`. |
 | `GC.SPOT.ConcreteScenarios` | Connects the concrete heaps, roots, slot table, and forwarding array to the real collection preconditions. |
-| `GC.SPOT.ConcreteFull` | Connects post-minor facts to final `gen_gc` postconditions. |
-| `GC.SPOT.CallMinor` / `ConcreteCallMinor` | Pulse wrappers that call the real `minor_collect_full` and prove concrete consequences. |
-| `GC.SPOT.CallFull` / `ConcreteCallFull` | Pulse wrappers that call the real `gen_gc` and prove final survival facts. |
+| `GC.SPOT.ConcreteFull` | Connects post-minor facts to final `full_gc` postconditions. |
+| `GC.SPOT.CallMinor` / `ConcreteCallMinor` | Pulse wrappers that call the real `minor_collect` (idle) and prove concrete consequences. |
+| `GC.SPOT.CallFull` / `ConcreteCallFull` | Pulse wrappers that call the real `full_gc` (through `full_gc_from_shape`, which states it over the heap, the idle phase and `collection_heap_shape`, and returns the final free-list head beside the flag) and prove final survival facts. |
 | `GC.SPOT.ThreeObjects` | The scenario layer: A is promoted, C.field1 is rewritten to A', B is not promoted, and C/A' survive full GC. |
 | `GC.SPOT.InfixMajor` | A second, independent scenario: a ten-word major heap containing a genuine OCaml interior (infix) pointer. |
-| `GC.SPOT.InfixPre` / `InfixPost` | Discharge `gen_gc`'s precondition for that heap over an empty nursery, and read back its postcondition. |
-| `GC.SPOT.InfixCall` | Pulse wrapper that calls the real `gen_gc` on the infix heap. |
+| `GC.SPOT.InfixPre` / `InfixPost` | Discharge `full_gc`'s precondition for that heap over an empty nursery, and read back its postcondition. |
+| `GC.SPOT.InfixCall` | Pulse wrapper that calls the real `full_gc` on the infix heap. |
 
 The main useful facts proved by the active SPOT are:
 
-1. The real Pulse entry points `minor_collect_full` and `gen_gc` are callable from
+1. The real Pulse entry points `minor_collect` and `full_gc` are callable from
    concrete Pulse clients.
 2. The concrete A/B/C heap satisfies the real collector preconditions.
 3. The remembered table's single slot, C.field1, is enough to account for the
@@ -2474,10 +2548,10 @@ The audit is two-sided, on one and the same heap:
   the pointer clauses, with `resolve_object H == P` established from
   `GC.Spec.Object.infix_addr_conds`.
 
-`GC.SPOT.InfixPre` discharges the remainder of `gen_gc`'s precondition (empty
+`GC.SPOT.InfixPre` discharges the remainder of `full_gc`'s precondition (empty
 nursery, empty remembered table, single root `Q`) and proves the collection
 cannot run out of memory. `GC.SPOT.InfixCall.call_gen_gc_infix` then calls the
-real `gen_gc` and proves that it succeeds, that `collection_heap_shape` holds
+real `full_gc` and proves that it succeeds, that `collection_heap_shape` holds
 again of the state handed back, and that `Q` is still an enumerated object of
 the post-collection heap. Interior pointers are therefore supported by the
 shipped collector, not merely by an intermediate lemma.
@@ -2506,8 +2580,10 @@ It calls extracted functions from `GC_Gen_Impl.c`:
 ```c
 minor_alloc(...)
 allocate(...)
-minor_collect_full(...)
-gen_gc(...)
+minor_collect(...)
+start_cycle(...)   /* incremental */
+major_slice(...)   /* incremental */
+full_gc(...)       /* stop-the-world */
 ```
 
 The bridge is deliberately outside the verified F*/Pulse boundary. Its job is to
@@ -2636,16 +2712,16 @@ Caml_state->_young_ptr   = Caml_state->_young_end;
 
 OCaml's `caml_modify` records major fields that receive young pointers in
 `Caml_state->_ref_table`. The bridge passes that table directly to
-`minor_collect_full`:
+`minor_collect`:
 
 ```c
 struct caml_ref_table *tbl = Caml_state->_ref_table;
 size_t n_slots = (size_t)(tbl->ptr - tbl->base);
 
-promote_ok = minor_collect_full(gc_gen_heap, root_values,
-                                (size_t)root_count, gc_fwd_arr,
-                                gc_queue,
-                                (uint64_t *)tbl->base, n_slots);
+promote_ok = minor_collect(gc_gen_heap, root_values,
+                           (size_t)root_count, gc_fwd_arr,
+                           gc_queue,
+                           (uint64_t *)tbl->base, n_slots);
 ```
 
 It also adds the minor targets of remembered slots to the minor root set before
@@ -2668,8 +2744,10 @@ the root set.
 
 ### Full GC root and gray-stack layout
 
-The full-GC bridge calls the extracted verified `gen_gc` entry point. The root
-buffer and gray stack are separate allocations:
+The full-GC bridge calls the extracted verified `full_gc` entry point
+(stop-the-world), or `minor_collect` and then `start_cycle` (incremental,
+after finishing any cycle still running). The root buffer and gray stack are
+separate allocations:
 
 ```c
 uint64_t *gray_storage = calloc(gray_cap, sizeof(uint64_t));
@@ -2684,21 +2762,29 @@ gray_stack_rec gc_stack = {
   .cap = gray_cap
 };
 
-gen_gc(gc_gen_heap, roots_for_gc, root_count, gc_fwd_arr,
-       gc_queue, (uint64_t *)tbl->base, n_slots, gc_stack);
+if (sweep_incremental) {
+    ok = minor_collect(gc_gen_heap, roots_for_gc, root_count, gc_fwd_arr,
+                       gc_queue, (uint64_t *)tbl->base, n_slots);
+    if (ok) start_cycle(gc_gen_heap, roots_for_gc, root_count, gc_stack);
+} else {
+    ok = full_gc(gc_gen_heap, roots_for_gc, root_count, gc_fwd_arr,
+                 gc_queue, (uint64_t *)tbl->base, n_slots, gc_stack);
+}
 ```
 
-The verified `gen_gc` protocol is:
+The verified protocol is:
 
-1. `minor_collect_full` rewrites `roots_for_gc` in place and rewrites the
+1. `minor_collect` rewrites `roots_for_gc` in place and rewrites the
    remembered major slots.
-2. `darken_roots_bounded` scans the rewritten post-minor roots, colors root
-   objects, and pushes them onto the initially empty gray stack.
-3. `collect_with_roots` runs the verified major collector over the prepared
-   major heap and prepared gray stack.
+2. `start_cycle` darkens the rewritten post-minor roots (`darken_roots_bounded`:
+   it colours the root objects and pushes them onto the initially empty gray
+   stack), marks (`mark_loop_bounded_flagged`) and starts the sweep phase.
+3. `major_slice` sweeps in slices until the collector is idle; `full_gc` does
+   this with an unbounded budget, the incremental bridge after each minor
+   collection.
 
 The bridge keeps the original `root_values[]` and `root_locs[]` outside the
-verified stack. After `gen_gc` returns, `write_back_forwarded_roots()` uses the
+verified stack. After the collection returns, `write_back_forwarded_roots()` uses the
 original root values plus the forwarding array to update only real OCaml root
 locations. Remembered-table entries have `root_locs[i] == NULL`; their owning
 major slots have already been rewritten by verified code.
@@ -2918,7 +3004,7 @@ Several proof-engineering patterns recur across the repository.
 ### Keep pure specs and Pulse implementations connected by exact postconditions
 
 The implementation contracts often say "the imperative result equals the pure
-spec result." Examples include `allocate`, `minor_collect_full`, and the
+spec result." Examples include `allocate`, `minor_collect`, and the
 lower-level update/heap operations. This pattern is extremely effective: prove
 the algorithm once as a pure function, then prove the Pulse code refines it.
 
@@ -2934,7 +3020,7 @@ required the whole invariant. Instead, the development factors shape predicates:
   definition of free the allocator at the phase makes no block of, and
   `collection_heap_shape` for the stop-the-world collector;
 - the major collector's own precondition, derived from the post-minor heap
-  inside `gen_gc` (`GC.Gen.MajorPrecondition`).
+  inside `full_gc` (`GC.Gen.MajorPrecondition`).
 
 This factoring is why promotion can call the allocator in the middle of a
 collection: `allocate` asks nothing of the heap, and the allocator lemmas need

@@ -38,7 +38,7 @@ run a full collection before a minor collection that may not fit.
 
 **Observed by:** the runtime audit for the incremental sweep
 
-The verified collector's contracts (`GC.Gen.Impl.Incremental`'s trusted bridge
+The verified collector's contracts (`GC.Gen.Impl`'s trusted bridge
 obligations) model the program as allocation, field writes through
 `caml_modify` / `caml_initialize`, and nursery allocation. These runtime paths
 change a live major block in other ways; each is safe in both sweep modes for
@@ -368,14 +368,14 @@ image then implies the image is scannable, hence the source was.
 `GC.Gen.HeapInvariant.minor_major_fields_no_blue` — the third conjunct of
 `collection_heap_shape` — was narrowed to `minor_scan_wosize` at the same time,
 and for the same reason: it quantified over *every* young field, so deleting
-`minor_no_scan_invariant` alone would still have left `gen_gc`'s precondition
+`minor_no_scan_invariant` alone would still have left `full_gc`'s precondition
 falsified by an ordinary young `Bytes.t`. `GC.Gen.ReachabilityBridge.
 minor_no_pointer_to_blue` was narrowed with it.
 
 `spot/GC.SPOT.NoScanMinor` is the machine-checked witness that the relaxation is
 real: a three-word nursery holding one tag-251 block whose body words are `8`,
 a value `is_minor_pointer` accepts. `spot_ns_minor_was_forbidden` refutes the
-deleted clause; `spot_ns_collection_heap_shape` proves `gen_gc`'s full entry
+deleted clause; `spot_ns_collection_heap_shape` proves `full_gc`'s full entry
 invariant of the same nursery.
 
 In the extracted C, `scan_loop` gained:

@@ -7,7 +7,7 @@ https://risemsr.github.io/blog/2026-04-16-spotting-specs/
 
 Build a **truly admit/assume-free SPOT** that validates:
 
-1. **GC preconditions are not too strong**: All 11 preconditions for `minor_collect_full` can be satisfied by constructing a small, concrete heap (major + minor) using allocator APIs
+1. **GC preconditions are not too strong**: All 11 preconditions for `minor_collect` can be satisfied by constructing a small, concrete heap (major + minor) using allocator APIs
 2. **GC postconditions are useful**: The isomorphism postcondition is strong enough to prove meaningful properties about the result (e.g., unreachable objects are collected, reachable objects are promoted, pointers are forwarded correctly)
 
 The SPOT should demonstrate a complete end-to-end workflow:
@@ -15,7 +15,7 @@ The SPOT should demonstrate a complete end-to-end workflow:
 - Allocate objects in major and minor heaps
 - Wire up pointer relationships
 - Prove all 11 GC preconditions hold
-- Call `minor_collect_full`
+- Call `minor_collect`
 - Extract the result and prove postcondition properties from the isomorphism
 
 I want objects
@@ -55,12 +55,12 @@ generational development and treating upstream `GC.*` modules as already cached.
 The top-level SPOT is **`GC.SPOT.ConcreteCallFull.call_concrete_gen_gc_spot`**.
 It takes nothing but the generational heap holding the A/B/C fixture, allocates
 the roots array, forwarding array, Cheney queue, remembered-slot table and a
-two-slot gray stack itself, calls the real `gen_gc`, frees everything, and
+two-slot gray stack itself, calls the real `full_gc`, frees everything, and
 returns the concrete conclusions: `C` survives, `A` has a promoted image `A'`
 that survives, `C.field1` still points to `A'`, and `B` was never promoted.
 
 `GC.SPOT.ConcreteCallMinor.call_concrete_minor_collect_full_spot` is the same
-thing one phase earlier, stopping after `minor_collect_full`.
+thing one phase earlier, stopping after `minor_collect`.
 
 Reading order, each layer using only the ones above it:
 
@@ -90,47 +90,52 @@ allocation.
 - `GC.SPOT.ConcreteMajor`: constructs the major heap containing C and one blue
   free-list block, proves the C.field1 -> A remembered edge, the object list,
   free-list facts, and the concrete `major_heap_shape`.
-- `GC.SPOT.Preconditions`: packages the real `minor_collect_full` and `gen_gc`
+- `GC.SPOT.Preconditions`: packages the real `minor_collect` and `full_gc`
   preconditions into named predicates with elimination lemmas. This is only a
   proof boundary; it does not weaken the collector contracts.
 - `GC.SPOT.Postconditions`: packages post-minor and post-full consequences.
   It exposes reusable lemmas for promotion from nonzero forwarding, no-promotion
   from zero forwarding, remembered-field rewriting, and final major survival
-  from the `gen_gc` isomorphism postcondition.
+  from the `full_gc` isomorphism postcondition.
 - `GC.SPOT.ConcreteForwarding`: proves the concrete Cheney forwarding facts.
   The concrete no-OOM obligation is discharged internally by proving root
   coverage and scanned-forwarding closure for C -> A, A's promotion succeeds,
   and the unreachable minor object B's forwarding-map entry remains zero.
 - `GC.SPOT.ConcreteScenarios`: connects the concrete A/B/C heaps, roots, slot
-  table, and forwarding array to the real `minor_collect_full` and `gen_gc`
+  table, and forwarding array to the real `minor_collect` and `full_gc`
   precondition bundles. It proves A is promoted, C.field1 is rewritten to A',
   and B has no promoted image.
-- `GC.SPOT.ConcreteFull`: connects the post-minor result to the final `gen_gc`
+- `GC.SPOT.ConcreteFull`: connects the post-minor result to the final `full_gc`
   postcondition. It proves C survives, A' survives, and C.field1 still points
   to A' in the final major heap.
 - `GC.SPOT.ConcreteSetup`: the sequence lemmas that identify freshly allocated
   arrays with the concrete root, forwarding and slot sequences, so the
   concrete wrappers can allocate their own resources.
 - `GC.SPOT.CallMinor`: a Pulse wrapper that calls the real
-  `minor_collect_full`, taking the packaged precondition and returning the
+  `minor_collect` (idle: it folds the idle `gc_state` from the heap, the idle
+  phase and `collection_heap_shape`), taking the packaged precondition and returning the
   packaged postcondition.
 - `GC.SPOT.ConcreteCallMinor`: the concrete Pulse minor-collection SPOT. From
   the concrete A/B/C heap resources, root array, forwarding array, Cheney queue,
-  and remembered slot table, it derives the real `minor_collect_full`
+  and remembered slot table, it derives the real `minor_collect`
   precondition, calls it through `GC.SPOT.CallMinor`, and immediately proves
   the useful concrete consequences: A has a promoted image, C.field1 contains
   that image in the post-minor heap, and B has no promoted image.
-- `GC.SPOT.CallFull`: a Pulse wrapper that calls the real `gen_gc`.
+- `GC.SPOT.CallFull`: a Pulse wrapper that calls the real `full_gc`, through
+  `full_gc_from_shape`: `full_gc` stated in the scenarios' vocabulary (the
+  heap, the idle phase and `collection_heap_shape` instead of the idle
+  `gc_state`), returning the final free-list head beside the success flag.
+  `InfixCall` and `MinorInfixCall` call it too.
 - `GC.SPOT.ConcreteCallFull`: the concrete Pulse full-GC SPOT. It derives the
-  real `gen_gc` precondition from the concrete heap/resources plus the supplied
-  post-minor gray stack shape, calls `gen_gc`, and consumes the exported
-  `gen_gc` postconditions to prove that a successful final heap contains C and
+  real `full_gc` precondition from the concrete heap/resources plus the supplied
+  post-minor gray stack shape, calls `full_gc`, and consumes the exported
+  `full_gc` postconditions to prove that a successful final heap contains C and
   A', with C.field1 still pointing to A'.
 - `GC.SPOT.ThreeObjects`: the C/A/B scenario layer. Roots are `[C; A]` before
   the minor phase, and the remembered table contains C's field slot. The module
   proves that C and A are combined-graph roots, A is promoted when the real
   precondition bundle holds, C's field is rewritten to A', B is not promoted
-  when its forwarding entry is zero, and final `gen_gc` reachability implies
+  when its forwarding entry is zero, and final `full_gc` reachability implies
   survival in the final major heap.
 
 The SPOTs name the spec where it is defined: the forwarding array and queue
@@ -139,15 +144,15 @@ size (`fwd_array_size`, `represents_fwd`, `queue_size`, ...) are in
 `GC.Gen.MinorCollectForwarding.{Helpers,Edges}`; and the equation between
 the collection at `free_stw` and `cheney_collect_spec` is
 `GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw`, called next to
-`MinorCollectForwarding.stop_the_world_context`.  `minor_collect_full`'s
+`MinorCollectForwarding.stop_the_world_context`.  `minor_collect`'s
 postcondition says nothing about the forwarding array it hands back.
 
 ## What This Proves
 
 The cleaned campaign now validates the collector proof surface directly:
 
-1. The SPOT calls the real Pulse entry points (`minor_collect_full` and
-   `gen_gc`) rather than a model or duplicate implementation. The generic
+1. The SPOT calls the real Pulse entry points (`minor_collect` and
+   `full_gc`) rather than a model or duplicate implementation. The generic
    wrappers expose the raw contracts, while the concrete wrappers establish
    those contracts for the three-object heap and consume the postconditions.
 2. The root set includes `C` pre-minor, so the post-minor major GC has a root
@@ -174,12 +179,12 @@ The cleaned campaign now validates the collector proof surface directly:
 7. C.field1 preservation is proved through the exported major-GC live-subgraph
    isomorphism: the post-minor proof establishes that C.field1 contains A', and
    the final proof uses the field-preservation conjunct for reachable object C
-   at field index 2 to show the same slot still contains A' after `gen_gc`.
+   at field index 2 to show the same slot still contains A' after `full_gc`.
 8. The final Pulse layer is imperative: `ConcreteCallMinor` calls
-   `minor_collect_full` on concrete resources and `ConcreteCallFull` calls
-   `gen_gc` on concrete resources. The full connector now takes an empty gray
+   `minor_collect` on concrete resources and `ConcreteCallFull` calls
+   `full_gc` on concrete resources. The full connector now takes an empty gray
    stack with capacity at least two and proves internally that darkening the
-   concrete post-minor roots produces the real `gen_gc` major-collection
+   concrete post-minor roots produces the real `full_gc` major-collection
    precondition.
 
 ## Completed Connector
@@ -188,12 +193,12 @@ The active SPOT now covers the concrete three-object scenario end to end:
 
 - roots before the minor phase are exactly `[C; A]`;
 - the remembered table has exactly one slot, C.field1;
-- the concrete heap satisfies the `minor_collect_full` preconditions;
+- the concrete heap satisfies the `minor_collect` preconditions;
 - the concrete Cheney no-OOM proof is derived from the layout and is not a
   caller precondition of the concrete Pulse connectors;
 - the post-minor result promotes A to A', rewrites C.field1 to A', and leaves
   B without a promoted image;
-- the post-minor state satisfies the `gen_gc` preconditions from an initially
+- the post-minor state satisfies the `full_gc` preconditions from an initially
   empty gray stack with capacity at least two; and
 - the final major heap contains both C and A', with C.field1 still pointing to
   A'.
@@ -240,16 +245,16 @@ The audit has two halves, and the point is that both hold of *the same heap*:
   `resolve_object H == P` proved from `infix_addr_conds`), `no_pointer_to_blue`
   (the interior pointer resolves to the White `P`).
 
-`GC.SPOT.InfixPre` discharges the rest of `gen_gc`'s precondition. The nursery
+`GC.SPOT.InfixPre` discharges the rest of `full_gc`'s precondition. The nursery
 is `GC.Gen.MinorHeap.minor_reset`, so the minor side is vacuous and the
 remembered table is empty — `spot_infix_ref_table_covers` proves that no field
 of this heap holds a minor pointer, the interior pointer included. It also
 proves `~(cheney_oom ...)`: there is nothing to promote.
 
-`GC.SPOT.InfixCall` then calls the real `gen_gc`. Its postcondition records
+`GC.SPOT.InfixCall` then calls the real `full_gc`. Its postcondition records
 that
 
-- the collection succeeds (`snd res == true`), from `gen_gc`'s
+- the collection succeeds (`snd res == true`), from `full_gc`'s
   `not ok ==> cheney_oom` and the no-OOM proof above;
 - `GC.Gen.HeapInvariant.collection_heap_shape` — literally the predicate the
   precondition demands — holds again of the returned state;
@@ -257,7 +262,7 @@ that
 - `Q` is still an enumerated object of the post-collection major heap.
 
 Together these say that the relaxation is real: a heap with a genuine OCaml
-interior pointer is accepted by `gen_gc`, collected, and handed back satisfying
+interior pointer is accepted by `full_gc`, collected, and handed back satisfying
 the same invariant, with the root still live.
 
 ## `GC.SPOT.MinorInfix` — interior pointers in the nursery
@@ -332,7 +337,7 @@ except that field 1 of the live object `c` holds `24` — a pointer into the
 construction and one set of proofs is the point: a nursery pointer is opaque to
 the major heap, so storing an interior one changes nothing about its shape.
 
-`GC.SPOT.MinorInfixPre` discharges `gen_gc`'s precondition for that pair, with
+`GC.SPOT.MinorInfixPre` discharges `full_gc`'s precondition for that pair, with
 roots `[c; 24]` and a one-entry remembered set holding the address of `c`'s
 field 1. The interior address has to be a root: `remembered_targets_in_roots`
 demands that every minor value reachable through the remembered set also appear
@@ -350,10 +355,10 @@ Phase H.2 routed it through `resolve_minor`, which names the closure at byte 8.
   item this is the non-vacuity statement: not merely a heap the collector
   accepts, but exactly a heap the collector used to reject.
 
-`GC.SPOT.MinorInfixCall` runs the real `gen_gc` on it. Its postcondition records
+`GC.SPOT.MinorInfixCall` runs the real `full_gc` on it. Its postcondition records
 that `collection_heap_shape` is restored, the nursery comes back zeroed, and the
 root array has been rewritten to the Cheney-collected roots. It deliberately
-does not pin `snd res == true`: `gen_gc` reports failure only on a concrete
+does not pin `snd res == true`: `full_gc` reports failure only on a concrete
 out-of-memory event, and ruling that out for a nursery with live content is a
 separate and much larger obligation (`GC.SPOT.ConcreteForwarding` spends 600
 lines on it for the two-object nursery) that is orthogonal to the question this
@@ -362,7 +367,7 @@ SPOT answers.
 ## `GC.SPOT.NoScanMajor` — a no-scan object whose bytes spell a heap address
 
 The non-vacuity witness for the *other* invariant relaxation: dropping
-`GC.Spec.Fields.no_scan_invariant` from `gen_gc`'s major-heap precondition.
+`GC.Spec.Fields.no_scan_invariant` from `full_gc`'s major-heap precondition.
 
 `no_scan_tag` is 251, and blocks at or above it are strings, `Bytes.t`,
 `Bigarray` payloads and custom blocks. Their contents are arbitrary bytes by
@@ -411,7 +416,7 @@ C --- it was covering a real bug, reproduced by
 ## `GC.SPOT.NoScanMinor` — a young no-scan block whose body spells a nursery address
 
 The nursery analogue of the previous SPOT, and the witness for deleting
-`GC.Gen.Promote.minor_no_scan_invariant` from `gen_gc`'s precondition.
+`GC.Gen.Promote.minor_no_scan_invariant` from `full_gc`'s precondition.
 
 The nursery is three words:
 
@@ -522,9 +527,10 @@ white, so dead at mark):
 is the finishing sweep that frees it.  No allocation runs, so no address is
 new and the conclusion is unconditional.
 
-`GC.SPOT.IncrementalCycle` composes the Pulse entry points `gen_gc_start`,
-`sweep_slice` and `finish_sweep`; on success `cycle_frees_dead` shows every
+`GC.SPOT.IncrementalCycle` composes the Pulse entry points `minor_collect`,
+`start_cycle`, a 64-word `major_slice` and an unbounded `major_slice` (which
+finishes the cycle), from `full_gc`'s precondition alone; on success `cycle_frees_dead` shows every
 object white in the marked heap is freed at the end
 (`phase_account_slice`, `phase_account_idle`), and, given the graph
-hypotheses (`roots_in_graph`, which `gen_gc_start`'s postcondition does not
+hypotheses (`roots_in_graph`, which `start_cycle`'s postcondition does not
 carry), every object unreachable from the roots at mark time.

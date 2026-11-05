@@ -33,8 +33,8 @@ Verified OCaml garbage collector formalized in **F\*** and **Pulse** (concurrent
   `GC.Gen.SweptTail` (the sweep's caches kept derived across promotion) and
   `GC.Gen.Incremental` (the collector's state by phase).  No spec module imports `GC.Gen.Impl.*`.
   `impl/` = `GC.Gen.Impl`, `GC.Gen.Impl.MinorHeap`, `GC.Gen.Impl.Cheney`,
-  `GC.Gen.Impl.Promote`, `GC.Gen.Impl.UpdatePtrs`, `GC.Gen.Impl.Incremental` (the
-  incremental sweep's entry points). Also `ocaml-integration/` + `snapshot/`.
+  `GC.Gen.Impl.Promote`, `GC.Gen.Impl.UpdatePtrs`; the entry points
+  (`minor_collect`, `start_cycle`, `major_slice`, `full_gc`) are in `GC.Gen.Impl`. Also `ocaml-integration/` + `snapshot/`.
 - **spot/** — Small concrete "spot check" scenarios (`GC.SPOT.*`) that instantiate the
   specs on tiny fixed heaps to sanity-check pre/post-conditions. Flat layout, one `.fsti`
   per `.fst`. See `spot/SPOT_STATUS.md`.

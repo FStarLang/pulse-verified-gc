@@ -123,8 +123,8 @@ bundled toolchain code and archived attempts, the active F*/Pulse tree contains
 | --- | --- | --- |
 | Shared model and Pulse infrastructure | `common/` | OCaml headers, heap words, object layout, field traversal, graph/reachability, and shared Pulse heap/stack predicates. |
 | Major collector and allocator | `mark-and-sweep/` | Verified free-list allocator, bounded-stack mark phase, and sweep/coalescing. Extracted as part of the generational snapshot, which runs this code for its major collections. |
-| Generational collector | `generational/` | Verified minor heap, promotion, forwarding, remembered-slot/root rewriting, Cheney BFS, and composed `gen_gc`. |
-| SPOT contract audits | `spot/` | Concrete three-object scenario calls the real `minor_collect_full` and `gen_gc` entry points and proves client-visible consequences. |
+| Generational collector | `generational/` | Verified minor heap, promotion, forwarding, remembered-slot/root rewriting, Cheney BFS, and the entry points `minor_collect`, `start_cycle`, `major_slice` and the composed `full_gc`. |
+| SPOT contract audits | `spot/` | Concrete three-object scenario calls the real `minor_collect` and `full_gc` entry points and proves client-visible consequences. |
 | OCaml integration | `generational/ocaml-integration/` | Extracted verified GC bridge for OCaml 4.14 bytecode, smoke tests, timing benchmarks, GC/RSS stats CSVs, heap calibration, and refreshed results. |
 
 The latest default-heap verified-GC benchmark run reports a geometric-mean
@@ -164,8 +164,11 @@ cd spot && make -j    # local SPOT verification with its own .depend file
 The generational collector is extracted through KaRaMeL and connected to OCaml's
 bytecode runtime by `generational/ocaml-integration/verified_gc/alloc_gen.c`.
 The current full-GC bridge uses a separate mutable `roots_for_gc` buffer and a
-separate initially empty gray stack; verified `gen_gc` performs minor
-collection, verified root darkening, and then major mark/sweep.
+separate initially empty gray stack; verified `full_gc` performs minor
+collection, verified root darkening and marking (`start_cycle`), and then the
+sweep (`major_slice` until idle).  With `VERGC_SWEEP=incremental` the bridge
+calls `minor_collect` and `start_cycle` itself and runs `major_slice` after
+each minor collection.
 
 ```bash
 make extract
@@ -186,7 +189,7 @@ make bench-stats
 make bench-min-heaps
 ```
 
-See [`DESIGN_AND_IMPL.md`](DESIGN_AND_IMPL.md) for the exact `gen_gc` contract,
+See [`DESIGN_AND_IMPL.md`](DESIGN_AND_IMPL.md) for the exact `full_gc` contract,
 root/gray-stack protocol, verified boundary, and benchmark interpretation.
 
 ## Repository tour
@@ -204,7 +207,7 @@ root/gray-stack protocol, verified boundary, and benchmark interpretation.
 
 | Document | Contents |
 | --- | --- |
-| [`DESIGN_AND_IMPL.md`](DESIGN_AND_IMPL.md) | Architecture, the `gen_gc` contract, and benchmark results. |
+| [`DESIGN_AND_IMPL.md`](DESIGN_AND_IMPL.md) | Architecture, the `full_gc` contract, and benchmark results. |
 | [`PROOF_COMPLEXITY.md`](PROOF_COMPLEXITY.md) | The main steps of the correctness proof, measured verification cost per module, where the difficulty concentrates and why, and what could be simplified. |
 | [`OPTIMIZATIONS.md`](OPTIMIZATIONS.md) | Performance decisions in the collector. |
 | [`HEAP_EXPANSION.md`](HEAP_EXPANSION.md) | Heap-growth design notes. |

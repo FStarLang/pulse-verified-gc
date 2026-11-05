@@ -10,7 +10,7 @@ to C via KaRaMeL.
 OCaml 4.14 runtime (patched: memory.h, interp.c, minor_gc.c, ...)
     ↓ inline minor bump allocation; verified_allocate_minor() slow path
 alloc_gen.c (bridge: root scanning, minor/major collection, heap init)
-    ↓ minor_alloc(), allocate(), minor_collect_full(), gen_gc()
+    ↓ minor_alloc(), allocate(), minor_collect(), start_cycle(), major_slice(), full_gc()
 GC_Gen_Impl.c (KaRaMeL-extracted verified code)
 ```
 
@@ -108,19 +108,20 @@ at exit.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `VERGC_SWEEP` | `stw` | `stw`: a full collection marks and sweeps at once (`gen_gc`). `incremental`: it marks (`gen_gc_start`) and the sweep then runs in slices, one after each minor collection. Any other value warns once and means `stw`. |
+| `VERGC_SWEEP` | `stw` | `stw`: a full collection marks and sweeps at once (`full_gc`). `incremental`: it marks (`minor_collect`, then `start_cycle`) and the sweep then runs in slices (`major_slice`), one after each minor collection. Any other value warns once and means `stw`. |
 | `VERGC_SWEEP_MIN_WORDS` | 4096 | incremental: the smallest slice, in words |
 | `VERGC_SWEEP_K` | 4 | incremental: a slice sweeps `max(MIN_WORDS, K * words the minor collection collected + words allocated directly in the major heap since the last slice)` words |
 | `VERGC_SWEEP_STATS` | unset | `1`: print the sweep counters (slices, words swept, forced finishes, allocations mid-sweep) to stderr at exit |
 
-A full collection requested mid-sweep finishes the sweep first; a failed
-major allocation mid-sweep finishes the sweep and retries, then runs a full
-collection and retries. `Gc.full_major`, `Gc.major` and `Gc.compact` run a
-whole verified cycle, its sweep included, and `Gc.major_slice` a sweep slice
+A full collection requested mid-sweep finishes the cycle first (`major_slice`
+with an unbounded budget until idle); a failed major allocation mid-sweep
+finishes the cycle and retries, then runs a full collection and retries.
+`Gc.full_major`, `Gc.major` and `Gc.compact` run a whole verified cycle, its
+sweep included, and `Gc.major_slice` a `major_slice`
 (see "Stock collector entry points" above). See
 `verified_gc/OCAML_INTEGRATION.md`, "The Incremental Sweep", for the policy
-and how the bridge meets the trusted obligations of
-`GC.Gen.Impl.Incremental`.
+and how the bridge meets the trusted obligations listed in
+`GC.Gen.Impl`.
 
 ## Tests
 
@@ -187,7 +188,7 @@ into the nursery are admitted by `minor_heap_shape` / `collection_heap_shape`,
 whose two restrictions forbidding them were removed once Cheney forwarding was
 proved to preserve interiority. The corresponding audits are
 `spot/GC.SPOT.InfixMajor` (a concrete major heap with an interior pointer that
-satisfies the whole precondition, is collected by the real `gen_gc`, and comes
+satisfies the whole precondition, is collected by the real `full_gc`, and comes
 back satisfying it again) and `spot/GC.SPOT.MinorInfix` (the nursery analogue).
 See `docs/minor-infix-support-plan.md`.
 
