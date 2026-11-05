@@ -953,8 +953,6 @@ for every live root:
 
 ```c
 static void scan_minor_root(value root, value *root_ptr) {
-    if (root_count >= MAX_ROOTS)
-        caml_fatal_error("too many GC roots");
     if (!Is_block(root)) return;           // skip integers
     if ((uint64_t)root < minor_heap_size_u64) return; // stale offset guard
     if (Wosize_val(root) == 0) return;     // skip atoms/empty blocks
@@ -965,9 +963,7 @@ static void scan_minor_root(value root, value *root_ptr) {
     else
         translated = (uint64_t)(uintptr_t)root;  // major -> passthrough
 
-    root_values[root_count] = translated;
-    root_locs[root_count] = root_ptr;  // for writeback
-    root_count++;
+    push_root(translated, root_ptr);  // root_locs entry is for writeback
 }
 ```
 
@@ -978,8 +974,11 @@ We collect roots into parallel arrays:
 
 ### Capacity
 
-`MAX_ROOTS = 256K` slots.  If exceeded, the GC fatal-errors.  In
-practice, even binarytrees-14 uses only ~6K roots.
+The arrays grow on demand (`push_root` doubles them, starting at 4096
+slots).  They used to be a fixed `MAX_ROOTS = 256K`, which deep recursions
+overflowed (issue #41: Sandmark's stacks and lazylist had 268K-304K stack
+roots).  The full collection's gray stack is sized after scanning, at least
+`root_count`, which keeps `gen_gc_stack_budget` (`nroots <= capacity`) true.
 
 ---
 

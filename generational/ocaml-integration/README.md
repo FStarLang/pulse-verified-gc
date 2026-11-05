@@ -97,11 +97,15 @@ The runtime paths that used to reach them now use the verified collector:
 | Memprof's minor-heap refill | The verified minor collection |
 
 Finalisers (`Gc.finalise`, custom-block finalisers), weak references and
-ephemerons are not implemented by the verified collector yet; this is a
-known limitation, and the tests that exercise them are listed in
-`ci/expected-failures.txt`.  Skipping the stock major cycle and sweep at
-exit is consistent with it: finalisers run neither during the program nor
-at exit.
+ephemerons are not implemented by the verified collector yet.  Creating a
+weak array or ephemeron, or registering a `Gc.finalise` finaliser, therefore
+fails early with `caml_fatal_error` ("Weak arrays and ephemerons are not
+supported by the verified GC", "Gc.finalise is not supported by the verified
+GC"; issues #42 and #43, `tests/unsupported_features.ml`) instead of leaving
+weak keys dangling or letting the finaliser table grow forever.  Custom-block
+finalisers still silently do not run.  The testsuite tests that exercise
+these features are listed in `ci/expected-failures.txt`.  Skipping the stock
+major cycle and sweep at exit is consistent with this.
 
 ## Tests
 

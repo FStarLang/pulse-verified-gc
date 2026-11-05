@@ -43,17 +43,60 @@ channel (an enum, or at minimum distinguishing "allocator returned null" from
 
 ---
 
-## Open: finalisers and weak pointers are not run
+## Open: finalisers, weak arrays and ephemerons are not supported
 
-**Observed by:** `tests/no_scan.ml` section 4 (which skips its liveness
-assertion when the control finaliser does not fire)
+**Issues:** [#42](https://github.com/FStarLang/pulse-verified-gc/issues/42)
+(finalisers), [#43](https://github.com/FStarLang/pulse-verified-gc/issues/43)
+(weak arrays and ephemerons)
+**Regression test:** `tests/unsupported_features.ml` (`make correctness`,
+`make test-native`)
+**Severity:** memory unsafety for weak arrays and ephemerons, before they were
+made to fail early
 
-`Gc.finalise` registers callbacks but the verified runtime never runs them,
-and `Weak.get` does not track liveness. `no_scan.ml` therefore compares
-against a *control* — a second doomed block with no forged reference — and
-only asserts collection when the control's finaliser fires, so the test
-carries no information on a runtime without finalisers rather than failing
-spuriously.
+The verified collector neither runs finalisers nor updates or clears weak and
+ephemeron keys. A finaliser table only grows, until the root set overflows (Sandmark's
+`finalise`). A young key stored in a weak array or ephemeron dangles into the
+emptied nursery after the next minor collection, because the minor collection
+ignores `ephe_ref_table`, so the program reads freed memory (Sandmark's `zdd`).
+
+Until they are implemented, both fail early. Creating a weak array or an
+ephemeron (`caml_ephemeron_create`, behind `Weak.create`, every
+`Ephemeron` table and the C API) stops the program with
+
+    Fatal error: Weak arrays and ephemerons are not supported by the verified GC (caml_ephemeron_create)
+
+and registering a finaliser (`Gc.finalise`, `Gc.finalise_last`) with
+
+    Fatal error: Gc.finalise is not supported by the verified GC (generic_final_register)
+
+An invalid argument still raises `Invalid_argument` first, as on stock OCaml.
+The testsuite tests that use these features are listed in
+`ci/expected-failures.txt`. `tests/no_scan.ml` section 4 registers its
+finalisers only under stock OCaml (`NO_SCAN_RUNTIME` is not `verified`).
+
+Custom-block finalisers are a separate gap and still do not run
+(`regression/pr3612`).
+
+---
+
+## Fixed: deep stacks overflowed a fixed root buffer
+
+**Issue:** [#41](https://github.com/FStarLang/pulse-verified-gc/issues/41)
+**Regression test:** `tests/deep_stack.ml` (`make correctness`, `make test-native`)
+**Fixed in:** `verified_gc/alloc_gen.c`
+**Severity:** a valid program aborted with "verified gen GC: root overflow"
+
+`alloc_gen.c` copied every root into a static array of `MAX_ROOTS` = 2^18
+slots. A deep, non-tail recursion that keeps a few blocks live in each frame
+has more pointer slots than that well within stock OCaml's default stack
+limit: Sandmark's `stacks` (floats-small, floats-large) and `lazylist` had
+268K to 304K. The root arrays now grow on demand (doubling from 4096).
+
+`gen_gc`'s precondition `gen_gc_stack_budget` requires `nroots <= capacity`
+of the gray stack. The full collection already sized the gray stack after scanning the roots,
+as `max(heap_words / 8, 4096, root_count)`, so the budget holds for any root
+count. `deep_stack.ml` keeps over 300K roots live with a 2M-word heap, whose
+gray stack would otherwise be 250K entries, so the `root_count` branch is the one taken.
 
 ---
 
