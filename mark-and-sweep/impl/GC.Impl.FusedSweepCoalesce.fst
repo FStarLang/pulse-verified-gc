@@ -35,6 +35,10 @@ module SI = GC.Spec.SweepInv
 module FusedLemmas = GC.Impl.FusedSweepCoalesce.Lemmas
 module CoalLemmas = GC.Impl.Coalesce.Lemmas
 module Coalesce = GC.Impl.Coalesce
+module R = Pulse.Lib.Reference
+module OT = GC.Spec.ObjectTable
+module TS = GC.Spec.ObjectTable.Sweep
+module ImplOT = GC.Impl.ObjectTable
 
 open GC.Impl.Fields
 
@@ -109,17 +113,19 @@ fn flush_blue_lists_impl (heap: heap_t) (heads: array U64.t) (fb: U64.t) (rw: U6
 #pop-options
 
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
-fn fused_sweep_coalesce (heap: heap_t) (heads: array U64.t)
-  requires is_heap heap 's ** pts_to heads 'fls **
+fn fused_sweep_coalesce (heap: heap_t) (heads: array U64.t) (tbl: array U64.t)
+  requires is_heap heap 's ** pts_to heads 'fls ** pts_to tbl 't **
            pure (SpecFields.well_formed_heap 's /\
                  Seq.length (SpecFields.objects zero_addr 's) > 0 /\
                  GC.Spec.Fields.heap_objects_dense 's /\
                  (forall (x: obj_addr).
                    Seq.mem x (SpecFields.objects zero_addr 's) ==>
                    ~(SpecObject.is_gray x 's)) /\
-                 Seq.length 'fls == SC.n_lists)
-  ensures exists* s2 fls2. is_heap heap s2 ** pts_to heads fls2 **
-    pure ((s2, fls2) == SCL.fused_sweep_coalesce_lists 's)
+                 Seq.length 'fls == SC.n_lists /\
+                 Seq.length 't == OT.n_windows)
+  ensures exists* s2 fls2 t2. is_heap heap s2 ** pts_to heads fls2 ** pts_to tbl t2 **
+    pure ((s2, fls2) == SCL.fused_sweep_coalesce_lists 's /\
+          OT.table_matches s2 t2)
 {
   // Establish initial facts
   fused_heap_length heap;
@@ -135,13 +141,25 @@ fn fused_sweep_coalesce (heap: heap_t) (heads: array U64.t)
   let mut fb_ref = 0UL;
   let mut rw_ref = 0UL;
 
+  // The table cursor: the last output header, and the first window not yet
+  // written with its boundary.
+  let mut prev = (zero_addr <: U64.t);
+  let mut k = 0UL;
+  let mut nb = (zero_addr <: U64.t);
+  OT.objs_from_zero 's;
+
   while (U64.lt (U64.add !current mword) heap_size_u64)
-    invariant exists* v fb rw fv s.
+    invariant exists* v fb rw fv s tv vp vk vnb.
       pts_to current v **
       pts_to fb_ref fb **
       pts_to rw_ref rw **
       pts_to heads fv **
       is_heap heap s **
+      pts_to tbl tv ** R.pts_to prev vp ** R.pts_to k vk ** R.pts_to nb vnb **
+      pure (Seq.length tv == OT.n_windows /\ U64.v vk <= OT.n_windows /\
+            U64.v vnb == OT.boundary (U64.v vk) /\
+            OT.cursor (TS.out_emit 's (OT.objs_from 's (U64.v v)) (U64.v rw)) vp (U64.v vk) tv ==
+              OT.cursor (TS.out_emit 's (SpecFields.objects zero_addr 's) 0) zero_addr 0 't) **
       pure (Seq.length fv == SC.n_lists /\
             U64.v v % 8 == 0 /\
             U64.v v <= heap_size /\
@@ -166,6 +184,9 @@ fn fused_sweep_coalesce (heap: heap_t) (heads: array U64.t)
     let cur_rw = !rw_ref;
     with cur_fv. assert (pts_to heads cur_fv);
     with s. assert (is_heap heap s);
+    let vprev = !prev;
+    with tv. assert (pts_to tbl tv);
+    with vk. assert (R.pts_to k vk);
 
     // Read header from current heap (same bytes as original via suffix preservation)
     let hdr = read_word heap cur;
@@ -249,7 +270,13 @@ fn fused_sweep_coalesce (heap: heap_t) (heads: array U64.t)
       FusedLemmas.makeWhite_suffix_preserved s_flush obj (U64.v next);
       FusedLemmas.makeWhite_length s_flush obj;
 
-      // 6. Update loop state
+      // 6. The survivor is an output walk position: the windows below it
+      //    belong to the previous one.
+      TS.cursor_out_emit_step 's cur (U64.v cur_rw) vprev (U64.v vk) tv;
+      ImplOT.emit_impl tbl k nb vprev cur;
+      prev := cur;
+
+      // 7. Update loop state
       current := next;
       fb_ref := 0UL;
       rw_ref := new_rw;
@@ -285,6 +312,15 @@ fn fused_sweep_coalesce (heap: heap_t) (heads: array U64.t)
       // =====================================================
       let new_fb = (if U64.eq cur_rw 0UL then obj else cur_fb);
       let new_rw = U64.add cur_rw ws_plus_1;
+
+      // A run's first object is an output walk position (its header becomes
+      // the run's); the rest of a run is not.  With no run starting, the
+      // emit is given 0, below every boundary, and writes nothing.
+      TS.cursor_out_emit_step 's cur (U64.v cur_rw) vprev (U64.v vk) tv;
+      let starts = U64.eq cur_rw 0UL;
+      OT.emit_stop tv (U64.v vk) vprev 0;
+      ImplOT.emit_impl tbl k nb vprev (if starts then cur else 0UL);
+      prev := (if starts then cur else vprev);
 
       current := next;
       fb_ref := new_fb;
@@ -340,6 +376,24 @@ fn fused_sweep_coalesce (heap: heap_t) (heads: array U64.t)
   // Bridge: fused_aux_lists with Seq.empty == flush_blue_lists
   FusedLemmas.fused_step_empty 's s_exit final_fb (U64.v final_rw) final_fv;
 
-  flush_blue_lists_impl heap heads final_fb final_rw
+  flush_blue_lists_impl heap heads final_fb final_rw;
+
+  // Every window not yet written belongs to the last output position.
+  let vprev = !prev;
+  with v_exit. assert (pts_to current v_exit);
+  with tv. assert (pts_to tbl tv);
+  with vk. assert (R.pts_to k vk);
+  with vrw. assert (pts_to rw_ref vrw);
+  assert (pure (U64.v v_exit + 8 >= heap_size /\ U64.v v_exit <= heap_size /\
+                U64.v v_exit % 8 == 0));
+  assert (pure (OT.cursor (TS.out_emit 's (OT.objs_from 's (U64.v v_exit)) (U64.v vrw))
+                          vprev (U64.v vk) tv ==
+                OT.cursor (TS.out_emit 's (SpecFields.objects zero_addr 's) 0) zero_addr 0 't));
+  TS.cursor_out_emit_end 's (U64.v v_exit) (U64.v vrw) vprev (U64.v vk) tv;
+  ImplOT.emit_impl tbl k nb vprev heap_size_u64;
+  with t2. assert (pts_to tbl t2);
+  assert (pure (t2 == OT.cursor (TS.out_emit 's (SpecFields.objects zero_addr 's) 0) zero_addr 0 't));
+  TS.fused_table 's 't;
+  assert (pure (OT.table_matches (fst (SCL.fused_sweep_coalesce_lists 's)) t2))
 }
 #pop-options

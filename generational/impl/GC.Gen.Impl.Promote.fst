@@ -12,6 +12,8 @@ open Pulse.Lib.Pervasives
 open Pulse.Lib.Array.PtsTo
 module R = Pulse.Lib.Reference
 module FLs = GC.Spec.FreeLists
+module OT = GC.Spec.ObjectTable
+module GOT = GC.Gen.ObjectTable
 module AK = GC.Gen.AllocLists
 module SAL = GC.Spec.Allocator.Lists
 module SZ = FStar.SizeT
@@ -192,10 +194,11 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn promote_one (minor: minor_heap_t) (major: heap_t) (heads: array U64.t)
-               (obj: U64.t)
+               (tbl: array U64.t) (obj: U64.t)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
            pts_to heads 'fp **
+           pts_to tbl 't **
            pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
                  U64.v obj % 8 == 0 /\
                  // Minor object body within bounds (from minor_objects_wosize_bound)
@@ -203,12 +206,16 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (heads: array U64.t)
                  // Major heap structural well-formedness (weaker than full wfh)
                  SF.well_formed_heap_part1 'ms /\
                  FLs.fls_valid 'ms 'fp /\
-                 FLs.fls_terminates 'ms 'fp)
+                 FLs.fls_terminates 'ms 'fp /\
+                 Seq.length 't == OT.n_windows)
   returns new_addr: U64.t
-  ensures exists* md2 mb2 ms2 fp2.
+  ensures exists* md2 mb2 ms2 fp2 t2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
     pts_to heads fp2 **
+    pts_to tbl t2 **
+    pure (Seq.length t2 == OT.n_windows /\
+          (OT.table_sound 'ms 't ==> OT.table_sound ms2 t2)) **
     pure (let minor_st = {data='md; bump='mb} in
           let wz = minor_wosize minor_st obj in
           md2 == 'md /\ mb2 == 'mb /\
@@ -230,7 +237,8 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (heads: array U64.t)
   } else {
     // Allocate space in major heap (using weak precondition variant)
     FLs.fls_valid_elim 'ms 'fp;
-    let new_obj = Alloc.allocate_part1 major heads wosize;
+    let new_obj = Alloc.allocate_part1 major heads tbl wosize;
+    with t2. assert (pts_to tbl t2);
     if U64.eq new_obj 0UL {
       // OOM — alloc_spec with obj_out=0 returns heap unchanged
       AK.alloc_lists_preserves_wfh_part1 'ms 'fp (U64.v wosize);
@@ -289,6 +297,8 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (heads: array U64.t)
       PromoteSpec.promote_object_success {data='md; bump='mb} 'ms obj 'fp (U64.v wosize);
       PromoteSpec.promote_object_preserves_alloc_invariants
         {data='md; bump='mb} 'ms obj 'fp (U64.v wosize);
+      // The table: the allocation's, kept by the copy and the retag
+      GOT.promote_object_sound_step {data='md; bump='mb} 'ms obj 'fp (U64.v wosize) 't t2;
       new_obj
     }
   }

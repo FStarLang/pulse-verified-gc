@@ -30,8 +30,8 @@ let spot_gc_precondition r =
     (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
     Seq.empty spot_cap
 
-let spot_gc_correct r s2 final_fls =
+let spot_gc_correct r s2 final_fls final_tbl =
   spot_gc_precondition r;
   Correct.gc_correct
     (spot_major_h_init r) s2 (spot_major_roots r) (spot_major_roots r)
-    final_fls spot_cap
+    final_fls final_tbl spot_cap

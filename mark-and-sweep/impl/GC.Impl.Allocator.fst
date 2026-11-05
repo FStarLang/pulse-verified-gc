@@ -35,6 +35,9 @@ module SpecObject = GC.Spec.Object
 module SAL = GC.Spec.Allocator.Lists
 module FLs = GC.Spec.FreeLists
 module SC = GC.Spec.SizeClass
+module OT = GC.Spec.ObjectTable
+module GOT = GC.Gen.ObjectTable
+module ImplOT = GC.Impl.ObjectTable
 
 /// ---------------------------------------------------------------------------
 /// Pure helper lemmas (all proven — no admits)
@@ -431,7 +434,7 @@ let alloc_on_empty (g: SpecBase.heap) (fls: FLs.fl_state) (i: nat) (wz: pos)
                    (SAL.alloc_on g fls i wz).SAL.fls_out == fls)
   = SA.alloc_search_invalid g 0UL 0UL 0UL wz SpecBase.heap_words
 
-fn init_heap (heap: heap_t) (heads: array U64.t)
+fn init_heap_heads (heap: heap_t) (heads: array U64.t)
   requires is_heap heap 's ** pts_to heads 'fls **
            pure (Seq.length 'fls == SC.n_lists)
   ensures exists* s2 fls2. is_heap heap s2 ** pts_to heads fls2 **
@@ -447,6 +450,29 @@ fn init_heap (heap: heap_t) (heads: array U64.t)
     heads.(k) <- fp
   }
 }
+
+fn init_heap (heap: heap_t) (heads: array U64.t) (tbl: array U64.t)
+  requires is_heap heap 's ** pts_to heads 'fls ** pts_to tbl 't **
+           pure (Seq.length 'fls == SC.n_lists /\ Seq.length 't == OT.n_windows)
+  ensures exists* s2 fls2 t2. is_heap heap s2 ** pts_to heads fls2 ** pts_to tbl t2 **
+    pure ((s2, fls2) == SAL.init_heap_lists_spec 's /\ OT.table_matches s2 t2)
+{
+  init_heap_heads heap heads;
+  ImplOT.rebuild_walk heap tbl
+}
+
+fn table_rebuild (heap: heap_t) (tbl: array U64.t)
+  requires is_heap heap 's ** pts_to tbl 't ** pure (Seq.length 't == OT.n_windows)
+  ensures exists* t2. is_heap heap 's ** pts_to tbl t2 ** pure (OT.table_matches 's t2)
+{
+  ImplOT.rebuild_walk heap tbl
+}
+
+
+/// `well_formed_heap` includes `well_formed_heap_part1`.
+let wfh_part1 (g: SpecBase.heap)
+  : Lemma (requires SF.well_formed_heap g) (ensures SF.well_formed_heap_part1 g)
+  = reveal_opaque (`%SF.well_formed_heap) (SF.well_formed_heap g)
 
 /// `SAL.alloc_lists_spec`: the small lists from the request's own upwards,
 /// skipping empty ones, then list 0.
@@ -532,34 +558,57 @@ fn alloc_lists_impl (heap: heap_t) (heads: array U64.t) (wz: U64.t)
 }
 #pop-options
 
-fn allocate (heap: heap_t) (heads: array U64.t) (wosize: U64.t)
-  requires is_heap heap 's ** pts_to heads 'fls **
+fn allocate (heap: heap_t) (heads: array U64.t) (tbl: array U64.t) (wosize: U64.t)
+  requires is_heap heap 's ** pts_to heads 'fls ** pts_to tbl 't **
            pure (SF.well_formed_heap 's /\
                  U64.v wosize >= 1 /\
-                 Seq.length 'fls == SC.n_lists)
+                 Seq.length 'fls == SC.n_lists /\
+                 Seq.length 't == OT.n_windows)
   returns obj: U64.t
-  ensures exists* s2 fls2. is_heap heap s2 ** pts_to heads fls2 **
+  ensures exists* s2 fls2 t2. is_heap heap s2 ** pts_to heads fls2 ** pts_to tbl t2 **
     pure (let spec_res = SAL.alloc_lists_spec 's 'fls (U64.v wosize) in
           s2 == spec_res.heap_out /\
           fls2 == spec_res.fls_out /\
-          obj == spec_res.obj_out)
+          obj == spec_res.obj_out /\
+          t2 == OT.alloc_table 't obj (U64.v wosize) /\
+          Seq.length t2 == OT.n_windows /\
+          (OT.table_sound 's 't /\ FLs.fls_valid 's 'fls /\ FLs.fls_terminates 's 'fls ==>
+           OT.table_sound s2 t2) /\
+          (OT.table_ok 's 't /\ FLs.fls_valid 's 'fls /\ FLs.fls_terminates 's 'fls ==>
+           OT.table_ok s2 t2))
 {
-  alloc_lists_impl heap heads wosize
+  let obj = alloc_lists_impl heap heads wosize;
+  GOT.alloc_lists_obj_for_table 's 'fls (U64.v wosize);
+  ImplOT.table_alloc_write tbl obj wosize;
+  wfh_part1 's;
+  GOT.alloc_lists_table_imp 's 'fls (U64.v wosize) 't;
+  GOT.alloc_lists_sound_imp 's 'fls (U64.v wosize) 't;
+  obj
 }
 
-fn allocate_part1 (heap: heap_t) (heads: array U64.t) (wosize: U64.t)
-  requires is_heap heap 's ** pts_to heads 'fls **
+fn allocate_part1 (heap: heap_t) (heads: array U64.t) (tbl: array U64.t) (wosize: U64.t)
+  requires is_heap heap 's ** pts_to heads 'fls ** pts_to tbl 't **
            pure (SF.well_formed_heap_part1 's /\
                  FLs.fls_valid 's 'fls /\
                  FLs.fls_terminates 's 'fls /\
                  U64.v wosize >= 1 /\
-                 Seq.length 'fls == SC.n_lists)
+                 Seq.length 'fls == SC.n_lists /\
+                 Seq.length 't == OT.n_windows)
   returns obj: U64.t
-  ensures exists* s2 fls2. is_heap heap s2 ** pts_to heads fls2 **
+  ensures exists* s2 fls2 t2. is_heap heap s2 ** pts_to heads fls2 ** pts_to tbl t2 **
     pure (let spec_res = SAL.alloc_lists_spec 's 'fls (U64.v wosize) in
           s2 == spec_res.heap_out /\
           fls2 == spec_res.fls_out /\
-          obj == spec_res.obj_out)
+          obj == spec_res.obj_out /\
+          t2 == OT.alloc_table 't obj (U64.v wosize) /\
+          Seq.length t2 == OT.n_windows /\
+          (OT.table_sound 's 't ==> OT.table_sound s2 t2) /\
+          (OT.table_ok 's 't ==> OT.table_ok s2 t2))
 {
-  alloc_lists_impl heap heads wosize
+  let obj = alloc_lists_impl heap heads wosize;
+  GOT.alloc_lists_obj_for_table 's 'fls (U64.v wosize);
+  ImplOT.table_alloc_write tbl obj wosize;
+  GOT.alloc_lists_table_imp 's 'fls (U64.v wosize) 't;
+  GOT.alloc_lists_sound_imp 's 'fls (U64.v wosize) 't;
+  obj
 }
