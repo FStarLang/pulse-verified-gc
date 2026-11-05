@@ -12,7 +12,7 @@
 /// how far the cursor has moved, in words.
 ///
 /// A slice is some number of steps (`slice_is_steps`), so the sweep phase's
-/// step theorems (`GC.Spec.SweepPhase.Intrinsic.sweep_phase_steps`) apply to
+/// step theorems (`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental_steps`) apply to
 /// it: it keeps the sweep phase, leaves the derived state, frees only objects
 /// pending free, and the pending-free set shrinks (`sweep_slice_phase`).  It
 /// stops early only when the sweep is finished, and a budget larger than the
@@ -86,11 +86,11 @@ val slice_is_steps (g: heap) (fp: U64.t) (st: sweep_state) (c0: U64.t) (budget: 
 /// or the budget is spent.  A budget of more words than the heap has
 /// finishes the sweep.
 val sweep_slice_phase (g: heap) (fp: U64.t) (c: U64.t) (budget: nat)
-  : Lemma (requires sweep_phase_inv g fp c)
+  : Lemma (requires sweep_inv_incremental g fp c)
           (ensures (let (g', fp', st') = sweep_slice g fp (state_at g c) budget in
                     let c' = st'.cursor in
                     st' == state_at g' c' /\
-                    sweep_phase_inv g' fp' c' /\
+                    sweep_inv_incremental g' fp' c' /\
                     (forall (x: obj_addr). in_use (free_incremental c') g' x == in_use (free_incremental c) g x) /\
                     (forall (x: obj_addr). in_use (free_incremental c) g x ==> same_block g g' (hd_address x)) /\
                     (forall (x: obj_addr). pending_free c' g' x ==> pending_free c g x) /\

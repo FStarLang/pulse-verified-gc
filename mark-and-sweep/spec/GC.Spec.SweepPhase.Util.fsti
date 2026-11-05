@@ -108,7 +108,7 @@ val behind_pos_ref (g0 g: heap) (c: nat) (p: nat)
 /// same blocks from `c` on, with the same headers.
 val front_pos (g0 g: heap) (c: nat) (p: hp_addr)
   : Lemma (requires W.reaches g0 zero_addr c /\ W.reaches g zero_addr c /\
-                    front_same g0 g c /\ U64.v p >= c)
+                    front_unchanged g0 g c /\ U64.v p >= c)
           (ensures (pos g p <==> pos g0 p) /\ read_word g p == read_word g0 p /\
                    W.bnext g p == W.bnext g0 p)
 

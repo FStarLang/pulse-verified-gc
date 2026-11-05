@@ -73,7 +73,7 @@ let cursor_block (g0 g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr)
                    W.reaches g zero_addr (W.bnext g c) /\ W.reaches g0 zero_addr (W.bnext g c))
   = sweep_inv_facts g0 g fp st;
     sweep_inv_elim g0 g fp st;
-    front_same_elim g0 g (U64.v c) c;
+    front_unchanged_elim g0 g (U64.v c) c;
     W.reaches_end_of_dense g0;
     W.can_step_before_end g0 zero_addr c (W.walk_end g0 zero_addr);
     W.reaches_snoc g zero_addr c;
@@ -121,10 +121,10 @@ let nm_walk (g g': heap) (c: hp_addr) (w: U64.t)
 #pop-options
 
 let nm_front (g0 g g': heap) (c: hp_addr) (w: U64.t)
-  : Lemma (requires nm_ctx g g' c w /\ front_same g0 g (U64.v c))
-          (ensures front_same g0 g' (W.bnext g c))
+  : Lemma (requires nm_ctx g g' c w /\ front_unchanged g0 g (U64.v c))
+          (ensures front_unchanged g0 g' (W.bnext g c))
   = W.bnext_facts g c;
-    front_same_intro g0 g' (W.bnext g c) (fun a -> front_same_elim g0 g (U64.v c) a)
+    front_unchanged_intro g0 g' (W.bnext g c) (fun a -> front_unchanged_elim g0 g (U64.v c) a)
 
 /// The header at a walk position other than the cursor is unchanged.
 let nm_header (g g': heap) (c: hp_addr) (w: U64.t) (p: hp_addr)
@@ -310,10 +310,10 @@ let mg_walk (g g': heap) (ph c: hp_addr) (w: U64.t)
 #pop-options
 
 let mg_front (g0 g g': heap) (ph c: hp_addr) (w: U64.t)
-  : Lemma (requires mg_ctx g g' ph c w /\ front_same g0 g (U64.v c))
-          (ensures front_same g0 g' (W.bnext g c))
+  : Lemma (requires mg_ctx g g' ph c w /\ front_unchanged g0 g (U64.v c))
+          (ensures front_unchanged g0 g' (W.bnext g c))
   = W.bnext_facts g c;
-    front_same_intro g0 g' (W.bnext g c) (fun a -> front_same_elim g0 g (U64.v c) a)
+    front_unchanged_intro g0 g' (W.bnext g c) (fun a -> front_unchanged_elim g0 g (U64.v c) a)
 
 /// Headers below `ph` are unchanged.
 let mg_header (g g': heap) (ph c: hp_addr) (w: U64.t) (p: hp_addr)
@@ -543,7 +543,7 @@ let opened (g0 g: heap) (fp: U64.t) (st: sweep_state) (c: hp_addr) : prop =
   W.reaches g zero_addr (U64.v c) /\ W.reaches g zero_addr n /\
   W.reaches g0 zero_addr n /\ n % 8 == 0 /\ n <= heap_size /\ n >= U64.v c + 8 /\
   U64.v c >= U64.v zero_addr /\
-  front_same g0 g (U64.v c) /\ behind_ok g0 g (U64.v c) /\
+  front_unchanged g0 g (U64.v c) /\ behind_ok g0 g (U64.v c) /\
   no_adjacent_free g (U64.v c) /\ ends_free g (U64.v c) (prev_free g st) /\
   tail_ok g (U64.v c) st.swept_tail /\ frag_ok g (U64.v c) st.last_fragment /\
   FLA.fl_ascending g fp /\
@@ -644,7 +644,7 @@ let nm_same_list (g g': heap) (fp: U64.t) (c: hp_addr) (w: U64.t)
 /// The block at the cursor, recoloured in `g'`, is a swept block.
 #push-options "--z3rlimit 40"
 let survivor_block (g0 g g': heap) (c: hp_addr)
-  : Lemma (requires front_same g0 g (U64.v c) /\ black_at g0 c /\ W.can_step g c /\
+  : Lemma (requires front_unchanged g0 g (U64.v c) /\ black_at g0 c /\ W.can_step g c /\
                     read_word g c == read_word g0 c /\
                     read_word g' c == white_header (read_word g0 c) /\
                     (forall (a: hp_addr). a <> c ==> read_word g' a == read_word g a))
@@ -653,7 +653,7 @@ let survivor_block (g0 g g': heap) (c: hp_addr)
     let body (a: hp_addr)
       : Lemma (requires U64.v c < U64.v a /\ U64.v a < W.bnext g' c)
               (ensures read_word g' a == read_word g0 a)
-      = front_same_elim g0 g (U64.v c) a
+      = front_unchanged_elim g0 g (U64.v c) a
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires body)
 

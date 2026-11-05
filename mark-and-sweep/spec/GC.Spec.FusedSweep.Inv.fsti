@@ -12,7 +12,7 @@
 ///      blocks that were dead (white or blue) in `g0`.  No two free blocks
 ///      are adjacent (`no_adjacent_free`), and the block ending at `c` is
 ///      free exactly when `prev_free` says so (`ends_free`).
-///   2. *In front of the cursor* (`front_same`): `g` is word for word `g0`.
+///   2. *In front of the cursor* (`front_unchanged`): `g` is word for word `g0`.
 ///   3. *The free list* (`FLA.fl_ascending g fp`): every cell of the whole
 ///      heap, in ascending order.
 ///   4. *`swept_tail` and `last_fragment`* (`tail_ok`, `frag_ok`): the former
@@ -139,7 +139,7 @@ val swept_block_frame_free (g0 g g': heap) (p: hp_addr)
 /// ---------------------------------------------------------------------------
 
 [@@"opaque_to_smt"]
-let front_same (g0 g: heap) (c: nat) : prop =
+let front_unchanged (g0 g: heap) (c: nat) : prop =
   forall (a: hp_addr). U64.v a >= c ==> read_word g a == read_word g0 a
 
 [@@"opaque_to_smt"]
@@ -176,7 +176,7 @@ let sweep_inv (g0 g: heap) (fp: U64.t) (st: sweep_state) : prop =
   let c = U64.v st.cursor in
   c % 8 == 0 /\ c <= heap_size /\
   W.reaches g0 zero_addr c /\ W.reaches g zero_addr c /\
-  front_same g0 g c /\ behind_ok g0 g c /\ no_adjacent_free g c /\
+  front_unchanged g0 g c /\ behind_ok g0 g c /\ no_adjacent_free g c /\
   ends_free g c (prev_free g st) /\
   tail_ok g c st.swept_tail /\ frag_ok g c st.last_fragment /\
   FLA.fl_ascending g fp
@@ -198,7 +198,7 @@ val sweep_inv_intro (g0 g: heap) (fp: U64.t) (st: sweep_state)
   : Lemma (requires (let c = U64.v st.cursor in
                      c % 8 == 0 /\ c <= heap_size /\
                      W.reaches g0 zero_addr c /\ W.reaches g zero_addr c /\
-                     front_same g0 g c /\ behind_ok g0 g c /\ no_adjacent_free g c /\
+                     front_unchanged g0 g c /\ behind_ok g0 g c /\ no_adjacent_free g c /\
                      ends_free g c (prev_free g st) /\
                      tail_ok g c st.swept_tail /\ frag_ok g c st.last_fragment /\
                      FLA.fl_ascending g fp))
@@ -209,18 +209,18 @@ val sweep_inv_elim (g0 g: heap) (fp: U64.t) (st: sweep_state)
           (ensures (let c = U64.v st.cursor in
                     c % 8 == 0 /\ c <= heap_size /\
                     W.reaches g0 zero_addr c /\ W.reaches g zero_addr c /\
-                    front_same g0 g c /\ behind_ok g0 g c /\ no_adjacent_free g c /\
+                    front_unchanged g0 g c /\ behind_ok g0 g c /\ no_adjacent_free g c /\
                     ends_free g c (prev_free g st) /\
                     tail_ok g c st.swept_tail /\ frag_ok g c st.last_fragment /\
                     FLA.fl_ascending g fp))
 
-val front_same_elim (g0 g: heap) (c: nat) (a: hp_addr)
-  : Lemma (requires front_same g0 g c /\ U64.v a >= c)
+val front_unchanged_elim (g0 g: heap) (c: nat) (a: hp_addr)
+  : Lemma (requires front_unchanged g0 g c /\ U64.v a >= c)
           (ensures read_word g a == read_word g0 a)
 
-val front_same_intro (g0 g: heap) (c: nat)
+val front_unchanged_intro (g0 g: heap) (c: nat)
   (pf: (a: hp_addr -> Lemma (requires U64.v a >= c) (ensures read_word g a == read_word g0 a)))
-  : Lemma (front_same g0 g c)
+  : Lemma (front_unchanged g0 g c)
 
 val behind_ok_elim (g0 g: heap) (c: nat) (p: hp_addr)
   : Lemma (requires behind_ok g0 g c /\ W.reaches g zero_addr (U64.v p) /\ U64.v p < c)

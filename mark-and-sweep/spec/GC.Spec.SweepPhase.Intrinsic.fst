@@ -217,14 +217,14 @@ private let derived_clauses (g: heap) (c: U64.t)
     tail_ok_iff g (U64.v c) (last_cell_behind g (U64.v c));
     frag_at_ok g (U64.v c)
 
-let sweep_phase_inv_elim g fp c =
-  reveal_opaque (`%sweep_phase_inv) (sweep_phase_inv g fp c);
+let sweep_inv_incremental_elim g fp c =
+  reveal_opaque (`%sweep_inv_incremental) (sweep_inv_incremental g fp c);
   derived_clauses g c
 
 /// The sweep phase at a state that is the derived one: the form the
 /// stop-the-world step lemmas take.
 let inv_st (g: heap) (fp: U64.t) (st: sweep_state) : prop =
-  sweep_phase_inv g fp st.cursor /\ st == state_at g st.cursor
+  sweep_inv_incremental g fp st.cursor /\ st == state_at g st.cursor
 
 let inv_st_elim (g: heap) (fp: U64.t) (st: sweep_state)
   : Lemma (requires inv_st g fp st)
@@ -236,7 +236,7 @@ let inv_st_elim (g: heap) (fp: U64.t) (st: sweep_state)
                     no_adjacent_free g c /\ ends_free g c (prev_free g st) /\
                     tail_ok g c st.swept_tail /\ frag_ok g c st.last_fragment /\
                     FLA.fl_ascending g fp))
-  = sweep_phase_inv_elim g fp st.cursor
+  = sweep_inv_incremental_elim g fp st.cursor
 
 let inv_st_intro (g: heap) (fp: U64.t) (st: sweep_state)
   : Lemma (requires (let c = U64.v st.cursor in
@@ -249,14 +249,14 @@ let inv_st_intro (g: heap) (fp: U64.t) (st: sweep_state)
                      FLA.fl_ascending g fp))
           (ensures inv_st g fp st)
   = caches_derived g st;
-    reveal_opaque (`%sweep_phase_inv) (sweep_phase_inv g fp st.cursor)
+    reveal_opaque (`%sweep_inv_incremental) (sweep_inv_incremental g fp st.cursor)
 
 /// ---------------------------------------------------------------------------
 /// The shape
 /// ---------------------------------------------------------------------------
 
-let sweep_phase_inv_iff g fp c =
-  reveal_opaque (`%sweep_phase_inv) (sweep_phase_inv g fp c);
+let sweep_inv_incremental_iff g fp c =
+  reveal_opaque (`%sweep_inv_incremental) (sweep_inv_incremental g fp c);
   reveal_opaque (`%sweep_shape) (sweep_shape g fp c)
 
 let sweep_shape_elim g fp c =
@@ -288,25 +288,25 @@ let front_unswept_intro (g: heap) (c: nat)
 let behind_swept_elim g c p
   = reveal_opaque (`%behind_swept) (behind_swept g c)
 
-let marked_unchanged_elim g0 g p = reveal_opaque (`%marked_unchanged) (marked_unchanged g0 g)
+let marked_survive_elim g0 g p = reveal_opaque (`%marked_survive) (marked_survive g0 g)
 
-let marked_unchanged_intro (g0 g: heap)
+let marked_survive_intro (g0 g: heap)
   (pf: (p: hp_addr -> Lemma (requires pos g0 p /\ black_at g0 p)
          (ensures pos g p /\ not (blue_at g p) /\ wz_at g p == wz_at g0 p /\
                   getTag (read_word g p) == getTag (read_word g0 p) /\
                   (forall (a: hp_addr). U64.v p < U64.v a /\ U64.v a < W.bnext g0 p ==>
                      read_word g a == read_word g0 a))))
-  : Lemma (marked_unchanged g0 g)
-  = reveal_opaque (`%marked_unchanged) (marked_unchanged g0 g);
+  : Lemma (marked_survive g0 g)
+  = reveal_opaque (`%marked_survive) (marked_survive g0 g);
     FStar.Classical.forall_intro (FStar.Classical.move_requires pf)
 
-let behind_marked_elim g0 g c p = reveal_opaque (`%behind_marked) (behind_marked g0 g c)
+let survivors_were_marked_elim g0 g c p = reveal_opaque (`%survivors_were_marked) (survivors_were_marked g0 g c)
 
-let behind_marked_intro (g0 g: heap) (c: nat)
+let survivors_were_marked_intro (g0 g: heap) (c: nat)
   (pf: (p: hp_addr -> Lemma (requires pos g p /\ U64.v p < c /\ not (blue_at g p))
                            (ensures pos g0 p /\ black_at g0 p)))
-  : Lemma (behind_marked g0 g c)
-  = reveal_opaque (`%behind_marked) (behind_marked g0 g c);
+  : Lemma (survivors_were_marked g0 g c)
+  = reveal_opaque (`%survivors_were_marked) (survivors_were_marked g0 g c);
     FStar.Classical.forall_intro (FStar.Classical.move_requires pf)
 
 /// ---------------------------------------------------------------------------
@@ -440,7 +440,7 @@ let to_ref (g: heap) (fp: U64.t) (st: sweep_state)
     let c = U64.v st.cursor in
     let r = ref_of g c in
     ref_walk g c;
-    front_same_intro r g c (fun a -> ref_read g c a);
+    front_unchanged_intro r g c (fun a -> ref_read g c a);
     behind_ok_intro r g c (fun p -> swept_of g fp st p);
     W.reaches_end_of_dense g;
     W.dense_of_reaches_end r (W.walk_end g zero_addr);
@@ -455,7 +455,7 @@ let to_ref (g: heap) (fp: U64.t) (st: sweep_state)
 /// (and no others) as non-free blocks, with their contents.
 let after_live (r g': heap) (c': nat) (q: hp_addr)
   : Lemma (requires W.reaches r zero_addr c' /\ W.reaches g' zero_addr c' /\
-                    front_same r g' c' /\ behind_ok r g' c' /\ front_unswept r c')
+                    front_unchanged r g' c' /\ behind_ok r g' c' /\ front_unswept r c')
           (ensures (live_pos g' c' q <==> pos r q /\ black_at r q) /\
                    (pos r q /\ black_at r q ==> same_block r g' q /\ W.bnext g' q == W.bnext r q))
   = if U64.v q >= c' then begin
@@ -463,7 +463,7 @@ let after_live (r g': heap) (c': nat) (q: hp_addr)
       if pos r q then front_unswept_elim r c' q;
       let body (a: hp_addr)
         : Lemma (requires U64.v q < U64.v a) (ensures read_word g' a == read_word r a)
-        = front_same_elim r g' c' a
+        = front_unchanged_elim r g' c' a
       in
       FStar.Classical.forall_intro (FStar.Classical.move_requires body)
     end else begin
@@ -720,7 +720,7 @@ let start_target (g0: heap) (src dst: obj_addr)
     assert (~(is_white t g0));
     Mark.color_exhaustive t g0; Mark.colors_exclusive t g0
 
-let sweep_phase_start g0 fp =
+let sweep_inv_incremental_start g0 fp =
   sweep_start_inv g0 fp;
   sweep_inv_elim g0 g0 fp sweep_start;
   let c = U64.v zero_addr in
@@ -741,9 +741,9 @@ let sweep_phase_start g0 fp =
   interior_pointers_valid_intro (free_incremental sweep_start.cursor) g0 (fun src dst -> start_target g0 src dst);
   inv_st_intro g0 fp sweep_start;
   W.reaches_refl g0 zero_addr;
-  front_same_intro g0 g0 c (fun _ -> ());
-  marked_unchanged_intro g0 g0 (fun _ -> ());
-  behind_marked_intro g0 g0 c (fun p -> W.reaches_bounds g0 zero_addr (U64.v p))
+  front_unchanged_intro g0 g0 c (fun _ -> ());
+  marked_survive_intro g0 g0 (fun _ -> ());
+  survivors_were_marked_intro g0 g0 c (fun p -> W.reaches_bounds g0 zero_addr (U64.v p))
 
 /// ---------------------------------------------------------------------------
 /// Step
@@ -870,7 +870,7 @@ let step_dense (g: heap) (fp: U64.t) (st: sweep_state)
       let ca = mk_hp_addr c' in
       W.reaches_det r zero_addr ca e;
       let fr (w: hp_addr) : Lemma (requires U64.v w >= c') (ensures read_word g' w == read_word r w)
-        = front_same_elim r g' c' w in
+        = front_unchanged_elim r g' c' w in
       FStar.Classical.forall_intro (FStar.Classical.move_requires fr);
       W.walk_frame_from r g' ca;
       W.reaches_trans g' zero_addr ca e
@@ -941,7 +941,7 @@ let step_st (g: heap) (fp: U64.t) (st: sweep_state)
   inv_st_intro g' fp' st';
   FStar.Classical.forall_intro (step_pending_free g fp st)
 
-let sweep_phase_step g fp c = step_st g fp (state_at g c)
+let sweep_inv_incremental_step g fp c = step_st g fp (state_at g c)
 
 let pending_free_within_step g fp c dead =
   step_st g fp (state_at g c)
@@ -982,7 +982,7 @@ let rec steps_aux (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
       assert (U64.v st2.cursor > U64.v st.cursor)
     end
 
-let sweep_phase_steps g fp c k = steps_aux g fp (state_at g c) k
+let sweep_inv_incremental_steps g fp c k = steps_aux g fp (state_at g c) k
 
 /// ---------------------------------------------------------------------------
 /// Step, stop-the-world
@@ -998,8 +998,8 @@ let stw_marked (g0 g: heap) (fp: U64.t) (st: sweep_state) (p: hp_addr)
                     (forall (a: hp_addr). U64.v p < U64.v a /\ U64.v a < W.bnext g0 p ==>
                        read_word g' a == read_word g0 a)))
   = let c = U64.v st.cursor in
-    marked_unchanged_elim g0 g p;
-    if U64.v p >= c then front_same_elim g0 g c p;
+    marked_survive_elim g0 g p;
+    if U64.v p >= c then front_unchanged_elim g0 g c p;
     step_live g fp st p
 
 let stw_behind (g0 g: heap) (fp: U64.t) (st: sweep_state) (p: hp_addr)
@@ -1016,11 +1016,11 @@ let stw_behind (g0 g: heap) (fp: U64.t) (st: sweep_state) (p: hp_addr)
     let c' = U64.v st'.cursor in
     step_live g fp st p;
     if pos g' p && U64.v p < c' && not (blue_at g' p) then begin
-      if U64.v p < c then behind_marked_elim g0 g c p
+      if U64.v p < c then survivors_were_marked_elim g0 g c p
       else begin
         if U64.v p > c then Edit.no_pos_inside g st.cursor (U64.v p);
         front_unswept_elim g c p;
-        front_same_elim g0 g c p
+        front_unchanged_elim g0 g c p
       end
     end
 
@@ -1037,18 +1037,18 @@ let step_stw_st (g0 g: heap) (fp: U64.t) (st: sweep_state)
   let (g', fp', st') = sweep_step g fp st in
   let c' = U64.v st'.cursor in
   sweep_inv_elim r g' fp' st';
-  front_same_elim g0 g c st.cursor;
+  front_unchanged_elim g0 g c st.cursor;
   W.reaches_snoc g0 zero_addr st.cursor;
   let fs (a: hp_addr) : Lemma (requires U64.v a >= c') (ensures read_word g' a == read_word g0 a)
-    = front_same_elim r g' c' a;
+    = front_unchanged_elim r g' c' a;
       ref_read g c a;
-      front_same_elim g0 g c a
+      front_unchanged_elim g0 g c a
   in
-  front_same_intro g0 g' c' fs;
-  marked_unchanged_intro g0 g' (fun p -> stw_marked g0 g fp st p);
-  behind_marked_intro g0 g' c' (fun p -> stw_behind g0 g fp st p)
+  front_unchanged_intro g0 g' c' fs;
+  marked_survive_intro g0 g' (fun p -> stw_marked g0 g fp st p);
+  survivors_were_marked_intro g0 g' c' (fun p -> stw_behind g0 g fp st p)
 
-let sweep_phase_step_stw g0 g fp c = step_stw_st g0 g fp (state_at g c)
+let sweep_inv_stw_step g0 g fp c = step_stw_st g0 g fp (state_at g c)
 
 #push-options "--z3rlimit 20"
 let rec steps_stw_aux (g0 g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
@@ -1066,7 +1066,7 @@ let rec steps_stw_aux (g0 g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
     end
 #pop-options
 
-let sweep_phase_steps_stw g0 g fp c k = steps_stw_aux g0 g fp (state_at g c) k
+let sweep_inv_stw_steps g0 g fp c k = steps_stw_aux g0 g fp (state_at g c) k
 
 #push-options "--z3rlimit 20"
 let rec steps_done_aux (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
@@ -1087,7 +1087,7 @@ let rec steps_done_aux (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
 
 let sweep_steps_done g fp c k = steps_done_aux g fp (state_at g c) k
 
-let sweep_phase_ready g fp c =
+let sweep_inv_incremental_ready g fp c =
   let st = state_at g c in
   to_ref g fp st;
   sweep_inv_facts (ref_of g (U64.v st.cursor)) g fp st

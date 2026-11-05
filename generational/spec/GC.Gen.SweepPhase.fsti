@@ -4,7 +4,7 @@
 ///
 /// Between sweep slices the program runs: it allocates in the major heap,
 /// writes fields, and a minor collection promotes into the major heap.  Each
-/// keeps the sweep phase (`GC.Spec.SweepPhase.Intrinsic.sweep_phase_inv`),
+/// keeps the sweep phase (`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental`),
 /// which is about the current heap and the cursor only.  Every event
 /// leaves the pending-free set (`pending_free`: the white objects in front of the
 /// cursor) where it was: nothing is reclaimed, and a new object is never
@@ -114,7 +114,7 @@ val alloc_sweep_shape (g: heap) (fp: U64.t) (c: U64.t) (wz: nat) (tag: tag_t)
 
 /// **Allocation keeps the sweep phase**, with the new object fresh.
 val alloc_sweep_phase (g: heap) (fp: U64.t) (c: U64.t) (wz: nat) (tag: tag_t)
-  : Lemma (requires sweep_phase_inv g fp c /\ tag <> infix_tag)
+  : Lemma (requires sweep_inv_incremental g fp c /\ tag <> infix_tag)
           (ensures (let r = AC.alloc_phase g fp (SA.Sweeping c) wz tag in
                     (forall (x: obj_addr). pending_free c r.SA.heap_out x == pending_free c g x) /\
                     (r.SA.obj_out == 0UL ==> r.SA.heap_out == g /\ r.SA.fp_out == fp) /\
@@ -180,7 +180,7 @@ let fields_storable (free: free_def) (g: heap) (x: obj_addr) : prop =
 /// holds.
 val fresh_close (g: heap) (fp: U64.t) (c: U64.t) (obj: obj_addr)
   : Lemma (requires fresh_ok g fp c obj /\ fields_storable (free_incremental c) g obj)
-          (ensures sweep_phase_inv g fp c)
+          (ensures sweep_inv_incremental g fp c)
 
 /// ---------------------------------------------------------------------------
 /// Field writes
@@ -197,8 +197,8 @@ let program_write (free: free_def) (g: heap) (x: obj_addr) (a: hp_addr) (w: U64.
 
 /// **A program write keeps the sweep phase**, and the pending-free set.
 val write_sweep_phase (g: heap) (fp: U64.t) (c: U64.t) (x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires sweep_phase_inv g fp c /\ program_write (free_incremental c) g x a v)
-          (ensures sweep_phase_inv (write_word g a v) fp c /\
+  : Lemma (requires sweep_inv_incremental g fp c /\ program_write (free_incremental c) g x a v)
+          (ensures sweep_inv_incremental (write_word g a v) fp c /\
                    (forall (y: obj_addr). pending_free c (write_word g a v) y == pending_free c g y))
 
 /// ---------------------------------------------------------------------------
@@ -227,10 +227,10 @@ val promote_sweep_shape (g: heap) (fp: U64.t) (c: U64.t)
 /// **Promotion keeps the sweep phase**, and the pending-free set.
 val promote_sweep_phase (g: heap) (fp: U64.t) (c: U64.t)
                         (minor: minor_state) (obj: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires sweep_phase_inv g fp c /\
+  : Lemma (requires sweep_inv_incremental g fp c /\
                     Promote.promoted_tag minor obj <> infix_tag /\
                     wosize == minor_wosize minor obj /\
                     minor_fields_ok (free_incremental c) minor obj g)
           (ensures (let r = Promote.promote_object minor g obj fp wosize (SA.Sweeping c) in
-                    sweep_phase_inv r.Promote.major_out r.Promote.fp_out c /\
+                    sweep_inv_incremental r.Promote.major_out r.Promote.fp_out c /\
                     (forall (x: obj_addr). pending_free c r.Promote.major_out x == pending_free c g x)))

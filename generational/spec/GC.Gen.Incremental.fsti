@@ -9,7 +9,7 @@
 ///   * `Idle`: the stop-the-world shape `GC.Gen.HeapInvariant.
 ///     collection_heap_shape` -- what `gen_gc` demands and restores;
 ///   * `Sweeping c`: the sweep phase at the cursor `c`
-///     (`GC.Spec.SweepPhase.Intrinsic.sweep_phase_inv g fp c`), the
+///     (`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental g fp c`), the
 ///     nursery's shape, and the cross-generation condition for
 ///     `free_incremental` (`minor_major_fields_not_free (free_incremental c)
 ///     minor g`).
@@ -55,7 +55,7 @@ let phase_shape (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) : p
   match ph with
   | Ph.Idle -> GenInv.collection_heap_shape minor g fp
   | Ph.Sweeping c ->
-      sweep_phase_inv g fp c /\ GenInv.minor_heap_shape minor /\
+      sweep_inv_incremental g fp c /\ GenInv.minor_heap_shape minor /\
       GenInv.minor_major_fields_not_free (free_incremental c) minor g
 
 val phase_shape_idle (minor: minor_state) (g: heap) (fp: U64.t)
@@ -63,7 +63,7 @@ val phase_shape_idle (minor: minor_state) (g: heap) (fp: U64.t)
 
 val phase_shape_sweeping (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
   : Lemma (phase_shape minor g fp (Ph.Sweeping c) <==>
-           (sweep_phase_inv g fp c /\ GenInv.minor_heap_shape minor /\
+           (sweep_inv_incremental g fp c /\ GenInv.minor_heap_shape minor /\
             GenInv.minor_major_fields_not_free (free_incremental c) minor g))
 
 /// At any phase the state is the minor collection's entry shape at the
@@ -75,7 +75,7 @@ val phase_shape_collection (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc
 /// **The start of the sweep phase**, after the minor collection that emptied
 /// the nursery and marking.
 val phase_shape_start (minor: minor_state) (g: heap) (fp: U64.t)
-  : Lemma (requires sweep_phase_inv g fp sweep_start.cursor)
+  : Lemma (requires sweep_inv_incremental g fp sweep_start.cursor)
           (ensures phase_shape (minor_reset minor) g fp (Ph.Sweeping sweep_start.cursor))
 
 /// **The end of the sweep phase** is the idle shape: nothing is pending free, the

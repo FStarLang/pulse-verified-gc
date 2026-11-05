@@ -157,10 +157,10 @@ let behind_pos_ref g1 g c p = behind_pos_ref_aux g1 g c p
 #push-options "--z3rlimit 30"
 let front_pos g1 g c p
   = W.reaches_bounds g zero_addr c;
-    front_same_elim g1 g c p;
+    front_unchanged_elim g1 g c p;
     let ca = mk_hp_addr c in
     let fr (w: hp_addr) : Lemma (requires U64.v w >= U64.v ca) (ensures read_word g w == read_word g1 w)
-      = front_same_elim g1 g c w in
+      = front_unchanged_elim g1 g c w in
     FStar.Classical.forall_intro (FStar.Classical.move_requires fr);
     W.walk_frame_from g1 g ca;
     if W.reaches g zero_addr (U64.v p) then begin

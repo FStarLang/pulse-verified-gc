@@ -78,7 +78,7 @@ let slice_result (minor: minor_state) (g: heap) (fp: U64.t) (v: Alloc.phase_stat
     GI.phase_shape_sweeping minor g fp c;
     SL.sweep_slice_phase g fp c (U64.v budget);
     let (g1, fp1, st1) = SL.sweep_slice g fp (SPI.state_at g c) (U64.v budget) in
-    SPI.sweep_phase_inv_elim g1 fp1 st1.FS.cursor
+    SPI.sweep_inv_incremental_elim g1 fp1 st1.FS.cursor
 #pop-options
 
 let bounds () : Lemma (heap_size == GC.Spec.Base.heap_size /\ heap_size < pow2 57 /\
@@ -315,7 +315,7 @@ let start_after_mark (minor: minor_state) (h: heap) (h_mark: heap)
     SpecGCPost.mark_post_sweep_pre h h_mark roots fp;
     SpecGCPost.mark_post_elim_no_grey h h_mark roots fp;
     SpecGCPost.mark_post_elim_tri_color h h_mark roots fp;
-    SPI.sweep_phase_start h_mark fp;
+    SPI.sweep_inv_incremental_start h_mark fp;
     GI.phase_shape_start minor h_mark fp
 #pop-options
 

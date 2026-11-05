@@ -115,10 +115,10 @@ let swept_block_frame_free (g0 g g': heap) (p: hp_addr) =
 let sweep_inv_intro g0 g fp st = reveal_opaque (`%sweep_inv) (sweep_inv g0 g fp st)
 let sweep_inv_elim g0 g fp st = reveal_opaque (`%sweep_inv) (sweep_inv g0 g fp st)
 
-let front_same_elim g0 g c a = reveal_opaque (`%front_same) (front_same g0 g c)
+let front_unchanged_elim g0 g c a = reveal_opaque (`%front_unchanged) (front_unchanged g0 g c)
 
-let front_same_intro g0 g c pf =
-  reveal_opaque (`%front_same) (front_same g0 g c);
+let front_unchanged_intro g0 g c pf =
+  reveal_opaque (`%front_unchanged) (front_unchanged g0 g c);
   FStar.Classical.forall_intro (FStar.Classical.move_requires pf)
 
 let behind_ok_elim g0 g c p = reveal_opaque (`%behind_ok) (behind_ok g0 g c)
@@ -181,7 +181,7 @@ let cell_link_not_pos (g: heap) (x: U64.t) (q: nat) =
 let sweep_start_inv (g0: heap) (fp: U64.t) =
   let c = U64.v zero_addr in
   W.reaches_refl g0 zero_addr;
-  front_same_intro g0 g0 c (fun _ -> ());
+  front_unchanged_intro g0 g0 c (fun _ -> ());
   behind_ok_intro g0 g0 c (fun p -> W.reaches_bounds g0 zero_addr (U64.v p));
   no_adjacent_free_intro g0 c (fun p q ->
     W.reaches_bounds g0 zero_addr (U64.v p); W.bnext_facts g0 p);
@@ -216,7 +216,7 @@ let sweep_inv_facts (g0 g: heap) (fp: U64.t) (st: sweep_state) =
   sweep_inv_elim g0 g fp st;
   let c : hp_addr = st.cursor in
   g0_can_step g0 c;
-  front_same_elim g0 g (U64.v c) c;
+  front_unchanged_elim g0 g (U64.v c) c;
   assert (W.can_step g c);
   assert (step_next g st == W.bnext g c);
   tail_ok_elim g (U64.v c) st.swept_tail;

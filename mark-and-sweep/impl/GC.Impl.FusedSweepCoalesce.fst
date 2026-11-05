@@ -248,8 +248,8 @@ let slice_step_facts (g: heap_state) (fp: U64.t) (c t f c0: U64.t) (budget: nat)
                     slice_pre g' fp' st'.FS.cursor st'.FS.swept_tail st'.FS.last_fragment /\
                     U64.v st'.FS.cursor > U64.v c /\ U64.v st'.FS.cursor <= heap_size /\
                     SL.slice_from g fp (mk_st c t f) c0 budget == SL.slice_from g' fp' st' c0 budget))
-  = SPI.sweep_phase_ready g fp c;
-    SPI.sweep_phase_step g fp c;
+  = SPI.sweep_inv_incremental_ready g fp c;
+    SPI.sweep_inv_incremental_step g fp c;
     SL.slice_from_unfold g fp (mk_st c t f) c0 budget
 #pop-options
 
@@ -268,7 +268,7 @@ fn sweep_slice_impl (heap: heap_t) (c0 t0 f0 fp budget: U64.t)
   returns r: (U64.t & U64.t & U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 ** pure (slice_matches 's fp c0 t0 f0 budget s2 r)
 {
-  SPI.sweep_phase_inv_elim 's fp c0;
+  SPI.sweep_inv_incremental_elim 's fp c0;
   pow2_facts ();
   let mut cursor = c0;
   let mut tail = t0;

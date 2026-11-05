@@ -51,13 +51,13 @@ val free_incremental_allocations_not_free (c: U64.t)
 
 /// The major half alone.
 val sweep_major_shape (g: heap) (fp: U64.t) (c: U64.t)
-  : Lemma (requires sweep_phase_inv g fp c)
+  : Lemma (requires sweep_inv_incremental g fp c)
           (ensures GenInv.major_shape_with (Ph.Sweeping c) (free_incremental c) g fp)
 
 /// **Step B: the sweep phase is the minor collection's shape** at the
 /// sweep's phase.
 val sweep_collection_shape (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
-  : Lemma (requires sweep_phase_inv g fp c /\
+  : Lemma (requires sweep_inv_incremental g fp c /\
                     GenInv.minor_heap_shape minor /\
                     GenInv.minor_major_fields_not_free (free_incremental c) minor g)
           (ensures GenInv.collection_shape_with (Ph.Sweeping c) (free_incremental c) minor g fp)
@@ -71,11 +71,11 @@ let collect_at (c: U64.t) (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq
 /// same pending-free set, and keeps the minor collection's shape.
 val minor_keeps_sweep_phase (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
                             (roots: seq U64.t)
-  : Lemma (requires sweep_phase_inv g fp c /\
+  : Lemma (requires sweep_inv_incremental g fp c /\
                     GenInv.minor_heap_shape minor /\
                     GenInv.minor_major_fields_not_free (free_incremental c) minor g)
           (ensures (let res = collect_at c minor g fp roots in
-                    sweep_phase_inv res.Promote.mc_major res.Promote.mc_fp c /\
+                    sweep_inv_incremental res.Promote.mc_major res.Promote.mc_fp c /\
                     (forall (x: obj_addr). pending_free c res.Promote.mc_major x == pending_free c g x) /\
                     GenInv.collection_shape_with (Ph.Sweeping c) (free_incremental c)
                       res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp))
@@ -85,7 +85,7 @@ val minor_keeps_sweep_phase (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t
 /// existing header changes) ...
 val minor_keeps_pending_free (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
                              (roots: seq U64.t) (x: obj_addr)
-  : Lemma (requires sweep_phase_inv g fp c /\
+  : Lemma (requires sweep_inv_incremental g fp c /\
                     GenInv.minor_heap_shape minor /\
                     GenInv.minor_major_fields_not_free (free_incremental c) minor g)
           (ensures (let g' = (collect_at c minor g fp roots).Promote.mc_major in
@@ -96,7 +96,7 @@ val minor_keeps_pending_free (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.
 /// non-free blocks of `g` are promoted copies.
 val minor_keeps_blocks (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
                        (roots: seq U64.t) (x: obj_addr)
-  : Lemma (requires sweep_phase_inv g fp c /\
+  : Lemma (requires sweep_inv_incremental g fp c /\
                     GenInv.minor_heap_shape minor /\
                     GenInv.minor_major_fields_not_free (free_incremental c) minor g)
           (ensures (let g' = (collect_at c minor g fp roots).Promote.mc_major in

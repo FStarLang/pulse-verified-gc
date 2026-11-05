@@ -46,7 +46,7 @@ let free_incremental_allocations_not_free c =
 /// ---------------------------------------------------------------------------
 
 let sweep_major_shape g fp c =
-  sweep_phase_inv_elim g fp c;
+  sweep_inv_incremental_elim g fp c;
   free_incremental_ok c;
   free_incremental_allocations_not_free c;
   PCS.free_list_shape_of_ascending g fp;
@@ -90,9 +90,9 @@ let run_step (minor: minor_state) (c: U64.t) (g: heap)
 
 #push-options "--z3rlimit 20"
 let run_start (g: heap) (fp: U64.t) (c: U64.t)
-  : Lemma (requires sweep_phase_inv g fp c) (ensures run_p c g g fp /\ CI.alloc_ok g fp)
-  = sweep_phase_inv_iff g fp c;
-    sweep_phase_inv_elim g fp c;
+  : Lemma (requires sweep_inv_incremental g fp c) (ensures run_p c g g fp /\ CI.alloc_ok g fp)
+  = sweep_inv_incremental_iff g fp c;
+    sweep_inv_incremental_elim g fp c;
     FLA.fl_ascending_valid g fp;
     part1_holds g
 #pop-options
@@ -100,7 +100,7 @@ let run_start (g: heap) (fp: U64.t) (c: U64.t)
 /// The promotions, then the pointer update.
 #push-options "--z3rlimit 30"
 let run_facts (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t) (roots: seq U64.t)
-  : Lemma (requires sweep_phase_inv g fp c /\
+  : Lemma (requires sweep_inv_incremental g fp c /\
                     GenInv.minor_heap_shape minor /\
                     GenInv.minor_major_fields_not_free (free_incremental c) minor g)
           (ensures (let ph = Ph.Sweeping c in
@@ -144,7 +144,7 @@ let minor_keeps_sweep_phase minor g fp c roots =
   shape_transport pm rm prom.Promote.fp_final c;
   same_heads_facts pm rm;
   // well-formedness: the generic theorem's, at the same cursor
-  sweep_phase_inv_iff rm prom.Promote.fp_final c
+  sweep_inv_incremental_iff rm prom.Promote.fp_final c
 #pop-options
 
 let minor_keeps_pending_free minor g fp c roots x =

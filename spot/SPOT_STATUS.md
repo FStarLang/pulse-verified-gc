@@ -474,7 +474,7 @@ shape invariant now carries, so the end-to-end SPOTs run the new sweep.
 ## A mid-sweep heap with an object pending free
 
 `GC.SPOT.SweepPhasePendingFree` shows the sweep phase
-(`GC.Spec.SweepPhase.Intrinsic.sweep_phase_inv`, well-formedness for
+(`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental`, well-formedness for
 `free_incremental`) and the minor collection's shape (`collection_shape_with`)
 are satisfiable with a **non-empty** pending-free set, on a heap where the
 field of an object pending free points into a block the sweep has freed and

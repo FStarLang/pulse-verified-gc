@@ -65,7 +65,7 @@ module SA = GC.Spec.Allocator
 ///   * `Ph.Idle`: `GenInv.collection_heap_shape` of the nursery, the major
 ///     heap and the free-list head -- what `gen_gc` demands and restores;
 ///   * `Ph.Sweeping c`: the sweep phase at the cursor `c`
-///     (`SPI.sweep_phase_inv s fp c`), the nursery's shape, and that the
+///     (`SPI.sweep_inv_incremental s fp c`), the nursery's shape, and that the
 ///     nursery's major pointers point at non-free objects
 ///     (`GenInv.minor_major_fields_not_free` for `SPI.free_incremental c`:
 ///     free is blue, or pending free -- white in front of the cursor).

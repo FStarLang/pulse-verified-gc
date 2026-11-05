@@ -53,7 +53,7 @@ let rec reach_aux (g: heap) (fp: U64.t) (c: U64.t)
                   (r: Graph.vertex_id{Graph.mem_graph_vertex (sweep_graph g c) r})
                   (x: Graph.vertex_id{Graph.mem_graph_vertex (sweep_graph g c) x})
                   (w: Graph.reach (sweep_graph g c) r x)
-  : Lemma (requires sweep_phase_inv g fp c /\ U64.v r >= U64.v mword /\
+  : Lemma (requires sweep_inv_incremental g fp c /\ U64.v r >= U64.v mword /\
                     in_use (free_incremental c) g (r <: obj_addr))
           (ensures U64.v x >= U64.v mword /\ in_use (free_incremental c) g (x <: obj_addr))
           (decreases w)
@@ -62,7 +62,7 @@ let rec reach_aux (g: heap) (fp: U64.t) (c: U64.t)
     | Graph.ReachRefl _ -> ()
     | Graph.ReachTrans _ y _ w' ->
       reach_aux g fp c r y w';
-      sweep_phase_inv_iff g fp c;
+      sweep_inv_incremental_iff g fp c;
       free_incremental_ok c;
       MCFH.heap_graph_edge_to_field_read g (free_incremental c) (y <: obj_addr) (x <: obj_addr)
 #pop-options
@@ -73,16 +73,16 @@ let reachable_not_free g fp c r x =
   with reach_aux g fp c r x w
 
 let reachable_not_free_combined minor g fp c roots a =
-  sweep_phase_inv_iff g fp c;
+  sweep_inv_incremental_iff g fp c;
   RBridge.reachable_not_free (free_incremental c) minor g roots
 
 let step_keeps_reachable g fp c r x =
   reachable_not_free g fp c r x;
-  sweep_phase_step g fp c
+  sweep_inv_incremental_step g fp c
 
 let steps_keep_reachable g fp c k r x =
   reachable_not_free g fp c r x;
-  sweep_phase_steps g fp c k
+  sweep_inv_incremental_steps g fp c k
 
 let minor_keeps_not_free minor g fp c roots x =
   SPM.minor_keeps_blocks minor g fp c roots x

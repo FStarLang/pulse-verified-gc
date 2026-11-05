@@ -23,7 +23,7 @@
 /// (`tail_ok`, `frag_ok`, `ends_free`) hold of the derived state at any
 /// position of the walk (`tail_ok_iff`, `frag_at_ok`, `ends_free_derived`).
 /// A sweep step is the stop-the-world step run from `state_at g c`, and the
-/// state it leaves is again the derived one (`sweep_phase_step`).
+/// state it leaves is again the derived one (`sweep_inv_incremental_step`).
 ///
 /// Everything but well-formedness is `sweep_shape`: facts about the walk,
 /// the headers and the free list, which any change that keeps the walk and
@@ -32,16 +32,16 @@
 /// `GC.Gen.SweepPhase.Minor`, and safety in `GC.Gen.SweepPhase.Safety`.
 ///
 /// A sweep step frees only blocks pending free and the pending-free set only
-/// shrinks (`sweep_phase_step`, `sweep_phase_steps` for a slice of `k`
+/// shrinks (`sweep_inv_incremental_step`, `sweep_inv_incremental_steps` for a slice of `k`
 /// steps).  That the blocks pending free are among the white objects marking
 /// left (`pending_free_within`, `white_after_mark`) is a lemma, never carried.
 ///
 /// Stop-the-world, the end facts relate the result to the marked heap `g0`;
 /// for those the sweep carries `stw_rel g0 g c`: the walk of `g0` reaches the
-/// cursor, `g` is `g0` from the cursor on (`front_same`), every block black
+/// cursor, `g` is `g0` from the cursor on (`front_unchanged`), every block black
 /// in `g0` is still a block of `g` with the same size, tag and fields
-/// (`marked_unchanged`), and every non-free block behind the cursor was
-/// black in `g0` (`behind_marked`).
+/// (`marked_survive`), and every non-free block behind the cursor was
+/// black in `g0` (`survivors_were_marked`).
 
 module GC.Spec.SweepPhase.Intrinsic
 
@@ -182,7 +182,7 @@ let front_unswept (g: heap) (c: nat) : prop =
 
 /// **The sweep phase at cursor `c`**, about the current heap only.
 [@@"opaque_to_smt"]
-let sweep_phase_inv (g: heap) (fp: U64.t) (c: U64.t) : prop =
+let sweep_inv_incremental (g: heap) (fp: U64.t) (c: U64.t) : prop =
   let n = U64.v c in
   n % 8 == 0 /\ n <= heap_size /\ W.reaches g zero_addr n /\
   heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
@@ -192,8 +192,8 @@ let sweep_phase_inv (g: heap) (fp: U64.t) (c: U64.t) : prop =
   FLA.fl_ascending g fp
 
 /// Its clauses, and those of the derived sweep state (`state_at`).
-val sweep_phase_inv_elim (g: heap) (fp: U64.t) (c: U64.t)
-  : Lemma (requires sweep_phase_inv g fp c)
+val sweep_inv_incremental_elim (g: heap) (fp: U64.t) (c: U64.t)
+  : Lemma (requires sweep_inv_incremental g fp c)
           (ensures (let n = U64.v c in
                     let st = state_at g c in
                     n % 8 == 0 /\ n <= heap_size /\ W.reaches g zero_addr n /\
@@ -218,8 +218,8 @@ let sweep_shape (g: heap) (fp: U64.t) (c: U64.t) : prop =
   FLA.fl_ascending g fp
 
 /// The sweep phase is its shape and well-formedness for `free_incremental`.
-val sweep_phase_inv_iff (g: heap) (fp: U64.t) (c: U64.t)
-  : Lemma (sweep_phase_inv g fp c <==>
+val sweep_inv_incremental_iff (g: heap) (fp: U64.t) (c: U64.t)
+  : Lemma (sweep_inv_incremental g fp c <==>
            sweep_shape g fp c /\ well_formed_heap_with (free_incremental c) g)
 
 val sweep_shape_elim (g: heap) (fp: U64.t) (c: U64.t)
@@ -275,7 +275,7 @@ let white_after_mark (g0: heap) (x: obj_addr) : prop =
 /// Every block black in `g0` is still a block, not free, with the same size,
 /// tag and fields; only its colour may differ.
 [@@"opaque_to_smt"]
-let marked_unchanged (g0 g: heap) : prop =
+let marked_survive (g0 g: heap) : prop =
   forall (p: hp_addr). pos g0 p /\ black_at g0 p ==>
     pos g p /\ not (blue_at g p) /\ wz_at g p == wz_at g0 p /\
     getTag (read_word g p) == getTag (read_word g0 p) /\
@@ -284,22 +284,22 @@ let marked_unchanged (g0 g: heap) : prop =
 
 /// Every block behind the cursor that is not free was black in `g0`.
 [@@"opaque_to_smt"]
-let behind_marked (g0 g: heap) (c: nat) : prop =
+let survivors_were_marked (g0 g: heap) (c: nat) : prop =
   forall (p: hp_addr). pos g p /\ U64.v p < c /\ not (blue_at g p) ==> pos g0 p /\ black_at g0 p
 
 let stw_rel (g0 g: heap) (c: nat) : prop =
-  W.reaches g0 zero_addr c /\ front_same g0 g c /\
-  marked_unchanged g0 g /\ behind_marked g0 g c
+  W.reaches g0 zero_addr c /\ front_unchanged g0 g c /\
+  marked_survive g0 g /\ survivors_were_marked g0 g c
 
-val marked_unchanged_elim (g0 g: heap) (p: hp_addr)
-  : Lemma (requires marked_unchanged g0 g /\ pos g0 p /\ black_at g0 p)
+val marked_survive_elim (g0 g: heap) (p: hp_addr)
+  : Lemma (requires marked_survive g0 g /\ pos g0 p /\ black_at g0 p)
           (ensures pos g p /\ not (blue_at g p) /\ wz_at g p == wz_at g0 p /\
                    getTag (read_word g p) == getTag (read_word g0 p) /\
                    (forall (a: hp_addr). U64.v p < U64.v a /\ U64.v a < W.bnext g0 p ==>
                       read_word g a == read_word g0 a))
 
-val behind_marked_elim (g0 g: heap) (c: nat) (p: hp_addr)
-  : Lemma (requires behind_marked g0 g c /\ pos g p /\ U64.v p < c /\ not (blue_at g p))
+val survivors_were_marked_elim (g0 g: heap) (c: nat) (p: hp_addr)
+  : Lemma (requires survivors_were_marked g0 g c /\ pos g p /\ U64.v p < c /\ not (blue_at g p))
           (ensures pos g0 p /\ black_at g0 p)
 
 /// ---------------------------------------------------------------------------
@@ -420,9 +420,9 @@ val storable_transfer (g g': heap) (free free': free_def) (w: U64.t)
 
 /// From the heap marking left: everything white is pending free, and the
 /// stop-the-world relation holds trivially.
-val sweep_phase_start (g0: heap) (fp: U64.t)
+val sweep_inv_incremental_start (g0: heap) (fp: U64.t)
   : Lemma (requires sweep_pre g0 fp /\ Mark.noGreyObjects g0 /\ Mark.tri_color_invariant g0)
-          (ensures sweep_phase_inv g0 fp sweep_start.cursor /\
+          (ensures sweep_inv_incremental g0 fp sweep_start.cursor /\
                    pending_free_within g0 sweep_start.cursor (white_after_mark g0) /\
                    stw_rel g0 g0 (U64.v sweep_start.cursor))
 
@@ -435,13 +435,13 @@ val sweep_phase_start (g0: heap) (fp: U64.t)
 /// it leaves is the derived one again.  It frees only objects pending free:
 /// the non-free objects are the same before and after (with the same size,
 /// tag and fields).
-val sweep_phase_step (g: heap) (fp: U64.t) (c: U64.t)
-  : Lemma (requires sweep_phase_inv g fp c /\ U64.v c + 8 < heap_size)
+val sweep_inv_incremental_step (g: heap) (fp: U64.t) (c: U64.t)
+  : Lemma (requires sweep_inv_incremental g fp c /\ U64.v c + 8 < heap_size)
           (ensures can_sweep g (state_at g c) /\
                    (let (g', fp', st') = sweep_step g fp (state_at g c) in
                     let c' = st'.cursor in
                     st' == state_at g' c' /\
-                    sweep_phase_inv g' fp' c' /\
+                    sweep_inv_incremental g' fp' c' /\
                     (forall (x: obj_addr). in_use (free_incremental c') g' x == in_use (free_incremental c) g x) /\
                     (forall (x: obj_addr). in_use (free_incremental c) g x ==> same_block g g' (hd_address x)) /\
                     (forall (x: obj_addr). pending_free c' g' x ==> pending_free c g x) /\
@@ -450,7 +450,7 @@ val sweep_phase_step (g: heap) (fp: U64.t) (c: U64.t)
 /// The ghost set is never carried: that the objects pending free stay among the
 /// white objects marking left follows from the shrinking, step by step.
 val pending_free_within_step (g: heap) (fp: U64.t) (c: U64.t) (dead: obj_addr -> prop)
-  : Lemma (requires sweep_phase_inv g fp c /\ pending_free_within g c dead /\
+  : Lemma (requires sweep_inv_incremental g fp c /\ pending_free_within g c dead /\
                     U64.v c + 8 < heap_size)
           (ensures can_sweep g (state_at g c) /\
                    (let (g', fp', st') = sweep_step g fp (state_at g c) in
@@ -484,12 +484,12 @@ val sweep_steps_unfold (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
 /// one, the pending-free set shrinks, the non-free objects are the same
 /// before and after, the cursor does not move back, and it stays put only if
 /// no step was asked for or the sweep is finished.
-val sweep_phase_steps (g: heap) (fp: U64.t) (c: U64.t) (k: nat)
-  : Lemma (requires sweep_phase_inv g fp c)
+val sweep_inv_incremental_steps (g: heap) (fp: U64.t) (c: U64.t) (k: nat)
+  : Lemma (requires sweep_inv_incremental g fp c)
           (ensures (let (g', fp', st') = sweep_steps g fp (state_at g c) k in
                     let c' = st'.cursor in
                     st' == state_at g' c' /\
-                    sweep_phase_inv g' fp' c' /\
+                    sweep_inv_incremental g' fp' c' /\
                     (forall (x: obj_addr). in_use (free_incremental c') g' x == in_use (free_incremental c) g x) /\
                     (forall (x: obj_addr). in_use (free_incremental c) g x ==> same_block g g' (hd_address x)) /\
                     (forall (x: obj_addr). pending_free c' g' x ==> pending_free c g x) /\
@@ -497,22 +497,22 @@ val sweep_phase_steps (g: heap) (fp: U64.t) (c: U64.t) (k: nat)
                     (c' == c ==> k = 0 \/ sweep_done c)))
 
 /// Stop-the-world, one step keeps the relation to the marked heap.
-val sweep_phase_step_stw (g0 g: heap) (fp: U64.t) (c: U64.t)
-  : Lemma (requires sweep_phase_inv g fp c /\ stw_rel g0 g (U64.v c) /\
+val sweep_inv_stw_step (g0 g: heap) (fp: U64.t) (c: U64.t)
+  : Lemma (requires sweep_inv_incremental g fp c /\ stw_rel g0 g (U64.v c) /\
                     U64.v c + 8 < heap_size)
           (ensures can_sweep g (state_at g c) /\
                    (let (g', fp', st') = sweep_step g fp (state_at g c) in
                     stw_rel g0 g' (U64.v st'.cursor)))
 
 /// Stop-the-world, `k` steps keep the relation to the marked heap.
-val sweep_phase_steps_stw (g0 g: heap) (fp: U64.t) (c: U64.t) (k: nat)
-  : Lemma (requires sweep_phase_inv g fp c /\ stw_rel g0 g (U64.v c))
+val sweep_inv_stw_steps (g0 g: heap) (fp: U64.t) (c: U64.t) (k: nat)
+  : Lemma (requires sweep_inv_incremental g fp c /\ stw_rel g0 g (U64.v c))
           (ensures (let (g', fp', st') = sweep_steps g fp (state_at g c) k in
                     stw_rel g0 g' (U64.v st'.cursor)))
 
 /// A budget of one step per word of the heap finishes the sweep.
 val sweep_steps_done (g: heap) (fp: U64.t) (c: U64.t) (k: nat)
-  : Lemma (requires sweep_phase_inv g fp c /\ k * 8 >= heap_size - U64.v c)
+  : Lemma (requires sweep_inv_incremental g fp c /\ k * 8 >= heap_size - U64.v c)
           (ensures (let (g', fp', st') = sweep_steps g fp (state_at g c) k in sweep_done st'.cursor))
 
 /// What a step needs to be safe to run on the heap itself (the Pulse step
@@ -520,8 +520,8 @@ val sweep_steps_done (g: heap) (fp: U64.t) (c: U64.t) (k: nat)
 /// blocks, and writes a merged header): the facts the stop-the-world
 /// invariant gives (`GC.Spec.FusedSweep.Inv.sweep_inv_facts`), of the derived
 /// state, from the sweep phase.
-val sweep_phase_ready (g: heap) (fp: U64.t) (c: U64.t)
-  : Lemma (requires sweep_phase_inv g fp c /\ U64.v c + 8 < heap_size)
+val sweep_inv_incremental_ready (g: heap) (fp: U64.t) (c: U64.t)
+  : Lemma (requires sweep_inv_incremental g fp c /\ U64.v c + 8 < heap_size)
           (ensures (let st = state_at g c in
                     can_sweep g st /\
                     (st.swept_tail == 0UL \/ is_obj st.swept_tail) /\

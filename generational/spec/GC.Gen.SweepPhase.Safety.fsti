@@ -53,7 +53,7 @@ let reachable_from (g: heap) (c: U64.t) (r x: obj_addr) : prop =
 /// **Safety: a reachable object is not free**: a real object, neither blue
 /// nor pending free.
 val reachable_not_free (g: heap) (fp: U64.t) (c: U64.t) (r x: obj_addr)
-  : Lemma (requires sweep_phase_inv g fp c /\ in_use (free_incremental c) g r /\
+  : Lemma (requires sweep_inv_incremental g fp c /\ in_use (free_incremental c) g r /\
                     reachable_from g c r x)
           (ensures in_use (free_incremental c) g x)
 
@@ -61,7 +61,7 @@ val reachable_not_free (g: heap) (fp: U64.t) (c: U64.t) (r x: obj_addr)
 /// the program's roots (`GC.Gen.ReachabilityBridge.reachable_not_free`).
 val reachable_not_free_combined (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
                                  (roots: seq U64.t) (a: U64.t)
-  : Lemma (requires sweep_phase_inv g fp c /\ minor_wf minor /\
+  : Lemma (requires sweep_inv_incremental g fp c /\ minor_wf minor /\
                     GenInv.minor_major_fields_not_free (free_incremental c) minor g /\
                     RBridge.roots_not_free (free_incremental c) roots g /\
                     CG.combined_reachable (CG.build_combined_graph minor g (free_incremental c))
@@ -71,7 +71,7 @@ val reachable_not_free_combined (minor: minor_state) (g: heap) (fp: U64.t) (c: U
 /// **A sweep step never frees a reachable object**, and leaves its size, tag
 /// and fields alone.
 val step_keeps_reachable (g: heap) (fp: U64.t) (c: U64.t) (r x: obj_addr)
-  : Lemma (requires sweep_phase_inv g fp c /\ U64.v c + 8 < heap_size /\
+  : Lemma (requires sweep_inv_incremental g fp c /\ U64.v c + 8 < heap_size /\
                     in_use (free_incremental c) g r /\ reachable_from g c r x)
           (ensures can_sweep g (state_at g c) /\
                    (let (g', fp', c') = sweep_step g fp (state_at g c) in
@@ -79,7 +79,7 @@ val step_keeps_reachable (g: heap) (fp: U64.t) (c: U64.t) (r x: obj_addr)
 
 /// Nor does a slice of `k` steps.
 val steps_keep_reachable (g: heap) (fp: U64.t) (c: U64.t) (k: nat) (r x: obj_addr)
-  : Lemma (requires sweep_phase_inv g fp c /\ in_use (free_incremental c) g r /\ reachable_from g c r x)
+  : Lemma (requires sweep_inv_incremental g fp c /\ in_use (free_incremental c) g r /\ reachable_from g c r x)
           (ensures (let (g', fp', c') = sweep_steps g fp (state_at g c) k in
                     in_use (free_incremental c'.cursor) g' x /\ same_block g g' (hd_address x)))
 
@@ -87,7 +87,7 @@ val steps_keep_reachable (g: heap) (fp: U64.t) (c: U64.t) (k: nat) (r x: obj_add
 /// non-free (in the heap it leaves, at the same cursor).
 val minor_keeps_not_free (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
                           (roots: seq U64.t) (x: obj_addr)
-  : Lemma (requires sweep_phase_inv g fp c /\ GenInv.minor_heap_shape minor /\
+  : Lemma (requires sweep_inv_incremental g fp c /\ GenInv.minor_heap_shape minor /\
                     GenInv.minor_major_fields_not_free (free_incremental c) minor g /\
                     in_use (free_incremental c) g x)
           (ensures (let res = GC.Gen.SweepPhase.Minor.collect_at c minor g fp roots in

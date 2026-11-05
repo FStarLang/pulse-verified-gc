@@ -39,10 +39,10 @@ let slice_matches (g: GC.Spec.Base.heap) (fp: U64.t) (c t f: U64.t) (budget: U64
   SL.sweep_slice g fp (mk_st c t f) (U64.v budget) == (g', fp', mk_st c' t' f')
 
 /// The heap is in the sweep phase at cursor `c`
-/// (`GC.Spec.SweepPhase.Intrinsic.sweep_phase_inv`), and `t`, `f` are the
+/// (`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental`), and `t`, `f` are the
 /// caches derived from it (`SPI.state_at`).
 let slice_pre (g: GC.Spec.Base.heap) (fp: U64.t) (c t f: U64.t) : prop =
-  SPI.sweep_phase_inv g fp c /\ mk_st c t f == SPI.state_at g c
+  SPI.sweep_inv_incremental g fp c /\ mk_st c t f == SPI.state_at g c
 
 /// **One slice of the incremental sweep**: whole steps from the sweep state
 /// `(c, t, f)` until the blocks swept add up to at least `budget` words

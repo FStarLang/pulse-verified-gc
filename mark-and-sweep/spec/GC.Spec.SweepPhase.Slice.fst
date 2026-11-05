@@ -26,13 +26,13 @@ let rec slice_is_steps g fp st c0 budget
 
 /// The slice stops only when the sweep is finished or the budget is spent.
 let rec slice_stops (g: heap) (fp: U64.t) (st: sweep_state) (c0: U64.t) (budget: nat)
-  : Lemma (requires sweep_phase_inv g fp st.cursor /\ st == state_at g st.cursor)
+  : Lemma (requires sweep_inv_incremental g fp st.cursor /\ st == state_at g st.cursor)
           (ensures (let (_, _, st') = slice_from g fp st c0 budget in
                     sweep_done st'.cursor \/ swept_words c0 st' >= budget))
           (decreases (heap_size - U64.v st.cursor))
   = if sweep_done st.cursor || swept_words c0 st >= budget then ()
     else begin
-      sweep_phase_step g fp st.cursor;
+      sweep_inv_incremental_step g fp st.cursor;
       let (g', fp', st') = sweep_step g fp st in
       slice_stops g' fp' st' c0 budget
     end
@@ -40,7 +40,7 @@ let rec slice_stops (g: heap) (fp: U64.t) (st: sweep_state) (c0: U64.t) (budget:
 let sweep_slice_phase g fp c budget =
   let st = state_at g c in
   slice_is_steps g fp st c budget;
-  sweep_phase_steps g fp c (slice_count g fp st c budget);
+  sweep_inv_incremental_steps g fp c (slice_count g fp st c budget);
   slice_stops g fp st c budget;
   let (g', fp', st') = sweep_slice g fp st budget in
-  sweep_phase_inv_elim g' fp' st'.cursor
+  sweep_inv_incremental_elim g' fp' st'.cursor

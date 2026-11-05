@@ -831,7 +831,7 @@ ending at `c` is free exactly when `prev_free g (state_at g c)`: a free block
 ending there is a fragment, or a cell and then the last cell behind `c`; and
 only one block of the walk ends at `c`).  A sweep step is the stop-the-world
 step run from `state_at g c`, and the state it leaves is the derived one of
-the new heap (`sweep_phase_step`).  The implementation stores the caches in
+the new heap (`sweep_inv_incremental_step`).  The implementation stores the caches in
 the phase record and updates them in place -- the sweep step, and the
 allocator when it takes the cached cell off the list
 (`GC.Impl.Allocator.record_after_alloc`; `alloc_choice` names the block
@@ -852,7 +852,7 @@ let pending_free (c: U64.t) (g: heap) (x: obj_addr) : GTot bool =
 let free_incremental (c: U64.t) : free_def =
   fun g x -> is_blue x g || pending_free c g x
 
-let sweep_phase_inv (g: heap) (fp: U64.t) (c: U64.t) : prop =
+let sweep_inv_incremental (g: heap) (fp: U64.t) (c: U64.t) : prop =
   let n = U64.v c in
   n % 8 == 0 /\ n <= heap_size /\ W.reaches g zero_addr n /\
   heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
@@ -876,23 +876,23 @@ The step lemmas are the stop-the-world ones (`GC.Spec.FusedSweep.Step`), run
 inside the proof against a heap rebuilt from the current one (`ref_of`:
 blacken every white block behind the cursor); nothing carries it.
 
-- `sweep_phase_start`: the heap marking left satisfies it, with every white
+- `sweep_inv_incremental_start`: the heap marking left satisfies it, with every white
   object pending free.
-- `sweep_phase_step`: a step from `state_at g c` keeps it at the new cursor,
+- `sweep_inv_incremental_step`: a step from `state_at g c` keeps it at the new cursor,
   leaving the derived state; it frees only blocks pending free (the
   non-free blocks are the same before and after, with the same size, tag and
-  fields) and the pending-free set only shrinks.  `sweep_phase_steps` is the
+  fields) and the pending-free set only shrinks.  `sweep_inv_incremental_steps` is the
   same for up to `k` steps (`sweep_steps`, a slice).  That the blocks pending
   free are among the white objects marking left is a lemma
   (`pending_free_within_step`), not carried.
-- `sweep_phase_end` (`.End`): at the end nothing is pending free, the heap is
+- `sweep_inv_incremental_end` (`.End`): at the end nothing is pending free, the heap is
   well formed and swept clean (`GC.Spec.SweepPhase.Util.swept_clean`); while
   the sweep runs the list is exact, so an allocation fails only when no free
-  block anywhere is big enough (`sweep_phase_oom_no_fit`, #29 mid-sweep).
+  block anywhere is big enough (`sweep_inv_incremental_oom_no_fit`, #29 mid-sweep).
 - Stop-the-world the sweep also carries `stw_rel g0 g c` against the marked
-  heap (the blocks black in `g0` are unchanged, `marked_unchanged`, and every
-  non-free block behind the cursor was black, `behind_marked`), and
-  `sweep_phase_end_stw` gives `FusedSweep.End.sweep_post`
+  heap (the blocks black in `g0` are unchanged, `marked_survive`, and every
+  non-free block behind the cursor was black, `survivors_were_marked`), and
+  `sweep_inv_stw_end` gives `FusedSweep.End.sweep_post`
   (`fused_sweep_post_intrinsic` re-derives the stop-the-world pass).
 
 **The program's events keep it** (`GC.Gen.SweepPhase`), each leaving the
@@ -941,7 +941,7 @@ would be pending free, and freed by the sweep while reachable.
 - `minor_keeps_sweep_phase` (step C): for the collection at the sweep's phase,
   `collect_at c minor g fp roots = cheney_collect_spec_with (Sweeping c)
   (free_incremental c) minor g fp roots`, the result satisfies
-  `sweep_phase_inv` at the same cursor `c`, the pending-free set is the
+  `sweep_inv_incremental` at the same cursor `c`, the pending-free set is the
   same, and the result keeps `collection_shape_with`.  Well-formedness is the
   generic theorem's (`cheney_collect_with_preserves_shape`); the shape is by
   induction over the promotions (`GC.Gen.Cheney.Induction.cheney_promote_keeps`),
@@ -964,7 +964,7 @@ only blocks pending free, so it never frees a reachable one and leaves its
 size, tag and fields alone (`step_keeps_reachable`; `steps_keep_reachable` for
 a slice), and a minor collection in between keeps every non-free object
 non-free (`minor_keeps_not_free`) and the pending-free set (step C).  The
-slice lemmas are in `Intrinsic`: `sweep_phase_steps` (and `_stw`), and
+slice lemmas are in `Intrinsic`: `sweep_inv_incremental_steps` (and `_stw`), and
 `sweep_steps_done` (a budget of one step per heap word finishes the sweep).
 
 `GC.SPOT.SweepPhasePendingFree` exercises all of it on a concrete heap: from
@@ -994,7 +994,7 @@ let gc_state gh d b s fp ph : slprop =
 
 phase_shape minor g fp Idle         = collection_heap_shape minor g fp
 phase_shape minor g fp (Sweeping c) =
-  sweep_phase_inv g fp c /\ minor_heap_shape minor /\
+  sweep_inv_incremental g fp c /\ minor_heap_shape minor /\
   minor_major_fields_not_free (free_incremental c) minor g
 ```
 
@@ -1015,7 +1015,7 @@ the phase: nothing idle; mid-sweep the slice from `state_at g c`, the phase
 it leaves its new cursor, and idle again once the cursor reaches the end. The
 Pulse loop is `GC.Impl.FusedSweepCoalesce.sweep_slice_impl`, over the same
 `sweep_step_impl` the stop-the-world pass runs, with step safety from
-`Intrinsic.sweep_phase_ready`.
+`Intrinsic.sweep_inv_incremental_ready`.
 
 | entry point | requires | ensures |
 |---|---|---|
@@ -1026,7 +1026,7 @@ Pulse loop is `GC.Impl.FusedSweepCoalesce.sweep_slice_impl`, over the same
 | `gen_alloc_major gh wosize tag` | the heap and phase, `wosize >= 1`, mid-sweep an exact ascending free list | `AC.alloc_phase`'s result at the same phase (the record's `swept_tail` kept derived); mid-sweep with `gc_state` and `tag <> infix_tag`: either nothing changed or the object is a `new_block` and `fresh_ok` |
 
 The end of the sweep is the stop-the-world shape again
-(`GI.sweep_end_shape`: `sweep_phase_end`'s swept-clean heap, the free-list
+(`GI.sweep_end_shape`: `sweep_inv_incremental_end`'s swept-clean heap, the free-list
 facts from the ascending list, no black or grey object, and with nothing
 pending free the cross-generation condition is the idle one), so `gen_gc` or
 `gen_gc_start` can follow. A full collection requested mid-sweep calls

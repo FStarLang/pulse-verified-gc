@@ -439,7 +439,7 @@ let found_in_use (g: heap) (fp: U64.t) (c0: U64.t) (wz: nat) (tag: tag_t) (p cur
 
 #push-options "--z3rlimit 30"
 let alloc_sweep_phase g fp c0 wz tag =
-  sweep_phase_inv_iff g fp c0;
+  sweep_inv_incremental_iff g fp c0;
   alloc_sweep_shape g fp c0 wz tag;
   let r = AC.alloc_phase g fp (SA.Sweeping c0) wz tag in
   if r.SA.obj_out <> 0UL then begin
@@ -579,7 +579,7 @@ let fresh_close g fp c0 obj =
       else if is_pointer w then CV.wf_with_field fresh_free g src j
   in
   pointer_clauses_from_field_closure free g closure;
-  sweep_phase_inv_iff g fp c0
+  sweep_inv_incremental_iff g fp c0
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -590,8 +590,8 @@ let fresh_close g fp c0 obj =
 let write_sweep_phase g fp c0 x a v =
   let g' = write_word g a v in
   let free = free_incremental c0 in
-  sweep_phase_inv_iff g fp c0;
-  sweep_phase_inv_iff g' fp c0;
+  sweep_inv_incremental_iff g fp c0;
+  sweep_inv_incremental_iff g' fp c0;
   body_write_shape g fp c0 x a v;
   same_heads_facts g g';
   free_incremental_ok c0;
@@ -812,7 +812,7 @@ let copy_storable (g g2: heap) (free free2: free_def) (minor: minor_state) (obj:
 let promote_sweep_phase g fp c0 minor obj wosize =
   let tag = Promote.promoted_tag minor obj in
   let free = free_incremental c0 in
-  sweep_phase_inv_iff g fp c0;
+  sweep_inv_incremental_iff g fp c0;
   alloc_sweep_phase g fp c0 wosize tag;
   let r = AC.alloc_phase g fp (SA.Sweeping c0) wosize tag in
   if r.SA.obj_out <> 0UL then begin

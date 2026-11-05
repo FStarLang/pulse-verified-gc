@@ -60,7 +60,7 @@ let phase_shape_start minor g fp =
 #push-options "--z3rlimit 20"
 let sweep_end_shape minor g fp c =
   phase_shape_sweeping minor g fp c;
-  SPE.sweep_phase_end g fp c;
+  SPE.sweep_inv_incremental_end g fp c;
   PCS.free_list_shape_of_ascending g fp;
   let col (x: obj_addr)
     : Lemma (Seq.mem x (objects zero_addr g) ==> ~(is_black x g) /\ ~(is_gray x g))
