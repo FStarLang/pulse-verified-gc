@@ -1,6 +1,6 @@
 /// ---------------------------------------------------------------------------
 /// GC.SPOT.MinorInfixPre — a concrete major-to-nursery interior pointer, and
-/// the proof that `gen_gc` accepts it
+/// the proof that `full_gc` accepts it
 /// ---------------------------------------------------------------------------
 ///
 /// The heap:
@@ -95,7 +95,7 @@ val spot_mi_field_is_interior : r:unit{Major.spot_major_room} ->
 /// The precondition
 /// ---------------------------------------------------------------------------
 
-/// The entry invariant, on the nose: exactly the predicate `gen_gc` requires of
+/// The entry invariant, on the nose: exactly the predicate `full_gc` requires of
 /// the heap it is handed.
 val spot_mi_collection_heap_shape : r:unit{Major.spot_major_room} ->
   Lemma (ensures GenInv.collection_heap_shape
@@ -113,7 +113,7 @@ val spot_mi_minor_collect_full_pre : r:unit{Major.spot_major_room} ->
                    spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fp r)
                    (spot_mi_roots r) spot_mi_fwd_array (spot_mi_slots r) 1)
 
-/// `gen_gc`'s full precondition, for any empty mark stack with room for the
+/// `full_gc`'s full precondition, for any empty mark stack with room for the
 /// two roots.
 val spot_mi_gen_gc_pre : r:unit{Major.spot_major_room} -> cap:nat{cap >= 2} ->
   Lemma (ensures Preconditions.gen_gc_pre

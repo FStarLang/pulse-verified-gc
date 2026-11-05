@@ -388,7 +388,7 @@ let spot_ns_nursery_scan_window_empty ()
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// The nursery half of `gen_gc`'s precondition
+/// The nursery half of `full_gc`'s precondition
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 1"

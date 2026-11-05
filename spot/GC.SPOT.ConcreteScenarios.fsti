@@ -30,7 +30,7 @@ val spot_c_slot_is_field1
       ConcreteMajor.spot_c_field1 r)
 
 /// The concrete scenario's pre-minor shape and root validity, which the
-/// `gen_gc` entry contract is stated against.
+/// `full_gc` entry contract is stated against.
 val spot_collection_heap_shape
   : r:unit{ConcreteMajor.spot_major_room} ->
     Lemma (GenInv.collection_heap_shape

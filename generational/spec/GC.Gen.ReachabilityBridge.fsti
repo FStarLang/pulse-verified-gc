@@ -116,7 +116,7 @@ val reachable_major_valid
 /// the stored word, so an interior pointer into a live nursery closure counts
 /// as live and must be covered.
 ///
-/// This is exactly what the slot-table preconditions of `minor_collect_full`
+/// This is exactly what the slot-table preconditions of `minor_collect`
 /// supply: `ref_table_covers_with` puts the address of every such field
 /// (field 0 included) into `slots[0..n)`, and `remembered_targets_in_roots`
 /// puts every recorded slot's minor target into `roots` (see

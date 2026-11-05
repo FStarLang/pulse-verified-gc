@@ -16,7 +16,7 @@ module MajorGC = GC.Impl
 module Correct = GC.Impl.Correct
 
 /// The fixture's pre-minor shape, root validity and no-OOM fact are the
-/// existing SPOT lemmas `gen_gc`'s own call is discharged with; the major
+/// existing SPOT lemmas `full_gc`'s own call is discharged with; the major
 /// precondition then follows from `gen_gc_major_precondition_elim`.
 let spot_gc_precondition r =
   ConcreteScenarios.spot_collection_heap_shape r;

@@ -2,7 +2,7 @@ module GC.SPOT.GcCorrect
 
 /// `GC.Impl.Correct.gc_correct` on the SPOT's concrete A/B/C fixture.
 ///
-/// Inside `gen_gc`, the major phase calls `GC.Impl.collect_with_roots` on the
+/// Inside `full_gc`, the major phase calls `GC.Impl.collect_with_roots` on the
 /// heap `gen_gc_prepared_major` builds from the fixture (the post-minor major
 /// heap with the roots darkened), with the prepared root stack and the minor
 /// collection's free pointer.  This module shows that call's precondition --
@@ -22,7 +22,7 @@ module CheneySpec = GC.Gen.Cheney
 module MajorGC = GC.Impl
 module Correct = GC.Impl.Correct
 
-/// The gray stack `gen_gc` starts from (empty) and its capacity: two roots.
+/// The gray stack `full_gc` starts from (empty) and its capacity: two roots.
 let spot_cap : nat = 2
 
 let spot_major_h_init (r: unit{ConcreteMajor.spot_major_room}) : GTot heap =

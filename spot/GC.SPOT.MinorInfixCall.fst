@@ -28,7 +28,7 @@ module FA = GC.Gen.ForwardingArray
 /// middle of a nursery closure*.
 ///
 /// The precondition is discharged entirely by `GC.SPOT.MinorInfixPre`, so
-/// calling this function at all is the machine-checked statement that `gen_gc`
+/// calling this function at all is the machine-checked statement that `full_gc`
 /// accepts a major-to-minor interior pointer --- the exact shape that
 /// `GC.SPOT.MinorInfixPre.spot_mi_was_forbidden` shows the pre-Phase-H
 /// invariant ruled out.
@@ -42,7 +42,7 @@ module FA = GC.Gen.ForwardingArray
 ///   * the root array has been rewritten to the Cheney-collected roots, so the
 ///     interior root has been forwarded rather than dropped.
 ///
-/// `snd res` is deliberately left unconstrained.  `gen_gc` reports failure only
+/// `snd res` is deliberately left unconstrained.  `full_gc` reports failure only
 /// on a concrete out-of-memory event (`CheneyBFS.cheney_oom`), and ruling that
 /// out for a nursery with live content is a separate, and much larger, proof
 /// obligation (`GC.SPOT.ConcreteForwarding` does it for the two-object nursery
@@ -93,7 +93,7 @@ fn call_gen_gc_minor_infix
     MIPre.spot_mi_minor 's 'fp 'rs 'farr 'sl (SZ.v nslots) 'st (stack_capacity st);
   GC.SPOT.Preconditions.minor_collect_full_pre_elim
     MIPre.spot_mi_minor 's 'fp 'rs 'farr 'sl (SZ.v nslots);
-  let res = gen_gc gh roots nroots fwd_arr queue slots nslots st;
+  let res = GC.SPOT.CallFull.full_gc_from_shape gh roots nroots fwd_arr queue slots nslots st;
   with d2 b2 s2. assert (is_gen_heap gh d2 b2 s2 (fst res));
   gen_gc_heap_shape_post_intro d2 b2 s2 (fst res);
   res

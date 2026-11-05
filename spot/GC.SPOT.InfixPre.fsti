@@ -17,7 +17,7 @@ module GenImpl = GC.Gen.Impl
 module Preconditions = GC.SPOT.Preconditions
 module InfixMajor = GC.SPOT.InfixMajor
 
-/// Everything `gen_gc` demands, discharged for the interior-pointer heap of
+/// Everything `full_gc` demands, discharged for the interior-pointer heap of
 /// `GC.SPOT.InfixMajor`.
 ///
 /// The nursery is empty (`GC.Gen.MinorHeap.minor_reset`), so the whole minor
@@ -57,7 +57,7 @@ val spot_infix_fwd_array_zero : unit ->
 
 /// The heap-shape half of the precondition.  This is the interesting one: it
 /// is `GC.SPOT.InfixMajor.spot_infix_major_heap_shape` lifted across the empty
-/// nursery, and it is exactly the predicate `gen_gc` requires.
+/// nursery, and it is exactly the predicate `full_gc` requires.
 val spot_infix_collection_heap_shape (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
       GenInv.collection_heap_shape
@@ -89,7 +89,7 @@ val spot_infix_minor_collect_full_pre (r: unit{InfixMajor.spot_infix_room})
         spot_infix_minor (InfixMajor.spot_infix_heap r) (InfixMajor.spot_infix_fp r)
         (spot_infix_roots r) spot_infix_fwd_array spot_infix_slots 0)
 
-/// The full `gen_gc` precondition, for any gray stack budget that can hold the
+/// The full `full_gc` precondition, for any gray stack budget that can hold the
 /// single root.
 val spot_infix_gen_gc_pre (r: unit{InfixMajor.spot_infix_room}) (cap: nat{cap >= 1})
   : Lemma (ensures
@@ -108,7 +108,7 @@ val spot_infix_cheney_no_oom (r: unit{InfixMajor.spot_infix_room})
         (InfixMajor.spot_infix_fp r) (spot_infix_roots r))
 
 /// The minor collection cannot run out of memory here: there is nothing to
-/// promote.  Combined with `gen_gc`'s `not ok ==> cheney_oom`, this pins the
+/// promote.  Combined with `full_gc`'s `not ok ==> cheney_oom`, this pins the
 /// success flag to `true`.
 val spot_infix_no_oom (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures

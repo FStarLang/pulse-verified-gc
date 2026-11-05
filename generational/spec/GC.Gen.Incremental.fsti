@@ -2,12 +2,12 @@
 /// GC.Gen.Incremental - the collector's state at each phase
 /// ---------------------------------------------------------------------------
 ///
-/// The incremental sweep's entry points (`GC.Gen.Impl.Incremental`) hand the
-/// collector's state from one call to the next through one predicate,
+/// The collector's entry points (`GC.Gen.Impl`) hand the collector's state
+/// from one call to the next through one predicate (`GC.Gen.Impl.gc_state`),
 /// indexed by the phase (`phase_shape minor g fp ph`):
 ///
 ///   * `Idle`: the stop-the-world shape `GC.Gen.HeapInvariant.
-///     collection_heap_shape` -- what `gen_gc` demands and restores;
+///     collection_heap_shape` -- what `full_gc` demands and restores;
 ///   * `Sweeping c`: the sweep phase at the cursor `c`
 ///     (`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental g fp c`), the
 ///     nursery's shape, and the cross-generation condition for

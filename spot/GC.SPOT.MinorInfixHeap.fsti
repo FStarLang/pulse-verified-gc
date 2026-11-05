@@ -95,7 +95,7 @@ val spot_infix_nursery_fields : j:nat ->
                   ~(GC.Spec.HeapGraph.is_pointer_field v) /\
                   ~(Promote.is_minor_pointer (to_minor_offset v))))
 
-/// The nursery half of `gen_gc`'s precondition, for a nursery that contains an
+/// The nursery half of `full_gc`'s precondition, for a nursery that contains an
 /// interior pointer.  Before Phase H this was unprovable: `minor_heap_shape`
 /// used to demand that no nursery header carry `Infix_tag`.
 val spot_infix_nursery_heap_shape : unit ->

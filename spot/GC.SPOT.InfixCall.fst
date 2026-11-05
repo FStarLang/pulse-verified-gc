@@ -27,7 +27,7 @@ module FA = GC.Gen.ForwardingArray
 /// pointer.
 ///
 /// The precondition is discharged entirely by `GC.SPOT.InfixPre`, so calling
-/// this function is a machine-checked demonstration that `gen_gc` *accepts* an
+/// this function is a machine-checked demonstration that `full_gc` *accepts* an
 /// infix-pointing heap.  The postcondition records what comes back:
 ///
 ///   * the collection succeeded (`snd res == true`);
@@ -85,7 +85,7 @@ fn call_gen_gc_infix
     (SZ.v nslots) 'st (stack_capacity st);
   GC.SPOT.Preconditions.minor_collect_full_pre_elim
     InfixPre.spot_infix_minor 's 'fp 'rs 'farr 'sl (SZ.v nslots);
-  let res = gen_gc gh roots nroots fwd_arr queue slots nslots st;
+  let res = GC.SPOT.CallFull.full_gc_from_shape gh roots nroots fwd_arr queue slots nslots st;
   with d2 b2 s2 rs2. assert (is_gen_heap gh d2 b2 s2 (fst res) ** pts_to roots rs2);
   GC.SPOT.InfixPost.spot_infix_ok r (snd res);
   GC.SPOT.InfixPost.spot_infix_q_survives r rs2 s2 'st (stack_capacity st);

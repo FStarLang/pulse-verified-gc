@@ -4,7 +4,7 @@
 ///
 /// This module captures the reusable forwarding kernel of the upstream
 /// minor-collection isomorphism proof, specialized to the current
-/// `minor_collect_full` path.
+/// `minor_collect` path.
 ///
 /// The property is stated over `cheney_collect_spec_with` for a definition
 /// `free` of what counts as free in the major heap (`free_stw` gives the
@@ -20,7 +20,7 @@
 /// graph isomorphism: the full reachable-subgraph isomorphism additionally
 /// proves surjectivity onto the post-minor reachable subgraph and edge
 /// preservation/reflection.  The result-indexed wrapper states that theorem
-/// directly over the heap and roots returned by `minor_collect_full`.
+/// directly over the heap and roots returned by `minor_collect`.
 
 module GC.Gen.MinorCollectForwarding
 

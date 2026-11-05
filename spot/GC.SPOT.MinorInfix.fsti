@@ -159,7 +159,7 @@ val spot_minor_infix_promoted
 /// abstract nursery.  `GC.SPOT.MinorInfixPre` supplies the witness: a nursery
 /// written out word by word, holding a real `CLOSUREREC` group with an
 /// `Infix_tag` header, and a major object whose field points at the group's
-/// second entry point.  It proves `gen_gc`'s entry invariant of that heap
+/// second entry point.  It proves `full_gc`'s entry invariant of that heap
 /// (`spot_mi_collection_heap_shape`) *and* proves the clause below false of it
 /// (`spot_mi_was_forbidden`), and `GC.SPOT.MinorInfixCall` then runs the real
 /// collector on it.

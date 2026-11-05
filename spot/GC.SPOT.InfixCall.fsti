@@ -27,7 +27,7 @@ module FA = GC.Gen.ForwardingArray
 /// pointer.
 ///
 /// The precondition is discharged entirely by `GC.SPOT.InfixPre`, so calling
-/// this function is a machine-checked demonstration that `gen_gc` *accepts* an
+/// this function is a machine-checked demonstration that `full_gc` *accepts* an
 /// infix-pointing heap.  The postcondition records what comes back:
 ///
 ///   * the collection succeeded (`snd res == true`);

@@ -278,7 +278,7 @@ fn collect_correct
 }
 
 /// `gc_correct` at `GC.Impl.collect`, the entry point the generational
-/// collector (`GC.Gen.Impl.gen_gc`) calls.  `collect` is `collect_with_roots`
+/// collector (`GC.Gen.Impl.full_gc`) calls.  `collect` is `collect_with_roots`
 /// with the gray stack as the root set, so its precondition is
 /// `gc_precondition_with_roots 's 'st 'st` and its postcondition is
 /// `collect_post` at roots `'st`: `gc_correct` applies unchanged.

@@ -4,7 +4,7 @@
 /// ---------------------------------------------------------------------------
 ///
 /// `GC.Impl.MarkBoundedPrecondition.darken_precondition` is the contract the
-/// major collector needs *before* root darkening.  `gen_gc` must satisfy it on
+/// major collector needs *before* root darkening.  `full_gc` must satisfy it on
 /// the state produced by the preceding minor collection, so left to itself a
 /// caller has to transport all ten of its conjuncts across
 /// `cheney_collect_spec` by hand.
@@ -71,7 +71,7 @@ val post_minor_major_root_valid
 /// Every post-minor root is a genuine, non-blue major object.
 ///
 /// This is the one conjunct of `darken_precondition` that mentions the rewritten
-/// root set, and it used to be an obligation on `gen_gc`'s caller -- who has no
+/// root set, and it used to be an obligation on `full_gc`'s caller -- who has no
 /// way to discharge it without unfolding the whole Cheney simulation.  It is
 /// really a theorem about minor collection, and the two cases are quite
 /// different.  A non-minor root survives `rewrite_root` untouched, so it only
@@ -132,7 +132,7 @@ val darken_precondition_of_shape
 ///
 /// `major_heap_shape` records both `no_black_objects` and `no_gray_objects`, and
 /// colours are exhaustive, so every object is white or blue -- which together
-/// with well-formedness is exactly `gc_postcondition`.  `gen_gc` needs this on
+/// with well-formedness is exactly `gc_postcondition`.  `full_gc` needs this on
 /// the path where the minor collection ran out of memory and the major phase is
 /// therefore skipped: the heap it returns is the post-minor heap, and the shape
 /// invariant alone certifies it.

@@ -77,7 +77,7 @@ val major_graphs_agree (h1 h2: heap) (droots: Seq.seq obj_addr)
 
 /// The reachable subgraph seen through the generational vocabulary is the same
 /// before and after the major collection.  This is the missing step that used
-/// to force `gen_gc`'s caller to compose the minor and major isomorphisms.
+/// to force `full_gc`'s caller to compose the minor and major isomorphisms.
 val major_result_post_transfer
   (h1 h2: heap) (droots: Seq.seq obj_addr) (rts: Seq.seq U64.t)
   : Lemma
@@ -102,7 +102,7 @@ val major_result_post_transfer
 module CG = GC.Gen.CombinedGraph
 module MinorFwd = GC.Gen.MinorCollectForwarding
 
-/// One isomorphism, from the reachable subgraph of the heap `gen_gc` was
+/// One isomorphism, from the reachable subgraph of the heap `full_gc` was
 /// handed to the reachable subgraph of the heap it returns.  The morphism is
 /// the minor collector's forwarding map: the major collection does not move
 /// anything, so it contributes the identity.

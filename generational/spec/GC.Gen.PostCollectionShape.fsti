@@ -2,9 +2,9 @@
 /// GC.Gen.PostCollectionShape - the collector restores its own precondition
 /// ---------------------------------------------------------------------------
 ///
-/// `GC.Gen.HeapInvariant.collection_heap_shape` is what `gen_gc` demands of the
+/// `GC.Gen.HeapInvariant.collection_heap_shape` is what `full_gc` demands of the
 /// heap it is handed.  For that to be usable by a runtime driving repeated
-/// collections, `gen_gc` must also *re-establish* it on the heap it returns.
+/// collections, `full_gc` must also *re-establish* it on the heap it returns.
 ///
 /// The minor half of that is already available
 /// (`GC.Gen.HeapInvariant.collection_heap_shape_after_minor_reset`: the nursery
@@ -51,7 +51,7 @@ val free_list_shape_of_ascending (g: heap) (fp: U64.t)
 ///
 /// This is what makes the generational invariant *inductive* rather than merely
 /// assumed: composed with `collection_heap_shape_after_minor_reset` it gives
-/// `gen_gc` a postcondition that is literally its own precondition.
+/// `full_gc` a postcondition that is literally its own precondition.
 val major_gc_restores_major_heap_shape
   (major: heap) (h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
   : Lemma

@@ -1046,7 +1046,7 @@ let rec run_preserves_entry (g: heap) (fp: U64.t) (es: list event)
 /// Where an exact free list comes from: `fused_entry` (the pass the collector
 /// runs), and, in the generational collector,
 /// `GC.Gen.AllocExact.major_heap_shape_gives_entry` (any heap satisfying the
-/// collector's invariant, i.e. anything `gen_gc` or `minor_collect_full`
+/// collector's invariant, i.e. anything `full_gc` or `minor_collect`
 /// returns).  So
 /// the retry after a collection in `verified_allocate` is needed only when no
 /// single free block fits.

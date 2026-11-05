@@ -59,9 +59,14 @@ fn call_minor_collect_full_spot
     ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl (SZ.v nslots);
   minor_collect_idle_pre ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots);
-  let ok = minor_collect_with gh roots nroots fwd_arr queue slots nslots
-             #(hide GC.Spec.Fields.free_stw);
+  // The minor-collection entry point, idle: `gc_state` at `Idle` is the
+  // stop-the-world shape, and the phase's definition of free is `free_stw`.
+  GC.Gen.Incremental.phase_free_idle ();
+  GC.Gen.Incremental.phase_shape_idle ({ data = 'd; bump = 'b } <: minor_state) 's 'fp;
+  fold (gc_state gh 'd 'b 's 'fp GC.Spec.Phase.Idle);
+  let ok = minor_collect gh roots nroots fwd_arr queue slots nslots;
   with d2 b2 s2 fp2 rs2 farr2 qv2. _;
+  unfold gc_state;
   minor_collect_idle_post ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots) ok d2 b2 s2 fp2 rs2;
   assert (pure (s2 ==

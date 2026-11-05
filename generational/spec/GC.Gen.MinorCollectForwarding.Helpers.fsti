@@ -4,7 +4,7 @@
 ///
 /// This module captures the reusable forwarding kernel of the upstream
 /// minor-collection isomorphism proof, specialized to the current
-/// `minor_collect_full` path.
+/// `minor_collect` path.
 ///
 /// The property is stated over `cheney_collect_spec_with` for a definition
 /// `free` of what counts as free in the major heap, since the Pulse
@@ -21,7 +21,7 @@
 /// graph isomorphism: the full reachable-subgraph isomorphism additionally
 /// proves surjectivity onto the post-minor reachable subgraph and edge
 /// preservation/reflection.  The result-indexed wrapper states that theorem
-/// directly over the heap and roots returned by `minor_collect_full`.
+/// directly over the heap and roots returned by `minor_collect`.
 
 module GC.Gen.MinorCollectForwarding.Helpers
 
@@ -465,7 +465,7 @@ val major_field_target_in_roots
 /// scannable major non-free block.  Combined with
 /// `remembered_targets_in_roots`, which puts every recorded slot's minor target
 /// into the Cheney root sequence, the two preconditions that
-/// `minor_collect_full` already demands are together enough to discharge
+/// `minor_collect` already demands are together enough to discharge
 /// `RBridge.major_fields_covered` outright.
 val major_fields_covered_from_slots
   (minor: minor_state) (major: heap) (free: free_def) (roots slots: seq U64.t) (n: nat)
