@@ -55,7 +55,7 @@ val object_cases (r: unit{room}) (col: idx -> ccol) (tg: idx -> tgt) (x: obj_add
            (x == obj r 1 \/ x == obj r 2 \/ x == obj r 3 \/ x == obj r 4 \/ x == free_obj r))
 
 /// Each object: a block of the walk with its colour, one field, scannable,
-/// not infix, resolving to itself, and the field its value.
+/// not infix, not a closure, resolving to itself, and the field its value.
 val obj_facts (r: unit{room}) (col: idx -> ccol) (tg: idx -> tgt) (i: idx)
   : Lemma (let h = heap4 r col tg in
            let o = obj r i in
@@ -66,7 +66,7 @@ val obj_facts (r: unit{room}) (col: idx -> ccol) (tg: idx -> tgt) (i: idx)
            (is_white o h <==> col i == Header.White) /\
            ~(is_blue o h) /\
            wosize_of_object o h == 1UL /\
-           ~(is_no_scan o h) /\ ~(is_infix o h) /\
+           ~(is_no_scan o h) /\ ~(is_infix o h) /\ ~(is_closure o h) /\
            resolve_object o h == o /\
            read_word h o == fv r (tg i))
 

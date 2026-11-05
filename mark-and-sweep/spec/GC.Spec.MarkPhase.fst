@@ -424,23 +424,42 @@ let marking_inv_change g g' held held' =
   in
   FStar.Classical.forall_intro_2 (fun b -> FStar.Classical.move_requires (c1 b))
 
+/// What greying a white object keeps: the walk, well-formedness, every edge
+/// out of a block, and every other block's colours.
+let grey_setup (g: heap) (w: obj_addr)
+  : Lemma (requires well_formed_heap g /\ Seq.mem w (objects zero_addr g) /\ is_white w g)
+          (ensures (let g' = makeGray w g in
+                    well_formed_heap g' /\ objects zero_addr g' == objects zero_addr g /\
+                    is_gray w g' /\ ~(is_white w g') /\ ~(is_black w g') /\ ~(is_blue w g') /\
+                    ~(is_black w g) /\ ~(is_blue w g) /\ ~(is_gray w g) /\
+                    (forall (y: obj_addr). y <> w ==>
+                       ((is_black y g' <==> is_black y g) /\ (is_white y g' <==> is_white y g) /\
+                        (is_gray y g' <==> is_gray y g) /\ (is_blue y g' <==> is_blue y g))) /\
+                    (forall (u v: obj_addr). Seq.mem u (objects zero_addr g) ==>
+                       (field_edge g' u v <==> field_edge g u v))))
+  = let g' = makeGray w g in
+    makeGray_eq w g;
+    makeGray_is_gray w g;
+    Mark.colors_exclusive w g;
+    Mark.colors_exclusive w g';
+    Mark.color_change_preserves_wf g w Header.Gray;
+    color_change_preserves_objects g w Header.Gray;
+    let col (y: obj_addr)
+      : Lemma (y <> w ==> ((is_black y g' <==> is_black y g) /\ (is_white y g' <==> is_white y g) /\
+                           (is_gray y g' <==> is_gray y g) /\ (is_blue y g' <==> is_blue y g)))
+      = if y <> w then cc_colours w y g Header.Gray
+    in
+    FStar.Classical.forall_intro col;
+    let edge (u v: obj_addr)
+      : Lemma (Seq.mem u (objects zero_addr g) ==> (field_edge g' u v <==> field_edge g u v))
+      = if Seq.mem u (objects zero_addr g) then cc_field_edge g w Header.Gray u v
+    in
+    FStar.Classical.forall_intro_2 edge
+
 let marking_inv_grey g held w =
-  let g' = makeGray w g in
-  makeGray_eq w g;
-  makeGray_is_gray w g;
-  Mark.colors_exclusive w g;
-  Mark.colors_exclusive w g';
-  Mark.color_change_preserves_wf g w Header.Gray;
-  color_change_preserves_objects g w Header.Gray;
-  let col (y: obj_addr)
-    : Lemma (y <> w ==> ((is_black y g' <==> is_black y g) /\ (is_white y g' <==> is_white y g) /\
-                         (is_gray y g' <==> is_gray y g) /\ (is_blue y g' <==> is_blue y g)))
-    = if y <> w then cc_colours w y g Header.Gray
-  in
-  FStar.Classical.forall_intro col;
-  let edge (u v: obj_addr)
-    : Lemma (Seq.mem u (objects zero_addr g) ==> (field_edge g' u v <==> field_edge g u v))
-    = if Seq.mem u (objects zero_addr g) then cc_field_edge g w Header.Gray u v
-  in
-  FStar.Classical.forall_intro_2 edge;
-  marking_inv_change g g' held held
+  grey_setup g w;
+  marking_inv_change g (makeGray w g) held held
+
+let marker_will_reach_grey g w u =
+  grey_setup g w;
+  reach_change g (makeGray w g) u

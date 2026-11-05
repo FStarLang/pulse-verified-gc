@@ -563,3 +563,14 @@ objects, then a free block to the end of the heap) checks
    (its only child is black) is just blackening G, leaves no grey object and
    the edge B -> W, so the weaker property fails and the heap is not
    tri-coloured: marking would end with W white although B points at it.
+
+`GC.SPOT.MarkPhaseWrite` checks the deletion barrier
+(`GC.Spec.MarkPhase.Mutator`) on the mid-mark heap of case 1: the program
+overwrites G's only field with an immediate, cutting G -> W1.
+
+3. **The barrier is what keeps the invariant.**  `barrier_greys_w1`: `darken`
+   of the old value is greying W1; `barrier_write_inv`: after the barrier and
+   the write, `marking_inv` holds (`marking_write_barrier`, whose hypotheses
+   `write_ok` checks).  `unbarriered_write_breaks`: the same write without the
+   barrier breaks it -- G, the only grey object, has no edge left
+   (`g_no_edge`), so the marker will reach nothing, yet W1 is white and held.

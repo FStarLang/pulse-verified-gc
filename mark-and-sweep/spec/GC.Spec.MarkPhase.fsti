@@ -216,3 +216,9 @@ val marking_inv_change (g g': heap) (held held': obj_addr -> prop)
 val marking_inv_grey (g: heap) (held: obj_addr -> prop) (w: obj_addr)
   : Lemma (requires marking_inv g held /\ Seq.mem w (objects zero_addr g) /\ is_white w g)
           (ensures marking_inv (makeGray w g) held)
+
+/// Greying a white object keeps every object the marker would reach.
+val marker_will_reach_grey (g: heap) (w u: obj_addr)
+  : Lemma (requires well_formed_heap g /\ Seq.mem w (objects zero_addr g) /\ is_white w g /\
+                    marker_will_reach g u)
+          (ensures marker_will_reach (makeGray w g) u)

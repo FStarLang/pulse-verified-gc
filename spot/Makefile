@@ -119,6 +119,7 @@ SPOT_SRC = \
   GC.SPOT.MarkPhaseHeap.fsti \
   GC.SPOT.MarkPhaseHeap.fst \
   GC.SPOT.MarkPhase.fst \
+  GC.SPOT.MarkPhaseWrite.fst \
   GC.SPOT.GcCorrect.fsti \
   GC.SPOT.GcCorrect.fst
 

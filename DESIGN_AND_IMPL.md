@@ -1267,14 +1267,31 @@ of the nursery and of the program.
   white held objects only among those held or reached before). Greying a white
   object, the barrier's darkening, is an instance (`marking_inv_grey`).
 
-**Left for M2** (the event model at the `Marking` phase): the deletion
-barrier's write and black allocation as instances of `marking_inv_change`.
-For a write of `v` into a field of a non-free object `x` whose old target was
-greyed first, the hypotheses reduce to field-level facts about `write_word`
-(the walk and colours are kept, only `x`'s edges change, the cut edge ends at
-the greyed old target, and the new edge's target is held by the program or not
-white). For allocation, the new object is black and the hypotheses ask that
-its fields' white targets be held. Minor collection at `Marking` is M2 too.
+**Field writes** (`GC.Spec.MarkPhase.Mutator`, milestone M2a).  A write of
+`v` into a body word `a` of a non-free, non-closure object `x` keeps the walk
+and every header (`write_heads`) and well-formedness when `v` is storable
+(`write_wf`); only `x`'s edges change.  Every other block keeps its edges
+(`write_edges_other`); an edge of `x` afterwards is an old one or goes to
+`v`'s target (`write_edges_new`); an old edge is kept or went to the old
+value's target (`write_edges_old`).  Resolution of a pointer stored in a
+non-free block survives because its header is a walk position or an infix
+header inside a closure, never a body word of `x` (`target_header_away`).
+From these, as an instance of `marking_inv_change`:
+
+- `marking_write`: the invariant survives when the old value's target is not
+  white and the new one's is not white, or held, or one the marker will reach
+  (`target_ok`); `held` is unchanged.  Writing an immediate is the instance
+  with no new target (`marking_write_immediate`).
+- `marking_write_barrier`: 4.14's `caml_modify` while marking, `darken` (4.14's
+  `caml_darken`) of the old value and then the write; the old value may be
+  anything.  `GC.SPOT.MarkPhaseWrite` shows the darkening is what keeps it.
+- `marking_load`: a field of a held object, loaded, may be held too.  That is
+  why clause 2 stays true of the program's roots (the trusted obligation of the
+  plan's option (a)): the program obtains pointers only by loading fields of
+  objects it holds, or by allocating.
+
+**Left for M2**: the `Marking` phase and black allocation, and minor
+collection at `Marking`.
 
 ## The minor collector
 
