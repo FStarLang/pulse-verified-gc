@@ -547,8 +547,9 @@ let allocation_color (ph: gc_phase) (hd_addr: U64.t) : color =
   | Sweeping c -> if U64.v hd_addr >= U64.v c then Header.Black else Header.White
 ```
 
-`Marking` (4.14's `Phase_mark`) is for incremental marking; nothing enters it
-yet (the mark slices are milestone M4 of the incremental-mark plan).
+`Marking` (4.14's `Phase_mark`) is the incremental marking phase:
+`start_cycle` enters it and the mark slices run in it (M4 of the
+incremental-mark plan, "The mark slice" below).
 
 `alloc_search` takes the phase and writes `allocation_color` of the header
 address it chose, once (`alloc_color`).  `alloc_spec g fp wz tag` is the
@@ -1055,10 +1056,11 @@ an unbounded one, every object white in the marked heap is freed.
 (`start_cycle`, as 4.14's `start_cycle`) and runs in slices (`major_slice`, as
 `caml_major_collection_slice`) until it is idle again; finishing a cycle
 (4.14's `caml_finish_major_cycle`) is slices with an unbounded budget until
-`major_slice` reports idle.  Marking still runs to completion inside
-`start_cycle`; the slices are the sweep's.  Both modes use the same entry
-points, all extracted into `GC_Gen_Impl.{c,h}`: stop-the-world is `full_gc`,
-which is `minor_collect`, `start_cycle` and slices until idle in one call.
+`major_slice` reports idle.  `start_cycle` darkens the roots and enters
+`Marking`; the slices mark (4.14's `mark_slice`), hand over to the sweep when
+nothing is grey, and sweep.  Both modes use the same entry points, all
+extracted into `GC_Gen_Impl.{c,h}`: stop-the-world is `full_gc`, which is
+`minor_collect`, `start_cycle` and slices until idle in one call.
 
 **The collector's state** is one predicate, indexed by the phase
 (`GC.Gen.Incremental.phase_shape`):
@@ -1069,14 +1071,17 @@ let gc_state gh d b s fp ph : slprop =
   pure (GI.phase_shape ({ data = d; bump = b }) s fp ph)
 
 phase_shape minor g fp Idle         = collection_heap_shape minor g fp
+phase_shape minor g fp Marking      =
+  collection_shape_with Marking free_stw minor g fp /\ marking_inv g (nursery_held minor)
 phase_shape minor g fp (Sweeping c) =
   sweep_inv_incremental g fp c /\ minor_heap_shape minor /\
   minor_major_fields_not_free (free_incremental c) minor g
 ```
 
-(`phase_shape` is opaque, with `phase_shape_idle` / `phase_shape_sweeping`
-to open it.)  `mark_state gh s ph` owns the persistent mark stack and its
-overflow flag (below, "The write barrier").  `gen_phase gh s ph` is where the stored caches meet the heap:
+(`phase_shape` is opaque, with `phase_shape_idle` / `phase_shape_marking` /
+`phase_shape_sweeping` to open it.)  `mark_state gh s ph` owns the persistent
+mark state: the stack, the overflow flag, the partly scanned object and the
+rescan cursor (below, "The mark slice").  `gen_phase gh s ph` is where the stored caches meet the heap:
 the phase record holds `swept_tail` and `last_fragment` beside the cursor,
 and `Alloc.is_phase` says they are `state_at s cursor`'s.  What counts as
 free for a minor collection at a phase is `phase_free ph`: `free_stw` idle,
@@ -1097,11 +1102,11 @@ Pulse loop is `GC.Impl.FusedSweepCoalesce.sweep_slice_impl`, over the same
 | entry point | requires | ensures |
 |---|---|---|
 | `minor_collect gh roots .. slots ..` | `gc_state .. ph`, `minor_slots_ok ph` (the remembered set and roots for `phase_free ph`) | `minor_collect_with`'s contract at `ph` for `phase_free ph` (`minor_collect_post_with ph (phase_free ph) ..`), `gc_state` at the same phase `ph` (idle stays idle; mid-sweep the cursor and the pending-free set are kept, `GI.minor_keeps_phase_shape`); returns whether promotion succeeded |
-| `start_cycle gh roots nroots st` | `gc_state .. Idle`, `nursery_empty d b` (right after a minor collection), `start_cycle_pre s rs st cap` (the stack empty and able to hold the roots, every root a darkenable major object) | `start_cycle_post`: with `prepared` the darkened heap and stack, the stack holds the objects the roots name (`roots_match_stack`) and the heap is the marked one (`mark_post` of the darkened heap); `gc_state` at `Sweeping zero_addr`; nursery, free-list head and roots unchanged |
-| `major_slice gh budget` | `gc_state .. ph` | `(s2, fp2, ph2) == major_slice_spec s fp ph budget` (idle: nothing; mid-sweep: `phase_slice`), `gc_state` at `ph2`; returns `Idle? ph2` |
-| `modify_field ghr slot v` | `gc_state .. ph`, `GB.modify_ok ph minor s x slot v` (trusted: `slot` a body word of the non-free, scannable, non-closure block `x`, `v` storable there, and while marking a value the program holds) | `gc_state` at the same phase of `GB.modify_heap ph s slot v`; returns `GB.modify_records s slot v` (append the slot to the ref table) |
-| `initialize_field ghr slot v` | `is_gen_heap`, `gen_phase`, `mark_state` at `s`; `slot` a body word of a non-free block of `s` (a block just allocated) | the same of `write_word s slot v`; returns `GB.initialize_records v` |
-| `full_gc gh roots .. slots .. st` | `gc_state .. Idle`, the stack budget, and the stop-the-world minor-collection arguments (zeroed forwarding array, remembered set sound and covering, remembered targets among the roots, roots valid) | the stop-the-world contract (below): out of memory reported only for a concrete OOM, rewritten roots, `minor_reset`, `collection_heap_shape` restored, the end-to-end isomorphism, unreachable objects freed; `gc_state .. Idle`; returns whether promotion succeeded |
+| `start_cycle gh roots nroots` | `gc_state .. Idle`, `nursery_empty d b` (right after a minor collection), `start_cycle_pre s rs` (every root a darkenable major object; nothing about how many) | `start_cycle_post s rs s2`: the heap is the roots darkened (`GC.Gen.MarkPhase.Start.darkened`) and the roots are held (`MP.held_reached s2 (GMM.roots_held s2 rs)`); `gc_state` at `Marking`; nursery, free-list head and roots unchanged |
+| `major_slice gh budget` | `gc_state .. ph` | `GI.major_slice_post s fp ph budget s2 fp2 ph2`: idle, nothing; marking, some mark moves (`S.mark_steps`), the free list untouched, still `Marking` or, with nothing grey, `Sweeping zero_addr`, and an unbounded budget finishes marking (`GI.mark_slice_post`); mid-sweep, `phase_slice`; `gc_state` at `ph2`; returns `Idle? ph2` |
+| `modify_field ghr slot v` | `gc_state .. ph`, `GB.modify_ok ph minor s x slot v` (trusted: `slot` a body word of the non-free, scannable, non-closure block `x`, `v` storable there, and while marking a value the program holds) | `gc_state` at the same phase of `GB.modify_heap ph s slot v`; returns `GB.modify_records s slot v` (append the slot to the ref table); while marking, a write into a field the mark slice has scanned restarts the partly scanned object's scan (`MS.reset_cur`) |
+| `initialize_field ghr slot v` | `is_gen_heap`, `gen_phase`, `mark_state` at `s`; `slot` a body word of a non-free block `x` of `s` (a block just allocated); while marking, `x` black and nothing non-free pointing into it (the part of `marking_fresh` the mark cache needs) | the same of `write_word s slot v`; returns `GB.initialize_records v` |
+| `full_gc gh roots .. slots ..` | `gc_state .. Idle` and the stop-the-world minor-collection arguments (zeroed forwarding array, remembered set sound and covering, remembered targets among the roots, roots valid) | the stop-the-world contract (below): out of memory reported only for a concrete OOM, rewritten roots, `minor_reset`, `collection_heap_shape` restored, the end-to-end isomorphism, unreachable objects freed; `gc_state .. Idle`; returns whether promotion succeeded |
 
 Major allocation, at either phase, is the allocator itself
 (`GC.Impl.Allocator.allocate` on the heap's free-list head and phase record):
@@ -1118,8 +1123,8 @@ pending free the cross-generation condition is the idle one), so a new
 cycle can follow. A full collection requested mid-sweep finishes the cycle
 first (D4). `GC.SPOT.IncrementalCycle` checks that the contracts compose:
 from `full_gc`'s precondition alone, `minor_collect`, `start_cycle`, a
-64-word slice and an unbounded slice end idle in `collection_heap_shape`,
-with nothing supplied in between.
+64-word slice while marking and unbounded slices end idle in
+`collection_heap_shape`, with nothing supplied in between.
 
 **What the bridge supplies** (trusted, documented in the interface). Each
 entry point is a separate C call, so `gc_state`'s pure half is re-supplied at
@@ -1209,13 +1214,13 @@ The theorem structure proves that bounded marking produces the same heap colors
 as the unbounded mark, despite using a finite stack. The implementation then
 uses the bounded variant in the top-level `collect` contract.
 
-### Incremental marking: the invariant (spec only, in progress)
+### Incremental marking
 
 Incremental marking runs the mark step a few objects at a time with the
-program running in between. This is the spec core (milestone M1 of the
-incremental-mark plan); the `Marking` phase and black allocation (M2) and
-the verified write barrier (M3) follow below, the Pulse mark slices are to
-come. The mark stack stays an
+program running in between. The spec core (milestone M1 of the
+incremental-mark plan) comes first; the `Marking` phase and black allocation
+(M2), the verified write barrier (M3) and the mark slices in Pulse (M4) follow
+below. The mark stack stays an
 implementation cache: the spec state is the heap's colours alone.
 
 **The step at any grey object** (`GC.Spec.MarkPhase.mark_step_at g x`):
@@ -1313,8 +1318,8 @@ allocation; the record's `ps_kind` is 2 (the C bridge's `vergc_sweeping()` is
 what the nursery's major pointers point at is held.  The program's roots are
 the other half of `held`; they are not part of the collector's state
 (`gc_state` has no roots), so the entry points that take roots will state
-`held_reached` of them (the plan's option (a)).  `major_slice` does nothing at
-`Marking` yet.  Nothing enters `Marking`.
+`held_reached` of them (the plan's option (a)).  `start_cycle` enters
+`Marking` and `major_slice` marks there (M4, below).
 
 **Allocation while marking** (`GC.Spec.MarkPhase.Alloc`, M2c).  A new
 object is black, and its fields are what the free block held until the
@@ -1397,12 +1402,9 @@ an implementation cache of the heap's colours
 Every entry point keeps it: outside marking it says nothing of the heap
 (`mark_cache_off`), and a minor collection while marking keeps the grey
 objects (`GC.Gen.MarkPhase.Minor.minor_keeps_greys`: an old non-free block
-keeps its header, a new one is a black copy).  `start_cycle` and `full_gc`
-still mark with the per-collection stack the bridge hands them: their
-contracts are stated over that stack (`gen_gc_prepared_state`, the SPOTs),
-and darkening the roots into a fixed-capacity persistent stack needs either a
-roots-fit obligation or an overflowing root darkening, which is M4's
-`gen_mark_start`.  M4's mark slices will drain the persistent stack.
+keeps its header, a new one is a black copy).  M4 extended the cache with the
+partly scanned object and the rescan cursor, and the stack entries may be
+black (below, "The mark slice").
 
 **The spec** (`GC.Gen.Barrier`):
 
@@ -1469,10 +1471,126 @@ livegraph 1000000 4 4 (3.69 -> 3.77 s, 2.26 -> 2.38 s; ranges overlap), where
 the barrier is about 1% of the run (`perf`: `modify_field` 0.6-0.9%, as
 stock's `caml_modify` was 0.8% of livemap).
 
-**Left** (M4): the allocation entry points that would carry
+**Left** (after M4): the allocation entry points that would carry
 `marking_alloc`/`_fresh_*` to the implementation, with the generational
-shape across a direct major allocation; the mark slices over the persistent
-stack, `start_cycle` entering `Marking`, and the hand-over to the sweep.
+shape across a direct major allocation.
+
+#### The mark slice (M4)
+
+`start_cycle` darkens the roots onto the persistent mark stack and enters
+`Marking`; `major_slice` at `Marking` is a **mark slice** (OCaml 4.14's
+`mark_slice`): it scans about `budget` words and stops, and when nothing is
+grey it starts the sweep.  The budget counts a header for each entry popped
+and each block the rescan walks, and a word for each field scanned;
+`UINT64_MAX` is unbounded.
+
+**What a slice does to the heap** (`GC.Spec.MarkPhase.Slice`).  An object
+larger than what is left of the budget is scanned in parts, so a slice is a
+sequence of two kinds of moves on the colours:
+
+- **scanning a field** (`grey_move`): the target of a field of a grey,
+  scannable object is greyed if white (`MM.darken`); the object stays grey;
+- **blackening** (`black_move`): a grey object whose fields are all *dark*
+  (`fields_dark`: no field points at a white block), or that has no fields
+  to scan, becomes black.
+
+The marking invariant survives each move: scanning a field is greying a white
+block (`MM.darken_inv`), and blackening an object whose fields are dark *is*
+the stop-the-world step at it (`black_move_is_step`: `push_children` finds no
+white child), which keeps it (`MP.marking_inv_step`).  `mark_steps g g'` is
+any number of moves; it keeps `marking_inv` for every `held`
+(`mark_steps_inv`), changes nothing but colours, only darkening them
+(`darker`), and lowers `mark_weight` (two per white block, one per grey) at
+every move that changes the heap.
+
+Blackening asks that *every* field be dark, not only those scanned in the
+slice that finishes the object.  A field scanned in an earlier slice may have
+been overwritten since: the program may store a white object `w` that, once
+the program drops its own reference, only the partly scanned object reaches
+(through a field it has already scanned); blackening the object without
+looking at that field again would leave a black-to-white edge to an object
+nothing will mark.  The implementation keeps "the fields scanned so far are
+dark" in its cache (`cur_ok`), and the **write barrier restarts the scan**
+when the program writes into one of them (`MS.reset_cur`: two compares and a
+store, only while marking).  4.14 does not need this because its marking is
+snapshot-at-the-beginning and its partly scanned objects are black; ours is a
+per-edge invariant with grey partly scanned objects.  A minor collection
+keeps the scanned fields dark (`GMM.minor_keeps_field_dark`: a major pointer
+field is unchanged, a rewritten one points at a black promoted copy).
+
+**The mark cache** (`GC.Gen.MarkState`, `mark_cache_ok g ph st ov p`), while
+marking:
+
+- the stack holds grey or black blocks (`entry_ok`: a rescan may push an
+  object already on the stack; the slice skips an entry no longer grey);
+- the partly scanned object `p.cur` (0 for none) is a grey scannable block
+  whose fields before `p.fld` are dark (`cur_ok`);
+- the rescan cursor `p.rc` (0 for none) is the start of the heap or the
+  header of a block that is not free (`rescan_at`: allocation and promotion
+  split only free blocks, so this stays a position of the walk);
+- every grey object is on the stack, or the partly scanned object, or the
+  overflow flag is up, or a rescan is in progress and it lies after the
+  cursor (`covered`).
+
+With the stack empty, nothing partly scanned, no rescan and the flag down,
+nothing is grey (`marking_cache_done`).  It is kept by the barrier's
+darkening and write (with the restart), the initialisation of a fresh block,
+a minor collection, root darkening (`GC.Gen.MarkSlice.mark_cache_start`: the
+roots are pushed while the stack has room, and the flag goes up if it ends
+full), and the slice's steps (`GC.Gen.MarkSlice`).
+
+**The slice** (`GC.Gen.Impl.MarkSlice.mark_slice`, Pulse) repeats, while there
+is budget:
+
+- resume the partly scanned object: scan its fields from `p.fld` (each
+  pushes the greyed target, or raises the flag when the stack is full --
+  exactly then, not whenever the stack is full) and, if the budget covers the
+  rest, blacken it; otherwise scan what the budget allows and leave it;
+- pop an entry: a grey object with fields becomes the partly scanned object,
+  one without (no-scan or empty) is blackened, a black one is skipped;
+- with the stack empty and a rescan in progress, walk the blocks from the
+  cursor pushing the grey ones, until (after at least one block) the stack is
+  a quarter full (4.14's `redarken_chunk`) or the budget is spent, at a block
+  that is not free, or the heap ends (then the rescan is over);
+- with the stack empty and the flag up, start a rescan: flag down, cursor at
+  the start of the heap -- a drop while the rescan runs raises the flag again,
+  so the rescan restarts once it ends;
+- otherwise marking is over.
+
+**Termination.**  Every step lowers, lexicographically, the mark weight, the
+flag, how far the rescan has to go, twice the stack plus the partly scanned
+object, and the partly scanned object's fields left
+(`GC.Gen.MarkSlice.slice_measure`), so the loop terminates whatever the
+budget, and an unbounded slice (which never stops for budget) ends only when
+marking is over.  That is what lets `full_gc` mark with one slice.
+
+**The contract.**  `major_slice` at `Marking` ensures `GI.mark_slice_post`:
+the heap is some mark moves away, the free list untouched, and the phase is
+`Marking` or, with nothing grey, `Sweeping zero_addr`; an unbounded budget
+leaves `Sweeping zero_addr`.  `GI.mark_steps_shape` keeps `phase_shape` at
+`Marking` (the moves recolour among white, grey and black, so the walk, the
+free list and the cross-generation condition are kept), `GI.mark_steps_roots`
+keeps the roots held, and `GI.marking_done_shape` is the hand-over: with
+nothing grey, `MP.marking_done_sweep_start` gives the sweep phase at the
+first block, and what the nursery holds is not white, so not pending free.
+
+**Stop-the-world** (`full_gc`) runs the same slices with no program between
+them, and the strengthened invariant (`GC.Spec.MarkPhase.Stw`) recovers the
+marked heap the end-to-end theorems start from (below, "How `full_gc`'s
+contract is proved").
+
+**Cost** (stop-the-world, before = the M3 runtime marking with
+`mark_loop_bounded_flagged`, after = mark slices; user-space instructions and
+cycles from `perf stat`, the machine loaded, wall-clock ranges overlapping):
+binarytrees 16 bytecode 124.5G -> 127.0G instructions, 38.8G -> 36.6G cycles;
+native 90.3G -> 86.4G, 29.9G -> 31.0G (on a quieter machine 6.42 s -> 6.40 s);
+livemap 1000000 1 82.6G -> 83.1G, 60.7G -> 58.2G; livegraph 1000000 4 4
+20.5G -> 21.0G, 18.9G -> 15.9G.  The first version of the slice cost about
+twice the mark instructions (+15% on native binarytrees): every popped object
+went through the partly-scanned cells and a second loop iteration, and every
+field called the darkening and `is_full`.  The slice now scans and blackens a
+popped object at once when the budget covers it, tests `is_pointer` before
+calling the darkening, and has the darkening report a drop itself.
 
 ## The minor collector
 
@@ -2377,21 +2495,21 @@ fn full_gc (gh: gen_heap_t)
            (fwd_arr: array U64.t)
            (queue: larray U64.t FA.queue_size)
            (slots: array U64.t) (nslots: SZ.t)
-           (st: gray_stack)
   requires gc_state gh 'd 'b 's 'fp Ph.Idle ** ...
   returns ok: bool
-  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 st2.
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
     gc_state gh d2 b2 s2 fp2 Ph.Idle ** ...
 ```
 
 Its body is `minor_collect`; then, unless promotion ran out of memory,
-`start_cycle` and `major_slice` with an unbounded budget until the collector
-is idle again:
+`start_cycle` (root darkening, the phase becomes `Marking`) and `major_slice`
+with an unbounded budget until the collector is idle again -- one slice marks
+(and hands over to the sweep), one sweeps:
 
 ```pulse
   let ok = minor_collect gh roots nroots fwd_arr queue slots nslots;
   if ok {
-    start_cycle gh roots nroots st;
+    start_cycle gh roots nroots;
     let mut busy = true;
     while (!busy) ... { let idle = major_slice gh 0xFFFFFFFFFFFFFFFFUL; busy := not idle; };
     ok
@@ -2405,63 +2523,78 @@ the pre-minor heap, the nursery, and the arrays being passed in; the idle
 ```fstar
 gc_state gh 'd 'b 's 'fp Ph.Idle   (* GenInv.collection_heap_shape minor_st 's 'fp *)
 MinorFwd.roots_valid_for_minor_collection minor_st 's 'rs /\
-gen_gc_stack_budget 'rs 'st (stack_capacity st) /\
 ...
 ```
 
-`gen_gc_stack_budget` is the whole of what the caller owes the major phase.  It
-mentions no heap at all:
+Nothing is asked of the mark stack any more: it is the collector's persistent
+stack (`mark_state`), root darkening pushes onto it while it has room and
+raises the overflow flag when it is full, and the mark slices then rescan.
+(Before M4 the caller handed `full_gc` an empty gray stack able to hold every
+root, `gen_gc_stack_budget`.)
 
-```fstar
-let gen_gc_stack_budget roots st cap =
-  Seq.length st == 0 /\
-  Seq.length roots <= cap /\
-  cap > 0
-```
-
-  * `Seq.length st == 0` — the gray stack starts empty.  It is collector scratch
-    space, not caller state, and both real clients (SPOT and the OCaml runtime
-    bridge) already passed an empty one.  Pinning it collapses two conjuncts of
-    `darken_precondition` (the stack is a subset of the roots; the stack has no
-    duplicates and points only to gray objects) to nothing.
-  * `Seq.length roots <= cap /\ cap > 0` — the sizing obligation, in the form a
-    caller can actually check.  Darkening pushes every root onto the gray stack,
-    so the stack must be able to hold them; `cap > 0` rules out the degenerate
-    zero-capacity stack.
-
-Both are decidable by inspection of the arguments being passed.  There is
-deliberately nothing else.
+The postcondition's definitions name the major collection's starting point
+without any stack: `gen_gc_prepared_state minor major fp roots` is root
+darkening of the post-minor heap into a stack with room for every root
+(`prepared_cap roots = |roots| + 1`); its heap is the darkened heap, which does
+not depend on the stack (`GC.Gen.MarkSlice.darken_roots_heap`), so it is the
+heap `start_cycle` leaves; its stack names the root objects, each once.
 
 ### How `full_gc`'s contract is proved
 
 The contract is `gen_gc`'s (the stop-the-world entry point before the
-restructure), and the proof reuses its end lemmas unchanged.  The only new
-fact is that slices from the start of the sweep phase until idle leave exactly
-what the stop-the-world sweep leaves.  `GC.Spec.SweepPhase.Slice.phase_rest g
-fp ph` is what the rest of the sweep leaves from the collector's phase: idle,
-`(g, fp)`; mid-sweep, the stop-the-world pass `sweep_from g fp (state_at g c)`.
-The loop invariant is
+restructure), and the proof reuses its end lemmas unchanged.  What is new is
+that marking runs in slices: the end lemmas need the marked heap of the
+darkened one, `mark_post g0 g_mark roots fp` (black exactly when reachable
+from the roots in `g0`, objects and fields unchanged), and a mark slice's
+contract (`GI.mark_slice_post`) only says it made some mark moves.  No
+program runs between `full_gc`'s slices, so the marking invariant holds with
+its **stop-the-world strengthening** (`GC.Spec.MarkPhase.Stw`, mirroring the
+sweep's `sweep_inv_stw`):
 
 ```fstar
-gc_state gh d_mid b_mid s_i fp_i ph_i ** R.pts_to busy vb **
-pure (vb == not (Ph.Idle? ph_i) /\
-      SL.phase_rest s_i fp_i ph_i == FS.fused_sweep_coalesce s_mark fp_mid)
+let marking_inv_stw (g0 g: heap) (roots: seq obj_addr) : prop =
+  colours_only_changed g0 g /\       (* g is g0 recoloured; no black-to-white edge *)
+  dark_were_reachable g0 g roots /\  (* every grey or black object is reachable in g0 *)
+  darkened_stay_dark g0 g            (* every object grey in g0 is grey or black *)
 ```
 
-with `s_mark` the heap `start_cycle` leaves.  `phase_rest_start` establishes
-it (at `Sweeping zero_addr` the rest of the sweep is `fused_sweep_coalesce`),
-and every slice keeps it (`phase_rest_slice`: a slice is some number of steps,
-`slice_is_steps`, and the pass from a state is the pass from where the steps
-leave it).  At the exit `ph_i` is `Idle`, so the heap and free-list head are
-exactly `fused_sweep_coalesce s_mark fp_mid`, with `s_mark` the `mark_post`
-of the darkened heap (`start_cycle_post`).  That is the situation
-`GC.Impl.collect` is in after its fused sweep, so `full_gc_major_post` applies
-the same lemmas `gen_gc` did: `SpecGCPost.gc_result_fused` for the major
-theorems and `MRT.end_to_end_isomorphism_intro` for the end-to-end
-isomorphism.  `collection_heap_shape` of the result is the idle `gc_state` the
-last slice leaves (`GI.sweep_end_shape`).  The loop terminates: one slice with
-an unbounded budget finishes the sweep (`GI.phase_slice_finishes`), which is
-the loop's `decreases`.
+It holds at the darkened heap (`marking_inv_stw_start`), every mark move keeps
+it (`marking_inv_stw_move`: a scanned field greys a child of a reachable grey
+object; blackening an object whose fields are dark is the stop-the-world step
+`mark_step_bounded` on a one-entry stack, whose lemmas apply), and with nothing
+grey it is `mark_post` (`marking_inv_stw_done`, through
+`MarkBoundedCorrectness.mark_post_from_bounded_mark`).
+
+`GC.Spec.SweepPhase.Slice.phase_rest g fp ph` is what the rest of the sweep
+leaves from the collector's phase: idle, `(g, fp)`; mid-sweep, the
+stop-the-world pass `sweep_from g fp (state_at g c)`.  The loop invariant is
+
+```fstar
+gc_state gh d_mid b_mid s_i fp_i ph_i ** R.pts_to busy vb ** GR.pts_to gr n **
+pure (vb == not (Ph.Idle? ph_i) /\ n == rank ph_i /\
+      full_rest g0 droots fp_mid s_i fp_i ph_i)
+
+full_rest g0 droots fp0 s fp ph =
+  (Marking? ph ==> fp == fp0 /\ Stw.marking_inv_stw g0 s droots) /\
+  (~(Marking? ph) ==> exists s_mark. mark_post g0 s_mark droots fp0 /\
+                                     SL.phase_rest s fp ph == FS.fused_sweep_coalesce s_mark fp0)
+```
+
+with `g0`/`droots` the prepared heap and root objects (`gen_gc_prepared_*`).
+`full_cycle_start` establishes it after `start_cycle`; `full_slice_step` keeps
+it for an unbounded slice: from `Marking` the slice finishes marking
+(`GI.unbounded`), so the heap it leaves is `mark_post` of `g0` and, at
+`Sweeping zero_addr`, the rest of the sweep is all of it (`phase_rest_start`);
+from `Sweeping` it finishes the sweep and keeps `phase_rest`
+(`phase_rest_slice`).  The measure is `rank`: 2 at `Marking`, 1 at
+`Sweeping`, 0 at `Idle`, and every unbounded slice lowers it.  At the exit the
+heap and free-list head are exactly `fused_sweep_coalesce s_mark fp_mid` for a
+`mark_post` of the darkened heap -- the situation `GC.Impl.collect` is in
+after its fused sweep -- so `full_gc_major_post` applies the same lemmas
+`gen_gc` did: `SpecGCPost.gc_result_fused` for the major theorems and
+`MRT.end_to_end_isomorphism_intro` for the end-to-end isomorphism
+(`full_gc_end` opens the existential).  `collection_heap_shape` of the result
+is the idle `gc_state` the last slice leaves (`GI.sweep_end_shape`).
 
 ### Out-of-memory is a runtime fact, not a proof obligation
 
@@ -2645,7 +2778,7 @@ pointer, because the source was a `minor_objects` member and therefore not an
 infix sub-object.  Both cases then transport across `update_major_pointers`,
 which preserves the object list and every header.
 
-The second lemma assembles the whole entry condition:The second lemma assembles the whole entry condition:
+The second lemma assembles the whole entry condition:
 
 ```fstar
 val darken_precondition_after_minor minor major fp roots cap
@@ -2662,8 +2795,10 @@ val darken_precondition_after_minor minor major fp roots cap
 
 Note where the hypotheses live: the first two are already `full_gc` preconditions
 for entirely independent reasons, the third is the runtime success flag, and the
-last is `gen_gc_stack_budget`.  There is no `..._intro` counterpart any more —
-there is nothing left for a caller to introduce.
+last is about the spec-level stack that names the root objects
+(`prepared_cap roots = |roots| + 1`), so it holds by construction.  There is no
+`..._intro` counterpart any more — there is nothing left for a caller to
+introduce.
 
 One conjunct deserves a note.  With an empty stack, `gray_objects_on_stack`
 reduces to "the major heap has no gray objects", which is a property of the
@@ -2677,15 +2812,15 @@ minor collection.
 state.  That last step is also done inside the library:
 
 ```fstar
-val gen_gc_major_precondition_elim minor major fp roots st cap
+val gen_gc_major_precondition_elim minor major fp roots
   : Lemma (requires
              GenInv.collection_heap_shape minor major fp /\
              MinorFwd.roots_valid_for_minor_collection minor major roots /\
-             CheneyBFS.cheney_no_oom minor major fp roots /\
-             gen_gc_stack_budget roots st cap)
+             CheneyBFS.cheney_no_oom minor major fp roots)
           (ensures
             MajorGC.gc_precondition_with_roots
-              (fst prepared) (snd prepared) (snd prepared) result.mc_fp cap /\
+              (fst prepared) (snd prepared) (snd prepared) result.mc_fp
+              (prepared_cap result.mc_roots) /\
             roots_match_stack result.mc_roots (snd prepared))
 ```
 
@@ -2693,9 +2828,10 @@ val gen_gc_major_precondition_elim minor major fp roots st cap
 the darkened heap:
 
 ```fstar
-let gen_gc_prepared_state minor major fp roots st cap =
+let gen_gc_prepared_state minor major fp roots =
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
-  MarkBoundedImpl.darken_roots_bounded_spec result.mc_major st result.mc_roots cap
+  MarkBoundedImpl.darken_roots_bounded_spec result.mc_major Seq.empty result.mc_roots
+    (prepared_cap result.mc_roots)
 ```
 
 So callers do not have to pre-color roots, pre-seed the mark stack, or reason
@@ -2706,21 +2842,15 @@ collector's internal reasoning the old contract leaked: SPOT's hand-proof of the
 entry condition went from ~374 lines of concrete case analysis over its three
 objects to a two-line lemma invocation.
 
-Note also that `Seq.length 'st <= stack_capacity st` is not restated in the
-precondition: it is recoverable from `is_gray_stack` via
-`GC.Impl.Stack.stack_facts`.
-
 The postcondition is two facts about the returned state plus three named
 bundles:
 
 ```fstar
 minor_st_out == minor_reset minor_st /\
 GenInv.collection_heap_shape minor_st_out s2 (fst res) /\
-gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok 'st (stack_capacity st) /\
-gen_gc_reachable_subgraph_isomorphism_post
-  minor_st 's 'fp 'rs ok s2 rs2 'st (stack_capacity st) /\
+gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok /\
+gen_gc_reachable_subgraph_isomorphism_post minor_st 's 'fp 'rs ok s2 rs2 /\
 gen_gc_unreachable_final_blue_post minor_st 's 'fp 'rs ok s2
-  'st (stack_capacity st)
 ```
 
 In prose, after a successful full generational collection:
@@ -2807,10 +2937,10 @@ The main useful facts proved by the active SPOT are:
 The main concrete full-GC connector is
 `GC.SPOT.ConcreteCallFull.call_concrete_gen_gc_spot`. It takes the actual linear
 resources for the concrete heap, roots array, forwarding array, Cheney queue,
-remembered slot array, and an empty gray stack with capacity at least two. The
-pure side condition that this empty stack is enough for the scenario is proved
-inside `GC.SPOT.ConcreteScenarios.spot_concrete_gen_gc_pre_empty_stack`, not
-assumed by the caller.
+and remembered slot array (the mark stack is the collector's own). The pure
+precondition for the scenario is proved inside
+`GC.SPOT.ConcreteScenarios.spot_concrete_gen_gc_pre`, not assumed by the
+caller.
 
 This is a powerful audit because it checks both sides of a public formal
 contract: the preconditions are not impossibly strong, and the postconditions
@@ -3035,33 +3165,31 @@ for (r = tbl->base; r < tbl->ptr; r++) {
 This matches the verified precondition that remembered targets are included in
 the root set.
 
-### Full GC root and gray-stack layout
+### Full GC roots and the persistent mark stack
 
 The full-GC bridge calls the extracted verified `full_gc` entry point
 (stop-the-world), or `minor_collect` and then `start_cycle` (incremental,
-after finishing any cycle still running). The root buffer and gray stack are
-separate allocations:
+after finishing any cycle still running).  The root buffer is a separate
+allocation; the mark stack is the collector's own, allocated once at heap
+set-up with the rest of the mark state (`gen_heap_t.mark_stack`,
+`mark_overflow`, `mark_cur`, `mark_field`, `mark_rescan`):
 
 ```c
-uint64_t *gray_storage = calloc(gray_cap, sizeof(uint64_t));
 uint64_t *roots_for_gc = calloc(root_count == 0 ? 1 : root_count, sizeof(uint64_t));
 if (root_count > 0)
     memcpy(roots_for_gc, root_values, root_count * sizeof(uint64_t));
-size_t gray_top = gray_cap;   // empty downward-growing stack
-
-gray_stack_rec gc_stack = {
-  .storage = gray_storage,
-  .top = &gray_top,
-  .cap = gray_cap
-};
 
 if (sweep_incremental) {
     ok = minor_collect(gc_gen_heap, roots_for_gc, root_count, gc_fwd_arr,
                        gc_queue, (uint64_t *)tbl->base, n_slots);
-    if (ok) start_cycle(gc_gen_heap, roots_for_gc, root_count, gc_stack);
+    if (ok) {
+        start_cycle(gc_gen_heap, roots_for_gc, root_count);
+        while (gc_gen_heap.phase_ref->ps_kind == 2)   /* marking, at once for now */
+            major_slice(gc_gen_heap, UINT64_MAX);
+    }
 } else {
     ok = full_gc(gc_gen_heap, roots_for_gc, root_count, gc_fwd_arr,
-                 gc_queue, (uint64_t *)tbl->base, n_slots, gc_stack);
+                 gc_queue, (uint64_t *)tbl->base, n_slots);
 }
 ```
 
@@ -3070,11 +3198,18 @@ The verified protocol is:
 1. `minor_collect` rewrites `roots_for_gc` in place and rewrites the
    remembered major slots.
 2. `start_cycle` darkens the rewritten post-minor roots (`darken_roots_bounded`:
-   it colours the root objects and pushes them onto the initially empty gray
-   stack), marks (`mark_loop_bounded_flagged`) and starts the sweep phase.
-3. `major_slice` sweeps in slices until the collector is idle; `full_gc` does
-   this with an unbounded budget, the incremental bridge after each minor
-   collection.
+   it greys the root objects and pushes them onto the persistent mark stack
+   while it has room; the overflow flag goes up when the stack ends full) and
+   enters `Marking`.
+3. `major_slice` marks while marking (one unbounded slice finishes it and
+   starts the sweep phase), then sweeps in slices until the collector is
+   idle; `full_gc` does all of it with unbounded budgets, the incremental
+   bridge marks at once and sweeps a slice after each minor collection.
+   Mark slices between program steps are milestone M5.
+
+The capacity of the mark stack is `max(heap_bytes / 64, 4096)`, or
+`VERGC_MARK_STACK` entries (a testing knob: `tests/gray_overflow.ml` runs with
+3, so root darkening overflows and every slice rescans).
 
 The bridge keeps the original `root_values[]` and `root_locs[]` outside the
 verified stack. After the collection returns, `write_back_forwarded_roots()` uses the

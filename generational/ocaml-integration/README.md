@@ -111,7 +111,8 @@ at exit.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `VERGC_SWEEP` | `stw` | `stw`: a full collection marks and sweeps at once (`full_gc`). `incremental`: it marks (`minor_collect`, then `start_cycle`) and the sweep then runs in slices (`major_slice`), one after each minor collection. Any other value warns once and means `stw`. |
+| `VERGC_SWEEP` | `stw` | `stw`: a full collection marks and sweeps at once (`full_gc`). `incremental`: it marks at once (`minor_collect`, `start_cycle`, then one unbounded mark slice, `major_slice`) and the sweep then runs in slices (`major_slice`), one after each minor collection. Any other value warns once and means `stw`. |
+| `VERGC_MARK_STACK` | `max(heap bytes / 64, 4096)` | Capacity of the persistent mark stack, in entries (testing: a small stack makes root darkening and marking overflow, so the mark slices rescan). |
 | `VERGC_SWEEP_MIN_WORDS` | 4096 | incremental: the smallest slice, in words |
 | `VERGC_SWEEP_K` | 4 | incremental: a slice sweeps `max(MIN_WORDS, K * words the minor collection collected + words allocated directly in the major heap since the last slice)` words |
 | `VERGC_SWEEP_STATS` | unset | `1`: print the sweep counters (slices, words swept, forced finishes, allocations mid-sweep) to stderr at exit |
