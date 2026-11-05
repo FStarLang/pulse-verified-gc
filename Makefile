@@ -111,6 +111,7 @@ ROOT_MODULES = \
   generational/spec/GC.Gen.SweepPhase.Completeness.fst \
   mark-and-sweep/spec/GC.Spec.SweepPhase.Completeness.fst \
   mark-and-sweep/spec/GC.Spec.SweepPhase.Intrinsic.End.fst \
+  mark-and-sweep/spec/GC.Spec.MarkPhase.fst \
   mark-and-sweep/impl/GC.Impl.Correct.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst
