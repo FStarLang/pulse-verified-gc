@@ -38,19 +38,19 @@ let spot_infix_ok (r: unit{InfixMajor.spot_infix_room}) (ok: bool)
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 private let post_roots_mem_q
   (r: unit{InfixMajor.spot_infix_room})
-  (roots_out: seq U64.t) (st: seq obj_addr) (cap: nat)
+  (roots_out: seq U64.t)
   : Lemma
       (requires
         GenImpl.gen_gc_roots_post
           InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
           (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r)
-          roots_out true st cap)
+          roots_out true)
       (ensures
         Seq.mem (InfixMajor.spot_q r <: U64.t) roots_out /\
         Seq.mem (InfixMajor.spot_q r)
           (GenImpl.gen_gc_prepared_roots
             InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
-            (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r) st cap))
+            (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r)))
   =
   let q = InfixMajor.spot_q r in
   let roots = InfixPre.spot_infix_roots r in
@@ -73,10 +73,10 @@ private let post_roots_mem_q
   FStar.Seq.Properties.seq_mem_k roots_out 0;
   let prepared_roots = GenImpl.gen_gc_prepared_roots
     InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
-    (InfixMajor.spot_infix_fp r) roots st cap in
+    (InfixMajor.spot_infix_fp r) roots in
   GC.Spec.Base.is_val_addr_spec (q <: U64.t);
   // `q` is a major root, so it survives rewriting untouched and still names
-  // itself in the post-minor heap; the darkened stack therefore holds it
+  // itself in the post-minor heap; the prepared root objects therefore hold it
   // literally, not merely up to resolution.
   InfixPre.spot_infix_collection_heap_shape r;
   InfixPre.spot_infix_roots_valid r;
@@ -85,7 +85,7 @@ private let post_roots_mem_q
     (InfixMajor.spot_infix_fp r) roots (q <: U64.t);
   GenImpl.gen_gc_named_root_in_stack
     InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
-    (InfixMajor.spot_infix_fp r) roots roots_out st cap ((q <: U64.t) <: obj_addr);
+    (InfixMajor.spot_infix_fp r) roots roots_out ((q <: U64.t) <: obj_addr);
   assert (Seq.mem ((q <: U64.t) <: obj_addr) prepared_roots)
 #pop-options
 
@@ -94,21 +94,20 @@ private let post_roots_mem_q
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 private let prepared_root_heap_reachable
   (r: unit{InfixMajor.spot_infix_room})
-  (st: seq obj_addr) (cap: nat) (v: obj_addr)
+  (v: obj_addr)
   : Lemma
       (requires
-        GenImpl.gen_gc_stack_budget (InfixPre.spot_infix_roots r) st cap /\
         Seq.mem v (GenImpl.gen_gc_prepared_roots
           InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
-          (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r) st cap))
+          (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r)))
       (ensures
         SpecCorrectness.heap_reachable
           (GenImpl.gen_gc_prepared_major
             InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
-            (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r) st cap)
+            (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r))
           (GenImpl.gen_gc_prepared_roots
             InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
-            (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r) st cap)
+            (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r))
           v)
   =
   let minor = InfixPre.spot_infix_minor in
@@ -118,14 +117,15 @@ private let prepared_root_heap_reachable
   InfixPre.spot_infix_collection_heap_shape r;
   InfixPre.spot_infix_roots_valid r;
   InfixPre.spot_infix_cheney_no_oom r;
-  let prepared_major = GenImpl.gen_gc_prepared_major minor major fp roots st cap in
-  let prepared_roots = GenImpl.gen_gc_prepared_roots minor major fp roots st cap in
+  let prepared_major = GenImpl.gen_gc_prepared_major minor major fp roots in
+  let prepared_roots = GenImpl.gen_gc_prepared_roots minor major fp roots in
   let graph = HeapModel.create_graph prepared_major in
   let roots' = HeapGraph.coerce_to_vertex_list prepared_roots in
-  GenImpl.gen_gc_major_precondition_elim minor major fp roots st cap;
+  GenImpl.gen_gc_major_precondition_elim minor major fp roots;
   assert (MajorGC.gc_precondition_with_roots
     prepared_major prepared_roots prepared_roots
-    (Cheney.cheney_collect_spec minor major fp roots).mc_fp cap);
+    (Cheney.cheney_collect_spec minor major fp roots).mc_fp
+    (GenImpl.prepared_cap (Cheney.cheney_collect_spec minor major fp roots).mc_roots));
   HeapGraph.coerce_mem_lemma prepared_roots v;
   assert (Seq.mem v roots');
   assert (SpecGraph.mem_graph_vertex graph v);
@@ -136,12 +136,12 @@ private let prepared_root_heap_reachable
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 let spot_infix_q_survives
   (r: unit{InfixMajor.spot_infix_room})
-  (roots_out: seq U64.t) (final_major: heap) (st: seq obj_addr) (cap: nat)
+  (roots_out: seq U64.t) (final_major: heap)
   =
-  post_roots_mem_q r roots_out st cap;
-  prepared_root_heap_reachable r st cap (InfixMajor.spot_q r);
+  post_roots_mem_q r roots_out;
+  prepared_root_heap_reachable r (InfixMajor.spot_q r);
   Postconditions.final_major_survives_from_gen_gc_post
     InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
     (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r)
-    roots_out true final_major st cap (InfixMajor.spot_q r)
+    roots_out true final_major (InfixMajor.spot_q r)
 #pop-options

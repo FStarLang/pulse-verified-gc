@@ -2,12 +2,16 @@ module GC.SPOT.GcCorrect
 
 /// `GC.Impl.Correct.gc_correct` on the SPOT's concrete A/B/C fixture.
 ///
-/// Inside `full_gc`, the major phase calls `GC.Impl.collect_with_roots` on the
-/// heap `gen_gc_prepared_major` builds from the fixture (the post-minor major
-/// heap with the roots darkened), with the prepared root stack and the minor
-/// collection's free pointer.  This module shows that call's precondition --
-/// the first hypothesis of `gc_correct` -- holds on that concrete heap, and
-/// instantiates `gc_correct` there.
+/// `full_gc`'s major phase starts from the heap `gen_gc_prepared_major` builds
+/// from the fixture (the post-minor major heap with the roots darkened), with
+/// the root objects `gen_gc_prepared_roots` and the minor collection's free
+/// pointer; it marks and sweeps it in slices, and its postcondition is the
+/// stop-the-world collector's (`GC.Impl.collect_with_roots`) on that heap.
+/// This module shows the stop-the-world collector's precondition -- the first
+/// hypothesis of `gc_correct` -- holds on that concrete heap, with the
+/// darkening capacity `full_gc`'s contract names it by
+/// (`GenImpl.prepared_cap`: the number of roots + 1), and instantiates
+/// `gc_correct` there.
 
 open FStar.Seq
 open GC.Spec.Base
@@ -22,8 +26,9 @@ module CheneySpec = GC.Gen.Cheney
 module MajorGC = GC.Impl
 module Correct = GC.Impl.Correct
 
-/// The gray stack `full_gc` starts from (empty) and its capacity: two roots.
-let spot_cap : nat = 2
+/// The darkening capacity the prepared state is named with
+/// (`GenImpl.prepared_cap` of the post-minor roots): two roots, plus one.
+let spot_cap : nat = 3
 
 let spot_major_h_init (r: unit{ConcreteMajor.spot_major_room}) : GTot heap =
   GenImpl.gen_gc_prepared_major
@@ -31,7 +36,6 @@ let spot_major_h_init (r: unit{ConcreteMajor.spot_major_room}) : GTot heap =
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)
     (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-    Seq.empty spot_cap
 
 let spot_major_roots (r: unit{ConcreteMajor.spot_major_room}) : GTot (seq obj_addr) =
   GenImpl.gen_gc_prepared_roots
@@ -39,7 +43,6 @@ let spot_major_roots (r: unit{ConcreteMajor.spot_major_room}) : GTot (seq obj_ad
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)
     (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-    Seq.empty spot_cap
 
 let spot_major_fp (r: unit{ConcreteMajor.spot_major_room}) : GTot U64.t =
   (CheneySpec.cheney_collect_spec
@@ -47,6 +50,16 @@ let spot_major_fp (r: unit{ConcreteMajor.spot_major_room}) : GTot U64.t =
      (ConcreteMajor.spot_major_heap r)
      (ConcreteMajor.spot_major_fp r)
      (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))).mc_fp
+
+/// `spot_cap` is `full_gc`'s darkening capacity for the fixture.
+val spot_cap_prepared (r: unit{ConcreteMajor.spot_major_room})
+  : Lemma (spot_cap ==
+           GenImpl.prepared_cap
+             (CheneySpec.cheney_collect_spec
+                ConcreteMinor.spot_minor2
+                (ConcreteMajor.spot_major_heap r)
+                (ConcreteMajor.spot_major_fp r)
+                (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))).mc_roots)
 
 /// `gc_correct`'s precondition hypothesis holds on the concrete heap.
 val spot_gc_precondition (r: unit{ConcreteMajor.spot_major_room})

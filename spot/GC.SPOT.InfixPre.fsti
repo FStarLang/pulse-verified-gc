@@ -89,14 +89,13 @@ val spot_infix_minor_collect_full_pre (r: unit{InfixMajor.spot_infix_room})
         spot_infix_minor (InfixMajor.spot_infix_heap r) (InfixMajor.spot_infix_fp r)
         (spot_infix_roots r) spot_infix_fwd_array spot_infix_slots 0)
 
-/// The full `full_gc` precondition, for any gray stack budget that can hold the
-/// single root.
-val spot_infix_gen_gc_pre (r: unit{InfixMajor.spot_infix_room}) (cap: nat{cap >= 1})
+/// The full `full_gc` precondition (the minor collection's: the collector
+/// darkens the root onto its own persistent mark stack).
+val spot_infix_gen_gc_pre (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
       Preconditions.gen_gc_pre
         spot_infix_minor (InfixMajor.spot_infix_heap r) (InfixMajor.spot_infix_fp r)
-        (spot_infix_roots r) spot_infix_fwd_array spot_infix_slots 0
-        Seq.empty cap)
+        (spot_infix_roots r) spot_infix_fwd_array spot_infix_slots 0)
 
 /// The success-side dual: the forwarding map the (empty) minor collection
 /// produces is trivially well formed, which is what the major phase's

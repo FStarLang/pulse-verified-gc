@@ -15,7 +15,6 @@ open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
 open GC.Gen.Impl
 open GC.Impl.Heap
-open GC.Impl.Stack
 
 module CheneyImpl = GC.Gen.Impl.Cheney
 module CheneySpec = GC.Gen.Cheney

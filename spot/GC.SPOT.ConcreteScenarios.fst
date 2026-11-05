@@ -382,8 +382,7 @@ let spot_concrete_minor_scenario_pre_from_no_oom
     (ConcreteMajor.spot_c r)
     spot_fwd_array
 
-let spot_concrete_gen_gc_pre_from_stack
-  (r: unit{ConcreteMajor.spot_major_room}) (st: seq obj_addr) (cap: nat)
+let spot_concrete_gen_gc_pre (r: unit{ConcreteMajor.spot_major_room})
   =
   spot_concrete_minor_collect_full_pre r;
   Preconditions.gen_gc_pre_intro
@@ -393,24 +392,7 @@ let spot_concrete_gen_gc_pre_from_stack
     (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
     spot_fwd_array
     (ThreeObjects.spot_slots (ConcreteMajor.spot_c r))
-    1 st cap
-
-let spot_concrete_gen_gc_major_pre_empty_stack
-  (r: unit{ConcreteMajor.spot_major_room}) (cap: nat{cap >= 2})
-  : Lemma
-      (ensures
-        GenImpl.gen_gc_stack_budget
-          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-          Seq.empty cap)
-  =
-  ThreeObjects.spot_roots_len (ConcreteMajor.spot_c r);
-  assert_norm (Seq.length (Seq.empty #obj_addr) == 0)
-
-let spot_concrete_gen_gc_pre_empty_stack
-  (r: unit{ConcreteMajor.spot_major_room}) (cap: nat{cap >= 2})
-  =
-  spot_concrete_gen_gc_major_pre_empty_stack r cap;
-  spot_concrete_gen_gc_pre_from_stack r Seq.empty cap
+    1
 
 let spot_concrete_a_promoted_from_no_oom (r: unit{ConcreteMajor.spot_major_room})
   =

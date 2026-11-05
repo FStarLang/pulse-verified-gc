@@ -16,9 +16,11 @@ val zero_forwarding_array : seq U64.t -> prop
 val minor_collect_full_pre
   : minor_state -> heap -> U64.t -> seq U64.t -> seq U64.t -> seq U64.t -> nat -> prop
 
+/// What `full_gc` asks of its pure arguments: no more than the minor
+/// collection's (the gray stack it used to be handed is gone; the collector
+/// darkens onto its own persistent mark stack).
 val gen_gc_pre
-  : minor_state -> heap -> U64.t -> seq U64.t -> seq U64.t -> seq U64.t -> nat ->
-    seq obj_addr -> nat -> prop
+  : minor_state -> heap -> U64.t -> seq U64.t -> seq U64.t -> seq U64.t -> nat -> prop
 
 val zero_forwarding_array_elim
   : farr:seq U64.t ->
@@ -61,20 +63,12 @@ val minor_collect_full_pre_intro
 val gen_gc_pre_elim
   : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
     farr:seq U64.t -> slots:seq U64.t -> nslots:nat ->
-    st:seq obj_addr -> cap:nat ->
-    Lemma (requires gen_gc_pre minor major fp roots farr slots nslots st cap)
-          (ensures
-            minor_collect_full_pre minor major fp roots farr slots nslots /\
-            Seq.length st <= cap /\
-            GC.Gen.Impl.gen_gc_stack_budget roots st cap)
+    Lemma (requires gen_gc_pre minor major fp roots farr slots nslots)
+          (ensures minor_collect_full_pre minor major fp roots farr slots nslots)
 
 val gen_gc_pre_intro
   : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
     farr:seq U64.t -> slots:seq U64.t -> nslots:nat ->
-    st:seq obj_addr -> cap:nat ->
     Lemma
-      (requires
-        minor_collect_full_pre minor major fp roots farr slots nslots /\
-        Seq.length st <= cap /\
-        GC.Gen.Impl.gen_gc_stack_budget roots st cap)
-      (ensures gen_gc_pre minor major fp roots farr slots nslots st cap)
+      (requires minor_collect_full_pre minor major fp roots farr slots nslots)
+      (ensures gen_gc_pre minor major fp roots farr slots nslots)

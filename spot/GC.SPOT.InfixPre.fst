@@ -207,15 +207,12 @@ let spot_infix_minor_collect_full_pre (r: unit{InfixMajor.spot_infix_room})
     (spot_infix_roots r) spot_infix_fwd_array spot_infix_slots 0
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let spot_infix_gen_gc_pre (r: unit{InfixMajor.spot_infix_room}) (cap: nat{cap >= 1})
+let spot_infix_gen_gc_pre (r: unit{InfixMajor.spot_infix_room})
   =
   spot_infix_minor_collect_full_pre r;
-  spot_infix_roots_len r;
-  assert_norm (Seq.length (Seq.empty #obj_addr) == 0);
   Preconditions.gen_gc_pre_intro
     spot_infix_minor (InfixMajor.spot_infix_heap r) (InfixMajor.spot_infix_fp r)
     (spot_infix_roots r) spot_infix_fwd_array spot_infix_slots 0
-    Seq.empty cap
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"

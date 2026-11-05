@@ -491,3 +491,86 @@ let minor_keeps_greys minor g fp roots y =
       new_block_black minor g fp roots y
   end
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Blocks and dark fields
+/// ---------------------------------------------------------------------------
+
+let minor_keeps_block minor g fp roots y =
+  old_block minor g fp roots y
+
+/// A forwarded address resolves, after the collection, to a black block.
+#push-options "--z3rlimit 20"
+let forwarded_target_black (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t) (m: U64.t)
+  : Lemma (requires pre minor g fp /\ (prom minor g fp roots).Promote.fwd_map m <> 0UL)
+          (ensures (let h = (prom minor g fp roots).Promote.fwd_map m in
+                    let g' = (collect_marking minor g fp roots).Promote.mc_major in
+                    U64.v h >= U64.v mword /\ U64.v h < heap_size /\ U64.v h % U64.v mword == 0 /\
+                    is_black (resolve_object (h <: obj_addr) g') g'))
+  = let p = prom minor g fp roots in
+    let pm = p.Promote.major_final in
+    let fwd = p.Promote.fwd_map in
+    let g' = (collect_marking minor g fp roots).Promote.mc_major in
+    pre_facts minor g fp;
+    free_unless_black_ok ();
+    black_allocations ();
+    free_def_ok_elim free_unless_black;
+    CV.cheney_promote_fwd_targets_not_free Ph.Marking free_unless_black minor g fp roots;
+    CS.cheney_promote_preserves_wfh_part1 Ph.Marking minor g fp roots;
+    let h : obj_addr = fwd m in
+    let t = resolve_object h pm in
+    (if is_infix h pm then infix_addr_wf_elim pm (objects zero_addr pm) h
+     else resolve_non_infix h pm);
+    CV.update_walk_frame_target_header pm (in_use free_stw pm) fwd h;
+    resolve_object_locality h pm g';
+    PUpd.update_walk_preserves_header pm (in_use free_stw pm) fwd t;
+    MM.header_kept_facts pm g' t
+#pop-options
+
+#push-options "--z3rlimit 20"
+let minor_keeps_field_dark minor g fp roots y k =
+  let p = prom minor g fp roots in
+  let pm = p.Promote.major_final in
+  let fwd = p.Promote.fwd_map in
+  let g' = (collect_marking minor g fp roots).Promote.mc_major in
+  if U64.v (hd_address y) + U64.v mword * U64.v k + U64.v mword <= heap_size then begin
+    hd_address_spec y;
+    FStar.Math.Lemmas.pow2_plus 3 54;
+    assert_norm (pow2 3 == 8);
+    assert (U64.v k < pow2 54);
+    let j : nat = U64.v k - 1 in
+    let fa = U64.uint_to_t (U64.v y + j * 8) in
+    GC.Spec.HeapGraph.get_field_addr_eq g y k;
+    GC.Spec.HeapGraph.get_field_addr_eq g' y k;
+    assert (GC.Spec.HeapGraph.get_field g y k == read_word g fa);
+    assert (GC.Spec.HeapGraph.get_field g' y k == read_word g' fa);
+    let v = read_word g fa in
+    pre_facts minor g fp;
+    free_stw_ok ();
+    wf_with_parts ();
+    old_block minor g fp roots y;
+    if is_pointer v then begin
+      old_pointer_field minor g fp roots y j;
+      FT.wf_with_field free_stw g y j;
+      old_target minor g fp roots v;
+      let t = resolve_object (v <: obj_addr) g in
+      old_block minor g fp roots t;
+      MM.header_kept_facts g g' t
+    end else begin
+      MM.header_kept_facts g pm y;
+      Frame.cheney_promote_frame_old_fields Ph.Marking minor g fp roots y j;
+      free_def_ok_elim free_stw;
+      assert (Seq.mem y (objects zero_addr pm));
+      assert (is_no_scan y pm = false);
+      assert (j < U64.v (wosize_of_object y pm));
+      assert (read_word pm fa == v);
+      PUpd.update_walk_field_effect pm (in_use free_stw pm) fwd y j;
+      let ov = GB.to_minor_offset v in
+      if Promote.is_minor_pointer ov && fwd ov <> 0UL then begin
+        assert (read_word g' fa == fwd ov);
+        forwarded_target_black minor g fp roots ov;
+        Mark.colors_exclusive (resolve_object ((fwd ov) <: obj_addr) g') g'
+      end
+    end
+  end
+#pop-options

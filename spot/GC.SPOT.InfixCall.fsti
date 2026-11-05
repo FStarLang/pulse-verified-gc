@@ -15,7 +15,6 @@ open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
 open GC.Gen.Impl
 open GC.Impl.Heap
-open GC.Impl.Stack
 
 module CheneyImpl = GC.Gen.Impl.Cheney
 module GenInv = GC.Gen.HeapInvariant
@@ -44,13 +43,11 @@ fn call_gen_gc_infix
   (fwd_arr: array U64.t)
   (queue: larray U64.t FA.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
-  (st: gray_stack)
   requires gen_phase gh 's GC.Spec.Phase.Idle ** mark_state gh 's GC.Spec.Phase.Idle ** is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to slots 'sl **
-           is_gray_stack st 'st **
            pure (SZ.v nroots == Seq.length 'rs /\
                  ({ data = 'd; bump = 'b } <: minor_state) ==
                    InfixPre.spot_infix_minor /\
@@ -59,17 +56,14 @@ fn call_gen_gc_infix
                  'rs == InfixPre.spot_infix_roots r /\
                  'farr == InfixPre.spot_infix_fwd_array /\
                  'sl == InfixPre.spot_infix_slots /\
-                 SZ.v nslots == 0 /\
-                 'st == Seq.empty /\
-                 stack_capacity st >= 1)
+                 SZ.v nslots == 0)
   returns res: (U64.t & bool)
-  ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
+  ensures exists* d2 b2 s2 rs2 farr2 qv2.
     gen_phase gh s2 GC.Spec.Phase.Idle ** mark_state gh s2 GC.Spec.Phase.Idle ** is_gen_heap gh d2 b2 s2 (fst res) **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
-    is_gray_stack st st2 **
     pure (
       snd res == true /\
       ({ data = d2; bump = b2 } <: minor_state) == InfixPre.spot_infix_minor /\

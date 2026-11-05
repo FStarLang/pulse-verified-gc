@@ -139,10 +139,10 @@ let spot_minor_scenario_pre_intro_from_c_to_a
 let spot_full_scenario_pre
   (minor: minor_state) (major: heap) (fp: U64.t)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
-  (farr: seq U64.t) (st: seq obj_addr) (cap: nat) : prop =
+  (farr: seq U64.t) : prop =
   spot_minor_scenario_pre minor major fp c farr /\
   Preconditions.gen_gc_pre
-    minor major fp (spot_roots c) farr (spot_slots c) 1 st cap
+    minor major fp (spot_roots c) farr (spot_slots c) 1
 
 let expose_spot_collection_facts
   (minor: minor_state) (major: heap) (fp: U64.t)
@@ -261,6 +261,6 @@ let spot_final_survives_from_gen_gc_post
   (minor: minor_state) (major: heap) (fp: U64.t)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
   (roots_out: seq U64.t) (ok: bool) (final_major: heap)
-  (st: seq obj_addr) (cap: nat) (x: obj_addr)
+  (x: obj_addr)
   = Postconditions.final_major_survives_from_gen_gc_post
-      minor major fp (spot_roots c) roots_out ok final_major st cap x
+      minor major fp (spot_roots c) roots_out ok final_major x

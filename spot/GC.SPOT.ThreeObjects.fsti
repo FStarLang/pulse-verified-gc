@@ -89,7 +89,7 @@ val spot_minor_scenario_pre_intro_from_c_to_a
 val spot_full_scenario_pre
   : minor:minor_state -> major:heap -> fp:U64.t ->
     c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size} ->
-    farr:seq U64.t -> st:seq obj_addr -> cap:nat -> Tot prop
+    farr:seq U64.t -> Tot prop
 
 val spot_c_reachable_root
   : minor:minor_state -> major:heap -> fp:U64.t ->
@@ -155,15 +155,14 @@ val spot_b_not_promoted_from_forwarding_zero
 val spot_final_survives_from_gen_gc_post
   : minor:minor_state -> major:heap -> fp:U64.t ->
     c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size} ->
-    roots_out:seq U64.t -> ok:bool -> final_major:heap -> st:seq obj_addr ->
-    cap:nat -> x:obj_addr ->
+    roots_out:seq U64.t -> ok:bool -> final_major:heap -> x:obj_addr ->
     Lemma
       (requires
         ok /\
         GC.Gen.Impl.gen_gc_reachable_subgraph_isomorphism_post
-          minor major fp (spot_roots c) ok final_major roots_out st cap /\
+          minor major fp (spot_roots c) ok final_major roots_out /\
         GC.Spec.Correctness.heap_reachable
-          (GC.Gen.Impl.gen_gc_prepared_major minor major fp (spot_roots c) st cap)
-          (GC.Gen.Impl.gen_gc_prepared_roots minor major fp (spot_roots c) st cap)
+          (GC.Gen.Impl.gen_gc_prepared_major minor major fp (spot_roots c))
+          (GC.Gen.Impl.gen_gc_prepared_roots minor major fp (spot_roots c))
           x)
       (ensures Seq.mem x (GC.Spec.Fields.objects zero_addr final_major))

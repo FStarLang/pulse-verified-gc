@@ -62,6 +62,12 @@ module GI = GC.Gen.Incremental
 module MP = GC.Spec.MarkPhase
 module GMM = GC.Gen.MarkPhase.Minor
 module MS = GC.Gen.MarkState
+module GR = Pulse.Lib.GhostReference
+module MSI = GC.Gen.Impl.MarkSlice
+module MSl = GC.Gen.MarkSlice
+module MStart = GC.Gen.MarkPhase.Start
+module Stw = GC.Spec.MarkPhase.Stw
+module S = GC.Spec.MarkPhase.Slice
 
 /// Two transports in one: `GC.Gen.MajorPrecondition` carries the pre-minor facts
 /// across the minor collection to `darken_precondition`, and
@@ -69,14 +75,15 @@ module MS = GC.Gen.MarkState
 /// obligation `GC.Impl.collect_with_roots` actually demands.  Neither step is
 /// the caller's business.
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let gen_gc_major_precondition_elim minor major fp roots st cap
+let gen_gc_major_precondition_elim minor major fp roots
   = let result = CheneySpec.cheney_collect_spec minor major fp roots in
-    assert (Seq.equal st (Seq.empty #obj_addr));
+    let st : Seq.seq obj_addr = Seq.empty in
+    let cap = prepared_cap result.mc_roots in
     GMP.darken_precondition_after_minor minor major fp roots cap;
     MBP.darken_establishes_precondition result.mc_major st result.mc_roots result.mc_fp cap;
     MBP.darken_roots_match_stack result.mc_major st result.mc_roots result.mc_fp cap;
     GMP.post_minor_roots_valid_for_darkening minor major fp roots;
-    (let prepared = gen_gc_prepared_state minor major fp roots st cap in
+    (let prepared = gen_gc_prepared_state minor major fp roots in
      introduce forall (r: U64.t). Seq.mem r result.mc_roots ==>
        GC.Spec.Base.is_val_addr r /\ U64.v r >= U64.v zero_addr + U64.v mword
      with introduce _ ==> _
@@ -110,7 +117,7 @@ let gen_gc_major_precondition_elim minor major fp roots st cap
 #pop-options
 
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
-let gen_gc_named_root_in_stack minor major fp roots roots_out st cap r
+let gen_gc_named_root_in_stack minor major fp roots roots_out r
   = let result = CheneySpec.cheney_collect_spec minor major fp roots in
     // `r` is a root, so it is a pointer field, and resolving it is the identity.
     assert (GC.Spec.Base.is_val_addr (r <: U64.t));
@@ -445,24 +452,24 @@ fn mark_state_off (gh: gen_heap_t) (s s': heap_state) (ph ph': Ph.gc_phase)
   ensures mark_state gh s' ph'
 {
   unfold mark_state;
-  with st ov. _;
-  MS.mark_cache_off s s' ph ph' st ov;
+  with st ov c f r. _;
+  MS.mark_cache_off s s' ph ph' st ov (MSI.pos c f r);
   fold (mark_state gh s' ph')
 }
 
 /// A minor collection keeps the mark stack a cache of the grey objects:
 /// while marking it keeps the grey objects (`MS.mark_cache_minor`).
 let mark_cache_minor_at (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
-    (rs: Seq.seq U64.t) (s2: heap) (st: Seq.seq obj_addr) (ov: bool)
-  : Lemma (requires GI.phase_shape minor s fp ph /\ MS.mark_cache_ok s ph st ov /\
+    (rs: Seq.seq U64.t) (s2: heap) (st: Seq.seq obj_addr) (ov: bool) (p: MS.mark_pos)
+  : Lemma (requires GI.phase_shape minor s fp ph /\ MS.mark_cache_ok s ph st ov p /\
                     s2 == (CheneySpec.cheney_collect_spec_with ph (GI.phase_free ph) minor s fp rs).mc_major)
-          (ensures MS.mark_cache_ok s2 ph st ov)
+          (ensures MS.mark_cache_ok s2 ph st ov p)
   = if Ph.Marking? ph then begin
       GI.phase_free_marking ();
       GI.phase_shape_collection minor s fp ph;
-      MS.mark_cache_minor minor s fp rs st ov
+      MS.mark_cache_minor minor s fp rs st ov p
     end else
-      MS.mark_cache_off s s2 ph ph st ov
+      MS.mark_cache_off s s2 ph ph st ov p
 
 ghost
 fn mark_state_minor (gh: gen_heap_t) (minor: minor_state) (s: heap_state) (fp: U64.t)
@@ -473,8 +480,8 @@ fn mark_state_minor (gh: gen_heap_t) (minor: minor_state) (s: heap_state) (fp: U
   ensures mark_state gh s2 ph
 {
   unfold mark_state;
-  with st ov. _;
-  mark_cache_minor_at minor s fp ph rs s2 st ov;
+  with st ov c f r. _;
+  mark_cache_minor_at minor s fp ph rs s2 st ov (MSI.pos c f r);
   fold (mark_state gh s2 ph)
 }
 
@@ -548,85 +555,73 @@ let nursery_empty_reset (d: minor_heap) (b: U64.t)
                    ({ data = d; bump = b } <: minor_state))
   = U64.v_inj b 0UL
 
-/// Root darkening on the idle shape: the major collector's entry condition,
-/// and the stack holds the objects the roots name.
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let start_cycle_darken (minor: minor_state) (s: heap) (fp: U64.t) (rs: Seq.seq U64.t)
-    (st: Seq.seq obj_addr) (cap: nat)
-  : Lemma (requires GenInv.collection_heap_shape minor s fp /\ start_cycle_pre s rs st cap)
-          (ensures (let prepared = MarkBoundedImpl.darken_roots_bounded_spec s st rs cap in
-                    MajorGC.gc_precondition_with_roots (fst prepared) (snd prepared)
-                      (snd prepared) fp cap /\
-                    roots_match_stack s rs (snd prepared)))
-  = assert (Seq.equal st (Seq.empty #obj_addr));
-    GMP.darken_precondition_of_shape minor s fp rs cap;
-    MBP.darken_establishes_precondition s st rs fp cap;
-    MBP.darken_roots_match_stack s st rs fp cap
-#pop-options
+/// The phase record while marking.
+inline_for_extraction noextract
+let marking_record : Alloc.phase_state =
+  { Alloc.ps_kind = 2UL; Alloc.ps_cursor = 0UL;
+    Alloc.ps_swept_tail = 0UL; Alloc.ps_last_fragment = 0UL }
 
-/// Marking leaves the heap `mark_post` describes, from which the sweep
-/// phase starts.
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
-let start_after_mark (minor: minor_state) (h: heap) (h_mark: heap)
-    (st roots: Seq.seq obj_addr) (fp: U64.t) (cap: nat)
-  : Lemma (requires MajorGC.gc_precondition_with_roots h st roots fp cap /\
-                    SpecFields.well_formed_heap h_mark /\
-                    SweepInv.no_gray_objects h_mark /\
-                    SpecFields.objects zero_addr h_mark == SpecFields.objects zero_addr h /\
-                    MarkCorr.mark_color_inv h h_mark /\
-                    MarkCorr.gray_black_reachable h h_mark roots /\
-                    MarkCorr.gray_stays h h_mark)
-          (ensures SpecGCPost.mark_post h h_mark roots fp /\
-                   GI.phase_shape (minor_reset minor) h_mark fp (Ph.Sweeping zero_addr))
-  = MarkCorr.mark_post_from_bounded_mark h h_mark roots fp;
-    SpecGCPost.mark_post_sweep_pre h h_mark roots fp;
-    SpecGCPost.mark_post_elim_no_grey h h_mark roots fp;
-    SpecGCPost.mark_post_elim_tri_color h h_mark roots fp;
-    SPI.sweep_inv_incremental_start h_mark fp;
-    GI.phase_shape_start minor h_mark fp
-#pop-options
+/// While marking the phase record holds `Marking` whatever the heap.
+ghost
+fn phase_marking_any (phase: R.ref Alloc.phase_state) (g': heap)
+  requires Alloc.is_phase phase 'g 'ph ** pure (Ph.Marking? 'ph)
+  ensures Alloc.is_phase phase g' 'ph
+{
+  unfold Alloc.is_phase;
+  fold (Alloc.is_phase phase g' 'ph)
+}
+
+/// What the idle state says of the heap root darkening starts from.
+let start_facts (minor: minor_state) (s: heap) (fp: U64.t)
+  : Lemma (requires GI.phase_shape minor s fp Ph.Idle)
+          (ensures SpecFields.well_formed_heap s /\ SweepInv.no_gray_objects s /\
+                   GenInv.collection_heap_shape minor s fp)
+  = GI.phase_shape_idle minor s fp;
+    GenInv.collection_heap_shape_elim minor s fp;
+    GenInv.major_heap_shape_elim s fp
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-fn start_cycle (gh: gen_heap_t) (roots: array U64.t) (nroots: SZ.t) (st: gray_stack)
+fn start_cycle (gh: gen_heap_t) (roots: array U64.t) (nroots: SZ.t)
   requires gc_state gh 'd 'b 's 'fp Ph.Idle **
            pts_to roots 'rs **
-           is_gray_stack st 'st **
            pure (SZ.v nroots == Seq.length 'rs /\
                  nursery_empty 'd 'b /\
-                 start_cycle_pre 's 'rs 'st (stack_capacity st))
-  ensures exists* s2 st2.
-    gc_state gh 'd 'b s2 'fp (Ph.Sweeping zero_addr) **
+                 start_cycle_pre 's 'rs)
+  ensures exists* s2.
+    gc_state gh 'd 'b s2 'fp Ph.Marking **
     pts_to roots 'rs **
-    is_gray_stack st st2 **
-    pure (start_cycle_post 's 'fp 'rs 'st (stack_capacity st) s2)
+    pure (start_cycle_post 's 'rs s2)
 {
   unfold gc_state;
-  GI.phase_shape_idle ({ data = 'd; bump = 'b } <: minor_state) 's 'fp;
-  start_cycle_darken ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'st (stack_capacity st);
-  unfold is_gen_heap;
-  // Root darkening ...
-  MarkBoundedImpl.darken_roots_bounded gh.major st roots nroots (stack_capacity st);
-  with prepared_major prepared_st. assert (
-    is_heap gh.major prepared_major ** is_gray_stack st prepared_st);
-  // ... and marking.  The ghost root set is the darkened stack itself, so
-  // every gray object is on the stack and the mark may skip its heap rescan
-  // when the stack never overflows (as `MajorGC.collect` does).
-  GC.Spec.MarkBoundedNoOverflow.gray_on_stack_of_roots_eq_stack prepared_major prepared_st;
-  MarkBoundedImpl.mark_loop_bounded_flagged gh.major st prepared_st false;
-  with s_mark st_mark. assert (is_heap gh.major s_mark ** is_gray_stack st st_mark);
-  start_after_mark ({ data = 'd; bump = 'b } <: minor_state) prepared_major s_mark
-    prepared_st prepared_st 'fp (stack_capacity st);
+  start_facts ({ data = 'd; bump = 'b } <: minor_state) 's 'fp;
   nursery_empty_reset 'd 'b;
-  // The sweep phase starts.
+  unfold is_gen_heap;
+  unfold mark_state;
+  with st ov c f r. _;
+  MS.mark_cache_not_marking 's Ph.Idle st ov (MSI.pos c f r);
+  stack_facts gh.mark_stack;
+  Seq.lemma_empty st;
+  // Root darkening onto the persistent stack, the flag raised if it ends
+  // full (a root may have been dropped).
+  MSl.mark_cache_start 's 'rs (stack_capacity gh.mark_stack);
+  MarkBoundedImpl.darken_roots_bounded gh.major gh.mark_stack roots nroots (stack_capacity gh.mark_stack);
+  with s2 st2 rs2. assert (is_heap gh.major s2 ** is_gray_stack gh.mark_stack st2 ** pts_to roots rs2);
+  let full = is_full gh.mark_stack;
+  R.op_Colon_Equals gh.mark_overflow full;
+  R.op_Colon_Equals gh.mark_field 1UL;
+  MS.mark_cache_marking s2 st2 full (MSI.pos 0UL 1UL 0UL);
+  // The darkened heap is the collector's state while marking.
+  MSl.darken_roots_heap 's Seq.empty Seq.empty 'rs (stack_capacity gh.mark_stack) (prepared_cap 'rs);
+  MStart.mark_start_shape ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs;
+  fold (mark_state gh s2 Ph.Marking);
+  // Marking starts.
   unfold gen_phase;
   unfold Alloc.is_phase;
-  R.op_Colon_Equals gh.phase_ref start_record;
-  start_record_rel s_mark;
-  fold (Alloc.is_phase gh.phase_ref s_mark (Ph.Sweeping zero_addr));
-  fold (gen_phase gh s_mark (Ph.Sweeping zero_addr));
-  fold (is_gen_heap gh 'd 'b s_mark 'fp);
-  mark_state_off gh 's s_mark Ph.Idle (Ph.Sweeping zero_addr);
-  fold (gc_state gh 'd 'b s_mark 'fp (Ph.Sweeping zero_addr));
+  R.op_Colon_Equals gh.phase_ref marking_record;
+  fold (Alloc.is_phase gh.phase_ref s2 Ph.Marking);
+  fold (gen_phase gh s2 Ph.Marking);
+  fold (is_gen_heap gh 'd 'b s2 'fp);
+  fold (gc_state gh 'd 'b s2 'fp Ph.Marking);
 }
 #pop-options
 
@@ -677,13 +672,69 @@ let slice_ready (minor: minor_state) (g: heap) (fp: U64.t) (v: Alloc.phase_state
           (ensures FSC.slice_pre g fp v.Alloc.ps_cursor v.Alloc.ps_swept_tail v.Alloc.ps_last_fragment)
   = GI.phase_shape_sweeping minor g fp v.Alloc.ps_cursor
 
+/// What the mark slice needs of the marking state.
+let marking_heap_ok (minor: minor_state) (g: heap) (fp: U64.t)
+  : Lemma (requires GI.phase_shape minor g fp Ph.Marking)
+          (ensures MSI.heap_ok g)
+  = GI.phase_shape_marking minor g fp;
+    GenInv.collection_shape_with_elim Ph.Marking SpecFields.free_stw minor g fp;
+    GenInv.major_shape_with_elim Ph.Marking SpecFields.free_stw g fp
+
+/// A mark slice at `Marking`.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+fn mark_slice_at (gh: gen_heap_t) (budget: U64.t)
+  requires gc_state gh 'd 'b 's 'fp Ph.Marking
+  returns idle: bool
+  ensures exists* s2 fp2 ph2.
+    gc_state gh 'd 'b s2 fp2 ph2 **
+    pure (GI.mark_slice_post 's 'fp (U64.v budget) s2 fp2 ph2 /\ idle == Ph.Idle? ph2)
+{
+  unfold gc_state;
+  marking_heap_ok ({ data = 'd; bump = 'b } <: minor_state) 's 'fp;
+  unfold is_gen_heap;
+  unfold mark_state;
+  with st ov c f r. _;
+  MS.mark_cache_marking 's st ov (MSI.pos c f r);
+  let fin = MSI.mark_slice gh.major gh.mark_stack gh.mark_overflow gh.mark_cur gh.mark_field
+              gh.mark_rescan budget;
+  with s2 st2 ov2 c2 f2 r2. assert (is_heap gh.major s2 ** is_gray_stack gh.mark_stack st2 **
+    R.pts_to gh.mark_overflow ov2 ** R.pts_to gh.mark_cur c2 ** R.pts_to gh.mark_field f2 **
+    R.pts_to gh.mark_rescan r2);
+  GI.mark_steps_shape ({ data = 'd; bump = 'b } <: minor_state) 's s2 'fp;
+  if fin {
+    // Nothing is grey: the sweep starts.
+    GI.marking_done_shape ({ data = 'd; bump = 'b } <: minor_state) s2 'fp;
+    MS.mark_cache_not_marking s2 (Ph.Sweeping zero_addr) st2 ov2 (MSI.pos c2 f2 r2);
+    fold (mark_state gh s2 (Ph.Sweeping zero_addr));
+    unfold gen_phase;
+    unfold Alloc.is_phase;
+    R.op_Colon_Equals gh.phase_ref start_record;
+    start_record_rel s2;
+    fold (Alloc.is_phase gh.phase_ref s2 (Ph.Sweeping zero_addr));
+    fold (gen_phase gh s2 (Ph.Sweeping zero_addr));
+    fold (is_gen_heap gh 'd 'b s2 'fp);
+    fold (gc_state gh 'd 'b s2 'fp (Ph.Sweeping zero_addr));
+    false
+  } else {
+    MS.mark_cache_marking s2 st2 ov2 (MSI.pos c2 f2 r2);
+    fold (mark_state gh s2 Ph.Marking);
+    unfold gen_phase;
+    phase_marking_any gh.phase_ref s2;
+    fold (gen_phase gh s2 Ph.Marking);
+    fold (is_gen_heap gh 'd 'b s2 'fp);
+    fold (gc_state gh 'd 'b s2 'fp Ph.Marking);
+    false
+  }
+}
+#pop-options
+
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 fn major_slice (gh: gen_heap_t) (budget: U64.t)
   requires gc_state gh 'd 'b 's 'fp 'ph
   returns idle: bool
   ensures exists* s2 fp2 ph2.
     gc_state gh 'd 'b s2 fp2 ph2 **
-    pure ((s2, fp2, ph2) == GI.major_slice_spec 's 'fp 'ph (U64.v budget) /\
+    pure (GI.major_slice_post 's 'fp 'ph (U64.v budget) s2 fp2 ph2 /\
           idle == Ph.Idle? ph2)
 {
   unfold gc_state;
@@ -699,12 +750,13 @@ fn major_slice (gh: gen_heap_t) (budget: U64.t)
     fold (gc_state gh 'd 'b 's 'fp 'ph);
     true
   } else if (not (U64.eq v.Alloc.ps_kind 1UL)) {
-    // Marking: nothing yet (the mark slice is to come).
+    // Marking: a mark slice.
     fold (Alloc.is_phase gh.phase_ref 's 'ph);
     fold (gen_phase gh 's 'ph);
     fold (is_gen_heap gh 'd 'b 's 'fp);
     fold (gc_state gh 'd 'b 's 'fp 'ph);
-    false
+    rewrite (gc_state gh 'd 'b 's 'fp 'ph) as (gc_state gh 'd 'b 's 'fp Ph.Marking);
+    mark_slice_at gh budget
   } else {
     // Sweeping: a slice of the sweep.
     slice_ready ({ data = 'd; bump = 'b } <: minor_state) 's 'fp v;
@@ -731,70 +783,122 @@ fn major_slice (gh: gen_heap_t) (budget: U64.t)
 }
 #pop-options
 
+/// A major slice keeps what the rest of the sweep leaves
+/// (`SL.phase_rest`).
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+let major_slice_keeps_rest (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
+    (budget: nat) (g': heap) (fp': U64.t) (ph': Ph.gc_phase)
+  : Lemma (requires GI.phase_shape minor g fp (Ph.Sweeping c) /\
+                    (g', fp', ph') == GI.major_slice_spec g fp (Ph.Sweeping c) budget)
+          (ensures SL.phase_rest g' fp' ph' == SL.phase_rest g fp (Ph.Sweeping c) /\
+                   (budget > GC.Spec.Base.heap_words ==> ph' == Ph.Idle))
+  = GI.phase_shape_sweeping minor g fp c;
+    SL.phase_rest_slice g fp (Ph.Sweeping c) budget;
+    if budget > GC.Spec.Base.heap_words then
+      GI.phase_slice_finishes minor g fp (Ph.Sweeping c) budget
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)
 /// ---------------------------------------------------------------------------
 
 /// The unbounded budget is more words than the heap has.
-let unbounded_budget () : Lemma (U64.v 0xFFFFFFFFFFFFFFFFUL > GC.Spec.Base.heap_words)
-  = assert_norm (pow2 57 < U64.v 0xFFFFFFFFFFFFFFFFUL)
+let unbounded_budget () : Lemma (U64.v 0xFFFFFFFFFFFFFFFFUL > GC.Spec.Base.heap_words /\
+                                 GI.unbounded (U64.v 0xFFFFFFFFFFFFFFFFUL))
+  = assert_norm (pow2 57 < U64.v 0xFFFFFFFFFFFFFFFFUL);
+    assert_norm (U64.v 0xFFFFFFFFFFFFFFFFUL == pow2 64 - 1)
 
-/// A major slice keeps what the rest of the sweep leaves
-/// (`SL.phase_rest_slice`).
+/// Where a full collection's cycle is, from the darkened heap `g0` with the
+/// root objects `droots`: marking, with the stop-the-world strengthening of
+/// the marking invariant; or past marking, with what is left of the cycle
+/// (`SL.phase_rest`) what the stop-the-world sweep of a marked heap of `g0`
+/// leaves.
+let full_rest (g0: heap) (droots: Seq.seq obj_addr) (fp0: U64.t)
+    (s: heap) (fp: U64.t) (ph: Ph.gc_phase) : prop =
+  (Ph.Marking? ph ==> fp == fp0 /\ Stw.marking_inv_stw g0 s droots) /\
+  (~(Ph.Marking? ph) ==>
+     (exists (s_mark: heap). SpecGCPost.mark_post g0 s_mark droots fp0 /\
+                        SL.phase_rest s fp ph == FS.fused_sweep_coalesce s_mark fp0))
+
+/// How far the cycle has to go: mark, then sweep.
+let rank (ph: Ph.gc_phase) : nat =
+  match ph with
+  | Ph.Idle -> 0
+  | Ph.Sweeping _ -> 1
+  | Ph.Marking -> 2
+
+/// **An unbounded slice of a full collection**: marking finishes with the
+/// marked heap (`Stw.marking_inv_stw_done`), whose sweep is what is left; a
+/// sweep slice finishes the sweep.
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
-let major_slice_keeps_rest (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase)
-    (budget: nat) (g': heap) (fp': U64.t) (ph': Ph.gc_phase)
-  : Lemma (requires GI.phase_shape minor g fp ph /\
-                    (g', fp', ph') == GI.major_slice_spec g fp ph budget)
-          (ensures SL.phase_rest g' fp' ph' == SL.phase_rest g fp ph /\
-                   (~(Ph.Marking? ph) ==> ~(Ph.Marking? ph')) /\
-                   (budget > GC.Spec.Base.heap_words /\ ~(Ph.Marking? ph) ==> ph' == Ph.Idle))
-  = match ph with
-    | Ph.Idle | Ph.Marking -> ()
+let full_slice_step (minor: minor_state) (g0: heap) (droots: Seq.seq obj_addr) (fp0: U64.t)
+    (s: heap) (fp: U64.t) (ph: Ph.gc_phase) (s': heap) (fp': U64.t) (ph': Ph.gc_phase)
+  : Lemma (requires GI.phase_shape minor s fp ph /\ full_rest g0 droots fp0 s fp ph /\
+                    Stw.stw_start g0 droots /\ GC.Spec.FreeList.fp_in_heap fp0 g0 /\
+                    ~(Ph.Idle? ph) /\
+                    GI.major_slice_post s fp ph (U64.v 0xFFFFFFFFFFFFFFFFUL) s' fp' ph')
+          (ensures full_rest g0 droots fp0 s' fp' ph' /\ rank ph' < rank ph)
+  = unbounded_budget ();
+    match ph with
+    | Ph.Marking ->
+        Stw.marking_inv_stw_steps g0 s s' droots;
+        Stw.marking_inv_stw_done g0 s' droots fp0;
+        SL.phase_rest_start s' fp0
     | Ph.Sweeping c ->
-        GI.phase_shape_sweeping minor g fp c;
-        SL.phase_rest_slice g fp ph budget;
-        if budget > GC.Spec.Base.heap_words then
-          GI.phase_slice_finishes minor g fp ph budget
+        major_slice_keeps_rest minor s fp c (U64.v 0xFFFFFFFFFFFFFFFFUL) s' fp' ph'
 #pop-options
 
+/// The start of a full collection's cycle: from the major collector's entry
+/// condition at the darkened heap.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let full_start (g0: heap) (droots: Seq.seq obj_addr) (fp0: U64.t) (cap: nat)
+  : Lemma (requires MajorGC.gc_precondition_with_roots g0 droots droots fp0 cap)
+          (ensures Stw.stw_start g0 droots /\ GC.Spec.FreeList.fp_in_heap fp0 g0 /\
+                   full_rest g0 droots fp0 g0 fp0 Ph.Marking)
+  = MarkBoundedInv.bounded_mark_inv_elim_wfh g0 droots cap;
+    MarkBoundedInv.bounded_mark_inv_elim_objects g0 droots cap;
+    MarkBoundedInv.bounded_mark_inv_elim_density g0 droots cap;
+    Stw.marking_inv_stw_start g0 droots
+#pop-options
+
+
 /// What the major half of a full collection leaves, from the heap the minor
-/// collection left: the cycle started from it (`start_cycle_post`), and the
-/// slices until idle left what the stop-the-world sweep of the marked heap
-/// leaves (`SL.phase_rest`).  These are `MajorGC.collect`'s theorems at that
-/// heap (`SpecGCPost.gc_result_fused`), chained with the minor collection's
-/// isomorphism into a single isomorphism from the heap we were handed to the
-/// heap we return (`MRT.end_to_end_isomorphism_intro`), so that no caller
-/// has to do it.
+/// collection left: the cycle started from it marked the darkened heap
+/// (`mark_post`), and the slices until idle left what the stop-the-world
+/// sweep of the marked heap leaves.  These are `MajorGC.collect`'s theorems at
+/// that heap (`SpecGCPost.gc_result_fused`), chained with the minor
+/// collection's isomorphism into a single isomorphism from the heap we were
+/// handed to the heap we return (`MRT.end_to_end_isomorphism_intro`), so that
+/// no caller has to do it.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let full_gc_major_post
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
-  (st: Seq.seq obj_addr) (cap: nat) (s_mark s_fin: heap) (fp_fin: U64.t)
+  (s_mark s_fin: heap) (fp_fin: U64.t)
   : Lemma
     (requires
       (let result = CheneySpec.cheney_collect_spec minor major fp roots in
        GenInv.collection_heap_shape minor major fp /\
        MinorFwd.roots_valid_for_minor_collection minor major roots /\
        CheneyBFS.cheney_no_oom Idle minor major fp roots /\
-       gen_gc_stack_budget roots st cap /\
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop Idle
          minor major fp SpecFields.free_stw roots result.mc_major
          (MCFH.resolve_roots result.mc_major result.mc_roots) /\
        MinorFwd.normal_result_non_pointer_fields_preserved_prop Idle
          minor major fp SpecFields.free_stw roots result.mc_major /\
-       start_cycle_post result.mc_major result.mc_fp result.mc_roots st cap s_mark /\
+       SpecGCPost.mark_post (gen_gc_prepared_major minor major fp roots) s_mark
+         (gen_gc_prepared_roots minor major fp roots) result.mc_fp /\
        (s_fin, fp_fin) == FS.fused_sweep_coalesce s_mark result.mc_fp))
     (ensures
       (let result = CheneySpec.cheney_collect_spec minor major fp roots in
-       gen_gc_roots_post minor major fp roots result.mc_roots true st cap /\
+       gen_gc_roots_post minor major fp roots result.mc_roots true /\
        gen_gc_reachable_subgraph_isomorphism_post
-         minor major fp roots true s_fin result.mc_roots st cap /\
-       gen_gc_unreachable_final_blue_post minor major fp roots true s_fin st cap))
+         minor major fp roots true s_fin result.mc_roots /\
+       gen_gc_unreachable_final_blue_post minor major fp roots true s_fin))
   = let result = CheneySpec.cheney_collect_spec minor major fp roots in
-    let prepared = gen_gc_prepared_state minor major fp roots st cap in
+    let prepared = gen_gc_prepared_state minor major fp roots in
     let prepared_major = fst prepared in
     let prepared_st = snd prepared in
-    gen_gc_major_precondition_elim minor major fp roots st cap;
+    gen_gc_major_precondition_elim minor major fp roots;
     SpecGCPost.gc_result_fused prepared_major s_mark prepared_st result.mc_fp;
     SpecGCPost.gc_postcondition_elim s_fin;
     Mark.create_graph_wf_from_heap s_fin;
@@ -804,21 +908,76 @@ let full_gc_major_post
       prepared_major prepared_st s_fin
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+/// At the end, the cycle is the stop-the-world collection of a marked heap of
+/// the darkened one, so `full_gc_major_post` applies.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let full_gc_end
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t) (s_fin: heap) (fp_fin: U64.t)
+  : Lemma
+    (requires
+      (let result = CheneySpec.cheney_collect_spec minor major fp roots in
+       GenInv.collection_heap_shape minor major fp /\
+       MinorFwd.roots_valid_for_minor_collection minor major roots /\
+       CheneyBFS.cheney_no_oom Idle minor major fp roots /\
+       MinorFwd.normal_result_reachable_subgraph_isomorphism_prop Idle
+         minor major fp SpecFields.free_stw roots result.mc_major
+         (MCFH.resolve_roots result.mc_major result.mc_roots) /\
+       MinorFwd.normal_result_non_pointer_fields_preserved_prop Idle
+         minor major fp SpecFields.free_stw roots result.mc_major /\
+       full_rest (gen_gc_prepared_major minor major fp roots) (gen_gc_prepared_roots minor major fp roots)
+         result.mc_fp s_fin fp_fin Ph.Idle))
+    (ensures
+      (let result = CheneySpec.cheney_collect_spec minor major fp roots in
+       gen_gc_roots_post minor major fp roots result.mc_roots true /\
+       gen_gc_reachable_subgraph_isomorphism_post
+         minor major fp roots true s_fin result.mc_roots /\
+       gen_gc_unreachable_final_blue_post minor major fp roots true s_fin))
+  = let result = CheneySpec.cheney_collect_spec minor major fp roots in
+    let g0 = gen_gc_prepared_major minor major fp roots in
+    let droots = gen_gc_prepared_roots minor major fp roots in
+    eliminate exists (s_mark: heap). SpecGCPost.mark_post g0 s_mark droots result.mc_fp /\
+                                   SL.phase_rest s_fin fp_fin Ph.Idle ==
+                                     FS.fused_sweep_coalesce s_mark result.mc_fp
+    with full_gc_major_post minor major fp roots s_mark s_fin fp_fin
+#pop-options
+
+/// The cycle's start, from the minor collection's result: the darkened heap
+/// is `gen_gc_prepared_major`, its root objects `gen_gc_prepared_roots`.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let full_cycle_start (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+    (s_dark: heap)
+  : Lemma
+    (requires
+      (let result = CheneySpec.cheney_collect_spec minor major fp roots in
+       GenInv.collection_heap_shape minor major fp /\
+       MinorFwd.roots_valid_for_minor_collection minor major roots /\
+       CheneyBFS.cheney_no_oom Idle minor major fp roots /\
+       start_cycle_post result.mc_major result.mc_roots s_dark))
+    (ensures
+      (let result = CheneySpec.cheney_collect_spec minor major fp roots in
+       let g0 = gen_gc_prepared_major minor major fp roots in
+       let droots = gen_gc_prepared_roots minor major fp roots in
+       s_dark == g0 /\
+       Stw.stw_start g0 droots /\ GC.Spec.FreeList.fp_in_heap result.mc_fp g0 /\
+       full_rest g0 droots result.mc_fp s_dark result.mc_fp Ph.Marking))
+  = let result = CheneySpec.cheney_collect_spec minor major fp roots in
+    gen_gc_major_precondition_elim minor major fp roots;
+    full_start (gen_gc_prepared_major minor major fp roots) (gen_gc_prepared_roots minor major fp roots)
+      result.mc_fp (prepared_cap result.mc_roots)
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 fn full_gc (gh: gen_heap_t)
            (roots: array U64.t) (nroots: SZ.t)
            (fwd_arr: array U64.t)
            (queue: larray U64.t FA.queue_size)
            (slots: array U64.t) (nslots: SZ.t)
-           (st: gray_stack)
   requires gc_state gh 'd 'b 's 'fp Ph.Idle **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to slots 'sl **
-           is_gray_stack st 'st **
            pure (
-              gen_gc_stack_budget 'rs 'st (stack_capacity st) /\
                SZ.v nroots == Seq.length 'rs /\
                Seq.length 'farr == fwd_array_size /\
                (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
@@ -828,24 +987,23 @@ fn full_gc (gh: gen_heap_t)
                MinorFwd.roots_valid_for_minor_collection
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns ok: bool
-  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 st2.
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
     gc_state gh d2 b2 s2 fp2 Ph.Idle **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
-    is_gray_stack st st2 **
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
       let minor_st_out : minor_state = { data = d2; bump = b2 } in
       (not ok ==> CheneyBFS.cheney_oom Idle minor_st 's 'fp 'rs) /\
-      gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok 'st (stack_capacity st) /\
+      gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok /\
       minor_st_out == minor_reset minor_st /\
       GenInv.collection_heap_shape minor_st_out s2 fp2 /\
       gen_gc_reachable_subgraph_isomorphism_post
-        minor_st 's 'fp 'rs ok s2 rs2 'st (stack_capacity st) /\
+        minor_st 's 'fp 'rs ok s2 rs2 /\
       gen_gc_unreachable_final_blue_post
-        minor_st 's 'fp 'rs ok s2 'st (stack_capacity st))
+        minor_st 's 'fp 'rs ok s2)
 {
   unfold gc_state;
   GI.phase_shape_idle ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
@@ -861,9 +1019,6 @@ fn full_gc (gh: gen_heap_t)
     (SZ.v nslots) ok d_mid b_mid s_mid fp_mid rs_mid;
   PromoteSpec.rewrite_roots_length 'rs
     (CheneySpec.cheney_promote Idle ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map;
-  unfold gc_state;
-  GI.phase_shape_idle ({ data = d_mid; bump = b_mid } <: minor_state) s_mid fp_mid;
-  fold (gc_state gh d_mid b_mid s_mid fp_mid Ph.Idle);
   // The major phase, but only if the minor collection succeeded.
   //
   // On the out-of-memory path some live nursery objects were never promoted, so
@@ -876,20 +1031,21 @@ fn full_gc (gh: gen_heap_t)
     // The rewritten roots are darkenable major objects.
     GMP.post_minor_roots_valid_for_darkening
       ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
-    start_cycle gh roots nroots st;
-    with s_mark. assert (gc_state gh d_mid b_mid s_mark fp_mid (Ph.Sweeping zero_addr));
-    // The rest of the sweep is the whole stop-the-world sweep of the marked
-    // heap, and every slice keeps it so.
-    SL.phase_rest_start s_mark fp_mid;
+    start_cycle gh roots nroots;
+    with s_dark. assert (gc_state gh d_mid b_mid s_dark fp_mid Ph.Marking);
+    let g0 = Ghost.hide (gen_gc_prepared_major ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs);
+    let droots = Ghost.hide (gen_gc_prepared_roots ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs);
+    full_cycle_start ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs s_dark;
+    // Slices with an unbounded budget until idle: one marks, one sweeps.
     let mut busy = true;
+    let gr = GR.alloc #nat 2;
     while (!busy)
-      invariant exists* s_i fp_i ph_i vb.
+      invariant exists* s_i fp_i ph_i vb (n: nat).
         gc_state gh d_mid b_mid s_i fp_i ph_i **
-        R.pts_to busy vb **
-        pure (vb == not (Ph.Idle? ph_i) /\ ~(Ph.Marking? ph_i) /\
-              SL.phase_rest s_i fp_i ph_i == FS.fused_sweep_coalesce s_mark fp_mid)
-    // One slice with an unbounded budget finishes the sweep.
-    decreases (if !busy then 1 else 0)
+        R.pts_to busy vb ** GR.pts_to gr n **
+        pure (vb == not (Ph.Idle? ph_i) /\ n == rank ph_i /\
+              full_rest g0 droots fp_mid s_i fp_i ph_i)
+      decreases (GR.op_Bang gr + (if !busy then 1 else 0))
     {
       with s_i fp_i ph_i. assert (gc_state gh d_mid b_mid s_i fp_i ph_i);
       unfold gc_state;
@@ -899,19 +1055,19 @@ fn full_gc (gh: gen_heap_t)
       fold (gc_state gh d_mid b_mid s_i fp_i ph_i);
       let idle = major_slice gh 0xFFFFFFFFFFFFFFFFUL;
       with s_j fp_j ph_j. assert (gc_state gh d_mid b_mid s_j fp_j ph_j);
-      major_slice_keeps_rest ({ data = d_mid; bump = b_mid } <: minor_state) s_i fp_i ph_i
-        (U64.v 0xFFFFFFFFFFFFFFFFUL) s_j fp_j ph_j;
-      unbounded_budget ();
+      full_slice_step ({ data = d_mid; bump = b_mid } <: minor_state) g0 droots fp_mid
+        s_i fp_i ph_i s_j fp_j ph_j;
+      GR.op_Colon_Equals gr (rank ph_j);
       busy := not idle;
     };
+    GR.free gr;
     with s_fin fp_fin ph_fin. assert (gc_state gh d_mid b_mid s_fin fp_fin ph_fin);
     rewrite (gc_state gh d_mid b_mid s_fin fp_fin ph_fin)
          as (gc_state gh d_mid b_mid s_fin fp_fin Ph.Idle);
     unfold gc_state;
     GI.phase_shape_idle ({ data = d_mid; bump = b_mid } <: minor_state) s_fin fp_fin;
     fold (gc_state gh d_mid b_mid s_fin fp_fin Ph.Idle);
-    full_gc_major_post ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)
-      s_mark s_fin fp_fin;
+    full_gc_end ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs s_fin fp_fin;
     ok
   } else {
     // Nothing ran after the minor collection, so the heap we hand back is the

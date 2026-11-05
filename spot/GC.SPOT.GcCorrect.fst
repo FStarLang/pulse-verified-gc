@@ -18,7 +18,16 @@ module Correct = GC.Impl.Correct
 /// The fixture's pre-minor shape, root validity and no-OOM fact are the
 /// existing SPOT lemmas `full_gc`'s own call is discharged with; the major
 /// precondition then follows from `gen_gc_major_precondition_elim`.
+let spot_cap_prepared r =
+  let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
+  let prom = CheneySpec.cheney_promote GC.Spec.Phase.Idle
+    ConcreteMinor.spot_minor2 (ConcreteMajor.spot_major_heap r)
+    (ConcreteMajor.spot_major_fp r) roots in
+  ThreeObjects.spot_roots_len (ConcreteMajor.spot_c r);
+  GC.Gen.Promote.rewrite_roots_length roots prom.fwd_map
+
 let spot_gc_precondition r =
+  spot_cap_prepared r;
   ConcreteScenarios.spot_collection_heap_shape r;
   ConcreteScenarios.spot_roots_valid_for_minor_collection r;
   ConcreteForwarding.spot_concrete_no_oom r;
@@ -28,7 +37,6 @@ let spot_gc_precondition r =
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)
     (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-    Seq.empty spot_cap
 
 let spot_gc_correct r s2 final_fp =
   spot_gc_precondition r;

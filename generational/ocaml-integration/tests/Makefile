@@ -115,7 +115,10 @@ LARGE_ALLOC_LEAVE_FREE  ?= 100000
 # Invalid_argument (OBJ_TRUNCATE_RUNTIME=verified); stock truncates.
 
 # gray_overflow holds heap_words / 5 live refs in one array, more than the
-# heap_words / 8-entry gray stack, so the major mark overflows and must rescan.
+# heap_words / 8-entry mark stack, so the major mark overflows and must rescan.
+# It runs a second time with a 3-entry mark stack (VERGC_MARK_STACK=3, read by
+# the bridge at start-up): root darkening overflows it, and the mark slices
+# rescan the heap in chunks over and over.
 # tools/mutation-ov-never-set.sh checks that it fails when the rescan is
 # skipped after an overflow.
 GRAY_OVERFLOW_MAJOR_WORDS ?= 2000000
@@ -234,6 +237,8 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	$(UNCHANGED_OCAMLRUN) large_alloc_garbage.byte $(LARGE_ALLOC_MAJOR_WORDS) $(LARGE_ALLOC_LEAVE_FREE)
 	@echo "--- gray_overflow (verified generational GC; gray stack overflows) ---"
 	MIN_EXPANSION_WORDSIZE=$(GRAY_OVERFLOW_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) gray_overflow.byte $(GRAY_OVERFLOW_MAJOR_WORDS)
+	@echo "--- gray_overflow (a 3-entry mark stack: the roots overflow it, every slice rescans) ---"
+	VERGC_MARK_STACK=3 MIN_EXPANSION_WORDSIZE=$(GRAY_OVERFLOW_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) gray_overflow.byte $(GRAY_OVERFLOW_MAJOR_WORDS)
 	@echo "--- gray_overflow (stock OCaml, differential check) ---"
 	$(UNCHANGED_OCAMLRUN) gray_overflow.byte $(GRAY_OVERFLOW_MAJOR_WORDS)
 	@echo "--- obj_truncate (verified generational GC: Obj.truncate raises) ---"
@@ -298,6 +303,7 @@ test-native: $(NATIVE_FILES) $(addsuffix .byte, $(NATIVE_DIFF_TESTS))
 	MIN_EXPANSION_WORDSIZE=$(LARGE_ALLOC_MAJOR_WORDS) ./large_alloc_garbage.native $(LARGE_ALLOC_MAJOR_WORDS) $(LARGE_ALLOC_LEAVE_FREE)
 	@echo "--- gray_overflow (gray stack overflows, so the rescan runs) ---"
 	MIN_EXPANSION_WORDSIZE=$(GRAY_OVERFLOW_MAJOR_WORDS) ./gray_overflow.native $(GRAY_OVERFLOW_MAJOR_WORDS)
+	VERGC_MARK_STACK=3 MIN_EXPANSION_WORDSIZE=$(GRAY_OVERFLOW_MAJOR_WORDS) ./gray_overflow.native $(GRAY_OVERFLOW_MAJOR_WORDS)
 	@echo "--- obj_truncate (Obj.truncate raises) ---"
 	OBJ_TRUNCATE_RUNTIME=verified ./obj_truncate.native
 	$(DIFF) explicit_major.native '$(UNCHANGED_OCAMLRUN) explicit_major.byte' \

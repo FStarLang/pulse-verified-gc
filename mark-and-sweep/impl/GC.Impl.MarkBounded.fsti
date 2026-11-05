@@ -394,3 +394,27 @@ fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
                 SpecMarkBoundedCorr.gray_black_reachable 's s2 roots /\
                 SpecMarkBoundedCorr.gray_stays 's s2)
 
+
+/// ---------------------------------------------------------------------------
+/// For the incremental mark slice (`GC.Gen.Impl.MarkSlice`)
+/// ---------------------------------------------------------------------------
+
+/// Whether `check_and_darken_bounded_spec` greys a block (a white one the
+/// value points at, resolved).
+let check_and_darken_greys (g: heap_state) (v: U64.t) : GTot bool =
+  if U64.v v >= U64.v zero_addr + U64.v mword && U64.v v < heap_size && U64.v v % U64.v mword = 0 then
+    let target : obj_addr = SpecObject.resolve_object v g in
+    let h_addr : hp_addr = U64.sub target mword in
+    U64.v h_addr + U64.v mword < heap_size && SpecObject.is_white (SpecHeap.f_address h_addr) g
+  else false
+
+/// `check_and_darken_bounded`, saying whether it dropped a block: greyed it
+/// with the stack full, so not pushed.  The slice raises the overflow flag
+/// exactly then.
+fn check_and_darken_bounded_drops (heap: heap_t) (st: gray_stack) (v: U64.t) (cap: Ghost.erased nat)
+  requires is_heap heap 's ** is_gray_stack st 'st **
+           pure (Seq.length 'st <= cap /\ stack_capacity st == cap)
+  returns dropped: bool
+  ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
+    pure ((s2, st2) == check_and_darken_bounded_spec 's 'st v cap /\
+          dropped == (check_and_darken_greys 's v && Seq.length 'st >= cap))

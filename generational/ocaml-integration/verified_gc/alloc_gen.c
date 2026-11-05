@@ -13,19 +13,24 @@
  *   minor_collect() — the minor collection (Cheney BFS + ref_table rewrite),
  *                     at either phase
  *   start_cycle()   — start a major cycle, idle and with the nursery empty:
- *                     darken the roots, mark; the phase becomes Sweeping
- *                     (4.14's start_cycle)
- *   major_slice()   — one slice of the cycle (a budget in words); returns
- *                     whether the collector is idle again
+ *                     darken the roots onto the persistent mark stack; the
+ *                     phase becomes Marking (4.14's start_cycle)
+ *   major_slice()   — one slice of the cycle (a budget in words): a mark
+ *                     slice while marking (Sweeping once nothing is grey),
+ *                     a sweep slice while sweeping; returns whether the
+ *                     collector is idle again
  *                     (4.14's caml_major_collection_slice)
  *   full_gc()       — a whole collection: minor_collect, start_cycle, then
- *                     major_slice with an unbounded budget until idle
+ *                     major_slice with an unbounded budget until idle (one
+ *                     slice marks, one sweeps)
  *
  * Sweep mode (VERGC_SWEEP, read once at start-up):
  *   stw (default) — every full collection is full_gc: the cycle runs to its
  *     end at once.
  *   incremental   — a full collection finishes any cycle still running, then
- *     is minor_collect + start_cycle; the sweep then runs in slices, one after
+ *     is minor_collect + start_cycle, and marks at once (major_slice with an
+ *     unbounded budget while marking: mark slices between program steps are
+ *     the incremental-mark plan's M5); the sweep then runs in slices, one after
  *     each minor collection (see incremental_slice for the budget).  Finishing
  *     a cycle (4.14's caml_finish_major_cycle) is major_slice with an unbounded
  *     budget until idle (finish_cycle_now).  A failed major allocation
@@ -265,26 +270,37 @@ static void ensure_heap(void) {
     phase_ref->ps_kind = 0;  /* Idle */
     gc_gen_heap.phase_ref = phase_ref;
 
-    /* The persistent mark state (GC.Gen.Impl.mark_state): the mark stack and
-     * its overflow flag, owned by the collector from here on.  Empty (top ==
-     * cap: the stack grows downward) with the flag down, as mark_state says
-     * at every phase but Marking.  Only the write barrier (modify) pushes
-     * onto it, and only while marking, which nothing enters yet; M4's mark
-     * slices will drain it.  The capacity is the one do_full_gc gives the
-     * per-collection gray stack; calloc'd, so its pages cost nothing until
-     * used. */
+    /* The persistent mark state (GC.Gen.Impl.mark_state): the mark stack,
+     * its overflow flag, the partly scanned object and its next field, and
+     * the rescan cursor, owned by the collector from here on.  Empty (top ==
+     * cap: the stack grows downward), the flag down and the positions 0, as
+     * mark_state says at every phase but Marking.  start_cycle darkens the
+     * roots onto it (raising the flag if they do not fit: the mark slices
+     * then rescan the heap), the write barrier pushes onto it while marking,
+     * and the mark slices drain it.  calloc'd, so its pages cost nothing
+     * until used. */
     size_t mark_cap = major_bytes / 64;
     if (mark_cap < 4096) mark_cap = 4096;
+    const char *cap_env = getenv("VERGC_MARK_STACK");   /* testing: a small stack */
+    if (cap_env) {
+        size_t c = (size_t)atoll(cap_env);
+        if (c > 0) mark_cap = c;
+    }
     uint64_t *mark_storage = (uint64_t *)calloc(mark_cap, sizeof(uint64_t));
     size_t *mark_top = (size_t *)malloc(sizeof(size_t));
     bool *mark_overflow = (bool *)calloc(1, sizeof(bool));
-    if (!mark_storage || !mark_top || !mark_overflow)
+    uint64_t *mark_pos = (uint64_t *)calloc(3, sizeof(uint64_t));
+    if (!mark_storage || !mark_top || !mark_overflow || !mark_pos)
         caml_fatal_error("verified gen GC: cannot allocate the mark stack");
     *mark_top = mark_cap;
     gc_gen_heap.mark_stack.storage = mark_storage;
     gc_gen_heap.mark_stack.top = mark_top;
     gc_gen_heap.mark_stack.cap = mark_cap;
     gc_gen_heap.mark_overflow = mark_overflow;
+    gc_gen_heap.mark_cur = &mark_pos[0];
+    gc_gen_heap.mark_field = &mark_pos[1];
+    gc_gen_heap.mark_rescan = &mark_pos[2];
+    mark_pos[1] = 1;
 
     /* --- Minor heap --- */
     /* Override the verified constant (2048B) with a production-sized minor heap.
@@ -397,8 +413,10 @@ static inline value minor_offset_to_abs(uint64_t off) {
 /* --- The sweep phase (VERGC_SWEEP=incremental) --- */
 
 /* Is the major collector mid-sweep?  phase_ref is the collector's; we only
- * read it.  ps_kind: 0 Idle, 1 Sweeping, 2 Marking (GC.Impl.Allocator.phase_of;
- * nothing enters Marking yet). */
+ * read it.  ps_kind: 0 Idle, 1 Sweeping, 2 Marking (GC.Impl.Allocator.phase_of).
+ * Marking is entered by start_cycle and, for now, always finished within
+ * the same do_full_gc (mark_now), so between collector calls it is never
+ * Marking. */
 static inline int vergc_sweeping(void) {
     return gc_gen_heap.phase_ref->ps_kind == 1;
 }
@@ -910,26 +928,13 @@ static void do_full_gc(void) {
     memset(gc_fwd_arr, 0, (size_t)queue_size_sz * sizeof(uint64_t));
     PROF_END(fwd_arr_zero);
 
-    /* The collector prepares the major mark stack itself: minor_collect
-     * rewrites this roots array in place, then start_cycle darkens those
-     * post-minor roots and pushes them onto an initially empty gray stack
-     * before marking.  Keep roots separate from the stack storage so the C
-     * bridge matches the verified separation-logic model. */
-    size_t gray_cap = gc_gen_heap.major.size / 64;
-    if (gray_cap < 4096) gray_cap = 4096;
-    if (gray_cap < root_count) gray_cap = root_count;
-    if (gray_cap == 0) gray_cap = 1;
-
-    uint64_t *gray_storage = (uint64_t *)calloc(gray_cap, sizeof(uint64_t));
-    if (!gray_storage)
-        caml_fatal_error("verified gen GC: cannot allocate gray stack");
-
+    /* minor_collect rewrites this roots array in place, then start_cycle
+     * darkens those post-minor roots onto the collector's persistent mark
+     * stack (raising its overflow flag if they do not fit). */
     uint64_t *roots_for_gc =
         (uint64_t *)calloc(root_count == 0 ? 1 : root_count, sizeof(uint64_t));
-    if (!roots_for_gc) {
-        free(gray_storage);
+    if (!roots_for_gc)
         caml_fatal_error("verified gen GC: cannot allocate root buffer");
-    }
     if (root_count > 0)
         memcpy(roots_for_gc, root_values, root_count * sizeof(uint64_t));
 
@@ -949,13 +954,6 @@ static void do_full_gc(void) {
         memcpy(minor_snapshot, minor_base, (size_t)minor_heap_size_u64);
     }
 
-    size_t gray_top = gray_cap;
-
-    gray_stack_rec gc_stack;
-    gc_stack.storage = gray_storage;
-    gc_stack.top = &gray_top;
-    gc_stack.cap = gray_cap;
-
     {
         struct caml_ref_table *tbl = Caml_state->_ref_table;
         size_t n_slots = (size_t)(tbl->ptr - tbl->base);
@@ -971,18 +969,19 @@ static void do_full_gc(void) {
                                n_slots);
             if (ok) {
                 count_promoted_words(promoted_words(NULL));
-                start_cycle(gc_gen_heap, roots_for_gc, (size_t)root_count,
-                            gc_stack);
+                start_cycle(gc_gen_heap, roots_for_gc, (size_t)root_count);
+                /* Marking, at once for now (M5 runs mark slices between
+                 * program steps): one unbounded slice finishes it. */
+                while (gc_gen_heap.phase_ref->ps_kind == 2)
+                    major_slice(gc_gen_heap, UINT64_MAX);
             }
         } else {
             ok = full_gc(gc_gen_heap, roots_for_gc, (size_t)root_count,
-                         gc_fwd_arr, gc_queue, (uint64_t *)tbl->base, n_slots,
-                         gc_stack);
+                         gc_fwd_arr, gc_queue, (uint64_t *)tbl->base, n_slots);
             if (ok) count_promoted_words(promoted_words(minor_snapshot));
         }
         if (!ok) {
             free(roots_for_gc);
-            free(gray_storage);
             in_full_gc = 0;
             fatal_promotion_failed();
         }
@@ -1003,7 +1002,6 @@ static void do_full_gc(void) {
     sweep_direct_words = 0;
 
     free(roots_for_gc);
-    free(gray_storage);
     PROF_END(major_gc);
 
     #ifdef NATIVE_CODE

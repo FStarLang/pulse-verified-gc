@@ -30,6 +30,9 @@ module Alloc = GC.Impl.Allocator
 module MBI = GC.Impl.MarkBounded
 module GBase = GC.Gen.Base
 module PromoteImpl = GC.Gen.Impl.Promote
+module MSl = GC.Gen.MarkSlice
+module MSI = GC.Gen.Impl.MarkSlice
+module MPA = GC.Spec.MarkPhase.Alloc
 
 /// ---------------------------------------------------------------------------
 /// Helpers
@@ -40,25 +43,6 @@ inline_for_extraction
 let young (v: U64.t) : (r: bool{r == GB.is_young v}) =
   let off = GBase.to_minor_offset_u64 v in
   U64.gte off 8UL && U64.lt off GBase.minor_heap_size_u64 && U64.eq (U64.rem off 8UL) 0UL
-
-/// The bounded darkening of the stop-the-world mark
-/// (`MBI.check_and_darken_bounded`) is `MM.darken`, with the darkened block
-/// pushed when the stack has room.
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
-let darken_spec_eq (g: heap) (st: Seq.seq obj_addr) (w: U64.t) (cap: nat)
-  : Lemma (requires SpecFields.is_pointer w ==>
-                    Seq.mem (SpecObj.resolve_object (w <: obj_addr) g) (SpecFields.objects zero_addr g))
-          (ensures (let r = MBI.check_and_darken_bounded_spec g st w cap in
-                    fst r == MM.darken g w /\
-                    snd r == (if MS.darken_target g w && Seq.length st < cap
-                              then Seq.cons (SpecObj.resolve_object (w <: obj_addr) g) st else st)))
-  = if SpecFields.is_pointer w then begin
-      let t = SpecObj.resolve_object (w <: obj_addr) g in
-      let h : hp_addr = U64.sub t mword in
-      SpecHeap.f_address_spec h;
-      U64.v_inj (SpecHeap.f_address h) t
-    end
-#pop-options
 
 /// The barrier's darkening: raise the overflow flag if the stack is full,
 /// then the bounded darkening (grey a white target, push it if there is
@@ -131,9 +115,9 @@ fn modify_at (ghr: R.ref gen_heap_t) (gh: gen_heap_t) (slot: hp_addr) (v: U64.t)
   GB.modify_heap_facts 'ph minor 's 'fp x slot v;
   unfold is_gen_heap;
   unfold mark_state;
-  with st ov. _;
+  with st ov c f r. _;
   stack_facts gh.mark_stack;
-  GB.modify_mark_cache 'ph minor 's 'fp x slot v st ov (stack_capacity gh.mark_stack);
+  GB.modify_mark_cache 'ph minor 's 'fp x slot v st ov (MSI.pos c f r) (stack_capacity gh.mark_stack);
   let old = read_word gh.major slot;
   unfold gen_phase;
   unfold Alloc.is_phase;
@@ -143,7 +127,7 @@ fn modify_at (ghr: R.ref gen_heap_t) (gh: gen_heap_t) (slot: hp_addr) (v: U64.t)
     // Marking: the deletion barrier darkens the old value first.
     GI.phase_free_marking ();
     SpecFields.free_def_ok_elim SpecFields.free_stw;
-    darken_spec_eq 's st old (stack_capacity gh.mark_stack);
+    MSl.darken_spec_eq 's st old (stack_capacity gh.mark_stack);
     darken_via ghr old;
     with s1 st1 ov1. assert (is_heap gh.major s1 ** is_gray_stack gh.mark_stack st1 **
                              R.pts_to gh.mark_overflow ov1);
@@ -151,6 +135,13 @@ fn modify_at (ghr: R.ref gen_heap_t) (gh: gen_heap_t) (slot: hp_addr) (v: U64.t)
     rewrite (is_heap gh.major (SpecHeap.write_word s1 slot v))
          as (is_heap gh.major (GB.modify_heap 'ph 's slot v));
     phase_marking gh.phase_ref (GB.modify_heap 'ph 's slot v);
+    // A write into a field the mark slice has scanned restarts the scan of
+    // the partly scanned object (`MS.reset_cur`).
+    let cv = R.op_Bang gh.mark_cur;
+    let fv = R.op_Bang gh.mark_field;
+    if (cv <> 0UL && U64.gte slot cv && U64.lt (U64.add (U64.div (U64.sub slot cv) 8UL) 1UL) fv) {
+      R.op_Colon_Equals gh.mark_field 1UL;
+    };
     fold (mark_state gh (GB.modify_heap 'ph 's slot v) 'ph);
   } else {
     // Idle or sweeping: just the write, which keeps the walk and every
@@ -178,7 +169,9 @@ inline_for_extraction
 fn initialize_at (gh: gen_heap_t) (slot: hp_addr) (v: U64.t) (#x: erased obj_addr)
   requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph ** mark_state gh 's 'ph **
            pure (Seq.mem (reveal x) (SpecFields.objects zero_addr 's) /\ ~(SpecObj.is_blue x 's) /\
-                 SPM.in_body 's x slot)
+                 SPM.in_body 's x slot /\
+                 (Ph.Marking? 'ph ==> SpecObj.is_black x 's /\
+                                     SpecFields.well_formed_heap_with (MPA.free_or_new x) 's))
   returns r: bool
   ensures is_gen_heap gh 'd 'b (SpecHeap.write_word 's slot v) 'fp **
           gen_phase gh (SpecHeap.write_word 's slot v) 'ph **
@@ -193,8 +186,8 @@ fn initialize_at (gh: gen_heap_t) (slot: hp_addr) (v: U64.t) (#x: erased obj_add
   PromoteImpl.phase_heads gh.phase_ref (SpecHeap.write_word 's slot v);
   fold (gen_phase gh (SpecHeap.write_word 's slot v) 'ph);
   unfold mark_state;
-  with st ov. _;
-  MS.mark_cache_write 's 'ph st ov x slot v;
+  with st ov c f r. _;
+  MS.mark_cache_write 's 'ph st ov (MSI.pos c f r) x slot v;
   fold (mark_state gh (SpecHeap.write_word 's slot v) 'ph);
   young v
 }
@@ -229,7 +222,9 @@ fn initialize_field (ghr: R.ref gen_heap_t) (slot: hp_addr) (v: U64.t)
   requires R.pts_to ghr #p gh **
            is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph ** mark_state gh 's 'ph **
            pure (Seq.mem (reveal x) (SpecFields.objects zero_addr 's) /\ ~(SpecObj.is_blue x 's) /\
-                 SPM.in_body 's x slot)
+                 SPM.in_body 's x slot /\
+                 (Ph.Marking? 'ph ==> SpecObj.is_black x 's /\
+                                     SpecFields.well_formed_heap_with (MPA.free_or_new x) 's))
   returns r: bool
   ensures R.pts_to ghr #p gh **
           is_gen_heap gh 'd 'b (SpecHeap.write_word 's slot v) 'fp **

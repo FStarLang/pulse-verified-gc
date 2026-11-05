@@ -203,7 +203,7 @@ CUSTARD_ENTRY_MODS = \
   GC.Impl GC.Impl.Allocator GC.Impl.MarkBounded
 
 ALL_KRML_MODS = \
-  GC.Gen.Impl GC.Gen.Impl.Barrier GC.Gen.Impl.MinorHeap GC.Gen.Impl.Cheney \
+  GC.Gen.Impl GC.Gen.Impl.Barrier GC.Gen.Impl.MarkSlice GC.Gen.Impl.MinorHeap GC.Gen.Impl.Cheney \
   GC.Gen.Impl.Promote GC.Gen.Impl.UpdatePtrs \
   GC.Gen.Base \
   GC.Impl GC.Impl.Fields \

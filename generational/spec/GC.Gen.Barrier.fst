@@ -321,22 +321,24 @@ let modify_heap_facts ph minor g fp x a v =
 #pop-options
 
 #push-options "--z3rlimit 30"
-let modify_mark_cache ph minor g fp x a v st ov cap =
+let modify_mark_cache ph minor g fp x a v st ov p cap =
   modify_heap_facts ph minor g fp x a v;
   let old = read_word g a in
   if Ph.Marking? ph then begin
     GI.phase_free_marking ();
     free_def_ok_elim free_stw;
     shape_facts ph minor g fp;
+    GI.phase_shape_marking minor g fp;
     let g1 = MM.darken g old in
-    MS.mark_cache_darken g st ov old cap;
+    MM.darken_inv g (GMM.nursery_held minor) old;
+    MS.mark_cache_darken g st ov p old cap;
     darken_facts g fp old;
     let st' = if MS.darken_target g old && Seq.length st < cap
               then Seq.cons (resolve_object (old <: obj_addr) g) st else st in
-    MS.mark_cache_write g1 Ph.Marking st' (ov || Seq.length st = cap) x a v
+    MS.mark_cache_barrier_write g1 st' (ov || Seq.length st = cap) p x a v
   end else begin
     shape_facts ph minor g fp;
-    MS.mark_cache_off g (modify_heap ph g a v) ph ph st ov
+    MS.mark_cache_off g (modify_heap ph g a v) ph ph st ov p
   end
 #pop-options
 

@@ -2153,3 +2153,82 @@ fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
   mark_loop_bounded_flagged heap st roots true
 }
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// For the incremental mark slice
+/// ---------------------------------------------------------------------------
+
+fn darken_if_white_bounded_drops (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (cap: Ghost.erased nat)
+  requires is_heap heap 's ** is_gray_stack st 'st **
+           pure (U64.v h_addr + U64.v mword < heap_size /\
+                 Seq.length 'st <= cap /\
+                 stack_capacity st == cap)
+  returns dropped: bool
+  ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
+    pure ((s2, st2) == darken_if_white_bounded_spec 's 'st h_addr cap /\
+          dropped == (U64.v h_addr + U64.v mword < heap_size &&
+                      SpecObject.is_white (SpecHeap.f_address h_addr) 's &&
+                      Seq.length 'st >= cap))
+{
+  hp_addr_plus_8 h_addr;
+  is_heap_length heap;
+  spec_read_word_eq 's h_addr;
+  let hdr = read_word heap h_addr;
+  let c = getColor hdr;
+  getColor_eq hdr;
+
+  f_address_valid h_addr;
+  let obj : obj_addr = f_address h_addr;
+  SpecObject.color_of_object_spec obj 's;
+  SpecHeap.hd_address_spec obj;
+  U64.v_inj h_addr (SpecHeap.hd_address obj);
+  SpecObject.is_white_iff obj 's;
+  f_address_eq h_addr;
+
+  if (c = white) {
+    darken_write_gray heap h_addr obj;
+    let full = is_full st;
+    if (not full) {
+      push st obj;
+      false
+    } else {
+      true
+    }
+  } else {
+    false
+  }
+}
+
+fn check_and_darken_bounded_drops (heap: heap_t) (st: gray_stack) (v: U64.t) (cap: Ghost.erased nat)
+  requires is_heap heap 's ** is_gray_stack st 'st **
+           pure (Seq.length 'st <= cap /\ stack_capacity st == cap)
+  returns dropped: bool
+  ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
+    pure ((s2, st2) == check_and_darken_bounded_spec 's 'st v cap /\
+          dropped == (check_and_darken_greys 's v && Seq.length 'st >= cap))
+{
+  let is_ptr = is_pointer v;
+  if is_ptr {
+    let target_hdr_raw = U64.sub v mword;
+    let target_hdr : hp_addr = target_hdr_raw;
+    is_heap_length heap;
+    spec_read_word_eq 's target_hdr;
+    let hdr = read_word heap target_hdr;
+    let vo : obj_addr = v;
+    SpecHeap.hd_address_spec vo;
+    resolve_object_rt 's vo hdr;
+    let t = getTag hdr;
+    let wz = getWosize hdr;
+    infix_offset_fits wz;
+    let off = U64.mul wz mword;
+    if (t = infix_tag && U64.gte v (U64.add off mword)) {
+      infix_parent_hdr_ok 's vo hdr off;
+      let parent_hdr : hp_addr = U64.sub (U64.sub v off) mword;
+      darken_if_white_bounded_drops heap st parent_hdr cap
+    } else {
+      darken_if_white_bounded_drops heap st target_hdr cap
+    }
+  } else {
+    false
+  }
+}

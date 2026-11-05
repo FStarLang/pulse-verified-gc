@@ -32,11 +32,8 @@ let minor_collect_full_pre
 
 let gen_gc_pre
   (minor: minor_state) (major: heap) (fp: U64.t)
-  (roots farr slots: seq U64.t) (nslots: nat)
-  (st: seq obj_addr) (cap: nat) : prop =
-  minor_collect_full_pre minor major fp roots farr slots nslots /\
-  Seq.length st <= cap /\
-  GenImpl.gen_gc_stack_budget roots st cap
+  (roots farr slots: seq U64.t) (nslots: nat) : prop =
+  minor_collect_full_pre minor major fp roots farr slots nslots
 
 let zero_forwarding_array_elim (farr: seq U64.t)
   = ()
@@ -57,11 +54,9 @@ let minor_collect_full_pre_intro
 let gen_gc_pre_elim
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots farr slots: seq U64.t) (nslots: nat)
-  (st: seq obj_addr) (cap: nat)
   = ()
 
 let gen_gc_pre_intro
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots farr slots: seq U64.t) (nslots: nat)
-  (st: seq obj_addr) (cap: nat)
   = ()

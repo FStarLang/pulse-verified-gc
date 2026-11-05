@@ -15,7 +15,6 @@ open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
 open GC.Gen.Impl
 open GC.Impl.Heap
-open GC.Impl.Stack
 
 module CheneyImpl = GC.Gen.Impl.Cheney
 module CheneySpec = GC.Gen.Cheney
@@ -54,13 +53,11 @@ fn call_gen_gc_minor_infix
   (fwd_arr: array U64.t)
   (queue: larray U64.t FA.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
-  (st: gray_stack)
   requires gen_phase gh 's GC.Spec.Phase.Idle ** mark_state gh 's GC.Spec.Phase.Idle ** is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to slots 'sl **
-           is_gray_stack st 'st **
            pure (SZ.v nroots == Seq.length 'rs /\
                  ({ data = 'd; bump = 'b } <: minor_state) == MIPre.spot_mi_minor /\
                  's == Major.spot_major_heap r /\
@@ -68,17 +65,14 @@ fn call_gen_gc_minor_infix
                  'rs == MIPre.spot_mi_roots r /\
                  'farr == MIPre.spot_mi_fwd_array /\
                  'sl == MIPre.spot_mi_slots r /\
-                 SZ.v nslots == 1 /\
-                 'st == Seq.empty /\
-                 stack_capacity st >= 2)
+                 SZ.v nslots == 1)
   returns res: (U64.t & bool)
-  ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
+  ensures exists* d2 b2 s2 rs2 farr2 qv2.
     gen_phase gh s2 GC.Spec.Phase.Idle ** mark_state gh s2 GC.Spec.Phase.Idle ** is_gen_heap gh d2 b2 s2 (fst res) **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
-    is_gray_stack st st2 **
     pure (
       ({ data = d2; bump = b2 } <: minor_state) == minor_reset MIPre.spot_mi_minor /\
       GenInv.collection_heap_shape
@@ -88,12 +82,12 @@ fn call_gen_gc_minor_infix
                 MIPre.spot_mi_minor (Major.spot_major_heap r)
                 (Major.spot_major_fp r) (MIPre.spot_mi_roots r)).mc_roots)
 {
-  MIPre.spot_mi_gen_gc_pre r (stack_capacity st);
+  MIPre.spot_mi_gen_gc_pre r;
   GC.SPOT.Preconditions.gen_gc_pre_elim
-    MIPre.spot_mi_minor 's 'fp 'rs 'farr 'sl (SZ.v nslots) 'st (stack_capacity st);
+    MIPre.spot_mi_minor 's 'fp 'rs 'farr 'sl (SZ.v nslots);
   GC.SPOT.Preconditions.minor_collect_full_pre_elim
     MIPre.spot_mi_minor 's 'fp 'rs 'farr 'sl (SZ.v nslots);
-  let res = GC.SPOT.CallFull.full_gc_from_shape gh roots nroots fwd_arr queue slots nslots st;
+  let res = GC.SPOT.CallFull.full_gc_from_shape gh roots nroots fwd_arr queue slots nslots;
   with d2 b2 s2. assert (is_gen_heap gh d2 b2 s2 (fst res));
   gen_gc_heap_shape_post_intro d2 b2 s2 (fst res);
   res

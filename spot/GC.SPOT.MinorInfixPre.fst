@@ -349,13 +349,11 @@ let spot_mi_minor_collect_full_pre r =
     spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fp r)
     (spot_mi_roots r) spot_mi_fwd_array (spot_mi_slots r) 1
 
-let spot_mi_gen_gc_pre r cap =
+let spot_mi_gen_gc_pre r =
   spot_mi_minor_collect_full_pre r;
-  assert_norm (Seq.length (Seq.empty #obj_addr) == 0);
   Preconditions.gen_gc_pre_intro
     spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fp r)
     (spot_mi_roots r) spot_mi_fwd_array (spot_mi_slots r) 1
-    Seq.empty cap
 
 /// ---------------------------------------------------------------------------
 /// Non-vacuity

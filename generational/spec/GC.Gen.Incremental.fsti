@@ -52,6 +52,8 @@ module SPM = GC.Gen.SweepPhase.Minor
 module MP = GC.Spec.MarkPhase
 module GMM = GC.Gen.MarkPhase.Minor
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
+module S = GC.Spec.MarkPhase.Slice
+module Mark = GC.Spec.Mark
 
 /// What counts as free for a minor collection at a phase: blue (`free_stw`)
 /// when idle or marking; mid-sweep, blue or pending free
@@ -105,16 +107,64 @@ val sweep_end_shape (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
   : Lemma (requires phase_shape minor g fp (Ph.Sweeping c) /\ sweep_done c)
           (ensures GenInv.collection_heap_shape minor g fp)
 
-/// **A major slice**, at the collector's phase: nothing when idle; mid-sweep,
-/// a slice of the sweep (`SL.phase_slice`).  While marking, nothing for now:
-/// the mark slice is to come (incremental-mark-plan.md, M4), and nothing
-/// enters `Marking` yet.
+/// **A major slice** idle or mid-sweep: nothing when idle; mid-sweep, a
+/// slice of the sweep (`SL.phase_slice`).  While marking the slice depends
+/// on the implementation's mark cache, so it is stated as a relation
+/// (`mark_slice_post`, `major_slice_post`); `major_slice_spec` leaves the
+/// heap alone there.
 let major_slice_spec (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
   : GTot (heap & U64.t & Ph.gc_phase) =
   match ph with
   | Ph.Idle -> (g, fp, Ph.Idle)
   | Ph.Marking -> (g, fp, Ph.Marking)
   | Ph.Sweeping _ -> SL.phase_slice g fp ph budget
+
+/// The budget of a slice that finishes its phase: more words than there are
+/// (`pow2 64 - 1`, `UINT64_MAX`, is what the bridge and `full_gc` pass).
+let unbounded (budget: nat) : bool = budget >= pow2 64 - 1
+
+/// **A mark slice**: some mark moves (`S.mark_steps`: fields of grey objects
+/// scanned, grey objects whose fields are dark blackened), the free list
+/// untouched, and either still marking or, with nothing grey left, the
+/// start of the sweep.  An unbounded slice finishes marking.
+let mark_slice_post (g: heap) (fp: U64.t) (budget: nat) (g': heap) (fp': U64.t) (ph': Ph.gc_phase)
+  : prop =
+  fp' == fp /\ S.mark_steps g g' /\
+  (ph' == Ph.Marking \/ (ph' == Ph.Sweeping zero_addr /\ Mark.noGreyObjects g')) /\
+  (unbounded budget ==> ~(Ph.Marking? ph'))
+
+/// **A major slice at any phase.**
+let major_slice_post (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
+    (g': heap) (fp': U64.t) (ph': Ph.gc_phase) : prop =
+  if Ph.Marking? ph then mark_slice_post g fp budget g' fp' ph'
+  else (g', fp', ph') == major_slice_spec g fp ph budget
+
+/// **Marking keeps the collector's state**: mark moves keep the marking
+/// invariant (for any `held`) and the shape (only colours change, among
+/// white, grey and black) ...
+val mark_steps_shape (minor: minor_state) (g g': heap) (fp: U64.t)
+  : Lemma (requires phase_shape minor g fp Ph.Marking /\ S.mark_steps g g')
+          (ensures phase_shape minor g' fp Ph.Marking)
+
+/// ... and what the program's roots hold stays one the marker will reach
+/// or not white.
+val mark_steps_roots (minor: minor_state) (g g': heap) (fp: U64.t) (rs: seq U64.t)
+  : Lemma (requires phase_shape minor g fp Ph.Marking /\ MP.held_reached g (GMM.roots_held g rs) /\
+                    S.mark_steps g g')
+          (ensures MP.held_reached g' (GMM.roots_held g' rs))
+
+/// **The hand-over to the sweep**: with nothing grey, marking is done
+/// (`MP.marking_done_sweep_start`) and the sweep starts at the first block.
+/// What the nursery holds is held, so not white, so not pending free.
+val marking_done_shape (minor: minor_state) (g: heap) (fp: U64.t)
+  : Lemma (requires phase_shape minor g fp Ph.Marking /\ Mark.noGreyObjects g)
+          (ensures phase_shape minor g fp (Ph.Sweeping zero_addr))
+
+/// A mark slice leaves the collector's state at the phase it leaves.
+val mark_slice_shape (minor: minor_state) (g: heap) (fp: U64.t) (budget: nat)
+    (g': heap) (fp': U64.t) (ph': Ph.gc_phase)
+  : Lemma (requires phase_shape minor g fp Ph.Marking /\ mark_slice_post g fp budget g' fp' ph')
+          (ensures phase_shape minor g' fp' ph')
 
 /// **A slice keeps the collector's state**, at whatever phase it leaves.
 val phase_slice_shape (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)

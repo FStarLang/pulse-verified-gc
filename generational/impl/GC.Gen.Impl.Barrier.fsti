@@ -41,6 +41,7 @@ module SpecObj = GC.Spec.Object
 module SpecFields = GC.Spec.Fields
 module SPM = GC.Spec.SweepPhase.Mutator
 module GB = GC.Gen.Barrier
+module MPA = GC.Spec.MarkPhase.Alloc
 
 /// **`caml_modify` of a major slot**, at the collector's phase.
 ///
@@ -66,7 +67,9 @@ fn modify_field (ghr: R.ref gen_heap_t) (slot: hp_addr) (v: U64.t)
 /// block `x` of the heap, not free (a block just allocated: while sweeping
 /// or marking it is *fresh*, `SPM.fresh_ok` /
 /// `GC.Spec.MarkPhase.Alloc.marking_fresh`, and a write into it keeps it so:
-/// `SPM.fresh_write`, `GC.Spec.MarkPhase.Alloc.marking_fresh_write`).  The
+/// `SPM.fresh_write`, `GC.Spec.MarkPhase.Alloc.marking_fresh_write`; while
+/// marking, what this asks is the part of `marking_fresh` the mark cache
+/// needs: black, and nothing that is not free points into it).  The
 /// heap is the write, the phase record and the mark state are kept, and the
 /// result says whether the slot must be remembered
 /// (`GB.initialize_records`).
@@ -75,7 +78,9 @@ fn initialize_field (ghr: R.ref gen_heap_t) (slot: hp_addr) (v: U64.t)
   requires R.pts_to ghr #p gh **
            is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph ** mark_state gh 's 'ph **
            pure (Seq.mem (reveal x) (SpecFields.objects zero_addr 's) /\ ~(SpecObj.is_blue x 's) /\
-                 SPM.in_body 's x slot)
+                 SPM.in_body 's x slot /\
+                 (Ph.Marking? 'ph ==> SpecObj.is_black x 's /\
+                                     SpecFields.well_formed_heap_with (MPA.free_or_new x) 's))
   returns r: bool
   ensures R.pts_to ghr #p gh **
           is_gen_heap gh 'd 'b (SpecHeap.write_word 's slot v) 'fp **

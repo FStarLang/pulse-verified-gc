@@ -101,3 +101,23 @@ val minor_keeps_greys (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64
           (ensures (let g' = (collect_marking minor g fp roots).Promote.mc_major in
                     (Seq.mem y (objects zero_addr g') /\ is_gray y g') <==>
                     (Seq.mem y (objects zero_addr g) /\ is_gray y g)))
+
+/// **The collection keeps every block that was not free**, on the walk and
+/// with its header (so its colour).
+val minor_keeps_block (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t) (y: obj_addr)
+  : Lemma (requires GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\ in_use free_stw g y)
+          (ensures (let g' = (collect_marking minor g fp roots).Promote.mc_major in
+                    Seq.mem y (objects zero_addr g') /\
+                    read_word g' (hd_address y) == read_word g (hd_address y)))
+
+/// **... and its dark fields** (`GC.Spec.MarkPhase.Slice.field_dark`): a
+/// major pointer field is unchanged and its target keeps its header; a field
+/// the pointer update rewrites held a nursery pointer and now points at a
+/// promoted copy, which is black.  The mark slice's partly scanned object
+/// (`GC.Gen.MarkState.cur_ok`) relies on it.
+val minor_keeps_field_dark (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
+  (y: obj_addr) (k: U64.t{U64.v k >= 1})
+  : Lemma (requires GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\ in_use free_stw g y /\
+                    ~(is_no_scan y g) /\ U64.v k <= U64.v (wosize_of_object y g) /\
+                    GC.Spec.MarkPhase.Slice.field_dark g y k)
+          (ensures GC.Spec.MarkPhase.Slice.field_dark (collect_marking minor g fp roots).Promote.mc_major y k)

@@ -36,18 +36,17 @@ val spot_infix_ok
 /// pointer, is still an enumerated object of the post-collection heap.
 val spot_infix_q_survives
   : r:unit{InfixMajor.spot_infix_room} ->
-    roots_out:seq U64.t -> final_major:heap -> st:seq obj_addr -> cap:nat ->
+    roots_out:seq U64.t -> final_major:heap ->
     Lemma
       (requires
-        GenImpl.gen_gc_stack_budget (InfixPre.spot_infix_roots r) st cap /\
         GenImpl.gen_gc_roots_post
           InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
           (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r)
-          roots_out true st cap /\
+          roots_out true /\
         GenImpl.gen_gc_reachable_subgraph_isomorphism_post
           InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
           (InfixMajor.spot_infix_fp r) (InfixPre.spot_infix_roots r)
-          true final_major roots_out st cap)
+          true final_major roots_out)
       (ensures
         Seq.mem (InfixMajor.spot_q r <: U64.t) roots_out /\
         Seq.mem (InfixMajor.spot_q r) (GC.Spec.Fields.objects zero_addr final_major))

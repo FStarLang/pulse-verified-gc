@@ -113,13 +113,12 @@ val spot_mi_minor_collect_full_pre : r:unit{Major.spot_major_room} ->
                    spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fp r)
                    (spot_mi_roots r) spot_mi_fwd_array (spot_mi_slots r) 1)
 
-/// `full_gc`'s full precondition, for any empty mark stack with room for the
-/// two roots.
-val spot_mi_gen_gc_pre : r:unit{Major.spot_major_room} -> cap:nat{cap >= 2} ->
+/// `full_gc`'s full precondition (the minor collection's: the collector
+/// darkens the roots onto its own persistent mark stack).
+val spot_mi_gen_gc_pre : r:unit{Major.spot_major_room} ->
   Lemma (ensures Preconditions.gen_gc_pre
                    spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fp r)
-                   (spot_mi_roots r) spot_mi_fwd_array (spot_mi_slots r) 1
-                   Seq.empty cap)
+                   (spot_mi_roots r) spot_mi_fwd_array (spot_mi_slots r) 1)
 
 /// ---------------------------------------------------------------------------
 /// Non-vacuity

@@ -99,19 +99,21 @@ val modify_heap_facts (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.
                    SPI.storable (GI.phase_free ph) g (read_word g a) /\
                    (~(Ph.Marking? ph) ==> SPI.same_heads g (modify_heap ph g a v)))
 
-/// **The barrier keeps the mark stack a cache of the grey objects**
-/// (`GC.Gen.MarkState`): while marking, the block it darkens is pushed, or
-/// the overflow flag raised when the stack is full; at any other phase
-/// nothing changes.
+/// **The barrier keeps the mark cache** (`GC.Gen.MarkState`): while
+/// marking, the block it darkens is pushed, or the overflow flag raised when
+/// the stack is full, and a write into a field of the partly scanned object
+/// that the mark slice has scanned restarts its scan (`MS.reset_cur`); at
+/// any other phase nothing changes.
 val modify_mark_cache (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.t)
-  (x: obj_addr) (a: hp_addr) (v: U64.t) (st: seq obj_addr) (ov: bool) (cap: nat)
+  (x: obj_addr) (a: hp_addr) (v: U64.t) (st: seq obj_addr) (ov: bool) (p: MS.mark_pos) (cap: nat)
   : Lemma (requires GI.phase_shape minor g fp ph /\ modify_ok ph minor g x a v /\
-                    MS.mark_cache_ok g ph st ov /\ Seq.length st <= cap)
+                    MS.mark_cache_ok g ph st ov p /\ Seq.length st <= cap)
           (ensures (let old = read_word g a in
                     let push = Ph.Marking? ph && MS.darken_target g old && Seq.length st < cap in
                     let st' = if push then Seq.cons (resolve_object (old <: obj_addr) g) st else st in
                     let ov' = ov || (Ph.Marking? ph && Seq.length st = cap) in
-                    MS.mark_cache_ok (modify_heap ph g a v) ph st' ov'))
+                    let p' = if Ph.Marking? ph then MS.reset_cur p a else p in
+                    MS.mark_cache_ok (modify_heap ph g a v) ph st' ov' p'))
 
 /// ---------------------------------------------------------------------------
 /// The remembered set

@@ -85,11 +85,10 @@ let major_minor_field_rewritten
 
 let final_major_survives_from_gen_gc_post
   (minor: minor_state) (major: heap) (fp: U64.t)
-  (roots roots_out: seq U64.t) (ok: bool) (final_major: heap)
-  (st: seq obj_addr) (cap: nat) (x: obj_addr)
+  (roots roots_out: seq U64.t) (ok: bool) (final_major: heap) (x: obj_addr)
   =
   assert (SpecCorrectness.major_gc_live_subgraph_isomorphism
-    (GenImpl.gen_gc_prepared_major minor major fp roots st cap)
+    (GenImpl.gen_gc_prepared_major minor major fp roots)
     final_major
-    (GenImpl.gen_gc_prepared_roots minor major fp roots st cap));
+    (GenImpl.gen_gc_prepared_roots minor major fp roots));
   assert (Seq.mem x (SpecFields.objects zero_addr final_major))

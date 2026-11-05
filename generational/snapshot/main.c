@@ -1,8 +1,10 @@
 /* Minimal test harness for the verified generational GC.
  *
  * Tests: init → minor allocs → minor_collect → full_gc → reuse →
- *        an incremental collection (minor_collect + start_cycle, major
- *        slices, a major allocation and a minor collection mid-sweep).
+ *        an incremental collection (minor_collect + start_cycle, mark
+ *        slices, sweep slices, a major allocation and a minor collection
+ *        mid-sweep), and one with a 1-entry mark stack (roots overflow it,
+ *        the mark slices rescan).
  *
  * Small objects go to the nursery (`minor_alloc`), major ones to the free
  * list at the collector's phase (`allocate`), as the OCaml bridge does.
@@ -71,9 +73,23 @@ int main(void)
     if (!phase_ref) { perror("calloc phase_ref"); goto cleanup; }
     phase_ref->ps_kind = 0;  /* Idle */
 
+    /* ---- The persistent mark state: empty stack, flag down, positions 0 ---- */
+    size_t mark_cap = major_bytes / 64;
+    if (mark_cap < 256) mark_cap = 256;
+    uint64_t *mark_storage = calloc(mark_cap, sizeof(uint64_t));
+    size_t *mark_top = malloc(sizeof(size_t));
+    bool *mark_overflow = calloc(1, sizeof(bool));
+    uint64_t *mark_pos = calloc(3, sizeof(uint64_t));
+    if (!mark_storage || !mark_top || !mark_overflow || !mark_pos) { perror("calloc mark"); goto cleanup; }
+    *mark_top = mark_cap;
+    mark_pos[1] = 1;
+    gray_stack_rec mark_stack = { .storage = mark_storage, .top = mark_top, .cap = mark_cap };
+
     /* ---- Construct gen_heap ---- */
     gen_heap_t gh = { .minor = minor, .major = major_heap, .fp_ref = fp_ref,
-                      .phase_ref = phase_ref };
+                      .phase_ref = phase_ref, .mark_stack = mark_stack,
+                      .mark_overflow = mark_overflow, .mark_cur = &mark_pos[0],
+                      .mark_field = &mark_pos[1], .mark_rescan = &mark_pos[2] };
 
     /* ---- Forwarding array ---- */
     size_t fwd_entries = (size_t)minor_heap_size_sz / 8;  /* one entry per word */
@@ -138,25 +154,15 @@ int main(void)
     uint64_t obj4 = minor_alloc(minor, 2, 0);
     printf("minor_alloc(2, tag=0) = %llu\n", (unsigned long long)obj4);
 
-    /* Gray stack for major collection */
-    size_t gray_cap = major_bytes / 64;
-    if (gray_cap < 256) gray_cap = 256;
-    uint64_t *gray_storage = calloc(gray_cap, sizeof(uint64_t));
-    if (!gray_storage) { perror("calloc gray"); goto cleanup_queue; }
-    size_t gray_top = gray_cap;  /* stack grows downward; start at cap = empty */
-    gray_stack_rec st = { .storage = gray_storage, .top = &gray_top, .cap = gray_cap };
-
     /* No roots → everything becomes garbage after full GC */
     uint64_t empty_roots[1] = { 0 };
     memset(fwd_arr, 0, fwd_entries * sizeof(uint64_t));
-    if (!full_gc(gh, empty_roots, 0, fwd_arr, queue, empty_slots, 0, st)) {
+    if (!full_gc(gh, empty_roots, 0, fwd_arr, queue, empty_slots, 0)) {
         printf("FAIL: full_gc promotion phase failed\n");
-        free(gray_storage);
         goto cleanup_queue;
     }
     if (phase_ref->ps_kind != 0) {
         printf("FAIL: full_gc left the collector mid-cycle\n");
-        free(gray_storage);
         goto cleanup_queue;
     }
     printf("full_gc left fp = %llu\n", (unsigned long long)*fp_ref);
@@ -169,7 +175,6 @@ int main(void)
 
     if (obj5 == 0) {
         printf("FAIL: allocation after GC failed\n");
-        free(gray_storage);
         goto cleanup_queue;
     }
 
@@ -180,26 +185,30 @@ int main(void)
     uint64_t live = 0;
     for (int i = 0; i < 64; i++) {
         uint64_t o = allocate(major_heap, fp_ref, phase_ref, 4, 0);
-        if (o == 0) { printf("FAIL: allocate\n"); free(gray_storage); goto cleanup_queue; }
+        if (o == 0) { printf("FAIL: allocate\n"); goto cleanup_queue; }
         for (int j = 0; j < 4; j++) *(uint64_t *)(major_data + o + 8 * j) = 1;  /* integers */
         if (i == 17) live = o;
     }
     uint64_t live_root[1] = { live };
     memset(fwd_arr, 0, fwd_entries * sizeof(uint64_t));
-    gray_top = gray_cap;
     /* A cycle starts right after a minor collection, with the nursery empty. */
     if (!minor_collect(gh, live_root, 1, fwd_arr, queue, empty_slots, 0)) {
         printf("FAIL: minor_collect promotion failed\n");
-        free(gray_storage);
         goto cleanup_queue;
     }
-    start_cycle(gh, live_root, 1, st);
+    start_cycle(gh, live_root, 1);
+    if (phase_ref->ps_kind != 2) {
+        printf("FAIL: start_cycle did not leave the collector marking\n");
+        goto cleanup_queue;
+    }
+    int mslices = 0;
+    while (phase_ref->ps_kind == 2 && mslices < 1000) { major_slice(gh, 2); mslices++; }
     if (phase_ref->ps_kind != 1) {
-        printf("FAIL: start_cycle did not leave the collector sweeping\n");
-        free(gray_storage);
+        printf("FAIL: marking did not finish\n");
         goto cleanup_queue;
     }
-    printf("start_cycle: sweeping from cursor %llu\n", (unsigned long long)phase_ref->ps_cursor);
+    printf("marked in %d slices of 2 words; sweeping from cursor %llu\n", mslices,
+           (unsigned long long)phase_ref->ps_cursor);
 
     /* A few slices, then a major allocation and a minor collection mid-sweep. */
     int slices = 0;
@@ -216,8 +225,7 @@ int main(void)
         minor_collect(gh, yroots, 1, fwd_arr, queue, empty_slots, 0);
         if (*bump_ref != 0 || phase_ref->ps_kind != 1) {
             printf("FAIL: minor collection mid-sweep\n");
-            free(gray_storage);
-            goto cleanup_queue;
+                goto cleanup_queue;
         }
     }
     while (!fin) { fin = major_slice(gh, 16); slices++; }
@@ -225,17 +233,47 @@ int main(void)
     major_slice(gh, UINT64_MAX);  /* idle already: nothing to do */
     if (phase_ref->ps_kind != 0) {
         printf("FAIL: the sweep did not finish\n");
-        free(gray_storage);
         goto cleanup_queue;
     }
     if (allocate(major_heap, fp_ref, phase_ref, 1, 0) == 0) {
         printf("FAIL: allocation after the incremental collection failed\n");
-        free(gray_storage);
         goto cleanup_queue;
     }
 
+    /* ---- Phase 6: A 1-entry mark stack: the roots overflow it ---- */
+    printf("\n--- Phase 6: Root darkening overflows a 1-entry mark stack ---\n");
+    gh.mark_stack.cap = 1;
+    *mark_top = 1;
+    uint64_t a = 0, b = 0;
+    for (int i = 0; i < 8; i++) {
+        uint64_t o = allocate(major_heap, fp_ref, phase_ref, 2, 0);
+        if (o == 0) { printf("FAIL: allocate\n"); goto cleanup_queue; }
+        *(uint64_t *)(major_data + o) = 1; *(uint64_t *)(major_data + o + 8) = 1;
+        if (i == 2) a = o;
+        if (i == 5) b = o;
+    }
+    *(uint64_t *)(major_data + a) = b;   /* a -> b: b is reached only through a */
+    uint64_t two_roots[2] = { a, live };
+    memset(fwd_arr, 0, fwd_entries * sizeof(uint64_t));
+    if (!minor_collect(gh, two_roots, 2, fwd_arr, queue, empty_slots, 0)) {
+        printf("FAIL: minor_collect promotion failed\n");
+        goto cleanup_queue;
+    }
+    start_cycle(gh, two_roots, 2);
+    if (!*mark_overflow) {
+        printf("FAIL: two roots in a 1-entry stack should raise the overflow flag\n");
+        goto cleanup_queue;
+    }
+    while (!major_slice(gh, 3)) { }
+    /* a, b and live survive: their headers are white (live), not blue (free) */
+    uint64_t ha = *(uint64_t *)(major_data + a - 8), hb = *(uint64_t *)(major_data + b - 8);
+    if (((ha >> 8) & 3) != 0 || ((hb >> 8) & 3) != 0) {
+        printf("FAIL: an object reachable from the roots was freed\n");
+        goto cleanup_queue;
+    }
+    printf("overflowed marking kept both roots' objects and their child\n");
+
     printf("\nAll tests passed.\n");
-    free(gray_storage);
     free(queue);
     free(fwd_arr);
     free(phase_ref);

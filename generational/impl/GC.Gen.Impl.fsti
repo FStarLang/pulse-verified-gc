@@ -7,8 +7,8 @@
    - minor_collect: the minor collection, at the collector's phase (the
      generic minor_collect_with underneath, for any phase and definition of
      free)
-   - start_cycle: start a major cycle (darken the roots, mark, start the
-     sweep phase)
+   - start_cycle: start a major cycle (darken the roots, enter the marking
+     phase)
    - major_slice: one slice of the major cycle, at the collector's phase
    - full_gc: a whole collection (minor_collect, start_cycle, slices until
      idle)
@@ -65,6 +65,8 @@ module GI = GC.Gen.Incremental
 module MP = GC.Spec.MarkPhase
 module GMM = GC.Gen.MarkPhase.Minor
 module MS = GC.Gen.MarkState
+module MSI = GC.Gen.Impl.MarkSlice
+module MStart = GC.Gen.MarkPhase.Start
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -78,6 +80,9 @@ type gen_heap_t = {
   phase_ref : R.ref Alloc.phase_state;  // the major collector's phase
   mark_stack : gray_stack;              // the persistent mark stack
   mark_overflow : R.ref bool;           // set when a grey object was not pushed
+  mark_cur : R.ref U64.t;               // the partly scanned object (0: none)
+  mark_field : R.ref U64.t;             // its next field
+  mark_rescan : R.ref U64.t;            // the rescan cursor (0: no rescan)
 }
 
 /// The major collector's phase, held in `gh.phase_ref`, with the sweep's
@@ -89,20 +94,23 @@ type gen_heap_t = {
 let gen_phase (gh: gen_heap_t) (g: heap_state) (ph: Ph.gc_phase) : slprop =
   Alloc.is_phase gh.phase_ref g ph
 
-/// The persistent mark state: the mark stack `gh.mark_stack` and the
-/// overflow flag `gh.mark_overflow`, allocated once by the bridge at heap
-/// set-up (the stack empty, the flag down).  Like the sweep's caches they
-/// are an implementation cache of the heap's colours
-/// (`GC.Gen.MarkState.mark_cache_ok`): while marking, every entry is a grey
-/// object and, while the flag is down, every grey object is on the stack; at
-/// any other phase the stack is empty and the flag down.  The write barrier
-/// pushes onto it (`GC.Gen.Impl.Barrier.modify`); the mark slices will pop
-/// from it (incremental-mark-plan.md, M4).  `start_cycle` and `full_gc`
-/// still mark with the stack the caller hands them.
+/// The persistent mark state: the mark stack `gh.mark_stack`, the overflow
+/// flag `gh.mark_overflow`, the partly scanned object and its next field
+/// (`gh.mark_cur`, `gh.mark_field`) and the rescan cursor
+/// (`gh.mark_rescan`), allocated once by the bridge at heap set-up (the stack
+/// empty, the flag down, the positions 0).  Like the sweep's caches they are
+/// an implementation cache of the heap's colours
+/// (`GC.Gen.MarkState.mark_cache_ok`): while marking, every grey object is on
+/// the stack, or partly scanned, or after the rescan cursor, or the flag is
+/// up; at any other phase the stack is empty, the flag down and the
+/// positions 0.  `start_cycle` darkens the roots onto it, the write barrier
+/// pushes onto it (`GC.Gen.Impl.Barrier.modify_field`), and `major_slice`
+/// drains it while marking (`GC.Gen.Impl.MarkSlice.mark_slice`).
 let mark_state (gh: gen_heap_t) (g: heap_state) (ph: Ph.gc_phase) : slprop =
-  exists* (st: Seq.seq obj_addr) (ov: bool).
+  exists* (st: Seq.seq obj_addr) (ov: bool) (c f r: U64.t).
     is_gray_stack gh.mark_stack st ** R.pts_to gh.mark_overflow ov **
-    pure (MS.mark_cache_ok g ph st ov)
+    R.pts_to gh.mark_cur c ** R.pts_to gh.mark_field f ** R.pts_to gh.mark_rescan r **
+    pure (MS.mark_cache_ok g ph st ov (MSI.pos c f r))
 
 /// Combined slprop for the generational heap:
 ///   is_minor — ownership of minor heap array + bump pointer
@@ -127,8 +135,8 @@ let is_gen_heap (gh: gen_heap_t) (d: minor_heap) (b: U64.t)
 ///     restores;
 ///   * `Ph.Marking`: the minor collection's shape at `free_stw` and the
 ///     marking invariant with the nursery's major pointers held
-///     (`GI.nursery_held`; nothing enters it yet: the mark slices are to
-///     come);
+///     (`GMM.nursery_held`): `start_cycle` enters it, the mark slices
+///     (`major_slice`) run in it;
 ///   * `Ph.Sweeping c`: the sweep phase at the cursor `c`
 ///     (`SPI.sweep_inv_incremental s fp c`), the nursery's shape, and that the
 ///     nursery's major pointers point at non-free objects
@@ -143,8 +151,8 @@ let gc_state (gh: gen_heap_t) (d: minor_heap) (b: U64.t) (s: heap_state) (fp: U6
   is_gen_heap gh d b s fp ** gen_phase gh s ph ** mark_state gh s ph **
   pure (GI.phase_shape ({ data = d; bump = b } <: minor_state) s fp ph)
 
-/// The mark stack handed to the major collector holds exactly the objects the
-/// root array names in `g`.
+/// The root objects of a major collection hold exactly the objects the root
+/// array names in `g`.
 ///
 /// "Names" rather than "is": a root may be an interior (infix) pointer, in
 /// which case it names the closure it points into.  `SpecObject.resolve_object`
@@ -156,63 +164,53 @@ let roots_match_stack (g: heap) (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) : 
      Seq.mem (SpecObject.resolve_object r g) st) /\
   (forall (r: obj_addr). Seq.mem r st ==> MBP.root_named g roots r)
 
+/// The heap a major collection starts marking from -- the post-minor heap
+/// with the roots darkened (`GC.Gen.MarkPhase.Start.darkened`) -- and its
+/// root objects: what the roots name.  Root darkening pushes onto the
+/// persistent mark stack and may overflow it, but the heap it leaves does
+/// not depend on the stack (`GC.Gen.MarkSlice.darken_roots_heap`); the root
+/// objects are named here by the stack of a darkening with room for every
+/// root (capacity `prepared_cap`), so they are the objects the roots name,
+/// each once.
+noextract
+let prepared_cap (roots: Seq.seq U64.t) : nat = Seq.length roots + 1
+
 let gen_gc_prepared_state
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
-  (st: Seq.seq obj_addr) (cap: nat) : GTot (heap & Seq.seq obj_addr) =
+  : GTot (heap & Seq.seq obj_addr) =
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
-  MarkBoundedImpl.darken_roots_bounded_spec result.mc_major st result.mc_roots cap
+  MarkBoundedImpl.darken_roots_bounded_spec result.mc_major Seq.empty result.mc_roots
+    (prepared_cap result.mc_roots)
 
 let gen_gc_prepared_major
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
-  (st: Seq.seq obj_addr) (cap: nat) : GTot heap =
-  fst (gen_gc_prepared_state minor major fp roots st cap)
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t) : GTot heap =
+  fst (gen_gc_prepared_state minor major fp roots)
 
 let gen_gc_prepared_roots
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
-  (st: Seq.seq obj_addr) (cap: nat) : GTot (Seq.seq obj_addr) =
-  snd (gen_gc_prepared_state minor major fp roots st cap)
-
-/// What the caller owes the collector about the gray stack it supplies.
-///
-/// This is the whole of it.  There is no heap in the statement: the major
-/// phase's entry condition is derived internally by `GC.Gen.MajorPrecondition`
-/// from `collection_heap_shape`, `roots_valid_for_minor_collection` and the
-/// *runtime* success flag of the minor collection.
-///
-///  * `Seq.length st == 0` -- the gray stack starts empty.  It is collector
-///    scratch space, not caller state, and both real clients pass an empty one.
-///  * `Seq.length roots <= cap` -- darkening pushes every root, so the stack has
-///    to be able to hold them.  This is the only sizing obligation.
-///  * `cap > 0` rules out a zero-capacity stack.
-///
-/// In particular the caller does *not* have to establish `cheney_no_oom`.  An
-/// earlier version did require it, which was indefensible: it is a statement
-/// about the outcome of the entire Cheney BFS, no caller can discharge it, and
-/// `full_gc` reports promotion failure through its `ok` result anyway.  `full_gc`
-/// now consumes the runtime flag instead and simply skips the major phase when
-/// the minor collection ran out of memory.
-let gen_gc_stack_budget
-  (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) (cap: nat) : prop =
-  Seq.length st == 0 /\
-  Seq.length roots <= cap /\
-  cap > 0
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t) : GTot (Seq.seq obj_addr) =
+  snd (gen_gc_prepared_state minor major fp roots)
 
 /// Everything the major phase needs, from pre-minor shape facts plus the
 /// minor collection's own success flag.
+///
+/// The caller does *not* have to establish `cheney_no_oom`: it is a statement
+/// about the outcome of the entire Cheney BFS, no caller can discharge it, and
+/// `full_gc` reports promotion failure through its `ok` result anyway.  `full_gc`
+/// consumes the runtime flag instead and simply skips the major phase when the
+/// minor collection ran out of memory.
 val gen_gc_major_precondition_elim
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
-  (st: Seq.seq obj_addr) (cap: nat)
   : Lemma
       (requires
         GenInv.collection_heap_shape minor major fp /\
         MinorFwd.roots_valid_for_minor_collection minor major roots /\
-        CheneyBFS.cheney_no_oom Idle minor major fp roots /\
-        gen_gc_stack_budget roots st cap)
+        CheneyBFS.cheney_no_oom Idle minor major fp roots)
       (ensures
         (let result = CheneySpec.cheney_collect_spec minor major fp roots in
-         let prepared = gen_gc_prepared_state minor major fp roots st cap in
+         let prepared = gen_gc_prepared_state minor major fp roots in
          MajorGC.gc_precondition_with_roots
-           (fst prepared) (snd prepared) (snd prepared) result.mc_fp cap /\
+           (fst prepared) (snd prepared) (snd prepared) result.mc_fp
+           (prepared_cap result.mc_roots) /\
          roots_match_stack result.mc_major result.mc_roots (snd prepared) /\
          (forall (r: U64.t). Seq.mem r result.mc_roots ==>
             GC.Spec.Base.is_val_addr r /\
@@ -237,12 +235,12 @@ val gen_gc_major_precondition_elim
 /// actually ran.
 let gen_gc_roots_post
   (minor: minor_state) (major: heap) (fp: U64.t) (roots roots_out: Seq.seq U64.t)
-  (ok: bool) (st: Seq.seq obj_addr) (cap: nat) : prop =
+  (ok: bool) : prop =
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
   roots_out == result.mc_roots /\
   (ok ==>
    roots_match_stack (CheneySpec.cheney_collect_spec minor major fp roots).mc_major
-                     roots_out (gen_gc_prepared_roots minor major fp roots st cap) /\
+                     roots_out (gen_gc_prepared_roots minor major fp roots) /\
    (forall (r: U64.t). Seq.mem r roots_out ==>
       GC.Spec.Base.is_val_addr r /\ U64.v r >= U64.v zero_addr + U64.v mword) /\
    /// The mark stack holds the objects the roots *name*: an interior root
@@ -252,7 +250,7 @@ let gen_gc_roots_post
       GC.Spec.Base.is_val_addr e) /\
    (forall (e: obj_addr).
       Seq.mem (e <: U64.t) (MCFH.resolve_roots result.mc_major roots_out) ==>
-      Seq.mem e (gen_gc_prepared_roots minor major fp roots st cap)))
+      Seq.mem e (gen_gc_prepared_roots minor major fp roots)))
 
 /// A root that names *itself* --- i.e. one that is not an interior pointer ---
 /// is on the darkened mark stack literally, not merely up to resolution.
@@ -261,14 +259,14 @@ let gen_gc_roots_post
 /// lemma reads the ordinary case straight back out of it.
 val gen_gc_named_root_in_stack
   (minor: minor_state) (major: heap) (fp: U64.t) (roots roots_out: Seq.seq U64.t)
-  (st: Seq.seq obj_addr) (cap: nat) (r: obj_addr)
+  (r: obj_addr)
   : Lemma
     (requires
-      gen_gc_roots_post minor major fp roots roots_out true st cap /\
+      gen_gc_roots_post minor major fp roots roots_out true /\
       Seq.mem (r <: U64.t) roots_out /\
       SpecObject.resolve_object r
         (CheneySpec.cheney_collect_spec minor major fp roots).mc_major == r)
-    (ensures Seq.mem r (gen_gc_prepared_roots minor major fp roots st cap))
+    (ensures Seq.mem r (gen_gc_prepared_roots minor major fp roots))
 
 /// The free-list-free projection of the shape invariant.
 ///
@@ -318,10 +316,9 @@ val gen_gc_heap_shape_post_intro
 /// major step says the survivors did not move again and are white.
 let gen_gc_reachable_subgraph_isomorphism_post
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
-  (ok: bool) (final_major: heap) (roots_out: Seq.seq U64.t)
-  (st: Seq.seq obj_addr) (cap: nat) : prop =
+  (ok: bool) (final_major: heap) (roots_out: Seq.seq U64.t) : prop =
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
-  let prepared = gen_gc_prepared_state minor major fp roots st cap in
+  let prepared = gen_gc_prepared_state minor major fp roots in
   (ok ==>
    MRT.end_to_end_isomorphism minor major fp roots final_major
      (MCFH.resolve_roots result.mc_major roots_out) /\
@@ -339,8 +336,8 @@ let gen_gc_reachable_subgraph_isomorphism_post
 /// on the out-of-memory path the returned heap is the (unswept) post-minor heap.
 let gen_gc_unreachable_final_blue_post
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
-  (ok: bool) (final_major: heap) (st: Seq.seq obj_addr) (cap: nat) : prop =
-  let prepared = gen_gc_prepared_state minor major fp roots st cap in
+  (ok: bool) (final_major: heap) : prop =
+  let prepared = gen_gc_prepared_state minor major fp roots in
   ok ==>
   SpecGCPost.major_gc_unreachable_final_blue (fst prepared) final_major (snd prepared)
 
@@ -625,66 +622,72 @@ fn minor_collect (gh: gen_heap_t)
 /// `start_cycle`), and then runs in slices (`major_slice`, as
 /// `caml_major_collection_slice`) until it is idle again; finishing a cycle
 /// (4.14's `caml_finish_major_cycle`) is slices with an unbounded budget until
-/// `major_slice` reports idle.  Marking still runs to completion inside
-/// `start_cycle`; the slices are the sweep's.
+/// `major_slice` reports idle.  `start_cycle` darkens the roots and enters
+/// `Marking`; the slices mark (4.14's `mark_slice`), hand over to the sweep
+/// when nothing is grey, and sweep.
 
 /// The nursery is empty: what a minor collection leaves (`minor_reset`).
 let nursery_empty (d: minor_heap) (b: U64.t) : prop =
   U64.v b == 0 /\ d == Seq.create minor_heap_size 0uy
 
-/// What starting a cycle needs of the roots and the gray stack: the stack
-/// empty and able to hold the roots (`gen_gc_stack_budget`), and every root a
-/// darkenable major object (`MBP.root_valid_for_darkening`: not a nursery
-/// pointer -- the nursery is empty -- and naming an object that is not free).
-/// A minor collection leaves its rewritten roots so
-/// (`GMP.post_minor_roots_valid_for_darkening`).
-let start_cycle_pre (s: heap) (rs: Seq.seq U64.t) (st: Seq.seq obj_addr) (cap: nat) : prop =
-  gen_gc_stack_budget rs st cap /\
-  (forall (i: nat). i < Seq.length rs ==> MBP.root_valid_for_darkening s (Seq.index rs i))
+/// What starting a cycle needs of the roots: every root a darkenable major
+/// object (`MBP.root_valid_for_darkening`: not a nursery pointer -- the
+/// nursery is empty -- and naming an object that is not free).  A minor
+/// collection leaves its rewritten roots so
+/// (`GMP.post_minor_roots_valid_for_darkening`).  Nothing is asked of their
+/// number: root darkening pushes onto the persistent mark stack while it has
+/// room and raises the overflow flag when it is full.
+let start_cycle_pre (s: heap) (rs: Seq.seq U64.t) : prop =
+  forall (i: nat). i < Seq.length rs ==> MBP.root_valid_for_darkening s (Seq.index rs i)
 
-/// What starting a cycle guarantees.  With `prepared` the heap and stack
-/// root darkening leaves (`darken_roots_bounded_spec`): the stack holds the
-/// objects the roots name (`roots_match_stack`), and the heap is the marked
-/// heap (`SpecGCPost.mark_post` of the darkened heap: every object reachable
-/// from the roots is black, everything else white or free, nothing grey, and
-/// the objects and their fields unchanged).
-let start_cycle_post (s: heap) (fp: U64.t) (rs: Seq.seq U64.t) (st: Seq.seq obj_addr) (cap: nat)
-    (s2: heap) : prop =
-  let prepared = MarkBoundedImpl.darken_roots_bounded_spec s st rs cap in
-  roots_match_stack s rs (snd prepared) /\
-  SpecGCPost.mark_post (fst prepared) s2 (snd prepared) fp
+/// What starting a cycle guarantees: the heap is the roots darkened
+/// (`MStart.darkened`: every white object a root names greyed, nothing else
+/// changed), and every object the roots point at is one the marker will
+/// reach or not white (`MP.held_reached`, the roots half of the marking
+/// invariant, which entry points taking roots carry while marking).
+let start_cycle_post (s: heap) (rs: Seq.seq U64.t) (s2: heap) : prop =
+  s2 == MStart.darkened s rs /\
+  MP.held_reached s2 (GMM.roots_held s2 rs)
 
 /// **Start a major cycle**, idle and with the nursery empty (right after a
-/// minor collection): darken the roots, mark to completion, and start the
-/// sweep phase (`Sweeping zero_addr`, the cursor at the first block).  The
-/// nursery, the free-list head and the roots are unchanged.
-fn start_cycle (gh: gen_heap_t) (roots: array U64.t) (nroots: SZ.t) (st: gray_stack)
+/// minor collection): darken the roots onto the persistent mark stack (4.14's
+/// `caml_darken_all_roots_start`) and enter `Marking`.  The nursery, the
+/// free-list head and the roots are unchanged.
+fn start_cycle (gh: gen_heap_t) (roots: array U64.t) (nroots: SZ.t)
   requires gc_state gh 'd 'b 's 'fp Ph.Idle **
            pts_to roots 'rs **
-           is_gray_stack st 'st **
            pure (SZ.v nroots == Seq.length 'rs /\
                  nursery_empty 'd 'b /\
-                 start_cycle_pre 's 'rs 'st (stack_capacity st))
-  ensures exists* s2 st2.
-    gc_state gh 'd 'b s2 'fp (Ph.Sweeping zero_addr) **
+                 start_cycle_pre 's 'rs)
+  ensures exists* s2.
+    gc_state gh 'd 'b s2 'fp Ph.Marking **
     pts_to roots 'rs **
-    is_gray_stack st st2 **
-    pure (start_cycle_post 's 'fp 'rs 'st (stack_capacity st) s2)
+    pure (start_cycle_post 's 'rs s2)
 
-/// **One major slice**, at the collector's phase (`GI.major_slice_spec`):
-/// idle, nothing; mid-sweep, whole sweep steps until the blocks swept add up
-/// to at least `budget` words (headers included; at most one block over), or
-/// the sweep is finished (`SL.phase_slice`: some number of sweep steps,
-/// keeping the sweep phase, `SL.sweep_slice_phase`).  When the sweep
-/// finishes the phase is `Idle` and the state is the stop-the-world shape
-/// again (`GI.sweep_end_shape`).  Returns whether the phase it leaves is
-/// `Idle`.
+/// **One major slice**, at the collector's phase (`GI.major_slice_post`):
+///
+///   * idle, nothing;
+///   * marking, a mark slice (`GC.Gen.Impl.MarkSlice.mark_slice`): mark
+///     moves (`GC.Spec.MarkPhase.Slice.mark_steps`: fields of grey objects
+///     scanned, grey objects whose fields are dark blackened) until about
+///     `budget` words are scanned (an object larger than what is left is
+///     scanned in parts across slices), and, once nothing is grey, the start
+///     of the sweep (`Sweeping zero_addr`, `GI.marking_done_shape`); an
+///     unbounded budget (`UINT64_MAX`) finishes marking;
+///   * mid-sweep, whole sweep steps until the blocks swept add up to at
+///     least `budget` words (headers included; at most one block over), or
+///     the sweep is finished (`SL.phase_slice`: some number of sweep steps,
+///     keeping the sweep phase, `SL.sweep_slice_phase`).  When the sweep
+///     finishes the phase is `Idle` and the state is the stop-the-world shape
+///     again (`GI.sweep_end_shape`).
+///
+/// Returns whether the phase it leaves is `Idle`.
 fn major_slice (gh: gen_heap_t) (budget: U64.t)
   requires gc_state gh 'd 'b 's 'fp 'ph
   returns idle: bool
   ensures exists* s2 fp2 ph2.
     gc_state gh 'd 'b s2 fp2 ph2 **
-    pure ((s2, fp2, ph2) == GI.major_slice_spec 's 'fp 'ph (U64.v budget) /\
+    pure (GI.major_slice_post 's 'fp 'ph (U64.v budget) s2 fp2 ph2 /\
           idle == Ph.Idle? ph2)
 
 /// ---------------------------------------------------------------------------
@@ -693,7 +696,11 @@ fn major_slice (gh: gen_heap_t) (budget: U64.t)
 
 /// **A full collection**, idle: `minor_collect`, then, unless promotion ran
 /// out of memory, `start_cycle` and `major_slice` with an unbounded budget
-/// until the collector is idle again.
+/// until the collector is idle again (one slice marks, one sweeps).  No
+/// program runs between the slices, so marking keeps the stop-the-world
+/// strengthening of its invariant (`GC.Spec.MarkPhase.Stw.marking_inv_stw`)
+/// and ends with the marked heap of the darkened one (`mark_post`), from
+/// which the stop-the-world theorems give the postcondition.
 ///
 /// Postcondition provides:
 /// - the end-to-end reachable-subgraph isomorphism and the unreachable-blocks-
@@ -710,21 +717,15 @@ fn full_gc (gh: gen_heap_t)
            (fwd_arr: array U64.t)
            (queue: larray U64.t FA.queue_size)
            (slots: array U64.t) (nslots: SZ.t)
-           (st: gray_stack)
   requires gc_state gh 'd 'b 's 'fp Ph.Idle **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to slots 'sl **
-           is_gray_stack st 'st **
            pure (
-              // `Seq.length 'st <= stack_capacity st` is not restated here: it
-              // is recoverable from `is_gray_stack` via `Stack.stack_facts`.
               // Everything the major phase needs about the *post*-minor heap
               // is derived from the idle shape internally, by
               // `GC.Gen.MajorPrecondition`.
-              gen_gc_stack_budget 'rs 'st (stack_capacity st) /\
-
                // Operational array preconditions.
                SZ.v nroots == Seq.length 'rs /\
                Seq.length 'farr == FA.fwd_array_size /\
@@ -735,20 +736,19 @@ fn full_gc (gh: gen_heap_t)
                MinorFwd.roots_valid_for_minor_collection
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns ok: bool
-  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 st2.
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
     gc_state gh d2 b2 s2 fp2 Ph.Idle **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
-    is_gray_stack st st2 **
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
       let minor_st_out : minor_state = { data = d2; bump = b2 } in
       // Failure is reported only for a concrete out-of-memory event: an object
       // the major free list had no room for, at a point of this collection.
       (not ok ==> CheneyBFS.cheney_oom Idle minor_st 's 'fp 'rs) /\
-      gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok 'st (stack_capacity st) /\
+      gen_gc_roots_post minor_st 's 'fp 'rs rs2 ok /\
       // The nursery handed back is the zeroed one, `GC.Gen.MinorHeap.minor_reset`.
       // This is the only heap-shape fact in the postcondition that does *not*
       // follow from the invariant below; everything else about the returned
@@ -767,6 +767,6 @@ fn full_gc (gh: gen_heap_t)
       // free-list head, every conjunct of it.
       GenInv.collection_heap_shape minor_st_out s2 fp2 /\
       gen_gc_reachable_subgraph_isomorphism_post
-        minor_st 's 'fp 'rs ok s2 rs2 'st (stack_capacity st) /\
+        minor_st 's 'fp 'rs ok s2 rs2 /\
       gen_gc_unreachable_final_blue_post
-        minor_st 's 'fp 'rs ok s2 'st (stack_capacity st))
+        minor_st 's 'fp 'rs ok s2)
