@@ -115,6 +115,7 @@ ROOT_MODULES = \
   mark-and-sweep/spec/GC.Spec.MarkPhase.Mutator.fst \
   mark-and-sweep/spec/GC.Spec.MarkPhase.Alloc.fst \
   generational/spec/GC.Gen.MarkPhase.Minor.fst \
+  generational/spec/GC.Gen.MarkPhase.Alloc.fst \
   mark-and-sweep/impl/GC.Impl.Correct.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst \

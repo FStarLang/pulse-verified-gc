@@ -208,3 +208,14 @@ val mark_cache_minor (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.
   : Lemma (requires GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\
                     mark_cache_ok g Ph.Marking st ov p)
           (ensures mark_cache_ok (GMM.collect_marking minor g fp roots).Promote.mc_major Ph.Marking st ov p)
+
+/// **A change that keeps every non-free block** (`MPA.keeps_blocks`, e.g.
+/// an allocation while marking) and makes no new grey object keeps the
+/// cache: the stack's entries, the partly scanned object and the rescan
+/// cursor are non-free blocks, kept with their headers, and the partly
+/// scanned object's fields keep their values and their targets' colours.
+val mark_cache_keeps_blocks (g g': heap) (st: seq obj_addr) (ov: bool) (p: mark_pos)
+  : Lemma (requires mark_cache_ok g Ph.Marking st ov p /\ well_formed_heap g /\
+                    MPA.keeps_blocks free_stw g g' /\
+                    (forall (y: obj_addr). grey_obj g' y ==> grey_obj g y))
+          (ensures mark_cache_ok g' Ph.Marking st ov p)

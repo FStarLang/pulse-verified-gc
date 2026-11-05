@@ -108,6 +108,15 @@ let marking_fresh (g: heap) (held: obj_addr -> prop) (obj: obj_addr) : prop =
 /// Allocation
 /// ---------------------------------------------------------------------------
 
+/// After an allocation while marking, the non-free blocks with the new object
+/// counted free are exactly the non-free blocks before (so, for instance, a
+/// grey object after was a grey object before).
+val alloc_in_use (g: heap) (fp: U64.t) (wz: nat) (tag: SPM.tag_t) (obj x: obj_addr)
+  : Lemma (requires well_formed_heap g /\ FLA.fl_ascending g fp /\ wz >= 1 /\
+                    (AC.alloc_phase g fp Ph.Marking wz tag).SA.obj_out == obj)
+          (ensures (let r = AC.alloc_phase g fp Ph.Marking wz tag in
+                    in_use (free_or_new obj) r.SA.heap_out x == in_use free_stw g x))
+
 /// **Allocation while marking**: first-fit at `Marking` from an ascending
 /// free list.  If nothing fits, nothing changes; otherwise the new object is
 /// black, of the requested size and tag, was not a non-free block before,
