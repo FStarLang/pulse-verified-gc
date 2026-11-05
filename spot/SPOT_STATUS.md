@@ -540,3 +540,26 @@ object white in the marked heap is freed at the end
 (`phase_account_slice`, `phase_account_idle`), and, given the graph
 hypotheses (`roots_in_graph`, which `start_cycle`'s postcondition does not
 carry), every object unreachable from the roots at mark time.
+
+## Incremental marking's invariant on concrete heaps
+
+`GC.SPOT.MarkPhase` (heaps from `GC.SPOT.MarkPhaseHeap`: four one-field
+objects, then a free block to the end of the heap) checks
+`GC.Spec.MarkPhase` on two mid-mark heaps.
+
+1. **The invariant holds with a black-to-white edge.**  B (black) -> W
+   (white), G (grey) -> W1 (white) -> W, and W1 is held from outside the major
+   heap.  `mid_black_to_white`: B points at the white W, so the heap is not
+   strongly tri-coloured; `mid_reach`: the marker will reach W1 and W (from G,
+   through W1); `mid_mark_inv`: `marking_inv` holds, with its black-object
+   clause in use; `mid_mark_step`: one mark step at G keeps it, and
+   `mid_mark_step_colours`: that step blackens G, greys W1 and leaves W white.
+2. **A path through a black object does not count.**  G (grey) -> B (black)
+   -> W (white).  `through_black_reachable`: the weaker property "every white
+   object a black one points at is reachable from some grey object, through
+   any blocks" holds; `through_black_not_reached` / `through_black_not_inv`:
+   the marker will not reach W, and `marking_inv` fails whatever is held;
+   `through_black_step`/`through_black_step_breaks`: the next mark step at G
+   (its only child is black) is just blackening G, leaves no grey object and
+   the edge B -> W, so the weaker property fails and the heap is not
+   tri-coloured: marking would end with W white although B points at it.

@@ -116,6 +116,9 @@ SPOT_SRC = \
   GC.SPOT.SweepPhasePendingFree.fst \
   GC.SPOT.SweepPhaseFreedByEnd.fst \
   GC.SPOT.IncrementalCycle.fst \
+  GC.SPOT.MarkPhaseHeap.fsti \
+  GC.SPOT.MarkPhaseHeap.fst \
+  GC.SPOT.MarkPhase.fst \
   GC.SPOT.GcCorrect.fsti \
   GC.SPOT.GcCorrect.fst
 
