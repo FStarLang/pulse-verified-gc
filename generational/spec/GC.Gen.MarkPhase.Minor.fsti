@@ -90,3 +90,14 @@ val minor_keeps_marking_inv (minor: minor_state) (g: heap) (fp: U64.t) (roots: s
                     GenInv.collection_shape_with Ph.Marking free_stw
                       res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp /\
                     MP.marking_inv res.Promote.mc_major (roots_held res.Promote.mc_major res.Promote.mc_roots)))
+
+/// **The collection keeps the grey objects**: a block of the heap after it
+/// is a grey object exactly when it was one before.  An old non-free block
+/// keeps its header, and a block that was not one is a promoted copy, black.
+/// The mark stack (`GC.Gen.MarkState`) is a cache of the grey objects, so
+/// this is what keeps it across a minor collection while marking.
+val minor_keeps_greys (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t) (y: obj_addr)
+  : Lemma (requires GenInv.collection_shape_with Ph.Marking free_stw minor g fp)
+          (ensures (let g' = (collect_marking minor g fp roots).Promote.mc_major in
+                    (Seq.mem y (objects zero_addr g') /\ is_gray y g') <==>
+                    (Seq.mem y (objects zero_addr g) /\ is_gray y g)))

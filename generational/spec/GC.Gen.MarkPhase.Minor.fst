@@ -467,3 +467,27 @@ let minor_keeps_marking_inv minor g fp roots =
   FStar.Classical.forall_intro (FStar.Classical.move_requires hr);
   MP.marking_inv_change g g' held held'
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// The grey objects
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 20"
+let minor_keeps_greys minor g fp roots y =
+  let g' = (collect_marking minor g fp roots).Promote.mc_major in
+  free_stw_ok ();
+  free_def_ok_elim free_stw;
+  Mark.colors_exclusive y g;
+  Mark.colors_exclusive y g';
+  if Seq.mem y (objects zero_addr g) && is_gray y g then begin
+    old_block minor g fp roots y;
+    MM.header_kept_facts g g' y
+  end;
+  if Seq.mem y (objects zero_addr g') && is_gray y g' then begin
+    if in_use free_stw g y then begin
+      old_block minor g fp roots y;
+      MM.header_kept_facts g g' y
+    end else
+      new_block_black minor g fp roots y
+  end
+#pop-options

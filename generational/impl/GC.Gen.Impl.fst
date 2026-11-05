@@ -61,6 +61,7 @@ module MRT = GC.Gen.MajorReachabilityTransfer
 module GI = GC.Gen.Incremental
 module MP = GC.Spec.MarkPhase
 module GMM = GC.Gen.MarkPhase.Minor
+module MS = GC.Gen.MarkState
 
 /// Two transports in one: `GC.Gen.MajorPrecondition` carries the pre-minor facts
 /// across the minor collection to `darken_precondition`, and
@@ -432,6 +433,51 @@ let minor_collect_keeps_shape (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph
         GI.minor_keeps_phase_shape minor s fp c rs
 #pop-options
 
+/// ---------------------------------------------------------------------------
+/// The persistent mark state across the entry points
+/// ---------------------------------------------------------------------------
+
+/// Outside marking the mark state is the empty stack with the flag down,
+/// whatever the heap and the phase.
+ghost
+fn mark_state_off (gh: gen_heap_t) (s s': heap_state) (ph ph': Ph.gc_phase)
+  requires mark_state gh s ph ** pure (~(Ph.Marking? ph) /\ ~(Ph.Marking? ph'))
+  ensures mark_state gh s' ph'
+{
+  unfold mark_state;
+  with st ov. _;
+  MS.mark_cache_off s s' ph ph' st ov;
+  fold (mark_state gh s' ph')
+}
+
+/// A minor collection keeps the mark stack a cache of the grey objects:
+/// while marking it keeps the grey objects (`MS.mark_cache_minor`).
+let mark_cache_minor_at (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
+    (rs: Seq.seq U64.t) (s2: heap) (st: Seq.seq obj_addr) (ov: bool)
+  : Lemma (requires GI.phase_shape minor s fp ph /\ MS.mark_cache_ok s ph st ov /\
+                    s2 == (CheneySpec.cheney_collect_spec_with ph (GI.phase_free ph) minor s fp rs).mc_major)
+          (ensures MS.mark_cache_ok s2 ph st ov)
+  = if Ph.Marking? ph then begin
+      GI.phase_free_marking ();
+      GI.phase_shape_collection minor s fp ph;
+      MS.mark_cache_minor minor s fp rs st ov
+    end else
+      MS.mark_cache_off s s2 ph ph st ov
+
+ghost
+fn mark_state_minor (gh: gen_heap_t) (minor: minor_state) (s: heap_state) (fp: U64.t)
+    (ph: Ph.gc_phase) (rs: Seq.seq U64.t) (s2: heap_state)
+  requires mark_state gh s ph **
+           pure (GI.phase_shape minor s fp ph /\
+                 s2 == (CheneySpec.cheney_collect_spec_with ph (GI.phase_free ph) minor s fp rs).mc_major)
+  ensures mark_state gh s2 ph
+{
+  unfold mark_state;
+  with st ov. _;
+  mark_cache_minor_at minor s fp ph rs s2 st ov;
+  fold (mark_state gh s2 ph)
+}
+
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 fn minor_collect (gh: gen_heap_t)
                  (roots: array U64.t) (nroots: SZ.t)
@@ -465,6 +511,7 @@ fn minor_collect (gh: gen_heap_t)
   with rs2. assert (pts_to roots rs2);
   minor_collect_keeps_shape ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'ph 'rs ok
     d2 b2 s2 fp2 rs2;
+  mark_state_minor gh ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'ph 'rs s2;
   fold (gc_state gh d2 b2 s2 fp2 'ph);
   ok
 }
@@ -578,6 +625,7 @@ fn start_cycle (gh: gen_heap_t) (roots: array U64.t) (nroots: SZ.t) (st: gray_st
   fold (Alloc.is_phase gh.phase_ref s_mark (Ph.Sweeping zero_addr));
   fold (gen_phase gh s_mark (Ph.Sweeping zero_addr));
   fold (is_gen_heap gh 'd 'b s_mark 'fp);
+  mark_state_off gh 's s_mark Ph.Idle (Ph.Sweeping zero_addr);
   fold (gc_state gh 'd 'b s_mark 'fp (Ph.Sweeping zero_addr));
 }
 #pop-options
@@ -674,6 +722,7 @@ fn major_slice (gh: gen_heap_t) (budget: U64.t)
         fold (Alloc.is_phase gh.phase_ref s2 (Alloc.phase_of (slice_record fin c' t' f')));
         fold (gen_phase gh s2 (Alloc.phase_of (slice_record fin c' t' f')));
         fold (is_gen_heap gh 'd 'b s2 fp');
+        mark_state_off gh 's s2 'ph (Alloc.phase_of (slice_record fin c' t' f'));
         fold (gc_state gh 'd 'b s2 fp' (Alloc.phase_of (slice_record fin c' t' f')));
         fin
       }

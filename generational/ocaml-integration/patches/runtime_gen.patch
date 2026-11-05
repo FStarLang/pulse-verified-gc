@@ -80,6 +80,31 @@ index b62a579..9fa3887 100644
  
  libasmrund.$(A): $(libasmrund_OBJECTS)
  	$(call MKLIB,$@, $^)
+diff --git a/runtime/array.c b/runtime/array.c
+index 0c2577b..53fda8b 100644
+--- a/runtime/array.c
++++ b/runtime/array.c
+@@ -540,15 +540,12 @@ CAMLprim value caml_array_fill(value array,
+   } else {
+     int is_val_young_block = Is_block(val) && Is_young(val);
+     CAMLassert(Is_in_heap(fp));
++    /* Verified GC: each field through the verified barrier, as caml_modify
++       (it darkens the old value while marking and says whether to remember
++       the slot); a field already holding [val] is skipped, as stock. */
+     for (; len > 0; len--, fp++) {
+-      value old = *fp;
+-      if (old == val) continue;
+-      *fp = val;
+-      if (Is_block(old)) {
+-        if (Is_young(old)) continue;
+-        if (caml_gc_phase == Phase_mark) caml_darken(old, NULL);
+-      }
+-      if (is_val_young_block)
++      if (*fp == val) continue;
++      if (vergc_modify (fp, val))
+         add_to_ref_table (Caml_state->ref_table, fp);
+     }
+     if (is_val_young_block) caml_check_urgent_gc (Val_unit);
 diff --git a/runtime/caml/freelist.h b/runtime/caml/freelist.h
 index 1735d77..29ae9fa 100644
 --- a/runtime/caml/freelist.h
@@ -105,10 +130,10 @@ index 1735d77..29ae9fa 100644
  Caml_inline void caml_make_free_blocks
    (value *p, mlsize_t size, int do_merge, int color)
 diff --git a/runtime/caml/memory.h b/runtime/caml/memory.h
-index d9e58bc..260a479 100644
+index d9e58bc..fbf757d 100644
 --- a/runtime/caml/memory.h
 +++ b/runtime/caml/memory.h
-@@ -217,6 +217,45 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -217,6 +217,50 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
                                         int nallocs, unsigned char* alloc_lens);
  // Do not call asynchronous callbacks from allocation functions
  #define Alloc_small_origin CAML_FROM_C
@@ -132,6 +157,11 @@ index d9e58bc..260a479 100644
 +   policy change) to one whole verified collection. */
 +extern void verified_major_collection_slice (intnat howmuch);
 +extern void verified_do_full_gc (void);
++/* The verified write barrier, for a slot not in the nursery: caml_modify
++   (darken the old value while marking, write) and caml_initialize (write).
++   Each returns whether the caller must add the slot to the ref table. */
++extern int vergc_modify (value *fp, value val);
++extern int vergc_initialize (value *fp, value val);
 +extern uint64_t *vergc_minor_bump_ref;
 +extern uint8_t  *vergc_minor_base;
 +extern uint64_t  vergc_minor_size;
@@ -154,7 +184,7 @@ index d9e58bc..260a479 100644
  #define Alloc_small_aux(result, wosize, tag, profinfo, track) do {     \
    CAMLassert ((wosize) >= 1);                                          \
    CAMLassert ((tag_t) (tag) < 256);                                    \
-@@ -233,6 +272,38 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
+@@ -233,6 +277,38 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
    (result) = Val_hp (Caml_state_field(young_ptr));                     \
    DEBUG_clear ((result), (wosize));                                    \
  }while(0)
@@ -561,7 +591,7 @@ index 3da350e..9ebb07f 100644
  
  #if defined(NAKED_POINTERS_CHECKER) && defined(NATIVE_CODE)
 diff --git a/runtime/memory.c b/runtime/memory.c
-index 66d1c50..8e58dd6 100644
+index 66d1c50..be58b6e 100644
 --- a/runtime/memory.c
 +++ b/runtime/memory.c
 @@ -311,6 +311,7 @@ void caml_free_for_heap (char *mem)
@@ -679,6 +709,64 @@ index 66d1c50..8e58dd6 100644
 -  if(track)
 -    caml_memprof_track_alloc_shr(Val_hp (hp));
    return Val_hp (hp);
+ }
+ 
+@@ -597,8 +589,13 @@ CAMLexport void caml_adjust_gc_speed (mlsize_t res, mlsize_t max)
+ CAMLexport CAMLweakdef void caml_initialize (value *fp, value val)
+ {
+   CAMLassert(Is_in_heap_or_young(fp));
+-  *fp = val;
+-  if (!Is_young((value)fp) && Is_block (val) && Is_young (val)) {
++  /* Verified GC: a slot of the nursery needs no barrier; any other slot goes
++     through the verified barrier (vergc_initialize, verified_gc/alloc_gen.c),
++     which writes the value and says whether to remember the slot: exactly
++     when the value is young. */
++  if (Is_young((value)fp)) {
++    *fp = val;
++  } else if (vergc_initialize (fp, val)) {
+     add_to_ref_table (Caml_state->ref_table, fp);
+   }
+ }
+@@ -629,31 +626,22 @@ CAMLexport CAMLweakdef void caml_modify (value *fp, value val)
+      avoid repeated calls to caml_modify and repeated tests on the
+      values.  Don't forget to update caml_array_fill if the logic
+      below changes!
+-  */
+-  value old;
+ 
++     Verified GC: a slot of the nursery needs no barrier (conditions 1 and
++     2 cannot occur), as stock.  Any other slot goes through the verified
++     barrier (vergc_modify, verified_gc/alloc_gen.c): it reads the old
++     value, darkens it while the verified collector is marking, writes the
++     new one, and says whether to remember the slot -- the new value is
++     young and the old one was not (otherwise the slot is in the table
++     already).  The table stays this runtime's: the slot is added exactly
++     when the barrier says so, which is what keeps it covering and sound
++     (GC.Gen.Barrier.modify_ref_table). */
+   if (Is_young((value)fp)) {
+-    /* The modified object resides in the minor heap.
+-       Conditions 1 and 2 cannot occur. */
+     *fp = val;
+   } else {
+-    /* The modified object resides in the major heap. */
+     CAMLassert(Is_in_heap(fp));
+-    old = *fp;
+-    *fp = val;
+-    if (Is_block(old)) {
+-      /* If [old] is a pointer within the minor heap, we already
+-         have a major->minor pointer and [fp] is already in the
+-         remembered set.  Conditions 1 and 2 cannot occur. */
+-      if (Is_young(old)) return;
+-      /* Here, [old] can be a pointer within the major heap.
+-         Check for condition 2. */
+-      if (caml_gc_phase == Phase_mark) caml_darken(old, NULL);
+-    }
+-    /* Check for condition 1. */
+-    if (Is_block(val) && Is_young(val)) {
++    if (vergc_modify (fp, val))
+       add_to_ref_table (Caml_state->ref_table, fp);
+-    }
+   }
  }
  
 diff --git a/runtime/memprof.c b/runtime/memprof.c

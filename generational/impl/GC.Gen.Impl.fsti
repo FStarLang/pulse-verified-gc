@@ -64,6 +64,7 @@ module FA = GC.Gen.ForwardingArray
 module GI = GC.Gen.Incremental
 module MP = GC.Spec.MarkPhase
 module GMM = GC.Gen.MarkPhase.Minor
+module MS = GC.Gen.MarkState
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -75,6 +76,8 @@ type gen_heap_t = {
   major : heap_t;
   fp_ref : R.ref U64.t;    // major heap free-list head
   phase_ref : R.ref Alloc.phase_state;  // the major collector's phase
+  mark_stack : gray_stack;              // the persistent mark stack
+  mark_overflow : R.ref bool;           // set when a grey object was not pushed
 }
 
 /// The major collector's phase, held in `gh.phase_ref`, with the sweep's
@@ -85,6 +88,21 @@ type gen_heap_t = {
 /// run outside a sweep (`Ph.Idle`).
 let gen_phase (gh: gen_heap_t) (g: heap_state) (ph: Ph.gc_phase) : slprop =
   Alloc.is_phase gh.phase_ref g ph
+
+/// The persistent mark state: the mark stack `gh.mark_stack` and the
+/// overflow flag `gh.mark_overflow`, allocated once by the bridge at heap
+/// set-up (the stack empty, the flag down).  Like the sweep's caches they
+/// are an implementation cache of the heap's colours
+/// (`GC.Gen.MarkState.mark_cache_ok`): while marking, every entry is a grey
+/// object and, while the flag is down, every grey object is on the stack; at
+/// any other phase the stack is empty and the flag down.  The write barrier
+/// pushes onto it (`GC.Gen.Impl.Barrier.modify`); the mark slices will pop
+/// from it (incremental-mark-plan.md, M4).  `start_cycle` and `full_gc`
+/// still mark with the stack the caller hands them.
+let mark_state (gh: gen_heap_t) (g: heap_state) (ph: Ph.gc_phase) : slprop =
+  exists* (st: Seq.seq obj_addr) (ov: bool).
+    is_gray_stack gh.mark_stack st ** R.pts_to gh.mark_overflow ov **
+    pure (MS.mark_cache_ok g ph st ov)
 
 /// Combined slprop for the generational heap:
 ///   is_minor — ownership of minor heap array + bump pointer
@@ -117,10 +135,12 @@ let is_gen_heap (gh: gen_heap_t) (d: minor_heap) (b: U64.t)
 ///     (`GenInv.minor_major_fields_not_free` for `SPI.free_incremental c`:
 ///     free is blue, or pending free -- white in front of the cursor).
 ///
+/// Beside it, the persistent mark state (`mark_state`).
+///
 /// Every entry point states its contract over it.
 let gc_state (gh: gen_heap_t) (d: minor_heap) (b: U64.t) (s: heap_state) (fp: U64.t)
              (ph: Ph.gc_phase) : slprop =
-  is_gen_heap gh d b s fp ** gen_phase gh s ph **
+  is_gen_heap gh d b s fp ** gen_phase gh s ph ** mark_state gh s ph **
   pure (GI.phase_shape ({ data = d; bump = b } <: minor_state) s fp ph)
 
 /// The mark stack handed to the major collector holds exactly the objects the
@@ -512,12 +532,29 @@ val minor_collect_idle_post
 ///     next collector call; `Mut.fresh_write` and `Mut.fresh_close` then give
 ///     back the sweep phase.  Idle, the obligation is today's: the fields are
 ///     initialised before the next collection.
-///   * **Field writes** (`caml_modify`, `caml_initialize`): `Mut.program_write`
-///     -- a word of the body of a non-free object that is not a closure, and
-///     a value that is not a pointer or points at a non-free object.
-///     `Mut.write_sweep_phase` keeps the sweep phase.  The write barrier
-///     records every major field that gets a nursery pointer (the remembered
-///     set below).
+///   * **Field writes into the major heap** go through the verified barrier
+///     (`GC.Gen.Impl.Barrier.modify_field` for `caml_modify` and
+///     `caml_array_fill`, `initialize_field` for `caml_initialize`), whose
+///     contract keeps `gc_state` at every phase
+///     (`GC.Gen.Barrier.modify_phase_shape`).  What stays trusted is its
+///     precondition (`GC.Gen.Barrier.modify_ok`): the slot is a body word of
+///     a non-free, scannable block that is not a closure, and the value is
+///     storable there (`Mut.program_write`); while marking, the value is one
+///     the program holds (so white only if the marker will reach it:
+///     `MM.target_ok`, the roots obligation).  `initialize_field` asks only
+///     that the slot is a body word of a block of the heap that is not free
+///     (a block just allocated, *fresh* while sweeping or marking:
+///     `Mut.fresh_write`).
+///   * **Writes into nursery objects** need no barrier and are made by the C
+///     caller directly (`Is_young (fp)`, as 4.14): they change the nursery,
+///     which keeps its shape, and the stored value is one the program holds.
+///   * **The remembered set** is the runtime's C table (`caml_ref_table`,
+///     grown by `add_to_ref_table`).  The bridge appends the slot exactly
+///     when the barrier returns true; with that, `GC.Gen.Barrier.
+///     modify_ref_table` / `initialize_ref_table` keep the table covering and
+///     sound (`RT.ref_table_covers_with`, `RT.ref_table_sound_with` for
+///     `GI.phase_free`).  A slot outside the verified major heap (native
+///     static data) is handled by the C bridge with the stock logic.
 ///   * **Nursery allocation** keeps the nursery's shape and the
 ///     cross-generation condition (as today, mid-sweep for `free_incremental`).
 ///   * **The minor collection's arguments** (`minor_slots_ok`): the
@@ -526,7 +563,9 @@ val minor_collect_idle_post
 ///     `RT.ref_table_covers_with` for `GI.phase_free`; repeated slots are
 ///     allowed), the remembered targets among the roots, and the roots valid and not free (never pending free).
 ///   * **The phase record** (`gh.phase_ref`) is written only by the collector
-///     and the allocator.
+///     and the allocator; **the mark state** (`gh.mark_stack`,
+///     `gh.mark_overflow`) only by the collector and the barrier, and the
+///     bridge sets it up empty with the flag down.
 
 /// ---------------------------------------------------------------------------
 /// The minor collection

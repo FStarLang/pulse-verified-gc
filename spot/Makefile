@@ -121,6 +121,7 @@ SPOT_SRC = \
   GC.SPOT.MarkPhase.fst \
   GC.SPOT.MarkPhaseWrite.fst \
   GC.SPOT.MarkPhaseUnreached.fst \
+  GC.SPOT.WriteBarrier.fst \
   GC.SPOT.GcCorrect.fsti \
   GC.SPOT.GcCorrect.fst
 

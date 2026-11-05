@@ -117,7 +117,9 @@ ROOT_MODULES = \
   generational/spec/GC.Gen.MarkPhase.Minor.fst \
   mark-and-sweep/impl/GC.Impl.Correct.fst \
   generational/impl/GC.Gen.Impl.fsti \
-  generational/impl/GC.Gen.Impl.fst
+  generational/impl/GC.Gen.Impl.fst \
+  generational/impl/GC.Gen.Impl.Barrier.fsti \
+  generational/impl/GC.Gen.Impl.Barrier.fst
 
 # All sources (for pattern rules and clean targets)
 COMMON_SRC = $(wildcard common/spec/*.fst common/spec/*.fsti \
@@ -357,7 +359,7 @@ DEPGRAPH_OCAMLPATH ?= $(FSTAR_HOME)/lib
 # to keep it even if nothing calls it, which is how dead code survived before.
 DEPGRAPH_IFACE_ROOTS = \
   GC.Impl GC.Impl.Allocator GC.Impl.MarkBounded \
-  GC.Gen.Impl GC.Gen.Impl.Cheney GC.Gen.Impl.MinorHeap GC.Gen.Impl.UpdatePtrs \
+  GC.Gen.Impl GC.Gen.Impl.Barrier GC.Gen.Impl.Cheney GC.Gen.Impl.MinorHeap GC.Gen.Impl.UpdatePtrs \
   GC.Gen.Impl.Promote
 
 # The top-level theorems.  These are results, so nothing refers to them; they

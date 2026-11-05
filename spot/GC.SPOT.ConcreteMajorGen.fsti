@@ -65,6 +65,13 @@ val spot_major_c_reads
       ~(SpecObj.is_infix (spot_c r) major) /\
       ~(SpecObj.is_no_scan (spot_c r) major)))
 
+/// `C` is not a closure (its tag is 0): a field write into it is a program
+/// write (`GC.Spec.SweepPhase.Mutator.program_write`), as `GC.SPOT.WriteBarrier`
+/// uses.
+val spot_major_c_not_closure
+  : r:unit{spot_major_room} -> mp:minor_ptr ->
+    Lemma (ensures ~(SpecObj.is_closure (spot_c r) (spot_major_heap r mp)))
+
 val spot_major_free_reads
   : r:unit{spot_major_room} -> mp:minor_ptr ->
     Lemma (ensures (

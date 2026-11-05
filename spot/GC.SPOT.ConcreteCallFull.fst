@@ -81,7 +81,7 @@ fn call_concrete_gen_gc_spot_borrowed
   (queue: larray U64.t FA.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
   (st: gray_stack)
-  requires gen_phase gh (ConcreteMajor.spot_major_heap r) GC.Spec.Phase.Idle ** is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
+  requires gen_phase gh (ConcreteMajor.spot_major_heap r) GC.Spec.Phase.Idle ** mark_state gh (ConcreteMajor.spot_major_heap r) GC.Spec.Phase.Idle ** is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
              (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r) **
            pts_to roots (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) **
            pts_to fwd_arr ConcreteScenarios.spot_fwd_array **
@@ -94,7 +94,7 @@ fn call_concrete_gen_gc_spot_borrowed
              stack_capacity st >= 2)
   returns res: (U64.t & bool)
   ensures exists* d2 b2 final_major roots_out farr_out qv_out st_out.
-    gen_phase gh final_major GC.Spec.Phase.Idle ** is_gen_heap gh d2 b2 final_major (fst res) **
+    gen_phase gh final_major GC.Spec.Phase.Idle ** mark_state gh final_major GC.Spec.Phase.Idle ** is_gen_heap gh d2 b2 final_major (fst res) **
     pts_to roots roots_out **
     pts_to fwd_arr farr_out **
     pts_to queue qv_out **
@@ -165,11 +165,11 @@ fn call_concrete_gen_gc_spot_borrowed
 fn call_concrete_gen_gc_spot
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)
-  requires gen_phase gh (ConcreteMajor.spot_major_heap r) GC.Spec.Phase.Idle ** is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
+  requires gen_phase gh (ConcreteMajor.spot_major_heap r) GC.Spec.Phase.Idle ** mark_state gh (ConcreteMajor.spot_major_heap r) GC.Spec.Phase.Idle ** is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
              (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r)
   returns res: (U64.t & bool)
   ensures exists* d2 b2 final_major.
-    gen_phase gh final_major GC.Spec.Phase.Idle ** is_gen_heap gh d2 b2 final_major (fst res) **
+    gen_phase gh final_major GC.Spec.Phase.Idle ** mark_state gh final_major GC.Spec.Phase.Idle ** is_gen_heap gh d2 b2 final_major (fst res) **
     pure (
       let ok = snd res in
       GenImpl.gen_gc_heap_shape_post d2 b2 final_major /\

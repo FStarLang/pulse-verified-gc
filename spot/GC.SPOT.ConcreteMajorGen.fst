@@ -186,6 +186,26 @@ let spot_major_c_reads (r: unit{spot_major_room}) (mp: minor_ptr)
   assert (~(SpecObj.is_infix (spot_c r) g5));
   assert (~(SpecObj.is_no_scan (spot_c r) g5))
 
+let spot_major_c_not_closure (r: unit{spot_major_room}) (mp: minor_ptr)
+  =
+  let g0 = zero_major in
+  let g1 = write_word g0 zero_addr c_header in
+  let g2 = write_word g1 (spot_c_field0 r) 0UL in
+  let g3 = write_word g2 (spot_c_field1 r) mp in
+  let g4 = write_word g3 (spot_free_header r) (free_header r) in
+  let g5 = write_word g4 (spot_free_obj r) 0UL in
+  spot_major_layout_facts r;
+  c_header_facts ();
+  hd_f_roundtrip zero_addr;
+  read_write_same g0 zero_addr c_header;
+  read_write_different g1 (spot_c_field0 r) zero_addr 0UL;
+  read_write_different g2 (spot_c_field1 r) zero_addr mp;
+  read_write_different g3 (spot_free_header r) zero_addr (free_header r);
+  read_write_different g4 (spot_free_obj r) zero_addr 0UL;
+  SpecObj.tag_of_object_spec (spot_c r) g5;
+  SpecObj.is_closure_spec (spot_c r) g5;
+  SpecObj.closure_tag_val ()
+
 let spot_major_free_reads (r: unit{spot_major_room}) (mp: minor_ptr)
   =
   let g0 = zero_major in

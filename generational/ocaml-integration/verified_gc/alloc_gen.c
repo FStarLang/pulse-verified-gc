@@ -98,7 +98,10 @@
 extern size_t queue_size_sz;
 
 /* --- Globals --- */
-static gen_heap_t   gc_gen_heap;
+/* The collector's record.  Not static: the patched caml_modify and
+ * caml_initialize (runtime/memory.c) pass its address to the extracted
+ * barrier directly. */
+gen_heap_t          gc_gen_heap;
 static uint64_t    *gc_fwd_arr;
 static uint64_t    *gc_queue;         /* BFS queue for Cheney promotion (heap-allocated) */
 static uint8_t     *minor_base;      /* absolute address of minor heap buffer */
@@ -261,6 +264,27 @@ static void ensure_heap(void) {
     if (!phase_ref) caml_fatal_error("verified gen GC: malloc phase_ref");
     phase_ref->ps_kind = 0;  /* Idle */
     gc_gen_heap.phase_ref = phase_ref;
+
+    /* The persistent mark state (GC.Gen.Impl.mark_state): the mark stack and
+     * its overflow flag, owned by the collector from here on.  Empty (top ==
+     * cap: the stack grows downward) with the flag down, as mark_state says
+     * at every phase but Marking.  Only the write barrier (modify) pushes
+     * onto it, and only while marking, which nothing enters yet; M4's mark
+     * slices will drain it.  The capacity is the one do_full_gc gives the
+     * per-collection gray stack; calloc'd, so its pages cost nothing until
+     * used. */
+    size_t mark_cap = major_bytes / 64;
+    if (mark_cap < 4096) mark_cap = 4096;
+    uint64_t *mark_storage = (uint64_t *)calloc(mark_cap, sizeof(uint64_t));
+    size_t *mark_top = (size_t *)malloc(sizeof(size_t));
+    bool *mark_overflow = (bool *)calloc(1, sizeof(bool));
+    if (!mark_storage || !mark_top || !mark_overflow)
+        caml_fatal_error("verified gen GC: cannot allocate the mark stack");
+    *mark_top = mark_cap;
+    gc_gen_heap.mark_stack.storage = mark_storage;
+    gc_gen_heap.mark_stack.top = mark_top;
+    gc_gen_heap.mark_stack.cap = mark_cap;
+    gc_gen_heap.mark_overflow = mark_overflow;
 
     /* --- Minor heap --- */
     /* Override the verified constant (2048B) with a production-sized minor heap.
@@ -800,6 +824,50 @@ void vergc_native_run_minor_collection(void) {
 }
 
 #endif
+
+/* --- The write barrier (caml_modify, caml_initialize) --- */
+
+/* A slot of the verified major heap.  Before ensure_heap both bounds are 0,
+ * so nothing is. */
+static inline int vergc_in_major(const value *fp) {
+    uint64_t a = (uint64_t)(uintptr_t)fp;
+    return a - zero_addr < heap_size_u64 - zero_addr;
+}
+
+/* caml_modify of a slot that is not in the nursery (the caller wrote a
+ * nursery slot itself: no barrier is needed there, 4.14's fast path).
+ * Returns whether the caller must add fp to the ref table.
+ *
+ * In the verified major heap this is the extracted `modify_field`
+ * (GC.Gen.Impl.Barrier): old value read, darkened while marking, new value
+ * written, and "the new value is young and the old one was not".  The
+ * trusted obligations: fp is a field of a live, scannable, non-closure block
+ * and val is a value the program holds (GC.Gen.Barrier.modify_ok), and the
+ * caller appends fp to the ref table exactly when this returns true
+ * (GC.Gen.Barrier.modify_ref_table then keeps the table covering and sound).
+ *
+ * Elsewhere (a slot outside both heaps, e.g. native code's static data): the
+ * stock logic without darkening (nothing is ever marking there: the verified
+ * collector's roots cover such slots). */
+int vergc_modify(value *fp, value val) {
+    if (vergc_in_major(fp))
+        return modify_field(&gc_gen_heap, (uint64_t)(uintptr_t)fp, (uint64_t)val);
+    value old = *fp;
+    *fp = val;
+    return Is_block(val) && Is_young(val) && !(Is_block(old) && Is_young(old));
+}
+
+/* caml_initialize of a slot that is not in the nursery: the first value of a
+ * field of a block just allocated.  Returns whether the caller must add fp
+ * to the ref table: the value is young.  No darkening (the old value is
+ * garbage).  In the verified major heap this is the extracted
+ * `initialize_field`. */
+int vergc_initialize(value *fp, value val) {
+    if (vergc_in_major(fp))
+        return initialize_field(&gc_gen_heap, (uint64_t)(uintptr_t)fp, (uint64_t)val);
+    *fp = val;
+    return Is_block(val) && Is_young(val);
+}
 
 /* --- Full GC (minor + major) --- */
 

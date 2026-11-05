@@ -58,7 +58,8 @@ BT18_MAJOR_WORDS      ?= 536870912
 # Correctness tests (not benchmarks): run under both runtimes and compared.
 CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior \
                     alloc_exact_promotion tiny_globals gc_explicit large_alloc_garbage \
-                    gray_overflow explicit_major incremental_sweep obj_truncate
+                    gray_overflow explicit_major incremental_sweep obj_truncate \
+                    write_barrier
 
 # infix_closures needs a small major heap so that real major collections
 # (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
@@ -93,6 +94,11 @@ EXPLICIT_MAJOR_WORDS ?= 4000000
 # A small heap, so that cycles are frequent and most of the run is mid-sweep.
 INCREMENTAL_SWEEP_MAJOR_WORDS ?= 4000000
 
+# write_barrier: stores into old blocks in every pattern the verified write
+# barrier (caml_modify / caml_initialize / caml_array_fill) distinguishes,
+# with collections in between; differential against stock.
+WRITE_BARRIER_MAJOR_WORDS ?= 4000000
+
 # These two run through run_differential.sh: stock's output is the reference
 # and the verified output must be identical. With VERGC_SWEEP=incremental it
 # runs the verified side under three slice pacings, and (REQUIRE_MID_SWEEP)
@@ -116,7 +122,7 @@ GRAY_OVERFLOW_MAJOR_WORDS ?= 2000000
 
 BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
              $(addsuffix .byte, $(KNOWN_GAP_TESTS)) $(addsuffix .byte, $(MARK_BENCHMARKS))
-NATIVE_DIFF_TESTS = explicit_major incremental_sweep
+NATIVE_DIFF_TESTS = explicit_major incremental_sweep write_barrier
 NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS)) gc_explicit.native large_alloc_garbage.native \
                gray_overflow.native obj_truncate.native $(addsuffix .native, $(NATIVE_DIFF_TESTS))
 BENCH_TARGETS = $(addsuffix .bench, $(BENCHMARKS))
@@ -238,6 +244,8 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	  'MIN_EXPANSION_WORDSIZE=$(EXPLICIT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) explicit_major.byte'
 	REQUIRE_MID_SWEEP=1 $(DIFF) incremental_sweep '$(UNCHANGED_OCAMLRUN) incremental_sweep.byte' \
 	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_SWEEP_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) incremental_sweep.byte'
+	$(DIFF) write_barrier '$(UNCHANGED_OCAMLRUN) write_barrier.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(WRITE_BARRIER_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) write_barrier.byte'
 	@echo "=== Correctness tests passed ==="
 
 # ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
@@ -296,6 +304,8 @@ test-native: $(NATIVE_FILES) $(addsuffix .byte, $(NATIVE_DIFF_TESTS))
 	  'MIN_EXPANSION_WORDSIZE=$(EXPLICIT_MAJOR_WORDS) ./explicit_major.native'
 	REQUIRE_MID_SWEEP=1 $(DIFF) incremental_sweep.native '$(UNCHANGED_OCAMLRUN) incremental_sweep.byte' \
 	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_SWEEP_MAJOR_WORDS) ./incremental_sweep.native'
+	$(DIFF) write_barrier.native '$(UNCHANGED_OCAMLRUN) write_barrier.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(WRITE_BARRIER_MAJOR_WORDS) ./write_barrier.native'
 	@echo "=== All native smoke tests passed ==="
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----

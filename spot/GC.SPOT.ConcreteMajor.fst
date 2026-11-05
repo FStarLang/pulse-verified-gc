@@ -36,6 +36,7 @@ let spot_major_fp r = Gen.spot_major_fp r
 
 let spot_major_layout_facts r = Gen.spot_major_layout_facts r
 let spot_major_c_reads r = Gen.spot_major_c_reads r Layout.a_minor
+let spot_major_c_not_closure r = Gen.spot_major_c_not_closure r Layout.a_minor
 let spot_major_free_reads r = Gen.spot_major_free_reads r Layout.a_minor
 let spot_major_objects r = Gen.spot_major_objects r Layout.a_minor
 let spot_major_c_mem r = Gen.spot_major_c_mem r Layout.a_minor
