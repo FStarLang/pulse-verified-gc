@@ -52,21 +52,29 @@ module SC = GC.Spec.SizeClass
 module FLs = GC.Spec.FreeLists
 module CL = GC.Spec.CollectLists
 module PL = GC.Spec.Partition.Lists
+module OT = GC.Spec.ObjectTable
 
 /// ---------------------------------------------------------------------------
 /// The collector's postcondition
 /// ---------------------------------------------------------------------------
 
-/// The pure part of `GC.Impl.collect_with_roots`'s `ensures`, word for word.
-/// `collect_correct` below checks the match: it calls the real function and
-/// discharges `gc_correct`'s hypothesis from what that call returns.
-let collect_post
+/// The heap and free-list part of `GC.Impl.collect_with_roots`'s `ensures`.
+let collect_post_heap
   (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state) : prop =
   Corr.gc_postcondition s2 /\
   Corr.full_gc_correctness h_init s2 roots /\
   Corr.major_gc_live_subgraph_isomorphism h_init s2 roots /\
   Corr.major_gc_unreachable_final_blue h_init s2 roots /\
   CL.gc_coalesce_source_lists h_init s2 roots fls
+
+/// The pure part of `GC.Impl.collect_with_roots`'s `ensures`, word for word:
+/// the heap and lists, and the object-start table `t` of `s2`.
+/// `collect_correct` below checks the match: it calls the real function and
+/// discharges `gc_correct`'s hypothesis from what that call returns.
+let collect_post
+  (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state) (t: seq U64.t) : prop =
+  collect_post_heap h_init s2 roots fls /\
+  OT.table_ok s2 t
 
 /// ---------------------------------------------------------------------------
 /// The marked heap behind `s2`
@@ -91,21 +99,28 @@ let source_mark
 /// 1. Safety: nothing reachable is lost
 /// ---------------------------------------------------------------------------
 
-/// The last conjunct is `fls_sound`: every block on every free list is a free
-/// block of `s2`, so the allocator never hands out a live object.
-let gc_safe (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state) : prop =
+/// `fls_sound`: every block on every free list is a free block of `s2`, so
+/// the allocator never hands out a live object.
+///
+/// The last conjunct is `table_ok`: every entry of the object-start table `t`
+/// names the block of `s2`'s walk that contains its window's boundary
+/// (`GC.Spec.ObjectTable.table_ok_meaning`), so a cut taken from it starts at
+/// a header and never inside an object.
+let gc_safe (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state) (t: seq U64.t)
+  : prop =
   well_formed_heap s2 /\
   Corr.full_gc_correctness h_init s2 roots /\
   Corr.major_gc_live_subgraph_isomorphism h_init s2 roots /\
-  FLs.fls_sound s2 fls
+  FLs.fls_sound s2 fls /\
+  OT.table_ok s2 t
 
 val gc_safe_of_post
-  (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state)
+  (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state) (t: seq U64.t)
   : Lemma
-    (requires collect_post h_init s2 roots fls)
-    (ensures gc_safe h_init s2 roots fls)
+    (requires collect_post h_init s2 roots fls t)
+    (ensures gc_safe h_init s2 roots fls t)
 
-let gc_safe_of_post h_init s2 roots fls =
+let gc_safe_of_post h_init s2 roots fls t =
   Corr.gc_postcondition_elim s2;
   CL.gc_coalesce_source_lists_facts h_init s2 roots fls
 
@@ -451,7 +466,7 @@ let live_a
   (h_init s2: heap) (st roots: seq obj_addr) (fls: FLs.fl_state) (cap: nat) (h_mark: heap)
   : Lemma
     (requires Impl.gc_precondition_with_roots h_init st roots cap /\
-              collect_post h_init s2 roots fls /\
+              collect_post_heap h_init s2 roots fls /\
               source_at h_init s2 roots fls h_mark)
     (ensures unreachable_reclaimed h_init s2 roots)
   = introduce forall (x: obj_addr) (p: nat).
@@ -470,15 +485,15 @@ let live_a
 /// (a) speaks of reachability in the *initial* heap, and relating that to the
 /// mark bits takes the graph well-formedness facts the precondition carries.
 val gc_correct
-  (h_init s2: heap) (st roots: seq obj_addr) (fls: FLs.fl_state) (cap: nat)
+  (h_init s2: heap) (st roots: seq obj_addr) (fls: FLs.fl_state) (t: seq U64.t) (cap: nat)
   : Lemma
     (requires Impl.gc_precondition_with_roots h_init st roots cap /\
-              collect_post h_init s2 roots fls)
-    (ensures gc_safe h_init s2 roots fls /\
+              collect_post h_init s2 roots fls t)
+    (ensures gc_safe h_init s2 roots fls t /\
              gc_live h_init s2 roots fls)
 
-let gc_correct h_init s2 st roots fls cap =
-  gc_safe_of_post h_init s2 roots fls;
+let gc_correct h_init s2 st roots fls t cap =
+  gc_safe_of_post h_init s2 roots fls t;
   let h_mark = source_mark h_init s2 roots fls in
   live_a h_init s2 st roots fls cap h_mark;
   live_b h_init s2 roots fls;
@@ -490,19 +505,21 @@ let gc_correct h_init s2 st roots fls cap =
 /// `collect_with_roots` ensures.
 fn collect_correct
     (heap: IH.heap_t) (st: IS.gray_stack)
-    (roots: Ghost.erased (Seq.seq obj_addr)) (heads: array U64.t)
-  requires IH.is_heap heap 's ** IS.is_gray_stack st 'st ** pts_to heads 'fls **
+    (roots: Ghost.erased (Seq.seq obj_addr)) (heads: array U64.t) (tbl: array U64.t)
+  requires IH.is_heap heap 's ** IS.is_gray_stack st 'st ** pts_to heads 'fls ** pts_to tbl 't **
            pure (Impl.gc_precondition_with_roots 's 'st roots (IS.stack_capacity st) /\
-                 Seq.length 'fls == SC.n_lists)
-  ensures exists* s2 st2 fls2. IH.is_heap heap s2 ** IS.is_gray_stack st st2 **
-          pts_to heads fls2 **
-          pure (gc_safe 's s2 roots fls2 /\ gc_live 's s2 roots fls2)
+                 Seq.length 'fls == SC.n_lists /\
+                 Seq.length 't == OT.n_windows)
+  ensures exists* s2 st2 fls2 t2. IH.is_heap heap s2 ** IS.is_gray_stack st st2 **
+          pts_to heads fls2 ** pts_to tbl t2 **
+          pure (gc_safe 's s2 roots fls2 t2 /\ gc_live 's s2 roots fls2)
 {
-  Impl.collect_with_roots heap st roots heads;
-  with s2 st2 fls2. assert (IH.is_heap heap s2 ** IS.is_gray_stack st st2 ** pts_to heads fls2);
-  assert (pure (collect_post 's s2 roots fls2));
-  gc_correct 's s2 'st roots fls2 (IS.stack_capacity st);
-  assert (pure (gc_safe 's s2 roots fls2));
+  Impl.collect_with_roots heap st roots heads tbl;
+  with s2 st2 fls2 t2. assert (IH.is_heap heap s2 ** IS.is_gray_stack st st2 **
+                               pts_to heads fls2 ** pts_to tbl t2);
+  assert (pure (collect_post 's s2 roots fls2 t2));
+  gc_correct 's s2 'st roots fls2 t2 (IS.stack_capacity st);
+  assert (pure (gc_safe 's s2 roots fls2 t2));
   assert (pure (gc_live 's s2 roots fls2))
 }
 
@@ -512,19 +529,21 @@ fn collect_correct
 /// `gc_precondition_with_roots 's 'st 'st` and its postcondition is
 /// `collect_post` at roots `'st`: `gc_correct` applies unchanged.
 fn collect_stack_correct
-    (heap: IH.heap_t) (st: IS.gray_stack) (heads: array U64.t)
-  requires IH.is_heap heap 's ** IS.is_gray_stack st 'st ** pts_to heads 'fls **
+    (heap: IH.heap_t) (st: IS.gray_stack) (heads: array U64.t) (tbl: array U64.t)
+  requires IH.is_heap heap 's ** IS.is_gray_stack st 'st ** pts_to heads 'fls ** pts_to tbl 't **
            pure (Impl.gc_precondition 's 'st (IS.stack_capacity st) /\
-                 Seq.length 'fls == SC.n_lists)
-  ensures exists* s2 st2 fls2. IH.is_heap heap s2 ** IS.is_gray_stack st st2 **
-          pts_to heads fls2 **
-          pure (gc_safe 's s2 'st fls2 /\ gc_live 's s2 'st fls2)
+                 Seq.length 'fls == SC.n_lists /\
+                 Seq.length 't == OT.n_windows)
+  ensures exists* s2 st2 fls2 t2. IH.is_heap heap s2 ** IS.is_gray_stack st st2 **
+          pts_to heads fls2 ** pts_to tbl t2 **
+          pure (gc_safe 's s2 'st fls2 t2 /\ gc_live 's s2 'st fls2)
 {
-  Impl.collect heap st heads;
-  with s2 st2 fls2. assert (IH.is_heap heap s2 ** IS.is_gray_stack st st2 ** pts_to heads fls2);
-  assert (pure (collect_post 's s2 'st fls2));
-  gc_correct 's s2 'st 'st fls2 (IS.stack_capacity st);
-  assert (pure (gc_safe 's s2 'st fls2));
+  Impl.collect heap st heads tbl;
+  with s2 st2 fls2 t2. assert (IH.is_heap heap s2 ** IS.is_gray_stack st st2 **
+                               pts_to heads fls2 ** pts_to tbl t2);
+  assert (pure (collect_post 's s2 'st fls2 t2));
+  gc_correct 's s2 'st 'st fls2 t2 (IS.stack_capacity st);
+  assert (pure (gc_safe 's s2 'st fls2 t2));
   assert (pure (gc_live 's s2 'st fls2))
 }
 
@@ -541,10 +560,10 @@ fn collect_stack_correct
 #push-options "--z3rlimit 5 --fuel 1 --ifuel 1"
 [@@expect_failure [19]]
 let gc_correct_hyps_not_false
-  (h_init s2: heap) (st roots: seq obj_addr) (fls: FLs.fl_state) (cap: nat)
+  (h_init s2: heap) (st roots: seq obj_addr) (fls: FLs.fl_state) (t: seq U64.t) (cap: nat)
   : Lemma
     (requires Impl.gc_precondition_with_roots h_init st roots cap /\
-              collect_post h_init s2 roots fls)
+              collect_post h_init s2 roots fls t)
     (ensures False)
   = ()
 
@@ -552,9 +571,9 @@ let gc_correct_hyps_not_false
 /// add nothing to `gc_safe`.
 [@@expect_failure [19]]
 let gc_live_not_from_safe
-  (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state)
+  (h_init s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state) (t: seq U64.t)
   : Lemma
-    (requires gc_safe h_init s2 roots fls)
+    (requires gc_safe h_init s2 roots fls t)
     (ensures gc_live h_init s2 roots fls)
   = ()
 #pop-options

@@ -22,6 +22,10 @@
 
 /* Read a word from minor heap (host byte order, little-endian assumed) */
 int test_size_lists(void);   /* size_lists_test.c */
+int test_object_table(void); /* object_table_test.c */
+long ot_check(const uint8_t *m, const uint64_t *tbl);
+long ot_sound(const uint8_t *m, const uint64_t *tbl);
+uint64_t ot_len(void);
 
 static uint64_t peek_minor(minor_heap_t mh, uint64_t offset)
     __attribute__((unused));
@@ -65,11 +69,16 @@ int main(void)
      *      init_heap puts the one free block on the list of its class. ---- */
     uint64_t *heads = calloc(VGC_N_LISTS, sizeof(uint64_t));
     if (!heads) { perror("calloc heads"); goto cleanup; }
-    init_heap(major_heap, heads);
+    /* ---- The object-start table, one entry per 64 KB window; init_heap
+     *      rebuilds it for the heap it lays out. ---- */
+    uint64_t *tbl = calloc((size_t)ot_len(), sizeof(uint64_t));
+    if (!tbl) { perror("calloc tbl"); goto cleanup; }
+    init_heap(major_heap, heads, tbl);
     printf("init_heap: class-0 head = %llu\n", (unsigned long long)heads[0]);
+    if (ot_check(major_data, tbl) != 0) { printf("FAIL: table after init_heap\n"); goto cleanup; }
 
     /* ---- Construct gen_heap ---- */
-    gen_heap_t gh = { .minor = minor, .major = major_heap, .heads = heads };
+    gen_heap_t gh = { .minor = minor, .major = major_heap, .heads = heads, .tbl = tbl };
 
     /* ---- Forwarding array ---- */
     size_t fwd_entries = (size_t)fwd_arr_size_sz;
@@ -127,6 +136,11 @@ int main(void)
         printf("FAIL: bump should be 0 after minor_collect_full\n");
         goto cleanup_queue;
     }
+    /* sound always (the invariant); exact too here, since nothing re-tiled */
+    if (ot_sound(major_data, tbl) != 0 || ot_check(major_data, tbl) != 0) {
+        printf("FAIL: object-start table after minor_collect_full\n");
+        goto cleanup_queue;
+    }
 
     /* ---- Phase 3: More minor allocations + full GC ---- */
     printf("\n--- Phase 3: Full GC (minor + major) ---\n");
@@ -152,6 +166,12 @@ int main(void)
         goto cleanup_queue;
     }
     printf("gen_gc: class-0 head = %llu\n", (unsigned long long)heads[0]);
+    /* the sweep rebuilt it: exact */
+    if (ot_sound(major_data, tbl) != 0 || ot_check(major_data, tbl) != 0) {
+        printf("FAIL: object-start table after gen_gc\n");
+        free(gray_storage);
+        goto cleanup_queue;
+    }
 
     /* ---- Phase 4: Allocate after GC ---- */
     printf("\n--- Phase 4: Post-GC allocation ---\n");
@@ -168,6 +188,13 @@ int main(void)
     /* ---- Phase 5: the size-segregated free lists ---- */
     printf("\n--- Phase 5: size lists ---\n");
     if (test_size_lists() != 0) {
+        free(gray_storage);
+        goto cleanup_queue;
+    }
+
+    /* ---- Phase 6: the object-start table ---- */
+    printf("\n--- Phase 6: object-start table ---\n");
+    if (test_object_table() != 0) {
         free(gray_storage);
         goto cleanup_queue;
     }

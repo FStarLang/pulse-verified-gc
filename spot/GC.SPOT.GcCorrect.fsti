@@ -51,8 +51,9 @@ val spot_gc_precondition (r: unit{ConcreteMajor.spot_major_room})
 /// Any result of `collect_with_roots` on that heap is safe and live.
 val spot_gc_correct
   (r: unit{ConcreteMajor.spot_major_room}) (s2: heap) (final_fls: FLs.fl_state)
+  (final_tbl: seq U64.t)
   : Lemma
     (requires Correct.collect_post
-                (spot_major_h_init r) s2 (spot_major_roots r) final_fls)
-    (ensures Correct.gc_safe (spot_major_h_init r) s2 (spot_major_roots r) final_fls /\
+                (spot_major_h_init r) s2 (spot_major_roots r) final_fls final_tbl)
+    (ensures Correct.gc_safe (spot_major_h_init r) s2 (spot_major_roots r) final_fls final_tbl /\
              Correct.gc_live (spot_major_h_init r) s2 (spot_major_roots r) final_fls)

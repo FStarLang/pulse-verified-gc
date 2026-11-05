@@ -56,11 +56,16 @@ routes listed below go through the spec heap and `HeapAgree` instead.
 | `full_gc_correctness h_init s2 roots` | The mark was exact: an object was marked if and only if it was reachable. Every marked object survives, ends white, and keeps its successors and every field. Every object of `s2` is white or blue. |
 | `major_gc_live_subgraph_isomorphism h_init s2 roots` | Every reachable object survives and is white. Between reachable objects the edges are the same before and after, and so are their fields and successor lists. |
 | `fl_sound s2 final_fp` | Every block on the free list from `final_fp` is a free block of `s2` with at least one field. The allocator can never hand out a live object. |
+| `table_ok s2 t` | The object-start table `t` that the sweep rebuilt is exact for `s2`: entry `j` names the header of the block of `s2`'s walk that contains its 64 KB window's boundary (`GC.Spec.ObjectTable.table_ok_meaning`). So a cut taken from it starts at a header, never inside an object. Between collections only the weaker `table_sound` is kept (`docs/allocator-table-and-size-lists.md`, §8). |
 
 **Status: proved** (`gc_safe_of_post`). The first three come straight from
 `collect_post`; the first is reached through `gc_postcondition_elim`.
 `fl_sound` comes from `coalesce_exact` on the swept heap, carried to `s2` by
 `HeapAgree.agree_fl_exact` (`s2_fl_exact`).
+`table_ok` comes from the fused sweep's rebuild (`GC.Impl.FusedSweepCoalesce`
+ensures `table_matches`), with density of `s2` from
+`GC.Spec.ObjectTable.Sweep.collect_table_ok`. Part A added it, together with
+the table argument `t` of `collect_post`, `gc_safe` and `gc_correct`.
 
 `source_mark` names the marked heap behind `gc_coalesce_source`, so every proof
 below works with one fixed `h_mark`.

@@ -23,6 +23,7 @@ open GC.Gen.Impl.MinorHeap
 open GC.Impl.Heap
 module PromoteSpec = GC.Gen.Promote
 module FLs = GC.Spec.FreeLists
+module OT = GC.Spec.ObjectTable
 
 /// ---------------------------------------------------------------------------
 /// Read wosize from a minor heap object header
@@ -67,21 +68,26 @@ fn read_minor_scan_wosize (minor: minor_heap_t) (obj: U64.t)
 
 inline_for_extraction
 fn promote_one (minor: minor_heap_t) (major: heap_t) (heads: array U64.t)
-               (obj: U64.t)
+               (tbl: array U64.t) (obj: U64.t)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
            pts_to heads 'fp **
+           pts_to tbl 't **
            pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
                  U64.v obj % 8 == 0 /\
                  U64.v obj + minor_wosize {data='md; bump='mb} obj * 8 <= minor_heap_size /\
                  GC.Spec.Fields.well_formed_heap_part1 'ms /\
                  FLs.fls_valid 'ms 'fp /\
-                 FLs.fls_terminates 'ms 'fp)
+                 FLs.fls_terminates 'ms 'fp /\
+                 Seq.length 't == OT.n_windows)
   returns new_addr: U64.t
-  ensures exists* md2 mb2 ms2 fp2.
+  ensures exists* md2 mb2 ms2 fp2 t2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
     pts_to heads fp2 **
+    pts_to tbl t2 **
+    pure (Seq.length t2 == OT.n_windows /\
+          (OT.table_sound 'ms 't ==> OT.table_sound ms2 t2)) **
     pure (let minor_st = {data='md; bump='mb} in
           let wz = minor_wosize minor_st obj in
           md2 == 'md /\ mb2 == 'mb /\

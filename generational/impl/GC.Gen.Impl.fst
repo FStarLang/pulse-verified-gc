@@ -13,6 +13,8 @@ open Pulse.Lib.Pervasives
 open Pulse.Lib.Array.PtsTo
 module R = Pulse.Lib.Reference
 module FLs = GC.Spec.FreeLists
+module GOT = GC.Gen.ObjectTable
+module OT = GC.Spec.ObjectTable
 module SZ = FStar.SizeT
 module U8 = FStar.UInt8
 module U64 = FStar.UInt64
@@ -132,30 +134,38 @@ let gen_gc_heap_shape_post_intro minor_data minor_bump final_major final_fp
 fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
   requires is_gen_heap gh 'd 'b 's 'fp **
            pure (U64.v wosize > 0 /\ U64.v tag < 256 /\
-                 SpecFields.well_formed_heap 's)
+                 SpecFields.well_formed_heap 's /\
+                 FLs.fls_valid 's 'fp /\
+                 FLs.fls_terminates 's 'fp)
   returns obj: U64.t
   ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2
 {
   unfold is_gen_heap;
   pts_to_len gh.heads;
+  unfold table_pkg;
   if U64.lte wosize max_young_wosize_u64 {
     // Small object → try minor heap
     let obj = minor_alloc gh.minor wosize tag;
     if U64.eq obj 0UL {
       // Minor full — allocate directly from major
-      let res = Alloc.allocate gh.major gh.heads wosize;
+      let res = Alloc.allocate gh.major gh.heads gh.tbl wosize;
       pts_to_len gh.heads;
+      with s2. assert (is_heap gh.major s2);
+      fold (table_pkg gh.tbl s2);
       fold (is_gen_heap gh _ _ _ _);
       res
     } else {
       pts_to_len gh.heads;
+      fold (table_pkg gh.tbl 's);
       fold (is_gen_heap gh _ _ _ _);
       obj
     }
   } else {
     // Large object → major heap directly
-    let res = Alloc.allocate gh.major gh.heads wosize;
+    let res = Alloc.allocate gh.major gh.heads gh.tbl wosize;
     pts_to_len gh.heads;
+    with s2. assert (is_heap gh.major s2);
+    fold (table_pkg gh.tbl s2);
     fold (is_gen_heap gh _ _ _ _);
     res
   }
@@ -243,20 +253,23 @@ let add_bytes_advances (p tw tb: U64.t)
 /// Records forwarding: fwd_arr[obj/8] := new_major_addr.
 #push-options "--z3rlimit 12 --fuel 4 --ifuel 1"
 fn promote_phase (minor: minor_heap_t) (major: heap_t) (heads: array U64.t)
-                 (fwd_arr: array U64.t)
+                 (tbl: array U64.t) (fwd_arr: array U64.t)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
            pts_to heads 'fp **
+           pts_to tbl 't ** pure (Seq.length 't == OT.n_windows) **
            pts_to fwd_arr 'farr **
            pure (SpecFields.well_formed_heap_part1 'ms /\
                  FLs.fls_valid 'ms 'fp /\
                  FLs.fls_terminates 'ms 'fp /\
                  Seq.length 'farr == fwd_array_size /\
                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL))
-  ensures exists* md2 mb2 ms2 fp2 farr2.
+  ensures exists* md2 mb2 ms2 fp2 farr2 t2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
     pts_to heads fp2 **
+    pts_to tbl t2 **
+    pure (Seq.length t2 == OT.n_windows /\ (OT.table_sound 'ms 't ==> OT.table_sound ms2 t2)) **
     pts_to fwd_arr farr2 **
     pure (md2 == 'md /\ mb2 == 'mb /\
           SpecFields.well_formed_heap_part1 ms2 /\
@@ -270,10 +283,12 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (heads: array U64.t)
   fold (is_minor minor 'md bump);
   let mut pos = 0UL;
   while (U64.lt !pos bump)
-    invariant exists* md_i mb_i ms_i fp_i farr_i p_i.
+    invariant exists* md_i mb_i ms_i fp_i farr_i p_i t_i.
       is_minor minor md_i mb_i **
       is_heap major ms_i **
       pts_to heads fp_i **
+      pts_to tbl t_i **
+      pure (Seq.length t_i == OT.n_windows /\ (OT.table_sound 'ms 't ==> OT.table_sound ms_i t_i)) **
       pts_to fwd_arr farr_i **
       R.pts_to pos p_i **
       pure (U64.v p_i <= U64.v bump /\
@@ -318,7 +333,7 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (heads: array U64.t)
             // so obj_addr = p+8 < p + total_bytes <= bump <= minor_heap_size
             // and obj_addr + wosize * 8 = (p+8) + wosize*8
             //   = p + (wosize+1)*8 = p + total_bytes <= bump <= minor_heap_size
-            let new_addr = promote_one minor major heads obj_addr;
+            let new_addr = promote_one minor major heads tbl obj_addr;
             with farr_pre. assert (pts_to fwd_arr farr_pre);
             fwd_index_bound obj_addr;
             let idx = SZ.uint64_to_sizet (U64.div obj_addr 8UL);
@@ -1040,6 +1055,7 @@ fn minor_collect_full (gh: gen_heap_t)
 {
   unfold is_gen_heap;
   pts_to_len gh.heads;
+  unfold table_pkg;
   MCFH.major_field_zero_covered_from_slots
     ({data = 'd; bump = 'b} <: minor_state) 's 'rs 'sl (SZ.v nslots);
   GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
@@ -1047,7 +1063,8 @@ fn minor_collect_full (gh: gen_heap_t)
   GenInv.minor_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state);
 
   // Phase 1: Cheney BFS promotion (forward roots + scan)
-  let ok = cheney_promote_phase gh.minor gh.major gh.heads fwd_arr queue roots nroots;
+  let ok = cheney_promote_phase gh.minor gh.major gh.heads gh.tbl fwd_arr queue roots nroots;
+  with t_post. assert (pts_to gh.tbl t_post);
 
   // Extract ghost state from promote phase
   with ms_post. assert (is_heap gh.major ms_post);
@@ -1117,7 +1134,10 @@ fn minor_collect_full (gh: gen_heap_t)
       (PromoteSpec.rewrite_roots 'rs
         (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map));
 
+  // The table: promotion's, kept by the pointer rewrite
+  GOT.minor_collect_sound ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs t_post;
   pts_to_len gh.heads;
+  fold (table_pkg gh.tbl ms_final);
   fold (is_gen_heap gh _ 0UL _ _);
   ok
 }
@@ -1126,6 +1146,29 @@ fn minor_collect_full (gh: gen_heap_t)
 /// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)
 /// ---------------------------------------------------------------------------
+
+/// `MajorGC.collect` with the object-start table packaged: the collector
+/// rebuilds the table, so the one it is handed need only have the right
+/// length, and the one it returns is the table of its heap.
+fn collect_pkg (heap: heap_t) (st: gray_stack) (heads: array U64.t) (tbl: array U64.t)
+  requires is_heap heap 's ** is_gray_stack st 'st ** pts_to heads 'fls ** table_pkg tbl 's0 **
+           pure (MajorGC.gc_precondition 's 'st (stack_capacity st) /\
+                 Seq.length 'fls == GC.Spec.SizeClass.n_lists)
+  ensures exists* s2 st2 fls2. is_heap heap s2 ** is_gray_stack st st2 **
+          pts_to heads fls2 ** table_pkg tbl s2 **
+          pure (SpecGCPost.gc_postcondition s2 /\
+                SpecGCPost.full_gc_correctness 's s2 'st /\
+                SpecGCPost.major_gc_live_subgraph_isomorphism 's s2 'st /\
+                SpecGCPost.major_gc_unreachable_final_blue 's s2 'st /\
+                GC.Spec.CollectLists.gc_coalesce_source_lists 's s2 'st fls2)
+{
+  unfold table_pkg;
+  MajorGC.collect heap st heads tbl;
+  with s2 t2. assert (is_heap heap s2 ** pts_to tbl t2);
+  OT.table_ok_elim s2 t2;
+  OT.table_ok_sound s2 t2;
+  fold (table_pkg tbl s2)
+}
 
 /// gen_gc composes the verified full minor collection with mark-and-sweep.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
@@ -1275,7 +1318,8 @@ fn gen_gc (gh: gen_heap_t)
     // `collect_with_roots gh.major st prepared_st`, but it also tells the mark
     // phase that every gray object is on the stack, so the heap rescan is
     // skipped when the stack never overflows.
-    MajorGC.collect gh.major st gh.heads;
+    // ... which also rebuilds the object-start table of the heap it leaves
+    collect_pkg gh.major st gh.heads gh.tbl;
 
     with s_final st_final final_fp. assert (
       is_heap gh.major s_final **

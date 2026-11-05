@@ -44,6 +44,8 @@ module FLs = GC.Spec.FreeLists
 module CL = GC.Spec.CollectLists
 module SCL = GC.Spec.SweepCoalesce.Lists
 module HeapAgree = GC.Spec.HeapAgree
+module OT = GC.Spec.ObjectTable
+module TS = GC.Spec.ObjectTable.Sweep
 
 
 /// ---------------------------------------------------------------------------
@@ -65,18 +67,21 @@ module HeapAgree = GC.Spec.HeapAgree
 #push-options "--z3rlimit 50"
 fn collect_core
     (heap: heap_t) (st: gray_stack)
-    (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr)) (heads: array U64.t) (ov: bool)
-  requires is_heap heap 's ** is_gray_stack st 'st ** pts_to heads 'fls **
+    (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr)) (heads: array U64.t)
+    (tbl: array U64.t) (ov: bool)
+  requires is_heap heap 's ** is_gray_stack st 'st ** pts_to heads 'fls ** pts_to tbl 't **
            pure (gc_precondition_with_roots 's 'st roots (stack_capacity st) /\
                  Seq.length 'fls == SC.n_lists /\
+                 Seq.length 't == OT.n_windows /\
                  (not ov ==> SpecMark.gray_objects_on_stack 's 'st))
-  ensures exists* s2 st2 fls2. is_heap heap s2 ** is_gray_stack st st2 **
-          pts_to heads fls2 **
+  ensures exists* s2 st2 fls2 t2. is_heap heap s2 ** is_gray_stack st st2 **
+          pts_to heads fls2 ** pts_to tbl t2 **
           pure (SpecGCPost.gc_postcondition s2 /\
                SpecGCPost.full_gc_correctness 's s2 roots /\
                SpecGCPost.major_gc_live_subgraph_isomorphism 's s2 roots /\
                SpecGCPost.major_gc_unreachable_final_blue 's s2 roots /\
-               CL.gc_coalesce_source_lists 's s2 roots fls2)
+               CL.gc_coalesce_source_lists 's s2 roots fls2 /\
+               OT.table_ok s2 t2)
 {
   // The sweep rebuilds every list, so the reference sweep starts empty.
   let fp = 0UL;
@@ -98,10 +103,12 @@ fn collect_core
   
   // Fused sweep+coalesce: single pass that whitens survivors, merges free
   // blocks and pushes each on the list of its size class
-  fused_sweep_coalesce heap heads;
+  // ... and rebuilds the object-start table of the heap it leaves
+  fused_sweep_coalesce heap heads tbl;
 
-  with s_fused fls2. assert (is_heap heap s_fused ** pts_to heads fls2 **
-    pure ((s_fused, fls2) == SCL.fused_sweep_coalesce_lists s_mark));
+  with s_fused fls2 t2. assert (is_heap heap s_fused ** pts_to heads fls2 ** pts_to tbl t2 **
+    pure ((s_fused, fls2) == SCL.fused_sweep_coalesce_lists s_mark /\
+          OT.table_matches s_fused t2));
 
   // The lists, and the heap modulo free blocks' bodies and links, are the
   // coalescer's: the theorems about coalesce(sweep ...) carry over.
@@ -114,42 +121,50 @@ fn collect_core
   assert (pure (SpecGCPost.full_gc_correctness 's s_fused roots));
   assert (pure (SpecGCPost.major_gc_live_subgraph_isomorphism 's s_fused roots));
   assert (pure (SpecGCPost.major_gc_unreachable_final_blue 's s_fused roots));
-  assert (pure (CL.gc_coalesce_source_lists 's s_fused roots fls2))
+  assert (pure (CL.gc_coalesce_source_lists 's s_fused roots fls2));
+  assert (pure (OT.table_matches s_fused t2));
+  TS.collect_table_ok 's s_mark roots s_fused t2;
+  assert (pure (OT.table_ok s_fused t2))
 }
 
 fn collect_with_roots
     (heap: heap_t) (st: gray_stack)
     (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr)) (heads: array U64.t)
-  requires is_heap heap 's ** is_gray_stack st 'st ** pts_to heads 'fls **
+    (tbl: array U64.t)
+  requires is_heap heap 's ** is_gray_stack st 'st ** pts_to heads 'fls ** pts_to tbl 't **
            pure (gc_precondition_with_roots 's 'st roots (stack_capacity st) /\
-                 Seq.length 'fls == SC.n_lists)
-  ensures exists* s2 st2 fls2. is_heap heap s2 ** is_gray_stack st st2 **
-          pts_to heads fls2 **
+                 Seq.length 'fls == SC.n_lists /\
+                 Seq.length 't == OT.n_windows)
+  ensures exists* s2 st2 fls2 t2. is_heap heap s2 ** is_gray_stack st st2 **
+          pts_to heads fls2 ** pts_to tbl t2 **
           pure (SpecGCPost.gc_postcondition s2 /\
                SpecGCPost.full_gc_correctness 's s2 roots /\
                SpecGCPost.major_gc_live_subgraph_isomorphism 's s2 roots /\
                SpecGCPost.major_gc_unreachable_final_blue 's s2 roots /\
-               CL.gc_coalesce_source_lists 's s2 roots fls2)
+               CL.gc_coalesce_source_lists 's s2 roots fls2 /\
+               OT.table_ok s2 t2)
 {
   // General roots: nothing says the grays are on the stack, so rescan.
-  collect_core heap st roots heads true
+  collect_core heap st roots heads tbl true
 }
 
 /// With the stack as the root set, "gray or black ==> root" says every gray
 /// object is on the stack, so the mark phase may skip its rescan.
-fn collect (heap: heap_t) (st: gray_stack) (heads: array U64.t)
-  requires is_heap heap 's ** is_gray_stack st 'st ** pts_to heads 'fls **
+fn collect (heap: heap_t) (st: gray_stack) (heads: array U64.t) (tbl: array U64.t)
+  requires is_heap heap 's ** is_gray_stack st 'st ** pts_to heads 'fls ** pts_to tbl 't **
             pure (gc_precondition 's 'st (stack_capacity st) /\
-                  Seq.length 'fls == SC.n_lists)
-  ensures exists* s2 st2 fls2. is_heap heap s2 ** is_gray_stack st st2 **
-          pts_to heads fls2 **
+                  Seq.length 'fls == SC.n_lists /\
+                  Seq.length 't == OT.n_windows)
+  ensures exists* s2 st2 fls2 t2. is_heap heap s2 ** is_gray_stack st st2 **
+          pts_to heads fls2 ** pts_to tbl t2 **
           pure (SpecGCPost.gc_postcondition s2 /\
                 SpecGCPost.full_gc_correctness 's s2 'st /\
                 SpecGCPost.major_gc_live_subgraph_isomorphism 's s2 'st /\
                 SpecGCPost.major_gc_unreachable_final_blue 's s2 'st /\
-                CL.gc_coalesce_source_lists 's s2 'st fls2)
+                CL.gc_coalesce_source_lists 's s2 'st fls2 /\
+                OT.table_ok s2 t2)
 {
   GC.Spec.MarkBoundedNoOverflow.gray_on_stack_of_roots_eq_stack 's 'st;
-  collect_core heap st 'st heads false
+  collect_core heap st 'st heads tbl false
 }
 #pop-options

@@ -71,6 +71,7 @@ extern size_t queue_size_sz;
 static gen_heap_t   gc_gen_heap;
 static uint64_t    *gc_fwd_arr;
 static uint64_t    *gc_queue;         /* BFS queue for Cheney promotion (heap-allocated) */
+static uint64_t     gc_tbl_len;       /* object-start table: entries (64 KB windows) */
 static uint8_t     *minor_base;      /* absolute address of minor heap buffer */
 static int          heap_initialized = 0;
 static uint64_t    *minor_snapshot;   /* do_full_gc: minor heap before gen_gc */
@@ -152,6 +153,17 @@ static void ensure_heap(void) {
     heads[(1 <= wosize && wosize <= VGC_N_SMALL) ? wosize : 0] = initial_fp;
     gc_gen_heap.heads = heads;
 
+    /* Object-start table (GC.Spec.ObjectTable): one entry per 64 KB window of
+     * the major heap, naming a header of the heap walk at or below the
+     * window's first byte (exactly the block containing it, right after a
+     * sweep or a rebuild).  The verified rebuild walks the heap once. */
+    gc_tbl_len = ((uint64_t)major_bytes + 0xFFFFULL) >> 16;
+    uint64_t *tbl = (uint64_t *)calloc((size_t)gc_tbl_len, sizeof(uint64_t));
+    if (!tbl) caml_fatal_error("verified gen GC: calloc object-start table");
+    gc_gen_heap.tbl = tbl;
+    /* Filled by the verified rebuild once krmlinit_globals() has run below:
+     * the extracted code reads its own copy of zero_addr, set there. */
+
     /* --- Minor heap --- */
     /* Override the verified constant (2048B) with a production-sized minor heap.
      * OCaml default is 256K words = 2MB.  We match that default, overridable
@@ -170,6 +182,7 @@ static void ensure_heap(void) {
 
     /* Re-derive constants that depend on minor_heap_size */
     krmlinit_globals();
+    table_rebuild(gc_gen_heap.major, gc_gen_heap.tbl);
     uint8_t *minor_data = (uint8_t *)calloc(1, minor_sz);
     if (!minor_data)
         caml_fatal_error("verified gen GC: cannot allocate minor heap");
@@ -406,13 +419,21 @@ static void write_back_forwarded_roots(void) {
 /* --- Minor collection --- */
 
 
-/* --- Free-list checker (test builds only) ---
+/* --- Free-list and object-start table checker (test builds only) ---
  *
  * With -DVGC_CHECK_ALLOC, every collection, and every 1024th direct major
  * allocation, re-checks the free-list invariant the proofs maintain
- * (GC.Spec.FreeLists: fls_valid, fls_terminates, fls_exact) by walking the
- * major heap:
+ * (GC.Spec.FreeLists: fls_valid, fls_terminates, fls_exact) and the table
+ * invariant (GC.Spec.ObjectTable.table_sound) by walking the major heap:
  *   - the walk from zero_addr tiles the heap exactly;
+ *   - every table entry is a header of the walk, at or below its window's
+ *     boundary zero_addr + j * 64 KB, and the entries do not decrease;
+ *   - right after a full collection (exact != 0), when the sweep has just
+ *     rebuilt the table, every entry is moreover the header of the walk block
+ *     that contains its boundary (GC.Spec.ObjectTable.table_ok).  Between
+ *     sweeps that need not hold: unmarshalling (runtime/intern.c) re-tiles a
+ *     major block into the objects it reads, adding walk positions the
+ *     table does not hear of;
  *   - every cell of list i is the start of a blue object of wosize >= 1 whose
  *     class is i (class w = w for 1 <= w <= n_small, else 0);
  *   - each list ends, and no cell is on a list twice or on two lists;
@@ -420,6 +441,7 @@ static void write_back_forwarded_roots(void) {
  * Any failure aborts with a message naming the check. */
 #ifdef VGC_CHECK_ALLOC
 static uint8_t *chk_starts;           /* one bit per heap word: an object start */
+static uint8_t *chk_hdrs;             /* one bit per heap word: a walk header */
 static uint64_t chk_alloc_count;
 
 static void chk_fail(const char *where, const char *what, size_t list, uint64_t cell) {
@@ -428,31 +450,73 @@ static void chk_fail(const char *where, const char *what, size_t list, uint64_t 
     abort();
 }
 
-static void check_free_lists(const char *where) {
+static void check_free_lists(const char *where, int exact) {
     uint64_t z = zero_addr, hs = heap_size_u64;
     uint64_t words = (hs - z) / 8;
     uint64_t n_small = VGC_N_SMALL;
     size_t n_lists = VGC_N_LISTS;
     if (!chk_starts) {
         chk_starts = (uint8_t *)calloc((size_t)(words / 8 + 1), 1);
-        if (!chk_starts) caml_fatal_error("VGC_CHECK_ALLOC: calloc");
+        chk_hdrs = (uint8_t *)calloc((size_t)(words / 8 + 1), 1);
+        if (!chk_starts || !chk_hdrs) caml_fatal_error("VGC_CHECK_ALLOC: calloc");
     }
     memset(chk_starts, 0, (size_t)(words / 8 + 1));
-    /* 1. the walk, marking the object starts that can be cells */
+    memset(chk_hdrs, 0, (size_t)(words / 8 + 1));
+    /* 1. the walk, marking the walk headers and the object starts that can be
+     *    cells, and (exact) checking the entries of the boundaries inside each
+     *    block */
     uint64_t cells = 0;
     uint64_t pos = z;
+    uint64_t k = 0, last = z;
     while (pos + 8 < hs) {
         uint64_t hdr = *(uint64_t *)(uintptr_t)pos;
         uint64_t wz = hdr >> 10;
         uint64_t col = (hdr >> 8) & 3;
         uint64_t next = pos + (wz + 1) * 8;
         if (next > hs || next <= pos) chk_fail(where, "walk overruns the heap", 0, pos + 8);
+        {
+            uint64_t h = (pos - z) / 8;
+            chk_hdrs[h / 8] |= (uint8_t)(1u << (h % 8));
+        }
+        while (exact && k < gc_tbl_len && z + (k << 16) < next) {
+            if (gc_gen_heap.tbl[k] != pos) {
+                uint64_t got = gc_gen_heap.tbl[k];
+                fprintf(stderr, "VGC_CHECK_ALLOC: window %llu (boundary +0x%llx): entry +0x%llx, "
+                        "containing block +0x%llx (wosize %llu, colour %llu)\n",
+                        (unsigned long long)k, (unsigned long long)(k << 16),
+                        (unsigned long long)(got - z), (unsigned long long)(pos - z),
+                        (unsigned long long)wz, (unsigned long long)col);
+                chk_fail(where, "table entry does not name the block containing its boundary",
+                         (size_t)k, got);
+            }
+            k++;
+        }
+        last = pos;
         if (col == 2 && wz >= 1) {
             uint64_t w = (pos + 8 - z) / 8;
             chk_starts[w / 8] |= (uint8_t)(1u << (w % 8));
             cells++;
         }
         pos = next;
+    }
+    if (exact)
+        for (; k < gc_tbl_len; k++)
+            if (gc_gen_heap.tbl[k] != last)
+                chk_fail(where, "table entry past the walk does not name the last block",
+                         (size_t)k, gc_gen_heap.tbl[k]);
+    /* 1b. the table is sound: every entry a walk header at or below its
+     *     boundary, entries non-decreasing */
+    for (k = 0; k < gc_tbl_len; k++) {
+        uint64_t e = gc_gen_heap.tbl[k];
+        if (e < z || e >= hs || (e - z) % 8 != 0)
+            chk_fail(where, "table entry outside the heap or misaligned", (size_t)k, e);
+        uint64_t h = (e - z) / 8;
+        if (!(chk_hdrs[h / 8] & (1u << (h % 8))))
+            chk_fail(where, "table entry is not a header of the walk", (size_t)k, e);
+        if (e > z + (k << 16))
+            chk_fail(where, "table entry above its boundary", (size_t)k, e);
+        if (k > 0 && gc_gen_heap.tbl[k - 1] > e)
+            chk_fail(where, "table entries decrease", (size_t)k, e);
     }
     /* 2. the lists: each cell is a marked start of its class, met once */
     uint64_t listed = 0;
@@ -477,9 +541,29 @@ static void check_free_lists(const char *where) {
     /* 3. every free block with a link is listed */
     if (listed != cells) chk_fail(where, "a free block is on no list", 0, 0);
 }
-#define CHECK_FREE_LISTS(where) check_free_lists(where)
+
+/* The allocator's table writes, after each direct major allocation of `wz`
+ * words at `obj`: every boundary inside the new object names its header
+ * (GC.Spec.ObjectTable.alloc_table), unless the entry past them names a
+ * block below it (alloc_stale), in which case none is written. */
+static void check_alloc_table(uint64_t obj, uint64_t wz) {
+    uint64_t z = zero_addr, hs = heap_size_u64;
+    uint64_t hp = obj - 8, p_end = obj + wz * 8;
+    uint64_t lim = (p_end + 8 >= hs) ? hs : p_end;
+    uint64_t j0 = (hp - z + 0xFFFF) >> 16, k1 = (lim - z + 0xFFFF) >> 16;
+    if (j0 >= k1) return;
+    if (k1 < gc_tbl_len && gc_gen_heap.tbl[k1] < hp) return;
+    for (uint64_t j = j0; j < k1; j++)
+        if (gc_gen_heap.tbl[j] != hp)
+            chk_fail("after a major allocation",
+                     "allocator did not set the entry of a boundary inside the object",
+                     (size_t)j, gc_gen_heap.tbl[j]);
+}
+#define CHECK_FREE_LISTS(where) check_free_lists(where, 0)
+#define CHECK_FREE_LISTS_EXACT(where) check_free_lists(where, 1)
 #else
 #define CHECK_FREE_LISTS(where) ((void)0)
+#define CHECK_FREE_LISTS_EXACT(where) ((void)0)
 #endif
 
 static void do_full_gc(void);       /* forward decl */
@@ -746,7 +830,7 @@ static void do_full_gc(void) {
         }
     }
 
-    CHECK_FREE_LISTS("after a full collection");
+    CHECK_FREE_LISTS_EXACT("after a full collection");
 
     PROF_START(writeback);
     write_back_forwarded_roots();
@@ -839,7 +923,7 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     }
 
     PROF_START(major_alloc);
-    uint64_t result = allocate(gc_gen_heap.major, gc_gen_heap.heads, (uint64_t)wosize);
+    uint64_t result = allocate(gc_gen_heap.major, gc_gen_heap.heads, gc_gen_heap.tbl, (uint64_t)wosize);
     PROF_END(major_alloc);
 #ifdef VGC_CHECK_ALLOC
     if ((++chk_alloc_count & 1023) == 0) CHECK_FREE_LISTS("after a major allocation");
@@ -848,7 +932,7 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     if (result == 0) {
         do_full_gc();
         PROF_START(major_alloc);
-        result = allocate(gc_gen_heap.major, gc_gen_heap.heads, (uint64_t)wosize);
+        result = allocate(gc_gen_heap.major, gc_gen_heap.heads, gc_gen_heap.tbl, (uint64_t)wosize);
         PROF_END(major_alloc);
     }
 
@@ -882,6 +966,9 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
         return NULL;
     }
 
+#ifdef VGC_CHECK_ALLOC
+    check_alloc_table(result, (uint64_t)wosize);
+#endif
     PROF_INC(major_alloc_count);
     bytes_promoted_since_major += alloc_bytes;
 

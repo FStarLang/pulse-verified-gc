@@ -48,6 +48,7 @@ module SpecHeapModel = GC.Spec.HeapModel
 module MRT = GC.Gen.MajorReachabilityTransfer
 module FLs = GC.Spec.FreeLists
 module SC = GC.Spec.SizeClass
+module OT = GC.Spec.ObjectTable
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -58,17 +59,30 @@ type gen_heap_t = {
   minor : minor_heap_t;
   major : heap_t;
   heads : array U64.t;     // major heap free-list heads, one per size class
+  tbl   : array U64.t;     // major heap object-start table (GC.Spec.ObjectTable)
 }
 
 /// Combined slprop for the generational heap:
 ///   is_minor — ownership of minor heap array + bump pointer
 ///   is_heap  — ownership of major heap array
 ///   pts_to   — ownership of the free-list heads
+///   table_pkg — ownership of the object-start table, which is always sound
+///               for the major heap's walk (`OT.table_sound`: every entry a
+///               walk header at or below its boundary, non-decreasing).  It
+///               is exact (`OT.table_ok`) right after a major collection,
+///               but the runtime's own header writes (unmarshalling into a
+///               major block) may add walk positions it does not hear of, so
+///               soundness is what the heap's representation carries
+let table_pkg (tbl: array U64.t) (s: heap_state) : slprop =
+  exists* (t: Seq.seq U64.t). pts_to tbl t **
+    pure (Seq.length t == OT.n_windows /\ OT.table_sound s t)
+
 let is_gen_heap (gh: gen_heap_t) (d: minor_heap) (b: U64.t)
                 (s: heap_state) (fp: FLs.fl_state) : slprop =
   is_minor gh.minor d b **
   is_heap gh.major s **
   pts_to gh.heads fp **
+  table_pkg gh.tbl s **
   pure (Seq.length fp == SC.n_lists)
 
 /// The mark stack handed to the major collector holds exactly the objects the
@@ -303,7 +317,13 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
              // wosize/color/tag, objects don't overlap, sizes fit within
              // heap bounds, pointer fields target valid objects, and infix
              // structure is correct
-             SpecFields.well_formed_heap 's)
+             SpecFields.well_formed_heap 's /\
+             // The free lists are valid: a major allocation keeps the
+             // object-start table sound only from valid lists (it must keep
+             // every walk position, and the entries it writes name a header
+             // only if the block it carves from is one)
+             FLs.fls_valid 's 'fp /\
+             FLs.fls_terminates 's 'fp)
   returns obj: U64.t
   // Heap ownership is returned; internal state may change (bump pointer
   // advanced, or a free-list node consumed)

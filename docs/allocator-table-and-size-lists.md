@@ -2,8 +2,8 @@
 
 This is step 1 of three: the allocator now, then the parallel mark, then the
 parallel sweep. It began as a design-only note, based on `origin/main`
-(`1ecb000`). §0.1 records the review's decisions, and §7 records part B as
-built. It builds on
+(`1ecb000`). §0.1 records the review's decisions, §7 records part B as
+built, and §8 part A as built. It builds on
 `docs/parallel-gc-combined-design.md` on `sheera/parallel-mark-proto2`
 (referred to below as *the combined design*). That note analyses the
 object-start table as part (d) of a parallel sweep.
@@ -90,6 +90,14 @@ j * 0x10000`. "Header" means a header address `hd`; the object is at `hd + 8`.
    signature, and neither CI nor any `make` target compiles it. It is left
    unchanged. (§2.1's row for it, and §6.1 step 4, are superseded.)
 4. **Part B first, on its own,** as its own PR (§7). Part A is not started.
+5. **Part A: option (a) for large objects, and option (b) for the invariant**
+   (decided while building part A, §8.1). The OCaml runtime re-tiles major
+   blocks behind the collector (unmarshalling, `Obj.truncate`), so exactness
+   (A3) cannot hold at all times. The invariant that always holds is
+   `table_sound`: every entry is a walk header, at or below its boundary, and
+   the entries do not decrease. Exactness is proved of the table the sweep
+   rebuilds, and the allocator's writes are a balance improvement. §1.2's
+   "(C)" and §3.1's "`table_ok` in `major_heap_shape`" are superseded by §8.2.
 
 ## 1. Design
 
@@ -873,3 +881,320 @@ What this says:
   pass (`eintr`, `ephe_infix`, `ephe_issue9391`, `finaliser`,
   `output-complete-obj`, in both variants). I have not checked whether those
   10 are related to this change or to this machine.
+
+## 8. Part A as built
+
+Part A is built on `sheera/object-table`, from `origin/sheera/size-lists`
+(`3be9eb3`). It covers the spec and proofs, the Pulse table writes in the
+allocator and the fused sweep, extraction, the runtime bridge, a checker
+build, directed tests, negative controls and measurements. The large-object
+decision is §0.1's option (a): the allocator writes the entry of every
+boundary inside a new object, so at most one write for an object under 64 KB
+and one per 64 KB above that. One design flaw turned up while building it
+(§8.1). It changed the invariant to option (b), decided in review.
+
+### 8.1 The flaw: the runtime re-tiles major blocks
+
+§3.1 assumed that "the program writes only fields of live objects", so that
+only the allocator and the sweep move the walk. The OCaml runtime itself breaks
+that assumption.
+
+- **Unmarshalling** (`runtime/intern.c`). For a value of more than
+  `Max_young_wosize` words, `intern_alloc` takes **one** block from
+  `caml_alloc_shr_no_track_noexc` (`intern.c:638`), which goes through the
+  verified `allocate`. That block's table entries correctly name its header.
+  `intern_rec` then writes a header for every unmarshalled object inside the
+  block (`intern.c:375`), starting at the block's own header and moving up
+  without gaps. The walk gains one position per object, and the table never
+  hears of them.
+- **Concrete case, observed.** The first checker build (which checked
+  exactness, A3) aborted in `tests/no_scan.byte`, after a minor collection.
+  A logging build showed:
+  - one intern of a 4,063-word block at `Z+0x1e7c908`;
+  - after it, window 488 (boundary `Z+0x1e80000`) still held `Z+0x1e7c900`,
+    now the header of a 498-word object;
+  - the block containing the boundary was the 10-word string at `Z+0x1e7fff8`;
+  - no collection ran in between.
+- **`caml_obj_truncate`** (`Obj.truncate`, `obj.c:214–217`) does the same: it
+  splits one block into two.
+
+What survives: these writes only **add** walk positions (§8.4). Every entry
+is still a header of the walk, at or below its boundary, and the entries still
+do not decrease. What breaks is exactness: an entry can name a block that no
+longer contains its boundary, until the next sweep rebuilds the table. Nothing
+reads the table yet, so no output was wrong. But the allocator's proved "the
+table stays exact" assumed exactness on entry, which the runtime had already
+broken.
+
+**Decision (review): option (b).** The invariant that must always hold is the
+weaker one: every entry is a header of the walk, at or below its boundary, and
+the entries do not decrease. Exactness (A3) stays a separately proved fact
+about the table the fused sweep rebuilds. The allocator's writes are a balance
+improvement, not something correctness depends on. The rejected options were:
+- a hook in `intern.c` and `obj.c` calling a verified re-tile of the block;
+- making intern allocate each object separately.
+
+### 8.2 The invariants as built
+
+`GC.Spec.ObjectTable`:
+
+- **`table_sound g t`, the invariant.** For every window `j`:
+  - `t[j]` is `zero_addr` or a header of `g`'s walk (`walk_hd`). `zero_addr` is
+    the walk's first header, which only an empty walk lacks;
+    `table_sound_meaning` says every entry is a walk header when the walk is
+    non-empty.
+  - `t[j] ≤ b[j]`.
+  - `t[j] ≤ t[j+1]`.
+
+  It lives in `GC.Gen.Impl.table_pkg`, part of `is_gen_heap`, so every
+  generational entry point keeps it.
+  - **`table_sound_grow`:** it survives any step that keeps every walk
+    position, whatever positions that step adds. That covers the mark (colours),
+    field writes, promotion's same-wosize retag and Cheney's pointer rewrite,
+    all proved. The runtime's re-tilings rely on it too, but that they only
+    add positions is audited (§8.4), not proved.
+- **`table_ok g t`, exactness (A3).** `t[j]` is the last walk header at or below
+  `b[j]` (`tbl_entry`), and `g` is dense. By `table_ok_meaning`, that header's
+  block contains `b[j]`.
+  - **The sweep establishes it.** `GC.Impl.FusedSweepCoalesce` ensures
+    `table_matches`, and `collect` ensures `table_ok`.
+  - **`gc_safe` gains `table_ok s2 t` as a new conjunct.**
+  - `table_ok_sound`: exact implies sound.
+- **The allocator** (`alloc_table`). It writes the new object's header `hp`
+  into the entries of the boundaries inside the object
+  (`emit … (first_window hp) hp (new_block_limit (obj + wz·8))`), unless the
+  guard below holds.
+  - `allocate`'s postcondition carries soundness *and* exactness, each
+    conditional on the free lists being valid:
+    - `table_sound_add_block`: sound stays sound;
+    - `table_add_block`: exact stays exact.
+  - Promotion and the minor collection carry soundness only. They keep the
+    walk, so exactness would carry over too, but it is not stated: nothing
+    downstream needs it.
+- **The guard** (`alloc_stale`). Let `k` be the first window past the new
+  object. If `t[k] < hp`, the allocator writes nothing.
+  - **Why soundness needs it.** A sound table may name, at `k`, a block that a
+    runtime re-tiling has since cut up and that lies below `hp`. Writing `hp`
+    below it would break (M).
+  - **The directed test `guard`** (`object_table_test.c`) builds exactly that
+    case. It is synthetic: no runtime path makes it.
+    - a block over boundaries 1–3 is re-tiled into `A1`, a free block `F` and
+      `A3`;
+    - an object carved from the top of `F` contains boundary 2;
+    - entry 3 still names the old block below it, so the guard skips the
+      write.
+  - **On an exact table the guard never holds.** `table_add_block` proves it
+    from (M) of the result. In practice it never holds at all: a re-tiled
+    region holds live objects, not free blocks, until the next sweep rebuilds
+    the table.
+  - **Cost.** The guard is evaluated only for an object that contains a
+    boundary: one shift, one compare and one load.
+
+**gen_alloc keeps its new `fls_valid` / `fls_terminates` requirement.**
+Under (b) it is still needed, for (W). An allocation keeps every old walk
+position, and makes its new entry `hp` a walk header, only if the block it
+carves from is a real free block of the walk. Concrete case: let the head of a
+list point into the body of a live object at a word that reads as a large
+wosize. Then:
+- the allocator rewrites that word as the remainder's header, and writes a new
+  header `hp` further in;
+- both writes are inside the live object, so the walk does not change;
+- `hp` is not a walk position, yet the allocator writes it into the table, and
+  (W) fails.
+
+`is_gen_heap` does not carry list validity, so `gen_alloc` has to require it.
+`promote_one` and the Cheney functions already had it from `major_heap_shape`.
+
+### 8.3 Changes to existing vals, and why
+
+No existing `ensures` got weaker, and no rlimit was raised. Where a proof
+timed out, it was split (`OT.table_ok_elim` / `table_sound_elim` asserts,
+`table_pkg`, `collect_pkg`).
+
+| Val | Change | Why |
+|---|---|---|
+| `GC.Impl.Allocator.allocate`, `allocate_part1` | take `tbl`; require `Seq.length 't == n_windows`; ensure `t2 == alloc_table 't obj wz`, plus `table_sound 's 't ⇒ table_sound s2 t2` and `table_ok 's 't ⇒ table_ok s2 t2`. In `allocate` both implications are conditional on `fls_valid` / `fls_terminates`, which it does not require. | The table is new state. The implications keep the `requires` as they were. |
+| `init_heap` | takes `tbl`; ensures `table_matches s2 t2` | the walk rebuild (`rebuild_walk`) |
+| New: `table_rebuild` | rebuilds the table of a heap by one walk | used by the bridge at start-up, and by tests |
+| `fused_sweep_coalesce` (Pulse) | takes `tbl`; ensures `table_matches s2 t2` | the rebuild in the sweep |
+| `collect`, `collect_with_roots`, `collect_core` | take `tbl`; ensure `table_ok s2 t2` | exactness after a collection |
+| `GC.Impl.Correct.collect_post`, `gc_safe`, `gc_correct`, `collect_correct`, `collect_stack_correct` | gain a table argument `t`; `collect_post` and `gc_safe` gain the conjunct `table_ok s2 t` | **stronger**: a new safety conjunct. `collect_post_heap` is the old `collect_post` body. |
+| SPOT `spot_gc_correct` | gains `final_tbl` | `gc_correct`'s new argument |
+| `GC.Gen.Impl.Promote.promote_one`, the five Cheney functions, `promote_phase` | take `tbl`; ensure `Seq.length t2 == n_windows /\ (table_sound 'ms 't ⇒ table_sound ms2 t2)` | carried as an implication, so no `requires` changes |
+| `gen_heap_t` | gains `tbl` | the state |
+| `is_gen_heap` | gains `table_pkg gh.tbl s`: the table is sound for `s` | **Deviation from §3.1**, which put `table_ok` in `major_heap_shape`. Exactness cannot always hold (§8.1), and the table is a separate array, so it belongs with the heap's ownership, not inside the pure shape predicate. |
+| `gen_alloc` | **`requires` gains `fls_valid 's 'fp /\ fls_terminates 's 'fp`** | §8.2: soundness after a major allocation needs a real free block |
+| `minor_collect_full`, `gen_gc` | unchanged signatures; the table travels in `is_gen_heap` | `gen_gc` uses `collect_pkg`, which unfolds `table_pkg` around `MajorGC.collect` |
+| `GC.Spec.ObjectTable.Sweep.fused_objects` (new) | `objects zero_addr (fst (fused_sweep_coalesce_lists g)) == out_emit g (objects zero_addr g) 0`, **no precondition** | the output walk is the survivors plus each run's first header (§1.2) |
+
+### 8.4 Audit: who else writes major-heap headers
+
+Every path in the OCaml 4.14.2 runtime, plus the patch and the bridge, that
+writes a header word of the major heap outside the verified code. Verdicts:
+- **(1)** does not touch the verified heap;
+- **(2)** changes colour or tag only, or writes inside a block's fields: the
+  walk is unchanged;
+- **(3)** only adds walk positions inside an existing block;
+- **(4)** can remove a walk position.
+
+| Where (4.14.2) | What | Under the verified runtime | Verdict |
+|---|---|---|---|
+| `memory.c` `caml_alloc_shr_aux` (patched line 479) | rewrites the header the verified allocator wrote, with the same wosize and the real tag | every major allocation | (2), except `wosize = 0`, below |
+| `intern.c:375` and the other `Make_header`s in `intern_rec` | a header for every unmarshalled object, in ascending order, from the block's own header, with no gaps; `extern` sizes the block exactly | values over `Max_young_wosize` words | **(3)** |
+| `intern.c:168` `intern_cleanup` | puts back the block's original header after an unmarshalling error, which swallows the inner headers | on errors | (4) for that one write, but harmless: no GC can run between the inner writes and the restore, so no one has seen the inner positions |
+| `obj.c:214–217` `caml_obj_truncate` | first a tail header inside the block (a field write), then the block's own header with the smaller wosize | `Obj.truncate` (deprecated) | **(3)**: one position added |
+| `obj.c:48, 67` `caml_obj_set_tag`, `caml_obj_make_forward` | the tag | yes | (2) |
+| `alloc.c:236, 259` `caml_update_dummy` | the tag; wosize never written | `let rec` | (2) |
+| `alloc.c:221`, `interp.c:603` | Infix headers inside a closure's fields | yes | (2): not walk positions |
+| `memory.h` `Alloc_small`, `minor_gc.c` oldify | minor heap only; oldify is a fatal error under the patch | — | (1) |
+| `major_gc.c`, `compact.c`, `freelist.c`, `memory.c` `expand_heap` / `caml_add_to_heap` / `caml_shrink_heap` | colours, merges, free blocks | every entry point is a fatal error under the patch (`VERGC_STOCK_GC_UNREACHABLE`), or acts on the stock chunk, never the verified heap | (1) |
+| `intern.c:676` (`intern_add_to_heap`) | free blocks in a new chunk | more than 2^54 words: the chunk is outside the verified heap, and `caml_add_to_heap` is a fatal error | (1) |
+| `extern.c:529`, `startup_aux.c:62`, `weak.c`, `finalise.c`, `array.c`, `str.c`, `custom.c`, `memprof.c`, `globroots.c` | the output buffer, the atom table, or allocations through `caml_alloc_shr` | — | (1)/(2) |
+
+So the only writers that change the walk are intern and truncate. Both add
+positions inside an existing block and remove none, which `table_sound`
+tolerates. The audit also found three things outside the table's scope, not
+fixed here:
+- **`caml_alloc_shr(0, tag)`** from a C stub. The bridge rounds the request up
+  to 1 (`alloc_gen.c`), so the allocator carves 2 words. `caml_alloc_shr_aux`
+  then writes a header of wosize 0, and the walk steps onto the next word,
+  which is stale. No stock caller passes 0: zero-sized values are atoms. A fix
+  is to reject 0 in the bridge, or to write the normalised size.
+- **Truncate's tail is black.** It is `Caml_black` in the major heap, which
+  breaks `gc_precondition`'s "every black object is a root" until the next
+  collection.
+- **intern while it is still writing headers** leaves the walk running into
+  unwritten words, and malformed input can leave the block untiled. No GC can
+  run inside `intern_rec`, and stock 4.14 has the same exposure to malformed
+  input.
+
+### 8.5 Verification and tests
+
+- **Proofs.** `gmake verify` and `make -C spot` from an empty `_cache`, in a
+  scratch worktree: 277 checked files in 40 min at `-j5`, with
+other jobs running, then all SPOT modules. There are no admits, and no new `assume`.
+- **Vacuity.** `GC.Spec.ObjectTable.Vacuity` (a root module, so every build
+  checks it). "Precondition implies `False`" fails, as it must, for:
+  `table_ok_meaning`, `table_add_block`, `table_sound_add_block`,
+  `table_sound_meaning`, `table_sound_grow`, `table_matches_sound`,
+  `fused_walk`, `cursor_out_emit_step`, `collect_table_ok`,
+  `alloc_lists_table`, `alloc_lists_sound`, `promote_object_sound_step` and
+  `minor_collect_sound`. `GC.Impl.Correct`'s vacuity check covers `gc_correct`
+  with the new conjunct.
+- **Snapshot tests** (`generational/snapshot`, `make`):
+  - **`object_table_test.c`.** The rebuild, then allocation cases:
+    - an object over a boundary, an object below one, an object starting
+      exactly at one;
+    - a large object over three boundaries;
+    - the last block of the heap;
+    - an exact fit that straddles a boundary, which writes nothing;
+    - out of memory.
+    
+    It also covers re-tiling: the table stays sound but is no longer exact,
+    the guard skips, and the rebuild restores exactness. Finally the sweep
+    case C3 (`sweep-absorbs`).
+  - **`size_lists_test.c`** checks exactness after every allocation.
+  - **`main.c`** checks soundness and exactness after `init_heap`, the minor
+    collection and `gen_gc`.
+- **`make test` and `make test-native`** pass. Native needs `OCAMLLIB` set,
+  because the installed `ocamlopt` points at a deleted directory; this is
+  unrelated to the change.
+- **Checker build** (`-DVGC_CHECK_ALLOC`):
+  - **After every collection, and every 1,024th direct major allocation:**
+    `table_sound` (each entry a walk header, at or below its boundary,
+    non-decreasing), plus the part B list checks.
+  - **After every full collection**, right after the sweep: exactness, each
+    entry naming the block that contains its boundary.
+  - **After every direct major allocation:** each boundary inside the new
+    object names its header, unless the guard held.
+  - **Results.** `make correctness` passes on it, `no_scan` included, as do
+    hamming (16M), binarytrees 16, livemap and livegraph.
+- **The OCaml testsuite:** `ci/build-verified-toolchain.sh`, then `ci/run-testsuite.sh`:
+  2,925 passed, 55 failed and 7 errors, of 3,141. **No new failures** against
+  `ci/expected-failures.txt`. The same 10 expected failures now pass as on
+  part B (§7.6): the numbers are identical.
+
+### 8.6 Negative controls (§6.3, part A)
+
+`tools/mutation-object-table.sh` applies each mutant to a copy of one Pulse
+module, and the same edit to a copy of the extracted C. The Pulse module must
+fail to verify, in a scratch cache. The C copy must fail the snapshot tests.
+Each C mutant was also built into a checker runtime and run on `make
+correctness`.
+
+| ID | Mutant (Pulse / C) | F\* failure | Snapshot tests | Checker runtime |
+|---|---|---|---|---|
+| M6 | the sweep's cursor emits every visited header (`starts = true`) | `GC.Impl.FusedSweepCoalesce`: the loop invariant (the cursor equation) at the end of the non-black branch | `sweep-absorbs` | `infix_closures`, after a full collection: "table entry does not name the block containing its boundary" (window 35: entry `+0x22ffd0`, an absorbed header) |
+| M7 | the allocator skips the first boundary inside a new object (`k = j0 + 1`) | `GC.Impl.ObjectTable.table_alloc_write`: the postcondition `t2 == alloc_table 't obj wz` | carve-over-boundary, at-boundary, large and others | `no_scan`, after a major allocation: "allocator did not set the entry of a boundary inside the object" |
+| M8 | the allocator stores `obj` (`hd + 8`), not the header | the same postcondition | `size_lists_test`: exactness after an allocation | `no_scan`, after a major allocation: the same message |
+| M11 | the allocator writes without the guard (`if false`) | the same postcondition (Pulse); for the spec mutant, see below | `guard`: the table changes, and `ot_sound` finds (M) broken | not caught, and it cannot be: no runtime path puts a free block inside a re-tiled region before the next sweep (§8.2). The guard exists for the proof. |
+
+**M11s, the spec mutant.** `alloc_table` without the guard (`if false then
+t`) was checked in place in the clean worktree, then restored.
+`GC.Spec.ObjectTable` fails in `table_sound_add_block`, in the branch where the
+guard holds: soundness genuinely needs the guard. `table_add_block`, the
+exactness lemma, still verifies, because the guard never holds on an exact
+table.
+
+### 8.7 Measurements
+
+Setup:
+- bytecode, on the same machine as §7.5 (macOS, x86-64), with the machine
+  otherwise idle;
+- no attaching tools;
+- "Base" is `origin/sheera/size-lists` (`3be9eb3`), built the same way;
+- every program's output is byte-identical on base and new.
+
+**Wall clock** (`hyperfine`; 3 runs, and 6 for the second bt16/livemap row):
+
+| Program (major heap, words) | Base, s | Table, s | Change |
+|---|---|---|---|
+| hamming (16M) | 0.251 ± 0.006 | 0.253 ± 0.002 | +0.6% |
+| hamming (8M) | 0.269 ± 0.006 | 0.269 ± 0.003 | +0.3% |
+| binarytrees 16 (64M) | 12.89 ± 0.29; 14.06 ± 0.88 | 13.28 ± 0.35; 13.83 ± 0.49 | +3.1%; −1.6% |
+| binarytrees 18 (512M) | 55.60 ± 0.25 | 54.64 ± 0.18 | −1.7% |
+| livemap (25M) | 8.21 ± 0.14; 8.49 ± 0.25 | 8.41 ± 0.24; 8.60 ± 0.22 | +2.5%; +1.3% |
+| livegraph (16M) | 4.65 ± 0.11 | 4.59 ± 0.01 | −1.3% |
+
+The changes go both ways, and they are within run-to-run noise.
+
+**Allocation and sweep, measured directly.** Scratch copies of the extracted
+`GC_Gen_Impl.c` (base and table) time:
+- every `allocate` / `allocate_part1` call, in `rdtsc` cycles: promotions and
+  direct major allocations, guard included;
+- every `fused_sweep_coalesce`, in wall time.
+
+They also count the table work. Mean of 3 runs each:
+
+| Program | Sweeps | Sweep, ms: base / table | Allocations | Cycles per allocation: base / table | Allocations containing a boundary | Entries written | Guard held | Entries per sweep |
+|---|---|---|---|---|---|---|---|---|
+| hamming 16M | 1 | 4.2 / 4.3 | 1,614,976 | 122 / 113 | 538 (0.03%) | 538 | 0 | 2,048 |
+| binarytrees 16 | 58 | 1,331 / 1,352 | 15,567,346 | 182 / 177 | 126,497 (0.81%) | 126,497 | 0 | 8,192 |
+| binarytrees 18 | 33 | 4,846 / 4,824 | 79,041,572 | 199 / 198 | 642,146 (0.81%) | 642,146 | 0 | 65,536 |
+| livemap | 14 | 231 / 227 | 16,656,560 | 200 / 206 | 10,751 (0.06%) | 10,751 | 0 | 3,072 |
+| livegraph | 4 | 67 / 69 | 5,937,847 | 65 / 69 | 2,772 (0.05%) | 2,893 | 0 | 2,048 |
+
+The run-to-run spread is 5–15%. To get below it, 10 interleaved base/table
+pairs of bt16 and livemap were run, and the per-pair differences give a 95%
+interval:
+
+| | Sweep | Allocation | Wall |
+|---|---|---|---|
+| binarytrees 16 | −0.1% ± 1.0% | −3.1% ± 1.8% | +0.7% ± 1.3% |
+| livemap | −1.7% ± 1.3% | +1.2% ± 1.7% | −0.1% ± 2.3% |
+
+What this says:
+- **No overhead is measurable,** in the sweep or in allocation. At this
+  resolution, about 1–2%, the table costs nothing that can be seen.
+- **The allocator's one compare per call is lost in code-layout effects.**
+  The allocation differences have both signs, and bt16's table build is
+  *faster*. Under 1% of allocations contain a boundary, and binarytrees'
+  128-word blocks cross one in 1 case in 64.
+- **The sweep's added work is small against the pass.** It is one compare per
+  output header plus `n_windows` stores, which is 2.2M stores over bt18's 33
+  sweeps against a 4.8 s sweep total. §5.1 predicted under 1%.
+- **The guard never held.** In every workload, every allocation that contained
+  a boundary wrote its entries. This is consistent with §8.2's argument that
+  it cannot, at run time.
+- **Balance** (§6.4.6) is not measured: the cuts are for the parallel sweep,
+  step 3.

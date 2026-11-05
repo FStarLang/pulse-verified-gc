@@ -24,7 +24,9 @@
 static uint8_t *mem;
 static heap_t heap;
 static uint64_t heads[NL];
+static uint64_t tbl[64];   /* object-start table (object_table_test.c) */
 static int failures;
+long ot_check(const uint8_t *m, const uint64_t *tbl);
 
 static void wr(uint64_t a, uint64_t v) { memcpy(mem + a, &v, 8); }
 static uint64_t rd(uint64_t a) { uint64_t v; memcpy(&v, mem + a, 8); return v; }
@@ -44,6 +46,7 @@ static void layout(int n, const uint64_t *wz, const uint64_t *col, uint64_t *obj
         pos += (wz[i] + 1) * 8;
     }
     wr(pos, hdr((heap_size_u64 - pos) / 8 - 1, WHITE));
+    table_rebuild(heap, tbl);
 }
 
 #define CHECK(name, cond) do { \
@@ -69,7 +72,8 @@ int test_size_lists(void) {
     /* exact hit: pop the head of list 5 */
     { uint64_t wz[] = {3, 5}, col[] = {WHITE, BLUE};
       layout(2, wz, col, o); heads[5] = o[1];
-      uint64_t r = allocate(heap, heads, 5);
+      uint64_t r = allocate(heap, heads, tbl, 5);
+      CHECK("table", ot_check(mem, tbl) == 0);
       CHECK("exact", r == o[1]);
       CHECK("exact", rd(o[1] - 8) == hdr(5, WHITE));
       heads_zero_except("exact", -1, -1); }
@@ -79,7 +83,8 @@ int test_size_lists(void) {
      * request, so the search never looks at it) */
     { uint64_t wz[] = {3, 12, 5}, col[] = {WHITE, BLUE, BLUE};
       layout(3, wz, col, o); heads[12] = o[1]; heads[5] = o[2];
-      uint64_t r = allocate(heap, heads, 6);
+      uint64_t r = allocate(heap, heads, tbl, 6);
+      CHECK("table", ot_check(mem, tbl) == 0);
       CHECK("fallback", r == o[1] + 6 * 8);
       CHECK("fallback", rd(r - 8) == hdr(6, WHITE));
       CHECK("fallback", rd(o[1] - 8) == hdr(5, BLUE));
@@ -90,7 +95,8 @@ int test_size_lists(void) {
      * taken, and its 1-word remainder moves to list 1 */
     { uint64_t wz[] = {3, 9, 5}, col[] = {WHITE, BLUE, BLUE};
       layout(3, wz, col, o); heads[9] = o[1]; heads[5] = o[2];
-      uint64_t r = allocate(heap, heads, 3);
+      uint64_t r = allocate(heap, heads, tbl, 3);
+      CHECK("table", ot_check(mem, tbl) == 0);
       CHECK("smallest-list", r == o[2] + 2 * 8);
       CHECK("smallest-list", rd(o[2] - 8) == hdr(1, BLUE));
       CHECK("smallest-list", heads[1] == o[2] && heads[9] == o[1]);
@@ -100,7 +106,8 @@ int test_size_lists(void) {
      * on no list */
     { uint64_t wz[] = {3, 4}, col[] = {WHITE, BLUE};
       layout(2, wz, col, o); heads[4] = o[1];
-      uint64_t r = allocate(heap, heads, 3);
+      uint64_t r = allocate(heap, heads, tbl, 3);
+      CHECK("table", ot_check(mem, tbl) == 0);
       CHECK("fragment", r == o[1] + 8);
       CHECK("fragment", rd(o[1] - 8) == hdr(0, BLUE));
       CHECK("fragment", rd(o[1]) == hdr(3, WHITE));
@@ -110,7 +117,8 @@ int test_size_lists(void) {
      * leaves list 0 for list 16 */
     { uint64_t wz[] = {3, 20}, col[] = {WHITE, BLUE};
       layout(2, wz, col, o); heads[0] = o[1];
-      uint64_t r = allocate(heap, heads, 3);
+      uint64_t r = allocate(heap, heads, tbl, 3);
+      CHECK("table", ot_check(mem, tbl) == 0);
       CHECK("large-to-small", r == o[1] + 17 * 8);
       CHECK("large-to-small", rd(o[1] - 8) == hdr(16, BLUE));
       CHECK("large-to-small", heads[16] == o[1] && rd(o[1]) == 0);
@@ -119,7 +127,8 @@ int test_size_lists(void) {
     /* large stays: a 40-word block keeps its 36-word remainder on list 0 */
     { uint64_t wz[] = {3, 40}, col[] = {WHITE, BLUE};
       layout(2, wz, col, o); heads[0] = o[1];
-      uint64_t r = allocate(heap, heads, 3);
+      uint64_t r = allocate(heap, heads, tbl, 3);
+      CHECK("table", ot_check(mem, tbl) == 0);
       CHECK("large-stays", r == o[1] + 37 * 8);
       CHECK("large-stays", rd(o[1] - 8) == hdr(36, BLUE));
       CHECK("large-stays", heads[0] == o[1]);
@@ -129,7 +138,8 @@ int test_size_lists(void) {
      * from B, whose 4-word remainder moves to list 4 and A links past it */
     { uint64_t wz[] = {18, 3, 25}, col[] = {BLUE, WHITE, BLUE};
       layout(3, wz, col, o); heads[0] = o[0]; wr(o[0], o[2]);
-      uint64_t r = allocate(heap, heads, 20);
+      uint64_t r = allocate(heap, heads, tbl, 20);
+      CHECK("table", ot_check(mem, tbl) == 0);
       CHECK("predecessor", r == o[2] + 5 * 8);
       CHECK("predecessor", rd(o[2] - 8) == hdr(4, BLUE));
       CHECK("predecessor", heads[0] == o[0] && rd(o[0]) == 0);
@@ -141,7 +151,8 @@ int test_size_lists(void) {
       layout(2, wz, col, o); heads[2] = o[1];
       uint8_t *before = malloc((size_t)heap_size_u64);
       memcpy(before, mem, (size_t)heap_size_u64);
-      uint64_t r = allocate(heap, heads, 3);
+      uint64_t r = allocate(heap, heads, tbl, 3);
+      CHECK("table", ot_check(mem, tbl) == 0);
       CHECK("oom", r == 0);
       CHECK("oom", memcmp(before, mem, (size_t)heap_size_u64) == 0);
       CHECK("oom", heads[2] == o[1]);
@@ -151,7 +162,8 @@ int test_size_lists(void) {
     /* drained lists: lists 1..6 empty, list 7 serves 1 */
     { uint64_t wz[] = {3, 7}, col[] = {WHITE, BLUE};
       layout(2, wz, col, o); heads[7] = o[1];
-      uint64_t r = allocate(heap, heads, 1);
+      uint64_t r = allocate(heap, heads, tbl, 1);
+      CHECK("table", ot_check(mem, tbl) == 0);
       CHECK("drained", r == o[1] + 6 * 8);
       CHECK("drained", heads[5] == o[1]);
       heads_zero_except("drained", 5, -1); }
@@ -159,7 +171,8 @@ int test_size_lists(void) {
     /* the exact list is preferred to list 0 */
     { uint64_t wz[] = {3, 100}, col[] = {BLUE, BLUE};
       layout(2, wz, col, o); heads[3] = o[0]; heads[0] = o[1];
-      uint64_t r = allocate(heap, heads, 3);
+      uint64_t r = allocate(heap, heads, tbl, 3);
+      CHECK("table", ot_check(mem, tbl) == 0);
       CHECK("exact-first", r == o[0]);
       CHECK("exact-first", heads[0] == o[1]);
       heads_zero_except("exact-first", 0, -1); }
