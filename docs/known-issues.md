@@ -40,7 +40,9 @@ run a full collection before a minor collection that may not fit.
 
 The verified collector's contracts (`GC.Gen.Impl`'s trusted bridge
 obligations) model the program as allocation, field writes through
-`caml_modify` / `caml_initialize`, and nursery allocation. These runtime paths
+`caml_modify` / `caml_initialize` (since M3 the verified barrier,
+`GC.Gen.Impl.Barrier`, whose precondition `GC.Gen.Barrier.modify_ok` is the
+trusted part), and nursery allocation. These runtime paths
 change a live major block in other ways; each is safe in both sweep modes for
 the reason given, but none is covered by a proof:
 
@@ -53,6 +55,23 @@ the reason given, but none is covered by a proof:
   nor OCaml's own testsuite calls it.
 - **Tag changes**: `Obj.set_tag`, `Lazy` forcing (`Forward_tag`),
   `caml_update_dummy`. They write the tag byte, never the colour.
+- **Closure bodies written through `caml_modify`**: `caml_update_dummy` of a
+  closure value (`let rec` of values whose right-hand sides are closures)
+  copies the closure's words -- code pointers, the closure info word, infix
+  headers -- into the dummy with `caml_modify`, after setting its tag to
+  `Closure_tag`. `modify_ok` asks for a block that is not a closure (its body
+  holds the infix headers interior pointers resolve through). At run time
+  the verified barrier does what stock's does (the old values are the
+  dummy's immediates, so nothing is darkened, and a young value copied from
+  the closure's environment is remembered), and a dummy of at most `Max_young_wosize` words is young, so
+  its writes never reach the barrier.
+- **Slots outside the verified heap**: `caml_modify` / `caml_initialize` of a
+  slot that is neither in the nursery nor in the verified major heap (native
+  code's static data) take the stock logic in the bridge (`vergc_modify`,
+  without darkening), not the verified barrier. If such a slot gets a young
+  value it goes into the ref table, which `ref_table_sound_with` does not
+  allow; the minor collection's slot rewrite (`rewrite_one_slot`, which only
+  checks `slot < heap_size`) rewrites it as stock would.
 - **Intern** (`Marshal.from_*`): a block of at most `Max_wosize` words is one
   `caml_alloc_shr` block carved into objects that all get that block's colour.
   That is the colour the allocator would give each of them, because the sweep
@@ -74,8 +93,9 @@ the reason given, but none is covered by a proof:
   to it, `caml_compact_heap` and `caml_finalise_heap` do nothing, and the
   remaining stock entry points are fatal (`VERGC_STOCK_GC_UNREACHABLE`) (so `Gc.compact` does not compact, and `Gc.set`'s policy change
   is not honoured). Stock's `caml_gc_phase` therefore stays `Phase_idle`, and
-  every path guarded by it (`caml_darken` in `caml_modify`, `weak.c`,
-  `finalise.c`, `array.c`) is dead.
+  every path still guarded by it (`weak.c`, `finalise.c`) is dead;
+  `caml_modify` and `caml_array_fill` darken at the verified collector's
+  phase instead, through the verified barrier.
 
 ---
 

@@ -1065,7 +1065,7 @@ which is `minor_collect`, `start_cycle` and slices until idle in one call.
 
 ```fstar
 let gc_state gh d b s fp ph : slprop =
-  is_gen_heap gh d b s fp ** gen_phase gh s ph **
+  is_gen_heap gh d b s fp ** gen_phase gh s ph ** mark_state gh s ph **
   pure (GI.phase_shape ({ data = d; bump = b }) s fp ph)
 
 phase_shape minor g fp Idle         = collection_heap_shape minor g fp
@@ -1075,7 +1075,8 @@ phase_shape minor g fp (Sweeping c) =
 ```
 
 (`phase_shape` is opaque, with `phase_shape_idle` / `phase_shape_sweeping`
-to open it.)  `gen_phase gh s ph` is where the stored caches meet the heap:
+to open it.)  `mark_state gh s ph` owns the persistent mark stack and its
+overflow flag (below, "The write barrier").  `gen_phase gh s ph` is where the stored caches meet the heap:
 the phase record holds `swept_tail` and `last_fragment` beside the cursor,
 and `Alloc.is_phase` says they are `state_at s cursor`'s.  What counts as
 free for a minor collection at a phase is `phase_free ph`: `free_stw` idle,
@@ -1098,6 +1099,8 @@ Pulse loop is `GC.Impl.FusedSweepCoalesce.sweep_slice_impl`, over the same
 | `minor_collect gh roots .. slots ..` | `gc_state .. ph`, `minor_slots_ok ph` (the remembered set and roots for `phase_free ph`) | `minor_collect_with`'s contract at `ph` for `phase_free ph` (`minor_collect_post_with ph (phase_free ph) ..`), `gc_state` at the same phase `ph` (idle stays idle; mid-sweep the cursor and the pending-free set are kept, `GI.minor_keeps_phase_shape`); returns whether promotion succeeded |
 | `start_cycle gh roots nroots st` | `gc_state .. Idle`, `nursery_empty d b` (right after a minor collection), `start_cycle_pre s rs st cap` (the stack empty and able to hold the roots, every root a darkenable major object) | `start_cycle_post`: with `prepared` the darkened heap and stack, the stack holds the objects the roots name (`roots_match_stack`) and the heap is the marked one (`mark_post` of the darkened heap); `gc_state` at `Sweeping zero_addr`; nursery, free-list head and roots unchanged |
 | `major_slice gh budget` | `gc_state .. ph` | `(s2, fp2, ph2) == major_slice_spec s fp ph budget` (idle: nothing; mid-sweep: `phase_slice`), `gc_state` at `ph2`; returns `Idle? ph2` |
+| `modify_field ghr slot v` | `gc_state .. ph`, `GB.modify_ok ph minor s x slot v` (trusted: `slot` a body word of the non-free, scannable, non-closure block `x`, `v` storable there, and while marking a value the program holds) | `gc_state` at the same phase of `GB.modify_heap ph s slot v`; returns `GB.modify_records s slot v` (append the slot to the ref table) |
+| `initialize_field ghr slot v` | `is_gen_heap`, `gen_phase`, `mark_state` at `s`; `slot` a body word of a non-free block of `s` (a block just allocated) | the same of `write_word s slot v`; returns `GB.initialize_records v` |
 | `full_gc gh roots .. slots .. st` | `gc_state .. Idle`, the stack budget, and the stop-the-world minor-collection arguments (zeroed forwarding array, remembered set sound and covering, remembered targets among the roots, roots valid) | the stop-the-world contract (below): out of memory reported only for a concrete OOM, rewritten roots, `minor_reset`, `collection_heap_shape` restored, the end-to-end isomorphism, unreachable objects freed; `gc_state .. Idle`; returns whether promotion succeeded |
 
 Major allocation, at either phase, is the allocator itself
@@ -1127,8 +1130,12 @@ collector call returns it and the program's events in between keep it:
   every field with a storable value (an integer, or a pointer to a non-free
   object -- a reachable one) before the next collector call
   (`fresh_write`, `fresh_close`);
-- every field write is a `program_write`, and the write barrier records every
-  major field that gets a nursery pointer;
+- every major-field write goes through the verified barrier
+  (`modify_field` / `initialize_field`, "The write barrier" below) with its
+  precondition `modify_ok` (a `program_write`; while marking, a value the
+  program holds), and the bridge appends the slot to the ref table exactly
+  when the barrier returns true; a write into a nursery object needs no
+  barrier;
 - nursery allocation keeps the nursery's shape and the cross-generation
   condition for `free_incremental c`;
 - `minor_slots_ok`: the forwarding array zeroed, the remembered set sound and
@@ -1206,8 +1213,9 @@ uses the bounded variant in the top-level `collect` contract.
 
 Incremental marking runs the mark step a few objects at a time with the
 program running in between. This is the spec core (milestone M1 of the
-incremental-mark plan); the `Marking` phase, black allocation, the Pulse
-slices and the write barrier come later. The mark stack stays an
+incremental-mark plan); the `Marking` phase and black allocation (M2) and
+the verified write barrier (M3) follow below, the Pulse mark slices are to
+come. The mark stack stays an
 implementation cache: the spec state is the heap's colours alone.
 
 **The step at any grey object** (`GC.Spec.MarkPhase.mark_step_at g x`):
@@ -1366,11 +1374,105 @@ instance of `marking_inv_change`:
 `Marking`, that the roots be held (`MP.held_reached s (GMM.roots_held s
 rs)`), and `minor_collect` gives the same of the rewritten roots.
 
-**Left** (M3/M4): the Pulse barrier and allocation entry points that would
-carry `marking_write_barrier` and `marking_alloc`/`_fresh_*` to the
-implementation, with the generational shape (`collection_shape_with`) across
-a direct major allocation; the mark slices, `start_cycle` entering
-`Marking`, and the hand-over to the sweep.
+#### The write barrier (M3)
+
+4.14's `caml_modify (fp, val)` for a major slot: `old = *fp; *fp = val;` while
+marking, darken `old` (`caml_darken`); if `val` is a nursery block and `old`
+was not, add `fp` to the ref table.  `caml_initialize` writes and remembers
+the slot when `val` is young, without darkening.  Both are now verified, and
+every phase's state is kept by them.
+
+**The persistent mark state.**  `gen_heap_t` gains `mark_stack` (a
+`gray_stack`) and `mark_overflow` (a `bool` reference), allocated once by the
+bridge at heap set-up, empty with the flag down.  `GC.Gen.Impl.mark_state gh
+s ph` owns them, and `gc_state` includes it.  Like the sweep's caches they are
+an implementation cache of the heap's colours
+(`GC.Gen.MarkState.mark_cache_ok`):
+
+- while marking, every stack entry is a grey object, and while the flag is
+  down every grey object is on the stack;
+- at any other phase the stack is empty and the flag down (nothing is grey
+  then either, but that is `phase_shape`'s).
+
+Every entry point keeps it: outside marking it says nothing of the heap
+(`mark_cache_off`), and a minor collection while marking keeps the grey
+objects (`GC.Gen.MarkPhase.Minor.minor_keeps_greys`: an old non-free block
+keeps its header, a new one is a black copy).  `start_cycle` and `full_gc`
+still mark with the per-collection stack the bridge hands them: their
+contracts are stated over that stack (`gen_gc_prepared_state`, the SPOTs),
+and darkening the roots into a fixed-capacity persistent stack needs either a
+roots-fit obligation or an overflowing root darkening, which is M4's
+`gen_mark_start`.  M4's mark slices will drain the persistent stack.
+
+**The spec** (`GC.Gen.Barrier`):
+
+- `modify_ok ph minor g x a v` (the trusted program obligation):
+  `SPM.program_write (phase_free ph) g x a v` (a body word of a non-free block
+  that is not a closure, a storable value), `scannable g x`, and while marking
+  `MM.target_ok g (nursery_held minor) v` -- the program holds `v`, so if it
+  is white the marker will reach it (the roots obligation, option (a));
+- `modify_heap ph g a v`: while marking `write_word (MM.darken g (read_word g
+  a)) a v`, otherwise `write_word g a v`;
+- `modify_records g a v = is_young v && not (is_young (read_word g a))`;
+- `modify_phase_shape`: `phase_shape` is kept at every phase.  Idle it is a
+  new lemma for `collection_heap_shape` (the stop-the-world code never had
+  program events in its spec): `MM.write_wf` for well-formedness, the walk,
+  the headers and the list from `SPI.body_write`, density from the walk, the
+  colour facts from the headers; mid-sweep `SPM.write_sweep_phase`; while
+  marking `MM.marking_write_barrier` and the minor collection's shape at
+  `free_stw` across the darkening (greying a white block keeps the walk, the
+  free-list cells and their links) and the write;
+- `modify_ref_table` / `initialize_ref_table` (both from `write_ref_table`):
+  if the table covered every nursery pointer of a non-free scannable block and
+  named only fields of such blocks, then with the slot appended exactly when
+  the barrier says so (`appended`) it still does, for the phase's definition
+  of free.  The young-over-young case relies on the slot being in the table
+  already (coverage); darkening touches no field.  So
+  `RT.ref_table_covers_with` / `ref_table_sound_with`, which `minor_slots_ok`
+  asks the bridge for, follow from "the bridge appends iff the barrier
+  returned true", for the writes; what is left trusted is that every field
+  of a block allocated in the major heap is initialised (through
+  `caml_initialize`, or a raw store of a value that is not young) before the
+  next minor collection, since a fresh block's garbage fields are not
+  covered;
+- `modify_mark_cache`: the darkened block is pushed, or the flag raised when
+  the stack is full (whether or not there was a block to push: a raised flag
+  only costs a rescan).
+
+**The implementation** (`GC.Gen.Impl.Barrier`, extracted into
+`GC_Gen_Impl.c`): `modify_field ghr slot v` and `initialize_field ghr slot v`
+take the collector's record by reference (`ghr`, the bridge's
+`&gc_gen_heap`), so the call copies one word.  `modify_field` reads the old
+value and the phase record, and while marking (`ps_kind >= 2`, as
+`phase_of`) calls the out-of-line `darken_via` (the stop-the-world mark's
+`check_and_darken_bounded`, which resolves infix pointers, preceded by the
+overflow flag update; `darken_spec_eq` says it is `MM.darken` with the push);
+then it writes and returns `young v && not (young old)`.  The common path
+(not marking) is about twenty instructions.
+
+**The bridge and the runtime.**  The patched `caml_modify` writes a nursery
+slot directly (no barrier is needed there, as 4.14), calls `modify_field` for
+a slot of the verified major heap, and for any other slot (native code's
+static data) keeps the stock logic without darkening (`vergc_modify` in
+`alloc_gen.c`); it calls `add_to_ref_table` exactly when the barrier returns
+true.  `caml_initialize` is the same with `initialize_field`, and
+`caml_array_fill`'s copy of the barrier goes through `vergc_modify`.
+
+**Cost.**  `caml_modify` was already an out-of-line call; the verified one
+adds a range check and one more call.  On a loop that only stores into a
+major array (native, 300M stores) it costs about 1-1.4 ns more per store than
+stock's barrier (0.55 s -> 0.88 s storing immediates, 1.34 s -> 1.77 s
+storing fresh young boxes); in bytecode about 10%.  On the mark benchmarks
+it is within noise: binarytrees 16 (bytecode 8.49 s -> 8.47 s, native 7.14 s
+-> 7.14 s), livemap 1000000 1 (12.75 -> 12.82 s, 11.87 -> 11.69 s),
+livegraph 1000000 4 4 (3.69 -> 3.77 s, 2.26 -> 2.38 s; ranges overlap), where
+the barrier is about 1% of the run (`perf`: `modify_field` 0.6-0.9%, as
+stock's `caml_modify` was 0.8% of livemap).
+
+**Left** (M4): the allocation entry points that would carry
+`marking_alloc`/`_fresh_*` to the implementation, with the generational
+shape across a direct major allocation; the mark slices over the persistent
+stack, `start_cycle` entering `Marking`, and the hand-over to the sweep.
 
 ## The minor collector
 
@@ -2770,6 +2872,8 @@ minor_collect(...)
 start_cycle(...)   /* incremental */
 major_slice(...)   /* incremental */
 full_gc(...)       /* stop-the-world */
+modify_field(...)      /* caml_modify, caml_array_fill */
+initialize_field(...)  /* caml_initialize */
 ```
 
 The bridge is deliberately outside the verified F*/Pulse boundary. Its job is to
@@ -2897,8 +3001,11 @@ Caml_state->_young_ptr   = Caml_state->_young_end;
 ### Remembered slots and write barrier compatibility
 
 OCaml's `caml_modify` records major fields that receive young pointers in
-`Caml_state->_ref_table`. The bridge passes that table directly to
-`minor_collect`:
+`Caml_state->_ref_table`.  In this runtime the decision is the verified
+barrier's (`modify_field` / `initialize_field`, above): the patched
+`caml_modify` / `caml_initialize` call `add_to_ref_table` exactly when it
+returns true, and the table itself, and its growth, stay stock's. The bridge
+passes that table directly to `minor_collect`:
 
 ```c
 struct caml_ref_table *tbl = Caml_state->_ref_table;
@@ -3048,7 +3155,10 @@ modifies the runtime so bytecode programs call the verified collector:
   The inline fast path writes the OCaml header itself; slow minor allocations
   reuse the extracted header unless reserved profinfo bits are enabled.
 - `runtime/memory.c` routes `caml_alloc_shr_aux` through `verified_allocate`
-  for major allocations.
+  for major allocations, and `caml_modify` / `caml_initialize` through the
+  verified barrier (`modify_field` / `initialize_field`) for a slot of the
+  verified major heap; `runtime/array.c`'s `caml_array_fill` (which duplicates
+  `caml_modify`'s logic) through the same.
 - `runtime/interp.c` wraps allocation sites with `Setup_for_gc` /
   `Restore_after_gc` where verified allocation may trigger collection.
 - `runtime/minor_gc.c` disables OCaml's stock minor collection entry points so

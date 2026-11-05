@@ -584,3 +584,23 @@ well-formedness that the minor collection at `Marking` uses
    (`marking_inv_unreached`); `through_black_not_unreached_wf`: the heap of
    case 2 (G -> B -> W, W not reached) is not, since B is not free for it and
    points at W, which is.
+
+## The verified write barrier on the A/B/C fixture
+
+`GC.SPOT.WriteBarrier` runs `GC.Gen.Barrier` (the spec of `caml_modify`, M3)
+on the idle A/B/C fixture of `GC.SPOT.ConcreteScenarios`: `C` in the major
+heap with `field0 = 0` and `field1 = A` (a nursery pointer), and the
+remembered set `[field1]`.
+
+1. **A young value over an immediate** (`young_over_immediate`, `C.field0 :=
+   A`): the trusted precondition `modify_ok` holds, so it is not vacuous; the
+   barrier says to remember the slot (`modify_records` is true); the idle
+   shape is kept (`collection_heap_shape` of the result); and with `field0`
+   appended, the table `[field1; field0]` covers and is sound.
+2. **Without the append it does not cover** (`without_append`): after the
+   same write the table `[field1]` misses `field0`, which holds a nursery
+   pointer.  So "the bridge appends iff the barrier returns true" is the
+   obligation that keeps the remembered set right.
+3. **A young value over a young one** (`young_over_young`, `C.field1 := A`):
+   the barrier says not to remember the slot, and `[field1]` still covers --
+   the slot is in the table already, as 4.14's early return assumes.

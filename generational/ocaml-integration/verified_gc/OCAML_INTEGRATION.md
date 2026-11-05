@@ -127,27 +127,52 @@ still writes the final header for raw fast-path reservations and for
 `WITH_PROFINFO` builds.  Shared/large allocations use `verified_allocate()` and
 the verified major free list.
 
-### Write Barrier (`caml_modify`)
+### Write Barrier (`caml_modify`, `caml_initialize`)
 
-When mutator code writes a pointer into an existing major-heap object,
-`caml_modify` checks if the stored value points to the minor heap.
-If so, it records the **slot address** (the field being written) in the
-**remembered set** (`Caml_state->ref_table`):
+When mutator code writes into a field, OCaml 4.14's `caml_modify` (a) leaves
+a nursery slot alone, (b) for a major slot reads the old value, writes the new
+one, darkens the old one while the major GC is marking, and (c) records the
+**slot address** in the **remembered set** (`Caml_state->ref_table`) when the
+new value is young and the old one was not.  `caml_initialize` (the first
+write into a field of a block just allocated) writes and records the slot when
+the value is young.
+
+In this runtime the barrier for a slot of the verified major heap is verified
+code (`GC.Gen.Impl.Barrier`, extracted into `GC_Gen_Impl.c`), called from the
+patched runtime (`runtime/memory.c`):
 
 ```c
 void caml_modify(value *fp, value val) {
     if (Is_young((value)fp)) {
-        *fp = val;                          // minor→anywhere: no barrier
-    } else {
-        *fp = val;
-        if (Is_block(val) && Is_young(val))
-            add_to_ref_table(ref_table, fp); // major→minor: remember!
+        *fp = val;                               // nursery slot: no barrier
+    } else if (Vergc_in_major(fp)) {             // the verified major heap
+        if (modify_field(&gc_gen_heap, (uint64_t)fp, (uint64_t)val))
+            add_to_ref_table(Caml_state->ref_table, fp);
+    } else if (vergc_modify(fp, val)) {          // elsewhere: stock logic
+        add_to_ref_table(Caml_state->ref_table, fp);
     }
 }
 ```
 
-This is OCaml's **card-marking** equivalent — it tells the GC which
-major-heap fields may contain stale minor pointers after collection.
+`modify_field` reads the old value, darkens it if the collector is marking
+(onto the persistent mark stack, or raising its overflow flag; nothing enters
+`Marking` yet), writes the new value, and returns whether the slot must be
+remembered.  `caml_initialize` is the same with `initialize_field`, and
+`caml_array_fill` (`runtime/array.c`, which duplicates `caml_modify`'s logic
+for a range) calls `vergc_modify` for every field that changes.  The table is
+stock's, grown by `add_to_ref_table`; the slot is added exactly when the
+barrier returns true, which is what keeps it covering and sound
+(`GC.Gen.Barrier.modify_ref_table`).
+
+Other runtime writers of major fields, audited for the barrier:
+
+| writer | path |
+|---|---|
+| `caml_array_blit`, `caml_array_gather` (`Array.append`, `Array.concat`, `Array.sub`) | `caml_modify` / `caml_initialize` for a major destination |
+| `Obj.set_field`, `caml_obj_make_forward` (`Lazy`) | `caml_modify` (the tag change is outside the model: docs/known-issues.md) |
+| `caml_update_dummy` (`let rec` of values) | `caml_modify` (a closure body for a closure value: outside `modify_ok`, docs/known-issues.md) |
+| `caml_make_vect`, `caml_alloc`, `caml_obj_dup`, the interpreter's `MAKEBLOCK` / `CLOSURE` for a major block, intern | raw stores into a block just allocated, of values that are not young (stock requires it): no ref-table entry is needed |
+| `weak.c` (weak arrays, ephemerons) | its own copy of the barrier; unsupported (docs/known-issues.md) |
 
 ### Root Scanning (`caml_do_roots`)
 
@@ -944,7 +969,9 @@ keep true in between. How this runtime meets each:
 |---|---|
 | **Allocation mid-sweep**: a new block is *fresh* (`GC.Spec.SweepPhase.Mutator.fresh_ok`), and every field is initialised with a storable value before the next collector call | OCaml's rule for `caml_alloc_shr`: its callers initialise every field (`caml_initialize`, or raw stores of values that are not young) before allocating again -- the interpreter's `CLOSURE`/`CLOSUREREC`/`MAKEBLOCK`, `caml_alloc`, `caml_make_vect`, intern. A value the program holds is reachable, so never pending free. (A sweep slice reads no field, so even a slice between allocation and initialisation reads nothing uninitialised.) `tag <> Infix_tag` is asserted in `verified_allocate`. |
 | **The allocation colour is the collector's** | `verified_allocate` writes the final header; the patched `caml_alloc_shr_aux` rewrites only profiling bits (WITH_PROFINFO), keeping the colour; `caml_allocation_color` uses the same rule (`vergc_allocation_color`), for C stubs that ask. `Obj.truncate` is not supported: `caml_obj_truncate` raises `Invalid_argument`, so no leftover header is written. |
-| **Field writes** (`GC.Spec.SweepPhase.Mutator.program_write`) | `caml_modify` / `caml_initialize`, whose barrier records every major field given a young pointer in `caml_ref_table`. |
+| **Field writes** (`GC.Gen.Barrier.modify_ok`: a body word of a non-free, scannable, non-closure block; a storable value; while marking, a value the program holds) | Every major-field write goes through `caml_modify` / `caml_initialize` / `caml_array_fill`, which call the verified barrier (`modify_field` / `initialize_field`); OCaml's type safety gives the rest (the program stores only values it holds, into fields of blocks it holds). A write into a nursery object is made directly, with no barrier. |
+| **The remembered set: append iff the barrier returned true** | The patched `caml_modify` / `caml_initialize` call `add_to_ref_table` exactly when `modify_field` / `initialize_field` return true (`GC.Gen.Barrier.modify_ref_table` then keeps the table covering and sound); a block allocated in the major heap has every field initialised (through `caml_initialize`, or a raw store of a value that is not young) before the next minor collection. |
+| **The mark state** (`gc_gen_heap.mark_stack`, `mark_overflow`) | Allocated once in `ensure_heap`, empty with the flag down; only the extracted collector and barrier touch it. |
 | **Nursery allocation** keeps the nursery's shape and the cross-generation condition | The nursery is allocated only after the cycle's own minor collection (before `start_cycle`), so every nursery object was initialised from reachable values: none points at an object pending free. |
 | **The minor collection's arguments** (`minor_slots_ok`) | The forwarding array is zeroed before every call; the remembered set is `caml_ref_table`, reset after every minor collection (so it never names a slot in an object that was unreachable when marking ended); its young targets are added to the roots; the roots come from `caml_do_roots`, which marking used too. The table may list a field more than once (`caml_modify` adds it again after young -> immediate -> young); the contract allows repeats, so the bridge does not deduplicate. |
 | **`phase_ref` is written only by the collector** | `alloc_gen.c` only reads it (`vergc_sweeping`, `vergc_allocation_color`). |
@@ -971,8 +998,9 @@ points"). Before this, the
 page table), which left its objects black in an idle heap; the next verified
 mark skipped their children, and the sweep freed live objects
 (`tests/explicit_major.ml`). Stock's own phase, `caml_gc_phase`, therefore
-never leaves `Phase_idle`, so every stock path guarded by it (`caml_darken`
-in `caml_modify`, `weak.c`, `finalise.c`) is dead.
+never leaves `Phase_idle`, so every stock path still guarded by it (`weak.c`,
+`finalise.c`) is dead; `caml_modify` and `caml_array_fill` no longer test it:
+their darkening is the verified barrier's, at the verified collector's phase.
 
 ### Testing
 
@@ -1052,8 +1080,11 @@ bytes -- the same as `uint64_t`.  The numeric value of the pointer is
 the slot address.  We cast `tbl->base` directly and pass it to the
 verified function.  This is safe because:
 
-1. `caml_modify` only adds entries when `Is_in_heap(fp)` — all
-   entries are valid major-heap addresses.
+1. `caml_modify` adds an entry for a major-heap slot only when the verified
+   barrier says so (`modify_field`), so those entries are fields of
+   non-free scannable blocks (`GC.Gen.Barrier.modify_ref_table`).  A slot
+   outside the verified heap (native static data, through the stock
+   fallback) is outside that model, as before.
 2. `rewrite_heap_slots` treats each entry as an address to read/write
    via `read_word(major, slot_addr)` -- with `major.data = NULL`, this
    dereferences the raw address, which is correct.

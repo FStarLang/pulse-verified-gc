@@ -33,8 +33,9 @@ GC_Gen_Impl.c (KaRaMeL-extracted verified code)
 
 3. **runtime_gen.patch** — OCaml runtime modifications (~250 lines).  Patches
    `memory.h` (inline minor allocation plus slow-path `verified_allocate_minor`),
-   `memory.c` (caml_alloc_shr), `interp.c` (Setup_for_gc), `minor_gc.c`
-   (disable native GC).
+   `memory.c` (caml_alloc_shr; caml_modify and caml_initialize call the
+   verified write barrier), `array.c` (caml_array_fill, likewise),
+   `interp.c` (Setup_for_gc), `minor_gc.c` (disable native GC).
 
 ## Quick start
 
@@ -53,9 +54,9 @@ make benchmark
 
 | Component | Lines | Why trusted |
 |-----------|-------|-------------|
-| `alloc_gen.c` | ~1100 | Bridge: root scanning, address translation, heap init, the sweep mode and its pacing |
+| `alloc_gen.c` | ~1200 | Bridge: root scanning, address translation, heap init (including the persistent mark stack), the sweep mode and its pacing, the barrier's slot classification |
 | NULL-base patches | ~20 | 6 patches to GC_Gen_Impl.c for absolute addressing |
-| `runtime_gen.patch` | ~650 | OCaml runtime modifications |
+| `runtime_gen.patch` | ~1000 | OCaml runtime modifications (allocation, collection entry points, the write barrier's calls) |
 | `krmlinit.c` | ~25 | Derived constant initialization |
 | `compat.c` | ~5 | Missing `FStar_UInt64_ne` shim |
 | `caml_ref_table` completeness | — | Same trust as stock OCaml |
