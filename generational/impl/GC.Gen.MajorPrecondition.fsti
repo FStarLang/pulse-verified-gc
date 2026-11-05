@@ -113,6 +113,21 @@ val darken_precondition_after_minor
       MBP.darken_precondition
         result.mc_major Seq.empty result.mc_roots result.mc_fp cap))
 
+/// The same entry condition with no minor collection in between: at the
+/// idle shape, a root set of darkenable major objects (`root_valid_for_darkening`,
+/// what a minor collection leaves its rewritten roots,
+/// `post_minor_roots_valid_for_darkening`) and an empty stack that can hold it.
+/// This is what starting a major cycle needs (`GC.Gen.Impl.start_cycle`).
+val darken_precondition_of_shape
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (cap: nat)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      (forall (i: nat). i < Seq.length roots ==>
+         MBP.root_valid_for_darkening major (Seq.index roots i)) /\
+      Seq.length roots <= cap /\ cap > 0)
+    (ensures MBP.darken_precondition major Seq.empty roots fp cap)
+
 /// A heap between collections already satisfies the major-GC postcondition.
 ///
 /// `major_heap_shape` records both `no_black_objects` and `no_gray_objects`, and

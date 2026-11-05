@@ -45,3 +45,29 @@ let sweep_slice_phase g fp c budget =
   slice_stops g fp st c budget;
   let (g', fp', st') = sweep_slice g fp st budget in
   sweep_inv_incremental_elim g' fp' st'.cursor
+
+let phase_rest_start g fp = state_at_start g
+
+/// The pass from a state is the pass from where `k` steps leave it.
+let rec sweep_from_steps (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
+  : Lemma (ensures (let (g', fp', st') = sweep_steps g fp st k in
+                    sweep_from g' fp' st' == sweep_from g fp st))
+          (decreases k)
+  = sweep_steps_unfold g fp st k;
+    if k = 0 || sweep_done st.cursor || not (can_sweep g st) then ()
+    else begin
+      let (g', fp', st') = sweep_step g fp st in
+      sweep_from_step g fp st;
+      sweep_from_steps g' fp' st' (k - 1)
+    end
+
+let phase_rest_slice g fp ph budget =
+  match ph with
+  | Ph.Idle -> ()
+  | Ph.Sweeping c ->
+      let st = state_at g c in
+      slice_is_steps g fp st c budget;
+      sweep_from_steps g fp st (slice_count g fp st c budget);
+      sweep_slice_phase g fp c budget;
+      let (g', fp', st') = sweep_slice g fp st budget in
+      if sweep_done st'.cursor then sweep_from_stop g' fp' st' else ()

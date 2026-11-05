@@ -236,6 +236,17 @@ let darken_precondition_after_minor minor major fp roots cap
   post_minor_roots_valid_for_darkening minor major fp roots
 #pop-options
 
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let darken_precondition_of_shape minor major fp roots cap
+  =
+  GenInv.collection_heap_shape_elim minor major fp;
+  GenInv.major_heap_shape_elim major fp;
+  gray_objects_on_stack_of_no_gray major;
+  empty_bounded_stack_props major;
+  MarkBoundedInv.bounded_mark_inv_intro major Seq.empty cap;
+  empty_stack_subset major roots
+#pop-options
+
 #push-options "--fuel 0 --ifuel 0"
 let major_heap_shape_gc_postcondition major fp =
   GenInv.major_heap_shape_elim major fp;

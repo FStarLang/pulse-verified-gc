@@ -158,74 +158,6 @@ fn finish_sweep (gh: gen_heap_t)
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// A minor collection at either phase
-/// ---------------------------------------------------------------------------
-
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
-let any_phase_pre (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
-    (rs farr sl: Seq.seq U64.t) (n: nat)
-  : Lemma (requires GI.phase_shape minor s fp ph /\ minor_slots_ok ph minor s rs farr sl n)
-          (ensures minor_collect_pre_with ph (GI.phase_free ph) minor s fp rs farr sl n)
-  = GI.phase_shape_collection minor s fp ph
-#pop-options
-
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
-let any_phase_post (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
-    (rs: Seq.seq U64.t) (ok: bool)
-    (d2: minor_heap) (b2: U64.t) (s2: heap) (fp2: U64.t) (rs2: Seq.seq U64.t)
-  : Lemma (requires GI.phase_shape minor s fp ph /\
-                    minor_collect_post_with ph (GI.phase_free ph) minor s fp rs ok d2 b2 s2 fp2 rs2)
-          (ensures GI.phase_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 ph)
-  = match ph with
-    | Ph.Idle ->
-        GI.phase_free_idle ();
-        CV.cheney_collect_spec_with_stw minor s fp rs;
-        GI.phase_shape_idle minor s fp;
-        CheneyPres.cheney_collect_preserves_collection_heap_shape minor s fp rs;
-        GI.phase_shape_idle ({ data = d2; bump = b2 } <: minor_state) s2 fp2
-    | Ph.Sweeping c ->
-        GI.phase_free_sweeping c;
-        GI.minor_keeps_phase_shape minor s fp c rs
-#pop-options
-
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
-fn minor_collect_any_phase (gh: gen_heap_t)
-                           (roots: array U64.t) (nroots: SZ.t)
-                           (fwd_arr: array U64.t)
-                           (queue: larray U64.t GC.Gen.ForwardingArray.queue_size)
-                           (slots: array U64.t) (nslots: SZ.t)
-  requires gc_state gh 'd 'b 's 'fp 'ph **
-           pts_to roots 'rs **
-           pts_to fwd_arr 'farr **
-           pts_to queue 'qv **
-           pts_to slots 'sl **
-           pure (SZ.v nroots == Seq.length 'rs /\
-                 minor_slots_ok 'ph ({ data = 'd; bump = 'b } <: minor_state) 's
-                   'rs 'farr 'sl (SZ.v nslots))
-  returns ok: bool
-  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
-    gc_state gh d2 b2 s2 fp2 'ph **
-    pts_to roots rs2 **
-    pts_to fwd_arr farr2 **
-    pts_to queue qv2 **
-    pts_to slots 'sl **
-    pure (minor_collect_post_with 'ph (GI.phase_free 'ph) ({ data = 'd; bump = 'b } <: minor_state)
-            's 'fp 'rs ok d2 b2 s2 fp2 rs2)
-{
-  unfold gc_state;
-  any_phase_pre ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'ph 'rs 'farr 'sl (SZ.v nslots);
-  let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots
-             #(hide (GI.phase_free 'ph));
-  with d2 b2 s2 fp2. assert (is_gen_heap gh d2 b2 s2 fp2);
-  with rs2. assert (pts_to roots rs2);
-  any_phase_post ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'ph 'rs ok
-    d2 b2 s2 fp2 rs2;
-  fold (gc_state gh d2 b2 s2 fp2 'ph);
-  ok
-}
-#pop-options
-
-/// ---------------------------------------------------------------------------
 /// Starting the sweep phase
 /// ---------------------------------------------------------------------------
 
@@ -317,7 +249,7 @@ fn gen_gc_start (gh: gen_heap_t)
   // The minor collection, on the `free_stw` definition (as in `gen_gc`).
   minor_collect_idle_pre ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots);
-  let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots
+  let ok = minor_collect_with gh roots nroots fwd_arr queue slots nslots
              #(hide SpecFields.free_stw);
 
   with d_mid b_mid ms_updated fp_mid. assert (is_gen_heap gh d_mid b_mid ms_updated fp_mid);

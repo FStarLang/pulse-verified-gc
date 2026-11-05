@@ -85,6 +85,15 @@ val sweep_end_shape (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
   : Lemma (requires phase_shape minor g fp (Ph.Sweeping c) /\ sweep_done c)
           (ensures GenInv.collection_heap_shape minor g fp)
 
+/// **A major slice**, at the collector's phase: nothing when idle; mid-sweep,
+/// a slice of the sweep (`SL.phase_slice`).  (Incremental marking will add a
+/// mark slice, at its own phase.)
+let major_slice_spec (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
+  : GTot (heap & U64.t & Ph.gc_phase) =
+  match ph with
+  | Ph.Idle -> (g, fp, Ph.Idle)
+  | Ph.Sweeping _ -> SL.phase_slice g fp ph budget
+
 /// **A slice keeps the collector's state**, at whatever phase it leaves.
 val phase_slice_shape (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
   : Lemma (requires phase_shape minor g fp ph)

@@ -60,6 +60,7 @@ module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module Cheney = GC.Gen.Impl.Cheney
 module SpecHeapModel = GC.Spec.HeapModel
 module MRT = GC.Gen.MajorReachabilityTransfer
+module GI = GC.Gen.Incremental
 
 /// Two transports in one: `GC.Gen.MajorPrecondition` carries the pre-minor facts
 /// across the minor collection to `darken_precondition`, and
@@ -212,7 +213,7 @@ module CPInj = GC.Gen.CheneyPreservation.Injectivity
 module TPC = GC.Gen.TwoPassEquiv.Collect
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
-let minor_collect_full_isomorphism_post (ph: Ph.gc_phase)
+let minor_collect_with_isomorphism_post (ph: Ph.gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: SpecFields.free_def)
   (roots slots: Seq.seq U64.t) (n: nat) (ok: bool)
   (post_major: heap) (post_roots: Seq.seq U64.t)
@@ -250,7 +251,7 @@ let minor_collect_full_isomorphism_post (ph: Ph.gc_phase)
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// minor_collect_full: includes ref_table rewriting for full correctness
+/// minor_collect_with: includes ref_table rewriting for full correctness
 /// ---------------------------------------------------------------------------
 
 module CE = GC.Gen.CheneyGeneric
@@ -301,7 +302,7 @@ let minor_collect_with_spec (ph: Ph.gc_phase)
 /// caller's definition of free throughout: nothing here reads or assumes
 /// anything of a free block.
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-fn minor_collect_full (gh: gen_heap_t)
+fn minor_collect_with (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
                       (queue: larray U64.t FA.queue_size)
@@ -376,7 +377,7 @@ fn minor_collect_full (gh: gen_heap_t)
   minor_collect_with_spec 'ph free ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs
     farr_post3 'sl (SZ.v nslots);
   // ... and is a reachable-subgraph isomorphism.
-  minor_collect_full_isomorphism_post 'ph ({data = 'd; bump = 'b} <: minor_state) 's 'fp free
+  minor_collect_with_isomorphism_post 'ph ({data = 'd; bump = 'b} <: minor_state) 's 'fp free
     'rs 'sl (SZ.v nslots) ok ms_final (MCFH.resolve_roots ms_final rs_out);
 
   // the phase is the same, its caches derived from the heap the pointer
@@ -408,6 +409,74 @@ let minor_collect_idle_post minor_st s fp rs farr sl nslots ok d2 b2 s2 fp2 rs2 
   CE.cheney_collect_spec_with_stw minor_st s fp rs;
   // ... which keeps the stop-the-world shape.
   CheneyPres.cheney_collect_preserves_collection_heap_shape minor_st s fp rs
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// The minor collection
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+let minor_collect_pre (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
+    (rs farr sl: Seq.seq U64.t) (n: nat)
+  : Lemma (requires GI.phase_shape minor s fp ph /\ minor_slots_ok ph minor s rs farr sl n)
+          (ensures minor_collect_pre_with ph (GI.phase_free ph) minor s fp rs farr sl n)
+  = GI.phase_shape_collection minor s fp ph
+#pop-options
+
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+let minor_collect_keeps_shape (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
+    (rs: Seq.seq U64.t) (ok: bool)
+    (d2: minor_heap) (b2: U64.t) (s2: heap) (fp2: U64.t) (rs2: Seq.seq U64.t)
+  : Lemma (requires GI.phase_shape minor s fp ph /\
+                    minor_collect_post_with ph (GI.phase_free ph) minor s fp rs ok d2 b2 s2 fp2 rs2)
+          (ensures GI.phase_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 ph)
+  = match ph with
+    | Ph.Idle ->
+        GI.phase_free_idle ();
+        CE.cheney_collect_spec_with_stw minor s fp rs;
+        GI.phase_shape_idle minor s fp;
+        CheneyPres.cheney_collect_preserves_collection_heap_shape minor s fp rs;
+        GI.phase_shape_idle ({ data = d2; bump = b2 } <: minor_state) s2 fp2
+    | Ph.Sweeping c ->
+        GI.phase_free_sweeping c;
+        GI.minor_keeps_phase_shape minor s fp c rs
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+fn minor_collect (gh: gen_heap_t)
+                 (roots: array U64.t) (nroots: SZ.t)
+                 (fwd_arr: array U64.t)
+                 (queue: larray U64.t FA.queue_size)
+                 (slots: array U64.t) (nslots: SZ.t)
+  requires gc_state gh 'd 'b 's 'fp 'ph **
+           pts_to roots 'rs **
+           pts_to fwd_arr 'farr **
+           pts_to queue 'qv **
+           pts_to slots 'sl **
+           pure (SZ.v nroots == Seq.length 'rs /\
+                 minor_slots_ok 'ph ({ data = 'd; bump = 'b } <: minor_state) 's
+                   'rs 'farr 'sl (SZ.v nslots))
+  returns ok: bool
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
+    gc_state gh d2 b2 s2 fp2 'ph **
+    pts_to roots rs2 **
+    pts_to fwd_arr farr2 **
+    pts_to queue qv2 **
+    pts_to slots 'sl **
+    pure (minor_collect_post_with 'ph (GI.phase_free 'ph) ({ data = 'd; bump = 'b } <: minor_state)
+            's 'fp 'rs ok d2 b2 s2 fp2 rs2)
+{
+  unfold gc_state;
+  minor_collect_pre ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'ph 'rs 'farr 'sl (SZ.v nslots);
+  let ok = minor_collect_with gh roots nroots fwd_arr queue slots nslots
+             #(hide (GI.phase_free 'ph));
+  with d2 b2 s2 fp2. assert (is_gen_heap gh d2 b2 s2 fp2);
+  with rs2. assert (pts_to roots rs2);
+  minor_collect_keeps_shape ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'ph 'rs ok
+    d2 b2 s2 fp2 rs2;
+  fold (gc_state gh d2 b2 s2 fp2 'ph);
+  ok
+}
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -489,7 +558,7 @@ fn gen_gc (gh: gen_heap_t)
   // on the `free_stw` definition.
   minor_collect_idle_pre ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots);
-  let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots
+  let ok = minor_collect_with gh roots nroots fwd_arr queue slots nslots
              #(hide SpecFields.free_stw);
 
   with d_mid b_mid ms_updated fp_mid. assert (is_gen_heap gh d_mid b_mid ms_updated fp_mid);
@@ -543,7 +612,7 @@ fn gen_gc (gh: gen_heap_t)
   //
   // On the out-of-memory path some live nursery objects were never promoted, so
   // the rewritten root set still contains nursery addresses and there is nothing
-  // sensible for mark-and-sweep to do with it.  `minor_collect_full` reports
+  // sensible for mark-and-sweep to do with it.  `minor_collect_with` reports
   // that through `ok`, which also witnesses `cheney_no_oom` -- the fact the
   // major phase's entry condition is derived from.  This is why `gen_gc`'s
   // caller does not have to establish `cheney_no_oom` itself.

@@ -2,7 +2,11 @@
    Pulse GC (Generational) - Top-Level Entry Point Interface
 
    Provides:
-   - minor_collect_full: full Cheney minor collection with ref_table rewriting
+   - gc_state: the collector's state at its phase, which every entry point
+     states its contract over
+   - minor_collect: the minor collection, at the collector's phase (the
+     generic minor_collect_with underneath, for any phase and definition of
+     free)
    - gen_gc: Full generational GC (minor + major collection)
 *)
 
@@ -53,6 +57,8 @@ module Ph = GC.Spec.Phase
 module ST = GC.Gen.SweptTail
 
 module FA = GC.Gen.ForwardingArray
+module GI = GC.Gen.Incremental
+
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
 /// ---------------------------------------------------------------------------
@@ -68,7 +74,7 @@ type gen_heap_t = {
 /// The major collector's phase, held in `gh.phase_ref`, with the sweep's
 /// caches beside the cursor the ones derived from the major heap `g`
 /// (`Alloc.is_phase`).  It is kept apart from `is_gen_heap`: only the
-/// allocator and the sweep read it.  `minor_collect_full` runs at any phase
+/// allocator and the sweep read it.  `minor_collect_with` runs at any phase
 /// (its promotions are allocated at it); `gen_gc` runs outside a sweep
 /// (`Ph.Idle`).
 let gen_phase (gh: gen_heap_t) (g: heap_state) (ph: Ph.gc_phase) : slprop =
@@ -83,6 +89,29 @@ let is_gen_heap (gh: gen_heap_t) (d: minor_heap) (b: U64.t)
   is_minor gh.minor d b **
   is_heap gh.major s **
   R.pts_to gh.fp_ref fp
+
+/// ---------------------------------------------------------------------------
+/// The collector's state
+/// ---------------------------------------------------------------------------
+
+/// The generational heap, the collector's phase (its record's caches derived
+/// from the major heap, `gen_phase`), and the collector's state at that phase
+/// (`GI.phase_shape`):
+///
+///   * `Ph.Idle`: `GenInv.collection_heap_shape` of the nursery, the major
+///     heap and the free-list head -- what a full collection demands and
+///     restores;
+///   * `Ph.Sweeping c`: the sweep phase at the cursor `c`
+///     (`SPI.sweep_inv_incremental s fp c`), the nursery's shape, and that the
+///     nursery's major pointers point at non-free objects
+///     (`GenInv.minor_major_fields_not_free` for `SPI.free_incremental c`:
+///     free is blue, or pending free -- white in front of the cursor).
+///
+/// Every entry point states its contract over it.
+let gc_state (gh: gen_heap_t) (d: minor_heap) (b: U64.t) (s: heap_state) (fp: U64.t)
+             (ph: Ph.gc_phase) : slprop =
+  is_gen_heap gh d b s fp ** gen_phase gh s ph **
+  pure (GI.phase_shape ({ data = d; bump = b } <: minor_state) s fp ph)
 
 /// The mark stack handed to the major collector holds exactly the objects the
 /// root array names in `g`.
@@ -306,7 +335,7 @@ let gen_gc_unreachable_final_blue_post
 /// `free_stw`; `minor_collect_pre_idle` / `minor_collect_post_idle` below are
 /// that instance, with the colour facts of `collection_heap_shape` added.
 /// The incremental sweep's minor collection runs at `Sweeping c` with
-/// `free_incremental c` (`GC.Gen.Impl.Incremental.minor_collect_any_phase`).
+/// `free_incremental c` (`minor_collect`, below).
 ///
 /// The ref_table comes from the write barrier: it records addresses of
 /// existing major-heap fields that were assigned minor-heap pointers.  The
@@ -338,7 +367,7 @@ let minor_collect_post_with (ph: Ph.gc_phase) (free: SpecFields.free_def)
   // The major heap is the collection's, at `ph` and for `free`.  (`gen_gc`
   // and the SPOT instances reason about the result through
   // `cheney_collect_spec`; see DESIGN_AND_IMPL.md, "The contract of
-  // minor_collect_full".)
+  // minor_collect_with".)
   s2 == (CheneySpec.cheney_collect_spec_with ph free minor_st s fp rs).mc_major /\
   // Free pointer from promotion phase
   fp2 == prom.fp_final /\
@@ -364,7 +393,7 @@ let minor_collect_post_with (ph: Ph.gc_phase) (free: SpecFields.free_def)
 /// The collection runs at the phase the allocator holds (`gh.phase_ref`),
 /// and hands it back: the same phase, its caches derived from the heap the
 /// collection leaves.
-fn minor_collect_full (gh: gen_heap_t)
+fn minor_collect_with (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
                       (queue: larray U64.t FA.queue_size)
@@ -453,6 +482,51 @@ val minor_collect_idle_post
           (ensures minor_collect_post_idle minor_st s fp rs ok d2 b2 s2 fp2 rs2)
 
 /// ---------------------------------------------------------------------------
+/// The minor collection
+/// ---------------------------------------------------------------------------
+
+/// The minor collection's arguments, for the phase's definition of free.
+let minor_slots_ok (ph: Ph.gc_phase) (minor_st: minor_state) (s: heap_state)
+    (rs farr sl: Seq.seq U64.t) (nslots: nat) : prop =
+  let free = GI.phase_free ph in
+  Seq.length farr == FA.fwd_array_size /\
+  (forall (i: nat). i < Seq.length farr ==> Seq.index farr i == 0UL) /\
+  RT.ref_table_sound_with free s sl nslots /\
+  RT.ref_table_covers_with free s sl nslots /\
+  RT.slots_pairwise_distinct sl nslots /\
+  MinorFwd.remembered_targets_in_roots s rs sl nslots /\
+  MinorFwd.roots_valid_with free minor_st s rs
+
+/// **The minor collection**, at the collector's phase, for the phase's
+/// definition of free (`GI.phase_free`: `free_stw` idle, `free_incremental c`
+/// mid-sweep): `minor_collect_with`'s contract (`minor_collect_post_with`,
+/// at the phase), and the collector's state at the same phase -- idle stays
+/// idle; mid-sweep the sweep keeps its cursor and the objects pending free
+/// (`GI.minor_keeps_phase_shape`).
+fn minor_collect (gh: gen_heap_t)
+                 (roots: array U64.t) (nroots: SZ.t)
+                 (fwd_arr: array U64.t)
+                 (queue: larray U64.t FA.queue_size)
+                 (slots: array U64.t) (nslots: SZ.t)
+  requires gc_state gh 'd 'b 's 'fp 'ph **
+           pts_to roots 'rs **
+           pts_to fwd_arr 'farr **
+           pts_to queue 'qv **
+           pts_to slots 'sl **
+           pure (SZ.v nroots == Seq.length 'rs /\
+                 minor_slots_ok 'ph ({ data = 'd; bump = 'b } <: minor_state) 's
+                   'rs 'farr 'sl (SZ.v nslots))
+  returns ok: bool
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
+    gc_state gh d2 b2 s2 fp2 'ph **
+    pts_to roots rs2 **
+    pts_to fwd_arr farr2 **
+    pts_to queue qv2 **
+    pts_to slots 'sl **
+    pure (minor_collect_post_with 'ph (GI.phase_free 'ph) ({ data = 'd; bump = 'b } <: minor_state)
+            's 'fp 'rs ok d2 b2 s2 fp2 rs2)
+
+/// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)
 /// ---------------------------------------------------------------------------
 
@@ -468,7 +542,7 @@ val minor_collect_idle_post
 ///   is restored
 ///
 /// The caller provides `collection_heap_shape` plus the remembered-set table
-/// needed by `minor_collect_full`. The implementation derives the post-minor
+/// needed by `minor_collect_with`. The implementation derives the post-minor
 /// major-GC precondition before invoking mark-and-sweep.
 fn gen_gc (gh: gen_heap_t)
            (roots: array U64.t) (nroots: SZ.t)
