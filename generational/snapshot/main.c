@@ -1,8 +1,8 @@
 /* Minimal test harness for the verified generational GC.
  *
- * Tests: init → minor allocs → minor_collect_full → major GC → reuse →
- *        an incremental collection (gen_gc_start, sweep slices, a major
- *        allocation and a minor collection mid-sweep).
+ * Tests: init → minor allocs → minor_collect → full_gc → reuse →
+ *        an incremental collection (minor_collect + start_cycle, major
+ *        slices, a major allocation and a minor collection mid-sweep).
  *
  * Small objects go to the nursery (`minor_alloc`), major ones to the free
  * list at the collector's phase (`allocate`), as the OCaml bridge does.
@@ -117,10 +117,10 @@ int main(void)
     /* Zero forwarding array */
     memset(fwd_arr, 0, fwd_entries * sizeof(uint64_t));
 
-    printf("Calling minor_collect_full (nroots=%zu) ...\n", nroots);
-    minor_collect_full(gh, roots, nroots, fwd_arr, queue, empty_slots, 0);
+    printf("Calling minor_collect (nroots=%zu) ...\n", nroots);
+    minor_collect(gh, roots, nroots, fwd_arr, queue, empty_slots, 0);
 
-    printf("After minor_collect_full:\n");
+    printf("After minor_collect:\n");
     printf("  bump = %llu (should be 0 after reset)\n", (unsigned long long)*bump_ref);
     printf("  roots[0] = %llu (was obj1=%llu, now major)\n",
            (unsigned long long)roots[0], (unsigned long long)obj1);
@@ -128,7 +128,7 @@ int main(void)
            (unsigned long long)roots[1], (unsigned long long)obj2);
 
     if (*bump_ref != 0) {
-        printf("FAIL: bump should be 0 after minor_collect_full\n");
+        printf("FAIL: bump should be 0 after minor_collect\n");
         goto cleanup_queue;
     }
 
@@ -149,18 +149,20 @@ int main(void)
     /* No roots → everything becomes garbage after full GC */
     uint64_t empty_roots[1] = { 0 };
     memset(fwd_arr, 0, fwd_entries * sizeof(uint64_t));
-    FStar_Pervasives_Native_tuple2__uint64_t_bool result = gen_gc(gh, empty_roots, 0, fwd_arr, queue, empty_slots, 0, st);
-    if (!result._2) {
-        printf("FAIL: gen_gc promotion phase failed\n");
+    if (!full_gc(gh, empty_roots, 0, fwd_arr, queue, empty_slots, 0, st)) {
+        printf("FAIL: full_gc promotion phase failed\n");
         free(gray_storage);
         goto cleanup_queue;
     }
-    uint64_t result_fp = result._1;
-    printf("gen_gc returned fp = %llu\n", (unsigned long long)result_fp);
+    if (phase_ref->ps_kind != 0) {
+        printf("FAIL: full_gc left the collector mid-cycle\n");
+        free(gray_storage);
+        goto cleanup_queue;
+    }
+    printf("full_gc left fp = %llu\n", (unsigned long long)*fp_ref);
 
     /* ---- Phase 4: Allocate after GC ---- */
     printf("\n--- Phase 4: Post-GC allocation ---\n");
-    *fp_ref = result_fp;
 
     uint64_t obj5 = minor_alloc(minor, 1, 0);
     printf("minor_alloc(1, tag=0) after GC = %llu\n", (unsigned long long)obj5);
@@ -185,22 +187,24 @@ int main(void)
     uint64_t live_root[1] = { live };
     memset(fwd_arr, 0, fwd_entries * sizeof(uint64_t));
     gray_top = gray_cap;
-    if (!gen_gc_start(gh, live_root, 1, fwd_arr, queue, empty_slots, 0, st)) {
-        printf("FAIL: gen_gc_start promotion failed\n");
+    /* A cycle starts right after a minor collection, with the nursery empty. */
+    if (!minor_collect(gh, live_root, 1, fwd_arr, queue, empty_slots, 0)) {
+        printf("FAIL: minor_collect promotion failed\n");
         free(gray_storage);
         goto cleanup_queue;
     }
+    start_cycle(gh, live_root, 1, st);
     if (phase_ref->ps_kind == 0) {
-        printf("FAIL: gen_gc_start left the collector idle\n");
+        printf("FAIL: start_cycle left the collector idle\n");
         free(gray_storage);
         goto cleanup_queue;
     }
-    printf("gen_gc_start: sweeping from cursor %llu\n", (unsigned long long)phase_ref->ps_cursor);
+    printf("start_cycle: sweeping from cursor %llu\n", (unsigned long long)phase_ref->ps_cursor);
 
     /* A few slices, then a major allocation and a minor collection mid-sweep. */
     int slices = 0;
     bool fin = false;
-    while (!fin && slices < 4) { fin = sweep_slice(gh, 16); slices++; }
+    while (!fin && slices < 4) { fin = major_slice(gh, 16); slices++; }
     if (!fin) {
         uint64_t o = allocate(major_heap, fp_ref, phase_ref, 2, 0);
         if (o != 0) { *(uint64_t *)(major_data + o) = 1; *(uint64_t *)(major_data + o + 8) = 1; }
@@ -209,16 +213,16 @@ int main(void)
         uint64_t y = minor_alloc(minor, 2, 0);
         uint64_t yroots[1] = { y };
         memset(fwd_arr, 0, fwd_entries * sizeof(uint64_t));
-        minor_collect_any_phase(gh, yroots, 1, fwd_arr, queue, empty_slots, 0);
+        minor_collect(gh, yroots, 1, fwd_arr, queue, empty_slots, 0);
         if (*bump_ref != 0 || phase_ref->ps_kind == 0) {
             printf("FAIL: minor collection mid-sweep\n");
             free(gray_storage);
             goto cleanup_queue;
         }
     }
-    while (!fin) { fin = sweep_slice(gh, 16); slices++; }
+    while (!fin) { fin = major_slice(gh, 16); slices++; }
     printf("sweep finished after %d slices of 16 words\n", slices);
-    finish_sweep(gh);  /* idle already: nothing to do */
+    major_slice(gh, UINT64_MAX);  /* idle already: nothing to do */
     if (phase_ref->ps_kind != 0) {
         printf("FAIL: the sweep did not finish\n");
         free(gray_storage);

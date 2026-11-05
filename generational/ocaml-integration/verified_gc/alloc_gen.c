@@ -6,30 +6,33 @@
  *   verified_allocate(wosize, tag)       — major/shared allocation path
  *   caml_trigger_verified_gc(unit)    — OCaml-callable full GC trigger
  *
- * Uses:
- *   minor_alloc()          from GC_Gen_Impl.c — bump alloc in the minor heap
- *   allocate()             from GC_Gen_Impl.c — free-list allocation in the major heap
- *   minor_collect_full()   from GC_Gen_Impl.c — Cheney BFS + ref_table rewrite (full correctness)
- *   gen_gc()               from GC_Gen_Impl.c — verified minor+major full collection
- *
- * and, with VERGC_SWEEP=incremental (GC.Gen.Impl.Incremental):
- *   gen_gc_start()            — minor collection + mark; the phase becomes Sweeping
- *   sweep_slice()             — one slice of the sweep (a budget in words)
- *   finish_sweep()            — the rest of the sweep at once
- *   minor_collect_any_phase() — minor_collect_full at either phase
- * and allocate() at the current phase, as stop-the-world.
+ * Uses, from GC_Gen_Impl.c (GC.Gen.Impl, shaped like OCaml 4.14's
+ * runtime/major_gc.c):
+ *   minor_alloc()   — bump allocation in the minor heap
+ *   allocate()      — free-list allocation in the major heap, at the phase
+ *   minor_collect() — the minor collection (Cheney BFS + ref_table rewrite),
+ *                     at either phase
+ *   start_cycle()   — start a major cycle, idle and with the nursery empty:
+ *                     darken the roots, mark; the phase becomes Sweeping
+ *                     (4.14's start_cycle)
+ *   major_slice()   — one slice of the cycle (a budget in words); returns
+ *                     whether the collector is idle again
+ *                     (4.14's caml_major_collection_slice)
+ *   full_gc()       — a whole collection: minor_collect, start_cycle, then
+ *                     major_slice with an unbounded budget until idle
  *
  * Sweep mode (VERGC_SWEEP, read once at start-up):
- *   stw (default) — every full collection is gen_gc: mark and sweep at once.
- *     These paths are exactly the ones this file had before the incremental
- *     mode existed.
- *   incremental   — a full collection is gen_gc_start; the sweep then runs in
- *     slices, one after each minor collection (see incremental_slice for the
- *     budget). A full collection requested mid-sweep finishes the sweep first;
- *     a failed major allocation mid-sweep finishes the sweep and retries, then
- *     runs a full collection (and its whole sweep) and retries, then fails.
+ *   stw (default) — every full collection is full_gc: the cycle runs to its
+ *     end at once.
+ *   incremental   — a full collection finishes any cycle still running, then
+ *     is minor_collect + start_cycle; the sweep then runs in slices, one after
+ *     each minor collection (see incremental_slice for the budget).  Finishing
+ *     a cycle (4.14's caml_finish_major_cycle) is major_slice with an unbounded
+ *     budget until idle (finish_cycle_now).  A failed major allocation
+ *     mid-sweep finishes the cycle and retries, then runs a full collection
+ *     (and finishes it) and retries, then fails.
  *
- * The trusted obligations GC.Gen.Impl.Incremental lists, and how this bridge
+ * The trusted obligations GC.Gen.Impl lists, and how this bridge
  * meets them (see also OCAML_INTEGRATION.md):
  *   - fresh objects are initialised before the next collector call: OCaml's
  *     caml_alloc_shr callers initialise every field (caml_initialize, or raw
@@ -62,7 +65,7 @@
  * Inter-generational pointers:
  *   Uses OCaml's caml_ref_table (populated by caml_modify).  Before minor
  *   collection, the bridge translates ref_table entries from absolute minor
- *   pointers to minor offsets in-place.  minor_collect_full rewrites those
+ *   pointers to minor offsets in-place.  minor_collect rewrites those
  *   slots to major addresses (absolute with NULL-base).
  */
 
@@ -100,7 +103,7 @@ static uint64_t    *gc_fwd_arr;
 static uint64_t    *gc_queue;         /* BFS queue for Cheney promotion (heap-allocated) */
 static uint8_t     *minor_base;      /* absolute address of minor heap buffer */
 static int          heap_initialized = 0;
-static uint64_t    *minor_snapshot;   /* do_full_gc: minor heap before gen_gc */
+static uint64_t    *minor_snapshot;   /* do_full_gc, stw: minor heap before full_gc */
 
 /* Inline minor-allocation fast-path state for Alloc_small_aux (memory.h).
  * The fast path reserves bytes by updating the same verified bump counter;
@@ -143,14 +146,14 @@ static uint64_t   sweep_k = 4;             /* VERGC_SWEEP_K */
 static uint64_t   sweep_direct_words = 0;  /* major-allocated words since the last slice */
 
 /* Statistics, printed at exit with VERGC_SWEEP_STATS=1. */
-static uint64_t   stat_cycles = 0;          /* full collections (gen_gc or gen_gc_start) */
+static uint64_t   stat_cycles = 0;          /* full collections (full_gc, or minor_collect + start_cycle) */
 static uint64_t   stat_sweeps_done = 0;     /* sweeps that reached the end of the heap */
-static uint64_t   stat_slices = 0;          /* sweep_slice calls mid-sweep */
+static uint64_t   stat_slices = 0;          /* major_slice calls mid-sweep, with a budget */
 static uint64_t   stat_words_swept = 0;     /* words the cursor moved over, in slices and finishes */
-static uint64_t   stat_finish_full = 0;     /* finish_sweep before a full collection (D4) */
-static uint64_t   stat_finish_alloc = 0;    /* finish_sweep on a failed major allocation */
-static uint64_t   stat_finish_promote = 0;  /* finish_sweep before a minor collection, for room */
-static uint64_t   stat_finish_explicit = 0; /* finish_sweep for Gc.full_major & co. */
+static uint64_t   stat_finish_full = 0;     /* cycle finished before a full collection (D4) */
+static uint64_t   stat_finish_alloc = 0;    /* cycle finished on a failed major allocation */
+static uint64_t   stat_finish_promote = 0;  /* cycle finished before a minor collection, for room */
+static uint64_t   stat_finish_explicit = 0; /* cycle finished for Gc.full_major & co. */
 static uint64_t   stat_alloc_mid_sweep = 0; /* major allocations while sweeping */
 
 /* minor_base_addr is defined in the extracted GC_Gen_Base module.
@@ -249,10 +252,11 @@ static void ensure_heap(void) {
 
     /* phase_ref: the major collector's phase, which the verified allocator
      * reads to colour a new object (GC.Spec.Phase.allocation_color).  It
-     * starts Idle (ps_kind 0).  Stop-the-world it stays Idle and every major
-     * allocation is white; incremental, gen_gc_start sets it to Sweeping and
-     * sweep_slice / finish_sweep set it back to Idle.  Only the extracted
-     * collector writes it. */
+     * starts Idle (ps_kind 0).  start_cycle sets it to Sweeping and the
+     * major_slice that ends the sweep sets it back to Idle; stop-the-world
+     * that all happens inside full_gc, so between collections it is Idle and
+     * every major allocation is white.  Only the extracted collector writes
+     * it. */
     phase_state *phase_ref = (phase_state *)calloc(1, sizeof(phase_state));
     if (!phase_ref) caml_fatal_error("verified gen GC: malloc phase_ref");
     phase_ref->ps_kind = 0;  /* Idle */
@@ -395,12 +399,13 @@ static void sweep_ended(void) {
     Caml_state->_stat_major_collections++;
 }
 
-/* One slice of `budget` words.  Returns whether the sweep is finished. */
-static int run_sweep_slice(uint64_t budget) {
+/* One major slice of `budget` words.  Returns whether the collector is idle
+ * again. */
+static int run_major_slice(uint64_t budget) {
     if (!vergc_sweeping()) return 1;
     uint64_t c0 = gc_gen_heap.phase_ref->ps_cursor;
     PROF_START(major_gc);
-    bool fin = sweep_slice(gc_gen_heap, budget);
+    bool fin = major_slice(gc_gen_heap, budget);
     PROF_END(major_gc);
     stat_slices++;
     stat_words_swept += (gc_gen_heap.phase_ref->ps_cursor - c0) / 8;
@@ -408,12 +413,14 @@ static int run_sweep_slice(uint64_t budget) {
     return fin;
 }
 
-/* The rest of the sweep, at once; `counter` records why. */
-static void finish_sweep_now(uint64_t *counter) {
+/* Finish the cycle (4.14's caml_finish_major_cycle): major slices with an
+ * unbounded budget until the collector is idle -- one slice, in fact.
+ * `counter` records why. */
+static void finish_cycle_now(uint64_t *counter) {
     if (!vergc_sweeping()) return;
     uint64_t c0 = gc_gen_heap.phase_ref->ps_cursor;
     PROF_START(major_gc);
-    finish_sweep(gc_gen_heap);
+    while (!major_slice(gc_gen_heap, UINT64_MAX)) { }
     PROF_END(major_gc);
     (*counter)++;
     stat_words_swept += (gc_gen_heap.phase_ref->ps_cursor - c0) / 8;
@@ -445,14 +452,14 @@ static void incremental_slice(uint64_t minor_words) {
     else budget *= sweep_k;
     budget = (budget > UINT64_MAX - direct) ? UINT64_MAX : budget + direct;
     if (budget < sweep_min_words) budget = sweep_min_words;
-    run_sweep_slice(budget);
+    run_major_slice(budget);
 }
 
 /* Mid-sweep, garbage in front of the cursor is not on the free list yet, so
  * a minor collection might find too little room to promote into -- and a
  * promotion failure is fatal.  Before a minor collection that may promote
  * `bytes`, walk the free list (stopping as soon as there is enough) and finish
- * the sweep first if it holds less than twice that.  Stop-the-world there is
+ * the cycle first if it holds less than twice that.  Stop-the-world there is
  * no such check: there the free list is the whole of the free memory. */
 static void ensure_room_for_promotion(uint64_t bytes) {
     if (!vergc_sweeping()) return;
@@ -465,7 +472,7 @@ static void ensure_room_for_promotion(uint64_t bytes) {
         if (have >= need) return;
         p = *(uint64_t *)(uintptr_t)p;
     }
-    finish_sweep_now(&stat_finish_promote);
+    finish_cycle_now(&stat_finish_promote);
 }
 
 /* --- Root scanning callback for minor collection --- */
@@ -592,7 +599,7 @@ static uint64_t rewrite_root_from_forwarding(uint64_t root) {
         uint64_t rewritten = gc_fwd_arr[idx];
         if (rewritten == 0 || rewritten < minor_heap_size_u64) {
             caml_fatal_error(
-                "verified gen GC: internal error — unpromoted root after gen_gc");
+                "verified gen GC: internal error — unpromoted root after full collection");
         }
         return rewritten;
     }
@@ -632,9 +639,10 @@ static void do_minor_gc_core(void) {
     memset(gc_fwd_arr, 0, (size_t)queue_size_sz * sizeof(uint64_t));
     PROF_END(fwd_arr_zero);
 
-    /* 5. Minor collection via verified minor_collect_full.
+    /* 5. Minor collection via verified minor_collect, at the collector's
+     * phase (mid-sweep: the cursor and the pending set are kept).
      *
-     * The verified minor_collect_full bundles:
+     * The verified minor_collect bundles:
      *   cheney_promote_phase (with infix-aware BFS) +
      *   update_promoted_objects +
      *   rewrite_heap_slots (ref_table entries) +
@@ -655,19 +663,10 @@ static void do_minor_gc_core(void) {
         size_t n_slots = (size_t)(tbl->ptr - tbl->base);
         _Static_assert(sizeof(value *) == sizeof(uint64_t),
             "ref_table optimization requires LP64 (sizeof(value*)==8)");
-        if (sweep_incremental)
-            /* The same C as minor_collect_full, with the contract at the
-             * collector's phase (mid-sweep: the cursor and the pending set
-             * are kept). */
-            promote_ok = minor_collect_any_phase(gc_gen_heap, root_values,
-                                                 (size_t)root_count, gc_fwd_arr,
-                                                 gc_queue,
-                                                 (uint64_t *)tbl->base, n_slots);
-        else
-            promote_ok = minor_collect_full(gc_gen_heap, root_values,
-                                            (size_t)root_count, gc_fwd_arr,
-                                            gc_queue,
-                                            (uint64_t *)tbl->base, n_slots);
+        promote_ok = minor_collect(gc_gen_heap, root_values,
+                                   (size_t)root_count, gc_fwd_arr,
+                                   gc_queue,
+                                   (uint64_t *)tbl->base, n_slots);
     }
     PROF_END(cheney);
 
@@ -808,10 +807,10 @@ static void do_full_gc(void) {
     ensure_heap();
     in_full_gc = 1;
 
-    /* Incremental: a full collection requested mid-sweep finishes the sweep
-     * first (decision D4, as 4.14 does): gen_gc_start needs an idle
+    /* Incremental: a full collection requested mid-sweep finishes the cycle
+     * first (decision D4, as 4.14 does): start_cycle needs an idle
      * collector. */
-    if (sweep_incremental) finish_sweep_now(&stat_finish_full);
+    if (sweep_incremental) finish_cycle_now(&stat_finish_full);
 
     #ifdef NATIVE_CODE
         /* A full GC can be entered without passing through
@@ -841,10 +840,10 @@ static void do_full_gc(void) {
     memset(gc_fwd_arr, 0, (size_t)queue_size_sz * sizeof(uint64_t));
     PROF_END(fwd_arr_zero);
 
-    /* gen_gc now prepares the major mark stack itself: minor_collect_full
-     * rewrites this roots array in place, then gen_gc darkens those post-minor
-     * roots and pushes them onto an initially empty gray stack before running
-     * mark-and-sweep.  Keep roots separate from the stack storage so the C
+    /* The collector prepares the major mark stack itself: minor_collect
+     * rewrites this roots array in place, then start_cycle darkens those
+     * post-minor roots and pushes them onto an initially empty gray stack
+     * before marking.  Keep roots separate from the stack storage so the C
      * bridge matches the verified separation-logic model. */
     size_t gray_cap = gc_gen_heap.major.size / 64;
     if (gray_cap < 4096) gray_cap = 4096;
@@ -864,16 +863,21 @@ static void do_full_gc(void) {
     if (root_count > 0)
         memcpy(roots_for_gc, root_values, root_count * sizeof(uint64_t));
 
-    /* gen_gc sweeps after promoting, and a promoted copy reachable only
-     * through a dead remembered slot can be swept and coalesced, so its major
-     * header cannot be read afterwards.  It also zeroizes the minor heap, so
-     * keep a copy of the minor headers for promoted_words. */
-    if (minor_snapshot == NULL) {
-        minor_snapshot = (uint64_t *)malloc((size_t)minor_heap_size_u64);
-        if (!minor_snapshot)
-            caml_fatal_error("verified gen GC: cannot allocate minor snapshot");
+    /* Stop-the-world, full_gc sweeps right after promoting, and a promoted
+     * copy reachable only through a dead remembered slot can be swept and
+     * coalesced, so its major header cannot be read afterwards.  It also
+     * zeroizes the minor heap, so keep a copy of the minor headers for
+     * promoted_words.  Incremental, nothing sweeps between minor_collect and
+     * the count (start_cycle only recolours headers), so the major copies'
+     * headers are read, as after any minor collection. */
+    if (!sweep_incremental) {
+        if (minor_snapshot == NULL) {
+            minor_snapshot = (uint64_t *)malloc((size_t)minor_heap_size_u64);
+            if (!minor_snapshot)
+                caml_fatal_error("verified gen GC: cannot allocate minor snapshot");
+        }
+        memcpy(minor_snapshot, minor_base, (size_t)minor_heap_size_u64);
     }
-    memcpy(minor_snapshot, minor_base, (size_t)minor_heap_size_u64);
 
     size_t gray_top = gray_cap;
 
@@ -889,16 +893,22 @@ static void do_full_gc(void) {
             "ref_table optimization requires LP64 (sizeof(value*)==8)");
         bool ok;
         if (sweep_incremental) {
-            /* Minor collection, root darkening and marking; the phase becomes
-             * Sweeping and the sweep runs in slices from here on. */
-            ok = gen_gc_start(gc_gen_heap, roots_for_gc, (size_t)root_count,
-                              gc_fwd_arr, gc_queue, (uint64_t *)tbl->base,
-                              n_slots, gc_stack);
+            /* The minor collection, then -- unless promotion ran out of
+             * memory, as full_gc -- root darkening and marking; the phase
+             * becomes Sweeping and the sweep runs in slices from here on. */
+            ok = minor_collect(gc_gen_heap, roots_for_gc, (size_t)root_count,
+                               gc_fwd_arr, gc_queue, (uint64_t *)tbl->base,
+                               n_slots);
+            if (ok) {
+                count_promoted_words(promoted_words(NULL));
+                start_cycle(gc_gen_heap, roots_for_gc, (size_t)root_count,
+                            gc_stack);
+            }
         } else {
-            FStar_Pervasives_Native_tuple2__uint64_t_bool result =
-                gen_gc(gc_gen_heap, roots_for_gc, (size_t)root_count, gc_fwd_arr,
-                       gc_queue, (uint64_t *)tbl->base, n_slots, gc_stack);
-            ok = result._2;
+            ok = full_gc(gc_gen_heap, roots_for_gc, (size_t)root_count,
+                         gc_fwd_arr, gc_queue, (uint64_t *)tbl->base, n_slots,
+                         gc_stack);
+            if (ok) count_promoted_words(promoted_words(minor_snapshot));
         }
         if (!ok) {
             free(roots_for_gc);
@@ -913,6 +923,12 @@ static void do_full_gc(void) {
     PROF_END(writeback);
 
     Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
+    /* The trigger counts what was promoted or allocated directly in the major
+     * heap since the last cycle started.  This collection's own promotions
+     * happened before its marking, so they are in the marked heap -- live
+     * data of the cycle, not growth since it -- and the count restarts at
+     * zero (stop-the-world the cycle has also ended: the heap is the live
+     * data). */
     bytes_promoted_since_major = 0;
     sweep_direct_words = 0;
 
@@ -921,7 +937,7 @@ static void do_full_gc(void) {
     PROF_END(major_gc);
 
     #ifdef NATIVE_CODE
-        /* gen_gc emptied the minor heap.  Without this young_ptr keeps its
+        /* The minor collection emptied the minor heap.  Without this young_ptr keeps its
          * old value: the next collection would count those words in
          * minor_words a second time, and the space would not be reused. */
         vergc_native_reset_young_ptr();
@@ -999,21 +1015,21 @@ static uint64_t allocate_timed(mlsize_t wosize, uint8_t tag) {
 /* verified_allocate, VERGC_SWEEP=incremental.  allocate allocates at the
  * collector's phase: mid-sweep a block in front of the cursor is black (the
  * sweep keeps it), one behind it white.  On failure:
- *   1. mid-sweep, finish the sweep (the garbage in front of the cursor is not
+ *   1. mid-sweep, finish the cycle (the garbage in front of the cursor is not
  *      on the free list yet) and retry;
- *   2. then a full collection, with its whole sweep, and retry -- what
- *      stop-the-world's gen_gc gives;
+ *   2. then a full collection, finished, and retry -- what stop-the-world's
+ *      full_gc gives;
  *   3. then fail: Out_of_memory, as stop-the-world. */
 static void *verified_allocate_incremental(mlsize_t wosize, uint8_t tag) {
     if (vergc_sweeping()) stat_alloc_mid_sweep++;
     uint64_t result = allocate_timed(wosize, tag);
     if (result == 0 && vergc_sweeping()) {
-        finish_sweep_now(&stat_finish_alloc);
+        finish_cycle_now(&stat_finish_alloc);
         result = allocate_timed(wosize, tag);
     }
     if (result == 0) {
         do_full_gc();
-        finish_sweep_now(&stat_finish_alloc);
+        finish_cycle_now(&stat_finish_alloc);
         result = allocate_timed(wosize, tag);
     }
     if (result == 0) {
@@ -1119,7 +1135,7 @@ CAMLprim value caml_trigger_verified_gc(value v) {
 /* --- Stock's major-GC entry points (runtime/major_gc.c, gc_ctrl.c) --- */
 
 /* caml_major_collection_slice: Gc.major_slice.  Incremental and mid-sweep, a
- * slice of `howmuch` words when positive (stock: "enough work to free n
+ * major_slice of `howmuch` words when positive (stock: "enough work to free n
  * words"), else the default budget; nothing otherwise -- a cycle starts only
  * from do_full_gc. */
 void verified_major_collection_slice(intnat howmuch) {
@@ -1128,7 +1144,7 @@ void verified_major_collection_slice(intnat howmuch) {
     uint64_t budget = howmuch > 0 ? (uint64_t)howmuch : sweep_direct_words;
     sweep_direct_words = 0;
     if (budget < sweep_min_words) budget = sweep_min_words;
-    run_sweep_slice(budget);
+    run_major_slice(budget);
 }
 
 /* Gc.major, Gc.full_major and Gc.compact (runtime/gc_ctrl.c), in place of the
@@ -1141,7 +1157,7 @@ void verified_do_full_gc(void) {
     ensure_heap();
     verified_do_minor_gc();
     do_full_gc();
-    if (sweep_incremental) finish_sweep_now(&stat_finish_explicit);
+    if (sweep_incremental) finish_cycle_now(&stat_finish_explicit);
 }
 
 /* Called by caml_minor_collection() in minor_gc.c.
