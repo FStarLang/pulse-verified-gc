@@ -27,6 +27,9 @@ module Util = GC.Spec.SweepPhase.Util
 
 let phase_shape_idle minor g fp = reveal_opaque (`%phase_shape) (phase_shape minor g fp Ph.Idle)
 
+let phase_shape_marking minor g fp =
+  reveal_opaque (`%phase_shape) (phase_shape minor g fp Ph.Marking)
+
 let phase_shape_sweeping minor g fp c =
   reveal_opaque (`%phase_shape) (phase_shape minor g fp (Ph.Sweeping c))
 
@@ -45,6 +48,9 @@ let phase_shape_collection minor g fp ph =
       phase_shape_idle minor g fp;
       GenInv.collection_heap_shape_as_free_stw minor g fp;
       assert_norm (phase_free Ph.Idle == free_stw)
+  | Ph.Marking ->
+      phase_shape_marking minor g fp;
+      assert_norm (phase_free Ph.Marking == free_stw)
   | Ph.Sweeping c ->
       phase_shape_sweeping minor g fp c;
       SPM.sweep_collection_shape minor g fp c;
@@ -78,7 +84,7 @@ let sweep_end_shape minor g fp c =
 #push-options "--z3rlimit 20"
 let phase_slice_shape minor g fp ph budget =
   match ph with
-  | Ph.Idle -> ()
+  | Ph.Idle | Ph.Marking -> ()
   | Ph.Sweeping c ->
       phase_shape_sweeping minor g fp c;
       SL.sweep_slice_phase g fp c budget;
@@ -93,7 +99,7 @@ let phase_slice_shape minor g fp ph budget =
 
 let phase_slice_finishes minor g fp ph budget =
   match ph with
-  | Ph.Idle -> ()
+  | Ph.Idle | Ph.Marking -> ()
   | Ph.Sweeping c ->
       phase_shape_sweeping minor g fp c;
       SL.sweep_slice_phase g fp c budget
@@ -109,5 +115,7 @@ let minor_keeps_phase_shape minor g fp c roots =
 #pop-options
 
 let phase_free_idle () = assert_norm (phase_free Ph.Idle == free_stw)
+
+let phase_free_marking () = assert_norm (phase_free Ph.Marking == free_stw)
 
 let phase_free_sweeping c = assert_norm (phase_free (Ph.Sweeping c) == free_incremental c)

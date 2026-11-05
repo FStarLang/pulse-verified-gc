@@ -538,13 +538,17 @@ The header's colour comes from the collector's phase (`GC.Spec.Phase`), as
 OCaml 4.14's `caml_allocation_color` decides it:
 
 ```fstar
-type gc_phase = | Idle | Sweeping of U64.t    (* the sweep's cursor *)
+type gc_phase = | Idle | Marking | Sweeping of U64.t    (* the sweep's cursor *)
 
 let allocation_color (ph: gc_phase) (hd_addr: U64.t) : color =
   match ph with
   | Idle -> Header.White
+  | Marking -> Header.Black
   | Sweeping c -> if U64.v hd_addr >= U64.v c then Header.Black else Header.White
 ```
+
+`Marking` (4.14's `Phase_mark`) is for incremental marking; nothing enters it
+yet (the mark slices are milestone M4 of the incremental-mark plan).
 
 `alloc_search` takes the phase and writes `allocation_color` of the header
 address it chose, once (`alloc_color`).  `alloc_spec g fp wz tag` is the
@@ -569,11 +573,13 @@ that phase of the new heap.
 
 ```fstar
 type phase_state = {            // GC.Impl.Allocator: the phase as C holds it
-  ps_kind: U64.t;               // 0 idle, otherwise sweeping
+  ps_kind: U64.t;               // 0 idle, 1 sweeping, 2 marking
   ps_cursor: U64.t; ps_swept_tail: U64.t; ps_last_fragment: U64.t;
 }
 let phase_of (v: phase_state) : gc_phase =
-  if v.ps_kind = 0UL then Idle else Sweeping v.ps_cursor
+  if v.ps_kind = 0UL then Idle
+  else if v.ps_kind = 1UL then Sweeping v.ps_cursor
+  else Marking
 
 fn allocate (heap: heap_t) (fp_ref: R.ref U64.t) (phase: R.ref phase_state)
             (wosize: U64.t) (tag: U64.t{U64.v tag < 256})
@@ -588,7 +594,8 @@ fn allocate (heap: heap_t) (fp_ref: R.ref U64.t) (phase: R.ref phase_state)
 ```
 
 `allocate` updates the free-list head in place, reads the phase once, computes the colour of the header address it
-chose (white when idle; while sweeping, black at or above the cursor) and
+chose (white when idle; black while marking; while sweeping, black at or
+above the cursor) and
 writes the header once with it; while sweeping, an allocation that takes
 `swept_tail`'s cell off the list stores the new `swept_tail` (one store, only
 then).  At `Idle` the postcondition is `alloc_spec`'s (`alloc_phase_idle`, an
@@ -1290,8 +1297,20 @@ From these, as an instance of `marking_inv_change`:
   plan's option (a)): the program obtains pointers only by loading fields of
   objects it holds, or by allocating.
 
-**Left for M2**: the `Marking` phase and black allocation, and minor
-collection at `Marking`.
+**The `Marking` phase** (M2b).  `gc_phase` has a `Marking` case, with black
+allocation; the record's `ps_kind` is 2 (the C bridge's `vergc_sweeping()` is
+`ps_kind == 1`, and `vergc_allocation_color` is black while marking).  At
+`Marking`, `GC.Gen.Incremental.phase_shape` is the minor collection's shape at
+`free_stw` (marking frees nothing) and `marking_inv g (nursery_held minor)`:
+what the nursery's major pointers point at is held.  The program's roots are
+the other half of `held`; they are not part of the collector's state
+(`gc_state` has no roots), so the entry points that take roots will state
+`held_reached` of them (the plan's option (a)).  `major_slice` does nothing at
+`Marking` yet, and `minor_collect` is not called at it (`minor_slots_ok`
+excludes it until M2d).  Nothing enters `Marking`.
+
+**Left for M2**: black allocation's fresh objects, and minor collection at
+`Marking`.
 
 ## The minor collector
 

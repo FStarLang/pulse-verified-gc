@@ -34,7 +34,7 @@ open GC.Spec.Phase
 /// ---------------------------------------------------------------------------
 
 /// The collector's phase (`GC.Spec.Phase.gc_phase`) as the C state holds it:
-/// a kind -- 0 idle, otherwise sweeping -- and the sweep state, which only
+/// a kind -- 0 idle, 1 sweeping, 2 marking -- and the sweep state, which only
 /// means something while sweeping: the cursor, and beside it the two caches
 /// the sweep step reads and updates in place, `swept_tail` and
 /// `last_fragment` (`GC.Spec.FusedSweep`).
@@ -48,20 +48,22 @@ type phase_state = {
 /// The phase a `phase_state` stands for: only the cursor.
 noextract
 let phase_of (v: phase_state) : gc_phase =
-  if v.ps_kind = 0UL then Idle else Sweeping v.ps_cursor
+  if v.ps_kind = 0UL then Idle
+  else if v.ps_kind = 1UL then Sweeping v.ps_cursor
+  else Marking
 
 /// The sweep state a `phase_state` holds.
 noextract
 let record_state (v: phase_state) : FS.sweep_state =
   { FS.cursor = v.ps_cursor; FS.swept_tail = v.ps_swept_tail; FS.last_fragment = v.ps_last_fragment }
 
-/// The record holds the phase `ph` of the heap `g`: idle, or sweeping with
-/// the cursor at a position of `g`'s walk and the caches the ones derived
-/// from `g` and the cursor (`SPI.state_at`).
+/// The record holds the phase `ph` of the heap `g`: idle, marking, or
+/// sweeping with the cursor at a position of `g`'s walk and the caches the
+/// ones derived from `g` and the cursor (`SPI.state_at`).
 noextract
 let phase_rel (g: SpecBase.heap) (v: phase_state) (ph: gc_phase) : prop =
   phase_of v == ph /\
-  (v.ps_kind <> 0UL ==>
+  (v.ps_kind = 1UL ==>
      W.reaches g SpecBase.zero_addr (U64.v v.ps_cursor) /\ record_state v == SPI.state_at g v.ps_cursor)
 
 /// `r` holds the phase `ph`, its caches derived from the heap `g`.
@@ -90,8 +92,9 @@ fn init_heap (heap: heap_t)
 ///   phase: the collector's phase record, which holds the phase `'ph` with
 ///          its caches derived from the heap (`is_phase`), before and after.
 ///          The header's colour is the one the phase gives the address the
-///          search chose (`caml_allocation_color`): white when idle; while
-///          sweeping, black in front of the cursor and white behind it.
+///          search chose (`caml_allocation_color`): white when idle; black
+///          while marking; while sweeping, black in front of the cursor and
+///          white behind it.
 ///          While sweeping, an allocation that takes `swept_tail`'s own cell
 ///          off the list moves `swept_tail` back to the cell before it, as
 ///          `caml_fl_merge` does; that this is the derived one after the

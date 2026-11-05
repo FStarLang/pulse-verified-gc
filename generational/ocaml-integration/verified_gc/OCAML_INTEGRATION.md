@@ -892,7 +892,8 @@ like OCaml 4.14's `runtime/major_gc.c`; finishing a cycle (4.14's
 `caml_finish_major_cycle`) is `major_slice(UINT64_MAX)` until it reports
 idle (`finish_cycle_now`).  Major allocation is
 `allocate` at the record's phase, as stop-the-world. The phase lives in
-`gc_gen_heap.phase_ref` (`ps_kind` 0 = Idle, 1 = Sweeping, plus the cursor,
+`gc_gen_heap.phase_ref` (`ps_kind` 0 = Idle, 1 = Sweeping, 2 = Marking -- not
+entered yet; a new object is black while marking -- plus the cursor,
 and the sweep's two caches `swept_tail` and `last_fragment`, which the
 proofs say are functions of the heap and the cursor). Incremental, each event of the program
 does this:

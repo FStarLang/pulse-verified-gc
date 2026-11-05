@@ -193,10 +193,12 @@ val unreachable_freed_by_end (h_init h_mark: heap) (roots: seq obj_addr) (fp0: U
 
 /// The account at the collector's phase: mid-sweep, the sweep phase and the
 /// account at its cursor; idle (the sweep has ended), every block that is not
-/// free is a survivor of marking or new.
+/// free is a survivor of marking or new.  It is an account of one sweep, from
+/// its marked heap `g0`: there is none while marking.
 let phase_account (g0: heap) (since: obj_addr -> prop) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) : prop =
   match ph with
   | Ph.Sweeping c -> sweep_inv_incremental g fp c /\ survivor_or_new g0 since g c
+  | Ph.Marking -> False
   | Ph.Idle ->
       forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) ==>
         survived_mark g0 x \/ since x

@@ -63,7 +63,7 @@ let rec sweep_from_steps (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
 
 let phase_rest_slice g fp ph budget =
   match ph with
-  | Ph.Idle -> ()
+  | Ph.Idle | Ph.Marking -> ()
   | Ph.Sweeping c ->
       let st = state_at g c in
       slice_is_steps g fp st c budget;

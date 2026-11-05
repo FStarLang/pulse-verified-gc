@@ -74,7 +74,7 @@ let phase_account_start g0 fp =
 
 let phase_account_slice g0 since g fp ph budget =
   match ph with
-  | Ph.Idle -> ()
+  | Ph.Idle | Ph.Marking -> ()
   | Ph.Sweeping c ->
       SL.sweep_slice_phase g fp c budget;
       survivor_or_new_slice g0 since g fp c budget;

@@ -52,10 +52,11 @@ let rec slice_from (g: heap) (fp: U64.t) (st: sweep_state) (c0: U64.t) (budget: 
 let sweep_slice (g: heap) (fp: U64.t) (st: sweep_state) (budget: nat) : heap & U64.t & sweep_state =
   slice_from g fp st st.cursor budget
 
-/// The slice at the collector's phase.
+/// The slice at the collector's phase (nothing outside a sweep).
 let phase_slice (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat) : GTot (heap & U64.t & Ph.gc_phase) =
   match ph with
   | Ph.Idle -> (g, fp, Ph.Idle)
+  | Ph.Marking -> (g, fp, Ph.Marking)
   | Ph.Sweeping c ->
       let (g', fp', st') = sweep_slice g fp (state_at g c) budget in
       (g', fp', (if sweep_done st'.cursor then Ph.Idle else Ph.Sweeping st'.cursor))
@@ -102,12 +103,12 @@ val sweep_slice_phase (g: heap) (fp: U64.t) (c: U64.t) (budget: nat)
 /// Slices add up to the stop-the-world sweep
 /// ---------------------------------------------------------------------------
 
-/// **What the rest of the sweep leaves**, from the collector's phase: idle,
-/// the heap and free-list head as they are; mid-sweep, the stop-the-world
+/// **What the rest of the sweep leaves**, from the collector's phase: outside
+/// a sweep, the heap and free-list head as they are; mid-sweep, the stop-the-world
 /// pass (`GC.Spec.FusedSweep.sweep_from`) from the derived state.
 let phase_rest (g: heap) (fp: U64.t) (ph: Ph.gc_phase) : GTot (heap & U64.t) =
   match ph with
-  | Ph.Idle -> (g, fp)
+  | Ph.Idle | Ph.Marking -> (g, fp)
   | Ph.Sweeping c -> sweep_from g fp (state_at g c)
 
 /// At the start of the sweep phase the rest of the sweep is the whole
@@ -119,6 +120,6 @@ val phase_rest_start (g: heap) (fp: U64.t)
 /// start of the sweep phase until it is idle again leave exactly what the
 /// stop-the-world sweep (`fused_sweep_coalesce`) leaves.
 val phase_rest_slice (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
-  : Lemma (requires (match ph with Ph.Sweeping c -> sweep_inv_incremental g fp c | Ph.Idle -> True))
+  : Lemma (requires (match ph with Ph.Sweeping c -> sweep_inv_incremental g fp c | _ -> True))
           (ensures (let (g', fp', ph') = phase_slice g fp ph budget in
                     phase_rest g' fp' ph' == phase_rest g fp ph))

@@ -105,6 +105,10 @@ let is_gen_heap (gh: gen_heap_t) (d: minor_heap) (b: U64.t)
 ///   * `Ph.Idle`: `GenInv.collection_heap_shape` of the nursery, the major
 ///     heap and the free-list head -- what a full collection demands and
 ///     restores;
+///   * `Ph.Marking`: the minor collection's shape at `free_stw` and the
+///     marking invariant with the nursery's major pointers held
+///     (`GI.nursery_held`; nothing enters it yet: the mark slices are to
+///     come);
 ///   * `Ph.Sweeping c`: the sweep phase at the cursor `c`
 ///     (`SPI.sweep_inv_incremental s fp c`), the nursery's shape, and that the
 ///     nursery's major pointers point at non-free objects
@@ -535,7 +539,11 @@ let minor_slots_ok (ph: Ph.gc_phase) (minor_st: minor_state) (s: heap_state)
   RT.ref_table_sound_with free s sl nslots /\
   RT.ref_table_covers_with free s sl nslots /\
   MinorFwd.remembered_targets_in_roots s rs sl nslots /\
-  MinorFwd.roots_valid_with free minor_st s rs
+  MinorFwd.roots_valid_with free minor_st s rs /\
+  // A minor collection while marking keeps the marking invariant only with
+  // the program's roots held; that is still to come (incremental-mark-plan.md,
+  // M2d), and nothing enters `Marking` yet.
+  ~(Ph.Marking? ph)
 
 /// **The minor collection**, at the collector's phase, for the phase's
 /// definition of free (`GI.phase_free`: `free_stw` idle, `free_incremental c`

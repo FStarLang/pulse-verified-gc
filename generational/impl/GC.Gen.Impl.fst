@@ -409,7 +409,7 @@ let minor_collect_pre (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phas
 let minor_collect_keeps_shape (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase)
     (rs: Seq.seq U64.t) (ok: bool)
     (d2: minor_heap) (b2: U64.t) (s2: heap) (fp2: U64.t) (rs2: Seq.seq U64.t)
-  : Lemma (requires GI.phase_shape minor s fp ph /\
+  : Lemma (requires GI.phase_shape minor s fp ph /\ ~(Ph.Marking? ph) /\
                     minor_collect_post_with ph (GI.phase_free ph) minor s fp rs ok d2 b2 s2 fp2 rs2)
           (ensures GI.phase_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 ph)
   = match ph with
@@ -588,7 +588,7 @@ let slice_record (fin: bool) (c t f: U64.t) : Alloc.phase_state =
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let slice_result (minor: minor_state) (g: heap) (fp: U64.t) (v: Alloc.phase_state)
     (budget: U64.t) (g': heap) (c' t' f' fp': U64.t)
-  : Lemma (requires v.Alloc.ps_kind <> 0UL /\
+  : Lemma (requires v.Alloc.ps_kind = 1UL /\
                     Alloc.phase_rel g v (Alloc.phase_of v) /\
                     GI.phase_shape minor g fp (Alloc.phase_of v) /\
                     FSC.slice_matches g fp v.Alloc.ps_cursor v.Alloc.ps_swept_tail
@@ -614,7 +614,7 @@ let bounds () : Lemma (heap_size == GC.Spec.Base.heap_size /\ heap_size < pow2 5
 
 /// What the slice needs, from the record and the sweep phase.
 let slice_ready (minor: minor_state) (g: heap) (fp: U64.t) (v: Alloc.phase_state)
-  : Lemma (requires v.Alloc.ps_kind <> 0UL /\
+  : Lemma (requires v.Alloc.ps_kind = 1UL /\
                     Alloc.phase_rel g v (Alloc.phase_of v) /\
                     GI.phase_shape minor g fp (Alloc.phase_of v))
           (ensures FSC.slice_pre g fp v.Alloc.ps_cursor v.Alloc.ps_swept_tail v.Alloc.ps_last_fragment)
@@ -641,6 +641,13 @@ fn major_slice (gh: gen_heap_t) (budget: U64.t)
     fold (is_gen_heap gh 'd 'b 's 'fp);
     fold (gc_state gh 'd 'b 's 'fp 'ph);
     true
+  } else if (not (U64.eq v.Alloc.ps_kind 1UL)) {
+    // Marking: nothing yet (the mark slice is to come).
+    fold (Alloc.is_phase gh.phase_ref 's 'ph);
+    fold (gen_phase gh 's 'ph);
+    fold (is_gen_heap gh 'd 'b 's 'fp);
+    fold (gc_state gh 'd 'b 's 'fp 'ph);
+    false
   } else {
     // Sweeping: a slice of the sweep.
     slice_ready ({ data = 'd; bump = 'b } <: minor_state) 's 'fp v;
@@ -682,9 +689,10 @@ let major_slice_keeps_rest (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc
   : Lemma (requires GI.phase_shape minor g fp ph /\
                     (g', fp', ph') == GI.major_slice_spec g fp ph budget)
           (ensures SL.phase_rest g' fp' ph' == SL.phase_rest g fp ph /\
-                   (budget > GC.Spec.Base.heap_words ==> ph' == Ph.Idle))
+                   (~(Ph.Marking? ph) ==> ~(Ph.Marking? ph')) /\
+                   (budget > GC.Spec.Base.heap_words /\ ~(Ph.Marking? ph) ==> ph' == Ph.Idle))
   = match ph with
-    | Ph.Idle -> ()
+    | Ph.Idle | Ph.Marking -> ()
     | Ph.Sweeping c ->
         GI.phase_shape_sweeping minor g fp c;
         SL.phase_rest_slice g fp ph budget;
@@ -820,7 +828,7 @@ fn full_gc (gh: gen_heap_t)
       invariant exists* s_i fp_i ph_i vb.
         gc_state gh d_mid b_mid s_i fp_i ph_i **
         R.pts_to busy vb **
-        pure (vb == not (Ph.Idle? ph_i) /\
+        pure (vb == not (Ph.Idle? ph_i) /\ ~(Ph.Marking? ph_i) /\
               SL.phase_rest s_i fp_i ph_i == FS.fused_sweep_coalesce s_mark fp_mid)
     // One slice with an unbounded budget finishes the sweep.
     decreases (if !busy then 1 else 0)

@@ -535,6 +535,8 @@ bool major_slice(gen_heap_t gh, uint64_t budget)
   phase_state v = gh.phase_ref[0U];
   if (v.ps_kind == 0ULL)
     return true;
+  else if (!(v.ps_kind == 1ULL))
+    return false;
   else
   {
     uint64_t fp = gh.fp_ref[0U];
@@ -1423,9 +1425,10 @@ allocate(heap_t heap, uint64_t *fp_ref, phase_state *phase, uint64_t wosize, uin
             go = false;
           else
           {
-            if (!(pv.ps_kind == 0ULL) && vcur == pv.ps_swept_tail && leftover < 2ULL)
+            if (pv.ps_kind == 1ULL && vcur == pv.ps_swept_tail && leftover < 2ULL)
               phase->ps_swept_tail = vp;
-            bool b = !(pv.ps_kind == 0ULL) && alloc_hd_off >= pv.ps_cursor;
+            bool
+            b = !(pv.ps_kind == 0ULL) && (!(pv.ps_kind == 1ULL) || alloc_hd_off >= pv.ps_cursor);
             color_sem col = b ? black : white;
             if (leftover >= 1ULL)
             {

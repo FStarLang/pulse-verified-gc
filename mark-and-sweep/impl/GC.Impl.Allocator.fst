@@ -176,10 +176,11 @@ let prev_write_keeps_header (g: SpecBase.heap) (p: SpecBase.hp_addr)
   = SH.read_write_different g p hd v
 
 /// The colour the phase gives a new header at `ah`, as `alloc_color` states
-/// it: white when idle; while sweeping, black at or above the cursor.
+/// it: white when idle; black while marking; while sweeping, black at or
+/// above the cursor.
 inline_for_extraction
 let alloc_col (pv: phase_state) (ah: U64.t) : bool =
-  not (U64.eq pv.ps_kind 0UL) && U64.gte ah pv.ps_cursor
+  not (U64.eq pv.ps_kind 0UL) && (not (U64.eq pv.ps_kind 1UL) || U64.gte ah pv.ps_cursor)
 
 let alloc_col_eq (pv: phase_state) (g: SpecBase.heap) (obj: obj_addr) (wz: nat) (ah: U64.t)
   : Lemma (requires U64.v ah == U64.v (SH.hd_address obj) +
@@ -198,7 +199,7 @@ let alloc_header_eq (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
 /// and leaves the list (`leftover < 2`), its predecessor.
 noextract
 let tail_after (pv: phase_state) (prev cur leftover: U64.t) : U64.t =
-  if not (U64.eq pv.ps_kind 0UL) && U64.eq cur pv.ps_swept_tail && U64.lt leftover 2UL
+  if U64.eq pv.ps_kind 1UL && U64.eq cur pv.ps_swept_tail && U64.lt leftover 2UL
   then prev else pv.ps_swept_tail
 
 /// Move `swept_tail` back when the allocation takes its cell; otherwise leave
@@ -209,7 +210,7 @@ fn update_tail (phase: R.ref phase_state) (#pv: erased phase_state) (pvc: phase_
   requires R.pts_to phase pv ** pure (pvc == reveal pv)
   ensures R.pts_to phase ({ reveal pv with ps_swept_tail = tail_after pv prev cur leftover })
 {
-  if (not (U64.eq pvc.ps_kind 0UL) && U64.eq cur pvc.ps_swept_tail && U64.lt leftover 2UL) {
+  if (U64.eq pvc.ps_kind 1UL && U64.eq cur pvc.ps_swept_tail && U64.lt leftover 2UL) {
     let v = !phase;
     phase := { v with ps_swept_tail = prev }
   } else {
@@ -226,7 +227,7 @@ noextract
 let record_after_alloc (g: SpecBase.heap) (fp: U64.t) (wz: nat) (v: phase_state) : GTot phase_state =
   let (p, c) = AC.alloc_choice g fp wz in
   { v with ps_swept_tail =
-      (if v.ps_kind <> 0UL && c = v.ps_swept_tail && AC.takes_off g c wz then p
+      (if v.ps_kind = 1UL && c = v.ps_swept_tail && AC.takes_off g c wz then p
        else v.ps_swept_tail) }
 
 /// The record after an allocation holds the phase of the heap it leaves: the
@@ -236,7 +237,7 @@ let alloc_phase_rel (g: SpecBase.heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v t
   : Lemma (requires phase_rel g v ph /\ (Sweeping? ph ==> FLA.fl_ascending g fp))
           (ensures phase_rel (AC.alloc_phase g fp ph wz tag).SA.heap_out
                      (record_after_alloc g fp wz v) ph)
-  = if v.ps_kind <> 0UL then GC.Spec.Allocator.Caches.alloc_caches g fp v.ps_cursor wz tag
+  = if v.ps_kind = 1UL then GC.Spec.Allocator.Caches.alloc_caches g fp v.ps_cursor wz tag
 
 /// ---------------------------------------------------------------------------
 /// Main allocation function (fully proved — 0 admits)

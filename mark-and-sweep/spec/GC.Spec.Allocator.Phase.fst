@@ -210,6 +210,7 @@ let allocation_color_cases (ph: gc_phase) (a: U64.t)
   : Lemma (allocation_color ph a == Header.White \/ allocation_color ph a == Header.Black)
   = match ph with
     | Idle -> ()
+    | Marking -> ()
     | Sweeping _ -> ()
 #pop-options
 

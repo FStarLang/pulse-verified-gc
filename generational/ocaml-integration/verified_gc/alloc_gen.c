@@ -373,21 +373,23 @@ static inline value minor_offset_to_abs(uint64_t off) {
 /* --- The sweep phase (VERGC_SWEEP=incremental) --- */
 
 /* Is the major collector mid-sweep?  phase_ref is the collector's; we only
- * read it. */
+ * read it.  ps_kind: 0 Idle, 1 Sweeping, 2 Marking (GC.Impl.Allocator.phase_of;
+ * nothing enters Marking yet). */
 static inline int vergc_sweeping(void) {
-    return gc_gen_heap.phase_ref->ps_kind != 0;
+    return gc_gen_heap.phase_ref->ps_kind == 1;
 }
 
 /* The colour the verified allocator gives a block whose header is at `hp`
- * (GC.Spec.Phase.allocation_color, as `allocate` computes it): black
- * mid-sweep at or above the cursor, white otherwise.  caml_allocation_color
+ * (GC.Spec.Phase.allocation_color, as `allocate` computes it): black while
+ * marking, black mid-sweep at or above the cursor, white otherwise.  caml_allocation_color
  * and the patched caml_alloc_shr_aux / caml_obj_truncate use it. */
 color_t vergc_allocation_color(void *hp) {
     if (!heap_initialized) return Caml_white;
     uint64_t a = (uint64_t)(uintptr_t)hp;
     if (a < zero_addr || a >= heap_size_u64) return Caml_white;
     const phase_state *ph = gc_gen_heap.phase_ref;
-    return (ph->ps_kind != 0 && a >= ph->ps_cursor) ? Caml_black : Caml_white;
+    return (ph->ps_kind == 2 || (ph->ps_kind == 1 && a >= ph->ps_cursor))
+           ? Caml_black : Caml_white;
 }
 
 /* The end of a sweep.  Stock counts a major collection when its cycle ends,

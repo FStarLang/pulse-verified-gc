@@ -50,11 +50,12 @@ module CheneySpec = GC.Gen.Cheney
 module PromoteSpec = GC.Gen.Promote
 
 /// A major slice is a slice of the sweep (incremental marking will add a
-/// mark slice).
+/// mark slice; for now a slice while marking does nothing, as the sweep's
+/// slice outside a sweep).
 let major_slice_is_phase_slice (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
   : Lemma (GI.major_slice_spec g fp ph budget == SL.phase_slice g fp ph budget)
   = match ph with
-    | Ph.Idle -> ()
+    | Ph.Idle | Ph.Marking -> ()
     | Ph.Sweeping _ -> ()
 
 /// The unbounded budget is more words than the heap has.

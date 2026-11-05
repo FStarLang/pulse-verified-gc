@@ -194,8 +194,8 @@ int main(void)
         goto cleanup_queue;
     }
     start_cycle(gh, live_root, 1, st);
-    if (phase_ref->ps_kind == 0) {
-        printf("FAIL: start_cycle left the collector idle\n");
+    if (phase_ref->ps_kind != 1) {
+        printf("FAIL: start_cycle did not leave the collector sweeping\n");
         free(gray_storage);
         goto cleanup_queue;
     }
@@ -214,7 +214,7 @@ int main(void)
         uint64_t yroots[1] = { y };
         memset(fwd_arr, 0, fwd_entries * sizeof(uint64_t));
         minor_collect(gh, yroots, 1, fwd_arr, queue, empty_slots, 0);
-        if (*bump_ref != 0 || phase_ref->ps_kind == 0) {
+        if (*bump_ref != 0 || phase_ref->ps_kind != 1) {
             printf("FAIL: minor collection mid-sweep\n");
             free(gray_storage);
             goto cleanup_queue;

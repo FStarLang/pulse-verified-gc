@@ -11,13 +11,15 @@
 ///   | phase    | colour                                              |
 ///   |----------|-----------------------------------------------------|
 ///   | Idle     | white                                               |
+///   | Marking  | black                                               |
 ///   | Sweeping | black in front of the cursor, white behind it       |
 ///
 /// In front of the cursor (the header at or above it) the sweep has still to
 /// visit the object: black keeps it, and the sweep whitens it when it gets
 /// there.  Behind the cursor the sweep has passed, so the object is white, as
-/// every object behind the cursor is.  Incremental marking would add a third
-/// row (`Marking`: always black); it is not here yet.
+/// every object behind the cursor is.  While marking (4.14's `Phase_mark`) a
+/// new object is black: the marker never needs to scan it, and its fields are
+/// initialised from values the program holds (`GC.Spec.MarkPhase`).
 ///
 /// The allocator takes the phase (`GC.Spec.Allocator.alloc_search`), and writes
 /// the colour `allocation_color` gives into the header it writes, once.
@@ -29,17 +31,21 @@ open GC.Spec.Object
 module U64 = FStar.UInt64
 module Header = GC.Lib.Header
 
-/// The major collector's phase.  `Sweeping c`: a sweep is under way, with its
-/// cursor at `c`, the header address of the next block it visits.  The rest
+/// The major collector's phase.  `Marking`: an incremental mark is under
+/// way; the mark stack is an implementation cache, so the phase carries
+/// nothing (the grey objects are in the heap's colours).  `Sweeping c`: a
+/// sweep is under way, with its cursor at `c`, the header address of the next block it visits.  The rest
 /// of the sweep's state -- `swept_tail` and `last_fragment` -- is a function of
 /// the heap and the cursor (`GC.Spec.SweepPhase.Intrinsic.state_at`): caches
 /// the implementation keeps beside the cursor, not part of the phase.
 type gc_phase =
   | Idle
+  | Marking
   | Sweeping of U64.t
 
 /// The colour of a new object whose header is at `hd_addr`.
 let allocation_color (ph: gc_phase) (hd_addr: U64.t) : color =
   match ph with
   | Idle -> Header.White
+  | Marking -> Header.Black
   | Sweeping c -> if U64.v hd_addr >= U64.v c then Header.Black else Header.White
