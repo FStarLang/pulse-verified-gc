@@ -1056,6 +1056,11 @@ static void start_major_cycle(void) {
     cycle_marked = 0;
     in_cycle = 0;
     cycle_estimates();
+    /* What was allocated while idle is not this cycle's work: 4.14 zeroes
+     * caml_allocated_words at every slice, the one that starts the cycle
+     * included. */
+    pace_words = 0;
+    caml_extra_heap_resources = 0.0;
     if (*gc_gen_heap.mark_overflow && !ov_seen) { stat_overflows++; ov_seen = 1; }
 }
 
