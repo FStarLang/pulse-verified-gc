@@ -15,9 +15,10 @@ name: OCaml testsuite
 # permanently red and would stop being read. ci/expected-failures.txt is the
 # baseline; shrinking it is progress, growing it needs justification.
 #
-# Everything runs twice, in parallel, once per sweep mode of the collector
-# (VERGC_SWEEP, read by verified_gc/alloc_gen.c): `stw`, the stop-the-world
-# sweep, and `incremental`, the sweep in slices between minor collections.
+# Everything runs twice, in parallel, once per major mode of the collector
+# (VERGC_MAJOR, read by verified_gc/alloc_gen.c): `stw`, every major
+# collection marked and swept at once, and `incremental`, the major cycle
+# (marking, then the sweep) in slices between minor collections.
 # The mode is set for the whole job, so the compiler build itself also runs
 # on the collector in that mode. The incremental job's baseline is
 # ci/expected-failures.txt plus ci/expected-failures-incremental.txt (the
@@ -52,7 +53,7 @@ jobs:
       group: testsuite-${{ github.ref }}-${{ matrix.mode }}
       cancel-in-progress: true
     env:
-      VERGC_SWEEP: ${{ matrix.mode }}
+      VERGC_MAJOR: ${{ matrix.mode }}
       # The baseline for this mode: stw's, plus incremental's own entries.
       EXPECTED: ${{ matrix.mode == 'incremental' && '--expected ci/expected-failures.txt --expected ci/expected-failures-incremental.txt' || '--expected ci/expected-failures.txt' }}
     steps:
@@ -190,7 +191,7 @@ jobs:
             ${{ (inputs.run_baseline && matrix.mode == 'stw') && '--baseline-log stock.log' || '' }} \
             $EXPECTED \
             --summary "$GITHUB_STEP_SUMMARY" \
-            --title "OCaml testsuite — verified GC, VERGC_SWEEP=$VERGC_SWEEP (${GITHUB_SHA:0:8})"
+            --title "OCaml testsuite — verified GC, VERGC_MAJOR=$VERGC_MAJOR (${GITHUB_SHA:0:8})"
           echo "verdict=$?" >> "$GITHUB_OUTPUT"
           [ ! -f known-gaps.md ] || { echo; cat known-gaps.md; } >> "$GITHUB_STEP_SUMMARY"
 
@@ -209,5 +210,5 @@ jobs:
       - name: Fail on new failures
         if: steps.report.outputs.verdict != '0'
         run: |
-          echo "::error::New test failures (VERGC_SWEEP=$VERGC_SWEEP) that are not in the expected failures for this mode -- see the job summary."
+          echo "::error::New test failures (VERGC_MAJOR=$VERGC_MAJOR) that are not in the expected failures for this mode -- see the job summary."
           exit 1

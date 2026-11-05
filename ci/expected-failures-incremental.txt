@@ -1,4 +1,5 @@
-# Failures of OCaml 4.14's testsuite particular to VERGC_SWEEP=incremental.
+# Failures of OCaml 4.14's testsuite particular to VERGC_MAJOR=incremental
+# (incremental marking and sweeping; VERGC_SWEEP=incremental is an alias).
 #
 # The incremental job's baseline is ci/expected-failures.txt PLUS this file:
 # list here only tests that pass stop-the-world and fail incrementally for an
