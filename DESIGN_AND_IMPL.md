@@ -1195,6 +1195,87 @@ The theorem structure proves that bounded marking produces the same heap colors
 as the unbounded mark, despite using a finite stack. The implementation then
 uses the bounded variant in the top-level `collect` contract.
 
+### Incremental marking: the invariant (spec only, in progress)
+
+Incremental marking runs the mark step a few objects at a time with the
+program running in between. This is the spec core (milestone M1 of the
+incremental-mark plan); the `Marking` phase, black allocation, the Pulse
+slices and the write barrier come later. The mark stack stays an
+implementation cache: the spec state is the heap's colours alone.
+
+**The step at any grey object** (`GC.Spec.MarkPhase.mark_step_at g x`):
+blacken `x` and grey its white children, resolved through infix headers (a
+no-scan object has none). The stop-the-world `GC.Spec.Mark.mark_step` is the
+instance at the top of the stack (`mark_step_heap`), so the implementation's
+step, whichever grey object it pops, is covered.
+
+**Reachability through a predicate** (`GC.Spec.Graph.Within`). `reach_within e
+p x y`: a path from `x` to `y` along the relation `e` whose every vertex
+satisfies `p`. Generic in the relation, so it serves `graph_state` and a
+relation read off the heap alike. Its lemmas are what colour and edge changes
+need: a larger predicate and more edges keep paths (`reach_within_mono`); the
+part of a path from any vertex on it is a path (`reach_within_suffix`); taking
+`u` out of `p` breaks only paths through `u`, and each restarts after its last
+visit at a successor of `u` (`reach_within_without`); deleting the edge `u ->
+v` breaks only paths using it, and each restarts at `v`
+(`reach_within_edge_removed`); and the general form, where every broken edge
+ends at a vertex satisfying `q` (`reach_within_restart`).
+
+**What the marker will reach.** `field_edge g x y`: `y` is what a pointer field
+of the scannable object `x` points at, resolved (the edges of `create_graph`
+are among these). `marker_will_reach g w`: `w` is reachable from a grey object
+along a path of grey or white blocks. The marker will scan every object on such
+a path. A path through a black object does not count: the marker never scans a
+black object again, so a path "reachable from some grey object through
+anything" can be cut for good by a single step. `GC.SPOT.MarkPhase` has the
+counterexample: grey `G -> B`, black `B -> W`, `W` white; `W` is reachable from
+`G`, but the step at `G` greys nothing (its only child is black) and leaves no
+grey object, with `B -> W` still a black-to-white edge.
+
+**The invariant, parameterised by what is held from outside.**
+
+```fstar
+let marking_inv (g: heap) (held: obj_addr -> prop) : prop =
+  well_formed_heap g /\     (* free means blue: marking frees nothing *)
+  weak_tri_color g /\       (* every white object a black one points at: marker_will_reach *)
+  held_reached g held       (* every white object held from outside: marker_will_reach *)
+```
+
+`held w` says something outside the major heap points at `w` (resolved). The
+generational layer will instantiate it with the program's roots and the
+targets of the nursery's fields, so the mark-and-sweep spec stays independent
+of the nursery and of the program.
+
+- **Start** (`marking_inv_start`): no black object points at a white one (with
+  no black object at all, `no_black_tri_color`), and every held object is
+  darkened.
+- **Step** (`marking_inv_step`): the step at any grey object keeps it.
+  Greying `x`'s children keeps every grey-or-white path; blackening `x` breaks
+  only paths through `x`, and each restarts at the child it went through,
+  which the step has just greyed (`reach_within_without`). Nothing becomes
+  white, and the walk, the edges and well-formedness are unchanged
+  (`mark_step_at_objects`, `_wf`, `_dense`, `_blue`).
+- **End** (`marking_done`): with no grey object the marker will reach nothing,
+  so clause 1 is the strong tri-colour invariant and clause 2 says no held
+  object is white: the heap is `FusedSweep.End.marked`, where the sweep
+  starts. `marking_done_sweep_start` hands it to
+  `sweep_inv_incremental_start` with the walk facts and the free list.
+- **Other changes** (`marking_inv_change`): any heap change that keeps grey
+  objects grey and grey-or-white blocks grey or white, makes no object white,
+  greys the target of every edge between non-black blocks it cuts, and adds
+  black-to-white edges only to objects the marker would already reach (and
+  white held objects only among those held or reached before). Greying a white
+  object, the barrier's darkening, is an instance (`marking_inv_grey`).
+
+**Left for M2** (the event model at the `Marking` phase): the deletion
+barrier's write and black allocation as instances of `marking_inv_change`.
+For a write of `v` into a field of a non-free object `x` whose old target was
+greyed first, the hypotheses reduce to field-level facts about `write_word`
+(the walk and colours are kept, only `x`'s edges change, the cut edge ends at
+the greyed old target, and the new edge's target is held by the program or not
+white). For allocation, the new object is black and the hypotheses ask that
+its fields' white targets be held. Minor collection at `Marking` is M2 too.
+
 ## The minor collector
 
 The generational collector adds a nursery. The nursery is modeled separately
