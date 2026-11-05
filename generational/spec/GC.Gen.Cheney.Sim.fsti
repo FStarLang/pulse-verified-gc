@@ -22,6 +22,7 @@ open GC.Gen.Impl.UpdatePtrs
 module CheneySpec = GC.Gen.Cheney
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module SimOne = GC.Gen.Cheney.SimOne
+module FLs = GC.Spec.FreeLists
 
 /// ---------------------------------------------------------------------------
 /// Connection predicate: relates impl state to spec cheney_state
@@ -37,7 +38,7 @@ let queue_size : pos = fwd_array_size
 /// - fwd_arr represents cs.cs_fwd
 /// - queue[0..back) = cs.cs_queue
 let impl_matches_spec
-  (ms: heap) (fp: U64.t)
+  (ms: heap) (fp: FLs.fl_state)
   (farr: seq U64.t) (q: seq U64.t) (bk: nat)
   (cs: CheneySpec.cheney_state) : prop =
   ms == cs.cs_major /\
@@ -112,7 +113,7 @@ val not_minor_if_wosize_bounds_fail (minor: minor_state) (addr: U64.t)
 
 /// When promote_object returns new_addr=0, heap and fp are unchanged
 val promote_object_zero_noop
-  (minor_st: minor_state) (ms: heap) (addr: U64.t) (fp: U64.t) (wz: nat)
+  (minor_st: minor_state) (ms: heap) (addr: U64.t) (fp: FLs.fl_state) (wz: nat)
   : Lemma (requires wz > 0 /\
                     (GC.Gen.Promote.promote_object minor_st ms addr fp wz).new_addr == 0UL)
           (ensures (GC.Gen.Promote.promote_object minor_st ms addr fp wz).major_out == ms /\

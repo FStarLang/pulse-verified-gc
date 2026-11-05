@@ -6,6 +6,7 @@ module GC.Gen.MinorCollectForwarding.NormalEdges
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -39,7 +40,7 @@ open GC.Gen.MinorCollectForwarding.Edges
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 let combined_reachable_edge_forwarded_normal
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (u v: CG.combined_vertex)
   =
@@ -118,9 +119,19 @@ let combined_reachable_edge_forwarded_normal
       promoted_minor_minor_edge_forwarded minor major fp roots src dst i
 #pop-options
 
+/// Two word-aligned addresses, one above the other, are a word apart.
+/// Proved in an empty context: inside the large proofs below the same step
+/// times out.
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+private let aligned_gt_step (a b: U64.t)
+  : Lemma (requires U64.v a > U64.v b /\ U64.v a % 8 == 0 /\ U64.v b % 8 == 0)
+          (ensures U64.v a >= U64.v b + U64.v mword)
+  = ()
+#pop-options
+
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 private let fwd_disjoint_reachable_major_at
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (x y: U64.t)
   : Lemma
     (requires
@@ -160,7 +171,7 @@ private let fwd_disjoint_reachable_major_at
     assert (prom.fwd_map x <> y)
 
 let fwd_disjoint_reachable_major_intro
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   =
     let aux (x y: U64.t) : Lemma
       (requires
@@ -183,7 +194,7 @@ let fwd_disjoint_reachable_major_intro
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let minor_source_edge_not_no_scan
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (src: U64.t) (dst: CG.combined_vertex)
   =
     CG.minor_edge_elim minor major src dst;
@@ -199,7 +210,7 @@ let minor_source_edge_not_no_scan
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let combined_reachable_normal_injective
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   =
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
@@ -262,7 +273,7 @@ let combined_reachable_normal_injective
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 private let normal_minor_source_ready_intro
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t) (src: U64.t) (dst: CG.combined_vertex)
   : Lemma
     (requires
@@ -292,8 +303,8 @@ private let normal_minor_source_ready_intro
     GenInv.major_heap_shape_elim major fp;
     GenInv.minor_heap_shape_elim minor;
     assert (well_formed_heap major);
-    assert (AllocLemmas.fl_valid major fp heap_words);
-    assert (AllocLemmas.fl_chain_terminates major fp heap_words);
+    assert (FLs.fls_valid major fp);
+    assert (FLs.fls_terminates major fp);
     assert (chain_objects_blue major fp);
     assert (minor_wf minor);
     assert (minor_infix_wf minor);
@@ -334,7 +345,7 @@ private let normal_minor_source_ready_intro
     FStar.Classical.forall_intro (FStar.Classical.move_requires i_aux)
 
 let normal_edge_forward_ready_intro
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t)
   (u v: CG.combined_vertex)
   =
@@ -365,6 +376,7 @@ let normal_edge_forward_ready_intro
       assert (Seq.mem ((prom.fwd_map dst) <: obj_addr) (objects zero_addr prom.major_final));
       objects_addresses_gt_start zero_addr prom.major_final ((prom.fwd_map dst) <: obj_addr);
       assert (U64.v (prom.fwd_map dst) > U64.v zero_addr);
+      aligned_gt_step (prom.fwd_map dst) zero_addr;
       assert (U64.v (prom.fwd_map dst) >= U64.v zero_addr + U64.v mword);
       assert (HeapGraph.is_pointer_field (prom.fwd_map dst))
     | CG.MinorV src, CG.MajorV dst ->
@@ -384,6 +396,7 @@ let normal_edge_forward_ready_intro
       assert (Seq.mem ((prom.fwd_map dst) <: obj_addr) (objects zero_addr prom.major_final));
       objects_addresses_gt_start zero_addr prom.major_final ((prom.fwd_map dst) <: obj_addr);
       assert (U64.v (prom.fwd_map dst) > U64.v zero_addr);
+      aligned_gt_step (prom.fwd_map dst) zero_addr;
       assert (U64.v (prom.fwd_map dst) >= U64.v zero_addr + U64.v mword);
       assert (HeapGraph.is_pointer_field (prom.fwd_map dst));
       assert (CG.mem_cv (CG.MinorV dst) (CG.build_combined_graph minor major));
@@ -395,7 +408,7 @@ let normal_edge_forward_ready_intro
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let normal_src_images_injective
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t) (u v: CG.combined_vertex)
   =
     let prom = cheney_promote minor major fp roots in

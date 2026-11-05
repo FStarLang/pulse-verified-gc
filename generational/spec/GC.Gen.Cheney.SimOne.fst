@@ -7,6 +7,7 @@ module GC.Gen.Cheney.SimOne
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 open GC.Spec.Fields
@@ -244,8 +245,8 @@ private let fwd_one_bfs_inv_success
                     cs.cs_fwd addr = 0UL /\
                     minor_wosize minor addr > 0 /\
                     well_formed_heap_part1 cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+                    FLs.fls_valid cs.cs_major cs.cs_fp /\
+                    FLs.fls_terminates cs.cs_major cs.cs_fp /\
                     (promote_object minor cs.cs_major addr cs.cs_fp
                        (minor_wosize minor addr)).new_addr <> 0UL)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_normal minor cs addr))
@@ -308,8 +309,8 @@ private let fwd_normal_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
   : Lemma (requires cheney_bfs_inv minor cs /\ minor_wf minor /\
                     well_formed_heap_part1 cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words)
+                    FLs.fls_valid cs.cs_major cs.cs_fp /\
+                    FLs.fls_terminates cs.cs_major cs.cs_fp)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_normal minor cs addr))
   =
   if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL then

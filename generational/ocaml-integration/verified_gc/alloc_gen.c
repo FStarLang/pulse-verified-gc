@@ -37,6 +37,13 @@
 #include "internal/GC_Gen_Impl.h"
 #include "internal/GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
 #include "krmlinit.h"
+
+/* The size classes (GC.Spec.SizeClass): list w holds free blocks of wosize w
+ * for 1 <= w <= VGC_N_SMALL, list 0 every larger one.  Must equal
+ * n_small_u64, which the extracted code has inlined; the snapshot's
+ * size_lists_test.c checks the extracted allocator's cut-off. */
+#define VGC_N_SMALL 16
+#define VGC_N_LISTS (VGC_N_SMALL + 1)
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -137,11 +144,13 @@ static void ensure_heap(void) {
 
     uint64_t initial_fp = zero_addr + 8;
 
-    /* fp_ref */
-    uint64_t *fp_ref = (uint64_t *)malloc(sizeof(uint64_t));
-    if (!fp_ref) caml_fatal_error("verified gen GC: malloc fp_ref");
-    *fp_ref = initial_fp;
-    gc_gen_heap.fp_ref = fp_ref;
+    /* Free-list heads, one per size class (GC.Spec.SizeClass): class w for
+     * 1 <= w <= n_small, class 0 for every larger block.  The one free block
+     * goes on the list of its class. */
+    uint64_t *heads = (uint64_t *)calloc(VGC_N_LISTS, sizeof(uint64_t));
+    if (!heads) caml_fatal_error("verified gen GC: calloc heads");
+    heads[(1 <= wosize && wosize <= VGC_N_SMALL) ? wosize : 0] = initial_fp;
+    gc_gen_heap.heads = heads;
 
     /* --- Minor heap --- */
     /* Override the verified constant (2048B) with a production-sized minor heap.
@@ -396,6 +405,83 @@ static void write_back_forwarded_roots(void) {
 
 /* --- Minor collection --- */
 
+
+/* --- Free-list checker (test builds only) ---
+ *
+ * With -DVGC_CHECK_ALLOC, every collection, and every 1024th direct major
+ * allocation, re-checks the free-list invariant the proofs maintain
+ * (GC.Spec.FreeLists: fls_valid, fls_terminates, fls_exact) by walking the
+ * major heap:
+ *   - the walk from zero_addr tiles the heap exactly;
+ *   - every cell of list i is the start of a blue object of wosize >= 1 whose
+ *     class is i (class w = w for 1 <= w <= n_small, else 0);
+ *   - each list ends, and no cell is on a list twice or on two lists;
+ *   - every blue object of wosize >= 1 is on a list.
+ * Any failure aborts with a message naming the check. */
+#ifdef VGC_CHECK_ALLOC
+static uint8_t *chk_starts;           /* one bit per heap word: an object start */
+static uint64_t chk_alloc_count;
+
+static void chk_fail(const char *where, const char *what, size_t list, uint64_t cell) {
+    fprintf(stderr, "VGC_CHECK_ALLOC: %s: %s (list %zu, cell 0x%llx)\n",
+            where, what, list, (unsigned long long)cell);
+    abort();
+}
+
+static void check_free_lists(const char *where) {
+    uint64_t z = zero_addr, hs = heap_size_u64;
+    uint64_t words = (hs - z) / 8;
+    uint64_t n_small = VGC_N_SMALL;
+    size_t n_lists = VGC_N_LISTS;
+    if (!chk_starts) {
+        chk_starts = (uint8_t *)calloc((size_t)(words / 8 + 1), 1);
+        if (!chk_starts) caml_fatal_error("VGC_CHECK_ALLOC: calloc");
+    }
+    memset(chk_starts, 0, (size_t)(words / 8 + 1));
+    /* 1. the walk, marking the object starts that can be cells */
+    uint64_t cells = 0;
+    uint64_t pos = z;
+    while (pos + 8 < hs) {
+        uint64_t hdr = *(uint64_t *)(uintptr_t)pos;
+        uint64_t wz = hdr >> 10;
+        uint64_t col = (hdr >> 8) & 3;
+        uint64_t next = pos + (wz + 1) * 8;
+        if (next > hs || next <= pos) chk_fail(where, "walk overruns the heap", 0, pos + 8);
+        if (col == 2 && wz >= 1) {
+            uint64_t w = (pos + 8 - z) / 8;
+            chk_starts[w / 8] |= (uint8_t)(1u << (w % 8));
+            cells++;
+        }
+        pos = next;
+    }
+    /* 2. the lists: each cell is a marked start of its class, met once */
+    uint64_t listed = 0;
+    for (size_t i = 0; i < n_lists; i++) {
+        uint64_t cur = gc_gen_heap.heads[i];
+        uint64_t steps = 0;
+        while (cur != 0) {
+            if (cur % 8 != 0 || cur < z + 8 || cur >= hs)
+                chk_fail(where, "cell out of the heap or misaligned", i, cur);
+            uint64_t w = (cur - z) / 8;
+            if (!(chk_starts[w / 8] & (1u << (w % 8))))
+                chk_fail(where, "cell is not a free block with a link, or is listed twice", i, cur);
+            chk_starts[w / 8] &= (uint8_t)~(1u << (w % 8));
+            uint64_t wz = *(uint64_t *)(uintptr_t)(cur - 8) >> 10;
+            size_t cls = (1 <= wz && wz <= n_small) ? (size_t)wz : 0;
+            if (cls != i) chk_fail(where, "cell on the wrong list for its size", i, cur);
+            listed++;
+            if (++steps > words) chk_fail(where, "list does not end", i, cur);
+            cur = *(uint64_t *)(uintptr_t)cur;
+        }
+    }
+    /* 3. every free block with a link is listed */
+    if (listed != cells) chk_fail(where, "a free block is on no list", 0, 0);
+}
+#define CHECK_FREE_LISTS(where) check_free_lists(where)
+#else
+#define CHECK_FREE_LISTS(where) ((void)0)
+#endif
+
 static void do_full_gc(void);       /* forward decl */
 
 /* Core minor GC implementation.  If major heap space is insufficient,
@@ -449,6 +535,7 @@ static void do_minor_gc_core(void) {
     if (!promote_ok) {
         fatal_promotion_failed();
     }
+    CHECK_FREE_LISTS("after a minor collection");
 
     /* No sweep has run since promotion, so the major copies' headers are
      * intact. */
@@ -648,16 +735,18 @@ static void do_full_gc(void) {
         size_t n_slots = (size_t)(tbl->ptr - tbl->base);
         _Static_assert(sizeof(value *) == sizeof(uint64_t),
             "ref_table optimization requires LP64 (sizeof(value*)==8)");
-        FStar_Pervasives_Native_tuple2__uint64_t_bool result =
+        bool ok =
             gen_gc(gc_gen_heap, roots_for_gc, (size_t)root_count, gc_fwd_arr,
                    gc_queue, (uint64_t *)tbl->base, n_slots, gc_stack);
-        if (!result._2) {
+        if (!ok) {
             free(roots_for_gc);
             free(gray_storage);
             in_full_gc = 0;
             fatal_promotion_failed();
         }
     }
+
+    CHECK_FREE_LISTS("after a full collection");
 
     PROF_START(writeback);
     write_back_forwarded_roots();
@@ -750,19 +839,16 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     }
 
     PROF_START(major_alloc);
-    uint64_t fp = *gc_gen_heap.fp_ref;
-    FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize);
-    *gc_gen_heap.fp_ref = res._1;
-    uint64_t result = res._2;
+    uint64_t result = allocate(gc_gen_heap.major, gc_gen_heap.heads, (uint64_t)wosize);
     PROF_END(major_alloc);
+#ifdef VGC_CHECK_ALLOC
+    if ((++chk_alloc_count & 1023) == 0) CHECK_FREE_LISTS("after a major allocation");
+#endif
 
     if (result == 0) {
         do_full_gc();
         PROF_START(major_alloc);
-        fp = *gc_gen_heap.fp_ref;
-        res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize);
-        *gc_gen_heap.fp_ref = res._1;
-        result = res._2;
+        result = allocate(gc_gen_heap.major, gc_gen_heap.heads, (uint64_t)wosize);
         PROF_END(major_alloc);
     }
 

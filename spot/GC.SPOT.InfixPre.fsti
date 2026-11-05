@@ -60,7 +60,7 @@ val spot_infix_fwd_array_zero : unit ->
 val spot_infix_collection_heap_shape (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
       GenInv.collection_heap_shape
-        spot_infix_minor (InfixMajor.spot_infix_heap r) (InfixMajor.spot_infix_fp r))
+        spot_infix_minor (InfixMajor.spot_infix_heap r) (InfixMajor.spot_infix_fls r))
 
 val spot_infix_ref_table_sound (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
@@ -85,7 +85,7 @@ val spot_infix_roots_valid (r: unit{InfixMajor.spot_infix_room})
 val spot_infix_minor_collect_full_pre (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
       Preconditions.minor_collect_full_pre
-        spot_infix_minor (InfixMajor.spot_infix_heap r) (InfixMajor.spot_infix_fp r)
+        spot_infix_minor (InfixMajor.spot_infix_heap r) (InfixMajor.spot_infix_fls r)
         (spot_infix_roots r) spot_infix_fwd_array spot_infix_slots 0)
 
 /// The full `gen_gc` precondition, for any gray stack budget that can hold the
@@ -93,7 +93,7 @@ val spot_infix_minor_collect_full_pre (r: unit{InfixMajor.spot_infix_room})
 val spot_infix_gen_gc_pre (r: unit{InfixMajor.spot_infix_room}) (cap: nat{cap >= 1})
   : Lemma (ensures
       Preconditions.gen_gc_pre
-        spot_infix_minor (InfixMajor.spot_infix_heap r) (InfixMajor.spot_infix_fp r)
+        spot_infix_minor (InfixMajor.spot_infix_heap r) (InfixMajor.spot_infix_fls r)
         (spot_infix_roots r) spot_infix_fwd_array spot_infix_slots 0
         Seq.empty cap)
 
@@ -104,7 +104,7 @@ val spot_infix_cheney_no_oom (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
       CheneyBFS.cheney_no_oom
         spot_infix_minor (InfixMajor.spot_infix_heap r)
-        (InfixMajor.spot_infix_fp r) (spot_infix_roots r))
+        (InfixMajor.spot_infix_fls r) (spot_infix_roots r))
 
 /// The minor collection cannot run out of memory here: there is nothing to
 /// promote.  Combined with `gen_gc`'s `not ok ==> cheney_oom`, this pins the
@@ -113,4 +113,4 @@ val spot_infix_no_oom (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
       ~(CheneyBFS.cheney_oom
           spot_infix_minor (InfixMajor.spot_infix_heap r)
-          (InfixMajor.spot_infix_fp r) (spot_infix_roots r)))
+          (InfixMajor.spot_infix_fls r) (spot_infix_roots r)))

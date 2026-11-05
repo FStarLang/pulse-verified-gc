@@ -51,6 +51,7 @@ module HeapModel = GC.Spec.HeapModel
 
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 open GC.Gen.MinorCollectForwarding.Helpers
+module FLs = GC.Spec.FreeLists
 
 /// Statement well-formedness here involves `U64.uint_to_t (v x + j * 8)`
 /// side conditions (`FStar.UInt.size ... 64`); with fuel, Z3 5.x unrolls the
@@ -58,7 +59,7 @@ open GC.Gen.MinorCollectForwarding.Helpers
 /// None of the statements below need recursive unfolding.
 #push-options "--fuel 0 --ifuel 0"
 val combined_reachable_minor_has_fwd
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires
       RBridge.major_field_zero_covered minor major roots /\
@@ -79,7 +80,7 @@ val combined_reachable_minor_has_fwd
 
 /// Slot-table-facing form of `combined_reachable_minor_has_fwd`.
 val combined_reachable_minor_has_fwd_from_slots
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
@@ -101,7 +102,7 @@ val combined_reachable_minor_has_fwd_from_slots
         minor_wosize minor v > 0 ==> fwd v <> 0UL))
 
 let combined_reachable_images_valid_or_infix_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) : prop =
   let cg = CG.build_combined_graph minor major in
   let combined_roots = CG.classify_roots minor roots in
   let prom = cheney_promote minor major fp roots in
@@ -126,7 +127,7 @@ let combined_reachable_images_valid_or_infix_prop
 /// - reachable positive-size minor vertices have valid-or-infix forwarding
 ///   images in the post-promotion heap.
 val combined_reachable_images_valid_or_infix
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
@@ -140,7 +141,7 @@ val combined_reachable_images_valid_or_infix
 
 /// Slot-table-facing form of `combined_reachable_images_valid_or_infix`.
 val combined_reachable_images_valid_or_infix_from_slots
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
@@ -163,12 +164,12 @@ val combined_reachable_images_valid_or_infix_from_slots
 /// `MajorV src -> MajorV dst` combined-graph edge survive into the
 /// post-collection heap graph when the field holds an interior pointer.
 val cheney_collect_frame_target_header
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (h: obj_addr)
   : Lemma
     (requires well_formed_heap major /\
-              AllocLemmas.fl_valid major fp heap_words /\
-              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              FLs.fls_valid major fp /\
+              FLs.fls_terminates major fp /\
               chain_objects_blue major fp /\
               minor_infix_wf minor /\
               GC.Spec.Object.infix_addr_wf major (objects zero_addr major) h /\
@@ -180,7 +181,7 @@ val cheney_collect_frame_target_header
                 GC.Spec.Object.resolve_object h major))
 
 val combined_reachable_major_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src dst: obj_addr)
   : Lemma
     (requires
@@ -208,7 +209,7 @@ let field_addr_fits (src: U64.t) (i: nat)
 /// points to a reachable positive-size minor object, the post-minor heap stores
 /// the target's forwarding address in that field.
 val combined_major_minor_field_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (src: obj_addr) (dst: U64.t) (i: nat)
   : Lemma
@@ -243,7 +244,7 @@ val combined_major_minor_field_forwarded
       read_word res.mc_major fa == prom.fwd_map ov))
 
 val combined_major_minor_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (src: obj_addr) (dst: U64.t) (i: nat)
   : Lemma
@@ -278,7 +279,7 @@ val combined_major_minor_edge_forwarded
 /// minor source, a field that points to an old major object remains that major
 /// object in the post-minor heap.
 val promoted_minor_major_field_preserved
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   : Lemma
     (requires
@@ -305,7 +306,7 @@ val promoted_minor_major_field_preserved
       read_word res.mc_major (U64.uint_to_t (U64.v (prom.fwd_map src) + j * 8)) == dst))
 
 val promoted_minor_major_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   : Lemma
     (requires
@@ -337,7 +338,7 @@ val promoted_minor_major_edge_forwarded
 // the `U64.uint_to_t` in the conclusion needs more than the default budget
 #push-options "--z3rlimit 40"
 val promoted_minor_minor_field_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   : Lemma
     (requires
@@ -371,7 +372,7 @@ val promoted_minor_minor_field_forwarded
 #pop-options
 
 val promoted_minor_minor_edge_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
   : Lemma
     (requires

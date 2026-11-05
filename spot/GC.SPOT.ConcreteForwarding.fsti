@@ -16,7 +16,7 @@ val spot_concrete_no_oom
       CheneyBFS.cheney_no_oom
         GC.SPOT.ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
-        (ConcreteMajor.spot_major_fp r)
+        (ConcreteMajor.spot_major_fls r)
         (GC.SPOT.ThreeObjects.spot_roots (ConcreteMajor.spot_c r)))
 
 val spot_concrete_b_forwarding_zero
@@ -25,7 +25,7 @@ val spot_concrete_b_forwarding_zero
       (Cheney.cheney_promote
         GC.SPOT.ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
-        (ConcreteMajor.spot_major_fp r)
+        (ConcreteMajor.spot_major_fls r)
         (GC.SPOT.ThreeObjects.spot_roots (ConcreteMajor.spot_c r))).fwd_map
         GC.SPOT.Layout.b_minor == 0UL)
 
@@ -35,7 +35,7 @@ val spot_concrete_a_forwarding_free_obj
       U64.v ((Cheney.cheney_promote
         GC.SPOT.ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
-        (ConcreteMajor.spot_major_fp r)
+        (ConcreteMajor.spot_major_fls r)
         (GC.SPOT.ThreeObjects.spot_roots (ConcreteMajor.spot_c r))).fwd_map
         GC.SPOT.Layout.a_minor) ==
       // Right-justified: `a` lands at the TOP of the free block, not at its

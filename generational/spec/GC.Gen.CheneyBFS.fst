@@ -6,6 +6,7 @@ module GC.Gen.CheneyBFS
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 open GC.Gen.Base
@@ -592,7 +593,7 @@ let scanned_exhausted_implies_fwd_closed_oom
 /// ---------------------------------------------------------------------------
 
 let cheney_no_oom_from_loop_posts
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (oom_roots oom_final: bool)
   =
     if not oom_final then begin
@@ -609,7 +610,7 @@ let cheney_no_oom_from_loop_posts
     end
 
 let cheney_promotes_all_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   =
   let prom = CheneySpec.cheney_promote minor major fp roots in
   fwd_well_formed_covers_reachable minor prom.fwd_map roots

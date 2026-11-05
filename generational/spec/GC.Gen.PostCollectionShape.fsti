@@ -25,32 +25,20 @@ module Corr = GC.Spec.Correctness
 module Sweep = GC.Spec.Sweep
 module Coalesce = GC.Spec.Coalesce
 module GenInv = GC.Gen.HeapInvariant
+module FLs = GC.Spec.FreeLists
+module CL = GC.Spec.CollectLists
 
 /// **The major collector restores `major_heap_shape`.**
 ///
-/// Given a heap satisfying the shape invariant and any mark output for it, the
-/// heap and free pointer produced by `coalesce (sweep ...)` -- which is what
-/// `GC.Impl.FusedSweepCoalesce.fused_sweep_coalesce` computes, up to the bodies
-/// of free blocks -- satisfy the shape invariant again.
+/// The heap `s2` and the free lists `fls` the collector hands back
+/// (`GC.Impl.collect_with_roots`, described by `gc_coalesce_source_lists`)
+/// satisfy the shape invariant again, from any mark output of any heap.
 ///
 /// This is what makes the generational invariant *inductive* rather than merely
 /// assumed: composed with `collection_heap_shape_after_minor_reset` it gives
 /// `gen_gc` a postcondition that is literally its own precondition.
-val major_gc_restores_major_heap_shape
-  (major: heap) (h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
-  : Lemma
-    (requires Corr.mark_post major h_mark roots fp)
-    (ensures (let r = Coalesce.coalesce (fst (Sweep.sweep h_mark fp)) in
-              GenInv.major_heap_shape (fst r) (snd r)))
-
-/// The same statement against the collector's Pulse postcondition.
-///
-/// `GC.Impl.collect_with_roots` does not expose the marked heap -- it exposes
-/// `Corr.gc_coalesce_source`, which says only that *some* marked heap produced
-/// the result.  This lemma discharges that existential so callers of the Pulse
-/// entry point can use the theorem directly.
 val major_gc_restores_major_heap_shape_of_source
-  (h_init: heap) (s2: heap) (roots: seq obj_addr) (fp: U64.t) (final_fp: U64.t)
+  (h_init: heap) (s2: heap) (roots: seq obj_addr) (fls: FLs.fl_state)
   : Lemma
-    (requires Corr.gc_coalesce_source h_init s2 roots fp final_fp)
-    (ensures GenInv.major_heap_shape s2 final_fp)
+    (requires CL.gc_coalesce_source_lists h_init s2 roots fls)
+    (ensures GenInv.major_heap_shape s2 fls)

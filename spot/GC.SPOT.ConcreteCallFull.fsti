@@ -36,7 +36,7 @@ let spot_gen_gc_success_post
     CheneySpec.cheney_promote
       ConcreteMinor.spot_minor2
       (ConcreteMajor.spot_major_heap r)
-      (ConcreteMajor.spot_major_fp r)
+      (ConcreteMajor.spot_major_fls r)
       (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
   ok ==>
     Seq.mem (ConcreteMajor.spot_c r)
@@ -50,17 +50,16 @@ fn call_concrete_gen_gc_spot
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)
   requires is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
-            (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r)
-  returns res: (U64.t & bool)
-  ensures exists* d2 b2 final_major.
-    is_gen_heap gh d2 b2 final_major (fst res) **
+            (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fls r)
+  returns ok: bool
+  ensures exists* d2 b2 final_major fp2.
+    is_gen_heap gh d2 b2 final_major fp2 **
     pure (
-      let ok = snd res in
       GenImpl.gen_gc_heap_shape_post d2 b2 final_major /\
       Postconditions.minor_not_promoted
         ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
-        (ConcreteMajor.spot_major_fp r)
+        (ConcreteMajor.spot_major_fls r)
         (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
         Layout.b_minor /\
       spot_gen_gc_success_post r ok final_major)

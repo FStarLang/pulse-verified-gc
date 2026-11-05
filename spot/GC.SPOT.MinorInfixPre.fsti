@@ -99,7 +99,7 @@ val spot_mi_field_is_interior : r:unit{Major.spot_major_room} ->
 /// the heap it is handed.
 val spot_mi_collection_heap_shape : r:unit{Major.spot_major_room} ->
   Lemma (ensures GenInv.collection_heap_shape
-                   spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fp r))
+                   spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fls r))
 
 /// The interior nursery pointer is a legal root.  This is the Phase H.2 clause
 /// under test: `roots_valid_for_minor_collection` sends every minor root through
@@ -110,14 +110,14 @@ val spot_mi_roots_valid : r:unit{Major.spot_major_room} ->
 
 val spot_mi_minor_collect_full_pre : r:unit{Major.spot_major_room} ->
   Lemma (ensures Preconditions.minor_collect_full_pre
-                   spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fp r)
+                   spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fls r)
                    (spot_mi_roots r) spot_mi_fwd_array (spot_mi_slots r) 1)
 
 /// `gen_gc`'s full precondition, for any empty mark stack with room for the
 /// two roots.
 val spot_mi_gen_gc_pre : r:unit{Major.spot_major_room} -> cap:nat{cap >= 2} ->
   Lemma (ensures Preconditions.gen_gc_pre
-                   spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fp r)
+                   spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fls r)
                    (spot_mi_roots r) spot_mi_fwd_array (spot_mi_slots r) 1
                    Seq.empty cap)
 

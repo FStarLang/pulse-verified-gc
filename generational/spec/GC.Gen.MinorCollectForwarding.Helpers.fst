@@ -6,6 +6,7 @@ module GC.Gen.MinorCollectForwarding.Helpers
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -264,7 +265,7 @@ let result_post_reachable_refl_resolved post_major rts rr w =
   result_post_reachable_refl_direct post_major (resolve_roots post_major rts) w
 
 let post_minor_reachable_refl_from_root
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t) (rr: U64.t) (w: U64.t)
   =
     let prom = cheney_promote minor major fp roots in
@@ -647,7 +648,7 @@ let vertex_resolves_to_itself h w =
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let cheney_promote_preserves_old_major_field_context
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src: obj_addr) (j: nat)
   =
     GenInv.collection_heap_shape_elim minor major fp;
@@ -692,7 +693,7 @@ private let infix_wosize_lt_parent (h p w wp: int)
 
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
 let fwd_image_resolves
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (x: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) (x: U64.t)
   =
     let prom = cheney_promote minor major fp roots in
     let g = prom.major_final in
@@ -782,13 +783,13 @@ let major_field_target_in_roots
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let minor_field_infix_target_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (src: U64.t) (j: nat)
   = assert (CheneyBFS.fwd_covers_infix_fields minor
               (cheney_promote minor major fp roots).fwd_map)
 
 let major_field_infix_target_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots slots: seq U64.t) (n: nat)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots slots: seq U64.t) (n: nat)
   (src: obj_addr) (j: nat)
   = major_field_target_in_roots major roots slots n src j;
     assert (CheneyBFS.fwd_covers_infix_roots minor

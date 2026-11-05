@@ -17,15 +17,16 @@ open GC.Gen.Promote
 open GC.Gen.Cheney
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module FLs = GC.Spec.FreeLists
 
 val promote_object_nonblue_other_reflects_pre
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: FLs.fl_state) (wz: nat{wz > 0})
   (target: obj_addr)
   : Lemma
     (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp heap_words /\
-      AllocLemmas.fl_chain_terminates major fp heap_words /\
+      FLs.fls_valid major fp /\
+      FLs.fls_terminates major fp /\
       // Right-justification rewrites the remainder's header as well as the
       // allocated one, so `alloc_spec_read_header_other_part1` now needs
       // `target` off the free list.  A cell is blue before and stays blue,
@@ -41,11 +42,11 @@ val promote_object_nonblue_other_reflects_pre
       is_blue target major = false)
 
 val cheney_promote_nonblue_origin
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (obj: obj_addr)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    FLs.fls_valid major fp /\
+                    FLs.fls_terminates major fp /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor /\

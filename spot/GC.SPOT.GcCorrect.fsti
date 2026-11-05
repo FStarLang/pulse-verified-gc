@@ -14,6 +14,7 @@ open GC.Spec.Base
 
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
+module FLs = GC.Spec.FreeLists
 module ConcreteMinor = GC.SPOT.ConcreteMinor
 module ConcreteMajor = GC.SPOT.ConcreteMajor
 module ThreeObjects = GC.SPOT.ThreeObjects
@@ -29,7 +30,7 @@ let spot_major_h_init (r: unit{ConcreteMajor.spot_major_room}) : GTot heap =
   GenImpl.gen_gc_prepared_major
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
+    (ConcreteMajor.spot_major_fls r)
     (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
     Seq.empty spot_cap
 
@@ -37,29 +38,21 @@ let spot_major_roots (r: unit{ConcreteMajor.spot_major_room}) : GTot (seq obj_ad
   GenImpl.gen_gc_prepared_roots
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
+    (ConcreteMajor.spot_major_fls r)
     (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
     Seq.empty spot_cap
-
-let spot_major_fp (r: unit{ConcreteMajor.spot_major_room}) : GTot U64.t =
-  (CheneySpec.cheney_collect_spec
-     ConcreteMinor.spot_minor2
-     (ConcreteMajor.spot_major_heap r)
-     (ConcreteMajor.spot_major_fp r)
-     (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))).mc_fp
 
 /// `gc_correct`'s precondition hypothesis holds on the concrete heap.
 val spot_gc_precondition (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (MajorGC.gc_precondition_with_roots
              (spot_major_h_init r) (spot_major_roots r) (spot_major_roots r)
-             (spot_major_fp r) spot_cap)
+             spot_cap)
 
 /// Any result of `collect_with_roots` on that heap is safe and live.
 val spot_gc_correct
-  (r: unit{ConcreteMajor.spot_major_room}) (s2: heap) (final_fp: U64.t)
+  (r: unit{ConcreteMajor.spot_major_room}) (s2: heap) (final_fls: FLs.fl_state)
   : Lemma
     (requires Correct.collect_post
-                (spot_major_h_init r) s2 (spot_major_roots r) (spot_major_fp r) final_fp)
-    (ensures Correct.gc_safe (spot_major_h_init r) s2 (spot_major_roots r) final_fp /\
-             Correct.gc_live (spot_major_h_init r) s2 (spot_major_roots r)
-               (spot_major_fp r) final_fp)
+                (spot_major_h_init r) s2 (spot_major_roots r) final_fls)
+    (ensures Correct.gc_safe (spot_major_h_init r) s2 (spot_major_roots r) final_fls /\
+             Correct.gc_live (spot_major_h_init r) s2 (spot_major_roots r) final_fls)

@@ -37,6 +37,7 @@ module GC.Gen.CheneyCorrectness
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 open GC.Spec.Fields
@@ -60,15 +61,15 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 /// is valid and terminates. These ensure promote_object writes only into
 /// legitimate free-list nodes.
 val cheney_collect_preserves_objects
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires
       // Major heap has valid OCaml object layout
       well_formed_heap major /\
       // Free-list from fp: each node is a valid blue object with wosize >= 1
-      AllocLemmas.fl_valid major fp heap_words /\
+      FLs.fls_valid major fp /\
       // Free-list traversal terminates (no cycles)
-      AllocLemmas.fl_chain_terminates major fp heap_words)
+      FLs.fls_terminates major fp)
     (ensures (let res = cheney_collect_spec minor major fp roots in
               // Every pre-existing object address is still in the post-collection object list
               forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
@@ -87,14 +88,14 @@ val cheney_collect_preserves_objects
 /// because promotion may violate pointer-closure (part 2) if the forwarding
 /// map introduces dangling minor-heap references. Part 1 alone is always safe.
 val cheney_collect_preserves_wfh_part1
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires
       // Major heap well-formed
       well_formed_heap major /\
       // Free-list valid and terminating
-      AllocLemmas.fl_valid major fp heap_words /\
-      AllocLemmas.fl_chain_terminates major fp heap_words)
+      FLs.fls_valid major fp /\
+      FLs.fls_terminates major fp)
     (ensures
       // Every object's header+body fits within the post-collection heap byte array
       well_formed_heap_part1 (cheney_collect_spec minor major fp roots).mc_major)
@@ -107,7 +108,7 @@ val cheney_collect_preserves_wfh_part1
 /// This means the entire minor heap is available for new allocations.
 /// This property is UNCONDITIONAL — no preconditions required.
 val cheney_collect_resets_minor
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (ensures (let res = cheney_collect_spec minor major fp roots in
               // Minor heap satisfies structural well-formedness
@@ -127,7 +128,7 @@ val cheney_collect_resets_minor
 /// unchanged otherwise.
 /// This property is UNCONDITIONAL — no preconditions required.
 val cheney_collect_rewrites_roots
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (ensures (let res = cheney_collect_spec minor major fp roots in
               let prom = cheney_promote minor major fp roots in
@@ -146,16 +147,16 @@ val cheney_collect_rewrites_roots
 /// This is what GC.Gen.Impl.fst calls to establish Cheney collection
 /// postconditions around the full minor collection path.
 val cheney_gc_correct
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires
       // Major heap has valid OCaml object layout (all 4 well-formedness parts)
       well_formed_heap major /\
       // Free-list from fp: each node is a valid blue object, wosize >= 1,
       // and the next-pointer chain is valid
-      AllocLemmas.fl_valid major fp heap_words /\
+      FLs.fls_valid major fp /\
       // Free-list terminates within bounded steps (no cycles)
-      AllocLemmas.fl_chain_terminates major fp heap_words /\
+      FLs.fls_terminates major fp /\
       // Free chain only visits blue objects: no allocated (non-blue) object
       // appears on the free list (prevents promote_object from clobbering
       // live data)
@@ -174,11 +175,11 @@ val cheney_gc_correct
 
               // Property 3a — Post-collection free-list validity: the new
               // free-list head (res.mc_fp) leads through valid blue objects
-              AllocLemmas.fl_valid res.mc_major res.mc_fp heap_words /\
+              FLs.fls_valid res.mc_major res.mc_fp /\
 
               // Property 3b — Post-collection free-list terminates (no
               // cycles introduced by consuming free-list nodes for promotion)
-              AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp heap_words /\
+              FLs.fls_terminates res.mc_major res.mc_fp /\
 
               // Property 4a — Minor heap well-formed (bump aligned, in bounds)
               minor_wf res.mc_minor /\
@@ -221,7 +222,7 @@ open GC.Gen.Reachability
 /// minor_reachable definition to show that root-coverage + successor-closure
 /// implies full reachability coverage. See GC.Gen.CheneyBFS for details.
 val cheney_promotes_all_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires
       // The BFS completed without running out of free-list space:

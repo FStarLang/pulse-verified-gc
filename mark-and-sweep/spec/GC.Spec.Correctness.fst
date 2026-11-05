@@ -1566,7 +1566,7 @@ private let coal_black_wosize (h_init h_mark: heap) (roots: seq obj_addr) (fp: U
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 private let coal_agree_facts (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) (s2: heap)
   : Lemma (requires mark_post h_init h_mark roots fp /\
-                    HeapAgree.heaps_agree_mod_free s2 (fst (Coalesce.coalesce (fst (sweep h_mark fp)))))
+                    HeapAgree.heaps_agree_mod_free_links s2 (fst (Coalesce.coalesce (fst (sweep h_mark fp)))))
           (ensures (let c = fst (Coalesce.coalesce (fst (sweep h_mark fp))) in
                     HeapAgree.agree_target_pre c /\
                     objects zero_addr s2 == objects zero_addr c /\
@@ -1589,13 +1589,13 @@ private let coal_agree_facts (h_init h_mark: heap) (roots: seq obj_addr) (fp: U6
     sweep_post_sweep_strong_gen h_init h_mark roots fp;
     Coalesce.coalesce_preserves_wf h_sweep;
     Shape.coalesce_no_pointer_to_blue h_sweep;
-    HeapAgree.agree_objects s2 c;
-    HeapAgree.agree_well_formed_heap s2 c;
-    HeapAgree.agree_create_graph s2 c;
+    HeapAgree.agree_objects_links s2 c;
+    HeapAgree.agree_well_formed_heap_links s2 c;
+    HeapAgree.agree_create_graph_links s2 c;
     let col (x: obj_addr)
       : Lemma (Seq.mem x (objects zero_addr c) ==>
                is_white x s2 == is_white x c /\ is_blue x s2 == is_blue x c)
-      = if Seq.mem x (objects zero_addr c) then HeapAgree.agree_block s2 c x
+      = if Seq.mem x (objects zero_addr c) then HeapAgree.agree_block_links s2 c x
     in
     FStar.Classical.forall_intro col;
     let fld (x: obj_addr) (i: U64.t)
@@ -1610,14 +1610,14 @@ private let coal_agree_facts (h_init h_mark: heap) (roots: seq obj_addr) (fp: U6
           Coalesce.coalesce_preserves_survivor_header h_sweep x;
           color_of_header_eq x h_sweep c;
           colors_exclusive x c;
-          HeapAgree.agree_get_field s2 c x i
+          HeapAgree.agree_get_field_links s2 c x i
         end
     in
     FStar.Classical.forall_intro_2 fld
 #pop-options
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-let gc_result_agree h_init h_mark roots fp s2 =
+let gc_result_agree_links h_init h_mark roots fp s2 =
   let h_sweep = fst (sweep h_mark fp) in
   let c = fst (Coalesce.coalesce h_sweep) in
   coal_agree_facts h_init h_mark roots fp s2;
@@ -1657,3 +1657,7 @@ let gc_result_agree h_init h_mark roots fp s2 =
     assert (major_gc_unreachable_final_blue h_init s2 roots)
   end
 #pop-options
+
+let gc_result_agree h_init h_mark roots fp s2 =
+  HeapAgree.agree_implies_links s2 (fst (Coalesce.coalesce (fst (sweep h_mark fp))));
+  gc_result_agree_links h_init h_mark roots fp s2

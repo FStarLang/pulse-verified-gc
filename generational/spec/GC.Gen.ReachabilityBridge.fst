@@ -6,6 +6,7 @@ module GC.Gen.ReachabilityBridge
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -47,7 +48,7 @@ let aligned_gt_ge_plus_mword (x z: nat)
 /// `GenInv.minor_major_fields_no_blue` condition.
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let minor_no_pointer_to_blue_from_collection_shape
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   =
     GenInv.collection_heap_shape_elim minor major fp;
     let aux (obj: U64.t) (j: nat)

@@ -21,13 +21,14 @@ module Mark = GC.Spec.Mark
 module Forwarding = GC.Gen.CheneyPreservation.Forwarding
 module Injectivity = GC.Gen.CheneyPreservation.Injectivity
 module GenInv = GC.Gen.HeapInvariant
+module FLs = GC.Spec.FreeLists
 
 /// Cheney promotion alone preserves `no_pointer_to_blue` from the centralized
 /// combined heap invariant.  Promoted copied fields that are already major
 /// pointers are covered by `GenInv.minor_major_fields_no_blue`; copied minor
 /// pointers are not major pointer fields until the later update pass.
 val cheney_promote_preserves_no_pointer_to_blue_from_shape
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires GenInv.collection_heap_shape minor major fp)
     (ensures Mark.no_pointer_to_blue

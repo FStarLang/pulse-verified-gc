@@ -113,7 +113,7 @@ let spot_collection_heap_shape (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (GenInv.collection_heap_shape
              ConcreteMinor.spot_minor2
              (ConcreteMajor.spot_major_heap r)
-             (ConcreteMajor.spot_major_fp r))
+             (ConcreteMajor.spot_major_fls r))
   =
   ConcreteMajor.spot_major_heap_shape r;
   ConcreteMinor.spot_minor_heap_shape ();
@@ -121,7 +121,7 @@ let spot_collection_heap_shape (r: unit{ConcreteMajor.spot_major_room})
   GenInv.collection_heap_shape_intro
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
+    (ConcreteMajor.spot_major_fls r)
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_ref_table_sound (r: unit{ConcreteMajor.spot_major_room})
@@ -347,7 +347,7 @@ let spot_concrete_minor_collect_full_pre (r: unit{ConcreteMajor.spot_major_room}
   Preconditions.minor_collect_full_pre_intro
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
+    (ConcreteMajor.spot_major_fls r)
     (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
     spot_fwd_array
     (ThreeObjects.spot_slots (ConcreteMajor.spot_c r))
@@ -378,7 +378,7 @@ let spot_concrete_minor_scenario_pre_from_no_oom
   ThreeObjects.spot_minor_scenario_pre_intro_from_c_to_a
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
+    (ConcreteMajor.spot_major_fls r)
     (ConcreteMajor.spot_c r)
     spot_fwd_array
 
@@ -389,7 +389,7 @@ let spot_concrete_gen_gc_pre_from_stack
   Preconditions.gen_gc_pre_intro
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
+    (ConcreteMajor.spot_major_fls r)
     (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
     spot_fwd_array
     (ThreeObjects.spot_slots (ConcreteMajor.spot_c r))
@@ -418,7 +418,7 @@ let spot_concrete_a_promoted_from_no_oom (r: unit{ConcreteMajor.spot_major_room}
   ThreeObjects.spot_a_promoted
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
+    (ConcreteMajor.spot_major_fls r)
     (ConcreteMajor.spot_c r)
     spot_fwd_array
 
@@ -429,7 +429,7 @@ let spot_concrete_c_field_rewritten_from_no_oom
   ThreeObjects.spot_c_field_rewritten_to_a_prime
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
+    (ConcreteMajor.spot_major_fls r)
     (ConcreteMajor.spot_c r)
     spot_fwd_array;
   spot_c_slot_is_field1 r
@@ -440,5 +440,5 @@ let spot_concrete_b_not_promoted (r: unit{ConcreteMajor.spot_major_room})
   ThreeObjects.spot_b_not_promoted_from_forwarding_zero
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
+    (ConcreteMajor.spot_major_fls r)
     (ConcreteMajor.spot_c r)

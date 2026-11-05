@@ -14,6 +14,8 @@ open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
 module Defs = GC.Spec.SweepCoalesce.Defs
+module SCL = GC.Spec.SweepCoalesce.Lists
+module FLs = GC.Spec.FreeLists
 module SpecCoalesce = GC.Spec.Coalesce
 module Alloc = GC.Spec.Allocator
 module HeapGraph = GC.Spec.HeapGraph
@@ -28,8 +30,8 @@ module SI = GC.Spec.SweepInv
 val fused_unfold (g: heap)
   : Lemma
     (requires Seq.length g == heap_size)
-    (ensures Defs.fused_sweep_coalesce g ==
-             Defs.fused_aux g g (objects zero_addr g) 0UL 0 0UL)
+    (ensures SCL.fused_sweep_coalesce_lists g ==
+             SCL.fused_aux_lists g g (objects zero_addr g) 0UL 0 FLs.fls_empty)
 
 /// ---------------------------------------------------------------------------
 /// is_black reading from current heap via suffix preservation
@@ -104,15 +106,15 @@ val whiten_from_original
 /// all invariant facts for the next iteration.
 val nonblack_step_fused_aux_eq
   (g0 g: heap) (start: hp_addr)
-  (first_blue: U64.t) (run_words: nat) (fp: U64.t)
+  (first_blue: U64.t) (run_words: nat) (fp: FLs.fl_state)
   : Lemma
     (requires
       U64.v start + U64.v mword < heap_size /\
       Seq.length (objects start g0) > 0 /\
       ~(is_black (f_address start) g0) /\
       Seq.length g0 == heap_size /\
-      Defs.fused_aux g0 g (objects start g0) first_blue run_words fp ==
-        Defs.fused_sweep_coalesce g0 /\
+      SCL.fused_aux_lists g0 g (objects start g0) first_blue run_words fp ==
+        SCL.fused_sweep_coalesce_lists g0 /\
       (run_words > 0 ==>
         U64.v first_blue >= U64.v mword /\
         U64.v first_blue < heap_size /\
@@ -135,11 +137,11 @@ val nonblack_step_fused_aux_eq
       U64.v new_first % U64.v mword == 0 /\
       U64.v new_first - U64.v mword + new_rw * U64.v mword == next_nat /\
       (next_nat < heap_size /\ next_nat % U64.v mword = 0 ==>
-        Defs.fused_aux g0 g (objects (U64.uint_to_t next_nat) g0)
-          new_first new_rw fp == Defs.fused_sweep_coalesce g0) /\
+        SCL.fused_aux_lists g0 g (objects (U64.uint_to_t next_nat) g0)
+          new_first new_rw fp == SCL.fused_sweep_coalesce_lists g0) /\
       (next_nat >= heap_size ==>
-        Defs.fused_aux g0 g Seq.empty
-          new_first new_rw fp == Defs.fused_sweep_coalesce g0)))
+        SCL.fused_aux_lists g0 g Seq.empty
+          new_first new_rw fp == SCL.fused_sweep_coalesce_lists g0)))
 
 /// ---------------------------------------------------------------------------
 /// Black step: flush pending run + makeWhite
@@ -149,7 +151,7 @@ val nonblack_step_fused_aux_eq
 /// then apply makeWhite. Establishes invariant for next iteration.
 val black_step_fused_aux_eq
   (g0 g: heap) (start: hp_addr)
-  (first_blue: U64.t) (run_words: nat) (fp: U64.t)
+  (first_blue: U64.t) (run_words: nat) (fp: FLs.fl_state)
   : Lemma
     (requires
       U64.v start + U64.v mword < heap_size /\
@@ -157,8 +159,8 @@ val black_step_fused_aux_eq
       is_black (f_address start) g0 /\
       Seq.length g0 == heap_size /\
       Seq.length g == heap_size /\
-      Defs.fused_aux g0 g (objects start g0) first_blue run_words fp ==
-        Defs.fused_sweep_coalesce g0 /\
+      SCL.fused_aux_lists g0 g (objects start g0) first_blue run_words fp ==
+        SCL.fused_sweep_coalesce_lists g0 /\
       (run_words > 0 ==>
         run_words < pow2 54 /\
         U64.v first_blue >= U64.v mword /\
@@ -171,7 +173,7 @@ val black_step_fused_aux_eq
       let wz = getWosize (read_word g0 start) in
       let ws = U64.v wz in
       let obj = f_address start in
-      let (g', fp') = SpecCoalesce.flush_blue g first_blue run_words fp in
+      let (g', fp') = SCL.flush_blue_lists g first_blue run_words fp in
       let g'' = makeWhite obj g' in
       let next_nat = U64.v start + (ws + 1) * U64.v mword in
       Seq.length g' == heap_size /\
@@ -184,11 +186,11 @@ val black_step_fused_aux_eq
         read_word g'' addr == read_word g0 addr) /\
       // Spec: fused_aux from next step == fused_sweep_coalesce g0
       (next_nat < heap_size /\ next_nat % U64.v mword = 0 ==>
-        Defs.fused_aux g0 g'' (objects (U64.uint_to_t next_nat) g0)
-          0UL 0 fp' == Defs.fused_sweep_coalesce g0) /\
+        SCL.fused_aux_lists g0 g'' (objects (U64.uint_to_t next_nat) g0)
+          0UL 0 fp' == SCL.fused_sweep_coalesce_lists g0) /\
       (next_nat >= heap_size ==>
-        Defs.fused_aux g0 g'' Seq.empty
-          0UL 0 fp' == Defs.fused_sweep_coalesce g0)))
+        SCL.fused_aux_lists g0 g'' Seq.empty
+          0UL 0 fp' == SCL.fused_sweep_coalesce_lists g0)))
 
 /// ---------------------------------------------------------------------------
 /// Reexport from GC.Impl.Coalesce.Lemmas
@@ -198,7 +200,7 @@ val black_step_fused_aux_eq
 /// so callers only need to open one Lemmas module.
 /// Empty case: flush final run
 val fused_step_empty
-  (g0 g: heap) (first_blue: U64.t) (run_words: nat) (fp: U64.t)
+  (g0 g: heap) (first_blue: U64.t) (run_words: nat) (fp: FLs.fl_state)
   : Lemma
-    (Defs.fused_aux g0 g Seq.empty first_blue run_words fp ==
-     SpecCoalesce.flush_blue g first_blue run_words fp)
+    (SCL.fused_aux_lists g0 g Seq.empty first_blue run_words fp ==
+     SCL.flush_blue_lists g first_blue run_words fp)

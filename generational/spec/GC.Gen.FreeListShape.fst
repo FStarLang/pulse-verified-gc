@@ -15,6 +15,8 @@ module Sweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module HeapGraph = GC.Spec.HeapGraph
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module FLs = GC.Spec.FreeLists
+module SC = GC.Spec.SizeClass
 
 [@@"opaque_to_smt"]
 let blue_link_fields_valid (major: heap) : prop =
@@ -85,3 +87,21 @@ let fp_pointer_or_zero_fl_valid_implies_fp_valid
     end else
       SweepInv.fp_valid_not_pointer fp g
 #pop-options
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let fls_pointer_or_zero_implies_fp_valid (fls: FLs.fl_state) (g: heap) =
+  FLs.fls_valid_elim g fls;
+  reveal_opaque (`%fls_pointer_or_zero) (fls_pointer_or_zero fls);
+  reveal_opaque (`%fls_fp_valid) (fls_fp_valid fls g);
+  reveal_opaque (`%fls_in_heap) (fls_in_heap fls g);
+  let aux (i: nat{i < SC.n_lists})
+    : Lemma (SweepInv.fp_valid (FLs.fls_head fls i) g /\
+             Sweep.fp_in_heap (FLs.fls_head fls i) g)
+    = fp_pointer_or_zero_fl_valid_implies_fp_valid (FLs.fls_head fls i) g heap_words;
+      fp_pointer_or_zero_implies_fp_in_heap (FLs.fls_head fls i) g
+  in
+  FStar.Classical.forall_intro aux
+#pop-options
+
+let fls_pointer_or_zero_iff fls =
+  reveal_opaque (`%fls_pointer_or_zero) (fls_pointer_or_zero fls)

@@ -26,6 +26,15 @@ val objects_nonempty_from_header (g1 g2: heap) (start: hp_addr)
                     Seq.length (objects start g1) > 0)
           (ensures Seq.length (objects start g2) > 0)
 
+/// Writing the first field of an object of wosize >= 1 --- a free cell's link
+/// --- preserves heap_objects_dense.
+val write_field_preserves_dense (g: heap) (obj: obj_addr) (v: U64.t)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    heap_objects_dense g /\
+                    Seq.mem obj (objects zero_addr g) /\
+                    U64.v (wosize_of_object obj g) >= 1)
+          (ensures heap_objects_dense (write_word g obj v))
+
 /// alloc_spec preserves heap_objects_dense under well_formed_heap_part1.
 val alloc_spec_preserves_dense_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -34,3 +43,4 @@ val alloc_spec_preserves_dense_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
                     AllocLemmas.fl_chain_terminates g fp heap_words)
           (ensures (let r = GC.Spec.Allocator.alloc_spec g fp requested_wz in
                     heap_objects_dense r.heap_out))
+

@@ -22,6 +22,7 @@ open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
 open GC.Impl.Heap
 module PromoteSpec = GC.Gen.Promote
+module FLs = GC.Spec.FreeLists
 
 /// ---------------------------------------------------------------------------
 /// Read wosize from a minor heap object header
@@ -65,28 +66,28 @@ fn read_minor_scan_wosize (minor: minor_heap_t) (obj: U64.t)
 /// ---------------------------------------------------------------------------
 
 inline_for_extraction
-fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
+fn promote_one (minor: minor_heap_t) (major: heap_t) (heads: array U64.t)
                (obj: U64.t)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
-           R.pts_to fp_ref 'fp **
+           pts_to heads 'fp **
            pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
                  U64.v obj % 8 == 0 /\
                  U64.v obj + minor_wosize {data='md; bump='mb} obj * 8 <= minor_heap_size /\
                  GC.Spec.Fields.well_formed_heap_part1 'ms /\
-                 GC.Spec.Allocator.Lemmas.fl_valid 'ms 'fp heap_words /\
-                 GC.Spec.Allocator.Lemmas.fl_chain_terminates 'ms 'fp heap_words)
+                 FLs.fls_valid 'ms 'fp /\
+                 FLs.fls_terminates 'ms 'fp)
   returns new_addr: U64.t
   ensures exists* md2 mb2 ms2 fp2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
-    R.pts_to fp_ref fp2 **
+    pts_to heads fp2 **
     pure (let minor_st = {data='md; bump='mb} in
           let wz = minor_wosize minor_st obj in
           md2 == 'md /\ mb2 == 'mb /\
           GC.Spec.Fields.well_formed_heap_part1 ms2 /\
-          GC.Spec.Allocator.Lemmas.fl_valid ms2 fp2 heap_words /\
-          GC.Spec.Allocator.Lemmas.fl_chain_terminates ms2 fp2 heap_words /\
+          FLs.fls_valid ms2 fp2 /\
+          FLs.fls_terminates ms2 fp2 /\
           (wz > 0 ==>
             (let spec_res = PromoteSpec.promote_object minor_st 'ms obj 'fp wz in
              ms2 == spec_res.major_out /\

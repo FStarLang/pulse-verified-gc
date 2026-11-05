@@ -124,7 +124,7 @@ val spot_ns_minor_heap_shape : unit ->
 /// it is handed.
 val spot_ns_collection_heap_shape : r:unit{Major.spot_major_room} ->
   Lemma (ensures GenInv.collection_heap_shape
-                   spot_ns_nursery (Major.spot_major_heap r) (Major.spot_major_fp r))
+                   spot_ns_nursery (Major.spot_major_heap r) (Major.spot_major_fls r))
 
 /// ---------------------------------------------------------------------------
 /// Non-vacuity

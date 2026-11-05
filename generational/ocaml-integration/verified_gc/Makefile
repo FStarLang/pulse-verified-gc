@@ -13,6 +13,8 @@ CFLAGS  ?= -O2 -flto -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable
 CFLAGS  += -include $(SNAPSHOT)/compat.h
 CFLAGS  += -I$(SNAPSHOT) -I$(SNAPSHOT)/internal \
            -I$(SNAPSHOT)/krmllib -I$(SNAPSHOT)/krmllib/krml -I$(SNAPSHOT)/krmllib/krml/internal
+# Extra flags for test builds, e.g. VGC_EXTRA_CFLAGS=-DVGC_CHECK_ALLOC
+CFLAGS  += $(VGC_EXTRA_CFLAGS)
 # Allow access to OCaml runtime internals (for alloc_gen.c)
 CFLAGS  += -I.. -I../ocaml-4.14-verified-gen/runtime -I../ocaml-4.14-verified-gen
 # None of the runtime headers alloc_gen.c includes depend on TARGET_*, so

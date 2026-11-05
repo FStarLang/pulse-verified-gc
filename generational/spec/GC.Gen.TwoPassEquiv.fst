@@ -12,6 +12,7 @@ module GC.Gen.TwoPassEquiv
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 module U8 = FStar.UInt8
 
 open GC.Spec.Base
@@ -1953,7 +1954,7 @@ private let two_pass_pointwise
 
 #push-options "--z3rlimit 75 --fuel 0 --ifuel 0"
 let promoted_plus_slots_eq_full_update
-  (minor: minor_state) (major_pre: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major_pre: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (farr: seq U64.t) (slots: seq U64.t) (n: nat)
   = let prom = CheneySpec.cheney_promote minor major_pre fp roots in
     let major = prom.major_final in

@@ -15,7 +15,8 @@ CFLAGS  ?= -O2 -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable
 CFLAGS += -I. -Iinternal -Ikrmllib -Ikrmllib/krml -Ikrmllib/krml/internal
 CFLAGS += -include compat.h
 
-SOURCES = GC_Gen_Impl.c GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.c krmlinit.c compat.c main.c
+SOURCES = GC_Gen_Impl.c GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.c krmlinit.c compat.c main.c \
+          size_lists_test.c
 TARGET  = gc_gen_test
 
 .PHONY: all test clean

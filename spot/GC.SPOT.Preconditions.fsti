@@ -2,6 +2,7 @@ module GC.SPOT.Preconditions
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 open GC.Gen.Base
@@ -12,10 +13,10 @@ module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 val zero_forwarding_array : seq U64.t -> prop
 
 val minor_collect_full_pre
-  : minor_state -> heap -> U64.t -> seq U64.t -> seq U64.t -> seq U64.t -> nat -> prop
+  : minor_state -> heap -> FLs.fl_state -> seq U64.t -> seq U64.t -> seq U64.t -> nat -> prop
 
 val gen_gc_pre
-  : minor_state -> heap -> U64.t -> seq U64.t -> seq U64.t -> seq U64.t -> nat ->
+  : minor_state -> heap -> FLs.fl_state -> seq U64.t -> seq U64.t -> seq U64.t -> nat ->
     seq obj_addr -> nat -> prop
 
 val zero_forwarding_array_elim
@@ -36,7 +37,7 @@ val singleton_slots_pairwise_distinct
           (ensures UpdatePtrs.slots_pairwise_distinct slots n)
 
 val minor_collect_full_pre_elim
-  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state -> roots:seq U64.t ->
     farr:seq U64.t -> slots:seq U64.t -> nslots:nat ->
     Lemma (requires minor_collect_full_pre minor major fp roots farr slots nslots)
           (ensures
@@ -50,7 +51,7 @@ val minor_collect_full_pre_elim
             GC.Gen.MinorCollectForwarding.roots_valid_for_minor_collection minor major roots)
 
 val minor_collect_full_pre_intro
-  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state -> roots:seq U64.t ->
     farr:seq U64.t -> slots:seq U64.t -> nslots:nat ->
     Lemma
       (requires
@@ -64,7 +65,7 @@ val minor_collect_full_pre_intro
       (ensures minor_collect_full_pre minor major fp roots farr slots nslots)
 
 val gen_gc_pre_elim
-  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state -> roots:seq U64.t ->
     farr:seq U64.t -> slots:seq U64.t -> nslots:nat ->
     st:seq obj_addr -> cap:nat ->
     Lemma (requires gen_gc_pre minor major fp roots farr slots nslots st cap)
@@ -74,7 +75,7 @@ val gen_gc_pre_elim
             GC.Gen.Impl.gen_gc_stack_budget roots st cap)
 
 val gen_gc_pre_intro
-  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state -> roots:seq U64.t ->
     farr:seq U64.t -> slots:seq U64.t -> nslots:nat ->
     st:seq obj_addr -> cap:nat ->
     Lemma

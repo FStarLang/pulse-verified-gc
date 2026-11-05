@@ -15,6 +15,7 @@ open GC.Gen.Promote
 
 module CheneySpec = GC.Gen.Cheney
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module FLs = GC.Spec.FreeLists
 
 /// Abstract predicate: all queue entries are minor objects.
 /// Abstract (val, not let) to prevent quantifier nesting in WP encodings.
@@ -98,9 +99,8 @@ val fwd_one_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
   : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor /\
                     well_formed_heap_part1 cs.CheneySpec.cs_major /\
-                    AllocLemmas.fl_valid cs.CheneySpec.cs_major cs.CheneySpec.cs_fp heap_words /\
-                    AllocLemmas.fl_chain_terminates cs.CheneySpec.cs_major
-                      cs.CheneySpec.cs_fp heap_words)
+                    FLs.fls_valid cs.CheneySpec.cs_major cs.CheneySpec.cs_fp /\
+                    FLs.fls_terminates cs.CheneySpec.cs_major cs.CheneySpec.cs_fp)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_one minor cs addr))
 /// When the BFS invariant holds and addr is an unforwarded minor object,
 /// there is strict room in the queue: |queue| < |minor_objects|.

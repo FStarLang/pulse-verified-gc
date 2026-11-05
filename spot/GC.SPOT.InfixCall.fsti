@@ -28,7 +28,7 @@ module InfixPre = GC.SPOT.InfixPre
 /// this function is a machine-checked demonstration that `gen_gc` *accepts* an
 /// infix-pointing heap.  The postcondition records what comes back:
 ///
-///   * the collection succeeded (`snd res == true`);
+///   * the collection succeeded (`ok == true`);
 ///   * `GC.Gen.HeapInvariant.collection_heap_shape` -- the very predicate the
 ///     precondition demands -- holds again of the returned state, so the heap
 ///     is ready for the next cycle;
@@ -53,26 +53,26 @@ fn call_gen_gc_infix
                  ({ data = 'd; bump = 'b } <: minor_state) ==
                    InfixPre.spot_infix_minor /\
                  's == InfixMajor.spot_infix_heap r /\
-                 'fp == InfixMajor.spot_infix_fp r /\
+                 'fp == InfixMajor.spot_infix_fls r /\
                  'rs == InfixPre.spot_infix_roots r /\
                  'farr == InfixPre.spot_infix_fwd_array /\
                  'sl == InfixPre.spot_infix_slots /\
                  SZ.v nslots == 0 /\
                  'st == Seq.empty /\
                  stack_capacity st >= 1)
-  returns res: (U64.t & bool)
-  ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
-    is_gen_heap gh d2 b2 s2 (fst res) **
+  returns ok: bool
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 st2.
+    is_gen_heap gh d2 b2 s2 fp2 **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
     is_gray_stack st st2 **
     pure (
-      snd res == true /\
+      ok == true /\
       ({ data = d2; bump = b2 } <: minor_state) == InfixPre.spot_infix_minor /\
       GenInv.collection_heap_shape
-        InfixPre.spot_infix_minor s2 (fst res) /\
+        InfixPre.spot_infix_minor s2 fp2 /\
       gen_gc_heap_shape_post d2 b2 s2 /\
       Seq.mem (InfixMajor.spot_q r <: U64.t) rs2 /\
       Seq.mem (InfixMajor.spot_q r) (GC.Spec.Fields.objects zero_addr s2))

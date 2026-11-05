@@ -19,20 +19,22 @@ open GC.Gen.Cheney
 module Allocator = GC.Spec.Allocator
 module PromUpdate = GC.Gen.PromoteUpdate
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module FLs = GC.Spec.FreeLists
+module SAL = GC.Spec.Allocator.Lists
 
 val promote_object_frame_old_field_derived
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: FLs.fl_state) (wz: nat{wz > 0})
   (src: obj_addr) (idx: nat)
   : Lemma
     (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp heap_words /\
-      AllocLemmas.fl_chain_terminates major fp heap_words /\
+      FLs.fls_valid major fp /\
+      FLs.fls_terminates major fp /\
       (let res = promote_object minor major obj fp wz in
        res.new_addr <> 0UL) /\
       Seq.mem src (objects zero_addr major) /\
-      AllocLemmas.chain_avoids major fp src heap_words = true /\
-      (src <> (Allocator.alloc_spec major fp wz).obj_out) /\
+      FLs.fls_avoids major fp src /\
+      (src <> (SAL.alloc_lists_spec major fp wz).obj_out) /\
       idx < U64.v (wosize_of_object src major) /\
       U64.v src + idx * 8 + 8 <= heap_size /\
       (U64.v src + idx * 8) % 8 == 0)
@@ -42,13 +44,13 @@ val promote_object_frame_old_field_derived
        read_word res.major_out field_addr == read_word major field_addr))
 
 val promote_object_frame_old_header_derived
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: FLs.fl_state) (wz: nat{wz > 0})
   (src: obj_addr)
   : Lemma
     (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp heap_words /\
-      AllocLemmas.fl_chain_terminates major fp heap_words /\
+      FLs.fls_valid major fp /\
+      FLs.fls_terminates major fp /\
       (let res = promote_object minor major obj fp wz in
        res.new_addr <> 0UL) /\
       Seq.mem src (objects zero_addr major) /\
@@ -56,8 +58,8 @@ val promote_object_frame_old_header_derived
       // the remainder keeps the block's address and ITS header is rewritten
       // too, so excluding `obj_out` no longer excludes every rewritten
       // header.  `src` has to be off the free list entirely.
-      AllocLemmas.chain_avoids major fp src heap_words = true /\
-      (src <> (Allocator.alloc_spec major fp wz).obj_out))
+      FLs.fls_avoids major fp src /\
+      (src <> (SAL.alloc_lists_spec major fp wz).obj_out))
     (ensures
       (let res = promote_object minor major obj fp wz in
        read_word res.major_out (hd_address src) == read_word major (hd_address src)))
@@ -68,8 +70,8 @@ val cheney_forward_normal_preserves_old_nonblue_shape
   : Lemma
       (requires
         well_formed_heap_part1 cs.cs_major /\
-        AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-        AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+        FLs.fls_valid cs.cs_major cs.cs_fp /\
+        FLs.fls_terminates cs.cs_major cs.cs_fp /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
         Seq.mem src (objects zero_addr cs.cs_major) /\
         is_blue src cs.cs_major = false)
@@ -86,8 +88,8 @@ val cheney_forward_one_preserves_old_nonblue_shape
   : Lemma
       (requires
         well_formed_heap_part1 cs.cs_major /\
-        AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-        AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+        FLs.fls_valid cs.cs_major cs.cs_fp /\
+        FLs.fls_terminates cs.cs_major cs.cs_fp /\
         chain_objects_blue cs.cs_major cs.cs_fp /\
         Seq.mem src (objects zero_addr cs.cs_major) /\
         is_blue src cs.cs_major = false /\
@@ -105,8 +107,8 @@ val cheney_forward_normal_frame_field
   : Lemma
     (requires
       well_formed_heap_part1 cs.cs_major /\
-      AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+      FLs.fls_valid cs.cs_major cs.cs_fp /\
+      FLs.fls_terminates cs.cs_major cs.cs_fp /\
       chain_objects_blue cs.cs_major cs.cs_fp /\
       Seq.mem src (objects zero_addr cs.cs_major) /\
       is_blue src cs.cs_major = false /\
@@ -124,8 +126,8 @@ val cheney_forward_one_frame_field
   : Lemma
     (requires
       well_formed_heap_part1 cs.cs_major /\
-      AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
+      FLs.fls_valid cs.cs_major cs.cs_fp /\
+      FLs.fls_terminates cs.cs_major cs.cs_fp /\
       chain_objects_blue cs.cs_major cs.cs_fp /\
       Seq.mem src (objects zero_addr cs.cs_major) /\
       is_blue src cs.cs_major = false /\
@@ -139,11 +141,11 @@ val cheney_forward_one_frame_field
        read_word cs.cs_major (U64.uint_to_t (U64.v src + idx * 8))))
 
 val cheney_promote_frame_old_fields
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (obj: obj_addr) (j: nat)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    FLs.fls_valid major fp /\
+                    FLs.fls_terminates major fp /\
                     chain_objects_blue major fp /\
                     Seq.mem obj (objects zero_addr major) /\
                     is_blue obj major = false /\
@@ -155,11 +157,11 @@ val cheney_promote_frame_old_fields
                     == read_word major (U64.uint_to_t (U64.v obj + j * 8))))
 
 val cheney_promote_frame_old_header
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (obj: obj_addr)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
+                    FLs.fls_valid major fp /\
+                    FLs.fls_terminates major fp /\
                     chain_objects_blue major fp /\
                     Seq.mem obj (objects zero_addr major) /\
                     is_blue obj major = false /\
@@ -176,12 +178,12 @@ val cheney_promote_frame_old_header
 /// with `w < wosize(p)`, so the *field* framing lemma applies at index `w-1`.
 /// Framing the header is what keeps `resolve_object h` stable across promotion.
 val cheney_promote_frame_target_header
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (h: obj_addr)
   : Lemma
     (requires well_formed_heap major /\
-              AllocLemmas.fl_valid major fp heap_words /\
-              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              FLs.fls_valid major fp /\
+              FLs.fls_terminates major fp /\
               chain_objects_blue major fp /\
               minor_infix_wf minor /\
               GC.Spec.Object.infix_addr_wf major (objects zero_addr major) h /\

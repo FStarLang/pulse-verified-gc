@@ -26,12 +26,12 @@ let spot_gc_precondition r =
   GenImpl.gen_gc_major_precondition_elim
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
+    (ConcreteMajor.spot_major_fls r)
     (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
     Seq.empty spot_cap
 
-let spot_gc_correct r s2 final_fp =
+let spot_gc_correct r s2 final_fls =
   spot_gc_precondition r;
   Correct.gc_correct
     (spot_major_h_init r) s2 (spot_major_roots r) (spot_major_roots r)
-    (spot_major_fp r) final_fp spot_cap
+    final_fls spot_cap

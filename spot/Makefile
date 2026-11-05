@@ -62,6 +62,7 @@ FSTAR_UPSTREAM = $(FSTAR_EXE) $(FSTAR_UPSTREAM_FLAGS)
 SPOT_SRC = \
   GC.SPOT.Layout.fsti \
   GC.SPOT.Layout.fst \
+  GC.SPOT.SingleList.fst \
   GC.SPOT.ConcreteMinor.fsti \
   GC.SPOT.ConcreteMinor.fst \
   GC.SPOT.ConcreteMajor.fsti \

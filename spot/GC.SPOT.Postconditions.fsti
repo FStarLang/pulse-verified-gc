@@ -2,22 +2,23 @@ module GC.SPOT.Postconditions
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
 val minor_collect_full_post
-  : minor_state -> heap -> U64.t -> seq U64.t -> bool -> heap -> seq U64.t -> prop
+  : minor_state -> heap -> FLs.fl_state -> seq U64.t -> bool -> heap -> seq U64.t -> prop
 
 val promoted_image
-  : minor_state -> heap -> U64.t -> seq U64.t -> U64.t -> U64.t -> prop
+  : minor_state -> heap -> FLs.fl_state -> seq U64.t -> U64.t -> U64.t -> prop
 
 val minor_not_promoted
-  : minor_state -> heap -> U64.t -> seq U64.t -> U64.t -> prop
+  : minor_state -> heap -> FLs.fl_state -> seq U64.t -> U64.t -> prop
 
 val minor_collect_full_post_intro
-  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state -> roots:seq U64.t ->
     ok:bool -> post_major:heap -> post_roots:seq U64.t ->
     Lemma
       (requires (
@@ -37,7 +38,7 @@ val minor_collect_full_post_intro
 /// see the package, so this is what lets them keep reasoning about
 /// `cheney_collect_spec` afterwards.
 val minor_collect_full_post_elim
-  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state -> roots:seq U64.t ->
     ok:bool -> post_major:heap -> post_roots:seq U64.t ->
     Lemma
       (requires minor_collect_full_post minor major fp roots ok post_major post_roots)
@@ -53,21 +54,21 @@ val minor_collect_full_post_elim
                    minor major fp roots post_major)))
 
 val promoted_image_from_forwarding
-  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state -> roots:seq U64.t ->
     old:U64.t -> img:U64.t ->
     Lemma (requires (GC.Gen.Cheney.cheney_promote minor major fp roots).fwd_map old == img /\
                     img <> 0UL)
           (ensures promoted_image minor major fp roots old img)
 
 val promoted_image_elim
-  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state -> roots:seq U64.t ->
     old:U64.t -> img:U64.t ->
     Lemma (requires promoted_image minor major fp roots old img)
           (ensures img <> 0UL /\
                    (GC.Gen.Cheney.cheney_promote minor major fp roots).fwd_map old == img)
 
 val not_promoted_from_zero_forwarding
-  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t -> old:U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state -> roots:seq U64.t -> old:U64.t ->
     Lemma (requires (GC.Gen.Cheney.cheney_promote minor major fp roots).fwd_map old == 0UL)
           (ensures minor_not_promoted minor major fp roots old)
 
@@ -75,7 +76,7 @@ val not_promoted_from_zero_forwarding
 /// of the *word as stored*.  When that word is an interior pointer the stored
 /// image is interior too; `resolve_minor` relates it to the vertex `dst`.
 val major_minor_field_rewritten
-  : minor:minor_state -> major:heap -> fp:U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state ->
     roots:seq U64.t -> slots:seq U64.t -> n:nat ->
     src:obj_addr -> dst:U64.t -> i:nat ->
     Lemma
@@ -115,7 +116,7 @@ val major_minor_field_rewritten
         GC.Spec.Heap.read_word res.mc_major fa == prom.fwd_map ov))
 
 val final_major_survives_from_gen_gc_post
-  : minor:minor_state -> major:heap -> fp:U64.t ->
+  : minor:minor_state -> major:heap -> fp:FLs.fl_state ->
     roots:seq U64.t -> roots_out:seq U64.t ->
     ok:bool -> final_major:heap -> st:seq obj_addr -> cap:nat -> x:obj_addr ->
     Lemma

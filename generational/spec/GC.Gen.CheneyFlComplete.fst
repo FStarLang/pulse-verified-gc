@@ -14,6 +14,7 @@ module GC.Gen.CheneyFlComplete
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Fields
@@ -29,9 +30,9 @@ module AE = GC.Gen.AllocExact
 /// What every rung needs of the major heap, and keeps.
 let fl_inv (cs: cheney_state) : prop =
   well_formed_heap_part1 cs.cs_major /\
-  AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-  AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
-  FL.fl_complete cs.cs_major cs.cs_fp
+  FLs.fls_valid cs.cs_major cs.cs_fp /\
+  FLs.fls_terminates cs.cs_major cs.cs_fp /\
+  FLs.fls_complete cs.cs_major cs.cs_fp
 
 private let minor_wosize_bound (minor: minor_state) (obj: U64.t)
   : Lemma (minor_wosize minor obj < pow2 54)
@@ -48,7 +49,7 @@ private let minor_wosize_bound (minor: minor_state) (obj: U64.t)
 private let forward_normal_keeps (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires fl_inv cs)
           (ensures (let cs' = cheney_forward_normal minor cs addr in
-                    FL.fl_complete cs'.cs_major cs'.cs_fp))
+                    FLs.fls_complete cs'.cs_major cs'.cs_fp))
   = if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL
     then cheney_forward_normal_noop minor cs addr
     else begin
@@ -129,13 +130,13 @@ private let rec scan_keeps (minor: minor_state) (cs: cheney_state) (scan: nat) (
 
 /// **Cheney promotion keeps the free list complete.**
 let cheney_promote_preserves_fl_complete
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma (requires well_formed_heap_part1 major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    FL.fl_complete major fp)
+                    FLs.fls_valid major fp /\
+                    FLs.fls_terminates major fp /\
+                    FLs.fls_complete major fp)
           (ensures (let prom = cheney_promote minor major fp roots in
-                    FL.fl_complete prom.major_final prom.fp_final))
+                    FLs.fls_complete prom.major_final prom.fp_final))
   = let cs0 : cheney_state =
       { cs_major = major; cs_fp = fp; cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
     forward_roots_keeps minor cs0 roots 0;

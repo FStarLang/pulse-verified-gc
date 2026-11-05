@@ -159,7 +159,7 @@ let spot_mi_collection_heap_shape r =
   Nursery.spot_infix_nursery_heap_shape ();
   spot_mi_minor_major_fields_no_blue r;
   GenInv.collection_heap_shape_intro
-    spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fp r)
+    spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fls r)
 
 /// ---------------------------------------------------------------------------
 /// The remembered set
@@ -345,14 +345,14 @@ let spot_mi_minor_collect_full_pre r =
   spot_mi_remembered_targets r;
   spot_mi_roots_valid r;
   Preconditions.minor_collect_full_pre_intro
-    spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fp r)
+    spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fls r)
     (spot_mi_roots r) spot_mi_fwd_array (spot_mi_slots r) 1
 
 let spot_mi_gen_gc_pre r cap =
   spot_mi_minor_collect_full_pre r;
   assert_norm (Seq.length (Seq.empty #obj_addr) == 0);
   Preconditions.gen_gc_pre_intro
-    spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fp r)
+    spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fls r)
     (spot_mi_roots r) spot_mi_fwd_array (spot_mi_slots r) 1
     Seq.empty cap
 

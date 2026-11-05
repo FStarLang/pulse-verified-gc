@@ -62,16 +62,16 @@ fn call_gen_gc_minor_infix
            pure (SZ.v nroots == Seq.length 'rs /\
                  ({ data = 'd; bump = 'b } <: minor_state) == MIPre.spot_mi_minor /\
                  's == Major.spot_major_heap r /\
-                 'fp == Major.spot_major_fp r /\
+                 'fp == Major.spot_major_fls r /\
                  'rs == MIPre.spot_mi_roots r /\
                  'farr == MIPre.spot_mi_fwd_array /\
                  'sl == MIPre.spot_mi_slots r /\
                  SZ.v nslots == 1 /\
                  'st == Seq.empty /\
                  stack_capacity st >= 2)
-  returns res: (U64.t & bool)
-  ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
-    is_gen_heap gh d2 b2 s2 (fst res) **
+  returns ok: bool
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 st2.
+    is_gen_heap gh d2 b2 s2 fp2 **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
@@ -80,19 +80,19 @@ fn call_gen_gc_minor_infix
     pure (
       ({ data = d2; bump = b2 } <: minor_state) == minor_reset MIPre.spot_mi_minor /\
       GenInv.collection_heap_shape
-        ({ data = d2; bump = b2 } <: minor_state) s2 (fst res) /\
+        ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
       gen_gc_heap_shape_post d2 b2 s2 /\
       rs2 == (CheneySpec.cheney_collect_spec
                 MIPre.spot_mi_minor (Major.spot_major_heap r)
-                (Major.spot_major_fp r) (MIPre.spot_mi_roots r)).mc_roots)
+                (Major.spot_major_fls r) (MIPre.spot_mi_roots r)).mc_roots)
 {
   MIPre.spot_mi_gen_gc_pre r (stack_capacity st);
   GC.SPOT.Preconditions.gen_gc_pre_elim
     MIPre.spot_mi_minor 's 'fp 'rs 'farr 'sl (SZ.v nslots) 'st (stack_capacity st);
   GC.SPOT.Preconditions.minor_collect_full_pre_elim
     MIPre.spot_mi_minor 's 'fp 'rs 'farr 'sl (SZ.v nslots);
-  let res = gen_gc gh roots nroots fwd_arr queue slots nslots st;
-  with d2 b2 s2. assert (is_gen_heap gh d2 b2 s2 (fst res));
-  gen_gc_heap_shape_post_intro d2 b2 s2 (fst res);
-  res
+  let ok = gen_gc gh roots nroots fwd_arr queue slots nslots st;
+  with d2 b2 s2 fp2. assert (is_gen_heap gh d2 b2 s2 fp2);
+  gen_gc_heap_shape_post_intro d2 b2 s2 fp2;
+  ok
 }

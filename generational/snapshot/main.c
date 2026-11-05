@@ -16,7 +16,13 @@
 #include "internal/GC_Gen_Impl.h"
 #include "internal/GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
 
+/* The number of free lists, GC.Spec.SizeClass.n_small_u64 + 1.  The
+ * extracted code has the value inlined; size_lists_test.c checks its cut-off. */
+#define VGC_N_LISTS 17
+
 /* Read a word from minor heap (host byte order, little-endian assumed) */
+int test_size_lists(void);   /* size_lists_test.c */
+
 static uint64_t peek_minor(minor_heap_t mh, uint64_t offset)
     __attribute__((unused));
 static uint64_t peek_minor(minor_heap_t mh, uint64_t offset) {
@@ -44,8 +50,6 @@ int main(void)
     heap_t major_heap = { .data = major_data, .size = major_bytes };
 
     printf("\nInitializing %zu-byte major heap ...\n", major_bytes);
-    uint64_t fp = init_heap(major_heap);
-    printf("init_heap returned fp = %llu\n", (unsigned long long)fp);
 
     /* ---- Allocate minor heap (manually, not via alloc_minor_heap) ---- */
     size_t minor_bytes = (size_t)minor_heap_size_sz;
@@ -56,13 +60,16 @@ int main(void)
     *bump_ref = 0;
     minor_heap_t minor = { .data = minor_data, .size = minor_bytes, .bump_ref = bump_ref };
 
-    /* ---- Free-list head reference ---- */
-    uint64_t *fp_ref = calloc(1, sizeof(uint64_t));
-    if (!fp_ref) { perror("calloc fp_ref"); goto cleanup; }
-    *fp_ref = fp;
+    /* ---- Free-list heads, one per size class (GC.Spec.SizeClass): list w
+     *      for 1 <= w <= 16, list 0 for every larger block.  The verified
+     *      init_heap puts the one free block on the list of its class. ---- */
+    uint64_t *heads = calloc(VGC_N_LISTS, sizeof(uint64_t));
+    if (!heads) { perror("calloc heads"); goto cleanup; }
+    init_heap(major_heap, heads);
+    printf("init_heap: class-0 head = %llu\n", (unsigned long long)heads[0]);
 
     /* ---- Construct gen_heap ---- */
-    gen_heap_t gh = { .minor = minor, .major = major_heap, .fp_ref = fp_ref };
+    gen_heap_t gh = { .minor = minor, .major = major_heap, .heads = heads };
 
     /* ---- Forwarding array ---- */
     size_t fwd_entries = (size_t)fwd_arr_size_sz;
@@ -138,18 +145,16 @@ int main(void)
     /* No roots → everything becomes garbage after full GC */
     uint64_t empty_roots[1] = { 0 };
     memset(fwd_arr, 0, fwd_entries * sizeof(uint64_t));
-    FStar_Pervasives_Native_tuple2__uint64_t_bool result = gen_gc(gh, empty_roots, 0, fwd_arr, queue, empty_slots, 0, st);
-    if (!result._2) {
+    bool ok = gen_gc(gh, empty_roots, 0, fwd_arr, queue, empty_slots, 0, st);
+    if (!ok) {
         printf("FAIL: gen_gc promotion phase failed\n");
         free(gray_storage);
         goto cleanup_queue;
     }
-    uint64_t result_fp = result._1;
-    printf("gen_gc returned fp = %llu\n", (unsigned long long)result_fp);
+    printf("gen_gc: class-0 head = %llu\n", (unsigned long long)heads[0]);
 
     /* ---- Phase 4: Allocate after GC ---- */
     printf("\n--- Phase 4: Post-GC allocation ---\n");
-    *fp_ref = result_fp;
 
     uint64_t obj5 = gen_alloc(gh, 1, 0);
     printf("gen_alloc(1, tag=0) after GC = %llu\n", (unsigned long long)obj5);
@@ -160,11 +165,18 @@ int main(void)
         goto cleanup_queue;
     }
 
+    /* ---- Phase 5: the size-segregated free lists ---- */
+    printf("\n--- Phase 5: size lists ---\n");
+    if (test_size_lists() != 0) {
+        free(gray_storage);
+        goto cleanup_queue;
+    }
+
     printf("\nAll tests passed.\n");
     free(gray_storage);
     free(queue);
     free(fwd_arr);
-    free(fp_ref);
+    free(heads);
     free(bump_ref);
     free(minor_data);
     free(major_data);
@@ -175,7 +187,7 @@ cleanup_queue:
 cleanup_fwd:
     free(fwd_arr);
 cleanup:
-    if (fp_ref) free(fp_ref);
+    if (heads) free(heads);
     if (bump_ref) free(bump_ref);
     free(minor_data);
     free(major_data);

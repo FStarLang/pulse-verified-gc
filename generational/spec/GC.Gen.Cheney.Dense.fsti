@@ -18,13 +18,14 @@ open GC.Gen.MinorHeap
 open GC.Gen.Promote
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module FLs = GC.Spec.FreeLists
 
 /// promote_object preserves heap_objects_dense.
 val promote_object_preserves_dense
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: FLs.fl_state) (wz: nat{wz > 0})
   : Lemma (requires well_formed_heap_part1 major /\
                     heap_objects_dense major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words)
+                    FLs.fls_valid major fp /\
+                    FLs.fls_terminates major fp)
           (ensures (let res = promote_object minor major obj fp wz in
                     heap_objects_dense res.major_out))

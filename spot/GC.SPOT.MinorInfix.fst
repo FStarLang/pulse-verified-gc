@@ -1,6 +1,7 @@
 module GC.SPOT.MinorInfix
 
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 module Seq = FStar.Seq
 
 open FStar.Seq
@@ -26,7 +27,7 @@ module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 30"
 
 let spot_minor_infix_admissible
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (c: obj_addr) (i: nat)
   =
@@ -37,7 +38,7 @@ let spot_minor_infix_admissible
 /// The classification of the field is the *resolved* one: a field holding an
 /// interior nursery pointer is a combined-graph edge to the enclosing closure.
 private let scenario_classifies
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (c: obj_addr) (i: nat)
   : Lemma
@@ -58,7 +59,7 @@ private let scenario_classifies
 
 #push-options "--z3rlimit 60"
 let spot_minor_infix_promoted
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (c: obj_addr) (i: nat)
   =
@@ -80,7 +81,7 @@ let spot_minor_infix_promoted
 #pop-options
 
 let spot_minor_infix_was_forbidden
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (c: obj_addr) (i: nat)
   =

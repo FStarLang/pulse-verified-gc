@@ -421,13 +421,7 @@ private let alloc_from_block_preserves_dense
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 
-private let write_field_preserves_dense
-  (g: heap) (obj: obj_addr) (v: U64.t)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    heap_objects_dense g /\
-                    Seq.mem obj (objects zero_addr g) /\
-                    U64.v (wosize_of_object obj g) >= 1)
-          (ensures heap_objects_dense (write_word g obj v))
+let write_field_preserves_dense g obj v
   = reveal_opaque (`%heap_objects_dense) heap_objects_dense;
     let g' = write_word g obj v in
     // Writing at obj (first field) preserves objects

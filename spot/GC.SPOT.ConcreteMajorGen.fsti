@@ -1,6 +1,7 @@
 module GC.SPOT.ConcreteMajorGen
 
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 
@@ -37,6 +38,9 @@ val spot_free_wosize : (r:unit{spot_major_room}) -> Tot (n:nat{n < pow2 54})
 
 val spot_major_heap : (r:unit{spot_major_room}) -> (mp:minor_ptr) -> Tot heap
 val spot_major_fp : (r:unit{spot_major_room}) -> Tot U64.t
+
+/// The free-list state: the one free block, on the list of its class.
+let spot_major_fls (r:unit{spot_major_room}) : FLs.fl_state = FLs.fls_one (GC.Spec.SizeClass.size_class (spot_free_wosize r)) (spot_major_fp r)
 
 val spot_major_layout_facts
   : r:unit{spot_major_room} ->
@@ -112,4 +116,4 @@ val spot_major_free_field_read
 
 val spot_major_heap_shape
   : r:unit{spot_major_room} -> mp:minor_ptr ->
-    Lemma (ensures GenInv.major_heap_shape (spot_major_heap r mp) (spot_major_fp r))
+    Lemma (ensures GenInv.major_heap_shape (spot_major_heap r mp) (spot_major_fls r))

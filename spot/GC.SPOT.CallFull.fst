@@ -41,9 +41,9 @@ fn call_gen_gc_spot
                  Preconditions.gen_gc_pre
                    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp
                    'rs 'farr 'sl (SZ.v nslots) 'st (stack_capacity st))
-  returns res: (U64.t & bool)
-  ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
-    is_gen_heap gh d2 b2 s2 (fst res) **
+  returns ok: bool
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 st2.
+    is_gen_heap gh d2 b2 s2 fp2 **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
@@ -52,14 +52,14 @@ fn call_gen_gc_spot
     pure (
       gen_gc_roots_post
         ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs
-        rs2 (snd res) 'st (stack_capacity st) /\
+        rs2 ok 'st (stack_capacity st) /\
       gen_gc_heap_shape_post d2 b2 s2 /\
       gen_gc_reachable_subgraph_isomorphism_post
         ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs
-        (snd res) s2 rs2 'st (stack_capacity st) /\
+        ok s2 rs2 'st (stack_capacity st) /\
       gen_gc_unreachable_final_blue_post
         ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs
-        (snd res) s2 'st (stack_capacity st))
+        ok s2 'st (stack_capacity st))
 {
   Preconditions.gen_gc_pre_elim
     ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl
@@ -67,10 +67,10 @@ fn call_gen_gc_spot
   Preconditions.minor_collect_full_pre_elim
     ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots);
-  let res = gen_gc gh roots nroots fwd_arr queue slots nslots st;
+  let ok = gen_gc gh roots nroots fwd_arr queue slots nslots st;
   // `gen_gc` promises the invariant itself; the colour-only projection this
   // wrapper advertises is derived from it here rather than restated there.
-  with d2 b2 s2. assert (is_gen_heap gh d2 b2 s2 (fst res));
-  gen_gc_heap_shape_post_intro d2 b2 s2 (fst res);
-  res
+  with d2 b2 s2 fp2. assert (is_gen_heap gh d2 b2 s2 fp2);
+  gen_gc_heap_shape_post_intro d2 b2 s2 fp2;
+  ok
 }

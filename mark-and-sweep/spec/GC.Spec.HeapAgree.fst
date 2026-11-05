@@ -17,12 +17,36 @@ module AllocChain = GC.Spec.Allocator.Lemmas.Chain
 #set-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 
 /// ---------------------------------------------------------------------------
+/// The strict relation is `walk_agree`
+/// ---------------------------------------------------------------------------
+
+let rec walk_agree_gen_true (start: hp_addr) (h1 h2: heap)
+  : Lemma (ensures walk_agree_gen true start h1 h2 <==> walk_agree start h1 h2)
+          (decreases (heap_size - U64.v start))
+  = if U64.v start + 8 >= heap_size then ()
+    else begin
+      let wz = getWosize (read_word h2 start) in
+      let next = U64.v start + (U64.v wz + 1) * 8 in
+      if next > heap_size then ()
+      else begin
+        walk_next_aligned start (U64.v wz);
+        if next < heap_size then walk_agree_gen_true (U64.uint_to_t next) h1 h2
+      end
+    end
+
+private let agree_gen (strict: bool) (h1 h2: heap) : prop = walk_agree_gen strict zero_addr h1 h2
+
+private let to_gen (h1 h2: heap)
+  : Lemma (requires heaps_agree_mod_free h1 h2) (ensures agree_gen true h1 h2)
+  = walk_agree_gen_true zero_addr h1 h2
+
+/// ---------------------------------------------------------------------------
 /// Building `walk_agree`
 /// ---------------------------------------------------------------------------
 
-let rec walk_agree_of_equal_from (start: hp_addr) (h1 h2: heap)
+private let rec walk_agree_of_equal_from_gen (strict: bool) (start: hp_addr) (h1 h2: heap)
   : Lemma (requires forall (a: hp_addr). U64.v a >= U64.v start ==> read_word h1 a == read_word h2 a)
-          (ensures walk_agree start h1 h2)
+          (ensures walk_agree_gen strict start h1 h2)
           (decreases (heap_size - U64.v start))
   = if U64.v start + 8 >= heap_size then ()
     else begin
@@ -33,9 +57,13 @@ let rec walk_agree_of_equal_from (start: hp_addr) (h1 h2: heap)
         walk_next_aligned start (U64.v wz);
         f_address_spec start;
         hd_f_roundtrip start;
-        if next < heap_size then walk_agree_of_equal_from (U64.uint_to_t next) h1 h2
+        if next < heap_size then walk_agree_of_equal_from_gen strict (U64.uint_to_t next) h1 h2
       end
     end
+
+let walk_agree_of_equal_from (start: hp_addr) (h1 h2: heap) =
+  walk_agree_of_equal_from_gen true start h1 h2;
+  walk_agree_gen_true start h1 h2
 
 let walk_agree_step (start: hp_addr) (h1 h2: heap) = ()
 
@@ -44,10 +72,10 @@ let walk_agree_step (start: hp_addr) (h1 h2: heap) = ()
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
-private let rec walk_agree_objects (start: hp_addr) (h1 h2: heap)
-  : Lemma (requires walk_agree start h1 h2)
+private let rec walk_agree_objects (strict: bool) (start: hp_addr) (h1 h2: heap)
+  : Lemma (requires walk_agree_gen strict start h1 h2)
           (ensures objects start h1 == objects start h2 /\
-                   (forall (b: obj_addr). Seq.mem b (objects start h2) ==> block_agree h1 h2 b))
+                   (forall (b: obj_addr). Seq.mem b (objects start h2) ==> block_agree_gen strict h1 h2 b))
           (decreases (heap_size - U64.v start))
   = if U64.v start + 8 >= heap_size then ()
     else begin
@@ -60,11 +88,11 @@ private let rec walk_agree_objects (start: hp_addr) (h1 h2: heap)
         let b0 = f_address start in
         if next < heap_size then begin
           let nx : hp_addr = U64.uint_to_t next in
-          walk_agree_objects nx h1 h2;
+          walk_agree_objects strict nx h1 h2;
           objects_cons_step_to start h1 nx;
           objects_cons_step_to start h2 nx;
           let aux (b: obj_addr)
-            : Lemma (Seq.mem b (objects start h2) ==> block_agree h1 h2 b)
+            : Lemma (Seq.mem b (objects start h2) ==> block_agree_gen strict h1 h2 b)
             = mem_cons_lemma b b0 (objects nx h2)
           in
           FStar.Classical.forall_intro aux
@@ -72,7 +100,7 @@ private let rec walk_agree_objects (start: hp_addr) (h1 h2: heap)
           objects_cons_end start h1;
           objects_cons_end start h2;
           let aux (b: obj_addr)
-            : Lemma (Seq.mem b (objects start h2) ==> block_agree h1 h2 b)
+            : Lemma (Seq.mem b (objects start h2) ==> block_agree_gen strict h1 h2 b)
             = mem_cons_lemma b b0 Seq.empty
           in
           FStar.Classical.forall_intro aux
@@ -81,34 +109,67 @@ private let rec walk_agree_objects (start: hp_addr) (h1 h2: heap)
     end
 #pop-options
 
-let agree_objects (h1 h2: heap) = walk_agree_objects zero_addr h1 h2
+private let agree_objects_gen (strict: bool) (h1 h2: heap)
+  : Lemma (requires agree_gen strict h1 h2)
+          (ensures objects zero_addr h1 == objects zero_addr h2)
+  = walk_agree_objects strict zero_addr h1 h2
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
-let agree_block (h1 h2: heap) (b: obj_addr) =
-  walk_agree_objects zero_addr h1 h2;
-  assert (block_agree h1 h2 b);
-  color_of_header_eq b h1 h2;
-  color_of_object_spec b h1;
-  color_of_object_spec b h2;
-  wosize_of_object_spec b h1;
-  wosize_of_object_spec b h2;
-  tag_of_object_spec b h1;
-  tag_of_object_spec b h2;
-  is_no_scan_spec b h1;
-  is_no_scan_spec b h2;
-  resolve_object_locality b h1 h2
+private let agree_block_gen (strict: bool) (h1 h2: heap) (b: obj_addr)
+  : Lemma (requires agree_gen strict h1 h2 /\ Seq.mem b (objects zero_addr h2))
+          (ensures
+            objects zero_addr h1 == objects zero_addr h2 /\
+            read_word h1 (hd_address b) == read_word h2 (hd_address b) /\
+            color_of_object b h1 == color_of_object b h2 /\
+            is_white b h1 == is_white b h2 /\ is_blue b h1 == is_blue b h2 /\
+            is_gray b h1 == is_gray b h2 /\ is_black b h1 == is_black b h2 /\
+            wosize_of_object b h1 == wosize_of_object b h2 /\
+            tag_of_object b h1 == tag_of_object b h2 /\
+            is_no_scan b h1 == is_no_scan b h2 /\
+            is_infix b h1 == is_infix b h2 /\
+            is_closure b h1 == is_closure b h2 /\
+            resolve_object b h1 == resolve_object b h2 /\
+            fields_constrained h1 b == fields_constrained h2 b /\
+            (strict /\ is_blue b h2 /\ U64.v (wosize_of_object b h2) >= 1 ==>
+              read_word h1 b == read_word h2 b) /\
+            (~(is_blue b h2) ==>
+              (forall (a: hp_addr).
+                 U64.v a >= U64.v b /\ U64.v a + 8 <= U64.v b + U64.v (wosize_of_object b h2) * 8 ==>
+                 read_word h1 a == read_word h2 a)))
+  = walk_agree_objects strict zero_addr h1 h2;
+    assert (block_agree_gen strict h1 h2 b);
+    color_of_header_eq b h1 h2;
+    color_of_object_spec b h1;
+    color_of_object_spec b h2;
+    wosize_of_object_spec b h1;
+    wosize_of_object_spec b h2;
+    tag_of_object_spec b h1;
+    tag_of_object_spec b h2;
+    is_no_scan_spec b h1;
+    is_no_scan_spec b h2;
+    resolve_object_locality b h1 h2
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let agree_get_field (h1 h2: heap) (b: obj_addr) (i: U64.t{U64.v i >= 1}) =
-  agree_block h1 h2 b;
-  hd_address_spec b;
-  wosize_of_object_bound b h2;
-  if U64.v (hd_address b) + U64.v mword * U64.v i + U64.v mword <= heap_size then begin
-    HeapGraph.get_field_addr_eq h1 b i;
-    HeapGraph.get_field_addr_eq h2 b i
-  end
+private let agree_get_field_gen (strict: bool) (h1 h2: heap) (b: obj_addr) (i: U64.t{U64.v i >= 1})
+  : Lemma (requires agree_gen strict h1 h2 /\ Seq.mem b (objects zero_addr h2) /\
+                    ~(is_blue b h2) /\ U64.v i <= U64.v (wosize_of_object b h2))
+          (ensures HeapGraph.get_field h1 b i == HeapGraph.get_field h2 b i)
+  = agree_block_gen strict h1 h2 b;
+    hd_address_spec b;
+    wosize_of_object_bound b h2;
+    if U64.v (hd_address b) + U64.v mword * U64.v i + U64.v mword <= heap_size then begin
+      HeapGraph.get_field_addr_eq h1 b i;
+      HeapGraph.get_field_addr_eq h2 b i
+    end
 #pop-options
+
+let agree_objects (h1 h2: heap) = to_gen h1 h2; agree_objects_gen true h1 h2
+
+let agree_block (h1 h2: heap) (b: obj_addr) = to_gen h1 h2; agree_block_gen true h1 h2 b
+
+let agree_get_field (h1 h2: heap) (b: obj_addr) (i: U64.t{U64.v i >= 1}) =
+  to_gen h1 h2; agree_get_field_gen true h1 h2 b i
 
 /// ---------------------------------------------------------------------------
 /// Field targets
@@ -142,40 +203,52 @@ private let rec efptu_congr (h1 h2: heap) (src: obj_addr) (wz: U64.t{U64.v wz < 
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let agree_points_to (h1 h2: heap) (src dst: obj_addr) =
-  agree_block h1 h2 src;
-  wosize_of_object_bound src h2;
-  efptu_congr h1 h2 src (wosize_of_object src h2) dst
+private let agree_points_to_gen (strict: bool) (h1 h2: heap) (src dst: obj_addr)
+  : Lemma (requires agree_gen strict h1 h2 /\ Seq.mem src (objects zero_addr h2) /\
+                    ~(is_blue src h2))
+          (ensures points_to h1 src dst == points_to h2 src dst)
+  = agree_block_gen strict h1 h2 src;
+    wosize_of_object_bound src h2;
+    efptu_congr h1 h2 src (wosize_of_object src h2) dst
 #pop-options
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-let agree_target (h1 h2: heap) (src dst: obj_addr) =
-  wf_parts ();
-  agree_objects h1 h2;
-  let objs = objects zero_addr h2 in
-  wosize_of_object_bound src h2;
-  wfh_part2_elim h2 src dst;
-  wfh_part3_elim h2 src dst;
-  let r = resolve_object dst h2 in
-  assert (~(is_blue r h2));
-  if is_infix dst h2 then begin
-    infix_addr_wf_elim h2 objs dst;
-    let w = U64.v (wosize_of_object dst h2) in
-    let p : obj_addr = U64.uint_to_t (U64.v dst - w * 8) in
-    parent_closure_addr_nat_spec dst h2;
-    resolve_infix_spec dst h2;
-    assert (r == p);
-    agree_block h1 h2 p;
-    hd_address_spec dst;
-    let a : hp_addr = hd_address dst in
-    assert (U64.v a >= U64.v p);
-    assert (U64.v a + 8 <= U64.v p + U64.v (wosize_of_object p h2) * 8);
-    resolve_object_locality dst h1 h2
-  end else begin
-    resolve_non_infix dst h2;
-    agree_block h1 h2 dst;
-    resolve_object_locality dst h1 h2
-  end
+private let agree_target_gen (strict: bool) (h1 h2: heap) (src dst: obj_addr)
+  : Lemma (requires agree_gen strict h1 h2 /\ agree_target_pre h2 /\
+                    Seq.mem src (objects zero_addr h2) /\ fields_constrained h2 src /\
+                    points_to h2 src dst)
+          (ensures read_word h1 (hd_address dst) == read_word h2 (hd_address dst) /\
+                   resolve_object dst h1 == resolve_object dst h2 /\
+                   is_infix dst h1 == is_infix dst h2 /\
+                   wosize_of_object dst h1 == wosize_of_object dst h2 /\
+                   Seq.mem (resolve_object dst h2) (objects zero_addr h2) /\
+                   ~(is_blue (resolve_object dst h2) h2))
+  = wf_parts ();
+    agree_objects_gen strict h1 h2;
+    let objs = objects zero_addr h2 in
+    wosize_of_object_bound src h2;
+    wfh_part2_elim h2 src dst;
+    wfh_part3_elim h2 src dst;
+    let r = resolve_object dst h2 in
+    assert (~(is_blue r h2));
+    if is_infix dst h2 then begin
+      infix_addr_wf_elim h2 objs dst;
+      let w = U64.v (wosize_of_object dst h2) in
+      let p : obj_addr = U64.uint_to_t (U64.v dst - w * 8) in
+      parent_closure_addr_nat_spec dst h2;
+      resolve_infix_spec dst h2;
+      assert (r == p);
+      agree_block_gen strict h1 h2 p;
+      hd_address_spec dst;
+      let a : hp_addr = hd_address dst in
+      assert (U64.v a >= U64.v p);
+      assert (U64.v a + 8 <= U64.v p + U64.v (wosize_of_object p h2) * 8);
+      resolve_object_locality dst h1 h2
+    end else begin
+      resolve_non_infix dst h2;
+      agree_block_gen strict h1 h2 dst;
+      resolve_object_locality dst h1 h2
+    end
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -183,104 +256,115 @@ let agree_target (h1 h2: heap) (src dst: obj_addr) =
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
-let agree_wfh_part1 (h1 h2: heap) =
-  agree_objects h1 h2;
-  let p1 (h: obj_addr)
-    : Lemma (Seq.mem h (objects zero_addr h1) ==>
-             (let wz = wosize_of_object h h1 in
-              U64.v (hd_address h) + 8 + (U64.v wz * 8) <= Seq.length h1))
-    = if Seq.mem h (objects zero_addr h2) then agree_block h1 h2 h
-  in
-  FStar.Classical.forall_intro p1
+private let agree_wfh_part1_gen (strict: bool) (h1 h2: heap)
+  : Lemma (requires agree_gen strict h1 h2 /\ well_formed_heap_part1 h2)
+          (ensures well_formed_heap_part1 h1)
+  = agree_objects_gen strict h1 h2;
+    let p1 (h: obj_addr)
+      : Lemma (Seq.mem h (objects zero_addr h1) ==>
+               (let wz = wosize_of_object h h1 in
+                U64.v (hd_address h) + 8 + (U64.v wz * 8) <= Seq.length h1))
+      = if Seq.mem h (objects zero_addr h2) then agree_block_gen strict h1 h2 h
+    in
+    FStar.Classical.forall_intro p1
 
-let agree_white_or_blue (h1 h2: heap) =
-  agree_objects h1 h2;
-  let c (x: obj_addr)
-    : Lemma (Seq.mem x (objects zero_addr h1) ==> is_white x h1 \/ is_blue x h1)
-    = if Seq.mem x (objects zero_addr h2) then agree_block h1 h2 x
-  in
-  FStar.Classical.forall_intro c
+private let agree_white_or_blue_gen (strict: bool) (h1 h2: heap)
+  : Lemma (requires agree_gen strict h1 h2 /\
+                    (forall (x: obj_addr). Seq.mem x (objects zero_addr h2) ==>
+                       is_white x h2 \/ is_blue x h2))
+          (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr h1) ==>
+                     is_white x h1 \/ is_blue x h1)
+  = agree_objects_gen strict h1 h2;
+    let c (x: obj_addr)
+      : Lemma (Seq.mem x (objects zero_addr h1) ==> is_white x h1 \/ is_blue x h1)
+      = if Seq.mem x (objects zero_addr h2) then agree_block_gen strict h1 h2 x
+    in
+    FStar.Classical.forall_intro c
 #pop-options
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-let agree_well_formed_heap (h1 h2: heap) =
-  wf_parts ();
-  agree_objects h1 h2;
-  let objs = objects zero_addr h2 in
-  let p1 (h: obj_addr)
-    : Lemma (Seq.mem h (objects zero_addr h1) ==>
-             (let wz = wosize_of_object h h1 in
-              U64.v (hd_address h) + 8 + (U64.v wz * 8) <= Seq.length h1))
-    = if Seq.mem h objs then agree_block h1 h2 h
-  in
-  FStar.Classical.forall_intro p1;
-  assert (well_formed_heap_part1 h1);
-  let p4 (h: obj_addr)
-    : Lemma (Seq.mem h (objects zero_addr h1) ==> ~(is_infix h h1))
-    = if Seq.mem h objs then agree_block h1 h2 h
-  in
-  FStar.Classical.forall_intro p4;
-  assert (well_formed_heap_part4 h1);
-  let to_h2 (src dst: obj_addr)
-    : Lemma (requires Seq.mem src (objects zero_addr h1) /\ fields_constrained h1 src /\
-                      (let wz = wosize_of_object src h1 in
-                       U64.v wz < pow2 54 /\
-                       exists_field_pointing_to_unchecked h1 src wz dst))
-            (ensures Seq.mem src objs /\ fields_constrained h2 src /\ points_to h2 src dst /\
-                     resolve_object dst h1 == resolve_object dst h2 /\
-                     is_infix dst h1 == is_infix dst h2 /\
-                     wosize_of_object dst h1 == wosize_of_object dst h2 /\
-                     Seq.mem (resolve_object dst h2) objs /\
-                     infix_addr_wf h2 objs dst)
-    = agree_block h1 h2 src;
-      agree_points_to h1 h2 src dst;
-      agree_target h1 h2 src dst;
-      wosize_of_object_bound src h2;
-      wfh_part3_elim h2 src dst
-  in
-  let pf2 (src dst: obj_addr)
-    : Lemma (requires Seq.mem src (objects zero_addr h1) /\ fields_constrained h1 src /\
-                      (let wz = wosize_of_object src h1 in
-                       U64.v wz < pow2 54 /\
-                       exists_field_pointing_to_unchecked h1 src wz dst))
-            (ensures Seq.mem (resolve_object dst h1) (objects zero_addr h1))
-    = to_h2 src dst
-  in
-  well_formed_heap_part2_intro h1 pf2;
-  let pf3 (src dst: obj_addr)
-    : Lemma (requires Seq.mem src (objects zero_addr h1) /\ fields_constrained h1 src /\
-                      (let wz = wosize_of_object src h1 in
-                       U64.v wz < pow2 54 /\
-                       exists_field_pointing_to_unchecked h1 src wz dst))
-            (ensures infix_addr_wf h1 (objects zero_addr h1) dst)
-    = to_h2 src dst;
-      if is_infix dst h2 then begin
-        infix_addr_wf_elim h2 objs dst;
-        let w = U64.v (wosize_of_object dst h2) in
-        let p : obj_addr = U64.uint_to_t (U64.v dst - w * 8) in
-        agree_block h1 h2 p
-      end;
-      infix_addr_wf_transfer h2 h1 objs (objects zero_addr h1) dst
-  in
-  well_formed_heap_part3_intro h1 pf3
+private let agree_well_formed_heap_gen (strict: bool) (h1 h2: heap)
+  : Lemma (requires agree_gen strict h1 h2 /\ agree_target_pre h2)
+          (ensures well_formed_heap h1)
+  = wf_parts ();
+    agree_objects_gen strict h1 h2;
+    let objs = objects zero_addr h2 in
+    let p1 (h: obj_addr)
+      : Lemma (Seq.mem h (objects zero_addr h1) ==>
+               (let wz = wosize_of_object h h1 in
+                U64.v (hd_address h) + 8 + (U64.v wz * 8) <= Seq.length h1))
+      = if Seq.mem h objs then agree_block_gen strict h1 h2 h
+    in
+    FStar.Classical.forall_intro p1;
+    assert (well_formed_heap_part1 h1);
+    let p4 (h: obj_addr)
+      : Lemma (Seq.mem h (objects zero_addr h1) ==> ~(is_infix h h1))
+      = if Seq.mem h objs then agree_block_gen strict h1 h2 h
+    in
+    FStar.Classical.forall_intro p4;
+    assert (well_formed_heap_part4 h1);
+    let to_h2 (src dst: obj_addr)
+      : Lemma (requires Seq.mem src (objects zero_addr h1) /\ fields_constrained h1 src /\
+                        (let wz = wosize_of_object src h1 in
+                         U64.v wz < pow2 54 /\
+                         exists_field_pointing_to_unchecked h1 src wz dst))
+              (ensures Seq.mem src objs /\ fields_constrained h2 src /\ points_to h2 src dst /\
+                       resolve_object dst h1 == resolve_object dst h2 /\
+                       is_infix dst h1 == is_infix dst h2 /\
+                       wosize_of_object dst h1 == wosize_of_object dst h2 /\
+                       Seq.mem (resolve_object dst h2) objs /\
+                       infix_addr_wf h2 objs dst)
+      = agree_block_gen strict h1 h2 src;
+        agree_points_to_gen strict h1 h2 src dst;
+        agree_target_gen strict h1 h2 src dst;
+        wosize_of_object_bound src h2;
+        wfh_part3_elim h2 src dst
+    in
+    let pf2 (src dst: obj_addr)
+      : Lemma (requires Seq.mem src (objects zero_addr h1) /\ fields_constrained h1 src /\
+                        (let wz = wosize_of_object src h1 in
+                         U64.v wz < pow2 54 /\
+                         exists_field_pointing_to_unchecked h1 src wz dst))
+              (ensures Seq.mem (resolve_object dst h1) (objects zero_addr h1))
+      = to_h2 src dst
+    in
+    well_formed_heap_part2_intro h1 pf2;
+    let pf3 (src dst: obj_addr)
+      : Lemma (requires Seq.mem src (objects zero_addr h1) /\ fields_constrained h1 src /\
+                        (let wz = wosize_of_object src h1 in
+                         U64.v wz < pow2 54 /\
+                         exists_field_pointing_to_unchecked h1 src wz dst))
+              (ensures infix_addr_wf h1 (objects zero_addr h1) dst)
+      = to_h2 src dst;
+        if is_infix dst h2 then begin
+          infix_addr_wf_elim h2 objs dst;
+          let w = U64.v (wosize_of_object dst h2) in
+          let p : obj_addr = U64.uint_to_t (U64.v dst - w * 8) in
+          agree_block_gen strict h1 h2 p
+        end;
+        infix_addr_wf_transfer h2 h1 objs (objects zero_addr h1) dst
+    in
+    well_formed_heap_part3_intro h1 pf3
 #pop-options
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-let agree_no_pointer_to_blue (h1 h2: heap) =
-  agree_objects h1 h2;
-  let aux (src dst: obj_addr)
-    : Lemma (Seq.mem src (objects zero_addr h1) /\ ~(is_blue src h1) /\
-             fields_constrained h1 src /\ points_to h1 src dst ==>
-             ~(is_blue (resolve_object dst h1) h1))
-    = if Seq.mem src (objects zero_addr h1) && not (is_blue src h1) &&
-         fields_constrained h1 src && points_to h1 src dst then begin
-        agree_block h1 h2 src;
-        agree_points_to h1 h2 src dst;
-        agree_target h1 h2 src dst;
-        agree_block h1 h2 (resolve_object dst h2)
-      end
-  in
-  FStar.Classical.forall_intro_2 aux
+private let agree_no_pointer_to_blue_gen (strict: bool) (h1 h2: heap)
+  : Lemma (requires agree_gen strict h1 h2 /\ agree_target_pre h2)
+          (ensures Mark.no_pointer_to_blue h1)
+  = agree_objects_gen strict h1 h2;
+    let aux (src dst: obj_addr)
+      : Lemma (Seq.mem src (objects zero_addr h1) /\ ~(is_blue src h1) /\
+               fields_constrained h1 src /\ points_to h1 src dst ==>
+               ~(is_blue (resolve_object dst h1) h1))
+      = if Seq.mem src (objects zero_addr h1) && not (is_blue src h1) &&
+           fields_constrained h1 src && points_to h1 src dst then begin
+          agree_block_gen strict h1 h2 src;
+          agree_points_to_gen strict h1 h2 src dst;
+          agree_target_gen strict h1 h2 src dst;
+          agree_block_gen strict h1 h2 (resolve_object dst h2)
+        end
+    in
+    FStar.Classical.forall_intro_2 aux
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -289,14 +373,14 @@ let agree_no_pointer_to_blue (h1 h2: heap) =
 
 /// A pointer field of a live, scannable block resolves the same way in both heaps.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-private let agree_field_resolve (h1 h2: heap) (b: obj_addr) (j: U64.t{U64.v j >= 1})
-  : Lemma (requires heaps_agree_mod_free h1 h2 /\ agree_target_pre h2 /\
+private let agree_field_resolve (strict: bool) (h1 h2: heap) (b: obj_addr) (j: U64.t{U64.v j >= 1})
+  : Lemma (requires agree_gen strict h1 h2 /\ agree_target_pre h2 /\
                     Seq.mem b (objects zero_addr h2) /\ fields_constrained h2 b /\
                     U64.v j <= U64.v (wosize_of_object b h2))
           (ensures (let v = HeapGraph.get_field h2 b j in
                     HeapGraph.get_field h1 b j == v /\
                     HeapGraph.resolve_field h1 v == HeapGraph.resolve_field h2 v))
-  = agree_get_field h1 h2 b j;
+  = agree_get_field_gen strict h1 h2 b j;
     let v = HeapGraph.get_field h2 b j in
     if HeapGraph.is_pointer_field v then begin
       HeapGraph.is_pointer_field_is_obj_addr v;
@@ -310,13 +394,13 @@ private let agree_field_resolve (h1 h2: heap) (b: obj_addr) (j: U64.t{U64.v j >=
       HeapGraph.get_field_addr_eq h2 b j;
       field_read_implies_exists_pointing h2 b wz (U64.sub j 1UL) vo;
       assert (points_to h2 b vo);
-      agree_target h1 h2 b vo
+      agree_target_gen strict h1 h2 b vo
     end
 #pop-options
 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
-private let rec agree_gpf_aux (h1 h2: heap) (b: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t)
-  : Lemma (requires heaps_agree_mod_free h1 h2 /\ agree_target_pre h2 /\
+private let rec agree_gpf_aux (strict: bool) (h1 h2: heap) (b: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t)
+  : Lemma (requires agree_gen strict h1 h2 /\ agree_target_pre h2 /\
                     Seq.mem b (objects zero_addr h2) /\ fields_constrained h2 b /\
                     ws == wosize_of_object b h2)
           (ensures HeapGraph.get_pointer_fields_aux h1 b i ws ==
@@ -324,24 +408,24 @@ private let rec agree_gpf_aux (h1 h2: heap) (b: obj_addr) (i: U64.t{U64.v i >= 1
           (decreases (U64.v ws - U64.v i + 1))
   = if U64.v i > U64.v ws then ()
     else begin
-      agree_field_resolve h1 h2 b i;
-      if U64.v i < U64.v ws then agree_gpf_aux h1 h2 b (U64.add i 1UL) ws
+      agree_field_resolve strict h1 h2 b i;
+      if U64.v i < U64.v ws then agree_gpf_aux strict h1 h2 b (U64.add i 1UL) ws
     end
 #pop-options
 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
-private let agree_object_edges (h1 h2: heap) (b: obj_addr)
-  : Lemma (requires heaps_agree_mod_free h1 h2 /\ agree_target_pre h2 /\
+private let agree_object_edges (strict: bool) (h1 h2: heap) (b: obj_addr)
+  : Lemma (requires agree_gen strict h1 h2 /\ agree_target_pre h2 /\
                     Seq.mem b (objects zero_addr h2))
           (ensures HeapGraph.object_edges h1 b == HeapGraph.object_edges h2 b)
-  = agree_block h1 h2 b;
+  = agree_block_gen strict h1 h2 b;
     if fields_constrained h2 b && HeapGraph.object_fits_in_heap b h2 then
-      agree_gpf_aux h1 h2 b 1UL (wosize_of_object b h2)
+      agree_gpf_aux strict h1 h2 b 1UL (wosize_of_object b h2)
 #pop-options
 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
-private let rec agree_all_edges (h1 h2: heap) (objs: seq obj_addr)
-  : Lemma (requires heaps_agree_mod_free h1 h2 /\ agree_target_pre h2 /\
+private let rec agree_all_edges (strict: bool) (h1 h2: heap) (objs: seq obj_addr)
+  : Lemma (requires agree_gen strict h1 h2 /\ agree_target_pre h2 /\
                     (forall (b: obj_addr). Seq.mem b objs ==> Seq.mem b (objects zero_addr h2)))
           (ensures HeapGraph.all_edges h1 objs == HeapGraph.all_edges h2 objs)
           (decreases Seq.length objs)
@@ -354,21 +438,104 @@ private let rec agree_all_edges (h1 h2: heap) (objs: seq obj_addr)
         = mem_cons_lemma b (Seq.head objs) (Seq.tail objs)
       in
       FStar.Classical.forall_intro tl_sub;
-      agree_object_edges h1 h2 (Seq.head objs);
-      agree_all_edges h1 h2 (Seq.tail objs)
+      agree_object_edges strict h1 h2 (Seq.head objs);
+      agree_all_edges strict h1 h2 (Seq.tail objs)
     end
 #pop-options
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-let agree_create_graph (h1 h2: heap) =
-  agree_objects h1 h2;
-  agree_all_edges h1 h2 (objects zero_addr h2);
-  HeapModel.objects_is_vertex_set h2;
-  assert (HeapModel.create_graph h1 ==
-          HeapGraph.create_graph_from_heap h1 (objects zero_addr h2));
-  assert (HeapModel.create_graph h2 ==
-          HeapGraph.create_graph_from_heap h2 (objects zero_addr h2))
+private let agree_create_graph_gen (strict: bool) (h1 h2: heap)
+  : Lemma (requires agree_gen strict h1 h2 /\ agree_target_pre h2)
+          (ensures HeapModel.create_graph h1 == HeapModel.create_graph h2)
+  = agree_objects_gen strict h1 h2;
+    agree_all_edges strict h1 h2 (objects zero_addr h2);
+    HeapModel.objects_is_vertex_set h2;
+    assert (HeapModel.create_graph h1 ==
+            HeapGraph.create_graph_from_heap h1 (objects zero_addr h2));
+    assert (HeapModel.create_graph h2 ==
+            HeapGraph.create_graph_from_heap h2 (objects zero_addr h2))
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Density
+/// ---------------------------------------------------------------------------
+
+/// Agreement from a position carries over to every later block on the walk.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+private let rec walk_agree_suffix (strict: bool) (start: hp_addr) (h1 h2: heap) (b: obj_addr)
+  : Lemma (requires walk_agree_gen strict start h1 h2 /\ Seq.mem b (objects start h2))
+          (ensures walk_agree_gen strict (hd_address b) h1 h2)
+          (decreases (heap_size - U64.v start))
+  = let wz = getWosize (read_word h2 start) in
+    let next = U64.v start + (U64.v wz + 1) * 8 in
+    walk_next_aligned start (U64.v wz);
+    f_address_spec start;
+    hd_f_roundtrip start;
+    let b0 = f_address start in
+    if b = b0 then ()
+    else if next < heap_size then begin
+      let nx : hp_addr = U64.uint_to_t next in
+      objects_cons_step_to start h2 nx;
+      mem_cons_lemma b b0 (objects nx h2);
+      walk_agree_suffix strict nx h1 h2 b
+    end else begin
+      objects_cons_end start h2;
+      mem_cons_lemma b b0 Seq.empty
+    end
+#pop-options
+
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+private let agree_dense_gen (strict: bool) (h1 h2: heap)
+  : Lemma (requires agree_gen strict h1 h2 /\ heap_objects_dense h2)
+          (ensures heap_objects_dense h1)
+  = agree_objects_gen strict h1 h2;
+    reveal_opaque (`%heap_objects_dense) heap_objects_dense;
+    let aux (start: hp_addr)
+      : Lemma (U64.v start + 8 < heap_size ==>
+               Seq.mem (f_address start) (objects zero_addr h1) ==>
+               Seq.length (objects start h1) > 0 ==>
+               (let wz = getWosize (read_word h1 start) in
+                let next = U64.v start + ((U64.v wz + 1) * 8) in
+                next + 8 < heap_size ==>
+                Seq.length (objects (U64.uint_to_t next) h1) > 0 /\
+                Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr h1)))
+      = if U64.v start + 8 < heap_size && Seq.mem (f_address start) (objects zero_addr h2) then begin
+          hd_f_roundtrip start;
+          walk_agree_suffix strict zero_addr h1 h2 (f_address start);
+          walk_agree_objects strict start h1 h2;
+          let wz = getWosize (read_word h2 start) in
+          let next = U64.v start + ((U64.v wz + 1) * 8) in
+          if Seq.length (objects start h2) > 0 && next + 8 < heap_size then begin
+            objects_nonempty_next start h2;
+            let nx : hp_addr = U64.uint_to_t next in
+            hd_f_roundtrip nx;
+            walk_agree_suffix strict zero_addr h1 h2 (f_address nx);
+            walk_agree_objects strict nx h1 h2
+          end
+        end
+    in
+    FStar.Classical.forall_intro aux
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// The strict instances
+/// ---------------------------------------------------------------------------
+
+let agree_points_to (h1 h2: heap) (src dst: obj_addr) =
+  to_gen h1 h2; agree_points_to_gen true h1 h2 src dst
+
+let agree_target (h1 h2: heap) (src dst: obj_addr) =
+  to_gen h1 h2; agree_target_gen true h1 h2 src dst
+
+let agree_wfh_part1 (h1 h2: heap) = to_gen h1 h2; agree_wfh_part1_gen true h1 h2
+
+let agree_white_or_blue (h1 h2: heap) = to_gen h1 h2; agree_white_or_blue_gen true h1 h2
+
+let agree_well_formed_heap (h1 h2: heap) = to_gen h1 h2; agree_well_formed_heap_gen true h1 h2
+
+let agree_no_pointer_to_blue (h1 h2: heap) = to_gen h1 h2; agree_no_pointer_to_blue_gen true h1 h2
+
+let agree_create_graph (h1 h2: heap) = to_gen h1 h2; agree_create_graph_gen true h1 h2
 
 /// ---------------------------------------------------------------------------
 /// The free list
@@ -445,61 +612,91 @@ let agree_fl_exact (h1 h2: heap) (fp: U64.t) =
   FStar.Classical.forall_intro blk
 #pop-options
 
+let agree_dense (h1 h2: heap) = to_gen h1 h2; agree_dense_gen true h1 h2
+
 /// ---------------------------------------------------------------------------
-/// Density
+/// Agreement modulo free links
 /// ---------------------------------------------------------------------------
 
-/// Agreement from a position carries over to every later block on the walk.
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
-private let rec walk_agree_suffix (start: hp_addr) (h1 h2: heap) (b: obj_addr)
-  : Lemma (requires walk_agree start h1 h2 /\ Seq.mem b (objects start h2))
-          (ensures walk_agree (hd_address b) h1 h2)
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+private let rec walk_agree_weaken (start: hp_addr) (h1 h2: heap)
+  : Lemma (requires walk_agree_gen true start h1 h2)
+          (ensures walk_agree_gen false start h1 h2)
           (decreases (heap_size - U64.v start))
-  = let wz = getWosize (read_word h2 start) in
-    let next = U64.v start + (U64.v wz + 1) * 8 in
-    walk_next_aligned start (U64.v wz);
-    f_address_spec start;
-    hd_f_roundtrip start;
-    let b0 = f_address start in
-    if b = b0 then ()
-    else if next < heap_size then begin
-      let nx : hp_addr = U64.uint_to_t next in
-      objects_cons_step_to start h2 nx;
-      mem_cons_lemma b b0 (objects nx h2);
-      walk_agree_suffix nx h1 h2 b
-    end else begin
-      objects_cons_end start h2;
-      mem_cons_lemma b b0 Seq.empty
+  = if U64.v start + 8 >= heap_size then ()
+    else begin
+      let wz = getWosize (read_word h2 start) in
+      let next = U64.v start + (U64.v wz + 1) * 8 in
+      if next > heap_size then ()
+      else begin
+        walk_next_aligned start (U64.v wz);
+        if next < heap_size then walk_agree_weaken (U64.uint_to_t next) h1 h2
+      end
     end
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
-let agree_dense (h1 h2: heap) =
-  agree_objects h1 h2;
-  reveal_opaque (`%heap_objects_dense) heap_objects_dense;
-  let aux (start: hp_addr)
-    : Lemma (U64.v start + 8 < heap_size ==>
-             Seq.mem (f_address start) (objects zero_addr h1) ==>
-             Seq.length (objects start h1) > 0 ==>
-             (let wz = getWosize (read_word h1 start) in
-              let next = U64.v start + ((U64.v wz + 1) * 8) in
-              next + 8 < heap_size ==>
-              Seq.length (objects (U64.uint_to_t next) h1) > 0 /\
-              Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr h1)))
-    = if U64.v start + 8 < heap_size && Seq.mem (f_address start) (objects zero_addr h2) then begin
-        hd_f_roundtrip start;
-        walk_agree_suffix zero_addr h1 h2 (f_address start);
-        walk_agree_objects start h1 h2;
-        let wz = getWosize (read_word h2 start) in
-        let next = U64.v start + ((U64.v wz + 1) * 8) in
-        if Seq.length (objects start h2) > 0 && next + 8 < heap_size then begin
-          objects_nonempty_next start h2;
-          let nx : hp_addr = U64.uint_to_t next in
-          hd_f_roundtrip nx;
-          walk_agree_suffix zero_addr h1 h2 (f_address nx);
-          walk_agree_objects nx h1 h2
-        end
-      end
-  in
-  FStar.Classical.forall_intro aux
+let agree_implies_links (h1 h2: heap) = to_gen h1 h2; walk_agree_weaken zero_addr h1 h2
+
+/// One block: the header is the same in all three heaps, hence the colour and
+/// the size, and a live block's body agrees through `h2`.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
+private let block_links_trans (h1 h2 h3: heap) (b: obj_addr)
+  : Lemma (requires block_agree_gen false h1 h2 b /\ block_agree_gen true h2 h3 b)
+          (ensures block_agree_gen false h1 h3 b)
+  = color_of_header_eq b h2 h3;
+    wosize_of_object_spec b h2;
+    wosize_of_object_spec b h3
 #pop-options
+
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+private let rec walk_links_trans (start: hp_addr) (h1 h2 h3: heap)
+  : Lemma (requires walk_agree_gen false start h1 h2 /\ walk_agree_gen true start h2 h3)
+          (ensures walk_agree_gen false start h1 h3)
+          (decreases (heap_size - U64.v start))
+  = if U64.v start + 8 >= heap_size then ()
+    else begin
+      let wz = getWosize (read_word h3 start) in
+      let next = U64.v start + (U64.v wz + 1) * 8 in
+      if next > heap_size then ()
+      else begin
+        walk_next_aligned start (U64.v wz);
+        f_address_spec start;
+        hd_f_roundtrip start;
+        block_links_trans h1 h2 h3 (f_address start);
+        if next < heap_size then walk_links_trans (U64.uint_to_t next) h1 h2 h3
+      end
+    end
+#pop-options
+
+let agree_links_trans (h1 h2 h3: heap) =
+  to_gen h2 h3; walk_links_trans zero_addr h1 h2 h3
+
+let walk_agree_links_of_equal_from (start: hp_addr) (h1 h2: heap) =
+  walk_agree_of_equal_from_gen false start h1 h2
+
+let walk_agree_links_step (start: hp_addr) (h1 h2: heap) = ()
+
+let agree_objects_links (h1 h2: heap) = agree_objects_gen false h1 h2
+
+let agree_block_links (h1 h2: heap) (b: obj_addr) = agree_block_gen false h1 h2 b
+
+let agree_get_field_links (h1 h2: heap) (b: obj_addr) (i: U64.t{U64.v i >= 1}) =
+  agree_get_field_gen false h1 h2 b i
+
+let agree_points_to_links (h1 h2: heap) (src dst: obj_addr) =
+  agree_points_to_gen false h1 h2 src dst
+
+let agree_target_links (h1 h2: heap) (src dst: obj_addr) =
+  agree_target_gen false h1 h2 src dst
+
+let agree_wfh_part1_links (h1 h2: heap) = agree_wfh_part1_gen false h1 h2
+
+let agree_white_or_blue_links (h1 h2: heap) = agree_white_or_blue_gen false h1 h2
+
+let agree_well_formed_heap_links (h1 h2: heap) = agree_well_formed_heap_gen false h1 h2
+
+let agree_no_pointer_to_blue_links (h1 h2: heap) = agree_no_pointer_to_blue_gen false h1 h2
+
+let agree_create_graph_links (h1 h2: heap) = agree_create_graph_gen false h1 h2
+
+let agree_dense_links (h1 h2: heap) = agree_dense_gen false h1 h2

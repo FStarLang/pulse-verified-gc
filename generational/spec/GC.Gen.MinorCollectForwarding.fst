@@ -6,6 +6,7 @@ module GC.Gen.MinorCollectForwarding
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -63,7 +64,7 @@ let normal_edge_forward_ready_intro = MCFNE.normal_edge_forward_ready_intro
 /// and `fwd_covers_infix_roots` forwards every interior root.  So an interior
 /// target would have a non-null forwarding entry.
 private let major_field_target_non_infix
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots slots: seq U64.t) (n: nat)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots slots: seq U64.t) (n: nat)
   (obj: obj_addr) (j: nat)
   : Lemma (requires CheneyBFS.cheney_no_oom minor major fp roots /\
                     UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
@@ -86,7 +87,7 @@ private let major_field_target_non_infix
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 private let normal_src_image_is_val_addr
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t) (u: CG.combined_vertex)
   : Lemma
     (requires
@@ -112,7 +113,7 @@ private let normal_src_image_is_val_addr
       assert (is_val_addr (prom.fwd_map x))
 
 private let post_minor_edge_to_mem_graph_edge
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t) (x y: U64.t)
   : Lemma
     (requires
@@ -240,7 +241,7 @@ private let rec rewrite_roots_mem_inv
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let normal_classified_root_image_in_rewrite_roots
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t) (u: CG.combined_vertex)
   =
     let prom = cheney_promote minor major fp roots in
@@ -299,7 +300,7 @@ let normal_classified_root_image_in_rewrite_roots
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let normal_image_vertex_is_post_vertex
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (w: U64.t)
   =
     let prom = cheney_promote minor major fp roots in
@@ -367,7 +368,7 @@ let normal_image_vertex_is_post_vertex
 /// root must keep its offset at run time, so an interior nursery root is
 /// rewritten to an interior pointer, which is not a vertex.
 private let post_root_image_is_normal_image
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat) (rr: U64.t)
   (r: vertex_id{mem_graph_vertex (HeapModel.create_graph (cheney_collect_spec minor major fp roots).mc_major) r})
   : Lemma
@@ -474,7 +475,7 @@ private let post_root_image_is_normal_image
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let normal_classified_root_image_post_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t) (u: CG.combined_vertex)
   =
     let prom = cheney_promote minor major fp roots in
@@ -511,7 +512,7 @@ private let normal_src_images_injective = MCFNE.normal_src_images_injective
 
 #push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
 private let post_edge_from_major_image_reflects_mem_ce
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (src: U64.t) (v: CG.combined_vertex)
   : Lemma
@@ -557,6 +558,7 @@ private let post_edge_from_major_image_reflects_mem_ce
       (fun j ->
         j < U64.v (wosize_of_object src_obj updated) /\
         U64.v src + j * 8 + 8 <= heap_size /\
+        U64.v src + j * 8 < pow2 64 /\
         (U64.v src + j * 8) % 8 == 0 /\
         HeapGraph.is_pointer_field
           (read_word updated (U64.uint_to_t (U64.v src + j * 8))) /\
@@ -709,7 +711,7 @@ private let post_edge_from_major_image_reflects_mem_ce
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 private let post_edge_from_major_image_reflects_target
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (src y: U64.t)
   : Lemma
@@ -753,6 +755,7 @@ private let post_edge_from_major_image_reflects_target
       (fun j ->
         j < U64.v (wosize_of_object src_obj updated) /\
         U64.v src + j * 8 + 8 <= heap_size /\
+        U64.v src + j * 8 < pow2 64 /\
         (U64.v src + j * 8) % 8 == 0 /\
         HeapGraph.is_pointer_field
           (read_word updated (U64.uint_to_t (U64.v src + j * 8))) /\
@@ -856,7 +859,7 @@ private let post_edge_from_major_image_reflects_target
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 private let post_edge_from_minor_image_reflects_mem_ce
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (src: U64.t) (v: CG.combined_vertex)
   : Lemma
@@ -882,7 +885,7 @@ private let post_edge_from_minor_image_reflects_mem_ce
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 private let post_edge_from_minor_image_reflects_target
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (src y: U64.t)
   : Lemma
@@ -907,7 +910,7 @@ private let post_edge_from_minor_image_reflects_target
 
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 1"
 let normal_image_reachable_subgraph_isomorphism
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   =
     let prom = cheney_promote minor major fp roots in
     GenInv.collection_heap_shape_elim minor major fp;
@@ -1003,7 +1006,7 @@ let normal_image_reachable_subgraph_isomorphism
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 private let post_successor_of_normal_image_reflects
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (x y: U64.t)
   : Lemma
@@ -1046,7 +1049,7 @@ private let post_successor_of_normal_image_reflects
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 private let rec post_reach_witness_is_normal_image
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (rr: U64.t)
   (r: vertex_id{mem_graph_vertex (HeapModel.create_graph (cheney_collect_spec minor major fp roots).mc_major) r})
@@ -1105,7 +1108,7 @@ private let rec post_reach_witness_is_normal_image
 
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 1"
 let normal_src_edge_preserves_post_minor_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (u v: CG.combined_vertex)
   =
@@ -1219,7 +1222,7 @@ let normal_src_edge_preserves_post_minor_reachable
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let rec ready_src_reach_image_post_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (u: CG.combined_vertex)
   (r: ready_src_reach minor major fp roots u)
@@ -1255,7 +1258,7 @@ let rec ready_src_reach_image_post_reachable
         minor major fp roots slots n src dst
 
 let ready_image_reachable_is_post_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (w: U64.t)
   =
@@ -1289,7 +1292,7 @@ let ready_image_reachable_is_post_reachable
       (fun u -> FStar.Classical.move_requires proof_u u)
 
 private let edge_source_normal_vertex_ready
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (u v: CG.combined_vertex)
   : Lemma
@@ -1316,8 +1319,8 @@ private let edge_source_normal_vertex_ready
       assert (well_formed_heap major);
       assert (minor_wf minor);
       assert (minor_infix_wf minor);
-      assert (AllocLemmas.fl_valid major fp heap_words);
-      assert (AllocLemmas.fl_chain_terminates major fp heap_words);
+      assert (FLs.fls_valid major fp);
+      assert (FLs.fls_terminates major fp);
       assert (chain_objects_blue major fp);
       remembered_roots_in_roots_from_slots major roots slots n;
       combined_reachable_minor_has_fwd minor major fp roots;
@@ -1341,7 +1344,7 @@ private let edge_source_normal_vertex_ready
       assert (is_infix (prom.fwd_map src) prom.major_final = false)
 
 let normal_src_reachable_is_ready_src_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (u: CG.combined_vertex)
   =
@@ -1395,7 +1398,7 @@ let normal_src_reachable_is_ready_src_reachable
     assert (ready_src_reachable minor major fp roots u)
 
 let normal_image_reachable_is_post_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (w: U64.t)
   =
@@ -1422,7 +1425,7 @@ let normal_image_reachable_is_post_reachable
       (fun u -> FStar.Classical.move_requires proof u)
 
 let normal_image_reachable_is_post_reachable_all
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   =
     let aux (w: U64.t) : Lemma
@@ -1435,7 +1438,7 @@ let normal_image_reachable_is_post_reachable_all
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 let post_normal_image_edges_reflect_src
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (u v: CG.combined_vertex)
   =
@@ -1452,7 +1455,7 @@ let post_normal_image_edges_reflect_src
 
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
 let post_minor_reachable_is_normal_image_reachable_all
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   =
     let prom = cheney_promote minor major fp roots in
@@ -1491,7 +1494,7 @@ let post_minor_reachable_is_normal_image_reachable_all
 
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 1"
 let normal_post_reachable_subgraph_isomorphism
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   =
     let prom = cheney_promote minor major fp roots in
@@ -1564,7 +1567,7 @@ let normal_post_reachable_subgraph_isomorphism
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let normal_post_reachable_subgraph_isomorphism_to_result
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (post_major: heap) (post_roots: seq U64.t)
   =
     let prom = cheney_promote minor major fp roots in

@@ -913,7 +913,7 @@ let spot_infix_chain_avoids (r: unit{spot_infix_room}) (obj: obj_addr)
   AllocChain.chain_avoids_unfold_step g fp obj fuel
 
 let spot_infix_chain_objects_blue (r: unit{spot_infix_room})
-  : Lemma (ensures Promote.chain_objects_blue (spot_infix_heap r) (spot_infix_fp r))
+  : Lemma (ensures GC.SPOT.SingleList.single_chain_objects_blue (spot_infix_heap r) (spot_infix_fp r))
   =
   let g = spot_infix_heap r in
   let proof (obj: obj_addr)
@@ -928,8 +928,7 @@ let spot_infix_chain_objects_blue (r: unit{spot_infix_room})
     spot_infix_layout_facts r;
     spot_infix_chain_avoids r obj
   in
-  reveal_opaque (`%Promote.chain_objects_blue) Promote.chain_objects_blue;
-  FStar.Classical.forall_intro (FStar.Classical.move_requires proof)
+    FStar.Classical.forall_intro (FStar.Classical.move_requires proof)
 
 let spot_infix_no_black_objects (r: unit{spot_infix_room})
   : Lemma (ensures SpecMark.no_black_objects (spot_infix_heap r))
@@ -1047,6 +1046,12 @@ let spot_infix_major_heap_shape (r: unit{spot_infix_room})
   spot_infix_wfh_part1 r;
   spot_infix_wfh_part2_3 r;
   spot_infix_fl_complete r;
-  GC.Gen.AllocExact.fl_valid_cob_gives_sound g fp;
-  GenInv.free_list_exact_iff g fp;
-  GenInv.major_heap_shape_intro g fp
+  GC.Gen.AllocExact.fl_valid_cob_gives_sound_one g fp;
+  spot_infix_layout_facts r;
+  spot_infix_free_reads r;
+  GC.Spec.SizeClass.size_class_lt (spot_free_wosize r);
+  FStar.Math.Lemmas.pow2_lt_compat 64 54;
+  assert (U64.v fp == U64.v (spot_free_obj r));
+  assert (fp == (spot_free_obj r <: U64.t));
+  assert (U64.v (SpecObj.wosize_of_object (fp <: obj_addr) g) == spot_free_wosize r);
+  GC.SPOT.SingleList.single_shape_intro g fp (GC.Spec.SizeClass.size_class (spot_free_wosize r))

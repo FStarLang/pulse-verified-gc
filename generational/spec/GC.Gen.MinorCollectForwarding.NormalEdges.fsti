@@ -38,9 +38,10 @@ module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 open GC.Gen.MinorCollectForwarding.Helpers
 module MCFE = GC.Gen.MinorCollectForwarding.Edges
 open GC.Gen.MinorCollectForwarding.Edges
+module FLs = GC.Spec.FreeLists
 
 let normal_edge_forward_ready
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (u v: CG.combined_vertex) : prop =
   let prom = cheney_promote minor major fp roots in
   let normal_minor_source (src: U64.t) =
@@ -73,7 +74,7 @@ let normal_edge_forward_ready
     is_minor_pointer dst
 
 val combined_reachable_edge_forwarded_normal
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots slots: seq U64.t) (n: nat)
   (u v: CG.combined_vertex)
   : Lemma
@@ -100,7 +101,7 @@ val combined_reachable_edge_forwarded_normal
         (CG.fwd_morphism prom.fwd_map v)))
 
 let fwd_disjoint_reachable_major
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) : prop =
   let cg = CG.build_combined_graph minor major in
   let combined_roots = CG.classify_roots minor roots in
   let prom = cheney_promote minor major fp roots in
@@ -113,7 +114,7 @@ let fwd_disjoint_reachable_major
     prom.fwd_map x <> y
 
 val fwd_disjoint_reachable_major_intro
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
@@ -123,7 +124,7 @@ val fwd_disjoint_reachable_major_intro
     (ensures fwd_disjoint_reachable_major minor major fp roots)
 
 val minor_source_edge_not_no_scan
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (src: U64.t) (dst: CG.combined_vertex)
   : Lemma
     (requires
@@ -132,7 +133,7 @@ val minor_source_edge_not_no_scan
     (ensures minor_tag minor src < 251)
 
 let normal_vertex_ready
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (u: CG.combined_vertex) : prop =
   let prom = cheney_promote minor major fp roots in
   match u with
@@ -143,7 +144,7 @@ let normal_vertex_ready
     is_infix (prom.fwd_map x) prom.major_final = false
 
 let normal_src_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (u: CG.combined_vertex) : prop =
   let cg = CG.build_combined_graph minor major in
   let combined_roots = CG.classify_roots minor roots in
@@ -151,7 +152,7 @@ let normal_src_reachable
   normal_vertex_ready minor major fp roots u
 
 let combined_reachable_normal_injective_prop
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) : prop =
   let cg = CG.build_combined_graph minor major in
   let combined_roots = CG.classify_roots minor roots in
   let prom = cheney_promote minor major fp roots in
@@ -173,7 +174,7 @@ let combined_reachable_normal_injective_prop
     CG.fwd_morphism prom.fwd_map u == CG.fwd_morphism prom.fwd_map v ==> u == v
 
 val combined_reachable_normal_injective
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
@@ -184,7 +185,7 @@ val combined_reachable_normal_injective
     (ensures combined_reachable_normal_injective_prop minor major fp roots)
 
 val normal_edge_forward_ready_intro
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t)
   (u v: CG.combined_vertex)
   : Lemma
@@ -199,7 +200,7 @@ val normal_edge_forward_ready_intro
     (ensures normal_edge_forward_ready minor major fp roots u v)
 
 val normal_src_images_injective
-  (minor: minor_state) (major: heap) (fp: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state)
   (roots: seq U64.t) (u v: CG.combined_vertex)
   : Lemma
     (requires

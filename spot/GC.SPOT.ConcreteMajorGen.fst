@@ -743,7 +743,7 @@ let spot_major_chain_avoids_c (r: unit{spot_major_room}) (mp: minor_ptr)
   assert (AllocLemmas.chain_avoids major fp (spot_c r) fuel = true)
 
 let spot_major_chain_objects_blue (r: unit{spot_major_room}) (mp: minor_ptr)
-  : Lemma (ensures Promote.chain_objects_blue (spot_major_heap r mp) (spot_major_fp r))
+  : Lemma (ensures GC.SPOT.SingleList.single_chain_objects_blue (spot_major_heap r mp) (spot_major_fp r))
   =
   let major = spot_major_heap r mp in
   spot_major_chain_avoids_c r mp;
@@ -759,8 +759,7 @@ let spot_major_chain_objects_blue (r: unit{spot_major_room}) (mp: minor_ptr)
     if obj = spot_c r then spot_major_chain_avoids_c r mp
     else assert False
   in
-  reveal_opaque (`%Promote.chain_objects_blue) Promote.chain_objects_blue;
-  FStar.Classical.forall_intro (FStar.Classical.move_requires proof)
+    FStar.Classical.forall_intro (FStar.Classical.move_requires proof)
 
 let spot_major_no_black_objects (r: unit{spot_major_room}) (mp: minor_ptr)
   : Lemma (ensures SpecMark.no_black_objects (spot_major_heap r mp))
@@ -864,6 +863,12 @@ let spot_major_heap_shape (r: unit{spot_major_room}) (mp: minor_ptr)
   spot_major_wfh_part1 r mp;
   spot_major_wfh_part2 r mp;
   spot_major_fl_complete r mp;
-  GC.Gen.AllocExact.fl_valid_cob_gives_sound major fp;
-  GenInv.free_list_exact_iff major fp;
-  GenInv.major_heap_shape_intro major fp
+  GC.Gen.AllocExact.fl_valid_cob_gives_sound_one major fp;
+  spot_major_layout_facts r;
+  spot_major_free_reads r mp;
+  GC.Spec.SizeClass.size_class_lt (spot_free_wosize r);
+  FStar.Math.Lemmas.pow2_lt_compat 64 54;
+  assert (U64.v fp == U64.v (spot_free_obj r));
+  assert (fp == (spot_free_obj r <: U64.t));
+  assert (U64.v (SpecObj.wosize_of_object (fp <: obj_addr) major) == spot_free_wosize r);
+  GC.SPOT.SingleList.single_shape_intro major fp (GC.Spec.SizeClass.size_class (spot_free_wosize r))

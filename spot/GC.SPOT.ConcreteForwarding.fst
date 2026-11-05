@@ -1,6 +1,9 @@
 module GC.SPOT.ConcreteForwarding
 
 module U64 = FStar.UInt64
+module SAL = GC.Spec.Allocator.Lists
+module AL = GC.Gen.AllocLists
+module FLs = GC.Spec.FreeLists
 module Seq = FStar.Seq
 
 open FStar.Seq
@@ -98,10 +101,11 @@ let spot_promote_a_success (r: unit{ConcreteMajor.spot_major_room})
         ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
         Layout.a_minor
-        (ConcreteMajor.spot_major_fp r)
+        (ConcreteMajor.spot_major_fls r)
         1).Promote.new_addr <> 0UL)
   =
   let major = ConcreteMajor.spot_major_heap r in
+  let fls = ConcreteMajor.spot_major_fls r in
   let fp = ConcreteMajor.spot_major_fp r in
   let free = ConcreteMajor.spot_free_obj r in
   let fuel = heap_words in
@@ -136,10 +140,19 @@ let spot_promote_a_success (r: unit{ConcreteMajor.spot_major_room})
           == U64.v fp + (ConcreteMajor.spot_free_wosize r - 1) * 8);
   assert (U64.v ((SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out) >= U64.v fp);
   assert (fp <> 0UL);
+  // one non-empty list, the block's, which the search reaches: the object
+  // is first fit's on it
+  let k = GC.Spec.SizeClass.size_class (ConcreteMajor.spot_free_wosize r) in
+  GC.Spec.SizeClass.size_class_lt (ConcreteMajor.spot_free_wosize r);
+  GC.Spec.SizeClass.n_small_u64_v ();
+  FStar.Classical.forall_intro (FLs.fls_one_head k fp);
+  SAL.alloc_from_only major fls 1 (GC.Spec.SizeClass.size_class 1) k;
+  assert ((SAL.alloc_lists_spec major fls 1).SAL.obj_out ==
+          (SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out);
   Promote.promote_object_success
-    ConcreteMinor.spot_minor2 major Layout.a_minor fp 1;
+    ConcreteMinor.spot_minor2 major Layout.a_minor fls 1;
   assert ((Promote.promote_object
-    ConcreteMinor.spot_minor2 major Layout.a_minor fp 1).Promote.new_addr ==
+    ConcreteMinor.spot_minor2 major Layout.a_minor fls 1).Promote.new_addr ==
     (SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out)
 
 let spot_promote_a_to_free_obj (r: unit{ConcreteMajor.spot_major_room})
@@ -148,12 +161,13 @@ let spot_promote_a_to_free_obj (r: unit{ConcreteMajor.spot_major_room})
         ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
         Layout.a_minor
-        (ConcreteMajor.spot_major_fp r)
+        (ConcreteMajor.spot_major_fls r)
         1).Promote.new_addr) ==
       U64.v (ConcreteMajor.spot_free_obj r)
         + (ConcreteMajor.spot_free_wosize r - 1) * 8)
   =
   let major = ConcreteMajor.spot_major_heap r in
+  let fls = ConcreteMajor.spot_major_fls r in
   let fp = ConcreteMajor.spot_major_fp r in
   let free = ConcreteMajor.spot_free_obj r in
   let fuel = heap_words in
@@ -186,20 +200,29 @@ let spot_promote_a_to_free_obj (r: unit{ConcreteMajor.spot_major_room})
   FStar.Math.Lemmas.pow2_lt_compat 64 57;
   assert (U64.v ((SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out)
           == U64.v fp + (ConcreteMajor.spot_free_wosize r - 1) * 8);
+  // one non-empty list, the block's, which the search reaches: the object
+  // is first fit's on it
+  let k = GC.Spec.SizeClass.size_class (ConcreteMajor.spot_free_wosize r) in
+  GC.Spec.SizeClass.size_class_lt (ConcreteMajor.spot_free_wosize r);
+  GC.Spec.SizeClass.n_small_u64_v ();
+  FStar.Classical.forall_intro (FLs.fls_one_head k fp);
+  SAL.alloc_from_only major fls 1 (GC.Spec.SizeClass.size_class 1) k;
+  assert ((SAL.alloc_lists_spec major fls 1).SAL.obj_out ==
+          (SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out);
   Promote.promote_object_success
-    ConcreteMinor.spot_minor2 major Layout.a_minor fp 1;
+    ConcreteMinor.spot_minor2 major Layout.a_minor fls 1;
   assert ((Promote.promote_object
-    ConcreteMinor.spot_minor2 major Layout.a_minor fp 1).Promote.new_addr ==
+    ConcreteMinor.spot_minor2 major Layout.a_minor fls 1).Promote.new_addr ==
     (SpecAlloc.alloc_spec major fp 1).SpecAlloc.obj_out);
   assert (U64.v ((Promote.promote_object
-    ConcreteMinor.spot_minor2 major Layout.a_minor fp 1).Promote.new_addr) ==
+    ConcreteMinor.spot_minor2 major Layout.a_minor fls 1).Promote.new_addr) ==
     U64.v (free <: U64.t) + (ConcreteMajor.spot_free_wosize r - 1) * 8)
 
 let forward_a_from_initial_nonzero (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (ensures
       (let cs0 : Cheney.cheney_state =
         { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
-          Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
+          Cheney.cs_fp = ConcreteMajor.spot_major_fls r;
           Cheney.cs_fwd = Promote.empty_forwarding;
           Cheney.cs_queue = Seq.empty } in
        (Cheney.cheney_forward_one
@@ -207,7 +230,7 @@ let forward_a_from_initial_nonzero (r: unit{ConcreteMajor.spot_major_room})
           Layout.a_minor <> 0UL))
   =
   let major = ConcreteMajor.spot_major_heap r in
-  let fp = ConcreteMajor.spot_major_fp r in
+  let fp = ConcreteMajor.spot_major_fls r in
   let cs0 : Cheney.cheney_state =
     { Cheney.cs_major = major;
       Cheney.cs_fp = fp;
@@ -235,7 +258,7 @@ let forward_roots_a_nonzero (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (ensures
       (let cs0 : Cheney.cheney_state =
         { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
-          Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
+          Cheney.cs_fp = ConcreteMajor.spot_major_fls r;
           Cheney.cs_fwd = Promote.empty_forwarding;
           Cheney.cs_queue = Seq.empty } in
        let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
@@ -247,7 +270,7 @@ let forward_roots_a_nonzero (r: unit{ConcreteMajor.spot_major_room})
   let roots = ThreeObjects.spot_roots c in
   let cs0 : Cheney.cheney_state =
     { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
-      Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
+      Cheney.cs_fp = ConcreteMajor.spot_major_fls r;
       Cheney.cs_fwd = Promote.empty_forwarding;
       Cheney.cs_queue = Seq.empty } in
   ThreeObjects.spot_roots_len c;
@@ -270,7 +293,7 @@ let forward_roots_cover_concrete_roots (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (ensures
       (let cs0 : Cheney.cheney_state =
         { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
-          Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
+          Cheney.cs_fp = ConcreteMajor.spot_major_fls r;
           Cheney.cs_fwd = Promote.empty_forwarding;
           Cheney.cs_queue = Seq.empty } in
        let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
@@ -285,7 +308,7 @@ let forward_roots_cover_concrete_roots (r: unit{ConcreteMajor.spot_major_room})
   let roots = ThreeObjects.spot_roots c in
   let cs0 : Cheney.cheney_state =
     { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
-      Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
+      Cheney.cs_fp = ConcreteMajor.spot_major_fls r;
       Cheney.cs_fwd = Promote.empty_forwarding;
       Cheney.cs_queue = Seq.empty } in
   let cs1 = Cheney.cheney_forward_roots ConcreteMinor.spot_minor2 cs0 roots 0 in
@@ -372,7 +395,7 @@ let scan_fwd_closed_concrete (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (ensures
       (let cs0 : Cheney.cheney_state =
         { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
-          Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
+          Cheney.cs_fp = ConcreteMajor.spot_major_fls r;
           Cheney.cs_fwd = Promote.empty_forwarding;
           Cheney.cs_queue = Seq.empty } in
        let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
@@ -388,7 +411,7 @@ let scan_fwd_closed_concrete (r: unit{ConcreteMajor.spot_major_room})
   let roots = ThreeObjects.spot_roots c in
   let cs0 : Cheney.cheney_state =
     { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
-      Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
+      Cheney.cs_fp = ConcreteMajor.spot_major_fls r;
       Cheney.cs_fwd = Promote.empty_forwarding;
       Cheney.cs_queue = Seq.empty } in
   let cs1 = Cheney.cheney_forward_roots ConcreteMinor.spot_minor2 cs0 roots 0 in
@@ -434,14 +457,14 @@ let spot_concrete_no_oom (r: unit{ConcreteMajor.spot_major_room})
   CheneyBFS.cheney_no_oom_from_loop_posts
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
-    (ConcreteMajor.spot_major_fp r)
+    (ConcreteMajor.spot_major_fls r)
     roots false false
 
 let forward_roots_b_zero (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (ensures
       (let cs0 : Cheney.cheney_state =
         { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
-          Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
+          Cheney.cs_fp = ConcreteMajor.spot_major_fls r;
           Cheney.cs_fwd = Promote.empty_forwarding;
           Cheney.cs_queue = Seq.empty } in
        let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
@@ -453,7 +476,7 @@ let forward_roots_b_zero (r: unit{ConcreteMajor.spot_major_room})
   let roots = ThreeObjects.spot_roots c in
   let cs0 : Cheney.cheney_state =
     { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
-      Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
+      Cheney.cs_fp = ConcreteMajor.spot_major_fls r;
       Cheney.cs_fwd = Promote.empty_forwarding;
       Cheney.cs_queue = Seq.empty } in
   ThreeObjects.spot_roots_len c;
@@ -478,7 +501,7 @@ let scan_after_roots_b_zero (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (ensures
       (let cs0 : Cheney.cheney_state =
         { Cheney.cs_major = ConcreteMajor.spot_major_heap r;
-          Cheney.cs_fp = ConcreteMajor.spot_major_fp r;
+          Cheney.cs_fp = ConcreteMajor.spot_major_fls r;
           Cheney.cs_fwd = Promote.empty_forwarding;
           Cheney.cs_queue = Seq.empty } in
        let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
@@ -491,7 +514,7 @@ let scan_after_roots_b_zero (r: unit{ConcreteMajor.spot_major_room})
   let c = ConcreteMajor.spot_c r in
   let roots = ThreeObjects.spot_roots c in
   let major = ConcreteMajor.spot_major_heap r in
-  let fp = ConcreteMajor.spot_major_fp r in
+  let fp = ConcreteMajor.spot_major_fls r in
   let cs0 : Cheney.cheney_state =
     { Cheney.cs_major = major;
       Cheney.cs_fp = fp;
@@ -569,7 +592,7 @@ let spot_concrete_a_forwarding_free_obj
   let c = ConcreteMajor.spot_c r in
   let roots = ThreeObjects.spot_roots c in
   let major = ConcreteMajor.spot_major_heap r in
-  let fp = ConcreteMajor.spot_major_fp r in
+  let fp = ConcreteMajor.spot_major_fls r in
   let cs0 : Cheney.cheney_state =
     { Cheney.cs_major = major;
       Cheney.cs_fp = fp;

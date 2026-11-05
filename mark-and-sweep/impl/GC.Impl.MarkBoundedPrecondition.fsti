@@ -58,11 +58,9 @@ let root_named (g: heap) (roots: Seq.seq U64.t) (x: obj_addr) : prop =
 /// darkening.  Every conjunct talks about `g`, `st` and `roots` only; nothing
 /// here mentions `darken_roots_bounded_spec`.
 let darken_precondition
-  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t) (fp: U64.t) (cap: nat)
+  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t) (cap: nat)
   : prop =
   MarkBoundedInv.bounded_mark_inv g st cap /\
-  SweepInv.fp_valid fp g /\
-  SpecSweep.fp_in_heap fp g /\
   SpecMark.no_black_objects g /\
   SpecMark.no_pointer_to_blue g /\
   SpecMark.gray_objects_on_stack g st /\
@@ -74,9 +72,9 @@ let darken_precondition
 /// Every root ends up on the darkened stack, and the darkened stack holds
 /// nothing but roots.
 val darken_roots_match_stack
-  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t) (fp: U64.t) (cap: nat)
+  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t) (cap: nat)
   : Lemma
-      (requires darken_precondition g st roots fp cap)
+      (requires darken_precondition g st roots cap)
       (ensures
         (let st' = snd (MB.darken_roots_bounded_spec g st roots cap) in
          (forall (r: U64.t). Seq.mem r roots ==> is_val_addr r) /\
@@ -87,20 +85,20 @@ val darken_roots_match_stack
 /// The main result: darkening a caller-supplied root set turns
 /// `darken_precondition` into the full major-GC precondition.
 val darken_establishes_precondition
-  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t) (fp: U64.t) (cap: nat)
+  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t) (cap: nat)
   : Lemma
-      (requires darken_precondition g st roots fp cap)
+      (requires darken_precondition g st roots cap)
       (ensures
         (let g' = fst (MB.darken_roots_bounded_spec g st roots cap) in
          let st' = snd (MB.darken_roots_bounded_spec g st roots cap) in
-         MajorGC.gc_precondition_with_roots g' st' st' fp cap))
+         MajorGC.gc_precondition_with_roots g' st' st' cap))
 
 /// Darkening recolours headers only, so the caller may freely move statements
 /// about the object graph across it.
 val darken_preserves_create_graph
-  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t) (fp: U64.t) (cap: nat)
+  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t) (cap: nat)
   : Lemma
-      (requires darken_precondition g st roots fp cap /\ SpecFields.well_formed_heap g)
+      (requires darken_precondition g st roots cap /\ SpecFields.well_formed_heap g)
       (ensures
         GC.Spec.HeapModel.create_graph (fst (MB.darken_roots_bounded_spec g st roots cap)) ==
         GC.Spec.HeapModel.create_graph g)

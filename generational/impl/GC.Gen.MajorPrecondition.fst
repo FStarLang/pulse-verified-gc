@@ -2,6 +2,7 @@ module GC.Gen.MajorPrecondition
 
 open FStar.Seq
 module U64 = FStar.UInt64
+module FLs = GC.Spec.FreeLists
 module Seq = FStar.Seq
 
 open GC.Spec.Base
@@ -94,7 +95,7 @@ let empty_stack_subset (g: heap) (roots: seq U64.t)
 /// time, so an interior nursery root is rewritten to an interior major pointer.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let post_minor_minor_root_valid
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (r: U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) (r: U64.t)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\

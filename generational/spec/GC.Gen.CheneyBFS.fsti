@@ -24,6 +24,7 @@ open GC.Gen.Promote
 open GC.Gen.Reachability
 
 module CheneySpec = GC.Gen.Cheney
+module FLs = GC.Spec.FreeLists
 
 /// ---------------------------------------------------------------------------
 /// Predicates: well-formedness of the forwarding map
@@ -392,11 +393,11 @@ val scanned_exhausted_implies_fwd_closed_oom
 /// This precondition says "roots are forwarded AND forwarding is closed
 /// under successors." The conclusion follows by graph-theoretic induction
 /// (fwd_well_formed_covers_reachable), which is non-trivial.
-let cheney_no_oom (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+let cheney_no_oom (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) : prop =
   fwd_well_formed minor (CheneySpec.cheney_promote minor major fp roots).fwd_map roots
 
 val cheney_no_oom_from_loop_posts
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   (oom_roots oom_final: bool)
   : Lemma (requires minor_infix_wf minor /\
                     (let cs0 : CheneySpec.cheney_state =
@@ -419,7 +420,7 @@ val cheney_no_oom_from_loop_posts
 /// cheney_promote, provided no OOM occurred (the forwarding map covers
 /// roots and is successor-closed).
 val cheney_promotes_all_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : Lemma (requires cheney_no_oom minor major fp roots)
           (ensures (let prom = CheneySpec.cheney_promote minor major fp roots in
                     forall (x: U64.t).
@@ -495,7 +496,7 @@ let cheney_oom_reaching (minor: minor_state) (final: CheneySpec.cheney_state) : 
     cheney_attempts minor cs final addr /\ promote_fails_for minor cs addr
 
 /// The state `cheney_promote` ends in (its result is this state's projection).
-let cheney_promote_state (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+let cheney_promote_state (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t)
   : GTot CheneySpec.cheney_state
   = let cs0 : CheneySpec.cheney_state =
       { CheneySpec.cs_major = major; CheneySpec.cs_fp = fp;
@@ -504,7 +505,7 @@ let cheney_promote_state (minor: minor_state) (major: heap) (fp: U64.t) (roots: 
       (CheneySpec.cheney_forward_roots minor cs0 roots 0) 0 (CheneySpec.cheney_fuel minor)
 
 /// `cheney_promote minor major fp roots` ran out of major-heap room.
-let cheney_oom (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+let cheney_oom (minor: minor_state) (major: heap) (fp: FLs.fl_state) (roots: seq U64.t) : prop =
   cheney_oom_reaching minor (cheney_promote_state minor major fp roots)
 
 /// Introduction from the root loop: the collector was about to forward

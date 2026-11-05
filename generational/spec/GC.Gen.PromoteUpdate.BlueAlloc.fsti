@@ -17,28 +17,33 @@ open GC.Gen.WriteBodyLemmas
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module FreeListShape = GC.Gen.FreeListShape
+module FLs = GC.Spec.FreeLists
+module SAL = GC.Spec.Allocator.Lists
 
 val alloc_spec_preserves_fp_pointer_or_zero
-  (g: heap) (fp: U64.t) (wz: nat)
+  (g: heap) (fp: FLs.fl_state) (wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
-                    AllocLemmas.fl_valid g fp heap_words /\
-                    AllocLemmas.fl_chain_terminates g fp heap_words /\
+                    FLs.fls_valid g fp /\
+                    FLs.fls_terminates g fp /\
                     FreeListShape.blue_link_fields_valid g /\
-                    FreeListShape.fp_pointer_or_zero fp /\
+                    FreeListShape.fls_pointer_or_zero fp /\
                     wz >= 1 /\
-                    (GC.Spec.Allocator.alloc_spec g fp wz).obj_out <> 0UL /\
+                    (SAL.alloc_lists_spec g fp wz).obj_out <> 0UL /\
                     chain_objects_blue g fp)
-          (ensures FreeListShape.fp_pointer_or_zero
-                     (GC.Spec.Allocator.alloc_spec g fp wz).fp_out)
+          (ensures FreeListShape.fls_pointer_or_zero
+                     (SAL.alloc_lists_spec g fp wz).fls_out)
 
+/// The heads' shape is needed when the allocation moves a block to another
+/// list: the block's link becomes that list's old head.
 val alloc_spec_preserves_blue_link_fields_valid
-  (g: heap) (fp: U64.t) (wz: nat)
+  (g: heap) (fp: FLs.fl_state) (wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
-                    AllocLemmas.fl_valid g fp heap_words /\
-                    AllocLemmas.fl_chain_terminates g fp heap_words /\
+                    FLs.fls_valid g fp /\
+                    FLs.fls_terminates g fp /\
                     FreeListShape.blue_link_fields_valid g /\
+                    FreeListShape.fls_pointer_or_zero fp /\
                     wz >= 1 /\
-                    (GC.Spec.Allocator.alloc_spec g fp wz).obj_out <> 0UL /\
+                    (SAL.alloc_lists_spec g fp wz).obj_out <> 0UL /\
                     chain_objects_blue g fp)
           (ensures FreeListShape.blue_link_fields_valid
-                     (GC.Spec.Allocator.alloc_spec g fp wz).heap_out)
+                     (SAL.alloc_lists_spec g fp wz).heap_out)

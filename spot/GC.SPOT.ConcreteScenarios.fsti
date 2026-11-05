@@ -35,7 +35,7 @@ val spot_collection_heap_shape
     Lemma (GenInv.collection_heap_shape
              ConcreteMinor.spot_minor2
              (ConcreteMajor.spot_major_heap r)
-             (ConcreteMajor.spot_major_fp r))
+             (ConcreteMajor.spot_major_fls r))
 
 val spot_roots_valid_for_minor_collection
   : r:unit{ConcreteMajor.spot_major_room} ->
@@ -50,7 +50,7 @@ val spot_concrete_minor_collect_full_pre
       Preconditions.minor_collect_full_pre
         ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
-        (ConcreteMajor.spot_major_fp r)
+        (ConcreteMajor.spot_major_fls r)
         (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
         spot_fwd_array
         (ThreeObjects.spot_slots (ConcreteMajor.spot_c r))
@@ -63,7 +63,7 @@ val spot_concrete_minor_scenario_pre_from_no_oom
         ThreeObjects.spot_minor_scenario_pre
           ConcreteMinor.spot_minor2
           (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
+          (ConcreteMajor.spot_major_fls r)
           (ConcreteMajor.spot_c r)
           spot_fwd_array)
 
@@ -80,7 +80,7 @@ val spot_concrete_gen_gc_pre_from_stack
         Preconditions.gen_gc_pre
           ConcreteMinor.spot_minor2
           (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
+          (ConcreteMajor.spot_major_fls r)
           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
           spot_fwd_array
           (ThreeObjects.spot_slots (ConcreteMajor.spot_c r))
@@ -104,7 +104,7 @@ val spot_concrete_gen_gc_pre_empty_stack
         Preconditions.gen_gc_pre
           ConcreteMinor.spot_minor2
           (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
+          (ConcreteMajor.spot_major_fls r)
           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
           spot_fwd_array
           (ThreeObjects.spot_slots (ConcreteMajor.spot_c r))
@@ -118,12 +118,12 @@ val spot_concrete_a_promoted_from_no_oom
           Cheney.cheney_promote
             ConcreteMinor.spot_minor2
             (ConcreteMajor.spot_major_heap r)
-            (ConcreteMajor.spot_major_fp r)
+            (ConcreteMajor.spot_major_fls r)
             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
         GC.SPOT.Postconditions.promoted_image
           ConcreteMinor.spot_minor2
           (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
+          (ConcreteMajor.spot_major_fls r)
           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
           GC.SPOT.Layout.a_minor
           (prom.fwd_map GC.SPOT.Layout.a_minor)))
@@ -136,18 +136,18 @@ val spot_concrete_c_field_rewritten_from_no_oom
           Cheney.cheney_promote
             ConcreteMinor.spot_minor2
             (ConcreteMajor.spot_major_heap r)
-            (ConcreteMajor.spot_major_fp r)
+            (ConcreteMajor.spot_major_fls r)
             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
         let res =
           Cheney.cheney_collect_spec
             ConcreteMinor.spot_minor2
             (ConcreteMajor.spot_major_heap r)
-            (ConcreteMajor.spot_major_fp r)
+            (ConcreteMajor.spot_major_fls r)
             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
         GC.SPOT.Postconditions.promoted_image
           ConcreteMinor.spot_minor2
           (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
+          (ConcreteMajor.spot_major_fls r)
           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
           GC.SPOT.Layout.a_minor
           (prom.fwd_map GC.SPOT.Layout.a_minor) /\
@@ -160,6 +160,6 @@ val spot_concrete_b_not_promoted
       GC.SPOT.Postconditions.minor_not_promoted
         ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
-        (ConcreteMajor.spot_major_fp r)
+        (ConcreteMajor.spot_major_fls r)
         (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
         GC.SPOT.Layout.b_minor)
