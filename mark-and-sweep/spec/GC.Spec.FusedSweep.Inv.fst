@@ -27,105 +27,8 @@ let free_header_facts (wz: nat{wz < pow2 54}) =
   makeHeader_getTag (U64.uint_to_t wz) Header.Blue 0UL
 
 /// ---------------------------------------------------------------------------
-/// Dead runs
-/// ---------------------------------------------------------------------------
-
-#push-options "--fuel 1 --ifuel 1"
-let rec dead_run_reaches (g0: heap) (a: hp_addr) (b: nat)
-  : Lemma (requires dead_run g0 a b) (ensures W.reaches g0 a b)
-          (decreases (heap_size - U64.v a))
-  = if U64.v a = b then W.reaches_refl g0 a
-    else begin
-      let n = W.bnext g0 a in
-      W.bnext_facts g0 a;
-      if n = b then W.reaches_step g0 a
-      else begin
-        let na = mk_hp_addr n in
-        dead_run_reaches g0 na b;
-        W.reaches_step g0 a;
-        W.reaches_trans g0 a na b
-      end
-    end
-#pop-options
-
-#push-options "--fuel 1 --ifuel 1"
-let dead_run_one (g0: heap) (p: hp_addr) = ()
-#pop-options
-
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 30"
-let rec dead_run_snoc (g0: heap) (a p: hp_addr)
-  : Lemma (requires dead_run g0 a (U64.v p) /\ W.can_step g0 p /\ not (black_at g0 p))
-          (ensures dead_run g0 a (W.bnext g0 p))
-          (decreases (heap_size - U64.v a))
-  = W.bnext_facts g0 p;
-    if U64.v a = U64.v p then ()
-    else begin
-      W.bnext_facts g0 a;
-      let n = W.bnext g0 a in
-      if n = U64.v p then begin
-        dead_run_one g0 p;
-        assert (mk_hp_addr n == p)
-      end
-      else dead_run_snoc g0 (mk_hp_addr n) p
-    end
-#pop-options
-
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 30"
-let rec dead_run_mem (g0: heap) (a: hp_addr) (b: nat) (q: hp_addr)
-  : Lemma (requires dead_run g0 a b /\ W.reaches g0 a (U64.v q) /\ U64.v q < b)
-          (ensures not (black_at g0 q))
-          (decreases (heap_size - U64.v a))
-  = if U64.v a = U64.v q then ()
-    else begin
-      // q lies beyond a, so the walk steps from a first
-      W.reaches_bounds g0 a (U64.v q);
-      W.reaches_unfold g0 a (U64.v q);
-      W.bnext_facts g0 a;
-      let n = W.bnext g0 a in
-      if n = b then begin
-        // the run is the single block at a, and q inside it would be a second position
-        W.reaches_block_before g0 a a (U64.v q);
-        assert False
-      end
-      else dead_run_mem g0 (mk_hp_addr n) b q
-    end
-#pop-options
-
-/// ---------------------------------------------------------------------------
-/// Frames
-/// ---------------------------------------------------------------------------
-
-#push-options "--fuel 0 --ifuel 1 --z3rlimit 30"
-let swept_block_frame (g0 g g': heap) (p: hp_addr) =
-  W.bnext_facts g p;
-  assert (read_word g' p == read_word g p);
-  assert (W.bnext g' p == W.bnext g p);
-  assert (W.can_step g' p == W.can_step g p)
-
-let swept_block_frame_free (g0 g g': heap) (p: hp_addr) =
-  white_header_facts (read_word g0 p);
-  assert (W.bnext g' p == W.bnext g p);
-  assert (W.can_step g' p == W.can_step g p)
-#pop-options
-
-/// ---------------------------------------------------------------------------
 /// Opening and closing
 /// ---------------------------------------------------------------------------
-
-let sweep_inv_intro g0 g fp st = reveal_opaque (`%sweep_inv) (sweep_inv g0 g fp st)
-let sweep_inv_elim g0 g fp st = reveal_opaque (`%sweep_inv) (sweep_inv g0 g fp st)
-
-let front_unchanged_elim g0 g c a = reveal_opaque (`%front_unchanged) (front_unchanged g0 g c)
-
-let front_unchanged_intro g0 g c pf =
-  reveal_opaque (`%front_unchanged) (front_unchanged g0 g c);
-  FStar.Classical.forall_intro (FStar.Classical.move_requires pf)
-
-let behind_ok_elim g0 g c p = reveal_opaque (`%behind_ok) (behind_ok g0 g c)
-
-let behind_ok_intro g0 g c pf =
-  reveal_opaque (`%behind_ok) (behind_ok g0 g c);
-  FStar.Classical.forall_intro (FStar.Classical.move_requires pf)
 
 let no_adjacent_free_elim g c p q = reveal_opaque (`%no_adjacent_free) (no_adjacent_free g c)
 
@@ -174,49 +77,20 @@ let cell_link_not_pos (g: heap) (x: U64.t) (q: nat) =
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// Start
-/// ---------------------------------------------------------------------------
-
-#push-options "--fuel 0 --ifuel 1 --z3rlimit 30"
-let sweep_start_inv (g0: heap) (fp: U64.t) =
-  let c = U64.v zero_addr in
-  W.reaches_refl g0 zero_addr;
-  front_unchanged_intro g0 g0 c (fun _ -> ());
-  behind_ok_intro g0 g0 c (fun p -> W.reaches_bounds g0 zero_addr (U64.v p));
-  no_adjacent_free_intro g0 c (fun p q ->
-    W.reaches_bounds g0 zero_addr (U64.v p); W.bnext_facts g0 p);
-  ends_free_intro g0 c false (fun p ->
-    W.reaches_bounds g0 zero_addr (U64.v p); W.bnext_facts g0 p);
-  let no_low (x: U64.t)
-    : Lemma (requires FL.fl_cell g0 x /\ U64.v x < c) (ensures False)
-    = FLA.fl_cell_facts g0 x
-  in
-  FStar.Classical.forall_intro (FStar.Classical.move_requires no_low);
-  tail_ok_intro g0 c 0UL;
-  assert (prev_free g0 sweep_start == false);
-  sweep_inv_intro g0 g0 fp sweep_start
-#pop-options
-
-/// ---------------------------------------------------------------------------
 /// Facts at a step
 /// ---------------------------------------------------------------------------
 
-/// The cursor is a position of `g0`'s walk with room for a header, so the
-/// block there fits.
 #push-options "--fuel 0 --ifuel 1 --z3rlimit 30"
-let g0_can_step (g0: heap) (c: hp_addr)
-  : Lemma (requires sweep_g0 g0 /\ W.reaches g0 zero_addr (U64.v c) /\ U64.v c + 8 < heap_size)
-          (ensures W.can_step g0 c)
-  = W.reaches_end_of_dense g0;
-    W.can_step_before_end g0 zero_addr c (W.walk_end g0 zero_addr)
+let dense_can_step (g: heap) (c: hp_addr) =
+  W.reaches_end_of_dense g;
+  W.can_step_before_end g zero_addr c (W.walk_end g zero_addr)
 #pop-options
 
 #push-options "--fuel 0 --ifuel 1 --z3rlimit 40"
-let sweep_inv_facts (g0 g: heap) (fp: U64.t) (st: sweep_state) =
-  sweep_inv_elim g0 g fp st;
+let step_guards (g: heap) (fp: U64.t) (st: sweep_state) =
+  W.reaches_bounds g zero_addr (U64.v st.cursor);
   let c : hp_addr = st.cursor in
-  g0_can_step g0 c;
-  front_unchanged_elim g0 g (U64.v c) c;
+  dense_can_step g c;
   assert (W.can_step g c);
   assert (step_next g st == W.bnext g c);
   tail_ok_elim g (U64.v c) st.swept_tail;

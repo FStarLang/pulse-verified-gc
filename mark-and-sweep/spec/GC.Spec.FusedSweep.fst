@@ -38,8 +38,9 @@
 ///   white, previous not free: free it; link it after `swept_tail` if it has
 ///           room for a link, otherwise it is a fragment.
 ///
-/// The correctness argument is a loop invariant on this step
-/// (`GC.Spec.FusedSweep.Inv`), with one lemma per case.
+/// The correctness argument is a loop invariant on this step, the sweep
+/// invariant on the current heap (`GC.Spec.SweepPhase.Intrinsic`), with one
+/// lemma per case (`GC.Spec.FusedSweep.Step`).
 
 module GC.Spec.FusedSweep
 

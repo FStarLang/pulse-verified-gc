@@ -473,13 +473,14 @@ shape invariant now carries, so the end-to-end SPOTs run the new sweep.
 
 ## A mid-sweep heap with an object pending free
 
-`GC.SPOT.SweepPhasePendingFree` shows the sweep phase
+`GC.SPOT.SweepPhasePendingFree` shows the sweep invariant
 (`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental`, well-formedness for
 `free_incremental`) and the minor collection's shape (`collection_shape_with`)
 are satisfiable with a **non-empty** pending-free set, on a heap where the
 field of an object pending free points into a block the sweep has freed and
 merged -- the case that definitions of free beyond blue exist for.  It is built with
-the sweep phase's own theorems from the concrete heap of `ConcreteMajorGen`:
+the sweep invariant's own theorems (`GC.Spec.FusedSweep.Step`) from the
+concrete heap of `ConcreteMajorGen`:
 
 1. sweep it completely, nothing marked: one free block (`sweep_steps_done`,
    `nothing_live_one_block`);

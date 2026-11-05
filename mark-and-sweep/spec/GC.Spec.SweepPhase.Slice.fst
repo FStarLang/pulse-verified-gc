@@ -6,6 +6,7 @@ open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Spec.FusedSweep
 open GC.Spec.SweepPhase.Intrinsic
+open GC.Spec.FusedSweep.Step
 
 module U64 = FStar.UInt64
 module Ph = GC.Spec.Phase

@@ -32,6 +32,7 @@ module MarkInv = GC.Spec.MarkInv
 module FS = GC.Spec.FusedSweep
 module FSI = GC.Spec.FusedSweep.Inv
 module FSE = GC.Spec.FusedSweep.End
+module SPE = GC.Spec.SweepPhase.Intrinsic.End
 module FLA = GC.Spec.FreeList.Ascending
 
 /// ---------------------------------------------------------------------------
@@ -388,9 +389,7 @@ let mark_post_sweep_pre h_init h_mark roots fp =
 
 let fused_post_gen h_init h_mark roots fp =
   mark_post_sweep_pre h_init h_mark roots fp;
-  FSE.fused_sweep_post h_mark fp;
-  let r = FS.fused_sweep_coalesce h_mark fp in
-  FSE.sweep_post_wf h_mark (fst r) (snd r)
+  SPE.fused_sweep_post h_mark fp
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let gc_postcondition_fused h_init h_mark roots fp =

@@ -759,36 +759,43 @@ Free blocks' bodies are left alone: a merged block's header records its full
 size, so the object walk jumps over the stale words of the blocks it absorbed.
 
 **The proof is a loop invariant on the step**, not a reduction to a two-pass
-specification. `GC.Spec.FusedSweep.Inv.sweep_inv g0 g fp st` relates the
-marked heap `g0` to the current heap `g`:
+specification, and it is the one invariant of the incremental sweep
+(`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental`, below): it is about the
+current heap and the cursor only, and holds in both modes.  Its clauses about
+the walk and the list (`GC.Spec.FusedSweep.Inv`): behind the cursor no two free
+blocks are adjacent; the free list from `fp` is exactly the heap's cells, in
+ascending order (`GC.Spec.FreeList.Ascending.fl_ascending`); `swept_tail` and
+`last_fragment` mean what they say (they are derived from the heap and the
+cursor).  `GC.Spec.FusedSweep.Step` keeps it with one lemma per case of the
+step, each concluding the invariant's clauses at the new cursor directly.
 
-1. behind the cursor, every block of `g`'s walk is a survivor (black in `g0`,
-   now white with the same size, tag and fields) or a free block covering a run
-   of blocks that were dead in `g0`; no two free blocks are adjacent;
-2. in front of the cursor, `g` is `g0` word for word;
-3. the free list from `fp` is exactly the heap's cells, in ascending order
-   (`GC.Spec.FreeList.Ascending.fl_ascending`);
-4. `swept_tail` and `last_fragment` mean what they say;
-5. the cursor is a position of both walks (`GC.Spec.Walk.reaches`), so `g`'s
-   walk tiles the swept part and continues as `g0`'s.
-
-`sweep_start_inv` establishes it from the previous cycle's list,
-`GC.Spec.FusedSweep.Step` keeps it with one lemma per case of the step, and
-`GC.Spec.FusedSweep.End` reads the post-collection facts off it once the cursor
-reaches the end of the heap (`sweep_post`): live objects unchanged and white,
-every dead block inside a free block, free blocks holding only dead blocks, no
-adjacent free blocks, the walk dense, the list exact and ascending, and -- from
-the mark postcondition's colour facts -- the heap well formed, with no pointer
-into a free block and every live object's edges unchanged.
+Stop-the-world, the end facts relate the result to the marked heap `g0`, so
+the sweep keeps `sweep_inv_stw g0 g fp c`: the invariant, the walk of `g0`
+reaches the cursor, `g` is `g0` from the cursor on (`front_unchanged`), every
+block black in `g0` is still a block of `g` with the same size, tag and fields
+(`marked_survive`), and every non-free block behind the cursor was black in
+`g0` (`survivors_were_marked`).  `sweep_inv_stw_start` establishes it from the
+heap marking left and the previous cycle's list, `sweep_inv_stw_step` keeps it
+(only the extra clauses, from the step's frame), and
+`GC.Spec.SweepPhase.Intrinsic.End.sweep_inv_stw_end` reads the
+post-collection facts off it once the cursor reaches the end of the heap
+(`GC.Spec.FusedSweep.End.sweep_post`; `fused_sweep_post` for the whole pass):
+live objects unchanged and white, every dead block inside a free block, free
+blocks holding only dead blocks, no adjacent free blocks, the walk dense, the
+list exact and ascending, and -- from the mark postcondition's colour facts --
+the heap well formed, with no pointer into a free block and every live
+object's edges unchanged.
 
 `GC.Impl.FusedSweepCoalesce.fused_sweep_coalesce` is the Pulse loop: the state
-lives in references, the loop invariant is `sweep_inv` plus "the rest of the
-pass computes the spec's result", and each iteration is one
-`sweep_step_impl`, checked against the step equations
-(`GC.Spec.FusedSweep.Step.step_eq_*`). `GC.Impl.collect_with_roots` calls it
-with the free list it was handed and proves its postcondition with
-`GC.Spec.Correctness.gc_result_fused`; `gc_coalesce_source` records that the
-result is exactly `fused_sweep_coalesce h_mark fp`.
+lives in references, the loop invariant is `sweep_inv_incremental` (with the
+derived caches) plus "the rest of the pass computes the spec's result", and
+each iteration is one `sweep_step_impl`, checked against the step equations
+(`GC.Spec.FusedSweep.Step.step_eq_*`).  It needs the heap marking left
+(`FusedSweep.End.marked`: no grey object, no black object pointing at a white
+one).  `GC.Impl.collect_with_roots` calls it with the free list it was handed
+and proves its postcondition with `GC.Spec.Correctness.gc_result_fused`, whose
+`sweep_post` comes from `fused_sweep_post`; `gc_coalesce_source` records that
+the result is exactly `fused_sweep_coalesce h_mark fp`.
 
 Because the list is kept, the collector needs it ascending and exact on entry.
 `gc_precondition_with_roots` asks for it, root darkening keeps it, and the
@@ -831,8 +838,8 @@ ending at `c` is free exactly when `prev_free g (state_at g c)`: a free block
 ending there is a fragment, or a cell and then the last cell behind `c`; and
 only one block of the walk ends at `c`).  A sweep step is the stop-the-world
 step run from `state_at g c`, and the state it leaves is the derived one of
-the new heap (`sweep_inv_incremental_step`).  The implementation stores the caches in
-the phase record and updates them in place -- the sweep step, and the
+the new heap (`sweep_inv_incremental_step`).  The implementation stores the
+caches in the phase record and updates them in place -- the sweep step, and the
 allocator when it takes the cached cell off the list
 (`GC.Impl.Allocator.record_after_alloc`; `alloc_choice` names the block
 first-fit takes and its list predecessor) -- and its phase predicate says the
@@ -872,28 +879,30 @@ definition of free (`free_incremental_ok`: blue blocks are free, and it is
 read off the walk and the headers).  Everything but well-formedness is
 `sweep_shape`: facts about the walk, the headers and the free list, kept by
 any change that keeps the walk and every header on it (`shape_transport`).
-The step lemmas are the stop-the-world ones (`GC.Spec.FusedSweep.Step`), run
-inside the proof against a heap rebuilt from the current one (`ref_of`:
-blacken every white block behind the cursor); nothing carries it.
+The step is proved directly on the invariant (`GC.Spec.FusedSweep.Step`):
+behind the new cursor the block just swept is white or free, in front of it
+nothing changed (and nothing is grey), and the blocks that are not free are
+the same blocks with the same contents, so well-formedness carries over
+(`wf_transport`).
 
-- `sweep_inv_incremental_start`: the heap marking left satisfies it, with every white
-  object pending free.
-- `sweep_inv_incremental_step`: a step from `state_at g c` keeps it at the new cursor,
-  leaving the derived state; it frees only blocks pending free (the
-  non-free blocks are the same before and after, with the same size, tag and
-  fields) and the pending-free set only shrinks.  `sweep_inv_incremental_steps` is the
-  same for up to `k` steps (`sweep_steps`, a slice).  That the blocks pending
-  free are among the white objects marking left is a lemma
-  (`pending_free_within_step`), not carried.
-- `sweep_inv_incremental_end` (`.End`): at the end nothing is pending free, the heap is
-  well formed and swept clean (`GC.Spec.SweepPhase.Util.swept_clean`); while
-  the sweep runs the list is exact, so an allocation fails only when no free
-  block anywhere is big enough (`sweep_inv_incremental_oom_no_fit`, #29 mid-sweep).
-- Stop-the-world the sweep also carries `stw_rel g0 g c` against the marked
-  heap (the blocks black in `g0` are unchanged, `marked_survive`, and every
-  non-free block behind the cursor was black, `survivors_were_marked`), and
-  `sweep_inv_stw_end` gives `FusedSweep.End.sweep_post`
-  (`fused_sweep_post_intrinsic` re-derives the stop-the-world pass).
+- `sweep_inv_incremental_start`: the heap marking left satisfies it, with
+  every white object pending free.
+- `sweep_inv_incremental_step` (`FusedSweep.Step`): a step from `state_at g c`
+  keeps it at the new cursor, leaving the derived state; it frees only blocks
+  pending free (the non-free blocks are the same before and after, with the
+  same size, tag and fields) and the pending-free set only shrinks.
+  `sweep_inv_incremental_steps` is the same for up to `k` steps
+  (`sweep_steps`, a slice).  That the blocks pending free are among the white
+  objects marking left is a lemma (`pending_free_within_step`), not carried.
+- `sweep_inv_incremental_end` (`.End`): at the end nothing is pending free,
+  the heap is well formed and swept clean
+  (`GC.Spec.SweepPhase.Util.swept_clean`); while the sweep runs the list is
+  exact, so an allocation fails only when no free block anywhere is big
+  enough (`Allocator.Oom.sweep_inv_incremental_oom_no_fit`, #29 mid-sweep).
+- Stop-the-world the sweep keeps `sweep_inv_stw g0 g fp c` (above:
+  `front_unchanged`, `marked_survive`, `survivors_were_marked` against the
+  marked heap), and `sweep_inv_stw_end` gives `FusedSweep.End.sweep_post`
+  (`fused_sweep_post` for the whole pass).
 
 **The program's events keep it** (`GC.Gen.SweepPhase`), each leaving the
 pending-free set unchanged:
@@ -964,8 +973,9 @@ only blocks pending free, so it never frees a reachable one and leaves its
 size, tag and fields alone (`step_keeps_reachable`; `steps_keep_reachable` for
 a slice), and a minor collection in between keeps every non-free object
 non-free (`minor_keeps_not_free`) and the pending-free set (step C).  The
-slice lemmas are in `Intrinsic`: `sweep_inv_incremental_steps` (and `_stw`), and
-`sweep_steps_done` (a budget of one step per heap word finishes the sweep).
+slice lemmas are in `FusedSweep.Step`: `sweep_inv_incremental_steps` (and
+`sweep_inv_stw_steps`), and `sweep_steps_done` (a budget of one step per heap
+word finishes the sweep).
 
 `GC.SPOT.SweepPhasePendingFree` exercises all of it on a concrete heap: from
 the two-block heap of `GC.SPOT.ConcreteMajorGen` it sweeps everything into one
@@ -1015,7 +1025,7 @@ the phase: nothing idle; mid-sweep the slice from `state_at g c`, the phase
 it leaves its new cursor, and idle again once the cursor reaches the end. The
 Pulse loop is `GC.Impl.FusedSweepCoalesce.sweep_slice_impl`, over the same
 `sweep_step_impl` the stop-the-world pass runs, with step safety from
-`Intrinsic.sweep_inv_incremental_ready`.
+`FusedSweep.Step.sweep_inv_incremental_ready`.
 
 | entry point | requires | ensures |
 |---|---|---|
@@ -1026,8 +1036,8 @@ Pulse loop is `GC.Impl.FusedSweepCoalesce.sweep_slice_impl`, over the same
 | `gen_alloc_major gh wosize tag` | the heap and phase, `wosize >= 1`, mid-sweep an exact ascending free list | `AC.alloc_phase`'s result at the same phase (the record's `swept_tail` kept derived); mid-sweep with `gc_state` and `tag <> infix_tag`: either nothing changed or the object is a `new_block` and `fresh_ok` |
 
 The end of the sweep is the stop-the-world shape again
-(`GI.sweep_end_shape`: `sweep_inv_incremental_end`'s swept-clean heap, the free-list
-facts from the ascending list, no black or grey object, and with nothing
+(`GI.sweep_end_shape`: `sweep_inv_incremental_end`'s swept-clean heap, the
+free-list facts from the ascending list, no black or grey object, and with nothing
 pending free the cross-generation condition is the idle one), so `gen_gc` or
 `gen_gc_start` can follow. A full collection requested mid-sweep calls
 `finish_sweep` first (D4). `GC.SPOT.IncrementalCycle` checks that the

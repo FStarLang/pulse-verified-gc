@@ -111,9 +111,12 @@ pushed back through `create_graph`.
   heap; black → white (survives), dead blocks freed and merged eagerly into their free
   neighbour, the ascending free list edited in place.
 
-The proof is a loop invariant on the step (`GC.Spec.FusedSweep.Inv`), kept by one
-lemma per case (`.Step`), and an end lemma (`.End`) from which the top-level
-theorems are read directly -- there is no two-pass reference composition.
+The proof is a loop invariant on the step, the sweep invariant on the current
+heap (`GC.Spec.SweepPhase.Intrinsic`, with its walk and list clauses in
+`GC.Spec.FusedSweep.Inv`), kept by one lemma per case (`GC.Spec.FusedSweep.Step`),
+and an end lemma (`GC.Spec.SweepPhase.Intrinsic.End`) giving the end facts
+(`GC.Spec.FusedSweep.End.sweep_post`) from which the top-level theorems are
+read directly -- there is no two-pass reference composition.
 
 ### 2.4 The top theorem, and its five pillars
 

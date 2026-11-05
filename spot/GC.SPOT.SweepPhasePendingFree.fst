@@ -35,6 +35,7 @@ open GC.Spec.FusedSweep
 open GC.Spec.FusedSweep.Inv
 open GC.Spec.SweepPhase.Util
 open GC.Spec.SweepPhase.Intrinsic
+open GC.Spec.FusedSweep.Step
 open GC.Gen.MinorHeap
 
 module U64 = FStar.UInt64
@@ -45,6 +46,7 @@ module GenInv = GC.Gen.HeapInvariant
 module Mark = GC.Spec.Mark
 module SweepInv = GC.Spec.SweepInv
 module SPE = GC.Spec.SweepPhase.Intrinsic.End
+module Oom = GC.Spec.Allocator.Oom
 module GSP = GC.Gen.SweepPhase
 module SPM = GC.Gen.SweepPhase.Minor
 module AC = GC.Spec.Allocator.Cursor
@@ -134,7 +136,7 @@ let stage1 (r: unit{room})
            only_block (g1 r) (c1 r))
   = stage0 r;
     state_at_start (g0 r);
-    sweep_inv_incremental_start (g0 r) (fp0 r);
+    sweep_inv_stw_start (g0 r) (fp0 r);
     sweep_inv_incremental_steps (g0 r) (fp0 r) sweep_start.cursor heap_words;
     sweep_inv_stw_steps (g0 r) (g0 r) (fp0 r) sweep_start.cursor heap_words;
     assert (heap_words * 8 == heap_size);
@@ -171,7 +173,7 @@ let new_obj (g: heap) (fp: U64.t) (cur: U64.t) : GTot U64.t = (ar g fp cur).SA.o
 let alloc_ok (g: heap) (fp: U64.t) (cur: U64.t) (e: nat)
   : Lemma (requires before g fp cur e) (ensures new_obj g fp cur <> 0UL)
   = if new_obj g fp cur = 0UL then begin
-      SPE.sweep_inv_incremental_oom_no_fit g fp cur 1 0UL;
+      Oom.sweep_inv_incremental_oom_no_fit g fp cur 1 0UL;
       let x = obj_of zero_addr in
       obj_of_facts zero_addr;
       obj_pos g x; colour_of g x;
@@ -435,7 +437,7 @@ let stage4 (r: unit{room})
 let stage5 (r: unit{room})
   : Lemma (let g = g4 r in
            let c = cend r in
-           sweep_inv_incremental g (fp3 r) sweep_start.cursor /\ stw_rel g g (U64.v zero_addr) /\
+           sweep_inv_stw g g (fp3 r) sweep_start.cursor /\
            no_black_pos g /\
            only_block g (c - 32) /\
            pos g (mk_hp_addr (c - 32)) /\ wz_at g (mk_hp_addr (c - 32)) == 1 /\
@@ -448,7 +450,7 @@ let stage5 (r: unit{room})
     sweep_inv_incremental_elim g (fp3 r) (cur1 r);
     SPE.sweep_inv_incremental_end g (fp3 r) (cur1 r);
     can_start g (fp3 r);
-    sweep_inv_incremental_start g (fp3 r);
+    sweep_inv_stw_start g (fp3 r);
     state_at_start g;
     hd_address_spec (gg r);
     obj_pos g (gg r)
@@ -475,7 +477,7 @@ let step_a (r: unit{room})
   : Lemma (let (ga, fpa, sta) = sa r in
            sweep_inv_incremental ga fpa sta.cursor /\ sta == state_at ga sta.cursor /\
            U64.v sta.cursor == cend r - 32 /\
-           stw_rel (g4 r) ga (cend r - 32) /\ not (sweep_done sweep_start.cursor) /\
+           sweep_inv_stw (g4 r) ga fpa sta.cursor /\ not (sweep_done sweep_start.cursor) /\
            can_sweep (g4 r) sweep_start)
   = stage5 r;
     state_at_start (g4 r);
@@ -490,7 +492,7 @@ let step_b (r: unit{room})
            can_sweep ga sta /\ not (sweep_done sta.cursor) /\
            (let (gb, fpb, stb) = sweep_step ga fpa sta in
             sweep_inv_incremental gb fpb stb.cursor /\ U64.v stb.cursor == cend r - 16 /\
-            stw_rel (g4 r) gb (cend r - 16)))
+            sweep_inv_stw (g4 r) gb fpb stb.cursor))
   = stage5 r;
     step_a r;
     let (ga, fpa, sta) = sa r in
@@ -503,7 +505,7 @@ let step_b (r: unit{room})
 #push-options "--z3rlimit 20"
 let stage6 (r: unit{room})
   : Lemma (sweep_inv_incremental (g5 r) (fp5 r) (st5 r).cursor /\ U64.v (st5 r).cursor == cend r - 16 /\
-           stw_rel (g4 r) (g5 r) (cend r - 16))
+           sweep_inv_stw (g4 r) (g5 r) (fp5 r) (st5 r).cursor)
   = step_a r; step_b r; sa_ok r;
     let (ga, fpa, sta) = sa r in
     let (gb, fpb, stb) = sweep_step ga fpa sta in

@@ -1,29 +1,24 @@
 /// ---------------------------------------------------------------------------
-/// GC.Spec.FusedSweep.Inv - the sweep's loop invariant
+/// GC.Spec.FusedSweep.Inv - the sweep's clauses about the walk and the list
 /// ---------------------------------------------------------------------------
 ///
-/// `sweep_inv g0 g fp st` relates the heap right after marking (`g0`) to the
-/// current heap (`g`) at sweep state `st`, with `fp` the head of the free list.
-/// Writing `c` for the cursor:
+/// The clauses of the sweep invariant
+/// (`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental`) that are about the
+/// walk of the current heap `g`, its headers and its free list, at a cursor
+/// `c` (a position of the walk):
 ///
-///   1. *Behind the cursor* (`behind_ok`): every block of `g`'s walk below `c`
-///      is either a marked block (`marked_block`: black in `g0`, now white,
-///      same size, tag and fields) or a free (blue) block covering a run of
-///      blocks that were dead (white or blue) in `g0`.  No two free blocks
-///      are adjacent (`no_adjacent_free`), and the block ending at `c` is
-///      free exactly when `prev_free` says so (`ends_free`).
-///   2. *In front of the cursor* (`front_unchanged`): `g` is word for word `g0`.
-///   3. *The free list* (`FLA.fl_ascending g fp`): every cell of the whole
-///      heap, in ascending order.
-///   4. *`swept_tail` and `last_fragment`* (`tail_ok`, `frag_ok`): the former
-///      is the highest cell below `c` (or 0 when there is none); the latter,
-///      when set, is the header-only free block ending at `c`.
-///   5. *The walk*: `c` is a position of both walks, so the walk of `g` covers
-///      the swept part of the heap block by block and continues as `g0`'s.
+///   * *behind the cursor* no two free blocks are adjacent
+///     (`no_adjacent_free`), and the block ending at `c` is free exactly when
+///     `prev_free` says so (`ends_free`);
+///   * *the free list* (`FLA.fl_ascending g fp`): every cell of the whole
+///     heap, in ascending order;
+///   * *`swept_tail` and `last_fragment`* (`tail_ok`, `frag_ok`): the former
+///     is the highest cell below `c` (or 0 when there is none); the latter,
+///     when set, is the header-only free block ending at `c`.
 ///
-/// `sweep_start_inv` establishes it, `GC.Spec.FusedSweep.Step.sweep_step_inv`
-/// keeps it, and `GC.Spec.FusedSweep.End` reads the post-collection facts off
-/// it once the cursor reaches the end of the heap.
+/// `GC.Spec.FusedSweep.Step` proves one lemma per clause and per kind of step
+/// (one that keeps the walk, one that merges two blocks), and
+/// `step_guards` gives what the step needs to be safe to run.
 
 module GC.Spec.FusedSweep.Inv
 
@@ -63,88 +58,8 @@ val free_header_facts (wz: nat{wz < pow2 54})
            getTag (free_header wz) == 0UL)
 
 /// ---------------------------------------------------------------------------
-/// Dead runs of `g0`
-/// ---------------------------------------------------------------------------
-
-/// The walk of `g0` from `a` lands on `b`, and every block it crosses is dead
-/// (not black).
-let rec dead_run (g0: heap) (a: hp_addr) (b: nat)
-  : Tot bool (decreases (heap_size - U64.v a))
-  = if U64.v a = b then true
-    else if U64.v a > b || not (W.can_step g0 a) || black_at g0 a then false
-    else begin
-      let n = W.bnext g0 a in
-      if n = b then true
-      else if n > b || n >= heap_size then false
-      else begin
-        aligned_plus_mul8 (U64.v a) (U64.v (getWosize (read_word g0 a)) + 1);
-        dead_run g0 (mk_hp_addr n) b
-      end
-    end
-
-val dead_run_reaches (g0: heap) (a: hp_addr) (b: nat)
-  : Lemma (requires dead_run g0 a b) (ensures W.reaches g0 a b)
-
-/// One dead block.
-val dead_run_one (g0: heap) (p: hp_addr)
-  : Lemma (requires W.can_step g0 p /\ not (black_at g0 p))
-          (ensures dead_run g0 p (W.bnext g0 p))
-
-/// Extend a dead run by the dead block at its end.
-val dead_run_snoc (g0: heap) (a p: hp_addr)
-  : Lemma (requires dead_run g0 a (U64.v p) /\ W.can_step g0 p /\ not (black_at g0 p))
-          (ensures dead_run g0 a (W.bnext g0 p))
-
-/// A block of `g0`'s walk inside a dead run is dead.
-val dead_run_mem (g0: heap) (a: hp_addr) (b: nat) (q: hp_addr)
-  : Lemma (requires dead_run g0 a b /\ W.reaches g0 a (U64.v q) /\ U64.v q < b)
-          (ensures not (black_at g0 q))
-
-/// ---------------------------------------------------------------------------
-/// Blocks behind the cursor
-/// ---------------------------------------------------------------------------
-
-/// A marked block: black in `g0`; white in `g` with the same size and tag; the
-/// same fields.
-let marked_block (g0 g: heap) (p: hp_addr) : prop =
-  black_at g0 p /\
-  read_word g p == white_header (read_word g0 p) /\
-  (forall (a: hp_addr). U64.v p < U64.v a /\ U64.v a < W.bnext g p ==>
-     read_word g a == read_word g0 a)
-
-/// A free block over a dead run of `g0`.  Its header is the one `g0` had (a
-/// free block left alone) or a fresh one, of tag 0.
-let free_run (g0 g: heap) (p: hp_addr) : prop =
-  blue_at g p /\
-  dead_run g0 p (W.bnext g p) /\
-  (read_word g p == read_word g0 p \/ getTag (read_word g p) == 0UL)
-
-let swept_block (g0 g: heap) (p: hp_addr) : prop =
-  W.can_step g p /\ (marked_block g0 g p \/ free_run g0 g p)
-
-/// A swept block depends only on its own words of `g` (and on `g0`).
-val swept_block_frame (g0 g g': heap) (p: hp_addr)
-  : Lemma (requires swept_block g0 g p /\
-                    (forall (a: hp_addr). U64.v p <= U64.v a /\ U64.v a < W.bnext g p ==>
-                       read_word g' a == read_word g a))
-          (ensures swept_block g0 g' p)
-
-/// A free block depends only on its header.
-val swept_block_frame_free (g0 g g': heap) (p: hp_addr)
-  : Lemma (requires swept_block g0 g p /\ blue_at g p /\ read_word g' p == read_word g p)
-          (ensures swept_block g0 g' p)
-
-/// ---------------------------------------------------------------------------
 /// The invariant's clauses
 /// ---------------------------------------------------------------------------
-
-[@@"opaque_to_smt"]
-let front_unchanged (g0 g: heap) (c: nat) : prop =
-  forall (a: hp_addr). U64.v a >= c ==> read_word g a == read_word g0 a
-
-[@@"opaque_to_smt"]
-let behind_ok (g0 g: heap) (c: nat) : prop =
-  forall (p: hp_addr). W.reaches g zero_addr (U64.v p) /\ U64.v p < c ==> swept_block g0 g p
 
 [@@"opaque_to_smt"]
 let no_adjacent_free (g: heap) (c: nat) : prop =
@@ -170,19 +85,7 @@ let frag_ok (g: heap) (c: nat) (f: U64.t) : prop =
       W.reaches g zero_addr (c - 8) /\ W.can_step g p /\ blue_at g p /\ wz_at g p == 0
     end else False))
 
-/// The invariant.
-[@@"opaque_to_smt"]
-let sweep_inv (g0 g: heap) (fp: U64.t) (st: sweep_state) : prop =
-  let c = U64.v st.cursor in
-  c % 8 == 0 /\ c <= heap_size /\
-  W.reaches g0 zero_addr c /\ W.reaches g zero_addr c /\
-  front_unchanged g0 g c /\ behind_ok g0 g c /\ no_adjacent_free g c /\
-  ends_free g c (prev_free g st) /\
-  tail_ok g c st.swept_tail /\ frag_ok g c st.last_fragment /\
-  FLA.fl_ascending g fp
-
-/// What each step needs of the heap the sweep started on: its walk runs to
-/// the end of the heap.
+/// The walk of the heap the sweep starts on runs to the end of the heap.
 let sweep_g0 (g0: heap) : prop =
   heap_objects_dense g0 /\ Seq.length (objects zero_addr g0) > 0
 
@@ -193,43 +96,6 @@ let sweep_pre (g0: heap) (fp: U64.t) : prop =
 /// ---------------------------------------------------------------------------
 /// Opening and closing the clauses
 /// ---------------------------------------------------------------------------
-
-val sweep_inv_intro (g0 g: heap) (fp: U64.t) (st: sweep_state)
-  : Lemma (requires (let c = U64.v st.cursor in
-                     c % 8 == 0 /\ c <= heap_size /\
-                     W.reaches g0 zero_addr c /\ W.reaches g zero_addr c /\
-                     front_unchanged g0 g c /\ behind_ok g0 g c /\ no_adjacent_free g c /\
-                     ends_free g c (prev_free g st) /\
-                     tail_ok g c st.swept_tail /\ frag_ok g c st.last_fragment /\
-                     FLA.fl_ascending g fp))
-          (ensures sweep_inv g0 g fp st)
-
-val sweep_inv_elim (g0 g: heap) (fp: U64.t) (st: sweep_state)
-  : Lemma (requires sweep_inv g0 g fp st)
-          (ensures (let c = U64.v st.cursor in
-                    c % 8 == 0 /\ c <= heap_size /\
-                    W.reaches g0 zero_addr c /\ W.reaches g zero_addr c /\
-                    front_unchanged g0 g c /\ behind_ok g0 g c /\ no_adjacent_free g c /\
-                    ends_free g c (prev_free g st) /\
-                    tail_ok g c st.swept_tail /\ frag_ok g c st.last_fragment /\
-                    FLA.fl_ascending g fp))
-
-val front_unchanged_elim (g0 g: heap) (c: nat) (a: hp_addr)
-  : Lemma (requires front_unchanged g0 g c /\ U64.v a >= c)
-          (ensures read_word g a == read_word g0 a)
-
-val front_unchanged_intro (g0 g: heap) (c: nat)
-  (pf: (a: hp_addr -> Lemma (requires U64.v a >= c) (ensures read_word g a == read_word g0 a)))
-  : Lemma (front_unchanged g0 g c)
-
-val behind_ok_elim (g0 g: heap) (c: nat) (p: hp_addr)
-  : Lemma (requires behind_ok g0 g c /\ W.reaches g zero_addr (U64.v p) /\ U64.v p < c)
-          (ensures swept_block g0 g p)
-
-val behind_ok_intro (g0 g: heap) (c: nat)
-  (pf: (p: hp_addr -> Lemma (requires W.reaches g zero_addr (U64.v p) /\ U64.v p < c)
-                           (ensures swept_block g0 g p)))
-  : Lemma (behind_ok g0 g c)
 
 val no_adjacent_free_elim (g: heap) (c: nat) (p q: hp_addr)
   : Lemma (requires no_adjacent_free g c /\ W.reaches g zero_addr (U64.v p) /\ W.can_step g p /\
@@ -292,18 +158,23 @@ val cell_link_not_pos (g: heap) (x: U64.t) (q: nat)
           (ensures U64.v x <> q)
 
 /// ---------------------------------------------------------------------------
-/// Start and facts
+/// Facts at a step
 /// ---------------------------------------------------------------------------
 
-/// The invariant holds at the start, with the free list the previous cycle left.
-val sweep_start_inv (g0: heap) (fp: U64.t)
-  : Lemma (requires sweep_pre g0 fp)
-          (ensures sweep_inv g0 g0 fp sweep_start)
+/// The walk of a dense heap steps at every position with room for a header.
+val dense_can_step (g: heap) (c: hp_addr)
+  : Lemma (requires heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
+                    W.reaches g zero_addr (U64.v c) /\ U64.v c + 8 < heap_size)
+          (ensures W.can_step g c)
 
 /// What the implementation needs at each step: the step is defined, and the
 /// guards of its defensive branches are false.
-val sweep_inv_facts (g0 g: heap) (fp: U64.t) (st: sweep_state)
-  : Lemma (requires sweep_g0 g0 /\ sweep_inv g0 g fp st /\ U64.v st.cursor + 8 < heap_size)
+val step_guards (g: heap) (fp: U64.t) (st: sweep_state)
+  : Lemma (requires heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
+                    W.reaches g zero_addr (U64.v st.cursor) /\
+                    tail_ok g (U64.v st.cursor) st.swept_tail /\
+                    frag_ok g (U64.v st.cursor) st.last_fragment /\
+                    FLA.fl_ascending g fp /\ U64.v st.cursor + 8 < heap_size)
           (ensures can_sweep g st /\
                    (st.swept_tail == 0UL \/ is_obj st.swept_tail) /\
                    (st.last_fragment == 0UL \/ is_obj st.last_fragment) /\

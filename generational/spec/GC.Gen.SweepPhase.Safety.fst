@@ -21,6 +21,7 @@ module Cheney = GC.Gen.Cheney
 module CV = GC.Gen.CheneyGeneric
 module Promote = GC.Gen.Promote
 module SPM = GC.Gen.SweepPhase.Minor
+module Step = GC.Spec.FusedSweep.Step
 module Ph = GC.Spec.Phase
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 10"
@@ -78,11 +79,11 @@ let reachable_not_free_combined minor g fp c roots a =
 
 let step_keeps_reachable g fp c r x =
   reachable_not_free g fp c r x;
-  sweep_inv_incremental_step g fp c
+  Step.sweep_inv_incremental_step g fp c
 
 let steps_keep_reachable g fp c k r x =
   reachable_not_free g fp c r x;
-  sweep_inv_incremental_steps g fp c k
+  Step.sweep_inv_incremental_steps g fp c k
 
 let minor_keeps_not_free minor g fp c roots x =
   SPM.minor_keeps_blocks minor g fp c roots x

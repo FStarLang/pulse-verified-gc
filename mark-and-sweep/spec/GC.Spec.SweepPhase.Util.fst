@@ -116,52 +116,10 @@ let cells_transfer g g'
     FStar.Classical.forall_intro aux
 #pop-options
 
-#push-options "--fuel 1"
-let dead_run_first (g1: heap) (a: hp_addr) (b: nat)
-  : Lemma (requires dead_run g1 a b /\ U64.v a < b)
-          (ensures W.can_step g1 a /\ not (black_at g1 a) /\ W.bnext g1 a <= b)
-  = ()
-#pop-options
-
-let swept_block_kinds g1 g p =
-  W.bnext_facts g p;
-  white_header_facts (read_word g1 p);
-  if black_at g1 p then begin
-    if not (marked_block g1 g p) then dead_run_first g1 p (W.bnext g p)
-  end
-  else dead_run_first g1 p (W.bnext g p)
-
-#push-options "--z3rlimit 40"
-let rec behind_pos_ref_aux (g1 g: heap) (c: nat) (p: nat)
-  : Lemma (requires W.reaches g zero_addr c /\ behind_ok g1 g c /\
-                    W.reaches g zero_addr p /\ p <= c)
-          (ensures W.reaches g1 zero_addr p)
-          (decreases p)
-  = W.reaches_bounds g zero_addr p;
-    if p = U64.v zero_addr then W.reaches_refl g1 zero_addr
-    else begin
-      let q = W.last_block g zero_addr p in
-      behind_ok_elim g1 g c q;
-      swept_block_kinds g1 g q;
-      behind_pos_ref_aux g1 g c (U64.v q);
-      if black_at g1 q then W.reaches_snoc g1 zero_addr q
-      else begin
-        dead_run_reaches g1 q p;
-        W.reaches_trans g1 zero_addr q p
-      end
-    end
-#pop-options
-
-let behind_pos_ref g1 g c p = behind_pos_ref_aux g1 g c p
-
 #push-options "--z3rlimit 30"
 let front_pos g1 g c p
   = W.reaches_bounds g zero_addr c;
-    front_unchanged_elim g1 g c p;
     let ca = mk_hp_addr c in
-    let fr (w: hp_addr) : Lemma (requires U64.v w >= U64.v ca) (ensures read_word g w == read_word g1 w)
-      = front_unchanged_elim g1 g c w in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires fr);
     W.walk_frame_from g1 g ca;
     if W.reaches g zero_addr (U64.v p) then begin
       W.reaches_det g zero_addr ca (U64.v p);
@@ -172,62 +130,3 @@ let front_pos g1 g c p
       W.reaches_trans g zero_addr ca (U64.v p)
     end
 #pop-options
-
-/// ---------------------------------------------------------------------------
-/// Blackening a set of blocks
-/// ---------------------------------------------------------------------------
-
-let black_header_facts h =
-  makeHeader_getWosize (getWosize h) Header.Black (getTag h);
-  makeHeader_getColor (getWosize h) Header.Black (getTag h);
-  makeHeader_getTag (getWosize h) Header.Black (getTag h)
-
-#push-options "--fuel 1 --z3rlimit 20"
-let rec recolour_read_aux (sel: hp_addr -> GTot bool) (g: heap) (p: hp_addr) (a: hp_addr)
-  : Lemma (ensures read_word (recolour sel g p) a ==
-                   (if W.reaches g p (U64.v a) && W.can_step g a && sel a
-                    then black_header (read_word g a) else read_word g a))
-          (decreases (heap_size - U64.v p))
-  = if not (W.can_step g p) then begin
-      if W.reaches g p (U64.v a) then begin
-        W.reaches_bounds g p (U64.v a);
-        if U64.v p < U64.v a then W.reaches_unfold g p (U64.v a)
-      end
-    end else begin
-      let hb = black_header (read_word g p) in
-      let g1 = if sel p then write_word g p hb else g in
-      let n = W.bnext g p in
-      W.bnext_facts g p;
-      let same (w: hp_addr) : Lemma (requires w <> p) (ensures read_word g1 w == read_word g w)
-        = if sel p then read_write_different g p w hb
-      in
-      (if sel p then read_write_same g p hb);
-      if U64.v a < U64.v p then begin
-        if W.reaches g p (U64.v a) then W.reaches_bounds g p (U64.v a)
-      end;
-      if U64.v a > U64.v p && W.reaches g p (U64.v a) then W.reaches_unfold g p (U64.v a);
-      if n >= heap_size then begin
-        if U64.v a <> U64.v p then same a
-      end else begin
-        let nn = mk_hp_addr n in
-        recolour_read_aux sel g1 nn a;
-        let fr (w: hp_addr) : Lemma (requires U64.v w >= U64.v nn) (ensures read_word g1 w == read_word g w)
-          = same w in
-        FStar.Classical.forall_intro (FStar.Classical.move_requires fr);
-        W.walk_frame_from g g1 nn;
-        if U64.v a < n && W.reaches g1 nn (U64.v a) then W.reaches_bounds g1 nn (U64.v a);
-        if U64.v a <> U64.v p then begin
-          same a;
-          if U64.v a > U64.v p then begin
-            W.reaches_refl g nn;
-            if W.reaches g nn (U64.v a) then begin
-              W.reaches_step g p;
-              W.reaches_trans g p nn (U64.v a)
-            end
-          end
-        end
-      end
-    end
-#pop-options
-
-let recolour_read sel g p a = recolour_read_aux sel g p a

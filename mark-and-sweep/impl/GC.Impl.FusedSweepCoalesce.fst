@@ -4,9 +4,10 @@
    A loop of `GC.Spec.FusedSweep.sweep_step`s over the current heap, with the
    sweep state {cursor, swept_tail, last_fragment} and the free-list head in
    references.  The loop invariant is the spec's own
-   (`GC.Spec.FusedSweep.Inv.sweep_inv`), which also supplies the facts that
-   make every read and every arithmetic step safe, plus the statement that
-   the rest of the pass computes the spec's result.
+   (`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental`, with the derived
+   caches), which also supplies the facts that make every read and every
+   arithmetic step safe, plus the statement that the rest of the pass
+   computes the spec's result.
 *)
 
 module GC.Impl.FusedSweepCoalesce
@@ -22,6 +23,7 @@ module SpecObject = GC.Spec.Object
 module Header = GC.Lib.Header
 module FS = GC.Spec.FusedSweep
 module FSI = GC.Spec.FusedSweep.Inv
+module FSE = GC.Spec.FusedSweep.End
 module FStep = GC.Spec.FusedSweep.Step
 module SPI = GC.Spec.SweepPhase.Intrinsic
 module SL = GC.Spec.SweepPhase.Slice
@@ -168,32 +170,41 @@ fn sweep_step_impl (heap: heap_t) (c t f fp: U64.t)
 /// The pass
 /// ---------------------------------------------------------------------------
 
+/// The sweep invariant at cursor `c`, with `t`, `f` the derived caches (as
+/// `slice_pre` in the interface, which comes into scope only after
+/// `fused_sweep_coalesce`).
+let sweep_at (g: heap_state) (fp: U64.t) (c t f: U64.t) : prop =
+  SPI.sweep_inv_incremental g fp c /\ mk_st c t f == SPI.state_at g c
+
 /// What the loop needs at a step, from the invariant.
-let step_facts (g0 g: heap_state) (fp: U64.t) (c t f: U64.t)
-  : Lemma (requires FSI.sweep_g0 g0 /\ FSI.sweep_inv g0 g fp (mk_st c t f) /\ U64.v c + 8 < heap_size)
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+let step_facts (g: heap_state) (fp: U64.t) (c t f: U64.t)
+  : Lemma (requires sweep_at g fp c t f /\ U64.v c + 8 < heap_size)
           (ensures step_ready g (mk_st c t f) /\
                    (let (g', fp', st') = step_total g fp (mk_st c t f) in
-                    FSI.sweep_inv g0 g' fp' st' /\
+                    sweep_at g' fp' st'.FS.cursor st'.FS.swept_tail st'.FS.last_fragment /\
                     U64.v st'.FS.cursor > U64.v c /\ U64.v st'.FS.cursor <= heap_size /\
                     FS.sweep_from g fp (mk_st c t f) == FS.sweep_from g' fp' st'))
-  = FSI.sweep_inv_facts g0 g fp (mk_st c t f);
-    FStep.sweep_step_inv g0 g fp (mk_st c t f);
+  = FStep.sweep_inv_incremental_ready g fp c;
+    FStep.sweep_inv_incremental_step g fp c;
     FS.sweep_from_step g fp (mk_st c t f)
+#pop-options
 
 /// The pass stops at the end of the heap.
-let stop_facts (g0 g: heap_state) (fp: U64.t) (c t f: U64.t)
+let stop_facts (g: heap_state) (fp: U64.t) (c t f: U64.t)
   : Lemma (requires U64.v c + 8 >= heap_size)
           (ensures FS.sweep_from g fp (mk_st c t f) == (g, fp))
   = FS.sweep_from_stop g fp (mk_st c t f)
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 fn fused_sweep_coalesce (heap: heap_t) (fp: U64.t)
-  requires is_heap heap 's ** pure (FSI.sweep_pre 's fp)
+  requires is_heap heap 's ** pure (FSI.sweep_pre 's fp /\ FSE.marked 's)
   returns new_fp: U64.t
   ensures exists* s2. is_heap heap s2 **
     pure ((s2, new_fp) == FS.fused_sweep_coalesce 's fp)
 {
-  FSI.sweep_start_inv 's fp;
+  SPI.sweep_inv_incremental_start 's fp;
+  SPI.state_at_start 's;
   pow2_facts ();
   let mut cursor = (zero_addr <: U64.t);
   let mut tail = 0UL;
@@ -204,7 +215,7 @@ fn fused_sweep_coalesce (heap: heap_t) (fp: U64.t)
       pts_to cursor c ** pts_to tail t ** pts_to frag f ** pts_to head h **
       is_heap heap s **
       pure (U64.v c <= heap_size /\ U64.v c < pow2 57 /\
-            FSI.sweep_inv 's s h (mk_st c t f) /\
+            sweep_at s h c t f /\
             FS.sweep_from s h (mk_st c t f) == FS.fused_sweep_coalesce 's fp)
     decreases (heap_size - U64.v !cursor)
   {
@@ -213,7 +224,7 @@ fn fused_sweep_coalesce (heap: heap_t) (fp: U64.t)
     let f = !frag;
     let h = !head;
     with s. assert (is_heap heap s);
-    step_facts 's s h c t f;
+    step_facts s h c t f;
     pow2_facts ();
     let r = sweep_step_impl heap c t f h;
     match r {
@@ -229,7 +240,7 @@ fn fused_sweep_coalesce (heap: heap_t) (fp: U64.t)
   let t = !tail;
   let f = !frag;
   with s. assert (is_heap heap s);
-  stop_facts 's s !head c t f;
+  stop_facts s !head c t f;
   !head
 }
 #pop-options
@@ -248,8 +259,8 @@ let slice_step_facts (g: heap_state) (fp: U64.t) (c t f c0: U64.t) (budget: nat)
                     slice_pre g' fp' st'.FS.cursor st'.FS.swept_tail st'.FS.last_fragment /\
                     U64.v st'.FS.cursor > U64.v c /\ U64.v st'.FS.cursor <= heap_size /\
                     SL.slice_from g fp (mk_st c t f) c0 budget == SL.slice_from g' fp' st' c0 budget))
-  = SPI.sweep_inv_incremental_ready g fp c;
-    SPI.sweep_inv_incremental_step g fp c;
+  = FStep.sweep_inv_incremental_ready g fp c;
+    FStep.sweep_inv_incremental_step g fp c;
     SL.slice_from_unfold g fp (mk_st c t f) c0 budget
 #pop-options
 

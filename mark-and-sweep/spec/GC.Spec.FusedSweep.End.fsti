@@ -2,9 +2,10 @@
 /// GC.Spec.FusedSweep.End - what the sweep leaves behind
 /// ---------------------------------------------------------------------------
 ///
-/// Once the cursor reaches the end of the heap, the invariant
-/// (`GC.Spec.FusedSweep.Inv.sweep_inv`) says everything about the result, and
-/// this module reads it off as the facts the collector's theorems use:
+/// What a full sweep of the marked heap `g0` leaves (`sweep_post`), as the
+/// collector's theorems use it -- established from the sweep invariant at the
+/// end of the heap (`GC.Spec.SweepPhase.Intrinsic.End.sweep_inv_stw_end`,
+/// and `fused_sweep_post` for the whole pass):
 ///
 ///   * every live (black) object is still there, white, with the same size,
 ///     tag and fields (`survives`);
@@ -28,7 +29,6 @@ open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Spec.FusedSweep
 open GC.Spec.FusedSweep.Inv
-open GC.Spec.FusedSweep.Step
 
 module U64 = FStar.UInt64
 module HeapGraph = GC.Spec.HeapGraph
@@ -88,21 +88,6 @@ val sweep_post_elim (g0 g: heap) (fp: U64.t)
             (forall (x y: obj_addr). Seq.mem y (objects zero_addr g) /\ is_blue y g /\
                Seq.mem x (objects zero_addr g0) /\ inside g0 g x y ==> ~(is_black x g0)) /\
             FLA.fl_ascending g fp)
-
-/// **The end lemma.**  A sweep that has reached the end of the heap with its
-/// invariant intact has produced a heap satisfying `sweep_post`.  Of `g0` it
-/// needs only that its walk covers the heap and that no block of it is infix
-/// (part 4 of well-formedness), not the field closure: the heap the step
-/// lemmas are run against inside `GC.Spec.SweepPhase.Intrinsic` (`ref_of`)
-/// has garbage that may point into blocks the sweep has already freed.
-val sweep_done_post (g0 g: heap) (fp: U64.t)
-  : Lemma (requires no_infix_block g0 /\ sweep_g0 g0 /\ sweep_done g0 g fp)
-          (ensures sweep_post g0 g fp)
-
-/// The fused sweep, from the heap marking left.
-val fused_sweep_post (g0: heap) (fp: U64.t)
-  : Lemma (requires sweep_pre g0 fp)
-          (ensures (let r = fused_sweep_coalesce g0 fp in sweep_post g0 (fst r) (snd r)))
 
 /// ---------------------------------------------------------------------------
 /// Consequences

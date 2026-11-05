@@ -15,8 +15,7 @@ module W = GC.Spec.Walk
 module FLA = GC.Spec.FreeList.Ascending
 module FSE = GC.Spec.FusedSweep.End
 module Edit = GC.Spec.SweepPhase.Util
-module AC = GC.Spec.Allocator.Cursor
-module Oom = GC.Spec.Allocator.Oom
+module Step = GC.Spec.FusedSweep.Step
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 10"
 
@@ -57,7 +56,7 @@ let sweep_inv_incremental_end g fp c0 =
 /// ---------------------------------------------------------------------------
 
 let at_end_stw (g0 g: heap) (fp: U64.t) (c0: U64.t) : prop =
-  at_end g fp c0 /\ stw_rel g0 g (U64.v c0)
+  sweep_inv_stw g0 g fp c0 /\ U64.v c0 + 8 >= heap_size
 
 let pos0_behind (g0 g: heap) (fp: U64.t) (c0: U64.t) (p: hp_addr)
   : Lemma (requires at_end_stw g0 g fp c0 /\ pos g0 p) (ensures U64.v p < U64.v c0)
@@ -201,13 +200,12 @@ let sweep_inv_stw_end g0 g fp c0 =
 
 #push-options "--fuel 1"
 let rec from_post_st (g0 g: heap) (fp: U64.t) (st: sweep_state)
-  : Lemma (requires sweep_inv_incremental g fp st.cursor /\ st == state_at g st.cursor /\
-                    stw_rel g0 g (U64.v st.cursor))
+  : Lemma (requires sweep_inv_stw g0 g fp st.cursor /\ st == state_at g st.cursor)
           (ensures (let r = sweep_from g fp st in FSE.sweep_post g0 (fst r) (snd r)))
           (decreases (heap_size - U64.v st.cursor))
   = if U64.v st.cursor + 8 < heap_size then begin
-      sweep_inv_incremental_step g fp st.cursor;
-      sweep_inv_stw_step g0 g fp st.cursor;
+      Step.sweep_inv_incremental_step g fp st.cursor;
+      Step.sweep_inv_stw_step g0 g fp st.cursor;
       let (g', fp', st') = sweep_step g fp st in
       sweep_from_step g fp st;
       from_post_st g0 g' fp' st'
@@ -219,24 +217,16 @@ let rec from_post_st (g0 g: heap) (fp: U64.t) (st: sweep_state)
 
 let sweep_from_post g0 g fp c = from_post_st g0 g fp (state_at g c)
 
-let fused_sweep_post_intrinsic g0 fp =
-  sweep_inv_incremental_start g0 fp;
+let fused_sweep_post g0 fp =
+  sweep_inv_stw_start g0 fp;
   state_at_start g0;
   sweep_from_post g0 g0 fp sweep_start.cursor;
   let r = fused_sweep_coalesce g0 fp in
   FSE.sweep_post_wf g0 (fst r) (snd r)
 
 /// ---------------------------------------------------------------------------
-/// #29 mid-sweep
+/// Nothing live
 /// ---------------------------------------------------------------------------
-
-let sweep_inv_incremental_oom_no_fit g fp c0 wz tag =
-  sweep_inv_incremental_elim g fp c0;
-  AC.alloc_phase_fields g fp (GC.Spec.Phase.Sweeping c0) wz tag;
-  FLA.fl_ascending_valid g fp;
-  FLA.fl_ascending_exact g fp;
-  Edit.part1_holds g;
-  Oom.alloc_spec_oom_no_fit g fp wz tag
 
 #push-options "--z3rlimit 20"
 let nothing_live_one_block g0 g fp c0 =

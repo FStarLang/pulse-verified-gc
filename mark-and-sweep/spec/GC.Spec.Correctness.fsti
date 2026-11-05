@@ -302,8 +302,9 @@ val gc_coalesce_source_intro :
 /// needs the list it is handed to be exact and ascending
 /// (`GC.Spec.FreeList.Ascending.fl_ascending`); every other hypothesis is the
 /// mark postcondition.  The statements below are the collector's theorems at
-/// the heap that pass returns, proved from its end lemma
-/// (`GC.Spec.FusedSweep.End`), with no reference heap in between.
+/// the heap that pass returns, proved from its end facts
+/// (`GC.Spec.FusedSweep.End.sweep_post`), which the sweep invariant gives at
+/// the end of the heap (`GC.Spec.SweepPhase.Intrinsic.End.fused_sweep_post`).
 
 /// What the sweep needs, from the mark postcondition and the free list.
 val mark_post_sweep_pre :

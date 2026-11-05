@@ -28,7 +28,8 @@
 ///   3. `fused_oom_no_fit` -- the fused sweep's output satisfies every
 ///      hypothesis of layer 2 (`GC.Spec.FusedSweep.End`: the list it leaves
 ///      is exact and ascending), so the statement holds at the pass the
-///      collector actually runs.
+///      collector actually runs; mid-sweep, the sweep invariant does the same
+///      (`sweep_inv_incremental_oom_no_fit`).
 
 module GC.Spec.Allocator.Oom
 
@@ -48,6 +49,9 @@ module Corr = GC.Spec.Correctness
 module FS = GC.Spec.FusedSweep
 module FSE = GC.Spec.FusedSweep.End
 module FLA = GC.Spec.FreeList.Ascending
+module SPI = GC.Spec.SweepPhase.Intrinsic
+module AC = GC.Spec.Allocator.Cursor
+module Util = GC.Spec.SweepPhase.Util
 
 /// ---------------------------------------------------------------------------
 /// Layer 1: a failed search saw only small cells
@@ -180,4 +184,26 @@ let fused_oom_no_fit (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) (wz
     FLA.fl_ascending_valid (fst r) (snd r);
     FLA.fl_ascending_exact (fst r) (snd r);
     alloc_spec_oom_no_fit (fst r) (snd r) wz tag
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Mid-sweep
+/// ---------------------------------------------------------------------------
+
+/// **#29 mid-sweep**: the free list is exact at every point of the sweep
+/// (`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental`), so an allocation
+/// fails only when no free block anywhere is big enough.
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
+let sweep_inv_incremental_oom_no_fit (g: heap) (fp: U64.t) (c: U64.t) (wz: nat)
+                                     (tag: U64.t{U64.v tag < 256})
+  : Lemma (requires SPI.sweep_inv_incremental g fp c /\ wz >= 1 /\
+                    (AC.alloc_phase g fp (GC.Spec.Phase.Sweeping c) wz tag).obj_out == 0UL)
+          (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ is_blue x g ==>
+                     U64.v (wosize_of_object x g) < wz)
+  = SPI.sweep_inv_incremental_elim g fp c;
+    AC.alloc_phase_fields g fp (GC.Spec.Phase.Sweeping c) wz tag;
+    FLA.fl_ascending_valid g fp;
+    FLA.fl_ascending_exact g fp;
+    Util.part1_holds g;
+    alloc_spec_oom_no_fit g fp wz tag
 #pop-options

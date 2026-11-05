@@ -11,9 +11,9 @@
 /// `sweep_slice` does (incremental-sweep-plan.md, D3).  The words swept are
 /// how far the cursor has moved, in words.
 ///
-/// A slice is some number of steps (`slice_is_steps`), so the sweep phase's
-/// step theorems (`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental_steps`) apply to
-/// it: it keeps the sweep phase, leaves the derived state, frees only objects
+/// A slice is some number of steps (`slice_is_steps`), so the sweep's step
+/// theorems (`GC.Spec.FusedSweep.Step.sweep_inv_incremental_steps`) apply to
+/// it: it keeps the sweep invariant, leaves the derived state, frees only objects
 /// pending free, and the pending-free set shrinks (`sweep_slice_phase`).  It
 /// stops early only when the sweep is finished, and a budget larger than the
 /// heap always finishes it.

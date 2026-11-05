@@ -17,16 +17,20 @@ open GC.Impl.Object
 module U64 = FStar.UInt64
 module FS = GC.Spec.FusedSweep
 module FSI = GC.Spec.FusedSweep.Inv
+module FSE = GC.Spec.FusedSweep.End
 module SPI = GC.Spec.SweepPhase.Intrinsic
 module SL = GC.Spec.SweepPhase.Slice
 
 /// The sweep state as the implementation holds it: three words.
 let mk_st (c t f: U64.t) : FS.sweep_state = { FS.cursor = c; FS.swept_tail = t; FS.last_fragment = f }
 
-/// Precondition: the marked heap's walk covers it and the free list is exact
-/// and ascending (`FSI.sweep_pre`).  Postcondition: the result is the spec's.
+/// Precondition: the heap is the one marking left (`FSE.marked`: well formed,
+/// no grey object, no black object pointing at a white one), its walk covers
+/// it and the free list is exact and ascending (`FSI.sweep_pre`) -- what the
+/// sweep invariant needs at the start.  Postcondition: the result is the
+/// spec's.
 fn fused_sweep_coalesce (heap: heap_t) (fp: U64.t)
-  requires is_heap heap 's ** pure (FSI.sweep_pre 's fp)
+  requires is_heap heap 's ** pure (FSI.sweep_pre 's fp /\ FSE.marked 's)
   returns new_fp: U64.t
   ensures exists* s2. is_heap heap s2 **
     pure ((s2, new_fp) == FS.fused_sweep_coalesce 's fp)
