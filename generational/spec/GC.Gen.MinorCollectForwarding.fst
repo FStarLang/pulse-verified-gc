@@ -52,7 +52,10 @@ let cheney_promote_preserves_old_major_field_context = MCFH.cheney_promote_prese
 let mem_graph_vertex_at_is_obj_addr = MCFH.mem_graph_vertex_at_is_obj_addr
 let combined_reachable_minor_has_fwd = MCFE.combined_reachable_minor_has_fwd
 let combined_reachable_minor_has_fwd_from_slots = MCFE.combined_reachable_minor_has_fwd_from_slots
+// See the val: the ensures' `uint_to_t` side condition is rechecked here.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 let combined_major_minor_field_forwarded = MCFE.combined_major_minor_field_forwarded
+#pop-options
 let combined_reachable_edge_forwarded_normal = MCFNE.combined_reachable_edge_forwarded_normal
 let fwd_disjoint_reachable_major_intro = MCFNE.fwd_disjoint_reachable_major_intro
 let normal_edge_forward_ready_intro = MCFNE.normal_edge_forward_ready_intro

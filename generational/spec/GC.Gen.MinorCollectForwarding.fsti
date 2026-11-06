@@ -204,6 +204,9 @@ val combined_reachable_minor_has_fwd_from_slots
 /// Field-level MajorV -> MinorV edge-forwarding lemma: if an old major field
 /// points to a reachable positive-size minor object, the post-minor heap stores
 /// the target's forwarding address in that field.
+/// (Core does not assume `field_addr_fits`'s postcondition when checking the
+/// `uint_to_t` below, so the fact is re-derived under the full hypotheses.)
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 val combined_major_minor_field_forwarded
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -239,6 +242,7 @@ val combined_major_minor_field_forwarded
       prom.fwd_map ov <> 0UL /\
       resolve_minor minor ov == dst /\
       read_word res.mc_major fa == prom.fwd_map ov))
+#pop-options
 
 /// Side condition for the normal-object edge-forwarding theorem.  Minor-source
 /// cases require the source image to be a normal promoted object; minor-target
