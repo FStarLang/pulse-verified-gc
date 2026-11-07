@@ -9,3 +9,5 @@ tests/*.o
 tests/results/
 verified_gc/*.o
 verified_gc/*.a
+verified_gc/GC_Gen_Impl_proto.c
+_build/

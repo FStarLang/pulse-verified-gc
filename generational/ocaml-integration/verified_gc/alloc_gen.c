@@ -109,6 +109,24 @@ static int        in_full_gc = 0;  /* re-entrancy guard */
  * the verified to_minor_offset_u64 can translate absolute→offset inline. */
 extern uint64_t minor_base_addr;
 
+#ifdef VERGC_PROTO
+/* The allocator-comparison prototypes (verified_gc/proto/, docs/
+ * allocator-comparison-results.md).  Built only with PROTO=A or PROTO=B. */
+void vergc_proto_init(uint64_t *heads, uint64_t *tbl, uint64_t tbl_len);
+void vergc_proto_minor_begin(uint64_t promoted_words, uint64_t heap_words);
+void vergc_proto_minor_end(void);
+void vergc_proto_full_begin(void);
+void vergc_proto_full_end(void);
+void vergc_proto_direct_begin(void);
+void vergc_proto_direct_end(void);
+int  impl_sweeping(void);
+void vergc_proto_check(const char *where);
+uint64_t vergc_proto_scale(uint64_t requested_bytes);
+#define VERGC_CONSUMED(b) vergc_proto_scale(b)
+#else
+#define VERGC_CONSUMED(b) (b)
+#endif
+
 /* --- Heap initialization --- */
 
 static void ensure_heap(void) {
@@ -183,6 +201,9 @@ static void ensure_heap(void) {
     /* Re-derive constants that depend on minor_heap_size */
     krmlinit_globals();
     table_rebuild(gc_gen_heap.major, gc_gen_heap.tbl);
+#ifdef VERGC_PROTO
+    vergc_proto_init(heads, tbl, gc_tbl_len);
+#endif
     uint8_t *minor_data = (uint8_t *)calloc(1, minor_sz);
     if (!minor_data)
         caml_fatal_error("verified gen GC: cannot allocate minor heap");
@@ -559,8 +580,18 @@ static void check_alloc_table(uint64_t obj, uint64_t wz) {
                      "allocator did not set the entry of a boundary inside the object",
                      (size_t)j, gc_gen_heap.tbl[j]);
 }
+#if defined(VERGC_PROTO)
+#define CHECK_FREE_LISTS(where) \
+    do { if (!impl_sweeping()) check_free_lists(where, 0); } while (0)
+#define CHECK_FREE_LISTS_EXACT(where) \
+    do { if (!impl_sweeping()) check_free_lists(where, 1); } while (0)
+#else
 #define CHECK_FREE_LISTS(where) check_free_lists(where, 0)
 #define CHECK_FREE_LISTS_EXACT(where) check_free_lists(where, 1)
+#endif
+#elif defined(VERGC_PROTO_B) && defined(VERGC_PROTO_CHECK)
+#define CHECK_FREE_LISTS(where) vergc_proto_check(where)
+#define CHECK_FREE_LISTS_EXACT(where) vergc_proto_check(where)
 #else
 #define CHECK_FREE_LISTS(where) ((void)0)
 #define CHECK_FREE_LISTS_EXACT(where) ((void)0)
@@ -657,7 +688,7 @@ static void do_minor_gc(void) {
         uint64_t major_size = heap_size_u64 - zero_addr;
         /* Use 50% threshold — balances sweep cost vs fragmentation */
         uint64_t threshold = major_size / 2;
-        if (bytes_promoted_since_major + bump > threshold) {
+        if (VERGC_CONSUMED(bytes_promoted_since_major + bump) > threshold) {
             do_full_gc();
             if (*gc_gen_heap.minor.bump_ref == 0) return;
         }
@@ -667,7 +698,14 @@ static void do_minor_gc(void) {
     Caml_state->_stat_minor_collections++;
     Caml_state->_stat_minor_words += (double)(bump_before / sizeof(value));
 
+#ifdef VERGC_PROTO
+    vergc_proto_minor_begin(bytes_promoted_since_major / 8,
+                            (heap_size_u64 - zero_addr) / 8);
+#endif
     do_minor_gc_core();
+#ifdef VERGC_PROTO
+    vergc_proto_minor_end();
+#endif
 
     /* Track promoted bytes (approximate by the minor bump value) */
     bytes_promoted_since_major += bump_before;
@@ -745,6 +783,9 @@ static int full_gc_count = 0;
 static void do_full_gc(void) {
     ensure_heap();
     in_full_gc = 1;
+#ifdef VERGC_PROTO
+    vergc_proto_full_begin();
+#endif
 
     #ifdef NATIVE_CODE
         /* A full GC can be entered without passing through
@@ -842,6 +883,9 @@ static void do_full_gc(void) {
     free(roots_for_gc);
     free(gray_storage);
     PROF_END(major_gc);
+#ifdef VERGC_PROTO
+    vergc_proto_full_end();
+#endif
 
     #ifdef NATIVE_CODE
         /* gen_gc emptied the minor heap.  Without this young_ptr keeps its
@@ -918,15 +962,23 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     uint64_t alloc_bytes = ((uint64_t)wosize + 1) * 8;
     if (!in_full_gc) {
         uint64_t major_size = heap_size_u64 - zero_addr;
-        if (bytes_promoted_since_major + alloc_bytes > major_size / 2)
+        if (VERGC_CONSUMED(bytes_promoted_since_major + alloc_bytes) > major_size / 2)
             do_full_gc();
     }
 
+#ifdef VERGC_PROTO
+    vergc_proto_direct_begin();
+#endif
     PROF_START(major_alloc);
     uint64_t result = allocate(gc_gen_heap.major, gc_gen_heap.heads, gc_gen_heap.tbl, (uint64_t)wosize);
     PROF_END(major_alloc);
 #ifdef VGC_CHECK_ALLOC
     if ((++chk_alloc_count & 1023) == 0) CHECK_FREE_LISTS("after a major allocation");
+#elif defined(VERGC_PROTO_B) && defined(VERGC_PROTO_CHECK)
+    {
+        static uint64_t n_direct;
+        if ((++n_direct & 1023) == 0) CHECK_FREE_LISTS("after a major allocation");
+    }
 #endif
 
     if (result == 0) {
@@ -935,6 +987,9 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
         result = allocate(gc_gen_heap.major, gc_gen_heap.heads, gc_gen_heap.tbl, (uint64_t)wosize);
         PROF_END(major_alloc);
     }
+#ifdef VERGC_PROTO
+    vergc_proto_direct_end();
+#endif
 
     if (result == 0) {
         /* The heap here is the one a full collection just produced, so by
@@ -966,7 +1021,7 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
         return NULL;
     }
 
-#ifdef VGC_CHECK_ALLOC
+#if defined(VGC_CHECK_ALLOC) && !defined(VERGC_PROTO_B)
     check_alloc_table(result, (uint64_t)wosize);
 #endif
     PROF_INC(major_alloc_count);
