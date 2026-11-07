@@ -10,6 +10,7 @@ int       proto_mode = SW_SEQ;
 int       proto_threads = 4;
 int       proto_check_control = 0;
 int       proto_stats = 0;
+int       proto_mem = 0;
 uint64_t *proto_heads;
 uint64_t *proto_tbl;
 uint64_t  proto_tbl_len;
@@ -59,6 +60,103 @@ void vergc_proto_mark_end(void) {
     vec_push(&mark_times, d);
 }
 void proto_record_eager_sweep(uint64_t ns) { t_sweep += ns; vec_push(&eager_sweeps, ns); }
+
+/* ---- VERGC_PROTO_MEM: pointer locality after the mark --------------------
+ * For every black block that is scanned, every field that points into the
+ * major heap is one edge, except a field equal to the one before it (an
+ * array filled with one value is one edge); it is counted by the distance
+ * from the source block's header to the target's: under 64 bytes, 4 KB,
+ * 256 KB, 2 MB, or more.  The mark follows these edges, so the shares say how
+ * far its reads jump.  Also counted: the 4 KB OS pages that hold live words;
+ * live words per such page is the density of what the mark reads. */
+static uint64_t n_rescans;
+void vergc_proto_rescan(void) { n_rescans++; }
+
+static uint64_t loc_edges, loc_b[5], loc_blocks, loc_live_words, loc_os_pages;
+
+/* The order the mark reads memory in, replayed: a depth-first walk of the
+ * black blocks (a stack, children pushed in field order, as the mark's gray
+ * stack does), started from each not yet visited black block in address
+ * order, since the roots are not at hand here.  Counted per block visited:
+ * a jump of 4 KB or more from the block visited before it, and a miss in a
+ * 256-entry direct-mapped model of the data TLB (4 KB pages). */
+static uint64_t dfs_visits, dfs_j4k, dfs_tlb_miss;
+static uint8_t *dfs_seen;
+static uint64_t *dfs_stack, dfs_cap;
+
+static inline int dfs_test_set(uint64_t a) {
+    uint64_t i = (a - zero_addr) >> 3;
+    uint8_t m = (uint8_t)(1u << (i & 7));
+    if (dfs_seen[i >> 3] & m) return 1;
+    dfs_seen[i >> 3] |= m;
+    return 0;
+}
+
+static void dfs_walk(void) {
+    uint64_t z = zero_addr, hs = heap_size_u64, words = (hs - z) / 8;
+    dfs_seen = calloc(words / 8 + 1, 1);
+    if (dfs_cap == 0) { dfs_cap = 1 << 20; dfs_stack = malloc(dfs_cap * 8); }
+    if (!dfs_seen || !dfs_stack) return;
+    uint64_t tlb[256], last = 0;
+    memset(tlb, 0xff, sizeof tlb);
+    for (uint64_t root = z; root + 8 < hs; root += (HD_WZ(PW(root)) + 1) * 8) {
+        if (!IS_BLACK(PW(root)) || dfs_test_set(root)) continue;
+        uint64_t sp = 0;
+        dfs_stack[sp++] = root;
+        while (sp) {
+            uint64_t cur = dfs_stack[--sp], h = PW(cur), wz = HD_WZ(h);
+            uint64_t d = cur > last ? cur - last : last - cur, pg = cur >> 12;
+            dfs_visits++;
+            if (d >= 4096) dfs_j4k++;
+            if (tlb[pg & 255] != pg) { tlb[pg & 255] = pg; dfs_tlb_miss++; }
+            last = cur;
+            if ((h & 0xff) >= 251) continue;
+            uint64_t prev = 1;
+            for (uint64_t i = 1; i <= wz; i++) {
+                uint64_t v = PW(cur + 8 * i);
+                if ((v & 7) || v <= z || v >= hs || v == prev) continue;
+                prev = v;
+                uint64_t t = v - 8;
+                if (!IS_BLACK(PW(t)) || t + (HD_WZ(PW(t)) + 1) * 8 > hs || dfs_test_set(t)) continue;
+                if (sp == dfs_cap) {
+                    uint64_t *n = realloc(dfs_stack, dfs_cap * 2 * 8);
+                    if (!n) { free(dfs_seen); return; }
+                    dfs_stack = n; dfs_cap *= 2;
+                }
+                dfs_stack[sp++] = t;
+            }
+        }
+    }
+    free(dfs_seen);
+}
+
+void proto_mem_after_mark(void) {
+    uint64_t z = zero_addr, hs = heap_size_u64, last_os_page = UINT64_MAX;
+    for (uint64_t cur = z; cur + 8 < hs;) {
+        uint64_t h = PW(cur), wz = HD_WZ(h);
+        if (IS_BLACK(h)) {
+            uint64_t first = (cur - z) >> 12, last = (cur + wz * 8 - z) >> 12;
+            loc_blocks++;
+            loc_live_words += wz + 1;
+            /* OS pages holding live words, each counted once per collection */
+            loc_os_pages += last - first + (first != last_os_page);
+            last_os_page = last;
+            if ((h & 0xff) < 251) {
+                uint64_t prev = 1;
+                for (uint64_t i = 1; i <= wz; i++) {
+                    uint64_t v = PW(cur + 8 * i);
+                    if ((v & 7) || v <= z || v >= hs || v == prev) continue;
+                    prev = v;
+                    uint64_t t = v - 8, d = t > cur ? t - cur : cur - t;
+                    loc_edges++;
+                    loc_b[d < 64 ? 0 : d < 4096 ? 1 : d < (256u << 10) ? 2 : d < (2u << 20) ? 3 : 4]++;
+                }
+            }
+        }
+        cur += (wz + 1) * 8;
+    }
+    dfs_walk();
+}
 
 /* ---- incremental sweep work and the pauses it causes --------------------
  * A "stop" is one mutator-visible interruption: a minor collection, a direct
@@ -146,6 +244,19 @@ static void print_stats(void) {
     for (int i = 0; i < 16 && counters_k[i]; i++)
         fprintf(f, " %s=%llu", counters_k[i], (unsigned long long)counters_v[i]);
     fprintf(f, " par_imbalance=%.3f", pool_imbalance());
+    fprintf(f, " rescans=%llu", (unsigned long long)n_rescans);
+    if (proto_mem)
+        fprintf(f, " loc_blocks=%llu loc_live_words=%llu loc_os_pages=%llu loc_edges=%llu"
+                   " loc_64=%llu loc_4k=%llu loc_256k=%llu loc_2m=%llu loc_far=%llu",
+                (unsigned long long)loc_blocks, (unsigned long long)loc_live_words,
+                (unsigned long long)loc_os_pages, (unsigned long long)loc_edges,
+                (unsigned long long)loc_b[0], (unsigned long long)loc_b[1],
+                (unsigned long long)loc_b[2], (unsigned long long)loc_b[3],
+                (unsigned long long)loc_b[4]);
+    if (proto_mem)
+        fprintf(f, " dfs_visits=%llu dfs_j4k=%llu dfs_tlb_miss=%llu",
+                (unsigned long long)dfs_visits, (unsigned long long)dfs_j4k,
+                (unsigned long long)dfs_tlb_miss);
     impl_stats(f);
     fprintf(f, "\n");
 }
@@ -170,6 +281,8 @@ void vergc_proto_init(uint64_t *heads, uint64_t *tbl, uint64_t tbl_len) {
     proto_check_control = c != NULL && atoi(c) != 0;
     const char *s = getenv("VERGC_PROTO_STATS");
     proto_stats = s != NULL && atoi(s) != 0;
+    const char *mm = getenv("VERGC_PROTO_MEM");
+    proto_mem = mm != NULL && atoi(mm) != 0;
     impl_init();
     atexit(print_stats);
 }

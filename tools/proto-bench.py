@@ -7,9 +7,11 @@
     tools/proto-bench.py minheap CONFIG [PROG...] [--rel R]
     tools/proto-bench.py campaign TAG CONFIG... -- [PROG...] [--runs N]
         interleaved: for each run, each program, each config in turn, after
-        waiting (up to 120 s) for the 1-minute load average to fall below 2;
+        waiting (up to 120 s) for the 1-minute load average to fall below 2
+        (or VERGC_BENCH_LOAD);
         PROG@SCALE runs PROG at SCALE x its usual heap
     tools/proto-bench.py summary TAG               markdown tables of medians
+    tools/proto-bench.py table TAG VARIANT...      the same, one column per variant
 
 CONFIG is RUNTIME[:MODE[:THREADS]], RUNTIME a directory under
 generational/ocaml-integration/_build/proto (base, A, B, A-check, B-check) or
@@ -209,7 +211,9 @@ def cmd_minheap(cfg, progs, rel):
         print(f"{cfg} {prog}: min heap {hi} words (fails at {lo})", flush=True)
 
 
-def wait_quiet(limit=2.0, max_wait=120):
+def wait_quiet(limit=None, max_wait=120):
+    """VERGC_BENCH_LOAD sets the limit (default 2)."""
+    limit = limit or float(os.environ.get("VERGC_BENCH_LOAD", "2"))
     t0 = time.time()
     while os.getloadavg()[0] >= limit and time.time() - t0 < max_wait:
         time.sleep(5)
@@ -309,6 +313,64 @@ def cmd_summary(tag):
     print("\n".join(out))
 
 
+def cmd_table(tag, variants):
+    """Markdown tables of medians, one column per variant (A, B, B2, ...).
+    Run time is relative to `base`; A's sequential configuration is A:seq."""
+    rows = {}
+    for line in open(os.path.join(RES, "runs.jsonl")):
+        r = json.loads(line)
+        if r.get("tag") == tag:
+            rows.setdefault((r["cfg"], r["prog"]), []).append(r)
+
+    def get(cfg, prog, key):
+        rs = rows.get((cfg, prog), [])
+        if not rs or not all(x["output_ok"] for x in rs):
+            return None
+        if key == "wall":
+            return med([x["wall"] for x in rs])
+        if key == "coll_ms":
+            return med([x["stats"]["minor_ms"] + x["stats"]["full_ms"] + x["stats"]["pause_total_ms"]
+                        for x in rs])
+        return med([x["stats"].get(key) for x in rs])
+
+    def f(x, d=2):
+        return "fail" if x is None else f"{x:,.{d}f}"
+
+    progs = [p for p in ORDER if any(k[1] == p for k in rows)]
+    out = []
+
+    def table(title, cell):
+        out.append(f"**{title}**\n")
+        out.append("| Program | " + " | ".join(variants) + " |")
+        out.append("|---" * (len(variants) + 1) + "|")
+        for p in progs:
+            out.append(f"| {p} | " + " | ".join(cell(v, p) for v in variants) + " |")
+        out.append("")
+
+    def rel(v, p):
+        b, x = get("base", p, "wall"), get(f"{v}:seq", p, "wall")
+        return "fail" if x is None else f"{x:.2f} ({100 * (x - b) / b:+.1f}%)" if b else f(x)
+
+    table("Run time, s (vs base)", rel)
+    table("Collection time, s", lambda v, p: f(get(f"{v}:seq", p, "coll_ms") and get(f"{v}:seq", p, "coll_ms") / 1000))
+    table("Major collections", lambda v, p: f(get(f"{v}:seq", p, "majors"), 0))
+    table("Mark, median ms per collection", lambda v, p: f(get(f"{v}:seq", p, "mark_med_ms")))
+    table("Sweep, median ms per collection", lambda v, p: f(get(f"{v}:seq", p, "sweep_med_ms"), 3))
+    for t in (1, 2, 4):
+        table(f"Parallel sweep, {t} thread{'s' if t > 1 else ''}, median ms",
+              lambda v, p, t=t: f(get(f"{v}:par:{t}", p, "sweep_med_ms"), 3))
+
+    def speed(v, p):
+        a, b = get(f"{v}:seq", p, "sweep_med_ms"), get(f"{v}:par:4", p, "sweep_med_ms")
+        return f"{a / b:.2f}×" if a and b else "fail"
+    table("Parallel speedup at 4 threads (own sequential sweep / 4 threads)", speed)
+    table("Incremental, longest pause, ms", lambda v, p: f(get(f"{v}:incremental", p, "pause_max_ms"), 3))
+    table("Incremental, 99th percentile pause, ms", lambda v, p: f(get(f"{v}:incremental", p, "pause_p99_ms"), 3))
+    table("Incremental, total pause, ms", lambda v, p: f(get(f"{v}:incremental", p, "pause_total_ms"), 1))
+    table("Incremental, run time, s", lambda v, p: f(get(f"{v}:incremental", p, "wall")))
+    print("\n".join(out))
+
+
 def main():
     a = sys.argv[1:]
     if not a:
@@ -330,6 +392,8 @@ def main():
         cmd_run(a[1], a[2:] or ORDER, runs, scale, tag)
     elif cmd == "summary":
         cmd_summary(a[1])
+    elif cmd == "table":
+        cmd_table(a[1], a[2:])
     elif cmd == "campaign":
         sep = a.index("--") if "--" in a else len(a)
         cmd_campaign(a[1], a[2:sep], a[sep + 1:] or ORDER, runs)

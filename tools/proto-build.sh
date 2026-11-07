@@ -12,8 +12,14 @@
 #            must differ in more than case: macOS file systems ignore it
 #   A        A with the parallel and incremental sweep baselines (PROTO=A)
 #   B        B, pages by size class (PROTO=B)
-#   A-check  A, every sweep compared with the verified one; A's own checker on
-#   B-check  B, every sweep compared with the verified one; B's checker on
+#   B2       B as OCaml 5 has it: OCaml 5's 32 classes up to 128 words, pool
+#            header, an exact-size large-object area (VERGC_B_VARIANT=2)
+#   B3-8K, B3-16K, B3-32K
+#            B3: B2 with exact classes to 16 words then ~12% apart, the
+#            lowest-address page first, and pages of 8, 16 or 32 KB
+#   B-129    diagnostic: B with its 141-word class made 129 words
+#   V-check  for V any of A, B, B2, B3-*: every sweep compared with the
+#            verified one, and the allocator's own checker on
 # Each lands in generational/ocaml-integration/_build/proto/VARIANT/ as
 # ocamlrun and libasmrun.a (for ocamlopt -I).  Variants are built in a
 # separate patched worktree of ocaml-4.14-verified-gen (_build/pb, set up on
@@ -45,7 +51,14 @@ flags() {   # flags VARIANT -> "PROTO|EXTRA_CFLAGS"
     A)       echo "A|" ;;
     B)       echo "B|" ;;
     A-check) echo "A|-DVERGC_PROTO_CHECK -DVGC_CHECK_ALLOC" ;;
-    B-check) echo "B|-DVERGC_PROTO_CHECK" ;;
+    B2)      echo "B|-DVERGC_B_VARIANT=2" ;;
+    B-129)   echo "B|-DB_CLASS_129" ;;
+    B3-8K)   echo "B|-DVERGC_B_VARIANT=3 -DPG_WORDS_CFG=1024" ;;
+    B3-16K)  echo "B|-DVERGC_B_VARIANT=3 -DPG_WORDS_CFG=2048" ;;
+    B3-32K)  echo "B|-DVERGC_B_VARIANT=3 -DPG_WORDS_CFG=4096" ;;
+    B*-check)
+      f=$(flags "${1%-check}")
+      echo "${f%%|*}|${f#*|} -DVERGC_PROTO_CHECK" | sed 's/| /|/' ;;
     *) echo "unknown variant $1" >&2; exit 2 ;;
   esac
 }

@@ -249,6 +249,7 @@ uint64_t vergc_proto_allocate(heap_t heap, uint64_t *heads, uint64_t *tbl, uint6
 
 /* ---- the sweep hook ------------------------------------------------------ */
 void vergc_proto_sweep(heap_t heap, uint64_t *heads, uint64_t *tbl) {
+    if (proto_mem) proto_mem_after_mark();
 #ifdef VERGC_PROTO_CHECK
     chk_oracle();
 #endif
@@ -257,6 +258,7 @@ void vergc_proto_sweep(heap_t heap, uint64_t *heads, uint64_t *tbl) {
     if (proto_mode == SW_PAR) par_sweep(heads, proto_threads);
     else vergc_verified_fused_sweep(heap, heads, tbl);
     proto_record_eager_sweep(proto_now() - t0);
+    if (proto_mem) impl_mem();
 #ifdef VERGC_PROTO_CHECK
     chk_compare_eager("after A's sweep", 1);
 #endif
@@ -271,10 +273,31 @@ void impl_init(void) {
     HS = heap_size_u64;
 }
 
+/* VERGC_PROTO_MEM: after each eager sweep, the words in live blocks and in
+ * free blocks, and the free words in blocks under 129 words (fragments only
+ * the small lists can use); kept for the collection with the most live words. */
+static uint64_t m_n, m_live, m_free, m_frag;
+
+void impl_mem(void) {
+    uint64_t live = 0, fr = 0, frag = 0;
+    for (uint64_t cur = Z; cur + 8 < HS;) {
+        uint64_t h = PW(cur), w = HD_WZ(h) + 1;
+        if (IS_BLUE(h)) { fr += w; if (w < 129) frag += w; }
+        else live += w;
+        cur += w * 8;
+    }
+    m_n++;
+    if (live >= m_live) { m_live = live; m_free = fr; m_frag = frag; }
+}
+
 void impl_stats(FILE *f) {
     fprintf(f, " alloc_slices=%llu alloc_retries=%llu segments=%llu",
             (unsigned long long)st_slices_alloc, (unsigned long long)st_alloc_retries,
             (unsigned long long)n_segs);
+    if (proto_mem)
+        fprintf(f, " mem_n=%llu mem_live=%llu mem_free=%llu mem_frag=%llu",
+                (unsigned long long)m_n, (unsigned long long)m_live,
+                (unsigned long long)m_free, (unsigned long long)m_frag);
 }
 
 /* A's own checker (alloc_gen.c, -DVGC_CHECK_ALLOC) runs at the bridge's

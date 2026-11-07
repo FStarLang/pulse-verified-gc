@@ -12,10 +12,14 @@
  *   VERGC_SWEEP=seq|par|incremental      (default seq)
  *   VERGC_PAR_SWEEP_THREADS=1..8         (default 4)
  *   VERGC_PROTO_STATS=1                  timers and counters on stderr at exit
+ *   VERGC_PROTO_MEM=1                    also, at every major collection, the
+ *                                        locality of pointers after the mark
+ *                                        and where the heap's words go after
+ *                                        the sweep (slow; not for timing)
  * With -DVERGC_PROTO_CHECK every sweep is compared with the verified
  * fused_sweep_coalesce run on a copy of the heap (proto_check.c), and
  * VERGC_PROTO_CHECK_CONTROL=1 runs a deliberately wrong sweep the check must
- * reject. */
+ * reject (=2: B2 and B3's large-object sweep instead). */
 #ifndef VERGC_PROTO_H
 #define VERGC_PROTO_H
 
@@ -55,6 +59,7 @@ extern int       proto_mode;        /* SW_* */
 extern int       proto_threads;
 extern int       proto_check_control;
 extern int       proto_stats;
+extern int       proto_mem;
 extern uint64_t *proto_heads;       /* A's 17 heads (unused by B) */
 extern uint64_t *proto_tbl;         /* A's object-start table (unused by B) */
 extern uint64_t  proto_tbl_len;
@@ -66,6 +71,8 @@ void proto_sweep_work_begin(int kind);
 void proto_sweep_work_end(int kind);
 void proto_record_eager_sweep(uint64_t ns);
 void proto_count(const char *name, uint64_t n);
+/* VERGC_PROTO_MEM: call after the mark, before the sweep. */
+void proto_mem_after_mark(void);
 
 typedef void (*proto_job)(int i, int n, void *arg);
 /* Run f(0..n-1) in parallel, f(0) on the calling thread; persistent
@@ -87,6 +94,7 @@ double      impl_swept_fraction(void);
 void        impl_finish(void);           /* close the open sweep */
 void        impl_stats(FILE *f);
 void        impl_check(const char *where);
+void        impl_mem(void);              /* VERGC_PROTO_MEM, after an eager sweep */
 
 /* ---- proto_check.c (VERGC_PROTO_CHECK only) ----------------------------- */
 #ifdef VERGC_PROTO_CHECK
