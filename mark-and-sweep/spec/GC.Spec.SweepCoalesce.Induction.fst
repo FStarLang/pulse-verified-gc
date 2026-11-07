@@ -797,6 +797,12 @@ private let walk_dead_conclude (g gs h_f h_c: heap) (objs: seq obj_addr) (fb: U6
 /// Main theorem
 /// ========================================================================
 
+/// The next object's start, computed outside walk_proof's large context
+/// so that its nat-ness is not an SMT query there.
+private let next_start (obj: obj_addr) (wz: nat)
+  : (r: nat{r == U64.v obj + wz * 8})
+  = U64.v obj + wz * 8
+
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let rec walk_proof
   (g gs h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t) (start: nat)
@@ -814,12 +820,12 @@ let rec walk_proof
         let h_c' = fst (SpecCoalesce.flush_blue h_c fb rw fp) in
         let fp' = snd (SpecCoalesce.flush_blue h_f fb rw fp) in
         walk_black_hyps g gs h_f h_c objs fb rw fp start;
-        walk_proof g gs h_f'' h_c' rest 0UL 0 fp' (U64.v obj + wz * 8);
+        walk_proof g gs h_f'' h_c' rest 0UL 0 fp' (next_start obj wz);
         walk_black_conclude g gs h_f h_c objs fb rw fp start
       end else begin
         let new_fb : U64.t = if rw = 0 then obj else fb in
         walk_dead_hyps g gs h_f h_c objs fb rw start;
-        walk_proof g gs h_f h_c rest new_fb (rw + wz + 1) fp (U64.v obj + wz * 8);
+        walk_proof g gs h_f h_c rest new_fb (rw + wz + 1) fp (next_start obj wz);
         walk_dead_conclude g gs h_f h_c objs fb rw fp start
       end
     end
