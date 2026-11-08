@@ -13,7 +13,7 @@
 ///     by rewriting the link of the block before it, or the list head, and
 ///     the remainder stays as an unlisted free piece.
 ///
-/// `carve_ok` proves `alloc_ok` of the result.  Run growth, used when no
+/// `carve_ok` proves `cleared_ok` of the result.  Run growth, used when no
 /// listed block fits, is `GC.Spec.Pages.NewRun`.
 
 module GC.Spec.Pages.Large
@@ -64,10 +64,14 @@ let rec split_fit (g: heap) (cs: list obj_addr) (w: nat)
 #pop-options
 
 /// A free block of `l` words at `h`, then an object of wosize `wz`; or only
-/// the object, when `l = 0`.
+/// the object, when `l = 0`.  `clr` says whether the object's fields are
+/// cleared (`GC.Spec.Pages.Blocks.put_obj_as`).
+let carve_heap_as (clr: bool) (g: heap) (h: nat) (l: nat) (wz: nat{wz < pow2 54}) : GTot heap =
+  if l >= 1 && l <= pow2 54 then put_obj_as clr (put_blue g h l) (h + l * 8) wz
+  else put_obj_as clr g h wz
+
 let carve_heap (g: heap) (h: nat) (l: nat) (wz: nat{wz < pow2 54}) : GTot heap =
-  if l >= 1 && l <= pow2 54 then put_obj (put_blue g h l) (h + l * 8) wz
-  else put_obj g h wz
+  carve_heap_as true g h l wz
 
 let obj_at (x: nat) : U64.t = if x < pow2 64 then U64.uint_to_t x else 0UL
 
@@ -96,19 +100,26 @@ let rem_of (g: heap) (c: obj_addr) (wz: nat) : GTot nat =
 
 let obj_of (g: heap) (c: obj_addr) (wz: nat) : GTot U64.t = obj_at (hd_of c + rem_of g c wz * 8 + 8)
 
+let carved_as (clr: bool) (g: heap) (c: obj_addr) (wz: nat{wz < pow2 54}) : GTot heap =
+  carve_heap_as clr g (hd_of c) (rem_of g c wz) wz
+
 let carved (g: heap) (c: obj_addr) (wz: nat{wz < pow2 54}) : GTot heap =
-  carve_heap g (hd_of c) (rem_of g c wz) wz
+  carved_as true g c wz
 
 /// Carve an object of wosize `wz` from the right end of cell `c`.
-let carve (g: heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (wz: nat{wz < pow2 54})
+let carve_as (clr: bool) (g: heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (wz: nat{wz < pow2 54})
   : GTot (heap & pstate & U64.t)
   = if whsize g c < wz + 1 then (g, st, 0UL)
-    else if rem_of g c wz >= lg_min then (carved g c wz, st, obj_of g c wz)
+    else if rem_of g c wz >= lg_min then (carved_as clr g c wz, st, obj_of g c wz)
     else begin
       let nx = read_word g (c <: hp_addr) in
       let g1 = unlink_heap g st pre nx in
-      (carved g1 c wz, unlink_state g st pre nx, obj_of g1 c wz)
+      (carved_as clr g1 c wz, unlink_state g st pre nx, obj_of g1 c wz)
     end
+
+let carve (g: heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (wz: nat{wz < pow2 54})
+  : GTot (heap & pstate & U64.t)
+  = carve_as true g st pre c wz
 
 /// ---------------------------------------------------------------------------
 /// First fit
@@ -118,7 +129,7 @@ let carve (g: heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (wz: nat{wz 
 let rec split_fit_some (g: heap) (cs: list obj_addr) (w: nat)
                        (pre: list obj_addr) (c: obj_addr) (post: list obj_addr)
   : Lemma (requires split_fit g cs w == Some (pre, c, post))
-          (ensures cs == pre @ (c :: post) /\ whsize g c >= w /\
+          (ensures cs == L.append pre (c :: post) /\ whsize g c >= w /\
                    (forall (y: obj_addr). L.mem y pre ==> whsize g y < w))
           (decreases cs)
   = match cs with
@@ -630,7 +641,7 @@ let rec last_mem (l: list obj_addr)
 /// The chain without `c`: the link of the cell before it, or the head, now
 /// points past it.
 let rec cells_unlink (g g': heap) (fp: U64.t) (pre: list obj_addr) (c: obj_addr) (post: list obj_addr)
-  : Lemma (requires cells g fp (pre @ (c :: post)) /\ L.noRepeats pre /\
+  : Lemma (requires cells g fp (L.append pre (c :: post)) /\ L.noRepeats pre /\
                     (forall (y: obj_addr). L.mem y pre \/ L.mem y post ==>
                        Seq.mem y (objects zero_addr g') /\ U64.v (wosize_of_object y g') >= 1) /\
                     (forall (y: obj_addr). L.mem y post ==>
@@ -638,7 +649,7 @@ let rec cells_unlink (g g': heap) (fp: U64.t) (pre: list obj_addr) (c: obj_addr)
                     (forall (y: obj_addr). L.mem y pre /\ y <> L.last pre ==>
                        read_word g' (y <: hp_addr) == read_word g (y <: hp_addr)) /\
                     (Cons? pre ==> read_word g' (L.last pre <: hp_addr) == read_word g (c <: hp_addr)))
-          (ensures cells g' (if Nil? pre then read_word g (c <: hp_addr) else fp) (pre @ post))
+          (ensures cells g' (if Nil? pre then read_word g (c <: hp_addr) else fp) (L.append pre post))
           (decreases pre)
   = match pre with
     | [] -> cells_frame g g' (read_word g (c <: hp_addr)) post
@@ -668,10 +679,10 @@ let length_cons (c: obj_addr) (post: list obj_addr)
 #pop-options
 
 let noRepeats_drop (pre: list obj_addr) (c: obj_addr) (post: list obj_addr)
-  : Lemma (requires L.noRepeats (pre @ (c :: post)))
-          (ensures L.noRepeats (pre @ post) /\ L.noRepeats pre /\ ~(L.mem c pre) /\ ~(L.mem c post) /\
+  : Lemma (requires L.noRepeats (L.append pre (c :: post)))
+          (ensures L.noRepeats (L.append pre post) /\ L.noRepeats pre /\ ~(L.mem c pre) /\ ~(L.mem c post) /\
                    (forall (x: obj_addr). L.mem x pre ==> ~(L.mem x post)) /\
-                   L.length (pre @ post) < L.length (pre @ (c :: post)))
+                   L.length (L.append pre post) < L.length (L.append pre (c :: post)))
   = FStar.List.Tot.Properties.noRepeats_append_elim pre (c :: post);
     norep_cons c post;
     FStar.Classical.forall_intro (fun x -> mem_cons_obj x c post);
@@ -731,7 +742,7 @@ let carve_A_ok (g: heap) (st: pstate) (cs: list obj_addr) (c: obj_addr) (hh: nat
                (wz: nat{wz < pow2 54})
   : Lemma (requires pages_ok g st /\ well_formed_heap g /\ lview g st cs /\ L.mem c cs /\
                     cell_facts g st.pm c hh wz /\ rem_of g c wz >= lg_min)
-          (ensures alloc_ok g (carved g c wz) st st wz (obj_of g c wz))
+          (ensures cleared_ok g (carved g c wz) st st wz (obj_of g c wz))
   = let h = U64.v c - 8 in
     let w = whsize g c in
     let l = w - (wz + 1) in
@@ -892,7 +903,7 @@ let back_link (g g1: heap) (pm: page_map) (p: obj_addr) (v: U64.t) (y: obj_addr)
 let unlink_ctx (g g1 g': heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (post: list obj_addr)
                (wz: nat) : prop =
   Cons? pre /\ wz < pow2 54 /\
-  lview g st (pre @ (c :: post)) /\
+  lview g st (L.append pre (c :: post)) /\
   (let p = L.last pre in
    let nx = read_word g (c <: hp_addr) in
    let h = U64.v c - 8 in
@@ -911,8 +922,8 @@ let unlink_ctx (g g1 g': heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (
 let lists_B (g g1 g': heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (post: list obj_addr)
             (wz: nat)
   : Lemma (requires unlink_ctx g g1 g' st pre c post wz)
-          (ensures lview g' st (pre @ post))
-  = let cs = pre @ (c :: post) in
+          (ensures lview g' st (L.append pre post))
+  = let cs = L.append pre (c :: post) in
     let p = L.last pre in
     let nx = read_word g (c <: hp_addr) in
     noRepeats_drop pre c post;
@@ -938,7 +949,7 @@ let lists_B (g g1 g': heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (pos
     cells_unlink g g' (large_head st) pre c post;
     let back (y: obj_addr)
       : Lemma (requires Seq.mem y (objects zero_addr g') /\ is_blue y g' /\ large_listable g' st.pm y)
-              (ensures L.mem y (pre @ post))
+              (ensures L.mem y (L.append pre post))
       = back_carve g1 g' st.pm c wz y;
         back_link g g1 st.pm p nx y
     in
@@ -954,7 +965,7 @@ let carve_B_head (g: heap) (st: pstate) (c: obj_addr) (post: list obj_addr) (hh:
   : Lemma (requires pages_ok g st /\ well_formed_heap g /\ lview g st (c :: post) /\
                     cell_facts g st.pm c hh wz /\ rem_of g c wz < lg_min)
           (ensures (let st' = { st with large = FLs.fls_set st.large 0 (read_word g (c <: hp_addr)) } in
-                    alloc_ok g (carved g c wz) st st' wz (obj_of g c wz)))
+                    cleared_ok g (carved g c wz) st st' wz (obj_of g c wz)))
   = let st' = { st with large = FLs.fls_set st.large 0 (read_word g (c <: hp_addr)) } in
     let g' = carved g c wz in
     pages_ok_elim g st;
@@ -993,8 +1004,8 @@ let link_step (g: heap) (st: pstate) (cs: list obj_addr) (p: obj_addr) (v: U64.t
       run_region_step g g1 st hh a (a + whsize g p * 8)
     end
 
-/// `alloc_ok` from its parts.
-let alloc_ok_intro (g g': heap) (st st': pstate) (wz: nat) (obj: U64.t)
+/// `cleared_ok` from its parts.
+let cleared_ok_intro (g g': heap) (st st': pstate) (wz: nat) (obj: U64.t)
   : Lemma (requires obj =!= 0UL /\ U64.v obj >= 8 /\ U64.v obj < heap_size /\ U64.v obj % 8 == 0 /\
                     (let x : obj_addr = obj in
                      Seq.mem x (objects zero_addr g') /\
@@ -1004,7 +1015,7 @@ let alloc_ok_intro (g g': heap) (st st': pstate) (wz: nat) (obj: U64.t)
                     map_ok st'.pm /\ page_local_all g' st'.pm /\ tail_shape g' /\
                     avail_ok st' /\ large_ok g' st' /\ Mark.no_pointer_to_blue g' /\
                     well_formed_heap g' /\ others_unchanged g g' /\ unswept_unchanged g g' st st')
-          (ensures alloc_ok g g' st st' wz obj)
+          (ensures cleared_ok g g' st st' wz obj)
   = pages_ok_intro g' st'
 
 /// The cell's run facts carry to a heap where it is the same free block and
@@ -1019,11 +1030,11 @@ let cell_facts_move (g g1: heap) (pm: page_map) (c: obj_addr) (hh: nat{hh < n_pa
 /// The block follows the cell `p`: `p`'s link moves past it.
 let carve_B_prev (g: heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (post: list obj_addr)
                  (wz: nat{wz < pow2 54})
-  : Lemma (requires pages_ok g st /\ well_formed_heap g /\ lview g st (pre @ (c :: post)) /\
+  : Lemma (requires pages_ok g st /\ well_formed_heap g /\ lview g st (L.append pre (c :: post)) /\
                     Cons? pre /\ wz + 1 <= whsize g c /\ wz >= 1 /\ rem_of g c wz < lg_min)
           (ensures (let g1 = wr g (U64.v (L.last pre)) (read_word g (c <: hp_addr)) in
-                    alloc_ok g (carved g1 c wz) st st wz (obj_of g1 c wz)))
-  = let cs = pre @ (c :: post) in
+                    cleared_ok g (carved g1 c wz) st st wz (obj_of g1 c wz)))
+  = let cs = L.append pre (c :: post) in
     let p = L.last pre in
     let nx = read_word g (c <: hp_addr) in
     let g1 = wr g (U64.v p) nx in
@@ -1045,18 +1056,18 @@ let carve_B_prev (g: heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (post
       carve_object g1 st.pm c hh wz;
       let g' = carved g1 c wz in
       lists_B g g1 g' st pre c post wz;
-      lview_large_ok g' st (pre @ post);
-      alloc_ok_intro g1 g' st st wz (obj_of g1 c wz);
-      alloc_ok_compose g g1 g' st st st wz (obj_of g1 c wz)
+      lview_large_ok g' st (L.append pre post);
+      cleared_ok_intro g1 g' st st wz (obj_of g1 c wz);
+      cleared_ok_compose g g1 g' st st st wz (obj_of g1 c wz)
     end
 
 /// **Carving from the large list is correct.**
 let carve_ok (g: heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (post: list obj_addr)
              (wz: nat{wz < pow2 54})
-  : Lemma (requires pages_ok g st /\ well_formed_heap g /\ lview g st (pre @ (c :: post)) /\
+  : Lemma (requires pages_ok g st /\ well_formed_heap g /\ lview g st (L.append pre (c :: post)) /\
                     wz + 1 <= whsize g c /\ wz >= 1)
-          (ensures (let (g', st', obj) = carve g st pre c wz in alloc_ok g g' st st' wz obj))
-  = let cs = pre @ (c :: post) in
+          (ensures (let (g', st', obj) = carve g st pre c wz in cleared_ok g g' st st' wz obj))
+  = let cs = L.append pre (c :: post) in
     FStar.List.Tot.Properties.append_mem_forall pre (c :: post);
     mem_cons_obj c c post;
     if rem_of g c wz >= lg_min then begin
@@ -1066,8 +1077,30 @@ let carve_ok (g: heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (post: li
     end
     else match pre with
       | [] ->
-        assert_norm ([] @ (c :: post) == c :: post);
+        assert_norm (L.append [] (c :: post) == c :: post);
         cell_of_list g st cs c wz;
         eliminate exists (hh: nat{hh < n_pages}). cell_facts g st.pm c hh wz
         with carve_B_head g st c post hh wz
       | _ -> carve_B_prev g st pre c post wz
+
+/// ---------------------------------------------------------------------------
+/// The allocator's heap and the cleared one
+/// ---------------------------------------------------------------------------
+
+let carved_clears (g: heap) (c: obj_addr) (wz: nat{wz < pow2 54})
+  : Lemma (clears (carved_as false g c wz) (carved_as true g c wz) (obj_of g c wz) wz)
+  = let h = hd_of c in
+    let l = rem_of g c wz in
+    wosize_of_object_bound c g;
+    if l >= 1 && l <= pow2 54 then put_obj_clears (put_blue g h l) (h + l * 8) wz (obj_of g c wz)
+    else put_obj_clears g h wz (obj_of g c wz)
+
+/// The allocator's heap is the cleared one without the clearing
+/// (`GC.Spec.Pages.Blocks.clears`).
+let carve_clears (g: heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (wz: nat{wz < pow2 54})
+  : Lemma (let (gr, sr, o) = carve_as false g st pre c wz in
+           let (gc, sc, oc) = carve_as true g st pre c wz in
+           sc == sr /\ oc == o /\ clears gr gc o wz)
+  = if whsize g c < wz + 1 then ()
+    else if rem_of g c wz >= lg_min then carved_clears g c wz
+    else carved_clears (unlink_heap g st pre (read_word g (c <: hp_addr))) c wz

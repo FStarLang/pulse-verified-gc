@@ -12,7 +12,7 @@
 /// A new run is never joined to a neighbouring one: runs stay independent
 /// for the sweep.
 ///
-/// `new_run_ok` proves `alloc_ok` of the result.
+/// `new_run_ok` proves `cleared_ok` of the result.
 
 module GC.Spec.Pages.NewRun
 
@@ -77,17 +77,25 @@ let run_map (pm: page_map) (i: nat) (k: pos) : page_map =
 /// The words a run of `k` pages has after an object of `w` words.
 let rest (k: pos) (w: pos) : int = k * page_wsize - w
 
-/// The heap of the new run.
-let run_heap (g: heap) (i: nat) (k: pos) (wz: nat{wz < pow2 54}) (hd0: U64.t) : GTot heap =
+/// The heap of the new run: the rest of the run as a free block, linked at
+/// the head of list 0 if it is listable, then the object.  `clr` says
+/// whether the object's fields are cleared (`GC.Spec.Pages.Blocks.put_obj_as`).
+let run_heap_as (clr: bool) (g: heap) (i: nat) (k: pos) (wz: nat{wz < pow2 54}) (hd0: U64.t)
+  : GTot heap =
   let a = page_base i in
   let w = wz + 1 in
   let r = rest k w in
-  let g1 = put_obj g a wz in
-  if r > 0 && r <= pow2 54 then begin
-    let g2 = put_blue g1 (a + w * 8) r in
-    if r >= lg_min then wr g2 (a + w * 8 + 8) hd0 else g2
-  end
-  else g1
+  let g1 =
+    if r > 0 && r <= pow2 54 then begin
+      let g2 = put_blue g (a + w * 8) r in
+      if r >= lg_min then wr g2 (a + w * 8 + 8) hd0 else g2
+    end
+    else g
+  in
+  put_obj_as clr g1 a wz
+
+let run_heap (g: heap) (i: nat) (k: pos) (wz: nat{wz < pow2 54}) (hd0: U64.t) : GTot heap =
+  run_heap_as true g i k wz hd0
 
 let run_state (st: pstate) (i: nat) (k: pos) (w: pos) : pstate =
   let r = rest k w in
@@ -95,9 +103,32 @@ let run_state (st: pstate) (i: nat) (k: pos) (w: pos) : pstate =
             large = (if r >= lg_min then FLs.fls_set st.large 0 (LG.obj_at (page_base i + w * 8 + 8))
                      else st.large) }
 
+let new_run_as (clr: bool) (g: heap) (st: pstate) (i: nat) (k: pos) (wz: nat{wz < pow2 54})
+  : GTot (heap & pstate & U64.t)
+  = (run_heap_as clr g i k wz (large_head st), run_state st i k (wz + 1), LG.obj_at (page_base i + 8))
+
 let new_run (g: heap) (st: pstate) (i: nat) (k: pos) (wz: nat{wz < pow2 54})
   : GTot (heap & pstate & U64.t)
-  = (run_heap g i k wz (large_head st), run_state st i k (wz + 1), LG.obj_at (page_base i + 8))
+  = new_run_as true g st i k wz
+
+/// The allocator's heap is the cleared one without the clearing
+/// (`GC.Spec.Pages.Blocks.clears`).
+let new_run_clears (g: heap) (st: pstate) (i: nat) (k: pos) (wz: nat{wz < pow2 54})
+  : Lemma (let (gr, sr, o) = new_run_as false g st i k wz in
+           let (gc, sc, oc) = new_run_as true g st i k wz in
+           sc == sr /\ oc == o /\ clears gr gc o wz)
+  = let a = page_base i in
+    let w = wz + 1 in
+    let r = rest k w in
+    let hd0 = large_head st in
+    let g1 =
+      if r > 0 && r <= pow2 54 then begin
+        let g2 = put_blue g (a + w * 8) r in
+        if r >= lg_min then wr g2 (a + w * 8 + 8) hd0 else g2
+      end
+      else g
+    in
+    put_obj_clears g1 a wz (LG.obj_at (a + 8))
 
 /// ---------------------------------------------------------------------------
 /// Arithmetic
@@ -183,13 +214,14 @@ let run_read (g: heap) (i: nat{i < n_pages}) (k: pos) (wz: nat{wz < pow2 54}) (h
     let w = wz + 1 in
     let r = rest k w in
     page_base_aligned i;
-    let g1 = put_obj g a wz in
-    put_obj_read g a wz x;
     if r > 0 then begin
-      let g2 = put_blue g1 (a + w * 8) r in
-      wr_read g1 (a + w * 8) (bhdr r) x;
-      if r >= lg_min then wr_read g2 (a + w * 8 + 8) hd0 x
+      let g2 = put_blue g (a + w * 8) r in
+      let g1 = if r >= lg_min then wr g2 (a + w * 8 + 8) hd0 else g2 in
+      put_obj_read g1 a wz x;
+      if r >= lg_min then wr_read g2 (a + w * 8 + 8) hd0 x;
+      wr_read g (a + w * 8) (bhdr r) x
     end
+    else put_obj_read g a wz x
 
 /// The layout of the new run: the object, then the rest as one free block.
 let run_layout (g: heap) (i: nat{i < n_pages}) (k: pos) (wz: nat{wz < pow2 54}) (hd0: U64.t)
@@ -665,7 +697,7 @@ let nr_unswept (g: heap) (st: pstate) (i: nat{i < n_pages}) (k: pos) (wz: nat{wz
 /// **A new run is correct.**
 let new_run_ok (g: heap) (st: pstate) (i: nat{i < n_pages}) (k: pos) (wz: nat{wz < pow2 54})
   : Lemma (requires nr_ctx g st i k wz)
-          (ensures (let (g', st', obj) = new_run g st i k wz in alloc_ok g g' st st' wz obj))
+          (ensures (let (g', st', obj) = new_run g st i k wz in cleared_ok g g' st st' wz obj))
   = let g' = nr_heap g st i k wz in
     let st' = run_state st i k (wz + 1) in
     pages_ok_elim g st;
@@ -677,4 +709,4 @@ let new_run_ok (g: heap) (st: pstate) (i: nat{i < n_pages}) (k: pos) (wz: nat{wz
     else nr_large_short g st i k wz;
     nr_object g st i k wz;
     nr_unswept g st i k wz;
-    LG.alloc_ok_intro g g' st st' wz (LG.obj_at (page_base i + 8))
+    LG.cleared_ok_intro g g' st st' wz (LG.obj_at (page_base i + 8))

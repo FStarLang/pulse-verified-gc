@@ -3,7 +3,7 @@
 /// ---------------------------------------------------------------------------
 ///
 ///   - `pages_ok` taken apart into page-local clauses and global ones;
-///   - two steps of `alloc_ok` compose (taking a free page, then a slot);
+///   - two steps of `cleared_ok` compose (taking a free page, then a slot);
 ///   - a rewrite of pages that hold no run keeps every other page
 ///     (`others_local`) and the large lists (`lview_away`).
 
@@ -56,6 +56,24 @@ let pages_ok_intro (g: heap) (st: pstate)
 let step_ok (g g1: heap) (st st1: pstate) : prop =
   others_unchanged g g1 /\ unswept_unchanged g g1 st st1
 
+/// What the allocator proves of the heap it makes when it clears the new
+/// object's fields: `alloc_ok`'s statement before stage 2's change to
+/// uninitialised fields, with `pages_ok` and `well_formed_heap` of the heap
+/// itself.  `GC.Spec.Pages.Alloc` derives `alloc_ok` from it.
+let cleared_ok (g g': heap) (st st': pstate) (wz: nat) (obj: U64.t) : prop =
+  (obj == 0UL ==> g' == g /\ st' == st /\ (wz + 1 < pow2 54 ==> no_fit g st (wz + 1))) /\
+  (obj =!= 0UL ==>
+     U64.v obj >= 8 /\ U64.v obj < heap_size /\ U64.v obj % 8 == 0 /\
+     (let x : obj_addr = obj in
+      Seq.mem x (objects zero_addr g') /\
+      U64.v (wosize_of_object x g') == wz /\
+      is_white x g' /\
+      ~(Seq.mem x (objects zero_addr g) /\ ~(is_blue x g))) /\
+     pages_ok g' st' /\
+     well_formed_heap g' /\
+     others_unchanged g g' /\
+     unswept_unchanged g g' st st')
+
 let others_trans (g g1 g2: heap)
   : Lemma (requires others_unchanged g g1 /\ others_unchanged g1 g2)
           (ensures others_unchanged g g2)
@@ -72,9 +90,9 @@ let others_trans (g g1 g2: heap)
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
-let alloc_ok_compose (g g1 g': heap) (st st1 st': pstate) (wz: nat) (obj: U64.t)
-  : Lemma (requires step_ok g g1 st st1 /\ alloc_ok g1 g' st1 st' wz obj /\ obj =!= 0UL)
-          (ensures alloc_ok g g' st st' wz obj)
+let cleared_ok_compose (g g1 g': heap) (st st1 st': pstate) (wz: nat) (obj: U64.t)
+  : Lemma (requires step_ok g g1 st st1 /\ cleared_ok g1 g' st1 st' wz obj /\ obj =!= 0UL)
+          (ensures cleared_ok g g' st st' wz obj)
   = others_trans g g1 g';
     let x : obj_addr = obj in
     if Seq.mem x (objects zero_addr g) && not (is_blue x g) then color_of_header_eq x g g1

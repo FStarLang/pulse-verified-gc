@@ -13,7 +13,7 @@
 ///     `avail[c]`;
 ///   - otherwise there is no room.
 ///
-/// `small_alloc_ok` proves `alloc_ok` of the result.
+/// `small_alloc_ok` proves `cleared_ok` of the result.
 
 module GC.Spec.Pages.Pool
 
@@ -66,16 +66,21 @@ let small_wz_intro (wz: nat) (c: nat{c < n_cls})
   = cls_bounds c;
     FStar.Math.Lemmas.pow2_lt_compat 54 20
 
-/// Slot `k` of page `p` takes an object of wosize `wz`, and a filler.
-let fill_slot (g: heap) (p: nat) (c: nat{c < n_cls}) (k: nat) (wz: nat{small_wz wz c}) : GTot heap =
+/// Slot `k` of page `p` takes a filler, then an object of wosize `wz`; `clr`
+/// says whether its fields are cleared (`GC.Spec.Pages.Blocks.put_obj_as`).
+let fill_slot_as (clr: bool) (g: heap) (p: nat) (c: nat{c < n_cls}) (k: nat) (wz: nat{small_wz wz c})
+  : GTot heap =
   cls_bounds c;
   FStar.Math.Lemmas.pow2_lt_compat 54 20;
   let a = slot_base p c k in
-  let g1 = put_obj g a wz in
-  if wz + 1 < cls c then put_blue g1 (a + (wz + 1) * 8) (cls c - (wz + 1)) else g1
+  let g1 = if wz + 1 < cls c then put_blue g (a + (wz + 1) * 8) (cls c - (wz + 1)) else g in
+  put_obj_as clr g1 a wz
+
+let fill_slot (g: heap) (p: nat) (c: nat{c < n_cls}) (k: nat) (wz: nat{small_wz wz c}) : GTot heap =
+  fill_slot_as true g p c k wz
 
 /// Take the first free slot of the first page on `avail[c]`.
-let pop (g: heap) (st: pstate) (c: nat{c < n_cls}) (wz: nat{small_wz wz c})
+let pop_as (clr: bool) (g: heap) (st: pstate) (c: nat{c < n_cls}) (wz: nat{small_wz wz c})
   : GTot (heap & pstate & U64.t)
   = let hd = avail_at st c in
     if hd = 0UL || U64.v hd - 1 >= n_pages then (g, st, 0UL)
@@ -90,9 +95,13 @@ let pop (g: heap) (st: pstate) (c: nat{c < n_cls}) (wz: nat{small_wz wz c})
         let st' = { st with pm = Seq.upd st.pm p e';
                             avail = (if e.nfree = 1 then set_avail st c e.next else st.avail) } in
         PI.slot_fits p c k;
-        (fill_slot g p c k wz, st', U64.uint_to_t (slot_obj p c k))
+        (fill_slot_as clr g p c k wz, st', U64.uint_to_t (slot_obj p c k))
       end
     end
+
+let pop (g: heap) (st: pstate) (c: nat{c < n_cls}) (wz: nat{small_wz wz c})
+  : GTot (heap & pstate & U64.t)
+  = pop_as true g st c wz
 
 /// The first free page from `i` on, or `n_pages`.
 let rec find_free (pm: page_map) (i: nat) : Tot nat (decreases (if i < n_pages then n_pages - i else 0)) =
@@ -113,19 +122,62 @@ let acq_state (st: pstate) (i: nat{i < n_pages}) (c: nat{c < n_cls}) : pstate =
 let acquire (g: heap) (st: pstate) (i: nat{i < n_pages}) (c: nat{c < n_cls}) : GTot (heap & pstate) =
   (PI.pool_init g i c, acq_state st i c)
 
-let small_alloc (g: heap) (st: pstate) (wz: nat{wz + 1 <= small_max}) : GTot (heap & pstate & U64.t) =
+let small_alloc_as (clr: bool) (g: heap) (st: pstate) (wz: nat{wz + 1 <= small_max}) : GTot (heap & pstate & U64.t) =
   let c = class_of (wz + 1) in
   class_of_fits (wz + 1);
   small_wz_intro wz c;
-  if avail_at st c <> 0UL then pop g st c wz
+  if avail_at st c <> 0UL then pop_as clr g st c wz
   else begin
     let i = find_free st.pm 0 in
     if i >= n_pages then (g, st, 0UL)
     else begin
       let (g1, st1) = acquire g st i c in
-      pop g1 st1 c wz
+      pop_as clr g1 st1 c wz
     end
   end
+
+let small_alloc (g: heap) (st: pstate) (wz: nat{wz + 1 <= small_max}) : GTot (heap & pstate & U64.t) =
+  small_alloc_as true g st wz
+
+/// The allocator's heap is the cleared one without the clearing
+/// (`GC.Spec.Pages.Blocks.clears`).
+let pop_clears (g: heap) (st: pstate) (c: nat{c < n_cls}) (wz: nat{small_wz wz c})
+  : Lemma (let (gr, sr, o) = pop_as false g st c wz in
+           let (gc, sc, oc) = pop_as true g st c wz in
+           sc == sr /\ oc == o /\ clears gr gc o wz)
+  = let hd = avail_at st c in
+    if hd = 0UL || U64.v hd - 1 >= n_pages then ()
+    else begin
+      let p : nat = U64.v hd - 1 in
+      let e = entry st.pm p in
+      let k = slot_of p c e.free_head in
+      if k >= n_slots c || e.nfree = 0 then ()
+      else begin
+        PI.slot_fits p c k;
+        cls_bounds c;
+        FStar.Math.Lemmas.pow2_lt_compat 54 20;
+        let a = slot_base p c k in
+        let g1 = if wz + 1 < cls c then put_blue g (a + (wz + 1) * 8) (cls c - (wz + 1)) else g in
+        put_obj_clears g1 a wz (U64.uint_to_t (slot_obj p c k))
+      end
+    end
+
+let small_alloc_clears (g: heap) (st: pstate) (wz: nat{wz + 1 <= small_max /\ wz < pow2 54})
+  : Lemma (let (gr, sr, o) = small_alloc_as false g st wz in
+           let (gc, sc, oc) = small_alloc_as true g st wz in
+           sc == sr /\ oc == o /\ clears gr gc o wz)
+  = let c = class_of (wz + 1) in
+    class_of_fits (wz + 1);
+    small_wz_intro wz c;
+    if avail_at st c <> 0UL then pop_clears g st c wz
+    else begin
+      let i = find_free st.pm 0 in
+      if i >= n_pages then ()
+      else begin
+        let (g1, st1) = acquire g st i c in
+        pop_clears g1 st1 c wz
+      end
+    end
 
 /// ---------------------------------------------------------------------------
 /// Arithmetic
@@ -189,9 +241,12 @@ let fill_read (g: heap) (p: nat{p < n_pages}) (c: nat{c < n_cls}) (k: nat{k < n_
             else read_word g x))
   = let a = slot_base p c k in
     slot_in p c k;
-    let g1 = put_obj g a wz in
-    put_obj_read g a wz x;
-    if wz + 1 < cls c then wr_read g1 (a + (wz + 1) * 8) (bhdr (cls c - (wz + 1))) x
+    if wz + 1 < cls c then begin
+      let g1 = put_blue g (a + (wz + 1) * 8) (cls c - (wz + 1)) in
+      put_obj_read g1 a wz x;
+      wr_read g (a + (wz + 1) * 8) (bhdr (cls c - (wz + 1))) x
+    end
+    else put_obj_read g a wz x
 
 let fill_kept (g: heap) (p: nat{p < n_pages}) (c: nat{c < n_cls}) (k: nat{k < n_slots c})
               (wz: nat{small_wz wz c})
@@ -586,7 +641,7 @@ let pop_pages_ok (g: heap) (st: pstate) (c: nat{c < n_cls}) (p: nat) (k: nat) (k
 let pop_ok (g: heap) (st: pstate) (c: nat{c < n_cls}) (p: nat) (k: nat) (ks ps: list nat)
            (wz: nat{small_wz wz c})
   : Lemma (requires pop_ctx g st c p k ks ps)
-          (ensures alloc_ok g (fill_slot g p c k wz) st (pop_state g st c p k) wz (pop_obj p c k) /\
+          (ensures cleared_ok g (fill_slot g p c k wz) st (pop_state g st c p k) wz (pop_obj p c k) /\
                    pop_obj p c k =!= 0UL)
   = pop_pages_ok g st c p k ks ps wz;
     pop_replaces g st c p k ks ps wz;
@@ -824,7 +879,7 @@ let avail_empty (g: heap) (st: pstate) (c: nat{c < n_cls})
 
 let pop_any_ok (g: heap) (st: pstate) (c: nat{c < n_cls}) (wz: nat{small_wz wz c})
   : Lemma (requires pages_ok g st /\ well_formed_heap g /\ avail_at st c <> 0UL)
-          (ensures (let (g', st', obj) = pop g st c wz in alloc_ok g g' st st' wz obj /\ obj =!= 0UL))
+          (ensures (let (g', st', obj) = pop g st c wz in cleared_ok g g' st st' wz obj /\ obj =!= 0UL))
   = pop_ctx_intro g st c;
     let p = U64.v (avail_at st c) - 1 in
     eliminate exists (k: nat) (ks ps: list nat). pop_ctx g st c p k ks ps
@@ -836,7 +891,7 @@ let pop_any_ok (g: heap) (st: pstate) (c: nat{c < n_cls}) (wz: nat{small_wz wz c
 /// **A small block is allocated correctly.**
 let small_alloc_ok (g: heap) (st: pstate) (wz: nat{wz + 1 <= small_max})
   : Lemma (requires pages_ok g st /\ well_formed_heap g)
-          (ensures (let (g', st', obj) = small_alloc g st wz in alloc_ok g g' st st' wz obj))
+          (ensures (let (g', st', obj) = small_alloc g st wz in cleared_ok g g' st st' wz obj))
   = let c = class_of (wz + 1) in
     class_of_fits (wz + 1);
     small_wz_intro wz c;
@@ -851,6 +906,6 @@ let small_alloc_ok (g: heap) (st: pstate) (wz: nat{wz + 1 <= small_max})
         let st1 = acq_state st i c in
         pop_any_ok g1 st1 c wz;
         let (g', st', obj) = pop g1 st1 c wz in
-        alloc_ok_compose g g1 g' st st1 st' wz obj
+        cleared_ok_compose g g1 g' st st1 st' wz obj
       end
     end

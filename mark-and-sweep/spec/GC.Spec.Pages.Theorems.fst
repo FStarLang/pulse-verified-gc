@@ -125,6 +125,30 @@ let no_fit (g: heap) (st: pstate) (w: pos) : prop =
         large_listable g st.pm y ==> whsize g y < w) /\
      (forall (i: nat). ~(free_run st.pm i (pages_for w))))
 
+/// A value the caller may store in a field: not a pointer, or a pointer that
+/// resolves to an object of the heap that is not free.  The new object
+/// itself is one.
+let field_ok (g: heap) (v: U64.t) : prop =
+  is_pointer v ==>
+  Seq.mem (resolve_object (v <: obj_addr) g) (objects zero_addr g) /\
+  infix_addr_wf g (objects zero_addr g) (v <: obj_addr) /\
+  ~(is_blue (resolve_object (v <: obj_addr) g) g)
+
+/// `g''` is `g'` with the fields of `x` written: every other word is kept,
+/// and every field of `x` holds a value the caller may store.
+let fields_written (g' g'': heap) (x: obj_addr) : prop =
+  (forall (a: hp_addr).
+     U64.v a < U64.v x \/ U64.v a >= U64.v x + U64.v (wosize_of_object x g') * 8 ==>
+     read_word g'' a == read_word g' a) /\
+  (forall (a: hp_addr).
+     U64.v x <= U64.v a /\ U64.v a < U64.v x + U64.v (wosize_of_object x g') * 8 ==>
+     field_ok g'' (read_word g'' a))
+
+/// As OCaml's `caml_alloc_shr`, the allocator hands out the object with its
+/// fields as they were, and the caller must write every field before the
+/// heap is valid again.  So `alloc_ok` does not ask for `pages_ok` and
+/// `well_formed_heap` of `g'` itself: it asks that they hold of every heap
+/// the caller can make by writing valid values in the fields.
 let alloc_ok (g g': heap) (st st': pstate) (wz: nat) (obj: U64.t) : prop =
   (obj == 0UL ==> g' == g /\ st' == st /\ (wz + 1 < pow2 54 ==> no_fit g st (wz + 1))) /\
   (obj =!= 0UL ==>
@@ -133,9 +157,9 @@ let alloc_ok (g g': heap) (st st': pstate) (wz: nat) (obj: U64.t) : prop =
       Seq.mem x (objects zero_addr g') /\
       U64.v (wosize_of_object x g') == wz /\
       is_white x g' /\
-      ~(Seq.mem x (objects zero_addr g) /\ ~(is_blue x g))) /\
-     pages_ok g' st' /\
-     well_formed_heap g' /\
+      ~(Seq.mem x (objects zero_addr g) /\ ~(is_blue x g)) /\
+      (forall (g'': heap). fields_written g' g'' x ==>
+         pages_ok g'' st' /\ well_formed_heap g'')) /\
      others_unchanged g g' /\
      unswept_unchanged g g' st st')
 
