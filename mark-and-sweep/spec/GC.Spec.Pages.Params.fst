@@ -44,6 +44,11 @@ let increasing (c: nat)
   = both_candidates_ok ();
     if c + 1 < n_cls then increasing_from_spec 0 c
 
+let large_beyond_small_lists () : Lemma (cls (n_cls - 1) > GC.Spec.SizeClass.n_small)
+  = reveal_opaque (`%GC.Spec.SizeClass.n_small) GC.Spec.SizeClass.n_small;
+    assert_norm (cls (n_cls - 1) == 128)
+
 let params_ok () =
   both_candidates_ok ();
+  large_beyond_small_lists ();
   FStar.Classical.forall_intro increasing
