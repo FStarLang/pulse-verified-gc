@@ -1,8 +1,8 @@
 # Proof plan: the OCaml 5-style page allocator (B2)
 
-This is the plan for proving B2. Stage 1, the specification, is done on
-branch `sheera/pages-allocator`, which is based on
-`origin/sheera/size-lists` (§9).
+This is the plan for proving B2. Stage 1, the specification, and stage 2,
+the allocator, are done on branch `sheera/pages-allocator`, which is based
+on `origin/sheera/size-lists` (§9, §10).
 
 **Decisions (2026-11-08):**
 - **Size limit:** a block is small when `whsize ≤ 128`, as in OCaml 5.
@@ -727,3 +727,72 @@ the default rlimit of 20, with no admits and no assumptions. `Pages.Init`,
 - **Moved to stage 4:** `gc_correct` restated for pages. Its clauses reuse
   the existing `full_gc_correctness` and isomorphism, which stage 4 restates
   against `sweep_all`.
+
+---
+
+## 10. Stage 2 as built
+
+All modules are in `mark-and-sweep/spec/`. They verify from a clean cache at
+the default rlimit of 20, with no admits and no assumptions. `Pages.Alloc`
+is a root in the `Makefile`, so `make verify` checks them all.
+
+**The theorem.** `GC.Spec.Pages.Alloc.alloc_correct : unit -> Lemma
+(alloc_meets alloc)`: the allocator `alloc` meets the §2.2 statement of
+`Pages.Theorems` for every heap, state and wosize, 0 included.
+
+**Vacuity.**
+- `init_alloc_pre`: the empty heap of pages satisfies the precondition,
+  `pages_ok` and `well_formed_heap`.
+- `init_alloc_succeeds` and `init_alloc_large_succeeds`: on that heap a
+  small block, and a large block that fits in the pages, are allocated
+  (the result is not 0), so the theorem is not met by always failing.
+
+| Module | Lines (4,395 in all) | What it holds |
+|---|---|---|
+| `Pages.Replace` | 431 | `replaces g g' a e`: a stretch of free blocks the walk covers is laid over with new blocks the walk covers, none infix, none with a pointer field unless free. `replace_ok` derives `well_formed_heap`, `no_pointer_to_blue` and "every object that was not free keeps its place, header and fields" once, for every allocator step. Rests on `steps_to_det`, the walk is deterministic. |
+| `Pages.Cells` | 345 | #46's fuel-based lists as ghost lists of cells: `cells_of` and `cells_valid` go both ways between `fl_valid`/`fl_chain_terminates`/`chain_avoids`/`reachable_on_fl` and list membership. `lview`: L9 as "list 0 is exactly the free listable blocks, the exact-fit lists are empty" (`large_ok_lview`, `lview_large_ok`). |
+| `Pages.Frame` | 267 | `page_local` (L1–L7 of one page): kept when the page's entry and the words of its span are (`page_local_frame`). `avail_frame` for L8. |
+| `Pages.Blocks` | 184 | The writes: a fresh object (white header, tag 0, fields cleared) and a blue header; `two_blocks` walks one or two new blocks. |
+| `Pages.Step` | 190 | `pages_ok` intro/elim; `alloc_ok_compose` (two steps); `others_local` (a rewrite of whole spans keeps every other page); `lview_away` (a rewrite outside every swept run keeps L9). |
+| `Pages.Pool` | 856 | `pop` (a slot from the first page on `avail[c]`), `acquire` (a free page becomes a pool page, by `pool_init_ok`), `small_alloc_ok`. |
+| `Pages.Run` | 169 | `run_after_replace`: a swept run keeps L6 and L7 when one of its free blocks is rewritten into white or blue blocks, no two blue ones adjacent. |
+| `Pages.Large` | 1,073 | First fit on list 0 (`split_fit`), carving from the right; `carve_ok`. A remainder of at least `lg_min` words stays listed in place; a smaller one, or none, leaves the list by unlinking (`cells_unlink`). |
+| `Pages.NewRun` | 680 | `new_run_ok`: `pages_for w` consecutive free pages become a swept run, the object first, the rest one free block, pushed on list 0 if listable. |
+| `Pages.Alloc` | 200 | `alloc`, `alloc_correct`, the vacuity lemmas. |
+
+**Changes to the plan made in stage 2:**
+- **Three corrections to stage 1's statements.** None weakens a proved
+  theorem; stage 1 proved only `init_pages_ok` and `pool_init_ok`, and
+  both still hold.
+  - `no_fit` (`Pages.Theorems`) demanded "no free page" for large requests
+    as well, so `alloc_meets` held of no allocator: a request larger than
+    the heap must fail while a free page exists. It now says what §2.2
+    says: for a large block, no listed block fits and no `pages_for w`
+    consecutive pages are free (`free_run`).
+  - `unswept_unchanged` used `page_frame g g' i`, "only page `i` changed",
+    for every unswept page, which no step that writes another page can
+    meet. It now uses `page_kept g g' i`, "page `i`'s words are unchanged",
+    the meaning intended.
+  - `large_ok` (L9) did not say a listed block is free, so an allocator
+    could carve a live object. It now includes `fls_sound`, as §1.4's
+    "`fls_exact`" asked; `init_pages_ok` is re-proved.
+- **A fifth parameter condition, C5:** `small_max > n_small` (#46's 16
+  exact-fit lists). Every listable block is then on list 0, the only list
+  the large allocator searches. Both page sizes meet it (128 > 16).
+- **The allocator clears a new object's fields.** `alloc_ok` asks for
+  `well_formed_heap` and `no_pointer_to_blue` right after the allocation,
+  and a free slot's first field links to another free block. #46's
+  `alloc_spec` leaves the fields to its caller; the Pulse allocator of
+  stage 5 must zero them, or `alloc_ok` must be weakened to the caller's
+  form. Clearing costs a write per field; the prototype does not do it.
+- **No run joining.** When nothing fits, the allocator starts a new run of
+  `pages_for w` free pages; it never extends a neighbouring run (§2.2).
+  `no_fit` is stated to match. Joining can come later as an optimisation.
+- **Carving keeps #46's policy, with a different threshold.** The remainder
+  stays listed when it has at least `lg_min` words, not 2; a smaller one is
+  unlinked and left as an unlisted piece. Unlinking is proved here
+  (`cells_unlink`), since #46's `alloc_spec` lemmas do not say that the
+  other cells stay on the list.
+- **`pages_ok` is sealed** (`opaque_to_smt`), as #46's `fls_*` bundles are;
+  clients use `Pages.Step.pages_ok_intro` and `pages_ok_elim`. Without it,
+  queries that only carry `pages_ok` timed out.
