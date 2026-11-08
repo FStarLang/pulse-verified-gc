@@ -278,7 +278,8 @@ void vergc_proto_init(uint64_t *heads, uint64_t *tbl, uint64_t tbl_len) {
         }
     }
     const char *c = getenv("VERGC_PROTO_CHECK_CONTROL");
-    proto_check_control = c != NULL && atoi(c) != 0;
+    /* the mutant number: 1 the pool (or A's) sweep, 2 the large-object sweep */
+    proto_check_control = c != NULL ? atoi(c) : 0;
     const char *s = getenv("VERGC_PROTO_STATS");
     proto_stats = s != NULL && atoi(s) != 0;
     const char *mm = getenv("VERGC_PROTO_MEM");

@@ -499,12 +499,32 @@ The checks were the same as in section 2, for `B2`, `B3-8K`, `B3-16K` and
   All 96 runs passed. So did B's 8 parallel runs, redone with the race fix.
 - **`make test` and `make test-native`:** passed for each of the four
   variants in each mode, and for B's parallel mode after the fix.
-- **Control mutants:** the check rejected every one.
+- **Control mutants:**
   - B's mutant (the last slot of every page is never looked at) was run on
-    livegraph for the four variants in the three modes, 12 runs.
+    livegraph for the four variants in the three modes, 12 runs. The check
+    rejected every one.
   - A new mutant for the large-object area keeps the first block of every
-    large run, even when it is dead (`VERGC_PROTO_CHECK_CONTROL=2`). It was
-    run on binarytrees 16, sequential, for the four variants, 4 runs.
+    large run, even when it is dead (`VERGC_PROTO_CHECK_CONTROL=2`).
+    **Correction (2026-11-08): this mutant never ran here.**
+    `proto_common.c` read the variable as a boolean, so 2 became 1, and the
+    4 runs reported here (binarytrees 16, sequential) ran the pool mutant
+    instead.
+    - With the parsing fixed, B2 on binarytrees 16 at 1.25× completes in all
+      three modes and the check reports nothing.
+    - That mutant never fires. B2 carves large blocks from the right, so a
+      run's first block is its blue left-over piece (at least 97 words on
+      binarytrees, whose large blocks are all 129 words), and the mutant
+      only acts on a first block that is not blue.
+    - **The mutant now keeps the run's first block that is not blue, even
+      when it is dead,** and prints a line the first time it does.
+      - It fired, and the check rejected it, on binarytrees 16 (1.25×),
+        bdd and fft, in each of the three modes: 9 runs.
+      - The kept blocks were 129, 16,385 and 524,289 words.
+      - Sequential and parallel runs failed with "a block the verified
+        sweep frees survives". Incremental runs failed with "a dead block is
+        not covered by a blue block after its sweep".
+      - On livemap, minilight and markbench (0.25×, sequential) it never
+        fired: no large block died there. Those runs test nothing.
 - **Not run:**
   - the binarytrees 18 oracle checks, as in section 2.1;
   - the OCaml testsuite, for B2 and B3.

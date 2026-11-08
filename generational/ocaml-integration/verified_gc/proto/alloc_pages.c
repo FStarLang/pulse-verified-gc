@@ -335,12 +335,25 @@ static int lg_free_run(lists_t *L, uint64_t rs, uint64_t rw, uint32_t *seg) {
 static int sweep_large(uint32_t p, lists_t *L) {
     uint32_t k = pm[p].run, end = p + k, seg = p;
     uint64_t cur = pa(p), e = pa(end), rs = 0, rw = 0;
-    int freed = 0;
+    int freed = 0, seen_used = 0;
     for (uint32_t q = p; q < end; q++) pm[q].swept = 1;
     while (cur < e) {
         uint64_t h = PW(cur), next = cur + (HD_WZ(h) + 1) * 8;
-        /* control mutant 2: the first block of a run is kept even if dead */
-        if (IS_BLACK(h) || (proto_check_control == 2 && cur == pa(p) && !IS_BLUE(h))) {
+        /* control mutant 2: the run's first block that is not blue is kept
+         * even if dead.  (Its first block is usually the blue piece left
+         * over by carving from the right, so the mutant must skip it.) */
+        int keep = 0;
+        if (proto_check_control == 2 && !seen_used && !IS_BLUE(h)) {
+            seen_used = 1;
+            if (!IS_BLACK(h)) {
+                static int fired = 0;
+                keep = 1;
+                if (!__atomic_exchange_n(&fired, 1, __ATOMIC_RELAXED))
+                    fprintf(stderr, "control mutant 2 fired: dead block at 0x%llx kept\n",
+                            (unsigned long long)cur);
+            }
+        }
+        if (IS_BLACK(h) || keep) {
             if (rw) freed |= lg_free_run(L, rs, rw, &seg);
             rw = 0;
             PW(cur) = WHITEN(h);
