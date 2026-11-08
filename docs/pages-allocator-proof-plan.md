@@ -2,7 +2,8 @@
 
 This is the plan for proving B2. Stage 1, the specification, and stage 2,
 the allocator, are done on branch `sheera/pages-allocator`, which is based
-on `origin/sheera/size-lists` (§9, §10).
+on `origin/sheera/size-lists` (§9, §10). The allocator leaves a new
+object's fields to its caller, as `caml_alloc_shr` does (§10).
 
 **Decisions (2026-11-08):**
 - **Size limit:** a block is small when `whsize ≤ 128`, as in OCaml 5.
@@ -298,6 +299,9 @@ val alloc_correct (g:heap) (a:ast) (wz:pos) : Lemma
                        /\ (forall p. not pm[p].swept ==> page p of g' == page p of g /\ a'.pm[p] == a.pm[p]))
 ```
 
+- **The caller writes the fields.** As built (§10), the allocator writes
+  only the header; `alloc_ok g' a'` is asked of every heap the caller can
+  make by writing valid values in the new object's fields.
 - **Small path** (`wz + 1 ≤ small_max`):
   - with `c = class_of (wz+1)`, pop a slot from the first page on
     `avail[c]`;
@@ -738,7 +742,11 @@ is a root in the `Makefile`, so `make verify` checks them all.
 
 **The theorem.** `GC.Spec.Pages.Alloc.alloc_correct : unit -> Lemma
 (alloc_meets alloc)`: the allocator `alloc` meets the §2.2 statement of
-`Pages.Theorems` for every heap, state and wosize, 0 included.
+`Pages.Theorems` for every heap, state and wosize, 0 included. As OCaml's
+`caml_alloc_shr` does, `alloc` writes the new object's header and leaves its
+fields as they were; `alloc_ok` asks that every heap the caller can make by
+writing valid values in the fields satisfy `pages_ok` and
+`well_formed_heap` (see the changes below).
 
 **Vacuity.**
 - `init_alloc_pre`: the empty heap of pages satisfies the precondition,
@@ -746,19 +754,24 @@ is a root in the `Makefile`, so `make verify` checks them all.
 - `init_alloc_succeeds` and `init_alloc_large_succeeds`: on that heap a
   small block, and a large block that fits in the pages, are allocated
   (the result is not 0), so the theorem is not met by always failing.
+- `alloc_fill_exists`: after any allocation the caller can write the
+  fields (clearing them will do), and the heap it gets satisfies `pages_ok`
+  and `well_formed_heap`; so the caller's clause of `alloc_ok` is not
+  vacuous. `init_alloc_filled` combines it with `init_alloc_succeeds`.
 
-| Module | Lines (4,395 in all) | What it holds |
+| Module | Lines (5,326 in all) | What it holds |
 |---|---|---|
 | `Pages.Replace` | 431 | `replaces g g' a e`: a stretch of free blocks the walk covers is laid over with new blocks the walk covers, none infix, none with a pointer field unless free. `replace_ok` derives `well_formed_heap`, `no_pointer_to_blue` and "every object that was not free keeps its place, header and fields" once, for every allocator step. Rests on `steps_to_det`, the walk is deterministic. |
 | `Pages.Cells` | 345 | #46's fuel-based lists as ghost lists of cells: `cells_of` and `cells_valid` go both ways between `fl_valid`/`fl_chain_terminates`/`chain_avoids`/`reachable_on_fl` and list membership. `lview`: L9 as "list 0 is exactly the free listable blocks, the exact-fit lists are empty" (`large_ok_lview`, `lview_large_ok`). |
 | `Pages.Frame` | 267 | `page_local` (L1–L7 of one page): kept when the page's entry and the words of its span are (`page_local_frame`). `avail_frame` for L8. |
-| `Pages.Blocks` | 184 | The writes: a fresh object (white header, tag 0, fields cleared) and a blue header; `two_blocks` walks one or two new blocks. |
-| `Pages.Step` | 190 | `pages_ok` intro/elim; `alloc_ok_compose` (two steps); `others_local` (a rewrite of whole spans keeps every other page); `lview_away` (a rewrite outside every swept run keeps L9). |
-| `Pages.Pool` | 856 | `pop` (a slot from the first page on `avail[c]`), `acquire` (a free page becomes a pool page, by `pool_init_ok`), `small_alloc_ok`. |
+| `Pages.Blocks` | 214 | The writes: a fresh object's header (`put_hdr`), the same with its fields cleared (`put_obj`), a blue header; `clears`, the allocator's heap against the cleared one; `two_blocks` walks one or two new blocks. |
+| `Pages.Step` | 208 | `pages_ok` intro/elim; `cleared_ok`, the statement the per-path proofs meet, and `cleared_ok_compose` (two steps); `others_local` (a rewrite of whole spans keeps every other page); `lview_away` (a rewrite outside every swept run keeps L9). |
+| `Pages.Pool` | 911 | `pop` (a slot from the first page on `avail[c]`), `acquire` (a free page becomes a pool page, by `pool_init_ok`), `small_alloc_ok`. |
 | `Pages.Run` | 169 | `run_after_replace`: a swept run keeps L6 and L7 when one of its free blocks is rewritten into white or blue blocks, no two blue ones adjacent. |
-| `Pages.Large` | 1,073 | First fit on list 0 (`split_fit`), carving from the right; `carve_ok`. A remainder of at least `lg_min` words stays listed in place; a smaller one, or none, leaves the list by unlinking (`cells_unlink`). |
-| `Pages.NewRun` | 680 | `new_run_ok`: `pages_for w` consecutive free pages become a swept run, the object first, the rest one free block, pushed on list 0 if listable. |
-| `Pages.Alloc` | 200 | `alloc`, `alloc_correct`, the vacuity lemmas. |
+| `Pages.Large` | 1,106 | First fit on list 0 (`split_fit`), carving from the right; `carve_ok`. A remainder of at least `lg_min` words stays listed in place; a smaller one, or none, leaves the list by unlinking (`cells_unlink`). |
+| `Pages.NewRun` | 712 | `new_run_ok`: `pages_for w` consecutive free pages become a swept run, the object first, the rest one free block, pushed on list 0 if listable. |
+| `Pages.Fill` | 482 | `fill_ok`: writing the fields of an object that is neither free nor a closure with values `field_ok` allows keeps `pages_ok` and `well_formed_heap`. Every position the walk reaches lies outside the fields (`apart`), so the walk, the pages and the lists are kept. `cleared_written`: clearing the fields is such a write. |
+| `Pages.Alloc` | 481 | `alloc`, `alloc_correct` (`alloc_ok_of` takes the per-path proofs from the cleared heap to the allocator's, with `fill_ok`; `fields_swept`: the new fields lie in swept pages), the vacuity lemmas. |
 
 **Changes to the plan made in stage 2:**
 - **Three corrections to stage 1's statements.** None weakens a proved
@@ -779,12 +792,31 @@ is a root in the `Makefile`, so `make verify` checks them all.
 - **A fifth parameter condition, C5:** `small_max > n_small` (#46's 16
   exact-fit lists). Every listable block is then on list 0, the only list
   the large allocator searches. Both page sizes meet it (128 > 16).
-- **The allocator clears a new object's fields.** `alloc_ok` asks for
-  `well_formed_heap` and `no_pointer_to_blue` right after the allocation,
-  and a free slot's first field links to another free block. #46's
-  `alloc_spec` leaves the fields to its caller; the Pulse allocator of
-  stage 5 must zero them, or `alloc_ok` must be weakened to the caller's
-  form. Clearing costs a write per field; the prototype does not do it.
+- **The caller writes the new object's fields (decided 2026-11-08).**
+  As OCaml's `caml_alloc_shr` (4.14) and the pool allocator of OCaml 5,
+  and as #46's `alloc_spec`, the allocator returns the object with its
+  fields as they were; the caller must write every field before the next
+  collection. Stage 2 first cleared the fields, because `alloc_ok` asked
+  for `pages_ok` and `well_formed_heap` right after the allocation, and a
+  free slot's first field links to another free block. Now:
+  - `alloc_ok` (`Pages.Theorems`) no longer asks for `pages_ok` and
+    `well_formed_heap` of the allocator's heap `g'`. It asks them of every
+    `g''` with `fields_written g' g'' x`: `g''` is `g'` but for the fields
+    of the new object `x`, and each field holds a value `field_ok` allows,
+    a non-pointer or a pointer that resolves to an object that is not free
+    (`x` itself included). The rest of `alloc_ok` is unchanged, and stated
+    of `g'`.
+  - `Pages.Fill.fill_ok` is the lemma behind it, for any object that is
+    neither free nor a closure.
+  - The per-path proofs are unchanged; they are about the heap the
+    allocator would make if it cleared the fields, and meet `cleared_ok`
+    (`Pages.Step`), the old `alloc_ok`. The write helpers take a flag
+    `clr` (`put_obj_as`, `fill_slot_as`, `pop_as`, `carve_as`,
+    `new_run_as`, `alloc_as`); `alloc` is `alloc_as false`. The object's
+    header is now written after the filler or the run's free block, so the
+    cleared heap is the allocator's with `zeros` applied last (`clears`).
+  - For the Pulse allocator of stage 5 there is no field write; the
+    caller's obligation is `fields_written`.
 - **No run joining.** When nothing fits, the allocator starts a new run of
   `pages_for w` free pages; it never extends a neighbouring run (§2.2).
   `no_fit` is stated to match. Joining can come later as an optimisation.
