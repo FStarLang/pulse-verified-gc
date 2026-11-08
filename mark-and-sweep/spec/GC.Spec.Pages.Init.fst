@@ -25,6 +25,7 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module L = FStar.List.Tot
 module FLs = GC.Spec.FreeLists
+module FL = GC.Spec.FreeList
 module AL = GC.Spec.Allocator.Lemmas
 module Chain = GC.Spec.Allocator.Lemmas.Chain
 module Mark = GC.Spec.Mark
@@ -244,6 +245,7 @@ let init_all_blue (g: heap) (x: obj_addr)
 /// The invariant
 /// ---------------------------------------------------------------------------
 
+#push-options "--fuel 1"
 let init_large_ok (g: heap)
   : Lemma (large_ok (init_heap g) init_state)
   = let g' = init_heap g in
@@ -257,7 +259,12 @@ let init_large_ok (g: heap)
     FLs.fls_valid_intro g' fls;
     AL.fl_chain_terminates_terminal g' 0UL heap_words;
     FLs.fls_terminates_intro g' fls;
+    let sound (i: nat) (y: U64.t) : Lemma (~(FL.reachable_on_fl g' (FLs.fls_head fls i) y))
+      = introduce forall (n: nat). ~(FL.on_fl g' 0UL y n) with (if n = 0 then () else ())
+    in
+    FStar.Classical.forall_intro_2 sound;
     FStar.Classical.forall_intro (FLs.fls_avoids_iff g' fls)
+#pop-options
 
 #push-options "--fuel 1"
 let init_avail_ok () : Lemma (avail_ok init_state)
@@ -283,7 +290,8 @@ let init_no_pointer_to_blue (g: heap)
 /// **Vacuity.**  The empty heap of pages satisfies the invariant.
 let init_pages_ok (g: heap)
   : Lemma (pages_ok (init_heap g) init_state)
-  = init_shape_ok g;
+  = reveal_opaque (`%pages_ok) pages_ok;
+    init_shape_ok g;
     init_large_ok g;
     init_avail_ok ();
     init_no_pointer_to_blue g;

@@ -13,7 +13,10 @@
 ///       header and the free-list link;
 ///   C2  the classes strictly increase;
 ///   C3  the largest class, `small_max`, fits in a page;
-///   C4  a page is small enough that page arithmetic never overflows.
+///   C4  a page is small enough that page arithmetic never overflows;
+///   C5  a large block is larger than every exact-fit list of #46
+///       (`GC.Spec.SizeClass.n_small`), so the large-object area uses only
+///       #46's first-fit list 0.
 ///
 /// Sizes are in words and include the header (whsize), as in OCaml 5's
 /// `wsize_sizeclass`.  A block of whsize at most `small_max` is small and
@@ -40,6 +43,7 @@ let params_cond : prop =
   (* C1 *) cls 0 >= 2 /\
   (* C2 *) (forall (c: nat). c + 1 < n_cls ==> cls c < cls (c + 1)) /\
   (* C3 *) small_max <= page_wsize /\
-  (* C4 *) page_wsize < pow2 20
+  (* C4 *) page_wsize < pow2 20 /\
+  (* C5 *) small_max > GC.Spec.SizeClass.n_small
 
 val params_ok : unit -> Lemma params_cond

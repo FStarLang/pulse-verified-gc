@@ -15,8 +15,8 @@
 ///   L8  the list of class `c` holds exactly the swept pages of class `c`
 ///       with a free slot;
 ///   L9  the large lists are #46's lists, restricted to swept runs and to
-///       blocks of at least `lg_min` words, and every such free block is on
-///       them;
+///       blocks of at least `lg_min` words; every listed block is free, and
+///       every such free block is listed;
 ///   L10 no object points to a free block (`GC.Spec.Mark.no_pointer_to_blue`).
 ///
 /// L4, L5, L7 and L8 constrain swept pages only.  Unswept pages are held to
@@ -162,6 +162,8 @@ let large_listable (g: heap) (pm: page_map) (y: obj_addr) : prop =
 let large_ok (g: heap) (st: pstate) : prop =
   FLs.fls_valid g st.large /\
   FLs.fls_terminates g st.large /\
+  (* every listed block is free *)
+  FLs.fls_sound g st.large /\
   (* every listed block is listable *)
   (forall (y: obj_addr). Seq.mem y (objects zero_addr g) /\ ~(large_listable g st.pm y) ==>
      FLs.fls_avoids g st.large (y <: U64.t)) /\
@@ -174,6 +176,10 @@ let large_ok (g: heap) (st: pstate) : prop =
 /// The invariant
 /// ---------------------------------------------------------------------------
 
+/// Sealed, as #46's list bundles are: clients go through
+/// `GC.Spec.Pages.Step.pages_ok_intro` and `pages_ok_elim`, which keeps the
+/// many quantifiers of its clauses out of every query that only carries it.
+[@@"opaque_to_smt"]
 let pages_ok (g: heap) (st: pstate) : prop =
   shape_ok g st.pm /\
   (forall (i: nat{i < n_pages}).
@@ -186,4 +192,5 @@ let pages_ok (g: heap) (st: pstate) : prop =
 let pages_ok_tiled (g: heap) (st: pstate)
   : Lemma (requires pages_ok g st)
           (ensures GC.Spec.WalkEnd.walk_end g zero_addr + 8 >= heap_size)
-  = heap_tiled g st.pm
+  = reveal_opaque (`%pages_ok) pages_ok;
+    heap_tiled g st.pm

@@ -95,22 +95,35 @@ let others_unchanged (g g': heap) : prop =
     (forall (b: hp_addr). U64.v x <= U64.v b /\ U64.v b < U64.v x + U64.v (wosize_of_object x g) * 8 ==>
        read_word g' b == read_word g b)
 
+/// Page `i`'s words are unchanged.
+let page_kept (g g': heap) (i: nat) : prop =
+  forall (a: hp_addr). page_base i <= U64.v a /\ U64.v a < page_base (i + 1) ==>
+    read_word g' a == read_word g a
+
 /// Unswept pages, and their entries, are left as they were.
 let unswept_unchanged (g g': heap) (st st': pstate) : prop =
   forall (i: nat{i < n_pages}).
     not (entry st.pm i).swept ==>
-    entry st'.pm i == entry st.pm i /\ page_frame g g' i
+    entry st'.pm i == entry st.pm i /\ page_kept g g' i
+
+/// The pages a large block of `w` words takes: `w` rounded up to pages.
+let pages_for (w: pos) : pos = (w + page_wsize - 1) / page_wsize
+
+/// Pages `i .. i + k - 1` are all free.
+let free_run (pm: page_map) (i k: nat) : prop =
+  i + k <= n_pages /\ (forall (j: nat). i <= j /\ j < i + k ==> (entry pm j).kind == Free)
 
 /// No room for a block of `w` words: for a small block, no swept page of its
 /// class has a free slot and no page is free; for a large one, no listed
-/// block is large enough and no `k` consecutive pages are free.
+/// block is large enough and no `pages_for w` consecutive pages are free.
 let no_fit (g: heap) (st: pstate) (w: pos) : prop =
-  (forall (p: nat{p < n_pages}). (entry st.pm p).kind =!= Free) /\
   (w <= small_max ==>
+     (forall (p: nat{p < n_pages}). (entry st.pm p).kind =!= Free) /\
      (forall (p: nat{p < n_pages}). ~(has_free_slot st.pm (class_of w) p))) /\
   (w > small_max ==>
      (forall (y: obj_addr). Seq.mem y (objects zero_addr g) /\ is_blue y g /\
-        large_listable g st.pm y ==> whsize g y < w))
+        large_listable g st.pm y ==> whsize g y < w) /\
+     (forall (i: nat). ~(free_run st.pm i (pages_for w))))
 
 let alloc_ok (g g': heap) (st st': pstate) (wz: nat) (obj: U64.t) : prop =
   (obj == 0UL ==> g' == g /\ st' == st /\ (wz + 1 < pow2 54 ==> no_fit g st (wz + 1))) /\
