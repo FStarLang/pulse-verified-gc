@@ -108,6 +108,9 @@ ROOT_MODULES = \
   mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fst \
   mark-and-sweep/spec/GC.Spec.FreeList.Sweep.fst \
   mark-and-sweep/impl/GC.Impl.Correct.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Init.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.PoolInit.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Theorems.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst
 
