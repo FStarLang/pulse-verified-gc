@@ -93,9 +93,18 @@ let rec zeros_read (g: heap) (a: nat) (n: nat) (x: hp_addr)
     end
 #pop-options
 
-/// A fresh object of wosize `wz` with its header at `h`.
+/// A fresh object of wosize `wz` with its header at `h`, its fields as they
+/// were.
+let put_hdr (g: heap) (h: nat) (wz: nat{wz < pow2 54}) : GTot heap = wr g h (ohdr wz)
+
+/// The same, with its fields cleared.
 let put_obj (g: heap) (h: nat) (wz: nat{wz < pow2 54}) : GTot heap =
-  zeros (wr g h (ohdr wz)) (h + 8) wz
+  zeros (put_hdr g h wz) (h + 8) wz
+
+/// The allocator's object write: `clr` says whether it clears the fields.
+/// The spec allocator does not; its proofs go through the cleared heap.
+let put_obj_as (clr: bool) (g: heap) (h: nat) (wz: nat{wz < pow2 54}) : GTot heap =
+  if clr then put_obj g h wz else put_hdr g h wz
 
 let put_obj_read (g: heap) (h: nat) (wz: nat{wz < pow2 54}) (x: hp_addr)
   : Lemma (requires h % 8 == 0)
@@ -113,6 +122,27 @@ let hdr_wr (g: heap) (a: nat) (v: U64.t)
   : Lemma (requires a < heap_size /\ a % 8 == 0)
           (ensures hdr (wr g a v) a == v)
   = wr_read g a v (mk_hp_addr a)
+
+/// Clearing words past the heap changes nothing.
+#push-options "--fuel 1"
+let rec zeros_beyond (g: heap) (a: nat) (n: nat)
+  : Lemma (requires a >= heap_size) (ensures zeros g a n == g) (decreases n)
+  = if n = 0 then () else zeros_beyond g a (n - 1)
+#pop-options
+
+/// `gc` is `gr` with the fields of the new object `obj`, of wosize `wz`,
+/// cleared; and `gr` holds the object's header.  It relates the heap the
+/// allocator makes to the one it would make if it cleared the fields.
+let clears (gr gc: heap) (obj: U64.t) (wz: nat{wz < pow2 54}) : prop =
+  gc == (if obj = 0UL then gr else zeros gr (U64.v obj) wz) /\
+  (U64.v obj >= 8 /\ U64.v obj - 8 < heap_size /\ U64.v obj % 8 == 0 ==>
+     hdr gr (U64.v obj - 8) == ohdr wz)
+
+let put_obj_clears (g: heap) (a: nat) (wz: nat{wz < pow2 54}) (obj: U64.t)
+  : Lemma (requires U64.v obj == a + 8 \/ (obj == 0UL /\ a + 8 >= pow2 64))
+          (ensures clears (put_obj_as false g a wz) (put_obj_as true g a wz) obj wz)
+  = if obj = 0UL then zeros_beyond (put_hdr g a wz) (a + 8) wz
+    else if a < heap_size && a % 8 = 0 then hdr_wr g a (ohdr wz)
 
 /// ---------------------------------------------------------------------------
 /// Good new blocks
