@@ -26,6 +26,8 @@ module MP = GC.Spec.Pages.MarkPhase
 module SA = GC.Spec.Pages.SweepAll
 module SU = GC.Spec.Pages.SweepUnits
 module SO = GC.Spec.Pages.SweepOrder
+module SW = GC.Spec.Pages.SweepWf
+module SS = GC.Spec.Pages.StartSweep
 module A = GC.Spec.Pages.Alloc
 module Mark = GC.Spec.Mark
 
@@ -107,20 +109,27 @@ let sweep_run_correct () = GC.Spec.Pages.SweepRun.sweep_run_correct ()
 
 let sweep_commute g pm i j fpi fpj = SO.sweep_commute g pm i j fpi fpj
 
-let sweep_start g st = SA.inv_init g st
+let sweep_start g st = SW.inv2_init g st
 
 let sweep_step_inv g0 st0 g st p =
-  SA.inv_step g0 g st0 st p;
+  SW.inv2_step g0 g st0 st p;
   SA.inv_elim g0 st0 g st p
 
 let sweep_end g0 st0 g st =
+  SW.sweep_end_wf g0 st0 g st;
   SA.inv_elim g0 st0 g st n_pages;
   SA.no_blue_after g0 g st0 st;
   eliminate exists (cs: list obj_addr). GC.Spec.Pages.Cells.lview g st cs
   with GC.Spec.Pages.Cells.lview_large_ok g st cs;
   GC.Spec.Pages.Step.pages_ok_intro g st
 
-let sweep_all_correct g st = SA.sweep_all_correct g st
+let sweep_all_correct g st =
+  SA.sweep_all_correct g st;
+  SW.sweep_all_wf g st
+
+let start_ready g st = SS.start_ready g st
+
+let collection_cycle g st = SS.collection_cycle g st
 
 /// ---------------------------------------------------------------------------
 /// The collector's contract
