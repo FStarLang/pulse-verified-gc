@@ -57,6 +57,7 @@ module SV = GC.Spec.Pages.Survive
 module GP = GC.Spec.Pages.GcPillars
 module SPo = GC.Spec.Pages.SweepPools
 module Init = GC.Spec.Pages.Init
+module PT = GC.Spec.Pages.Partition
 module Corr = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
 module MarkInv = GC.Spec.MarkInv
@@ -155,41 +156,21 @@ let sweep_lossless (h_init g: heap) (st: pstate) (roots: Seq.seq obj_addr) : pro
     (g, st) == collect h_mark st_m /\
     lossless h_mark g st
 
-/// What a block of the swept heap is.  A free block is one of:
-///   - a free slot of a pool page (listed, by (b));
-///   - a filler: the rest of a used slot after its object, `cls c - w`
-///     words for an object of `w` words;
-///   - a pool page's tail, `tail_words c` words;
-///   - a `Free` page;
-///   - a free block of a swept run (listed when of at least `lg_min`
-///     words, by (b));
-///   - the heap's tail past the last page.
-let block_class (g: heap) (st: pstate) (y: obj_addr) : prop =
-  let b = U64.v y - 8 in
-  is_white y g \/
-  (is_blue y g /\
-   ((exists (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat).
-       (entry st.pm i).kind == Pool c /\ k < n_slots c /\ b == slot_base i c k /\ slot_free g i c k) \/
-    (exists (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat).
-       (entry st.pm i).kind == Pool c /\ k < n_slots c /\ ST.filler_at g i c k b) \/
-    (exists (i: nat{i < n_pages}) (c: nat{c < n_cls}).
-       (entry st.pm i).kind == Pool c /\ tail_words c > 0 /\ b == slots_end i c) \/
-    (exists (i: nat{i < n_pages}). (entry st.pm i).kind == Free /\ b == page_base i) \/
-    in_swept_run st.pm b \/
-    b == pages_end))
-
 /// (c2) No memory is lost: the walk tiles the heap (`well_formed_heap`, and
 ///      `pages_ok` makes it reach the end), and every block of it is a live
-///      object, listed free memory, or one of the bounded kinds of waste
-///      above.  No fourth class.
+///      object, listed free memory, or one of the bounded kinds of waste of
+///      `PT.block_class`.  No fourth class.  `PT.heap_partitioned` states
+///      the same as a word count, as the old `heap_partitioned`: the words
+///      of each kind sum to the end of the walk.
 let heap_classified (g: heap) (st: pstate) : prop =
-  forall (y: obj_addr). Seq.mem y (objects zero_addr g) ==> block_class g st y
+  forall (y: obj_addr). Seq.mem y (objects zero_addr g) ==> PT.block_class g st y
 
 let gc_live_pages (h_init g: heap) (st: pstate) (roots: Seq.seq obj_addr) : prop =
   unreachable_reclaimed h_init g roots /\
   free_listed g st /\
   sweep_lossless h_init g st roots /\
-  heap_classified g st
+  heap_classified g st /\
+  PT.heap_partitioned g st
 
 /// ---------------------------------------------------------------------------
 /// The clauses, one lemma each
@@ -278,7 +259,7 @@ let classify_page (g: heap) (st: pstate) (y: obj_addr) (j: nat{j < n_pages})
   : Lemma (requires shape_ok g st.pm /\ MP.all_swept st /\ is_blue y g /\
                     steps_to g (U64.v zero_addr) (U64.v y - 8) /\
                     page_base j <= U64.v y - 8 /\ U64.v y - 8 < page_base (j + 1))
-          (ensures block_class g st y)
+          (ensures PT.block_class g st y)
   = let b = U64.v y - 8 in
     hd_address_spec y;
     R.hdr_obj g y;
@@ -313,10 +294,10 @@ let classify_page (g: heap) (st: pstate) (y: obj_addr) (j: nat{j < n_pages})
 let live_c2 (g: heap) (st: pstate)
   : Lemma (requires pages_ok g st /\ MP.all_swept st /\
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==> is_white x g \/ is_blue x g))
-          (ensures heap_classified g st)
+          (ensures heap_classified g st /\ PT.heap_partitioned g st)
   = GC.Spec.Pages.Step.pages_ok_elim g st;
     let one (y: obj_addr)
-      : Lemma (requires Seq.mem y (objects zero_addr g)) (ensures block_class g st y)
+      : Lemma (requires Seq.mem y (objects zero_addr g)) (ensures PT.block_class g st y)
       = if is_blue y g then begin
           let b = U64.v y - 8 in
           hd_address_spec y;
@@ -337,7 +318,9 @@ let live_c2 (g: heap) (st: pstate)
           end
         end
     in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires one)
+    FStar.Classical.forall_intro (FStar.Classical.move_requires one);
+    heap_tiled g st.pm;
+    PT.partitioned g st
 
 /// ---------------------------------------------------------------------------
 /// 3. The theorems
