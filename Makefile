@@ -135,6 +135,7 @@ ROOT_MODULES = \
   mark-and-sweep/spec/GC.Spec.AllocIface.fst \
   mark-and-sweep/spec/GC.Spec.Pages.Allocator.fsti \
   mark-and-sweep/spec/GC.Spec.Pages.Allocator.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.GcCorrect.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst \
   generational/impl/GC.Gen.Impl.Barrier.fsti \
