@@ -7,7 +7,8 @@ allocator, and stage 3, the sweep, are done on branch
 as `caml_alloc_shr` does (§10). The run sweep is a fresh proof, not #46's
 coalescing sweep restricted to a run (§11). In stage 4, item 0 makes the
 allocator a component with a phase-aware interface, and the new object's
-colour a parameter (§12).
+colour a parameter (§12). Item 2 proves the swept heap well formed and
+adds the step before the sweep (§13).
 
 **Decisions (2026-11-08):**
 - **Size limit:** a block is small when `whsize ≤ 128`, as in OCaml 5.
@@ -1113,7 +1114,82 @@ either colour.**
     not need it.
 - **The `Sweeping → Idle` step still lacks `well_formed_heap`.** `sweep_end`
   gives `pages_ok` and every page swept; `well_formed_heap` after the sweep
-  is item 2.
+  is item 2. *(Done in item 2, §13.)*
 - **For the rebase onto akhil's main:** `Pages.Walk`, `Pages.Shape` and
   `Pages.Inv` use `GC.Spec.WalkEnd`, which his line replaces with
   `GC.Spec.Walk`. No other Pages module uses a module his line deletes.
+
+---
+
+## 13. Stage 4, item 2 as built: well-formedness after the sweep, and the step before it
+
+All modules are in `mark-and-sweep/spec/`. They verify at the default rlimit
+of 20, with no local rlimit raised, no `--retry`, no admits and no
+assumptions. `make verify` checks them through `GC.Spec.Pages.Allocator`.
+
+**The theorems.**
+- **`SweepWf.sweep_all_wf`**: from `sweep_ready` and `mark_done`,
+  `sweep_all` ends with `well_formed_heap`, as well as `pages_ok` and every
+  page swept. This is what §11 left to stage 4.
+  - Part 1 holds of every heap.
+  - Parts 2 and 3 (`field_target`, `target_in`): a pointer field of a
+    survivor is a field of a black object of the marked heap. Its target was
+    black, so it survives, and it resolves to the same object. Infix targets
+    keep `infix_addr_wf`, because their header lies in the fields of a
+    survivor.
+  - Part 4, no object is infix:
+    - a survivor keeps its tag;
+    - every free block of the swept heap either has a header the sweep
+      wrote, of tag 0, or is a block of the marked heap with its header
+      kept, and so not infix by the marked heap's part 4.
+
+    This is `SweepTags.blue_ok`, proved per unit (`pool_blue_ok`,
+    `run_blue_ok`, `kept_blue_ok`). It is carried through the sweep by
+    `SweepWf.inv2`, which is `SweepAll.inv` with `blue_ok` for every unit
+    swept so far. The heap's tail is kept from the marked heap.
+- **`StartSweep.start_ready`**, the step before the sweep:
+  - `start_sweep st` keeps every page's kind, marks every page that is not
+    free unswept, and empties the lists of pages and the large lists. It does
+    not touch the heap.
+  - From the `Marking` invariant (`MarkPhase.mark_inv`: `pages_ok_mc` and
+    every page swept) and `noGreyObjects`, it gives `sweep_ready`.
+  - The pages keep their shapes, because the walk and which blocks are free
+    do not read the colours of live objects (`shape_back`, `steps_same`).
+  - No used slot or run block is grey: a live object is not grey, and any
+    other block has its colour from the whitened heap, where every swept
+    page holds white and free blocks only. This covers the one-word block at
+    the end of the heap that §11 noted `noGreyObjects` does not reach.
+- **`StartSweep.collection_cycle`**: the `Marking` invariant and
+  `mark_done` give, after `start_sweep` and `sweep_all`, the `Idle`
+  invariant (`pages_ok`, `well_formed_heap`, every page swept). With item 0's
+  `phase_ok` (`Idle → Marking`, and the mark keeps `Marking`), this closes
+  the sequential collector's cycle, for item 3.
+
+**Interface changes (`GC.Spec.Pages.Allocator`).** All of them strengthen
+the interface; none weakens it.
+- `sweep_inv` is now `SweepWf.inv2`, which is stronger than `SweepAll.inv`.
+  `sweep_start` and `sweep_step_inv` are proved for it.
+- `sweep_end` and `sweep_all_correct` now also give `well_formed_heap`.
+- New: `start_sweep`, `start_ready` and `collection_cycle`.
+
+**Vacuity.**
+- The empty heap of pages meets `collection_cycle`'s hypotheses
+  (`init_cycle`).
+- The hypotheses of `start_ready`, `collection_cycle` and `sweep_all_wf` are
+  not refutable (`expect_failure`).
+
+| Module | Lines (910 in all) | What it holds |
+|---|---|---|
+| `Pages.SweepTags` | 284 | `blue_ok` and its frame; `pool_pos3`, the walk over a pool page (slot starts, fillers, tail); `pool_blue_ok`, `run_blue_ok`, `kept_blue_ok`. |
+| `Pages.SweepWf` | 380 | `inv2` and its step; `in_unit_lt`; part 4 (`part4_after`); parts 2 and 3 (`target_in`, `field_target`); `sweep_all_wf`, `sweep_end_wf`. |
+| `Pages.StartSweep` | 246 | `start_sweep`, `clear_map_ok`; `same_shape`, `steps_same`, `shape_back`; `not_grey`; `start_ready`, `collection_cycle`; vacuity. |
+
+**Changes to the plan made in item 2.**
+- **What the sweep needs from the mark is stated with the allocator's
+  invariant.** `start_ready` asks for `mark_inv` (the heap before the mark
+  satisfied `pages_ok` up to colours) and `noGreyObjects`, not for a
+  separate shape argument. Item 3 discharges `mark_inv` from item 0's
+  `phase_ok`, and `noGreyObjects` from the mark.
+- **No change to the stage-3 sweep theorems.** The tag facts are proved
+  from the sweeps' definitions (`SweepPage.sw_hd`, `SweepRun.blk_hdr`), not
+  added to `sweep_page_ok` or `sweep_run_ok`.
