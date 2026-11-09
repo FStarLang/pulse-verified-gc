@@ -5,7 +5,9 @@ allocator, and stage 3, the sweep, are done on branch
 `sheera/pages-allocator`, which is based on `origin/sheera/size-lists`
 (§9, §10, §11). The allocator leaves a new object's fields to its caller,
 as `caml_alloc_shr` does (§10). The run sweep is a fresh proof, not #46's
-coalescing sweep restricted to a run (§11).
+coalescing sweep restricted to a run (§11). In stage 4, item 0 makes the
+allocator a component with a phase-aware interface, and the new object's
+colour a parameter (§12).
 
 **Decisions (2026-11-08):**
 - **Size limit:** a block is small when `whsize ≤ 128`, as in OCaml 5.
@@ -957,3 +959,161 @@ are roots in the `Makefile`, so `make verify` checks them all.
   fails on some Z3 seeds without `--retry`. With the Makefile's `--retry 3`
   it passes; it is not changed here.
 
+
+---
+
+## 12. Stage 4, item 0 as built: the allocator as a component
+
+All modules are in `mark-and-sweep/spec/`. They verify at the default rlimit
+of 20, with no local rlimit raised, no `--retry`, no admits and no
+assumptions. `GC.Spec.AllocIface` and `GC.Spec.Pages.Allocator` are roots in
+the `Makefile`, so `make verify` checks them all.
+
+**The two interfaces.**
+- `GC.Spec.AllocIface` is the allocator interface, for any allocator and any
+  collector. It does not depend on pages. An allocator is a record
+  `allocator` with:
+  - its state;
+  - its invariant per phase;
+  - its allocation per phase;
+  - `unswept`, the memory it must not touch.
+
+  The phase is `Idle | Marking | Sweeping`. `new_colour` makes a new object
+  black while marking and white otherwise.
+  - `alloc_post` says what one allocation does:
+    - the new object has the phase's colour and the requested wosize, and
+      was not a live object;
+    - every live object keeps its header and fields;
+    - unswept memory is unchanged;
+    - every heap the caller makes by writing the fields satisfies the
+      invariant;
+    - on failure, nothing changes.
+  - `allocator_ok a` says that every allocation meets `alloc_post`.
+  - `phase_ok a` says that entering `Marking` keeps the invariant, and that
+    recolouring a live object to any colour but blue keeps it while marking.
+- `GC.Spec.Pages.Allocator` (`.fsti` and `.fst`) is the page allocator's
+  interface. A collector needs nothing else.
+  - **Invariant per phase.**
+    - `Idle`: `pages_ok`, `well_formed_heap`, and every page swept.
+    - `Marking`: `pages_ok_mc` and every page swept.
+    - `Sweeping`: `pages_ok_mc`.
+  - **Allocation.** `alloc ph` is `alloc_col (new_colour ph)`, and
+    `pages_allocator` is the `AllocIface` instance:
+    - **`pages_allocator_ok`**: `allocator_ok` and `phase_ok`;
+    - `alloc_idle`: in `Idle` it is stage 2's `alloc`, and meets the exact
+      `alloc_ok`;
+    - `alloc_no_fit`: the out-of-memory clause.
+  - **Sweep.** The sweep is exposed as a step function, as on
+    `akhil/sweep-refactor`:
+    - `sweep_step g st p` sweeps the unit at page `p` and returns the next
+      unit;
+    - `sweep_inv` (`SweepAll.inv`) is the invariant at every step;
+    - `sweep_start`, `sweep_step_inv` and `sweep_end` prove it;
+    - `sweep_all` is the step iterated from page 0.
+
+    `sweep_page`, `sweep_run`, their theorems and `sweep_commute` are
+    re-exported.
+  - **The collector's contract.**
+    - `mark_done` is what the sweep's safety needs: well formed, no grey
+      object, the tricolour invariant, and no pointer to a free block. An
+      incremental mark can meet it with floating garbage.
+    - `mark_exact` is what liveness needs: the same objects, black exactly
+      when reachable from the roots. Reachability is from the graph modules,
+      not `GC.Spec.Correctness`, which depends on modules akhil's line
+      deletes.
+
+**The colour of a new object is a parameter, and `alloc_correct` holds for
+either colour.**
+- `AllocPhase.alloc_col col` is `alloc` with the new header recoloured.
+  `alloc_col_white` proves `alloc_col White == alloc` from `pages_ok_mc`. So
+  `alloc_correct` (`alloc_meets alloc`, unchanged) is a theorem about the
+  white allocator, and `alloc_col_white_ok` restates it.
+- **`alloc_col_correct`**: for any colour but blue, from `pages_ok_mc`,
+  `alloc_col col` meets `alloc_ok_col col`.
+  - `alloc_ok_col col` is `alloc_ok`, with two changes:
+    - the new object has colour `col`;
+    - the caller's heap satisfies `pages_ok_mc` (it includes
+      `well_formed_heap`).
+  - Every other clause is `alloc_ok`'s word for word: `no_fit`,
+    `others_unchanged` (live headers keep their colour exactly) and
+    `unswept_unchanged`.
+- **`pages_ok_mc g st`**, `pages_ok` up to colours, is `well_formed_heap g`
+  and some list `ys` of live objects of `g` such that `whiten g ys`
+  satisfies `pages_ok`. `pages_ok` with `well_formed_heap` implies it
+  (`mc_of_ok`).
+- **Why it holds** (`GC.Spec.Pages.Recolour.alloc_paint`):
+  - The allocator reads and writes only words inside free blocks of the
+    whitened heap (free slots, free pages, list cells) and the state.
+  - No header of a live object lies in a free block (`blue_avoid`, from
+    `Fill.apart`).
+  - So allocating in `g` and in `g` with any of `ys` repainted any colour
+    gives the same state and object, and the same heap up to that
+    repainting.
+  - With the whitened heap this carries `alloc_correct` back. With each
+    object painted its own colour, it shows that live headers are kept
+    exactly (`kept_hdr_y`).
+- **Only swept pages are used**: `AllocPhase.new_hdr_swept` proves that the
+  new object's header is not in an unswept page. Stage 2's `fields_swept`
+  proves the same of its fields.
+- **The mark keeps the `Marking` invariant**
+  (`MarkPhase.mark_inv_recolour`). Every page is swept, so every live object
+  is white in the whitened heap (`live_white`), and whitening it again
+  changes nothing. `alloc_swept`: allocation keeps every page swept.
+
+**Vacuity.**
+- `AllocPhase`:
+  - the empty heap satisfies `pages_ok_mc` (`init_mc`);
+  - a black allocation there succeeds and gives a black object
+    (`init_black`);
+  - clearing its fields gives a heap satisfying `pages_ok_mc`
+    (`init_black_filled`);
+  - the hypotheses of `alloc_col_correct` are not refutable
+    (`expect_failure`).
+- `Allocator`:
+  - the empty heap satisfies every phase's invariant (`init_inv`);
+  - an allocation there succeeds in every phase, with the phase's colour
+    (`init_alloc_ok`);
+  - `inv`, the sweep's precondition and `mark_exact` are not refutable.
+
+| Module | Lines (2,312 in all) | What it holds |
+|---|---|---|
+| `AllocIface` | 145 | Phases, `new_colour`, `allocator`, `alloc_post`, `allocator_ok`, `phase_ok`. |
+| `Pages.Recolour` | 691 | `paint`, `whiten`; their reads and writes; `blue_avoid`; per path (pool pop, page acquire, carve, new run), allocation commutes with repainting; `alloc_paint`. |
+| `Pages.ColourFacts` | 180 | Recolouring a live object keeps the walk, which blocks are free, `field_ok` and `well_formed_heap`, both ways (`step_facts`, `whiten_facts`). |
+| `Pages.AllocPhase` | 663 | `pages_ok_mc`, `alloc_col`, `alloc_ok_col`, `alloc_col_correct`, `alloc_col_white`, `new_hdr_swept`, the vacuity lemmas. |
+| `Pages.MarkPhase` | 253 | `mark_inv`, `live_white`, `mark_inv_recolour`, `alloc_swept`, `mark_inv_alloc`. |
+| `Pages.Allocator` (`.fsti`, `.fst`) | 208 + 172 | The page allocator's interface and its proofs. |
+
+**Changes to the plan made in item 0.**
+- **The interface is phase-aware** (akhil, 2026-11-09). It does not use
+  `alloc_inv`/`alloc_spec` as in §1.5. The phase decides the colour, and
+  the invariant is per phase. Item 1 instantiates the same `allocator`
+  record with #46's allocator.
+- **While sweeping, a new object is white** and goes only in swept memory.
+  akhil's `allocation_color (Sweeping c)` allocates in front of the cursor
+  too, black. With pages there is no cursor, and plan §7.2 already chose
+  "only swept pages".
+- **New statements; none weakened.** `Pages.Theorems` is unchanged.
+  `alloc_correct` still proves `alloc_meets alloc`.
+  - `alloc_ok_col` asks only `pages_ok_mc` of the caller's heap, not
+    `pages_ok`. A black object breaks L5 and L7, so `pages_ok` cannot hold.
+  - For white, `alloc_col_white_ok` gives the full `alloc_ok`, and the
+    `Idle` instance uses it.
+- **Open for the incremental collector:** allocation *during* an
+  incremental sweep.
+  - The `Sweeping` invariant is `pages_ok_mc`, which is what the allocator
+    is proved from.
+  - A sweep in progress does not yet establish it. Unswept pages hold dead
+    white objects whose fields may point to blocks already freed, so L10
+    and `well_formed_heap` fail for them.
+  - Plan §7.1's per-page mid-sweep invariant is the remaining work. It is
+    akhil's `well_formed_heap_with (free_incremental c)` with "behind the
+    cursor" replaced by "swept".
+  - The sequential collector never allocates while sweeping, so stage 4 does
+    not need it.
+- **The `Sweeping → Idle` step still lacks `well_formed_heap`.** `sweep_end`
+  gives `pages_ok` and every page swept; `well_formed_heap` after the sweep
+  is item 2.
+- **For the rebase onto akhil's main:** `Pages.Walk`, `Pages.Shape` and
+  `Pages.Inv` use `GC.Spec.WalkEnd`, which his line replaces with
+  `GC.Spec.Walk`. No other Pages module uses a module his line deletes.
