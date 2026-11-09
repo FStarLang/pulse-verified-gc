@@ -8,7 +8,8 @@ as `caml_alloc_shr` does (§10). The run sweep is a fresh proof, not #46's
 coalescing sweep restricted to a run (§11). In stage 4, item 0 makes the
 allocator a component with a phase-aware interface, and the new object's
 colour a parameter (§12). Item 2 proves the swept heap well formed and
-adds the step before the sweep (§13).
+adds the step before the sweep (§13). Item 3 restates `gc_correct` for
+pages, proves it, and proves the allocation/collection cycle (§14).
 
 **Decisions (2026-11-08):**
 - **Size limit:** a block is small when `whsize ≤ 128`, as in OCaml 5.
@@ -1193,3 +1194,135 @@ the interface; none weakens it.
 - **No change to the stage-3 sweep theorems.** The tag facts are proved
   from the sweeps' definitions (`SweepPage.sw_hd`, `SweepRun.blk_hdr`), not
   added to `sweep_page_ok` or `sweep_run_ok`.
+
+---
+
+## 14. Stage 4, item 3 as built: `gc_correct` for pages, and the cycle
+
+Item 3 adds new modules only, in `mark-and-sweep/spec/`, and one `Makefile`
+root (`Pages.GcCorrect`). It leaves the existing `GC.Impl.Correct.gc_correct`,
+the minor collection and the allocator interface unchanged. All modules
+verify without `--retry` and with no local rlimit above 20 (the vacuity
+checks run at 5). There are no admits and no assumptions.
+
+**The theorems** (`GC.Spec.Pages.GcCorrect`).
+- `collect h_mark st = sweep_all h_mark (start_sweep st)`: the collector
+  after the mark.
+- `gc_correct_pages h_init st gs roots`:
+  - **Requires** `PA.inv Idle h_init st` (the allocator's invariant) and
+    `mark_pre h_init gs roots`, what the unbounded mark needs (as
+    `Corr.mark_satisfies_mark_post`, with the graph facts of
+    `gc_precondition_with_roots`).
+  - **Ensures** `gc_safe_pages` and `gc_live_pages` of
+    `collect (Mark.mark h_init gs) st`.
+- `gc_correct_gen`: the same conclusion for any marked heap that satisfies
+  `GP.marked` (`Corr.mark_post` and its clause on fields) and the
+  allocator's marking invariant `MP.mark_inv`.
+- `MarkSteps.mark_keeps_inv`: `Mark.mark` keeps the marking invariant. It
+  only recolours objects that are not free, and item 0's
+  `mark_inv_recolour` (the `phase_ok` clause) keeps the invariant at each
+  recolouring. This is how item 2's `start_ready` gets `mark_inv`.
+- **The cycle.** `reach g st` is an inductive type of the states reached
+  from the empty heap of pages by any sequence of:
+  - allocations, through the interface in `Idle`, each followed by the
+    caller's writes to the new object's fields (`I.fields_written`);
+  - collections, each with roots that satisfy `mark_pre`.
+
+  Two theorems follow:
+  - `reach_inv`: every state reached is in the `Idle` invariant;
+  - `cycle_correct`: every collection from a reached state satisfies
+    `gc_correct_pages`.
+
+  `phases` spells out the phases of one collection through the interface:
+  `Idle` gives `Marking` (`phase_ok`), the mark keeps `Marking`, and clearing
+  then sweeping gives `Idle` (item 2's `collection_cycle`).
+
+**The old and the new `gc_correct`, clause by clause.** Old:
+`GC.Impl.Correct` (`gc_safe`, `gc_live`). New: `GC.Spec.Pages.GcCorrect`
+(`gc_safe_pages`, `gc_live_pages`).
+
+| | Old clause | New clause | |
+|---|---|---|---|
+| Hypotheses | `gc_precondition_with_roots` (bounded mark) and `collect_post`, the Pulse collector's postcondition | `PA.inv Idle h_init st` and `mark_pre` (unbounded `Mark.mark`), with the collection given by `collect` | restated |
+| **Safety** | | | |
+| Layout | `well_formed_heap s2` | `well_formed_heap g` | same |
+| The mark is exact | `Corr.full_gc_correctness h_init s2 roots` | `Corr.full_gc_correctness h_init g roots` | same predicate |
+| Survivors unchanged | `Corr.major_gc_live_subgraph_isomorphism h_init s2 roots` | `Corr.major_gc_live_subgraph_isomorphism h_init g roots` | same predicate |
+| Lists hold only free blocks | `FLs.fls_sound s2 fls` (the 17 lists) | `lists_sound g st`: `FLs.fls_sound g st.large`, and each swept pool page's list holds exactly its free slots (L4) | restated |
+| No pointer to free memory | (inside `well_formed_heap`'s use by the mark) | `Mark.no_pointer_to_blue g` (L10) | new |
+| The allocator can run again | — | `PA.inv Idle g st`: `pages_ok`, `well_formed_heap`, every page swept | new |
+| **Liveness** | | | |
+| (a) Unreachable reclaimed | `unreachable_reclaimed h_init s2 roots`, with `CC.in_extent`, `CC.blue_covered` | `unreachable_reclaimed h_init g roots`, with `SV.in_extent`, `SV.blue_covered`, the same definitions copied word for word | same |
+| (b) Free memory listed | `fls_complete s2 fls`: every free block with a field is on its class's list | `free_listed g st`: every free slot is on its page's list (L4); every page with a free slot is on `avail[c]` (L8); every free block of a run of at least `lg_min` words is on the large lists (L9) | restated |
+| (c1) Nothing held without cause | `coalescing_lossless`: some correct mark `h_mark`; `s2` agrees with `coalesce (sweep h_mark)`; the lists are the coalescer's; `coalesce_correct_post` (free space and free words as the swept heap's, no two adjacent free blocks, white survivors at their size) | `sweep_lossless`: some marked heap `h_mark` (`GP.marked`) with `(g, st) == collect h_mark st_m`, and `lossless`: every black object survives white at its size; every object that is not free was black; a word of a block of `h_mark` is free exactly when the block was not black; in a run, no two adjacent free blocks and no free whole page (L7); a page still in a pool holds a live object, so an empty pool page is `Free` | restated |
+| (c2) Nothing lost | `heap_partitioned`: `zero + (white + on lists + fragments) * 8 == walk_end` | `heap_classified`: every block of the walk is live, a free slot, a filler (`cls c − w` words), a pool page's tail (`tail_words c`), a `Free` page, a free block of a run (listed when at least `lg_min`, by (b)), or the heap's tail | restated as a classification |
+| **Vacuity** | `gc_correct_hyps_not_false`, `gc_live_not_from_safe`, `unreachable_reclaimed_header` | the same three, plus `gc_correct_gen_hyps_not_false`, `swept_not_false`, `MarkSteps.mark_keeps_inv_hyps_not_false`, and `reach_start` | |
+
+How the new clauses compare in strength:
+- **The safety clauses keep their exact predicates** from
+  `GC.Spec.Correctness`.
+- **(a) is unchanged.**
+- **(b)** lists by page and by run instead of by size class. A free block
+  in a run smaller than `lg_min` is not listed. (c2) counts it as waste,
+  and L7 limits how many there are.
+- **(c1)** compares the result with the marked heap directly. The old
+  clause compares it with the coalesced heap, through agreement up to free
+  links. "A word is free exactly when its block was dead" combines the old
+  clause's two coverage equalities, sweep then coalesce, into one.
+- **(c2) is not the old arithmetic statement.** It says the same thing (no
+  fourth class of block) as a case split on each block of the walk, and
+  bounds each kind of waste per block. The word-count equation, summing
+  those bounds over the heap, is not proved. That needs a summation over
+  pages, in the manner of `GC.Spec.Partition`.
+
+**How it is proved.**
+- **Survivors** (`Pages.Survive`):
+  - `black_survives` and `obj_survivor` give the survivors;
+  - `pointer_fields_kept` gives their fields and how their pointers
+    resolve, so the same successors in the heap graph (`GcPillars.succ_kept`);
+  - `dead_covered` and `live_uncovered` give which words are free.
+- **The witness for the pillars** (`Pages.GcPillars`).
+  `full_gc_correctness` quantifies `is_black x h_mark` over every object of
+  the final heap.
+  - **Why the marked heap won't do:** the page sweep gives back whole
+    pages from inside dead large objects. Each such page gets a new header,
+    at a word that was a field of the dead object and may read as black.
+  - **The witness instead:** `clean h_mark`, the marked heap with each page
+    start that is not on its walk set to a white header. No header of the
+    walk changes, so pillar 2 holds as in the marked heap (`black_same`).
+  - **Why it works:** an object of the final heap that is black in
+    `clean h_mark` is not free (`black_clean`), so it is a survivor.
+- **Where free blocks start** (`Pages.SweepStarts`). `starts_ok` is a new
+  per-unit fact, carried through the sweep by `inv3`, as `inv2` carries the
+  tag facts: every free block of the swept unit starts where a block of the
+  marked heap started, or at a page start. It gives `black_clean`. It also
+  gives (a) at the heap's last word: a block there would be too short to be
+  an object, and no page starts there.
+- **Pool pages** (`Pages.SweepPools`): `pool_live`, carried through the
+  sweep with `SweepAll.inv`. A page still in a pool after the sweep holds a
+  live object.
+
+| Module | Lines (1,875 in all) | What it holds |
+|---|---|---|
+| `Pages.MarkSteps` | 117 | `push_inv`, `step_inv`, `aux_inv`: `Mark.mark` keeps `MP.mark_inv`; vacuity. |
+| `Pages.SweepStarts` | 327 | `starts_ok`, its frame; `pool_starts`, `run_starts` (`olds_at`, `merge_at`, `split_at`); `inv3`, `sweep_all_inv3`. |
+| `Pages.SweepPools` | 159 | `pool_live`; `step_entries`, `pool_new`, `pools_step`; `sweep_all_pools`. |
+| `Pages.Survive` | 374 | `in_extent`, `blue_covered`; `swept`; `black_survives`, `survivor`; `cover_at`, `not_last`, `dead_covered`, `live_uncovered`; `field_kept`, `pointer_fields_kept`. |
+| `Pages.GcPillars` | 396 | `marked`, `graph_pre`; the witness `clean` (`clean_walk`, `clean_from_page`, `black_same`, `black_clean`); `succ_kept`, `field_same`, `pillars`, `iso`. |
+| `Pages.GcCorrect` | 502 | `collect`, `mark_pre`; the clauses; `live_a`, `lists`, `live_c1`, `classify_page`, `live_c2`; `gc_correct_gen`, `mark_ok`, `gc_correct_pages`; `reach`, `reach_inv`, `cycle_correct`, `phases`; vacuity. |
+
+**Changes to the plan made in item 3.**
+- **The pillars use a cleaned witness**, not the marked heap (see above).
+  §2.3 assumed the marked heap would do.
+- **(c2) is a classification of blocks**, not the word-count equation. The
+  equation is left as follow-up work.
+- **The theorem is about the specification's unbounded `Mark.mark`.** The
+  Pulse collector uses `mark_bounded`, with overflow rescans, and has no
+  page version yet, so there is no `collect_correct` for pages.
+  - `mark_bounded` also only recolours objects that are not free, so
+    `MarkSteps`' induction applies to it unchanged.
+  - Any other mark can use `gc_correct_gen` directly.
+- **The cycle is sequential:** allocations happen only in `Idle`.
+  Allocation while marking is item 0's `mark_inv_alloc` and
+  `alloc_col_correct`. Allocation while sweeping needs the mid-sweep
+  invariant of §7.1, which is still open.
