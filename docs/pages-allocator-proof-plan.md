@@ -1,9 +1,11 @@
 # Proof plan: the OCaml 5-style page allocator (B2)
 
-This is the plan for proving B2. Stage 1, the specification, and stage 2,
-the allocator, are done on branch `sheera/pages-allocator`, which is based
-on `origin/sheera/size-lists` (§9, §10). The allocator leaves a new
-object's fields to its caller, as `caml_alloc_shr` does (§10).
+This is the plan for proving B2. Stage 1, the specification, stage 2, the
+allocator, and stage 3, the sweep, are done on branch
+`sheera/pages-allocator`, which is based on `origin/sheera/size-lists`
+(§9, §10, §11). The allocator leaves a new object's fields to its caller,
+as `caml_alloc_shr` does (§10). The run sweep is a fresh proof, not #46's
+coalescing sweep restricted to a run (§11).
 
 **Decisions (2026-11-08):**
 - **Size limit:** a block is small when `whsize ≤ 128`, as in OCaml 5.
@@ -667,6 +669,9 @@ files. Its commits are squashed, so they do not show how long it took.
   either keeping them for runs or porting the run sweep to akhil's
   ascending, single-list form.
 - Decide this before stage 3, since `sweep_run` is the riskiest proof.
+- **Settled in stage 3 (§11):** the run sweep does not use `Coalesce*`,
+  `SweepCoalesce*` or `HeapAgree`, so B2 no longer depends on them, and
+  akhil's line may remove them.
 
 ---
 
@@ -677,6 +682,7 @@ files. Its commits are squashed, so they do not show how long it took.
    proves too costly, there is a fallback: prove a fresh, simpler run
    sweep, modelled on `GC.Spec.SweepPar.segment_correct`. Its frame
    structure is already the one needed.
+   - **Resolved in stage 3:** the fallback was taken (§11).
 2. **The minor collection's move to the allocator interface.** It touches
    about 25 files and 15k lines. Most edits are mechanical, but the
    `CheneyPreservation.*` lemmas may depend on #46's list shape in ways the
@@ -828,3 +834,126 @@ writing valid values in the fields satisfy `pages_ok` and
 - **`pages_ok` is sealed** (`opaque_to_smt`), as #46's `fls_*` bundles are;
   clients use `Pages.Step.pages_ok_intro` and `pages_ok_elim`. Without it,
   queries that only carry `pages_ok` timed out.
+
+---
+
+## 11. Stage 3 as built
+
+All modules are in `mark-and-sweep/spec/`. They verify from a clean cache at
+the default rlimit of 20, with no local rlimit raised, no admits and no
+assumptions. `Pages.SweepAll`, `Pages.SweepOrder` and `Pages.SweepVacuity`
+are roots in the `Makefile`, so `make verify` checks them all.
+
+**The theorems.**
+- `GC.Spec.Pages.SweepPage.sweep_page_correct : unit -> Lemma
+  (sweep_page_meets sweep_page)`, the pool page of §2.1:
+  - a black slot keeps its block, made white; the rest of its slot, its
+    fields and filler, is unchanged;
+  - every other slot becomes a free slot, and the page's list holds exactly
+    them (L4); the page tail is unchanged;
+  - a page with no black slot becomes a `Free` page;
+  - only page `i`'s words and entry change, and the entry is swept.
+- `GC.Spec.Pages.SweepRun.sweep_run_correct : unit -> Lemma
+  (sweep_run_meets sweep_run)`, the run of §2.1 (`sweep_run_ok` in
+  `Pages.Theorems`):
+  - only the run's words and its pages' entries change, and the map stays
+    `map_ok`;
+  - a survivor (a black block of the walk over the run) keeps its place and
+    fields, made white; every block of the swept run that is not free was a
+    survivor;
+  - every stretch of dead blocks is merged into one free block, which stops
+    at the run's edges;
+  - a free block that holds whole pages gives them back as `Free` pages, and
+    the rest of the run becomes one or more smaller swept runs, each with
+    its shape (L6) and its swept clause (L7);
+  - a run with no survivor becomes `Free` pages only;
+  - the free blocks of at least `lg_min` words in the new runs are linked,
+    in address order, in front of a list head the caller gives, and the new
+    head is returned (`lchain`).
+- `GC.Spec.Pages.SweepAll.sweep_all_correct`: `sweep_all` sweeps every unit
+  once, from page 0 on.
+  - **Precondition:** `sweep_ready` (the shapes, every page that is not
+    `Free` unswept, the lists empty, no grey block in a pool page or run) and
+    `mark_done` (`well_formed_heap`, `no_pointer_to_blue`,
+    `tri_color_invariant`, `noGreyObjects`).
+  - **Result:** every page is swept and `pages_ok` holds, L10 included.
+    Each unit holds exactly the mark's survivors, made white
+    (`SweepUnits.unit_ok`).
+  - A swept pool page with a free slot goes on its class's list. This is the
+    push lemma, `SweepStep.push_ok`.
+- `GC.Spec.Pages.SweepOrder.sweep_commute`, order independence (§2.1):
+  - for two different unit heads of a `map_ok` map, sweeping them in either
+    order gives the same heap and page map, and each unit returns the same
+    list head;
+  - each unit is given its own list head, so this is an exact equality;
+  - there is no shape precondition: both sweeps' frames hold for any heap.
+
+**Vacuity** (`Pages.SweepVacuity`), for any page `i` of any heap:
+- a fresh pool page whose first slot holds a black block is a marked pool
+  page; the sweep keeps the page a pool page, with that slot used and white;
+- a fresh pool page with no black block is a marked pool page too; the sweep
+  gives it back as a `Free` page;
+- a one-page run holding a black block is a marked run; the sweep keeps the
+  block, made white;
+- the same run holding a white block is a marked run too; the sweep gives
+  its page back as a `Free` page;
+- the empty heap of pages satisfies `sweep_ready` and `mark_done`
+  (`sweep_all_ready`).
+
+| Module | Lines (4,512 in all) | What it holds |
+|---|---|---|
+| `Pages.SweepPage` | 421 | `sweep_page`, slot by slot as OCaml 5's `pool_sweep`; `sweep_page_correct`. The swept heap is read back slot by slot (`sw_hd`, `sw_link`, `sw_rest`, `sw_out`), and the free-slot list is followed from the last free slot down (`dead_chain`). |
+| `Pages.Blk` | 290 | A stretch as a list of blocks `{at; w; t}` (`Live`, `Dead`, `Page`). `contig` (end to end), `blk_at`, `slice`; `tiles_steps`: when the headers give the sizes, the walk steps over the list and stops exactly at its starts. |
+| `Pages.RunList` | 480 | The run's layout in three steps: `olds` (the walk), `merge` (dead stretches become one block, `nodd`), `split` (whole pages become `Page` blocks; what is left holds no whole page). `fin_spec`, `fin_all_free`. |
+| `Pages.RunMap` | 174 | The new page map from the layout's free pages: each stretch of other pages becomes a swept run (`new_map`, `new_map_ok`, `head_facts`, `cont_head`). |
+| `Pages.SweepRun` | 846 | `sweep_run`: write the layout's headers and links (`wr_all`), read them back (`val_at`), and prove each clause of `sweep_run_ok`; `new_run_ok` is L6 and L7 for each new run. |
+| `Pages.SweepVacuity` | 237 | The vacuity lemmas above. |
+| `Pages.SweepUnits` | 253 | `unit_ok`, a unit's survivor facts, from each sweep theorem (`pool_unit_ok`, `run_unit_ok`, `free_unit_ok`), and their frame. |
+| `Pages.SweepStep` | 629 | One step of the whole sweep: `push_avail` and `push_ok` (L8); `lview_frame` and `lview_run` (L9: the run's listed blocks go in front of the old list); `pool_step`, `run_step`. |
+| `Pages.SweepAll` | 702 | `sweep_all`, its invariant (`inv`, sealed), the steps, and the final theorem. L10 comes from `mark_done`: an object that is not free was black, so its pointers lead to black objects, which survive. |
+| `Pages.SweepOrder` | 480 | `sweep_unit`, the unconditional frames and locality of both sweeps, `sweep_commute`. |
+
+**Changes to the plan made in stage 3:**
+- **The run sweep is the fallback of §8,** a fresh sweep in the manner of
+  `GC.Spec.SweepPar.segment_correct`, not #46's coalescing sweep restricted
+  to a run. It is computed on lists of blocks (`Pages.Blk`), so the heap
+  reasoning is done once, in `tiles_steps` and `wr_all`'s read-back. Its
+  frame is the run's words and pages. It took about 1.8k lines (`Blk`,
+  `RunList`, `RunMap`, `SweepRun`), against the 3–5k estimated.
+- **The run sweep splits runs,** as the prototype's `sweep_large` does:
+  L7 forbids a swept run to hold a whole free page, so a dead stretch that
+  holds whole pages gives them back, and the run becomes smaller runs.
+  §2.1 asked only for whole free pages to "split off"; `sweep_run_ok` states
+  the result page by page (`run_pages_ok`).
+- **Statements added to `Pages.Theorems`; none weakened:**
+  - `sweep_page_ok` now also says that a survivor's slot keeps its fields
+    and filler (`slot_rest_kept`) and that a pool page keeps its tail
+    (`pool_tail_kept`). Nothing had proved it before.
+  - `sweep_run_ok`, `sweep_run_meets`, `marked_run`, `run_pages_ok`,
+    `whitened_at`, `run_survivor` and `lchain` are new.
+  - The pool tail clause is named `pool_tail_kept`, because `tail_kept`
+    would shadow `Pages.Step.tail_kept` in `Pages.Large`.
+- **The lists.** The run sweep links its listed blocks in front of the head
+  it is given, rather than calling `FreeLists.Push` per block. `sweep_all`
+  turns that into L9 with `cells_prepend`, which reuses stage 2's
+  `NewRun.push_len` for the `heap_words` bound.
+- **The precondition of the sweep is stated on headers.** "No grey block"
+  is asked of every used slot and run block (`sweep_ready`), not only of the
+  objects of the walk. A one-word block that ends the heap is not an object,
+  so `noGreyObjects` does not cover it. Stage 4 discharges this from the
+  mark.
+- **Order independence** is an exact equality, with each unit given its
+  own list head. "Up to the order of the lists" in §2.1 is this: the order
+  of the sweeps only decides which heads the units are given. It uses
+  `GC.Gen.HeapExtensional.heap_read_word_ext`, as other `mark-and-sweep/spec`
+  modules already use `GC.Gen.*`.
+- **Left to stage 4:**
+  - `well_formed_heap` after `sweep_all`. `sweep_all_correct` gives
+    `pages_ok` and the survivor facts; well-formedness follows the same
+    argument as L10 (`SweepAll.target_after`) but is not proved yet.
+  - The step before the sweep, which clears the lists and marks the pages
+    unswept. `sweep_ready` assumes it has been done.
+- **Proof stability.** The stage-2 module `Pages.Large` has one query that
+  fails on some Z3 seeds without `--retry`. With the Makefile's `--retry 3`
+  it passes; it is not changed here.
+
