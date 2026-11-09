@@ -115,6 +115,9 @@ ROOT_MODULES = \
   mark-and-sweep/spec/GC.Spec.Pages.SweepAll.fst \
   mark-and-sweep/spec/GC.Spec.Pages.SweepOrder.fst \
   mark-and-sweep/spec/GC.Spec.Pages.SweepVacuity.fst \
+  mark-and-sweep/spec/GC.Spec.AllocIface.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Allocator.fsti \
+  mark-and-sweep/spec/GC.Spec.Pages.Allocator.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst
 
