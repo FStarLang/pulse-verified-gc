@@ -41,6 +41,8 @@ module MP = GC.Spec.Pages.MarkPhase
 module SA = GC.Spec.Pages.SweepAll
 module SU = GC.Spec.Pages.SweepUnits
 module SO = GC.Spec.Pages.SweepOrder
+module SW = GC.Spec.Pages.SweepWf
+module SS = GC.Spec.Pages.StartSweep
 module Mark = GC.Spec.Mark
 
 /// ---------------------------------------------------------------------------
@@ -146,9 +148,10 @@ let sweep_step (g: heap) (st: pstate) (p: nat{p < n_pages}) : GTot (heap & pstat
   let (g', st') = SA.step g st p in (g', st', p + span st.pm p)
 
 /// The invariant at every step: the units before `p` are swept, each
-/// holding exactly the mark's survivors made white, and the rest is as the
-/// mark left it.  `g0, st0` is where the sweep started.
-let sweep_inv (g0: heap) (st0: pstate) (g: heap) (st: pstate) (p: nat) : prop = SA.inv g0 st0 g st p
+/// holding exactly the mark's survivors made white, with every free block
+/// either newly written (tag 0) or a block the mark left, and the rest is as
+/// the mark left it.  `g0, st0` is where the sweep started.
+let sweep_inv (g0: heap) (st0: pstate) (g: heap) (st: pstate) (p: nat) : prop = SW.inv2 g0 st0 g st p
 
 val sweep_start (g: heap) (st: pstate)
   : Lemma (requires sweep_ready g st) (ensures sweep_inv g st g st 0)
@@ -160,11 +163,11 @@ val sweep_step_inv (g0: heap) (st0: pstate) (g: heap) (st: pstate) (p: nat{p < n
 /// What the mark guarantees, for the sweep's safety (see 4).
 let mark_done (g: heap) : prop = SA.mark_done g
 
-/// **The end**: every page swept, `pages_ok`, and every unit holds exactly
-/// the mark's survivors, made white.
+/// **The end**: every page swept, `pages_ok`, `well_formed_heap`, and
+/// every unit holds exactly the mark's survivors, made white.
 val sweep_end (g0: heap) (st0: pstate) (g: heap) (st: pstate)
   : Lemma (requires sweep_ready g0 st0 /\ mark_done g0 /\ sweep_inv g0 st0 g st n_pages)
-          (ensures pages_ok g st /\ all_swept st /\
+          (ensures pages_ok g st /\ well_formed_heap g /\ all_swept st /\
                    (forall (i: nat{i < n_pages}). walk_page st0.pm i ==> SU.unit_ok g0 g i (span st0.pm i)))
 
 /// The whole sweep: the step from page 0 until the end.
@@ -173,8 +176,23 @@ let sweep_all (g: heap) (st: pstate) : GTot (heap & pstate) = SA.sweep_all g st
 val sweep_all_correct (g: heap) (st: pstate)
   : Lemma (requires sweep_ready g st /\ mark_done g)
           (ensures (let (g', st') = sweep_all g st in
-                    pages_ok g' st' /\ all_swept st' /\
+                    pages_ok g' st' /\ well_formed_heap g' /\ all_swept st' /\
                     (forall (i: nat{i < n_pages}). walk_page st.pm i ==> SU.unit_ok g g' i (span st.pm i))))
+
+/// **Before the sweep**: empty the lists and mark every page that is not
+/// free unswept.  From the `Marking` invariant and no grey object, this is
+/// where the sweep starts.
+let start_sweep (st: pstate) : pstate = SS.start_sweep st
+
+val start_ready (g: heap) (st: pstate)
+  : Lemma (requires inv I.Marking g st /\ Mark.noGreyObjects g)
+          (ensures sweep_ready g (start_sweep st))
+
+/// **The sequential collector's cycle**: once the mark is done, clearing
+/// and sweeping bring the `Marking` invariant back to the `Idle` one.
+val collection_cycle (g: heap) (st: pstate)
+  : Lemma (requires inv I.Marking g st /\ mark_done g)
+          (ensures (let (g', st') = sweep_all g (start_sweep st) in inv I.Idle g' st'))
 
 /// ---------------------------------------------------------------------------
 /// 4. The collector's contract
