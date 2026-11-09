@@ -10,6 +10,8 @@ allocator a component with a phase-aware interface, and the new object's
 colour a parameter (§12). Item 2 proves the swept heap well formed and
 adds the step before the sweep (§13). Item 3 restates `gc_correct` for
 pages, proves it, and proves the allocation/collection cycle (§14).
+Afterwards, (c2) gains the word-count equation, and the seed-sensitive
+query of `Pages.Large` is split (item 4) (§15).
 
 **Decisions (2026-11-08):**
 - **Size limit:** a block is small when `whsize ≤ 128`, as in OCaml 5.
@@ -959,7 +961,7 @@ are roots in the `Makefile`, so `make verify` checks them all.
     unswept. `sweep_ready` assumes it has been done.
 - **Proof stability.** The stage-2 module `Pages.Large` has one query that
   fails on some Z3 seeds without `--retry`. With the Makefile's `--retry 3`
-  it passes; it is not changed here.
+  it passes; it is not changed here. (Split in §15.)
 
 
 ---
@@ -1255,7 +1257,7 @@ checks run at 5). There are no admits and no assumptions.
 | (a) Unreachable reclaimed | `unreachable_reclaimed h_init s2 roots`, with `CC.in_extent`, `CC.blue_covered` | `unreachable_reclaimed h_init g roots`, with `SV.in_extent`, `SV.blue_covered`, the same definitions copied word for word | same |
 | (b) Free memory listed | `fls_complete s2 fls`: every free block with a field is on its class's list | `free_listed g st`: every free slot is on its page's list (L4); every page with a free slot is on `avail[c]` (L8); every free block of a run of at least `lg_min` words is on the large lists (L9) | restated |
 | (c1) Nothing held without cause | `coalescing_lossless`: some correct mark `h_mark`; `s2` agrees with `coalesce (sweep h_mark)`; the lists are the coalescer's; `coalesce_correct_post` (free space and free words as the swept heap's, no two adjacent free blocks, white survivors at their size) | `sweep_lossless`: some marked heap `h_mark` (`GP.marked`) with `(g, st) == collect h_mark st_m`, and `lossless`: every black object survives white at its size; every object that is not free was black; a word of a block of `h_mark` is free exactly when the block was not black; in a run, no two adjacent free blocks and no free whole page (L7); a page still in a pool holds a live object, so an empty pool page is `Free` | restated |
-| (c2) Nothing lost | `heap_partitioned`: `zero + (white + on lists + fragments) * 8 == walk_end` | `heap_classified`: every block of the walk is live, a free slot, a filler (`cls c − w` words), a pool page's tail (`tail_words c`), a `Free` page, a free block of a run (listed when at least `lg_min`, by (b)), or the heap's tail | restated as a classification |
+| (c2) Nothing lost | `heap_partitioned`: `zero + (white + on lists + fragments) * 8 == walk_end` | `heap_classified`: every block of the walk is live, a free slot, a filler (`cls c − w` words), a pool page's tail (`tail_words c`), a `Free` page, a free block of a run (listed when at least `lg_min`, by (b)), or the heap's tail; and `PT.heap_partitioned`: `zero + (live + listed + waste, by kind) * 8 == walk_end`, `walk_end + 8 >= heap_size` (§15) | restated, with the equation |
 | **Vacuity** | `gc_correct_hyps_not_false`, `gc_live_not_from_safe`, `unreachable_reclaimed_header` | the same three, plus `gc_correct_gen_hyps_not_false`, `swept_not_false`, `MarkSteps.mark_keeps_inv_hyps_not_false`, and `reach_start` | |
 
 How the new clauses compare in strength:
@@ -1271,9 +1273,8 @@ How the new clauses compare in strength:
   clause's two coverage equalities, sweep then coalesce, into one.
 - **(c2) is not the old arithmetic statement.** It says the same thing (no
   fourth class of block) as a case split on each block of the walk, and
-  bounds each kind of waste per block. The word-count equation, summing
-  those bounds over the heap, is not proved. That needs a summation over
-  pages, in the manner of `GC.Spec.Partition`.
+  bounds each kind of waste per block. The word-count equation was added
+  afterwards (§15).
 
 **How it is proved.**
 - **Survivors** (`Pages.Survive`):
@@ -1315,7 +1316,7 @@ How the new clauses compare in strength:
 - **The pillars use a cleaned witness**, not the marked heap (see above).
   §2.3 assumed the marked heap would do.
 - **(c2) is a classification of blocks**, not the word-count equation. The
-  equation is left as follow-up work.
+  equation was added afterwards (§15).
 - **The theorem is about the specification's unbounded `Mark.mark`.** The
   Pulse collector uses `mark_bounded`, with overflow rescans, and has no
   page version yet, so there is no `collect_correct` for pages.
@@ -1326,3 +1327,74 @@ How the new clauses compare in strength:
   Allocation while marking is item 0's `mark_inv_alloc` and
   `alloc_col_correct`. Allocation while sweeping needs the mid-sweep
   invariant of §7.1, which is still open.
+
+---
+
+## 15. Stage 4, after item 3: the (c2) equation, and item 4
+
+Both changes verify without `--retry` and with no local rlimit above 20.
+There are no admits and no assumptions.
+
+**(c2) as a word count** (`GC.Spec.Pages.Partition`, 254 lines).
+- **Estimate first.** The old equation is `GC.Spec.Partition`'s
+  `partition_exhaustive` and `walk_is_tiled`, about 250 lines. For pages
+  the classification of every block was already proved (§14), so the
+  equation needs only the sums and the tiling. The estimate was 300 to
+  450 lines, under the 1,000 allowed, so it was proved.
+- **Kinds.** `kind_of g st y` gives each block of the walk exactly one
+  kind, the first that applies:
+  - `KLive`: white;
+  - `KSlot`: a free slot (on its page's list, L4);
+  - `KListed`: a free block of a swept run of at least `lg_min` words (on
+    the large lists, L9);
+  - `KFiller`, `KTail`, `KFreePage`, `KRunWaste` (a free block of a run
+    smaller than `lg_min`), `KHeapTail`: the waste of `block_class`;
+  - `KOther`: none of these.
+- **The equation.** `heap_partitioned g st`:
+  `zero + (live + (slots + listed) + (fillers + tails + free pages + run
+  waste + heap tail)) * 8 == walk_end g zero`, and
+  `walk_end g zero + 8 >= heap_size`.
+  - The second conjunct is new. The old clause bounds its words by
+    `walk_end` only. Here the walk is shown to reach the end of the heap,
+    up to a last word too short for a header (`Shape.heap_tiled`).
+  - The kinds are exclusive by construction, so nothing is counted twice.
+    The old clause needs list disjointness for that; here the lists are
+    disjoint by L4 and L9 and are not summed.
+- **The proof.**
+  - `kinds_exhaustive`: the total splits by kind.
+  - `other_zero`: `KOther` sums to zero when every block satisfies
+    `block_class`.
+  - `walk_tiled`: the total reaches `walk_end`, through
+    `WE.walk_end_step`.
+- **Where it is used.** `block_class` moved from `Pages.GcCorrect` to
+  `Pages.Partition`, unchanged except that it names its disjuncts.
+  `gc_live_pages` gains `PT.heap_partitioned g st` after
+  `heap_classified`, and `live_c2` proves both.
+- **Vacuity.**
+  - `partitioned_needs_class`: the equation does not follow from the
+    tiling alone.
+  - `partitioned_hyps_not_false`: the hypotheses of `partitioned` are not
+    refutable.
+  - `gc_live_not_from_safe` still holds with the new conjunct.
+
+**Item 4: the seed-sensitive query of `Pages.Large`.**
+- The query was the precondition of `lists_B` in `carve_B_prev`,
+  `unlink_ctx`. It is a conjunction of about twenty facts, proved there in
+  the context of all of `pages_ok`. It timed out at the default seed
+  without `--retry`.
+- It is split into two lemmas, each with only the facts it needs:
+  - `unlink_ctx_intro` proves `unlink_ctx` from the link step and the
+    cell's facts in the relinked heap;
+  - `carve_B_lists` moves the cell's facts to the relinked heap and calls
+    `lists_B`.
+
+  `carve_B_prev` calls `carve_B_lists` right after `pages_ok_elim`. No
+  statement changes.
+- **Stability.**
+  - `Pages.Large` passes without `--retry` at the default seed and at
+    seeds 1 to 8.
+  - `Pages.Partition` passes at seeds 0 to 7. Its recursive step in
+    `walk_tiled` failed at seed 2 until the unfolding was made explicit
+    (`total_step`).
+  - `Pages.GcCorrect` passes at seeds 0 to 3.
+
