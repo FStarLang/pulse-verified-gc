@@ -1027,6 +1027,42 @@ let cell_facts_move (g g1: heap) (pm: page_map) (c: obj_addr) (hh: nat{hh < n_pa
   = steps_to_le g (page_base hh) (U64.v c - 8);
     cell_facts_intro g1 pm c hh wz
 
+/// `unlink_ctx` from the link step at `p` and the cell's facts in `g1`.
+let unlink_ctx_intro (g g1: heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (post: list obj_addr)
+                     (hh: nat{hh < n_pages}) (wz: nat{wz < pow2 54})
+  : Lemma (requires Cons? pre /\ lview g st (L.append pre (c :: post)) /\
+                    (let p = L.last pre in
+                     let nx = read_word g (c <: hp_addr) in
+                     g1 == wr g (U64.v p) nx /\
+                     replaces g g1 (U64.v p - 8) (U64.v p - 8 + whsize g p * 8) /\
+                     hdr g1 (U64.v p - 8) == hdr g (U64.v p - 8) /\
+                     read_word g1 (p <: hp_addr) == nx /\
+                     Seq.mem p (objects zero_addr g) /\ words_at g (U64.v p - 8) == whsize g p) /\
+                    cell_facts g1 st.pm c hh wz /\ whsize g1 c == whsize g c /\ rem_of g c wz < lg_min)
+          (ensures unlink_ctx g g1 (carved g1 c wz) st pre c post wz)
+  = cell_bounds g1 st.pm c hh wz;
+    carve_replaces g1 st.pm c hh wz
+
+/// The lists after the unlink and the carve, split out of `carve_B_prev`,
+/// where `unlink_ctx` was one query in the context of all of `pages_ok`.
+let carve_B_lists (g g1: heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (post: list obj_addr)
+                  (hh: nat{hh < n_pages}) (wz: nat{wz < pow2 54})
+  : Lemma (requires Cons? pre /\ lview g st (L.append pre (c :: post)) /\
+                    (let p = L.last pre in
+                     let nx = read_word g (c <: hp_addr) in
+                     g1 == wr g (U64.v p) nx /\
+                     replaces g g1 (U64.v p - 8) (U64.v p - 8 + whsize g p * 8) /\
+                     hdr g1 (U64.v p - 8) == hdr g (U64.v p - 8) /\
+                     read_word g1 (p <: hp_addr) == nx /\
+                     Seq.mem p (objects zero_addr g) /\ words_at g (U64.v p - 8) == whsize g p) /\
+                    cell_facts g st.pm c hh wz /\ map_ok st.pm /\ page_local_all g1 st.pm /\ tail_shape g1 /\
+                    Seq.mem c (objects zero_addr g1) /\ is_blue c g1 /\ whsize g1 c == whsize g c /\
+                    rem_of g c wz < lg_min)
+          (ensures cell_facts g1 st.pm c hh wz /\ lview (carved g1 c wz) st (L.append pre post))
+  = cell_facts_move g g1 st.pm c hh wz;
+    unlink_ctx_intro g g1 st pre c post hh wz;
+    lists_B g g1 (carved g1 c wz) st pre c post wz
+
 /// The block follows the cell `p`: `p`'s link moves past it.
 let carve_B_prev (g: heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (post: list obj_addr)
                  (wz: nat{wz < pow2 54})
@@ -1049,13 +1085,12 @@ let carve_B_prev (g: heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (post
     eliminate exists (hh: nat{hh < n_pages}). cell_facts g st.pm c hh wz
     with begin
       pages_ok_elim g st;
-      cell_facts_move g g1 st.pm c hh wz;
+      carve_B_lists g g1 st pre c post hh wz;
       cell_bounds g1 st.pm c hh wz;
       carve_replaces g1 st.pm c hh wz;
       carve_region g1 st c hh wz;
       carve_object g1 st.pm c hh wz;
       let g' = carved g1 c wz in
-      lists_B g g1 g' st pre c post wz;
       lview_large_ok g' st (L.append pre post);
       cleared_ok_intro g1 g' st st wz (obj_of g1 c wz);
       cleared_ok_compose g g1 g' st st st wz (obj_of g1 c wz)
