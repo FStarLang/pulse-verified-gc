@@ -11,7 +11,9 @@ colour a parameter (§12). Item 2 proves the swept heap well formed and
 adds the step before the sweep (§13). Item 3 restates `gc_correct` for
 pages, proves it, and proves the allocation/collection cycle (§14).
 Afterwards, (c2) gains the word-count equation, and the seed-sensitive
-query of `Pages.Large` is split (item 4) (§15).
+query of `Pages.Large` is split (item 4) (§15). Stage 5a writes the
+allocator and the sweep in Pulse, each function proved to compute exactly
+its specification, and extracts them to C with a test (§16).
 
 **Decisions (2026-11-08):**
 - **Size limit:** a block is small when `whsize ≤ 128`, as in OCaml 5.
@@ -1398,3 +1400,243 @@ There are no admits and no assumptions.
     (`total_step`).
   - `Pages.GcCorrect` passes at seeds 0 to 3.
 
+
+---
+
+## 16. Stage 5a as built: the allocator and the sweep in Pulse
+
+akhil's merge into main has not landed, so stage 5a adds new modules only.
+It does not touch the minor collection, the existing Pulse collector, the
+runtime bridge (`alloc_gen.c`) or the existing `gc_correct`. Threading the
+allocator through `gen_gc` and the minor collection is left for 5b, after
+the rebase (§6 stage 5, second half).
+
+All modules are in `mark-and-sweep/impl/`. They verify without `--retry`,
+with no local rlimit raised (every module runs at 20), no admits and no
+assumptions. `GC.Impl.Pages` is a root in the `Makefile`, so `make verify`
+checks them all.
+- **Trusted:** only what the rest of the collector already trusts.
+  - The word reads and writes of `GC.Impl.Heap`.
+  - Its platform assumption that `size_t` holds 64 bits
+    (`platform_fits_u64`). The page map's array indices rely on it.
+- **Verified from clean.** `make verify` was run from an empty cache in a
+  scratch worktree: 277 modules, 35 minutes. It was then re-run
+  incrementally after the last edits.
+- **Seed stability.** Every new module passes at Z3 seeds 0, 1 and 2,
+  without `--retry`; `RunMapLemmas` also passes at 3.
+  - The seed checks found two fragile proofs: `Pool.fill_slot`'s `rewrite`,
+    and the second-pass lemmas of `RunMapLemmas`.
+  - Both were restructured (an existential postcondition; one explicit
+    lemma per entry, `pass2_upd`). No rlimit was raised.
+
+**The theorems.** Each Pulse function's postcondition is an equality with
+the specification's function, for every heap and state the precondition
+allows:
+
+| Pulse function | Computes exactly | Precondition |
+|---|---|---|
+| `Init.init` | `Init.init_heap g`, `Init.init_state` | none |
+| `Alloc.alloc heap t wz col` | `AllocPhase.alloc_col col g st wz` | none |
+| `Alloc.alloc_white` | `Alloc.alloc g st wz` | none |
+| `Pool.small_alloc`, `pop`, `acquire`, `pool_init`, `find_free` | `Pool.small_alloc_as false`, `pop_as false`, `acquire`, `PoolInit.pool_init`, `find_free` | none (`wz + 1 <= small_max` for `small_alloc`) |
+| `Large.large_alloc`, `find_fit`, `carve`, `find_run`, `new_run` | `Alloc.large_alloc_as false`, `split_fit` on `walk g (large_head st) heap_words`, `carve_as false`, `find_run`, `new_run_as false` | none beyond the indices' ranges |
+| `SweepPage.sweep_page`, `pool_step` | `SweepPage.sweep_page`; then `SweepStep.push_avail` | the record is the page's entry |
+| `SweepRun.run_step` | `SweepRun.sweep_run` with the list head, then `SweepStep.run_state` | the record is a run head and the run's pages are run pages |
+| `Sweep.start_sweep` | `StartSweep.start_sweep` | none |
+| `Sweep.sweep_all` | `SweepAll.sweep_all` | `map_ok` of the starting map |
+| `Sweep.sweep` | `SweepAll.sweep_all g (StartSweep.start_sweep st)` | `map_ok` |
+
+- With the specification's theorems, these give the allocator's and the
+  sweep's correctness directly:
+  - `alloc_col_correct` (any colour but blue, from `pages_ok_mc`), and
+    `alloc_correct` for white;
+  - `sweep_all_correct`, `sweep_all_wf` and `collection_cycle` for the
+    sweep;
+  - `init_pages_ok` and `Allocator.init_inv` for `init`.
+- The allocator has no precondition at all. The specification's allocator
+  is total, and the Pulse code follows its guarded reads and writes
+  (`Shape.hdr`, `Blocks.wr`) with the same tests. So, for example, the
+  walk of list 0 stops after `heap_words` cells, as `Cells.walk` does,
+  even on a cyclic list.
+- `sweep_all` needs `map_ok` only to know that a run it reaches still has
+  its run pages. A step changes only its own unit's entries
+  (`Sweep.pool_ahead`, `run_ahead`). `sweep_ready` includes `map_ok`, so
+  the collector always has it.
+
+**The state in memory** (`GC.Impl.Pages.State`).
+- `pstate_t` is three arrays:
+  - `tpm`, one `pinfo` per page;
+  - `tavail`, `n_cls` words;
+  - `tlarge`, `n_lists` words.
+- `pages_st t st` ties them to the specification's `pstate`.
+- `pinfo` is the C form of `page_info`. The kind is a code (0 free, 1 pool,
+  2 run head, 3 run continuation) with its argument (the class or the run
+  length) beside it, and `nfree` is a machine word. `view` reads a record
+  as a `page_info`. It is total: a record with a bad code or argument reads
+  as a free page, and the code tests (`is_pool`, `is_head`, `is_cont`) are
+  exactly the tests `view` makes.
+- `pm_rel` relates the array to the page map entry by entry.
+
+**How the run sweep is proved** (`GC.Impl.Pages.RunLemmas`,
+`RunMapLemmas`, `SweepRun`).
+- The specification builds the run's layout as a list,
+  `fin g s e = split (merge (olds g s e))`, and writes it in one go
+  (`wr_all`). The Pulse code makes one pass over the run instead.
+- **`fin`, a stretch at a time:**
+  - `fin_live`: a black block is first in `fin`;
+  - `fin_dead`: a block that is not black starts a stretch that ends at
+    `dead_end`, and `fin` starts with `split1` of that stretch, cut into
+    the piece before its whole pages, the pages, and the piece after them;
+  - `fin_stop`: where the walk leaves the run, `fin` is empty.
+  - The key step is `merge_dead`, proved by induction over the stretch.
+- **The deferred link.** A listed block's link is the next listed block,
+  which is not known yet. The pass writes it when that block is found, and
+  closes the last one with the old list head.
+  - `emit_ok` is the invariant: every word reads as the specification's
+    writes of the blocks so far (`val_at`), with the open link still as it
+    was.
+  - `val_at_fp` is what makes this work: the list head given to the writes
+    matters only at the last listed block's link.
+  - `emit_plain`, `emit_listed` and `close_eq` are the steps; `close_eq`
+    ends with `wr_all` by heap extensionality.
+- **The map in two passes:**
+  - the first pass gives each whole free page a free page's entry as it
+    writes it (`map_in`);
+  - a second pass gives the other pages their entries: each stretch's first
+    page a run head with the stretch's length (`run_from`), the rest
+    continuation entries (`pass2`, `pass2_done`).
+  - A page is free after the first pass exactly when the layout freed it
+    (`freed_iff`), since every page of a run was a run page.
+
+**Other main lemmas.**
+- `Large`: `fit_inv_ex`, the first-fit invariant. `split_fit` on the walk is
+  the cells passed so far, followed by `split_fit` on the rest. Its four
+  steps are `fit_start_ex`, `fit_next_ex`, `fit_found_ex` and `fit_none_ex`.
+- `Pool`, `Large`: per-branch unfoldings of the specification's writes
+  (`fill_unfold_f`, `carved_split`, `run_listed`, ...). See the Pulse
+  lessons below.
+- `SweepPage`: `sw_step`, `dead_step`, and `sw_out` from the specification.
+- `Sweep`: `sweep_from_step`, the four cases of `step`, and the frame
+  lemmas above.
+
+**Vacuity** (`GC.Impl.Pages.Vacuity`).
+- Each loop invariant holds where its loop starts: `emit_ok`, `map_in`,
+  `pass2` and `fit_inv_ex`.
+- `sweep_all`'s precondition holds of the empty heap of pages.
+- The hypotheses of the step lemmas are not refutable (`expect_failure`):
+  `emit_plain`, `emit_listed`, `fin_live`, `fin_dead`, `run_pages`,
+  `pass2_head`, `pass2_cont`, `pass2_done` and `fit_found`.
+- The postconditions are equalities with the specification's functions,
+  so they cannot hold vacuously.
+
+**Extraction and the C test** (`mark-and-sweep/pages-c/`).
+- **`make extract`** extracts `GC.Impl.Pages.{Init,Alloc,Sweep}` from
+  their checked files into one bundle, `GC_Pages.{c,h}` (1.4k lines of C).
+  - The entry points are `init`, `alloc`, `alloc_white`, `start_sweep`,
+    `sweep_all` and `sweep`.
+  - `pinfo` and `pstate_t` extract as structs. The page size folds to a
+    constant (`32768ULL`), and the class table is a chain of tests
+    (`cls_u64`).
+  - There is no `Prims` or `krml_checked_int` arithmetic.
+  - `krmlinit_globals()` must run after `zero_addr` and `heap_size_u64`
+    are set, as for the generational snapshot.
+- **`make test`** builds `pages_test.c`, which needs neither F* nor
+  KaRaMeL: it uses `compat.c` and `krmllib/` from `generational/snapshot`.
+  - Each test lays out a small heap of 32 KB pages by hand, runs the
+    extracted function, and checks every header, link, entry and list head
+    against values worked out from the specification. 407 checks, all
+    passing:
+    - `init`, with and without a heap tail;
+    - small blocks: a fresh pool page and its slot links, a second pop, a
+      black allocation, wosize 0 with its 1-word filler, and a 9-word block
+      with its filler and the page's tail filler;
+    - large blocks: a new run with its listed rest, carving that stays
+      listed, carving that unlinks a remainder below `lg_min`, a request
+      with no room (heap and state byte-for-byte unchanged), a page filled
+      exactly, a run of two pages, and no free page for a new class;
+    - the sweep:
+      - a pool page with a survivor (the free slots linked from the last
+        one down, the page first on its class's list), and a pool page
+        given back;
+      - a run whose dead stretch gives back a whole page and leaves a
+        listed piece, and a dead run given back;
+      - a run with two listed stretches and an unlisted one, in address
+        order in front of the earlier run's;
+      - a short dead tail, and stale lists cleared;
+    - a sweep followed by allocations from what it freed.
+  - **Mutants.** In a scratch copy of the C, each of these was rejected:
+    linking a free slot to its header instead of its object (6 checks
+    fail), and listing only blocks above 200 words (2 fail) or not
+    listing a new run's rest (9 fail).
+
+| Module | Lines (3.8k in all) | What it holds |
+|---|---|---|
+| `Pages.Params` (`.fsti`, `.fst`) | 27 + 83 | `page_wsize_u64`, `n_cls_u64`, `cls_u64`, tied to the specification's parameters through `friend`; `Spec.Pages.Params` is unchanged. |
+| `Pages.State` | 259 | `pinfo`, `view`, `pm_rel`, `pstate_t`, `pages_st`; reading and writing an entry, a class's list head and list 0's head; `clear_lists`. |
+| `Pages.Heap` | 141 | `hdr_at` and `wr`, the guarded read and write; the header values (`ohdr_u64`, `bhdr_u64`, `blue_hdr_u64`, `recolour_hdr`) proved equal to the specification's. |
+| `Pages.Init` | 123 | `init`. |
+| `Pages.Pool` | 436 | `class_of_u64`, `find_free`, `pool_init`, `acquire`, `fill_slot`, `pop`, `small_alloc`. |
+| `Pages.Large` | 691 | `find_fit`, `carve`, `all_free`, `find_run`, `write_run`, `new_run`, `large_alloc`. |
+| `Pages.Alloc` | 107 | `alloc_white`, `alloc`. |
+| `Pages.SweepPage` | 298 | `page_any_live`, `sweep_slots`, `sweep_page`, `push_avail`, `pool_step`. |
+| `Pages.RunLemmas` | 373 | `dead_end`, `fin_live`, `fin_dead`, `merge_dead`; `va`, `val_at_append`, `val_at_fp`; `emit_ok`, `emit_plain`, `emit_listed`, `close_eq`. |
+| `Pages.RunMapLemmas` | 201 | `map_in`, `freed_iff`, `pass2` and its steps (`pass2_upd`, `new_head`, `new_cont`), `pass2_done`. |
+| `Pages.SweepRun` | 686 | `run_inv`, `emit`, `emit_pre`, `emit_stretch`, `find_dead_end`, `lay_out`, `close_run`, `count_run`, `pass2`, `run_step`. |
+| `Pages.Sweep` | 253 | `start_sweep`, `sweep_all`, `sweep`, and the step and frame lemmas. |
+| `Pages.Vacuity` | 120 | The vacuity checks above. |
+| `Pages` | 22 | The root: includes `Init`, `Alloc`, `Sweep` and `Vacuity`. |
+
+**Changes to the plan made in stage 5a.**
+- **Split stage 5.** 5a is the allocator and the sweep as functions, in new
+  modules, extracted and tested on their own. 5b threads the state through
+  `gen_gc`, the minor collection and the bridge, after the rebase onto
+  akhil's merge. With that split, §6 stage 6's checks are done here for the
+  allocator: the class table, the page size and the `pm` record extract as
+  intended.
+- **The parameters are read through `friend`.** A new interface,
+  `GC.Impl.Pages.Params`, gives `page_wsize_u64` and `cls_u64` with their
+  values tied to the specification's. Every other module still sees the
+  parameters as abstract.
+  - Changing the page size is now a two-line edit: `Spec.Pages.Params`, and
+    the literal in `Impl.Pages.Params`, whose `assert_norm` fails the build
+    if they disagree.
+  - The class table extracts as a chain of tests, not the static table
+    §6 stage 6 asked for. It is used only in allocation's class search and
+    in a pool page's slot arithmetic. Make it a table if stage 9 shows it
+    matters.
+- **The page map is an array of `pinfo` records**, not of `page_info`.
+  `page_info`'s kind carries arguments and its `nfree` is a `nat`, so it
+  cannot be a C struct.
+- **The page sweep makes two passes**, as the specification does: first
+  `any_live`, then the slots. The specification gives back a page with no
+  survivor as one blue header on the *unswept* page. A single pass, as in
+  OCaml 5's `pool_sweep`, would also leave the slots' blue headers and links
+  in the freed page's words. Those words are dead, but the heaps would
+  differ.
+- **The run sweep is one pass over the run plus one over its pages,** not a
+  list built and then written (above).
+- **Performance is not addressed here** (stage 9):
+  - `find_run` is the specification's search: quadratic in the worst case.
+  - `start_sweep` visits every page (§7.5's epoch is the fix).
+  - The class search is linear in the class number.
+- **Extraction is a separate bundle** in `mark-and-sweep/pages-c/`, not in
+  `generational/Makefile`. The generational collector does not use the
+  page allocator yet, and keeping it apart leaves the existing snapshot as
+  it is.
+
+**Lessons for Pulse proofs against total specification functions.**
+- Postconditions of the form `exists* g'. is_heap heap g' ** pure (g' == f g)`
+  are robust. `rewrite p as q` is not: Pulse normalises both sides,
+  unfolding `Blocks.wr` and the specification's `if`s, and then fails to
+  match them branch by branch. Give each branch its own unfolding lemma,
+  with the addresses as arguments (`fill_unfold_f`, `carved_split`).
+- After a `while` loop, read the loop variable (`let vj = !j`) and assert
+  the exit fact before using it. A lemma called last in a function needs
+  its conclusion asserted for the postcondition to see it.
+- Pass ghost lists and positions as implicit arguments, unified with an
+  existential's witness and constrained by pure equations. Then calls
+  chain without slprop rewrites (`emit`'s `#xs #a`).
+- Return a final position as a machine word rather than an erased `nat`.
+  A doubly erased `nat` in a pure fact did not match its use.
+- Bind `get_color` to a variable before testing it: KaRaMeL rejects its
+  inlined `let` inside `||`.
