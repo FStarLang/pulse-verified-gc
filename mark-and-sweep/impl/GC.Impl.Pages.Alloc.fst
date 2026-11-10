@@ -41,6 +41,7 @@ module A = GC.Spec.Pages.Alloc
 module AP = GC.Spec.Pages.AllocPhase
 module PL = GC.Impl.Pages.Pool
 module LI = GC.Impl.Pages.Large
+module Rd = GC.Impl.Pages.Ready
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
@@ -51,9 +52,10 @@ let alloc_unfold (g: Base.heap) (st: pstate) (wz: nat)
             else A.large_alloc_as false g st wz))
   = ()
 
-/// White allocation: `GC.Spec.Pages.Alloc.alloc`.
+/// White allocation: `GC.Spec.Pages.Alloc.alloc`.  `heads_ready` holds
+/// under `pages_ok` (`Ready.pages_ok_ready`), which `alloc_meets` assumes.
 fn alloc_white (heap: heap_t) (t: pstate_t) (wz: U64.t) (#st: erased pstate)
-  requires is_heap heap 'g ** pages_st t st
+  requires is_heap heap 'g ** pages_st t st ** pure (Rd.heads_ready st)
   returns o: U64.t
   ensures exists* g' st'. is_heap heap g' ** pages_st t st' **
           pure ((g', st', o) == A.alloc 'g st (U64.v wz))
@@ -83,9 +85,10 @@ let col_unfold (col: Hd.color_sem) (g: Base.heap) (st: pstate) (wz: nat)
   = ()
 
 /// **The page allocator**, with the new object's colour as a parameter:
-/// `GC.Spec.Pages.AllocPhase.alloc_col col`.
+/// `GC.Spec.Pages.AllocPhase.alloc_col col`.  `heads_ready` holds under
+/// `pages_ok_mc` (`Ready.mc_ready`), which `alloc_col_correct` assumes.
 fn alloc (heap: heap_t) (t: pstate_t) (wz: U64.t) (col: Hd.color_sem) (#st: erased pstate)
-  requires is_heap heap 'g ** pages_st t st
+  requires is_heap heap 'g ** pages_st t st ** pure (Rd.heads_ready st)
   returns o: U64.t
   ensures exists* g' st'. is_heap heap g' ** pages_st t st' **
           pure ((g', st', o) == AP.alloc_col col 'g st (U64.v wz))

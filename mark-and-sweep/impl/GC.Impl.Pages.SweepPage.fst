@@ -3,14 +3,16 @@
 /// ---------------------------------------------------------------------------
 ///
 /// `sweep_page` computes exactly `GC.Spec.Pages.SweepPage.sweep_page`, for
-/// every heap:
-///   - a first pass looks for a slot whose header is black (`any_live`);
-///   - if there is one, a second pass sweeps the slots in order: a black
-///     slot's header is made white, any other slot becomes a free slot
-///     linked to the free slot before it (`sw_heap`), and the page's entry
-///     gets the last free slot as its list head and the number of free slots;
-///   - if there is none, the page is given back: one blue header at its
-///     start, and a free page's entry.
+/// every heap, in one pass over the slots, as OCaml 5's `pool_sweep` and the
+/// prototype's `sweep_pool`:
+///   - the pass sweeps the slots in order: a black slot's header is made
+///     white, any other slot becomes a free slot linked to the free slot
+///     before it (`sw_heap`), and it counts the free slots;
+///   - if fewer slots than all are free, the page had a survivor
+///     (`SP.dead_count`): its entry gets the last free slot as its list
+///     head and the number of free slots;
+///   - if all are, the page is given back: one blue header at its start,
+///     over the swept slots, and a free page's entry.
 /// `pool_step` adds what `GC.Spec.Pages.SweepAll.step` does after it: the
 /// entry is stored, and a page with a free slot goes first on its class's
 /// list (`SweepStep.push_avail`).
@@ -51,12 +53,6 @@ module PL = GC.Impl.Pages.Pool
 /// ---------------------------------------------------------------------------
 
 #push-options "--fuel 1"
-let any_live_step (g: Base.heap) (i: nat) (c: nat{c < n_cls}) (k: nat)
-  : Lemma (SP.any_live g i c (k + 1) == (SP.live g i c k || SP.any_live g i c k))
-  = ()
-
-let any_live_zero (g: Base.heap) (i: nat) (c: nat{c < n_cls}) : Lemma (SP.any_live g i c 0 == false) = ()
-
 let sw_step (g: Base.heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat{k < n_slots c})
   : Lemma (SP.sw_heap g i c (k + 1) ==
            (if SP.live g i c k
@@ -86,66 +82,25 @@ let rec dead_len (g: Base.heap) (i: nat) (c: nat{c < n_cls}) (k: nat)
   = if k > 0 then dead_len g i c (k - 1)
 #pop-options
 
-/// Once a survivor is found, the page has one.
-let any_live_found (g: Base.heap) (i: nat) (c: nat{c < n_cls}) (k: nat)
-  : Lemma (requires SP.live g i c k /\ k < n_slots c) (ensures SP.any_live g i c (n_slots c))
-  = SP.any_live_spec g i c (n_slots c)
-
 /// `live g i c k`, read at the slot start.
 let live_at (g: Base.heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat{k < n_slots c})
   : Lemma (SP.live g i c k == (GC.Spec.Object.getColor (SH.read_word g (PI.slot_hd i c k)) = Hd.Black))
   = PI.slot_fits i c k
 
 /// ---------------------------------------------------------------------------
-/// Is a slot live?
-/// ---------------------------------------------------------------------------
-
-fn page_any_live (heap: heap_t) (i: U64.t{U64.v i < n_pages}) (c: U64.t{U64.v c < n_cls})
-  requires is_heap heap 'g
-  returns b: bool
-  ensures is_heap heap 'g ** pure (b == SP.any_live 'g (U64.v i) (U64.v c) (n_slots (U64.v c)))
-{
-  let ns = PL.n_slots_u64 c;
-  any_live_zero 'g (U64.v i) (U64.v c);
-  let mut k = 0UL;
-  let mut found = false;
-  while (not !found && U64.lt !k ns)
-    invariant exists* vk vf.
-      R.pts_to k vk ** R.pts_to found vf ** is_heap heap 'g **
-      pure (U64.v vk <= n_slots (U64.v c) /\
-            (not vf ==> SP.any_live 'g (U64.v i) (U64.v c) (U64.v vk) == false) /\
-            (vf ==> SP.any_live 'g (U64.v i) (U64.v c) (n_slots (U64.v c))))
-    decreases (n_slots (U64.v c) - U64.v !k + (if !found then 0 else 1))
-  {
-    let vk = !k;
-    PI.slot_fits (U64.v i) (U64.v c) (U64.v vk);
-    live_at 'g (U64.v i) (U64.v c) (U64.v vk);
-    any_live_step 'g (U64.v i) (U64.v c) (U64.v vk);
-    let h = read_word heap (PL.slot_base_u64 i c vk);
-    let col = get_color h;
-    if (col = Hd.Black) {
-      any_live_found 'g (U64.v i) (U64.v c) (U64.v vk);
-      found := true
-    } else {
-      k := U64.add vk 1UL
-    }
-  };
-  !found
-}
-
-/// ---------------------------------------------------------------------------
 /// Sweeping the slots
 /// ---------------------------------------------------------------------------
 
 fn sweep_slots (heap: heap_t) (i: U64.t{U64.v i < n_pages}) (c: U64.t{U64.v c < n_cls})
+  (cl: U64.t{U64.v cl == cls (U64.v c)}) (ns: U64.t{U64.v ns == n_slots (U64.v c)})
   requires is_heap heap 'g
   returns res: (U64.t & U64.t)
   ensures is_heap heap (SP.sw_heap 'g (U64.v i) (U64.v c) (n_slots (U64.v c))) **
           pure (fst res == SP.hd_upto 'g (U64.v i) (U64.v c) (n_slots (U64.v c)) /\
                 U64.v (snd res) == L.length (SP.dead_list 'g (U64.v i) (U64.v c) (n_slots (U64.v c))))
 {
-  let ns = PL.n_slots_u64 c;
-  let sh = PL.slot_hdr_u64 c;
+  cls_bounds (U64.v c);
+  let sh = blue_hdr_u64 cl;
   sw_zero 'g (U64.v i) (U64.v c);
   dead_zero 'g (U64.v i) (U64.v c);
   let mut k = 0UL;
@@ -167,7 +122,7 @@ fn sweep_slots (heap: heap_t) (i: U64.t{U64.v i < n_pages}) (c: U64.t{U64.v c < 
     sw_step 'g (U64.v i) (U64.v c) (U64.v vk);
     dead_step 'g (U64.v i) (U64.v c) (U64.v vk);
     dead_len 'g (U64.v i) (U64.v c) (U64.v vk);
-    let a = PL.slot_base_u64 i c vk;
+    let a = PL.slot_base_cl i (U64.v c) cl vk;
     SP.sw_out 'g (U64.v i) (U64.v c) (U64.v vk) a;
     let h = read_word heap a;
     let col = get_color h;
@@ -206,27 +161,30 @@ let page_hdr_u64 () : r: U64.t{r == In.page_hdr} =
 let sweep_page_pool (g: Base.heap) (pm: page_map) (i: nat{i < n_pages}) (c: nat{c < n_cls})
   : Lemma (requires (entry pm i).kind == Pool c)
           (ensures SP.sweep_page g pm i ==
-                   (if SP.any_live g i c (n_slots c) then SP.pool_swept g pm i c else SP.page_freed g i))
+                   (if SP.any_live g i c (n_slots c) then SP.pool_swept g pm i c else SP.page_freed g i c))
   = ()
 
 let sweep_page_other (g: Base.heap) (pm: page_map) (i: nat{i < n_pages})
   : Lemma (requires ~(Pool? (entry pm i).kind)) (ensures SP.sweep_page g pm i == (g, entry pm i))
   = ()
 
-/// Sweep pool page `i`, whose entry is `r`; return its new entry.
-fn sweep_page (heap: heap_t) (i: U64.t{U64.v i < n_pages}) (r: pinfo) (#pm: erased page_map)
-  requires is_heap heap 'g ** pure (view r == entry pm (U64.v i))
+/// Sweep pool page `i`, whose entry is `r`, with its class's slot size `cl`
+/// and slot count `ns`; return its new entry.
+fn sweep_page (heap: heap_t) (i: U64.t{U64.v i < n_pages}) (r: pinfo{is_pool r})
+  (cl: U64.t{U64.v cl == cls (U64.v r.arg)}) (ns: U64.t{U64.v ns == n_slots (U64.v r.arg)})
+  (#pm: erased page_map)
+  requires is_heap heap 'g ** pure (view r == entry pm (U64.v i) /\ storable r)
   returns r': pinfo
   ensures exists* g'. is_heap heap g' **
-          pure (g' == fst (SP.sweep_page 'g pm (U64.v i)) /\ view r' == snd (SP.sweep_page 'g pm (U64.v i)))
+          pure (g' == fst (SP.sweep_page 'g pm (U64.v i)) /\ view r' == snd (SP.sweep_page 'g pm (U64.v i)) /\
+                storable r')
 {
   if (is_pool r) {
     let c = r.arg;
     sweep_page_pool 'g pm (U64.v i) (U64.v c);
-    let b = page_any_live heap i c;
-    if b {
-      let res = sweep_slots heap i c;
-      dead_len 'g (U64.v i) (U64.v c) (n_slots (U64.v c));
+    let res = sweep_slots heap i c cl ns;
+    SP.dead_count 'g (U64.v i) (U64.v c) (n_slots (U64.v c));
+    if (U64.lt (snd res) ns) {
       swept_rec r c (fst res) (snd res)
     } else {
       let a = page_base_u64 i;
@@ -266,7 +224,7 @@ let push_plain (st: pstate) (i: nat{i < n_pages}) (e: page_info)
 /// Store the entry `r` of page `i`, and put it on its class's list if it is
 /// a pool page with a free slot.
 fn push_avail (t: pstate_t) (i: U64.t{U64.v i < n_pages}) (r: pinfo) (#st: erased pstate)
-  requires pages_st t st
+  requires pages_st t st ** pure (storable r)
   ensures pages_st t (SS.push_avail st (U64.v i) (view r))
 {
   pages_st_lengths t;
@@ -274,7 +232,7 @@ fn push_avail (t: pstate_t) (i: U64.t{U64.v i < n_pages}) (r: pinfo) (#st: erase
     let c = r.arg;
     let nx = read_avail t c;
     push_pool st (U64.v i) (view r) (U64.v c);
-    write_entry t i ({ r with next = nx });
+    write_used t i ({ r with next = nx });
     write_avail t c (page_id_u64 i);
     with st'. assert (pages_st t st');
     rewrite (pages_st t st') as (pages_st t (SS.push_avail st (U64.v i) (view r)))
@@ -287,12 +245,14 @@ fn push_avail (t: pstate_t) (i: U64.t{U64.v i < n_pages}) (r: pinfo) (#st: erase
 }
 
 /// Sweep pool page `i` and store the result, as `SweepAll.step` does.
-fn pool_step (heap: heap_t) (t: pstate_t) (i: U64.t{U64.v i < n_pages}) (r: pinfo) (#st: erased pstate)
-  requires is_heap heap 'g ** pages_st t st ** pure (view r == entry st.pm (U64.v i))
+fn pool_step (heap: heap_t) (t: pstate_t) (i: U64.t{U64.v i < n_pages}) (r: pinfo{is_pool r}) (#st: erased pstate)
+  requires is_heap heap 'g ** pages_st t st ** pure (view r == entry st.pm (U64.v i) /\ storable r)
   ensures exists* g' st'. is_heap heap g' ** pages_st t st' **
           pure (g' == fst (SP.sweep_page 'g st.pm (U64.v i)) /\
                 st' == SS.push_avail st (U64.v i) (snd (SP.sweep_page 'g st.pm (U64.v i))))
 {
-  let r' = sweep_page heap i r #st.pm;
+  let cl = cls_at t r.arg;
+  let ns = ns_at t r.arg;
+  let r' = sweep_page heap i r cl ns #st.pm;
   push_avail t i r'
 }

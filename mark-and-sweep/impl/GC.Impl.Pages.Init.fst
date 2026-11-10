@@ -67,31 +67,23 @@ let tail_hdr_u64 (tw: U64.t{U64.v tw == In.tail_w}) : r: U64.t{r == In.tail_hdr}
     0UL
   end
 
-/// Every entry before `k` is a free page's.
-let all_free_upto (pm: page_map) (k: nat) : prop =
-  forall (i: nat{i < n_pages}). i < k ==> entry pm i == free_entry
+let init_state_eq () : Lemma (empty_state == In.init_state) = ()
 
-let init_state_eq (st: pstate)
-  : Lemma (requires all_free_upto st.pm n_pages)
-          (ensures ({ st with avail = Seq.create n_cls 0UL; large = FLs.fls_empty }) == In.init_state)
-  = Seq.lemma_eq_intro st.pm all_free
-
-fn init (heap: heap_t) (t: pstate_t) (#st: erased pstate)
-  requires is_heap heap 'g ** pages_st t st
+fn init (heap: heap_t) (t: pstate_t)
+  requires is_heap heap 'g ** pages_raw t
   ensures exists* g' st'. is_heap heap g' ** pages_st t st' **
           pure (g' == In.init_heap 'g /\ st' == In.init_state)
 {
   LI.bounds ();
   cls_bounds 0;
-  free_rec_view ();
   free_pages_zero 'g;
   let np = n_pages_u64 ();
   let ph = page_hdr_u64 ();
   let mut k = 0UL;
   while (U64.lt !k np)
-    invariant exists* vk g1 st1.
-      R.pts_to k vk ** is_heap heap g1 ** pages_st t st1 **
-      pure (U64.v vk <= n_pages /\ g1 == In.free_pages 'g (U64.v vk) /\ all_free_upto st1.pm (U64.v vk))
+    invariant exists* vk g1.
+      R.pts_to k vk ** is_heap heap g1 **
+      pure (U64.v vk <= n_pages /\ g1 == In.free_pages 'g (U64.v vk))
     decreases (n_pages - U64.v !k)
   {
     let vk = !k;
@@ -100,14 +92,12 @@ fn init (heap: heap_t) (t: pstate_t) (#st: erased pstate)
     page_base_mono (U64.v vk) (U64.v vk + 1);
     page_base_mono (U64.v vk + 1) n_pages;
     write_word heap (page_base_u64 vk) ph;
-    write_entry t vk free_rec;
     k := U64.add vk 1UL
   };
-  with st1. assert (pages_st t st1);
   let vk = !k;
   assert (pure (U64.v vk == n_pages));
-  clear_lists t;
-  init_state_eq st1;
+  reset_state t;
+  init_state_eq ();
   pages_end_bound ();
   page_base_bound n_pages;
   let pe = page_base_u64 np;

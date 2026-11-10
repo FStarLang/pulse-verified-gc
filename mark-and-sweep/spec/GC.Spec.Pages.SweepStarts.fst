@@ -116,10 +116,10 @@ let swept_pool_starts (g: heap) (pm: page_map) (i: nat{i < n_pages}) (c: nat{c <
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires one)
 
-let freed_page_starts (g: heap) (i: nat{i < n_pages})
-  : Lemma (let (g', _) = SP.page_freed g i in starts_ok g g' i 1)
-  = let (g', e) = SP.page_freed g i in
-    SP.page_freed_ok g i;
+let freed_page_starts (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls})
+  : Lemma (let (g', _) = SP.page_freed g i c in starts_ok g g' i 1)
+  = let (g', e) = SP.page_freed g i c in
+    SP.page_freed_ok g i c;
     let one (b: nat)
       : Lemma (requires steps_to g' (page_base i) b /\ b < page_base (i + 1))
               (ensures is_page_start b)
@@ -141,7 +141,7 @@ let pool_starts (g: heap) (pm: page_map) (i: nat{i < n_pages}) (c: nat{c < n_cls
       SP.live_used g i c k;
       swept_pool_starts g pm i c
     end
-    else freed_page_starts g i
+    else freed_page_starts g i c
 
 /// ---------------------------------------------------------------------------
 /// A run

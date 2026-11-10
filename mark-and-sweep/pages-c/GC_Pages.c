@@ -56,104 +56,6 @@ static uint64_t getTag(uint64_t hdr)
   return hdr & 0xffULL;
 }
 
-static size_t sz_of(uint64_t i)
-{
-  return (size_t)i;
-}
-
-static pinfo read_entry(pstate_t t, uint64_t i)
-{
-  return t.tpm[sz_of(i)];
-}
-
-static void write_entry(pstate_t t, uint64_t i, pinfo r)
-{
-  t.tpm[sz_of(i)] = r;
-}
-
-static void clear_lists(pstate_t t)
-{
-  uint64_t c = 0ULL;
-  uint64_t __anf00 = c;
-  bool cond = __anf00 < 31ULL;
-  while (cond)
-  {
-    uint64_t vc = c;
-    t.tavail[(size_t)vc] = 0ULL;
-    c = vc + 1ULL;
-    uint64_t __anf0 = c;
-    cond = __anf0 < 31ULL;
-  }
-  size_t k = (size_t)0U;
-  size_t __anf0 = k;
-  bool cond0 = __anf0 < (size_t)17U;
-  while (cond0)
-  {
-    size_t vk = k;
-    t.tlarge[vk] = 0ULL;
-    k = vk + (size_t)1U;
-    size_t __anf0 = k;
-    cond0 = __anf0 < (size_t)17U;
-  }
-}
-
-static uint64_t read_avail(pstate_t t, uint64_t c)
-{
-  return t.tavail[(size_t)c];
-}
-
-static void write_avail(pstate_t t, uint64_t c, uint64_t v)
-{
-  t.tavail[(size_t)c] = v;
-}
-
-static uint64_t read_lhead(pstate_t t)
-{
-  return t.tlarge[0U];
-}
-
-static void write_lhead(pstate_t t, uint64_t v)
-{
-  t.tlarge[0U] = v;
-}
-
-extern uint64_t read_u64_le(uint8_t *x0, size_t x1);
-
-extern void write_u64_le(uint8_t *x0, size_t x1, uint64_t x2);
-
-uint64_t zero_addr1;
-
-static uint64_t read_word(heap_t h, uint64_t addr)
-{
-  size_t base = (size_t)addr;
-  return read_u64_le(h.data, base);
-}
-
-static void write_word(heap_t h, uint64_t addr, uint64_t v)
-{
-  size_t base = (size_t)addr;
-  write_u64_le(h.data, base, v);
-}
-
-static bool in_heap(uint64_t a)
-{
-  return a < heap_size_u640 && a % 8ULL == 0ULL;
-}
-
-static void wr(heap_t heap, uint64_t a, uint64_t v)
-{
-  if (in_heap(a))
-    write_word(heap, a, v);
-}
-
-static uint64_t hdr_at(heap_t heap, uint64_t a)
-{
-  if (in_heap(a))
-    return read_word(heap, a);
-  else
-    return 0ULL;
-}
-
 static uint64_t cls_u64(uint64_t c)
 {
   return
@@ -236,17 +138,763 @@ static uint64_t cls_u64(uint64_t c)
 
 static uint64_t n_slots_u64(uint64_t c)
 {
-  return 4096ULL / cls_u64(c);
+  return
+    c == 0ULL ? 2048ULL
+              : c == 1ULL ? 1365ULL
+                          : c == 2ULL ? 1024ULL
+                                      : c == 3ULL ? 819ULL
+                                                  : c == 4ULL ? 682ULL
+                                                              : c == 5ULL ? 585ULL
+                                                                          : c == 6ULL ? 512ULL
+                                                                                      : c == 7ULL ? 409ULL
+                                                                                                  : c
+                                                                                                  ==
+                                                                                                    8ULL ? 341ULL
+                                                                                                         : c
+                                                                                                         ==
+                                                                                                           9ULL ? 292ULL
+                                                                                                                : c
+                                                                                                                ==
+                                                                                                                  10ULL ? 256ULL
+                                                                                                                        : c
+                                                                                                                        ==
+                                                                                                                          11ULL ? 240ULL
+                                                                                                                                : c
+                                                                                                                                ==
+                                                                                                                                  12ULL ? 215ULL
+                                                                                                                                        : c
+                                                                                                                                        ==
+                                                                                                                                          13ULL ? 186ULL
+                                                                                                                                                : c
+                                                                                                                                                ==
+                                                                                                                                                  14ULL ? 163ULL
+                                                                                                                                                        : c
+                                                                                                                                                        ==
+                                                                                                                                                          15ULL ? 146ULL
+                                                                                                                                                                : c
+                                                                                                                                                                ==
+                                                                                                                                                                  16ULL ? 128ULL
+                                                                                                                                                                        : c
+                                                                                                                                                                        ==
+                                                                                                                                                                          17ULL ? 124ULL
+                                                                                                                                                                                : c
+                                                                                                                                                                                ==
+                                                                                                                                                                                  18ULL ? 110ULL
+                                                                                                                                                                                        : c
+                                                                                                                                                                                        ==
+                                                                                                                                                                                          19ULL ? 97ULL
+                                                                                                                                                                                                : c
+                                                                                                                                                                                                ==
+                                                                                                                                                                                                  20ULL ? 87ULL
+                                                                                                                                                                                                        : c
+                                                                                                                                                                                                        ==
+                                                                                                                                                                                                          21ULL ? 77ULL
+                                                                                                                                                                                                                : c
+                                                                                                                                                                                                                ==
+                                                                                                                                                                                                                  22ULL ? 69ULL
+                                                                                                                                                                                                                        : c
+                                                                                                                                                                                                                        ==
+                                                                                                                                                                                                                          23ULL ? 63ULL
+                                                                                                                                                                                                                                : c
+                                                                                                                                                                                                                                ==
+                                                                                                                                                                                                                                  24ULL ? 56ULL
+                                                                                                                                                                                                                                        : c
+                                                                                                                                                                                                                                        ==
+                                                                                                                                                                                                                                          25ULL ? 50ULL
+                                                                                                                                                                                                                                                : c
+                                                                                                                                                                                                                                                ==
+                                                                                                                                                                                                                                                  26ULL ? 46ULL
+                                                                                                                                                                                                                                                        : c
+                                                                                                                                                                                                                                                        ==
+                                                                                                                                                                                                                                                          27ULL ? 41ULL
+                                                                                                                                                                                                                                                                : c
+                                                                                                                                                                                                                                                                ==
+                                                                                                                                                                                                                                                                  28ULL ? 37ULL
+                                                                                                                                                                                                                                                                        : c
+                                                                                                                                                                                                                                                                        ==
+                                                                                                                                                                                                                                                                          29ULL ? 34ULL
+                                                                                                                                                                                                                                                                                : 32ULL;
 }
 
-static uint64_t slot_base_u64(uint64_t i, uint64_t c, uint64_t k)
+static uint64_t class_u64(uint64_t w)
 {
-  return zero_addr1 + i * 32768ULL + k * (cls_u64(c) * 8ULL);
+  return
+    w == 1ULL ? 0ULL
+              : w == 2ULL ? 0ULL
+                          : w == 3ULL ? 1ULL
+                                      : w == 4ULL ? 2ULL
+                                                  : w == 5ULL ? 3ULL
+                                                              : w == 6ULL ? 4ULL
+                                                                          : w == 7ULL ? 5ULL
+                                                                                      : w == 8ULL ? 6ULL
+                                                                                                  : w
+                                                                                                  ==
+                                                                                                    9ULL ? 7ULL
+                                                                                                         : w
+                                                                                                         ==
+                                                                                                           10ULL ? 7ULL
+                                                                                                                 : w
+                                                                                                                 ==
+                                                                                                                   11ULL ? 8ULL
+                                                                                                                         : w
+                                                                                                                         ==
+                                                                                                                           12ULL ? 8ULL
+                                                                                                                                 : w
+                                                                                                                                 ==
+                                                                                                                                   13ULL ? 9ULL
+                                                                                                                                         : w
+                                                                                                                                         ==
+                                                                                                                                           14ULL ? 9ULL
+                                                                                                                                                 : w
+                                                                                                                                                 ==
+                                                                                                                                                   15ULL ? 10ULL
+                                                                                                                                                         : w
+                                                                                                                                                         ==
+                                                                                                                                                           16ULL ? 10ULL
+                                                                                                                                                                 : w
+                                                                                                                                                                 ==
+                                                                                                                                                                   17ULL ? 11ULL
+                                                                                                                                                                         : w
+                                                                                                                                                                         ==
+                                                                                                                                                                           18ULL ? 12ULL
+                                                                                                                                                                                 : w
+                                                                                                                                                                                 ==
+                                                                                                                                                                                   19ULL ? 12ULL
+                                                                                                                                                                                         : w
+                                                                                                                                                                                         ==
+                                                                                                                                                                                           20ULL ? 13ULL
+                                                                                                                                                                                                 : w
+                                                                                                                                                                                                 ==
+                                                                                                                                                                                                   21ULL ? 13ULL
+                                                                                                                                                                                                         : w
+                                                                                                                                                                                                         ==
+                                                                                                                                                                                                           22ULL ? 13ULL
+                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                   23ULL ? 14ULL
+                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                           24ULL ? 14ULL
+                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                   25ULL ? 14ULL
+                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                           26ULL ? 15ULL
+                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                   27ULL ? 15ULL
+                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                           28ULL ? 15ULL
+                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                   29ULL ? 16ULL
+                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                           30ULL ? 16ULL
+                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                   31ULL ? 16ULL
+                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                           32ULL ? 16ULL
+                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                   33ULL ? 17ULL
+                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                           34ULL ? 18ULL
+                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                   35ULL ? 18ULL
+                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                           36ULL ? 18ULL
+                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                   37ULL ? 18ULL
+                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                           38ULL ? 19ULL
+                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                   39ULL ? 19ULL
+                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                           40ULL ? 19ULL
+                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                   41ULL ? 19ULL
+                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                           42ULL ? 19ULL
+                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                   43ULL ? 20ULL
+                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                           44ULL ? 20ULL
+                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                   45ULL ? 20ULL
+                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                           46ULL ? 20ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                   47ULL ? 20ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                           48ULL ? 21ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                   49ULL ? 21ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                           50ULL ? 21ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                   51ULL ? 21ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                           52ULL ? 21ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                   53ULL ? 21ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                           54ULL ? 22ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   55ULL ? 22ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           56ULL ? 22ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   57ULL ? 22ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           58ULL ? 22ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   59ULL ? 22ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           60ULL ? 23ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   61ULL ? 23ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           62ULL ? 23ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   63ULL ? 23ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           64ULL ? 23ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   65ULL ? 23ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           66ULL ? 24ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   67ULL ? 24ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           68ULL ? 24ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   69ULL ? 24ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           70ULL ? 24ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   71ULL ? 24ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           72ULL ? 24ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   73ULL ? 24ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           74ULL ? 25ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   75ULL ? 25ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           76ULL ? 25ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   77ULL ? 25ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           78ULL ? 25ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   79ULL ? 25ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           80ULL ? 25ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   81ULL ? 25ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           82ULL ? 26ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   83ULL ? 26ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           84ULL ? 26ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   85ULL ? 26ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           86ULL ? 26ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   87ULL ? 26ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           88ULL ? 26ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   89ULL ? 26ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           90ULL ? 27ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   91ULL ? 27ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           92ULL ? 27ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   93ULL ? 27ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           94ULL ? 27ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   95ULL ? 27ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           96ULL ? 27ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   97ULL ? 27ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           98ULL ? 27ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   99ULL ? 27ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           100ULL ? 28ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    101ULL ? 28ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             102ULL ? 28ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      103ULL ? 28ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               104ULL ? 28ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        105ULL ? 28ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 106ULL ? 28ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          107ULL ? 28ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   108ULL ? 28ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            109ULL ? 29ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     110ULL ? 29ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              111ULL ? 29ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       112ULL ? 29ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                113ULL ? 29ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         114ULL ? 29ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  115ULL ? 29ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           116ULL ? 29ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    117ULL ? 29ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             118ULL ? 29ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      119ULL ? 30ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               120ULL ? 30ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        121ULL ? 30ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 122ULL ? 30ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          123ULL ? 30ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   124ULL ? 30ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            125ULL ? 30ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     126ULL ? 30ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            : w
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ==
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              127ULL ? 30ULL
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     : 30ULL;
 }
 
-static uint64_t slot_hdr_u64(uint64_t c)
+extern uint64_t read_u64_le(uint8_t *x0, size_t x1);
+
+extern void write_u64_le(uint8_t *x0, size_t x1, uint64_t x2);
+
+uint64_t zero_addr1;
+
+static uint64_t read_word(heap_t h, uint64_t addr)
 {
-  return makeHeader(cls_u64(c) - 1ULL, Blue, 0ULL);
+  size_t base = (size_t)addr;
+  return read_u64_le(h.data, base);
+}
+
+static void write_word(heap_t h, uint64_t addr, uint64_t v)
+{
+  size_t base = (size_t)addr;
+  write_u64_le(h.data, base, v);
+}
+
+static size_t sz_of(uint64_t i)
+{
+  return (size_t)i;
+}
+
+static prec unsep(prec p)
+{
+  return
+    (
+      (prec){
+        .pcode = p.pcode,
+        .parg = p.parg,
+        .sep = 0ULL,
+        .pfree_head = p.pfree_head,
+        .pnfree = p.pnfree,
+        .pnext = p.pnext
+      }
+    );
+}
+
+static void start_epoch(pstate_t t)
+{
+  uint64_t ep = t.tmeta[1U];
+  if (ep < 0xffffffffffffffffULL)
+    t.tmeta[1U] = ep + 1ULL;
+  else
+  {
+    uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
+    uint64_t j = 0ULL;
+    uint64_t __anf0 = j;
+    bool cond = __anf0 < np;
+    while (cond)
+    {
+      uint64_t vj = j;
+      prec p = t.tpm[sz_of(vj)];
+      t.tpm[sz_of(vj)] = unsep(p);
+      j = vj + 1ULL;
+      uint64_t __anf0 = j;
+      cond = __anf0 < np;
+    }
+    t.tmeta[1U] = 1ULL;
+  }
+}
+
+static void clear_heads(pstate_t t)
+{
+  uint64_t c = 0ULL;
+  uint64_t __anf00 = c;
+  bool cond = __anf00 < 31ULL;
+  while (cond)
+  {
+    uint64_t vc = c;
+    t.tavail[(size_t)vc] = 0ULL;
+    c = vc + 1ULL;
+    uint64_t __anf0 = c;
+    cond = __anf0 < 31ULL;
+  }
+  size_t k = (size_t)0U;
+  size_t __anf0 = k;
+  bool cond0 = __anf0 < (size_t)17U;
+  while (cond0)
+  {
+    size_t vk = k;
+    t.tlarge[vk] = 0ULL;
+    k = vk + (size_t)1U;
+    size_t __anf0 = k;
+    cond0 = __anf0 < (size_t)17U;
+  }
+}
+
+static void clear_lists(pstate_t t)
+{
+  clear_heads(t);
+}
+
+typedef struct pinfo_s
+{
+  uint8_t code;
+  uint64_t arg;
+  bool swept;
+  uint64_t free_head;
+  uint64_t nfree;
+  uint64_t next;
+}
+pinfo;
+
+static pinfo read_entry(pstate_t t, uint64_t i)
+{
+  uint64_t ep = t.tmeta[1U];
+  prec p = t.tpm[sz_of(i)];
+  return
+    (
+      (pinfo){
+        .code = p.pcode,
+        .arg = p.parg,
+        .swept = !(p.pcode == 1U && p.parg < 31ULL) && !(p.pcode == 2U && p.parg > 0ULL) &&
+          !(p.pcode == 3U)
+        || p.sep == ep,
+        .free_head = p.pfree_head,
+        .nfree = p.pnfree,
+        .next = p.pnext
+      }
+    );
+}
+
+static uint64_t cls_at(pstate_t t, uint64_t c)
+{
+  return t.tcls[(size_t)c];
+}
+
+static uint64_t ns_at(pstate_t t, uint64_t c)
+{
+  return t.tns[(size_t)c];
+}
+
+static uint64_t read_avail(pstate_t t, uint64_t c)
+{
+  return t.tavail[(size_t)c];
+}
+
+static void write_used(pstate_t t, uint64_t i, pinfo r)
+{
+  uint64_t ep = t.tmeta[1U];
+  t.tpm[sz_of(i)] =
+    (
+      (prec){
+        .pcode = r.code,
+        .parg = r.arg,
+        .sep = r.swept ? ep : 0ULL,
+        .pfree_head = r.free_head,
+        .pnfree = r.nfree,
+        .pnext = r.next
+      }
+    );
+}
+
+static void write_avail(pstate_t t, uint64_t c, uint64_t v)
+{
+  t.tavail[(size_t)c] = v;
+}
+
+static void write_entry(pstate_t t, uint64_t i, pinfo r)
+{
+  uint64_t ep = t.tmeta[1U];
+  uint64_t h = t.tmeta[0U];
+  t.tpm[sz_of(i)] =
+    (
+      (prec){
+        .pcode = r.code,
+        .parg = r.arg,
+        .sep = r.swept ? ep : 0ULL,
+        .pfree_head = r.free_head,
+        .pnfree = r.nfree,
+        .pnext = r.next
+      }
+    );
+  if
+  (
+    !(r.code == 1U && r.arg < 31ULL) && !(r.code == 2U && r.arg > 0ULL) && !(r.code == 3U) && i < h
+  )
+    t.tmeta[0U] = i;
+}
+
+static uint64_t read_lhead(pstate_t t)
+{
+  return t.tlarge[0U];
+}
+
+static void write_lhead(pstate_t t, uint64_t v)
+{
+  t.tlarge[0U] = v;
+}
+
+static size_t small_sz(uint64_t w)
+{
+  return (size_t)w;
+}
+
+static uint64_t class_at(pstate_t t, uint64_t w)
+{
+  return t.tcof[small_sz(w)];
+}
+
+static prec read_slots(pstate_t t, uint64_t i)
+{
+  return t.tpm[sz_of(i)];
+}
+
+static void write_slots(pstate_t t, uint64_t i, uint64_t fh, uint64_t nf)
+{
+  prec p = t.tpm[sz_of(i)];
+  t.tpm[sz_of(i)] =
+    (
+      (prec){
+        .pcode = p.pcode,
+        .parg = p.parg,
+        .sep = p.sep,
+        .pfree_head = fh,
+        .pnfree = nf,
+        .pnext = p.pnext
+      }
+    );
+}
+
+static uint64_t read_hint(pstate_t t)
+{
+  return t.tmeta[0U];
+}
+
+static void write_hint(pstate_t t, uint64_t h)
+{
+  t.tmeta[0U] = h;
+}
+
+static void fill_tables(pstate_t t)
+{
+  uint64_t sm = cls_u64(30ULL);
+  t.tcof[0U] = 0ULL;
+  uint64_t w = 1ULL;
+  uint64_t __anf00 = w;
+  bool cond = __anf00 <= sm;
+  while (cond)
+  {
+    uint64_t vw = w;
+    t.tcof[small_sz(vw)] = class_u64(vw);
+    w = vw + 1ULL;
+    uint64_t __anf0 = w;
+    cond = __anf0 <= sm;
+  }
+  uint64_t c = 0ULL;
+  uint64_t __anf0 = c;
+  bool cond0 = __anf0 < 31ULL;
+  while (cond0)
+  {
+    uint64_t vc = c;
+    t.tcls[(size_t)vc] = cls_u64(vc);
+    t.tns[(size_t)vc] = n_slots_u64(vc);
+    c = vc + 1ULL;
+    uint64_t __anf0 = c;
+    cond0 = __anf0 < 31ULL;
+  }
+}
+
+static void reset_state(pstate_t t)
+{
+  uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
+  uint64_t j = 0ULL;
+  uint64_t __anf0 = j;
+  bool cond = __anf0 < np;
+  while (cond)
+  {
+    uint64_t vj = j;
+    t.tpm[sz_of(vj)] =
+      (
+        (prec){
+          .pcode = 0U,
+          .parg = 0ULL,
+          .sep = 1ULL,
+          .pfree_head = 0ULL,
+          .pnfree = 0ULL,
+          .pnext = 0ULL
+        }
+      );
+    j = vj + 1ULL;
+    uint64_t __anf0 = j;
+    cond = __anf0 < np;
+  }
+  t.tmeta[0U] = 0ULL;
+  t.tmeta[1U] = 1ULL;
+  clear_heads(t);
+  fill_tables(t);
+}
+
+static bool in_heap(uint64_t a)
+{
+  return a < heap_size_u640 && a % 8ULL == 0ULL;
+}
+
+static void wr(heap_t heap, uint64_t a, uint64_t v)
+{
+  if (in_heap(a))
+    write_word(heap, a, v);
+}
+
+static uint64_t hdr_at(heap_t heap, uint64_t a)
+{
+  if (in_heap(a))
+    return read_word(heap, a);
+  else
+    return 0ULL;
 }
 
 static uint64_t small_max_u64(void)
@@ -254,98 +902,49 @@ static uint64_t small_max_u64(void)
   return cls_u64(30ULL);
 }
 
-uint64_t class_from_u64(uint64_t w, uint64_t c)
+static void fill_at(heap_t heap, uint64_t a, uint64_t cl, uint64_t wz)
 {
-  if (w <= cls_u64(c) || c >= 30ULL)
-    return c;
-  else
-    return class_from_u64(w, c + 1ULL);
-}
-
-static uint64_t class_of_u64(uint64_t w)
-{
-  return class_from_u64(w, 0ULL);
-}
-
-static uint64_t slot_of_u64(uint64_t i, uint64_t c, uint64_t s)
-{
-  uint64_t pb = zero_addr1 + i * 32768ULL;
-  if (s >= pb + 8ULL)
-    return (s - 8ULL - pb) / (cls_u64(c) * 8ULL);
-  else
-    return 0ULL;
-}
-
-static pinfo pop_rec(pinfo r, uint64_t nx)
-{
-  return
-    (
-      (pinfo){
-        .code = r.code,
-        .arg = r.arg,
-        .swept = r.swept,
-        .free_head = nx,
-        .nfree = r.nfree > 0ULL ? r.nfree - 1ULL : 0ULL,
-        .next = r.next
-      }
-    );
-}
-
-static void fill_slot(heap_t heap, uint64_t p, uint64_t c, uint64_t k, uint64_t wz)
-{
-  uint64_t a = slot_base_u64(p, c, k);
   uint64_t w = wz + 1ULL;
-  uint64_t cl = cls_u64(c);
   uint64_t vo = makeHeader(wz, White, 0ULL);
   if (w < cl)
   {
     uint64_t x = a + w * 8ULL;
     uint64_t vb = makeHeader(cl - w - 1ULL, Blue, 0ULL);
-    wr(heap, x, vb);
-    wr(heap, a, vo);
+    write_word(heap, x, vb);
+    write_word(heap, a, vo);
   }
   else
-    wr(heap, a, vo);
+    write_word(heap, a, vo);
 }
 
 static uint64_t pop(heap_t heap, pstate_t t, uint64_t c, uint64_t wz)
 {
   uint64_t hd = read_avail(t, c);
-  uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
-  if (hd == 0ULL || hd - 1ULL >= np)
-    return 0ULL;
+  uint64_t p = hd - 1ULL;
+  prec sl = read_slots(t, p);
+  uint64_t so = sl.pfree_head;
+  uint64_t nf = sl.pnfree;
+  uint64_t nx = read_word(heap, so);
+  write_slots(t, p, nx, nf - 1ULL);
+  uint64_t cl = cls_at(t, c);
+  if (nf == 1ULL)
+  {
+    write_avail(t, c, sl.pnext);
+    fill_at(heap, so - 8ULL, cl, wz);
+    return so;
+  }
   else
   {
-    uint64_t p = hd - 1ULL;
-    pinfo r = read_entry(t, p);
-    uint64_t k = slot_of_u64(p, c, r.free_head);
-    uint64_t ns = n_slots_u64(c);
-    if (k >= ns || r.nfree == 0ULL)
-      return 0ULL;
-    else
-    {
-      uint64_t so = slot_base_u64(p, c, k) + 8ULL;
-      uint64_t nx = hdr_at(heap, so);
-      write_entry(t, p, pop_rec(r, nx));
-      if (r.nfree == 1ULL)
-      {
-        write_avail(t, c, r.next);
-        fill_slot(heap, p, c, k, wz);
-        return so;
-      }
-      else
-      {
-        fill_slot(heap, p, c, k, wz);
-        return so;
-      }
-    }
+    fill_at(heap, so - 8ULL, cl, wz);
+    return so;
   }
 }
 
 static uint64_t find_free(pstate_t t)
 {
   uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
-  uint64_t i = 0ULL;
+  uint64_t h = read_hint(t);
+  uint64_t i = h;
   bool go = true;
   while (go)
   {
@@ -361,20 +960,29 @@ static uint64_t find_free(pstate_t t)
         i = vi + 1ULL;
     }
   }
-  return i;
+  uint64_t vi = i;
+  write_hint(t, vi);
+  return vi;
 }
 
-static uint64_t link_val_u64(uint64_t i, uint64_t c, uint64_t k)
+static uint64_t slot_hdr_u64(uint64_t c)
 {
-  if (k + 1ULL < n_slots_u64(c))
-    return slot_base_u64(i, c, k + 1ULL) + 8ULL;
-  else
-    return 0ULL;
+  return makeHeader(cls_u64(c) - 1ULL, Blue, 0ULL);
+}
+
+static uint64_t link_val_u64(uint64_t i, uint64_t cl, uint64_t ns, uint64_t k)
+{
+  return k + 1ULL < ns ? zero_addr1 + i * 32768ULL + (k + 1ULL) * (cl * 8ULL) + 8ULL : 0ULL;
 }
 
 static uint64_t tail_words_u64(uint64_t c)
 {
   return 4096ULL % cls_u64(c);
+}
+
+static uint64_t slot_base_u64(uint64_t i, uint64_t c, uint64_t k)
+{
+  return zero_addr1 + i * 32768ULL + k * (cls_u64(c) * 8ULL);
 }
 
 static uint64_t tail_hdr_u64(uint64_t c)
@@ -386,9 +994,8 @@ static uint64_t tail_hdr_u64(uint64_t c)
     return 0ULL;
 }
 
-static void pool_init(heap_t heap, uint64_t i, uint64_t c)
+static void pool_init(heap_t heap, uint64_t i, uint64_t c, uint64_t cl, uint64_t ns)
 {
-  uint64_t ns = n_slots_u64(c);
   uint64_t h = slot_hdr_u64(c);
   uint64_t k = 0ULL;
   uint64_t __anf0 = k;
@@ -396,9 +1003,9 @@ static void pool_init(heap_t heap, uint64_t i, uint64_t c)
   while (cond)
   {
     uint64_t vk = k;
-    uint64_t a = slot_base_u64(i, c, vk);
+    uint64_t a = zero_addr1 + i * 32768ULL + vk * (cl * 8ULL);
     write_word(heap, a, h);
-    write_word(heap, a + 8ULL, link_val_u64(i, c, vk));
+    write_word(heap, a + 8ULL, link_val_u64(i, cl, ns, vk));
     k = vk + 1ULL;
     uint64_t __anf0 = k;
     cond = __anf0 < ns;
@@ -428,15 +1035,17 @@ static pinfo acq_rec(uint64_t i, uint64_t c, uint64_t nx)
 
 static void acquire(heap_t heap, pstate_t t, uint64_t i, uint64_t c)
 {
-  pool_init(heap, i, c);
+  uint64_t cl = cls_at(t, c);
+  uint64_t ns = ns_at(t, c);
+  pool_init(heap, i, c, cl, ns);
   uint64_t nx = read_avail(t, c);
-  write_entry(t, i, acq_rec(i, c, nx));
+  write_used(t, i, acq_rec(i, c, nx));
   write_avail(t, c, i + 1ULL);
 }
 
 static uint64_t small_alloc(heap_t heap, pstate_t t, uint64_t wz)
 {
-  uint64_t c = class_of_u64(wz + 1ULL);
+  uint64_t c = class_at(t, wz + 1ULL);
   uint64_t hd = read_avail(t, c);
   if (hd != 0ULL)
     return pop(heap, t, c, wz);
@@ -582,57 +1191,41 @@ static uint64_t pages_for_u64(uint64_t w)
   return (w + 4096ULL - 1ULL) / 4096ULL;
 }
 
-static bool all_free(pstate_t t, uint64_t i, uint64_t k)
-{
-  uint64_t m = 0ULL;
-  bool ok = true;
-  bool __anf1 = ok;
-  uint64_t __anf00 = m;
-  bool cond = __anf1 && __anf00 < k;
-  while (cond)
-  {
-    uint64_t vm = m;
-    uint64_t j = i + vm;
-    pinfo r = read_entry(t, j);
-    if (!(r.code == 1U && r.arg < 31ULL) && !(r.code == 2U && r.arg > 0ULL) && !(r.code == 3U))
-      m = vm + 1ULL;
-    else
-      ok = false;
-    bool __anf1 = ok;
-    uint64_t __anf0 = m;
-    cond = __anf1 && __anf0 < k;
-  }
-  bool vok = ok;
-  return vok;
-}
-
 static uint64_t find_run(pstate_t t, uint64_t k)
 {
   uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
-  uint64_t j = 0ULL;
+  uint64_t h = read_hint(t);
+  uint64_t p = h;
+  uint64_t s = h;
   uint64_t res = np;
   bool go = true;
-  while (go)
+  bool __anf1 = go;
+  uint64_t __anf00 = p;
+  bool cond = __anf1 && __anf00 < np;
+  while (cond)
   {
-    uint64_t vj = j;
-    if (k > np - vj)
-    {
-      res = np;
-      go = false;
-    }
-    else
-    {
-      bool b = all_free(t, vj, k);
-      if (b)
+    uint64_t vp = p;
+    uint64_t vs = s;
+    pinfo r = read_entry(t, vp);
+    if (!(r.code == 1U && r.arg < 31ULL) && !(r.code == 2U && r.arg > 0ULL) && !(r.code == 3U))
+      if (vp + 1ULL - vs == k)
       {
-        res = vj;
+        res = vs;
         go = false;
       }
       else
-        j = vj + 1ULL;
+        p = vp + 1ULL;
+    else
+    {
+      p = vp + 1ULL;
+      s = vp + 1ULL;
     }
+    bool __anf1 = go;
+    uint64_t __anf0 = p;
+    cond = __anf1 && __anf0 < np;
   }
-  return res;
+  bool vgo = go;
+  return vgo ? np : res;
 }
 
 static pinfo head_rec(uint64_t k)
@@ -1072,36 +1665,10 @@ static void run_step(heap_t heap, pstate_t t, uint64_t h, pinfo r)
   write_lhead(t, hd);
 }
 
-static bool page_any_live(heap_t heap, uint64_t i, uint64_t c)
-{
-  uint64_t ns = n_slots_u64(c);
-  uint64_t k = 0ULL;
-  bool found = false;
-  bool __anf1 = found;
-  uint64_t __anf00 = k;
-  bool cond = !__anf1 && __anf00 < ns;
-  while (cond)
-  {
-    uint64_t vk = k;
-    uint64_t h = read_word(heap, slot_base_u64(i, c, vk));
-    uint64_t raw = h >> 8U & 3ULL;
-    color_sem col = raw == 0ULL ? White : raw == 1ULL ? Gray : raw == 2ULL ? Blue : Black;
-    if (col == Black)
-      found = true;
-    else
-      k = vk + 1ULL;
-    bool __anf1 = found;
-    uint64_t __anf0 = k;
-    cond = !__anf1 && __anf0 < ns;
-  }
-  return found;
-}
-
 static FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
-sweep_slots(heap_t heap, uint64_t i, uint64_t c)
+sweep_slots(heap_t heap, uint64_t i, uint64_t cl, uint64_t ns)
 {
-  uint64_t ns = n_slots_u64(c);
-  uint64_t sh = slot_hdr_u64(c);
+  uint64_t sh = makeHeader(cl - 1ULL, Blue, 0ULL);
   uint64_t k = 0ULL;
   uint64_t hd = 0ULL;
   uint64_t cnt = 0ULL;
@@ -1110,7 +1677,7 @@ sweep_slots(heap_t heap, uint64_t i, uint64_t c)
   while (cond)
   {
     uint64_t vk = k;
-    uint64_t a = slot_base_u64(i, c, vk);
+    uint64_t a = zero_addr1 + i * 32768ULL + vk * (cl * 8ULL);
     uint64_t h = read_word(heap, a);
     uint64_t raw = h >> 8U & 3ULL;
     color_sem col = raw == 0ULL ? White : raw == 1ULL ? Gray : raw == 2ULL ? Blue : Black;
@@ -1148,17 +1715,14 @@ static uint64_t page_hdr_u64(void)
   return makeHeader(4095ULL, Blue, 0ULL);
 }
 
-static pinfo sweep_page(heap_t heap, uint64_t i, pinfo r)
+static pinfo sweep_page(heap_t heap, uint64_t i, pinfo r, uint64_t cl, uint64_t ns)
 {
   if (r.code == 1U && r.arg < 31ULL)
   {
     uint64_t c = r.arg;
-    bool b = page_any_live(heap, i, c);
-    if (b)
-    {
-      FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = sweep_slots(heap, i, c);
+    FStar_Pervasives_Native_tuple2__uint64_t_uint64_t res = sweep_slots(heap, i, cl, ns);
+    if (res._2 < ns)
       return swept_rec(r, c, res._1, res._2);
-    }
     else
     {
       uint64_t a = zero_addr1 + i * 32768ULL;
@@ -1192,7 +1756,7 @@ static void push_avail(pstate_t t, uint64_t i, pinfo r)
   {
     uint64_t c = r.arg;
     uint64_t nx = read_avail(t, c);
-    write_entry(t,
+    write_used(t,
       i,
       (
         (pinfo){
@@ -1212,7 +1776,9 @@ static void push_avail(pstate_t t, uint64_t i, pinfo r)
 
 static void pool_step(heap_t heap, pstate_t t, uint64_t i, pinfo r)
 {
-  pinfo r_ = sweep_page(heap, i, r);
+  uint64_t cl = cls_at(t, r.arg);
+  uint64_t ns = ns_at(t, r.arg);
+  pinfo r_ = sweep_page(heap, i, r, cl, ns);
   push_avail(t, i, r_);
 }
 
@@ -1240,23 +1806,11 @@ void init(heap_t heap, pstate_t t)
   {
     uint64_t vk = k;
     write_word(heap, zero_addr1 + vk * 32768ULL, ph);
-    write_entry(t,
-      vk,
-      (
-        (pinfo){
-          .code = 0U,
-          .arg = 0ULL,
-          .swept = true,
-          .free_head = 0ULL,
-          .nfree = 0ULL,
-          .next = 0ULL
-        }
-      ));
     k = vk + 1ULL;
     uint64_t __anf0 = k;
     cond = __anf0 < np;
   }
-  clear_lists(t);
+  reset_state(t);
   uint64_t pe = zero_addr1 + np * 32768ULL;
   if (heap_size_u640 - pe >= 16ULL)
   {
@@ -1296,41 +1850,9 @@ uint64_t alloc(heap_t heap, pstate_t t, uint64_t wz, color_sem col)
     return o;
 }
 
-pinfo unsweep_rec(pinfo r)
-{
-  return
-    (
-      (pinfo){
-        .code = r.code,
-        .arg = r.arg,
-        .swept = false,
-        .free_head = r.free_head,
-        .nfree = r.nfree,
-        .next = r.next
-      }
-    );
-}
-
 void start_sweep(pstate_t t)
 {
-  uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
-  uint64_t j = 0ULL;
-  uint64_t __anf0 = j;
-  bool cond = __anf0 < np;
-  while (cond)
-  {
-    uint64_t vj = j;
-    pinfo r = read_entry(t, vj);
-    if (!(r.code == 1U && r.arg < 31ULL) && !(r.code == 2U && r.arg > 0ULL) && !(r.code == 3U))
-      j = vj + 1ULL;
-    else
-    {
-      write_entry(t, vj, unsweep_rec(r));
-      j = vj + 1ULL;
-    }
-    uint64_t __anf0 = j;
-    cond = __anf0 < np;
-  }
+  start_epoch(t);
   clear_lists(t);
 }
 

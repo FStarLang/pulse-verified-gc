@@ -177,13 +177,16 @@ let page_frame (g: heap) (pm: page_map) (i: nat{i < n_pages})
         FStar.Classical.forall_intro aux
       end else begin
         cls_bounds 0;
+        slots_fill_page i c;
+        let g1 = SP.sw_heap g i c (n_slots c) in
         let aux (x: hp_addr)
           : Lemma (U64.v x < page_base i \/ U64.v x >= page_base (i + 1) ==>
-                   read_word (write_word g (IN.page_addr i) IN.page_hdr) x == read_word g x)
+                   read_word (write_word g1 (IN.page_addr i) IN.page_hdr) x == read_word g x)
           = if U64.v x < page_base i || U64.v x >= page_base (i + 1) then begin
               page_base_mono i (i + 1);
               if U64.v x < page_base i then below8 x (page_base i);
-              read_write_different g (IN.page_addr i) x IN.page_hdr
+              read_write_different g1 (IN.page_addr i) x IN.page_hdr;
+              SP.sw_out g i c (n_slots c) x
             end
         in
         FStar.Classical.forall_intro aux
@@ -200,8 +203,11 @@ let page_local (g1 g2: heap) (pm1 pm2: page_map) (i: nat{i < n_pages})
     | Pool c ->
       any_live_local g1 g2 i c (n_slots c);
       dead_local g1 g2 i c (n_slots c);
-      if SP.any_live g1 i c (n_slots c) then sw_local g1 g2 i c (n_slots c)
-      else (cls_bounds 0; write_agree g1 g2 (page_base i) (page_base (i + 1)) (IN.page_addr i) IN.page_hdr)
+      sw_local g1 g2 i c (n_slots c);
+      if SP.any_live g1 i c (n_slots c) then ()
+      else (cls_bounds 0;
+            write_agree (SP.sw_heap g1 i c (n_slots c)) (SP.sw_heap g2 i c (n_slots c))
+                        (page_base i) (page_base (i + 1)) (IN.page_addr i) IN.page_hdr)
     | _ -> ()
 
 /// ---------------------------------------------------------------------------

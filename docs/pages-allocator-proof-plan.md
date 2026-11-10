@@ -13,7 +13,25 @@ pages, proves it, and proves the allocation/collection cycle (§14).
 Afterwards, (c2) gains the word-count equation, and the seed-sensitive
 query of `Pages.Large` is split (item 4) (§15). Stage 5a writes the
 allocator and the sweep in Pulse, each function proved to compute exactly
-its specification, and extracts them to C with a test (§16).
+its specification, and extracts them to C with a test (§16). The
+efficiency pass after it is §17.
+
+**Project rule (2026-11-10): the verified code is as efficient as the
+unverified code.** The extracted C must be as efficient as the prototype
+(`proto/alloc_pages.c` on `sheera/alloc-pages-proto`) and as OCaml 5's
+`shared_heap.c`. Making code less efficient for the sake of verification
+is not acceptable.
+- Use their algorithms: table lookups for size classes, a free-page search
+  that does not start from page 0, no per-page work at the start of a
+  sweep where they have none, one pass per page in the sweep.
+- Prove each fast function equal to the specification's function where it
+  computes the same result. Where it may make a different valid choice,
+  prove it against the theorems (`alloc_meets` with `alloc_ok`,
+  `sweep_page_meets`, `sweep_run_ok`). A different valid choice may also
+  be made by changing the specification's function and re-proving its
+  theorem. Never weaken a theorem to fit the code.
+- Measure the extracted C against the prototype on the same operations
+  (`mark-and-sweep/pages-c/bench`). The target is at most 5% slower.
 
 **Decisions (2026-11-08):**
 - **Size limit:** a block is small when `whsize ≤ 128`, as in OCaml 5.
@@ -1640,3 +1658,118 @@ allows:
   A doubly erased `nat` in a pure fact did not match its use.
 - Bind `get_color` to a variable before testing it: KaRaMeL rejects its
   inlined `let` inside `||`.
+
+## 17. The efficiency pass (2026-11-10)
+
+This applies the project rule above to stage 5a's Pulse allocator and
+sweep. Every theorem is unchanged. Each Pulse function is still proved
+equal to a specification function. Two of those specification functions
+now make the choices the fast code makes, and their theorems are proved
+again unchanged (the page sweep), or need nothing new (the allocator's
+fast path takes a precondition the invariant gives).
+
+**What changed.**
+
+| Before (§16) | Now | Like |
+|---|---|---|
+| `class_of` by a linear search, each step a chain of tests | a table of 129 words in the state (`State.class_at`) | OCaml 5's `sizeclass_wsize`, the prototype's `cls_of` |
+| slot size and slots per page by a chain of tests and a division | two tables of 31 words (`cls_at`, `ns_at`) | `cls_wh`, `cls_ns` |
+| `pop`: the slot from the list entry by a division, then checks | the list entry *is* the slot; no division, no check (`Ready.heads_ready`) | `alloc_small` |
+| `pop` stores the whole page entry | stores the free-slot head and count only (`State.write_slots`) | `alloc_small` |
+| guarded reads and writes in `pop` | plain ones, with the slot's bounds proved | `alloc_small` |
+| `find_free` scans from page 0 | from the free-page hint, which it then moves up | `take_free_page`, `free_hint` |
+| `find_run` tests every start, `all_free` at each: quadratic | one pass from the hint, counting free pages in a row | `lg_grow` |
+| `start_sweep` visits every page | adds one to a sweep epoch; visits the pages only when the epoch wraps (once in 2^64 cycles) | OCaml 5's cycle start (list heads only) |
+| page sweep: a pass for a survivor, then a pass over the slots | one pass; the page has a survivor when fewer slots than all are freed | `pool_sweep`, `sweep_pool` |
+
+- The class tables are arrays in the state, not functions. KaRaMeL writes a
+  function of constants (an `if` chain or a `match`) as nested `?:`, and
+  clang did not make the 128-case one a table: 23 ns per allocation
+  against 15.5 ns with an array (measured). `init` fills them from
+  `Params.class_u64`, `cls_u64` and `n_slots_u64`. `pages_st` fixes their
+  contents to the specification's values (`State.tables`).
+
+**The proofs.**
+- **The state** (`GC.Impl.Pages.State`). A stored record (`prec`) keeps the
+  epoch of its page's last sweep, not a swept bit. `to_pinfo` reads it back:
+  swept when free or swept in the current epoch.
+  - `meta_ok`: no stored epoch is past the current one, the epoch is at
+    least 1, and no page below the hint is free (`none_free_below`).
+  - `start_epoch` proves `pages_st t ({ st with pm = unswept_map st.pm })`,
+    which `Sweep.start_eq` shows is `StartSweep.start_sweep`'s map.
+  - `write_entry` lowers the hint when it stores a free page below it.
+    `write_used` skips the hint for records that are not free.
+  - `init` now takes the arrays with any contents (`pages_raw`), as a caller
+    has them at start-up.
+- **The allocator** (`GC.Impl.Pages.Ready`, `Pool`). `heads_ready st` says
+  that each class's list head is 0, or names a pool page of the class whose
+  free-slot list starts at a slot.
+  - `pages_ok_ready` and `mc_ready` prove it from `pages_ok` and from
+    `pages_ok_mc`, the preconditions of `alloc_meets` and
+    `alloc_col_correct`. So `alloc` and `alloc_white` take it as a
+    precondition and lose nothing.
+  - Under it, `pop` equals `Pool.pop_as false` exactly (`ready_head`,
+    `slot_of_obj`).
+  - `find_free` equals `find_free pm 0`: `find_free_skip` shows the search
+    may start at the hint, and `find_free_below` shows the hint may move to
+    the page found.
+  - `find_run` equals `NewRun.find_run pm k 0`. `hint_skip` covers the start,
+    `run_skip` and `not_free_breaks` a page that is not free, and
+    `run_found` and `run_none` the two ends.
+- **The page sweep: a specification change.** `SweepPage.page_freed` now
+  writes the page's blue header *over the swept slots* (`sw_heap`), not over
+  the marked page. That is what a single pass leaves.
+  - `sweep_page_correct` (`sweep_page_meets`) is proved again, unchanged in
+    statement (`page_freed_ok`).
+  - `SweepStarts.freed_page_starts`, `SweepTags.freed_page_blue_ok`, and
+    `SweepOrder.page_frame` and `page_local` follow (`sw_out`, `sw_local`).
+  - `dead_count` gives the single pass its test.
+- **Checked:** every changed and new module, without `--retry` and with no
+  rlimit raised. `make verify` was run from an empty cache in a scratch
+  worktree: 281 modules, 42 minutes, no errors. The C test passes, with `pages_test.c` changed for the
+  stored records, the epoch, `tmeta` and the tables: 407 checks.
+
+**The measurements** (`mark-and-sweep/pages-c/bench`, `make bench`).
+- Both builds use `cc -O2 -flto` on an Intel i5-1038NG7. The heap is 4096
+  pages of 32 KB. Each run is a fresh heap, and the same requests and
+  survivors go to both.
+- Medians of 15 repetitions, 5 rounds alternating the two binaries, taken
+  before `reallocS` was added. The `reallocS` row is 3 rounds of 15.
+
+| Workload | Prototype B2 | Verified | Before §17 |
+|---|---|---|---|
+| small allocation (ns) | 11.83 | 12.10 (+2.3%) | 50.4 |
+| mixed, 0.5% large (ns) | 32.9 | 20.2 | 70.9 |
+| large only (µs) | 4.73 | 2.81 | 5.73 |
+| sweep, 10% survive (ms) | 1.145 | 1.059 | 1.42 |
+| sweep, 50% (ms) | 1.990 | 1.947 | 2.61 |
+| sweep, 90% (ms) | 1.081 | 1.028 | 1.30 |
+| realloc after sweep50, mixed heap (ns) | 12.40 | 13.91 (+12%) | 50.6 |
+| reallocS, small-only heap (ns) | 12.6 | 15.1 (+20%) | — |
+
+- Large allocation is faster than the prototype's. The prototype's
+  `lg_grow` joins a new run to its neighbours, which makes its first-fit
+  list longer. That difference is in the prototype's layout, not in proof
+  overhead.
+- **Not yet within 5%: allocation after a sweep.** Scratch-copy experiments
+  on the extracted C (not proved) point to list order:
+  - each page's free slots are linked from the highest down (OCaml 5's
+    order, and the specification's), where the prototype links them from
+    the lowest up. Linking upwards in the same single pass took `reallocS`
+    from about 13 to 11.6 ns;
+  - pages go on their class's list in front, so the list is in descending
+    address order. The prototype appends, so its list is in address order.
+    With both changes, about 10.9 ns, against the prototype's 10.5 ns.
+  - Both would change the specification's list orders: `sw_heap`'s links,
+    and `SweepStep.push_avail`. The second needs a list tail per class in
+    `pstate`. Both depart from OCaml 5's order, so they are left for a
+    decision.
+- Not addressed: the prototype keeps never-used pages as one "wilderness"
+  block, so they are never touched; `init` writes one header per page.
+
+**Files.** New: `GC.Impl.Pages.Ready`, `mark-and-sweep/pages-c/bench/`
+(`bench.c`, `proto_stubs.c`, `stub/GC_Gen_Impl.h`, `Makefile`; the
+prototype's sources are read from its branch with `git show`). Changed:
+`Pages.{Params,State,Pool,Large,Alloc,SweepPage,SweepRun,Sweep,Init}`,
+`Spec.Pages.{SweepPage,SweepStarts,SweepTags,SweepOrder}`, and the
+extracted C and its test.
