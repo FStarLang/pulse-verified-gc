@@ -14,8 +14,6 @@
 
 extern uint64_t zero_addr1;
 
-uint64_t class_from_u64(uint64_t w, uint64_t c);
-
 
 #define internal_GC_Pages_H_DEFINED
 #endif /* internal_GC_Pages_H */

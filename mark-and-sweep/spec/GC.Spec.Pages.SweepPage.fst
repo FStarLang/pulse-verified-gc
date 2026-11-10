@@ -8,7 +8,11 @@
 ///     white, and the rest of the slot (fields, filler) is left alone;
 ///   - any other slot becomes a free slot: a blue header of the class size,
 ///     its first field linking to the free slot before it (0 for the first);
-///   - a page left with no survivor becomes a free page, one blue block.
+///   - a page left with no survivor becomes a free page, one blue block: its
+///     first word, over the swept slots, becomes a blue header covering the
+///     page.  So the sweep is one pass over the slots, as `pool_sweep` is,
+///     and it knows whether the page had a survivor when the pass ends
+///     (`dead_count`: fewer free slots than slots).
 /// The page tail is never written.  Only page `i`'s words change, and only
 /// its entry; the entry is swept, and a page with a survivor keeps its `next`
 /// link, which the caller sets when it puts the page on its class's list
@@ -88,10 +92,11 @@ let pool_swept (g: heap) (pm: page_map) (i: nat{i < n_pages}) (c: nat{c < n_cls}
    { kind = Pool c; swept = true; free_head = hd_upto g i c (n_slots c);
      nfree = L.length (dead_list g i c (n_slots c)); next = (entry pm i).next })
 
-/// The page given back as a free page.
-let page_freed (g: heap) (i: nat{i < n_pages}) : GTot (heap & page_info) =
+/// The page given back as a free page: the swept slots, then one blue header
+/// over the page.
+let page_freed (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) : GTot (heap & page_info) =
   cls_bounds 0;
-  (write_word g (page_addr i) page_hdr, free_entry)
+  (write_word (sw_heap g i c (n_slots c)) (page_addr i) page_hdr, free_entry)
 
 #push-options "--fuel 1"
 let rec any_live (g: heap) (i: nat) (c: nat{c < n_cls}) (k: nat) : Tot bool (decreases k) =
@@ -100,11 +105,17 @@ let rec any_live (g: heap) (i: nat) (c: nat{c < n_cls}) (k: nat) : Tot bool (dec
 let rec any_live_spec (g: heap) (i: nat) (c: nat{c < n_cls}) (k: nat)
   : Lemma (ensures any_live g i c k <==> (exists (j: nat). j < k /\ live g i c j)) (decreases k)
   = if k > 0 then any_live_spec g i c (k - 1)
+
+/// Some slot holds a survivor exactly when fewer slots than all are freed.
+let rec dead_count (g: heap) (i: nat) (c: nat{c < n_cls}) (k: nat)
+  : Lemma (ensures L.length (dead_list g i c k) <= k /\
+                   (any_live g i c k <==> L.length (dead_list g i c k) < k)) (decreases k)
+  = if k > 0 then dead_count g i c (k - 1)
 #pop-options
 
 let sweep_page (g: heap) (pm: page_map) (i: nat{i < n_pages}) : GTot (heap & page_info) =
   match (entry pm i).kind with
-  | Pool c -> if any_live g i c (n_slots c) then pool_swept g pm i c else page_freed g i
+  | Pool c -> if any_live g i c (n_slots c) then pool_swept g pm i c else page_freed g i c
   | _ -> (g, entry pm i)
 
 /// ---------------------------------------------------------------------------
@@ -376,20 +387,25 @@ let pool_swept_ok (g: heap) (pm: page_map) (i: nat{i < n_pages}) (c: nat{c < n_c
     assert (pool_list_ok g' pm' i);
     assert (pool_white g' pm' i)
 
-let page_freed_ok (g: heap) (i: nat{i < n_pages})
-  : Lemma (let (g', e) = page_freed g i in
+let page_freed_ok (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls})
+  : Lemma (let (g', e) = page_freed g i c in
            page_frame g g' i /\ e.swept == true /\ e.kind == Free /\ free_page_shape g' i)
-  = let (g', e) = page_freed g i in
+  = let g1 = sw_heap g i c (n_slots c) in
+    let (g', e) = page_freed g i c in
     cls_bounds 0;
     let a = page_addr i in
-    read_write_same g a page_hdr;
+    read_write_same g1 a page_hdr;
     blue_hdr_spec page_wsize;
     page_base_mono i (i + 1);
+    slots_fill_page i c;
     FStar.Math.Lemmas.distributivity_add_left i 1 page_bytes;
     let aux (x: hp_addr)
       : Lemma (U64.v x + 8 <= page_base i \/ U64.v x >= page_base (i + 1) ==>
                read_word g' x == read_word g x)
-      = if U64.v x <> page_base i then read_write_different g a x page_hdr
+      = if U64.v x + 8 <= page_base i || U64.v x >= page_base (i + 1) then begin
+          read_write_different g1 a x page_hdr;
+          sw_out g i c (n_slots c) x
+        end
     in
     FStar.Classical.forall_intro aux
 
@@ -409,7 +425,7 @@ let sweep_page_ok_at (g: heap) (pm: page_map) (i: nat{i < n_pages}) (c: nat{c < 
   = FStar.Classical.forall_intro (FStar.Classical.move_requires (survivor_iff g pm i c));
     any_live_spec g i c (n_slots c);
     if any_live g i c (n_slots c) then pool_swept_ok g pm i c
-    else page_freed_ok g i
+    else page_freed_ok g i c
 
 /// **The page sweep meets its specification.**
 let sweep_page_correct () : Lemma (sweep_page_meets sweep_page)

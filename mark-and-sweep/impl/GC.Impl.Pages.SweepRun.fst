@@ -568,7 +568,7 @@ fn count_run (t: pstate_t) (jj lim: U64.t) (h n: U64.t)
       RML.pass2_ahead st0 st1 st fs (U64.v h) (U64.v n) (U64.v jj) (U64.v vk);
       RML.freed_iff st0 st1 fs (U64.v h) (U64.v n) (U64.v vk);
       let r = read_entry t vk;
-      if (PL.is_free_rec r) {
+      if (is_free_rec r) {
         more := false
       } else {
         k := U64.add vk 1UL
@@ -593,7 +593,7 @@ fn starts_run (t: pstate_t) (h n jj: U64.t) (#st0 #st1 #st: erased pstate) (fs: 
   } else {
     RML.pass2_prev st0 st1 st fs (U64.v h) (U64.v n) (U64.v jj);
     let rp = read_entry t (U64.sub jj 1UL);
-    PL.is_free_rec rp
+    is_free_rec rp
   }
 }
 
@@ -622,7 +622,7 @@ fn pass2 (t: pstate_t) (h n: U64.t) (#st0 #st1: erased pstate) (fs: erased (list
     RML.pass2_ahead st0 st1 st fs (U64.v h) (U64.v n) (U64.v vj) (U64.v vj);
     RML.freed_iff st0 st1 fs (U64.v h) (U64.v n) (U64.v vj);
     let r = read_entry t vj;
-    if (PL.is_free_rec r) {
+    if (is_free_rec r) {
       RML.pass2_free st0 st1 st fs (U64.v h) (U64.v n) (U64.v vj);
       j := U64.add vj 1UL
     } else {

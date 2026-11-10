@@ -25,3 +25,10 @@ val n_cls_u64 : n: U64.t{U64.v n == n_cls}
 
 /// The slot size of class `c`, in words.
 val cls_u64 (c: U64.t{U64.v c < n_cls}) : r: U64.t{U64.v r == cls (U64.v c)}
+
+/// The slots of a page of class `c`.
+val n_slots_u64 (c: U64.t{U64.v c < n_cls}) : r: U64.t{U64.v r == n_slots (U64.v c)}
+
+/// The class of a block of `w` words, header included: OCaml 5's
+/// `sizeclass_wsize` lookup.
+val class_u64 (w: U64.t{1 <= U64.v w /\ U64.v w <= small_max}) : r: U64.t{U64.v r == class_of (U64.v w)}

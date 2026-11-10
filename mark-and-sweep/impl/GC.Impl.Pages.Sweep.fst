@@ -4,7 +4,9 @@
 ///
 /// - `start_sweep` computes exactly `GC.Spec.Pages.StartSweep.start_sweep`:
 ///   every page that is not free becomes unswept, and every list is emptied.
-///   The heap is not touched.
+///   It does not visit the pages: it starts a new sweep epoch
+///   (`State.start_epoch`) and clears the list heads, as OCaml 5's cycle
+///   start only swaps list heads.  The heap is not touched.
 /// - `sweep_all` computes exactly `GC.Spec.Pages.SweepAll.sweep_all`: it
 ///   sweeps every unit from page 0 on, a pool page with
 ///   `GC.Impl.Pages.SweepPage.pool_step` and a run with
@@ -53,48 +55,23 @@ module ISR = GC.Impl.Pages.SweepRun
 /// The step before the sweep
 /// ---------------------------------------------------------------------------
 
-/// Pages before `j` are unswept; the rest are as they were.
-let unswept_upto (pm0 pm: page_map) (j: nat) : prop =
-  forall (i: nat{i < n_pages}). entry pm i == (if i < j then SSt.unsweep (entry pm0 i) else entry pm0 i)
-
-let unsweep_rec (r: pinfo) : pinfo = { r with swept = false }
-
-let clear_done (st0 st: pstate)
-  : Lemma (requires unswept_upto st0.pm st.pm n_pages)
-          (ensures ({ st with avail = Seq.create n_cls 0UL; large = FLs.fls_empty }) == SSt.start_sweep st0)
-  = let aux (i: nat{i < n_pages}) : Lemma (Seq.index st.pm i == Seq.index (SSt.clear_map st0.pm) i)
-      = SSt.clear_entry st0.pm i
+let start_eq (st: pstate)
+  : Lemma (({ ({ st with pm = unswept_map st.pm }) with avail = Seq.create n_cls 0UL; large = FLs.fls_empty })
+           == SSt.start_sweep st)
+  = let aux (i: nat{i < n_pages}) : Lemma (Seq.index (unswept_map st.pm) i == Seq.index (SSt.clear_map st.pm) i)
+      = SSt.clear_entry st.pm i
     in
     FStar.Classical.forall_intro aux;
-    Seq.lemma_eq_intro st.pm (SSt.clear_map st0.pm)
+    Seq.lemma_eq_intro (unswept_map st.pm) (SSt.clear_map st.pm)
 
 fn start_sweep (t: pstate_t) (#st: erased pstate)
   requires pages_st t st
   ensures pages_st t (SSt.start_sweep st)
 {
-  let np = n_pages_u64 ();
-  let mut j = 0UL;
-  while (U64.lt !j np)
-    invariant exists* vj st1.
-      R.pts_to j vj ** pages_st t st1 **
-      pure (U64.v vj <= n_pages /\ unswept_upto st.pm st1.pm (U64.v vj))
-    decreases (n_pages - U64.v !j)
-  {
-    let vj = !j;
-    let r = read_entry t vj;
-    if (PL.is_free_rec r) {
-      j := U64.add vj 1UL
-    } else {
-      write_entry t vj (unsweep_rec r);
-      j := U64.add vj 1UL
-    }
-  };
-  with st1. assert (pages_st t st1);
-  let vj = !j;
-  assert (pure (U64.v vj == n_pages));
+  start_epoch t;
   clear_lists t;
-  clear_done st st1;
-  rewrite (pages_st t ({ st1 with avail = Seq.create n_cls 0UL; large = FLs.fls_empty }))
+  start_eq st;
+  rewrite (pages_st t ({ ({ reveal st with pm = unswept_map st.pm }) with avail = Seq.create n_cls 0UL; large = FLs.fls_empty }))
        as (pages_st t (SSt.start_sweep st))
 }
 

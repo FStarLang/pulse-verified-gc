@@ -9,7 +9,9 @@
 ///     least `w` words, and the cell before it;
 ///   - `carve`: `Large.carve_as false`, an object carved from the right end of
 ///     that cell, the cell unlinked when what is left is too small to list;
-///   - `find_run`: `NewRun.find_run`, the first `k` consecutive free pages;
+///   - `find_run`: `NewRun.find_run`, the first `k` consecutive free pages,
+///     found as the prototype's `lg_grow` does: one pass from the free-page
+///     hint, counting the free pages in a row;
 ///   - `new_run`: `NewRun.new_run_as false`, those pages made a swept run with
 ///     the object first and the rest one free block;
 ///   - `large_alloc`: `Alloc.large_alloc_as false`.
@@ -380,14 +382,6 @@ fn carve (heap: heap_t) (t: pstate_t) (c: U64.t{Ce.node c}) (prev: U64.t) (wz: U
 /// ---------------------------------------------------------------------------
 
 #push-options "--fuel 1"
-let all_free_step (pm: page_map) (i k: nat)
-  : Lemma (requires k > 0)
-          (ensures NR.all_free pm i k ==
-                   (i < n_pages && (entry pm i).kind = Free && NR.all_free pm (i + 1) (k - 1)))
-  = ()
-
-let all_free_zero (pm: page_map) (i: nat) : Lemma (NR.all_free pm i 0 == (i <= n_pages)) = ()
-
 let find_run_step (pm: page_map) (k: pos) (j: nat)
   : Lemma (NR.find_run pm k j ==
            (if j + k > n_pages then n_pages
@@ -403,42 +397,48 @@ let rec find_run_le (pm: page_map) (k: pos) (j: nat)
   = find_run_step pm k j;
     if j + k > n_pages then () else if NR.all_free pm j k then () else find_run_le pm k (j + 1)
 
-/// `all_free pm i k`, for `i + k <= n_pages`.
-fn all_free (t: pstate_t) (i: U64.t) (k: U64.t{U64.v i + U64.v k <= n_pages}) (#st: erased pstate)
-  requires pages_st t st
-  returns b: bool
-  ensures pages_st t st ** pure (b == NR.all_free st.pm (U64.v i) (U64.v k))
-{
-  bounds ();
-  let mut m = 0UL;
-  let mut ok = true;
-  while (!ok && U64.lt !m k)
-    invariant exists* vm vok.
-      R.pts_to m vm ** R.pts_to ok vok ** pages_st t st **
-      pure (U64.v vm <= U64.v k /\
-            (vok ==> NR.all_free st.pm (U64.v i) (U64.v k) ==
-                     NR.all_free st.pm (U64.v i + U64.v vm) (U64.v k - U64.v vm)) /\
-            (not vok ==> NR.all_free st.pm (U64.v i) (U64.v k) == false))
-    decreases (U64.v k - U64.v !m + (if !ok then 1 else 0))
-  {
-    let vm = !m;
-    let j = U64.add i vm;
-    all_free_step st.pm (U64.v j) (U64.v k - U64.v vm);
-    let r = read_entry t j;
-    if (PL.is_free_rec r) {
-      m := U64.add vm 1UL
-    } else {
-      ok := false
-    }
-  };
-  let vok = !ok;
-  if vok {
-    all_free_zero st.pm (U64.v i + U64.v k);
-    true
-  } else {
-    false
-  }
-}
+/// No start of `k` free pages from `s` up to `q`: the search may go on from `q`.
+let rec run_skip (pm: page_map) (k: pos) (s q: nat)
+  : Lemma (requires s <= q /\
+                    (forall (j: nat). s <= j /\ j < q ==> ~(NR.all_free pm j k) \/ j + k > n_pages))
+          (ensures NR.find_run pm k s == NR.find_run pm k q)
+          (decreases (q - s))
+  = find_run_step pm k s;
+    if s < q then begin
+      if s + k > n_pages then find_run_step pm k q
+      else run_skip pm k (s + 1) q
+    end
+
+/// A page that is not free ends every stretch of `k` pages over it.
+let not_free_breaks (pm: page_map) (k: pos) (s p: nat)
+  : Lemma (requires p < n_pages /\ (entry pm p).kind =!= Free /\ s <= p /\ p - s < k)
+          (ensures forall (j: nat). s <= j /\ j < p + 1 ==> ~(NR.all_free pm j k) \/ j + k > n_pages)
+  = let aux (j: nat) : Lemma (s <= j /\ j < p + 1 ==> ~(NR.all_free pm j k) \/ j + k > n_pages)
+      = NR.all_free_spec pm j k
+    in
+    FStar.Classical.forall_intro aux
+
+/// No page below the hint is free, so no stretch starts below it.
+let hint_skip (pm: page_map) (k: pos) (h: nat)
+  : Lemma (requires none_free_below pm h /\ h <= n_pages)
+          (ensures NR.find_run pm k 0 == NR.find_run pm k h)
+  = let aux (j: nat) : Lemma (j < h ==> ~(NR.all_free pm j k) \/ j + k > n_pages)
+      = NR.all_free_spec pm j k
+    in
+    FStar.Classical.forall_intro aux;
+    run_skip pm k 0 h
+
+/// `k` free pages in a row from `s`: the search stops there.
+let run_found (pm: page_map) (k: pos) (s: nat)
+  : Lemma (requires s + k <= n_pages /\ (forall (j: nat). s <= j /\ j < s + k ==> (entry pm j).kind == Free))
+          (ensures NR.find_run pm k s == s)
+  = NR.all_free_spec pm s k;
+    find_run_step pm k s
+
+/// Fewer than `k` pages left from `s`: none found.
+let run_none (pm: page_map) (k: pos) (s: nat)
+  : Lemma (requires s + k > n_pages) (ensures NR.find_run pm k s == n_pages)
+  = find_run_step pm k s
 
 fn find_run (t: pstate_t) (k: U64.t{U64.v k > 0}) (#st: erased pstate)
   requires pages_st t st
@@ -448,34 +448,48 @@ fn find_run (t: pstate_t) (k: U64.t{U64.v k > 0}) (#st: erased pstate)
   bounds ();
   let np = n_pages_u64 ();
   n_pages_small ();
-  find_run_le st.pm (U64.v k) 0;
-  let mut j = 0UL;
+  let h = read_hint t;
+  hint_skip st.pm (U64.v k) (U64.v h);
+  let mut p = h;
+  let mut s = h;
   let mut res = np;
   let mut go = true;
-  while (!go)
-    invariant exists* vj vres vgo.
-      R.pts_to j vj ** R.pts_to res vres ** R.pts_to go vgo ** pages_st t st **
-      pure (U64.v vj <= n_pages /\
-            (vgo ==> NR.find_run st.pm (U64.v k) (U64.v vj) == NR.find_run st.pm (U64.v k) 0) /\
+  while (!go && U64.lt !p np)
+    invariant exists* vp vs vres vgo.
+      R.pts_to p vp ** R.pts_to s vs ** R.pts_to res vres ** R.pts_to go vgo ** pages_st t st **
+      pure (U64.v vs <= U64.v vp /\ U64.v vp <= n_pages /\
+            (vgo ==> U64.v vp - U64.v vs < U64.v k /\
+                     (forall (j: nat). U64.v vs <= j /\ j < U64.v vp ==> (entry st.pm j).kind == Free) /\
+                     NR.find_run st.pm (U64.v k) (U64.v vs) == NR.find_run st.pm (U64.v k) 0) /\
             (not vgo ==> U64.v vres == NR.find_run st.pm (U64.v k) 0))
-    decreases (n_pages - U64.v !j + (if !go then 1 else 0))
+    decreases (n_pages - U64.v !p + (if !go then 1 else 0))
   {
-    let vj = !j;
-    find_run_step st.pm (U64.v k) (U64.v vj);
-    if (U64.gt k (U64.sub np vj)) {
-      res := np;
-      go := false
-    } else {
-      let b = all_free t vj k;
-      if b {
-        res := vj;
+    let vp = !p;
+    let vs = !s;
+    let r = read_entry t vp;
+    if (is_free_rec r) {
+      if (U64.sub (U64.add vp 1UL) vs = k) {
+        run_found st.pm (U64.v k) (U64.v vs);
+        res := vs;
         go := false
       } else {
-        j := U64.add vj 1UL
+        p := U64.add vp 1UL
       }
+    } else {
+      not_free_breaks st.pm (U64.v k) (U64.v vs) (U64.v vp);
+      run_skip st.pm (U64.v k) (U64.v vs) (U64.v vp + 1);
+      p := U64.add vp 1UL;
+      s := U64.add vp 1UL
     }
   };
-  !res
+  let vgo = !go;
+  if vgo {
+    let vs = !s;
+    run_none st.pm (U64.v k) (U64.v vs);
+    np
+  } else {
+    !res
+  }
 }
 
 /// ---------------------------------------------------------------------------

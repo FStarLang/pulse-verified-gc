@@ -12,31 +12,35 @@
 
 #include "GC_Pages_Spec.h"
 
-typedef struct pinfo_s
-{
-  uint8_t code;
-  uint64_t arg;
-  bool swept;
-  uint64_t free_head;
-  uint64_t nfree;
-  uint64_t next;
-}
-pinfo;
-
-typedef struct pstate_t_s
-{
-  pinfo *tpm;
-  uint64_t *tavail;
-  uint64_t *tlarge;
-}
-pstate_t;
-
 typedef struct heap_t_s
 {
   uint8_t *data;
   size_t size;
 }
 heap_t;
+
+typedef struct prec_s
+{
+  uint8_t pcode;
+  uint64_t parg;
+  uint64_t sep;
+  uint64_t pfree_head;
+  uint64_t pnfree;
+  uint64_t pnext;
+}
+prec;
+
+typedef struct pstate_t_s
+{
+  prec *tpm;
+  uint64_t *tavail;
+  uint64_t *tlarge;
+  uint64_t *tmeta;
+  uint64_t *tcof;
+  uint64_t *tcls;
+  uint64_t *tns;
+}
+pstate_t;
 
 typedef struct FStar_Pervasives_Native_tuple3__bool_uint64_t_uint64_t_s
 {
@@ -62,8 +66,6 @@ void init(heap_t heap, pstate_t t);
 uint64_t alloc_white(heap_t heap, pstate_t t, uint64_t wz);
 
 uint64_t alloc(heap_t heap, pstate_t t, uint64_t wz, color_sem col);
-
-pinfo unsweep_rec(pinfo r);
 
 void start_sweep(pstate_t t);
 
