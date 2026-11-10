@@ -253,11 +253,22 @@ let acq_rec_view (st: pstate) (i: U64.t{U64.v i < n_pages}) (c: U64.t{U64.v c < 
                    P.acq_entry st (U64.v i) (U64.v c))
   = PI.slot_fits (U64.v i) (U64.v c) 0
 
+/// A class's list tail set to `v` when `b` holds.
+fn tail_if (t: pstate_t) (b: bool) (c: U64.t{U64.v c < n_cls}) (v: U64.t) (#st: erased pstate)
+  requires pages_st t st
+  ensures pages_st t (if b then set_atail_at st (U64.v c) v else reveal st)
+{
+  if b {
+    write_atail t c v
+  }
+}
+
 let acq_state_eq (st: pstate) (i: U64.t{U64.v i < n_pages}) (c: U64.t{U64.v c < n_cls})
-  : Lemma (requires Seq.length st.avail == n_cls)
-          (ensures set_avail_at (set_entry st (U64.v i) (view (acq_rec i c (Seq.index st.avail (U64.v c)))))
-                                (U64.v c) (U64.add i 1UL) ==
-                   P.acq_state st (U64.v i) (U64.v c))
+  : Lemma (requires Seq.length st.avail == n_cls /\ Seq.length st.atail == n_cls)
+          (ensures (let nx = Seq.index st.avail (U64.v c) in
+                    let st1 = set_avail_at (set_entry st (U64.v i) (view (acq_rec i c nx))) (U64.v c) (U64.add i 1UL) in
+                    (if nx = 0UL then set_atail_at st1 (U64.v c) (U64.add i 1UL) else st1) ==
+                    P.acq_state st (U64.v i) (U64.v c)))
   = acq_rec_view st i c;
     n_pages_small ();
     FStar.Math.Lemmas.pow2_lt_compat 64 54
@@ -276,6 +287,8 @@ fn acquire (heap: heap_t) (t: pstate_t) (i: U64.t{U64.v i < n_pages}) (c: U64.t{
   FStar.Math.Lemmas.pow2_lt_compat 64 54;
   write_used t i (acq_rec i c nx);
   write_avail t c (U64.add i 1UL);
+  pages_st_lengths t;
+  tail_if t (nx = 0UL) c (U64.add i 1UL);
   acq_state_eq st i c;
   with st'. assert (pages_st t st');
   rewrite (pages_st t st') as (pages_st t (snd (P.acquire 'g st (U64.v i) (U64.v c))));
@@ -313,7 +326,8 @@ let pop_state (st: pstate) (p: nat{p < n_pages /\ (entry st.pm p).nfree > 0}) (c
   let e = entry st.pm p in
   let e' = { e with free_head = nx; nfree = e.nfree - 1 } in
   { st with pm = Seq.upd st.pm p e';
-            avail = (if e.nfree = 1 then P.set_avail st c e.next else st.avail) }
+            avail = (if e.nfree = 1 then P.set_avail st c e.next else st.avail);
+            atail = P.pop_tail st c e }
 
 let pop_unfold (g: Base.heap) (st: pstate) (c: nat{c < n_cls}) (wz: nat{P.small_wz wz c})
                 (p: nat{p < n_pages}) (k: nat)
@@ -328,9 +342,12 @@ let pop_unfold (g: Base.heap) (st: pstate) (c: nat{c < n_cls}) (wz: nat{P.small_
   = ()
 
 let pop_state_eq (st: pstate) (p: U64.t{U64.v p < n_pages}) (c: U64.t{U64.v c < n_cls}) (nx nf: U64.t)
-  : Lemma (requires U64.v nf == (entry st.pm (U64.v p)).nfree /\ U64.v nf > 0 /\ Seq.length st.avail == n_cls)
+  : Lemma (requires U64.v nf == (entry st.pm (U64.v p)).nfree /\ U64.v nf > 0 /\
+                    Seq.length st.avail == n_cls /\ Seq.length st.atail == n_cls)
           (ensures (let st1 = set_slots st (U64.v p) nx (U64.sub nf 1UL) in
-                    (if U64.v nf = 1 then set_avail_at st1 (U64.v c) (entry st.pm (U64.v p)).next else st1) ==
+                    let nxt = (entry st.pm (U64.v p)).next in
+                    let st2 = set_avail_at st1 (U64.v c) nxt in
+                    (if U64.v nf = 1 then (if nxt = 0UL then set_atail_at st2 (U64.v c) 0UL else st2) else st1) ==
                     pop_state st (U64.v p) (U64.v c) nx))
   = ()
 
@@ -415,6 +432,7 @@ fn pop (heap: heap_t) (t: pstate_t) (c: U64.t{U64.v c < n_cls}) (wz: U64.t{P.sma
   let cl = cls_at t c;
   if (nf = 1UL) {
     write_avail t c sl.pnext;
+    tail_if t (sl.pnext = 0UL) c 0UL;
     fill_at heap (U64.sub so 8UL) c cl wz #(U64.v p) #k;
     so
   } else {

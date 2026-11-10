@@ -13,7 +13,8 @@
 ///     count is a machine word.  `view` reads a `pinfo` as a `page_info`; it
 ///     is total, so a record with a bad code or argument reads as a free
 ///     page, and the code tests below are exactly the tests `view` makes.
-///   - `avail`, `n_cls` words;
+///   - `avail` and `atail`, `n_cls` words each: the first and the last page
+///     of each class's list;
 ///   - `large`, `n_lists` words, of which the allocator uses list 0 only;
 ///   - `meta`, two words: the free-page hint and the sweep epoch;
 ///   - three constant tables, as the prototype's `cls_of`, `cls_wh` and
@@ -190,14 +191,71 @@ let n_pages_small () : Lemma (n_pages < pow2 54 /\ n_pages <= Base.heap_size)
 /// ---------------------------------------------------------------------------
 
 noeq type pstate_t = {
-  tpm: A.array prec;
-  tavail: A.array U64.t;
-  tlarge: A.array U64.t;
-  tmeta: A.array U64.t;   (* the free-page hint, the sweep epoch *)
-  tcof: A.array U64.t;    (* small_max + 1 words: the class of each size *)
-  tcls: A.array U64.t;    (* n_cls words: the slot size of each class *)
-  tns: A.array U64.t;     (* n_cls words: the slots per page of each class *)
+  tpm: A.array prec;      (* one record per page *)
+  tw: A.array U64.t;      (* the words below, one region after another *)
 }
+
+/// The word array, region by region: the first page of each class's list,
+/// the last one, the large lists' heads, the free-page hint and the sweep
+/// epoch, and the three tables (the class of each size, the slot size and
+/// the slots per page of each class).  One array, so that the state is two
+/// pointers, which C passes in registers, and taking a slot loads one base
+/// address for all of these.
+let o_at : nat = n_cls
+let o_lg : nat = 2 * n_cls
+let o_mt : nat = 2 * n_cls + SC.n_lists
+let o_cf : nat = o_mt + 2
+let o_cl : nat = o_cf + (small_max + 1)
+let o_ns : nat = o_cl + n_cls
+let w_len : nat = o_ns + n_cls
+
+/// The classes strictly increase from 2 words, so there are fewer of them
+/// than the words of the largest.
+let rec cls_above (c: nat{c < n_cls})
+  : Lemma (ensures cls c >= c + 2) (decreases c)
+  = params_ok ();
+    if c > 0 then cls_above (c - 1)
+
+let w_small () : Lemma (w_len < pow2 24 /\ pow2 24 < pow2 64 /\ n_cls < w_len)
+  = FStar.Math.Lemmas.pow2_lt_compat 64 24;
+    cls_bounds (n_cls - 1);
+    cls_above (n_cls - 1);
+    assert (n_cls <= small_max);
+    SC.n_lists_sz_v ();
+    assert_norm (pow2 24 == 16 * pow2 20)
+
+inline_for_extraction
+let small_max_u64' () : r: U64.t{U64.v r == small_max} = cls_u64 (U64.sub n_cls_u64 1UL)
+
+inline_for_extraction
+let o_at_u64 () : r: U64.t{U64.v r == o_at} = n_cls_u64
+
+inline_for_extraction
+let o_lg_u64 () : r: U64.t{U64.v r == o_lg} = w_small (); U64.mul 2UL n_cls_u64
+
+inline_for_extraction
+let o_mt_u64 () : r: U64.t{U64.v r == o_mt} =
+  w_small (); SC.n_lists_sz_v (); U64.add (U64.mul 2UL n_cls_u64) (SZ.sizet_to_uint64 SC.n_lists_sz)
+
+inline_for_extraction
+let o_cf_u64 () : r: U64.t{U64.v r == o_cf} = w_small (); U64.add (o_mt_u64 ()) 2UL
+
+inline_for_extraction
+let o_cl_u64 () : r: U64.t{U64.v r == o_cl} =
+  w_small (); U64.add (o_cf_u64 ()) (U64.add (small_max_u64' ()) 1UL)
+
+inline_for_extraction
+let o_ns_u64 () : r: U64.t{U64.v r == o_ns} = w_small (); U64.add (o_cl_u64 ()) n_cls_u64
+
+inline_for_extraction
+let w_len_u64 () : r: U64.t{U64.v r == w_len} = w_small (); U64.add (o_ns_u64 ()) n_cls_u64
+
+/// A position of the word array as an array index.
+inline_for_extraction
+let wsz (j: U64.t{U64.v j < w_len}) : s: SZ.t{SZ.v s == U64.v j} =
+  w_small ();
+  FStar.Math.Lemmas.pow2_lt_compat 64 24;
+  SZ.uint64_to_sizet j
 
 /// The tables' contents.
 let cof_val (w: nat{w <= small_max}) : U64.t =
@@ -224,31 +282,82 @@ let cls_index (c: nat{c < n_cls})
            Seq.length ns_seq == n_cls /\ U64.v (Seq.index ns_seq c) == n_slots c)
   = cls_bounds c; FStar.Math.Lemmas.pow2_lt_compat 64 20
 
-let tables (t: pstate_t) : slprop =
-  A.pts_to t.tcof cof_seq ** A.pts_to t.tcls cls_seq ** A.pts_to t.tns ns_seq
+/// A region of the word array.
+let sl (w: Seq.seq U64.t) (o n: nat) : Seq.seq U64.t =
+  if o + n <= Seq.length w then Seq.slice w o (o + n) else Seq.empty
+
+let sl_index (w: Seq.seq U64.t) (o n: nat) (i: nat)
+  : Lemma (requires o + n <= Seq.length w /\ i < n)
+          (ensures Seq.length (sl w o n) == n /\ Seq.index (sl w o n) i == Seq.index w (o + i))
+  = ()
+
+/// A write inside a region updates it; outside, keeps it.
+let sl_upd (w: Seq.seq U64.t) (o n: nat) (j: nat) (v: U64.t)
+  : Lemma (requires o + n <= Seq.length w /\ j < Seq.length w)
+          (ensures sl (Seq.upd w j v) o n ==
+                   (if o <= j && j < o + n then Seq.upd (sl w o n) (j - o) v else sl w o n))
+  = let a = sl (Seq.upd w j v) o n in
+    let b = (if o <= j && j < o + n then Seq.upd (sl w o n) (j - o) v else sl w o n) in
+    Seq.lemma_eq_intro a b
+
+/// The hint and the epoch.
+let mt_of (w: Seq.seq U64.t) : Seq.seq U64.t = sl w o_mt 2
+
+/// The regions of the word array, as the state has them.
+let w_ok (w: Seq.seq U64.t) (st: pstate) : prop =
+  Seq.length w == w_len /\
+  sl w 0 n_cls == st.avail /\ sl w o_at n_cls == st.atail /\ sl w o_lg SC.n_lists == st.large /\
+  sl w o_cf (small_max + 1) == cof_seq /\ sl w o_cl n_cls == cls_seq /\ sl w o_ns n_cls == ns_seq
+
+/// A write to region `o` (of `n` words) at `k` changes only that region.
+let w_upd (w: Seq.seq U64.t) (o n k: nat) (v: U64.t)
+  : Lemma (requires Seq.length w == w_len /\ o + n <= w_len /\ k < n /\
+                    (o == 0 /\ n == n_cls \/ o == o_at /\ n == n_cls \/ o == o_lg /\ n == SC.n_lists \/
+                     o == o_mt /\ n == 2))
+          (ensures (let w' = Seq.upd w (o + k) v in
+                    Seq.length w' == w_len /\
+                    sl w' 0 n_cls == (if o = 0 then Seq.upd (sl w 0 n_cls) k v else sl w 0 n_cls) /\
+                    sl w' o_at n_cls == (if o = o_at then Seq.upd (sl w o_at n_cls) k v else sl w o_at n_cls) /\
+                    sl w' o_lg SC.n_lists == (if o = o_lg then Seq.upd (sl w o_lg SC.n_lists) k v else sl w o_lg SC.n_lists) /\
+                    mt_of w' == (if o = o_mt then Seq.upd (mt_of w) k v else mt_of w) /\
+                    sl w' o_cf (small_max + 1) == sl w o_cf (small_max + 1) /\
+                    sl w' o_cl n_cls == sl w o_cl n_cls /\ sl w' o_ns n_cls == sl w o_ns n_cls))
+  = w_small ();
+    let j = o + k in
+    sl_upd w 0 n_cls j v;
+    sl_upd w o_at n_cls j v;
+    sl_upd w o_lg SC.n_lists j v;
+    sl_upd w o_mt 2 j v;
+    sl_upd w o_cf (small_max + 1) j v;
+    sl_upd w o_cl n_cls j v;
+    sl_upd w o_ns n_cls j v
 
 let pages_st (t: pstate_t) (st: pstate) : slprop =
-  exists* (s: Seq.seq prec) (m: Seq.seq U64.t).
-    A.pts_to t.tpm s ** A.pts_to t.tavail st.avail ** A.pts_to t.tlarge st.large **
-    A.pts_to t.tmeta m ** tables t **
-    pure (meta_ok s m st.pm /\ pm_rel s (Seq.index m 1) st.pm /\
-          Seq.length st.avail == n_cls /\ Seq.length st.large == SC.n_lists)
+  exists* (s: Seq.seq prec) (w: Seq.seq U64.t).
+    A.pts_to t.tpm s ** A.pts_to t.tw w **
+    pure (w_ok w st /\ meta_ok s (mt_of w) st.pm /\ pm_rel s (Seq.index (mt_of w) 1) st.pm)
 
 /// The arrays before `init`: of the right lengths, holding anything.
 let pages_raw (t: pstate_t) : slprop =
-  exists* (s: Seq.seq prec) (m av lg cf cl ns: Seq.seq U64.t).
-    A.pts_to t.tpm s ** A.pts_to t.tavail av ** A.pts_to t.tlarge lg ** A.pts_to t.tmeta m **
-    A.pts_to t.tcof cf ** A.pts_to t.tcls cl ** A.pts_to t.tns ns **
-    pure (Seq.length s == n_pages /\ Seq.length m == 2 /\
-          Seq.length av == n_cls /\ Seq.length lg == SC.n_lists /\
-          Seq.length cf == small_max + 1 /\ Seq.length cl == n_cls /\ Seq.length ns == n_cls)
+  exists* (s: Seq.seq prec) (w: Seq.seq U64.t).
+    A.pts_to t.tpm s ** A.pts_to t.tw w **
+    pure (Seq.length s == n_pages /\ Seq.length w == w_len)
+
+let w_lengths (w: Seq.seq U64.t) (st: pstate)
+  : Lemma (requires w_ok w st)
+          (ensures Seq.length st.avail == n_cls /\ Seq.length st.atail == n_cls /\
+                   Seq.length st.large == SC.n_lists /\ Seq.length (mt_of w) == 2)
+  = w_small ()
 
 /// The facts every caller can rely on.
 ghost fn pages_st_lengths (t: pstate_t) (#st: pstate)
   requires pages_st t st
-  ensures pages_st t st ** pure (Seq.length st.avail == n_cls /\ Seq.length st.large == SC.n_lists)
+  ensures pages_st t st ** pure (Seq.length st.avail == n_cls /\ Seq.length st.atail == n_cls /\
+                                 Seq.length st.large == SC.n_lists)
 {
   unfold pages_st;
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_lengths w st;
   fold (pages_st t st)
 }
 
@@ -261,14 +370,22 @@ let sz_of (i: U64.t{U64.v i < n_pages}) : s: SZ.t{SZ.v s == U64.v i} =
   FStar.Math.Lemmas.pow2_lt_compat 64 54;
   SZ.uint64_to_sizet i
 
+/// The epoch and the hint, read from the word array.
+let mt_read (w: Seq.seq U64.t) (st: pstate) (k: nat{k < 2})
+  : Lemma (requires w_ok w st)
+          (ensures Seq.length (mt_of w) == 2 /\ Seq.index w (o_mt + k) == Seq.index (mt_of w) k)
+  = w_small (); sl_index w o_mt 2 k
+
 fn read_entry (t: pstate_t) (i: U64.t{U64.v i < n_pages}) (#st: erased pstate)
   requires pages_st t st
   returns r: pinfo
   ensures pages_st t st ** pure (view r == entry st.pm (U64.v i) /\ storable r)
 {
   unfold pages_st;
-  with s m. assert (A.pts_to t.tpm s ** A.pts_to t.tmeta m);
-  let ep = t.tmeta.(1sz);
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_small ();
+  mt_read w st 1;
+  let ep = t.tw.(wsz (U64.add (o_mt_u64 ()) 1UL));
   let p = t.tpm.(sz_of i);
   to_storable ep p;
   fold (pages_st t st);
@@ -303,13 +420,17 @@ fn write_entry (t: pstate_t) (i: U64.t{U64.v i < n_pages}) (r: pinfo) (#st: eras
   ensures pages_st t (set_entry st (U64.v i) (view r))
 {
   unfold pages_st;
-  with s m. assert (A.pts_to t.tpm s ** A.pts_to t.tmeta m);
-  let ep = t.tmeta.(1sz);
-  let h = t.tmeta.(0sz);
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_small ();
+  mt_read w st 0;
+  mt_read w st 1;
+  let ep = t.tw.(wsz (U64.add (o_mt_u64 ()) 1UL));
+  let h = t.tw.(wsz (o_mt_u64 ()));
   t.tpm.(sz_of i) <- of_pinfo ep r;
-  write_ok s m st.pm (U64.v i) r;
+  write_ok s (mt_of w) st.pm (U64.v i) r;
   if (is_free_rec r && U64.lt i h) {
-    t.tmeta.(0sz) <- i;
+    w_upd w o_mt 2 0 i;
+    t.tw.(wsz (o_mt_u64 ())) <- i;
     fold (pages_st t (set_entry st (U64.v i) (view r)))
   } else {
     fold (pages_st t (set_entry st (U64.v i) (view r)))
@@ -323,10 +444,12 @@ fn write_used (t: pstate_t) (i: U64.t{U64.v i < n_pages}) (r: pinfo) (#st: erase
   ensures pages_st t (set_entry st (U64.v i) (view r))
 {
   unfold pages_st;
-  with s m. assert (A.pts_to t.tpm s ** A.pts_to t.tmeta m);
-  let ep = t.tmeta.(1sz);
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_small ();
+  mt_read w st 1;
+  let ep = t.tw.(wsz (U64.add (o_mt_u64 ()) 1UL));
   t.tpm.(sz_of i) <- of_pinfo ep r;
-  write_ok s m st.pm (U64.v i) r;
+  write_ok s (mt_of w) st.pm (U64.v i) r;
   fold (pages_st t (set_entry st (U64.v i) (view r)))
 }
 
@@ -364,11 +487,35 @@ fn write_slots (t: pstate_t) (i: U64.t{U64.v i < n_pages}) (fh nf: U64.t) (#st: 
   ensures pages_st t (set_slots st (U64.v i) fh nf)
 {
   unfold pages_st;
-  with s m. assert (A.pts_to t.tpm s ** A.pts_to t.tmeta m);
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
   let p = t.tpm.(sz_of i);
   t.tpm.(sz_of i) <- { p with pfree_head = fh; pnfree = nf };
-  slots_ok s m st.pm (U64.v i) fh nf;
+  slots_ok s (mt_of w) st.pm (U64.v i) fh nf;
   fold (pages_st t (set_slots st (U64.v i) fh nf))
+}
+
+/// Page `i`'s class-list link set to `v`, alone.
+let set_next_at (st: pstate) (i: nat{i < n_pages}) (v: U64.t) : pstate =
+  set_entry st i ({ entry st.pm i with next = v })
+
+let next_ok (s: Seq.seq prec) (m: Seq.seq U64.t) (pm: page_map) (i: nat{i < n_pages}) (v: U64.t)
+  : Lemma (requires meta_ok s m pm /\ pm_rel s (Seq.index m 1) pm)
+          (ensures (let pm' = Seq.upd pm i ({ entry pm i with next = v }) in
+                    let p = Seq.index s i in
+                    meta_ok (Seq.upd s i ({ p with pnext = v })) m pm' /\
+                    pm_rel (Seq.upd s i ({ p with pnext = v })) (Seq.index m 1) pm'))
+  = ()
+
+fn write_next (t: pstate_t) (i: U64.t{U64.v i < n_pages}) (v: U64.t) (#st: erased pstate)
+  requires pages_st t st
+  ensures pages_st t (set_next_at st (U64.v i) v)
+{
+  unfold pages_st;
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  let p = t.tpm.(sz_of i);
+  t.tpm.(sz_of i) <- { p with pnext = v };
+  next_ok s (mt_of w) st.pm (U64.v i) v;
+  fold (pages_st t (set_next_at st (U64.v i) v))
 }
 
 /// The free-page hint.
@@ -378,7 +525,10 @@ fn read_hint (t: pstate_t) (#st: erased pstate)
   ensures pages_st t st ** pure (U64.v h <= n_pages /\ none_free_below st.pm (U64.v h))
 {
   unfold pages_st;
-  let h = t.tmeta.(0sz);
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_small ();
+  mt_read w st 0;
+  let h = t.tw.(wsz (o_mt_u64 ()));
   fold (pages_st t st);
   h
 }
@@ -388,7 +538,10 @@ fn write_hint (t: pstate_t) (h: U64.t) (#st: erased pstate)
   ensures pages_st t st
 {
   unfold pages_st;
-  t.tmeta.(0sz) <- h;
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_small ();
+  w_upd w o_mt 2 0 h;
+  t.tw.(wsz (o_mt_u64 ())) <- h;
   fold (pages_st t st)
 }
 
@@ -396,22 +549,18 @@ fn write_hint (t: pstate_t) (h: U64.t) (#st: erased pstate)
 /// The tables
 /// ---------------------------------------------------------------------------
 
-let small_sz (w: U64.t{U64.v w <= small_max}) : s: SZ.t{SZ.v s == U64.v w} =
-  cls_bounds (n_cls - 1);
-  FStar.Math.Lemmas.pow2_lt_compat 64 20;
-  SZ.uint64_to_sizet w
-
 /// The class of a block of `w` words, header included.
-fn class_at (t: pstate_t) (w: U64.t{1 <= U64.v w /\ U64.v w <= small_max}) (#st: erased pstate)
+fn class_at (t: pstate_t) (wh: U64.t{1 <= U64.v wh /\ U64.v wh <= small_max}) (#st: erased pstate)
   requires pages_st t st
   returns r: U64.t
-  ensures pages_st t st ** pure (U64.v r == class_of (U64.v w))
+  ensures pages_st t st ** pure (U64.v r == class_of (U64.v wh))
 {
   unfold pages_st;
-  unfold tables;
-  cof_index (U64.v w);
-  let r = t.tcof.(small_sz w);
-  fold (tables t);
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_small ();
+  cof_index (U64.v wh);
+  sl_index w o_cf (small_max + 1) (U64.v wh);
+  let r = t.tw.(wsz (U64.add (o_cf_u64 ()) wh));
   fold (pages_st t st);
   r
 }
@@ -423,10 +572,11 @@ fn cls_at (t: pstate_t) (c: U64.t{U64.v c < n_cls}) (#st: erased pstate)
   ensures pages_st t st ** pure (U64.v r == cls (U64.v c))
 {
   unfold pages_st;
-  unfold tables;
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_small ();
   cls_index (U64.v c);
-  let r = t.tcls.(SZ.uint64_to_sizet c);
-  fold (tables t);
+  sl_index w o_cl n_cls (U64.v c);
+  let r = t.tw.(wsz (U64.add (o_cl_u64 ()) c));
   fold (pages_st t st);
   r
 }
@@ -438,64 +588,14 @@ fn ns_at (t: pstate_t) (c: U64.t{U64.v c < n_cls}) (#st: erased pstate)
   ensures pages_st t st ** pure (U64.v r == n_slots (U64.v c))
 {
   unfold pages_st;
-  unfold tables;
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_small ();
   cls_index (U64.v c);
-  let r = t.tns.(SZ.uint64_to_sizet c);
-  fold (tables t);
+  sl_index w o_ns n_cls (U64.v c);
+  let r = t.tw.(wsz (U64.add (o_ns_u64 ()) c));
   fold (pages_st t st);
   r
 }
-
-/// Fill the tables, once, from the parameters' functions.
-fn fill_tables (t: pstate_t)
-  requires exists* (cf cl ns: Seq.seq U64.t).
-             A.pts_to t.tcof cf ** A.pts_to t.tcls cl ** A.pts_to t.tns ns **
-             pure (Seq.length cf == small_max + 1 /\ Seq.length cl == n_cls /\ Seq.length ns == n_cls)
-  ensures tables t
-{
-  cls_bounds (n_cls - 1);
-  FStar.Math.Lemmas.pow2_lt_compat 64 20;
-  let sm = cls_u64 (U64.sub n_cls_u64 1UL);
-  t.tcof.(0sz) <- 0UL;
-  let mut w = 1UL;
-  while (U64.lte !w sm)
-    invariant exists* vw (cf: Seq.seq U64.t).
-      R.pts_to w vw ** A.pts_to t.tcof cf **
-      pure (1 <= U64.v vw /\ U64.v vw <= small_max + 1 /\ Seq.length cf == small_max + 1 /\
-            (forall (i: nat). i < U64.v vw ==> Seq.index cf i == cof_val i))
-    decreases (small_max + 1 - U64.v !w)
-  {
-    let vw = !w;
-    t.tcof.(small_sz vw) <- class_u64 vw;
-    w := U64.add vw 1UL
-  };
-  with cf. assert (A.pts_to t.tcof cf);
-  Seq.lemma_eq_intro cf cof_seq;
-  let mut c = 0UL;
-  while (U64.lt !c n_cls_u64)
-    invariant exists* vc (cl ns: Seq.seq U64.t).
-      R.pts_to c vc ** A.pts_to t.tcls cl ** A.pts_to t.tns ns **
-      pure (U64.v vc <= n_cls /\ Seq.length cl == n_cls /\ Seq.length ns == n_cls /\
-            (forall (i: nat). i < U64.v vc ==> Seq.index cl i == cls_val i /\ Seq.index ns i == ns_val i))
-    decreases (n_cls - U64.v !c)
-  {
-    let vc = !c;
-    t.tcls.(SZ.uint64_to_sizet vc) <- cls_u64 vc;
-    t.tns.(SZ.uint64_to_sizet vc) <- n_slots_u64 vc;
-    c := U64.add vc 1UL
-  };
-  with cl ns. assert (A.pts_to t.tcls cl ** A.pts_to t.tns ns);
-  Seq.lemma_eq_intro cl cls_seq;
-  Seq.lemma_eq_intro ns ns_seq;
-  rewrite (A.pts_to t.tcof cf) as (A.pts_to t.tcof cof_seq);
-  rewrite (A.pts_to t.tcls cl) as (A.pts_to t.tcls cls_seq);
-  rewrite (A.pts_to t.tns ns) as (A.pts_to t.tns ns_seq);
-  fold (tables t)
-}
-
-/// ---------------------------------------------------------------------------
-/// The sweep epoch
-/// ---------------------------------------------------------------------------
 
 /// `GC.Spec.Pages.StartSweep.unsweep`, `clear_map`: every page that is not
 /// free becomes unswept.
@@ -534,12 +634,15 @@ fn start_epoch (t: pstate_t) (#st: erased pstate)
   ensures pages_st t ({ st with pm = unswept_map st.pm })
 {
   unfold pages_st;
-  with s0 m. assert (A.pts_to t.tpm s0 ** A.pts_to t.tmeta m);
-  let ep = t.tmeta.(1sz);
+  with s0 w. assert (A.pts_to t.tpm s0 ** A.pts_to t.tw w);
+  w_small ();
+  mt_read w st 1;
+  let ep = t.tw.(wsz (U64.add (o_mt_u64 ()) 1UL));
   if (U64.lt ep 0xFFFFFFFFFFFFFFFFUL) {
     assert_norm (pow2 64 - 1 == 0xFFFFFFFFFFFFFFFF);
-    next_epoch s0 m st.pm;
-    t.tmeta.(1sz) <- U64.add ep 1UL;
+    next_epoch s0 (mt_of w) st.pm;
+    w_upd w o_mt 2 1 (U64.add ep 1UL);
+    t.tw.(wsz (U64.add (o_mt_u64 ()) 1UL)) <- U64.add ep 1UL;
     fold (pages_st t ({ st with pm = unswept_map st.pm }))
   } else {
     let np = n_pages_u64 ();
@@ -556,8 +659,9 @@ fn start_epoch (t: pstate_t) (#st: erased pstate)
       j := U64.add vj 1UL
     };
     with s. assert (A.pts_to t.tpm s);
-    wrap_epoch s0 s m st.pm;
-    t.tmeta.(1sz) <- 1UL;
+    wrap_epoch s0 s (mt_of w) st.pm;
+    w_upd w o_mt 2 1 1UL;
+    t.tw.(wsz (U64.add (o_mt_u64 ()) 1UL)) <- 1UL;
     fold (pages_st t ({ st with pm = unswept_map st.pm }))
   }
 }
@@ -575,7 +679,10 @@ fn read_avail (t: pstate_t) (c: U64.t{U64.v c < n_cls}) (#st: erased pstate)
   ensures pages_st t st ** pure (Seq.length st.avail == n_cls /\ v == Seq.index st.avail (U64.v c))
 {
   unfold pages_st;
-  let v = t.tavail.(SZ.uint64_to_sizet c);
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_small ();
+  sl_index w 0 n_cls (U64.v c);
+  let v = t.tw.(wsz c);
   fold (pages_st t st);
   v
 }
@@ -585,8 +692,40 @@ fn write_avail (t: pstate_t) (c: U64.t{U64.v c < n_cls}) (v: U64.t) (#st: erased
   ensures pages_st t (set_avail_at st (U64.v c) v)
 {
   unfold pages_st;
-  t.tavail.(SZ.uint64_to_sizet c) <- v;
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_small ();
+  w_upd w 0 n_cls (U64.v c) v;
+  t.tw.(wsz c) <- v;
   fold (pages_st t (set_avail_at st (U64.v c) v))
+}
+
+let set_atail_at (st: pstate) (c: nat{c < n_cls}) (v: U64.t) : pstate =
+  { st with atail = (if c < Seq.length st.atail then Seq.upd st.atail c v else st.atail) }
+
+fn read_atail (t: pstate_t) (c: U64.t{U64.v c < n_cls}) (#st: erased pstate)
+  requires pages_st t st
+  returns v: U64.t
+  ensures pages_st t st ** pure (Seq.length st.atail == n_cls /\ v == Seq.index st.atail (U64.v c))
+{
+  unfold pages_st;
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_small ();
+  sl_index w o_at n_cls (U64.v c);
+  let v = t.tw.(wsz (U64.add (o_at_u64 ()) c));
+  fold (pages_st t st);
+  v
+}
+
+fn write_atail (t: pstate_t) (c: U64.t{U64.v c < n_cls}) (v: U64.t) (#st: erased pstate)
+  requires pages_st t st
+  ensures pages_st t (set_atail_at st (U64.v c) v)
+{
+  unfold pages_st;
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_small ();
+  w_upd w o_at n_cls (U64.v c) v;
+  t.tw.(wsz (U64.add (o_at_u64 ()) c)) <- v;
+  fold (pages_st t (set_atail_at st (U64.v c) v))
 }
 
 let set_lhead (st: pstate) (v: U64.t) : pstate =
@@ -598,7 +737,10 @@ fn read_lhead (t: pstate_t) (#st: erased pstate)
   ensures pages_st t st ** pure (v == FLs.fls_head st.large 0)
 {
   unfold pages_st;
-  let v = t.tlarge.(0sz);
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_small ();
+  sl_index w o_lg SC.n_lists 0;
+  let v = t.tw.(wsz (o_lg_u64 ()));
   fold (pages_st t st);
   v
 }
@@ -608,57 +750,65 @@ fn write_lhead (t: pstate_t) (v: U64.t) (#st: erased pstate)
   ensures pages_st t (set_lhead st v)
 {
   unfold pages_st;
-  t.tlarge.(0sz) <- v;
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_small ();
+  w_upd w o_lg SC.n_lists 0 v;
+  t.tw.(wsz (o_lg_u64 ())) <- v;
   fold (pages_st t (set_lhead st v))
 }
 
-fn clear_heads (t: pstate_t)
-  requires exists* (av lg: Seq.seq U64.t). A.pts_to t.tavail av ** A.pts_to t.tlarge lg **
-             pure (Seq.length av == n_cls /\ Seq.length lg == SC.n_lists)
-  ensures A.pts_to t.tavail (Seq.create n_cls 0UL) ** A.pts_to t.tlarge FLs.fls_empty
+/// Words `lo .. hi - 1` set to 0, the rest as they were.
+let zeroed (w0 w: Seq.seq U64.t) (lo j: nat) : prop =
+  Seq.length w == Seq.length w0 /\
+  (forall (i: nat). i < Seq.length w ==> Seq.index w i == (if lo <= i && i < j then 0UL else Seq.index w0 i))
+
+/// The heads, the tails and the large lists cleared: the regions
+/// `0 .. o_mt - 1`.
+let clear_done (w0 w: Seq.seq U64.t) (st: pstate)
+  : Lemma (requires w_ok w0 st /\ zeroed w0 w 0 o_mt)
+          (ensures w_ok w ({ st with avail = Seq.create n_cls 0UL; atail = Seq.create n_cls 0UL;
+                                     large = FLs.fls_empty }) /\
+                   mt_of w == mt_of w0)
+  = w_small ();
+    Seq.lemma_eq_intro (sl w 0 n_cls) (Seq.create n_cls 0UL);
+    Seq.lemma_eq_intro (sl w o_at n_cls) (Seq.create n_cls 0UL);
+    Seq.lemma_eq_intro (sl w o_lg SC.n_lists) FLs.fls_empty;
+    Seq.lemma_eq_intro (mt_of w) (mt_of w0);
+    Seq.lemma_eq_intro (sl w o_cf (small_max + 1)) (sl w0 o_cf (small_max + 1));
+    Seq.lemma_eq_intro (sl w o_cl n_cls) (sl w0 o_cl n_cls);
+    Seq.lemma_eq_intro (sl w o_ns n_cls) (sl w0 o_ns n_cls)
+
+/// Write 0 over words `0 .. o_mt - 1`.
+fn zero_heads (t: pstate_t) (#w0: erased (Seq.seq U64.t))
+  requires A.pts_to t.tw w0 ** pure (Seq.length w0 == w_len)
+  ensures exists* w. A.pts_to t.tw w ** pure (zeroed w0 w 0 o_mt)
 {
-  let mut c = 0UL;
-  while (U64.lt !c n_cls_u64)
-    invariant exists* vc (av: Seq.seq U64.t).
-      R.pts_to c vc ** A.pts_to t.tavail av **
-      pure (U64.v vc <= n_cls /\ Seq.length av == n_cls /\
-            (forall (i: nat). i < U64.v vc ==> Seq.index av i == 0UL))
-    decreases (n_cls - U64.v !c)
+  w_small ();
+  let e = o_mt_u64 ();
+  let mut j = 0UL;
+  while (U64.lt !j e)
+    invariant exists* vj w.
+      R.pts_to j vj ** A.pts_to t.tw w ** pure (U64.v vj <= o_mt /\ zeroed w0 w 0 (U64.v vj))
+    decreases (o_mt - U64.v !j)
   {
-    let vc = !c;
-    t.tavail.(SZ.uint64_to_sizet vc) <- 0UL;
-    c := U64.add vc 1UL
-  };
-  with av. assert (A.pts_to t.tavail av);
-  Seq.lemma_eq_intro av (Seq.create n_cls 0UL);
-  SC.n_lists_sz_v ();
-  let mut k = 0sz;
-  while (SZ.lt !k SC.n_lists_sz)
-    invariant exists* vk (lg: Seq.seq U64.t).
-      R.pts_to k vk ** A.pts_to t.tlarge lg **
-      pure (SZ.v vk <= SC.n_lists /\ Seq.length lg == SC.n_lists /\
-            (forall (i: nat). i < SZ.v vk ==> Seq.index lg i == 0UL))
-    decreases (SC.n_lists - SZ.v !k)
-  {
-    let vk = !k;
-    t.tlarge.(vk) <- 0UL;
-    k := SZ.add vk 1sz
-  };
-  with lg. assert (A.pts_to t.tlarge lg);
-  Seq.lemma_eq_intro lg FLs.fls_empty;
-  rewrite (A.pts_to t.tavail av) as (A.pts_to t.tavail (Seq.create n_cls 0UL));
-  rewrite (A.pts_to t.tlarge lg) as (A.pts_to t.tlarge FLs.fls_empty)
+    let vj = !j;
+    t.tw.(wsz vj) <- 0UL;
+    j := U64.add vj 1UL
+  }
 }
 
 /// Every list head 0: the lists of pages with a free slot and the large
 /// lists are empty.
 fn clear_lists (t: pstate_t) (#st: erased pstate)
   requires pages_st t st
-  ensures pages_st t ({ st with avail = Seq.create n_cls 0UL; large = FLs.fls_empty })
+  ensures pages_st t ({ st with avail = Seq.create n_cls 0UL; atail = Seq.create n_cls 0UL; large = FLs.fls_empty })
 {
   unfold pages_st;
-  clear_heads t;
-  fold (pages_st t ({ st with avail = Seq.create n_cls 0UL; large = FLs.fls_empty }))
+  with s w0. assert (A.pts_to t.tpm s ** A.pts_to t.tw w0);
+  zero_heads t;
+  with w. assert (A.pts_to t.tw w);
+  clear_done w0 w st;
+  fold (pages_st t ({ st with avail = Seq.create n_cls 0UL; atail = Seq.create n_cls 0UL; large = FLs.fls_empty }))
 }
 
 /// ---------------------------------------------------------------------------
@@ -671,7 +821,8 @@ let free_prec : prec =
   { pcode = 0uy; parg = 0UL; sep = 1UL; pfree_head = 0UL; pnfree = 0UL; pnext = 0UL }
 
 /// The state of a heap of free pages with every list empty.
-let empty_state : pstate = { pm = all_free; avail = Seq.create n_cls 0UL; large = FLs.fls_empty }
+let empty_state : pstate =
+  { pm = all_free; avail = Seq.create n_cls 0UL; atail = Seq.create n_cls 0UL; large = FLs.fls_empty }
 
 let reset_done (s: Seq.seq prec) (m: Seq.seq U64.t)
   : Lemma (requires Seq.length s == n_pages /\ Seq.length m == 2 /\
@@ -679,6 +830,41 @@ let reset_done (s: Seq.seq prec) (m: Seq.seq U64.t)
                     (forall (i: nat). i < n_pages ==> Seq.index s i == free_prec))
           (ensures meta_ok s m all_free /\ pm_rel s (Seq.index m 1) all_free)
   = ()
+
+/// The words at the start: every head 0, hint 0, epoch 1, and the tables.
+let w_start (i: nat{i < w_len}) : U64.t =
+  if i < o_mt then 0UL
+  else if i = o_mt then 0UL
+  else if i = o_mt + 1 then 1UL
+  else if i < o_cl then cof_val (i - o_cf)
+  else if i < o_ns then cls_val (i - o_cl)
+  else ns_val (i - o_ns)
+
+let w_start_ok (w: Seq.seq U64.t)
+  : Lemma (requires Seq.length w == w_len /\ (forall (i: nat{i < w_len}). Seq.index w i == w_start i))
+          (ensures w_ok w empty_state /\ Seq.index (mt_of w) 0 == 0UL /\ Seq.index (mt_of w) 1 == 1UL /\
+                   Seq.length (mt_of w) == 2)
+  = w_small ();
+    Seq.lemma_eq_intro (sl w 0 n_cls) (Seq.create n_cls 0UL);
+    Seq.lemma_eq_intro (sl w o_at n_cls) (Seq.create n_cls 0UL);
+    Seq.lemma_eq_intro (sl w o_lg SC.n_lists) FLs.fls_empty;
+    Seq.lemma_eq_intro (sl w o_cf (small_max + 1)) cof_seq;
+    Seq.lemma_eq_intro (sl w o_cl n_cls) cls_seq;
+    Seq.lemma_eq_intro (sl w o_ns n_cls) ns_seq
+
+/// The start's word at `i`, computed.
+inline_for_extraction
+let w_start_u64 (i: U64.t{U64.v i < w_len}) : r: U64.t{r == w_start (U64.v i)} =
+  w_small ();
+  if U64.lt i (o_mt_u64 ()) then 0UL
+  else if i = o_mt_u64 () then 0UL
+  else if i = U64.add (o_mt_u64 ()) 1UL then 1UL
+  else if U64.lt i (o_cl_u64 ()) then begin
+    let wh = U64.sub i (o_cf_u64 ()) in
+    if wh = 0UL then 0UL else (assert (n_cls == U64.v n_cls_u64); class_u64 wh)
+  end
+  else if U64.lt i (o_ns_u64 ()) then cls_u64 (U64.sub i (o_cl_u64 ()))
+  else n_slots_u64 (U64.sub i (o_ns_u64 ()))
 
 /// Every page free, every list empty, epoch 1 and hint 0, from any arrays of
 /// the right lengths.
@@ -700,11 +886,22 @@ fn reset_state (t: pstate_t)
     t.tpm.(sz_of vj) <- free_prec;
     j := U64.add vj 1UL
   };
-  t.tmeta.(0sz) <- 0UL;
-  t.tmeta.(1sz) <- 1UL;
-  with s m. assert (A.pts_to t.tpm s ** A.pts_to t.tmeta m);
-  reset_done s m;
-  clear_heads t;
-  fill_tables t;
+  w_small ();
+  let e = w_len_u64 ();
+  let mut k = 0UL;
+  while (U64.lt !k e)
+    invariant exists* vk w.
+      R.pts_to k vk ** A.pts_to t.tw w **
+      pure (U64.v vk <= w_len /\ Seq.length w == w_len /\
+            (forall (i: nat{i < w_len}). i < U64.v vk ==> Seq.index w i == w_start i))
+    decreases (w_len - U64.v !k)
+  {
+    let vk = !k;
+    t.tw.(wsz vk) <- w_start_u64 vk;
+    k := U64.add vk 1UL
+  };
+  with s w. assert (A.pts_to t.tpm s ** A.pts_to t.tw w);
+  w_start_ok w;
+  reset_done s (mt_of w);
   fold (pages_st t empty_state)
 }

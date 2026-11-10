@@ -33,12 +33,7 @@ prec;
 typedef struct pstate_t_s
 {
   prec *tpm;
-  uint64_t *tavail;
-  uint64_t *tlarge;
-  uint64_t *tmeta;
-  uint64_t *tcof;
-  uint64_t *tcls;
-  uint64_t *tns;
+  uint64_t *tw;
 }
 pstate_t;
 

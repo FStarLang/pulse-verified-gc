@@ -41,7 +41,7 @@ let set_entry (st: pstate) (i: nat{i < n_pages}) (e: page_info) : pstate =
 
 /// The map once the blocks `xs` are laid out: their whole pages are free.
 let map_in (st0 st: pstate) (xs: list blk) : prop =
-  st.avail == st0.avail /\ st.large == st0.large /\
+  st.avail == st0.avail /\ st.atail == st0.atail /\ st.large == st0.large /\
   (forall (j: nat{j < n_pages}). entry st.pm j == (if L.mem (page_blk j) xs then free_entry else entry st0.pm j))
 
 let map_in_start (st0: pstate) : Lemma (map_in st0 st0 []) = ()
@@ -101,7 +101,7 @@ let freed_iff (st0 st1: pstate) (fs: list blk) (h: nat{h < n_pages}) (n: pos) (j
 /// The pages before `jj` have their new entries; the rest are as the first
 /// pass left them.
 let pass2 (st0 st1 st: pstate) (fs: list blk) (h n jj: nat) : prop =
-  st.avail == st0.avail /\ st.large == st0.large /\
+  st.avail == st0.avail /\ st.atail == st0.atail /\ st.large == st0.large /\
   (forall (j: nat{j < n_pages}).
      entry st.pm j == (if h <= j && j < jj then new_entry st0.pm fs h n j else entry st1.pm j))
 

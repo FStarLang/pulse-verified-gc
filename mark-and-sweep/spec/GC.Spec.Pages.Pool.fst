@@ -54,6 +54,13 @@ let avail_at (st: pstate) (c: nat) : U64.t =
 let set_avail (st: pstate) (c: nat) (v: U64.t) : Seq.seq U64.t =
   if c < Seq.length st.avail then Seq.upd st.avail c v else st.avail
 
+let set_atail (st: pstate) (c: nat) (v: U64.t) : Seq.seq U64.t =
+  if c < Seq.length st.atail then Seq.upd st.atail c v else st.atail
+
+/// The list's tail after its first page leaves: 0 when it was the only one.
+let pop_tail (st: pstate) (c: nat) (e: page_info) : Seq.seq U64.t =
+  if e.nfree = 1 && e.next = 0UL then set_atail st c 0UL else st.atail
+
 /// The slot of page `i` whose list entry is `s`.
 let slot_of (i: nat) (c: nat{c < n_cls}) (s: U64.t) : nat =
   cls_bounds c;
@@ -93,7 +100,8 @@ let pop_as (clr: bool) (g: heap) (st: pstate) (c: nat{c < n_cls}) (wz: nat{small
         let nx = hdr g (slot_obj p c k) in
         let e' = { e with free_head = nx; nfree = e.nfree - 1 } in
         let st' = { st with pm = Seq.upd st.pm p e';
-                            avail = (if e.nfree = 1 then set_avail st c e.next else st.avail) } in
+                            avail = (if e.nfree = 1 then set_avail st c e.next else st.avail);
+                            atail = pop_tail st c e } in
         PI.slot_fits p c k;
         (fill_slot_as clr g p c k wz, st', U64.uint_to_t (slot_obj p c k))
       end
@@ -117,7 +125,8 @@ let acq_entry (st: pstate) (i: nat{i < n_pages}) (c: nat{c < n_cls}) : page_info
 let acq_state (st: pstate) (i: nat{i < n_pages}) (c: nat{c < n_cls}) : pstate =
   assert (i + 1 <= heap_size);
   { st with pm = Seq.upd st.pm i (acq_entry st i c);
-            avail = set_avail st c (U64.uint_to_t (i + 1)) }
+            avail = set_avail st c (U64.uint_to_t (i + 1));
+            atail = (if avail_at st c = 0UL then set_atail st c (U64.uint_to_t (i + 1)) else st.atail) }
 
 let acquire (g: heap) (st: pstate) (i: nat{i < n_pages}) (c: nat{c < n_cls}) : GTot (heap & pstate) =
   (PI.pool_init g i c, acq_state st i c)
@@ -284,6 +293,23 @@ let fill_blocks (g: heap) (p: nat{p < n_pages}) (c: nat{c < n_cls}) (k: nat{k < 
     two_blocks g' a w (cls c - w)
 
 /// ---------------------------------------------------------------------------
+/// Chain tails
+/// ---------------------------------------------------------------------------
+
+#push-options "--fuel 2"
+let chain_tail_cons (x: nat{x < n_pages}) (ps: list nat)
+  : Lemma (chain_tail (x :: ps) == (if Nil? ps then U64.uint_to_t (x + 1) else chain_tail ps))
+  = n_pages_small ()
+#pop-options
+
+#push-options "--fuel 1"
+/// A chain is empty exactly when its head is 0.
+let chain_empty (pm: page_map) (hd: U64.t) (ps: list nat)
+  : Lemma (requires page_chain pm hd ps) (ensures Nil? ps <==> hd == 0UL)
+  = ()
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// What `pop` starts from
 /// ---------------------------------------------------------------------------
 
@@ -296,13 +322,15 @@ let pop_ctx (g: heap) (st: pstate) (c: nat{c < n_cls}) (p: nat) (k: nat) (ks ps:
   (forall (j: nat). j < n_slots c ==> (L.mem j (k :: ks) <==> slot_free g p c j)) /\
   (entry st.pm p).nfree == L.length ks + 1 /\
   page_chain st.pm (entry st.pm p).next ps /\ L.noRepeats (p :: ps) /\
-  (forall (q: nat{q < n_pages}). L.mem q (p :: ps) <==> has_free_slot st.pm c q)
+  (forall (q: nat{q < n_pages}). L.mem q (p :: ps) <==> has_free_slot st.pm c q) /\
+  Seq.length st.atail == n_cls /\ Seq.index st.atail c == chain_tail (p :: ps)
 
 #push-options "--fuel 1"
 let pop_ctx_of (g: heap) (st: pstate) (c: nat{c < n_cls}) (p: nat) (ps: list nat) (k: nat) (ks: list nat)
   : Lemma (requires pages_ok g st /\ well_formed_heap g /\ c < Seq.length st.avail /\
                     page_chain st.pm (Seq.index st.avail c) (p :: ps) /\ L.noRepeats (p :: ps) /\
                     (forall (q: nat{q < n_pages}). L.mem q (p :: ps) <==> has_free_slot st.pm c q) /\
+                    Seq.length st.atail == n_cls /\ Seq.index st.atail c == chain_tail (p :: ps) /\
                     p < n_pages /\
                     slot_chain g p c (entry st.pm p).free_head (k :: ks) /\ L.noRepeats (k :: ks) /\
                     (forall (j: nat). j < n_slots c ==> (L.mem j (k :: ks) <==> slot_free g p c j)) /\
@@ -318,7 +346,8 @@ let pop_ctx_intro (g: heap) (st: pstate) (c: nat{c < n_cls})
   = pages_ok_elim g st;
     eliminate exists (ps0: list nat).
       page_chain st.pm (Seq.index st.avail c) ps0 /\ L.noRepeats ps0 /\
-      (forall (q: nat{q < n_pages}). L.mem q ps0 <==> has_free_slot st.pm c q)
+      (forall (q: nat{q < n_pages}). L.mem q ps0 <==> has_free_slot st.pm c q) /\
+      Seq.index st.atail c == chain_tail ps0
     with begin
       match ps0 with
       | [] -> assert_norm (page_chain st.pm (Seq.index st.avail c) [] == (Seq.index st.avail c == 0UL))
@@ -353,7 +382,8 @@ let pop_entry (g: heap) (st: pstate) (c: nat{c < n_cls}) (p: nat{p < n_pages}) (
 let pop_state (g: heap) (st: pstate) (c: nat{c < n_cls}) (p: nat{p < n_pages}) (k: nat) : pstate =
   let e = entry st.pm p in
   { st with pm = Seq.upd st.pm p (pop_entry g st c p k);
-            avail = (if e.nfree = 1 then set_avail st c e.next else st.avail) }
+            avail = (if e.nfree = 1 then set_avail st c e.next else st.avail);
+            atail = pop_tail st c e }
 
 let pop_obj (p: nat{p < n_pages}) (c: nat{c < n_cls}) (k: nat{k < n_slots c}) : U64.t =
   PI.slot_fits p c k;
@@ -528,18 +558,23 @@ let pop_avail (g: heap) (st: pstate) (c: nat{c < n_cls}) (p: nat) (k: nat) (ks p
     let per (c': nat{c' < n_cls})
       : Lemma (exists (ps': list nat).
                  page_chain st'.pm (Seq.index st'.avail c') ps' /\ L.noRepeats ps' /\
-                 (forall (q: nat{q < n_pages}). L.mem q ps' <==> has_free_slot st'.pm c' q))
+                 (forall (q: nat{q < n_pages}). L.mem q ps' <==> has_free_slot st'.pm c' q) /\
+                 Seq.index st'.atail c' == chain_tail ps')
       = FStar.Classical.forall_intro (free_slot c');
         if c' = c && e.nfree = 1 then begin
           page_chain_frame st.pm st'.pm e.next ps;
+          chain_tail_cons p ps;
+          chain_empty st.pm e.next ps;
           assert (Seq.index st'.avail c == e.next)
         end else begin
           eliminate exists (ps0: list nat).
             page_chain st.pm (Seq.index st.avail c') ps0 /\ L.noRepeats ps0 /\
-            (forall (q: nat{q < n_pages}). L.mem q ps0 <==> has_free_slot st.pm c' q)
+            (forall (q: nat{q < n_pages}). L.mem q ps0 <==> has_free_slot st.pm c' q) /\
+            Seq.index st.atail c' == chain_tail ps0
           with begin
             page_chain_frame st.pm st'.pm (Seq.index st.avail c') ps0;
-            assert (Seq.index st'.avail c' == Seq.index st.avail c')
+            assert (Seq.index st'.avail c' == Seq.index st.avail c');
+            assert (Seq.index st'.atail c' == Seq.index st.atail c')
           end
         end
     in
@@ -560,9 +595,13 @@ let pop_large (g: heap) (st: pstate) (c: nat{c < n_cls}) (p: nat) (k: nat) (ks p
     pop_replaces g st c p k ks ps wz;
     large_ok_lview g st;
     swept_run_same st.pm st'.pm;
+    assert (map_ok st.pm);
+    assert ((entry st.pm p).kind == Pool c);
     let away (x: nat) : Lemma (a <= x /\ x < e ==> ~(in_swept_run st.pm x))
-      = if a <= x && x < e then
+      = if a <= x && x < e then begin
+          assert (in_page p x);
           FStar.Classical.move_requires (not_in_run st.pm p) x
+        end
     in
     FStar.Classical.forall_intro away;
     lview_away g g' a e st st' (walk g (large_head st) heap_words);
@@ -786,14 +825,18 @@ let acq_avail (g: heap) (st: pstate) (i: nat{i < n_pages}) (c: nat{c < n_cls})
     let per (c': nat{c' < n_cls})
       : Lemma (exists (ps': list nat).
                  page_chain st1.pm (Seq.index st1.avail c') ps' /\ L.noRepeats ps' /\
-                 (forall (q: nat{q < n_pages}). L.mem q ps' <==> has_free_slot st1.pm c' q))
+                 (forall (q: nat{q < n_pages}). L.mem q ps' <==> has_free_slot st1.pm c' q) /\
+                 Seq.index st1.atail c' == chain_tail ps')
       = FStar.Classical.forall_intro (free_slot c');
         eliminate exists (ps0: list nat).
           page_chain st.pm (Seq.index st.avail c') ps0 /\ L.noRepeats ps0 /\
-          (forall (q: nat{q < n_pages}). L.mem q ps0 <==> has_free_slot st.pm c' q)
+          (forall (q: nat{q < n_pages}). L.mem q ps0 <==> has_free_slot st.pm c' q) /\
+          Seq.index st.atail c' == chain_tail ps0
         with begin
           assert (not (L.mem i ps0));
           page_chain_frame st.pm st1.pm (Seq.index st.avail c') ps0;
+          chain_tail_cons i ps0;
+          chain_empty st.pm (Seq.index st.avail c') ps0;
           if c' = c then begin
             assert (page_chain st1.pm (Seq.index st1.avail c) (i :: ps0));
             assert (L.noRepeats (i :: ps0))

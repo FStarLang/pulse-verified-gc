@@ -52,6 +52,7 @@ module Mark = GC.Spec.Mark
 noeq type pstate = {
   pm: page_map;
   avail: Seq.seq U64.t;       (* per class: the first page with a free slot, as index + 1; 0 = none *)
+  atail: Seq.seq U64.t;       (* per class: the last page on that list, as index + 1; 0 = none *)
   large: FLs.fl_state;        (* #46's lists, for the large-object area *)
 }
 
@@ -134,15 +135,25 @@ let rec page_chain (pm: page_map) (hd: U64.t) (ps: list nat) : Tot prop (decreas
   | p :: ps' -> p < n_pages /\ U64.v hd == p + 1 /\ page_chain pm (entry pm p).next ps'
 #pop-options
 
+/// The last page of a chain, as index + 1; 0 for an empty one.
+#push-options "--fuel 1"
+let rec chain_tail (ps: list nat) : U64.t =
+  match ps with
+  | [] -> 0UL
+  | [p] -> if p + 1 < pow2 64 then U64.uint_to_t (p + 1) else 0UL
+  | _ :: ps' -> chain_tail ps'
+#pop-options
+
 let has_free_slot (pm: page_map) (c: nat{c < n_cls}) (p: nat{p < n_pages}) : bool =
   (entry pm p).kind = Pool c && (entry pm p).swept && (entry pm p).nfree > 0
 
 let avail_ok (st: pstate) : prop =
-  Seq.length st.avail == n_cls /\
+  Seq.length st.avail == n_cls /\ Seq.length st.atail == n_cls /\
   (forall (c: nat{c < n_cls}).
      exists (ps: list nat).
        page_chain st.pm (Seq.index st.avail c) ps /\ L.noRepeats ps /\
-       (forall (p: nat{p < n_pages}). L.mem p ps <==> has_free_slot st.pm c p))
+       (forall (p: nat{p < n_pages}). L.mem p ps <==> has_free_slot st.pm c p) /\
+       Seq.index st.atail c == chain_tail ps)
 
 /// ---------------------------------------------------------------------------
 /// L9: the large lists

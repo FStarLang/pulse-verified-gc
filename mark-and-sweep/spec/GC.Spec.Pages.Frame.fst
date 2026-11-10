@@ -222,10 +222,50 @@ let rec page_chain_frame (pm pm': page_map) (hd: U64.t) (ps: list nat)
     | p :: ps' -> page_chain_frame pm pm' (entry pm p).next ps'
 #pop-options
 
+/// The tail of a chain is its last page, whose link is 0.
+#push-options "--fuel 2"
+let rec chain_last (pm: page_map) (hd: U64.t) (ps: list nat)
+  : Lemma (requires page_chain pm hd ps)
+          (ensures (Nil? ps <==> chain_tail ps == 0UL) /\
+                   (Cons? ps ==> U64.v (chain_tail ps) >= 1 /\ U64.v (chain_tail ps) - 1 < n_pages /\
+                                 L.mem (U64.v (chain_tail ps) - 1) ps /\
+                                 (entry pm (U64.v (chain_tail ps) - 1)).next == 0UL))
+          (decreases ps)
+  = assert (n_pages <= heap_size);
+    match ps with
+    | [] -> ()
+    | [p] -> ()
+    | p :: ps' -> chain_last pm (entry pm p).next ps'
+
+#pop-options
+
+/// Page `i` linked after the tail: the chain with `i` at its end.
+#push-options "--fuel 3"
+let rec chain_snoc (pm pm': page_map) (hd: U64.t) (ps: list nat) (i: nat{i < n_pages})
+  : Lemma (requires page_chain pm hd ps /\ L.noRepeats ps /\ ~(L.mem i ps) /\
+                    (entry pm' i).next == 0UL /\
+                    (Cons? ps ==> U64.v (chain_tail ps) >= 1 /\ U64.v (chain_tail ps) - 1 < n_pages /\
+                                  (entry pm' (U64.v (chain_tail ps) - 1)).next == U64.uint_to_t (i + 1)) /\
+                    (forall (q: nat{q < n_pages}). L.mem q ps /\ U64.v (chain_tail ps) <> q + 1 ==>
+                       (entry pm' q).next == (entry pm q).next))
+          (ensures page_chain pm' (if Nil? ps then U64.uint_to_t (i + 1) else hd) (L.append ps [i]) /\
+                   chain_tail (L.append ps [i]) == U64.uint_to_t (i + 1) /\
+                   L.noRepeats (L.append ps [i]) /\
+                   (forall (q: nat). L.mem q (L.append ps [i]) <==> (L.mem q ps \/ q == i)))
+          (decreases ps)
+  = assert (n_pages <= heap_size);
+    match ps with
+    | [] -> assert (L.append ps [i] == [i])
+    | [p] -> assert (L.append ps [i] == [p; i])
+    | p :: ps' ->
+      chain_last pm (entry pm p).next ps';
+      chain_snoc pm pm' (entry pm p).next ps' i
+#pop-options
+
 /// The page lists are kept when the pages with a free slot, and their links,
 /// are.
 let avail_frame (st st': pstate)
-  : Lemma (requires avail_ok st /\ st'.avail == st.avail /\
+  : Lemma (requires avail_ok st /\ st'.avail == st.avail /\ st'.atail == st.atail /\
                     (forall (c: nat{c < n_cls}) (q: nat{q < n_pages}).
                        has_free_slot st'.pm c q == has_free_slot st.pm c q /\
                        (has_free_slot st.pm c q ==> (entry st'.pm q).next == (entry st.pm q).next)))
@@ -233,10 +273,12 @@ let avail_frame (st st': pstate)
   = let aux (c: nat{c < n_cls})
       : Lemma (exists (ps: list nat).
                  page_chain st'.pm (Seq.index st'.avail c) ps /\ L.noRepeats ps /\
-                 (forall (p: nat{p < n_pages}). L.mem p ps <==> has_free_slot st'.pm c p))
+                 (forall (p: nat{p < n_pages}). L.mem p ps <==> has_free_slot st'.pm c p) /\
+                 Seq.index st'.atail c == chain_tail ps)
       = eliminate exists (ps: list nat).
           page_chain st.pm (Seq.index st.avail c) ps /\ L.noRepeats ps /\
-          (forall (p: nat{p < n_pages}). L.mem p ps <==> has_free_slot st.pm c p)
+          (forall (p: nat{p < n_pages}). L.mem p ps <==> has_free_slot st.pm c p) /\
+          Seq.index st.atail c == chain_tail ps
         with page_chain_frame st.pm st'.pm (Seq.index st.avail c) ps
     in
     FStar.Classical.forall_intro aux

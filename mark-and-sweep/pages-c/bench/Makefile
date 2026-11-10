@@ -1,6 +1,7 @@
 # Microbenchmark of the extracted page allocator and sweep against the
-# prototype B2 (see bench.c).  `make bench` builds both and runs them
-# alternately; `make` builds only.
+# prototype B2 (see bench.c).  `make bench` builds both and runs every
+# workload in its own process, the two alternately (bench.sh), printing the
+# medians; `make` builds only.
 #
 # The prototype's sources are read from the branch sheera/alloc-pages-proto
 # (git show), so nothing of it is copied into this tree.  Both builds use the
@@ -12,7 +13,7 @@ PROTO_DIR     = generational/ocaml-integration/verified_gc/proto
 SNAP          = ../../../generational/snapshot
 CC           ?= cc
 OPT          ?= -O2 -flto
-ROUNDS       ?= 3
+ROUNDS       ?= 5
 REPS         ?= 7
 
 all: bench_proto bench_verified
@@ -33,7 +34,7 @@ bench_verified: bench.c $(VSRC) ../GC_Pages.h
 	$(CC) $(OPT) $(VINC) -Wno-everything bench.c $(VSRC) -o $@
 
 bench: all
-	@for i in $$(seq $(ROUNDS)); do ./bench_proto $(REPS); ./bench_verified $(REPS); done
+	@./bench.sh $(ROUNDS) $(REPS)
 
 clean:
 	rm -rf _proto bench_proto bench_verified

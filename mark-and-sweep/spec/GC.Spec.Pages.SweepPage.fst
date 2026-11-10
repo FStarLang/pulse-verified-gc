@@ -7,7 +7,9 @@
 ///   - a slot whose header is black holds a survivor: its header is made
 ///     white, and the rest of the slot (fields, filler) is left alone;
 ///   - any other slot becomes a free slot: a blue header of the class size,
-///     its first field linking to the free slot before it (0 for the first);
+///     its first field linking to the next free slot after it (0 for the
+///     last), so the page's list starts at its lowest free slot and runs up
+///     the page, as in the prototype's `sweep_pool`;
 ///   - a page left with no survivor becomes a free page, one blue block: its
 ///     first word, over the swept slots, becomes a blue header covering the
 ///     page.  So the sweep is one pass over the slots, as `pool_sweep` is,
@@ -62,11 +64,22 @@ let rec dead_list (g: heap) (i: nat) (c: nat{c < n_cls}) (k: nat) : Tot (list na
   else (k - 1) :: dead_list g i c (k - 1)
 #pop-options
 
-/// The head of that list.
-let hd_upto (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat) : U64.t =
-  match dead_list g i c k with
-  | [] -> 0UL
-  | j :: _ -> if j < n_slots c then (slot_link i c j <: U64.t) else 0UL
+/// The free slots from `j` on, the lowest first: the page's free-slot list
+/// after the sweep, from slot `j`.
+#push-options "--fuel 1"
+let rec dead_from (g: heap) (i: nat) (c: nat{c < n_cls}) (j: nat)
+  : Tot (list nat) (decreases (if j < n_slots c then n_slots c - j else 0))
+  = if j >= n_slots c then []
+    else if live g i c j then dead_from g i c (j + 1)
+    else j :: dead_from g i c (j + 1)
+
+/// The head of that list: the link field of the first free slot from `j` on.
+let rec nd_from (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (j: nat)
+  : Tot U64.t (decreases (if j < n_slots c then n_slots c - j else 0))
+  = if j >= n_slots c then 0UL
+    else if live g i c j then nd_from g i c (j + 1)
+    else (slot_link i c j <: U64.t)
+#pop-options
 
 /// The swept slots `0 .. k-1`.
 #push-options "--fuel 1"
@@ -78,7 +91,7 @@ let rec sw_heap (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat{k <=
       let g1 = sw_heap g i c j in
       let a = slot_hd i c j in
       if live g i c j then write_word g1 a (colorHeader (read_word g a) White)
-      else write_word (write_word g1 a (slot_hdr c)) (slot_link i c j) (hd_upto g i c j)
+      else write_word (write_word g1 a (slot_hdr c)) (slot_link i c j) (nd_from g i c (j + 1))
     end
 #pop-options
 
@@ -89,7 +102,7 @@ let page_live (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) : prop =
 /// The swept page, when it holds a survivor.
 let pool_swept (g: heap) (pm: page_map) (i: nat{i < n_pages}) (c: nat{c < n_cls}) : GTot (heap & page_info) =
   (sw_heap g i c (n_slots c),
-   { kind = Pool c; swept = true; free_head = hd_upto g i c (n_slots c);
+   { kind = Pool c; swept = true; free_head = nd_from g i c 0;
      nfree = L.length (dead_list g i c (n_slots c)); next = (entry pm i).next })
 
 /// The page given back as a free page: the swept slots, then one blue header
@@ -149,7 +162,7 @@ let rec sw_out (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat{k <= 
       if live g i c j then read_write_different g1 a x (colorHeader (read_word g a) White)
       else begin
         read_write_different g1 a x (slot_hdr c);
-        read_write_different (write_word g1 a (slot_hdr c)) (slot_link i c j) x (hd_upto g i c j)
+        read_write_different (write_word g1 a (slot_hdr c)) (slot_link i c j) x (nd_from g i c (j + 1))
       end
     end
 
@@ -166,7 +179,7 @@ let rec sw_hd (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat{k <= n
       if live g i c m then read_write_same g1 a (colorHeader (read_word g a) White)
       else begin
         read_write_same g1 a (slot_hdr c);
-        read_write_different (write_word g1 a (slot_hdr c)) (slot_link i c m) a (hd_upto g i c m)
+        read_write_different (write_word g1 a (slot_hdr c)) (slot_link i c m) a (nd_from g i c (m + 1))
       end
     end else begin
       sw_hd g i c m j;
@@ -174,28 +187,28 @@ let rec sw_hd (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat{k <= n
       if live g i c m then read_write_different g1 a (slot_hd i c j) (colorHeader (read_word g a) White)
       else begin
         read_write_different g1 a (slot_hd i c j) (slot_hdr c);
-        read_write_different (write_word g1 a (slot_hdr c)) (slot_link i c m) (slot_hd i c j) (hd_upto g i c m)
+        read_write_different (write_word g1 a (slot_hdr c)) (slot_link i c m) (slot_hd i c j) (nd_from g i c (m + 1))
       end
     end
 
 /// The link of a freed slot: the free slot before it.
 let rec sw_link (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat{k <= n_slots c}) (j: nat{j < k})
   : Lemma (requires not (live g i c j))
-          (ensures read_word (sw_heap g i c k) (slot_link i c j) == hd_upto g i c j)
+          (ensures read_word (sw_heap g i c k) (slot_link i c j) == nd_from g i c (j + 1))
           (decreases k)
   = let m = k - 1 in
     let g1 = sw_heap g i c m in
     let a = slot_hd i c m in
     slot_fits i c m;
     if j = m then
-      read_write_same (write_word g1 a (slot_hdr c)) (slot_link i c m) (hd_upto g i c m)
+      read_write_same (write_word g1 a (slot_hdr c)) (slot_link i c m) (nd_from g i c (m + 1))
     else begin
       sw_link g i c m j;
       slot_words i c j m;
       if live g i c m then read_write_different g1 a (slot_link i c j) (colorHeader (read_word g a) White)
       else begin
         read_write_different g1 a (slot_link i c j) (slot_hdr c);
-        read_write_different (write_word g1 a (slot_hdr c)) (slot_link i c m) (slot_link i c j) (hd_upto g i c m)
+        read_write_different (write_word g1 a (slot_hdr c)) (slot_link i c m) (slot_link i c j) (nd_from g i c (m + 1))
       end
     end
 
@@ -219,7 +232,7 @@ let rec sw_rest (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat{k <=
       if live g i c m then read_write_different g1 a x (colorHeader (read_word g a) White)
       else begin
         read_write_different g1 a x (slot_hdr c);
-        read_write_different (write_word g1 a (slot_hdr c)) (slot_link i c m) x (hd_upto g i c m)
+        read_write_different (write_word g1 a (slot_hdr c)) (slot_link i c m) x (nd_from g i c (m + 1))
       end
     end
 #pop-options
@@ -233,12 +246,29 @@ let rec dead_list_mem (g: heap) (i: nat) (c: nat{c < n_cls}) (k: nat) (j: nat)
   : Lemma (ensures L.mem j (dead_list g i c k) <==> (j < k /\ not (live g i c j))) (decreases k)
   = if k > 0 then dead_list_mem g i c (k - 1) j
 
-let rec dead_list_norep (g: heap) (i: nat) (c: nat{c < n_cls}) (k: nat)
-  : Lemma (ensures L.noRepeats (dead_list g i c k)) (decreases k)
-  = if k > 0 then begin
-      dead_list_norep g i c (k - 1);
-      dead_list_mem g i c (k - 1) (k - 1)
+let rec dead_from_mem (g: heap) (i: nat) (c: nat{c < n_cls}) (j: nat) (x: nat)
+  : Lemma (ensures L.mem x (dead_from g i c j) <==> (j <= x /\ x < n_slots c /\ not (live g i c x)))
+          (decreases (if j < n_slots c then n_slots c - j else 0))
+  = if j < n_slots c then dead_from_mem g i c (j + 1) x
+
+let rec dead_from_norep (g: heap) (i: nat) (c: nat{c < n_cls}) (j: nat)
+  : Lemma (ensures L.noRepeats (dead_from g i c j))
+          (decreases (if j < n_slots c then n_slots c - j else 0))
+  = if j < n_slots c then begin
+      dead_from_norep g i c (j + 1);
+      dead_from_mem g i c (j + 1) j
     end
+
+/// The sweep counts the free slots below `k`; the list holds the rest.
+let rec dead_len (g: heap) (i: nat) (c: nat{c < n_cls}) (k: nat)
+  : Lemma (requires k <= n_slots c)
+          (ensures L.length (dead_list g i c k) + L.length (dead_from g i c k) ==
+                   L.length (dead_from g i c 0))
+          (decreases k)
+  = if k > 0 then dead_len g i c (k - 1)
+
+let dead_from_end (g: heap) (i: nat) (c: nat{c < n_cls})
+  : Lemma (dead_from g i c (n_slots c) == []) = ()
 #pop-options
 
 /// A slot the sweep freed is a free slot of the swept heap.
@@ -251,23 +281,23 @@ let sw_free (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (j: nat{j < n_sl
     blue_hdr_spec (cls c);
     assert (mk_hp_addr (slot_base i c j) == slot_hd i c j)
 
-/// The list from the head after slot `k - 1` holds the free slots below `k`.
+/// The list from the first free slot from `j` on holds the free slots from
+/// `j` on, in order.
 #push-options "--fuel 2"
-let rec dead_chain (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat{k <= n_slots c})
-  : Lemma (ensures slot_chain (sw_heap g i c (n_slots c)) i c (hd_upto g i c k) (dead_list g i c k))
-          (decreases k)
+let rec dead_chain (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (j: nat{j <= n_slots c})
+  : Lemma (ensures slot_chain (sw_heap g i c (n_slots c)) i c (nd_from g i c j) (dead_from g i c j))
+          (decreases (n_slots c - j))
   = let g' = sw_heap g i c (n_slots c) in
-    if k = 0 then ()
+    if j = n_slots c then ()
     else begin
-      let j = k - 1 in
-      dead_chain g i c j;
+      dead_chain g i c (j + 1);
       if live g i c j then ()
       else begin
         sw_free g i c j;
         sw_link g i c (n_slots c) j;
         slot_fits i c j;
         assert (mk_hp_addr (slot_obj i c j) == slot_link i c j);
-        assert (hdr g' (slot_obj i c j) == hd_upto g i c j)
+        assert (hdr g' (slot_obj i c j) == nd_from g i c (j + 1))
       end
     end
 #pop-options
@@ -380,10 +410,18 @@ let pool_swept_ok (g: heap) (pm: page_map) (i: nat{i < n_pages}) (c: nat{c < n_c
     slots_fill_page i c;
     if tail_words c > 0 then assert (hdr g' (slots_end i c) == hdr g (slots_end i c));
     assert (pool_shape g' i c);
-    dead_chain g i c (n_slots c);
-    dead_list_norep g i c (n_slots c);
-    FStar.Classical.forall_intro (dead_list_mem g i c (n_slots c));
+    dead_chain g i c 0;
+    dead_from_norep g i c 0;
+    FStar.Classical.forall_intro (dead_from_mem g i c 0);
+    dead_len g i c (n_slots c);
+    dead_from_end g i c;
+    let ks = dead_from g i c 0 in
+    assert_norm (L.length ([] <: list nat) == 0);
     assert (entry pm' i == e);
+    assert (e.free_head == nd_from g i c 0);
+    assert (e.nfree == L.length ks);
+    assert (forall (k: nat). k < n_slots c ==> (L.mem k ks <==> slot_free g' i c k));
+    assert (slot_chain g' i c (entry pm' i).free_head ks /\ L.noRepeats ks);
     assert (pool_list_ok g' pm' i);
     assert (pool_white g' pm' i)
 

@@ -56,7 +56,8 @@ module ISR = GC.Impl.Pages.SweepRun
 /// ---------------------------------------------------------------------------
 
 let start_eq (st: pstate)
-  : Lemma (({ ({ st with pm = unswept_map st.pm }) with avail = Seq.create n_cls 0UL; large = FLs.fls_empty })
+  : Lemma (({ ({ st with pm = unswept_map st.pm }) with avail = Seq.create n_cls 0UL;
+                                                      atail = Seq.create n_cls 0UL; large = FLs.fls_empty })
            == SSt.start_sweep st)
   = let aux (i: nat{i < n_pages}) : Lemma (Seq.index (unswept_map st.pm) i == Seq.index (SSt.clear_map st.pm) i)
       = SSt.clear_entry st.pm i
@@ -71,7 +72,8 @@ fn start_sweep (t: pstate_t) (#st: erased pstate)
   start_epoch t;
   clear_lists t;
   start_eq st;
-  rewrite (pages_st t ({ ({ reveal st with pm = unswept_map st.pm }) with avail = Seq.create n_cls 0UL; large = FLs.fls_empty }))
+  rewrite (pages_st t ({ ({ reveal st with pm = unswept_map st.pm }) with avail = Seq.create n_cls 0UL;
+                                                                     atail = Seq.create n_cls 0UL; large = FLs.fls_empty }))
        as (pages_st t (SSt.start_sweep st))
 }
 
@@ -117,9 +119,10 @@ let step_other (g: Base.heap) (st: pstate) (p: nat{p < n_pages})
           (ensures SA.step g st p == (g, st))
   = ()
 
-/// The entries from `p` on are those the sweep started with.
+/// The pages from `p` on are of the kinds the sweep started with.  (A pool
+/// step may set the link of a page anywhere on its class's list.)
 let ahead (pm0 pm: page_map) (p: nat) : prop =
-  forall (j: nat{j < n_pages}). j >= p ==> entry pm j == entry pm0 j
+  forall (j: nat{j < n_pages}). j >= p ==> (entry pm j).kind == (entry pm0 j).kind
 
 /// A run the sweep reaches has its run pages.
 let run_reached (pm0 pm: page_map) (p: nat{p < n_pages}) (n: pos)
@@ -129,8 +132,9 @@ let run_reached (pm0 pm: page_map) (p: nat{p < n_pages}) (n: pos)
 
 /// Each step changes only its own unit's entries.
 let pool_frame (st: pstate) (p: nat{p < n_pages}) (e: page_info) (j: nat{j < n_pages})
-  : Lemma (requires j > p) (ensures entry (SS.push_avail st p e).pm j == entry st.pm j)
-  = ()
+  : Lemma (requires j > p) (ensures (entry (SS.push_avail st p e).pm j).kind == (entry st.pm j).kind)
+  = SS.push_entry st p e;
+    SS.push_frame st p e
 
 let run_frame (pm: page_map) (fs: list GC.Spec.Pages.Blk.blk) (h n: nat) (j: nat{j < n_pages})
   : Lemma (requires j >= h + n) (ensures entry (RM.new_map pm fs h n) j == entry pm j)

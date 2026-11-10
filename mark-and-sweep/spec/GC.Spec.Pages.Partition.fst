@@ -168,6 +168,9 @@ let total_step (g: heap) (objs: Seq.seq obj_addr)
       (if Seq.length objs = 0 then 0
        else whsize g (Seq.head objs) + total_whsize g (Seq.tail objs)))
 
+/// `s + (w + t) * 8` split, in a context of its own.
+let add_mul8 (s w t: nat) : Lemma (s + (w + t) * 8 == (s + w * 8) + t * 8) = ()
+
 /// The blocks of the walk from `start` cover exactly up to its end
 /// (`GC.Spec.Partition.walk_is_tiled`, through `WE.walk_end_step`).
 #push-options "--fuel 1"
@@ -198,7 +201,7 @@ let rec walk_tiled (g: heap) (start: hp_addr)
         walk_tiled g nx;
         total_step g (objects start g);
         assert (total_whsize g (objects start g) == U64.v wz + 1 + t);
-        FStar.Math.Lemmas.distributivity_add_left (U64.v wz + 1) t 8
+        add_mul8 (U64.v start) (U64.v wz + 1) t
       end
     end
 #pop-options

@@ -175,7 +175,11 @@ let in_unit_lt (g: heap) (pm0 pm: page_map) (h: nat)
       = walk_pages_reached g pm i;
         R.steps_to_det g (U64.v zero_addr) (page_base i) h
     in
-    if walk_page pm0 j then found j
+    if walk_page pm0 j then begin
+      assert (span pm0 j >= 1);
+      page_base_mono (j + 1) (j + span pm0 j);
+      found j
+    end
     else begin
       assert (cont_ok pm0 j);
       eliminate exists (u: nat{u < n_pages}). u < j /\ in_run pm0 u j

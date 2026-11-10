@@ -83,6 +83,7 @@ let init_heap (g: heap) : GTot heap =
 let init_state : pstate = {
   pm = all_free;
   avail = Seq.create n_cls 0UL;
+  atail = Seq.create n_cls 0UL;
   large = FLs.fls_empty;
 }
 
@@ -271,7 +272,8 @@ let init_avail_ok () : Lemma (avail_ok init_state)
   = let aux (c: nat{c < n_cls})
       : Lemma (exists (ps: list nat).
                  page_chain all_free (Seq.index init_state.avail c) ps /\ L.noRepeats ps /\
-                 (forall (p: nat{p < n_pages}). L.mem p ps <==> has_free_slot all_free c p))
+                 (forall (p: nat{p < n_pages}). L.mem p ps <==> has_free_slot all_free c p) /\
+                 Seq.index init_state.atail c == chain_tail ps)
       = assert (page_chain all_free (Seq.index init_state.avail c) []);
         assert (L.noRepeats #nat [])
     in
