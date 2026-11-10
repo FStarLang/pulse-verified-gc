@@ -20,8 +20,11 @@
  *   reallocS as realloc, from a heap filled with small objects only, so
  *            that both allocators start from pool pages alone
  *
- * Usage: bench_proto|bench_verified [reps]   prints one line per workload:
- *   <workload> <median> <unit>
+ * Usage: bench_proto|bench_verified [reps [workload]]   prints one line per
+ * workload run: <workload> <median> <unit>.  With a workload name (small,
+ * mixed, large, sweep, realloc, reallocS) only that one runs, so that each
+ * starts in a fresh process; `bench.sh` does that for every workload,
+ * alternating the two binaries.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,12 +70,7 @@ static void a_init(void) {
     heap.size = BYTES;
     if (!st.tpm) {
         st.tpm = calloc(NPAGES, sizeof(prec));
-        st.tmeta = calloc(2, sizeof(uint64_t));
-        st.tcof = calloc(129, sizeof(uint64_t));
-        st.tcls = calloc(31, sizeof(uint64_t));
-        st.tns = calloc(31, sizeof(uint64_t));
-        st.tavail = calloc(64, sizeof(uint64_t));
-        st.tlarge = calloc(17, sizeof(uint64_t));
+        st.tw = calloc(1024, sizeof(uint64_t));
     }
     init(heap, st);
 }
@@ -147,6 +145,8 @@ static uint64_t pages_used;   /* rough: words requested / page words */
 
 int main(int argc, char **argv) {
     int reps = argc > 1 ? atoi(argv[1]) : 7;
+    const char *only = argc > 2 ? argv[2] : NULL;
+#define RUN(name) (!only || strcmp(only, name) == 0)
     mem = aligned_alloc(PB, BYTES + PB);
     req = malloc(sizeof(uint32_t) * MAXN);
     objs = malloc(sizeof(uint64_t) * MAXN);
@@ -157,6 +157,7 @@ int main(int argc, char **argv) {
     uint64_t *t = malloc(sizeof(uint64_t) * reps);
 
     for (int k = 0; k < 3; k++) {
+        if (!RUN(names[k])) continue;
         make_reqs(k, target);
         for (int r = 0; r < reps; r++) { a_init(); t[r] = run_allocs(nreq); }
         qsort(t, reps, sizeof(uint64_t), cmp_u64);
@@ -164,7 +165,7 @@ int main(int argc, char **argv) {
     }
 
     unsigned pcts[] = {10, 50, 90};
-    for (int s = 0; s < 3; s++) {
+    for (int s = 0; s < 3 && RUN("sweep"); s++) {
         make_reqs(1, target);
         pages_used = target / 4096;
         for (int r = 0; r < reps; r++) {
@@ -181,7 +182,7 @@ int main(int argc, char **argv) {
     }
 
     /* realloc: after a 50% sweep, allocate small objects again */
-    {
+    if (RUN("realloc")) {
         make_reqs(1, target);
         size_t n1 = nreq;
         for (int r = 0; r < reps; r++) {
@@ -197,7 +198,7 @@ int main(int argc, char **argv) {
         printf("realloc  %8.2f ns/alloc  (%s, %zu allocs)\n", (double)t[reps / 2] / nreq, a_name, nreq);
     }
     /* reallocS: the same from a heap of small objects only */
-    {
+    if (RUN("reallocS")) {
         make_reqs(0, target);
         size_t n1 = nreq;
         for (int r = 0; r < reps; r++) {

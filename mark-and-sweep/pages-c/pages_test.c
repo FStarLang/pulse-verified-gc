@@ -12,7 +12,8 @@
  *     block listed in front of list 0 when it has at least lg_min words;
  *   - when nothing fits, nothing changes;
  *   - the sweep whitens survivors, links each pool page's dead slots from the
- *     last one down, gives back pool pages with no survivor and whole free
+ *     lowest one up, appends each swept page with a free slot to its class's
+ *     list (address order, with the list's tail kept), gives back pool pages with no survivor and whole free
  *     pages of runs, merges dead stretches of runs, and lists every merged
  *     block of at least lg_min words, in address order, in front of list 0.
  */
@@ -34,10 +35,17 @@
 static uint8_t *mem;
 static heap_t heap;
 static prec pm[MAXP];          /* stored records: the epoch of the last sweep */
-static uint64_t meta[2];       /* the free-page hint, the sweep epoch */
-static uint64_t tcof[129], tcls[NCLS], tns[NCLS];   /* the class tables, filled by init */
-static uint64_t avail[NCLS];
-static uint64_t large[NL];
+/* The word array (State.tw): avail, atail, the large lists, the hint and the
+ * epoch, then the class tables, which init fills. */
+#define O_AT NCLS
+#define O_LG (2 * NCLS)
+#define O_MT (2 * NCLS + NL)
+#define W_LEN (O_MT + 2 + 129 + 2 * NCLS)
+static uint64_t tw[W_LEN];
+#define avail (tw)
+#define atail (tw + O_AT)
+#define large (tw + O_LG)
+#define meta (tw + O_MT)
 static pstate_t st;
 static uint64_t np;
 static int failures, checks;
@@ -95,15 +103,15 @@ static void fresh(uint64_t n) {
     heap.size = (size_t)heap_size_u64;
     for (int i = 0; i < MAXP; i++) pm[i] = (prec){ .pcode = HEAD, .parg = 7, .sep = 99, .pfree_head = 1, .pnfree = 2, .pnext = 3 };
     meta[0] = 5; meta[1] = 0;
-    for (int c = 0; c < NCLS; c++) avail[c] = 5;
+    for (int c = 0; c < NCLS; c++) avail[c] = 5, atail[c] = 6;
     for (int k = 0; k < NL; k++) large[k] = 9;
-    st.tpm = pm; st.tavail = avail; st.tlarge = large; st.tmeta = meta; st.tcof = tcof; st.tcls = tcls; st.tns = tns;
+    st.tpm = pm; st.tw = tw;
     init(heap, st);
     for (uint64_t i = 0; i < n; i++) {
         CHECK("init", rd(pg(i)) == hdr(PW - 1, BLUE));
         CHECK("init", same_rec(V(i), rec(FREE, 0, true, 0, 0, 0)));
     }
-    for (int c = 0; c < NCLS; c++) CHECK("init", avail[c] == 0);
+    for (int c = 0; c < NCLS; c++) CHECK("init", avail[c] == 0 && atail[c] == 0);
     for (int k = 0; k < NL; k++) CHECK("init", large[k] == 0);
     memset(mem, 0, (size_t)(MAXP * PB));
     for (uint64_t i = 0; i < n; i++) wr(pg(i), hdr(PW - 1, BLUE));
@@ -118,7 +126,7 @@ static void test_init_tail(void) {
     memset(mem, 0xAB, (size_t)(MAXP * PB));
     heap.data = mem;
     heap.size = (size_t)heap_size_u64;
-    st.tpm = pm; st.tavail = avail; st.tlarge = large; st.tmeta = meta; st.tcof = tcof; st.tcls = tcls; st.tns = tns;
+    st.tpm = pm; st.tw = tw;
     init(heap, st);
     CHECK("init tail", rd(0) == hdr(PW - 1, BLUE) && rd(PB) == hdr(PW - 1, BLUE));
     CHECK("init tail", rd(2 * PB) == hdr(2, BLUE));
@@ -277,12 +285,12 @@ static void test_sweep(void) {
     sweep(heap, st);
 
     /* page 0: slot 0 white; slots 1..2047 free, each linked to the one
-     * before it, slot 1 to nothing; the list head is the last slot */
+     * after it, the last to nothing; the list head is slot 1 */
     CHECK("pool", rd(pg(0)) == hdr(1, WHITE));
-    CHECK("pool", rd(16) == hdr(1, BLUE) && rd(24) == 0);
-    CHECK("pool", rd(32) == hdr(1, BLUE) && rd(40) == 24);
-    CHECK("pool", rd(pg(1) - 16) == hdr(1, BLUE) && rd(pg(1) - 8) == pg(1) - 32 + 8);
-    CHECK("pool", same_rec(V(0), rec(POOL, 0, true, pg(1) - 8, 2047, 0)));
+    CHECK("pool", rd(16) == hdr(1, BLUE) && rd(24) == 40);
+    CHECK("pool", rd(32) == hdr(1, BLUE) && rd(40) == 56);
+    CHECK("pool", rd(pg(1) - 16) == hdr(1, BLUE) && rd(pg(1) - 8) == 0);
+    CHECK("pool", same_rec(V(0), rec(POOL, 0, true, 24, 2047, 0)));
     CHECK("pool", avail[0] == 1);
     for (int c = 1; c < NCLS; c++) CHECK("pool", avail[c] == 0);
     /* page 1: given back */
@@ -326,14 +334,38 @@ static void test_sweep_then_alloc(void) {
     { int col[] = { WHITE, BLACK }; pool_page(0, 2, col); }
     { uint64_t w[] = { PW }; int col[] = { WHITE }; run_pages(1, 1, 1, w, col); }
     sweep(heap, st);
-    /* slot 0 is the only free slot before slot 1; the list head is the last */
-    CHECK("cycle sweep", same_rec(V(0), rec(POOL, 0, true, pg(1) - 8, 2047, 0)));
+    /* slot 0 is free and comes first; it links to slot 2, past the survivor */
+    CHECK("cycle sweep", same_rec(V(0), rec(POOL, 0, true, 8, 2047, 0)) && rd(8) == 40);
     CHECK("cycle sweep", V(1).code == FREE && large[0] == 0);
     uint64_t r = alloc(heap, st, 1, White);
-    CHECK("cycle alloc", r == pg(1) - 8 && rd(pg(1) - 16) == hdr(1, WHITE));
-    CHECK("cycle alloc", V(0).free_head == pg(1) - 24 && V(0).nfree == 2046);
+    CHECK("cycle alloc", r == 8 && rd(0) == hdr(1, WHITE));
+    CHECK("cycle alloc", V(0).free_head == 40 && V(0).nfree == 2046);
     r = alloc(heap, st, 1000, White);
     CHECK("cycle alloc", r == pg(1) + 8 && same_rec(V(1), rec(HEAD, 1, true, 0, 0, 0)));
+}
+
+/* Pages join their class's list in address order: the sweep appends at the
+ * tail, and allocation then takes the lowest page first.  A page that fills
+ * up leaves the front; the last one leaving empties the tail too. */
+static void test_list_order(void) {
+    fresh(3);
+    { int col[] = { BLACK }; pool_page(0, 1, col); }
+    { int col[] = { BLACK }; pool_page(1, 1, col); }
+    { int col[] = { BLACK }; pool_page(2, 1, col); }
+    sweep(heap, st);
+    CHECK("order", avail[0] == 1 && atail[0] == 3);
+    CHECK("order", V(0).next == 2 && V(1).next == 3 && V(2).next == 0);
+    CHECK("order", V(0).free_head == 24 && V(0).nfree == 2047);
+    uint64_t r = alloc(heap, st, 1, White);
+    CHECK("order alloc", r == 24 && V(0).free_head == 40);
+    /* fill page 0: it leaves the front, the tail stays */
+    for (int k = 1; k < 2047; k++) alloc(heap, st, 1, White);
+    CHECK("order fill", avail[0] == 2 && atail[0] == 3 && V(0).nfree == 0);
+    r = alloc(heap, st, 1, White);
+    CHECK("order next page", r == pg(1) + 24);
+    /* fill pages 1 and 2: the list and its tail are empty */
+    for (int k = 1; k < 2 * 2047; k++) alloc(heap, st, 1, White);
+    CHECK("order empty", avail[0] == 0 && atail[0] == 0);
 }
 
 int main(void) {
@@ -345,6 +377,7 @@ int main(void) {
     test_two_pages();
     test_sweep();
     test_sweep_then_alloc();
+    test_list_order();
     free(mem);
     if (failures) { printf("pages: %d of %d checks FAILED\n", failures, checks); return 1; }
     printf("pages: all %d checks passed\n", checks);

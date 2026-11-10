@@ -605,7 +605,7 @@ fn pass2 (t: pstate_t) (h n: U64.t) (#st0 #st1: erased pstate) (fs: erased (list
                  contig fs (page_base (U64.v h)) a /\ a <= page_base (U64.v h + U64.v n))
   ensures exists* st. pages_st t st **
           pure (st.pm == RM.new_map st0.pm fs (U64.v h) (U64.v n) /\
-                st.avail == st0.avail /\ st.large == st0.large)
+                st.avail == st0.avail /\ st.atail == st0.atail /\ st.large == st0.large)
 {
   RML.pass2_start st0 st1 fs (U64.v h) (U64.v n);
   let lim = U64.add h n;
@@ -652,7 +652,7 @@ fn pass2 (t: pstate_t) (h n: U64.t) (#st0 #st1: erased pstate) (fs: erased (list
 /// ---------------------------------------------------------------------------
 
 let run_state_eq (st0 st: pstate) (pm': page_map) (fp': U64.t)
-  : Lemma (requires st.pm == pm' /\ st.avail == st0.avail /\ st.large == st0.large)
+  : Lemma (requires st.pm == pm' /\ st.avail == st0.avail /\ st.atail == st0.atail /\ st.large == st0.large)
           (ensures set_lhead st fp' == SS.run_state st0 pm' fp')
   = ()
 

@@ -59,55 +59,147 @@ let page_id (i: nat{i < n_pages}) : U64.t =
   FStar.Math.Lemmas.pow2_lt_compat 64 57;
   U64.uint_to_t (i + 1)
 
-/// Page `i` is swept into entry `e`; if it is a pool page with a free slot,
-/// it goes in front of its class's list.
-let push_avail (st: pstate) (i: nat{i < n_pages}) (e: page_info) : pstate =
+/// Page `i` is swept into entry `e`.  If it is a pool page with a free slot,
+/// it goes at the end of its class's list, so that the list stays in the
+/// order the sweep visits pages, address order, as the prototype's
+/// `av_append`.  In two parts: `push0` stores the entry with link 0 and makes
+/// the page the list's tail (and its head, when the list was empty); the old
+/// tail, if any, then links to it (`old_tail`, `set_next`).
+let push0 (st: pstate) (i: nat{i < n_pages}) (e: page_info) : pstate =
   match e.kind with
   | Pool c ->
-    if e.nfree > 0 && Seq.length st.avail = n_cls then
-      { st with pm = Seq.upd st.pm i ({ e with next = Seq.index st.avail c });
-                avail = Seq.upd st.avail c (page_id i) }
+    if e.nfree > 0 && Seq.length st.avail = n_cls && Seq.length st.atail = n_cls then
+      { st with pm = Seq.upd st.pm i ({ e with next = 0UL });
+                avail = (if Seq.index st.atail c = 0UL then Seq.upd st.avail c (page_id i) else st.avail);
+                atail = Seq.upd st.atail c (page_id i) }
     else { st with pm = Seq.upd st.pm i e }
   | _ -> { st with pm = Seq.upd st.pm i e }
 
+/// The old tail of the list page `i` joins.
+let old_tail (st: pstate) (i: nat{i < n_pages}) (e: page_info) : option (q: nat{q < n_pages}) =
+  match e.kind with
+  | Pool c ->
+    if e.nfree > 0 && Seq.length st.avail = n_cls && Seq.length st.atail = n_cls then begin
+      let t = Seq.index st.atail c in
+      if t = 0UL || U64.v t - 1 >= n_pages || U64.v t - 1 = i then None else Some (U64.v t - 1)
+    end
+    else None
+  | _ -> None
+
+/// Page `q`'s link set to `v`.
+let set_next (pm: page_map) (q: nat{q < n_pages}) (v: U64.t) : page_map =
+  Seq.upd pm q ({ entry pm q with next = v })
+
+let push_avail (st: pstate) (i: nat{i < n_pages}) (e: page_info) : pstate =
+  let st1 = push0 st i e in
+  match old_tail st i e with
+  | None -> st1
+  | Some q -> { st1 with pm = set_next st1.pm q (page_id i) }
+
+/// The entries `push0` leaves.
 let push_entry (st: pstate) (i: nat{i < n_pages}) (e: page_info)
-  : Lemma (let st' = push_avail st i e in
+  : Lemma (let st' = push0 st i e in
            st'.large == st.large /\
            (entry st'.pm i).kind == e.kind /\ (entry st'.pm i).swept == e.swept /\
            (entry st'.pm i).free_head == e.free_head /\ (entry st'.pm i).nfree == e.nfree /\
            (forall (j: nat{j < n_pages}). j <> i ==> entry st'.pm j == entry st.pm j))
   = ()
 
-#push-options "--fuel 1"
+/// Two entries that differ at most in their link.
+let same_but_next (e e': page_info) : prop =
+  e'.kind == e.kind /\ e'.swept == e.swept /\ e'.free_head == e.free_head /\ e'.nfree == e.nfree
+
+/// The entries `push_avail` leaves: page `i`'s as `push0` leaves it, the old
+/// tail's with a new link, the others as they were.
+let push_frame (st: pstate) (i: nat{i < n_pages}) (e: page_info)
+  : Lemma (let st1 = push0 st i e in
+           let st' = push_avail st i e in
+           st'.large == st.large /\ st'.avail == st1.avail /\ st'.atail == st1.atail /\
+           entry st'.pm i == entry st1.pm i /\
+           (forall (j: nat{j < n_pages}). same_but_next (entry st1.pm j) (entry st'.pm j)) /\
+           (forall (j: nat{j < n_pages}). (Some? (old_tail st i e) ==> j <> Some?.v (old_tail st i e)) ==>
+              entry st'.pm j == entry st1.pm j))
+  = push_entry st i e
+
+/// The old tail was on the list: a swept pool page of the class with a free
+/// slot.
+let old_tail_listed (st: pstate) (i: nat{i < n_pages}) (e: page_info)
+  : Lemma (requires avail_ok st /\ Some? (old_tail st i e))
+          (ensures Pool? e.kind /\ has_free_slot st.pm (Pool?.c e.kind) (Some?.v (old_tail st i e)))
+  = let Pool c = e.kind in
+    eliminate exists (ps: list nat).
+      page_chain st.pm (Seq.index st.avail c) ps /\ L.noRepeats ps /\
+      (forall (p: nat{p < n_pages}). L.mem p ps <==> has_free_slot st.pm c p) /\
+      Seq.index st.atail c == chain_tail ps
+    with chain_last st.pm (Seq.index st.avail c) ps
+
 /// **The push lemma.**  Page `i`, with no free slot listed before, swept
-/// into entry `e`: the class lists stay exact.
+/// into entry `e`: the class lists stay exact, and in the order pages join
+/// them.
 let push_ok (st: pstate) (i: nat{i < n_pages}) (e: page_info)
   : Lemma (requires avail_ok st /\ (forall (c: nat{c < n_cls}). not (has_free_slot st.pm c i)) /\
                     e.swept == true)
           (ensures avail_ok (push_avail st i e))
-  = let st' = push_avail st i e in
-    push_entry st i e;
+  = let st1 = push0 st i e in
+    let st' = push_avail st i e in
+    push_frame st i e;
+    if Some? (old_tail st i e) then old_tail_listed st i e;
+    let hfs (d: nat{d < n_cls}) (q: nat{q < n_pages})
+      : Lemma (has_free_slot st'.pm d q ==
+               (if q = i then (Pool? e.kind && Pool?.c e.kind = d && e.nfree > 0) else has_free_slot st.pm d q))
+      = ()
+    in
     let per (d: nat{d < n_cls})
       : Lemma (exists (ps: list nat).
                  page_chain st'.pm (Seq.index st'.avail d) ps /\ L.noRepeats ps /\
-                 (forall (p: nat{p < n_pages}). L.mem p ps <==> has_free_slot st'.pm d p))
-      = eliminate exists (ps: list nat).
+                 (forall (p: nat{p < n_pages}). L.mem p ps <==> has_free_slot st'.pm d p) /\
+                 Seq.index st'.atail d == chain_tail ps)
+      = FStar.Classical.forall_intro (hfs d);
+        eliminate exists (ps: list nat).
           page_chain st.pm (Seq.index st.avail d) ps /\ L.noRepeats ps /\
-          (forall (p: nat{p < n_pages}). L.mem p ps <==> has_free_slot st.pm d p)
+          (forall (p: nat{p < n_pages}). L.mem p ps <==> has_free_slot st.pm d p) /\
+          Seq.index st.atail d == chain_tail ps
         with begin
           assert (~(L.mem i ps));
-          page_chain_frame st.pm st'.pm (Seq.index st.avail d) ps;
+          chain_last st.pm (Seq.index st.avail d) ps;
           match e.kind with
           | Pool c ->
             if e.nfree > 0 && c = d then begin
-              assert (Seq.index st'.avail d == page_id i);
-              assert (page_chain st'.pm (Seq.index st'.avail d) (i :: ps))
+              n_pages_small ();
+              FStar.Math.Lemmas.pow2_lt_compat 64 57;
+              chain_snoc st.pm st'.pm (Seq.index st.avail d) ps i;
+              assert (L.noRepeats (L.append ps [i]))
+            end else begin
+              let nexts (q: nat{q < n_pages}) : Lemma (L.mem q ps ==> (entry st'.pm q).next == (entry st.pm q).next)
+                = if L.mem q ps && q <> i then begin
+                    if Some? (old_tail st i e) && q = Some?.v (old_tail st i e) then
+                      assert (has_free_slot st.pm c q /\ has_free_slot st.pm d q)
+                  end
+              in
+              FStar.Classical.forall_intro nexts;
+              page_chain_frame st.pm st'.pm (Seq.index st.avail d) ps
             end
-          | _ -> ()
+          | _ -> page_chain_frame st.pm st'.pm (Seq.index st.avail d) ps
         end
     in
     FStar.Classical.forall_intro per
-#pop-options
+
+/// A link set on a pool page keeps every clause that does not read links.
+let relink_ok (g: heap) (st: pstate) (q: nat{q < n_pages}) (v: U64.t) (cs: list obj_addr)
+  : Lemma (requires Pool? (entry st.pm q).kind)
+          (ensures (let st' = { st with pm = set_next st.pm q v } in
+                    (map_ok st.pm ==> map_ok st'.pm) /\
+                    (forall (i: nat{i < n_pages}). page_local g st.pm i ==> page_local g st'.pm i) /\
+                    (shape_ok g st.pm ==> shape_ok g st'.pm) /\
+                    (forall (a: nat). in_swept_run st'.pm a <==> in_swept_run st.pm a) /\
+                    (lview g st cs ==> lview g st' cs)))
+  = let st' = { st with pm = set_next st.pm q v } in
+    FStar.Classical.move_requires (GC.Spec.Pages.Step.map_ok_same_kinds st.pm) st'.pm;
+    GC.Spec.Pages.Step.swept_run_same st.pm st'.pm;
+    let loc (i: nat{i < n_pages}) : Lemma (page_local g st.pm i ==> page_local g st'.pm i)
+      = ()
+    in
+    FStar.Classical.forall_intro loc
 
 /// A pool page swept into a pool page or a free page keeps the map well
 /// formed.
@@ -500,13 +592,13 @@ let pool_own (g': heap) (pm1 pm2: page_map) (p: nat{p < n_pages})
 /// What the page sweep leaves of the page itself.
 let pool_own_of (g g': heap) (st: pstate) (p: nat{p < n_pages}) (c: nat{c < n_cls}) (e: page_info)
   : Lemma (requires marked_pool_page g st.pm p c /\ sweep_page_ok g st.pm p c g' e)
-          (ensures page_local g' (push_avail st p e).pm p /\ e.swept == true /\
+          (ensures page_local g' (push0 st p e).pm p /\ e.swept == true /\
                    (Pool? e.kind \/ e.kind == Free) /\
                    (forall (x: hp_addr). U64.v x < page_base p \/ U64.v x >= page_base (p + 1) ==>
                       read_word g' x == read_word g x))
   = push_entry st p e;
     pool_frame g g' p;
-    pool_own g' (Seq.upd st.pm p e) (push_avail st p e).pm p
+    pool_own g' (Seq.upd st.pm p e) (push0 st p e).pm p
 
 /// The other pages keep their clauses.
 let others_pool (g g': heap) (pm pm': page_map) (p: nat{p < n_pages})
@@ -524,13 +616,13 @@ let pool_pages_core (g g': heap) (st: pstate) (p: nat{p < n_pages}) (e: page_inf
                     (forall (i: nat{i < n_pages}). page_local g st.pm i) /\ tail_shape g /\
                     (forall (x: hp_addr). U64.v x < page_base p \/ U64.v x >= page_base (p + 1) ==>
                        read_word g' x == read_word g x) /\
-                    page_local g' (push_avail st p e).pm p /\ e.swept == true /\
+                    page_local g' (push0 st p e).pm p /\ e.swept == true /\
                     (Pool? e.kind \/ e.kind == Free))
-          (ensures (let st' = push_avail st p e in
+          (ensures (let st' = push0 st p e in
                     shape_ok g' st'.pm /\ (forall (i: nat{i < n_pages}). page_local g' st'.pm i) /\
                     (forall (j: nat{j < n_pages}). j <> p ==> entry st'.pm j == entry st.pm j) /\
                     (entry st'.pm p).swept == true /\ (entry st'.pm p).kind =!= LargeCont))
-  = let st' = push_avail st p e in
+  = let st' = push0 st p e in
     push_entry st p e;
     others_pool g g' st.pm st'.pm p;
     GC.Spec.Pages.Step.tail_kept g g' (p + 1);
@@ -541,7 +633,7 @@ let pool_pages (g g': heap) (st: pstate) (p: nat{p < n_pages}) (c: nat{c < n_cls
   : Lemma (requires marked_pool_page g st.pm p c /\ shape_ok g st.pm /\
                     (forall (i: nat{i < n_pages}). page_local g st.pm i) /\
                     sweep_page_ok g st.pm p c g' e)
-          (ensures (let st' = push_avail st p e in
+          (ensures (let st' = push0 st p e in
                     shape_ok g' st'.pm /\ (forall (i: nat{i < n_pages}). page_local g' st'.pm i) /\
                     (forall (x: hp_addr). U64.v x < page_base p \/ U64.v x >= page_base (p + 1) ==>
                        read_word g' x == read_word g x) /\
@@ -555,7 +647,7 @@ let pool_runs (g g': heap) (st: pstate) (p: nat{p < n_pages}) (e: page_info)
   : Lemma (requires map_ok st.pm /\ Pool? (entry st.pm p).kind /\ ~(LargeHead? e.kind) /\
                     (forall (x: hp_addr). U64.v x < page_base p \/ U64.v x >= page_base (p + 1) ==>
                        read_word g' x == read_word g x))
-          (ensures runs_kept g g' st.pm (push_avail st p e).pm)
+          (ensures runs_kept g g' st.pm (push0 st p e).pm)
   = push_entry st p e;
     let runs (u: nat{u < n_pages})
       : Lemma (LargeHead? (entry st.pm u).kind ==>
@@ -564,7 +656,29 @@ let pool_runs (g g': heap) (st: pstate) (p: nat{p < n_pages}) (e: page_info)
     in
     FStar.Classical.forall_intro runs
 
-/// **A pool step.**
+/// The link set on the old tail keeps the step's clauses.
+let pool_relink (g g': heap) (st: pstate) (p: nat{p < n_pages}) (e: page_info) (cs: list obj_addr)
+  : Lemma (requires avail_ok st /\ shape_ok g' (push0 st p e).pm /\
+                    (forall (i: nat{i < n_pages}). page_local g' (push0 st p e).pm i) /\
+                    lview g' (push0 st p e) cs /\
+                    runs_kept g g' st.pm (push0 st p e).pm)
+          (ensures (let st' = push_avail st p e in
+                    shape_ok g' st'.pm /\ (forall (i: nat{i < n_pages}). page_local g' st'.pm i) /\
+                    lview g' st' cs /\ runs_kept g g' st.pm st'.pm))
+  = let st1 = push0 st p e in
+    push_entry st p e;
+    match old_tail st p e with
+    | None -> ()
+    | Some q ->
+      old_tail_listed st p e;
+      assert (entry st1.pm q == entry st.pm q);
+      relink_ok g' st1 q (page_id p) cs;
+      let st' = push_avail st p e in
+      assert (st' == { st1 with pm = set_next st1.pm q (page_id p) });
+      assert (forall (h: nat{h < n_pages}). LargeHead? (entry st1.pm h).kind ==> entry st'.pm h == entry st1.pm h)
+
+/// **A pool step.**  Page `p` is swept; the old tail of its class's list,
+/// a page already on the list, may get a new link, and nothing else changes.
 let pool_step (g: heap) (st: pstate) (p: nat{p < n_pages}) (c: nat{c < n_cls}) (cs: list obj_addr)
   : Lemma (requires marked_pool_page g st.pm p c /\ shape_ok g st.pm /\
                     (forall (i: nat{i < n_pages}). page_local g st.pm i) /\ avail_ok st /\ lview g st cs)
@@ -574,18 +688,24 @@ let pool_step (g: heap) (st: pstate) (p: nat{p < n_pages}) (c: nat{c < n_cls}) (
                     avail_ok st' /\ lview g' st' cs /\
                     (forall (x: hp_addr). U64.v x < page_base p \/ U64.v x >= page_base (p + 1) ==>
                        read_word g' x == read_word g x) /\
-                    (forall (j: nat{j < n_pages}). j <> p ==> entry st'.pm j == entry st.pm j) /\
+                    (forall (j: nat{j < n_pages}). j <> p ==> same_but_next (entry st.pm j) (entry st'.pm j)) /\
+                    (forall (j: nat{j < n_pages}). j <> p /\ ~(entry st'.pm j == entry st.pm j) ==>
+                       (exists (d: nat{d < n_cls}). has_free_slot st.pm d j)) /\
                     (entry st'.pm p).swept == true /\ (entry st'.pm p).kind =!= LargeCont /\
                     SU.unit_ok g g' p 1))
   = SP.sweep_page_correct ();
     let (g', e) = SP.sweep_page g st.pm p in
     assert (sweep_page_ok g st.pm p c g' e);
+    let st1 = push0 st p e in
     let st' = push_avail st p e in
     pool_pages g g' st p c e;
     push_ok st p e;
     pool_runs g g' st p e;
     push_entry st p e;
-    lview_frame g g' st st' cs;
+    lview_frame g g' st st1 cs;
+    pool_relink g g' st p e cs;
+    push_frame st p e;
+    if Some? (old_tail st p e) then old_tail_listed st p e;
     SU.pool_unit_ok g g' st.pm p c e
 
 /// **A run step.**

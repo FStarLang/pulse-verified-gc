@@ -62,6 +62,7 @@ let clear_map (pm: page_map) : page_map =
 let start_sweep (st: pstate) : pstate = {
   pm = clear_map st.pm;
   avail = Seq.create n_cls 0UL;
+  atail = Seq.create n_cls 0UL;
   large = FLs.fls_empty;
 }
 

@@ -111,12 +111,20 @@ let live_local (g1 g2: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat)
 #push-options "--fuel 1"
 let rec dead_local (g1 g2: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat)
   : Lemma (requires hagree g1 g2 (page_base i) (page_base (i + 1)) /\ k <= n_slots c)
-          (ensures SP.dead_list g1 i c k == SP.dead_list g2 i c k /\
-                   SP.hd_upto g1 i c k == SP.hd_upto g2 i c k)
+          (ensures SP.dead_list g1 i c k == SP.dead_list g2 i c k)
           (decreases k)
   = if k > 0 then begin
       dead_local g1 g2 i c (k - 1);
       live_local g1 g2 i c (k - 1)
+    end
+
+let rec nd_local (g1 g2: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (j: nat)
+  : Lemma (requires hagree g1 g2 (page_base i) (page_base (i + 1)))
+          (ensures SP.nd_from g1 i c j == SP.nd_from g2 i c j)
+          (decreases (if j < n_slots c then n_slots c - j else 0))
+  = if j < n_slots c then begin
+      nd_local g1 g2 i c (j + 1);
+      live_local g1 g2 i c j
     end
 
 let rec any_live_local (g1 g2: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat)
@@ -139,7 +147,7 @@ let rec sw_local (g1 g2: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat
       let hi = page_base (i + 1) in
       sw_local g1 g2 i c j;
       live_local g1 g2 i c j;
-      dead_local g1 g2 i c j;
+      nd_local g1 g2 i c (j + 1);
       in_page_slot i c j;
       let a = PI.slot_hd i c j in
       let h1 = SP.sw_heap g1 i c j in
@@ -150,7 +158,7 @@ let rec sw_local (g1 g2: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat
       end else begin
         write_agree h1 h2 lo hi a (PI.slot_hdr c);
         write_agree (write_word h1 a (PI.slot_hdr c)) (write_word h2 a (PI.slot_hdr c)) lo hi
-          (PI.slot_link i c j) (SP.hd_upto g1 i c j)
+          (PI.slot_link i c j) (SP.nd_from g1 i c (j + 1))
       end
     end
 #pop-options
@@ -203,6 +211,7 @@ let page_local (g1 g2: heap) (pm1 pm2: page_map) (i: nat{i < n_pages})
     | Pool c ->
       any_live_local g1 g2 i c (n_slots c);
       dead_local g1 g2 i c (n_slots c);
+      nd_local g1 g2 i c 0;
       sw_local g1 g2 i c (n_slots c);
       if SP.any_live g1 i c (n_slots c) then ()
       else (cls_bounds 0;

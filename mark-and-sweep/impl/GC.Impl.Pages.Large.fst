@@ -517,7 +517,7 @@ let run_map_done (pm pm': page_map) (i: nat) (k: pos)
     Seq.lemma_eq_intro pm' (NR.run_map pm i k)
 
 let pstate_eq (a b: pstate)
-  : Lemma (requires a.pm == b.pm /\ a.avail == b.avail /\ a.large == b.large) (ensures a == b)
+  : Lemma (requires a.pm == b.pm /\ a.avail == b.avail /\ a.atail == b.atail /\ a.large == b.large) (ensures a == b)
   = ()
 
 fn write_run (t: pstate_t) (i: U64.t) (k: U64.t{U64.v k > 0 /\ U64.v i + U64.v k <= n_pages})
@@ -532,7 +532,7 @@ fn write_run (t: pstate_t) (i: U64.t) (k: U64.t{U64.v k > 0 /\ U64.v i + U64.v k
   while (U64.lt !m k)
     invariant exists* vm st1.
       R.pts_to m vm ** pages_st t st1 **
-      pure (U64.v vm <= U64.v k /\ st1.avail == st.avail /\ st1.large == st.large /\
+      pure (U64.v vm <= U64.v k /\ st1.avail == st.avail /\ st1.atail == st.atail /\ st1.large == st.large /\
             (forall (j: nat{j < n_pages}). entry st1.pm j == run_part st.pm (U64.v i) (U64.v k) (U64.v vm) j))
     decreases (U64.v k - U64.v !m)
   {

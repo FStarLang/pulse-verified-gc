@@ -627,9 +627,9 @@ static prec unsep(prec p)
 
 static void start_epoch(pstate_t t)
 {
-  uint64_t ep = t.tmeta[1U];
+  uint64_t ep = t.tw[(size_t)(62ULL + (uint64_t)(size_t)17U + 1ULL)];
   if (ep < 0xffffffffffffffffULL)
-    t.tmeta[1U] = ep + 1ULL;
+    t.tw[(size_t)(62ULL + (uint64_t)(size_t)17U + 1ULL)] = ep + 1ULL;
   else
   {
     uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
@@ -645,39 +645,29 @@ static void start_epoch(pstate_t t)
       uint64_t __anf0 = j;
       cond = __anf0 < np;
     }
-    t.tmeta[1U] = 1ULL;
+    t.tw[(size_t)(62ULL + (uint64_t)(size_t)17U + 1ULL)] = 1ULL;
   }
 }
 
-static void clear_heads(pstate_t t)
+static void zero_heads(pstate_t t)
 {
-  uint64_t c = 0ULL;
-  uint64_t __anf00 = c;
-  bool cond = __anf00 < 31ULL;
+  uint64_t e = 62ULL + (uint64_t)(size_t)17U;
+  uint64_t j = 0ULL;
+  uint64_t __anf0 = j;
+  bool cond = __anf0 < e;
   while (cond)
   {
-    uint64_t vc = c;
-    t.tavail[(size_t)vc] = 0ULL;
-    c = vc + 1ULL;
-    uint64_t __anf0 = c;
-    cond = __anf0 < 31ULL;
-  }
-  size_t k = (size_t)0U;
-  size_t __anf0 = k;
-  bool cond0 = __anf0 < (size_t)17U;
-  while (cond0)
-  {
-    size_t vk = k;
-    t.tlarge[vk] = 0ULL;
-    k = vk + (size_t)1U;
-    size_t __anf0 = k;
-    cond0 = __anf0 < (size_t)17U;
+    uint64_t vj = j;
+    t.tw[(size_t)vj] = 0ULL;
+    j = vj + 1ULL;
+    uint64_t __anf0 = j;
+    cond = __anf0 < e;
   }
 }
 
 static void clear_lists(pstate_t t)
 {
-  clear_heads(t);
+  zero_heads(t);
 }
 
 typedef struct pinfo_s
@@ -693,7 +683,7 @@ pinfo;
 
 static pinfo read_entry(pstate_t t, uint64_t i)
 {
-  uint64_t ep = t.tmeta[1U];
+  uint64_t ep = t.tw[(size_t)(62ULL + (uint64_t)(size_t)17U + 1ULL)];
   prec p = t.tpm[sz_of(i)];
   return
     (
@@ -712,22 +702,23 @@ static pinfo read_entry(pstate_t t, uint64_t i)
 
 static uint64_t cls_at(pstate_t t, uint64_t c)
 {
-  return t.tcls[(size_t)c];
+  return t.tw[(size_t)(62ULL + (uint64_t)(size_t)17U + 2ULL + (cls_u64(30ULL) + 1ULL) + c)];
 }
 
 static uint64_t ns_at(pstate_t t, uint64_t c)
 {
-  return t.tns[(size_t)c];
+  return
+    t.tw[(size_t)(62ULL + (uint64_t)(size_t)17U + 2ULL + (cls_u64(30ULL) + 1ULL) + 31ULL + c)];
 }
 
-static uint64_t read_avail(pstate_t t, uint64_t c)
+static uint64_t read_atail(pstate_t t, uint64_t c)
 {
-  return t.tavail[(size_t)c];
+  return t.tw[(size_t)(31ULL + c)];
 }
 
 static void write_used(pstate_t t, uint64_t i, pinfo r)
 {
-  uint64_t ep = t.tmeta[1U];
+  uint64_t ep = t.tw[(size_t)(62ULL + (uint64_t)(size_t)17U + 1ULL)];
   t.tpm[sz_of(i)] =
     (
       (prec){
@@ -743,13 +734,34 @@ static void write_used(pstate_t t, uint64_t i, pinfo r)
 
 static void write_avail(pstate_t t, uint64_t c, uint64_t v)
 {
-  t.tavail[(size_t)c] = v;
+  t.tw[(size_t)c] = v;
+}
+
+static void write_atail(pstate_t t, uint64_t c, uint64_t v)
+{
+  t.tw[(size_t)(31ULL + c)] = v;
+}
+
+static void write_next(pstate_t t, uint64_t i, uint64_t v)
+{
+  prec p = t.tpm[sz_of(i)];
+  t.tpm[sz_of(i)] =
+    (
+      (prec){
+        .pcode = p.pcode,
+        .parg = p.parg,
+        .sep = p.sep,
+        .pfree_head = p.pfree_head,
+        .pnfree = p.pnfree,
+        .pnext = v
+      }
+    );
 }
 
 static void write_entry(pstate_t t, uint64_t i, pinfo r)
 {
-  uint64_t ep = t.tmeta[1U];
-  uint64_t h = t.tmeta[0U];
+  uint64_t ep = t.tw[(size_t)(62ULL + (uint64_t)(size_t)17U + 1ULL)];
+  uint64_t h = t.tw[(size_t)(62ULL + (uint64_t)(size_t)17U)];
   t.tpm[sz_of(i)] =
     (
       (prec){
@@ -765,27 +777,27 @@ static void write_entry(pstate_t t, uint64_t i, pinfo r)
   (
     !(r.code == 1U && r.arg < 31ULL) && !(r.code == 2U && r.arg > 0ULL) && !(r.code == 3U) && i < h
   )
-    t.tmeta[0U] = i;
+    t.tw[(size_t)(62ULL + (uint64_t)(size_t)17U)] = i;
 }
 
 static uint64_t read_lhead(pstate_t t)
 {
-  return t.tlarge[0U];
+  return t.tw[62ULL];
 }
 
 static void write_lhead(pstate_t t, uint64_t v)
 {
-  t.tlarge[0U] = v;
+  t.tw[62ULL] = v;
 }
 
-static size_t small_sz(uint64_t w)
+static uint64_t class_at(pstate_t t, uint64_t wh)
 {
-  return (size_t)w;
+  return t.tw[(size_t)(62ULL + (uint64_t)(size_t)17U + 2ULL + wh)];
 }
 
-static uint64_t class_at(pstate_t t, uint64_t w)
+static uint64_t read_avail(pstate_t t, uint64_t c)
 {
-  return t.tcof[small_sz(w)];
+  return t.tw[(size_t)c];
 }
 
 static prec read_slots(pstate_t t, uint64_t i)
@@ -811,49 +823,20 @@ static void write_slots(pstate_t t, uint64_t i, uint64_t fh, uint64_t nf)
 
 static uint64_t read_hint(pstate_t t)
 {
-  return t.tmeta[0U];
+  return t.tw[(size_t)(62ULL + (uint64_t)(size_t)17U)];
 }
 
 static void write_hint(pstate_t t, uint64_t h)
 {
-  t.tmeta[0U] = h;
-}
-
-static void fill_tables(pstate_t t)
-{
-  uint64_t sm = cls_u64(30ULL);
-  t.tcof[0U] = 0ULL;
-  uint64_t w = 1ULL;
-  uint64_t __anf00 = w;
-  bool cond = __anf00 <= sm;
-  while (cond)
-  {
-    uint64_t vw = w;
-    t.tcof[small_sz(vw)] = class_u64(vw);
-    w = vw + 1ULL;
-    uint64_t __anf0 = w;
-    cond = __anf0 <= sm;
-  }
-  uint64_t c = 0ULL;
-  uint64_t __anf0 = c;
-  bool cond0 = __anf0 < 31ULL;
-  while (cond0)
-  {
-    uint64_t vc = c;
-    t.tcls[(size_t)vc] = cls_u64(vc);
-    t.tns[(size_t)vc] = n_slots_u64(vc);
-    c = vc + 1ULL;
-    uint64_t __anf0 = c;
-    cond0 = __anf0 < 31ULL;
-  }
+  t.tw[(size_t)(62ULL + (uint64_t)(size_t)17U)] = h;
 }
 
 static void reset_state(pstate_t t)
 {
   uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
   uint64_t j = 0ULL;
-  uint64_t __anf0 = j;
-  bool cond = __anf0 < np;
+  uint64_t __anf00 = j;
+  bool cond = __anf00 < np;
   while (cond)
   {
     uint64_t vj = j;
@@ -872,10 +855,38 @@ static void reset_state(pstate_t t)
     uint64_t __anf0 = j;
     cond = __anf0 < np;
   }
-  t.tmeta[0U] = 0ULL;
-  t.tmeta[1U] = 1ULL;
-  clear_heads(t);
-  fill_tables(t);
+  uint64_t e = 62ULL + (uint64_t)(size_t)17U + 2ULL + (cls_u64(30ULL) + 1ULL) + 31ULL + 31ULL;
+  uint64_t k = 0ULL;
+  uint64_t __anf0 = k;
+  bool cond0 = __anf0 < e;
+  while (cond0)
+  {
+    uint64_t vk = k;
+    uint64_t ite;
+    if (vk < 62ULL + (uint64_t)(size_t)17U)
+      ite = 0ULL;
+    else if (vk == 62ULL + (uint64_t)(size_t)17U)
+      ite = 0ULL;
+    else if (vk == 62ULL + (uint64_t)(size_t)17U + 1ULL)
+      ite = 1ULL;
+    else if (vk < 62ULL + (uint64_t)(size_t)17U + 2ULL + (cls_u64(30ULL) + 1ULL))
+    {
+      uint64_t wh = vk - (62ULL + (uint64_t)(size_t)17U + 2ULL);
+      if (wh == 0ULL)
+        ite = 0ULL;
+      else
+        ite = class_u64(wh);
+    }
+    else if (vk < 62ULL + (uint64_t)(size_t)17U + 2ULL + (cls_u64(30ULL) + 1ULL) + 31ULL)
+      ite = cls_u64(vk - (62ULL + (uint64_t)(size_t)17U + 2ULL + (cls_u64(30ULL) + 1ULL)));
+    else
+      ite =
+        n_slots_u64(vk - (62ULL + (uint64_t)(size_t)17U + 2ULL + (cls_u64(30ULL) + 1ULL) + 31ULL));
+    t.tw[(size_t)vk] = ite;
+    k = vk + 1ULL;
+    uint64_t __anf0 = k;
+    cond0 = __anf0 < e;
+  }
 }
 
 static bool in_heap(uint64_t a)
@@ -900,6 +911,12 @@ static uint64_t hdr_at(heap_t heap, uint64_t a)
 static uint64_t small_max_u64(void)
 {
   return cls_u64(30ULL);
+}
+
+static void tail_if(pstate_t t, bool b, uint64_t c, uint64_t v)
+{
+  if (b)
+    write_atail(t, c, v);
 }
 
 static void fill_at(heap_t heap, uint64_t a, uint64_t cl, uint64_t wz)
@@ -930,6 +947,7 @@ static uint64_t pop(heap_t heap, pstate_t t, uint64_t c, uint64_t wz)
   if (nf == 1ULL)
   {
     write_avail(t, c, sl.pnext);
+    tail_if(t, sl.pnext == 0ULL, c, 0ULL);
     fill_at(heap, so - 8ULL, cl, wz);
     return so;
   }
@@ -1041,6 +1059,7 @@ static void acquire(heap_t heap, pstate_t t, uint64_t i, uint64_t c)
   uint64_t nx = read_avail(t, c);
   write_used(t, i, acq_rec(i, c, nx));
   write_avail(t, c, i + 1ULL);
+  tail_if(t, nx == 0ULL, c, i + 1ULL);
 }
 
 static uint64_t small_alloc(heap_t heap, pstate_t t, uint64_t wz)
@@ -1665,18 +1684,28 @@ static void run_step(heap_t heap, pstate_t t, uint64_t h, pinfo r)
   write_lhead(t, hd);
 }
 
+static void link_last(heap_t heap, uint64_t last, uint64_t l)
+{
+  if (last != 0ULL)
+    write_word(heap, last, l);
+}
+
+KRML_NOINLINE
+
 static FStar_Pervasives_Native_tuple2__uint64_t_uint64_t
 sweep_slots(heap_t heap, uint64_t i, uint64_t cl, uint64_t ns)
 {
   uint64_t sh = makeHeader(cl - 1ULL, Blue, 0ULL);
   uint64_t k = 0ULL;
   uint64_t hd = 0ULL;
+  uint64_t last = 0ULL;
   uint64_t cnt = 0ULL;
-  uint64_t __anf0 = k;
-  bool cond = __anf0 < ns;
+  uint64_t __anf00 = k;
+  bool cond = __anf00 < ns;
   while (cond)
   {
     uint64_t vk = k;
+    uint64_t vlast = last;
     uint64_t a = zero_addr1 + i * 32768ULL + vk * (cl * 8ULL);
     uint64_t h = read_word(heap, a);
     uint64_t raw = h >> 8U & 3ULL;
@@ -1689,19 +1718,32 @@ sweep_slots(heap_t heap, uint64_t i, uint64_t cl, uint64_t ns)
     else
     {
       write_word(heap, a, sh);
-      uint64_t __anf0 = hd;
-      write_word(heap, a + 8ULL, __anf0);
-      hd = a + 8ULL;
-      uint64_t __anf01 = cnt;
-      cnt = __anf01 + 1ULL;
+      uint64_t l = a + 8ULL;
+      link_last(heap, vlast, l);
+      if (vlast == 0ULL)
+        hd = l;
+      last = l;
+      uint64_t __anf0 = cnt;
+      cnt = __anf0 + 1ULL;
       k = vk + 1ULL;
     }
     uint64_t __anf0 = k;
     cond = __anf0 < ns;
   }
-  uint64_t vhd = hd;
-  uint64_t vcnt = cnt;
-  return ((FStar_Pervasives_Native_tuple2__uint64_t_uint64_t){ ._1 = vhd, ._2 = vcnt });
+  uint64_t vlast = last;
+  if (vlast != 0ULL)
+  {
+    write_word(heap, vlast, 0ULL);
+    uint64_t __anf1 = hd;
+    uint64_t __anf0 = cnt;
+    return ((FStar_Pervasives_Native_tuple2__uint64_t_uint64_t){ ._1 = __anf1, ._2 = __anf0 });
+  }
+  else
+  {
+    uint64_t __anf1 = hd;
+    uint64_t __anf0 = cnt;
+    return ((FStar_Pervasives_Native_tuple2__uint64_t_uint64_t){ ._1 = __anf1, ._2 = __anf0 });
+  }
 }
 
 static pinfo swept_rec(pinfo r, uint64_t c, uint64_t hd, uint64_t cnt)
@@ -1750,12 +1792,25 @@ static uint64_t page_id_u64(uint64_t i)
   return i + 1ULL;
 }
 
+static void avail_if(pstate_t t, bool b, uint64_t c, uint64_t v)
+{
+  if (b)
+    write_avail(t, c, v);
+}
+
+static void next_if(pstate_t t, bool b, uint64_t q, uint64_t v)
+{
+  if (b && q < (heap_size_u640 - zero_addr1) / 32768ULL)
+    write_next(t, q, v);
+}
+
 static void push_avail(pstate_t t, uint64_t i, pinfo r)
 {
   if (r.code == 1U && r.arg < 31ULL && r.nfree > 0ULL)
   {
     uint64_t c = r.arg;
-    uint64_t nx = read_avail(t, c);
+    uint64_t tl = read_atail(t, c);
+    uint64_t id = page_id_u64(i);
     write_used(t,
       i,
       (
@@ -1765,10 +1820,12 @@ static void push_avail(pstate_t t, uint64_t i, pinfo r)
           .swept = r.swept,
           .free_head = r.free_head,
           .nfree = r.nfree,
-          .next = nx
+          .next = 0ULL
         }
       ));
-    write_avail(t, c, page_id_u64(i));
+    avail_if(t, tl == 0ULL, c, id);
+    write_atail(t, c, id);
+    next_if(t, tl != 0ULL && tl - 1ULL != i, tl - 1ULL, id);
   }
   else
     write_entry(t, i, r);

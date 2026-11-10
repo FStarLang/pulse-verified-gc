@@ -81,6 +81,7 @@ let sweep_ready (g: heap) (st: pstate) : prop =
   shape_ok g st.pm /\
   (forall (j: nat{j < n_pages}). (entry st.pm j).kind =!= Free ==> not (entry st.pm j).swept) /\
   Seq.length st.avail == n_cls /\ (forall (c: nat{c < n_cls}). Seq.index st.avail c == 0UL) /\
+  Seq.length st.atail == n_cls /\ (forall (c: nat{c < n_cls}). Seq.index st.atail c == 0UL) /\
   st.large == FLs.fls_empty /\
   (forall (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat).
      (entry st.pm i).kind == Pool c /\ k < n_slots c /\ slot_used g i c k ==>
@@ -154,7 +155,8 @@ let init_avail (g: heap) (st: pstate)
   = let aux (c: nat{c < n_cls})
       : Lemma (exists (ps: list nat).
                  page_chain st.pm (Seq.index st.avail c) ps /\ L.noRepeats ps /\
-                 (forall (p: nat{p < n_pages}). L.mem p ps <==> has_free_slot st.pm c p))
+                 (forall (p: nat{p < n_pages}). L.mem p ps <==> has_free_slot st.pm c p) /\
+                 Seq.index st.atail c == chain_tail ps)
       = empty_chain st.pm;
         assert (page_chain st.pm (Seq.index st.avail c) []);
         assert (L.noRepeats ([] <: list nat));
@@ -200,7 +202,7 @@ let units_kept (g0 g g': heap) (st0 st st': pstate) (p q: nat)
                     (forall (i: nat{i < n_pages}). i < p /\ walk_page st0.pm i ==>
                        walk_page st.pm i /\ i + span st0.pm i <= p /\ SU.unit_ok g0 g i (span st0.pm i)) /\
                     (forall (x: hp_addr). U64.v x < page_base p ==> read_word g' x == read_word g x) /\
-                    (forall (j: nat{j < n_pages}). j < p ==> entry st'.pm j == entry st.pm j))
+                    (forall (j: nat{j < n_pages}). j < p ==> (entry st'.pm j).kind == (entry st.pm j).kind))
           (ensures forall (i: nat{i < n_pages}). i < p /\ walk_page st0.pm i ==>
                      walk_page st'.pm i /\ i + span st0.pm i <= q /\ SU.unit_ok g0 g' i (span st0.pm i))
   = let aux (i: nat{i < n_pages})
@@ -246,12 +248,19 @@ let words_from (g g0: heap) (p q: nat)
           (ensures forall (x: hp_addr). U64.v x >= page_base q ==> read_word g x == read_word g0 x)
   = page_base_mono_any p q
 
+let one_swept (pm: page_map) (p: nat{p < n_pages})
+  : Lemma (requires (entry pm p).swept == true)
+          (ensures forall (j: nat{j < n_pages}). p <= j /\ j < p + 1 ==> (entry pm j).swept == true)
+  = ()
+
 let inv_free (g0 g: heap) (st0 st: pstate) (p: nat{p < n_pages})
   : Lemma (requires sweep_ready g0 st0 /\ inv g0 st0 g st p /\ (entry st0.pm p).kind == Free)
           (ensures step g st p == (g, st) /\ inv g0 st0 g st (p + 1))
   = inv_elim g0 st0 g st p;
     assert (map_ok st0.pm /\ free_ok st0.pm p);
+    assert ((entry st0.pm p).swept == true);
     assert (entry st.pm p == entry st0.pm p);
+    one_swept st.pm p;
     next_walk_page st0.pm p p;
     assert (page_shape g0 st0.pm p);
     page_base_mono p (p + 1);
@@ -284,7 +293,9 @@ let inv_next (g0 g g': heap) (st0 st st': pstate) (p: nat{p < n_pages}) (q: nat)
                     avail_ok st' /\ (exists (cs: list obj_addr). lview g' st' cs) /\
                     (forall (x: hp_addr). U64.v x < page_base p \/ U64.v x >= page_base q ==>
                        read_word g' x == read_word g x) /\
-                    (forall (j: nat{j < n_pages}). j < p \/ j >= q ==> entry st'.pm j == entry st.pm j) /\
+                    (forall (j: nat{j < n_pages}). j < p ==>
+                       (entry st'.pm j).kind == (entry st.pm j).kind /\ (entry st'.pm j).swept == (entry st.pm j).swept) /\
+                    (forall (j: nat{j < n_pages}). j >= q ==> entry st'.pm j == entry st.pm j) /\
                     (forall (j: nat{j < n_pages}). p <= j /\ j < q ==> (entry st'.pm j).swept == true) /\
                     walk_page st'.pm p /\
                     SU.unit_ok g g' p (span st0.pm p) /\
@@ -307,11 +318,6 @@ let inv_parts (g0: heap) (st0: pstate) (g: heap) (st: pstate) (p: nat)
                    map_ok st0.pm /\ p <= n_pages /\ walk_page st0.pm p)
   = inv_elim g0 st0 g st p
 
-let one_swept (pm: page_map) (p: nat{p < n_pages})
-  : Lemma (requires (entry pm p).swept == true)
-          (ensures forall (j: nat{j < n_pages}). p <= j /\ j < p + 1 ==> (entry pm j).swept == true)
-  = ()
-
 let no_between (pm: page_map) (p: nat)
   : Lemma (forall (i: nat{i < n_pages}). p < i /\ i < p + 1 ==> ~(walk_page pm i))
   = ()
@@ -321,17 +327,28 @@ let inv_entry (g0: heap) (st0: pstate) (g: heap) (st: pstate) (p: nat{p < n_page
   = inv_elim g0 st0 g st p
 
 let pool_next (g0 g g': heap) (st0 st st': pstate) (p: nat{p < n_pages})
-  : Lemma (requires inv g0 st0 g st p /\ p + 1 <= n_pages /\ walk_page st0.pm (p + 1) /\
+  : Lemma (requires sweep_ready g0 st0 /\ inv g0 st0 g st p /\ p + 1 <= n_pages /\ walk_page st0.pm (p + 1) /\
                     span st0.pm p == 1 /\
                     shape_ok g' st'.pm /\ (forall (i: nat{i < n_pages}). page_local g' st'.pm i) /\
                     avail_ok st' /\ (exists (cs: list obj_addr). lview g' st' cs) /\
                     (forall (x: hp_addr). U64.v x < page_base p \/ U64.v x >= page_base (p + 1) ==>
                        read_word g' x == read_word g x) /\
-                    (forall (j: nat{j < n_pages}). j <> p ==> entry st'.pm j == entry st.pm j) /\
+                    (forall (j: nat{j < n_pages}). j <> p ==> SS.same_but_next (entry st.pm j) (entry st'.pm j)) /\
+                    (forall (j: nat{j < n_pages}). j <> p /\ ~(entry st'.pm j == entry st.pm j) ==>
+                       (exists (d: nat{d < n_cls}). has_free_slot st.pm d j)) /\
                     (entry st'.pm p).swept == true /\ (entry st'.pm p).kind =!= LargeCont /\
                     SU.unit_ok g g' p 1)
           (ensures inv g0 st0 g' st' (p + 1))
-  = one_swept st'.pm p;
+  = inv_elim g0 st0 g st p;
+    let ahead (j: nat{j < n_pages}) : Lemma (j >= p + 1 ==> entry st'.pm j == entry st.pm j)
+      = if j >= p + 1 then begin
+          assert (entry st.pm j == entry st0.pm j);
+          assert ((entry st0.pm j).kind =!= Free ==> not (entry st0.pm j).swept);
+          assert (forall (d: nat{d < n_cls}). ~(has_free_slot st.pm d j))
+        end
+    in
+    FStar.Classical.forall_intro ahead;
+    one_swept st'.pm p;
     no_between st0.pm p;
     inv_next g0 g g' st0 st st' p (p + 1)
 

@@ -1751,19 +1751,8 @@ fast path takes a precondition the invariant gives).
   `lg_grow` joins a new run to its neighbours, which makes its first-fit
   list longer. That difference is in the prototype's layout, not in proof
   overhead.
-- **Not yet within 5%: allocation after a sweep.** Scratch-copy experiments
-  on the extracted C (not proved) point to list order:
-  - each page's free slots are linked from the highest down (OCaml 5's
-    order, and the specification's), where the prototype links them from
-    the lowest up. Linking upwards in the same single pass took `reallocS`
-    from about 13 to 11.6 ns;
-  - pages go on their class's list in front, so the list is in descending
-    address order. The prototype appends, so its list is in address order.
-    With both changes, about 10.9 ns, against the prototype's 10.5 ns.
-  - Both would change the specification's list orders: `sw_heap`'s links,
-    and `SweepStep.push_avail`. The second needs a list tail per class in
-    `pstate`. Both depart from OCaml 5's order, so they are left for a
-    decision.
+- **Allocation after a sweep was not yet within 5%** (`realloc` +12%,
+  `reallocS` +20%). The second pass below closes it.
 - Not addressed: the prototype keeps never-used pages as one "wilderness"
   block, so they are never touched; `init` writes one header per page.
 
@@ -1773,3 +1762,135 @@ prototype's sources are read from its branch with `git show`). Changed:
 `Pages.{Params,State,Pool,Large,Alloc,SweepPage,SweepRun,Sweep,Init}`,
 `Spec.Pages.{SweepPage,SweepStarts,SweepTags,SweepOrder}`, and the
 extracted C and its test.
+
+### 17.2 The prototype's list orders, and the state as two pointers (2026-11-10)
+
+Decision (the user, 2026-11-10): both lists in the prototype's order, every
+theorem unchanged.
+- A page's free slots are linked lowest address first.
+- Each class's list of pages is in address order, with a list tail per
+  class in the specification's state.
+
+**The free slots, lowest first** (`Spec.Pages.SweepPage`).
+- `sw_heap` links a freed slot to the next freed slot after it
+  (`nd_from`, `dead_from`), not to the one before it. The list head is the
+  lowest freed slot (`pool_swept`'s `free_head = nd_from g i c 0`).
+- `sweep_page_correct` is proved again with its statement unchanged:
+  `dead_chain` now runs up the page; `dead_from_mem`, `dead_from_norep`
+  and `dead_len` replace their downward forms.
+  - In `SweepOrder`, `nd_local` replaces `hd_upto`'s half of `dead_local`.
+- **The Pulse pass** (`Impl.Pages.SweepPage.sweep_slots`, `SlotLemmas`).
+  It is still one pass in address order. A freed slot's link is written
+  when the next freed slot is found, and the last one's (0) at the end, as
+  in the prototype's sweep.
+  - `pend g i c k last` is the heap after slot `k - 1`: the swept slots,
+    except the open link at `last`, which still holds the marked heap's
+    word. `last_ok` says where `last` is.
+  - The steps are `pend_live`, `pend_dead` and `pend_end`, each by heap
+    extensionality (`HE.heap_read_word_ext`).
+  - `link_last` writes the open link only when there is one, so the two
+    branches join.
+
+**The page lists, in address order** (`Spec.Pages.Inv`, `Pool`,
+`SweepStep`, `Frame`).
+- `pstate` has `atail`: per class, the last page on the list (index + 1;
+  0 if none). `avail_ok` adds `atail.[c] == chain_tail ps` for the list's
+  pages `ps`.
+- Allocation takes pages from the front, as before:
+  - `acquire` puts a fresh page in front, and sets the tail when the list
+    was empty;
+  - `pop`, when a page fills, removes it, and sets the tail to 0 when that
+    empties the list (`pop_tail`).
+- The sweep appends (`SweepStep.push_avail` = `push0`, then the link):
+  - `push0` stores page `i`'s entry with link 0, makes it the tail, and
+    makes it the head when the list was empty;
+  - then the old tail (`old_tail`, a page already on the list,
+    `old_tail_listed`) links to it (`set_next`).
+  - `push_ok` is the push lemma for the append. It uses `chain_last` (the
+    tail is the chain's last page, with link 0) and `chain_snoc` (the
+    chain with `i` at its end).
+  - `relink_ok`: setting one pool page's link keeps every clause that
+    reads no link (`map_ok`, `page_local`, `shape_ok`, `in_swept_run`,
+    `lview`).
+- **What a pool step changes, restated.** It may set the link of a page
+  already on a list, so:
+  - `pool_step` now ensures `same_but_next` for every other page, and that
+    any page that changed was on a list;
+  - `SweepAll.pool_next` derives that the pages from `p + 1` on are
+    unchanged (none is on a list under `sweep_ready`);
+  - `inv_next` and `units_kept` ask, of the pages before `p`, only their
+    kinds and swept bits;
+  - `SweepPools.step_entries` and `kept_live` ask only kinds;
+  - in the Pulse sweep (`Impl.Pages.Sweep`), `ahead` is now about kinds.
+- `sweep_ready` also asks for empty tails, which `start_sweep` gives.
+- Two queries in modules this pass did not edit, `Partition.walk_tiled`
+  and `SweepWf.in_unit_lt`, passed only with `--retry` once `pstate` grew.
+  Each now has its arithmetic step stated (`add_mul8`; a `page_base_mono`
+  call). Neither statement changed.
+
+**The state as two pointers** (`Impl.Pages.State`).
+- With the orders as the prototype's, the verified code made exactly the
+  prototype's accesses, in the same order. This was checked by printing
+  the first slots handed out after a sweep: same pages, same order.
+- A hand-written prototype-style `pop` in the extracted C was no faster.
+  The remaining cost was the state: 10 array pointers, loaded at every
+  allocation, and passed in memory (80 bytes).
+- So `pstate_t` is now `{ tpm; tw }`. `tw` is one word array:
+  - avail, atail, the large lists, the hint and the epoch;
+  - then the three tables.
+- `pages_st` ties each region (`sl w o n`) to the state (`w_ok`), and
+  `w_upd` shows that a write changes only its region. No other module
+  changed.
+- `init` fills the whole array in one loop (`w_start`).
+
+**The slot loop out of line.**
+- Inlined into the whole sweep, the slot loop ran out of registers and
+  reloaded the heap's base address at every slot. That made `sweep50`
+  7–12% slower than the prototype, with the same C for the loop.
+- `[@@CPrologue "KRML_NOINLINE"]` on `sweep_slots` keeps it out of line.
+  Custard does not translate `CNoInline`; it keeps `CPrologue` text.
+
+**The benchmark runs each workload in its own process** (`bench.sh`,
+`make bench`).
+- In one process, the earlier workloads moved the later ones by up to 10%,
+  and differently for the two allocators.
+- The same reallocS code measured 10.0 or 11.0 ns depending on the driver
+  around it.
+- `bench.sh ROUNDS REPS` alternates the binaries and prints medians.
+
+**Checked.**
+- Every changed module was checked without `--retry`, with no rlimit
+  raised.
+- `make verify` from an empty cache in a scratch worktree: 282 checked
+  files, 41 minutes, no errors. It ran with the Makefile's `--retry 3`,
+  which `GC.Gen.Reachability` (not touched here) needs.
+- `SlotLemmas`, `Impl.Pages.State`, `SweepStep`, `Frame` and
+  `Spec.Pages.SweepPage` also pass at Z3 seeds 1 and 2, without retry.
+
+**The C test.** `pages_test.c` has the word array, the expected lists in
+the new orders, and `test_list_order`: three pages swept are listed 1, 2, 3
+with tail 3; pages leave from the front, and the tail empties with the
+list. 468 checks, all passing.
+
+**Measurements** (`make bench`, 5 rounds × 15 repetitions, medians; three
+runs, so a range is given).
+
+| Workload | Prototype B2 | Verified | Difference |
+|---|---|---|---|
+| small allocation (ns) | 9.71–10.07 | 9.46–9.54 | −2% to −6% |
+| mixed, 0.5% large (ns) | 25.1–25.6 | 15.3–15.7 | −39% |
+| large only (µs) | 3.37–3.44 | 2.00–2.01 | −41% |
+| sweep, 10% survive (ms) | 0.99–1.04 | 0.90–0.94 | −7% to −12% |
+| sweep, 50% (ms) | 1.58–1.61 | 1.53–1.58 | −1% to −3% |
+| sweep, 90% (ms) | 0.97–1.01 | 0.84–0.87 | −13% to −14% |
+| realloc after sweep50, mixed heap (ns) | 10.00–10.23 | 9.37–9.94 | −2% to −8% |
+| reallocS, small-only heap (ns) | 9.94–10.12 | 9.84–10.07 | 0% to −2% |
+
+- Every workload is at or below the prototype's time.
+- The machine's clock varies between sessions (§17's first table was taken
+  at a lower one), so compare rows only within a table.
+
+**For the runtime (5b).** The extracted code reads and writes heap words
+through `compat.c`'s `read_u64_le` and `write_u64_le`. Here they inline
+only through `-flto`. A build without LTO would pay a call per word, so 5b
+must compile them inline (LTO, or a header definition).

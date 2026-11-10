@@ -48,13 +48,14 @@ let pools_before (g: heap) (st: pstate) (p: nat) : prop =
 let step_entries (g0 g: heap) (st0 st: pstate) (p: nat{p < n_pages})
   : Lemma (requires sweep_ready g0 st0 /\ inv g0 st0 g st p)
           (ensures (let (_, st') = step g st p in
-                    forall (j: nat{j < n_pages}). j < p ==> entry st'.pm j == entry st.pm j))
+                    forall (j: nat{j < n_pages}). j < p ==> (entry st'.pm j).kind == (entry st.pm j).kind))
   = inv_elim g0 st0 g st p;
     if (entry st.pm p).swept then ()
     else match (entry st.pm p).kind with
       | Pool c ->
         let (g', e) = SP.sweep_page g st.pm p in
-        SS.push_entry st p e
+        SS.push_entry st p e;
+        SS.push_frame st p e
       | LargeHead _ ->
         marked_run_at g0 g st0 st p;
         SR.sweep_run_correct ();
@@ -64,7 +65,7 @@ let step_entries (g0 g: heap) (st0 st: pstate) (p: nat{p < n_pages})
 
 /// A used slot of a page below `p` stays used.
 let kept_live (g g': heap) (st st': pstate) (p: nat) (i: nat{i < n_pages})
-  : Lemma (requires pool_live g st i /\ i < p /\ p <= n_pages /\ entry st'.pm i == entry st.pm i /\
+  : Lemma (requires pool_live g st i /\ i < p /\ p <= n_pages /\ (entry st'.pm i).kind == (entry st.pm i).kind /\
                     (forall (x: hp_addr). U64.v x < page_base p ==> read_word g' x == read_word g x))
           (ensures pool_live g' st' i)
   = page_base_mono (i + 1) p;
@@ -87,6 +88,7 @@ let pool_new (g: heap) (st: pstate) (p: nat{p < n_pages}) (c: nat{c < n_cls})
     let (g1, e) = SP.sweep_page g st.pm p in
     assert (sweep_page_ok g st.pm p c g1 e);
     SS.push_entry st p e;
+    SS.push_frame st p e;
     if FStar.IndefiniteDescription.strong_excluded_middle
          (exists (k: nat). k < n_slots c /\ slot_used g p c k /\ color_at g (slot_base p c k) == Black)
     then
