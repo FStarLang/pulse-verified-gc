@@ -30,7 +30,8 @@ purpose of §6.
 1. **B can keep the invariant that every proof rests on.** That invariant is
    that the heap is one contiguous region tiled by headers, which `objects
    zero_addr g` walks. 172 F\* files use it.
-   - B divides the same `calloc` region into 32 KB pages.
+   - B divides the same `calloc` region into pages of 16 KB or 32 KB. Both
+     sizes remain candidates (§3.1).
    - Every word stays covered by a header:
      - a free slot gets a blue header for the whole slot;
      - the leftover after a rounded-up object gets a filler header;
@@ -62,9 +63,14 @@ purpose of §6.
      separately, as OCaml 5 does (§4.4).
 5. **The open risks are sequential speed and memory.**
    - Rounding up to a size class wastes up to 10% per object.
-   - binarytrees' 128-word blocks (whsize 129) round up to 141 words, which is
-     8.5%, and they are about 97% of its allocated words.
+   - binarytrees' 128-word blocks (whsize 129) round up to 141 words with
+     32 KB pages, which is 8.5%. With 16 KB pages they round up to 131 words,
+     which is 1.5%. These blocks are about 97% of its allocated words.
    - A pool page that holds one live object keeps the whole page in use.
+     16 KB pages halve the extra memory on small programs (*measured*,
+     `docs/allocator-comparison-results.md` §9.3 on
+     `sheera/alloc-pages-proto`: `B3-16K` cut minilight's extra heap from
+     +27.5% to +13.8%, and bdd's from +5.4% to +1.8%).
    - B writes one header per dead slot instead of one per coalesced run.
    - Whether B stays within the 5% limit cannot be known without measuring.
 6. **Proof effort, estimated.** B costs about as much as #46 and #48 together:
@@ -277,10 +283,20 @@ changes the rest.
 
 - **The region stays.** It is the same contiguous `calloc` region from
   `ensure_heap`. Its first page starts at `Z` (aligned up to a page), and it
-  is divided into **pages of 4096 words (32 KB)**, as in OCaml 5.
+  is divided into pages. **There are two candidate page sizes: 2048 words
+  (16 KB) and 4096 words (32 KB).** OCaml 5 uses 32 KB.
+  - **16 KB** halves the extra memory on small programs (*measured*, results
+    note §9.3: minilight +27.5% → +13.8%, bdd +5.4% → +1.8%). A sparse page
+    holds less, and the pool pages a small program touches cost half as
+    much.
+  - **32 KB** allows size classes up to 257 words within the 10.1% bound, so
+    every promotion fits a class.
   - A 64 KB page would match the table window. But the generator then gives
-    fewer classes for the same overhead, and a sparse page wastes more.
-    4096 is the default; 8192 is a measurement option.
+    fewer classes for the same overhead, and a sparse page wastes more. It is
+    no longer a candidate.
+  - The page size is a compile-time constant. Nothing in the proofs below
+    depends on which of the two is chosen, only on the class table being
+    data.
 - **The page map is a side table.** `pm[n_pages]` is a Pulse array, like the
   object-start table. Each entry has a kind `Free | Pool c | Large`, a
   free-slot head, a next link, a live count and a `swept` bit.
@@ -290,22 +306,34 @@ changes the rest.
   - It also leaves no 4-word header to explain to the walk.
 - **Size classes.** I ran `gen_sizeclasses.ml` with `max_slot = 257`, so that
   every promotion from the minor heap fits a class (`Max_young_wosize = 256`).
-  - It gives 40 classes: {1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 17, 19, 22,
-    25, 28, 32, 36, 40, 45, 51, 57, 63, 70, 78, 87, 96, 105, 114, 126, 141,
-    153, 167, 183, 204, 216, 229, 245, 257} (whsize).
-  - The worst rounding is 10.0%.
-  - The benchmarks' sizes fall like this:
-    - wosize 1–5 (whsize 2–6): exact;
+  The generator's other settings are unchanged (4-word pool header,
+  `max_overhead = 0.101`).
+  - **32 KB:** it gives 40 classes: {1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16,
+    17, 19, 22, 25, 28, 32, 36, 40, 45, 51, 57, 63, 70, 78, 87, 96, 105, 114,
+    126, 141, 153, 167, 183, 204, 216, 229, 245, 257} (whsize).
+    - The worst rounding is 10.0%.
+    - wosize 1–5 (whsize 2–6): exact.
     - wosize 128 (whsize 129): rounds to 141, which is 8.5%.
+  - **16 KB:** the generator fails at `max_slot = 257`. A 2044-word page holds
+    7 slots of 257 words, which wastes 12%. The largest `max_slot` it accepts
+    is 227, with 41 classes: {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18,
+    20, 23, 26, 29, 32, 34, 38, 42, 47, 52, 57, 63, 70, 76, 83, 91, 102, 108,
+    114, 122, 131, 141, 153, 167, 183, 204, 227} (whsize).
+    - wosize 1–5 (whsize 2–6): exact.
+    - wosize 128 (whsize 129): rounds to 131, which is 1.5%.
+    - Promotions of whsize 228–257 have no class. They go to the large path,
+      or a last class of 257 is added that accepts 12% overhead. The
+      prototype takes the large path, and §6 counts how many objects it gets.
 
   Stock OCaml 5's `max_slot = 128` would send binarytrees' 128-word blocks to
   the large path. The classes are data, so the proofs need not depend on them.
-- **Large objects** are those with whsize > 257. They live in **large pages**:
+- **Large objects** are those above the largest class: whsize > 257 with
+  32 KB pages, or > 227 with 16 KB pages. They live in **large pages**:
   runs of consecutive pages marked `Large`, managed by A's list-0 allocator
   (first fit, right-justified, coalescing). Coalescing stops at the edge of a
   run. Two alternatives were considered:
   - one page run per object, the analogue of OCaml 5's `malloc`, which wastes
-    up to 32 KB at the tail of each object;
+    up to one page at the tail of each object;
   - a fixed split of the heap, with pools at the bottom and large space at the
     top. This is cheaper to prove, but free pool pages cannot then serve large
     requests.
@@ -323,7 +351,7 @@ the walk ends exactly at `heap_size`. B keeps it as follows.
   - Fillers are never reachable and are never on a list.
   - Classes 1–8 are exact, so the small sizes that dominate the benchmarks
     need no filler.
-- **Page tail:** `4096 mod wh_c` words. They form one filler at the end of
+- **Page tail:** `page_wsize mod wh_c` words. They form one filler at the end of
   the page, where OCaml 5 puts the wastage at the start.
 - **Free page:** one blue block covering the page, linked from the free-page
   list.
@@ -334,7 +362,7 @@ reuse them as they are (§6).
 
 ### 3.3 Allocation
 
-- **Small (whsize ≤ 257):**
+- **Small (whsize up to the largest class):**
   1. `c = class[whsize]`; `p = avail[c]`.
   2. If `p` is null:
      - sweep one unswept page of class `c` that has a free slot (incremental
@@ -436,7 +464,7 @@ of the design.
   - A: an exact hit for wosize ≤ 16 is O(1). binarytrees, however, takes
     99.99% of its requests from list 0 and skips 7 empty heads each time
     (measured).
-  - B: O(1) for every size up to 257: one table load and one pop. When a page
+  - B: O(1) for every size up to the largest class (257 or 227): one table load and one pop. When a page
     fills there is one list move.
   - *Estimate:* B allocates faster than A on binarytrees and livemap, and
     about as fast on hamming (where A is already O(1)).
@@ -478,7 +506,7 @@ of the design.
   - Large runs are swept serially; they are usually few objects.
 - **Load balance.**
   - B: any page boundary is a cut, so the work per thread is within one page
-    (4096 words) of even.
+    (2048 or 4096 words) of even.
   - A: the work per thread is within one table window (8192 words) of even
     while the table is exact. When it is not (§1.2 of the allocator note), a
     region refilled from one large block stays a single segment.
@@ -496,8 +524,8 @@ of the design.
   - The akhil branch's black-ahead / white-behind rule also makes every
     allocation compare against the cursor.
 - **B:**
-  - The unit of sweeping is one page: at most 4096 words, about 1,000 slots
-    for small classes.
+  - The unit of sweeping is one page: at most 2048 words (16 KB) or 4096
+    words (32 KB), about 500 or 1,000 slots for small classes.
   - An allocation sweeps at most one page (§1.4).
   - The colour rule is per page: allocation happens only in swept pages, so a
     new object is white. There is no cursor test.
@@ -510,10 +538,10 @@ of the design.
 | Source | A | B |
 |---|---|---|
 | Rounding within a size | None: exact fit or split. | Up to 10% per object, by the generated table. binarytrees: 8.5% on its 129-word blocks, about 97% of its words. |
-| Page tail | None. | `4096 mod wh_c` words per page, at most 245 words (whsize 257: 15 slots, 237 words). |
-| External fragmentation | Small holes between live blocks. Today 1–2-word holes are on lists 1–2 and do not slow list 0. They are lost only if no request of that size comes. | A page with one live slot keeps 32 KB. There is no compaction. A program that leaves one survivor per page in a class it no longer allocates holds that memory until the survivors die. |
+| Page tail | None. | `page_wsize mod wh_c` words per page. 32 KB: at most 241 words (whsize 257: 15 slots). 16 KB: at most 110 words (whsize 114: 17 slots). |
+| External fragmentation | Small holes between live blocks. Today 1–2-word holes are on lists 1–2 and do not slow list 0. They are lost only if no request of that size comes. | A page with one live slot keeps the whole page, 16 KB or 32 KB. 16 KB halves the extra memory on small programs (*measured*, results note §9.3: minilight +27.5% → +13.8%, bdd +5.4% → +1.8%). There is no compaction. A program that leaves one survivor per page in a class it no longer allocates holds that memory until the survivors die. |
 | Coalescing | Yes, everywhere. | Only whole pages, plus inside large runs. |
-| Metadata | 17 heads, and the table (8 bytes per 64 KB). | The page map, about 32 bytes per 32 KB page (0.1%), plus 40×2 heads. |
+| Metadata | 17 heads, and the table (8 bytes per 64 KB). | The page map, about 32 bytes per page (0.1% at 32 KB, 0.2% at 16 KB), plus 2 heads per class (40 or 41 classes). |
 
 **Peak heap.** Our heap is a fixed region, so the fair measure is the
 **smallest `MIN_EXPANSION_WORDSIZE` at which a program completes**, which is
@@ -529,7 +557,7 @@ sweep.
   - For 256 < wosize ≤ `Max_wosize`, it calls `caml_alloc_shr_no_track_noexc`
     (`:638`) and re-tiles a major block (`:375`):
     - In A, this is the cause of decision (b).
-    - In B, this block has whsize > 257 and so goes to a **large run**, where
+    - In B, this block has whsize > 257, above the largest class for either page size, and so goes to a **large run**, where
       A's walk-based sweep frees each sub-object separately, exactly as today.
       Pool pages never see a re-tiled block.
   - Above `Max_wosize`, `intern_add_to_heap` (`:664`) is already fatal under
@@ -626,8 +654,9 @@ adopt rotation now. B does not depend on it.
   work because the heap stays tiled (§3.2).
 - **The sweep hook.** It enters through a hook in the sweep step of
   `gen_gc`, like the parallel sweep's `vergc_sweep_hook`.
-- **Parameters.** Pages of 4096 words; the 40 classes of §3.1. Large runs use
-  a C copy of A's list-0 allocator and fused sweep, with runs that stop at
+- **Parameters.** The page size is a build flag, 2048 or 4096 words, and
+  every benchmark is run at both. Each size uses its own classes from §3.1.
+  Large runs use a C copy of A's list-0 allocator and fused sweep, with runs that stop at
   page-kind edges.
 - **Intern.** Intern is changed to allocate per object on the major path
   (§4.4). The change is behind its own flag, so that B can also be measured
@@ -698,9 +727,9 @@ native code as well where the earlier notes did.
 | Sequential | Run time | `hyperfine` wall time at the benchmark's usual `MIN_EXPANSION_WORDSIZE` |
 | | Collection time | Mark, sweep and minor collection, from in-runtime timers, summed per run |
 | | Allocation time | Major allocations, in total and by size class, from counters in a separate stats build |
-| | Peak heap | (i) The smallest heap size at which the program completes (`bench-min-heaps`, by bisection). (ii) The maximum over collections of the words in use after the sweep: for B, pages in use × 4096; for A, the walk words that are not free. (iii) Words lost to rounding and page tails (B), and to fragments (A). |
+| | Peak heap | (i) The smallest heap size at which the program completes (`bench-min-heaps`, by bisection). (ii) The maximum over collections of the words in use after the sweep: for B, pages in use × page size; for A, the walk words that are not free. (iii) Words lost to rounding and page tails (B), and to fragments (A). |
 | Parallel | Sweep time at 1, 2 and 4 threads | B by pages; A by the object-start table, using the parallel sweep of `sheera/parallel-sweep` adapted to 17 lists, or a C prototype of it if that port is not ready. Report the median sweep time per collection, and the speedup over each allocator's own sequential sweep. |
-| Incremental | Longest pause | Interleave the sweep with allocation while the program runs. For B, page by page. For A, the akhil incremental sweep adapted to the size lists, with slices of the same number of words (4096). Record each mutator-visible pause (slice + sweeping during allocation + `finish_sweep`). Report the maximum, the 99th percentile, and the total. |
+| Incremental | Longest pause | Interleave the sweep with allocation while the program runs. For B, page by page. For A, the akhil incremental sweep adapted to the size lists, with slices of the same number of words as one B page (2048 or 4096). Record each mutator-visible pause (slice + sweeping during allocation + `finish_sweep`). Report the maximum, the 99th percentile, and the total. |
 
 **Decision.** Choose B if all of the following hold:
 1. Every correctness check passes.
@@ -712,11 +741,16 @@ native code as well where the earlier notes did.
 A minimum heap more than 10% above A's is a warning sign. If it appears,
 tune the classes (for example, add a class at 129) and measure again.
 
+B passes if either page size meets these conditions. If both do, choose
+16 KB unless 32 KB is clearly faster, since 16 KB uses less memory on small
+programs. With 16 KB, also report how many promotions of whsize 228–257 go
+to the large path.
+
 ## 7. Main risks
 
-1. **Memory.** Class rounding (8.5% on binarytrees' main size) and sparse
-   pages could raise the minimum heap and the number of collections, and so
-   exceed the 5% limit.
+1. **Memory.** Class rounding (8.5% on binarytrees' main size at 32 KB, 1.5%
+   at 16 KB) and sparse pages could raise the minimum heap and the number
+   of collections, and so exceed the 5% limit.
 2. **Proving coalescing that stops at page-kind edges** inside
    `Coalesce.Correct` / `fused_aux`, for large runs.
 3. **The change to intern.c** to allocate per object without collecting part
