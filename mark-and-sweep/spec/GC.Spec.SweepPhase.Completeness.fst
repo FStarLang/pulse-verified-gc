@@ -153,8 +153,116 @@ let block_over (g: heap) (p: nat)
     extent_block g y;
     y
 
+/// ---------------------------------------------------------------------------
+/// The converse
+/// ---------------------------------------------------------------------------
+
+let transfer_word (g0 g g': heap) (since since': obj_addr -> prop) (free free': free_def)
+                  (made: obj_addr -> prop) (y: obj_addr) (p: nat)
+  : Lemma (requires reclaimed_was_dead g0 since free g /\
+                    heap_objects_dense g' /\ Seq.length (objects zero_addr g') > 0 /\
+                    W.walk_end g' zero_addr == W.walk_end g zero_addr /\
+                    (forall (x: obj_addr). in_use free g x ==>
+                       in_use free' g' x /\ ~(made x) /\ wosize_of_object x g' == wosize_of_object x g) /\
+                    (forall (x: obj_addr). in_use free' g' x /\ ~(made x) ==> in_use free g x) /\
+                    (forall (x: obj_addr). since' x ==> since x \/ made x) /\
+                    Seq.mem y (objects zero_addr g') /\ (free' g' y \/ since' y) /\ LL.in_extent g' y p)
+          (ensures LL.dead_covered g0 p)
+  = if FStar.IndefiniteDescription.strong_excluded_middle (in_use free' g' y /\ ~(made y))
+    then assert (in_use free g y /\ since y /\ LL.in_extent g y p)
+    else begin
+      W.reaches_end_of_dense g';
+      extent_below_end g' y p;
+      let z = block_over g p in
+      if in_use free g z then begin
+        assert (LL.in_extent g' z p);
+        extents_disjoint g' y z p
+      end
+    end
+
+let reclaimed_was_dead_transfer g0 g g' since since' free free' made =
+  let one (y: obj_addr) (p: nat)
+    : Lemma (Seq.mem y (objects zero_addr g') /\ (free' g' y \/ since' y) /\ LL.in_extent g' y p ==>
+             LL.dead_covered g0 p)
+    = FStar.Classical.move_requires (transfer_word g0 g g' since since' free free' made y) p
+  in
+  FStar.Classical.forall_intro_2 one
+
+let reclaimed_was_dead_start g0 =
+  let one (y: obj_addr) (p: nat)
+    : Lemma (Seq.mem y (objects zero_addr g0) /\
+             (free_incremental sweep_start.cursor g0 y \/ nothing_new y) /\ LL.in_extent g0 y p ==>
+             LL.dead_covered g0 p)
+    = Mark.colors_exclusive y g0
+  in
+  FStar.Classical.forall_intro_2 one
+
+let reclaimed_was_dead_steps g0 since g fp c k =
+  Step.sweep_inv_incremental_steps g fp c k;
+  Step.sweep_steps_walk_end g fp c k;
+  let (g', fp', st') = sweep_steps g fp (state_at g c) k in
+  sweep_inv_incremental_elim g' fp' st'.cursor;
+  let sz (x: obj_addr)
+    : Lemma (in_use (free_incremental c) g x ==> wosize_of_object x g' == wosize_of_object x g)
+    = if in_use (free_incremental c) g x then same_block_wosize g g' x
+  in
+  FStar.Classical.forall_intro sz;
+  reclaimed_was_dead_transfer g0 g g' since since (free_incremental c) (free_incremental st'.cursor)
+    (fun _ -> False)
+
+let reclaimed_was_dead_slice g0 since g fp c budget =
+  let st = state_at g c in
+  SL.slice_is_steps g fp st c budget;
+  reclaimed_was_dead_steps g0 since g fp c (SL.slice_count g fp st c budget)
+
+let reclaimed_was_dead_alloc g0 since g fp c wz tag =
+  Mut.alloc_walk_end g fp c wz tag;
+  Mut.alloc_sweep_shape g fp c wz tag;
+  let r = AC.alloc_phase g fp (SA.Sweeping c) wz tag in
+  let g' = r.SA.heap_out in
+  let obj = r.SA.obj_out in
+  sweep_shape_elim g' r.SA.fp_out c;
+  let fwd (x: obj_addr)
+    : Lemma (in_use (free_incremental c) g x ==>
+             in_use (free_incremental c) g' x /\ ~(x == obj) /\ wosize_of_object x g' == wosize_of_object x g)
+    = Mut.alloc_in_use g fp c wz tag x;
+      if obj <> 0UL && in_use (free_incremental c) g x then begin
+        Mut.alloc_keeps g fp c wz tag x;
+        colour_of g x; colour_of g' x
+      end
+  in
+  let back (x: obj_addr)
+    : Lemma (in_use (free_incremental c) g' x /\ ~(x == obj) ==> in_use (free_incremental c) g x)
+    = Mut.alloc_in_use g fp c wz tag x
+  in
+  FStar.Classical.forall_intro fwd;
+  FStar.Classical.forall_intro back;
+  reclaimed_was_dead_transfer g0 g g' since (with_new since obj) (free_incremental c) (free_incremental c)
+    (fun x -> x == obj)
+
+let reclaimed_was_dead_body_write g0 since g fp c x a v =
+  Mut.body_write_shape g fp c x a v;
+  let g' = write_word g a v in
+  sweep_shape_elim g fp c;
+  sweep_shape_elim g' fp c;
+  Mut.same_heads_walk_end g g';
+  same_heads_facts g g';
+  free_incremental_ok c;
+  let sz (y: obj_addr)
+    : Lemma (in_use (free_incremental c) g y ==> wosize_of_object y g' == wosize_of_object y g)
+    = colour_of g y; colour_of g' y
+  in
+  FStar.Classical.forall_intro sz;
+  reclaimed_was_dead_transfer g0 g g' since since (free_incremental c) (free_incremental c)
+    (fun _ -> False)
+
+/// ---------------------------------------------------------------------------
+/// The end
+/// ---------------------------------------------------------------------------
+
 let covered_word (g0: heap) (since: obj_addr -> prop) (g: heap) (x: obj_addr) (p: nat)
-  : Lemma (requires idle_account g0 since g /\ white_after_mark g0 x /\ LL.in_extent g0 x p)
+  : Lemma (requires idle_account g0 since g /\
+                    Seq.mem x (objects zero_addr g0) /\ ~(is_black x g0) /\ LL.in_extent g0 x p)
           (ensures free_or_new_at g since p)
   = W.reaches_end_of_dense g;
     extent_below_end g0 x p;
@@ -164,16 +272,19 @@ let covered_word (g0: heap) (since: obj_addr -> prop) (g: heap) (x: obj_addr) (p
     else begin
       assert (survivor g0 g y);
       extent_block g y; extent_block g0 y;
-      Mark.colors_exclusive x g0;
       extents_disjoint g0 x y p
     end
 
 let covered_at_idle g0 since g =
-  let one (x: obj_addr) (p: nat)
-    : Lemma (white_after_mark g0 x /\ LL.in_extent g0 x p ==> free_or_new_at g since p)
+  let one (p: nat) (x: obj_addr)
+    : Lemma (Seq.mem x (objects zero_addr g0) /\ ~(is_black x g0) /\ LL.in_extent g0 x p ==>
+             free_or_new_at g since p)
     = FStar.Classical.move_requires (covered_word g0 since g x) p
   in
   FStar.Classical.forall_intro_2 one
+
+let lossless_at_idle g0 since g =
+  covered_at_idle g0 since g
 
 let freed_by_end g0 since g fp c =
   SPE.sweep_inv_incremental_end g fp c;
@@ -188,6 +299,8 @@ let covered_by_end g0 since g fp c =
   freed_by_end g0 since g fp c;
   covered_at_idle g0 since g
 
+let reclaimed_was_dead_end g0 since g fp c = ()
+
 let dead_at_mark_white h_init h_mark roots fp x =
   Mark.colors_exclusive x h_mark;
   if FStar.IndefiniteDescription.strong_excluded_middle
@@ -200,11 +313,15 @@ let unreachable_freed_by_end h_init h_mark roots fp0 since g fp c =
 
 let unreachable_covered_at_idle h_init h_mark roots fp0 since g =
   covered_at_idle h_mark since g;
-  FStar.Classical.forall_intro (dead_at_mark_white h_init h_mark roots fp0)
+  let one (x: obj_addr) : Lemma (dead_at_mark h_init h_mark roots x ==> ~(is_black x h_mark))
+    = dead_at_mark_white h_init h_mark roots fp0 x; Mark.colors_exclusive x h_mark
+  in
+  FStar.Classical.forall_intro one
 
 let phase_account_start g0 fp =
   sweep_inv_incremental_start g0 fp;
-  survivor_or_new_start g0
+  survivor_or_new_start g0;
+  reclaimed_was_dead_start g0
 
 let phase_account_slice g0 since g fp ph budget =
   match ph with
@@ -212,11 +329,15 @@ let phase_account_slice g0 since g fp ph budget =
   | Ph.Sweeping c ->
       SL.sweep_slice_phase g fp c budget;
       survivor_or_new_slice g0 since g fp c budget;
+      reclaimed_was_dead_slice g0 since g fp c budget;
       let (g', fp', st') = SL.sweep_slice g fp (state_at g c) budget in
-      if sweep_done st'.cursor then freed_by_end g0 since g' fp' st'.cursor
+      if sweep_done st'.cursor then begin
+        freed_by_end g0 since g' fp' st'.cursor;
+        reclaimed_was_dead_end g0 since g' fp' st'.cursor
+      end
 
 let phase_account_idle g0 since g fp =
-  covered_at_idle g0 since g;
+  lossless_at_idle g0 since g;
   let dead (x: obj_addr)
     : Lemma (requires white_after_mark g0 x) (ensures freed g x \/ since x)
     = Mark.colors_exclusive x g0

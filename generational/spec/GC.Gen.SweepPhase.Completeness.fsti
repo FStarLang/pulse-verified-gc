@@ -30,6 +30,7 @@ module Ph = GC.Spec.Phase
 module Cheney = GC.Gen.Cheney
 module Promote = GC.Gen.Promote
 module SPM = GC.Gen.SweepPhase.Minor
+module LL = GC.Spec.FusedSweep.Lossless
 
 /// The addresses of the copies a minor collection at the sweep's phase
 /// promotes into the major heap.
@@ -58,3 +59,48 @@ val survivor_or_new_minor (g0: heap) (since: obj_addr -> prop)
 val nothing_promoted_after_reset (c: U64.t) (m: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
                                  (x: obj_addr)
   : Lemma (~(promoted_copy c (minor_reset m) g fp roots x))
+
+/// ---------------------------------------------------------------------------
+/// The blocks a collection made, and the converse
+/// ---------------------------------------------------------------------------
+
+/// The blocks a change from `g` to `g'` made non-free: non-free after, and
+/// not before.
+let made_by (c: U64.t) (g g': heap) (x: obj_addr) : prop =
+  in_use (free_incremental c) g' x /\ ~(in_use (free_incremental c) g x)
+
+/// `since`, and the blocks a change from `g` to `g'` made non-free.
+let with_made (since: obj_addr -> prop) (c: U64.t) (g g': heap) : obj_addr -> prop =
+  fun x -> since x \/ made_by c g g' x
+
+/// **The blocks a minor collection makes are its promoted copies.**
+val made_by_minor_promoted (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t) (roots: seq U64.t)
+                           (x: obj_addr)
+  : Lemma (requires sweep_inv_incremental g fp c /\
+                    GenInv.minor_heap_shape minor /\
+                    GenInv.minor_major_fields_not_free (free_incremental c) minor g /\
+                    made_by c g (SPM.collect_at c minor g fp roots).Promote.mc_major x)
+          (ensures promoted_copy c minor g fp roots x)
+
+/// **A minor collection mid-sweep keeps the account**, with the blocks it
+/// made (its promoted copies) among the new addresses.
+val survivor_or_new_minor_made (g0: heap) (since: obj_addr -> prop)
+                               (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t) (roots: seq U64.t)
+  : Lemma (requires sweep_inv_incremental g fp c /\
+                    GenInv.minor_heap_shape minor /\
+                    GenInv.minor_major_fields_not_free (free_incremental c) minor g /\
+                    survivor_or_new g0 since g c)
+          (ensures (let g' = (SPM.collect_at c minor g fp roots).Promote.mc_major in
+                    survivor_or_new g0 (with_made since c g g') g' c))
+
+/// **A minor collection mid-sweep keeps the converse**, with the blocks it
+/// made among the new addresses: it keeps every non-free block, and its
+/// copies are carved out of free space.
+val reclaimed_was_dead_minor (g0: heap) (since: obj_addr -> prop)
+                             (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t) (roots: seq U64.t)
+  : Lemma (requires sweep_inv_incremental g fp c /\
+                    GenInv.minor_heap_shape minor /\
+                    GenInv.minor_major_fields_not_free (free_incremental c) minor g /\
+                    reclaimed_was_dead g0 since (free_incremental c) g)
+          (ensures (let g' = (SPM.collect_at c minor g fp roots).Promote.mc_major in
+                    reclaimed_was_dead g0 (with_made since c g g') (free_incremental c) g'))

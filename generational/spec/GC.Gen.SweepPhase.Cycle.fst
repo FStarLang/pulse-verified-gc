@@ -39,13 +39,20 @@ let rec cycle_account (#g0 #g: heap) (#fp: U64.t) (#ph: Ph.gc_phase) (#since: ob
       phase_account_slice g0 since g1 fp1 (Ph.Sweeping c1) budget
   | Alloc #_ #g1 #fp1 #c1 #since1 r1 wz tag g' fp' obj _ ->
       cycle_account r1;
-      survivor_or_new_alloc g0 since1 g1 fp1 c1 wz tag
+      survivor_or_new_alloc g0 since1 g1 fp1 c1 wz tag;
+      reclaimed_was_dead_alloc g0 since1 g1 fp1 c1 wz tag
   | Write #_ #g1 #fp1 #c1 #since1 r1 x a v g' _ ->
       cycle_account r1;
-      survivor_or_new_body_write g0 since1 g1 fp1 c1 x a v
+      survivor_or_new_body_write g0 since1 g1 fp1 c1 x a v;
+      reclaimed_was_dead_body_write g0 since1 g1 fp1 c1 x a v
   | Minor #_ #g1 #fp1 #c1 #since1 r1 minor roots g' fp' _ ->
       cycle_account r1;
-      SPC.survivor_or_new_minor g0 since1 minor g1 fp1 c1 roots
+      SPC.survivor_or_new_minor_made g0 since1 minor g1 fp1 c1 roots;
+      SPC.reclaimed_was_dead_minor g0 since1 minor g1 fp1 c1 roots
+
+let cycle_lossless #g0 #g #fp #since r =
+  cycle_account r;
+  lossless_at_idle g0 since g
 
 let cycle_covered #g0 #g #fp #since r =
   cycle_account r;

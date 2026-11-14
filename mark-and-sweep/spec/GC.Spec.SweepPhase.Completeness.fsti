@@ -33,18 +33,30 @@
 /// At the end of the sweep nothing is pending free, so the account is about
 /// the blocks that are not blue (`idle_account`).  The end theorem is by
 /// coverage (`covered_by_end`, `covered_at_idle`): every word of a block
-/// white in the marked heap lies in a blue block, or in a block in `since`.
-/// The walk of the end heap covers the words of the marked heap's walk, a
-/// block over such a word that is neither blue nor new is a survivor with
-/// its old extent, and two blocks of the marked heap do not overlap.
-/// Marking leaves white exactly the unreachable objects
-/// (`dead_at_mark_white`), which gives the reachability form
-/// (`unreachable_covered_at_idle`).  The older, address-based form -- no
-/// non-free block starts at a dead block's address (`freed_by_end`,
-/// `unreachable_freed_by_end`) -- is kept.
+/// that was not black in the marked heap (`LL.dead_covered`: dead, or
+/// already free) lies in a blue block, or in a block in `since`.  The walk
+/// of the end heap covers the words of the marked heap's walk, a block over
+/// such a word that is neither blue nor new is a survivor with its old
+/// extent, and two blocks of the marked heap do not overlap.  Marking leaves
+/// white exactly the unreachable objects (`dead_at_mark_white`), which gives
+/// the reachability form (`unreachable_covered_at_idle`).  The older,
+/// address-based form -- no non-free block starts at a dead block's address
+/// (`freed_by_end`, `unreachable_freed_by_end`) -- is kept.
 ///
-/// `since` is an argument here, and any larger set accounts for as much
-/// (`survivor_or_new_weaken`); a run of the sweep phase fixes it
+/// The converse (`reclaimed_was_dead`): every word of a free or new block was
+/// in a non-black block of the marked heap.  Every event keeps it
+/// (`reclaimed_was_dead_start`, `_steps`, `_slice`, `_alloc`, `_body_write`,
+/// and `GC.Gen.SweepPhase.Completeness.reclaimed_was_dead_minor`), all
+/// through `reclaimed_was_dead_transfer`: an event keeps every non-free
+/// block, so a free block after is over free space before, and a new block
+/// is carved out of free space.  With both, once the sweep has ended a word
+/// was dead or free at mark exactly when it is free or new now
+/// (`lossless_at_idle`) -- with nothing new, the stop-the-world clause of
+/// `GC.Spec.FusedSweep.Lossless.sweep_lossless`.
+///
+/// `since` is an argument here.  Any larger set accounts for as much
+/// (`survivor_or_new_weaken`), and any smaller one keeps the converse, so
+/// each half alone is weak; a run of the sweep phase fixes `since`
 /// (`GC.Gen.SweepPhase.Cycle`).
 
 module GC.Spec.SweepPhase.Completeness
@@ -158,6 +170,71 @@ val survivor_or_new_body_write (g0: heap) (since: obj_addr -> prop) (g: heap) (f
           (ensures survivor_or_new g0 since (write_word g a v) c)
 
 /// ---------------------------------------------------------------------------
+/// The converse: only space dead at mark is free or new
+/// ---------------------------------------------------------------------------
+
+/// **Every word of a block of `g` that is free (for `free`) or new was in a
+/// non-black block of the marked heap `g0`** (`LL.dead_covered`): the space
+/// this cycle frees or hands out again is space that was dead (white) or
+/// already free (blue) when marking ended.  Unlike the account, it does not
+/// hold of a larger `since`.
+let reclaimed_was_dead (g0: heap) (since: obj_addr -> prop) (free: free_def) (g: heap) : prop =
+  forall (y: obj_addr) (p: nat).
+    Seq.mem y (objects zero_addr g) /\ (free g y \/ since y) /\ LL.in_extent g y p ==>
+    LL.dead_covered g0 p
+
+/// **A change that keeps the non-free blocks keeps it.**  From `g` to a
+/// dense `g'` whose walk ends at the same place: every block non-free
+/// before is non-free after (for `free'`), with its size, and not among the
+/// blocks the change made (`made`); every block non-free after and not made
+/// was non-free before; and the new addresses after are those before and the
+/// made blocks.  Then a free or new block after is over words of free blocks
+/// before, or of a made block, or is an old new block with its old extent.
+val reclaimed_was_dead_transfer (g0 g g': heap) (since since': obj_addr -> prop) (free free': free_def)
+                                (made: obj_addr -> prop)
+  : Lemma (requires reclaimed_was_dead g0 since free g /\
+                    heap_objects_dense g' /\ Seq.length (objects zero_addr g') > 0 /\
+                    W.walk_end g' zero_addr == W.walk_end g zero_addr /\
+                    (forall (x: obj_addr). in_use free g x ==>
+                       in_use free' g' x /\ ~(made x) /\ wosize_of_object x g' == wosize_of_object x g) /\
+                    (forall (x: obj_addr). in_use free' g' x /\ ~(made x) ==> in_use free g x) /\
+                    (forall (x: obj_addr). since' x ==> since x \/ made x))
+          (ensures reclaimed_was_dead g0 since' free' g')
+
+/// From the marked heap: what is free at the start of the sweep is blue or
+/// white, so not black.
+val reclaimed_was_dead_start (g0: heap)
+  : Lemma (reclaimed_was_dead g0 nothing_new (free_incremental sweep_start.cursor) g0)
+
+/// Sweep steps keep it: they free only blocks pending free (white at mark)
+/// and merge free blocks.
+val reclaimed_was_dead_steps (g0: heap) (since: obj_addr -> prop) (g: heap) (fp: U64.t) (c: U64.t) (k: nat)
+  : Lemma (requires sweep_inv_incremental g fp c /\ reclaimed_was_dead g0 since (free_incremental c) g)
+          (ensures (let (g', fp', st') = sweep_steps g fp (state_at g c) k in
+                    reclaimed_was_dead g0 since (free_incremental st'.cursor) g'))
+
+/// So does a slice.
+val reclaimed_was_dead_slice (g0: heap) (since: obj_addr -> prop) (g: heap) (fp: U64.t) (c: U64.t) (budget: nat)
+  : Lemma (requires sweep_inv_incremental g fp c /\ reclaimed_was_dead g0 since (free_incremental c) g)
+          (ensures (let (g', fp', st') = SL.sweep_slice g fp (state_at g c) budget in
+                    reclaimed_was_dead g0 since (free_incremental st'.cursor) g'))
+
+/// An allocation keeps it, with the new object among the new addresses: the
+/// object is carved out of a free block.
+val reclaimed_was_dead_alloc (g0: heap) (since: obj_addr -> prop) (g: heap) (fp: U64.t) (c: U64.t)
+                             (wz: nat) (tag: Mut.tag_t)
+  : Lemma (requires sweep_shape g fp c /\ reclaimed_was_dead g0 since (free_incremental c) g)
+          (ensures (let r = AC.alloc_phase g fp (SA.Sweeping c) wz tag in
+                    reclaimed_was_dead g0 (with_new since r.SA.obj_out) (free_incremental c) r.SA.heap_out))
+
+/// A write into the body of a block that is not blue keeps it.
+val reclaimed_was_dead_body_write (g0: heap) (since: obj_addr -> prop) (g: heap) (fp: U64.t) (c: U64.t)
+                                  (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires sweep_shape g fp c /\ Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\
+                    Mut.in_body g x a /\ reclaimed_was_dead g0 since (free_incremental c) g)
+          (ensures reclaimed_was_dead g0 since (free_incremental c) (write_word g a v))
+
+/// ---------------------------------------------------------------------------
 /// The end
 /// ---------------------------------------------------------------------------
 
@@ -170,18 +247,35 @@ let idle_account (g0: heap) (since: obj_addr -> prop) (g: heap) : prop =
   (forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) ==>
      survivor g0 g x \/ since x)
 
+/// The word `p` lies in a block of `g` allocated since marking ended.
+let new_covered (since: obj_addr -> prop) (g: heap) (p: nat) : prop =
+  exists (y: obj_addr). Seq.mem y (objects zero_addr g) /\ since y /\ LL.in_extent g y p
+
 /// The word `p` lies in a free (blue) block of `g`, or in a block of `g`
 /// allocated since marking ended.
 let free_or_new_at (g: heap) (since: obj_addr -> prop) (p: nat) : prop =
-  LL.blue_covered g p \/
-  (exists (y: obj_addr). Seq.mem y (objects zero_addr g) /\ since y /\ LL.in_extent g y p)
+  LL.blue_covered g p \/ new_covered since g p
 
-/// **Coverage once the sweep has ended**: every word of a block white in the
-/// marked heap `g0` lies in a free block, or in a block allocated since.
+/// **Coverage once the sweep has ended**: every word of a non-black block of
+/// the marked heap `g0` (dead, or already free) lies in a free block, or in
+/// a block allocated since.
 val covered_at_idle (g0: heap) (since: obj_addr -> prop) (g: heap)
   : Lemma (requires idle_account g0 since g)
-          (ensures forall (x: obj_addr) (p: nat).
-                     white_after_mark g0 x /\ LL.in_extent g0 x p ==> free_or_new_at g since p)
+          (ensures forall (p: nat). LL.dead_covered g0 p ==> free_or_new_at g since p)
+
+/// **The sweep phase is lossless, up to what it handed out.**  Once the sweep
+/// has ended, with both the account and its converse, a word of the heap
+/// was in a non-black block of the marked heap exactly when it lies in a
+/// free block now or in a block allocated since.  With nothing allocated
+/// (`since` empty) this is the stop-the-world clause of
+/// `LL.sweep_lossless`: `blue_covered g p <==> dead_covered g0 p`.  Each
+/// direction alone is weak in `since` -- completeness holds of the set of
+/// every address, the converse of the empty set -- so both are stated for
+/// one `since`.
+val lossless_at_idle (g0: heap) (since: obj_addr -> prop) (g: heap)
+  : Lemma (requires idle_account g0 since g /\ reclaimed_was_dead g0 since free_stw g)
+          (ensures forall (p: nat). p < heap_size ==>
+                     (LL.dead_covered g0 p <==> LL.blue_covered g p \/ new_covered since g p))
 
 /// Freed: not a non-free block -- not a block of the walk (merged into a free
 /// block), or a free (blue) block.
@@ -201,8 +295,14 @@ val freed_by_end (g0: heap) (since: obj_addr -> prop) (g: heap) (fp: U64.t) (c: 
 /// the marked heap lies in a free block, or in a block allocated since.
 val covered_by_end (g0: heap) (since: obj_addr -> prop) (g: heap) (fp: U64.t) (c: U64.t)
   : Lemma (requires sweep_inv_incremental g fp c /\ sweep_done c /\ survivor_or_new g0 since g c)
-          (ensures forall (x: obj_addr) (p: nat).
-                     white_after_mark g0 x /\ LL.in_extent g0 x p ==> free_or_new_at g since p)
+          (ensures forall (p: nat). LL.dead_covered g0 p ==> free_or_new_at g since p)
+
+/// At the end of the sweep nothing is pending free, so the converse is about
+/// the blue blocks.
+val reclaimed_was_dead_end (g0: heap) (since: obj_addr -> prop) (g: heap) (fp: U64.t) (c: U64.t)
+  : Lemma (requires sweep_inv_incremental g fp c /\ sweep_done c /\
+                    reclaimed_was_dead g0 since (free_incremental c) g)
+          (ensures reclaimed_was_dead g0 since free_stw g)
 
 /// ---------------------------------------------------------------------------
 /// Dead at mark: unreachable
@@ -250,12 +350,15 @@ val unreachable_covered_at_idle (h_init h_mark: heap) (roots: seq obj_addr) (fp0
 /// At the collector's phase
 /// ---------------------------------------------------------------------------
 
-/// The account at the collector's phase: mid-sweep, the sweep phase and the
-/// account at its cursor; idle (the sweep has ended), the idle account.
+/// The account and its converse at the collector's phase: mid-sweep, the
+/// sweep phase, and both at its cursor; idle (the sweep has ended), the idle
+/// account, and the converse for the blue blocks.
 let phase_account (g0: heap) (since: obj_addr -> prop) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) : prop =
   match ph with
-  | Ph.Sweeping c -> sweep_inv_incremental g fp c /\ survivor_or_new g0 since g c
-  | Ph.Idle -> idle_account g0 since g
+  | Ph.Sweeping c ->
+      sweep_inv_incremental g fp c /\ survivor_or_new g0 since g c /\
+      reclaimed_was_dead g0 since (free_incremental c) g
+  | Ph.Idle -> idle_account g0 since g /\ reclaimed_was_dead g0 since free_stw g
 
 /// From the marked heap, at the start of the sweep.
 val phase_account_start (g0: heap) (fp: U64.t)
@@ -271,10 +374,10 @@ val phase_account_slice (g0: heap) (since: obj_addr -> prop) (g: heap) (fp: U64.
                     phase_account g0 since g' fp' ph'))
 
 /// **Idle again, everything dead at mark is freed**, or its address was
-/// allocated since; and every word of it lies in a free block, or in a block
-/// allocated since.
+/// allocated since; and a word was in a non-black block of the marked heap
+/// exactly when it lies in a free block or in a block allocated since.
 val phase_account_idle (g0: heap) (since: obj_addr -> prop) (g: heap) (fp: U64.t)
   : Lemma (requires phase_account g0 since g fp Ph.Idle)
           (ensures (forall (x: obj_addr). white_after_mark g0 x ==> freed g x \/ since x) /\
-                   (forall (x: obj_addr) (p: nat).
-                      white_after_mark g0 x /\ LL.in_extent g0 x p ==> free_or_new_at g since p))
+                   (forall (p: nat). p < heap_size ==>
+                      (LL.dead_covered g0 p <==> LL.blue_covered g p \/ new_covered since g p)))

@@ -16,18 +16,26 @@
 ///     returned (`with_new`);
 ///   * `Write`: a write into the body of a block that is not blue (a program
 ///     write, or the initialisation of a fresh object) -- `since` unchanged;
-///   * `Minor`: a minor collection -- `since` and the copies it promoted
-///     (`with_promoted`).
+///   * `Minor`: a minor collection -- `since` and the blocks it made non-free
+///     (`with_made`), which are its promoted copies
+///     (`SPC.made_by_minor_promoted`).
 ///
 /// `since` is an index of the run, so it is the addresses the run's
 /// allocations and promotions handed out, and no others.  The events other
 /// than a slice need the sweep's phase, so a run reaches `Idle` exactly by
 /// the slice that ends the sweep and stops there.
 ///
-/// **Completeness of a run** (`cycle_covered`, `cycle_unreachable_covered`):
-/// once a run is idle, every word of a block dead at mark lies in a free
-/// block, or in a block the run allocated or promoted.  Every state of a run
-/// carries the account (`cycle_account`).
+/// **The sweep phase is lossless, up to what the run handed out**
+/// (`cycle_lossless`): once a run is idle, a word was in a non-black block
+/// of the marked heap (dead, or already free) exactly when it lies in a free
+/// block, or in a block the run allocated or promoted.  With no allocation
+/// and nothing promoted this is the stop-the-world clause of
+/// `GC.Spec.FusedSweep.Lossless.sweep_lossless`, `blue_covered g p <==>
+/// dead_covered g0 p`.  Its two halves are completeness (`cycle_covered`,
+/// and `cycle_unreachable_covered` for dead read as unreachable) and its
+/// converse; each alone is weak in `since` (completeness holds of every
+/// address, the converse of none), and the run pins `since`.  Every state of
+/// a run carries the account and its converse (`cycle_account`).
 ///
 /// The run is here, with the generational spec, because the minor
 /// collection is one of its events.
@@ -105,27 +113,35 @@ noeq type cycle (g0: heap) : heap -> U64.t -> Ph.gc_phase -> (obj_addr -> prop) 
               GenInv.minor_major_fields_not_free (free_incremental c) minor g /\
               (let res = SPM.collect_at c minor g fp roots in
                g' == res.Promote.mc_major /\ fp' == res.Promote.mc_fp)) ->
-      cycle g0 g' fp' (Ph.Sweeping c) (SPC.with_promoted since c minor g fp roots)
+      cycle g0 g' fp' (Ph.Sweeping c) (SPC.with_made since c g g')
 
-/// The account a run carries: mid-sweep, `survivor_or_new` at the cursor;
-/// idle, the idle account.
+/// The account and its converse a run carries: mid-sweep, at the cursor;
+/// idle, for the blue blocks.
 let cycle_inv (g0: heap) (since: obj_addr -> prop) (g: heap) (ph: Ph.gc_phase) : prop =
   match ph with
-  | Ph.Sweeping c -> survivor_or_new g0 since g c
-  | Ph.Idle -> idle_account g0 since g
+  | Ph.Sweeping c -> survivor_or_new g0 since g c /\ reclaimed_was_dead g0 since (free_incremental c) g
+  | Ph.Idle -> idle_account g0 since g /\ reclaimed_was_dead g0 since free_stw g
 
 /// **Every state of a run carries the account.**
 val cycle_account (#g0 #g: heap) (#fp: U64.t) (#ph: Ph.gc_phase) (#since: obj_addr -> prop)
                   (r: cycle g0 g fp ph since)
   : Lemma (ensures cycle_inv g0 since g ph)
 
-/// **Completeness of a run**: once it is idle, every word of a block white
-/// in the marked heap lies in a free block, or in a block the run allocated
-/// or promoted.
+/// **The sweep phase is lossless, up to what the run handed out**: once a
+/// run is idle, a word of the heap was in a non-black block of the marked
+/// heap exactly when it lies in a free block, or in a block the run
+/// allocated or promoted.
+val cycle_lossless (#g0 #g: heap) (#fp: U64.t) (#since: obj_addr -> prop)
+                   (r: cycle g0 g fp Ph.Idle since)
+  : Lemma (ensures forall (p: nat). p < heap_size ==>
+                     (LL.dead_covered g0 p <==> LL.blue_covered g p \/ new_covered since g p))
+
+/// **Completeness of a run**: once it is idle, every word of a non-black
+/// block of the marked heap lies in a free block, or in a block the run
+/// allocated or promoted.
 val cycle_covered (#g0 #g: heap) (#fp: U64.t) (#since: obj_addr -> prop)
                   (r: cycle g0 g fp Ph.Idle since)
-  : Lemma (ensures forall (x: obj_addr) (p: nat).
-                     white_after_mark g0 x /\ LL.in_extent g0 x p ==> free_or_new_at g since p)
+  : Lemma (ensures forall (p: nat). LL.dead_covered g0 p ==> free_or_new_at g since p)
 
 /// The same with dead at mark read as unreachable from the roots when
 /// marking ended.
