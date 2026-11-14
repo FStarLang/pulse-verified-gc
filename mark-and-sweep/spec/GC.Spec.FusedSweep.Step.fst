@@ -1432,3 +1432,60 @@ let rec steps_done_aux (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
 let sweep_steps_done g fp c k = steps_done_aux g fp (state_at g c) k
 
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Where the walk ends
+/// ---------------------------------------------------------------------------
+
+/// After a step the walk ends where it did: it reaches the new cursor, from
+/// which the heap is unchanged (`dense_after`'s argument).
+let walk_end_after (g g': heap) (n: nat)
+  : Lemma (requires heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
+                    W.reaches g zero_addr n /\ W.reaches g' zero_addr n /\ U64.v zero_addr < n /\
+                    (forall (a: hp_addr). U64.v a >= n ==> read_word g' a == read_word g a))
+          (ensures W.walk_end g' zero_addr == W.walk_end g zero_addr)
+  = W.reaches_bounds g' zero_addr n;
+    W.reaches_end_of_dense g;
+    let e = W.walk_end g zero_addr in
+    W.reaches_stuck g zero_addr e n;
+    W.reaches_bounds g zero_addr e;
+    if n < e then begin
+      let na = mk_hp_addr n in
+      W.reaches_det g zero_addr na e;
+      W.walk_frame_from g g' na;
+      W.reaches_trans g' zero_addr na e
+    end;
+    W.walk_end_of_reaches g' zero_addr e
+
+let step_walk_end (g: heap) (fp: U64.t) (st: sweep_state)
+  : Lemma (requires inv_st g fp st /\ not (sweep_done st.cursor) /\ can_sweep g st)
+          (ensures (let (g', _, _) = sweep_step g fp st in
+                    W.walk_end g' zero_addr == W.walk_end g zero_addr))
+  = let c : hp_addr = (sweep_inv_incremental_elim g fp st.cursor; st.cursor) in
+    step_st g fp c;
+    let (g', fp', st') = sweep_step g fp st in
+    let n = U64.v st'.cursor in
+    sweep_inv_incremental_elim g fp c;
+    sweep_inv_incremental_elim g' fp' st'.cursor;
+    W.reaches_snoc g zero_addr c;
+    W.reaches_bounds g zero_addr (U64.v c);
+    W.bnext_facts g c;
+    walk_end_after g g' n
+
+let rec steps_walk_end (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
+  : Lemma (requires inv_st g fp st)
+          (ensures (let (g', _, _) = sweep_steps g fp st k in
+                    W.walk_end g' zero_addr == W.walk_end g zero_addr))
+          (decreases k)
+  = sweep_steps_unfold g fp st k;
+    if k = 0 || sweep_done st.cursor || not (can_sweep g st) then ()
+    else begin
+      step_inv g fp st;
+      step_walk_end g fp st;
+      let (g1, fp1, st1) = sweep_step g fp st in
+      steps_walk_end g1 fp1 st1 (k - 1)
+    end
+
+let sweep_steps_walk_end g fp c k =
+  sweep_inv_incremental_elim g fp c;
+  steps_walk_end g fp (state_at g c) k

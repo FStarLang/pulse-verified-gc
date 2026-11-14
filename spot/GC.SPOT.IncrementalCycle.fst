@@ -156,7 +156,8 @@ let mark_slice_step (minor: minor_state) (g0: heap) (droots: Seq.seq obj_addr) (
     if Ph.Sweeping? ph' then begin
       Stw.marking_inv_stw_done g0 s' droots fp0;
       GI.phase_shape_sweeping minor s' fp' zero_addr;
-      SPC.survivor_or_new_start s'
+      SPC.survivor_or_new_start s';
+      SPC.reclaimed_was_dead_start s'
     end
 #pop-options
 

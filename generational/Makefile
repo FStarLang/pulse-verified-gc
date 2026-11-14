@@ -76,9 +76,10 @@ checked = $(addprefix $(CACHE_DIR)/,$(addsuffix .checked,$(notdir $(1))))
 # GC.Gen.SweepPhase.Minor (a minor collection mid-sweep) and
 # GC.Gen.SweepPhase.Safety (safety over the sweep phase) and
 # GC.Gen.SweepPhase.Completeness (a minor collection mid-sweep, for the sweep
-# phase's completeness) are theorems about it; the first two are also reached
-# through it, Safety and Completeness only as roots.
-ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst impl/GC.Gen.Impl.Barrier.fsti impl/GC.Gen.Impl.Barrier.fst spec/GC.Gen.SweepPhase.fst spec/GC.Gen.SweepPhase.Minor.fst spec/GC.Gen.SweepPhase.Safety.fst spec/GC.Gen.SweepPhase.Completeness.fst spec/GC.Gen.MarkPhase.Alloc.fst spec/GC.Gen.MarkPhase.Completeness.fst spec/GC.Gen.MarkPhase.Safety.fst
+# phase's completeness) and GC.Gen.SweepPhase.Cycle (a run of the sweep phase,
+# and what it frees) are theorems about it; the first two are also reached
+# through it, Safety, Completeness and Cycle only as roots.
+ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst impl/GC.Gen.Impl.Barrier.fsti impl/GC.Gen.Impl.Barrier.fst spec/GC.Gen.SweepPhase.fst spec/GC.Gen.SweepPhase.Minor.fst spec/GC.Gen.SweepPhase.Safety.fst spec/GC.Gen.SweepPhase.Completeness.fst spec/GC.Gen.SweepPhase.Cycle.fst spec/GC.Gen.MarkPhase.Alloc.fst spec/GC.Gen.MarkPhase.Completeness.fst spec/GC.Gen.MarkPhase.Safety.fst
 ROOT_CHECKED = $(call checked,$(ROOT_SRC))
 ALL_CHECKED  = $(call checked,$(ALL_SRC))
 

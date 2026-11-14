@@ -675,3 +675,35 @@ let alloc_in_use g fp c0 wz tag y =
     found_in_use g fp c0 wz tag p cur pc y;
     found_shape g fp c0 wz tag p cur pc
   end
+
+/// ---------------------------------------------------------------------------
+/// Where the walk ends
+/// ---------------------------------------------------------------------------
+
+let same_heads_walk_end g g' =
+  W.reaches_end_of_dense g;
+  W.walk_end_of_reaches g' zero_addr (W.walk_end g zero_addr)
+
+let carved_walk_end (g g': heap) (q p: hp_addr)
+  : Lemma (requires carved_from g g' q p /\ heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0)
+          (ensures W.walk_end g' zero_addr == W.walk_end g zero_addr)
+  = W.reaches_end_of_dense g;
+    let e = W.walk_end g zero_addr in
+    W.reaches_bounds g zero_addr e;
+    W.reaches_block_before g zero_addr q e;
+    W.walk_end_of_reaches g' zero_addr e
+
+let alloc_walk_end g fp c wz tag =
+  sweep_shape_elim g fp c;
+  alloc_sweep_shape g fp c wz tag;
+  let r = AC.alloc_phase g fp (SA.Sweeping c) wz tag in
+  if r.SA.obj_out <> 0UL then begin
+    alloc_carved g fp c wz tag;
+    let p = hd_address (r.SA.obj_out <: obj_addr) in
+    let one (q: hp_addr)
+      : Lemma (requires carved_from g r.SA.heap_out q p)
+              (ensures W.walk_end r.SA.heap_out zero_addr == W.walk_end g zero_addr)
+      = carved_walk_end g r.SA.heap_out q p
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires one)
+  end

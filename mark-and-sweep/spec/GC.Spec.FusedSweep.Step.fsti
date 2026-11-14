@@ -178,3 +178,10 @@ val sweep_inv_stw_steps (g0 g: heap) (fp: U64.t) (c: U64.t) (k: nat)
 val sweep_steps_done (g: heap) (fp: U64.t) (c: U64.t) (k: nat)
   : Lemma (requires sweep_inv_incremental g fp c /\ k * 8 >= heap_size - U64.v c)
           (ensures (let (g', fp', st') = sweep_steps g fp (state_at g c) k in sweep_done st'.cursor))
+
+/// **Sweep steps keep where the walk ends**: a step changes headers only
+/// below the new cursor, and the walk still reaches it.
+val sweep_steps_walk_end (g: heap) (fp: U64.t) (c: U64.t) (k: nat)
+  : Lemma (requires sweep_inv_incremental g fp c)
+          (ensures (let (g', _, _) = sweep_steps g fp (state_at g c) k in
+                    GC.Spec.Walk.walk_end g' zero_addr == GC.Spec.Walk.walk_end g zero_addr))

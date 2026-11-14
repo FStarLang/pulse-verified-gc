@@ -90,6 +90,22 @@ let promote_sweep_shape g fp c0 minor obj wosize =
   end
 #pop-options
 
+#push-options "--z3rlimit 10"
+let promote_walk_end g fp c0 minor obj wosize =
+  let tag = Promote.promoted_tag minor obj in
+  alloc_sweep_shape g fp c0 wosize tag;
+  alloc_walk_end g fp c0 wosize tag;
+  let r = AC.alloc_phase g fp (SA.Sweeping c0) wosize tag in
+  if r.SA.obj_out <> 0UL then begin
+    let dst : obj_addr = r.SA.obj_out in
+    obj_pos r.SA.heap_out dst; colour_of r.SA.heap_out dst;
+    hd_address_spec dst;
+    copy_shape r.SA.heap_out r.SA.fp_out c0 minor obj dst 0 wosize;
+    sweep_shape_elim r.SA.heap_out r.SA.fp_out c0;
+    same_heads_walk_end r.SA.heap_out (WB.copy_fields minor r.SA.heap_out obj dst 0 wosize)
+  end
+#pop-options
+
 /// `same_block` composes.
 let same_block_trans (g g' g'': heap) (q: hp_addr)
   : Lemma (requires same_block g g' q /\ same_block g' g'' q)

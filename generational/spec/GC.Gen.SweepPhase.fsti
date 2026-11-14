@@ -60,6 +60,14 @@ val promote_sweep_shape (g: heap) (fp: U64.t) (c: U64.t)
                     sweep_shape r.Promote.major_out r.Promote.fp_out c /\
                     (forall (x: obj_addr). pending_free c r.Promote.major_out x == pending_free c g x)))
 
+/// Promotion keeps where the walk ends: an allocation, then writes into the
+/// body of the new object.
+val promote_walk_end (g: heap) (fp: U64.t) (c: U64.t)
+                     (minor: minor_state) (obj: U64.t) (wosize: nat{wosize > 0})
+  : Lemma (requires sweep_shape g fp c)
+          (ensures W.walk_end (Promote.promote_object minor g obj fp wosize (SA.Sweeping c)).Promote.major_out
+                     zero_addr == W.walk_end g zero_addr)
+
 /// **Promotion keeps the sweep phase**, and the pending-free set.
 val promote_sweep_phase (g: heap) (fp: U64.t) (c: U64.t)
                         (minor: minor_state) (obj: U64.t) (wosize: nat{wosize > 0})
