@@ -73,12 +73,13 @@ theorem is weakened to fit the code.
    reading header colours; only the Pulse sweep reads the bitmap, and its
    loop invariant is "the specification's heap is `with_marks` of the real
    heap and the bitmap still set".
-7. **What F\* and Pulse do not provide** (§4): in this toolchain no atomic
-   operation extracts correctly (the `cas` is `as_atomic` over a plain read,
-   compare and write), there is no CAS on an array cell, no fetch-and-add,
-   no lock in C, and `par` does not extract. All of these become a small set
-   of trusted, monomorphic primitives with hand-written C, as Spike 2 did
-   with `par_env`.
+7. **Toolchain** (§4): we upgrade to an F\* nightly after `bc02ebf`
+   (FStar#4812), which makes the U32 `cas`, `read_atomic` and `write_atomic`
+   truly atomic in C and realizes `SpinLock` in C. Four trusted primitives
+   remain, in one file with a short specification each: a CAS and an
+   atomic load on an array element (the bitmap), a pause hint, and fork/join
+   of k workers (`par` does not extract with karamel). Fetch-and-add and the
+   pool lock are verified code over `cas`.
 8. **Effort, estimated:** 13–22k proof lines, plus 1–1.5k lines of C and
    about two weeks of prototype work and measurement (§7). **The main risk**
    is the Pulse proof of the mark loop against a shared invariant with ghost
@@ -336,6 +337,9 @@ As the page prototype does it (`chunk_bounds`, `chunk_job`):
    (slowest/mean) of 1.02–1.04 on big heaps (*measured*, results §9.8).
    Static is simpler to prove (no shared counter; §2.4); if it is within 5%
    of dynamic at k = 2 and 4 on every program, take it.
+   *Outcome (P0, §9.3):* at k = 2 the two are equal. At k = 4, static's
+   sweep is 5–27% slower on five programs, but by at most 0.2 ms, under 2%
+   of a collection. Dynamic is recommended; S2 can start with static.
 4. **What a chunk owns:** the heap words `[page_base lo_c, page_base
    lo_{c+1})` (including a run reaching past `lo_{c+1}`'s nominal start,
    which by construction is inside), the page-map entries `[lo_c,
@@ -499,35 +503,80 @@ as they are.
 
 ## 4. What F\* and Pulse provide, and what is missing
 
-Checked in `fstar/` (nightly 2026-10-17, `f43a1127`; there is no separate F\*
-in the worktree).
+**Decision (2026-11-14): we will upgrade to an F\* nightly after commit
+`bc02ebf`, which contains FStar#4812. Not yet:** the current toolchain stays
+until stage P1. The design assumes the upgraded toolchain.
 
-**FStar#4812.** The `parallel-mark` design notes that "F\*'s 32-bit CAS is
-truly atomic since FStar#4812". **This toolchain does not have it.** In
-`fstar/lib/fstar/pulse/pulse/lib/Pulse.Lib.Primitives.fst`, `read_atomic`,
-`write_atomic` (l.30, 33) and `cas` (l.62) are `Pulse.Lib.Core.as_atomic`
-(an assumption, with `warn_on_use`) over a plain read, compare and write,
-and no runtime C header ships for them. The survey of this session reports
-that #4812 was merged on 2026-10-29, after this nightly, and adds a
-`Pulse_Lib_Primitives_runtime.h` implementing the three U32 operations with
-`__atomic_*` at `SEQ_CST`. *That was not checked against the PR here* (no
-`gh` and no F\* git history in this environment); it should be confirmed
-before upgrading. Even with it, the operations are on `ref U32.t` only.
+**What #4812 gives** (merged into F\* master early November 2026): the U32
+`cas`, `read_atomic` and `write_atomic` of `Pulse.Lib.Primitives` become
+truly atomic in C, and `Pulse.Lib.SpinLock` is realized in hand-written C.
+In today's nightly (2026-10-17, `f43a1127`) they are
+`Pulse.Lib.Core.as_atomic` (an assumption) over a plain read, compare and
+write (`Pulse.Lib.Primitives.fst` l.30, 33, 62), and `write_atomic` even
+loses its store when extracted (spike issue 1). All of them are on a
+`ref U32.t`, not on an array element.
 
-| Need | In this toolchain | Missing / plan |
+**After the upgrade.**
+
+| Need | Provided after the upgrade | Remaining trusted primitive, or how it is built |
 |---|---|---|
-| 32-bit CAS on a bitmap word | `cas (r: ref U32.t)`, `stt_atomic`, full ownership of `r`; extracts non-atomically, and `write_atomic` loses its store (spike issue 1) | **no CAS on an array cell.** Trusted `bm_cas (a: array U32.t) (i: SZ.t) (u v: U32.t) (#s)`: `stt_atomic bool emp_inames (pts_to a s) (λb. if b then pts_to a (upd s i v) ** pure (s.[i] == u) else pts_to a s)`, used inside `with_invariants`; C: `__atomic_compare_exchange_n`, seq_cst |
-| atomic load of a bitmap word | `read_atomic` on a ref only | trusted `bm_load` on an array cell; C: `__atomic_load_n` |
-| fetch-and-add/sub (counter, chunk claim) | none | trusted `fetch_add_u32 (r: ref U32.t)`; C: `__atomic_fetch_add`. A CAS loop on `cas` would also do, but `cas` needs its C anyway |
-| lock | `Pulse.Lib.SpinLock` and `Mutex` (interfaces good), spinning on the broken `cas`; no C realization in the toolchain | extract with `-library Pulse.Lib.SpinLock`; trusted C over `pthread_mutex_t` (an old copy is in `pulse-verified-gc/FStar/.../dice/external/c/hacl/Pulse_Lib_SpinLock.c`); `try_acquire` is also needed (for §1.3) and is not in the interface |
-| fork/join of k workers | `Pulse.Lib.Par.par` (two branches, closures): karamel drops it; `fork_core` has no realization; `Pulse.Lib.Task` crashes karamel (spike issue 4) | trusted, **monomorphic** `run_workers` per use, in the style of Spike 2's `par_env` (polymorphic assumes are not extracted, spike issue 5): `(k) (envs: array env) (f: env -> stt unit (pre e) (post e))` with an iterated star; C: the persistent pool of `proto_common.c` |
+| 32-bit CAS on a bitmap word | `cas` on a `ref U32.t` only; a bitmap of one `ref` per word is not a flat array (`Pulse.Lib.Reference.Array` only goes from a ref to an array) | **trusted `cas_cell`** (below) |
+| atomic load of a bitmap word (the bitmap-first test, concurrent with CASes; a plain load would be a data race in C) | `read_atomic` on a ref only | **trusted `load_cell`** (below) |
+| fetch-and-add/sub (termination counter, chunk counter) | none | **not trusted:** a verified CAS loop over the upgraded `cas` on a `ref U32.t`. The counter moves only at publish, take and idle transitions, and the chunk counter once per chunk, so a CAS loop costs the same as `lock xadd` there. P0 measures it in the prototype |
+| the pool lock, with `try_acquire` (§1.3) | `SpinLock` in C, but its interface has no `try_acquire` | **not trusted:** a verified test-and-test-and-set spin lock over the upgraded `cas` (`try_acquire` is one `cas`). P0 measures it against the prototype's `pthread_mutex_t`; if it is slower, `try_acquire` is added to the trusted file instead |
+| back-off in spin loops | none | **trusted `cpu_pause`** (below): no logical effect, extracted as `_mm_pause()` |
+| fork/join of k workers | `Pulse.Lib.Par.par` passes closures and karamel drops it; `fork_core` has no realization; `Pulse.Lib.Task` crashes karamel (spike issue 4). #4812 does not change this | **trusted `run_workers`** (below), monomorphic, as Spike 2's `par_env` (polymorphic assumes are not extracted, spike issue 5) |
 | invariants, ghost state | `Pulse.Lib.Inv` (`with_invariants_a`, costs a `later_credit`), `CancellableInvariant`, `GhostPCMReference`, `MonotonicGhostRef`, PCM maps | enough; the later-credit cost to be checked (§1.6) |
 | array splitting | `pts_to_range_split/join/share/gather`, `pts_to_mask` with `split_mask`/`join_mask`, `ArrayPtr.split` | enough |
-| memory order | all seq_cst | fine on the test machine: on x86, a seq_cst CAS is `lock cmpxchg` and a seq_cst load is a `mov`, the same instructions as relaxed; only seq_cst *stores* cost (`xchg`), and the design has none on hot paths. On ARM this would cost; out of scope |
+| memory order | all seq_cst (#4812's C uses `__ATOMIC_SEQ_CST`) | fine on the test machine: on x86 a seq_cst CAS is `lock cmpxchg` and a seq_cst load is a `mov`, the same instructions as relaxed; only seq_cst stores cost (`xchg`), and there are none on hot paths. On ARM this would cost; out of scope |
 
-**Trusted base added:** the five primitives' specifications and their C (a
-few dozen lines), and the thread pool. Nothing else; the mark and the sweep
-themselves are verified.
+**The trusted primitives, all in one file** (`GC.Impl.Par.Trusted.fsti`,
+with its C in `gc_par_trusted.c`, extracted with `-library`), each with a
+short specification. Nothing else in the parallel collector is trusted
+beyond what F\* and Pulse themselves trust.
+
+```fstar
+(* Atomically: if a.(i) = u then a.(i) <- v.  Used inside with_invariants. *)
+val cas_cell (a: array U32.t) (i: SZ.t) (u v: U32.t) (#s: erased (Seq.seq U32.t))
+  : stt_atomic bool #Observable emp_inames
+      (pts_to a s ** pure (SZ.v i < Seq.length s))
+      (fun b -> if b then pts_to a (Seq.upd s (SZ.v i) v) ** pure (Seq.index s (SZ.v i) == u)
+                     else pts_to a s)
+      (* C: __atomic_compare_exchange_n(&a[i], &u, v, false, SEQ_CST, SEQ_CST) *)
+
+(* Atomically read a.(i), with any fraction. *)
+val load_cell (a: array U32.t) (i: SZ.t) (#p: perm) (#s: erased (Seq.seq U32.t))
+  : stt_atomic U32.t #Observable emp_inames
+      (pts_to a #p s ** pure (SZ.v i < Seq.length s))
+      (fun x -> pts_to a #p s ** pure (x == Seq.index s (SZ.v i)))
+      (* C: __atomic_load_n(&a[i], SEQ_CST) *)
+
+(* A spin-loop hint; no logical effect. *)
+val cpu_pause (_: unit) : stt unit emp (fun _ -> emp)       (* C: _mm_pause() *)
+
+(* Run f on each of the k environments, f envs.(0) on the calling thread and
+   the others on the pool's threads, and return when all have returned.  One
+   instance per environment type (mark, sweep), since an assumed val cannot
+   be polymorphic. *)
+val run_workers_mark (k: SZ.t{SZ.v k >= 1}) (envs: array mark_env)
+  (pre post: nat -> slprop) {| forall i. is_send (pre i) |} {| forall i. is_send (post i) |}
+  (f: (i: SZ.t) -> stt unit (pre (SZ.v i)) (fun _ -> post (SZ.v i)))
+  : stt unit (on_range pre 0 (SZ.v k)) (fun _ -> on_range post 0 (SZ.v k))
+      (* C: the persistent pthread pool of proto_common.c *)
+(* run_workers_sweep: the same, for sweep_env. *)
+```
+
+So after the upgrade, **four trusted primitives remain**: the array-element
+CAS, the array-element atomic load, the pause hint, and fork/join (one
+declaration per environment type). Fetch-and-add and the lock are verified
+code over #4812's `cas`, unless P0 shows that costs time, in which case
+`fetch_add_u32` or `try_acquire` joins the file with a specification of the
+same size. P1 checks the exact form of the `is_send` instances and of
+`on_range` (an iterated star) in the upgraded Pulse.
+
+**Until the upgrade**, none of these extract correctly; P1's spike can be
+done on the new nightly in a scratch worktree, so that the upgrade of the
+main build stays a separate step.
 
 ---
 
@@ -572,14 +621,18 @@ unverified, for measurement only:
    time. Thread counts 8 are not required (4 cores, hyper-threaded).
 
 **The k = 1 question.** With one thread, BP was 0.36–0.53× the sequential
-header mark on binarytrees, livemap, minilight, bdd and fft, and 2× faster
-on markbench and 1.1× faster on livegraph (*measured*). The rule compares Pulse with the C of the same
-algorithm, so this is not a rule violation, but a collector that is slower
-with one thread than today is a regression. P0 also measures a
-*sequential bitmap mark* (gray stack, bitmap, no packets). If it is close to
-the header mark, k = 1 uses it (a second, simpler mark to prove, *Estimate:*
-1–1.5k lines, reusing the I1/I2 argument without concurrency). **This is a
-decision for you after P0.**
+header mark on binarytrees, livemap, minilight, bdd and fft, and faster on
+markbench (2×) and livegraph (1.1×) (*measured*). **Decision (2026-11-14):
+with one thread the collector uses today's sequential mark** (the verified
+header mark, `MarkBounded`) with the existing, verified sequential page
+sweep, both unchanged, **unless P0 shows that the sequential bitmap mark**
+(gray stack, bitmap, no packets) **is as fast**. If it is, k = 1 uses the
+bitmap mark and the bitmap sweep instead (a second, simpler mark to prove,
+*Estimate:* 1–1.5k lines, reusing the I1/I2 argument without concurrency).
+
+**Outcome (P0, §9.2):** the sequential bitmap mark is not as fast (0.55–0.93×
+the header mark on seven of nine programs; faster only on fft). k = 1 keeps
+the header mark and the header sweep.
 
 ---
 
@@ -627,7 +680,7 @@ and at the default rlimit, and with vacuity checks for each new invariant.
 | # | Stage | Content | *Estimate* |
 |---|---|---|---|
 | P0 | C prototype | §5's prototype; the bdd fix in steps; static vs dynamic chunks; bit clearing per bit vs per page; the sequential bitmap mark for k = 1. Checks, controls, TSan. Measure k = 1, 2, 4 on the eight programs. **Gate:** the decisions in §5 and §2.1 | 4–6 days, no proofs |
-| P1 | Primitives spike | The trusted vals of §4 with their C; `run_workers` over the pool; a two-thread toy (counter + bitmap CAS + lock) proved, extracted, run under TSan; the later-credit question; whether to move to a nightly with #4812 | 2–4 days, 0.3k F\*, 0.3k C |
+| P1 | Primitives spike | On a nightly after `bc02ebf`, in a scratch worktree: the trusted file of §4 with its C; the verified CAS-loop counter and spin lock over #4812's `cas`; `run_workers` over the pool; a two-thread toy (counter + bitmap CAS + lock) proved, extracted, run under TSan; the later-credit question. The main build's upgrade is a separate step | 2–4 days, 0.3k F\*, 0.3k C |
 | S1 | Sweep specification | `Bitmap` (`with_marks`, `with_marks_unit`); `SweepChunks` (`sweep_range`, range frame and locality, `run_head_only`, list splitting, the join lemma) | 2–3.5k |
 | S2 | Pulse sweep | Fractional and range heap access; the bitmap in `sweep_slots` and the run sweep; `sweep_chunk`, `join`, workers (static first); `sweep_all` on the bitmap for k = 1. Extract; `pages_test.c` extended; `psweep*` workloads within 5% of P0's sweep | 2.5–4k, + 0.3k C |
 | M1 | Mark model | Interleaving model of BP (§1.6): steps, I1–I3, termination, `B` = reachable; `bitmap_marked` to `GP.marked` and `mark_inv` | 3–5k |
@@ -658,10 +711,10 @@ range-access layer the mark's reads reuse.
    markbench. P0 decides before any proof.
 3. **k = 1 is slower than today's sequential mark** with BP (0.36–0.53× on
    five programs, *measured*). Needs the decision in §5.
-4. **Toolchain:** no atomic extracts correctly in this nightly; `par` and
-   locks do not extract. Five trusted primitives with hand-written C are
-   needed. Upgrading to a nightly with #4812 may touch the existing build
-   (the PR renames model files).
+4. **Toolchain:** the upgrade to a nightly after `bc02ebf` is needed before
+   any parallel Pulse code extracts, and it may touch the existing build
+   (#4812 also renames Pulse's model files). Four trusted primitives remain
+   after it (§4); fork/join is the largest.
 5. **Range-restricted signatures** for `pool_step`, `run_step` and their
    loops may cost the §17 performance (register pressure was already an
    issue: `sweep_slots` is kept out of line). The C must stay the same loop;
@@ -671,3 +724,155 @@ range-access layer the mark's reads reuse.
 7. **Measurement noise:** the mark report saw a 20–25% unexplained shift
    between sessions on binarytrees 18. Compare only within one session, with
    alternated binaries, as `bench.sh` does.
+
+---
+
+## 9. Stage P0 results (2026-11-14)
+
+### 9.1 What was built and checked
+
+**Where.** The prototype is in worktree `~/Documents/pgc-pages-par-proto` on branch
+`sheera/pages-parallel-proto`, uncommitted, under `generational/ocaml-integration/`:
+- **`verified_gc/proto/par_mark_pages.c`** (new). It has three marks, chosen with
+  `VERGC_MARK`:
+  - `hdr`: the sequential header mark;
+  - `bm`: the sequential bitmap mark (a growable gray stack and a plain claim);
+  - `bp`: BP with the §1.3 fixes (step chosen with `VERGC_BP_FIX`=0/1/2; the
+    default is 2), on the persistent pool, with the mutex or spin pool lock and
+    a locked or CAS work counter.
+- **`alloc_pages.c`**: the page sweep reads and clears the bitmap. It writes no
+  live header. `VERGC_BM_CLEAR` chooses how the bitmap is cleared:
+  - `page` (the default): memset the page's slice if the page has a survivor;
+  - `bit`: clear each bit.
+- **`proto_common.c`**: `VERGC_CHUNKS=static` gives the sweep's static chunk
+  assignment.
+
+**Checks.**
+- **Check matrix: 97 of 97 runs pass.** The matrix is 12 configurations on
+  eight programs, plus bt18 with BP at k = 4. The configurations include
+  PKT = 2 or 4 and CHUNK = 1 or 4, to force splitting and sharing. Each run
+  checks every major collection:
+  - the bitmap equals the verified mark's black set;
+  - the heap and lists after the sweep are byte-equal to the verified sweep's;
+  - the bitmap is zero after the sweep;
+  - the program's output equals stock OCaml's.
+- **Negative controls, all rejected:**
+  - a flipped bit (mark control);
+  - three sweep mutants, the third of which skips the slice memset.
+- **ThreadSanitizer** (`tests/pagespar/build_tsan.sh`): clean on bdd, livegraph
+  and bt14 across the variants. The race control (a plain read-modify-write
+  in place of the CAS) is reported.
+
+### 9.2 Timings
+
+**Method.** Tag `p0a`, 3 runs each, medians. The tables give ms per major
+collection, with the speed-up over the sequential page collector (header
+mark, k = 1) in brackets. hamming does a single major collection, so it was
+run for correctness only.
+
+**Whole collection** (mark + sweep + the rest):
+
+| program | majors | bm k=1 | bp k=1 | bp k=2 | bp k=4 | hdr mark, k=4 sweep |
+|---|---|---|---|---|---|---|
+| bt16 | 58 | 0.71 | 0.66 | 1.15 | 1.74 | 1.27 |
+| bt18 | 33 | 0.72 | 0.66 | 1.29 | 2.58 | 1.67 |
+| livemap | 14 | 0.80 | 0.92 | 1.58 | 2.55 | 1.07 |
+| livegraph | 4 | 0.94 | 1.19 | 2.27 | 4.10 | 1.02 |
+| markbench | 5 | 0.84 | 2.13 | 4.40 | 7.98 | 1.02 |
+| minilight | 1110 | 0.95 | 0.85 | 1.20 | 1.52 | 1.02 |
+| bdd | 329 | 0.94 | 0.79 | 1.16 | 1.34 | 1.04 |
+| fft | 33 | 1.16 | 0.71 | 1.03 | 1.35 | 1.05 |
+
+**Mark only, k = 1:**
+
+| program | hdr ms | bm | bp |
+|---|---|---|---|
+| bt16 | 23.9 | 0.55 | 0.49 |
+| bt18 | 97.6 | 0.55 | 0.48 |
+| livemap | 66.5 | 0.73 | 0.87 |
+| livegraph | 164.0 | 0.93 | 1.20 |
+| markbench | 2184 | 0.83 | 2.15 |
+| minilight | 1.22 | 0.88 | 0.74 |
+| bdd | 2.98 | 0.91 | 0.73 |
+| fft | 18.3 | 1.55 | 0.50 |
+
+**Run time (wall clock).** At k = 4, run time improves by 0–16%, except on
+markbench (4.1×), because collection is a small share of most programs' run
+time.
+
+### 9.3 Decisions and findings
+
+1. **One thread: keep the sequential header mark** and the header sweep, as
+   decided in §5.
+   - The bitmap mark is 0.55× the header mark on binarytrees, 0.73–0.93× on
+     livemap, livegraph, markbench, minilight and bdd, and faster only on fft
+     (1.55×). Its whole collection loses on the same seven programs.
+   - BP at k = 1 is faster than the header mark on markbench (2.15×) and
+     livegraph (1.20×), as in the mark report. The cause is not diagnosed:
+     bm's bitmap and claim do not explain it, since bm is slower there.
+2. **Chunks: dynamic recommended, by a small margin.** All figures are
+   sweep ms, k = 4, static against dynamic.
+   - At k = 2 the two are equal.
+   - At k = 4 static is slower on seven of nine programs:
+
+     | program | static | dynamic |
+     |---|---|---|
+     | bdd | 0.19 | 0.15 |
+     | minilight | 0.16 | 0.14 |
+     | livegraph | 2.86 | 2.66 |
+     | fft | 2.79 | 2.62 |
+     | bt16 | 4.50 | 4.26 |
+
+     - It ties on livemap and is slightly faster on bt18 and markbench.
+     - That is 5–27%, more than the 5% gate of §2.1, though under 2% of a
+       collection.
+   - Noise: mark times, which chunks do not affect, differ by up to 10%
+     between the same two configurations. So only the consistent direction
+     is evidence.
+   - Dynamic costs 1–1.5k lines (§2.4) and needs fetch-and-add. After the
+     `bc02ebf` upgrade, that is verified over `cas` and is not a new trusted
+     primitive.
+   - Plan: S2 proves static first, then adds dynamic.
+3. **The bdd fix works; the sharded pool is not needed.** Figures are bdd,
+   k = 4, per collection:
+
+   | step | mark ms | shares | contended / acquisitions |
+   |---|---|---|---|
+   | 0 | 2.57 | 938 | 541 / 3,103 |
+   | 1 | 2.24 | 455 | 312 / 1,714 |
+   | 2 | 2.02 | 217 | 38 / 843 |
+
+   - With step 2, BP's mark is 1.48× the sequential mark (acceptance: at
+     least 1.27×) and its whole collection 1.34×.
+   - Against step 0 (BP as measured), step 2 is within 5% or faster on six
+     of eight programs:
+     - faster on livemap (+11%), bt16 (+8%), livegraph (+6%), minilight
+       (+6%) and markbench (+4%);
+     - equal on bt18.
+   - **Open: fft.** Step 2 is 15% slower than step 0 there (11.3 against
+     9.8 ms). fft publishes 9 packets a collection, so with one share per
+     request and `S_min` = 16 entries, idle threads starve. A likely
+     remedy, to try in E: count `S_min` in fields, not entries, since one
+     range entry holds up to 256 fields. hamming also favours step 0, but
+     that is one collection and one sample per run.
+4. **The spin lock and CAS counter cost nothing measurable.** The
+   configuration that #4812's verified spin lock and a CAS-loop counter will
+   give is within noise of the mutex on every program: −4% to +4%, and fft
+   +7%. The design's trusted list (§4) stands.
+5. **Clearing per page beats clearing per bit.** The sweep is 1.11–1.47×
+   faster with per-page clearing on six programs and equal on binarytrees.
+   Per page is kept.
+6. **The bitmap sweep alone is faster than the header sweep** at k = 1
+   (1.03–1.68× on seven of nine programs; equal on bt16, and slower on
+   hamming's single collection), because it writes no live
+   header. That is not enough to repay the bitmap mark at k = 1.
+7. **New risk: at k = 2, BP's mark only equals the header mark** on
+   binarytrees and fft (0.91–0.98×, since BP is about 0.5× per thread
+   there). The k = 2 collection still wins (1.03–1.29×), thanks to the
+   parallel sweep.
+   - A header mark with a parallel sweep (header colours) would be about as
+     good at k = 2 on bt18, but it would mean a second parallel sweep to
+     prove. Not recommended.
+   - The per-thread cost of BP (the bitmap is a separate cache line from the
+     object it marks, plus the CAS and the packets) is what E must keep
+     within 5%; it is not something to remove.
