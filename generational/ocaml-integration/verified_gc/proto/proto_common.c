@@ -11,6 +11,8 @@ int       proto_threads = 4;
 int       proto_check_control = 0;
 int       proto_stats = 0;
 int       proto_mem = 0;
+int       proto_chunks_static = 0;     /* VERGC_CHUNKS=static */
+int       proto_pool_record = 1;       /* record the balance of pool runs */
 uint64_t *proto_heads;
 uint64_t *proto_tbl;
 uint64_t  proto_tbl_len;
@@ -243,7 +245,9 @@ static void print_stats(void) {
                 kinds[k], kind_total[k] / 1e6);
     for (int i = 0; i < 16 && counters_k[i]; i++)
         fprintf(f, " %s=%llu", counters_k[i], (unsigned long long)counters_v[i]);
-    fprintf(f, " par_imbalance=%.3f", pool_imbalance());
+    fprintf(f, " par_imbalance=%.3f chunks=%s", pool_imbalance(),
+            proto_chunks_static ? "static" : "dynamic");
+    proto_mark_stats(f);
     fprintf(f, " rescans=%llu", (unsigned long long)n_rescans);
     if (proto_mem)
         fprintf(f, " loc_blocks=%llu loc_live_words=%llu loc_os_pages=%llu loc_edges=%llu"
@@ -282,6 +286,11 @@ void vergc_proto_init(uint64_t *heads, uint64_t *tbl, uint64_t tbl_len) {
     proto_check_control = c != NULL ? atoi(c) : 0;
     const char *s = getenv("VERGC_PROTO_STATS");
     proto_stats = s != NULL && atoi(s) != 0;
+    const char *cs = getenv("VERGC_CHUNKS");
+    if (cs != NULL) {
+        if (strcmp(cs, "static") == 0) proto_chunks_static = 1;
+        else if (strcmp(cs, "dynamic") != 0) { fprintf(stderr, "VERGC_CHUNKS: static or dynamic\n"); exit(2); }
+    }
     const char *mm = getenv("VERGC_PROTO_MEM");
     proto_mem = mm != NULL && atoi(mm) != 0;
     impl_init();
@@ -403,7 +412,7 @@ void proto_pool_run(int n, proto_job f, void *arg) {
     pthread_mutex_unlock(&pool_mu);
     uint64_t mx = 0, sum = 0;
     for (int i = 0; i < n; i++) { sum += job_ns[i]; if (job_ns[i] > mx) mx = job_ns[i]; }
-    if (sum > 0) { imbalance_sum += (double)mx * n / (double)sum; imbalance_n++; }
+    if (sum > 0 && proto_pool_record) { imbalance_sum += (double)mx * n / (double)sum; imbalance_n++; }
 }
 
 static void (*chunk_f)(int);
@@ -411,8 +420,12 @@ static int chunk_k;
 static volatile int chunk_next;
 
 static void chunk_job(int i, int n, void *arg) {
-    (void)i; (void)n; (void)arg;
+    (void)arg;
     int c;
+    if (proto_chunks_static) {        /* chunks i, i + n, i + 2n, ... */
+        for (c = i; c < chunk_k; c += n) chunk_f(c);
+        return;
+    }
     while ((c = __atomic_fetch_add(&chunk_next, 1, __ATOMIC_RELAXED)) < chunk_k) chunk_f(c);
 }
 

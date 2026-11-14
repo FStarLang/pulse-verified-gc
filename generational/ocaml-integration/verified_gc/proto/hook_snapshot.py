@@ -17,7 +17,10 @@ places, each checked to match exactly once:
   4. `vergc_verified_fused_sweep` exports the verified sweep, for the
      comparison checks and for A's sequential sweep;
   5. each heap rescan after a gray-stack overflow in the mark calls
-     `vergc_proto_rescan` (a counter).
+     `vergc_proto_rescan` (a counter);
+  6. gen_gc's mark and sweep (darken the roots, then collect) call
+     `vergc_proto_collect`, which chooses the mark (par_mark_pages.c) and
+     then sweeps with `vergc_proto_sweep`.
 """
 import sys
 
@@ -46,7 +49,11 @@ once('#include "internal/GC_Gen_Impl.h"\n',
      "extern void vergc_proto_sweep(heap_t heap, uint64_t *heads, uint64_t *tbl);\n"
      "extern void vergc_proto_mark_begin(void);\n"
      "extern void vergc_proto_mark_end(void);\n"
-     "extern void vergc_proto_rescan(void);\n")
+     "extern void vergc_proto_rescan(void);\n"
+     "extern void vergc_proto_collect(heap_t heap, gray_stack_rec st, uint64_t *heads, uint64_t *tbl,"
+     " uint64_t *roots, size_t nroots);\n")
+once("    darken_roots_bounded(gh.major, st, roots, nroots);\n    collect_pkg(gh.major, st, gh.heads, gh.tbl);\n",
+     "    vergc_proto_collect(gh.major, st, gh.heads, gh.tbl, roots, nroots);\n")
 once("  while (go)\n  {\n    rescan_heap_impl(heap, st);\n",
      "  while (go)\n  {\n    vergc_proto_rescan();\n    rescan_heap_impl(heap, st);\n")
 

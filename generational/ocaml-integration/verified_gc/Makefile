@@ -41,7 +41,7 @@ CFLAGS  += -DVERGC_PROTO -DVERGC_PROTO_$(PROTO) -Iproto
 PROTO_IMPL_A = sweep_lists.o
 PROTO_IMPL_B = alloc_pages.o
 OBJECTS = GC_Gen_Impl_proto.o GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.o \
-          krmlinit.o compat.o alloc_gen.o proto_common.o proto_check.o $(PROTO_IMPL_$(PROTO))
+          krmlinit.o compat.o alloc_gen.o proto_common.o proto_check.o par_mark_pages.o $(PROTO_IMPL_$(PROTO))
 GC_Gen_Impl_proto.c: $(SNAPSHOT)/GC_Gen_Impl.c proto/hook_snapshot.py
 	python3 proto/hook_snapshot.py $< $@
 endif

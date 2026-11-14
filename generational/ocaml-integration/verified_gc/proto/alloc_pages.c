@@ -265,20 +265,39 @@ static void pool_init(uint32_t p, uint32_t c) {
 
 /* ---- sweeping one unit --------------------------------------------------- */
 
+/* The mark: header colours (VERGC_MARK=hdr), or the bitmap
+ * (par_mark_pages.c), in which case a live block's header is already white
+ * and is not written, and the bits read are cleared: a pool page's slice of
+ * PG_WORDS / 32 words at once after its sweep if it kept a survivor
+ * (VERGC_BM_CLEAR=page, the default), or each bit as it is read (=bit); a
+ * large block's bit always singly. */
+static int bm_clear_bit;
+static inline uint32_t *bm_slice(uint32_t p) { return proto_bm + (size_t)p * (PG_WORDS / 32); }
+
 /* Returns 1 if the page became free. */
-static int sweep_pool(uint32_t p, lists_t *L) {
+static inline __attribute__((always_inline)) int sweep_pool_g(uint32_t p, lists_t *L, const int bm) {
     page_t *g = &pm[p];
     uint32_t c = g->cls;
     uint64_t wh = cls_wh[c], ns = cls_ns[c], step = wh * 8;
     uint64_t base = pa(p), first = base + cls_off[c] * 8, hb = MK_BLUE(wh - 1), head = 0;
+    uint32_t *bw = bm ? bm_slice(p) : NULL;
     uint32_t nfree = 0;
     uint64_t j = ns;
     if (proto_check_control == 1) j--;   /* control mutant: never looks at the last slot */
     while (j-- > 0) {
-        uint64_t s = first + j * step, h = PW(s);
-        if (IS_BLACK(h)) {
-            PW(s) = WHITEN(h);
+        uint64_t s = first + j * step;
+        int live;
+        if (bm) {
+            uint64_t i = (s - base) >> 3;
+            uint32_t m = 1u << (i & 31);
+            live = (bw[i >> 5] & m) != 0;
+            if (live && bm_clear_bit) bw[i >> 5] &= ~m;
         } else {
+            uint64_t h = PW(s);
+            live = IS_BLACK(h);
+            if (live) PW(s) = WHITEN(h);
+        }
+        if (!live) {
             PW(s) = hb;
             PW(s + 8) = head;
             head = s + 8;
@@ -294,11 +313,27 @@ static int sweep_pool(uint32_t p, lists_t *L) {
         if (p < L->min_free) L->min_free = p;
         return 1;
     }
+    if (bm && !bm_clear_bit && proto_check_control != 3) memset(bw, 0, PG_WORDS / 8);  /* 3: a mutant */
     g->free_head = head;
     g->nfree = nfree;
     L->pages_used++;
     if (nfree) av_append(L, c, p);
     return 0;
+}
+static int sweep_pool_h(uint32_t p, lists_t *L) { return sweep_pool_g(p, L, 0); }
+static int sweep_pool_b(uint32_t p, lists_t *L) { return sweep_pool_g(p, L, 1); }
+static inline int sweep_pool(uint32_t p, lists_t *L) {
+    return proto_mark ? sweep_pool_b(p, L) : sweep_pool_h(p, L);
+}
+
+/* A large block's mark: its header's colour, or its bit (cleared here). */
+static inline int lg_live(uint64_t cur, uint64_t h) {
+    if (!proto_mark) return IS_BLACK(h);
+    uint64_t i = (cur - Z) >> 3;
+    uint32_t m = 1u << (i & 31);
+    if (!(proto_bm[i >> 5] & m)) return 0;
+    proto_bm[i >> 5] &= ~m;
+    return 1;
 }
 
 static inline void lg_flush(lists_t *L, uint64_t rs, uint64_t rw) {
@@ -342,10 +377,10 @@ static int sweep_large(uint32_t p, lists_t *L) {
         /* control mutant 2: the run's first block that is not blue is kept
          * even if dead.  (Its first block is usually the blue piece left
          * over by carving from the right, so the mutant must skip it.) */
-        int keep = 0;
+        int keep = 0, live = lg_live(cur, h);
         if (proto_check_control == 2 && !seen_used && !IS_BLUE(h)) {
             seen_used = 1;
-            if (!IS_BLACK(h)) {
+            if (!live) {
                 static int fired = 0;
                 keep = 1;
                 if (!__atomic_exchange_n(&fired, 1, __ATOMIC_RELAXED))
@@ -353,10 +388,10 @@ static int sweep_large(uint32_t p, lists_t *L) {
                             (unsigned long long)cur);
             }
         }
-        if (IS_BLACK(h) || keep) {
+        if (live || keep) {
             if (rw) freed |= lg_free_run(L, rs, rw, &seg);
             rw = 0;
-            PW(cur) = WHITEN(h);
+            if (!proto_mark) PW(cur) = WHITEN(h);
         } else {
             if (rw == 0) rs = cur;
             rw += HD_WZ(h) + 1;
@@ -711,8 +746,13 @@ void vergc_proto_sweep(heap_t heap, uint64_t *heads, uint64_t *tbl) {
     if (proto_mem) proto_mem_after_mark();
 #ifdef VERGC_PROTO_CHECK
     chk_oracle();
+    proto_mark_after_oracle();
 #endif
-    if (proto_mode == SW_INCR) { incr_start(); return; }
+    if (proto_mode == SW_INCR) {
+        if (proto_mark) { fprintf(stderr, "B: the incremental sweep reads header colours only\n"); exit(2); }
+        incr_start();
+        return;
+    }
     uint64_t t0 = proto_now();
     av_reset();
     int n = proto_mode == SW_PAR ? proto_threads : 1;
@@ -731,6 +771,7 @@ void vergc_proto_sweep(heap_t heap, uint64_t *heads, uint64_t *tbl) {
 #ifdef VERGC_PROTO_CHECK
     chk_compare_eager("after B's sweep", 0);
     impl_check("after B's sweep");
+    proto_mark_after_sweep();
 #endif
 }
 
@@ -779,6 +820,11 @@ void impl_init(void) {
     for (uint64_t wh = 2, c = 1; wh <= MAX_SMALL_WH; wh++) {
         while (cls_wh[c] < wh) c++;
         cls_of[wh] = (uint8_t)c;
+    }
+    const char *bc = getenv("VERGC_BM_CLEAR");
+    if (bc != NULL) {
+        if (strcmp(bc, "bit") == 0) bm_clear_bit = 1;
+        else if (strcmp(bc, "page") != 0) { fprintf(stderr, "VERGC_BM_CLEAR: page or bit\n"); exit(2); }
     }
     hwm = 0;
     free_hint = 0;
@@ -830,6 +876,7 @@ void impl_mem(void) {
 }
 
 void impl_stats(FILE *f) {
+    fprintf(f, " bm_clear=%s", bm_clear_bit ? "bit" : "page");
     if (proto_mem)
         fprintf(f, " mem_n=%llu mem_pages=%llu mem_pool_pages=%llu mem_lg_pages=%llu"
                    " mem_live=%llu mem_round=%llu mem_slot_free=%llu mem_fill=%llu"

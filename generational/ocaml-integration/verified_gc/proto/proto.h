@@ -84,6 +84,17 @@ void proto_pool_run(int n, proto_job f, void *arg);
 #define MAX_CHUNKS (8 * CHUNKS_PER_THREAD)
 void proto_pool_chunks(int n, int k, void (*chunk)(int c));
 
+/* ---- par_mark_pages.c: the mark (VERGC_MARK=hdr|bm|bp) ------------------ */
+extern int       proto_mark;        /* 0 header colours, else the bitmap */
+extern uint32_t *proto_bm;          /* bit i: heap word zero_addr + 8 i */
+extern int       proto_chunks_static;
+extern int       proto_pool_record;
+void proto_mark_stats(FILE *f);
+#ifdef VERGC_PROTO_CHECK
+void proto_mark_after_oracle(void);
+void proto_mark_after_sweep(void);
+#endif
+
 /* ---- the allocator under test (alloc_pages.c or sweep_lists.c) ---------- */
 void        impl_init(void);
 const char *impl_name(void);

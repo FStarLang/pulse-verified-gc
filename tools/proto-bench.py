@@ -13,9 +13,10 @@
     tools/proto-bench.py summary TAG               markdown tables of medians
     tools/proto-bench.py table TAG VARIANT...      the same, one column per variant
 
-CONFIG is RUNTIME[:MODE[:THREADS]], RUNTIME a directory under
+CONFIG is RUNTIME[:MODE[:THREADS[:VAR=VALUE...]]], RUNTIME a directory under
 generational/ocaml-integration/_build/proto (base, A, B, A-check, B-check) or
-`stock`; MODE seq | par | incremental.  Every run's stdout (and minilight's
+`stock`; MODE seq | par | incremental; each VAR=VALUE is set in the run's
+environment (e.g. VERGC_MARK=bp, VERGC_CHUNKS=static).  Every run's stdout (and minilight's
 image) must equal stock OCaml's, or the run counts as failed.  Results are
 appended to _build/proto-results/runs.jsonl and minheap.jsonl.  Wall time is
 measured here; collection times come from the runtime's own timers
@@ -93,8 +94,13 @@ def parse_stats(err):
 
 def run_one(cfg, prog, words, timeout=None):
     parts = cfg.split(":")
+    extra = [p for p in parts[3:] if "=" in p]
+    parts = parts[:3]
     rt, mode, threads = (parts + ["seq", "4"][len(parts) - 1:])[:3]
     env = dict(os.environ)
+    for kv in extra:
+        k, _, v = kv.partition("=")
+        env[k] = v
     env["MIN_EXPANSION_WORDSIZE"] = str(words)
     env["VERGC_SWEEP"] = mode
     env["VERGC_PAR_SWEEP_THREADS"] = threads
