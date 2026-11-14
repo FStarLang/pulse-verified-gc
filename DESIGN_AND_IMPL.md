@@ -982,46 +982,73 @@ slice lemmas are in `FusedSweep.Step`: `sweep_inv_incremental_steps` (and
 `sweep_inv_stw_steps`), and `sweep_steps_done` (a budget of one step per heap
 word finishes the sweep).
 
-**Completeness over the phase** (`GC.Spec.SweepPhase.Completeness`, and
-`GC.Gen.SweepPhase.Completeness` for the minor collection) is the incremental
-counterpart of `major_gc_unreachable_final_blue`: *when the sweep ends, every
-block that was dead when marking ended has been freed* -- it is no longer a
-non-free block (merged into a free block, or a free block itself) -- unless its
-address was handed out again since, in which case the block there is a new
-object.  Objects that die during the sweep are floating garbage for the next
-cycle and are not covered.  It is carried as an account of the non-free blocks,
-`survivor_or_new g0 since g c`: every block not free for `free_incremental c`
-was black in the marked heap `g0` (`survived_mark`) or its address is in
-`since`, a ghost set of addresses allocated since marking ended.  The account
+**Completeness over the phase** (`GC.Spec.SweepPhase.Completeness`,
+`GC.Gen.SweepPhase.Completeness` for the minor collection, and
+`GC.Gen.SweepPhase.Cycle` for a whole run) is the incremental counterpart of
+`major_gc_unreachable_final_blue` and of the lossless sweep: *when the sweep
+ends, every word of a block that was dead when marking ended lies in a free
+block*, unless an allocation or a promotion since handed out a block over it,
+in which case it lies in that new block.  Objects that die during the sweep
+are floating garbage for the next cycle and are not covered.
+
+It is carried as an account of the non-free blocks, `survivor_or_new g0 since
+g c`: the walk of `g` ends where the walk of the marked heap `g0` ended, and
+every block not free for `free_incremental c` is a `survivor` (black in `g0`,
+with the size it had there, so over the same words) or its address is in
+`since`, a ghost set of addresses handed out since marking ended.  The account
 holds from the marked heap with nothing allocated (`survivor_or_new_start`,
 needing only that nothing is grey), and every event keeps it:
 
 - sweep steps and slices (`survivor_or_new_steps`, `survivor_or_new_slice`):
-  a step never makes a block non-free;
+  a step never makes a block non-free, keeps every non-free block
+  (`same_block`), and keeps where the walk ends (`Step.sweep_steps_walk_end`);
 - an allocation (`survivor_or_new_alloc`), with the new object added to
-  `since` (`with_new`); it makes no other block non-free
-  (`GC.Spec.SweepPhase.Mutator.alloc_in_use`);
+  `since` (`with_new`); it makes no other block non-free, keeps the header of
+  every non-free block, and carves the new object out of a free block, so the
+  walk ends where it did (`Mutator.alloc_in_use`, `alloc_keeps`,
+  `alloc_walk_end`);
 - a write into the body of a non-blue block, i.e. a program write or the
   initialisation of a fresh object (`survivor_or_new_body_write`): it keeps
   the walk and every header;
 - a minor collection (`GC.Gen.SweepPhase.Completeness.survivor_or_new_minor`),
   with its promoted copies added to `since` (`with_promoted`), from
-  `minor_keeps_blocks`.
+  `minor_keeps_blocks` and `minor_keeps_walk_end`.
 
-At the end nothing is pending free, so `freed_by_end` reads the account off
-the blue blocks: every non-blue block is a survivor or new, and every object
-white in the marked heap is `freed` or in `since`.  Marking leaves white
-exactly the non-free objects unreachable from the roots
+At the end nothing is pending free, so the account becomes `idle_account`:
+the heap is dense, its walk ends where `g0`'s did, and every non-blue block is
+a survivor or new.  The end theorem is by coverage (`covered_by_end`,
+`covered_at_idle`): for a block `x` white in `g0` and a word `p` of its extent
+in `g0`, `p` lies below the walk's end, so in some block `y` of the end heap;
+`y` is blue, or new, or a survivor -- and a survivor has its `g0` extent, which
+cannot meet `x`'s, as distinct blocks of `g0`'s walk do not overlap.  Marking
+leaves white exactly the non-free objects unreachable from the roots
 (`GC.Spec.Correctness.mark_post_white_iff_unreachable`, `dead_at_mark_white`),
-which gives the reachability form `unreachable_freed_by_end` (under the same
-graph hypotheses as the stop-the-world theorem, `roots_in_graph`).  At the
-collector's phase, `phase_account` (the sweep phase and the account
-mid-sweep; the end form when idle) is kept by `SL.phase_slice`
-(`phase_account_slice`), so it composes with the `major_slice` contract
-directly.  The "survivor or new" form was chosen over
-a per-object "dead ones are pending free or freed" invariant because every
-event already states what it does to the non-free blocks, and it says more:
-the non-free blocks at the end are exactly accounted for.
+which gives the reachability form `unreachable_covered_at_idle` (under the
+same graph hypotheses as the stop-the-world theorem, `roots_in_graph`).  The
+older address-based statements, `freed_by_end` and `unreachable_freed_by_end`
+(no non-free block starts at a dead block's address), are kept.  At the
+collector's phase, `phase_account` (the sweep phase and the account mid-sweep;
+`idle_account` when idle) is kept by `SL.phase_slice` (`phase_account_slice`),
+so it composes with the `major_slice` contract directly.
+
+`since` is an argument of these lemmas, and any larger set accounts for as
+much, so on its own the statement is only as strong as the `since` a caller
+threads.  `GC.Gen.SweepPhase.Cycle` fixes it: `cycle g0 g fp ph since` is a run
+of the sweep phase from `g0`, an inductive relation with one constructor per
+event (`Start`, `Slice`, `Alloc`, `Write`, `Minor`), each carrying that
+event's preconditions and fixing how `since` changes -- unchanged by a slice
+or a write, plus exactly the address `alloc_phase` returned for an
+allocation, plus exactly the promoted copies for a minor collection.  `since`
+is an index of the run, so it cannot be chosen.  Every state of a run carries
+the account (`cycle_account`), and once the run is idle every word of a block
+dead at mark lies in a free block or in a block the run itself handed out
+(`cycle_covered`, `cycle_unreachable_covered`).  The run lives with the
+generational spec because the minor collection is one of its events.
+
+The "survivor or new" form was chosen over a per-object "dead ones are
+pending free or freed" invariant because every event already states what it
+does to the non-free blocks, and it says more: the non-free blocks at the end
+are exactly accounted for.
 
 `GC.SPOT.SweepPhasePendingFree` exercises all of it on a concrete heap: from
 the two-block heap of `GC.SPOT.ConcreteMajorGen` it sweeps everything into one
