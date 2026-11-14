@@ -175,3 +175,26 @@ let minor_keeps_blocks minor g fp c roots x =
   // a new one is a promoted copy
   FStar.Classical.move_requires (CV.cheney_promote_in_use_origin ph free minor g fp roots) x
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Where the walk ends
+/// ---------------------------------------------------------------------------
+
+/// The promotions keep the sweep shape and where the walk ends.
+let run_q (c: U64.t) (g: heap) (h: heap) (f: U64.t) : prop =
+  sweep_shape h f c /\ W.walk_end h zero_addr == W.walk_end g zero_addr
+
+#push-options "--ifuel 1"
+let run_q_step (minor: minor_state) (c: U64.t) (g: heap)
+  : CI.promote_keeps minor (Ph.Sweeping c) (run_q c g)
+  = fun h f obj wz -> GSP.promote_sweep_shape h f c minor obj wz; GSP.promote_walk_end h f c minor obj wz
+#pop-options
+
+let minor_keeps_walk_end minor g fp c roots =
+  run_start g fp c;
+  run_facts minor g fp c roots;
+  CI.cheney_promote_keeps minor (Ph.Sweeping c) (run_q c g) (run_q_step minor c g) g fp roots;
+  let prom = Cheney.cheney_promote (Ph.Sweeping c) minor g fp roots in
+  let pm = prom.Promote.major_final in
+  sweep_shape_elim pm prom.Promote.fp_final c;
+  GC.Spec.SweepPhase.Mutator.same_heads_walk_end pm (collect_at c minor g fp roots).Promote.mc_major

@@ -241,3 +241,20 @@ val alloc_in_use (g: heap) (fp: U64.t) (c0: U64.t) (wz: nat) (tag: tag_t) (y: ob
           (ensures (let r = AC.alloc_phase g fp (SA.Sweeping c0) wz tag in
                     in_use (free_incremental c0) r.SA.heap_out y ==
                       (in_use (free_incremental c0) g y || (r.SA.obj_out <> 0UL && y = r.SA.obj_out))))
+
+/// ---------------------------------------------------------------------------
+/// Where the walk ends
+/// ---------------------------------------------------------------------------
+
+/// Keeping the walk and every header keeps where the walk of a dense heap
+/// ends.
+val same_heads_walk_end (g g': heap)
+  : Lemma (requires same_heads g g' /\ heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0)
+          (ensures W.walk_end g' zero_addr == W.walk_end g zero_addr)
+
+/// **An allocation keeps where the walk ends**: it carves the new object out
+/// of a free block, and the end of that block stays a position of the walk.
+val alloc_walk_end (g: heap) (fp: U64.t) (c: U64.t) (wz: nat) (tag: tag_t)
+  : Lemma (requires sweep_shape g fp c)
+          (ensures W.walk_end (AC.alloc_phase g fp (SA.Sweeping c) wz tag).SA.heap_out zero_addr ==
+                   W.walk_end g zero_addr)

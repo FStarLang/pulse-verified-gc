@@ -107,3 +107,12 @@ val minor_keeps_blocks (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
                      ~(is_block g x /\ not (free_incremental c g x)) ==>
                        (exists (m: U64.t). Seq.mem m (minor_objects minor) /\
                           (Cheney.cheney_promote (Ph.Sweeping c) minor g fp roots).Promote.fwd_map m == x))))
+
+/// ... and the walk of the heap ends where it did: each promotion carves its
+/// copy out of a free block, and the pointer update keeps the walk.
+val minor_keeps_walk_end (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t) (roots: seq U64.t)
+  : Lemma (requires sweep_inv_incremental g fp c /\
+                    GenInv.minor_heap_shape minor /\
+                    GenInv.minor_major_fields_not_free (free_incremental c) minor g)
+          (ensures GC.Spec.Walk.walk_end (collect_at c minor g fp roots).Promote.mc_major zero_addr ==
+                   GC.Spec.Walk.walk_end g zero_addr)
