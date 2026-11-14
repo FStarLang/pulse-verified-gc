@@ -22,8 +22,9 @@
 /// The same marked heap is also the start of a run of the sweep phase
 /// (`GC.Gen.SweepPhase.Cycle`): a minor collection of an empty nursery, then
 /// a slice that ends the sweep.  The run fixes the new addresses (the
-/// promoted copies, none), and its completeness theorem says every word of
-/// `G` and `P` lies in a free block at the end (`covered_spot`).
+/// promoted copies, none), and its theorem says a word lies in a free block
+/// at the end exactly when it lay in a non-black block of the marked heap
+/// (`lossless_spot`), so every word of `G` and `P` does (`covered_spot`).
 
 module GC.SPOT.SweepPhaseFreedByEnd
 
@@ -155,16 +156,16 @@ let freed_by_end_spot (r: unit{room}) (m: minor_state) (roots: seq U64.t)
 /// A run of the sweep phase from `g4` (`GC.Gen.SweepPhase.Cycle`): the start,
 /// a minor collection of the empty nursery `minor_reset m`, then a slice with
 /// a budget of more words than the heap has, which ends the sweep.  The run
-/// fixes the new addresses: the copies the minor collection promoted, which
-/// are none.
+/// fixes the new addresses: the blocks the minor collection made (its
+/// promoted copies), which are none.
 
 /// The heap after the minor collection at the start of the sweep.
 let mc0 (r: unit{room}) (m: minor_state) (roots: seq U64.t) : GTot Promote.minor_collect_result =
   SPM.collect_at sweep_start.cursor (minor_reset m) (g4 r) (fp3 r) roots
 
-/// The new addresses of the run: those of the minor collection.
+/// The new addresses of the run: the blocks the minor collection made.
 let since0 (r: unit{room}) (m: minor_state) (roots: seq U64.t) : obj_addr -> prop =
-  SPC.with_promoted nothing_new sweep_start.cursor (minor_reset m) (g4 r) (fp3 r) roots
+  SPC.with_made nothing_new sweep_start.cursor (g4 r) (mc0 r m roots).Promote.mc_major
 
 /// After the finishing slice.
 let fin_run (r: unit{room}) (m: minor_state) (roots: seq U64.t) : GTot (heap & U64.t & Ph.gc_phase) =
@@ -211,14 +212,32 @@ let run (r: unit{room}) (m: minor_state) (roots: seq U64.t)
     let (g', fp', ph') = fin_run r m roots in
     Cy.Slice r1 (heap_words + 1) g' fp' Ph.Idle ()
 
+/// The run made nothing new: an empty nursery promotes nothing.
+let nothing_made (r: unit{room}) (m: minor_state) (roots: seq U64.t) (y: obj_addr)
+  : Lemma (~(since0 r m roots y))
+  = minor_at_start r m roots;
+    let c = sweep_start.cursor in
+    SPC.nothing_promoted_after_reset c m (g4 r) (fp3 r) roots y;
+    FStar.Classical.move_requires
+      (SPC.made_by_minor_promoted (minor_reset m) (g4 r) (fp3 r) c roots) y
+
+/// **The SPOT, lossless.**  At the end of the run a word lies in a free block
+/// exactly when it lay in a non-black block of the marked heap -- the
+/// stop-the-world `sweep_lossless` clause, since the run made nothing new.
+let lossless_spot (r: unit{room}) (m: minor_state) (roots: seq U64.t)
+  : Lemma (let g = Mktuple3?._1 (fin_run r m roots) in
+           forall (p: nat). p < heap_size ==> (LL.blue_covered g p <==> LL.dead_covered (g4 r) p))
+  = Cy.cycle_lossless (run r m roots);
+    FStar.Classical.forall_intro (nothing_made r m roots)
+
 /// **The SPOT, by coverage.**  At the end of the run every word of `G` and
-/// of `P`, as blocks of the marked heap, lies in a free block: the run
-/// promoted nothing, so no block is new.
+/// of `P`, as blocks of the marked heap, lies in a free block.
 let covered_spot (r: unit{room}) (m: minor_state) (roots: seq U64.t)
   : Lemma (let g = Mktuple3?._1 (fin_run r m roots) in
            forall (p: nat). LL.in_extent (g4 r) (gg r) p \/ LL.in_extent (g4 r) (pp r) p ==>
              LL.blue_covered g p)
   = dead_objects r;
+    Mark.colors_exclusive (gg r) (g4 r);
+    Mark.colors_exclusive (pp r) (g4 r);
     Cy.cycle_covered (run r m roots);
-    FStar.Classical.forall_intro
-      (SPC.nothing_promoted_after_reset sweep_start.cursor m (g4 r) (fp3 r) roots)
+    FStar.Classical.forall_intro (nothing_made r m roots)

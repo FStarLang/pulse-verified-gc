@@ -1016,34 +1016,58 @@ needing only that nothing is grey), and every event keeps it:
 
 At the end nothing is pending free, so the account becomes `idle_account`:
 the heap is dense, its walk ends where `g0`'s did, and every non-blue block is
-a survivor or new.  The end theorem is by coverage (`covered_by_end`,
-`covered_at_idle`): for a block `x` white in `g0` and a word `p` of its extent
-in `g0`, `p` lies below the walk's end, so in some block `y` of the end heap;
-`y` is blue, or new, or a survivor -- and a survivor has its `g0` extent, which
-cannot meet `x`'s, as distinct blocks of `g0`'s walk do not overlap.  Marking
-leaves white exactly the non-free objects unreachable from the roots
+a survivor or new.  Completeness is by coverage (`covered_by_end`,
+`covered_at_idle`): for a word `p` of a non-black block `x` of `g0`
+(`Lossless.dead_covered`: dead, or already free), `p` lies below the walk's
+end, so in some block `y` of the end heap; `y` is blue, or new, or a survivor
+-- and a survivor has its `g0` extent, which cannot meet `x`'s, as distinct
+blocks of `g0`'s walk do not overlap.  Marking leaves white exactly the
+non-free objects unreachable from the roots
 (`GC.Spec.Correctness.mark_post_white_iff_unreachable`, `dead_at_mark_white`),
 which gives the reachability form `unreachable_covered_at_idle` (under the
 same graph hypotheses as the stop-the-world theorem, `roots_in_graph`).  The
 older address-based statements, `freed_by_end` and `unreachable_freed_by_end`
-(no non-free block starts at a dead block's address), are kept.  At the
-collector's phase, `phase_account` (the sweep phase and the account mid-sweep;
-`idle_account` when idle) is kept by `SL.phase_slice` (`phase_account_slice`),
-so it composes with the `major_slice` contract directly.
+(no non-free block starts at a dead block's address), are kept.
 
-`since` is an argument of these lemmas, and any larger set accounts for as
-much, so on its own the statement is only as strong as the `since` a caller
-threads.  `GC.Gen.SweepPhase.Cycle` fixes it: `cycle g0 g fp ph since` is a run
+The converse, `reclaimed_was_dead g0 since free g`, says only space dead (or
+free) at mark is free or reused: every word of a block of `g` that is free
+or in `since` lies in a non-black block of `g0`.  It holds at the start (what
+is free then is blue or white) and every event keeps it, all through one
+lemma, `reclaimed_was_dead_transfer`: if an event keeps every non-free block
+(same size, still non-free), every block non-free after was non-free before
+or was made by the event, and the new addresses after are the old ones and
+the made blocks, then a free block after lies over free blocks before (it
+cannot overlap a kept block), and so does a made block.  The made blocks are
+the allocated object, and for a minor collection the blocks it made
+non-free (`with_made`), which are its promoted copies
+(`made_by_minor_promoted`).  With both directions, once the sweep has ended,
+for every word `p < heap_size`,
+`dead_covered g0 p <==> blue_covered g p \/ new_covered since g p`
+(`lossless_at_idle`).  With nothing allocated or promoted this is exactly the
+stop-the-world clause of `sweep_lossless`
+(`blue_covered g p <==> dead_covered g0 p`), so the incremental theorem
+generalises the stop-the-world one.  At the collector's phase, `phase_account`
+(the sweep phase, the account and its converse mid-sweep; `idle_account` and
+the converse for blue blocks when idle) is kept by `SL.phase_slice`
+(`phase_account_slice`), so it composes with the `major_slice` contract
+directly.
+
+`since` is an argument of these lemmas.  Completeness alone is vacuous for a
+large `since` (the set of every address satisfies it); the converse alone is
+weak for a small one (the empty set satisfies it as long as nothing was
+handed out).  Stating both for one `since` bounds it from both sides, and
+`GC.Gen.SweepPhase.Cycle` fixes it outright: `cycle g0 g fp ph since` is a run
 of the sweep phase from `g0`, an inductive relation with one constructor per
 event (`Start`, `Slice`, `Alloc`, `Write`, `Minor`), each carrying that
 event's preconditions and fixing how `since` changes -- unchanged by a slice
 or a write, plus exactly the address `alloc_phase` returned for an
-allocation, plus exactly the promoted copies for a minor collection.  `since`
-is an index of the run, so it cannot be chosen.  Every state of a run carries
-the account (`cycle_account`), and once the run is idle every word of a block
-dead at mark lies in a free block or in a block the run itself handed out
-(`cycle_covered`, `cycle_unreachable_covered`).  The run lives with the
-generational spec because the minor collection is one of its events.
+allocation, plus exactly the blocks a minor collection made (its promoted
+copies).  `since` is an index of the run, so it cannot be chosen.  Every
+state of a run carries the account and its converse (`cycle_account`), and
+once the run is idle the equivalence holds with the run's `since`
+(`cycle_lossless`; its completeness half alone is `cycle_covered`, and
+`cycle_unreachable_covered` reads dead as unreachable).  The run lives with
+the generational spec because the minor collection is one of its events.
 
 The "survivor or new" form was chosen over a per-object "dead ones are
 pending free or freed" invariant because every event already states what it

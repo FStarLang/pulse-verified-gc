@@ -536,9 +536,11 @@ new and the conclusion is unconditional.
 The same file builds a run of the sweep phase (`GC.Gen.SweepPhase.Cycle`):
 `Start` at the marked heap, `Minor` of an empty nursery, and a `Slice` with a
 budget of more words than the heap has, which ends the sweep (`run`).  The run
-fixes `since` to the promoted copies, which are none, so `cycle_covered` gives
-`covered_spot`: every word of `G` and `P` (as blocks of the marked heap) lies
-in a blue block at the end.
+fixes `since` to the blocks the minor collection made (its promoted copies),
+which are none (`nothing_made`), so `cycle_lossless` gives `lossless_spot`: at
+the end a word lies in a blue block exactly when it lay in a non-black block
+of the marked heap -- the stop-the-world `sweep_lossless` clause -- and
+`covered_spot`: every word of `G` and `P` lies in a blue block.
 
 `GC.SPOT.IncrementalCycle` composes the Pulse entry points `minor_collect`,
 `start_cycle`, a 64-word `major_slice` and an unbounded `major_slice` (which

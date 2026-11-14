@@ -85,6 +85,7 @@ let cycle_frees_dead (minor: minor_state) (h_init: heap) (roots: Seq.seq obj_add
   = GI.phase_shape_sweeping minor s1 fp1 zero_addr;
     Corr.mark_post_elim_no_grey h_init s1 roots fp1;
     SPC.survivor_or_new_start s1;
+    SPC.reclaimed_was_dead_start s1;
     SPC.phase_account_slice s1 SPC.nothing_new s1 fp1 (Ph.Sweeping zero_addr) 64;
     SPC.phase_account_slice s1 SPC.nothing_new s2 fp2 ph2 (pow2 64 - 1);
     SPC.phase_account_idle s1 SPC.nothing_new s3 fp3;
