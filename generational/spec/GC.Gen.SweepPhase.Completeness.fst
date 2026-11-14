@@ -20,7 +20,15 @@ module SPM = GC.Gen.SweepPhase.Minor
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 
 let survivor_or_new_minor g0 since minor g fp c roots =
-  FStar.Classical.forall_intro (SPM.minor_keeps_blocks minor g fp c roots)
+  SPM.minor_keeps_walk_end minor g fp c roots;
+  let g' = (SPM.collect_at c minor g fp roots).Promote.mc_major in
+  let one (x: obj_addr)
+    : Lemma (requires in_use (free_incremental c) g' x)
+            (ensures survivor g0 g' x \/ with_promoted since c minor g fp roots x)
+    = SPM.minor_keeps_blocks minor g fp c roots x;
+      colour_of g x; colour_of g' x
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires one)
 
 let nothing_promoted_after_reset c m g fp roots x =
   FStar.Classical.forall_intro (minor_reset_objects_not_mem m)

@@ -7,8 +7,9 @@
 /// marking or was allocated since.  A minor collection in the middle of the
 /// sweep keeps the account with its promoted copies among the new addresses
 /// (`survivor_or_new_minor`): every non-free block of the heap before is one
-/// after, and the only other non-free blocks after are promoted copies
-/// (`GC.Gen.SweepPhase.Minor.minor_keeps_blocks`).  An empty nursery promotes
+/// after, with the same header, and the only other non-free blocks after are
+/// promoted copies (`GC.Gen.SweepPhase.Minor.minor_keeps_blocks`); and the
+/// walk ends where it did (`GC.Gen.SweepPhase.Minor.minor_keeps_walk_end`).  An empty nursery promotes
 /// nothing (`nothing_promoted_after_reset`).
 
 module GC.Gen.SweepPhase.Completeness
