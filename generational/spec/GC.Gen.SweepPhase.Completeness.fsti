@@ -9,7 +9,12 @@
 /// (`survivor_or_new_minor`): every non-free block of the heap before is one
 /// after, with the same header, and the only other non-free blocks after are
 /// promoted copies (`GC.Gen.SweepPhase.Minor.minor_keeps_blocks`); and the
-/// walk ends where it did (`GC.Gen.SweepPhase.Minor.minor_keeps_walk_end`).  An empty nursery promotes
+/// walk ends where it did (`GC.Gen.SweepPhase.Minor.minor_keeps_walk_end`).
+/// A run of the sweep phase (`GC.Gen.SweepPhase.Cycle`) counts as new the
+/// blocks the collection made non-free (`with_made`), which are its promoted
+/// copies (`made_by_minor_promoted`); with them the collection keeps the
+/// account (`survivor_or_new_minor_made`) and its converse, that only space
+/// dead or free at mark is free or new (`reclaimed_was_dead_minor`).  An empty nursery promotes
 /// nothing (`nothing_promoted_after_reset`).
 
 module GC.Gen.SweepPhase.Completeness
