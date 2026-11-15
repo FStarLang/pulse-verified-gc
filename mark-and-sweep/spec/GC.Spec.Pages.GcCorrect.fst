@@ -15,10 +15,15 @@
 /// others are restated for pages (plan §2.3); docs/pages-allocator-proof-plan.md
 /// §14 sets the two side by side.
 ///
-/// The collection is the mark (`GC.Spec.Mark.mark`), then `start_sweep` and
-/// `sweep_all` (`collect`).  `gc_correct_gen` proves the clauses for any mark
-/// that leaves `GP.marked` and the allocator's marking invariant; the mark
-/// keeps that invariant by `GC.Spec.Pages.MarkSteps`.
+/// The collection (`collection`) greys the roots (`GC.Spec.Pages.Darken`),
+/// marks (`GC.Spec.Mark.mark`, with the roots as the stack), then runs
+/// `start_sweep` and `sweep_all` (`collect`).  `gc_correct_gen` proves the
+/// clauses for any mark that leaves `GP.marked` and the allocator's marking
+/// invariant; the mark keeps that invariant by `GC.Spec.Pages.MarkSteps`.
+///
+/// The roots must be greyed first: in `Idle` every live object is white, and
+/// the mark needs grey roots (`mark_pre`), so `Idle` and `mark_pre` together
+/// allow no root at all (`idle_mark_pre_empty`).
 ///
 /// `reach` is the explicit cycle: any run of allocations, through the
 /// allocator interface with the caller's field writes, and collections,
@@ -53,6 +58,7 @@ module SS = GC.Spec.Pages.StartSweep
 module ST = GC.Spec.Pages.SweepTags
 module MP = GC.Spec.Pages.MarkPhase
 module MS = GC.Spec.Pages.MarkSteps
+module D = GC.Spec.Pages.Darken
 module SV = GC.Spec.Pages.Survive
 module GP = GC.Spec.Pages.GcPillars
 module SPo = GC.Spec.Pages.SweepPools
@@ -73,8 +79,13 @@ module HeapModel = GC.Spec.HeapModel
 let collect (h_mark: heap) (st: pstate) : GTot (heap & pstate) =
   SA.sweep_all h_mark (SS.start_sweep st)
 
+/// The whole collection: grey the roots, mark from them, sweep.
+let collection (h: heap) (st: pstate) (roots: Seq.seq obj_addr) : GTot (heap & pstate) =
+  collect (Mark.mark (D.darken h roots) roots) st
+
 /// What the mark needs, as `GC.Impl.gc_precondition_with_roots` for the
-/// unbounded mark (`GC.Spec.Correctness.mark_satisfies_mark_post`).
+/// unbounded mark (`GC.Spec.Correctness.mark_satisfies_mark_post`).  The
+/// same as `D.mark_ready`.
 let mark_pre (h_init: heap) (gs roots: Seq.seq obj_addr) : prop =
   MarkInv.mark_inv h_init gs /\ Mark.root_props h_init roots /\
   Mark.no_black_objects h_init /\ Mark.no_pointer_to_blue h_init /\
@@ -347,34 +358,79 @@ let gc_correct_gen (h_init h_mark: heap) (st_m: pstate) (roots: Seq.seq obj_addr
     FStar.Classical.forall_intro colour;
     live_c2 g st
 
-/// The mark leaves what `gc_correct_gen` needs, from the `Idle` invariant.
-let mark_ok (h_init: heap) (st: pstate) (gs roots: Seq.seq obj_addr)
-  : Lemma (requires PA.inv I.Idle h_init st /\ mark_pre h_init gs roots)
-          (ensures GP.marked h_init (Mark.mark h_init gs) roots /\ MP.mark_inv (Mark.mark h_init gs) st)
-  = MarkInv.mark_inv_elim_wfh h_init gs;
-    MarkInv.mark_inv_elim_sp h_init gs;
-    Corr.mark_satisfies_mark_post h_init gs roots 0UL;
+/// The mark's facts about the darkened heap, restated about the first heap:
+/// the two differ only in the roots' colours.
+let marked_of_darkened (h hd hm: heap) (roots: Seq.seq obj_addr)
+  : Lemma (requires D.kept h hd roots /\ Corr.mark_post hd hm roots 0UL /\
+                    well_formed_heap h /\ Mark.no_black_objects h /\ Mark.no_pointer_to_blue h /\
+                    (forall (x: obj_addr) (i: U64.t).
+                       Seq.mem x (objects zero_addr hd) /\ U64.v i >= 1 /\
+                       U64.v i <= U64.v (wosize_of_object x hd) ==>
+                       GC.Spec.HeapGraph.get_field hm x i == GC.Spec.HeapGraph.get_field hd x i))
+          (ensures GP.marked h hm roots)
+  = Corr.mark_post_elim_wfh hd hm roots 0UL;
+    Corr.mark_post_elim_no_grey hd hm roots 0UL;
+    Corr.mark_post_elim_objects hd hm roots 0UL;
+    Corr.mark_post_elim_density hd hm roots 0UL;
+    Corr.mark_post_elim_objects_gt0 hd hm roots 0UL;
+    Corr.mark_post_elim_no_pointer_to_blue hd hm roots 0UL;
+    Corr.mark_post_elim_tri_color hd hm roots 0UL;
+    Corr.mark_post_elim_black_reachable hd hm roots 0UL;
+    Corr.mark_post_elim_graph hd hm roots 0UL;
+    Corr.mark_post_elim_wosize hd hm roots 0UL;
+    Corr.mark_post_intro h hm roots 0UL
+
+/// The mark from the darkened roots leaves what `gc_correct_gen` needs, from
+/// the `Idle` invariant.
+let mark_ok (h_init: heap) (st: pstate) (roots: Seq.seq obj_addr)
+  : Lemma (requires D.start_pre h_init st roots)
+          (ensures (let hm = Mark.mark (D.darken h_init roots) roots in
+                    GP.marked h_init hm roots /\ MP.mark_inv hm st))
+  = let hd = D.darken h_init roots in
+    let hm = Mark.mark hd roots in
+    D.darken_ok h_init st roots;
+    MarkInv.mark_inv_elim_wfh hd roots;
+    MarkInv.mark_inv_elim_sp hd roots;
+    Corr.mark_satisfies_mark_post hd roots roots 0UL;
     let fld (x: obj_addr) (i: U64.t)
-      : Lemma (Seq.mem x (objects zero_addr h_init) /\ U64.v i >= 1 /\
-               U64.v i <= U64.v (wosize_of_object x h_init) ==>
-               GC.Spec.HeapGraph.get_field (Mark.mark h_init gs) x i ==
-               GC.Spec.HeapGraph.get_field h_init x i)
-      = if Seq.mem x (objects zero_addr h_init) && U64.v i >= 1 &&
-           U64.v i <= U64.v (wosize_of_object x h_init) then
-          Mark.mark_preserves_get_field h_init gs x i
+      : Lemma (Seq.mem x (objects zero_addr hd) /\ U64.v i >= 1 /\
+               U64.v i <= U64.v (wosize_of_object x hd) ==>
+               GC.Spec.HeapGraph.get_field hm x i == GC.Spec.HeapGraph.get_field hd x i)
+      = if Seq.mem x (objects zero_addr hd) && U64.v i >= 1 &&
+           U64.v i <= U64.v (wosize_of_object x hd) then
+          Mark.mark_preserves_get_field hd roots x i
     in
     FStar.Classical.forall_intro_2 fld;
-    MP.mark_inv_of_ok h_init st;
-    MS.mark_keeps_inv h_init st gs
+    marked_of_darkened h_init hd hm roots;
+    MS.mark_keeps_inv hd st roots
 
 /// **`gc_correct` for pages.**  From the allocator's `Idle` invariant and
-/// what the mark needs, the collection is safe and live.
-let gc_correct_pages (h_init: heap) (st: pstate) (gs roots: Seq.seq obj_addr)
-  : Lemma (requires PA.inv I.Idle h_init st /\ mark_pre h_init gs roots)
-          (ensures (let (g, st') = collect (Mark.mark h_init gs) st in
+/// live roots, the collection -- grey the roots, mark, sweep -- is safe and
+/// live.
+let gc_correct_pages (h_init: heap) (st: pstate) (roots: Seq.seq obj_addr)
+  : Lemma (requires D.start_pre h_init st roots)
+          (ensures (let (g, st') = collection h_init st roots in
                     gc_safe_pages h_init g st' roots /\ gc_live_pages h_init g st' roots))
-  = mark_ok h_init st gs roots;
-    gc_correct_gen h_init (Mark.mark h_init gs) st roots
+  = mark_ok h_init st roots;
+    gc_correct_gen h_init (Mark.mark (D.darken h_init roots) roots) st roots
+
+/// **Why the roots are greyed first.**  `Idle` and `mark_pre` on the same
+/// heap allow no root and an empty stack: every live object is white, and
+/// the mark needs its roots grey or black and its stack grey.
+let idle_mark_pre_empty (h: heap) (st: pstate) (gs roots: Seq.seq obj_addr)
+  : Lemma (requires PA.inv I.Idle h st /\ mark_pre h gs roots)
+          (ensures Seq.length roots == 0 /\ Seq.length gs == 0)
+  = MarkInv.mark_inv_elim_sp h gs;
+    let none (r: obj_addr)
+      : Lemma (requires Seq.mem r roots \/ Seq.mem r gs) (ensures False)
+      = colors_exhaustive_and_exclusive r h;
+        D.idle_white h st r
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires none);
+    if Seq.length roots > 0 then Seq.contains_cons (Seq.head roots) (Seq.tail roots) (Seq.head roots);
+    if Seq.length roots > 0 then Seq.cons_head_tail roots;
+    if Seq.length gs > 0 then Seq.contains_cons (Seq.head gs) (Seq.tail gs) (Seq.head gs);
+    if Seq.length gs > 0 then Seq.cons_head_tail gs
 
 /// ---------------------------------------------------------------------------
 /// 4. The cycle
@@ -397,9 +453,9 @@ noeq type reach : heap -> pstate -> Type =
   | Start : g:heap -> reach (Init.init_heap g) Init.init_state
   | Alloc : #g:heap -> #st:pstate -> reach g st -> wz:nat -> g'':heap ->
             squash (allocated g st wz g'') -> reach g'' (alloc_state g st wz)
-  | Collect : #g:heap -> #st:pstate -> reach g st -> gs:Seq.seq obj_addr -> roots:Seq.seq obj_addr ->
-              squash (mark_pre g gs roots) ->
-              reach (fst (collect (Mark.mark g gs) st)) (snd (collect (Mark.mark g gs) st))
+  | Collect : #g:heap -> #st:pstate -> reach g st -> roots:Seq.seq obj_addr ->
+              squash (D.roots_ok g roots) ->
+              reach (fst (collection g st roots)) (snd (collection g st roots))
 
 /// One allocation keeps the `Idle` invariant (`I.allocator_ok`).
 let alloc_keeps (g: heap) (st: pstate) (wz: nat) (g'': heap)
@@ -417,37 +473,42 @@ let rec reach_inv (#g: heap) (#st: pstate) (r: reach g st)
   = match r with
     | Start g0 -> GC.Spec.Pages.Alloc.init_alloc_pre g0
     | Alloc #g1 #st1 r1 wz g'' _ -> reach_inv r1; alloc_keeps g1 st1 wz g''
-    | Collect #g1 #st1 r1 gs roots _ -> reach_inv r1; gc_correct_pages g1 st1 gs roots
+    | Collect #g1 #st1 r1 roots _ -> reach_inv r1; gc_correct_pages g1 st1 roots
 
 /// **Every collection of the cycle is correct.**
-let cycle_correct (#g: heap) (#st: pstate) (r: reach g st) (gs roots: Seq.seq obj_addr)
-  : Lemma (requires mark_pre g gs roots)
-          (ensures (let (g', st') = collect (Mark.mark g gs) st in
+let cycle_correct (#g: heap) (#st: pstate) (r: reach g st) (roots: Seq.seq obj_addr)
+  : Lemma (requires D.roots_ok g roots)
+          (ensures (let (g', st') = collection g st roots in
                     gc_safe_pages g g' st' roots /\ gc_live_pages g g' st' roots))
   = reach_inv r;
-    gc_correct_pages g st gs roots
+    gc_correct_pages g st roots
 
 /// The phases of one collection, through the interface (`I.phase_ok`):
-/// `Idle` gives `Marking`; the mark keeps `Marking`; clearing and the sweep
-/// give `Idle` back.
-let phases (g: heap) (st: pstate) (gs: Seq.seq obj_addr)
-  : Lemma (requires PA.inv I.Idle g st /\ MarkInv.mark_inv g gs)
-          (ensures PA.inv I.Marking g st /\ PA.inv I.Marking (Mark.mark g gs) st)
-  = PA.pages_allocator_ok ();
-    MarkInv.mark_inv_elim_wfh g gs;
-    MarkInv.mark_inv_elim_sp g gs;
+/// `Idle` gives `Marking`; greying the roots and the mark keep `Marking`;
+/// clearing and the sweep give `Idle` back.
+let phases (g: heap) (st: pstate) (roots: Seq.seq obj_addr)
+  : Lemma (requires PA.inv I.Idle g st /\ D.roots_ok g roots)
+          (ensures (let hd = D.darken g roots in
+                    let hm = Mark.mark hd roots in
+                    PA.inv I.Marking g st /\ PA.inv I.Marking hd st /\ PA.inv I.Marking hm st /\
+                    PA.inv I.Idle (fst (collect hm st)) (snd (collect hm st))))
+  = let hd = D.darken g roots in
+    PA.pages_allocator_ok ();
     MP.mark_inv_of_ok g st;
-    MS.mark_keeps_inv g st gs
+    D.darken_ok g st roots;
+    mark_ok g st roots;
+    gc_correct_pages g st roots
 
 /// ---------------------------------------------------------------------------
 /// Vacuity
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 5 --fuel 1 --ifuel 1"
-/// The hypotheses of `gc_correct_pages` are not refutable.
+/// The hypotheses of `gc_correct_pages` are not refutable (the constructive
+/// witness is `GC.Spec.Pages.Vacuity.gc_correct_pages_witness`).
 [@@expect_failure [19]]
-let gc_correct_pages_hyps_not_false (h_init: heap) (st: pstate) (gs roots: Seq.seq obj_addr)
-  : Lemma (requires PA.inv I.Idle h_init st /\ mark_pre h_init gs roots) (ensures False)
+let gc_correct_pages_hyps_not_false (h_init: heap) (st: pstate) (roots: Seq.seq obj_addr)
+  : Lemma (requires D.start_pre h_init st roots) (ensures False)
   = ()
 
 /// Nor are those of `gc_correct_gen`.
