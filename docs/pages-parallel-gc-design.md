@@ -1244,7 +1244,7 @@ Real witnesses (`ParMark.Vacuity`):
 `ParMarkCorrect.par_mark_terminates_applies` applies the terminating
 theorem to the first heap of pages, with two workers and no roots.
 `expect_failure` tests cover the main lemmas' hypotheses. No heap witness
-with a non-empty root set was built.
+with a non-empty root set was built (§11.8 adds them).
 
 ### 11.6 Modules
 
@@ -1281,3 +1281,60 @@ witnesses. Total: 4.9k lines, against the estimate of 3–5k.
   - The pending multiset and the claims become ghost state, as in §1.6.
 - **The later-credit question** of §1.6 is still open.
 - **Speed:** the 5% rule, against P0 at k = 2 and 4.
+
+### 11.8 The vacuity audit (2026-11-15)
+
+The vacuity rule is `docs/pages-allocator-proof-plan.md` §18.3 on
+`sheera/pages-allocator`:
+- every theorem with hypotheses about heaps has a constructive witness, a
+  state shown to satisfy all its hypotheses;
+- `expect_failure` does not count, since a solver timeout looks the same;
+- witnesses have at least one root, one reachable object, one unreachable
+  object, and where it matters a pool page and a large run;
+- the audit runs at the end of every stage and before any PR.
+
+The `gc_correct_pages` finding of §11.1 is fixed on `sheera/pages-allocator`
+(§18 there: a step greys the roots first). The branches are not merged;
+here only this branch's own theorems get witnesses.
+
+New modules:
+- `GC.Spec.Pages.Witness` (668 lines): the shared witness `W`, identical to
+  the file on `sheera/pages-allocator`. From the empty heap of pages,
+  through `PA.alloc I.Idle` and the caller's writes: B, a large object
+  heading a run; A, a one-field object in a pool page, pointing to B; C, a
+  one-field object. Roots `[A]`: A a root, B reachable and not a root, C
+  unreachable. Needs `pages_for (small_max + 1) + 2 <= n_pages`.
+- `GC.Impl.Pages.ParWitness` (334 lines, a new `ROOT_MODULES` entry). The
+  lemmas are stated for any heap with `W`'s facts (`wfacts`, sealed), and
+  instantiated with `W` at the end. Two workers, round robin.
+
+| Theorem | Witness before | Witness now | Problem found |
+|---|---|---|---|
+| `ParMarkCorrect.par_mark_gc_terminates` | `par_mark_terminates_applies`: the empty heap, no roots | `par_terminates_witness`: `W`; the run finishes with A's and B's bits set and C's clear | — |
+| `CDrive.sweep_par_seq` (its pure precondition) | `ParVacuity.par_ready`: the empty heap, an empty bitmap | `sweep_par_seq_witness`: `W` and the bitmap the mark leaves (A, B marked; C not); the sweep starts with A's pool page and B's run unswept | — |
+| `par_gc_correct`, `mark_marks_from`, `Marked.bitmap_marked` | `par_witness`: the empty heap, no roots, and `expect_failure` | `sweep_par_seq_witness` (`sweep_pre`) | — |
+| `par_mark_gc_correct` | as `par_mark_gc_terminates` | `par_terminates_witness` (same hypotheses) | — |
+| `Heap.view_ok_heap`, `reach_iff` | none | `model_witness_w`: `par_pre` of `W` | — |
+| `Init.init_inv`, `mark_correct`, `Term.terminates`, `Safety.step_inv`, `run_inv`, `Decrease.step_mu`, `Term.progress` | `ParMark.Vacuity.toy_marks`: a toy view with one object, its root | `model_witness_w`: `W`'s view; the start satisfies `inv` and is not finished; A and B reachable in the model, C not | — |
+| `Complete.cnt_zero_complete`, `cnt_zero_marks`, `all_done_marks` | `expect_failure` | `final_witness`: the finished state of the run, `inv`, `cnt == 0`, B reachable, C not | — |
+| `SweepChunks.sweep_chunks_eq`, `SweepSplit.split`, `BitmapUnits.pool_marks`, `run_marks` | `ParVacuity`: the empty heap; a pool page and a run with one marked block (page-level) | unchanged; `sweep_par_seq`'s proof meets them at `W`'s state | not built separately |
+
+No hypotheses were found contradictory.
+
+Checked:
+- `Witness` and `ParWitness` verify without `--retry` at Z3 seeds 0, 1
+  and 2. No local rlimit is above 40; the most any `ParWitness` query uses
+  is 3.2 (of 20), and `Witness`'s 17.3 (of 40).
+- `ParWitness` takes 10 to 16 minutes, almost all of it in F\* rather than
+  Z3. It is a candidate for speeding up.
+- `make verify` from an empty cache in a scratch worktree: 313 checked
+  files, no errors, 75 minutes.
+- No admits, no assumptions.
+
+Proof lessons:
+- `fair 2 rr`, with `rr` a top-level partial application of `round_robin`,
+  sent Z3 into a long search. Stating the lemmas for any `sched` with
+  `fair 2 sched`, and passing `round_robin 2` only at the end, fixed it.
+- An existential over a run's length, with `par_conclusion` unfolded in
+  context, timed out. Sealing `finished` and `wfacts`, and giving the
+  bitmap witness with `exists_intro`, fixed it.
