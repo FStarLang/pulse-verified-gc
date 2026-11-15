@@ -33,10 +33,29 @@ VINC = -I.. -I../internal -I$(SNAP) -I$(SNAP)/krmllib -I$(SNAP)/krmllib/krml -I$
 bench_verified: bench.c $(VSRC) ../GC_Pages.h
 	$(CC) $(OPT) $(VINC) -Wno-everything bench.c $(VSRC) -o $@
 
+# The parallel sweep against the parallel prototype (pbench.sh): the
+# prototype's alloc_pages.c and proto.h from the P0 worktree branch
+# sheera/pages-parallel-proto (PPROTO_DIR, uncommitted there), on its own
+# worker pool (proto_par_stubs.c); the verified one over pages_par.c.
+PPROTO_DIR ?= $(HOME)/Documents/pgc-pages-par-proto/$(PROTO_DIR)
+
+_pproto/alloc_pages.c _pproto/proto.h:
+	@mkdir -p _pproto
+	cp $(PPROTO_DIR)/alloc_pages.c $(PPROTO_DIR)/proto.h _pproto/
+
+bench_pproto: bench.c proto_par_stubs.c _pproto/alloc_pages.c _pproto/proto.h
+	$(CC) $(OPT) -pthread -DPROTO -DPAR -DVERGC_B_VARIANT=2 -I_pproto -Istub bench.c proto_par_stubs.c _pproto/alloc_pages.c -o $@
+
+bench_pverified: bench.c $(VSRC) ../pages_par.c ../GC_Pages.h ../pages_par.h
+	$(CC) $(OPT) -pthread -DPAR $(VINC) -Wno-everything bench.c $(VSRC) ../pages_par.c -o $@
+
+pbench: bench_pproto bench_pverified
+	@./pbench.sh $(ROUNDS) $(REPS)
+
 bench: all
 	@./bench.sh $(ROUNDS) $(REPS)
 
 clean:
-	rm -rf _proto bench_proto bench_verified
+	rm -rf _proto _pproto bench_proto bench_verified bench_pproto bench_pverified
 
-.PHONY: all bench clean
+.PHONY: all bench pbench clean

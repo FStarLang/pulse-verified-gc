@@ -39,6 +39,9 @@ void vergc_proto_sweep(heap_t heap, uint64_t *heads, uint64_t *tbl);
 #else
 #include "GC_Pages.h"
 #include "krmlinit.h"
+#ifdef PAR
+#include "pages_par.h"
+#endif
 #endif
 
 #define NPAGES 4096ULL
@@ -60,6 +63,22 @@ static inline uint64_t a_alloc(uint64_t wz) { return vergc_proto_allocate(heap, 
 static inline uint64_t *a_hdr(uint64_t o) { return (uint64_t *)(uintptr_t)(o - 8); }
 static void a_sweep(void) { vergc_proto_sweep(heap, NULL, NULL); }
 static const char *a_name = "proto-B2";
+#ifdef PAR
+/* The parallel prototype: the bitmap sweep on its pool, k threads. */
+static uint32_t *bm;
+static void a_bm_init(void) {
+    if (!bm) bm = calloc(BYTES / 8 / 32, sizeof(uint32_t));
+    memset(bm, 0, BYTES / 8 / 32 * sizeof(uint32_t));
+    proto_bm = bm;
+}
+static inline void a_mark_bit(uint64_t o) { uint64_t i = (o - 8 - zero_addr) >> 3; bm[i >> 5] |= 1u << (i & 31); }
+static void a_psweep(int k) {
+    const char *e = getenv("VERGC_PSTATIC");
+    proto_chunks_static = !(e && e[0] == '0');
+    proto_threads = k;
+    vergc_proto_sweep(heap, NULL, NULL);
+}
+#endif
 #else
 static pstate_t st;
 static void a_init(void) {
@@ -78,6 +97,18 @@ static inline uint64_t a_alloc(uint64_t wz) { return alloc_white(heap, st, wz); 
 static inline uint64_t *a_hdr(uint64_t o) { return (uint64_t *)(mem + o - 8); }
 static void a_sweep(void) { sweep(heap, st); }
 static const char *a_name = "verified";
+#ifdef PAR
+/* The verified parallel sweep (pages_par.c over the extracted chunks). */
+static uint32_t *bm;
+static uint64_t parts[PAGES_PAR_MAX_CHUNKS * PAGES_PAR_PW];
+static uint64_t bounds[PAGES_PAR_MAX_CHUNKS + 1];
+static void a_bm_init(void) {
+    if (!bm) bm = calloc(BYTES / 8 / 32, sizeof(uint32_t));
+    memset(bm, 0, BYTES / 8 / 32 * sizeof(uint32_t));
+}
+static inline void a_mark_bit(uint64_t o) { uint64_t i = (o - 8) >> 3; bm[i >> 5] |= 1u << (i & 31); }
+static void a_psweep(int k) { par_sweep(heap, st, bm, parts, bounds, PAGES_PAR_CHUNKS(k), k); }
+#endif
 #endif
 
 static uint64_t now(void) {
@@ -181,6 +212,29 @@ int main(int argc, char **argv) {
                (double)t[reps / 2] / 1e6, a_name, (double)t[reps / 2] / pages_used);
     }
 
+#ifdef PAR
+    /* psweep K: as sweepS, the marks as bits of the bitmap, swept by the
+     * parallel sweep on K threads */
+    if (only && strcmp(only, "psweep") == 0) {
+        int k = argc > 3 ? atoi(argv[3]) : 1;
+        for (int s = 0; s < 3; s++) {
+            make_reqs(1, target);
+            pages_used = target / 4096;
+            for (int r = 0; r < reps; r++) {
+                a_init();
+                a_bm_init();
+                run_allocs(nreq);
+                rng = 12345 + r;
+                for (size_t i = 0; i < nreq; i++) if (rnd() % 100 < pcts[s]) a_mark_bit(objs[i]);
+                uint64_t t0 = now();
+                a_psweep(k);
+                t[r] = now() - t0;
+            }
+            qsort(t, reps, sizeof(uint64_t), cmp_u64);
+            printf("psweep%u.k%d %8.3f ms/sweep  (%s)\n", pcts[s], k, (double)t[reps / 2] / 1e6, a_name);
+        }
+    }
+#endif
     /* realloc: after a 50% sweep, allocate small objects again */
     if (RUN("realloc")) {
         make_reqs(1, target);
