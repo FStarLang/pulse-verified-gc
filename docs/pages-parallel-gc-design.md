@@ -876,3 +876,161 @@ time.
    - The per-thread cost of BP (the bitmap is a separate cache line from the
      object it marks, plus the CAS and the packets) is what E must keep
      within 5%; it is not something to remove.
+
+---
+
+## 10. Stages S1 and S2: the parallel sweep, static chunks (2026-11-15)
+
+Uncommitted. Toolchain unchanged (nightly 2026-10-17, no upgrade): the
+sweep needs no CAS, and no trusted Pulse primitive was added.
+
+### 10.1 What is proved
+
+**Top-level theorem**, `GC.Impl.Pages.CDrive.sweep_par_seq`: from a heap
+`g` whose marks are the bits of a bitmap `bs`, running `par_prepare`, then
+`CPar.sweep_chunk c` for every chunk in order, then `par_finish`, gives
+exactly `SweepAll.sweep_all (Bitmap.with_marks g bs) (StartSweep.start_sweep st)`
+(heap and `pstate`, as an equality), and leaves the bitmap equal to
+`Seq.create bm_len 0ul`. Hypotheses: `map_ok st.pm`, and
+`CSweep.marks_from g bs (start_sweep st).pm 0 n_pages`: the marks of a pool
+page lie on slot headers of white blocks and no unmarked slot header is
+black; the marks of a run lie on the run's walk; a free page or a swept
+unit has none. (The mark stage, M1, must establish this; it follows from
+"bits = headers of the reachable objects" on a heap with white and blue
+headers only.)
+
+No existing theorem changed. One lemma was added to the page parameters'
+interface, `Params.page_wsize_bm : page_wsize % 32 == 0`, so that a page's
+bits are whole bitmap words.
+
+**Main lemmas** (all checked without `--retry`, rlimit ≤ 40 everywhere):
+- `SweepRange`: `crange` (`sweep_from` stopped at `hi`, with the open
+  link); `crange_from`, `crange_trans`; the chunk versions of `unit_frame`
+  and `unit_local` in commuting form: `crange_wr` (a heap write outside the
+  range commutes with sweeping it) and `crange_sn` (a link set below it).
+- `SweepSplit.split` (the list-splitting lemma): sweeping a range from the
+  lists of `st` (which end below it) = sweeping it from empty lists, then
+  `jstep`: per class `L ++ F` (old tail's link := `F`'s head), list 0
+  `F ++ L` (the open link := `L`'s head). Rests on `push_join` and
+  `run_head_only` (`wr_open`, `lhead_open`): a run's sweep with head `fp`
+  and with head 0 differ only at its last listed block's link.
+- `SweepChunks.sweep_chunks_eq`: every chunk swept from empty lists one after
+  another, then the joins in ascending chunk order = `sweep_all`, from any
+  state with empty lists and `bounds_ok` bounds; via `commute` (the earlier
+  chunks' joins commute with a later chunk: `crange_wr`, `crange_jpm`).
+  Also `chunks_map_ok`.
+- `Bitmap`: `with_marks` (`wm g m`), `wm_read`, `wm_write`, `wm_unmark`,
+  `whiten_black`, `clear_bit_marked`, `zero_page_marked`, `page_words_zero`,
+  `bit_test`.
+- `BitmapUnits`: the pool page's window lemmas (`win_live`, `win_dead`,
+  `win_end`, `freed_unmarked`), so the pool sweep never writes a live slot
+  and zeroes the page's bitmap words at the end; the run's mark
+  materialization (`mat_step`, `mat_done`) and `run_sim`.
+- `ParVacuity`: the hypotheses hold for the first allocator state with one
+  chunk and an empty bitmap; a marked white slot satisfies `pool_marks` and
+  the sweep keeps it; a marked white run block satisfies `run_marks`.
+
+### 10.2 Modules
+
+Spec: `GC.Spec.Pages.{SweepRange, SweepSplit, SweepChunks, Bitmap, BitmapUnits}`.
+Pulse, `mark-and-sweep/impl/GC.Impl.Pages.*`:
+- `CState`: what a chunk owns. Heap bytes as a sub-array (`ch_heap`; word
+  access through the existing `ArrayWord` primitives on the sub-array, so no
+  new trusted primitive); page records as a `pts_to_range` with accessors
+  carrying `State`'s specifications (`cst`); bitmap words (`ch_bm`,
+  `bm_test`, `bm_test_w`, `bm_clear`, `bm_zero_page`).
+- `CSub`: `range_sub`/`range_unsub` (Pulse `Array.Core.sub`, a pointer
+  addition in C), `split3`/`join3`, `range_idx`.
+- `CPool`: the bitmap pool-page sweep (`sweep_slots_b`, `sweep_page_b`,
+  `pool_step_c`) = `SweepPage.sweep_page` of `with_marks`.
+- `CRun`: `materialize` (marks → black headers, bits cleared), then the
+  existing `SweepRun` ported onto the chunk's resources (same lemmas);
+  `run_step_c` also returns the run's open link.
+- `CSweep`: `sweep_units`, the chunk loop = `crange` from empty lists.
+- `CPar`: `sweep_chunk` (the per-thread entry), `chunk_bounds`.
+- `CJoin`: `join_chunk` = `SweepSplit.jstep`, a class at a time.
+- `CDrive`: `par_prepare`, `par_finish` (the free-page hint as the minimum of
+  the chunks' lowest free pages, then the joins), `sweep_par_seq`.
+- `Par` (root; added to `ROOT_MODULES` with `ParVacuity`).
+
+### 10.3 Trusted code
+
+One C file, `mark-and-sweep/pages-c/pages_par.c` (+ `pages_par.h`, 131
+lines): `par_sweep` calls `par_prepare`, runs `sweep_chunk(c)` for chunks
+`t, t + k, …` on thread `t` of a persistent pthread pool (as
+`proto_common.c`; thread 0 is the caller), waits for all, then calls
+`par_finish`. Its specification (in the file): the same effect as
+`sweep_par_seq`, because each `sweep_chunk`'s Pulse precondition owns only
+its chunk's heap bytes, page records, bitmap words and record, plus shares
+of the word array and the bounds, which no chunk writes.
+
+### 10.4 Tests
+
+- `pages-c/pages_par_test.c` (`make par-test`): two copies built by the
+  same requests; the same objects marked as black headers in one and as
+  bits in the other; the sequential header sweep against `par_sweep` at
+  k = 1..4, 0–100% survivors, three sweep + reallocation rounds: heaps,
+  page records and lists byte-equal, bitmap zero, later allocations equal.
+  8.6M checks pass. A control (one bit left out) is caught.
+- ThreadSanitizer (LLVM 18; Apple clang 12's TSan crashes on this macOS):
+  clean. `pages_test` (existing): passes.
+
+### 10.5 Measurements
+
+`pages-c/bench`, `make pbench` (`pbench.sh`): the mixed workload of
+`bench.c`, 10/50/90% of objects marked in the bitmap, one parallel sweep
+timed; the prototype is P0's `alloc_pages.c` (B2, bitmap mark, its own
+pool), copied from the P0 worktree; each workload in its own process,
+alternated, 11 rounds × 15 reps, medians, ms per sweep.
+
+| workload | proto static | verified | diff | proto dynamic | verified | diff |
+|---|---|---|---|---|---|---|
+| psweep10 k=1 | 1.119 | 1.077 | −3.8% | 1.103 | 1.040 | −5.7% |
+| psweep50 k=1 | 1.456 | 1.379 | −5.3% | 1.434 | 1.377 | −4.0% |
+| psweep90 k=1 | 0.721 | 0.567 | −21.4% | 0.728 | 0.565 | −22.4% |
+| psweep10 k=2 | 0.800 | 0.701 | −12.4% | 0.808 | 0.686 | −15.1% |
+| psweep50 k=2 | 0.841 | 0.777 | −7.6% | 0.850 | 0.787 | −7.4% |
+| psweep90 k=2 | 0.482 | 0.428 | −11.2% | 0.445 | 0.421 | −5.4% |
+| psweep10 k=4 | 0.832 | 0.650 | −21.9% | 0.828 | 0.657 | −20.7% |
+| psweep50 k=4 | 0.694 | 0.662 | −4.6% | 0.680 | 0.627 | −7.8% |
+| psweep90 k=4 | 0.376 | 0.343 | −8.8% | 0.373 | 0.357 | −4.3% |
+
+The two builds' allocators lay the heap out differently (as in §17's
+sequential bench), so the swept heaps are not identical. The sequential
+`bench.sh` after re-extraction: every workload at or below the prototype
+except `reallocS` (+2.1%).
+
+### 10.6 Changes to the design, and findings
+
+1. **Chunk bounds over the used pages.** The first version cut
+   `[0, n_pages)` into chunks; at k = 4 most chunks were in the never-used
+   tail, and psweep10 was 10.7% slower. `chunk_bounds` now cuts
+   `[0, top)`, `top` one past the last page that is not free (a downward
+   scan, the prototype's high-water mark); the last chunk still ends at
+   `n_pages`. No proof changed beyond the bound.
+2. **The pool sweep's bit index** is computed from the page (`i *
+   page_wsize + k * cls`), not from the address: the first version reloaded
+   the global `zero_addr` per slot (byte stores alias it). 5–10% on psweep.
+3. **Runs: materialization pass** instead of reading bits inside the run
+   sweep. It reuses the run sweep's proofs unchanged; it costs one extra
+   header read per run block and two header writes per live large block.
+   Measured: the run part of psweep is about 15% of the sweep, and the whole
+   sweep stays below the prototype. Revisit if a large-object workload is
+   slower.
+4. **Run marks**: `run_marks` needs the marks on the run's walk only (no
+   colour condition), since the materialized run is swept with header
+   colours.
+5. **The hint** is the minimum of the chunks' lowest free pages (as the
+   prototype's `min_free`), not `write_entry`'s running hint.
+6. **Extraction pitfall:** a total spec helper left extractable in a
+   `GC.Impl.Pages.*` module (e.g. one computing a `Seq` slice) makes
+   KaRaMeL extract `FStar.Seq`'s list model and spin for tens of minutes in
+   its Inlining pass. All such helpers are `noextract`; KaRaMeL then takes
+   1 s.
+
+### 10.7 What remains
+
+- Dynamic chunks (§2.4): not needed for the 5% rule on these workloads
+  (static is at or below the dynamic prototype); deferred.
+- Runtime integration waits for 5b, as planned.
+- The mark stage (M1/M2) must establish `marks_from`.
