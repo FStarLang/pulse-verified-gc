@@ -28,10 +28,12 @@ FSTAR = $(FSTAR_EXE) \
   --include $(ROOT)/mark-and-sweep/spec --include $(ROOT)/mark-and-sweep/impl \
   --include $(ROOT)/generational/spec
 
-ENTRY_MODS = GC.Impl.Pages.Init GC.Impl.Pages.Alloc GC.Impl.Pages.Sweep
+ENTRY_MODS = GC.Impl.Pages.Init GC.Impl.Pages.Alloc GC.Impl.Pages.Sweep GC.Impl.Pages.CPar GC.Impl.Pages.CDrive
 
 KRML_MODS = \
   GC.Impl.Pages.Init GC.Impl.Pages.Alloc GC.Impl.Pages.Sweep GC.Impl.Pages.SweepRun GC.Impl.Pages.SweepPage \
+  GC.Impl.Pages.CPar GC.Impl.Pages.CDrive GC.Impl.Pages.CSweep GC.Impl.Pages.CPool GC.Impl.Pages.CRun \
+  GC.Impl.Pages.CJoin GC.Impl.Pages.CState GC.Impl.Pages.CSub \
   GC.Impl.Pages.Large GC.Impl.Pages.Pool GC.Impl.Pages.Heap GC.Impl.Pages.State \
   GC.Impl.Pages.Params GC.Impl.Heap GC.Impl.Object GC.Impl.ArrayWord \
   GC.Spec.ZeroAddr GC.Spec.Base GC.Spec.Heap GC.Spec.Object GC.Lib.Header GC.Lib.Address
@@ -39,7 +41,7 @@ KRML_MODS = \
 KRML_FLAGS = \
   -tmpdir $(EXTRACT_DIR) \
   -skip-compilation -skip-linking \
-  -bundle 'GC.Impl.Pages.Init+GC.Impl.Pages.Alloc+GC.Impl.Pages.Sweep=GC.Impl.Pages.*,GC.Impl.Heap,GC.Impl.Object,GC.Impl.ArrayWord,Pulse.Lib.Array[rename=GC_Pages]' \
+  -bundle 'GC.Impl.Pages.Init+GC.Impl.Pages.Alloc+GC.Impl.Pages.Sweep+GC.Impl.Pages.CPar+GC.Impl.Pages.CDrive=GC.Impl.Pages.*,GC.Impl.Heap,GC.Impl.Object,GC.Impl.ArrayWord,Pulse.Lib.Array[rename=GC_Pages]' \
   -bundle 'GC.Spec.ZeroAddr=GC.Spec.ZeroAddr' \
   -bundle 'GC.Spec.*,GC.Lib.Header,GC.Lib.Address,GC.Gen.*[rename=GC_Pages_Spec]' \
   $(foreach m,$(KRML_MODS),-no-prefix $(m)) \
@@ -55,7 +57,7 @@ $(OUTPUT_DIR) $(EXTRACT_DIR):
 $(OUTPUT_DIR)/Custard.krml: | $(OUTPUT_DIR)
 	$(FSTAR) --odir $(OUTPUT_DIR) --codegen KrmlC --custard_split \
 	  $(addprefix --custard_entry_module ,$(ENTRY_MODS)) \
-	  $(ROOT)/mark-and-sweep/impl/GC.Impl.Pages.fst
+	  $(ROOT)/mark-and-sweep/impl/GC.Impl.Pages.Par.fst
 
 extract: $(OUTPUT_DIR)/Custard.krml | $(EXTRACT_DIR)
 	$(KRML) $(KRML_FLAGS) $(OUTPUT_DIR)/Custard.krml
@@ -81,3 +83,15 @@ test: pages_test
 
 clean:
 	rm -rf $(OUTPUT_DIR) $(EXTRACT_DIR) pages_test
+
+# The parallel sweep (pages_par.c, the trusted thread driver) against the
+# sequential sweep: pages_par_test.c.
+PAR_SOURCES = GC_Pages.c GC_Pages_Spec.c krmlinit.c $(SNAP)/compat.c pages_par.c pages_par_test.c
+
+pages_par_test: $(PAR_SOURCES) GC_Pages.h pages_par.h
+	$(CC) $(CFLAGS) -pthread $(PAR_SOURCES) -o $@
+
+par-test: pages_par_test
+	./pages_par_test
+
+.PHONY: par-test
