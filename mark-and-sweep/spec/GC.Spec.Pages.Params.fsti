@@ -47,3 +47,8 @@ let params_cond : prop =
   (* C5 *) small_max > GC.Spec.SizeClass.n_small
 
 val params_ok : unit -> Lemma params_cond
+
+/// A page is a whole number of 32-bit words of the mark bitmap, one bit per
+/// heap word (docs/pages-parallel-gc-design.md §1.2): both candidate sizes
+/// are.
+val page_wsize_bm : unit -> Lemma (page_wsize % 32 == 0)

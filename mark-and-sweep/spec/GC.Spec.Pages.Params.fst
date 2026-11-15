@@ -52,3 +52,5 @@ let params_ok () =
   both_candidates_ok ();
   large_beyond_small_lists ();
   FStar.Classical.forall_intro increasing
+
+let page_wsize_bm () = assert_norm (page_wsize_16k % 32 == 0 /\ page_wsize_32k % 32 == 0)
