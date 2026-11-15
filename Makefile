@@ -120,6 +120,8 @@ ROOT_MODULES = \
   mark-and-sweep/spec/GC.Spec.Pages.Allocator.fst \
   mark-and-sweep/spec/GC.Spec.Pages.GcCorrect.fst \
   mark-and-sweep/impl/GC.Impl.Pages.fst \
+  mark-and-sweep/impl/GC.Impl.Pages.Par.fst \
+  mark-and-sweep/impl/GC.Impl.Pages.ParVacuity.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst
 
