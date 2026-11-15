@@ -1034,3 +1034,250 @@ except `reallocS` (+2.1%).
   (static is at or below the dynamic prototype); deferred.
 - Runtime integration waits for 5b, as planned.
 - The mark stage (M1/M2) must establish `marks_from`.
+
+---
+
+## 11. Stage M1: the parallel mark as an F\* model (2026-11-15)
+
+Uncommitted. F\* model only, no Pulse. Toolchain unchanged (nightly
+2026-10-17). No existing theorem changed; one module was added to
+`ROOT_MODULES` (`GC.Impl.Pages.ParMarkCorrect`, which reaches every new one).
+
+### 11.1 What is proved
+
+All checked without `--retry`, local rlimits ≤ 40, no admit, no assume.
+
+- **Safety** (`Safety.step_inv`, `run_inv`): every step of every worker keeps
+  the invariant `Inv.inv`, so it holds after any interleaving. Its I1 says
+  every set bit is the header of a claimable object reachable from the roots
+  (`Init.mark_correct`: at every point, `marked bs a ==> reach (a + 8)`).
+- **Completeness** (`Complete.cnt_zero_complete`, `cnt_zero_marks`): in any
+  state of the invariant where the work count is 0, every reachable object's
+  bit is set, and the bits are exactly the reachable headers
+  (`Reach.marks_reach`). A worker finishes only after reading 0, and 0 is
+  final, so when all have finished the bitmap is the result
+  (`all_done_marks`).
+- **Termination** (`Term.terminates`): under any fair schedule (every worker
+  scheduled infinitely often), from the start, every worker finishes, with
+  `marks_reach`. Without fairness it is false (a worker spins while another
+  holds the lock); `Vacuity.unfair_terminates` checks that this is not
+  provable.
+- **The collection** (`GC.Impl.Pages.ParMarkCorrect`):
+  - `par_mark_gc_terminates`: under a fair schedule the mark finishes, and
+    for the bitmap it leaves, `CSweep.marks_from h bs (start_sweep st).pm 0
+    n_pages` and `map_ok st.pm` hold (the hypotheses of
+    `CDrive.sweep_par_seq`), and `collect (with_marks h bs) st`, which is
+    exactly what `sweep_par_seq` computes, satisfies `gc_safe_pages` and
+    `gc_live_pages`: the conclusion of `gc_correct_pages`.
+  - `par_mark_gc_correct`: the same for any finite interleaving that ends
+    with every worker finished.
+  - Through `gc_correct_gen` with `h_mark = with_marks h bs`:
+    `Marked.bitmap_marked` proves `GP.marked` and `MP.mark_inv` for it.
+
+**Finding: `gc_correct_pages` holds only for empty roots.** Its `mark_pre`
+needs every root grey (`Mark.root_props`, with `no_black_objects`), but in
+`PA.inv I.Idle` every live object is white (`MarkPhase.live_white`). A
+throwaway lemma `Idle /\ mark_pre /\ Seq.mem r roots ==> False` verifies. The
+existing `expect_failure` vacuity test does not catch it, because Z3 cannot
+refute the hypotheses within its rlimit. The theorem is left as it is. The
+parallel theorems use a new precondition, `Heap.par_pre`: `Idle`, each root
+an object and not blue, and `graph_pre`. They need no grey header, because the
+mark claims its roots in the bitmap.
+
+### 11.2 The model
+
+`ParMark.Model.wstep p s w` is one atomic step of worker `w`. A run is any
+interleaving. The model is `par_mark_pages.c`'s BP with fix 2, the
+prototype's code path, case by case. Its parameters are PKT, CHUNK,
+MAXLEN, S_min and the share-check period. The heap is seen only through
+`tst`, `tgt` and `nf`:
+- `tst`: the bitmap-first test's address;
+- `tgt`: the target after infix resolution and the blue test;
+- `nf`: the fields to push.
+
+`ParMark.Heap` instantiates them from the heap.
+
+**Shared state:** the bitmap, `cnt` (work_in_flight), `flag`
+(share_wanted), the lock word, the pool and `nfull`.
+
+**Per worker:**
+- the packets `inp` and `out`;
+- `pend`, the entries still to push: push_obj's ranges, or the rest pushed
+  back after CHUNK;
+- `pub`, the packet being published, and `got`, the packet taken;
+- `scan`, the range being visited, and `vis`, the claim in progress;
+- `active` (holds a count), `tick` and `chk`.
+
+**The atomic steps and the primitive each uses.** LOAD is an atomic load.
+FAA is fetch-and-add, a verified loop over the word CAS that takes effect at
+its successful CAS. ACQ and REL are one try and the release of the spin lock,
+each a word CAS. LOCAL means no shared access: worker-owned memory and the
+read-only heap.
+
+| phase | step (prototype) | shared access | primitive |
+|---|---|---|---|
+| Run | visit: word is not a heap pointer | none | LOCAL |
+| Run | visit: bitmap-first test of `v - 8` | load of one bitmap word; none if outside the pages | LOAD (bitmap) |
+| Run | claim: read the word (`CLoad`) | load of one bitmap word | LOAD (bitmap) |
+| Run | claim: `old -> old \| bit` (`CCas`); on success push_obj into `pend` | CAS on one bitmap word | **CAS on array element** |
+| Run | push one pending entry to `out` | none | LOCAL |
+| Run | `out` full: it becomes `pub`, go to Lk | none | LOCAL |
+| Run | share check due (every `tickp` entries) | none | LOCAL |
+| Run | no work left: give up the count | `cnt -= 1` | FAA (`cnt`) |
+| Run | swap `inp`/`out`; pop, push back past CHUNK | none | LOCAL |
+| Sh1 | `nfull != 0`? | load `nfull` | LOAD (word), a test against 0 |
+| Sh2 | `share_wanted`? (and `src >= S_min`) | load `flag` | LOAD (word), a test against 0 |
+| Sh3 | `share_wanted 1 -> 0`; on success split off the older half | CAS `flag` | **CAS on word** |
+| Lk | take the pool lock; on failure the state is unchanged | CAS lock 0 → 1 | ACQ (CAS on word) |
+| Cs1 | count the packet | `cnt += 1` | FAA (`cnt`) |
+| Cs2 | push the packet; `nfull += 1` | pool (lock-protected), `nfull` | FAA (`nfull`), or a CAS from a lock-held copy |
+| Cs3 | release | CAS lock 1 → 0 | REL (CAS on word) |
+| Id1 | `nfull > 0`? | load `nfull` | LOAD (word), a test against 0 |
+| Id2 | try the lock once (`trylock`) | CAS lock 0 → 1 | ACQ (CAS on word) |
+| Tk1 | pop a packet; `nfull -= 1` | pool (lock-protected), `nfull` | FAA (`nfull`), or a CAS from a lock-held copy |
+| Tk2 | release; a taken packet becomes `inp`, with its count | CAS lock 1 → 0 | REL (CAS on word) |
+| Id3 | `share_wanted` clear? | load `flag` | LOAD (word), a test against 0 |
+| Id4 | set `share_wanted` (the prototype stores 1) | CAS `flag` 0 → 1 | **CAS on word** |
+| Id5 | `cnt == 0`? then finish | load `cnt` | LOAD (word), a test against 0 |
+| start | claim the roots, pack them into the pool | main thread only | plain writes |
+
+**The two primitives do not suffice in the shape asked for. A decision is
+needed before M2.**
+- `Pulse.Lib.Primitives.cas` returns only a bool. That gives every word step
+  except FAA on `cnt`:
+  - every word LOAD in the model is a test against 0, which `cas_word r 0 0`
+    answers without changing `r`;
+  - ACQ and REL are CASes;
+  - `nfull` is only written under the lock, so its update can be a CAS from a
+    lock-held copy, which always succeeds.
+- It cannot give the bitmap steps. The claim needs the word's current value
+  to form `old | bit`, and the test needs one bit of a word whose other bits
+  are unknown.
+- For the same reason it cannot give FAA on `cnt`: the decrement on going
+  idle is outside the lock.
+- Options:
+  1. **Recommended.** Add two atomic loads, in the shape of
+     `Pulse.Lib.Primitives.read_atomic`: one on an array element (the bitmap)
+     and one on a word. That makes four primitives. The word load can later
+     be swapped for F\*'s own, and FAA becomes a verified load-and-CAS loop.
+  2. Make the two CASes return the value they read (C's
+     `__atomic_compare_exchange_n` already does), so that a load is
+     `cas x x`. That puts a locked instruction on every pointer visited,
+     where P0's bitmap-first test is a plain `mov`. It would very likely
+     break the 5% rule.
+- The model covers both shapes. A value-returning CAS that fails is a model
+  CAS failure followed at once by a load, which is a legal interleaving.
+
+**Differences from the prototype, which M2 must follow:**
+- The model is deterministic. The changes, with their reason:
+  - an idle worker tests `share_wanted` on every round, not every 64th: no
+    round counter in the state;
+  - `tick` also counts the first entry after a take: one pop step;
+  - `share_wanted` is set with a CAS, not a store: only CAS is trusted.
+- Left out, since they have no logical effect:
+  - `idle_workers` (read only by fix 0);
+  - the empty-packet free list and `malloc`;
+  - back-off, `sched_yield` and statistics.
+- One worker steps at a time, but each step is a single access, so this is
+  every interleaving of the real accesses.
+
+### 11.3 The invariant
+
+`Inv.inv` (opaque to SMT, `inv_reveal`):
+- I1: bits lie on reachable claimable headers, and the roots are marked.
+- I0: every held entry lies in a marked object's fields. A claim in progress
+  is for a reachable object, from a word read while its bit was clear.
+- I2: every field of a marked object has its target marked, or the field is
+  pending (`obl`: an entry held by a worker or the pool, or the scan range),
+  or a worker is claiming the target.
+- I3: `cnt` = the units held plus the pool's packets. A unit is held by an
+  active worker, a worker between counting and pooling, or a worker holding a
+  taken packet.
+- Shape: an idle or finished worker holds nothing. The pool's packets are
+  non-empty. `nfull` = |pool|.
+- Lock: held exactly by the one worker in a critical section.
+- `Done ==> cnt = 0`, and 0 is final.
+
+`Inv.preserve` reduces a step to facts about the stepping worker:
+- `xfer`: the obligations it held are still met, and the fields of an object
+  it marked are covered;
+- the count, the lock and the shape.
+
+### 11.4 Termination
+
+**The measure.** `Measure.mu` is a natural number. Its weights:
+- `W_U` for each unmarked claimable object;
+- entries and fields by where they are: pending > `out` > `inp`, the pool
+  and the packets in flight; a field being scanned weighs least;
+- a weight for each phase, so that every multi-step operation runs down;
+- one unit each for the flag clear and the lock free;
+- a term `psi` of at most 3 per worker. It is what another worker can undo:
+  a CAS that makes a read stale, or a take that empties the pool under an
+  idle worker. The other constants grow with `3k` only to pay for it.
+
+**The steps.**
+- `Decrease.step_mu`: every step that does not wait decreases `mu`.
+- A waiting step keeps `mu` and changes no shared state. The waiting steps
+  are:
+  - a failed lock try;
+  - an idle round that finds nothing;
+  - a finished worker's step.
+- `Term.progress`: in any state where some worker has not finished, some
+  worker reaches a non-waiting step within 3 of its own steps.
+- `Term.wstep_local` and `wstep_frame`: a worker's step depends only on the
+  shared state and its own, so other workers' waiting steps do not change
+  its path.
+- `terminates` follows by induction on `mu`. If no step from time `n` on
+  decreased `mu`, the worker from `progress` would decrease it within 4
+  turns, which fairness guarantees.
+
+### 11.5 Vacuity
+
+Real witnesses (`ParMark.Vacuity`):
+- a one-object, one-root instance, given `n_pages > 0`, satisfies `view_ok`.
+  From there:
+  - the start state satisfies `inv` and is not finished, so `step_inv`,
+    `step_mu` and `progress` apply;
+  - round robin is fair;
+  - the run finishes with the root's bit set.
+
+`ParMarkCorrect.par_mark_terminates_applies` applies the terminating
+theorem to the first heap of pages, with two workers and no roots.
+`expect_failure` tests cover the main lemmas' hypotheses. No heap witness
+with a non-empty root set was built.
+
+### 11.6 Modules
+
+Spec, `mark-and-sweep/spec/GC.Spec.Pages.ParMark.*`. Lines, and check time
+without `--retry`:
+
+| module | content | lines | s |
+|---|---|---|---|
+| Bits | `set_bit`, `bword`, `set_bit_marked` | 88 | 2 |
+| Model | state, `wstep`, `init` (root claiming, packing), `run` | 322 | 2 |
+| Reach | `view_ok`, `reach`, `marks_reach` | 98 | 1 |
+| Inv | the invariant, `preserve` | 374 | 4 |
+| Safety | one lemma per step, `step_inv`, `run_inv` | 764 | 116 |
+| Complete | count 0 ⇒ closed ⇒ complete | 112 | 2 |
+| Init | `init_inv`, `mark_correct` | 205 | 6 |
+| Measure | `mu`, `waiting` | 148 | 1 |
+| Decrease | `step_mu` | 613 | 55 |
+| Term | `runf`, `fair`, `progress`, `terminates` | 586 | 16 |
+| Vacuity | witnesses, `expect_failure` tests | 131 | 115 |
+| Heap | the heap's view, `view_ok_heap`, `reach_iff` | 557 | 10 |
+| Marked | `with_marks` = painting black; `bitmap_marked` | 547 | 9 |
+
+Impl: `GC.Impl.Pages.ParMarkCorrect` (319 lines, 16 s): `mark_marks_from`,
+`par_gc_correct`, `par_mark_gc_correct`, `par_mark_gc_terminates`, and the
+witnesses. Total: 4.9k lines, against the estimate of 3–5k.
+
+### 11.7 What remains for M2
+
+- **Decide the primitive set** (§11.2).
+- **The Pulse mark:** each Pulse atomic block is one `wstep` case.
+  - The shared invariant is `Inv.inv`, split into resources: the bitmap and
+    the counters in a `Pulse.Lib.Inv` invariant; the pool behind the lock;
+    the packets with their owners.
+  - The pending multiset and the claims become ghost state, as in §1.6.
+- **The later-credit question** of §1.6 is still open.
+- **Speed:** the 5% rule, against P0 at k = 2 and 4.
