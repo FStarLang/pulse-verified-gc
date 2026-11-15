@@ -1227,7 +1227,9 @@ the minor collection and the allocator interface unchanged. All modules
 verify without `--retry` and with no local rlimit above 20 (the vacuity
 checks run at 5). There are no admits and no assumptions.
 
-**The theorems** (`GC.Spec.Pages.GcCorrect`).
+**The theorems** (`GC.Spec.Pages.GcCorrect`). As built here,
+`gc_correct_pages`, the cycle and `phases` held only without roots; §18
+restates them over a collection that first greys the roots.
 - `collect h_mark st = sweep_all h_mark (start_sweep st)`: the collector
   after the mark.
 - `gc_correct_pages h_init st gs roots`:
@@ -1894,3 +1896,172 @@ runs, so a range is given).
 through `compat.c`'s `read_u64_le` and `write_u64_le`. Here they inline
 only through `-flto`. A build without LTO would pay a call per word, so 5b
 must compile them inline (LTO, or a header definition).
+
+---
+
+## 18. The roots are greyed first; the vacuity rule and its audit (2026-11-15)
+
+### 18.1 The gap
+
+`gc_correct_pages` (§14) held only when there are no roots.
+- Its precondition was `PA.inv I.Idle h_init st /\ mark_pre h_init gs roots`.
+- In `Idle` every live object is white (`MarkPhase.live_white`).
+- `mark_pre` needs every root grey or black (`Mark.root_props`), and every
+  stack entry grey (`MarkInv.mark_inv`'s `stack_props`).
+- So `roots` and `gs` had to be empty. `GcCorrect.idle_mark_pre_empty` now
+  proves this.
+- The cycle had the same gap: `Collect` asked for `mark_pre`, so the only
+  collections in `reach` were the ones with no roots. `phases` too: it asked
+  for `MarkInv.mark_inv g gs` in `Idle`, so `gs` was empty.
+- Its vacuity check, `gc_correct_pages_hyps_not_false`, missed this. It was
+  an `expect_failure` test, so Z3 failing to refute the hypotheses within
+  rlimit 5 counted as success. The cycle's check, `reach_start`, used only
+  the empty heap.
+- Found in stage M1 of the parallel mark (`docs/pages-parallel-gc-design.md`
+  §11 on `sheera/pages-parallel`).
+
+### 18.2 The fix: a step that darkens the roots
+
+`GC.Spec.Pages.Darken` (new, 309 lines):
+- `darken h roots` greys each root in turn, as OCaml's
+  `caml_darken_all_roots`. The roots are then the mark's stack.
+- `roots_ok h roots`: each root is an object of `h` and not free, and
+  `GP.graph_pre h roots` (with it, the roots are distinct).
+- `start_pre h st roots = PA.inv I.Idle h st /\ roots_ok h roots`. It is
+  `ParMark.Heap.par_pre` on `sheera/pages-parallel`, word for word.
+- **`darken_ok`**: from `start_pre`, the darkened heap
+  - meets `mark_ready`, which is `mark_pre` with the roots as the stack;
+  - is in the allocator's marking invariant, `MP.mark_inv` and
+    `PA.inv I.Marking` (each greying is `MarkPhase.mark_inv_recolour`: the
+    allocator ignores live objects' colours);
+  - differs from `h` only in the roots' colours (`kept`): the same walk,
+    graph, blue blocks, sizes and fields.
+- Density (`heap_objects_dense`, which `MarkInv.mark_inv` needs) follows
+  from `Idle` by `Shape.heap_tiled` and `WalkEnd.dense_from_walk_end`
+  (`idle_dense`).
+
+`GC.Spec.MarkInv` gains `mark_inv_intro`. The pruning of 79bdaaf6 had
+removed it as dead code, so nothing could establish `MarkInv.mark_inv`,
+which `Corr.mark_satisfies_mark_post` assumes. Its only users are the page
+modules.
+
+`GcCorrect` (changed):
+- `collection h st roots = collect (Mark.mark (D.darken h roots) roots) st`.
+- `marked_of_darkened` restates the mark's `Corr.mark_post` about the
+  darkened heap as one about the first heap (`Corr.mark_post_intro`): the two
+  differ only in colours, and the first has no black object.
+- `mark_ok` gives `GP.marked h_init hm roots` and `MP.mark_inv hm st` for
+  `hm = Mark.mark (D.darken h_init roots) roots`.
+- `gc_correct_gen`, the clauses and every lemma behind them are unchanged.
+
+The statements, old and new:
+
+| | Old (§14) | New |
+|---|---|---|
+| `gc_correct_pages` arguments | `h_init st gs roots` | `h_init st roots` |
+| requires | `PA.inv I.Idle h_init st /\ mark_pre h_init gs roots` | `D.start_pre h_init st roots`, that is `PA.inv I.Idle h_init st /\ D.roots_ok h_init roots` |
+| the collection | `collect (Mark.mark h_init gs) st` | `collection h_init st roots` = `collect (Mark.mark (D.darken h_init roots) roots) st` |
+| ensures | `gc_safe_pages h_init g st' roots /\ gc_live_pages h_init g st' roots` | the same, word for word, about the same `h_init` (the heap before the roots are greyed) |
+| `reach`'s `Collect` | `gs roots`, `squash (mark_pre g gs roots)`, to `collect (Mark.mark g gs) st` | `roots`, `squash (D.roots_ok g roots)`, to `collection g st roots` |
+| `reach_inv` | every state of `reach` is in `Idle` | the same statement, over the larger `reach` |
+| `cycle_correct` | `r: reach g st`, `mark_pre g gs roots`; ensures as above on `collect (Mark.mark g gs) st` | `r: reach g st`, `D.roots_ok g roots`; ensures the same clauses on `collection g st roots` |
+| `phases` | `PA.inv I.Idle g st /\ MarkInv.mark_inv g gs`; ensures `Marking` of `g` and of `Mark.mark g gs` | `PA.inv I.Idle g st /\ D.roots_ok g roots`; ensures `Marking` of `g`, of `D.darken g roots` and of its mark, and `Idle` after `collect` |
+
+- No clause of a conclusion is weakened.
+- The old theorem was satisfiable only with `roots` and `gs` empty. There
+  the new one covers it: `D.darken h [] == h` and the collection is the same.
+- The new hypotheses are weaker: everything in `mark_pre` except
+  `graph_pre` is now derived from `Idle`.
+
+### 18.3 The vacuity rule
+
+From now on, in this plan and in `docs/pages-parallel-gc-design.md`:
+- **Every theorem with hypotheses about heaps has a constructive witness**:
+  a concrete state, built by definitions and the theorems already proved,
+  shown to satisfy all its hypotheses.
+- An `expect_failure` check (failing to prove `False`) is not enough: a
+  solver timeout looks the same as success. Such checks may stay, but they
+  do not count.
+- **Witnesses are non-trivial**: at least one root, one reachable object,
+  one unreachable object, and, where the theorem concerns them, at least
+  one pool page and one large run.
+- **The vacuity audit runs at the end of every stage and before any PR**:
+  for each theorem, name its witness, or build one.
+
+The shared witness, **`GC.Spec.Pages.Witness`** (new, 668 lines, identical
+on `sheera/pages-parallel`):
+- From the empty heap of pages, through `PA.alloc I.Idle` with the
+  caller's field writes:
+  1. B, `small_max` fields (a large object): a new run of `kL` pages at
+     `i0`; fields 0;
+  2. A, one field, in the first free page, which becomes a pool page; its
+     field points to B;
+  3. C, one field; field 0.
+- Roots `[A]`. A is a root in a pool page; B heads a run and is reachable
+  through A, not a root; C is a live object that is unreachable
+  (`w_graph`, through `reach_two` on the graph).
+- `w_ok` sums it up: `Idle`, live roots with `graph_pre`, the
+  reachability facts, the pages. `w_reach` is the state as a term of
+  `reach` (`Start`, then three `Alloc`).
+- It needs only `big_enough`: `pages_for (small_max + 1) + 2 <= n_pages`.
+  The parameters are abstract, so every witness is stated under it.
+- Each allocation is shown to succeed from `alloc_ok`'s failure clause:
+  failure means `no_fit`, and a free page is kept free (`small_kinds`,
+  `large_init` track the page kinds).
+
+**`GC.Spec.Pages.Vacuity`** (new, 341 lines) derives the witnesses from `W`,
+by the theorems themselves: `W`; `hd`, `W` with its roots greyed; `hm`, the
+mark of `hd` (A and B black, C not); the sweep's start (A's pool page and
+B's run unswept); the collection's result.
+
+**`GC.Spec.Pages.SweepingStart`** (new, 109 lines): `start_sweep` keeps
+`pages_ok` (`start_keeps_ok`), so the `Sweeping` invariant holds where the
+sweep starts, with every page that is not free unswept
+(`sweeping_at_start`). Before, no state with an unswept page was known to
+satisfy `Sweeping`.
+
+### 18.4 The audit
+
+`W` means the witness above. "Empty heap" means `Init.init_heap`: no
+object, no root.
+
+| Theorem | Witness before | Witness now | Problem found |
+|---|---|---|---|
+| `GcCorrect.gc_correct_pages` | `expect_failure` only | `Vacuity.gc_correct_pages_witness` (`W`) | **Hypotheses contradictory for any root** (§18.1). Fixed. |
+| `GcCorrect.reach_inv`, `cycle_correct` (the cycle) | `reach_start` (empty heap) | `Vacuity.cycle_witness`: `W` as a term of `reach`, and a `Collect` from it with roots `[A]`; `cycle_witness_ok` | **`Collect` only without roots** (§18.1). Fixed. |
+| `GcCorrect.phases` | none | `gc_correct_pages_witness` (same hypotheses) | **Stack empty in `Idle`** (§18.1). Restated. |
+| `Darken.darken_ok` (new) | — | `gc_correct_pages_witness` | — |
+| `GcCorrect.idle_mark_pre_empty` (new) | — | `idle_mark_pre_witness`: `W` with no roots, the only kind it allows | states the gap |
+| `GcCorrect.gc_correct_gen` | `expect_failure` | `gc_correct_gen_witness`: `W` and `hm` | — |
+| `MarkSteps.mark_keeps_inv` | `expect_failure` | `mark_keeps_inv_witness`: `hd`, stack `[A]`, A grey | — |
+| `start_ready` (`Allocator`, `StartSweep`) | `expect_failure` | `start_ready_witness`: `hm` | — |
+| `collection_cycle` | `init_cycle` (empty heap) and `expect_failure` | `start_ready_witness`: `hm`, `mark_done` | — |
+| `SweepWf.sweep_all_wf`, `Allocator.sweep_all_correct` | `SweepVacuity.sweep_all_ready` (empty heap) and `expect_failure` | `sweep_witness`: `hm` and its sweep's start | — |
+| `Allocator.sweep_start`, `sweep_step_inv`, `sweep_end` | `sweep_all_ready` (empty heap) | `sweep_witness`: `sweep_inv` at page 0 and at `n_pages` | — |
+| `Survive.swept` (the setting of `black_survives` and the rest) | `expect_failure` | `sweep_witness` | — |
+| The interface's phases: `inv` of `Idle`, `Marking`, `Sweeping` (`pages_allocator_ok`, `alloc_no_fit`) | `init_inv` (empty heap) and `expect_failure` | `interface_witness`: `Idle` `W`; `Marking` `hd` and `hm`; `Sweeping` `hm`. `sweeping_witness`: `Sweeping` with A's pool page and B's run unswept | **`Sweeping` had no witness with an unswept page**. Now `SweepingStart`. |
+| `alloc_idle`, `Alloc.alloc_correct` | `init_alloc_pre`, `init_alloc_succeeds`, `init_alloc_large_succeeds` (empty heap) | `W` is built by three successful allocations; `interface_witness` | — |
+| `alloc_col_correct` (`Allocator`, `AllocPhase`) | `init_mc`, `init_black` (empty heap) and `expect_failure` | `interface_witness`: `pages_ok_mc` of `hm`, A and B black | — |
+| `MarkPhase.mark_inv_recolour` (the `phase_ok` clause) | none | `interface_witness`: `hd`, A live | — |
+| `Allocator.mark_exact`, `mark_exact_done` | `expect_failure` | `mark_exact_witness`: B black, C not | — |
+| `Partition.partitioned` | `expect_failure` | `partitioned_witness`: the collection of `W` | — |
+| `sweep_page_correct`, `sweep_run_correct` (`Th.sweep_page_meets`, `sweep_run_meets`) | `SweepVacuity`: a pool page and a one-page run, each with a black block and with none (page-level, no roots) | unchanged | — |
+| The Pulse allocator and sweep (`GC.Impl.Pages`: `alloc_white`, `alloc`, `sweep`, `sweep_all`) | `sweep_pre_holds` (empty heap) | `pulse_pre_witness`: `pages_ok` of `W`, `pages_ok_mc` of `hm` (so `heads_ready`), `map_ok` before and at the sweep's start | — |
+| The Pulse loop lemmas (`Impl.Pages.Vacuity`: `emit_plain`, `emit_listed`, `fin_dead`, `fin_live`, `run_pages`, `pass2_head`, `pass2_cont`, `pass2_done`, `fit_found`) | loop starts (`emit_ok_start`, `map_start`, `fit_start`) and `expect_failure` | **not built**: they need states in the middle of a loop | open |
+| `SweepOrder.sweep_commute` | none | `sweep_commute_witness`: A's pool page and B's run, two units of the sweep's start | — |
+
+The parallel branch's theorems are audited in
+`docs/pages-parallel-gc-design.md` §11.8 on `sheera/pages-parallel`.
+
+**Checked.**
+- Every new and changed module (`MarkInv`, `Darken`, `GcCorrect`,
+  `Witness`, `SweepingStart`, `Vacuity`) verifies without `--retry` at Z3
+  seeds 0, 1 and 2. No local rlimit is above 40; the most any query uses is
+  17.3 (`Witness.w_succ`, under rlimit 40); every other uses at most 8.6.
+- Check times (seed 0): `Witness` 39 s, `Vacuity` 20 s, `GcCorrect` 10 s,
+  the others under 5 s.
+- `make verify` from an empty cache in a scratch worktree: 286 checked
+  files, no errors. On the first run `GC.Spec.Coalesce.Correct`, which
+  depends on none of these changes, timed out while the machine was also
+  running the seed checks; the rerun passed it.
+- No admits, no assumptions.
