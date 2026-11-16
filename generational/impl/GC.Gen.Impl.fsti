@@ -566,10 +566,10 @@ val minor_collect_idle_post
 ///     every slot, a field of the partly scanned object the mark slice has
 ///     scanned already included: such a field is a scanned edge, like a
 ///     black object's, so a write into it needs exactly what a write into a
-///     black object needs, and the barrier does not restart the scan.  `initialize_field` asks only
-///     that the slot is a body word of a block of the heap that is not free
-///     (a block just allocated, *fresh* while sweeping or marking:
-///     `Mut.fresh_write`).
+///     black object needs, and the barrier does not restart the scan.
+///     `initialize_field` asks only that the slot is a body word of a block
+///     of the heap that is not free (a block just allocated, *fresh* while
+///     sweeping or marking: `Mut.fresh_write`).
 ///   * **Writes into nursery objects** need no barrier and are made by the C
 ///     caller directly (`Is_young (fp)`, as 4.14): they change the nursery,
 ///     which keeps its shape, and the stored value is one the program holds.

@@ -131,23 +131,32 @@ channel (an enum, or at minimum distinguishing "allocator returned null" from
 
 ---
 
-## Open: incremental marking restarts a partly scanned object on a write
+## Fixed: incremental marking restarted a partly scanned object on a write
 
 **Observed by:** the design of the mark slice (M4); see DESIGN_AND_IMPL.md,
 "The mark slice"
+**Checked by:** `tests/mark_scanned_writes.ml` (`REQUIRE_MARKS_ENDED`),
+`spot/GC.SPOT.MarkPhaseSlice` (`fork_*`)
 
 With `VERGC_MAJOR=incremental` a mark slice scans a large object a budget's
-worth of fields at a time, and a write into a field it has already scanned
-restarts the object's scan (the object is grey and its scanned fields must
-stay dark; 4.14 blackens first and needs no restart).  A program that keeps
-writing into a large array the marker is half way through can therefore
-keep that cycle's marking from ending in slices; it then ends when memory
-runs short (a minor collection without room finishes the cycle: one long
-pause) or at the next full collection.  Not observed in the tests or
-benchmarks (`tests/incremental_mark.ml` writes into a 60000-element array
-mid-scan and its cycles end in slices), but nothing bounds it.  The fix
-would be 4.14's: resume after the written field rather than from the start,
-which needs a different cache invariant.
+worth of fields at a time, and a write into a field it had already scanned
+restarted the object's scan (the object was grey and the invariant needed its
+scanned fields to stay dark).  A program that kept writing into a large array
+the marker was half way through could therefore keep that cycle's marking
+from ending in slices; it ended only when memory ran short (a minor
+collection without room finished the cycle: one long pause) or at the next
+full collection.  `tests/mark_scanned_writes.ml` shows it on the old runtime:
+marking never ended in slices (`marks_spanned=0`) under any pacing.
+
+Fixed by making the scan position part of the marking invariant: the partly
+scanned object's fields before its next field are scanned edges (like a
+black object's), the others unscanned (like a grey object's), and "the marker
+will reach" follows unscanned edges only.  A write into a scanned field is
+then a write into a black field: the deletion barrier greys the old value,
+the program's obligation (`MM.target_ok`) covers the new one, and blackening
+needs only that every field was scanned once.  The barrier no longer touches
+the scan position (`GC.Gen.Impl.Barrier.modify_field`: the restart is gone
+from the extracted C).
 
 ---
 

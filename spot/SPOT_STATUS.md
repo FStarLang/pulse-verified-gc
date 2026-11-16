@@ -600,7 +600,7 @@ overwrites G's only field with an immediate, cutting G -> W1.
 
 `GC.SPOT.MarkPhaseUnreached` checks the reading of the invariant as
 well-formedness that the minor collection at `Marking` uses
-(`GC.Spec.MarkPhase.unreached g`: free = blue, or white and not reached).
+(`GC.Spec.MarkPhase.unreached g sp`: free = blue, or white and not reached).
 
 4. **The reading tells the two heaps apart.**  `mid_unreached_wf`: the
    mid-mark heap of case 1 is well formed for `unreached`
@@ -608,21 +608,36 @@ well-formedness that the minor collection at `Marking` uses
    case 2 (G -> B -> W, W not reached) is not, since B is not free for it and
    points at W, which is.
 
+Cases 1-4 are at the scan position `scan_none` (nothing partly scanned).
 `GC.SPOT.MarkPhaseSlice` checks the moves of a mark slice
-(`GC.Spec.MarkPhase.Slice`) on the same heaps.
+(`GC.Spec.MarkPhase.Slice`), which carry the scan position (the partly
+scanned object and its next field).
 
-5. **The two moves, one at a time.**  On the mid-mark heap of case 1,
-   `mid_scan_move`: scanning G's field is a `grey_move` (W1 greyed, G still
-   grey, its field dark); `mid_blacken_move`: then blackening G is a
-   `black_move`; `mid_moves_inv`: each keeps `marking_inv`
+5. **The three moves, one at a time.**  On the mid-mark heap of case 1,
+   `mid_begin_move`: starting to scan G is a `begin_move` (only the position
+   changes); `mid_scan_move`: scanning G's field is a `grey_move` (W1 greyed,
+   G still grey, the position past the field); `mid_blacken_move`: then
+   blackening G is a `black_move` (its only field scanned), leaving nothing
+   partly scanned; `mid_moves_inv`: each keeps `marking_inv`
    (`mark_move_inv`), and together they are `mark_steps`.
-6. **Why blackening asks for every field dark.**  G (grey) -> W (white),
-   nothing else points at W or references it: G's field was scanned in an earlier
-   slice and then overwritten with W.  `par_inv`: `marking_inv` holds;
-   `par_no_black_move`: G's field is not dark, so no blackening is a mark
-   move; `par_blacken_breaks`: blackening G anyway leaves the black G pointing
-   at the white W with no grey object left, and `marking_inv` fails whatever
-   the outside references are.
+6. **Blackening asks for every field scanned.**  G (grey) -> W (white),
+   nothing else points at W.  `par_inv`: with G's field not scanned,
+   `marking_inv` holds; `par_no_black_move`: no blackening is a mark move;
+   `par_blacken_breaks`: blackening G anyway leaves the black G pointing at
+   the white W with no grey object left, and `marking_inv` fails at any
+   position, whatever the outside references are.  `par_scanned_not_inv`:
+   with G's field counted as scanned -- the heap a write of W into a field the
+   slice had scanned would leave -- `marking_inv` fails: W is not one the
+   marker will reach, so the barrier's contract (`MM.target_ok`) rules that
+   write out.
+7. **A write into a scanned field needs no restart.**  G (grey) -> W, X
+   (grey) -> W, W white, G past its only field (the program wrote W there
+   after the slice scanned it).  `fork_inv`: `marking_inv` holds at that
+   position (the marker will reach W from X); `fork_black_move`: blackening G
+   is a mark move and keeps it -- G is finished without being scanned again.
+   This is the case the old barrier restarted the scan for, and the reason a
+   program writing into a partly scanned object can no longer keep marking
+   from finishing.
 
 ## The verified write barrier on the A/B/C fixture
 
