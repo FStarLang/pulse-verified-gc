@@ -123,8 +123,9 @@ let start_pre (minor: minor_state) (g0: heap) (fp0: U64.t) (rs: seq U64.t) : pro
 noeq type init_writes (obj: obj_addr) : heap -> heap -> Type =
   | Init_done : g: heap -> init_writes obj g g
   | Init_write : #g: heap -> #g1: heap -> init_writes obj g g1 ->
-      a: hp_addr -> v: U64.t -> squash (SPM.in_body g1 obj a) ->
-      init_writes obj g (write_word g1 a v)
+      a: hp_addr -> v: U64.t -> g2: heap ->
+      squash (SPM.in_body g1 obj a /\ g2 == write_word g1 a v) ->
+      init_writes obj g g2
 
 /// ---------------------------------------------------------------------------
 /// The run

@@ -248,7 +248,7 @@ let rec init_inv (#obj: obj_addr) (#g1 #g': heap) (w: init_writes obj g1 g')
           (decreases w)
   = match w with
     | Init_done _ -> ()
-    | Init_write #_ #_ #gm w' a v _ ->
+    | Init_write #_ #_ #gm w' a v _ _ ->
         init_inv w' s r sp;
         MPC.account_fresh_write s gm obj a v;
         MPA.marking_fresh_write gm r sp obj a v;

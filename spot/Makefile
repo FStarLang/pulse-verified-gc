@@ -126,6 +126,7 @@ SPOT_SRC = \
   GC.SPOT.WriteBarrier.fst \
   GC.SPOT.CycleHeap.fst \
   GC.SPOT.IncrementalCycleTheorems.fst \
+  GC.SPOT.MarkPhaseCycleAlloc.fst \
   GC.SPOT.GcCorrect.fsti \
   GC.SPOT.GcCorrect.fst
 
