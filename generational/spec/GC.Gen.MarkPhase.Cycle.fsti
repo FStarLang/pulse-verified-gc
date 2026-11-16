@@ -51,9 +51,15 @@
 ///     references, which is what the objects reachable at the start are
 ///     (`MP.outside_refs_reached`).
 ///
+/// It also carries that the blocks it handed out are black blocks
+/// (allocated and promoted black; marking whitens nothing), and that the
+/// walk still reaches where the start heap's walk ended
+/// (`GC.Gen.MarkPhase.Walk`).
+///
 /// So when marking ends, with nothing grey (`handover`), **the black objects
-/// are the snapshot's**: every object reachable at the start is black, and
-/// every black object is in the snapshot.
+/// are the snapshot's**: every object reachable at the start is black, at
+/// its size, every black object is in the snapshot, every block the run
+/// handed out is black, and the walk ends where it did at the start.
 
 module GC.Gen.MarkPhase.Cycle
 
@@ -82,6 +88,7 @@ module SA = GC.Spec.Allocator
 module GenInv = GC.Gen.HeapInvariant
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module Promote = GC.Gen.Promote
+module W = GC.Spec.Walk
 
 /// ---------------------------------------------------------------------------
 /// The snapshot
@@ -102,11 +109,18 @@ let satb (g0: heap) (rs: seq U64.t) (g: heap) (sp: MP.scan_pos) : prop =
 
 /// What the run carries: the account, snapshot-at-the-beginning, and of
 /// the objects reachable at the start, that they keep their size and are
-/// not among the addresses handed out (those were not blocks in use).
+/// not among the addresses handed out (those were not blocks in use); the
+/// addresses handed out are black blocks (allocated and promoted black, and
+/// marking whitens nothing); and the walk still reaches where the walk of
+/// `g0` ended, the end of the heap or one header slot short of it.
 let mark_run_inv (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop) (g: heap) (sp: MP.scan_pos) : prop =
   MPC.within_snapshot (snapshot g0 rs since) g /\ satb g0 rs g sp /\
-  (forall (x: obj_addr). GMC.reachable_at_start g0 rs x ==> wosize_of_object x g == wosize_of_object x g0) /\
-  (forall (x: obj_addr). since x ==> ~(GMC.reachable_at_start g0 rs x))
+  (forall (x: obj_addr). GMC.reachable_at_start g0 rs x ==>
+     Seq.mem x (objects zero_addr g0) /\ wosize_of_object x g == wosize_of_object x g0) /\
+  (forall (x: obj_addr). since x ==> ~(GMC.reachable_at_start g0 rs x)) /\
+  (forall (x: obj_addr). since x ==> Seq.mem x (objects zero_addr g) /\ is_black x g) /\
+  W.walk_end g0 zero_addr + 8 >= heap_size /\
+  W.reaches g zero_addr (W.walk_end g0 zero_addr)
 
 /// What `start_cycle` is called on: idle, the nursery empty, every root a
 /// darkenable object.
@@ -206,14 +220,19 @@ val mark_run_account (#g0: heap) (#rs: seq U64.t) (#g: heap) (#fp: U64.t) (#sp: 
 
 /// **When marking ends, the black objects are the snapshot's**: after the
 /// slice that hands over to the sweep (nothing grey left), every object
-/// reachable when the cycle started is black, at the size it had, and every
-/// black object is in the snapshot.
+/// reachable when the cycle started is black, at the size it had, every
+/// black object is in the snapshot, the blocks handed out are black, and the
+/// walk ends where it did when the cycle started.
 val handover (#g0: heap) (#rs: seq U64.t) (#g: heap) (#fp: U64.t) (#sp: MP.scan_pos)
              (#since: obj_addr -> prop) (r: marking g0 rs g fp sp since)
              (minor: minor_state) (budget: nat) (gh: heap) (sp': MP.scan_pos)
   : Lemma (requires GI.phase_shape minor g fp Ph.Marking sp /\
                     GI.mark_slice_post g sp fp budget gh sp' fp (Ph.Sweeping zero_addr))
           (ensures (forall (x: obj_addr). GMC.reachable_at_start g0 rs x ==>
+                      Seq.mem x (objects zero_addr g0) /\
                       SPC.survived_mark gh x /\ wosize_of_object x gh == wosize_of_object x g0) /\
                    (forall (x: obj_addr). SPC.survived_mark gh x ==> snapshot g0 rs since x) /\
-                   (forall (x: obj_addr). since x ==> ~(GMC.reachable_at_start g0 rs x)))
+                   (forall (x: obj_addr). since x ==> ~(GMC.reachable_at_start g0 rs x)) /\
+                   (forall (x: obj_addr). since x ==> SPC.survived_mark gh x) /\
+                   W.walk_end g0 zero_addr + 8 >= heap_size /\
+                   W.walk_end gh zero_addr == W.walk_end g0 zero_addr)

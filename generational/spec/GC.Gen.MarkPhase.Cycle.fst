@@ -35,6 +35,9 @@ module Promote = GC.Gen.Promote
 module FLA = GC.Spec.FreeList.Ascending
 module SweepInv = GC.Spec.SweepInv
 module Header = GC.Lib.Header
+module W = GC.Spec.Walk
+module AP = GC.Spec.Allocator.Phase
+module MW = GC.Gen.MarkPhase.Walk
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 
@@ -187,7 +190,53 @@ let start_satb (minor: minor_state) (g0: heap) (fp0: U64.t) (rs: seq U64.t)
     FStar.Classical.forall_intro (FStar.Classical.move_requires one)
 #pop-options
 
+/// The collector's state while marking, taken apart.
+let marking_parts (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
+  : Lemma (requires GI.phase_shape minor g fp Ph.Marking sp)
+          (ensures MP.marking_inv g (GMM.nursery_refs minor) sp /\ FLA.fl_ascending g fp /\
+                   AP.alloc_ok g fp /\ heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0)
+  = GI.phase_shape_marking minor g fp sp;
+    GenInv.collection_shape_with_elim Ph.Marking free_stw minor g fp;
+    GenInv.major_shape_with_elim Ph.Marking free_stw g fp
+
+/// The run's facts about the walk and the blocks handed out.
+let extra_inv (g0: heap) (since: obj_addr -> prop) (g: heap) : prop =
+  (forall (x: obj_addr). since x ==> Seq.mem x (objects zero_addr g) /\ is_black x g) /\
+  W.walk_end g0 zero_addr + 8 >= heap_size /\
+  W.reaches g zero_addr (W.walk_end g0 zero_addr)
+
+/// Two dense heaps with the same blocks at the same sizes: the walk of the
+/// second reaches where the first's ended.
+let same_blocks_reaches (g g': heap) (e: nat)
+  : Lemma (requires W.reaches g zero_addr e /\ e + 8 >= heap_size /\
+                    heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
+                    heap_objects_dense g' /\ Seq.length (objects zero_addr g') > 0 /\
+                    objects zero_addr g' == objects zero_addr g /\
+                    (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
+                       wosize_of_object x g' == wosize_of_object x g))
+          (ensures W.reaches g' zero_addr e)
+  = W.walk_end_of_reaches g zero_addr e;
+    SPC.walk_end_same_blocks g g';
+    W.reaches_end_of_dense g'
+
+#push-options "--z3rlimit 20"
+let start_extra (minor: minor_state) (g0: heap) (fp0: U64.t) (rs: seq U64.t)
+  : Lemma (requires start_pre minor g0 fp0 rs)
+          (ensures extra_inv g0 SPC.nothing_new (MStart.darkened g0 rs))
+  = let gd = MStart.darkened g0 rs in
+    GenInv.collection_heap_shape_as_free_stw minor g0 fp0;
+    GenInv.collection_shape_with_elim Ph.Idle free_stw minor g0 fp0;
+    GenInv.major_shape_with_elim Ph.Idle free_stw g0 fp0;
+    W.reaches_end_of_dense g0;
+    MStart.mark_start_shape minor g0 fp0 rs;
+    marking_parts minor gd fp0 MP.scan_none;
+    GMS.start_keeps_blocks minor g0 fp0 rs;
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (size_of_block g0 gd));
+    same_blocks_reaches g0 gd (W.walk_end g0 zero_addr)
+#pop-options
+
 let start_inv minor g0 fp0 rs =
+  start_extra minor g0 fp0 rs;
   start_satb minor g0 fp0 rs;
   GMS.start_keeps_blocks minor g0 fp0 rs;
   FStar.Classical.forall_intro (FStar.Classical.move_requires (size_of_block g0 (MStart.darkened g0 rs)));
@@ -213,7 +262,41 @@ let slice_inv (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop)
     S.mark_steps_inv g g' sp sp' r;
     MPC.account_steps (snapshot g0 rs since) g g' sp sp';
     MPC.mark_steps_keep_blocks g g' sp sp';
-    FStar.Classical.forall_intro (FStar.Classical.move_requires (size_of_block g g'))
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (size_of_block g g'));
+    // the walk, and the blocks handed out (marking only darkens)
+    marking_parts minor g fp sp;
+    S.mark_steps_darker g g' sp sp';
+    same_blocks_reaches g g' (W.walk_end g0 zero_addr)
+
+/// The barrier keeps every block, at its size, and every black block black.
+#push-options "--z3rlimit 20"
+let barrier_blocks (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires well_formed_heap g /\ Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\
+                    SPM.in_body g x a)
+          (ensures (let g' = write_word (MM.darken g (read_word g a)) a v in
+                    objects zero_addr g' == objects zero_addr g /\
+                    (forall (y: obj_addr). Seq.mem y (objects zero_addr g) ==>
+                       wosize_of_object y g' == wosize_of_object y g /\ (is_black y g ==> is_black y g'))))
+  = let w = read_word g a in
+    let g1 = MM.darken g w in
+    (if is_pointer w &&
+        Seq.mem (resolve_object (w <: obj_addr) g) (objects zero_addr g) &&
+        is_white (resolve_object (w <: obj_addr) g) g
+     then begin
+       let t = resolve_object (w <: obj_addr) g in
+       Mark.colors_exclusive t g;
+       MPC.grey_keeps_blocks g t;
+       FStar.Classical.forall_intro (FStar.Classical.move_requires (size_of_block g g1));
+       let bl (y: obj_addr)
+         : Lemma (requires Seq.mem y (objects zero_addr g) /\ is_black y g) (ensures is_black y g1)
+         = Mark.colors_exclusive y g;
+           MM.header_kept_facts g g1 y
+       in
+       FStar.Classical.forall_intro (FStar.Classical.move_requires bl)
+     end);
+    MM.write_heads g1 x a v;
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (size_of_header g1 (write_word g1 a v)))
+#pop-options
 
 /// The barrier write: the deletion barrier keeps the marking invariant for
 /// the nursery's fields and the objects reachable at the start as outside
@@ -233,7 +316,14 @@ let write_inv (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop)
     assert (MP.marking_inv g o sp);
     MM.marking_write_barrier g o sp x a v;
     MPC.account_barrier (snapshot g0 rs since) g x a v;
-    FStar.Classical.forall_intro (FStar.Classical.move_requires (GMS.modify_keeps_blocks minor g fp sp x a v))
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (GMS.modify_keeps_blocks minor g fp sp x a v));
+    // the walk, and the blocks handed out
+    let g' = GB.modify_heap Ph.Marking g a v in
+    marking_parts minor g fp sp;
+    GB.modify_phase_shape Ph.Marking minor g fp sp x a v;
+    marking_parts minor g' fp sp;
+    barrier_blocks g x a v;
+    same_blocks_reaches g g' (W.walk_end g0 zero_addr)
 #pop-options
 
 /// The writes that initialise a fresh object keep it fresh, for the account
@@ -244,7 +334,8 @@ let rec init_inv (#obj: obj_addr) (#g1 #g': heap) (w: init_writes obj g1 g')
   : Lemma (requires MPC.within_snapshot_fresh s g1 obj /\ MPA.marking_fresh g1 r sp obj)
           (ensures MPC.within_snapshot_fresh s g' obj /\ MPA.marking_fresh g' r sp obj /\
                    (forall (y: obj_addr). in_use free_stw g1 y ==>
-                      in_use free_stw g' y /\ read_word g' (hd_address y) == read_word g1 (hd_address y)))
+                      in_use free_stw g' y /\ read_word g' (hd_address y) == read_word g1 (hd_address y)) /\
+                   (forall (b: nat). W.reaches g' zero_addr b == W.reaches g1 zero_addr b))
           (decreases w)
   = match w with
     | Init_done _ -> ()
@@ -254,14 +345,6 @@ let rec init_inv (#obj: obj_addr) (#g1 #g': heap) (w: init_writes obj g1 g')
         MPA.marking_fresh_write gm r sp obj a v;
         SPI.same_heads_facts gm (write_word gm a v)
 #pop-options
-
-/// The collector's state while marking, taken apart.
-let marking_parts (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
-  : Lemma (requires GI.phase_shape minor g fp Ph.Marking sp)
-          (ensures MP.marking_inv g (GMM.nursery_refs minor) sp /\ FLA.fl_ascending g fp)
-  = GI.phase_shape_marking minor g fp sp;
-    GenInv.collection_shape_with_elim Ph.Marking free_stw minor g fp;
-    GenInv.major_shape_with_elim Ph.Marking free_stw g fp
 
 /// An allocation and the initialisation of the new object: the account with
 /// the object added, and the marking invariant for the objects reachable at
@@ -288,11 +371,24 @@ let alloc_inv (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop)
     init_inv w s1 r sp;
     let keep (y: obj_addr)
       : Lemma (requires in_use free_stw g y)
-              (ensures in_use free_stw g' y /\ wosize_of_object y g' == wosize_of_object y g)
+              (ensures in_use free_stw g' y /\ wosize_of_object y g' == wosize_of_object y g /\
+                       (is_black y g ==> is_black y g'))
       = MM.header_kept_facts g g1 y;
-        size_of_header g g' y
+        size_of_header g g' y;
+        MM.header_kept_facts g g' y
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires keep);
+    // the blocks handed out: the old ones stay black, the new one is black
+    let old (y: obj_addr) : Lemma (requires since y) (ensures Seq.mem y (objects zero_addr g') /\ is_black y g')
+      = Mark.colors_exclusive y g; keep y
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires old);
+    Mark.colors_exclusive obj g1;
+    MM.header_kept_facts g1 g' obj;
+    assert (Seq.mem obj (objects zero_addr g') /\ is_black obj g');
+    // the walk
+    W.reaches_bounds g zero_addr (W.walk_end g0 zero_addr);
+    MW.alloc_reaches Ph.Marking g fp wz tag (W.walk_end g0 zero_addr);
     let same (h: heap) (y: obj_addr) : Lemma (MPC.outside_snapshot s1 h y == MPC.outside_snapshot s' h y) = () in
     FStar.Classical.forall_intro_2 same;
     assert (SPM.fields_storable (MPC.outside_snapshot s1) g' obj);
@@ -323,11 +419,24 @@ let minor_inv (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop)
     GMM.minor_keeps_marking_inv_with r minor g fp roots sp;
     let keep (y: obj_addr)
       : Lemma (requires in_use free_stw g y)
-              (ensures in_use free_stw g' y /\ wosize_of_object y g' == wosize_of_object y g)
+              (ensures in_use free_stw g' y /\ wosize_of_object y g' == wosize_of_object y g /\
+                       (is_black y g ==> is_black y g'))
       = GMM.minor_keeps_block minor g fp roots y;
         MM.header_kept_facts g g' y
     in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires keep)
+    FStar.Classical.forall_intro (FStar.Classical.move_requires keep);
+    // the blocks handed out: the old ones stay black, the made ones are black
+    let made (y: obj_addr)
+      : Lemma (requires GMC.with_new_blocks since g g' y) (ensures Seq.mem y (objects zero_addr g') /\ is_black y g')
+      = if FStar.IndefiniteDescription.strong_excluded_middle (since y)
+        then begin Mark.colors_exclusive y g; keep y end
+        else GMM.minor_new_block_black minor g fp roots y
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires made);
+    // the walk
+    marking_parts minor g fp sp;
+    W.reaches_bounds g zero_addr (W.walk_end g0 zero_addr);
+    MW.minor_reaches minor g fp roots (W.walk_end g0 zero_addr)
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -362,4 +471,5 @@ let handover #g0 #rs #g #fp #sp #since r minor budget gh sp' =
       if is_white x gh then MP.marker_will_reach_elim gh sp' x
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires black);
-  MPC.account_marked (snapshot g0 rs since) gh
+  MPC.account_marked (snapshot g0 rs since) gh;
+  W.walk_end_of_reaches gh zero_addr (W.walk_end g0 zero_addr)
