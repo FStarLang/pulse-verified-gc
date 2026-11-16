@@ -1799,10 +1799,10 @@ nothing about the heap marking started from, so completeness is carried
 separately, as an **account** indexed by a ghost set `s` of addresses: those
 reachable when the cycle started (`MPC.reachable g outside_refs`: along
 `MP.field_edge` from what the roots hold), and those allocated or promoted
-since.  While marking (`MPC.mark_account s g`):
+since.  While marking (`MPC.within_snapshot s g`):
 
-- every grey or black object is in `s` (`dark_accounted`);
-- the heap is well formed for the definition of free `unaccounted s` (blue,
+- every grey or black object is in `s` (`dark_in_snapshot`);
+- the heap is well formed for the definition of free `outside_snapshot s` (blue,
   or white and outside `s`): a non-free block that is dark or in `s` points
   only at blocks that are dark or in `s`.  This is the closure of `s` under
   the heap's edges, stated as well-formedness so that the minor collection's
@@ -1827,7 +1827,7 @@ the sweep's `survivor_or_new_*`:
 | minor collection mid-sweep | `GMC.sweep_minor` | the promoted copies added (`GSC.with_promoted`) |
 
 At the collector's phase this is `MPC.cycle_account s g ph`: the mark account
-while marking; mid-sweep `sweep_accounted` (every block not free for
+while marking; mid-sweep `sweep_in_snapshot` (every block not free for
 `free_incremental c` is in `s` -- the sweep's `survivor_or_new` with the
 survivors of marking folded into `s`); idle, every block that is not blue is
 in `s`.  At the entry points: `GMC.cycle_slice` (any `major_slice`, from
@@ -1839,16 +1839,16 @@ when the cycle started and not allocated or promoted since -- is freed
 
 **The trusted obligation it adds.**  The account needs the program's writes
 to stay inside `s`: `MPC.cycle_write s g x a v` -- `SPM.program_write` at
-`unaccounted s` (the program writes a body word of an object it can reach,
+`outside_snapshot s` (the program writes a body word of an object it can reach,
 and stores a value it holds: both in `s` or dark) and `x` scannable.  This
 is the marking invariant's roots obligation (the plan's option (a)) read
 against the cycle's start: OCaml's type safety -- the program obtains
 pointers only from its roots, by loading fields of objects it holds
 (`MPC.account_load`: a field of an accounted object is accounted), and by
 allocating (added to `s`).  It is not in `GB.modify_ok`: the completeness
-theorem takes it as a hypothesis (`GMC.modify_accounted`) of the writes it
+theorem takes it as a hypothesis (`GMC.modify_in_snapshot`) of the writes it
 covers, as it takes the nursery half for minor collections while marking
-(`minor_major_fields_not_free (unaccounted s)`: what the nursery holds is
+(`minor_major_fields_not_free (outside_snapshot s)`: what the nursery holds is
 accounted for).  Nothing at runtime depends on it.
 
 **Safety** (`GC.Gen.MarkPhase.Safety`), stated once for every phase

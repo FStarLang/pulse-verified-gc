@@ -9,55 +9,58 @@
 ///
 /// The marking invariant (`GC.Spec.MarkPhase.marking_inv`) is intrinsic: it
 /// says nothing about the heap marking started from.  Completeness does, so
-/// it is carried separately, as an *account* indexed by a ghost set `s` of
-/// addresses -- those reachable when the cycle started (`reachable g0
-/// outside_refs`), and those allocated or promoted since.  The account
-/// (`mark_account s g`) has two halves:
+/// it is carried separately, as an *account* against the cycle's **snapshot**:
+/// the ghost set `snapshot` of the addresses the cycle must keep, in the
+/// sense of snapshot-at-the-beginning (SATB) marking -- those reachable from
+/// the roots when the cycle started (`reachable g0 outside_refs`), and those
+/// allocated or promoted during the cycle.  The account (`within_snapshot
+/// snapshot g`) has two halves:
 ///
-///   * **what is dark is accounted for** (`dark_accounted`): every grey or
-///     black object is in `s`;
-///   * **the accounted objects are closed under the heap's edges**: the heap
-///     is well formed for the definition of free `unaccounted s` -- blue, or
-///     white and not in `s` -- so a non-free block that is dark or in `s`
-///     points only at blocks that are dark or in `s`.
+///   * **what is dark is in the snapshot** (`dark_in_snapshot`): every grey
+///     or black object is in `snapshot`;
+///   * **the snapshot is closed under the heap's edges**: the heap is well
+///     formed for the definition of free `outside_snapshot snapshot` -- blue,
+///     or white and not in `snapshot` -- so a non-free block that is dark or
+///     in `snapshot` points only at blocks that are dark or in `snapshot`.
 ///
-/// So an object outside `s` is never greyed: marking greys only targets of
-/// fields of grey objects (dark, so accounted, so their targets are), and the
-/// barrier greys only the old value of a field of an object the program
-/// writes, which the program can reach (accounted, so its targets are).
+/// So an object outside `snapshot` is never greyed: marking greys only targets of
+/// fields of grey objects (dark, so in the snapshot, so their targets are),
+/// and the barrier greys only the old value of a field of an object the
+/// program writes, which the program can reach (in the snapshot, so its
+/// targets are).
 /// When marking ends nothing is grey, so every block black in the marked
-/// heap is in `s` (`account_marked`), and the sweep's completeness
+/// heap is in `snapshot` (`account_marked`), and the sweep's completeness
 /// (`GC.Spec.SweepPhase.Completeness`) frees every non-free block that is
 /// not a survivor of marking or new.
 ///
 /// Every event of the marking phase keeps the account (a per-event family,
 /// as the sweep's `survivor_or_new_*`):
 ///
-///   * the start, after root darkening (`account_start`, with `s` the
+///   * the start, after root darkening (`account_start`, with `snapshot` the
 ///     objects reachable from the roots);
 ///   * mark moves (`account_move`, `account_steps`);
 ///   * the barrier write (`account_barrier`), under the trusted obligation
-///     `cycle_write s` -- the program writes into an object it can reach a
-///     value it holds (both accounted for);
-///   * allocation, with the new object added to `s` (`account_alloc`,
+///     `cycle_write snapshot` -- the program writes into an object it can reach a
+///     value it holds (both in the snapshot);
+///   * allocation, with the new object added to `snapshot` (`account_alloc`,
 ///     `account_fresh_write`, `account_fresh_close`);
-///   * a minor collection, with its promoted copies added to `s`
+///   * a minor collection, with its promoted copies added to `snapshot`
 ///     (`GC.Gen.MarkPhase.Completeness.account_minor`).
 ///
 /// The trusted obligation is the same kind as the marking invariant's roots
 /// clause (option (a) of the plan): OCaml's type safety -- the program
 /// obtains pointers only from its roots, by loading fields of objects it
 /// holds, and by allocating.  `account_load` says that loading keeps it: a
-/// field of an accounted object is accounted.
+/// field of an object in the snapshot is in the snapshot.
 ///
-/// `cycle_account` packages the account at the collector's phase: the mark
-/// account while marking; mid-sweep, every block that is not free (for
-/// `free_incremental c`) is in `s` -- the sweep's account
-/// (`SPC.survivor_or_new`) with the survivors of marking folded into `s`.
+/// `cycle_account` packages the account at the collector's phase:
+/// `within_snapshot` while marking; mid-sweep, every block that is not free (for
+/// `free_incremental c`) is in `snapshot` -- the sweep's account
+/// (`SPC.survivor_or_new`) with the survivors of marking folded into `snapshot`.
 /// The hand-over (`cycle_handover`), sweep slices (`cycle_sweep_slice`) and
 /// the program's events mid-sweep (`cycle_sweep_alloc`, `cycle_sweep_write`)
 /// keep it, and idle again the cycle is complete (`cycle_complete`): every
-/// non-free block is in `s`, so every address outside `s` is freed.
+/// non-free block is in `snapshot`, so every address outside `snapshot` is freed.
 
 module GC.Spec.MarkPhase.Completeness
 
@@ -110,72 +113,72 @@ val reachable_closed (g: heap) (outside_refs: obj_addr -> prop) (c: obj_addr -> 
 /// The account
 /// ---------------------------------------------------------------------------
 
-/// What is free for the account: blue blocks, and white blocks outside `s`.
+/// What is free for the account: blue blocks, and white blocks outside `snapshot`.
 /// A function of the header (the set is fixed), so an admissible definition
 /// of free.
-let unaccounted (s: obj_addr -> prop) : free_def =
-  fun g x -> is_blue x g || (is_white x g && not (FStar.IndefiniteDescription.strong_excluded_middle (s x)))
+let outside_snapshot (snapshot: obj_addr -> prop) : free_def =
+  fun g x -> is_blue x g || (is_white x g && not (FStar.IndefiniteDescription.strong_excluded_middle (snapshot x)))
 
-val unaccounted_ok (s: obj_addr -> prop) : Lemma (free_def_ok (unaccounted s))
+val outside_snapshot_ok (snapshot: obj_addr -> prop) : Lemma (free_def_ok (outside_snapshot snapshot))
 
-/// Not free for it: a block that is not blue, and that is in `s` if white.
-val in_use_unaccounted (s: obj_addr -> prop) (g: heap) (x: obj_addr)
-  : Lemma (in_use (unaccounted s) g x <==>
-           (Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\ (is_white x g ==> s x)))
+/// Not free for it: a block that is not blue, and that is in `snapshot` if white.
+val in_use_outside_snapshot (snapshot: obj_addr -> prop) (g: heap) (x: obj_addr)
+  : Lemma (in_use (outside_snapshot snapshot) g x <==>
+           (Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\ (is_white x g ==> snapshot x)))
 
-/// Every grey or black object is accounted for.
-let dark_accounted (s: obj_addr -> prop) (g: heap) : prop =
-  forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ (is_gray x g \/ is_black x g) ==> s x
+/// Every grey or black object is in the snapshot.
+let dark_in_snapshot (snapshot: obj_addr -> prop) (g: heap) : prop =
+  forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ (is_gray x g \/ is_black x g) ==> snapshot x
 
-/// **The account**: what is dark is in `s`, and a block that is dark or in
-/// `s` points only at blocks that are dark or in `s`.
-let mark_account (s: obj_addr -> prop) (g: heap) : prop =
-  dark_accounted s g /\ well_formed_heap_with (unaccounted s) g
+/// **The account**: what is dark is in `snapshot`, and a block that is dark or in
+/// `snapshot` points only at blocks that are dark or in `snapshot`.
+let within_snapshot (snapshot: obj_addr -> prop) (g: heap) : prop =
+  dark_in_snapshot snapshot g /\ well_formed_heap_with (outside_snapshot snapshot) g
 
 /// ---------------------------------------------------------------------------
 /// Start
 /// ---------------------------------------------------------------------------
 
 /// **The start**: when every dark object is a root (after root darkening,
-/// before any mark step), the account holds with `s` the objects reachable
+/// before any mark step), the account holds with `snapshot` the objects reachable
 /// from the roots.
 val account_start (g: heap) (outside_refs: obj_addr -> prop)
   : Lemma (requires well_formed_heap g /\
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ (is_gray x g \/ is_black x g) ==>
                        outside_refs x))
-          (ensures mark_account (reachable g outside_refs) g)
+          (ensures within_snapshot (reachable g outside_refs) g)
 
 /// ---------------------------------------------------------------------------
 /// Marking
 /// ---------------------------------------------------------------------------
 
-/// **Greying an accounted white object** keeps the account, and the heap's
+/// **Greying a white object in the snapshot** keeps the account, and the heap's
 /// blocks, fields, resolutions and non-free blocks for the account.
-val account_grey (s: obj_addr -> prop) (g: heap) (t: obj_addr)
-  : Lemma (requires mark_account s g /\ well_formed_heap g /\
-                    Seq.mem t (objects zero_addr g) /\ is_white t g /\ s t)
-          (ensures mark_account s (makeGray t g) /\ well_formed_heap (makeGray t g) /\
+val account_grey (snapshot: obj_addr -> prop) (g: heap) (t: obj_addr)
+  : Lemma (requires within_snapshot snapshot g /\ well_formed_heap g /\
+                    Seq.mem t (objects zero_addr g) /\ is_white t g /\ snapshot t)
+          (ensures within_snapshot snapshot (makeGray t g) /\ well_formed_heap (makeGray t g) /\
                    objects zero_addr (makeGray t g) == objects zero_addr g /\
-                   (forall (y: obj_addr). in_use (unaccounted s) (makeGray t g) y == in_use (unaccounted s) g y))
+                   (forall (y: obj_addr). in_use (outside_snapshot snapshot) (makeGray t g) y == in_use (outside_snapshot snapshot) g y))
 
-/// The barrier's darkening (`MM.darken`) of a value an accounted object
+/// The barrier's darkening (`MM.darken`) of a value an object in the snapshot
 /// stores, or of no pointer at all.
-val account_darken (s: obj_addr -> prop) (g: heap) (w: U64.t)
-  : Lemma (requires mark_account s g /\ well_formed_heap g /\
-                    (is_pointer w ==> in_use (unaccounted s) g (resolve_object (w <: obj_addr) g)))
-          (ensures mark_account s (MM.darken g w) /\ well_formed_heap (MM.darken g w))
+val account_darken (snapshot: obj_addr -> prop) (g: heap) (w: U64.t)
+  : Lemma (requires within_snapshot snapshot g /\ well_formed_heap g /\
+                    (is_pointer w ==> in_use (outside_snapshot snapshot) g (resolve_object (w <: obj_addr) g)))
+          (ensures within_snapshot snapshot (MM.darken g w) /\ well_formed_heap (MM.darken g w))
 
 /// **A mark move keeps it**: a scanned field's target is a field of a grey
-/// object, so accounted; blackening changes no block's status; starting to
+/// object, so in the snapshot; blackening changes no block's status; starting to
 /// scan an object changes nothing.
-val account_move (s: obj_addr -> prop) (g g': heap) (sp sp': MP.scan_pos)
-  : Lemma (requires mark_account s g /\ well_formed_heap g /\ S.mark_move g sp g' sp')
-          (ensures mark_account s g')
+val account_move (snapshot: obj_addr -> prop) (g g': heap) (sp sp': MP.scan_pos)
+  : Lemma (requires within_snapshot snapshot g /\ well_formed_heap g /\ S.mark_move g sp g' sp')
+          (ensures within_snapshot snapshot g')
 
 /// ... and so do any number of moves (a mark slice).
-val account_steps (s: obj_addr -> prop) (g g': heap) (sp sp': MP.scan_pos)
-  : Lemma (requires mark_account s g /\ well_formed_heap g /\ S.mark_steps g sp g' sp')
-          (ensures mark_account s g')
+val account_steps (snapshot: obj_addr -> prop) (g g': heap) (sp sp': MP.scan_pos)
+  : Lemma (requires within_snapshot snapshot g /\ well_formed_heap g /\ S.mark_steps g sp g' sp')
+          (ensures within_snapshot snapshot g')
 
 /// **What marking keeps (safety)**: a mark move only recolours, so every
 /// block keeps its size, tag and fields (`SPI.same_block`), and which blocks
@@ -207,128 +210,129 @@ val mark_steps_keep_blocks (g g': heap) (sp sp': MP.scan_pos)
 
 /// **The trusted obligation for completeness**: the program writes a body
 /// word of a scannable object `x` it can reach, and stores a value it holds
-/// -- `x` and `v`'s target are accounted for (in `s`, or dark).  This is
+/// -- `x` and `v`'s target are covered by the snapshot (in `snapshot`, or dark).  This is
 /// `SPM.program_write` at the account's definition of free, as the sweep
 /// phase states the program's writes at `free_incremental c`.
-let cycle_write (s: obj_addr -> prop) (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t) : prop =
-  SPM.program_write (unaccounted s) g x a v /\ scannable g x
+let cycle_write (snapshot: obj_addr -> prop) (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t) : prop =
+  SPM.program_write (outside_snapshot snapshot) g x a v /\ scannable g x
 
-/// **Loading keeps the obligation maintainable**: a field of an accounted
-/// object, loaded, is accounted for (the account is closed under the edges).
-val account_load (s: obj_addr -> prop) (g: heap) (u t: obj_addr)
-  : Lemma (requires mark_account s g /\ in_use (unaccounted s) g u /\ MP.field_edge g u t)
-          (ensures in_use (unaccounted s) g t)
+/// **Loading keeps the obligation maintainable**: a field of an object
+/// in the snapshot, loaded, is in the snapshot (the account is closed under the edges).
+val account_load (snapshot: obj_addr -> prop) (g: heap) (u t: obj_addr)
+  : Lemma (requires within_snapshot snapshot g /\ in_use (outside_snapshot snapshot) g u /\ MP.field_edge g u t)
+          (ensures in_use (outside_snapshot snapshot) g t)
 
 /// **A program write keeps it** (no barrier: idle, or into a fresh black
 /// object's initialised fields).
-val account_write (s: obj_addr -> prop) (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires mark_account s g /\ SPM.program_write (unaccounted s) g x a v)
-          (ensures mark_account s (write_word g a v))
+val account_write (snapshot: obj_addr -> prop) (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires within_snapshot snapshot g /\ SPM.program_write (outside_snapshot snapshot) g x a v)
+          (ensures within_snapshot snapshot (write_word g a v))
 
 /// **The barrier write keeps it**: 4.14's `caml_modify` while marking --
 /// darken the old value, then write.  The old value is a field of `x`,
-/// which is accounted for, so it is too.
-val account_barrier (s: obj_addr -> prop) (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires mark_account s g /\ well_formed_heap g /\ cycle_write s g x a v)
-          (ensures mark_account s (write_word (MM.darken g (read_word g a)) a v))
+/// which is in the snapshot, so it is too.
+val account_barrier (snapshot: obj_addr -> prop) (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires within_snapshot snapshot g /\ well_formed_heap g /\ cycle_write snapshot g x a v)
+          (ensures within_snapshot snapshot (write_word (MM.darken g (read_word g a)) a v))
 
 /// What is free while the new object `obj` is uninitialised.
-let unaccounted_or_new (s: obj_addr -> prop) (obj: obj_addr) : free_def =
-  fun g x -> unaccounted s g x || x = obj
+let outside_snapshot_or_new (snapshot: obj_addr -> prop) (obj: obj_addr) : free_def =
+  fun g x -> outside_snapshot snapshot g x || x = obj
 
-val unaccounted_or_new_ok (s: obj_addr -> prop) (obj: obj_addr)
-  : Lemma (free_def_ok (unaccounted_or_new s obj))
+val outside_snapshot_or_new_ok (snapshot: obj_addr -> prop) (obj: obj_addr)
+  : Lemma (free_def_ok (outside_snapshot_or_new snapshot obj))
 
-/// **The account with `obj` fresh**: black, accounted for, its fields not
+/// **The account with `obj` fresh**: black, in the snapshot, its fields not
 /// yet bound by the closure clause.
-let account_fresh (s: obj_addr -> prop) (g: heap) (obj: obj_addr) : prop =
-  dark_accounted s g /\ s obj /\
+let within_snapshot_fresh (snapshot: obj_addr -> prop) (g: heap) (obj: obj_addr) : prop =
+  dark_in_snapshot snapshot g /\ snapshot obj /\
   Seq.mem obj (objects zero_addr g) /\ is_black obj g /\
-  well_formed_heap_with (unaccounted_or_new s obj) g
+  well_formed_heap_with (outside_snapshot_or_new snapshot obj) g
 
-/// **Allocation while marking**: the new object is added to `s`
+/// **Allocation while marking**: the new object is added to `snapshot`
 /// (`SPC.with_new`); it is fresh.
-val account_alloc (s: obj_addr -> prop) (outside_refs: obj_addr -> prop) (sp: MP.scan_pos) (g: heap) (fp: U64.t)
+val account_alloc (snapshot: obj_addr -> prop) (outside_refs: obj_addr -> prop) (sp: MP.scan_pos) (g: heap) (fp: U64.t)
                   (wz: nat) (tag: SPM.tag_t)
-  : Lemma (requires mark_account s g /\ MP.marking_inv g outside_refs sp /\ FLA.fl_ascending g fp /\
+  : Lemma (requires within_snapshot snapshot g /\ MP.marking_inv g outside_refs sp /\ FLA.fl_ascending g fp /\
                     wz >= 1 /\ tag <> infix_tag)
           (ensures (let r = AC.alloc_phase g fp Ph.Marking wz tag in
                     (r.SA.obj_out == 0UL ==> r.SA.heap_out == g) /\
                     (r.SA.obj_out <> 0UL ==>
                        GC.Spec.FusedSweep.is_obj r.SA.obj_out /\
-                       account_fresh (SPC.with_new s r.SA.obj_out) r.SA.heap_out r.SA.obj_out)))
+                       within_snapshot_fresh (SPC.with_new snapshot r.SA.obj_out) r.SA.heap_out r.SA.obj_out)))
 
 /// Writes into the fresh object's body keep it fresh.
-val account_fresh_write (s: obj_addr -> prop) (g: heap) (obj: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires account_fresh s g obj /\ SPM.in_body g obj a)
-          (ensures account_fresh s (write_word g a v) obj)
+val account_fresh_write (snapshot: obj_addr -> prop) (g: heap) (obj: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires within_snapshot_fresh snapshot g obj /\ SPM.in_body g obj a)
+          (ensures within_snapshot_fresh snapshot (write_word g a v) obj)
 
-/// Once its fields are accounted for (values the program holds), the
+/// Once its fields are in the snapshot (values the program holds), the
 /// account holds.
-val account_fresh_close (s: obj_addr -> prop) (g: heap) (obj: obj_addr)
-  : Lemma (requires account_fresh s g obj /\ SPM.fields_storable (unaccounted s) g obj)
-          (ensures mark_account s g)
+val account_fresh_close (snapshot: obj_addr -> prop) (g: heap) (obj: obj_addr)
+  : Lemma (requires within_snapshot_fresh snapshot g obj /\ SPM.fields_storable (outside_snapshot snapshot) g obj)
+          (ensures within_snapshot snapshot g)
 
 /// ---------------------------------------------------------------------------
 /// The end of marking, and the cycle
 /// ---------------------------------------------------------------------------
 
-/// **When marking ends** every block black in the marked heap is accounted
+/// **When marking ends** every block black in the marked heap is in the snapshot
 /// for.
-val account_marked (s: obj_addr -> prop) (g: heap)
-  : Lemma (requires mark_account s g)
-          (ensures forall (x: obj_addr). SPC.survived_mark g x ==> s x)
+val account_marked (snapshot: obj_addr -> prop) (g: heap)
+  : Lemma (requires within_snapshot snapshot g)
+          (ensures forall (x: obj_addr). SPC.survived_mark g x ==> snapshot x)
 
 /// Mid-sweep, every block that is not free (not blue, not pending free) is
-/// accounted for.  (This is `SPC.survivor_or_new` with the survivors of
-/// marking folded into `s`.)
-let sweep_accounted (s: obj_addr -> prop) (g: heap) (c: U64.t) : prop =
-  forall (x: obj_addr). in_use (SPI.free_incremental c) g x ==> s x
+/// in the snapshot.  (This is `SPC.survivor_or_new` with the survivors of
+/// marking folded into `snapshot`.)
+let sweep_in_snapshot (snapshot: obj_addr -> prop) (g: heap) (c: U64.t) : prop =
+  forall (x: obj_addr). in_use (SPI.free_incremental c) g x ==> snapshot x
 
 /// **The account at the collector's phase.**  While marking, the mark
-/// account; mid-sweep, every non-free block accounted for; idle again
-/// (the sweep over), every block that is not blue accounted for.
-let cycle_account (s: obj_addr -> prop) (g: heap) (ph: Ph.gc_phase) : prop =
+/// account; mid-sweep, every non-free block in the snapshot; idle again
+/// (the sweep over), every block that is not blue in the snapshot.
+let cycle_account (snapshot: obj_addr -> prop) (g: heap) (ph: Ph.gc_phase) : prop =
   match ph with
-  | Ph.Marking -> mark_account s g
-  | Ph.Sweeping c -> sweep_accounted s g c
-  | Ph.Idle -> forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) ==> s x
+  | Ph.Marking -> within_snapshot snapshot g
+  | Ph.Sweeping c -> sweep_in_snapshot snapshot g c
+  | Ph.Idle -> forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) ==> snapshot x
 
-/// **The hand-over**: when nothing is grey, the sweep starts accounted for
+/// **The hand-over**: when nothing is grey, the sweep starts with every
+/// non-free block in the snapshot
 /// (a block that is not free at the start of the sweep is black).
-val cycle_handover (s: obj_addr -> prop) (g: heap)
-  : Lemma (requires mark_account s g /\ Mark.noGreyObjects g)
-          (ensures cycle_account s g (Ph.Sweeping zero_addr))
+val cycle_handover (snapshot: obj_addr -> prop) (g: heap)
+  : Lemma (requires within_snapshot snapshot g /\ Mark.noGreyObjects g)
+          (ensures cycle_account snapshot g (Ph.Sweeping zero_addr))
 
 /// **A sweep slice keeps it**, at whatever phase it leaves.
-val cycle_sweep_slice (s: obj_addr -> prop) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
-  : Lemma (requires cycle_account s g ph /\ ~(Ph.Marking? ph) /\
+val cycle_sweep_slice (snapshot: obj_addr -> prop) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
+  : Lemma (requires cycle_account snapshot g ph /\ ~(Ph.Marking? ph) /\
                     (Ph.Sweeping? ph ==> SPI.sweep_inv_incremental g fp (Ph.Sweeping?._0 ph)))
           (ensures (let (g', fp', ph') = SL.phase_slice g fp ph budget in
-                    cycle_account s g' ph'))
+                    cycle_account snapshot g' ph'))
 
-/// **An allocation mid-sweep keeps it**, with the new object added to `s`.
-val cycle_sweep_alloc (s: obj_addr -> prop) (g: heap) (fp: U64.t) (c: U64.t) (wz: nat) (tag: SPM.tag_t)
-  : Lemma (requires sweep_accounted s g c /\ SPI.sweep_shape g fp c)
+/// **An allocation mid-sweep keeps it**, with the new object added to `snapshot`.
+val cycle_sweep_alloc (snapshot: obj_addr -> prop) (g: heap) (fp: U64.t) (c: U64.t) (wz: nat) (tag: SPM.tag_t)
+  : Lemma (requires sweep_in_snapshot snapshot g c /\ SPI.sweep_shape g fp c)
           (ensures (let r = AC.alloc_phase g fp (SA.Sweeping c) wz tag in
-                    sweep_accounted (SPC.with_new s r.SA.obj_out) r.SA.heap_out c))
+                    sweep_in_snapshot (SPC.with_new snapshot r.SA.obj_out) r.SA.heap_out c))
 
 /// **A write into the body of a block that is not blue keeps it** mid-sweep
 /// (a program write, or a fresh object's initialisation).
-val cycle_sweep_write (s: obj_addr -> prop) (g: heap) (fp: U64.t) (c: U64.t)
+val cycle_sweep_write (snapshot: obj_addr -> prop) (g: heap) (fp: U64.t) (c: U64.t)
                       (x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires sweep_accounted s g c /\ SPI.sweep_shape g fp c /\
+  : Lemma (requires sweep_in_snapshot snapshot g c /\ SPI.sweep_shape g fp c /\
                     Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\ SPM.in_body g x a)
-          (ensures sweep_accounted s (write_word g a v) c)
+          (ensures sweep_in_snapshot snapshot (write_word g a v) c)
 
 /// A larger set accounts for as much, past marking.
-val cycle_weaken (s s': obj_addr -> prop) (g: heap) (ph: Ph.gc_phase)
-  : Lemma (requires cycle_account s g ph /\ ~(Ph.Marking? ph) /\ (forall (x: obj_addr). s x ==> s' x))
-          (ensures cycle_account s' g ph)
+val cycle_weaken (snapshot snapshot': obj_addr -> prop) (g: heap) (ph: Ph.gc_phase)
+  : Lemma (requires cycle_account snapshot g ph /\ ~(Ph.Marking? ph) /\ (forall (x: obj_addr). snapshot x ==> snapshot' x))
+          (ensures cycle_account snapshot' g ph)
 
 /// **The cycle is complete**: idle again, every block that is not free is
-/// accounted for -- reachable when the cycle started, or allocated or
+/// in the snapshot -- reachable when the cycle started, or allocated or
 /// promoted since -- so every other address is freed.
-val cycle_complete (s: obj_addr -> prop) (g: heap)
-  : Lemma (requires cycle_account s g Ph.Idle)
-          (ensures forall (x: obj_addr). ~(s x) ==> SPC.freed g x)
+val cycle_complete (snapshot: obj_addr -> prop) (g: heap)
+  : Lemma (requires cycle_account snapshot g Ph.Idle)
+          (ensures forall (x: obj_addr). ~(snapshot x) ==> SPC.freed g x)

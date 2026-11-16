@@ -63,9 +63,9 @@ let start_pre (g: heap) (rs: seq U64.t) : prop =
 let rec start_prefix (g: heap) (rs: seq U64.t) (cap: nat) (idx: nat{idx <= Seq.length rs})
   : Lemma (requires start_pre g rs)
           (ensures (let gi = fst (MB.darken_roots_bounded_prefix_spec g Seq.empty rs idx cap) in
-                    MPC.mark_account (reachable_at_start g rs) gi /\ well_formed_heap gi))
+                    MPC.within_snapshot (reachable_at_start g rs) gi /\ well_formed_heap gi))
           (decreases idx)
-  = let s = reachable_at_start g rs in
+  = let snapshot = reachable_at_start g rs in
     if idx = 0 then begin
       assert (fst (MB.darken_roots_bounded_prefix_spec g Seq.empty rs idx cap) == g);
       MPC.account_start g (GMM.root_refs g rs);
@@ -88,7 +88,7 @@ let rec start_prefix (g: heap) (rs: seq U64.t) (cap: nat) (idx: nat{idx <= Seq.l
           mem_of_index rs (idx - 1);
           assert (GMM.root_refs g rs t);
           MPC.reachable_outside_refs g (GMM.root_refs g rs) t;
-          MPC.account_grey s g0 t
+          MPC.account_grey snapshot g0 t
         end
       end
     end
@@ -109,16 +109,16 @@ let cycle_start minor g fp rs =
 /// ---------------------------------------------------------------------------
 
 #push-options "--ifuel 1"
-let cycle_slice s minor g sp fp ph budget g' sp' fp' ph' =
+let cycle_slice snapshot minor g sp fp ph budget g' sp' fp' ph' =
   match ph with
   | Ph.Marking ->
       GI.phase_shape_marking minor g fp sp;
-      MPC.account_steps s g g' sp sp';
-      if Ph.Sweeping? ph' then MPC.cycle_handover s g'
+      MPC.account_steps snapshot g g' sp sp';
+      if Ph.Sweeping? ph' then MPC.cycle_handover snapshot g'
   | Ph.Idle -> ()
   | Ph.Sweeping c ->
       GI.phase_shape_sweeping minor g fp c sp;
-      MPC.cycle_sweep_slice s g fp ph budget
+      MPC.cycle_sweep_slice snapshot g fp ph budget
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -126,11 +126,11 @@ let cycle_slice s minor g sp fp ph budget g' sp' fp' ph' =
 /// ---------------------------------------------------------------------------
 
 #push-options "--ifuel 1"
-let cycle_modify s ph minor g fp sp x a v =
+let cycle_modify snapshot ph minor g fp sp x a v =
   match ph with
   | Ph.Marking ->
       GI.phase_shape_marking minor g fp sp;
-      MPC.account_barrier s g x a v
+      MPC.account_barrier snapshot g x a v
   | Ph.Idle ->
       GI.phase_free_idle ();
       MM.write_heads g x a v
@@ -140,7 +140,7 @@ let cycle_modify s ph minor g fp sp x a v =
       SPI.free_incremental_ok c;
       free_def_ok_elim (SPI.free_incremental c);
       SPI.sweep_inv_incremental_iff g fp c;
-      MPC.cycle_sweep_write s g fp c x a v
+      MPC.cycle_sweep_write snapshot g fp c x a v
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -148,35 +148,35 @@ let cycle_modify s ph minor g fp sp x a v =
 /// ---------------------------------------------------------------------------
 
 /// A block allocated while marking is black, so not free for the account.
-let account_allocations (s: obj_addr -> prop)
-  : Lemma (Promote.allocations_not_free Ph.Marking (MPC.unaccounted s))
+let account_allocations (snapshot: obj_addr -> prop)
+  : Lemma (Promote.allocations_not_free Ph.Marking (MPC.outside_snapshot snapshot))
   = let prf (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}) (x: obj_addr)
       : Lemma (requires AP.alloc_ok g fp /\ (AP.alloc_at Ph.Marking g fp wz tag).GC.Spec.Allocator.obj_out == x)
-              (ensures not (MPC.unaccounted s (AP.alloc_at Ph.Marking g fp wz tag).GC.Spec.Allocator.heap_out x))
+              (ensures not (MPC.outside_snapshot snapshot (AP.alloc_at Ph.Marking g fp wz tag).GC.Spec.Allocator.heap_out x))
       = AP.alloc_at_recoloured Ph.Marking g fp wz tag;
         Mark.colors_exclusive x (AP.alloc_at Ph.Marking g fp wz tag).GC.Spec.Allocator.heap_out
     in
-    Promote.allocations_not_free_intro Ph.Marking (MPC.unaccounted s) prf
+    Promote.allocations_not_free_intro Ph.Marking (MPC.outside_snapshot snapshot) prf
 
-let account_minor s minor g fp roots sp =
+let account_minor snapshot minor g fp roots sp =
   let g' = (GMM.collect_marking minor g fp roots).Promote.mc_major in
-  let s' = with_new_blocks s g g' in
-  let un = MPC.unaccounted s in
+  let snapshot' = with_new_blocks snapshot g g' in
+  let un = MPC.outside_snapshot snapshot in
   GI.phase_shape_marking minor g fp sp;
-  MPC.unaccounted_ok s;
-  account_allocations s;
+  MPC.outside_snapshot_ok snapshot;
+  account_allocations snapshot;
   GMM.minor_keeps_wf_with un minor g fp roots;
-  let iu (x: obj_addr) : Lemma (in_use (MPC.unaccounted s') g' x == in_use un g' x) =
+  let iu (x: obj_addr) : Lemma (in_use (MPC.outside_snapshot snapshot') g' x == in_use un g' x) =
     if in_use free_stw g' x && not (in_use free_stw g x) then begin
       GMM.minor_new_block_black minor g fp roots x;
       Mark.colors_exclusive x g'
     end
   in
   FStar.Classical.forall_intro iu;
-  SPI.well_formed_heap_with_congr un (MPC.unaccounted s') g';
+  SPI.well_formed_heap_with_congr un (MPC.outside_snapshot snapshot') g';
   let dk (y: obj_addr)
     : Lemma (requires Seq.mem y (objects zero_addr g') /\ (is_gray y g' \/ is_black y g'))
-            (ensures s' y)
+            (ensures snapshot' y)
     = Mark.colors_exclusive y g';
       if in_use free_stw g y then begin
         GMM.minor_keeps_block minor g fp roots y;
@@ -185,7 +185,7 @@ let account_minor s minor g fp roots sp =
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires dk)
 
-let sweep_minor s minor g fp c roots sp =
+let sweep_minor snapshot minor g fp c roots sp =
   GI.phase_shape_sweeping minor g fp c sp;
   FStar.Classical.forall_intro (SPM.minor_keeps_blocks minor g fp c roots)
 
@@ -193,5 +193,5 @@ let sweep_minor s minor g fp c roots sp =
 /// The theorem
 /// ---------------------------------------------------------------------------
 
-let cycle_frees_unreachable g0 rs since s g =
-  MPC.cycle_complete s g
+let cycle_frees_unreachable g0 rs since snapshot g =
+  MPC.cycle_complete snapshot g

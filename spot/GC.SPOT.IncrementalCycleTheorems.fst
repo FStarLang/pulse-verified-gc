@@ -243,15 +243,15 @@ let modify_tracked (r: unit{MPH.room}) (minor: minor_state) (g: heap) (fp: U64.t
     GMC.reachable_at_start_eq (CH.h0 r) (CH.roots0 r);
     start_set_eq r;
     assert (start_set r a);
-    MPC.unaccounted_ok (start_set r);
-    MPC.in_use_unaccounted (start_set r) g a;
+    MPC.outside_snapshot_ok (start_set r);
+    MPC.in_use_outside_snapshot (start_set r) g a;
     (match ph with
      | Ph.Marking -> GI.phase_free_marking (); free_stw_ok (); free_def_ok_elim free_stw
      | Ph.Idle -> GI.phase_free_idle (); free_stw_ok (); free_def_ok_elim free_stw
      | Ph.Sweeping c ->
          GI.phase_free_sweeping c; SPI.free_incremental_ok c;
          free_def_ok_elim (SPI.free_incremental c));
-    assert (GMC.modify_accounted (start_set r) ph g a (slot_a r) one_imm);
+    assert (GMC.modify_in_snapshot (start_set r) ph g a (slot_a r) one_imm);
     GMC.cycle_modify (start_set r) ph minor g fp sp a (slot_a r) one_imm;
     GMS.modify_keeps_others ph minor g fp sp a (slot_a r) one_imm (CH.obj_c r)
 #pop-options

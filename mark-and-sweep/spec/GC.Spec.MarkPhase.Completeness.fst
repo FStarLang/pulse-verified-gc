@@ -57,31 +57,31 @@ let reachable_closed g outside_refs c x =
 /// The account
 /// ---------------------------------------------------------------------------
 
-let unaccounted_ok s =
+let outside_snapshot_ok snapshot =
   reveal_opaque (`%free_def_ok) free_def_ok;
   let det (g g': heap) (x: obj_addr)
     : Lemma ((is_block g x <==> is_block g' x) /\ read_word g (hd_address x) == read_word g' (hd_address x) ==>
-             unaccounted s g x == unaccounted s g' x)
+             outside_snapshot snapshot g x == outside_snapshot snapshot g' x)
     = if read_word g (hd_address x) = read_word g' (hd_address x) then MM.header_kept_facts g g' x
   in
   FStar.Classical.forall_intro_3 det
 
-let in_use_unaccounted s g x = ()
+let in_use_outside_snapshot snapshot g x = ()
 
 /// A non-free block for the account: a block, not blue.
-let in_use_block (s: obj_addr -> prop) (g: heap) (x: obj_addr)
-  : Lemma (requires in_use (unaccounted s) g x)
+let in_use_block (snapshot: obj_addr -> prop) (g: heap) (x: obj_addr)
+  : Lemma (requires in_use (outside_snapshot snapshot) g x)
           (ensures Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\ in_use free_stw g x)
   = ()
 
 /// The account's pointer clauses, from well-formedness: every white target
-/// of an edge out of a block that is not free for the account is in `s`.
-let account_wf_intro (s: obj_addr -> prop) (g: heap)
+/// of an edge out of a block that is not free for the account is in `snapshot`.
+let account_wf_intro (snapshot: obj_addr -> prop) (g: heap)
   (h: (src: obj_addr) -> (t: obj_addr) ->
-      Lemma (requires in_use (unaccounted s) g src /\ MP.field_edge g src t /\ is_white t g)
-            (ensures s t))
-  : Lemma (requires well_formed_heap g) (ensures well_formed_heap_with (unaccounted s) g)
-  = let un = unaccounted s in
+      Lemma (requires in_use (outside_snapshot snapshot) g src /\ MP.field_edge g src t /\ is_white t g)
+            (ensures snapshot t))
+  : Lemma (requires well_formed_heap g) (ensures well_formed_heap_with (outside_snapshot snapshot) g)
+  = let un = outside_snapshot snapshot in
     wf_with_parts ();
     let tgt (src dst: obj_addr)
       : Lemma (requires in_use un g src /\ scannable g src /\ points_to g src dst)
@@ -96,27 +96,27 @@ let account_wf_intro (s: obj_addr -> prop) (g: heap)
     interior_pointers_valid_intro un g tgt
 
 /// An edge out of a block that is not free for the account ends at one.
-let edge_accounted (s: obj_addr -> prop) (g: heap) (u t: obj_addr)
-  : Lemma (requires well_formed_heap_with (unaccounted s) g /\ in_use (unaccounted s) g u /\
+let edge_in_snapshot (snapshot: obj_addr -> prop) (g: heap) (u t: obj_addr)
+  : Lemma (requires well_formed_heap_with (outside_snapshot snapshot) g /\ in_use (outside_snapshot snapshot) g u /\
                     MP.field_edge g u t)
-          (ensures in_use (unaccounted s) g t)
+          (ensures in_use (outside_snapshot snapshot) g t)
   = eliminate exists (c: obj_addr). points_to g u c /\ resolve_object c g == t
-    with points_to_target_not_free (unaccounted s) g u c
+    with points_to_target_not_free (outside_snapshot snapshot) g u c
 
 /// ---------------------------------------------------------------------------
 /// Start
 /// ---------------------------------------------------------------------------
 
 let account_start g outside_refs =
-  let s = reachable g outside_refs in
+  let snapshot = reachable g outside_refs in
   let dk (x: obj_addr)
-    : Lemma (requires Seq.mem x (objects zero_addr g) /\ (is_gray x g \/ is_black x g)) (ensures s x)
+    : Lemma (requires Seq.mem x (objects zero_addr g) /\ (is_gray x g \/ is_black x g)) (ensures snapshot x)
     = reachable_outside_refs g outside_refs x
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires dk);
   let h (src t: obj_addr)
-    : Lemma (requires in_use (unaccounted s) g src /\ MP.field_edge g src t /\ is_white t g)
-            (ensures s t)
+    : Lemma (requires in_use (outside_snapshot snapshot) g src /\ MP.field_edge g src t /\ is_white t g)
+            (ensures snapshot t)
     = Mark.colors_exclusive src g;
       Mark.color_exhaustive src g;
       if is_white src g then ()
@@ -127,7 +127,7 @@ let account_start g outside_refs =
         reach_within_trans (MP.field_edge g) (fun _ -> True) r src t
       end
   in
-  account_wf_intro s g h
+  account_wf_intro snapshot g h
 
 /// ---------------------------------------------------------------------------
 /// Recolouring a block that is not free
@@ -184,19 +184,19 @@ let recolour (g: heap) (t: obj_addr) (c: color)
     in
     FStar.Classical.forall_intro any
 
-/// Recolouring an accounted block dark keeps the account, and which blocks
+/// Recolouring a snapshot block dark keeps the account, and which blocks
 /// are free for it.
-let account_recolour (s: obj_addr -> prop) (g: heap) (t: obj_addr) (c: color)
-  : Lemma (requires mark_account s g /\ well_formed_heap g /\
-                    Seq.mem t (objects zero_addr g) /\ ~(is_blue t g) /\ s t /\
+let account_recolour (snapshot: obj_addr -> prop) (g: heap) (t: obj_addr) (c: color)
+  : Lemma (requires within_snapshot snapshot g /\ well_formed_heap g /\
+                    Seq.mem t (objects zero_addr g) /\ ~(is_blue t g) /\ snapshot t /\
                     (c == Header.Gray \/ c == Header.Black))
           (ensures (let g' = set_object_color t g c in
-                    mark_account s g' /\ well_formed_heap g' /\
-                    (forall (y: obj_addr). in_use (unaccounted s) g' y == in_use (unaccounted s) g y)))
+                    within_snapshot snapshot g' /\ well_formed_heap g' /\
+                    (forall (y: obj_addr). in_use (outside_snapshot snapshot) g' y == in_use (outside_snapshot snapshot) g y)))
   = let g' = set_object_color t g c in
-    let un = unaccounted s in
+    let un = outside_snapshot snapshot in
     recolour g t c;
-    unaccounted_ok s;
+    outside_snapshot_ok snapshot;
     Mark.color_change_preserves_wf g t c;
     let iu (y: obj_addr) : Lemma (in_use un g' y == in_use un g y) =
       if y = t then ()
@@ -206,22 +206,22 @@ let account_recolour (s: obj_addr -> prop) (g: heap) (t: obj_addr) (c: color)
     AP.recoloured_wf g g' un un;
     let dk (y: obj_addr)
       : Lemma (requires Seq.mem y (objects zero_addr g') /\ (is_gray y g' \/ is_black y g'))
-              (ensures s y)
+              (ensures snapshot y)
       = if y <> t then MM.header_kept_facts g g' y
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires dk)
 
-let account_grey s g t =
+let account_grey snapshot g t =
   makeGray_eq t g;
   Mark.colors_exclusive t g;
   recolour g t Header.Gray;
-  account_recolour s g t Header.Gray
+  account_recolour snapshot g t Header.Gray
 
-let account_darken s g w =
+let account_darken snapshot g w =
   if is_pointer w &&
      Seq.mem (resolve_object (w <: obj_addr) g) (objects zero_addr g) &&
      is_white (resolve_object (w <: obj_addr) g) g
-  then account_grey s g (resolve_object (w <: obj_addr) g)
+  then account_grey snapshot g (resolve_object (w <: obj_addr) g)
 
 /// ---------------------------------------------------------------------------
 /// Mark moves
@@ -238,50 +238,50 @@ let field_word (g: heap) (x: obj_addr) (k: U64.t{U64.v k >= 1})
     assert_norm (pow2 3 == 8);
     HG.get_field_addr_eq g x k
 
-let account_scan (s: obj_addr -> prop) (g: heap) (x: obj_addr) (k: U64.t{U64.v k >= 1})
-  : Lemma (requires mark_account s g /\ well_formed_heap g /\
+let account_scan (snapshot: obj_addr -> prop) (g: heap) (x: obj_addr) (k: U64.t{U64.v k >= 1})
+  : Lemma (requires within_snapshot snapshot g /\ well_formed_heap g /\
                     S.scan_target g x /\ U64.v k <= U64.v (wosize_of_object x g))
-          (ensures mark_account s (S.scan_field g x k))
-  = let un = unaccounted s in
+          (ensures within_snapshot snapshot (S.scan_field g x k))
+  = let un = outside_snapshot snapshot in
     wf_with_parts ();
-    unaccounted_ok s;
+    outside_snapshot_ok snapshot;
     let w = HG.get_field g x k in
     Mark.colors_exclusive x g;
-    assert (s x);
+    assert (snapshot x);
     assert (in_use un g x);
     field_word g x k;
     let j : nat = U64.v k - 1 in
     (if is_pointer w then FT.wf_with_field un g x j);
-    account_darken s g w
+    account_darken snapshot g w
 
-let account_blacken (s: obj_addr -> prop) (g: heap) (x: obj_addr)
-  : Lemma (requires mark_account s g /\ well_formed_heap g /\
+let account_blacken (snapshot: obj_addr -> prop) (g: heap) (x: obj_addr)
+  : Lemma (requires within_snapshot snapshot g /\ well_formed_heap g /\
                     Seq.mem x (objects zero_addr g) /\ is_gray x g)
-          (ensures mark_account s (makeBlack x g))
+          (ensures within_snapshot snapshot (makeBlack x g))
   = wf_with_parts ();
-    unaccounted_ok s;
+    outside_snapshot_ok snapshot;
     Mark.colors_exclusive x g;
     makeBlack_eq x g;
-    account_recolour s g x Header.Black
+    account_recolour snapshot g x Header.Black
 
-let account_move s g g' sp sp' =
+let account_move snapshot g g' sp sp' =
   if FStar.IndefiniteDescription.strong_excluded_middle (S.grey_move g sp g' sp') then
     eliminate exists (x: obj_addr).
       x == sp.MP.cur /\ S.scan_target g x /\ 1 <= sp.MP.fld /\ sp.MP.fld <= U64.v (wosize_of_object x g) /\
       g' == S.scan_field g x (U64.uint_to_t sp.MP.fld) /\ sp' == { sp with MP.fld = sp.MP.fld + 1 }
-    with account_scan s g x (U64.uint_to_t sp.MP.fld)
+    with account_scan snapshot g x (U64.uint_to_t sp.MP.fld)
   else if FStar.IndefiniteDescription.strong_excluded_middle (S.black_move g sp g' sp') then
     eliminate exists (x: obj_addr).
       Seq.mem x (objects zero_addr g) /\ is_gray x g /\ MP.all_scanned g sp x /\
       g' == makeBlack x g /\ sp' == MP.blackened_pos sp x
-    with account_blacken s g x
+    with account_blacken snapshot g x
   else assert (S.begin_move g sp g' sp')
 
-let account_steps s g g' sp sp' =
-  let p (h: heap) (q: MP.scan_pos) : prop = mark_account s h /\ well_formed_heap h in
+let account_steps snapshot g g' sp sp' =
+  let p (h: heap) (q: MP.scan_pos) : prop = within_snapshot snapshot h /\ well_formed_heap h in
   let step (h: heap) (q: MP.scan_pos) (h': heap) (q': MP.scan_pos)
     : Lemma (requires p h q /\ S.mark_move h q h' q') (ensures p h' q') =
-    account_move s h h' q q';
+    account_move snapshot h h' q q';
     S.mark_move_darker h h' q q'
   in
   S.mark_steps_ind p step g sp g' sp'
@@ -371,16 +371,16 @@ let mark_steps_keep_blocks g g' sp sp' =
 /// The program
 /// ---------------------------------------------------------------------------
 
-let account_load s g u t = edge_accounted s g u t
+let account_load snapshot g u t = edge_in_snapshot snapshot g u t
 
-let account_write s g x a v =
+let account_write snapshot g x a v =
   let g' = write_word g a v in
-  unaccounted_ok s;
-  MM.write_wf_with (unaccounted s) g x a v;
+  outside_snapshot_ok snapshot;
+  MM.write_wf_with (outside_snapshot snapshot) g x a v;
   MM.write_heads g x a v;
   let dk (y: obj_addr)
     : Lemma (requires Seq.mem y (objects zero_addr g') /\ (is_gray y g' \/ is_black y g'))
-            (ensures s y)
+            (ensures snapshot y)
     = ()
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires dk)
@@ -394,18 +394,18 @@ let body_field (g: heap) (x: obj_addr) (a: hp_addr)
   = FStar.Math.Lemmas.lemma_div_exact (U64.v a - U64.v x) 8
 
 /// What the barrier's darkening keeps of a program write.
-let darken_keeps_write (s: obj_addr -> prop) (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires mark_account s g /\ well_formed_heap g /\ cycle_write s g x a v)
+let darken_keeps_write (snapshot: obj_addr -> prop) (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires within_snapshot snapshot g /\ well_formed_heap g /\ cycle_write snapshot g x a v)
           (ensures (let g1 = MM.darken g (read_word g a) in
-                    mark_account s g1 /\ SPM.program_write (unaccounted s) g1 x a v))
-  = let un = unaccounted s in
+                    within_snapshot snapshot g1 /\ SPM.program_write (outside_snapshot snapshot) g1 x a v))
+  = let un = outside_snapshot snapshot in
     let w = read_word g a in
-    unaccounted_ok s;
+    outside_snapshot_ok snapshot;
     wf_with_parts ();
     body_field g x a;
     let j = (U64.v a - U64.v x) / 8 in
     (if is_pointer w then FT.wf_with_field un g x j);
-    account_darken s g w;
+    account_darken snapshot g w;
     if is_pointer w &&
        Seq.mem (resolve_object (w <: obj_addr) g) (objects zero_addr g) &&
        is_white (resolve_object (w <: obj_addr) g) g
@@ -414,7 +414,7 @@ let darken_keeps_write (s: obj_addr -> prop) (g: heap) (x: obj_addr) (a: hp_addr
       let g1 = MM.darken g w in
       makeGray_eq t g;
       Mark.colors_exclusive t g;
-      account_recolour s g t Header.Gray;
+      account_recolour snapshot g t Header.Gray;
       recolour g t Header.Gray;
       (if x = t then color_preserves_is_no_scan t g Header.Gray
        else MM.header_kept_facts g g1 x);
@@ -425,29 +425,29 @@ let darken_keeps_write (s: obj_addr -> prop) (g: heap) (x: obj_addr) (a: hp_addr
       end
     end
 
-let account_barrier s g x a v =
-  darken_keeps_write s g x a v;
-  account_write s (MM.darken g (read_word g a)) x a v
+let account_barrier snapshot g x a v =
+  darken_keeps_write snapshot g x a v;
+  account_write snapshot (MM.darken g (read_word g a)) x a v
 
 /// ---------------------------------------------------------------------------
 /// Allocation
 /// ---------------------------------------------------------------------------
 
-let unaccounted_or_new_ok s obj =
-  unaccounted_ok s;
+let outside_snapshot_or_new_ok snapshot obj =
+  outside_snapshot_ok snapshot;
   reveal_opaque (`%free_def_ok) free_def_ok
 
-let account_alloc s outside_refs sp g fp wz tag =
+let account_alloc snapshot outside_refs sp g fp wz tag =
   let r = AC.alloc_phase g fp Ph.Marking wz tag in
   MPA.marking_alloc g outside_refs sp fp wz tag;
   if r.SA.obj_out <> 0UL then begin
     let g' = r.SA.heap_out in
     let obj : obj_addr = r.SA.obj_out in
-    let s' = SPC.with_new s r.SA.obj_out in
-    let un = unaccounted s in
-    let un' = unaccounted_or_new s' obj in
-    unaccounted_ok s;
-    unaccounted_or_new_ok s' obj;
+    let snapshot' = SPC.with_new snapshot r.SA.obj_out in
+    let un = outside_snapshot snapshot in
+    let un' = outside_snapshot_or_new snapshot' obj in
+    outside_snapshot_ok snapshot;
+    outside_snapshot_or_new_ok snapshot' obj;
     MPA.free_or_new_ok obj;
     free_stw_ok ();
     wf_with_parts ();
@@ -464,7 +464,7 @@ let account_alloc s outside_refs sp g fp wz tag =
     SPI.wf_transport g g' un un';
     let dk (y: obj_addr)
       : Lemma (requires Seq.mem y (objects zero_addr g') /\ (is_gray y g' \/ is_black y g'))
-              (ensures s' y)
+              (ensures snapshot' y)
       = if y = obj then ()
         else begin
           Mark.colors_exclusive y g';
@@ -475,10 +475,10 @@ let account_alloc s outside_refs sp g fp wz tag =
     FStar.Classical.forall_intro (FStar.Classical.move_requires dk)
   end
 
-let account_fresh_write s g obj a v =
+let account_fresh_write snapshot g obj a v =
   let g' = write_word g a v in
-  let free = unaccounted_or_new s obj in
-  unaccounted_or_new_ok s obj;
+  let free = outside_snapshot_or_new snapshot obj in
+  outside_snapshot_or_new_ok snapshot obj;
   free_def_ok_elim free;
   Mark.colors_exclusive obj g;
   MM.write_heads g obj a v;
@@ -500,11 +500,11 @@ let account_fresh_write s g obj a v =
   FStar.Classical.forall_intro (FStar.Classical.move_requires kb);
   SPI.wf_transport g g' free free
 
-let account_fresh_close s g obj =
-  let fresh = unaccounted_or_new s obj in
-  let un = unaccounted s in
-  unaccounted_or_new_ok s obj;
-  unaccounted_ok s;
+let account_fresh_close snapshot g obj =
+  let fresh = outside_snapshot_or_new snapshot obj in
+  let un = outside_snapshot snapshot in
+  outside_snapshot_or_new_ok snapshot obj;
+  outside_snapshot_ok snapshot;
   wf_with_parts ();
   free_def_ok_elim un;
   free_def_ok_elim fresh;
@@ -526,12 +526,12 @@ let account_fresh_close s g obj =
 /// The end of marking, and the cycle
 /// ---------------------------------------------------------------------------
 
-let account_marked s g = ()
+let account_marked snapshot g = ()
 
-let cycle_handover s g =
+let cycle_handover snapshot g =
   SPC.survivor_or_new_start g
 
-let cycle_sweep_slice s g fp ph budget =
+let cycle_sweep_slice snapshot g fp ph budget =
   match ph with
   | Ph.Idle -> ()
   | Ph.Sweeping c ->
@@ -540,14 +540,14 @@ let cycle_sweep_slice s g fp ph budget =
       if SPI.sweep_done st'.GC.Spec.FusedSweep.cursor then
         SPE.sweep_inv_incremental_end g' fp' st'.GC.Spec.FusedSweep.cursor
 
-let cycle_sweep_alloc s g fp c wz tag =
+let cycle_sweep_alloc snapshot g fp c wz tag =
   FStar.Classical.forall_intro (SPM.alloc_in_use g fp c wz tag)
 
-let cycle_sweep_write s g fp c x a v =
+let cycle_sweep_write snapshot g fp c x a v =
   SPM.body_write_shape g fp c x a v;
   SPI.same_heads_facts g (write_word g a v);
   SPI.free_incremental_ok c
 
-let cycle_weaken s s' g ph = ()
+let cycle_weaken snapshot snapshot' g ph = ()
 
-let cycle_complete s g = ()
+let cycle_complete snapshot g = ()
