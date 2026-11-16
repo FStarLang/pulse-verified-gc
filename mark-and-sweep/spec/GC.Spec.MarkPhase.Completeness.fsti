@@ -166,21 +166,22 @@ val account_darken (s: obj_addr -> prop) (g: heap) (w: U64.t)
           (ensures mark_account s (MM.darken g w) /\ well_formed_heap (MM.darken g w))
 
 /// **A mark move keeps it**: a scanned field's target is a field of a grey
-/// object, so accounted; blackening changes no block's status.
-val account_move (s: obj_addr -> prop) (g g': heap)
-  : Lemma (requires mark_account s g /\ well_formed_heap g /\ S.mark_move g g')
+/// object, so accounted; blackening changes no block's status; starting to
+/// scan an object changes nothing.
+val account_move (s: obj_addr -> prop) (g g': heap) (sp sp': MP.scan_pos)
+  : Lemma (requires mark_account s g /\ well_formed_heap g /\ S.mark_move g sp g' sp')
           (ensures mark_account s g')
 
 /// ... and so do any number of moves (a mark slice).
-val account_steps (s: obj_addr -> prop) (g g': heap)
-  : Lemma (requires mark_account s g /\ well_formed_heap g /\ S.mark_steps g g')
+val account_steps (s: obj_addr -> prop) (g g': heap) (sp sp': MP.scan_pos)
+  : Lemma (requires mark_account s g /\ well_formed_heap g /\ S.mark_steps g sp g' sp')
           (ensures mark_account s g')
 
 /// **What marking keeps (safety)**: a mark move only recolours, so every
 /// block keeps its size, tag and fields (`SPI.same_block`), and which blocks
 /// are blue; so do any number of moves.
-val mark_move_keeps_blocks (g g': heap)
-  : Lemma (requires well_formed_heap g /\ S.mark_move g g')
+val mark_move_keeps_blocks (g g': heap) (sp sp': MP.scan_pos)
+  : Lemma (requires well_formed_heap g /\ S.mark_move g sp g' sp')
           (ensures objects zero_addr g' == objects zero_addr g /\
                    (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                       SPI.same_block g g' (hd_address x) /\ (is_blue x g' <==> is_blue x g)))
@@ -194,8 +195,8 @@ val grey_keeps_blocks (g: heap) (t: obj_addr)
                       SPI.same_block g (makeGray t g) (hd_address x) /\ (is_blue x (makeGray t g) <==> is_blue x g)) /\
                    (forall (y: obj_addr). y <> t ==> read_word (makeGray t g) (hd_address y) == read_word g (hd_address y)))
 
-val mark_steps_keep_blocks (g g': heap)
-  : Lemma (requires well_formed_heap g /\ S.mark_steps g g')
+val mark_steps_keep_blocks (g g': heap) (sp sp': MP.scan_pos)
+  : Lemma (requires well_formed_heap g /\ S.mark_steps g sp g' sp')
           (ensures objects zero_addr g' == objects zero_addr g /\
                    (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                       SPI.same_block g g' (hd_address x) /\ (is_blue x g' <==> is_blue x g)))
@@ -247,9 +248,9 @@ let account_fresh (s: obj_addr -> prop) (g: heap) (obj: obj_addr) : prop =
 
 /// **Allocation while marking**: the new object is added to `s`
 /// (`SPC.with_new`); it is fresh.
-val account_alloc (s: obj_addr -> prop) (outside_refs: obj_addr -> prop) (g: heap) (fp: U64.t)
+val account_alloc (s: obj_addr -> prop) (outside_refs: obj_addr -> prop) (sp: MP.scan_pos) (g: heap) (fp: U64.t)
                   (wz: nat) (tag: SPM.tag_t)
-  : Lemma (requires mark_account s g /\ MP.marking_inv g outside_refs /\ FLA.fl_ascending g fp /\
+  : Lemma (requires mark_account s g /\ MP.marking_inv g outside_refs sp /\ FLA.fl_ascending g fp /\
                     wz >= 1 /\ tag <> infix_tag)
           (ensures (let r = AC.alloc_phase g fp Ph.Marking wz tag in
                     (r.SA.obj_out == 0UL ==> r.SA.heap_out == g) /\

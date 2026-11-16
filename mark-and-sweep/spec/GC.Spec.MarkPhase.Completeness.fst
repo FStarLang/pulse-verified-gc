@@ -238,43 +238,53 @@ let field_word (g: heap) (x: obj_addr) (k: U64.t{U64.v k >= 1})
     assert_norm (pow2 3 == 8);
     HG.get_field_addr_eq g x k
 
-let account_move s g g' =
-  let un = unaccounted s in
-  wf_with_parts ();
-  unaccounted_ok s;
-  eliminate S.grey_move g g' \/ S.black_move g g'
-  with begin
-    eliminate exists (x: obj_addr) (k: U64.t{U64.v k >= 1}).
-      S.scan_target g x /\ U64.v k <= U64.v (wosize_of_object x g) /\ g' == S.scan_field g x k
-    with begin
-      let w = HG.get_field g x k in
-      Mark.colors_exclusive x g;
-      assert (s x);
-      assert (in_use un g x);
-      field_word g x k;
-      let j : nat = U64.v k - 1 in
-      (if is_pointer w then FT.wf_with_field un g x j);
-      account_darken s g w
-    end
-  end
-  and begin
-    eliminate exists (x: obj_addr).
-      Seq.mem x (objects zero_addr g) /\ is_gray x g /\
-      (is_no_scan x g \/ S.fields_dark g x 1 (U64.v (wosize_of_object x g))) /\ g' == makeBlack x g
-    with begin
-      Mark.colors_exclusive x g;
-      makeBlack_eq x g;
-      account_recolour s g x Header.Black
-    end
-  end
+let account_scan (s: obj_addr -> prop) (g: heap) (x: obj_addr) (k: U64.t{U64.v k >= 1})
+  : Lemma (requires mark_account s g /\ well_formed_heap g /\
+                    S.scan_target g x /\ U64.v k <= U64.v (wosize_of_object x g))
+          (ensures mark_account s (S.scan_field g x k))
+  = let un = unaccounted s in
+    wf_with_parts ();
+    unaccounted_ok s;
+    let w = HG.get_field g x k in
+    Mark.colors_exclusive x g;
+    assert (s x);
+    assert (in_use un g x);
+    field_word g x k;
+    let j : nat = U64.v k - 1 in
+    (if is_pointer w then FT.wf_with_field un g x j);
+    account_darken s g w
 
-let account_steps s g g' =
-  let p (h: heap) : prop = mark_account s h /\ well_formed_heap h in
-  let step (h h': heap) : Lemma (requires p h /\ S.mark_move h h') (ensures p h') =
-    account_move s h h';
-    S.mark_move_darker h h'
+let account_blacken (s: obj_addr -> prop) (g: heap) (x: obj_addr)
+  : Lemma (requires mark_account s g /\ well_formed_heap g /\
+                    Seq.mem x (objects zero_addr g) /\ is_gray x g)
+          (ensures mark_account s (makeBlack x g))
+  = wf_with_parts ();
+    unaccounted_ok s;
+    Mark.colors_exclusive x g;
+    makeBlack_eq x g;
+    account_recolour s g x Header.Black
+
+let account_move s g g' sp sp' =
+  if FStar.IndefiniteDescription.strong_excluded_middle (S.grey_move g sp g' sp') then
+    eliminate exists (x: obj_addr).
+      x == sp.MP.cur /\ S.scan_target g x /\ 1 <= sp.MP.fld /\ sp.MP.fld <= U64.v (wosize_of_object x g) /\
+      g' == S.scan_field g x (U64.uint_to_t sp.MP.fld) /\ sp' == { sp with MP.fld = sp.MP.fld + 1 }
+    with account_scan s g x (U64.uint_to_t sp.MP.fld)
+  else if FStar.IndefiniteDescription.strong_excluded_middle (S.black_move g sp g' sp') then
+    eliminate exists (x: obj_addr).
+      Seq.mem x (objects zero_addr g) /\ is_gray x g /\ MP.all_scanned g sp x /\
+      g' == makeBlack x g /\ sp' == MP.blackened_pos sp x
+    with account_blacken s g x
+  else assert (S.begin_move g sp g' sp')
+
+let account_steps s g g' sp sp' =
+  let p (h: heap) (q: MP.scan_pos) : prop = mark_account s h /\ well_formed_heap h in
+  let step (h: heap) (q: MP.scan_pos) (h': heap) (q': MP.scan_pos)
+    : Lemma (requires p h q /\ S.mark_move h q h' q') (ensures p h' q') =
+    account_move s h h' q q';
+    S.mark_move_darker h h' q q'
   in
-  S.mark_steps_ind p step g g'
+  S.mark_steps_ind p step g sp g' sp'
 
 /// ---------------------------------------------------------------------------
 /// What marking keeps
@@ -287,51 +297,65 @@ let same_block_trans (g1 g2 g3: heap) (q: hp_addr)
           (ensures SPI.same_block g1 g3 q)
   = ()
 
-let mark_move_keeps_blocks g g' =
-  eliminate S.grey_move g g' \/ S.black_move g g'
-  with begin
-    eliminate exists (x: obj_addr) (k: U64.t{U64.v k >= 1}).
-      S.scan_target g x /\ U64.v k <= U64.v (wosize_of_object x g) /\ g' == S.scan_field g x k
-    with begin
-      let w = HG.get_field g x k in
-      if is_pointer w &&
-         Seq.mem (resolve_object (w <: obj_addr) g) (objects zero_addr g) &&
-         is_white (resolve_object (w <: obj_addr) g) g
-      then begin
-        let t = resolve_object (w <: obj_addr) g in
-        makeGray_eq t g;
-        Mark.colors_exclusive t g;
-        recolour g t Header.Gray;
-        AP.recoloured_facts g g'
-      end
-    end
-  end
-  and begin
-    eliminate exists (x: obj_addr).
-      Seq.mem x (objects zero_addr g) /\ is_gray x g /\
-      (is_no_scan x g \/ S.fields_dark g x 1 (U64.v (wosize_of_object x g))) /\ g' == makeBlack x g
-    with begin
-      Mark.colors_exclusive x g;
-      makeBlack_eq x g;
-      recolour g x Header.Black;
+let scan_keeps_blocks (g: heap) (x: obj_addr) (k: U64.t{U64.v k >= 1})
+  : Lemma (requires well_formed_heap g /\ S.scan_target g x /\ U64.v k <= U64.v (wosize_of_object x g))
+          (ensures (let g' = S.scan_field g x k in
+                    objects zero_addr g' == objects zero_addr g /\
+                    (forall (y: obj_addr). Seq.mem y (objects zero_addr g) ==>
+                       SPI.same_block g g' (hd_address y) /\ (is_blue y g' <==> is_blue y g))))
+  = let g' = S.scan_field g x k in
+    let w = HG.get_field g x k in
+    if is_pointer w &&
+       Seq.mem (resolve_object (w <: obj_addr) g) (objects zero_addr g) &&
+       is_white (resolve_object (w <: obj_addr) g) g
+    then begin
+      let t = resolve_object (w <: obj_addr) g in
+      makeGray_eq t g;
+      Mark.colors_exclusive t g;
+      recolour g t Header.Gray;
       AP.recoloured_facts g g'
     end
-  end
+
+let blacken_keeps_blocks (g: heap) (x: obj_addr)
+  : Lemma (requires well_formed_heap g /\ Seq.mem x (objects zero_addr g) /\ is_gray x g)
+          (ensures (let g' = makeBlack x g in
+                    objects zero_addr g' == objects zero_addr g /\
+                    (forall (y: obj_addr). Seq.mem y (objects zero_addr g) ==>
+                       SPI.same_block g g' (hd_address y) /\ (is_blue y g' <==> is_blue y g))))
+  = Mark.colors_exclusive x g;
+    makeBlack_eq x g;
+    recolour g x Header.Black;
+    AP.recoloured_facts g (makeBlack x g)
+
+let mark_move_keeps_blocks g g' sp sp' =
+  if FStar.IndefiniteDescription.strong_excluded_middle (S.grey_move g sp g' sp') then
+    eliminate exists (x: obj_addr).
+      x == sp.MP.cur /\ S.scan_target g x /\ 1 <= sp.MP.fld /\ sp.MP.fld <= U64.v (wosize_of_object x g) /\
+      g' == S.scan_field g x (U64.uint_to_t sp.MP.fld) /\ sp' == { sp with MP.fld = sp.MP.fld + 1 }
+    with scan_keeps_blocks g x (U64.uint_to_t sp.MP.fld)
+  else if FStar.IndefiniteDescription.strong_excluded_middle (S.black_move g sp g' sp') then
+    eliminate exists (x: obj_addr).
+      Seq.mem x (objects zero_addr g) /\ is_gray x g /\ MP.all_scanned g sp x /\
+      g' == makeBlack x g /\ sp' == MP.blackened_pos sp x
+    with blacken_keeps_blocks g x
+  else assert (S.begin_move g sp g' sp')
 
 let grey_keeps_blocks g t =
   makeGray_eq t g;
   recolour g t Header.Gray;
   AP.recoloured_facts g (makeGray t g)
 
-let mark_steps_keep_blocks g g' =
+let mark_steps_keep_blocks g g' sp sp' =
   let p (h: heap) : prop =
     well_formed_heap h /\ objects zero_addr h == objects zero_addr g /\
     (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
        SPI.same_block g h (hd_address x) /\ (is_blue x h <==> is_blue x g))
   in
-  let step (h h': heap) : Lemma (requires p h /\ S.mark_move h h') (ensures p h') =
-    mark_move_keeps_blocks h h';
-    S.mark_move_darker h h';
+  let p (h: heap) (_: MP.scan_pos) : prop = p h in
+  let step (h: heap) (q: MP.scan_pos) (h': heap) (q': MP.scan_pos)
+    : Lemma (requires p h q /\ S.mark_move h q h' q') (ensures p h' q') =
+    mark_move_keeps_blocks h h' q q';
+    S.mark_move_darker h h' q q';
     let tr (x: obj_addr)
       : Lemma (requires Seq.mem x (objects zero_addr g))
               (ensures SPI.same_block g h' (hd_address x))
@@ -341,7 +365,7 @@ let mark_steps_keep_blocks g g' =
   in
   let q (x: obj_addr) : Lemma (SPI.same_block g g (hd_address x)) = same_block_refl g (hd_address x) in
   FStar.Classical.forall_intro q;
-  S.mark_steps_ind p step g g'
+  S.mark_steps_ind p step g sp g' sp'
 
 /// ---------------------------------------------------------------------------
 /// The program
@@ -413,9 +437,9 @@ let unaccounted_or_new_ok s obj =
   unaccounted_ok s;
   reveal_opaque (`%free_def_ok) free_def_ok
 
-let account_alloc s outside_refs g fp wz tag =
+let account_alloc s outside_refs sp g fp wz tag =
   let r = AC.alloc_phase g fp Ph.Marking wz tag in
-  MPA.marking_alloc g outside_refs fp wz tag;
+  MPA.marking_alloc g outside_refs sp fp wz tag;
   if r.SA.obj_out <> 0UL then begin
     let g' = r.SA.heap_out in
     let obj : obj_addr = r.SA.obj_out in
@@ -427,7 +451,7 @@ let account_alloc s outside_refs g fp wz tag =
     MPA.free_or_new_ok obj;
     free_stw_ok ();
     wf_with_parts ();
-    assert (MPA.marking_fresh g' outside_refs obj);
+    assert (MPA.marking_fresh g' outside_refs sp obj);
     let iu (x: obj_addr) : Lemma (in_use un' g' x == in_use un g x) =
       MPA.alloc_in_use g fp wz tag obj x;
       if x = obj then ()
