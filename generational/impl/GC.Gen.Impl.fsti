@@ -108,13 +108,16 @@ let gen_phase (gh: gen_heap_t) (g: heap_state) (ph: Ph.gc_phase) : slprop =
 /// drains it while marking (`GC.Gen.Impl.MarkSlice.mark_slice`).  Beside it,
 /// a counter (`gh.mark_words`) of the words the mark slices blackened since
 /// `start_cycle` zeroed it: statistics for the bridge (its pacing estimates
-/// the live words from it), about which nothing is claimed.
-let mark_state (gh: gen_heap_t) (g: heap_state) (ph: Ph.gc_phase) : slprop =
+/// the live words from it), about which nothing is claimed.  The index `sp`
+/// is the scan position the cells hold (`MS.scan_of`: the partly scanned
+/// object and its next field, `MP.scan_none` for none), at which the marking
+/// invariant holds (`gc_state`).
+let mark_state (gh: gen_heap_t) (g: heap_state) (ph: Ph.gc_phase) (sp: MP.scan_pos) : slprop =
   exists* (st: Seq.seq obj_addr) (ov: bool) (c f r mw: U64.t).
     is_gray_stack gh.mark_stack st ** R.pts_to gh.mark_overflow ov **
     R.pts_to gh.mark_cur c ** R.pts_to gh.mark_field f ** R.pts_to gh.mark_rescan r **
     R.pts_to gh.mark_words mw **
-    pure (MS.mark_cache_ok g ph st ov (MSI.pos c f r))
+    pure (MS.mark_cache_ok g ph st ov (MSI.pos c f r) /\ MS.scan_of (MSI.pos c f r) == sp)
 
 /// Combined slprop for the generational heap:
 ///   is_minor — ownership of minor heap array + bump pointer
@@ -131,29 +134,29 @@ let is_gen_heap (gh: gen_heap_t) (d: minor_heap) (b: U64.t)
 /// ---------------------------------------------------------------------------
 
 /// The generational heap, the collector's phase (its record's caches derived
-/// from the major heap, `gen_phase`), and the collector's state at that phase
+/// from the major heap, `gen_phase`), the mark state at the scan position
+/// `sp` (`mark_state`), and the collector's state at that phase and position
 /// (`GI.phase_shape`):
 ///
 ///   * `Ph.Idle`: `GenInv.collection_heap_shape` of the nursery, the major
 ///     heap and the free-list head -- what a full collection demands and
 ///     restores;
 ///   * `Ph.Marking`: the minor collection's shape at `free_stw` and the
-///     marking invariant with the nursery's major pointers as outside references
-///     (`GMM.nursery_refs`): `start_cycle` enters it, the mark slices
-///     (`major_slice`) run in it;
+///     marking invariant at the scan position `sp`, with the nursery's major
+///     pointers as outside references (`GMM.nursery_refs`): `start_cycle`
+///     enters it, the mark slices (`major_slice`) run in it;
 ///   * `Ph.Sweeping c`: the sweep phase at the cursor `c`
 ///     (`SPI.sweep_inv_incremental s fp c`), the nursery's shape, and that the
 ///     nursery's major pointers point at non-free objects
 ///     (`GenInv.minor_major_fields_not_free` for `SPI.free_incremental c`:
 ///     free is blue, or pending free -- white in front of the cursor).
 ///
-/// Beside it, the persistent mark state (`mark_state`).
-///
-/// Every entry point states its contract over it.
+/// Outside marking `sp` is `MP.scan_none`.  Every entry point states its
+/// contract over it.
 let gc_state (gh: gen_heap_t) (d: minor_heap) (b: U64.t) (s: heap_state) (fp: U64.t)
-             (ph: Ph.gc_phase) : slprop =
-  is_gen_heap gh d b s fp ** gen_phase gh s ph ** mark_state gh s ph **
-  pure (GI.phase_shape ({ data = d; bump = b } <: minor_state) s fp ph)
+             (ph: Ph.gc_phase) (sp: MP.scan_pos) : slprop =
+  is_gen_heap gh d b s fp ** gen_phase gh s ph ** mark_state gh s ph sp **
+  pure (GI.phase_shape ({ data = d; bump = b } <: minor_state) s fp ph sp)
 
 /// The root objects of a major collection hold exactly the objects the root
 /// array names in `g`.
@@ -558,8 +561,12 @@ val minor_collect_idle_post
 ///     precondition (`GC.Gen.Barrier.modify_ok`): the slot is a body word of
 ///     a non-free, scannable block that is not a closure, and the value is
 ///     storable there (`Mut.program_write`); while marking, the value is one
-///     the program holds (so white only if the marker will reach it:
-///     `MM.target_ok`, the roots obligation).  `initialize_field` asks only
+///     the program holds (so white only if the marker will reach it from the
+///     scan position: `MM.target_ok`, the roots obligation).  That holds for
+///     every slot, a field of the partly scanned object the mark slice has
+///     scanned already included: such a field is a scanned edge, like a
+///     black object's, so a write into it needs exactly what a write into a
+///     black object needs, and the barrier does not restart the scan.  `initialize_field` asks only
 ///     that the slot is a body word of a block of the heap that is not free
 ///     (a block just allocated, *fresh* while sweeping or marking:
 ///     `Mut.fresh_write`).
@@ -581,7 +588,8 @@ val minor_collect_idle_post
 ///     `RT.ref_table_covers_with` for `GI.phase_free`; repeated slots are
 ///     allowed), the remembered targets among the roots, and the roots valid and not free (never pending free).
 ///   * **The roots while marking**: every white object the program holds is
-///     one the marker will reach (`MP.outside_refs_reached` of the roots, which
+///     one the marker will reach from the scan position
+///     (`MP.outside_refs_reached` of the roots at `gc_state`'s `sp`, which
 ///     `minor_collect` asks at `Ph.Marking`).  `start_cycle` establishes it
 ///     for the roots it darkens; between collector calls the program obtains
 ///     values only by allocating (black) or loading fields of what it holds
@@ -599,7 +607,7 @@ val minor_collect_idle_post
 /// ---------------------------------------------------------------------------
 
 /// The minor collection's arguments, for the phase's definition of free.
-let minor_slots_ok (ph: Ph.gc_phase) (minor_st: minor_state) (s: heap_state)
+let minor_slots_ok (ph: Ph.gc_phase) (minor_st: minor_state) (s: heap_state) (sp: MP.scan_pos)
     (rs farr sl: Seq.seq U64.t) (nslots: nat) : prop =
   let free = GI.phase_free ph in
   Seq.length farr == FA.fwd_array_size /\
@@ -611,7 +619,7 @@ let minor_slots_ok (ph: Ph.gc_phase) (minor_st: minor_state) (s: heap_state)
   // While marking, the program's roots are outside_refs: every white object a root
   // points at is one the marker will reach (the program's obligation,
   // incremental-mark-plan.md section 3 clause 3, option (a)).
-  (Ph.Marking? ph ==> MP.outside_refs_reached s (GMM.root_refs s rs))
+  (Ph.Marking? ph ==> MP.outside_refs_reached s sp (GMM.root_refs s rs))
 
 /// **The minor collection**, at the collector's phase, for the phase's
 /// definition of free (`GI.phase_free`: `free_stw` idle, `free_incremental c`
@@ -624,24 +632,24 @@ fn minor_collect (gh: gen_heap_t)
                  (fwd_arr: array U64.t)
                  (queue: larray U64.t FA.queue_size)
                  (slots: array U64.t) (nslots: SZ.t)
-  requires gc_state gh 'd 'b 's 'fp 'ph **
+  requires gc_state gh 'd 'b 's 'fp 'ph 'sp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to slots 'sl **
            pure (SZ.v nroots == Seq.length 'rs /\
-                 minor_slots_ok 'ph ({ data = 'd; bump = 'b } <: minor_state) 's
+                 minor_slots_ok 'ph ({ data = 'd; bump = 'b } <: minor_state) 's 'sp
                    'rs 'farr 'sl (SZ.v nslots))
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
-    gc_state gh d2 b2 s2 fp2 'ph **
+    gc_state gh d2 b2 s2 fp2 'ph 'sp **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     pts_to slots 'sl **
     pure (minor_collect_post_with 'ph (GI.phase_free 'ph) ({ data = 'd; bump = 'b } <: minor_state)
             's 'fp 'rs ok d2 b2 s2 fp2 rs2 /\
-          (Ph.Marking? 'ph ==> MP.outside_refs_reached s2 (GMM.root_refs s2 rs2)))
+          (Ph.Marking? 'ph ==> MP.outside_refs_reached s2 'sp (GMM.root_refs s2 rs2)))
 
 /// ---------------------------------------------------------------------------
 /// The major collector: starting a cycle, and its slices
@@ -677,20 +685,20 @@ let start_cycle_pre (s: heap) (rs: Seq.seq U64.t) : prop =
 /// invariant, which entry points taking roots carry while marking).
 let start_cycle_post (s: heap) (rs: Seq.seq U64.t) (s2: heap) : prop =
   s2 == MStart.darkened s rs /\
-  MP.outside_refs_reached s2 (GMM.root_refs s2 rs)
+  MP.outside_refs_reached s2 MP.scan_none (GMM.root_refs s2 rs)
 
 /// **Start a major cycle**, idle and with the nursery empty (right after a
 /// minor collection): darken the roots onto the persistent mark stack (4.14's
 /// `caml_darken_all_roots_start`) and enter `Marking`.  The nursery, the
 /// free-list head and the roots are unchanged.
 fn start_cycle (gh: gen_heap_t) (roots: array U64.t) (nroots: SZ.t)
-  requires gc_state gh 'd 'b 's 'fp Ph.Idle **
+  requires gc_state gh 'd 'b 's 'fp Ph.Idle 'sp **
            pts_to roots 'rs **
            pure (SZ.v nroots == Seq.length 'rs /\
                  nursery_empty 'd 'b /\
                  start_cycle_pre 's 'rs)
   ensures exists* s2.
-    gc_state gh 'd 'b s2 'fp Ph.Marking **
+    gc_state gh 'd 'b s2 'fp Ph.Marking MP.scan_none **
     pts_to roots 'rs **
     pure (start_cycle_post 's 'rs s2)
 
@@ -699,11 +707,13 @@ fn start_cycle (gh: gen_heap_t) (roots: array U64.t) (nroots: SZ.t)
 ///   * idle, nothing;
 ///   * marking, a mark slice (`GC.Gen.Impl.MarkSlice.mark_slice`): mark
 ///     moves (`GC.Spec.MarkPhase.Slice.mark_steps`: fields of grey objects
-///     scanned, grey objects whose fields are dark blackened) until about
-///     `budget` words are scanned (an object larger than what is left is
-///     scanned in parts across slices), and, once nothing is grey, the start
-///     of the sweep (`Sweeping zero_addr`, `GI.marking_done_shape`); an
-///     unbounded budget (`UINT64_MAX`) finishes marking;
+///     scanned, grey objects whose fields are all scanned blackened) from the
+///     scan position `'sp` to the one it leaves, until about `budget` words
+///     are scanned (an object larger than what is left is scanned in parts
+///     across slices), and, once nothing is grey, the start of the sweep
+///     (`Sweeping zero_addr`, `GI.marking_done_shape`); an unbounded budget
+///     (`UINT64_MAX`) finishes marking, whatever the program wrote between
+///     slices;
 ///   * mid-sweep, whole sweep steps until the blocks swept add up to at
 ///     least `budget` words (headers included; at most one block over), or
 ///     the sweep is finished (`SL.phase_slice`: some number of sweep steps,
@@ -713,11 +723,11 @@ fn start_cycle (gh: gen_heap_t) (roots: array U64.t) (nroots: SZ.t)
 ///
 /// Returns whether the phase it leaves is `Idle`.
 fn major_slice (gh: gen_heap_t) (budget: U64.t)
-  requires gc_state gh 'd 'b 's 'fp 'ph
+  requires gc_state gh 'd 'b 's 'fp 'ph 'sp
   returns idle: bool
-  ensures exists* s2 fp2 ph2.
-    gc_state gh 'd 'b s2 fp2 ph2 **
-    pure (GI.major_slice_post 's 'fp 'ph (U64.v budget) s2 fp2 ph2 /\
+  ensures exists* s2 fp2 ph2 sp2.
+    gc_state gh 'd 'b s2 fp2 ph2 sp2 **
+    pure (GI.major_slice_post 's 'sp 'fp 'ph (U64.v budget) s2 sp2 fp2 ph2 /\
           idle == Ph.Idle? ph2)
 
 /// ---------------------------------------------------------------------------
@@ -747,7 +757,7 @@ fn full_gc (gh: gen_heap_t)
            (fwd_arr: array U64.t)
            (queue: larray U64.t FA.queue_size)
            (slots: array U64.t) (nslots: SZ.t)
-  requires gc_state gh 'd 'b 's 'fp Ph.Idle **
+  requires gc_state gh 'd 'b 's 'fp Ph.Idle 'sp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
@@ -766,8 +776,8 @@ fn full_gc (gh: gen_heap_t)
                MinorFwd.roots_valid_for_minor_collection
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns ok: bool
-  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
-    gc_state gh d2 b2 s2 fp2 Ph.Idle **
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 sp2.
+    gc_state gh d2 b2 s2 fp2 Ph.Idle sp2 **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **

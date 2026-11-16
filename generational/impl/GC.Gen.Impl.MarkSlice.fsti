@@ -55,8 +55,9 @@ let heap_ok (g: heap) : prop =
   SpecFields.well_formed_heap g /\ SpecFields.heap_objects_dense g /\
   Seq.length (SpecFields.objects zero_addr g) > 0
 
-/// **A mark slice.**  The heap after is some mark moves away (`S.mark_steps`),
-/// the cache holds of it; when it returns true, marking is over: the cache is
+/// **A mark slice.**  The heap after is some mark moves away (`S.mark_steps`,
+/// from the cache's scan position to the one it leaves), the cache holds of
+/// it; when it returns true, marking is over: the cache is
 /// empty and nothing is grey.  With an unbounded budget it returns true.
 fn mark_slice (heap: heap_t) (stk: gray_stack) (ovr: R.ref bool)
               (curr fldr rcr: R.ref U64.t) (mw: R.ref U64.t) (budget: U64.t)
@@ -67,6 +68,7 @@ fn mark_slice (heap: heap_t) (stk: gray_stack) (ovr: R.ref bool)
   ensures exists* s2 st2 ov2 c2 f2 r2 m2.
     is_heap heap s2 ** is_gray_stack stk st2 ** R.pts_to ovr ov2 **
     R.pts_to curr c2 ** R.pts_to fldr f2 ** R.pts_to rcr r2 ** R.pts_to mw m2 **
-    pure (MS.marking_cache s2 st2 ov2 (pos c2 f2 r2) /\ heap_ok s2 /\ S.mark_steps 's s2 /\
+    pure (MS.marking_cache s2 st2 ov2 (pos c2 f2 r2) /\ heap_ok s2 /\
+          S.mark_steps 's (MS.scan_of (pos 'c 'f 'r)) s2 (MS.scan_of (pos c2 f2 r2)) /\
           (fin ==> MS.cache_off st2 ov2 (pos c2 f2 r2) /\ Mark.noGreyObjects s2) /\
           (GI.unbounded (U64.v budget) ==> fin))

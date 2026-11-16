@@ -47,7 +47,10 @@ module MPA = GC.Spec.MarkPhase.Alloc
 ///
 /// The slot is a body word of the non-free, scannable, non-closure block
 /// `x`, and the value is storable there; while marking it is a value the
-/// program holds (`GB.modify_ok`: the trusted program obligation).  The
+/// program holds, so one the marker will reach from the scan position `'sp`
+/// if white (`GB.modify_ok`: the trusted program obligation).  The slot may
+/// be a field of the partly scanned object the mark slice has scanned
+/// already: the scan is not restarted.  The
 /// collector's state is kept at the same phase, the heap is the barrier's
 /// (`GB.modify_heap`: while marking the old value darkened, then the
 /// write), and the result says whether the slot must be remembered
@@ -57,10 +60,10 @@ module MPA = GC.Spec.MarkPhase.Alloc
 /// `&gc_gen_heap`): the call copies one word, not the record.
 fn modify_field (ghr: R.ref gen_heap_t) (slot: hp_addr) (v: U64.t)
                 (#gh: erased gen_heap_t) (#p: perm) (#x: erased obj_addr)
-  requires R.pts_to ghr #p gh ** gc_state gh 'd 'b 's 'fp 'ph **
-           pure (GB.modify_ok 'ph ({ data = 'd; bump = 'b } <: minor_state) 's x slot v)
+  requires R.pts_to ghr #p gh ** gc_state gh 'd 'b 's 'fp 'ph 'sp **
+           pure (GB.modify_ok 'ph ({ data = 'd; bump = 'b } <: minor_state) 's 'sp x slot v)
   returns r: bool
-  ensures R.pts_to ghr #p gh ** gc_state gh 'd 'b (GB.modify_heap 'ph 's slot v) 'fp 'ph **
+  ensures R.pts_to ghr #p gh ** gc_state gh 'd 'b (GB.modify_heap 'ph 's slot v) 'fp 'ph 'sp **
           pure (r == GB.modify_records 's slot v)
 
 /// **`caml_initialize` of a major slot**: the slot is a body word of the
@@ -76,7 +79,7 @@ fn modify_field (ghr: R.ref gen_heap_t) (slot: hp_addr) (v: U64.t)
 fn initialize_field (ghr: R.ref gen_heap_t) (slot: hp_addr) (v: U64.t)
                     (#gh: erased gen_heap_t) (#p: perm) (#x: erased obj_addr)
   requires R.pts_to ghr #p gh **
-           is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph ** mark_state gh 's 'ph **
+           is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph ** mark_state gh 's 'ph 'sp **
            pure (Seq.mem (reveal x) (SpecFields.objects zero_addr 's) /\ ~(SpecObj.is_blue x 's) /\
                  SPM.in_body 's x slot /\
                  (Ph.Marking? 'ph ==> SpecObj.is_black x 's /\
@@ -85,5 +88,5 @@ fn initialize_field (ghr: R.ref gen_heap_t) (slot: hp_addr) (v: U64.t)
   ensures R.pts_to ghr #p gh **
           is_gen_heap gh 'd 'b (SpecHeap.write_word 's slot v) 'fp **
           gen_phase gh (SpecHeap.write_word 's slot v) 'ph **
-          mark_state gh (SpecHeap.write_word 's slot v) 'ph **
+          mark_state gh (SpecHeap.write_word 's slot v) 'ph 'sp **
           pure (r == GB.initialize_records v)

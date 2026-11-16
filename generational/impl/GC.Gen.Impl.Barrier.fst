@@ -104,20 +104,20 @@ fn darken_via (ghr: R.ref gen_heap_t) (old: U64.t) (#gh: erased gen_heap_t) (#p:
 inline_for_extraction
 fn modify_at (ghr: R.ref gen_heap_t) (gh: gen_heap_t) (slot: hp_addr) (v: U64.t)
              (#p: perm) (#x: erased obj_addr)
-  requires R.pts_to ghr #p gh ** gc_state gh 'd 'b 's 'fp 'ph **
-           pure (GB.modify_ok 'ph ({ data = 'd; bump = 'b } <: minor_state) 's x slot v)
+  requires R.pts_to ghr #p gh ** gc_state gh 'd 'b 's 'fp 'ph 'sp **
+           pure (GB.modify_ok 'ph ({ data = 'd; bump = 'b } <: minor_state) 's 'sp x slot v)
   returns r: bool
-  ensures R.pts_to ghr #p gh ** gc_state gh 'd 'b (GB.modify_heap 'ph 's slot v) 'fp 'ph **
+  ensures R.pts_to ghr #p gh ** gc_state gh 'd 'b (GB.modify_heap 'ph 's slot v) 'fp 'ph 'sp **
           pure (r == GB.modify_records 's slot v)
 {
   let minor : erased minor_state = hide ({ data = 'd; bump = 'b } <: minor_state);
   unfold gc_state;
-  GB.modify_heap_facts 'ph minor 's 'fp x slot v;
+  GB.modify_heap_facts 'ph minor 's 'fp 'sp x slot v;
   unfold is_gen_heap;
   unfold mark_state;
   with st ov c f r mw. _;
   stack_facts gh.mark_stack;
-  GB.modify_mark_cache 'ph minor 's 'fp x slot v st ov (MSI.pos c f r) (stack_capacity gh.mark_stack);
+  GB.modify_mark_cache 'ph minor 's 'fp 'sp x slot v st ov (MSI.pos c f r) (stack_capacity gh.mark_stack);
   let old = read_word gh.major slot;
   unfold gen_phase;
   unfold Alloc.is_phase;
@@ -135,14 +135,10 @@ fn modify_at (ghr: R.ref gen_heap_t) (gh: gen_heap_t) (slot: hp_addr) (v: U64.t)
     rewrite (is_heap gh.major (SpecHeap.write_word s1 slot v))
          as (is_heap gh.major (GB.modify_heap 'ph 's slot v));
     phase_marking gh.phase_ref (GB.modify_heap 'ph 's slot v);
-    // A write into a field the mark slice has scanned restarts the scan of
-    // the partly scanned object (`MS.reset_cur`).
-    let cv = R.op_Bang gh.mark_cur;
-    let fv = R.op_Bang gh.mark_field;
-    if (cv <> 0UL && U64.gte slot cv && U64.lt (U64.add (U64.div (U64.sub slot cv) 8UL) 1UL) fv) {
-      R.op_Colon_Equals gh.mark_field 1UL;
-    };
-    fold (mark_state gh (GB.modify_heap 'ph 's slot v) 'ph);
+    // A write into a field the mark slice has scanned needs nothing more:
+    // the field is a scanned edge, whose new target the contract makes one
+    // the marker will reach (or not white); the scan goes on where it was.
+    fold (mark_state gh (GB.modify_heap 'ph 's slot v) 'ph 'sp);
   } else {
     // Idle or sweeping: just the write, which keeps the walk and every
     // header, so the sweep's caches.
@@ -150,12 +146,12 @@ fn modify_at (ghr: R.ref gen_heap_t) (gh: gen_heap_t) (slot: hp_addr) (v: U64.t)
     rewrite (is_heap gh.major (SpecHeap.write_word 's slot v))
          as (is_heap gh.major (GB.modify_heap 'ph 's slot v));
     PromoteImpl.phase_heads gh.phase_ref (GB.modify_heap 'ph 's slot v);
-    fold (mark_state gh (GB.modify_heap 'ph 's slot v) 'ph);
+    fold (mark_state gh (GB.modify_heap 'ph 's slot v) 'ph 'sp);
   };
-  GB.modify_phase_shape 'ph minor 's 'fp x slot v;
+  GB.modify_phase_shape 'ph minor 's 'fp 'sp x slot v;
   fold (gen_phase gh (GB.modify_heap 'ph 's slot v) 'ph);
   fold (is_gen_heap gh 'd 'b (GB.modify_heap 'ph 's slot v) 'fp);
-  fold (gc_state gh 'd 'b (GB.modify_heap 'ph 's slot v) 'fp 'ph);
+  fold (gc_state gh 'd 'b (GB.modify_heap 'ph 's slot v) 'fp 'ph 'sp);
   (young v && not (young old))
 }
 #pop-options
@@ -167,7 +163,7 @@ fn modify_at (ghr: R.ref gen_heap_t) (gh: gen_heap_t) (slot: hp_addr) (v: U64.t)
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 inline_for_extraction
 fn initialize_at (gh: gen_heap_t) (slot: hp_addr) (v: U64.t) (#x: erased obj_addr)
-  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph ** mark_state gh 's 'ph **
+  requires is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph ** mark_state gh 's 'ph 'sp **
            pure (Seq.mem (reveal x) (SpecFields.objects zero_addr 's) /\ ~(SpecObj.is_blue x 's) /\
                  SPM.in_body 's x slot /\
                  (Ph.Marking? 'ph ==> SpecObj.is_black x 's /\
@@ -175,7 +171,7 @@ fn initialize_at (gh: gen_heap_t) (slot: hp_addr) (v: U64.t) (#x: erased obj_add
   returns r: bool
   ensures is_gen_heap gh 'd 'b (SpecHeap.write_word 's slot v) 'fp **
           gen_phase gh (SpecHeap.write_word 's slot v) 'ph **
-          mark_state gh (SpecHeap.write_word 's slot v) 'ph **
+          mark_state gh (SpecHeap.write_word 's slot v) 'ph 'sp **
           pure (r == GB.initialize_records v)
 {
   MM.write_heads 's x slot v;
@@ -188,7 +184,7 @@ fn initialize_at (gh: gen_heap_t) (slot: hp_addr) (v: U64.t) (#x: erased obj_add
   unfold mark_state;
   with st ov c f r mw. _;
   MS.mark_cache_write 's 'ph st ov (MSI.pos c f r) x slot v;
-  fold (mark_state gh (SpecHeap.write_word 's slot v) 'ph);
+  fold (mark_state gh (SpecHeap.write_word 's slot v) 'ph 'sp);
   young v
 }
 #pop-options
@@ -203,24 +199,24 @@ fn initialize_at (gh: gen_heap_t) (slot: hp_addr) (v: U64.t) (#x: erased obj_add
 
 fn modify_field (ghr: R.ref gen_heap_t) (slot: hp_addr) (v: U64.t)
                 (#gh: erased gen_heap_t) (#p: perm) (#x: erased obj_addr)
-  requires R.pts_to ghr #p gh ** gc_state gh 'd 'b 's 'fp 'ph **
-           pure (GB.modify_ok 'ph ({ data = 'd; bump = 'b } <: minor_state) 's x slot v)
+  requires R.pts_to ghr #p gh ** gc_state gh 'd 'b 's 'fp 'ph 'sp **
+           pure (GB.modify_ok 'ph ({ data = 'd; bump = 'b } <: minor_state) 's 'sp x slot v)
   returns r: bool
-  ensures R.pts_to ghr #p gh ** gc_state gh 'd 'b (GB.modify_heap 'ph 's slot v) 'fp 'ph **
+  ensures R.pts_to ghr #p gh ** gc_state gh 'd 'b (GB.modify_heap 'ph 's slot v) 'fp 'ph 'sp **
           pure (r == GB.modify_records 's slot v)
 {
   let g = R.op_Bang ghr;
-  rewrite (gc_state gh 'd 'b 's 'fp 'ph) as (gc_state g 'd 'b 's 'fp 'ph);
+  rewrite (gc_state gh 'd 'b 's 'fp 'ph 'sp) as (gc_state g 'd 'b 's 'fp 'ph 'sp);
   let r = modify_at ghr g slot v #p #x;
-  rewrite (gc_state g 'd 'b (GB.modify_heap 'ph 's slot v) 'fp 'ph)
-       as (gc_state gh 'd 'b (GB.modify_heap 'ph 's slot v) 'fp 'ph);
+  rewrite (gc_state g 'd 'b (GB.modify_heap 'ph 's slot v) 'fp 'ph 'sp)
+       as (gc_state gh 'd 'b (GB.modify_heap 'ph 's slot v) 'fp 'ph 'sp);
   r
 }
 
 fn initialize_field (ghr: R.ref gen_heap_t) (slot: hp_addr) (v: U64.t)
                     (#gh: erased gen_heap_t) (#p: perm) (#x: erased obj_addr)
   requires R.pts_to ghr #p gh **
-           is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph ** mark_state gh 's 'ph **
+           is_gen_heap gh 'd 'b 's 'fp ** gen_phase gh 's 'ph ** mark_state gh 's 'ph 'sp **
            pure (Seq.mem (reveal x) (SpecFields.objects zero_addr 's) /\ ~(SpecObj.is_blue x 's) /\
                  SPM.in_body 's x slot /\
                  (Ph.Marking? 'ph ==> SpecObj.is_black x 's /\
@@ -229,19 +225,19 @@ fn initialize_field (ghr: R.ref gen_heap_t) (slot: hp_addr) (v: U64.t)
   ensures R.pts_to ghr #p gh **
           is_gen_heap gh 'd 'b (SpecHeap.write_word 's slot v) 'fp **
           gen_phase gh (SpecHeap.write_word 's slot v) 'ph **
-          mark_state gh (SpecHeap.write_word 's slot v) 'ph **
+          mark_state gh (SpecHeap.write_word 's slot v) 'ph 'sp **
           pure (r == GB.initialize_records v)
 {
   let g = R.op_Bang ghr;
   rewrite (is_gen_heap gh 'd 'b 's 'fp) as (is_gen_heap g 'd 'b 's 'fp);
   rewrite (gen_phase gh 's 'ph) as (gen_phase g 's 'ph);
-  rewrite (mark_state gh 's 'ph) as (mark_state g 's 'ph);
+  rewrite (mark_state gh 's 'ph 'sp) as (mark_state g 's 'ph 'sp);
   let r = initialize_at g slot v #x;
   rewrite (is_gen_heap g 'd 'b (SpecHeap.write_word 's slot v) 'fp)
        as (is_gen_heap gh 'd 'b (SpecHeap.write_word 's slot v) 'fp);
   rewrite (gen_phase g (SpecHeap.write_word 's slot v) 'ph)
        as (gen_phase gh (SpecHeap.write_word 's slot v) 'ph);
-  rewrite (mark_state g (SpecHeap.write_word 's slot v) 'ph)
-       as (mark_state gh (SpecHeap.write_word 's slot v) 'ph);
+  rewrite (mark_state g (SpecHeap.write_word 's slot v) 'ph 'sp)
+       as (mark_state gh (SpecHeap.write_word 's slot v) 'ph 'sp);
   r
 }
