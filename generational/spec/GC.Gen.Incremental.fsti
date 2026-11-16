@@ -135,12 +135,13 @@ let unbounded (budget: nat) : bool = budget >= pow2 64 - 1
 /// **A mark slice**: some mark moves (`S.mark_steps`: objects started, their
 /// fields scanned, objects whose fields are all scanned blackened) from the
 /// scan position `sp` to `sp'`, the free list untouched, and either still
-/// marking or, with nothing grey left, the start of the sweep.  An unbounded
-/// slice finishes marking.
+/// marking or, with nothing grey left (and nothing partly scanned), the start
+/// of the sweep.  An unbounded slice finishes marking.
 let mark_slice_post (g: heap) (sp: MP.scan_pos) (fp: U64.t) (budget: nat)
     (g': heap) (sp': MP.scan_pos) (fp': U64.t) (ph': Ph.gc_phase) : prop =
   fp' == fp /\ S.mark_steps g sp g' sp' /\
-  (ph' == Ph.Marking \/ (ph' == Ph.Sweeping zero_addr /\ Mark.noGreyObjects g')) /\
+  (ph' == Ph.Marking \/
+   (ph' == Ph.Sweeping zero_addr /\ Mark.noGreyObjects g' /\ sp' == MP.scan_none)) /\
   (unbounded budget ==> ~(Ph.Marking? ph'))
 
 /// **A major slice at any phase** (outside marking the scan position stays).

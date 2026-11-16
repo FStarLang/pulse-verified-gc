@@ -776,8 +776,8 @@ fn full_gc (gh: gen_heap_t)
                MinorFwd.roots_valid_for_minor_collection
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns ok: bool
-  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 sp2.
-    gc_state gh d2 b2 s2 fp2 Ph.Idle sp2 **
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
+    gc_state gh d2 b2 s2 fp2 Ph.Idle MP.scan_none **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **

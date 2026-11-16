@@ -456,6 +456,19 @@ fn mark_state_off (gh: gen_heap_t) (s s': heap_state) (ph ph': Ph.gc_phase) (sp:
   fold (mark_state gh s' ph' sp)
 }
 
+/// Outside marking the scan position is `MP.scan_none` (nothing is partly
+/// scanned).
+ghost
+fn mark_state_none (gh: gen_heap_t) (s: heap_state) (ph: Ph.gc_phase) (sp: MP.scan_pos)
+  requires mark_state gh s ph sp ** pure (~(Ph.Marking? ph))
+  ensures mark_state gh s ph MP.scan_none ** pure (sp == MP.scan_none)
+{
+  unfold mark_state;
+  with st ov c f r mw. _;
+  MS.mark_cache_not_marking s ph st ov (MSI.pos c f r);
+  fold (mark_state gh s ph MP.scan_none)
+}
+
 /// A minor collection keeps the mark stack a cache of the grey objects:
 /// while marking it keeps the grey objects (`MS.mark_cache_minor`).
 let mark_cache_minor_at (minor: minor_state) (s: heap) (fp: U64.t) (ph: Ph.gc_phase) (sp: MP.scan_pos)
@@ -989,8 +1002,8 @@ fn full_gc (gh: gen_heap_t)
                MinorFwd.roots_valid_for_minor_collection
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns ok: bool
-  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 sp2.
-    gc_state gh d2 b2 s2 fp2 Ph.Idle sp2 **
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
+    gc_state gh d2 b2 s2 fp2 Ph.Idle MP.scan_none **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
@@ -1068,12 +1081,19 @@ fn full_gc (gh: gen_heap_t)
          as (gc_state gh d_mid b_mid s_fin fp_fin Ph.Idle sp_fin);
     unfold gc_state;
     GI.phase_shape_idle ({ data = d_mid; bump = b_mid } <: minor_state) s_fin fp_fin sp_fin;
-    fold (gc_state gh d_mid b_mid s_fin fp_fin Ph.Idle sp_fin);
+    GI.phase_shape_idle ({ data = d_mid; bump = b_mid } <: minor_state) s_fin fp_fin MP.scan_none;
+    mark_state_none gh s_fin Ph.Idle sp_fin;
+    fold (gc_state gh d_mid b_mid s_fin fp_fin Ph.Idle MP.scan_none);
     full_gc_end ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs s_fin fp_fin;
     ok
   } else {
     // Nothing ran after the minor collection, so the heap we hand back is the
     // post-minor one, and every `ok`-guarded conjunct is vacuous.
+    unfold gc_state;
+    GI.phase_shape_idle ({ data = d_mid; bump = b_mid } <: minor_state) s_mid fp_mid 'sp;
+    GI.phase_shape_idle ({ data = d_mid; bump = b_mid } <: minor_state) s_mid fp_mid MP.scan_none;
+    mark_state_none gh s_mid Ph.Idle 'sp;
+    fold (gc_state gh d_mid b_mid s_mid fp_mid Ph.Idle MP.scan_none);
     ok
   }
 }

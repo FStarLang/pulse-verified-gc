@@ -187,6 +187,12 @@ val marker_will_reach_elim (g: heap) (sp: scan_pos) (w: obj_addr)
           (ensures grey_or_white g w /\
                    (exists (x: obj_addr). Seq.mem x (objects zero_addr g) /\ is_gray x g))
 
+/// With no partly scanned object, it is reachability from a grey object
+/// along every edge, through grey or white blocks.
+val marker_will_reach_none (g: heap) (w: obj_addr)
+  : Lemma (marker_will_reach g scan_none w <==>
+           (exists (x: obj_addr). is_gray x g /\ reach_within (field_edge g) (grey_or_white g) x w))
+
 /// ---------------------------------------------------------------------------
 /// The mark step at any grey object
 /// ---------------------------------------------------------------------------

@@ -145,6 +145,31 @@ let marker_will_reach_elim g sp w =
   eliminate exists (x: obj_addr). is_gray x g /\ reach_within (unscanned_edge g sp) (grey_or_white g) x w
   with reach_within_ends (unscanned_edge g sp) (grey_or_white g) x w
 
+/// With no partly scanned object every edge is unscanned: what the marker
+/// will reach is then reachability along every edge (`mwr0`), the form the
+/// stop-the-world step is proved with.
+let mwr0 (g: heap) (w: obj_addr) : prop =
+  exists (x: obj_addr). is_gray x g /\ reach_within (field_edge g) (grey_or_white g) x w
+
+/// With no partly scanned object it is `mwr0`.
+let mwr_none (g: heap) (w: obj_addr)
+  : Lemma (marker_will_reach g scan_none w <==> mwr0 g w)
+  = let p = grey_or_white g in
+    let e1 = unscanned_edge g scan_none in
+    let e0 = field_edge g in
+    let to0 (x: obj_addr) : Lemma (requires is_gray x g /\ reach_within e1 p x w) (ensures mwr0 g w)
+      = reach_within_mono e1 e0 p p x w
+    in
+    let from0 (x: obj_addr) : Lemma (requires is_gray x g /\ reach_within e0 p x w)
+                                    (ensures marker_will_reach g scan_none w)
+      = reach_within_mono e0 e1 p p x w
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires to0);
+    FStar.Classical.forall_intro (FStar.Classical.move_requires from0)
+
+let marker_will_reach_none g w = mwr_none g w
+
+
 /// ---------------------------------------------------------------------------
 /// The stop-the-world step is the step at the top of the stack
 /// ---------------------------------------------------------------------------
@@ -352,12 +377,6 @@ let step_child_grey (g: heap) (x y: obj_addr)
 /// What the marker will reach, across the step
 /// ---------------------------------------------------------------------------
 
-/// With no partly scanned object every edge is unscanned: what the marker
-/// will reach is then reachability along every edge (`mwr0`), the form the
-/// stop-the-world step is proved with.
-let mwr0 (g: heap) (w: obj_addr) : prop =
-  exists (x: obj_addr). is_gray x g /\ reach_within (field_edge g) (grey_or_white g) x w
-
 let mwr_intro (g: heap) (x w: obj_addr)
   : Lemma (requires is_gray x g /\ reach_within (field_edge g) (grey_or_white g) x w)
           (ensures mwr0 g w)
@@ -417,22 +436,6 @@ let reach_step (g: heap) (x w: obj_addr)
 /// ---------------------------------------------------------------------------
 /// What the marker will reach, at a scan position
 /// ---------------------------------------------------------------------------
-
-/// With no partly scanned object it is `mwr0`.
-let mwr_none (g: heap) (w: obj_addr)
-  : Lemma (marker_will_reach g scan_none w <==> mwr0 g w)
-  = let p = grey_or_white g in
-    let e1 = unscanned_edge g scan_none in
-    let e0 = field_edge g in
-    let to0 (x: obj_addr) : Lemma (requires is_gray x g /\ reach_within e1 p x w) (ensures mwr0 g w)
-      = reach_within_mono e1 e0 p p x w
-    in
-    let from0 (x: obj_addr) : Lemma (requires is_gray x g /\ reach_within e0 p x w)
-                                    (ensures marker_will_reach g scan_none w)
-      = reach_within_mono e0 e1 p p x w
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires to0);
-    FStar.Classical.forall_intro (FStar.Classical.move_requires from0)
 
 /// **What the marker will reach, across a change**: when every grey or
 /// white block stays one, grey objects stay grey, and every unscanned edge
