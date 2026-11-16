@@ -187,31 +187,31 @@ let black_move_is_step g x =
 /// The marking invariant
 /// ---------------------------------------------------------------------------
 
-let grey_move_inv (g g': heap) (held: obj_addr -> prop)
-  : Lemma (requires MP.marking_inv g held /\ grey_move g g') (ensures MP.marking_inv g' held)
+let grey_move_inv (g g': heap) (outside_refs: obj_addr -> prop)
+  : Lemma (requires MP.marking_inv g outside_refs /\ grey_move g g') (ensures MP.marking_inv g' outside_refs)
   = eliminate exists (x: obj_addr) (k: U64.t{U64.v k >= 1}).
       scan_target g x /\ U64.v k <= U64.v (wosize_of_object x g) /\ g' == scan_field g x k
-    with MM.darken_inv g held (HG.get_field g x k)
+    with MM.darken_inv g outside_refs (HG.get_field g x k)
 
-let black_move_inv (g g': heap) (held: obj_addr -> prop)
-  : Lemma (requires MP.marking_inv g held /\ black_move g g') (ensures MP.marking_inv g' held)
+let black_move_inv (g g': heap) (outside_refs: obj_addr -> prop)
+  : Lemma (requires MP.marking_inv g outside_refs /\ black_move g g') (ensures MP.marking_inv g' outside_refs)
   = eliminate exists (x: obj_addr).
       Seq.mem x (objects zero_addr g) /\ is_gray x g /\
       (is_no_scan x g \/ fields_dark g x 1 (U64.v (wosize_of_object x g))) /\
       g' == makeBlack x g
     with begin
       black_move_is_step g x;
-      MP.marking_inv_step g held x
+      MP.marking_inv_step g outside_refs x
     end
 
-let mark_move_inv g g' held =
-  FStar.Classical.move_requires (grey_move_inv g g') held;
-  FStar.Classical.move_requires (black_move_inv g g') held
+let mark_move_inv g g' outside_refs =
+  FStar.Classical.move_requires (grey_move_inv g g') outside_refs;
+  FStar.Classical.move_requires (black_move_inv g g') outside_refs
 
-let mark_steps_inv g g' held =
-  let p (h: heap) : prop = MP.marking_inv h held in
+let mark_steps_inv g g' outside_refs =
+  let p (h: heap) : prop = MP.marking_inv h outside_refs in
   let step (h h': heap) : Lemma (requires p h /\ mark_move h h') (ensures p h') =
-    mark_move_inv h h' held
+    mark_move_inv h h' outside_refs
   in
   mark_steps_ind p step g g'
 

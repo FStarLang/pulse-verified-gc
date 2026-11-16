@@ -26,14 +26,14 @@ module Promote = GC.Gen.Promote
 #push-options "--z3rlimit 20"
 let roots_grey (g: heap) (fp: U64.t) (rs: seq U64.t)
   : Lemma (requires MBP.darken_precondition g Seq.empty rs fp (Seq.length rs + 1))
-          (ensures MP.held_reached (darkened g rs) (GMM.roots_held (darkened g rs) rs))
+          (ensures MP.outside_refs_reached (darkened g rs) (GMM.root_refs (darkened g rs) rs))
   = let cap = Seq.length rs + 1 in
     let r = MB.darken_roots_bounded_spec g Seq.empty rs cap in
     let g' = fst r in
     MBP.darken_establishes_precondition g Seq.empty rs fp cap;
     MBP.darken_roots_match_stack g Seq.empty rs fp cap;
     let aux (w: obj_addr)
-      : Lemma (requires GMM.roots_held g' rs w) (ensures ~(is_white w g'))
+      : Lemma (requires GMM.root_refs g' rs w) (ensures ~(is_white w g'))
       = eliminate exists (q: U64.t). Seq.mem q rs /\ is_pointer q /\ resolve_object (q <: obj_addr) g' == w
         with begin
           MB.darken_roots_bounded_spec_preserves_resolve g Seq.empty rs cap (q <: obj_addr);
@@ -65,8 +65,8 @@ let mark_start_shape minor g fp rs =
   GenInv.collection_shape_with_intro Ph.Marking free_stw minor g' fp;
   // the marking invariant: nothing black, and the empty nursery holds nothing
   MP.no_black_tri_color g';
-  FStar.Classical.forall_intro (GMM.nursery_held_reset minor);
-  MP.marking_inv_start g' (GMM.nursery_held minor);
+  FStar.Classical.forall_intro (GMM.nursery_refs_reset minor);
+  MP.marking_inv_start g' (GMM.nursery_refs minor);
   GI.phase_shape_marking minor g' fp
 #pop-options
 

@@ -8,7 +8,7 @@
 /// they must not count against the marking invariant until then -- the
 /// analogue of the sweep's `fresh_ok` (`GC.Spec.SweepPhase.Mutator`):
 ///
-///   * **Fresh** (`marking_fresh g held obj`): the invariant with `obj` black
+///   * **Fresh** (`marking_fresh g outside_refs obj`): the invariant with `obj` black
 ///     and its fields exempt: well-formedness counts `obj` as free
 ///     (`free_or_new obj`, so nothing points at it and its fields are
 ///     unconstrained) and the weak tri-colour clause skips it as a source
@@ -22,7 +22,7 @@
 ///   * **Initialising** (`marking_fresh_write`): writes into the fresh
 ///     object's body keep it fresh.
 ///   * **Closing** (`marking_fresh_close`): once every field is storable and
-///     its target is not white, or held, or one the marker will reach
+///     its target is not white, or an outside reference, or one the marker will reach
 ///     (`fields_ok`), the invariant holds.  A field the program initialises
 ///     with a value it holds meets this.
 ///
@@ -99,10 +99,10 @@ let fresh_tri_color (g: heap) (obj: obj_addr) : prop =
 
 /// **The marking invariant with `obj` fresh**: black, a block, its fields
 /// not yet bound by well-formedness or the weak tri-colour clause.
-let marking_fresh (g: heap) (held: obj_addr -> prop) (obj: obj_addr) : prop =
+let marking_fresh (g: heap) (outside_refs: obj_addr -> prop) (obj: obj_addr) : prop =
   well_formed_heap_with (free_or_new obj) g /\
   Seq.mem obj (objects zero_addr g) /\ is_black obj g /\
-  fresh_tri_color g obj /\ held_reached g held
+  fresh_tri_color g obj /\ outside_refs_reached g outside_refs
 
 /// ---------------------------------------------------------------------------
 /// Allocation
@@ -122,8 +122,8 @@ val alloc_in_use (g: heap) (fp: U64.t) (wz: nat) (tag: SPM.tag_t) (obj x: obj_ad
 /// black, of the requested size and tag, was not a non-free block before,
 /// and is fresh; every non-free block is kept (allocation frees nothing),
 /// and the list stays ascending.
-val marking_alloc (g: heap) (held: obj_addr -> prop) (fp: U64.t) (wz: nat) (tag: SPM.tag_t)
-  : Lemma (requires marking_inv g held /\ FLA.fl_ascending g fp /\ wz >= 1 /\ tag <> infix_tag)
+val marking_alloc (g: heap) (outside_refs: obj_addr -> prop) (fp: U64.t) (wz: nat) (tag: SPM.tag_t)
+  : Lemma (requires marking_inv g outside_refs /\ FLA.fl_ascending g fp /\ wz >= 1 /\ tag <> infix_tag)
           (ensures (let r = AC.alloc_phase g fp Ph.Marking wz tag in
                     (r.SA.obj_out == 0UL ==> r.SA.heap_out == g /\ r.SA.fp_out == fp) /\
                     (r.SA.obj_out <> 0UL ==>
@@ -134,28 +134,28 @@ val marking_alloc (g: heap) (held: obj_addr -> prop) (fp: U64.t) (wz: nat) (tag:
                         tag_of_object obj r.SA.heap_out == tag /\
                         keeps_blocks free_stw g r.SA.heap_out /\
                         FLA.fl_ascending r.SA.heap_out r.SA.fp_out /\
-                        marking_fresh r.SA.heap_out held obj))))
+                        marking_fresh r.SA.heap_out outside_refs obj))))
 
 /// ---------------------------------------------------------------------------
 /// Initialising a fresh object
 /// ---------------------------------------------------------------------------
 
 /// A write into the body of a fresh object keeps it fresh.
-val marking_fresh_write (g: heap) (held: obj_addr -> prop) (obj: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires marking_fresh g held obj /\ SPM.in_body g obj a)
-          (ensures marking_fresh (write_word g a v) held obj /\
+val marking_fresh_write (g: heap) (outside_refs: obj_addr -> prop) (obj: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires marking_fresh g outside_refs obj /\ SPM.in_body g obj a)
+          (ensures marking_fresh (write_word g a v) outside_refs obj /\
                    SPI.same_heads g (write_word g a v))
 
 /// Every field of `obj`, if it is scannable, points at nothing white unless
-/// that is held or one the marker will reach.
-let fields_ok (g: heap) (held: obj_addr -> prop) (obj: obj_addr) : prop =
+/// that is an outside reference or one the marker will reach.
+let fields_ok (g: heap) (outside_refs: obj_addr -> prop) (obj: obj_addr) : prop =
   not (is_no_scan obj g) ==>
   (forall (i: nat). i < U64.v (wosize_of_object obj g) /\ U64.v obj + i * 8 + 8 <= heap_size ==>
-     MM.target_ok g held (SPM.field_val g obj i))
+     MM.target_ok g outside_refs (SPM.field_val g obj i))
 
 /// **Closing a fresh object**: once its fields are storable and fine for a
 /// black object to point at, the invariant holds.
-val marking_fresh_close (g: heap) (held: obj_addr -> prop) (obj: obj_addr)
-  : Lemma (requires marking_fresh g held obj /\ SPM.fields_storable free_stw g obj /\
-                    fields_ok g held obj)
-          (ensures marking_inv g held)
+val marking_fresh_close (g: heap) (outside_refs: obj_addr -> prop) (obj: obj_addr)
+  : Lemma (requires marking_fresh g outside_refs obj /\ SPM.fields_storable free_stw g obj /\
+                    fields_ok g outside_refs obj)
+          (ensures marking_inv g outside_refs)

@@ -1,5 +1,4 @@
-(*
-   Pulse GC (Generational) - Top-Level Entry Point Interface
+(*   Pulse GC (Generational) - Top-Level Entry Point Interface
 
    Provides:
    - gc_state: the collector's state at its phase, which every entry point
@@ -139,8 +138,8 @@ let is_gen_heap (gh: gen_heap_t) (d: minor_heap) (b: U64.t)
 ///     heap and the free-list head -- what a full collection demands and
 ///     restores;
 ///   * `Ph.Marking`: the minor collection's shape at `free_stw` and the
-///     marking invariant with the nursery's major pointers held
-///     (`GMM.nursery_held`): `start_cycle` enters it, the mark slices
+///     marking invariant with the nursery's major pointers as outside references
+///     (`GMM.nursery_refs`): `start_cycle` enters it, the mark slices
 ///     (`major_slice`) run in it;
 ///   * `Ph.Sweeping c`: the sweep phase at the cursor `c`
 ///     (`SPI.sweep_inv_incremental s fp c`), the nursery's shape, and that the
@@ -543,7 +542,7 @@ val minor_collect_idle_post
 ///     cache is kept (`alloc_mark_cache`).  The runtime initialises every
 ///     field before the next collector call (`initialize_field`, or a raw
 ///     store; `fresh_shape_write`, `fresh_mark_cache_write`) with values that
-///     are storable and, if white, held by the program
+///     are storable and, if white, referenced by the program
 ///     (`GC.Spec.MarkPhase.Alloc.fields_ok`, met by the roots obligation
 ///     below); `fresh_shape_close` then gives back `phase_shape ...
 ///     Ph.Marking`, its `collection_shape_with Ph.Marking free_stw` included.
@@ -582,7 +581,7 @@ val minor_collect_idle_post
 ///     `RT.ref_table_covers_with` for `GI.phase_free`; repeated slots are
 ///     allowed), the remembered targets among the roots, and the roots valid and not free (never pending free).
 ///   * **The roots while marking**: every white object the program holds is
-///     one the marker will reach (`MP.held_reached` of the roots, which
+///     one the marker will reach (`MP.outside_refs_reached` of the roots, which
 ///     `minor_collect` asks at `Ph.Marking`).  `start_cycle` establishes it
 ///     for the roots it darkens; between collector calls the program obtains
 ///     values only by allocating (black) or loading fields of what it holds
@@ -609,10 +608,10 @@ let minor_slots_ok (ph: Ph.gc_phase) (minor_st: minor_state) (s: heap_state)
   RT.ref_table_covers_with free s sl nslots /\
   MinorFwd.remembered_targets_in_roots s rs sl nslots /\
   MinorFwd.roots_valid_with free minor_st s rs /\
-  // While marking, the program's roots are held: every white object a root
+  // While marking, the program's roots are outside_refs: every white object a root
   // points at is one the marker will reach (the program's obligation,
   // incremental-mark-plan.md section 3 clause 3, option (a)).
-  (Ph.Marking? ph ==> MP.held_reached s (GMM.roots_held s rs))
+  (Ph.Marking? ph ==> MP.outside_refs_reached s (GMM.root_refs s rs))
 
 /// **The minor collection**, at the collector's phase, for the phase's
 /// definition of free (`GI.phase_free`: `free_stw` idle, `free_incremental c`
@@ -642,7 +641,7 @@ fn minor_collect (gh: gen_heap_t)
     pts_to slots 'sl **
     pure (minor_collect_post_with 'ph (GI.phase_free 'ph) ({ data = 'd; bump = 'b } <: minor_state)
             's 'fp 'rs ok d2 b2 s2 fp2 rs2 /\
-          (Ph.Marking? 'ph ==> MP.held_reached s2 (GMM.roots_held s2 rs2)))
+          (Ph.Marking? 'ph ==> MP.outside_refs_reached s2 (GMM.root_refs s2 rs2)))
 
 /// ---------------------------------------------------------------------------
 /// The major collector: starting a cycle, and its slices
@@ -674,11 +673,11 @@ let start_cycle_pre (s: heap) (rs: Seq.seq U64.t) : prop =
 /// What starting a cycle guarantees: the heap is the roots darkened
 /// (`MStart.darkened`: every white object a root names greyed, nothing else
 /// changed), and every object the roots point at is one the marker will
-/// reach or not white (`MP.held_reached`, the roots half of the marking
+/// reach or not white (`MP.outside_refs_reached`, the roots half of the marking
 /// invariant, which entry points taking roots carry while marking).
 let start_cycle_post (s: heap) (rs: Seq.seq U64.t) (s2: heap) : prop =
   s2 == MStart.darkened s rs /\
-  MP.held_reached s2 (GMM.roots_held s2 rs)
+  MP.outside_refs_reached s2 (GMM.root_refs s2 rs)
 
 /// **Start a major cycle**, idle and with the nursery empty (right after a
 /// minor collection): darken the roots onto the persistent mark stack (4.14's

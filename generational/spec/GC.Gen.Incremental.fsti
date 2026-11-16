@@ -11,10 +11,10 @@
 ///   * `Marking`: the minor collection's shape at `free_stw` (marking frees
 ///     nothing) and the marking invariant
 ///     (`GC.Spec.MarkPhase.marking_inv`) with what the nursery's fields
-///     point at held (`GC.Gen.MarkPhase.Minor.nursery_held`).  The program's
-///     roots are the other half of what is held; they are not part of the
+///     point at as outside references (`GC.Gen.MarkPhase.Minor.nursery_refs`).  The program's
+///     roots are the other half of the outside references; they are not part of the
 ///     collector's state, so the entry points that take them state it of
-///     them (`MP.held_reached g (GMM.roots_held g roots)`);
+///     them (`MP.outside_refs_reached g (GMM.root_refs g roots)`);
 ///   * `Sweeping c`: the sweep phase at the cursor `c`
 ///     (`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental g fp c`), the
 ///     nursery's shape, and the cross-generation condition for
@@ -70,7 +70,7 @@ let phase_shape (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) : p
   | Ph.Idle -> GenInv.collection_heap_shape minor g fp
   | Ph.Marking ->
       GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\
-      MP.marking_inv g (GMM.nursery_held minor)
+      MP.marking_inv g (GMM.nursery_refs minor)
   | Ph.Sweeping c ->
       sweep_inv_incremental g fp c /\ GenInv.minor_heap_shape minor /\
       GenInv.minor_major_fields_not_free (free_incremental c) minor g
@@ -81,7 +81,7 @@ val phase_shape_idle (minor: minor_state) (g: heap) (fp: U64.t)
 val phase_shape_marking (minor: minor_state) (g: heap) (fp: U64.t)
   : Lemma (phase_shape minor g fp Ph.Marking <==>
            (GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\
-            MP.marking_inv g (GMM.nursery_held minor)))
+            MP.marking_inv g (GMM.nursery_refs minor)))
 
 val phase_shape_sweeping (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
   : Lemma (phase_shape minor g fp (Ph.Sweeping c) <==>
@@ -140,7 +140,7 @@ let major_slice_post (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
   else (g', fp', ph') == major_slice_spec g fp ph budget
 
 /// **Marking keeps the collector's state**: mark moves keep the marking
-/// invariant (for any `held`) and the shape (only colours change, among
+/// invariant (for any `outside_refs`) and the shape (only colours change, among
 /// white, grey and black) ...
 val mark_steps_shape (minor: minor_state) (g g': heap) (fp: U64.t)
   : Lemma (requires phase_shape minor g fp Ph.Marking /\ S.mark_steps g g')
@@ -149,13 +149,13 @@ val mark_steps_shape (minor: minor_state) (g g': heap) (fp: U64.t)
 /// ... and what the program's roots hold stays one the marker will reach
 /// or not white.
 val mark_steps_roots (minor: minor_state) (g g': heap) (fp: U64.t) (rs: seq U64.t)
-  : Lemma (requires phase_shape minor g fp Ph.Marking /\ MP.held_reached g (GMM.roots_held g rs) /\
+  : Lemma (requires phase_shape minor g fp Ph.Marking /\ MP.outside_refs_reached g (GMM.root_refs g rs) /\
                     S.mark_steps g g')
-          (ensures MP.held_reached g' (GMM.roots_held g' rs))
+          (ensures MP.outside_refs_reached g' (GMM.root_refs g' rs))
 
 /// **The hand-over to the sweep**: with nothing grey, marking is done
 /// (`MP.marking_done_sweep_start`) and the sweep starts at the first block.
-/// What the nursery holds is held, so not white, so not pending free.
+/// What the nursery points at is an outside reference, so not white, so not pending free.
 val marking_done_shape (minor: minor_state) (g: heap) (fp: U64.t)
   : Lemma (requires phase_shape minor g fp Ph.Marking /\ Mark.noGreyObjects g)
           (ensures phase_shape minor g fp (Ph.Sweeping zero_addr))
@@ -189,18 +189,18 @@ val minor_keeps_phase_shape (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t
                     phase_shape res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp (Ph.Sweeping c)))
 
 /// **A minor collection while marking keeps the collector's state**, given
-/// that the program's roots are held (`MP.held_reached`: each white object a
+/// that the program's roots are outside references reached (`MP.outside_refs_reached`: each white object a
 /// root points at is one the marker will reach); it leaves the same of the
 /// rewritten roots.
 val minor_keeps_marking_shape (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires phase_shape minor g fp Ph.Marking /\
                     MCFH.roots_valid_for_minor_collection minor g roots /\
-                    MP.held_reached g (GMM.roots_held g roots))
+                    MP.outside_refs_reached g (GMM.root_refs g roots))
           (ensures (let res = GMM.collect_marking minor g fp roots in
                     res.Promote.mc_minor == minor_reset minor /\
                     phase_shape res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp Ph.Marking /\
-                    MP.held_reached res.Promote.mc_major
-                      (GMM.roots_held res.Promote.mc_major res.Promote.mc_roots)))
+                    MP.outside_refs_reached res.Promote.mc_major
+                      (GMM.root_refs res.Promote.mc_major res.Promote.mc_roots)))
 
 /// `phase_free` at each phase, as an equation (the SMT encoding does not
 /// unfold a definition whose value is a function).

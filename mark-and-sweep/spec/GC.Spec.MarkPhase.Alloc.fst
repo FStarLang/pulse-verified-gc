@@ -173,7 +173,7 @@ let alloc_in_use (g: heap) (fp: U64.t) (wz: nat) (tag: SPM.tag_t) (obj x: obj_ad
 #pop-options
 
 #push-options "--z3rlimit 40"
-let marking_alloc g held fp wz tag =
+let marking_alloc g outside_refs fp wz tag =
   let ph = Ph.Marking in
   let r = AC.alloc_phase g fp ph wz tag in
   FLA.fl_ascending_valid g fp;
@@ -223,7 +223,7 @@ let marking_alloc g held fp wz tag =
     in
     FStar.Classical.forall_intro_2 (fun b -> FStar.Classical.move_requires (tc b));
     let hr (w: obj_addr)
-      : Lemma (requires held w /\ Seq.mem w (objects zero_addr g') /\ is_white w g')
+      : Lemma (requires outside_refs w /\ Seq.mem w (objects zero_addr g') /\ is_white w g')
               (ensures marker_will_reach g' w)
       = Mark.colors_exclusive w g';
         alloc_in_use g fp wz tag obj w;
@@ -239,7 +239,7 @@ let marking_alloc g held fp wz tag =
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 30"
-let marking_fresh_write g held obj a v =
+let marking_fresh_write g outside_refs obj a v =
   let g' = write_word g a v in
   let free = free_or_new obj in
   free_or_new_ok obj;
@@ -282,7 +282,7 @@ let marking_fresh_write g held obj a v =
   in
   FStar.Classical.forall_intro_2 (fun b -> FStar.Classical.move_requires (tc b));
   let hr (w: obj_addr)
-    : Lemma (requires held w /\ Seq.mem w (objects zero_addr g') /\ is_white w g')
+    : Lemma (requires outside_refs w /\ Seq.mem w (objects zero_addr g') /\ is_white w g')
             (ensures marker_will_reach g' w)
     = reach w
   in
@@ -294,7 +294,7 @@ let marking_fresh_write g held obj a v =
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 30"
-let marking_fresh_close g held obj =
+let marking_fresh_close g outside_refs obj =
   let fresh = free_or_new obj in
   free_or_new_ok obj;
   free_stw_ok ();
@@ -322,7 +322,7 @@ let marking_fresh_close g held obj =
         eliminate exists (c: obj_addr). points_to g obj c /\ resolve_object c g == t
         with begin
           let q (d: obj_addr) : prop =
-            is_pointer d /\ MM.target_ok g held d /\ SPI.storable free_stw g d
+            is_pointer d /\ MM.target_ok g outside_refs d /\ SPI.storable free_stw g d
           in
           let field (j: nat)
             : Lemma (requires j < U64.v (wosize_of_object obj g) /\ U64.v obj + j * 8 + 8 <= heap_size)

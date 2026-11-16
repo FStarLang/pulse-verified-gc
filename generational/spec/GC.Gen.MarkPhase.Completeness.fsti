@@ -58,12 +58,12 @@ module Promote = GC.Gen.Promote
 /// The objects reachable from the roots `rs` in the heap `g` a cycle starts
 /// from.
 let reachable_at_start (g: heap) (rs: seq U64.t) : obj_addr -> prop =
-  MPC.reachable g (GMM.roots_held g rs)
+  MPC.reachable g (GMM.root_refs g rs)
 
 /// As an equation (the SMT encoding does not unfold a definition whose
 /// value is a function).
 val reachable_at_start_eq (g: heap) (rs: seq U64.t)
-  : Lemma (reachable_at_start g rs == MPC.reachable g (GMM.roots_held g rs))
+  : Lemma (reachable_at_start g rs == MPC.reachable g (GMM.root_refs g rs))
 
 /// **The start of the cycle**: idle, the nursery empty, every root a
 /// darkenable object; the darkened heap has the account of what was

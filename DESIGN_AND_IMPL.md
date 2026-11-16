@@ -1125,7 +1125,7 @@ let gc_state gh d b s fp ph : slprop =
 
 phase_shape minor g fp Idle         = collection_heap_shape minor g fp
 phase_shape minor g fp Marking      =
-  collection_shape_with Marking free_stw minor g fp /\ marking_inv g (nursery_held minor)
+  collection_shape_with Marking free_stw minor g fp /\ marking_inv g (nursery_refs minor)
 phase_shape minor g fp (Sweeping c) =
   sweep_inv_incremental g fp c /\ minor_heap_shape minor /\
   minor_major_fields_not_free (free_incremental c) minor g
@@ -1155,7 +1155,7 @@ Pulse loop is `GC.Impl.FusedSweepCoalesce.sweep_slice_impl`, over the same
 | entry point | requires | ensures |
 |---|---|---|
 | `minor_collect gh roots .. slots ..` | `gc_state .. ph`, `minor_slots_ok ph` (the remembered set and roots for `phase_free ph`) | `minor_collect_with`'s contract at `ph` for `phase_free ph` (`minor_collect_post_with ph (phase_free ph) ..`), `gc_state` at the same phase `ph` (idle stays idle; mid-sweep the cursor and the pending-free set are kept, `GI.minor_keeps_phase_shape`); returns whether promotion succeeded |
-| `start_cycle gh roots nroots` | `gc_state .. Idle`, `nursery_empty d b` (right after a minor collection), `start_cycle_pre s rs` (every root a darkenable major object; nothing about how many) | `start_cycle_post s rs s2`: the heap is the roots darkened (`GC.Gen.MarkPhase.Start.darkened`) and the roots are held (`MP.held_reached s2 (GMM.roots_held s2 rs)`); `gc_state` at `Marking`; nursery, free-list head and roots unchanged |
+| `start_cycle gh roots nroots` | `gc_state .. Idle`, `nursery_empty d b` (right after a minor collection), `start_cycle_pre s rs` (every root a darkenable major object; nothing about how many) | `start_cycle_post s rs s2`: the heap is the roots darkened (`GC.Gen.MarkPhase.Start.darkened`) and the roots are held (`MP.outside_refs_reached s2 (GMM.root_refs s2 rs)`); `gc_state` at `Marking`; nursery, free-list head and roots unchanged |
 | `major_slice gh budget` | `gc_state .. ph` | `GI.major_slice_post s fp ph budget s2 fp2 ph2`: idle, nothing; marking, some mark moves (`S.mark_steps`), the free list untouched, still `Marking` or, with nothing grey, `Sweeping zero_addr`, and an unbounded budget finishes marking (`GI.mark_slice_post`); mid-sweep, `phase_slice`; `gc_state` at `ph2`; returns `Idle? ph2` |
 | `modify_field ghr slot v` | `gc_state .. ph`, `GB.modify_ok ph minor s x slot v` (trusted: `slot` a body word of the non-free, scannable, non-closure block `x`, `v` storable there, and while marking a value the program holds) | `gc_state` at the same phase of `GB.modify_heap ph s slot v`; returns `GB.modify_records s slot v` (append the slot to the ref table); while marking, a write into a field the mark slice has scanned restarts the partly scanned object's scan (`MS.reset_cur`) |
 | `initialize_field ghr slot v` | `is_gen_heap`, `gen_phase`, `mark_state` at `s`; `slot` a body word of a non-free block `x` of `s` (a block just allocated); while marking, `x` black and nothing non-free pointing into it (the part of `marking_fresh` the mark cache needs) | the same of `write_word s slot v`; returns `GB.initialize_records v` |
@@ -1313,22 +1313,22 @@ counterexample: grey `G -> B`, black `B -> W`, `W` white; `W` is reachable from
 `G`, but the step at `G` greys nothing (its only child is black) and leaves no
 grey object, with `B -> W` still a black-to-white edge.
 
-**The invariant, parameterised by what is held from outside.**
+**The invariant, parameterised by what is referenced from outside.**
 
 ```fstar
-let marking_inv (g: heap) (held: obj_addr -> prop) : prop =
+let marking_inv (g: heap) (outside_refs: obj_addr -> prop) : prop =
   well_formed_heap g /\     (* free means blue: marking frees nothing *)
   weak_tri_color g /\       (* every white object a black one points at: marker_will_reach *)
-  held_reached g held       (* every white object held from outside: marker_will_reach *)
+  outside_refs_reached g outside_refs       (* every white object referenced from outside: marker_will_reach *)
 ```
 
-`held w` says something outside the major heap points at `w` (resolved). The
+`outside_refs w` says something outside the major heap points at `w` (resolved). The
 generational layer will instantiate it with the program's roots and the
 targets of the nursery's fields, so the mark-and-sweep spec stays independent
 of the nursery and of the program.
 
 - **Start** (`marking_inv_start`): no black object points at a white one (with
-  no black object at all, `no_black_tri_color`), and every held object is
+  no black object at all, `no_black_tri_color`), and every outside reference is
   darkened.
 - **Step** (`marking_inv_step`): the step at any grey object keeps it.
   Greying `x`'s children keeps every grey-or-white path; blackening `x` breaks
@@ -1337,15 +1337,15 @@ of the nursery and of the program.
   white, and the walk, the edges and well-formedness are unchanged
   (`mark_step_at_objects`, `_wf`, `_dense`, `_blue`).
 - **End** (`marking_done`): with no grey object the marker will reach nothing,
-  so clause 1 is the strong tri-colour invariant and clause 2 says no held
-  object is white: the heap is `FusedSweep.End.marked`, where the sweep
+  so clause 1 is the strong tri-colour invariant and clause 2 says no outside
+  reference is white: the heap is `FusedSweep.End.marked`, where the sweep
   starts. `marking_done_sweep_start` hands it to
   `sweep_inv_incremental_start` with the walk facts and the free list.
 - **Other changes** (`marking_inv_change`): any heap change that keeps grey
   objects grey and grey-or-white blocks grey or white, makes no object white,
   greys the target of every edge between non-black blocks it cuts, and adds
   black-to-white edges only to objects the marker would already reach (and
-  white held objects only among those held or reached before). Greying a white
+  white outside references only among those that were or that the marker would reach). Greying a white
   object, the barrier's darkening, is an instance (`marking_inv_grey`).
 
 **Field writes** (`GC.Spec.MarkPhase.Mutator`, milestone M2a).  A write of
@@ -1360,32 +1360,32 @@ header inside a closure, never a body word of `x` (`target_header_away`).
 From these, as an instance of `marking_inv_change`:
 
 - `marking_write`: the invariant survives when the old value's target is not
-  white and the new one's is not white, or held, or one the marker will reach
-  (`target_ok`); `held` is unchanged.  Writing an immediate is the instance
+  white and the new one's is not white, or an outside reference, or one the marker will reach
+  (`target_ok`); `outside_refs` is unchanged.  Writing an immediate is the instance
   with no new target (`marking_write_immediate`).
 - `marking_write_barrier`: 4.14's `caml_modify` while marking, `darken` (4.14's
   `caml_darken`) of the old value and then the write; the old value may be
   anything.  `GC.SPOT.MarkPhaseWrite` shows the darkening is what keeps it.
-- `marking_load`: a field of a held object, loaded, may be held too.  That is
+- `marking_load`: a field of an outside reference, loaded, may be one too.  That is
   why clause 2 stays true of the program's roots (the trusted obligation of the
   plan's option (a)): the program obtains pointers only by loading fields of
-  objects it holds, or by allocating.
+  objects it references, or by allocating.
 
 **The `Marking` phase** (M2b).  `gc_phase` has a `Marking` case, with black
 allocation; the record's `ps_kind` is 2 (the C bridge's `vergc_sweeping()` is
 `ps_kind == 1`, and `vergc_allocation_color` is black while marking).  At
 `Marking`, `GC.Gen.Incremental.phase_shape` is the minor collection's shape at
-`free_stw` (marking frees nothing) and `marking_inv g (GC.Gen.MarkPhase.Minor.nursery_held minor)`:
-what the nursery's major pointers point at is held.  The program's roots are
-the other half of `held`; they are not part of the collector's state
+`free_stw` (marking frees nothing) and `marking_inv g (GC.Gen.MarkPhase.Minor.nursery_refs minor)`:
+what the nursery's major pointers point at is an outside reference.  The program's roots are
+the other half of `outside_refs`; they are not part of the collector's state
 (`gc_state` has no roots), so the entry points that take roots will state
-`held_reached` of them (the plan's option (a)).  `start_cycle` enters
+`outside_refs_reached` of them (the plan's option (a)).  `start_cycle` enters
 `Marking` and `major_slice` marks there (M4, below).
 
 **Allocation while marking** (`GC.Spec.MarkPhase.Alloc`, M2c).  A new
 object is black, and its fields are what the free block held until the
 runtime initialises them.  As the sweep's `fresh_ok`, the invariant then
-holds with the object *fresh* (`marking_fresh g held obj`): well-formedness
+holds with the object *fresh* (`marking_fresh g outside_refs obj`): well-formedness
 counts it as free (`free_or_new obj`: nothing points at it, its fields are
 unconstrained) and the weak tri-colour clause skips it as a source
 (`fresh_tri_color`); being black, it lies on no path the marker follows, so
@@ -1397,7 +1397,7 @@ its fields do not affect what the marker will reach.
   ascending, and the new object was not a non-free block before.
 - `marking_fresh_write`: writes into the fresh object's body keep it fresh.
 - `marking_fresh_close`: once every field is storable and its target not
-  white, held, or one the marker will reach (`fields_ok`; a value the program
+  white, an outside reference, or one the marker will reach (`fields_ok`; a value the program
   holds), `marking_inv` holds.
 - For the minor collection's generic theorem, a block allocated at `Marking`
   is not free under `free_stw` (`GC.Gen.Promote.free_stw_allocations_not_free`,
@@ -1408,9 +1408,9 @@ that keeps every non-free block, for any admissible definition of free.
 
 **Minor collection while marking** (`GC.Gen.MarkPhase.Minor`, M2d).  At
 `Marking` the collection runs with `free_stw`; its promoted copies are black.
-Before it, `held` is the roots and the nursery's major pointers
-(`marking_held minor g roots`); after it, with the nursery empty, the
-rewritten roots (`roots_held g' roots'`).  `minor_keeps_marking_inv` is an
+Before it, `outside_refs` is the roots and the nursery's major pointers
+(`outside_refs_of minor g roots`); after it, with the nursery empty, the
+rewritten roots (`root_refs g' roots'`).  `minor_keeps_marking_inv` is an
 instance of `marking_inv_change`:
 
 - every non-free block stays with its header (`old_block`) and its pointer
@@ -1424,20 +1424,20 @@ instance of `marking_inv_change`:
 - a black object's white target is one the marker would reach.  This is the
   invariant read as well-formedness: `GC.Spec.MarkPhase.unreached g` (free =
   blue, or white and not reached) is an admissible definition of free, and
-  `marking_inv g held` makes `g` well formed for it (`marking_inv_unreached`)
-  when the nursery's pointers are held.  The generic theorem keeps
+  `marking_inv g outside_refs` makes `g` well formed for it (`marking_inv_unreached`)
+  when the nursery's pointers are outside references.  The generic theorem keeps
   well-formedness for it (its allocations are black), and the pointer update
   at `free_stw` agrees with the one at `unreached g` on every block the
   latter keeps (`update_agrees`), so the heap after is well formed for
   `unreached g` (`unreached_wf_after`), which is the condition
   (`unreached_black_edge`).  This covers the copies' fields and the
   remembered slots without looking at them;
-- a rewritten root is the old one, held before, or a forwarded copy, black
+- a rewritten root is the old one, an outside reference before, or a forwarded copy, black
   (`rewritten_root`).
 
 `GC.Gen.Incremental.minor_keeps_marking_shape` lifts it to `phase_shape` at
 `Marking`, and `minor_collect` runs at `Marking`: `minor_slots_ok` asks, at
-`Marking`, that the roots be held (`MP.held_reached s (GMM.roots_held s
+`Marking`, that the roots be reached (`MP.outside_refs_reached s (GMM.root_refs s
 rs)`), and `minor_collect` gives the same of the rewritten roots.
 
 #### The write barrier (M3)
@@ -1472,7 +1472,7 @@ black (below, "The mark slice").
 - `modify_ok ph minor g x a v` (the trusted program obligation):
   `SPM.program_write (phase_free ph) g x a v` (a body word of a non-free block
   that is not a closure, a storable value), `scannable g x`, and while marking
-  `MM.target_ok g (nursery_held minor) v` -- the program holds `v`, so if it
+  `MM.target_ok g (nursery_refs minor) v` -- the program holds `v`, so if it
   is white the marker will reach it (the roots obligation, option (a));
 - `modify_heap ph g a v`: while marking `write_word (MM.darken g (read_word g
   a)) a v`, otherwise `write_word g a v`;
@@ -1559,7 +1559,7 @@ The marking invariant survives each move: scanning a field is greying a white
 block (`MM.darken_inv`), and blackening an object whose fields are dark *is*
 the stop-the-world step at it (`black_move_is_step`: `push_children` finds no
 white child), which keeps it (`MP.marking_inv_step`).  `mark_steps g g'` is
-any number of moves; it keeps `marking_inv` for every `held`
+any number of moves; it keeps `marking_inv` for every `outside_refs`
 (`mark_steps_inv`), changes nothing but colours, only darkening them
 (`darker`), and lowers `mark_weight` (two per white block, one per grey) at
 every move that changes the heap.
@@ -1631,7 +1631,7 @@ the heap is some mark moves away, the free list untouched, and the phase is
 leaves `Sweeping zero_addr`.  `GI.mark_steps_shape` keeps `phase_shape` at
 `Marking` (the moves recolour among white, grey and black, so the walk, the
 free list and the cross-generation condition are kept), `GI.mark_steps_roots`
-keeps the roots held, and `GI.marking_done_shape` is the hand-over: with
+keeps the roots reached, and `GI.marking_done_shape` is the hand-over: with
 nothing grey, `MP.marking_done_sweep_start` gives the sweep phase at the
 first block, and what the nursery holds is not white, so not pending free.
 
@@ -1670,7 +1670,7 @@ does to the marking invariant; M5 carries it up to the collector's state
   marking invariant with `obj` black and its fields exempt: well-formedness
   counts it as free, the weak tri-colour clause skips it as a source);
 - `fresh_shape_write`: writes into its body keep it fresh;
-- `fresh_shape_close`: once its fields are storable and, if white, held
+- `fresh_shape_close`: once its fields are storable and, if white, outside references
   (`MPA.fields_ok`), `phase_shape ... Marking` holds again;
 - `alloc_mark_cache`, `fresh_mark_cache_write`: the mark cache is kept --
   the allocation splits only free blocks and keeps every non-free one with
@@ -1724,7 +1724,7 @@ sweep, unless its address was handed out again since* (an allocation, or a
 minor collection's promotion).  The marking invariant is intrinsic and says
 nothing about the heap marking started from, so completeness is carried
 separately, as an **account** indexed by a ghost set `s` of addresses: those
-reachable when the cycle started (`MPC.reachable g held`: along
+reachable when the cycle started (`MPC.reachable g outside_refs`: along
 `MP.field_edge` from what the roots hold), and those allocated or promoted
 since.  While marking (`MPC.mark_account s g`):
 
@@ -1788,7 +1788,7 @@ pending free mid-sweep):
   `reachable_not_free_combined` at every phase, via the generic
   `RBridge.reachable_not_free`.  The roots must be non-free at the phase;
   across the hand-over they are (`handover_roots`: with nothing grey every
-  root is black, as the roots are held);
+  root is black, as the roots are outside references);
 - the collector's own moves leave the blocks alone: root darkening is a
   recolouring (`start_keeps_blocks`), a major slice keeps every non-free
   block with its size, tag and fields and non-free at the phase it leaves,

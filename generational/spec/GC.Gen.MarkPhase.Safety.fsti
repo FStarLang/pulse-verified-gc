@@ -62,11 +62,11 @@ val cycle_reachable_not_free (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.
           (ensures GC.Spec.FusedSweep.is_obj a /\ in_use (GI.phase_free ph) g (a <: obj_addr))
 
 /// **The roots across the hand-over**: when marking ends, every root that
-/// is a block is black (the roots are held, and nothing is grey), so not
+/// is a block is black (the roots are outside references, and nothing is grey), so not
 /// pending free.
 val handover_roots (minor: minor_state) (g: heap) (fp: U64.t) (rs: seq U64.t)
   : Lemma (requires GI.phase_shape minor g fp Ph.Marking /\ Mark.noGreyObjects g /\
-                    MP.held_reached g (GMM.roots_held g rs) /\
+                    MP.outside_refs_reached g (GMM.root_refs g rs) /\
                     RBridge.roots_not_free free_stw rs g)
           (ensures RBridge.roots_not_free (SPI.free_incremental zero_addr) rs g)
 

@@ -252,9 +252,9 @@ let modify_sweeping (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
 let modify_marking (minor: minor_state) (g: heap) (fp: U64.t) (x: obj_addr) (a: hp_addr) (v: U64.t)
   : Lemma (requires GI.phase_shape minor g fp Ph.Marking /\
                     SPM.program_write free_stw g x a v /\
-                    (~(is_no_scan x g) ==> MM.target_ok g (GMM.nursery_held minor) v))
+                    (~(is_no_scan x g) ==> MM.target_ok g (GMM.nursery_refs minor) v))
           (ensures GI.phase_shape minor (write_word (MM.darken g (read_word g a)) a v) fp Ph.Marking)
-  = let held = GMM.nursery_held minor in
+  = let outside_refs = GMM.nursery_refs minor in
     let g1 = MM.darken g (read_word g a) in
     let g' = write_word g1 a v in
     GI.phase_shape_marking minor g fp;
@@ -263,7 +263,7 @@ let modify_marking (minor: minor_state) (g: heap) (fp: U64.t) (x: obj_addr) (a: 
     free_def_ok_elim free_stw;
     GenInv.collection_shape_with_elim Ph.Marking free_stw minor g fp;
     GenInv.major_shape_with_elim Ph.Marking free_stw g fp;
-    MM.marking_write_barrier g held x a v;
+    MM.marking_write_barrier g outside_refs x a v;
     darken_facts g fp (read_word g a);
     body_write_facts g1 fp x a v;
     PCS.free_list_shape_of_ascending g' fp;
@@ -330,7 +330,7 @@ let modify_mark_cache ph minor g fp x a v st ov p cap =
     shape_facts ph minor g fp;
     GI.phase_shape_marking minor g fp;
     let g1 = MM.darken g old in
-    MM.darken_inv g (GMM.nursery_held minor) old;
+    MM.darken_inv g (GMM.nursery_refs minor) old;
     MS.mark_cache_darken g st ov p old cap;
     darken_facts g fp old;
     let st' = if MS.darken_target g old && Seq.length st < cap
@@ -349,6 +349,12 @@ let modify_mark_cache ph minor g fp x a v st ov p cap =
 /// The field `j` of `obj` is the word `a` or not.
 let field_addr (obj: obj_addr) (j: nat{U64.v obj + j * 8 + 8 <= heap_size}) : hp_addr =
   U64.uint_to_t (U64.v obj + j * 8)
+
+/// Two distinct words do not overlap.
+let words_apart (a b: hp_addr)
+  : Lemma (requires a <> b)
+          (ensures U64.v a + U64.v mword <= U64.v b \/ U64.v b + U64.v mword <= U64.v a)
+  = ()
 
 /// The only new entry is the slot.
 let appended_new (b: bool) (a: U64.t) (sl: seq U64.t) (n: nat) (sl': seq U64.t) (n': nat) (i: nat)
@@ -454,6 +460,7 @@ let write_ref_table free g x a v b sl sl' n n' =
           covered_prefix sl sl' n n' (U64.v obj + j * 8)
         end
       end else begin
+        words_apart a fa;
         read_write_different g a fa v;
         covers_at free g sl n obj j;
         covered_prefix sl sl' n n' (U64.v obj + j * 8)

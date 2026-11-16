@@ -7,8 +7,8 @@
 ///
 /// **1. A mid-mark heap where the invariant holds with a black-to-white
 /// edge** (`mid_mark_inv`, `mid_mark_step`).  Objects B (black), G (grey),
-/// W1 (white), W (white); B -> W, G -> W1, W1 -> W, and W1 is held from
-/// outside the major heap (`held_w1`).  The black object B points at the
+/// W1 (white), W (white); B -> W, G -> W1, W1 -> W, and W1 is referenced from
+/// outside the major heap (`outside_refs_w1`).  The black object B points at the
 /// white object W, so the heap is not strongly tri-coloured, but the marker
 /// will reach W: from the grey object G through the white object W1.  So
 /// `marking_inv` holds, and the clause about black objects is used, not
@@ -84,8 +84,8 @@ let mid_tg (i: H.idx) : H.tgt = if i = 1 then 4 else if i = 2 then 3 else if i =
 
 let mid (r: unit{H.room}) : heap = H.heap4 r mid_col mid_tg
 
-/// W1 is held from outside the major heap.
-let held_w1 (r: unit{H.room}) : obj_addr -> prop = fun w -> w == H.obj r 3
+/// W1 is referenced from outside the major heap.
+let outside_refs_w1 (r: unit{H.room}) : obj_addr -> prop = fun w -> w == H.obj r 3
 
 /// The black object B points at the white object W: not strongly tri-coloured.
 let mid_black_to_white (r: unit{H.room})
@@ -107,7 +107,7 @@ let mid_reach (r: unit{H.room})
 
 #push-options "--z3rlimit 20"
 let mid_mark_inv (r: unit{H.room})
-  : Lemma (marking_inv (mid r) (held_w1 r))
+  : Lemma (marking_inv (mid r) (outside_refs_w1 r))
   = let h = mid r in
     heap_facts r mid_col mid_tg;
     mid_reach r
@@ -115,10 +115,10 @@ let mid_mark_inv (r: unit{H.room})
 
 /// One mark step at G keeps the invariant.
 let mid_mark_step (r: unit{H.room})
-  : Lemma (marking_inv (mark_step_at (mid r) (H.obj r 2)) (held_w1 r))
+  : Lemma (marking_inv (mark_step_at (mid r) (H.obj r 2)) (outside_refs_w1 r))
   = heap_facts r mid_col mid_tg;
     mid_mark_inv r;
-    marking_inv_step (mid r) (held_w1 r) (H.obj r 2)
+    marking_inv_step (mid r) (outside_refs_w1 r) (H.obj r 2)
 
 /// ---------------------------------------------------------------------------
 /// Blackening an object whose only field points at `child`
@@ -215,7 +215,7 @@ let no_path (r: unit{H.room}) (l: list obj_addr)
   = heap_facts r thr_col thr_tg
 #pop-options
 
-/// The marker will not reach W, so the invariant fails, whatever is held.
+/// The marker will not reach W, so the invariant fails, whatever the outside references.
 let through_black_not_reached (r: unit{H.room})
   : Lemma (~(marker_will_reach (thr r) (H.obj r 4)))
   = let h = thr r in
@@ -231,8 +231,8 @@ let through_black_not_reached (r: unit{H.room})
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
-let through_black_not_inv (r: unit{H.room}) (held: obj_addr -> prop)
-  : Lemma (~(marking_inv (thr r) held))
+let through_black_not_inv (r: unit{H.room}) (outside_refs: obj_addr -> prop)
+  : Lemma (~(marking_inv (thr r) outside_refs))
   = let h = thr r in
     heap_facts r thr_col thr_tg;
     through_black_not_reached r;

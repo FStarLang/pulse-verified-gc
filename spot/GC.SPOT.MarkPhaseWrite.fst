@@ -3,12 +3,12 @@
 /// ---------------------------------------------------------------------------
 ///
 /// The mid-mark heap of `GC.SPOT.MarkPhase`: B (black), G (grey), W1 (white),
-/// W (white); B -> W, G -> W1, W1 -> W; W1 held from outside.  The program
+/// W (white); B -> W, G -> W1, W1 -> W; W1 referenced from outside.  The program
 /// overwrites G's only field with an immediate, cutting G -> W1.
 ///
 ///   * **Without the barrier the invariant breaks** (`unbarriered_write_breaks`):
 ///     G was the only grey object and loses its only edge, so the marker
-///     will reach nothing, yet W1 is white and held.
+///     will reach nothing, yet W1 is white and referenced from outside.
 ///   * **With the barrier it holds** (`barrier_write_inv`): the barrier greys
 ///     W1 first (`darken` of the old value is `makeGray W1`,
 ///     `barrier_greys_w1`), and `marking_write_barrier` applies.  So the
@@ -72,11 +72,11 @@ let barrier_greys_w1 (r: unit{H.room})
 
 /// **With the barrier the invariant holds.**
 let barrier_write_inv (r: unit{H.room})
-  : Lemma (marking_inv (write_word (makeGray (H.obj r 3) (S.mid r)) (slot r) 0UL) (S.held_w1 r))
+  : Lemma (marking_inv (write_word (makeGray (H.obj r 3) (S.mid r)) (slot r) 0UL) (S.outside_refs_w1 r))
   = S.mid_mark_inv r;
     write_ok r (S.mid r);
     barrier_greys_w1 r;
-    MM.marking_write_barrier (S.mid r) (S.held_w1 r) (H.obj r 2) (slot r) 0UL
+    MM.marking_write_barrier (S.mid r) (S.outside_refs_w1 r) (H.obj r 2) (slot r) 0UL
 
 /// After the unbarriered write, G has no edge: its only field is 0.
 #push-options "--z3rlimit 20"
@@ -115,11 +115,11 @@ let no_path (r: unit{H.room}) (l: list obj_addr)
     | z :: _ -> g_no_edge r z
 #pop-options
 
-/// **Without the barrier the invariant breaks**: W1 is white and held, and
+/// **Without the barrier the invariant breaks**: W1 is white and referenced from outside, and
 /// the marker will not reach it.
 #push-options "--z3rlimit 20"
 let unbarriered_write_breaks (r: unit{H.room})
-  : Lemma (~(marking_inv (write_word (S.mid r) (slot r) 0UL) (S.held_w1 r)))
+  : Lemma (~(marking_inv (write_word (S.mid r) (slot r) 0UL) (S.outside_refs_w1 r)))
   = let g = S.mid r in
     let h' = write_word g (slot r) 0UL in
     S.heap_facts r S.mid_col S.mid_tg;
@@ -136,5 +136,5 @@ let unbarriered_write_breaks (r: unit{H.room})
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
     assert (~(marker_will_reach h' w1));
-    assert (Seq.mem w1 (objects zero_addr h') /\ is_white w1 h' /\ S.held_w1 r w1)
+    assert (Seq.mem w1 (objects zero_addr h') /\ is_white w1 h' /\ S.outside_refs_w1 r w1)
 #pop-options

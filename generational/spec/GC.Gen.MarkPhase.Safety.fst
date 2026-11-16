@@ -59,7 +59,7 @@ let handover_roots minor g fp rs =
           objects_addresses_gt_start zero_addr g ro;
           RBridge.aligned_gt_ge_plus_mword (U64.v ro) (U64.v zero_addr);
           resolve_non_infix ro g;
-          assert (GMM.roots_held g rs ro);
+          assert (GMM.root_refs g rs ro);
           if is_white ro g then MP.marker_will_reach_elim g ro
         end
       end

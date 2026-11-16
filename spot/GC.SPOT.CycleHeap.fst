@@ -368,8 +368,8 @@ let roots_valid_darkening (r: unit{MPH.room})
   = roots_facts r; facts r; layout r
 
 /// What the roots hold (resolved): `A` and `C`.
-let roots_held_iff (r: unit{MPH.room}) (w: obj_addr)
-  : Lemma (GMM.roots_held (h0 r) (roots0 r) w <==> w == obj_a r \/ w == obj_c r)
+let root_refs_iff (r: unit{MPH.room}) (w: obj_addr)
+  : Lemma (GMM.root_refs (h0 r) (roots0 r) w <==> w == obj_a r \/ w == obj_c r)
   = roots_facts r; facts r; layout r; zero_addr_above_2048 ();
     if w = obj_a r then assert (Seq.mem (obj_a r <: U64.t) (roots0 r))
     else if w = obj_c r then assert (Seq.mem (obj_c r <: U64.t) (roots0 r))
@@ -533,20 +533,20 @@ let no_oom (r: unit{MPH.room})
 
 /// The roots' objects `A` and `C` are reachable ...
 let roots_reachable (r: unit{MPH.room})
-  : Lemma (MPC.reachable (h0 r) (GMM.roots_held (h0 r) (roots0 r)) (obj_a r) /\
-           MPC.reachable (h0 r) (GMM.roots_held (h0 r) (roots0 r)) (obj_c r))
-  = roots_held_iff r (obj_a r);
-    roots_held_iff r (obj_c r);
-    MPC.reachable_held (h0 r) (GMM.roots_held (h0 r) (roots0 r)) (obj_a r);
-    MPC.reachable_held (h0 r) (GMM.roots_held (h0 r) (roots0 r)) (obj_c r)
+  : Lemma (MPC.reachable (h0 r) (GMM.root_refs (h0 r) (roots0 r)) (obj_a r) /\
+           MPC.reachable (h0 r) (GMM.root_refs (h0 r) (roots0 r)) (obj_c r))
+  = root_refs_iff r (obj_a r);
+    root_refs_iff r (obj_c r);
+    MPC.reachable_outside_refs (h0 r) (GMM.root_refs (h0 r) (roots0 r)) (obj_a r);
+    MPC.reachable_outside_refs (h0 r) (GMM.root_refs (h0 r) (roots0 r)) (obj_c r)
 
 /// ... and `U` is not: `A`, `B` and `C` contain the roots and are closed
 /// under the edges.
 let u_unreachable (r: unit{MPH.room})
-  : Lemma (~(MPC.reachable (h0 r) (GMM.roots_held (h0 r) (roots0 r)) (obj_u r)))
+  : Lemma (~(MPC.reachable (h0 r) (GMM.root_refs (h0 r) (roots0 r)) (obj_u r)))
   = let g = h0 r in
     let c (x: obj_addr) : prop = x == obj_a r \/ x == obj_b r \/ x == obj_c r in
-    FStar.Classical.forall_intro (roots_held_iff r);
+    FStar.Classical.forall_intro (root_refs_iff r);
     let closed (u v: obj_addr) : Lemma (requires c u /\ MP.field_edge g u v) (ensures c v) =
       if u = obj_a r then MPH.field_edge_iff r col0 tg0 1 v
       else if u = obj_b r then MPH.field_edge_iff r col0 tg0 2 v
@@ -554,4 +554,4 @@ let u_unreachable (r: unit{MPH.room})
     in
     FStar.Classical.forall_intro_2 (fun u -> FStar.Classical.move_requires (closed u));
     layout r;
-    FStar.Classical.move_requires (MPC.reachable_closed g (GMM.roots_held g (roots0 r)) c) (obj_u r)
+    FStar.Classical.move_requires (MPC.reachable_closed g (GMM.root_refs g (roots0 r)) c) (obj_u r)

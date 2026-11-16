@@ -1,5 +1,4 @@
-(*
-   Pulse GC (Generational) - the mark slice
+(*   Pulse GC (Generational) - the mark slice
 
    One slice of incremental marking (OCaml 4.14's `mark_slice`), over the
    major heap and the persistent mark cache (`GC.Gen.MarkState`): the mark

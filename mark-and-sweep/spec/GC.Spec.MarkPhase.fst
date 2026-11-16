@@ -332,7 +332,7 @@ let reach_step (g: heap) (x w: obj_addr)
 /// Start, step, end
 /// ---------------------------------------------------------------------------
 
-let marking_inv_start g held =
+let marking_inv_start g outside_refs =
   let c1 (b w: obj_addr)
     : Lemma (requires Seq.mem b (objects zero_addr g) /\ is_black b g /\ field_edge g b w /\ is_white w g)
             (ensures marker_will_reach g w)
@@ -343,7 +343,7 @@ let marking_inv_start g held =
 
 let no_black_tri_color g = ()
 
-let marking_inv_step g held x =
+let marking_inv_step g outside_refs x =
   let g2 = mark_step_at g x in
   mark_step_at_wf g x;
   mark_step_at_objects g x;
@@ -362,7 +362,7 @@ let marking_inv_step g held x =
   in
   FStar.Classical.forall_intro_2 (fun b -> FStar.Classical.move_requires (c1 b));
   let c2 (w: obj_addr)
-    : Lemma (requires held w /\ Seq.mem w (objects zero_addr g2) /\ is_white w g2)
+    : Lemma (requires outside_refs w /\ Seq.mem w (objects zero_addr g2) /\ is_white w g2)
             (ensures marker_will_reach g2 w)
     = step_white g x w;
       reach_step g x w
@@ -375,7 +375,7 @@ let nothing_to_reach (g: heap) (w: obj_addr)
           (ensures ~(marker_will_reach g w))
   = FStar.Classical.move_requires (marker_will_reach_elim g) w
 
-let marking_done g held =
+let marking_done g outside_refs =
   FStar.Classical.forall_intro (FStar.Classical.move_requires (nothing_to_reach g));
   let tc (b c: obj_addr)
     : Lemma (requires Seq.mem b (objects zero_addr g) /\ is_black b g /\ ~(is_no_scan b g) /\ points_to g b c)
@@ -390,8 +390,8 @@ let marking_done g held =
   FStar.Classical.forall_intro_2 tc';
   assert (Mark.tri_color_invariant g)
 
-let marking_done_sweep_start g held fp =
-  marking_done g held;
+let marking_done_sweep_start g outside_refs fp =
+  marking_done g outside_refs;
   SPI.sweep_inv_incremental_start g fp
 
 /// ---------------------------------------------------------------------------
@@ -414,7 +414,7 @@ let reach_change (g g': heap) (w: obj_addr)
         (fun t -> is_gray t g') a w
     end
 
-let marking_inv_change g g' held held' =
+let marking_inv_change g g' outside_refs outside_refs' =
   FStar.Classical.forall_intro (FStar.Classical.move_requires (reach_change g g'));
   let c1 (b w: obj_addr)
     : Lemma (requires Seq.mem b (objects zero_addr g') /\ is_black b g' /\ field_edge g' b w /\ is_white w g')
@@ -456,9 +456,9 @@ let grey_setup (g: heap) (w: obj_addr)
     in
     FStar.Classical.forall_intro_2 edge
 
-let marking_inv_grey g held w =
+let marking_inv_grey g outside_refs w =
   grey_setup g w;
-  marking_inv_change g (makeGray w g) held held
+  marking_inv_change g (makeGray w g) outside_refs outside_refs
 
 let marker_will_reach_grey g w u =
   grey_setup g w;
@@ -484,7 +484,7 @@ let unreached_ok g0 =
   FStar.Classical.forall_intro_3 det
 
 #push-options "--z3rlimit 20"
-let marking_inv_unreached g held =
+let marking_inv_unreached g outside_refs =
   let un = unreached g in
   wf_with_parts ();
   let tgt (src dst: obj_addr)

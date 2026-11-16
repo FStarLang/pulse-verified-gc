@@ -14,7 +14,7 @@
 /// greys white blocks), and the marking invariant (nothing is black, so no
 /// black object points at a white one, `MP.marking_inv_start`; the empty
 /// nursery holds nothing) -- and every object the roots point at is grey,
-/// so the roots are held (`MP.held_reached`).
+/// so the roots are outside references reached (`MP.outside_refs_reached`).
 
 module GC.Gen.MarkPhase.Start
 
@@ -43,12 +43,12 @@ val mark_start_shape (minor: minor_state) (g: heap) (fp: U64.t) (rs: seq U64.t)
   : Lemma (requires GenInv.collection_heap_shape minor g fp /\ minor == minor_reset minor /\
                     (forall (i: nat). i < Seq.length rs ==> MBP.root_valid_for_darkening g (Seq.index rs i)))
           (ensures GI.phase_shape minor (darkened g rs) fp Ph.Marking /\
-                   MP.held_reached (darkened g rs) (GMM.roots_held (darkened g rs) rs))
+                   MP.outside_refs_reached (darkened g rs) (GMM.root_refs (darkened g rs) rs))
 
 /// **Every object a root names is darkened**: not white in the darkened heap
 /// (it is grey, on the stack root darkening pushes).
 val darkened_roots_dark (minor: minor_state) (g: heap) (fp: U64.t) (rs: seq U64.t) (w: obj_addr)
   : Lemma (requires GenInv.collection_heap_shape minor g fp /\
                     (forall (i: nat). i < Seq.length rs ==> MBP.root_valid_for_darkening g (Seq.index rs i)) /\
-                    GMM.roots_held (darkened g rs) rs w)
+                    GMM.root_refs (darkened g rs) rs w)
           (ensures ~(is_white w (darkened g rs)))

@@ -294,7 +294,7 @@ let write_edges_old g x a v t =
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 30"
-let marking_write g held x a v =
+let marking_write g outside_refs x a v =
   let g' = write_word g a v in
   write_heads g x a v;
   write_wf g x a v;
@@ -325,20 +325,20 @@ let marking_write g held x a v =
       end else write_edges_other g x a v b t
   in
   FStar.Classical.forall_intro_2 (fun b -> FStar.Classical.move_requires (black b));
-  marking_inv_change g g' held held
+  marking_inv_change g g' outside_refs outside_refs
 #pop-options
 
-let marking_write_immediate g held x a v = marking_write g held x a v
+let marking_write_immediate g outside_refs x a v = marking_write g outside_refs x a v
 
 /// ---------------------------------------------------------------------------
 /// The deletion barrier
 /// ---------------------------------------------------------------------------
 
-let darken_inv g held w =
+let darken_inv g outside_refs w =
   if is_pointer w &&
      Seq.mem (resolve_object (w <: obj_addr) g) (objects zero_addr g) &&
      is_white (resolve_object (w <: obj_addr) g) g
-  then marking_inv_grey g held (resolve_object (w <: obj_addr) g)
+  then marking_inv_grey g outside_refs (resolve_object (w <: obj_addr) g)
 
 /// The index of the field at a body word.
 let slot_index (g: heap) (x: obj_addr) (a: hp_addr)
@@ -350,14 +350,14 @@ let slot_index (g: heap) (x: obj_addr) (a: hp_addr)
 
 /// Greying a white block `t0` keeps what the write needs.
 #push-options "--z3rlimit 30"
-let grey_keeps_write (g: heap) (held: obj_addr -> prop) (t0 x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires marking_inv g held /\ Seq.mem t0 (objects zero_addr g) /\ is_white t0 g /\
+let grey_keeps_write (g: heap) (outside_refs: obj_addr -> prop) (t0 x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires marking_inv g outside_refs /\ Seq.mem t0 (objects zero_addr g) /\ is_white t0 g /\
                     SPM.program_write free_stw g x a v /\
-                    (~(is_no_scan x g) ==> target_ok g held v))
+                    (~(is_no_scan x g) ==> target_ok g outside_refs v))
           (ensures (let g1 = makeGray t0 g in
                     SPM.program_write free_stw g1 x a v /\
                     is_no_scan x g1 == is_no_scan x g /\
-                    (~(is_no_scan x g) ==> target_ok g1 held v)))
+                    (~(is_no_scan x g) ==> target_ok g1 outside_refs v)))
   = let g1 = makeGray t0 g in
     makeGray_eq t0 g;
     makeGray_is_gray t0 g;
@@ -397,16 +397,16 @@ let grey_keeps_write (g: heap) (held: obj_addr -> prop) (t0 x: obj_addr) (a: hp_
 #pop-options
 
 #push-options "--z3rlimit 30"
-let marking_write_barrier g held x a v =
+let marking_write_barrier g outside_refs x a v =
   let old = read_word g a in
   let g1 = darken g old in
-  darken_inv g held old;
+  darken_inv g outside_refs old;
   if is_pointer old &&
      Seq.mem (resolve_object (old <: obj_addr) g) (objects zero_addr g) &&
      is_white (resolve_object (old <: obj_addr) g) g
   then begin
     let t0 = resolve_object (old <: obj_addr) g in
-    grey_keeps_write g held t0 x a v;
+    grey_keeps_write g outside_refs t0 x a v;
     makeGray_eq t0 g;
     makeGray_is_gray t0 g;
     Mark.colors_exclusive t0 g1;
@@ -418,7 +418,7 @@ let marking_write_barrier g held x a v =
     SPI.obj_pos g t0;
     color_change_preserves_other_read t0 a g Header.Gray;
     assert (read_word g1 a == old);
-    marking_write g1 held x a v
+    marking_write g1 outside_refs x a v
   end else begin
     // nothing to darken: the old value's target, if any, is not white
     (if not (is_no_scan x g) && is_pointer old then begin
@@ -427,7 +427,7 @@ let marking_write_barrier g held x a v =
        free_stw_ok ();
        free_def_ok_elim free_stw
      end);
-    marking_write g held x a v
+    marking_write g outside_refs x a v
   end
 #pop-options
 
@@ -436,12 +436,12 @@ let marking_write_barrier g held x a v =
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 20"
-let marking_load g held s t =
-  let held' (w: obj_addr) : prop = held w \/ w == t in
+let marking_load g outside_refs s t =
+  let outside_refs' (w: obj_addr) : prop = outside_refs w \/ w == t in
   let r (w: obj_addr)
-    : Lemma (requires held' w /\ Seq.mem w (objects zero_addr g) /\ is_white w g)
+    : Lemma (requires outside_refs' w /\ Seq.mem w (objects zero_addr g) /\ is_white w g)
             (ensures marker_will_reach g w)
-    = if FStar.IndefiniteDescription.strong_excluded_middle (held w) then ()
+    = if FStar.IndefiniteDescription.strong_excluded_middle (outside_refs w) then ()
       else begin
         Mark.color_exhaustive s g;
         Mark.colors_exclusive s g;
@@ -458,5 +458,5 @@ let marking_load g held s t =
       end
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires r);
-  assert (held_reached g held')
+  assert (outside_refs_reached g outside_refs')
 #pop-options

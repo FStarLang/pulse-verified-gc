@@ -11,7 +11,7 @@
 /// says nothing about the heap marking started from.  Completeness does, so
 /// it is carried separately, as an *account* indexed by a ghost set `s` of
 /// addresses -- those reachable when the cycle started (`reachable g0
-/// held`), and those allocated or promoted since.  The account
+/// outside_refs`), and those allocated or promoted since.  The account
 /// (`mark_account s g`) has two halves:
 ///
 ///   * **what is dark is accounted for** (`dark_accounted`): every grey or
@@ -87,23 +87,23 @@ module Ph = GC.Spec.Phase
 /// Reachable when the cycle starts
 /// ---------------------------------------------------------------------------
 
-/// `x` is reachable in `g` from an object `held` names (the roots), along
+/// `x` is reachable in `g` from an object `outside_refs` names (the roots), along
 /// the heap's edges (`MP.field_edge`: pointer fields of scannable objects,
 /// resolved through infix headers).
-let reachable (g: heap) (held: obj_addr -> prop) (x: obj_addr) : prop =
-  exists (r: obj_addr). held r /\ reach_within (MP.field_edge g) (fun _ -> True) r x
+let reachable (g: heap) (outside_refs: obj_addr -> prop) (x: obj_addr) : prop =
+  exists (r: obj_addr). outside_refs r /\ reach_within (MP.field_edge g) (fun _ -> True) r x
 
 /// The roots are reachable ...
-val reachable_held (g: heap) (held: obj_addr -> prop) (x: obj_addr)
-  : Lemma (requires held x) (ensures reachable g held x)
+val reachable_outside_refs (g: heap) (outside_refs: obj_addr -> prop) (x: obj_addr)
+  : Lemma (requires outside_refs x) (ensures reachable g outside_refs x)
 
 /// ... and reachability is the least set containing them and closed under
 /// the edges: a set that contains the roots and is closed contains every
 /// reachable object.  (How a concrete heap shows an object unreachable.)
-val reachable_closed (g: heap) (held: obj_addr -> prop) (c: obj_addr -> prop) (x: obj_addr)
-  : Lemma (requires (forall (r: obj_addr). held r ==> c r) /\
+val reachable_closed (g: heap) (outside_refs: obj_addr -> prop) (c: obj_addr -> prop) (x: obj_addr)
+  : Lemma (requires (forall (r: obj_addr). outside_refs r ==> c r) /\
                     (forall (u v: obj_addr). c u /\ MP.field_edge g u v ==> c v) /\
-                    reachable g held x)
+                    reachable g outside_refs x)
           (ensures c x)
 
 /// ---------------------------------------------------------------------------
@@ -139,11 +139,11 @@ let mark_account (s: obj_addr -> prop) (g: heap) : prop =
 /// **The start**: when every dark object is a root (after root darkening,
 /// before any mark step), the account holds with `s` the objects reachable
 /// from the roots.
-val account_start (g: heap) (held: obj_addr -> prop)
+val account_start (g: heap) (outside_refs: obj_addr -> prop)
   : Lemma (requires well_formed_heap g /\
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ (is_gray x g \/ is_black x g) ==>
-                       held x))
-          (ensures mark_account (reachable g held) g)
+                       outside_refs x))
+          (ensures mark_account (reachable g outside_refs) g)
 
 /// ---------------------------------------------------------------------------
 /// Marking
@@ -247,9 +247,9 @@ let account_fresh (s: obj_addr -> prop) (g: heap) (obj: obj_addr) : prop =
 
 /// **Allocation while marking**: the new object is added to `s`
 /// (`SPC.with_new`); it is fresh.
-val account_alloc (s: obj_addr -> prop) (held: obj_addr -> prop) (g: heap) (fp: U64.t)
+val account_alloc (s: obj_addr -> prop) (outside_refs: obj_addr -> prop) (g: heap) (fp: U64.t)
                   (wz: nat) (tag: SPM.tag_t)
-  : Lemma (requires mark_account s g /\ MP.marking_inv g held /\ FLA.fl_ascending g fp /\
+  : Lemma (requires mark_account s g /\ MP.marking_inv g outside_refs /\ FLA.fl_ascending g fp /\
                     wz >= 1 /\ tag <> infix_tag)
           (ensures (let r = AC.alloc_phase g fp Ph.Marking wz tag in
                     (r.SA.obj_out == 0UL ==> r.SA.heap_out == g) /\

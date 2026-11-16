@@ -32,7 +32,7 @@
 /// into its scanned prefix (`GC.Gen.MarkState`).
 ///
 /// `mark_steps g g'` is any number of moves.  What they keep: the marking
-/// invariant for every `held` (`mark_steps_inv`); everything but colours,
+/// invariant for every `outside_refs` (`mark_steps_inv`); everything but colours,
 /// with colours only getting darker (`darker`, `mark_steps_darker`).  And
 /// what they decrease: `mark_weight` (two per white block, one per grey),
 /// strictly at every move that changes the heap (`grey_move_weight`,
@@ -151,12 +151,12 @@ val black_move_is_step (g: heap) (x: obj_addr)
 /// What the moves keep
 /// ---------------------------------------------------------------------------
 
-/// **The marking invariant**, for any `held`.
-val mark_move_inv (g g': heap) (held: obj_addr -> prop)
-  : Lemma (requires MP.marking_inv g held /\ mark_move g g') (ensures MP.marking_inv g' held)
+/// **The marking invariant**, for any `outside_refs`.
+val mark_move_inv (g g': heap) (outside_refs: obj_addr -> prop)
+  : Lemma (requires MP.marking_inv g outside_refs /\ mark_move g g') (ensures MP.marking_inv g' outside_refs)
 
-val mark_steps_inv (g g': heap) (held: obj_addr -> prop)
-  : Lemma (requires MP.marking_inv g held /\ mark_steps g g') (ensures MP.marking_inv g' held)
+val mark_steps_inv (g g': heap) (outside_refs: obj_addr -> prop)
+  : Lemma (requires MP.marking_inv g outside_refs /\ mark_steps g g') (ensures MP.marking_inv g' outside_refs)
 
 /// `g'` is `g` with some blocks darker: the same walk, headers but for their
 /// colours, fields and resolutions; free blocks stay free and nothing else

@@ -6,10 +6,10 @@
 /// are black) with `free_stw` (marking frees nothing), so the generic theorem
 /// (`GC.Gen.CheneyGeneric.cheney_collect_with_preserves_shape`) gives its
 /// shape.  What it must also keep is the marking invariant
-/// (`GC.Spec.MarkPhase.marking_inv`) with what is held from outside the
+/// (`GC.Spec.MarkPhase.marking_inv`) with what is referenced from outside the
 /// major heap: before the collection, the program's roots and the nursery's
-/// major pointers (`marking_held`); after it, with the nursery empty, the
-/// rewritten roots (`roots_held`).
+/// major pointers (`outside_refs_of`); after it, with the nursery empty, the
+/// rewritten roots (`root_refs`).
 ///
 /// It is an instance of `marking_inv_change`:
 ///   * every non-free block stays, with its header (`old_block`), and its
@@ -28,9 +28,9 @@
 ///     on every block non-free for the latter; so the heap after is well
 ///     formed for `unreached g`, which says exactly that
 ///     (`unreached_wf_after`).  This covers the promoted copies' fields (old
-///     targets held by the nursery, or copies) and the remembered slots
+///     targets the nursery points at, or copies) and the remembered slots
 ///     (rewritten to copies) without looking at them;
-///   * a rewritten root is the old one (held before) or a forwarded copy
+///   * a rewritten root is the old one (an outside reference before) or a forwarded copy
 ///     (black).
 
 module GC.Gen.MarkPhase.Minor
@@ -53,7 +53,7 @@ module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 /// What the nursery holds in the major heap: a major pointer in the scan
 /// window of a nursery object points at `w` (such a pointer is never
 /// interior: `minor_major_fields_not_free` makes it a block).
-let nursery_held (minor: minor_state) (w: obj_addr) : prop =
+let nursery_refs (minor: minor_state) (w: obj_addr) : prop =
   exists (obj: U64.t) (j: nat).
     Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
     is_pointer_field (minor_read_field minor obj j) /\
@@ -61,17 +61,17 @@ let nursery_held (minor: minor_state) (w: obj_addr) : prop =
 
 /// What the program's roots hold in the major heap: a root that is a major
 /// pointer points (resolved) at `w`.
-let roots_held (g: heap) (roots: seq U64.t) (w: obj_addr) : prop =
+let root_refs (g: heap) (roots: seq U64.t) (w: obj_addr) : prop =
   exists (r: U64.t). Seq.mem r roots /\ is_pointer r /\ resolve_object (r <: obj_addr) g == w
 
-/// What is held from outside the major heap, with a nursery: the roots and
+/// What is referenced from outside the major heap, with a nursery: the roots and
 /// the nursery's major pointers.
-let marking_held (minor: minor_state) (g: heap) (roots: seq U64.t) (w: obj_addr) : prop =
-  roots_held g roots w \/ nursery_held minor w
+let outside_refs_of (minor: minor_state) (g: heap) (roots: seq U64.t) (w: obj_addr) : prop =
+  root_refs g roots w \/ nursery_refs minor w
 
 /// The reset nursery holds nothing.
-val nursery_held_reset (minor: minor_state) (w: obj_addr)
-  : Lemma (~(nursery_held (minor_reset minor) w))
+val nursery_refs_reset (minor: minor_state) (w: obj_addr)
+  : Lemma (~(nursery_refs (minor_reset minor) w))
 
 /// The collection at `Marking`.
 let collect_marking (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
@@ -79,17 +79,17 @@ let collect_marking (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t
   = Cheney.cheney_collect_spec_with Ph.Marking free_stw minor g fp roots
 
 /// **A minor collection while marking keeps the marking invariant**, with
-/// the rewritten roots held (the nursery is empty afterwards), and its
+/// the rewritten roots as the outside references (the nursery is empty afterwards), and its
 /// shape.
 val minor_keeps_marking_inv (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\
                     MCFH.roots_valid_for_minor_collection minor g roots /\
-                    MP.marking_inv g (marking_held minor g roots))
+                    MP.marking_inv g (outside_refs_of minor g roots))
           (ensures (let res = collect_marking minor g fp roots in
                     res.Promote.mc_minor == minor_reset minor /\
                     GenInv.collection_shape_with Ph.Marking free_stw
                       res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp /\
-                    MP.marking_inv res.Promote.mc_major (roots_held res.Promote.mc_major res.Promote.mc_roots)))
+                    MP.marking_inv res.Promote.mc_major (root_refs res.Promote.mc_major res.Promote.mc_roots)))
 
 /// **The collection keeps the grey objects**: a block of the heap after it
 /// is a grey object exactly when it was one before.  An old non-free block

@@ -10,7 +10,7 @@
 ///
 /// **1. The two moves, one at a time** (`mid_scan_*`, `mid_blacken_*`).  The
 /// mid-mark heap of `GC.SPOT.MarkPhase` (B black, G grey, W1 white, W white;
-/// B -> W, G -> W1, W1 -> W; W1 held).  Scanning the field of G is a
+/// B -> W, G -> W1, W1 -> W; W1 referenced from outside).  Scanning the field of G is a
 /// `grey_move`: it greys W1 and leaves G grey with its field dark.  Then
 /// blackening G is a `black_move` (its only field is dark).  Each keeps the
 /// marking invariant (`mark_move_inv`), and the two together are mark steps
@@ -23,7 +23,7 @@
 /// value) and then overwritten by the program with W.  The marking
 /// invariant holds -- W is reached from G -- but G's field is not dark, so
 /// no blackening is a mark move here (`par_no_black_move`).  And indeed
-/// blackening G anyway breaks the invariant, whatever is held: the black G
+/// blackening G anyway breaks the invariant, whatever the outside references: the black G
 /// points at the white W and no grey object is left to reach it
 /// (`par_blacken_breaks`).  This is the counterexample `black_move`'s
 /// `fields_dark` requirement rules out, and why the implementation restarts
@@ -133,14 +133,14 @@ let mid_blacken_move (r: unit{H.room})
 /// **Each move keeps the marking invariant**, and the two are mark steps
 /// from the mid-mark heap.
 let mid_moves_inv (r: unit{H.room})
-  : Lemma (marking_inv (mid_scanned r) (MPS.held_w1 r) /\
-           marking_inv (mid_blackened r) (MPS.held_w1 r) /\
+  : Lemma (marking_inv (mid_scanned r) (MPS.outside_refs_w1 r) /\
+           marking_inv (mid_blackened r) (MPS.outside_refs_w1 r) /\
            S.mark_steps (MPS.mid r) (mid_blackened r))
   = mid_scan_move r;
     mid_blacken_move r;
     MPS.mid_mark_inv r;
-    S.mark_move_inv (MPS.mid r) (mid_scanned r) (MPS.held_w1 r);
-    S.mark_move_inv (mid_scanned r) (mid_blackened r) (MPS.held_w1 r);
+    S.mark_move_inv (MPS.mid r) (mid_scanned r) (MPS.outside_refs_w1 r);
+    S.mark_move_inv (mid_scanned r) (mid_blackened r) (MPS.outside_refs_w1 r);
     S.mark_steps_move (MPS.mid r) (mid_scanned r);
     S.mark_steps_snoc (MPS.mid r) (mid_scanned r) (mid_blackened r)
 
@@ -156,11 +156,11 @@ let par_tg (i: H.idx) : H.tgt = if i = 1 then 2 else 0
 
 let par (r: unit{H.room}) : heap = H.heap4 r par_col par_tg
 
-/// Nothing is held from outside the major heap.
-let held_none : obj_addr -> prop = fun _ -> False
+/// Nothing is referenced from outside the major heap.
+let no_outside_refs : obj_addr -> prop = fun _ -> False
 
 /// **The marking invariant holds**: there is no black object.
-let par_inv (r: unit{H.room}) : Lemma (marking_inv (par r) held_none)
+let par_inv (r: unit{H.room}) : Lemma (marking_inv (par r) no_outside_refs)
   = MPS.heap_facts r par_col par_tg
 
 /// G's field is not dark: it points at the white W.
@@ -184,14 +184,14 @@ let par_no_black_move (r: unit{H.room}) (h': heap) : Lemma (~(S.black_move (par 
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
-/// **Blackening G anyway breaks the invariant**, whatever is held: the black
+/// **Blackening G anyway breaks the invariant**, whatever the outside references: the black
 /// G points at the white W, and no grey object is left to reach it.
 #push-options "--fuel 1"
-let par_blacken_breaks (r: unit{H.room}) (held: obj_addr -> prop)
+let par_blacken_breaks (r: unit{H.room}) (outside_refs: obj_addr -> prop)
   : Lemma (let h' = makeBlack (H.obj r 1) (par r) in
            is_black (H.obj r 1) h' /\ is_white (H.obj r 2) h' /\
            field_edge h' (H.obj r 1) (H.obj r 2) /\ Mark.noGreyObjects h' /\
-           ~(marking_inv h' held))
+           ~(marking_inv h' outside_refs))
   = let h = par r in
     let g = H.obj r 1 in
     let w = H.obj r 2 in

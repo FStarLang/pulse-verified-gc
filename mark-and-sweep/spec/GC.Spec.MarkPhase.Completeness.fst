@@ -35,7 +35,7 @@ module Header = GC.Lib.Header
 /// Reachable when the cycle starts
 /// ---------------------------------------------------------------------------
 
-let reachable_held g held x =
+let reachable_outside_refs g outside_refs x =
   reach_within_refl (MP.field_edge g) (fun _ -> True) x
 
 #push-options "--fuel 1 --ifuel 1"
@@ -48,8 +48,8 @@ let rec path_closed (g: heap) (c: obj_addr -> prop) (x y: obj_addr) (l: list obj
     | z :: rest -> path_closed g c z y rest
 #pop-options
 
-let reachable_closed g held c x =
-  eliminate exists (r: obj_addr). held r /\ reach_within (MP.field_edge g) (fun _ -> True) r x
+let reachable_closed g outside_refs c x =
+  eliminate exists (r: obj_addr). outside_refs r /\ reach_within (MP.field_edge g) (fun _ -> True) r x
   with eliminate exists (l: list obj_addr). path_within (MP.field_edge g) (fun _ -> True) r x l
        with path_closed g c r x l
 
@@ -107,11 +107,11 @@ let edge_accounted (s: obj_addr -> prop) (g: heap) (u t: obj_addr)
 /// Start
 /// ---------------------------------------------------------------------------
 
-let account_start g held =
-  let s = reachable g held in
+let account_start g outside_refs =
+  let s = reachable g outside_refs in
   let dk (x: obj_addr)
     : Lemma (requires Seq.mem x (objects zero_addr g) /\ (is_gray x g \/ is_black x g)) (ensures s x)
-    = reachable_held g held x
+    = reachable_outside_refs g outside_refs x
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires dk);
   let h (src t: obj_addr)
@@ -121,7 +121,7 @@ let account_start g held =
       Mark.color_exhaustive src g;
       if is_white src g then ()
       else dk src;
-      eliminate exists (r: obj_addr). held r /\ reach_within (MP.field_edge g) (fun _ -> True) r src
+      eliminate exists (r: obj_addr). outside_refs r /\ reach_within (MP.field_edge g) (fun _ -> True) r src
       with begin
         reach_within_edge (MP.field_edge g) (fun _ -> True) src t;
         reach_within_trans (MP.field_edge g) (fun _ -> True) r src t
@@ -413,9 +413,9 @@ let unaccounted_or_new_ok s obj =
   unaccounted_ok s;
   reveal_opaque (`%free_def_ok) free_def_ok
 
-let account_alloc s held g fp wz tag =
+let account_alloc s outside_refs g fp wz tag =
   let r = AC.alloc_phase g fp Ph.Marking wz tag in
-  MPA.marking_alloc g held fp wz tag;
+  MPA.marking_alloc g outside_refs fp wz tag;
   if r.SA.obj_out <> 0UL then begin
     let g' = r.SA.heap_out in
     let obj : obj_addr = r.SA.obj_out in
@@ -427,7 +427,7 @@ let account_alloc s held g fp wz tag =
     MPA.free_or_new_ok obj;
     free_stw_ok ();
     wf_with_parts ();
-    assert (MPA.marking_fresh g' held obj);
+    assert (MPA.marking_fresh g' outside_refs obj);
     let iu (x: obj_addr) : Lemma (in_use un' g' x == in_use un g x) =
       MPA.alloc_in_use g fp wz tag obj x;
       if x = obj then ()

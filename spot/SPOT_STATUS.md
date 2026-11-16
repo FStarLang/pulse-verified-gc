@@ -571,7 +571,7 @@ objects, then a free block to the end of the heap) checks
 `GC.Spec.MarkPhase` on two mid-mark heaps.
 
 1. **The invariant holds with a black-to-white edge.**  B (black) -> W
-   (white), G (grey) -> W1 (white) -> W, and W1 is held from outside the major
+   (white), G (grey) -> W1 (white) -> W, and W1 is referenced from outside the major
    heap.  `mid_black_to_white`: B points at the white W, so the heap is not
    strongly tri-coloured; `mid_reach`: the marker will reach W1 and W (from G,
    through W1); `mid_mark_inv`: `marking_inv` holds, with its black-object
@@ -581,7 +581,7 @@ objects, then a free block to the end of the heap) checks
    -> W (white).  `through_black_reachable`: the weaker property "every white
    object a black one points at is reachable from some grey object, through
    any blocks" holds; `through_black_not_reached` / `through_black_not_inv`:
-   the marker will not reach W, and `marking_inv` fails whatever is held;
+   the marker will not reach W, and `marking_inv` fails whatever the outside references;
    `through_black_step`/`through_black_step_breaks`: the next mark step at G
    (its only child is black) is just blackening G, leaves no grey object and
    the edge B -> W, so the weaker property fails and the heap is not
@@ -596,7 +596,7 @@ overwrites G's only field with an immediate, cutting G -> W1.
    the write, `marking_inv` holds (`marking_write_barrier`, whose hypotheses
    `write_ok` checks).  `unbarriered_write_breaks`: the same write without the
    barrier breaks it -- G, the only grey object, has no edge left
-   (`g_no_edge`), so the marker will reach nothing, yet W1 is white and held.
+   (`g_no_edge`), so the marker will reach nothing, yet W1 is white and referenced from outside.
 
 `GC.SPOT.MarkPhaseUnreached` checks the reading of the invariant as
 well-formedness that the minor collection at `Marking` uses
@@ -617,12 +617,12 @@ well-formedness that the minor collection at `Marking` uses
    `black_move`; `mid_moves_inv`: each keeps `marking_inv`
    (`mark_move_inv`), and together they are `mark_steps`.
 6. **Why blackening asks for every field dark.**  G (grey) -> W (white),
-   nothing else points at W or holds it: G's field was scanned in an earlier
+   nothing else points at W or references it: G's field was scanned in an earlier
    slice and then overwritten with W.  `par_inv`: `marking_inv` holds;
    `par_no_black_move`: G's field is not dark, so no blackening is a mark
    move; `par_blacken_breaks`: blackening G anyway leaves the black G pointing
    at the white W with no grey object left, and `marking_inv` fails whatever
-   is held.
+   the outside references are.
 
 ## The verified write barrier on the A/B/C fixture
 

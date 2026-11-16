@@ -189,7 +189,7 @@ let move_shape (minor: minor_state) (fp: U64.t) (g g': heap)
     phase_shape_marking minor g' fp;
     GenInv.collection_shape_with_elim Ph.Marking free_stw minor g fp;
     GenInv.major_shape_with_elim Ph.Marking free_stw g fp;
-    S.mark_move_inv g g' (GMM.nursery_held minor);
+    S.mark_move_inv g g' (GMM.nursery_refs minor);
     move_recolour g g' fp;
     PCS.free_list_shape_of_ascending g' fp;
     GenInv.major_shape_with_intro Ph.Marking free_stw g' fp;
@@ -201,19 +201,19 @@ let mark_steps_shape minor g g' fp =
   S.mark_steps_ind (fun h -> phase_shape minor h fp Ph.Marking) (move_shape minor fp) g g'
 
 /// What the roots and the nursery hold.
-let union_held (minor: minor_state) (h0: heap) (rs: seq U64.t) (w: obj_addr) : prop =
-  GMM.roots_held h0 rs w \/ GMM.nursery_held minor w
+let union_outside_refs (minor: minor_state) (h0: heap) (rs: seq U64.t) (w: obj_addr) : prop =
+  GMM.root_refs h0 rs w \/ GMM.nursery_refs minor w
 
 #push-options "--z3rlimit 20"
 let mark_steps_roots minor g g' fp rs =
   phase_shape_marking minor g fp;
-  let held = union_held minor g rs in
-  assert (MP.marking_inv g held);
-  S.mark_steps_inv g g' held;
+  let outside_refs = union_outside_refs minor g rs in
+  assert (MP.marking_inv g outside_refs);
+  S.mark_steps_inv g g' outside_refs;
   S.mark_steps_darker g g';
-  let same (w: obj_addr) : Lemma (GMM.roots_held g' rs w ==> GMM.roots_held g rs w) =
+  let same (w: obj_addr) : Lemma (GMM.root_refs g' rs w ==> GMM.root_refs g rs w) =
     let aux (r: U64.t) : Lemma (Seq.mem r rs /\ is_pointer r /\ resolve_object (r <: obj_addr) g' == w ==>
-                                GMM.roots_held g rs w) = () in
+                                GMM.root_refs g rs w) = () in
     FStar.Classical.forall_intro aux
   in
   FStar.Classical.forall_intro same
@@ -225,9 +225,9 @@ let marking_done_shape minor g fp =
   phase_shape_marking minor g fp;
   GenInv.collection_shape_with_elim Ph.Marking free_stw minor g fp;
   GenInv.major_shape_with_elim Ph.Marking free_stw g fp;
-  let held = GMM.nursery_held minor in
-  MP.marking_done_sweep_start g held fp;
-  MP.marking_done g held;
+  let outside_refs = GMM.nursery_refs minor in
+  MP.marking_done_sweep_start g outside_refs fp;
+  MP.marking_done g outside_refs;
   assert (sweep_start.cursor == c);
   free_stw_ok ();
   let nf (obj: U64.t) (j: nat)
@@ -236,7 +236,7 @@ let marking_done_shape minor g fp =
             (ensures in_use (free_incremental c) g ((minor_read_field minor obj j) <: obj_addr))
     = GenInv.minor_major_fields_not_free_elim free_stw minor g obj j;
       let v : obj_addr = minor_read_field minor obj j in
-      assert (held v)
+      assert (outside_refs v)
   in
   GenInv.minor_major_fields_not_free_intro (free_incremental c) minor g nf;
   phase_shape_sweeping minor g fp c
@@ -282,11 +282,11 @@ let minor_keeps_phase_shape minor g fp c roots =
 #push-options "--z3rlimit 20"
 let minor_keeps_marking_shape minor g fp roots =
   phase_shape_marking minor g fp;
-  assert (MP.marking_inv g (GMM.marking_held minor g roots));
+  assert (MP.marking_inv g (GMM.outside_refs_of minor g roots));
   GMM.minor_keeps_marking_inv minor g fp roots;
   let res = GMM.collect_marking minor g fp roots in
-  FStar.Classical.forall_intro (GMM.nursery_held_reset minor);
-  assert (MP.marking_inv res.Promote.mc_major (GMM.nursery_held res.Promote.mc_minor));
+  FStar.Classical.forall_intro (GMM.nursery_refs_reset minor);
+  assert (MP.marking_inv res.Promote.mc_major (GMM.nursery_refs res.Promote.mc_minor));
   phase_shape_marking res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp
 #pop-options
 

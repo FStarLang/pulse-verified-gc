@@ -4,7 +4,7 @@
 ///
 /// Between mark slices the program runs.  This module is about its field
 /// writes into the major heap, and the loads by which it obtains pointers, at
-/// the marking invariant `GC.Spec.MarkPhase.marking_inv g held` (`held`: what
+/// the marking invariant `GC.Spec.MarkPhase.marking_inv g outside_refs` (`outside_refs`: what
 /// is pointed at from outside the major heap -- the program's roots and the
 /// nursery's fields, chosen by the generational layer).
 ///
@@ -19,7 +19,7 @@
 ///     inside closures, never a body word of `x` (`target_header_away`).
 ///   * **The write** (`marking_write`): `marking_inv` survives the write when
 ///     the old value's target is not white (no edge into a white object is
-///     cut unseen) and the new value's target is not white, held, or one the
+///     cut unseen) and the new value's target is not white, an outside reference, or one the
 ///     marker will reach (a black `x` may then point at it).  Writing an
 ///     immediate (`marking_write_immediate`) is the instance with no target.
 ///   * **The deletion barrier** (`marking_write_barrier`): darken the old
@@ -142,27 +142,27 @@ let target_not_white (g: heap) (w: U64.t) : prop =
   is_pointer w ==> ~(is_white (resolve_object (w <: obj_addr) g) g)
 
 /// The new value's target, if any, may be pointed at by a black object: it
-/// is not white, or it is held, or the marker will reach it.
-let target_ok (g: heap) (held: obj_addr -> prop) (w: U64.t) : prop =
+/// is not white, or it is an outside reference, or the marker will reach it.
+let target_ok (g: heap) (outside_refs: obj_addr -> prop) (w: U64.t) : prop =
   is_pointer w ==>
   (let t = resolve_object (w <: obj_addr) g in
-   ~(is_white t g) \/ held t \/ marker_will_reach g t)
+   ~(is_white t g) \/ outside_refs t \/ marker_will_reach g t)
 
 /// **A write keeps the marking invariant** when the old target is not white
 /// and the new one is fine for a black object to point at (when `x` is
-/// scannable: a no-scan block has no edges).  `held` need not change: the
+/// scannable: a no-scan block has no edges).  `outside_refs` need not change: the
 /// program may still hold what it stored.
-val marking_write (g: heap) (held: obj_addr -> prop) (x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires marking_inv g held /\ SPM.program_write free_stw g x a v /\
-                    (~(is_no_scan x g) ==> target_not_white g (read_word g a) /\ target_ok g held v))
-          (ensures marking_inv (write_word g a v) held)
+val marking_write (g: heap) (outside_refs: obj_addr -> prop) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires marking_inv g outside_refs /\ SPM.program_write free_stw g x a v /\
+                    (~(is_no_scan x g) ==> target_not_white g (read_word g a) /\ target_ok g outside_refs v))
+          (ensures marking_inv (write_word g a v) outside_refs)
 
 /// Writing an immediate (not a pointer) where the old value was not a white
 /// object's pointer.
-val marking_write_immediate (g: heap) (held: obj_addr -> prop) (x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires marking_inv g held /\ in_use free_stw g x /\ ~(is_closure x g) /\ SPM.in_body g x a /\
+val marking_write_immediate (g: heap) (outside_refs: obj_addr -> prop) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires marking_inv g outside_refs /\ in_use free_stw g x /\ ~(is_closure x g) /\ SPM.in_body g x a /\
                     ~(is_pointer v) /\ target_not_white g (read_word g a))
-          (ensures marking_inv (write_word g a v) held)
+          (ensures marking_inv (write_word g a v) outside_refs)
 
 /// ---------------------------------------------------------------------------
 /// The deletion barrier
@@ -178,17 +178,17 @@ let darken (g: heap) (w: U64.t) : GTot heap =
   else g
 
 /// Darkening keeps the invariant.
-val darken_inv (g: heap) (held: obj_addr -> prop) (w: U64.t)
-  : Lemma (requires marking_inv g held)
-          (ensures marking_inv (darken g w) held)
+val darken_inv (g: heap) (outside_refs: obj_addr -> prop) (w: U64.t)
+  : Lemma (requires marking_inv g outside_refs)
+          (ensures marking_inv (darken g w) outside_refs)
 
 /// **The deletion barrier** (4.14's `caml_modify` while marking): darken the
 /// old value, then write.  The new value is storable and fine for a black
 /// object to point at, as in `marking_write`; the old one is anything.
-val marking_write_barrier (g: heap) (held: obj_addr -> prop) (x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires marking_inv g held /\ SPM.program_write free_stw g x a v /\
-                    (~(is_no_scan x g) ==> target_ok g held v))
-          (ensures marking_inv (write_word (darken g (read_word g a)) a v) held)
+val marking_write_barrier (g: heap) (outside_refs: obj_addr -> prop) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires marking_inv g outside_refs /\ SPM.program_write free_stw g x a v /\
+                    (~(is_no_scan x g) ==> target_ok g outside_refs v))
+          (ensures marking_inv (write_word (darken g (read_word g a)) a v) outside_refs)
 
 /// ---------------------------------------------------------------------------
 /// Loads
@@ -196,6 +196,6 @@ val marking_write_barrier (g: heap) (held: obj_addr -> prop) (x: obj_addr) (a: h
 
 /// **A load**: the program holds `s` and reads a field of it pointing at
 /// `t`; it may hold `t` too.
-val marking_load (g: heap) (held: obj_addr -> prop) (s t: obj_addr)
-  : Lemma (requires marking_inv g held /\ held s /\ in_use free_stw g s /\ field_edge g s t)
-          (ensures marking_inv g (fun w -> held w \/ w == t))
+val marking_load (g: heap) (outside_refs: obj_addr -> prop) (s t: obj_addr)
+  : Lemma (requires marking_inv g outside_refs /\ outside_refs s /\ in_use free_stw g s /\ field_edge g s t)
+          (ensures marking_inv g (fun w -> outside_refs w \/ w == t))

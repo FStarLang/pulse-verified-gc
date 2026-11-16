@@ -31,7 +31,7 @@ module SA = GC.Spec.Allocator
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 
-let nursery_held_reset minor w =
+let nursery_refs_reset minor w =
   FStar.Classical.forall_intro (minor_reset_objects_not_mem minor)
 
 /// An element of a sequence is a member of it.
@@ -265,7 +265,7 @@ let update_agrees (pm: heap) (un: free_def) (fwd: Promote.forwarding_map) (x: ob
 /// The nursery's fields point at blocks the marker will reach, if white.
 #push-options "--z3rlimit 20"
 let nursery_not_unreached (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires pre minor g fp /\ MP.marking_inv g (marking_held minor g roots))
+  : Lemma (requires pre minor g fp /\ MP.marking_inv g (outside_refs_of minor g roots))
           (ensures GenInv.minor_major_fields_not_free (MP.unreached g) minor g)
   = pre_facts minor g fp;
     let h (obj: U64.t) (j: nat)
@@ -274,8 +274,8 @@ let nursery_not_unreached (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq
               (ensures in_use (MP.unreached g) g ((minor_read_field minor obj j) <: obj_addr))
       = GenInv.minor_major_fields_not_free_elim free_stw minor g obj j;
         let v : obj_addr = minor_read_field minor obj j in
-        assert (nursery_held minor v);
-        assert (marking_held minor g roots v)
+        assert (nursery_refs minor v);
+        assert (outside_refs_of minor g roots v)
     in
     GenInv.minor_major_fields_not_free_intro (MP.unreached g) minor g h
 #pop-options
@@ -336,10 +336,10 @@ let wf_after_with (un: free_def) (minor: minor_state) (g: heap) (fp: U64.t) (roo
 /// **The heap after is well formed for `unreached g`.**
 #push-options "--z3rlimit 20"
 let unreached_wf_after (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires pre minor g fp /\ MP.marking_inv g (marking_held minor g roots))
+  : Lemma (requires pre minor g fp /\ MP.marking_inv g (outside_refs_of minor g roots))
           (ensures well_formed_heap_with (MP.unreached g) (collect_marking minor g fp roots).Promote.mc_major)
   = MP.unreached_ok g;
-    MP.marking_inv_unreached g (marking_held minor g roots);
+    MP.marking_inv_unreached g (outside_refs_of minor g roots);
     unreached_allocations g;
     nursery_not_unreached minor g fp roots;
     wf_after_with (MP.unreached g) minor g fp roots
@@ -349,7 +349,7 @@ let unreached_wf_after (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U6
 /// The rewritten roots
 /// ---------------------------------------------------------------------------
 
-/// A white object a rewritten root holds was held by an old root.
+/// A white object a rewritten root points at was pointed at by an old root.
 #push-options "--z3rlimit 40"
 let rewritten_root (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t) (r': U64.t) (w: obj_addr)
   : Lemma (requires pre minor g fp /\ MCFH.roots_valid_for_minor_collection minor g roots /\
@@ -358,7 +358,7 @@ let rewritten_root (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
                      resolve_object (r' <: obj_addr) res.Promote.mc_major == w /\
                      Seq.mem w (objects zero_addr res.Promote.mc_major) /\
                      is_white w res.Promote.mc_major))
-          (ensures roots_held g roots w)
+          (ensures root_refs g roots w)
   = let p = prom minor g fp roots in
     let pm = p.Promote.major_final in
     let fwd = p.Promote.fwd_map in
@@ -402,10 +402,10 @@ let rewritten_root (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
 
 #push-options "--z3rlimit 40"
 let minor_keeps_marking_inv minor g fp roots =
-  let held = marking_held minor g roots in
+  let outside_refs = outside_refs_of minor g roots in
   let res = collect_marking minor g fp roots in
   let g' = res.Promote.mc_major in
-  let held' = roots_held g' res.Promote.mc_roots in
+  let outside_refs' = root_refs g' res.Promote.mc_roots in
   pre_facts minor g fp;
   CV.cheney_collect_with_preserves_shape Ph.Marking free_stw minor g fp roots;
   GenInv.collection_shape_with_elim Ph.Marking free_stw res.Promote.mc_minor g' res.Promote.mc_fp;
@@ -466,16 +466,16 @@ let minor_keeps_marking_inv minor g fp roots =
     = MP.unreached_black_edge g g' b t
   in
   FStar.Classical.forall_intro_2 (fun b -> FStar.Classical.move_requires (blk b));
-  // a white object a rewritten root holds was held
+  // a white object a rewritten root holds was outside_refs
   let hr (w: obj_addr)
-    : Lemma (requires held' w /\ Seq.mem w (objects zero_addr g') /\ is_white w g')
-            (ensures held w)
+    : Lemma (requires outside_refs' w /\ Seq.mem w (objects zero_addr g') /\ is_white w g')
+            (ensures outside_refs w)
     = eliminate exists (r': U64.t).
         Seq.mem r' res.Promote.mc_roots /\ is_pointer r' /\ resolve_object (r' <: obj_addr) g' == w
       with rewritten_root minor g fp roots r' w
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires hr);
-  MP.marking_inv_change g g' held held'
+  MP.marking_inv_change g g' outside_refs outside_refs'
 #pop-options
 
 /// ---------------------------------------------------------------------------

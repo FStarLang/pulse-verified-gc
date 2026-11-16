@@ -16,7 +16,7 @@
 ///   * **The state with a fresh block** (`fresh_shape minor g fp obj`): the
 ///     nursery's shape and the cross-generation condition at `free_stw`, the
 ///     walk dense, the free list ascending, and the marking invariant with
-///     `obj` fresh and what the nursery points at held.
+///     `obj` fresh and what the nursery points at as outside references.
 ///   * **Allocation** (`marking_alloc_shape`): from the collector's state at
 ///     `Marking`, the allocation either fails and changes nothing, or hands
 ///     out a block of the requested size and tag, fresh.  Nothing the
@@ -64,7 +64,7 @@ let fresh_shape (minor: minor_state) (g: heap) (fp: U64.t) (obj: obj_addr) : pro
   GenInv.minor_major_fields_not_free free_stw minor g /\
   heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
   FLA.fl_ascending g fp /\
-  MPA.marking_fresh g (GMM.nursery_held minor) obj
+  MPA.marking_fresh g (GMM.nursery_refs minor) obj
 
 /// **Allocation while marking**: nothing changes if nothing fits; otherwise
 /// the new block has the requested size and tag and is fresh.
@@ -89,7 +89,7 @@ val fresh_shape_write (minor: minor_state) (g: heap) (fp: U64.t) (obj: obj_addr)
 /// point at, the collector's state at `Marking`.
 val fresh_shape_close (minor: minor_state) (g: heap) (fp: U64.t) (obj: obj_addr)
   : Lemma (requires fresh_shape minor g fp obj /\ SPM.fields_storable free_stw g obj /\
-                    MPA.fields_ok g (GMM.nursery_held minor) obj)
+                    MPA.fields_ok g (GMM.nursery_refs minor) obj)
           (ensures GI.phase_shape minor g fp Ph.Marking)
 
 /// ---------------------------------------------------------------------------

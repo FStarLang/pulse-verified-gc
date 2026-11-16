@@ -49,7 +49,7 @@ let rec mem_of_index (#a: eqtype) (s: seq a) (i: nat{i < Seq.length s})
 /// ---------------------------------------------------------------------------
 
 let reachable_at_start_eq g rs =
-  assert_norm (reachable_at_start g rs == MPC.reachable g (GMM.roots_held g rs))
+  assert_norm (reachable_at_start g rs == MPC.reachable g (GMM.root_refs g rs))
 
 /// What the start needs of the heap: well formed, nothing dark, every root a
 /// darkenable object.
@@ -68,7 +68,7 @@ let rec start_prefix (g: heap) (rs: seq U64.t) (cap: nat) (idx: nat{idx <= Seq.l
   = let s = reachable_at_start g rs in
     if idx = 0 then begin
       assert (fst (MB.darken_roots_bounded_prefix_spec g Seq.empty rs idx cap) == g);
-      MPC.account_start g (GMM.roots_held g rs);
+      MPC.account_start g (GMM.root_refs g rs);
       reachable_at_start_eq g rs
     end else begin
       start_prefix g rs cap (idx - 1);
@@ -86,8 +86,8 @@ let rec start_prefix (g: heap) (rs: seq U64.t) (cap: nat) (idx: nat{idx <= Seq.l
         assert (U64.sub t mword == hd_address t);
         if is_white t g0 then begin
           mem_of_index rs (idx - 1);
-          assert (GMM.roots_held g rs t);
-          MPC.reachable_held g (GMM.roots_held g rs) t;
+          assert (GMM.root_refs g rs t);
+          MPC.reachable_outside_refs g (GMM.root_refs g rs) t;
           MPC.account_grey s g0 t
         end
       end

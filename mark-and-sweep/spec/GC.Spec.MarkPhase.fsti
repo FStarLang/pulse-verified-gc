@@ -20,13 +20,13 @@
 ///     object again; grey objects in the middle are fine (the part from the
 ///     last one on is itself such a path).
 ///
-///   * **The invariant** (`marking_inv g held`), where `held w` says that
+///   * **The invariant** (`marking_inv g outside_refs`), where `outside_refs w` says that
 ///     something outside the major heap points at `w` (the program's roots,
 ///     and later the nursery's fields: the generational layer chooses):
 ///       1. every white object a black object points at is one the marker
 ///          will reach (the weak tri-colour invariant, `weak_tri_color`);
-///       2. every white object held from outside is one the marker will
-///          reach (`held_reached`);
+///       2. every white object referenced from outside is one the marker will
+///          reach (`outside_refs_reached`);
 ///       3. the heap is well formed with free meaning blue: marking frees
 ///          nothing.
 ///
@@ -34,7 +34,7 @@
 /// (`marking_inv_start`).  Step: any mark step keeps it
 /// (`marking_inv_step`).  End: with no grey object left, nothing is one the
 /// marker will reach, so clause 1 is the strong tri-colour invariant and
-/// clause 2 says every held object is marked -- the heap is `marked`, where
+/// clause 2 says every outside reference is marked -- the heap is `marked`, where
 /// the sweep starts (`marking_done`, `marking_done_sweep_start`).
 ///
 /// The program's events are changes to the heap that keep grey objects grey
@@ -136,27 +136,27 @@ let weak_tri_color (g: heap) : prop =
     Seq.mem b (objects zero_addr g) /\ is_black b g /\ field_edge g b w /\ is_white w g ==>
     marker_will_reach g w
 
-/// Clause 2: every white object held from outside the major heap is one
+/// Clause 2: every white object referenced from outside the major heap is one
 /// the marker will reach.
-let held_reached (g: heap) (held: obj_addr -> prop) : prop =
+let outside_refs_reached (g: heap) (outside_refs: obj_addr -> prop) : prop =
   forall (w: obj_addr).
-    held w /\ Seq.mem w (objects zero_addr g) /\ is_white w g ==> marker_will_reach g w
+    outside_refs w /\ Seq.mem w (objects zero_addr g) /\ is_white w g ==> marker_will_reach g w
 
-/// The marking invariant.  `held w`: something outside the major heap points
+/// The marking invariant.  `outside_refs w`: something outside the major heap points
 /// at `w` (resolved).
-let marking_inv (g: heap) (held: obj_addr -> prop) : prop =
-  well_formed_heap g /\ weak_tri_color g /\ held_reached g held
+let marking_inv (g: heap) (outside_refs: obj_addr -> prop) : prop =
+  well_formed_heap g /\ weak_tri_color g /\ outside_refs_reached g outside_refs
 
 /// ---------------------------------------------------------------------------
 /// Start, step, end
 /// ---------------------------------------------------------------------------
 
 /// **Start.**  No black object points at a white one (in particular, there is
-/// no black object), and every held object has been darkened.
-val marking_inv_start (g: heap) (held: obj_addr -> prop)
+/// no black object), and every outside reference has been darkened.
+val marking_inv_start (g: heap) (outside_refs: obj_addr -> prop)
   : Lemma (requires well_formed_heap g /\ Mark.tri_color_invariant g /\
-                    (forall (w: obj_addr). held w /\ Seq.mem w (objects zero_addr g) ==> ~(is_white w g)))
-          (ensures marking_inv g held)
+                    (forall (w: obj_addr). outside_refs w /\ Seq.mem w (objects zero_addr g) ==> ~(is_white w g)))
+          (ensures marking_inv g outside_refs)
 
 /// With no black object, no black object points at a white one.
 val no_black_tri_color (g: heap)
@@ -164,22 +164,22 @@ val no_black_tri_color (g: heap)
           (ensures Mark.tri_color_invariant g)
 
 /// **Step.**  A mark step at any grey object keeps the invariant.
-val marking_inv_step (g: heap) (held: obj_addr -> prop) (x: obj_addr)
-  : Lemma (requires marking_inv g held /\ Seq.mem x (objects zero_addr g) /\ is_gray x g)
-          (ensures marking_inv (mark_step_at g x) held)
+val marking_inv_step (g: heap) (outside_refs: obj_addr -> prop) (x: obj_addr)
+  : Lemma (requires marking_inv g outside_refs /\ Seq.mem x (objects zero_addr g) /\ is_gray x g)
+          (ensures marking_inv (mark_step_at g x) outside_refs)
 
 /// **End.**  With no grey object left, the heap is `marked` -- no grey, and no
-/// black object points at a white one -- and no held object is white.
-val marking_done (g: heap) (held: obj_addr -> prop)
-  : Lemma (requires marking_inv g held /\ Mark.noGreyObjects g)
+/// black object points at a white one -- and no outside reference is white.
+val marking_done (g: heap) (outside_refs: obj_addr -> prop)
+  : Lemma (requires marking_inv g outside_refs /\ Mark.noGreyObjects g)
           (ensures FSE.marked g /\
-                   (forall (w: obj_addr). held w /\ Seq.mem w (objects zero_addr g) ==> ~(is_white w g)))
+                   (forall (w: obj_addr). outside_refs w /\ Seq.mem w (objects zero_addr g) ==> ~(is_white w g)))
 
 /// The hand-over to the sweep: from a heap where marking is done, with the
 /// walk facts and the free list the allocator keeps, the sweep starts
 /// (`SPI.sweep_inv_incremental_start`).
-val marking_done_sweep_start (g: heap) (held: obj_addr -> prop) (fp: U64.t)
-  : Lemma (requires marking_inv g held /\ Mark.noGreyObjects g /\
+val marking_done_sweep_start (g: heap) (outside_refs: obj_addr -> prop) (fp: U64.t)
+  : Lemma (requires marking_inv g outside_refs /\ Mark.noGreyObjects g /\
                     FSI.sweep_g0 g /\ FLA.fl_ascending g fp)
           (ensures FSI.sweep_pre g fp /\ FSE.marked g /\
                    SPI.sweep_inv_incremental g fp GC.Spec.FusedSweep.sweep_start.cursor /\
@@ -193,11 +193,11 @@ val marking_done_sweep_start (g: heap) (held: obj_addr -> prop) (fp: U64.t)
 /// white blocks grey or white, makes no object white, and every edge between
 /// grey or white blocks it cuts ends at a grey object; a black object's edge
 /// to a white one is an old black edge, or its target is one the marker would
-/// already reach; and every white object held afterwards was held before, or
+/// already reach; and every white outside reference afterwards was one before, or
 /// is one the marker would already reach.
-val marking_inv_change (g g': heap) (held held': obj_addr -> prop)
+val marking_inv_change (g g': heap) (outside_refs outside_refs': obj_addr -> prop)
   : Lemma (requires
-            marking_inv g held /\ well_formed_heap g' /\
+            marking_inv g outside_refs /\ well_formed_heap g' /\
             (forall (y: obj_addr). grey_or_white g y ==> grey_or_white g' y) /\
             (forall (y: obj_addr). Seq.mem y (objects zero_addr g) /\ is_gray y g ==> is_gray y g') /\
             (forall (y: obj_addr). Seq.mem y (objects zero_addr g') /\ is_white y g' ==>
@@ -208,14 +208,14 @@ val marking_inv_change (g g': heap) (held held': obj_addr -> prop)
                Seq.mem b (objects zero_addr g') /\ is_black b g' /\ field_edge g' b t /\ is_white t g' ==>
                (Seq.mem b (objects zero_addr g) /\ is_black b g /\ field_edge g b t) \/
                marker_will_reach g t) /\
-            (forall (w: obj_addr). held' w /\ Seq.mem w (objects zero_addr g') /\ is_white w g' ==>
-                              held w \/ marker_will_reach g w))
-          (ensures marking_inv g' held')
+            (forall (w: obj_addr). outside_refs' w /\ Seq.mem w (objects zero_addr g') /\ is_white w g' ==>
+                              outside_refs w \/ marker_will_reach g w))
+          (ensures marking_inv g' outside_refs')
 
 /// Greying a white object -- the write barrier's darkening -- keeps it.
-val marking_inv_grey (g: heap) (held: obj_addr -> prop) (w: obj_addr)
-  : Lemma (requires marking_inv g held /\ Seq.mem w (objects zero_addr g) /\ is_white w g)
-          (ensures marking_inv (makeGray w g) held)
+val marking_inv_grey (g: heap) (outside_refs: obj_addr -> prop) (w: obj_addr)
+  : Lemma (requires marking_inv g outside_refs /\ Seq.mem w (objects zero_addr g) /\ is_white w g)
+          (ensures marking_inv (makeGray w g) outside_refs)
 
 /// Greying a white object keeps every object the marker would reach.
 val marker_will_reach_grey (g: heap) (w u: obj_addr)
@@ -241,8 +241,8 @@ val unreached_ok (g0: heap) : Lemma (free_def_ok (unreached g0))
 /// block the marker will not reach.  So whatever keeps well-formedness for
 /// every admissible definition of free -- the minor collection's generic
 /// theorem -- keeps that too.
-val marking_inv_unreached (g: heap) (held: obj_addr -> prop)
-  : Lemma (requires marking_inv g held)
+val marking_inv_unreached (g: heap) (outside_refs: obj_addr -> prop)
+  : Lemma (requires marking_inv g outside_refs)
           (ensures well_formed_heap_with (unreached g) g)
 
 /// And back: in a heap well formed for `unreached g0`, a black object's

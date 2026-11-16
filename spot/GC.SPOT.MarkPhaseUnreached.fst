@@ -31,7 +31,7 @@ module S = GC.SPOT.MarkPhase
 let mid_unreached_wf (r: unit{H.room})
   : Lemma (well_formed_heap_with (unreached (S.mid r)) (S.mid r))
   = S.mid_mark_inv r;
-    marking_inv_unreached (S.mid r) (S.held_w1 r)
+    marking_inv_unreached (S.mid r) (S.outside_refs_w1 r)
 
 let through_black_not_unreached_wf (r: unit{H.room})
   : Lemma (~(well_formed_heap_with (unreached (S.thr r)) (S.thr r)))

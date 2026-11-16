@@ -134,7 +134,7 @@ let start_dark (r: unit{MPH.room}) (x: obj_addr)
     zero_addr_above_2048 ();
     MB.darken_roots_bounded_spec_preserves_resolve g Seq.empty rs cap x;
     assert (Seq.mem (x <: U64.t) rs);
-    assert (GMM.roots_held (MStart.darkened g rs) rs x);
+    assert (GMM.root_refs (MStart.darkened g rs) rs x);
     MStart.darkened_roots_dark CH.minor0 g (CH.fp0 r) rs x
 #pop-options
 
