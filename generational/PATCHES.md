@@ -571,9 +571,9 @@ root scanning API and do address translation.
 2. The callback shape (`caml_do_roots`) is OCaml-specific and stays in C.
 3. With BRIDGE 2 eliminated (absolute minor addressing), the translation
    in this callback disappears — it just stores `(uint64_t)(uintptr_t)root`.
-4. **`MAX_ROOTS` (256K) static array**: Replace with a dynamically-sized
-   `Vec` allocated in the verified code.  The fixed bound is a latent bug
-   (silently drops roots if exceeded).
+4. **`MAX_ROOTS` (256K) static array**: done in C (issue #41): the root
+   arrays now grow on demand in `alloc_gen.c`.  Moving the buffer into
+   verified code remains possible.
 5. **Performance note**: Root scanning is O(roots) per GC — moderate.
 
 ---
