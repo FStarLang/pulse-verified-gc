@@ -1796,60 +1796,105 @@ unreachable from the roots when the cycle starts is freed by the end of the
 sweep, unless its address was handed out again since* (an allocation, or a
 minor collection's promotion).  The marking invariant is intrinsic and says
 nothing about the heap marking started from, so completeness is carried
-separately, as an **account** indexed by a ghost set `s` of addresses: those
-reachable when the cycle started (`MPC.reachable g outside_refs`: along
-`MP.field_edge` from what the roots hold), and those allocated or promoted
-since.  While marking (`MPC.within_snapshot s g`):
+separately, as an **account** against the cycle's **snapshot** -- in the
+sense of snapshot-at-the-beginning marking, the ghost set `snapshot` of
+addresses the cycle must keep: those reachable when the cycle started
+(`MPC.reachable g outside_refs`: along `MP.field_edge` from what the roots
+hold), and those allocated or promoted during the cycle.  While marking
+(`MPC.within_snapshot snapshot g`):
 
-- every grey or black object is in `s` (`dark_in_snapshot`);
-- the heap is well formed for the definition of free `outside_snapshot s` (blue,
-  or white and outside `s`): a non-free block that is dark or in `s` points
-  only at blocks that are dark or in `s`.  This is the closure of `s` under
-  the heap's edges, stated as well-formedness so that the minor collection's
-  generic theorem keeps it (as M2d's `MP.unreached`).
+- every grey or black object is in `snapshot` (`dark_in_snapshot`);
+- the heap is well formed for the definition of free `outside_snapshot
+  snapshot` (blue, or white and outside `snapshot`): a non-free block that
+  is dark or in `snapshot` points only at blocks that are dark or in
+  `snapshot`.  This is the closure of `snapshot` under the heap's edges,
+  stated as well-formedness so that the minor collection's generic theorem
+  keeps it (as M2d's `MP.unreached`).
 
-So an object outside `s` is never greyed: a mark step greys targets of
-fields of grey objects (dark, so accounted), and the barrier greys the old
-value of a field of the object the program writes, which the program can
-reach (accounted).  Each event keeps the account, a per-event family like
-the sweep's `survivor_or_new_*`:
+So an object outside `snapshot` is never greyed: a mark step greys targets
+of fields of grey objects (dark, so in the snapshot), and the barrier greys
+the old value of a field of the object the program writes, which the
+program can reach (in the snapshot).  Each event keeps the account, a
+per-event family like the sweep's `survivor_or_new_*`:
 
-| event | lemma | `s` afterwards |
+| event | lemma | `snapshot` afterwards |
 |---|---|---|
 | root darkening (`start_cycle`) | `GMC.cycle_start`, from `MPC.account_start` | the objects reachable from the roots in the heap `start_cycle` starts from (`GMC.reachable_at_start`) |
 | mark moves (a mark slice) | `MPC.account_move`, `account_steps` | unchanged |
 | the barrier write while marking | `MPC.account_barrier` (darken the old value, `account_darken`; then the write, `account_write`) | unchanged |
 | allocation while marking | `MPC.account_alloc`, `account_fresh_write`, `account_fresh_close` | the new object added (`SPC.with_new`) |
 | minor collection while marking | `GMC.account_minor` (`GMM.minor_keeps_wf_with`, the generalised `unreached_wf_after`) | the promoted copies added (`with_new_blocks`: the blocks that were not blocks before, black by `GMM.minor_new_block_black`) |
-| hand-over (nothing grey) | `MPC.cycle_handover` | unchanged: every block not free at the start of the sweep is black, so in `s` |
+| hand-over (nothing grey) | `MPC.cycle_handover` | unchanged: every block not free at the start of the sweep is black, so in `snapshot` |
 | sweep slices | `MPC.cycle_sweep_slice` | unchanged |
 | allocation / write mid-sweep | `MPC.cycle_sweep_alloc`, `cycle_sweep_write` | the new object added |
 | minor collection mid-sweep | `GMC.sweep_minor` | the promoted copies added (`GSC.with_promoted`) |
 
-At the collector's phase this is `MPC.cycle_account s g ph`: the mark account
-while marking; mid-sweep `sweep_in_snapshot` (every block not free for
-`free_incremental c` is in `s` -- the sweep's `survivor_or_new` with the
-survivors of marking folded into `s`); idle, every block that is not blue is
-in `s`.  At the entry points: `GMC.cycle_slice` (any `major_slice`, from
-`GI.major_slice_post`), `GMC.cycle_modify` (the barrier at every phase).
-The theorem is the idle form (`MPC.cycle_complete`,
-`GMC.cycle_frees_unreachable`): every address outside `s` -- unreachable
-when the cycle started and not allocated or promoted since -- is freed
+At the collector's phase this is `MPC.cycle_account snapshot g ph`:
+`within_snapshot` while marking; mid-sweep `sweep_in_snapshot` (every block
+not free for `free_incremental c` is in `snapshot` -- the sweep's
+`survivor_or_new` with the survivors of marking folded into `snapshot`);
+idle, every block that is not blue is in `snapshot`.  At the entry points:
+`GMC.cycle_slice` (any `major_slice`, from `GI.major_slice_post`),
+`GMC.cycle_modify` (the barrier at every phase).  Idle again
+(`MPC.cycle_complete`), every address outside `snapshot` is freed
 (`SPC.freed`: no block there, or a free block).
 
-**The trusted obligation it adds.**  The account needs the program's writes
-to stay inside `s`: `MPC.cycle_write s g x a v` -- `SPM.program_write` at
-`outside_snapshot s` (the program writes a body word of an object it can reach,
-and stores a value it holds: both in `s` or dark) and `x` scannable.  This
-is the marking invariant's roots obligation (the plan's option (a)) read
-against the cycle's start: OCaml's type safety -- the program obtains
-pointers only from its roots, by loading fields of objects it holds
-(`MPC.account_load`: a field of an accounted object is accounted), and by
-allocating (added to `s`).  It is not in `GB.modify_ok`: the completeness
-theorem takes it as a hypothesis (`GMC.modify_in_snapshot`) of the writes it
-covers, as it takes the nursery half for minor collections while marking
-(`minor_major_fields_not_free (outside_snapshot s)`: what the nursery holds is
-accounted for).  Nothing at runtime depends on it.
+**The run pins the snapshot.**  Stated of a set given as an argument,
+completeness is weak: the set of every address satisfies it.  As the sweep's
+run does for its `since` (`GC.Gen.SweepPhase.Cycle`), two runs fix it:
+
+- `GC.Gen.MarkPhase.Cycle.marking g0 rs g fp sp since`: a run of the
+  marking phase from the heap `start_cycle` was called on (`g0`, roots `rs`,
+  idle, nursery empty), with one constructor per event -- `Start` (root
+  darkening), `Slice` (a mark slice that stays marking), `Write` (the
+  barrier), `Alloc` (an allocation and the writes that initialise the new
+  object, `init_writes`), `Minor` -- each with the collector's state
+  (`GI.phase_shape`) as hypothesis and `since` fixed by the event.  The
+  snapshot is `MC.snapshot g0 rs since`.  Every state carries
+  (`mark_run_account`) the account and **snapshot-at-the-beginning**
+  (`MC.satb`): every object reachable at the start is a block in use, at its
+  size, and, if white, one the marker will reach (`MP.outside_refs_reached`
+  with the reachable objects as a fixed set of outside references -- the
+  marking invariant's lemmas keep that for any fixed set, the minor
+  collection's through `GMM.minor_keeps_marking_inv_with`; the deletion
+  barrier is what makes a write keep it; at the start the set of such blocks
+  contains the roots and is closed under the edges, which root darkening
+  keeps).  So at the hand-over (`MC.handover`) the black objects are the
+  snapshot's: everything reachable at the start is black, and everything
+  black is in the snapshot.
+- `GC.Gen.Cycle.major_cycle g0 rs g fp ph since`: the whole cycle -- a
+  marking run, the slice that hands over to the sweep, and a sweep run
+  (`GC.Gen.SweepPhase.Cycle.cycle`) from the heap and free list it handed
+  over; `since` is what both runs handed out.  Every state carries
+  `MPC.cycle_account` of the snapshot (`cycle_account`), and once idle:
+
+  **The incremental cycle is lossless, up to what it handed out**
+  (`cycle_lossless`): an address the run did not hand out holds a block that
+  is not free exactly when it held an object reachable from the roots when
+  the cycle started.  Completeness (`cycle_complete`,
+  `cycle_frees_unreachable`: every address outside the snapshot is freed)
+  and its converse (`cycle_survives`: every object reachable at the start is
+  a block in use at the end, at its size, and not handed out again; from
+  SATB at the hand-over and `SPC.survived_at_idle` for the sweep).
+
+**The trusted obligations.**  The account needs the program's writes to
+stay inside the snapshot: `MPC.cycle_write snapshot g x a v` --
+`SPM.program_write` at `outside_snapshot snapshot` (the program writes a
+body word of an object it can reach, and stores a value it holds: both in
+the snapshot or dark) and `x` scannable.  This is the marking invariant's
+roots obligation (the plan's option (a)) read against the cycle's start:
+OCaml's type safety -- the program obtains pointers only from its roots, by
+loading fields of objects it holds (`MPC.account_load`: a field of an object
+in the snapshot is in it), and by allocating (added to the snapshot).  It is
+not in `GB.modify_ok`: the runs take it as a hypothesis of the events it
+covers -- `Write`, the initialisation of a fresh object (`Alloc`:
+`SPM.fields_storable` at `outside_snapshot`), and the nursery half for a
+minor collection while marking (`Minor`: `minor_major_fields_not_free
+(outside_snapshot snapshot)`, what the nursery holds is in the snapshot) --
+as the sweep run takes the sweep's.  Nothing at runtime depends on it.
+SATB adds no obligation: it uses only the safety obligations the entry
+points already state (`MM.target_ok` in `GB.modify_ok`, and the roots
+reached at a minor collection, `GI.minor_keeps_marking_shape`'s).
 
 **Safety** (`GC.Gen.MarkPhase.Safety`), stated once for every phase
 (`GI.phase_shape`, with `GI.phase_free ph`: blue idle or marking, blue or
@@ -1885,12 +1930,17 @@ immediate into `A`'s field (cutting `A -> B`), and two unbounded slices to
 `Idle`; then `U`, unreachable at the start, is freed, and `C` survives with
 its size, tag and field.
 
-**Not done**: an event-list theorem (induction over the program's and the
-collector's events between collector calls, with the obligations as
-hypotheses on the list).  It needs the nursery's own events (allocation and
-writes into nursery objects, which the spec does not model as events) to
-state the minor collection's obligation, so the per-event lemmas are
-composed by hand, as the SPOT does.
+**The runs' SPOT** (`GC.SPOT.MarkPhaseCycleAlloc`, on the same heap): a
+marking run that starts the cycle, allocates a one-field object while
+marking and initialises it with an immediate.  `since` is the new object,
+so the snapshot is `A`, `B`, `C` and the new object, not `U`; the run's
+invariants give that `U` is still a white block (never greyed) and that
+`A`, `B` and `C` are blocks in use that the marker will reach if white.
+
+**Not done**: the nursery's own events (allocation and writes into nursery
+objects) are not modelled, so the minor collection's obligation is a
+hypothesis of `Minor` rather than derived; and no SPOT builds a whole
+`major_cycle` to `Idle` (that needs concrete mark steps to the hand-over).
 
 ## The minor collector
 

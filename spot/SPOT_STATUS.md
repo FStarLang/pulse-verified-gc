@@ -692,3 +692,21 @@ carries the cycle's account (`MPC.cycle_account`, from `GMC.cycle_start`,
   reachable then (`MPC.cycle_complete`);
 - `C` is a non-free block with the size, tag and field it had before the
   cycle (`SPI.same_block`).
+
+## A run of the marking phase that allocates
+
+`GC.SPOT.MarkPhaseCycleAlloc` builds a run of the marking phase
+(`GC.Gen.MarkPhase.Cycle.marking`) on the same heap and roots, with a
+non-empty `since`: `Start` (root darkening, from `CycleHeap.shape` and the
+roots' validity), and an `Alloc` of a one-field object while marking (it
+succeeds: the free block has a word, `Oom.alloc_spec_oom_no_fit` on the
+darkened heap) initialised with an immediate (`init_writes`, one write; the
+field is in the snapshot trivially).  The run's `since` is the new object, so
+the cycle's snapshot (`MC.snapshot`) is `A`, `B`, `C` and the new object, and
+not `U` (`u_unreachable`; the new object was not a block in use, so it is not
+`U`).  `mark_alloc_spot`, from the run's invariants (`MC.mark_run_account`):
+
+- `U` is still a white block: nothing outside the snapshot is greyed
+  (`MPC.within_snapshot`);
+- `A`, `B` and `C` are blocks in use and, if white, ones the marker will
+  reach (`MC.satb`) -- `B`, named by no root, through `A`.
