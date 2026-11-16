@@ -135,6 +135,12 @@ let dark_in_snapshot (snapshot: obj_addr -> prop) (g: heap) : prop =
 let within_snapshot (snapshot: obj_addr -> prop) (g: heap) : prop =
   dark_in_snapshot snapshot g /\ well_formed_heap_with (outside_snapshot snapshot) g
 
+/// The account depends on the snapshot only through which addresses are in
+/// it.
+val within_snapshot_ext (snapshot snapshot': obj_addr -> prop) (g: heap)
+  : Lemma (requires within_snapshot snapshot g /\ (forall (x: obj_addr). snapshot x <==> snapshot' x))
+          (ensures within_snapshot snapshot' g)
+
 /// ---------------------------------------------------------------------------
 /// Start
 /// ---------------------------------------------------------------------------

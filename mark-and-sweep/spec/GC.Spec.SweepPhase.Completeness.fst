@@ -286,6 +286,30 @@ let covered_at_idle g0 since g =
 let lossless_at_idle g0 since g =
   covered_at_idle g0 since g
 
+let survived_at_idle g0 since g x =
+  let p = U64.v (hd_address x) in
+  colour_of g0 x;
+  extent_block g0 x;
+  W.hd_address_pos x;
+  assert (LL.in_extent g0 x p);
+  W.reaches_end_of_dense g;
+  extent_below_end g0 x p;
+  // no block of `g0` but `x` lies over `p`, and `x` is black: `p` is not dead
+  let not_dead (y: obj_addr)
+    : Lemma (requires Seq.mem y (objects zero_addr g0) /\ ~(is_black y g0) /\ LL.in_extent g0 y p)
+            (ensures False)
+    = extents_disjoint g0 x y p
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires not_dead);
+  let z = block_over g p in
+  // so the block of `g` over it is neither free nor new: a survivor
+  assert (~(is_blue z g) /\ ~(since z));
+  assert (survivor g0 g z);
+  extent_block g z; extent_block g0 z;
+  assert (LL.in_extent g0 z p);
+  if z <> x then extents_disjoint g0 x z p;
+  assert (z == x)
+
 let freed_by_end g0 since g fp c =
   SPE.sweep_inv_incremental_end g fp c;
   sweep_inv_incremental_elim g fp c;

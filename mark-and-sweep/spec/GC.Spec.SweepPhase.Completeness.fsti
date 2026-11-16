@@ -277,6 +277,16 @@ val lossless_at_idle (g0: heap) (since: obj_addr -> prop) (g: heap)
           (ensures forall (p: nat). p < heap_size ==>
                      (LL.dead_covered g0 p <==> LL.blue_covered g p \/ new_covered since g p))
 
+/// **A survivor of marking survives the sweep.**  Once the sweep has ended,
+/// with both the account and its converse, a block black in the marked heap
+/// is a block of `g` that is not free, at the size it had, and its address
+/// was not handed out since (its words were never free).
+val survived_at_idle (g0: heap) (since: obj_addr -> prop) (g: heap) (x: obj_addr)
+  : Lemma (requires idle_account g0 since g /\ reclaimed_was_dead g0 since free_stw g /\
+                    survived_mark g0 x)
+          (ensures Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\
+                   wosize_of_object x g == wosize_of_object x g0 /\ ~(since x))
+
 /// Freed: not a non-free block -- not a block of the walk (merged into a free
 /// block), or a free (blue) block.
 let freed (g: heap) (x: obj_addr) : prop =

@@ -215,3 +215,13 @@ let modify_keeps_others ph minor g fp sp x a v y =
       free_def_ok_elim (SPI.free_incremental c);
       write_keeps_in_use (SPI.free_incremental c) g x a v y
 #pop-options
+
+let modify_keeps_blocks minor g fp sp x a v y =
+  GI.phase_shape_marking minor g fp sp;
+  GI.phase_free_marking ();
+  free_stw_ok ();
+  free_def_ok_elim free_stw;
+  let g1 = MM.darken g (read_word g a) in
+  darken_keeps g (read_word g a) x y a;
+  MM.write_heads g1 x a v;
+  MM.header_kept_facts g1 (write_word g1 a v) y

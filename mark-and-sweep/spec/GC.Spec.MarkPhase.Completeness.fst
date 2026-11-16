@@ -68,6 +68,14 @@ let outside_snapshot_ok snapshot =
 
 let in_use_outside_snapshot snapshot g x = ()
 
+let within_snapshot_ext snapshot snapshot' g =
+  let same (x: obj_addr) : Lemma (in_use (outside_snapshot snapshot') g x == in_use (outside_snapshot snapshot) g x)
+    = ()
+  in
+  FStar.Classical.forall_intro same;
+  SPI.well_formed_heap_with_congr (outside_snapshot snapshot) (outside_snapshot snapshot') g
+
+
 /// A non-free block for the account: a block, not blue.
 let in_use_block (snapshot: obj_addr -> prop) (g: heap) (x: obj_addr)
   : Lemma (requires in_use (outside_snapshot snapshot) g x)

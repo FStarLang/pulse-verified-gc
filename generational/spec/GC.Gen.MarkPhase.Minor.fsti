@@ -93,6 +93,20 @@ val minor_keeps_marking_inv (minor: minor_state) (g: heap) (fp: U64.t) (roots: s
                       res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp /\
                     MP.marking_inv res.Promote.mc_major (root_refs res.Promote.mc_major res.Promote.mc_roots) sp))
 
+/// **... and with more outside references**: a fixed set of addresses
+/// `extra` that are outside references before (besides the roots and the
+/// nursery's fields) still are after (besides the rewritten roots).  The
+/// completeness of the cycle uses it with `extra` the objects reachable when
+/// the cycle started (`GC.Gen.MarkPhase.Cycle`).
+val minor_keeps_marking_inv_with (extra: obj_addr -> prop)
+    (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t) (sp: MP.scan_pos)
+  : Lemma (requires GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\
+                    MCFH.roots_valid_for_minor_collection minor g roots /\
+                    MP.marking_inv g (fun w -> outside_refs_of minor g roots w \/ extra w) sp)
+          (ensures (let res = collect_marking minor g fp roots in
+                    MP.marking_inv res.Promote.mc_major
+                      (fun w -> root_refs res.Promote.mc_major res.Promote.mc_roots w \/ extra w) sp))
+
 /// **The collection keeps the grey objects**: a block of the heap after it
 /// is a grey object exactly when it was one before.  An old non-free block
 /// keeps its header, and a block that was not one is a promoted copy, black.

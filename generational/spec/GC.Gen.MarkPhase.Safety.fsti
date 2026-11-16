@@ -115,3 +115,11 @@ val modify_keeps_others (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U6
           (ensures (let g' = GB.modify_heap ph g a v in
                     SPI.same_block g g' (hd_address y) /\ in_use (GI.phase_free ph) g' y /\
                     (~(is_white y g) ==> ~(is_white y g'))))
+
+/// **While marking, the barrier keeps every block that is not free**, the
+/// written one included.
+val modify_keeps_blocks (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
+                        (x: obj_addr) (a: hp_addr) (v: U64.t) (y: obj_addr)
+  : Lemma (requires GI.phase_shape minor g fp Ph.Marking sp /\ GB.modify_ok Ph.Marking minor g sp x a v /\
+                    in_use free_stw g y)
+          (ensures in_use free_stw (GB.modify_heap Ph.Marking g a v) y)

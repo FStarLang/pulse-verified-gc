@@ -425,12 +425,24 @@ let old_field_edge_at (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64
     old_target minor g fp roots w
 #pop-options
 
+/// The invariant with more outside references, `extra`, a fixed set of
+/// addresses: the program's roots and the nursery's fields, or `extra`,
+/// before; the rewritten roots, or `extra`, after.
 #push-options "--z3rlimit 40"
-let minor_keeps_marking_inv minor g fp roots sp =
-  let outside_refs = outside_refs_of minor g roots in
+let keeps_marking_inv_with (extra: obj_addr -> prop)
+    (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t) (sp: MP.scan_pos)
+  : Lemma (requires pre minor g fp /\
+                    MCFH.roots_valid_for_minor_collection minor g roots /\
+                    MP.marking_inv g (fun w -> outside_refs_of minor g roots w \/ extra w) sp)
+          (ensures (let res = collect_marking minor g fp roots in
+                    MP.marking_inv res.Promote.mc_major
+                      (fun w -> root_refs res.Promote.mc_major res.Promote.mc_roots w \/ extra w) sp))
+  =
+  let outside_refs = fun w -> outside_refs_of minor g roots w \/ extra w in
   let res = collect_marking minor g fp roots in
   let g' = res.Promote.mc_major in
-  let outside_refs' = root_refs g' res.Promote.mc_roots in
+  let outside_refs' = fun w -> root_refs g' res.Promote.mc_roots w \/ extra w in
+  assert (MP.marking_inv g (outside_refs_of minor g roots) sp);
   pre_facts minor g fp;
   CV.cheney_collect_with_preserves_shape Ph.Marking free_stw minor g fp roots;
   GenInv.collection_shape_with_elim Ph.Marking free_stw res.Promote.mc_minor g' res.Promote.mc_fp;
@@ -508,13 +520,23 @@ let minor_keeps_marking_inv minor g fp roots sp =
   let hr (w: obj_addr)
     : Lemma (requires outside_refs' w /\ Seq.mem w (objects zero_addr g') /\ is_white w g')
             (ensures outside_refs w)
-    = eliminate exists (r': U64.t).
+    = if FStar.IndefiniteDescription.strong_excluded_middle (extra w) then ()
+      else
+      eliminate exists (r': U64.t).
         Seq.mem r' res.Promote.mc_roots /\ is_pointer r' /\ resolve_object (r' <: obj_addr) g' == w
       with rewritten_root minor g fp roots r' w
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires hr);
   MP.marking_inv_change g g' outside_refs outside_refs' sp
 #pop-options
+
+let minor_keeps_marking_inv minor g fp roots sp =
+  pre_facts minor g fp;
+  CV.cheney_collect_with_preserves_shape Ph.Marking free_stw minor g fp roots;
+  keeps_marking_inv_with (fun _ -> False) minor g fp roots sp
+
+let minor_keeps_marking_inv_with extra minor g fp roots sp =
+  keeps_marking_inv_with extra minor g fp roots sp
 
 /// ---------------------------------------------------------------------------
 /// The grey objects
