@@ -140,9 +140,12 @@ pacing and how the bridge meets the trusted obligations listed in
    blocks, explicit collections, shrinking blocks and `Marshal`, and a stress mix,
    all mid-sweep), `incremental_mark` (heavy mutation while marking: paths
    cut and restored, black and white objects overwritten, young into old, a
-   large array rewritten mid-scan, `Lazy`, `Hashtbl`) and `write_barrier` are
-   compared with stock OCaml's output byte for byte by
-   `tests/run_differential.sh`, under three pacings when
+   large array rewritten mid-scan, `Lazy`, `Hashtbl`), `mark_scanned_writes`
+   (the first fields of a large array rewritten over and over while it is
+   being marked; it also checks that marking still ends in slices, which it
+   did not when the barrier restarted the scan of a partly scanned object)
+   and `write_barrier` are compared with stock OCaml's output byte for byte
+   by `tests/run_differential.sh`, under three pacings when
    `VERGC_MAJOR=incremental`.
 2. **Smoke tests** — the eight Computer Language Benchmarks Game programs, run
    once each to confirm the collector survives realistic workloads.

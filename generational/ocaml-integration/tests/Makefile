@@ -59,7 +59,7 @@ BT18_MAJOR_WORDS      ?= 536870912
 CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior \
                     alloc_exact_promotion tiny_globals gc_explicit large_alloc_garbage \
                     gray_overflow explicit_major incremental_sweep obj_truncate \
-                    write_barrier incremental_mark
+                    write_barrier incremental_mark mark_scanned_writes
 
 # infix_closures needs a small major heap so that real major collections
 # (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
@@ -103,6 +103,14 @@ INCREMENTAL_SWEEP_MAJOR_WORDS ?= 4000000
 INCREMENTAL_MARK_MAJOR_WORDS ?= 1000000
 INCREMENTAL_MARK_REPS ?= 3
 
+# mark_scanned_writes: the program keeps writing into the first fields of a
+# large array while a cycle marks it, a slice's worth of fields at a time
+# (VERGC_MAJOR=incremental).  The barrier once restarted the array's scan on
+# each such write, so marking never ended in slices; REQUIRE_MARKS_ENDED
+# checks that every run's marking ends in slices with no cycle finished early
+# while marking.
+MARK_SCANNED_WRITES_MAJOR_WORDS ?= 1000000
+
 # write_barrier: stores into old blocks in every pattern the verified write
 # barrier (caml_modify / caml_initialize / caml_array_fill) distinguishes,
 # with collections in between; differential against stock.
@@ -136,7 +144,7 @@ GRAY_OVERFLOW_MAJOR_WORDS ?= 2000000
 
 BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
              $(addsuffix .byte, $(KNOWN_GAP_TESTS)) $(addsuffix .byte, $(MARK_BENCHMARKS))
-NATIVE_DIFF_TESTS = explicit_major incremental_sweep write_barrier incremental_mark
+NATIVE_DIFF_TESTS = explicit_major incremental_sweep write_barrier incremental_mark mark_scanned_writes
 NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS)) gc_explicit.native large_alloc_garbage.native \
                gray_overflow.native obj_truncate.native $(addsuffix .native, $(NATIVE_DIFF_TESTS))
 BENCH_TARGETS = $(addsuffix .bench, $(BENCHMARKS))
@@ -264,6 +272,8 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	  'MIN_EXPANSION_WORDSIZE=$(WRITE_BARRIER_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) write_barrier.byte'
 	REQUIRE_MID_MARK=1 $(DIFF) incremental_mark '$(UNCHANGED_OCAMLRUN) incremental_mark.byte $(INCREMENTAL_MARK_REPS)' \
 	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_MARK_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) incremental_mark.byte $(INCREMENTAL_MARK_REPS)'
+	REQUIRE_MID_MARK=1 REQUIRE_MARKS_ENDED=1 $(DIFF) mark_scanned_writes '$(UNCHANGED_OCAMLRUN) mark_scanned_writes.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(MARK_SCANNED_WRITES_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) mark_scanned_writes.byte'
 	@echo "=== Correctness tests passed ==="
 
 # ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
@@ -327,6 +337,8 @@ test-native: $(NATIVE_FILES) $(addsuffix .byte, $(NATIVE_DIFF_TESTS))
 	  'MIN_EXPANSION_WORDSIZE=$(WRITE_BARRIER_MAJOR_WORDS) ./write_barrier.native'
 	REQUIRE_MID_MARK=1 $(DIFF) incremental_mark.native '$(UNCHANGED_OCAMLRUN) incremental_mark.byte $(INCREMENTAL_MARK_REPS)' \
 	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_MARK_MAJOR_WORDS) ./incremental_mark.native $(INCREMENTAL_MARK_REPS)'
+	REQUIRE_MID_MARK=1 REQUIRE_MARKS_ENDED=1 $(DIFF) mark_scanned_writes.native '$(UNCHANGED_OCAMLRUN) mark_scanned_writes.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(MARK_SCANNED_WRITES_MAJOR_WORDS) ./mark_scanned_writes.native'
 	@echo "=== All native smoke tests passed ==="
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----

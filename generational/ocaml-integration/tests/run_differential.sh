@@ -20,7 +20,11 @@
 # default-paced one must also show (VERGC_MAJOR_STATS) that the test exercised
 # what it is about: sweep slices ran and major allocations happened mid-sweep
 # / marking spanned several slices and the program ran in between (minor
-# collections, major allocations or barrier calls while marking).
+# collections, major allocations or barrier calls while marking).  With
+# REQUIRE_MARKS_ENDED=1, every incremental run (the default-paced one too)
+# must show that marking ended in slices at least once (marks_spanned) and
+# that no cycle had to be finished early while marking (finish_mid_mark): the
+# program's writes did not keep marking from ending.
 set -eu
 name=$1; stock=$2; verified=$3
 out=${TMPDIR:-/tmp}/vergc-diff.$$
@@ -54,6 +58,13 @@ for pacing in "$@"; do
   stats=$(grep '^vergc-major:' "$out.err" || true)
   grep -v '^vergc-major:\|^vergc-pauses:' "$out.err" >&2 || true
   echo "    $stats"
+  if [ "$mode" = incremental ] && [ "${REQUIRE_MARKS_ENDED:-0}" = 1 ]; then
+    ended=$(stat "$stats" marks_spanned); early=$(stat "$stats" finish_mid_mark)
+    if [ "${ended:-0}" -eq 0 ] || [ "${early:-1}" -ne 0 ]; then
+      echo "FAIL: $label: marking did not end in slices (marks_spanned=${ended:-?} finish_mid_mark=${early:-?})" >&2
+      exit 1
+    fi
+  fi
   if [ "$mode" = incremental ] && [ -n "$pacing" ]; then
     if [ "${REQUIRE_MID_SWEEP:-0}" = 1 ]; then
       slices=$(stat "$stats" sweep_slices); mid=$(stat "$stats" alloc_mid_sweep)
