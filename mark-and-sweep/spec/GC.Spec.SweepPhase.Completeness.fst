@@ -153,6 +153,30 @@ let block_over (g: heap) (p: nat)
     extent_block g y;
     y
 
+let walk_end_same_blocks g g' =
+  W.reaches_end_of_dense g;
+  W.reaches_end_of_dense g';
+  let e = W.walk_end g zero_addr in
+  let e' = W.walk_end g' zero_addr in
+  W.reaches_bounds g zero_addr e;
+  W.reaches_bounds g' zero_addr e';
+  // a word below one walk's end lies below the other's
+  let below (h h': heap) (p: nat)
+    : Lemma (requires heap_objects_dense h /\ Seq.length (objects zero_addr h) > 0 /\
+                      heap_objects_dense h' /\ Seq.length (objects zero_addr h') > 0 /\
+                      objects zero_addr h' == objects zero_addr h /\
+                      (forall (x: obj_addr). Seq.mem x (objects zero_addr h) ==>
+                         wosize_of_object x h' == wosize_of_object x h) /\
+                      U64.v zero_addr <= p /\ p < W.walk_end h zero_addr)
+            (ensures p < W.walk_end h' zero_addr)
+    = W.reaches_end_of_dense h';
+      let y = block_over h p in
+      assert (LL.in_extent h' y p);
+      extent_below_end h' y p
+  in
+  if e < e' then below g' g e
+  else if e' < e then below g g' e'
+
 /// ---------------------------------------------------------------------------
 /// The converse
 /// ---------------------------------------------------------------------------

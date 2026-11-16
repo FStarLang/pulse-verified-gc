@@ -170,6 +170,39 @@ val survivor_or_new_body_write (g0: heap) (since: obj_addr -> prop) (g: heap) (f
           (ensures survivor_or_new g0 since (write_word g a v) c)
 
 /// ---------------------------------------------------------------------------
+/// Extents
+/// ---------------------------------------------------------------------------
+
+/// Two different objects of a walk have disjoint extents.
+val extents_disjoint (g: heap) (x y: obj_addr) (p: nat)
+  : Lemma (requires Seq.mem x (objects zero_addr g) /\ Seq.mem y (objects zero_addr g) /\ x <> y /\
+                    LL.in_extent g x p)
+          (ensures ~(LL.in_extent g y p))
+
+/// The extent of an object of a dense walk lies below the walk's end.
+val extent_below_end (g: heap) (x: obj_addr) (p: nat)
+  : Lemma (requires Seq.mem x (objects zero_addr g) /\ LL.in_extent g x p /\
+                    W.walk_end g zero_addr + 8 >= heap_size)
+          (ensures p < W.walk_end g zero_addr /\ U64.v zero_addr <= p)
+
+/// A word of the walk lies in the extent of an object of the walk.
+val block_over (g: heap) (p: nat)
+  : Ghost obj_addr
+      (requires U64.v zero_addr <= p /\ p < W.walk_end g zero_addr)
+      (ensures fun y -> Seq.mem y (objects zero_addr g) /\ LL.in_extent g y p)
+
+/// **Two dense heaps with the same blocks, of the same sizes, end their
+/// walks at the same place** (each block's extent lies below the other's
+/// walk end).
+val walk_end_same_blocks (g g': heap)
+  : Lemma (requires heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
+                    heap_objects_dense g' /\ Seq.length (objects zero_addr g') > 0 /\
+                    objects zero_addr g' == objects zero_addr g /\
+                    (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
+                       wosize_of_object x g' == wosize_of_object x g))
+          (ensures W.walk_end g' zero_addr == W.walk_end g zero_addr)
+
+/// ---------------------------------------------------------------------------
 /// The converse: only space dead at mark is free or new
 /// ---------------------------------------------------------------------------
 
