@@ -68,6 +68,7 @@ module Stw = GC.Spec.MarkPhase.Stw
 module Mark = GC.Spec.Mark
 module MBI = GC.Spec.MarkBoundedInv
 module FL = GC.Spec.FreeList
+module MP = GC.Spec.MarkPhase
 
 /// The unbounded budget is more words than the heap has.
 let unbounded_budget () : Lemma (U64.v 0xFFFFFFFFFFFFFFFFUL > GC.Spec.Base.heap_words /\
@@ -83,16 +84,17 @@ let unbounded_budget () : Lemma (U64.v 0xFFFFFFFFFFFFFFFFUL > GC.Spec.Base.heap_
 /// nothing grey, and the stop-the-world marked heap of `g0` from the root
 /// objects `droots`.
 let marked (g0: heap) (droots: Seq.seq obj_addr) (fp0: U64.t) (s1: heap) : prop =
-  S.mark_steps g0 s1 /\ Mark.noGreyObjects s1 /\ Corr.mark_post g0 s1 droots fp0
+  S.mark_steps g0 MP.scan_none s1 MP.scan_none /\ Mark.noGreyObjects s1 /\ Corr.mark_post g0 s1 droots fp0
 
 /// Where the cycle started from `g0` is, at the heap `s`, the free-list head
-/// `fp` and the phase `ph`, with `s1` the marked heap once marking is over:
-/// marking, with the stop-the-world strengthening of the marking invariant;
+/// `fp`, the phase `ph` and the scan position `sp`, with `s1` the marked heap
+/// once marking is over: marking, with the stop-the-world strengthening of
+/// the marking invariant;
 /// or past marking, with the sweep's account from `s1` (`SPC.phase_account`:
 /// every block not free is a survivor of marking; nothing is allocated).
 let cycle_at (g0: heap) (droots: Seq.seq obj_addr) (fp0: U64.t)
-    (s: heap) (fp: U64.t) (ph: Ph.gc_phase) (s1: heap) : prop =
-  (Ph.Marking? ph ==> fp == fp0 /\ S.mark_steps g0 s /\ Stw.marking_inv_stw g0 s droots) /\
+    (s: heap) (fp: U64.t) (ph: Ph.gc_phase) (sp: MP.scan_pos) (s1: heap) : prop =
+  (Ph.Marking? ph ==> fp == fp0 /\ S.mark_steps g0 MP.scan_none s sp /\ Stw.marking_inv_stw g0 s droots sp) /\
   (~(Ph.Marking? ph) ==> marked g0 droots fp0 s1 /\ SPC.phase_account s1 SPC.nothing_new s fp ph)
 
 /// The marked heap after a slice from `ph` to `ph'` that left `s'`: `s'` if
@@ -126,7 +128,7 @@ let cycle_start (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U
        let droots = gen_gc_prepared_roots minor major fp roots in
        s_dark == g0 /\
        Stw.stw_start g0 droots /\ FL.fp_in_heap result.mc_fp g0 /\
-       cycle_at g0 droots result.mc_fp s_dark result.mc_fp Ph.Marking s_dark))
+       cycle_at g0 droots result.mc_fp s_dark result.mc_fp Ph.Marking MP.scan_none s_dark))
   = let result = CheneySpec.cheney_collect_spec minor major fp roots in
     let g0 = gen_gc_prepared_major minor major fp roots in
     let droots = gen_gc_prepared_roots minor major fp roots in
@@ -136,7 +138,7 @@ let cycle_start (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U
     MBI.bounded_mark_inv_elim_objects g0 droots cap;
     MBI.bounded_mark_inv_elim_density g0 droots cap;
     Stw.marking_inv_stw_start g0 droots;
-    S.mark_steps_refl g0
+    S.mark_steps_refl g0 MP.scan_none
 #pop-options
 
 /// **A slice from `Marking`**: mark moves keep the stop-the-world invariant;
@@ -144,18 +146,19 @@ let cycle_start (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U
 /// account starts from it.
 #push-options "--fuel 0 --ifuel 1"
 let mark_slice_step (minor: minor_state) (g0: heap) (droots: Seq.seq obj_addr) (fp0: U64.t)
-    (s: heap) (fp: U64.t) (s1: heap) (budget: nat) (s': heap) (fp': U64.t) (ph': Ph.gc_phase)
-  : Lemma (requires GI.phase_shape minor s fp Ph.Marking /\
-                    cycle_at g0 droots fp0 s fp Ph.Marking s1 /\
+    (s: heap) (fp: U64.t) (sp: MP.scan_pos) (s1: heap) (budget: nat)
+    (s': heap) (fp': U64.t) (ph': Ph.gc_phase) (sp': MP.scan_pos)
+  : Lemma (requires GI.phase_shape minor s fp Ph.Marking sp /\
+                    cycle_at g0 droots fp0 s fp Ph.Marking sp s1 /\
                     Stw.stw_start g0 droots /\ FL.fp_in_heap fp0 g0 /\
-                    GI.mark_slice_post s fp budget s' fp' ph')
-          (ensures cycle_at g0 droots fp0 s' fp' ph' (marked_after Ph.Marking ph' s1 s'))
-  = Stw.marking_inv_stw_steps g0 s s' droots;
-    S.mark_steps_trans g0 s s';
-    GI.mark_slice_shape minor s fp budget s' fp' ph';
+                    GI.mark_slice_post s sp fp budget s' sp' fp' ph')
+          (ensures cycle_at g0 droots fp0 s' fp' ph' sp' (marked_after Ph.Marking ph' s1 s'))
+  = Stw.marking_inv_stw_steps g0 s s' droots sp sp';
+    S.mark_steps_trans g0 s s' MP.scan_none sp sp';
+    GI.mark_slice_shape minor s sp fp budget s' sp' fp' ph';
     if Ph.Sweeping? ph' then begin
-      Stw.marking_inv_stw_done g0 s' droots fp0;
-      GI.phase_shape_sweeping minor s' fp' zero_addr;
+      Stw.marking_inv_stw_done g0 s' droots sp' fp0;
+      GI.phase_shape_sweeping minor s' fp' zero_addr sp';
       SPC.survivor_or_new_start s';
       SPC.reclaimed_was_dead_start s'
     end
@@ -165,20 +168,20 @@ let mark_slice_step (minor: minor_state) (g0: heap) (droots: Seq.seq obj_addr) (
 /// a phase that is not idle moves it on (`rank`).
 #push-options "--fuel 0 --ifuel 1"
 let slice_step (minor: minor_state) (g0: heap) (droots: Seq.seq obj_addr) (fp0: U64.t)
-    (s: heap) (fp: U64.t) (ph: Ph.gc_phase) (s1: heap)
-    (budget: nat) (s': heap) (fp': U64.t) (ph': Ph.gc_phase)
-  : Lemma (requires GI.phase_shape minor s fp ph /\ cycle_at g0 droots fp0 s fp ph s1 /\
+    (s: heap) (fp: U64.t) (ph: Ph.gc_phase) (sp: MP.scan_pos) (s1: heap)
+    (budget: nat) (s': heap) (fp': U64.t) (ph': Ph.gc_phase) (sp': MP.scan_pos)
+  : Lemma (requires GI.phase_shape minor s fp ph sp /\ cycle_at g0 droots fp0 s fp ph sp s1 /\
                     Stw.stw_start g0 droots /\ FL.fp_in_heap fp0 g0 /\
-                    GI.major_slice_post s fp ph budget s' fp' ph')
-          (ensures cycle_at g0 droots fp0 s' fp' ph' (marked_after ph ph' s1 s') /\
+                    GI.major_slice_post s sp fp ph budget s' sp' fp' ph')
+          (ensures cycle_at g0 droots fp0 s' fp' ph' sp' (marked_after ph ph' s1 s') /\
                    (budget > heap_words /\ GI.unbounded budget ==>
                       (Ph.Idle? ph /\ Ph.Idle? ph') \/ rank ph' < rank ph))
   = match ph with
-    | Ph.Marking -> mark_slice_step minor g0 droots fp0 s fp s1 budget s' fp' ph'
+    | Ph.Marking -> mark_slice_step minor g0 droots fp0 s fp sp s1 budget s' fp' ph' sp'
     | Ph.Idle -> ()
     | Ph.Sweeping c ->
         SPC.phase_account_slice s1 SPC.nothing_new s fp ph budget;
-        if budget > heap_words then GI.phase_slice_finishes minor s fp ph budget
+        if budget > heap_words then GI.phase_slice_finishes minor s fp ph budget sp
 #pop-options
 
 /// **The cycle frees what marking left dead**: with the marked heap `s1`,
@@ -193,7 +196,7 @@ let cycle_frees_dead_post (g0: heap) (droots: Seq.seq obj_addr) (fp0: U64.t) (s1
 
 let cycle_frees_dead (g0: heap) (droots: Seq.seq obj_addr) (fp0: U64.t)
                      (s1: heap) (s3: heap) (fp3: U64.t)
-  : Lemma (requires Stw.stw_start g0 droots /\ cycle_at g0 droots fp0 s3 fp3 Ph.Idle s1)
+  : Lemma (requires Stw.stw_start g0 droots /\ cycle_at g0 droots fp0 s3 fp3 Ph.Idle MP.scan_none s1)
           (ensures cycle_frees_dead_post g0 droots fp0 s1 s3)
   = SPC.phase_account_idle s1 SPC.nothing_new s3 fp3;
     FStar.Classical.forall_intro (FStar.Classical.move_requires
@@ -210,25 +213,25 @@ fn cycle_slice
   (g0: erased heap) (droots: erased (Seq.seq obj_addr)) (fp0: erased U64.t)
   (s1: erased heap)
   (#d: erased minor_heap) (#b: erased U64.t)
-  (#s: erased heap) (#fp: erased U64.t) (#ph: erased Ph.gc_phase)
-  requires gc_state gh d b s fp ph **
-           pure (cycle_at g0 droots fp0 s fp ph s1 /\
+  (#s: erased heap) (#fp: erased U64.t) (#ph: erased Ph.gc_phase) (#sp: erased MP.scan_pos)
+  requires gc_state gh d b s fp ph sp **
+           pure (cycle_at g0 droots fp0 s fp ph sp s1 /\
                  Stw.stw_start g0 droots /\ FL.fp_in_heap fp0 g0)
-  ensures exists* s' fp' ph'.
-    gc_state gh d b s' fp' ph' **
-    pure (cycle_at g0 droots fp0 s' fp' ph' (marked_after ph ph' s1 s') /\
+  ensures exists* s' fp' ph' sp'.
+    gc_state gh d b s' fp' ph' sp' **
+    pure (cycle_at g0 droots fp0 s' fp' ph' sp' (marked_after ph ph' s1 s') /\
           (U64.v budget > heap_words /\ GI.unbounded (U64.v budget) ==>
              (Ph.Idle? ph /\ Ph.Idle? ph') \/ rank ph' < rank ph))
 {
   unfold gc_state;
-  let shape = Ghost.hide (GI.phase_shape ({ data = d; bump = b } <: minor_state) s fp ph);
+  let shape = Ghost.hide (GI.phase_shape ({ data = d; bump = b } <: minor_state) s fp ph sp);
   assert (pure (Ghost.reveal shape));
-  fold (gc_state gh d b s fp ph);
+  fold (gc_state gh d b s fp ph sp);
   let _idle = major_slice gh budget;
-  with s' fp' ph'. assert (gc_state gh d b s' fp' ph');
-  slice_step ({ data = d; bump = b } <: minor_state) g0 droots fp0 s fp ph s1
-    (U64.v budget) s' fp' ph';
-  assert (pure (cycle_at g0 droots fp0 s' fp' ph' (marked_after ph ph' s1 s')));
+  with s' fp' ph' sp'. assert (gc_state gh d b s' fp' ph' sp');
+  slice_step ({ data = d; bump = b } <: minor_state) g0 droots fp0 s fp ph sp s1
+    (U64.v budget) s' fp' ph' sp';
+  assert (pure (cycle_at g0 droots fp0 s' fp' ph' sp' (marked_after ph ph' s1 s')));
   assert (pure (U64.v budget > heap_words /\ GI.unbounded (U64.v budget) ==>
              (Ph.Idle? ph /\ Ph.Idle? ph') \/ rank ph' < rank ph));
 }
@@ -241,7 +244,7 @@ fn incremental_cycle_spot
   (fwd_arr: array U64.t)
   (queue: larray U64.t GC.Gen.ForwardingArray.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
-  requires gc_state gh 'd 'b 's 'fp Ph.Idle **
+  requires gc_state gh 'd 'b 's 'fp Ph.Idle MP.scan_none **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
@@ -254,8 +257,8 @@ fn incremental_cycle_spot
                  MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
                  MinorFwd.roots_valid_for_minor_collection
                    ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
-  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
-    gc_state gh d2 b2 s2 fp2 Ph.Idle **
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2 sp2.
+    gc_state gh d2 b2 s2 fp2 Ph.Idle sp2 **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
@@ -264,13 +267,13 @@ fn incremental_cycle_spot
           ({ data = d2; bump = b2 } <: minor_state) == minor_reset ({ data = 'd; bump = 'b } <: minor_state))
 {
   unfold gc_state;
-  GI.phase_shape_idle ({ data = 'd; bump = 'b } <: minor_state) 's 'fp;
+  GI.phase_shape_idle ({ data = 'd; bump = 'b } <: minor_state) 's 'fp MP.scan_none;
   minor_collect_idle_pre ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots);
   GI.phase_free_idle ();
-  fold (gc_state gh 'd 'b 's 'fp Ph.Idle);
+  fold (gc_state gh 'd 'b 's 'fp Ph.Idle MP.scan_none);
   let ok = minor_collect gh roots nroots fwd_arr queue slots nslots;
-  with d1 b1 s0 fp1. assert (gc_state gh d1 b1 s0 fp1 Ph.Idle);
+  with d1 b1 s0 fp1. assert (gc_state gh d1 b1 s0 fp1 Ph.Idle MP.scan_none);
   with rs1. assert (pts_to roots rs1);
   minor_collect_idle_post ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl
     (SZ.v nslots) ok d1 b1 s0 fp1 rs1;
@@ -282,36 +285,36 @@ fn incremental_cycle_spot
     assert (pure (nursery_empty d1 b1));
     start_cycle gh roots nroots;
     // the collector is marking the darkened heap
-    with s_dark. assert (gc_state gh d1 b1 s_dark fp1 Ph.Marking);
+    with s_dark. assert (gc_state gh d1 b1 s_dark fp1 Ph.Marking MP.scan_none);
     let g0 = Ghost.hide (gen_gc_prepared_major ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs);
     let droots = Ghost.hide (gen_gc_prepared_roots ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs);
     cycle_start ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs s_dark;
     // a mark slice of 64 words: still marking, or the start of the sweep
     cycle_slice gh 64UL g0 droots fp1 s_dark;
-    with s_a fp_a ph_a. assert (gc_state gh d1 b1 s_a fp_a ph_a);
+    with s_a fp_a ph_a sp_a. assert (gc_state gh d1 b1 s_a fp_a ph_a sp_a);
     let s1a = Ghost.hide (marked_after Ph.Marking ph_a s_dark s_a);
     // the rest of the cycle: two slices with an unbounded budget (the first
     // finishes marking if it is not finished, the last the sweep)
     unbounded_budget ();
     cycle_slice gh 0xFFFFFFFFFFFFFFFFUL g0 droots fp1 s1a;
-    with s_b fp_b ph_b. assert (gc_state gh d1 b1 s_b fp_b ph_b);
+    with s_b fp_b ph_b sp_b. assert (gc_state gh d1 b1 s_b fp_b ph_b sp_b);
     let s1 = Ghost.hide (marked_after ph_a ph_b s1a s_b);
     cycle_slice gh 0xFFFFFFFFFFFFFFFFUL g0 droots fp1 s1;
-    with s3 fp3 ph3. assert (gc_state gh d1 b1 s3 fp3 ph3);
+    with s3 fp3 ph3 sp3. assert (gc_state gh d1 b1 s3 fp3 ph3 sp3);
     assert (pure (Ph.Idle? ph3 /\ marked_after ph_b ph3 s1 s3 == Ghost.reveal s1));
-    rewrite (gc_state gh d1 b1 s3 fp3 ph3) as (gc_state gh d1 b1 s3 fp3 Ph.Idle);
-    unfold (gc_state gh d1 b1 s3 fp3 Ph.Idle);
-    GI.phase_shape_idle ({ data = d1; bump = b1 } <: minor_state) s3 fp3;
-    fold (gc_state gh d1 b1 s3 fp3 Ph.Idle);
+    rewrite (gc_state gh d1 b1 s3 fp3 ph3 sp3) as (gc_state gh d1 b1 s3 fp3 Ph.Idle sp3);
+    unfold (gc_state gh d1 b1 s3 fp3 Ph.Idle sp3);
+    GI.phase_shape_idle ({ data = d1; bump = b1 } <: minor_state) s3 fp3 sp3;
+    fold (gc_state gh d1 b1 s3 fp3 Ph.Idle sp3);
     // everything marking left dead is freed by the end of the sweep
     cycle_frees_dead g0 droots fp1 s1 s3 fp3;
-    assert (pure (S.mark_steps s_dark s1 /\
+    assert (pure (S.mark_steps s_dark MP.scan_none s1 MP.scan_none /\
                   cycle_frees_dead_post g0 droots fp1 s1 s3))
   } else {
     // out of memory: the cycle is not started, and the collector stays idle
-    unfold (gc_state gh d1 b1 s0 fp1 Ph.Idle);
-    GI.phase_shape_idle ({ data = d1; bump = b1 } <: minor_state) s0 fp1;
-    fold (gc_state gh d1 b1 s0 fp1 Ph.Idle);
+    unfold (gc_state gh d1 b1 s0 fp1 Ph.Idle MP.scan_none);
+    GI.phase_shape_idle ({ data = d1; bump = b1 } <: minor_state) s0 fp1 MP.scan_none;
+    fold (gc_state gh d1 b1 s0 fp1 Ph.Idle MP.scan_none);
   }
 }
 #pop-options

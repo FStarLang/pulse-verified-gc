@@ -53,7 +53,7 @@ fn call_gen_gc_minor_infix
   (fwd_arr: array U64.t)
   (queue: larray U64.t FA.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
-  requires gen_phase gh 's GC.Spec.Phase.Idle ** mark_state gh 's GC.Spec.Phase.Idle ** is_gen_heap gh 'd 'b 's 'fp **
+  requires gen_phase gh 's GC.Spec.Phase.Idle ** mark_state gh 's GC.Spec.Phase.Idle GC.Spec.MarkPhase.scan_none ** is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
@@ -68,7 +68,7 @@ fn call_gen_gc_minor_infix
                  SZ.v nslots == 1)
   returns res: (U64.t & bool)
   ensures exists* d2 b2 s2 rs2 farr2 qv2.
-    gen_phase gh s2 GC.Spec.Phase.Idle ** mark_state gh s2 GC.Spec.Phase.Idle ** is_gen_heap gh d2 b2 s2 (fst res) **
+    gen_phase gh s2 GC.Spec.Phase.Idle ** mark_state gh s2 GC.Spec.Phase.Idle GC.Spec.MarkPhase.scan_none ** is_gen_heap gh d2 b2 s2 (fst res) **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **

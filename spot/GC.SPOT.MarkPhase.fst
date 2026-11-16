@@ -5,6 +5,9 @@
 /// Two four-object heaps built by `GC.SPOT.MarkPhaseHeap` (one field each,
 /// then a free block to the end of the heap).
 ///
+/// All at the scan position `scan_none` (no partly scanned object; the
+/// moves of a slice inside an object are `GC.SPOT.MarkPhaseSlice`'s).
+///
 /// **1. A mid-mark heap where the invariant holds with a black-to-white
 /// edge** (`mid_mark_inv`, `mid_mark_step`).  Objects B (black), G (grey),
 /// W1 (white), W (white); B -> W, G -> W1, W1 -> W, and W1 is referenced from
@@ -96,26 +99,29 @@ let mid_black_to_white (r: unit{H.room})
 
 /// The marker will reach W1 (from G) and W (from G, through W1).
 let mid_reach (r: unit{H.room})
-  : Lemma (marker_will_reach (mid r) (H.obj r 3) /\ marker_will_reach (mid r) (H.obj r 4))
+  : Lemma (marker_will_reach (mid r) scan_none (H.obj r 3) /\ marker_will_reach (mid r) scan_none (H.obj r 4))
   = let h = mid r in
     heap_facts r mid_col mid_tg;
     let e = field_edge h in
     let p = grey_or_white h in
     reach_within_edge e p (H.obj r 3) (H.obj r 4);
     reach_within_cons e p (H.obj r 2) (H.obj r 3) (H.obj r 4);
-    reach_within_edge e p (H.obj r 2) (H.obj r 3)
+    reach_within_edge e p (H.obj r 2) (H.obj r 3);
+    marker_will_reach_none h (H.obj r 3);
+    marker_will_reach_none h (H.obj r 4)
 
 #push-options "--z3rlimit 20"
 let mid_mark_inv (r: unit{H.room})
-  : Lemma (marking_inv (mid r) (outside_refs_w1 r))
+  : Lemma (marking_inv (mid r) (outside_refs_w1 r) scan_none)
   = let h = mid r in
     heap_facts r mid_col mid_tg;
+    FStar.Classical.forall_intro_2 (scan_none_edges h);
     mid_reach r
 #pop-options
 
 /// One mark step at G keeps the invariant.
 let mid_mark_step (r: unit{H.room})
-  : Lemma (marking_inv (mark_step_at (mid r) (H.obj r 2)) (outside_refs_w1 r))
+  : Lemma (marking_inv (mark_step_at (mid r) (H.obj r 2)) (outside_refs_w1 r) scan_none)
   = heap_facts r mid_col mid_tg;
     mid_mark_inv r;
     marking_inv_step (mid r) (outside_refs_w1 r) (H.obj r 2)
@@ -217,9 +223,10 @@ let no_path (r: unit{H.room}) (l: list obj_addr)
 
 /// The marker will not reach W, so the invariant fails, whatever the outside references.
 let through_black_not_reached (r: unit{H.room})
-  : Lemma (~(marker_will_reach (thr r) (H.obj r 4)))
+  : Lemma (~(marker_will_reach (thr r) scan_none (H.obj r 4)))
   = let h = thr r in
     heap_facts r thr_col thr_tg;
+    marker_will_reach_none h (H.obj r 4);
     let aux (x: obj_addr)
       : Lemma (requires is_gray x h /\ reach_within (field_edge h) (grey_or_white h) x (H.obj r 4))
               (ensures False)
@@ -232,13 +239,14 @@ let through_black_not_reached (r: unit{H.room})
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
 let through_black_not_inv (r: unit{H.room}) (outside_refs: obj_addr -> prop)
-  : Lemma (~(marking_inv (thr r) outside_refs))
+  : Lemma (~(marking_inv (thr r) outside_refs scan_none))
   = let h = thr r in
     heap_facts r thr_col thr_tg;
     through_black_not_reached r;
     assert (Seq.mem (H.obj r 2) (objects zero_addr h) /\ is_black (H.obj r 2) h /\
             field_edge h (H.obj r 2) (H.obj r 4) /\ is_white (H.obj r 4) h);
-    assert (weak_tri_color h ==> marker_will_reach h (H.obj r 4))
+    assert (scanned_edge h scan_none (H.obj r 2) (H.obj r 4));
+    assert (weak_tri_color h scan_none ==> marker_will_reach h scan_none (H.obj r 4))
 
 /// The step at G is just blackening G: its only child B is not white.  It
 /// leaves no grey object, and B -> W to a white object.

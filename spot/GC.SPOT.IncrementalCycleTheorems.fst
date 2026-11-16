@@ -175,28 +175,29 @@ let start_tracked (r: unit{MPH.room}) (s_dark: heap)
     start_kept r (CH.obj_c r)
 
 /// **A slice keeps `x`**.
-let slice_kept (r: unit{MPH.room}) (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase)
-               (budget: nat) (g': heap) (fp': U64.t) (ph': Ph.gc_phase) (x: obj_addr)
-  : Lemma (requires GI.phase_shape minor g fp ph /\ GI.major_slice_post g fp ph budget g' fp' ph' /\
+let slice_kept (r: unit{MPH.room}) (minor: minor_state) (g: heap) (sp: MP.scan_pos) (fp: U64.t)
+               (ph: Ph.gc_phase) (budget: nat) (g': heap) (sp': MP.scan_pos) (fp': U64.t) (ph': Ph.gc_phase)
+               (x: obj_addr)
+  : Lemma (requires GI.phase_shape minor g fp ph sp /\ GI.major_slice_post g sp fp ph budget g' sp' fp' ph' /\
                     kept r g ph x)
           (ensures kept r g' ph' x)
-  = GMS.cycle_slice_keeps minor g fp ph budget g' fp' ph' x
+  = GMS.cycle_slice_keeps minor g sp fp ph budget g' sp' fp' ph' x
 
 /// **A slice keeps where the cycle is**, and an unbounded one moves it on.
 #push-options "--ifuel 1"
-let slice_tracked (r: unit{MPH.room}) (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase)
-                  (budget: nat) (g': heap) (fp': U64.t) (ph': Ph.gc_phase)
-  : Lemma (requires GI.phase_shape minor g fp ph /\ GI.major_slice_post g fp ph budget g' fp' ph' /\
+let slice_tracked (r: unit{MPH.room}) (minor: minor_state) (g: heap) (sp: MP.scan_pos) (fp: U64.t)
+                  (ph: Ph.gc_phase) (budget: nat) (g': heap) (sp': MP.scan_pos) (fp': U64.t) (ph': Ph.gc_phase)
+  : Lemma (requires GI.phase_shape minor g fp ph sp /\ GI.major_slice_post g sp fp ph budget g' sp' fp' ph' /\
                     tracked r g ph)
           (ensures tracked r g' ph' /\
                    (kept r g ph (CH.obj_a r) ==> kept r g' ph' (CH.obj_a r)) /\
                    (budget > heap_words /\ GI.unbounded budget ==>
                       (Ph.Idle? ph /\ Ph.Idle? ph') \/ rank ph' < rank ph))
-  = GMC.cycle_slice (start_set r) minor g fp ph budget g' fp' ph';
-    slice_kept r minor g fp ph budget g' fp' ph' (CH.obj_c r);
-    FStar.Classical.move_requires (slice_kept r minor g fp ph budget g' fp' ph') (CH.obj_a r);
+  = GMC.cycle_slice (start_set r) minor g sp fp ph budget g' sp' fp' ph';
+    slice_kept r minor g sp fp ph budget g' sp' fp' ph' (CH.obj_c r);
+    FStar.Classical.move_requires (slice_kept r minor g sp fp ph budget g' sp' fp' ph') (CH.obj_a r);
     match ph with
-    | Ph.Sweeping _ -> if budget > heap_words then GI.phase_slice_finishes minor g fp ph budget
+    | Ph.Sweeping _ -> if budget > heap_words then GI.phase_slice_finishes minor g fp ph budget sp
     | _ -> ()
 #pop-options
 
@@ -226,8 +227,9 @@ let same_block_facts (r: unit{MPH.room}) (g: heap) (i: MPH.idx)
 /// cycle is: the account (`GMC.cycle_modify`) and `C` (`GMS.modify_keeps_others`).
 #push-options "--z3rlimit 20 --ifuel 1"
 let modify_tracked (r: unit{MPH.room}) (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase)
-  : Lemma (requires GI.phase_shape minor g fp ph /\ tracked r g ph /\ kept r g ph (CH.obj_a r))
-          (ensures GB.modify_ok ph minor g (CH.obj_a r) (slot_a r) one_imm /\
+    (sp: MP.scan_pos)
+  : Lemma (requires GI.phase_shape minor g fp ph sp /\ tracked r g ph /\ kept r g ph (CH.obj_a r))
+          (ensures GB.modify_ok ph minor g sp (CH.obj_a r) (slot_a r) one_imm /\
                    tracked r (GB.modify_heap ph g (slot_a r) one_imm) ph)
   = let a = CH.obj_a r in
     same_block_facts r g 1;
@@ -236,7 +238,7 @@ let modify_tracked (r: unit{MPH.room}) (minor: minor_state) (g: heap) (fp: U64.t
     assert (~(is_pointer one_imm));
     assert (SPM.in_body g a (slot_a r));
     assert (SPM.program_write (GI.phase_free ph) g a (slot_a r) one_imm);
-    assert (GB.modify_ok ph minor g a (slot_a r) one_imm);
+    assert (GB.modify_ok ph minor g sp a (slot_a r) one_imm);
     CH.roots_reachable r;
     GMC.reachable_at_start_eq (CH.h0 r) (CH.roots0 r);
     start_set_eq r;
@@ -250,8 +252,8 @@ let modify_tracked (r: unit{MPH.room}) (minor: minor_state) (g: heap) (fp: U64.t
          GI.phase_free_sweeping c; SPI.free_incremental_ok c;
          free_def_ok_elim (SPI.free_incremental c));
     assert (GMC.modify_accounted (start_set r) ph g a (slot_a r) one_imm);
-    GMC.cycle_modify (start_set r) ph minor g fp a (slot_a r) one_imm;
-    GMS.modify_keeps_others ph minor g fp a (slot_a r) one_imm (CH.obj_c r)
+    GMC.cycle_modify (start_set r) ph minor g fp sp a (slot_a r) one_imm;
+    GMS.modify_keeps_others ph minor g fp sp a (slot_a r) one_imm (CH.obj_c r)
 #pop-options
 
 /// **The end**: idle again, `U` is freed and `C` survives as it was.
@@ -275,22 +277,22 @@ let end_tracked (r: unit{MPH.room}) (g: heap)
 #push-options "--fuel 0 --ifuel 0"
 fn tracked_slice (gh: gen_heap_t) (budget: U64.t) (r: unit{MPH.room}) (with_a: bool)
   (#d: erased minor_heap) (#b: erased U64.t)
-  (#s: erased heap) (#fp: erased U64.t) (#ph: erased Ph.gc_phase)
-  requires gc_state gh d b s fp ph **
+  (#s: erased heap) (#fp: erased U64.t) (#ph: erased Ph.gc_phase) (#sp: erased MP.scan_pos)
+  requires gc_state gh d b s fp ph sp **
            pure (tracked r s ph /\ (with_a ==> kept r s ph (CH.obj_a r)))
-  ensures exists* s' fp' ph'.
-    gc_state gh d b s' fp' ph' **
+  ensures exists* s' fp' ph' sp'.
+    gc_state gh d b s' fp' ph' sp' **
     pure (tracked r s' ph' /\ (with_a ==> kept r s' ph' (CH.obj_a r)) /\
           (U64.v budget > heap_words /\ GI.unbounded (U64.v budget) ==>
              (Ph.Idle? ph /\ Ph.Idle? ph') \/ rank ph' < rank ph))
 {
   unfold gc_state;
-  let shape = Ghost.hide (GI.phase_shape ({ data = d; bump = b } <: minor_state) s fp ph);
+  let shape = Ghost.hide (GI.phase_shape ({ data = d; bump = b } <: minor_state) s fp ph sp);
   assert (pure (Ghost.reveal shape));
-  fold (gc_state gh d b s fp ph);
+  fold (gc_state gh d b s fp ph sp);
   let _idle = major_slice gh budget;
-  with s' fp' ph'. assert (gc_state gh d b s' fp' ph');
-  slice_tracked r ({ data = d; bump = b } <: minor_state) s fp ph (U64.v budget) s' fp' ph';
+  with s' fp' ph' sp'. assert (gc_state gh d b s' fp' ph' sp');
+  slice_tracked r ({ data = d; bump = b } <: minor_state) s sp fp ph (U64.v budget) s' sp' fp' ph';
   assert (pure (tracked r s' ph'));
   assert (pure (with_a ==> kept r s' ph' (CH.obj_a r)));
   assert (pure (U64.v budget > heap_words /\ GI.unbounded (U64.v budget) ==>
@@ -302,17 +304,17 @@ fn tracked_slice (gh: gen_heap_t) (budget: U64.t) (r: unit{MPH.room}) (with_a: b
 #push-options "--fuel 0 --ifuel 0"
 fn tracked_write (gh: gen_heap_t) (ghr: R.ref gen_heap_t) (r: unit{MPH.room})
   (#d: erased minor_heap) (#b: erased U64.t)
-  (#s: erased heap) (#fp: erased U64.t) (#ph: erased Ph.gc_phase)
-  requires R.pts_to ghr gh ** gc_state gh d b s fp ph **
+  (#s: erased heap) (#fp: erased U64.t) (#ph: erased Ph.gc_phase) (#sp: erased MP.scan_pos)
+  requires R.pts_to ghr gh ** gc_state gh d b s fp ph sp **
            pure (tracked r s ph /\ kept r s ph (CH.obj_a r))
   ensures exists* s'.
-    R.pts_to ghr gh ** gc_state gh d b s' fp ph ** pure (tracked r s' ph)
+    R.pts_to ghr gh ** gc_state gh d b s' fp ph sp ** pure (tracked r s' ph)
 {
   unfold gc_state;
-  let shape = Ghost.hide (GI.phase_shape ({ data = d; bump = b } <: minor_state) s fp ph);
+  let shape = Ghost.hide (GI.phase_shape ({ data = d; bump = b } <: minor_state) s fp ph sp);
   assert (pure (Ghost.reveal shape));
-  fold (gc_state gh d b s fp ph);
-  modify_tracked r ({ data = d; bump = b } <: minor_state) s fp ph;
+  fold (gc_state gh d b s fp ph sp);
+  modify_tracked r ({ data = d; bump = b } <: minor_state) s fp ph sp;
   let _rec = Barrier.modify_field ghr (slot_a r) one_imm #gh #1.0R #(CH.obj_a r);
   ()
 }
@@ -327,7 +329,7 @@ fn incremental_cycle_theorems_spot
   (slots: array U64.t) (nslots: SZ.t)
   (r: unit{MPH.room})
   requires R.pts_to ghr gh **
-           gc_state gh 'd 'b (CH.h0 r) (CH.fp0 r) Ph.Idle **
+           gc_state gh 'd 'b (CH.h0 r) (CH.fp0 r) Ph.Idle MP.scan_none **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
@@ -336,9 +338,9 @@ fn incremental_cycle_theorems_spot
                  'rs == CH.roots0 r /\ SZ.v nroots == 2 /\ SZ.v nslots == 0 /\
                  Seq.length 'farr == FA.fwd_array_size /\
                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL))
-  ensures exists* d2 b2 s3 fp3 rs2 farr2 qv2.
+  ensures exists* d2 b2 s3 fp3 rs2 farr2 qv2 sp3.
     R.pts_to ghr gh **
-    gc_state gh d2 b2 s3 fp3 Ph.Idle **
+    gc_state gh d2 b2 s3 fp3 Ph.Idle sp3 **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
@@ -347,14 +349,14 @@ fn incremental_cycle_theorems_spot
 {
   // the minor collection of the empty nursery
   unfold gc_state;
-  GI.phase_shape_idle CH.minor0 (CH.h0 r) (CH.fp0 r);
+  GI.phase_shape_idle CH.minor0 (CH.h0 r) (CH.fp0 r) MP.scan_none;
   CH.minor_pre r 'farr 'sl;
   CH.roots_facts r;
   minor_collect_idle_pre CH.minor0 (CH.h0 r) (CH.fp0 r) 'rs 'farr 'sl 0;
   GI.phase_free_idle ();
-  fold (gc_state gh 'd 'b (CH.h0 r) (CH.fp0 r) Ph.Idle);
+  fold (gc_state gh 'd 'b (CH.h0 r) (CH.fp0 r) Ph.Idle MP.scan_none);
   let ok = minor_collect gh roots nroots fwd_arr queue slots nslots;
-  with d1 b1 s0 fp1. assert (gc_state gh d1 b1 s0 fp1 Ph.Idle);
+  with d1 b1 s0 fp1. assert (gc_state gh d1 b1 s0 fp1 Ph.Idle MP.scan_none);
   with rs1. assert (pts_to roots rs1);
   minor_collect_idle_post CH.minor0 (CH.h0 r) (CH.fp0 r) 'rs 'farr 'sl 0 ok d1 b1 s0 fp1 rs1;
   // it changed nothing
@@ -365,7 +367,7 @@ fn incremental_cycle_theorems_spot
   assert (pure (nursery_empty d1 b1));
   // the cycle starts
   start_cycle gh roots nroots;
-  with s_dark. assert (gc_state gh d1 b1 s_dark fp1 Ph.Marking);
+  with s_dark. assert (gc_state gh d1 b1 s_dark fp1 Ph.Marking MP.scan_none);
   start_tracked r s_dark;
   // a mark slice of 64 words
   tracked_slice gh 64UL r true;
@@ -375,9 +377,9 @@ fn incremental_cycle_theorems_spot
   unbounded_budget ();
   tracked_slice gh 0xFFFFFFFFFFFFFFFFUL r false;
   tracked_slice gh 0xFFFFFFFFFFFFFFFFUL r false;
-  with s3 fp3 ph3. assert (gc_state gh d1 b1 s3 fp3 ph3);
+  with s3 fp3 ph3 sp3. assert (gc_state gh d1 b1 s3 fp3 ph3 sp3);
   assert (pure (Ph.Idle? ph3));
-  rewrite (gc_state gh d1 b1 s3 fp3 ph3) as (gc_state gh d1 b1 s3 fp3 Ph.Idle);
+  rewrite (gc_state gh d1 b1 s3 fp3 ph3 sp3) as (gc_state gh d1 b1 s3 fp3 Ph.Idle sp3);
   end_tracked r s3;
   assert (pure (cycle_post r s3));
 }

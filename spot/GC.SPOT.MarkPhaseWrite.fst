@@ -72,11 +72,11 @@ let barrier_greys_w1 (r: unit{H.room})
 
 /// **With the barrier the invariant holds.**
 let barrier_write_inv (r: unit{H.room})
-  : Lemma (marking_inv (write_word (makeGray (H.obj r 3) (S.mid r)) (slot r) 0UL) (S.outside_refs_w1 r))
+  : Lemma (marking_inv (write_word (makeGray (H.obj r 3) (S.mid r)) (slot r) 0UL) (S.outside_refs_w1 r) scan_none)
   = S.mid_mark_inv r;
     write_ok r (S.mid r);
     barrier_greys_w1 r;
-    MM.marking_write_barrier (S.mid r) (S.outside_refs_w1 r) (H.obj r 2) (slot r) 0UL
+    MM.marking_write_barrier (S.mid r) (S.outside_refs_w1 r) scan_none (H.obj r 2) (slot r) 0UL
 
 /// After the unbarriered write, G has no edge: its only field is 0.
 #push-options "--z3rlimit 20"
@@ -119,7 +119,7 @@ let no_path (r: unit{H.room}) (l: list obj_addr)
 /// the marker will not reach it.
 #push-options "--z3rlimit 20"
 let unbarriered_write_breaks (r: unit{H.room})
-  : Lemma (~(marking_inv (write_word (S.mid r) (slot r) 0UL) (S.outside_refs_w1 r)))
+  : Lemma (~(marking_inv (write_word (S.mid r) (slot r) 0UL) (S.outside_refs_w1 r) scan_none))
   = let g = S.mid r in
     let h' = write_word g (slot r) 0UL in
     S.heap_facts r S.mid_col S.mid_tg;
@@ -135,6 +135,7 @@ let unbarriered_write_breaks (r: unit{H.room})
         with no_path r l
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
-    assert (~(marker_will_reach h' w1));
+    marker_will_reach_none h' w1;
+    assert (~(marker_will_reach h' scan_none w1));
     assert (Seq.mem w1 (objects zero_addr h') /\ is_white w1 h' /\ S.outside_refs_w1 r w1)
 #pop-options

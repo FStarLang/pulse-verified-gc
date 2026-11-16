@@ -31,7 +31,7 @@ fn full_gc_from_shape
   (fwd_arr: array U64.t)
   (queue: larray U64.t FA.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
-  requires gen_phase gh 's GC.Spec.Phase.Idle ** mark_state gh 's GC.Spec.Phase.Idle ** is_gen_heap gh 'd 'b 's 'fp **
+  requires gen_phase gh 's GC.Spec.Phase.Idle ** mark_state gh 's GC.Spec.Phase.Idle GC.Spec.MarkPhase.scan_none ** is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
@@ -48,7 +48,7 @@ fn full_gc_from_shape
                    ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns res: (U64.t & bool)
   ensures exists* d2 b2 s2 rs2 farr2 qv2.
-    gen_phase gh s2 GC.Spec.Phase.Idle ** mark_state gh s2 GC.Spec.Phase.Idle ** is_gen_heap gh d2 b2 s2 (fst res) **
+    gen_phase gh s2 GC.Spec.Phase.Idle ** mark_state gh s2 GC.Spec.Phase.Idle GC.Spec.MarkPhase.scan_none ** is_gen_heap gh d2 b2 s2 (fst res) **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
@@ -66,10 +66,10 @@ fn full_gc_from_shape
       gen_gc_unreachable_final_blue_post
         minor_st 's 'fp 'rs ok s2)
 {
-  GC.Gen.Incremental.phase_shape_idle ({ data = 'd; bump = 'b } <: minor_state) 's 'fp;
-  fold (gc_state gh 'd 'b 's 'fp GC.Spec.Phase.Idle);
+  GC.Gen.Incremental.phase_shape_idle ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.MarkPhase.scan_none;
+  fold (gc_state gh 'd 'b 's 'fp GC.Spec.Phase.Idle GC.Spec.MarkPhase.scan_none);
   let ok = full_gc gh roots nroots fwd_arr queue slots nslots;
-  with d2 b2 s2 fp2. assert (gc_state gh d2 b2 s2 fp2 GC.Spec.Phase.Idle);
+  with d2 b2 s2 fp2. assert (gc_state gh d2 b2 s2 fp2 GC.Spec.Phase.Idle GC.Spec.MarkPhase.scan_none);
   unfold gc_state;
   unfold is_gen_heap;
   let fp = Pulse.Lib.Reference.op_Bang gh.fp_ref;
@@ -83,7 +83,7 @@ fn call_gen_gc_spot
   (fwd_arr: array U64.t)
   (queue: larray U64.t FA.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
-  requires gen_phase gh 's GC.Spec.Phase.Idle ** mark_state gh 's GC.Spec.Phase.Idle ** is_gen_heap gh 'd 'b 's 'fp **
+  requires gen_phase gh 's GC.Spec.Phase.Idle ** mark_state gh 's GC.Spec.Phase.Idle GC.Spec.MarkPhase.scan_none ** is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
@@ -94,7 +94,7 @@ fn call_gen_gc_spot
                    'rs 'farr 'sl (SZ.v nslots))
   returns res: (U64.t & bool)
   ensures exists* d2 b2 s2 rs2 farr2 qv2.
-    gen_phase gh s2 GC.Spec.Phase.Idle ** mark_state gh s2 GC.Spec.Phase.Idle ** is_gen_heap gh d2 b2 s2 (fst res) **
+    gen_phase gh s2 GC.Spec.Phase.Idle ** mark_state gh s2 GC.Spec.Phase.Idle GC.Spec.MarkPhase.scan_none ** is_gen_heap gh d2 b2 s2 (fst res) **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **

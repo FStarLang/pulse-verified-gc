@@ -62,14 +62,14 @@ let sl2 (r: unit{CM.spot_major_room}) : seq U64.t = Seq.snoc (sl r) (f0 r <: U64
 /// What the fixture gives: the idle shape, and the table `[field1]` sound
 /// and covering.
 let fixture (r: unit{CM.spot_major_room})
-  : Lemma (GI.phase_shape minor (g r) (fp r) Idle /\
+  : Lemma (GI.phase_shape minor (g r) (fp r) Idle GC.Spec.MarkPhase.scan_none /\
            RT.ref_table_covers_with SpecFields.free_stw (g r) (sl r) 1 /\
            RT.ref_table_sound_with SpecFields.free_stw (g r) (sl r) 1 /\
            Seq.length (sl r) == 1 /\ Seq.index (sl r) 0 == (f1 r <: U64.t))
   = CS.spot_concrete_minor_collect_full_pre r;
     Pre.minor_collect_full_pre_elim minor (g r) (fp r)
       (TO.spot_roots (c r)) CS.spot_fwd_array (sl r) 1;
-    GI.phase_shape_idle minor (g r) (fp r);
+    GI.phase_shape_idle minor (g r) (fp r) GC.Spec.MarkPhase.scan_none;
     TO.spot_slots_len (c r);
     TO.spot_slots_index (c r) 0;
     CS.spot_c_slot_is_field1 r
@@ -100,7 +100,7 @@ let c_facts (r: unit{CM.spot_major_room})
 
 let modify_ok_holds (r: unit{CM.spot_major_room}) (slot: hp_addr) (v: U64.t)
   : Lemma (requires (slot == f0 r \/ slot == f1 r) /\ ~(SpecFields.is_pointer v))
-          (ensures GB.modify_ok Idle minor (g r) (c r) slot v)
+          (ensures GB.modify_ok Idle minor (g r) GC.Spec.MarkPhase.scan_none (c r) slot v)
   = c_facts r;
     GI.phase_free_idle ()
 
@@ -109,7 +109,7 @@ let modify_ok_holds (r: unit{CM.spot_major_room}) (slot: hp_addr) (v: U64.t)
 #push-options "--z3rlimit 20"
 let young_over_immediate (r: unit{CM.spot_major_room})
   : Lemma (let g' = GB.modify_heap Idle (g r) (f0 r) a in
-           GB.modify_ok Idle minor (g r) (c r) (f0 r) a /\
+           GB.modify_ok Idle minor (g r) GC.Spec.MarkPhase.scan_none (c r) (f0 r) a /\
            GB.modify_records (g r) (f0 r) a == true /\
            GenInv.collection_heap_shape minor g' (fp r) /\
            RT.ref_table_covers_with SpecFields.free_stw g' (sl2 r) 2 /\
@@ -118,11 +118,11 @@ let young_over_immediate (r: unit{CM.spot_major_room})
     values ();
     c_facts r;
     modify_ok_holds r (f0 r) a;
-    GB.modify_phase_shape Idle minor (g r) (fp r) (c r) (f0 r) a;
-    GI.phase_shape_idle minor (GB.modify_heap Idle (g r) (f0 r) a) (fp r);
+    GB.modify_phase_shape Idle minor (g r) (fp r) GC.Spec.MarkPhase.scan_none (c r) (f0 r) a;
+    GI.phase_shape_idle minor (GB.modify_heap Idle (g r) (f0 r) a) (fp r) GC.Spec.MarkPhase.scan_none;
     GI.phase_free_idle ();
     assert (GB.appended true (f0 r) (sl r) 1 (sl2 r) 2);
-    GB.modify_ref_table Idle minor (g r) (fp r) (c r) (f0 r) a (sl r) (sl2 r) 1 2
+    GB.modify_ref_table Idle minor (g r) (fp r) GC.Spec.MarkPhase.scan_none (c r) (f0 r) a (sl r) (sl2 r) 1 2
 #pop-options
 
 /// The coverage clause at one field.
@@ -135,6 +135,19 @@ let covers_at (free: SpecFields.free_def) (h: heap) (t: seq U64.t) (n: nat{n <= 
                       (SpecHeap.read_word h (U64.uint_to_t (U64.v obj + j * 8)))))
           (ensures exists (i: nat). i < n /\ U64.v (Seq.index t i) == U64.v obj + j * 8)
   = ()
+
+/// The table's one entry is `field1`, eight bytes past `field0`.
+let entry_is_field1 (r: unit{CM.spot_major_room})
+  : Lemma (Seq.length (sl r) == 1 /\ (Seq.length (sl r) == 1 ==> U64.v (Seq.index (sl r) 0) == U64.v (c r) + 8))
+  = fixture r;
+    CM.spot_major_layout_facts r
+
+/// So `field0` is not the entry.
+let field0_not_entry (r: unit{CM.spot_major_room})
+  : Lemma (requires Seq.length (sl r) >= 1 /\
+                    (exists (i: nat). i < 1 /\ U64.v (Seq.index (sl r) i) == U64.v (c r) + 0 * 8))
+          (ensures False)
+  = entry_is_field1 r
 
 /// **2. The same write without the append** leaves `field0`, which holds a
 /// nursery pointer, out of the table.
@@ -157,7 +170,7 @@ let without_append (r: unit{CM.spot_major_room})
       : Lemma (requires RT.ref_table_covers_with SpecFields.free_stw g' (sl r) 1) (ensures False)
       = covers_at SpecFields.free_stw g' (sl r) 1 (c r) 0;
         // the one entry is field1, eight bytes past field0
-        assert (U64.v (Seq.index (sl r) 0) == U64.v (c r) + 8)
+        field0_not_entry r
     in
     FStar.Classical.move_requires contra ()
 #pop-options
@@ -175,9 +188,9 @@ let young_over_young (r: unit{CM.spot_major_room})
     values ();
     c_facts r;
     modify_ok_holds r (f1 r) a;
-    GB.modify_phase_shape Idle minor (g r) (fp r) (c r) (f1 r) a;
-    GI.phase_shape_idle minor (GB.modify_heap Idle (g r) (f1 r) a) (fp r);
+    GB.modify_phase_shape Idle minor (g r) (fp r) GC.Spec.MarkPhase.scan_none (c r) (f1 r) a;
+    GI.phase_shape_idle minor (GB.modify_heap Idle (g r) (f1 r) a) (fp r) GC.Spec.MarkPhase.scan_none;
     GI.phase_free_idle ();
     assert (GB.appended false (f1 r) (sl r) 1 (sl r) 1);
-    GB.modify_ref_table Idle minor (g r) (fp r) (c r) (f1 r) a (sl r) (sl r) 1 1
+    GB.modify_ref_table Idle minor (g r) (fp r) GC.Spec.MarkPhase.scan_none (c r) (f1 r) a (sl r) (sl r) 1 1
 #pop-options

@@ -34,7 +34,7 @@ fn call_minor_collect_full_spot
   (fwd_arr: array U64.t)
   (queue: larray U64.t FA.queue_size)
   (slots: array U64.t) (nslots: SZ.t)
-  requires gen_phase gh 's GC.Spec.Phase.Idle ** mark_state gh 's GC.Spec.Phase.Idle ** is_gen_heap gh 'd 'b 's 'fp **
+  requires gen_phase gh 's GC.Spec.Phase.Idle ** mark_state gh 's GC.Spec.Phase.Idle GC.Spec.MarkPhase.scan_none ** is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
@@ -45,7 +45,7 @@ fn call_minor_collect_full_spot
                    'rs 'farr 'sl (SZ.v nslots))
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
-    gen_phase gh s2 GC.Spec.Phase.Idle ** mark_state gh s2 GC.Spec.Phase.Idle ** is_gen_heap gh d2 b2 s2 fp2 **
+    gen_phase gh s2 GC.Spec.Phase.Idle ** mark_state gh s2 GC.Spec.Phase.Idle GC.Spec.MarkPhase.scan_none ** is_gen_heap gh d2 b2 s2 fp2 **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
@@ -62,8 +62,8 @@ fn call_minor_collect_full_spot
   // The minor-collection entry point, idle: `gc_state` at `Idle` is the
   // stop-the-world shape, and the phase's definition of free is `free_stw`.
   GC.Gen.Incremental.phase_free_idle ();
-  GC.Gen.Incremental.phase_shape_idle ({ data = 'd; bump = 'b } <: minor_state) 's 'fp;
-  fold (gc_state gh 'd 'b 's 'fp GC.Spec.Phase.Idle);
+  GC.Gen.Incremental.phase_shape_idle ({ data = 'd; bump = 'b } <: minor_state) 's 'fp GC.Spec.MarkPhase.scan_none;
+  fold (gc_state gh 'd 'b 's 'fp GC.Spec.Phase.Idle GC.Spec.MarkPhase.scan_none);
   let ok = minor_collect gh roots nroots fwd_arr queue slots nslots;
   with d2 b2 s2 fp2 rs2 farr2 qv2. _;
   unfold gc_state;

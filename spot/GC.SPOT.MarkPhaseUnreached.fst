@@ -2,10 +2,10 @@
 /// GC.SPOT.MarkPhaseUnreached - the marking invariant read as well-formedness
 /// ---------------------------------------------------------------------------
 ///
-/// `GC.Spec.MarkPhase.unreached g` counts as free the blue blocks and the
-/// white blocks the marker will not reach.  The minor collection at
-/// `Marking` (`GC.Gen.MarkPhase.Minor`) keeps the weak tri-colour clause by
-/// keeping well-formedness for it.  On the two heaps of `GC.SPOT.MarkPhase`:
+/// `GC.Spec.MarkPhase.unreached g sp` (here at `scan_none`) counts as free
+/// the blue blocks and the white blocks the marker will not reach.  The
+/// minor collection at `Marking` (`GC.Gen.MarkPhase.Minor`) keeps the weak
+/// tri-colour clause by keeping well-formedness for it.  On the two heaps of `GC.SPOT.MarkPhase`:
 ///
 ///   * the mid-mark heap (B black -> W white, reached through G -> W1 -> W)
 ///     is well formed for it (`mid_unreached_wf`, from `marking_inv`);
@@ -29,13 +29,13 @@ module S = GC.SPOT.MarkPhase
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 10"
 
 let mid_unreached_wf (r: unit{H.room})
-  : Lemma (well_formed_heap_with (unreached (S.mid r)) (S.mid r))
+  : Lemma (well_formed_heap_with (unreached (S.mid r) scan_none) (S.mid r))
   = S.mid_mark_inv r;
-    marking_inv_unreached (S.mid r) (S.outside_refs_w1 r)
+    marking_inv_unreached (S.mid r) (S.outside_refs_w1 r) scan_none
 
 let through_black_not_unreached_wf (r: unit{H.room})
-  : Lemma (~(well_formed_heap_with (unreached (S.thr r)) (S.thr r)))
+  : Lemma (~(well_formed_heap_with (unreached (S.thr r) scan_none) (S.thr r)))
   = let h = S.thr r in
     S.heap_facts r S.thr_col S.thr_tg;
     S.through_black_not_reached r;
-    FStar.Classical.move_requires (unreached_black_edge h h (H.obj r 2)) (H.obj r 4)
+    FStar.Classical.move_requires (unreached_dark_edge h scan_none h (H.obj r 2)) (H.obj r 4)
