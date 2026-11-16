@@ -186,4 +186,5 @@ let cycle_alloc_spot (r: unit{room})
     Cy.cycle_lossless (run r);
     FBE.dead_objects r;
     Mark.colors_exclusive (gg r) (g4 r);
+    assert (forall (y: obj_addr). since1 r y <==> y == o);
     Cy.cycle_covered (run r)
