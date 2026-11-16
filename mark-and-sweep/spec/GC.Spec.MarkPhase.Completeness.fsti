@@ -61,6 +61,11 @@
 /// the program's events mid-sweep (`cycle_sweep_alloc`, `cycle_sweep_write`)
 /// keep it, and idle again the cycle is complete (`cycle_complete`): every
 /// non-free block is in `snapshot`, so every address outside `snapshot` is freed.
+///
+/// These lemmas take the snapshot as an argument, and the set of every
+/// address satisfies them.  A run of the cycle fixes it:
+/// `GC.Gen.MarkPhase.Cycle` (marking, with snapshot-at-the-beginning) and
+/// `GC.Gen.Cycle` (the whole cycle, and that it is lossless).
 
 module GC.Spec.MarkPhase.Completeness
 
