@@ -27,21 +27,39 @@
 /// and what the run handed out.
 ///
 /// **The incremental cycle is lossless, up to what it handed out**
-/// (`cycle_lossless`): once a run is idle again, an address the run did not
-/// hand out holds a block that is not free exactly when it held an object
-/// reachable from the roots when the cycle started.  Its two halves:
+/// (`cycle_lossless`): once a run is idle again, a word of the heap lay in a
+/// block unreachable from the roots when the cycle started (dead, or already
+/// free: `unreachable_covered`) exactly when it lies in a free block, or in a
+/// block the run allocated or promoted.  This is the sweep's
+/// `GC.Gen.SweepPhase.Cycle.cycle_lossless` with the marked heap replaced by
+/// the heap the cycle started from, and dead at mark by unreachable at the
+/// start; with nothing handed out it is the stop-the-world clause of
+/// `LL.sweep_lossless`.  It is stated word by word because an address alone
+/// does not say the space was reclaimed: a freed object's header may simply
+/// have been merged into a free block.  Its two halves:
 ///
-///   * **completeness** (`cycle_complete`, and `cycle_frees_unreachable`):
-///     every address outside the snapshot is freed.  Each event keeps the
-///     account of the snapshot (`MPC.cycle_account`, at every state of a run:
-///     `cycle_account`): marking greys only what is in the snapshot, so what
-///     marking leaves black is in it, and the sweep frees every other block
-///     that it did not hand out;
+///   * **completeness** (`cycle_covered`; by address `cycle_complete`,
+///     `cycle_frees_unreachable`): every address outside the snapshot is
+///     freed, and every word of an unreachable block lies in a free or new
+///     block.  Each event keeps the account of the snapshot
+///     (`MPC.cycle_account`, at every state of a run: `cycle_account`):
+///     marking greys only what is in the snapshot, so what marking leaves
+///     black is in it, and the sweep frees every other block that it did not
+///     hand out;
 ///   * **its converse** (`cycle_survives`): every object reachable when the
 ///     cycle started survives it -- a block that is not free, at the size it
 ///     had, and not handed out again.  The deletion barrier keeps
 ///     snapshot-at-the-beginning while marking (`MC.satb`), so marking leaves
 ///     every such object black, and the sweep frees no black block.
+///
+/// The word form composes the sweep's with what marking keeps
+/// (`MC.handover`): at the hand-over the black blocks are exactly the
+/// objects reachable at the start, at their sizes, and the blocks marking
+/// handed out; and the walk ends where it did at the start
+/// (`GC.Gen.MarkPhase.Walk`).  So a word lies in no reachable block at the
+/// start exactly when it lies in a dead block at the hand-over or in a block
+/// marking handed out, which survive the sweep.  `cycle_addresses_lossless`
+/// is the same by address.
 ///
 /// Completeness alone is weak in `since` (it holds of the set of every
 /// address); the run pins `since`, and the converse shows the snapshot is not
@@ -67,6 +85,7 @@ module SPC = GC.Spec.SweepPhase.Completeness
 module FSI = GC.Spec.FusedSweep.Inv
 module MC = GC.Gen.MarkPhase.Cycle
 module SC = GC.Gen.SweepPhase.Cycle
+module LL = GC.Spec.FusedSweep.Lossless
 
 /// The addresses either set holds.
 let union (a b: obj_addr -> prop) (x: obj_addr) : prop = a x \/ b x
@@ -146,11 +165,41 @@ val cycle_survives (#g0: heap) (#rs: seq U64.t) (#g: heap) (#fp: U64.t) (#since:
                      Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\
                      wosize_of_object x g == wosize_of_object x g0 /\ ~(since x))
 
-/// **The incremental cycle is lossless, up to what it handed out**: once a
-/// run is idle again, an address the run did not hand out holds a block that
-/// is not free exactly when it held an object reachable from the roots when
-/// the cycle started.
-val cycle_lossless (#g0: heap) (#rs: seq U64.t) (#g: heap) (#fp: U64.t) (#since: obj_addr -> prop)
+/// **The same, address by address**: once a run is idle again, an address
+/// the run did not hand out holds a block that is not free exactly when it
+/// held an object reachable from the roots when the cycle started.
+val cycle_addresses_lossless (#g0: heap) (#rs: seq U64.t) (#g: heap) (#fp: U64.t) (#since: obj_addr -> prop)
                    (r: major_cycle g0 rs g fp Ph.Idle since)
   : Lemma (ensures forall (x: obj_addr). ~(since x) ==>
                      (GMC.reachable_at_start g0 rs x <==> ~(SPC.freed g x)))
+
+/// ---------------------------------------------------------------------------
+/// Word by word
+/// ---------------------------------------------------------------------------
+
+/// The word `p` lies in a block of the heap the cycle started from that the
+/// roots did not reach: an object dead when the cycle started, or a free
+/// block.  (The counterpart of `LL.dead_covered` over the marked heap, with
+/// dead read as unreachable at the start.)
+let unreachable_covered (g0: heap) (rs: seq U64.t) (p: nat) : prop =
+  exists (x: obj_addr). Seq.mem x (objects zero_addr g0) /\ ~(GMC.reachable_at_start g0 rs x) /\
+                   LL.in_extent g0 x p
+
+/// **Completeness of a run, word by word**: once it is idle again, every
+/// word of a block unreachable when the cycle started lies in a free block,
+/// or in a block the run allocated or promoted.
+val cycle_covered (#g0: heap) (#rs: seq U64.t) (#g: heap) (#fp: U64.t) (#since: obj_addr -> prop)
+                  (r: major_cycle g0 rs g fp Ph.Idle since)
+  : Lemma (ensures forall (p: nat). unreachable_covered g0 rs p ==> SPC.free_or_new_at g since p)
+
+/// **The incremental cycle is lossless, up to what it handed out**: once a
+/// run is idle again, a word of the heap lay in a block unreachable from the
+/// roots when the cycle started (dead, or already free) exactly when it lies
+/// in a free block, or in a block the run allocated or promoted.  With
+/// nothing allocated or promoted this is the stop-the-world clause of
+/// `LL.sweep_lossless`, `blue_covered g p <==> dead_covered g0 p`, with dead
+/// read as unreachable when the cycle started.
+val cycle_lossless (#g0: heap) (#rs: seq U64.t) (#g: heap) (#fp: U64.t) (#since: obj_addr -> prop)
+                   (r: major_cycle g0 rs g fp Ph.Idle since)
+  : Lemma (ensures forall (p: nat). p < heap_size ==>
+                     (unreachable_covered g0 rs p <==> LL.blue_covered g p \/ SPC.new_covered since g p))

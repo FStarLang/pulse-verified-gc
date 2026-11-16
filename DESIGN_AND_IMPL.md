@@ -1869,13 +1869,25 @@ run does for its `since` (`GC.Gen.SweepPhase.Cycle`), two runs fix it:
   `MPC.cycle_account` of the snapshot (`cycle_account`), and once idle:
 
   **The incremental cycle is lossless, up to what it handed out**
-  (`cycle_lossless`): an address the run did not hand out holds a block that
-  is not free exactly when it held an object reachable from the roots when
-  the cycle started.  Completeness (`cycle_complete`,
-  `cycle_frees_unreachable`: every address outside the snapshot is freed)
-  and its converse (`cycle_survives`: every object reachable at the start is
-  a block in use at the end, at its size, and not handed out again; from
-  SATB at the hand-over and `SPC.survived_at_idle` for the sweep).
+  (`cycle_lossless`): a word of the heap lay in a block unreachable from the
+  roots when the cycle started (`unreachable_covered`: dead, or already
+  free) exactly when it lies in a free block at the end, or in a block the
+  run allocated or promoted -- the sweep run's per-word `cycle_lossless`
+  with the marked heap replaced by the start heap and dead at mark by
+  unreachable at the start; with nothing handed out, the stop-the-world
+  clause of `LL.sweep_lossless`.  It is per word because an address alone
+  does not show the space was reclaimed (a freed header may just be merged
+  into a free block).  Its proof composes the sweep run's with the hand-over
+  (`MC.handover`): the black blocks there are exactly the objects reachable
+  at the start, at their sizes, and the blocks marking handed out (black),
+  and the walk ends where it did at the start (`GC.Gen.MarkPhase.Walk`:
+  allocation at any phase and a minor collection while marking keep a
+  position of the walk).  Completeness alone is `cycle_covered`.  By
+  address: `cycle_complete` / `cycle_frees_unreachable` (every address
+  outside the snapshot is freed), the converse `cycle_survives` (every
+  object reachable at the start is a block in use at the end, at its size,
+  and not handed out again; from SATB at the hand-over and
+  `SPC.survived_at_idle`), and the two together `cycle_addresses_lossless`.
 
 **The trusted obligations.**  The account needs the program's writes to
 stay inside the snapshot: `MPC.cycle_write snapshot g x a v` --
