@@ -100,9 +100,13 @@ let satb (g0: heap) (rs: seq U64.t) (g: heap) (sp: MP.scan_pos) : prop =
   (forall (x: obj_addr). GMC.reachable_at_start g0 rs x ==> in_use free_stw g x) /\
   MP.outside_refs_reached g sp (GMC.reachable_at_start g0 rs)
 
-/// What the run carries.
+/// What the run carries: the account, snapshot-at-the-beginning, and of
+/// the objects reachable at the start, that they keep their size and are
+/// not among the addresses handed out (those were not blocks in use).
 let mark_run_inv (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop) (g: heap) (sp: MP.scan_pos) : prop =
-  MPC.within_snapshot (snapshot g0 rs since) g /\ satb g0 rs g sp
+  MPC.within_snapshot (snapshot g0 rs since) g /\ satb g0 rs g sp /\
+  (forall (x: obj_addr). GMC.reachable_at_start g0 rs x ==> wosize_of_object x g == wosize_of_object x g0) /\
+  (forall (x: obj_addr). since x ==> ~(GMC.reachable_at_start g0 rs x))
 
 /// What `start_cycle` is called on: idle, the nursery empty, every root a
 /// darkenable object.
@@ -199,11 +203,16 @@ val mark_run_account (#g0: heap) (#rs: seq U64.t) (#g: heap) (#fp: U64.t) (#sp: 
                      (#since: obj_addr -> prop) (r: marking g0 rs g fp sp since)
   : Lemma (ensures mark_run_inv g0 rs since g sp)
 
-/// **When marking ends, the black objects are the snapshot's**: with nothing
-/// grey, every object reachable when the cycle started is black, and every
+/// **When marking ends, the black objects are the snapshot's**: after the
+/// slice that hands over to the sweep (nothing grey left), every object
+/// reachable when the cycle started is black, at the size it had, and every
 /// black object is in the snapshot.
 val handover (#g0: heap) (#rs: seq U64.t) (#g: heap) (#fp: U64.t) (#sp: MP.scan_pos)
              (#since: obj_addr -> prop) (r: marking g0 rs g fp sp since)
-  : Lemma (requires Mark.noGreyObjects g)
-          (ensures (forall (x: obj_addr). GMC.reachable_at_start g0 rs x ==> SPC.survived_mark g x) /\
-                   (forall (x: obj_addr). SPC.survived_mark g x ==> snapshot g0 rs since x))
+             (minor: minor_state) (budget: nat) (gh: heap) (sp': MP.scan_pos)
+  : Lemma (requires GI.phase_shape minor g fp Ph.Marking sp /\
+                    GI.mark_slice_post g sp fp budget gh sp' fp (Ph.Sweeping zero_addr))
+          (ensures (forall (x: obj_addr). GMC.reachable_at_start g0 rs x ==>
+                      SPC.survived_mark gh x /\ wosize_of_object x gh == wosize_of_object x g0) /\
+                   (forall (x: obj_addr). SPC.survived_mark gh x ==> snapshot g0 rs since x) /\
+                   (forall (x: obj_addr). since x ==> ~(GMC.reachable_at_start g0 rs x)))

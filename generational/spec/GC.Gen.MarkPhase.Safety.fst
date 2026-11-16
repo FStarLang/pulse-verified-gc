@@ -224,4 +224,6 @@ let modify_keeps_blocks minor g fp sp x a v y =
   let g1 = MM.darken g (read_word g a) in
   darken_keeps g (read_word g a) x y a;
   MM.write_heads g1 x a v;
-  MM.header_kept_facts g1 (write_word g1 a v) y
+  MM.header_kept_facts g1 (write_word g1 a v) y;
+  wosize_of_object_spec y g;
+  wosize_of_object_spec y g1

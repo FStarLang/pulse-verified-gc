@@ -188,10 +188,3 @@ let account_minor snapshot minor g fp roots sp =
 let sweep_minor snapshot minor g fp c roots sp =
   GI.phase_shape_sweeping minor g fp c sp;
   FStar.Classical.forall_intro (SPM.minor_keeps_blocks minor g fp c roots)
-
-/// ---------------------------------------------------------------------------
-/// The theorem
-/// ---------------------------------------------------------------------------
-
-let cycle_frees_unreachable g0 rs since snapshot g =
-  MPC.cycle_complete snapshot g

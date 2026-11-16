@@ -28,9 +28,10 @@
 /// allocator's result, and mid-sweep `MPC.cycle_sweep_alloc` /
 /// `cycle_sweep_write`.
 ///
-/// **The theorem** (`cycle_frees_unreachable`): when the cycle is idle again,
-/// every object unreachable from the roots when it started is freed, unless
-/// its address was allocated or promoted since.
+/// These are the per-event lemmas.  The theorem is stated of a run of the
+/// cycle, which fixes the snapshot (`GC.Gen.MarkPhase.Cycle` for marking,
+/// `GC.Gen.Cycle` for the whole cycle: `cycle_frees_unreachable`,
+/// `cycle_lossless`).
 
 module GC.Gen.MarkPhase.Completeness
 
@@ -116,14 +117,3 @@ val sweep_minor (snapshot: obj_addr -> prop) (minor: minor_state) (g: heap) (fp:
   : Lemma (requires GI.phase_shape minor g fp (Ph.Sweeping c) sp /\ MPC.sweep_in_snapshot snapshot g c)
           (ensures MPC.sweep_in_snapshot (GSC.with_promoted snapshot c minor g fp roots)
                      (SPM.collect_at c minor g fp roots).Promote.mc_major c)
-
-/// **Completeness across an incremental cycle.**  Idle again, with the
-/// account of the cycle that started from `g0` and the roots `rs` -- every
-/// address in `snapshot` reachable then, or in `since` (allocated or promoted
-/// since) -- every object unreachable from the roots when the cycle started
-/// is freed, unless its address is in `since`.
-val cycle_frees_unreachable (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop)
-                            (snapshot: obj_addr -> prop) (g: heap)
-  : Lemma (requires MPC.cycle_account snapshot g Ph.Idle /\
-                    (forall (x: obj_addr). snapshot x ==> reachable_at_start g0 rs x \/ since x))
-          (ensures forall (x: obj_addr). ~(reachable_at_start g0 rs x) /\ ~(since x) ==> SPC.freed g x)

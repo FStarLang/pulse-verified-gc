@@ -38,6 +38,17 @@ module Header = GC.Lib.Header
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 
+/// A block keeps its size when it keeps its header, or its block.
+let size_of_header (g g': heap) (x: obj_addr)
+  : Lemma (requires read_word g' (hd_address x) == read_word g (hd_address x))
+          (ensures wosize_of_object x g' == wosize_of_object x g)
+  = wosize_of_object_spec x g; wosize_of_object_spec x g'
+
+let size_of_block (g g': heap) (x: obj_addr)
+  : Lemma (requires SPI.same_block g g' (hd_address x))
+          (ensures wosize_of_object x g' == wosize_of_object x g)
+  = wosize_of_object_spec x g; wosize_of_object_spec x g'
+
 /// ---------------------------------------------------------------------------
 /// The start: root darkening keeps every edge
 /// ---------------------------------------------------------------------------
@@ -178,6 +189,8 @@ let start_satb (minor: minor_state) (g0: heap) (fp0: U64.t) (rs: seq U64.t)
 
 let start_inv minor g0 fp0 rs =
   start_satb minor g0 fp0 rs;
+  GMS.start_keeps_blocks minor g0 fp0 rs;
+  FStar.Classical.forall_intro (FStar.Classical.move_requires (size_of_block g0 (MStart.darkened g0 rs)));
   GMC.cycle_start minor g0 fp0 rs;
   MPC.within_snapshot_ext (GMC.reachable_at_start g0 rs) (snapshot g0 rs SPC.nothing_new) (MStart.darkened g0 rs)
 
@@ -185,21 +198,22 @@ let start_inv minor g0 fp0 rs =
 /// The events
 /// ---------------------------------------------------------------------------
 
-/// A mark slice: mark moves keep the marking invariant for the objects
-/// reachable at the start as outside references, and the account; they only
-/// recolour.
+/// A mark slice, whatever phase it leaves: mark moves keep the marking
+/// invariant for the objects reachable at the start as outside references,
+/// and the account; they only recolour.
 let slice_inv (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop)
               (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos) (budget: nat)
-              (g': heap) (sp': MP.scan_pos)
+              (g': heap) (sp': MP.scan_pos) (ph': Ph.gc_phase)
   : Lemma (requires mark_run_inv g0 rs since g sp /\ GI.phase_shape minor g fp Ph.Marking sp /\
-                    GI.mark_slice_post g sp fp budget g' sp' fp Ph.Marking)
+                    GI.mark_slice_post g sp fp budget g' sp' fp ph')
           (ensures mark_run_inv g0 rs since g' sp')
   = let r = GMC.reachable_at_start g0 rs in
     GI.phase_shape_marking minor g fp sp;
     assert (MP.marking_inv g r sp);
     S.mark_steps_inv g g' sp sp' r;
     MPC.account_steps (snapshot g0 rs since) g g' sp sp';
-    MPC.mark_steps_keep_blocks g g' sp sp'
+    MPC.mark_steps_keep_blocks g g' sp sp';
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (size_of_block g g'))
 
 /// The barrier write: the deletion barrier keeps the marking invariant for
 /// the nursery's fields and the objects reachable at the start as outside
@@ -229,7 +243,8 @@ let rec init_inv (#obj: obj_addr) (#g1 #g': heap) (w: init_writes obj g1 g')
                  (s: obj_addr -> prop) (r: obj_addr -> prop) (sp: MP.scan_pos)
   : Lemma (requires MPC.within_snapshot_fresh s g1 obj /\ MPA.marking_fresh g1 r sp obj)
           (ensures MPC.within_snapshot_fresh s g' obj /\ MPA.marking_fresh g' r sp obj /\
-                   (forall (y: obj_addr). in_use free_stw g1 y ==> in_use free_stw g' y))
+                   (forall (y: obj_addr). in_use free_stw g1 y ==>
+                      in_use free_stw g' y /\ read_word g' (hd_address y) == read_word g1 (hd_address y)))
           (decreases w)
   = match w with
     | Init_done _ -> ()
@@ -270,11 +285,14 @@ let alloc_inv (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop)
     assert (MP.marking_inv g r sp);
     MPC.account_alloc s (GMM.nursery_refs minor) sp g fp wz tag;
     MPA.marking_alloc g r sp fp wz tag;
-    let keep (y: obj_addr) : Lemma (requires in_use free_stw g y) (ensures in_use free_stw g1 y)
-      = MM.header_kept_facts g g1 y
+    init_inv w s1 r sp;
+    let keep (y: obj_addr)
+      : Lemma (requires in_use free_stw g y)
+              (ensures in_use free_stw g' y /\ wosize_of_object y g' == wosize_of_object y g)
+      = MM.header_kept_facts g g1 y;
+        size_of_header g g' y
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires keep);
-    init_inv w s1 r sp;
     let same (h: heap) (y: obj_addr) : Lemma (MPC.outside_snapshot s1 h y == MPC.outside_snapshot s' h y) = () in
     FStar.Classical.forall_intro_2 same;
     assert (SPM.fields_storable (MPC.outside_snapshot s1) g' obj);
@@ -303,7 +321,9 @@ let minor_inv (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop)
     MPC.within_snapshot_ext (GMC.with_new_blocks s g g') (snapshot g0 rs (GMC.with_new_blocks since g g')) g';
     assert (MP.marking_inv g (fun w -> GMM.outside_refs_of minor g roots w \/ r w) sp);
     GMM.minor_keeps_marking_inv_with r minor g fp roots sp;
-    let keep (y: obj_addr) : Lemma (requires in_use free_stw g y) (ensures in_use free_stw g' y)
+    let keep (y: obj_addr)
+      : Lemma (requires in_use free_stw g y)
+              (ensures in_use free_stw g' y /\ wosize_of_object y g' == wosize_of_object y g)
       = GMM.minor_keeps_block minor g fp roots y;
         MM.header_kept_facts g g' y
     in
@@ -320,7 +340,7 @@ let rec mark_run_account #g0 #rs #g #fp #sp #since r : Lemma (ensures mark_run_i
   | Start minor fp0 _ -> start_inv minor g0 fp0 rs
   | Slice #_ #_ #g1 #fp1 #sp1 #since1 r1 minor budget g' sp' _ ->
       mark_run_account r1;
-      slice_inv g0 rs since1 minor g1 fp1 sp1 budget g' sp'
+      slice_inv g0 rs since1 minor g1 fp1 sp1 budget g' sp' Ph.Marking
   | Write #_ #_ #g1 #fp1 #sp1 #since1 r1 minor x a v _ ->
       mark_run_account r1;
       write_inv g0 rs since1 minor g1 fp1 sp1 x a v
@@ -332,13 +352,14 @@ let rec mark_run_account #g0 #rs #g #fp #sp #since r : Lemma (ensures mark_run_i
       minor_inv g0 rs since1 minor g1 fp1 sp1 roots
 #pop-options
 
-let handover #g0 #rs #g #fp #sp #since r =
+let handover #g0 #rs #g #fp #sp #since r minor budget gh sp' =
   mark_run_account r;
+  slice_inv g0 rs since minor g fp sp budget gh sp' (Ph.Sweeping zero_addr);
   let black (x: obj_addr)
-    : Lemma (requires GMC.reachable_at_start g0 rs x) (ensures SPC.survived_mark g x)
-    = Mark.color_exhaustive x g;
-      Mark.colors_exclusive x g;
-      if is_white x g then MP.marker_will_reach_elim g sp x
+    : Lemma (requires GMC.reachable_at_start g0 rs x) (ensures SPC.survived_mark gh x)
+    = Mark.color_exhaustive x gh;
+      Mark.colors_exclusive x gh;
+      if is_white x gh then MP.marker_will_reach_elim gh sp' x
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires black);
-  MPC.account_marked (snapshot g0 rs since) g
+  MPC.account_marked (snapshot g0 rs since) gh

@@ -122,4 +122,5 @@ val modify_keeps_blocks (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_
                         (x: obj_addr) (a: hp_addr) (v: U64.t) (y: obj_addr)
   : Lemma (requires GI.phase_shape minor g fp Ph.Marking sp /\ GB.modify_ok Ph.Marking minor g sp x a v /\
                     in_use free_stw g y)
-          (ensures in_use free_stw (GB.modify_heap Ph.Marking g a v) y)
+          (ensures in_use free_stw (GB.modify_heap Ph.Marking g a v) y /\
+                   wosize_of_object y (GB.modify_heap Ph.Marking g a v) == wosize_of_object y g)
