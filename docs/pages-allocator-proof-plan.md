@@ -2153,3 +2153,284 @@ to before the rebase.
 - `pages-c`: `make extract` from that cache gives C byte-identical to the
   committed files, and `make test` passes all 468 checks.
 - No admits, no assumptions.
+- `pages-c/bench` (`bench.sh 5 7`), extracted from the clean build of
+  `ef186b67`, median of 5 rounds (verified against the prototype):
+  - small −3.9%, mixed −38.8%, large −41.0%;
+  - sweep10 −7.3%, sweep50 −4.5%, sweep90 −9.4%;
+  - realloc −0.6%, reallocS −2.9%.
+
+  Every workload is at or below the prototype, so the ≤ 5% rule holds.
+
+---
+
+## 20. Design: the page allocator in main's incremental cycle (2026-11-16)
+
+Design only. Nothing here is built. It replaces §7's sketch and stage-4
+item 1, now that the incremental collector is on main. References to main
+are at `5623c7f6`.
+
+### 20.1 What main's cycle needs from an allocator
+
+**The allocator is hard-wired.** Main's cycle names its allocator directly:
+- `GC.Gen.MarkPhase.Cycle.marking` has an `Alloc` step on
+  `AC.alloc_phase g fp Marking`.
+- `GC.Gen.SweepPhase.Cycle.cycle` has an `Alloc` step on
+  `AC.alloc_phase g fp (Sweeping c)`.
+- Promotion calls `AP.alloc_at ph`, which is `AC.alloc_phase g fp ph`
+  (`GC.Gen.Promote.promote_object`).
+- The implementation keeps `fp_ref` and `phase_ref` in `gen_heap_t`. Its only
+  allocator calls are `promote_one`, and `verified_allocate` in `alloc_gen.c`.
+
+**The proofs use five facts about an allocation:**
+1. **The colour** (`Phase.allocation_color`):
+   - Idle: white.
+   - Marking: black.
+   - `Sweeping c`: black if the header is at or above `c`, white below it.
+2. **Only the new object comes into use, carved from a free block.** The
+   facts are `Mut.alloc_in_use`, `MarkPhase.Alloc.alloc_in_use` and
+   `allocations_not_free`.
+3. **Every other block is kept.** This is `keeps_blocks` and `Mut.alloc_keeps`.
+4. **The walk is kept.** The facts are `MW.alloc_reaches` and `Mut.alloc_walk_end`.
+5. **The allocator's own invariant is kept.** This is `fl_ascending` with `alloc_ok`.
+   - In the mark phase, `fl_ascending` is the only place the free list
+     appears (`marking_alloc`).
+   - In the sweep phase, the free list sits inside the collector's
+     invariant: `sweep_inv_incremental` includes `fl_ascending`.
+
+**No allocator facts appear in the mark side.** The mark invariant
+(`marking_inv`), the barrier, the scan position and the mark slice mention
+no allocator.
+
+### 20.2 The colour rule
+
+**Today's rule and main's rule.**
+- `AllocIface.new_colour` is a function of the phase only:
+  - Marking: black.
+  - Idle and Sweeping: white.
+- Main's rule depends on the address while sweeping.
+
+**The common rule.**
+
+    colour_at a s ph x = Black  if ph = Marking
+                         Black  if ph = Sweeping and a.unswept s (hd_address x)
+                         White  otherwise
+
+`alloc_post`'s colour clause becomes `color_of_object x g' == colour_at a s ph x`.
+
+**The record's one field `unswept` has two jobs today. It splits into two:**
+- `unswept s b`: memory the sweep has yet to visit. This decides the colour.
+- `pending s b`: memory the allocator must not change, which is the sweep's
+  remaining work. This is the frame clause of `alloc_post`, unchanged in form.
+
+| | `unswept s b` | `pending s b` |
+|---|---|---|
+| Main's first fit | `b >= c` | the words of `pending_free c` blocks (white, at or above `c`) |
+| Pages | `b` is in an unswept page | the same |
+
+Main's allocator does allocate above the cursor. It takes blue cells there,
+never pending ones, which is why main needs two predicates.
+
+**Check that no page theorem's conclusion weakens.** The rule may be applied
+only if this holds.
+- The page allocator never allocates into an unswept page.
+  `AllocPhase.new_hdr_swept` proves this of the header, and stage 2's
+  `fields_swept` proves it of the fields.
+- So for pages `colour_at` is `new_colour ph` at every allocation. The page
+  `alloc` (`alloc_col (new_colour ph)`) does not change.
+- `alloc_correct`, `alloc_col_correct`, `alloc_idle`, `alloc_no_fit`,
+  `Pages.Theorems` and `Pages.Allocator.fsti` are untouched.
+- `pages_allocator_ok` is re-proved against the new `alloc_post`. A lemma
+  `alloc_post_new_old` shows that, for pages, the new `alloc_post` implies the
+  old one: `colour_at = new_colour` there by `new_hdr_swept`, and the frame
+  clause is the same predicate.
+- So every page conclusion is kept as it is. If a page theorem had to change
+  (for example, if pages allocated into unswept pages), the rule would not
+  be applied, and pages would keep `new_colour` as its own instance's colour.
+
+**One more generalisation** is needed by 20.4: `fields_written`'s
+`field_ok` becomes `field_ok_with free`, where `free` is the collector's
+`free_def` (20.3). `field_ok` is the instance at `free_stw`.
+
+### 20.3 Page-by-page sweeping and main's Sweeping phase
+
+**The mismatch.**
+- Main's sweep is one address-ordered cursor. `Sweeping of U64.t` holds the
+  cursor, and free means `free_incremental c` (blue, or white at or above
+  `c`).
+- `SweepPhase.Slice.phase_slice` advances the cursor. `state_at` derives the
+  caches from it.
+- The page sweep has no such order:
+  - Its unit is a page or a run, and units commute (`sweep_commute`).
+  - Plan §7 item 3 sweeps on allocation, as OCaml 5's `pool_find` does.
+    That sweeps a page of the requested class out of address order.
+  - Progress is a set of swept pages, implemented as a per-page epoch.
+
+**Recommended: make the phase's payload the sweeper's own state.** A new
+record `GC.Spec.SweeperIface.sweeper` has:
+- `sst: Type0`, the sweep's progress;
+- `unswept: sst -> hp_addr -> bool`, shared with the allocator's colour rule;
+- `free_of: sst -> free_def`, with `free_def_ok (free_of s)` and
+  `allocations_not_free` for the allocator;
+- `start: heap -> sst`, `slice: sst -> heap -> budget -> heap & sst`, `done: sst -> bool`;
+- `sweep_inv: heap -> a.ast -> sst -> prop`, and the facts main's
+  `sweep_slice_phase` gives:
+  - in-use objects stay in use, as the same block;
+  - pending work strictly shrinks;
+  - when done, `well_formed_heap`, nothing pending, and only white or blue
+    blocks.
+
+The phase becomes `Idle | Marking | Sweeping of sst`.
+
+**Main's instance:**
+- `sst` is the cursor `c`; `unswept s b = b >= c`;
+- `free_of c = free_incremental c`;
+- `slice = phase_slice`; `sweep_inv = sweep_inv_incremental`.
+- The lemmas already exist: `sweep_slice_phase`, `sweep_inv_incremental_end`,
+  `minor_keeps_sweep_phase` and `free_incremental_allocations_not_free`.
+
+**The page instance:**
+- `sst` is a swept set, `page -> bool` in the spec and an epoch in the
+  implementation (§17).
+- `unswept s b` holds when `page_of b` is not swept.
+- `free_of s g x = is_blue x g || (is_white x g && not (s (page_of x)))`.
+  - This is a `free_def`: for a fixed `s` it reads only `x`'s header and
+    address, so `free_def_ok` holds.
+- `slice` sweeps unswept units in page order up to the budget, each with
+  `sweep_page_correct`/`sweep_run_correct`.
+- **Sweeping on allocation** is a collector step, `Slice_unit p`, taken just
+  before the `Alloc` step in the run. It is not an effect inside the
+  allocator. The implementation's fused `pool_find` is proved equal to
+  `Slice_unit` followed by `alloc`. So `alloc_post` never mentions `sst`.
+
+**Alternative, not recommended:** keep main's `Sweeping of U64.t` and sweep
+pages in address order behind a page-aligned cursor. Main's types then stay
+as they are, apart from `free_def`. But this forbids sweeping on allocation,
+which is what keeps the page allocator's pauses short (results §9.9).
+
+### 20.4 Allocation during an incremental page sweep: the proof
+
+**The mid-sweep invariant** is plan §7.1's,
+`pages_ok_sw g st s`:
+- **Swept pages:** `pages_ok`'s L4, L5 and L7 (exact lists, slots and runs).
+  Colours are white or blue, as after `sweep_page`. The lists hold cells of
+  swept pages only.
+- **Unswept pages:** shape L3 and L6. Colours are black, white or blue, never grey.
+- **The heap:** `well_formed_heap_with (free_of s) g`, the page map
+  (`map_ok`) and `heap_partitioned`.
+
+**The obstacle.** `alloc_col_correct` assumes `pages_ok_mc`, which includes
+`well_formed_heap`, that is, `free_stw`. That fails mid-sweep: a dead white
+object in an unswept page may point to a block already freed in a swept page.
+
+**The plan.**
+1. **Weaken the precondition, which strengthens the theorem.** Find
+   `alloc_pre g st`, the parts of `pages_ok_mc` that the allocation proofs
+   actually read. Expected:
+   - the page map;
+   - the swept pages' lists and shapes;
+   - the tiling;
+   - `blocks_fit` and `no_infix_block`. These two parts of
+     well-formedness do not depend on `free`, so they hold mid-sweep.
+
+   Restate `alloc_col_correct` from `alloc_pre`. The old statement is the
+   instance `pages_ok_mc ⇒ alloc_pre`, so nothing weakens. Then prove
+   `pages_ok_sw ⇒ alloc_pre`.
+2. **The invariant after allocation and field writes.**
+   - **Swept pages:** from `alloc_ok_col`'s clauses, as in stage 4.
+   - **Unswept pages:** from `unswept_unchanged` and `Pages.Frame`.
+   - **`well_formed_heap_with (free_of s)`:** the new object is white in a
+     swept page, so it is in use. Its fields are written with
+     `field_ok_with (free_of s)` values. Every other block is kept
+     (`others_unchanged`).
+
+     This follows main's sweep-phase lemmas one for one, and the page
+     analogues get the same names: `alloc_sweep_phase`, `fresh_write`,
+     `fresh_close` and `program_write`.
+3. **The five facts of 20.1:**
+   - **Colour:** white, by `new_hdr_swept` and the 20.2 rule.
+   - **In use:** `in_use (free_of s) g' y == in_use g y || y = obj`. The
+     object was carved from blue memory of a swept page, and others are
+     unchanged.
+   - **Others kept:** `others_unchanged`.
+   - **Walk kept:** new lemma `alloc_reaches_pages`. A pool allocation
+     rewrites a slot header in place, at the same size. A large carve
+     splits a blue block into two that tile it. In both cases `W.reaches g
+     zero e` implies `W.reaches g' zero e` (`W.walk_write` and
+     `W.walk_merge` read backwards). For the large carve this is the hardest
+     new lemma.
+   - **Not pending:** the new object is in a swept page.
+4. **A minor collection mid-sweep** promotes through `alloc Sweeping`.
+   `allocations_not_free (free_of s)` holds by 3. `CheneyGeneric` gives the
+   rest, as `minor_keeps_sweep_phase` does for main.
+5. **Vacuity.** `SweepingStart` already gives a `Sweeping` state with
+   unswept pages.
+   - Add a run like main's `GC.SPOT.SweepPhaseCycleAlloc`:
+     start the sweep → `Slice_unit` → `Alloc` → `Write` → finish.
+   - Add one with a minor collection, like `SweepPhaseFreedByEnd`.
+
+### 20.5 Generalising main's cycle proofs over `AllocIface`
+
+**Two ways to do it.**
+- **(A) Edit akhil's modules to take the records.** There is one proof, but
+  it rewrites the signatures and proofs of `MarkPhase.Cycle`,
+  `SweepPhase.Cycle`, `Gen.Cycle`, `MarkPhase.Alloc`,
+  `SweepPhase.Mutator`/`Completeness`, `Promote`, the Cheney simulation and
+  the two minor-collection modules.
+- **(B, recommended) Add generic modules beside his.** The new modules are
+  `GC.Gen.Cycle.Generic`, `.MarkRun` and `.SweepRun`. They state the run
+  types and the generic cycle theorems over `allocator` and `sweeper`:
+  - `cycle_account`, `cycle_complete`, `cycle_frees_unreachable` and
+    `cycle_survives` are generic.
+  - `cycle_lossless` and `cycle_covered` describe the fused sweep's extents,
+    so they stay instance theorems. For pages the analogues are
+    `Survive`'s `dead_covered` and `live_uncovered`.
+
+  The generic proofs are adapted from his, with the allocator facts
+  replaced by the interface's clauses.
+
+**Instance 1: main's first fit with the fused sweep.**
+- Prove `alloc_phase` meets the new `alloc_post`, with the walk clause. The
+  proofs come from `Allocator.Cursor`, `Allocator.Phase`, `Allocator.Exact`,
+  `SweepPhase.Mutator.alloc_*` and `MarkPhase.Walk.alloc_reaches`, all
+  already proved.
+- The sweeper is the fused sweep phase.
+- **Evidence the interface is not vacuous:**
+  - main's own `GC.Gen.Cycle` theorems are re-derived from the generic ones
+    at instance 1, with the same statements;
+  - main's SPOT runs (`MarkPhaseCycleAlloc`, `SweepPhaseCycleAlloc`,
+    `SweepPhaseFreedByEnd`) are rebuilt through the interface.
+- Once this is stable, akhil may choose to replace his concrete runs with
+  the instance. That is his call.
+
+**Instance 2: the page allocator** with the page sweeper (20.3 and 20.4).
+
+**Which parts touch akhil's proofs:**
+
+| Part | Option A | Option B (recommended) |
+|---|---|---|
+| `MarkPhase.Cycle`, `SweepPhase.Cycle`, `Gen.Cycle` (run types, cycle theorems) | rewritten | **used, not edited**: instance 1's theorems are re-derived from them |
+| `MarkPhase.Alloc.marking_alloc`, `Completeness.account_alloc`, `Gen.MarkPhase.Walk.alloc_reaches`, `SweepPhase.Mutator.alloc_*` | restated over the record | **used** to prove instance 1's `alloc_post` |
+| `Promote`, `CheneyGeneric`, `MarkPhase.Minor`, `SweepPhase.Minor` | `alloc_at ph` → `a.alloc ph` throughout the Cheney simulation | **used** for instance 1. For pages, promotion needs the same Cheney facts from the record (header written, fields not touched, other blocks kept). Either `Promote` takes the record (an edit to his module), or a generic copy of the promotion lemmas is made. **This is the largest piece; decide it with akhil.** |
+| `marking_inv`, barrier, scan position, mark slice, `FusedSweep`, `Walk` | untouched | untouched |
+| Impl: `gen_heap_t.fp_ref`/`phase_ref`, `promote_one`'s `allocate`, `alloc_gen.c`'s `verified_allocate` | edited | **edited (unavoidable)**: see below |
+
+**The implementation, under either option.**
+- Add an interface `GC.Impl.AllocIface.fsti` with an abstract allocator
+  state, its slprop and `allocate`, related to `alloc_post`.
+- `GC.Impl.Allocator` (main) and `GC.Impl.Pages` (pages) each implement it.
+- The build chooses one, as two extraction bundles. There is no
+  indirection at run time, as the ≤ 5% rule requires.
+- `gen_heap_t` holds the interface's state in place of `fp_ref`/`phase_ref`.
+  This touches main's implementation, not akhil's spec proofs.
+
+**Order of work, smallest risk first:**
+1. `AllocIface` v2: `colour_at`, `pending`, `field_ok_with` and the walk
+   clause. Re-prove `pages_allocator_ok`, and add `alloc_post_new_old`.
+2. Instance 1's `alloc_post`, from main's lemmas.
+3. `SweeperIface` and the generic sweep run, with both instances. Main's
+   SPOT runs are the witnesses.
+4. The page mid-sweep invariant and allocation during the sweep (20.4).
+5. The generic mark run.
+6. Promotion and the minor collection, after deciding the Promote question
+   with akhil.
+7. The implementation interface, then 5b (`gen_gc` with the page state).
