@@ -8,12 +8,13 @@
 /// they must not count against the marking invariant until then -- the
 /// analogue of the sweep's `fresh_ok` (`GC.Spec.SweepPhase.Mutator`):
 ///
-///   * **Fresh** (`marking_fresh g outside_refs obj`): the invariant with `obj` black
-///     and its fields exempt: well-formedness counts `obj` as free
+///   * **Fresh** (`marking_fresh g outside_refs sp obj`): the invariant with
+///     `obj` black and its fields exempt: well-formedness counts `obj` as free
 ///     (`free_or_new obj`, so nothing points at it and its fields are
 ///     unconstrained) and the weak tri-colour clause skips it as a source
 ///     (`fresh_tri_color`).  Being black, `obj` lies on no path the marker
-///     follows, so what the marker will reach is unaffected by its fields.
+///     follows, so what the marker will reach is unaffected by its fields;
+///     and it is not the partly scanned object, which is grey.
 ///   * **Allocation** (`marking_alloc`): first-fit at `Marking` from an
 ///     ascending free list keeps the invariant with the new object fresh; it
 ///     frees nothing (every non-free block keeps its header and fields,
@@ -27,8 +28,9 @@
 ///     with a value it holds meets this.
 ///
 /// The frame lemmas (`keeps_blocks_*`) are about any change that keeps every
-/// non-free block (for any admissible definition of free): its edges, the
-/// resolution of what it stores, and what the marker will reach.
+/// non-free block (for any admissible definition of free): its edges (field
+/// by field), the resolution of what it stores, and what the marker will
+/// reach.
 
 module GC.Spec.MarkPhase.Alloc
 
@@ -66,20 +68,26 @@ val keeps_blocks_resolve (free: free_def) (g g': heap) (w: U64.t)
                     is_pointer w /\ SPI.storable free g w)
           (ensures resolve_object (w <: obj_addr) g' == resolve_object (w <: obj_addr) g)
 
-/// A non-free block keeps its edges.
+/// A non-free block keeps its edges ...
 val keeps_blocks_edges (free: free_def) (g g': heap) (u t: obj_addr)
   : Lemma (requires free_def_ok free /\ well_formed_heap_with free g /\ blocks_fit g' /\
                     keeps_blocks free g g' /\ in_use free g u)
           (ensures field_edge g' u t <==> field_edge g u t)
 
+/// ... field by field.
+val keeps_blocks_field_edge_at (free: free_def) (g g': heap) (u: obj_addr) (k: nat) (t: obj_addr)
+  : Lemma (requires free_def_ok free /\ well_formed_heap_with free g /\ blocks_fit g' /\
+                    keeps_blocks free g g' /\ in_use free g u)
+          (ensures field_edge_at g' u k t <==> field_edge_at g u k t)
+
 /// When every grey or white block is non-free, the marker will still reach
 /// what it would.
-val keeps_blocks_reach (free: free_def) (g g': heap) (w: obj_addr)
+val keeps_blocks_reach (free: free_def) (g g': heap) (sp: scan_pos) (w: obj_addr)
   : Lemma (requires free_def_ok free /\ well_formed_heap_with free g /\ blocks_fit g' /\
                     keeps_blocks free g g' /\
                     (forall (y: obj_addr). grey_or_white g y ==> in_use free g y) /\
-                    marker_will_reach g w)
-          (ensures marker_will_reach g' w)
+                    marker_will_reach g sp w)
+          (ensures marker_will_reach g' sp w)
 
 /// ---------------------------------------------------------------------------
 /// Fresh objects
@@ -91,18 +99,17 @@ let free_or_new (obj: obj_addr) : free_def = fun g x -> is_blue x g || x = obj
 
 val free_or_new_ok (obj: obj_addr) : Lemma (free_def_ok (free_or_new obj))
 
-/// The weak tri-colour clause for every black object but `obj`.
-let fresh_tri_color (g: heap) (obj: obj_addr) : prop =
+/// The weak tri-colour clause for every scanned edge but `obj`'s.
+let fresh_tri_color (g: heap) (sp: scan_pos) (obj: obj_addr) : prop =
   forall (b w: obj_addr).
-    Seq.mem b (objects zero_addr g) /\ is_black b g /\ b <> obj /\ field_edge g b w /\ is_white w g ==>
-    marker_will_reach g w
+    scanned_edge g sp b w /\ b <> obj /\ is_white w g ==> marker_will_reach g sp w
 
 /// **The marking invariant with `obj` fresh**: black, a block, its fields
 /// not yet bound by well-formedness or the weak tri-colour clause.
-let marking_fresh (g: heap) (outside_refs: obj_addr -> prop) (obj: obj_addr) : prop =
+let marking_fresh (g: heap) (outside_refs: obj_addr -> prop) (sp: scan_pos) (obj: obj_addr) : prop =
   well_formed_heap_with (free_or_new obj) g /\
-  Seq.mem obj (objects zero_addr g) /\ is_black obj g /\
-  fresh_tri_color g obj /\ outside_refs_reached g outside_refs
+  Seq.mem obj (objects zero_addr g) /\ is_black obj g /\ scan_pos_ok g sp /\
+  fresh_tri_color g sp obj /\ outside_refs_reached g sp outside_refs
 
 /// ---------------------------------------------------------------------------
 /// Allocation
@@ -122,8 +129,8 @@ val alloc_in_use (g: heap) (fp: U64.t) (wz: nat) (tag: SPM.tag_t) (obj x: obj_ad
 /// black, of the requested size and tag, was not a non-free block before,
 /// and is fresh; every non-free block is kept (allocation frees nothing),
 /// and the list stays ascending.
-val marking_alloc (g: heap) (outside_refs: obj_addr -> prop) (fp: U64.t) (wz: nat) (tag: SPM.tag_t)
-  : Lemma (requires marking_inv g outside_refs /\ FLA.fl_ascending g fp /\ wz >= 1 /\ tag <> infix_tag)
+val marking_alloc (g: heap) (outside_refs: obj_addr -> prop) (sp: scan_pos) (fp: U64.t) (wz: nat) (tag: SPM.tag_t)
+  : Lemma (requires marking_inv g outside_refs sp /\ FLA.fl_ascending g fp /\ wz >= 1 /\ tag <> infix_tag)
           (ensures (let r = AC.alloc_phase g fp Ph.Marking wz tag in
                     (r.SA.obj_out == 0UL ==> r.SA.heap_out == g /\ r.SA.fp_out == fp) /\
                     (r.SA.obj_out <> 0UL ==>
@@ -134,28 +141,28 @@ val marking_alloc (g: heap) (outside_refs: obj_addr -> prop) (fp: U64.t) (wz: na
                         tag_of_object obj r.SA.heap_out == tag /\
                         keeps_blocks free_stw g r.SA.heap_out /\
                         FLA.fl_ascending r.SA.heap_out r.SA.fp_out /\
-                        marking_fresh r.SA.heap_out outside_refs obj))))
+                        marking_fresh r.SA.heap_out outside_refs sp obj))))
 
 /// ---------------------------------------------------------------------------
 /// Initialising a fresh object
 /// ---------------------------------------------------------------------------
 
 /// A write into the body of a fresh object keeps it fresh.
-val marking_fresh_write (g: heap) (outside_refs: obj_addr -> prop) (obj: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires marking_fresh g outside_refs obj /\ SPM.in_body g obj a)
-          (ensures marking_fresh (write_word g a v) outside_refs obj /\
+val marking_fresh_write (g: heap) (outside_refs: obj_addr -> prop) (sp: scan_pos) (obj: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires marking_fresh g outside_refs sp obj /\ SPM.in_body g obj a)
+          (ensures marking_fresh (write_word g a v) outside_refs sp obj /\
                    SPI.same_heads g (write_word g a v))
 
 /// Every field of `obj`, if it is scannable, points at nothing white unless
 /// that is an outside reference or one the marker will reach.
-let fields_ok (g: heap) (outside_refs: obj_addr -> prop) (obj: obj_addr) : prop =
+let fields_ok (g: heap) (outside_refs: obj_addr -> prop) (sp: scan_pos) (obj: obj_addr) : prop =
   not (is_no_scan obj g) ==>
   (forall (i: nat). i < U64.v (wosize_of_object obj g) /\ U64.v obj + i * 8 + 8 <= heap_size ==>
-     MM.target_ok g outside_refs (SPM.field_val g obj i))
+     MM.target_ok g outside_refs sp (SPM.field_val g obj i))
 
 /// **Closing a fresh object**: once its fields are storable and fine for a
 /// black object to point at, the invariant holds.
-val marking_fresh_close (g: heap) (outside_refs: obj_addr -> prop) (obj: obj_addr)
-  : Lemma (requires marking_fresh g outside_refs obj /\ SPM.fields_storable free_stw g obj /\
-                    fields_ok g outside_refs obj)
-          (ensures marking_inv g outside_refs)
+val marking_fresh_close (g: heap) (outside_refs: obj_addr -> prop) (sp: scan_pos) (obj: obj_addr)
+  : Lemma (requires marking_fresh g outside_refs sp obj /\ SPM.fields_storable free_stw g obj /\
+                    fields_ok g outside_refs sp obj)
+          (ensures marking_inv g outside_refs sp)

@@ -80,22 +80,53 @@ let keeps_blocks_edges free g g' u t =
 #pop-options
 
 #push-options "--z3rlimit 20"
-let keeps_blocks_reach free g g' w =
+let keeps_blocks_field_edge_at free g g' u k t =
+  wf_with_parts ();
   free_def_ok_elim free;
-  eliminate exists (x: obj_addr). is_gray x g /\ reach_within (field_edge g) (grey_or_white g) x w
+  MM.header_kept_facts g g' u;
+  if 1 <= k && k <= U64.v (wosize_of_object u g) && not (is_no_scan u g) then begin
+    get_field_word g u k;
+    get_field_word g' u k;
+    field_in_block g u (k - 1);
+    let fa : hp_addr = U64.uint_to_t (U64.v u + (k - 1) * 8) in
+    assert (SPI.same_block g g' (hd_address u));
+    assert (read_word g' fa == read_word g fa);
+    let w = read_word g fa in
+    if is_pointer w then begin
+      FT.wf_with_field free g u (k - 1);
+      keeps_blocks_resolve free g g' w
+    end;
+    field_edge_at_kept g g' u k t
+  end
+#pop-options
+
+/// A non-free block keeps its unscanned edges, and its scanned fields' edges.
+let keeps_blocks_scan (free: free_def) (g g': heap) (sp: scan_pos) (u t: obj_addr)
+  : Lemma (requires free_def_ok free /\ well_formed_heap_with free g /\ blocks_fit g' /\
+                    keeps_blocks free g g' /\ in_use free g u)
+          (ensures (unscanned_edge g' sp u t <==> unscanned_edge g sp u t) /\
+                   ((exists (k: nat). k < sp.fld /\ field_edge_at g' u k t) <==>
+                    (exists (k: nat). k < sp.fld /\ field_edge_at g u k t)))
+  = keeps_blocks_edges free g g' u t;
+    FStar.Classical.forall_intro (fun (k: nat) -> keeps_blocks_field_edge_at free g g' u k t)
+
+#push-options "--z3rlimit 20"
+let keeps_blocks_reach free g g' sp w =
+  free_def_ok_elim free;
+  eliminate exists (x: obj_addr). is_gray x g /\ reach_within (unscanned_edge g sp) (grey_or_white g) x w
   with begin
-    reach_within_ends (field_edge g) (grey_or_white g) x w;
+    reach_within_ends (unscanned_edge g sp) (grey_or_white g) x w;
     let pm (v: obj_addr) : Lemma (requires grey_or_white g v) (ensures grey_or_white g' v) =
       MM.header_kept_facts g g' v
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires pm);
     let em (u v: obj_addr)
-      : Lemma (requires grey_or_white g u /\ grey_or_white g v /\ field_edge g u v)
-              (ensures field_edge g' u v)
-      = keeps_blocks_edges free g g' u v
+      : Lemma (requires grey_or_white g u /\ grey_or_white g v /\ unscanned_edge g sp u v)
+              (ensures unscanned_edge g' sp u v)
+      = keeps_blocks_scan free g g' sp u v
     in
     FStar.Classical.forall_intro_2 (fun u -> FStar.Classical.move_requires (em u));
-    reach_within_mono (field_edge g) (field_edge g') (grey_or_white g) (grey_or_white g') x w;
+    reach_within_mono (unscanned_edge g sp) (unscanned_edge g' sp) (grey_or_white g) (grey_or_white g') x w;
     MM.header_kept_facts g g' x
   end
 #pop-options
@@ -173,7 +204,7 @@ let alloc_in_use (g: heap) (fp: U64.t) (wz: nat) (tag: SPM.tag_t) (obj x: obj_ad
 #pop-options
 
 #push-options "--z3rlimit 40"
-let marking_alloc g outside_refs fp wz tag =
+let marking_alloc g outside_refs sp fp wz tag =
   let ph = Ph.Marking in
   let r = AC.alloc_phase g fp ph wz tag in
   FLA.fl_ascending_valid g fp;
@@ -206,17 +237,30 @@ let marking_alloc g outside_refs fp wz tag =
       Mark.colors_exclusive y g
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires gw);
-    let reach (w: obj_addr) : Lemma (requires marker_will_reach g w) (ensures marker_will_reach g' w) =
-      keeps_blocks_reach free_stw g g' w
+    let reach (w: obj_addr) : Lemma (requires marker_will_reach g sp w) (ensures marker_will_reach g' sp w) =
+      keeps_blocks_reach free_stw g g' sp w
     in
+    // the partly scanned object is a non-free block, kept
+    (if sp.cur <> 0UL then begin
+       Mark.colors_exclusive (sp.cur <: obj_addr) g;
+       MM.header_kept_facts g g' (sp.cur <: obj_addr)
+     end);
     let tc (b w: obj_addr)
-      : Lemma (requires Seq.mem b (objects zero_addr g') /\ is_black b g' /\ b <> obj /\
-                        field_edge g' b w /\ is_white w g')
-              (ensures marker_will_reach g' w)
-      = Mark.colors_exclusive b g';
-        alloc_in_use g fp wz tag obj b;
+      : Lemma (requires scanned_edge g' sp b w /\ b <> obj /\ is_white w g')
+              (ensures marker_will_reach g' sp w)
+      = (if FStar.IndefiniteDescription.strong_excluded_middle
+              (Seq.mem b (objects zero_addr g') /\ is_black b g' /\ field_edge g' b w) then begin
+           Mark.colors_exclusive b g';
+           alloc_in_use g fp wz tag obj b
+         end else begin
+           assert (b == sp.cur);
+           Mark.colors_exclusive b g
+         end);
+        assert (in_use free_stw g b);
         MM.header_kept_facts g g' b;
-        keeps_blocks_edges free_stw g g' b w;
+        keeps_blocks_scan free_stw g g' sp b w;
+        assert (scanned_edge g sp b w);
+        scanned_edge_field_edge g sp b w;
         edge_in_use free_stw g b w;
         MM.header_kept_facts g g' w;
         reach w
@@ -224,7 +268,7 @@ let marking_alloc g outside_refs fp wz tag =
     FStar.Classical.forall_intro_2 (fun b -> FStar.Classical.move_requires (tc b));
     let hr (w: obj_addr)
       : Lemma (requires outside_refs w /\ Seq.mem w (objects zero_addr g') /\ is_white w g')
-              (ensures marker_will_reach g' w)
+              (ensures marker_will_reach g' sp w)
       = Mark.colors_exclusive w g';
         alloc_in_use g fp wz tag obj w;
         MM.header_kept_facts g g' w;
@@ -239,7 +283,7 @@ let marking_alloc g outside_refs fp wz tag =
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 30"
-let marking_fresh_write g outside_refs obj a v =
+let marking_fresh_write g outside_refs sp obj a v =
   let g' = write_word g a v in
   let free = free_or_new obj in
   free_or_new_ok obj;
@@ -268,22 +312,26 @@ let marking_fresh_write g outside_refs obj a v =
     Mark.colors_exclusive y g
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires gw);
-  let reach (w: obj_addr) : Lemma (requires marker_will_reach g w) (ensures marker_will_reach g' w) =
-    keeps_blocks_reach free g g' w
+  let reach (w: obj_addr) : Lemma (requires marker_will_reach g sp w) (ensures marker_will_reach g' sp w) =
+    keeps_blocks_reach free g g' sp w
   in
+  // the partly scanned object is grey, so not `obj`: a non-free block, kept
+  (if sp.cur <> 0UL then Mark.colors_exclusive (sp.cur <: obj_addr) g);
   let tc (b w: obj_addr)
-    : Lemma (requires Seq.mem b (objects zero_addr g') /\ is_black b g' /\ b <> obj /\
-                      field_edge g' b w /\ is_white w g')
-            (ensures marker_will_reach g' w)
+    : Lemma (requires scanned_edge g' sp b w /\ b <> obj /\ is_white w g')
+            (ensures marker_will_reach g' sp w)
     = Mark.colors_exclusive b g;
-      keeps_blocks_edges free g g' b w;
+      assert (in_use free g b);
+      keeps_blocks_scan free g g' sp b w;
+      assert (scanned_edge g sp b w);
+      scanned_edge_field_edge g sp b w;
       edge_in_use free g b w;
       reach w
   in
   FStar.Classical.forall_intro_2 (fun b -> FStar.Classical.move_requires (tc b));
   let hr (w: obj_addr)
     : Lemma (requires outside_refs w /\ Seq.mem w (objects zero_addr g') /\ is_white w g')
-            (ensures marker_will_reach g' w)
+            (ensures marker_will_reach g' sp w)
     = reach w
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires hr)
@@ -294,7 +342,7 @@ let marking_fresh_write g outside_refs obj a v =
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 30"
-let marking_fresh_close g outside_refs obj =
+let marking_fresh_close g outside_refs sp obj =
   let fresh = free_or_new obj in
   free_or_new_ok obj;
   free_stw_ok ();
@@ -315,14 +363,15 @@ let marking_fresh_close g outside_refs obj =
   in
   pointer_clauses_from_field_closure free_stw g closure;
   assert (well_formed_heap g);
+  (if sp.cur <> 0UL then Mark.colors_exclusive (sp.cur <: obj_addr) g);
   let tc (b t: obj_addr)
-    : Lemma (requires Seq.mem b (objects zero_addr g) /\ is_black b g /\ field_edge g b t /\ is_white t g)
-            (ensures marker_will_reach g t)
+    : Lemma (requires scanned_edge g sp b t /\ is_white t g)
+            (ensures marker_will_reach g sp t)
     = if b = obj then begin
         eliminate exists (c: obj_addr). points_to g obj c /\ resolve_object c g == t
         with begin
           let q (d: obj_addr) : prop =
-            is_pointer d /\ MM.target_ok g outside_refs d /\ SPI.storable free_stw g d
+            is_pointer d /\ MM.target_ok g outside_refs sp d /\ SPI.storable free_stw g d
           in
           let field (j: nat)
             : Lemma (requires j < U64.v (wosize_of_object obj g) /\ U64.v obj + j * 8 + 8 <= heap_size)

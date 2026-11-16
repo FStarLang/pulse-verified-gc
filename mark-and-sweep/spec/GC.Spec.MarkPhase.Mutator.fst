@@ -289,56 +289,133 @@ let write_edges_old g x a v t =
   field_edge_transfer g' g x q t
 #pop-options
 
+#push-options "--z3rlimit 20"
+let write_field_edge_at g x a v u k t =
+  let g' = write_word g a v in
+  write_heads g x a v;
+  write_wf g x a v;
+  wf_parts ();
+  header_kept_facts g g' u;
+  if 1 <= k && k <= U64.v (wosize_of_object u g) && not (is_no_scan u g) then begin
+    get_field_word g u k;
+    get_field_word g' u k;
+    let fa : hp_addr = U64.uint_to_t (U64.v u + (k - 1) * 8) in
+    if fa = a then begin
+      (if u <> x then other_field g x u a (k - 1));
+      read_write_same g a v;
+      (if is_pointer v then target_header_away g x a v);
+      field_storable g x (k - 1);
+      let old = read_word g a in
+      if is_pointer old then target_header_away g x a old
+    end else begin
+      read_write_different g a fa v;
+      field_storable g u (k - 1);
+      let w = read_word g fa in
+      if is_pointer w then target_header_away g x a w
+    end
+  end
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// The write
 /// ---------------------------------------------------------------------------
 
+/// A scanned edge after the write is an old one, or ends at the new value's
+/// target.
+#push-options "--z3rlimit 20"
+let write_scanned (g: heap) (sp: scan_pos) (x: obj_addr) (a: hp_addr) (v: U64.t) (b t: obj_addr)
+  : Lemma (requires well_formed_heap g /\ scan_pos_ok g sp /\ SPM.program_write free_stw g x a v /\
+                    scanned_edge (write_word g a v) sp b t)
+          (ensures scanned_edge g sp b t \/ (b == x /\ ~(is_no_scan x g) /\ value_target g v t))
+  = let g' = write_word g a v in
+    write_heads g x a v;
+    free_stw_ok ();
+    wf_parts ();
+    if FStar.IndefiniteDescription.strong_excluded_middle
+         (Seq.mem b (objects zero_addr g') /\ is_black b g' /\ field_edge g' b t) then begin
+      Mark.colors_exclusive b g;
+      if b = x then write_edges_new g x a v t
+      else write_edges_other g x a v b t
+    end else begin
+      assert (b == sp.cur);
+      Mark.colors_exclusive b g;
+      eliminate exists (k: nat). k < sp.fld /\ field_edge_at g' b k t
+      with write_field_edge_at g x a v b k t
+    end
+#pop-options
+
+/// An unscanned edge between grey or white blocks the write cuts goes to the
+/// old value's target.
+#push-options "--z3rlimit 20"
+let write_unscanned (g: heap) (sp: scan_pos) (x: obj_addr) (a: hp_addr) (v: U64.t) (s t: obj_addr)
+  : Lemma (requires well_formed_heap g /\ SPM.program_write free_stw g x a v /\
+                    grey_or_white g s /\ unscanned_edge g sp s t)
+          (ensures unscanned_edge (write_word g a v) sp s t \/
+                   (s == x /\ ~(is_no_scan x g) /\ value_target g (read_word g a) t))
+  = let g' = write_word g a v in
+    write_heads g x a v;
+    write_wf g x a v;
+    free_stw_ok ();
+    wf_parts ();
+    Mark.colors_exclusive s g;
+    if s = x then begin
+      write_edges_old g x a v t;
+      if x = sp.cur then
+        eliminate exists (k: nat). sp.fld <= k /\ field_edge_at g x k t
+        with begin
+          write_field_edge_at g x a v x k t;
+          if FStar.IndefiniteDescription.strong_excluded_middle (field_edge_at g' x k t) then
+            field_edge_fields g' x t
+        end
+    end else begin
+      write_edges_other g x a v s t;
+      if s = sp.cur then
+        eliminate exists (k: nat). sp.fld <= k /\ field_edge_at g s k t
+        with write_field_edge_at g x a v s k t
+    end
+#pop-options
+
 #push-options "--z3rlimit 30"
-let marking_write g outside_refs x a v =
+let marking_write g outside_refs sp x a v =
   let g' = write_word g a v in
   write_heads g x a v;
   write_wf g x a v;
   free_stw_ok ();
+  wf_parts ();
   let cut (s t: obj_addr)
-    : Lemma (requires grey_or_white g s /\ grey_or_white g t /\ field_edge g s t)
-            (ensures field_edge g' s t \/ is_gray t g')
-    = Mark.colors_exclusive s g;
-      Mark.colors_exclusive t g;
-      if s = x then write_edges_old g x a v t
-      else write_edges_other g x a v s t
+    : Lemma (requires grey_or_white g s /\ grey_or_white g t /\ unscanned_edge g sp s t)
+            (ensures unscanned_edge g' sp s t \/ is_gray t g')
+    = Mark.colors_exclusive t g;
+      write_unscanned g sp x a v s t
   in
   FStar.Classical.forall_intro_2 (fun s -> FStar.Classical.move_requires (cut s));
   let black (b t: obj_addr)
-    : Lemma (requires Seq.mem b (objects zero_addr g') /\ is_black b g' /\ field_edge g' b t /\ is_white t g')
-            (ensures (Seq.mem b (objects zero_addr g) /\ is_black b g /\ field_edge g b t) \/
-                     marker_will_reach g t)
-    = Mark.colors_exclusive b g;
-      if b = x then begin
-        write_edges_new g x a v t;
-        if FStar.IndefiniteDescription.strong_excluded_middle (field_edge g x t) then ()
-        else begin
-          // t is the new value's target: a non-free block, white before too
-          assert (SPI.storable free_stw g v);
-          free_def_ok_elim free_stw;
-          assert (Seq.mem t (objects zero_addr g))
-        end
-      end else write_edges_other g x a v b t
+    : Lemma (requires scanned_edge g' sp b t /\ is_white t g')
+            (ensures scanned_edge g sp b t \/ marker_will_reach g sp t)
+    = write_scanned g sp x a v b t;
+      if FStar.IndefiniteDescription.strong_excluded_middle (scanned_edge g sp b t) then ()
+      else begin
+        // t is the new value's target: a non-free block, white before too
+        assert (SPI.storable free_stw g v);
+        free_def_ok_elim free_stw;
+        assert (Seq.mem t (objects zero_addr g))
+      end
   in
   FStar.Classical.forall_intro_2 (fun b -> FStar.Classical.move_requires (black b));
-  marking_inv_change g g' outside_refs outside_refs
+  marking_inv_change g g' outside_refs outside_refs sp
 #pop-options
 
-let marking_write_immediate g outside_refs x a v = marking_write g outside_refs x a v
+let marking_write_immediate g outside_refs sp x a v = marking_write g outside_refs sp x a v
 
 /// ---------------------------------------------------------------------------
 /// The deletion barrier
 /// ---------------------------------------------------------------------------
 
-let darken_inv g outside_refs w =
+let darken_inv g outside_refs sp w =
   if is_pointer w &&
      Seq.mem (resolve_object (w <: obj_addr) g) (objects zero_addr g) &&
      is_white (resolve_object (w <: obj_addr) g) g
-  then marking_inv_grey g outside_refs (resolve_object (w <: obj_addr) g)
+  then marking_inv_grey g outside_refs sp (resolve_object (w <: obj_addr) g)
 
 /// The index of the field at a body word.
 let slot_index (g: heap) (x: obj_addr) (a: hp_addr)
@@ -350,14 +427,14 @@ let slot_index (g: heap) (x: obj_addr) (a: hp_addr)
 
 /// Greying a white block `t0` keeps what the write needs.
 #push-options "--z3rlimit 30"
-let grey_keeps_write (g: heap) (outside_refs: obj_addr -> prop) (t0 x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires marking_inv g outside_refs /\ Seq.mem t0 (objects zero_addr g) /\ is_white t0 g /\
+let grey_keeps_write (g: heap) (outside_refs: obj_addr -> prop) (sp: scan_pos) (t0 x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires marking_inv g outside_refs sp /\ Seq.mem t0 (objects zero_addr g) /\ is_white t0 g /\
                     SPM.program_write free_stw g x a v /\
-                    (~(is_no_scan x g) ==> target_ok g outside_refs v))
+                    (~(is_no_scan x g) ==> target_ok g outside_refs sp v))
           (ensures (let g1 = makeGray t0 g in
                     SPM.program_write free_stw g1 x a v /\
                     is_no_scan x g1 == is_no_scan x g /\
-                    (~(is_no_scan x g) ==> target_ok g1 outside_refs v)))
+                    (~(is_no_scan x g) ==> target_ok g1 outside_refs sp v)))
   = let g1 = makeGray t0 g in
     makeGray_eq t0 g;
     makeGray_is_gray t0 g;
@@ -391,22 +468,22 @@ let grey_keeps_write (g: heap) (outside_refs: obj_addr -> prop) (t0 x: obj_addr)
       (if not (is_no_scan x g) then
          infix_addr_wf_congr g g1 (objects zero_addr g) vv);
       let t = resolve_object vv g in
-      if FStar.IndefiniteDescription.strong_excluded_middle (marker_will_reach g t) then
-        marker_will_reach_grey g t0 t
+      if FStar.IndefiniteDescription.strong_excluded_middle (marker_will_reach g sp t) then
+        marker_will_reach_grey g sp t0 t
     end
 #pop-options
 
 #push-options "--z3rlimit 30"
-let marking_write_barrier g outside_refs x a v =
+let marking_write_barrier g outside_refs sp x a v =
   let old = read_word g a in
   let g1 = darken g old in
-  darken_inv g outside_refs old;
+  darken_inv g outside_refs sp old;
   if is_pointer old &&
      Seq.mem (resolve_object (old <: obj_addr) g) (objects zero_addr g) &&
      is_white (resolve_object (old <: obj_addr) g) g
   then begin
     let t0 = resolve_object (old <: obj_addr) g in
-    grey_keeps_write g outside_refs t0 x a v;
+    grey_keeps_write g outside_refs sp t0 x a v;
     makeGray_eq t0 g;
     makeGray_is_gray t0 g;
     Mark.colors_exclusive t0 g1;
@@ -418,7 +495,7 @@ let marking_write_barrier g outside_refs x a v =
     SPI.obj_pos g t0;
     color_change_preserves_other_read t0 a g Header.Gray;
     assert (read_word g1 a == old);
-    marking_write g1 outside_refs x a v
+    marking_write g1 outside_refs sp x a v
   end else begin
     // nothing to darken: the old value's target, if any, is not white
     (if not (is_no_scan x g) && is_pointer old then begin
@@ -427,7 +504,7 @@ let marking_write_barrier g outside_refs x a v =
        free_stw_ok ();
        free_def_ok_elim free_stw
      end);
-    marking_write g outside_refs x a v
+    marking_write g outside_refs sp x a v
   end
 #pop-options
 
@@ -436,27 +513,33 @@ let marking_write_barrier g outside_refs x a v =
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 20"
-let marking_load g outside_refs s t =
+let marking_load g outside_refs sp s t =
   let outside_refs' (w: obj_addr) : prop = outside_refs w \/ w == t in
   let r (w: obj_addr)
     : Lemma (requires outside_refs' w /\ Seq.mem w (objects zero_addr g) /\ is_white w g)
-            (ensures marker_will_reach g w)
+            (ensures marker_will_reach g sp w)
     = if FStar.IndefiniteDescription.strong_excluded_middle (outside_refs w) then ()
       else begin
         Mark.color_exhaustive s g;
         Mark.colors_exclusive s g;
         assert (grey_or_white g t);
-        if is_gray s g then begin
-          reach_within_edge (field_edge g) (grey_or_white g) s t
-        end else if is_white s g then begin
-          eliminate exists (x: obj_addr). is_gray x g /\ reach_within (field_edge g) (grey_or_white g) x s
-          with begin
-            reach_within_edge (field_edge g) (grey_or_white g) s t;
-            reach_within_trans (field_edge g) (grey_or_white g) x s t
+        wf_parts ();
+        field_edge_fields g s t;
+        if FStar.IndefiniteDescription.strong_excluded_middle (scanned_edge g sp s t) then ()
+        else begin
+          assert (unscanned_edge g sp s t);
+          if is_gray s g then
+            reach_within_edge (unscanned_edge g sp) (grey_or_white g) s t
+          else if is_white s g then begin
+            eliminate exists (x: obj_addr). is_gray x g /\ reach_within (unscanned_edge g sp) (grey_or_white g) x s
+            with begin
+              reach_within_edge (unscanned_edge g sp) (grey_or_white g) s t;
+              reach_within_trans (unscanned_edge g sp) (grey_or_white g) x s t
+            end
           end
         end
       end
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires r);
-  assert (outside_refs_reached g outside_refs')
+  assert (outside_refs_reached g sp outside_refs')
 #pop-options
