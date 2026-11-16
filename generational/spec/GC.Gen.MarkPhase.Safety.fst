@@ -33,21 +33,21 @@ module SPE = GC.Spec.SweepPhase.Intrinsic.End
 
 /// What every phase's state gives: the heap well formed for the phase's
 /// definition of free, and the nursery's shape.
-let phase_facts (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase)
-  : Lemma (requires GI.phase_shape minor g fp ph)
+let phase_facts (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (sp: MP.scan_pos)
+  : Lemma (requires GI.phase_shape minor g fp ph sp)
           (ensures free_def_ok (GI.phase_free ph) /\ well_formed_heap_with (GI.phase_free ph) g /\
                    minor_wf minor /\ GenInv.minor_major_fields_not_free (GI.phase_free ph) minor g)
-  = GI.phase_shape_collection minor g fp ph;
+  = GI.phase_shape_collection minor g fp ph sp;
     GenInv.collection_shape_with_elim ph (GI.phase_free ph) minor g fp;
     GenInv.major_shape_with_elim ph (GI.phase_free ph) g fp;
     GenInv.minor_heap_shape_elim minor
 
-let cycle_reachable_not_free minor g fp ph roots a =
-  phase_facts minor g fp ph;
+let cycle_reachable_not_free minor g fp ph sp roots a =
+  phase_facts minor g fp ph sp;
   RBridge.reachable_not_free (GI.phase_free ph) minor g roots
 
-let handover_roots minor g fp rs =
-  GI.phase_shape_marking minor g fp;
+let handover_roots minor g fp sp rs =
+  GI.phase_shape_marking minor g fp sp;
   SPI.free_incremental_ok zero_addr;
   wf_with_parts ();
   let one (r: U64.t)
@@ -60,20 +60,20 @@ let handover_roots minor g fp rs =
           RBridge.aligned_gt_ge_plus_mword (U64.v ro) (U64.v zero_addr);
           resolve_non_infix ro g;
           assert (GMM.root_refs g rs ro);
-          if is_white ro g then MP.marker_will_reach_elim g ro
+          if is_white ro g then MP.marker_will_reach_elim g sp ro
         end
       end
   in
   FStar.Classical.forall_intro one
 
 #push-options "--ifuel 1"
-let cycle_slice_keeps minor g fp ph budget g' fp' ph' x =
+let cycle_slice_keeps minor g sp fp ph budget g' sp' fp' ph' x =
   match ph with
   | Ph.Marking ->
-      GI.phase_shape_marking minor g fp;
+      GI.phase_shape_marking minor g fp sp;
       GI.phase_free_marking ();
-      MPC.mark_steps_keep_blocks g g';
-      S.mark_steps_darker g g';
+      MPC.mark_steps_keep_blocks g g' sp sp';
+      S.mark_steps_darker g g' sp sp';
       (match ph' with
        | Ph.Marking -> ()
        | Ph.Sweeping c -> GI.phase_free_sweeping c; SPI.free_incremental_ok c
@@ -81,7 +81,7 @@ let cycle_slice_keeps minor g fp ph budget g' fp' ph' x =
   | Ph.Idle ->
       GI.phase_free_idle ()
   | Ph.Sweeping c ->
-      GI.phase_shape_sweeping minor g fp c;
+      GI.phase_shape_sweeping minor g fp c sp;
       GI.phase_free_sweeping c;
       SPI.free_incremental_ok c;
       free_def_ok_elim (SPI.free_incremental c);
@@ -94,9 +94,9 @@ let cycle_slice_keeps minor g fp ph budget g' fp' ph' x =
       else GI.phase_free_sweeping c1
 #pop-options
 
-let slice_keeps_reachable minor g fp ph budget g' fp' ph' roots a =
-  cycle_reachable_not_free minor g fp ph roots a;
-  cycle_slice_keeps minor g fp ph budget g' fp' ph' (a <: obj_addr)
+let slice_keeps_reachable minor g sp fp ph budget g' sp' fp' ph' roots a =
+  cycle_reachable_not_free minor g fp ph sp roots a;
+  cycle_slice_keeps minor g sp fp ph budget g' sp' fp' ph' (a <: obj_addr)
 
 /// Darkening the first `idx` roots keeps every block.
 #push-options "--fuel 1 --ifuel 1"
@@ -194,10 +194,10 @@ let darken_keeps (g: heap) (w: U64.t) (x y: obj_addr) (a: hp_addr)
     end
 
 #push-options "--ifuel 1"
-let modify_keeps_others ph minor g fp x a v y =
+let modify_keeps_others ph minor g fp sp x a v y =
   match ph with
   | Ph.Marking ->
-      GI.phase_shape_marking minor g fp;
+      GI.phase_shape_marking minor g fp sp;
       GI.phase_free_marking ();
       free_stw_ok ();
       free_def_ok_elim free_stw;

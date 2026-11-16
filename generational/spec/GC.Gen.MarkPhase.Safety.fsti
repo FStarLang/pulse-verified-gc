@@ -53,9 +53,9 @@ module MStart = GC.Gen.MarkPhase.Start
 module MBP = GC.Impl.MarkBoundedPrecondition
 
 /// **At every phase, what the roots reach is not free.**
-val cycle_reachable_not_free (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase)
+val cycle_reachable_not_free (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (sp: MP.scan_pos)
                              (roots: seq U64.t) (a: U64.t)
-  : Lemma (requires GI.phase_shape minor g fp ph /\
+  : Lemma (requires GI.phase_shape minor g fp ph sp /\
                     RBridge.roots_not_free (GI.phase_free ph) roots g /\
                     CG.combined_reachable (CG.build_combined_graph minor g (GI.phase_free ph))
                       (CG.classify_roots minor roots) (CG.MajorV a))
@@ -64,18 +64,18 @@ val cycle_reachable_not_free (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.
 /// **The roots across the hand-over**: when marking ends, every root that
 /// is a block is black (the roots are outside references, and nothing is grey), so not
 /// pending free.
-val handover_roots (minor: minor_state) (g: heap) (fp: U64.t) (rs: seq U64.t)
-  : Lemma (requires GI.phase_shape minor g fp Ph.Marking /\ Mark.noGreyObjects g /\
-                    MP.outside_refs_reached g (GMM.root_refs g rs) /\
+val handover_roots (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos) (rs: seq U64.t)
+  : Lemma (requires GI.phase_shape minor g fp Ph.Marking sp /\ Mark.noGreyObjects g /\
+                    MP.outside_refs_reached g sp (GMM.root_refs g rs) /\
                     RBridge.roots_not_free free_stw rs g)
           (ensures RBridge.roots_not_free (SPI.free_incremental zero_addr) rs g)
 
 /// **A major slice keeps every non-free block**: its size, tag and fields,
 /// on the walk and not blue; and not free at the phase it leaves, unless the
 /// slice handed over to the sweep and the block is white.
-val cycle_slice_keeps (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
-                      (g': heap) (fp': U64.t) (ph': Ph.gc_phase) (x: obj_addr)
-  : Lemma (requires GI.phase_shape minor g fp ph /\ GI.major_slice_post g fp ph budget g' fp' ph' /\
+val cycle_slice_keeps (minor: minor_state) (g: heap) (sp: MP.scan_pos) (fp: U64.t) (ph: Ph.gc_phase)
+                      (budget: nat) (g': heap) (sp': MP.scan_pos) (fp': U64.t) (ph': Ph.gc_phase) (x: obj_addr)
+  : Lemma (requires GI.phase_shape minor g fp ph sp /\ GI.major_slice_post g sp fp ph budget g' sp' fp' ph' /\
                     in_use (GI.phase_free ph) g x)
           (ensures SPI.same_block g g' (hd_address x) /\
                    Seq.mem x (objects zero_addr g') /\ ~(is_blue x g') /\
@@ -84,9 +84,10 @@ val cycle_slice_keeps (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phas
                       in_use (GI.phase_free ph') g' x))
 
 /// **So a slice never changes a reachable object.**
-val slice_keeps_reachable (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
-                          (g': heap) (fp': U64.t) (ph': Ph.gc_phase) (roots: seq U64.t) (a: U64.t)
-  : Lemma (requires GI.phase_shape minor g fp ph /\ GI.major_slice_post g fp ph budget g' fp' ph' /\
+val slice_keeps_reachable (minor: minor_state) (g: heap) (sp: MP.scan_pos) (fp: U64.t) (ph: Ph.gc_phase)
+                          (budget: nat) (g': heap) (sp': MP.scan_pos) (fp': U64.t) (ph': Ph.gc_phase)
+                          (roots: seq U64.t) (a: U64.t)
+  : Lemma (requires GI.phase_shape minor g fp ph sp /\ GI.major_slice_post g sp fp ph budget g' sp' fp' ph' /\
                     RBridge.roots_not_free (GI.phase_free ph) roots g /\
                     CG.combined_reachable (CG.build_combined_graph minor g (GI.phase_free ph))
                       (CG.classify_roots minor roots) (CG.MajorV a))
@@ -107,9 +108,9 @@ val start_keeps_blocks (minor: minor_state) (g: heap) (fp: U64.t) (rs: seq U64.t
 /// **A program write changes only the word it writes**: through the barrier
 /// (`GB.modify_heap`), every other non-free block keeps its size, tag and
 /// fields, stays non-free at the phase, and does not become white.
-val modify_keeps_others (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.t)
+val modify_keeps_others (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
                         (x: obj_addr) (a: hp_addr) (v: U64.t) (y: obj_addr)
-  : Lemma (requires GI.phase_shape minor g fp ph /\ GB.modify_ok ph minor g x a v /\
+  : Lemma (requires GI.phase_shape minor g fp ph sp /\ GB.modify_ok ph minor g sp x a v /\
                     in_use (GI.phase_free ph) g y /\ y <> x)
           (ensures (let g' = GB.modify_heap ph g a v in
                     SPI.same_block g g' (hd_address y) /\ in_use (GI.phase_free ph) g' y /\

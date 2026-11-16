@@ -109,15 +109,15 @@ let cycle_start minor g fp rs =
 /// ---------------------------------------------------------------------------
 
 #push-options "--ifuel 1"
-let cycle_slice s minor g fp ph budget g' fp' ph' =
+let cycle_slice s minor g sp fp ph budget g' sp' fp' ph' =
   match ph with
   | Ph.Marking ->
-      GI.phase_shape_marking minor g fp;
-      MPC.account_steps s g g';
+      GI.phase_shape_marking minor g fp sp;
+      MPC.account_steps s g g' sp sp';
       if Ph.Sweeping? ph' then MPC.cycle_handover s g'
   | Ph.Idle -> ()
   | Ph.Sweeping c ->
-      GI.phase_shape_sweeping minor g fp c;
+      GI.phase_shape_sweeping minor g fp c sp;
       MPC.cycle_sweep_slice s g fp ph budget
 #pop-options
 
@@ -126,16 +126,16 @@ let cycle_slice s minor g fp ph budget g' fp' ph' =
 /// ---------------------------------------------------------------------------
 
 #push-options "--ifuel 1"
-let cycle_modify s ph minor g fp x a v =
+let cycle_modify s ph minor g fp sp x a v =
   match ph with
   | Ph.Marking ->
-      GI.phase_shape_marking minor g fp;
+      GI.phase_shape_marking minor g fp sp;
       MPC.account_barrier s g x a v
   | Ph.Idle ->
       GI.phase_free_idle ();
       MM.write_heads g x a v
   | Ph.Sweeping c ->
-      GI.phase_shape_sweeping minor g fp c;
+      GI.phase_shape_sweeping minor g fp c sp;
       GI.phase_free_sweeping c;
       SPI.free_incremental_ok c;
       free_def_ok_elim (SPI.free_incremental c);
@@ -158,11 +158,11 @@ let account_allocations (s: obj_addr -> prop)
     in
     Promote.allocations_not_free_intro Ph.Marking (MPC.unaccounted s) prf
 
-let account_minor s minor g fp roots =
+let account_minor s minor g fp roots sp =
   let g' = (GMM.collect_marking minor g fp roots).Promote.mc_major in
   let s' = with_new_blocks s g g' in
   let un = MPC.unaccounted s in
-  GI.phase_shape_marking minor g fp;
+  GI.phase_shape_marking minor g fp sp;
   MPC.unaccounted_ok s;
   account_allocations s;
   GMM.minor_keeps_wf_with un minor g fp roots;
@@ -185,8 +185,8 @@ let account_minor s minor g fp roots =
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires dk)
 
-let sweep_minor s minor g fp c roots =
-  GI.phase_shape_sweeping minor g fp c;
+let sweep_minor s minor g fp c roots sp =
+  GI.phase_shape_sweeping minor g fp c sp;
   FStar.Classical.forall_intro (SPM.minor_keeps_blocks minor g fp c roots)
 
 /// ---------------------------------------------------------------------------

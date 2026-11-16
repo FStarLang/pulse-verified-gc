@@ -47,6 +47,7 @@ module GenInv = GC.Gen.HeapInvariant
 module GI = GC.Gen.Incremental
 module GB = GC.Gen.Barrier
 module GMM = GC.Gen.MarkPhase.Minor
+module MP = GC.Spec.MarkPhase
 module MStart = GC.Gen.MarkPhase.Start
 module MBP = GC.Impl.MarkBoundedPrecondition
 module MPC = GC.Spec.MarkPhase.Completeness
@@ -76,10 +77,10 @@ val cycle_start (minor: minor_state) (g: heap) (fp: U64.t) (rs: seq U64.t)
 /// **A major slice keeps the account**, at whatever phase it leaves:
 /// marking, mark moves; the hand-over to the sweep when nothing is grey; a
 /// sweep slice.
-val cycle_slice (s: obj_addr -> prop) (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase)
-                (budget: nat) (g': heap) (fp': U64.t) (ph': Ph.gc_phase)
-  : Lemma (requires GI.phase_shape minor g fp ph /\ MPC.cycle_account s g ph /\
-                    GI.major_slice_post g fp ph budget g' fp' ph')
+val cycle_slice (s: obj_addr -> prop) (minor: minor_state) (g: heap) (sp: MP.scan_pos) (fp: U64.t)
+                (ph: Ph.gc_phase) (budget: nat) (g': heap) (sp': MP.scan_pos) (fp': U64.t) (ph': Ph.gc_phase)
+  : Lemma (requires GI.phase_shape minor g fp ph sp /\ MPC.cycle_account s g ph /\
+                    GI.major_slice_post g sp fp ph budget g' sp' fp' ph')
           (ensures MPC.cycle_account s g' ph')
 
 /// The completeness half of the barrier's obligation: while marking, the
@@ -90,8 +91,8 @@ let modify_accounted (s: obj_addr -> prop) (ph: Ph.gc_phase) (g: heap) (x: obj_a
 
 /// **The barrier keeps the account** at every phase.
 val cycle_modify (s: obj_addr -> prop) (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.t)
-                 (x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires GI.phase_shape minor g fp ph /\ GB.modify_ok ph minor g x a v /\
+                 (sp: MP.scan_pos) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires GI.phase_shape minor g fp ph sp /\ GB.modify_ok ph minor g sp x a v /\
                     MPC.cycle_account s g ph /\ modify_accounted s ph g x a v)
           (ensures MPC.cycle_account s (GB.modify_heap ph g a v) ph)
 
@@ -103,15 +104,16 @@ let with_new_blocks (s: obj_addr -> prop) (g g': heap) (x: obj_addr) : prop =
 /// **A minor collection while marking keeps the account**, with its promoted
 /// copies added, when what the nursery holds is accounted for.
 val account_minor (s: obj_addr -> prop) (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires GI.phase_shape minor g fp Ph.Marking /\ MPC.mark_account s g /\
+    (sp: MP.scan_pos)
+  : Lemma (requires GI.phase_shape minor g fp Ph.Marking sp /\ MPC.mark_account s g /\
                     GenInv.minor_major_fields_not_free (MPC.unaccounted s) minor g)
           (ensures (let g' = (GMM.collect_marking minor g fp roots).Promote.mc_major in
                     MPC.mark_account (with_new_blocks s g g') g'))
 
 /// **A minor collection mid-sweep keeps it**, with its promoted copies added.
 val sweep_minor (s: obj_addr -> prop) (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
-                (roots: seq U64.t)
-  : Lemma (requires GI.phase_shape minor g fp (Ph.Sweeping c) /\ MPC.sweep_accounted s g c)
+                (roots: seq U64.t) (sp: MP.scan_pos)
+  : Lemma (requires GI.phase_shape minor g fp (Ph.Sweeping c) sp /\ MPC.sweep_accounted s g c)
           (ensures MPC.sweep_accounted (GSC.with_promoted s c minor g fp roots)
                      (SPM.collect_at c minor g fp roots).Promote.mc_major c)
 
