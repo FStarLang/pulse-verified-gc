@@ -138,7 +138,7 @@ let sweep_step (g: heap) (fp: U64.t) (st: sweep_state{can_sweep g st})
       let linked = col = Header.Blue && U64.v wz >= 1 in
       if prev_free g st then begin
         // Grow the free block before the cursor over this one.
-        let p = if st.last_fragment <> 0UL then st.last_fragment else st.swept_tail in
+        let p : U64.t = if st.last_fragment <> 0UL then st.last_fragment else st.swept_tail in
         if not (is_obj p) || wosize_at g p + U64.v wz + 1 >= pow2 54
         then (g, fp, advance st nx)   // unreachable under the invariant
         else begin
