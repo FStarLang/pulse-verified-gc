@@ -18,6 +18,8 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Spec.Pages.Wf
+module Wf = GC.Spec.Pages.Wf
 open GC.Spec.Pages.Inv
 
 module U64 = FStar.UInt64

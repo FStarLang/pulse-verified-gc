@@ -13,6 +13,8 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Spec.Pages.Wf
+module Wf = GC.Spec.Pages.Wf
 open GC.Lib.Header
 open GC.Spec.Pages.Params
 open GC.Spec.Pages.Layout
@@ -39,13 +41,13 @@ module Mark = GC.Spec.Mark
 let pages_ok_elim (g: heap) (st: pstate)
   : Lemma (requires pages_ok g st)
           (ensures map_ok st.pm /\ (forall (i: nat{i < n_pages}). page_local g st.pm i) /\
-                   tail_shape g /\ avail_ok st /\ large_ok g st /\ Mark.no_pointer_to_blue g /\
+                   tail_shape g /\ avail_ok st /\ large_ok g st /\ Wf.no_pointer_to_blue g /\
                    shape_ok g st.pm)
   = reveal_opaque (`%pages_ok) pages_ok
 
 let pages_ok_intro (g: heap) (st: pstate)
   : Lemma (requires map_ok st.pm /\ (forall (i: nat{i < n_pages}). page_local g st.pm i) /\
-                    tail_shape g /\ avail_ok st /\ large_ok g st /\ Mark.no_pointer_to_blue g)
+                    tail_shape g /\ avail_ok st /\ large_ok g st /\ Wf.no_pointer_to_blue g)
           (ensures pages_ok g st)
   = reveal_opaque (`%pages_ok) pages_ok
 

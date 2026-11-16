@@ -8,7 +8,7 @@
 /// the walk from its start steps to its end.
 ///
 /// The bridge lemmas tie it to the global walk `objects zero_addr g` and to
-/// its end `GC.Spec.WalkEnd.walk_end`: a heap whose pages are each tiled is
+/// its end `GC.Spec.Walk.walk_end`: a heap whose pages are each tiled is
 /// tiled as a whole, and every position the walk steps to is an object.
 
 module GC.Spec.Pages.Walk
@@ -20,7 +20,7 @@ open GC.Spec.Fields
 
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
-module WE = GC.Spec.WalkEnd
+module WE = GC.Spec.Pages.WalkEnd
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 
@@ -131,7 +131,7 @@ let rec steps_to_objects (g: heap) (s: hp_addr) (a: hp_addr) (b: nat)
 #pop-options
 
 /// A walk that steps to the end of the heap, up to a last word too small
-/// for a header, gives density as `GC.Spec.WalkEnd` states it.
+/// for a header, gives density as `GC.Spec.Walk` states it.
 #push-options "--fuel 1 --ifuel 1"
 let rec steps_to_walk_end (g: heap) (s: hp_addr) (e: nat)
   : Lemma (requires steps_to g (U64.v s) e /\ e <= heap_size /\ e + 8 >= heap_size)

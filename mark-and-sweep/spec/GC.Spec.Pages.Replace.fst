@@ -26,6 +26,8 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Spec.Pages.Wf
+module Wf = GC.Spec.Pages.Wf
 open GC.Lib.Header
 open GC.Spec.Pages.Walk
 open GC.Spec.Pages.Shape
@@ -261,7 +263,7 @@ let field_addr (src: obj_addr) (j: nat{U64.v src + j * 8 + 8 <= heap_size}) : hp
 /// A pointer field of an object of a well-formed heap with no pointer to a
 /// free block: its target resolves to an object that is not free.
 let old_target (g: heap) (src: obj_addr) (j: nat) (v: obj_addr)
-  : Lemma (requires well_formed_heap g /\ Mark.no_pointer_to_blue g /\
+  : Lemma (requires well_formed_heap g /\ Wf.no_pointer_to_blue g /\
                     Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
                     field_at g src j /\ read_word g (field_addr src j) == (v <: U64.t) /\
                     is_pointer (v <: U64.t))
@@ -325,7 +327,7 @@ let new_target (g g': heap) (a e: nat) (v: obj_addr)
 
 /// A pointer field of an object of the new heap.
 let new_field (g g': heap) (a e: nat) (src: obj_addr) (j: nat) (v: obj_addr)
-  : Lemma (requires replaces g g' a e /\ well_formed_heap g /\ Mark.no_pointer_to_blue g /\
+  : Lemma (requires replaces g g' a e /\ well_formed_heap g /\ Wf.no_pointer_to_blue g /\
                     Seq.mem src (objects zero_addr g') /\ fields_constrained g' src /\
                     field_at g' src j /\ read_word g' (field_addr src j) == (v <: U64.t) /\
                     is_pointer (v <: U64.t))
@@ -373,7 +375,7 @@ let part1_always (g: heap)
     FStar.Classical.forall_intro aux
 
 let replace_part2_3 (g g': heap) (a e: nat)
-  : Lemma (requires replaces g g' a e /\ well_formed_heap g /\ Mark.no_pointer_to_blue g /\
+  : Lemma (requires replaces g g' a e /\ well_formed_heap g /\ Wf.no_pointer_to_blue g /\
                     well_formed_heap_part4 g')
           (ensures well_formed_heap_part2 g' /\ well_formed_heap_part3 g')
   = let closure (src: obj_addr) (j: nat)
@@ -392,8 +394,8 @@ let replace_part2_3 (g g': heap) (a e: nat)
     well_formed_heap_part2_3_from_resolved_field_closure g' closure
 
 let replace_no_blue (g g': heap) (a e: nat)
-  : Lemma (requires replaces g g' a e /\ well_formed_heap g /\ Mark.no_pointer_to_blue g)
-          (ensures Mark.no_pointer_to_blue g')
+  : Lemma (requires replaces g g' a e /\ well_formed_heap g /\ Wf.no_pointer_to_blue g)
+          (ensures Wf.no_pointer_to_blue g')
   = let field (src: obj_addr) (dst: obj_addr) (j: nat)
       : Lemma (requires Seq.mem src (objects zero_addr g') /\
                         ~(is_blue src g') /\
@@ -410,12 +412,12 @@ let replace_no_blue (g g': heap) (a e: nat)
         new_field g g' a e src j dst
     in
     part1_always g';
-    Mark.no_pointer_to_blue_intro_from_fields g' field
+    Wf.no_pointer_to_blue_intro_from_fields g' field
 
 /// **The heap-level facts of a replacement.**
 let replace_ok (g g': heap) (a e: nat)
-  : Lemma (requires replaces g g' a e /\ well_formed_heap g /\ Mark.no_pointer_to_blue g)
-          (ensures well_formed_heap g' /\ Mark.no_pointer_to_blue g' /\
+  : Lemma (requires replaces g g' a e /\ well_formed_heap g /\ Wf.no_pointer_to_blue g)
+          (ensures well_formed_heap g' /\ Wf.no_pointer_to_blue g' /\
                    (forall (x: obj_addr).
                       Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) ==>
                       Seq.mem x (objects zero_addr g') /\
@@ -423,7 +425,7 @@ let replace_ok (g g': heap) (a e: nat)
                       (forall (b: hp_addr). U64.v x <= U64.v b /\
                          U64.v b < U64.v x + U64.v (wosize_of_object x g) * 8 ==>
                          read_word g' b == read_word g b)))
-  = reveal_opaque (`%well_formed_heap) well_formed_heap;
+  = Wf.wfh_old_parts ();
     part1_always g';
     replace_part4 g g' a e;
     replace_part2_3 g g' a e;

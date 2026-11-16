@@ -21,6 +21,8 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Spec.Pages.Wf
+module Wf = GC.Spec.Pages.Wf
 open GC.Lib.Header
 open GC.Spec.Pages.Params
 open GC.Spec.Pages.Layout
@@ -36,7 +38,7 @@ module MP = GC.Spec.Pages.MarkPhase
 module GP = GC.Spec.Pages.GcPillars
 module CF = GC.Spec.Pages.ColourFacts
 module R = GC.Spec.Pages.Replace
-module WE = GC.Spec.WalkEnd
+module WE = GC.Spec.Pages.WalkEnd
 module SI = GC.Spec.SweepInv
 module Mark = GC.Spec.Mark
 module MarkInv = GC.Spec.MarkInv
@@ -93,8 +95,8 @@ let kept (h h': heap) (roots: Seq.seq obj_addr) : prop =
 /// resolve and which blocks are free are unchanged.
 let npb_step (h: heap) (r: obj_addr) (c: color)
   : Lemma (requires well_formed_heap h /\ Seq.mem r (objects zero_addr h) /\ ~(is_blue r h) /\ c <> Blue /\
-                    Mark.no_pointer_to_blue h)
-          (ensures Mark.no_pointer_to_blue (set_object_color r h c))
+                    Wf.no_pointer_to_blue h)
+          (ensures Wf.no_pointer_to_blue (set_object_color r h c))
   = let h' = set_object_color r h c in
     CF.step_facts h r c;
     let one (src dst: obj_addr)
@@ -120,7 +122,7 @@ let gray_step (h: heap) (r: obj_addr)
           (ensures (let h' = makeGray r h in
                     same h h' /\ is_gray r h' /\
                     (forall (x: obj_addr). x <> r ==> color_of_object x h' == color_of_object x h) /\
-                    (Mark.no_pointer_to_blue h ==> Mark.no_pointer_to_blue h') /\
+                    (Wf.no_pointer_to_blue h ==> Wf.no_pointer_to_blue h') /\
                     (forall (st: pstate). MP.mark_inv h st ==> MP.mark_inv h' st)))
   = let h' = makeGray r h in
     makeGray_eq r h;
@@ -156,7 +158,7 @@ let live_roots (h: heap) (roots: Seq.seq obj_addr) : prop =
 let rec darken_kept (h: heap) (roots: Seq.seq obj_addr)
   : Lemma (requires well_formed_heap h /\ live_roots h roots)
           (ensures kept h (darken h roots) roots /\
-                   (Mark.no_pointer_to_blue h ==> Mark.no_pointer_to_blue (darken h roots)) /\
+                   (Wf.no_pointer_to_blue h ==> Wf.no_pointer_to_blue (darken h roots)) /\
                    (forall (st: pstate). MP.mark_inv h st ==> MP.mark_inv (darken h roots) st))
           (decreases Seq.length roots)
   = if Seq.length roots = 0 then begin
@@ -263,7 +265,7 @@ let rec darken_dense (h: heap) (roots: Seq.seq obj_addr)
 /// the stack.
 let mark_ready (h: heap) (gs roots: Seq.seq obj_addr) : prop =
   MarkInv.mark_inv h gs /\ Mark.root_props h roots /\
-  Mark.no_black_objects h /\ Mark.no_pointer_to_blue h /\
+  Mark.no_black_objects h /\ Wf.no_pointer_to_blue h /\
   (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r gs) /\
   GP.graph_pre h roots
 
@@ -274,7 +276,7 @@ let darken_ok (h: heap) (st: pstate) (roots: Seq.seq obj_addr)
   : Lemma (requires start_pre h st roots)
           (ensures (let hd = darken h roots in
                     mark_ready hd roots roots /\ MP.mark_inv hd st /\ PA.inv I.Marking hd st /\
-                    kept h hd roots /\ Mark.no_black_objects h /\ Mark.no_pointer_to_blue h /\
+                    kept h hd roots /\ Mark.no_black_objects h /\ Wf.no_pointer_to_blue h /\
                     well_formed_heap h))
   = let hd = darken h roots in
     GC.Spec.Pages.Step.pages_ok_elim h st;

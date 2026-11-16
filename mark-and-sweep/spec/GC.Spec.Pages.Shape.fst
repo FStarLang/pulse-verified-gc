@@ -32,7 +32,7 @@ open GC.Spec.Pages.Walk
 
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
-module WE = GC.Spec.WalkEnd
+module WE = GC.Spec.Pages.WalkEnd
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 

@@ -2065,3 +2065,91 @@ The parallel branch's theorems are audited in
   depends on none of these changes, timed out while the machine was also
   running the seed checks; the rerun passed it.
 - No admits, no assumptions.
+
+---
+
+## 19. Rebased onto main's incremental collector (2026-11-16)
+
+`sheera/pages-allocator` now sits on `origin/main` `5623c7f6` (PR #52, akhil's
+incremental mark and sweep), no longer on #46. The rebase is textual. The
+commits keep their content, and one "port to main" commit at the end makes the
+branch build. Commits between the first and the port do not build on their
+own. The impact assessment is `docs/main-merge-impact.md`.
+
+**The first commit carries #46's size-class list state.** The large-object
+area uses `GC.Spec.SizeClass`, `GC.Spec.FreeLists` and `GC.Spec.FreeLists.Push`
+from `sheera/size-lists`. #46's sweep and collect modules are built on modules
+main deleted, so only these three come over. They are unchanged except that
+`fls_push` states its precondition with main's `blocks_fit`, which has the
+same body as the old `well_formed_heap_part1`. `FreeLists.Push` is a root
+module.
+
+**Rebase conflicts.**
+- Only `Makefile` conflicted (the `ROOT_MODULES` lists of both sides), and
+  only on the first page commit. Both sides were kept. Every other commit
+  applied with a 3-way merge.
+- Main had already added `MarkInv.mark_inv_intro`, word for word as stage
+  4 did. The merge kept both declarations. The port drops ours.
+
+**What the port changes.** No page statement changes meaning.
+`Pages.Theorems`, `Pages.Allocator.fsti` and `AllocIface` are byte-identical
+to before the rebase.
+- **`GC.Spec.WalkEnd` → `GC.Spec.Walk`.** Main's `Walk.walk_end` is the same
+  function as the old one; its guard is `can_step`, the guard of `objects`.
+  A new module, `GC.Spec.Pages.WalkEnd`, restates the five old lemmas the
+  page proofs use, about `Walk.walk_end`:
+  - `walk_end_step`, `walk_head`, `walk_end_empty` and
+    `walk_nonempty_of_walk_end`, with the old proofs;
+  - `dense_from_walk_end`, from main's `dense_of_reaches_end`.
+
+  The six modules that used `WalkEnd` (`Darken`, `Inv`, `Partition`,
+  `Shape`, `Vacuity`, `Walk`) now alias it instead.
+- **Well-formedness.** Main restated `well_formed_heap` as
+  `well_formed_heap_with free_stw`, whose parts are `blocks_fit`,
+  `pointers_lead_to_non_free`, `interior_pointers_valid` and
+  `no_infix_block`. It also retired `GC.Spec.Mark.no_pointer_to_blue` (L10),
+  which the second part now contains. A new module, `GC.Spec.Pages.Wf`,
+  defines the old parts and the old `no_pointer_to_blue` word for word, and
+  proves
+  `wfh_old_parts`: `well_formed_heap g <==> part1 ∧ part2 ∧ part3 ∧ part4 ∧
+  no_pointer_to_blue g`.
+  It also restates the old helpers the page proofs use:
+  `fields_constrained`, `well_formed_heap_part2_3_from_resolved_field_closure`,
+  `wf_field_target_in_objects`, `wf_field_target_infix_wf`,
+  `no_pointer_to_blue_intro_from_fields` and `mark_post_elim_no_pointer_to_blue`.
+  - In 13 page modules the change is qualifiers only:
+    `Mark.no_pointer_to_blue` → `Wf.no_pointer_to_blue`, and
+    `reveal_opaque (`%well_formed_heap)` → `Wf.wfh_old_parts ()`.
+  - L10 stays in `pages_ok` with its old meaning. By `wfh_old_parts` it is now
+    implied by `well_formed_heap`, but removing it would change `pages_ok`'s
+    text, and nothing needs that.
+- **Three proofs needed one more fact each.** Main's `well_formed_heap`
+  contains `no_pointer_to_blue`, and main's `mark_post` gained a clause:
+  - `Alloc.init_alloc_pre` proves `well_formed_heap` of the empty heap from
+    the old parts. It now also calls `Init.init_no_pointer_to_blue`.
+  - `SweepWf.wf_after` proves it after the sweep. It now also calls
+    `SweepAll.no_blue_after`, which was already proved for L10.
+  - `GcCorrect.marked_of_darkened` builds `mark_post` with
+    `Corr.mark_post_intro`. Main's version also asks that marking keeps
+    every block's blueness. The proof now calls `Corr.mark_post_elim_blue`
+    on the mark from the darkened heap, and `Darken.same` gives the step
+    before it.
+- **Comments:** `Survive` names `FusedSweep.Lossless` as the source of its
+  `in_extent`/`blue_covered`, which are word for word main's.
+
+**Checked.**
+- `make verify`: 372 checked files, no errors, with the Makefile's default
+  `--retry 3` as CI runs it.
+  - It ran in a scratch worktree whose cache was main's own clean build at
+    `5623c7f6` (295 files, built from an empty cache in another scratch
+    worktree).
+  - Without `--retry`, main's own `GC.Gen.Reachability` (unchanged since
+    `1ecb0004`) fails a query at line 588 on this machine. That is main's,
+    not ours.
+- Every new and changed module verifies without `--retry` at Z3 seeds 0, 1
+  and 2: 22 modules, 66 checks. They are `Pages.Wf`, `Pages.WalkEnd`, the
+  17 page modules the port touches, `SizeClass`, `FreeLists` and
+  `FreeLists.Push`. The slowest is `Pages.Large`, at about 80 s.
+- `pages-c`: `make extract` from that cache gives C byte-identical to the
+  committed files, and `make test` passes all 468 checks.
+- No admits, no assumptions.

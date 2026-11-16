@@ -30,6 +30,8 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Spec.Pages.Wf
+module Wf = GC.Spec.Pages.Wf
 open GC.Lib.Header
 open GC.Spec.Pages.Params
 open GC.Spec.Pages.Layout
@@ -407,7 +409,8 @@ let init_alloc_pre (g: heap)
   : Lemma (pages_ok (Init.init_heap g) Init.init_state /\ well_formed_heap (Init.init_heap g))
   = let g' = Init.init_heap g in
     Init.init_pages_ok g;
-    reveal_opaque (`%well_formed_heap) well_formed_heap;
+    Init.init_no_pointer_to_blue g;
+    Wf.wfh_old_parts ();
     GC.Spec.Pages.Replace.part1_always g';
     let p4 (x: obj_addr) : Lemma (Seq.mem x (objects zero_addr g') ==> ~(is_infix x g'))
       = if Seq.mem x (objects zero_addr g') then begin

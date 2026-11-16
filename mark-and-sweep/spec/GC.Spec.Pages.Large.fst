@@ -22,6 +22,8 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Spec.Pages.Wf
+module Wf = GC.Spec.Pages.Wf
 open GC.Lib.Header
 open GC.Spec.Pages.Params
 open GC.Spec.Pages.Layout
@@ -282,9 +284,9 @@ let unswept_run (g g': heap) (st: pstate) (hh: nat{hh < n_pages})
 /// well-formedness, and every page outside the run.**
 let run_region_step (g g': heap) (st: pstate) (hh: nat{hh < n_pages}) (a e: nat)
   : Lemma (requires map_ok st.pm /\ page_local_all g st.pm /\ tail_shape g /\
-                    run_ctx g g' st.pm hh a e /\ well_formed_heap g /\ Mark.no_pointer_to_blue g)
+                    run_ctx g g' st.pm hh a e /\ well_formed_heap g /\ Wf.no_pointer_to_blue g)
           (ensures page_local_all g' st.pm /\ tail_shape g' /\ well_formed_heap g' /\
-                   Mark.no_pointer_to_blue g' /\ others_unchanged g g' /\
+                   Wf.no_pointer_to_blue g' /\ others_unchanged g g' /\
                    unswept_unchanged g g' st st)
   = let pm = st.pm in
     let n = run_len (entry pm hh).kind in
@@ -344,7 +346,7 @@ let cell_facts (g: heap) (pm: page_map) (c: obj_addr) (hh: nat{hh < n_pages}) (w
 /// page.
 let carve_pre (g: heap) (st: pstate) (c: obj_addr) (hh: nat{hh < n_pages}) (wz: nat) : prop =
   map_ok st.pm /\ page_local_all g st.pm /\ tail_shape g /\
-  well_formed_heap g /\ Mark.no_pointer_to_blue g /\
+  well_formed_heap g /\ Wf.no_pointer_to_blue g /\
   cell_facts g st.pm c hh wz
 
 let cell_bounds (g: heap) (pm: page_map) (c: obj_addr) (hh: nat{hh < n_pages}) (wz: nat)
@@ -454,7 +456,7 @@ let carve_region (g: heap) (st: pstate) (c: obj_addr) (hh: nat{hh < n_pages}) (w
                     wz < pow2 54 /\ l <= pow2 54 /\
                     (let g' = carve_heap g h l wz in
                      page_local_all g' st.pm /\ tail_shape g' /\ well_formed_heap g' /\
-                     Mark.no_pointer_to_blue g' /\ others_unchanged g g' /\
+                     Wf.no_pointer_to_blue g' /\ others_unchanged g g' /\
                      unswept_unchanged g g' st st)))
   = let h = U64.v c - 8 in
     let w = whsize g c in
@@ -957,7 +959,7 @@ let lists_B (g g1 g': heap) (st: pstate) (pre: list obj_addr) (c: obj_addr) (pos
 
 let wfh_part4 (g: heap)
   : Lemma (requires well_formed_heap g) (ensures well_formed_heap_part4 g)
-  = reveal_opaque (`%well_formed_heap) well_formed_heap
+  = Wf.wfh_old_parts ()
 
 /// The block is first on the list: the head moves past it.
 let carve_B_head (g: heap) (st: pstate) (c: obj_addr) (post: list obj_addr) (hh: nat{hh < n_pages})
@@ -987,7 +989,7 @@ let link_step (g: heap) (st: pstate) (cs: list obj_addr) (p: obj_addr) (v: U64.t
                     read_word g1 (p <: hp_addr) == v /\
                     Seq.mem p (objects zero_addr g) /\ words_at g a == whsize g p /\
                     page_local_all g1 st.pm /\ tail_shape g1 /\ well_formed_heap g1 /\
-                    Mark.no_pointer_to_blue g1 /\ step_ok g g1 st st))
+                    Wf.no_pointer_to_blue g1 /\ step_ok g g1 st st))
   = let g1 = wr g (U64.v p) v in
     let a = U64.v p - 8 in
     pages_ok_elim g st;
@@ -1013,7 +1015,7 @@ let cleared_ok_intro (g g': heap) (st st': pstate) (wz: nat) (obj: U64.t)
                      is_white x g' /\
                      ~(Seq.mem x (objects zero_addr g) /\ ~(is_blue x g))) /\
                     map_ok st'.pm /\ page_local_all g' st'.pm /\ tail_shape g' /\
-                    avail_ok st' /\ large_ok g' st' /\ Mark.no_pointer_to_blue g' /\
+                    avail_ok st' /\ large_ok g' st' /\ Wf.no_pointer_to_blue g' /\
                     well_formed_heap g' /\ others_unchanged g g' /\ unswept_unchanged g g' st st')
           (ensures cleared_ok g g' st st' wz obj)
   = pages_ok_intro g' st'

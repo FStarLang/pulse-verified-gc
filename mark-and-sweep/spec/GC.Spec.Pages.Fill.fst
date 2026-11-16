@@ -24,6 +24,8 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Spec.Pages.Wf
+module Wf = GC.Spec.Pages.Wf
 open GC.Lib.Header
 open GC.Spec.Pages.Params
 open GC.Spec.Pages.Layout
@@ -371,7 +373,7 @@ let target_kept (g g': heap) (x: obj_addr) (v: obj_addr)
 #push-options "--z3rlimit 40"
 let field_fill (g g': heap) (x: obj_addr) (src: obj_addr) (j: nat) (v: obj_addr)
   : Lemma (requires fctx g g' x /\ ~(is_blue x g) /\ ~(is_closure x g) /\
-                    well_formed_heap g /\ Mark.no_pointer_to_blue g /\
+                    well_formed_heap g /\ Wf.no_pointer_to_blue g /\
                     (forall (a: hp_addr). U64.v x <= U64.v a /\ U64.v a < fields_end g x ==>
                        field_ok g' (read_word g' a)) /\
                     Seq.mem src (objects zero_addr g') /\ fields_constrained g' src /\
@@ -410,11 +412,11 @@ let fill_part4 (g g': heap) (x: obj_addr)
 
 let fill_heap (g g': heap) (x: obj_addr)
   : Lemma (requires fctx g g' x /\ ~(is_blue x g) /\ ~(is_closure x g) /\
-                    well_formed_heap g /\ Mark.no_pointer_to_blue g /\
+                    well_formed_heap g /\ Wf.no_pointer_to_blue g /\
                     (forall (a: hp_addr). U64.v x <= U64.v a /\ U64.v a < fields_end g x ==>
                        field_ok g' (read_word g' a)))
-          (ensures well_formed_heap g' /\ Mark.no_pointer_to_blue g')
-  = reveal_opaque (`%well_formed_heap) well_formed_heap;
+          (ensures well_formed_heap g' /\ Wf.no_pointer_to_blue g')
+  = Wf.wfh_old_parts ();
     part1_always g';
     fill_part4 g g' x;
     let closure (src: obj_addr) (j: nat)
@@ -445,7 +447,7 @@ let fill_heap (g g': heap) (x: obj_addr)
         assert (v == (dst <: U64.t));
         field_fill g g' x src j dst
     in
-    Mark.no_pointer_to_blue_intro_from_fields g' field
+    Wf.no_pointer_to_blue_intro_from_fields g' field
 
 /// ---------------------------------------------------------------------------
 /// The lemma

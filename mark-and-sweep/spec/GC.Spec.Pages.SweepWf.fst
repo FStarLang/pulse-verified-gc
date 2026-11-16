@@ -22,6 +22,8 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Spec.Pages.Wf
+module Wf = GC.Spec.Pages.Wf
 open GC.Lib.Header
 open GC.Spec.Pages.Params
 open GC.Spec.Pages.Layout
@@ -205,7 +207,7 @@ let not_infix_of (g0 g: heap) (x: obj_addr)
   : Lemma (requires well_formed_heap g0 /\ Seq.mem x (objects zero_addr g0) /\
                     tag_of_object x g0 == tag_of_object x g)
           (ensures ~(is_infix x g))
-  = reveal_opaque (`%well_formed_heap) well_formed_heap;
+  = Wf.wfh_old_parts ();
     is_infix_spec x g;
     is_infix_spec x g0
 
@@ -349,9 +351,10 @@ let field_target (g0 g: heap) (st0 st: pstate) (src: obj_addr) (j: nat)
 let wf_after (g0 g: heap) (st0 st: pstate)
   : Lemma (requires sweep_ready g0 st0 /\ mark_done g0 /\ inv2 g0 st0 g st n_pages)
           (ensures well_formed_heap g)
-  = reveal_opaque (`%well_formed_heap) well_formed_heap;
+  = Wf.wfh_old_parts ();
     R.part1_always g;
     part4_after g0 g st0 st;
+    no_blue_after g0 g st0 st;
     let closure (src: obj_addr) (j: nat)
       : Lemma (requires Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
                         j < U64.v (wosize_of_object src g) /\

@@ -31,7 +31,7 @@ open GC.Spec.Pages.Inv
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module ST = GC.Spec.Pages.SweepTags
-module WE = GC.Spec.WalkEnd
+module WE = GC.Spec.Pages.WalkEnd
 module ID = FStar.IndefiniteDescription
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"

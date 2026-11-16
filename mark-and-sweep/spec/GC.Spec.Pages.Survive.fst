@@ -12,8 +12,9 @@
 ///   - a survivor has the same pointer fields, resolved the same way
 ///     (`pointer_fields_kept`), so the same successors in the heap graph.
 ///
-/// `in_extent` and `blue_covered` are `GC.Spec.Coalesce.Correct`'s, word for
-/// word, so that this module does not depend on the coalescing sweep.
+/// `in_extent` and `blue_covered` are `GC.Spec.FusedSweep.Lossless`'s (formerly
+/// `GC.Spec.Coalesce.Correct`'s), word for word, so that this module does not
+/// depend on the fused sweep.
 
 module GC.Spec.Pages.Survive
 
@@ -45,7 +46,7 @@ module HeapGraph = GC.Spec.HeapGraph
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
 /// ---------------------------------------------------------------------------
-/// Words and blocks (as GC.Spec.Coalesce.Correct)
+/// Words and blocks (as GC.Spec.FusedSweep.Lossless)
 /// ---------------------------------------------------------------------------
 
 /// The walk position immediately above x.

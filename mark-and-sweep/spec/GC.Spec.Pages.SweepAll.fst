@@ -23,6 +23,8 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Spec.Pages.Wf
+module Wf = GC.Spec.Pages.Wf
 open GC.Lib.Header
 open GC.Spec.Pages.Params
 open GC.Spec.Pages.Layout
@@ -92,7 +94,7 @@ let sweep_ready (g: heap) (st: pstate) : prop =
 
 /// What the mark guarantees about pointers.
 let mark_done (g: heap) : prop =
-  well_formed_heap g /\ Mark.no_pointer_to_blue g /\
+  well_formed_heap g /\ Wf.no_pointer_to_blue g /\
   Mark.tri_color_invariant g /\ Mark.noGreyObjects g
 
 /// ---------------------------------------------------------------------------
@@ -583,7 +585,7 @@ let obj_survivor (g0 g: heap) (st0 st: pstate) (x: obj_addr)
 /// A pointer field of an object of the marked heap that is not free, as
 /// `GC.Spec.Pages.Replace.old_target`, also giving the edge.
 let old_edge (g: heap) (src: obj_addr) (j: nat) (v: obj_addr)
-  : Lemma (requires well_formed_heap g /\ Mark.no_pointer_to_blue g /\
+  : Lemma (requires well_formed_heap g /\ Wf.no_pointer_to_blue g /\
                     Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
                     R.field_at g src j /\ read_word g (R.field_addr src j) == (v <: U64.t) /\
                     is_pointer (v <: U64.t))
@@ -692,9 +694,9 @@ let field_after (g0 g: heap) (st0 st: pstate) (src dst: obj_addr) (j: nat)
 
 let no_blue_after (g0 g: heap) (st0 st: pstate)
   : Lemma (requires sweep_ready g0 st0 /\ mark_done g0 /\ inv g0 st0 g st n_pages)
-          (ensures Mark.no_pointer_to_blue g)
+          (ensures Wf.no_pointer_to_blue g)
   = R.part1_always g;
-    Mark.no_pointer_to_blue_intro_from_fields g (field_after g0 g st0 st)
+    Wf.no_pointer_to_blue_intro_from_fields g (field_after g0 g st0 st)
 
 /// ---------------------------------------------------------------------------
 /// The theorem

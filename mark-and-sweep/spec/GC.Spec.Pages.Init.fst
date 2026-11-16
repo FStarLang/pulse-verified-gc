@@ -13,6 +13,8 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Spec.Pages.Wf
+module Wf = GC.Spec.Pages.Wf
 open GC.Lib.Header
 open GC.Spec.Pages.Params
 open GC.Spec.Pages.Layout
@@ -286,7 +288,7 @@ let init_page_clauses (g: heap) (i: nat{i < n_pages})
   = assert (entry all_free i == free_entry)
 
 let init_no_pointer_to_blue (g: heap)
-  : Lemma (Mark.no_pointer_to_blue (init_heap g))
+  : Lemma (Wf.no_pointer_to_blue (init_heap g))
   = FStar.Classical.forall_intro (FStar.Classical.move_requires (init_all_blue g))
 
 /// **Vacuity.**  The empty heap of pages satisfies the invariant.

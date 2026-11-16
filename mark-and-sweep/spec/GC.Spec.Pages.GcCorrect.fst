@@ -37,6 +37,8 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Spec.Pages.Wf
+module Wf = GC.Spec.Pages.Wf
 open GC.Lib.Header
 open GC.Spec.Pages.Params
 open GC.Spec.Pages.Layout
@@ -88,7 +90,7 @@ let collection (h: heap) (st: pstate) (roots: Seq.seq obj_addr) : GTot (heap & p
 /// same as `D.mark_ready`.
 let mark_pre (h_init: heap) (gs roots: Seq.seq obj_addr) : prop =
   MarkInv.mark_inv h_init gs /\ Mark.root_props h_init roots /\
-  Mark.no_black_objects h_init /\ Mark.no_pointer_to_blue h_init /\
+  Mark.no_black_objects h_init /\ Wf.no_pointer_to_blue h_init /\
   (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r gs) /\
   GP.graph_pre h_init roots
 
@@ -111,7 +113,7 @@ let gc_safe_pages (h_init g: heap) (st: pstate) (roots: Seq.seq obj_addr) : prop
   Corr.full_gc_correctness h_init g roots /\
   Corr.major_gc_live_subgraph_isomorphism h_init g roots /\
   lists_sound g st /\
-  Mark.no_pointer_to_blue g /\
+  Wf.no_pointer_to_blue g /\
   PA.inv I.Idle g st
 
 /// ---------------------------------------------------------------------------
@@ -202,7 +204,7 @@ let setting_facts (h_init h_mark: heap) (st_m: pstate) (g: heap) (st: pstate) (r
   = Corr.mark_post_elim_wfh h_init h_mark roots 0UL;
     Corr.mark_post_elim_no_grey h_init h_mark roots 0UL;
     Corr.mark_post_elim_tri_color h_init h_mark roots 0UL;
-    Corr.mark_post_elim_no_pointer_to_blue h_init h_mark roots 0UL;
+    Wf.mark_post_elim_no_pointer_to_blue h_init h_mark roots 0UL;
     Corr.mark_post_elim_objects h_init h_mark roots 0UL;
     Corr.mark_post_elim_wosize h_init h_mark roots 0UL;
     SS.start_ready h_mark st_m;
@@ -226,7 +228,7 @@ let live_a (h_init h_mark: heap) (st_m: pstate) (g: heap) (st: pstate) (roots: S
 /// (b) and the lists' soundness, from `pages_ok`.
 let lists (g: heap) (st: pstate)
   : Lemma (requires pages_ok g st)
-          (ensures free_listed g st /\ lists_sound g st /\ Mark.no_pointer_to_blue g /\
+          (ensures free_listed g st /\ lists_sound g st /\ Wf.no_pointer_to_blue g /\
                    (forall (i: nat{i < n_pages}). run_swept_ok g st.pm i))
   = GC.Spec.Pages.Step.pages_ok_elim g st
 
@@ -362,7 +364,7 @@ let gc_correct_gen (h_init h_mark: heap) (st_m: pstate) (roots: Seq.seq obj_addr
 /// the two differ only in the roots' colours.
 let marked_of_darkened (h hd hm: heap) (roots: Seq.seq obj_addr)
   : Lemma (requires D.kept h hd roots /\ Corr.mark_post hd hm roots 0UL /\
-                    well_formed_heap h /\ Mark.no_black_objects h /\ Mark.no_pointer_to_blue h /\
+                    well_formed_heap h /\ Mark.no_black_objects h /\ Wf.no_pointer_to_blue h /\
                     (forall (x: obj_addr) (i: U64.t).
                        Seq.mem x (objects zero_addr hd) /\ U64.v i >= 1 /\
                        U64.v i <= U64.v (wosize_of_object x hd) ==>
@@ -373,11 +375,12 @@ let marked_of_darkened (h hd hm: heap) (roots: Seq.seq obj_addr)
     Corr.mark_post_elim_objects hd hm roots 0UL;
     Corr.mark_post_elim_density hd hm roots 0UL;
     Corr.mark_post_elim_objects_gt0 hd hm roots 0UL;
-    Corr.mark_post_elim_no_pointer_to_blue hd hm roots 0UL;
+    Wf.mark_post_elim_no_pointer_to_blue hd hm roots 0UL;
     Corr.mark_post_elim_tri_color hd hm roots 0UL;
     Corr.mark_post_elim_black_reachable hd hm roots 0UL;
     Corr.mark_post_elim_graph hd hm roots 0UL;
     Corr.mark_post_elim_wosize hd hm roots 0UL;
+    Corr.mark_post_elim_blue hd hm roots 0UL;
     Corr.mark_post_intro h hm roots 0UL
 
 /// The mark from the darkened roots leaves what `gc_correct_gen` needs, from

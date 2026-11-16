@@ -17,7 +17,7 @@
 ///   L9  the large lists are #46's lists, restricted to swept runs and to
 ///       blocks of at least `lg_min` words; every listed block is free, and
 ///       every such free block is listed;
-///   L10 no object points to a free block (`GC.Spec.Mark.no_pointer_to_blue`).
+///   L10 no object points to a free block (`GC.Spec.Wf.no_pointer_to_blue`).
 ///
 /// L4, L5, L7 and L8 constrain swept pages only.  Unswept pages are held to
 /// their shape alone, which is what lets the allocator and a later
@@ -29,6 +29,8 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Spec.Pages.Wf
+module Wf = GC.Spec.Pages.Wf
 open GC.Lib.Header
 open GC.Spec.Pages.Params
 open GC.Spec.Pages.Layout
@@ -197,11 +199,11 @@ let pages_ok (g: heap) (st: pstate) : prop =
      pool_list_ok g st.pm i /\ pool_white g st.pm i /\ run_swept_ok g st.pm i) /\
   avail_ok st /\
   large_ok g st /\
-  Mark.no_pointer_to_blue g
+  Wf.no_pointer_to_blue g
 
 /// The walk facts every client needs, from `pages_ok` alone.
 let pages_ok_tiled (g: heap) (st: pstate)
   : Lemma (requires pages_ok g st)
-          (ensures GC.Spec.WalkEnd.walk_end g zero_addr + 8 >= heap_size)
+          (ensures GC.Spec.Pages.WalkEnd.walk_end g zero_addr + 8 >= heap_size)
   = reveal_opaque (`%pages_ok) pages_ok;
     heap_tiled g st.pm

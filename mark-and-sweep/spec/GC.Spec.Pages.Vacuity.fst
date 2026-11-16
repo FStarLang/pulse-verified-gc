@@ -31,6 +31,8 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Spec.Pages.Wf
+module Wf = GC.Spec.Pages.Wf
 open GC.Lib.Header
 open GC.Spec.Pages.Params
 open GC.Spec.Pages.Layout
@@ -51,7 +53,7 @@ module SS = GC.Spec.Pages.StartSweep
 module SW = GC.Spec.Pages.SweepWf
 module SV = GC.Spec.Pages.Survive
 module PT = GC.Spec.Pages.Partition
-module WE = GC.Spec.WalkEnd
+module WE = GC.Spec.Pages.WalkEnd
 module Mark = GC.Spec.Mark
 module MarkInv = GC.Spec.MarkInv
 module Corr = GC.Spec.Correctness
@@ -155,7 +157,7 @@ let marked_facts (g: heap)
     Corr.mark_post_elim_wfh hi m r 0UL;
     Corr.mark_post_elim_no_grey hi m r 0UL;
     Corr.mark_post_elim_tri_color hi m r 0UL;
-    Corr.mark_post_elim_no_pointer_to_blue hi m r 0UL;
+    Wf.mark_post_elim_no_pointer_to_blue hi m r 0UL;
     Corr.mark_post_elim_objects hi m r 0UL;
     Corr.mark_post_elim_black_reachable hi m r 0UL;
     HeapModel.graph_vertices_mem hi (W.oC g)
