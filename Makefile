@@ -124,6 +124,7 @@ ROOT_MODULES = \
   generational/spec/GC.Gen.MarkPhase.Cycle.fst \
   generational/spec/GC.Gen.Cycle.fst \
   mark-and-sweep/impl/GC.Impl.Correct.fst \
+  mark-and-sweep/spec/GC.Spec.FreeLists.Push.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst \
   generational/impl/GC.Gen.Impl.Barrier.fsti \
