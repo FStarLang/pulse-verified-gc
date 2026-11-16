@@ -39,15 +39,15 @@ let mmf_keep (minor: minor_state) (g g': heap)
       (fun obj j -> GenInv.minor_major_fields_not_free_elim free_stw minor g obj j)
 
 /// The collector's state at `Marking`, taken apart.
-let marking_parts (minor: minor_state) (g: heap) (fp: U64.t)
-  : Lemma (requires GI.phase_shape minor g fp Ph.Marking)
-          (ensures MP.marking_inv g (GMM.nursery_refs minor) /\
+let marking_parts (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
+  : Lemma (requires GI.phase_shape minor g fp Ph.Marking sp)
+          (ensures MP.marking_inv g (GMM.nursery_refs minor) sp /\
                    GenInv.minor_heap_shape minor /\
                    GenInv.minor_major_fields_not_free free_stw minor g /\
                    AP.alloc_ok g fp /\ no_infix_block g /\
                    heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
                    FLA.fl_ascending g fp)
-  = GI.phase_shape_marking minor g fp;
+  = GI.phase_shape_marking minor g fp sp;
     GenInv.collection_shape_with_elim Ph.Marking free_stw minor g fp;
     GenInv.major_shape_with_elim Ph.Marking free_stw g fp
 
@@ -55,11 +55,11 @@ let marking_parts (minor: minor_state) (g: heap) (fp: U64.t)
 /// Allocation
 /// ---------------------------------------------------------------------------
 
-let marking_alloc_shape minor g fp wz tag =
+let marking_alloc_shape minor g fp sp wz tag =
   let ph = Ph.Marking in
   let outside_refs = GMM.nursery_refs minor in
-  marking_parts minor g fp;
-  MPA.marking_alloc g outside_refs fp wz tag;
+  marking_parts minor g fp sp;
+  MPA.marking_alloc g outside_refs sp fp wz tag;
   let r = AC.alloc_phase g fp ph wz tag in
   if r.SA.obj_out <> 0UL then begin
     let g' = r.SA.heap_out in
@@ -77,7 +77,7 @@ let marking_alloc_shape minor g fp wz tag =
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires keep);
     mmf_keep minor g g';
-    assert (fresh_shape minor g' r.SA.fp_out r.SA.obj_out)
+    assert (fresh_shape minor g' r.SA.fp_out sp r.SA.obj_out)
   end
 
 /// ---------------------------------------------------------------------------
@@ -94,9 +94,9 @@ let dense_transport (g g': heap)
     W.reaches_refl g zero_addr;
     W.dense_of_reaches_end g' (W.walk_end g zero_addr)
 
-let fresh_shape_write minor g fp obj a v =
+let fresh_shape_write minor g fp sp obj a v =
   let g' = write_word g a v in
-  MPA.marking_fresh_write g (GMM.nursery_refs minor) obj a v;
+  MPA.marking_fresh_write g (GMM.nursery_refs minor) sp obj a v;
   SPI.same_heads_facts g g';
   Mark.colors_exclusive obj g;
   SPM.in_body_block g obj a;
@@ -109,14 +109,14 @@ let fresh_shape_write minor g fp obj a v =
 /// Closing
 /// ---------------------------------------------------------------------------
 
-let fresh_shape_close minor g fp obj =
-  MPA.marking_fresh_close g (GMM.nursery_refs minor) obj;
+let fresh_shape_close minor g fp sp obj =
+  MPA.marking_fresh_close g (GMM.nursery_refs minor) sp obj;
   free_stw_ok ();
   Promote.free_stw_allocations_not_free Ph.Marking;
   PCS.free_list_shape_of_ascending g fp;
   GenInv.major_shape_with_intro Ph.Marking free_stw g fp;
   GenInv.collection_shape_with_intro Ph.Marking free_stw minor g fp;
-  GI.phase_shape_marking minor g fp
+  GI.phase_shape_marking minor g fp sp
 
 /// ---------------------------------------------------------------------------
 /// The mark cache
@@ -138,10 +138,10 @@ let alloc_grey (g: heap) (fp: U64.t) (wz: nat) (tag: SPM.tag_t) (obj y: obj_addr
     assert (in_use (MPA.free_or_new obj) g' y);
     MM.header_kept_facts g g' y
 
-let alloc_mark_cache minor g fp wz tag st ov p =
+let alloc_mark_cache minor g fp sp wz tag st ov p =
   let outside_refs = GMM.nursery_refs minor in
-  marking_parts minor g fp;
-  MPA.marking_alloc g outside_refs fp wz tag;
+  marking_parts minor g fp sp;
+  MPA.marking_alloc g outside_refs sp fp wz tag;
   let r = AC.alloc_phase g fp Ph.Marking wz tag in
   if r.SA.obj_out <> 0UL then begin
     let obj : obj_addr = r.SA.obj_out in
@@ -149,6 +149,6 @@ let alloc_mark_cache minor g fp wz tag st ov p =
     MS.mark_cache_keeps_blocks g r.SA.heap_out st ov p
   end
 
-let fresh_mark_cache_write minor g fp obj a v st ov p =
+let fresh_mark_cache_write minor g fp sp obj a v st ov p =
   Mark.colors_exclusive obj g;
   MS.mark_cache_write g Ph.Marking st ov p obj a v

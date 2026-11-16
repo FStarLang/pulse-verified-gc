@@ -11,22 +11,24 @@
 /// major pointers (`outside_refs_of`); after it, with the nursery empty, the
 /// rewritten roots (`root_refs`).
 ///
-/// It is an instance of `marking_inv_change`:
+/// It is an instance of `marking_inv_change`, at the scan position it keeps:
 ///   * every non-free block stays, with its header (`old_block`), and its
 ///     pointer fields: the pointer update rewrites only nursery pointers,
 ///     which never look like major pointers (`old_pointer_field`), and their
 ///     targets keep their resolution -- so no edge between grey or white
-///     blocks is cut, and no colour changes;
+///     blocks is cut (field by field: the partly scanned object keeps its
+///     unscanned edges), and no colour changes;
 ///   * every other non-free block afterwards is a promoted copy, black
 ///     (`new_block_black`): so nothing new is white;
-///   * a black object's white target is one the marker would already reach.
-///     That is the trick of `GC.Spec.MarkPhase.unreached g`: the invariant
+///   * a scanned edge's white target (out of a black object, or the grey
+///     partly scanned one) is one the marker would already reach.
+///     That is the trick of `GC.Spec.MarkPhase.unreached g sp`: the invariant
 ///     makes `g` well formed for "free = blue, or white and not reached"; the
 ///     generic theorem keeps well-formedness for *any* admissible definition
 ///     of free whose allocations are not free (black copies are not), and
-///     the pointer update at `free_stw` agrees with the one at `unreached g`
+///     the pointer update at `free_stw` agrees with the one at `unreached g sp`
 ///     on every block non-free for the latter; so the heap after is well
-///     formed for `unreached g`, which says exactly that
+///     formed for `unreached g sp`, which says exactly that
 ///     (`unreached_wf_after`).  This covers the promoted copies' fields (old
 ///     targets the nursery points at, or copies) and the remembered slots
 ///     (rewritten to copies) without looking at them;
@@ -78,18 +80,18 @@ let collect_marking (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t
   : GTot Promote.minor_collect_result
   = Cheney.cheney_collect_spec_with Ph.Marking free_stw minor g fp roots
 
-/// **A minor collection while marking keeps the marking invariant**, with
-/// the rewritten roots as the outside references (the nursery is empty afterwards), and its
-/// shape.
-val minor_keeps_marking_inv (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
+/// **A minor collection while marking keeps the marking invariant**, at the
+/// same scan position, with the rewritten roots as the outside references
+/// (the nursery is empty afterwards), and its shape.
+val minor_keeps_marking_inv (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t) (sp: MP.scan_pos)
   : Lemma (requires GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\
                     MCFH.roots_valid_for_minor_collection minor g roots /\
-                    MP.marking_inv g (outside_refs_of minor g roots))
+                    MP.marking_inv g (outside_refs_of minor g roots) sp)
           (ensures (let res = collect_marking minor g fp roots in
                     res.Promote.mc_minor == minor_reset minor /\
                     GenInv.collection_shape_with Ph.Marking free_stw
                       res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp /\
-                    MP.marking_inv res.Promote.mc_major (root_refs res.Promote.mc_major res.Promote.mc_roots)))
+                    MP.marking_inv res.Promote.mc_major (root_refs res.Promote.mc_major res.Promote.mc_roots) sp))
 
 /// **The collection keeps the grey objects**: a block of the heap after it
 /// is a grey object exactly when it was one before.  An old non-free block
@@ -109,18 +111,6 @@ val minor_keeps_block (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64
           (ensures (let g' = (collect_marking minor g fp roots).Promote.mc_major in
                     Seq.mem y (objects zero_addr g') /\
                     read_word g' (hd_address y) == read_word g (hd_address y)))
-
-/// **... and its dark fields** (`GC.Spec.MarkPhase.Slice.field_dark`): a
-/// major pointer field is unchanged and its target keeps its header; a field
-/// the pointer update rewrites held a nursery pointer and now points at a
-/// promoted copy, which is black.  The mark slice's partly scanned object
-/// (`GC.Gen.MarkState.cur_ok`) relies on it.
-val minor_keeps_field_dark (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
-  (y: obj_addr) (k: U64.t{U64.v k >= 1})
-  : Lemma (requires GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\ in_use free_stw g y /\
-                    ~(is_no_scan y g) /\ U64.v k <= U64.v (wosize_of_object y g) /\
-                    GC.Spec.MarkPhase.Slice.field_dark g y k)
-          (ensures GC.Spec.MarkPhase.Slice.field_dark (collect_marking minor g fp roots).Promote.mc_major y k)
 
 /// **The collection keeps well-formedness for any admissible definition of
 /// free** whose allocations while marking are not free (a promoted copy is

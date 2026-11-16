@@ -28,13 +28,17 @@ module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 10"
 
-let phase_shape_idle minor g fp = reveal_opaque (`%phase_shape) (phase_shape minor g fp Ph.Idle)
+let phase_shape_idle minor g fp sp = reveal_opaque (`%phase_shape) (phase_shape minor g fp Ph.Idle sp)
 
-let phase_shape_marking minor g fp =
-  reveal_opaque (`%phase_shape) (phase_shape minor g fp Ph.Marking)
+let phase_shape_marking minor g fp sp =
+  reveal_opaque (`%phase_shape) (phase_shape minor g fp Ph.Marking sp)
 
-let phase_shape_sweeping minor g fp c =
-  reveal_opaque (`%phase_shape) (phase_shape minor g fp (Ph.Sweeping c))
+let phase_shape_sweeping minor g fp c sp =
+  reveal_opaque (`%phase_shape) (phase_shape minor g fp (Ph.Sweeping c) sp)
+
+let phase_shape_pos minor g fp ph sp sp' =
+  reveal_opaque (`%phase_shape) (phase_shape minor g fp ph sp);
+  reveal_opaque (`%phase_shape) (phase_shape minor g fp ph sp')
 
 /// The cross-generation condition carries over to a heap in which every block
 /// non-free under `free` before is non-free under `free'`.
@@ -45,30 +49,30 @@ let fields_not_free_transport (minor: minor_state) (g g': heap) (free free': fre
   = GenInv.minor_major_fields_not_free_intro free' minor g'
       (fun obj j -> GenInv.minor_major_fields_not_free_elim free minor g obj j)
 
-let phase_shape_collection minor g fp ph =
+let phase_shape_collection minor g fp ph sp =
   match ph with
   | Ph.Idle ->
-      phase_shape_idle minor g fp;
+      phase_shape_idle minor g fp sp;
       GenInv.collection_heap_shape_as_free_stw minor g fp;
       assert_norm (phase_free Ph.Idle == free_stw)
   | Ph.Marking ->
-      phase_shape_marking minor g fp;
+      phase_shape_marking minor g fp sp;
       assert_norm (phase_free Ph.Marking == free_stw)
   | Ph.Sweeping c ->
-      phase_shape_sweeping minor g fp c;
+      phase_shape_sweeping minor g fp c sp;
       SPM.sweep_collection_shape minor g fp c;
       assert_norm (phase_free (Ph.Sweeping c) == free_incremental c)
 
-let phase_shape_start minor g fp =
+let phase_shape_start minor g fp sp =
   let c = sweep_start.cursor in
   SPM.sweep_major_shape g fp c;
   GenInv.collection_shape_with_after_minor_reset (Ph.Sweeping c) (free_incremental c) minor g fp;
   GenInv.collection_shape_with_elim (Ph.Sweeping c) (free_incremental c) (minor_reset minor) g fp;
-  phase_shape_sweeping (minor_reset minor) g fp c
+  phase_shape_sweeping (minor_reset minor) g fp c sp
 
 #push-options "--z3rlimit 20"
-let sweep_end_shape minor g fp c =
-  phase_shape_sweeping minor g fp c;
+let sweep_end_shape minor g fp c sp =
+  phase_shape_sweeping minor g fp c sp;
   SPE.sweep_inv_incremental_end g fp c;
   PCS.free_list_shape_of_ascending g fp;
   let col (x: obj_addr)
@@ -149,68 +153,78 @@ let mmf_transport (free: free_def) (minor: minor_state) (g g': heap)
 
 /// A mark move is one such recolouring, or nothing.
 #push-options "--z3rlimit 20"
-let move_recolour (g g': heap) (fp: U64.t)
-  : Lemma (requires well_formed_heap g /\ walk_ok g fp /\ S.mark_move g g')
+let recolour_scan (g: heap) (fp: U64.t) (x: obj_addr) (k: U64.t{U64.v k >= 1})
+  : Lemma (requires well_formed_heap g /\ walk_ok g fp /\ S.scan_target g x /\
+                    U64.v k <= U64.v (wosize_of_object x g))
+          (ensures (let g' = S.scan_field g x k in
+                    walk_ok g' fp /\ objects zero_addr g' == objects zero_addr g /\
+                    (forall (y: obj_addr). in_use free_stw g' y == in_use free_stw g y)))
+  = S.scan_field_is_grey g x k;
+    let v = HeapGraph.get_field g x k in
+    if is_pointer v && is_white (resolve_object v g) g then begin
+      let tt = resolve_object v g in
+      Mark.colors_exclusive tt g;
+      makeGray_eq tt g;
+      recolour_facts g fp tt Header.Gray
+    end
+
+let recolour_black (g: heap) (fp: U64.t) (x: obj_addr)
+  : Lemma (requires well_formed_heap g /\ walk_ok g fp /\ Seq.mem x (objects zero_addr g) /\ is_gray x g)
+          (ensures (let g' = makeBlack x g in
+                    walk_ok g' fp /\ objects zero_addr g' == objects zero_addr g /\
+                    (forall (y: obj_addr). in_use free_stw g' y == in_use free_stw g y)))
+  = Mark.colors_exclusive x g;
+    makeBlack_eq x g;
+    recolour_facts g fp x Header.Black
+
+let move_recolour (g g': heap) (fp: U64.t) (sp sp': MP.scan_pos)
+  : Lemma (requires well_formed_heap g /\ walk_ok g fp /\ S.mark_move g sp g' sp')
           (ensures walk_ok g' fp /\ objects zero_addr g' == objects zero_addr g /\
                    (forall (y: obj_addr). in_use free_stw g' y == in_use free_stw g y))
-  = eliminate S.grey_move g g' \/ S.black_move g g'
-    with begin
-      eliminate exists (x: obj_addr) (k: U64.t{U64.v k >= 1}).
-        S.scan_target g x /\ U64.v k <= U64.v (wosize_of_object x g) /\ g' == S.scan_field g x k
-      with begin
-        S.scan_field_is_grey g x k;
-        let v = HeapGraph.get_field g x k in
-        if is_pointer v && is_white (resolve_object v g) g then begin
-          let tt = resolve_object v g in
-          Mark.colors_exclusive tt g;
-          makeGray_eq tt g;
-          recolour_facts g fp tt Header.Gray
-        end
-      end
-    end
-    and begin
+  = if FStar.IndefiniteDescription.strong_excluded_middle (S.grey_move g sp g' sp') then
       eliminate exists (x: obj_addr).
-        Seq.mem x (objects zero_addr g) /\ is_gray x g /\
-        (is_no_scan x g \/ S.fields_dark g x 1 (U64.v (wosize_of_object x g))) /\ g' == makeBlack x g
-      with begin
-        Mark.colors_exclusive x g;
-        makeBlack_eq x g;
-        recolour_facts g fp x Header.Black
-      end
-    end
+        x == sp.MP.cur /\ S.scan_target g x /\ 1 <= sp.MP.fld /\ sp.MP.fld <= U64.v (wosize_of_object x g) /\
+        g' == S.scan_field g x (U64.uint_to_t sp.MP.fld) /\ sp' == { sp with MP.fld = sp.MP.fld + 1 }
+      with recolour_scan g fp x (U64.uint_to_t sp.MP.fld)
+    else if FStar.IndefiniteDescription.strong_excluded_middle (S.black_move g sp g' sp') then
+      eliminate exists (x: obj_addr).
+        Seq.mem x (objects zero_addr g) /\ is_gray x g /\ MP.all_scanned g sp x /\
+        g' == makeBlack x g /\ sp' == MP.blackened_pos sp x
+      with recolour_black g fp x
+    else assert (S.begin_move g sp g' sp')
 #pop-options
 
 /// One move keeps the marking shape.
 #push-options "--z3rlimit 30"
-let move_shape (minor: minor_state) (fp: U64.t) (g g': heap)
-  : Lemma (requires phase_shape minor g fp Ph.Marking /\ S.mark_move g g')
-          (ensures phase_shape minor g' fp Ph.Marking)
-  = phase_shape_marking minor g fp;
-    phase_shape_marking minor g' fp;
+let move_shape (minor: minor_state) (fp: U64.t) (g: heap) (sp: MP.scan_pos) (g': heap) (sp': MP.scan_pos)
+  : Lemma (requires phase_shape minor g fp Ph.Marking sp /\ S.mark_move g sp g' sp')
+          (ensures phase_shape minor g' fp Ph.Marking sp')
+  = phase_shape_marking minor g fp sp;
+    phase_shape_marking minor g' fp sp';
     GenInv.collection_shape_with_elim Ph.Marking free_stw minor g fp;
     GenInv.major_shape_with_elim Ph.Marking free_stw g fp;
-    S.mark_move_inv g g' (GMM.nursery_refs minor);
-    move_recolour g g' fp;
+    S.mark_move_inv g g' sp sp' (GMM.nursery_refs minor);
+    move_recolour g g' fp sp sp';
     PCS.free_list_shape_of_ascending g' fp;
     GenInv.major_shape_with_intro Ph.Marking free_stw g' fp;
     mmf_transport free_stw minor g g';
     GenInv.collection_shape_with_intro Ph.Marking free_stw minor g' fp
 #pop-options
 
-let mark_steps_shape minor g g' fp =
-  S.mark_steps_ind (fun h -> phase_shape minor h fp Ph.Marking) (move_shape minor fp) g g'
+let mark_steps_shape minor g g' fp sp sp' =
+  S.mark_steps_ind (fun h q -> phase_shape minor h fp Ph.Marking q) (move_shape minor fp) g sp g' sp'
 
-/// What the roots and the nursery hold.
+/// What the roots and the nursery point at.
 let union_outside_refs (minor: minor_state) (h0: heap) (rs: seq U64.t) (w: obj_addr) : prop =
   GMM.root_refs h0 rs w \/ GMM.nursery_refs minor w
 
 #push-options "--z3rlimit 20"
-let mark_steps_roots minor g g' fp rs =
-  phase_shape_marking minor g fp;
+let mark_steps_roots minor g g' fp rs sp sp' =
+  phase_shape_marking minor g fp sp;
   let outside_refs = union_outside_refs minor g rs in
-  assert (MP.marking_inv g outside_refs);
-  S.mark_steps_inv g g' outside_refs;
-  S.mark_steps_darker g g';
+  assert (MP.marking_inv g outside_refs sp);
+  S.mark_steps_inv g g' sp sp' outside_refs;
+  S.mark_steps_darker g g' sp sp';
   let same (w: obj_addr) : Lemma (GMM.root_refs g' rs w ==> GMM.root_refs g rs w) =
     let aux (r: U64.t) : Lemma (Seq.mem r rs /\ is_pointer r /\ resolve_object (r <: obj_addr) g' == w ==>
                                 GMM.root_refs g rs w) = () in
@@ -220,14 +234,14 @@ let mark_steps_roots minor g g' fp rs =
 #pop-options
 
 #push-options "--z3rlimit 30"
-let marking_done_shape minor g fp =
+let marking_done_shape minor g fp sp sp' =
   let c = zero_addr in
-  phase_shape_marking minor g fp;
+  phase_shape_marking minor g fp sp;
   GenInv.collection_shape_with_elim Ph.Marking free_stw minor g fp;
   GenInv.major_shape_with_elim Ph.Marking free_stw g fp;
   let outside_refs = GMM.nursery_refs minor in
-  MP.marking_done_sweep_start g outside_refs fp;
-  MP.marking_done g outside_refs;
+  MP.marking_done_sweep_start g outside_refs sp fp;
+  MP.marking_done g outside_refs sp;
   assert (sweep_start.cursor == c);
   free_stw_ok ();
   let nf (obj: U64.t) (j: nat)
@@ -239,55 +253,55 @@ let marking_done_shape minor g fp =
       assert (outside_refs v)
   in
   GenInv.minor_major_fields_not_free_intro (free_incremental c) minor g nf;
-  phase_shape_sweeping minor g fp c
+  phase_shape_sweeping minor g fp c sp'
 #pop-options
 
-let mark_slice_shape minor g fp budget g' fp' ph' =
-  mark_steps_shape minor g g' fp;
-  if Ph.Sweeping? ph' then marking_done_shape minor g' fp
+let mark_slice_shape minor g sp fp budget g' sp' fp' ph' =
+  mark_steps_shape minor g g' fp sp sp';
+  if Ph.Sweeping? ph' then marking_done_shape minor g' fp sp' sp'
 
 #push-options "--z3rlimit 20"
-let phase_slice_shape minor g fp ph budget =
+let phase_slice_shape minor g fp ph budget sp =
   match ph with
   | Ph.Idle | Ph.Marking -> ()
   | Ph.Sweeping c ->
-      phase_shape_sweeping minor g fp c;
+      phase_shape_sweeping minor g fp c sp;
       SL.sweep_slice_phase g fp c budget;
       let (g', fp', st') = SL.sweep_slice g fp (state_at g c) budget in
       fields_not_free_transport minor g g' (free_incremental c) (free_incremental st'.cursor);
-      phase_shape_sweeping minor g' fp' st'.cursor;
+      phase_shape_sweeping minor g' fp' st'.cursor sp;
       if sweep_done st'.cursor then begin
-        sweep_end_shape minor g' fp' st'.cursor;
-        phase_shape_idle minor g' fp'
+        sweep_end_shape minor g' fp' st'.cursor sp;
+        phase_shape_idle minor g' fp' sp
       end
 #pop-options
 
-let phase_slice_finishes minor g fp ph budget =
+let phase_slice_finishes minor g fp ph budget sp =
   match ph with
   | Ph.Idle | Ph.Marking -> ()
   | Ph.Sweeping c ->
-      phase_shape_sweeping minor g fp c;
+      phase_shape_sweeping minor g fp c sp;
       SL.sweep_slice_phase g fp c budget
 
 #push-options "--z3rlimit 20"
-let minor_keeps_phase_shape minor g fp c roots =
-  phase_shape_sweeping minor g fp c;
+let minor_keeps_phase_shape minor g fp c roots sp =
+  phase_shape_sweeping minor g fp c sp;
   SPM.minor_keeps_sweep_phase minor g fp c roots;
   let free = free_incremental c in
   let res = SPM.collect_at c minor g fp roots in
   GenInv.collection_shape_with_elim (Ph.Sweeping c) free res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp;
-  phase_shape_sweeping res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp c
+  phase_shape_sweeping res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp c sp
 #pop-options
 
 #push-options "--z3rlimit 20"
-let minor_keeps_marking_shape minor g fp roots =
-  phase_shape_marking minor g fp;
-  assert (MP.marking_inv g (GMM.outside_refs_of minor g roots));
-  GMM.minor_keeps_marking_inv minor g fp roots;
+let minor_keeps_marking_shape minor g fp roots sp =
+  phase_shape_marking minor g fp sp;
+  assert (MP.marking_inv g (GMM.outside_refs_of minor g roots) sp);
+  GMM.minor_keeps_marking_inv minor g fp roots sp;
   let res = GMM.collect_marking minor g fp roots in
   FStar.Classical.forall_intro (GMM.nursery_refs_reset minor);
-  assert (MP.marking_inv res.Promote.mc_major (GMM.nursery_refs res.Promote.mc_minor));
-  phase_shape_marking res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp
+  assert (MP.marking_inv res.Promote.mc_major (GMM.nursery_refs res.Promote.mc_minor) sp);
+  phase_shape_marking res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp sp
 #pop-options
 
 let phase_free_idle () = assert_norm (phase_free Ph.Idle == free_stw)

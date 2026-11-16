@@ -38,12 +38,12 @@ module MBP = GC.Impl.MarkBoundedPrecondition
 let darkened (g: heap) (rs: seq U64.t) : GTot heap =
   fst (MB.darken_roots_bounded_spec g Seq.empty rs (Seq.length rs + 1))
 
-/// **The start of marking.**
+/// **The start of marking**, with no partly scanned object.
 val mark_start_shape (minor: minor_state) (g: heap) (fp: U64.t) (rs: seq U64.t)
   : Lemma (requires GenInv.collection_heap_shape minor g fp /\ minor == minor_reset minor /\
                     (forall (i: nat). i < Seq.length rs ==> MBP.root_valid_for_darkening g (Seq.index rs i)))
-          (ensures GI.phase_shape minor (darkened g rs) fp Ph.Marking /\
-                   MP.outside_refs_reached (darkened g rs) (GMM.root_refs (darkened g rs) rs))
+          (ensures GI.phase_shape minor (darkened g rs) fp Ph.Marking MP.scan_none /\
+                   MP.outside_refs_reached (darkened g rs) MP.scan_none (GMM.root_refs (darkened g rs) rs))
 
 /// **Every object a root names is darkened**: not white in the darkened heap
 /// (it is grey, on the stack root darkening pushes).

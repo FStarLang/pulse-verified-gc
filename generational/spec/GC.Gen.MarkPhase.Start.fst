@@ -26,7 +26,7 @@ module Promote = GC.Gen.Promote
 #push-options "--z3rlimit 20"
 let roots_grey (g: heap) (fp: U64.t) (rs: seq U64.t)
   : Lemma (requires MBP.darken_precondition g Seq.empty rs fp (Seq.length rs + 1))
-          (ensures MP.outside_refs_reached (darkened g rs) (GMM.root_refs (darkened g rs) rs))
+          (ensures MP.outside_refs_reached (darkened g rs) MP.scan_none (GMM.root_refs (darkened g rs) rs))
   = let cap = Seq.length rs + 1 in
     let r = MB.darken_roots_bounded_spec g Seq.empty rs cap in
     let g' = fst r in
@@ -67,7 +67,7 @@ let mark_start_shape minor g fp rs =
   MP.no_black_tri_color g';
   FStar.Classical.forall_intro (GMM.nursery_refs_reset minor);
   MP.marking_inv_start g' (GMM.nursery_refs minor);
-  GI.phase_shape_marking minor g' fp
+  GI.phase_shape_marking minor g' fp MP.scan_none
 #pop-options
 
 #push-options "--z3rlimit 20"

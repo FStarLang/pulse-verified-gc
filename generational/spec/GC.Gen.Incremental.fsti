@@ -4,17 +4,21 @@
 ///
 /// The collector's entry points (`GC.Gen.Impl`) hand the collector's state
 /// from one call to the next through one predicate (`GC.Gen.Impl.gc_state`),
-/// indexed by the phase (`phase_shape minor g fp ph`):
+/// indexed by the phase and the mark slice's scan position
+/// (`phase_shape minor g fp ph sp`; the position is the mark cache's partly
+/// scanned object and next field, `GC.Gen.MarkState.scan_of`, and matters
+/// only while marking):
 ///
 ///   * `Idle`: the stop-the-world shape `GC.Gen.HeapInvariant.
 ///     collection_heap_shape` -- what `full_gc` demands and restores;
 ///   * `Marking`: the minor collection's shape at `free_stw` (marking frees
 ///     nothing) and the marking invariant
-///     (`GC.Spec.MarkPhase.marking_inv`) with what the nursery's fields
-///     point at as outside references (`GC.Gen.MarkPhase.Minor.nursery_refs`).  The program's
-///     roots are the other half of the outside references; they are not part of the
+///     (`GC.Spec.MarkPhase.marking_inv`) at the scan position, with what the
+///     nursery's fields point at as outside references
+///     (`GC.Gen.MarkPhase.Minor.nursery_refs`).  The program's roots are the
+///     other half of the outside references; they are not part of the
 ///     collector's state, so the entry points that take them state it of
-///     them (`MP.outside_refs_reached g (GMM.root_refs g roots)`);
+///     them (`MP.outside_refs_reached g sp (GMM.root_refs g roots)`);
 ///   * `Sweeping c`: the sweep phase at the cursor `c`
 ///     (`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental g fp c`), the
 ///     nursery's shape, and the cross-generation condition for
@@ -65,46 +69,51 @@ let phase_free (ph: Ph.gc_phase) : free_def =
 
 /// **The collector's state at its phase.**
 [@@"opaque_to_smt"]
-let phase_shape (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) : prop =
+let phase_shape (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (sp: MP.scan_pos) : prop =
   match ph with
   | Ph.Idle -> GenInv.collection_heap_shape minor g fp
   | Ph.Marking ->
       GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\
-      MP.marking_inv g (GMM.nursery_refs minor)
+      MP.marking_inv g (GMM.nursery_refs minor) sp
   | Ph.Sweeping c ->
       sweep_inv_incremental g fp c /\ GenInv.minor_heap_shape minor /\
       GenInv.minor_major_fields_not_free (free_incremental c) minor g
 
-val phase_shape_idle (minor: minor_state) (g: heap) (fp: U64.t)
-  : Lemma (phase_shape minor g fp Ph.Idle <==> GenInv.collection_heap_shape minor g fp)
+val phase_shape_idle (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
+  : Lemma (phase_shape minor g fp Ph.Idle sp <==> GenInv.collection_heap_shape minor g fp)
 
-val phase_shape_marking (minor: minor_state) (g: heap) (fp: U64.t)
-  : Lemma (phase_shape minor g fp Ph.Marking <==>
+val phase_shape_marking (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
+  : Lemma (phase_shape minor g fp Ph.Marking sp <==>
            (GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\
-            MP.marking_inv g (GMM.nursery_refs minor)))
+            MP.marking_inv g (GMM.nursery_refs minor) sp))
 
-val phase_shape_sweeping (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
-  : Lemma (phase_shape minor g fp (Ph.Sweeping c) <==>
+val phase_shape_sweeping (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t) (sp: MP.scan_pos)
+  : Lemma (phase_shape minor g fp (Ph.Sweeping c) sp <==>
            (sweep_inv_incremental g fp c /\ GenInv.minor_heap_shape minor /\
             GenInv.minor_major_fields_not_free (free_incremental c) minor g))
 
+/// Outside marking the scan position does not matter.
+val phase_shape_pos (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (sp sp': MP.scan_pos)
+  : Lemma (requires ~(Ph.Marking? ph))
+          (ensures phase_shape minor g fp ph sp <==> phase_shape minor g fp ph sp')
+
 /// At any phase the state is the minor collection's entry shape at the
 /// phase for the phase's definition of free.
-val phase_shape_collection (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase)
-  : Lemma (requires phase_shape minor g fp ph)
+val phase_shape_collection (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (sp: MP.scan_pos)
+  : Lemma (requires phase_shape minor g fp ph sp)
           (ensures GenInv.collection_shape_with ph (phase_free ph) minor g fp)
 
 /// **The start of the sweep phase**, after the minor collection that emptied
 /// the nursery and marking.
-val phase_shape_start (minor: minor_state) (g: heap) (fp: U64.t)
+val phase_shape_start (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
   : Lemma (requires sweep_inv_incremental g fp sweep_start.cursor)
-          (ensures phase_shape (minor_reset minor) g fp (Ph.Sweeping sweep_start.cursor))
+          (ensures phase_shape (minor_reset minor) g fp (Ph.Sweeping sweep_start.cursor) sp)
 
 /// **The end of the sweep phase** is the idle shape: nothing is pending free, the
 /// heap is well formed, every object is white or free, the free list is
 /// exact and ascending.
-val sweep_end_shape (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
-  : Lemma (requires phase_shape minor g fp (Ph.Sweeping c) /\ sweep_done c)
+val sweep_end_shape (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t) (sp: MP.scan_pos)
+  : Lemma (requires phase_shape minor g fp (Ph.Sweeping c) sp /\ sweep_done c)
           (ensures GenInv.collection_heap_shape minor g fp)
 
 /// **A major slice** idle or mid-sweep: nothing when idle; mid-sweep, a
@@ -123,83 +132,88 @@ let major_slice_spec (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
 /// (`pow2 64 - 1`, `UINT64_MAX`, is what the bridge and `full_gc` pass).
 let unbounded (budget: nat) : bool = budget >= pow2 64 - 1
 
-/// **A mark slice**: some mark moves (`S.mark_steps`: fields of grey objects
-/// scanned, grey objects whose fields are dark blackened), the free list
-/// untouched, and either still marking or, with nothing grey left, the
-/// start of the sweep.  An unbounded slice finishes marking.
-let mark_slice_post (g: heap) (fp: U64.t) (budget: nat) (g': heap) (fp': U64.t) (ph': Ph.gc_phase)
-  : prop =
-  fp' == fp /\ S.mark_steps g g' /\
+/// **A mark slice**: some mark moves (`S.mark_steps`: objects started, their
+/// fields scanned, objects whose fields are all scanned blackened) from the
+/// scan position `sp` to `sp'`, the free list untouched, and either still
+/// marking or, with nothing grey left, the start of the sweep.  An unbounded
+/// slice finishes marking.
+let mark_slice_post (g: heap) (sp: MP.scan_pos) (fp: U64.t) (budget: nat)
+    (g': heap) (sp': MP.scan_pos) (fp': U64.t) (ph': Ph.gc_phase) : prop =
+  fp' == fp /\ S.mark_steps g sp g' sp' /\
   (ph' == Ph.Marking \/ (ph' == Ph.Sweeping zero_addr /\ Mark.noGreyObjects g')) /\
   (unbounded budget ==> ~(Ph.Marking? ph'))
 
-/// **A major slice at any phase.**
-let major_slice_post (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
-    (g': heap) (fp': U64.t) (ph': Ph.gc_phase) : prop =
-  if Ph.Marking? ph then mark_slice_post g fp budget g' fp' ph'
-  else (g', fp', ph') == major_slice_spec g fp ph budget
+/// **A major slice at any phase** (outside marking the scan position stays).
+let major_slice_post (g: heap) (sp: MP.scan_pos) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
+    (g': heap) (sp': MP.scan_pos) (fp': U64.t) (ph': Ph.gc_phase) : prop =
+  if Ph.Marking? ph then mark_slice_post g sp fp budget g' sp' fp' ph'
+  else (g', fp', ph') == major_slice_spec g fp ph budget /\ sp' == sp
 
 /// **Marking keeps the collector's state**: mark moves keep the marking
 /// invariant (for any `outside_refs`) and the shape (only colours change, among
 /// white, grey and black) ...
-val mark_steps_shape (minor: minor_state) (g g': heap) (fp: U64.t)
-  : Lemma (requires phase_shape minor g fp Ph.Marking /\ S.mark_steps g g')
-          (ensures phase_shape minor g' fp Ph.Marking)
+val mark_steps_shape (minor: minor_state) (g g': heap) (fp: U64.t) (sp sp': MP.scan_pos)
+  : Lemma (requires phase_shape minor g fp Ph.Marking sp /\ S.mark_steps g sp g' sp')
+          (ensures phase_shape minor g' fp Ph.Marking sp')
 
-/// ... and what the program's roots hold stays one the marker will reach
+/// ... and what the program's roots point at stays one the marker will reach
 /// or not white.
-val mark_steps_roots (minor: minor_state) (g g': heap) (fp: U64.t) (rs: seq U64.t)
-  : Lemma (requires phase_shape minor g fp Ph.Marking /\ MP.outside_refs_reached g (GMM.root_refs g rs) /\
-                    S.mark_steps g g')
-          (ensures MP.outside_refs_reached g' (GMM.root_refs g' rs))
+val mark_steps_roots (minor: minor_state) (g g': heap) (fp: U64.t) (rs: seq U64.t) (sp sp': MP.scan_pos)
+  : Lemma (requires phase_shape minor g fp Ph.Marking sp /\
+                    MP.outside_refs_reached g sp (GMM.root_refs g rs) /\
+                    S.mark_steps g sp g' sp')
+          (ensures MP.outside_refs_reached g' sp' (GMM.root_refs g' rs))
 
 /// **The hand-over to the sweep**: with nothing grey, marking is done
 /// (`MP.marking_done_sweep_start`) and the sweep starts at the first block.
-/// What the nursery points at is an outside reference, so not white, so not pending free.
-val marking_done_shape (minor: minor_state) (g: heap) (fp: U64.t)
-  : Lemma (requires phase_shape minor g fp Ph.Marking /\ Mark.noGreyObjects g)
-          (ensures phase_shape minor g fp (Ph.Sweeping zero_addr))
+/// What the nursery points at is an outside reference, so not white, so not
+/// pending free.
+val marking_done_shape (minor: minor_state) (g: heap) (fp: U64.t) (sp sp': MP.scan_pos)
+  : Lemma (requires phase_shape minor g fp Ph.Marking sp /\ Mark.noGreyObjects g)
+          (ensures phase_shape minor g fp (Ph.Sweeping zero_addr) sp')
 
 /// A mark slice leaves the collector's state at the phase it leaves.
-val mark_slice_shape (minor: minor_state) (g: heap) (fp: U64.t) (budget: nat)
-    (g': heap) (fp': U64.t) (ph': Ph.gc_phase)
-  : Lemma (requires phase_shape minor g fp Ph.Marking /\ mark_slice_post g fp budget g' fp' ph')
-          (ensures phase_shape minor g' fp' ph')
+val mark_slice_shape (minor: minor_state) (g: heap) (sp: MP.scan_pos) (fp: U64.t) (budget: nat)
+    (g': heap) (sp': MP.scan_pos) (fp': U64.t) (ph': Ph.gc_phase)
+  : Lemma (requires phase_shape minor g fp Ph.Marking sp /\ mark_slice_post g sp fp budget g' sp' fp' ph')
+          (ensures phase_shape minor g' fp' ph' sp')
 
 /// **A slice keeps the collector's state**, at whatever phase it leaves.
 val phase_slice_shape (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
-  : Lemma (requires phase_shape minor g fp ph)
+    (sp: MP.scan_pos)
+  : Lemma (requires phase_shape minor g fp ph sp)
           (ensures (let (g', fp', ph') = SL.phase_slice g fp ph budget in
-                    phase_shape minor g' fp' ph'))
+                    phase_shape minor g' fp' ph' sp))
 
 /// A budget of more words than the heap has finishes the sweep.
 val phase_slice_finishes (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (budget: nat)
-  : Lemma (requires phase_shape minor g fp ph /\ budget > heap_words /\ ~(Ph.Marking? ph))
+    (sp: MP.scan_pos)
+  : Lemma (requires phase_shape minor g fp ph sp /\ budget > heap_words /\ ~(Ph.Marking? ph))
           (ensures (let (_, _, ph') = SL.phase_slice g fp ph budget in ph' == Ph.Idle))
 
 /// **A minor collection mid-sweep keeps the collector's state**: the phase
 /// it leaves is the sweep at the same cursor, with the same objects pending
 /// free.
 val minor_keeps_phase_shape (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
-                            (roots: seq U64.t)
-  : Lemma (requires phase_shape minor g fp (Ph.Sweeping c))
+                            (roots: seq U64.t) (sp: MP.scan_pos)
+  : Lemma (requires phase_shape minor g fp (Ph.Sweeping c) sp)
           (ensures (let res = SPM.collect_at c minor g fp roots in
                     (forall (x: obj_addr). pending_free c res.Promote.mc_major x == pending_free c g x) /\
                     res.Promote.mc_minor == minor_reset minor /\
-                    phase_shape res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp (Ph.Sweeping c)))
+                    phase_shape res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp (Ph.Sweeping c) sp))
 
-/// **A minor collection while marking keeps the collector's state**, given
-/// that the program's roots are outside references reached (`MP.outside_refs_reached`: each white object a
-/// root points at is one the marker will reach); it leaves the same of the
-/// rewritten roots.
-val minor_keeps_marking_shape (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires phase_shape minor g fp Ph.Marking /\
+/// **A minor collection while marking keeps the collector's state**, at the
+/// same scan position, given that the program's roots are outside references
+/// the marker will reach if white (`MP.outside_refs_reached`); it leaves the
+/// same of the rewritten roots.
+val minor_keeps_marking_shape (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t) (sp: MP.scan_pos)
+  : Lemma (requires phase_shape minor g fp Ph.Marking sp /\
                     MCFH.roots_valid_for_minor_collection minor g roots /\
-                    MP.outside_refs_reached g (GMM.root_refs g roots))
+                    MP.outside_refs_reached g sp (GMM.root_refs g roots))
           (ensures (let res = GMM.collect_marking minor g fp roots in
                     res.Promote.mc_minor == minor_reset minor /\
-                    phase_shape res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp Ph.Marking /\
-                    MP.outside_refs_reached res.Promote.mc_major
+                    phase_shape res.Promote.mc_minor res.Promote.mc_major res.Promote.mc_fp Ph.Marking sp /\
+                    MP.outside_refs_reached res.Promote.mc_major sp
                       (GMM.root_refs res.Promote.mc_major res.Promote.mc_roots)))
 
 /// `phase_free` at each phase, as an equation (the SMT encoding does not
