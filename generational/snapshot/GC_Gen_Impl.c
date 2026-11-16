@@ -887,10 +887,6 @@ bool modify_field(gen_heap_t *ghr, uint64_t slot, uint64_t v)
   {
     darken_via(ghr, old);
     write_word(g.major, slot, v);
-    uint64_t cv = g.mark_cur[0U];
-    uint64_t fv = g.mark_field[0U];
-    if (cv != 0ULL && slot >= cv && (slot - cv) / 8ULL + 1ULL < fv)
-      g.mark_field[0U] = 1ULL;
   }
   else
     write_word(g.major, slot, v);

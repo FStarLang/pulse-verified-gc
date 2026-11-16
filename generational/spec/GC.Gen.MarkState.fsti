@@ -72,8 +72,10 @@ type mark_pos = { cur: U64.t; fld: U64.t; rc: U64.t }
 let no_pos : mark_pos = { cur = 0UL; fld = 1UL; rc = 0UL }
 
 /// The scan position of the marking invariant (`GC.Spec.MarkPhase.scan_pos`):
-/// the partly scanned object and its next field.
-let scan_of (p: mark_pos) : MP.scan_pos = { MP.cur = p.cur; MP.fld = U64.v p.fld }
+/// the partly scanned object and its next field (with none, the next-field
+/// cell does not matter: `MP.scan_none`).
+let scan_of (p: mark_pos) : MP.scan_pos =
+  if p.cur = 0UL then MP.scan_none else { MP.cur = p.cur; MP.fld = U64.v p.fld }
 
 /// A grey object of the heap.
 let grey_obj (g: heap) (x: obj_addr) : prop =

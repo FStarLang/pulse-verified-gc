@@ -311,7 +311,7 @@ let all_scanned (g: heap) (sp: scan_pos) (x: obj_addr) : prop =
 
 /// The position after blackening `x`: none partly scanned if it was `x`.
 let blackened_pos (sp: scan_pos) (x: obj_addr) : scan_pos =
-  if x = sp.cur then { sp with cur = 0UL } else sp
+  if x = sp.cur then scan_none else sp
 
 /// **Blackening** a grey object whose fields are all scanned: its edges were
 /// scanned already.
