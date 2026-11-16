@@ -95,7 +95,10 @@ let mid_black_to_white (r: unit{H.room})
   : Lemma (let h = mid r in
            is_black (H.obj r 1) h /\ field_edge h (H.obj r 1) (H.obj r 4) /\ is_white (H.obj r 4) h /\
            ~(Mark.tri_color_invariant h))
-  = heap_facts r mid_col mid_tg
+  = heap_facts r mid_col mid_tg;
+    let h = mid r in
+    assert (points_to h (H.obj r 1) (H.obj r 4));
+    assert (is_white (resolve_object (H.obj r 4) h) h)
 
 /// The marker will reach W1 (from G) and W (from G, through W1).
 let mid_reach (r: unit{H.room})
