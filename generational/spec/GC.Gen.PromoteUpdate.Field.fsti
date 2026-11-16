@@ -11,25 +11,26 @@ open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Reachability
-open GC.Gen.Remembered
 open GC.Gen.Promote
 open GC.Gen.WriteBodyLemmas
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
-val update_major_pointers_field_effect
-  (major: heap) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
+/// A field of a rewritten scannable object on the walk is rewritten exactly when it
+/// holds a forwarded nursery pointer.
+val update_walk_field_effect
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       Seq.mem obj (objects zero_addr major) /\
       j < U64.v (wosize_of_object obj major) /\
       U64.v obj + j * 8 + 8 <= heap_size /\
       (U64.v obj + j * 8) % 8 == 0 /\
-      is_blue obj major = false /\
+      upd obj /\
       is_no_scan obj major = false)
     (ensures
-      (let updated = update_major_pointers major fwd in
+      (let updated = update_walk major upd fwd in
        let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
        let old_raw = read_word major field_addr in
        let old_val = to_minor_offset old_raw in

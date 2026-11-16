@@ -11,40 +11,38 @@ open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Reachability
-open GC.Gen.Remembered
 open GC.Gen.Promote
 open GC.Gen.WriteBodyLemmas
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
-val update_all_objects_aux_preserves_header
-  (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat) (h: obj_addr)
-  : Lemma (requires
-      well_formed_heap_part1 major /\
-      objs == objects zero_addr major /\
-      Seq.mem h objs)
-    (ensures read_word (update_all_objects_aux major objs fwd idx) (hd_address h) ==
-             read_word major (hd_address h))
-    (decreases (Seq.length objs - idx))
+/// ---------------------------------------------------------------------------
+/// The walk over a fixed set of objects
+/// ---------------------------------------------------------------------------
 
-val update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (h: obj_addr)
-  : Lemma (requires well_formed_heap_part1 major /\ Seq.mem h (objects zero_addr major))
-    (ensures read_word (update_major_pointers major fwd) (hd_address h) ==
+/// The walk preserves the header word of every object on the walk.
+val update_walk_preserves_header
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (h: obj_addr)
+  : Lemma (requires blocks_fit major /\ Seq.mem h (objects zero_addr major))
+    (ensures read_word (update_walk major upd fwd) (hd_address h) ==
              read_word major (hd_address h))
 
-val update_major_pointers_preserves_blue_field
-  (major: heap) (fwd: forwarding_map) (h: obj_addr) (j: nat)
-  : Lemma (requires well_formed_heap_part1 major /\
+/// The walk never writes a field of an object it skips: one that is not
+/// in the rewritten set, or is no-scan.
+val update_walk_preserves_skipped_field
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (h: obj_addr) (j: nat)
+  : Lemma (requires blocks_fit major /\
                     Seq.mem h (objects zero_addr major) /\
-                    is_blue h major /\
+                    (~(upd h) \/ is_no_scan h major) /\
                     j < U64.v (wosize_of_object h major) /\
                     U64.v h + j * 8 + 8 <= heap_size /\
                     (U64.v h + j * 8) % 8 == 0)
     (ensures (let field_addr = U64.uint_to_t (U64.v h + j * 8) in
-              read_word (update_major_pointers major fwd) field_addr ==
+              read_word (update_walk major upd fwd) field_addr ==
               read_word major field_addr))
 
-val update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
-    (ensures well_formed_heap_part4 (update_major_pointers major fwd))
+val update_walk_preserves_wfh_part4
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
+  : Lemma (requires blocks_fit major /\ no_infix_block major)
+    (ensures no_infix_block (update_walk major upd fwd))
 

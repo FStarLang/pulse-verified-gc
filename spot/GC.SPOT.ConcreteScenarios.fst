@@ -28,6 +28,7 @@ module MinorFwdHelpers = GC.Gen.MinorCollectForwarding.Helpers
 module RBridge = GC.Gen.ReachabilityBridge
 module PromoteUpdate = GC.Gen.PromoteUpdate
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
+module RefTable = GC.Gen.RefTable
 module GenImpl = GC.Gen.Impl
 module CheneyPres = GC.Gen.CheneyPreservation
 module MajorGC = GC.Impl
@@ -36,15 +37,15 @@ module MarkBoundedRootLemmas = GC.Impl.MarkBoundedRootLemmas
 module SpecMarkBounded = GC.Spec.MarkBounded
 module SpecMarkBoundedInv = GC.Spec.MarkBoundedInv
 module SpecMark = GC.Spec.Mark
-module SpecSweep = GC.Spec.Sweep
 module SpecHeapModel = GC.Spec.HeapModel
 module SpecHeapGraph = GC.Spec.HeapGraph
 module SpecGraph = GC.Spec.Graph
 module MBP = GC.Impl.MarkBoundedPrecondition
 module GMP = GC.Gen.MajorPrecondition
 
+module FA = GC.Gen.ForwardingArray
 let spot_fwd_array : seq U64.t =
-  Seq.create UpdatePtrs.fwd_array_size 0UL
+  Seq.create FA.fwd_array_size 0UL
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let zero_not_minor_pointer ()
@@ -61,14 +62,14 @@ let zero_not_major_pointer ()
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_fwd_array_zero ()
   =
-  FStar.Seq.Base.lemma_create_len UpdatePtrs.fwd_array_size 0UL;
-  assert (Seq.length spot_fwd_array == UpdatePtrs.fwd_array_size);
+  FStar.Seq.Base.lemma_create_len FA.fwd_array_size 0UL;
+  assert (Seq.length spot_fwd_array == FA.fwd_array_size);
   let aux (i: nat)
     : Lemma (ensures i < Seq.length spot_fwd_array ==> Seq.index spot_fwd_array i == 0UL)
     =
     if i < Seq.length spot_fwd_array then begin
-      assert (i < UpdatePtrs.fwd_array_size);
-      FStar.Seq.Base.lemma_index_create UpdatePtrs.fwd_array_size 0UL i
+      assert (i < FA.fwd_array_size);
+      FStar.Seq.Base.lemma_index_create FA.fwd_array_size 0UL i
     end
   in
   FStar.Classical.forall_intro aux;
@@ -125,7 +126,7 @@ let spot_collection_heap_shape (r: unit{ConcreteMajor.spot_major_room})
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_ref_table_sound (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma (UpdatePtrs.ref_table_sound
+  : Lemma (RefTable.ref_table_sound
              (ConcreteMajor.spot_major_heap r)
              (ThreeObjects.spot_slots (ConcreteMajor.spot_c r)) 1)
   =
@@ -175,7 +176,7 @@ let spot_ref_table_sound (r: unit{ConcreteMajor.spot_major_room})
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_ref_table_covers_minor_ptrs (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma (UpdatePtrs.ref_table_covers_minor_ptrs
+  : Lemma (RefTable.ref_table_covers_minor_ptrs
              (ConcreteMajor.spot_major_heap r)
              (ThreeObjects.spot_slots (ConcreteMajor.spot_c r)) 1)
   =
@@ -341,7 +342,6 @@ let spot_concrete_minor_collect_full_pre (r: unit{ConcreteMajor.spot_major_room}
   spot_fwd_array_zero ();
   spot_ref_table_sound r;
   spot_ref_table_covers_minor_ptrs r;
-  ThreeObjects.spot_slots_singleton_distinct (ConcreteMajor.spot_c r);
   spot_remembered_targets_in_roots r;
   spot_roots_valid_for_minor_collection r;
   Preconditions.minor_collect_full_pre_intro
@@ -382,8 +382,7 @@ let spot_concrete_minor_scenario_pre_from_no_oom
     (ConcreteMajor.spot_c r)
     spot_fwd_array
 
-let spot_concrete_gen_gc_pre_from_stack
-  (r: unit{ConcreteMajor.spot_major_room}) (st: seq obj_addr) (cap: nat)
+let spot_concrete_gen_gc_pre (r: unit{ConcreteMajor.spot_major_room})
   =
   spot_concrete_minor_collect_full_pre r;
   Preconditions.gen_gc_pre_intro
@@ -393,24 +392,7 @@ let spot_concrete_gen_gc_pre_from_stack
     (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
     spot_fwd_array
     (ThreeObjects.spot_slots (ConcreteMajor.spot_c r))
-    1 st cap
-
-let spot_concrete_gen_gc_major_pre_empty_stack
-  (r: unit{ConcreteMajor.spot_major_room}) (cap: nat{cap >= 2})
-  : Lemma
-      (ensures
-        GenImpl.gen_gc_stack_budget
-          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-          Seq.empty cap)
-  =
-  ThreeObjects.spot_roots_len (ConcreteMajor.spot_c r);
-  assert_norm (Seq.length (Seq.empty #obj_addr) == 0)
-
-let spot_concrete_gen_gc_pre_empty_stack
-  (r: unit{ConcreteMajor.spot_major_room}) (cap: nat{cap >= 2})
-  =
-  spot_concrete_gen_gc_major_pre_empty_stack r cap;
-  spot_concrete_gen_gc_pre_from_stack r Seq.empty cap
+    1
 
 let spot_concrete_a_promoted_from_no_oom (r: unit{ConcreteMajor.spot_major_room})
   =

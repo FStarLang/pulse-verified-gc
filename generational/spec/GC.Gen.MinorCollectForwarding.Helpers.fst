@@ -15,13 +15,13 @@ open GC.Spec.Graph
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
-open GC.Gen.Remembered
 open GC.Gen.Reachability
 open GC.Gen.Cheney
 
+open GC.Gen.Cheney.Induction
+open GC.Gen.Cheney.Steps
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module Mark = GC.Spec.Mark
-module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module PromUpdate = GC.Gen.PromoteUpdate
 module CheneyBFS = GC.Gen.CheneyBFS
 module CheneyCorr = GC.Gen.CheneyCorrectness
@@ -31,12 +31,13 @@ module CheneyInj = GC.Gen.CheneyPreservation.Injectivity
 module Forwarding = GC.Gen.CheneyPreservation.Forwarding
 module CG = GC.Gen.CombinedGraph
 module RBridge = GC.Gen.ReachabilityBridge
-module NoBlueUtil = GC.Gen.NoBlueUtil
+module FieldTarget = GC.Spec.FieldTarget
 module GenInv = GC.Gen.HeapInvariant
 module SpecBase = GC.Spec.Base
 module HeapGraph = GC.Spec.HeapGraph
 module HeapModel = GC.Spec.HeapModel
 module Frame = GC.Gen.CheneyPreservation.Frame
+module CE = GC.Gen.CheneyGeneric
 module SpecFields = GC.Spec.Fields
 module SpecObject = GC.Spec.Object
 
@@ -150,61 +151,9 @@ let remembered_targets_in_roots_intro_by_slots major roots slots n
   remembered_slot_targets_from_all_in_roots major roots slots n 0
 #pop-options
 
-let roots_valid_for_minor_collection_nonblue minor major roots = ()
+let roots_valid_with_stw minor major roots = ()
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 1"
-private let field_zero_target_in_roots
-  (major: heap) (roots slots: seq U64.t) (n: nat) (src: obj_addr)
-  : Lemma
-    (requires
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
-      remembered_targets_in_roots major roots slots n /\
-      Seq.mem src (objects zero_addr major) /\
-      is_blue src major = false /\
-      is_no_scan src major = false /\
-      0 < U64.v (wosize_of_object src major) /\
-      U64.v src + 8 <= heap_size /\
-      is_minor_pointer (to_minor_offset (read_word major (U64.uint_to_t (U64.v src)))))
-    (ensures
-      Seq.mem (to_minor_offset (read_word major (U64.uint_to_t (U64.v src)))) roots)
-  =
-  // Spell out the `j := 0` instance of `ref_table_covers_minor_ptrs`; Z3 does
-  // not find it on its own, because the trigger is written over `obj + j * 8`
-  // and the goal mentions the syntactically distinct `U64.v src`.
-  let jz : nat = 0 in
-  assert (
-    (Seq.mem src (objects zero_addr major) /\
-     is_blue src major = false /\
-     is_no_scan src major = false /\
-     jz < U64.v (wosize_of_object src major) /\
-     U64.v src + jz * 8 + 8 <= heap_size /\
-     (let field_val = to_minor_offset
-        (read_word major (U64.uint_to_t (U64.v src + jz * 8))) in
-      is_minor_pointer field_val))
-    ==> (exists (i: nat). i < n /\ U64.v (Seq.index slots i) == U64.v src + jz * 8));
-  assert (exists (i: nat). i < n /\ U64.v (Seq.index slots i) == U64.v src);
-  let i = FStar.IndefiniteDescription.indefinite_description_ghost nat
-            (fun i -> i < n /\ U64.v (Seq.index slots i) == U64.v src) in
-  assert (U64.v (Seq.index slots i) < heap_size);
-  assert (U64.v (Seq.index slots i) % U64.v mword == 0);
-  remembered_slot_targets_from_mem major slots n 0 i
-#pop-options
-
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
-let major_field_zero_covered_from_slots minor major roots slots n =
-  let aux (src: obj_addr) : Lemma
-    (requires
-      Seq.mem src (objects zero_addr major) /\
-      ~(is_blue src major) /\ ~(is_no_scan src major) /\
-      0 < U64.v (wosize_of_object src major) /\
-      U64.v src + 8 <= heap_size /\
-      is_minor_pointer (to_minor_offset (read_word major (U64.uint_to_t (U64.v src)))))
-    (ensures
-      Seq.mem (to_minor_offset (read_word major (U64.uint_to_t (U64.v src)))) roots)
-  = field_zero_target_in_roots major roots slots n src
-  in
-  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-#pop-options
+let roots_valid_with_implies_not_free free minor major roots = ()
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 let rec resolve_roots_length h rts =
@@ -238,15 +187,15 @@ let rec resolve_roots_mem_inv h rts e =
       (fun (rr: U64.t) -> Seq.mem rr rts /\ HeapGraph.resolve_field h rr == e) rr
   end
 
-let rec resolve_roots_congr h1 h2 rts =
-  if Seq.length rts = 0 then ()
-  else resolve_roots_congr h1 h2 (Seq.tail rts)
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
-let result_post_reachable_refl_direct post_major post_roots w =
-  let post_g = HeapModel.create_graph post_major in
-  let goal = result_post_reachable post_major post_roots w in
+let result_post_stw post_major post_roots =
+  HeapModel.create_graph_with_stw post_major
+
+let result_post_reachable_refl_direct post_major free post_roots w =
+  let post_g = HeapModel.create_graph_with free post_major in
+  let goal = result_post_reachable post_major free post_roots w in
   let proof (x: vertex_id{mem_graph_vertex post_g x}) : Lemma
     (requires x == w)
     (ensures goal)
@@ -259,75 +208,28 @@ let result_post_reachable_refl_direct post_major post_roots w =
     ()
     (fun x -> FStar.Classical.move_requires proof x)
 
-let result_post_reachable_refl_resolved post_major rts rr w =
+let result_post_reachable_refl_resolved post_major free rts rr w =
   resolve_roots_mem post_major rts rr;
-  result_post_reachable_refl_direct post_major (resolve_roots post_major rts) w
+  result_post_reachable_refl_direct post_major free (resolve_roots post_major rts) w
 
-let post_minor_reachable_refl_from_root
-  (minor: minor_state) (major: heap) (fp: U64.t)
+let post_minor_reachable_refl_from_root (ph: gc_phase)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
   (roots: seq U64.t) (rr: U64.t) (w: U64.t)
   =
-    let prom = cheney_promote minor major fp roots in
-    let res = cheney_collect_spec minor major fp roots in
-    result_post_reachable_refl_resolved res.mc_major
+    let prom = cheney_promote ph minor major fp roots in
+    let res = cheney_collect_spec_with ph free minor major fp roots in
+    result_post_reachable_refl_resolved res.mc_major free
       (rewrite_roots roots prom.fwd_map) rr w
-#pop-options
-
-#push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
-let remembered_roots_in_roots_from_slots
-  (major: heap) (roots slots: seq U64.t) (n: nat)
-  =
-    let aux (r: U64.t) : Lemma
-      (requires Seq.mem r (minor_roots_from_major major))
-      (ensures Seq.mem r roots)
-    =
-      minor_roots_from_major_sound major r;
-      let obj = FStar.IndefiniteDescription.indefinite_description_ghost obj_addr
-        (fun obj -> exists (field_idx: nat).
-          Seq.mem obj (objects zero_addr major) /\
-          is_blue obj major = false /\
-          is_no_scan obj major = false /\
-          field_idx >= 1 /\
-          field_idx < U64.v (wosize_of_object obj major) /\
-          U64.v obj + field_idx * 8 + 8 <= heap_size /\
-          (U64.v obj + field_idx * 8) % 8 == 0 /\
-          to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))) == r /\
-          is_minor_object_addr r) in
-      let field_idx = FStar.IndefiniteDescription.indefinite_description_ghost nat
-        (fun field_idx ->
-          Seq.mem obj (objects zero_addr major) /\
-          is_blue obj major = false /\
-          is_no_scan obj major = false /\
-          field_idx >= 1 /\
-          field_idx < U64.v (wosize_of_object obj major) /\
-          U64.v obj + field_idx * 8 + 8 <= heap_size /\
-          (U64.v obj + field_idx * 8) % 8 == 0 /\
-          to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))) == r /\
-          is_minor_object_addr r) in
-      is_minor_object_addr_bounds r;
-      to_minor_offset_in_minor_range r;
-      assert (is_minor_pointer r);
-      assert (to_minor_offset r == r);
-      let slot_witness = FStar.IndefiniteDescription.indefinite_description_ghost nat
-        (fun i -> i < n /\ U64.v (Seq.index slots i) == U64.v obj + field_idx * 8) in
-      let slot = Seq.index slots slot_witness in
-      assert (U64.v slot == U64.v obj + field_idx * 8);
-      assert (U64.v slot < heap_size);
-      assert (U64.v slot % U64.v mword == 0);
-      assert (slot == U64.uint_to_t (U64.v obj + field_idx * 8));
-      assert (to_minor_offset (read_word major (slot <: hp_addr)) == r);
-      remembered_slot_targets_from_mem major slots n 0 slot_witness;
-      assert (Seq.mem r (remembered_slot_targets major slots n))
-    in
-    Classical.forall_intro (Classical.move_requires aux)
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let update_preserves_major_target_field
-  (major: heap) (fwd: forwarding_map) (src dst: obj_addr) (j: nat)
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (src dst: obj_addr) (j: nat)
   =
     RBridge.major_object_not_minor_pointer major dst;
-    PromUpdate.update_major_pointers_field_effect major fwd src j;
+    if upd src
+    then PromUpdate.update_walk_field_effect major upd fwd src j
+    else PromUpdate.update_walk_preserves_skipped_field major upd fwd src j;
     let field_addr = U64.uint_to_t (U64.v src + j * 8) in
     let old_raw = read_word major field_addr in
     let old_val = to_minor_offset old_raw in
@@ -339,9 +241,10 @@ let update_preserves_major_target_field
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let heap_field_points_to_graph_edge
-  (g: heap) (src: obj_addr) (dst: U64.t) (j: nat)
+  (g: heap) (free: free_def) (src: obj_addr) (dst: U64.t) (j: nat)
   =
-    wf_object_bound g src;
+    free_def_ok_elim free;
+    wfh_part1_obj_bound g src;
     HeapGraph.object_fits_from_bound src g;
     HeapModel.objects_is_vertex_set g;
     assert (j + 1 < pow2 64);
@@ -356,69 +259,11 @@ let heap_field_points_to_graph_edge
     HeapGraph.get_field_addr_eq g src field_index;
     assert (HeapGraph.get_field g src field_index == dst);
     HeapGraph.pointer_field_is_graph_edge g (objects zero_addr g) src field_index;
-    HeapGraph.is_pointer_field_is_obj_addr dst
+    HeapGraph.is_pointer_field_is_obj_addr dst;
+    HeapModel.create_graph_with_edge free g src (HeapGraph.resolve_field g dst)
 #pop-options
 
 #push-options "--z3rlimit 15 --fuel 1 --ifuel 1"
-private let rec make_edges_mem_inv
-  (src dst h: vertex_id) (succs: seq vertex_id)
-  : Lemma
-    (requires Seq.mem (src, dst) (HeapGraph.make_edges h succs))
-    (ensures src == h /\ Seq.mem dst succs)
-    (decreases Seq.length succs)
-  =
-    if Seq.length succs = 0 then ()
-    else begin
-      let hd = Seq.head succs in
-      let tl = Seq.tail succs in
-      Seq.mem_cons (h, hd) (HeapGraph.make_edges h tl);
-      if (src, dst) = (h, hd) then begin
-        assert (src == h);
-        assert (dst == hd);
-        Seq.mem_cons hd tl
-      end else begin
-        assert (Seq.mem (src, dst) (HeapGraph.make_edges h tl));
-        make_edges_mem_inv src dst h tl;
-        assert (Seq.mem dst tl);
-        Seq.mem_cons hd tl
-      end
-    end
-
-private let object_edges_mem_inv
-  (g: heap) (obj src dst: obj_addr)
-  : Lemma
-    (requires Seq.mem (src, dst) (HeapGraph.object_edges g obj))
-    (ensures src == obj /\ Seq.mem dst (HeapGraph.get_pointer_fields g obj))
-  =
-    make_edges_mem_inv src dst obj (HeapGraph.get_pointer_fields g obj)
-
-private let rec all_edges_mem_inv
-  (g: heap) (objs: seq obj_addr) (src dst: obj_addr)
-  : Lemma
-    (requires Seq.mem (src, dst) (HeapGraph.all_edges g objs))
-    (ensures Seq.mem src objs /\ Seq.mem dst (HeapGraph.get_pointer_fields g src))
-    (decreases Seq.length objs)
-  =
-    if Seq.length objs = 0 then ()
-    else begin
-      let hd = Seq.head objs in
-      let tl = Seq.tail objs in
-      let edges_hd = HeapGraph.object_edges g hd in
-      let edges_tl = HeapGraph.all_edges g tl in
-      Seq.lemma_mem_append edges_hd edges_tl;
-      if Seq.mem (src, dst) edges_hd then begin
-        object_edges_mem_inv g hd src dst;
-        assert (src == hd);
-        assert (Seq.mem dst (HeapGraph.get_pointer_fields g src));
-        Seq.mem_cons hd tl
-      end else begin
-        assert (Seq.mem (src, dst) edges_tl);
-        all_edges_mem_inv g tl src dst;
-        assert (Seq.mem src tl);
-        Seq.mem_cons hd tl
-      end
-    end
-
 private let rec get_pointer_fields_aux_mem_inv
   (g: heap) (obj dst: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t)
   : Lemma
@@ -463,14 +308,19 @@ private let rec get_pointer_fields_aux_mem_inv
     end
 
 let heap_graph_edge_to_pointer_field
-  (g: heap) (src dst: obj_addr)
+  (g: heap) (free: free_def) (src dst: obj_addr)
   =
+    free_def_ok_elim free;
     HeapModel.objects_is_vertex_set g;
+    HeapModel.create_graph_with_edge free g src dst;
     assert (Seq.mem (src, dst) (HeapGraph.all_edges g (objects zero_addr g)));
-    all_edges_mem_inv g (objects zero_addr g) src dst;
+    HeapGraph.all_edges_mem_inv g (objects zero_addr g) src dst;
     assert (Seq.mem src (objects zero_addr g));
     assert (Seq.mem dst (HeapGraph.get_pointer_fields g src));
     let ws = wosize_of_object src g in
+    // A blue block has no edges, and the graph gives any other free block none.
+    if is_blue src g then assert (HeapGraph.get_pointer_fields g src == Seq.empty);
+    assert (in_use free g src);
     if not (HeapGraph.object_fits_in_heap src g) then begin
       assert (HeapGraph.get_pointer_fields g src == Seq.empty);
       assert False
@@ -491,23 +341,23 @@ let heap_graph_edge_to_pointer_field
                   U64.v j <= U64.v ws /\
                   HeapGraph.is_pointer_field (HeapGraph.get_field g src j) /\
                   HeapGraph.resolve_field g (HeapGraph.get_field g src j) == dst)
-        (ensures goal /\ HeapGraph.is_pointer_field dst)
+        (ensures goal /\ HeapGraph.is_pointer_field dst /\ in_use free g dst)
       =
         // The graph successor is the *resolved* field value; the target may be
         // an interior pointer, in which case `dst` is its enclosing closure.
-        let v = HeapGraph.get_field g src j in
-        HeapGraph.is_pointer_field_is_obj_addr v;
+        let w = HeapGraph.get_field g src j in
+        HeapGraph.is_pointer_field_is_obj_addr w;
         wosize_of_object_bound src g;
-        wf_parts ();
+        wf_with_parts ();
         wfh_part1_obj_bound g src;
         hd_address_spec src;
         HeapGraph.get_field_addr_eq g src j;
         let jn : nat = U64.v j - 1 in
         assert (U64.v src + jn * U64.v mword + U64.v mword <= heap_size);
         assert ((U64.v src + jn * U64.v mword) % U64.v mword == 0);
-        assert (read_word g (U64.uint_to_t (U64.v src + jn * U64.v mword)) == v);
-        NoBlueUtil.field_pointer_target_in_objects_nat g src (v <: obj_addr) jn;
-        assert (dst == resolve_object (v <: obj_addr) g);
+        assert (read_word g (U64.uint_to_t (U64.v src + jn * U64.v mword)) == w);
+        FieldTarget.field_pointer_target_not_free_nat free g src (w <: obj_addr) jn;
+        assert (dst == resolve_object (w <: obj_addr) g);
         assert (Seq.mem dst (objects zero_addr g));
         objects_addresses_gt_start zero_addr g dst;
         assert (HeapGraph.is_pointer_field dst);
@@ -519,7 +369,7 @@ let heap_graph_edge_to_pointer_field
           j
       in
       FStar.Classical.exists_elim
-        (goal /\ HeapGraph.is_pointer_field dst)
+        (goal /\ HeapGraph.is_pointer_field dst /\ in_use free g dst)
         #_
         #(fun j -> U64.v j >= 1 /\
                   U64.v j <= U64.v ws /\
@@ -530,11 +380,28 @@ let heap_graph_edge_to_pointer_field
     end
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
+let create_graph_with_wf (free: free_def) (g: heap) =
+  free_def_ok_elim free;
+  let gr = HeapModel.create_graph_with free g in
+  let edge_ok (e: edge)
+    : Lemma (requires Seq.mem e gr.edges)
+            (ensures Seq.mem (fst e) gr.vertices /\ Seq.mem (snd e) gr.vertices)
+    = let (s, d) = e in
+      HeapModel.create_graph_with_edge_subset free g s d;
+      HeapGraph.all_edges_mem_inv g (objects zero_addr g) s d;
+      heap_graph_edge_to_pointer_field g free s d;
+      HeapModel.graph_vertices_mem g s;
+      HeapModel.graph_vertices_mem g d
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires edge_ok)
+#pop-options
+
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let heap_graph_edge_to_field_read
-  (g: heap) (src dst: obj_addr)
+  (g: heap) (free: free_def) (src dst: obj_addr)
   =
-    heap_graph_edge_to_pointer_field g src dst;
+    heap_graph_edge_to_pointer_field g free src dst;
     assert (Seq.mem src (objects zero_addr g));
     assert (is_no_scan src g = false);
     assert (HeapGraph.is_pointer_field dst);
@@ -620,9 +487,9 @@ private let rec coerce_vertex_mem_is_obj_addr
     end
 
 let mem_graph_vertex_at_is_obj_addr
-  (g: heap) (w: U64.t)
+  (g: heap) (free: free_def) (w: U64.t)
   =
-    let post_g = HeapModel.create_graph g in
+    let post_g = HeapModel.create_graph_with free g in
     let goal = is_val_addr w /\ Seq.mem (w <: obj_addr) (objects zero_addr g) in
     let proof (x: vertex_id{mem_graph_vertex post_g x}) : Lemma
       (requires x == w)
@@ -640,23 +507,22 @@ let mem_graph_vertex_at_is_obj_addr
       (fun x -> FStar.Classical.move_requires proof x)
 #pop-options
 
-let vertex_resolves_to_itself h w =
-  mem_graph_vertex_at_is_obj_addr h w;
-  SpecFields.wf_objects_non_infix h (w <: obj_addr);
+let vertex_resolves_to_itself h free w =
+  mem_graph_vertex_at_is_obj_addr h free w;
   SpecObject.resolve_non_infix (w <: obj_addr) h
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
-let cheney_promote_preserves_old_major_field_context
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (src: obj_addr) (j: nat)
+let cheney_promote_preserves_old_major_field_context (ph: gc_phase)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
+  (roots: seq U64.t) (src: obj_addr) (j: nat)
   =
-    GenInv.collection_heap_shape_elim minor major fp;
-    GenInv.major_heap_shape_elim major fp;
+    GenInv.collection_shape_with_elim ph free minor major fp;
+    GenInv.major_shape_with_elim ph free major fp;
     GenInv.minor_heap_shape_elim minor;
-    let prom = cheney_promote minor major fp roots in
-    cheney_promote_preserves_objects minor major fp roots;
-    CheneyPres.cheney_promote_frame_old_header minor major fp roots src;
-    CheneyPres.cheney_promote_frame_old_fields minor major fp roots src j;
+    let prom = cheney_promote ph minor major fp roots in
+    cheney_promote_preserves_objects ph minor major fp roots;
+    Frame.cheney_promote_frame_old_header ph minor major fp roots src;
+    Frame.cheney_promote_frame_old_fields ph minor major fp roots src j;
     color_of_header_eq src major prom.major_final;
     wosize_of_object_spec src major;
     wosize_of_object_spec src prom.major_final;
@@ -691,24 +557,25 @@ private let infix_wosize_lt_parent (h p w wp: int)
 #pop-options
 
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
-let fwd_image_resolves
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (x: U64.t)
+let fwd_image_resolves (ph: gc_phase)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
+  (roots: seq U64.t) (x: U64.t)
   =
-    let prom = cheney_promote minor major fp roots in
+    let prom = cheney_promote ph minor major fp roots in
     let g = prom.major_final in
-    let updated = (cheney_collect_spec minor major fp roots).mc_major in
+    let updated = (cheney_collect_spec_with ph free minor major fp roots).mc_major in
     let rv = resolve_minor minor x in
-    GenInv.collection_heap_shape_elim minor major fp;
-    GenInv.major_heap_shape_elim major fp;
+    GenInv.collection_shape_with_elim ph free minor major fp;
+    GenInv.major_shape_with_elim ph free major fp;
     GenInv.minor_heap_shape_elim minor;
-    cheney_promote_preserves_wfh_part1 minor major fp roots;
-    cheney_promote_preserves_wfh_part4 minor major fp roots;
-    Forwarding.cheney_promote_fwd_noninfix_targets_valid minor major fp roots;
-    Forwarding.cheney_promote_fwd_valid_or_infix minor major fp roots;
+    cheney_promote_preserves_wfh_part1 ph minor major fp roots;
+    cheney_promote_preserves_wfh_part4 ph minor major fp roots;
+    Forwarding.cheney_promote_fwd_noninfix_targets_valid ph minor major fp roots;
+    Forwarding.cheney_promote_fwd_valid_or_infix ph minor major fp roots;
     let t : obj_addr = prom.fwd_map x in
     if is_infix_in_minor minor x then begin
-      Forwarding.cheney_promote_fwd_infix_targets_wf minor major fp roots;
-      Forwarding.cheney_promote_fwd_infix_delta minor major fp roots;
+      Forwarding.cheney_promote_fwd_infix_targets_wf ph minor major fp roots;
+      Forwarding.cheney_promote_fwd_infix_delta ph minor major fp roots;
       infix_parent_in_minor_objects minor x;
       minor_objects_not_infix minor rv;
       assert (rv == infix_parent minor x);
@@ -730,7 +597,7 @@ let fwd_image_resolves
         (U64.v (wosize_of_object (U64.uint_to_t (U64.v t - U64.v (wosize_of_object t g) * 8)) g))
     end else begin
       resolve_minor_non_infix minor x;
-      CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots;
+      CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects ph minor major fp roots;
       assert (~(is_infix t g));
       resolve_non_infix t g;
       objects_addresses_gt_start zero_addr g t;
@@ -743,8 +610,8 @@ let fwd_image_resolves
     // enumerated minor object, hence never itself interior, so its image is an
     // ordinary object of the final heap.
     assert (~(is_infix ((prom.fwd_map rv) <: obj_addr) g));
-    assert (updated == update_major_pointers g prom.fwd_map);
-    Frame.update_major_pointers_frame_target_header g prom.fwd_map t;
+    assert (updated == update_walk g (in_use free g) prom.fwd_map);
+    CE.update_walk_frame_target_header g (in_use free g) prom.fwd_map t;
     resolve_object_locality t g updated;
     // the header is unchanged by the pointer-update pass, so interiority is too
     tag_of_object_spec t g;
@@ -759,13 +626,12 @@ let fwd_image_resolves
 
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 1"
 let major_field_target_in_roots
-  (major: heap) (roots slots: seq U64.t) (n: nat) (src: obj_addr) (j: nat)
+  (major: heap) (free: free_def) (roots slots: seq U64.t) (n: nat) (src: obj_addr) (j: nat)
   =
-  // As in `field_zero_target_in_roots`, the slot-table instance has to be
+  // The slot-table instance has to be
   // spelled out: the trigger is written over `obj + j * 8`.
   assert (
-    (Seq.mem src (objects zero_addr major) /\
-     is_blue src major = false /\
+    (in_use free major src /\
      is_no_scan src major = false /\
      j < U64.v (wosize_of_object src major) /\
      U64.v src + j * 8 + 8 <= heap_size /\
@@ -780,17 +646,66 @@ let major_field_target_in_roots
   remembered_slot_targets_from_mem major slots n 0 i
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
+let major_fields_covered_from_slots minor major free roots slots n =
+  let aux (src: obj_addr) (j: nat) : Lemma
+    (in_use free major src /\ ~(is_no_scan src major) /\
+     j < U64.v (wosize_of_object src major) /\
+     U64.v src + j * 8 + 8 <= heap_size ==>
+     (let v = to_minor_offset (read_word major (U64.uint_to_t (U64.v src + j * 8))) in
+      is_minor_pointer v /\ Seq.mem (resolve_minor minor v) (minor_objects minor) ==>
+      Seq.mem v roots))
+  = if (in_use free major src) &&
+       not (is_no_scan src major) &&
+       j < U64.v (wosize_of_object src major) &&
+       U64.v src + j * 8 + 8 <= heap_size
+    then begin
+      FStar.Math.Lemmas.lemma_mod_plus (U64.v src) j 8;
+      if is_minor_pointer (to_minor_offset
+           (read_word major (U64.uint_to_t (U64.v src + j * 8))))
+      then major_field_target_in_roots major free roots slots n src j
+    end
+  in
+  FStar.Classical.forall_intro_2 aux
+#pop-options
+
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
-let minor_field_infix_target_forwarded
+let minor_field_infix_target_forwarded (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src: U64.t) (j: nat)
   = assert (CheneyBFS.fwd_covers_infix_fields minor
-              (cheney_promote minor major fp roots).fwd_map)
+              (cheney_promote ph minor major fp roots).fwd_map)
 
-let major_field_infix_target_forwarded
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots slots: seq U64.t) (n: nat)
-  (src: obj_addr) (j: nat)
-  = major_field_target_in_roots major roots slots n src j;
+let major_field_infix_target_forwarded (ph: gc_phase)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
+  (roots slots: seq U64.t) (n: nat) (src: obj_addr) (j: nat)
+  = major_field_target_in_roots major free roots slots n src j;
     assert (CheneyBFS.fwd_covers_infix_roots minor
-              (cheney_promote minor major fp roots).fwd_map roots)
+              (cheney_promote ph minor major fp roots).fwd_map roots)
 #pop-options
+
+let post_shape_with ph free minor major fp roots =
+  let res = cheney_collect_spec_with ph free minor major fp roots in
+  CE.cheney_collect_with_preserves_shape ph free minor major fp roots;
+  GenInv.collection_shape_with_elim ph free res.mc_minor res.mc_major res.mc_fp;
+  GenInv.major_shape_with_elim ph free res.mc_major res.mc_fp
+
+let part4_non_infix g h = ()
+
+let image_not_free ph free minor major fp roots m x =
+  let prom = cheney_promote ph minor major fp roots in
+  GenInv.collection_shape_with_elim ph free minor major fp;
+  GenInv.major_shape_with_elim ph free major fp;
+  GenInv.minor_heap_shape_elim minor;
+  CE.cheney_promote_image_not_free ph free minor major fp roots m x;
+  cheney_promote_preserves_wfh_part1 ph minor major fp roots;
+  CE.update_walk_keeps_in_use free prom.major_final (in_use free prom.major_final) prom.fwd_map x
+
+let old_not_free ph free minor major fp roots x =
+  let prom = cheney_promote ph minor major fp roots in
+  GenInv.collection_shape_with_elim ph free minor major fp;
+  GenInv.major_shape_with_elim ph free major fp;
+  GenInv.minor_heap_shape_elim minor;
+  CE.cheney_promote_keeps_in_use ph free minor major fp roots x;
+  cheney_promote_preserves_wfh_part1 ph minor major fp roots;
+  CE.update_walk_keeps_in_use free prom.major_final (in_use free prom.major_final) prom.fwd_map x

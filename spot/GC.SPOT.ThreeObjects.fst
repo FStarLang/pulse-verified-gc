@@ -5,6 +5,7 @@ module Seq = FStar.Seq
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -21,9 +22,10 @@ module Cheney = GC.Gen.Cheney
 module CheneyBFS = GC.Gen.CheneyBFS
 module CG = GC.Gen.CombinedGraph
 module MinorFwd = GC.Gen.MinorCollectForwarding
+module MCFEdges = GC.Gen.MinorCollectForwarding.Edges
 module RBridge = GC.Gen.ReachabilityBridge
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
-module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
+module RefTable = GC.Gen.RefTable
 
 let spot_roots (c: obj_addr) : seq U64.t =
   Seq.cons (c <: U64.t)
@@ -84,10 +86,6 @@ let spot_roots_cases (c: obj_addr) (root: U64.t)
     assert False
   end
 
-let spot_slots_singleton_distinct
-  (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
-  = Preconditions.singleton_slots_pairwise_distinct (spot_slots c) 1
-
 let spot_minor_scenario_pre
   (minor: minor_state) (major: heap) (fp: U64.t)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
@@ -108,7 +106,7 @@ let spot_minor_scenario_pre
   Seq.mem Layout.b_minor (minor_objects minor) /\
   minor_wosize minor Layout.a_minor > 0 /\
   minor_wosize minor Layout.b_minor > 0 /\
-  CheneyBFS.cheney_no_oom minor major fp (spot_roots c)
+  CheneyBFS.cheney_no_oom Idle minor major fp (spot_roots c)
 
 let spot_minor_scenario_pre_intro_from_c_to_a
   (minor: minor_state) (major: heap) (fp: U64.t)
@@ -141,10 +139,10 @@ let spot_minor_scenario_pre_intro_from_c_to_a
 let spot_full_scenario_pre
   (minor: minor_state) (major: heap) (fp: U64.t)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
-  (farr: seq U64.t) (st: seq obj_addr) (cap: nat) : prop =
+  (farr: seq U64.t) : prop =
   spot_minor_scenario_pre minor major fp c farr /\
   Preconditions.gen_gc_pre
-    minor major fp (spot_roots c) farr (spot_slots c) 1 st cap
+    minor major fp (spot_roots c) farr (spot_slots c) 1
 
 let expose_spot_collection_facts
   (minor: minor_state) (major: heap) (fp: U64.t)
@@ -156,22 +154,22 @@ let expose_spot_collection_facts
         GC.Gen.HeapInvariant.collection_heap_shape minor major fp /\
         SpecFields.well_formed_heap major /\
         minor_wf minor /\
-        SpecMark.no_pointer_to_blue major /\
-        RBridge.minor_no_pointer_to_blue minor major /\
-        UpdatePtrs.ref_table_covers_minor_ptrs major (spot_slots c) 1 /\
+        GC.Spec.Fields.well_formed_heap_with GC.Spec.Fields.free_stw major /\
+        GC.Gen.HeapInvariant.minor_major_fields_not_free GC.Spec.Fields.free_stw minor major /\
+        RefTable.ref_table_covers_minor_ptrs major (spot_slots c) 1 /\
         MinorFwd.remembered_targets_in_roots major (spot_roots c) (spot_slots c) 1 /\
-        RBridge.roots_valid_nonblue (spot_roots c) major /\
-        RBridge.major_field_zero_covered minor major (spot_roots c))
+        RBridge.roots_not_free GC.Spec.Fields.free_stw (spot_roots c) major /\
+        RBridge.major_fields_covered minor major GC.Spec.Fields.free_stw (spot_roots c))
   =
   Preconditions.minor_collect_full_pre_elim
     minor major fp (spot_roots c) farr (spot_slots c) 1;
-  MCFH.roots_valid_for_minor_collection_nonblue minor major (spot_roots c);
-  MCFH.major_field_zero_covered_from_slots
-    minor major (spot_roots c) (spot_slots c) 1;
+  MinorFwd.stop_the_world_context minor major fp (spot_roots c);
+  GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw minor major fp (spot_roots c);
+  MCFH.major_fields_covered_from_slots
+    minor major GC.Spec.Fields.free_stw (spot_roots c) (spot_slots c) 1;
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
-  GenInv.minor_heap_shape_elim minor;
-  RBridge.minor_no_pointer_to_blue_from_collection_shape minor major fp
+  GenInv.minor_heap_shape_elim minor
 
 let spot_c_reachable_root
   (minor: minor_state) (major: heap) (fp: U64.t)
@@ -180,10 +178,10 @@ let spot_c_reachable_root
   =
   spot_roots_mem_c c;
   CG.classify_roots_major_mem minor (spot_roots c) (c <: U64.t);
-  CG.major_vertex_char minor major c;
-  assert (CG.mem_cv (CG.MajorV c) (CG.build_combined_graph minor major));
+  CG.major_vertex_char minor major GC.Spec.Fields.free_stw c;
+  assert (CG.mem_cv (CG.MajorV c) (CG.build_combined_graph minor major GC.Spec.Fields.free_stw));
   CG.combined_reachable_root
-    (CG.build_combined_graph minor major)
+    (CG.build_combined_graph minor major GC.Spec.Fields.free_stw)
     (CG.classify_roots minor (spot_roots c))
     (CG.MajorV c)
 
@@ -202,10 +200,11 @@ let spot_a_reachable_root
   GenInv.minor_heap_shape_elim minor;
   minor_objects_not_infix minor Layout.a_minor;
   CG.classify_roots_minor_mem_raw minor (spot_roots c) Layout.a_minor;
-  CG.minor_vertex_char minor major Layout.a_minor;
-  assert (CG.mem_cv (CG.MinorV Layout.a_minor) (CG.build_combined_graph minor major));
+  CG.minor_vertex_char minor major GC.Spec.Fields.free_stw Layout.a_minor;
+  assert (CG.mem_cv (CG.MinorV Layout.a_minor)
+    (CG.build_combined_graph minor major GC.Spec.Fields.free_stw));
   CG.combined_reachable_root
-    (CG.build_combined_graph minor major)
+    (CG.build_combined_graph minor major GC.Spec.Fields.free_stw)
     (CG.classify_roots minor (spot_roots c))
     (CG.MinorV Layout.a_minor)
 
@@ -216,13 +215,13 @@ let spot_a_promoted
   =
   expose_spot_collection_facts minor major fp c farr;
   spot_a_reachable_root minor major fp c farr;
-  MinorFwd.combined_reachable_minor_has_fwd_from_slots
-    minor major fp (spot_roots c) (spot_slots c) 1;
-  assert ((Cheney.cheney_promote minor major fp (spot_roots c)).fwd_map
+  MCFEdges.combined_reachable_minor_has_fwd Idle
+    minor major fp GC.Spec.Fields.free_stw (spot_roots c);
+  assert ((Cheney.cheney_promote Idle minor major fp (spot_roots c)).fwd_map
     Layout.a_minor <> 0UL);
   Postconditions.promoted_image_from_forwarding
     minor major fp (spot_roots c) Layout.a_minor
-    ((Cheney.cheney_promote minor major fp (spot_roots c)).fwd_map Layout.a_minor)
+    ((Cheney.cheney_promote Idle minor major fp (spot_roots c)).fwd_map Layout.a_minor)
 
 /// The c->a slot as the field address `c + idx * 8`, aligned.  Stated in an
 /// empty context: Z3 5.x times out on these facts inside the proof below.
@@ -262,6 +261,6 @@ let spot_final_survives_from_gen_gc_post
   (minor: minor_state) (major: heap) (fp: U64.t)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
   (roots_out: seq U64.t) (ok: bool) (final_major: heap)
-  (st: seq obj_addr) (cap: nat) (x: obj_addr)
+  (x: obj_addr)
   = Postconditions.final_major_survives_from_gen_gc_post
-      minor major fp (spot_roots c) roots_out ok final_major st cap x
+      minor major fp (spot_roots c) roots_out ok final_major x

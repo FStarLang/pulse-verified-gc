@@ -12,18 +12,29 @@ Verified OCaml garbage collector formalized in **F\*** and **Pulse** (concurrent
   `GC.Impl.Stack`, `GC.Impl.ArrayWord`). `.fsti` interfaces exist for Base, Heap, Object,
   ZeroAddr, Stack, ArrayWord.
 - **mark-and-sweep/** — Sequential stop-the-world GC. `spec/` = `GC.Spec.Mark*`,
-  `GC.Spec.Sweep*`, `GC.Spec.Coalesce`, `GC.Spec.SweepCoalesce.*`, the free-list
-  `GC.Spec.Allocator*` family, and `GC.Spec.Correctness`. `impl/` = the Pulse
-  implementation (`GC.Impl`, `GC.Impl.MarkBounded`, `GC.Impl.Allocator`,
-  `GC.Impl.Coalesce`, `GC.Impl.FusedSweepCoalesce`, `GC.Impl.Fields`).  It has no
+  `GC.Spec.FusedSweep*` (the sweep, its invariant and end lemma), `GC.Spec.Walk`,
+  `GC.Spec.FreeList*`, the `GC.Spec.Allocator*` family (with `GC.Spec.Allocator.Phase`,
+  the allocator at a collector phase from the idle one, and `GC.Spec.Allocator.Caches`,
+  the sweep's caches kept derived across an allocation), the sweep phase's
+  `GC.Spec.SweepPhase.*` (its invariant, and `Mutator`: the program's allocations and
+  writes mid-sweep), and `GC.Spec.Correctness`.
+  `impl/` = the Pulse implementation (`GC.Impl`, `GC.Impl.MarkBounded`,
+  `GC.Impl.Allocator`, `GC.Impl.FusedSweepCoalesce`, `GC.Impl.Fields`).  It has no
   extraction target of its own: the generational collector runs this code for its
   major collections, so `generational/snapshot/` is the only checked-in C.
 - **generational/** — Minor/major generational GC with Cheney copying collection.
-  `spec/` = `GC.Gen.Base`, `GC.Gen.MinorHeap`, `GC.Gen.Cheney*`,
-  `GC.Gen.CheneyPreservation.*`, `GC.Gen.Promote*`, `GC.Gen.MinorCollectForwarding.*`,
-  `GC.Gen.Reachability*`, `GC.Gen.TwoPassEquiv*`, `GC.Gen.HeapInvariant`.
+  `spec/` = `GC.Gen.Base`, `GC.Gen.MinorHeap`, `GC.Gen.Cheney*` (definitions in
+  `GC.Gen.Cheney`, the induction over a run in `GC.Gen.Cheney.Induction`, what a run
+  keeps in `GC.Gen.Cheney.Steps`), `GC.Gen.CheneyPreservation.*`, `GC.Gen.CheneyGeneric`,
+  `GC.Gen.Promote*`, `GC.Gen.MinorCollectForwarding.*`, `GC.Gen.Reachability*`,
+  `GC.Gen.ForwardingArray` (the forwarding array and the two update passes),
+  `GC.Gen.TwoPassEquiv*`, `GC.Gen.HeapInvariant`, and the incremental sweep's
+  `GC.Gen.SweepPhase*` (promotion mid-sweep, a minor collection mid-sweep, safety),
+  `GC.Gen.SweptTail` (the sweep's caches kept derived across promotion) and
+  `GC.Gen.Incremental` (the collector's state by phase).  No spec module imports `GC.Gen.Impl.*`.
   `impl/` = `GC.Gen.Impl`, `GC.Gen.Impl.MinorHeap`, `GC.Gen.Impl.Cheney`,
-  `GC.Gen.Impl.Promote`, `GC.Gen.Impl.UpdatePtrs`. Also `ocaml-integration/` + `snapshot/`.
+  `GC.Gen.Impl.Promote`, `GC.Gen.Impl.UpdatePtrs`; the entry points
+  (`minor_collect`, `start_cycle`, `major_slice`, `full_gc`) are in `GC.Gen.Impl`. Also `ocaml-integration/` + `snapshot/`.
 - **spot/** — Small concrete "spot check" scenarios (`GC.SPOT.*`) that instantiate the
   specs on tiny fixed heaps to sanity-check pre/post-conditions. Flat layout, one `.fsti`
   per `.fst`. See `spot/SPOT_STATUS.md`.
@@ -159,12 +170,12 @@ skipped during marking and during Cheney scanning.
 ### Mark-and-Sweep phases
 1. Mark — DFS/BFS from roots, `White → Gray → Black` (`GC.Spec.Mark`,
    `GC.Spec.MarkBounded` for the fuel-bounded variant used by the implementation).
-2. Sweep — reclaim `White` objects onto the free list, reset `Black → White`
-   (`GC.Spec.Sweep`).
-3. Coalesce — merge adjacent free (`Blue`) blocks (`GC.Spec.Coalesce`); the
-   implementation fuses sweep and coalesce in one pass (`GC.Spec.SweepCoalesce`,
-   `GC.Impl.FusedSweepCoalesce`).
-4. Allocate — first-fit search of the free list with block splitting
+2. Sweep — one pass (`GC.Spec.FusedSweep`, `GC.Impl.FusedSweepCoalesce`):
+   reset `Black → White`, free `White` objects, and merge adjacent free (`Blue`)
+   blocks eagerly, editing the ascending free list in place
+   (`GC.Spec.FreeList.Ascending`).  Proved by a per-step loop invariant
+   (`GC.Spec.FusedSweep.Inv/Step/End`).
+3. Allocate — first-fit search of the free list with block splitting
    (`GC.Spec.Allocator` + the `GC.Spec.Allocator.Lemmas.*` family).
 
 ### Generational phases
@@ -174,12 +185,19 @@ skipped during marking and during Cheney scanning.
 2. Promotion — surviving minor objects are allocated in the major heap
    (`GC.Gen.Promote`, `GC.Gen.PromoteUpdate.*`).
 3. Remembered set — major→minor edges recorded by the write barrier
-   (`GC.Gen.Remembered`).
+   (the slot table; `ref_table_covers_with` / `ref_table_sound_with` in
+   `GC.Gen.RefTable`).
 4. Major collection — reuses the mark-and-sweep major heap machinery.
 
-`GC.Gen.TwoPassEquiv` proves the single-pass implementation equals the two-pass
-(copy then patch) specification; `GC.Gen.CheneyCorrectness` and
-`GC.Gen.CheneyPreservation.*` carry the preservation invariants.
+`GC.Gen.TwoPassEquiv` proves the implementation's two passes (promoted objects, then
+remembered slots) equal the single pointer-update walk of the specification.  Facts
+about a Cheney run are instances of `GC.Gen.Cheney.Induction.cheney_promote_induction`
+(an invariant of the Cheney state, given the `cheney_forward_one` step) or
+`cheney_promote_keeps` (an invariant of the major heap, given the `promote_object`
+step): write the step lemma and apply the combinator rather than a new
+fields/roots/scan ladder.  `GC.Gen.Cheney.Steps` and `GC.Gen.CheneyPreservation.*`
+hold the instances; `GC.Gen.CheneyGeneric` proves the collection keeps
+`collection_shape_with free`.
 
 ### End-to-End Correctness (mark-and-sweep/)
 `GC.Spec.Correctness` proves five pillars: well-formedness preservation,
@@ -196,15 +214,10 @@ preservation.
 - `fl_sound` (every cell is a blue heap object) / `fl_complete` (every blue heap
   object is a cell) / `fl_exact` (both).
 
-`GC.Spec.FreeList.Sweep` proves `sweep_preserves_fl_exact`,
-`sweep_establishes_fl_exact` (from a heap with no blue blocks and a null `fp`,
-so the invariant is reachable and preservation is not vacuous) and
-`fl_exact_blue_blocks` (exactness restated against `blue_blocks`).
-
-The step proof is self-supporting: soundness says every cell is blue, so a step
-on a *non*-blue object cannot write a cell's link word. That discharges write
-locality via the existing `sweep_object_preserves_other_body_read` — no new
-aliasing reasoning is needed.
+`GC.Spec.FreeList.Ascending.fl_ascending` is the form the collector keeps:
+the list is every cell of the heap in address order.  It implies `fl_exact`,
+`fl_valid` and `fl_chain_terminates`, and it is local, so the sweep's steps and
+the allocator keep it with insert/remove/replace lemmas.
 
 **Standing side condition — `linkable_heap`.** Every heap object must have room
 for a link word (`wosize >= 1` and field 1 inside the heap). This is *not*
@@ -356,7 +369,7 @@ the first three already wired into every Makefile:
   - `aligned_plus_mul8 base k` — `(base + k * 8) % 8 == 0` from `base % 8 == 0`
 
   Goal shapes that reliably blow up, and their fixes:
-  1. `n - 1 >= 0` / `n - 1 << n` at a recursive call → a helper carrying the facts in its *result type*, e.g. `dec_fuel (fuel: nat{fuel >= 1}) : (r: nat{r == fuel - 1 /\ r << fuel})` (`GC.Gen.Cheney`), or `dec_field_idx` (`GC.Gen.CheneyPreservation.Fields`) for an `if i < n then n - i else 0` measure.
+  1. `n - 1 >= 0` / `n - 1 << n` at a recursive call → a helper carrying the facts in its *result type*, e.g. `dec_fuel (fuel: nat{fuel >= 1}) : (r: nat{r == fuel - 1 /\ r << fuel})`.  (Over a Cheney run, use `GC.Gen.Cheney.Induction` instead: its recursions run in an empty context, which is what these helpers worked around.)
   2. `UInt.size a 64` for `U64.uint_to_t a` → `GC.Spec.Base.mk_hp_addr`, or a module-local `Pure` wrapper such as `mk_u64_lt_heap`.
   3. `(base + k * 8) % 8 == 0` → `GC.Spec.Base.aligned_plus_mul8`; an `SMTPat`-carrying module-local wrapper works well when the coercion appears many times (`aligned_step`/`aligned_step8` in `GC.Spec.Allocator.Dense`). Note `(x + 8)` does *not* match a pattern written `(base + k * 8)`, so both variants are needed.
   4. Two distinct aligned addresses being at least a word apart → an `aligned_distinct`/`aligned_apart` helper, needed before nearly every `read_write_different`.
@@ -455,7 +468,7 @@ Idioms used in this repository:
 | fuel-driven `while (!go)` | `U64.v !fuel_ref + (if !go then 1 else 0)` |
 
 For a heap walk the loop body must be shown to *strictly* advance the cursor.  Where the
-body is a separate `fn` (e.g. `GC.Impl.FusedSweepCoalesce.fused_step`) the strict increase has to
+body is a separate `fn` (e.g. `GC.Impl.FusedSweepCoalesce.sweep_step_impl`) the strict increase has to
 be added to that function's postcondition (`U64.v v1 > U64.v 'v0`).
 
 **Worklist loops with no concrete counter** (the bounded mark loops in
@@ -494,7 +507,7 @@ not be conflated:
   described above.  Preferred for new code: same guarantee, and it leaves *no* runtime
   residue.  The extracted C is just
   `while (go) { if (is_empty(st)) go = false; else mark_step_bounded_impl(heap, st); }`.
-* **Load-bearing fuel** — `GC.Impl.Allocator.allocate` / `.allocate_part1`.  Here the
+* **Load-bearing fuel** — `GC.Impl.Allocator.allocate`.  Here the
   counter *is* tested at runtime (`if (vfuel == 0ULL)` appears in `GC_Impl.c`) and
   running out returns OOM.  This is faithful to the spec, because `alloc_spec` is itself
   defined as `alloc_search g fp 0UL fp wz heap_words` — the budget is part of the
@@ -516,12 +529,11 @@ not be conflated:
   still reachable.
 
   The hypothesis `fl_chain_terminates g fp heap_words` ("the free-list chain reaches a
-  terminal within `heap_words` steps") is not a new assumption: `GC.Impl.Allocator.
-  allocate_part1` already requires it, and `GC.Gen.Impl.Cheney` carries it as a loop
-  invariant.  So clients of `allocate_part1` can invoke the corollary directly with no
-  interface change.  Plain `allocate` cannot yet: it is guarded by `well_formed_heap`,
-  which constrains object layout and pointer closure but says *nothing* about the free
-  list, so it would need `fl_chain_terminates` added to its precondition.
+  terminal within `heap_words` steps") is not a new assumption: `GC.Gen.Impl.Promote.
+  promote_one` requires it, and `GC.Gen.Impl.Cheney` carries it as a loop invariant, so
+  promotion can invoke the corollary directly.  `allocate` itself requires nothing of
+  the heap (it checks every address it follows); a caller wanting the no-spurious-OOM
+  fact supplies `fl_chain_terminates` to the corollary.
 
   Note where the bound really comes from.  `heap_words` is not a safety margin: an acyclic
   free list has at most one node per distinct 8-aligned heap address, i.e. at most

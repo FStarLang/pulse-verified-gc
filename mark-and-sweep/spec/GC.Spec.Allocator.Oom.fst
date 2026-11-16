@@ -25,10 +25,11 @@
 ///      wosize-0 fragment is smaller than any request of at least one word.
 ///      Two layers because the heap-wide claim is not inductive: blocks the walk
 ///      has already passed are not reachable from the next node.
-///   3. `fused_oom_no_fit` -- the coalescer's output satisfies every
-///      hypothesis of layer 2, and the fused pass's heap agrees with it on
-///      everything layer 2 reads, so the statement holds at the pass the
-///      collector actually runs.
+///   3. `fused_oom_no_fit` -- the fused sweep's output satisfies every
+///      hypothesis of layer 2 (`GC.Spec.FusedSweep.End`: the list it leaves
+///      is exact and ascending), so the statement holds at the pass the
+///      collector actually runs; mid-sweep, the sweep invariant does the same
+///      (`sweep_inv_incremental_oom_no_fit`).
 
 module GC.Spec.Allocator.Oom
 
@@ -43,15 +44,14 @@ open GC.Lib.Header
 module U64 = FStar.UInt64
 module FL = GC.Spec.FreeList
 module AllocLemmas = GC.Spec.Allocator.Lemmas
-module Coalesce = GC.Spec.Coalesce
-module CD = GC.Spec.Coalesce.Descending
-module CC = GC.Spec.Coalesce.Complete
 module SI = GC.Spec.SweepInv
 module Corr = GC.Spec.Correctness
-module SC = GC.Spec.SweepCoalesce
-module SCD = GC.Spec.SweepCoalesce.Defs
-module SpecSweep = GC.Spec.Sweep
-module HA = GC.Spec.HeapAgree
+module FS = GC.Spec.FusedSweep
+module FSE = GC.Spec.FusedSweep.End
+module FLA = GC.Spec.FreeList.Ascending
+module SPI = GC.Spec.SweepPhase.Intrinsic
+module AC = GC.Spec.Allocator.Cursor
+module Util = GC.Spec.SweepPhase.Util
 
 /// ---------------------------------------------------------------------------
 /// Layer 1: a failed search saw only small cells
@@ -76,12 +76,12 @@ private let object_above_zero_addr (g: heap) (x: obj_addr)
 
 #push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
 private let rec alloc_search_oom_cells_small
-  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (y: U64.t)
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (y: U64.t) (tag: U64.t{U64.v tag < 256})
   : Lemma
-    (requires well_formed_heap_part1 g /\ wz >= 1 /\
+    (requires blocks_fit g /\ wz >= 1 /\
               AllocLemmas.fl_valid g cur_fp fuel /\
               AllocLemmas.fl_chain_terminates g cur_fp fuel /\
-              (alloc_search g head_fp prev_fp cur_fp wz fuel).obj_out == 0UL /\
+              (alloc_search g head_fp prev_fp cur_fp wz Idle tag fuel).obj_out == 0UL /\
               FL.reachable_on_fl g cur_fp y)
     (ensures U64.v y >= U64.v mword /\ U64.v y < heap_size /\ U64.v y % U64.v mword == 0 /\
              U64.v (wosize_of_object (y <: obj_addr) g) < wz)
@@ -107,7 +107,7 @@ private let rec alloc_search_oom_cells_small
     assert (FL.fl_next g cur_fp == next_fp);
     if block_wz >= wz then begin
       // The search allocates here: the right-justified object lies inside the
-      // block, which well_formed_heap_part1 puts inside the heap, so the bounds
+      // block, which blocks_fit puts inside the heap, so the bounds
       // guard cannot fire and obj_out is a real address -- contradicting the
       // hypothesis that it is 0.
       let leftover = block_wz - wz in
@@ -123,7 +123,7 @@ private let rec alloc_search_oom_cells_small
     else begin
       FL.reachable_uncons g cur_fp y;
       AllocLemmas.fl_chain_terminates_elim g cur_fp fuel;
-      alloc_search_oom_cells_small g head_fp cur_fp next_fp wz (fuel - 1) y
+      alloc_search_oom_cells_small g head_fp cur_fp next_fp wz (fuel - 1) y tag
     end
   end
 #pop-options
@@ -133,13 +133,13 @@ private let rec alloc_search_oom_cells_small
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
-let alloc_spec_oom_no_fit (g: heap) (fp: U64.t) (wz: nat)
+let alloc_spec_oom_no_fit (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
-    (requires well_formed_heap_part1 g /\ wz >= 1 /\
+    (requires blocks_fit g /\ wz >= 1 /\
               AllocLemmas.fl_valid g fp heap_words /\
               AllocLemmas.fl_chain_terminates g fp heap_words /\
               FL.fl_complete g fp /\
-              (alloc_spec g fp wz).obj_out == 0UL)
+              (alloc_spec g fp wz tag).obj_out == 0UL)
     (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ is_blue x g ==>
                U64.v (wosize_of_object x g) < wz)
   = let aux (x: obj_addr)
@@ -148,7 +148,7 @@ let alloc_spec_oom_no_fit (g: heap) (fp: U64.t) (wz: nat)
       = if U64.v (wosize_of_object x g) = 0 then ()
         else begin
           FL.fl_complete_elim g fp x;
-          alloc_search_oom_cells_small g fp 0UL fp wz heap_words x
+          alloc_search_oom_cells_small g fp 0UL fp wz heap_words x tag
         end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
@@ -163,36 +163,47 @@ let alloc_spec_oom_no_fit (g: heap) (fp: U64.t) (wz: nat)
 /// is big enough.**
 ///
 /// Stated over `fused_sweep_coalesce`, the pass the collector runs
-/// (`GC.Impl.collect_with_roots` returns exactly its result), under the
-/// hypotheses `GC.Impl.fst` already discharges at that call site -- the same
-/// ones as `GC.Spec.Coalesce.Complete.fused_exact`.
-#push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
-let fused_oom_no_fit (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) (wz: nat)
+/// (`GC.Impl.collect_with_roots` returns exactly its result), under the mark
+/// postcondition and the free list the previous cycle left.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+let fused_oom_no_fit (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256})
   : Lemma
     (requires
       Corr.mark_post h_init h_mark roots fp /\
-      well_formed_heap h_mark /\
-      heap_objects_dense h_mark /\
-      SpecSweep.fp_in_heap fp h_mark /\
-      (forall (x: obj_addr). Seq.mem x (objects zero_addr h_mark) ==> ~(is_gray x h_mark)) /\
+      FLA.fl_ascending h_init fp /\
       wz >= 1 /\
-      (let r = SCD.fused_sweep_coalesce h_mark in
-       (alloc_spec (fst r) (snd r) wz).obj_out == 0UL))
-    (ensures (let g' = fst (SCD.fused_sweep_coalesce h_mark) in
+      (let r = FS.fused_sweep_coalesce h_mark fp in
+       (alloc_spec (fst r) (snd r) wz tag).obj_out == 0UL))
+    (ensures (let g' = fst (FS.fused_sweep_coalesce h_mark fp) in
               forall (x: obj_addr). Seq.mem x (objects zero_addr g') /\ is_blue x g' ==>
                 U64.v (wosize_of_object x g') < wz))
-  = SC.fused_agrees_sweep_coalesce h_mark fp;
-    Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    let g = fst (SpecSweep.sweep h_mark fp) in
-    let rc = Coalesce.coalesce g in
-    let f = fst (SCD.fused_sweep_coalesce h_mark) in
-    Coalesce.coalesce_preserves_wf g;
+  = let r = FS.fused_sweep_coalesce h_mark fp in
+    Corr.fused_post_gen h_init h_mark roots fp;
+    FSE.sweep_post_elim h_mark (fst r) (snd r);
     wf_parts ();
-    CD.coalesce_fl_entry g;
-    CC.coalesce_exact g;
-    HA.agree_wfh_part1 f (fst rc);
-    HA.agree_fl_valid f (fst rc) (snd rc) heap_words;
-    HA.agree_fl_chain_terminates f (fst rc) (snd rc) heap_words;
-    HA.agree_fl_exact f (fst rc) (snd rc);
-    alloc_spec_oom_no_fit f (snd rc) wz
+    FLA.fl_ascending_valid (fst r) (snd r);
+    FLA.fl_ascending_exact (fst r) (snd r);
+    alloc_spec_oom_no_fit (fst r) (snd r) wz tag
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Mid-sweep
+/// ---------------------------------------------------------------------------
+
+/// **#29 mid-sweep**: the free list is exact at every point of the sweep
+/// (`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental`), so an allocation
+/// fails only when no free block anywhere is big enough.
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
+let sweep_inv_incremental_oom_no_fit (g: heap) (fp: U64.t) (c: U64.t) (wz: nat)
+                                     (tag: U64.t{U64.v tag < 256})
+  : Lemma (requires SPI.sweep_inv_incremental g fp c /\ wz >= 1 /\
+                    (AC.alloc_phase g fp (GC.Spec.Phase.Sweeping c) wz tag).obj_out == 0UL)
+          (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr g) /\ is_blue x g ==>
+                     U64.v (wosize_of_object x g) < wz)
+  = SPI.sweep_inv_incremental_elim g fp c;
+    AC.alloc_phase_fields g fp (GC.Spec.Phase.Sweeping c) wz tag;
+    FLA.fl_ascending_valid g fp;
+    FLA.fl_ascending_exact g fp;
+    Util.part1_holds g;
+    alloc_spec_oom_no_fit g fp wz tag
 #pop-options

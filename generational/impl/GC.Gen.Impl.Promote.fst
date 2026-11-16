@@ -23,7 +23,11 @@ open GC.Gen.Impl.MinorHeap
 open GC.Impl.Heap
 module Alloc = GC.Impl.Allocator
 module AllocLemmas = GC.Spec.Allocator.Lemmas
-module AllocProps = GC.Gen.AllocProps
+module AllocProps = GC.Spec.Allocator.Props
+module AP = GC.Spec.Allocator.Phase
+module ST = GC.Gen.SweptTail
+module FLA = GC.Spec.FreeList.Ascending
+module FLAsc = GC.Gen.FreeListAscending
 module SF = GC.Spec.Fields
 module Obj = GC.Impl.Object
 module SpecObj = GC.Spec.Object
@@ -92,6 +96,7 @@ fn read_minor_scan_wosize (minor: minor_heap_t) (obj: U64.t)
 /// Postcondition: the output heap equals the spec's copy_fields result.
 /// This spec refinement enables callers to apply spec-level preservation lemmas.
 module PromoteSpec = GC.Gen.Promote
+module Ph = GC.Spec.Phase
 module WBL = GC.Gen.WriteBodyLemmas
 
 let field_in_bounds (limit obj_addr wosize jv: nat)
@@ -179,116 +184,123 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
 }
 #pop-options
 
-/// Promote one minor-heap object to the major heap.
+/// ---------------------------------------------------------------------------
+/// The phase record across a promotion
+/// ---------------------------------------------------------------------------
+
+/// The caches across a change that keeps the walk and every header.
+let phase_rel_heads (g g': heap) (v: Alloc.phase_state) (ph: Ph.gc_phase)
+  : Lemma (requires Alloc.phase_rel g v ph /\ GC.Spec.SweepPhase.Intrinsic.same_heads g g')
+          (ensures Alloc.phase_rel g' v ph)
+  = GC.Spec.SweepPhase.Intrinsic.state_at_heads g g' v.Alloc.ps_cursor
+
+ghost
+fn phase_heads (phase: R.ref Alloc.phase_state) (g': heap)
+  requires Alloc.is_phase phase 'g 'ph ** pure (GC.Spec.SweepPhase.Intrinsic.same_heads 'g g')
+  ensures Alloc.is_phase phase g' 'ph
+{
+  unfold (Alloc.is_phase phase 'g 'ph);
+  with v. assert (R.pts_to phase v);
+  phase_rel_heads 'g g' v 'ph;
+  fold (Alloc.is_phase phase g' 'ph)
+}
+
+ghost
+fn phase_idle (phase: R.ref Alloc.phase_state) (g': heap)
+  requires Alloc.is_phase phase 'g Ph.Idle
+  ensures Alloc.is_phase phase g' Ph.Idle
+{
+  unfold (Alloc.is_phase phase 'g Ph.Idle);
+  fold (Alloc.is_phase phase g' Ph.Idle)
+}
+
+/// A nursery object's size is far below a header's limit.
+let wz_small (obj wz: nat)
+  : Lemma (requires obj + wz * 8 <= minor_heap_size) (ensures wz < pow2 54)
+  = FStar.Math.Lemmas.pow2_plus 54 3;
+    assert_norm (pow2 3 == 8)
+
+/// Promote one minor-heap object to the major heap, at the collector's phase.
 /// Returns the new address in major heap (0UL on OOM).
 ///
-/// Preconditions only require well_formed_heap_part1 (not full wfh) because
-/// during a promotion loop, pointer closure (part2) is temporarily violated
-/// (minor pointers are written into the major heap body). The allocator only
-/// needs part1 + fl_valid + fl_chain_terminates to function correctly.
+/// The promotion runs at the phase the record holds, which it keeps derived
+/// from the heap: the allocation does (`Alloc.allocate`), and the copy of
+/// the fields writes no header (`GC.Gen.SweptTail.promote_heads`).  Nothing
+/// of pointer closure is needed: during a promotion loop it is temporarily
+/// violated (minor pointers are written into the major heap body).
 #push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
-               (obj: U64.t)
+               (phase: R.ref Alloc.phase_state) (obj: U64.t)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
            R.pts_to fp_ref 'fp **
+           Alloc.is_phase phase 'ms 'ph **
            pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
                  U64.v obj % 8 == 0 /\
-                 // Minor object body within bounds (from minor_objects_wosize_bound)
                  U64.v obj + minor_wosize {data='md; bump='mb} obj * 8 <= minor_heap_size /\
-                 // Major heap structural well-formedness (weaker than full wfh)
-                 SF.well_formed_heap_part1 'ms /\
-                 AllocLemmas.fl_valid 'ms 'fp heap_words /\
-                 AllocLemmas.fl_chain_terminates 'ms 'fp heap_words)
+                 FLA.fl_ascending 'ms 'fp)
   returns new_addr: U64.t
   ensures exists* md2 mb2 ms2 fp2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
     R.pts_to fp_ref fp2 **
+    Alloc.is_phase phase ms2 'ph **
     pure (let minor_st = {data='md; bump='mb} in
           let wz = minor_wosize minor_st obj in
           md2 == 'md /\ mb2 == 'mb /\
-          SF.well_formed_heap_part1 ms2 /\
-          AllocLemmas.fl_valid ms2 fp2 heap_words /\
-          AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
+          GC.Spec.Fields.blocks_fit ms2 /\
+          GC.Spec.Allocator.Lemmas.fl_valid ms2 fp2 heap_words /\
+          GC.Spec.Allocator.Lemmas.fl_chain_terminates ms2 fp2 heap_words /\
+          FLA.fl_ascending ms2 fp2 /\
           (wz > 0 ==>
-            (let spec_res = PromoteSpec.promote_object minor_st 'ms obj 'fp wz in
+            (let spec_res = PromoteSpec.promote_object minor_st 'ms obj 'fp wz 'ph in
              ms2 == spec_res.major_out /\
              fp2 == spec_res.fp_out /\
              new_addr == spec_res.new_addr)) /\
           (wz == 0 ==> ms2 == 'ms /\ fp2 == 'fp /\ new_addr == 0UL))
 {
+  GC.Spec.SweepPhase.Util.part1_holds 'ms;
+  FLA.fl_ascending_valid 'ms 'fp;
   // Read the wosize from the minor object header
   let wosize = read_minor_wosize minor obj;
   if U64.eq wosize 0UL {
     // Zero-sized object, nothing to copy
     0UL
   } else {
-    // Allocate space in major heap (using weak precondition variant)
-    let fp = R.op_Bang fp_ref;
-    let res = Alloc.allocate_part1 major fp wosize;
-    let new_fp = fst res;
-    let new_obj = snd res;
-    R.op_Colon_Equals fp_ref new_fp;
+    // The copy is allocated with the minor object's tag, as
+    // `caml_alloc_shr (wosize, tag)` does, so its header is written once.
+    let minor_hdr = minor_read minor (U64.sub obj 8UL);
+    let tag = Obj.getTag minor_hdr;
+    // Connect impl tag to spec minor_tag and establish bound
+    minor_tag_bound {data='md; bump='mb} obj;
+    assert (pure (U64.v tag == minor_tag {data='md; bump='mb} obj));
+    assert (pure (tag == PromoteSpec.promoted_tag {data='md; bump='mb} obj));
+    // The allocation is at the phase the record holds, and keeps its caches
+    // derived; the copy below writes no header.
+    wz_small (U64.v obj) (U64.v wosize);
+    ST.promote_heads 'ph 'ms 'fp {data='md; bump='mb} obj (U64.v wosize);
+    FLAsc.promote_object_preserves_fl_ascending {data='md; bump='mb} 'ms obj 'fp (U64.v wosize) 'ph;
+    PromoteSpec.promote_object_preserves_alloc_invariants {data='md; bump='mb} 'ms obj 'fp (U64.v wosize) 'ph;
+    let new_obj = Alloc.allocate major fp_ref phase wosize tag;
+    AP.alloc_at_fields 'ph 'ms 'fp (U64.v wosize) tag;
     if U64.eq new_obj 0UL {
-      // OOM — alloc_spec with obj_out=0 returns heap unchanged
-      AllocLemmas.alloc_spec_preserves_wfh_part1 'ms fp (U64.v wosize);
-      AllocLemmas.alloc_spec_preserves_fl_valid_part1 'ms fp (U64.v wosize);
-      AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 'ms fp (U64.v wosize);
-      // Spec refinement for OOM: promote_object returns {major_out='ms; fp_out='fp; new_addr=0UL}
-      AllocProps.alloc_spec_oom_unchanged 'ms fp (U64.v wosize);
-      PromoteSpec.promote_object_oom {data='md; bump='mb} 'ms obj 'fp (U64.v wosize);
+      // OOM: nothing changes
+      PromoteSpec.promote_object_oom {data='md; bump='mb} 'ms obj 'fp (U64.v wosize) 'ph;
       0UL
     } else {
       // Derive bounds from allocator postconditions:
-      AllocProps.alloc_spec_obj_in_objects_part1 'ms fp (U64.v wosize);
+      AP.alloc_at_obj_body_within_heap 'ph 'ms 'fp (U64.v wosize) tag;
+      AP.alloc_at_obj_wosize 'ph 'ms 'fp (U64.v wosize) tag;
       assert (pure (U64.v new_obj >= U64.v mword /\
                     U64.v new_obj < heap_size /\
                     U64.v new_obj % U64.v mword == 0));
-      AllocLemmas.alloc_spec_preserves_wfh_part1 'ms fp (U64.v wosize);
-      AllocLemmas.alloc_spec_preserves_fl_valid_part1 'ms fp (U64.v wosize);
-      AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 'ms fp (U64.v wosize);
-      AllocProps.alloc_spec_obj_wosize_part1 'ms fp (U64.v wosize);
-      SF.wfh_part1_obj_bound
-        (GC.Spec.Allocator.alloc_spec 'ms fp (U64.v wosize)).heap_out
-        (new_obj <: obj_addr);
       assert (pure (U64.v new_obj + U64.v wosize * 8 <= heap_size));
-      AllocLemmas.alloc_spec_obj_not_in_chain_part1 'ms fp (U64.v wosize);
+      PromoteSpec.promote_object_success {data='md; bump='mb} 'ms obj 'fp (U64.v wosize) 'ph;
       // Copy all fields (0..wosize-1) from minor to major
       copy_fields_loop minor major obj new_obj wosize;
-      // Bind the existential witnesses from copy_fields_loop
-      with md_c mb_c ms_c. _;
-      // --- Retag: copy the tag from minor header to the promoted major header ---
-      // Read minor header to extract the original tag
-      let minor_hdr = minor_read minor (U64.sub obj 8UL);
-      let tag = Obj.getTag minor_hdr;
-      // Connect impl tag to spec minor_tag and establish bound
-      minor_tag_bound {data='md; bump='mb} obj;
-      assert (pure (U64.v tag == minor_tag {data='md; bump='mb} obj));
-      assert (pure (minor_tag {data='md; bump='mb} obj < 256));
-      // Read promoted major header (from copied state) and rebuild with correct tag
-      let major_hdr_addr = U64.sub new_obj 8UL;
-      SpecHeap.hd_address_spec (new_obj <: obj_addr);
-      assert (pure (major_hdr_addr == SpecHeap.hd_address (new_obj <: obj_addr)));
-      let major_hdr = read_word major major_hdr_addr;
-      let wz_read = SpecObj.getWosize major_hdr;
-      let new_hdr = Obj.makeHeader wz_read Header.White tag;
-      // Bridge: Obj.makeHeader == SpecObj.makeHeader (both compute pack_header)
-      Obj.makeHeader_eq_pack_header wz_read Header.White tag;
-      SpecObj.makeHeader_is_pack_header64 wz_read Header.White tag;
-      assert (pure (new_hdr == SpecObj.makeHeader wz_read Header.White tag));
-      // Unfold set_promoted_tag so SMT sees it equals our write_word on copied state
-      PromoteSpec.set_promoted_tag_unfold ms_c (new_obj <: obj_addr) (minor_tag {data='md; bump='mb} obj);
-      // Assert the key equality: our write matches set_promoted_tag
-      assert (pure (
-        SpecHeap.write_word ms_c major_hdr_addr new_hdr ==
-        PromoteSpec.set_promoted_tag ms_c (new_obj <: U64.t) (minor_tag {data='md; bump='mb} obj)));
-      write_word major major_hdr_addr new_hdr;
-      // Ghost: prove spec refinement + allocator invariant preservation
-      PromoteSpec.promote_object_success {data='md; bump='mb} 'ms obj 'fp (U64.v wosize);
-      PromoteSpec.promote_object_preserves_alloc_invariants
-        {data='md; bump='mb} 'ms obj 'fp (U64.v wosize);
+      with ms2. assert (is_heap major ms2);
+      phase_heads phase ms2;
       new_obj
     }
   }

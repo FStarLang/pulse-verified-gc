@@ -1,0 +1,219 @@
+/// ---------------------------------------------------------------------------
+/// GC.Spec.MarkPhase.Mutator - the program's field writes and loads while marking
+/// ---------------------------------------------------------------------------
+///
+/// Between mark slices the program runs.  This module is about its field
+/// writes into the major heap, and the loads by which it obtains pointers, at
+/// the marking invariant `GC.Spec.MarkPhase.marking_inv g outside_refs sp`
+/// (`outside_refs`: what is pointed at from outside the major heap -- the
+/// program's roots and the nursery's fields, chosen by the generational
+/// layer; `sp`: the scan position, which the program's events keep).
+///
+///   * **What a write changes** (`write_*`): a write into a body word `a` of a
+///     non-free object `x` that is not a closure keeps the walk and every
+///     header; only `x`'s edges change.  Every other block's edges are kept
+///     (`write_edges_other`).  An edge of `x` afterwards is an old one or goes
+///     to the new value's target (`write_edges_new`); an old edge of `x` is
+///     kept or went to the old value's target (`write_edges_old`); and field
+///     by field the same (`write_field_edge_at`).  These need
+///     the targets of pointers in non-free blocks to keep their resolution,
+///     which holds because their headers are walk positions or infix headers
+///     inside closures, never a body word of `x` (`target_header_away`).
+///   * **The write** (`marking_write`): `marking_inv` survives the write when
+///     the old value's target is not white (no edge into a white object is
+///     cut unseen) and the new value's target is not white, an outside
+///     reference, or one the marker will reach (`target_ok`: a black `x`, or
+///     a scanned field of the partly scanned object, may then point at it).
+///     A write into a scanned field of the partly scanned object is no
+///     different from a write into a black object: nothing restarts its
+///     scan.  Writing an immediate (`marking_write_immediate`) is the
+///     instance with no target.
+///   * **The deletion barrier** (`marking_write_barrier`): darken the old
+///     value first (`darken`, 4.14's `caml_darken`), then write: the cut edge
+///     ends at a grey object, so every path the marker would follow restarts
+///     there.
+///   * **Loads** (`marking_load`): a field of an object the program holds,
+///     loaded into a register, is one the marker will reach if white -- so
+///     the program may hold it too.  This is why clause 2 of the invariant
+///     stays true of the program's roots between collector events.
+
+module GC.Spec.MarkPhase.Mutator
+
+open FStar.Seq
+open GC.Spec.Base
+open GC.Spec.Heap
+open GC.Spec.Object
+open GC.Spec.Fields
+open GC.Spec.MarkPhase
+
+module U64 = FStar.UInt64
+module SPI = GC.Spec.SweepPhase.Intrinsic
+module SPM = GC.Spec.SweepPhase.Mutator
+
+/// ---------------------------------------------------------------------------
+/// Headers and edges
+/// ---------------------------------------------------------------------------
+
+/// Everything read off a header is the same when the header is.
+val header_kept_facts (g g': heap) (y: obj_addr)
+  : Lemma (requires read_word g' (hd_address y) == read_word g (hd_address y))
+          (ensures (is_black y g' <==> is_black y g) /\ (is_white y g' <==> is_white y g) /\
+                   (is_gray y g' <==> is_gray y g) /\ (is_blue y g' <==> is_blue y g) /\
+                   is_no_scan y g' == is_no_scan y g /\ is_closure y g' == is_closure y g /\
+                   wosize_of_object y g' == wosize_of_object y g)
+
+/// An edge of `s` in `g'` is one in `g`, or ends where `q` holds, when every
+/// pointer field of `s` in `g'` is the same in `g` (with the same resolution)
+/// or resolves where `q` holds.
+val field_edge_transfer (g g': heap) (s: obj_addr) (q: obj_addr -> prop) (t: obj_addr)
+  : Lemma (requires blocks_fit g /\ blocks_fit g' /\
+                    Seq.mem s (objects zero_addr g) /\ Seq.mem s (objects zero_addr g') /\
+                    read_word g' (hd_address s) == read_word g (hd_address s) /\
+                    field_edge g' s t /\
+                    (~(is_no_scan s g) ==>
+                     (forall (j: nat). j < U64.v (wosize_of_object s g) /\ U64.v s + j * 8 + 8 <= heap_size ==>
+                       (let w = read_word g' (U64.uint_to_t (U64.v s + j * 8)) in
+                        is_pointer w ==>
+                        (read_word g (U64.uint_to_t (U64.v s + j * 8)) == w /\
+                         resolve_object (w <: obj_addr) g == resolve_object (w <: obj_addr) g') \/
+                        q (resolve_object (w <: obj_addr) g')))))
+          (ensures field_edge g s t \/ q t)
+
+/// ---------------------------------------------------------------------------
+/// What a write changes
+/// ---------------------------------------------------------------------------
+
+/// The value `w` points (resolved) at `t`.
+let value_target (g: heap) (w: U64.t) (t: obj_addr) : prop =
+  is_pointer w /\ resolve_object (w <: obj_addr) g == t
+
+/// A storable value's header -- a walk position, or an infix header inside a
+/// closure -- is not a body word of a non-free object that is not a closure.
+val target_header_away (g: heap) (x: obj_addr) (a: hp_addr) (w: U64.t)
+  : Lemma (requires well_formed_heap g /\ in_use free_stw g x /\ ~(is_closure x g) /\
+                    SPM.in_body g x a /\ is_pointer w /\ SPI.storable free_stw g w)
+          (ensures hd_address (w <: obj_addr) <> a /\
+                   (forall (v: U64.t). resolve_object (w <: obj_addr) (write_word g a v) ==
+                                  resolve_object (w <: obj_addr) g))
+
+/// A write into the body of a non-free object keeps the walk and every header.
+val write_heads (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\ SPM.in_body g x a)
+          (ensures SPI.same_heads g (write_word g a v) /\
+                   objects zero_addr (write_word g a v) == objects zero_addr g /\
+                   (forall (y: obj_addr). Seq.mem y (objects zero_addr g) ==>
+                      read_word (write_word g a v) (hd_address y) == read_word g (hd_address y) /\
+                      (is_black y (write_word g a v) <==> is_black y g) /\
+                      (is_white y (write_word g a v) <==> is_white y g) /\
+                      (is_gray y (write_word g a v) <==> is_gray y g) /\
+                      (is_blue y (write_word g a v) <==> is_blue y g) /\
+                      is_no_scan y (write_word g a v) == is_no_scan y g /\
+                      is_closure y (write_word g a v) == is_closure y g))
+
+/// The write keeps well-formedness (`SPM.program_write`: the new value is
+/// storable if `x` is scannable), for any admissible definition of free ...
+val write_wf_with (free: free_def) (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires free_def_ok free /\ well_formed_heap_with free g /\ SPM.program_write free g x a v)
+          (ensures well_formed_heap_with free (write_word g a v))
+
+/// ... in particular for `free_stw`.
+val write_wf (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires well_formed_heap g /\ SPM.program_write free_stw g x a v)
+          (ensures well_formed_heap (write_word g a v))
+
+/// Every other non-free block keeps its edges.
+val write_edges_other (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t) (u t: obj_addr)
+  : Lemma (requires well_formed_heap g /\ in_use free_stw g x /\ ~(is_closure x g) /\
+                    SPM.in_body g x a /\ in_use free_stw g u /\ u <> x)
+          (ensures field_edge (write_word g a v) u t <==> field_edge g u t)
+
+/// An edge of `x` after the write is an old one or goes to the new value's
+/// target.
+val write_edges_new (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t) (t: obj_addr)
+  : Lemma (requires well_formed_heap g /\ SPM.program_write free_stw g x a v /\
+                    field_edge (write_word g a v) x t)
+          (ensures field_edge g x t \/ value_target g v t)
+
+/// An edge of `x` before the write is kept, or went to the old value's target.
+val write_edges_old (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t) (t: obj_addr)
+  : Lemma (requires well_formed_heap g /\ SPM.program_write free_stw g x a v /\ field_edge g x t)
+          (ensures field_edge (write_word g a v) x t \/ value_target g (read_word g a) t)
+
+/// Field by field: a field of a non-free block points after the write where
+/// it did before, unless it is the written word, which points at the new
+/// value's target (and pointed at the old one's).
+val write_field_edge_at (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t) (u: obj_addr) (k: nat) (t: obj_addr)
+  : Lemma (requires well_formed_heap g /\ SPM.program_write free_stw g x a v /\ in_use free_stw g u)
+          (ensures (field_edge_at (write_word g a v) u k t ==>
+                      field_edge_at g u k t \/ (u == x /\ value_target g v t)) /\
+                   (field_edge_at g u k t ==>
+                      field_edge_at (write_word g a v) u k t \/ (u == x /\ value_target g (read_word g a) t)))
+
+/// ---------------------------------------------------------------------------
+/// The write
+/// ---------------------------------------------------------------------------
+
+/// The old value's target, if any, is not white.
+let target_not_white (g: heap) (w: U64.t) : prop =
+  is_pointer w ==> ~(is_white (resolve_object (w <: obj_addr) g) g)
+
+/// The new value's target, if any, may be pointed at by a scanned edge (of
+/// a black object, or of a scanned field of the partly scanned object): it
+/// is not white, or it is an outside reference, or the marker will reach it
+/// from the scan position `sp`.
+let target_ok (g: heap) (outside_refs: obj_addr -> prop) (sp: scan_pos) (w: U64.t) : prop =
+  is_pointer w ==>
+  (let t = resolve_object (w <: obj_addr) g in
+   ~(is_white t g) \/ outside_refs t \/ marker_will_reach g sp t)
+
+/// **A write keeps the marking invariant** when the old target is not white
+/// and the new one is fine for a black object to point at (when `x` is
+/// scannable: a no-scan block has no edges).  `outside_refs` need not change: the
+/// program may still hold what it stored.
+val marking_write (g: heap) (outside_refs: obj_addr -> prop) (sp: scan_pos) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires marking_inv g outside_refs sp /\ SPM.program_write free_stw g x a v /\
+                    (~(is_no_scan x g) ==> target_not_white g (read_word g a) /\ target_ok g outside_refs sp v))
+          (ensures marking_inv (write_word g a v) outside_refs sp)
+
+/// Writing an immediate (not a pointer) where the old value was not a white
+/// object's pointer.
+val marking_write_immediate (g: heap) (outside_refs: obj_addr -> prop) (sp: scan_pos) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires marking_inv g outside_refs sp /\ in_use free_stw g x /\ ~(is_closure x g) /\ SPM.in_body g x a /\
+                    ~(is_pointer v) /\ target_not_white g (read_word g a))
+          (ensures marking_inv (write_word g a v) outside_refs sp)
+
+/// ---------------------------------------------------------------------------
+/// The deletion barrier
+/// ---------------------------------------------------------------------------
+
+/// 4.14's `caml_darken`: grey the object a value points at, if it is a white
+/// block.
+let darken (g: heap) (w: U64.t) : GTot heap =
+  if is_pointer w &&
+     Seq.mem (resolve_object (w <: obj_addr) g) (objects zero_addr g) &&
+     is_white (resolve_object (w <: obj_addr) g) g
+  then makeGray (resolve_object (w <: obj_addr) g) g
+  else g
+
+/// Darkening keeps the invariant.
+val darken_inv (g: heap) (outside_refs: obj_addr -> prop) (sp: scan_pos) (w: U64.t)
+  : Lemma (requires marking_inv g outside_refs sp)
+          (ensures marking_inv (darken g w) outside_refs sp)
+
+/// **The deletion barrier** (4.14's `caml_modify` while marking): darken the
+/// old value, then write.  The new value is storable and fine for a black
+/// object to point at, as in `marking_write`; the old one is anything.
+val marking_write_barrier (g: heap) (outside_refs: obj_addr -> prop) (sp: scan_pos) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires marking_inv g outside_refs sp /\ SPM.program_write free_stw g x a v /\
+                    (~(is_no_scan x g) ==> target_ok g outside_refs sp v))
+          (ensures marking_inv (write_word (darken g (read_word g a)) a v) outside_refs sp)
+
+/// ---------------------------------------------------------------------------
+/// Loads
+/// ---------------------------------------------------------------------------
+
+/// **A load**: the program holds `s` and reads a field of it pointing at
+/// `t`; it may hold `t` too.
+val marking_load (g: heap) (outside_refs: obj_addr -> prop) (sp: scan_pos) (s t: obj_addr)
+  : Lemma (requires marking_inv g outside_refs sp /\ outside_refs s /\ in_use free_stw g s /\ field_edge g s t)
+          (ensures marking_inv g (fun w -> outside_refs w \/ w == t) sp)

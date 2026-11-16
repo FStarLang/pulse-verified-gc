@@ -7,11 +7,11 @@
 ///   - safe:   nothing reachable is lost (`gc_safe`), and
 ///   - live:   everything unreachable is reclaimed and reusable (`gc_live`).
 ///
-/// Every clause is stated of `s2` itself, the heap the fused sweep+coalesce
-/// pass leaves.  The collector's postcondition relates `s2` to the spec heap
-/// `coalesce (sweep h_mark fp)` only up to `heaps_agree_mod_free` (equal
-/// headers, live fields and free links; free-block bodies not compared), so
-/// the coalescing theorems are carried across that relation.
+/// Every clause is stated of `s2` itself, the heap the fused sweep leaves.
+/// The collector's postcondition says `(s2, final_fp)` is exactly
+/// `fused_sweep_coalesce h_mark fp` for a marked heap `h_mark` satisfying
+/// `mark_post`, so the fused sweep's theorems (`GC.Spec.FusedSweep.Facts`,
+/// `GC.Spec.FusedSweep.Lossless`) apply to it directly.
 ///
 /// Fully proved, no admits.  See docs/gc-correct.md for each clause in plain
 /// words, the lemmas it rests on, and the vacuity checks at the end of this
@@ -32,16 +32,15 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module Impl = GC.Impl
 module Corr = GC.Spec.Correctness
-module SpecSweep = GC.Spec.Sweep
-module SpecCoalesce = GC.Spec.Coalesce
-module HA = GC.Spec.HeapAgree
-module CC = GC.Spec.Coalesce.Correct
+module FS = GC.Spec.FusedSweep
+module FSF = GC.Spec.FusedSweep.Facts
+module LS = GC.Spec.FusedSweep.Lossless
 module FL = GC.Spec.FreeList
+module FLA = GC.Spec.FreeList.Ascending
 module Part = GC.Spec.Partition
-module WE = GC.Spec.WalkEnd
+module W = GC.Spec.Walk
 module IH = GC.Impl.Heap
 module IS = GC.Impl.Stack
-module Complete = GC.Spec.Coalesce.Complete
 module HeapGraph = GC.Spec.HeapGraph
 module Graph = GC.Spec.Graph
 module Mark = GC.Spec.Mark
@@ -69,9 +68,9 @@ let collect_post
 /// `gc_coalesce_source`'s body, at a given witness.
 let source_at
   (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) (h_mark: heap) : prop =
+  FLA.fl_ascending h_init fp /\
   Corr.mark_post h_init h_mark roots fp /\
-  (let r = SpecCoalesce.coalesce (fst (SpecSweep.sweep h_mark fp)) in
-   HA.heaps_agree_mod_free s2 (fst r) /\ final_fp == snd r)
+  (s2, final_fp) == FS.fused_sweep_coalesce h_mark fp
 
 /// Name the witness of `gc_coalesce_source`, so each clause below can be
 /// proved about one fixed marked heap.
@@ -84,16 +83,13 @@ let source_mark
       (fun h_mark -> source_at h_init s2 roots fp final_fp h_mark)
 
 /// The free list from `final_fp` is exactly the free blocks of `s2` that have
-/// a field: `coalesce_exact` on the swept heap, carried to `s2`.
+/// a field: `fused_exact`.
 let s2_fl_exact
   (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) (h_mark: heap)
   : Lemma
     (requires source_at h_init s2 roots fp final_fp h_mark)
     (ensures FL.fl_exact s2 final_fp)
-  = let hs = fst (SpecSweep.sweep h_mark fp) in
-    Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    Complete.coalesce_exact hs;
-    HA.agree_fl_exact s2 (fst (SpecCoalesce.coalesce hs)) final_fp
+  = FSF.fused_exact h_init h_mark roots fp
 
 /// ---------------------------------------------------------------------------
 /// 1. Safety: nothing reachable is lost
@@ -129,8 +125,8 @@ let unreachable_reclaimed (h_init s2: heap) (roots: seq obj_addr) : prop =
   forall (x: obj_addr) (p: nat).
     Seq.mem x (objects zero_addr h_init) /\
     ~(Corr.heap_reachable h_init roots x) /\
-    CC.in_extent h_init x p ==>
-    CC.blue_covered s2 p
+    LS.in_extent h_init x p ==>
+    LS.blue_covered s2 p
 
 /// (b) Every free block of `s2` with at least one field is on the free list
 ///     from `final_fp`.  A wosize-0 block (a fragment) cannot hold a link and
@@ -138,31 +134,17 @@ let unreachable_reclaimed (h_init s2: heap) (roots: seq obj_addr) : prop =
 let free_blocks_listed (s2: heap) (final_fp: U64.t) : prop =
   FL.fl_complete s2 final_fp
 
-/// What `GC.Spec.Coalesce.Correct.coalesce_correct` says of coalescing `hs`
-/// into `g'`, verbatim.
-let coalesce_correct_post (hs g': heap) : prop =
-  CC.total_free_space g' == CC.total_free_space hs /\
-  (forall (p: nat). p < heap_size ==> (CC.blue_covered g' p <==> CC.blue_covered hs p)) /\
-  (forall (x y: obj_addr).
-     Seq.mem x (objects zero_addr g') /\ Seq.mem y (objects zero_addr g') /\
-     is_blue x g' /\ is_blue y g' /\ CC.adjacent g' x y ==> False) /\
-  (forall (x: obj_addr).
-     Seq.mem x (objects zero_addr hs) /\ is_white x hs ==>
-     Seq.mem x (objects zero_addr g') /\ is_white x g' /\
-     wosize_of_object x g' == wosize_of_object x hs)
-
-/// (c1) `s2` is, modulo free-block bodies, the coalescing of the swept heap
-///      of a correct mark, and what `coalesce_correct` says of that coalescing
-///      holds with `s2` as its output: no free space or coverage lost.
+/// (c1) `s2` is the fused sweep of the heap a correct mark left, and the sweep
+///      lost nothing (`GC.Spec.FusedSweep.Lossless.sweep_lossless`): its free
+///      space is the marked heap's dead space, a word is free exactly when it
+///      was dead, no two free blocks touch, and every live object survives
+///      white at its size.
 let coalescing_lossless
   (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) : prop =
   exists (h_mark: heap).
     Corr.mark_post h_init h_mark roots fp /\
-    (let hs = fst (SpecSweep.sweep h_mark fp) in
-     let r = SpecCoalesce.coalesce hs in
-     HA.heaps_agree_mod_free s2 (fst r) /\
-     final_fp == snd r /\
-     coalesce_correct_post hs s2)
+    (s2, final_fp) == FS.fused_sweep_coalesce h_mark fp /\
+    LS.sweep_lossless h_mark s2
 
 /// (c2) `s2` splits into live objects, the free list from `final_fp` and
 ///      fragments, with no fourth class: `heap_partition_strong` at `s2`, the
@@ -173,153 +155,13 @@ let heap_partitioned (s2: heap) (final_fp: U64.t) : prop =
   + (Part.white_whsize s2 objs
      + Part.onchain_whsize s2 final_fp objs
      + Part.frag_whsize s2 objs) * U64.v mword
-  == WE.walk_end s2 zero_addr
+  == W.walk_end s2 zero_addr
 
 let gc_live (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) : prop =
   unreachable_reclaimed h_init s2 roots /\
   free_blocks_listed s2 final_fp /\
   coalescing_lossless h_init s2 roots fp final_fp /\
   heap_partitioned s2 final_fp
-
-/// ---------------------------------------------------------------------------
-/// Sweep keeps every object's size
-/// ---------------------------------------------------------------------------
-
-/// Restated from `GC.Spec.SweepCoalesce.sweep_preserves_wosize_all`, which is
-/// private there; same proof, from the public `GC.Spec.Sweep` lemmas.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
-let rec sweep_aux_preserves_wosize_any
-  (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
-  : Lemma (requires well_formed_heap g /\
-                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
-                    SpecSweep.fp_in_heap fp g /\
-                    Seq.mem x (objects zero_addr g) /\
-                    Seq.mem x objs /\
-                    Graph.is_vertex_set (HeapGraph.coerce_to_vertex_list objs))
-          (ensures wosize_of_object x g == wosize_of_object x (fst (SpecSweep.sweep_aux g objs fp)))
-          (decreases Seq.length objs)
-  = if Seq.length objs = 0 then ()
-    else begin
-      let obj = Seq.head objs in
-      let (g', fp') = SpecSweep.sweep_object g obj fp in
-      Seq.lemma_index_is_nth objs 0;
-      SpecSweep.sweep_object_preserves_objects g obj fp;
-      SpecSweep.sweep_object_preserves_wf g obj fp;
-      wf_objects_non_infix g obj;
-      HeapGraph.coerce_tail_lemma objs;
-      if obj = x then begin
-        SpecSweep.sweep_object_preserves_self_wosize g x fp;
-        HeapGraph.coerce_mem_lemma (Seq.tail objs) x;
-        assert (~(Seq.mem x (Seq.tail objs)));
-        (if is_white obj g then () else ());
-        assert (SpecSweep.fp_in_heap fp' g');
-        SpecSweep.sweep_aux_preserves_wosize_nonmember g' (Seq.tail objs) fp' x
-      end else begin
-        SpecSweep.sweep_object_preserves_other_header g obj fp x;
-        Seq.lemma_mem_inversion objs;
-        (if is_white obj g then () else ());
-        assert (SpecSweep.fp_in_heap fp' g');
-        sweep_aux_preserves_wosize_any g' (Seq.tail objs) fp' x
-      end
-    end
-#pop-options
-
-#push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
-let sweep_preserves_wosize_all
-  (g: heap) (fp: U64.t) (x: obj_addr)
-  : Lemma (requires well_formed_heap g /\
-                    Mark.noGreyObjects g /\
-                    SpecSweep.fp_in_heap fp g /\
-                    Seq.mem x (objects zero_addr g))
-          (ensures wosize_of_object x g == wosize_of_object x (fst (SpecSweep.sweep g fp)))
-  = GC.Spec.HeapModel.objects_is_vertex_set g;
-    sweep_aux_preserves_wosize_any g (objects zero_addr g) fp x
-#pop-options
-
-/// ---------------------------------------------------------------------------
-/// Carrying `coalesce_correct` from the spec heap to `s2`
-/// ---------------------------------------------------------------------------
-
-/// Every conjunct of `coalesce_correct_post` reads only the object walk and
-/// each object's header word, and `heaps_agree_mod_free` keeps both.
-let agree_headers (s2 g': heap)
-  : Lemma
-    (requires HA.heaps_agree_mod_free s2 g')
-    (ensures objects zero_addr s2 == objects zero_addr g' /\
-             (forall (x: obj_addr). Seq.mem x (objects zero_addr g') ==>
-                read_word s2 (hd_address x) == read_word g' (hd_address x)))
-  = HA.agree_objects s2 g';
-    introduce forall (x: obj_addr).
-      Seq.mem x (objects zero_addr g') ==>
-      read_word s2 (hd_address x) == read_word g' (hd_address x)
-    with introduce _ ==> _
-    with HA.agree_block s2 g' x
-
-let transfer_free_space (s2 g': heap)
-  : Lemma
-    (requires HA.heaps_agree_mod_free s2 g')
-    (ensures CC.total_free_space s2 == CC.total_free_space g')
-  = agree_headers s2 g';
-    CC.free_space_agree s2 g' (objects zero_addr g')
-
-let transfer_blue_covered (s2 g': heap) (p: nat)
-  : Lemma
-    (requires HA.heaps_agree_mod_free s2 g')
-    (ensures CC.blue_covered s2 p <==> CC.blue_covered g' p)
-  = agree_headers s2 g';
-    let aux (x: obj_addr)
-      : Lemma (Seq.mem x (objects zero_addr g') ==>
-               ((is_blue x s2 /\ CC.in_extent s2 x p) <==>
-                (is_blue x g' /\ CC.in_extent g' x p)))
-      = if Seq.mem x (objects zero_addr g') then CC.blue_covered_by_agree s2 g' x p
-    in
-    FStar.Classical.forall_intro aux
-
-let transfer_no_adjacent_blue (s2 g': heap)
-  : Lemma
-    (requires HA.heaps_agree_mod_free s2 g' /\
-              (forall (x y: obj_addr).
-                 Seq.mem x (objects zero_addr g') /\ Seq.mem y (objects zero_addr g') /\
-                 is_blue x g' /\ is_blue y g' /\ CC.adjacent g' x y ==> False))
-    (ensures forall (x y: obj_addr).
-               Seq.mem x (objects zero_addr s2) /\ Seq.mem y (objects zero_addr s2) /\
-               is_blue x s2 /\ is_blue y s2 /\ CC.adjacent s2 x y ==> False)
-  = agree_headers s2 g';
-    introduce forall (x y: obj_addr).
-      Seq.mem x (objects zero_addr s2) /\ Seq.mem y (objects zero_addr s2) /\
-      is_blue x s2 /\ is_blue y s2 /\ CC.adjacent s2 x y ==> False
-    with introduce _ ==> _
-    with CC.adjacent_by_agree s2 g' x y
-
-let transfer_white (hs s2 g': heap)
-  : Lemma
-    (requires HA.heaps_agree_mod_free s2 g' /\
-              (forall (x: obj_addr).
-                 Seq.mem x (objects zero_addr hs) /\ is_white x hs ==>
-                 Seq.mem x (objects zero_addr g') /\ is_white x g' /\
-                 wosize_of_object x g' == wosize_of_object x hs))
-    (ensures forall (x: obj_addr).
-               Seq.mem x (objects zero_addr hs) /\ is_white x hs ==>
-               Seq.mem x (objects zero_addr s2) /\ is_white x s2 /\
-               wosize_of_object x s2 == wosize_of_object x hs)
-  = introduce forall (x: obj_addr).
-      Seq.mem x (objects zero_addr hs) /\ is_white x hs ==>
-      Seq.mem x (objects zero_addr s2) /\ is_white x s2 /\
-      wosize_of_object x s2 == wosize_of_object x hs
-    with introduce _ ==> _
-    with HA.agree_block s2 g' x
-
-let coalesce_correct_transfer (hs s2 g': heap)
-  : Lemma
-    (requires HA.heaps_agree_mod_free s2 g' /\ coalesce_correct_post hs g')
-    (ensures coalesce_correct_post hs s2)
-  = transfer_free_space s2 g';
-    introduce forall (p: nat). p < heap_size ==>
-      (CC.blue_covered s2 p <==> CC.blue_covered hs p)
-    with introduce _ ==> _
-    with transfer_blue_covered s2 g' p;
-    transfer_no_adjacent_blue s2 g';
-    transfer_white hs s2 g'
 
 /// ---------------------------------------------------------------------------
 /// The liveness clauses, one lemma each
@@ -335,31 +177,17 @@ let live_b
 let live_c2
   (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) (h_mark: heap)
   : Lemma
-    (requires source_at h_init s2 roots fp final_fp h_mark /\ Corr.gc_postcondition s2)
+    (requires source_at h_init s2 roots fp final_fp h_mark)
     (ensures heap_partitioned s2 final_fp)
-  = Corr.gc_postcondition_elim s2;
-    s2_fl_exact h_init s2 roots fp final_fp h_mark;
-    Part.heap_partition_strong s2 final_fp
+  = FSF.fused_partition h_init h_mark roots fp
 
 let live_c1
   (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) (h_mark: heap)
   : Lemma
     (requires source_at h_init s2 roots fp final_fp h_mark)
     (ensures coalescing_lossless h_init s2 roots fp final_fp)
-  = let hs = fst (SpecSweep.sweep h_mark fp) in
-    let r = SpecCoalesce.coalesce hs in
-    Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    Corr.coalesce_precondition_bridge_gen h_init h_mark roots fp;
-    CC.coalesce_correct hs;
-    coalesce_correct_transfer hs s2 (fst r);
-    introduce exists (h: heap).
-      Corr.mark_post h_init h roots fp /\
-      (let hs = fst (SpecSweep.sweep h fp) in
-       let r = SpecCoalesce.coalesce hs in
-       HA.heaps_agree_mod_free s2 (fst r) /\
-       final_fp == snd r /\
-       coalesce_correct_post hs s2)
-    with h_mark and ()
+  = Corr.mark_post_sweep_pre h_init h_mark roots fp;
+    LS.fused_sweep_lossless h_mark fp
 
 /// The graph-shape facts of the initial heap that `gc_precondition_with_roots`
 /// carries; pillar 2 of `mark_post` is guarded by them.
@@ -368,35 +196,10 @@ let graph_pre (h_init: heap) (roots: seq obj_addr) : prop =
   let roots' = HeapGraph.coerce_to_vertex_list roots in
   Graph.graph_wf g /\ Graph.is_vertex_set roots' /\ Graph.subset_vertices roots' g.vertices
 
-/// Neither grey nor black, so white or blue; sweep leaves either blue.
-let swept_blue (g: heap) (fp: U64.t) (x: obj_addr)
-  : Lemma
-    (requires well_formed_heap g /\ Mark.noGreyObjects g /\ SpecSweep.fp_in_heap fp g /\
-              Seq.mem x (objects zero_addr g) /\ ~(is_black x g))
-    (ensures is_blue x (fst (SpecSweep.sweep g fp)))
-  = is_white_iff x g;
-    is_blue_iff x g;
-    is_gray_iff x g;
-    is_black_iff x g;
-    if is_white x g then SpecSweep.sweep_white_becomes_blue g fp
-    else SpecSweep.sweep_blue_stays_blue g fp
-
-/// A word of an object's extent lies inside the heap.
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-let extent_in_heap (g: heap) (x: obj_addr) (p: nat)
-  : Lemma
-    (requires well_formed_heap g /\ Seq.mem x (objects zero_addr g) /\ CC.in_extent g x p)
-    (ensures p < heap_size)
-  = let wz = U64.v (wosize_of_object x g) in
-    wf_parts ();
-    assert (U64.v (hd_address x) + 8 + wz * 8 <= Seq.length g);
-    assert (CC.next_pos g x == U64.v (hd_address x) + (1 + wz) * 8)
-#pop-options
-
 /// One word `p` of one object `x` unreachable in `h_init`.  `x` is not black
-/// in the marked heap (pillar 2), so sweep leaves it blue at the same size;
-/// its words are then blue-covered in the swept heap, coalescing keeps that
-/// coverage (`coalesce_correct` 3a), and agreement carries it to `s2`.
+/// in the marked heap (pillar 2), and marking kept its size, so `p` lies in a
+/// dead block of the marked heap; the fused sweep puts every such word in a
+/// free block (`fused_dead_covered`).
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 let live_a_word
   (h_init s2: heap) (roots: seq obj_addr) (fp final_fp: U64.t) (h_mark: heap)
@@ -406,28 +209,16 @@ let live_a_word
               graph_pre h_init roots /\
               Seq.mem x (objects zero_addr h_init) /\
               ~(Corr.heap_reachable h_init roots x) /\
-              CC.in_extent h_init x p)
-    (ensures CC.blue_covered s2 p)
-  = let hs = fst (SpecSweep.sweep h_mark fp) in
-    let g' = fst (SpecCoalesce.coalesce hs) in
-    Corr.mark_post_elim_wfh h_init h_mark roots fp;
-    Corr.mark_post_elim_no_grey h_init h_mark roots fp;
-    Corr.mark_post_elim_objects h_init h_mark roots fp;
-    Corr.mark_post_elim_fp h_init h_mark roots fp;
+              LS.in_extent h_init x p)
+    (ensures LS.blue_covered s2 p)
+  = Corr.mark_post_elim_objects h_init h_mark roots fp;
     Corr.mark_post_elim_black_reachable h_init h_mark roots fp;
     Corr.mark_post_elim_wosize h_init h_mark roots fp;
     GC.Spec.HeapModel.graph_vertices_mem h_init x;
     assert (~(is_black x h_mark));
-    swept_blue h_mark fp x;
-    SpecSweep.sweep_preserves_objects h_mark fp;
-    sweep_preserves_wosize_all h_mark fp x;
-    assert (CC.in_extent hs x p);
-    assert (CC.blue_covered hs p);
-    Corr.sweep_post_sweep_strong_gen h_init h_mark roots fp;
-    extent_in_heap hs x p;
-    Corr.coalesce_precondition_bridge_gen h_init h_mark roots fp;
-    CC.coalesce_correct hs;
-    transfer_blue_covered s2 g' p
+    assert (LS.in_extent h_mark x p);
+    Corr.mark_post_sweep_pre h_init h_mark roots fp;
+    LS.fused_dead_covered h_mark fp x p
 #pop-options
 
 let live_a
@@ -440,8 +231,8 @@ let live_a
   = introduce forall (x: obj_addr) (p: nat).
       Seq.mem x (objects zero_addr h_init) /\
       ~(Corr.heap_reachable h_init roots x) /\
-      CC.in_extent h_init x p ==>
-      CC.blue_covered s2 p
+      LS.in_extent h_init x p ==>
+      LS.blue_covered s2 p
     with introduce _ ==> _
     with live_a_word h_init s2 roots fp final_fp h_mark x p
 
@@ -487,7 +278,7 @@ fn collect_correct
 }
 
 /// `gc_correct` at `GC.Impl.collect`, the entry point the generational
-/// collector (`GC.Gen.Impl.gen_gc`) calls.  `collect` is `collect_with_roots`
+/// collector (`GC.Gen.Impl.full_gc`) calls.  `collect` is `collect_with_roots`
 /// with the gray stack as the root set, so its precondition is
 /// `gc_precondition_with_roots 's 'st 'st` and its postcondition is
 /// `collect_post` at roots `'st`: `gc_correct` applies unchanged.
@@ -546,8 +337,8 @@ let unreachable_reclaimed_header
     (requires unreachable_reclaimed h_init s2 roots /\
               Seq.mem x (objects zero_addr h_init) /\
               ~(Corr.heap_reachable h_init roots x))
-    (ensures CC.blue_covered s2 (U64.v (hd_address x)))
+    (ensures LS.blue_covered s2 (U64.v (hd_address x)))
   = assert (whsize h_init x >= 1);
-    assert (CC.next_pos h_init x >= U64.v (hd_address x) + U64.v mword);
-    assert (CC.in_extent h_init x (U64.v (hd_address x)))
+    assert (LS.next_pos h_init x >= U64.v (hd_address x) + U64.v mword);
+    assert (LS.in_extent h_init x (U64.v (hd_address x)))
 #pop-options

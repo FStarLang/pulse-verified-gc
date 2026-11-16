@@ -175,8 +175,7 @@ val wosize_of_object_spec : (h_addr: obj_addr) -> (g: heap) ->
 /// `Whsize_wosize`). Unlike wosize, whsize is conserved when a block is split,
 /// since the split costs a header word, so counting arguments use this.
 /// Arguments are (heap, object), not wosize_of_object's (object, heap), to
-/// match the definitions this replaces in GC.Spec.Partition and
-/// GC.Spec.Coalesce.
+/// match the definitions this replaces in GC.Spec.Partition.
 let whsize (g: heap) (x: obj_addr) : GTot nat = 1 + U64.v (wosize_of_object x g)
 
 /// Color predicates
@@ -445,8 +444,7 @@ val resolve_infix_invalid_parent : (addr: obj_addr) -> (g: heap) ->
 ///   * the offset is at least two words.  OCaml lays out a closure as
 ///     `code ptr | closinfo | ...` before the first infix header, so
 ///     `Infix_offset_val` is never 0 or 1.  This is what makes it impossible for
-///     field 0 of an object to be an infix header (see
-///     `GC.Spec.Fields.no_field_points_to_field_zero`);
+///     field 0 of an object to be an infix header;
 ///   * the infix object lies within its parent's fields.  Without this an
 ///     "infix" could name a closure arbitrarily far away.
 unfold

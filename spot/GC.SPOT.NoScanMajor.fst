@@ -3,6 +3,7 @@ module GC.SPOT.NoScanMajor
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module FL = GC.Spec.FreeList
+module FLA = GC.Spec.FreeList.Ascending
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -11,7 +12,6 @@ module SpecFields = GC.Spec.Fields
 module SpecObj = GC.Spec.Object
 module Header = GC.Lib.Header
 module SpecMark = GC.Spec.Mark
-module Sweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module HeapGraph = GC.Spec.HeapGraph
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -465,8 +465,8 @@ let spot_ns_field_read (r: unit{spot_ns_room}) (src: obj_addr) (j: nat)
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
-let spot_ns_wfh_part1 (r: unit{spot_ns_room})
-  : Lemma (ensures SpecFields.well_formed_heap_part1 (spot_ns_heap r))
+let spot_ns_blocks_fit (r: unit{spot_ns_room})
+  : Lemma (ensures SpecFields.blocks_fit (spot_ns_heap r))
   =
   let g = spot_ns_heap r in
   spot_ns_layout_facts r;
@@ -482,8 +482,8 @@ let spot_ns_wfh_part1 (r: unit{spot_ns_room})
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
-let spot_ns_wfh_part4 (r: unit{spot_ns_room})
-  : Lemma (ensures SpecFields.well_formed_heap_part4 (spot_ns_heap r))
+let spot_ns_no_infix_block (r: unit{spot_ns_room})
+  : Lemma (ensures SpecFields.no_infix_block (spot_ns_heap r))
   =
   let g = spot_ns_heap r in
   let aux (h: obj_addr)
@@ -501,22 +501,21 @@ let spot_ns_wfh_part4 (r: unit{spot_ns_room})
 /// field closure is demanded only of *scannable* sources, and S is not one, so
 /// the raw word never has to target an object.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
-let spot_ns_wfh_part2_3 (r: unit{spot_ns_room})
-  : Lemma (ensures SpecFields.well_formed_heap_part2 (spot_ns_heap r) /\
-                   SpecFields.well_formed_heap_part3 (spot_ns_heap r))
+let spot_ns_pointer_clauses (r: unit{spot_ns_room})
+  : Lemma (ensures SpecFields.pointers_lead_to_non_free SpecFields.free_stw (spot_ns_heap r) /\
+                   SpecFields.interior_pointers_valid SpecFields.free_stw (spot_ns_heap r))
   =
   let g = spot_ns_heap r in
-  spot_ns_wfh_part1 r;
-  spot_ns_wfh_part4 r;
+  spot_ns_blocks_fit r;
+  spot_ns_no_infix_block r;
   let field_closure (src: obj_addr) (j: nat)
     : Lemma (requires Seq.mem src (SpecFields.objects zero_addr g) /\
-                      SpecFields.fields_constrained g src /\
+                      ~(SpecObj.is_no_scan src g) /\
                       j < U64.v (SpecObj.wosize_of_object src g) /\
                       U64.v src + j * 8 + 8 <= heap_size)
             (ensures (let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
                       SpecFields.is_pointer v ==>
-                      Seq.mem (SpecObj.resolve_object (v <: obj_addr) g)
-                              (SpecFields.objects zero_addr g) /\
+                      SpecFields.in_use SpecFields.free_stw g (SpecObj.resolve_object (v <: obj_addr) g) /\
                       SpecObj.infix_addr_wf g (SpecFields.objects zero_addr g)
                               (v <: obj_addr)))
     =
@@ -527,15 +526,16 @@ let spot_ns_wfh_part2_3 (r: unit{spot_ns_room})
     // scannable, so this case is unreachable.
     spot_ns_field_read r src j
   in
-  SpecFields.well_formed_heap_part2_3_from_resolved_field_closure g field_closure
+  SpecFields.pointer_clauses_from_field_closure SpecFields.free_stw g
+    (fun src j -> field_closure src j)
 
 let spot_ns_well_formed_heap (r: unit{spot_ns_room})
   : Lemma (ensures SpecFields.well_formed_heap (spot_ns_heap r))
   =
-  spot_ns_wfh_part1 r;
-  spot_ns_wfh_part2_3 r;
-  spot_ns_wfh_part4 r;
-  reveal_opaque (`%SpecFields.well_formed_heap) SpecFields.well_formed_heap
+  spot_ns_blocks_fit r;
+  spot_ns_pointer_clauses r;
+  spot_ns_no_infix_block r;
+  SpecFields.wf_parts ()
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -611,7 +611,7 @@ let spot_ns_fp_valid (r: unit{spot_ns_room})
     (spot_ns_fp r) (spot_ns_heap r) heap_words
 
 let spot_ns_fp_in_heap (r: unit{spot_ns_room})
-  : Lemma (ensures Sweep.fp_in_heap (spot_ns_fp r) (spot_ns_heap r))
+  : Lemma (ensures GC.Spec.FreeList.fp_in_heap (spot_ns_fp r) (spot_ns_heap r))
   =
   spot_ns_fp_pointer_or_zero r;
   spot_ns_fp_valid r;
@@ -770,34 +770,6 @@ let spot_ns_no_gray_objects (r: unit{spot_ns_room})
   SweepInv.no_gray_intro g
 #pop-options
 
-/// The raw word is never followed, so it cannot be a pointer to the free list:
-/// `no_pointer_to_blue` skips no-scan sources for exactly the same reason
-/// `well_formed_heap_part2` does.
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
-let spot_ns_no_pointer_to_blue (r: unit{spot_ns_room})
-  : Lemma (ensures SpecMark.no_pointer_to_blue (spot_ns_heap r))
-  =
-  let g = spot_ns_heap r in
-  spot_ns_wfh_part1 r;
-  let field_no_blue (src: obj_addr) (dst: obj_addr) (j: nat)
-    : Lemma (requires Seq.mem src (SpecFields.objects zero_addr g) /\
-                      ~(SpecObj.is_blue src g) /\
-                      SpecFields.fields_constrained g src /\
-                      j < U64.v (SpecObj.wosize_of_object src g) /\
-                      U64.v src + j * 8 + 8 <= heap_size /\
-                      SpecFields.is_pointer_to
-                        (read_word g (U64.uint_to_t (U64.v src + j * 8))) dst)
-            (ensures ~(SpecObj.is_blue (SpecObj.resolve_object dst g) g))
-    =
-    spot_ns_object_cases r src;
-    spot_ns_s_reads r;
-    spot_ns_free_reads r;
-    spot_ns_field_read r src j
-  in
-  SpecMark.no_pointer_to_blue_intro_from_fields g field_no_blue
-
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// The audit
 /// ---------------------------------------------------------------------------
@@ -826,6 +798,27 @@ let spot_ns_fl_complete (r: unit{spot_ns_room})
   FStar.Classical.forall_intro (FStar.Classical.move_requires proof)
 #pop-options
 
+
+/// The free list is ascending: its only cell is the free block, which is the
+/// head and links to null.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let spot_ns_fl_ascending (r: unit{spot_ns_room})
+  : Lemma (ensures FLA.fl_ascending (spot_ns_heap r) (spot_ns_fp r))
+  =
+  let g = spot_ns_heap r in
+  let only (x: U64.t)
+    : Lemma (requires FL.fl_cell g x) (ensures x == spot_ns_fp r)
+    =
+    spot_ns_object_cases r x; spot_ns_s_reads r; spot_ns_free_reads r; spot_ns_layout_facts r
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires only);
+  spot_ns_objects r; spot_ns_free_reads r; spot_ns_layout_facts r;
+  hd_address_spec (spot_free_obj r);
+  spot_ns_fl_valid r;
+  GC.Spec.Allocator.Lemmas.fl_valid_gives_mem g (spot_ns_fp r) heap_words;
+  FLA.fl_ascending_single g (spot_ns_fp r)
+#pop-options
+
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 let spot_ns_major_heap_shape (r: unit{spot_ns_room})
   =
@@ -844,10 +837,10 @@ let spot_ns_major_heap_shape (r: unit{spot_ns_room})
   spot_ns_fp_in_heap r;
   spot_ns_no_black_objects r;
   spot_ns_no_gray_objects r;
-  spot_ns_no_pointer_to_blue r;
-  spot_ns_wfh_part1 r;
-  spot_ns_wfh_part2_3 r;
+  spot_ns_blocks_fit r;
+  spot_ns_pointer_clauses r;
   spot_ns_fl_complete r;
+  spot_ns_fl_ascending r;
   GC.Gen.AllocExact.fl_valid_cob_gives_sound g fp;
   GenInv.free_list_exact_iff g fp;
   GenInv.major_heap_shape_intro g fp

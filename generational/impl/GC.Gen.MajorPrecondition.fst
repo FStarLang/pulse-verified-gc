@@ -5,27 +5,28 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
 module SpecObj = GC.Spec.Object
 module SpecFields = GC.Spec.Fields
 module SpecMark = GC.Spec.Mark
-module SpecSweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module SpecMarkBounded = GC.Spec.MarkBounded
 module MarkBoundedInv = GC.Spec.MarkBoundedInv
 module GenInv = GC.Gen.HeapInvariant
 module Promote = GC.Gen.Promote
 module Cheney = GC.Gen.Cheney
+module CheneySteps = GC.Gen.Cheney.Steps
 module CheneyPres = GC.Gen.CheneyPreservation
+module CPInj = GC.Gen.CheneyPreservation.Injectivity
 module CheneyFwd = GC.Gen.CheneyPreservation.Forwarding
 module CheneyFrame = GC.Gen.CheneyPreservation.Frame
 module CheneyCorr = GC.Gen.CheneyCorrectness
 module CheneyBFS = GC.Gen.CheneyBFS
 module Reach = GC.Gen.Reachability
 module PromUpd = GC.Gen.PromoteUpdate
-module PromUpdAux = GC.Gen.PromoteUpdate.Aux
 module MinorFwd = GC.Gen.MinorCollectForwarding.Helpers
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module MBP = GC.Impl.MarkBoundedPrecondition
@@ -99,10 +100,10 @@ let post_minor_minor_root_valid
     (requires
       GenInv.collection_heap_shape minor major fp /\
       MinorFwd.roots_valid_for_minor_collection minor major roots /\
-      CheneyBFS.cheney_no_oom minor major fp roots /\
+      CheneyBFS.cheney_no_oom Idle minor major fp roots /\
       Seq.mem r roots /\ Promote.is_minor_pointer r)
     (ensures (
-      let prom = Cheney.cheney_promote minor major fp roots in
+      let prom = Cheney.cheney_promote Idle minor major fp roots in
       let result = Cheney.cheney_collect_spec minor major fp roots in
       prom.fwd_map r <> 0UL /\
       MBP.root_valid_for_darkening result.mc_major
@@ -113,14 +114,15 @@ let post_minor_minor_root_valid
   =
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
+  GenInv.major_heap_shape_walk major fp;
   GenInv.minor_heap_shape_elim minor;
-  let prom = Cheney.cheney_promote minor major fp roots in
+  let prom = Cheney.cheney_promote Idle minor major fp roots in
   let result = Cheney.cheney_collect_spec minor major fp roots in
   let rv = resolve_minor minor r in
   // The object the root names is a live nursery object, hence reachable, hence
   // forwarded.
   Reach.minor_reachable_roots minor roots;
-  CheneyCorr.cheney_promotes_all_reachable minor major fp roots;
+  CheneyBFS.cheney_promotes_all_reachable Idle minor major fp roots;
   assert (prom.fwd_map rv <> 0UL);
   // The root address itself is forwarded: an ordinary root is its own
   // resolution, and an interior one is covered by `fwd_covers_infix_roots`,
@@ -131,20 +133,22 @@ let post_minor_minor_root_valid
   assert (prom.fwd_map r <> 0UL);
   let t = prom.fwd_map r in
   assert (Promote.rewrite_root r prom.fwd_map == t);
-  MinorFwd.fwd_image_resolves minor major fp roots r;
+  GC.Gen.MinorCollectForwarding.stop_the_world_context minor major fp roots;
+  GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw minor major fp roots;
+  MinorFwd.fwd_image_resolves Idle minor major fp SpecFields.free_stw roots r;
   let p = prom.fwd_map rv in
   assert (SpecObj.resolve_object (t <: obj_addr) result.mc_major == p);
   assert (Seq.mem (p <: obj_addr) (SpecFields.objects zero_addr prom.major_final));
-  // `well_formed_heap_part4` says no member of the objects list is infix,
+  // `no_infix_block` says no member of the objects list is infix,
   // which is exactly the side condition `fwd_targets_not_blue` guards on.
-  Cheney.cheney_promote_preserves_wfh_part4 minor major fp roots;
+  CheneySteps.cheney_promote_preserves_wfh_part4 Idle minor major fp roots;
   assert (SpecObj.is_infix p prom.major_final = false);
-  CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
+  CPInj.cheney_promote_fwd_targets_not_blue Idle minor major fp roots;
   assert (SpecObj.is_blue (p <: obj_addr) prom.major_final = false);
   // Rewriting the major heap's pointers moves neither objects nor headers.
-  Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
-  PromUpdAux.update_major_pointers_preserves_objects prom.major_final prom.fwd_map;
-  PromUpd.update_major_pointers_preserves_header prom.major_final prom.fwd_map p;
+  CheneySteps.cheney_promote_preserves_wfh_part1 Idle minor major fp roots;
+  PromUpd.update_walk_preserves_objects prom.major_final (SpecFields.in_use SpecFields.free_stw prom.major_final) prom.fwd_map;
+  PromUpd.update_walk_preserves_header prom.major_final (SpecFields.in_use SpecFields.free_stw prom.major_final) prom.fwd_map p;
   SpecObj.color_of_header_eq p prom.major_final result.mc_major;
   SpecFields.objects_addresses_gt_start zero_addr result.mc_major t
 #pop-options
@@ -156,17 +160,18 @@ let post_minor_major_root_valid minor major fp roots r
   =
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
+  GenInv.major_heap_shape_walk major fp;
   GenInv.minor_heap_shape_elim minor;
-  let prom = Cheney.cheney_promote minor major fp roots in
+  let prom = Cheney.cheney_promote Idle minor major fp roots in
   let result = Cheney.cheney_collect_spec minor major fp roots in
   assert (Promote.rewrite_root r prom.fwd_map == r);
   assert (is_val_addr r);
   assert (Seq.mem (r <: obj_addr) (SpecFields.objects zero_addr major));
-  CheneyCorr.cheney_collect_preserves_objects minor major fp roots;
-  CheneyFrame.cheney_promote_frame_old_header minor major fp roots r;
-  Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
-  PromUpdAux.update_major_pointers_preserves_objects prom.major_final prom.fwd_map;
-  PromUpd.update_major_pointers_preserves_header prom.major_final prom.fwd_map r;
+  CheneyCorr.cheney_collect_preserves_objects Idle minor major fp SpecFields.free_stw roots;
+  CheneyFrame.cheney_promote_frame_old_header Idle minor major fp roots r;
+  CheneySteps.cheney_promote_preserves_wfh_part1 Idle minor major fp roots;
+  PromUpd.update_walk_preserves_objects prom.major_final (SpecFields.in_use SpecFields.free_stw prom.major_final) prom.fwd_map;
+  PromUpd.update_walk_preserves_header prom.major_final (SpecFields.in_use SpecFields.free_stw prom.major_final) prom.fwd_map r;
   SpecObj.color_of_header_eq r major result.mc_major;
   SpecFields.objects_addresses_gt_start zero_addr major r;
   // A major root is an enumerated object, and well-formedness forbids an
@@ -187,7 +192,7 @@ let rec seq_index_is_mem (#a: eqtype) (s: seq a) (i: nat)
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let post_minor_roots_valid_for_darkening minor major fp roots
   =
-  let prom = Cheney.cheney_promote minor major fp roots in
+  let prom = Cheney.cheney_promote Idle minor major fp roots in
   let result = Cheney.cheney_collect_spec minor major fp roots in
   Promote.rewrite_roots_length roots prom.fwd_map;
   let aux (i: nat)
@@ -226,9 +231,20 @@ let darken_precondition_after_minor minor major fp roots cap
   MarkBoundedInv.bounded_mark_inv_intro result.mc_major Seq.empty cap;
   // Conjuncts 8-9 are what the empty stack buys.
   empty_stack_subset result.mc_major result.mc_roots;
-  Promote.rewrite_roots_length roots (Cheney.cheney_promote minor major fp roots).fwd_map;
+  Promote.rewrite_roots_length roots (Cheney.cheney_promote Idle minor major fp roots).fwd_map;
   // Conjunct 10.
   post_minor_roots_valid_for_darkening minor major fp roots
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let darken_precondition_of_shape minor major fp roots cap
+  =
+  GenInv.collection_heap_shape_elim minor major fp;
+  GenInv.major_heap_shape_elim major fp;
+  gray_objects_on_stack_of_no_gray major;
+  empty_bounded_stack_props major;
+  MarkBoundedInv.bounded_mark_inv_intro major Seq.empty cap;
+  empty_stack_subset major roots
 #pop-options
 
 #push-options "--fuel 0 --ifuel 0"

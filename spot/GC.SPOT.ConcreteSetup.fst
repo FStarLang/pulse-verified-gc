@@ -13,6 +13,7 @@ module ConcreteScenarios = GC.SPOT.ConcreteScenarios
 module Preconditions = GC.SPOT.Preconditions
 module ThreeObjects = GC.SPOT.ThreeObjects
 
+module FA = GC.Gen.ForwardingArray
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_roots_alloc_seq (c: obj_addr)
   =
@@ -63,8 +64,8 @@ let spot_fwd_alloc_seq ()
   let t = ConcreteScenarios.spot_fwd_array in
   ConcreteScenarios.spot_fwd_array_zero ();
   Preconditions.zero_forwarding_array_elim t;
-  assert (SZ.v CheneyImpl.queue_size_sz == CheneyImpl.queue_size);
-  assert (CheneyImpl.queue_size == UpdatePtrs.fwd_array_size);
+  assert (SZ.v CheneyImpl.queue_size_sz == FA.queue_size);
+  assert (FA.queue_size == FA.fwd_array_size);
   FStar.Seq.Base.lemma_create_len (SZ.v CheneyImpl.queue_size_sz) 0UL;
   assert (Seq.length s == Seq.length t);
   let aux (i: nat{i < Seq.length s})

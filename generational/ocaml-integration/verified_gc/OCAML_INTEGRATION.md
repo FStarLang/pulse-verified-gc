@@ -16,6 +16,7 @@ This document describes how the verified generational garbage collector
 7. [Allocation Path](#allocation-path)
 8. [Minor GC (Cheney Promotion)](#minor-gc-cheney-promotion)
 9. [Full GC and Major Mark-and-Sweep](#full-gc-and-major-mark-and-sweep)
+   - [The Major Mode (`VERGC_MAJOR`)](#the-major-mode-vergc_major)
 10. [Inter-Generational Pointers (ref\_table)](#inter-generational-pointers)
 11. [Root Scanning](#root-scanning)
 12. [OOM Handling](#oom-handling)
@@ -48,8 +49,10 @@ This document describes how the verified generational garbage collector
 │                                                              │
 │  • verified_allocate_minor() — Alloc_small slow path         │
 │  • verified_allocate()       — shared/major allocation       │
-│  • do_minor_gc()       — calls verified minor_collect_full   │
-│  • do_full_gc()        — calls verified gen_gc               │
+│  • do_minor_gc()       — calls verified minor_collect        │
+│  • do_full_gc()        — calls verified full_gc (stw), or    │
+│                          minor_collect + start_cycle +   │
+│                          an unbounded mark slice (incr.)     │
 │  • verified_do_minor_gc() — runtime forced minor collection  │
 │  • ensure_heap()       — lazy initialization                 │
 │                                                              │
@@ -67,10 +70,11 @@ This document describes how the verified generational garbage collector
 │                                                              │
 │  • minor_alloc()           — bump allocation in minor heap   │
 │  • allocate()              — free-list allocation in major   │
-│  • minor_collect_full()    — verified minor collection       │
-│  • gen_gc()                — verified minor + major GC       │
+│  • minor_collect()         — verified minor collection       │
+│  • start_cycle()           — darken roots, start marking     │
+│  • major_slice()           — one slice: mark or sweep        │
+│  • full_gc()               — verified minor + major GC       │
 │  • collect()               — mark_loop + fused_sweep_coalesce│
-│  • allocate_part1()        — free-list allocator (major)     │
 │  • rewrite_heap_slots()    — remembered-set slot rewrite     │
 │                                                              │
 │  All functions are machine-checked against their specs.      │
@@ -124,27 +128,58 @@ still writes the final header for raw fast-path reservations and for
 `WITH_PROFINFO` builds.  Shared/large allocations use `verified_allocate()` and
 the verified major free list.
 
-### Write Barrier (`caml_modify`)
+### Write Barrier (`caml_modify`, `caml_initialize`)
 
-When mutator code writes a pointer into an existing major-heap object,
-`caml_modify` checks if the stored value points to the minor heap.
-If so, it records the **slot address** (the field being written) in the
-**remembered set** (`Caml_state->ref_table`):
+When mutator code writes into a field, OCaml 4.14's `caml_modify` (a) leaves
+a nursery slot alone, (b) for a major slot reads the old value, writes the new
+one, darkens the old one while the major GC is marking, and (c) records the
+**slot address** in the **remembered set** (`Caml_state->ref_table`) when the
+new value is young and the old one was not.  `caml_initialize` (the first
+write into a field of a block just allocated) writes and records the slot when
+the value is young.
+
+In this runtime the barrier for a slot of the verified major heap is verified
+code (`GC.Gen.Impl.Barrier`, extracted into `GC_Gen_Impl.c`), called from the
+patched runtime (`runtime/memory.c`):
 
 ```c
 void caml_modify(value *fp, value val) {
     if (Is_young((value)fp)) {
-        *fp = val;                          // minor→anywhere: no barrier
-    } else {
-        *fp = val;
-        if (Is_block(val) && Is_young(val))
-            add_to_ref_table(ref_table, fp); // major→minor: remember!
+        *fp = val;                               // nursery slot: no barrier
+    } else if (Vergc_in_major(fp)) {             // the verified major heap
+        if (modify_field(&gc_gen_heap, (uint64_t)fp, (uint64_t)val))
+            add_to_ref_table(Caml_state->ref_table, fp);
+    } else if (vergc_modify(fp, val)) {          // elsewhere: stock logic
+        add_to_ref_table(Caml_state->ref_table, fp);
     }
 }
 ```
 
-This is OCaml's **card-marking** equivalent — it tells the GC which
-major-heap fields may contain stale minor pointers after collection.
+`modify_field` reads the old value, darkens it if the collector is marking
+(onto the persistent mark stack, or raising its overflow flag), writes the new
+value, and returns whether the slot must be remembered.  A write into a field
+of the mark slice's partly scanned object that the slice has already scanned
+is no different: the marking invariant treats a scanned field as a scanned
+edge, like a black object's field, so the scan goes on where it was (an
+earlier version restarted it, and a program that kept writing into a large
+array's scanned prefix kept that cycle's marking from ending;
+`tests/mark_scanned_writes.ml` is the regression test).  (Marking is entered and finished within `do_full_gc` for now, so
+the program never runs while marking until M5.)  `caml_initialize` is the same with `initialize_field`, and
+`caml_array_fill` (`runtime/array.c`, which duplicates `caml_modify`'s logic
+for a range) calls `vergc_modify` for every field that changes.  The table is
+stock's, grown by `add_to_ref_table`; the slot is added exactly when the
+barrier returns true, which is what keeps it covering and sound
+(`GC.Gen.Barrier.modify_ref_table`).
+
+Other runtime writers of major fields, audited for the barrier:
+
+| writer | path |
+|---|---|
+| `caml_array_blit`, `caml_array_gather` (`Array.append`, `Array.concat`, `Array.sub`) | `caml_modify` / `caml_initialize` for a major destination |
+| `Obj.set_field`, `caml_obj_make_forward` (`Lazy`) | `caml_modify` (the tag change is outside the model: docs/known-issues.md) |
+| `caml_update_dummy` (`let rec` of values) | `caml_modify` (a closure body for a closure value: outside `modify_ok`, docs/known-issues.md) |
+| `caml_make_vect`, `caml_alloc`, `caml_obj_dup`, the interpreter's `MAKEBLOCK` / `CLOSURE` for a major block, intern | raw stores into a block just allocated, of values that are not young (stock requires it): no ref-table entry is needed |
+| `weak.c` (weak arrays, ephemerons) | its own copy of the barrier; unsupported (docs/known-issues.md) |
 
 ### Root Scanning (`caml_do_roots`)
 
@@ -196,6 +231,7 @@ typedef struct {
     minor_heap_t  minor;
     heap_t        major;
     uint64_t     *fp_ref;   // free-list pointer (for major)
+    phase_state  *phase_ref; // the major collector's phase (always Idle here)
 } gen_heap_t;
 ```
 
@@ -208,9 +244,12 @@ extern uint64_t heap_size_u64;     // major heap end address
 
 // From internal headers — minor heap configuration:
 extern uint64_t minor_heap_size_u64;   // minor heap size in bytes
-extern uint64_t max_young_wosize_u64;  // max object size for minor alloc
 extern uint64_t minor_base_addr;       // absolute address of minor buffer
 ```
+
+(The largest nursery object is OCaml's own `Max_young_wosize`: the bridge
+routes by it, and the verified code no longer has an allocation entry point
+that does.)
 
 These are **abstract** in the F\* spec (`val zero_addr : U64.t`) and
 instantiated by the bridge at runtime.  This is the key design decision
@@ -221,12 +260,13 @@ that lets the same verified code work with any heap placement.
 | Function | Called by bridge? | Purpose |
 |----------|-------------------|---------|
 | `minor_alloc(minor, wosize, tag)` | Yes, small-allocation slow path | Bump-allocate in the minor heap after any needed minor collection |
-| `allocate(major, fp, wosize)` | Yes, shared/major allocation path | Allocate from the major free list; the OCaml runtime finalizes the tag/profinfo header |
-| `minor_collect_full(gh, roots, n, fwd_arr, queue, slots, nslots)` | Yes, `do_minor_gc_core` | Verified minor collection: Cheney promotion, promoted-object field rewrite, remembered-slot rewrite, root rewrite, and minor bump reset |
-| `gen_gc(gh, roots, n, fwd_arr, queue, slots, nslots, gray_stack)` | Yes, `do_full_gc` | Verified full collection: first `minor_collect_full`, then root darkening into an initially empty gray stack, then major `collect_with_roots` |
-| `collect_with_roots(major, gray_stack, roots, n, fp)` | Indirectly through `gen_gc` | Mark-and-sweep over the major heap from the post-minor roots, returning the new free-list head |
-| `rewrite_heap_slots(major, fwd_arr, slots, n)` | Indirectly through `minor_collect_full` and `gen_gc` | Rewrite remembered major fields that still point into the minor heap |
-| `allocate_part1(major, wosize, tag, fp)` | Indirectly through `allocate` | Internal split/consume step used by the major free-list allocator |
+| `allocate(major, fp_ref, phase, wosize, tag)` | Yes, shared/major allocation path, in both sweep modes | Allocate from the major free list (its head `*fp_ref` updated in place), writing the header once with the tag and the colour the collector's phase gives it (white when `Idle`, always so stop-the-world; mid-sweep black in front of the cursor, white behind it).  The OCaml runtime rewrites the header only to add profinfo bits, keeping the colour |
+| `minor_collect(gh, roots, n, fwd_arr, queue, slots, nslots)` | Yes, `do_minor_gc_core` (both modes) and `do_full_gc` (incremental) | Verified minor collection at the collector's phase: Cheney promotion, promoted-object field rewrite, remembered-slot rewrite, root rewrite, and minor bump reset; returns the success flag |
+| `start_cycle(gh, roots, n)` | Yes, `do_full_gc` (incremental) | Start a major cycle, idle and with the nursery empty: darken the post-minor roots onto the persistent mark stack (raising the overflow flag if they do not fit) and set the phase to `Marking` (4.14's `start_cycle`) |
+| `major_slice(gh, budget)` | Yes, incremental: right after `start_cycle` with `UINT64_MAX` (marking), after each minor collection, `Gc.major_slice`, and with `UINT64_MAX` to finish a cycle | One slice of the major cycle at the collector's phase: nothing when idle; while marking, a mark slice of about `budget` words (the sweep starts once nothing is grey; `UINT64_MAX` finishes marking); mid-sweep, a sweep slice of `budget` words; returns whether the collector is idle again (4.14's `caml_major_collection_slice`) |
+| `full_gc(gh, roots, n, fwd_arr, queue, slots, nslots)` | Yes, `do_full_gc` (stop-the-world) | Verified full collection: `minor_collect`, then (unless promotion ran out of memory) `start_cycle` and `major_slice` with an unbounded budget until idle (one slice marks, one sweeps); returns the success flag |
+| `rewrite_heap_slots(major, fwd_arr, slots, n)` | Indirectly through `minor_collect` and `full_gc` | Rewrite remembered major fields that still point into the minor heap |
+| `allocate(major, fp_ref, phase, wosize, tag)` | Indirectly through `minor_collect` | The same free-list allocator; promotion calls it with the minor object's tag, so the copy's header is written once |
 
 ---
 
@@ -369,7 +409,7 @@ runtime write the final header.
 ## Minor GC (Cheney Promotion)
 
 When the minor heap fills, the bridge promotes live young objects to the
-major heap by calling the extracted verified `minor_collect_full` function.
+major heap by calling the extracted verified `minor_collect` function.
 The bridge is responsible only for presenting OCaml roots and remembered
 slots in the layout expected by the verified collector, and for writing
 rewritten OCaml roots back afterward.
@@ -394,7 +434,7 @@ Step                  (bridge logic)                      (verified)
 
 2. Zero fwd_arr       memset(gc_fwd_arr, 0, ...)
 
-3. Minor collect      ─────────────────────────────────► minor_collect_full()
+3. Minor collect      ─────────────────────────────────► minor_collect()
                                                            a) cheney_promote_phase
                                                               (infix-aware BFS)
                                                            b) update_promoted_objects
@@ -413,11 +453,13 @@ Step                  (bridge logic)                      (verified)
 5. Clear ref_table    ref_table->ptr = ref_table->base
 ```
 
-`minor_collect_full` mutates `root_values[]` in place.  Entries that were
+`minor_collect` mutates `root_values[]` in place.  Entries that were
 minor offsets become major value addresses using `gc_fwd_arr`; entries that
 were already major values remain unchanged.  Ref-table entries are also
 rewritten by the verified call because the bridge passes the actual table
-slots (`tbl->base`, `nslots`) as `slots`.
+slots (`tbl->base`, `nslots`) as `slots`.  An entry may repeat; the second
+rewrite of a slot finds a major pointer and leaves it alone, and the
+contract does not ask for distinct slots.
 
 ### Forwarding Array
 
@@ -578,9 +620,8 @@ range and ARE rewritten — so no separate infix scan is needed.
 `promote_object` copies the ENTIRE parent closure body verbatim:
 ```
 promote_object(minor, major, parent_addr, fp, wosize):
-  alloc_res = alloc_spec(major, fp, wosize)      // allocate wosize words
+  alloc_res = alloc_spec(major, fp, wosize, parent_tag)  // allocate, header carries the tag
   copy_fields(minor, major, parent, new_addr, 0, wosize)  // copy ALL fields
-  set_promoted_tag(major, new_addr, parent_tag)  // set outer header tag
 ```
 
 The `copy_fields` step copies the raw body INCLUDING:
@@ -751,9 +792,12 @@ all infix sub-object fields.
 
 ## Full GC and Major Mark-and-Sweep
 
-`do_full_gc` now calls the extracted verified `gen_gc` entry point instead
-of sequencing an unverified bridge-level minor collection followed by a
-separate bridge-level major collection.
+`do_full_gc` calls the extracted verified `full_gc` entry point (stop-the-world)
+instead of sequencing an unverified bridge-level minor collection followed by
+a separate bridge-level major collection.  Incremental, it finishes any cycle
+still running, then calls `minor_collect` and `start_cycle` itself, with the
+same arguments, marks with one unbounded `major_slice`, and leaves the sweep to
+the slices.
 
 ```
 alloc_gen.c                                  GC_Gen_Impl.c
@@ -766,37 +810,42 @@ do_full_gc():
   │
   ├─ memset(gc_fwd_arr, 0, ...)
   │
-  ├─ allocate roots_for_gc[] and gray_storage[]
+  ├─ allocate roots_for_gc[]
   │
-  ├─ copy roots into roots_for_gc[]; initialize an empty gray stack
+  ├─ copy roots into roots_for_gc[]
   │   memcpy(roots_for_gc, root_values, root_count * 8)
-  │   gray_top = gray_cap
   │
-  ├─ ─────────────────────────────────────► gen_gc(gh,
+  ├─ ─────────────────────────────────────► full_gc(gh,
   │                                             roots_for_gc, root_count,
   │                                             gc_fwd_arr, gc_queue,
-  │                                             ref_table slots, nslots,
-  │                                             gray_stack)
-  │                                           1. minor_collect_full(...)
+  │                                             ref_table slots, nslots)
+  │                                           1. minor_collect(...)
   │                                              rewrites roots_for_gc in place
-  │                                           2. darken_roots_bounded(...)
-  │                                              pushes post-minor roots onto
-  │                                              the initially empty gray stack
-  │                                           3. collect_with_roots(...)
-  │                                           returns: (new_fp, ok)
+  │                                           2. start_cycle(...)
+  │                                              darken_roots_bounded pushes
+  │                                              post-minor roots onto the
+  │                                              persistent mark stack (flag
+  │                                              up if they do not fit);
+  │                                              phase = Marking
+  │                                           3. major_slice(gh, UINT64_MAX)
+  │                                              marks (phase = Sweeping), then
+  │                                              major_slice(gh, UINT64_MAX)
+  │                                              sweeps (phase = Idle)
+  │                                           returns: ok
   │
   ├─ write_back_forwarded_roots()
   │   uses original root_values[] plus gc_fwd_arr to update OCaml roots
   │
   ├─ clear ref_table
   │
-  └─ free(roots_for_gc); free(gray_storage)
+  └─ free(roots_for_gc)
 ```
 
-### Gray Stack and Root-Set Layout
+### The Mark Stack and the Root Set
 
-The verified major collector does not call `caml_do_roots`; it only knows
-about a `gray_stack_rec`:
+The verified major collector does not call `caml_do_roots`; it marks from the
+roots array it is handed and its own persistent mark state, which the bridge
+allocates once in `ensure_heap` (`gen_heap_t`):
 
 ```c
 typedef struct gray_stack_rec_s {
@@ -804,52 +853,51 @@ typedef struct gray_stack_rec_s {
   size_t  *top;
   size_t   cap;
 } gray_stack_rec;
+
+gc_gen_heap.mark_stack    /* gray_stack_rec, cap = max(heap_bytes / 64, 4096) */
+gc_gen_heap.mark_overflow /* bool: a grey object was dropped from a full stack */
+gc_gen_heap.mark_cur      /* the partly scanned object (0: none) */
+gc_gen_heap.mark_field    /* its next field */
+gc_gen_heap.mark_rescan   /* the rescan cursor (0: no rescan) */
 ```
 
 The stack grows downward.  An empty stack has `*top == cap`; pushing
 decrements `top`, and popping consumes `storage[*top]` and then increments
-`top`.  The bridge passes `gen_gc` an initially empty stack:
+`top`.  Outside a cycle it is empty, the flag down and the positions 0.
 
-```
-gray_storage indices:   0                                      cap
-                         ├──────────────────────────────────────┤
-                         │ free push space for verified marking │
-                         └──────────────────────────────────────┘
-                                                                ^
-                                                              *top
-```
-
-The roots array is separate from the stack storage.  This matches the verified
-`gen_gc` interface: `minor_collect_full` rewrites roots first, then `gen_gc`
-calls `darken_roots_bounded` to color/push the post-minor roots before major
-mark-and-sweep.
-
-1. Before `gen_gc`, `roots_for_gc` contains OCaml roots plus minor values
+1. Before the collection, `roots_for_gc` contains OCaml roots plus minor values
    read from the remembered set.  Minor roots are represented as minor
    offsets; major roots are represented as major value addresses.
-2. `gen_gc` first calls `minor_collect_full`, which promotes reachable
-   minor objects, rewrites remembered slots, and rewrites `roots_for_gc`
-   in place.  After this step, every live minor root in `roots_for_gc` has
-   become the corresponding major value address.
-3. `gen_gc` calls the verified root-darkening helper, which scans
-   `roots_for_gc`, colors white root objects gray, and pushes them into
-   `gray_storage`.
-4. `gen_gc` then calls `collect_with_roots(major, gray_stack, roots, fp)`.
-   The major mark loop consumes only addresses that the verified code pushed.
-5. The bridge keeps the original `root_values[]` unchanged outside the gray
-   stack.  After `gen_gc`, `write_back_forwarded_roots()` uses those original
+2. `minor_collect` promotes reachable minor objects, rewrites remembered
+   slots, and rewrites `roots_for_gc` in place.  After this step, every live
+   minor root in `roots_for_gc` has become the corresponding major value
+   address.
+3. `start_cycle` calls the verified root-darkening helper, which scans
+   `roots_for_gc`, colours white root objects grey and pushes them onto the
+   mark stack while it has room; if the stack ends full the overflow flag goes
+   up (a root may have been dropped).  The phase becomes `Marking`.
+4. `major_slice` marks (`GC.Gen.Impl.MarkSlice.mark_slice`): it pops entries,
+   scans their fields (an object larger than the budget across slices),
+   blackens them, and when the stack is empty and the flag up rescans the heap
+   in chunks (stopping when the stack is a quarter full) for grey objects that
+   were dropped.  When nothing is grey the sweep starts.  `full_gc` marks with
+   one unbounded slice; incremental, the bridge does the same right after
+   `start_cycle` (mark slices between program steps are M5).
+5. `major_slice` sweeps: `full_gc` with an unbounded budget until idle;
+   incremental, the bridge after each minor collection.
+6. The bridge keeps the original `root_values[]` unchanged.  After the
+   collection, `write_back_forwarded_roots()` uses those original
    values and `gc_fwd_arr` to update only real OCaml root slots
    (`root_locs[i] != NULL`).  Ref-table roots have `root_locs[i] == NULL`
    because their owning major slots were already rewritten by
    `rewrite_heap_slots` inside the verified collector.
 
 The stack capacity is chosen by the bridge as `major.size / 64`, with a
-minimum of 4096 entries and a final bump to at least `root_count`.  This
-keeps the stack large enough for root darkening while avoiding an oversized
-side allocation on small runs; verified stack operations remain bounded by
-the `cap` field.  The bridge does not pre-color or pre-seed root objects:
-coloring, pushing, child traversal, and blackening are all handled by verified
-code.
+minimum of 4096 entries (`VERGC_MARK_STACK=n` overrides it, for testing).  No
+bound on the number of roots is needed: what does not fit is found again by
+the rescan.  The bridge does not pre-colour or pre-seed root objects:
+colouring, pushing, child traversal, rescanning and blackening are all
+handled by verified code.
 
 Including remembered-set minor values in the root array is conservative for
 full GC, but safe.  It matches the requirement of minor collection: an old
@@ -859,6 +907,220 @@ this can keep a promoted young object alive even if the old remembered
 object itself is later swept; the ref table is cleared afterward, so the
 extra retention is bounded to this collection cycle rather than a permanent
 root.
+
+---
+
+## The Major Mode (`VERGC_MAJOR`)
+
+`VERGC_MAJOR`, read once when the heap is set up, picks how the major
+collector runs (`VERGC_SWEEP` is an alias, from when only the sweep was
+incremental; `VERGC_MAJOR` wins when both are set):
+
+| `VERGC_MAJOR` | a major collection | marking | sweep |
+|---|---|---|---|
+| `stw` (default; anything else warns once and means `stw`) | `full_gc` | all at once, inside `full_gc` | all at once, inside `full_gc` |
+| `incremental` | `start_cycle` after a minor collection (root darkening; the phase becomes `Marking`) | in slices (`major_slice`), one after each minor collection | in slices, one after each minor collection |
+
+The entry points are `GC.Gen.Impl`'s (`minor_collect`, `start_cycle`,
+`major_slice`, `full_gc`; DESIGN_AND_IMPL.md, "The entry points"), shaped
+like OCaml 4.14's `runtime/major_gc.c`; finishing a cycle (4.14's
+`caml_finish_major_cycle`) is `major_slice(UINT64_MAX)` until it reports idle
+(`finish_cycle_now`: one slice finishes marking, one sweeps).  Major
+allocation is `allocate` at the record's phase. The phase lives in
+`gc_gen_heap.phase_ref` (`ps_kind` 0 = Idle, 1 = Sweeping, 2 = Marking,
+plus the cursor and the sweep's two caches `swept_tail` and
+`last_fragment`, which the proofs say are functions of the heap and the
+cursor); a new object is black while marking and in front of the sweep
+cursor, white otherwise.
+
+### The rhythm (incremental)
+
+4.14's: after every minor collection, at Idle, `start_cycle` when the
+trigger fires -- the nursery is empty right then, as `start_cycle` needs --
+and otherwise one `major_slice`, which marks while marking (handing over to
+the sweep when nothing is grey) and sweeps while sweeping.  Each event:
+
+| event | `alloc_gen.c` |
+|---|---|
+| minor collection (`do_minor_gc`) | mid-cycle, if the heap may not have room for twice the nursery's words, the cycle finished first (below); `minor_collect` at the phase (while marking, promoted copies are black); then at Idle the trigger (`start_major_cycle`: `start_cycle` with the roots the minor collection just rewrote), otherwise a paced slice (`paced_slice(-1)`) |
+| major allocation (`verified_allocate`) | at Idle the trigger (a minor collection and `start_cycle`, `begin_cycle_now`); mid-cycle, once a nursery's worth of words has been allocated since the last slice, a paced slice (4.14 requests one there); then `allocate` at the phase.  On failure: mid-cycle, finish the cycle and retry; then a full collection, finished, and retry; then `NULL` (`Out_of_memory`), as stop-the-world |
+| `Gc.full_major`, `Gc.major`, `Gc.compact` (`runtime/gc_ctrl.c`), `Gc.set` (policy change, through stock `caml_finish_major_cycle`), `caml_trigger_verified_gc` | `do_full_gc`: any cycle in progress finished, then a minor collection, `start_cycle`, and that cycle finished too -- the program sees a finished cycle |
+| `Gc.major_slice n` (`runtime/gc_ctrl.c` calls `verified_major_collection_slice` directly; stock's own test of its phase is always "idle") | at Idle, start a cycle (as 4.14); otherwise a slice with 4.14's reading of `n` (0: the next bucket's work; `n > 0`: the work to free about `n` words) |
+
+**The trigger, at Idle only.**  Incremental mode never starts a cycle in the
+middle of one: mid-cycle, memory pressure makes the slices bigger (the
+pacing), it never finishes the cycle.  A cycle starts when, since the last one
+ended,
+
+- the words allocated in the major heap (promoted, or allocated directly)
+  exceed `caml_percent_free` percent (`space_overhead`, `o`, default 120) of
+  the words in use when it ended, and at least `VERGC_TRIGGER_MIN_WORDS`
+  (default: an eighth of the heap) -- 4.14's steady state, on a heap of fixed
+  size;
+- or the words in use (estimated from above) reach half the heap -- the
+  safety net #39 had, now on the estimate: a cycle needs free memory to run
+  in;
+- or the nursery has allocated as many words as the heap has -- a slow clock
+  standing in for 4.14's back-to-back cycles, so that a program whose garbage
+  all dies young still sees major cycles.
+
+The words in use when a cycle ends are estimated as the words it marked (the
+mark slice counts them: `gc_gen_heap.mark_words`) plus the words allocated
+during the cycle; every block that survives a sweep was marked or allocated
+during the cycle, so the estimate is an upper bound, and so is "that plus
+what was allocated since" for the words in use now.
+
+### Pacing (incremental): 4.14's `caml_major_collection_slice`
+
+`major_slice` takes its budget in words: while marking, a header for each
+object popped or block rescanned and a word for each field scanned (an object
+larger than what is left is scanned in parts); while sweeping, the words of
+the blocks swept (at most one block over).  `paced_slice` ports
+`runtime/major_gc.c` L938-1109:
+
+```
+FM = free memory when the cycle started    G = 2 * FM / 3
+P  = words allocated since the last slice / G      (>= caml_extra_heap_resources)
+P += backlog; if P > 0.3 then backlog = P - 0.3, P = 0.3
+spread P over the ring of caml_major_window buckets (the clock: the
+nursery's fill), take the current bucket minus the work credit
+(Gc.major_slice adds to the credit)
+mark slice:  P * MW / 0.4 words        sweep slice:  P * heap / 0.6 words
+```
+
+so the cycle ends after about `G` words are allocated: 40% of the time
+marking `MW` words, 60% sweeping the heap.  4.14 takes `FM = heap * o / (100
++ o)` and `MW = heap * 100 / (100 + o)`, its heap growing to make that true.
+Ours is fixed, so `FM` is also bounded by what is free (from below: the heap
+minus the words in use, estimated from above; at least a 64th of the heap) and
+`MW` is the words in use when the cycle started.  A slice is at least
+`VERGC_SLICE_MIN_WORDS` (default 4096; `VERGC_SWEEP_MIN_WORDS` is an alias)
+words; `VERGC_SLICE_WORDS=n` replaces the computed budget by `n` (testing).
+`VERGC_SWEEP_K`, the incremental sweep's multiplier, is gone: the pacing
+supersedes it.
+
+**Finishing early.**  A cycle in progress is finished at once only where the
+program needs a finished cycle or memory now: a full collection (above), a
+failed allocation, and a minor collection mid-cycle that might not find room
+to promote into -- a promotion failure is fatal, and garbage is not on the free
+list until the sweep reaches it.  That check first compares the heap minus the
+words in use (estimated) with twice the nursery's words, then walks the free
+list; if it holds less, the cycle is finished -- marking and the sweep:
+finishing only the marking frees nothing.
+
+### Statistics
+
+`VERGC_MAJOR_STATS=1` (alias `VERGC_SWEEP_STATS=1`) prints two lines at exit.
+`vergc-major:` counts cycles started and finished; mark and sweep slices
+(budgeted ones; finishes are not slices); cycles whose marking spanned more
+than one slice; words marked and swept; cycles finished early by reason
+(`finish_full`, `finish_alloc`, `finish_promote`, and of those
+`finish_mid_mark`); whole collections by reason (`full_explicit`,
+`full_alloc`, `full_other`); cycles started by each trigger; the program's
+steps while marking (minor collections, major allocations, barrier calls on
+major slots) and major allocations while sweeping; barrier darkenings (the
+mark stack grew or its overflow flag went up); overflows of the mark stack and
+rescans the slices started.  `vergc-pauses:` gives count/mean/max in
+microseconds of minor collections, `start_cycle`, mark slices, sweep slices,
+finishes and whole collections.
+
+### Measurements
+
+Wall time (three runs, seconds) and pauses (`VERGC_MAJOR_STATS`, max in
+milliseconds: stop-the-world a whole collection; incremental the largest mark
+slice / sweep slice / `start_cycle`), on a loaded 16-core machine, heaps as in
+`make bench-mark`; no cycle was finished early in any incremental run:
+
+| program | build | stw time | incr. time | stw max pause | incr. max mark / sweep / start | cycles stw / incr. | mark slices per cycle |
+|---|---|---|---|---|---|---|---|
+| binarytrees 16 | native | 6.39 6.81 6.43 | 6.99 6.69 7.31 | 45.1 | 3.3 / 1.8 / 0.004 | 58 / 66 | 40 |
+| binarytrees 16 | bytecode | 8.49 8.36 8.56 | 9.27 9.52 9.73 | 94.4 | 9.5 / 1.8 / 0.003 | 58 / 66 | 40 |
+| binarytrees 18 | native | 29.4 28.3 27.4 | 29.6 28.5 27.7 | 259.1 | 1.0 / 3.2 / 0.005 | 33 / 30 | 275 |
+| binarytrees 18 | bytecode | 33.6 34.6 34.1 | 35.1 35.0 35.2 | 494.7 | 3.6 / 1.2 / 0.003 | 33 / 30 | 275 |
+| livemap 1000000 1 | native | 10.6 10.9 11.3 | 11.5 11.9 11.4 | 191.4 | 14.7 / 1.0 / 0.03 | 14 / 14 | 12 |
+| livemap 1000000 1 | bytecode | 12.0 12.1 12.0 | 14.1 14.4 13.6 | 187.5 | 13.8 / 0.9 / 0.03 | 14 / 14 | 12 |
+| livegraph 1000000 4 4 | native | 1.81 1.79 1.80 | 2.46 2.47 2.50 | 231.8 | 63.9 / 2.0 / 0.18 | 4 / 7 | 9 |
+| livegraph 1000000 4 4 | bytecode | 3.28 3.27 3.22 | 4.03 4.04 3.96 | 227.7 | 62.4 / 2.0 / 0.47 | 4 / 7 | 9 |
+
+Slices are bounded by the pacing: on binarytrees the largest slice is about
+the largest minor collection (2-4 ms), against 45-495 ms for a stop-the-world
+collection.  On livemap the minor collections themselves pause up to 200-390
+ms in both modes (a large young live set promoted at once), so the program's
+worst pause does not change.  livegraph has a large live set and few minor
+collections (about 146), so each slice carries a large share of its cycle (up
+to 4.14's cap of 0.3), and its slices reach 64 ms; it also runs 7 cycles
+against stop-the-world's 4 (the space_overhead trigger on its live set),
+which with the slices' bookkeeping costs 27-37% wall time.  Elsewhere the
+incremental mode costs 0-10% (bytecode livemap 16%).
+
+### The trusted bridge obligations
+
+Each entry point is a separate C call, so the separation-logic state does not
+survive between calls; `GC.Gen.Impl` lists what the runtime must
+keep true in between. How this runtime meets each:
+
+| obligation (`GC.Gen.Impl`) | how it is met |
+|---|---|
+| **Allocation mid-cycle**: a new block is *fresh* (mid-sweep `GC.Spec.SweepPhase.Mutator.fresh_ok`; while marking `GC.Gen.MarkPhase.Alloc.fresh_shape`: black, its fields exempt), and every field is initialised before the next collector call with a storable value (while marking: one the program holds, `fields_ok`) | OCaml's rule for `caml_alloc_shr`: its callers initialise every field (`caml_initialize`, or raw stores of values that are not young) before allocating again -- the interpreter's `CLOSURE`/`CLOSUREREC`/`MAKEBLOCK`, `caml_alloc`, `caml_make_vect`, intern. A value the program holds is reachable, so never pending free, and while marking it is one the marker will reach (the roots obligation). (Neither a sweep slice nor a mark slice reads the fields of a black block, so even a slice between allocation and initialisation reads nothing uninitialised.) `tag <> Infix_tag` is asserted in `verified_allocate`. |
+| **The allocation colour is the collector's** | `verified_allocate` writes the final header; the patched `caml_alloc_shr_aux` rewrites only profiling bits (WITH_PROFINFO), keeping the colour; `caml_allocation_color` uses the same rule (`vergc_allocation_color`), for C stubs that ask. `Obj.truncate` is not supported: `caml_obj_truncate` raises `Invalid_argument`, so no leftover header is written. |
+| **Field writes** (`GC.Gen.Barrier.modify_ok`: a body word of a non-free, scannable, non-closure block; a storable value; while marking, a value the program holds -- so, if white, one the marker will reach from the scan position, `MM.target_ok`) | Every major-field write goes through `caml_modify` / `caml_initialize` / `caml_array_fill`, which call the verified barrier (`modify_field` / `initialize_field`); OCaml's type safety gives the rest (the program stores only values it holds, into fields of blocks it holds). A write into a nursery object is made directly, with no barrier. The obligation has the shape it always had; "the marker will reach" is now reachability along *unscanned* edges from the mark cache's scan position (the partly scanned object's fields before the next one count as scanned), which is what the roots obligation below provides for values the program holds, and what lets a write into an already scanned field go without restarting the scan. |
+| **The remembered set: append iff the barrier returned true** | The patched `caml_modify` / `caml_initialize` call `add_to_ref_table` exactly when `modify_field` / `initialize_field` return true (`GC.Gen.Barrier.modify_ref_table` then keeps the table covering and sound); a block allocated in the major heap has every field initialised (through `caml_initialize`, or a raw store of a value that is not young) before the next minor collection. |
+| **The mark state** (`gc_gen_heap.mark_stack`, `mark_overflow`, the positions, the counter `mark_words`) | Allocated once in `ensure_heap`, empty with the flag down; only the extracted collector and barrier write it (the bridge reads the stack's length, the flag and the counter, for the statistics and the pacing). |
+| **The roots while marking**: every white object the program holds is one the marker will reach (`MP.outside_refs_reached` of the roots, at the scan position `gc_state` carries) | `start_cycle` darkens all roots at once (the roots of the minor collection just run, the remembered slots' targets included); between collector calls OCaml code obtains values only by allocating (black) or by loading fields of values it holds, as 4.14's snapshot relies on. A root slot overwritten without a barrier (a stack slot, a register, a field of a module block in native static data, which `vergc_modify` writes without darkening) needs none: what it held was darkened when the cycle started. |
+| **Nursery allocation** keeps the nursery's shape and the cross-generation condition | The nursery is allocated only after the cycle's own minor collection (before `start_cycle`), so every nursery object was initialised from reachable values: none points at an object pending free. |
+| **The minor collection's arguments** (`minor_slots_ok`) | The forwarding array is zeroed before every call; the remembered set is `caml_ref_table`, reset after every minor collection (so it never names a slot in an object that was unreachable when marking ended); its young targets are added to the roots; the roots come from `caml_do_roots`, which marking used too. The table may list a field more than once (`caml_modify` adds it again after young -> immediate -> young); the contract allows repeats, so the bridge does not deduplicate. |
+| **`phase_ref` is written only by the collector** | `alloc_gen.c` only reads it (`vergc_idle`, `vergc_marking`, `vergc_sweeping`, `vergc_allocation_color`). |
+
+Known holes, shared with stop-the-world (docs/known-issues.md): weak arrays
+and ephemerons are not cleaned, so `Weak.get` can hand back a block the mark
+did not reach -- mid-sweep one pending free -- and header changes the runtime
+makes on live blocks (`Obj.set_tag`, `Lazy`'s forwarding,
+`caml_update_dummy`) are outside the model of program events (they keep the
+colour bits; `tests/incremental_mark.ml` forces lazy values mid-mark).
+
+### The runtime patch and stock's major collector
+
+The patched runtime never runs stock's mark or sweep: `Gc.major`,
+`Gc.full_major` and `Gc.compact` call `verified_do_full_gc` directly,
+`caml_major_collection_slice` and `caml_finish_major_cycle` forward to the two
+bridge functions above, `caml_compact_heap` (reached only from `Gc.set`'s
+policy change) does nothing, and `caml_finalise_heap` (`OCAMLRUNPARAM=c`) does
+nothing. Every other stock collector entry point (`caml_gc_dispatch`,
+`caml_darken`, `caml_compact_heap_maybe`, the stock free list and heap
+expansion, the stock minor collector) calls `caml_fatal_error`
+(`VERGC_STOCK_GC_UNREACHABLE`; see the README, "Stock collector entry
+points"). Before this, the
+`Gc` calls ran stock's mark over the verified heap (it is `In_heap` in the
+page table), which left its objects black in an idle heap; the next verified
+mark skipped their children, and the sweep freed live objects
+(`tests/explicit_major.ml`). Stock's own phase, `caml_gc_phase`, therefore
+never leaves `Phase_idle`, so every stock path still guarded by it (`weak.c`,
+`finalise.c`) is dead; `caml_modify` and `caml_array_fill` no longer test it:
+their darkening is the verified barrier's, at the verified collector's phase.
+
+### Testing
+
+`tests/incremental_sweep.ml`, `tests/incremental_mark.ml`,
+`tests/write_barrier.ml` and `tests/explicit_major.ml` run through
+`tests/run_differential.sh`, which compares their output with stock OCaml's
+byte for byte. With `VERGC_MAJOR=incremental` it runs them under three
+pacings -- the default; small slices, often (`VERGC_SLICE_MIN_WORDS=64
+MINOR_HEAP_WORDS=32768`); a tiny mark stack and back-to-back cycles
+(`VERGC_SLICE_MIN_WORDS=256 VERGC_MARK_STACK=8 VERGC_TRIGGER_MIN_WORDS=0`,
+so root darkening and the barrier overflow the stack and the slices rescan)
+-- and checks, from `VERGC_MAJOR_STATS`, that `incremental_sweep` ran
+mid-sweep and `incremental_mark` mid-mark (marking spanned slices, with minor
+collections, allocations and barrier calls in between).  `incremental_mark`
+mutates heavily while marking: it overwrites fields of black and white
+objects, cuts the only path to a subtree and stores the subtree elsewhere
+after the program has allocated, stores young values into old blocks, drops
+references, swaps elements of a 60000-element array a slice is half way
+through, forces lazy values and mutates and resizes a hash table, checking
+every object against a model without pointers.  With the barrier's
+darkening disabled it fails (a corrupted node, then an exception or a
+crash).  Every integration target (`make test`, `make -C tests correctness`,
+`test-native`) runs in whichever mode the environment selects, and CI runs
+everything, OCaml's own testsuite included, in both.
 
 ---
 
@@ -906,7 +1168,7 @@ with respect to old-to-young edges: young objects reachable from old objects
 are promoted before the minor heap is reset.
 
 Second, the ref\_table itself is passed as the remembered-slot array to
-`minor_collect_full` or `gen_gc`.  After promotion, major-heap fields
+`minor_collect` or `full_gc`.  After promotion, major-heap fields
 recorded in the ref\_table may still hold stale minor addresses.  The
 verified collector rewrites those slots using `fwd_arr`:
 
@@ -914,20 +1176,23 @@ verified collector rewrites those slots using `fwd_arr`:
 struct caml_ref_table *tbl = Caml_state->_ref_table;
 size_t n_slots = (size_t)(tbl->ptr - tbl->base);
 
-minor_collect_full(gc_gen_heap, root_values, root_count,
-                   gc_fwd_arr, gc_queue,
-                   (uint64_t *)tbl->base, n_slots);
+minor_collect(gc_gen_heap, root_values, root_count,
+              gc_fwd_arr, gc_queue,
+              (uint64_t *)tbl->base, n_slots);
 ```
 
-The full-GC path passes the same `tbl->base`/`n_slots` pair to `gen_gc`.
+The full-GC path passes the same `tbl->base`/`n_slots` pair to `full_gc`.
 
 **No malloc needed.**  On LP64, each `value*` in the ref\_table is 8
 bytes -- the same as `uint64_t`.  The numeric value of the pointer is
 the slot address.  We cast `tbl->base` directly and pass it to the
 verified function.  This is safe because:
 
-1. `caml_modify` only adds entries when `Is_in_heap(fp)` — all
-   entries are valid major-heap addresses.
+1. `caml_modify` adds an entry for a major-heap slot only when the verified
+   barrier says so (`modify_field`), so those entries are fields of
+   non-free scannable blocks (`GC.Gen.Barrier.modify_ref_table`).  A slot
+   outside the verified heap (native static data, through the stock
+   fallback) is outside that model, as before.
 2. `rewrite_heap_slots` treats each entry as an address to read/write
    via `read_word(major, slot_addr)` -- with `major.data = NULL`, this
    dereferences the raw address, which is correct.
@@ -990,7 +1255,7 @@ surfaced by the extracted verified functions:
 
 ### 1. Promotion Failure
 
-`minor_collect_full` and `gen_gc` return a boolean success flag.  If
+`minor_collect` and `full_gc` return a boolean success flag.  If
 Cheney promotion cannot allocate a major copy for a reachable minor object,
 the flag is false and the bridge calls:
 
@@ -1025,7 +1290,14 @@ Direct major allocations (`verified_allocate`, blocks larger than
 `verified_allocate` checks the same threshold against the requested size
 before allocating. Without this, a heap filled by large blocks that are then
 dropped never triggered a full collection, and the next minor collection
-failed to promote (issue #34).
+failed to promote (issue #34). That is stop-the-world's trigger; incremental
+(`VERGC_MAJOR=incremental`) has its own, at Idle only, and the words
+allocated directly feed it and the pacing (see "The Major Mode").
+
+Mid-cycle (`VERGC_MAJOR=incremental`) a minor collection also finishes the
+cycle first when the heap may not hold twice the nursery's words, and a
+failed major allocation finishes the cycle before it runs a full collection
+(see "The Major Mode").
 
 ---
 
@@ -1070,7 +1342,7 @@ No manual copying of snapshot files.  The `.a` is linked into `ocamlrun`.
 Representative profiling from binarytrees-14 (1635 minor GCs, 25 major
 GCs, 6.4M allocations).  The phase names below are the verified collector
 sub-phases; in the current bridge, the minor phases execute inside
-`minor_collect_full` and the full-GC path executes them through `gen_gc`.
+`minor_collect` and the full-GC path executes them through `full_gc`.
 
 ```
 Phase                              Time        % of GC
@@ -1117,7 +1389,6 @@ void krmlinit_globals(void) {
     zero_addr0 = zero_addr;
     zero_addr1 = zero_addr0;
     minor_heap_size_sz = (size_t)minor_heap_size_u64;
-    fwd_arr_size_sz = (size_t)(minor_heap_size_u64 / 8ULL);
     queue_size_sz = (size_t)(minor_heap_size_u64 / 8ULL);
 }
 ```
@@ -1139,15 +1410,16 @@ writes results back to OCaml root locations.
 | Runtime root iteration | `caml_do_roots` -> `scan_minor_root` | Bridge | OCaml root enumeration and address translation |
 | Remembered-set enumeration | `collect_minor_roots_and_refs` | Bridge | Reads `Caml_state->_ref_table`, appends minor values to `root_values[]`, passes slot addresses to verified code |
 | Forwarding-array reset | `memset(gc_fwd_arr, 0, ...)` | Bridge | Clears stale forwarding entries before each collection |
-| Minor collection | `minor_collect_full` | Verified | Promotion, promoted-object rewrite, remembered-slot rewrite, root rewrite, minor reset, OOM flag |
-| Full collection | `gen_gc` | Verified | Calls `minor_collect_full`, darkens post-minor roots into the gray stack, then calls major `collect_with_roots` |
-| Full-GC support-array setup | `calloc`, `memcpy`, `gray_stack_rec` setup | Bridge | Copies roots into a separate mutable roots array and passes an initially empty gray stack |
+| Minor collection | `minor_collect` | Verified | Promotion, promoted-object rewrite, remembered-slot rewrite, root rewrite, minor reset, OOM flag |
+| Full collection | `full_gc` | Verified | Calls `minor_collect`, then `start_cycle` (darkens post-minor roots onto the persistent mark stack, enters `Marking`), then `major_slice` until idle (one slice marks, one sweeps) |
+| Full-GC support-array setup | `calloc`, `memcpy` | Bridge | Copies roots into a separate mutable roots array |
+| Mark state setup | `calloc` of the mark stack, flag and positions in `ensure_heap` | Bridge | Allocated once, empty, flag down, positions 0 (`VERGC_MARK_STACK` sets the capacity, for testing) |
 | OCaml root writeback | `write_back_rewritten_roots`, `write_back_forwarded_roots` | Bridge | Updates only real OCaml root slots; ref-table slots are rewritten inside verified code |
 | Ref-table reset | `tbl->ptr = tbl->base` | Bridge | Drops remembered-set entries after the slots have been rewritten |
 
 ### Efficient promoted-object update and remembered slots
 
-`minor_collect_full` uses the efficient promoted-object path:
+`minor_collect` uses the efficient promoted-object path:
 `update_promoted_objects` iterates the forwarding array and rewrites only the
 freshly promoted major copies.  Those are precisely the new major objects
 whose fields were copied from the minor heap and may still contain minor
@@ -1156,14 +1428,14 @@ offsets.
 Pre-existing major objects are handled separately through the remembered set.
 If a mutator writes a young pointer into an old object, OCaml's write barrier
 records the slot in `Caml_state->_ref_table`.  Passing that table to
-`minor_collect_full` or `gen_gc` lets verified `rewrite_heap_slots` update
+`minor_collect` or `full_gc` lets verified `rewrite_heap_slots` update
 those old slots after promotion.  The split is what makes the bridge fast:
 newly promoted objects are found through `fwd_arr`, while old-to-young fields
 are found through the ref table instead of scanning the whole major heap.
 
 ---
 
-## Completed: Verified `minor_collect_full` and `gen_gc` Integration
+## Completed: Verified `minor_collect` and `full_gc` Integration
 
 The old plan to replace the multi-step bridge pipeline with a verified
 minor-collection entry point is complete.  The bridge no longer calls
@@ -1180,16 +1452,16 @@ collect_minor_roots_and_refs();
 memset(gc_fwd_arr, 0, queue_size_sz * sizeof(uint64_t));
 
 bool ok =
-    minor_collect_full(gc_gen_heap, root_values, root_count,
-                       gc_fwd_arr, gc_queue,
-                       (uint64_t *)tbl->base, n_slots);
+    minor_collect(gc_gen_heap, root_values, root_count,
+                  gc_fwd_arr, gc_queue,
+                  (uint64_t *)tbl->base, n_slots);
 if (!ok) fatal_promotion_failed();
 
 write_back_rewritten_roots(root_values);
 Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
 ```
 
-`minor_collect_full` bundles:
+`minor_collect` bundles:
 
 1. infix-aware Cheney promotion;
 2. `update_promoted_objects` for freshly promoted copies;
@@ -1199,9 +1471,9 @@ Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
 
 ### Full collection path
 
-`do_full_gc` now calls `gen_gc`, not `do_minor_gc()` followed by a separate
+`do_full_gc` now calls `full_gc`, not `do_minor_gc()` followed by a separate
 bridge-level major collector.  The additional bridge work is only building a
-mutable roots array and an initially empty gray stack:
+mutable roots array:
 
 ```c
 collect_minor_roots_and_refs();
@@ -1210,22 +1482,21 @@ memset(gc_fwd_arr, 0, queue_size_sz * sizeof(uint64_t));
 roots_for_gc = calloc(root_count, sizeof(uint64_t));
 memcpy(roots_for_gc, root_values, root_count * sizeof(uint64_t));
 
-gray_top = gray_cap;
-gray_stack_rec s = { gray_storage, &gray_top, gray_cap };
-FStar_Pervasives_Native_tuple2__uint64_t_bool r =
-    gen_gc(gc_gen_heap, roots_for_gc, root_count,
-           gc_fwd_arr, gc_queue,
-           (uint64_t *)tbl->base, n_slots, s);
-if (!r._2) fatal_promotion_failed();
+bool ok =
+    full_gc(gc_gen_heap, roots_for_gc, root_count,
+            gc_fwd_arr, gc_queue,
+            (uint64_t *)tbl->base, n_slots);
+if (!ok) fatal_promotion_failed();
 
 write_back_forwarded_roots();
 Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
 ```
 
-The roots array is deliberately separate from the gray-stack storage because
-`gen_gc` now owns the verified transition from post-minor roots to the major
+`full_gc` owns the verified transition from post-minor roots to the major
 mark stack.  It performs minor collection, rewrites `roots_for_gc`, calls the
-verified root-darkening helper, and only then invokes the major mark loop.
+verified root-darkening helper (`start_cycle`), and then marks and sweeps
+(`major_slice`).  Incremental, the bridge makes the `minor_collect`,
+`start_cycle` and marking `major_slice` calls itself.
 
 ---
 
@@ -1240,16 +1511,19 @@ verified root-darkening helper, and only then invokes the major mark loop.
 3. **Minor addresses are translated at GC boundaries only** — during
    normal execution, OCaml uses absolute minor addresses.  Translation to
    minor offsets happens when building `root_values[]`; translation back to
-   major value addresses happens inside `minor_collect_full`/`gen_gc` and
+   major value addresses happens inside `minor_collect`/`full_gc` and
    bridge root writeback.
 
 4. **The minor heap is fully evacuated** — after minor GC, the minor
    heap is empty (bump reset to 0).  All live objects are in major.
 
-5. **No incremental/concurrent GC** — both minor and major GC are
-   stop-the-world.  The proactive trigger keeps pause times bounded.
+5. **No concurrent GC** — minor collections are stop-the-world; the major
+   cycle is too by default, and in slices between minor collections
+   (marking, then the sweep) with `VERGC_MAJOR=incremental` (see "The Major
+   Mode").
 
-6. **Full-GC roots are post-minor roots** — `do_full_gc` gives `gen_gc` a
-   separate mutable roots array and an empty gray stack.  The minor phase
-   rewrites the roots array, and verified root darkening pushes exactly those
-   post-minor roots for the major mark phase.
+6. **Full-GC roots are post-minor roots** — `do_full_gc` gives `full_gc` a
+   separate mutable roots array.  The minor phase rewrites the roots array,
+   and verified root darkening greys exactly those post-minor roots (pushing
+   them onto the persistent mark stack while it has room) for the mark
+   slices.

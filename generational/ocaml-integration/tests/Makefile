@@ -27,7 +27,8 @@ MANDELBROT_MAJOR_WORDS    ?= $(DEFAULT_MAJOR_WORDS)
 %.byte: %.ml
 	$(OCAMLC) -o $@ $<
 
-%.native: %.ml
+# Relink when the verified runtime changes: the GC is linked in statically.
+%.native: %.ml $(VERGC_NATIVE_RUNTIME_DIR)/libasmrun.a
 	$(OCAMLOPT) -I $(VERGC_NATIVE_RUNTIME_DIR) -o $@ $<
 
 # tiny_globals is linked without the stdlib (and against an empty std_exit,
@@ -57,7 +58,8 @@ BT18_MAJOR_WORDS      ?= 536870912
 # Correctness tests (not benchmarks): run under both runtimes and compared.
 CORRECTNESS_TESTS = infix_closures no_scan make_vect_barrier nursery_no_scan_interior \
                     alloc_exact_promotion tiny_globals gc_explicit large_alloc_garbage \
-                    gray_overflow
+                    gray_overflow explicit_major incremental_sweep obj_truncate \
+                    write_barrier incremental_mark mark_scanned_writes
 
 # infix_closures needs a small major heap so that real major collections
 # (mark & sweep) happen; it checks Gc.quick_stat to confirm they did.
@@ -83,6 +85,44 @@ ALLOC_EXACT_MAJOR_WORDS ?= 4194304
 
 # gc_explicit calls Gc.major / Gc.full_major / Gc.compact; it needs little room.
 GC_EXPLICIT_MAJOR_WORDS ?= 4000000
+
+# explicit_major: Gc.full_major & co. used to run stock's major collector over
+# the verified heap. Small enough a heap that the churn forces collections.
+EXPLICIT_MAJOR_WORDS ?= 4000000
+
+# incremental_sweep: the program running mid-sweep (VERGC_MAJOR=incremental).
+# A small heap, so that cycles are frequent and most of the run is mid-sweep.
+INCREMENTAL_SWEEP_MAJOR_WORDS ?= 4000000
+
+# incremental_mark: heavy mutation while marking (VERGC_MAJOR=incremental):
+# fields of black and white objects overwritten, the only path to a subtree
+# cut and the subtree stored elsewhere, young into old, a large array
+# rewritten while a slice is half way through it, Lazy, Hashtbl.  A small
+# heap so that cycles are frequent; the sections run INCREMENTAL_MARK_REPS
+# times.
+INCREMENTAL_MARK_MAJOR_WORDS ?= 1000000
+INCREMENTAL_MARK_REPS ?= 3
+
+# mark_scanned_writes: the program keeps writing into the first fields of a
+# large array while a cycle marks it, a slice's worth of fields at a time
+# (VERGC_MAJOR=incremental).  The barrier once restarted the array's scan on
+# each such write, so marking never ended in slices; REQUIRE_MARKS_ENDED
+# checks that every run's marking ends in slices with no cycle finished early
+# while marking.
+MARK_SCANNED_WRITES_MAJOR_WORDS ?= 1000000
+
+# write_barrier: stores into old blocks in every pattern the verified write
+# barrier (caml_modify / caml_initialize / caml_array_fill) distinguishes,
+# with collections in between; differential against stock.
+WRITE_BARRIER_MAJOR_WORDS ?= 4000000
+
+# These run through run_differential.sh: stock's output is the reference and
+# the verified output must be identical. With VERGC_MAJOR=incremental it runs
+# the verified side under three pacings (the default, tiny slices with a small
+# nursery, small slices with a tiny mark stack and back-to-back cycles), and
+# checks (REQUIRE_MID_SWEEP, REQUIRE_MID_MARK) that incremental_sweep really
+# ran mid-sweep and incremental_mark mid-mark.
+DIFF = ./run_differential.sh
 NURSERY_NO_SCAN_MAJOR_WORDS ?= 4000000
 
 # large_alloc_garbage (issue #34) fills a 4M-word major heap with dead large
@@ -90,16 +130,23 @@ NURSERY_NO_SCAN_MAJOR_WORDS ?= 4000000
 LARGE_ALLOC_MAJOR_WORDS ?= 4000000
 LARGE_ALLOC_LEAVE_FREE  ?= 100000
 
+# obj_truncate: Obj.truncate is not supported by the verified GC and raises
+# Invalid_argument (OBJ_TRUNCATE_RUNTIME=verified); stock truncates.
+
 # gray_overflow holds heap_words / 5 live refs in one array, more than the
-# heap_words / 8-entry gray stack, so the major mark overflows and must rescan.
+# heap_words / 8-entry mark stack, so the major mark overflows and must rescan.
+# It runs a second time with a 3-entry mark stack (VERGC_MARK_STACK=3, read by
+# the bridge at start-up): root darkening overflows it, and the mark slices
+# rescan the heap in chunks over and over.
 # tools/mutation-ov-never-set.sh checks that it fails when the rescan is
 # skipped after an overflow.
 GRAY_OVERFLOW_MAJOR_WORDS ?= 2000000
 
 BYTE_FILES = $(addsuffix .byte, $(BENCHMARKS)) $(addsuffix .byte, $(CORRECTNESS_TESTS)) \
              $(addsuffix .byte, $(KNOWN_GAP_TESTS)) $(addsuffix .byte, $(MARK_BENCHMARKS))
+NATIVE_DIFF_TESTS = explicit_major incremental_sweep write_barrier incremental_mark mark_scanned_writes
 NATIVE_FILES = $(addsuffix .native, $(BENCHMARKS)) gc_explicit.native large_alloc_garbage.native \
-               gray_overflow.native
+               gray_overflow.native obj_truncate.native $(addsuffix .native, $(NATIVE_DIFF_TESTS))
 BENCH_TARGETS = $(addsuffix .bench, $(BENCHMARKS))
 STATS_TARGETS = $(addsuffix .stats, $(BENCHMARKS))
 MINHEAP_TARGETS = $(addsuffix .minheap, $(BENCHMARKS))
@@ -209,8 +256,24 @@ correctness: $(addsuffix .byte, $(CORRECTNESS_TESTS))
 	$(UNCHANGED_OCAMLRUN) large_alloc_garbage.byte $(LARGE_ALLOC_MAJOR_WORDS) $(LARGE_ALLOC_LEAVE_FREE)
 	@echo "--- gray_overflow (verified generational GC; gray stack overflows) ---"
 	MIN_EXPANSION_WORDSIZE=$(GRAY_OVERFLOW_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) gray_overflow.byte $(GRAY_OVERFLOW_MAJOR_WORDS)
+	@echo "--- gray_overflow (a 3-entry mark stack: the roots overflow it, every slice rescans) ---"
+	VERGC_MARK_STACK=3 MIN_EXPANSION_WORDSIZE=$(GRAY_OVERFLOW_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) gray_overflow.byte $(GRAY_OVERFLOW_MAJOR_WORDS)
 	@echo "--- gray_overflow (stock OCaml, differential check) ---"
 	$(UNCHANGED_OCAMLRUN) gray_overflow.byte $(GRAY_OVERFLOW_MAJOR_WORDS)
+	@echo "--- obj_truncate (verified generational GC: Obj.truncate raises) ---"
+	OBJ_TRUNCATE_RUNTIME=verified $(VERIFIED_GEN_OCAMLRUN) obj_truncate.byte
+	@echo "--- obj_truncate (stock OCaml, differential check: it truncates) ---"
+	$(UNCHANGED_OCAMLRUN) obj_truncate.byte
+	$(DIFF) explicit_major '$(UNCHANGED_OCAMLRUN) explicit_major.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(EXPLICIT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) explicit_major.byte'
+	REQUIRE_MID_SWEEP=1 $(DIFF) incremental_sweep '$(UNCHANGED_OCAMLRUN) incremental_sweep.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_SWEEP_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) incremental_sweep.byte'
+	$(DIFF) write_barrier '$(UNCHANGED_OCAMLRUN) write_barrier.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(WRITE_BARRIER_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) write_barrier.byte'
+	REQUIRE_MID_MARK=1 $(DIFF) incremental_mark '$(UNCHANGED_OCAMLRUN) incremental_mark.byte $(INCREMENTAL_MARK_REPS)' \
+	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_MARK_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) incremental_mark.byte $(INCREMENTAL_MARK_REPS)'
+	REQUIRE_MID_MARK=1 REQUIRE_MARKS_ENDED=1 $(DIFF) mark_scanned_writes '$(UNCHANGED_OCAMLRUN) mark_scanned_writes.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(MARK_SCANNED_WRITES_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) mark_scanned_writes.byte'
 	@echo "=== Correctness tests passed ==="
 
 # ---- Known-gap reproducers (expected to FAIL under the verified GC) ----
@@ -239,7 +302,7 @@ known-gaps: $(addsuffix .byte, $(KNOWN_GAP_TESTS))
 # If this fails but `make test` passes, suspect the young_ptr <-> bump_ref
 # translation before anything else (verified_gc/alloc_gen.c).
 
-test-native: $(NATIVE_FILES)
+test-native: $(NATIVE_FILES) $(addsuffix .byte, $(NATIVE_DIFF_TESTS))
 	@echo "=== Smoke tests, native (verified generational GC) ==="
 	@echo "--- binarytrees ---"
 	MIN_EXPANSION_WORDSIZE=$(BINARYTREES_MAJOR_WORDS) ./binarytrees.native 10
@@ -263,6 +326,19 @@ test-native: $(NATIVE_FILES)
 	MIN_EXPANSION_WORDSIZE=$(LARGE_ALLOC_MAJOR_WORDS) ./large_alloc_garbage.native $(LARGE_ALLOC_MAJOR_WORDS) $(LARGE_ALLOC_LEAVE_FREE)
 	@echo "--- gray_overflow (gray stack overflows, so the rescan runs) ---"
 	MIN_EXPANSION_WORDSIZE=$(GRAY_OVERFLOW_MAJOR_WORDS) ./gray_overflow.native $(GRAY_OVERFLOW_MAJOR_WORDS)
+	VERGC_MARK_STACK=3 MIN_EXPANSION_WORDSIZE=$(GRAY_OVERFLOW_MAJOR_WORDS) ./gray_overflow.native $(GRAY_OVERFLOW_MAJOR_WORDS)
+	@echo "--- obj_truncate (Obj.truncate raises) ---"
+	OBJ_TRUNCATE_RUNTIME=verified ./obj_truncate.native
+	$(DIFF) explicit_major.native '$(UNCHANGED_OCAMLRUN) explicit_major.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(EXPLICIT_MAJOR_WORDS) ./explicit_major.native'
+	REQUIRE_MID_SWEEP=1 $(DIFF) incremental_sweep.native '$(UNCHANGED_OCAMLRUN) incremental_sweep.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_SWEEP_MAJOR_WORDS) ./incremental_sweep.native'
+	$(DIFF) write_barrier.native '$(UNCHANGED_OCAMLRUN) write_barrier.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(WRITE_BARRIER_MAJOR_WORDS) ./write_barrier.native'
+	REQUIRE_MID_MARK=1 $(DIFF) incremental_mark.native '$(UNCHANGED_OCAMLRUN) incremental_mark.byte $(INCREMENTAL_MARK_REPS)' \
+	  'MIN_EXPANSION_WORDSIZE=$(INCREMENTAL_MARK_MAJOR_WORDS) ./incremental_mark.native $(INCREMENTAL_MARK_REPS)'
+	REQUIRE_MID_MARK=1 REQUIRE_MARKS_ENDED=1 $(DIFF) mark_scanned_writes.native '$(UNCHANGED_OCAMLRUN) mark_scanned_writes.byte' \
+	  'MIN_EXPANSION_WORDSIZE=$(MARK_SCANNED_WRITES_MAJOR_WORDS) ./mark_scanned_writes.native'
 	@echo "=== All native smoke tests passed ==="
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----

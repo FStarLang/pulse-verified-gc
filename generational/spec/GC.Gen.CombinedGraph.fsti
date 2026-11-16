@@ -24,7 +24,6 @@ open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Reachability
-open GC.Gen.Remembered
 open GC.Gen.Promote
 
 /// ---------------------------------------------------------------------------
@@ -99,7 +98,7 @@ val classify_minor_field_minor_raw (ms: minor_state) (major: heap) (v: U64.t)
 ///
 /// Unlike `classify_major_field`, the *major* branch of this classifier is still
 /// raw: a minor object's field holding an interior pointer into a major closure
-/// is ruled out by `GC.Gen.HeapInvariant.minor_major_fields_no_blue`, which
+/// is ruled out by `GC.Gen.HeapInvariant.minor_major_fields_not_free`, which
 /// requires every pointer-valued minor field to name an enumerated major object
 /// outright.
 val classify_minor_field_major (ms: minor_state) (major: heap) (v: U64.t)
@@ -196,15 +195,6 @@ val classify_major_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x
                    (let vr = resolve_minor ms (to_minor_offset v) in
                     ~(is_minor_pointer (to_minor_offset v) /\ Seq.mem vr (minor_objects ms))))
 
-/// Inversion specialized to non-interior targets, where resolution is the
-/// identity and the pre-resolution conclusion `v == x` is recovered verbatim.
-val classify_major_field_inv_major_raw (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
-  : Lemma (requires classify_major_field ms major v == Some (MajorV x) /\
-                    is_val_addr v /\ ~(is_infix (v <: obj_addr) major))
-          (ensures v == x /\ Seq.mem (v <: obj_addr) (objects zero_addr major) /\
-                   (let vr = resolve_minor ms (to_minor_offset v) in
-                    ~(is_minor_pointer (to_minor_offset v) /\ Seq.mem vr (minor_objects ms))))
-
 /// ---------------------------------------------------------------------------
 /// Graph Construction
 /// ---------------------------------------------------------------------------
@@ -215,7 +205,14 @@ val classify_major_field_inv_major_raw (ms: minor_state) (major: heap) (v: U64.t
 ///
 /// NOTE: Uses ALL minor objects (not just reachable ones) as vertices.
 /// The reachability analysis happens at a higher level via combined_reachable.
-val build_combined_graph (ms: minor_state) (major: heap)
+///
+/// `free` says which major blocks count as free (`GC.Spec.Fields.free_def`;
+/// `GC.Spec.Fields.free_stw` when the world is stopped).  Only a non-free
+/// major block has edges: a free block (blue, or about to be freed)
+/// stays a vertex with no outgoing edges, as in
+/// `GC.Spec.HeapModel.create_graph_with`.  Mid-sweep a dead block's fields may
+/// name blocks already merged into the free list.
+val build_combined_graph (ms: minor_state) (major: heap) (free: free_def)
   : GTot combined_graph
 
 /// ---------------------------------------------------------------------------
@@ -223,32 +220,32 @@ val build_combined_graph (ms: minor_state) (major: heap)
 /// ---------------------------------------------------------------------------
 
 /// A MinorV is a vertex iff it's a valid minor object
-val minor_vertex_char (ms: minor_state) (major: heap) (a: U64.t)
+val minor_vertex_char (ms: minor_state) (major: heap) (free: free_def) (a: U64.t)
   : Lemma (ensures
-      mem_cv (MinorV a) (build_combined_graph ms major) <==>
+      mem_cv (MinorV a) (build_combined_graph ms major free) <==>
       Seq.mem a (minor_objects ms))
 
 /// A MajorV is a vertex iff it's an allocated major object
-val major_vertex_char (ms: minor_state) (major: heap) (a: obj_addr)
+val major_vertex_char (ms: minor_state) (major: heap) (free: free_def) (a: obj_addr)
   : Lemma (ensures
-      mem_cv (MajorV a) (build_combined_graph ms major) <==>
+      mem_cv (MajorV a) (build_combined_graph ms major free) <==>
       Seq.mem a (objects zero_addr major))
 
-/// Validity from vertex membership: if MajorV v is a vertex, then v satisfies
+/// Validity from vertex membership: if MajorV a is a vertex, then a satisfies
 /// the obj_addr refinement (>= mword, < heap_size, word-aligned).
-val major_vertex_valid (ms: minor_state) (major: heap) (v: U64.t)
-  : Lemma (requires mem_cv (MajorV v) (build_combined_graph ms major))
-          (ensures U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
-                   Seq.mem (v <: obj_addr) (objects zero_addr major))
+val major_vertex_valid (ms: minor_state) (major: heap) (free: free_def) (a: U64.t)
+  : Lemma (requires mem_cv (MajorV a) (build_combined_graph ms major free))
+          (ensures U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword == 0 /\
+                   Seq.mem (a <: obj_addr) (objects zero_addr major))
 
 /// ---------------------------------------------------------------------------
 /// Well-Formedness of Construction
 /// ---------------------------------------------------------------------------
 
-/// The constructed graph is well-formed (all edge endpoints are vertices)
-val build_combined_graph_wf (ms: minor_state) (major: heap)
-  : Lemma (requires well_formed_heap major /\ minor_wf ms)
-          (ensures combined_graph_wf (build_combined_graph ms major))
+/// The constructed graph is well-formed (all edge endpoints are vertices), for
+/// any heaps: the field classifiers only name vertices.
+val build_combined_graph_wf (ms: minor_state) (major: heap) (free: free_def)
+  : Lemma (ensures combined_graph_wf (build_combined_graph ms major free))
 
 /// ---------------------------------------------------------------------------
 /// Edge Introduction Lemmas
@@ -256,7 +253,7 @@ val build_combined_graph_wf (ms: minor_state) (major: heap)
 
 /// If a field of minor object src is classified as a pointer, the
 /// corresponding edge exists in the combined graph.
-val minor_field_edge_intro (ms: minor_state) (major: heap)
+val minor_field_edge_intro (ms: minor_state) (major: heap) (free: free_def)
   (src: U64.t) (i: nat) (dst: combined_vertex)
   : Lemma (requires Seq.mem src (minor_objects ms) /\
                     // `minor_scan_wosize` rather than `minor_wosize`: a no-scan
@@ -264,20 +261,20 @@ val minor_field_edge_intro (ms: minor_state) (major: heap)
                     // analogue below requires `~(is_no_scan src major)`.
                     i < minor_scan_wosize ms src /\
                     classify_minor_field ms major (minor_read_field ms src i) == Some dst)
-          (ensures mem_ce (MinorV src, dst) (build_combined_graph ms major))
+          (ensures mem_ce (MinorV src, dst) (build_combined_graph ms major free))
 
 /// If a field of major object src is classified as a pointer, the
 /// corresponding edge exists in the combined graph.
-val major_field_edge_intro (ms: minor_state) (major: heap)
+val major_field_edge_intro (ms: minor_state) (major: heap) (free: free_def)
   (src: obj_addr) (i: nat) (dst: combined_vertex)
-  : Lemma (requires Seq.mem src (objects zero_addr major) /\
+  : Lemma (requires Seq.mem src (objects zero_addr major) /\ in_use free major src /\
                     i < U64.v (wosize_of_object src major) /\
                     ~(is_no_scan src major) /\
                     U64.v src + i * 8 + 8 <= heap_size /\
                     (U64.v src + i * 8) % 8 == 0 /\
                     classify_major_field ms major
                       (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some dst)
-          (ensures mem_ce (MajorV src, dst) (build_combined_graph ms major))
+          (ensures mem_ce (MajorV src, dst) (build_combined_graph ms major free))
 
 /// ---------------------------------------------------------------------------
 /// Edge Elimination Lemmas
@@ -285,9 +282,9 @@ val major_field_edge_intro (ms: minor_state) (major: heap)
 
 /// Source decomposition: every edge comes from a minor or major source.
 /// Combined with well-formedness, this classifies every edge into one of two cases.
-val edge_source_decomposition (ms: minor_state) (major: heap)
+val edge_source_decomposition (ms: minor_state) (major: heap) (free: free_def)
   (e: combined_edge)
-  : Lemma (requires mem_ce e (build_combined_graph ms major))
+  : Lemma (requires mem_ce e (build_combined_graph ms major free))
           (ensures
             (match fst e with
              | MinorV src -> Seq.mem src (minor_objects ms)
@@ -296,9 +293,9 @@ val edge_source_decomposition (ms: minor_state) (major: heap)
                Seq.mem (src <: obj_addr) (objects zero_addr major)))
 
 /// Minor edge elimination: every edge from a minor source has a witness field.
-val minor_edge_elim (ms: minor_state) (major: heap)
+val minor_edge_elim (ms: minor_state) (major: heap) (free: free_def)
   (src: U64.t) (dst: combined_vertex)
-  : Lemma (requires mem_ce (MinorV src, dst) (build_combined_graph ms major))
+  : Lemma (requires mem_ce (MinorV src, dst) (build_combined_graph ms major free))
           (ensures Seq.mem src (minor_objects ms) /\
                    // `minor_scan_wosize`, mirroring `~(is_no_scan src major)` in
                    // `major_edge_elim`: a no-scan source has no outgoing edges.
@@ -306,10 +303,10 @@ val minor_edge_elim (ms: minor_state) (major: heap)
                      classify_minor_field ms major (minor_read_field ms src i) == Some dst))
 
 /// Major edge elimination: every edge from a major source has a witness field.
-val major_edge_elim (ms: minor_state) (major: heap)
+val major_edge_elim (ms: minor_state) (major: heap) (free: free_def)
   (src: obj_addr) (dst: combined_vertex)
-  : Lemma (requires mem_ce (MajorV src, dst) (build_combined_graph ms major))
-          (ensures Seq.mem src (objects zero_addr major) /\
+  : Lemma (requires mem_ce (MajorV src, dst) (build_combined_graph ms major free))
+          (ensures in_use free major src /\
                    ~(is_no_scan src major) /\
                    (exists (i: nat). i < U64.v (wosize_of_object src major) /\
                      U64.v src + i * 8 + 8 <= heap_size /\
@@ -391,11 +388,11 @@ val combined_reachable_ind_with_reach
 /// (`roots_not_infix_in_minor`).  Relaxing that predicate is Phase H of
 /// `docs/minor-infix-support-plan.md`; it is a project of its own, because it
 /// also reaches `GC.Impl.MarkBoundedPrecondition.root_valid_for_darkening`
-/// and, through it, `gen_gc`'s published `roots_match_stack` postcondition.
+/// and, through it, `full_gc`'s published `roots_match_stack` postcondition.
 ///
 /// The major branch is still raw, mirroring `classify_minor_field`: a root
 /// pointing into the middle of a *major* closure is excluded by
-/// `roots_valid_nonblue`, which requires every root to name an enumerated
+/// `roots_not_free`, which requires every root to name an enumerated
 /// major object outright.
 let classify_root (ms: minor_state) (r: U64.t) : GTot combined_vertex =
   if is_minor_pointer r then MinorV (resolve_minor ms r) else MajorV r

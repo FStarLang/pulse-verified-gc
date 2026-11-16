@@ -53,9 +53,6 @@ let is_minor_addr (a: U64.t) : bool =
 let is_minor_addr_from_bounds (a: U64.t)
   = ()
 
-let is_minor_object_addr_bounds (a: U64.t)
-  = ()
-
 let to_minor_offset_in_minor_range (a: U64.t)
   = ()
 

@@ -5,8 +5,8 @@
 ///
 /// `GC.SPOT.NoScanMajor` is the major-heap version of this witness: a live
 /// `String_tag` block whose bytes happen to spell a heap address, admitted by
-/// `major_heap_shape` because `well_formed_heap` parts 2 and 3 are guarded by
-/// `GC.Spec.Fields.fields_constrained`.
+/// `major_heap_shape` because a no-scan block has no pointers
+/// (it is not `GC.Spec.Fields.scannable`).
 ///
 /// This module is the nursery version, and it took longer to arrive because the
 /// nursery half of the same relaxation was a *real bug*, not just proof debt.
@@ -115,12 +115,12 @@ val spot_ns_nursery_scan_window_empty : unit ->
 /// The precondition
 /// ---------------------------------------------------------------------------
 
-/// The nursery half of `gen_gc`'s entry invariant.
+/// The nursery half of `full_gc`'s entry invariant.
 val spot_ns_minor_heap_shape : unit ->
   Lemma (ensures GenInv.minor_heap_shape spot_ns_nursery)
 
 /// And the whole thing, against the concrete major heap of
-/// `GC.SPOT.ConcreteMajor`: exactly the predicate `gen_gc` requires of the heap
+/// `GC.SPOT.ConcreteMajor`: exactly the predicate `full_gc` requires of the heap
 /// it is handed.
 val spot_ns_collection_heap_shape : r:unit{Major.spot_major_room} ->
   Lemma (ensures GenInv.collection_heap_shape

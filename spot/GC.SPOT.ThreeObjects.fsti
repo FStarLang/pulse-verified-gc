@@ -5,6 +5,7 @@ module Seq = FStar.Seq
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -57,10 +58,6 @@ val spot_roots_cases
     Lemma (requires Seq.mem root (spot_roots c))
           (ensures root == (c <: U64.t) \/ root == GC.SPOT.Layout.a_minor)
 
-val spot_slots_singleton_distinct
-  : c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size} ->
-    Lemma (GC.Gen.Impl.UpdatePtrs.slots_pairwise_distinct (spot_slots c) 1)
-
 val spot_minor_scenario_pre
   : minor:minor_state -> major:heap -> fp:U64.t ->
     c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size} ->
@@ -86,13 +83,13 @@ val spot_minor_scenario_pre_intro_from_c_to_a
         Seq.mem GC.SPOT.Layout.b_minor (minor_objects minor) /\
         minor_wosize minor GC.SPOT.Layout.a_minor > 0 /\
         minor_wosize minor GC.SPOT.Layout.b_minor > 0 /\
-        GC.Gen.CheneyBFS.cheney_no_oom minor major fp (spot_roots c))
+        GC.Gen.CheneyBFS.cheney_no_oom Idle minor major fp (spot_roots c))
       (ensures spot_minor_scenario_pre minor major fp c farr)
 
 val spot_full_scenario_pre
   : minor:minor_state -> major:heap -> fp:U64.t ->
     c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size} ->
-    farr:seq U64.t -> st:seq obj_addr -> cap:nat -> Tot prop
+    farr:seq U64.t -> Tot prop
 
 val spot_c_reachable_root
   : minor:minor_state -> major:heap -> fp:U64.t ->
@@ -101,7 +98,7 @@ val spot_c_reachable_root
     Lemma
       (requires spot_minor_scenario_pre minor major fp c farr)
       (ensures (
-        let cg = GC.Gen.CombinedGraph.build_combined_graph minor major in
+        let cg = GC.Gen.CombinedGraph.build_combined_graph minor major GC.Spec.Fields.free_stw in
         GC.Gen.CombinedGraph.combined_reachable
           cg (GC.Gen.CombinedGraph.classify_roots minor (spot_roots c))
           (GC.Gen.CombinedGraph.MajorV c)))
@@ -113,7 +110,7 @@ val spot_a_reachable_root
     Lemma
       (requires spot_minor_scenario_pre minor major fp c farr)
       (ensures (
-        let cg = GC.Gen.CombinedGraph.build_combined_graph minor major in
+        let cg = GC.Gen.CombinedGraph.build_combined_graph minor major GC.Spec.Fields.free_stw in
         GC.Gen.CombinedGraph.combined_reachable
           cg (GC.Gen.CombinedGraph.classify_roots minor (spot_roots c))
           (GC.Gen.CombinedGraph.MinorV GC.SPOT.Layout.a_minor)))
@@ -125,7 +122,7 @@ val spot_a_promoted
     Lemma
       (requires spot_minor_scenario_pre minor major fp c farr)
       (ensures (
-        let prom = GC.Gen.Cheney.cheney_promote minor major fp (spot_roots c) in
+        let prom = GC.Gen.Cheney.cheney_promote Idle minor major fp (spot_roots c) in
         GC.SPOT.Postconditions.promoted_image
           minor major fp (spot_roots c) GC.SPOT.Layout.a_minor
           (prom.fwd_map GC.SPOT.Layout.a_minor)))
@@ -137,7 +134,7 @@ val spot_c_field_rewritten_to_a_prime
     Lemma
       (requires spot_minor_scenario_pre minor major fp c farr)
       (ensures (
-        let prom = GC.Gen.Cheney.cheney_promote minor major fp (spot_roots c) in
+        let prom = GC.Gen.Cheney.cheney_promote Idle minor major fp (spot_roots c) in
         let res = GC.Gen.Cheney.cheney_collect_spec minor major fp (spot_roots c) in
         GC.SPOT.Postconditions.promoted_image
           minor major fp (spot_roots c) GC.SPOT.Layout.a_minor
@@ -149,7 +146,7 @@ val spot_b_not_promoted_from_forwarding_zero
   : minor:minor_state -> major:heap -> fp:U64.t -> c:obj_addr ->
     Lemma
       (requires
-        (GC.Gen.Cheney.cheney_promote minor major fp (spot_roots c)).fwd_map
+        (GC.Gen.Cheney.cheney_promote Idle minor major fp (spot_roots c)).fwd_map
           GC.SPOT.Layout.b_minor == 0UL)
       (ensures
         GC.SPOT.Postconditions.minor_not_promoted
@@ -158,15 +155,14 @@ val spot_b_not_promoted_from_forwarding_zero
 val spot_final_survives_from_gen_gc_post
   : minor:minor_state -> major:heap -> fp:U64.t ->
     c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size} ->
-    roots_out:seq U64.t -> ok:bool -> final_major:heap -> st:seq obj_addr ->
-    cap:nat -> x:obj_addr ->
+    roots_out:seq U64.t -> ok:bool -> final_major:heap -> x:obj_addr ->
     Lemma
       (requires
         ok /\
         GC.Gen.Impl.gen_gc_reachable_subgraph_isomorphism_post
-          minor major fp (spot_roots c) ok final_major roots_out st cap /\
+          minor major fp (spot_roots c) ok final_major roots_out /\
         GC.Spec.Correctness.heap_reachable
-          (GC.Gen.Impl.gen_gc_prepared_major minor major fp (spot_roots c) st cap)
-          (GC.Gen.Impl.gen_gc_prepared_roots minor major fp (spot_roots c) st cap)
+          (GC.Gen.Impl.gen_gc_prepared_major minor major fp (spot_roots c))
+          (GC.Gen.Impl.gen_gc_prepared_roots minor major fp (spot_roots c))
           x)
       (ensures Seq.mem x (GC.Spec.Fields.objects zero_addr final_major))

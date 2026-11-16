@@ -9,6 +9,7 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
@@ -30,7 +31,7 @@ let spot_minor_collect_full_success_post
   (post_major: heap) : prop =
   let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
   let prom =
-    CheneySpec.cheney_promote
+    CheneySpec.cheney_promote Idle
       ConcreteMinor.spot_minor2
       (ConcreteMajor.spot_major_heap r)
       (ConcreteMajor.spot_major_fp r)
@@ -61,11 +62,11 @@ let spot_minor_collect_full_success_post
 fn call_concrete_minor_collect_full_spot
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)
-  requires is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
+  requires gen_phase gh (ConcreteMajor.spot_major_heap r) GC.Spec.Phase.Idle ** mark_state gh (ConcreteMajor.spot_major_heap r) GC.Spec.Phase.Idle GC.Spec.MarkPhase.scan_none ** is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
             (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r)
   returns ok: bool
   ensures exists* d2 b2 post_major fp2.
-    is_gen_heap gh d2 b2 post_major fp2 **
+    gen_phase gh post_major GC.Spec.Phase.Idle ** mark_state gh post_major GC.Spec.Phase.Idle GC.Spec.MarkPhase.scan_none ** is_gen_heap gh d2 b2 post_major fp2 **
     pure (
       U64.v b2 == 0 /\
       spot_minor_collect_full_success_post r post_major)

@@ -5,6 +5,7 @@ module Seq = FStar.Seq
 
 open FStar.Seq
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -65,18 +66,23 @@ let spot_minor_infix_promoted
   let ov = stored_target major c i in
   let par = infix_parent minor ov in
   scenario_classifies minor major fp roots slots n c i;
+  MinorFwd.stop_the_world_context minor major fp roots;
+  GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw minor major fp roots;
   // the field is rewritten to the image of the word *as stored*
-  MCFE.combined_major_minor_field_forwarded
-    minor major fp roots slots n c par i;
+  MCFE.combined_major_minor_field_forwarded Idle
+    minor major fp GC.Spec.Fields.free_stw roots slots n c par i;
   // that image is an interior pointer of the post heap resolving to `fwd par`
-  MCFH.fwd_image_resolves minor major fp roots ov;
+  MCFH.fwd_image_resolves Idle minor major fp GC.Spec.Fields.free_stw roots ov;
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.minor_heap_shape_elim minor;
   infix_parent_in_minor_objects minor ov;
   assert (resolve_minor minor ov == par);
   // and the graph edge still names the promoted closure
-  MCFE.combined_major_minor_edge_forwarded
-    minor major fp roots slots n c par i
+  MCFE.combined_major_minor_edge_forwarded Idle
+    minor major fp GC.Spec.Fields.free_stw roots slots n c par i;
+  // at `free_stw`, the post graph is `create_graph`
+  HeapModel.create_graph_with_stw
+    (Cheney.cheney_collect_spec minor major fp roots).mc_major
 #pop-options
 
 let spot_minor_infix_was_forbidden
@@ -87,7 +93,9 @@ let spot_minor_infix_was_forbidden
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.minor_heap_shape_elim minor;
   GenInv.major_heap_shape_elim major fp;
-  RBridge.reachable_major_valid_nonblue minor major roots;
+  MinorFwd.stop_the_world_context minor major fp roots;
+  GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw minor major fp roots;
+  RBridge.reachable_not_free GC.Spec.Fields.free_stw minor major roots;
   assert (Seq.mem c (GC.Spec.Fields.objects zero_addr major));
   assert (~(SpecObj.is_blue c major));
   assert (deleted_major_minor_fields_no_infix_targets minor major);

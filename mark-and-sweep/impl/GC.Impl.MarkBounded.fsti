@@ -285,19 +285,6 @@ val darken_roots_bounded_spec_preserves_no_black
         SpecMark.no_black_objects
           (fst (darken_roots_bounded_spec g st roots cap)))
 
-val darken_roots_bounded_spec_preserves_no_pointer_to_blue
-  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
-  (cap: nat)
-  : Lemma
-      (requires
-        SpecFields.well_formed_heap g /\
-        SpecMark.no_pointer_to_blue g /\
-        (forall (i:nat). i < Seq.length roots ==>
-          root_points_to_object g (Seq.index roots i)))
-      (ensures
-        SpecMark.no_pointer_to_blue
-          (fst (darken_roots_bounded_spec g st roots cap)))
-
 /// Darkening only recolours white objects, so it changes neither the set of
 /// allocated objects nor the free-list head.  Both free-list facts therefore
 /// come for free from `darken_roots_bounded_spec_preserves_objects`.
@@ -312,8 +299,8 @@ val darken_roots_bounded_spec_preserves_fp_in_heap
   (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
   (cap: nat) (fp: U64.t)
   : Lemma
-      (requires GC.Spec.Sweep.fp_in_heap fp g)
-      (ensures GC.Spec.Sweep.fp_in_heap fp (fst (darken_roots_bounded_spec g st roots cap)))
+      (requires GC.Spec.FreeList.fp_in_heap fp g)
+      (ensures GC.Spec.FreeList.fp_in_heap fp (fst (darken_roots_bounded_spec g st roots cap)))
 
 /// Bounded mark loop: process gray objects with overflow handling.
 /// The outer loop alternates between draining the stack and rescanning
@@ -365,7 +352,6 @@ fn mark_loop_bounded_flagged (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkBoundedInv.bounded_mark_inv 's 'st (stack_capacity st) /\
                  SpecMark.no_black_objects 's /\
-                 SpecMark.no_pointer_to_blue 's /\
                  SpecMark.root_props 's roots /\
                  (forall (x:GC.Spec.Base.obj_addr). Seq.mem x (SpecFields.objects GC.Spec.Base.zero_addr 's) /\
                    (GC.Spec.Object.is_gray x 's \/ GC.Spec.Object.is_black x 's) ==> Seq.mem x roots) /\
@@ -393,7 +379,6 @@ fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkBoundedInv.bounded_mark_inv 's 'st (stack_capacity st) /\
                  SpecMark.no_black_objects 's /\
-                 SpecMark.no_pointer_to_blue 's /\
                  SpecMark.root_props 's roots /\
                  (forall (x:GC.Spec.Base.obj_addr). Seq.mem x (SpecFields.objects GC.Spec.Base.zero_addr 's) /\
                    (GC.Spec.Object.is_gray x 's \/ GC.Spec.Object.is_black x 's) ==> Seq.mem x roots) /\
@@ -409,3 +394,27 @@ fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
                 SpecMarkBoundedCorr.gray_black_reachable 's s2 roots /\
                 SpecMarkBoundedCorr.gray_stays 's s2)
 
+
+/// ---------------------------------------------------------------------------
+/// For the incremental mark slice (`GC.Gen.Impl.MarkSlice`)
+/// ---------------------------------------------------------------------------
+
+/// Whether `check_and_darken_bounded_spec` greys a block (a white one the
+/// value points at, resolved).
+let check_and_darken_greys (g: heap_state) (v: U64.t) : GTot bool =
+  if U64.v v >= U64.v zero_addr + U64.v mword && U64.v v < heap_size && U64.v v % U64.v mword = 0 then
+    let target : obj_addr = SpecObject.resolve_object v g in
+    let h_addr : hp_addr = U64.sub target mword in
+    U64.v h_addr + U64.v mword < heap_size && SpecObject.is_white (SpecHeap.f_address h_addr) g
+  else false
+
+/// `check_and_darken_bounded`, saying whether it dropped a block: greyed it
+/// with the stack full, so not pushed.  The slice raises the overflow flag
+/// exactly then.
+fn check_and_darken_bounded_drops (heap: heap_t) (st: gray_stack) (v: U64.t) (cap: Ghost.erased nat)
+  requires is_heap heap 's ** is_gray_stack st 'st **
+           pure (Seq.length 'st <= cap /\ stack_capacity st == cap)
+  returns dropped: bool
+  ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
+    pure ((s2, st2) == check_and_darken_bounded_spec 's 'st v cap /\
+          dropped == (check_and_darken_greys 's v && Seq.length 'st >= cap))

@@ -16,6 +16,94 @@ with `make -C generational/ocaml-integration/tests correctness`.
 ---
 
 
+## Fixed: the proactive full collection counted only promotion
+
+**Observed by:** writing `tests/explicit_major.ml` (a first draft that
+allocated its churn directly in the major heap died with "promotion failed")
+
+`do_minor_gc` starts a full collection when the words that went through minor
+collections since the last one exceed half the major heap. Words allocated
+directly in the major heap (`caml_alloc_shr`: blocks over `Max_young_wosize`)
+are not counted. A program that allocates mostly large blocks fills the major
+heap with garbage that only a failed major allocation collects; if the next
+minor collection comes first, its promotion finds no room, and promotion
+failure is fatal. Fixed by counting direct major allocation towards the
+trigger (4.14's `caml_allocated_words`): stop-the-world in
+`bytes_promoted_since_major` (issue #34, `tests/large_alloc_garbage.ml`);
+with `VERGC_MAJOR=incremental` the trigger and the pacing count the words
+promoted and allocated directly, and a minor collection mid-cycle that may
+not fit finishes the cycle first.
+
+---
+
+## Open: runtime paths outside the collector's model of the program
+
+**Observed by:** the runtime audit for the incremental sweep
+
+The verified collector's contracts (`GC.Gen.Impl`'s trusted bridge
+obligations) model the program as allocation, field writes through
+`caml_modify` / `caml_initialize` (since M3 the verified barrier,
+`GC.Gen.Impl.Barrier`, whose precondition `GC.Gen.Barrier.modify_ok` is the
+trusted part), and nursery allocation. These runtime paths
+change a live major block in other ways; each is safe in both major modes for
+the reason given, but none is covered by a proof:
+
+- **`Obj.truncate` is unsupported**: `caml_obj_truncate` raises
+  `Invalid_argument "Obj.truncate: not supported by the verified GC"` for
+  every block and changes nothing (OCaml 5 removed it). Shrinking a block in
+  place leaves a leftover block the collector's invariants have no account
+  of, so it is ruled out rather than argued safe
+  (`generational/ocaml-integration/tests/obj_truncate.ml`). Neither the stdlib
+  nor OCaml's own testsuite calls it.
+- **Tag changes**: `Obj.set_tag`, `Lazy` forcing (`Forward_tag`),
+  `caml_update_dummy`. They write the tag byte, never the colour.
+- **Closure bodies written through `caml_modify`**: `caml_update_dummy` of a
+  closure value (`let rec` of values whose right-hand sides are closures)
+  copies the closure's words -- code pointers, the closure info word, infix
+  headers -- into the dummy with `caml_modify`, after setting its tag to
+  `Closure_tag`. `modify_ok` asks for a block that is not a closure (its body
+  holds the infix headers interior pointers resolve through). At run time
+  the verified barrier does what stock's does (the old values are the
+  dummy's immediates, so nothing is darkened, and a young value copied from
+  the closure's environment is remembered), and a dummy of at most `Max_young_wosize` words is young, so
+  its writes never reach the barrier.
+- **Slots outside the verified heap**: `caml_modify` / `caml_initialize` of a
+  slot that is neither in the nursery nor in the verified major heap (native
+  code's static data) take the stock logic in the bridge (`vergc_modify`,
+  without darkening), not the verified barrier. While marking that needs no
+  darkening: such a slot is a root (a module block's field), and what a root
+  held when the cycle started was darkened by `start_cycle`. If such a slot gets a young
+  value it goes into the ref table, which `ref_table_sound_with` does not
+  allow; the minor collection's slot rewrite (`rewrite_one_slot`, which only
+  checks `slot < heap_size`) rewrites it as stock would.
+- **Intern** (`Marshal.from_*`): a block of at most `Max_wosize` words is one
+  `caml_alloc_shr` block carved into objects that all get that block's colour.
+  That is the colour the allocator would give each of them, because the sweep
+  does not run during intern, so they are all on the same side of the cursor
+  (and while marking all are black, as each would be).
+  A larger one (over 2^54 words, so not in practice) goes to a stock heap
+  chunk outside the verified heap.
+- **Infix headers** (`CLOSUREREC`, `caml_alloc_dummy_infix`) are written inside
+  a closure block; their colour is irrelevant.
+- **Weak arrays and ephemerons** are `Abstract_tag` blocks that nothing cleans
+  (see "finalisers and weak pointers are not run"). `Weak.get` can return a
+  block that marking did not reach: stop-the-world a freed one, mid-sweep a
+  one *pending free* (white, in front of the cursor), whose resurrection breaks the
+  sweep phase's invariant. Same class of bug in both modes; the weak and
+  ephemeron tests are expected failures (`regression/pr5233` among them since
+  `Gc.full_major` runs the verified collector).
+- **Stock's major collector, compaction, and heap finalisation** never run:
+  `Gc.major`, `Gc.full_major` and `Gc.compact` call the verified collector
+  directly, `caml_major_collection_slice` and `caml_finish_major_cycle` forward
+  to it, `caml_compact_heap` and `caml_finalise_heap` do nothing, and the
+  remaining stock entry points are fatal (`VERGC_STOCK_GC_UNREACHABLE`) (so `Gc.compact` does not compact, and `Gc.set`'s policy change
+  is not honoured). Stock's `caml_gc_phase` therefore stays `Phase_idle`, and
+  every path still guarded by it (`weak.c`, `finalise.c`) is dead;
+  `caml_modify` and `caml_array_fill` darken at the verified collector's
+  phase instead, through the verified barrier.
+
+---
+
 ## Open: every promotion failure is reported as "major heap full"
 
 **Observed by:** instrumenting the pre-fix build while diagnosing the nursery
@@ -43,6 +131,35 @@ channel (an enum, or at minimum distinguishing "allocator returned null" from
 
 ---
 
+## Fixed: incremental marking restarted a partly scanned object on a write
+
+**Observed by:** the design of the mark slice (M4); see DESIGN_AND_IMPL.md,
+"The mark slice"
+**Checked by:** `tests/mark_scanned_writes.ml` (`REQUIRE_MARKS_ENDED`),
+`spot/GC.SPOT.MarkPhaseSlice` (`fork_*`)
+
+With `VERGC_MAJOR=incremental` a mark slice scans a large object a budget's
+worth of fields at a time, and a write into a field it had already scanned
+restarted the object's scan (the object was grey and the invariant needed its
+scanned fields to stay dark).  A program that kept writing into a large array
+the marker was half way through could therefore keep that cycle's marking
+from ending in slices; it ended only when memory ran short (a minor
+collection without room finished the cycle: one long pause) or at the next
+full collection.  `tests/mark_scanned_writes.ml` shows it on the old runtime:
+marking never ended in slices (`marks_spanned=0`) under any pacing.
+
+Fixed by making the scan position part of the marking invariant: the partly
+scanned object's fields before its next field are scanned edges (like a
+black object's), the others unscanned (like a grey object's), and "the marker
+will reach" follows unscanned edges only.  A write into a scanned field is
+then a write into a black field: the deletion barrier greys the old value,
+the program's obligation (`MM.target_ok`) covers the new one, and blackening
+needs only that every field was scanned once.  The barrier no longer touches
+the scan position (`GC.Gen.Impl.Barrier.modify_field`: the restart is gone
+from the extracted C).
+
+---
+
 ## Open: finalisers and weak pointers are not run
 
 **Observed by:** `tests/no_scan.ml` section 4 (which skips its liveness
@@ -54,6 +171,60 @@ against a *control* — a second doomed block with no forged reference — and
 only asserts collection when the control's finaliser fires, so the test
 carries no information on a runtime without finalisers rather than failing
 spuriously.
+
+---
+
+## Fixed: the minor collection assumed distinct remembered slots
+
+**Checked by:** `spot/GC.SPOT.DuplicateSlot` (proof, no runtime test)
+**Fixed in:** `GC.Gen.TwoPassEquiv` (the precondition was dropped)
+
+The minor collection's contract used to require `slots_pairwise_distinct`:
+no field listed twice in the remembered set. Stock `caml_modify` does not
+guarantee that. A field written young -> immediate -> young is recorded twice,
+because the second write sees an immediate old value, and the bridge passes
+`caml_ref_table` through without deduplicating. The obligation was unmet, not
+just unchecked.
+
+No bug came of it, because rewriting a slot twice does nothing the second time.
+The first rewrite forwards the slot to a major copy, and a forwarding target is
+never a forwarded nursery pointer (`fwd_targets_stable`). The proof now shows
+this (`rewrite_slots_iter_slot_effect` holds for any slot sequence), and the
+precondition is gone from `minor_collect`, `minor_collect_with` and `full_gc`.
+
+---
+
+## Fixed: `Gc.full_major` ran stock's major collector over the verified heap
+
+**Regression test:** `tests/explicit_major.ml` (`make correctness`)
+**Fixed in:** `patches/runtime_gen.patch` (`runtime/major_gc.c`,
+`runtime/compact.c`)
+**Severity:** heap corruption -- reachable from safe OCaml
+
+`caml_gc_full_major`, `caml_gc_major`, `caml_gc_compaction` and `Gc.set`'s
+policy change call stock's `caml_finish_major_cycle`, and `caml_gc_dispatch`
+calls `caml_major_collection_slice`; the patch left both alone. So
+`Gc.full_major ()` ran stock's mark and sweep. The verified major heap is
+registered `In_heap` in the page table, so stock's mark darkened every object
+reachable in it, while stock's sweep walks only stock's own (empty) chunks
+and never whitened them. The idle heap was left full of black objects. A
+fresh white block stored into one of them was then invisible to the next
+verified mark (which does not rescan a black object), and the verified sweep
+freed it while it was reachable:
+
+```ocaml
+let a = Array.make 2000 [||] in          (* major *)
+Gc.full_major ();                         (* stock cycle: a is now black *)
+for i = 0 to 1999 do a.(i) <- Array.make 300 i done;
+(* ... allocate until a verified collection runs: a.(i) freed, SIGSEGV *)
+```
+
+The `Gc` calls now run the verified collector (`verified_do_full_gc`: the
+nursery emptied and a whole verified cycle, called from `runtime/gc_ctrl.c` and
+from `caml_finish_major_cycle`; `verified_major_collection_slice`: with
+`VERGC_MAJOR=incremental` a slice, or the start of a cycle when idle), compaction and
+`caml_finalise_heap` do nothing, and stock's `caml_gc_phase` never leaves
+`Phase_idle`.
 
 ---
 
@@ -272,14 +443,14 @@ image then implies the image is scannable, hence the source was.
 `GC.Gen.HeapInvariant.minor_major_fields_no_blue` — the third conjunct of
 `collection_heap_shape` — was narrowed to `minor_scan_wosize` at the same time,
 and for the same reason: it quantified over *every* young field, so deleting
-`minor_no_scan_invariant` alone would still have left `gen_gc`'s precondition
+`minor_no_scan_invariant` alone would still have left `full_gc`'s precondition
 falsified by an ordinary young `Bytes.t`. `GC.Gen.ReachabilityBridge.
 minor_no_pointer_to_blue` was narrowed with it.
 
 `spot/GC.SPOT.NoScanMinor` is the machine-checked witness that the relaxation is
 real: a three-word nursery holding one tag-251 block whose body words are `8`,
 a value `is_minor_pointer` accepts. `spot_ns_minor_was_forbidden` refutes the
-deleted clause; `spot_ns_collection_heap_shape` proves `gen_gc`'s full entry
+deleted clause; `spot_ns_collection_heap_shape` proves `full_gc`'s full entry
 invariant of the same nursery.
 
 In the extracted C, `scan_loop` gained:

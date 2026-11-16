@@ -4,6 +4,7 @@ module U64 = FStar.UInt64
 module U8 = FStar.UInt8
 module Seq = FStar.Seq
 module FL = GC.Spec.FreeList
+module FLA = GC.Spec.FreeList.Ascending
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -13,7 +14,6 @@ module SpecFields = GC.Spec.Fields
 module SpecObj = GC.Spec.Object
 module Header = GC.Lib.Header
 module SpecMark = GC.Spec.Mark
-module Sweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module HeapGraph = GC.Spec.HeapGraph
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -185,6 +185,26 @@ let spot_major_c_reads (r: unit{spot_major_room}) (mp: minor_ptr)
   assert (~(SpecObj.is_black (spot_c r) g5));
   assert (~(SpecObj.is_infix (spot_c r) g5));
   assert (~(SpecObj.is_no_scan (spot_c r) g5))
+
+let spot_major_c_not_closure (r: unit{spot_major_room}) (mp: minor_ptr)
+  =
+  let g0 = zero_major in
+  let g1 = write_word g0 zero_addr c_header in
+  let g2 = write_word g1 (spot_c_field0 r) 0UL in
+  let g3 = write_word g2 (spot_c_field1 r) mp in
+  let g4 = write_word g3 (spot_free_header r) (free_header r) in
+  let g5 = write_word g4 (spot_free_obj r) 0UL in
+  spot_major_layout_facts r;
+  c_header_facts ();
+  hd_f_roundtrip zero_addr;
+  read_write_same g0 zero_addr c_header;
+  read_write_different g1 (spot_c_field0 r) zero_addr 0UL;
+  read_write_different g2 (spot_c_field1 r) zero_addr mp;
+  read_write_different g3 (spot_free_header r) zero_addr (free_header r);
+  read_write_different g4 (spot_free_obj r) zero_addr 0UL;
+  SpecObj.tag_of_object_spec (spot_c r) g5;
+  SpecObj.is_closure_spec (spot_c r) g5;
+  SpecObj.closure_tag_val ()
 
 let spot_major_free_reads (r: unit{spot_major_room}) (mp: minor_ptr)
   =
@@ -406,8 +426,8 @@ let spot_major_field_not_pointer
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-let spot_major_wfh_part1 (r: unit{spot_major_room}) (mp: minor_ptr)
-  : Lemma (ensures SpecFields.well_formed_heap_part1 (spot_major_heap r mp))
+let spot_major_blocks_fit (r: unit{spot_major_room}) (mp: minor_ptr)
+  : Lemma (ensures SpecFields.blocks_fit (spot_major_heap r mp))
   =
   let major = spot_major_heap r mp in
   spot_major_objects r mp;
@@ -437,8 +457,8 @@ let spot_major_wfh_part1 (r: unit{spot_major_room}) (mp: minor_ptr)
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
-let spot_major_wfh_part4 (r: unit{spot_major_room}) (mp: minor_ptr)
-  : Lemma (ensures SpecFields.well_formed_heap_part4 (spot_major_heap r mp))
+let spot_major_no_infix_block (r: unit{spot_major_room}) (mp: minor_ptr)
+  : Lemma (ensures SpecFields.no_infix_block (spot_major_heap r mp))
   =
   let major = spot_major_heap r mp in
   let aux (h: obj_addr)
@@ -451,42 +471,34 @@ let spot_major_wfh_part4 (r: unit{spot_major_room}) (mp: minor_ptr)
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
-let spot_major_wfh_part2 (r: unit{spot_major_room}) (mp: minor_ptr)
-  : Lemma (ensures SpecFields.well_formed_heap_part2 (spot_major_heap r mp) /\
-                   SpecFields.well_formed_heap_part3 (spot_major_heap r mp) /\
+let spot_major_pointer_clauses (r: unit{spot_major_room}) (mp: minor_ptr)
+  : Lemma (ensures SpecFields.pointers_lead_to_non_free SpecFields.free_stw (spot_major_heap r mp) /\
+                   SpecFields.interior_pointers_valid SpecFields.free_stw (spot_major_heap r mp) /\
                    SpecFields.no_infix_field_targets (spot_major_heap r mp))
   =
   let major = spot_major_heap r mp in
-  spot_major_wfh_part1 r mp;
-  spot_major_wfh_part4 r mp;
+  spot_major_blocks_fit r mp;
+  spot_major_no_infix_block r mp;
   let field_closure (src: obj_addr) (j: nat)
     : Lemma (requires Seq.mem src (SpecFields.objects zero_addr major) /\
                       j < U64.v (SpecObj.wosize_of_object src major) /\
                       U64.v src + j * 8 + 8 <= heap_size)
             (ensures (let v = read_word major (U64.uint_to_t (U64.v src + j * 8)) in
-                      SpecFields.is_pointer_field v ==> Seq.mem (v <: obj_addr) (SpecFields.objects zero_addr major)))
+                      SpecFields.is_pointer v ==> SpecFields.in_use SpecFields.free_stw major (v <: obj_addr)))
     =
     spot_major_field_not_pointer r mp src j
   in
-  SpecFields.well_formed_heap_part2_from_field_closure major field_closure
-
-/// The concrete major heap has no infix objects at all (part 4), so part 3 is
-/// vacuous; it comes out of the field-closure derivation for free.
-let spot_major_wfh_part3 (r: unit{spot_major_room}) (mp: minor_ptr)
-  : Lemma (ensures SpecFields.well_formed_heap_part3 (spot_major_heap r mp))
-  =
-  spot_major_wfh_part2 r mp
+  SpecFields.pointer_clauses_from_raw_field_closure major (fun src j -> field_closure src j)
 
 let spot_major_well_formed_heap (r: unit{spot_major_room}) (mp: minor_ptr)
   : Lemma (ensures SpecFields.well_formed_heap (spot_major_heap r mp) /\
                    SpecFields.no_infix_field_targets (spot_major_heap r mp))
   =
   let major = spot_major_heap r mp in
-  spot_major_wfh_part1 r mp;
-  spot_major_wfh_part2 r mp;
-  spot_major_wfh_part3 r mp;
-  spot_major_wfh_part4 r mp;
-  reveal_opaque (`%SpecFields.well_formed_heap) SpecFields.well_formed_heap
+  spot_major_blocks_fit r mp;
+  spot_major_pointer_clauses r mp;
+  spot_major_no_infix_block r mp;
+  SpecFields.wf_parts ()
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
@@ -584,7 +596,7 @@ let spot_major_fp_valid (r: unit{spot_major_room}) (mp: minor_ptr)
     (spot_major_fp r) (spot_major_heap r mp) fuel
 
 let spot_major_fp_in_heap (r: unit{spot_major_room}) (mp: minor_ptr)
-  : Lemma (ensures Sweep.fp_in_heap (spot_major_fp r) (spot_major_heap r mp))
+  : Lemma (ensures GC.Spec.FreeList.fp_in_heap (spot_major_fp r) (spot_major_heap r mp))
   =
   spot_major_fp_pointer_or_zero r;
   spot_major_fp_valid r mp;
@@ -793,28 +805,6 @@ let spot_major_no_gray_objects (r: unit{spot_major_room}) (mp: minor_ptr)
   FStar.Classical.forall_intro proof;
   SweepInv.no_gray_intro major
 
-let spot_major_no_pointer_to_blue (r: unit{spot_major_room}) (mp: minor_ptr)
-  : Lemma (ensures SpecMark.no_pointer_to_blue (spot_major_heap r mp))
-  =
-  let major = spot_major_heap r mp in
-  spot_major_wfh_part1 r mp;
-  let field_no_blue (src: obj_addr) (dst: obj_addr) (j: nat)
-    : Lemma (requires Seq.mem src (SpecFields.objects zero_addr major) /\
-                      ~(SpecObj.is_blue src major) /\
-                      j < U64.v (SpecObj.wosize_of_object src major) /\
-                      U64.v src + j * 8 + 8 <= heap_size /\
-                      SpecFields.is_pointer_to
-                        (read_word major (U64.uint_to_t (U64.v src + j * 8)))
-                        dst)
-            (ensures ~(SpecObj.is_blue (SpecObj.resolve_object dst major) major))
-    =
-    spot_major_field_not_pointer r mp src j;
-    assert (SpecFields.is_pointer_to
-              (read_word major (U64.uint_to_t (U64.v src + j * 8)))
-              dst == false);
-    assert False
-  in
-  SpecMark.no_pointer_to_blue_intro_from_fields major field_no_blue
 
 #pop-options
 
@@ -842,6 +832,27 @@ let spot_major_fl_complete (r: unit{spot_major_room}) (mp: minor_ptr)
   FStar.Classical.forall_intro (FStar.Classical.move_requires proof)
 #pop-options
 
+/// The free list is ascending: its only cell is the free block, which is the
+/// head and links to null.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let spot_major_fl_ascending (r: unit{spot_major_room}) (mp: minor_ptr)
+  : Lemma (ensures FLA.fl_ascending (spot_major_heap r mp) (spot_major_fp r))
+  =
+  let g = spot_major_heap r mp in
+  let only (x: U64.t)
+    : Lemma (requires FL.fl_cell g x) (ensures x == spot_major_fp r)
+    =
+    spot_major_object_cases r mp x; spot_major_c_reads r mp; spot_major_free_reads r mp; spot_major_layout_facts r
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires only);
+  spot_major_objects r mp; spot_major_free_reads r mp; spot_major_layout_facts r;
+  hd_address_spec (spot_free_obj r);
+  spot_major_fl_valid r mp;
+  GC.Spec.Allocator.Lemmas.fl_valid_gives_mem g (spot_major_fp r) heap_words;
+  FLA.fl_ascending_single g (spot_major_fp r)
+#pop-options
+
+
 let spot_major_heap_shape (r: unit{spot_major_room}) (mp: minor_ptr)
   =
   let major = spot_major_heap r mp in
@@ -860,10 +871,10 @@ let spot_major_heap_shape (r: unit{spot_major_room}) (mp: minor_ptr)
   spot_major_fp_in_heap r mp;
   spot_major_no_black_objects r mp;
   spot_major_no_gray_objects r mp;
-  spot_major_no_pointer_to_blue r mp;
-  spot_major_wfh_part1 r mp;
-  spot_major_wfh_part2 r mp;
+  spot_major_blocks_fit r mp;
+  spot_major_pointer_clauses r mp;
   spot_major_fl_complete r mp;
+  spot_major_fl_ascending r mp;
   GC.Gen.AllocExact.fl_valid_cob_gives_sound major fp;
   GenInv.free_list_exact_iff major fp;
   GenInv.major_heap_shape_intro major fp

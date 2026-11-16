@@ -101,15 +101,33 @@ FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 # This identifies orphaned/unused files that are not reachable
 ROOT_MODULES = \
   mark-and-sweep/spec/GC.Spec.Partition.fst \
-  mark-and-sweep/spec/GC.Spec.Coalesce.Complete.fst \
-  mark-and-sweep/spec/GC.Spec.Coalesce.Correct.fst \
   mark-and-sweep/spec/GC.Spec.Allocator.Oom.fst \
   mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fsti \
   mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fst \
-  mark-and-sweep/spec/GC.Spec.FreeList.Sweep.fst \
+  mark-and-sweep/spec/GC.Spec.FusedSweep.Facts.fst \
+  generational/spec/GC.Gen.SweepPhase.fst \
+  generational/spec/GC.Gen.SweepPhase.Minor.fst \
+  generational/spec/GC.Gen.SweepPhase.Safety.fst \
+  generational/spec/GC.Gen.SweepPhase.Completeness.fst \
+  generational/spec/GC.Gen.SweepPhase.Cycle.fst \
+  mark-and-sweep/spec/GC.Spec.SweepPhase.Completeness.fst \
+  mark-and-sweep/spec/GC.Spec.SweepPhase.Intrinsic.End.fst \
+  mark-and-sweep/spec/GC.Spec.MarkPhase.fst \
+  mark-and-sweep/spec/GC.Spec.MarkPhase.Mutator.fst \
+  mark-and-sweep/spec/GC.Spec.MarkPhase.Alloc.fst \
+  generational/spec/GC.Gen.MarkPhase.Minor.fst \
+  generational/spec/GC.Gen.MarkPhase.Alloc.fst \
+  mark-and-sweep/spec/GC.Spec.MarkPhase.Completeness.fst \
+  generational/spec/GC.Gen.MarkPhase.Completeness.fst \
+  generational/spec/GC.Gen.MarkPhase.Safety.fst \
+  generational/spec/GC.Gen.MarkPhase.Walk.fst \
+  generational/spec/GC.Gen.MarkPhase.Cycle.fst \
+  generational/spec/GC.Gen.Cycle.fst \
   mark-and-sweep/impl/GC.Impl.Correct.fst \
   generational/impl/GC.Gen.Impl.fsti \
-  generational/impl/GC.Gen.Impl.fst
+  generational/impl/GC.Gen.Impl.fst \
+  generational/impl/GC.Gen.Impl.Barrier.fsti \
+  generational/impl/GC.Gen.Impl.Barrier.fst
 
 # All sources (for pattern rules and clean targets)
 COMMON_SRC = $(wildcard common/spec/*.fst common/spec/*.fsti \
@@ -344,19 +362,21 @@ DEPGRAPH_OCAMLPATH ?= $(FSTAR_HOME)/lib
 # The interface: the API surface of the one extraction bundle, i.e. exactly the
 # modules named on the left of `-bundle ...=` in generational/Makefile.  Modules
 # they call (GC.Impl.Heap, GC.Impl.Object, GC.Impl.Stack, GC.Impl.Fields,
-# GC.Impl.Coalesce, GC.Impl.FusedSweepCoalesce, ...) are reached transitively
+# GC.Impl.FusedSweepCoalesce, ...) are reached transitively
 # and must NOT be listed here -- listing a module as a root asserts that we want
 # to keep it even if nothing calls it, which is how dead code survived before.
 DEPGRAPH_IFACE_ROOTS = \
   GC.Impl GC.Impl.Allocator GC.Impl.MarkBounded \
-  GC.Gen.Impl GC.Gen.Impl.Cheney GC.Gen.Impl.MinorHeap GC.Gen.Impl.UpdatePtrs \
+  GC.Gen.Impl GC.Gen.Impl.Barrier GC.Gen.Impl.Cheney GC.Gen.Impl.MinorHeap GC.Gen.Impl.UpdatePtrs \
   GC.Gen.Impl.Promote
 
 # The top-level theorems.  These are results, so nothing refers to them; they
 # have to be named explicitly or the whole proof development looks dead.
 DEPGRAPH_THEOREM_ROOTS = \
   GC.Spec.Correctness GC.Spec.MarkBoundedCorrectness GC.Gen.CheneyCorrectness \
-  GC.Impl.MarkBoundedRootLemmas GC.Spec.FreeList.Sweep GC.Impl.Correct
+  GC.Impl.MarkBoundedRootLemmas GC.Spec.FusedSweep.Facts \
+  GC.Gen.SweepPhase GC.Gen.SweepPhase.Minor GC.Gen.SweepPhase.Safety GC.Spec.SweepPhase.Intrinsic.End \
+  GC.Impl.Correct
 
 DEPGRAPH_SPOT_ROOTS = $(sort $(basename $(notdir $(wildcard spot/GC.SPOT.*.fst))))
 

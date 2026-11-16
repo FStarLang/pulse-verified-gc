@@ -9,12 +9,12 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
 open GC.Gen.Impl
 open GC.Impl.Heap
-open GC.Impl.Stack
 
 module CheneyImpl = GC.Gen.Impl.Cheney
 module CheneySpec = GC.Gen.Cheney
@@ -33,7 +33,7 @@ let spot_gen_gc_success_post
   (r: unit{ConcreteMajor.spot_major_room})
   (ok: bool) (final_major: heap) : prop =
   let prom =
-    CheneySpec.cheney_promote
+    CheneySpec.cheney_promote Idle
       ConcreteMinor.spot_minor2
       (ConcreteMajor.spot_major_heap r)
       (ConcreteMajor.spot_major_fp r)
@@ -49,11 +49,11 @@ let spot_gen_gc_success_post
 fn call_concrete_gen_gc_spot
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)
-  requires is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
+  requires gen_phase gh (ConcreteMajor.spot_major_heap r) GC.Spec.Phase.Idle ** mark_state gh (ConcreteMajor.spot_major_heap r) GC.Spec.Phase.Idle GC.Spec.MarkPhase.scan_none ** is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
             (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r)
   returns res: (U64.t & bool)
   ensures exists* d2 b2 final_major.
-    is_gen_heap gh d2 b2 final_major (fst res) **
+    gen_phase gh final_major GC.Spec.Phase.Idle ** mark_state gh final_major GC.Spec.Phase.Idle GC.Spec.MarkPhase.scan_none ** is_gen_heap gh d2 b2 final_major (fst res) **
     pure (
       let ok = snd res in
       GenImpl.gen_gc_heap_shape_post d2 b2 final_major /\

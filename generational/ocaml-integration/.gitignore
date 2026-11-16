@@ -9,3 +9,6 @@ tests/*.o
 tests/results/
 verified_gc/*.o
 verified_gc/*.a
+
+# Built by the tiny_globals test (its own std_exit.ml)
+tests/tiny_globals/*.cm[io]

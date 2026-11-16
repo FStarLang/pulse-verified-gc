@@ -16,7 +16,6 @@ module U64 = FStar.UInt64
 module SZ = FStar.SizeT
 module Seq = FStar.Seq
 module ML = FStar.Math.Lemmas
-module SpecSweep = GC.Spec.Sweep
 module SpecFields = GC.Spec.Fields
 module SpecHeap = GC.Spec.Heap
 module SpecObject = GC.Spec.Object

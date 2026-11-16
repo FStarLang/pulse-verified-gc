@@ -7,7 +7,7 @@ https://risemsr.github.io/blog/2026-04-16-spotting-specs/
 
 Build a **truly admit/assume-free SPOT** that validates:
 
-1. **GC preconditions are not too strong**: All 11 preconditions for `minor_collect_full` can be satisfied by constructing a small, concrete heap (major + minor) using allocator APIs
+1. **GC preconditions are not too strong**: All 11 preconditions for `minor_collect` can be satisfied by constructing a small, concrete heap (major + minor) using allocator APIs
 2. **GC postconditions are useful**: The isomorphism postcondition is strong enough to prove meaningful properties about the result (e.g., unreachable objects are collected, reachable objects are promoted, pointers are forwarded correctly)
 
 The SPOT should demonstrate a complete end-to-end workflow:
@@ -15,7 +15,7 @@ The SPOT should demonstrate a complete end-to-end workflow:
 - Allocate objects in major and minor heaps
 - Wire up pointer relationships
 - Prove all 11 GC preconditions hold
-- Call `minor_collect_full`
+- Call `minor_collect`
 - Extract the result and prove postcondition properties from the isomorphism
 
 I want objects
@@ -54,13 +54,14 @@ generational development and treating upstream `GC.*` modules as already cached.
 
 The top-level SPOT is **`GC.SPOT.ConcreteCallFull.call_concrete_gen_gc_spot`**.
 It takes nothing but the generational heap holding the A/B/C fixture, allocates
-the roots array, forwarding array, Cheney queue, remembered-slot table and a
-two-slot gray stack itself, calls the real `gen_gc`, frees everything, and
+the roots array, forwarding array, Cheney queue and remembered-slot table
+itself (the collector darkens the roots onto its own persistent mark stack, so
+no gray stack is supplied), calls the real `full_gc`, frees everything, and
 returns the concrete conclusions: `C` survives, `A` has a promoted image `A'`
 that survives, `C.field1` still points to `A'`, and `B` was never promoted.
 
 `GC.SPOT.ConcreteCallMinor.call_concrete_minor_collect_full_spot` is the same
-thing one phase earlier, stopping after `minor_collect_full`.
+thing one phase earlier, stopping after `minor_collect`.
 
 Reading order, each layer using only the ones above it:
 
@@ -75,7 +76,7 @@ Reading order, each layer using only the ones above it:
 | concrete wrappers | `ConcreteCallMinor`, **`ConcreteCallFull`** |
 
 Both concrete wrappers also come in a `_borrowed` variant that takes the
-arrays, queue, slot table and gray stack as parameters instead of allocating
+arrays, queue and slot table as parameters instead of allocating
 them, for readers who want to see the resource obligations rather than the
 allocation.
 
@@ -90,55 +91,74 @@ allocation.
 - `GC.SPOT.ConcreteMajor`: constructs the major heap containing C and one blue
   free-list block, proves the C.field1 -> A remembered edge, the object list,
   free-list facts, and the concrete `major_heap_shape`.
-- `GC.SPOT.Preconditions`: packages the real `minor_collect_full` and `gen_gc`
+- `GC.SPOT.Preconditions`: packages the real `minor_collect` and `full_gc`
   preconditions into named predicates with elimination lemmas. This is only a
   proof boundary; it does not weaken the collector contracts.
 - `GC.SPOT.Postconditions`: packages post-minor and post-full consequences.
   It exposes reusable lemmas for promotion from nonzero forwarding, no-promotion
   from zero forwarding, remembered-field rewriting, and final major survival
-  from the `gen_gc` isomorphism postcondition.
+  from the `full_gc` isomorphism postcondition.
 - `GC.SPOT.ConcreteForwarding`: proves the concrete Cheney forwarding facts.
   The concrete no-OOM obligation is discharged internally by proving root
   coverage and scanned-forwarding closure for C -> A, A's promotion succeeds,
   and the unreachable minor object B's forwarding-map entry remains zero.
 - `GC.SPOT.ConcreteScenarios`: connects the concrete A/B/C heaps, roots, slot
-  table, and forwarding array to the real `minor_collect_full` and `gen_gc`
+  table, and forwarding array to the real `minor_collect` and `full_gc`
   precondition bundles. It proves A is promoted, C.field1 is rewritten to A',
   and B has no promoted image.
-- `GC.SPOT.ConcreteFull`: connects the post-minor result to the final `gen_gc`
+- `GC.SPOT.ConcreteFull`: connects the post-minor result to the final `full_gc`
   postcondition. It proves C survives, A' survives, and C.field1 still points
   to A' in the final major heap.
 - `GC.SPOT.ConcreteSetup`: the sequence lemmas that identify freshly allocated
   arrays with the concrete root, forwarding and slot sequences, so the
   concrete wrappers can allocate their own resources.
 - `GC.SPOT.CallMinor`: a Pulse wrapper that calls the real
-  `minor_collect_full`, taking the packaged precondition and returning the
+  `minor_collect` (idle: it folds the idle `gc_state` from the heap, the idle
+  phase and `collection_heap_shape`), taking the packaged precondition and returning the
   packaged postcondition.
 - `GC.SPOT.ConcreteCallMinor`: the concrete Pulse minor-collection SPOT. From
   the concrete A/B/C heap resources, root array, forwarding array, Cheney queue,
-  and remembered slot table, it derives the real `minor_collect_full`
+  and remembered slot table, it derives the real `minor_collect`
   precondition, calls it through `GC.SPOT.CallMinor`, and immediately proves
   the useful concrete consequences: A has a promoted image, C.field1 contains
   that image in the post-minor heap, and B has no promoted image.
-- `GC.SPOT.CallFull`: a Pulse wrapper that calls the real `gen_gc`.
+- `GC.SPOT.DuplicateSlot`: the same minor collection with the remembered
+  table `[C.field1; C.field1]` -- one field recorded twice, as stock
+  `caml_modify` does for young -> immediate -> young. It shows the
+  `minor_collect` contract holds for the doubled table (the contract no
+  longer asks for distinct slots), calls `minor_collect` through
+  `GC.SPOT.CallMinor`, and proves C.field1 holds A's promoted copy afterwards.
+- `GC.SPOT.CallFull`: a Pulse wrapper that calls the real `full_gc`, through
+  `full_gc_from_shape`: `full_gc` stated in the scenarios' vocabulary (the
+  heap, the idle phase and `collection_heap_shape` instead of the idle
+  `gc_state`), returning the final free-list head beside the success flag.
+  `InfixCall` and `MinorInfixCall` call it too.
 - `GC.SPOT.ConcreteCallFull`: the concrete Pulse full-GC SPOT. It derives the
-  real `gen_gc` precondition from the concrete heap/resources plus the supplied
-  post-minor gray stack shape, calls `gen_gc`, and consumes the exported
-  `gen_gc` postconditions to prove that a successful final heap contains C and
+  real `full_gc` precondition from the concrete heap/resources, calls `full_gc`, and consumes the exported
+  `full_gc` postconditions to prove that a successful final heap contains C and
   A', with C.field1 still pointing to A'.
 - `GC.SPOT.ThreeObjects`: the C/A/B scenario layer. Roots are `[C; A]` before
   the minor phase, and the remembered table contains C's field slot. The module
   proves that C and A are combined-graph roots, A is promoted when the real
   precondition bundle holds, C's field is rewritten to A', B is not promoted
-  when its forwarding entry is zero, and final `gen_gc` reachability implies
+  when its forwarding entry is zero, and final `full_gc` reachability implies
   survival in the final major heap.
+
+The SPOTs name the spec where it is defined: the forwarding array and queue
+size (`fwd_array_size`, `represents_fwd`, `queue_size`, ...) are in
+`GC.Gen.ForwardingArray`; the Cheney-run facts in `GC.Gen.Cheney.Steps`,
+`GC.Gen.MinorCollectForwarding.{Helpers,Edges}`; and the equation between
+the collection at `free_stw` and `cheney_collect_spec` is
+`GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw`, called next to
+`MinorCollectForwarding.stop_the_world_context`.  `minor_collect`'s
+postcondition says nothing about the forwarding array it hands back.
 
 ## What This Proves
 
 The cleaned campaign now validates the collector proof surface directly:
 
-1. The SPOT calls the real Pulse entry points (`minor_collect_full` and
-   `gen_gc`) rather than a model or duplicate implementation. The generic
+1. The SPOT calls the real Pulse entry points (`minor_collect` and
+   `full_gc`) rather than a model or duplicate implementation. The generic
    wrappers expose the raw contracts, while the concrete wrappers establish
    those contracts for the three-object heap and consume the postconditions.
 2. The root set includes `C` pre-minor, so the post-minor major GC has a root
@@ -147,7 +167,7 @@ The cleaned campaign now validates the collector proof surface directly:
    field 1, which contains a minor pointer to A. Field 0 happens to be empty in
    this fixture, but nothing requires that: field 0 is covered by the slot
    table like any other field, and the bridge hypothesis
-   `major_field_zero_covered` is discharged from the slot-table preconditions
+   `major_fields_covered` is discharged from the slot-table preconditions
    rather than assumed. The postcondition proof uses the exported forwarding
    theorem to show that field 1 is rewritten to A's promoted image.
 4. B's collection fact is isolated to the exact Cheney execution fact that
@@ -159,19 +179,19 @@ The cleaned campaign now validates the collector proof surface directly:
    invoking the generic collector wrappers.
 6. The final full-GC connector uses `gen_gc_roots_post`,
    `gen_gc_heap_shape_post`, and
-   `gen_gc_reachable_subgraph_isomorphism_post`: C and A' are placed in the
-   major mark stack from the rewritten roots, shown reachable in the post-minor
+   `gen_gc_reachable_subgraph_isomorphism_post`: C and A' are among the
+   root objects of the darkening of the rewritten roots (`gen_gc_prepared_roots`,
+   a spec-level darkening with room for every root, `prepared_cap`), shown reachable in the post-minor
    major heap, and then shown to survive in the final major heap.
 7. C.field1 preservation is proved through the exported major-GC live-subgraph
    isomorphism: the post-minor proof establishes that C.field1 contains A', and
    the final proof uses the field-preservation conjunct for reachable object C
-   at field index 2 to show the same slot still contains A' after `gen_gc`.
+   at field index 2 to show the same slot still contains A' after `full_gc`.
 8. The final Pulse layer is imperative: `ConcreteCallMinor` calls
-   `minor_collect_full` on concrete resources and `ConcreteCallFull` calls
-   `gen_gc` on concrete resources. The full connector now takes an empty gray
-   stack with capacity at least two and proves internally that darkening the
-   concrete post-minor roots produces the real `gen_gc` major-collection
-   precondition.
+   `minor_collect` on concrete resources and `ConcreteCallFull` calls
+   `full_gc` on concrete resources. The full connector proves internally that
+   darkening the concrete post-minor roots (with `prepared_cap` = three) produces
+   the stop-the-world major collector's precondition (`GC.SPOT.GcCorrect`).
 
 ## Completed Connector
 
@@ -179,21 +199,20 @@ The active SPOT now covers the concrete three-object scenario end to end:
 
 - roots before the minor phase are exactly `[C; A]`;
 - the remembered table has exactly one slot, C.field1;
-- the concrete heap satisfies the `minor_collect_full` preconditions;
+- the concrete heap satisfies the `minor_collect` preconditions;
 - the concrete Cheney no-OOM proof is derived from the layout and is not a
   caller precondition of the concrete Pulse connectors;
 - the post-minor result promotes A to A', rewrites C.field1 to A', and leaves
   B without a promoted image;
-- the post-minor state satisfies the `gen_gc` preconditions from an initially
-  empty gray stack with capacity at least two; and
+- the post-minor state satisfies the major collector's precondition; and
 - the final major heap contains both C and A', with C.field1 still pointing to
   A'.
 
 There are no local admits or assumes in the active `GC.SPOT.*` campaign.
 The remaining visible preconditions of the concrete call connectors are linear
-Pulse resources (heap, roots, forwarding array, Cheney queue, remembered slots,
-and an initially empty gray stack). The former stack-shape proof obligation is
-now constructed inside the concrete full-GC wrapper.
+Pulse resources (heap, roots, forwarding array, Cheney queue, remembered slots).
+There is no gray-stack obligation any more: the collector darkens the roots onto
+its own persistent mark stack.
 ## Second scenario: an interior (infix) pointer in the major heap
 
 `GC.SPOT.InfixMajor`, `GC.SPOT.InfixPre`, `GC.SPOT.InfixPost` and
@@ -231,16 +250,16 @@ The audit has two halves, and the point is that both hold of *the same heap*:
   `resolve_object H == P` proved from `infix_addr_conds`), `no_pointer_to_blue`
   (the interior pointer resolves to the White `P`).
 
-`GC.SPOT.InfixPre` discharges the rest of `gen_gc`'s precondition. The nursery
+`GC.SPOT.InfixPre` discharges the rest of `full_gc`'s precondition. The nursery
 is `GC.Gen.MinorHeap.minor_reset`, so the minor side is vacuous and the
 remembered table is empty — `spot_infix_ref_table_covers` proves that no field
 of this heap holds a minor pointer, the interior pointer included. It also
 proves `~(cheney_oom ...)`: there is nothing to promote.
 
-`GC.SPOT.InfixCall` then calls the real `gen_gc`. Its postcondition records
+`GC.SPOT.InfixCall` then calls the real `full_gc`. Its postcondition records
 that
 
-- the collection succeeds (`snd res == true`), from `gen_gc`'s
+- the collection succeeds (`snd res == true`), from `full_gc`'s
   `not ok ==> cheney_oom` and the no-OOM proof above;
 - `GC.Gen.HeapInvariant.collection_heap_shape` — literally the predicate the
   precondition demands — holds again of the returned state;
@@ -248,7 +267,7 @@ that
 - `Q` is still an enumerated object of the post-collection major heap.
 
 Together these say that the relaxation is real: a heap with a genuine OCaml
-interior pointer is accepted by `gen_gc`, collected, and handed back satisfying
+interior pointer is accepted by `full_gc`, collected, and handed back satisfying
 the same invariant, with the root still live.
 
 ## `GC.SPOT.MinorInfix` — interior pointers in the nursery
@@ -323,7 +342,7 @@ except that field 1 of the live object `c` holds `24` — a pointer into the
 construction and one set of proofs is the point: a nursery pointer is opaque to
 the major heap, so storing an interior one changes nothing about its shape.
 
-`GC.SPOT.MinorInfixPre` discharges `gen_gc`'s precondition for that pair, with
+`GC.SPOT.MinorInfixPre` discharges `full_gc`'s precondition for that pair, with
 roots `[c; 24]` and a one-entry remembered set holding the address of `c`'s
 field 1. The interior address has to be a root: `remembered_targets_in_roots`
 demands that every minor value reachable through the remembered set also appear
@@ -341,10 +360,10 @@ Phase H.2 routed it through `resolve_minor`, which names the closure at byte 8.
   item this is the non-vacuity statement: not merely a heap the collector
   accepts, but exactly a heap the collector used to reject.
 
-`GC.SPOT.MinorInfixCall` runs the real `gen_gc` on it. Its postcondition records
+`GC.SPOT.MinorInfixCall` runs the real `full_gc` on it. Its postcondition records
 that `collection_heap_shape` is restored, the nursery comes back zeroed, and the
 root array has been rewritten to the Cheney-collected roots. It deliberately
-does not pin `snd res == true`: `gen_gc` reports failure only on a concrete
+does not pin `snd res == true`: `full_gc` reports failure only on a concrete
 out-of-memory event, and ruling that out for a nursery with live content is a
 separate and much larger obligation (`GC.SPOT.ConcreteForwarding` spends 600
 lines on it for the two-object nursery) that is orthogonal to the question this
@@ -353,7 +372,7 @@ SPOT answers.
 ## `GC.SPOT.NoScanMajor` — a no-scan object whose bytes spell a heap address
 
 The non-vacuity witness for the *other* invariant relaxation: dropping
-`GC.Spec.Fields.no_scan_invariant` from `gen_gc`'s major-heap precondition.
+`GC.Spec.Fields.no_scan_invariant` from `full_gc`'s major-heap precondition.
 
 `no_scan_tag` is 251, and blocks at or above it are strings, `Bytes.t`,
 `Bigarray` payloads and custom blocks. Their contents are arbitrary bytes by
@@ -386,9 +405,8 @@ Both halves are proved of the same heap:
 - `spot_ns_violates_no_scan_invariant` — the heap refutes
   `GC.Spec.Fields.no_scan_invariant`, so it was inadmissible before;
 - `spot_ns_major_heap_shape` — the heap nevertheless satisfies every conjunct of
-  `GC.Gen.HeapInvariant.major_heap_shape`, including `well_formed_heap` (parts 2
-  and 3 are now guarded by `fields_constrained`, which skips `S` entirely),
-  and `no_pointer_to_blue` (likewise).  The clause that briefly replaced
+  `GC.Gen.HeapInvariant.major_heap_shape`, including `well_formed_heap` (a
+  no-scan block is not `scannable`, so its pointer clauses skip `S` entirely), and `no_pointer_to_blue` (likewise).  The clause that briefly replaced
   `no_scan_invariant`, `GC.Gen.Promote.blue_fields_closed`, is gone too: free
   blocks are no longer constrained beyond their link.
 
@@ -403,7 +421,7 @@ C --- it was covering a real bug, reproduced by
 ## `GC.SPOT.NoScanMinor` — a young no-scan block whose body spells a nursery address
 
 The nursery analogue of the previous SPOT, and the witness for deleting
-`GC.Gen.Promote.minor_no_scan_invariant` from `gen_gc`'s precondition.
+`GC.Gen.Promote.minor_no_scan_invariant` from `full_gc`'s precondition.
 
 The nursery is three words:
 
@@ -440,3 +458,255 @@ never simultaneously refutable. `GC.Spec.HeapGraph.is_pointer_field` demands
 `zero_addr >= 2048 == minor_heap_size`, while `is_minor_pointer` demands
 `v < minor_heap_size`. The ranges are disjoint, so refuting either half refutes
 the conjunction.
+
+## The fused sweep's step on concrete heaps
+
+`GC.SPOT.FusedSweepSteps` exercises `GC.Spec.FusedSweep.sweep_step` on small
+hand-built heap prefixes starting at `zero_addr` (the start of the heap's only
+extent), for the cases the in-place, ascending free list introduced.  Each
+lemma states the exact heap words and sweep state after the step:
+
+- `frag_at_start_joins_list`: a header-only free block at the very start of
+  the heap absorbs the garbage block after it, gains a link field, and becomes
+  the head of the list and the new `swept_tail` (a merge at an extent's start,
+  and a fragment that grows linkable);
+- `old_cell_absorbed_and_unlinked`: a list block left by the previous cycle
+  sits right after `swept_tail`'s block; it is merged into it and unlinked, so
+  `swept_tail` now links where it linked;
+- `old_cell_kept`: a list block from the previous cycle with no free neighbour
+  is left alone -- the heap is unchanged -- and becomes `swept_tail`;
+- `survivor_whitened`: a black block is turned white, nothing else.
+
+The concrete major heaps above (`ConcreteMajorGen`, `InfixMajor`,
+`NoScanMajor`) also prove their single-cell free list ascending, which the
+shape invariant now carries, so the end-to-end SPOTs run the new sweep.
+
+## A mid-sweep heap with an object pending free
+
+`GC.SPOT.SweepPhasePendingFree` shows the sweep invariant
+(`GC.Spec.SweepPhase.Intrinsic.sweep_inv_incremental`, well-formedness for
+`free_incremental`) and the minor collection's shape (`collection_shape_with`)
+are satisfiable with a **non-empty** pending-free set, on a heap where the
+field of an object pending free points into a block the sweep has freed and
+merged -- the case that definitions of free beyond blue exist for.  It is built with
+the sweep invariant's own theorems (`GC.Spec.FusedSweep.Step`) from the
+concrete heap of `ConcreteMajorGen`:
+
+1. sweep it completely, nothing marked: one free block (`sweep_steps_done`,
+   `nothing_live_one_block`);
+2. at the end of that sweep phase allocate `P`, then `G` (behind the cursor, so
+   white; the allocation succeeds by #29 mid-sweep), initialise them, and store
+   `G` into `P`'s field (`GC.Spec.SweepPhase.Mutator`'s `alloc_sweep_phase`,
+   `fresh_write`, `fresh_close`, `write_sweep_phase`);
+3. end the phase and start the next one, nothing marked;
+4. two steps: the free block at the start absorbs `G`.
+
+`sweep_phase_pending_free_spot`: `P` is pending free, `P`'s field is `G`, `G` was an
+object of the heap the sweep started on and is no longer one (its word lies
+inside the merged free block at the start), the heap is in the sweep phase and
+in `collection_shape_with (Sweeping c) (free_incremental c)` (the minor
+collection's shape at the sweep's phase, for the sweep's definition of free),
+and the minor collection at the sweep's phase
+(`GC.Gen.SweepPhase.Minor.collect_at`) keeps the sweep phase at the same
+cursor with `P` still pending free
+(`GC.Gen.SweepPhase.Minor.minor_keeps_sweep_phase`).
+
+## A sweep cycle frees what marking left dead
+
+`GC.SPOT.SweepPhaseFreedByEnd` applies the sweep phase's completeness
+(`GC.Spec.SweepPhase.Completeness`) to a concrete cycle.  The marked heap is
+`SweepPhasePendingFree`'s heap after stage 3 (nothing marked; `G` and `P`
+white, so dead at mark):
+
+1. start the sweep: every non-free block is a survivor of marking, nothing is
+   new (`survivor_or_new_start`);
+2. a slice of two steps, in which the free block at the start absorbs `G`
+   (`survivor_or_new_steps`);
+3. a minor collection at the sweep's phase of an empty nursery
+   (`GC.Gen.SweepPhase.Completeness.survivor_or_new_minor`; it promotes
+   nothing, `nothing_promoted_after_reset`);
+4. the rest of the sweep, one step per heap word (`sweep_steps_done`).
+
+`freed_by_end_spot`: the sweep is finished and both `G` and `P` are `freed`
+(`freed_by_end`); `P` was still pending free after the minor collection, so it
+is the finishing sweep that frees it.  No allocation runs, so no address is
+new and the conclusion is unconditional.
+
+The same file builds a run of the sweep phase (`GC.Gen.SweepPhase.Cycle`):
+`Start` at the marked heap, `Minor` of an empty nursery, and a `Slice` with a
+budget of more words than the heap has, which ends the sweep (`run`).  The run
+fixes `since` to the blocks the minor collection made (its promoted copies),
+which are none (`nothing_made`), so `cycle_lossless` gives `lossless_spot`: at
+the end a word lies in a blue block exactly when it lay in a non-black block
+of the marked heap -- the stop-the-world `sweep_lossless` clause -- and
+`covered_spot`: every word of `G` and `P` lies in a blue block.
+
+`GC.SPOT.SweepPhaseCycleAlloc` is a run with a non-empty `since`: from the
+same marked heap, `Start`, an `Alloc` of a one-field object (it succeeds: the
+free block at the start is big enough), a `Write` initialising its field, a
+one-word `Slice`, and, unless that ended the sweep, a finishing `Slice`.  The
+run's `since` is the allocated object.  `cycle_alloc_spot`: at the end the
+object is a non-blue block, its header word was in a non-black block of the
+marked heap (`cycle_lossless`), and every word of `G` lies in a blue block or
+in the new object (`cycle_covered`).
+
+`GC.SPOT.IncrementalCycle` composes the Pulse entry points `minor_collect`,
+`start_cycle` (darken the roots, enter `Marking`), a 64-word `major_slice`
+(a mark slice: it leaves `Marking`, or `Sweeping zero_addr` once nothing is
+grey) and two `major_slice`s with an unbounded budget (one finishes marking if
+it is not finished, the other the sweep), from `full_gc`'s precondition alone,
+and ends idle in `collection_heap_shape`.  On success `cycle_frees_dead` shows,
+for the marked heap -- the heap when the phase became `Sweeping zero_addr`,
+reached from the darkened heap by mark moves, nothing grey -- that it is the
+stop-the-world marked heap of the darkened one (`mark_post`: no program runs
+between the slices, so `GC.Spec.MarkPhase.Stw.marking_inv_stw` holds
+throughout), and that every object white in it, i.e. every object unreachable
+from the root objects of the darkened heap, is freed at the end
+(`phase_account_slice`, `phase_account_idle`, `dead_at_mark_white`).
+
+## Incremental marking's invariant on concrete heaps
+
+`GC.SPOT.MarkPhase` (heaps from `GC.SPOT.MarkPhaseHeap`: four one-field
+objects, then a free block to the end of the heap) checks
+`GC.Spec.MarkPhase` on two mid-mark heaps.
+
+1. **The invariant holds with a black-to-white edge.**  B (black) -> W
+   (white), G (grey) -> W1 (white) -> W, and W1 is referenced from outside the major
+   heap.  `mid_black_to_white`: B points at the white W, so the heap is not
+   strongly tri-coloured; `mid_reach`: the marker will reach W1 and W (from G,
+   through W1); `mid_mark_inv`: `marking_inv` holds, with its black-object
+   clause in use; `mid_mark_step`: one mark step at G keeps it, and
+   `mid_mark_step_colours`: that step blackens G, greys W1 and leaves W white.
+2. **A path through a black object does not count.**  G (grey) -> B (black)
+   -> W (white).  `through_black_reachable`: the weaker property "every white
+   object a black one points at is reachable from some grey object, through
+   any blocks" holds; `through_black_not_reached` / `through_black_not_inv`:
+   the marker will not reach W, and `marking_inv` fails whatever the outside references;
+   `through_black_step`/`through_black_step_breaks`: the next mark step at G
+   (its only child is black) is just blackening G, leaves no grey object and
+   the edge B -> W, so the weaker property fails and the heap is not
+   tri-coloured: marking would end with W white although B points at it.
+
+`GC.SPOT.MarkPhaseWrite` checks the deletion barrier
+(`GC.Spec.MarkPhase.Mutator`) on the mid-mark heap of case 1: the program
+overwrites G's only field with an immediate, cutting G -> W1.
+
+3. **The barrier is what keeps the invariant.**  `barrier_greys_w1`: `darken`
+   of the old value is greying W1; `barrier_write_inv`: after the barrier and
+   the write, `marking_inv` holds (`marking_write_barrier`, whose hypotheses
+   `write_ok` checks).  `unbarriered_write_breaks`: the same write without the
+   barrier breaks it -- G, the only grey object, has no edge left
+   (`g_no_edge`), so the marker will reach nothing, yet W1 is white and referenced from outside.
+
+`GC.SPOT.MarkPhaseUnreached` checks the reading of the invariant as
+well-formedness that the minor collection at `Marking` uses
+(`GC.Spec.MarkPhase.unreached g sp`: free = blue, or white and not reached).
+
+4. **The reading tells the two heaps apart.**  `mid_unreached_wf`: the
+   mid-mark heap of case 1 is well formed for `unreached`
+   (`marking_inv_unreached`); `through_black_not_unreached_wf`: the heap of
+   case 2 (G -> B -> W, W not reached) is not, since B is not free for it and
+   points at W, which is.
+
+Cases 1-4 are at the scan position `scan_none` (nothing partly scanned).
+`GC.SPOT.MarkPhaseSlice` checks the moves of a mark slice
+(`GC.Spec.MarkPhase.Slice`), which carry the scan position (the partly
+scanned object and its next field).
+
+5. **The three moves, one at a time.**  On the mid-mark heap of case 1,
+   `mid_begin_move`: starting to scan G is a `begin_move` (only the position
+   changes); `mid_scan_move`: scanning G's field is a `grey_move` (W1 greyed,
+   G still grey, the position past the field); `mid_blacken_move`: then
+   blackening G is a `black_move` (its only field scanned), leaving nothing
+   partly scanned; `mid_moves_inv`: each keeps `marking_inv`
+   (`mark_move_inv`), and together they are `mark_steps`.
+6. **Blackening asks for every field scanned.**  G (grey) -> W (white),
+   nothing else points at W.  `par_inv`: with G's field not scanned,
+   `marking_inv` holds; `par_no_black_move`: no blackening is a mark move;
+   `par_blacken_breaks`: blackening G anyway leaves the black G pointing at
+   the white W with no grey object left, and `marking_inv` fails at any
+   position, whatever the outside references are.  `par_scanned_not_inv`:
+   with G's field counted as scanned -- the heap a write of W into a field the
+   slice had scanned would leave -- `marking_inv` fails: W is not one the
+   marker will reach, so the barrier's contract (`MM.target_ok`) rules that
+   write out.
+7. **A write into a scanned field needs no restart.**  G (grey) -> W, X
+   (grey) -> W, W white, G past its only field (the program wrote W there
+   after the slice scanned it).  `fork_inv`: `marking_inv` holds at that
+   position (the marker will reach W from X); `fork_black_move`: blackening G
+   is a mark move and keeps it -- G is finished without being scanned again.
+   This is the case the old barrier restarted the scan for, and the reason a
+   program writing into a partly scanned object can no longer keep marking
+   from finishing.
+
+## The verified write barrier on the A/B/C fixture
+
+`GC.SPOT.WriteBarrier` runs `GC.Gen.Barrier` (the spec of `caml_modify`, M3)
+on the idle A/B/C fixture of `GC.SPOT.ConcreteScenarios`: `C` in the major
+heap with `field0 = 0` and `field1 = A` (a nursery pointer), and the
+remembered set `[field1]`.
+
+1. **A young value over an immediate** (`young_over_immediate`, `C.field0 :=
+   A`): the trusted precondition `modify_ok` holds, so it is not vacuous; the
+   barrier says to remember the slot (`modify_records` is true); the idle
+   shape is kept (`collection_heap_shape` of the result); and with `field0`
+   appended, the table `[field1; field0]` covers and is sound.
+2. **Without the append it does not cover** (`without_append`): after the
+   same write the table `[field1]` misses `field0`, which holds a nursery
+   pointer.  So "the bridge appends iff the barrier returns true" is the
+   obligation that keeps the remembered set right.
+3. **A young value over a young one** (`young_over_young`, `C.field1 := A`):
+   the barrier says not to remember the slot, and `[field1]` still covers --
+   the slot is in the table already, as 4.14's early return assumes.
+
+## The incremental cycle's theorems on a concrete heap
+
+`GC.SPOT.IncrementalCycleTheorems` applies the cycle's completeness and safety
+theorems (`GC.Gen.MarkPhase.Completeness`, `GC.Gen.MarkPhase.Safety`, M6) to
+the Pulse entry points, on the heap of `GC.SPOT.CycleHeap`: the four one-field
+objects of `GC.SPOT.MarkPhaseHeap`, all white, then a free block to the end of
+the heap, an empty nursery, and the roots `[A; C]`:
+
+    A -> B      B      U -> A      C
+
+`CycleHeap.shape` proves the heap is in the idle collector's state
+(`collection_heap_shape`, as `GC.SPOT.InfixMajor` does for its heap), so the
+SPOT's precondition is not vacuous; `CycleHeap.minor_pre` the minor
+collection's precondition with no remembered slot; `collect_empty` that
+collecting the empty nursery changes nothing (heap, free-list head, roots);
+`no_oom` that it cannot fail; `u_unreachable` that `U` is unreachable from the
+roots (`A`, `B`, `C` contain them and are closed under the edges,
+`MPC.reachable_closed`).
+
+The run, with no fact supplied between the calls: `minor_collect`,
+`start_cycle`, a 64-word `major_slice`, a program write through the barrier
+(`modify_field`: `A`'s field, which pointed at `B`, overwritten with an
+immediate -- under the completeness obligation `MPC.cycle_write`, `A` being a
+root), and two unbounded `major_slice`s, ending idle.  Along the way it
+carries the cycle's account (`MPC.cycle_account`, from `GMC.cycle_start`,
+`cycle_slice`, `cycle_modify`) and `C` kept (`GMS.start_keeps_blocks`,
+`cycle_slice_keeps`, `modify_keeps_others`).  `cycle_post`, at the end:
+
+- `U` is freed (`SPC.freed`): it was unreachable when the cycle started, and
+  nothing was allocated or promoted, so the account's set is exactly what was
+  reachable then (`MPC.cycle_complete`);
+- `C` is a non-free block with the size, tag and field it had before the
+  cycle (`SPI.same_block`).
+
+## A run of the marking phase that allocates
+
+`GC.SPOT.MarkPhaseCycleAlloc` builds a run of the marking phase
+(`GC.Gen.MarkPhase.Cycle.marking`) on the same heap and roots, with a
+non-empty `since`: `Start` (root darkening, from `CycleHeap.shape` and the
+roots' validity), and an `Alloc` of a one-field object while marking (it
+succeeds: the free block has a word, `Oom.alloc_spec_oom_no_fit` on the
+darkened heap) initialised with an immediate (`init_writes`, one write; the
+field is in the snapshot trivially).  The run's `since` is the new object, so
+the cycle's snapshot (`MC.snapshot`) is `A`, `B`, `C` and the new object, and
+not `U` (`u_unreachable`; the new object was not a block in use, so it is not
+`U`).  `mark_alloc_spot`, from the run's invariants (`MC.mark_run_account`):
+
+- `U` is still a white block: nothing outside the snapshot is greyed
+  (`MPC.within_snapshot`);
+- `A`, `B` and `C` are blocks in use and, if white, ones the marker will
+  reach (`MC.satb`) -- `B`, named by no root, through `A`.

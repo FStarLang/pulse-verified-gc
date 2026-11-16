@@ -21,7 +21,7 @@ module GenInv = GC.Gen.HeapInvariant
 /// `H` is never enumerated by `objects` -- its header sits inside P's body --
 /// so this heap is precisely the shape that the old `no_infix_field_targets`
 /// conjunct of `major_heap_shape` ruled out.  The audit here is that the heap
-/// nevertheless satisfies the *current* invariant, so `gen_gc` accepts it.
+/// nevertheless satisfies the *current* invariant, so `full_gc` accepts it.
 val spot_infix_room : prop
 
 val spot_q_header : (r:unit{spot_infix_room}) -> Tot hp_addr
@@ -173,8 +173,8 @@ val spot_infix_object_cases
     Lemma (requires Seq.mem obj (SpecFields.objects zero_addr (spot_infix_heap r)))
           (ensures obj == spot_q r \/ obj == spot_p r \/ obj == spot_free_obj r)
 
-/// The infix object is *not* enumerated, which is why part 4 holds and why the
-/// raw formulation of part 2 would reject this heap.
+/// The infix object is *not* enumerated, which is why `no_infix_block` holds and why the
+/// raw formulation of `pointers_lead_to_non_free` would reject this heap.
 val spot_infix_h_not_enumerated
   : r:unit{spot_infix_room} ->
     Lemma (ensures
@@ -224,12 +224,12 @@ val spot_infix_well_formed_heap
 
 /// The negative half of the audit.  Before the generational invariant was
 /// relaxed, `major_heap_shape` carried `no_infix_field_targets`; this heap
-/// refutes that clause, so it could not have been handed to `gen_gc` at all.
+/// refutes that clause, so it could not have been handed to `full_gc` at all.
 val spot_infix_violates_no_infix_field_targets
   : r:unit{spot_infix_room} ->
     Lemma (ensures ~(SpecFields.no_infix_field_targets (spot_infix_heap r)))
 
-/// The positive half: the heap satisfies the invariant `gen_gc` demands.
+/// The positive half: the heap satisfies the invariant `full_gc` demands.
 val spot_infix_major_heap_shape
   : r:unit{spot_infix_room} ->
     Lemma (ensures

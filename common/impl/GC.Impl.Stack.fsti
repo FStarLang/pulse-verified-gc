@@ -81,6 +81,12 @@ fn is_full (st: gray_stack)
   requires is_gray_stack st 's
   returns b: bool
   ensures is_gray_stack st 's ** pure (b <==> (Seq.length 's == stack_capacity st))
+/// Whether the stack is at least a quarter full (the rescan of an
+/// incremental mark slice stops there, as 4.14's `redarken_chunk`).
+fn quarter_full (st: gray_stack)
+  requires is_gray_stack st 's
+  returns b: bool
+  ensures is_gray_stack st 's ** pure (b <==> (Seq.length 's >= stack_capacity st / 4))
 /// Push an object address onto the gray stack.
 /// Precondition: stack has remaining capacity.
 fn push (st: gray_stack) (addr: obj_addr)

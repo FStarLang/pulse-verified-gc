@@ -2,8 +2,11 @@
 /// GC.Gen.TwoPassEquiv — Equivalence of two-pass pointer rewriting and full update
 /// ---------------------------------------------------------------------------
 ///
-/// Proves: update_promoted_iter + rewrite_slots_iter == update_major_pointers
-/// under ref_table_complete and standard well-formedness conditions.
+/// Proves: update_promoted_iter + rewrite_slots_iter == the pointer update over
+/// a fixed set of objects (`update_walk`), under a classification of the
+/// forwarded fields of rewritten objects and standard well-formedness conditions
+/// (`promoted_plus_slots_eq_walk`).  `GC.Gen.TwoPassEquiv.Collect`
+/// instantiates it at a Cheney result.
 
 module GC.Gen.TwoPassEquiv
 
@@ -18,12 +21,77 @@ open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
-open GC.Gen.Impl.UpdatePtrs
+open GC.Gen.ForwardingArray
+open GC.Gen.RefTable
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
-module CheneySpec = GC.Gen.Cheney
 
 let heap_fuel : nat = heap_words
+
+/// ---------------------------------------------------------------------------
+/// Predicates of the two passes over a fixed set of objects
+/// ---------------------------------------------------------------------------
+
+/// The addresses the walk may rewrite: fields of rewritten scannable objects.
+let walked_field_addr (major: heap) (upd: obj_addr -> GTot bool) (a: nat) : prop =
+  exists (obj: obj_addr) (j: nat).
+    Seq.mem obj (objects zero_addr major) /\
+    upd obj /\
+    is_no_scan obj major = false /\
+    j < U64.v (wosize_of_object obj major) /\
+    a == U64.v obj + j * 8 /\
+    U64.v obj + j * 8 + 8 <= heap_size /\
+    (U64.v obj + j * 8) % 8 == 0
+
+/// The word at an aligned address holds a forwarded nursery pointer.
+let holds_forwarded (major: heap) (fwd: forwarding_map) (a: hp_addr) : prop =
+  let v = to_minor_offset (read_word major a) in
+  is_minor_pointer v /\ fwd v <> 0UL
+
+/// The promoted entries (non-zero, non-infix) are rewritten by the walk.
+let promoted_entries_walked (major: heap) (upd: obj_addr -> GTot bool) (farr: seq U64.t) : prop =
+  Seq.length farr == fwd_array_size /\
+  (forall (i: nat). i < fwd_array_size ==>
+    (let obj = Seq.index farr i in
+     obj <> 0UL /\
+     U64.v obj >= U64.v mword /\
+     U64.v obj % U64.v mword == 0 /\
+     U64.v obj < heap_size /\
+     is_infix obj major = false ==>
+     upd (obj <: obj_addr)))
+
+/// Every slot either is a field of a rewritten scannable object, or holds no
+/// forwarded nursery pointer (so rewriting it is a no-op).  The second case is
+/// a slot recorded in an object that has since become garbage.
+let slots_rewrite_walked (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
+                       (slots: seq U64.t) (n: nat) : prop =
+  n <= Seq.length slots /\
+  (forall (i: nat). i < n ==>
+    (let a = U64.v (Seq.index slots i) in
+     a < heap_size /\ a % 8 == 0 /\
+     (walked_field_addr major upd a \/ ~(holds_forwarded major fwd (U64.uint_to_t a)))))
+
+/// Classification of forwarded nursery pointers at the fields of rewritten
+/// scannable objects: each is in a promoted object or at a slot.  Stated over
+/// field positions rather than addresses, since a header word can look like a
+/// forwarded nursery pointer.
+let fwd_ptrs_classified_walked (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
+                             (farr: seq U64.t) (slots: seq U64.t) (n: nat) : prop =
+  Seq.length farr == fwd_array_size /\
+  n <= Seq.length slots /\
+  (forall (obj: obj_addr) (j: nat).
+    {:pattern (to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + j * 8))))}
+    Seq.mem obj (objects zero_addr major) /\
+    upd obj /\
+    is_no_scan obj major = false /\
+    j < U64.v (wosize_of_object obj major) /\
+    U64.v obj + j * 8 + 8 <= heap_size /\
+    (U64.v obj + j * 8) % 8 == 0 /\
+    (let field_val = to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + j * 8))) in
+     is_minor_pointer field_val /\ fwd field_val <> 0UL) ==>
+    ((exists (pi: nat). pi < fwd_array_size /\ Seq.index farr pi == obj) \/
+     (exists (si: nat). si < n /\ U64.v (Seq.index slots si) == U64.v obj + j * 8)))
+
 
 /// ---------------------------------------------------------------------------
 /// Heap extensionality: word-level agreement implies byte-level equality
@@ -49,7 +117,7 @@ val heap_read_word_extensional_mk (h1 h2: heap)
 /// Frame precondition: addr is outside all promoted object bodies from idx onward
 let promoted_iter_frame_pre (major: heap) (farr: seq U64.t) (idx: nat) (addr: hp_addr) : prop =
   Seq.length farr == fwd_array_size /\
-  well_formed_heap_part1 major /\
+  blocks_fit major /\
   (forall (i: nat). i >= idx /\ i < fwd_array_size ==>
     (let obj = Seq.index farr i in
      obj = 0UL \/
@@ -85,7 +153,7 @@ val update_promoted_iter_promoted_field
   : Lemma
     (requires
       Seq.length farr == fwd_array_size /\
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       pi < fwd_array_size /\
       (let obj = Seq.index farr pi in
        obj <> 0UL /\
@@ -147,6 +215,11 @@ val rewrite_slots_iter_frame
 /// rewrite_slots_iter effect on a slot address
 /// ---------------------------------------------------------------------------
 
+/// The slots may repeat (the write barrier records a field again when it is
+/// assigned a nursery pointer after holding an immediate): the first
+/// occurrence forwards the slot to a major address, which by
+/// `fwd_targets_stable` is not a forwarded nursery pointer, so every later
+/// occurrence leaves it alone.
 val rewrite_slots_iter_slot_effect
   (major: heap) (fwd: forwarding_map) (slots: seq U64.t) (n: nat) (si: nat)
   : Lemma
@@ -155,8 +228,7 @@ val rewrite_slots_iter_slot_effect
       (forall (i: nat). i < n ==>
         (let sa = U64.v (Seq.index slots i) in
          sa < heap_size /\ sa % 8 == 0)) /\
-      (forall (i: nat). i < n /\ i <> si ==>
-        U64.v (Seq.index slots i) <> U64.v (Seq.index slots si)))
+      fwd_targets_stable fwd)
     (ensures
       (let slot_addr = Seq.index slots si in
        let old_raw = read_word major slot_addr in
@@ -166,36 +238,26 @@ val rewrite_slots_iter_slot_effect
        (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> result == old_raw)))
 
 /// ---------------------------------------------------------------------------
-/// Main equivalence theorem
+/// The two passes over a fixed set of objects
 /// ---------------------------------------------------------------------------
 
-val promoted_plus_slots_eq_full_update
-  (minor: minor_state) (major_pre: heap) (fp: U64.t) (roots: seq U64.t)
+/// Rewriting the promoted objects' fields, then the slots, is the pointer
+/// update over that set.
+val promoted_plus_slots_eq_walk
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
   (farr: seq U64.t) (slots: seq U64.t) (n: nat)
   : Lemma
     (requires
-      (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
-       Seq.length farr == fwd_array_size /\
-       promoted_entries_valid_from prom.major_final farr 0 /\
-       promoted_entries_disjoint prom.major_final farr /\
-       promoted_entries_not_blue prom.major_final farr /\
-       well_formed_heap_part4 prom.major_final /\
-       valid_slot_addrs slots n /\
-       slots_pairwise_distinct slots n /\
-       ref_table_sound major_pre slots n /\
-       slots_scannable_in_major prom.major_final slots n /\
-       ref_table_complete major_pre prom.fwd_map slots n /\
-       fwd_targets_stable prom.fwd_map /\
-       fwd_ptrs_classified prom.major_final prom.fwd_map farr slots n /\
-       well_formed_heap_part1 prom.major_final /\
-       heap_objects_dense prom.major_final /\
-       Seq.length (objects zero_addr prom.major_final) > 0 /\
-       well_formed_heap major_pre /\
-       AllocLemmas.fl_valid major_pre fp heap_fuel /\
-       AllocLemmas.fl_chain_terminates major_pre fp heap_fuel))
+      blocks_fit major /\
+      no_infix_block major /\
+      Seq.length farr == fwd_array_size /\
+      promoted_entries_valid_from major farr 0 /\
+      promoted_entries_disjoint major farr /\
+      promoted_entries_walked major upd farr /\
+      valid_slot_addrs slots n /\
+      slots_rewrite_walked major upd fwd slots n /\
+      fwd_targets_stable fwd /\
+      fwd_ptrs_classified_walked major upd fwd farr slots n)
     (ensures
-      (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
-       rewrite_slots_iter
-         (update_promoted_iter prom.major_final farr prom.fwd_map 0)
-         prom.fwd_map slots n 0
-         == update_major_pointers prom.major_final prom.fwd_map))
+      rewrite_slots_iter (update_promoted_iter major farr fwd 0) fwd slots n 0
+        == update_walk major upd fwd)

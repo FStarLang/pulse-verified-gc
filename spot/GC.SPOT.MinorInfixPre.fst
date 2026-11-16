@@ -17,6 +17,7 @@ module MinorFwd = GC.Gen.MinorCollectForwarding
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RBridge = GC.Gen.ReachabilityBridge
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
+module RefTable = GC.Gen.RefTable
 module GenImpl = GC.Gen.Impl
 module Preconditions = GC.SPOT.Preconditions
 module Layout = GC.SPOT.Layout
@@ -24,6 +25,7 @@ module Major = GC.SPOT.ConcreteMajorInfix
 module Nursery = GC.SPOT.MinorInfixHeap
 module MinorInfix = GC.SPOT.MinorInfix
 
+module FA = GC.Gen.ForwardingArray
 #set-options "--fuel 1 --ifuel 1 --z3rlimit 30"
 
 let spot_mi_roots (r: unit{Major.spot_major_room})
@@ -46,7 +48,7 @@ let spot_mi_slots (r: unit{Major.spot_major_room})
 let spot_mi_slots_index r = ()
 
 let spot_mi_fwd_array : seq U64.t =
-  Seq.create UpdatePtrs.fwd_array_size 0UL
+  Seq.create FA.fwd_array_size 0UL
 
 /// Case analysis on the two roots.
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
@@ -74,13 +76,13 @@ private let zero_not_minor_pointer ()
 private let spot_mi_fwd_array_zero ()
   : Lemma (ensures Preconditions.zero_forwarding_array spot_mi_fwd_array)
   =
-  FStar.Seq.Base.lemma_create_len UpdatePtrs.fwd_array_size 0UL;
+  FStar.Seq.Base.lemma_create_len FA.fwd_array_size 0UL;
   let aux (i: nat)
     : Lemma (ensures i < Seq.length spot_mi_fwd_array ==>
                      Seq.index spot_mi_fwd_array i == 0UL)
     =
     if i < Seq.length spot_mi_fwd_array then
-      FStar.Seq.Base.lemma_index_create UpdatePtrs.fwd_array_size 0UL i
+      FStar.Seq.Base.lemma_index_create FA.fwd_array_size 0UL i
   in
   FStar.Classical.forall_intro aux;
   Preconditions.zero_forwarding_array_intro spot_mi_fwd_array
@@ -167,7 +169,7 @@ let spot_mi_collection_heap_shape r =
 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 private let spot_mi_ref_table_sound (r: unit{Major.spot_major_room})
-  : Lemma (UpdatePtrs.ref_table_sound (Major.spot_major_heap r) (spot_mi_slots r) 1)
+  : Lemma (RefTable.ref_table_sound (Major.spot_major_heap r) (spot_mi_slots r) 1)
   =
   let major = Major.spot_major_heap r in
   Major.spot_major_layout_facts r;
@@ -206,7 +208,7 @@ private let spot_mi_ref_table_sound (r: unit{Major.spot_major_room})
 
 #push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
 private let spot_mi_ref_table_covers (r: unit{Major.spot_major_room})
-  : Lemma (UpdatePtrs.ref_table_covers_minor_ptrs
+  : Lemma (RefTable.ref_table_covers_minor_ptrs
              (Major.spot_major_heap r) (spot_mi_slots r) 1)
   =
   let major = Major.spot_major_heap r in
@@ -341,20 +343,17 @@ let spot_mi_minor_collect_full_pre r =
   spot_mi_fwd_array_zero ();
   spot_mi_ref_table_sound r;
   spot_mi_ref_table_covers r;
-  Preconditions.singleton_slots_pairwise_distinct (spot_mi_slots r) 1;
   spot_mi_remembered_targets r;
   spot_mi_roots_valid r;
   Preconditions.minor_collect_full_pre_intro
     spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fp r)
     (spot_mi_roots r) spot_mi_fwd_array (spot_mi_slots r) 1
 
-let spot_mi_gen_gc_pre r cap =
+let spot_mi_gen_gc_pre r =
   spot_mi_minor_collect_full_pre r;
-  assert_norm (Seq.length (Seq.empty #obj_addr) == 0);
   Preconditions.gen_gc_pre_intro
     spot_mi_minor (Major.spot_major_heap r) (Major.spot_major_fp r)
     (spot_mi_roots r) spot_mi_fwd_array (spot_mi_slots r) 1
-    Seq.empty cap
 
 /// ---------------------------------------------------------------------------
 /// Non-vacuity

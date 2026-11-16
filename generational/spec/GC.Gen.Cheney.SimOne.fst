@@ -13,7 +13,6 @@ open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
-open GC.Gen.Impl.UpdatePtrs
 
 module CheneySpec = GC.Gen.Cheney
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -243,16 +242,16 @@ private let fwd_one_bfs_inv_success
                     Seq.mem addr (minor_objects minor) /\
                     cs.cs_fwd addr = 0UL /\
                     minor_wosize minor addr > 0 /\
-                    well_formed_heap_part1 cs.cs_major /\
+                    blocks_fit cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     (promote_object minor cs.cs_major addr cs.cs_fp
-                       (minor_wosize minor addr)).new_addr <> 0UL)
+                       (minor_wosize minor addr) cs.cs_phase).new_addr <> 0UL)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_normal minor cs addr))
   =
   let wz = minor_wosize minor addr in
-  let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
-  promote_object_new_addr_body_bound minor cs.cs_major addr cs.cs_fp wz;
+  let res = promote_object minor cs.cs_major addr cs.cs_fp wz cs.cs_phase in
+  promote_object_new_addr_body_bound minor cs.cs_major addr cs.cs_fp wz cs.cs_phase;
   minor_objects_not_infix minor addr;
   fwd_infix_closed_extend minor cs.cs_fwd addr res.new_addr;
   CheneySpec.cheney_forward_normal_success minor cs addr;
@@ -307,7 +306,7 @@ private let fwd_one_bfs_inv_success
 private let fwd_normal_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
   : Lemma (requires cheney_bfs_inv minor cs /\ minor_wf minor /\
-                    well_formed_heap_part1 cs.cs_major /\
+                    blocks_fit cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_normal minor cs addr))
@@ -319,7 +318,7 @@ private let fwd_normal_preserves_bfs_inv
     if wz = 0 then
       CheneySpec.cheney_forward_normal_noop_wz0 minor cs addr
     else begin
-      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz cs.cs_phase in
       if res.new_addr = 0UL then
         CheneySpec.cheney_forward_normal_noop_oom minor cs addr
       else

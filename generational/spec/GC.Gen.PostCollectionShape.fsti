@@ -2,9 +2,9 @@
 /// GC.Gen.PostCollectionShape - the collector restores its own precondition
 /// ---------------------------------------------------------------------------
 ///
-/// `GC.Gen.HeapInvariant.collection_heap_shape` is what `gen_gc` demands of the
+/// `GC.Gen.HeapInvariant.collection_heap_shape` is what `full_gc` demands of the
 /// heap it is handed.  For that to be usable by a runtime driving repeated
-/// collections, `gen_gc` must also *re-establish* it on the heap it returns.
+/// collections, `full_gc` must also *re-establish* it on the heap it returns.
 ///
 /// The minor half of that is already available
 /// (`GC.Gen.HeapInvariant.collection_heap_shape_after_minor_reset`: the nursery
@@ -22,25 +22,41 @@ open GC.Spec.Fields
 
 module U64 = FStar.UInt64
 module Corr = GC.Spec.Correctness
-module Sweep = GC.Spec.Sweep
-module Coalesce = GC.Spec.Coalesce
 module GenInv = GC.Gen.HeapInvariant
+module FS = GC.Spec.FusedSweep
+module FLA = GC.Spec.FreeList.Ascending
+
+/// The free-list half of the shape, from an exact ascending list alone: the
+/// allocator's entry conditions, exactness, the head and every free block's
+/// link, and that no live object is on the chain.  It needs nothing of the
+/// colours, so it also holds in the middle of a sweep.
+val free_list_shape_of_ascending (g: heap) (fp: U64.t)
+  : Lemma (requires FLA.fl_ascending g fp)
+          (ensures GC.Spec.Allocator.Lemmas.fl_valid g fp heap_words /\
+                   GC.Spec.Allocator.Lemmas.fl_chain_terminates g fp heap_words /\
+                   GenInv.free_list_exact g fp /\
+                   GC.Gen.FreeListShape.fp_pointer_or_zero fp /\
+                   GC.Gen.FreeListShape.blue_link_fields_valid g /\
+                   GC.Gen.Promote.chain_objects_blue g fp /\
+                   GC.Spec.SweepInv.fp_valid fp g /\
+                   GC.Spec.FreeList.fp_in_heap fp g)
 
 /// **The major collector restores `major_heap_shape`.**
 ///
-/// Given a heap satisfying the shape invariant and any mark output for it, the
-/// heap and free pointer produced by `coalesce (sweep ...)` -- which is what
-/// `GC.Impl.FusedSweepCoalesce.fused_sweep_coalesce` computes, up to the bodies
-/// of free blocks -- satisfy the shape invariant again.
+/// Given any mark output for a heap whose free list is exact and ascending,
+/// the heap and free pointer the fused sweep (`GC.Spec.FusedSweep`, which
+/// `GC.Impl.FusedSweepCoalesce.fused_sweep_coalesce` computes exactly)
+/// produces satisfy the shape invariant again -- including the ascending,
+/// exact free list the next cycle's sweep starts from.
 ///
 /// This is what makes the generational invariant *inductive* rather than merely
 /// assumed: composed with `collection_heap_shape_after_minor_reset` it gives
-/// `gen_gc` a postcondition that is literally its own precondition.
+/// `full_gc` a postcondition that is literally its own precondition.
 val major_gc_restores_major_heap_shape
   (major: heap) (h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
   : Lemma
-    (requires Corr.mark_post major h_mark roots fp)
-    (ensures (let r = Coalesce.coalesce (fst (Sweep.sweep h_mark fp)) in
+    (requires Corr.mark_post major h_mark roots fp /\ FLA.fl_ascending major fp)
+    (ensures (let r = FS.fused_sweep_coalesce h_mark fp in
               GenInv.major_heap_shape (fst r) (snd r)))
 
 /// The same statement against the collector's Pulse postcondition.

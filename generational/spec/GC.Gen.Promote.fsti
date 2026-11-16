@@ -29,10 +29,12 @@ open GC.Lib.Header
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Reachability
-open GC.Gen.Remembered
 open GC.Gen.WriteBodyLemmas
 
+include GC.Spec.Phase
+
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module AP = GC.Spec.Allocator.Phase
 
 /// ---------------------------------------------------------------------------
 /// Forwarding Map
@@ -61,31 +63,27 @@ type promote_one_result = {
   new_addr  : U64.t;        // address of object in major heap (0 if failed)
 }
 
-/// Set the tag in a promoted object's header.
-/// Reads the current header, builds a new one with same wosize + white color + new tag.
-/// When obj is not a valid obj_addr or tag >= 256, returns the heap unchanged.
-let set_promoted_tag (major: heap) (obj: U64.t) (tag: nat) : GTot heap =
-  if tag >= 256 then major
-  else if U64.v obj >= U64.v mword && U64.v obj < heap_size && U64.v obj % U64.v mword = 0 then
-    let hd = hd_address (obj <: obj_addr) in
-    let hdr = read_word major hd in
-    let wz = getWosize hdr in
-    let new_hdr = makeHeader wz White (U64.uint_to_t tag) in
-    write_word major hd new_hdr
-  else major
+/// The tag a promoted copy is allocated with: the minor object's own.
+let promoted_tag (minor: minor_state) (obj: U64.t) : GTot (t:U64.t{U64.v t < 256}) =
+  minor_tag_bound minor obj;
+  U64.uint_to_t (minor_tag minor obj)
 
-/// Promote a single object from minor heap to major heap.
+/// Promote a single object from minor heap to major heap, at the collector's
+/// phase `ph`.
 ///
-/// 1. Read wosize and tag from minor object header
-/// 2. Allocate in major heap via the major allocator
-/// 3. Copy field data from minor to major
-/// 4. Set the correct tag from the minor header
+/// 1. Allocate in the major heap with the minor object's wosize and tag, as
+///    OCaml's `caml_alloc_shr (wosize, tag)` does: the header is written once,
+///    with the colour the phase gives it -- white outside a sweep; during one,
+///    black in front of the cursor and white behind it -- carrying the tag
+///    (`GC.Spec.Allocator.Phase.alloc_at`)
+/// 2. Copy field data from minor to major
 ///
-/// If major allocation fails (OOM), returns new_addr = 0.
+/// If major allocation fails (OOM), returns new_addr = 0.  At `Idle` the
+/// allocation is `alloc_spec` (`GC.Spec.Allocator.Phase.alloc_at_idle`).
 let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
-                   (fp: U64.t) (wosize: nat{wosize > 0})
+                   (fp: U64.t) (wosize: nat{wosize > 0}) (ph: gc_phase)
   : GTot promote_one_result =
-  let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
+  let alloc_res = AP.alloc_at ph major fp wosize (promoted_tag minor obj) in
   let new_major = alloc_res.heap_out in
   let new_fp = alloc_res.fp_out in
   let new_addr = alloc_res.obj_out in
@@ -93,79 +91,94 @@ let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
     { major_out = major; fp_out = fp; new_addr = 0UL }
   else
     let copied_major = copy_fields minor new_major obj new_addr 0 wosize in
-    let tag = minor_tag minor obj in
-    minor_tag_bound minor obj;
-    let final_major = set_promoted_tag copied_major new_addr tag in
-    { major_out = final_major; fp_out = new_fp; new_addr = new_addr }
+    { major_out = copied_major; fp_out = new_fp; new_addr = new_addr }
+
+/// **The blocks the allocator creates are not free.**  What a minor
+/// collection at phase `ph` assumes of a definition of free, beyond
+/// `free_def_ok`: a block the allocator hands out at that phase is not free in
+/// the heap it returns.  It is a property of the definition of free and of
+/// the allocator, not of a particular run; the minor collection's theorems
+/// derive from it that no promoted copy is free.
+///
+/// The allocator never writes a blue header, so `free_stw` has it at every
+/// phase (`free_stw_allocations_not_free`).  During a sweep, a white block in
+/// front of the cursor counts as free (pending free), and the allocator at
+/// the sweep's phase makes every block in front of the cursor black, so the
+/// sweep's definition of free has it there
+/// (`GC.Gen.SweepPhase.free_incremental_allocations_not_free`).
+[@@"opaque_to_smt"]
+let allocations_not_free (ph: gc_phase) (free: free_def) : prop =
+  forall (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}) (x: obj_addr).
+    AP.alloc_ok g fp /\
+    (AP.alloc_at ph g fp wz tag).obj_out == x ==>
+    not (free (AP.alloc_at ph g fp wz tag).heap_out x)
+
+val allocations_not_free_intro (ph: gc_phase) (free: free_def)
+  (prf: (g: heap) -> (fp: U64.t) -> (wz: nat) -> (tag: U64.t{U64.v tag < 256}) -> (x: obj_addr) ->
+        Lemma (requires AP.alloc_ok g fp /\
+                        (AP.alloc_at ph g fp wz tag).obj_out == x)
+              (ensures not (free (AP.alloc_at ph g fp wz tag).heap_out x)))
+  : Lemma (allocations_not_free ph free)
+
+val allocations_not_free_elim (ph: gc_phase) (free: free_def)
+  (g: heap) (fp: U64.t) (wz: nat) (tag: U64.t{U64.v tag < 256}) (x: obj_addr)
+  : Lemma (requires allocations_not_free ph free /\
+                    AP.alloc_ok g fp /\
+                    (AP.alloc_at ph g fp wz tag).obj_out == x)
+          (ensures not (free (AP.alloc_at ph g fp wz tag).heap_out x))
+
+/// The allocator writes no blue header, at any phase.
+val free_stw_allocations_not_free (ph: gc_phase) : Lemma (allocations_not_free ph free_stw)
 
 /// Unfold: when alloc fails (OOM), promote_object returns original heap/fp unchanged.
 val promote_object_oom (minor: minor_state) (major: heap) (obj: U64.t)
-                       (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out == 0UL)
-          (ensures (let res = promote_object minor major obj fp wosize in
+                       (fp: U64.t) (wosize: nat{wosize > 0}) (ph: gc_phase)
+  : Lemma (requires (AP.alloc_at ph major fp wosize (promoted_tag minor obj)).obj_out == 0UL)
+          (ensures (let res = promote_object minor major obj fp wosize ph in
                     res.major_out == major /\ res.fp_out == fp /\ res.new_addr == 0UL))
 
-/// Unfold: when alloc succeeds, promote_object = alloc + copy_fields + set_tag.
+/// Unfold: when alloc succeeds, promote_object = tagged alloc + copy_fields.
+/// The head and the object are the idle allocator's.
 val promote_object_success (minor: minor_state) (major: heap) (obj: U64.t)
-                           (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out <> 0UL)
-          (ensures (let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
-                    let res = promote_object minor major obj fp wosize in
-                    let copied = copy_fields minor alloc_res.heap_out obj alloc_res.obj_out 0 wosize in
-                    let tag = minor_tag minor obj in
-                    res.major_out == set_promoted_tag copied alloc_res.obj_out tag /\
+                           (fp: U64.t) (wosize: nat{wosize > 0}) (ph: gc_phase)
+  : Lemma (requires (AP.alloc_at ph major fp wosize (promoted_tag minor obj)).obj_out <> 0UL)
+          (ensures (let alloc_res = AP.alloc_at ph major fp wosize (promoted_tag minor obj) in
+                    let alloc0 = GC.Spec.Allocator.alloc_spec major fp wosize (promoted_tag minor obj) in
+                    let res = promote_object minor major obj fp wosize ph in
+                    alloc_res.obj_out == alloc0.obj_out /\ alloc_res.fp_out == alloc0.fp_out /\
+                    res.major_out == copy_fields minor alloc_res.heap_out obj alloc_res.obj_out 0 wosize /\
                     res.fp_out == alloc_res.fp_out /\
                     res.new_addr == alloc_res.obj_out))
 
-/// Unfold set_promoted_tag: when tag < 256 and obj is a valid obj_addr,
-/// set_promoted_tag is just a header write.
-val set_promoted_tag_unfold
-  (major: heap) (obj: obj_addr) (tag: nat{tag < 256})
-  : Lemma (set_promoted_tag major obj tag ==
-           write_word major (hd_address obj)
-             (makeHeader (getWosize (read_word major (hd_address obj)))
-                         White (U64.uint_to_t tag)))
+/// Whether the promotion succeeds, its head and its copy's address do not
+/// depend on the phase.
+val promote_object_phase (minor: minor_state) (major: heap) (obj: U64.t)
+                         (fp: U64.t) (wosize: nat{wosize > 0}) (ph ph': gc_phase)
+  : Lemma (let r = promote_object minor major obj fp wosize ph in
+           let r' = promote_object minor major obj fp wosize ph' in
+           r.fp_out == r'.fp_out /\ r.new_addr == r'.new_addr /\
+           (r.new_addr == 0UL ==> r.major_out == major))
 
-/// set_promoted_tag preserves the objects enumeration (same wosize → same objects list)
-val set_promoted_tag_preserves_objects
-  (major: heap) (obj: obj_addr) (tag: nat{tag < 256})
-  : Lemma (requires Seq.mem obj (objects zero_addr major))
-          (ensures objects zero_addr (set_promoted_tag major obj tag) ==
-                   objects zero_addr major)
-
-/// set_promoted_tag preserves reads at addresses disjoint from the header of obj
-val set_promoted_tag_read_frame
-  (major: heap) (obj: obj_addr) (tag: nat{tag < 256}) (addr: hp_addr)
-  : Lemma (requires (U64.v addr + U64.v mword <= U64.v (hd_address obj) \/
-                     U64.v (hd_address obj) + U64.v mword <= U64.v addr))
-          (ensures read_word (set_promoted_tag major obj tag) addr == read_word major addr)
-
-/// set_promoted_tag preserves allocator invariants (wfh_part1, fl_valid, fl_chain_terminates)
-/// because it writes to a header position that is not in the free-list chain,
-/// and the new header has the same wosize as the old one.
-val set_promoted_tag_preserves_alloc_invariants
-  (major: heap) (obj: obj_addr) (tag: nat{tag < 256}) (fp: U64.t)
-  : Lemma (requires
-             well_formed_heap_part1 major /\
-             Seq.mem obj (objects zero_addr major) /\
-             AllocLemmas.fl_valid major fp heap_words /\
-             AllocLemmas.fl_chain_terminates major fp heap_words /\
-             AllocLemmas.chain_avoids major fp obj heap_words = true)
-          (ensures (let g' = set_promoted_tag major obj tag in
-                    well_formed_heap_part1 g' /\
-                    AllocLemmas.fl_valid g' fp heap_words /\
-                    AllocLemmas.fl_chain_terminates g' fp heap_words))
+/// **The promotion at a phase is the idle one, recoloured**: only the copy's
+/// header colour depends on the phase.
+val promote_object_recoloured (minor: minor_state) (major: heap) (obj: U64.t)
+                              (fp: U64.t) (wosize: nat{wosize > 0}) (ph: gc_phase)
+  : Lemma (requires AP.alloc_ok major fp)
+          (ensures (let r0 = promote_object minor major obj fp wosize Idle in
+                    let r = promote_object minor major obj fp wosize ph in
+                    AP.recoloured r0.major_out r.major_out /\
+                    r.fp_out == r0.fp_out /\ r.new_addr == r0.new_addr))
 
 /// promote_object preserves allocator invariants (wfh_part1, fl_valid, fl_chain_terminates).
-/// Combines alloc_spec, copy_fields, and set_promoted_tag preservation in one lemma.
+/// Combines alloc_spec and copy_fields preservation in one lemma.
 val promote_object_preserves_alloc_invariants
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0}) (ph: gc_phase)
   : Lemma (requires
-             well_formed_heap_part1 major /\
+             blocks_fit major /\
              AllocLemmas.fl_valid major fp heap_words /\
              AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = promote_object minor major obj fp wosize in
-                    well_formed_heap_part1 res.major_out /\
+          (ensures (let res = promote_object minor major obj fp wosize ph in
+                    blocks_fit res.major_out /\
                     AllocLemmas.fl_valid res.major_out res.fp_out heap_words /\
                     AllocLemmas.fl_chain_terminates res.major_out res.fp_out heap_words))
 
@@ -175,15 +188,15 @@ val promote_object_preserves_alloc_invariants
 /// address a byte *inside* the copy --- forwarding an interior pointer lands at
 /// `new_addr + delta` for some `delta` below `wosize * 8` --- needs the body to
 /// fit as well.  It does: the block is an object of the resulting heap, and
-/// part 1 of well-formedness is exactly the statement that an object's body
+/// `blocks_fit` is exactly the statement that an object's body
 /// lies within the heap.
 val promote_object_new_addr_body_bound
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0}) (ph: gc_phase)
   : Lemma (requires
-             well_formed_heap_part1 major /\
+             blocks_fit major /\
              AllocLemmas.fl_valid major fp heap_words /\
              AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = promote_object minor major obj fp wosize in
+          (ensures (let res = promote_object minor major obj fp wosize ph in
                     res.new_addr <> 0UL ==>
                     U64.v res.new_addr + wosize * 8 <= heap_size))
 
@@ -266,38 +279,53 @@ val update_object_pointers_done (major: heap) (obj: U64.t) (wosize: nat)
           (ensures update_object_pointers major obj wosize fwd i == major)
 
 /// ---------------------------------------------------------------------------
-/// update_all_objects_aux — exposed for Pulse implementation
+/// The pointer update given what counts as free
 /// ---------------------------------------------------------------------------
 
-/// Exposed recursive worker: processes objects in `objs` starting at index `idx`
-let rec update_all_objects_aux (major: heap) (objs: seq obj_addr)
-                               (fwd: forwarding_map) (idx: nat)
+/// The walk over the major heap, over a set `upd` of objects fixed for the
+/// whole walk: it rewrites the fields of the objects `x` with `upd x` (and
+/// scannable) and skips every other object without reading its fields.  It
+/// reads every header, so it needs only the walk facts of the heap
+/// (`blocks_fit`, `no_infix_block`).  The minor collection runs it over the
+/// non-free blocks (`update_pointers_with`).
+let rec update_walk_aux (major: heap) (objs: seq obj_addr) (upd: obj_addr -> GTot bool)
+                        (fwd: forwarding_map) (idx: nat)
   : GTot heap (decreases (Seq.length objs - idx)) =
   if idx >= Seq.length objs then major
   else
     let obj = Seq.index objs idx in
-    if is_blue obj major then
-      update_all_objects_aux major objs fwd (idx + 1)
+    if not (upd obj) then
+      update_walk_aux major objs upd fwd (idx + 1)
     else if is_no_scan obj major then
-      update_all_objects_aux major objs fwd (idx + 1)
+      update_walk_aux major objs upd fwd (idx + 1)
     else
       let wz = U64.v (wosize_of_object obj major) in
       let major' = update_object_pointers major obj wz fwd 0 in
-      update_all_objects_aux major' objs fwd (idx + 1)
+      update_walk_aux major' objs upd fwd (idx + 1)
 
-/// Update all pointers in the major heap that refer to minor addresses
+/// Rewrite the nursery pointers held by the objects `upd` of the major heap.
+let update_walk (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map)
+  : GTot heap =
+  update_walk_aux major (objects zero_addr major) upd fwd 0
+
+/// The objects a walk rewrites are real, non-free blocks.
+let walk_ok (major: heap) (upd: obj_addr -> GTot bool) : prop =
+  forall (x: obj_addr). upd x ==> Seq.mem x (objects zero_addr major) /\ ~(is_blue x major)
+
+/// The minor collection's pointer update given what counts as free: it rewrites the fields
+/// of the scannable non-free blocks and never reads a field of any other
+/// block.
+let update_pointers_with (free: free_def) (major: heap) (fwd: forwarding_map)
+  : GTot heap =
+  update_walk major (in_use free major) fwd
+
+/// The stop-the-world pointer update: the `free_stw` instance.
 let update_major_pointers (major: heap) (fwd: forwarding_map) : GTot heap =
-  update_all_objects_aux major (objects zero_addr major) fwd 0
+  update_pointers_with free_stw major fwd
 
 /// ---------------------------------------------------------------------------
-/// Live Set and Root Rewriting
+/// Root Rewriting
 /// ---------------------------------------------------------------------------
-
-/// Compute the live set: minor objects reachable from program roots combined
-/// with the remembered set (major-heap objects pointing into the minor heap).
-let live_set_of (minor: minor_state) (major: heap) (roots: seq U64.t) : GTot (seq U64.t) =
-  let remembered = minor_roots_from_major major in
-  minor_reachable minor (Seq.append roots remembered)
 
 /// Rewrite a single root: if it's a minor pointer that was forwarded, use the new address
 let rewrite_root (r: U64.t) (fwd: forwarding_map) : GTot U64.t =
@@ -401,11 +429,11 @@ val copy_fields_all_correct
 #push-options "--fuel 0 --ifuel 0"
 val promote_preserves_fields
   (minor: minor_state) (major: heap) (obj: U64.t)
-  (fp: U64.t) (wosize: nat{wosize > 0})
+  (fp: U64.t) (wosize: nat{wosize > 0}) (ph: gc_phase)
   : Lemma (requires
              U64.v obj >= 8 /\ U64.v obj < minor_heap_size)
           (ensures
-             (let res = promote_object minor major obj fp wosize in
+             (let res = promote_object minor major obj fp wosize ph in
               res.new_addr <> 0UL ==>
               dst_fields_valid res.new_addr wosize ==>
               U64.v res.new_addr % 8 == 0 ==>
@@ -416,27 +444,27 @@ val promote_preserves_fields
 
 /// promote_object preserves objects (part1 version — no full well_formed_heap needed)
 val promote_object_preserves_objects_part1
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0}) (ph: gc_phase)
   : Lemma (requires
-             well_formed_heap_part1 major /\
+             blocks_fit major /\
              GC.Spec.Allocator.Lemmas.fl_valid major fp heap_words /\
              GC.Spec.Allocator.Lemmas.fl_chain_terminates major fp heap_words)
           (ensures
-             (let res = promote_object minor major obj fp wosize in
+             (let res = promote_object minor major obj fp wosize ph in
               (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
                 Seq.mem x (objects zero_addr res.major_out))))
-/// promote_object preserves well_formed_heap_part4 (no infix objects) when the
+/// promote_object preserves no_infix_block (no infix objects) when the
 /// promoted minor object has a non-infix tag (tag <> 249).
 val promote_object_preserves_wfh_part4
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0}) (ph: gc_phase)
   : Lemma (requires
-             well_formed_heap_part1 major /\
-             well_formed_heap_part4 major /\
+             blocks_fit major /\
+             no_infix_block major /\
              AllocLemmas.fl_valid major fp heap_words /\
              AllocLemmas.fl_chain_terminates major fp heap_words /\
              minor_tag minor obj <> U64.v GC.Spec.Object.infix_tag)
-           (ensures (let res = promote_object minor major obj fp wosize in
-                     well_formed_heap_part4 res.major_out))
+           (ensures (let res = promote_object minor major obj fp wosize ph in
+                     no_infix_block res.major_out))
 
 /// `heap_objects_dense` is `GC.Spec.Fields.heap_objects_dense`.
 

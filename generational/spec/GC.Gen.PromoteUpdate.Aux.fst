@@ -1,5 +1,5 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.PromoteUpdate.Aux — Auxiliary update_all_objects lemmas
+/// GC.Gen.PromoteUpdate.Aux — the pointer-update walk: objects, `blocks_fit`, extensionality in the rewritten set
 /// ---------------------------------------------------------------------------
 
 module GC.Gen.PromoteUpdate.Aux
@@ -15,7 +15,6 @@ open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Reachability
-open GC.Gen.Remembered
 open GC.Gen.Promote
 open GC.Gen.WriteBodyLemmas
 open GC.Gen.PromoteUpdate.Obj
@@ -23,83 +22,77 @@ open GC.Gen.PromoteUpdate.Obj
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module WriteBody = GC.Gen.WriteBodyLemmas
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let header_eq_object_facts (g1 g2: heap) (h: obj_addr) =
+  color_of_header_eq h g1 g2;
+  wosize_of_object_spec h g1; wosize_of_object_spec h g2;
+  tag_of_object_spec h g1; tag_of_object_spec h g2;
+  is_no_scan_spec h g1; is_no_scan_spec h g2;
+  is_infix_spec h g1; is_infix_spec h g2
+#pop-options
+
 #push-options "--z3rlimit 12 --fuel 1"
-/// Single induction establishing both preservation facts about
-/// `update_all_objects_aux`: the objects walk is unchanged, and
-/// `well_formed_heap_part1` is maintained.  Both follow from the same fact —
-/// `update_object_pointers` rewrites only field words, never headers — so they
-/// share one traversal rather than two identical ones.
-private let rec update_all_objects_aux_preserves_objects_wfh
-  (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
+let update_object_pointers_step (major: heap) (obj: obj_addr) (fwd: forwarding_map) =
+  let wz = U64.v (wosize_of_object obj major) in
+  hd_address_spec obj;
+  assert (U64.v (hd_address obj) + 8 + (wz * 8) <= Seq.length major);
+  assert (forall (j:nat). j < wz ==>
+    (U64.v obj + j * 8 + 8 <= heap_size /\ (U64.v obj + j * 8) % 8 == 0));
+  update_object_pointers_preserves_objects major obj wz fwd 0;
+  let major' = update_object_pointers major obj wz fwd 0 in
+  let hdr (h: obj_addr) : Lemma
+    (requires Seq.mem h (objects zero_addr major))
+    (ensures read_word major' (hd_address h) == read_word major (hd_address h))
+  = hd_address_spec h;
+    if h = obj then
+      update_object_pointers_preserves_self_header major obj wz fwd 0
+    else if U64.v h > U64.v obj then
+      update_object_pointers_preserves_other_header major obj wz fwd 0 h
+    else
+      // h < obj: hd_address(h) = h - 8 < h < obj, so it's below obj
+      update_object_pointers_preserves_addr_below major obj wz fwd 0 (hd_address h)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires hdr);
+  let aux_wfh (h: obj_addr) : Lemma
+    (requires Seq.mem h (objects zero_addr major'))
+    (ensures U64.v (hd_address h) + 8 + (U64.v (wosize_of_object h major') * 8) <= Seq.length major')
+  = hdr h;
+    wosize_of_object_spec h major';
+    wosize_of_object_spec h major
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux_wfh)
+#pop-options
+
+/// The walk keeps the object list and `blocks_fit`: each step does.
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
+private let rec update_walk_aux_preserves_objects_wfh
+  (major: heap) (objs: seq obj_addr) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (idx: nat)
   : Lemma (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       objs == objects zero_addr major)
-    (ensures (let major' = update_all_objects_aux major objs fwd idx in
+    (ensures (let major' = update_walk_aux major objs upd fwd idx in
               objects zero_addr major' == objs /\
-              well_formed_heap_part1 major'))
+              blocks_fit major'))
     (decreases (Seq.length objs - idx)) =
   if idx >= Seq.length objs then ()
   else begin
     let obj = Seq.index objs idx in
     assert (Seq.mem obj objs);
-    if is_blue obj major then
-      // Blue skip: heap unchanged, just recurse at idx+1
-      update_all_objects_aux_preserves_objects_wfh major objs fwd (idx + 1)
+    if not (upd obj) then
+      update_walk_aux_preserves_objects_wfh major objs upd fwd (idx + 1)
     else if is_no_scan obj major then
-      // No-scan skip: heap unchanged, just recurse at idx+1
-      update_all_objects_aux_preserves_objects_wfh major objs fwd (idx + 1)
+      update_walk_aux_preserves_objects_wfh major objs upd fwd (idx + 1)
     else begin
       let wz = U64.v (wosize_of_object obj major) in
-      // From well_formed_heap_part1: field bounds for obj
-      hd_address_spec obj;
-      assert (U64.v (hd_address obj) + 8 + (wz * 8) <= Seq.length major);
-      assert (forall (j:nat). j < wz ==>
-        (U64.v obj + j * 8 + 8 <= heap_size /\ (U64.v obj + j * 8) % 8 == 0));
-      // Step 1: update_object_pointers preserves the objects list
-      update_object_pointers_preserves_objects major obj wz fwd 0;
-      let major' = update_object_pointers major obj wz fwd 0 in
-      assert (objects zero_addr major' == objs);
-      // Step 2: show well_formed_heap_part1 major' (all headers unchanged)
-      let aux_wfh (h: obj_addr) : Lemma
-        (requires Seq.mem h (objects zero_addr major'))
-        (ensures U64.v (hd_address h) + 8 + (U64.v (wosize_of_object h major') * 8) <= Seq.length major')
-      = hd_address_spec h;
-        if h = obj then begin
-          update_object_pointers_preserves_self_header major obj wz fwd 0;
-          wosize_of_object_spec h major';
-          wosize_of_object_spec h major
-        end else if U64.v h > U64.v obj then begin
-          update_object_pointers_preserves_other_header major obj wz fwd 0 h;
-          wosize_of_object_spec h major';
-          wosize_of_object_spec h major
-        end else begin
-          // h < obj: hd_address(h) = h - 8 < h < obj, so it's below obj
-          update_object_pointers_preserves_addr_below major obj wz fwd 0 (hd_address h);
-          wosize_of_object_spec h major;
-          wosize_of_object_spec h major'
-        end
-      in
-      FStar.Classical.forall_intro (FStar.Classical.move_requires aux_wfh);
-      assert (well_formed_heap_part1 major');
-      // Step 3: recurse
-      update_all_objects_aux_preserves_objects_wfh major' objs fwd (idx + 1)
+      update_object_pointers_step major obj fwd;
+      update_walk_aux_preserves_objects_wfh
+        (update_object_pointers major obj wz fwd 0) objs upd fwd (idx + 1)
     end
   end
 #pop-options
 
-/// update_major_pointers preserves the objects walk.
-let update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map)
-    =
-  update_all_objects_aux_preserves_objects_wfh major (objects zero_addr major) fwd 0
+let update_walk_preserves_objects major upd fwd =
+  update_walk_aux_preserves_objects_wfh major (objects zero_addr major) upd fwd 0
 
-/// update_major_pointers preserves well_formed_heap_part1.
-let update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map)
-    =
-  update_all_objects_aux_preserves_objects_wfh major (objects zero_addr major) fwd 0
-
-/// ---------------------------------------------------------------------------
-/// Exported step/done/unfold lemmas for Pulse implementation
-/// ---------------------------------------------------------------------------
-/// Unfold: update_major_pointers is update_all_objects_aux at index 0
-let update_major_pointers_unfold (major: heap) (fwd: forwarding_map)
-  = ()
+let update_walk_preserves_wfh_part1 major upd fwd =
+  update_walk_aux_preserves_objects_wfh major (objects zero_addr major) upd fwd 0

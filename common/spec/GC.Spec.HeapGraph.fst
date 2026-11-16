@@ -520,3 +520,70 @@ val successors_eq_pointer_fields : (g: heap) -> (objs: seq obj_addr) -> (x: obj_
 
 let successors_eq_pointer_fields g objs x =
   successors_aux_all_edges g objs x
+
+/// ---------------------------------------------------------------------------
+/// Edge Membership Inversion
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 15 --fuel 1 --ifuel 1"
+let rec make_edges_mem_inv (src dst h: vertex_id) (succs: seq vertex_id)
+  : Lemma (requires Seq.mem (src, dst) (make_edges h succs))
+          (ensures src == h /\ Seq.mem dst succs)
+          (decreases Seq.length succs)
+  = if Seq.length succs = 0 then ()
+    else begin
+      let hd = Seq.head succs in
+      let tl = Seq.tail succs in
+      Seq.mem_cons (h, hd) (make_edges h tl);
+      Seq.mem_cons hd tl;
+      if (src, dst) = (h, hd) then ()
+      else make_edges_mem_inv src dst h tl
+    end
+
+/// A successor is an object address.
+let rec get_pointer_fields_aux_mem_ge_mword
+  (g: heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t) (dst: vertex_id)
+  : Lemma (requires Seq.mem dst (get_pointer_fields_aux g obj i ws))
+          (ensures U64.v dst >= U64.v mword)
+          (decreases (U64.v ws - U64.v i + 1))
+  = if U64.v i > U64.v ws then ()
+    else begin
+      let v = get_field g obj i in
+      let rest =
+        if U64.v i < U64.v ws then get_pointer_fields_aux g obj (U64.add i 1UL) ws
+        else Seq.empty in
+      if is_pointer_field v then begin
+        is_pointer_field_is_obj_addr v;
+        Seq.mem_cons (resolve_field g v) rest
+      end;
+      if U64.v i < U64.v ws && Seq.mem dst rest
+      then get_pointer_fields_aux_mem_ge_mword g obj (U64.add i 1UL) ws dst
+    end
+
+let get_pointer_fields_mem_ge_mword (g: heap) (obj: obj_addr) (dst: vertex_id)
+  : Lemma (requires Seq.mem dst (get_pointer_fields g obj))
+          (ensures U64.v dst >= U64.v mword)
+  = if object_fits_in_heap obj g && not (is_no_scan obj g || is_blue obj g)
+    then get_pointer_fields_aux_mem_ge_mword g obj 1UL (wosize_of_object obj g) dst
+
+/// An edge of `all_edges` leaves an enumerated object along one of its
+/// pointer fields.
+let rec all_edges_mem_inv (g: heap) (objs: seq obj_addr) (src dst: vertex_id)
+  : Lemma (requires Seq.mem (src, dst) (all_edges g objs))
+          (ensures U64.v src >= U64.v mword /\ U64.v dst >= U64.v mword /\
+                   Seq.mem (src <: obj_addr) objs /\
+                   Seq.mem dst (get_pointer_fields g (src <: obj_addr)))
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let hd = Seq.head objs in
+      let tl = Seq.tail objs in
+      Seq.lemma_mem_append (object_edges g hd) (all_edges g tl);
+      Seq.mem_cons hd tl;
+      if Seq.mem (src, dst) (object_edges g hd) then begin
+        make_edges_mem_inv src dst hd (get_pointer_fields g hd);
+        get_pointer_fields_mem_ge_mword g hd dst
+      end
+      else all_edges_mem_inv g tl src dst
+    end
+#pop-options

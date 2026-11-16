@@ -5,6 +5,7 @@ module Seq = FStar.Seq
 
 open FStar.Seq
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -16,7 +17,7 @@ module GenImpl = GC.Gen.Impl
 module Preconditions = GC.SPOT.Preconditions
 module InfixMajor = GC.SPOT.InfixMajor
 
-/// Everything `gen_gc` demands, discharged for the interior-pointer heap of
+/// Everything `full_gc` demands, discharged for the interior-pointer heap of
 /// `GC.SPOT.InfixMajor`.
 ///
 /// The nursery is empty (`GC.Gen.MinorHeap.minor_reset`), so the whole minor
@@ -56,7 +57,7 @@ val spot_infix_fwd_array_zero : unit ->
 
 /// The heap-shape half of the precondition.  This is the interesting one: it
 /// is `GC.SPOT.InfixMajor.spot_infix_major_heap_shape` lifted across the empty
-/// nursery, and it is exactly the predicate `gen_gc` requires.
+/// nursery, and it is exactly the predicate `full_gc` requires.
 val spot_infix_collection_heap_shape (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
       GenInv.collection_heap_shape
@@ -64,12 +65,12 @@ val spot_infix_collection_heap_shape (r: unit{InfixMajor.spot_infix_room})
 
 val spot_infix_ref_table_sound (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
-      GC.Gen.Impl.UpdatePtrs.ref_table_sound
+      GC.Gen.RefTable.ref_table_sound
         (InfixMajor.spot_infix_heap r) spot_infix_slots 0)
 
 val spot_infix_ref_table_covers (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
-      GC.Gen.Impl.UpdatePtrs.ref_table_covers_minor_ptrs
+      GC.Gen.RefTable.ref_table_covers_minor_ptrs
         (InfixMajor.spot_infix_heap r) spot_infix_slots 0)
 
 val spot_infix_remembered_targets_in_roots (r: unit{InfixMajor.spot_infix_room})
@@ -88,29 +89,28 @@ val spot_infix_minor_collect_full_pre (r: unit{InfixMajor.spot_infix_room})
         spot_infix_minor (InfixMajor.spot_infix_heap r) (InfixMajor.spot_infix_fp r)
         (spot_infix_roots r) spot_infix_fwd_array spot_infix_slots 0)
 
-/// The full `gen_gc` precondition, for any gray stack budget that can hold the
-/// single root.
-val spot_infix_gen_gc_pre (r: unit{InfixMajor.spot_infix_room}) (cap: nat{cap >= 1})
+/// The full `full_gc` precondition (the minor collection's: the collector
+/// darkens the root onto its own persistent mark stack).
+val spot_infix_gen_gc_pre (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
       Preconditions.gen_gc_pre
         spot_infix_minor (InfixMajor.spot_infix_heap r) (InfixMajor.spot_infix_fp r)
-        (spot_infix_roots r) spot_infix_fwd_array spot_infix_slots 0
-        Seq.empty cap)
+        (spot_infix_roots r) spot_infix_fwd_array spot_infix_slots 0)
 
 /// The success-side dual: the forwarding map the (empty) minor collection
 /// produces is trivially well formed, which is what the major phase's
 /// preconditions are stated against.
 val spot_infix_cheney_no_oom (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
-      CheneyBFS.cheney_no_oom
+      CheneyBFS.cheney_no_oom Idle
         spot_infix_minor (InfixMajor.spot_infix_heap r)
         (InfixMajor.spot_infix_fp r) (spot_infix_roots r))
 
 /// The minor collection cannot run out of memory here: there is nothing to
-/// promote.  Combined with `gen_gc`'s `not ok ==> cheney_oom`, this pins the
+/// promote.  Combined with `full_gc`'s `not ok ==> cheney_oom`, this pins the
 /// success flag to `true`.
 val spot_infix_no_oom (r: unit{InfixMajor.spot_infix_room})
   : Lemma (ensures
-      ~(CheneyBFS.cheney_oom
+      ~(CheneyBFS.cheney_oom Idle
           spot_infix_minor (InfixMajor.spot_infix_heap r)
           (InfixMajor.spot_infix_fp r) (spot_infix_roots r)))

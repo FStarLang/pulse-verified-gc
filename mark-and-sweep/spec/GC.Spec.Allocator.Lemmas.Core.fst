@@ -57,8 +57,8 @@ let fl_chain_terminates_valid_zero = AllocChain.fl_chain_terminates_valid_zero
 
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_objects_part1
-  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (tag: U64.t{U64.v tag < 256})
+  : Lemma (requires blocks_fit g /\
                     fl_valid g cur_fp fuel /\
                     fl_chain_terminates g cur_fp fuel /\
                     (prev_fp <> 0UL ==>
@@ -68,7 +68,7 @@ private let rec alloc_search_preserves_objects_part1
                        U64.v prev_fp % U64.v mword = 0 /\
                        Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
-          (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+          (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz Idle tag fuel in
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                       Seq.mem x (objects zero_addr r.heap_out))))
           (decreases fuel)
@@ -93,7 +93,7 @@ private let rec alloc_search_preserves_objects_part1
       if block_wz >= wz then begin
         // Found a suitable block
         if prev_fp = 0UL then
-          alloc_from_block_objects_facts_part1 g obj wz next_fp
+          alloc_from_block_objects_facts_part1 g obj wz next_fp tag
         else if U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
                 U64.v prev_fp % U64.v mword = 0 then begin
           // Reordered: `alloc_search` rewrites prev's link FIRST, on `g`, and
@@ -124,7 +124,7 @@ private let rec alloc_search_preserves_objects_part1
           assert (read_word gw hd == hdr);
           assert (U64.v (getWosize (read_word gw hd)) == block_wz);
           assert (Seq.mem obj (objects zero_addr gw));
-          alloc_from_block_objects_facts_part1 gw obj wz next_fp
+          alloc_from_block_objects_facts_part1 gw obj wz next_fp tag
         end
         else ()
       end
@@ -134,7 +134,7 @@ private let rec alloc_search_preserves_objects_part1
         if U64.v hd + 16 <= heap_size then
           fl_chain_terminates_elim g cur_fp fuel
         else ();
-        alloc_search_preserves_objects_part1 g head_fp cur_fp next_fp wz (fuel - 1)
+        alloc_search_preserves_objects_part1 g head_fp cur_fp next_fp wz (fuel - 1) tag
       end
     end
 #pop-options
@@ -175,20 +175,20 @@ open GC.Spec.Mark
 
 #push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let make_header_getColor (wz: U64.t{U64.v wz < pow2 54})
-                                  (c: U64.t{U64.v c < 4})
+                                  (c: color)
                                   (t: U64.t{U64.v t < 256})
   = let hdr = make_header wz c t in
     make_header_value wz c t;
     Header.get_color_val (U64.v hdr);
     FStar.UInt.shift_right_value_lemma #64 (U64.v hdr) 8;
     assert_norm (pow2 8 = 256);
-    FStar.Math.Lemmas.lemma_div_plus (U64.v c * 256 + U64.v t) (U64.v wz * 4) 256;
-    FStar.Math.Lemmas.lemma_div_plus (U64.v t) (U64.v c) 256;
+    FStar.Math.Lemmas.lemma_div_plus (Header.pack_color c * 256 + U64.v t) (U64.v wz * 4) 256;
+    FStar.Math.Lemmas.lemma_div_plus (U64.v t) (Header.pack_color c) 256;
     FStar.Math.Lemmas.small_div (U64.v t) 256;
-    FStar.UInt.logand_mask #64 (U64.v wz * 4 + U64.v c) 2;
+    FStar.UInt.logand_mask #64 (U64.v wz * 4 + Header.pack_color c) 2;
     assert_norm (pow2 2 - 1 = 3);
-    FStar.Math.Lemmas.lemma_mod_plus (U64.v c) (U64.v wz) 4;
-    FStar.Math.Lemmas.small_mod (U64.v c) 4
+    FStar.Math.Lemmas.lemma_mod_plus (Header.pack_color c) (U64.v wz) 4;
+    FStar.Math.Lemmas.small_mod (Header.pack_color c) 4
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -209,6 +209,6 @@ let make_header_getColor (wz: U64.t{U64.v wz < pow2 54})
 
 let chain_avoids_transfer_excl2 = AllocChain.chain_avoids_transfer_excl2
 /// alloc_spec preserves objects membership under part1
-let alloc_spec_preserves_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
+let alloc_spec_preserves_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat) (tag: U64.t{U64.v tag < 256})
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_preserves_objects_part1 g fp 0UL fp wz heap_words
+    alloc_search_preserves_objects_part1 g fp 0UL fp wz heap_words tag

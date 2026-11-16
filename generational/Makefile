@@ -70,7 +70,18 @@ ALL_SRC  = $(filter-out $(SPOT_SRC),$(SPEC_SRC) $(IMPL_SRC))
 # module file name alone.
 checked = $(addprefix $(CACHE_DIR)/,$(addsuffix .checked,$(notdir $(1))))
 
-ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst
+# GC.Gen.Impl is the collector's entry points.
+# GC.Gen.SweepPhase (promotion mid-sweep; the program's own events are
+# GC.Spec.SweepPhase.Mutator, reached through it),
+# GC.Gen.SweepPhase.Minor (a minor collection mid-sweep) and
+# GC.Gen.SweepPhase.Safety (safety over the sweep phase) and
+# GC.Gen.SweepPhase.Completeness (a minor collection mid-sweep, for the sweep
+# phase's completeness) and GC.Gen.SweepPhase.Cycle (a run of the sweep phase,
+# and what it frees) are theorems about it, as are GC.Gen.MarkPhase.Cycle (a
+# run of the marking phase) and GC.Gen.Cycle (a run of the whole cycle); the
+# first two are also reached through it, Safety, Completeness and the runs
+# only as roots.
+ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst impl/GC.Gen.Impl.Barrier.fsti impl/GC.Gen.Impl.Barrier.fst spec/GC.Gen.SweepPhase.fst spec/GC.Gen.SweepPhase.Minor.fst spec/GC.Gen.SweepPhase.Safety.fst spec/GC.Gen.SweepPhase.Completeness.fst spec/GC.Gen.SweepPhase.Cycle.fst spec/GC.Gen.MarkPhase.Alloc.fst spec/GC.Gen.MarkPhase.Completeness.fst spec/GC.Gen.MarkPhase.Safety.fst spec/GC.Gen.MarkPhase.Cycle.fst spec/GC.Gen.Cycle.fst
 ROOT_CHECKED = $(call checked,$(ROOT_SRC))
 ALL_CHECKED  = $(call checked,$(ALL_SRC))
 
@@ -181,21 +192,25 @@ verify: check-orphans $(VERIFY_CHECKED)
 # below still name F* modules.  The entry modules are the API modules of the
 # C bundle; Custard roots the values their interfaces declare.
 #
+# The file named is GC.Gen.Impl.Barrier.fst: it depends on GC.Gen.Impl, which
+# depends on every other entry module, so it loads them all (F* takes one
+# file here).
+#
 # Prerequisites: M&S and common .checked files must already exist
 # (run `make -C ../mark-and-sweep verify` first if needed).
 
 # --- Modules to extract -----------------------------------------------------
 
 CUSTARD_ENTRY_MODS = \
-  GC.Gen.Impl GC.Gen.Impl.MinorHeap GC.Gen.Impl.Cheney GC.Gen.Impl.UpdatePtrs \
+  GC.Gen.Impl GC.Gen.Impl.Barrier GC.Gen.Impl.MinorHeap GC.Gen.Impl.Cheney GC.Gen.Impl.UpdatePtrs \
   GC.Impl GC.Impl.Allocator GC.Impl.MarkBounded
 
 ALL_KRML_MODS = \
-  GC.Gen.Impl GC.Gen.Impl.MinorHeap GC.Gen.Impl.Cheney \
+  GC.Gen.Impl GC.Gen.Impl.Barrier GC.Gen.Impl.MarkSlice GC.Gen.Impl.MinorHeap GC.Gen.Impl.Cheney \
   GC.Gen.Impl.Promote GC.Gen.Impl.UpdatePtrs \
   GC.Gen.Base \
   GC.Impl GC.Impl.Fields \
-  GC.Impl.MarkBounded GC.Impl.Coalesce \
+  GC.Impl.MarkBounded \
   GC.Impl.FusedSweepCoalesce GC.Impl.Allocator \
   GC.Impl.ArrayWord GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
   GC.Spec.ZeroAddr GC.Spec.Base GC.Spec.Heap GC.Spec.Object \
@@ -208,7 +223,7 @@ CUSTARD_KRML = $(OUTPUT_DIR)/Custard.krml
 $(CUSTARD_KRML): verify | $(OUTPUT_DIR)
 	$(FSTAR) --odir $(OUTPUT_DIR) --codegen KrmlC --custard_split \
 	  $(addprefix --custard_entry_module ,$(CUSTARD_ENTRY_MODS)) \
-	  GC.Gen.Impl.fst
+	  GC.Gen.Impl.Barrier.fst
 
 # --- KaRaMeL bundling (.krml → C) ------------------------------------------
 #
@@ -217,7 +232,7 @@ $(CUSTARD_KRML): verify | $(OUTPUT_DIR)
 #                        including the Pulse.Lib.Array functions it calls
 #   Spec/constants      — heap_size_u64, minor_heap_size_u64, color enum (internal)
 #
-# API (public in header): GC.Gen.Impl, GC.Gen.Impl.MinorHeap, GC.Impl, GC.Impl.Allocator
+# API (public in header): GC.Gen.Impl, GC.Gen.Impl.Barrier, GC.Gen.Impl.MinorHeap, GC.Impl, GC.Impl.Allocator
 # Internal (static):      Cheney, Promote, UpdatePtrs, Mark, Sweep, Fields, ...
 # Hidden (no C output):   Spec modules, Prims, FStar, Pulse
 #
@@ -227,7 +242,7 @@ $(CUSTARD_KRML): verify | $(OUTPUT_DIR)
 KRML_FLAGS = \
   -tmpdir $(EXTRACT_DIR) \
   -skip-compilation -skip-linking \
-  -bundle 'GC.Gen.Impl+GC.Gen.Impl.MinorHeap+GC.Gen.Impl.Cheney+GC.Gen.Impl.UpdatePtrs+GC.Impl+GC.Impl.Allocator+GC.Impl.MarkBounded=GC.Gen.Impl.*,GC.Impl.*,Pulse.Lib.Array[rename=GC_Gen_Impl]' \
+  -bundle 'GC.Gen.Impl+GC.Gen.Impl.Barrier+GC.Gen.Impl.MinorHeap+GC.Gen.Impl.Cheney+GC.Gen.Impl.UpdatePtrs+GC.Impl+GC.Impl.Allocator+GC.Impl.MarkBounded=GC.Gen.Impl.*,GC.Impl.*,Pulse.Lib.Array[rename=GC_Gen_Impl]' \
   -bundle 'GC.Spec.ZeroAddr=GC.Spec.ZeroAddr' \
   -bundle 'GC.Gen.Base,GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
   $(foreach m,$(ALL_KRML_MODS),-no-prefix $(m)) \

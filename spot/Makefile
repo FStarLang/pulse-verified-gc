@@ -84,6 +84,7 @@ SPOT_SRC = \
   GC.SPOT.CallMinor.fst \
   GC.SPOT.ConcreteCallMinor.fsti \
   GC.SPOT.ConcreteCallMinor.fst \
+  GC.SPOT.DuplicateSlot.fst \
   GC.SPOT.CallFull.fsti \
   GC.SPOT.CallFull.fst \
   GC.SPOT.ConcreteCallFull.fsti \
@@ -111,6 +112,21 @@ SPOT_SRC = \
   GC.SPOT.NoScanMajor.fst \
   GC.SPOT.NoScanMinor.fsti \
   GC.SPOT.NoScanMinor.fst \
+  GC.SPOT.FusedSweepSteps.fst \
+  GC.SPOT.SweepPhasePendingFree.fst \
+  GC.SPOT.SweepPhaseFreedByEnd.fst \
+  GC.SPOT.SweepPhaseCycleAlloc.fst \
+  GC.SPOT.IncrementalCycle.fst \
+  GC.SPOT.MarkPhaseHeap.fsti \
+  GC.SPOT.MarkPhaseHeap.fst \
+  GC.SPOT.MarkPhase.fst \
+  GC.SPOT.MarkPhaseWrite.fst \
+  GC.SPOT.MarkPhaseUnreached.fst \
+  GC.SPOT.MarkPhaseSlice.fst \
+  GC.SPOT.WriteBarrier.fst \
+  GC.SPOT.CycleHeap.fst \
+  GC.SPOT.IncrementalCycleTheorems.fst \
+  GC.SPOT.MarkPhaseCycleAlloc.fst \
   GC.SPOT.GcCorrect.fsti \
   GC.SPOT.GcCorrect.fst
 

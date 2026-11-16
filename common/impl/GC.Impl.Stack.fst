@@ -194,6 +194,20 @@ fn is_full (st: gray_stack)
   b
 }
 
+fn quarter_full (st: gray_stack)
+  requires is_gray_stack st 's
+  returns b: bool
+  ensures is_gray_stack st 's ** pure (b <==> (Seq.length 's >= stack_capacity st / 4))
+{
+  unfold is_gray_stack;
+  with t contents. _;
+  let top_val = B.op_Bang st.top;
+  let q = SZ.div st.cap 4sz;
+  let b = SZ.lte top_val (SZ.sub st.cap q);
+  fold (is_gray_stack st 's);
+  b
+}
+
 #push-options "--z3rlimit 10"
 fn push (st: gray_stack) (addr: obj_addr)
   requires is_gray_stack st 's ** pure (Seq.length 's < stack_capacity st)

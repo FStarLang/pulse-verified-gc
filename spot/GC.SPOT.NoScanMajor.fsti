@@ -18,12 +18,13 @@
 /// write any bytes it likes into a `Bytes.t`.
 ///
 /// Before the relaxation this heap was *inadmissible*: both
-/// `well_formed_heap_part2` (every pointer-shaped field targets an object) and
+/// the old part 2 of `well_formed_heap` (every pointer-shaped field targets an
+/// object) and
 /// `GC.Spec.Fields.no_scan_invariant` (a live no-scan block contains no
-/// pointer-shaped word) rejected it, so `gen_gc` could not be called on any
+/// pointer-shaped word) rejected it, so `full_gc` could not be called on any
 /// heap containing a string with unlucky contents.  `spot_ns_violates_no_scan_invariant`
 /// below proves that rejection was real, and `spot_ns_major_heap_shape` proves
-/// that the heap nevertheless satisfies `gen_gc`'s major-heap precondition now.
+/// that the heap nevertheless satisfies `full_gc`'s major-heap precondition now.
 
 module GC.SPOT.NoScanMajor
 
@@ -37,7 +38,6 @@ module SpecFields = GC.Spec.Fields
 module SpecObj = GC.Spec.Object
 module Header = GC.Lib.Header
 module SpecMark = GC.Spec.Mark
-module Sweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module HeapGraph = GC.Spec.HeapGraph
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -89,6 +89,6 @@ val spot_ns_s_is_live_no_scan (r: unit{spot_ns_room})
 val spot_ns_violates_no_scan_invariant (r: unit{spot_ns_room})
   : Lemma (ensures ~(SpecFields.no_scan_invariant (spot_ns_heap r)))
 
-/// The positive half: it *does* satisfy `gen_gc`'s major-heap precondition.
+/// The positive half: it *does* satisfy `full_gc`'s major-heap precondition.
 val spot_ns_major_heap_shape (r: unit{spot_ns_room})
   : Lemma (ensures GenInv.major_heap_shape (spot_ns_heap r) (spot_ns_fp r))

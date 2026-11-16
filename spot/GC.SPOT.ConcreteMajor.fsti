@@ -51,6 +51,10 @@ val spot_major_c_reads
       ~(SpecObj.is_infix (spot_c r) major) /\
       ~(SpecObj.is_no_scan (spot_c r) major)))
 
+val spot_major_c_not_closure
+  : r:unit{spot_major_room} ->
+    Lemma (ensures ~(SpecObj.is_closure (spot_c r) (spot_major_heap r)))
+
 val spot_major_free_reads
   : r:unit{spot_major_room} ->
     Lemma (ensures (

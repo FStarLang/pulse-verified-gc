@@ -49,10 +49,12 @@ val reachable_transfer (g1 g2: graph_state) (live: vertex_id -> prop)
 /// ---------------------------------------------------------------------------
 
 open GC.Spec.Base
+open GC.Spec.Phase
 module HM = GC.Spec.HeapModel
 module HG = GC.Spec.HeapGraph
 module MS = GC.Spec.Correctness
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
+module SF = GC.Spec.Fields
 
 /// The live set of the major collection, as a predicate on graph vertices.
 let major_live (h: heap) (droots: Seq.seq obj_addr) (x: vertex_id) : prop =
@@ -75,7 +77,7 @@ val major_graphs_agree (h1 h2: heap) (droots: Seq.seq obj_addr)
 
 /// The reachable subgraph seen through the generational vocabulary is the same
 /// before and after the major collection.  This is the missing step that used
-/// to force `gen_gc`'s caller to compose the minor and major isomorphisms.
+/// to force `full_gc`'s caller to compose the minor and major isomorphisms.
 val major_result_post_transfer
   (h1 h2: heap) (droots: Seq.seq obj_addr) (rts: Seq.seq U64.t)
   : Lemma
@@ -85,12 +87,13 @@ val major_result_post_transfer
         (forall (r: obj_addr). Seq.mem (r <: U64.t) rts ==> Seq.mem r droots))
       (ensures
         (forall (w: U64.t).
-           MCFH.result_post_reachable h1 rts w <==>
-           MCFH.result_post_reachable h2 rts w) /\
+           MCFH.result_post_reachable h1 SF.free_stw rts w <==>
+           MCFH.result_post_reachable h2 SF.free_stw rts w) /\
         (forall (w1 w2: U64.t).
-           MCFH.result_post_reachable h1 rts w1 /\
-           MCFH.result_post_reachable h1 rts w2 ==>
-           (MCFH.result_post_edge h1 w1 w2 <==> MCFH.result_post_edge h2 w1 w2)))
+           MCFH.result_post_reachable h1 SF.free_stw rts w1 /\
+           MCFH.result_post_reachable h1 SF.free_stw rts w2 ==>
+           (MCFH.result_post_edge h1 SF.free_stw w1 w2 <==>
+            MCFH.result_post_edge h2 SF.free_stw w1 w2)))
 
 /// ---------------------------------------------------------------------------
 /// The composed, end-to-end isomorphism
@@ -99,7 +102,7 @@ val major_result_post_transfer
 module CG = GC.Gen.CombinedGraph
 module MinorFwd = GC.Gen.MinorCollectForwarding
 
-/// One isomorphism, from the reachable subgraph of the heap `gen_gc` was
+/// One isomorphism, from the reachable subgraph of the heap `full_gc` was
 /// handed to the reachable subgraph of the heap it returns.  The morphism is
 /// the minor collector's forwarding map: the major collection does not move
 /// anything, so it contributes the identity.
@@ -107,11 +110,11 @@ let end_to_end_isomorphism
   (minor: GC.Gen.MinorHeap.minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
   (final_major: heap) (final_roots: Seq.seq U64.t) : prop =
   CG.reachable_subgraph_isomorphism
-    (MinorFwd.normal_src_reachable minor major fp roots)
-    (MCFH.result_post_reachable final_major final_roots)
-    (MinorFwd.normal_src_edge minor major fp roots)
-    (MCFH.result_post_edge final_major)
-    (GC.Gen.Cheney.cheney_promote minor major fp roots).fwd_map
+    (MCFH.normal_src_reachable Idle minor major fp SF.free_stw roots)
+    (MCFH.result_post_reachable final_major SF.free_stw final_roots)
+    (MinorFwd.normal_src_edge Idle minor major fp SF.free_stw roots)
+    (MCFH.result_post_edge final_major SF.free_stw)
+    (GC.Gen.Cheney.cheney_promote Idle minor major fp roots).fwd_map
 
 /// Compose the minor collector's isomorphism with the major collection.
 /// `darkened` is the heap the major collection actually starts from -- the
@@ -123,8 +126,8 @@ val end_to_end_isomorphism_intro
   (darkened: heap) (droots: Seq.seq obj_addr) (final_major: heap)
   : Lemma
       (requires
-        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-          minor major fp roots post_major post_roots /\
+        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop Idle
+          minor major fp SF.free_stw roots post_major post_roots /\
         HM.create_graph darkened == HM.create_graph post_major /\
         major_transfer_hyp darkened final_major droots /\
         (forall (r: U64.t). Seq.mem r post_roots ==> is_val_addr r) /\

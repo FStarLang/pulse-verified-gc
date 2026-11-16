@@ -134,7 +134,7 @@ let rec push_children (g: heap) (st: seq obj_addr) (obj: obj_addr) (i: U64.t{U64
 /// Well-Formedness Preservation
 /// ---------------------------------------------------------------------------
 
-/// Blueness is what `fields_constrained` and the graph look at, and mark never
+/// Blueness is what `free_stw` and the graph look at, and mark never
 /// creates or removes it.  These two facts let the many colour-change sites in
 /// the mark proofs see that without a lemma call each.
 val is_blue_exclusive (x: obj_addr) (g: heap)
@@ -146,19 +146,22 @@ val set_color_keeps_not_blue (obj x: obj_addr) (g: heap) (c: color)
           (ensures ~(is_blue x (set_object_color obj g c)))
           [SMTPat (is_blue x (set_object_color obj g c))]
 
-/// A free block's body is unconstrained (`fields_constrained`), so a colour
-/// change may not take a block *out* of blue: its stale fields would become
-/// obligations.  Mark and sweep never do; allocation, which does, is not a
-/// colour change in this sense.
+/// A colour change among white, grey and black.  Blue is excluded at both ends:
+/// a free block's body is unconstrained (it is free under `free_stw`), so taking a
+/// block out of blue would make its stale fields obligations, and nothing may
+/// point at a free block, so turning a block blue could break
+/// `pointers_lead_to_non_free`.  Mark
+/// never does either; the sweep and the allocator, which do, have their own
+/// lemmas.
 val color_change_preserves_wf : (g: heap) -> (obj: obj_addr) -> (c: color) ->
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
-                  (c <> Header.Blue ==> ~(is_blue obj g)))
+                  c <> Header.Blue /\ ~(is_blue obj g))
         (ensures well_formed_heap (set_object_color obj g c))
 
 val push_children_preserves_wf : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
                                   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
-                  fields_constrained g obj /\
+  Lemma (requires well_formed_heap g /\ in_use free_stw g obj /\
+                  ~(is_no_scan obj g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures well_formed_heap (fst (push_children g st obj i ws)))
@@ -166,8 +169,8 @@ val push_children_preserves_wf : (g: heap) -> (st: seq obj_addr) -> (obj: obj_ad
 val push_children_preserves_stack_props :
   (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\
-                  is_black obj g /\ Seq.mem obj (objects zero_addr g) /\
-                  fields_constrained g obj /\
+                  is_black obj g /\ in_use free_stw g obj /\
+                  ~(is_no_scan obj g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ~(Seq.mem obj st))
@@ -237,41 +240,6 @@ let noGreyObjects (g: heap) : prop =
 /// No black objects initially
 let no_black_objects (g: heap) : prop =
   forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_black obj g)
-/// No non-blue object points *into* a blue object.
-///
-/// The target is resolved first: a field may hold an interior pointer to an
-/// infix object embedded in a closure, and what must not be free is the
-/// enclosing closure.  `resolve_object` is the identity on ordinary pointers, so
-/// on those this is exactly "no non-blue object points to a blue object".
-///
-/// Like `well_formed_heap_part2`, the clause skips no-scan sources: the bytes of
-/// a string are not fields, the collector never follows them, and demanding that
-/// they miss the free list would be a demand on the mutator's data.
-let no_pointer_to_blue (g: heap) : prop =
-  forall (src dst: obj_addr).
-    Seq.mem src (objects zero_addr g) /\ ~(is_blue src g) /\
-    fields_constrained g src /\ points_to g src dst ==>
-    ~(is_blue (GC.Spec.Object.resolve_object dst g) g)
-
-/// Introduce `no_pointer_to_blue` from a field-local proof.
-///
-/// This avoids unfolding `points_to` at call sites: clients prove that every
-/// concrete field of every non-blue object does not point to a blue target, and
-/// this lemma lifts that fact through `exists_field_pointing_to_unchecked`.
-val no_pointer_to_blue_intro_from_fields
-  (g: heap)
-  (field_no_blue: (src:obj_addr -> dst:obj_addr -> j:nat -> Lemma
-    (requires Seq.mem src (objects zero_addr g) /\
-              ~(is_blue src g) /\
-              fields_constrained g src /\
-              j < U64.v (wosize_of_object src g) /\
-              U64.v src + j * 8 + 8 <= heap_size /\
-              is_pointer_to
-                (read_word g (U64.uint_to_t (U64.v src + j * 8)))
-                dst)
-    (ensures ~(is_blue (GC.Spec.Object.resolve_object dst g) g))))
-  : Lemma (requires well_formed_heap_part1 g)
-          (ensures no_pointer_to_blue g)
 
 /// ---------------------------------------------------------------------------
 /// Mark Aux/Mark Lemmas
@@ -334,14 +302,14 @@ val push_children_no_new_white : (g: heap) -> (st: seq obj_addr) -> (obj: obj_ad
   Lemma (requires ~(is_white x g) /\ Seq.mem x (objects zero_addr g) /\ 
                   well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures ~(is_white x (fst (push_children g st obj i ws))))
 
 val push_children_obj_children_non_white : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (child: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
-                  fields_constrained g obj /\
+  Lemma (requires well_formed_heap g /\ in_use free_stw g obj /\
+                  ~(is_no_scan obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   points_to g obj child)
         (ensures (let ws = wosize_of_object obj g in
@@ -353,7 +321,7 @@ val push_children_preserves_points_to : (g: heap) -> (st: seq obj_addr) -> (obj:
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem b (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   points_to g' b child == points_to g b child))
@@ -362,7 +330,7 @@ val push_children_black_backward : (g: heap) -> (st: seq obj_addr) -> (obj: obj_
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (b: obj_addr) ->
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   is_black b (fst (push_children g st obj i ws)))
         (ensures is_black b g)
@@ -372,7 +340,7 @@ val push_children_preserves_is_no_scan : (g: heap) -> (st: seq obj_addr) -> (obj
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem b (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   is_no_scan b g' == is_no_scan b g))
@@ -381,7 +349,7 @@ val push_children_preserves_objects : (g: heap) -> (st: seq obj_addr) -> (obj: o
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   objects zero_addr g' == objects zero_addr g))
@@ -402,7 +370,7 @@ val push_children_preserves_resolve : (g: heap) -> (st: seq obj_addr) -> (obj: o
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (addr: obj_addr) ->
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   resolve_object addr g' == resolve_object addr g))
@@ -424,7 +392,7 @@ val push_children_no_new_blue : (g: heap) -> (st: seq obj_addr) -> (obj: obj_add
   Lemma (requires well_formed_heap g /\ ~(is_blue x g) /\
                   Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures ~(is_blue x (fst (push_children g st obj i ws))))
 
@@ -433,13 +401,12 @@ val push_children_preserves_blue : (g: heap) -> (st: seq obj_addr) -> (obj: obj_
   Lemma (requires well_formed_heap g /\ is_blue x g /\
                   Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures is_blue x (fst (push_children g st obj i ws)))
 
 val black_successor_is_black : (g: heap) -> (src: obj_addr) -> (dst: obj_addr) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\ tri_color_invariant g /\
-                  no_pointer_to_blue g /\
                   Seq.mem src (objects zero_addr g) /\ Seq.mem dst (objects zero_addr g) /\
                   is_black src g /\ mem_graph_edge (create_graph g) src dst)
         (ensures is_black dst g)
@@ -452,7 +419,7 @@ val black_reach_is_black : (graph: graph_state{graph_wf graph}) -> (g: heap{well
   (r: obj_addr{mem_graph_vertex graph r}) ->
   (x: obj_addr{mem_graph_vertex graph x}) ->
   (p: reach graph r x) ->
-  Lemma (requires noGreyObjects g /\ tri_color_invariant g /\ no_pointer_to_blue g /\
+  Lemma (requires noGreyObjects g /\ tri_color_invariant g /\
                   graph == create_graph g /\
                   is_black r g)
         (ensures is_black x g)
@@ -483,7 +450,7 @@ val push_children_preserves_create_graph : (g: heap{well_formed_heap g}) -> (st:
                                            (obj: obj_addr{Seq.mem obj (objects zero_addr g)}) ->
                                            (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
   Lemma (requires U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures create_graph (fst (push_children g st obj i ws)) == create_graph g)
 
@@ -506,7 +473,7 @@ val push_children_preserves_wosize : (g: heap) -> (st: seq obj_addr) -> (obj: ob
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) ->
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem x (objects zero_addr g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ws == wosize_of_object obj g /\
                   HeapGraph.object_fits_in_heap obj g)
@@ -516,7 +483,7 @@ val push_children_preserves_get_field : (g: heap) -> (st: seq obj_addr) -> (obj:
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) -> (j: U64.t{U64.v j >= 1}) ->
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem x (objects zero_addr g) /\ U64.v j <= U64.v (wosize_of_object x g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ws == wosize_of_object obj g /\
                   HeapGraph.object_fits_in_heap obj g)
@@ -552,10 +519,6 @@ val mark_preserves_blue : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{sta
   Lemma (requires Seq.mem x (objects zero_addr g) /\ is_blue x g)
         (ensures is_blue x (mark g st))
 
-val mark_preserves_no_pointer_to_blue : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
-  Lemma (requires no_pointer_to_blue g)
-        (ensures no_pointer_to_blue (mark g st))
-
 /// ---------------------------------------------------------------------------
 /// Graph / DFS Lemmas
 /// ---------------------------------------------------------------------------
@@ -570,7 +533,7 @@ val root_props_subset_create_graph : (g: heap) -> (roots: seq obj_addr) ->
 
 val mark_reachable_is_black : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ root_props g roots /\
-                  no_black_objects g /\ no_pointer_to_blue g /\
+                  no_black_objects g /\
                   (forall (r: obj_addr). Seq.mem r roots ==> Seq.mem r st))
         (ensures (forall (x: obj_addr). 
                    (let graph = create_graph g in
@@ -601,8 +564,8 @@ val mark_black_is_reachable : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj
 /// check_and_darken_field preserves well_formed_heap
 val check_and_darken_field_preserves_wf :
   (g: heap) -> (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> (wz: U64.t) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
-                  fields_constrained g obj /\
+  Lemma (requires well_formed_heap g /\ in_use free_stw g obj /\
+                  ~(is_no_scan obj g) /\
                   U64.v wz <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   Seq.length g == heap_size /\

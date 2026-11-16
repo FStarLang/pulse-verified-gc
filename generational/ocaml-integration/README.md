@@ -10,7 +10,7 @@ to C via KaRaMeL.
 OCaml 4.14 runtime (patched: memory.h, interp.c, minor_gc.c, ...)
     ↓ inline minor bump allocation; verified_allocate_minor() slow path
 alloc_gen.c (bridge: root scanning, minor/major collection, heap init)
-    ↓ minor_alloc(), allocate(), minor_collect_full(), gen_gc()
+    ↓ minor_alloc(), allocate(), minor_collect(), start_cycle(), major_slice(), full_gc()
 GC_Gen_Impl.c (KaRaMeL-extracted verified code)
 ```
 
@@ -33,8 +33,9 @@ GC_Gen_Impl.c (KaRaMeL-extracted verified code)
 
 3. **runtime_gen.patch** — OCaml runtime modifications (~250 lines).  Patches
    `memory.h` (inline minor allocation plus slow-path `verified_allocate_minor`),
-   `memory.c` (caml_alloc_shr), `interp.c` (Setup_for_gc), `minor_gc.c`
-   (disable native GC).
+   `memory.c` (caml_alloc_shr; caml_modify and caml_initialize call the
+   verified write barrier), `array.c` (caml_array_fill, likewise),
+   `interp.c` (Setup_for_gc), `minor_gc.c` (disable native GC).
 
 ## Quick start
 
@@ -53,9 +54,9 @@ make benchmark
 
 | Component | Lines | Why trusted |
 |-----------|-------|-------------|
-| `alloc_gen.c` | ~250 | Bridge: root scanning, address translation, heap init |
+| `alloc_gen.c` | ~1600 | Bridge: root scanning, address translation, heap init (including the persistent mark stack), the major mode, its trigger and pacing, the barrier's slot classification |
 | NULL-base patches | ~20 | 6 patches to GC_Gen_Impl.c for absolute addressing |
-| `runtime_gen.patch` | ~250 | OCaml runtime modifications |
+| `runtime_gen.patch` | ~1000 | OCaml runtime modifications (allocation, collection entry points, the write barrier's calls) |
 | `krmlinit.c` | ~25 | Derived constant initialization |
 | `compat.c` | ~5 | Missing `FStar_UInt64_ne` shim |
 | `caml_ref_table` completeness | — | Same trust as stock OCaml |
@@ -78,9 +79,8 @@ Once the verified collector owns the heap, the stock collector must never
 run.  In the verified build each stock entry point calls `caml_fatal_error`
 naming itself ("verified GC: stock *f* must not run under the verified
 collector"), so a path that still reaches one fails at that call rather than
-corrupting the heap and failing somewhere unrelated later: the major slice
-and `caml_finish_major_cycle`, `caml_darken`, compaction and
-`caml_shrink_heap`, the stock free list (`caml_fl_allocate`,
+corrupting the heap and failing somewhere unrelated later: `caml_darken`,
+automatic compaction (`caml_compact_heap_maybe`) and `caml_shrink_heap`, the stock free list (`caml_fl_allocate`,
 `caml_fl_merge_block`, `caml_fl_add_blocks`), heap expansion
 (`caml_add_to_heap`, `expand_heap`), `caml_gc_dispatch`, the stock minor
 collector (`caml_oldify_one`, `caml_oldify_mopup`) and, after startup,
@@ -91,7 +91,9 @@ The runtime paths that used to reach them now use the verified collector:
 | Path | Now |
 |---|---|
 | Bytecode startup ("ensure that the globals are in the major heap") | The verified minor collection, when the globals are young (`tests/tiny_globals.ml`) |
-| `Gc.major`, `Gc.full_major`, `Gc.compact` | One verified full collection; the verified heap is non-moving, so nothing is compacted (`tests/gc_explicit.ml`) |
+| `Gc.major`, `Gc.full_major`, `Gc.compact` | One whole verified collection (`verified_do_full_gc`: the nursery emptied, a full collection and, incremental, its whole sweep); the verified heap is non-moving, so nothing is compacted (`tests/gc_explicit.ml`, `tests/explicit_major.ml`) |
+| `Gc.set` with a new allocation policy (stock `caml_finish_major_cycle`, `caml_compact_heap`) | The same whole verified collection; the policy is not honoured and nothing is compacted |
+| `Gc.major_slice` (stock `caml_major_collection_slice`) | Incremental and mid-sweep, a verified sweep slice; otherwise nothing |
 | `caml_shutdown` (`OCAMLRUNPARAM=c`) | Nothing: the stock major cycle and sweep are skipped |
 | `Gc.set` with a new `minor_heap_size` | Ignored |
 | Memprof's minor-heap refill | The verified minor collection |
@@ -99,9 +101,33 @@ The runtime paths that used to reach them now use the verified collector:
 Finalisers (`Gc.finalise`, custom-block finalisers), weak references and
 ephemerons are not implemented by the verified collector yet; this is a
 known limitation, and the tests that exercise them are listed in
-`ci/expected-failures.txt`.  Skipping the stock major cycle and sweep at
+`ci/expected-failures.txt`.  `Obj.truncate` is not supported: it raises
+`Invalid_argument "Obj.truncate: not supported by the verified GC"` (OCaml 5
+removed it; `tests/obj_truncate.ml`).  Skipping the stock major cycle and sweep at
 exit is consistent with it: finalisers run neither during the program nor
 at exit.
+
+`VERGC_MAJOR` picks how the major collector runs:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `VERGC_MAJOR` | `stw` | `stw`: every major collection marks and sweeps at once (`full_gc`). `incremental`: 4.14's rhythm -- after each minor collection, at Idle `start_cycle` when the trigger fires, otherwise one `major_slice` that marks or sweeps, its budget paced as 4.14's `caml_major_collection_slice`. Any other value warns once and means `stw`. `VERGC_SWEEP` is an alias. |
+| `VERGC_MARK_STACK` | `max(heap bytes / 64, 4096)` | Capacity of the persistent mark stack, in entries (testing: a small stack makes root darkening and marking overflow, so the mark slices rescan). |
+| `VERGC_SLICE_MIN_WORDS` | 4096 | incremental: the smallest automatic slice, in words (`VERGC_SWEEP_MIN_WORDS` is an alias) |
+| `VERGC_SLICE_WORDS` | 0 | incremental, testing: a fixed budget for every automatic slice instead of the paced one (0: paced) |
+| `VERGC_TRIGGER_MIN_WORDS` | heap / 8 | incremental: the least major allocation between two cycles |
+| `VERGC_MAJOR_STATS` | unset | `1`: print the major collector's counters and pause times to stderr at exit (`VERGC_SWEEP_STATS` is an alias) |
+
+The pacing also reads `space_overhead` (`o`) and `window_size` (`w`), set by
+`Gc.set` or `OCAMLRUNPARAM` as usual.  A cycle in progress is finished at
+once only for a full collection, a failed major allocation (finish and
+retry, then a full collection and retry), or a minor collection that might
+not find room to promote into.  `Gc.full_major`, `Gc.major` and `Gc.compact`
+run a whole verified cycle, and `Gc.major_slice` starts a cycle when idle or
+runs a slice (see "Stock collector entry points" above). See
+`verified_gc/OCAML_INTEGRATION.md`, "The Major Mode", for the trigger, the
+pacing and how the bridge meets the trusted obligations listed in
+`GC.Gen.Impl`.
 
 ## Tests
 
@@ -109,7 +135,18 @@ at exit.
 
 1. **Correctness tests** (`make -C tests correctness`) — assertion-driven
    programs that check specific properties of the collector and exit non-zero
-   on failure.
+   on failure. `explicit_major` (the `Gc` calls drive the verified collector),
+   `incremental_sweep` (allocation, minor collections, mutation, large
+   blocks, explicit collections, shrinking blocks and `Marshal`, and a stress mix,
+   all mid-sweep), `incremental_mark` (heavy mutation while marking: paths
+   cut and restored, black and white objects overwritten, young into old, a
+   large array rewritten mid-scan, `Lazy`, `Hashtbl`), `mark_scanned_writes`
+   (the first fields of a large array rewritten over and over while it is
+   being marked; it also checks that marking still ends in slices, which it
+   did not when the barrier restarted the scan of a partly scanned object)
+   and `write_barrier` are compared with stock OCaml's output byte for byte
+   by `tests/run_differential.sh`, under three pacings when
+   `VERGC_MAJOR=incremental`.
 2. **Smoke tests** — the eight Computer Language Benchmarks Game programs, run
    once each to confirm the collector survives realistic workloads.
 
@@ -147,7 +184,7 @@ offset`).
 Collections are forced the way a real program forces them, by allocating;
 `Gc.quick_stat` confirms they happened. (`Gc.full_major`, `Gc.major` and
 `Gc.compact` also run the verified collector, as one full collection; see
-`tests/gc_explicit.ml`.) `MIN_EXPANSION_WORDSIZE` is set small so that major
+`tests/gc_explicit.ml` and `tests/explicit_major.ml`.) `MIN_EXPANSION_WORDSIZE` is set small so that major
 collections occur quickly.
 
 The same binary is also run under stock OCaml as a differential check; both
@@ -163,7 +200,7 @@ into the nursery are admitted by `minor_heap_shape` / `collection_heap_shape`,
 whose two restrictions forbidding them were removed once Cheney forwarding was
 proved to preserve interiority. The corresponding audits are
 `spot/GC.SPOT.InfixMajor` (a concrete major heap with an interior pointer that
-satisfies the whole precondition, is collected by the real `gen_gc`, and comes
+satisfies the whole precondition, is collected by the real `full_gc`, and comes
 back satisfying it again) and `spot/GC.SPOT.MinorInfix` (the nursery analogue).
 See `docs/minor-infix-support-plan.md`.
 

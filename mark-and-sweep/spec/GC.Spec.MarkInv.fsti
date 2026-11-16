@@ -23,6 +23,11 @@ module SweepInv = GC.Spec.SweepInv
 /// Abstract mark invariant: well_formed_heap + stack_props
 val mark_inv (g: heap) (st: seq obj_addr) : prop
 
+val mark_inv_intro : (g: heap) -> (st: seq obj_addr) ->
+  Lemma (requires well_formed_heap g /\ stack_props g st /\
+                  Seq.length (objects zero_addr g) > 0 /\ heap_objects_dense g)
+        (ensures mark_inv g st)
+
 /// ---------------------------------------------------------------------------
 /// Introduction
 /// ---------------------------------------------------------------------------

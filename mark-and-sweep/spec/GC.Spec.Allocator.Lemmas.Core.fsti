@@ -12,7 +12,7 @@ module AllocCommon = GC.Spec.Allocator.Lemmas.Common
 module AllocChain = GC.Spec.Allocator.Lemmas.Chain
 /// getWosize of make_header returns the original wosize
 val make_header_getWosize : (wz: U64.t{U64.v wz < pow2 54}) ->
-                            (c: U64.t{U64.v c < 4}) ->
+                            (c: color) ->
                             (t: U64.t{U64.v t < 256}) ->
   Lemma (getWosize (make_header wz c t) == wz)
 
@@ -124,11 +124,11 @@ val chain_avoids_transfer_on_chain (g g': heap) (fp excl: U64.t) (fuel: nat)
                         read_word g' a == read_word g a))
           (ensures chain_avoids g' fp excl fuel = true)
 
-/// get_color of make_header returns the original color bits
+/// get_color of make_header returns the packed colour
 val make_header_getColor : (wz: U64.t{U64.v wz < pow2 54}) ->
-                           (c: U64.t{U64.v c < 4}) ->
+                           (c: color) ->
                            (t: U64.t{U64.v t < 256}) ->
-  Lemma (Header.get_color (U64.v (make_header wz c t)) == U64.v c)
+  Lemma (Header.get_color (U64.v (make_header wz c t)) == Header.pack_color c)
 
 /// chain_avoids_transfer_excl2: transfer chain_avoids when reads preserved except at excl or excl2.
 val chain_avoids_transfer_excl2 (g g': heap) (fp excl excl2: U64.t) (fuel: nat)
@@ -143,12 +143,13 @@ val chain_avoids_transfer_excl2 (g g': heap) (fp excl excl2: U64.t) (fuel: nat)
                           read_word g' (a <: obj_addr) == read_word g (a <: obj_addr))))
           (ensures chain_avoids g' fp excl fuel = true)
 
-/// **Theorem**: alloc_spec preserves object membership under just well_formed_heap_part1.
+/// **Theorem**: alloc_spec preserves object membership under just blocks_fit.
 /// (Weaker precondition than alloc_spec_preserves_objects.)
 val alloc_spec_preserves_objects_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
-  Lemma (requires well_formed_heap_part1 g /\
+  (tag: U64.t{U64.v tag < 256}) ->
+  Lemma (requires blocks_fit g /\
                   fl_valid g fp heap_words /\
                   fl_chain_terminates g fp heap_words)
-        (ensures (let r = alloc_spec g fp requested_wz in
+        (ensures (let r = alloc_spec g fp requested_wz tag in
                   (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                     Seq.mem x (objects zero_addr r.heap_out))))

@@ -21,6 +21,11 @@
 #   - Gc.Memprof sampling: not implemented (every tests/statmemprof entry,
 #     including the timeouts)
 #   - custom-block finalisers: not run (regression/pr3612)
+#   - weak arrays are not cleaned, so Weak.get returns a dangling pointer once
+#     the collector frees its target (regression/pr5233). It started failing
+#     when Gc.full_major began running the verified collector (it used to run
+#     stock's, which freed nothing in the verified heap); the same commit made
+#     misc/ephe_infix, misc/ephe_issue9391 and misc/finaliser pass
 #   - signal handlers are not run at allocation safe points: the verified
 #     allocator does not consult young_limit (callback/signals_alloc,
 #     lib-systhreads/eintr)
@@ -51,12 +56,8 @@ tests/lib-sys/'opaque.ml' with 1 (native)
 tests/lib-sys/'opaque.ml' with 2 (bytecode)
 tests/lib-systhreads/'eintr.ml' with 1.1.1 (bytecode)
 tests/lib-systhreads/'eintr.ml' with 1.1.2 (native)
-tests/misc/'ephe_infix.ml' with 1 (native)
-tests/misc/'ephe_infix.ml' with 2 (bytecode)
 tests/misc/'ephe_infix_new.ml' with 1 (native)
 tests/misc/'ephe_infix_new.ml' with 2 (bytecode)
-tests/misc/'ephe_issue9391.ml' with 1 (native)
-tests/misc/'ephe_issue9391.ml' with 2 (bytecode)
 tests/misc/'ephetest.ml' with 1 (native)
 tests/misc/'ephetest.ml' with 2 (bytecode)
 tests/misc/'ephetest2.ml' with 1 (native)
@@ -67,8 +68,6 @@ tests/misc/'ephetest3.ml' with 1 (native)
 tests/misc/'ephetest3.ml' with 2 (bytecode)
 tests/misc/'ephetest_new.ml' with 1 (native)
 tests/misc/'ephetest_new.ml' with 2 (bytecode)
-tests/misc/'finaliser.ml' with 1 (native)
-tests/misc/'finaliser.ml' with 2 (bytecode)
 tests/misc/'weaklifetime.ml' with 1 (native)
 tests/misc/'weaklifetime.ml' with 2 (bytecode)
 tests/misc/'weaklifetime2.ml' with 1 (native)

@@ -4,7 +4,7 @@
 /// ---------------------------------------------------------------------------
 ///
 /// `GC.Impl.MarkBoundedPrecondition.darken_precondition` is the contract the
-/// major collector needs *before* root darkening.  `gen_gc` must satisfy it on
+/// major collector needs *before* root darkening.  `full_gc` must satisfy it on
 /// the state produced by the preceding minor collection, so left to itself a
 /// caller has to transport all ten of its conjuncts across
 /// `cheney_collect_spec` by hand.
@@ -27,6 +27,7 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Spec.Phase
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -59,7 +60,7 @@ val post_minor_major_root_valid
       MinorFwd.roots_valid_for_minor_collection minor major roots /\
       Seq.mem r roots /\ ~(Promote.is_minor_pointer r))
     (ensures (
-      let prom = Cheney.cheney_promote minor major fp roots in
+      let prom = Cheney.cheney_promote Idle minor major fp roots in
       let result = Cheney.cheney_collect_spec minor major fp roots in
       MBP.root_valid_for_darkening result.mc_major
         (Promote.rewrite_root r prom.fwd_map) /\
@@ -70,7 +71,7 @@ val post_minor_major_root_valid
 /// Every post-minor root is a genuine, non-blue major object.
 ///
 /// This is the one conjunct of `darken_precondition` that mentions the rewritten
-/// root set, and it used to be an obligation on `gen_gc`'s caller -- who has no
+/// root set, and it used to be an obligation on `full_gc`'s caller -- who has no
 /// way to discharge it without unfolding the whole Cheney simulation.  It is
 /// really a theorem about minor collection, and the two cases are quite
 /// different.  A non-minor root survives `rewrite_root` untouched, so it only
@@ -85,7 +86,7 @@ val post_minor_roots_valid_for_darkening
     (requires
       GenInv.collection_heap_shape minor major fp /\
       MinorFwd.roots_valid_for_minor_collection minor major roots /\
-      CheneyBFS.cheney_no_oom minor major fp roots)
+      CheneyBFS.cheney_no_oom Idle minor major fp roots)
     (ensures (
       let result = Cheney.cheney_collect_spec minor major fp roots in
       forall (i: nat). i < Seq.length result.mc_roots ==>
@@ -105,18 +106,33 @@ val darken_precondition_after_minor
     (requires
       GenInv.collection_heap_shape minor major fp /\
       MinorFwd.roots_valid_for_minor_collection minor major roots /\
-      CheneyBFS.cheney_no_oom minor major fp roots /\
+      CheneyBFS.cheney_no_oom Idle minor major fp roots /\
       Seq.length roots <= cap /\ cap > 0)
     (ensures (
       let result = Cheney.cheney_collect_spec minor major fp roots in
       MBP.darken_precondition
         result.mc_major Seq.empty result.mc_roots result.mc_fp cap))
 
+/// The same entry condition with no minor collection in between: at the
+/// idle shape, a root set of darkenable major objects (`root_valid_for_darkening`,
+/// what a minor collection leaves its rewritten roots,
+/// `post_minor_roots_valid_for_darkening`) and an empty stack that can hold it.
+/// This is what starting a major cycle needs (`GC.Gen.Impl.start_cycle`).
+val darken_precondition_of_shape
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (cap: nat)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      (forall (i: nat). i < Seq.length roots ==>
+         MBP.root_valid_for_darkening major (Seq.index roots i)) /\
+      Seq.length roots <= cap /\ cap > 0)
+    (ensures MBP.darken_precondition major Seq.empty roots fp cap)
+
 /// A heap between collections already satisfies the major-GC postcondition.
 ///
 /// `major_heap_shape` records both `no_black_objects` and `no_gray_objects`, and
 /// colours are exhaustive, so every object is white or blue -- which together
-/// with well-formedness is exactly `gc_postcondition`.  `gen_gc` needs this on
+/// with well-formedness is exactly `gc_postcondition`.  `full_gc` needs this on
 /// the path where the minor collection ran out of memory and the major phase is
 /// therefore skipped: the heap it returns is the post-minor heap, and the shape
 /// invariant alone certifies it.

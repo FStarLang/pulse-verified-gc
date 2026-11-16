@@ -18,7 +18,6 @@ open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Reachability
-open GC.Gen.Remembered
 open GC.Gen.Promote
 open GC.Gen.WriteBodyLemmas
 
@@ -27,51 +26,25 @@ module FreeListShape = GC.Gen.FreeListShape
 
 /// --- From GC.Gen.PromoteUpdate.Aux ---
 
-let update_major_pointers_preserves_objects =
-  GC.Gen.PromoteUpdate.Aux.update_major_pointers_preserves_objects
+let update_walk_preserves_objects =
+  GC.Gen.PromoteUpdate.Aux.update_walk_preserves_objects
 
-let update_major_pointers_preserves_wfh_part1 =
-  GC.Gen.PromoteUpdate.Aux.update_major_pointers_preserves_wfh_part1
+let update_walk_preserves_wfh_part1 =
+  GC.Gen.PromoteUpdate.Aux.update_walk_preserves_wfh_part1
 
-let update_major_pointers_unfold =
-  GC.Gen.PromoteUpdate.Aux.update_major_pointers_unfold
+let update_walk_preserves_header =
+  GC.Gen.PromoteUpdate.Header.update_walk_preserves_header
 
-/// --- From GC.Gen.PromoteUpdate.Positional ---
+let update_walk_preserves_skipped_field =
+  GC.Gen.PromoteUpdate.Header.update_walk_preserves_skipped_field
 
-let update_all_objects_positional_step =
-  GC.Gen.PromoteUpdate.Positional.update_all_objects_positional_step
+let update_walk_preserves_wfh_part4 =
+  GC.Gen.PromoteUpdate.Header.update_walk_preserves_wfh_part4
 
-let update_all_objects_positional_step_blue =
-  GC.Gen.PromoteUpdate.Positional.update_all_objects_positional_step_blue
-
-let update_all_objects_positional_step_no_scan =
-  GC.Gen.PromoteUpdate.Positional.update_all_objects_positional_step_no_scan
-
-let update_all_objects_terminal_step =
-  GC.Gen.PromoteUpdate.Positional.update_all_objects_terminal_step
-
-let objects_initial_membership =
-  GC.Gen.PromoteUpdate.Positional.objects_initial_membership
+let update_walk_field_effect =
+  GC.Gen.PromoteUpdate.Field.update_walk_field_effect
 
 /// --- From GC.Gen.PromoteUpdate.Header ---
-
-let update_major_pointers_preserves_header =
-  GC.Gen.PromoteUpdate.Header.update_major_pointers_preserves_header
-
-let update_major_pointers_preserves_blue_field =
-  GC.Gen.PromoteUpdate.Header.update_major_pointers_preserves_blue_field
-
-let update_major_pointers_preserves_no_scan_field =
-  GC.Gen.PromoteUpdate.NoScanField.update_major_pointers_preserves_no_scan_field
-
-let update_major_pointers_preserves_wfh_part4 =
-  GC.Gen.PromoteUpdate.Header.update_major_pointers_preserves_wfh_part4
-
-
-/// --- From GC.Gen.PromoteUpdate.Field ---
-
-let update_major_pointers_field_effect =
-  GC.Gen.PromoteUpdate.Field.update_major_pointers_field_effect
 
 /// --- From GC.Gen.PromoteUpdate.BlueProm ---
 

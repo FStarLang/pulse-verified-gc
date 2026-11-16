@@ -4,6 +4,7 @@ module U64 = FStar.UInt64
 module U8 = FStar.UInt8
 module Seq = FStar.Seq
 module FL = GC.Spec.FreeList
+module FLA = GC.Spec.FreeList.Ascending
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -12,7 +13,6 @@ module SpecFields = GC.Spec.Fields
 module SpecObj = GC.Spec.Object
 module Header = GC.Lib.Header
 module SpecMark = GC.Spec.Mark
-module Sweep = GC.Spec.Sweep
 module SweepInv = GC.Spec.SweepInv
 module HeapGraph = GC.Spec.HeapGraph
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -560,8 +560,8 @@ let spot_infix_field_pointer_cases (r: unit{spot_infix_room}) (src: obj_addr) (j
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
-let spot_infix_wfh_part1 (r: unit{spot_infix_room})
-  : Lemma (ensures SpecFields.well_formed_heap_part1 (spot_infix_heap r))
+let spot_infix_blocks_fit (r: unit{spot_infix_room})
+  : Lemma (ensures SpecFields.blocks_fit (spot_infix_heap r))
   =
   let g = spot_infix_heap r in
   spot_infix_layout_facts r;
@@ -578,8 +578,8 @@ let spot_infix_wfh_part1 (r: unit{spot_infix_room})
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
-let spot_infix_wfh_part4 (r: unit{spot_infix_room})
-  : Lemma (ensures SpecFields.well_formed_heap_part4 (spot_infix_heap r))
+let spot_infix_no_infix_block (r: unit{spot_infix_room})
+  : Lemma (ensures SpecFields.no_infix_block (spot_infix_heap r))
   =
   let g = spot_infix_heap r in
   let aux (h: obj_addr)
@@ -629,21 +629,20 @@ let spot_infix_h_addr_wf (r: unit{spot_infix_room})
 #pop-options
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
-let spot_infix_wfh_part2_3 (r: unit{spot_infix_room})
-  : Lemma (ensures SpecFields.well_formed_heap_part2 (spot_infix_heap r) /\
-                   SpecFields.well_formed_heap_part3 (spot_infix_heap r))
+let spot_infix_pointer_clauses (r: unit{spot_infix_room})
+  : Lemma (ensures SpecFields.pointers_lead_to_non_free SpecFields.free_stw (spot_infix_heap r) /\
+                   SpecFields.interior_pointers_valid SpecFields.free_stw (spot_infix_heap r))
   =
   let g = spot_infix_heap r in
-  spot_infix_wfh_part1 r;
-  spot_infix_wfh_part4 r;
+  spot_infix_blocks_fit r;
+  spot_infix_no_infix_block r;
   let field_closure (src: obj_addr) (j: nat)
     : Lemma (requires Seq.mem src (SpecFields.objects zero_addr g) /\
                       j < U64.v (SpecObj.wosize_of_object src g) /\
                       U64.v src + j * 8 + 8 <= heap_size)
             (ensures (let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
                       SpecFields.is_pointer v ==>
-                      Seq.mem (SpecObj.resolve_object (v <: obj_addr) g)
-                              (SpecFields.objects zero_addr g) /\
+                      SpecFields.in_use SpecFields.free_stw g (SpecObj.resolve_object (v <: obj_addr) g) /\
                       SpecObj.infix_addr_wf g (SpecFields.objects zero_addr g)
                               (v <: obj_addr)))
     =
@@ -655,17 +654,19 @@ let spot_infix_wfh_part2_3 (r: unit{spot_infix_room})
       assert ((v <: obj_addr) == spot_h r);
       spot_infix_h_resolves_to_p r;
       spot_infix_h_addr_wf r;
-      spot_infix_mem r
+      spot_infix_mem r;
+      spot_infix_p_reads r
     end
   in
-  SpecFields.well_formed_heap_part2_3_from_resolved_field_closure g field_closure
+  SpecFields.pointer_clauses_from_field_closure SpecFields.free_stw g
+    (fun src j -> field_closure src j)
 
 let spot_infix_well_formed_heap (r: unit{spot_infix_room})
   =
-  spot_infix_wfh_part1 r;
-  spot_infix_wfh_part2_3 r;
-  spot_infix_wfh_part4 r;
-  reveal_opaque (`%SpecFields.well_formed_heap) SpecFields.well_formed_heap
+  spot_infix_blocks_fit r;
+  spot_infix_pointer_clauses r;
+  spot_infix_no_infix_block r;
+  SpecFields.wf_parts ()
 #pop-options
 
 /// The negative half of the audit: this heap does *not* satisfy the old
@@ -768,7 +769,7 @@ let spot_infix_fp_valid (r: unit{spot_infix_room})
     (spot_infix_fp r) (spot_infix_heap r) heap_words
 
 let spot_infix_fp_in_heap (r: unit{spot_infix_room})
-  : Lemma (ensures Sweep.fp_in_heap (spot_infix_fp r) (spot_infix_heap r))
+  : Lemma (ensures GC.Spec.FreeList.fp_in_heap (spot_infix_fp r) (spot_infix_heap r))
   =
   spot_infix_fp_pointer_or_zero r;
   spot_infix_fp_valid r;
@@ -965,38 +966,6 @@ let spot_infix_no_gray_objects (r: unit{spot_infix_room})
   SweepInv.no_gray_intro g
 #pop-options
 
-/// The interior pointer's *resolved* target is P, which is white, so the
-/// no-pointer-to-blue invariant survives it.
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
-let spot_infix_no_pointer_to_blue (r: unit{spot_infix_room})
-  : Lemma (ensures SpecMark.no_pointer_to_blue (spot_infix_heap r))
-  =
-  let g = spot_infix_heap r in
-  spot_infix_wfh_part1 r;
-  let field_no_blue (src: obj_addr) (dst: obj_addr) (j: nat)
-    : Lemma (requires Seq.mem src (SpecFields.objects zero_addr g) /\
-                      ~(SpecObj.is_blue src g) /\
-                      j < U64.v (SpecObj.wosize_of_object src g) /\
-                      U64.v src + j * 8 + 8 <= heap_size /\
-                      SpecFields.is_pointer_to
-                        (read_word g (U64.uint_to_t (U64.v src + j * 8))) dst)
-            (ensures ~(SpecObj.is_blue (SpecObj.resolve_object dst g) g))
-    =
-    spot_infix_field_pointer_cases r src j;
-    spot_infix_layout_facts r;
-    let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
-    assert (SpecFields.is_pointer_field v);
-    assert (v == (spot_h r <: U64.t));
-    hd_address_spec (v <: obj_addr);
-    hd_address_spec dst;
-    assert (dst == spot_h r);
-    spot_infix_h_resolves_to_p r;
-    spot_infix_p_reads r
-  in
-  SpecMark.no_pointer_to_blue_intro_from_fields g field_no_blue
-#pop-options
-
-
 /// ---------------------------------------------------------------------------
 /// The audit
 /// ---------------------------------------------------------------------------
@@ -1026,6 +995,27 @@ let spot_infix_fl_complete (r: unit{spot_infix_room})
   FStar.Classical.forall_intro (FStar.Classical.move_requires proof)
 #pop-options
 
+/// The free list is ascending: its only cell is the free block, which is the
+/// head and links to null.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let spot_infix_fl_ascending (r: unit{spot_infix_room})
+  : Lemma (ensures FLA.fl_ascending (spot_infix_heap r) (spot_infix_fp r))
+  =
+  let g = spot_infix_heap r in
+  let only (x: U64.t)
+    : Lemma (requires FL.fl_cell g x) (ensures x == spot_infix_fp r)
+    =
+    spot_infix_object_cases r x; spot_infix_q_reads r; spot_infix_p_reads r; spot_infix_free_reads r; spot_infix_layout_facts r
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires only);
+  spot_infix_objects r; spot_infix_free_reads r; spot_infix_layout_facts r;
+  hd_address_spec (spot_free_obj r);
+  spot_infix_fl_valid r;
+  GC.Spec.Allocator.Lemmas.fl_valid_gives_mem g (spot_infix_fp r) heap_words;
+  FLA.fl_ascending_single g (spot_infix_fp r)
+#pop-options
+
+
 let spot_infix_major_heap_shape (r: unit{spot_infix_room})
   =
   let g = spot_infix_heap r in
@@ -1043,10 +1033,10 @@ let spot_infix_major_heap_shape (r: unit{spot_infix_room})
   spot_infix_fp_in_heap r;
   spot_infix_no_black_objects r;
   spot_infix_no_gray_objects r;
-  spot_infix_no_pointer_to_blue r;
-  spot_infix_wfh_part1 r;
-  spot_infix_wfh_part2_3 r;
+  spot_infix_blocks_fit r;
+  spot_infix_pointer_clauses r;
   spot_infix_fl_complete r;
+  spot_infix_fl_ascending r;
   GC.Gen.AllocExact.fl_valid_cob_gives_sound g fp;
   GenInv.free_list_exact_iff g fp;
   GenInv.major_heap_shape_intro g fp

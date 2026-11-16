@@ -114,7 +114,7 @@ let color_change_preserves_wf g obj c =
   let g' = set_object_color obj g c in
   color_change_preserves_objects g obj c;
   set_object_color_length obj g c;
-  // Part 1: object bounds preserved (wosize unchanged + length unchanged)
+  // blocks_fit: object bounds preserved (wosize unchanged + length unchanged)
   let aux1 (h: obj_addr) : Lemma
     (requires Seq.mem h (objects zero_addr g))
     (ensures (let wz = wosize_of_object h g' in
@@ -129,7 +129,7 @@ let color_change_preserves_wf g obj c =
     end
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux1);
-  // Part 2: pointer targets preserved
+  // The pointer clauses: pointer targets preserved
   let aux2 (src dst: obj_addr) : Lemma
     (requires Seq.mem src (objects zero_addr g') /\
              (let wz = wosize_of_object src g' in
@@ -150,29 +150,19 @@ let color_change_preserves_wf g obj c =
       color_change_preserves_field_pointing_other g obj c src (wosize_of_object src g) dst
     end
   in
-  // Parts 2 and 3: a colour change leaves every address's header interpretation
+  // The pointer clauses: a colour change leaves every address's header interpretation
   // alone, so both clauses transport verbatim once aux2 moves the field-pointer
   // fact from g' back to g.
-  let aux2_flat (src: obj_addr) (dst: obj_addr) : Lemma
-    (requires Seq.mem src (objects zero_addr g') /\
-              U64.v (wosize_of_object src g') < pow2 54 /\
-              exists_field_pointing_to_unchecked g' src (wosize_of_object src g') dst)
-    (ensures Seq.mem src (objects zero_addr g) /\
-             U64.v (wosize_of_object src g) < pow2 54 /\
-             exists_field_pointing_to_unchecked g src (wosize_of_object src g) dst)
-  = aux2 src dst
-  in
   let header_agree (h: obj_addr) : Lemma
     (is_infix h g' == is_infix h g /\
      is_closure h g' == is_closure h g /\
      GC.Spec.Object.is_no_scan h g' == GC.Spec.Object.is_no_scan h g /\
-     (is_blue h g ==> is_blue h g') /\
+     is_blue h g' == is_blue h g /\
      wosize_of_object h g' == wosize_of_object h g /\
      GC.Spec.Object.resolve_object h g' == GC.Spec.Object.resolve_object h g)
   = color_change_preserves_is_infix obj h g c;
-    (if h = obj then begin
-       if c = Header.Blue then begin makeBlue_eq obj g; makeBlue_is_blue obj g end
-     end else begin
+    (if h = obj then set_color_preserves_not_blue obj obj g c
+     else begin
        color_change_preserves_other_color obj h g c;
        is_blue_iff h g; is_blue_iff h g'
      end);
@@ -183,8 +173,14 @@ let color_change_preserves_wf g obj c =
     color_change_preserves_resolve obj h g c
   in
   FStar.Classical.forall_intro header_agree;
-  well_formed_heap_part2_3_transport g g' aux2_flat;
-  // Part 4: non-infix preserved by color change
+  let aux2_flat (src: obj_addr) (dst: obj_addr) : Lemma
+    (requires in_use free_stw g' src /\ scannable g' src /\ points_to g' src dst)
+    (ensures scannable g src /\ points_to g src dst)
+  = wosize_of_object_bound src g';
+    aux2 src dst
+  in
+  pointer_clauses_transport g g' aux2_flat;
+  // no_infix_block: preserved by color change
   let aux4 (h: obj_addr) : Lemma
     (requires Seq.mem h (objects zero_addr g'))
     (ensures ~(is_infix h g'))
@@ -196,8 +192,8 @@ let color_change_preserves_wf g obj c =
 /// push_children only applies color changes, which preserve wf
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec push_children_preserves_wf g st obj i ws
-  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
-                  fields_constrained g obj /\
+  : Lemma (requires well_formed_heap g /\ in_use free_stw g obj /\
+                  ~(is_no_scan obj g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures well_formed_heap (fst (push_children g st obj i ws)))
@@ -231,8 +227,8 @@ let rec push_children_preserves_wf g st obj i ws
         assert (is_pointer_field child_raw);
         wf_object_size_bound g obj;
         field_read_implies_exists_pointing g obj wz k child_raw;
-        // Part 2 lands directly on the resolved target
-        wf_field_target_in_objects g obj child_raw;
+        // `pointers_lead_to_non_free` lands directly on the resolved target
+        points_to_target_not_blue g obj child_raw;
         assert (Seq.mem child (objects zero_addr g));
         colors_exhaustive_and_exclusive child g;
         color_change_preserves_wf g child Header.Gray;
@@ -264,8 +260,8 @@ let rec push_children_preserves_wf g st obj i ws
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let rec push_children_preserves_stack_props g st obj i ws
   : Lemma (requires well_formed_heap g /\ stack_props g st /\
-                  is_black obj g /\ Seq.mem obj (objects zero_addr g) /\
-                  fields_constrained g obj /\
+                  is_black obj g /\ in_use free_stw g obj /\
+                  ~(is_no_scan obj g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ~(Seq.mem obj st))
@@ -291,7 +287,7 @@ let rec push_children_preserves_stack_props g st obj i ws
         HeapGraph.get_field_addr_eq g obj i;
         wf_object_size_bound g obj;
         field_read_implies_exists_pointing g obj wz (U64.sub i 1UL) child_raw;
-        wf_field_target_in_objects g obj child_raw;
+        points_to_target_not_blue g obj child_raw;
         
         color_change_preserves_wf g child Header.Gray;
         color_change_preserves_objects g child Header.Gray;
@@ -486,8 +482,8 @@ let mark_step_preserves_stack_props g st =
     // Help the solver see push_children_preserves_stack_props's precondition
     let pcsp_call () : Lemma
       (requires well_formed_heap g1 /\ stack_props g1 st_tail /\
-                is_black obj g1 /\ Seq.mem obj (objects zero_addr g1) /\
-                fields_constrained g1 obj /\
+                is_black obj g1 /\ in_use free_stw g1 obj /\
+                ~(is_no_scan obj g1) /\
                 U64.v ws <= U64.v (wosize_of_object obj g1) /\
                 U64.v (wosize_of_object obj g1) < pow2 54 /\
                 ~(Seq.mem obj st_tail))
@@ -531,61 +527,6 @@ let mark_step_preserves_wf g st =
 /// Mark Phase Invariants
 /// ---------------------------------------------------------------------------
 
-/// Introduce no_pointer_to_blue from a field-local proof.
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
-let no_pointer_to_blue_intro_from_fields
-  (g: heap)
-  (field_no_blue: (src:obj_addr -> dst:obj_addr -> j:nat -> Lemma
-    (requires Seq.mem src (objects zero_addr g) /\
-              ~(is_blue src g) /\
-              fields_constrained g src /\
-              j < U64.v (wosize_of_object src g) /\
-              U64.v src + j * 8 + 8 <= heap_size /\
-              is_pointer_to
-                (read_word g (U64.uint_to_t (U64.v src + j * 8)))
-                dst)
-    (ensures ~(is_blue (GC.Spec.Object.resolve_object dst g) g))))
-  =
-  let aux (src dst: obj_addr)
-    : Lemma (requires Seq.mem src (objects zero_addr g) /\
-                      ~(is_blue src g) /\
-                      fields_constrained g src /\
-                      points_to g src dst)
-            (ensures ~(is_blue (GC.Spec.Object.resolve_object dst g) g))
-    =
-    if is_blue (GC.Spec.Object.resolve_object dst g) g then begin
-      let wz = wosize_of_object src g in
-      wosize_of_object_bound src g;
-      wfh_part1_obj_bound g src;
-      hd_address_spec src;
-      assert (U64.v src + U64.v wz * 8 <= heap_size);
-      let field_not_dst (idx: nat{idx < U64.v wz})
-        : Lemma (let far = U64.add_mod src (U64.mul_mod (U64.uint_to_t idx) mword) in
-                 U64.v far < heap_size /\ U64.v far % 8 == 0 ==>
-                 ~(is_pointer_to (read_word g (far <: hp_addr)) dst))
-        =
-        let far = U64.add_mod src (U64.mul_mod (U64.uint_to_t idx) mword) in
-        assert (idx * 8 < pow2 64);
-        assert (U64.v (U64.mul_mod (U64.uint_to_t idx) mword) == idx * 8);
-        assert (U64.v src + idx * 8 < pow2 64);
-        assert (U64.v far == U64.v src + idx * 8);
-        if U64.v far >= heap_size || U64.v far % 8 <> 0 then ()
-        else begin
-          let fv = read_word g (far <: hp_addr) in
-          if is_pointer_to fv dst then begin
-            assert (U64.v src + idx * 8 + 8 <= heap_size);
-            field_no_blue src dst idx;
-            assert False
-          end
-        end
-      in
-      Classical.forall_intro field_not_dst;
-      efptu_false_if_no_field_matches g src wz dst;
-      assert False
-    end
-  in
-  Classical.forall_intro_2 (Classical.move_requires_2 aux)
-#pop-options
 /// ---------------------------------------------------------------------------
 /// Ghost State for Mark Termination
 /// ---------------------------------------------------------------------------
@@ -899,8 +840,8 @@ let rec non_black_count_makeBlack_gray (g: heap) (obj: obj_addr) (objs: seq obj_
 val push_children_preserves_non_black : (g: heap) -> (st: seq obj_addr) -> 
                                          (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> 
                                          (ws: U64.t) -> (objs: seq obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
-                  fields_constrained g obj /\
+  Lemma (requires well_formed_heap g /\ in_use free_stw g obj /\
+                  ~(is_no_scan obj g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\ objects zero_addr g == objs)
         (ensures (let (g', _) = push_children g st obj i ws in
@@ -951,7 +892,7 @@ let rec push_children_preserves_non_black g st obj i ws objs =
           HeapGraph.get_field_addr_eq g obj i;
           wf_object_size_bound g obj;
           field_read_implies_exists_pointing g obj (wosize_of_object obj g) (U64.sub i 1UL) child_raw;
-          wf_field_target_in_objects g obj child_raw;
+          points_to_target_not_blue g obj child_raw;
           color_change_preserves_wf g child Header.Gray;
           color_change_preserves_objects_mem g child Header.Gray obj;
           set_object_color_preserves_getWosize_at_hd child g Header.Gray;
@@ -1080,7 +1021,7 @@ let rec push_children_no_new_white g st obj i ws x
   : Lemma (requires ~(is_white x g) /\ Seq.mem x (objects zero_addr g) /\
                   well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures ~(is_white x (fst (push_children g st obj i ws))))
         (decreases (U64.v ws - U64.v i))
@@ -1110,7 +1051,7 @@ let rec push_children_no_new_white g st obj i ws x
         let k = U64.sub i 1UL in
         wf_object_size_bound g obj;
         field_read_implies_exists_pointing g obj wz k child_raw;
-        wf_field_target_in_objects g obj child_raw;
+        points_to_target_not_blue g obj child_raw;
         assert (Seq.mem child (objects zero_addr g));
         
         // makeGray child preserves x's color and well-formedness
@@ -1198,7 +1139,7 @@ let rec push_children_grays_white_at_field (g: heap) (st: seq obj_addr) (obj: ob
   (i: U64.t{U64.v i >= 1}) (ws: U64.t) (j: U64.t) (child: obj_addr)
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                     U64.v ws <= U64.v (wosize_of_object obj g) /\
-                    fields_constrained g obj /\
+                    ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                     U64.v (wosize_of_object obj g) < pow2 54 /\
                     U64.v j >= U64.v i /\ U64.v j <= U64.v ws /\
                     HeapGraph.get_field g obj j == child /\
@@ -1221,7 +1162,7 @@ let rec push_children_grays_white_at_field (g: heap) (st: seq obj_addr) (obj: ob
         HeapGraph.get_field_addr_eq g obj i;
         wf_object_size_bound g obj;
         field_read_implies_exists_pointing g obj wz (U64.sub i 1UL) c_raw;
-        wf_field_target_in_objects g obj c_raw;
+        points_to_target_not_blue g obj c_raw;
         if c = rc then begin
           // Field i resolves to the same target as child (rc)
           // rc is white, so push_children grays it
@@ -1305,8 +1246,8 @@ let push_children_obj_children_non_white g st obj child =
   let ws = wosize_of_object obj g in
   let rc = resolve_object child g in
   wosize_of_object_bound obj g;
-  // From well_formed_heap part 2: points_to g obj child + obj ∈ objects → child ∈ objects
-  points_to_target_in_objects g obj child;
+  // From `pointers_lead_to_non_free`: points_to g obj child + obj ∈ objects → child ∈ objects
+  points_to_target_not_blue g obj child;
   assert (Seq.mem rc (objects zero_addr g));
   if not (is_white rc g) then
     push_children_no_new_white g st obj 1UL ws rc
@@ -1325,7 +1266,7 @@ let rec push_children_preserves_points_to g st obj i ws b child
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem b (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   points_to g' b child == points_to g b child))
@@ -1349,7 +1290,7 @@ let rec push_children_preserves_points_to g st obj i ws b child
         HeapGraph.get_field_addr_eq g obj i;
         wf_object_size_bound g obj;
         field_read_implies_exists_pointing g obj wz (U64.sub i 1UL) c_raw;
-        wf_field_target_in_objects g obj c_raw;
+        points_to_target_not_blue g obj c_raw;
         assert (Seq.mem c (objects zero_addr g));
         // points_to preserved through makeGray c
         if b = c then
@@ -1386,7 +1327,7 @@ let rec push_children_preserves_points_to g st obj i ws b child
 let rec push_children_black_backward g st obj i ws b
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   is_black b (fst (push_children g st obj i ws)))
         (ensures is_black b g)
@@ -1409,7 +1350,7 @@ let rec push_children_black_backward g st obj i ws b
         HeapGraph.get_field_addr_eq g obj i;
         wf_object_size_bound g obj;
         field_read_implies_exists_pointing g obj wz (U64.sub i 1UL) c_raw;
-        wf_field_target_in_objects g obj c_raw;
+        points_to_target_not_blue g obj c_raw;
         color_change_preserves_wf g c Header.Gray;
         color_change_preserves_objects_mem g c Header.Gray obj;
         set_object_color_preserves_getWosize_at_hd c g Header.Gray;
@@ -1460,7 +1401,7 @@ let rec push_children_preserves_is_no_scan g st obj i ws b
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem b (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   is_no_scan b g' == is_no_scan b g))
@@ -1483,7 +1424,7 @@ let rec push_children_preserves_is_no_scan g st obj i ws b
         HeapGraph.get_field_addr_eq g obj i;
         wf_object_size_bound g obj;
         field_read_implies_exists_pointing g obj wz (U64.sub i 1UL) c_raw;
-        wf_field_target_in_objects g obj c_raw;
+        points_to_target_not_blue g obj c_raw;
         color_change_preserves_wf g c Header.Gray;
         color_change_preserves_objects_mem g c Header.Gray obj;
         color_change_preserves_objects_mem g c Header.Gray b;
@@ -1517,7 +1458,7 @@ let rec push_children_preserves_is_no_scan g st obj i ws b
 let rec push_children_preserves_objects g st obj i ws
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   objects zero_addr g' == objects zero_addr g))
@@ -1540,7 +1481,7 @@ let rec push_children_preserves_objects g st obj i ws
         HeapGraph.get_field_addr_eq g obj i;
         wf_object_size_bound g obj;
         field_read_implies_exists_pointing g obj wz (U64.sub i 1UL) c_raw;
-        wf_field_target_in_objects g obj c_raw;
+        points_to_target_not_blue g obj c_raw;
         color_change_preserves_wf g c Header.Gray;
         color_change_preserves_objects g c Header.Gray;
         color_change_preserves_objects_mem g c Header.Gray obj;
@@ -1571,7 +1512,7 @@ val push_children_preserves_density : (g: heap) -> (st: seq obj_addr) -> (obj: o
   Lemma (requires well_formed_heap g /\ heap_objects_dense g /\
                   Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures heap_objects_dense (fst (push_children g st obj i ws)))
         (decreases (U64.v ws - U64.v i))
@@ -1595,7 +1536,7 @@ let rec push_children_preserves_density g st obj i ws =
         HeapGraph.get_field_addr_eq g obj i;
         wf_object_size_bound g obj;
         field_read_implies_exists_pointing g obj wz (U64.sub i 1UL) c_raw;
-        wf_field_target_in_objects g obj c_raw;
+        points_to_target_not_blue g obj c_raw;
         SweepInv.color_change_preserves_density c g Header.Gray;
         color_change_preserves_wf g c Header.Gray;
         color_change_preserves_objects_mem g c Header.Gray obj;
@@ -1668,7 +1609,7 @@ let mark_preserves_density (g: heap) (st: seq obj_addr)
 let rec push_children_preserves_resolve g st obj i ws addr
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   resolve_object addr g' == resolve_object addr g))
@@ -1691,7 +1632,7 @@ let rec push_children_preserves_resolve g st obj i ws addr
         HeapGraph.get_field_addr_eq g obj i;
         wf_object_size_bound g obj;
         field_read_implies_exists_pointing g obj wz (U64.sub i 1UL) c_raw;
-        wf_field_target_in_objects g obj c_raw;
+        points_to_target_not_blue g obj c_raw;
         color_change_preserves_resolve c addr g Header.Gray;
         color_change_preserves_wf g c Header.Gray;
         color_change_preserves_objects_mem g c Header.Gray obj;
@@ -1821,7 +1762,7 @@ let mark_step_preserves_tri_color g st =
         // Transport rc non-white through makeBlack then push_children
         // Need: Seq.mem rc (objects zero_addr g) for push_children_no_new_white
         wosize_of_object_bound b g;
-        points_to_target_in_objects g b child;
+        points_to_target_not_blue g b child;
         assert (Seq.mem rc (objects zero_addr g));
         if rc = obj then begin
           push_children_preserves_parent_black g1 st' obj 1UL ws;
@@ -2005,7 +1946,7 @@ let rec push_children_no_new_blue (g: heap) (st: seq obj_addr) (obj: obj_addr)
   : Lemma (requires well_formed_heap g /\ ~(is_blue x g) /\
                     Seq.mem obj (objects zero_addr g) /\
                     U64.v ws <= U64.v (wosize_of_object obj g) /\
-                    fields_constrained g obj /\
+                    ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                     U64.v (wosize_of_object obj g) < pow2 54)
           (ensures ~(is_blue x (fst (push_children g st obj i ws))))
           (decreases (U64.v ws - U64.v i))
@@ -2030,7 +1971,7 @@ let rec push_children_no_new_blue (g: heap) (st: seq obj_addr) (obj: obj_addr)
           let k = U64.sub i 1UL in
           wf_object_size_bound g obj;
           field_read_implies_exists_pointing g obj wz k child_raw;
-          wf_field_target_in_objects g obj child_raw;
+          points_to_target_not_blue g obj child_raw;
           color_change_preserves_wf g child Header.Gray;
           color_change_preserves_objects_mem g child Header.Gray obj;
           if child = obj then
@@ -2111,7 +2052,7 @@ let rec push_children_preserves_blue (g: heap) (st: seq obj_addr) (obj: obj_addr
   : Lemma (requires well_formed_heap g /\ is_blue x g /\
                     Seq.mem obj (objects zero_addr g) /\
                     U64.v ws <= U64.v (wosize_of_object obj g) /\
-                    fields_constrained g obj /\
+                    ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                     U64.v (wosize_of_object obj g) < pow2 54)
           (ensures is_blue x (fst (push_children g st obj i ws)))
           (decreases (U64.v ws - U64.v i))
@@ -2142,7 +2083,7 @@ let rec push_children_preserves_blue (g: heap) (st: seq obj_addr) (obj: obj_addr
           let k = U64.sub i 1UL in
           wf_object_size_bound g obj;
           field_read_implies_exists_pointing g obj wz k child_raw;
-          wf_field_target_in_objects g obj child_raw;
+          points_to_target_not_blue g obj child_raw;
           color_change_preserves_wf g child Header.Gray;
           color_change_preserves_objects_mem g child Header.Gray obj;
           if child = obj then
@@ -2641,10 +2582,11 @@ let edge_implies_points_to g src dst =
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
 let black_successor_is_black g src dst =
   edge_implies_points_to g src dst;
-  // src is black, hence not blue — needed for weakened no_pointer_to_blue
+  // src is black, hence not blue, so `pointers_lead_to_non_free` keeps its targets out of blue
   is_black_iff src g;
   is_blue_iff src g;
   assert (~(is_blue src g));
+  FStar.Classical.forall_intro (FStar.Classical.move_requires (points_to_target_not_blue g src));
   color_exhaustive dst g
 #pop-options
 
@@ -2670,7 +2612,7 @@ let vertex_is_obj_addr g x =
 /// Induction on reach: if root is black and x is reachable from root, then x is black
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
 let rec black_reach_is_black graph g r x p
-  : Lemma (requires noGreyObjects g /\ tri_color_invariant g /\ no_pointer_to_blue g /\
+  : Lemma (requires noGreyObjects g /\ tri_color_invariant g /\
                   graph == create_graph g /\
                   is_black r g)
         (ensures is_black x g)
@@ -2863,7 +2805,7 @@ let color_preserves_create_graph obj g c =
 #push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let rec push_children_preserves_create_graph g st obj i ws
   : Lemma (requires U64.v ws <= U64.v (wosize_of_object obj g) /\
-  fields_constrained g obj /\
+  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures create_graph (fst (push_children g st obj i ws)) == create_graph g)
         (decreases (U64.v ws - U64.v i))
@@ -2898,9 +2840,9 @@ let rec push_children_preserves_create_graph g st obj i ws
           efptu_recurse_upto g obj i wz_full child_raw;
         assert (exists_field_pointing_to_unchecked g obj wz_full child_raw);
         
-        // child_raw ∈ objects (from well_formed_heap part 2)
+        // child_raw ∈ objects (from `pointers_lead_to_non_free`)
         assert (U64.v wz_full < pow2 54);
-        wf_field_target_in_objects g obj child_raw;
+        points_to_target_not_blue g obj child_raw;
         assert (Seq.mem child (objects zero_addr g));
         
         let g' = makeGray child g in
@@ -3002,7 +2944,7 @@ let color_preserves_object_fits (target: obj_addr) (hd: obj_addr) (g: heap) (c: 
 let rec push_children_preserves_wosize g st obj i ws x
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem x (objects zero_addr g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ws == wosize_of_object obj g /\
                   HeapGraph.object_fits_in_heap obj g)
@@ -3027,7 +2969,7 @@ let rec push_children_preserves_wosize g st obj i ws x
         HeapGraph.get_field_addr_eq g obj i;
         wf_object_size_bound g obj;
         field_read_implies_exists_pointing g obj wz (U64.sub i 1UL) child_raw;
-        wf_field_target_in_objects g obj child_raw;
+        points_to_target_not_blue g obj child_raw;
         assert (Seq.mem child (objects zero_addr g));
         wosize_of_object_bound child g;
         (if child = x then color_preserves_wosize x g Header.Gray
@@ -3062,7 +3004,7 @@ let rec push_children_preserves_wosize g st obj i ws x
 let rec push_children_preserves_get_field g st obj i ws x j
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   Seq.mem x (objects zero_addr g) /\ U64.v j <= U64.v (wosize_of_object x g) /\
-                  fields_constrained g obj /\
+                  ~(is_no_scan obj g) /\ ~(is_blue obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ws == wosize_of_object obj g /\
                   HeapGraph.object_fits_in_heap obj g)
@@ -3088,7 +3030,7 @@ let rec push_children_preserves_get_field g st obj i ws x j
         HeapGraph.get_field_addr_eq g obj i;
         wf_object_size_bound g obj;
         field_read_implies_exists_pointing g obj wz (U64.sub i 1UL) child_raw;
-        wf_field_target_in_objects g obj child_raw;
+        points_to_target_not_blue g obj child_raw;
         assert (Seq.mem child (objects zero_addr g));
         wosize_of_object_bound child g;
         color_preserves_get_field child x g Header.Gray j;
@@ -3304,146 +3246,6 @@ let mark_no_new_blue g st x =
 let mark_preserves_blue g st x =
   mark_aux_preserves_blue g st heap_words x
 
-/// mark preserves exists_field_pointing_to_unchecked (field data unchanged)
-val mark_preserves_efptu : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
-  (src: obj_addr) -> (wz: U64.t{U64.v wz < pow2 54}) -> (dst: obj_addr) ->
-  Lemma (requires Seq.mem src (objects zero_addr g) /\ U64.v wz <= U64.v (wosize_of_object src g))
-        (ensures exists_field_pointing_to_unchecked (mark g st) src wz dst ==
-                 exists_field_pointing_to_unchecked g src wz dst)
-        (decreases U64.v wz)
-
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
-let rec mark_preserves_efptu g st src wz dst =
-  if wz = 0UL then ()
-  else begin
-    let gm = mark g st in
-    let idx = U64.sub wz 1UL in
-    let field_addr_raw = U64.add_mod src (U64.mul_mod idx mword) in
-    // get_field_addr_eq bridges: get_field g src wz == read_word g far
-    // where far = add_mod src (mul_mod (wz-1) mword) = field_addr_raw
-    // Need: hd_address(src) + mword * wz + mword <= heap_size
-    wf_implies_object_fits g src;
-    mark_preserves_wf g st;
-    mark_aux_preserves_objects g st heap_words;
-    wf_implies_object_fits gm src;
-    HeapGraph.get_field_addr_eq g src wz;
-    HeapGraph.get_field_addr_eq gm src wz;
-    mark_preserves_get_field g st src wz;
-    mark_preserves_wosize g st src;
-    if U64.v field_addr_raw >= heap_size || U64.v field_addr_raw % 8 <> 0 then ()
-    else begin
-      // read_word gm far == get_field gm src wz == get_field g src wz == read_word g far
-      assert (read_word gm field_addr_raw == read_word g field_addr_raw);
-      mark_preserves_efptu g st src idx dst
-    end
-  end
-#pop-options
-
-/// mark preserves points_to
-val mark_preserves_points_to : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
-  (src: obj_addr) -> (dst: obj_addr) ->
-  Lemma (requires Seq.mem src (objects zero_addr g))
-        (ensures points_to (mark g st) src dst == points_to g src dst)
-
-let mark_preserves_points_to g st src dst =
-  let gm = mark g st in
-  mark_preserves_wosize g st src;
-  let wz = wosize_of_object src g in
-  let wz_m = wosize_of_object src gm in
-  assert (wz == wz_m);
-  wosize_of_object_bound src g;
-  wosize_of_object_bound src gm;
-  mark_preserves_efptu g st src wz dst
-
-/// Mark only ever recolours *enumerated* objects.  An infix header lives inside
-/// its enclosing closure's fields, and mark never writes fields, so the colour
-/// of an interior pointer's target is preserved as well.  This is what lets
-/// `no_pointer_to_blue` survive marking in the presence of interior pointers.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
-let mark_preserves_infix_header (g: heap{well_formed_heap g}) (st: seq obj_addr{stack_props g st})
-    (dst: obj_addr)
-  : Lemma (requires GC.Spec.Object.is_infix dst g /\
-                    GC.Spec.Object.infix_addr_wf g (objects zero_addr g) dst)
-          (ensures read_word (mark g st) (GC.Spec.Heap.hd_address dst) ==
-                   read_word g (GC.Spec.Heap.hd_address dst))
-  = let gm = mark g st in
-    GC.Spec.Object.infix_addr_wf_elim g (objects zero_addr g) dst;
-    let w = wosize_of_object dst g in
-    let p : obj_addr = U64.uint_to_t (U64.v dst - U64.v w * 8) in
-    assert (Seq.mem p (objects zero_addr g));
-    assert (U64.v w >= 2);
-    assert (U64.v dst < U64.v p + U64.v (wosize_of_object p g) * 8);
-    assert (U64.v w < U64.v (wosize_of_object p g));
-    wf_object_size_bound g p;
-    GC.Spec.Heap.hd_address_spec p;
-    GC.Spec.Heap.hd_address_spec dst;
-    assert (U64.v (GC.Spec.Heap.hd_address p) + 8 * U64.v w + 8 <= heap_size);
-    assert (U64.v (GC.Spec.Heap.hd_address p) + 8 * U64.v w ==
-            U64.v (GC.Spec.Heap.hd_address dst));
-    mark_preserves_get_field g st p w;
-    mark_preserves_wosize g st p;
-    assert (HeapGraph.get_field g p w == read_word g (GC.Spec.Heap.hd_address dst));
-    assert (HeapGraph.get_field gm p w == read_word gm (GC.Spec.Heap.hd_address dst))
-#pop-options
-
-/// Marking does not change how a `points_to` target resolves.
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
-let mark_resolve_stable (g: heap{well_formed_heap g}) (st: seq obj_addr{stack_props g st})
-    (src: obj_addr) (dst: obj_addr)
-  : Lemma (requires Seq.mem src (objects zero_addr g) /\ fields_constrained g src /\
-                    points_to g src dst)
-          (ensures GC.Spec.Object.resolve_object dst (mark g st) ==
-                   GC.Spec.Object.resolve_object dst g)
-  = let gm = mark g st in
-    mark_aux_preserves_objects g st heap_words;
-    mark_preserves_wf g st;
-    if GC.Spec.Object.is_infix dst g then begin
-      points_to_target_infix_wf g src dst;
-      mark_preserves_infix_header g st dst;
-      GC.Spec.Object.resolve_object_locality dst g gm
-    end else begin
-      points_to_target_in_objects_raw g src dst;
-      wf_resolve_identity g dst;
-      wf_resolve_identity gm dst
-    end
-#pop-options
-
-/// mark preserves no_pointer_to_blue (field data unchanged + no new blue)
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
-let mark_preserves_no_pointer_to_blue g st =
-  let gm = mark g st in
-  mark_aux_preserves_objects g st heap_words;
-  mark_preserves_wf g st;
-  let aux (src: obj_addr) (dst: obj_addr) : Lemma
-    (Seq.mem src (objects zero_addr gm) /\ ~(is_blue src gm) /\ fields_constrained gm src /\
-     points_to gm src dst ==>
-     ~(is_blue (GC.Spec.Object.resolve_object dst gm) gm))
-  = if Seq.mem src (objects zero_addr gm) && not (is_blue src gm) &&
-       fields_constrained gm src && points_to gm src dst then begin
-      assert (Seq.mem src (objects zero_addr g));
-      mark_preserves_is_no_scan g st src;
-      // Prove src was non-blue in g: contrapositive of mark_aux_preserves_blue
-      // mark_aux_preserves_blue: is_blue src g → is_blue src gm
-      // We have ~(is_blue src gm), so by contrapositive ~(is_blue src g)
-      (if is_blue src g then mark_aux_preserves_blue g st heap_words src);
-      assert (~(is_blue src g));
-      // Now use no_pointer_to_blue g: non-blue src with points_to → resolved
-      // target not blue
-      mark_preserves_points_to g st src dst;
-      assert (points_to g src dst);
-      assert (~(is_blue (GC.Spec.Object.resolve_object dst g) g));
-      wosize_of_object_bound src g;
-      points_to_target_in_objects g src dst;
-      // Marking leaves resolution alone: an interior pointer's target keeps its
-      // header (mark writes object headers only), and an ordinary target
-      // resolves to itself in both heaps by part 4.
-      mark_resolve_stable g st src dst;
-      mark_aux_no_new_blue g st heap_words (GC.Spec.Object.resolve_object dst g)
-    end
-  in
-  Classical.forall_intro_2 aux
-#pop-options
-
 /// A graph built from a well-formed heap has only in-heap object endpoints.
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 1"
 let create_graph_wf_from_heap (g: heap)
@@ -3463,7 +3265,7 @@ let create_graph_wf_from_heap (g: heap)
       assert (Seq.mem src objs);
       edge_implies_points_to g src dst;
       FStar.Classical.forall_intro
-        (FStar.Classical.move_requires (points_to_target_in_objects g src));
+        (FStar.Classical.move_requires (points_to_target_not_blue g src));
       graph_vertices_mem g src;
       graph_vertices_mem g dst
   in
@@ -3509,7 +3311,6 @@ let mark_reachable_is_black g st roots =
   FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 prove_tri);
   assert (tri_color_invariant g);
   mark_preserves_tri_color g st;
-  mark_preserves_no_pointer_to_blue g st;
   
   mark_aux_preserves_objects g st heap_words;
   
@@ -3779,7 +3580,7 @@ let mark_black_is_reachable g st roots =
 /// ---------------------------------------------------------------------------
 
 /// When `v` is a valid pointer field value of `obj`, its *resolved* target is an
-/// enumerated object (from well_formed_heap part 2), and graying that object
+/// enumerated object (from `pointers_lead_to_non_free`), and graying that object
 /// preserves all invariants.  Resolution matters for interior pointers into
 /// mutually recursive closures.
 let check_and_darken_field_preserves_wf
@@ -3795,7 +3596,7 @@ let check_and_darken_field_preserves_wf
     HeapGraph.get_field_addr_eq g obj i;
     wf_object_size_bound g obj;
     field_read_implies_exists_pointing g obj wz_obj (U64.sub i 1UL) raw;
-    wf_field_target_in_objects g obj raw;
+    points_to_target_not_blue g obj raw;
     if is_white target g then begin
       color_change_preserves_wf g target Header.Gray;
       color_change_preserves_objects_mem g target Header.Gray obj;

@@ -19,11 +19,11 @@ open GC.Gen.Cheney
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 val promote_object_nonblue_other_reflects_pre
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0}) (ph: gc_phase)
   (target: obj_addr)
   : Lemma
     (requires
-      well_formed_heap_part1 major /\
+      blocks_fit major /\
       AllocLemmas.fl_valid major fp heap_words /\
       AllocLemmas.fl_chain_terminates major fp heap_words /\
       // Right-justification rewrites the remainder's header as well as the
@@ -32,27 +32,27 @@ val promote_object_nonblue_other_reflects_pre
       // so a target that is NOT blue afterwards cannot be one -- but that
       // step needs to know the chain is all blue to begin with.
       chain_objects_blue major fp /\
-      (promote_object minor major obj fp wz).new_addr <> 0UL /\
-      Seq.mem target (objects zero_addr (promote_object minor major obj fp wz).major_out) /\
-      is_blue target (promote_object minor major obj fp wz).major_out = false /\
-      target <> (promote_object minor major obj fp wz).new_addr)
+      (promote_object minor major obj fp wz ph).new_addr <> 0UL /\
+      Seq.mem target (objects zero_addr (promote_object minor major obj fp wz ph).major_out) /\
+      is_blue target (promote_object minor major obj fp wz ph).major_out = false /\
+      target <> (promote_object minor major obj fp wz ph).new_addr)
     (ensures
       Seq.mem target (objects zero_addr major) /\
       is_blue target major = false)
 
-val cheney_promote_nonblue_origin
+val cheney_promote_nonblue_origin (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr)
-  : Lemma (requires well_formed_heap major /\
+  : Lemma (requires blocks_fit major /\ no_infix_block major /\
                     AllocLemmas.fl_valid major fp heap_words /\
                     AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor /\
-                    (let res = cheney_promote minor major fp roots in
+                    (let res = cheney_promote ph minor major fp roots in
                      Seq.mem obj (objects zero_addr res.major_final) /\
                      is_blue obj res.major_final = false /\
                      ~(Seq.mem obj (objects zero_addr major) /\
                        is_blue obj major = false)))
-          (ensures (let res = cheney_promote minor major fp roots in
+          (ensures (let res = cheney_promote ph minor major fp roots in
                     exists (x: U64.t). res.fwd_map x == obj /\ is_minor_pointer x))
