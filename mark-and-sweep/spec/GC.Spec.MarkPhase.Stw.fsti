@@ -18,7 +18,11 @@
 ///   * **what is dark was reachable** (`dark_were_reachable`): every grey or
 ///     black object is reachable from the roots in `g0`;
 ///   * **what was darkened stays dark** (`darkened_stay_dark`): an object grey
-///     in `g0` is grey or black.
+///     in `g0` is grey or black;
+///   * **the partly scanned object's scanned fields are dark**
+///     (`scanned_dark`): with no program writing, they still hold what they
+///     held when scanned, so blackening it once its last field is scanned is
+///     the stop-the-world step (`GC.Spec.MarkPhase.Slice.black_move_is_step`).
 ///
 /// Every move of a slice (`GC.Spec.MarkPhase.Slice.mark_move`) keeps it
 /// (`marking_inv_stw_move`); when nothing is grey any more it is the mark
@@ -41,6 +45,7 @@ module Corr = GC.Spec.Correctness
 module HM = GC.Spec.HeapModel
 module HG = GC.Spec.HeapGraph
 module S = GC.Spec.MarkPhase.Slice
+module MP = GC.Spec.MarkPhase
 
 /// The heap differs from `g0` only in colours, and no black object points at
 /// a white one.
@@ -53,9 +58,18 @@ let dark_were_reachable (g0 g: heap) (roots: seq obj_addr) : prop =
 /// Every object grey in `g0` is grey or black.
 let darkened_stay_dark (g0 g: heap) : prop = MBC.gray_stays g0 g
 
+/// The partly scanned object (at the scan position `sp`), if any, is a grey
+/// block with fields, its fields before the next one dark.
+let scanned_dark (g: heap) (sp: MP.scan_pos) : prop =
+  sp.MP.cur <> 0UL ==>
+  (is_val_addr sp.MP.cur /\ S.scan_target g sp.MP.cur /\ 1 <= sp.MP.fld /\
+   sp.MP.fld <= U64.v (wosize_of_object sp.MP.cur g) + 1 /\
+   S.fields_dark g sp.MP.cur 1 (sp.MP.fld - 1))
+
 /// **The stop-the-world strengthening of the marking invariant.**
-let marking_inv_stw (g0 g: heap) (roots: seq obj_addr) : prop =
-  colours_only_changed g0 g /\ dark_were_reachable g0 g roots /\ darkened_stay_dark g0 g
+let marking_inv_stw (g0 g: heap) (roots: seq obj_addr) (sp: MP.scan_pos) : prop =
+  colours_only_changed g0 g /\ dark_were_reachable g0 g roots /\ darkened_stay_dark g0 g /\
+  scanned_dark g sp
 
 /// What marking starts from: the roots darkened (every grey object a root),
 /// nothing black, the roots a set of vertices of the object graph.
@@ -74,23 +88,23 @@ let stw_start (g0: heap) (roots: seq obj_addr) : prop =
 
 /// **Start.**
 val marking_inv_stw_start (g0: heap) (roots: seq obj_addr)
-  : Lemma (requires stw_start g0 roots) (ensures marking_inv_stw g0 g0 roots)
+  : Lemma (requires stw_start g0 roots) (ensures marking_inv_stw g0 g0 roots MP.scan_none)
 
 /// **A move keeps it** ...
-val marking_inv_stw_move (g0 g g': heap) (roots: seq obj_addr)
-  : Lemma (requires marking_inv_stw g0 g roots /\ S.mark_move g g')
-          (ensures marking_inv_stw g0 g' roots)
+val marking_inv_stw_move (g0 g g': heap) (roots: seq obj_addr) (sp sp': MP.scan_pos)
+  : Lemma (requires marking_inv_stw g0 g roots sp /\ S.mark_move g sp g' sp')
+          (ensures marking_inv_stw g0 g' roots sp')
 
 /// ... and so does any number of moves.
-val marking_inv_stw_steps (g0 g g': heap) (roots: seq obj_addr)
-  : Lemma (requires marking_inv_stw g0 g roots /\ S.mark_steps g g')
-          (ensures marking_inv_stw g0 g' roots)
+val marking_inv_stw_steps (g0 g g': heap) (roots: seq obj_addr) (sp sp': MP.scan_pos)
+  : Lemma (requires marking_inv_stw g0 g roots sp /\ S.mark_steps g sp g' sp')
+          (ensures marking_inv_stw g0 g' roots sp')
 
 /// **End.**  With nothing grey, the heap is the marked heap of `g0`
 /// (`mark_post`: black exactly when reachable from the roots, the objects
 /// and their fields unchanged), from which the stop-the-world theorems
 /// follow.
-val marking_inv_stw_done (g0 g: heap) (roots: seq obj_addr) (fp: U64.t)
-  : Lemma (requires stw_start g0 roots /\ marking_inv_stw g0 g roots /\ Mark.noGreyObjects g /\
+val marking_inv_stw_done (g0 g: heap) (roots: seq obj_addr) (sp: MP.scan_pos) (fp: U64.t)
+  : Lemma (requires stw_start g0 roots /\ marking_inv_stw g0 g roots sp /\ Mark.noGreyObjects g /\
                     GC.Spec.FreeList.fp_in_heap fp g0)
           (ensures Corr.mark_post g0 g roots fp)

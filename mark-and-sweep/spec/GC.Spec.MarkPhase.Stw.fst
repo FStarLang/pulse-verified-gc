@@ -50,9 +50,11 @@ let singleton_bsp (g: heap) (x: obj_addr)
 #pop-options
 
 let black_step (g0 g: heap) (roots: seq obj_addr) (x: obj_addr)
-  : Lemma (requires marking_inv_stw g0 g roots /\ Seq.mem x (objects zero_addr g) /\ is_gray x g /\
+  : Lemma (requires colours_only_changed g0 g /\ dark_were_reachable g0 g roots /\ darkened_stay_dark g0 g /\
+                    Seq.mem x (objects zero_addr g) /\ is_gray x g /\
                     (is_no_scan x g \/ S.fields_dark g x 1 (U64.v (wosize_of_object x g))))
-          (ensures marking_inv_stw g0 (makeBlack x g) roots)
+          (ensures colours_only_changed g0 (makeBlack x g) /\ dark_were_reachable g0 (makeBlack x g) roots /\
+                   darkened_stay_dark g0 (makeBlack x g))
   = let st : seq obj_addr = Seq.cons x Seq.empty in
     singleton_bsp g x;
     S.black_move_is_step g x;
@@ -204,9 +206,10 @@ let grey_stays (g0 g: heap) (t: obj_addr)
     Mark.colors_exclusive t g
 
 let grey_step (g0 g: heap) (roots: seq obj_addr) (x: obj_addr) (k: U64.t{U64.v k >= 1})
-  : Lemma (requires marking_inv_stw g0 g roots /\ S.scan_target g x /\
-                    U64.v k <= U64.v (wosize_of_object x g))
-          (ensures marking_inv_stw g0 (S.scan_field g x k) roots)
+  : Lemma (requires colours_only_changed g0 g /\ dark_were_reachable g0 g roots /\ darkened_stay_dark g0 g /\
+                    S.scan_target g x /\ U64.v k <= U64.v (wosize_of_object x g))
+          (ensures (let g' = S.scan_field g x k in
+                    colours_only_changed g0 g' /\ dark_were_reachable g0 g' roots /\ darkened_stay_dark g0 g'))
   = S.scan_field_is_grey g x k;
     let v = HG.get_field g x k in
     if is_pointer v && is_white (resolve_object v g) g then begin
@@ -221,32 +224,74 @@ let grey_step (g0 g: heap) (roots: seq obj_addr) (x: obj_addr) (k: U64.t{U64.v k
 /// Moves
 /// ---------------------------------------------------------------------------
 
-let marking_inv_stw_move g0 g g' roots =
-  eliminate S.grey_move g g' \/ S.black_move g g'
-  with begin
-    eliminate exists (x: obj_addr) (k: U64.t{U64.v k >= 1}).
-      S.scan_target g x /\ U64.v k <= U64.v (wosize_of_object x g) /\ g' == S.scan_field g x k
-    with grey_step g0 g roots x k
-  end
-  and begin
-    eliminate exists (x: obj_addr).
-      Seq.mem x (objects zero_addr g) /\ is_gray x g /\
-      (is_no_scan x g \/ S.fields_dark g x 1 (U64.v (wosize_of_object x g))) /\
-      g' == makeBlack x g
-    with black_step g0 g roots x
-  end
+/// The partly scanned object stays a grey block with fields across a move
+/// that does not blacken it, and its dark fields stay dark.
+let scanned_dark_kept (g g': heap) (sp: MP.scan_pos) (n: nat)
+  : Lemma (requires well_formed_heap g /\ S.darker g g' /\ scanned_dark g sp /\ sp.MP.cur <> 0UL /\
+                    is_gray sp.MP.cur g' /\ n <= sp.MP.fld - 1)
+          (ensures S.scan_target g' sp.MP.cur /\
+                   wosize_of_object sp.MP.cur g' == wosize_of_object sp.MP.cur g /\
+                   S.fields_dark g' sp.MP.cur 1 n)
+  = let c : obj_addr = sp.MP.cur in
+    Mark.colors_exclusive c g;
+    S.darker_fields_dark g g' c 1 n
 
-let marking_inv_stw_steps g0 g g' roots =
-  let p (h: heap) : prop = marking_inv_stw g0 h roots in
-  let step (h h': heap) : Lemma (requires p h /\ S.mark_move h h') (ensures p h') =
-    marking_inv_stw_move g0 h h' roots
+let marking_inv_stw_move g0 g g' roots sp sp' =
+  let open S in
+  wf_parts ();
+  (if FStar.IndefiniteDescription.strong_excluded_middle (grey_move g sp g' sp') then begin
+     eliminate exists (x: obj_addr).
+       x == sp.MP.cur /\ scan_target g x /\ 1 <= sp.MP.fld /\ sp.MP.fld <= U64.v (wosize_of_object x g) /\
+       g' == scan_field g x (U64.uint_to_t sp.MP.fld) /\ sp' == { sp with MP.fld = sp.MP.fld + 1 }
+     with begin
+       let k : (k: U64.t{U64.v k >= 1}) = U64.uint_to_t sp.MP.fld in
+       grey_step g0 g roots x k;
+       mark_move_darker g g' sp sp';
+       scan_field_is_grey g x k;
+       (let v = HG.get_field g x k in
+        if is_pointer v && is_white (resolve_object v g) g then begin
+          grey_colours g (resolve_object v g);
+          Mark.colors_exclusive x g
+        end);
+       scanned_dark_kept g g' sp (sp.MP.fld - 1);
+       scan_field_dark g x k;
+       assert (fields_dark g' x 1 sp.MP.fld)
+     end
+   end
+   else if FStar.IndefiniteDescription.strong_excluded_middle (black_move g sp g' sp') then begin
+     eliminate exists (x: obj_addr).
+       Seq.mem x (objects zero_addr g) /\ is_gray x g /\ MP.all_scanned g sp x /\
+       g' == makeBlack x g /\ sp' == MP.blackened_pos sp x
+     with begin
+       (if not (is_no_scan x g) then
+          assert (fields_dark g x 1 (U64.v (wosize_of_object x g))));
+       black_step g0 g roots x;
+       mark_move_darker g g' sp sp';
+       if x <> sp.MP.cur && sp.MP.cur <> 0UL then begin
+         let c : obj_addr = sp.MP.cur in
+         makeBlack_eq x g;
+         color_change_preserves_other_color x c g Header.Black;
+         is_gray_iff c g; is_gray_iff c g';
+         scanned_dark_kept g g' sp (sp.MP.fld - 1)
+       end
+     end
+   end
+   else begin
+     assert (begin_move g sp g' sp')
+   end)
+
+let marking_inv_stw_steps g0 g g' roots sp sp' =
+  let p (h: heap) (q: MP.scan_pos) : prop = marking_inv_stw g0 h roots q in
+  let step (h: heap) (q: MP.scan_pos) (h': heap) (q': MP.scan_pos)
+    : Lemma (requires p h q /\ S.mark_move h q h' q') (ensures p h' q') =
+    marking_inv_stw_move g0 h h' roots q q'
   in
-  S.mark_steps_ind p step g g'
+  S.mark_steps_ind p step g sp g' sp'
 
 /// ---------------------------------------------------------------------------
 /// End
 /// ---------------------------------------------------------------------------
 
-let marking_inv_stw_done g0 g roots fp =
+let marking_inv_stw_done g0 g roots sp fp =
   SweepInv.no_gray_intro g;
   MBC.mark_post_from_bounded_mark g0 g roots fp

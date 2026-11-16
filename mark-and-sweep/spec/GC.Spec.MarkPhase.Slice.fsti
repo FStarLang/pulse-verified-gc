@@ -6,38 +6,43 @@
 /// stops.  An object larger than what is left of the budget is scanned in
 /// parts: it stays grey while some of its fields are scanned, and is
 /// blackened only once the last one is (OCaml 4.14 keeps `(object, next
-/// field)` entries for the same purpose).  So a slice is a sequence of two
-/// kinds of moves on the heap's colours:
+/// field)` entries for the same purpose).  The scan position
+/// (`GC.Spec.MarkPhase.scan_pos`: the partly scanned object and its next
+/// field) is part of the state, so a slice is a sequence of three kinds of
+/// moves on the heap's colours and the position:
 ///
-///   * **scanning a field** (`grey_move`): the target of a field of a grey,
-///     scannable object is greyed if it is white (`MM.darken`, 4.14's
-///     `mark_slice_darken`); the object stays grey;
-///   * **blackening** (`black_move`): a grey object whose fields are all
-///     *dark* -- not a pointer to a white block (`fields_dark`) -- or that has
-///     no fields to scan, becomes black.
+///   * **starting to scan** (`begin_move`): with no partly scanned object, a
+///     grey object with fields becomes it, at its first field;
+///   * **scanning a field** (`grey_move`): the target of the partly scanned
+///     object's next field is greyed if it is white (`MM.darken`, 4.14's
+///     `mark_slice_darken`), and the position moves one field on; the object
+///     stays grey;
+///   * **blackening** (`black_move`): a grey object all of whose fields are
+///     scanned (`MP.all_scanned`: the partly scanned object past its last
+///     field, or an object with no fields to scan) becomes black, and is no
+///     longer the partly scanned object.
 ///
-/// The stop-the-world step `GC.Spec.MarkPhase.mark_step_at` is the
-/// composition (scan every field, then blacken), and the marking invariant
-/// survives each move on its own: scanning a field is greying a white block
-/// (`MM.darken_inv`), and blackening an object whose fields are dark is
-/// `mark_step_at` (`black_move_is_step`), which keeps it
-/// (`MP.marking_inv_step`).
+/// The marking invariant survives each move on its own
+/// (`MP.marking_inv_begin`, `MP.marking_inv_advance` after the darkening,
+/// `MP.marking_inv_blacken`).  Blackening asks nothing of the fields' current
+/// values: a field scanned in an earlier slice and overwritten since by the
+/// program is an edge the invariant already treats as scanned (the barrier
+/// made sure its new target is one the marker will reach, or not white).  So
+/// the program's writes never restart a scan, and a slice with an unbounded
+/// budget finishes marking whatever the program did in between.
 ///
-/// Blackening asks that *every* field be dark, not only the ones scanned in
-/// the last part: a field scanned in an earlier slice may have been
-/// overwritten since by the program with a white object that only this
-/// object's (grey) path reached.  The implementation keeps "the fields
-/// scanned so far are dark" as part of its cache, and the write barrier
-/// restarts the scan of the partly scanned object when the program writes
-/// into its scanned prefix (`GC.Gen.MarkState`).
-///
-/// `mark_steps g g'` is any number of moves.  What they keep: the marking
-/// invariant for every `outside_refs` (`mark_steps_inv`); everything but colours,
-/// with colours only getting darker (`darker`, `mark_steps_darker`).  And
-/// what they decrease: `mark_weight` (two per white block, one per grey),
-/// strictly at every move that changes the heap (`grey_move_weight`,
-/// `black_move_weight`), the measure behind the termination of an unbounded
-/// slice.
+/// `mark_steps g sp g' sp'` is any number of moves.  What they keep: the
+/// marking invariant for every set of outside references (`mark_steps_inv`);
+/// everything but colours, with colours only getting darker (`darker`,
+/// `mark_steps_darker`).  And what they decrease: `mark_weight` (two per
+/// white block, one per grey), strictly at every move that changes the heap
+/// (`weight_grey`, `weight_black`), the measure behind the termination of an
+/// unbounded slice.  The stop-the-world step `GC.Spec.MarkPhase.mark_step_at`
+/// is the composition (scan every field, then blacken): blackening an object
+/// whose fields are dark is that step (`black_move_is_step`), which a full
+/// collection (`GC.Spec.MarkPhase.Stw`) uses with the fields the partly
+/// scanned object has been scanned up to kept dark (`fields_dark`, no program
+/// running).
 
 module GC.Spec.MarkPhase.Slice
 
@@ -80,47 +85,58 @@ let scan_target (g: heap) (x: obj_addr) : prop =
 let scan_field (g: heap) (x: obj_addr) (k: U64.t{U64.v k >= 1}) : GTot heap =
   MM.darken g (HG.get_field g x k)
 
-/// A field of a grey object scanned.
-let grey_move (g g': heap) : prop =
-  exists (x: obj_addr) (k: U64.t{U64.v k >= 1}).
-    scan_target g x /\ U64.v k <= U64.v (wosize_of_object x g) /\ g' == scan_field g x k
-
-/// A grey object whose fields are all dark (or that has none to scan)
-/// blackened.
-let black_move (g g': heap) : prop =
+/// **Scanning the next field** of the partly scanned object, and moving past
+/// it.
+let grey_move (g: heap) (sp: MP.scan_pos) (g': heap) (sp': MP.scan_pos) : prop =
   exists (x: obj_addr).
-    Seq.mem x (objects zero_addr g) /\ is_gray x g /\
-    (is_no_scan x g \/ fields_dark g x 1 (U64.v (wosize_of_object x g))) /\
-    g' == makeBlack x g
+    x == sp.MP.cur /\ scan_target g x /\ 1 <= sp.MP.fld /\ sp.MP.fld <= U64.v (wosize_of_object x g) /\
+    g' == scan_field g x (U64.uint_to_t sp.MP.fld) /\ sp' == { sp with MP.fld = sp.MP.fld + 1 }
 
-let mark_move (g g': heap) : prop = grey_move g g' \/ black_move g g'
+/// **Blackening** a grey object whose fields are all scanned; it is no longer
+/// the partly scanned object.
+let black_move (g: heap) (sp: MP.scan_pos) (g': heap) (sp': MP.scan_pos) : prop =
+  exists (x: obj_addr).
+    Seq.mem x (objects zero_addr g) /\ is_gray x g /\ MP.all_scanned g sp x /\
+    g' == makeBlack x g /\ sp' == MP.blackened_pos sp x
 
-/// The moves through the heaps of `l`, from `g` to `g'`.
-let rec moves (g: heap) (l: list heap) (g': heap) : Tot prop (decreases l) =
+/// **Starting to scan** a grey object with fields, when none is partly
+/// scanned.
+let begin_move (g: heap) (sp: MP.scan_pos) (g': heap) (sp': MP.scan_pos) : prop =
+  exists (x: obj_addr).
+    sp.MP.cur == 0UL /\ scan_target g x /\ g' == g /\ sp' == { MP.cur = x; MP.fld = 1 }
+
+let mark_move (g: heap) (sp: MP.scan_pos) (g': heap) (sp': MP.scan_pos) : prop =
+  grey_move g sp g' sp' \/ black_move g sp g' sp' \/ begin_move g sp g' sp'
+
+/// The moves through the states of `l`, from `(g, sp)` to `(g', sp')`.
+let rec moves (g: heap) (sp: MP.scan_pos) (l: list (heap & MP.scan_pos)) (g': heap) (sp': MP.scan_pos)
+  : Tot prop (decreases l) =
   match l with
-  | [] -> g == g'
-  | h :: t -> mark_move g h /\ moves h t g'
+  | [] -> g == g' /\ sp == sp'
+  | (h, q) :: t -> mark_move g sp h q /\ moves h q t g' sp'
 
 /// **Any number of moves.**
-let mark_steps (g g': heap) : prop = exists (l: list heap). moves g l g'
+let mark_steps (g: heap) (sp: MP.scan_pos) (g': heap) (sp': MP.scan_pos) : prop =
+  exists (l: list (heap & MP.scan_pos)). moves g sp l g' sp'
 
-val mark_steps_refl (g: heap) : Lemma (mark_steps g g)
+val mark_steps_refl (g: heap) (sp: MP.scan_pos) : Lemma (mark_steps g sp g sp)
 
-val mark_steps_trans (g1 g2 g3: heap)
-  : Lemma (requires mark_steps g1 g2 /\ mark_steps g2 g3) (ensures mark_steps g1 g3)
+val mark_steps_trans (g1 g2 g3: heap) (sp1 sp2 sp3: MP.scan_pos)
+  : Lemma (requires mark_steps g1 sp1 g2 sp2 /\ mark_steps g2 sp2 g3 sp3) (ensures mark_steps g1 sp1 g3 sp3)
 
-val mark_steps_move (g g': heap)
-  : Lemma (requires mark_move g g') (ensures mark_steps g g')
+val mark_steps_move (g g': heap) (sp sp': MP.scan_pos)
+  : Lemma (requires mark_move g sp g' sp') (ensures mark_steps g sp g' sp')
 
 /// One more move.
-val mark_steps_snoc (g1 g2 g3: heap)
-  : Lemma (requires mark_steps g1 g2 /\ mark_move g2 g3) (ensures mark_steps g1 g3)
+val mark_steps_snoc (g1 g2 g3: heap) (sp1 sp2 sp3: MP.scan_pos)
+  : Lemma (requires mark_steps g1 sp1 g2 sp2 /\ mark_move g2 sp2 g3 sp3) (ensures mark_steps g1 sp1 g3 sp3)
 
 /// What every move keeps, any number of moves keep.
-val mark_steps_ind (p: heap -> prop)
-  (step: (g: heap) -> (g': heap) -> Lemma (requires p g /\ mark_move g g') (ensures p g'))
-  (g g': heap)
-  : Lemma (requires p g /\ mark_steps g g') (ensures p g')
+val mark_steps_ind (p: heap -> MP.scan_pos -> prop)
+  (step: (g: heap) -> (sp: MP.scan_pos) -> (g': heap) -> (sp': MP.scan_pos) ->
+         Lemma (requires p g sp /\ mark_move g sp g' sp') (ensures p g' sp'))
+  (g: heap) (sp: MP.scan_pos) (g': heap) (sp': MP.scan_pos)
+  : Lemma (requires p g sp /\ mark_steps g sp g' sp') (ensures p g' sp')
 
 /// ---------------------------------------------------------------------------
 /// The moves as the stop-the-world step
@@ -141,7 +157,8 @@ val scan_field_dark (g: heap) (x: obj_addr) (k: U64.t{U64.v k >= 1})
           (ensures field_dark (scan_field g x k) x k)
 
 /// **Blackening a grey object whose fields are dark is the stop-the-world
-/// step at it.**
+/// step at it.**  (Not a condition of `black_move`; a full collection, with
+/// no program running, keeps the fields dark and uses it.)
 val black_move_is_step (g: heap) (x: obj_addr)
   : Lemma (requires well_formed_heap g /\ Seq.mem x (objects zero_addr g) /\ is_gray x g /\
                     (is_no_scan x g \/ fields_dark g x 1 (U64.v (wosize_of_object x g))))
@@ -152,11 +169,13 @@ val black_move_is_step (g: heap) (x: obj_addr)
 /// ---------------------------------------------------------------------------
 
 /// **The marking invariant**, for any `outside_refs`.
-val mark_move_inv (g g': heap) (outside_refs: obj_addr -> prop)
-  : Lemma (requires MP.marking_inv g outside_refs /\ mark_move g g') (ensures MP.marking_inv g' outside_refs)
+val mark_move_inv (g g': heap) (sp sp': MP.scan_pos) (outside_refs: obj_addr -> prop)
+  : Lemma (requires MP.marking_inv g outside_refs sp /\ mark_move g sp g' sp')
+          (ensures MP.marking_inv g' outside_refs sp')
 
-val mark_steps_inv (g g': heap) (outside_refs: obj_addr -> prop)
-  : Lemma (requires MP.marking_inv g outside_refs /\ mark_steps g g') (ensures MP.marking_inv g' outside_refs)
+val mark_steps_inv (g g': heap) (sp sp': MP.scan_pos) (outside_refs: obj_addr -> prop)
+  : Lemma (requires MP.marking_inv g outside_refs sp /\ mark_steps g sp g' sp')
+          (ensures MP.marking_inv g' outside_refs sp')
 
 /// `g'` is `g` with some blocks darker: the same walk, headers but for their
 /// colours, fields and resolutions; free blocks stay free and nothing else
@@ -188,11 +207,11 @@ val darker_refl (g: heap) : Lemma (requires well_formed_heap g) (ensures darker 
 val darker_trans (g1 g2 g3: heap)
   : Lemma (requires darker g1 g2 /\ darker g2 g3) (ensures darker g1 g3)
 
-val mark_move_darker (g g': heap)
-  : Lemma (requires well_formed_heap g /\ mark_move g g') (ensures darker g g')
+val mark_move_darker (g g': heap) (sp sp': MP.scan_pos)
+  : Lemma (requires well_formed_heap g /\ mark_move g sp g' sp') (ensures darker g g')
 
-val mark_steps_darker (g g': heap)
-  : Lemma (requires well_formed_heap g /\ mark_steps g g') (ensures darker g g')
+val mark_steps_darker (g g': heap) (sp sp': MP.scan_pos)
+  : Lemma (requires well_formed_heap g /\ mark_steps g sp g' sp') (ensures darker g g')
 
 /// Dark fields of a scannable block that is not free stay dark.
 val darker_fields_dark (g g': heap) (x: obj_addr) (lo hi: nat)

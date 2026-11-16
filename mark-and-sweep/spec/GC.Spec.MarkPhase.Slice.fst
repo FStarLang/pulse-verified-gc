@@ -22,47 +22,48 @@ module HM = GC.Spec.HeapModel
 /// ---------------------------------------------------------------------------
 
 #push-options "--fuel 1"
-let moves_nil (g: heap) : Lemma (moves g [] g) = ()
+let moves_nil (g: heap) (sp: MP.scan_pos) : Lemma (moves g sp [] g sp) = ()
 
-let moves_cons (g h g': heap) (t: list heap)
-  : Lemma (moves g (h :: t) g' <==> mark_move g h /\ moves h t g') = ()
+let moves_cons (g h g': heap) (sp q sp': MP.scan_pos) (t: list (heap & MP.scan_pos))
+  : Lemma (moves g sp ((h, q) :: t) g' sp' <==> mark_move g sp h q /\ moves h q t g' sp') = ()
 
-let rec moves_append (g1 g2 g3: heap) (l1 l2: list heap)
-  : Lemma (requires moves g1 l1 g2 /\ moves g2 l2 g3)
-          (ensures moves g1 (FStar.List.Tot.append l1 l2) g3)
+let rec moves_append (g1 g2 g3: heap) (sp1 sp2 sp3: MP.scan_pos) (l1 l2: list (heap & MP.scan_pos))
+  : Lemma (requires moves g1 sp1 l1 g2 sp2 /\ moves g2 sp2 l2 g3 sp3)
+          (ensures moves g1 sp1 (FStar.List.Tot.append l1 l2) g3 sp3)
           (decreases l1)
   = match l1 with
     | [] -> ()
-    | h :: t -> moves_append h g2 g3 t l2
+    | (h, q) :: t -> moves_append h g2 g3 q sp2 sp3 t l2
 
-let rec moves_ind (p: heap -> prop)
-  (step: (g: heap) -> (g': heap) -> Lemma (requires p g /\ mark_move g g') (ensures p g'))
-  (g: heap) (l: list heap) (g': heap)
-  : Lemma (requires p g /\ moves g l g') (ensures p g') (decreases l)
+let rec moves_ind (p: heap -> MP.scan_pos -> prop)
+  (step: (g: heap) -> (sp: MP.scan_pos) -> (g': heap) -> (sp': MP.scan_pos) ->
+         Lemma (requires p g sp /\ mark_move g sp g' sp') (ensures p g' sp'))
+  (g: heap) (sp: MP.scan_pos) (l: list (heap & MP.scan_pos)) (g': heap) (sp': MP.scan_pos)
+  : Lemma (requires p g sp /\ moves g sp l g' sp') (ensures p g' sp') (decreases l)
   = match l with
     | [] -> ()
-    | h :: t -> step g h; moves_ind p step h t g'
+    | (h, q) :: t -> step g sp h q; moves_ind p step h q t g' sp'
 #pop-options
 
-let mark_steps_refl g = moves_nil g; assert (moves g [] g)
+let mark_steps_refl g sp = moves_nil g sp; assert (moves g sp [] g sp)
 
-let mark_steps_trans g1 g2 g3 =
-  eliminate exists (l1: list heap). moves g1 l1 g2
+let mark_steps_trans g1 g2 g3 sp1 sp2 sp3 =
+  eliminate exists (l1: list (heap & MP.scan_pos)). moves g1 sp1 l1 g2 sp2
   with begin
-    eliminate exists (l2: list heap). moves g2 l2 g3
-    with moves_append g1 g2 g3 l1 l2
+    eliminate exists (l2: list (heap & MP.scan_pos)). moves g2 sp2 l2 g3 sp3
+    with moves_append g1 g2 g3 sp1 sp2 sp3 l1 l2
   end
 
-let mark_steps_move g g' =
-  moves_nil g'; moves_cons g g' g' [];
-  assert (moves g [g'] g')
+let mark_steps_move g g' sp sp' =
+  moves_nil g' sp'; moves_cons g g' g' sp sp' sp' [];
+  assert (moves g sp [(g', sp')] g' sp')
 
-let mark_steps_snoc g1 g2 g3 =
-  mark_steps_move g2 g3; mark_steps_trans g1 g2 g3
+let mark_steps_snoc g1 g2 g3 sp1 sp2 sp3 =
+  mark_steps_move g2 g3 sp2 sp3; mark_steps_trans g1 g2 g3 sp1 sp2 sp3
 
-let mark_steps_ind p step g g' =
-  eliminate exists (l: list heap). moves g l g'
-  with moves_ind p step g l g'
+let mark_steps_ind p step g sp g' sp' =
+  eliminate exists (l: list (heap & MP.scan_pos)). moves g sp l g' sp'
+  with moves_ind p step g sp l g' sp'
 
 /// ---------------------------------------------------------------------------
 /// Colour changes
@@ -187,33 +188,57 @@ let black_move_is_step g x =
 /// The marking invariant
 /// ---------------------------------------------------------------------------
 
-let grey_move_inv (g g': heap) (outside_refs: obj_addr -> prop)
-  : Lemma (requires MP.marking_inv g outside_refs /\ grey_move g g') (ensures MP.marking_inv g' outside_refs)
-  = eliminate exists (x: obj_addr) (k: U64.t{U64.v k >= 1}).
-      scan_target g x /\ U64.v k <= U64.v (wosize_of_object x g) /\ g' == scan_field g x k
-    with MM.darken_inv g outside_refs (HG.get_field g x k)
-
-let black_move_inv (g g': heap) (outside_refs: obj_addr -> prop)
-  : Lemma (requires MP.marking_inv g outside_refs /\ black_move g g') (ensures MP.marking_inv g' outside_refs)
+let grey_move_inv (g g': heap) (sp sp': MP.scan_pos) (outside_refs: obj_addr -> prop)
+  : Lemma (requires MP.marking_inv g outside_refs sp /\ grey_move g sp g' sp')
+          (ensures MP.marking_inv g' outside_refs sp')
   = eliminate exists (x: obj_addr).
-      Seq.mem x (objects zero_addr g) /\ is_gray x g /\
-      (is_no_scan x g \/ fields_dark g x 1 (U64.v (wosize_of_object x g))) /\
-      g' == makeBlack x g
+      x == sp.MP.cur /\ scan_target g x /\ 1 <= sp.MP.fld /\ sp.MP.fld <= U64.v (wosize_of_object x g) /\
+      g' == scan_field g x (U64.uint_to_t sp.MP.fld) /\ sp' == { sp with MP.fld = sp.MP.fld + 1 }
     with begin
-      black_move_is_step g x;
-      MP.marking_inv_step g outside_refs x
+      let k : (k: U64.t{U64.v k >= 1}) = U64.uint_to_t sp.MP.fld in
+      MM.darken_inv g outside_refs sp (HG.get_field g x k);
+      scan_field_dark g x k;
+      scan_field_is_grey g x k;
+      // the darkening keeps the walk, so the field's target is not white
+      let v = HG.get_field g x k in
+      (if is_pointer v && is_white (resolve_object v g) g then begin
+         let t = resolve_object v g in
+         makeGray_eq t g;
+         Mark.color_preserves_get_field t x g Header.Gray k;
+         color_change_preserves_wosize_any t x g Header.Gray;
+         (if x = t then color_preserves_is_no_scan x g Header.Gray
+          else color_change_preserves_other_is_no_scan t x g Header.Gray)
+       end);
+      MP.marking_inv_advance g' outside_refs sp x
     end
 
-let mark_move_inv g g' outside_refs =
-  FStar.Classical.move_requires (grey_move_inv g g') outside_refs;
-  FStar.Classical.move_requires (black_move_inv g g') outside_refs
+let black_move_inv (g g': heap) (sp sp': MP.scan_pos) (outside_refs: obj_addr -> prop)
+  : Lemma (requires MP.marking_inv g outside_refs sp /\ black_move g sp g' sp')
+          (ensures MP.marking_inv g' outside_refs sp')
+  = eliminate exists (x: obj_addr).
+      Seq.mem x (objects zero_addr g) /\ is_gray x g /\ MP.all_scanned g sp x /\
+      g' == makeBlack x g /\ sp' == MP.blackened_pos sp x
+    with MP.marking_inv_blacken g outside_refs sp x
 
-let mark_steps_inv g g' outside_refs =
-  let p (h: heap) : prop = MP.marking_inv h outside_refs in
-  let step (h h': heap) : Lemma (requires p h /\ mark_move h h') (ensures p h') =
-    mark_move_inv h h' outside_refs
+let begin_move_inv (g g': heap) (sp sp': MP.scan_pos) (outside_refs: obj_addr -> prop)
+  : Lemma (requires MP.marking_inv g outside_refs sp /\ begin_move g sp g' sp')
+          (ensures MP.marking_inv g' outside_refs sp')
+  = eliminate exists (x: obj_addr).
+      sp.MP.cur == 0UL /\ scan_target g x /\ g' == g /\ sp' == { MP.cur = x; MP.fld = 1 }
+    with MP.marking_inv_begin g outside_refs sp x
+
+let mark_move_inv g g' sp sp' outside_refs =
+  FStar.Classical.move_requires (grey_move_inv g g' sp sp') outside_refs;
+  FStar.Classical.move_requires (black_move_inv g g' sp sp') outside_refs;
+  FStar.Classical.move_requires (begin_move_inv g g' sp sp') outside_refs
+
+let mark_steps_inv g g' sp sp' outside_refs =
+  let p (h: heap) (q: MP.scan_pos) : prop = MP.marking_inv h outside_refs q in
+  let step (h: heap) (q: MP.scan_pos) (h': heap) (q': MP.scan_pos)
+    : Lemma (requires p h q /\ mark_move h q h' q') (ensures p h' q') =
+    mark_move_inv h h' q q' outside_refs
   in
-  mark_steps_ind p step g g'
+  mark_steps_ind p step g sp g' sp'
 
 /// ---------------------------------------------------------------------------
 /// Darker
@@ -277,11 +302,11 @@ let cc_move_darker (g: heap) (t: obj_addr) (c: color)
     introduce forall (v: obj_addr). resolve_object v g' == resolve_object v g
     with color_change_preserves_resolve t v g c
 
-let grey_move_darker (g g': heap)
-  : Lemma (requires well_formed_heap g /\ grey_move g g') (ensures darker g g')
-  = eliminate exists (x: obj_addr) (k: U64.t{U64.v k >= 1}).
-      scan_target g x /\ U64.v k <= U64.v (wosize_of_object x g) /\ g' == scan_field g x k
-    with begin
+let scan_field_darker (g g': heap) (x: obj_addr) (k: U64.t{U64.v k >= 1})
+  : Lemma (requires well_formed_heap g /\ scan_target g x /\ U64.v k <= U64.v (wosize_of_object x g) /\
+                    g' == scan_field g x k)
+          (ensures darker g g')
+  = begin
       scan_field_is_grey g x k;
       let v = HG.get_field g x k in
       if is_pointer v && is_white (resolve_object v g) g then begin
@@ -290,29 +315,37 @@ let grey_move_darker (g g': heap)
       end else darker_refl g
     end
 
-let black_move_darker (g g': heap)
-  : Lemma (requires well_formed_heap g /\ black_move g g') (ensures darker g g')
+let grey_move_darker (g g': heap) (sp sp': MP.scan_pos)
+  : Lemma (requires well_formed_heap g /\ grey_move g sp g' sp') (ensures darker g g')
   = eliminate exists (x: obj_addr).
-      Seq.mem x (objects zero_addr g) /\ is_gray x g /\
-      (is_no_scan x g \/ fields_dark g x 1 (U64.v (wosize_of_object x g))) /\
-      g' == makeBlack x g
+      x == sp.MP.cur /\ scan_target g x /\ 1 <= sp.MP.fld /\ sp.MP.fld <= U64.v (wosize_of_object x g) /\
+      g' == scan_field g x (U64.uint_to_t sp.MP.fld) /\ sp' == { sp with MP.fld = sp.MP.fld + 1 }
+    with scan_field_darker g g' x (U64.uint_to_t sp.MP.fld)
+
+let black_move_darker (g g': heap) (sp sp': MP.scan_pos)
+  : Lemma (requires well_formed_heap g /\ black_move g sp g' sp') (ensures darker g g')
+  = eliminate exists (x: obj_addr).
+      Seq.mem x (objects zero_addr g) /\ is_gray x g /\ MP.all_scanned g sp x /\
+      g' == makeBlack x g /\ sp' == MP.blackened_pos sp x
     with begin
       makeBlack_eq x g;
       cc_move_darker g x Header.Black
     end
 
-let mark_move_darker g g' =
-  FStar.Classical.move_requires (grey_move_darker g) g';
-  FStar.Classical.move_requires (black_move_darker g) g'
+let mark_move_darker g g' sp sp' =
+  FStar.Classical.move_requires (grey_move_darker g g' sp) sp';
+  FStar.Classical.move_requires (black_move_darker g g' sp) sp';
+  if FStar.IndefiniteDescription.strong_excluded_middle (begin_move g sp g' sp') then darker_refl g
 
-let mark_steps_darker g g' =
-  let p (h: heap) : prop = darker g h in
-  let step (h h': heap) : Lemma (requires p h /\ mark_move h h') (ensures p h') =
-    mark_move_darker h h';
+let mark_steps_darker g g' sp sp' =
+  let p (h: heap) (q: MP.scan_pos) : prop = darker g h in
+  let step (h: heap) (q: MP.scan_pos) (h': heap) (q': MP.scan_pos)
+    : Lemma (requires p h q /\ mark_move h q h' q') (ensures p h' q') =
+    mark_move_darker h h' q q';
     darker_trans g h h'
   in
   darker_refl g;
-  mark_steps_ind p step g g'
+  mark_steps_ind p step g sp g' sp'
 
 /// Dark fields stay dark: the fields and their resolutions are kept, and the
 /// target of a pointer field of a non-free scannable block is on the walk,
