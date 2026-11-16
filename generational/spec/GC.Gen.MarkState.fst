@@ -45,7 +45,7 @@ let marking_cache_done g st ov p =
   FStar.Classical.forall_intro aux
 
 /// ---------------------------------------------------------------------------
-/// Bodies and fields
+/// Bodies
 /// ---------------------------------------------------------------------------
 
 let bodies_disjoint g x y a =
@@ -54,121 +54,18 @@ let bodies_disjoint g x y a =
     SPM.in_body_block g y a
   end
 
-/// A word in the body of `x` lies outside the body of every other block.
-let outside_body (g: heap) (x y: obj_addr) (a: hp_addr)
-  : Lemma (requires Seq.mem x (objects zero_addr g) /\ Seq.mem y (objects zero_addr g) /\ x <> y /\
-                    SPM.in_body g x a)
-          (ensures U64.v a < U64.v y \/ U64.v a >= U64.v y + U64.v (wosize_of_object y g) * 8)
-  = FStar.Classical.move_requires (bodies_disjoint g x y) a
-
-/// A word in the body of a non-free block is no header.
-let body_not_header (g: heap) (y t: obj_addr) (b: hp_addr)
-  : Lemma (requires Seq.mem y (objects zero_addr g) /\ ~(is_blue y g) /\ SPM.in_body g y b /\
-                    Seq.mem t (objects zero_addr g))
-          (ensures hd_address t <> b)
-  = SPM.in_body_block g y b;
-    SPI.colour_of g y;
-    SPI.body_word g (hd_address y) b;
-    SPI.obj_pos g t
-
-/// The field `k` of `y` is the word `y + (k - 1) * 8`.
-let field_word (g: heap) (y: obj_addr) (k: U64.t{U64.v k >= 1})
-  : Lemma (requires U64.v y + U64.v k * 8 <= heap_size)
-          (ensures U64.v y + (U64.v k - 1) * 8 < heap_size /\
-                   (U64.v y + (U64.v k - 1) * 8) % 8 == 0 /\
-                   HG.get_field g y k == read_word g (U64.uint_to_t (U64.v y + (U64.v k - 1) * 8)))
-  = hd_address_spec y
-
-/// A field stays dark when its word, the header at the pointer and the header
-/// of its resolved target are unchanged.
-let field_dark_kept (g g': heap) (y: obj_addr) (k: U64.t{U64.v k >= 1})
-  : Lemma (requires S.field_dark g y k /\ HG.get_field g' y k == HG.get_field g y k /\
-                    (is_pointer (HG.get_field g y k) ==>
-                      (let w : obj_addr = HG.get_field g y k in
-                       read_word g' (hd_address w) == read_word g (hd_address w) /\
-                       read_word g' (hd_address (resolve_object w g)) ==
-                         read_word g (hd_address (resolve_object w g)))))
-          (ensures S.field_dark g' y k)
-  = if is_pointer (HG.get_field g y k) then begin
-      let w : obj_addr = HG.get_field g y k in
-      resolve_object_locality w g g';
-      MM.header_kept_facts g g' (resolve_object w g)
-    end
-
-/// ---------------------------------------------------------------------------
-/// A write into a body keeps the dark fields of the other words
-/// ---------------------------------------------------------------------------
-
-/// The field `k` of a non-free scannable block `y`, if it is not the word
-/// written, stays dark: the write touches no header of a block, and not the
-/// infix header a field may point at (it lies in the body of a closure that
-/// is not free, and `x` is not one).
-let field_dark_write (free: free_def) (g: heap) (y x: obj_addr) (a: hp_addr) (v: U64.t)
-  (k: U64.t{U64.v k >= 1})
-  : Lemma (requires free_def_ok free /\ well_formed_heap_with free g /\ in_use free g y /\
-                    ~(is_no_scan y g) /\ U64.v k <= U64.v (wosize_of_object y g) /\
-                    Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\ SPM.in_body g x a /\
-                    ~(in_use free g x /\ is_closure x g) /\
-                    U64.v a <> U64.v y + (U64.v k - 1) * 8 /\
-                    S.field_dark g y k)
-          (ensures S.field_dark (write_word g a v) y k)
-  = let g' = write_word g a v in
-    wf_with_parts ();
-    free_def_ok_elim free;
-    hd_address_spec y;
-    let j : nat = U64.v k - 1 in
-    field_word g y k;
-    field_word g' y k;
-    let fa : hp_addr = U64.uint_to_t (U64.v y + j * 8) in
-    read_write_different g a fa v;
-    if is_pointer (HG.get_field g y k) then begin
-      let w : obj_addr = HG.get_field g y k in
-      FT.wf_with_field free g y j;
-      let r = resolve_object w g in
-      body_not_header g x r a;
-      read_write_different g a (hd_address r) v;
-      if is_infix w g then begin
-        infix_addr_wf_elim g (objects zero_addr g) w;
-        parent_closure_addr_nat_spec w g;
-        resolve_infix_spec w g;
-        hd_address_spec w;
-        SPM.other_body g x r a;
-        SPM.in_body_block g r (hd_address w);
-        read_write_different g a (hd_address w) v
-      end else
-        resolve_non_infix w g
-    end;
-    field_dark_kept g g' y k
-
-let fields_dark_write (free: free_def) (g: heap) (y x: obj_addr) (a: hp_addr) (v: U64.t) (n: nat)
-  : Lemma (requires free_def_ok free /\ well_formed_heap_with free g /\ in_use free g y /\
-                    ~(is_no_scan y g) /\ n <= U64.v (wosize_of_object y g) /\
-                    Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\ SPM.in_body g x a /\
-                    ~(in_use free g x /\ is_closure x g) /\
-                    (U64.v a < U64.v y \/ U64.v a >= U64.v y + n * 8) /\
-                    S.fields_dark g y 1 n)
-          (ensures S.fields_dark (write_word g a v) y 1 n)
-  = let aux (k: U64.t{U64.v k >= 1})
-      : Lemma (1 <= U64.v k /\ U64.v k <= n ==> S.field_dark (write_word g a v) y k)
-      = if U64.v k <= n then field_dark_write free g y x a v k
-    in
-    FStar.Classical.forall_intro aux
-
 /// ---------------------------------------------------------------------------
 /// A change that keeps every block that is not free, with its header
 /// ---------------------------------------------------------------------------
 
 /// The cache survives a change that keeps every block that is not free with
-/// its header, makes no new grey object, and keeps the partly scanned
-/// object's scanned fields dark.
+/// its header and makes no new grey object.
 let cache_kept (g g': heap) (st: seq obj_addr) (ov: bool) (p: mark_pos)
   : Lemma (requires marking_cache g st ov p /\
                     (forall (y: obj_addr). Seq.mem y (objects zero_addr g) /\ ~(is_blue y g) ==>
                        Seq.mem y (objects zero_addr g') /\
                        read_word g' (hd_address y) == read_word g (hd_address y)) /\
-                    (forall (y: obj_addr). grey_obj g' y ==> grey_obj g y) /\
-                    (p.cur <> 0UL ==> is_val_addr p.cur /\
-                                      S.fields_dark g' (p.cur <: obj_addr) 1 (U64.v p.fld - 1)))
+                    (forall (y: obj_addr). grey_obj g' y ==> grey_obj g y))
           (ensures marking_cache g' st ov p)
   = let keep (y: obj_addr)
       : Lemma (requires Seq.mem y (objects zero_addr g) /\ ~(is_blue y g))
@@ -206,14 +103,6 @@ let mark_cache_write g ph st ov p x a v =
     mark_cache_marking g st ov p;
     mark_cache_marking g' st ov p;
     write_keeps g x a v;
-    if p.cur <> 0UL then begin
-      let c : obj_addr = p.cur in
-      MPA.free_or_new_ok x;
-      Mark.colors_exclusive x g;
-      Mark.colors_exclusive c g;
-      outside_body g x c a;
-      fields_dark_write (MPA.free_or_new x) g c x a v (U64.v p.fld - 1)
-    end;
     cache_kept g g' st ov p
   | _ ->
     mark_cache_not_marking g ph st ov p;
@@ -225,21 +114,10 @@ let mark_cache_write g ph st ov p x a v =
 
 let mark_cache_barrier_write g st ov p x a v =
   let g' = write_word g a v in
-  let p' = reset_cur p a in
   mark_cache_marking g st ov p;
-  mark_cache_marking g' st ov p';
+  mark_cache_marking g' st ov p;
   write_keeps g x a v;
-  if p.cur <> 0UL then begin
-    let c : obj_addr = p.cur in
-    if not (in_scanned p a) then begin
-      free_stw_ok ();
-      Mark.colors_exclusive c g;
-      if x <> c then outside_body g x c a;
-      fields_dark_write free_stw g c x a v (U64.v p.fld - 1)
-    end
-  end;
-  assert (marking_cache g st ov p');
-  cache_kept g g' st ov p'
+  cache_kept g g' st ov p
 
 /// ---------------------------------------------------------------------------
 /// Darkening
@@ -272,42 +150,6 @@ let grey_greys (g: heap) (t: obj_addr)
     in
     FStar.Classical.forall_intro col
 
-/// A dark field of a block that is not free stays dark when a white block is
-/// greyed.
-let field_dark_grey (g: heap) (t y: obj_addr) (k: U64.t{U64.v k >= 1})
-  : Lemma (requires blocks_fit g /\ Seq.mem t (objects zero_addr g) /\ is_white t g /\
-                    Seq.mem y (objects zero_addr g) /\ ~(is_blue y g) /\
-                    U64.v k <= U64.v (wosize_of_object y g) /\ S.field_dark g y k)
-          (ensures S.field_dark (makeGray t g) y k)
-  = let g1 = makeGray t g in
-    makeGray_eq t g;
-    hd_address_spec y;
-    field_word g y k;
-    field_word g1 y k;
-    let fa : hp_addr = U64.uint_to_t (U64.v y + (U64.v k - 1) * 8) in
-    body_not_header g y t fa;
-    color_change_preserves_other_read t fa g Header.Gray;
-    if is_pointer (HG.get_field g y k) then begin
-      let w : obj_addr = HG.get_field g y k in
-      color_change_preserves_resolve t w g Header.Gray;
-      let r = resolve_object w g in
-      if r <> t then begin
-        grey_other g t r;
-        MM.header_kept_facts g g1 r
-      end
-    end
-
-let fields_dark_grey (g: heap) (t y: obj_addr) (n: nat)
-  : Lemma (requires blocks_fit g /\ Seq.mem t (objects zero_addr g) /\ is_white t g /\
-                    Seq.mem y (objects zero_addr g) /\ ~(is_blue y g) /\
-                    n <= U64.v (wosize_of_object y g) /\ S.fields_dark g y 1 n)
-          (ensures S.fields_dark (makeGray t g) y 1 n)
-  = let aux (k: U64.t{U64.v k >= 1})
-      : Lemma (1 <= U64.v k /\ U64.v k <= n ==> S.field_dark (makeGray t g) y k)
-      = if U64.v k <= n then field_dark_grey g t y k
-    in
-    FStar.Classical.forall_intro aux
-
 let mark_cache_darken g st ov p w cap =
   mark_cache_marking g st ov p;
   let ov' = ov || Seq.length st = cap in
@@ -336,12 +178,6 @@ let mark_cache_darken g st ov p w cap =
         end
     in
     FStar.Classical.forall_intro kept;
-    if p.cur <> 0UL then begin
-      let c : obj_addr = p.cur in
-      wf_parts ();
-      Mark.colors_exclusive c g;
-      fields_dark_grey g t c (U64.v p.fld - 1)
-    end;
     assert (MM.darken g w == g1);
     mark_cache_marking g1 st' ov' p
   end else begin
@@ -368,59 +204,15 @@ let mark_cache_minor minor g fp roots st ov p =
     = GMM.minor_keeps_block minor g fp roots y
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires keep);
-  if p.cur <> 0UL then begin
-    let c : obj_addr = p.cur in
-    Mark.colors_exclusive c g;
-    let n = U64.v p.fld - 1 in
-    let aux (k: U64.t{U64.v k >= 1})
-      : Lemma (1 <= U64.v k /\ U64.v k <= n ==> S.field_dark g' c k)
-      = if U64.v k <= n then GMM.minor_keeps_field_dark minor g fp roots c k
-    in
-    FStar.Classical.forall_intro aux
-  end;
   cache_kept g g' st ov p
 
 /// ---------------------------------------------------------------------------
 /// A change that keeps every non-free block
 /// ---------------------------------------------------------------------------
 
-/// A field of a non-free scannable block stays dark across a change that
-/// keeps every non-free block: the same word, resolving to the same block,
-/// which is non-free so keeps its header.
-let field_dark_keeps (g g': heap) (c: obj_addr) (k: U64.t{U64.v k >= 1})
-  : Lemma (requires well_formed_heap g /\ MPA.keeps_blocks free_stw g g' /\ in_use free_stw g c /\
-                    ~(is_no_scan c g) /\ U64.v k <= U64.v (wosize_of_object c g) /\ S.field_dark g c k)
-          (ensures S.field_dark g' c k)
-  = free_stw_ok ();
-    free_def_ok_elim free_stw;
-    wf_with_parts ();
-    hd_address_spec c;
-    let j : nat = U64.v k - 1 in
-    field_word g c k;
-    let fa : hp_addr = U64.uint_to_t (U64.v c + j * 8) in
-    SPM.in_body_block g c fa;
-    assert (read_word g' fa == read_word g fa);
-    field_word g' c k;
-    if is_pointer (HG.get_field g c k) then begin
-      let w : obj_addr = HG.get_field g c k in
-      FT.wf_with_field free_stw g c j;
-      MPA.keeps_blocks_resolve free_stw g g' w;
-      MM.header_kept_facts g g' (resolve_object w g)
-    end
-
 let mark_cache_keeps_blocks g g' st ov p =
   mark_cache_marking g st ov p;
   mark_cache_marking g' st ov p;
   free_stw_ok ();
   free_def_ok_elim free_stw;
-  if p.cur <> 0UL then begin
-    let c : obj_addr = p.cur in
-    Mark.colors_exclusive c g;
-    let n = U64.v p.fld - 1 in
-    let aux (k: U64.t{U64.v k >= 1})
-      : Lemma (1 <= U64.v k /\ U64.v k <= n ==> S.field_dark g' c k)
-      = if U64.v k <= n then field_dark_keeps g g' c k
-    in
-    FStar.Classical.forall_intro aux
-  end;
   cache_kept g g' st ov p

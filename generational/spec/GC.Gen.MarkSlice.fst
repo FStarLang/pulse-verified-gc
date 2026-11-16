@@ -16,6 +16,7 @@ module MBP = GC.Impl.MarkBoundedPrecondition
 module SweepInv = GC.Spec.SweepInv
 module Mark = GC.Spec.Mark
 module Header = GC.Lib.Header
+module MP = GC.Spec.MarkPhase
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 10"
 
@@ -136,15 +137,6 @@ let field_target_mem (g: heap) (x: obj_addr) (k: U64.t{U64.v k >= 1})
   = field_points_to g x k;
     points_to_target_not_blue g x (HG.get_field g x k)
 
-/// The fields `1 .. k-1` dark and the field `k` dark: `1 .. k` dark.
-let fields_dark_snoc (g: heap) (x: obj_addr) (k: U64.t{U64.v k >= 1})
-  : Lemma (requires S.fields_dark g x 1 (U64.v k - 1) /\ S.field_dark g x k)
-          (ensures S.fields_dark g x 1 (U64.v k))
-  = let aux (j: U64.t{U64.v j >= 1}) : Lemma (1 <= U64.v j /\ U64.v j <= U64.v k ==> S.field_dark g x j) =
-      if U64.v j = U64.v k then U64.v_inj j k
-    in
-    FStar.Classical.forall_intro aux
-
 let slice_scan_field g st ov p cap =
   let x : obj_addr = p.cur in
   let k : (k: U64.t{U64.v k >= 1}) = p.fld in
@@ -159,13 +151,11 @@ let slice_scan_field g st ov p cap =
   if is_pointer w then field_target_mem g x k;
   assert (S.scan_target g x);
   assert (g' == S.scan_field g x k);
-  assert (S.grey_move g g');
-  S.mark_move_darker g g';
+  assert (U64.uint_to_t (scan_of p).MP.fld == k);
+  assert (S.grey_move g (scan_of p) g' (scan_of p'));
+  S.mark_move_darker g g' (scan_of p) (scan_of p');
   S.scan_field_is_grey g x k;
-  S.scan_field_dark g x k;
   S.scan_field_weight g x k;
-  S.darker_fields_dark g g' x 1 (U64.v k - 1);
-  fields_dark_snoc g' x k;
   entries_darker g g' st;
   rescan_darker g g' p;
   if darken_target g w then begin
@@ -190,23 +180,24 @@ let slice_scan_field g st ov p cap =
     assert (covered g st ov p')
   end
 
-/// Blackening a grey block of the walk whose fields are dark (or that has none
-/// to scan): a black move; every other grey block stays grey, so the cache
-/// holds with the block dropped from the stack, the partly scanned object or
-/// both (`st'` a stack whose grey entries cover those of `st` but `x`).
+/// Blackening a grey block of the walk whose fields are all scanned (or that
+/// has none to scan): a black move; every other grey block stays grey, so the
+/// cache holds with the block dropped from the stack, the partly scanned
+/// object or both (`st'` a stack whose grey entries cover those of `st` but
+/// `x`).
 let blacken_cache (g: heap) (x: obj_addr) (st st': seq obj_addr) (ov: bool) (p p': mark_pos)
   : Lemma (requires well_formed_heap g /\ Seq.mem x (objects zero_addr g) /\ is_gray x g /\
-                    (is_no_scan x g \/ S.fields_dark g x 1 (U64.v (wosize_of_object x g))) /\
+                    MP.all_scanned g (scan_of p) x /\ scan_of p' == MP.blackened_pos (scan_of p) x /\
                     entries_ok g st' /\ cur_ok (makeBlack x g) p' /\ rescan_ok g p /\
                     p'.rc == p.rc /\ covered g st ov p /\
                     (forall (y: obj_addr). y <> x /\ grey_obj g y ==>
                        (Seq.mem y st ==> Seq.mem y st') /\ (y == p.cur ==> y == p'.cur)))
           (ensures (let g' = makeBlack x g in
                     marking_cache g' st' ov p' /\
-                    S.black_move g g' /\ S.mark_weight g' + 1 == S.mark_weight g))
+                    S.black_move g (scan_of p) g' (scan_of p') /\ S.mark_weight g' + 1 == S.mark_weight g))
   = let g' = makeBlack x g in
-    assert (S.black_move g g');
-    S.mark_move_darker g g';
+    assert (S.black_move g (scan_of p) g' (scan_of p'));
+    S.mark_move_darker g g' (scan_of p) (scan_of p');
     S.weight_black g x;
     black_facts x g;
     entries_darker g g' st';
@@ -225,6 +216,7 @@ let slice_pop_grey g x st ov p =
   entries_cons g x st;
   let p' = { p with cur = x; fld = 1UL } in
   assert (cur_ok g p');
+  assert (S.begin_move g (scan_of p) g (scan_of p'));
   let cov (y: obj_addr) : Lemma (requires grey_obj g y)
       (ensures Seq.mem y st \/ y == p'.cur \/ ov == true \/ (p'.rc <> 0UL /\ U64.v y > U64.v p'.rc)) =
     ()

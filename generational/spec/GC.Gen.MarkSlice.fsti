@@ -14,8 +14,11 @@
 ///     full), and once they are all scanned blacken it (`slice_blacken_cur`,
 ///     a `black_move`);
 ///   * **pop** an entry: a grey object with fields becomes the partly scanned
-///     object (`slice_pop_grey`), one without is blackened at once
-///     (`slice_pop_blacken`), a black one is skipped (`slice_pop_skip`);
+///     object (`slice_pop_grey`, a `begin_move`), one without is blackened at
+///     once (`slice_pop_blacken`), a black one is skipped (`slice_pop_skip`);
+///
+/// Each move is at the scan position of the cache (`scan_of p`), which the
+/// moves themselves update; the rescan cursor is not part of it.
 ///   * **rescan**, when the stack is empty: walk the blocks from the rescan
 ///     cursor pushing the grey ones (`slice_rescan_visit`), and stop at a
 ///     block that is not free once the stack is a quarter full or the budget
@@ -79,9 +82,9 @@ let dropped (g: heap) (st: seq obj_addr) (w: U64.t) (cap: nat) : GTot bool =
 /// The partly scanned object
 /// ---------------------------------------------------------------------------
 
-/// **Scanning the next field** of the partly scanned object: a grey move;
-/// the cache holds with the next field after it; and either nothing changed
-/// or the weight went down.
+/// **Scanning the next field** of the partly scanned object: a grey move (at
+/// the cache's scan position); the cache holds with the next field after it;
+/// and either nothing changed or the weight went down.
 val slice_scan_field (g: heap) (st: seq obj_addr) (ov: bool) (p: mark_pos) (cap: nat)
   : Lemma (requires marking_cache g st ov p /\ well_formed_heap g /\ Seq.length st <= cap /\
                     p.cur <> 0UL /\ U64.v p.fld <= U64.v (wosize_of_object p.cur g))
@@ -94,7 +97,8 @@ val slice_scan_field (g: heap) (st: seq obj_addr) (ov: bool) (p: mark_pos) (cap:
                     (is_pointer w ==> Seq.mem (resolve_object (w <: obj_addr) g) (objects zero_addr g)) /\
                     U64.v p.fld < pow2 64 - 1 /\
                     marking_cache g' st' ov' ({ p with fld = U64.add p.fld 1UL }) /\
-                    S.grey_move g g' /\ Seq.length st' <= cap /\
+                    S.grey_move g (scan_of p) g' (scan_of ({ p with fld = U64.add p.fld 1UL })) /\
+                    Seq.length st' <= cap /\
                     ((g' == g /\ st' == st /\ ov' == ov) \/ S.mark_weight g' + 1 == S.mark_weight g)))
 
 /// **Blackening the partly scanned object** once all its fields are scanned:
@@ -104,7 +108,8 @@ val slice_blacken_cur (g: heap) (st: seq obj_addr) (ov: bool) (p: mark_pos)
                     p.cur <> 0UL /\ U64.v p.fld == U64.v (wosize_of_object p.cur g) + 1)
           (ensures (let g' = makeBlack (p.cur <: obj_addr) g in
                     marking_cache g' st ov ({ p with cur = 0UL }) /\
-                    S.black_move g g' /\ S.mark_weight g' + 1 == S.mark_weight g))
+                    S.black_move g (scan_of p) g' (scan_of ({ p with cur = 0UL })) /\
+                    S.mark_weight g' + 1 == S.mark_weight g))
 
 /// ---------------------------------------------------------------------------
 /// Popping
@@ -114,14 +119,15 @@ val slice_blacken_cur (g: heap) (st: seq obj_addr) (ov: bool) (p: mark_pos)
 val slice_pop_grey (g: heap) (x: obj_addr) (st: seq obj_addr) (ov: bool) (p: mark_pos)
   : Lemma (requires marking_cache g (Seq.cons x st) ov p /\ p.cur == 0UL /\ is_gray x g /\
                     ~(is_no_scan x g) /\ U64.v (wosize_of_object x g) >= 1)
-          (ensures marking_cache g st ov ({ p with cur = x; fld = 1UL }))
+          (ensures marking_cache g st ov ({ p with cur = x; fld = 1UL }) /\
+                   S.begin_move g (scan_of p) g (scan_of ({ p with cur = x; fld = 1UL })))
 
 /// A grey object with nothing to scan is blackened at once.
 val slice_pop_blacken (g: heap) (x: obj_addr) (st: seq obj_addr) (ov: bool) (p: mark_pos)
   : Lemma (requires marking_cache g (Seq.cons x st) ov p /\ well_formed_heap g /\ p.cur == 0UL /\
                     is_gray x g /\ (is_no_scan x g \/ U64.v (wosize_of_object x g) == 0))
           (ensures (let g' = makeBlack x g in
-                    marking_cache g' st ov p /\ S.black_move g g' /\
+                    marking_cache g' st ov p /\ S.black_move g (scan_of p) g' (scan_of p) /\
                     S.mark_weight g' + 1 == S.mark_weight g))
 
 /// An entry that is no longer grey (blackened since it was pushed) is

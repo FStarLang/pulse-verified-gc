@@ -16,12 +16,14 @@
 ///     grey object it finds even if it is already on the stack); the slice
 ///     skips it;
 ///   * **the partly scanned object** (`p.cur`, 0 for none) is a grey block
-///     with fields to scan, and its fields before `p.fld` are dark
-///     (`cur_ok`, `GC.Spec.MarkPhase.Slice.fields_dark`): a slice that runs
-///     out of budget in the middle of an object leaves it there, grey, and
-///     the next slice resumes it at `p.fld` (4.14's `(object, next field)`
-///     entries).  The write barrier keeps the scanned fields dark: a write
-///     into one of them restarts the scan (`reset_cur`);
+///     with fields to scan, `p.fld` one of its fields or one past the last
+///     (`cur_ok`): a slice that runs out of budget in the middle of an object
+///     leaves it there, grey, and the next slice resumes it at `p.fld`
+///     (4.14's `(object, next field)` entries).  Nothing is asked of the
+///     fields already scanned: the marking invariant, at the scan position
+///     `scan_of p`, treats them as scanned edges, and the write barrier's
+///     contract covers a write into one (so the barrier never restarts the
+///     scan);
 ///   * **the rescan cursor** (`p.rc`, 0 for none) is the start of the heap or
 ///     the header of a block that is not free (`rescan_ok`): a rescan in
 ///     progress resumes there, and walking from it visits every block after
@@ -60,6 +62,7 @@ module SPM = GC.Spec.SweepPhase.Mutator
 module Promote = GC.Gen.Promote
 module S = GC.Spec.MarkPhase.Slice
 module MPA = GC.Spec.MarkPhase.Alloc
+module MP = GC.Spec.MarkPhase
 
 /// The positions beside the stack: the partly scanned object and its next
 /// field, and the rescan cursor (`cur = 0`, `rc = 0`: none).
@@ -67,6 +70,10 @@ type mark_pos = { cur: U64.t; fld: U64.t; rc: U64.t }
 
 /// No partly scanned object, no rescan.
 let no_pos : mark_pos = { cur = 0UL; fld = 1UL; rc = 0UL }
+
+/// The scan position of the marking invariant (`GC.Spec.MarkPhase.scan_pos`):
+/// the partly scanned object and its next field.
+let scan_of (p: mark_pos) : MP.scan_pos = { MP.cur = p.cur; MP.fld = U64.v p.fld }
 
 /// A grey object of the heap.
 let grey_obj (g: heap) (x: obj_addr) : prop =
@@ -76,15 +83,14 @@ let grey_obj (g: heap) (x: obj_addr) : prop =
 let entry_ok (g: heap) (y: obj_addr) : prop =
   Seq.mem y (objects zero_addr g) /\ ~(is_white y g) /\ ~(is_blue y g)
 
-/// The partly scanned object: a grey block with fields to scan, the fields
-/// before `fld` dark (`fld` is one past the last field once all are
-/// scanned, before it is blackened).
+/// The partly scanned object: a grey block with fields to scan, and its next
+/// field (`fld` is one past the last field once all are scanned, before it is
+/// blackened).
 let cur_ok (g: heap) (p: mark_pos) : prop =
   p.cur <> 0UL ==>
   (is_val_addr p.cur /\
    Seq.mem (p.cur <: obj_addr) (objects zero_addr g) /\ is_gray p.cur g /\ ~(is_no_scan p.cur g) /\
-   1 <= U64.v p.fld /\ U64.v p.fld <= U64.v (wosize_of_object p.cur g) + 1 /\
-   S.fields_dark g p.cur 1 (U64.v p.fld - 1))
+   1 <= U64.v p.fld /\ U64.v p.fld <= U64.v (wosize_of_object p.cur g) + 1)
 
 /// Where a rescan may resume: the start of the heap, or the header of a
 /// block that is not free.
@@ -163,27 +169,15 @@ val mark_cache_write (g: heap) (ph: Ph.gc_phase) (st: seq obj_addr) (ov: bool) (
                     (Ph.Marking? ph ==> is_black x g /\ well_formed_heap_with (MPA.free_or_new x) g))
           (ensures mark_cache_ok (write_word g a v) ph st ov p)
 
-/// Whether the body word `a` is a field of the partly scanned object that
-/// the slice has scanned already.
-let in_scanned (p: mark_pos) (a: U64.t) : bool =
-  p.cur <> 0UL && U64.v a >= U64.v p.cur && (U64.v a - U64.v p.cur) / 8 + 1 < U64.v p.fld
-
-/// **The barrier restarts the scan** of the partly scanned object when the
-/// program writes into a field the slice has scanned: that field may now
-/// hold a white object, so the object must not be blackened without
-/// scanning it again.
-let reset_cur (p: mark_pos) (a: U64.t) : mark_pos =
-  if in_scanned p a then { p with fld = 1UL } else p
-
 /// **The barrier's write** (after its darkening) into the body of a block
-/// that is not free keeps the cache, with the scan restarted if it wrote a
-/// scanned field.
+/// that is not free keeps the cache -- a scanned field of the partly scanned
+/// object included: the scan goes on where it was.
 val mark_cache_barrier_write (g: heap) (st: seq obj_addr) (ov: bool) (p: mark_pos)
   (x: obj_addr) (a: hp_addr) (v: U64.t)
   : Lemma (requires mark_cache_ok g Ph.Marking st ov p /\ well_formed_heap g /\
                     Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\ ~(is_closure x g) /\
                     SPM.in_body g x a)
-          (ensures mark_cache_ok (write_word g a v) Ph.Marking st ov (reset_cur p a))
+          (ensures mark_cache_ok (write_word g a v) Ph.Marking st ov p)
 
 /// The target `MM.darken` greys, if any: a white block the value points at.
 let darken_target (g: heap) (w: U64.t) : GTot bool =
@@ -201,8 +195,8 @@ val mark_cache_darken (g: heap) (st: seq obj_addr) (ov: bool) (p: mark_pos) (w: 
                     mark_cache_ok (MM.darken g w) Ph.Marking st' (ov || Seq.length st = cap) p))
 
 /// **A minor collection while marking** keeps the grey objects
-/// (`GMM.minor_keeps_greys`), every block that was not free with its header
-/// and its dark fields (`GMM.minor_keeps_block`), so the cache.
+/// (`GMM.minor_keeps_greys`) and every block that was not free with its
+/// header (`GMM.minor_keeps_block`), so the cache.
 val mark_cache_minor (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
   (st: seq obj_addr) (ov: bool) (p: mark_pos)
   : Lemma (requires GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\
@@ -212,8 +206,7 @@ val mark_cache_minor (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.
 /// **A change that keeps every non-free block** (`MPA.keeps_blocks`, e.g.
 /// an allocation while marking) and makes no new grey object keeps the
 /// cache: the stack's entries, the partly scanned object and the rescan
-/// cursor are non-free blocks, kept with their headers, and the partly
-/// scanned object's fields keep their values and their targets' colours.
+/// cursor are non-free blocks, kept with their headers.
 val mark_cache_keeps_blocks (g g': heap) (st: seq obj_addr) (ov: bool) (p: mark_pos)
   : Lemma (requires mark_cache_ok g Ph.Marking st ov p /\ well_formed_heap g /\
                     MPA.keeps_blocks free_stw g g' /\
