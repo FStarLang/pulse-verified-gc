@@ -41,26 +41,26 @@ let walk_ok (g: heap) (fp: U64.t) : prop =
   heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\ FLA.fl_ascending g fp
 
 #push-options "--z3rlimit 20"
-let shape_facts (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.t)
-  : Lemma (requires GI.phase_shape minor g fp ph)
+let shape_facts (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
+  : Lemma (requires GI.phase_shape minor g fp ph sp)
           (ensures free_def_ok (GI.phase_free ph) /\ well_formed_heap_with (GI.phase_free ph) g /\
                    walk_ok g fp /\ GenInv.minor_heap_shape minor /\
                    GenInv.minor_major_fields_not_free (GI.phase_free ph) minor g)
   = match ph with
     | Ph.Idle ->
-        GI.phase_shape_idle minor g fp;
+        GI.phase_shape_idle minor g fp sp;
         GI.phase_free_idle ();
         free_stw_ok ();
         GenInv.collection_heap_shape_elim minor g fp;
         GenInv.major_heap_shape_elim g fp;
         GenInv.minor_major_fields_not_free_stw minor g
     | Ph.Marking ->
-        GI.phase_shape_marking minor g fp;
+        GI.phase_shape_marking minor g fp sp;
         GI.phase_free_marking ();
         GenInv.collection_shape_with_elim Ph.Marking free_stw minor g fp;
         GenInv.major_shape_with_elim Ph.Marking free_stw g fp
     | Ph.Sweeping c ->
-        GI.phase_shape_sweeping minor g fp c;
+        GI.phase_shape_sweeping minor g fp c sp;
         GI.phase_free_sweeping c;
         SPI.free_incremental_ok c;
         SPI.sweep_inv_incremental_iff g fp c;
@@ -229,14 +229,14 @@ let modify_idle (minor: minor_state) (g: heap) (fp: U64.t) (x: obj_addr) (a: hp_
 
 /// Mid-sweep: the sweep phase (`SPM.write_sweep_phase`).
 #push-options "--z3rlimit 20"
-let modify_sweeping (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
+let modify_sweeping (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t) (sp: MP.scan_pos)
   (x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires GI.phase_shape minor g fp (Ph.Sweeping c) /\
+  : Lemma (requires GI.phase_shape minor g fp (Ph.Sweeping c) sp /\
                     SPM.program_write (SPI.free_incremental c) g x a v)
-          (ensures GI.phase_shape minor (write_word g a v) fp (Ph.Sweeping c))
+          (ensures GI.phase_shape minor (write_word g a v) fp (Ph.Sweeping c) sp)
   = let g' = write_word g a v in
-    GI.phase_shape_sweeping minor g fp c;
-    GI.phase_shape_sweeping minor g' fp c;
+    GI.phase_shape_sweeping minor g fp c sp;
+    GI.phase_shape_sweeping minor g' fp c sp;
     SPI.free_incremental_ok c;
     free_def_ok_elim (SPI.free_incremental c);
     SPM.write_sweep_phase g fp c x a v;
@@ -249,21 +249,22 @@ let modify_sweeping (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t)
 /// While marking: the deletion barrier (`MM.marking_write_barrier`) and the
 /// minor collection's shape at `free_stw`.
 #push-options "--z3rlimit 30"
-let modify_marking (minor: minor_state) (g: heap) (fp: U64.t) (x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires GI.phase_shape minor g fp Ph.Marking /\
+let modify_marking (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
+  (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires GI.phase_shape minor g fp Ph.Marking sp /\
                     SPM.program_write free_stw g x a v /\
-                    (~(is_no_scan x g) ==> MM.target_ok g (GMM.nursery_refs minor) v))
-          (ensures GI.phase_shape minor (write_word (MM.darken g (read_word g a)) a v) fp Ph.Marking)
+                    (~(is_no_scan x g) ==> MM.target_ok g (GMM.nursery_refs minor) sp v))
+          (ensures GI.phase_shape minor (write_word (MM.darken g (read_word g a)) a v) fp Ph.Marking sp)
   = let outside_refs = GMM.nursery_refs minor in
     let g1 = MM.darken g (read_word g a) in
     let g' = write_word g1 a v in
-    GI.phase_shape_marking minor g fp;
-    GI.phase_shape_marking minor g' fp;
+    GI.phase_shape_marking minor g fp sp;
+    GI.phase_shape_marking minor g' fp sp;
     free_stw_ok ();
     free_def_ok_elim free_stw;
     GenInv.collection_shape_with_elim Ph.Marking free_stw minor g fp;
     GenInv.major_shape_with_elim Ph.Marking free_stw g fp;
-    MM.marking_write_barrier g outside_refs x a v;
+    MM.marking_write_barrier g outside_refs sp x a v;
     darken_facts g fp (read_word g a);
     body_write_facts g1 fp x a v;
     PCS.free_list_shape_of_ascending g' fp;
@@ -273,19 +274,19 @@ let modify_marking (minor: minor_state) (g: heap) (fp: U64.t) (x: obj_addr) (a: 
     GenInv.collection_shape_with_intro Ph.Marking free_stw minor g' fp
 #pop-options
 
-let modify_phase_shape ph minor g fp x a v =
+let modify_phase_shape ph minor g fp sp x a v =
   match ph with
   | Ph.Idle ->
       GI.phase_free_idle ();
-      GI.phase_shape_idle minor g fp;
-      GI.phase_shape_idle minor (write_word g a v) fp;
+      GI.phase_shape_idle minor g fp sp;
+      GI.phase_shape_idle minor (write_word g a v) fp sp;
       modify_idle minor g fp x a v
   | Ph.Marking ->
       GI.phase_free_marking ();
-      modify_marking minor g fp x a v
+      modify_marking minor g fp sp x a v
   | Ph.Sweeping c ->
       GI.phase_free_sweeping c;
-      modify_sweeping minor g fp c x a v
+      modify_sweeping minor g fp c sp x a v
 
 /// The index of the field at a body word.
 let slot_index (g: heap) (x: obj_addr) (a: hp_addr)
@@ -309,8 +310,8 @@ let old_target (free: free_def) (g: heap) (x: obj_addr) (a: hp_addr)
     end
 
 #push-options "--z3rlimit 30"
-let modify_heap_facts ph minor g fp x a v =
-  shape_facts ph minor g fp;
+let modify_heap_facts ph minor g fp sp x a v =
+  shape_facts ph minor g fp sp;
   let free = GI.phase_free ph in
   free_def_ok_elim free;
   (if is_pointer (read_word g a) then begin
@@ -321,23 +322,23 @@ let modify_heap_facts ph minor g fp x a v =
 #pop-options
 
 #push-options "--z3rlimit 30"
-let modify_mark_cache ph minor g fp x a v st ov p cap =
-  modify_heap_facts ph minor g fp x a v;
+let modify_mark_cache ph minor g fp sp x a v st ov p cap =
+  modify_heap_facts ph minor g fp sp x a v;
   let old = read_word g a in
   if Ph.Marking? ph then begin
     GI.phase_free_marking ();
     free_def_ok_elim free_stw;
-    shape_facts ph minor g fp;
-    GI.phase_shape_marking minor g fp;
+    shape_facts ph minor g fp sp;
+    GI.phase_shape_marking minor g fp sp;
     let g1 = MM.darken g old in
-    MM.darken_inv g (GMM.nursery_refs minor) old;
+    MM.darken_inv g (GMM.nursery_refs minor) sp old;
     MS.mark_cache_darken g st ov p old cap;
     darken_facts g fp old;
     let st' = if MS.darken_target g old && Seq.length st < cap
               then Seq.cons (resolve_object (old <: obj_addr) g) st else st in
     MS.mark_cache_barrier_write g1 st' (ov || Seq.length st = cap) p x a v
   end else begin
-    shape_facts ph minor g fp;
+    shape_facts ph minor g fp sp;
     MS.mark_cache_off g (modify_heap ph g a v) ph ph st ov p
   end
 #pop-options
@@ -536,8 +537,8 @@ let darken_ref_table (g: heap) (fp: U64.t) (w: U64.t) (sl: seq U64.t) (n: nat)
 #pop-options
 
 #push-options "--z3rlimit 30"
-let modify_ref_table ph minor g fp x a v sl sl' n n' =
-  shape_facts ph minor g fp;
+let modify_ref_table ph minor g fp sp x a v sl sl' n n' =
+  shape_facts ph minor g fp sp;
   let free = GI.phase_free ph in
   free_def_ok_elim free;
   if Ph.Marking? ph then begin

@@ -14,8 +14,11 @@
 ///     word of a non-free, scannable block that is not a closure, and the
 ///     value is storable there (`SPM.program_write` for the phase's
 ///     definition of free).  While marking, the value is one the program
-///     holds, so if it is white the marker will reach it (`MM.target_ok`; the
-///     plan's roots obligation, option (a)).
+///     holds, so if it is white the marker will reach it from the scan
+///     position `sp` (`MM.target_ok`; the plan's roots obligation, option
+///     (a)).  The slot may be any field, a scanned field of the partly
+///     scanned object included: such a field is a scanned edge, like a black
+///     object's, and the obligation is the same.
 ///   * **What the barrier does** (`modify_heap`, `modify_records`): the heap
 ///     after, and whether the slot must be remembered.  A nursery pointer is
 ///     never a major pointer (nursery offsets lie below `zero_addr`), so the
@@ -23,8 +26,9 @@
 ///   * **It keeps the collector's state at every phase**
 ///     (`modify_phase_shape`): idle the stop-the-world shape, mid-sweep the
 ///     sweep phase (`SPM.write_sweep_phase`), while marking the marking
-///     invariant (`MM.marking_write_barrier`) and the minor collection's
-///     shape at `free_stw`.
+///     invariant at the same scan position (`MM.marking_write_barrier`) and
+///     the minor collection's shape at `free_stw`.  The scan of the partly
+///     scanned object is never restarted.
 ///   * **It keeps the remembered set** (`modify_ref_table`): if the table
 ///     covered every nursery pointer of a non-free block and named only
 ///     fields of non-free scannable blocks before the write, and the slot is
@@ -54,6 +58,7 @@ module Promote = GC.Gen.Promote
 module GB = GC.Gen.Base
 module SPI = GC.Spec.SweepPhase.Intrinsic
 module MS = GC.Gen.MarkState
+module MP = GC.Spec.MarkPhase
 
 /// A nursery pointer (4.14's `Is_block (v) && Is_young (v)`).
 let is_young (v: U64.t) : GTot bool = Promote.is_minor_pointer (GB.to_minor_offset v)
@@ -63,11 +68,12 @@ let is_young (v: U64.t) : GTot bool = Promote.is_minor_pointer (GB.to_minor_offs
 /// ---------------------------------------------------------------------------
 
 /// **What the program owes at a `caml_modify`** of the slot `a`, a body word
-/// of the block `x`, with the value `v`, at the phase `ph`.
-let modify_ok (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
-  : prop =
+/// of the block `x`, with the value `v`, at the phase `ph` and the scan
+/// position `sp`.
+let modify_ok (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (sp: MP.scan_pos)
+    (x: obj_addr) (a: hp_addr) (v: U64.t) : prop =
   SPM.program_write (GI.phase_free ph) g x a v /\ scannable g x /\
-  (Ph.Marking? ph ==> MM.target_ok g (GMM.nursery_refs minor) v)
+  (Ph.Marking? ph ==> MM.target_ok g (GMM.nursery_refs minor) sp v)
 
 /// The heap after the barrier: while marking, the old value darkened
 /// (`MM.darken`, 4.14's `caml_darken`) and then the write; at any other
@@ -82,38 +88,37 @@ let modify_records (g: heap) (a: hp_addr) (v: U64.t) : GTot bool =
   is_young v && not (is_young (read_word g a))
 
 /// **The barrier keeps the collector's state**, at every phase.
-val modify_phase_shape (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.t)
+val modify_phase_shape (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
   (x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires GI.phase_shape minor g fp ph /\ modify_ok ph minor g x a v)
-          (ensures GI.phase_shape minor (modify_heap ph g a v) fp ph)
+  : Lemma (requires GI.phase_shape minor g fp ph sp /\ modify_ok ph minor g sp x a v)
+          (ensures GI.phase_shape minor (modify_heap ph g a v) fp ph sp)
 
 /// What the implementation needs of the barrier besides: the definition of
 /// free is admissible, the slot's block is non-free, the old value is
 /// storable there (a major pointer to a non-free block, or not a major
 /// pointer), and outside marking the write keeps the walk and every header
 /// (so the sweep's derived caches).
-val modify_heap_facts (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.t)
+val modify_heap_facts (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
   (x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires GI.phase_shape minor g fp ph /\ modify_ok ph minor g x a v)
+  : Lemma (requires GI.phase_shape minor g fp ph sp /\ modify_ok ph minor g sp x a v)
           (ensures free_def_ok (GI.phase_free ph) /\ in_use (GI.phase_free ph) g x /\
                    SPI.storable (GI.phase_free ph) g (read_word g a) /\
                    (~(Ph.Marking? ph) ==> SPI.same_heads g (modify_heap ph g a v)))
 
 /// **The barrier keeps the mark cache** (`GC.Gen.MarkState`): while
 /// marking, the block it darkens is pushed, or the overflow flag raised when
-/// the stack is full, and a write into a field of the partly scanned object
-/// that the mark slice has scanned restarts its scan (`MS.reset_cur`); at
-/// any other phase nothing changes.
-val modify_mark_cache (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.t)
+/// the stack is full; the positions do not change (a write into a scanned
+/// field of the partly scanned object does not restart its scan); at any
+/// other phase nothing changes.
+val modify_mark_cache (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
   (x: obj_addr) (a: hp_addr) (v: U64.t) (st: seq obj_addr) (ov: bool) (p: MS.mark_pos) (cap: nat)
-  : Lemma (requires GI.phase_shape minor g fp ph /\ modify_ok ph minor g x a v /\
+  : Lemma (requires GI.phase_shape minor g fp ph sp /\ modify_ok ph minor g sp x a v /\
                     MS.mark_cache_ok g ph st ov p /\ Seq.length st <= cap)
           (ensures (let old = read_word g a in
                     let push = Ph.Marking? ph && MS.darken_target g old && Seq.length st < cap in
                     let st' = if push then Seq.cons (resolve_object (old <: obj_addr) g) st else st in
                     let ov' = ov || (Ph.Marking? ph && Seq.length st = cap) in
-                    let p' = if Ph.Marking? ph then MS.reset_cur p a else p in
-                    MS.mark_cache_ok (modify_heap ph g a v) ph st' ov' p'))
+                    MS.mark_cache_ok (modify_heap ph g a v) ph st' ov' p))
 
 /// ---------------------------------------------------------------------------
 /// The remembered set
@@ -145,9 +150,9 @@ val write_ref_table (free: free_def) (g: heap) (x: obj_addr) (a: hp_addr) (v: U6
 /// `modify_records`, the table still covers every nursery pointer of a
 /// non-free scannable block, and still names only fields of such blocks, for
 /// the phase's definition of free.
-val modify_ref_table (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.t)
+val modify_ref_table (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
   (x: obj_addr) (a: hp_addr) (v: U64.t) (sl sl': seq U64.t) (n n': nat)
-  : Lemma (requires GI.phase_shape minor g fp ph /\ modify_ok ph minor g x a v /\
+  : Lemma (requires GI.phase_shape minor g fp ph sp /\ modify_ok ph minor g sp x a v /\
                     RT.ref_table_covers_with (GI.phase_free ph) g sl n /\
                     RT.ref_table_sound_with (GI.phase_free ph) g sl n /\
                     appended (modify_records g a v) a sl n sl' n')
