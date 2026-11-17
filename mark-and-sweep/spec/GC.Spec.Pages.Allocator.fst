@@ -49,6 +49,44 @@ let unswept_words (g g': heap) (st st': pstate)
           (ensures forall (b: hp_addr). unswept st b ==> read_word g' b == read_word g b)
   = ()
 
+/// The new object's header is in a swept page (`AP.new_hdr_swept`, through
+/// the whitened heap).
+let new_swept (col: color) (g: heap) (st: pstate) (wz: nat)
+  : Lemma (requires pages_ok_mc g st)
+          (ensures (let (_, _, o) = AP.alloc_col col g st wz in
+                    o =!= 0UL ==>
+                    U64.v o >= 8 /\ U64.v o < heap_size /\ U64.v o % 8 == 0 /\
+                    ~(unswept st (hd_address (o <: obj_addr)))))
+  = eliminate exists (ys: list obj_addr).
+      GC.Spec.Pages.ColourFacts.live_list g ys /\ Inv.pages_ok (GC.Spec.Pages.Recolour.whiten g ys) st
+    with begin
+      let gw = GC.Spec.Pages.Recolour.whiten g ys in
+      AP.mc_ctx g ys st;
+      AP.alloc_whitened g ys st wz;
+      A.alloc_ok_at gw st wz;
+      let (_, _, o) = A.alloc g st wz in
+      if o <> 0UL then begin
+        let x : obj_addr = o in
+        hd_address_spec x;
+        let page (i: nat{i < n_pages})
+          : Lemma (~(not (entry st.pm i).swept /\ page_base i <= U64.v (hd_address x) /\
+                     U64.v (hd_address x) < page_base (i + 1)))
+          = if not (entry st.pm i).swept then AP.new_hdr_swept gw st wz i
+        in
+        FStar.Classical.forall_intro page
+      end
+    end
+
+/// For pages, `colour_at` is the phase's colour.
+let colour_new (ph: I.phase) (g: heap) (st: pstate) (wz: nat)
+  : Lemma (requires inv ph g st)
+          (ensures (let (_, _, o) = alloc ph g st wz in
+                    o =!= 0UL ==>
+                    U64.v o >= 8 /\ U64.v o < heap_size /\ U64.v o % 8 == 0 /\
+                    I.colour_at pages_allocator st ph (o <: obj_addr) == I.new_colour ph))
+  = inv_mc ph g st;
+    new_swept (I.new_colour ph) g st wz
+
 /// Allocation meets `alloc_post` in one phase.
 let alloc_post_at (ph: I.phase) (g: heap) (st: pstate) (wz: nat)
   : Lemma (requires inv ph g st)
@@ -57,6 +95,7 @@ let alloc_post_at (ph: I.phase) (g: heap) (st: pstate) (wz: nat)
   = let col = I.new_colour ph in
     inv_mc ph g st;
     AP.alloc_col_correct col g st wz;
+    colour_new ph g st wz;
     let (g', st', o) = alloc ph g st wz in
     unswept_words g g' st st';
     match ph with
@@ -86,6 +125,9 @@ let pages_allocator_ok () =
       then MP.mark_inv_recolour g s x c
   in
   FStar.Classical.forall_intro_4 mark
+
+let alloc_post_new_old ph g st wz =
+  colour_new ph g st wz
 
 let alloc_no_fit ph g st wz =
   inv_mc ph g st;

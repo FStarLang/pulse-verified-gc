@@ -9,7 +9,8 @@
 ///   1. its state and invariants, per phase (`inv`);
 ///   2. allocation, as an instance of `GC.Spec.AllocIface` (`pages_allocator`),
 ///      with the new object's colour set by the phase and only swept pages
-///      used;
+///      used, so that the interface's rule `colour_at` is the phase's
+///      colour here;
 ///   3. the sweep: of one pool page, of one run, and of everything, as a
 ///      step function iterated to completion with an invariant proved at
 ///      every step (`sweep_step`, `sweep_inv`), as on `akhil/sweep-refactor`;
@@ -86,16 +87,28 @@ let unswept (st: pstate) (b: hp_addr) : prop =
   exists (i: nat{i < n_pages}).
     not (entry st.pm i).swept /\ page_base i <= U64.v b /\ U64.v b < page_base (i + 1)
 
+/// The memory the sweep has yet to visit and the memory the allocator must
+/// not change are the same: the unswept pages.
 let pages_allocator : I.allocator = {
   ast = pstate;
   inv = inv;
   alloc = alloc;
   unswept = unswept;
+  pending = unswept;
 }
 
 /// **The page allocator meets the interface**, in every phase, and its
 /// invariant follows the collector's phase.
 val pages_allocator_ok : unit -> Lemma (I.allocator_ok pages_allocator /\ I.phase_ok pages_allocator)
+
+/// The new object lies in a swept page, so the interface's colour,
+/// `colour_at`, is the phase's: the second version of `alloc_post` gives
+/// the first (`I.alloc_post_v1`), which `pages_allocator_ok` proved before.
+val alloc_post_new_old (ph: I.phase) (g: heap) (st: pstate) (wz: nat)
+  : Lemma (requires inv ph g st)
+          (ensures (let (g', st', o) = alloc ph g st wz in
+                    I.alloc_post pages_allocator ph g st wz g' st' o ==>
+                    I.alloc_post_v1 pages_allocator ph g st wz g' st' o))
 
 /// When nothing fits, there was no room (`Th.no_fit`).
 val alloc_no_fit (ph: I.phase) (g: heap) (st: pstate) (wz: nat)
