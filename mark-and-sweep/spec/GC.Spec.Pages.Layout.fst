@@ -86,7 +86,17 @@ let class_of_least (w: small_size) (d: nat)
 
 let page_bytes : pos = page_wsize * 8
 
-let n_pages : nat = (heap_size - U64.v zero_addr) / page_bytes
+/// The heap after `zero_addr` holds at least two words: `zero_addr` and
+/// `heap_size` are word aligned, and a header fits after `zero_addr`.
+let heap_room ()
+  : Lemma (heap_size - U64.v zero_addr >= 16)
+  = assert (U64.v zero_addr % 8 == 0 /\ heap_size % 8 == 0)
+
+/// The pages leave at least two words at the end of the heap, its tail,
+/// which is always one free block (`GC.Spec.Pages.Shape.tail_shape`), so
+/// the walk of the heap always ends at `heap_size`: no page tail of one word
+/// is ever the heap's last word.
+let n_pages : nat = heap_room (); (heap_size - U64.v zero_addr - 16) / page_bytes
 
 /// The start of page `i`; page `n_pages` is the start of the heap's tail.
 let page_base (i: nat) : nat = U64.v zero_addr + i * page_bytes
@@ -102,8 +112,15 @@ let page_base_aligned (i: nat)
     FStar.Math.Lemmas.lemma_mod_plus (U64.v zero_addr) (i * page_wsize) 8
 
 let pages_end_bound ()
-  : Lemma (pages_end <= heap_size /\ heap_size - pages_end < page_bytes)
-  = FStar.Math.Lemmas.lemma_div_mod (heap_size - U64.v zero_addr) page_bytes
+  : Lemma (pages_end + 16 <= heap_size /\ heap_size - pages_end < page_bytes + 16)
+  = heap_room ();
+    FStar.Math.Lemmas.lemma_div_mod (heap_size - U64.v zero_addr - 16) page_bytes
+
+/// A page and two words are fewer than `pow2 20` words (C6), so the heap's
+/// tail is.
+let page_wsize_small ()
+  : Lemma (page_wsize + 2 < pow2 20)
+  = params_ok ()
 
 /// Pages are laid out in order, inside the heap.
 let page_base_mono (i j: nat)

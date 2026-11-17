@@ -64,10 +64,10 @@ static const char *a_name = "proto-B2";
 static pstate_t st;
 static void a_init(void) {
     zero_addr = 0;
-    heap_size_u64 = BYTES;
+    heap_size_u64 = BYTES + 16;   /* the pages, and the two-word tail the layout reserves */
     krmlinit_globals();
     heap.data = mem;
-    heap.size = BYTES;
+    heap.size = BYTES + 16;
     if (!st.tpm) {
         st.tpm = calloc(NPAGES, sizeof(prec));
         st.tw = calloc(1024, sizeof(uint64_t));

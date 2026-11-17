@@ -178,11 +178,13 @@ inline_for_extraction
 let n_pages_u64 () : n: U64.t{U64.v n == n_pages} =
   page_bytes_bound ();
   FStar.Math.Lemmas.pow2_lt_compat 64 23;
-  U64.div (U64.sub IH.heap_size_u64 IH.zero_addr) (U64.mul page_wsize_u64 8UL)
+  heap_room ();
+  U64.div (U64.sub (U64.sub IH.heap_size_u64 IH.zero_addr) 16UL) (U64.mul page_wsize_u64 8UL)
 
 let n_pages_small () : Lemma (n_pages < pow2 54 /\ n_pages <= Base.heap_size)
   = cls_bounds 0;
-    FStar.Math.Lemmas.lemma_div_mod (Base.heap_size - U64.v Base.zero_addr) page_bytes;
+    heap_room ();
+    FStar.Math.Lemmas.lemma_div_mod (Base.heap_size - U64.v Base.zero_addr - 16) page_bytes;
     FStar.Math.Lemmas.lemma_mult_le_left n_pages 8 page_bytes;
     assert_norm (pow2 57 == 8 * pow2 54)
 

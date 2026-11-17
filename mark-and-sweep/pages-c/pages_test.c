@@ -31,6 +31,8 @@
 #define NL 17
 #define LG_MIN 129ULL         /* small_max + 1 */
 #define MAXP 8
+#define TAILB 16ULL         /* the heap's tail after the pages (plan §23.5) */
+#define MEMB (MAXP * PB + TAILB)
 
 static uint8_t *mem;
 static heap_t heap;
@@ -91,14 +93,15 @@ static int same_rec(vrec a, vrec b) {
            a.free_head == b.free_head && a.nfree == b.nfree && a.next == b.next;
 }
 
-/* A heap of `n` free pages, from the extracted `init`: one blue block per
- * page, every entry a free page's, every list empty.  Checked once here. */
+/* A heap of `n` free pages and the two-word tail the layout reserves after
+ * them, from the extracted `init`: one blue block per page and one for the
+ * tail, every entry a free page's, every list empty.  Checked once here. */
 static void fresh(uint64_t n) {
     np = n;
-    heap_size_u64 = n * PB;
+    heap_size_u64 = n * PB + TAILB;
     zero_addr = 0;
     krmlinit_globals();
-    memset(mem, 0xAB, (size_t)(MAXP * PB));
+    memset(mem, 0xAB, (size_t)MEMB);
     heap.data = mem;
     heap.size = (size_t)heap_size_u64;
     for (int i = 0; i < MAXP; i++) pm[i] = (prec){ .pcode = HEAD, .parg = 7, .sep = 99, .pfree_head = 1, .pnfree = 2, .pnext = 3 };
@@ -113,8 +116,10 @@ static void fresh(uint64_t n) {
     }
     for (int c = 0; c < NCLS; c++) CHECK("init", avail[c] == 0 && atail[c] == 0);
     for (int k = 0; k < NL; k++) CHECK("init", large[k] == 0);
-    memset(mem, 0, (size_t)(MAXP * PB));
+    CHECK("init tail", rd(pg(n)) == hdr(1, BLUE));
+    memset(mem, 0, (size_t)MEMB);
     for (uint64_t i = 0; i < n; i++) wr(pg(i), hdr(PW - 1, BLUE));
+    wr(pg(n), hdr(1, BLUE));
 }
 
 /* A heap of whole pages and a tail of 3 words: `init` gives the tail one
@@ -123,7 +128,7 @@ static void test_init_tail(void) {
     heap_size_u64 = 2 * PB + 24;
     zero_addr = 0;
     krmlinit_globals();
-    memset(mem, 0xAB, (size_t)(MAXP * PB));
+    memset(mem, 0xAB, (size_t)MEMB);
     heap.data = mem;
     heap.size = (size_t)heap_size_u64;
     st.tpm = pm; st.tw = tw;
@@ -369,7 +374,7 @@ static void test_list_order(void) {
 }
 
 int main(void) {
-    mem = calloc((size_t)(MAXP * PB), 1);
+    mem = calloc((size_t)MEMB, 1);
     if (!mem) { perror("calloc"); return 1; }
     test_init_tail();
     test_small();

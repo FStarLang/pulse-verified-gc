@@ -16,7 +16,10 @@
 ///   C4  a page is small enough that page arithmetic never overflows;
 ///   C5  a large block is larger than every exact-fit list of #46
 ///       (`GC.Spec.SizeClass.n_small`), so the large-object area uses only
-///       #46's first-fit list 0.
+///       #46's first-fit list 0;
+///   C6  a page and two words are fewer than `pow2 20` words, so the heap's
+///       tail after the last page (`GC.Spec.Pages.Layout.n_pages` leaves at
+///       least two words, plan §23.5) is one block a header can describe.
 ///
 /// Sizes are in words and include the header (whsize), as in OCaml 5's
 /// `wsize_sizeclass`.  A block of whsize at most `small_max` is small and
@@ -44,6 +47,7 @@ let params_cond : prop =
   (* C2 *) (forall (c: nat). c + 1 < n_cls ==> cls c < cls (c + 1)) /\
   (* C3 *) small_max <= page_wsize /\
   (* C4 *) page_wsize < pow2 20 /\
-  (* C5 *) small_max > GC.Spec.SizeClass.n_small
+  (* C5 *) small_max > GC.Spec.SizeClass.n_small /\
+  (* C6 *) page_wsize + 2 < pow2 20
 
 val params_ok : unit -> Lemma params_cond

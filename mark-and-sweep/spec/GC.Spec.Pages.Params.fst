@@ -33,7 +33,7 @@ let rec increasing_from_spec (c: nat) (d: nat)
 
 /// The conditions hold at a given page size.
 let cond_at (pw: pos) : bool =
-  cls 0 >= 2 && increasing_from 0 && cls (n_cls - 1) <= pw && pw < pow2 20
+  cls 0 >= 2 && increasing_from 0 && cls (n_cls - 1) <= pw && pw < pow2 20 && pw + 2 < pow2 20
 
 let both_candidates_ok () : Lemma (cond_at page_wsize_16k /\ cond_at page_wsize_32k)
   = assert_norm (cond_at page_wsize_16k);

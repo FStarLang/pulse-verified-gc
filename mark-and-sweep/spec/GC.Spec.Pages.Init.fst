@@ -152,6 +152,7 @@ let init_free_page (g: heap) (j: nat{j < n_pages})
 let tail_bound () : Lemma (heap_size - pages_end >= 16 ==> tail_w * 8 == heap_size - pages_end /\ tail_w < pow2 20)
   = pages_end_bound ();
     cls_bounds 0;
+    page_wsize_small ();
     page_base_aligned n_pages;
     assert (heap_size % 8 == 0);
     FStar.Math.Lemmas.lemma_mod_sub_distr heap_size pages_end 8;

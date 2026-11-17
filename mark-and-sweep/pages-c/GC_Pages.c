@@ -632,7 +632,7 @@ static void start_epoch(pstate_t t)
     t.tw[(size_t)(62ULL + (uint64_t)(size_t)17U + 1ULL)] = ep + 1ULL;
   else
   {
-    uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
+    uint64_t np = (heap_size_u640 - zero_addr1 - 16ULL) / 32768ULL;
     uint64_t j = 0ULL;
     uint64_t __anf0 = j;
     bool cond = __anf0 < np;
@@ -833,7 +833,7 @@ static void write_hint(pstate_t t, uint64_t h)
 
 static void reset_state(pstate_t t)
 {
-  uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
+  uint64_t np = (heap_size_u640 - zero_addr1 - 16ULL) / 32768ULL;
   uint64_t j = 0ULL;
   uint64_t __anf00 = j;
   bool cond = __anf00 < np;
@@ -960,7 +960,7 @@ static uint64_t pop(heap_t heap, pstate_t t, uint64_t c, uint64_t wz)
 
 static uint64_t find_free(pstate_t t)
 {
-  uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
+  uint64_t np = (heap_size_u640 - zero_addr1 - 16ULL) / 32768ULL;
   uint64_t h = read_hint(t);
   uint64_t i = h;
   bool go = true;
@@ -1071,7 +1071,7 @@ static uint64_t small_alloc(heap_t heap, pstate_t t, uint64_t wz)
   else
   {
     uint64_t i = find_free(t);
-    uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
+    uint64_t np = (heap_size_u640 - zero_addr1 - 16ULL) / 32768ULL;
     if (i >= np)
       return 0ULL;
     else
@@ -1212,7 +1212,7 @@ static uint64_t pages_for_u64(uint64_t w)
 
 static uint64_t find_run(pstate_t t, uint64_t k)
 {
-  uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
+  uint64_t np = (heap_size_u640 - zero_addr1 - 16ULL) / 32768ULL;
   uint64_t h = read_hint(t);
   uint64_t p = h;
   uint64_t s = h;
@@ -1328,7 +1328,7 @@ static uint64_t large_alloc(heap_t heap, pstate_t t, uint64_t wz)
   {
     uint64_t k = pages_for_u64(w);
     uint64_t i = find_run(t, k);
-    uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
+    uint64_t np = (heap_size_u640 - zero_addr1 - 16ULL) / 32768ULL;
     if (k > np - i)
       return 0ULL;
     else
@@ -1800,7 +1800,7 @@ static void avail_if(pstate_t t, bool b, uint64_t c, uint64_t v)
 
 static void next_if(pstate_t t, bool b, uint64_t q, uint64_t v)
 {
-  if (b && q < (heap_size_u640 - zero_addr1) / 32768ULL)
+  if (b && q < (heap_size_u640 - zero_addr1 - 16ULL) / 32768ULL)
     write_next(t, q, v);
 }
 
@@ -1854,7 +1854,7 @@ uint64_t tail_hdr_u640(uint64_t tw)
 
 void init(heap_t heap, pstate_t t)
 {
-  uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
+  uint64_t np = (heap_size_u640 - zero_addr1 - 16ULL) / 32768ULL;
   uint64_t ph = page_hdr_u640();
   uint64_t k = 0ULL;
   uint64_t __anf0 = k;
@@ -1915,7 +1915,7 @@ void start_sweep(pstate_t t)
 
 void sweep_all(heap_t heap, pstate_t t)
 {
-  uint64_t np = (heap_size_u640 - zero_addr1) / 32768ULL;
+  uint64_t np = (heap_size_u640 - zero_addr1 - 16ULL) / 32768ULL;
   uint64_t p = 0ULL;
   uint64_t __anf0 = p;
   bool cond = __anf0 < np;
