@@ -133,6 +133,8 @@ val params_ok : unit -> Lemma params_cond
 - **C2** makes the table a strictly increasing list of sizes.
 - **C3** puts at least one slot of every class in a page.
 - **C4** keeps page arithmetic far from overflow.
+- **C6** (§24): a page and two words are fewer than `pow2 20` words, so the
+  heap's tail block has a header (`Init.blue_hdr`).
 
 **The class table** is OCaml 5's (`runtime/caml/sizeclasses.h`) without its
 1-word class: {2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 17, 19, 22, 25, 28, 32,
@@ -164,11 +166,13 @@ it fits and is least are lemmas proved from C1 and C2 (`class_of_fits`,
   a logical division of the `calloc` region, as in the prototype; no
   hardware alignment is needed.
 - **No new assumption about the heap size.** The heap's tail after the last
-  whole page, fewer than `page_wsize` words, is either too short for a
-  header or one blue block on no list (`tail_shape`). The bridge still
-  rounds `MIN_EXPANSION_WORDSIZE` up so that the tail is empty, but the proofs
-  do not rely on that. This replaces the condition P5 of the first draft,
-  which would have been a new configuration axiom.
+  whole page is one blue block on no list (`tail_shape`). Since §24 (L1 of
+  §23.5) the pages leave at least two words for it
+  (`n_pages = (heap_size - zero_addr - 16) / page_bytes`), so it is never
+  too short for a header, and the walk of a heap of pages always ends at
+  `heap_size`. A bridge that wants `n` pages asks for `n` pages and two
+  words. This replaces the condition P5 of the first draft, which would
+  have been a new configuration axiom.
 
 ### 1.2 The page map
 
@@ -3327,3 +3331,127 @@ heap with the facts it needs, and is then instantiated.
 Nothing here needs akhil's agreement. If his modules change upstream, our
 copies (23.2, 23.6) do not follow automatically. Each copied lemma names its
 original, so a diff can be checked.
+
+## 24. Stage 1 of §23 as built: the layout L1 and the page cycle without minor collections (2026-11-17)
+
+**What is proved.** The incremental major cycle with the page allocator,
+marking then the page sweep, with akhil's cycle theorems word for word,
+including `cycle_lossless` for every word of the heap (the last one
+included). **These runs have no minor collection**: akhil's runs have a
+`Minor` event in each phase, and the page cycle gets it only with page
+promotion (§23.6, stage 5, not started). Until then the page theorems cover
+fewer runs than his: those in which no minor collection happens during the
+major cycle.
+
+### 24.1 The layout (L1 of §23.5)
+
+- `Layout.n_pages = (heap_size - zero_addr - 16) / page_bytes`
+  (`heap_room`: `heap_size - zero_addr >= 16` from alignment).
+  `pages_end_bound` is now `pages_end + 16 <= heap_size /\
+  heap_size - pages_end < page_bytes + 16`.
+- A sixth parameter condition, **C6**: `page_wsize + 2 < pow2 20`, so the
+  tail block (fewer than a page and two words) has a header. C4 is kept as
+  it was; changing C4 instead broke `Pages.Alloc.init_alloc_succeeds`,
+  whose proof reads C4. Both page sizes meet C6.
+- `Init.tail_bound` uses C6 (`Layout.page_wsize_small`); `tail_shape` is
+  unchanged (its short case no longer holds).
+- `GC.Impl.Pages.State.n_pages_u64` computes the new `n_pages`; the C is
+  re-extracted (`GC_Pages.c`: `(heap_size - zero_addr - 16) / 32768` at its
+  9 sites).
+- **New, `Pages.TailWalk`**: in every state whose pages are tiled
+  (`shape_ok`), the walk reaches `heap_size` exactly and the heap is dense
+  (`shape_walk_end`); the tail block is a free object over the heap's last
+  word (`tail_object`).
+- Every existing page theorem keeps its statement; the whole repository
+  verifies with the new layout (`make verify`, CI flags).
+- **C test and bench**: `pages_test.c` and `bench.c` ask for `n` pages and
+  two words. `pages: all 474 checks passed`. `bench.sh 5 15`, verified
+  against the prototype: small −3.7%, mixed −36.0%, large −37.2%,
+  sweep10/50/90 −1.8/−1.6/−3.6%, realloc −5.2%, reallocS −4.4%: within the
+  ≤ 5% rule everywhere.
+
+### 24.2 The modules
+
+| Module | Lines | What it holds |
+|---|---|---|
+| `Pages.TailWalk` | 114 | `steps_reaches`, `tail_room`, `shape_walk_end`, `tail_object` |
+| `Pages.Cycle.State` | 302 | `walk_full` in `Idle`/`Marking`/mid-sweep (`ok_walk`, `mc_walk`, `sw_walk`); mark moves keep the `Marking` invariant (`mark_steps_inv`); `handover_ready`; allocation while marking: `mark_new_only` (only the new object becomes non-free, through whitening and `NewOnly`), `mark_alloc_facts` |
+| `Pages.Cycle.Mark` | 846 | `pmark_ok`, `pstart_pre`, the run `pmarking` (`PStart`, `PSlice`, `PWrite`, `PAlloc`), `pmark_run_inv`, `pmark_run_account`, `phandover` |
+| `Pages.Cycle.Sweep` | 294 | the run `psweep` (`SStart`, `SStep`, `SAlloc`, `SWrite`, `SEnd`), `psweep_inv`, `psweep_account` |
+| `Pages.Cycle` | 350 | the run `pcycle` (`PMark`, `PSweep`), `cycle_account`, `cycle_complete`, `cycle_frees_unreachable`, `cycle_survives`, `cycle_addresses_lossless`, `cycle_covered`, `cycle_lossless` |
+| `Pages.Cycle.Vacuity` | 546 | the witness run and its facts |
+| `Pages.MidSweepStep` (changed) | +16 | `use_kept`, `unit_use_kept`; `pool_step_sw`, `run_step_sw`, `step_sw` also export `use_kept` (a conjunct added, none removed) |
+
+`Pages.Cycle.Vacuity` is a root in the `Makefile`.
+
+### 24.3 What is akhil's, what is copied, what is new
+
+- **Called unchanged** (his statements, his proofs): `MC.snapshot`,
+  `MC.satb`, `MC.init_writes`, `GMC.reachable_at_start`,
+  `MPC.account_start/grey/steps/barrier/fresh_write/fresh_close/marked`,
+  `MPC.mark_steps_keep_blocks`, `MPC.grey_keeps_blocks`, `MPC.reachable_*`,
+  `MPA.marking_fresh_write`, `MPA.keeps_blocks_*`, `MM.marking_write_barrier`,
+  `MM.write_heads`, `S.mark_steps_inv/darker`, `MP.marking_done`,
+  `MP.marking_inv_start`, `GB.modify_heap/modify_ok`, `MStart.darkened`,
+  `SPC.reclaimed_was_dead_transfer`, `SPC.covered_at_idle`,
+  `SPC.lossless_at_idle`, `SPC.survived_at_idle`, `SPC.extent*`,
+  `SPC.block_over`, `MPC.cycle_complete`, `GC_.unreachable_covered`,
+  `GC_.union`.
+- **Copied, with his name** (private helpers of his `.fst`s, with the
+  free-list facts replaced): from `GC.Gen.MarkPhase.Cycle`:
+  `size_of_header`, `size_of_block`, `edges_kept`, `grey_keeps_edges`,
+  `start_satb` (split into `sat_step`, `sat_root`), `slice_inv`,
+  `barrier_blocks`, `write_inv`, `init_inv`, `alloc_inv`, `handover`; from
+  `GC.Gen.MarkPhase.Completeness`: `start_prefix`; from
+  `GC.Spec.MarkPhase.Alloc`: `keeps_blocks_scan`, `edge_in_use`, and the
+  second half of `marking_alloc` (`fresh_of_facts`); from
+  `GC.Spec.MarkPhase.Completeness`: `account_alloc` (`account_of_facts`);
+  from `GC.Gen.Cycle`: `parts`, `start_words`, `reach_words`,
+  `handover_words`, `new_words`, `words`, `run_words`.
+- **New for pages**: the root-darkening induction from the page `Idle`
+  invariant (`start_prefix_pages`, `roots_dark`, which replace his
+  first-fit `MStart.mark_start_shape`), the page facts of `Cycle.State`,
+  and the sweep account (`start_acct`, `step_acct`, `alloc_acct`,
+  `write_acct`, `end_acct`).
+- The run invariant is his `mark_run_inv` with the walk clause replaced by
+  `walk_end g0 == heap_size`: with L1 the walk is not carried event by
+  event, it is read from the page invariant at the start and at the
+  hand-over.
+- **The account statement mid-sweep** (`cycle_account` at `Sweeping`) uses
+  the page sweep's `free_sw` where his uses his cursor's
+  `free_incremental c`; at `Marking` and `Idle` it is his.
+
+### 24.4 Vacuity (`Pages.Cycle.Vacuity`)
+
+`run g` is a run of `pcycle` from `W` (A in a pool page with its field
+pointing to B, B the head of a run, C in A's page), roots `[C]`:
+`PStart` (C greyed); the hand-over: three mark moves (start scanning C, its
+one field 0, blacken C), nothing grey; `SStart`; `SStep` of A's page (A
+dead: a free slot or a free page); `SAlloc` (succeeds in a swept page, its
+field cleared); a `SStep` at every unit; `SEnd`.
+
+`run_nontrivial`: C is reachable at the start; B is an object that is not
+free, not reachable at the start and not handed out; the run hands out the
+new object; the heap's last word lies in a block unreachable at the start
+(the tail block). `run_theorems` applies the theorems to the run: C
+survives, B is freed, the last word is free or new at the end.
+
+**Not exercised by the witness**: the barrier write (`PWrite`), allocation
+while marking (`PAlloc`) and a write mid-sweep (`SWrite`). Their account
+lemmas are proved; that their hypotheses can hold together is not shown.
+Showing it needs the page invariants kept by a field write (§23.2 M-b) and
+by allocation while marking with its writes; both are not done.
+
+### 24.5 Checked
+
+- Every new and changed module (`Params` `.fsti` and `.fst`, `Layout`,
+  `Init`, `TailWalk`, `MidSweepStep`, `GC.Impl.Pages.State`,
+  `Cycle.State`, `Cycle.Mark`, `Cycle.Sweep`, `Cycle`, `Cycle.Vacuity`)
+  verifies without `--retry` at Z3 seeds 0, 1 and 2: 36 checks, all passing,
+  from the cache of the full build.
+- No local rlimit above 40. The most any query uses is 20.7
+  (`MidSweepStep.run_step_sw`, local 40, as before); in the new modules at
+  most 4.0 (`Cycle.Mark.start_prefix`).
+- No admits, no assumes.
+- `make verify` with the Makefile's flags (`--retry 3`): every module of
+  the repository, `=== all modules verified ===`.

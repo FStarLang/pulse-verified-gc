@@ -243,6 +243,17 @@ let step_wf (g g': heap) (pm pm': page_map) (p k: nat)
     FStar.Classical.forall_intro (FStar.Classical.move_requires (step_block g g' pm pm' p k));
     SPI.wf_transport g g' (free_sw pm) (free_sw pm')
 
+/// The blocks in use mid-sweep are the same before and after, and each keeps
+/// its block (size, tag, fields).
+let use_kept (g g': heap) (pm pm': page_map) : prop =
+  (forall (y: obj_addr). in_use (free_sw pm') g' y == in_use (free_sw pm) g y) /\
+  (forall (y: obj_addr). in_use (free_sw pm) g y ==> SPI.same_block g g' (hd_address y))
+
+let unit_use_kept (g g': heap) (pm pm': page_map) (p k: nat)
+  : Lemma (requires swept_unit g g' pm pm' p k) (ensures use_kept g g' pm pm')
+  = FStar.Classical.forall_intro (step_use g g' pm pm' p k);
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (step_block g g' pm pm' p k))
+
 /// ---------------------------------------------------------------------------
 /// Swept bits
 /// ---------------------------------------------------------------------------
@@ -332,7 +343,7 @@ let pool_step_sw (g: heap) (st: pstate) (p: nat{p < n_pages}) (c: nat{c < n_cls}
   : Lemma (requires pages_ok_sw g st /\ (entry st.pm p).kind == Pool c /\ not (entry st.pm p).swept)
           (ensures (let (g', st') = SA.step g st p in
                     pages_ok_sw g' st' /\ (entry st'.pm p).swept == true /\ swept_mono st.pm st'.pm /\
-                    kinds_kept st.pm st'.pm p 1))
+                    kinds_kept st.pm st'.pm p 1 /\ use_kept g g' st.pm st'.pm))
   = let pm = st.pm in
     pages_ok_sw_elim g st;
     assert (page_local g pm p);
@@ -355,6 +366,7 @@ let pool_step_sw (g: heap) (st: pstate) (p: nat{p < n_pages}) (c: nat{c < n_cls}
     unit_one pm pm' p;
     unit_uw pm pm' p 1;
     assert (swept_unit g g' pm pm' p 1);
+    unit_use_kept g g' pm pm' p 1;
     step_wf g g' pm pm' p 1;
     (* no grey block in the pages left unswept *)
     let kept_entry (i: nat{i < n_pages})
@@ -378,7 +390,7 @@ let run_step_sw (g: heap) (st: pstate) (p: nat{p < n_pages}) (n: pos)
           (ensures (let (g', st') = SA.step g st p in
                     pages_ok_sw g' st' /\ p + n <= n_pages /\
                     (forall (j: nat{j < n_pages}). p <= j /\ j < p + n ==> (entry st'.pm j).swept) /\
-                    swept_mono st.pm st'.pm /\ kinds_kept st.pm st'.pm p n))
+                    swept_mono st.pm st'.pm /\ kinds_kept st.pm st'.pm p n /\ use_kept g g' st.pm st'.pm))
   = let pm = st.pm in
     pages_ok_sw_elim g st;
     assert (page_local g pm p);
@@ -408,6 +420,7 @@ let run_step_sw (g: heap) (st: pstate) (p: nat{p < n_pages}) (n: pos)
     FStar.Classical.forall_intro off_unit;
     unit_uw pm pm' p n;
     assert (swept_unit g g' pm pm' p n);
+    unit_use_kept g g' pm pm' p n;
     step_wf g g' pm pm' p n;
     no_grey_frame g g' pm pm';
     pages_ok_sw_intro g' st'
@@ -437,7 +450,7 @@ let unit_swept_run (st': pstate) (pm: page_map) (p: nat{p < n_pages}) (n: pos)
 let step_sw (g: heap) (st: pstate) (p: nat{p < n_pages})
   : Lemma (requires pages_ok_sw g st)
           (ensures (let (g', st') = SA.step g st p in
-                    pages_ok_sw g' st' /\ swept_mono st.pm st'.pm /\
+                    pages_ok_sw g' st' /\ swept_mono st.pm st'.pm /\ use_kept g g' st.pm st'.pm /\
                     (walk_page st.pm p ==> unit_swept st' st.pm p /\ kinds_kept st.pm st'.pm p (span st.pm p))))
   = pages_ok_sw_elim g st;
     let pm = st.pm in
