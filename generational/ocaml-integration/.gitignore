@@ -12,3 +12,5 @@ verified_gc/*.a
 
 # Built by the tiny_globals test (its own std_exit.ml)
 tests/tiny_globals/*.cm[io]
+_build/
+verified_gc/GC_Gen_Impl_hooked.c

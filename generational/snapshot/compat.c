@@ -3,7 +3,8 @@
  * Provides:
  *   1. Heap configuration constants (GC.Spec.ZeroAddr externs)
  *   2. FStar library functions that KaRaMeL doesn't bundle
- *   3. Word-level heap read/write (GC.Impl.ArrayWord assumed vals)
+ *   (the word-level heap read/write, GC.Impl.ArrayWord's assumed vals,
+ *   are static inline in compat.h)
  *
  * The heap configuration values (zero_addr, heap_size_u64) must be set
  * by the bridge BEFORE calling krmlinit() — see verified_gc_bridge.c.
@@ -33,12 +34,4 @@ bool FStar_UInt64_ne(uint64_t a, uint64_t b) { return a != b; }
  * longer provided here. */
 
 /* --- Word-level heap read/write (GC.Impl.ArrayWord assumed vals) ---
- * On little-endian platforms (x86-64, AArch64-LE), these are simple
- * aligned word loads/stores. */
-uint64_t read_u64_le(uint8_t *arr, size_t offset) {
-  return *(uint64_t *)(arr + offset);
-}
-
-void write_u64_le(uint8_t *arr, size_t offset, uint64_t v) {
-  *(uint64_t *)(arr + offset) = v;
-}
+ * read_u64_le and write_u64_le are static inline in compat.h. */

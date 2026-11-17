@@ -44,6 +44,20 @@
  *     then Out_of_memory), and a minor collection mid-cycle that might not
  *     find room to promote into.
  *
+ * Allocator (VERGC_ALLOC, read once at start-up):
+ *   firstfit (default) — the verified first-fit allocator and sweep of
+ *     GC.Gen.Impl, as above.
+ *   pages — stw only (with VERGC_MAJOR=incremental it is ignored, with a
+ *     warning: the incremental cycle keeps first-fit).  The verified page
+ *     allocator and page sweep (GC.Impl.Pages.*, mark-and-sweep/pages-c):
+ *     the heap is laid out as pages (Pages.Init), every major allocation and
+ *     every promotion goes to Pages.Alloc, and a collection is the minor
+ *     collection, start_cycle and the mark slices, as full_gc, and then
+ *     Pages.Sweep in place of the first-fit sweep.  VERGC_PAGE_KB=32 (default)
+ *     or 16 picks the page size (two extractions, verified_gc/pages/).
+ *     What is unverified glue in this mode is listed at vergc_pages_allocate
+ *     and pages_full_gc below.
+ *
  * The trusted obligations GC.Gen.Impl lists, and how this bridge
  * meets them (see also OCAML_INTEGRATION.md):
  *   - fresh objects are initialised before the next collector call: OCaml's
@@ -166,6 +180,16 @@ static uint64_t *mark_words_ref;
 
 static int        major_incremental = 0;    /* VERGC_MAJOR=incremental */
 
+/* VERGC_ALLOC: 0 first-fit, else pages of that many KB (32 or 16).  Read by
+ * the hooked `allocate` (verified_gc/pages/hook_allocate.py). */
+int               vergc_alloc_pages = 0;
+void     vergc_p32_setup(uint64_t heap_bytes);
+uint64_t vergc_p32_alloc_white(uint64_t wz);
+void     vergc_p32_sweep(void);
+void     vergc_p16_setup(uint64_t heap_bytes);
+uint64_t vergc_p16_alloc_white(uint64_t wz);
+void     vergc_p16_sweep(void);
+
 /* Pacing knobs (incremental mode; see "Pacing" below):
  *   VERGC_SLICE_WORDS      — a fixed budget for every automatic slice, in
  *                            place of the computed one (testing: tiny slices).
@@ -254,7 +278,7 @@ static void print_pause(const char *name, const pause_stat *p) {
 
 static void print_major_stats(void) {
     fprintf(stderr,
-        "vergc-major: mode=%s cycles=%lu cycles_done=%lu mark_slices=%lu "
+        "vergc-major: mode=%s alloc=%s cycles=%lu cycles_done=%lu mark_slices=%lu "
         "sweep_slices=%lu marks_spanned=%lu words_marked=%lu words_swept=%lu "
         "finish_full=%lu finish_alloc=%lu finish_promote=%lu finish_mid_mark=%lu "
         "full_explicit=%lu full_alloc=%lu full_other=%lu trigger_overhead=%lu trigger_heap=%lu "
@@ -262,6 +286,7 @@ static void print_major_stats(void) {
         "alloc_mid_sweep=%lu modify_mid_mark=%lu barrier_darken=%lu "
         "overflows=%lu rescans=%lu\n",
         major_incremental ? "incremental" : "stw",
+        vergc_alloc_pages == 32 ? "pages32" : vergc_alloc_pages == 16 ? "pages16" : "firstfit",
         (unsigned long)stat_cycles, (unsigned long)stat_cycles_done,
         (unsigned long)stat_mark_slices, (unsigned long)stat_sweep_slices,
         (unsigned long)stat_marks_spanned,
@@ -312,6 +337,24 @@ static void read_major_mode(void) {
         slice_words_fixed = env_u64("VERGC_SLICE_WORDS", 0, 0);
         slice_min_words = env_u64("VERGC_SWEEP_MIN_WORDS", slice_min_words, 1);
         slice_min_words = env_u64("VERGC_SLICE_MIN_WORDS", slice_min_words, 1);
+    }
+    const char *al = getenv("VERGC_ALLOC");
+    if (al != NULL && *al != '\0') {
+        if (strcmp(al, "pages") == 0) {
+            const char *kb = getenv("VERGC_PAGE_KB");
+            vergc_alloc_pages = 32;
+            if (kb != NULL && strcmp(kb, "16") == 0) vergc_alloc_pages = 16;
+            else if (kb != NULL && *kb != '\0' && strcmp(kb, "32") != 0)
+                fprintf(stderr, "verified gen GC: unknown VERGC_PAGE_KB=%s, using 32 "
+                                "(want 32 or 16)\n", kb);
+            if (major_incremental) {
+                fprintf(stderr, "verified gen GC: VERGC_ALLOC=pages is stw only; "
+                                "the incremental collector uses firstfit\n");
+                vergc_alloc_pages = 0;
+            }
+        } else if (strcmp(al, "firstfit") != 0)
+            fprintf(stderr, "verified gen GC: unknown VERGC_ALLOC=%s, using firstfit "
+                            "(want pages or firstfit)\n", al);
     }
     stats_enabled = env_flag("VERGC_MAJOR_STATS") || env_flag("VERGC_SWEEP_STATS");
     if (stats_enabled) atexit(print_major_stats);
@@ -421,6 +464,14 @@ static void ensure_heap(void) {
 
     /* Re-derive constants that depend on minor_heap_size */
     krmlinit_globals();
+
+    /* VERGC_ALLOC=pages: the heap laid out as free pages (Pages.Init, which
+     * overwrites the first-fit block's header above), after
+     * krmlinit_globals: the page code keeps its own copies of the bounds.
+     * fp_ref is then unused. */
+    if (vergc_alloc_pages == 32) vergc_p32_setup((uint64_t)major_bytes);
+    else if (vergc_alloc_pages == 16) vergc_p16_setup((uint64_t)major_bytes);
+    if (vergc_alloc_pages) *fp_ref = 0;
     uint8_t *minor_data = (uint8_t *)calloc(1, minor_sz);
     if (!minor_data)
         caml_fatal_error("verified gen GC: cannot allocate minor heap");
@@ -1275,6 +1326,51 @@ int vergc_initialize(value *fp, value val) {
     return Is_block(val) && Is_young(val);
 }
 
+/* --- The page allocator (VERGC_ALLOC=pages) --- */
+
+/* Every major allocation in pages mode: verified_allocate's, and each
+ * promotion of the minor collection (the hooked `allocate` calls this).
+ *
+ * Unverified glue, in full:
+ *   - the call: GC.Gen.Promote (Cheney) and the bridge are proved against
+ *     the first-fit allocator only, not against Pages.Alloc;
+ *   - the phase check: Pages.Alloc allocates white, the colour of Idle
+ *     (GC.Spec.Phase.allocation_color).  In stw every allocation happens at
+ *     Idle: the mutator's between collections, and the promotions of
+ *     pages_full_gc's minor collection, which runs before start_cycle;
+ *   - the tag: Pages.Alloc writes the header with tag 0
+ *     (makeHeader(wz, White, 0)); this ORs the requested tag into it, as
+ *     first-fit's `allocate` writes it. */
+uint64_t vergc_pages_allocate(phase_state *phase, uint64_t wosize, uint64_t tag) {
+    if (__builtin_expect(phase->ps_kind != 0, 0))
+        caml_fatal_error("verified gen GC: page allocation outside Idle");
+    uint64_t o = vergc_alloc_pages == 32 ? vergc_p32_alloc_white(wosize)
+                                         : vergc_p16_alloc_white(wosize);
+    if (o != 0) *(uint64_t *)(uintptr_t)(o - 8) |= tag;
+    return o;
+}
+
+/* full_gc with the page sweep (unverified glue, in full): the extracted
+ * full_gc is minor_collect, start_cycle, then major_slice with an unbounded
+ * budget until Idle -- one slice marks, one sweeps (first-fit).  This makes
+ * the same calls up to the end of the mark (major_slice's mark slice sets
+ * the phase to Sweeping), then calls the page sweep (Pages.Sweep: start_sweep
+ * and sweep_all) and sets the phase back to Idle, which major_slice's
+ * first-fit sweep slice would have done.  Each call is verified on its own
+ * (minor_collect but for its promotions, start_cycle, the mark slice, the
+ * page sweep); their composition with the page allocator is not. */
+static bool pages_full_gc(uint64_t *roots, size_t nroots, uint64_t *slots, size_t nslots) {
+    bool ok = minor_collect(gc_gen_heap, roots, nroots, gc_fwd_arr, gc_queue, slots, nslots);
+    if (!ok) return ok;
+    start_cycle(gc_gen_heap, roots, nroots);
+    while (vergc_marking())
+        major_slice(gc_gen_heap, UINT64_MAX);
+    if (vergc_alloc_pages == 32) vergc_p32_sweep();
+    else vergc_p16_sweep();
+    *gc_gen_heap.phase_ref = (phase_state){ .ps_kind = 0 };
+    return ok;
+}
+
 /* --- Full GC (minor + major) --- */
 
 static int full_gc_count = 0;
@@ -1339,8 +1435,10 @@ static void do_full_gc_stw(void) {
         size_t n_slots = (size_t)(tbl->ptr - tbl->base);
         _Static_assert(sizeof(value *) == sizeof(uint64_t),
             "ref_table optimization requires LP64 (sizeof(value*)==8)");
-        bool ok = full_gc(gc_gen_heap, roots_for_gc, (size_t)root_count,
-                          gc_fwd_arr, gc_queue, (uint64_t *)tbl->base, n_slots);
+        bool ok = vergc_alloc_pages
+            ? pages_full_gc(roots_for_gc, (size_t)root_count, (uint64_t *)tbl->base, n_slots)
+            : full_gc(gc_gen_heap, roots_for_gc, (size_t)root_count,
+                      gc_fwd_arr, gc_queue, (uint64_t *)tbl->base, n_slots);
         if (!ok) {
             free(roots_for_gc);
             in_full_gc = 0;
