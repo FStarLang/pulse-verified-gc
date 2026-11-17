@@ -345,25 +345,38 @@ def cmd_table(tag):
     for mode in modes:
         for title, key, scale, d, rel in [
                 ("Run time, s", "wall", 1, 2, True),
-                ("GC time, s (minor + major; stock not measured)", "gc_s", 1, 2, False),
+                ("GC time, s (minor + major; stock not measured)", "gc_s", 1, 2, True),
                 ("Peak memory (max RSS), MB", "maxrss", 1 / 2**20, 0, True),
                 ("Major collections", "majors", 1, 0, False)]:
             print(f"\n### {mode}: {title}\n")
             print("| Program | " + " | ".join(cfgs) + " |")
             print("|---" * (len(cfgs) + 1) + "|")
             for p in progs:
-                base = get(mode, p, "main-stw", key)[0]
                 cells = []
                 for c in cfgs:
                     v, n = get(mode, p, c, key)
                     v = None if v is None else v * scale
                     s = f(v, d)
-                    if rel and base and v is not None and c in ("pages32", "pages16", "rt-ff"):
-                        s += f" ({(v / (base * scale) - 1) * 100:+.1f}%)"
                     if n and n < 3:
                         s += f" [n={n}]"
                     cells.append(s)
                 print(f"| {p} | " + " | ".join(cells) + " |")
+            if rel:
+                # Each configuration's median over main-stw's and over stock's.
+                cols = [(c, b) for b in ("main-stw", "stock") if b in cfgs
+                        for c in cfgs if c != b and not (b == "stock" and key == "gc_s")]
+                if not cols:
+                    continue
+                print(f"\n{mode}: {title.split(',')[0].lower()}, ratio to main-stw and to stock "
+                      "(below 1 is faster / smaller)\n")
+                print("| Program | " + " | ".join(f"{c} / {b}" for c, b in cols) + " |")
+                print("|---" * (len(cols) + 1) + "|")
+                for p in progs:
+                    cells = []
+                    for c, b in cols:
+                        v, bv = get(mode, p, c, key)[0], get(mode, p, b, key)[0]
+                        cells.append("–" if v is None or not bv else f"{v / bv:.2f}")
+                    print(f"| {p} | " + " | ".join(cells) + " |")
         if "main-inc" in cfgs:
             print(f"\n### {mode}: main-inc pauses, ms (longest / mean of all pauses)\n")
             print("| Program | longest | mean |")
