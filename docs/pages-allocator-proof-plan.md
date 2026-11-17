@@ -2723,3 +2723,331 @@ need (`step1_abs`, `alloc_abs`) and instantiated with `W` at the end, as
   checked files (419 + the 8 new modules), no errors. The modules that use
   the interface (`Darken`, `GcCorrect`, `MarkSteps`, `SweepingStart`,
   `Vacuity`, `Witness`) were rechecked against it.
+
+---
+
+## 22. Design for review: the sweeper record, `AllocIface` v3 and the minor-collection event (2026-11-17)
+
+Design only. Nothing here is built. It is written to be agreed with akhil
+before any proof. References to main are at `5623c7f6`.
+
+**Why this comes first.** Stage A (generic modules for main's incremental
+cycle over `AllocIface` v2) stopped before any module was written. The cycle
+cannot be stated over an allocator alone:
+- **The sweep run is the first-fit allocator's.** In
+  `GC.Gen.SweepPhase.Cycle`, `Slice` is `SL.phase_slice g fp`, the fused
+  sweep that rebuilds the free list. The state at a slice,
+  `sweep_inv_incremental g fp c`, mixes the cursor (`behind_swept`,
+  `front_unswept`, `no_adjacent_free`, `free_incremental c`) with
+  `fl_ascending`. Making it generic needs a sweeper record (22.2).
+- **Both runs have a `Minor` event,** and it allocates through `Promote`
+  (`AP.alloc_at`, which is `AC.alloc_phase`). Without `Minor`, the instance's
+  theorems would cover fewer runs than akhil's. With `Minor` as an abstract
+  event (22.5), `Promote` is not touched.
+- **Some allocator facts the proofs use are not in v2** (22.3), and the walk
+  fact they use is false for pages (22.4).
+
+### 22.1 What the cycle's theorems use
+
+**The collector's state is a hypothesis of every event, not a conclusion.**
+Each constructor of `MC.marking` and `SC.cycle` takes the state at that point
+(`GI.phase_shape`, `sweep_inv_incremental`, `sweep_shape`) as a `squash`
+hypothesis. The entry points supply it. The cycle theorems use only the
+*account* each event keeps (`MC.mark_run_inv`, `SC.cycle_inv`). So:
+- For the cycle theorems, an event needs only "this event keeps the
+  account". §20.1's fact 5 (the allocator keeps its invariant) is not used
+  by them.
+- Fact 5 is still needed to show runs exist (the vacuity witnesses, §18.3)
+  and by the implementation. So it stays in the interface (clause F, 22.3).
+
+| Run | Event | Lemmas it uses | Allocator? |
+|---|---|---|---|
+| marking | `Start` | `MStart.mark_start_shape`, `GMS.start_keeps_blocks`, `GMC.cycle_start` | only through `start_pre`'s `collection_heap_shape` |
+| marking | `Slice` | `S.mark_steps_inv`, `MPC.account_steps`, `MPC.mark_steps_keep_blocks`, `S.mark_steps_darker` | no (`fp` appears only in `phase_shape`) |
+| marking | `Write` | `MM.marking_write_barrier`, `MPC.account_barrier`, `GMS.modify_keeps_blocks`, `GB.modify_phase_shape` | no (`fp` only in `phase_shape`) |
+| marking | `Alloc` | `MPC.account_alloc`, `MPA.marking_alloc`, `MPA.marking_fresh_write`, `MPC.account_fresh_close`, `MW.alloc_reaches` | **yes** (22.3) |
+| marking | `Minor` | `GMC.account_minor`, `GMM.minor_keeps_marking_inv_with`, `GMM.minor_keeps_block`, `GMM.minor_new_block_black`, `MW.minor_reaches` | **promotion** (22.5) |
+| sweep | `Start` | `phase_account_start` | **sweeper** (22.2) |
+| sweep | `Slice` | `phase_account_slice` | **sweeper** |
+| sweep | `Alloc` | `survivor_or_new_alloc`, `reclaimed_was_dead_alloc` | **yes**, with the sweeper's free |
+| sweep | `Write` | `survivor_or_new_body_write`, `reclaimed_was_dead_body_write` | no, given that the shape keeps every header (`same_heads`) |
+| sweep | `Minor` | `SPC.survivor_or_new_minor_made`, `SPC.reclaimed_was_dead_minor` | **promotion** |
+
+**Collector-side work, not about the allocator.** akhil's statements mention
+`fp` only through `phase_shape`, `collection_heap_shape` and
+`collection_shape_with`. The generic modules need the collector's state
+without the free list, `col_shape minor g ph sp`. For instance 1 they need
+`phase_shape minor g fp ph sp <==> col_shape … /\ a1.shape ph g (fp, c)`.
+- `GenInv.major_shape_with` is opaque, with `_intro` and `_elim`. So this
+  should be a short proof.
+- Generic copies of `mark_start_shape`, `modify_keeps_blocks` and
+  `modify_phase_shape` are then stated from `col_shape`. They are
+  allocator-free and their proofs carry over.
+- Recommended: define `col_shape` in the generic module, not in
+  `GC.Gen.Incremental` (question 3, 22.7).
+
+### 22.2 The sweeper record (proposed shape)
+
+**One change from §20.3: the sweep's progress lives in the allocator's
+state.** There is no separate `sst`:
+- **In both instances the sweep rewrites the allocator's state.** Main's
+  fused sweep rebuilds `fp`. The page sweep rebuilds the page lists and the
+  swept bits in `pstate`.
+- **The allocator needs the progress** to colour a new object
+  (`a.unswept`).
+- §21.6 already found that the page sweeper's swept set is the page map's
+  own bits.
+- So for main, `ast = (fp, c)`. `Ph.gc_phase`'s `Sweeping c` stays in
+  akhil's modules. The generic modules use `AllocIface.phase` and read `c`
+  from the state.
+
+    noeq type sweeper (a: allocator3) = {
+      free_of   : a.ast -> free_def;              (* what the collector counts as free mid-sweep *)
+      start     : heap -> a.ast -> a.ast;          (* the state at the hand-over *)
+      slice     : heap -> a.ast -> nat -> GTot (heap & a.ast);   (* one slice, of a budget *)
+      done      : a.ast -> bool;
+      sweep_inv : heap -> a.ast -> prop;           (* the collector's Sweeping state *)
+    }
+
+**The generic account.** These predicates are akhil's, generic in what
+counts as free. The walk-end equality is dropped (22.4).
+- `acct free g0 since g`: `heap_objects_dense g`, and every block in use
+  (`in_use free g x`) is a `survivor g0 g x` or in `since`.
+  - Main's `survivor_or_new g0 since g c` gives
+    `acct (free_incremental c) g0 since g`: the walk end is `g0`'s and `g0`
+    is dense.
+- `reclaimed_was_dead g0 since free g`: unchanged. It is already generic in
+  `free`.
+- At the end of the sweep: `acct free_stw`, and `reclaimed_was_dead … free_stw`.
+
+**The contract, `sweeper_ok a sw`.** Each clause is stated with these
+predicates, so main supplies its lemmas as they are.
+
+| | Clause | Main (instance 1) | Pages (instance 2) |
+|---|---|---|---|
+| S1 | `free_def_ok (free_of s)` | `free_incremental_ok` | `MidSweep.free_sw_ok` |
+| S2 | free agrees with the colour rule: for a block `x`, `free_of s g x <==> is_blue x g \/ (is_white x g /\ a.unswept s (hd_address x))` | the definition (`pending_free`: white, `x > c`); alignment to check | the definition of `free_sw` |
+| S3 | **start**: from the marked heap (nothing grey, the tri-colour invariant, ready to sweep): `sweep_inv g (start g s)`, `acct (free_of s0) g nothing_new g`, and `reclaimed_was_dead g nothing_new (free_of s0) g` | `phase_account_start` | invariant: `MidSweepStep.sw_start`. Account: **new**, small (a block in use is black at the start: `start_unswept`) |
+| S4 | **slice**: from `sweep_inv g s`, the slice gives `sweep_inv g' s'`, or the end state if `done s'`, and keeps `acct` and `reclaimed_was_dead` with `free_of s'` | `phase_account_slice`, `GI.phase_slice_shape` | invariant: `step_sw` per unit. Account: **new**, from `SweepUnits.unit_ok` through `step_use` and `step_block` (the blocks in use are the same before and after a step); words from `Survive` |
+| S5 | **end**: `sweep_inv g s /\ done s` gives the `Idle` shape, `well_formed_heap`, and `free_of s` agreeing with `free_stw` on `g` | `GI.sweep_end_shape` | `sw_end` |
+| S6 | **the program's events do not move the sweep**: allocation and body writes keep `sweep_inv`, and `free_of` is the same on old blocks | `alloc_sweep_phase`, `fresh_close`, `write_sweep_phase` (cursor unchanged) | `alloc_sw_ok` (`same_swept`); a body write leaves the page map alone |
+| S7 | **finishing** (liveness; the cycle theorems do not use it): an unbounded slice ends `done` | `GI.phase_slice_finishes` | `sweep_rest` |
+
+**The instances' fields:**
+
+| Field | Main | Pages |
+|---|---|---|
+| `a.ast` | `(fp, c)` | `pstate` |
+| `free_of` | `free_incremental c` | `free_sw st.pm` |
+| `start` | `(fp, sweep_start.cursor)` | `StartSweep.start_sweep st` |
+| `slice` | `SL.phase_slice` | **new definition**: `SA.step` over the next unswept units in page order, up to the budget |
+| `done` | `sweep_done c` | `all_swept st` |
+| `sweep_inv` | `sweep_inv_incremental g fp c` | `pages_ok_sw g st` |
+
+**Sweeping on allocation** (pages' `pool_find`) stays a collector step taken
+just before `Alloc` (§20.3's `Slice_unit`).
+- In the record it could be an optional field
+  `slice_unit: heap -> a.ast -> unit -> heap & a.ast`, with S4's contract.
+- Main would have none. Whether it belongs in the record or only in the
+  page instance is question 1b (22.7).
+
+### 22.3 `AllocIface` v3
+
+**Form.** v3 is a new record, `allocator3`, beside v2. No v2 statement
+changes (`pages_allocator_ok`, `pages_allocator_sw_ok` and §21 stay as they
+are). Each instance proves that v3 gives v2.
+
+**Changes to the record:**
+1. **The tag.** `alloc : phase -> heap -> ast -> nat -> tag -> GTot (heap & ast & U64.t)`,
+   with `tag < 256` and `tag <> infix_tag`. Main's `alloc_phase` takes one,
+   and the cycle needs it: `marking_alloc` concludes
+   `tag_of_object obj = tag`; `no_infix_block` and `program_write`'s
+   `~is_closure` read it.
+2. **The invariant splits.**
+   - `shape ph g s` is the allocator's own structures. It does not read the
+     fields of blocks in use.
+   - Well-formedness of the fields is the collector's
+     (`well_formed_heap_with free`).
+   - v2's `inv` is `shape /\ well_formed_heap_with free` (an instance lemma).
+   - Main's `shape` is the `fl_ascending`/`alloc_ok` part (`sweep_shape`
+     while sweeping). Pages' is `Scrub.core` plus each phase's colour facts,
+     without the well-formedness and L10.
+3. **`pending` takes the heap before the allocation**:
+   `pending : ast -> heap -> hp_addr -> prop`. Main's pending words are the
+   words of the `pending_free c` blocks of `g` (§20.2's table), which depend
+   on the heap. Pages ignores the heap.
+
+**The guarantee.** `free` is what the collector counts as free before the
+allocation, and `free'` after it: `free_stw` in `Idle` and `Marking`,
+`sw.free_of s` and `sw.free_of s'` in `Sweeping`. v2's clauses stay: on
+failure nothing changes; the new object `x` is an object of `g'` of wosize
+`wz`, of colour `colour_at`, and was not live in `g`; `others_unchanged`;
+the `pending` frame. The new clauses:
+
+| | Clause | Main's source | Pages' source |
+|---|---|---|---|
+| T | **tag**: `tag_of_object x g' == tag` | `alloc_phase_new_block` (`new_block`), `marking_alloc` | **none.** The page allocator writes tag 0 (`Pages.Alloc`: "white with tag 0"). Needs `alloc_tag`: `alloc_col`, then a header rewrite of the tag bits, proved as `Recolour` does for the colour bits. Risk: closures (`is_closure`, and infix headers in the body that the caller writes); `tag <> infix_tag` as main. Cost: the same header store, so the ≤ 5% rule is unaffected |
+| N+K | **only the new object comes into use, and no block in use becomes free**: `in_use free' g' y == (in_use free g y \|\| y = x)` | `Mut.alloc_in_use`, `alloc_keeps` (Sweeping, any cursor). For `Marking`/`Idle`: through the colour, since `alloc_phase` differs between phases only in the header's colour (an `AP` lemma, to check) | `Sweeping`: `alloc_sw_ok`'s `in_use` equation (`NewOnly.alloc_new_only`, `MidSweepAlloc.use_eq`). `Idle`: `NewOnly.alloc_new_only` with `others_unchanged` (`Th.alloc_ok`). `Marking` (`alloc_col Black` from `pages_ok_mc`): **new**, a transfer through `Recolour` as `pages_allocator_ok` does for its other clauses |
+| C | **carved from free space**: a word in the extent of `x`, or of a block free in `g'`, was in the extent of a block free in `g` | `Mut.alloc_carved` (`carved_from`: the object and the rest of block `q`) | per path, `Replace.replaces` (the replaced stretch was all blue; `NewOnly` uses each path's). **New**: one lemma over the paths, from `NewOnly`'s per-path facts |
+| W | **the walk is dense after the allocation**, and after the caller's writes: `heap_objects_dense g'` | `MW.alloc_reaches`, any phase (positions kept, so dense) | `Sweeping`: `alloc_sw_ok` (`walk_end g'' + 8 >= heap_size`), then `WalkEnd.dense_from_walk_end`. `Idle`: the result's `pages_ok` (`Th.alloc_ok`), then `Darken.idle_dense`. `Marking`: **new**, the same argument over `pages_ok_mc` |
+| W+ | **optional, per instance**: the walk ends where it did, `walk_end g' == walk_end g` | `Mut.alloc_walk_end`, `MW.alloc_reaches` | **false** when `heap_size = pages_end` (§21.6); see 22.4 |
+| F | **the bridge, write by write**. (i) Right after the allocation, `shape ph g' s'` and `well_formed_heap_with (free' ∪ {x}) g'` (`x` counted free while its fields are unwritten). (ii) A write into the body of `x`, or of a block in use, keeps (i), every header and the walk. (iii) Once `x`'s fields are storable (`fields_storable free' g'' x`), `well_formed_heap_with free' g''` | `Marking`: `MPA.marking_alloc` (`marking_fresh`: `wf_with (free_or_new obj)`), `marking_fresh_write`, `marking_fresh_close`. `Sweeping`: `alloc_sweep_phase` (`fresh_ok`, `free_or_uninitialised`), `fresh_write`, `body_write_shape`, `fresh_close` | (iii): `MidSweepAlloc.wf_close` (from `wf_with (free_x pm' x)`) with `after_wf`/`after_use`, stated after all writes. (i) and (ii) are **new**: today pages states the invariant only once every field is written (`fields_written_with`). Needed: `Scrub.core` does not read the fields of live objects; `Scrub.core_fill_objs` proves it for filling dead objects, and a per-write form for a live object is new |
+
+Clause F is not used by the cycle's theorems (22.1). It is how the runs'
+hypotheses are met in the witnesses and the implementation.
+
+**What the generic `Alloc` events then use:**
+- **marking:** N+K, `others_unchanged`, black (`colour_at Marking`), F(i)
+  and W;
+- **sweep:** N+K and C (for `reclaimed_was_dead`), W, the `pending` frame,
+  and S6.
+
+The generic form of `MPA.marking_alloc` (that the marking invariant holds
+with `x` fresh) is collector-side work from these clauses: the blocks in
+use, their edges and their colours are those of `g` plus a black `x`. This
+is the largest new proof of the generic marking run.
+
+### 22.4 The walk clause
+
+**What akhil's proofs use the walk for:**
+1. **Marking.** `mark_run_inv` carries `W.reaches g zero_addr (walk_end g0)`,
+   so the hand-over has `walk_end gh == walk_end g0` (`same_blocks_reaches`).
+2. **The sweep.** `survivor_or_new` and `idle_account` carry
+   `walk_end g == walk_end g0`.
+   - `reclaimed_was_dead_transfer` and `lossless_at_idle` use it.
+   - `survived_at_idle` uses it to find a block of `g` over `x`'s header
+     (`block_over g p`, with `p < walk_end g0`).
+3. **The cycle's words.** `start_words` and `handover_words` compare the
+   words below `walk_end g0` and below `walk_end gh`.
+
+**Proposal: the generic proofs carry only density.** Density is
+`heap_objects_dense`, that is `walk_end + 8 >= heap_size`
+(`W.reaches_end_of_dense`). Every word `p` with `p + 8 < heap_size` lies
+below every dense heap's walk end. So:
+- **`cycle_survives` stays as it is, generically.** `x`'s header is at most
+  `heap_size - 16`, so it is below the walk's end in any dense heap.
+- **`cycle_lossless`, generic form:** for `p + 8 < heap_size`.
+- **`cycle_lossless_walk`:** the full form, for every `p < heap_size`, when
+  the instance gives W+ for every event. That is akhil's statement.
+  - Main meets W+ with `alloc_walk_end`, `same_heads_walk_end` (writes),
+    `phase_account_slice` (which carries the equality), the minor lemmas
+    (whose `survivor_or_new` carries it) and `same_blocks_reaches` (marking).
+  - So instance 1 gives exactly his `cycle_lossless`.
+- **Pages.** W+ fails only for the last word, in the tail case. There the
+  page `cycle_lossless` is the `p + 8 < heap_size` form. To cover the last
+  word too, either the page layout keeps a one-word tail as a block, or the
+  statement stays partial (question 4, 22.7).
+
+**Risk.** `reclaimed_was_dead_transfer` and `lossless_at_idle` are stated
+with the equality. Their generic copies must be re-proved from density.
+This is the part of the generic sweep most likely to need new work.
+
+### 22.5 The abstract minor collection
+
+**The generic runs take a record that the instance supplies:**
+
+    noeq type minor_event (a: allocator3) = {
+      ev   : Type;                              (* main: the nursery and the roots *)
+      pre  : phase -> heap -> a.ast -> MP.scan_pos -> (obj_addr -> prop) -> ev -> prop;
+                                                 (* the event's hypotheses; the set is outside the snapshot *)
+      run  : phase -> heap -> a.ast -> ev -> GTot (heap & a.ast);
+      pre_refs  : heap -> ev -> obj_addr -> prop;   (* outside references before (main: outside_refs_of) *)
+      post_refs : heap -> ev -> obj_addr -> prop;   (* and after (main: root_refs of the new roots) *)
+    }
+
+**Main's `pre`:**
+- `Marking`: `GI.phase_shape`, `roots_valid_for_minor_collection`,
+  `outside_refs_reached` for the roots, and
+  `minor_major_fields_not_free (outside_snapshot s)`.
+- `Sweeping`: `sweep_inv_incremental`, `minor_heap_shape`, and
+  `minor_major_fields_not_free (free_incremental c)`.
+
+These are the hypotheses of akhil's `Minor` constructors, word for word.
+
+**What an instance proves.** Write `(g', s') = run ph g s e`.
+`made y` is `in_use free' g' y /\ ~(in_use free g y)`.
+
+| | At `Marking` | Main's lemma |
+|---|---|---|
+| M1 | **account**: `within_snapshot s g` gives `within_snapshot (with_new_blocks s g g') g'` | `GMC.account_minor` |
+| M2 | **marking invariant**, for every extra set `r`: `marking_inv g (pre_refs ∪ r) sp` gives `marking_inv g' (post_refs ∪ r) sp` | `GMM.minor_keeps_marking_inv_with` |
+| M3 | **blocks in use are kept**: `in_use free_stw g y` gives `y` in the objects of `g'`, with the same header | `GMM.minor_keeps_block` |
+| M4 | **made blocks are black** | `GMM.minor_new_block_black` |
+| M5 | **the walk**: density kept, and W+ (positions kept) where the instance has it | `MW.minor_reaches` |
+
+| | At `Sweeping` | Main's lemma |
+|---|---|---|
+| N1 | **account**: `acct (free_of s) g0 since g` gives `acct (free_of s') g0 (since ∪ made) g'` | `SPC.survivor_or_new_minor_made` |
+| N2 | **converse**: `reclaimed_was_dead` kept, with `made` added | `SPC.reclaimed_was_dead_minor` |
+| N3 | **the sweep does not move**: `free_of s'` agrees with `free_of s` on old blocks | `GI.minor_keeps_phase_shape` (`pending_free` kept; the cursor unchanged) |
+
+**What the generic run must still supply itself:** that
+`marking_inv g (pre_refs ∪ r) sp` holds, where `r` is what was reachable
+at the start. akhil's `minor_inv` gets it from `phase_shape`, the event's
+`outside_refs_reached` and `satb`. It is collector-side, a union of outside
+sets for `MP.marking_inv`.
+
+**The pages instance, later, by promotion.** A promotion is, for each live
+nursery object, an allocation at the phase (`a.alloc ph … tag`), its field
+writes, and the forwarding. With v3:
+- M3 and N3 follow from `others_unchanged` and N+K, one allocation at a
+  time.
+- M4 follows from `colour_at Marking = Black`.
+- N1 and N2 follow from N+K, C and W, one allocation at a time.
+- M5 follows from W.
+- M1 and M2 are the Cheney simulation (`CheneyGeneric`) given these.
+
+This is §20.5 item 6, whether as a generic copy of the promotion lemmas or
+as `Promote` taking the record (akhil's call).
+
+### 22.6 The generic runs and instance 1
+
+- **`gmarking a sw me g0 rs`** has `Start`, `Slice`, `Write`, `Alloc` and
+  `Minor`, as `MC.marking`. Each event's hypotheses are `col_shape`,
+  `a.shape` and the event's own (`me.pre` for `Minor`).
+- **`gsweep`** has `Start`, `Slice` (`sw.slice`), `Alloc`, `Write` and
+  `Minor`, as `SC.cycle`.
+- **`gcycle`** composes them, as `GC.Gen.Cycle.major_cycle`.
+- **The theorems:** `cycle_account`, `cycle_complete`,
+  `cycle_frees_unreachable`, `cycle_survives`, `cycle_addresses_lossless`
+  and `cycle_covered`. `cycle_lossless` comes in the two forms of 22.4.
+  `per_step_safety` keeps the collector's state through each event, from
+  S4, S6 and F.
+- **Instance 1: "exactly his theorems".**
+  - A total map `to_generic` from each of akhil's run types to the generic
+    one, at main's allocator, sweeper and minor event.
+  - Each of his conclusions is then the generic theorem applied to
+    `to_generic r`, with the same statement. His types and theorems are not
+    edited.
+  - Witnesses: main's SPOT runs (`MarkPhaseCycleAlloc`,
+    `SweepPhaseCycleAlloc`, `SweepPhaseFreedByEnd`) mapped through
+    `to_generic`.
+
+### 22.7 Questions for akhil
+
+1. **Progress.** (a) Should the sweep's progress live in the allocator's
+   state rather than in `Ph.gc_phase` (22.2)? (b) Does sweeping on
+   allocation belong in the record, or only in the page instance?
+2. **`Minor`.** Should it be an abstract event with the properties of 22.5?
+   Should `Promote` eventually take the allocator record, or should a
+   generic copy of the promotion lemmas be made?
+3. **`col_shape`.** Should it be defined in the generic modules (recommended;
+   no edit to `GC.Gen.Incremental`), or in his?
+4. **The walk.** Density in the generic proofs, W+ as an instance clause for
+   the full `cycle_lossless` (22.4). For pages, keep the tail word as a
+   block, or accept the partial statement?
+5. **The tag.** Should it be in the allocator's signature (22.3, change 1)?
+
+### 22.8 Order of work, once agreed
+
+1. `AllocIface` v3 (`allocator3`, the clauses), and instance 1's clauses from
+   main's lemmas (22.3).
+2. Pages' v3 clauses: `alloc_tag`; N+K at `Marking`; C as one lemma; W at
+   `Marking`; F (i) and (ii) per write.
+3. The sweeper record, instance 1 from akhil's lemmas, the generic sweep
+   run, and `to_generic` for `SC.cycle`.
+4. The generic marking run with `minor_event`, instance 1, and `to_generic`
+   for `MC.marking`.
+5. The generic cycle; instance 1's theorems; vacuity through the SPOT runs.
+6. The page sweeper instance (S3 and S4's accounts are new). Then pages'
+   minor event, by promotion (§20.5 item 6).
