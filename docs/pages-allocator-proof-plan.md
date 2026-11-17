@@ -2434,3 +2434,292 @@ object in an unswept page may point to a block already freed in a swept page.
 6. Promotion and the minor collection, after deciding the Promote question
    with akhil.
 7. The implementation interface, then 5b (`gen_gc` with the page state).
+
+---
+
+## 21. §20.2 and §20.4 as built (2026-11-17)
+
+Built: the colour rule (§20.2) and allocation during an incremental page
+sweep (§20.4), in the page modules and the allocator interface only. Not
+built: the sweeper record (§20.3), the generic cycle modules (§20.5), and
+the minor collection mid-sweep (§20.4 step 4), which needs `Promote`. No
+module of akhil's changed. All modules are in `mark-and-sweep/spec/`.
+
+### 21.1 `AllocIface` v2: the colour rule
+
+**The record** has a fifth field. `unswept` now decides the colour, and
+`pending` is the frame:
+- `unswept s b`: memory the sweep has yet to visit;
+- `pending s b`: memory the allocator must not change.
+
+**The colour** is `colour_at a s ph x`:
+- `Marking`: black;
+- `Sweeping`: black if `a.unswept s (hd_address x)`, white otherwise;
+- `Idle`: white.
+
+`alloc_post`'s colour clause is `color_of_object x g' == colour_at a s ph x`,
+with `s` the state before the allocation. Its frame clause is on `pending`.
+
+**What the caller may store** depends on what the collector counts as free:
+- `field_ok_with free` and `fields_written_with free` generalise
+  `field_ok` and `fields_written`. `field_ok_stw` and `fields_written_stw`
+  show the old ones are the instances at `free_stw`.
+- `alloc_post_with free` is the guarantee. `alloc_post` is
+  `alloc_post_with free_stw`.
+- `allocator_ok_with a free` takes `free` per phase and state.
+  `allocator_ok a` is the instance at `free_stw` in every phase
+  (`allocator_ok_stw`).
+- The sweeper's `free_of` (§20.3) would supply `free`; it is a parameter
+  until the sweeper record exists.
+
+**The first version is kept as `alloc_post_v1`** (colour `new_colour ph`,
+frame on `unswept`, `fields_written`), to show nothing is lost.
+
+**`Pages.Allocator`**:
+- `pages_allocator` sets `pending = unswept`.
+- `pages_allocator_ok` is re-proved against the new `alloc_post`. The new
+  object's header is in a swept page (`new_swept`, from
+  `AllocPhase.new_hdr_swept` through the whitened heap), so `colour_at` is
+  `new_colour ph` (`colour_new`).
+- **`alloc_post_new_old`** (new): for pages, from the phase's invariant, the
+  new `alloc_post` implies `alloc_post_v1`.
+
+**No page conclusion weakens:**
+
+| Statement | Change |
+|---|---|
+| `Pages.Theorems` | byte-identical |
+| `alloc_correct`, `alloc_col_correct`, `alloc_idle`, `alloc_no_fit` | unchanged statements and proofs |
+| `pages_allocator_ok` | same text; it now means the v2 `alloc_post`, and with `alloc_post_new_old` it gives v1 too |
+| `pages_allocator` | one more field, `pending = unswept` |
+| `inv`, `phase_ok`, the sweep and contract lemmas of `Pages.Allocator.fsti` | unchanged |
+
+The modules that use the interface (`Darken`, `GcCorrect`, `MarkSteps`,
+`SweepingStart`, `Vacuity`, `Witness`) verify unchanged.
+
+### 21.2 The mid-sweep invariant (`MidSweep`)
+
+- **`free_sw pm g x`**: `x` is blue, or white with its header in a page
+  unswept in `pm` (`unswept_at`, from `Graft.uw`). It is main's
+  `free_incremental c` with "at or above the cursor" read as "unswept". The
+  swept set is the page map's own `swept` bits; `free_sw_ok` proves
+  `free_def_ok`.
+- **`pages_ok_sw g st`** (sealed; `pages_ok_sw_intro`, `pages_ok_sw_elim`):
+  - `Scrub.core g st`: `pages_ok` without L10. That is the shapes of every
+    page (L1–L3, L6), the free-slot lists, colours and runs of swept pages
+    (L4, L5, L7), and the lists (L8, L9), which hold swept pages and blocks
+    only;
+  - `no_grey_unswept`: no grey block in an unswept pool page or run;
+  - `well_formed_heap_with (free_sw st.pm) g`.
+- With every page swept it is the `Idle` invariant (`MidSweepStep.sw_end`).
+- `map_ok` and the tiling are in `core`. `heap_partitioned` is not in it;
+  `Partition` is not needed by any proof here.
+
+### 21.3 Allocation during the sweep (`MidSweepAlloc`)
+
+**The obstacle** (§20.4) is unchanged: a dead white object of an unswept
+page may point to a block a swept page has freed, so `well_formed_heap`
+and L10 fail, and `alloc_correct` does not apply.
+
+**The proof is not plan step 1** (restating the allocator's proofs from a
+weaker precondition). The per-path proofs carry `well_formed_heap` through
+every intermediate step (`Replace.replace_ok`), so that would rewrite
+`Pool`, `Large`, `NewRun`, `Replace`, `Fill` and `Recolour`. Instead the
+allocator runs on a surrogate heap:
+1. **`Scrub`**: `scrub g zs` clears the fields of the objects `zs`, the dead
+   objects of unswept pages (`MidSweep.dead_list`). The walk and every
+   header are kept, and `core` holds of the scrubbed heap exactly when it
+   holds of `g` (`core_fill_objs`, by `Fill`'s lemmas, one object at a
+   time). The scrubbed fields hold no pointer (`scrubbed_no_pointer`).
+2. **`MidSweep.surrogate`**: the scrubbed heap satisfies `pages_ok` and
+   `well_formed_heap`. The blocks in use mid-sweep are those not blue and
+   not dead, so main's `SweepPhase.Intrinsic.wf_transport` carries
+   well-formedness to the surrogate with the dead objects counted free; the
+   dead objects then hold no pointer. The surrogate agrees with `g` off the
+   unswept pages, since the dead objects' blocks lie in unswept pages
+   (`block_uw`).
+3. **`Graft`**: the allocator does not read unswept pages. `alloc_graft`:
+   allocating in `graft gk d pm` (`gk` with the unswept words of `d`) gives
+   the same state and object as in `gk`, and the result grafted. The proof
+   follows `Recolour` path by path, with "not in an unswept page"
+   (`pop_out`, `free_page_out`, `cell_out`, `free_run_out`) where
+   `Recolour` has "not a painted header". `alloc_agree` instantiates it.
+4. **`MidSweep.alloc_relate`**: the heap allocated from `g` is the
+   surrogate's, with the dead fields put back (`Scrub.fill_objs`, the
+   general form of the scrub). The objects and headers are those of the
+   surrogate's heap.
+5. **The caller's writes** (`after_*`): scrubbing the caller's heap gives a
+   heap the surrogate's caller could have written (`after_written`). So
+   `alloc_ok` gives it `pages_ok` and `well_formed_heap`, which carry back to
+   `core` and `no_infix_block`. The pointer clauses follow from the blocks
+   in use being those of `g` and the new object (6), by `wf_transport`
+   with the new object counted free, then its fields (`wf_close`).
+6. **`NewOnly`**: an allocation brings only the new object into use.
+   **`alloc_new_only`**, from `pages_ok` and `well_formed_heap`: every block
+   of the allocator's heap that is not free, other than the new object, was
+   a block that was not free. `alloc_correct` has only the other half
+   (`others_unchanged`). The proof uses the stretches each path replaces
+   (`Replace.replaces`) and their layouts (`Pool.fill_blocks`,
+   `PoolInit.pool_init_free`, `Large.carve_layout`, `Large.link_replaces`,
+   `NewRun.run_layout`), on the cleared allocator, then `Blocks.clears`.
+
+**`alloc_sw_ok`**, from `pages_ok_sw g st`, for the `Sweeping` allocator
+`PA.alloc I.Sweeping` (`alloc_col White`, equal here to `Alloc.alloc` by
+`sweeping_alloc`):
+- every page keeps its swept bit (`same_swept`, by `alloc_same`);
+- on failure, nothing changes and `no_fit` holds;
+- on success, the new object `x` is an object of the heap, of wosize `wz`,
+  white, not in an unswept page, and was not in use;
+- **`in_use (free_sw st'.pm) g' y == (in_use (free_sw st.pm) g y || y = x)`**;
+- for every `g''` with `fields_written_with (free_sw st.pm) g' g'' x`,
+  `pages_ok_sw g'' st'` and the walk of `g''` reaches the end of the heap;
+- `others_unchanged g g'` and `unswept_unchanged g g' st st'`.
+
+**Main's five facts (§20.1):**
+
+| Fact | Where |
+|---|---|
+| 1. The colour | `colour_at`: white, the header not in an unswept page (`alloc_sw_ok`, `MidSweepAlloc.sweeping_post`) |
+| 2. Only the new object comes into use | the `in_use` equation of `alloc_sw_ok` (`NewOnly.alloc_new_only`, `use_eq`) |
+| 3. Every other block is kept | `others_unchanged g g'`, header and fields, for every block not blue (more than `keeps_blocks (free_sw pm)`) |
+| 4. The walk | `WalkEnd.walk_end g'' zero_addr + 8 >= heap_size` (main's `heap_objects_dense` form); see 21.6 |
+| 5. The invariant | `pages_ok_sw g'' st'` |
+| Not pending | `unswept_unchanged`; the new object's header and fields are in swept pages (`new_out`) |
+
+**`pages_allocator_sw`** (`MidSweepAlloc`) is the page allocator with
+`pages_ok_sw` as its `Sweeping` invariant (`inv_sw`), and `PA.inv`
+otherwise. **`pages_allocator_sw_ok`**:
+`allocator_ok_with pages_allocator_sw free_ph /\ phase_ok pages_allocator_sw`.
+`free_ph` is `free_sw st.pm` while sweeping and `free_stw` otherwise.
+
+### 21.4 Sweeping further pages (`MidSweepStep`, `MidSweepRun`)
+
+- **`step_sw`**: from `pages_ok_sw`, one `SweepAll.step` keeps it, unsweeps
+  nothing, and sweeps its unit. The kinds and swept bits outside the unit
+  are kept.
+  - The page invariant and the lists come from `SweepStep.pool_step` and
+    `run_step`. They are local and need only the unit as the mark left it.
+  - No grey position in a marked pool page (`pool_no_grey`, by
+    `SweepTags.pool_pos3`). Other pages: `no_grey_frame`.
+  - Well-formedness: the blocks in use are the same before and after the
+    step. The survivors were black, and are white in a swept page; the rest
+    of the unit was free mid-sweep and is free. Block for block, by
+    `SweepUnits.unit_ok` (`step_use`, `step_block`), with no infix block by
+    `SweepTags.blue_ok` (`step_infix`). Then `wf_transport` (`step_wf`).
+- **`sw_start`**: the sweep's start (`sweep_ready`, `mark_done`) is in
+  `pages_ok_sw`. A block in use there is black (`start_unswept`), and the
+  mark's tri-colour invariant gives its targets.
+- **`sw_end`**: `pages_ok_sw` with every page swept is the `Idle`
+  invariant.
+- **`sweep_rest`**: from any `pages_ok_sw` state, `SweepAll.sweep_all`,
+  whose steps skip swept units, ends in the `Idle` invariant
+  (`sweep_from_sw`).
+- **`MidSweepRun.sw_run`**: start, then allocations (`SwAlloc`, through the
+  interface in `Sweeping`, with the caller's writes) and sweep steps
+  (`SwStep`) in any order. **`sw_run_inv`**: every state is in
+  `pages_ok_sw`. **`sw_run_ends`**: from every state, the rest of the sweep
+  ends in `Idle`.
+
+### 21.5 Vacuity (`MidSweepVacuity`)
+
+The witness is a run of `sw_run` from the sweep's start of `W`'s mark
+(`Vacuity.hm`, `Vacuity.s_sw`), where every page that is not free is
+unswept:
+0. **Start** (`start_witness`): `pages_ok_sw`. C is a dead object in an
+   unswept pool page of A's class (`c_page`, `c_uw`): it is an object of the
+   heap and not in use. B is in use. `V.nontrivial` holds.
+1. **C's page swept** (`step1_witness`): that page is swept, and it keeps a
+   free slot or became a free page (`sweep_frees`). B's run is still
+   unswept.
+2. **An allocation** (`alloc_witness`), with C's page swept and B's run
+   unswept: it succeeds, because `no_fit` would contradict 1. The new object
+   is white, in a swept page, and in use; it was not in use before. The
+   caller clears its field (`zeros_written`), and the heap is in
+   `pages_ok_sw` with B's run still unswept.
+3. **B's run swept** (`sw_witness_ok`).
+4. **The rest**: `sweep_all` gives `pages_ok_sw` with every page swept
+   (`sw_end`'s hypotheses) and the `Idle` invariant.
+
+`sw_witness g` is the run: `SwStart`, `SwStep` (C's page), `SwAlloc`, and
+`SwStep` (B's run). The steps are stated over any heap with the facts they
+need (`step1_abs`, `alloc_abs`) and instantiated with `W` at the end, as
+§18.3 advises.
+
+| Theorem | Witness |
+|---|---|
+| `Graft.alloc_graft`, `alloc_agree` | `surrogate_witness`: the surrogate of the start, C scrubbed |
+| `NewOnly.alloc_new_only` | the same surrogate, and `W` |
+| `Scrub.scrub_facts`, `core_scrub`, `scrubbed_no_pointer` | `surrogate_witness`: `zs` the dead list, C in it |
+| `MidSweep.surrogate`, `alloc_relate`, `alloc_facts` | `surrogate_witness` (start); state 1 through `alloc_sw_ok` |
+| `MidSweepAlloc.alloc_sw_ok` | `alloc_witness`: state 1, the allocation succeeds |
+| `pages_allocator_sw_ok` (`Sweeping` invariant) | states 0–3 |
+| `MidSweepStep.step_sw` | a pool page (state 0) and a run (state 2) |
+| `sw_start` | state 0 |
+| `sw_end`, `sweep_rest`, `sweep_from_sw` | `sw_witness_ok`: the rest from state 3 |
+| `MidSweepRun.sw_run_inv`, `sw_run_ends` | `sw_witness` |
+| `Pages.Allocator.alloc_post_new_old` | `Vacuity.interface_witness` (each phase's invariant, unchanged hypotheses) |
+
+### 21.6 Changes to the plan
+
+- **The walk clause of §20.4 step 3 is false for pages.** The plan says
+  `W.reaches g zero e` implies `W.reaches g' zero e`. A new run of `k`
+  pages overwrites `k` free pages with the object and one free rest. So the
+  page bases inside the object stop being positions of the walk. What is
+  proved is the form main's cycles use the clause for: the walk reaches
+  the end of the heap after the allocation and the writes (`heap_objects_dense`
+  through `WalkEnd.dense_from_walk_end`). Main's `alloc_walk_end`
+  (equality of the walk's end) can also fail for pages: when
+  `heap_size = pages_end`, a last page that turns from free into a pool page
+  with a one-word tail ends the walk 8 bytes earlier. The walk clause is
+  not in `AllocIface`.
+- **Fact 2 needed its own lemma** (`NewOnly`); §20.4 expected it from
+  `others_unchanged`, which gives only the other direction.
+- **The `Sweeping` invariant of `pages_allocator` is still `pages_ok_mc`.**
+  The mid-sweep instance is a second record, `pages_allocator_sw`, so no
+  statement about `pages_allocator` changes meaning. A collector that
+  sweeps incrementally uses `pages_allocator_sw`.
+- **The swept set is the page map's swept bits**, not a separate `sst`.
+  The page sweeper of §20.3 can take `sst = page_map` when it is built.
+- **Not built:** sweeping on allocation (`Slice_unit`), the minor collection
+  mid-sweep (§20.4 step 4: `Promote` is akhil's), and the runs like main's
+  `SPOT.SweepPhaseCycleAlloc` (§20.4 step 5; `MidSweepRun` is the page form).
+
+### 21.7 Modules
+
+| Module | Lines | What it holds |
+|---|---|---|
+| `AllocIface` (changed) | 233 (was 145) | `colour_at`, `pending`, `field_ok_with`, `fields_written_with`, `alloc_post_with`, `allocator_ok_with`, `alloc_post_v1` |
+| `Pages.Allocator` (`.fsti`, `.fst`, changed) | +57 | `pending = unswept`; `new_swept`, `colour_new`, `alloc_post_new_old` |
+| `Pages.Graft` | 526 | `uw`, `graft`; `alloc_graft`, `alloc_agree` |
+| `Pages.NewOnly` | 362 | `new_only`; `alloc_new_only` |
+| `Pages.Scrub` | 289 | `core`; `fill_objs`, `scrub`; `fill_facts`, `core_fill_objs`, `scrubbed_no_pointer`; `objects_where` |
+| `Pages.MidSweep` | 709 | `free_sw`, `pages_ok_sw`, `dead_list`; `block_uw`, `surrogate`, `alloc_same`, `new_out`, `alloc_relate`, `alloc_facts`, `no_grey_frame`, `target_fill` |
+| `Pages.MidSweepAlloc` | 566 | `after_*`; **`alloc_sw_ok`**; `pages_allocator_sw`, `pages_allocator_sw_ok` |
+| `Pages.MidSweepStep` | 607 | `step_use`, `step_block`, `step_infix`, `step_wf`; **`step_sw`**, `sw_start`, `sw_end`, `sweep_rest` |
+| `Pages.MidSweepRun` | 95 | `sw_run`; `sw_run_inv`, `sw_run_ends` |
+| `Pages.MidSweepVacuity` | 382 | the witness run and its facts |
+
+`MidSweepRun` and `MidSweepVacuity` are roots in the `Makefile`.
+
+### 21.8 Checked
+
+- Every new and changed module (`AllocIface`, `Pages.Allocator` `.fsti` and
+  `.fst`, `Graft`, `NewOnly`, `Scrub`, `MidSweep`, `MidSweepAlloc`,
+  `MidSweepStep`, `MidSweepRun`, `MidSweepVacuity`) verifies without
+  `--retry` at Z3 seeds 0, 1 and 2, from the clean cache of `ef186b67`:
+  33 checks.
+- No local rlimit is above 40. The most any query uses is 24.8
+  (`MidSweepVacuity.step1_abs`, under 40); then 22.5 (`MidSweepAlloc.alloc_sw_basic`,
+  under 40) and 20.1 (`MidSweepStep.run_step_sw`, under 40). Under the
+  default rlimit of 20, at most 9.1.
+- Three queries were fragile at some seed and were split, not given more
+  rlimit: `Graft.pop_out` (`pop_swept`, `page_out`), `NewOnly.carve_new_only`
+  (`carve_arith` first) and `NewOnly.pop_new_only` (`pop_ctx_new_only`);
+  `MidSweepAlloc.alloc_sw_ok` (36 of 40 before) became `alloc_sw_basic`,
+  `alloc_sw_fill` and `after_intro`.
+- No admits, no assumptions.
+- `make verify`, with the Makefile's default `--retry 3` as CI runs it, in a
+  scratch worktree whose cache was the clean build of `ef186b67`: 427
+  checked files (419 + the 8 new modules), no errors. The modules that use
+  the interface (`Darken`, `GcCorrect`, `MarkSteps`, `SweepingStart`,
+  `Vacuity`, `Witness`) were rechecked against it.
