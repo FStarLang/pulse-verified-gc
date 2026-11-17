@@ -3051,3 +3051,279 @@ as `Promote` taking the record (akhil's call).
 5. The generic cycle; instance 1's theorems; vacuity through the SPOT runs.
 6. The page sweeper instance (S3 and S4's accounts are new). Then pages'
    minor event, by promotion (§20.5 item 6).
+
+## 23. Plan: a pages-only incremental cycle in our own modules (2026-11-17)
+
+**This replaces §22 as the plan of record; §22 stays as an alternative.**
+§22 made akhil's cycle generic and needed five decisions from him (22.7).
+This plan needs none:
+- akhil's modules are only imported, and his lemmas are called as they are.
+  Nothing in `generational/` or `mark-and-sweep/spec/GC.Spec.*Phase*`
+  changes;
+- there is no `AllocIface` v3 and no sweeper record;
+- the cost is that the page cycle is a second run type beside his, with the
+  same statements. Where his proof is in a private helper of a `.fst`, it is
+  copied into our module with the allocator facts replaced, never edited in
+  place.
+
+### 23.1 What we build
+
+| Piece | Our module (proposed) | What it is |
+|---|---|---|
+| Page marking run | `GC.Spec.Pages.Cycle.Mark` | `pmarking g0 rs g st sp since`: Start, Slice, Write, Alloc and Minor events, over a page state `st` in place of `fp` |
+| Page sweep run | `GC.Spec.Pages.Cycle.Sweep` | `psweep g0 g st ph since`: Start, Step (one `SA.step` unit, or a budget of them), Alloc, Write and Minor; built on `MidSweepRun.sw_run`'s events |
+| Page cycle | `GC.Spec.Pages.Cycle` | `pcycle g0 rs g st ph since = PMark … \| PSweep …`, and the theorems |
+| Page promotion | `GC.Spec.Pages.Promote*` | promotion into the page allocator (23.6) |
+| Witness | `GC.Spec.Pages.Cycle.Vacuity` | a full cycle, both phases, non-trivial (23.8) |
+
+**The theorems, with akhil's statements word for word** (his `GC.Gen.Cycle`,
+with `major_cycle … fp …` read as `pcycle … st …`):
+`cycle_account`, `cycle_complete`, `cycle_frees_unreachable`,
+`cycle_survives`, `cycle_addresses_lossless`, `cycle_covered`,
+`cycle_lossless`. Their bodies use his predicates unchanged
+(`MC.snapshot`, `GMC.reachable_at_start`, `SPC.freed`, `SPC.new_covered`,
+`LL.blue_covered`, `unreachable_covered`), so they mean what his mean. In
+particular `cycle_lossless` is for every `p < heap_size`, the last word
+included; 23.5 is what makes that true for pages.
+
+### 23.2 The marking side: his lemmas, reused unchanged
+
+His marking run's events take `GI.phase_shape minor g fp Ph.Marking sp`,
+which holds main's free-list shape, so we cannot build his `MC.marking`
+from page states. But `phase_shape` is used in his proofs only to get two
+facts, by `GI.phase_shape_marking`: `well_formed_heap g` and
+`MP.marking_inv g (nursery_refs minor) sp`. Both are allocator-free. Our
+marking state is
+
+    pmark_ok minor g st sp = pages_ok_mc g st /\ all_swept st /\
+                             MP.marking_inv g (GMM.nursery_refs minor) sp /\
+                             <the nursery facts of collection_shape_with, with free_stw>
+
+and `pages_ok_mc` holds `well_formed_heap` (`AllocPhase.pages_ok_mc`).
+
+**Reused as they are** (called from our module, statements unchanged):
+
+| Event | His lemmas we call | Allocator-free because |
+|---|---|---|
+| all | `MC.snapshot`, `MC.satb`, `MC.mark_run_inv`, `MC.init_writes` (definitions) | they mention only the heap |
+| Start | `MPC.account_start`, `MB.darken_roots_bounded_prefix_*`, `MPC.account_grey`, `MPC.reachable_outside_refs`, `MPC.reachable_closed`, `GMC.reachable_at_start_eq` | root darkening is a recolouring |
+| Slice | `MPC.account_steps`, `MPC.mark_steps_keep_blocks`, `MPC.grey_keeps_blocks`, `MPC.cycle_handover`, `MP.marking_inv_*` | `S.mark_steps` only recolours |
+| Write | `GB.modify_heap`, `GB.modify_ok`, `MPC.account_barrier`, `MPC.cycle_write`, `MM.write_heads` | the barrier is darken-then-write |
+| Alloc (after the allocation) | `MPC.account_fresh_write`, `MPC.account_fresh_close`, `MPA.marking_fresh`, `MPA.marking_fresh_write`, `MPA.marking_fresh_close`, `MPA.keeps_blocks_resolve`, `keeps_blocks_edges`, `keeps_blocks_reach`, `MPA.free_or_new_ok` | they are stated over `keeps_blocks` and `well_formed_heap_with`, not over the allocator |
+| Hand-over | `MPC.account_marked`, and `handover`'s argument | — |
+
+**Copied, with the allocator fact replaced** (his are private helpers of
+`GC.Gen.MarkPhase.Cycle.fst` or take `phase_shape`):
+`start_prefix`/`start_prefix_edges`, `start_satb`, `start_extra`, `slice_inv`,
+`barrier_blocks`, `write_inv`, `init_inv`, `alloc_inv`, `minor_inv`,
+`same_blocks_reaches`, `mark_run_account`, `handover`. About 400 of his 475
+lines, mostly unchanged text: each `GI.phase_shape_marking` becomes our
+`pmark_ok_elim`.
+
+**New for pages, the marking side:**
+
+| | What | From |
+|---|---|---|
+| M-a | **mark steps keep `pmark_ok`**: `S.mark_steps g sp g' sp'` keeps `pages_ok_mc` | `MPC.mark_steps_keep_blocks` (only colours change) and `MarkPhase.mark_inv_recolour`, as `MarkSteps` does for the stop-the-world mark. Small |
+| M-b | **the barrier keeps `pmark_ok`**: darken (a recolouring, as M-a), then a write into the body of a block in use | the write is new: `Scrub.core` and `pages_ok` do not read the fields of blocks in use (`Scrub.core_fill_objs` proves it for dead ones), and `no_pointer_to_blue` is kept since the value is storable. Medium |
+| M-c | **`marking_alloc` for pages**: from `pmark_ok`, `PA.alloc Marking` gives a black block `x` that was not in use, `keeps_blocks free_stw g g'`, `well_formed_heap_with (free_or_new x) g'`, `blocks_fit g'`, and `pmark_ok` with `x` fresh | his `MPA.marking_alloc` is first-fit (`alloc_kept`, `alloc_in_use`, `MarkPhase.Alloc.fst:155-285`); ours is the same argument from `Th.alloc_ok`, `others_unchanged`, `NewOnly.alloc_new_only` and `Recolour` (Marking paints black). The in-use equation at `Marking` is new (N+K of §22.3). Then his `keeps_blocks_*` give the rest. Medium |
+| M-d | **`account_alloc` for pages** (`within_snapshot_fresh` after the allocation) | his `MPC.account_alloc` proof with M-c in place of `MPA.alloc_in_use`. Small |
+| M-e | **init writes keep `pages_ok_mc`** (each write into the fresh object's body) | as M-b, for the fresh object. Small once M-b exists |
+| M-f | **the walk**: `W.reaches g zero (walk_end g0)` kept by an allocation | with the layout of 23.5 the walk always ends at `heap_size`; we carry `walk_end g == heap_size` in place of `reaches`, from `pages_ok` (Partition). Small |
+| M-g | **start**: the page `Idle` invariant (`pages_ok`, `well_formed_heap`, `all_swept`) gives his `start_pre`'s heap facts (well formed, nothing grey or black) | `pool_white`, `run_swept_ok`. Small |
+
+### 23.3 The sweeping side: our page sweep, his account predicates
+
+The sweep runs on the page sweep already proved (§21.4): `pages_ok_sw`,
+`step_sw`, `alloc_sw_ok`, `sw_start`, `sw_end`, `sweep_rest`, and the
+interleaved runs of `MidSweepRun.sw_run`. No sweeper record and no cursor.
+
+**What the run carries** (our `psweep_inv`), with his predicates:
+
+    Sweeping: walk_end g == walk_end g0 /\
+              (forall x. in_use (free_sw st.pm) g x ==> SPC.survivor g0 g x \/ since x) /\
+              SPC.reclaimed_was_dead g0 since (free_sw st.pm) g
+    Idle:     SPC.idle_account g0 since g /\ SPC.reclaimed_was_dead g0 since free_stw g
+
+The `Sweeping` line is his `survivor_or_new g0 since g c` with
+`free_incremental c` replaced by `free_sw st.pm`; it is a definition of ours
+(`survivor_or_new_pg`), since his fixes the cursor's free.
+
+**Reused unchanged** (all generic in `free`, or about `Idle`):
+- `SPC.survivor`, `survived_mark`, `nothing_new`, `with_new`, `idle_account`,
+  `new_covered`, `free_or_new_at`, `freed`, `reclaimed_was_dead`
+  (definitions);
+- `SPC.reclaimed_was_dead_transfer`: for every sweep step, allocation, write
+  and minor collection, with `free = free_sw pm`, `free' = free_sw pm'`.
+  It needs the walk's end equal; 23.5 gives it;
+- `SPC.covered_at_idle`, `SPC.lossless_at_idle`, `SPC.survived_at_idle`: the
+  end of the cycle, as they are;
+- `LL.blue_covered`, `LL.dead_covered`, `LL.in_extent`.
+
+**New for pages, the sweeping side:**
+
+| | What | From |
+|---|---|---|
+| S-a | **the start account**: at `sw_start`, `survivor_or_new_pg g0 nothing_new g0` and `reclaimed_was_dead g0 nothing_new (free_sw pm0) g0` | a block in use at the start is black (`start_unswept`); a free block is blue or white-unswept, so dead at mark. Small |
+| S-b | **a sweep step keeps the account** | `step_use` and `step_block` (the blocks in use are the same, with their sizes) give the transfer's hypotheses with `made = nothing`. The walk end: 23.5. Small to medium |
+| S-c | **an allocation keeps the account**, `since` gains `x` | `alloc_sw_ok`'s in-use equation (`MidSweepAlloc.use_eq`), `made = {x}`; the transfer. Small |
+| S-d | **a write keeps it** | the write keeps every header (`same_heads`), so `in_use` and the walk. Small |
+| S-e | **the end**: `pages_ok_sw` with every page swept gives `idle_account` | `sw_end`; `free_sw pm = free_stw` when nothing is unswept. Small |
+| S-f | **the hand-over**: his `handover` facts on `gh`, and `pages_ok_mc gh st`, give `sweep_ready gh (start_sweep st)` and `mark_done gh`, so `sw_start` | `SweepingStart` does this from the stop-the-world mark; ours is from `pages_ok_mc` after mark steps. Small to medium |
+| S-g | **writes during the sweep keep `pages_ok_sw`** | as M-b, with `free_sw`. Small once M-b exists |
+
+### 23.4 The cycle
+
+`pcycle` composes the two runs as his `major_cycle` does (`Mark`, and
+`Sweep` with the hand-over slice), and its theorems are proved as his
+`GC.Gen.Cycle.fst` proves them (251 lines, copied with our run types): the
+marking half from `handover` (23.2), the sweeping half from
+`psweep_inv` at `Idle` and his `lossless_at_idle`, `survived_at_idle`,
+`covered_at_idle`, joined by his `start_words`/`handover_words` argument.
+That argument compares words below `walk_end g0` and `walk_end gh`; with
+23.5 both are `heap_size`.
+
+### 23.5 The heap's last word
+
+**The gap.** `cycle_lossless` is for every `p < heap_size`. With the
+current layout it is false for pages in one case:
+- when `heap_size = pages_end` (the runtime's case: the bridge rounds the
+  heap to whole pages), and the last page is a pool page of a class with a
+  one-word page tail, that word is not a block (its object address would be
+  `heap_size`), and the walk ends at `heap_size - 8`;
+- the classes with `page_wsize % cls c = 1` exist: at 4096 words they are
+  3, 5, 7 and 65 (at 2048, 89);
+- **the counterexamples go both ways.** The sweep turns such a page with
+  every slot dead into a `Free` page, one blue block to `heap_size`: the
+  word was in no block of `g0` and is now free (left side false, right side
+  true). An allocation turns a free last page into such a pool page: the
+  word was in a free block of `g0`, and is now in no block (left true,
+  right false);
+- the stop-the-world page theorem (`GcCorrect.lossless`) does not meet this
+  because it quantifies over the words of blocks of the marked heap, not
+  over every word.
+
+So without a change to the allocator or the layout the theorem is false,
+and the plan does not weaken it. The options:
+
+| | Option | Change to the proofs | Performance |
+|---|---|---|---|
+| **L1 (recommended)** | **Reserve the heap's tail: at least two words after the last page, always one blue block.** `n_pages = (heap_size - zero_addr - 16) / page_bytes`. Then `tail_shape` is always its blue-block case, every page (and a one-word page tail, now at `pages_end - 8`, an object address below `heap_size`) is a block of the walk, and **the walk ends at `heap_size` in every page state**. W+ of §22.3 holds for pages, so his walk-end lemmas apply unchanged | `Layout`: `n_pages`, and `pages_end_bound` becomes `16 <= heap_size - pages_end < page_bytes + 16`; its 22 call sites (half in `Init`) checked against the new bound. `tail_shape` stays as it is (its short case never holds). `Init` writes the tail block (it already has a case for a heap tail). New: `walk_end g == heap_size` from `shape_ok` (`Partition` gives it up to the last word). No change to `Alloc`, `Sweep*`, `MidSweep*` | 16 bytes per heap. The bridge adds two words to the heap it asks for, so no page is lost. No change on any fast path |
+| L2 | **A parameter condition and a run rule**: no class with a one-word page tail (`page_wsize % cls c <> 1`, a new C6), and a new run never leaves a one-word rest | `Params`, `NewRun` (a run whose rest would be one word); `SweepRun` pieces at the heap's end to check | changes OCaml 5's class table (3, 5, 7, 65 at 4096), so memory overhead and the bench numbers move; must be re-benchmarked against the ≤ 5% rule |
+| L3 | **Avoid the last page** for those classes and for runs whose rest would be one word | the page-taking paths (`PoolInit`, `NewRun`, `Pages.Alloc`): a new case in each, and in their Pulse code | at most one page unused for those classes; a branch on the page-taking slow path |
+| L4 | Assume `heap_size - pages_end >= 16` of the runtime | none, but it is a configuration axiom on the extern `heap_size` (`GC.Spec.ZeroAddr`), which §1.1 rejected (the old P5) | none |
+
+L1 is the smallest change and the only one that makes the walk's end
+constant, which is what lets 23.3 reuse his transfer and `Idle` lemmas
+unchanged. The stop-the-world theorems (`gc_correct_pages`) keep their
+statements; their proofs are rechecked under the new `n_pages`.
+
+### 23.6 Promotion
+
+**Why his promotion cannot be called as it is.** `Promote.promote_object`
+calls `AP.alloc_at ph major fp …` (main's first fit) in its definition
+(`GC.Gen.Promote.fsti:83-94`), and the Cheney state carries `cs_fp`
+(`Cheney.fsti:46`). `cheney_collect_spec_with ph free` is generic in the
+phase and in what counts as free, but not in the allocator:
+`allocations_not_free` quantifies over `AP.alloc_at`, and `promote_pre`
+holds `fl_valid` and `chain_objects_blue` (`CheneyGeneric.fsti:47`). So
+every lemma whose statement mentions `cheney_collect_spec_with`,
+`collect_marking` or `collect_at` is about first fit, even where its proof
+uses only heap facts. Since we do not edit his modules, a page promotion is
+our own definition, `ppromote`, with `PA.alloc` in place of `AP.alloc_at`,
+and the lemmas about it are ours.
+
+**His promotion modules, by how much they depend on first fit** (a survey of
+`generational/spec`, line counts with interfaces, not checked by F*):
+
+| Group | Modules | Lines | For pages |
+|---|---|---|---|
+| allocator-free | `CheneyBFS`, `ForwardingArray`, `MinorHeap`, `PromoteUpdate.Field`/`Obj`/`Header`/`Aux`, `CombinedGraph`, `Reachability`, `ReachabilityBridge`, the definitions of `Cheney.fst`, `Cheney.Sim` (one `fl_ascending_valid`) | ~7.4k | **reused unchanged**: forwarding, field rewriting, the reachability and BFS theory, the nursery's shape |
+| free list only threaded | `MinorCollectForwarding.*`, `CheneyPreservation.*`, `Cheney.Induction`, `SimOne`, `CheneyCorrectness`, the well-formedness part of `CheneyGeneric`, `MarkPhase.Minor`, `SweepPhase.Minor` | ~14.5k | **copied and edited**: the reasoning is about the heap, but the statements name `fp` and his promotion. In our copy, `fp` becomes `pstate`, `alloc_ok g fp` becomes the page invariant, and the frame lemmas, stated today with `chain_avoids g fp x` (obtained from "x not blue" through `chain_objects_blue`), become "a block that is not blue is unchanged", which the page allocator gives directly (`others_unchanged`) |
+| essential free-list reasoning | `Promote.fst:159-230`, `Cheney.Steps`, `PromoteUpdate.BlueProm`/`BlueAlloc`, `WriteBodyLemmas`, `AllocExact`, `FreeListAscending`, `CheneyFlComplete`, `FreeListShape`, `PostCollectionShape`, `Cheney.fst:253-347`, the free-list part of `CheneyGeneric`, `Cheney.Dense`, `GC.Gen.SweepPhase.fst` | ~4.6k | **not used**; replaced by ~1.5-2.5k lines of page proofs |
+
+**The allocation facts promotion uses** (from the survey; each must be a
+page lemma, at the phase promotion runs at):
+
+| Fact | Page source |
+|---|---|
+| the new object is an object of the result, in bounds, of the requested size | `Th.alloc_ok`, `alloc_sw_ok` |
+| not blue; the phase's colour | `colour_at`, `Recolour` |
+| **the tag** (`promoted_tag`, the minor object's own) | **new**: the page allocator writes tag 0. `ppromote` writes the header's tag after the allocation (a one-header rewrite, proved as `Recolour` does for colours), or the page `alloc` takes a tag. Our choice, since `PA.alloc` is ours |
+| old objects kept, only one new object | `NewOnly.alloc_new_only`, `others_unchanged` |
+| old blue blocks: as the walk needs | `Replace.replaces` per path |
+| headers and bodies of blocks that are not blue unchanged | `others_unchanged` (in place of `chain_avoids`) |
+| `no_infix_block` kept | **new**, small (the new header's tag is not `infix_tag`; the rest unchanged) |
+| the walk dense, and (with 23.5) its end at `heap_size` | 23.5 |
+| copying the fields keeps the page invariant | as M-b (field writes into a block in use), for each copied field |
+| the pointer update (`update_walk`) keeps the page invariant | as M-b |
+| mid-sweep: `pages_ok_sw`, `same_swept`, the in-use equation | `alloc_sw_ok` |
+
+**What the cycle needs from `ppromote`** is the page form of the properties
+in §22.5, now as our lemmas about our definition:
+- while marking: the account with the promoted copies (his `account_minor`,
+  our copy, with "allocated black" from `colour_at Marking`); `pmark_ok`
+  kept for any extra outside references (his `minor_keeps_marking_shape`
+  without the free list); blocks in use kept; new blocks black; the walk's
+  end;
+- while sweeping: `survivor_or_new_pg` and `reclaimed_was_dead` with the
+  copies made (his `survivor_or_new_minor_made`, `reclaimed_was_dead_minor`,
+  copied: they use `minor_keeps_blocks` and the walk's end, both heap-side
+  once the frame is "not blue ⇒ unchanged"); `pages_ok_sw` kept and nothing
+  swept or unswept (`same_swept`).
+
+**An alternative, not proposed here:** if akhil later makes `promote_object`
+take the allocator as a parameter (the §22 route), the ~14.5k copied lines
+collapse to instantiations. The copy is the price of not depending on that.
+
+### 23.7 Estimate
+
+Rough, by lines of F* (what §21 took is the yardstick: about 3.9k lines of
+`MidSweep*`, `Graft`, `NewOnly`, `Scrub` for §20.2 and §20.4).
+
+| Stage | New proof | Copied from akhil, edited | Risk |
+|---|---|---|---|
+| 1. Layout L1 (23.5) | ~150 (`walk_end == heap_size`, `Init`'s tail block) | — | low: every page module rechecked; 22 `pages_end_bound` sites |
+| 2. Marking side (23.2) | ~900-1,300 (M-a … M-g; M-b and M-c are most of it) | ~400 | medium: M-b, the per-write bridge |
+| 3. Sweeping side (23.3) | ~600-900 (S-a … S-g) | ~150 | low to medium: S-f |
+| 4. Cycle without minor collections, and its witness | ~300 + ~600 (witness) | ~250 (`GC.Gen.Cycle.fst`) | low |
+| 5. Promotion (23.6) and the `Minor` events | ~1,500-2,500 | ~14,500 (mechanical, but each module must re-verify under the rules: seeds 0-2, no `--retry`, rlimit ≤ 40; his may not all meet that today) | **high, and most of the cost** |
+| 6. Witness with a minor collection in each phase | ~400 | — | medium |
+
+Stages 1-4 total about 3-4k new lines, about §21's size. Stage 5 roughly
+doubles the whole, and its copied lines need checking against our rules
+(no `--retry`), which his were not written for.
+
+### 23.8 Vacuity
+
+The witness is one run of `pcycle` built from `MidSweepVacuity`'s heap `W`:
+- Start with a reachable A, an unreachable C, and a free page;
+- a mark slice, a barrier write that cuts the edge to A while A is white
+  (so the barrier greys it), an allocation while marking (black);
+- the hand-over, a sweep step, an allocation mid-sweep, the rest of the
+  sweep;
+- in stage 6, one minor collection in each phase, promoting one object.
+
+At the end:
+- `cycle_survives` holds of A;
+- `cycle_complete` of C;
+- `cycle_lossless` of a word of C, a word of the free page, and the heap's
+  last word (the tail block of L1);
+
+each with both sides non-trivial. As in §21.5, each step is stated over any
+heap with the facts it needs, and is then instantiated.
+
+### 23.9 Order of work, and what to agree
+
+1. **L1** (23.5): the only change to an existing page definition (`n_pages`).
+   This is the one decision for the user. Its cost to the stop-the-world
+   theorems is a recheck, not a change of statement.
+2. Stages 2-4: the cycle **without minor collections**, with its witness.
+   Until stage 5 the page cycle covers fewer runs than his (no `Minor`
+   event), and is reported as such.
+3. Stage 5: `ppromote`, then the `Minor` events, then stage 6.
+4. The tag (23.6) is decided in stage 5.
+
+Nothing here needs akhil's agreement. If his modules change upstream, our
+copies (23.2, 23.6) do not follow automatically. Each copied lemma names its
+original, so a diff can be checked.
