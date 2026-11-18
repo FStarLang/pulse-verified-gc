@@ -27,8 +27,10 @@
 /// unreachable at the start (the tail block, plan §23.5), so
 /// `cycle_lossless` speaks of it.  `run_theorems` applies the theorems.
 ///
-/// The run has no barrier write, no allocation while marking and no write
-/// mid-sweep: those constructors' hypotheses are not shown satisfiable here.
+/// `run` has no barrier write, no allocation while marking and no write
+/// mid-sweep.  `run_all` (the second half of this module) is a run from the
+/// same start that has all three, with every hypothesis of every
+/// constructor shown; it asks for one page more than `W` (`roomy`).
 
 module GC.Spec.Pages.Cycle.Vacuity
 
@@ -79,6 +81,16 @@ module CS = GC.Spec.Pages.Cycle.State
 module PM = GC.Spec.Pages.Cycle.Mark
 module PS = GC.Spec.Pages.Cycle.Sweep
 module PC = GC.Spec.Pages.Cycle
+module AP = GC.Spec.Pages.AllocPhase
+module A = GC.Spec.Pages.Alloc
+module F = GC.Spec.Pages.Fill
+module B = GC.Spec.Pages.Blocks
+module MPA = GC.Spec.MarkPhase.Alloc
+module MC = GC.Gen.MarkPhase.Cycle
+module GB = GC.Gen.Barrier
+module GI = GC.Gen.Incremental
+module Ph = GC.Spec.Phase
+module SPM = GC.Spec.SweepPhase.Mutator
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
@@ -541,6 +553,600 @@ let run_theorems (g: heap)
                    (LL.blue_covered (gf g) (heap_size - 8) \/ SPC.new_covered (since g) (gf g) (heap_size - 8)))
   = run_nontrivial g;
     let r = run g in
+    PC.cycle_survives r;
+    PC.cycle_frees_unreachable r;
+    PC.cycle_lossless r
+
+/// ===========================================================================
+/// A run with every event: a barrier write and an allocation while marking,
+/// a program write mid-sweep
+/// ===========================================================================
+///
+/// `run_all g` is a second run from the same start, which also has the
+/// events `run` lacks:
+///
+///   0. **Start** (`PStart`) and 1. **a mark slice** (`PSlice`): the moves
+///      of `run` (C scanned and blackened), nothing grey after them;
+///   2. **An allocation while marking** (`PAlloc`): N, one field, black,
+///      handed out from a free page or a free slot; its initialising write
+///      (`MC.Init_write`) stores 0;
+///   3. **A barrier write** (`PWrite`): N's field gets a pointer to C (the
+///      barrier darkens the old value, 0, which is no pointer);
+///   4. **The hand-over** at that heap (no further moves); 5. **the sweep
+///      starts**; 6. **A's page is swept**; 7. **an allocation**, its field
+///      cleared;
+///   8. **A program write mid-sweep** (`SWrite`): the new object's field
+///      gets 1 (an OCaml integer);
+///   9. **the rest of the sweep** and **the end**.
+///
+/// An allocation while marking needs a free page or a free slot of its
+/// class in the start state.  With abstract size classes a pool page may
+/// hold one slot, so `W`'s room (B's run and two pages) may leave neither;
+/// `roomy` asks for one page more.  `run` keeps the weaker hypothesis.
+
+/// One page more than `W` asks for.
+let roomy : prop = Wt.kL + 3 <= n_pages
+
+/// ---------------------------------------------------------------------------
+/// A free page at the start
+/// ---------------------------------------------------------------------------
+
+/// Three pages outside B's run.
+let out_page (k: nat{k < 3}) : nat = if k < Wt.i0 then k else Wt.kL + k
+
+let out_facts (g: heap) (k: nat{k < 3})
+  : Lemma (requires roomy)
+          (ensures out_page k < n_pages /\ (out_page k < Wt.i0 \/ out_page k >= Wt.i0 + Wt.kL))
+  = Wt.step1 g
+
+/// A page outside B's run that neither A's nor C's allocation took is free.
+#push-options "--z3rlimit 40"
+let w_kinds (g: heap) (j: nat{j < n_pages})
+  : Lemma (requires roomy /\ (j < Wt.i0 \/ j >= Wt.i0 + Wt.kL) /\ j <> Wt.first_free (Wt.s1 g) /\
+                    j <> Wt.first_free (Wt.s2 g))
+          (ensures Wt.kind_of (st g) j == Free)
+  = Wt.step1 g;
+    Wt.step2 g;
+    Wt.step3 g;
+    Wt.sizes ();
+    Wt.alloc_small_is (Wt.g2 g) (Wt.s2 g) Wt.wzS;
+    Wt.small_kinds false (Wt.g2 g) (Wt.s2 g) Wt.wzS
+#pop-options
+
+let w_free (g: heap)
+  : Lemma (requires roomy) (ensures exists (j: nat{j < n_pages}). Wt.kind_of (st g) j == Free)
+  = let a = Wt.first_free (Wt.s1 g) in
+    let b = Wt.first_free (Wt.s2 g) in
+    out_facts g 0; out_facts g 1; out_facts g 2;
+    let pick (k: nat{k < 3})
+      : Lemma (requires out_page k <> a /\ out_page k <> b)
+              (ensures exists (j: nat{j < n_pages}). Wt.kind_of (st g) j == Free)
+      = out_facts g k;
+        w_kinds g (out_page k)
+    in
+    if out_page 0 <> a && out_page 0 <> b then pick 0
+    else if out_page 1 <> a && out_page 1 <> b then pick 1
+    else pick 2
+
+/// ---------------------------------------------------------------------------
+/// An allocation while marking
+/// ---------------------------------------------------------------------------
+
+/// A new object's header, recoloured black: tag 0.
+let new_hdr (ga: heap) (x: obj_addr)
+  : Lemma (requires Seq.mem x (objects zero_addr ga) /\ read_word ga (hd_address x) == B.ohdr Wt.wzS)
+          (ensures (let gc = set_object_color x ga Header.Black in
+                    ~(is_closure x gc) /\ ~(is_no_scan x gc) /\ ~(is_infix x gc)))
+  = let gc = set_object_color x ga Header.Black in
+    Wt.holds_facts ga x Wt.wzS (fun b -> read_word ga b);
+    color_preserves_tag x ga Header.Black;
+    color_preserves_is_no_scan x ga Header.Black;
+    is_infix_spec x ga; is_infix_spec x gc;
+    is_closure_spec x ga; is_closure_spec x gc
+
+/// An allocation at `Marking` with a free page succeeds; the new object is
+/// black, of one field, neither a closure nor no-scan; no page that is not
+/// free changes kind.
+#push-options "--z3rlimit 40"
+let malloc_ok (gx: heap) (stx: pstate) (j: nat{j < n_pages})
+  : Lemma (requires PMP.mark_inv gx stx /\ Wt.kind_of stx j == Free)
+          (ensures (let (gb, sb, o) = PA.alloc I.Marking gx stx Wt.wzS in
+                    o =!= 0UL /\ U64.v o >= 8 /\ U64.v o < heap_size /\ U64.v o % 8 == 0 /\
+                    (let x : obj_addr = o in
+                     Seq.mem x (objects zero_addr gb) /\ is_black x gb /\
+                     U64.v (wosize_of_object x gb) == 1 /\
+                     ~(is_closure x gb) /\ ~(is_no_scan x gb) /\ ~(is_infix x gb)) /\
+                    (forall (i: nat{i < n_pages}). Wt.kind_of stx i =!= Free ==> Wt.kind_of sb i == Wt.kind_of stx i)))
+  = Wt.sizes ();
+    PMP.mark_inv_alloc gx stx Wt.wzS;
+    CS.mark_alloc_facts gx stx Wt.wzS;
+    assert (PA.alloc I.Marking gx stx Wt.wzS == AP.alloc_col Header.Black gx stx Wt.wzS);
+    eliminate exists (ys: list obj_addr). GC.Spec.Pages.ColourFacts.live_list gx ys /\
+                                       pages_ok (GC.Spec.Pages.Recolour.whiten gx ys) stx
+    with begin
+      AP.base gx ys stx Wt.wzS;
+      let gw = GC.Spec.Pages.Recolour.whiten gx ys in
+      AP.mc_of_ok gw stx;
+      AP.alloc_col_white gw stx Wt.wzS;
+      Wt.alloc_small_is gw stx Wt.wzS;
+      Wt.small_kinds false gw stx Wt.wzS;
+      Wt.alloc_fresh gw stx Wt.wzS;
+      let (ga, sa, o) = A.alloc gx stx Wt.wzS in
+      assert (A.alloc gw stx Wt.wzS == (GC.Spec.Pages.Recolour.whiten ga ys, sa, o));
+      if o <> 0UL then begin
+        AP.new_facts gx ys stx Wt.wzS Header.Black;
+        let x : obj_addr = o in
+        hd_address_spec x;
+        assert (read_word ga (hd_address x) == B.ohdr Wt.wzS);
+        new_hdr ga x
+      end
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Writing the one field of an object
+/// ---------------------------------------------------------------------------
+
+/// A word of the body of a one-field object is its field.
+let body_one (x: obj_addr) (a: hp_addr)
+  : Lemma (requires U64.v x <= U64.v a /\ U64.v a < U64.v x + 1 * 8) (ensures a == (x <: hp_addr))
+  = U64.v_inj a x
+
+/// Writing the one field of `x` keeps every other word, the objects, and
+/// every header.
+#push-options "--z3rlimit 30"
+let write_one (g: heap) (x: obj_addr) (v: U64.t)
+  : Lemma (requires Seq.mem x (objects zero_addr g) /\ U64.v (wosize_of_object x g) == 1)
+          (ensures (let g' = write_word g (x <: hp_addr) v in
+                    F.fctx g g' x /\ SPM.in_body g x (x <: hp_addr) /\
+                    read_word g' (x <: hp_addr) == v /\
+                    (forall (a: hp_addr). a =!= (x <: hp_addr) ==> read_word g' a == read_word g a) /\
+                    (forall (y: obj_addr). (Seq.mem y (objects zero_addr g') <==> Seq.mem y (objects zero_addr g)) /\
+                       (Seq.mem y (objects zero_addr g) ==> read_word g' (hd_address y) == read_word g (hd_address y)))))
+  = let g' = write_word g (x <: hp_addr) v in
+    read_write_same g (x <: hp_addr) v;
+    let other (a: hp_addr) : Lemma (a =!= (x <: hp_addr) ==> read_word g' a == read_word g a)
+      = if a <> (x <: hp_addr) then read_write_different g (x <: hp_addr) a v
+    in
+    FStar.Classical.forall_intro other;
+    let out (a: hp_addr)
+      : Lemma (U64.v a < U64.v x \/ U64.v a >= F.fields_end g x ==> read_word g' a == read_word g a)
+      = other a
+    in
+    FStar.Classical.forall_intro out;
+    assert (F.fctx g g' x);
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (F.obj_same g g' x))
+#pop-options
+
+/// Two heaps that agree on the header of `y`.
+let same_hdr (g g': heap) (y: obj_addr)
+  : Lemma (requires read_word g' (hd_address y) == read_word g (hd_address y))
+          (ensures (is_black y g' <==> is_black y g) /\ (is_white y g' <==> is_white y g) /\
+                   (is_gray y g' <==> is_gray y g) /\ (is_blue y g' <==> is_blue y g) /\
+                   is_no_scan y g' == is_no_scan y g /\ is_closure y g' == is_closure y g /\
+                   is_infix y g' == is_infix y g /\
+                   wosize_of_object y g' == wosize_of_object y g)
+  = MM.header_kept_facts g g' y;
+    tag_of_object_spec y g;
+    tag_of_object_spec y g';
+    is_infix_spec y g;
+    is_infix_spec y g'
+
+/// ---------------------------------------------------------------------------
+/// The marking side
+/// ---------------------------------------------------------------------------
+
+/// The collector's state after the slice.
+let gm_ok (g: heap)
+  : Lemma (requires Wt.big_enough) (ensures PM.pmark_ok m0 (gm g) (st g) MP.scan_none)
+  = handover_ok g;
+    CS.mark_steps_inv (st g) (MStart.darkened (h g) (rs g)) MP.scan_none (gm g) MP.scan_none;
+    S.mark_steps_inv (MStart.darkened (h g) (rs g)) (gm g) MP.scan_none MP.scan_none (GMM.nursery_refs m0)
+
+/// A free page at the start, chosen.
+let jf (g: heap{roomy}) : GTot (j: nat{j < n_pages /\ Wt.kind_of (st g) j == Free}) =
+  w_free g;
+  FStar.IndefiniteDescription.indefinite_description_ghost (j: nat{j < n_pages})
+    (fun j -> Wt.kind_of (st g) j == Free)
+
+/// 2. The allocation while marking, and its initialising write.
+let mal (g: heap) : GTot (heap & pstate & U64.t) = PA.alloc I.Marking (gm g) (st g) Wt.wzS
+let gb (g: heap) : GTot heap = let (a, _, _) = mal g in a
+let sb (g: heap) : GTot pstate = let (_, s, _) = mal g in s
+let n1 (g: heap) : GTot obj_addr = Wt.as_obj (let (_, _, o) = mal g in o)
+let gz (g: heap) : GTot heap = write_word (gb g) (n1 g <: hp_addr) 0UL
+
+/// C at the end of marking: a black object of one field, at its address.
+#push-options "--z3rlimit 30"
+let c_gm (g: heap)
+  : Lemma (requires Wt.big_enough)
+          (ensures Seq.mem (oc g) (objects zero_addr (gm g)) /\ is_black (oc g) (gm g) /\
+                   ~(is_infix (oc g) (gm g)) /\ ~(is_closure (oc g) (gm g)) /\
+                   ~(is_no_scan (oc g) (gm g)) /\ U64.v (wosize_of_object (oc g) (gm g)) == 1)
+  = let c = oc g in
+    base g;
+    gm_no_grey g;
+    Wt.step3 g;
+    Wt.holds_facts (h g) c Wt.wzS (Wt.const 0UL);
+    makeGray_eq c (h g);
+    makeBlack_eq c (gd g);
+    color_preserves_tag c (h g) Header.Gray;
+    color_preserves_tag c (gd g) Header.Black;
+    color_preserves_wosize c (h g) Header.Gray;
+    color_preserves_wosize c (gd g) Header.Black;
+    is_infix_spec c (h g); is_infix_spec c (gm g);
+    is_closure_spec c (h g); is_closure_spec c (gm g);
+    is_no_scan_spec c (h g); is_no_scan_spec c (gm g)
+#pop-options
+
+/// What the allocation gives.
+#push-options "--z3rlimit 40"
+let mal_ok (g: heap)
+  : Lemma (requires roomy)
+          (ensures mal g == (gb g, sb g, (n1 g <: U64.t)) /\
+                   Seq.mem (n1 g) (objects zero_addr (gb g)) /\ is_black (n1 g) (gb g) /\
+                   U64.v (wosize_of_object (n1 g) (gb g)) == 1 /\
+                   ~(is_closure (n1 g) (gb g)) /\ ~(is_no_scan (n1 g) (gb g)) /\ ~(is_infix (n1 g) (gb g)) /\
+                   PM.alloc_facts (gm g) (gb g) (n1 g) /\
+                   (forall (g'': heap). I.fields_written (gb g) g'' (n1 g) ==> PMP.mark_inv g'' (sb g)) /\
+                   (forall (i: nat{i < n_pages}). Wt.kind_of (st g) i =!= Free ==> Wt.kind_of (sb g) i == Wt.kind_of (st g) i))
+  = gm_ok g;
+    malloc_ok (gm g) (st g) (jf g);
+    PMP.mark_inv_alloc (gm g) (st g) Wt.wzS;
+    CS.mark_alloc_facts (gm g) (st g) Wt.wzS;
+    assert (PA.alloc I.Marking (gm g) (st g) Wt.wzS == AP.alloc_col Header.Black (gm g) (st g) Wt.wzS)
+#pop-options
+
+/// A block in use at the end of marking keeps its header to `gz`; so does N.
+#push-options "--z3rlimit 30"
+let keep_gz (g: heap) (y: obj_addr)
+  : Lemma (requires roomy /\ ((Seq.mem y (objects zero_addr (gm g)) /\ ~(is_blue y (gm g))) \/ y == n1 g))
+          (ensures Seq.mem y (objects zero_addr (gz g)) /\ Seq.mem y (objects zero_addr (gb g)) /\
+                   read_word (gz g) (hd_address y) == read_word (gb g) (hd_address y) /\
+                   (y =!= n1 g ==> read_word (gb g) (hd_address y) == read_word (gm g) (hd_address y)))
+  = mal_ok g;
+    write_one (gb g) (n1 g) 0UL
+#pop-options
+
+/// The collector's state after the initialising write.
+#push-options "--z3rlimit 40"
+let gz_ok (g: heap)
+  : Lemma (requires roomy)
+          (ensures SPM.in_body (gb g) (n1 g) (n1 g <: hp_addr) /\
+                   read_word (gz g) (n1 g <: hp_addr) == 0UL /\
+                   I.fields_written (gb g) (gz g) (n1 g) /\
+                   Seq.mem (n1 g) (objects zero_addr (gz g)) /\ is_black (n1 g) (gz g) /\
+                   U64.v (wosize_of_object (n1 g) (gz g)) == 1 /\
+                   ~(is_closure (n1 g) (gz g)) /\ ~(is_no_scan (n1 g) (gz g)) /\
+                   PM.pmark_ok m0 (gz g) (sb g) MP.scan_none)
+  = let x = n1 g in
+    let a : hp_addr = x in
+    mal_ok g;
+    gm_ok g;
+    write_one (gb g) x 0UL;
+    keep_gz g x;
+    same_hdr (gb g) (gz g) x;
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (body_one x));
+    assert (I.fields_written (gb g) (gz g) x);
+    let o = GMM.nursery_refs m0 in
+    PM.fresh_of_facts (gm g) (gb g) o MP.scan_none x;
+    MPA.marking_fresh_write (gb g) o MP.scan_none x a 0UL;
+    assert (SPM.field_val (gz g) x 0 == 0UL);
+    MPA.marking_fresh_close (gz g) o MP.scan_none x
+#pop-options
+
+/// The initialising write.
+let iw (g: heap{roomy}) : GTot (MC.init_writes (n1 g) (gb g) (gz g)) =
+  gz_ok g;
+  MC.Init_write (MC.Init_done (gb g)) (n1 g <: hp_addr) 0UL (gz g) ()
+
+let since_m (g: heap) : obj_addr -> prop = SPC.with_new SPC.nothing_new (n1 g)
+
+/// 3. The barrier write: N's field gets C.
+let gw (g: heap) : GTot heap = GB.modify_heap Ph.Marking (gz g) (n1 g <: hp_addr) (oc g <: U64.t)
+
+/// C after the allocation: black, at its address, in `gz`.
+#push-options "--z3rlimit 30"
+let c_gz (g: heap)
+  : Lemma (requires roomy)
+          (ensures Seq.mem (oc g) (objects zero_addr (gz g)) /\ is_black (oc g) (gz g) /\
+                   ~(is_infix (oc g) (gz g)) /\ U64.v (wosize_of_object (oc g) (gz g)) == 1 /\
+                   is_pointer (oc g <: U64.t) /\ resolve_object (oc g) (gz g) == oc g /\
+                   infix_addr_wf (gz g) (objects zero_addr (gz g)) (oc g) /\ oc g <> n1 g)
+  = c_gm g;
+    c_root g;
+    mal_ok g;
+    keep_gz g (oc g);
+    same_hdr (gm g) (gz g) (oc g);
+    resolve_non_infix (oc g) (gz g);
+    infix_addr_wf_intro (gz g) (objects zero_addr (gz g)) (oc g)
+#pop-options
+
+/// The barrier's hypotheses, and the heap after it.
+#push-options "--z3rlimit 40"
+let write_ok (g: heap)
+  : Lemma (requires roomy)
+          (ensures GB.modify_ok Ph.Marking m0 (gz g) MP.scan_none (n1 g) (n1 g <: hp_addr) (oc g <: U64.t) /\
+                   MPC.cycle_write (MC.snapshot (h g) (rs g) (since_m g)) (gz g) (n1 g) (n1 g <: hp_addr) (oc g <: U64.t) /\
+                   gw g == write_word (gz g) (n1 g <: hp_addr) (oc g <: U64.t))
+  = gz_ok g;
+    c_gz g;
+    GI.phase_free_marking ();
+    not_pointer_zero ();
+    Mark.colors_exclusive (n1 g) (gz g);
+    Mark.colors_exclusive (oc g) (gz g)
+#pop-options
+
+/// The collector's state after the barrier; nothing is grey.
+#push-options "--z3rlimit 40"
+let gw_ok (g: heap)
+  : Lemma (requires roomy)
+          (ensures PM.pmark_ok m0 (gw g) (sb g) MP.scan_none /\ Mark.noGreyObjects (gw g) /\
+                   read_word (gw g) (n1 g <: hp_addr) == (oc g <: U64.t) /\
+                   (forall (y: obj_addr). (Seq.mem y (objects zero_addr (gw g)) <==> Seq.mem y (objects zero_addr (gz g))) /\
+                      (Seq.mem y (objects zero_addr (gz g)) ==> read_word (gw g) (hd_address y) == read_word (gz g) (hd_address y))))
+  = let x = n1 g in
+    let c = oc g in
+    let a : hp_addr = x in
+    write_ok g;
+    gz_ok g;
+    c_gz g;
+    mal_ok g;
+    write_one (gb g) x 0UL;
+    write_one (gz g) x (c <: U64.t);
+    let gw' = gw g in
+    (* the pages: N's field written with a pointer to C *)
+    same_hdr (gz g) gw' c;
+    resolve_non_infix c gw';
+    infix_addr_wf_intro gw' (objects zero_addr gw') c;
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (body_one x));
+    assert (I.field_ok gw' (c <: U64.t));
+    assert (I.fields_written (gb g) gw' x);
+    (* the marking invariant: akhil's barrier lemma *)
+    MM.marking_write_barrier (gz g) (GMM.nursery_refs m0) MP.scan_none x a (c <: U64.t);
+    (* nothing grey *)
+    gm_no_grey g;
+    let ng (y: obj_addr) : Lemma (requires Seq.mem y (objects zero_addr gw')) (ensures ~(is_gray y gw'))
+      = assert (Seq.mem y (objects zero_addr (gb g)));
+        same_hdr (gb g) gw' y;
+        if y = x then Mark.colors_exclusive x (gb g)
+        else if is_gray y (gb g) then begin
+          Mark.colors_exclusive y (gb g);
+          assert (in_use (MPA.free_or_new x) (gb g) y);
+          assert (in_use free_stw (gm g) y);
+          same_hdr (gm g) (gb g) y
+        end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires ng)
+#pop-options
+
+/// N's field holds 0 when it is handed out: storable for any snapshot.
+let zero_storable (fr: free_def) (g: heap) (x: obj_addr)
+  : Lemma (requires U64.v (wosize_of_object x g) == 1 /\ read_word g (x <: hp_addr) == 0UL)
+          (ensures SPM.fields_storable fr g x)
+  = not_pointer_zero ();
+    assert (SPM.field_val g x 0 == 0UL)
+
+let n1_storable (g: heap)
+  : Lemma (requires roomy)
+          (ensures SPM.fields_storable (MPC.outside_snapshot (MC.snapshot (h g) (rs g) (since_m g))) (gz g) (n1 g))
+  = gz_ok g;
+    zero_storable (MPC.outside_snapshot (MC.snapshot (h g) (rs g) (since_m g))) (gz g) (n1 g)
+
+/// ---------------------------------------------------------------------------
+/// The sweeping side
+/// ---------------------------------------------------------------------------
+
+let s0e (g: heap) : GTot pstate = SS.start_sweep (sb g)
+
+/// A's page and B's run at this sweep's start: unswept, as in `run`; the
+/// allocation while marking changed neither page.
+let at_start_e (g: heap)
+  : Lemma (requires roomy)
+          (ensures (entry (s0e g).pm (ia g)).kind == Pool Wt.cA /\ not (entry (s0e g).pm (ia g)).swept /\
+                   (entry (s0e g).pm (i0 g)).kind == LargeHead Wt.kL /\ not (entry (s0e g).pm (i0 g)).swept)
+  = Wt.step3 g;
+    mal_ok g;
+    FStar.Classical.forall_intro (SS.clear_entry (sb g).pm)
+
+/// A is still white when marking ends.
+#push-options "--z3rlimit 30"
+let a_white_e (g: heap)
+  : Lemma (requires roomy) (ensures ~(is_black (oa g) (gw g)))
+  = let a = oa g in
+    base g;
+    gm_no_grey g;
+    gm_other g a;
+    same_hdr (h g) (gm g) a;
+    mal_ok g;
+    keep_gz g a;
+    gw_ok g;
+    same_hdr (gm g) (gb g) a;
+    same_hdr (gb g) (gz g) a;
+    same_hdr (gz g) (gw g) a;
+    Mark.colors_exclusive a (h g)
+#pop-options
+
+/// 6. A's page swept.
+let g1e (g: heap{roomy}) : GTot heap = fst (SA.step (gw g) (s0e g) (ia g))
+let s1e (g: heap{roomy}) : GTot pstate = snd (SA.step (gw g) (s0e g) (ia g))
+
+let step1e (g: heap)
+  : Lemma (requires roomy)
+          (ensures SA.sweep_ready (gw g) (s0e g) /\ SA.mark_done (gw g) /\
+                   pages_ok_sw (gw g) (s0e g) /\ pages_ok_sw (g1e g) (s1e g) /\
+                   ((entry (s1e g).pm (ia g)).kind == Free \/ has_free_slot (s1e g).pm Wt.cA (ia g)) /\
+                   (entry (s1e g).pm (i0 g)).kind == LargeHead Wt.kL /\ not (entry (s1e g).pm (i0 g)).swept)
+  = gw_ok g;
+    CS.handover_ready (gw g) (sb g) (GMM.nursery_refs m0) MP.scan_none;
+    MS2.sw_start (gw g) (s0e g);
+    at_start_e g;
+    at_start g;
+    a_white_e g;
+    MSV.step1_abs (gw g) (s0e g) (ia g) (ka g) (oa g) (i0 g) Wt.kL
+
+/// 7. An allocation, its field cleared.
+let alloc1e (g: heap{roomy}) : GTot (heap & pstate & U64.t) = PA.alloc I.Sweeping (g1e g) (s1e g) Wt.wzS
+let gae (g: heap{roomy}) : GTot heap = let (a, _, _) = alloc1e g in a
+let s2e (g: heap{roomy}) : GTot pstate = let (_, s, _) = alloc1e g in s
+let one (g: heap{roomy}) : GTot obj_addr = Wt.as_obj (let (_, _, o) = alloc1e g in o)
+let g2e (g: heap{roomy}) : GTot heap = B.zeros (gae g) (U64.v (one g)) Wt.wzS
+
+#push-options "--z3rlimit 30"
+let alloc_ok_e (g: heap)
+  : Lemma (requires roomy)
+          (ensures alloc1e g == (gae g, s2e g, (one g <: U64.t)) /\
+                   I.fields_written_with (free_sw (s1e g).pm) (gae g) (g2e g) (one g) /\
+                   pages_ok_sw (g2e g) (s2e g) /\
+                   not (unswept_at (s1e g).pm (one g)) /\
+                   (entry (s2e g).pm (i0 g)).kind == LargeHead Wt.kL /\ not (entry (s2e g).pm (i0 g)).swept)
+  = step1e g;
+    at_start_e g;
+    MSV.alloc_abs (g1e g) (s1e g) (ia g) (i0 g) Wt.kL
+#pop-options
+
+/// 8. The program write mid-sweep: the new object's field gets 1.
+let g3e (g: heap{roomy}) : GTot heap = write_word (g2e g) (one g <: hp_addr) 1UL
+
+let not_pointer_one () : Lemma (~(is_pointer 1UL)) = ()
+
+#push-options "--z3rlimit 40"
+let swrite_ok (g: heap)
+  : Lemma (requires roomy)
+          (ensures pages_ok_sw (g2e g) (s2e g) /\ Seq.mem (one g) (objects zero_addr (g2e g)) /\
+                   ~(is_blue (one g) (g2e g)) /\ SPM.in_body (g2e g) (one g) (one g <: hp_addr) /\
+                   read_word (g2e g) (one g <: hp_addr) == 0UL /\
+                   read_word (g3e g) (one g <: hp_addr) == 1UL /\
+                   pages_ok_sw (g3e g) (s2e g))
+  = let x = one g in
+    step1e g;
+    alloc_ok_e g;
+    MA.alloc_sw_ok (g1e g) (s1e g) Wt.wzS;
+    let ga' = gae g in
+    FStar.Classical.forall_intro (B.zeros_read ga' (U64.v x) Wt.wzS);
+    assert (F.fctx ga' (g2e g) x);
+    F.obj_same ga' (g2e g) x x;
+    same_hdr ga' (g2e g) x;
+    write_one (g2e g) x 1UL;
+    not_pointer_one ();
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (body_one x));
+    assert (I.fields_written_with (free_sw (s1e g).pm) ga' (g3e g) x)
+#pop-options
+
+/// 9. The rest of the sweep, and the end.
+let gfe (g: heap{roomy}) : GTot heap = fst (SA.sweep_from (g3e g) (s2e g) 0)
+let sfe (g: heap{roomy}) : GTot pstate = snd (SA.sweep_from (g3e g) (s2e g) 0)
+
+let rest_ends_e (g: heap)
+  : Lemma (requires roomy)
+          (ensures pages_ok_sw (gfe g) (sfe g) /\ PMP.all_swept (sfe g))
+  = swrite_ok g;
+    pages_ok_sw_elim (g3e g) (s2e g);
+    if n_pages > 0 then assert (cont_ok (s2e g).pm 0);
+    MS2.sweep_from_sw (g3e g) (s2e g) 0
+
+/// The addresses the run hands out: N while marking, the allocation mid-sweep.
+let since_e (g: heap{roomy}) : obj_addr -> prop =
+  GC_.union (since_m g) (SPC.with_new SPC.nothing_new (one g <: U64.t))
+
+/// **The run, with every event.**
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 30"
+let run_all (g: heap{roomy}) : GTot (PC.pcycle (h g) (rs g) (gfe g) (sfe g) I.Idle (since_e g)) =
+  start_pre g;
+  handover_ok g;
+  gm_ok g;
+  mal_ok g;
+  gz_ok g;
+  n1_storable g;
+  write_ok g;
+  gw_ok g;
+  step1e g;
+  at_start_e g;
+  alloc_ok_e g;
+  swrite_ok g;
+  rest_ends_e g;
+  S.mark_steps_refl (gw g) MP.scan_none;
+  let rm0 : PM.pmarking (h g) (rs g) (MStart.darkened (h g) (rs g)) (st g) MP.scan_none SPC.nothing_new =
+    PM.PStart m0 (st g) () in
+  let rm1 : PM.pmarking (h g) (rs g) (gm g) (st g) MP.scan_none SPC.nothing_new =
+    PM.PSlice rm0 m0 (gm g) MP.scan_none () in
+  let rm2 : PM.pmarking (h g) (rs g) (gz g) (sb g) MP.scan_none (since_m g) =
+    PM.PAlloc rm1 m0 Wt.wzS (gb g) (sb g) (n1 g) () (gz g) (iw g) () in
+  let rm3 : PM.pmarking (h g) (rs g) (gw g) (sb g) MP.scan_none (since_m g) =
+    PM.PWrite rm2 m0 (n1 g) (n1 g <: hp_addr) (oc g <: U64.t) () in
+  let r0 : PS.psweep (gw g) (gw g) (s0e g) I.Sweeping SPC.nothing_new = PS.SStart (s0e g) () in
+  let r1 : PS.psweep (gw g) (g1e g) (s1e g) I.Sweeping SPC.nothing_new = PS.SStep r0 (ia g) () in
+  let r2 : PS.psweep (gw g) (g2e g) (s2e g) I.Sweeping (SPC.with_new SPC.nothing_new (one g <: U64.t)) =
+    PS.SAlloc r1 Wt.wzS (gae g) (s2e g) (one g) () (g2e g) () in
+  let r3 : PS.psweep (gw g) (g3e g) (s2e g) I.Sweeping (SPC.with_new SPC.nothing_new (one g <: U64.t)) =
+    PS.SWrite r2 (one g) (one g <: hp_addr) 1UL () in
+  let r4 = rest r3 0 in
+  let r5 : PS.psweep (gw g) (gfe g) (sfe g) I.Idle (SPC.with_new SPC.nothing_new (one g <: U64.t)) =
+    PS.SEnd r4 () in
+  assert (PC.sweep_start_st r0 == s0e g);
+  assert (PC.sweep_start_st r1 == PC.sweep_start_st r0);
+  assert (PC.sweep_start_st r2 == PC.sweep_start_st r1);
+  assert (PC.sweep_start_st r3 == PC.sweep_start_st r2);
+  assert (PC.sweep_start_st r5 == PC.sweep_start_st r4);
+  PC.PSweep rm3 m0 (gw g) MP.scan_none () r5 ()
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// It is not trivial
+/// ---------------------------------------------------------------------------
+
+/// B is neither allocation.
+let b_not_new_e (g: heap)
+  : Lemma (requires roomy) (ensures ob g <> n1 g /\ ob g <> one g)
+  = base g;
+    gm_no_grey g;
+    gm_other g (ob g);
+    same_hdr (h g) (gm g) (ob g);
+    Wt.step3 g;
+    mal_ok g;
+    alloc_ok_e g;
+    at_start g;
+    at_start_e g;
+    page_base_mono (i0 g) ((i0 g) + 1);
+    FStar.Math.Lemmas.distributivity_add_left (i0 g) 1 page_bytes;
+    page_uw (s1e g).pm (i0 g) (U64.v (ob g) - 8);
+    step1e g
+
+/// **The run is not trivial**: what `run` shows of the start, and every
+/// event changes something.  N was not a block in use when it was handed
+/// out; the barrier write replaces its field's 0 with a pointer to C; the
+/// write mid-sweep replaces the new object's 0 with 1; B is neither
+/// allocation, so the run must free it.
+let run_all_nontrivial (g: heap)
+  : Lemma (requires roomy)
+          (ensures GMC.reachable_at_start (h g) (rs g) (oc g) /\
+                   Seq.mem (ob g) (objects zero_addr (h g)) /\ ~(is_blue (ob g) (h g)) /\
+                   ~(GMC.reachable_at_start (h g) (rs g) (ob g)) /\ ~(since_e g (ob g)) /\
+                   since_e g (n1 g) /\ since_e g (one g) /\
+                   GC_.unreachable_covered (h g) (rs g) (heap_size - 8) /\
+                   ~(Seq.mem (n1 g) (objects zero_addr (gm g)) /\ ~(is_blue (n1 g) (gm g))) /\
+                   read_word (gz g) (n1 g <: hp_addr) == 0UL /\ ~(is_pointer 0UL) /\
+                   read_word (gw g) (n1 g <: hp_addr) == (oc g <: U64.t) /\ is_pointer (oc g <: U64.t) /\
+                   read_word (g2e g) (one g <: hp_addr) == 0UL /\
+                   read_word (g3e g) (one g <: hp_addr) == 1UL)
+  = run_nontrivial g;
+    b_not_new_e g;
+    mal_ok g;
+    gz_ok g;
+    gw_ok g;
+    c_root g;
+    not_pointer_zero ();
+    swrite_ok g
+
+/// **The theorems on it**: C survives; B is freed; the heap's last word is
+/// free or in an object the run handed out.
+let run_all_theorems (g: heap)
+  : Lemma (requires roomy)
+          (ensures Seq.mem (oc g) (objects zero_addr (gfe g)) /\ ~(is_blue (oc g) (gfe g)) /\
+                   SPC.freed (gfe g) (ob g) /\
+                   (LL.blue_covered (gfe g) (heap_size - 8) \/ SPC.new_covered (since_e g) (gfe g) (heap_size - 8)))
+  = run_all_nontrivial g;
+    let r = run_all g in
     PC.cycle_survives r;
     PC.cycle_frees_unreachable r;
     PC.cycle_lossless r

@@ -3379,7 +3379,7 @@ major cycle.
 | `Pages.Cycle.Mark` | 846 | `pmark_ok`, `pstart_pre`, the run `pmarking` (`PStart`, `PSlice`, `PWrite`, `PAlloc`), `pmark_run_inv`, `pmark_run_account`, `phandover` |
 | `Pages.Cycle.Sweep` | 294 | the run `psweep` (`SStart`, `SStep`, `SAlloc`, `SWrite`, `SEnd`), `psweep_inv`, `psweep_account` |
 | `Pages.Cycle` | 350 | the run `pcycle` (`PMark`, `PSweep`), `cycle_account`, `cycle_complete`, `cycle_frees_unreachable`, `cycle_survives`, `cycle_addresses_lossless`, `cycle_covered`, `cycle_lossless` |
-| `Pages.Cycle.Vacuity` | 546 | the witness run and its facts |
+| `Pages.Cycle.Vacuity` | 1152 | the witness runs (`run`, and `run_all` with every event, §24.4) and their facts |
 | `Pages.MidSweepStep` (changed) | +16 | `use_kept`, `unit_use_kept`; `pool_step_sw`, `run_step_sw`, `step_sw` also export `use_kept` (a conjunct added, none removed) |
 
 `Pages.Cycle.Vacuity` is a root in the `Makefile`.
@@ -3436,11 +3436,48 @@ new object; the heap's last word lies in a block unreachable at the start
 (the tail block). `run_theorems` applies the theorems to the run: C
 survives, B is freed, the last word is free or new at the end.
 
-**Not exercised by the witness**: the barrier write (`PWrite`), allocation
-while marking (`PAlloc`) and a write mid-sweep (`SWrite`). Their account
-lemmas are proved; that their hypotheses can hold together is not shown.
-Showing it needs the page invariants kept by a field write (§23.2 M-b) and
-by allocation while marking with its writes; both are not done.
+**Every event, in one run** (`run_all g`, added after stage 1). `run` has
+no barrier write, no allocation while marking and no write mid-sweep;
+`run_all` is a second run from the same start that has all three, every
+constructor's hypotheses proved:
+
+1. `PStart`, then `PSlice` with `run`'s three moves (nothing grey after).
+2. `PAlloc`: N, one field, handed out black (`malloc_ok`: an allocation at
+   `Marking` succeeds when a page is free, keeps the kind of every page that
+   is not free, and gives an object of tag 0); its initialising write
+   (`MC.Init_write`) stores 0. The collector's state after it: the page
+   invariant through `PMP.mark_inv_alloc` (its writes are `fields_written`),
+   the marking invariant through akhil's `MPA.marking_fresh_write` and
+   `MPA.marking_fresh_close` from `Cycle.Mark.fresh_of_facts`.
+3. `PWrite`: N's field gets a pointer to C (`GB.modify_ok`: a program
+   write of a value whose target, C, is black; `MPC.cycle_write`: N and C in
+   the snapshot). The barrier darkens the old value, 0, which is no pointer.
+   After it: akhil's `MM.marking_write_barrier`, the page invariant again
+   through `mark_inv_alloc` (N's fields written with a valid pointer), and
+   nothing grey.
+4. The hand-over at that heap (`mark_steps_refl`), `SStart`, `SStep` of A's
+   page, `SAlloc` as in `run`.
+5. `SWrite`: the new object's field gets 1 (an OCaml integer). After it,
+   `pages_ok_sw` through `MidSweepAlloc.alloc_sw_ok` (the cleared field and
+   the write together are a `fields_written_with` of the allocation).
+6. A `SStep` at every unit, `SEnd`.
+
+`run_all_nontrivial`: what `run_nontrivial` says of the start; N was not a
+block in use when handed out; the barrier write changes N's field from 0 to
+a pointer to C, the write mid-sweep the new object's field from 0 to 1; B is
+neither allocation, so the run must free it. `run_all_theorems`: C
+survives, B is freed, the last word is free or new at the end.
+
+The page writes used are writes into objects the run just allocated, whose
+page invariant the allocator's own lemmas carry; a field write into an older
+object (§23.2 M-b) is still not shown to keep the page invariants.
+
+**One page more.** An allocation while marking needs a free page or a free
+slot of its class at the start. With abstract size classes a pool page may
+hold a single slot, so `W`'s room (B's run and two pages, `big_enough`) may
+leave neither. `run_all` assumes `roomy` (`kL + 3 <= n_pages`), from which
+`w_free` finds a free page among three outside B's run; `run` keeps
+`big_enough`.
 
 ### 24.5 Checked
 
@@ -3455,3 +3492,7 @@ by allocation while marking with its writes; both are not done.
 - No admits, no assumes.
 - `make verify` with the Makefile's flags (`--retry 3`): every module of
   the repository, `=== all modules verified ===`.
+- After `run_all` was added: `Cycle.Vacuity` verifies without `--retry` at
+  seeds 0, 1 and 2 (738 queries each, none failing; the most any uses is
+  17.8, local limits at most 40); `make verify`, `=== all modules
+  verified ===`.
