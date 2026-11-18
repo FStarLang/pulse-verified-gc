@@ -3469,8 +3469,10 @@ neither allocation, so the run must free it. `run_all_theorems`: C
 survives, B is freed, the last word is free or new at the end.
 
 The page writes used are writes into objects the run just allocated, whose
-page invariant the allocator's own lemmas carry; a field write into an older
-object (§23.2 M-b) is still not shown to keep the page invariants.
+page invariant the allocator's own lemmas carry. A write into any block in
+use (§23.2 M-b) is proved in §25, and a third run there (`run_dark`) takes
+the branches `run_all` does not: the barrier darkens a white object, and
+the write mid-sweep stores a pointer into an older block.
 
 **One page more.** An allocation while marking needs a free page or a free
 slot of its class at the start. With abstract size classes a pool page may
@@ -3496,3 +3498,144 @@ leave neither. `run_all` assumes `roomy` (`kL + 3 <= n_pages`), from which
   seeds 0, 1 and 2 (738 queries each, none failing; the most any uses is
   17.8, local limits at most 40); `make verify`, `=== all modules
   verified ===`.
+
+## 25. Program writes into any block in use, and the witness branches (2026-11-18)
+
+**What is proved.** §23.2 M-b and §23.3 S-g: a program write into any block
+in use, not only one the run just allocated, keeps the page invariant of
+every phase. "Program write" is akhil's `SPM.program_write free g x a v`:
+`a` is a body word of `x`, `x` is in use and not a closure, and, when `x`
+is scannable, `v` is not a pointer or points at a block in use. Closures
+are excluded as in akhil's statement, since their bodies hold the infix
+headers. And a third witness run of the page cycle, in which the barrier
+darkens a white object and the write mid-sweep stores a pointer.
+
+### 25.1 The lemmas (`Pages.Cycle.Write`, 339 lines)
+
+| Lemma | Hypotheses | Conclusion |
+|---|---|---|
+| `write_ok` | `pages_ok g st`, `well_formed_heap g`, `program_write free_stw g x a v` | both at `write_word g a v` |
+| `write_idle` | `PA.inv I.Idle g st`, `program_write free_stw` | `PA.inv I.Idle` after the write |
+| `write_mc`, `write_mark_inv` | `AP.pages_ok_mc`, or `PMP.mark_inv`, and `program_write free_stw` | the same after the write |
+| `write_sw` | `MS.pages_ok_sw g st`, `program_write (free_sw st.pm)` | `MS.pages_ok_sw` after the write |
+| `barrier_mark_inv` | `PMP.mark_inv`, `program_write free_stw` | `PMP.mark_inv` at `GB.modify_heap Marking g a v` (darken the old value, then write) |
+| `pwrite_keeps` | a `PWrite`'s own hypotheses: `pmark_ok`, `GB.modify_ok Marking` | `pmark_ok` at the heap the `PWrite` makes |
+| `swrite_keeps` | `pages_ok_sw`, `program_write (free_sw st.pm)` | `pages_ok_sw` at the heap the `SWrite` makes, and `SWrite`'s other hypotheses |
+| `idle_modify_keeps` | `PA.inv I.Idle`, `GB.modify_ok Idle` | `PA.inv I.Idle` at `GB.modify_heap Idle` (the barrier between cycles is the plain write) |
+
+How:
+- **The page clauses** read only the headers the walk reaches and the links
+  of free blocks. A body word of a block that is not free is neither:
+  `Scrub.core_fill` keeps the pages, the tail and the large lists. The new
+  `no_grey_fill` keeps "no grey block in an unswept page", whose slots and
+  run blocks are walk positions (`Fill.pool_fill_slots`,
+  `Fill.run_block_fill`).
+- **The pointer clauses** are akhil's `MM.write_wf_with` (for any admissible
+  free, so `free_sw` mid-sweep) and `MM.write_wf`. `no_pointer_to_blue`
+  follows from `well_formed_heap` (`Wf.wfh_old_parts`).
+- **While marking**, the page invariant holds up to colours: `pages_ok_mc`
+  is `pages_ok` of the heap with some live blocks whitened. The word written
+  is no object's header (`not_header`, from `Fill.walk_out`), so whitening
+  commutes with the write (`Recolour.paint_write`). The write is a program
+  write in the whitened heap too (`whiten_obj`, `ColourFacts.whiten_facts`).
+- **The barrier** first greys a white block. That keeps the page invariant
+  (`Cycle.State.darken_mark_inv`) and keeps the write a program write
+  (`grey_keeps_write`, the first half of akhil's private
+  `MarkPhase.Mutator.grey_keeps_write`, copied without the marker's part).
+  The marking invariant after the barrier is akhil's
+  `MM.marking_write_barrier`.
+
+### 25.2 The write events of the page cycle
+
+**Checked.** `PWrite` and `SWrite` do not take the invariant *after* their
+write as a hypothesis. Like every event of `pmarking` and `psweep`, and of
+akhil's runs (which take `GI.phase_shape` and `sweep_shape`), they take the
+collector's state at the heap they start from: `PWrite` takes `pmark_ok`
+before it, and `SWrite` takes `pages_ok_sw` before it. So the state after a
+write is a hypothesis of the event that follows: another write, a slice, an
+allocation, the hand-over (`PSweep`), a sweep step or `SEnd`. Before this
+section, a run could discharge that only for writes into a block it had just
+allocated (§24.4).
+
+**Discharged:**
+- After a `PWrite`, `pwrite_keeps` gives `pmark_ok` from the `PWrite`'s own
+  hypotheses. This holds for every barrier write, with no further condition.
+- After a `SWrite`, `swrite_keeps` gives `pages_ok_sw` when the write is a
+  program write at `free_sw`. `SWrite`'s own hypotheses are akhil's
+  sweep-phase `Write` (the block is not blue; `a` is a body word). They
+  allow any value, and a white block in an unswept page (dead). For such a
+  write the state after it is not derived, and the next event still needs it
+  as a hypothesis.
+
+**Not changed:** the run types. Making the runs carry the page invariant,
+and dropping it from the events, would change the statements of the cycle
+theorems. It would also need `SWrite` to require a program write. And it
+would need the state after a `PAlloc` for any initialising values: M-e in
+general, which `PMP.mark_inv_alloc` gives only when every field of the new
+object holds a valid value, as `fields_written` requires. This is left for a
+decision.
+
+### 25.3 The witness: `Pages.Cycle.VacuityDark.run_dark` (1063 lines)
+
+**Why a third run.** In `run_all` the roots are `[C]` and C's one field is
+0. So C alone is reachable at the start, and root darkening greys it. akhil's
+account (`MPC.within_snapshot`) makes every field of a writable block point
+into the snapshot. So the old value the barrier finds can point at a white
+object only if that object was reachable at the start and is not yet marked.
+`run_dark` therefore uses `W`'s own roots, `[A]`: A's field points to B, B's
+fields are 0, and C is unreachable.
+
+The run, every constructor's hypotheses proved:
+1. `PStart`: A is greyed. B is white and reachable at the start.
+2. `PAlloc`: N, one field, black, from a free page (`roomy`, as `run_all`).
+   Its initialising write stores 0.
+3. `PWrite`: A's field, which points to the white B, gets a pointer to N.
+   **The barrier greys B.** The state after it comes from `pwrite_keeps`.
+4. The hand-over. Its mark moves scan A (its field, N, is black) and blacken
+   it, then scan B's `wzL` fields, all 0 (`scan_b`, by recursion), and
+   blacken B. Nothing is grey.
+5. `SStart`, then `SStep` of A's page. C is dead there and A is black
+   (`MidSweepVacuity.step1_abs` with C).
+6. `SAlloc`: O, its field cleared (`MidSweepVacuity.alloc_abs`).
+7. `SWrite`: **A's field gets a pointer to O.** This is a program write at
+   `free_sw` into a block older than the sweep. A was swept and kept
+   (`MidSweepStep.use_kept`) and kept by the allocation (`others_unchanged`).
+   The state after it comes from `swrite_keeps`.
+8. A `SStep` at every unit, then `SEnd`.
+
+`run_dark_nontrivial` shows:
+- A and B are reachable at the start.
+- A's field points to B when the barrier overwrites it, and B is white then
+  and grey after.
+- A's field goes from a pointer to B, to a pointer to N, and mid-sweep to a
+  pointer to O; all three are pointers.
+- N was not a block in use when it was handed out, and neither was O.
+- N and O are both handed out.
+
+`run_dark_theorems`, from `cycle_survives`: A and B are in use at the end,
+and neither was handed out. B survives although the program cut A's pointer
+to it while marking: that is snapshot-at-the-beginning, and here it is the
+barrier's darkening that marks B.
+
+**What this run does not claim.** It does not say C is freed: O may be
+given C's slot, and then C's address is handed out again. Nor is the
+heap's last word stated for this run; `run` and `run_all` state it.
+
+`Pages.Cycle.Write` and `Pages.Cycle.VacuityDark` are roots in the
+`Makefile`.
+
+### 25.4 Checked
+
+- `Cycle.Write` and `Cycle.VacuityDark` verify without `--retry` at Z3
+  seeds 0, 1 and 2, from scratch: 169 and 714 queries each, none failing.
+  The most any query uses is 0.6 in `Cycle.Write` and 14.3 in
+  `Cycle.VacuityDark`. Local limits are at most 40.
+- Two fixes came from the seed runs. `a_to_b`'s word arithmetic failed at
+  seeds 1 and 2, so it moved to a small lemma (`one_field_points`).
+  `gz_ok`'s `fields_storable` used 27 of its 40 at seed 2; it now calls
+  `Cycle.Vacuity.zero_storable`, and `gz_ok`'s heaviest query uses 7.6,
+  14.3 and 4.9 at seeds 0, 1 and 2.
+- No admits, no assumes.
+- `make verify` with the Makefile's flags, with the two new modules checked
+  again: `=== all modules verified ===`.
+- No existing module changed; the `Makefile` gains the two roots.
