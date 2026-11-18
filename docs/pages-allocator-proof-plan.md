@@ -3639,3 +3639,86 @@ heap's last word stated for this run; `run` and `run_all` state it.
 - `make verify` with the Makefile's flags, with the two new modules checked
   again: `=== all modules verified ===`.
 - No existing module changed; the `Makefile` gains the two roots.
+
+## 26. The page cycle with the page invariant carried by the run (2026-11-18)
+
+**Decision (user):** add, don't replace. The theorems of `Pages.Cycle` stay
+as they are. A new top-level theorem covers runs that carry the page
+invariant, so that no event takes it as a hypothesis.
+
+### 26.1 The runs (`Pages.Cycle.Carried`, 449 lines)
+
+`cmarking`, `csweep` and `ccycle` have the same events as `pmarking`,
+`psweep` and `pcycle`, with these changes to the hypotheses:
+
+| Event | Hypotheses |
+|---|---|
+| `CStart` | `pstart_pre`: the page `Idle` invariant at the cycle's start, the nursery empty, darkenable roots (unchanged) |
+| `CSlice`, `CWrite`, `CAlloc` | akhil's marking invariant `MP.marking_inv` and his obligations (`S.mark_steps`; `GB.modify_ok`, `MPC.cycle_write`; the allocation, `MC.init_writes`, `SPM.fields_storable` for the snapshot). **Not** the page invariant `PMP.mark_inv` |
+| `CSStart` | none. The cycle's hand-over gives the sweep's start |
+| `CSStep` | none |
+| `CSAlloc` | the allocation, and the caller's writes (`fields_written_with free_sw`) |
+| `CSWrite` | **a program write at `free_sw`**: into a block in use, which is never a dead object (OCaml programs cannot reach one), of a value that is not free |
+| `CSEnd` | every page swept |
+| `CSweep` (hand-over) | akhil's marking invariant, mark moves to nothing grey, and the sweep starting from the page state marking left |
+
+akhil's marking invariant (`MP.marking_inv`, part of his `phase_shape`)
+stays a per-event hypothesis, as in his runs. It is not an allocator fact.
+Carrying it too would need, at an allocation, every initialising value to
+be fine for a black object to point at. That follows from
+snapshot-at-the-beginning (SATB) but is not done here.
+
+### 26.2 The theorems
+
+- **`ccycle_inv`**: every state of a run is in the page invariant of its
+  phase (`cinv`: `PMP.mark_inv` while marking, `MS.pages_ok_sw` mid-sweep,
+  `PA.inv I.Idle` idle) and in akhil's account.
+- **`ccycle_correct`** (the top-level theorem): once a run is idle again,
+  the page `Idle` invariant holds, so the next cycle may start. Akhil's six
+  cycle theorems also hold, as `Pages.Cycle` states them: complete, frees
+  unreachable, survives, addresses lossless, covered, and lossless for every
+  word.
+
+**Derivation.** Each run is a run of `Pages.Cycle` (`to_pmarking`,
+`to_psweep`, `to_pcycle`), and the theorems are `Pages.Cycle`'s on it. The
+old events' page hypotheses come from the carried invariant. The carried
+invariant is kept by:
+- root darkening: `PM.start_facts`;
+- mark moves: `CS.mark_steps_inv`;
+- the barrier: `PW.barrier_mark_inv`;
+- the allocation while marking: `alloc_mark_inv`, below;
+- the hand-over: `CS.handover_ready` gives `sweep_ready`/`mark_done`, then
+  `MS2.sw_start`;
+- sweep steps: `MS2.step_sw`;
+- the allocation mid-sweep: `MA.alloc_sw_ok`;
+- the program write mid-sweep: `PW.swrite_keeps`;
+- the end: `MS2.sw_end` gives the `Idle` invariant.
+
+**M-e for any initialising values** (`alloc_mark_inv`). The page allocator
+gives the new object a tag-0 header (`malloc_new`, through
+`Witness.alloc_fresh` on the whitened heap), so the object is scannable.
+akhil's `fields_storable` for the snapshot then makes every field a value
+`field_ok` allows. Writes into the object's body keep its header and
+every other word (`init_frame`), so the initialised heap is a
+`fields_written` of the allocation, and `PMP.mark_inv_alloc` gives the page
+invariant.
+
+### 26.3 The witness (`Pages.Cycle.CarriedVacuity`, 135 lines)
+
+`run_carried g` is `run_dark` (§25.3) as a `ccycle`, event for event, on the
+same heaps, with only the events' own hypotheses shown. A step at every unit
+(`crest`) needs no hypothesis now. `run_carried_nontrivial` restates
+`run_dark_nontrivial`. `run_carried_theorems` applies `ccycle_correct`:
+- the `Idle` invariant at the end;
+- A and B survive and were not handed out;
+- the heap's last word is covered both ways.
+
+### 26.4 Checked
+
+- `Cycle.Carried` and `Cycle.CarriedVacuity` verify without `--retry` at Z3
+  seeds 0, 1 and 2, from scratch: 213 and 66 queries, none failing. The most
+  any query uses is 0.45 and 7.4. Local limits are at most 40.
+- No admits, no assumes. No existing module changed. The `Makefile` gains
+  the two roots.
+- `make verify` with the Makefile's flags, with the two modules checked
+  again: `=== all modules verified ===`.
