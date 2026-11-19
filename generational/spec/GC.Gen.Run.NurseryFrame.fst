@@ -140,6 +140,7 @@ let write_body_keeps_objects ms o s v =
   if U64.v ms.bump > minor_heap_size || U64.v ms.bump % 8 <> 0 then ()
   else begin
     minor_objects_valid ms o;
+    assert (U64.v o - 8 + 8 <= minor_heap_size /\ (U64.v o - 8) % 8 == 0);
     assert (minor_wosize ms o == U64.v (U64.shift_right (minor_read_word ms.data (U64.uint_to_t (U64.v o - 8))) 10ul));
     body_not_header ms.data 0 (U64.v ms.bump) o (U64.v s);
     write_not_header ms.data 0 (U64.v ms.bump) s v

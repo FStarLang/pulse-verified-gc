@@ -55,11 +55,13 @@ let rec young_slots_from_mem (x: obj_addr) (init: seq U64.t) (i: nat) (s: U64.t)
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 1"
 let init_young (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
                (tag: I.tag_t) (size: nat) (f: I.ideal_fields) (init: seq U64.t) (k: nat)
-  : Lemma (requires ctx r h im ids a /\ fields_rep ids f init /\ I.init_usable im f /\
+  : Lemma (requires keyed r.memory ids /\ copies_faithful r.memory h im ids /\ minor_wf r.memory.nursery /\
+                    blocks_fit r.memory.major /\ I.wf_objects im /\ nurs_rep ids a /\
+                    fields_rep ids f init /\ I.init_usable im f /\
                     event_no_young (I.Alloc tag size f) /\ k < Seq.length init)
           (ensures is_young (Seq.index init k) <==> alloc_rt a f k)
   = match f with
-    | I.Scannable vs -> young_rep r h im ids a (Seq.index vs k) (Seq.index init k)
+    | I.Scannable vs -> young_rep r.memory h im ids a (Seq.index vs k) (Seq.index init k)
     | I.NoScan ws -> ()
 #pop-options
 
@@ -78,12 +80,11 @@ let major_alloc_not_newly (r r': real_state) (x0 x: obj_addr)
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
 let alloc_major_acc (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
                     (e: event) (pe: I.program_event) (r': real_state)
-  : Lemma (requires program_ok r h im ids a e pe r' /\ Alloc? e /\ Alloc?.site e == InMajor)
+  : Lemma (requires pfacts r h im ids a e pe r' /\ alloc_facts r h im ids a e pe r' /\ Alloc? e /\ Alloc?.site e == InMajor)
           (ensures program_acc_post r h im ids a e pe r')
   = let n = Seq.length im.I.objects in
     let ids' = update_block_ids ids n r e r' in
     let h' = update_history h r e r' in
-    alloc_fresh r h im ids e pe r';
     match e, pe with
     | Alloc _ tag size init, I.Alloc _ _ f ->
       let a' = program_step a InMajor pe in
@@ -117,7 +118,7 @@ let alloc_major_acc (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids
         // kept blocks keep their ids
         let kk (x: obj_addr) : Lemma (kept h x ==> ids' (Major x) == ids (Major x)) =
           if FStar.IndefiniteDescription.strong_excluded_middle (kept h x) then begin
-            kept_allocated r h x; nb (Major x);
+            nb (Major x);
             assert (ids' (Major x) == restrict r'.memory ids (Major x))
           end in
         FStar.Classical.forall_intro kk;
@@ -164,13 +165,11 @@ let alloc_major_acc (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
 let alloc_nursery_acc (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
                       (e: event) (pe: I.program_event) (r': real_state)
-  : Lemma (requires program_ok r h im ids a e pe r' /\ Alloc? e /\ Alloc?.site e == InNursery)
+  : Lemma (requires pfacts r h im ids a e pe r' /\ alloc_facts r h im ids a e pe r' /\ Alloc? e /\ Alloc?.site e == InNursery)
           (ensures program_acc_post r h im ids a e pe r')
   = let n = Seq.length im.I.objects in
     let ids' = update_block_ids ids n r e r' in
     let h' = update_history h r e r' in
-    alloc_fresh r h im ids e pe r';
-    real_shape r h;
     match e, pe with
     | Alloc _ tag size init, I.Alloc _ _ f ->
       let a' = program_step a InNursery pe in
@@ -220,14 +219,16 @@ let alloc_nursery_acc (r: real_state) (h: cycle_history) (im: I.ideal_memory) (i
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 let write_major_records (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
                         (x: obj_addr) (i: nat) (v: U64.t) (obj: I.obj_id) (v': I.value) (aa: hp_addr)
-  : Lemma (requires ctx r h im ids a /\ ids (Major x) == Some obj /\ value_rep ids v' v /\
-                    I.valid_value im v' /\ no_young_value v' /\ U64.v aa == U64.v x + 8 * i /\
+  : Lemma (requires keyed r.memory ids /\ copies_faithful r.memory h im ids /\ minor_wf r.memory.nursery /\
+                    blocks_fit r.memory.major /\ I.wf_objects im /\ I.wf_memory im /\ nurs_rep ids a /\
+                    ids (Major x) == Some obj /\ kept h x /\ value_rep ids v' v /\
+                    I.valid_value im v' /\ U64.v aa == U64.v x + 8 * i /\
                     I.valid_id im obj /\ i < (Seq.index im.I.objects obj).I.size)
           (ensures (scannable r.memory.major x ==> (GB.modify_records r.memory.major aa v <==> write_records a obj i v')) /\
                    (~(scannable r.memory.major x) ==> ~(write_records a obj i v')))
   = let g = r.memory.major in
     let o = Seq.index im.I.objects obj in
-    cf_valid r.memory im ids (Major x) obj;
+    rep_of r.memory h im ids (Major x) obj;
     is_no_scan_spec x g;
     no_scan_tag_val ();
     assert (I.wf_objects im);
@@ -235,7 +236,7 @@ let write_major_records (r: real_state) (h: cycle_history) (im: I.ideal_memory) 
     let aux (o': U64.t) : Lemma (ids (Nursery o') =!= Some obj) = () in
     FStar.Classical.forall_intro aux;
     assert (~(a.nurs obj));
-    young_rep r h im ids a v' v;
+    young_rep r.memory h im ids a v' v;
     match o.I.fields with
     | I.Scannable vs ->
         assert (field_value im obj i == Some (Seq.index vs i));
@@ -244,15 +245,14 @@ let write_major_records (r: real_state) (h: cycle_history) (im: I.ideal_memory) 
         assert (U64.v aa + 8 <= heap_size);
         assert (block_field r.memory (Major x) i == read_word g aa);
         assert (I.wf_memory im);
-        assert (mem_no_young im);
-        young_rep r h im ids a (Seq.index vs i) (read_word g aa)
+        young_rep r.memory h im ids a (Seq.index vs i) (read_word g aa)
     | I.NoScan _ -> assert (field_value im obj i == None)
 #pop-options
 
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
 let write_major_acc (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
                     (e: event) (pe: I.program_event) (r': real_state)
-  : Lemma (requires program_ok r h im ids a e pe r' /\ Write? e /\ Major? (Write?.target e))
+  : Lemma (requires pfacts r h im ids a e pe r' /\ Write? e /\ Major? (Write?.target e))
           (ensures program_acc_post r h im ids a e pe r')
   = let n = Seq.length im.I.objects in
     let ids' = update_block_ids ids n r e r' in
@@ -262,7 +262,7 @@ let write_major_acc (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids
       assert (update_history h r e r' == h);
       let a' = program_step a InMajor pe in
       assert (kind_step a (kind_of e) (Some pe) == a');
-      cf_valid r.memory im ids (Major x) obj;
+      header_of r.memory h im ids (Major x) obj;
       assert (reachable_in_kept h im ids);
       assert (kept h x);
       assert (a.kept obj);
@@ -306,7 +306,7 @@ let write_major_acc (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 let write_nursery_acc (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
                       (e: event) (pe: I.program_event) (r': real_state)
-  : Lemma (requires program_ok r h im ids a e pe r' /\ Write? e /\ Nursery? (Write?.target e))
+  : Lemma (requires pfacts r h im ids a e pe r' /\ Write? e /\ Nursery? (Write?.target e))
           (ensures program_acc_post r h im ids a e pe r')
   = let n = Seq.length im.I.objects in
     let ids' = update_block_ids ids n r e r' in
@@ -316,7 +316,6 @@ let write_nursery_acc (r: real_state) (h: cycle_history) (im: I.ideal_memory) (i
       assert (update_history h r e r' == h);
       let a' = program_step a InMajor pe in
       assert (kind_step a (kind_of e) (Some pe) == a');
-      real_shape r h;
       assert (nursery_write_step r o i v r');
       assert (nursery_write_frame);
       assert (r'.memory.major == r.memory.major /\ r'.ref_table == r.ref_table);
@@ -329,7 +328,7 @@ let write_nursery_acc (r: real_state) (h: cycle_history) (im: I.ideal_memory) (i
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let read_roots_acc (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
                    (e: event) (pe: I.program_event) (r': real_state)
-  : Lemma (requires program_ok r h im ids a e pe r' /\ (Read? e \/ SetRoots? e))
+  : Lemma (requires pfacts r h im ids a e pe r' /\ (Read? e \/ SetRoots? e))
           (ensures program_acc_post r h im ids a e pe r')
   = let n = Seq.length im.I.objects in
     let ids' = update_block_ids ids n r e r' in
@@ -346,7 +345,9 @@ let program_acc (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: bl
                 (e: event) (pe: I.program_event) (r': real_state)
   : Lemma (requires program_ok r h im ids a e pe r')
           (ensures program_acc_post r h im ids a e pe r')
-  = match e with
+  = pfacts_intro r h im ids a e pe r';
+    if Alloc? e then alloc_facts_intro r h im ids a e pe r';
+    match e with
     | Alloc InMajor _ _ _ -> alloc_major_acc r h im ids a e pe r'
     | Alloc InNursery _ _ _ -> alloc_nursery_acc r h im ids a e pe r'
     | Write (Major _) _ _ -> write_major_acc r h im ids a e pe r'

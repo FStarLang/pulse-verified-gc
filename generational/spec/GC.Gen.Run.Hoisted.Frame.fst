@@ -82,7 +82,8 @@ let rt_block_kept (h: cycle_history) (ids: block_id_map) (a: acc) (m: real_memor
 /// nursery's allocated blocks are the same, and the map is restricted to
 /// what is allocated in `r'`.
 let nurs_kept_frame (r r': real_state) (h: cycle_history) (ids: block_id_map) (a: acc)
-  : Lemma (requires nurs_rep ids a /\ kept_rep h ids a /\ keyed r.memory ids /\ run_invariant r' h /\
+  : Lemma (requires nurs_rep ids a /\ kept_rep h ids a /\ keyed r.memory ids /\
+                    (forall (x: obj_addr). kept h x ==> is_allocated r'.memory (Major x)) /\
                     (forall (o: U64.t). is_allocated r'.memory (Nursery o) <==> is_allocated r.memory (Nursery o)))
           (ensures nurs_rep (restrict r'.memory ids) a /\ kept_rep h (restrict r'.memory ids) a /\
                    (forall (x: obj_addr). kept h x ==> restrict r'.memory ids (Major x) == ids (Major x)) /\
@@ -90,8 +91,7 @@ let nurs_kept_frame (r r': real_state) (h: cycle_history) (ids: block_id_map) (a
   = let ids' = restrict r'.memory ids in
     let nk (o: U64.t) : Lemma (ids' (Nursery o) == ids (Nursery o)) = () in
     FStar.Classical.forall_intro nk;
-    let kk (x: obj_addr) : Lemma (kept h x ==> ids' (Major x) == ids (Major x)) =
-      FStar.Classical.move_requires (kept_allocated r' h) x in
+    let kk (x: obj_addr) : Lemma (kept h x ==> ids' (Major x) == ids (Major x)) = () in
     FStar.Classical.forall_intro kk;
     introduce forall (id: I.obj_id). (exists (x: obj_addr). ids' (Major x) == Some id /\ kept h x) <==> a.kept id
     with begin

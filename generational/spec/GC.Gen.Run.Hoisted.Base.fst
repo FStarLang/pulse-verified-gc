@@ -71,33 +71,16 @@ let nursery_ptr_shape (ms: minor_state) (o: U64.t) (k: nat)
 /// Young values
 /// ---------------------------------------------------------------------------
 
-/// A value that is not a young-looking word.  (`I.Word` only excludes the
-/// major heap's range; a word in the nursery's range is treated as a
-/// nursery pointer by the barrier and the minor collection.)
-let no_young_value (v: I.value) : prop =
-  match v with
-  | I.Word w -> ~(GB.is_young w)
-  | _ -> True
-
-/// Every value in a field of the ideal memory is not a young-looking word.
-let mem_no_young (m: I.ideal_memory) : prop =
-  (forall (i: nat). i < Seq.length m.I.roots ==> no_young_value (Seq.index m.I.roots i)) /\
-  (forall (id: I.obj_id) (i: nat).
-    I.valid_id m id /\ i < Seq.length (I.field_values (Seq.index m.I.objects id)) ==>
-    no_young_value (Seq.index (I.field_values (Seq.index m.I.objects id)) i))
-
-/// What an event writes: no young-looking word, not even a raw word of a new
-/// no-scan object (which `major_alloc_step` would remember, `young_slots`).
+/// A new no-scan object's raw words are not young-looking.  (`major_alloc_step`
+/// remembers the slot of every young initial word, `young_slots`, whatever
+/// the tag; a raw word of a string that looks like a nursery address would
+/// then be a root of the next minor collection.)
 let event_no_young (pe: I.program_event) : prop =
   match pe with
-  | I.Alloc _ _ (I.Scannable vs) -> forall (i: nat). i < Seq.length vs ==> no_young_value (Seq.index vs i)
   | I.Alloc _ _ (I.NoScan ws) -> forall (i: nat). i < Seq.length ws ==> ~(GB.is_young (Seq.index ws i))
-  | I.Write _ _ v -> no_young_value v
-  | I.SetRoots vs -> forall (i: nat). i < Seq.length vs ==> no_young_value (Seq.index vs i)
-  | I.Read _ _ -> True
+  | _ -> True
 
-/// **The program never stores a young-looking word** (an OCaml program's
-/// immediates are odd, so never one).
+/// **The program allocates no no-scan object with a young-looking word.**
 let rec program_no_young (ps: list I.program_event) : prop =
   match ps with
   | [] -> True
@@ -109,78 +92,50 @@ let rec program_no_young_snoc (ps: list I.program_event) (pe: I.program_event)
     | [] -> ()
     | _ :: ps' -> program_no_young_snoc ps' pe
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
-let ideal_step_no_young (m: I.ideal_memory) (pe: I.program_event)
-  : Lemma (requires mem_no_young m /\ event_no_young pe)
-          (ensures mem_no_young (I.ideal_step m pe))
-  = let m' = I.ideal_step m pe in
-    let aux (id: I.obj_id) (i: nat)
-      : Lemma (requires I.valid_id m' id /\ i < Seq.length (I.field_values (Seq.index m'.I.objects id)))
-              (ensures no_young_value (Seq.index (I.field_values (Seq.index m'.I.objects id)) i))
-      = match pe with
-        | I.Write obj j v ->
-            if id = obj && I.valid_id m obj then begin
-              let o = Seq.index m.I.objects obj in
-              assert (Seq.index m'.I.objects id == I.update_field o j v);
-              if j < o.I.size then
-                (match o.I.fields, v with
-                 | I.Scannable vs, _ ->
-                     assert (I.field_values (I.update_field o j v) == Seq.upd vs j v);
-                     if i = j then () else begin
-                       assert (Seq.index (Seq.upd vs j v) i == Seq.index vs i);
-                       assert (no_young_value (Seq.index (I.field_values o) i))
-                     end
-                 | I.NoScan _, I.Word _ -> ()
-                 | _ -> ())
-            end else ()
-        | I.Alloc tag size init ->
-            if I.fields_length init = size then begin
-              let ob : I.ideal_object = { I.tag = tag; I.size = size; I.fields = init } in
-              assert (m'.I.objects == Seq.snoc m.I.objects ob);
-              if id = Seq.length m.I.objects then assert (Seq.index m'.I.objects id == ob)
-              else assert (Seq.index m'.I.objects id == Seq.index m.I.objects id)
-            end
-        | _ -> ()
-    in
-    (match pe with
-     | I.Alloc tag size init ->
-         if I.fields_length init = size then begin
-           let aux (i: nat) : Lemma (i < Seq.length m'.I.roots ==> no_young_value (Seq.index m'.I.roots i)) =
-             if i < Seq.length m.I.roots then assert (Seq.index m'.I.roots i == Seq.index m.I.roots i) else () in
-           FStar.Classical.forall_intro aux
-         end
-     | _ -> ());
-    introduce forall (id: I.obj_id) (i: nat).
-      I.valid_id m' id /\ i < Seq.length (I.field_values (Seq.index m'.I.objects id)) ==>
-      no_young_value (Seq.index (I.field_values (Seq.index m'.I.objects id)) i)
-    with introduce _ ==> _ with aux id i
-#pop-options
-
 /// The nursery's objects in the real state and in the accounting agree.
 let nurs_rep (ids: block_id_map) (a: acc) : prop =
   forall (id: I.obj_id). (exists (o: U64.t). ids (Nursery o) == Some id) <==> a.nurs id
 
+/// A block with an id has the object's tag and size.
+let header_of (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+              (b: block_addr) (id: I.obj_id)
+  : Lemma (requires copies_faithful m h im ids /\ ids b == Some id)
+          (ensures I.valid_id im id /\ block_header_rep m b (Seq.index im.I.objects id))
+  = // put the instance's trigger terms in the context
+    let p = I.valid_id im id ==> (block_header_rep m b (Seq.index im.I.objects id) \/
+                                  ~(block_header_rep m b (Seq.index im.I.objects id))) in
+    FStar.Classical.excluded_middle p;
+    let q = I.valid_id im id ==> (block_rep m ids b (Seq.index im.I.objects id) \/
+                                  ~(block_rep m ids b (Seq.index im.I.objects id))) in
+    FStar.Classical.excluded_middle q;
+    assert (copies_faithful m h im ids)
+
+/// A nursery or kept block with an id holds a faithful copy of the object.
+let rep_of (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+           (b: block_addr) (id: I.obj_id)
+  : Lemma (requires copies_faithful m h im ids /\ ids b == Some id /\ faithful_block h b)
+          (ensures I.valid_id im id /\ block_rep m ids b (Seq.index im.I.objects id))
+  = header_of m h im ids b id
+
 /// **A translated value is young exactly when it points into the nursery.**
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 1"
-let young_rep (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
+let young_rep (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
               (v: I.value) (w: U64.t)
-  : Lemma (requires sim_inv r h im ids /\ nurs_rep ids a /\ value_rep ids v w /\
-                    I.valid_value im v /\ no_young_value v)
+  : Lemma (requires keyed m ids /\ copies_faithful m h im ids /\ minor_wf m.nursery /\ blocks_fit m.major /\
+                    I.wf_objects im /\ nurs_rep ids a /\ value_rep ids v w /\ I.valid_value im v)
           (ensures (GB.is_young w <==> young a v))
   = match v with
     | I.Word _ -> ()
     | I.Ptr { head; infix_offset } ->
         eliminate exists (b: block_addr). ids b == Some head /\ w == ptr_value b infix_offset
         with begin
-          real_shape r h;
-          let o = Seq.index im.I.objects head in
-          assert (block_rep r.memory ids b o);
-          assert (infix_offset < block_size r.memory b);
+          header_of m h im ids b head;
+          assert (infix_offset < block_size m b);
           match b with
           | Major x ->
-              major_ptr_shape r.memory.major x infix_offset;
+              major_ptr_shape m.major x infix_offset;
               let aux (o': U64.t) : Lemma (ids (Nursery o') =!= Some head) = () in
               FStar.Classical.forall_intro aux
-          | Nursery o' -> nursery_ptr_shape r.memory.nursery o' infix_offset
+          | Nursery o' -> nursery_ptr_shape m.nursery o' infix_offset
         end
 #pop-options

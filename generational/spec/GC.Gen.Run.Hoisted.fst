@@ -27,11 +27,13 @@
 ///      corresponding blocks at the same offset.
 ///
 /// The result (`hoisted_isomorphic_given`) is conditional on
-///   * `program_no_young ps`: the program never stores a word that looks
-///     like a nursery pointer (`GC.Model.Ideal.Word` admits them);
-///   * `step_hyps` (`GC.Gen.Run.Hoisted.Steps`): two nursery frame facts,
-///     that the snapshot of a cycle start holds only ideal-reachable
-///     objects, and the exact set a minor collection promotes.
+///   * `program_no_young ps`: no new no-scan object has a raw word that looks
+///     like a nursery address (`major_alloc_step` would remember its slot);
+///   * `start_snapshot` and `minor_promotes` (`GC.Gen.Run.Hoisted.Steps`):
+///     the snapshot of a cycle start holds only ideal-reachable objects, and
+///     a minor collection promotes exactly `GC.Gen.Run.IdAccounting.promoted`.
+///     (The other two step hypotheses, the nursery frames, are proved:
+///     `GC.Gen.Run.Hoisted.Nursery`.)
 module GC.Gen.Run.Hoisted
 
 open FStar.Seq
@@ -63,8 +65,6 @@ module ID = FStar.IndefiniteDescription
 /// ---------------------------------------------------------------------------
 /// 1. The accounting along a run
 /// ---------------------------------------------------------------------------
-
-let empty_mem_no_young (_: unit) : Lemma (mem_no_young I.empty_ideal) = ()
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 let initial_acc (_: unit)
@@ -104,10 +104,10 @@ let rec acc_along (#es: list event) (#r: real_state) (rn: run (initial_state ())
   : Lemma (requires I.wf_program ps /\ executes rn ps /\ program_no_young ps /\ step_hyps)
           (ensures (let a = account empty_acc (kinds es) ps in
                     acc_inv r (history_of_run rn) (ids_of_run rn) a /\
-                    a.mem == I.ideal_run ps /\ mem_no_young (I.ideal_run ps)))
+                    a.mem == I.ideal_run ps))
           (decreases rn)
   = match rn with
-    | Done _ -> initial_acc (); empty_mem_no_young ()
+    | Done _ -> initial_acc ()
     | Step #_ #es' #r1 rn' e r2 s ->
         kinds_snoc es' e;
         run_step_maps rn' e r2 s;
@@ -124,7 +124,6 @@ let rec acc_along (#es: list event) (#r: real_state) (rn: run (initial_state ())
             executes_length rn' ps';
             account_snoc empty_acc (kinds es') ps' (kind_of e) pe;
             let im = I.ideal_run ps' in
-            ideal_step_no_young im pe;
             program_acc r1 (history_of_run rn') im (ids_of_run rn') (account empty_acc (kinds es') ps') e pe r2
           end
         else begin
@@ -269,14 +268,14 @@ let word_points_nowhere (m: real_memory) (w: U64.t)
 
 /// A pointer value lands in the block holding its object, at its offset.
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
-let ptr_points_into (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) (hd: I.obj_id) (k: nat) (w: U64.t)
-  : Lemma (requires keyed m ids /\ copies_faithful m im ids /\ I.wf_objects im /\
+let ptr_points_into (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (hd: I.obj_id) (k: nat) (w: U64.t)
+  : Lemma (requires keyed m ids /\ copies_faithful m h im ids /\ I.wf_objects im /\
                     I.valid_value im (I.Ptr { I.head = hd; I.infix_offset = k }) /\
                     value_rep ids (I.Ptr { I.head = hd; I.infix_offset = k }) w)
           (ensures exists (c: block_addr). ids c == Some hd /\ points_into m w c k)
   = eliminate exists (c: block_addr). ids c == Some hd /\ w == ptr_value c k
     with begin
-      cf_valid m im ids c hd;
+      header_of m h im ids c hd;
       assert (points_into m w c k)
     end
 #pop-options
@@ -284,9 +283,11 @@ let ptr_points_into (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) (h
 /// **Two memories representing the same ideal memory, with blocks for the
 /// same objects, are isomorphic.**
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
-let iso_from_ids (m1 m2: real_memory) (im: I.ideal_memory) (ids1 ids2: block_id_map)
-  : Lemma (requires keyed m1 ids1 /\ keyed m2 ids2 /\ copies_faithful m1 im ids1 /\ copies_faithful m2 im ids2 /\
-                    I.wf_memory im /\ I.wf_objects im /\ mem_no_young im /\
+let iso_from_ids (m1 m2: real_memory) (h1 h2: cycle_history) (im: I.ideal_memory) (ids1 ids2: block_id_map)
+  : Lemma (requires keyed m1 ids1 /\ keyed m2 ids2 /\ copies_faithful m1 h1 im ids1 /\ copies_faithful m2 h2 im ids2 /\
+                    (forall (b: block_addr). Some? (ids1 b) ==> faithful_block h1 b) /\
+                    (forall (b: block_addr). Some? (ids2 b) ==> faithful_block h2 b) /\
+                    I.wf_memory im /\ I.wf_objects im /\
                     minor_wf m1.nursery /\ blocks_fit m1.major /\ minor_wf m2.nursery /\ blocks_fit m2.major /\
                     (forall (id: I.obj_id). (exists (b: block_addr). ids1 b == Some id) <==>
                                             (exists (b: block_addr). ids2 b == Some id)))
@@ -313,8 +314,8 @@ let iso_from_ids (m1 m2: real_memory) (im: I.ideal_memory) (ids1 ids2: block_id_
                         else block_field m1 b i == block_field m2 b' i))
       = fb b;
         let Some id = ids1 b in
-        cf_valid m1 im ids1 b id;
-        cf_valid m2 im ids2 b' id;
+        rep_of m1 h1 im ids1 b id;
+        rep_of m2 h2 im ids2 b' id;
         let o = Seq.index im.I.objects id in
         O.no_scan_tag_val ();
         assert (I.valid_id im id ==> (Scannable? o.I.fields <==> I.tag_scannable o.I.tag));
@@ -326,12 +327,11 @@ let iso_from_ids (m1 m2: real_memory) (im: I.ideal_memory) (ids1 ids2: block_id_
             assert (I.field_at o i == I.FValue v);
             assert (value_rep ids1 v w1 /\ value_rep ids2 v w2);
             assert (I.valid_value im v);
-            assert (no_young_value v);
             (match v with
              | I.Word w -> word_points_nowhere m1 w; word_points_nowhere m2 w
              | I.Ptr { I.head = hd; I.infix_offset = k } ->
-                 ptr_points_into m1 im ids1 hd k w1;
-                 ptr_points_into m2 im ids2 hd k w2;
+                 ptr_points_into m1 h1 im ids1 hd k w1;
+                 ptr_points_into m2 h2 im ids2 hd k w2;
                  eliminate exists (c1: block_addr). ids1 c1 == Some hd /\ points_into m1 w1 c1 k
                  with eliminate exists (c2: block_addr). ids2 c2 == Some hd /\ points_into m2 w2 c2 k
                  with (fb c1; assert (f c1 == Some c2)))
@@ -347,8 +347,8 @@ let iso_from_ids (m1 m2: real_memory) (im: I.ideal_memory) (ids1 ids2: block_id_
     with begin
       fb b;
       let Some id = ids1 b in
-      cf_valid m1 im ids1 b id;
-      cf_valid m2 im ids2 b' id;
+      header_of m1 h1 im ids1 b id;
+      header_of m2 h2 im ids2 b' id;
       introduce forall (i: nat). i < block_size m1 b ==>
           (if block_tag m1 b < 251
            then word_corresponds m1 m2 f (block_field m1 b i) (block_field m2 b' i)
@@ -373,9 +373,10 @@ let hoisted_isomorphic_given (#es: list event) (#r: real_state) (rn: run (initia
                              (ps: list I.program_event)
   : Lemma (requires I.wf_program ps /\ executes rn ps /\ executes rn_h ps /\
                     kinds es_h == hoist (kinds es) /\ r.phase == Ph.Idle /\
-                    program_no_young ps /\ step_hyps)
+                    program_no_young ps /\ start_snapshot /\ minor_promotes)
           (ensures isomorphic r.memory r_h.memory)
-  = hoisted_idle rn_h ps (kinds es);
+  = GC.Gen.Run.Hoisted.Nursery.nursery_frames ();
+    hoisted_idle rn_h ps (kinds es);
     ids_at_idle rn ps;
     ids_at_idle rn_h ps;
     acc_along rn ps;
@@ -384,6 +385,10 @@ let hoisted_isomorphic_given (#es: list event) (#r: real_state) (rn: run (initia
     FStar.Classical.forall_intro lh;
     simulation rn ps;
     simulation rn_h ps;
-    real_shape r (history_of_run rn);
-    real_shape r_h (history_of_run rn_h);
-    iso_from_ids r.memory r_h.memory (I.ideal_run ps) (ids_of_run rn) (ids_of_run rn_h)
+    let h = history_of_run rn in
+    let h_h = history_of_run rn_h in
+    real_shape r h;
+    real_shape r_h h_h;
+    assert (forall (b: block_addr). Some? (ids_of_run rn b) ==> faithful_block h b);
+    assert (forall (b: block_addr). Some? (ids_of_run rn_h b) ==> faithful_block h_h b);
+    iso_from_ids r.memory r_h.memory h h_h (I.ideal_run ps) (ids_of_run rn) (ids_of_run rn_h)

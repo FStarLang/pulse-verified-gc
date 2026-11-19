@@ -58,7 +58,7 @@ let minor_promotes : prop =
   forall (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
          (roots: seq U64.t) (r': real_state) (a: acc).
     (sim_inv r h im ids /\ roots_represented ids im.I.roots roots /\ step r (Minor roots) r' /\
-     a.mem == im /\ acc_inv r h ids a /\ mem_no_young im /\
+     a.mem == im /\ acc_inv r h ids a /\
      sim_inv r' (update_history h r (Minor roots) r') im
              (update_block_ids ids (Seq.length im.I.objects) r (Minor roots) r')) ==>
     (let ids' = update_block_ids ids (Seq.length im.I.objects) r (Minor roots) r' in
@@ -74,7 +74,7 @@ let step_hyps : prop =
 
 /// Before and after a step `e` (with program event `pe`, if any).
 let ctx (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc) : prop =
-  sim_inv r h im ids /\ acc_inv r h ids a /\ a.mem == im /\ mem_no_young im
+  sim_inv r h im ids /\ acc_inv r h ids a /\ a.mem == im
 
 /// ---------------------------------------------------------------------------
 /// Extending the remembered set
@@ -175,15 +175,6 @@ let alloc_reachable (im: I.ideal_memory) (tag: I.tag_t) (size: nat) (init: I.ide
     assert (I.reach_within im' 0 (Seq.length im.I.objects))
 #pop-options
 
-let cf_valid (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) (b: block_addr) (id: I.obj_id)
-  : Lemma (requires copies_faithful m im ids /\ ids b == Some id)
-          (ensures I.valid_id im id /\ block_rep m ids b (Seq.index im.I.objects id))
-  = // put the instance's trigger terms in the context
-    let p = I.valid_id im id ==> (block_rep m ids b (Seq.index im.I.objects id) \/
-                                  ~(block_rep m ids b (Seq.index im.I.objects id))) in
-    FStar.Classical.excluded_middle p;
-    assert (copies_faithful m im ids)
-
 /// **An allocation makes exactly one new block, which gets the next id.**
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let alloc_fresh (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
@@ -211,8 +202,54 @@ let alloc_fresh (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: bl
           else begin
             wnb b;
             assert (ids b == Some n);
-            cf_valid r.memory im ids b n
+            header_of r.memory h im ids b n
           end in
         FStar.Classical.forall_intro (FStar.Classical.move_requires pick);
         assert (keyed r'.memory ids')
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// The facts a program step's accounting uses
+/// ---------------------------------------------------------------------------
+
+/// What the per-event proofs read of the joint invariant before and after the
+/// step (a much smaller context than `sim_inv`).
+let pfacts (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
+           (e: event) (pe: I.program_event) (r': real_state) : prop =
+  let n = Seq.length im.I.objects in
+  let ids' = update_block_ids ids n r e r' in
+  let h' = update_history h r e r' in
+  acc_inv r h ids a /\ a.mem == im /\ keyed r.memory ids /\ keyed r'.memory ids' /\
+  copies_faithful r.memory h im ids /\ reachable_in_kept h im ids /\
+  I.wf_memory im /\ I.wf_objects im /\ I.wf_event im pe /\ translates ids e pe /\ step r e r' /\
+  event_no_young pe /\ step_hyps /\
+  minor_wf r.memory.nursery /\ blocks_fit r.memory.major /\
+  (forall (x: obj_addr). kept h x ==> is_allocated r.memory (Major x)) /\
+  (forall (x: obj_addr). kept h' x ==> is_allocated r'.memory (Major x)) /\
+  covers_reachable (I.ideal_step im pe) ids'
+
+let pfacts_intro (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
+                 (e: event) (pe: I.program_event) (r': real_state)
+  : Lemma (requires ctx r h im ids a /\ program_pre r h im ids e pe r' /\ program_post r h im ids e pe r' /\
+                    event_no_young pe /\ step_hyps)
+          (ensures pfacts r h im ids a e pe r')
+  = real_shape r h;
+    let h' = update_history h r e r' in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (kept_allocated r h));
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (kept_allocated r' h'))
+
+/// The one new block of an allocation, from the facts.
+let alloc_facts (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
+                (e: event) (pe: I.program_event) (r': real_state) : prop =
+  let n = Seq.length im.I.objects in
+  let ids' = update_block_ids ids n r e r' in
+  (exists (b: block_addr). newly r r' b /\ ids' b == Some n) /\
+  (forall (b b': block_addr). newly r r' b /\ newly r r' b' ==> b == b') /\
+  (forall (b: block_addr). newly r r' b ==> ids' b == Some n) /\
+  (forall (b: block_addr). ~(newly r r' b) ==> ids' b == restrict r'.memory ids b)
+
+let alloc_facts_intro (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
+                      (e: event) (pe: I.program_event) (r': real_state)
+  : Lemma (requires ctx r h im ids a /\ program_pre r h im ids e pe r' /\ program_post r h im ids e pe r' /\ Alloc? e)
+          (ensures alloc_facts r h im ids a e pe r')
+  = alloc_fresh r h im ids e pe r'
