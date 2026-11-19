@@ -11,7 +11,6 @@ open GC.Gen.Run.Step
 open GC.Gen.Run.History
 open GC.Gen.Run.Invariant
 open GC.Model.Represents
-open GC.Gen.Run.Simulation
 
 module U64 = FStar.UInt64
 module Ph = GC.Spec.Phase
@@ -42,14 +41,13 @@ let obj_bounds (g: heap) (y: obj_addr)
     hd_address_spec y
 
 /// A pointer `k` words into the allocated major block `y`, which holds the
-/// ideal object `o`, where `Ptr { head; k }` is valid and exact: a pointer
+/// ideal object `o`, where `Ptr { head; k }` is valid: a pointer
 /// that resolves to `y`.
-let ptr_resolves (m: real_memory) (im: I.ideal_memory) (ids: block_id_map)
+let ptr_resolves (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
                  (y: obj_addr) (id: I.obj_id) (k: nat)
-  : Lemma (requires well_formed_heap m.major /\ copies_faithful m im ids /\
-                    ids (Major y) == Some id /\ is_allocated m (Major y) /\
+  : Lemma (requires well_formed_heap m.major /\ copies_faithful m h im ids /\
+                    ids (Major y) == Some id /\ is_allocated m (Major y) /\ kept h y /\
                     I.valid_value im (I.Ptr { head = id; infix_offset = k }) /\
-                    exact_value im (I.Ptr { head = id; infix_offset = k }) /\
                     (k == 0 \/ k < block_size m (Major y)))
           (ensures (let w = ptr_value (Major y) k in
                     is_pointer w /\ resolve_object (w <: obj_addr) m.major == y))
@@ -61,6 +59,10 @@ let ptr_resolves (m: real_memory) (im: I.ideal_memory) (ids: block_id_map)
       assert (w == y);
       resolve_non_infix y g
     end else begin
+      let p (id: I.obj_id) : prop =
+        I.valid_id im id /\ block_header_rep m (Major y) (Seq.index im.I.objects id) /\
+        (faithful_block h (Major y) ==> block_rep m ids (Major y) (Seq.index im.I.objects id)) in
+      assert (p id);
       let o = Seq.index im.I.objects id in
       assert (block_rep m ids (Major y) o);
       assert (content_rep ids (I.field_at o (k - 1)) (block_field m (Major y) (k - 1)));
@@ -80,12 +82,13 @@ let ptr_resolves (m: real_memory) (im: I.ideal_memory) (ids: block_id_map)
 
 /// ---------------------------------------------------------------------------
 /// The context: a well-formed real memory with an empty nursery, representing
-/// a well-formed ideal memory whose infix pointers are exact
+/// a well-formed ideal memory, every allocated major block kept (idle)
 /// ---------------------------------------------------------------------------
 
-let ctx (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) : prop =
-  well_formed_heap m.major /\ keyed m ids /\ copies_faithful m im ids /\
-  I.wf_memory im /\ I.wf_objects im /\ infix_exact im /\ m.nursery == minor_reset m.nursery
+let ctx (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) : prop =
+  well_formed_heap m.major /\ keyed m ids /\ copies_faithful m h im ids /\
+  I.wf_memory im /\ I.wf_objects im /\ m.nursery == minor_reset m.nursery /\
+  (forall (x: obj_addr). is_allocated m (Major x) ==> kept h x)
 
 /// With the nursery empty, only major blocks have ids.
 let no_nursery_ids (m: real_memory) (ids: block_id_map) (o: U64.t)
@@ -107,42 +110,50 @@ let ptr_rep_major (m: real_memory) (ids: block_id_map) (head: I.obj_id) (k: nat)
     end
 
 /// `copies_faithful` at one block.
-let faithful_at (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) (b: block_addr) (id: I.obj_id)
-  : Lemma (requires copies_faithful m im ids /\ ids b == Some id)
+let faithful_at (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (b: block_addr) (id: I.obj_id)
+  : Lemma (requires copies_faithful m h im ids /\ ids b == Some id /\ faithful_block h b)
           (ensures I.valid_id im id /\ block_rep m ids b (Seq.index im.I.objects id))
-  = let p (id: I.obj_id) : prop = I.valid_id im id /\ block_rep m ids b (Seq.index im.I.objects id) in
+  = let p (id: I.obj_id) : prop =
+      I.valid_id im id /\ block_header_rep m b (Seq.index im.I.objects id) /\
+      (faithful_block h b ==> block_rep m ids b (Seq.index im.I.objects id)) in
     assert (p id)
 
-/// A field value of the ideal memory is valid and exact.
+/// ... and its header, at any block with an id.
+let header_at (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (b: block_addr) (id: I.obj_id)
+  : Lemma (requires copies_faithful m h im ids /\ ids b == Some id)
+          (ensures I.valid_id im id /\ block_header_rep m b (Seq.index im.I.objects id))
+  = let p (id: I.obj_id) : prop =
+      I.valid_id im id /\ block_header_rep m b (Seq.index im.I.objects id) /\
+      (faithful_block h b ==> block_rep m ids b (Seq.index im.I.objects id)) in
+    assert (p id)
+
+/// A field value of the ideal memory is valid.
 let field_value_ok (im: I.ideal_memory) (id: I.obj_id) (i: nat)
-  : Lemma (requires I.wf_memory im /\ infix_exact im /\ I.valid_id im id /\
+  : Lemma (requires I.wf_memory im /\ I.valid_id im id /\
                     i < Seq.length (I.field_values (Seq.index im.I.objects id)))
-          (ensures I.valid_value im (Seq.index (I.field_values (Seq.index im.I.objects id)) i) /\
-                   exact_value im (Seq.index (I.field_values (Seq.index im.I.objects id)) i))
+          (ensures I.valid_value im (Seq.index (I.field_values (Seq.index im.I.objects id)) i))
   = let p (id: I.obj_id) (i: nat) : prop =
       I.valid_id im id /\ i < Seq.length (I.field_values (Seq.index im.I.objects id)) /\
-      I.valid_value im (Seq.index (I.field_values (Seq.index im.I.objects id)) i) /\
-      exact_value im (Seq.index (I.field_values (Seq.index im.I.objects id)) i) in
+      I.valid_value im (Seq.index (I.field_values (Seq.index im.I.objects id)) i) in
     assert (p id i)
 
-/// A root of the ideal memory is valid and exact.
+/// A root of the ideal memory is valid.
 let root_value_ok (im: I.ideal_memory) (i: nat)
-  : Lemma (requires I.wf_memory im /\ infix_exact im /\ i < Seq.length im.I.roots)
-          (ensures I.valid_value im (Seq.index im.I.roots i) /\ exact_value im (Seq.index im.I.roots i))
+  : Lemma (requires I.wf_memory im /\ i < Seq.length im.I.roots)
+          (ensures I.valid_value im (Seq.index im.I.roots i))
   = ()
 
 /// A block with an id that is scannable in the real heap holds a scannable
 /// object, and the other way round.
 #push-options "--ifuel 1"
-let scannable_iff (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) (x: obj_addr) (id: I.obj_id)
-  : Lemma (requires copies_faithful m im ids /\ I.wf_objects im /\ ids (Major x) == Some id)
+let scannable_iff (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (x: obj_addr) (id: I.obj_id)
+  : Lemma (requires copies_faithful m h im ids /\ I.wf_objects im /\ ids (Major x) == Some id)
           (ensures I.valid_id im id /\
                    (~(is_no_scan x m.major) <==> I.Scannable? (Seq.index im.I.objects id).I.fields) /\
                    U64.v (wosize_of_object x m.major) == (Seq.index im.I.objects id).I.size)
   = is_no_scan_spec x m.major;
-    faithful_at m im ids (Major x) id;
+    header_at m h im ids (Major x) id;
     let o = Seq.index im.I.objects id in
-    assert (block_rep m ids (Major x) o);
     assert (U64.v (tag_of_object x m.major) == U64.v o.I.tag);
     assert (I.Scannable? o.I.fields <==> I.tag_scannable o.I.tag)
 #pop-options
@@ -158,17 +169,17 @@ let get_field_major (g: heap) (x: obj_addr) (i: nat)
 /// ---------------------------------------------------------------------------
 
 #push-options "--ifuel 1 --z3rlimit 20"
-let field_edge_ideal_at (m: real_memory) (im: I.ideal_memory) (ids: block_id_map)
+let field_edge_ideal_at (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
                         (u v: obj_addr) (idu: I.obj_id) (k: nat)
-  : Lemma (requires ctx m im ids /\ ids (Major u) == Some idu /\ MP.field_edge_at m.major u k v)
+  : Lemma (requires ctx m h im ids /\ ids (Major u) == Some idu /\ MP.field_edge_at m.major u k v)
           (ensures exists (idv: I.obj_id). ids (Major v) == Some idv /\ I.points_to im idu idv)
   = let g = m.major in
     wf_with_parts ();
-    scannable_iff m im ids u idu;
+    scannable_iff m h im ids u idu;
     let o = Seq.index im.I.objects idu in
     get_field_major g u (k - 1);
     let fv = major_field g u (k - 1) in
-    faithful_at m im ids (Major u) idu;
+    faithful_at m h im ids (Major u) idu;
     assert (content_rep ids (I.field_at o (k - 1)) fv);
     let I.Scannable vs = o.I.fields in
     let val_ = Seq.index vs (k - 1) in
@@ -181,28 +192,28 @@ let field_edge_ideal_at (m: real_memory) (im: I.ideal_memory) (ids: block_id_map
         eliminate exists (y: obj_addr). ids (Major y) == Some head /\ is_allocated m (Major y) /\
                     fv == ptr_value (Major y) infix_offset
         with begin
-          scannable_iff m im ids y head;
-          faithful_at m im ids (Major y) head;
-          ptr_resolves m im ids y head infix_offset;
+          scannable_iff m h im ids y head;
+          faithful_at m h im ids (Major y) head;
+          ptr_resolves m h im ids y head infix_offset;
           assert (v == y);
           assert (I.target (Seq.index vs (k - 1)) == Some head);
           assert (I.points_to im idu head)
         end
 #pop-options
 
-let field_edge_ideal (m: real_memory) (im: I.ideal_memory) (ids: block_id_map)
+let field_edge_ideal (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
                      (u v: obj_addr) (idu: I.obj_id)
-  : Lemma (requires ctx m im ids /\ ids (Major u) == Some idu /\ MP.field_edge m.major u v)
+  : Lemma (requires ctx m h im ids /\ ids (Major u) == Some idu /\ MP.field_edge m.major u v)
           (ensures exists (idv: I.obj_id). ids (Major v) == Some idv /\ I.points_to im idu idv)
   = wf_with_parts ();
     MP.field_edge_fields m.major u v;
     eliminate exists (k: nat). MP.field_edge_at m.major u k v
-    with field_edge_ideal_at m im ids u v idu k
+    with field_edge_ideal_at m h im ids u v idu k
 
 /// A real root names an object the program's roots name.
 #push-options "--ifuel 1 --z3rlimit 20"
-let root_ideal (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) (rs: seq U64.t) (w: obj_addr)
-  : Lemma (requires ctx m im ids /\ roots_represented ids im.I.roots rs /\ GMM.root_refs m.major rs w)
+let root_ideal (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (rs: seq U64.t) (w: obj_addr)
+  : Lemma (requires ctx m h im ids /\ roots_represented ids im.I.roots rs /\ GMM.root_refs m.major rs w)
           (ensures exists (id: I.obj_id). ids (Major w) == Some id /\ I.root_names im id)
   = let g = m.major in
     eliminate exists (r: U64.t). Seq.mem r rs /\ is_pointer r /\ resolve_object (r <: obj_addr) g == w
@@ -218,9 +229,9 @@ let root_ideal (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) (rs: se
           eliminate exists (y: obj_addr). ids (Major y) == Some head /\ is_allocated m (Major y) /\
                       r == ptr_value (Major y) infix_offset
           with begin
-            scannable_iff m im ids y head;
-            faithful_at m im ids (Major y) head;
-            ptr_resolves m im ids y head infix_offset;
+            scannable_iff m h im ids y head;
+            faithful_at m h im ids (Major y) head;
+            ptr_resolves m h im ids y head infix_offset;
             assert (w == y);
             assert (I.root_names im head)
           end
@@ -232,16 +243,16 @@ let root_ideal (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) (rs: se
 /// ---------------------------------------------------------------------------
 
 #push-options "--ifuel 1 --z3rlimit 20"
-let ideal_edge_real (m: real_memory) (im: I.ideal_memory) (ids: block_id_map)
+let ideal_edge_real (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
                     (x: obj_addr) (src id: I.obj_id) (i: nat)
-  : Lemma (requires ctx m im ids /\ ids (Major x) == Some src /\ I.valid_id im src /\
+  : Lemma (requires ctx m h im ids /\ ids (Major x) == Some src /\ I.valid_id im src /\
                     i < Seq.length (I.field_values (Seq.index im.I.objects src)) /\
                     I.target (Seq.index (I.field_values (Seq.index im.I.objects src)) i) == Some id)
           (ensures exists (y: obj_addr). ids (Major y) == Some id /\ MP.field_edge m.major x y)
   = let g = m.major in
     wf_with_parts ();
-    faithful_at m im ids (Major x) src;
-    scannable_iff m im ids x src;
+    faithful_at m h im ids (Major x) src;
+    scannable_iff m h im ids x src;
     let o = Seq.index im.I.objects src in
     let I.Scannable vs = o.I.fields in
     let v = Seq.index vs i in
@@ -254,8 +265,8 @@ let ideal_edge_real (m: real_memory) (im: I.ideal_memory) (ids: block_id_map)
     eliminate exists (y: obj_addr). ids (Major y) == Some head /\ is_allocated m (Major y) /\
                 fv == ptr_value (Major y) infix_offset
     with begin
-      faithful_at m im ids (Major y) head;
-      ptr_resolves m im ids y head infix_offset;
+      faithful_at m h im ids (Major y) head;
+      ptr_resolves m h im ids y head infix_offset;
       get_field_major g x i;
       assert (MP.field_edge_at g x (i + 1) y);
       MP.field_edge_fields g x y
@@ -275,9 +286,9 @@ let reachable_snoc (g: heap) (refs: obj_addr -> prop) (x y: obj_addr)
 /// **What the program can reach is reachable from the real roots**, in the
 /// real heap, through the blocks holding it.
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
-let rec ideal_reaches_real (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) (rs: seq U64.t)
+let rec ideal_reaches_real (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (rs: seq U64.t)
                            (n: nat) (id: I.obj_id)
-  : Lemma (requires ctx m im ids /\ roots_represented ids im.I.roots rs /\ I.reach_within im n id)
+  : Lemma (requires ctx m h im ids /\ roots_represented ids im.I.roots rs /\ I.reach_within im n id)
           (ensures exists (x: obj_addr). ids (Major x) == Some id /\
                      MPC.reachable m.major (GMM.root_refs m.major rs) x)
           (decreases n)
@@ -293,8 +304,8 @@ let rec ideal_reaches_real (m: real_memory) (im: I.ideal_memory) (ids: block_id_
         eliminate exists (y: obj_addr). ids (Major y) == Some head /\ is_allocated m (Major y) /\
                     r == ptr_value (Major y) infix_offset
         with begin
-          faithful_at m im ids (Major y) head;
-          ptr_resolves m im ids y head infix_offset;
+          faithful_at m h im ids (Major y) head;
+          ptr_resolves m h im ids y head infix_offset;
           assert (refs y);
           MPC.reachable_outside_refs g refs y
         end
@@ -302,17 +313,17 @@ let rec ideal_reaches_real (m: real_memory) (im: I.ideal_memory) (ids: block_id_
     end else begin
       eliminate I.reach_within im (n - 1) id \/
                 (exists (src: I.obj_id). I.reach_within im (n - 1) src /\ I.points_to im src id)
-      with ideal_reaches_real m im ids rs (n - 1) id
+      with ideal_reaches_real m h im ids rs (n - 1) id
       and begin
         eliminate exists (src: I.obj_id). I.reach_within im (n - 1) src /\ I.points_to im src id
         with begin
-          ideal_reaches_real m im ids rs (n - 1) src;
+          ideal_reaches_real m h im ids rs (n - 1) src;
           eliminate exists (xs: obj_addr). ids (Major xs) == Some src /\ MPC.reachable g refs xs
           with begin
             eliminate exists (i: nat). i < Seq.length (I.field_values (Seq.index im.I.objects src)) /\
                         I.target (Seq.index (I.field_values (Seq.index im.I.objects src)) i) == Some id
             with begin
-              ideal_edge_real m im ids xs src id i;
+              ideal_edge_real m h im ids xs src id i;
               eliminate exists (y: obj_addr). ids (Major y) == Some id /\ MP.field_edge g xs y
               with reachable_snoc g refs xs y
             end
@@ -376,27 +387,37 @@ let block_rep_same (m m': real_memory) (ids ids': block_id_map) (b: block_addr) 
     in
     FStar.Classical.forall_intro aux
 
-/// `represents`' first three clauses carry over.
-let represents_same (m m': real_memory) (im: I.ideal_memory) (ids ids': block_id_map)
+/// `represents`' first three clauses carry over, when every block faithful
+/// for the new history was faithful for the old one.
+#push-options "--ifuel 1"
+let represents_same (m m': real_memory) (h h': cycle_history) (im: I.ideal_memory) (ids ids': block_id_map)
   : Lemma (requires same_blocks m m' /\ same_ids ids ids' /\ keyed m ids /\
-                    copies_faithful m im ids /\ covers_reachable im ids)
-          (ensures keyed m' ids' /\ copies_faithful m' im ids' /\ covers_reachable im ids')
+                    copies_faithful m h im ids /\ covers_reachable im ids /\
+                    (forall (b: block_addr). is_allocated m b /\ faithful_block h' b ==> faithful_block h b))
+          (ensures keyed m' ids' /\ copies_faithful m' h' im ids' /\ covers_reachable im ids')
   = let aux (b: block_addr) (id: I.obj_id)
       : Lemma (requires ids' b == Some id)
-              (ensures I.valid_id im id /\ block_rep m' ids' b (Seq.index im.I.objects id))
-      = faithful_at m im ids b id;
-        block_rep_same m m' ids ids' b (Seq.index im.I.objects id)
+              (ensures I.valid_id im id /\ block_header_rep m' b (Seq.index im.I.objects id) /\
+                       (faithful_block h' b ==> block_rep m' ids' b (Seq.index im.I.objects id)))
+      = header_at m h im ids b id;
+        if FStar.IndefiniteDescription.strong_excluded_middle (faithful_block h' b) then begin
+          faithful_at m h im ids b id;
+          block_rep_same m m' ids ids' b (Seq.index im.I.objects id)
+        end
     in
     introduce forall (b: block_addr) (id: I.obj_id).
-        ids' b == Some id ==> I.valid_id im id /\ block_rep m' ids' b (Seq.index im.I.objects id)
+        ids' b == Some id ==>
+          I.valid_id im id /\ block_header_rep m' b (Seq.index im.I.objects id) /\
+          (faithful_block h' b ==> block_rep m' ids' b (Seq.index im.I.objects id))
     with introduce _ ==> _ with aux b id;
-    assert (copies_faithful m' im ids');
+    assert (copies_faithful m' h' im ids');
     assert (keyed m' ids');
     let cov (id: I.obj_id)
       : Lemma (requires I.reachable im id) (ensures exists (b: block_addr). ids' b == Some id)
       = eliminate exists (b: block_addr). ids b == Some id with assert (ids' b == Some id)
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires cov)
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// The start of a cycle
@@ -436,7 +457,7 @@ let start_same_blocks (r: real_state) (roots: seq U64.t) (r': real_state)
 #pop-options
 
 #push-options "--ifuel 1 --z3rlimit 30"
-let start_keeps_sim_inv_exact r h im ids roots r' =
+let start_keeps r h im ids roots r' =
   let g = r.memory.major in
   let h' = update_history h r (StartCycle roots) r' in
   let ids' = update_block_ids ids (Seq.length im.I.objects) r (StartCycle roots) r' in
@@ -444,13 +465,13 @@ let start_keeps_sim_inv_exact r h im ids roots r' =
   start_keeps_run_invariant r h roots r';
   start_same_blocks r roots r';
   restrict_same r.memory r'.memory ids;
-  represents_same r.memory r'.memory im ids ids';
-  assert (ctx r.memory im ids);
+  represents_same r.memory r'.memory h h' im ids ids';
+  assert (ctx r.memory h im ids);
   let aux (x: obj_addr) (id: I.obj_id)
     : Lemma (requires ids' (Major x) == Some id /\ I.reachable im id) (ensures kept h' x)
     = eliminate exists (n: nat). I.reach_within im n id
       with begin
-        ideal_reaches_real r.memory im ids roots n id;
+        ideal_reaches_real r.memory h im ids roots n id;
         eliminate exists (x': obj_addr). ids (Major x') == Some id /\ MPC.reachable g (GMM.root_refs g roots) x'
         with begin
           assert (Major x' == Major x);
@@ -461,7 +482,6 @@ let start_keeps_sim_inv_exact r h im ids roots r' =
   in
   introduce forall (x: obj_addr) (id: I.obj_id). ids' (Major x) == Some id /\ I.reachable im id ==> kept h' x
   with introduce _ ==> _ with aux x id;
-  assert (reachable_in_kept h' im ids');
   assert (represents r' h' im ids')
 #pop-options
 
@@ -483,21 +503,21 @@ let ideal_reachable_root (im: I.ideal_memory) (id: I.obj_id)
 let held_reachable (im: I.ideal_memory) (ids: block_id_map) (x: obj_addr) : prop =
   exists (id: I.obj_id). ids (Major x) == Some id /\ I.reachable im id
 
-let real_reaches_ideal (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) (rs: seq U64.t) (x: obj_addr)
-  : Lemma (requires ctx m im ids /\ roots_represented ids im.I.roots rs /\
+let real_reaches_ideal (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (rs: seq U64.t) (x: obj_addr)
+  : Lemma (requires ctx m h im ids /\ roots_represented ids im.I.roots rs /\
                     MPC.reachable m.major (GMM.root_refs m.major rs) x)
           (ensures held_reachable im ids x)
   = let g = m.major in
     let c = held_reachable im ids in
     let roots_in (w: obj_addr) : Lemma (requires GMM.root_refs g rs w) (ensures c w) =
-      root_ideal m im ids rs w;
+      root_ideal m h im ids rs w;
       eliminate exists (id: I.obj_id). ids (Major w) == Some id /\ I.root_names im id
       with ideal_reachable_root im id
     in
     let closed (u v: obj_addr) : Lemma (requires c u /\ MP.field_edge g u v) (ensures c v) =
       eliminate exists (idu: I.obj_id). ids (Major u) == Some idu /\ I.reachable im idu
       with begin
-        field_edge_ideal m im ids u v idu;
+        field_edge_ideal m h im ids u v idu;
         eliminate exists (idv: I.obj_id). ids (Major v) == Some idv /\ I.points_to im idu idv
         with ideal_reachable_step im idu idv
       end
@@ -539,18 +559,19 @@ let full_gc_phases (r1 r2 r3 r: real_state) (rs': seq U64.t)
 #push-options "--ifuel 1 --z3rlimit 20"
 let full_gc_end (r1 r2 r3 r: real_state) (rs': seq U64.t) (h1 h: cycle_history) (im: I.ideal_memory)
                 (ids1 ids: block_id_map)
-  : Lemma (requires sim_inv r1 h1 im ids1 /\ start_step r1 rs' r2 /\
+  : Lemma (requires run_invariant r1 h1 /\ represents r1 h1 im ids1 /\ I.wf_memory im /\ I.wf_objects im /\
+                    start_step r1 rs' r2 /\
                     slice_step r2 unbounded_budget r3 /\ slice_step r3 unbounded_budget r /\
-                    phase_shape r3 /\ sim_inv r h im ids /\
+                    phase_shape r3 /\ run_invariant r h /\ represents r h im ids /\
                     h.start_memory == r1.memory /\ h.start_roots == rs' /\
                     (forall (x: obj_addr). ~(h.allocated_during_cycle x)) /\
-                    roots_represented ids1 im.I.roots rs' /\ infix_exact im /\
+                    roots_represented ids1 im.I.roots rs' /\
                     (forall (b: block_addr) (id: I.obj_id). ids b == Some id ==> ids1 b == Some id))
           (ensures r.phase == Ph.Idle /\ r.memory.nursery == minor_reset r.memory.nursery /\
                    (forall (b: block_addr) (id: I.obj_id). ids b == Some id ==> I.reachable im id))
   = full_gc_phases r1 r2 r3 r rs';
     idle_wf r1;
-    assert (ctx r1.memory im ids1);
+    assert (ctx r1.memory h1 im ids1);
     let g1 = r1.memory.major in
     let aux (b: block_addr) (id: I.obj_id)
       : Lemma (requires ids b == Some id) (ensures I.reachable im id)
@@ -563,7 +584,7 @@ let full_gc_end (r1 r2 r3 r: real_state) (rs': seq U64.t) (h1 h: cycle_history) 
             GMC.reachable_at_start_eq g1 rs';
             assert (MPC.reachable g1 (GMM.root_refs g1 rs') x);
             assert (ids1 (Major x) == Some id);
-            real_reaches_ideal r1.memory im ids1 rs' x
+            real_reaches_ideal r1.memory h1 im ids1 rs' x
     in
     introduce forall (b: block_addr) (id: I.obj_id). ids b == Some id ==> I.reachable im id
     with introduce _ ==> _ with aux b id
@@ -578,46 +599,3 @@ let full_gc_events_snoc (es0: list event) (rs rs': seq U64.t)
     append_assoc es0 [Minor rs; StartCycle rs'; Slice unbounded_budget] [Slice unbounded_budget]
 #pop-options
 
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 40"
-let full_gc_collects_exact #es0 #rs #rs' #r rn ps =
-  let u = unbounded_budget in
-  let im = I.ideal_run ps in
-  let l1 = es0 @ [Minor rs] in
-  let l2 = l1 @ [StartCycle rs'] in
-  let l3 = l2 @ [Slice u] in
-  full_gc_events_snoc es0 rs rs';
-  match rn with
-  | Done _ -> snoc_nonempty l3 (Slice u)
-  | Step #_ #es3 #r3 rn3 e4 _ s4 ->
-    snoc_inj es3 l3 e4 (Slice u);
-    match rn3 with
-    | Done _ -> snoc_nonempty l2 (Slice u)
-    | Step #_ #es2 #r2 rn2 e3 _ s3 ->
-      snoc_inj es2 l2 e3 (Slice u);
-      match rn2 with
-      | Done _ -> snoc_nonempty l1 (StartCycle rs')
-      | Step #_ #es1 #r1 rn1 e2 _ s2 ->
-        snoc_inj es1 l1 e2 (StartCycle rs');
-        assert (executes rn3 ps);
-        assert (executes rn2 ps);
-        assert (executes rn1 ps);
-        assert (roots_represented (ids_of_run rn1) im.I.roots rs');
-        simulation rn1 ps;
-        simulation rn3 ps;
-        simulation rn ps;
-        let ids1 = ids_of_run rn1 in
-        assert (ids_of_run rn2 == restrict r2.memory ids1);
-        assert (ids_of_run rn3 == restrict r3.memory (ids_of_run rn2));
-        assert (ids_of_run rn == restrict r.memory (ids_of_run rn3));
-        let h = history_of_run rn in
-        assert (history_of_run rn3 == history_of_run rn2);
-        assert (h == history_of_run rn2);
-        assert (h.start_memory == r1.memory /\ h.start_roots == rs');
-        assert (forall (x: obj_addr). ~(h.allocated_during_cycle x));
-        let sub (b: block_addr) (id: I.obj_id)
-          : Lemma (requires ids_of_run rn b == Some id) (ensures ids1 b == Some id)
-          = ()
-        in
-        FStar.Classical.forall_intro_2 (fun b -> FStar.Classical.move_requires (sub b));
-        full_gc_end r1 r2 r3 r rs' (history_of_run rn1) h im ids1 (ids_of_run rn)
-#pop-options
