@@ -40,7 +40,7 @@ module I = GC.Model.Ideal
 val start_keeps (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (roots: seq U64.t) (r': real_state)
   : Lemma (requires run_invariant r h /\ represents r h im ids /\ I.wf_memory im /\ I.wf_objects im /\
-                    roots_represented ids im.I.roots roots /\ step r (StartCycle roots) r')
+                    roots_represented ids (ptr_values im.I.roots) roots /\ step r (StartCycle roots) r')
           (ensures (let h' = update_history h r (StartCycle roots) r' in
                     let ids' = update_block_ids ids (Seq.length im.I.objects) r (StartCycle roots) r' in
                     run_invariant r' h' /\ represents r' h' im ids' /\
@@ -64,7 +64,7 @@ val full_gc_end (r1 r2 r3 r: real_state) (rs': seq U64.t) (h1 h: cycle_history) 
                     phase_shape r3 /\ run_invariant r h /\ represents r h im ids /\
                     h.start_memory == r1.memory /\ h.start_roots == rs' /\
                     (forall (x: obj_addr). ~(h.allocated_during_cycle x)) /\
-                    roots_represented ids1 im.I.roots rs' /\
+                    roots_represented ids1 (ptr_values im.I.roots) rs' /\
                     (forall (b: block_addr) (id: I.obj_id). ids b == Some id ==> ids1 b == Some id))
           (ensures r.phase == Ph.Idle /\ r.memory.nursery == minor_reset r.memory.nursery /\
                    (forall (b: block_addr) (id: I.obj_id). ids b == Some id ==> I.reachable im id))

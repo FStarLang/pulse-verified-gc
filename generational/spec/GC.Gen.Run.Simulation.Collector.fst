@@ -164,6 +164,19 @@ let get_field_major (g: heap) (x: obj_addr) (i: nat)
           (ensures HG.get_field g x (U64.uint_to_t (i + 1)) == major_field g x i)
   = MP.get_field_word g x (i + 1)
 
+/// The pointer roots are exactly the roots that are pointers.
+#push-options "--fuel 1 --ifuel 1"
+let rec mem_ptr_values (vs: seq I.value) (x: I.value)
+  : Lemma (ensures Seq.mem x (ptr_values vs) <==> I.Ptr? x /\ Seq.mem x vs)
+          (decreases Seq.length vs)
+  = if Seq.length vs = 0 then ()
+    else begin
+      mem_ptr_values (Seq.tail vs) x;
+      FStar.Seq.Properties.lemma_mem_inversion vs;
+      FStar.Seq.Properties.mem_cons (Seq.head vs) (ptr_values (Seq.tail vs))
+    end
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Real edges are ideal edges
 /// ---------------------------------------------------------------------------
@@ -213,15 +226,17 @@ let field_edge_ideal (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (i
 /// A real root names an object the program's roots name.
 #push-options "--ifuel 1 --z3rlimit 20"
 let root_ideal (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (rs: seq U64.t) (w: obj_addr)
-  : Lemma (requires ctx m h im ids /\ roots_represented ids im.I.roots rs /\ GMM.root_refs m.major rs w)
+  : Lemma (requires ctx m h im ids /\ roots_represented ids (ptr_values im.I.roots) rs /\ GMM.root_refs m.major rs w)
           (ensures exists (id: I.obj_id). ids (Major w) == Some id /\ I.root_names im id)
   = let g = m.major in
     eliminate exists (r: U64.t). Seq.mem r rs /\ is_pointer r /\ resolve_object (r <: obj_addr) g == w
     with begin
       let i = FStar.Seq.Properties.index_mem r rs in
-      let v = Seq.index im.I.roots i in
+      let v = Seq.index (ptr_values im.I.roots) i in
       assert (value_rep ids v r);
-      root_value_ok im i;
+      mem_ptr_values im.I.roots v;
+      let j = FStar.Seq.Properties.index_mem v im.I.roots in
+      root_value_ok im j;
       match v with
       | I.Word _ -> ()
       | I.Ptr { head; infix_offset } ->
@@ -288,7 +303,7 @@ let reachable_snoc (g: heap) (refs: obj_addr -> prop) (x y: obj_addr)
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
 let rec ideal_reaches_real (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (rs: seq U64.t)
                            (n: nat) (id: I.obj_id)
-  : Lemma (requires ctx m h im ids /\ roots_represented ids im.I.roots rs /\ I.reach_within im n id)
+  : Lemma (requires ctx m h im ids /\ roots_represented ids (ptr_values im.I.roots) rs /\ I.reach_within im n id)
           (ensures exists (x: obj_addr). ids (Major x) == Some id /\
                      MPC.reachable m.major (GMM.root_refs m.major rs) x)
           (decreases n)
@@ -298,8 +313,11 @@ let rec ideal_reaches_real (m: real_memory) (h: cycle_history) (im: I.ideal_memo
       eliminate exists (i: nat). i < Seq.length im.I.roots /\ I.target (Seq.index im.I.roots i) == Some id
       with begin
         root_value_ok im i;
-        let I.Ptr { head; infix_offset } = Seq.index im.I.roots i in
-        let r = Seq.index rs i in
+        let v = Seq.index im.I.roots i in
+        let I.Ptr { head; infix_offset } = v in
+        mem_ptr_values im.I.roots v;
+        let i' = FStar.Seq.Properties.index_mem v (ptr_values im.I.roots) in
+        let r = Seq.index rs i' in
         ptr_rep_major m ids head infix_offset r;
         eliminate exists (y: obj_addr). ids (Major y) == Some head /\ is_allocated m (Major y) /\
                     r == ptr_value (Major y) infix_offset
@@ -504,7 +522,7 @@ let held_reachable (im: I.ideal_memory) (ids: block_id_map) (x: obj_addr) : prop
   exists (id: I.obj_id). ids (Major x) == Some id /\ I.reachable im id
 
 let real_reaches_ideal (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (rs: seq U64.t) (x: obj_addr)
-  : Lemma (requires ctx m h im ids /\ roots_represented ids im.I.roots rs /\
+  : Lemma (requires ctx m h im ids /\ roots_represented ids (ptr_values im.I.roots) rs /\
                     MPC.reachable m.major (GMM.root_refs m.major rs) x)
           (ensures held_reachable im ids x)
   = let g = m.major in
@@ -565,7 +583,7 @@ let full_gc_end (r1 r2 r3 r: real_state) (rs': seq U64.t) (h1 h: cycle_history) 
                     phase_shape r3 /\ run_invariant r h /\ represents r h im ids /\
                     h.start_memory == r1.memory /\ h.start_roots == rs' /\
                     (forall (x: obj_addr). ~(h.allocated_during_cycle x)) /\
-                    roots_represented ids1 im.I.roots rs' /\
+                    roots_represented ids1 (ptr_values im.I.roots) rs' /\
                     (forall (b: block_addr) (id: I.obj_id). ids b == Some id ==> ids1 b == Some id))
           (ensures r.phase == Ph.Idle /\ r.memory.nursery == minor_reset r.memory.nursery /\
                    (forall (b: block_addr) (id: I.obj_id). ids b == Some id ==> I.reachable im id))
