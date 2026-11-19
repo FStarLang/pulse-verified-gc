@@ -7,8 +7,8 @@ module PD = GC.Gen.Run.Invariant.ProgramDefs
 
 /// The definitions restated in `GC.Gen.Run.Invariant.ProgramDefs` are these.
 let same_defs (r: real_state) (h: cycle_history) (e: event)
-  : Lemma ((phase_shape r <==> PD.phase_shape r) /\
-           (run_invariant r h <==> PD.run_invariant r h) /\
+  : Lemma ((GC.Gen.Run.Invariant.Defs.phase_shape r <==> PD.phase_shape r) /\
+           (GC.Gen.Run.Invariant.Defs.run_invariant r h <==> PD.run_invariant r h) /\
            (stores_in_kept r h e <==> PD.stores_in_kept r h e))
   = ()
 
