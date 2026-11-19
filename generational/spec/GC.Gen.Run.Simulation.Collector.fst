@@ -22,6 +22,8 @@ module GI = GC.Gen.Incremental
 module GenInv = GC.Gen.HeapInvariant
 module HG = GC.Spec.HeapGraph
 module SPI = GC.Spec.SweepPhase.Intrinsic
+module SL = GC.Spec.SweepPhase.Slice
+module W = GC.Spec.Walk
 module GW = GC.Spec.Graph.Within
 module I = GC.Model.Ideal
 
@@ -617,3 +619,81 @@ let full_gc_events_snoc (es0: list event) (rs rs': seq U64.t)
     append_assoc es0 [Minor rs; StartCycle rs'; Slice unbounded_budget] [Slice unbounded_budget]
 #pop-options
 
+
+/// ---------------------------------------------------------------------------
+/// A slice
+/// ---------------------------------------------------------------------------
+
+/// The blocks a step leaves allocated were allocated, with their headers
+/// and fields; and a kept allocated block stays allocated.
+let slice_blocks_post (r r': real_state) (h: cycle_history) : prop =
+  r'.memory.nursery == r.memory.nursery /\
+  (forall (x: obj_addr). is_allocated r'.memory (Major x) ==>
+     is_allocated r.memory (Major x) /\ SPI.same_block r.memory.major r'.memory.major (hd_address x)) /\
+  (forall (x: obj_addr). kept h x /\ is_allocated r.memory (Major x) ==> is_allocated r'.memory (Major x))
+
+#push-options "--ifuel 1 --z3rlimit 20"
+let slice_blocks_idle (r: real_state) (h: cycle_history) (budget: nat) (r': real_state)
+  : Lemma (requires slice_step r budget r' /\ r.phase == Ph.Idle)
+          (ensures slice_blocks_post r r' h)
+  = assert (r'.memory.major == r.memory.major);
+    let aux (x: obj_addr) : Lemma (SPI.same_block r.memory.major r.memory.major (hd_address x)) =
+      () in
+    FStar.Classical.forall_intro aux
+
+let slice_blocks_marking (r: real_state) (h: cycle_history) (budget: nat) (r': real_state)
+  : Lemma (requires phase_shape r /\ slice_step r budget r' /\ r.phase == Ph.Marking)
+          (ensures slice_blocks_post r r' h)
+  = let g = r.memory.major in
+    GI.phase_shape_marking r.memory.nursery g r.free_list r.scan_pos;
+    GenInv.collection_shape_with_elim Ph.Marking free_stw r.memory.nursery g r.free_list;
+    GenInv.major_shape_with_elim Ph.Marking free_stw g r.free_list;
+    MPC.mark_steps_keep_blocks g r'.memory.major r.scan_pos r'.scan_pos
+#pop-options
+
+/// **The frame of the sweep**: a slice leaves the heap from its new cursor on
+/// unchanged, so the blocks still pending free keep their headers and
+/// fields.  (A fact of `GC.Spec.FusedSweep.Step`'s steps -- `step_frame` --
+/// not yet exported; taken as a hypothesis here.)
+let sweep_frame : prop =
+  forall (g: heap) (fp: U64.t) (c: U64.t) (budget: nat).
+    SPI.sweep_inv_incremental g fp c ==>
+    (let (g', _, st') = SL.sweep_slice g fp (SPI.state_at g c) budget in
+     forall (a: hp_addr). U64.v a >= U64.v st'.GC.Spec.FusedSweep.cursor ==> read_word g' a == read_word g a)
+
+#push-options "--ifuel 1 --z3rlimit 40"
+let slice_blocks_sweeping (r: real_state) (h: cycle_history) (budget: nat) (r': real_state) (c: U64.t)
+  : Lemma (requires run_invariant r h /\ slice_step r budget r' /\ r.phase == Ph.Sweeping c /\ sweep_frame)
+          (ensures slice_blocks_post r r' h)
+  = let g = r.memory.major in
+    let fp = r.free_list in
+    GI.phase_shape_sweeping r.memory.nursery g fp c r.scan_pos;
+    SL.sweep_slice_phase g fp c budget;
+    let (g2, fp2, st2) = SL.sweep_slice g fp (SPI.state_at g c) budget in
+    let c' = st2.GC.Spec.FusedSweep.cursor in
+    assert (r'.memory.major == g2);
+    SPI.sweep_inv_incremental_elim g2 fp2 c';
+    assert (forall (a: hp_addr). U64.v a >= U64.v c' ==> read_word g2 a == read_word g a);
+    assert (MPC.sweep_in_snapshot (kept h) g c /\
+            (forall (x: obj_addr). kept h x /\ U64.v x > U64.v c ==> is_black x g));
+    let alloc (x: obj_addr)
+      : Lemma (requires is_allocated r'.memory (Major x))
+              (ensures is_allocated r.memory (Major x) /\ SPI.same_block g g2 (hd_address x))
+      = if SPI.pending_free c' g2 x then begin
+          assert (SPI.pending_free c g x);
+          hd_address_spec x;
+          W.bnext_facts g (hd_address x)
+        end else
+          assert (in_use (SPI.free_incremental c') g2 x)
+    in
+    let keep (x: obj_addr)
+      : Lemma (requires kept h x /\ is_allocated r.memory (Major x))
+              (ensures is_allocated r'.memory (Major x))
+      = is_black_iff x g; is_white_iff x g;
+        assert (~(SPI.pending_free c g x));
+        assert (in_use (SPI.free_incremental c) g x);
+        assert (in_use (SPI.free_incremental c') g2 x)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires alloc);
+    FStar.Classical.forall_intro (FStar.Classical.move_requires keep)
+#pop-options
