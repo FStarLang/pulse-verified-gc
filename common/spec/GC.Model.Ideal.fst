@@ -7,8 +7,10 @@
 /// mutator-equivalence theorem (`GC.Gen.Run.Simulation`) compares the real
 /// execution against (mutator-equivalence-plan.md, section 3.4).
 ///
-///   * **Values** (`value`): a machine word that does not point into our
-///     heaps (`Word`: an OCaml int, a pointer to static data or code), or a
+///   * **Values** (`value`): a machine word that is not a pointer to an
+///     object (`Word`: an OCaml int, a pointer to static data or code; that
+///     such a word lies outside the real heaps is the real side's business,
+///     `GC.Model.Represents.value_rep`), or a
 ///     pointer to an object (`Ptr { head; infix_offset }`; the offset, in
 ///     words, is 0 except for a pointer into a closure at an infix header).
 ///   * **Objects** (`ideal_object`): a tag, a size, and fields -- values for
@@ -30,7 +32,6 @@ open FStar.Seq
 open FStar.List.Tot
 
 module U64 = FStar.UInt64
-module F = GC.Spec.Fields
 module O = GC.Spec.Object
 
 /// ---------------------------------------------------------------------------
@@ -43,11 +44,12 @@ type obj_id = nat
 /// A header tag.
 let tag_t = t: U64.t{U64.v t < 256}
 
-/// A value of the program: a word that is not a pointer into the major heap's
-/// range (`GC.Spec.Fields.is_pointer_field`), or a pointer to object `head`,
-/// `infix_offset` words into it.
+/// A value of the program: a word that is not a pointer to an object, or a
+/// pointer to object `head`, `infix_offset` words into it.  (The ideal
+/// memory has no heaps; where a word may lie in the real memory is stated
+/// on the real side, `GC.Model.Represents.value_rep`.)
 type value =
-  | Word : w: U64.t{~(F.is_pointer_field w)} -> value
+  | Word : w: U64.t -> value
   | Ptr { head: obj_id; infix_offset: nat }
 
 /// The fields of an object: values (scannable), or raw words (no-scan).
@@ -106,7 +108,9 @@ let target (v: value) : option obj_id =
 
 /// A value is valid in `m`: a pointer names an object of `m`, and a pointer
 /// with an infix offset `k > 0` points into a closure whose field `k - 1` is
-/// an infix header (OCaml's mutually recursive closures).
+/// an infix header (OCaml's mutually recursive closures) whose size is `k`:
+/// the header gives the offset back to the closure (`Infix_offset_hd`), which
+/// is how the real heap resolves the pointer.
 let valid_value (m: ideal_memory) (v: value) : prop =
   match v with
   | Word _ -> True
@@ -116,7 +120,7 @@ let valid_value (m: ideal_memory) (v: value) : prop =
         (let o = Seq.index m.objects head in
          o.tag == O.closure_tag /\ infix_offset < o.size /\
          (match field_at o (infix_offset - 1) with
-          | FValue (Word w) -> O.getTag w == O.infix_tag
+          | FValue (Word w) -> O.getTag w == O.infix_tag /\ U64.v (O.getWosize w) == infix_offset
           | _ -> False)))
 
 /// Well-formed memory: every value in a field or a root is valid.
