@@ -13,17 +13,20 @@
 ///     mean in each phase, the generational shape), the remembered set
 ///     covering every nursery pointer of a block not free at the phase and
 ///     naming only such blocks' fields (`RT.ref_table_covers_with`,
-///     `RT.ref_table_sound_with`), and the heap walk reaching the end of the
-///     heap.  What the Pulse code maintains; proved here by the steps rather
+///     `RT.ref_table_sound_with`), the heap walk reaching the end of the
+///     heap, the nursery's pointers naming nursery objects
+///     (`nursery_fields_valid`), and the remembered set empty when the
+///     nursery is.  What the Pulse code maintains; proved here by the steps rather
 ///     than assumed at each call.
 ///   * **`snapshot_accounting r h`**, how the state relates to the cycle's
 ///     start (`GC.Gen.Run.History`), with `kept` the snapshot and the blocks
 ///     allocated since:
 ///       - B1 (closed): what is dark is kept, and a kept block points only at
 ///         kept blocks (`MPC.within_snapshot`); the nursery points only at
-///         kept blocks;
+///         kept blocks; every remembered slot is a field of a kept block;
 ///       - B2 (kept): every snapshot object is still an allocated block, at
-///         its size in the start memory;
+///         its size in the start memory; so is every garbage block not yet
+///         freed (nor its address reused); the walk ends where it did;
 ///       - B3 (new objects): the blocks allocated since are allocated, and
 ///         not in the snapshot;
 ///       - B4 (nothing else): every allocated block is kept or garbage at
@@ -32,11 +35,12 @@
 ///         block allocated since, was in a free or garbage block at the start;
 ///       - while marking: every white snapshot object is one the marker will
 ///         reach, and the blocks allocated since are black;
-///       - mid-sweep: every block not free at the cursor is kept;
-///       - idle: no allocated block is garbage at the start.
+///       - mid-sweep: every block not free at the cursor is kept, and every
+///         kept block past the cursor is black;
+///       - idle: every allocated block is kept.
 ///
 /// The program's events keep it only if what they store points at kept
-/// blocks (`stores_in_kept`): OCaml's type safety, which
+/// blocks, and what they write into is kept (`stores_in_kept`): OCaml's type safety, which
 /// `GC.Gen.Run.Simulation` derives from the program's well-formedness.
 ///
 /// At idle, the invariant is the incremental cycle's losslessness, per word
@@ -69,47 +73,7 @@ module RT = GC.Gen.RefTable
 module GenInv = GC.Gen.HeapInvariant
 module I = GC.Model.Ideal
 
-/// ---------------------------------------------------------------------------
-/// The invariant
-/// ---------------------------------------------------------------------------
-
-/// **The shape of the real state**, at its phase.
-let phase_shape (r: real_state) : prop =
-  let g = r.memory.major in
-  let free = GI.phase_free r.phase in
-  GI.phase_shape r.memory.nursery g r.free_list r.phase r.scan_pos /\
-  RT.ref_table_covers_with free g r.ref_table (Seq.length r.ref_table) /\
-  RT.ref_table_sound_with free g r.ref_table (Seq.length r.ref_table) /\
-  W.walk_end g zero_addr + 8 >= heap_size
-
-/// **The snapshot accounting** (B1-B5, and the phase's additions).
-let snapshot_accounting (r: real_state) (h: cycle_history) : prop =
-  let g = r.memory.major in
-  let g0 = h.start_memory.major in
-  // B1
-  MPC.within_snapshot (kept h) g /\
-  GenInv.minor_major_fields_not_free (MPC.outside_snapshot (kept h)) r.memory.nursery g /\
-  // B2
-  (forall (x: obj_addr). snapshot h x ==>
-     Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\ wosize_of_object x g == wosize_of_object x g0) /\
-  // B3
-  (forall (x: obj_addr). h.allocated_during_cycle x ==> is_allocated r.memory (Major x) /\ ~(snapshot h x)) /\
-  // B4
-  (forall (x: obj_addr). is_allocated r.memory (Major x) ==>
-     snapshot h x \/ h.allocated_during_cycle x \/ garbage_at_start h x) /\
-  // B5
-  (forall (p: nat). LL.blue_covered g p \/ SPC.new_covered h.allocated_during_cycle g p ==>
-     reclaimable_at_start h p) /\
-  (match r.phase with
-   | Ph.Marking ->
-       MP.outside_refs_reached g r.scan_pos (snapshot h) /\
-       (forall (x: obj_addr). h.allocated_during_cycle x ==> is_black x g)
-   | Ph.Sweeping c -> MPC.sweep_in_snapshot (kept h) g c
-   | Ph.Idle -> forall (x: obj_addr). is_allocated r.memory (Major x) ==> ~(garbage_at_start h x))
-
-/// **The run invariant.**
-let run_invariant (r: real_state) (h: cycle_history) : prop =
-  phase_shape r /\ snapshot_accounting r h
+include GC.Gen.Run.Invariant.Defs
 
 /// ---------------------------------------------------------------------------
 /// What the program's events owe
@@ -120,12 +84,13 @@ let in_kept (r: real_state) (h: cycle_history) (v: U64.t) : prop =
   is_pointer v ==> kept h (resolve_object (v <: obj_addr) r.memory.major)
 
 /// **What a program event stores points at kept blocks** (into scannable
-/// blocks; a no-scan block holds raw words).
+/// blocks; a no-scan block holds raw words), and a major block it writes
+/// into is kept (the program writes only into objects it holds).
 let stores_in_kept (r: real_state) (h: cycle_history) (e: event) : prop =
   match e with
   | Alloc _ tag _ init ->
       I.tag_scannable tag ==> (forall (i: nat). i < Seq.length init ==> in_kept r h (Seq.index init i))
-  | Write (Major x) _ v -> scannable r.memory.major x ==> in_kept r h v
+  | Write (Major x) _ v -> kept h x /\ (scannable r.memory.major x ==> in_kept r h v)
   | Write (Nursery o) _ v -> minor_tag r.memory.nursery o < 251 ==> in_kept r h v
   | _ -> True
 

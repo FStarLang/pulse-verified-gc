@@ -75,6 +75,7 @@ module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module Promote = GC.Gen.Promote
 module LL = GC.Spec.FusedSweep.Lossless
 module I = GC.Model.Ideal
+module Header = GC.Lib.Header
 
 /// ---------------------------------------------------------------------------
 /// The state
@@ -386,10 +387,24 @@ let rec alloc_count (es: list event) : nat =
 /// The initial state
 /// ---------------------------------------------------------------------------
 
+/// The major heap at start-up: one free (blue) block from `zero_addr` to
+/// the end of the heap, its free-list link (its first field) 0, and the
+/// free list that block.  (`SA.init_heap_spec` places the block at address
+/// 0, below `zero_addr`; this is the same heap at `zero_addr`.)
+let initial_major (_: unit) : GTot (heap & U64.t) =
+  let wz = (heap_size - U64.v zero_addr) / 8 - 1 in
+  assert_norm (pow2 57 / 8 == pow2 54);
+  FStar.Math.Lemmas.lemma_div_le heap_size (pow2 57) 8;
+  let hdr = SA.make_header (U64.uint_to_t wz) Header.Blue 0UL in
+  let g1 = write_word (Seq.create heap_size 0uy) zero_addr hdr in
+  FStar.Math.Lemmas.lemma_mod_plus (U64.v zero_addr) 1 8;
+  let fp : hp_addr = U64.uint_to_t (U64.v zero_addr + 8) in
+  (write_word g1 fp 0UL, fp)
+
 /// The runtime's heap at start-up: the nursery empty, the major heap one free
-/// block (`SA.init_heap_spec`), idle, the remembered set empty.
+/// block (`initial_major`), idle, the remembered set empty.
 let initial_state (_: unit) : GTot real_state =
-  let (g, fp) = SA.init_heap_spec (Seq.create heap_size 0uy) in
+  let (g, fp) = initial_major () in
   { memory = { nursery = minor_init (Seq.create GBase.minor_heap_size 0uy); major = g };
     free_list = fp; phase = Ph.Idle; scan_pos = MP.scan_none; ref_table = Seq.empty }
 
