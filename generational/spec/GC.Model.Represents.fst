@@ -128,7 +128,16 @@ let block_rep (m: real_memory) (ids: block_id_map) (b: block_addr) (o: I.ideal_o
   block_tag m b == U64.v o.I.tag /\ block_size m b == o.I.size /\
   (forall (i: nat). i < o.I.size ==> content_rep ids (I.field_at o i) (block_field m b i))
 
-/// **The roots handed to a collector call are the ideal roots, translated.**
+/// The pointers among the values `vs`, in order: what the collector is
+/// handed of the program's roots (the runtime's root scan records only the
+/// roots that are blocks; an integer root is never passed).
+let rec ptr_values (vs: seq I.value) : Tot (seq I.value) (decreases Seq.length vs) =
+  if Seq.length vs = 0 then Seq.empty
+  else
+    let rest = ptr_values (Seq.tail vs) in
+    if I.Ptr? (Seq.head vs) then Seq.cons (Seq.head vs) rest else rest
+
+/// **The values `vs`, translated, are the words `rs`.**
 let roots_represented (ids: block_id_map) (vs: seq I.value) (rs: seq U64.t) : prop =
   Seq.length rs == Seq.length vs /\
   (forall (i: nat). i < Seq.length vs ==> value_rep ids (Seq.index vs i) (Seq.index rs i))
@@ -171,20 +180,27 @@ let represents (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: blo
 /// The real events that carry out the program's
 /// ---------------------------------------------------------------------------
 
-/// **`e` carries out `pe`**: the same event with the objects and values
-/// translated by `ids` (the allocation site is the runtime's choice).
-let translates (ids: block_id_map) (e: event) (pe: I.program_event) : prop =
+/// **`e` carries out `pe`** in the real memory `m`: the same event with the
+/// objects and values translated by `ids` (the allocation site is the
+/// runtime's choice).  A write into a no-scan block stores the word itself
+/// (raw bytes, a float), as an allocation's no-scan fields do
+/// (`fields_rep`); into a scannable block, the value translated.
+let translates (m: real_memory) (ids: block_id_map) (e: event) (pe: I.program_event) : prop =
   match e, pe with
   | Alloc _ tag size init, I.Alloc tag' size' f -> tag == tag' /\ size == size' /\ fields_rep ids f init
-  | Write b i v, I.Write obj i' v' -> ids b == Some obj /\ i == i' /\ value_rep ids v' v
+  | Write b i v, I.Write obj i' v' ->
+      ids b == Some obj /\ i == i' /\
+      (if block_tag m b < 251 then value_rep ids v' v
+       else (match v' with I.Word w -> v == w | I.Ptr _ -> False))
   | Read b i, I.Read obj i' -> ids b == Some obj /\ i == i'
   | SetRoots rs, I.SetRoots vs -> roots_represented ids vs rs
   | _, _ -> False
 
-/// The collector calls that take roots take the ideal roots, translated.
+/// The collector calls that take roots take the ideal roots that are
+/// pointers, translated (`ptr_values`: integer roots are not passed).
 let collector_roots_represented (ids: block_id_map) (vs: seq I.value) (e: event) : prop =
   match e with
-  | Minor rs | StartCycle rs -> roots_represented ids vs rs
+  | Minor rs | StartCycle rs -> roots_represented ids (ptr_values vs) rs
   | _ -> True
 
 /// ---------------------------------------------------------------------------
