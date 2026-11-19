@@ -3875,3 +3875,66 @@ and unswept pages kept, old blocks kept at their sizes), and `with_made`.
   untagged allocator in the same run: -4.0%, -3.4%, -3.9%. The machine's
   run-to-run noise on these workloads is several percent (an untagged
   `small` run measured +11% once), so the 5% margin on `realloc` is thin.
+
+### 27.8 The tag's cost, removed (2026-11-19)
+
+Measured (25 interleaved rounds, against the untagged `alloc_white`, with an
+A/A control of two identical untagged binaries): the first `alloc_tag` was
++7 to +10% on `small`, `realloc`, `reallocS`, with the A/A spread about 1%,
+so not noise. Its C was `alloc_white`, then a guarded read of the new header,
+`getWosize`, `makeHeader`, a guarded write. Variants built only for the
+bench located the cost: computing the header from `wz` (no read) changed
+nothing, and even an unchecked hand-written second store after
+`alloc_white` cost +8 to +10%. The cost is the second header write itself.
+
+Fix: the header goes into the allocator's one header write.
+- `GC.Impl.Pages.AllocTagged` (new): `fill_at_h`, `pop_h`, `small_alloc_h`,
+  `carve_at_h`, `carve_h`, `new_run_h`, `large_alloc_h`: the allocation paths
+  with the header a parameter `vh`, written in place of `ohdr wz`. In every
+  path that header is the last heap write, so each result is the
+  specification's with that word rewritten (`AT.rehdr`, via `AT.wr_wr`).
+  `Pool`'s and `Large`'s lemmas are reused; their functions are unchanged.
+- `AllocTag`: `tagged_hdr`, `alloc_col_tag_wz` (the stage-2 allocator's
+  new header is `ohdr wz`, by `A.alloc_clears`), `rehdr`, `wr_wr`,
+  `alloc_col_tag_rehdr`. The definition of `alloc_col_tag`, and every
+  theorem about it, are unchanged.
+- `Alloc.alloc_tag` computes `makeHeader wz col tag` once and calls the
+  `_h` paths. Its Pulse statement is unchanged.
+
+C: `alloc_tag` and seven new static `_h` functions; every other function's C
+is unchanged. `make test`: 474 checks pass.
+
+Bench (25 interleaved rounds, medians, against the untagged allocator;
+A/A = a copy of the untagged binary):
+
+| workload | tagged | A/A | prototype |
+|---|---|---|---|
+| small | -2.7% | +0.8% | +4.3% |
+| realloc | -1.1% | +0.2% | +0.4% |
+| reallocS | +0.2% | -3.7% | -2.7% |
+| mixed | -0.3% | +0.6% | +64.1% |
+| large | +0.2% | +0.8% | +75.8% |
+
+The tagged allocator is within the A/A spread of the untagged one.
+
+### 27.9 A witness that promotes an object and the object it points at
+
+- `NurseryWitness2`: a nursery built word by word (akhil's
+  `spot/GC.SPOT.MinorInfixHeap` method; its read/write lemmas copied): A
+  (wosize 1, tag 0) at 8 whose field holds B's address 24, and B at 24 whose
+  field is 0; one root, A. Its shape, its walk (A, B), no major pointers.
+- `RoomAfter`: after a successful one-word allocation from a state with a
+  free page, `no_fit` is false: either the allocation took a slot (no page
+  changes kind, the free page stays free) or it took a fresh pool page,
+  which keeps a free slot, under `two_slots` (a page of the two-word class
+  has two slots; 2048 with the chosen parameters, which `Params.fsti` keeps
+  abstract; a hypothesis, as `roomy` is).
+- `Cycle.MinorVacuity2.run_mark_minor2 g`: root darkening, then `CMinor` of
+  that nursery, a carried run ending while marking.
+  `run_mark_minor2_promotes`: the root forwards A (`step_a`); scanning A's
+  copy forwards B through its field (`step_b`, the second allocation
+  succeeding by `RoomAfter`); the loop is exactly that trace
+  (`promote_trace`). Both copies are blocks the collection made, black,
+  different; the root is rewritten to A's copy, and **A's copy's field is
+  rewritten from the nursery pointer to B's copy**.
+  `run_mark_minor2_theorems` applies `ccycle_inv`.
