@@ -24,6 +24,7 @@ module GMC = GC.Gen.MarkPhase.Completeness
 module GMS = GC.Gen.MarkPhase.Safety
 module MC = GC.Gen.MarkPhase.Cycle
 module MStart = GC.Gen.MarkPhase.Start
+module S = GC.Spec.MarkPhase.Slice
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 
@@ -171,6 +172,59 @@ let start_accounting (r: real_state) (h: cycle_history) (roots: seq U64.t) (r': 
 let start_keeps r h roots r' =
   start_shape r roots r';
   start_accounting r h roots r'
+
+/// ---------------------------------------------------------------------------
+/// Slices
+/// ---------------------------------------------------------------------------
+
+let slice_keeps_idle r h budget r' = ()
+
+/// The nursery's pointers into the major heap stay in kept blocks when the
+/// major heap only darkens.
+let darker_nursery (k: obj_addr -> prop) (m: minor_state) (g g': heap)
+  : Lemma (requires S.darker g g' /\ GenInv.minor_major_fields_not_free (MPC.outside_snapshot k) m g)
+          (ensures GenInv.minor_major_fields_not_free (MPC.outside_snapshot k) m g')
+  = let f (obj: U64.t) (j: nat)
+      : Lemma (requires Seq.mem obj (minor_objects m) /\ j < minor_scan_wosize m obj /\
+                        is_pointer_field (minor_read_field m obj j))
+              (ensures in_use (MPC.outside_snapshot k) g' ((minor_read_field m obj j) <: obj_addr))
+      = let y : obj_addr = minor_read_field m obj j in
+        GenInv.minor_major_fields_not_free_elim (MPC.outside_snapshot k) m g obj j;
+        MPC.in_use_outside_snapshot k g y;
+        MPC.in_use_outside_snapshot k g' y
+    in
+    GenInv.minor_major_fields_not_free_intro (MPC.outside_snapshot k) m g' f
+
+#push-options "--z3rlimit 40"
+let slice_keeps_marking r h budget r' =
+  let m = r.memory.nursery in
+  let g = r.memory.major in
+  let g' = r'.memory.major in
+  let sp = r.scan_pos in
+  let sp' = r'.scan_pos in
+  let s = snapshot h in
+  GI.phase_shape_marking m g r.free_list sp;
+  assert (MP.marking_inv g s sp);
+  GI.mark_slice_shape m g sp r.free_list budget g' sp' r'.free_list Ph.Marking;
+  S.mark_steps_inv g g' sp sp' s;
+  MPC.mark_steps_keep_blocks g g' sp sp';
+  S.mark_steps_darker g g' sp sp';
+  assert (recoloured g g');
+  marking_dense m g r.free_list sp;
+  marking_dense m g' r'.free_list sp';
+  recoloured_walk_end g g';
+  recoloured_blocks g g';
+  GI.phase_free_marking ();
+  recoloured_ref_table g g' r.ref_table (Seq.length r.ref_table);
+  MPC.account_steps (kept h) g g' sp sp';
+  darker_nursery (kept h) m g g';
+  let b5 (p: nat)
+    : Lemma (requires LL.blue_covered g' p \/ SPC.new_covered h.allocated_during_cycle g' p)
+            (ensures LL.blue_covered g p \/ SPC.new_covered h.allocated_during_cycle g p)
+    = ()
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires b5)
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// At idle

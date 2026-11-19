@@ -17,7 +17,13 @@ let minor_keeps_run_invariant r h roots r' = admit ()
 
 let start_keeps_run_invariant r h roots r' = GC.Gen.Run.Invariant.Collector.start_keeps r h roots r'
 
-let slice_keeps_run_invariant r h budget r' = admit ()
+let slice_keeps_run_invariant r h budget r' =
+  match r.phase, r'.phase with
+  | GC.Spec.Phase.Idle, _ -> GC.Gen.Run.Invariant.Collector.slice_keeps_idle r h budget r'
+  | GC.Spec.Phase.Marking, GC.Spec.Phase.Marking -> GC.Gen.Run.Invariant.Collector.slice_keeps_marking r h budget r'
+  // Blocked (false as stated): the hand-over to the sweep and the sweep's
+  // slices -- see GC.Gen.Run.Invariant.Collector.fsti.
+  | _ -> admit ()
 
 let step_keeps_run_invariant r h e r' =
   match e with
