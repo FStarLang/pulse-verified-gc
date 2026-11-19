@@ -88,6 +88,8 @@ private let rec remembered_slot_targets_from_mem
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
+let remembered_slot_targets_mem major slots n i = remembered_slot_targets_from_mem major slots n 0 i
+
 private let rec remembered_slot_targets_from_all_in_roots
   (major: heap)
   (roots slots: seq U64.t)

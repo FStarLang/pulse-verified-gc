@@ -81,7 +81,7 @@ checked = $(addprefix $(CACHE_DIR)/,$(addsuffix .checked,$(notdir $(1))))
 # run of the marking phase) and GC.Gen.Cycle (a run of the whole cycle); the
 # first two are also reached through it, Safety, Completeness and the runs
 # only as roots; GC.Gen.Run.Simulation (mutator equivalence) is a root too.
-ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst impl/GC.Gen.Impl.Barrier.fsti impl/GC.Gen.Impl.Barrier.fst spec/GC.Gen.SweepPhase.fst spec/GC.Gen.SweepPhase.Minor.fst spec/GC.Gen.SweepPhase.Safety.fst spec/GC.Gen.SweepPhase.Completeness.fst spec/GC.Gen.SweepPhase.Cycle.fst spec/GC.Gen.MarkPhase.Alloc.fst spec/GC.Gen.MarkPhase.Completeness.fst spec/GC.Gen.MarkPhase.Safety.fst spec/GC.Gen.MarkPhase.Cycle.fst spec/GC.Gen.Cycle.fst spec/GC.Gen.Run.Simulation.fsti spec/GC.Gen.Run.Simulation.fst spec/GC.Gen.Run.Simulation.Collector.fsti spec/GC.Gen.Run.Simulation.Collector.fst
+ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst impl/GC.Gen.Impl.Barrier.fsti impl/GC.Gen.Impl.Barrier.fst spec/GC.Gen.SweepPhase.fst spec/GC.Gen.SweepPhase.Minor.fst spec/GC.Gen.SweepPhase.Safety.fst spec/GC.Gen.SweepPhase.Completeness.fst spec/GC.Gen.SweepPhase.Cycle.fst spec/GC.Gen.MarkPhase.Alloc.fst spec/GC.Gen.MarkPhase.Completeness.fst spec/GC.Gen.MarkPhase.Safety.fst spec/GC.Gen.MarkPhase.Cycle.fst spec/GC.Gen.Cycle.fst spec/GC.Gen.Run.Simulation.fsti spec/GC.Gen.Run.Simulation.fst spec/GC.Gen.Run.Simulation.Collector.fsti spec/GC.Gen.Run.Simulation.Collector.fst spec/GC.Gen.Run.Simulation.Minor.fsti spec/GC.Gen.Run.Simulation.Minor.fst
 ROOT_CHECKED = $(call checked,$(ROOT_SRC))
 ALL_CHECKED  = $(call checked,$(ALL_SRC))
 
