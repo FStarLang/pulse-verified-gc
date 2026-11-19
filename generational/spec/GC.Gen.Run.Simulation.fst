@@ -26,7 +26,9 @@ let minor_keeps_sim_inv r h im ids roots r' = GC.Gen.Run.Simulation.Minor.minor_
 
 let start_keeps_sim_inv r h im ids roots r' = C.start_keeps r h im ids roots r'
 
-let slice_keeps_sim_inv r h im ids budget r' = admit ()
+let slice_keeps_sim_inv r h im ids budget r' =
+  C.sweep_frame_holds ();
+  C.slice_keeps r h im ids budget r'
 
 let program_step_keeps_sim_inv r h im ids e pe r' =
   match e with

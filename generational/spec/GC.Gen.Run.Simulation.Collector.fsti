@@ -78,9 +78,7 @@ val full_gc_events_snoc (es0: list event) (rs rs': seq U64.t)
 
 /// **The frame of the sweep**: a slice leaves the heap from its new cursor on
 /// unchanged, so the blocks still pending free keep their headers and
-/// fields.  A fact of `GC.Spec.FusedSweep.Step`'s steps (`step_frame`, in its
-/// .fst) that its interface does not export yet; a hypothesis of
-/// `slice_keeps` until it does.
+/// fields (`GC.Spec.FusedSweep.Step.sweep_steps_front`; `sweep_frame_holds`).
 let sweep_frame : prop =
   forall (g: heap) (fp: U64.t) (c: U64.t) (budget: nat).
     SPI.sweep_inv_incremental g fp c ==>
@@ -101,3 +99,6 @@ val slice_keeps (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: bl
                     run_invariant r' h' /\ represents r' h' im ids' /\
                     (forall (x: obj_addr) (id: I.obj_id).
                        ids' (Major x) == Some id /\ I.reachable im id ==> kept h' x)))
+
+/// The sweep's frame holds (`GC.Spec.FusedSweep.Step.sweep_steps_front`).
+val sweep_frame_holds (_: unit) : Lemma sweep_frame

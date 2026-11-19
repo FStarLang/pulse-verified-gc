@@ -1047,3 +1047,21 @@ let slice_keeps r h im ids budget r' =
    | Ph.Sweeping c -> slice_blocks_sweeping r h budget r' c);
   slice_represents r r' h im ids
 #pop-options
+
+let sweep_frame_holds _ =
+  let aux (g: heap) (fp: U64.t) (c: U64.t) (budget: nat)
+    : Lemma (requires SPI.sweep_inv_incremental g fp c)
+            (ensures (let (g', _, st') = SL.sweep_slice g fp (SPI.state_at g c) budget in
+                      forall (a: hp_addr). U64.v a >= U64.v st'.GC.Spec.FusedSweep.cursor ==>
+                        read_word g' a == read_word g a))
+    = let st = SPI.state_at g c in
+      SPI.sweep_inv_incremental_elim g fp c;
+      SL.slice_is_steps g fp st st.GC.Spec.FusedSweep.cursor budget;
+      GC.Spec.FusedSweep.Step.sweep_steps_front g fp c
+        (SL.slice_count g fp st st.GC.Spec.FusedSweep.cursor budget)
+  in
+  introduce forall (g: heap) (fp: U64.t) (c: U64.t) (budget: nat).
+    SPI.sweep_inv_incremental g fp c ==>
+    (let (g', _, st') = SL.sweep_slice g fp (SPI.state_at g c) budget in
+     forall (a: hp_addr). U64.v a >= U64.v st'.GC.Spec.FusedSweep.cursor ==> read_word g' a == read_word g a)
+  with introduce _ ==> _ with aux g fp c budget
