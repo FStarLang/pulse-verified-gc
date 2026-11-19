@@ -128,6 +128,8 @@ ROOT_MODULES = \
   generational/spec/GC.Gen.Run.Simulation.Enabled.fsti \
   generational/spec/GC.Gen.Run.Simulation.Enabled.fst \
   generational/spec/GC.Gen.Run.Simulation.Frame.fst \
+  generational/spec/GC.Gen.Run.Simulation.Alloc.fst \
+  generational/spec/GC.Gen.Run.Simulation.Steps.fst \
   mark-and-sweep/impl/GC.Impl.Correct.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst \

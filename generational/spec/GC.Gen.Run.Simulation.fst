@@ -16,9 +16,9 @@ module P = GC.Gen.Run.Simulation.Program
 
 let initial_sim_inv _ = P.initial_sim_inv ()
 
-let alloc_keeps_sim_inv r h im ids e pe r' = admit ()
+let alloc_keeps_sim_inv r h im ids e pe r' = GC.Gen.Run.Simulation.Steps.alloc_keeps r h im ids e pe r'
 
-let write_keeps_sim_inv r h im ids e pe r' = admit ()
+let write_keeps_sim_inv r h im ids e pe r' = GC.Gen.Run.Simulation.Steps.write_keeps r h im ids e pe r'
 
 let read_roots_keep_sim_inv r h im ids e pe r' = P.read_roots_keep_sim_inv r h im ids e pe r'
 
@@ -91,7 +91,12 @@ let reads_agree #es #r rn ps obj i =
   simulation rn ps;
   reads_agree_state r (history_of_run rn) (I.ideal_run ps) (ids_of_run rn) obj i
 
-let program_step_enabled r h im ids e pe = GC.Gen.Run.Simulation.Enabled.program_step_enabled r h im ids e pe
+/// Blocked since stage 0d: a nursery step now asks for the nursery frame
+/// (with `GenInv.minor_heap_shape`, a trusted mutator obligation) and that
+/// no major infix pointer be stored into the nursery, which a well-formed
+/// program does not give.  With those as a hypothesis (`nursery_trusted`) it
+/// is `GC.Gen.Run.Simulation.Enabled.program_step_enabled_given`.
+let program_step_enabled r h im ids e pe = admit ()
 
 let full_gc_collects #es0 #rs #rs' #r rn ps = admit ()
 

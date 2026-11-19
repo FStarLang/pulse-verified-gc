@@ -296,7 +296,8 @@ let nursery_write_enabled (r: real_state) (h: cycle_history) (im: I.ideal_memory
     (n: U64.t) (i: nat) (v: U64.t) (obj: I.obj_id) (v': I.value)
   : Lemma (requires sim_inv_parts r h im ids /\ I.wf_event im (I.Write obj i v') /\
                     ids (Nursery n) == Some obj /\
-                    (block_tag r.memory (Nursery n) < 251 ==> value_rep ids v' v /\ word_layout ids v' v))
+                    (block_tag r.memory (Nursery n) < 251 ==> value_rep ids v' v /\ word_layout ids v' v) /\
+                    nursery_trusted r (Write (Nursery n) i v))
           (ensures exists (r': real_state). step r (Write (Nursery n) i v) r')
   = let ms = r.memory.nursery in
     let o = Seq.index im.I.objects obj in
@@ -304,25 +305,20 @@ let nursery_write_enabled (r: real_state) (h: cycle_history) (im: I.ideal_memory
     closure_tag_val ();
     no_scan_tag_val ();
     if minor_tag ms n < 251 then usable_storable r h im ids v' v;
-    let r' = { r with memory = { r.memory with nursery =
-                 { ms with data = minor_write_word_t ms.data (nursery_slot n i) v } } } in
+    let r' = { r with memory = { r.memory with nursery = nursery_after_store r n i v } } in
     assert (nursery_write_step r n i v r')
 #pop-options
 
 let nursery_alloc_enabled (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t)
   : Lemma (requires size >= 1 /\ size <= GBase.max_young_wosize /\ U64.v tag <> 249 /\
                     Seq.length init == size /\ init_storable r tag init /\
-                    minor_can_alloc r.memory.nursery size)
+                    minor_can_alloc r.memory.nursery size /\ nursery_trusted r (Alloc InNursery tag size init))
           (ensures exists (r': real_state). step r (Alloc InNursery tag size init) r')
-  = let ms = r.memory.nursery in
-    let t : (t: nat{t < 256 /\ t <> 249}) = U64.v tag in
-    let res = minor_alloc_spec ms size t in
-    let r' = { r with memory = { r.memory with nursery =
-                 { res.ms_out with data = write_nursery_fields res.ms_out.data res.obj_addr init 0 } } } in
+  = let r' = { r with memory = { r.memory with nursery = nursery_after_alloc r tag size init } } in
     assert (nursery_alloc_step r tag size init r')
 
 #push-options "--z3rlimit 40"
-let program_step_enabled r h im ids e pe =
+let program_step_enabled_given r h im ids e pe =
   match e, pe with
   | Alloc site tag size init, I.Alloc _ _ f ->
       alloc_init_storable r h im ids tag size f init;
