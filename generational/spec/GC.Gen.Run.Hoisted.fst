@@ -108,25 +108,28 @@ let sim_ok_run (#es: list event) (#r: real_state) (rn: run (initial_state ()) es
     reveal_opaque (`%sim_ok) sim_ok
 
 /// One program step of the induction.
-let program_case (r1 r2: real_state) (h1 h2: cycle_history) (im im2: I.ideal_memory) (ids1 ids2: block_id_map)
+let program_case (r1 r2: real_state) (h1: cycle_history) (im: I.ideal_memory) (ids1: block_id_map)
                  (a1: acc) (e: event) (pe: I.program_event)
-  : Lemma (requires sim_ok r1 h1 im ids1 /\ sim_ok r2 h2 im2 ids2 /\ acc_inv r1 h1 ids1 a1 /\ a1.mem == im /\
-                    I.wf_event im pe /\ translates ids1 e pe /\ step r1 e r2 /\ event_no_young pe /\ step_hyps /\
-                    h2 == update_history h1 r1 e r2 /\ im2 == I.ideal_step im pe /\
-                    ids2 == update_block_ids ids1 (Seq.length im.I.objects) r1 e r2)
-          (ensures acc_inv r2 h2 ids2 (kind_step a1 (kind_of e) (Some pe)))
+  : Lemma (requires sim_ok r1 h1 im ids1 /\
+                    sim_ok r2 (update_history h1 r1 e r2) (I.ideal_step im pe)
+                           (update_block_ids ids1 (Seq.length im.I.objects) r1 e r2) /\
+                    acc_inv r1 h1 ids1 a1 /\ a1.mem == im /\
+                    I.wf_event im pe /\ translates ids1 e pe /\ step r1 e r2 /\ event_no_young pe /\ step_hyps)
+          (ensures acc_inv r2 (update_history h1 r1 e r2) (update_block_ids ids1 (Seq.length im.I.objects) r1 e r2)
+                           (kind_step a1 (kind_of e) (Some pe)))
   = reveal_opaque (`%sim_ok) sim_ok;
     program_acc r1 h1 im ids1 a1 e pe r2
 
 /// One collector step of the induction.
-let collector_case (r1 r2: real_state) (h1 h2: cycle_history) (im: I.ideal_memory) (ids1 ids2: block_id_map)
+let collector_case (r1 r2: real_state) (h1: cycle_history) (im: I.ideal_memory) (ids1: block_id_map)
                    (a1: acc) (e: event)
-  : Lemma (requires sim_ok r1 h1 im ids1 /\ sim_ok r2 h2 im ids2 /\ acc_inv r1 h1 ids1 a1 /\ a1.mem == im /\
+  : Lemma (requires sim_ok r1 h1 im ids1 /\
+                    sim_ok r2 (update_history h1 r1 e r2) im (update_block_ids ids1 (Seq.length im.I.objects) r1 e r2) /\
+                    acc_inv r1 h1 ids1 a1 /\ a1.mem == im /\
                     ~(is_program_event e) /\ collector_roots_represented ids1 im.I.roots e /\
-                    step r1 e r2 /\ step_hyps /\
-                    h2 == update_history h1 r1 e r2 /\
-                    ids2 == update_block_ids ids1 (Seq.length im.I.objects) r1 e r2)
-          (ensures acc_inv r2 h2 ids2 (kind_step a1 (kind_of e) None))
+                    step r1 e r2 /\ step_hyps)
+          (ensures acc_inv r2 (update_history h1 r1 e r2) (update_block_ids ids1 (Seq.length im.I.objects) r1 e r2)
+                           (kind_step a1 (kind_of e) None))
   = reveal_opaque (`%sim_ok) sim_ok;
     match e with
     | Slice _ -> slice_acc r1 h1 im ids1 a1 e r2
@@ -160,8 +163,8 @@ let rec acc_along (#es: list event) (#r: real_state) (rn: run (initial_state ())
             executes_alloc_count rn' ps';
             executes_length rn' ps';
             account_snoc empty_acc (kinds es') ps' (kind_of e) pe;
-            program_case r1 r2 (history_of_run rn') (history_of_run rn) (I.ideal_run ps') (I.ideal_run ps)
-                         (ids_of_run rn') (ids_of_run rn) (account empty_acc (kinds es') ps') e pe
+            program_case r1 r2 (history_of_run rn') (I.ideal_run ps') (ids_of_run rn')
+                         (account empty_acc (kinds es') ps') e pe
           end
         else begin
           acc_along rn' ps;
@@ -169,8 +172,8 @@ let rec acc_along (#es: list event) (#r: real_state) (rn: run (initial_state ())
           executes_alloc_count rn' ps;
           executes_length rn' ps;
           account_snoc empty_acc (kinds es') ps (kind_of e) (I.Read 0 0);
-          collector_case r1 r2 (history_of_run rn') (history_of_run rn) (I.ideal_run ps)
-                         (ids_of_run rn') (ids_of_run rn) (account empty_acc (kinds es') ps) e
+          collector_case r1 r2 (history_of_run rn') (I.ideal_run ps) (ids_of_run rn')
+                         (account empty_acc (kinds es') ps) e
         end
 #pop-options
 
@@ -220,12 +223,58 @@ let rec pend_hoist_from (ks: list kind)
     | _ :: rest -> pend_hoist_from rest
 
 let pend_snoc (ks: list kind) (k: kind) : Lemma (pend (ks @ [k]) == pend_step (pend ks) k) =
-  List.Tot.Properties.fold_left_append pend_step (Some 0) ks [k]
+  List.Tot.Properties.fold_left_append pend_step ks [k]
 
 let phase_of (p: nat) (ph: Ph.gc_phase) : prop =
-  (p == 0 ==> ph == Ph.Idle) /\ (p == 2 ==> ph == Ph.Marking) /\ (p == 1 ==> Ph.Sweeping? ph)
+  p <= 2 /\ (p == 0 ==> ph == Ph.Idle) /\ (p == 2 ==> ph == Ph.Marking) /\ (p == 1 ==> Ph.Sweeping? ph)
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let sim_ok_shape (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+  : Lemma (requires sim_ok r h im ids)
+          (ensures GI.phase_shape r.memory.nursery r.memory.major r.free_list r.phase r.scan_pos)
+  = reveal_opaque (`%sim_ok) sim_ok
+
+#push-options "--z3rlimit 30 --fuel 1 --ifuel 1"
+let phase_step (r1 r2: real_state) (e: event) (p0: nat)
+  : Lemma (requires GI.phase_shape r1.memory.nursery r1.memory.major r1.free_list r1.phase r1.scan_pos /\
+                    step r1 e r2 /\ Some? (pend_step (Some p0) (kind_of e)) /\ phase_of p0 r1.phase)
+          (ensures phase_of (Some?.v (pend_step (Some p0) (kind_of e))) r2.phase)
+  = match e with
+    | Slice b ->
+        if p0 = 1 then begin
+          assert_norm (pow2 57 < pow2 64 - 1);
+          assert (b > heap_words);
+          GI.phase_slice_finishes r1.memory.nursery r1.memory.major r1.free_list r1.phase b r1.scan_pos;
+          assert (slice_step r1 b r2);
+          assert (~(Ph.Marking? r1.phase));
+          assert ((r2.memory.major, r2.free_list, r2.phase) ==
+                  GC.Spec.SweepPhase.Slice.phase_slice r1.memory.major r1.free_list r1.phase b);
+          let (_, _, ph') = GC.Spec.SweepPhase.Slice.phase_slice r1.memory.major r1.free_list r1.phase b in
+          assert (r2.phase == ph')
+        end
+        else if p0 = 2 then begin
+          assert (slice_step r1 b r2);
+          assert (r1.phase == Ph.Marking);
+          assert (GI.unbounded b);
+          assert (GI.mark_slice_post r1.memory.major r1.scan_pos r1.free_list b
+                    r2.memory.major r2.scan_pos r2.free_list r2.phase);
+          assert (Ph.Sweeping? r2.phase)
+        end
+        else begin
+          assert (slice_step r1 b r2);
+          if p0 = 0 then begin
+            assert (r1.phase == Ph.Idle);
+            assert ((r2.memory.major, r2.free_list, r2.phase) ==
+                    GI.major_slice_spec r1.memory.major r1.free_list r1.phase b);
+            assert (GI.major_slice_spec r1.memory.major r1.free_list r1.phase b ==
+                    (r1.memory.major, r1.free_list, Ph.Idle));
+            assert (r2.phase == Ph.Idle)
+          end
+        end
+    | Write (Major x) i v -> assert (major_write_step r1 x i v r2)
+    | _ -> ()
+#pop-options
+
+#push-options "--z3rlimit 30 --fuel 1 --ifuel 1"
 let rec phase_along (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
                     (ps: list I.program_event)
   : Lemma (requires I.wf_program ps /\ executes rn ps /\ Some? (pend (kinds es)))
@@ -248,17 +297,9 @@ let rec phase_along (#es: list event) (#r: real_state) (rn: run (initial_state (
           with I.ideal_run_snoc ps' pe
         end;
         phase_along rn' ps';
-        simulation rn' ps';
-        let p0 = Some?.v (pend (kinds es')) in
-        (match e with
-         | Slice b ->
-             if p0 = 1 then begin
-               let Ph.Sweeping c = r1.phase in
-               GI.phase_slice_finishes r1.memory.nursery r1.memory.major r1.free_list r1.phase b r1.scan_pos
-             end
-             else ()
-         | Write (Major x) i v -> assert (major_write_step r1 x i v r2)
-         | _ -> ())
+        sim_ok_run rn' ps';
+        sim_ok_shape r1 (history_of_run rn') (I.ideal_run ps') (ids_of_run rn');
+        phase_step r1 r2 e (Some?.v (pend (kinds es')))
 #pop-options
 
 /// **The hoisted run is idle at the end.**
@@ -348,7 +389,7 @@ let iso_from_ids (m1 m2: real_memory) (h1 h2: cycle_history) (im: I.ideal_memory
         rep_of m1 h1 im ids1 b id;
         rep_of m2 h2 im ids2 b' id;
         let o = Seq.index im.I.objects id in
-        O.no_scan_tag_val ();
+        no_scan_tag_val ();
         assert (I.valid_id im id ==> (I.Scannable? o.I.fields <==> I.tag_scannable o.I.tag));
         let w1 = block_field m1 b i in
         let w2 = block_field m2 b' i in
@@ -357,7 +398,10 @@ let iso_from_ids (m1 m2: real_memory) (h1 h2: cycle_history) (im: I.ideal_memory
             let v = Seq.index vs i in
             assert (I.field_at o i == I.FValue v);
             assert (value_rep ids1 v w1 /\ value_rep ids2 v w2);
-            assert (I.valid_value im v);
+            assert (I.field_values o == vs);
+            assert (i < Seq.length vs);
+            assert (I.wf_memory im);
+            assert (I.valid_value im (Seq.index (I.field_values o) i));
             (match v with
              | I.Word w -> word_points_nowhere m1 w; word_points_nowhere m2 w
              | I.Ptr { I.head = hd; I.infix_offset = k } ->
