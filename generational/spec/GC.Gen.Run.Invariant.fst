@@ -37,7 +37,19 @@ let step_keeps_run_invariant r h e r' =
   | StartCycle roots -> start_keeps_run_invariant r h roots r'
   | Slice budget -> slice_keeps_run_invariant r h budget r'
 
+#push-options "--fuel 1 --ifuel 1"
+let along_step (h0: cycle_history) (#r0: real_state) (#es: list event) (#r1: real_state) (rn: run r0 es r1)
+  : Lemma (match rn with
+           | Done _ -> True
+           | Step #_ #_ #r1' rn' e r2 _ ->
+               history_along h0 rn == update_history (history_along h0 rn') r1' e r2 /\
+               (stores_in_kept_along h0 rn <==>
+                stores_in_kept_along h0 rn' /\ stores_in_kept r1' (history_along h0 rn') e))
+  = ()
+#pop-options
+
 let rec run_invariant_along h0 #r0 #es #r1 rn =
+  along_step h0 rn;
   match rn with
   | Done _ -> ()
   | Step #_ #_ #r1' rn' e r2 _ ->
