@@ -1,8 +1,8 @@
 module GC.Gen.Run.Simulation
 
-/// Stage 0: the per-step lemmas, the allocation count, enabledness, the
-/// stop-the-world case and the hoisted run are admitted; the case splits,
-/// the induction over a run and the read corollary are proved from them.
+/// The per-step lemmas, the allocation count, enabledness, the
+/// stop-the-world case, the case splits, the induction over a run and the
+/// read corollary are proved; only the hoisted run is still admitted.
 
 open FStar.Seq
 open FStar.List.Tot
@@ -13,6 +13,7 @@ open GC.Model.Represents
 
 module I = GC.Model.Ideal
 module P = GC.Gen.Run.Simulation.Program
+module C = GC.Gen.Run.Simulation.Collector
 
 let initial_sim_inv _ = P.initial_sim_inv ()
 
@@ -22,11 +23,13 @@ let write_keeps_sim_inv r h im ids e pe r' = GC.Gen.Run.Simulation.Steps.write_k
 
 let read_roots_keep_sim_inv r h im ids e pe r' = P.read_roots_keep_sim_inv r h im ids e pe r'
 
-let minor_keeps_sim_inv r h im ids roots r' = admit ()
+let minor_keeps_sim_inv r h im ids roots r' = GC.Gen.Run.Simulation.Minor.minor_keeps r h im ids roots r'
 
-let start_keeps_sim_inv r h im ids roots r' = admit ()
+let start_keeps_sim_inv r h im ids roots r' = C.start_keeps r h im ids roots r'
 
-let slice_keeps_sim_inv r h im ids budget r' = admit ()
+let slice_keeps_sim_inv r h im ids budget r' =
+  C.sweep_frame_holds ();
+  C.slice_keeps r h im ids budget r'
 
 let program_step_keeps_sim_inv r h im ids e pe r' =
   match e with
@@ -94,6 +97,47 @@ let reads_agree #es #r rn ps obj i =
 let program_step_enabled r h im ids e pe =
   GC.Gen.Run.Simulation.Enabled.program_step_enabled_given r h im ids e pe
 
-let full_gc_collects #es0 #rs #rs' #r rn ps = admit ()
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 40"
+let full_gc_collects #es0 #rs #rs' #r rn ps =
+  let u = unbounded_budget in
+  let im = I.ideal_run ps in
+  let l1 = es0 @ [Minor rs] in
+  let l2 = l1 @ [StartCycle rs'] in
+  let l3 = l2 @ [Slice u] in
+  C.full_gc_events_snoc es0 rs rs';
+  match rn with
+  | Done _ -> C.snoc_nonempty l3 (Slice u)
+  | Step #_ #es3 #r3 rn3 e4 _ _ ->
+    C.snoc_inj es3 l3 e4 (Slice u);
+    match rn3 with
+    | Done _ -> C.snoc_nonempty l2 (Slice u)
+    | Step #_ #es2 #r2 rn2 e3 _ _ ->
+      C.snoc_inj es2 l2 e3 (Slice u);
+      match rn2 with
+      | Done _ -> C.snoc_nonempty l1 (StartCycle rs')
+      | Step #_ #es1 #r1 rn1 e2 _ _ ->
+        C.snoc_inj es1 l1 e2 (StartCycle rs');
+        assert (executes rn3 ps);
+        assert (executes rn2 ps);
+        assert (executes rn1 ps);
+        simulation rn1 ps;
+        simulation rn3 ps;
+        simulation rn ps;
+        let ids1 = ids_of_run rn1 in
+        assert (ids_of_run rn2 == restrict r2.memory ids1);
+        assert (ids_of_run rn3 == restrict r3.memory (ids_of_run rn2));
+        assert (ids_of_run rn == restrict r.memory (ids_of_run rn3));
+        let h = history_of_run rn in
+        assert (history_of_run rn3 == history_of_run rn2);
+        assert (h == history_of_run rn2);
+        assert (h.start_memory == r1.memory /\ h.start_roots == rs');
+        assert (forall (x: GC.Spec.Base.obj_addr). ~(h.allocated_during_cycle x));
+        let sub (b: block_addr) (id: I.obj_id)
+          : Lemma (requires ids_of_run rn b == Some id) (ensures ids1 b == Some id)
+          = ()
+        in
+        FStar.Classical.forall_intro_2 (fun b -> FStar.Classical.move_requires (sub b));
+        C.full_gc_end r1 r2 r3 r rs' (history_of_run rn1) h im ids1 (ids_of_run rn)
+#pop-options
 
 let hoisted_isomorphic #es #r rn #es_h #r_h rn_h ps = admit ()

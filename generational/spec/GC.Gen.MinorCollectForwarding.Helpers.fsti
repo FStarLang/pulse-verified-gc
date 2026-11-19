@@ -67,6 +67,16 @@ let remembered_targets_in_roots
   forall (r: U64.t).
     Seq.mem r (remembered_slot_targets major slots n) ==> Seq.mem r roots
 
+/// A remembered slot holding a nursery pointer contributes its target.
+val remembered_slot_targets_mem (major: heap) (slots: seq U64.t) (n: nat) (i: nat)
+  : Lemma
+    (requires i < n /\ i < Seq.length slots /\
+              U64.v (Seq.index slots i) < heap_size /\
+              U64.v (Seq.index slots i) % U64.v mword == 0 /\
+              is_minor_pointer (to_minor_offset (read_word major (Seq.index slots i <: hp_addr))))
+    (ensures Seq.mem (to_minor_offset (read_word major (Seq.index slots i <: hp_addr)))
+               (remembered_slot_targets major slots n))
+
 val remembered_targets_in_roots_intro_by_slots:
   major:heap ->
   roots:seq U64.t ->

@@ -263,7 +263,7 @@ let wf_objects (m: ideal_memory) : prop =
      (Scannable? o.fields <==> tag_scannable o.tag))
 
 /// ---------------------------------------------------------------------------
-/// Facts (stage 0: admitted)
+/// Facts
 /// ---------------------------------------------------------------------------
 
 /// The empty memory is well formed.

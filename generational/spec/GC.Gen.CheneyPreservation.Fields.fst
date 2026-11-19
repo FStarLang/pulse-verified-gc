@@ -364,6 +364,7 @@ let fwd_target_not_no_scan_match (free: free_def) (minor: minor_state) (cs: chen
    is_blue target cs.cs_major = false /\
    is_no_scan target cs.cs_major = (minor_tag minor x >= 251) /\
    U64.v (wosize_of_object target cs.cs_major) == minor_wosize minor x /\
+   U64.v (tag_of_object target cs.cs_major) == minor_tag minor x /\
        not (free cs.cs_major target))
 
 let fwd_target_not_no_scan_state (free: free_def) (minor: minor_state) (cs: cheney_state) : prop =
@@ -382,6 +383,7 @@ let fwd_target_not_no_scan_state_elim
         is_blue target cs.cs_major = false /\
         is_no_scan target cs.cs_major = (minor_tag minor x >= 251) /\
         U64.v (wosize_of_object target cs.cs_major) == minor_wosize minor x /\
+        U64.v (tag_of_object target cs.cs_major) == minor_tag minor x /\
        not (free cs.cs_major target)))
   = assert (fwd_target_not_no_scan_match free minor cs x)
 #pop-options
@@ -412,6 +414,7 @@ let fwd_state_extend_infix
        is_blue target r.cs_major = false /\
        is_no_scan target r.cs_major = (minor_tag minor x >= 251) /\
        U64.v (wosize_of_object target r.cs_major) == minor_wosize minor x /\
+       U64.v (tag_of_object target r.cs_major) == minor_tag minor x /\
        not (free r.cs_major target)))
     = if x = addr then begin
         minor_objects_not_infix minor addr;
@@ -442,6 +445,7 @@ let fwd_target_not_no_scan_initial (ph: gc_phase) (free: free_def) (minor: minor
        is_blue target cs0.cs_major = false /\
        is_no_scan target cs0.cs_major = (minor_tag minor x >= 251) /\
        U64.v (wosize_of_object target cs0.cs_major) == minor_wosize minor x /\
+       U64.v (tag_of_object target cs0.cs_major) == minor_tag minor x /\
        not (free cs0.cs_major target)))
   =
     assert (cs0.cs_fwd x == 0UL);
@@ -477,6 +481,7 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state (ph: gc_phase)
        is_blue target cs'.cs_major = false /\
        is_no_scan target cs'.cs_major = (minor_tag minor x >= 251) /\
        U64.v (wosize_of_object target cs'.cs_major) == minor_wosize minor x /\
+       U64.v (tag_of_object target cs'.cs_major) == minor_tag minor x /\
        not (free cs'.cs_major target)))
   =
     if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL then begin
@@ -538,7 +543,9 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state (ph: gc_phase)
             assert (is_no_scan target cs'.cs_major == is_no_scan target cs.cs_major);
             assert (is_no_scan target cs'.cs_major = (minor_tag minor x >= 251));
             assert (wosize_of_object target cs'.cs_major == wosize_of_object target cs.cs_major);
-            assert (U64.v (wosize_of_object target cs'.cs_major) == minor_wosize minor x)
+            assert (U64.v (wosize_of_object target cs'.cs_major) == minor_wosize minor x);
+            tag_of_object_spec target cs.cs_major;
+            tag_of_object_spec target cs'.cs_major
           end
         end
       end
@@ -670,3 +677,11 @@ let cheney_promote_fwd_target_not_free (ph: gc_phase)
   (x: U64.t)
   =
   cheney_promote_fwd_target_facts ph free minor major fp roots x
+
+let cheney_promote_fwd_target_tag (ph: gc_phase)
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (x: U64.t)
+  =
+  free_stw_ok ();
+  free_stw_allocations_not_free ph;
+  cheney_promote_fwd_target_facts ph free_stw minor major fp roots x
