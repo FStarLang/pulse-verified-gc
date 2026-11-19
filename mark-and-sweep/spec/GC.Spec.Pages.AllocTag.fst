@@ -107,3 +107,72 @@ let fields_written_away (free: GC.Spec.Fields.free_def) (g' g'': heap) (x: obj_a
         U64.v x <= U64.v a /\ U64.v a < U64.v x + U64.v (wosize_of_object x g') * 8 ==>
         I.field_ok_with free g'' (read_word g'' a) /\
         away x (U64.v (wosize_of_object x g')) (read_word g'' a)))
+
+/// ---------------------------------------------------------------------------
+/// The header from the size asked
+/// ---------------------------------------------------------------------------
+
+/// A header of wosize `wz`, colour `col` and tag `tag`.
+let tagged_hdr (wz: nat{wz < pow2 54}) (col: color) (tag: tag_t) : U64.t =
+  FStar.Math.Lemmas.pow2_lt_compat 64 54;
+  makeHeader (U64.uint_to_t wz) col tag
+
+/// The stage-2 allocator writes the new header `B.ohdr wz`, so the tagged
+/// allocator's header is `makeHeader wz col tag`, computed from the size
+/// asked without reading the heap (`GC.Impl.Pages.Alloc.alloc_tag`).  On
+/// success the size fits in a header.
+#push-options "--z3rlimit 30"
+let alloc_col_tag_wz (col: color) (tag: tag_t) (g: heap) (st: pstate) (wz: nat)
+  : Lemma (let (g', st', o) = A.alloc g st wz in
+           (o =!= 0UL ==> wz + 1 < pow2 54) /\
+           (o =!= 0UL /\ U64.v o >= 8 /\ wz + 1 < pow2 54 ==>
+              alloc_col_tag col tag g st wz ==
+              (B.wr g' (U64.v o - 8) (tagged_hdr wz col tag), st', o)))
+  = if wz + 1 >= pow2 54 then ()
+    else begin
+      A.alloc_clears g st wz;
+      let (g', st', o) = A.alloc g st wz in
+      if o <> 0UL && U64.v o >= 8 then begin
+        let a = U64.v o - 8 in
+        if a < heap_size && a % 8 = 0 then begin
+          B.ohdr_spec wz;
+          assert (Sh.hdr g' a == B.ohdr wz);
+          FStar.Math.Lemmas.pow2_lt_compat 64 54;
+          U64.v_inj (getWosize (B.ohdr wz)) (U64.uint_to_t wz)
+        end
+        else begin
+          assert (B.wr g' a (tag_hdr (Sh.hdr g' a) col tag) == g');
+          assert (B.wr g' a (tagged_hdr wz col tag) == g')
+        end
+      end
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// One header write (`GC.Impl.Pages.AllocTagged`)
+/// ---------------------------------------------------------------------------
+
+/// An allocation's result with the new object's header replaced by `vh`.
+let rehdr (r: heap & pstate & U64.t) (vh: U64.t) : GTot (heap & pstate & U64.t) =
+  let (g, s, o) = r in
+  if o = 0UL then r else if U64.v o >= 8 then (B.wr g (U64.v o - 8) vh, s, o) else r
+
+/// Writing a word twice is writing the second.
+let wr_wr (g: heap) (a: nat) (v1 v2: U64.t)
+  : Lemma (B.wr (B.wr g a v1) a v2 == B.wr g a v2)
+  = if a < heap_size && a % 8 = 0 then begin
+      let r (b: hp_addr) : Lemma (read_word (B.wr (B.wr g a v1) a v2) b == read_word (B.wr g a v2) b)
+        = B.wr_read (B.wr g a v1) a v2 b; B.wr_read g a v1 b; B.wr_read g a v2 b
+      in
+      FStar.Classical.forall_intro r;
+      GC.Gen.HeapExtensional.heap_read_word_ext (B.wr (B.wr g a v1) a v2) (B.wr g a v2)
+    end
+
+/// **The tagged allocator is the stage-2 allocator with one header
+/// rewritten**: the size asked fits, and the header is `tagged_hdr`.
+#push-options "--z3rlimit 30"
+let alloc_col_tag_rehdr (col: color) (tag: tag_t) (g: heap) (st: pstate) (wz: nat)
+  : Lemma (requires wz + 1 < pow2 54)
+          (ensures alloc_col_tag col tag g st wz == rehdr (A.alloc g st wz) (tagged_hdr wz col tag))
+  = alloc_col_tag_wz col tag g st wz
+#pop-options

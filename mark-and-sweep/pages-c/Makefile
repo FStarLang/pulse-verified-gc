@@ -32,7 +32,7 @@ ENTRY_MODS = GC.Impl.Pages.Init GC.Impl.Pages.Alloc GC.Impl.Pages.Sweep
 
 KRML_MODS = \
   GC.Impl.Pages.Init GC.Impl.Pages.Alloc GC.Impl.Pages.Sweep GC.Impl.Pages.SweepRun GC.Impl.Pages.SweepPage \
-  GC.Impl.Pages.Large GC.Impl.Pages.Pool GC.Impl.Pages.Heap GC.Impl.Pages.State \
+  GC.Impl.Pages.Large GC.Impl.Pages.Pool GC.Impl.Pages.AllocTagged GC.Impl.Pages.Heap GC.Impl.Pages.State \
   GC.Impl.Pages.Params GC.Impl.Heap GC.Impl.Object GC.Impl.ArrayWord \
   GC.Spec.ZeroAddr GC.Spec.Base GC.Spec.Heap GC.Spec.Object GC.Lib.Header GC.Lib.Address
 

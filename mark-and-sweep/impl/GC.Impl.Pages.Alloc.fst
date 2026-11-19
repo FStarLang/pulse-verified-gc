@@ -44,6 +44,7 @@ module LI = GC.Impl.Pages.Large
 module Rd = GC.Impl.Pages.Ready
 module AT = GC.Spec.Pages.AllocTag
 module IO = GC.Impl.Object
+module AG = GC.Impl.Pages.AllocTagged
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
@@ -115,28 +116,22 @@ fn alloc (heap: heap_t) (t: pstate_t) (wz: U64.t) (col: Hd.color_sem) (#st: eras
 /// With a tag (plan §27.1)
 /// ---------------------------------------------------------------------------
 
-/// The header `h`, at its wosize, with colour `c` and tag `tag`.
+/// The header of wosize `wz`, colour `c` and tag `tag`
+/// (`GC.Spec.Pages.AllocTag.tagged_hdr`).
 inline_for_extraction noextract
-let tag_hdr (h: U64.t) (c: Hd.color_sem) (tag: U64.t{U64.v tag < 256}) : r: U64.t{r == AT.tag_hdr h c tag}
-  = let wz = get_wosize h in
-    IO.makeHeader_eq_pack_header wz c tag;
+let mk_tag_hdr (wz: U64.t{U64.v wz < pow2 54}) (c: Hd.color_sem) (tag: U64.t{U64.v tag < 256})
+  : r: U64.t{r == AT.tagged_hdr (U64.v wz) c tag}
+  = IO.makeHeader_eq_pack_header wz c tag;
     SO.makeHeader_is_pack_header64 wz c tag;
     let r = IO.makeHeader wz c tag in
     U64.v_inj r (SO.makeHeader wz c tag);
     r
 
-let col_tag_unfold (col: Hd.color_sem) (tag: AT.tag_t) (g: Base.heap) (st: pstate) (wz: nat)
-  : Lemma (AT.alloc_col_tag col tag g st wz ==
-           (let (g', st', o) = A.alloc g st wz in
-            if o = 0UL then (g', st', o)
-            else if U64.v o >= 8
-            then (B.wr g' (U64.v o - 8) (AT.tag_hdr (Sh.hdr g' (U64.v o - 8)) col tag), st', o)
-            else (g', st', o)))
-  = ()
-
 /// **The page allocator with a colour and a tag**, as OCaml's
-/// `caml_alloc_shr (wosize, tag)`: the new header is written once more,
-/// with both (`GC.Spec.Pages.AllocTag.alloc_col_tag`).
+/// `caml_alloc_shr (wosize, tag)` (`GC.Spec.Pages.AllocTag.alloc_col_tag`):
+/// the allocation paths of `alloc_white` with the header, its colour and
+/// tag included, written once in place of `ohdr wz`
+/// (`GC.Impl.Pages.AllocTagged`, `AT.alloc_col_tag_rehdr`).
 fn alloc_tag (heap: heap_t) (t: pstate_t) (wz: U64.t) (col: Hd.color_sem) (tag: U64.t{U64.v tag < 256})
   (#st: erased pstate)
   requires is_heap heap 'g ** pages_st t st ** pure (Rd.heads_ready st)
@@ -144,18 +139,19 @@ fn alloc_tag (heap: heap_t) (t: pstate_t) (wz: U64.t) (col: Hd.color_sem) (tag: 
   ensures exists* g' st'. is_heap heap g' ** pages_st t st' **
           pure ((g', st', o) == AT.alloc_col_tag col tag 'g st (U64.v wz))
 {
-  col_tag_unfold col tag 'g st (U64.v wz);
-  let o = alloc_white heap t wz;
-  if (o = 0UL) {
+  alloc_unfold 'g st (U64.v wz);
+  LI.bounds ();
+  assert_norm (pow2 54 - 1 == 0x3FFFFFFFFFFFFF);
+  if (U64.gte wz 0x3FFFFFFFFFFFFFUL) {
     0UL
   } else {
-    if (U64.gte o 8UL) {
-      let a = U64.sub o 8UL;
-      let h = hdr_at heap a;
-      wr heap a (tag_hdr h col tag);
-      o
+    AT.alloc_col_tag_rehdr col tag 'g st (U64.v wz);
+    let vh = mk_tag_hdr wz col tag;
+    let sm = PL.small_max_u64 ();
+    if (U64.lte (U64.add wz 1UL) sm) {
+      AG.small_alloc_h heap t wz vh
     } else {
-      o
+      AG.large_alloc_h heap t wz vh
     }
   }
 }
