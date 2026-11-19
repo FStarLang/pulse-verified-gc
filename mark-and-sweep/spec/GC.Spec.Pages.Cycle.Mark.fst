@@ -13,7 +13,10 @@
 ///   * `PWrite`: the barrier write (`GB.modify_heap`) -- unchanged;
 ///   * `PAlloc`: an allocation through the page allocator at `Marking`
 ///     (black), and the writes that initialise the new object
-///     (akhil's `MC.init_writes`) -- `since` and the new object.
+///     (akhil's `MC.init_writes`) -- `since` and the new object;
+///   * `PMinor`: a minor collection (plan §27.4), its copies allocated
+///     black by the page allocator with their tags
+///     (`GC.Spec.Pages.Promote.Mark`) -- `since` and the blocks it made.
 ///
 /// Each event's hypotheses are the collector's state while marking
 /// (`pmark_ok`: the page `Marking` invariant and the marking invariant) and,
@@ -70,6 +73,9 @@ module PA = GC.Spec.Pages.Allocator
 module I = GC.Spec.AllocIface
 module D = GC.Spec.Pages.Darken
 module CS = GC.Spec.Pages.Cycle.State
+module GenInv = GC.Gen.HeapInvariant
+module MCFH = GC.Gen.MinorCollectForwarding.Helpers
+module PMk = GC.Spec.Pages.Promote.Mark
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 
@@ -124,6 +130,20 @@ noeq type pmarking (g0: heap) (rs: seq U64.t) : heap -> pstate -> MP.scan_pos ->
       g': heap -> MC.init_writes obj g1 g' ->
       squash (SPM.fields_storable (MPC.outside_snapshot (MC.snapshot g0 rs (SPC.with_new since obj))) g' obj) ->
       pmarking g0 rs g' st1 sp (SPC.with_new since obj)
+  // A minor collection of the nursery `minor` from `roots` (plan §27.4):
+  // akhil's `MC.Minor` with the page allocator, its copies black; the roots
+  // are ones the marker will reach if white, and the nursery has its shape
+  // and points only into the snapshot; the blocks it makes are new.
+  | PMinor :
+      #g: heap -> #st: pstate -> #sp: MP.scan_pos -> #since: (obj_addr -> prop) ->
+      pmarking g0 rs g st sp since ->
+      minor: minor_state -> roots: seq U64.t ->
+      squash (pmark_ok minor g st sp /\ GenInv.minor_heap_shape minor /\
+              MCFH.roots_valid_for_minor_collection minor g roots /\
+              MP.outside_refs_reached g sp (GMM.root_refs g roots) /\
+              GenInv.minor_major_fields_not_free (MPC.outside_snapshot (MC.snapshot g0 rs since)) minor g) ->
+      pmarking g0 rs (PMk.gm minor g st roots) (PMk.mcollect minor g st roots).rst sp
+                     (GMC.with_new_blocks since g (PMk.gm minor g st roots))
 
 /// **What every state of a run carries**: akhil's `MC.mark_run_inv`, with
 /// the walk replaced by the page layout's (the start heap's walk ends at
@@ -787,6 +807,59 @@ let alloc_inv (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop)
     MPC.within_snapshot_ext s1 s' g'
 #pop-options
 
+/// The nursery's major pointers, in the snapshot, are not blue.
+let nursery_stw (minor: minor_state) (g: heap) (s: obj_addr -> prop)
+  : Lemma (requires GenInv.minor_major_fields_not_free (MPC.outside_snapshot s) minor g)
+          (ensures GenInv.minor_major_fields_not_free free_stw minor g)
+  = let h (obj: U64.t) (j: nat)
+      : Lemma (requires Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
+                        is_pointer_field (minor_read_field minor obj j))
+              (ensures in_use free_stw g ((minor_read_field minor obj j) <: obj_addr))
+      = GenInv.minor_major_fields_not_free_elim (MPC.outside_snapshot s) minor g obj j;
+        MPC.in_use_outside_snapshot s g ((minor_read_field minor obj j) <: obj_addr)
+    in
+    GenInv.minor_major_fields_not_free_intro free_stw minor g h
+
+/// A minor collection: the account with the blocks it made added
+/// (`PMk.m_account`), and the marking invariant for the objects reachable
+/// at the start (`PMk.m_keeps_marking_inv_with`) -- akhil's `MC.minor_inv`.
+#push-options "--z3rlimit 30"
+let minor_inv (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop)
+              (minor: minor_state) (g: heap) (st: pstate) (sp: MP.scan_pos) (roots: seq U64.t)
+  : Lemma (requires pmark_run_inv g0 rs since g sp /\ pmark_ok minor g st sp /\ GenInv.minor_heap_shape minor /\
+                    MCFH.roots_valid_for_minor_collection minor g roots /\
+                    MP.outside_refs_reached g sp (GMM.root_refs g roots) /\
+                    GenInv.minor_major_fields_not_free (MPC.outside_snapshot (MC.snapshot g0 rs since)) minor g)
+          (ensures (let g' = PMk.gm minor g st roots in
+                    pmark_run_inv g0 rs (GMC.with_new_blocks since g g') g' sp))
+  = let r = GMC.reachable_at_start g0 rs in
+    let s = MC.snapshot g0 rs since in
+    let g' = PMk.gm minor g st roots in
+    nursery_stw minor g s;
+    assert (PMk.mpre_mark minor g st);
+    PMk.m_account s minor g st roots;
+    MPC.within_snapshot_ext (GMC.with_new_blocks s g g') (MC.snapshot g0 rs (GMC.with_new_blocks since g g')) g';
+    assert (MP.marking_inv g (fun w -> GMM.outside_refs_of minor g roots w \/ r w) sp);
+    PMk.m_keeps_marking_inv_with r minor g st roots sp;
+    free_stw_ok ();
+    let keep (y: obj_addr)
+      : Lemma (requires in_use free_stw g y)
+              (ensures in_use free_stw g' y /\ wosize_of_object y g' == wosize_of_object y g /\
+                       (is_black y g ==> is_black y g'))
+      = PMk.m_old_block minor g st roots y;
+        MM.header_kept_facts g g' y
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires keep);
+    // the blocks handed out: the old ones stay black, the made ones are black
+    let made (y: obj_addr)
+      : Lemma (requires GMC.with_new_blocks since g g' y) (ensures Seq.mem y (objects zero_addr g') /\ is_black y g')
+      = if FStar.IndefiniteDescription.strong_excluded_middle (since y)
+        then begin Mark.colors_exclusive y g; keep y end
+        else PMk.m_new_black minor g st roots y
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires made)
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// The run
 /// ---------------------------------------------------------------------------
@@ -807,6 +880,9 @@ let rec pmark_run_account (#g0: heap) (#rs: seq U64.t) (#g: heap) (#st: pstate) 
     | PAlloc #_ #_ #g1 #st1 #sp1 #since1 r1 minor wz ga sa obj _ g' w _ ->
         pmark_run_account r1;
         alloc_inv g0 rs since1 minor g1 st1 sp1 wz ga sa obj g' w
+    | PMinor #_ #_ #g1 #st1 #sp1 #since1 r1 minor roots _ ->
+        pmark_run_account r1;
+        minor_inv g0 rs since1 minor g1 st1 sp1 roots
 #pop-options
 
 /// **When marking ends, the black objects are the snapshot's** (akhil's

@@ -3722,3 +3722,156 @@ same heaps, with only the events' own hypotheses shown. A step at every unit
   the two roots.
 - `make verify` with the Makefile's flags, with the two modules checked
   again: `=== all modules verified ===`.
+
+## 27. Promotion with the page allocator: the minor events (2026-11-18)
+
+**Decisions (user):**
+- the smaller alternative, not option B: copy only the top of akhil's
+  chain (the Cheney loop, with the allocator a parameter) into new modules
+  of ours, reuse his lemmas wherever their facts do not mention his free
+  list, and leave his modules untouched;
+- the page allocator gets a tag parameter (spec, Pulse, C), re-benchmarked;
+- mid-sweep, the minor collection uses the page sweep's `free_sw` and colour
+  rule, with no cursor;
+- the no-retry rule covers our new modules; akhil's keep his `--retry 3`.
+
+**akhil's modules: no line changed.**
+
+### 27.1 The tag (`Pages.AllocTag`, `Retag`, `RetagInv`, `AllocTagOk`; Pulse)
+
+- `AllocTag.alloc_col_tag col tag`: the stage-2 allocator with the new
+  header written once more with wosize, colour `col` and tag `tag`, as
+  OCaml's `caml_alloc_shr (wosize, tag)`. `alloc_tag ph` takes the colour
+  from the phase. `alloc_col_tag_eq`: it is `AP.alloc_col col` with the
+  header rewritten (same object, state and failure).
+- `AllocTag.fields_written_away free g' g'' x`: the caller's writes of the
+  new block's fields. For a scannable block, values `field_ok_with free`, none
+  a pointer into the block itself. For a no-scan block (tag >= 251), any
+  bytes, as a nursery string may hold pointer-like words.
+- `Retag` (525 lines): a header rewrite of a non-blue walk object, at the
+  same wosize and colour, keeps `Sc.core` (mirrors `Fill`'s page part) and
+  well-formedness for any `free`, given the old tag is neither closure nor
+  infix. `RetagInv` carries `pages_ok_mc` (whitening) and `pages_ok_sw`.
+- `AllocTagOk` (633 lines):
+  - `alloc_tag_marking` (from `PMP.mark_inv`) and `alloc_tag_sweeping` (from
+    `MS.pages_ok_sw`): failure changes nothing; success returns a block that
+    was not live, of the size, tag and phase colour asked, the only block
+    that comes into use, every other live block kept, and the invariant for
+    every `fields_written_away` of its fields.
+  - `mark_inv_update`, `sw_update`: akhil's pointer update
+    (`Promote.update_walk`) over non-blue blocks keeps the page invariant,
+    given the result's well-formedness.
+- `FillFacts`: `whiten_obj` and `no_grey_fill` moved out of `Cycle.Write`
+  (which keeps both names, as wrappers) so `AllocTagOk` does not depend on
+  the page cycle.
+- Pulse: `GC.Impl.Pages.Alloc.alloc_tag heap t wz col tag` computes
+  `alloc_col_tag col tag` exactly (one more header write after
+  `alloc_white`). The extracted C adds `alloc_tag`; every existing function's
+  C is unchanged. `make test`: 474 checks pass. Bench: see 27.7.
+
+### 27.2 The minor collection over any allocator (`Pages.Promote`, `.Loop`, `.Collect`)
+
+- `Promote` (209 lines): `tal s` (state type, invariant, `free`, colour,
+  allocation with a tag) and `contract`:
+  - `free_def_ok free`; the invariant gives `well_formed_heap_with free`;
+  - every allocation with a non-infix tag meets `alloc_ok` (as above,
+    `in_use` after = before or the new block, and the fill clause through
+    `fields_written_away`);
+  - akhil's pointer update keeps the invariant, given well-formedness after.
+
+  Then akhil's definitions with the allocator a parameter:
+  `promote_object`, `forward_normal`, `forward_one`, `forward_fields`,
+  `forward_roots`, `scan`, `promote`, and `collect` (promotion, his
+  `update_pointers_with free`, `rewrite_roots`, `minor_reset`).
+- `Promote.Loop` (537 lines): the loop invariant `linv`: the allocator's
+  invariant; every block in use in `g0` in use, header and fields kept;
+  every other block in use the copy of a nursery object the forwarding map
+  sends to it (size, tag, colour, fields); every forwarding entry a copy, an
+  infix one at the same offset in its closure's copy. `promote_step` is one
+  allocation and copy; `promote_linv`: promotion ends in `linv`. This
+  replaces akhil's free-list-based `CheneyPreservation.*`/`Cheney.Steps`
+  (about 5,000 lines) for this purpose.
+- `Promote.Collect` (474 lines):
+  - `fwd_targets`: every forwarding target is in use for any `un` under
+    which the copies are, infix targets as valid interior pointers
+    (`infix_target`, from `minor_infix_wf`);
+  - `promoted_wf`: the promoted heap is well formed for any such `un` with
+    `in_use un ⊆ in_use free` (akhil's `cheney_promote_preserves_wf_with`);
+  - `collect_inv`: the allocator's invariant and well-formedness after his
+    pointer update;
+  - `collect_blocks`, `collect_major_field`, `collect_target`: old blocks
+    keep their headers and major pointers and what those resolve to; new
+    blocks are copies in the allocator's colour.
+
+### 27.3 The page instance (`Pages.PromoteInst`, 175 lines)
+
+- `mark_tal`: `PMP.mark_inv`, free = blue, black; `mark_contract`.
+- `sw_tal pm0`: `MS.pages_ok_sw` with the unswept pages of `pm0`, free =
+  `MS.free_sw pm0`, white (new blocks lie in swept pages); `sw_contract`.
+
+### 27.4 While marking (`Pages.Promote.Mark`, 574 lines; `Cycle.Mark`)
+
+akhil's `GC.Gen.MarkPhase.Minor` over `collect mark_tal`, his proofs copied
+with his names (`same_block_of_fields`, `update_agrees` for any allocator
+`free`, `free_unless_black`, `nursery_not_unreached`, `unreached_wf_after`,
+`rewritten_root`, `old_field_edge_at`), giving:
+- `m_mark_inv`: the page `Marking` invariant after;
+- `m_old_block`, `m_new_black`, `m_major_field`, `m_target`, `m_wf_with`;
+- `m_keeps_marking_inv_with`: akhil's `minor_keeps_marking_inv_with`;
+- `m_account`: akhil's `account_minor`.
+
+`Cycle.Mark` gains `PMinor` (akhil's `MC.Minor` hypotheses: the marking
+state, the nursery's shape, valid roots, `outside_refs_reached` for the
+roots, the nursery's major pointers in the snapshot), going to `since`
+plus the blocks it made (`GMC.with_new_blocks`). `minor_inv` (akhil's
+`MC.minor_inv`) keeps `pmark_run_inv`.
+
+### 27.5 Mid-sweep (`Pages.Promote.Sweep`, 91 lines; `Cycle.Sweep`)
+
+`scollect` at `sw_tal st.pm`, `spre` (mid-sweep invariant, nursery shape,
+its major pointers in use for `free_sw`), `s_facts` (the mid-sweep invariant
+and unswept pages kept, old blocks kept at their sizes), and `with_made`.
+`Cycle.Sweep` gains `SMinor` (akhil's sweep `Minor` with `free_sw` for his
+`free_incremental c`) and `minor_acct`: the run's account and its converse
+(`SPC.reclaimed_was_dead_transfer`, made = the copies).
+
+### 27.6 The cycles, and the witness
+
+- `Pages.Cycle`: the cycle theorems re-proved unchanged in statement, now
+  over runs with minor collections while marking and while sweeping.
+- `Pages.Cycle.Carried`: `CMinor`, `CSMinor` (the page invariant carried,
+  from `m_mark_inv`, `s_facts`); `ccycle_inv` and `ccycle_correct`
+  re-proved unchanged in statement. akhil's marking invariant stays a
+  per-event hypothesis (left for later, as asked).
+- Witness (`NurseryWitness`, `Cycle.MinorVacuity`): a nursery with one
+  object (wosize 1, tag 0, field 0), a root to it. `run_minor g` is
+  `run_dark`'s marking, the hand-over, the sweep's start, C's page step,
+  then **`CSMinor`**, then a step at every unit and the end, as a `ccycle`.
+  `run_minor_promotes`: the collection forwards the object to a block the
+  page allocator returned, not in use before, in use after (a made block),
+  and rewrites the root to it. `run_minor_theorems` applies
+  `ccycle_correct`.
+- `run_mark_minor g`: root darkening, then **`CMinor`** of the same
+  nursery, as a `ccycle` ending while marking. `run_mark_minor_promotes`:
+  the object goes to a black block, not in use before, among the addresses
+  handed out, and the root is rewritten to it. `run_mark_minor_theorems`
+  applies `ccycle_inv` (the page `Marking` invariant and akhil's account).
+  Neither witness writes a pointer into the nursery object, so the copies'
+  fields are immediates.
+
+### 27.7 Checked
+
+- Every new or changed module (13 new spec modules, 4,110 lines; the five
+  changed `Cycle*` modules; the Pulse `GC.Impl.Pages.Alloc`) verifies
+  without `--retry` at Z3 seeds 0, 1 and 2, each recheck forced. Local
+  limits are at most 40. No admits, no assumes. `gmake verify`: all modules
+  verified.
+- akhil's modules: not a line changed.
+- C: `alloc_tag` added to `GC_Pages.{c,h}`, every existing function
+  unchanged; `make test` 474 checks pass.
+- Bench (`make bench-tagged`; interleaved, 15 rounds, medians, against the
+  prototype): tagged allocation `small` +3.4%, `reallocS` +3.0%, `realloc`
+  +4.8%; mixed, large and the sweeps are faster than the prototype. The
+  untagged allocator in the same run: -4.0%, -3.4%, -3.9%. The machine's
+  run-to-run noise on these workloads is several percent (an untagged
+  `small` run measured +11% once), so the 5% margin on `realloc` is thin.

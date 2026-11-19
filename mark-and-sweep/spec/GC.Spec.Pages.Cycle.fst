@@ -72,6 +72,7 @@ let rec sweep_start_st (#gh #g: heap) (#st: pstate) (#ph: I.phase) (#since: obj_
     | PS.SStep r1 _ _ -> sweep_start_st r1
     | PS.SAlloc r1 _ _ _ _ _ _ _ -> sweep_start_st r1
     | PS.SWrite r1 _ _ _ _ -> sweep_start_st r1
+    | PS.SMinor r1 _ _ _ -> sweep_start_st r1
     | PS.SEnd r1 _ -> sweep_start_st r1
 #pop-options
 

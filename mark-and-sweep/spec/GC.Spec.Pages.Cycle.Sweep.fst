@@ -15,6 +15,9 @@
 ///     the caller's writes to its fields -- `since` and the new object;
 ///   * `SWrite`: a write into the body of a block that is not blue --
 ///     unchanged;
+///   * `SMinor`: a minor collection (plan §27.5), the page allocator
+///     copying with tags (`GC.Spec.Pages.Promote.Sweep`) -- `since` and the
+///     blocks it made;
 ///   * `SEnd`: every page swept: the run is idle.
 ///
 /// What counts as free mid-sweep is `free_sw`: blue, or white in a page not
@@ -38,6 +41,7 @@ open GC.Spec.Pages.Params
 open GC.Spec.Pages.Layout
 open GC.Spec.Pages.Map
 open GC.Spec.Pages.Inv
+open GC.Gen.MinorHeap
 
 module U64 = FStar.UInt64
 module Mark = GC.Spec.Mark
@@ -58,6 +62,9 @@ module Th = GC.Spec.Pages.Theorems
 module F = GC.Spec.Pages.Fill
 module G = GC.Spec.Pages.Graft
 module CS = GC.Spec.Pages.Cycle.State
+module GenInv = GC.Gen.HeapInvariant
+module PSw = GC.Spec.Pages.Promote.Sweep
+module Promote = GC.Spec.Pages.Promote
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 
@@ -99,6 +106,16 @@ noeq type psweep (g0: heap) : heap -> pstate -> I.phase -> (obj_addr -> prop) ->
       squash (MS.pages_ok_sw g st /\ Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\
               SPM.in_body g x a) ->
       psweep g0 (write_word g a v) st I.Sweeping since
+  // A minor collection of the nursery `minor` from `roots`, mid-sweep
+  // (plan §27.5): akhil's `SweepPhase.Cycle.Minor` with the page allocator,
+  // free meaning `free_sw`; the blocks it makes are new.
+  | SMinor :
+      #g: heap -> #st: pstate -> #since: (obj_addr -> prop) ->
+      psweep g0 g st I.Sweeping since ->
+      minor: minor_state -> roots: seq U64.t ->
+      squash (PSw.spre minor g st) ->
+      psweep g0 (PSw.scollect minor g st roots).Promote.rmajor (PSw.scollect minor g st roots).Promote.rst
+             I.Sweeping (PSw.with_made st.pm since g (PSw.scollect minor g st roots).Promote.rmajor)
   // Every page swept: the cycle is idle again.
   | SEnd :
       #g: heap -> #st: pstate -> #since: (obj_addr -> prop) ->
@@ -247,6 +264,33 @@ let write_acct (g0: heap) (since: obj_addr -> prop) (g: heap) (st: pstate) (x: o
     SPC.reclaimed_was_dead_transfer g0 g g' since since (MS.free_sw pm) (MS.free_sw pm) (fun _ -> False)
 #pop-options
 
+/// **A minor collection mid-sweep keeps the account of the page sweep
+/// run**, with the blocks it made added.
+#push-options "--z3rlimit 40"
+let minor_acct (g0: heap) (since: obj_addr -> prop) (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t)
+  : Lemma (requires psweep_inv g0 since g st I.Sweeping /\ PSw.spre minor g st)
+          (ensures (let r = PSw.scollect minor g st roots in
+                    psweep_inv g0 (PSw.with_made st.pm since g r.Promote.rmajor) r.Promote.rmajor r.Promote.rst I.Sweeping /\
+                    MS.pages_ok_sw r.Promote.rmajor r.Promote.rst))
+  = PSw.s_facts minor g st roots;
+    let r = PSw.scollect minor g st roots in
+    let g' = r.Promote.rmajor in
+    let pm = st.pm in
+    let pm' = r.Promote.rst.pm in
+    CS.sw_walk g' r.Promote.rst;
+    let since' = PSw.with_made pm since g g' in
+    let sv (x: obj_addr)
+      : Lemma (requires in_use (MS.free_sw pm') g' x)
+              (ensures SPC.survivor g0 g' x \/ since' x)
+      = if in_use (MS.free_sw pm) g x then begin
+          assert (SPC.survivor g0 g x \/ since x);
+          assert (wosize_of_object x g' == wosize_of_object x g)
+        end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires sv);
+    SPC.reclaimed_was_dead_transfer g0 g g' since since' (MS.free_sw pm) (MS.free_sw pm') (PSw.made pm g g')
+#pop-options
+
 /// Every page swept: nothing is unswept, so free means blue.
 let all_swept_free (st: pstate) (g: heap) (y: obj_addr)
   : Lemma (requires PMP.all_swept st)
@@ -288,6 +332,9 @@ let rec psweep_account (#g0 #g: heap) (#st: pstate) (#ph: I.phase) (#since: obj_
     | SWrite #_ #g1 #st1 #since1 r1 x a v _ ->
         psweep_account r1;
         write_acct g0 since1 g1 st1 x a v
+    | SMinor #_ #g1 #st1 #since1 r1 minor roots _ ->
+        psweep_account r1;
+        minor_acct g0 since1 minor g1 st1 roots
     | SEnd #_ #g1 #st1 #since1 r1 _ ->
         psweep_account r1;
         end_acct g0 since1 g1 st1

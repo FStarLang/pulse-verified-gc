@@ -90,6 +90,11 @@ module PM = GC.Spec.Pages.Cycle.Mark
 module PS = GC.Spec.Pages.Cycle.Sweep
 module PC = GC.Spec.Pages.Cycle
 module PW = GC.Spec.Pages.Cycle.Write
+module GenInv = GC.Gen.HeapInvariant
+module MCFH = GC.Gen.MinorCollectForwarding.Helpers
+module Promote = GC.Spec.Pages.Promote
+module PMk = GC.Spec.Pages.Promote.Mark
+module PSw = GC.Spec.Pages.Promote.Sweep
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 
@@ -242,6 +247,18 @@ noeq type cmarking (g0: heap) (rs: seq U64.t) : heap -> pstate -> MP.scan_pos ->
       g': heap -> MC.init_writes obj g1 g' ->
       squash (SPM.fields_storable (MPC.outside_snapshot (MC.snapshot g0 rs (SPC.with_new since obj))) g' obj) ->
       cmarking g0 rs g' st1 sp (SPC.with_new since obj)
+  // A minor collection (plan §27.4), its copies allocated black with their
+  // tags.
+  | CMinor :
+      #g: heap -> #st: pstate -> #sp: MP.scan_pos -> #since: (obj_addr -> prop) ->
+      cmarking g0 rs g st sp since ->
+      minor: minor_state -> roots: seq U64.t ->
+      squash (MP.marking_inv g (GMM.nursery_refs minor) sp /\ GenInv.minor_heap_shape minor /\
+              MCFH.roots_valid_for_minor_collection minor g roots /\
+              MP.outside_refs_reached g sp (GMM.root_refs g roots) /\
+              GenInv.minor_major_fields_not_free (MPC.outside_snapshot (MC.snapshot g0 rs since)) minor g) ->
+      cmarking g0 rs (PMk.gm minor g st roots) (PMk.mcollect minor g st roots).Promote.rst sp
+                     (GMC.with_new_blocks since g (PMk.gm minor g st roots))
 
 /// **The sweep**, from the marked heap `g0`, the page invariant carried.
 noeq type csweep (g0: heap) : heap -> pstate -> I.phase -> (obj_addr -> prop) -> Type =
@@ -271,6 +288,14 @@ noeq type csweep (g0: heap) : heap -> pstate -> I.phase -> (obj_addr -> prop) ->
       x: obj_addr -> a: hp_addr -> v: U64.t ->
       squash (SPM.program_write (MS.free_sw st.pm) g x a v) ->
       csweep g0 (write_word g a v) st I.Sweeping since
+  // A minor collection mid-sweep (plan §27.5), free meaning `free_sw`.
+  | CSMinor :
+      #g: heap -> #st: pstate -> #since: (obj_addr -> prop) ->
+      csweep g0 g st I.Sweeping since ->
+      minor: minor_state -> roots: seq U64.t ->
+      squash (GenInv.minor_heap_shape minor /\ GenInv.minor_major_fields_not_free (MS.free_sw st.pm) minor g) ->
+      csweep g0 (PSw.scollect minor g st roots).Promote.rmajor (PSw.scollect minor g st roots).Promote.rst
+             I.Sweeping (PSw.with_made st.pm since g (PSw.scollect minor g st roots).Promote.rmajor)
   // Every page swept: the cycle is idle again.
   | CSEnd :
       #g: heap -> #st: pstate -> #since: (obj_addr -> prop) ->
@@ -288,6 +313,7 @@ let rec cstart_st (#gh #g: heap) (#st: pstate) (#ph: I.phase) (#since: obj_addr 
     | CSStep r1 _ -> cstart_st r1
     | CSAlloc r1 _ _ _ _ _ _ _ -> cstart_st r1
     | CSWrite r1 _ _ _ _ -> cstart_st r1
+    | CSMinor r1 _ _ _ -> cstart_st r1
     | CSEnd r1 _ -> cstart_st r1
 #pop-options
 
@@ -345,6 +371,11 @@ let rec to_pmarking (#g0: heap) (#rs: seq U64.t) (#g: heap) (#st: pstate) (#sp: 
         let r1' = to_pmarking r1 in
         alloc_mark_inv g1 st1 wz ga sa obj g' w (MC.snapshot g0 rs (SPC.with_new since1 obj));
         PM.PAlloc r1' minor wz ga sa obj () g' w ()
+    | CMinor #_ #_ #g1 #st1 #sp1 #since1 r1 minor roots _ ->
+        let r1' = to_pmarking r1 in
+        PM.nursery_stw minor g1 (MC.snapshot g0 rs since1);
+        PMk.m_mark_inv minor g1 st1 roots;
+        PM.PMinor r1' minor roots ()
 #pop-options
 
 /// The page invariant mid-sweep, and at its end.
@@ -380,6 +411,10 @@ let rec to_psweep (#gh #g: heap) (#st: pstate) (#ph: I.phase) (#since: obj_addr 
         let r1' = to_psweep r1 in
         PW.swrite_keeps g1 st1 x a v;
         PS.SWrite r1' x a v ()
+    | CSMinor #_ #g1 #st1 #since1 r1 minor roots _ ->
+        let r1' = to_psweep r1 in
+        PSw.s_facts minor g1 st1 roots;
+        PS.SMinor r1' minor roots ()
     | CSEnd #_ #g1 #st1 #since1 r1 _ ->
         let r1' = to_psweep r1 in
         PS.SEnd r1' ()
