@@ -264,14 +264,120 @@ let wf_objects (m: ideal_memory) : prop =
 let empty_wf (_: unit) : Lemma (wf_memory empty_ideal /\ wf_objects empty_ideal) = ()
 
 /// **A well-formed event keeps the memory well formed.**
+/// Objects only ever grow at the end and keep their indices: a value valid
+/// in `m` stays valid when the objects it can name keep their tag, size and
+/// fields.
+let valid_value_mono (m m': ideal_memory) (v: value)
+  : Lemma (requires valid_value m v /\ Seq.length m.objects <= Seq.length m'.objects /\
+                    (match v with
+                     | Ptr { head } -> Seq.index m'.objects head == Seq.index m.objects head
+                     | Word _ -> True))
+          (ensures valid_value m' v)
+  = ()
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+let ideal_alloc_wf (m: ideal_memory) (tag: tag_t) (size: nat) (init: ideal_fields)
+  : Lemma (requires wf_memory m /\ wf_objects m /\ wf_event m (Alloc tag size init))
+          (ensures wf_memory (ideal_step m (Alloc tag size init)) /\
+                   wf_objects (ideal_step m (Alloc tag size init)))
+  = let m' = ideal_step m (Alloc tag size init) in
+    let n = Seq.length m.objects in
+    let o = { tag; size; fields = init } in
+    assert (m'.objects == Seq.snoc m.objects o);
+    let old (id: obj_id) : Lemma (requires id < n) (ensures Seq.index m'.objects id == Seq.index m.objects id)
+      = () in
+    let mono (v: value) : Lemma (requires valid_value m v) (ensures valid_value m' v)
+      = match v with
+        | Word _ -> ()
+        | Ptr { head } -> old head; valid_value_mono m m' v
+    in
+    let root (i: nat) : Lemma (i < Seq.length m'.roots ==> valid_value m' (Seq.index m'.roots i))
+      = if i >= Seq.length m'.roots then () else if i < Seq.length m.roots then mono (Seq.index m.roots i)
+        else assert (Seq.index m'.objects n == o)
+    in
+    let field (id: obj_id) (i: nat)
+      : Lemma (valid_id m' id /\ i < Seq.length (field_values (Seq.index m'.objects id)) ==>
+               valid_value m' (Seq.index (field_values (Seq.index m'.objects id)) i))
+      = if not (valid_id m' id && i < Seq.length (field_values (Seq.index m'.objects id))) then ()
+        else if id < n then begin old id; mono (Seq.index (field_values (Seq.index m.objects id)) i) end
+        else begin
+          assert (Seq.index m'.objects id == o);
+          match init with
+          | Scannable vs -> assert (usable m (Seq.index vs i)); mono (Seq.index vs i)
+          | NoScan _ -> ()
+        end
+    in
+    let obj (id: obj_id) : Lemma (valid_id m' id ==>
+          (let o = Seq.index m'.objects id in
+           o.size >= 1 /\ o.size < pow2 54 /\ o.tag <> O.infix_tag /\
+           (Scannable? o.fields <==> tag_scannable o.tag)))
+      = if id < n then old id else ()
+    in
+    FStar.Classical.forall_intro root;
+    FStar.Classical.forall_intro_2 field;
+    FStar.Classical.forall_intro obj
+
+let ideal_write_wf (m: ideal_memory) (obj: obj_id) (j: nat) (v: value)
+  : Lemma (requires wf_memory m /\ wf_objects m /\ wf_event m (Write obj j v))
+          (ensures wf_memory (ideal_step m (Write obj j v)) /\
+                   wf_objects (ideal_step m (Write obj j v)))
+  = let m' = ideal_step m (Write obj j v) in
+    let o = Seq.index m.objects obj in
+    let o' = update_field o j v in
+    assert (m'.objects == Seq.upd m.objects obj o');
+    assert (o'.tag == o.tag /\ o'.size == o.size /\ (Scannable? o'.fields <==> Scannable? o.fields));
+    // `obj` is not a closure, so no infix pointer resolves through it
+    let mono (w: value) : Lemma (requires valid_value m w) (ensures valid_value m' w)
+      = match w with
+        | Word _ -> ()
+        | Ptr { head; infix_offset } ->
+            if head = obj then begin
+              if infix_offset > 0 then assert False
+            end else valid_value_mono m m' w
+    in
+    let root (i: nat) : Lemma (i < Seq.length m'.roots ==> valid_value m' (Seq.index m'.roots i))
+      = if i < Seq.length m'.roots then mono (Seq.index m.roots i)
+    in
+    let field (id: obj_id) (i: nat)
+      : Lemma (valid_id m' id /\ i < Seq.length (field_values (Seq.index m'.objects id)) ==>
+               valid_value m' (Seq.index (field_values (Seq.index m'.objects id)) i))
+      = if not (valid_id m' id && i < Seq.length (field_values (Seq.index m'.objects id))) then ()
+        else if id <> obj then mono (Seq.index (field_values (Seq.index m.objects id)) i)
+        else match o.fields with
+             | Scannable vs ->
+                 if i = j then mono v
+                 else begin
+                   assert (Seq.index (field_values o') i == Seq.index vs i);
+                   mono (Seq.index vs i)
+                 end
+             | NoScan _ -> ()
+    in
+    FStar.Classical.forall_intro root;
+    FStar.Classical.forall_intro_2 field
+#pop-options
+
 let ideal_step_wf (m: ideal_memory) (e: program_event)
   : Lemma (requires wf_memory m /\ wf_objects m /\ wf_event m e)
           (ensures wf_memory (ideal_step m e) /\ wf_objects (ideal_step m e))
-  = admit ()
+  = match e with
+    | Alloc tag size init -> ideal_alloc_wf m tag size init
+    | Write obj j v -> ideal_write_wf m obj j v
+    | Read _ _ -> ()
+    | SetRoots rs -> ()
+
+#push-options "--fuel 2 --ifuel 1"
+let rec ideal_run_from_snoc (m: ideal_memory) (ps: list program_event) (e: program_event)
+  : Lemma (ensures ideal_run_from m (ps @ [e]) == ideal_step (ideal_run_from m ps) e /\
+                   (wf_program_from m (ps @ [e]) <==> wf_program_from m ps /\ wf_event (ideal_run_from m ps) e))
+          (decreases ps)
+  = match ps with
+    | [] -> ()
+    | e0 :: rest -> ideal_run_from_snoc (ideal_step m e0) rest e
+#pop-options
 
 /// Snoc decomposition of a run of the program (the runs of
 /// `GC.Gen.Run.Step` grow at the end).
 let ideal_run_snoc (ps: list program_event) (e: program_event)
   : Lemma (ideal_run (ps @ [e]) == ideal_step (ideal_run ps) e /\
            (wf_program (ps @ [e]) <==> wf_program ps /\ wf_event (ideal_run ps) e))
-  = admit ()
+  = ideal_run_from_snoc empty_ideal ps e
