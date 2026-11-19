@@ -3,6 +3,15 @@ module GC.Gen.Run.Invariant
 open GC.Gen.Run.Step
 open GC.Gen.Run.History
 
+module PD = GC.Gen.Run.Invariant.ProgramDefs
+
+/// The definitions restated in `GC.Gen.Run.Invariant.ProgramDefs` are these.
+let same_defs (r: real_state) (h: cycle_history) (e: event)
+  : Lemma ((phase_shape r <==> PD.phase_shape r) /\
+           (run_invariant r h <==> PD.run_invariant r h) /\
+           (stores_in_kept r h e <==> PD.stores_in_kept r h e))
+  = ()
+
 /// Stage 0: the per-step lemmas are admitted; the general step lemma, the
 /// induction over a run, and the run forms of losslessness are proved from
 /// them.
@@ -34,6 +43,21 @@ let rec run_invariant_along h0 #r0 #es #r1 rn =
   | Step #_ #_ #r1' rn' e r2 _ ->
       run_invariant_along h0 rn';
       step_keeps_run_invariant r1' (history_along h0 rn') e r2
+
+let rec same_write_major_fields (g: GC.Spec.Base.heap) (a: FStar.UInt64.t) (init: FStar.Seq.seq FStar.UInt64.t) (i: nat)
+  : Lemma (ensures write_major_fields g a init i == PD.write_major_fields g a init i)
+          (decreases (FStar.Seq.length init - i))
+  = if i >= FStar.Seq.length init then ()
+    else
+      let p = FStar.UInt64.v a + 8 * i in
+      let g' = if p + 8 <= GC.Spec.Base.heap_size && p % 8 = 0
+               then GC.Spec.Heap.write_word g (FStar.UInt64.uint_to_t p) (FStar.Seq.index init i) else g in
+      same_write_major_fields g' a init (i + 1)
+
+let same_alloc_then_init (r: real_state) (tag: GC.Model.Ideal.tag_t) (size: nat) (init: FStar.Seq.seq FStar.UInt64.t)
+  : Lemma (alloc_then_init r tag size init == PD.alloc_then_init r tag size init)
+  = let res = GC.Spec.Allocator.Cursor.alloc_phase r.memory.major r.free_list r.phase size tag in
+    same_write_major_fields res.GC.Spec.Allocator.heap_out res.GC.Spec.Allocator.obj_out init 0
 
 let alloc_phase_major_alloc_step r tag size init = admit ()
 
