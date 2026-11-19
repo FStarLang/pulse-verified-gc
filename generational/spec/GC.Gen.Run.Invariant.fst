@@ -13,7 +13,7 @@ let alloc_keeps_run_invariant r h site tag size init r' = admit ()
 
 let write_keeps_run_invariant r h b i v r' = admit ()
 
-let minor_keeps_run_invariant r h roots r' = admit ()
+let minor_keeps_run_invariant r h roots r' = GC.Gen.Run.Invariant.Minor.minor_keeps r h roots r'
 
 let start_keeps_run_invariant r h roots r' = GC.Gen.Run.Invariant.Collector.start_keeps r h roots r'
 
