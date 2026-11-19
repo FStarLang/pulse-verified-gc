@@ -50,20 +50,31 @@ let nursery_write_frame : prop =
 let start_snapshot : prop =
   forall (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
          (roots: seq U64.t) (r': real_state) (x: obj_addr).
-    (sim_inv r h im ids /\ roots_represented ids im.I.roots roots /\ step r (StartCycle roots) r' /\
+    (sim_inv r h im ids /\ roots_represented ids (ptr_values im.I.roots) roots /\ step r (StartCycle roots) r' /\
      GMC.reachable_at_start r.memory.major roots x) ==>
     (exists (id: I.obj_id). ids (Major x) == Some id /\ I.reachable im id)
+
+let mp_pre (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+           (roots: seq U64.t) (r': real_state) (a: acc) : prop =
+    sim_inv r h im ids /\ roots_represented ids (ptr_values im.I.roots) roots /\ step r (Minor roots) r' /\
+     a.mem == im /\ acc_inv r h ids a /\ rt_ok a /\
+     sim_inv r' (update_history h r (Minor roots) r') im
+             (update_block_ids ids (Seq.length im.I.objects) r (Minor roots) r')
+
+let mp_post (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+            (roots: seq U64.t) (r': real_state) (a: acc) : prop =
+    let ids' = update_block_ids ids (Seq.length im.I.objects) r (Minor roots) r' in
+    (forall (x: obj_addr). kept h x ==> ids' (Major x) == ids (Major x)) /\
+    (forall (id: I.obj_id). (exists (x: obj_addr). made r r' x /\ ids' (Major x) == Some id) <==> promoted a id)
+
+let minor_promotes_at (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+                      (roots: seq U64.t) (r': real_state) (a: acc) : prop =
+  mp_pre r h im ids roots r' a ==> mp_post r h im ids roots r' a
 
 let minor_promotes : prop =
   forall (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
          (roots: seq U64.t) (r': real_state) (a: acc).
-    (sim_inv r h im ids /\ roots_represented ids im.I.roots roots /\ step r (Minor roots) r' /\
-     a.mem == im /\ acc_inv r h ids a /\
-     sim_inv r' (update_history h r (Minor roots) r') im
-             (update_block_ids ids (Seq.length im.I.objects) r (Minor roots) r')) ==>
-    (let ids' = update_block_ids ids (Seq.length im.I.objects) r (Minor roots) r' in
-     (forall (x: obj_addr). kept h x ==> ids' (Major x) == ids (Major x)) /\
-     (forall (id: I.obj_id). (exists (x: obj_addr). made r r' x /\ ids' (Major x) == Some id) <==> promoted a id))
+    minor_promotes_at r h im ids roots r' a
 
 let step_hyps : prop =
   nursery_alloc_frame /\ nursery_write_frame /\ start_snapshot /\ minor_promotes
@@ -221,8 +232,8 @@ let pfacts (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_i
   let h' = update_history h r e r' in
   acc_inv r h ids a /\ a.mem == im /\ keyed r.memory ids /\ keyed r'.memory ids' /\
   copies_faithful r.memory h im ids /\ reachable_in_kept h im ids /\
-  I.wf_memory im /\ I.wf_objects im /\ I.wf_event im pe /\ translates ids e pe /\ step r e r' /\
-  event_no_young pe /\ step_hyps /\
+  I.wf_memory im /\ I.wf_objects im /\ I.wf_event im pe /\ translates r.memory ids e pe /\ step r e r' /\
+  step_hyps /\
   minor_wf r.memory.nursery /\ blocks_fit r.memory.major /\
   (forall (x: obj_addr). kept h x ==> is_allocated r.memory (Major x)) /\
   (forall (x: obj_addr). kept h' x ==> is_allocated r'.memory (Major x)) /\
@@ -231,7 +242,7 @@ let pfacts (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_i
 let pfacts_intro (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
                  (e: event) (pe: I.program_event) (r': real_state)
   : Lemma (requires ctx r h im ids a /\ program_pre r h im ids e pe r' /\ program_post r h im ids e pe r' /\
-                    event_no_young pe /\ step_hyps)
+                    step_hyps)
           (ensures pfacts r h im ids a e pe r')
   = real_shape r h;
     let h' = update_history h r e r' in

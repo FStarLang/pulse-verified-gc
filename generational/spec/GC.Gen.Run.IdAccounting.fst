@@ -36,3 +36,44 @@ let rec n_program_snoc ks k =
   | _ :: ks' -> n_program_snoc ks' k
 
 let kinds_snoc es e = FStar.List.Tot.Properties.map_append kind_of es [e]
+
+let rt_ok_empty _ = ()
+
+/// A program event keeps every field of every object a field.
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+let field_value_stable (m: I.ideal_memory) (pe: I.program_event) (x: I.obj_id) (j: nat)
+  : Lemma (Some? (field_value m x j) ==> Some? (field_value (I.ideal_step m pe) x j))
+  = let m' = I.ideal_step m pe in
+    if Some? (field_value m x j) then
+      match pe with
+      | I.Alloc tag size init ->
+          if I.fields_length init = size then
+            assert (Seq.index m'.I.objects x == Seq.index m.I.objects x)
+      | I.Write obj i v ->
+          if x = obj then begin
+            let o = Seq.index m.I.objects obj in
+            assert (Seq.index m'.I.objects x == I.update_field o i v);
+            if i < o.I.size then
+              (match o.I.fields, v with
+               | I.Scannable vs, _ -> assert (I.field_values (I.update_field o i v) == Seq.upd vs i v)
+               | _ -> ())
+          end else assert (Seq.index m'.I.objects x == Seq.index m.I.objects x)
+      | _ -> ()
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+let kind_step_rt_ok a k pe =
+  let a' = kind_step a k pe in
+  let aux (x: I.obj_id) (j: nat) : Lemma (a'.rt x j ==> Some? (field_value a'.mem x j)) =
+    field_value_stable a.mem (match pe with Some pe -> pe | None -> I.Read 0 0) x j;
+    match pe with
+    | Some (I.Alloc tag size init) ->
+        if I.fields_length init = size then begin
+          let n = Seq.length a.mem.I.objects in
+          let o : I.ideal_object = { I.tag = tag; I.size = size; I.fields = init } in
+          assert (Seq.index (I.ideal_step a.mem (I.Alloc tag size init)).I.objects n == o)
+        end
+    | _ -> ()
+  in
+  FStar.Classical.forall_intro_2 aux
+#pop-options

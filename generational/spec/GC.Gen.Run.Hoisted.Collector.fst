@@ -23,7 +23,7 @@ module I = GC.Model.Ideal
 /// The hypotheses of a collector step.
 let collector_ok (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
                  (e: event) (r': real_state) : prop =
-  ctx r h im ids a /\ ~(is_program_event e) /\ collector_roots_represented ids im.I.roots e /\
+  ctx r h im ids a /\ rt_ok a /\ ~(is_program_event e) /\ collector_roots_represented ids im.I.roots e /\
   step r e r' /\ collector_post r h im ids e r' /\ step_hyps
 
 let collector_acc_post (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
@@ -103,6 +103,7 @@ let minor_acc_lemma (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids
     let a' = kind_step a (kind_of e) None in
     assert (a' == minor_acc a);
     assert (minor_promotes);
+    assert (minor_promotes_at r h im ids roots r' a);
     assert ((forall (x: obj_addr). kept h x ==> ids' (Major x) == ids (Major x)) /\
             (forall (id: I.obj_id). (exists (x: obj_addr). made r r' x /\ ids' (Major x) == Some id) <==> promoted a id));
     let nn (o: U64.t) : Lemma (ids' (Nursery o) == None) = () in

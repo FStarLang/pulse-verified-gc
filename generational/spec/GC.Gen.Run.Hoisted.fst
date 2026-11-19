@@ -26,15 +26,13 @@
 ///      object, so the same tag, size and fields, a pointer field pointing at
 ///      corresponding blocks at the same offset.
 ///
-/// The result (`hoisted_isomorphic_given`) is conditional on
-///   * `program_no_young ps`: no new no-scan object has a raw word that looks
-///     like a nursery address (`major_alloc_step` would remember its slot);
-///   * `minor_promotes` (`GC.Gen.Run.Hoisted.Steps`): a minor collection
-///     promotes exactly `GC.Gen.Run.IdAccounting.promoted`, and the kept
-///     major blocks keep their ids.
-///     (The other step hypotheses are proved: the nursery frames,
-///     `GC.Gen.Run.Hoisted.Nursery`; the snapshot of a cycle start holds only
-///     ideal-reachable objects, `GC.Gen.Run.Hoisted.Start`.)
+/// The step facts the induction uses are proved: the nursery frames
+/// (`GC.Gen.Run.Hoisted.Nursery`); the snapshot of a cycle start holds only
+/// ideal-reachable objects (`GC.Gen.Run.Hoisted.Start`); a minor collection
+/// promotes exactly `GC.Gen.Run.IdAccounting.promoted` and the kept blocks
+/// keep their ids (`GC.Gen.Run.Hoisted.MinorPromotes`, from
+/// `GC.Gen.Cheney.Soundness` and `GC.Gen.Run.Hoisted.Minor`).  The result is
+/// `hoisted_isomorphic_proved`.
 module GC.Gen.Run.Hoisted
 
 open FStar.Seq
@@ -78,12 +76,12 @@ let rec executes_length (#es: list event) (#r: real_state) (rn: run (initial_sta
   : Lemma (requires executes rn ps) (ensures n_program (kinds es) == List.Tot.length ps) (decreases rn)
   = match rn with
     | Done _ -> ()
-    | Step #_ #es' #_ rn' e _ _ ->
+    | Step #_ #es' #r1 rn' e _ _ ->
         kinds_snoc es' e;
         n_program_snoc (kinds es') (kind_of e);
         if is_program_event e then
           eliminate exists (ps': list I.program_event) (pe: I.program_event).
-            ps == ps' @ [pe] /\ executes rn' ps' /\ translates (ids_of_run rn') e pe
+            ps == ps' @ [pe] /\ executes rn' ps' /\ translates r1.memory (ids_of_run rn') e pe
           with begin
             executes_length rn' ps';
             List.Tot.Properties.append_length ps' [pe]
@@ -108,6 +106,10 @@ let sim_ok_run (#es: list event) (#r: real_state) (rn: run (initial_state ()) es
   = simulation rn ps;
     reveal_opaque (`%sim_ok) sim_ok
 
+let sim_ok_elim (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+  : Lemma (requires sim_ok r h im ids) (ensures sim_inv r h im ids)
+  = reveal_opaque (`%sim_ok) sim_ok
+
 /// One program step of the induction.
 let program_case (r1 r2: real_state) (h1: cycle_history) (im: I.ideal_memory) (ids1: block_id_map)
                  (a1: acc) (e: event) (pe: I.program_event)
@@ -115,10 +117,16 @@ let program_case (r1 r2: real_state) (h1: cycle_history) (im: I.ideal_memory) (i
                     sim_ok r2 (update_history h1 r1 e r2) (I.ideal_step im pe)
                            (update_block_ids ids1 (Seq.length im.I.objects) r1 e r2) /\
                     acc_inv r1 h1 ids1 a1 /\ a1.mem == im /\
-                    I.wf_event im pe /\ translates ids1 e pe /\ step r1 e r2 /\ event_no_young pe /\ step_hyps)
+                    I.wf_event im pe /\ translates r1.memory ids1 e pe /\ step r1 e r2 /\ step_hyps)
           (ensures acc_inv r2 (update_history h1 r1 e r2) (update_block_ids ids1 (Seq.length im.I.objects) r1 e r2)
                            (kind_step a1 (kind_of e) (Some pe)))
-  = reveal_opaque (`%sim_ok) sim_ok;
+  = sim_ok_elim r1 h1 im ids1;
+    sim_ok_elim r2 (update_history h1 r1 e r2) (I.ideal_step im pe)
+                (update_block_ids ids1 (Seq.length im.I.objects) r1 e r2);
+    assert (ctx r1 h1 im ids1 a1);
+    assert (program_pre r1 h1 im ids1 e pe r2);
+    assert (program_post r1 h1 im ids1 e pe r2);
+    assert (program_ok r1 h1 im ids1 a1 e pe r2);
     program_acc r1 h1 im ids1 a1 e pe r2
 
 /// One collector step of the induction.
@@ -126,12 +134,13 @@ let collector_case (r1 r2: real_state) (h1: cycle_history) (im: I.ideal_memory) 
                    (a1: acc) (e: event)
   : Lemma (requires sim_ok r1 h1 im ids1 /\
                     sim_ok r2 (update_history h1 r1 e r2) im (update_block_ids ids1 (Seq.length im.I.objects) r1 e r2) /\
-                    acc_inv r1 h1 ids1 a1 /\ a1.mem == im /\
+                    acc_inv r1 h1 ids1 a1 /\ a1.mem == im /\ rt_ok a1 /\
                     ~(is_program_event e) /\ collector_roots_represented ids1 im.I.roots e /\
                     step r1 e r2 /\ step_hyps)
           (ensures acc_inv r2 (update_history h1 r1 e r2) (update_block_ids ids1 (Seq.length im.I.objects) r1 e r2)
                            (kind_step a1 (kind_of e) None))
-  = reveal_opaque (`%sim_ok) sim_ok;
+  = sim_ok_elim r1 h1 im ids1;
+    sim_ok_elim r2 (update_history h1 r1 e r2) im (update_block_ids ids1 (Seq.length im.I.objects) r1 e r2);
     match e with
     | Slice _ -> slice_acc r1 h1 im ids1 a1 e r2
     | StartCycle _ -> start_acc_lemma r1 h1 im ids1 a1 e r2
@@ -142,28 +151,28 @@ let collector_case (r1 r2: real_state) (h1: cycle_history) (im: I.ideal_memory) 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 let rec acc_along (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
                   (ps: list I.program_event)
-  : Lemma (requires I.wf_program ps /\ executes rn ps /\ program_no_young ps /\ step_hyps)
+  : Lemma (requires I.wf_program ps /\ executes rn ps /\ step_hyps)
           (ensures (let a = account empty_acc (kinds es) ps in
                     acc_inv r (history_of_run rn) (ids_of_run rn) a /\
-                    a.mem == I.ideal_run ps))
+                    a.mem == I.ideal_run ps /\ rt_ok a))
           (decreases rn)
   = match rn with
-    | Done _ -> initial_acc ()
+    | Done _ -> initial_acc (); rt_ok_empty ()
     | Step #_ #es' #r1 rn' e r2 s ->
         kinds_snoc es' e;
         run_step_maps rn' e r2 s;
         sim_ok_run rn ps;
         if is_program_event e then
           eliminate exists (ps': list I.program_event) (pe: I.program_event).
-            ps == ps' @ [pe] /\ executes rn' ps' /\ translates (ids_of_run rn') e pe
+            ps == ps' @ [pe] /\ executes rn' ps' /\ translates r1.memory (ids_of_run rn') e pe
           with begin
             I.ideal_run_snoc ps' pe;
-            program_no_young_snoc ps' pe;
             acc_along rn' ps';
             sim_ok_run rn' ps';
             executes_alloc_count rn' ps';
             executes_length rn' ps';
             account_snoc empty_acc (kinds es') ps' (kind_of e) pe;
+            kind_step_rt_ok (account empty_acc (kinds es') ps') (kind_of e) (Some pe);
             program_case r1 r2 (history_of_run rn') (I.ideal_run ps') (ids_of_run rn')
                          (account empty_acc (kinds es') ps') e pe
           end
@@ -173,6 +182,7 @@ let rec acc_along (#es: list event) (#r: real_state) (rn: run (initial_state ())
           executes_alloc_count rn' ps;
           executes_length rn' ps;
           account_snoc empty_acc (kinds es') ps (kind_of e) (I.Read 0 0);
+          kind_step_rt_ok (account empty_acc (kinds es') ps) (kind_of e) None;
           collector_case r1 r2 (history_of_run rn') (I.ideal_run ps) (ids_of_run rn')
                          (account empty_acc (kinds es') ps) e
         end
@@ -182,7 +192,7 @@ let rec acc_along (#es: list event) (#r: real_state) (rn: run (initial_state ())
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let ids_at_idle (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
                 (ps: list I.program_event)
-  : Lemma (requires I.wf_program ps /\ executes rn ps /\ program_no_young ps /\ step_hyps /\ r.phase == Ph.Idle)
+  : Lemma (requires I.wf_program ps /\ executes rn ps /\ step_hyps /\ r.phase == Ph.Idle)
           (ensures forall (id: I.obj_id). (exists (b: block_addr). ids_of_run rn b == Some id) <==> live_ids ps (kinds es) id)
   = acc_along rn ps;
     simulation rn ps;
@@ -290,11 +300,11 @@ let rec phase_along (#es: list event) (#r: real_state) (rn: run (initial_state (
           if is_program_event e
           then ID.indefinite_description_ghost (list I.program_event)
                  (fun ps' -> exists (pe: I.program_event). ps == ps' @ [pe] /\ executes rn' ps' /\
-                                                           translates (ids_of_run rn') e pe)
+                                                           translates r1.memory (ids_of_run rn') e pe)
           else ps in
         if is_program_event e then begin
           eliminate exists (pe: I.program_event). ps == ps' @ [pe] /\ executes rn' ps' /\
-                                                 translates (ids_of_run rn') e pe
+                                                 translates r1.memory (ids_of_run rn') e pe
           with I.ideal_run_snoc ps' pe
         end;
         phase_along rn' ps';
@@ -441,15 +451,14 @@ let iso_from_ids (m1 m2: real_memory) (h1 h2: cycle_history) (im: I.ideal_memory
 /// The corollary
 /// ---------------------------------------------------------------------------
 
-/// **The incremental run is isomorphic to its hoisted run**, given that no
-/// new no-scan object has a young-looking raw word and that a minor
-/// collection promotes what `GC.Gen.Run.IdAccounting.promoted` says.
+/// **The incremental run is isomorphic to its hoisted run**, given that a
+/// minor collection promotes what `GC.Gen.Run.IdAccounting.promoted` says.
 let hoisted_isomorphic_given (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
                              (#es_h: list event) (#r_h: real_state) (rn_h: run (initial_state ()) es_h r_h)
                              (ps: list I.program_event)
   : Lemma (requires I.wf_program ps /\ executes rn ps /\ executes rn_h ps /\
                     kinds es_h == hoist (kinds es) /\ r.phase == Ph.Idle /\
-                    program_no_young ps /\ minor_promotes)
+                    minor_promotes)
           (ensures isomorphic r.memory r_h.memory)
   = GC.Gen.Run.Hoisted.Nursery.nursery_frames ();
     GC.Gen.Run.Hoisted.Start.start_snapshot_holds ();
@@ -469,3 +478,17 @@ let hoisted_isomorphic_given (#es: list event) (#r: real_state) (rn: run (initia
     assert (forall (b: block_addr). Some? (ids_of_run rn b) ==> faithful_block h b);
     assert (forall (b: block_addr). Some? (ids_of_run rn_h b) ==> faithful_block h_h b);
     iso_from_ids r.memory r_h.memory h h_h (I.ideal_run ps) (ids_of_run rn) (ids_of_run rn_h)
+
+/// **The incremental run is isomorphic to its hoisted run**
+/// (`GC.Gen.Run.Simulation.hoisted_isomorphic`): the minor hypothesis holds
+/// (`GC.Gen.Run.Hoisted.MinorPromotes.minor_promotes_holds`, from the Cheney
+/// soundness of `GC.Gen.Cheney.Soundness` and the graph correspondence of
+/// `GC.Gen.Run.Hoisted.Minor`).
+let hoisted_isomorphic_proved (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
+                              (#es_h: list event) (#r_h: real_state) (rn_h: run (initial_state ()) es_h r_h)
+                              (ps: list I.program_event)
+  : Lemma (requires I.wf_program ps /\ executes rn ps /\ executes rn_h ps /\
+                    kinds es_h == hoist (kinds es) /\ r.phase == Ph.Idle)
+          (ensures isomorphic r.memory r_h.memory)
+  = GC.Gen.Run.Hoisted.MinorPromotes.minor_promotes_holds ();
+    hoisted_isomorphic_given rn rn_h ps

@@ -121,7 +121,8 @@ let program_step (a: acc) (site: alloc_site) (pe: I.program_event) : acc =
       (match site with
        | InNursery -> { a with mem = mem'; nurs = (fun id -> a.nurs id \/ id == n) }
        | InMajor -> { a with mem = mem'; kept = (fun id -> a.kept id \/ id == n);
-                             rt = (fun x j -> a.rt x j \/ (x == n /\ alloc_rt a init j)) })
+                             rt = (fun x j -> a.rt x j \/ (x == n /\ I.fields_length init == I.Alloc?.size pe /\
+                                                         alloc_rt a init j)) })
   | I.Write obj i v ->
       { a with mem = mem'; rt = (fun x j -> a.rt x j \/ (x == obj /\ j == i /\ write_records a obj i v)) }
   | _ -> { a with mem = mem' }
@@ -203,3 +204,13 @@ val n_program_snoc (ks: list kind) (k: kind)
 
 val kinds_snoc (es: list event) (e: event)
   : Lemma (kinds (es @ [e]) == kinds es @ [kind_of e])
+
+/// Every remembered slot is a field of its object (an index in range of a
+/// scannable object).
+let rt_ok (a: acc) : prop =
+  forall (x: I.obj_id) (j: nat). a.rt x j ==> Some? (field_value a.mem x j)
+
+val rt_ok_empty (_: unit) : Lemma (rt_ok empty_acc)
+
+val kind_step_rt_ok (a: acc) (k: kind) (pe: option I.program_event)
+  : Lemma (requires rt_ok a) (ensures rt_ok (kind_step a k pe))

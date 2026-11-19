@@ -71,27 +71,6 @@ let nursery_ptr_shape (ms: minor_state) (o: U64.t) (k: nat)
 /// Young values
 /// ---------------------------------------------------------------------------
 
-/// A new no-scan object's raw words are not young-looking.  (`major_alloc_step`
-/// remembers the slot of every young initial word, `young_slots`, whatever
-/// the tag; a raw word of a string that looks like a nursery address would
-/// then be a root of the next minor collection.)
-let event_no_young (pe: I.program_event) : prop =
-  match pe with
-  | I.Alloc _ _ (I.NoScan ws) -> forall (i: nat). i < Seq.length ws ==> ~(GB.is_young (Seq.index ws i))
-  | _ -> True
-
-/// **The program allocates no no-scan object with a young-looking word.**
-let rec program_no_young (ps: list I.program_event) : prop =
-  match ps with
-  | [] -> True
-  | pe :: ps' -> event_no_young pe /\ program_no_young ps'
-
-let rec program_no_young_snoc (ps: list I.program_event) (pe: I.program_event)
-  : Lemma (program_no_young (ps @ [pe]) <==> program_no_young ps /\ event_no_young pe)
-  = match ps with
-    | [] -> ()
-    | _ :: ps' -> program_no_young_snoc ps' pe
-
 /// The nursery's objects in the real state and in the accounting agree.
 let nurs_rep (ids: block_id_map) (a: acc) : prop =
   forall (id: I.obj_id). (exists (o: U64.t). ids (Nursery o) == Some id) <==> a.nurs id

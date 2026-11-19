@@ -32,33 +32,21 @@ let rec init_writes_keep (ms: minor_state) (oa: U64.t) (init: seq U64.t) (i: nat
     end
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+/// Since stage 0d the nursery steps carry their frames (`nursery_alloc_frame`,
+/// `nursery_store_frame` of `GC.Gen.Run.Step`, trusted); the walk-level proof
+/// above (`init_writes_keep`, `GC.Gen.Run.NurseryFrame`) shows the objects
+/// part of them.
 let alloc_frame_one (r: real_state) (tag: GC.Model.Ideal.tag_t) (size: nat) (init: seq U64.t) (r': real_state) (o: U64.t)
   : Lemma (requires nursery_alloc_step r tag size init r' /\ minor_wf r.memory.nursery /\
                     Seq.mem o (minor_objects r.memory.nursery))
           (ensures Seq.mem o (minor_objects r'.memory.nursery))
-  = let ms = r.memory.nursery in
-    let res = minor_alloc_spec ms size (U64.v tag) in
-    minor_alloc_preserves_existing ms size (U64.v tag) o;
-    minor_alloc_adds_object ms size (U64.v tag);
-    minor_alloc_success_wosize ms size (U64.v tag);
-    minor_alloc_success_layout ms size (U64.v tag);
-    FStar.Math.Lemmas.lemma_mod_plus (U64.v ms.bump) 1 8;
-    init_writes_keep res.ms_out res.obj_addr init 0;
-    assert (r'.memory.nursery == { res.ms_out with data = write_nursery_fields res.ms_out.data res.obj_addr init 0 })
-#pop-options
+  = let res = minor_alloc_spec r.memory.nursery size (U64.v tag) in
+    assert (GC.Gen.Run.Step.nursery_alloc_frame r.memory.nursery r'.memory.nursery res.obj_addr (U64.v tag) init)
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 let write_frame_one (r: real_state) (o: U64.t) (i: nat) (v: U64.t) (r': real_state) (o2: U64.t)
   : Lemma (requires nursery_write_step r o i v r' /\ minor_wf r.memory.nursery)
           (ensures Seq.mem o2 (minor_objects r'.memory.nursery) <==> Seq.mem o2 (minor_objects r.memory.nursery))
-  = let ms = r.memory.nursery in
-    minor_objects_valid ms o;
-    minor_objects_body_bound ms o;
-    FStar.Math.Lemmas.small_mod (U64.v o + 8 * i) (pow2 64);
-    FStar.Math.Lemmas.lemma_mod_plus (U64.v o) i 8;
-    NF.write_body_keeps_objects ms o (nursery_slot o i) v
-#pop-options
+  = assert (nursery_store_frame r.memory.nursery r'.memory.nursery o i v)
 
 /// **The nursery frame hypotheses hold.**
 let nursery_frames (_: unit) : Lemma (nursery_alloc_frame /\ nursery_write_frame)

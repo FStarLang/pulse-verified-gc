@@ -131,10 +131,31 @@ let ptr_target (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: bl
 let held_reachable (ids: block_id_map) (im: I.ideal_memory) (u: obj_addr) : prop =
   exists (id: I.obj_id). ids (Major u) == Some id /\ I.reachable im id
 
+/// The pointers among the roots are roots.
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+let rec ptr_values_index (vs: seq I.value) (i: nat)
+  : Lemma (requires i < Seq.length (ptr_values vs))
+          (ensures exists (j: nat). j < Seq.length vs /\ Seq.index vs j == Seq.index (ptr_values vs) i)
+          (decreases Seq.length vs)
+  = let rest = ptr_values (Seq.tail vs) in
+    if I.Ptr? (Seq.head vs) then begin
+      if i = 0 then assert (Seq.index vs 0 == Seq.head vs)
+      else begin
+        ptr_values_index (Seq.tail vs) (i - 1);
+        eliminate exists (j: nat). j < Seq.length (Seq.tail vs) /\ Seq.index (Seq.tail vs) j == Seq.index rest (i - 1)
+        with assert (Seq.index vs (j + 1) == Seq.index (Seq.tail vs) j)
+      end
+    end else begin
+      ptr_values_index (Seq.tail vs) i;
+      eliminate exists (j: nat). j < Seq.length (Seq.tail vs) /\ Seq.index (Seq.tail vs) j == Seq.index rest i
+      with assert (Seq.index vs (j + 1) == Seq.index (Seq.tail vs) j)
+    end
+#pop-options
+
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 let roots_held (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
                (roots: seq U64.t) (w: obj_addr)
-  : Lemma (requires start_facts m h im ids /\ roots_represented ids im.I.roots roots /\
+  : Lemma (requires start_facts m h im ids /\ roots_represented ids (ptr_values im.I.roots) roots /\
                     GMM.root_refs m.major roots w)
           (ensures held_reachable ids im w)
   = eliminate exists (rr: U64.t). Seq.mem rr roots /\ is_pointer rr /\ resolve_object (rr <: obj_addr) m.major == w
@@ -142,15 +163,19 @@ let roots_held (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: bl
       Seq.Properties.mem_index rr roots;
       eliminate exists (i: nat{i < Seq.length roots}). Seq.index roots i == rr
       with begin
-        let v = Seq.index im.I.roots i in
+        let v = Seq.index (ptr_values im.I.roots) i in
         assert (value_rep ids v rr);
-        assert (I.valid_value im v);
-        ptr_target m h im ids v rr;
-        match v with
-        | I.Ptr { I.head = hd } ->
-            assert (I.root_names im hd);
-            assert (I.reach_within im 0 hd);
-            assert (I.reachable im hd)
+        ptr_values_index im.I.roots i;
+        eliminate exists (j: nat). j < Seq.length im.I.roots /\ Seq.index im.I.roots j == v
+        with begin
+          assert (I.valid_value im v);
+          ptr_target m h im ids v rr;
+          match v with
+          | I.Ptr { I.head = hd } ->
+              assert (I.root_names im hd);
+              assert (I.reach_within im 0 hd);
+              assert (I.reachable im hd)
+        end
     end
     end
 #pop-options
@@ -204,7 +229,7 @@ let edge_held (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: blo
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 let start_one (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
               (roots: seq U64.t) (r': real_state) (x: obj_addr)
-  : Lemma (requires sim_inv r h im ids /\ roots_represented ids im.I.roots roots /\ step r (StartCycle roots) r' /\
+  : Lemma (requires sim_inv r h im ids /\ roots_represented ids (ptr_values im.I.roots) roots /\ step r (StartCycle roots) r' /\
                     GMC.reachable_at_start r.memory.major roots x)
           (ensures exists (id: I.obj_id). ids (Major x) == Some id /\ I.reachable im id)
   = let m = r.memory in
@@ -225,7 +250,7 @@ let start_one (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: bloc
 let start_snapshot_holds (_: unit) : Lemma start_snapshot
   = introduce forall (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
                      (roots: seq U64.t) (r': real_state) (x: obj_addr).
-      (sim_inv r h im ids /\ roots_represented ids im.I.roots roots /\ step r (StartCycle roots) r' /\
+      (sim_inv r h im ids /\ roots_represented ids (ptr_values im.I.roots) roots /\ step r (StartCycle roots) r' /\
        GMC.reachable_at_start r.memory.major roots x) ==>
       (exists (id: I.obj_id). ids (Major x) == Some id /\ I.reachable im id)
     with introduce _ ==> _ with start_one r h im ids roots r' x
