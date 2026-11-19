@@ -81,9 +81,10 @@ let no_young_value (v: I.value) : prop =
 
 /// Every value in a field of the ideal memory is not a young-looking word.
 let mem_no_young (m: I.ideal_memory) : prop =
-  forall (id: I.obj_id) (i: nat).
+  (forall (i: nat). i < Seq.length m.I.roots ==> no_young_value (Seq.index m.I.roots i)) /\
+  (forall (id: I.obj_id) (i: nat).
     I.valid_id m id /\ i < Seq.length (I.field_values (Seq.index m.I.objects id)) ==>
-    no_young_value (Seq.index (I.field_values (Seq.index m.I.objects id)) i)
+    no_young_value (Seq.index (I.field_values (Seq.index m.I.objects id)) i))
 
 /// What an event writes: no young-looking word, not even a raw word of a new
 /// no-scan object (which `major_alloc_step` would remember, `young_slots`).
@@ -141,6 +142,14 @@ let ideal_step_no_young (m: I.ideal_memory) (pe: I.program_event)
             end
         | _ -> ()
     in
+    (match pe with
+     | I.Alloc tag size init ->
+         if I.fields_length init = size then begin
+           let aux (i: nat) : Lemma (i < Seq.length m'.I.roots ==> no_young_value (Seq.index m'.I.roots i)) =
+             if i < Seq.length m.I.roots then assert (Seq.index m'.I.roots i == Seq.index m.I.roots i) else () in
+           FStar.Classical.forall_intro aux
+         end
+     | _ -> ());
     introduce forall (id: I.obj_id) (i: nat).
       I.valid_id m' id /\ i < Seq.length (I.field_values (Seq.index m'.I.objects id)) ==>
       no_young_value (Seq.index (I.field_values (Seq.index m'.I.objects id)) i)
