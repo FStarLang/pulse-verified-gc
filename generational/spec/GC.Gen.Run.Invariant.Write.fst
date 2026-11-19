@@ -4,16 +4,10 @@
 ///
 /// A write into the major heap (the barrier into a scannable block, a raw
 /// store into a no-scan one) or into the nursery keeps `run_invariant`
-/// (`GC.Gen.Run.Invariant.Defs`),
-/// under a hypothesis the statement lacks (`write_extra`): a value stored
-/// into the nursery is not an interior (infix) pointer -- the nursery's
-/// cross-generation conditions are stated on the raw word.  (That a major
-/// block written is kept is now part of `stores_in_kept`.)
-/// and, for a nursery write, the frame of the nursery store
-/// (`nursery_store_frame`): the nursery keeps its shape (a trusted mutator
-/// assumption -- `GenInv.minor_guards_complete` is broken by an ordinary
-/// integer store whose bits read as a header), its objects, their headers,
-/// and every field but the one written.
+/// (`GC.Gen.Run.Invariant.Defs`), and so does a nursery allocation.  For the
+/// nursery, `write_extra` (no interior pointer stored) and the frames
+/// (`nursery_store_frame`, `nursery_alloc_frame`, with the trusted nursery
+/// shape) are what `nursery_write_step` / `nursery_alloc_step` state.
 
 module GC.Gen.Run.Invariant.Write
 
