@@ -8,6 +8,7 @@ open GC.Spec.Fields
 open GC.Gen.MinorHeap
 open GC.Gen.Run.Step
 open GC.Gen.Run.History
+open GC.Gen.Run.Invariant.Defs
 
 module U64 = FStar.UInt64
 module Ph = GC.Spec.Phase
@@ -126,8 +127,8 @@ let reset_points_nowhere (free: free_def) (m: minor_state) (g: heap)
 /// The phase shape after the start.
 #push-options "--z3rlimit 20"
 let start_shape (r: real_state) (roots: seq U64.t) (r': real_state)
-  : Lemma (requires phase_shape_ r /\ start_step r roots r')
-          (ensures phase_shape_ r' /\ recoloured r.memory.major r'.memory.major)
+  : Lemma (requires phase_shape r /\ start_step r roots r')
+          (ensures phase_shape r' /\ recoloured r.memory.major r'.memory.major)
   = let m = r.memory.nursery in
     let g = r.memory.major in
     let gd = r'.memory.major in
@@ -137,6 +138,7 @@ let start_shape (r: real_state) (roots: seq U64.t) (r': real_state)
     assert (recoloured g gd);
     marking_dense m gd r.free_list MP.scan_none;
     recoloured_walk_end g gd;
+    minor_reset_objects_empty m;
     GI.phase_free_idle ();
     GI.phase_free_marking ();
     recoloured_ref_table g gd r.ref_table (Seq.length r.ref_table)
@@ -145,8 +147,8 @@ let start_shape (r: real_state) (roots: seq U64.t) (r': real_state)
 /// The accounting after the start.
 #push-options "--z3rlimit 40"
 let start_accounting (r: real_state) (h: cycle_history) (roots: seq U64.t) (r': real_state)
-  : Lemma (requires run_invariant_ r h /\ start_step r roots r' /\ recoloured r.memory.major r'.memory.major)
-          (ensures snapshot_accounting_ r' (update_history h r (StartCycle roots) r'))
+  : Lemma (requires run_invariant r h /\ start_step r roots r' /\ recoloured r.memory.major r'.memory.major)
+          (ensures snapshot_accounting r' (update_history h r (StartCycle roots) r'))
   = let m = r.memory.nursery in
     let g = r.memory.major in
     let gd = r'.memory.major in
@@ -159,6 +161,11 @@ let start_accounting (r: real_state) (h: cycle_history) (roots: seq U64.t) (r': 
     // B1
     MPC.within_snapshot_ext (MC.snapshot g roots SPC.nothing_new) (kept h') gd;
     reset_points_nowhere (MPC.outside_snapshot (kept h')) r'.memory.nursery gd;
+    // the remembered set is empty (the nursery is), the walk
+    minor_reset_objects_empty m;
+    MStart.mark_start_shape m g r.free_list roots;
+    marking_dense m gd r.free_list MP.scan_none;
+    recoloured_walk_end g gd;
     // B5
     let b5 (p: nat)
       : Lemma (requires LL.blue_covered gd p \/ SPC.new_covered h'.allocated_during_cycle gd p)
