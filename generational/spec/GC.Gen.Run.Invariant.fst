@@ -2,10 +2,11 @@ module GC.Gen.Run.Invariant
 
 open GC.Gen.Run.Step
 open GC.Gen.Run.History
+open GC.Gen.Run.Invariant.Defs
 
-/// Stage 0: the per-step lemmas are admitted; the general step lemma, the
-/// induction over a run, and the run forms of losslessness are proved from
-/// them.
+/// The per-step lemmas are proved in `GC.Gen.Run.Invariant.*`; the general
+/// step lemma, the induction over a run, and the run forms of losslessness
+/// are proved from them.
 
 let initial_run_invariant _ = GC.Gen.Run.Invariant.Initial.initial_run_invariant ()
 
@@ -14,12 +15,24 @@ let initial_run_invariant _ = GC.Gen.Run.Invariant.Initial.initial_run_invariant
 let alloc_keeps_run_invariant r h site tag size init r' =
   match site with
   | InNursery -> GC.Gen.Run.Invariant.Write.nursery_alloc_keeps r h tag size init r'
-  | InMajor -> admit ()
+  | InMajor -> GC.Gen.Run.Invariant.MajorAlloc.major_alloc_keeps r h tag size init r'
 
 /// A write (the barrier, a raw no-scan store, a nursery store):
 /// `GC.Gen.Run.Invariant.Write`.
 let write_keeps_run_invariant r h b i v r' =
   GC.Gen.Run.Invariant.Write.write_keeps r h b i v r'
+
+let minor_keeps_run_invariant r h roots r' = GC.Gen.Run.Invariant.Minor.minor_keeps r h roots r'
+
+let start_keeps_run_invariant r h roots r' = GC.Gen.Run.Invariant.Collector.start_keeps r h roots r'
+
+let slice_keeps_run_invariant r h budget r' =
+  match r.phase, r'.phase with
+  | GC.Spec.Phase.Idle, _ -> GC.Gen.Run.Invariant.Collector.slice_keeps_idle r h budget r'
+  | GC.Spec.Phase.Marking, GC.Spec.Phase.Marking -> GC.Gen.Run.Invariant.Collector.slice_keeps_marking r h budget r'
+  | GC.Spec.Phase.Marking, GC.Spec.Phase.Sweeping _ -> GC.Gen.Run.Invariant.Collector.slice_keeps_handover r h budget r'
+  | GC.Spec.Phase.Sweeping _, _ -> GC.Gen.Run.Invariant.SweepSlice.slice_keeps_sweeping r h budget r'
+  | GC.Spec.Phase.Marking, GC.Spec.Phase.Idle -> ()  // a mark slice never ends idle
 
 let step_keeps_run_invariant r h e r' =
   match e with

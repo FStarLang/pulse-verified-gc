@@ -224,6 +224,7 @@ let rt_kept_of (h: cycle_history) (rt: seq U64.t) (g: heap) : prop =
 let blk_extra (h: cycle_history) (m: real_memory) (ph: Ph.gc_phase) : prop =
   let g = m.major in
   let g0 = h.start_memory.major in
+  (forall (x: obj_addr). snapshot h x ==> is_allocated h.start_memory (Major x)) /\
   (forall (x: obj_addr). garbage_at_start h x /\ is_allocated m (Major x) /\ ~(h.allocated_during_cycle x) ==>
      wosize_of_object x g == wosize_of_object x g0) /\
   W.walk_end g zero_addr == W.walk_end g0 zero_addr /\

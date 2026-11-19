@@ -389,7 +389,8 @@ let block_facts (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t) (r'
   (forall (x: obj_addr). x <> a ==>
      (is_allocated r.memory (Major x) <==> is_allocated r'.memory (Major x)) /\
      (is_allocated r.memory (Major x) ==> same_block r.memory.major r'.memory.major x)) /\
-  r'.ref_table == Seq.append r.ref_table (young_slots a init)
+  r'.ref_table == (if I.tag_scannable tag then Seq.append r.ref_table (young_slots a init)
+                   else r.ref_table)
 
 /// The setting: the heap before, the allocation's, the heap after the writes.
 let setting (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t) : prop =
@@ -928,6 +929,37 @@ let idle_shape (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t)
     GI.phase_shape_idle minor g' fp1 sp
 #pop-options
 
+/// The walk ends where it did: the allocation carves the block out of a free
+/// cell whose end stays a position of the walk, and the writes keep the
+/// walk.
+#push-options "--z3rlimit 40"
+let alloc_walk_end (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t)
+  : Lemma (requires setting r tag size init /\ heap_objects_dense r.memory.major /\
+                    Seq.length (objects zero_addr r.memory.major) > 0)
+          (ensures W.walk_end (PD.alloc_then_init r tag size init).memory.major zero_addr ==
+                   W.walk_end r.memory.major zero_addr)
+  = let g = r.memory.major in
+    let fp = r.free_list in
+    let res = AC.alloc_phase g fp r.phase size tag in
+    let gx = res.SA.heap_out in
+    let (p, cur, pc) = found g fp r.phase size tag in
+    let w = AC.req_wz size in
+    let c = cur_of r.phase in
+    ASh.cell_facts g fp p cur w pc;
+    W.reaches_end_of_dense g;
+    let e = W.walk_end g zero_addr in
+    W.reaches_bounds g zero_addr e;
+    W.reaches_stuck g zero_addr e (U64.v pc.ASh.hd);
+    W.reaches_block_before g zero_addr pc.ASh.hd e;
+    ASh.at_reach g fp p cur w tag pc c e;
+    W.walk_end_of_reaches gx zero_addr e;
+    alloc_new r tag size init;
+    let a : obj_addr = res.SA.obj_out in
+    wmf_with (fun _ -> True) gx res.SA.fp_out a init (fun _ _ _ -> ());
+    SPI.same_heads_facts gx (PD.write_major_fields gx a init 0);
+    W.walk_end_of_reaches (PD.write_major_fields gx a init 0) zero_addr e
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// The theorem
 /// ---------------------------------------------------------------------------
@@ -935,7 +967,8 @@ let idle_shape (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t)
 /// The list is ascending at every phase.
 let shape_fl (r: real_state)
   : Lemma (requires GI.phase_shape r.memory.nursery r.memory.major r.free_list r.phase r.scan_pos)
-          (ensures FLA.fl_ascending r.memory.major r.free_list)
+          (ensures FLA.fl_ascending r.memory.major r.free_list /\ heap_objects_dense r.memory.major /\
+                   Seq.length (objects zero_addr r.memory.major) > 0)
   = let g = r.memory.major in
     let fp = r.free_list in
     let minor = r.memory.nursery in
@@ -966,6 +999,7 @@ let alloc_phase_step (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t
   = let r' = PD.alloc_then_init r tag size init in
     shape_fl r;
     alloc_block_facts r tag size init;
+    alloc_walk_end r tag size init;
     let a : obj_addr = (AC.alloc_phase r.memory.major r.free_list r.phase size tag).SA.obj_out in
     (match r.phase with
      | Ph.Idle -> idle_shape r tag size init
