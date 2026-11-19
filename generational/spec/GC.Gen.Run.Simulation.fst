@@ -22,7 +22,7 @@ let write_keeps_sim_inv r h im ids e pe r' = admit ()
 
 let read_roots_keep_sim_inv r h im ids e pe r' = admit ()
 
-let minor_keeps_sim_inv r h im ids roots r' = admit ()
+let minor_keeps_sim_inv r h im ids roots r' = GC.Gen.Run.Simulation.Minor.minor_keeps r h im ids roots r'
 
 let start_keeps_sim_inv r h im ids roots r' = C.start_keeps r h im ids roots r'
 

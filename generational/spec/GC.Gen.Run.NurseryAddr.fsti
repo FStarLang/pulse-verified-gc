@@ -21,3 +21,8 @@ val nursery_ptr (o: U64.t) (k: nat)
                    GBase.to_minor_offset (ptr_value (Nursery o) k) == ptr_value (Nursery o) k /\
                    Promote.is_minor_pointer (ptr_value (Nursery o) k) /\
                    is_young (ptr_value (Nursery o) k))
+
+/// A word whose offset is a nursery pointer is its own offset.
+val young_offset (w: U64.t)
+  : Lemma (requires Promote.is_minor_pointer (GBase.to_minor_offset w))
+          (ensures GBase.to_minor_offset w == w)
