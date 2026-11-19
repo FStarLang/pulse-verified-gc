@@ -5,11 +5,12 @@
 /// The real writes meet `GC.Gen.Run.Simulation.Program.write_frame`: a store
 /// into the body of an allocated major block keeps the walk and every header
 /// (`MM.write_heads`), and every other field, since two blocks of the walk
-/// have disjoint extents (`SPC.extents_disjoint`).  So a raw no-scan store,
-/// and the barrier outside marking (`GB.modify_heap` is then the store),
-/// meet it.  (The barrier while marking also darkens the old value's target;
-/// a nursery store needs the nursery walk to be unchanged by a body store,
-/// which `GC.Gen.MinorHeap` does not export: both remain to be done.)
+/// have disjoint extents (`SPC.extents_disjoint`); and recolouring a
+/// non-free block (the barrier's darkening while marking) changes nothing
+/// the program sees (`same_blocks`).  So every major write -- a raw no-scan
+/// store, or the barrier at any phase -- meets it
+/// (`major_write_keeps_given`).  (Nursery stores: to do, from the nursery
+/// step relation's frame.)
 
 module GC.Gen.Run.Simulation.Frame
 
@@ -34,6 +35,7 @@ module LL = GC.Spec.FusedSweep.Lossless
 module Ph = GC.Spec.Phase
 module GB = GC.Gen.Barrier
 module I = GC.Model.Ideal
+module Header = GC.Lib.Header
 
 #set-options "--fuel 1 --ifuel 1 --z3rlimit 20"
 
@@ -93,16 +95,108 @@ let major_body_write_frame (r: real_state) (x: obj_addr) (i: nat) (a: hp_addr) (
     assert (block_field r'.memory (Major x) i == v)
 #pop-options
 
+/// ---------------------------------------------------------------------------
+/// Recolouring, and the barrier while marking
+/// ---------------------------------------------------------------------------
+
+/// The real state with the major heap `g'`.
+let with_major (r: real_state) (g': heap) : real_state =
+  { r with memory = { r.memory with major = g' } }
+
+/// Nothing a block of the program sees changes: the same blocks allocated,
+/// with their tags, sizes and fields.
+let same_blocks (r r': real_state) : prop =
+  (forall (b: block_addr). is_allocated r'.memory b <==> is_allocated r.memory b) /\
+  (forall (b: block_addr). is_allocated r.memory b ==>
+     block_tag r'.memory b == block_tag r.memory b /\ block_size r'.memory b == block_size r.memory b) /\
+  (forall (b: block_addr) (j: nat). is_allocated r.memory b /\ j < block_size r.memory b ==>
+     block_field r'.memory b j == block_field r.memory b j)
+
 #push-options "--z3rlimit 60"
-/// **`write_keeps_sim_inv` for a major write that is a plain store**: into a
-/// no-scan block, or through the barrier outside marking -- given
-/// `infix_exact` (see `GC.Gen.Run.Simulation.Enabled`).
+let recolor_block (g: heap) (t: obj_addr) (c: color) (y: obj_addr)
+  : Lemma (requires c <> Header.Blue /\ Seq.mem t (objects zero_addr g) /\ ~(is_blue t g) /\
+                    Seq.mem y (objects zero_addr g))
+          (ensures (let g' = set_object_color t g c in
+                    (is_blue y g' <==> is_blue y g) /\
+                    tag_of_object y g' == tag_of_object y g /\
+                    wosize_of_object y g' == wosize_of_object y g /\
+                    (forall (j: nat). j < U64.v (wosize_of_object y g) ==> major_field g' y j == major_field g y j)))
+  = let g' = set_object_color t g c in
+    is_blue_iff y g; is_blue_iff y g';
+    if y = t then begin
+      set_color_preserves_not_blue t t g c;
+      color_preserves_tag t g c;
+      color_preserves_wosize t g c
+    end else begin
+      hd_address_injective t y;
+      color_change_locality t y g c;
+      color_change_header_locality t (hd_address y) g c;
+      tag_of_object_spec y g; tag_of_object_spec y g';
+      wosize_of_object_spec y g; wosize_of_object_spec y g'
+    end;
+    let aux (j: nat) : Lemma (j < U64.v (wosize_of_object y g) ==> major_field g' y j == major_field g y j) =
+      let p = U64.v y + j * 8 in
+      if j < U64.v (wosize_of_object y g) && p + 8 <= heap_size then begin
+        let q : hp_addr = U64.uint_to_t p in
+        if q = hd_address t then begin
+          hd_address_spec t;
+          hd_address_spec y;
+          assert (LL.in_extent g y p);
+          assert (LL.in_extent g t p);
+          if y = t then () else SPC.extents_disjoint g y t p
+        end else
+          color_change_header_locality t q g c
+      end in
+    FStar.Classical.forall_intro aux
+#pop-options
+
+#push-options "--z3rlimit 40"
+/// **Recolouring a non-free block to a non-blue colour changes nothing the
+/// program sees.**
+let recolor_same_blocks (r: real_state) (t: obj_addr) (c: color)
+  : Lemma (requires c <> Header.Blue /\ Seq.mem t (objects zero_addr r.memory.major) /\ ~(is_blue t r.memory.major))
+          (ensures same_blocks r (with_major r (set_object_color t r.memory.major c)))
+  = let g = r.memory.major in
+    color_change_preserves_objects g t c;
+    let aux (y: obj_addr) : Lemma (Seq.mem y (objects zero_addr g) ==>
+        (let g' = set_object_color t g c in
+         (is_blue y g' <==> is_blue y g) /\ tag_of_object y g' == tag_of_object y g /\
+         wosize_of_object y g' == wosize_of_object y g /\
+         (forall (j: nat). j < U64.v (wosize_of_object y g) ==> major_field g' y j == major_field g y j))) =
+      FStar.Classical.move_requires (recolor_block g t c) y in
+    FStar.Classical.forall_intro aux
+#pop-options
+
+/// **The deletion barrier's darkening changes nothing the program sees.**
+let darken_same_blocks (r: real_state) (w: U64.t)
+  : Lemma (same_blocks r (with_major r (MM.darken r.memory.major w)))
+  = let g = r.memory.major in
+    if is_pointer w &&
+       Seq.mem (resolve_object (w <: obj_addr) g) (objects zero_addr g) &&
+       is_white (resolve_object (w <: obj_addr) g) g
+    then begin
+      let t = resolve_object (w <: obj_addr) g in
+      makeGray_eq t g;
+      is_white_iff t g; is_blue_iff t g;
+      recolor_same_blocks r t Header.Gray
+    end
+
+/// `same_blocks` then `write_frame` is `write_frame`.
+let same_then_write (r r1 r': real_state) (b: block_addr) (i: nat) (v: U64.t)
+  : Lemma (requires same_blocks r r1 /\ write_frame r1 r' b i v)
+          (ensures write_frame r r' b i v)
+  = ()
+
+#push-options "--z3rlimit 60"
+/// **`write_keeps_sim_inv` for a major write**: a raw store into a no-scan
+/// block, or the barrier (while marking it first darkens the old value's
+/// target, which changes only a colour) -- given `infix_exact` (see
+/// `GC.Gen.Run.Simulation.Enabled`).
 let major_write_keeps_given (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (x: obj_addr) (i: nat) (v: U64.t) (obj: I.obj_id) (v': I.value) (r': real_state)
   : Lemma (requires sim_inv_parts r h im ids /\ I.wf_event im (I.Write obj i v') /\
                     translates ids (Write (Major x) i v) (I.Write obj i v') /\
-                    step r (Write (Major x) i v) r' /\ infix_exact im v' /\
-                    (scannable r.memory.major x ==> ~(Ph.Marking? r.phase)))
+                    step r (Write (Major x) i v) r' /\ infix_exact im v')
           (ensures sim_inv_parts r' (update_history h r (Write (Major x) i v) r')
                      (I.ideal_step im (I.Write obj i v'))
                      (update_block_ids ids (Seq.length im.I.objects) r (Write (Major x) i v) r'))
@@ -126,9 +220,17 @@ let major_write_keeps_given (r: real_state) (h: cycle_history) (im: I.ideal_memo
          in_use (GC.Gen.Incremental.phase_free r.phase) g x /\ SPM.in_body g x a /\
          r' == { r with memory = { r.memory with major = write_word g a v } })
     with begin
-      major_body_write_frame r x i a v;
-      assert (r'.memory == (with_major_word r a v).memory);
+      let r1 = if scannable g x && Ph.Marking? r.phase
+               then with_major r (MM.darken g (read_word g a)) else r in
+      darken_same_blocks r (read_word g a);
+      assert (same_blocks r r1);
+      assert (is_allocated r1.memory (Major x));
+      assert (i < U64.v (wosize_of_object x r1.memory.major));
+      major_body_write_frame r1 x i a v;
+      assert (r'.memory == (with_major_word r1 a v).memory);
+      same_then_write r r1 r' (Major x) i v;
       assert (write_frame r r' (Major x) i v);
       write_represents r r' h im ids (Major x) i v obj v'
     end
 #pop-options
+
