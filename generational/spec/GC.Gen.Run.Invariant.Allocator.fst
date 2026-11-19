@@ -501,3 +501,475 @@ let alloc_block_facts (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires oth)
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// What the other blocks keep, for the collector's state
+/// ---------------------------------------------------------------------------
+
+/// The new block was not allocated before; every other block keeps whether it
+/// is allocated and, if so, its header and fields.
+let frame (g g': heap) (a: obj_addr) : prop =
+  ~(Seq.mem a (objects zero_addr g) /\ ~(is_blue a g)) /\
+  Seq.mem a (objects zero_addr g') /\ ~(is_blue a g') /\
+  (forall (x: obj_addr). x <> a ==>
+     ((Seq.mem x (objects zero_addr g) /\ ~(is_blue x g)) <==> (Seq.mem x (objects zero_addr g') /\ ~(is_blue x g'))) /\
+     ((Seq.mem x (objects zero_addr g) /\ ~(is_blue x g)) ==> same_block g g' x))
+
+/// The same block, in the sweep's terms.
+#push-options "--z3rlimit 30"
+let spi_same_block (g g': heap) (y: obj_addr)
+  : Lemma (requires same_block g g' y /\ Seq.mem y (objects zero_addr g))
+          (ensures SPI.same_block g g' (hd_address y))
+  = let q = hd_address y in
+    hd_address_spec y;
+    SPI.colour_of g y; SPI.colour_of g' y;
+    SPI.obj_pos g y;
+    let body (b: hp_addr) : Lemma (requires U64.v q < U64.v b /\ U64.v b < W.bnext g q)
+                                  (ensures read_word g' b == read_word g b)
+      = let i = (U64.v b - U64.v y) / 8 in
+        assert (U64.v b == U64.v y + i * 8);
+        assert (i < U64.v (wosize_of_object y g));
+        assert (major_field g' y i == major_field g y i)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires body)
+#pop-options
+
+/// Every block not free under an admissible `free` before is one after, with
+/// its header and block, and is not the new one; and conversely.
+#push-options "--z3rlimit 30"
+let frame_in_use (free: free_def) (g g': heap) (a: obj_addr) (x: obj_addr)
+  : Lemma (requires frame g g' a /\ free_def_ok free)
+          (ensures (in_use free g x ==>
+                      x <> a /\ in_use free g' x /\ Seq.mem x (objects zero_addr g') /\
+                      read_word g' (hd_address x) == read_word g (hd_address x) /\
+                      SPI.same_block g g' (hd_address x)) /\
+                   (x <> a /\ in_use free g' x ==> in_use free g x))
+  = free_def_ok_elim free;
+    if x = a then ()
+    else if FStar.IndefiniteDescription.strong_excluded_middle (Seq.mem x (objects zero_addr g) /\ ~(is_blue x g)) then begin
+      spi_same_block g g' x;
+      in_use_is_determined_from_header free g g' x
+    end
+#pop-options
+
+let frame_keeps (free: free_def) (g g': heap) (a: obj_addr)
+  : Lemma (requires frame g g' a /\ free_def_ok free)
+          (ensures MPA.keeps_blocks free g g' /\ SPI.heads_kept free g g' /\
+                   (forall (y: obj_addr). in_use free g y ==> in_use free g' y) /\
+                   (forall (y: obj_addr). y <> a ==> in_use free g' y == in_use free g y))
+  = FStar.Classical.forall_intro (FStar.Classical.move_requires (frame_in_use free g g' a))
+
+/// The allocation's frame.
+#push-options "--z3rlimit 30"
+let alloc_frame (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t)
+  : Lemma (requires setting r tag size init)
+          (ensures is_obj (AC.alloc_phase r.memory.major r.free_list r.phase size tag).SA.obj_out /\
+                   frame r.memory.major (PD.alloc_then_init r tag size init).memory.major
+                     ((AC.alloc_phase r.memory.major r.free_list r.phase size tag).SA.obj_out <: obj_addr))
+  = alloc_block_facts r tag size init;
+    let (p, cur, pc) = found r.memory.major r.free_list r.phase size tag in
+    new_block r.memory.major r.free_list r.phase size tag p cur pc
+#pop-options
+
+/// A property that every write into the new block's body keeps holds after
+/// the initialising writes, with the walk and the headers.
+let wmf_with (pr: heap -> prop) (gx: heap) (fp: U64.t) (a: obj_addr) (init: seq U64.t)
+    (step: (h: heap) -> (q: hp_addr) -> (v: U64.t) ->
+           Lemma (requires pr h /\ heads_from gx fp (hd_address a) h /\ SPM.in_body h a q)
+                 (ensures pr (write_word h q v)))
+  : Lemma (requires pr gx /\ pos gx (hd_address a) /\ not (blue_at gx (hd_address a)) /\ fits a init /\
+                    U64.v (wosize_of_object a gx) == Seq.length init)
+          (ensures pr (PD.write_major_fields gx a init 0) /\ heads_from gx fp (hd_address a) (PD.write_major_fields gx a init 0))
+  = let ah = hd_address a in
+    let pr' (h: heap) : prop = pr h /\ heads_from gx fp ah h in
+    SPM.same_heads_refl gx;
+    let size_kept (h: heap) : Lemma (requires pr' h)
+                                    (ensures U64.v (wosize_of_object a h) == Seq.length init)
+      = SPI.colour_of h a; SPI.colour_of gx a
+    in
+    let step' (h: heap) (q: hp_addr) (v: U64.t)
+      : Lemma (requires pr' h /\ SPM.in_body h a q) (ensures pr' (write_word h q v))
+      = step h q v; heads_step gx fp a h q v
+    in
+    wmf_ind pr' a init 0 gx step' size_kept
+
+/// The new block's fields are the initial words, storable after if they were
+/// before.
+#push-options "--z3rlimit 30"
+let fields_storable_after (free: free_def) (g gx: heap) (a: obj_addr) (tag: I.tag_t) (init: seq U64.t)
+  : Lemma (requires (let g' = PD.write_major_fields gx a init 0 in
+                     frame g g' a /\ free_def_ok free /\ no_infix_block g /\ no_infix_block g' /\
+                     fits a init /\ U64.v (wosize_of_object a g') == Seq.length init /\
+                     tag_of_object a g' == tag /\
+                     (I.tag_scannable tag ==>
+                        (forall (i: nat). i < Seq.length init ==> SPI.storable free g (Seq.index init i)))))
+          (ensures SPM.fields_storable free (PD.write_major_fields gx a init 0) a)
+  = let g' = PD.write_major_fields gx a init 0 in
+    is_no_scan_spec a g';
+    frame_keeps free g g' a;
+    let one (i: nat)
+      : Lemma (i < U64.v (wosize_of_object a g') /\ U64.v a + i * 8 + 8 <= heap_size /\ not (is_no_scan a g') ==>
+               SPI.storable free g' (SPM.field_val g' a i))
+      = if i < U64.v (wosize_of_object a g') && U64.v a + i * 8 + 8 <= heap_size && not (is_no_scan a g') then begin
+          let q : hp_addr = U64.uint_to_t (U64.v a + i * 8) in
+          wmf_read gx a init 0 q;
+          assert ((U64.v q - U64.v a) / 8 == i);
+          SPI.storable_transfer g g' free free (Seq.index init i)
+        end
+    in
+    FStar.Classical.forall_intro one
+#pop-options
+
+/// What the nursery points at stays not free.
+let mmf_after (free: free_def) (minor: minor_state) (g g': heap) (a: obj_addr)
+  : Lemma (requires GenInv.minor_major_fields_not_free free minor g /\ frame g g' a /\ free_def_ok free)
+          (ensures GenInv.minor_major_fields_not_free free minor g')
+  = frame_keeps free g g' a;
+    GenInv.minor_major_fields_not_free_intro free minor g'
+      (fun obj j -> GenInv.minor_major_fields_not_free_elim free minor g obj j)
+
+/// The new block in the allocation's heap, by its address alone.
+#push-options "--z3rlimit 30"
+let alloc_new (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t)
+  : Lemma (requires setting r tag size init)
+          (ensures (let res = AC.alloc_phase r.memory.major r.free_list r.phase size tag in
+                    is_obj res.SA.obj_out /\
+                    (let a : obj_addr = res.SA.obj_out in
+                     let gx = res.SA.heap_out in
+                     pos gx (hd_address a) /\ not (blue_at gx (hd_address a)) /\ fits a init /\
+                     U64.v (wosize_of_object a gx) == size /\ tag_of_object a gx == tag)))
+  = let (p, cur, pc) = found r.memory.major r.free_list r.phase size tag in
+    new_block r.memory.major r.free_list r.phase size tag p cur pc
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// (4) The collector's state after, at each phase
+/// ---------------------------------------------------------------------------
+
+/// Mid-sweep: the sweep's allocation leaves the block fresh, the writes keep
+/// it fresh, storable fields close it.
+#push-options "--z3rlimit 40"
+let sweeping_shape (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t) (c: U64.t)
+  : Lemma (requires setting r tag size init /\ r.phase == Ph.Sweeping c /\ tag <> infix_tag /\
+                    GI.phase_shape r.memory.nursery r.memory.major r.free_list r.phase r.scan_pos /\
+                    (I.tag_scannable tag ==>
+                       (forall (i: nat). i < Seq.length init ==>
+                          SPI.storable (GI.phase_free r.phase) r.memory.major (Seq.index init i))))
+          (ensures (let r' = PD.alloc_then_init r tag size init in
+                    GI.phase_shape r'.memory.nursery r'.memory.major r'.free_list r'.phase r'.scan_pos))
+  = let g = r.memory.major in
+    let fp = r.free_list in
+    let minor = r.memory.nursery in
+    let sp = r.scan_pos in
+    let res = AC.alloc_phase g fp r.phase size tag in
+    let gx = res.SA.heap_out in
+    let fp1 = res.SA.fp_out in
+    alloc_new r tag size init;
+    let a : obj_addr = res.SA.obj_out in
+    let r' = PD.alloc_then_init r tag size init in
+    let g' = r'.memory.major in
+    assert (g' == PD.write_major_fields gx a init 0);
+    GI.phase_shape_sweeping minor g fp c sp;
+    SPI.free_incremental_ok c;
+    SPM.alloc_sweep_phase g fp c size tag;
+    let step (h: heap) (q: hp_addr) (v: U64.t)
+      : Lemma (requires SPM.fresh_ok h fp1 c a /\ heads_from gx fp1 (hd_address a) h /\ SPM.in_body h a q)
+              (ensures SPM.fresh_ok (write_word h q v) fp1 c a)
+      = SPM.fresh_write h fp1 c a q v
+    in
+    wmf_with (fun h -> SPM.fresh_ok h fp1 c a) gx fp1 a init step;
+    alloc_frame r tag size init;
+    SPI.same_heads_facts gx g';
+    SPI.colour_of gx a; SPI.colour_of g' a;
+    SPI.sweep_inv_incremental_iff g fp c;
+    wf_with_parts ();
+    SPM.free_or_uninitialised_ok c a;
+    fields_storable_after (SPI.free_incremental c) g gx a tag init;
+    SPM.fresh_close g' fp1 c a;
+    mmf_after (SPI.free_incremental c) minor g g' a;
+    GI.phase_shape_sweeping minor g' fp1 c sp
+#pop-options
+
+/// A value fine for a black block to point at stays so.
+#push-options "--z3rlimit 30"
+let target_after (g g': heap) (sp: MP.scan_pos) (o: obj_addr -> prop) (v: U64.t)
+  : Lemma (requires well_formed_heap g /\ blocks_fit g' /\ MPA.keeps_blocks free_stw g g' /\
+                    SPI.storable free_stw g v /\ MM.target_ok g (fun _ -> False) sp v)
+          (ensures MM.target_ok g' o sp v)
+  = if is_pointer v then begin
+      free_stw_ok ();
+      free_def_ok_elim free_stw;
+      MPA.keeps_blocks_resolve free_stw g g' v;
+      let t = resolve_object (v <: obj_addr) g in
+      SPI.colour_of g t; SPI.colour_of g' t;
+      if is_white t g then begin
+        let gw (y: obj_addr) : Lemma (MP.grey_or_white g y ==> in_use free_stw g y)
+          = Mark.colors_exclusive y g in
+        FStar.Classical.forall_intro gw;
+        MPA.keeps_blocks_reach free_stw g g' sp t
+      end
+    end
+#pop-options
+
+/// The new block's fields are fine for a black block to point at after, if
+/// they were before.
+#push-options "--z3rlimit 30"
+let fields_ok_after (g gx: heap) (a: obj_addr) (tag: I.tag_t) (init: seq U64.t) (sp: MP.scan_pos) (o: obj_addr -> prop)
+  : Lemma (requires (let g' = PD.write_major_fields gx a init 0 in
+                     well_formed_heap g /\ blocks_fit g' /\ MPA.keeps_blocks free_stw g g' /\
+                     fits a init /\ U64.v (wosize_of_object a g') == Seq.length init /\
+                     tag_of_object a g' == tag /\
+                     (I.tag_scannable tag ==>
+                        (forall (i: nat). i < Seq.length init ==>
+                           SPI.storable free_stw g (Seq.index init i) /\
+                           MM.target_ok g (fun _ -> False) sp (Seq.index init i)))))
+          (ensures MPA.fields_ok (PD.write_major_fields gx a init 0) o sp a)
+  = let g' = PD.write_major_fields gx a init 0 in
+    is_no_scan_spec a g';
+    let ok (i: nat)
+      : Lemma (i < U64.v (wosize_of_object a g') /\ U64.v a + i * 8 + 8 <= heap_size /\ not (is_no_scan a g') ==>
+               MM.target_ok g' o sp (SPM.field_val g' a i))
+      = if i < U64.v (wosize_of_object a g') && U64.v a + i * 8 + 8 <= heap_size && not (is_no_scan a g') then begin
+          let q : hp_addr = U64.uint_to_t (U64.v a + i * 8) in
+          wmf_read gx a init 0 q;
+          assert ((U64.v q - U64.v a) / 8 == i);
+          target_after g g' sp o (Seq.index init i)
+        end
+    in
+    FStar.Classical.forall_intro ok
+#pop-options
+
+/// While marking: the marking allocation leaves the block fresh, the writes
+/// keep it fresh, storable fields fine for a black block close it.
+#push-options "--z3rlimit 40"
+let marking_shape (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t)
+  : Lemma (requires setting r tag size init /\ r.phase == Ph.Marking /\ tag <> infix_tag /\
+                    GI.phase_shape r.memory.nursery r.memory.major r.free_list r.phase r.scan_pos /\
+                    (I.tag_scannable tag ==>
+                       (forall (i: nat). i < Seq.length init ==>
+                          SPI.storable free_stw r.memory.major (Seq.index init i) /\
+                          MM.target_ok r.memory.major (fun _ -> False) r.scan_pos (Seq.index init i))))
+          (ensures (let r' = PD.alloc_then_init r tag size init in
+                    GI.phase_shape r'.memory.nursery r'.memory.major r'.free_list r'.phase r'.scan_pos))
+  = let g = r.memory.major in
+    let fp = r.free_list in
+    let minor = r.memory.nursery in
+    let sp = r.scan_pos in
+    let res = AC.alloc_phase g fp r.phase size tag in
+    let gx = res.SA.heap_out in
+    let fp1 = res.SA.fp_out in
+    alloc_new r tag size init;
+    let a : obj_addr = res.SA.obj_out in
+    let r' = PD.alloc_then_init r tag size init in
+    let g' = r'.memory.major in
+    assert (g' == PD.write_major_fields gx a init 0);
+    GMA.marking_alloc_shape minor g fp sp size tag;
+    let step (h: heap) (q: hp_addr) (v: U64.t)
+      : Lemma (requires GMA.fresh_shape minor h fp1 sp a /\ heads_from gx fp1 (hd_address a) h /\ SPM.in_body h a q)
+              (ensures GMA.fresh_shape minor (write_word h q v) fp1 sp a)
+      = GMA.fresh_shape_write minor h fp1 sp a q v
+    in
+    wmf_with (fun h -> GMA.fresh_shape minor h fp1 sp a) gx fp1 a init step;
+    alloc_frame r tag size init;
+    SPI.same_heads_facts gx g';
+    SPI.colour_of gx a; SPI.colour_of g' a;
+    // the heap before, taken apart
+    GI.phase_shape_marking minor g fp sp;
+    GenInv.collection_shape_with_elim Ph.Marking free_stw minor g fp;
+    GenInv.major_shape_with_elim Ph.Marking free_stw g fp;
+    wf_with_parts ();
+    free_stw_ok ();
+    MPA.free_or_new_ok a;
+    fields_storable_after free_stw g gx a tag init;
+    frame_keeps free_stw g g' a;
+    fields_ok_after g gx a tag init sp (GMM.nursery_refs minor);
+    assert (MPA.fields_ok g' (GMM.nursery_refs minor) sp a);
+    GMA.fresh_shape_close minor g' fp1 sp a
+#pop-options
+
+/// Keeping the walk and the headers keeps a dense heap dense.
+let dense_transport (g g': heap)
+  : Lemma (requires heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\ SPI.same_heads g g')
+          (ensures heap_objects_dense g' /\ Seq.length (objects zero_addr g') > 0)
+  = SPI.same_heads_facts g g';
+    W.reaches_end_of_dense g;
+    W.reaches_refl g zero_addr;
+    W.dense_of_reaches_end g' (W.walk_end g zero_addr)
+
+/// **Closing a fresh block, stop-the-world**: once its fields are storable,
+/// the heap well formed with the block counted free is well formed.
+#push-options "--z3rlimit 30"
+let close_fresh_stw (g: heap) (obj: obj_addr)
+  : Lemma (requires well_formed_heap_with (MPA.free_or_new obj) g /\
+                    SPM.fields_storable free_stw g obj)
+          (ensures well_formed_heap g)
+  = let fresh_free = MPA.free_or_new obj in
+    wf_with_parts ();
+    free_stw_ok ();
+    MPA.free_or_new_ok obj;
+    free_def_ok_elim free_stw;
+    free_def_ok_elim fresh_free;
+    let closure (src: obj_addr) (j: nat)
+      : Lemma (requires in_use free_stw g src /\ ~(is_no_scan src g) /\
+                        j < U64.v (wosize_of_object src g) /\ U64.v src + j * 8 + 8 <= heap_size)
+              (ensures (let w = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
+                        is_pointer w ==>
+                        in_use free_stw g (resolve_object (w <: obj_addr) g) /\
+                        infix_addr_wf g (objects zero_addr g) (w <: obj_addr)))
+      = let w = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
+        if src = obj then assert (SPI.storable free_stw g (SPM.field_val g obj j))
+        else if is_pointer w then GC.Spec.FieldTarget.wf_with_field fresh_free g src j
+    in
+    pointer_clauses_from_field_closure free_stw g closure
+#pop-options
+
+/// The allocation's heap at idle: the list ascending, the heap dense, no
+/// infix block.
+#push-options "--z3rlimit 30"
+let idle_alloc_heap (g: heap) (fp: U64.t) (size: nat) (tag: I.tag_t)
+  : Lemma (requires FLA.fl_ascending g fp /\ blocks_fit g /\ heap_objects_dense g /\ no_infix_block g /\
+                    GC.Spec.Allocator.Lemmas.fl_valid g fp heap_words /\
+                    GC.Spec.Allocator.Lemmas.fl_chain_terminates g fp heap_words /\
+                    tag <> infix_tag /\
+                    (AC.alloc_phase g fp Ph.Idle size tag).SA.obj_out <> 0UL)
+          (ensures (let res = AC.alloc_phase g fp Ph.Idle size tag in
+                    FLA.fl_ascending res.SA.heap_out res.SA.fp_out /\
+                    heap_objects_dense res.SA.heap_out /\ no_infix_block res.SA.heap_out))
+  = let (p, cur, pc) = found g fp Ph.Idle size tag in
+    ASh.at_list g fp size tag (cur_of Ph.Idle) p cur pc;
+    AC.alloc_phase_idle g fp size tag;
+    GC.Spec.Allocator.Dense.alloc_spec_preserves_dense_part1 g fp size tag;
+    GC.Spec.Allocator.Phase.alloc_at_preserves_no_infix Ph.Idle g fp size tag
+#pop-options
+
+/// Idle colours: nothing black or grey stays so, the new block white.
+#push-options "--z3rlimit 30"
+let colours_after (g g': heap) (a: obj_addr)
+  : Lemma (requires frame g g' a /\ color_of_object a g' == Header.White /\
+                    Mark.no_black_objects g /\ SweepInv.no_gray_objects g)
+          (ensures Mark.no_black_objects g' /\ SweepInv.no_gray_objects g')
+  = let one (x: obj_addr)
+      : Lemma (Seq.mem x (objects zero_addr g') ==> ~(is_black x g') /\ ~(is_gray x g'))
+      = Mark.colors_exclusive x g';
+        SPI.colour_of g x; SPI.colour_of g' x;
+        if x = a then begin
+          color_of_object_spec a g';
+          Mark.color_exhaustive a g';
+          is_black_iff a g'; is_gray_iff a g'
+        end
+        else if Seq.mem x (objects zero_addr g') && not (is_blue x g') then begin
+          is_black_iff x g; is_gray_iff x g; is_black_iff x g'; is_gray_iff x g';
+          color_of_object_spec x g; color_of_object_spec x g';
+          SweepInv.no_gray_elim x g
+        end
+    in
+    FStar.Classical.forall_intro one;
+    SweepInv.no_gray_intro g'
+#pop-options
+
+/// Idle: the stop-the-world shape, with the new block closed by its storable
+/// fields.
+#push-options "--z3rlimit 40"
+let idle_shape (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t)
+  : Lemma (requires setting r tag size init /\ r.phase == Ph.Idle /\ tag <> infix_tag /\
+                    GI.phase_shape r.memory.nursery r.memory.major r.free_list r.phase r.scan_pos /\
+                    (I.tag_scannable tag ==>
+                       (forall (i: nat). i < Seq.length init ==>
+                          SPI.storable free_stw r.memory.major (Seq.index init i))))
+          (ensures (let r' = PD.alloc_then_init r tag size init in
+                    GI.phase_shape r'.memory.nursery r'.memory.major r'.free_list r'.phase r'.scan_pos))
+  = let g = r.memory.major in
+    let fp = r.free_list in
+    let minor = r.memory.nursery in
+    let sp = r.scan_pos in
+    let res = AC.alloc_phase g fp r.phase size tag in
+    let gx = res.SA.heap_out in
+    let fp1 = res.SA.fp_out in
+    alloc_new r tag size init;
+    let a : obj_addr = res.SA.obj_out in
+    let r' = PD.alloc_then_init r tag size init in
+    let g' = r'.memory.major in
+    assert (g' == PD.write_major_fields gx a init 0);
+    // the heap before, taken apart
+    GI.phase_shape_idle minor g fp sp;
+    GenInv.collection_heap_shape_as_free_stw minor g fp;
+    GenInv.collection_shape_with_elim Ph.Idle free_stw minor g fp;
+    GenInv.major_shape_with_elim Ph.Idle free_stw g fp;
+    wf_with_parts ();
+    free_stw_ok ();
+    MPA.free_or_new_ok a;
+    // the allocation's heap, and the writes
+    idle_alloc_heap g fp size tag;
+    wmf_with (fun _ -> True) gx fp1 a init (fun _ _ _ -> ());
+    SPI.same_heads_facts gx g';
+    SPM.same_heads_part4 gx g';
+    SPI.obj_pos gx a;
+    FStar.Seq.Properties.mem_index a (objects zero_addr gx);
+    dense_transport gx g';
+    part1_holds g';
+    alloc_block_facts r tag size init;
+    alloc_frame r tag size init;
+    // well formed with the new block counted free, then closed
+    frame_keeps free_stw g g' a;
+    let iu (x: obj_addr) : Lemma (in_use (MPA.free_or_new a) g' x == in_use free_stw g x)
+      = frame_in_use free_stw g g' a x in
+    FStar.Classical.forall_intro iu;
+    SPI.wf_transport g g' free_stw (MPA.free_or_new a);
+    fields_storable_after free_stw g gx a tag init;
+    close_fresh_stw g' a;
+    // the free list, the shape
+    PCS.free_list_shape_of_ascending g' fp1;
+    Promote.free_stw_allocations_not_free Ph.Idle;
+    GenInv.major_shape_with_intro Ph.Idle free_stw g' fp1;
+    mmf_after free_stw minor g g' a;
+    GenInv.collection_shape_with_intro Ph.Idle free_stw minor g' fp1;
+    colours_after g g' a;
+    GenInv.collection_heap_shape_of_free_stw minor g' fp1;
+    GI.phase_shape_idle minor g' fp1 sp
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// The theorem
+/// ---------------------------------------------------------------------------
+
+/// The list is ascending at every phase.
+let shape_fl (r: real_state)
+  : Lemma (requires GI.phase_shape r.memory.nursery r.memory.major r.free_list r.phase r.scan_pos)
+          (ensures FLA.fl_ascending r.memory.major r.free_list)
+  = let g = r.memory.major in
+    let fp = r.free_list in
+    let minor = r.memory.nursery in
+    let sp = r.scan_pos in
+    match r.phase with
+    | Ph.Idle ->
+        GI.phase_shape_idle minor g fp sp;
+        GenInv.collection_heap_shape_as_free_stw minor g fp;
+        GenInv.collection_shape_with_elim Ph.Idle free_stw minor g fp;
+        GenInv.major_shape_with_elim Ph.Idle free_stw g fp
+    | Ph.Marking ->
+        GI.phase_shape_marking minor g fp sp;
+        GenInv.collection_shape_with_elim Ph.Marking free_stw minor g fp;
+        GenInv.major_shape_with_elim Ph.Marking free_stw g fp
+    | Ph.Sweeping c ->
+        GI.phase_shape_sweeping minor g fp c sp;
+        SPI.sweep_inv_incremental_iff g fp c;
+        SPI.sweep_shape_elim g fp c
+
+/// **`alloc_phase` is a direct major allocation** (`GC.Gen.Run.Invariant.
+/// alloc_phase_major_alloc_step`).
+#push-options "--z3rlimit 30"
+let alloc_phase_step (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t)
+  : Lemma (requires PD.phase_shape r /\ size >= 1 /\ Seq.length init == size /\ tag <> infix_tag /\
+                    init_storable r tag init /\
+                    (AC.alloc_phase r.memory.major r.free_list r.phase size tag).SA.obj_out <> 0UL)
+          (ensures major_alloc_step r tag size init (PD.alloc_then_init r tag size init))
+  = let r' = PD.alloc_then_init r tag size init in
+    shape_fl r;
+    alloc_block_facts r tag size init;
+    let a : obj_addr = (AC.alloc_phase r.memory.major r.free_list r.phase size tag).SA.obj_out in
+    (match r.phase with
+     | Ph.Idle -> idle_shape r tag size init
+     | Ph.Marking -> marking_shape r tag size init
+     | Ph.Sweeping c -> sweeping_shape r tag size init c);
+    assert (block_facts r tag size init r' a)
+#pop-options

@@ -20,7 +20,17 @@ let initial_run_invariant _ = admit ()
 
 let alloc_keeps_run_invariant r h site tag size init r' = admit ()
 
-let write_keeps_run_invariant r h b i v r' = admit ()
+/// Writes into the major heap: `GC.Gen.Run.Invariant.Write`.  A nursery write
+/// is blocked: storing an interior pointer, or a word that reads as a nursery
+/// header, breaks `GI.phase_shape`'s nursery clauses (see the report of
+/// `akhil/me-inv-program`); `GC.Gen.Run.Invariant.Write.write_keeps` proves
+/// it under those two hypotheses.
+let write_keeps_run_invariant r h b i v r' =
+  same_defs r h (Write b i v);
+  same_defs r' (update_history h r (Write b i v) r') (Write b i v);
+  match b with
+  | Major _ -> GC.Gen.Run.Invariant.Write.write_keeps r h b i v r'
+  | Nursery _ -> admit ()
 
 let minor_keeps_run_invariant r h roots r' = admit ()
 
@@ -71,7 +81,10 @@ let same_alloc_then_init (r: real_state) (tag: GC.Model.Ideal.tag_t) (size: nat)
   = let res = GC.Spec.Allocator.Cursor.alloc_phase r.memory.major r.free_list r.phase size tag in
     same_write_major_fields res.GC.Spec.Allocator.heap_out res.GC.Spec.Allocator.obj_out init 0
 
-let alloc_phase_major_alloc_step r tag size init = admit ()
+let alloc_phase_major_alloc_step r tag size init =
+  same_alloc_then_init r tag size init;
+  same_defs r (initial_history ()) (SetRoots FStar.Seq.empty);
+  GC.Gen.Run.Invariant.Allocator.alloc_phase_step r tag size init
 
 let idle_lossless r h = admit ()
 

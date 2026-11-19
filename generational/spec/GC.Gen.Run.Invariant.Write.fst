@@ -4,13 +4,11 @@
 ///
 /// A write into the major heap (the barrier into a scannable block, a raw
 /// store into a no-scan one) or into the nursery keeps `run_invariant`
-/// (restated in `GC.Gen.Run.Invariant.ProgramDefs`), under two hypotheses the
-/// stage-0 statement lacks (`write_extra`):
-///   * a major scannable block written is kept (in the snapshot or allocated
-///     since): while marking, the barrier darkens the old value of the slot,
-///     and in a garbage block that may be another garbage block;
-///   * a value stored into the nursery is not an interior (infix) pointer:
-///     the nursery's cross-generation conditions are stated on the raw word.
+/// (`GC.Gen.Run.Invariant.Defs`, named in `GC.Gen.Run.Invariant.ProgramDefs`),
+/// under a hypothesis the statement lacks (`write_extra`): a value stored
+/// into the nursery is not an interior (infix) pointer -- the nursery's
+/// cross-generation conditions are stated on the raw word.  (That a major
+/// block written is kept is now part of `stores_in_kept`.)
 /// and, for a nursery write, the frame of the nursery store
 /// (`nursery_store_frame`): the nursery keeps its shape (a trusted mutator
 /// assumption -- `GenInv.minor_guards_complete` is broken by an ordinary
@@ -52,6 +50,7 @@ module PCS = GC.Gen.PostCollectionShape
 module SweepInv = GC.Spec.SweepInv
 module Header = GC.Lib.Header
 module PD = GC.Gen.Run.Invariant.ProgramDefs
+module D = GC.Gen.Run.Invariant.Defs
 module I = GC.Model.Ideal
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 10"
@@ -61,8 +60,7 @@ module I = GC.Model.Ideal
 /// ---------------------------------------------------------------------------
 
 let write_extra (r: real_state) (h: cycle_history) (b: block_addr) (v: U64.t) : prop =
-  (match b with | Major x -> scannable r.memory.major x ==> kept h x | Nursery _ -> True) /\
-  (Nursery? b /\ is_pointer v ==> ~(is_infix (v <: obj_addr) r.memory.major))
+  Nursery? b /\ is_pointer v ==> ~(is_infix (v <: obj_addr) r.memory.major)
 
 /// A store of `v` into field `i` of the nursery object `o`, from `ms` to
 /// `ms'`: the nursery keeps its shape (trusted), its objects, their headers,
@@ -194,6 +192,172 @@ let base_transfer (h: cycle_history) (m m': real_memory)
 #pop-options
 
 /// ---------------------------------------------------------------------------
+/// The invariant, split: the stage-0 clauses, and those stage 0b added
+/// ---------------------------------------------------------------------------
+
+/// The collector's state, the remembered set's shape, the walk.
+let shape_core (r: real_state) : prop =
+  let g = r.memory.major in
+  let free = GI.phase_free r.phase in
+  GI.phase_shape r.memory.nursery g r.free_list r.phase r.scan_pos /\
+  RT.ref_table_covers_with free g r.ref_table (Seq.length r.ref_table) /\
+  RT.ref_table_sound_with free g r.ref_table (Seq.length r.ref_table) /\
+  W.walk_end g zero_addr + 8 >= heap_size
+
+/// The nursery's own pointers, and the remembered set empty with it.
+let shape_extra (r: real_state) : prop =
+  D.nursery_fields_valid r.memory.nursery /\
+  (minor_objects r.memory.nursery == Seq.empty ==> Seq.length r.ref_table == 0)
+
+/// The phase's clause, as at stage 0 (but idle).
+let phase_core (r: real_state) (h: cycle_history) : prop =
+  let g = r.memory.major in
+  match r.phase with
+  | Ph.Marking ->
+      MP.outside_refs_reached g r.scan_pos (snapshot h) /\
+      (forall (x: obj_addr). h.allocated_during_cycle x ==> is_black x g)
+  | Ph.Sweeping c -> MPC.sweep_in_snapshot (kept h) g c
+  | Ph.Idle -> True
+
+let acc_core (r: real_state) (h: cycle_history) : prop =
+  MPC.within_snapshot (kept h) r.memory.major /\ base_ok h r.memory /\ phase_core r h
+
+/// Every remembered slot is a field of a kept block.
+let rt_kept_of (h: cycle_history) (rt: seq U64.t) (g: heap) : prop =
+  forall (i: nat). i < Seq.length rt ==>
+    (exists (x: obj_addr) (j: nat). kept h x /\ j < U64.v (wosize_of_object x g) /\
+       U64.v (Seq.index rt i) == U64.v x + j * 8)
+
+/// Garbage keeps its size, the walk its end; mid-sweep, kept blocks past the
+/// cursor are black; idle, every allocated block is kept.
+let blk_extra (h: cycle_history) (m: real_memory) (ph: Ph.gc_phase) : prop =
+  let g = m.major in
+  let g0 = h.start_memory.major in
+  (forall (x: obj_addr). garbage_at_start h x /\ is_allocated m (Major x) /\ ~(h.allocated_during_cycle x) ==>
+     wosize_of_object x g == wosize_of_object x g0) /\
+  W.walk_end g zero_addr == W.walk_end g0 zero_addr /\
+  (match ph with
+   | Ph.Sweeping c -> (forall (x: obj_addr). kept h x /\ U64.v x > U64.v c ==> is_black x g)
+   | Ph.Idle -> (forall (x: obj_addr). is_allocated m (Major x) ==> kept h x)
+   | Ph.Marking -> True)
+
+#push-options "--z3rlimit 30"
+let inv_split (r: real_state) (h: cycle_history)
+  : Lemma (PD.run_invariant r h <==>
+           (shape_core r /\ shape_extra r /\ acc_core r h /\
+            rt_kept_of h r.ref_table r.memory.major /\ blk_extra h r.memory r.phase))
+  = match r.phase with
+    | Ph.Marking -> ()
+    | Ph.Sweeping _ -> ()
+    | Ph.Idle -> ()
+#pop-options
+
+let mod_diff (a x: nat)
+  : Lemma (requires a % 8 == 0 /\ x % 8 == 0 /\ x <= a) (ensures (a - x) % 8 == 0)
+  = FStar.Math.Lemmas.lemma_mod_sub_distr a x 8
+
+/// Kept blocks are blocks of the heap.
+let kept_mem (h: cycle_history) (m: real_memory) (x: obj_addr)
+  : Lemma (requires base_ok h m /\ kept h x)
+          (ensures Seq.mem x (objects zero_addr m.major) /\ ~(is_blue x m.major))
+  = ()
+
+/// The added clauses across a change of the major heap that keeps every
+/// block (and, outside marking, every header).
+#push-options "--z3rlimit 30"
+let blk_transfer (h: cycle_history) (m m': real_memory) (ph: Ph.gc_phase) (fp fp': U64.t)
+  : Lemma (requires blk_extra h m ph /\ base_ok h m /\ blocks_same m.major m'.major /\
+                    walk_ok m.major fp /\ walk_ok m'.major fp' /\
+                    (~(Ph.Marking? ph) ==>
+                       (forall (y: obj_addr). Seq.mem y (objects zero_addr m.major) ==>
+                          read_word m'.major (hd_address y) == read_word m.major (hd_address y))))
+          (ensures blk_extra h m' ph)
+  = let g = m.major in
+    let g' = m'.major in
+    SPC.walk_end_same_blocks g g';
+    match ph with
+    | Ph.Sweeping c ->
+        let bl (x: obj_addr)
+          : Lemma (requires kept h x /\ U64.v x > U64.v c) (ensures is_black x g')
+          = kept_mem h m x;
+            SPI.colour_of g x; SPI.colour_of g' x
+        in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires bl)
+    | _ -> ()
+#pop-options
+
+/// The remembered slots across such a change, with possibly the slot `a` of
+/// the kept block `x` appended.
+#push-options "--z3rlimit 30"
+let rt_transfer (h: cycle_history) (m: real_memory) (g': heap) (rt rt': seq U64.t) (x: obj_addr) (a: U64.t)
+  : Lemma (requires rt_kept_of h rt m.major /\ base_ok h m /\ blocks_same m.major g' /\
+                    (rt' == rt \/
+                     (rt' == Seq.snoc rt a /\ kept h x /\ U64.v x <= U64.v a /\
+                      U64.v a < U64.v x + U64.v (wosize_of_object x m.major) * 8 /\
+                      (U64.v a - U64.v x) % 8 == 0)))
+          (ensures rt_kept_of h rt' g')
+  = let g = m.major in
+    let one (i: nat)
+      : Lemma (i < Seq.length rt' ==>
+               (exists (y: obj_addr) (j: nat). kept h y /\ j < U64.v (wosize_of_object y g') /\
+                  U64.v (Seq.index rt' i) == U64.v y + j * 8))
+      = if i >= Seq.length rt' then ()
+        else if i < Seq.length rt then begin
+          (if Seq.length rt' <> Seq.length rt then Seq.lemma_index_app1 rt (Seq.create 1 a) i);
+          assert (Seq.index rt' i == Seq.index rt i);
+          eliminate exists (y: obj_addr) (j: nat). kept h y /\ j < U64.v (wosize_of_object y g) /\
+              U64.v (Seq.index rt i) == U64.v y + j * 8
+          with (kept_mem h m y;
+                introduce exists (y: obj_addr) (j: nat). kept h y /\ j < U64.v (wosize_of_object y g') /\
+                    U64.v (Seq.index rt' i) == U64.v y + j * 8
+                with y j and ())
+        end else begin
+          Seq.lemma_index_app2 rt (Seq.create 1 a) i;
+          kept_mem h m x;
+          let j = (U64.v a - U64.v x) / 8 in
+          introduce exists (y: obj_addr) (j: nat). kept h y /\ j < U64.v (wosize_of_object y g') /\
+              U64.v (Seq.index rt' i) == U64.v y + j * 8
+          with x j and ()
+        end
+    in
+    FStar.Classical.forall_intro one
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Nursery resolution across a nursery change
+/// ---------------------------------------------------------------------------
+
+/// A change of the nursery that keeps every old object (and the fields of
+/// every old closure, which hold the infix headers) keeps every resolution
+/// to an old object an object.
+#push-options "--z3rlimit 40"
+let resolve_kept (ms ms': minor_state) (t: U64.t)
+  : Lemma (requires GenInv.minor_heap_shape ms /\ GenInv.minor_heap_shape ms' /\
+                    (forall (y: U64.t). Seq.mem y (minor_objects ms) ==> Seq.mem y (minor_objects ms')) /\
+                    (forall (y: U64.t) (j: nat). Seq.mem y (minor_objects ms) /\ minor_tag ms y == 247 /\
+                       j < minor_wosize ms y ==> minor_read_field ms' y j == minor_read_field ms y j) /\
+                    Seq.mem (resolve_minor ms t) (minor_objects ms))
+          (ensures Seq.mem (resolve_minor ms' t) (minor_objects ms'))
+  = GenInv.minor_heap_shape_elim ms;
+    GenInv.minor_heap_shape_elim ms';
+    if is_infix_in_minor ms' t then resolve_minor_in_objects ms' t
+    else begin
+      resolve_minor_non_infix ms' t;
+      if is_infix_in_minor ms t then begin
+        infix_parent_in_minor_objects ms t;
+        infix_parent_value ms t;
+        let p = infix_parent ms t in
+        let wz = minor_wosize ms t in
+        let j : nat = wz - 1 in
+        assert (U64.v p + j * 8 == U64.v t - 8);
+        assert (minor_read_field ms' p j == minor_read_field ms p j);
+        assert (minor_tag ms' t == minor_tag ms t)
+      end
+      else resolve_minor_non_infix ms t
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// The barrier keeps every block
 /// ---------------------------------------------------------------------------
 
@@ -318,7 +482,7 @@ let barrier_accounting (r: real_state) (h: cycle_history) (x: obj_addr) (a: hp_a
                     GB.modify_ok r.phase r.memory.nursery r.memory.major r.scan_pos x a v /\
                     r'.memory.nursery == r.memory.nursery /\ r'.phase == r.phase /\ r'.scan_pos == r.scan_pos /\
                     r'.memory.major == GB.modify_heap r.phase r.memory.major a v)
-          (ensures PD.snapshot_accounting r' h)
+          (ensures acc_core r' h)
   = let g = r.memory.major in
     let g' = r'.memory.major in
     let ms = r.memory.nursery in
@@ -355,7 +519,7 @@ let barrier_shape (r: real_state) (x: obj_addr) (a: hp_addr) (v: U64.t) (r': rea
                     r' == { r with memory = { r.memory with major = GB.modify_heap r.phase r.memory.major a v };
                                    ref_table = if GB.modify_records r.memory.major a v
                                                then Seq.snoc r.ref_table (a <: U64.t) else r.ref_table })
-          (ensures PD.phase_shape r')
+          (ensures shape_core r')
   = let g = r.memory.major in
     let ms = r.memory.nursery in
     GB.modify_phase_shape r.phase ms g r.free_list r.scan_pos x a v;
@@ -365,15 +529,44 @@ let barrier_shape (r: real_state) (x: obj_addr) (a: hp_addr) (v: U64.t) (r': rea
     shape_walk_end r.phase ms r'.memory.major r.free_list r.scan_pos
 #pop-options
 
+#push-options "--z3rlimit 40"
 let barrier_keeps (r: real_state) (h: cycle_history) (x: obj_addr) (a: hp_addr) (v: U64.t) (r': real_state)
   : Lemma (requires PD.run_invariant r h /\ scannable r.memory.major x /\ kept h x /\ PD.in_kept r h v /\
                     GB.modify_ok r.phase r.memory.nursery r.memory.major r.scan_pos x a v /\
+                    (is_young v ==> storable_value r v) /\
                     r' == { r with memory = { r.memory with major = GB.modify_heap r.phase r.memory.major a v };
                                    ref_table = if GB.modify_records r.memory.major a v
                                                then Seq.snoc r.ref_table (a <: U64.t) else r.ref_table })
           (ensures PD.run_invariant r' h)
-  = barrier_shape r x a v r';
-    barrier_accounting r h x a v r'
+  = let g = r.memory.major in
+    let g' = r'.memory.major in
+    let ms = r.memory.nursery in
+    let ph = r.phase in
+    let fp = r.free_list in
+    let sp = r.scan_pos in
+    let free = GI.phase_free ph in
+    inv_split r h;
+    barrier_shape r x a v r';
+    barrier_accounting r h x a v r';
+    shape_facts ph ms g fp sp;
+    shape_facts ph ms g' fp sp;
+    GB.modify_heap_facts ph ms g fp sp x a v;
+    in_use_not_blue free g x;
+    (match ph with
+     | Ph.Marking -> marking_blocks g x a v
+     | _ -> write_blocks g x a v);
+    blk_transfer h r.memory r'.memory ph fp fp;
+    (if GB.modify_records g a v then begin
+       assert (r'.ref_table == Seq.snoc r.ref_table (a <: U64.t));
+       assert (SPM.in_body g x a);
+       assert (U64.v a % 8 == 0 /\ U64.v x % 8 == 0);
+       mod_diff (U64.v a) (U64.v x);
+       rt_transfer h r.memory g' r.ref_table r'.ref_table x (a <: U64.t)
+     end else rt_transfer h r.memory g' r.ref_table r'.ref_table x (a <: U64.t));
+    (if GB.modify_records g a v then
+       FStar.Seq.Properties.mem_index (resolve_minor ms (GBase.to_minor_offset v)) (minor_objects ms));
+    inv_split r' h
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// A raw store into a major no-scan block
@@ -623,7 +816,7 @@ let store_accounting (r: real_state) (h: cycle_history) (x: obj_addr) (a: hp_add
   : Lemma (requires PD.run_invariant r h /\ ~(scannable r.memory.major x) /\
                     in_use (GI.phase_free r.phase) r.memory.major x /\ SPM.in_body r.memory.major x a /\
                     r' == { r with memory = { r.memory with major = write_word r.memory.major a v } })
-          (ensures PD.snapshot_accounting r' h)
+          (ensures acc_core r' h)
   = let g = r.memory.major in
     let g' = r'.memory.major in
     let ms = r.memory.nursery in
@@ -657,7 +850,7 @@ let store_shape (r: real_state) (h: cycle_history) (x: obj_addr) (a: hp_addr) (v
   : Lemma (requires PD.run_invariant r h /\ ~(scannable r.memory.major x) /\
                     in_use (GI.phase_free r.phase) r.memory.major x /\ SPM.in_body r.memory.major x a /\
                     r' == { r with memory = { r.memory with major = write_word r.memory.major a v } })
-          (ensures PD.phase_shape r')
+          (ensures shape_core r')
   = let g = r.memory.major in
     let ms = r.memory.nursery in
     let ph = r.phase in
@@ -683,13 +876,29 @@ let store_shape (r: real_state) (h: cycle_history) (x: obj_addr) (a: hp_addr) (v
     shape_walk_end ph ms r'.memory.major fp sp
 #pop-options
 
+#push-options "--z3rlimit 40"
 let store_keeps (r: real_state) (h: cycle_history) (x: obj_addr) (a: hp_addr) (v: U64.t) (r': real_state)
   : Lemma (requires PD.run_invariant r h /\ ~(scannable r.memory.major x) /\
                     in_use (GI.phase_free r.phase) r.memory.major x /\ SPM.in_body r.memory.major x a /\
                     r' == { r with memory = { r.memory with major = write_word r.memory.major a v } })
           (ensures PD.run_invariant r' h)
-  = store_shape r h x a v r';
-    store_accounting r h x a v r'
+  = let g = r.memory.major in
+    let g' = r'.memory.major in
+    let ms = r.memory.nursery in
+    let ph = r.phase in
+    let fp = r.free_list in
+    let sp = r.scan_pos in
+    inv_split r h;
+    store_shape r h x a v r';
+    store_accounting r h x a v r';
+    shape_facts ph ms g fp sp;
+    shape_facts ph ms g' fp sp;
+    in_use_not_blue (GI.phase_free ph) g x;
+    write_blocks g x a v;
+    blk_transfer h r.memory r'.memory ph fp fp;
+    rt_transfer h r.memory g' r.ref_table r'.ref_table x 0UL;
+    inv_split r' h
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// A store into the nursery
@@ -779,11 +988,33 @@ let nursery_shape (ph: Ph.gc_phase) (ms ms': minor_state) (g: heap) (fp: U64.t) 
         nursery_mmf (SPI.free_incremental c) ms ms' g o i v
 #pop-options
 
+/// The nursery's own pointers after a store.
+#push-options "--z3rlimit 40"
+let store_fields_valid (ms ms': minor_state) (o: U64.t) (i: nat) (v: U64.t)
+  : Lemma (requires D.nursery_fields_valid ms /\ GenInv.minor_heap_shape ms /\ nursery_store_frame ms ms' o i v /\
+                    Seq.mem o (minor_objects ms) /\ minor_tag ms o <> 247 /\
+                    (minor_tag ms o < 251 /\ is_young v ==>
+                       Seq.mem (resolve_minor ms (GBase.to_minor_offset v)) (minor_objects ms)))
+          (ensures D.nursery_fields_valid ms')
+  = let one (y: U64.t) (j: nat)
+      : Lemma (requires Seq.mem y (minor_objects ms') /\ j < minor_scan_wosize ms' y /\
+                        is_young (minor_read_field ms' y j))
+              (ensures Seq.mem (resolve_minor ms' (GBase.to_minor_offset (minor_read_field ms' y j)))
+                               (minor_objects ms'))
+      = minor_scan_wosize_cases ms y;
+        minor_scan_wosize_cases ms' y;
+        resolve_kept ms ms' (GBase.to_minor_offset (minor_read_field ms' y j))
+    in
+    FStar.Classical.forall_intro_2 (fun y -> FStar.Classical.move_requires (one y))
+#pop-options
+
+
 #push-options "--z3rlimit 40"
 let nursery_keeps (r: real_state) (h: cycle_history) (o: U64.t) (i: nat) (v: U64.t) (r': real_state)
   : Lemma (requires PD.run_invariant r h /\
                     (minor_tag r.memory.nursery o < 251 ==> storable_value r v /\ PD.in_kept r h v) /\
                     (is_pointer v ==> ~(is_infix (v <: obj_addr) r.memory.major)) /\
+                    Seq.mem o (minor_objects r.memory.nursery) /\ minor_tag r.memory.nursery o <> 247 /\
                     r'.memory.major == r.memory.major /\ r'.free_list == r.free_list /\
                     r'.phase == r.phase /\ r'.scan_pos == r.scan_pos /\ r'.ref_table == r.ref_table /\
                     nursery_store_frame r.memory.nursery r'.memory.nursery o i v)
@@ -799,8 +1030,11 @@ let nursery_keeps (r: real_state) (h: cycle_history) (o: U64.t) (i: nat) (v: U64
        in_use_not_blue free g (v <: obj_addr);
        in_use_outside_kept (kept h) g (v <: obj_addr)
      end);
+    inv_split r h;
     nursery_shape ph ms ms' g r.free_list r.scan_pos o i v;
-    nursery_mmf (MPC.outside_snapshot (kept h)) ms ms' g o i v
+    nursery_mmf (MPC.outside_snapshot (kept h)) ms ms' g o i v;
+    store_fields_valid ms ms' o i v;
+    inv_split r' h
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -817,7 +1051,7 @@ let nursery_write_frame (r r': real_state) (b: block_addr) (i: nat) (v: U64.t) :
 #push-options "--z3rlimit 30"
 let major_write_keeps (r: real_state) (h: cycle_history) (x: obj_addr) (i: nat) (v: U64.t) (r': real_state)
   : Lemma (requires PD.run_invariant r h /\ PD.stores_in_kept r h (Write (Major x) i v) /\
-                    major_write_step r x i v r' /\ (scannable r.memory.major x ==> kept h x))
+                    major_write_step r x i v r')
           (ensures PD.run_invariant r' h)
   = let g = r.memory.major in
     eliminate exists (a: hp_addr). U64.v a == U64.v x + 8 * i /\
@@ -955,6 +1189,25 @@ let alloc_nursery_shape (ph: Ph.gc_phase) (ms ms': minor_state) (g: heap) (fp: U
         alloc_mmf (SPI.free_incremental c) ms ms' g a tag init
 #pop-options
 
+/// The nursery's own pointers after an allocation.
+#push-options "--z3rlimit 40"
+let alloc_fields_valid (ms ms': minor_state) (a: U64.t) (tag: nat) (init: seq U64.t)
+  : Lemma (requires D.nursery_fields_valid ms /\ GenInv.minor_heap_shape ms /\ nursery_alloc_frame ms ms' a tag init /\
+                    (forall (j: nat). tag < 251 /\ j < Seq.length init /\ is_young (Seq.index init j) ==>
+                       Seq.mem (resolve_minor ms (GBase.to_minor_offset (Seq.index init j))) (minor_objects ms)))
+          (ensures D.nursery_fields_valid ms')
+  = let one (y: U64.t) (j: nat)
+      : Lemma (requires Seq.mem y (minor_objects ms') /\ j < minor_scan_wosize ms' y /\
+                        is_young (minor_read_field ms' y j))
+              (ensures Seq.mem (resolve_minor ms' (GBase.to_minor_offset (minor_read_field ms' y j)))
+                               (minor_objects ms'))
+      = minor_scan_wosize_cases ms y;
+        minor_scan_wosize_cases ms' y;
+        resolve_kept ms ms' (GBase.to_minor_offset (minor_read_field ms' y j))
+    in
+    FStar.Classical.forall_intro_2 (fun y -> FStar.Classical.move_requires (one y))
+#pop-options
+
 /// The new object's initial values, for the conditions above.
 #push-options "--z3rlimit 30"
 let init_values (r: real_state) (h: cycle_history) (tag: I.tag_t) (init: seq U64.t) (j: nat)
@@ -975,6 +1228,20 @@ let init_values (r: real_state) (h: cycle_history) (tag: I.tag_t) (init: seq U64
     resolve_non_infix (w <: obj_addr) g;
     in_use_not_blue (GI.phase_free r.phase) g (w <: obj_addr);
     in_use_outside_kept (kept h) g (w <: obj_addr)
+#pop-options
+
+/// A change of the nursery alone keeps every clause about the major heap.
+#push-options "--z3rlimit 40"
+let nursery_change (r r': real_state) (h: cycle_history)
+  : Lemma (requires shape_core r /\ acc_core r h /\ rt_kept_of h r.ref_table r.memory.major /\
+                    blk_extra h r.memory r.phase /\
+                    r'.memory.major == r.memory.major /\ r'.free_list == r.free_list /\
+                    r'.phase == r.phase /\ r'.scan_pos == r.scan_pos /\ r'.ref_table == r.ref_table /\
+                    GI.phase_shape r'.memory.nursery r'.memory.major r'.free_list r'.phase r'.scan_pos /\
+                    GenInv.minor_major_fields_not_free (MPC.outside_snapshot (kept h)) r'.memory.nursery r'.memory.major)
+          (ensures shape_core r' /\ acc_core r' h /\ rt_kept_of h r'.ref_table r'.memory.major /\
+                   blk_extra h r'.memory r'.phase)
+  = assert (forall (x: obj_addr). is_allocated r'.memory (Major x) <==> is_allocated r.memory (Major x))
 #pop-options
 
 #push-options "--z3rlimit 40"
@@ -1003,8 +1270,25 @@ let nursery_alloc_keeps (r: real_state) (h: cycle_history) (tag: I.tag_t) (size:
         then init_values r h tag init j
     in
     FStar.Classical.forall_intro ok;
+    assert (r'.memory.major == g /\ r'.free_list == r.free_list /\ r'.phase == ph /\
+            r'.scan_pos == r.scan_pos /\ r'.ref_table == r.ref_table);
     alloc_nursery_shape ph ms ms' g r.free_list r.scan_pos a (U64.v tag) init;
     alloc_mmf (MPC.outside_snapshot (kept h)) ms ms' g a (U64.v tag) init;
+    inv_split r h;
+    nursery_change r r' h;
+    shape_facts ph ms g r.free_list r.scan_pos;
+    let yg (j: nat)
+      : Lemma (U64.v tag < 251 /\ j < Seq.length init /\ is_young (Seq.index init j) ==>
+               Seq.mem (resolve_minor ms (GBase.to_minor_offset (Seq.index init j))) (minor_objects ms))
+      = no_scan_tag_val ()
+    in
+    FStar.Classical.forall_intro yg;
+    alloc_fields_valid ms ms' a (U64.v tag) init;
+    FStar.Seq.Properties.mem_index a (minor_objects ms');
+    inv_split r' h;
     assert (PD.run_invariant r' h);
-    history_ext r' h (update_history h r (Alloc InNursery tag size init) r')
+    let h' = update_history h r (Alloc InNursery tag size init) r' in
+    assert (forall (x: obj_addr). ~(made r r' x));
+    assert (forall (x: obj_addr). h'.allocated_during_cycle x <==> h.allocated_during_cycle x);
+    history_ext r' h h'
 #pop-options
