@@ -5,26 +5,12 @@
 /// Proofs for `GC.Gen.Run.Invariant`'s collector-step lemmas, over the
 /// definitions in `GC.Gen.Run.Invariant.Defs`.
 ///
-/// Proved: the start of a cycle, an idle slice, a mark slice that stays
-/// marking, and `idle_survives`.  False as stated at ab5bad3d (so not proved):
-///   * `initial_run_invariant`: `SA.init_heap_spec` writes its block header at
-///     `zero_addr` (>= 2048) with wosize `heap_words - 1`, so the block runs
-///     past the heap and `objects zero_addr g` is empty: no shape holds.
-///   * the hand-over slice: a stale remembered slot in a block left white
-///     (unreachable) by marking is sound for `free_stw` but not for
-///     `free_incremental zero_addr`, which counts that block as free.
-///   * sweep slices: nothing says a kept block past the cursor is black, so
-///     a white snapshot object past the cursor satisfies the invariant and
-///     is freed by the slice (B2 fails); B5 also needs garbage blocks to keep
-///     their start size.
-///   * minor collections: a scanned nursery field holding a nursery-looking
-///     word that names no nursery object is copied verbatim, so the empty
-///     remembered set does not cover the result; and at idle a promoted copy
-///     may reuse the address of a block that was garbage at the start, which
-///     the idle clause forbids.
-///   * `idle_lossless`: `phase_shape` allows the walk to end at
-///     `heap_size - 8`; with a start memory whose walk ends at `heap_size`,
-///     the last word is reclaimable at the start but covered by no block now.
+/// Proved here: the start of a cycle, idle slices, mark slices (staying
+/// marking, and the hand-over to the sweep), and `idle_survives`;
+/// `idle_lossless` given `snapshot_in_start` (the snapshot's objects were
+/// allocated blocks of the start memory), which the invariant does not yet
+/// carry.  The sweep's slices are in `GC.Gen.Run.Invariant.SweepSlice`, the
+/// initial state in `GC.Gen.Run.Invariant.Initial`.
 
 module GC.Gen.Run.Invariant.Collector
 
