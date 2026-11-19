@@ -96,6 +96,43 @@ let run_step_maps (#es': list event) (#r1: real_state) (rn': run (initial_state 
            history_of_run (Step rn' e r2 s) == update_history (history_of_run rn') r1 e r2)
   = ()
 
+/// The joint invariant, hidden from the solver in the induction below.
+[@@"opaque_to_smt"]
+let sim_ok (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) : prop =
+  sim_inv r h im ids
+
+let sim_ok_run (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r) (ps: list I.program_event)
+  : Lemma (requires I.wf_program ps /\ executes rn ps)
+          (ensures sim_ok r (history_of_run rn) (I.ideal_run ps) (ids_of_run rn))
+  = simulation rn ps;
+    reveal_opaque (`%sim_ok) sim_ok
+
+/// One program step of the induction.
+let program_case (r1 r2: real_state) (h1 h2: cycle_history) (im im2: I.ideal_memory) (ids1 ids2: block_id_map)
+                 (a1: acc) (e: event) (pe: I.program_event)
+  : Lemma (requires sim_ok r1 h1 im ids1 /\ sim_ok r2 h2 im2 ids2 /\ acc_inv r1 h1 ids1 a1 /\ a1.mem == im /\
+                    I.wf_event im pe /\ translates ids1 e pe /\ step r1 e r2 /\ event_no_young pe /\ step_hyps /\
+                    h2 == update_history h1 r1 e r2 /\ im2 == I.ideal_step im pe /\
+                    ids2 == update_block_ids ids1 (Seq.length im.I.objects) r1 e r2)
+          (ensures acc_inv r2 h2 ids2 (kind_step a1 (kind_of e) (Some pe)))
+  = reveal_opaque (`%sim_ok) sim_ok;
+    program_acc r1 h1 im ids1 a1 e pe r2
+
+/// One collector step of the induction.
+let collector_case (r1 r2: real_state) (h1 h2: cycle_history) (im: I.ideal_memory) (ids1 ids2: block_id_map)
+                   (a1: acc) (e: event)
+  : Lemma (requires sim_ok r1 h1 im ids1 /\ sim_ok r2 h2 im ids2 /\ acc_inv r1 h1 ids1 a1 /\ a1.mem == im /\
+                    ~(is_program_event e) /\ collector_roots_represented ids1 im.I.roots e /\
+                    step r1 e r2 /\ step_hyps /\
+                    h2 == update_history h1 r1 e r2 /\
+                    ids2 == update_block_ids ids1 (Seq.length im.I.objects) r1 e r2)
+          (ensures acc_inv r2 h2 ids2 (kind_step a1 (kind_of e) None))
+  = reveal_opaque (`%sim_ok) sim_ok;
+    match e with
+    | Slice _ -> slice_acc r1 h1 im ids1 a1 e r2
+    | StartCycle _ -> start_acc_lemma r1 h1 im ids1 a1 e r2
+    | Minor _ -> minor_acc_lemma r1 h1 im ids1 a1 e r2
+
 /// **The accounting invariant at the end of every run** that carries out a
 /// well-formed program that stores no young-looking word.
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
@@ -111,7 +148,7 @@ let rec acc_along (#es: list event) (#r: real_state) (rn: run (initial_state ())
     | Step #_ #es' #r1 rn' e r2 s ->
         kinds_snoc es' e;
         run_step_maps rn' e r2 s;
-        simulation rn ps;
+        sim_ok_run rn ps;
         if is_program_event e then
           eliminate exists (ps': list I.program_event) (pe: I.program_event).
             ps == ps' @ [pe] /\ executes rn' ps' /\ translates (ids_of_run rn') e pe
@@ -119,27 +156,21 @@ let rec acc_along (#es: list event) (#r: real_state) (rn: run (initial_state ())
             I.ideal_run_snoc ps' pe;
             program_no_young_snoc ps' pe;
             acc_along rn' ps';
-            simulation rn' ps';
+            sim_ok_run rn' ps';
             executes_alloc_count rn' ps';
             executes_length rn' ps';
             account_snoc empty_acc (kinds es') ps' (kind_of e) pe;
-            let im = I.ideal_run ps' in
-            program_acc r1 (history_of_run rn') im (ids_of_run rn') (account empty_acc (kinds es') ps') e pe r2
+            program_case r1 r2 (history_of_run rn') (history_of_run rn) (I.ideal_run ps') (I.ideal_run ps)
+                         (ids_of_run rn') (ids_of_run rn) (account empty_acc (kinds es') ps') e pe
           end
         else begin
           acc_along rn' ps;
-          simulation rn' ps;
+          sim_ok_run rn' ps;
           executes_alloc_count rn' ps;
           executes_length rn' ps;
           account_snoc empty_acc (kinds es') ps (kind_of e) (I.Read 0 0);
-          let a1 = account empty_acc (kinds es') ps in
-          let h1 = history_of_run rn' in
-          let ids1 = ids_of_run rn' in
-          let im = I.ideal_run ps in
-          match e with
-          | Slice _ -> slice_acc r1 h1 im ids1 a1 e r2
-          | StartCycle _ -> start_acc_lemma r1 h1 im ids1 a1 e r2
-          | Minor _ -> minor_acc_lemma r1 h1 im ids1 a1 e r2
+          collector_case r1 r2 (history_of_run rn') (history_of_run rn) (I.ideal_run ps)
+                         (ids_of_run rn') (ids_of_run rn) (account empty_acc (kinds es') ps) e
         end
 #pop-options
 
@@ -318,7 +349,7 @@ let iso_from_ids (m1 m2: real_memory) (h1 h2: cycle_history) (im: I.ideal_memory
         rep_of m2 h2 im ids2 b' id;
         let o = Seq.index im.I.objects id in
         O.no_scan_tag_val ();
-        assert (I.valid_id im id ==> (Scannable? o.I.fields <==> I.tag_scannable o.I.tag));
+        assert (I.valid_id im id ==> (I.Scannable? o.I.fields <==> I.tag_scannable o.I.tag));
         let w1 = block_field m1 b i in
         let w2 = block_field m2 b' i in
         match o.I.fields with
