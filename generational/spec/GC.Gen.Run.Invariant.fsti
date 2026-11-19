@@ -24,8 +24,8 @@
 ///       - B1 (closed): what is dark is kept, and a kept block points only at
 ///         kept blocks (`MPC.within_snapshot`); the nursery points only at
 ///         kept blocks; every remembered slot is a field of a kept block;
-///       - B2 (kept): every snapshot object is still an allocated block, at
-///         its size in the start memory; so is every garbage block not yet
+///       - B2 (kept): every snapshot object was an allocated block of the
+///         start memory and still is one, at its size there; so is every garbage block not yet
 ///         freed (nor its address reused); the walk ends where it did;
 ///       - B3 (new objects): the blocks allocated since are allocated, and
 ///         not in the snapshot;
