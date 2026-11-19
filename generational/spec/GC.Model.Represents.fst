@@ -22,9 +22,17 @@
 ///   1. **`covers_reachable`**: every object reachable in the ideal memory is
 ///      the id of some block;
 ///   2. **`copies_faithful`**: a block with an id has that object's tag and
-///      size, and its fields hold the object's fields translated: a word is
-///      itself, a pointer `Ptr { head; k }` is the address of `head`'s block
-///      plus `k` words (`value_rep`), a no-scan word is itself;
+///      size, and, if it is a nursery block or a kept major block
+///      (`faithful_block`: the snapshot and what was allocated since), its
+///      fields hold the object's fields translated: a word is itself, a
+///      pointer `Ptr { head; k }` is the address of `head`'s block plus `k`
+///      words (`value_rep`), a no-scan word is itself.  A major block that was
+///      garbage when the cycle started is only required to keep its tag and
+///      size: the sweep may free what it points at before freeing it, so its
+///      fields may name blocks that are gone.  This loses nothing: the
+///      blocks of reachable objects are kept (`Simulation.reachable_in_kept`),
+///      kept blocks and the nursery point only at kept blocks (B1), and idle
+///      every allocated major block is kept;
 ///   3. **`retains_snapshot`**: when the collector is idle, the major heap's
 ///      blocks with an id are exactly the cycle's snapshot and the blocks
 ///      allocated since (`GC.Gen.Run.History.kept`): the memory half.
@@ -81,9 +89,20 @@ let block_of (ids: block_id_map) (id: I.obj_id) : GTot (option block_addr) =
 
 /// The word `w` holds the value `v`: a word is itself; a pointer to `head`,
 /// `k` words in, is the address of `head`'s block plus `k` words.
+///
+/// **A word lies outside both heaps** (`outside_heaps`): it is neither a
+/// major-heap pointer (`is_pointer_field`) nor a nursery address
+/// (`is_young`).  Trusted, as part of the boundary (`translates`,
+/// `roots_represented`): an OCaml integer is tagged (odd), and static data
+/// and code pointers lie outside both heaps.  (Otherwise the collector would
+/// treat the word as a pointer: mark through it, or rewrite it when it
+/// promotes what it seems to point at.)
+let outside_heaps (w: U64.t) : prop =
+  ~(GC.Spec.Fields.is_pointer_field w) /\ ~(is_young w)
+
 let value_rep (ids: block_id_map) (v: I.value) (w: U64.t) : prop =
   match v with
-  | I.Word w' -> w == w'
+  | I.Word w' -> w == w' /\ outside_heaps w'
   | I.Ptr { head; infix_offset } -> exists (b: block_addr). ids b == Some head /\ w == ptr_value b infix_offset
 
 /// The word `w` holds the field content `c` (a raw word is itself).
@@ -98,6 +117,10 @@ let fields_rep (ids: block_id_map) (f: I.ideal_fields) (ws: seq U64.t) : prop =
   (match f with
    | I.Scannable vs -> forall (i: nat). i < Seq.length vs ==> value_rep ids (Seq.index vs i) (Seq.index ws i)
    | I.NoScan ws' -> forall (i: nat). i < Seq.length ws' ==> Seq.index ws i == Seq.index ws' i)
+
+/// The block `b` has the tag and size of the object `o`.
+let block_header_rep (m: real_memory) (b: block_addr) (o: I.ideal_object) : prop =
+  block_tag m b == U64.v o.I.tag /\ block_size m b == o.I.size
 
 /// The block `b` holds the object `o`: same tag, same size, fields
 /// translated.
@@ -118,10 +141,20 @@ let roots_represented (ids: block_id_map) (vs: seq I.value) (rs: seq U64.t) : pr
 let covers_reachable (im: I.ideal_memory) (ids: block_id_map) : prop =
   forall (id: I.obj_id). I.reachable im id ==> (exists (b: block_addr). ids b == Some id)
 
-/// 2. A block with an id holds a faithful copy of that object.
-let copies_faithful (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) : prop =
+/// The blocks whose fields must be faithful: the nursery's, and the kept
+/// major blocks.
+let faithful_block (h: cycle_history) (b: block_addr) : prop =
+  match b with
+  | Major x -> kept h x
+  | Nursery _ -> True
+
+/// 2. A block with an id has that object's tag and size, and, if it is a
+/// nursery block or kept, holds a faithful copy of it.
+let copies_faithful (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) : prop =
   forall (b: block_addr) (id: I.obj_id).
-    ids b == Some id ==> I.valid_id im id /\ block_rep m ids b (Seq.index im.I.objects id)
+    ids b == Some id ==>
+      I.valid_id im id /\ block_header_rep m b (Seq.index im.I.objects id) /\
+      (faithful_block h b ==> block_rep m ids b (Seq.index im.I.objects id))
 
 /// 4. Idle, the major blocks with an id are exactly the snapshot and what was
 /// allocated since.
@@ -131,7 +164,7 @@ let retains_snapshot (r: real_state) (h: cycle_history) (ids: block_id_map) : pr
 /// **The real state represents the ideal memory**, through `ids`, relative
 /// to the cycle's history `h`.
 let represents (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) : prop =
-  keyed r.memory ids /\ copies_faithful r.memory im ids /\ covers_reachable im ids /\
+  keyed r.memory ids /\ copies_faithful r.memory h im ids /\ covers_reachable im ids /\
   retains_snapshot r h ids
 
 /// ---------------------------------------------------------------------------
