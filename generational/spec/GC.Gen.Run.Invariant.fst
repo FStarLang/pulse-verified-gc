@@ -15,7 +15,7 @@ let write_keeps_run_invariant r h b i v r' = admit ()
 
 let minor_keeps_run_invariant r h roots r' = admit ()
 
-let start_keeps_run_invariant r h roots r' = admit ()
+let start_keeps_run_invariant r h roots r' = GC.Gen.Run.Invariant.Collector.start_keeps r h roots r'
 
 let slice_keeps_run_invariant r h budget r' = admit ()
 
@@ -39,7 +39,7 @@ let alloc_phase_major_alloc_step r tag size init = admit ()
 
 let idle_lossless r h = admit ()
 
-let idle_survives r h = admit ()
+let idle_survives r h = GC.Gen.Run.Invariant.Collector.idle_survives r h
 
 let cycle_lossless #es #r rn =
   initial_run_invariant ();
