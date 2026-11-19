@@ -22,7 +22,10 @@
 ///     the program cannot reach a dead object;
 ///   * the cycle (`ccycle`): marking, then the hand-over (akhil's marking
 ///     invariant, mark moves to nothing grey) and the sweep from the page
-///     state marking left.
+///     state marking left;
+///   * plan §29: the program's allocations with any tag but the infix tag
+///     (`CAllocT`, `CSAllocT`), and minor collections once the cycle is
+///     idle again (`CSIMinor`).
 ///
 /// **`ccycle_inv`**: every state of a run is in the page invariant of its
 /// phase (`cinv`: `PMP.mark_inv`, `MS.pages_ok_sw`, `PA.inv I.Idle`), and
@@ -95,6 +98,10 @@ module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module Promote = GC.Spec.Pages.Promote
 module PMk = GC.Spec.Pages.Promote.Mark
 module PSw = GC.Spec.Pages.Promote.Sweep
+module PId = GC.Spec.Pages.Promote.Idle
+module AT = GC.Spec.Pages.AllocTag
+module ATO = GC.Spec.Pages.AllocTagOk
+module TF = GC.Spec.Pages.Cycle.AllocTagged
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 
@@ -209,6 +216,35 @@ let alloc_mark_inv (g: heap) (st: pstate) (wz: nat) (g1: heap) (st1: pstate) (ob
     assert (I.fields_written g1 g' obj)
 #pop-options
 
+/// The program's writes to the fields of a scannable new object point
+/// nowhere into its own body (`AT.away`; plan §29.2).
+let away_body (g1 g': heap) (x: obj_addr) : prop =
+  ~(is_no_scan x g1) ==>
+  (forall (a: hp_addr). U64.v x <= U64.v a /\ U64.v a < U64.v x + U64.v (wosize_of_object x g1) * 8 ==>
+     AT.away x (U64.v (wosize_of_object x g1)) (read_word g' a))
+
+/// **An allocation with a tag while marking and its initialising writes
+/// keep the page `Marking` invariant**, for any values the snapshot allows
+/// that point nowhere into the new object's body.
+#push-options "--z3rlimit 40"
+let alloc_mark_tag_inv (g: heap) (st: pstate) (wz: nat) (tag: AT.tag_t)
+                       (g1: heap) (st1: pstate) (obj: obj_addr)
+                       (g': heap) (w: MC.init_writes obj g1 g') (s: obj_addr -> prop)
+  : Lemma (requires PMP.mark_inv g st /\ U64.v tag <> 249 /\
+                    AT.alloc_tag I.Marking g st wz tag == (g1, st1, (obj <: U64.t)) /\
+                    SPM.fields_storable (MPC.outside_snapshot s) g' obj /\ away_body g1 g' obj)
+          (ensures PMP.mark_inv g' st1)
+  = ATO.alloc_tag_marking g st wz tag;
+    init_frame w;
+    wosize_of_object_spec obj g1;
+    wosize_of_object_spec obj g';
+    tag_of_object_spec obj g1; tag_of_object_spec obj g';
+    is_no_scan_spec obj g1; is_no_scan_spec obj g';
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (body_ok s g' obj));
+    assert (AT.fields_written_away free_stw g1 g' obj);
+    TF.mark_tag_inv g st wz tag g1 st1 obj g'
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// The runs
 /// ---------------------------------------------------------------------------
@@ -247,6 +283,18 @@ noeq type cmarking (g0: heap) (rs: seq U64.t) : heap -> pstate -> MP.scan_pos ->
       g': heap -> MC.init_writes obj g1 g' ->
       squash (SPM.fields_storable (MPC.outside_snapshot (MC.snapshot g0 rs (SPC.with_new since obj))) g' obj) ->
       cmarking g0 rs g' st1 sp (SPC.with_new since obj)
+  // The same with a tag, any but the infix tag (plan §29.2), the values
+  // also pointing nowhere into the new object's body.
+  | CAllocT :
+      #g: heap -> #st: pstate -> #sp: MP.scan_pos -> #since: (obj_addr -> prop) ->
+      cmarking g0 rs g st sp since ->
+      minor: minor_state -> wz: nat -> tag: AT.tag_t -> g1: heap -> st1: pstate -> obj: obj_addr ->
+      squash (MP.marking_inv g (GMM.nursery_refs minor) sp /\ U64.v tag <> 249 /\
+              AT.alloc_tag I.Marking g st wz tag == (g1, st1, (obj <: U64.t))) ->
+      g': heap -> MC.init_writes obj g1 g' ->
+      squash (SPM.fields_storable (MPC.outside_snapshot (MC.snapshot g0 rs (SPC.with_new since obj))) g' obj /\
+              away_body g1 g' obj) ->
+      cmarking g0 rs g' st1 sp (SPC.with_new since obj)
   // A minor collection (plan §27.4), its copies allocated black with their
   // tags.
   | CMinor :
@@ -281,6 +329,16 @@ noeq type csweep (g0: heap) : heap -> pstate -> I.phase -> (obj_addr -> prop) ->
       g': heap ->
       squash (I.fields_written_with (MS.free_sw st.pm) g1 g' obj) ->
       csweep g0 g' st1 I.Sweeping (SPC.with_new since obj)
+  // The same with a tag, any but the infix tag (plan §29.2), and the
+  // caller's writes as `AT.fields_written_away` allows.
+  | CSAllocT :
+      #g: heap -> #st: pstate -> #since: (obj_addr -> prop) ->
+      csweep g0 g st I.Sweeping since ->
+      wz: nat -> tag: AT.tag_t -> g1: heap -> st1: pstate -> obj: obj_addr ->
+      squash (U64.v tag <> 249 /\ AT.alloc_tag I.Sweeping g st wz tag == (g1, st1, (obj <: U64.t))) ->
+      g': heap ->
+      squash (AT.fields_written_away (MS.free_sw st.pm) g1 g' obj) ->
+      csweep g0 g' st1 I.Sweeping (SPC.with_new since obj)
   // A program write: into a block in use, of a value that is not free.
   | CSWrite :
       #g: heap -> #st: pstate -> #since: (obj_addr -> prop) ->
@@ -302,6 +360,15 @@ noeq type csweep (g0: heap) : heap -> pstate -> I.phase -> (obj_addr -> prop) ->
       csweep g0 g st I.Sweeping since ->
       squash (PMP.all_swept st) ->
       csweep g0 g st I.Idle since
+  // A minor collection once the cycle is idle (plan §29.1), free meaning
+  // blue.
+  | CSIMinor :
+      #g: heap -> #st: pstate -> #since: (obj_addr -> prop) ->
+      csweep g0 g st I.Idle since ->
+      minor: minor_state -> roots: seq U64.t ->
+      squash (GenInv.minor_heap_shape minor /\ GenInv.minor_major_fields_not_free free_stw minor g) ->
+      csweep g0 (PId.icollect minor g st roots).Promote.rmajor (PId.icollect minor g st roots).Promote.rst
+             I.Idle (PId.with_made since g (PId.icollect minor g st roots).Promote.rmajor)
 
 /// The page state a sweep run started from.
 #push-options "--ifuel 1"
@@ -312,9 +379,11 @@ let rec cstart_st (#gh #g: heap) (#st: pstate) (#ph: I.phase) (#since: obj_addr 
     | CSStart st0 -> st0
     | CSStep r1 _ -> cstart_st r1
     | CSAlloc r1 _ _ _ _ _ _ _ -> cstart_st r1
+    | CSAllocT r1 _ _ _ _ _ _ _ _ -> cstart_st r1
     | CSWrite r1 _ _ _ _ -> cstart_st r1
     | CSMinor r1 _ _ _ -> cstart_st r1
     | CSEnd r1 _ -> cstart_st r1
+    | CSIMinor r1 _ _ _ -> cstart_st r1
 #pop-options
 
 /// **The cycle**: marking; or marking, the mark moves that leave nothing
@@ -371,6 +440,10 @@ let rec to_pmarking (#g0: heap) (#rs: seq U64.t) (#g: heap) (#st: pstate) (#sp: 
         let r1' = to_pmarking r1 in
         alloc_mark_inv g1 st1 wz ga sa obj g' w (MC.snapshot g0 rs (SPC.with_new since1 obj));
         PM.PAlloc r1' minor wz ga sa obj () g' w ()
+    | CAllocT #_ #_ #g1 #st1 #sp1 #since1 r1 minor wz tag ga sa obj _ g' w _ ->
+        let r1' = to_pmarking r1 in
+        alloc_mark_tag_inv g1 st1 wz tag ga sa obj g' w (MC.snapshot g0 rs (SPC.with_new since1 obj));
+        PM.PAllocT r1' minor wz tag ga sa obj () g' w ()
     | CMinor #_ #_ #g1 #st1 #sp1 #since1 r1 minor roots _ ->
         let r1' = to_pmarking r1 in
         PM.nursery_stw minor g1 (MC.snapshot g0 rs since1);
@@ -407,6 +480,10 @@ let rec to_psweep (#gh #g: heap) (#st: pstate) (#ph: I.phase) (#since: obj_addr 
         let r1' = to_psweep r1 in
         MA.alloc_sw_ok g1 st1 wz;
         PS.SAlloc r1' wz ga sa obj () g' ()
+    | CSAllocT #_ #g1 #st1 #since1 r1 wz tag ga sa obj _ g' _ ->
+        let r1' = to_psweep r1 in
+        TF.sw_tag_inv g1 st1 wz tag ga sa obj g';
+        PS.SAllocT r1' wz tag ga sa obj () g' ()
     | CSWrite #_ #g1 #st1 #since1 r1 x a v _ ->
         let r1' = to_psweep r1 in
         PW.swrite_keeps g1 st1 x a v;
@@ -418,6 +495,13 @@ let rec to_psweep (#gh #g: heap) (#st: pstate) (#ph: I.phase) (#since: obj_addr 
     | CSEnd #_ #g1 #st1 #since1 r1 _ ->
         let r1' = to_psweep r1 in
         PS.SEnd r1' ()
+    | CSIMinor #_ #g1 #st1 #since1 r1 minor roots _ ->
+        let r1' = to_psweep r1 in
+        MS2.sw_end g1 st1;
+        PId.i_facts minor g1 st1 roots;
+        let r = PId.icollect minor g1 st1 roots in
+        PId.idle_sw r.Promote.rmajor r.Promote.rst;
+        PS.SIMinor r1' minor roots ()
 #pop-options
 
 /// **A run of the cycle**, with the page invariant at its end.

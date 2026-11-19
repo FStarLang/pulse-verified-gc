@@ -15,13 +15,15 @@
 ///   * a unit swept (`sweep_unit`, `SweepAll.step`) is the event `CSStep`;
 ///     a slice (`sweep_slice`, `Incr.slice_from`) is a sequence of them
 ///     (`slice_events`); an allocation (`alloc_ph` with tag 0, `PA.alloc
-///     I.Sweeping`) and the caller's writes are `CSAlloc`; the end, once the
+///     I.Sweeping`) and the caller's writes are `CSAlloc`, and with any tag
+///     but 249 (`AT.alloc_tag I.Sweeping`) `CSAllocT`; the end, once the
 ///     cursor has passed every page (`Incr.cursor_end`), is `CSEnd`; the
 ///     start is `CSStart` at `StartSweep.start_sweep`, which the Pulse
 ///     `start_sweep` computes;
 ///   * so a run extended by any of them, in any order, is a run
-///     (`cyc_unit`, `cyc_slice`, `cyc_alloc`, `cyc_end`), and the theorems of
-///     the cycle (`Carried.ccycle_inv`, `ccycle_correct`) hold of it.
+///     (`cyc_unit`, `cyc_slice`, `cyc_alloc`, `cyc_alloc_t`, `cyc_end`), and
+///     the theorems of the cycle (`Carried.ccycle_inv`, `ccycle_correct`)
+///     hold of it.
 
 module GC.Spec.Pages.Cycle.Incr
 
@@ -45,6 +47,7 @@ module SPC = GC.Spec.SweepPhase.Completeness
 module GC_ = GC.Gen.Cycle
 module Inc = GC.Spec.Pages.Incr
 module CC = GC.Spec.Pages.Cycle.Carried
+module AT = GC.Spec.Pages.AllocTag
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
@@ -116,6 +119,13 @@ let cstart_alloc (#gh #g: heap) (#st: pstate) (#since: obj_addr -> prop)
                  (g': heap) (h2: squash (I.fields_written_with (MS.free_sw st.pm) g1 g' obj))
   : Lemma (CC.cstart_st (CC.CSAlloc r wz g1 st1 obj h1 g' h2) == CC.cstart_st r) = ()
 
+let cstart_alloc_t (#gh #g: heap) (#st: pstate) (#since: obj_addr -> prop)
+                   (r: CC.csweep gh g st I.Sweeping since)
+                   (wz: nat) (tag: AT.tag_t) (g1: heap) (st1: pstate) (obj: obj_addr)
+                   (h1: squash (U64.v tag <> 249 /\ AT.alloc_tag I.Sweeping g st wz tag == (g1, st1, (obj <: U64.t))))
+                   (g': heap) (h2: squash (AT.fields_written_away (MS.free_sw st.pm) g1 g' obj))
+  : Lemma (CC.cstart_st (CC.CSAllocT r wz tag g1 st1 obj h1 g' h2) == CC.cstart_st r) = ()
+
 let cstart_end (#gh #g: heap) (#st: pstate) (#since: obj_addr -> prop)
                (r: CC.csweep gh g st I.Sweeping since) (h: squash (PMP.all_swept st))
   : Lemma (CC.cstart_st (CC.CSEnd r h) == CC.cstart_st r) = ()
@@ -150,6 +160,20 @@ let cyc_alloc (#g0: heap) (#rs: seq U64.t) (#g: heap) (#st: pstate) (#since: obj
     | CC.CSweep #_ #_ #_ #_ #_ #sm rm minor gh sp' h1 #_ #_ #_ #ss sr h2 ->
       cstart_alloc sr wz g1 st1 obj () g' ();
       (| GC_.union sm (SPC.with_new ss obj), CC.CSweep rm minor gh sp' h1 (CC.CSAlloc sr wz g1 st1 obj () g' ()) () |)
+
+/// **An allocation with a tag** (`alloc_ph`, any tag but 249, mid-sweep)
+/// and the caller's writes to the new object's fields (plan §29.2).
+let cyc_alloc_t (#g0: heap) (#rs: seq U64.t) (#g: heap) (#st: pstate) (#since: obj_addr -> prop)
+                (r: CC.ccycle g0 rs g st I.Sweeping since)
+                (wz: nat) (tag: AT.tag_t) (g1: heap) (st1: pstate) (obj: obj_addr) (g': heap)
+  : Ghost (s: (obj_addr -> prop) & CC.ccycle g0 rs g' st1 I.Sweeping s)
+          (requires U64.v tag <> 249 /\ AT.alloc_tag I.Sweeping g st wz tag == (g1, st1, (obj <: U64.t)) /\
+                    AT.fields_written_away (MS.free_sw st.pm) g1 g' obj)
+          (ensures fun _ -> True)
+  = match r with
+    | CC.CSweep #_ #_ #_ #_ #_ #sm rm minor gh sp' h1 #_ #_ #_ #ss sr h2 ->
+      cstart_alloc_t sr wz tag g1 st1 obj () g' ();
+      (| GC_.union sm (SPC.with_new ss obj), CC.CSweep rm minor gh sp' h1 (CC.CSAllocT sr wz tag g1 st1 obj () g' ()) () |)
 
 /// **The end**, once the cursor has passed every page.
 let cyc_end (#g0: heap) (#rs: seq U64.t) (#g: heap) (#st: pstate) (#since: obj_addr -> prop)

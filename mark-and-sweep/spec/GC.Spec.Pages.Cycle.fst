@@ -18,11 +18,13 @@
 /// state).  `cycle_account` is his with the page sweep's definition of free
 /// mid-sweep (`free_sw`) in place of his cursor's.
 ///
-/// **These runs have no minor collection.**  akhil's runs have a `Minor`
-/// event in each phase (a minor collection, which promotes into the major
-/// heap); the page cycle gets it with a page promotion (plan §23.6), not
-/// done yet.  Until then the theorems here cover fewer runs than his: those
-/// in which no minor collection happens during the major cycle.
+/// **Minor collections and tags.**  Like akhil's runs, these have a minor
+/// collection while marking and mid-sweep (plan §27), with a page
+/// promotion; and, past his, once the cycle is idle again (`PS.SIMinor`,
+/// plan §29.1), so a run may go on after its sweep with minor collections
+/// until the next cycle starts, and the theorems hold at its end.  The
+/// program's allocations take any tag but the infix tag (`PM.PAllocT`,
+/// `PS.SAllocT`, plan §29.2), as his do, besides tag 0.
 ///
 /// The word-by-word proof is akhil's (`GC.Gen.Cycle.fst`: `parts`,
 /// `start_words`, `reach_words`, `handover_words`, `new_words`, `words`),
@@ -71,9 +73,11 @@ let rec sweep_start_st (#gh #g: heap) (#st: pstate) (#ph: I.phase) (#since: obj_
     | PS.SStart st0 _ -> st0
     | PS.SStep r1 _ _ -> sweep_start_st r1
     | PS.SAlloc r1 _ _ _ _ _ _ _ -> sweep_start_st r1
+    | PS.SAllocT r1 _ _ _ _ _ _ _ _ -> sweep_start_st r1
     | PS.SWrite r1 _ _ _ _ -> sweep_start_st r1
     | PS.SMinor r1 _ _ _ -> sweep_start_st r1
     | PS.SEnd r1 _ -> sweep_start_st r1
+    | PS.SIMinor r1 _ _ _ -> sweep_start_st r1
 #pop-options
 
 /// **A run of the incremental major cycle with the page allocator**, begun

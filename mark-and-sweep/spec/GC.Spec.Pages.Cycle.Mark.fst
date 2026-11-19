@@ -4,8 +4,7 @@
 ///
 /// Plan §23.2.  A run of the marking phase of the incremental cycle with the
 /// page allocator, as akhil's `GC.Gen.MarkPhase.Cycle.marking` with the page
-/// state `st` in place of the free-list head, and without minor
-/// collections (stage 1 of plan §23.9: promotion is not done yet):
+/// state `st` in place of the free-list head:
 ///
 ///   * `PStart`: root darkening (akhil's `MStart.darkened`) from the page
 ///     `Idle` invariant with the nursery empty -- nothing new;
@@ -14,6 +13,9 @@
 ///   * `PAlloc`: an allocation through the page allocator at `Marking`
 ///     (black), and the writes that initialise the new object
 ///     (akhil's `MC.init_writes`) -- `since` and the new object;
+///   * `PAllocT`: the same with any tag but the infix tag (plan §29.2),
+///     through the page allocator with a tag (`AT.alloc_tag`), as akhil's
+///     `MC.Alloc` takes one;
 ///   * `PMinor`: a minor collection (plan §27.4), its copies allocated
 ///     black by the page allocator with their tags
 ///     (`GC.Spec.Pages.Promote.Mark`) -- `since` and the blocks it made.
@@ -76,6 +78,8 @@ module CS = GC.Spec.Pages.Cycle.State
 module GenInv = GC.Gen.HeapInvariant
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module PMk = GC.Spec.Pages.Promote.Mark
+module AT = GC.Spec.Pages.AllocTag
+module TF = GC.Spec.Pages.Cycle.AllocTagged
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 
@@ -127,6 +131,17 @@ noeq type pmarking (g0: heap) (rs: seq U64.t) : heap -> pstate -> MP.scan_pos ->
       pmarking g0 rs g st sp since ->
       minor: minor_state -> wz: nat -> g1: heap -> st1: pstate -> obj: obj_addr ->
       squash (pmark_ok minor g st sp /\ PA.alloc I.Marking g st wz == (g1, st1, (obj <: U64.t))) ->
+      g': heap -> MC.init_writes obj g1 g' ->
+      squash (SPM.fields_storable (MPC.outside_snapshot (MC.snapshot g0 rs (SPC.with_new since obj))) g' obj) ->
+      pmarking g0 rs g' st1 sp (SPC.with_new since obj)
+  // The same with a tag, any but the infix tag (plan §29.2): the page
+  // allocator with a tag (`AT.alloc_tag`), as akhil's `MC.Alloc`.
+  | PAllocT :
+      #g: heap -> #st: pstate -> #sp: MP.scan_pos -> #since: (obj_addr -> prop) ->
+      pmarking g0 rs g st sp since ->
+      minor: minor_state -> wz: nat -> tag: AT.tag_t -> g1: heap -> st1: pstate -> obj: obj_addr ->
+      squash (pmark_ok minor g st sp /\ U64.v tag <> 249 /\
+              AT.alloc_tag I.Marking g st wz tag == (g1, st1, (obj <: U64.t))) ->
       g': heap -> MC.init_writes obj g1 g' ->
       squash (SPM.fields_storable (MPC.outside_snapshot (MC.snapshot g0 rs (SPC.with_new since obj))) g' obj) ->
       pmarking g0 rs g' st1 sp (SPC.with_new since obj)
@@ -807,6 +822,49 @@ let alloc_inv (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop)
     MPC.within_snapshot_ext s1 s' g'
 #pop-options
 
+/// The same with a tag.
+#push-options "--z3rlimit 30"
+let alloc_inv_t (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop)
+              (minor: minor_state) (g: heap) (st: pstate) (sp: MP.scan_pos)
+              (wz: nat) (tag: AT.tag_t) (g1: heap) (st1: pstate) (obj: obj_addr)
+              (g': heap) (w: MC.init_writes obj g1 g')
+  : Lemma (requires pmark_run_inv g0 rs since g sp /\ pmark_ok minor g st sp /\
+                    U64.v tag <> 249 /\ AT.alloc_tag I.Marking g st wz tag == (g1, st1, (obj <: U64.t)) /\
+                    SPM.fields_storable (MPC.outside_snapshot (MC.snapshot g0 rs (SPC.with_new since obj))) g' obj)
+          (ensures pmark_run_inv g0 rs (SPC.with_new since obj) g' sp)
+  = let r = GMC.reachable_at_start g0 rs in
+    let s = MC.snapshot g0 rs since in
+    let s1 = SPC.with_new s obj in
+    let s' = MC.snapshot g0 rs (SPC.with_new since obj) in
+    assert (MP.marking_inv g r sp);
+    TF.mark_alloc_tag_facts g st wz tag;
+    assert (alloc_facts g g1 obj);
+    account_of_facts s g g1 obj;
+    fresh_of_facts g g1 r sp obj;
+    init_inv w s1 r sp;
+    let keep (y: obj_addr)
+      : Lemma (requires in_use free_stw g y)
+              (ensures in_use free_stw g' y /\ wosize_of_object y g' == wosize_of_object y g /\
+                       (is_black y g ==> is_black y g'))
+      = MM.header_kept_facts g g1 y;
+        size_of_header g g' y;
+        MM.header_kept_facts g g' y
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires keep);
+    let old (y: obj_addr) : Lemma (requires since y) (ensures Seq.mem y (objects zero_addr g') /\ is_black y g')
+      = Mark.colors_exclusive y g; keep y
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires old);
+    Mark.colors_exclusive obj g1;
+    MM.header_kept_facts g1 g' obj;
+    assert (Seq.mem obj (objects zero_addr g') /\ is_black obj g');
+    let same (h: heap) (y: obj_addr) : Lemma (MPC.outside_snapshot s1 h y == MPC.outside_snapshot s' h y) = () in
+    FStar.Classical.forall_intro_2 same;
+    assert (SPM.fields_storable (MPC.outside_snapshot s1) g' obj);
+    MPC.account_fresh_close s1 g' obj;
+    MPC.within_snapshot_ext s1 s' g'
+#pop-options
+
 /// The nursery's major pointers, in the snapshot, are not blue.
 let nursery_stw (minor: minor_state) (g: heap) (s: obj_addr -> prop)
   : Lemma (requires GenInv.minor_major_fields_not_free (MPC.outside_snapshot s) minor g)
@@ -880,6 +938,9 @@ let rec pmark_run_account (#g0: heap) (#rs: seq U64.t) (#g: heap) (#st: pstate) 
     | PAlloc #_ #_ #g1 #st1 #sp1 #since1 r1 minor wz ga sa obj _ g' w _ ->
         pmark_run_account r1;
         alloc_inv g0 rs since1 minor g1 st1 sp1 wz ga sa obj g' w
+    | PAllocT #_ #_ #g1 #st1 #sp1 #since1 r1 minor wz tag ga sa obj _ g' w _ ->
+        pmark_run_account r1;
+        alloc_inv_t g0 rs since1 minor g1 st1 sp1 wz tag ga sa obj g' w
     | PMinor #_ #_ #g1 #st1 #sp1 #since1 r1 minor roots _ ->
         pmark_run_account r1;
         minor_inv g0 rs since1 minor g1 st1 sp1 roots

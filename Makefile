@@ -147,6 +147,7 @@ ROOT_MODULES = \
   mark-and-sweep/spec/GC.Spec.Pages.Cycle.MinorVacuity2.fst \
   mark-and-sweep/spec/GC.Spec.Pages.MidSweepVacuity.fst \
   mark-and-sweep/spec/GC.Spec.Pages.IncrVacuity.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Cycle.IdleVacuity.fst \
   mark-and-sweep/impl/GC.Impl.Pages.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst \
