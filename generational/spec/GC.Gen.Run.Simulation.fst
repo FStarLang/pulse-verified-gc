@@ -91,12 +91,8 @@ let reads_agree #es #r rn ps obj i =
   simulation rn ps;
   reads_agree_state r (history_of_run rn) (I.ideal_run ps) (ids_of_run rn) obj i
 
-/// Blocked since stage 0d: a nursery step now asks for the nursery frame
-/// (with `GenInv.minor_heap_shape`, a trusted mutator obligation) and that
-/// no major infix pointer be stored into the nursery, which a well-formed
-/// program does not give.  With those as a hypothesis (`nursery_trusted`) it
-/// is `GC.Gen.Run.Simulation.Enabled.program_step_enabled_given`.
-let program_step_enabled r h im ids e pe = admit ()
+let program_step_enabled r h im ids e pe =
+  GC.Gen.Run.Simulation.Enabled.program_step_enabled_given r h im ids e pe
 
 let full_gc_collects #es0 #rs #rs' #r rn ps = admit ()
 

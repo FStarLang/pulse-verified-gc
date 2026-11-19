@@ -52,7 +52,10 @@ let nursery_after_store (r: real_state) (o: U64.t) (i: nat) (v: U64.t) : minor_s
 /// not give: the nursery after the step has the frame -- in particular its
 /// shape, `GenInv.minor_heap_shape`, the trusted mutator obligation -- and
 /// no major interior (infix) pointer is stored into a scannable nursery
-/// object (`nursery_storable`, a provisional restriction of 0d).
+/// object (`nursery_storable`, a known provisional restriction of 0d,
+/// pending the decision on lifting it).  A hypothesis of
+/// `GC.Gen.Run.Simulation.program_step_enabled`: the nursery steps are on
+/// the trusted boundary.
 let nursery_trusted (r: real_state) (e: event) : prop =
   match e with
   | Alloc InNursery tag size init ->

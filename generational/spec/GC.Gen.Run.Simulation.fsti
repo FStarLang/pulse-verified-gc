@@ -242,9 +242,21 @@ let room_for (r: real_state) (e: event) : prop =
 /// value, while marking one the marker will reach), the initialising
 /// writes' values, the nursery's -- follow from the program's
 /// well-formedness and the invariant.
+///
+/// **Trusted, for the nursery steps** (`GC.Gen.Run.Simulation.Enabled.nursery_trusted`):
+/// nursery allocation and nursery stores are modelled steps on the trusted
+/// boundary, so what they leave is assumed rather than derived: the
+/// nursery's frame and shape (`GenInv.minor_heap_shape`: a stored word does
+/// not read as a nursery header -- the mutator obligation of
+/// `GC.Gen.MinorHeap`), and -- a **known provisional restriction**, pending
+/// the decision on lifting it -- that no major interior (infix) pointer is
+/// stored into a scannable nursery object (`Step.nursery_storable`; real
+/// OCaml may store one, e.g. a pointer to one of several mutually recursive
+/// closures).  It says nothing about the other steps.
 val program_step_enabled (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (e: event) (pe: I.program_event)
-  : Lemma (requires sim_inv r h im ids /\ I.wf_event im pe /\ translates r.memory ids e pe /\ room_for r e)
+  : Lemma (requires sim_inv r h im ids /\ I.wf_event im pe /\ translates r.memory ids e pe /\ room_for r e /\
+                    GC.Gen.Run.Simulation.Enabled.nursery_trusted r e)
           (ensures exists (r': real_state). step r e r')
 
 /// ---------------------------------------------------------------------------
