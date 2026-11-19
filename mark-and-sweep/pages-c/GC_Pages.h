@@ -62,6 +62,8 @@ uint64_t alloc_white(heap_t heap, pstate_t t, uint64_t wz);
 
 uint64_t alloc(heap_t heap, pstate_t t, uint64_t wz, color_sem col);
 
+uint64_t alloc_tag(heap_t heap, pstate_t t, uint64_t wz, color_sem col, uint64_t tag);
+
 void start_sweep(pstate_t t);
 
 void sweep_all(heap_t heap, pstate_t t);

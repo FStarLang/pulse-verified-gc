@@ -33,10 +33,17 @@ VINC = -I.. -I../internal -I$(SNAP) -I$(SNAP)/krmllib -I$(SNAP)/krmllib/krml -I$
 bench_verified: bench.c $(VSRC) ../GC_Pages.h
 	$(CC) $(OPT) $(VINC) -Wno-everything bench.c $(VSRC) -o $@
 
+# The same with the tagged allocator (alloc_tag) in place of alloc_white.
+bench_tagged: bench.c $(VSRC) ../GC_Pages.h
+	$(CC) $(OPT) $(VINC) -Wno-everything -DTAGGED bench.c $(VSRC) -o $@
+
 bench: all
 	@./bench.sh $(ROUNDS) $(REPS)
 
+bench-tagged: bench_proto bench_tagged
+	@VERIFIED=bench_tagged ./bench.sh $(ROUNDS) $(REPS)
+
 clean:
-	rm -rf _proto bench_proto bench_verified
+	rm -rf _proto bench_proto bench_verified bench_tagged
 
 .PHONY: all bench clean

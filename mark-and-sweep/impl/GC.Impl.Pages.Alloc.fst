@@ -42,6 +42,8 @@ module AP = GC.Spec.Pages.AllocPhase
 module PL = GC.Impl.Pages.Pool
 module LI = GC.Impl.Pages.Large
 module Rd = GC.Impl.Pages.Ready
+module AT = GC.Spec.Pages.AllocTag
+module IO = GC.Impl.Object
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
@@ -102,6 +104,55 @@ fn alloc (heap: heap_t) (t: pstate_t) (wz: U64.t) (col: Hd.color_sem) (#st: eras
       let a = U64.sub o 8UL;
       let h = hdr_at heap a;
       wr heap a (recolour_hdr h col);
+      o
+    } else {
+      o
+    }
+  }
+}
+
+/// ---------------------------------------------------------------------------
+/// With a tag (plan §27.1)
+/// ---------------------------------------------------------------------------
+
+/// The header `h`, at its wosize, with colour `c` and tag `tag`.
+inline_for_extraction noextract
+let tag_hdr (h: U64.t) (c: Hd.color_sem) (tag: U64.t{U64.v tag < 256}) : r: U64.t{r == AT.tag_hdr h c tag}
+  = let wz = get_wosize h in
+    IO.makeHeader_eq_pack_header wz c tag;
+    SO.makeHeader_is_pack_header64 wz c tag;
+    let r = IO.makeHeader wz c tag in
+    U64.v_inj r (SO.makeHeader wz c tag);
+    r
+
+let col_tag_unfold (col: Hd.color_sem) (tag: AT.tag_t) (g: Base.heap) (st: pstate) (wz: nat)
+  : Lemma (AT.alloc_col_tag col tag g st wz ==
+           (let (g', st', o) = A.alloc g st wz in
+            if o = 0UL then (g', st', o)
+            else if U64.v o >= 8
+            then (B.wr g' (U64.v o - 8) (AT.tag_hdr (Sh.hdr g' (U64.v o - 8)) col tag), st', o)
+            else (g', st', o)))
+  = ()
+
+/// **The page allocator with a colour and a tag**, as OCaml's
+/// `caml_alloc_shr (wosize, tag)`: the new header is written once more,
+/// with both (`GC.Spec.Pages.AllocTag.alloc_col_tag`).
+fn alloc_tag (heap: heap_t) (t: pstate_t) (wz: U64.t) (col: Hd.color_sem) (tag: U64.t{U64.v tag < 256})
+  (#st: erased pstate)
+  requires is_heap heap 'g ** pages_st t st ** pure (Rd.heads_ready st)
+  returns o: U64.t
+  ensures exists* g' st'. is_heap heap g' ** pages_st t st' **
+          pure ((g', st', o) == AT.alloc_col_tag col tag 'g st (U64.v wz))
+{
+  col_tag_unfold col tag 'g st (U64.v wz);
+  let o = alloc_white heap t wz;
+  if (o = 0UL) {
+    0UL
+  } else {
+    if (U64.gte o 8UL) {
+      let a = U64.sub o 8UL;
+      let h = hdr_at heap a;
+      wr heap a (tag_hdr h col tag);
       o
     } else {
       o

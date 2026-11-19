@@ -1907,6 +1907,23 @@ uint64_t alloc(heap_t heap, pstate_t t, uint64_t wz, color_sem col)
     return o;
 }
 
+uint64_t alloc_tag(heap_t heap, pstate_t t, uint64_t wz, color_sem col, uint64_t tag)
+{
+  uint64_t o = alloc_white(heap, t, wz);
+  if (o == 0ULL)
+    return 0ULL;
+  else if (o >= 8ULL)
+  {
+    uint64_t a = o - 8ULL;
+    uint64_t h = hdr_at(heap, a);
+    uint64_t wz1 = getWosize(h);
+    wr(heap, a, makeHeader(wz1, col, tag));
+    return o;
+  }
+  else
+    return o;
+}
+
 void start_sweep(pstate_t t)
 {
   start_epoch(t);

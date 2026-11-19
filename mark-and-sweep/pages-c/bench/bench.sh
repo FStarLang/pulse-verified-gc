@@ -9,7 +9,7 @@ cd "$(dirname "$0")"
 for w in small mixed large sweep realloc reallocS; do
   for i in $(seq "$ROUNDS"); do
     ./bench_proto "$REPS" "$w" | sed 's/^/proto /'
-    ./bench_verified "$REPS" "$w" | sed 's/^/verified /'
+    ./${VERIFIED:-bench_verified} "$REPS" "$w" | sed 's/^/verified /'
   done
 done | awk '
   { key = $1 " " $2; v[key] = v[key] " " $3; unit[$2] = $4; order[$2] = ++n }

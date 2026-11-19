@@ -74,10 +74,20 @@ static void a_init(void) {
     }
     init(heap, st);
 }
+#ifdef TAGGED
+/* The allocator with a tag (alloc_tag, plan section 27.1), white, as a
+ * promotion copies objects of several tags. */
+static inline uint64_t a_alloc(uint64_t wz) { return alloc_tag(heap, st, wz, White, wz & 7); }
+#else
 static inline uint64_t a_alloc(uint64_t wz) { return alloc_white(heap, st, wz); }
+#endif
 static inline uint64_t *a_hdr(uint64_t o) { return (uint64_t *)(mem + o - 8); }
 static void a_sweep(void) { sweep(heap, st); }
+#ifdef TAGGED
+static const char *a_name = "verified-tag";
+#else
 static const char *a_name = "verified";
+#endif
 #endif
 
 static uint64_t now(void) {
