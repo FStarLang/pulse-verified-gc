@@ -58,7 +58,7 @@ module Promote = GC.Gen.Promote
 module Mark = GC.Spec.Mark
 module Header = GC.Lib.Header
 module SweepInv = GC.Spec.SweepInv
-module PD = GC.Gen.Run.Invariant.ProgramDefs
+module PD = GC.Gen.Run.Invariant.Defs
 module I = GC.Model.Ideal
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"

@@ -3,46 +3,23 @@ module GC.Gen.Run.Invariant
 open GC.Gen.Run.Step
 open GC.Gen.Run.History
 
-module PD = GC.Gen.Run.Invariant.ProgramDefs
-
-/// The definitions restated in `GC.Gen.Run.Invariant.ProgramDefs` are these.
-let same_defs (r: real_state) (h: cycle_history) (e: event)
-  : Lemma ((GC.Gen.Run.Invariant.Defs.phase_shape r <==> PD.phase_shape r) /\
-           (GC.Gen.Run.Invariant.Defs.run_invariant r h <==> PD.run_invariant r h) /\
-           (stores_in_kept r h e <==> PD.stores_in_kept r h e))
-  = ()
-
 /// Stage 0: the per-step lemmas are admitted; the general step lemma, the
 /// induction over a run, and the run forms of losslessness are proved from
 /// them.
 
 let initial_run_invariant _ = GC.Gen.Run.Invariant.Initial.initial_run_invariant ()
 
-let alloc_keeps_run_invariant r h site tag size init r' = admit ()
+/// A nursery allocation: `GC.Gen.Run.Invariant.Write`; a major one:
+/// `GC.Gen.Run.Invariant.MajorAlloc`.
+let alloc_keeps_run_invariant r h site tag size init r' =
+  match site with
+  | InNursery -> GC.Gen.Run.Invariant.Write.nursery_alloc_keeps r h tag size init r'
+  | InMajor -> admit ()
 
-/// Writes into the major heap: `GC.Gen.Run.Invariant.Write`.  A nursery write
-/// is blocked: storing an interior pointer, or a word that reads as a nursery
-/// header, breaks `GI.phase_shape`'s nursery clauses (see the report of
-/// `akhil/me-inv-program`); `GC.Gen.Run.Invariant.Write.write_keeps` proves
-/// it under those two hypotheses.
+/// A write (the barrier, a raw no-scan store, a nursery store):
+/// `GC.Gen.Run.Invariant.Write`.
 let write_keeps_run_invariant r h b i v r' =
-  same_defs r h (Write b i v);
-  same_defs r' (update_history h r (Write b i v) r') (Write b i v);
-  match b with
-  | Major _ -> GC.Gen.Run.Invariant.Write.write_keeps r h b i v r'
-  | Nursery _ -> admit ()
-
-let minor_keeps_run_invariant r h roots r' = GC.Gen.Run.Invariant.Minor.minor_keeps r h roots r'
-
-let start_keeps_run_invariant r h roots r' = GC.Gen.Run.Invariant.Collector.start_keeps r h roots r'
-
-let slice_keeps_run_invariant r h budget r' =
-  match r.phase, r'.phase with
-  | GC.Spec.Phase.Idle, _ -> GC.Gen.Run.Invariant.Collector.slice_keeps_idle r h budget r'
-  | GC.Spec.Phase.Marking, GC.Spec.Phase.Marking -> GC.Gen.Run.Invariant.Collector.slice_keeps_marking r h budget r'
-  | GC.Spec.Phase.Marking, GC.Spec.Phase.Sweeping _ -> GC.Gen.Run.Invariant.Collector.slice_keeps_handover r h budget r'
-  | GC.Spec.Phase.Sweeping _, _ -> GC.Gen.Run.Invariant.SweepSlice.slice_keeps_sweeping r h budget r'
-  | GC.Spec.Phase.Marking, GC.Spec.Phase.Idle -> ()  // a mark slice never ends idle
+  GC.Gen.Run.Invariant.Write.write_keeps r h b i v r'
 
 let step_keeps_run_invariant r h e r' =
   match e with
@@ -72,24 +49,7 @@ let rec run_invariant_along h0 #r0 #es #r1 rn =
       run_invariant_along h0 rn';
       step_keeps_run_invariant r1' (history_along h0 rn') e r2
 
-let rec same_write_major_fields (g: GC.Spec.Base.heap) (a: FStar.UInt64.t) (init: FStar.Seq.seq FStar.UInt64.t) (i: nat)
-  : Lemma (ensures write_major_fields g a init i == PD.write_major_fields g a init i)
-          (decreases (FStar.Seq.length init - i))
-  = if i >= FStar.Seq.length init then ()
-    else
-      let p = FStar.UInt64.v a + 8 * i in
-      let g' = if p + 8 <= GC.Spec.Base.heap_size && p % 8 = 0
-               then GC.Spec.Heap.write_word g (FStar.UInt64.uint_to_t p) (FStar.Seq.index init i) else g in
-      same_write_major_fields g' a init (i + 1)
-
-let same_alloc_then_init (r: real_state) (tag: GC.Model.Ideal.tag_t) (size: nat) (init: FStar.Seq.seq FStar.UInt64.t)
-  : Lemma (alloc_then_init r tag size init == PD.alloc_then_init r tag size init)
-  = let res = GC.Spec.Allocator.Cursor.alloc_phase r.memory.major r.free_list r.phase size tag in
-    same_write_major_fields res.GC.Spec.Allocator.heap_out res.GC.Spec.Allocator.obj_out init 0
-
 let alloc_phase_major_alloc_step r tag size init =
-  same_alloc_then_init r tag size init;
-  same_defs r (initial_history ()) (SetRoots FStar.Seq.empty);
   GC.Gen.Run.Invariant.Allocator.alloc_phase_step r tag size init
 
 let idle_lossless r h = GC.Gen.Run.Invariant.Collector.idle_lossless_with r h

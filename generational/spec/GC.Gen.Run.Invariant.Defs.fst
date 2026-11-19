@@ -94,3 +94,47 @@ let snapshot_accounting (r: real_state) (h: cycle_history) : prop =
 /// **The run invariant.**
 let run_invariant (r: real_state) (h: cycle_history) : prop =
   phase_shape r /\ snapshot_accounting r h
+
+/// ---------------------------------------------------------------------------
+/// What the program's events owe
+/// ---------------------------------------------------------------------------
+
+/// A stored word that is a major pointer points (resolved) at a kept block.
+let in_kept (r: real_state) (h: cycle_history) (v: U64.t) : prop =
+  is_pointer v ==> kept h (resolve_object (v <: obj_addr) r.memory.major)
+
+/// **What a program event stores points at kept blocks** (into scannable
+/// blocks; a no-scan block holds raw words), and a major block it writes
+/// into is kept (the program writes only into objects it holds).
+let stores_in_kept (r: real_state) (h: cycle_history) (e: event) : prop =
+  match e with
+  | Alloc _ tag _ init ->
+      I.tag_scannable tag ==> (forall (i: nat). i < Seq.length init ==> in_kept r h (Seq.index init i))
+  | Write (Major x) _ v -> kept h x /\ (scannable r.memory.major x ==> in_kept r h v)
+  | Write (Nursery o) _ v -> minor_tag r.memory.nursery o < 251 ==> in_kept r h v
+  | _ -> True
+
+/// ---------------------------------------------------------------------------
+/// The allocator followed by the initialising writes
+/// ---------------------------------------------------------------------------
+
+/// Write the initial words of the new major object `a`.
+let rec write_major_fields (g: heap) (a: U64.t) (init: seq U64.t) (i: nat)
+  : GTot heap (decreases (Seq.length init - i)) =
+  if i >= Seq.length init then g
+  else
+    let p = U64.v a + 8 * i in
+    let g' = if p + 8 <= heap_size && p % 8 = 0 then write_word g (U64.uint_to_t p) (Seq.index init i) else g in
+    write_major_fields g' a init (i + 1)
+
+/// The state after the allocator (`AC.alloc_phase`, first fit at the phase)
+/// and the initialising writes (`caml_initialize`: young values remembered,
+/// for a scannable tag).
+let alloc_then_init (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t) : GTot real_state =
+  let res = AC.alloc_phase r.memory.major r.free_list r.phase size tag in
+  let a = res.SA.obj_out in
+  { r with memory = { r.memory with major = write_major_fields res.SA.heap_out a init 0 };
+           free_list = res.SA.fp_out;
+           ref_table = if I.tag_scannable tag && U64.v a >= U64.v mword && U64.v a < heap_size && U64.v a % 8 = 0
+                       then Seq.append r.ref_table (young_slots (a <: obj_addr) init)
+                       else r.ref_table }

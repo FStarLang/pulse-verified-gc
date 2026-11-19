@@ -4,7 +4,7 @@
 ///
 /// A write into the major heap (the barrier into a scannable block, a raw
 /// store into a no-scan one) or into the nursery keeps `run_invariant`
-/// (`GC.Gen.Run.Invariant.Defs`, named in `GC.Gen.Run.Invariant.ProgramDefs`),
+/// (`GC.Gen.Run.Invariant.Defs`),
 /// under a hypothesis the statement lacks (`write_extra`): a value stored
 /// into the nursery is not an interior (infix) pointer -- the nursery's
 /// cross-generation conditions are stated on the raw word.  (That a major
@@ -49,7 +49,7 @@ module FLA = GC.Spec.FreeList.Ascending
 module PCS = GC.Gen.PostCollectionShape
 module SweepInv = GC.Spec.SweepInv
 module Header = GC.Lib.Header
-module PD = GC.Gen.Run.Invariant.ProgramDefs
+module PD = GC.Gen.Run.Invariant.Defs
 module D = GC.Gen.Run.Invariant.Defs
 module I = GC.Model.Ideal
 
@@ -60,18 +60,9 @@ module I = GC.Model.Ideal
 /// ---------------------------------------------------------------------------
 
 let write_extra (r: real_state) (h: cycle_history) (b: block_addr) (v: U64.t) : prop =
-  Nursery? b /\ is_pointer v ==> ~(is_infix (v <: obj_addr) r.memory.major)
-
-/// A store of `v` into field `i` of the nursery object `o`, from `ms` to
-/// `ms'`: the nursery keeps its shape (trusted), its objects, their headers,
-/// and every other field.
-let nursery_store_frame (ms ms': minor_state) (o: U64.t) (i: nat) (v: U64.t) : prop =
-  GenInv.minor_heap_shape ms' /\
-  minor_objects ms' == minor_objects ms /\
-  (forall (y: U64.t). Seq.mem y (minor_objects ms) ==>
-     minor_wosize ms' y == minor_wosize ms y /\ minor_tag ms' y == minor_tag ms y /\
-     (forall (j: nat). j < minor_wosize ms y ==>
-        minor_read_field ms' y j == (if y = o && j = i then v else minor_read_field ms y j)))
+  match b with
+  | Nursery o -> minor_tag r.memory.nursery o < 251 /\ is_pointer v ==> ~(is_infix (v <: obj_addr) r.memory.major)
+  | Major _ -> True
 
 /// ---------------------------------------------------------------------------
 /// The collector's state, taken apart
@@ -1012,8 +1003,8 @@ let store_fields_valid (ms ms': minor_state) (o: U64.t) (i: nat) (v: U64.t)
 #push-options "--z3rlimit 40"
 let nursery_keeps (r: real_state) (h: cycle_history) (o: U64.t) (i: nat) (v: U64.t) (r': real_state)
   : Lemma (requires PD.run_invariant r h /\
-                    (minor_tag r.memory.nursery o < 251 ==> storable_value r v /\ PD.in_kept r h v) /\
-                    (is_pointer v ==> ~(is_infix (v <: obj_addr) r.memory.major)) /\
+                    (minor_tag r.memory.nursery o < 251 ==> storable_value r v /\ PD.in_kept r h v /\
+                       (is_pointer v ==> ~(is_infix (v <: obj_addr) r.memory.major))) /\
                     Seq.mem o (minor_objects r.memory.nursery) /\ minor_tag r.memory.nursery o <> 247 /\
                     r'.memory.major == r.memory.major /\ r'.free_list == r.free_list /\
                     r'.phase == r.phase /\ r'.scan_pos == r.scan_pos /\ r'.ref_table == r.ref_table /\
@@ -1109,18 +1100,6 @@ let history_ext (r: real_state) (h h': cycle_history)
     | Ph.Sweeping c -> ()
     | Ph.Idle -> ()
 #pop-options
-
-/// A nursery allocation of `init` with tag `tag`, the new object `a`, from
-/// `ms` to `ms'`: the nursery keeps its shape (trusted), its objects, their
-/// headers and fields, and gains `a` with the tag, size and fields asked.
-let nursery_alloc_frame (ms ms': minor_state) (a: U64.t) (tag: nat) (init: seq U64.t) : prop =
-  GenInv.minor_heap_shape ms' /\
-  (forall (y: U64.t). Seq.mem y (minor_objects ms') <==> Seq.mem y (minor_objects ms) \/ y == a) /\
-  minor_tag ms' a == tag /\ minor_wosize ms' a == Seq.length init /\
-  (forall (j: nat). j < Seq.length init ==> minor_read_field ms' a j == Seq.index init j) /\
-  (forall (y: U64.t). Seq.mem y (minor_objects ms) ==>
-     y <> a /\ minor_wosize ms' y == minor_wosize ms y /\ minor_tag ms' y == minor_tag ms y /\
-     (forall (j: nat). j < minor_wosize ms y ==> minor_read_field ms' y j == minor_read_field ms y j))
 
 #push-options "--z3rlimit 20"
 let alloc_mmf (free: free_def) (ms ms': minor_state) (g: heap) (a: U64.t) (tag: nat) (init: seq U64.t)
