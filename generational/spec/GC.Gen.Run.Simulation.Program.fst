@@ -270,8 +270,8 @@ let write_reachable im obj i v id =
 let write_block_rep (r r': real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (b: block_addr) (i: nat) (v: U64.t) (obj: I.obj_id) (v': I.value) (b': block_addr) (id: I.obj_id)
   : Lemma (requires keyed r.memory ids /\ copies_faithful r.memory h im ids /\
-                    I.wf_event im (I.Write obj i v') /\ ids b == Some obj /\ value_rep ids v' v /\
-                    write_frame r r' b i v /\ ids b' == Some id)
+                    I.wf_objects im /\ I.wf_event im (I.Write obj i v') /\ ids b == Some obj /\
+                    written_rep r.memory ids b v' v /\ write_frame r r' b i v /\ ids b' == Some id)
           (ensures I.valid_id (I.ideal_step im (I.Write obj i v')) id /\
                    (let o' = Seq.index (I.ideal_step im (I.Write obj i v')).I.objects id in
                     block_header_rep r'.memory b' o' /\
@@ -283,6 +283,8 @@ let write_block_rep (r r': real_state) (h: cycle_history) (im: I.ideal_memory) (
     if id = obj then begin
       assert (b' == b);
       assert (o' == I.update_field o i v');
+      no_scan_tag_val ();
+      assert (block_tag r.memory b == U64.v o.I.tag);
       introduce faithful_block h b' /\ faithful_block h b ==> block_rep r'.memory ids b' o'
       with begin
         introduce forall (j: nat). j < o'.I.size ==> content_rep ids (I.field_at o' j) (block_field r'.memory b' j)

@@ -176,8 +176,6 @@ let kept_target_ok (r: real_state) (h: cycle_history) (x: obj_addr)
   = is_white_iff x r.memory.major;
     is_black_iff x r.memory.major
 
-let ge2 (k: nat) : Lemma (requires k <> 1 /\ k > 0) (ensures k >= 2) = ()
-
 #push-options "--z3rlimit 60"
 let usable_storable r h im ids v w =
   let g = r.memory.major in
@@ -186,7 +184,6 @@ let usable_storable r h im ids v w =
   match v with
   | I.Word w' -> ()
   | I.Ptr { head; infix_offset = k } ->
-      assert (k <> 1);
       eliminate exists (b: block_addr). ids b == Some head /\ w == ptr_value b k
       with begin
         copies_faithful_elim r.memory h im ids b head;
@@ -199,7 +196,6 @@ let usable_storable r h im ids v w =
         assert (k > 0 ==> content_rep ids (I.field_at o (k - 1)) (block_field r.memory b (k - 1)));
         assert (I.valid_value im v);
         if k > 0 then begin
-          ge2 k;
           assert (getTag hw == infix_tag /\ U64.v (getWosize hw) == k)
         end;
         infix_tag_val ();
@@ -228,8 +224,7 @@ let usable_storable r h im ids v w =
 let alloc_init_storable (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (tag: I.tag_t) (size: nat) (f: I.ideal_fields) (init: seq U64.t)
   : Lemma (requires sim_inv_parts r h im ids /\ I.wf_event im (I.Alloc tag size f) /\
-                    fields_rep ids f init /\ fields_layout ids f init /\
-                    event_infix_exact im (I.Alloc tag size f))
+                    fields_rep ids f init /\ fields_layout ids f init)
           (ensures init_storable r tag init /\ Seq.length init == size)
   = match f with
     | I.Scannable vs ->
@@ -262,8 +257,8 @@ let slot_addr (x: obj_addr) (i: nat) (wz: nat)
 let major_write_enabled (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (x: obj_addr) (i: nat) (v: U64.t) (obj: I.obj_id) (v': I.value)
   : Lemma (requires sim_inv_parts r h im ids /\ I.wf_event im (I.Write obj i v') /\
-                    ids (Major x) == Some obj /\ value_rep ids v' v /\ word_layout ids v' v /\
-                    infix_exact im v')
+                    ids (Major x) == Some obj /\
+                    (block_tag r.memory (Major x) < 251 ==> value_rep ids v' v /\ word_layout ids v' v))
           (ensures exists (r': real_state). step r (Write (Major x) i v) r')
   = let g = r.memory.major in
     let ms = r.memory.nursery in
@@ -300,8 +295,8 @@ let major_write_enabled (r: real_state) (h: cycle_history) (im: I.ideal_memory) 
 let nursery_write_enabled (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (n: U64.t) (i: nat) (v: U64.t) (obj: I.obj_id) (v': I.value)
   : Lemma (requires sim_inv_parts r h im ids /\ I.wf_event im (I.Write obj i v') /\
-                    ids (Nursery n) == Some obj /\ value_rep ids v' v /\ word_layout ids v' v /\
-                    infix_exact im v')
+                    ids (Nursery n) == Some obj /\
+                    (block_tag r.memory (Nursery n) < 251 ==> value_rep ids v' v /\ word_layout ids v' v))
           (ensures exists (r': real_state). step r (Write (Nursery n) i v) r')
   = let ms = r.memory.nursery in
     let o = Seq.index im.I.objects obj in
@@ -327,7 +322,7 @@ let nursery_alloc_enabled (r: real_state) (tag: I.tag_t) (size: nat) (init: seq 
     assert (nursery_alloc_step r tag size init r')
 
 #push-options "--z3rlimit 40"
-let program_step_enabled_given r h im ids e pe =
+let program_step_enabled r h im ids e pe =
   match e, pe with
   | Alloc site tag size init, I.Alloc _ _ f ->
       alloc_init_storable r h im ids tag size f init;

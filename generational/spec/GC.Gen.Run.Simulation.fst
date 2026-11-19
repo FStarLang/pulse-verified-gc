@@ -53,7 +53,7 @@ let rec executes_alloc_count_aux (#es: list event) (#r: real_state) (rn: run (in
         P.alloc_count_snoc es' e;
         if is_program_event e then begin
           eliminate exists (ps': list I.program_event) (pe: I.program_event).
-              ps == ps' @ [pe] /\ executes rn' ps' /\ translates (ids_of_run rn') e pe
+              ps == ps' @ [pe] /\ executes rn' ps' /\ translates r1.memory (ids_of_run rn') e pe
           with begin
             I.ideal_run_snoc ps' pe;
             executes_alloc_count_aux rn' ps';
@@ -69,7 +69,7 @@ let rec simulation #es #r rn ps =
   | Step #_ #es' #r1 rn' e r2 _ ->
       if is_program_event e then begin
         eliminate exists (ps': list I.program_event) (pe: I.program_event).
-            ps == ps' @ [pe] /\ executes rn' ps' /\ translates (ids_of_run rn') e pe
+            ps == ps' @ [pe] /\ executes rn' ps' /\ translates r1.memory (ids_of_run rn') e pe
         with begin
           I.ideal_run_snoc ps' pe;
           simulation rn' ps';
@@ -91,11 +91,7 @@ let reads_agree #es #r rn ps obj i =
   simulation rn ps;
   reads_agree_state r (history_of_run rn) (I.ideal_run ps) (ids_of_run rn) obj i
 
-/// Blocked: the statement is false for infix pointers (see
-/// `GC.Gen.Run.Simulation.Enabled`, `infix_exact`).  With `infix_exact` of
-/// the event's values as a hypothesis it is
-/// `GC.Gen.Run.Simulation.Enabled.program_step_enabled_given`.
-let program_step_enabled r h im ids e pe = admit ()
+let program_step_enabled r h im ids e pe = GC.Gen.Run.Simulation.Enabled.program_step_enabled r h im ids e pe
 
 let full_gc_collects #es0 #rs #rs' #r rn ps = admit ()
 

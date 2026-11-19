@@ -188,15 +188,59 @@ let same_then_write (r r1 r': real_state) (b: block_addr) (i: nat) (v: U64.t)
   = ()
 
 #push-options "--z3rlimit 60"
+/// Every major write -- the barrier at any phase, or a raw store -- meets
+/// `write_frame`.
+let major_write_frame (r r': real_state) (x: obj_addr) (i: nat) (a: hp_addr) (v: U64.t)
+  : Lemma (requires is_allocated r.memory (Major x) /\ i < U64.v (wosize_of_object x r.memory.major) /\
+                    U64.v a == U64.v x + 8 * i /\
+                    (let g = r.memory.major in
+                     if scannable g x
+                     then r'.memory == { r.memory with major = GB.modify_heap r.phase g a v }
+                     else r'.memory == { r.memory with major = write_word g a v }))
+          (ensures write_frame r r' (Major x) i v)
+  = let g = r.memory.major in
+    let r1 = if scannable g x && Ph.Marking? r.phase
+             then with_major r (MM.darken g (read_word g a)) else r in
+    darken_same_blocks r (read_word g a);
+    assert (same_blocks r r1);
+    assert (is_allocated r1.memory (Major x));
+    assert (i < U64.v (wosize_of_object x r1.memory.major));
+    major_body_write_frame r1 x i a v;
+    assert (r'.memory == (with_major_word r1 a v).memory);
+    same_then_write r r1 r' (Major x) i v
+#pop-options
+
+#push-options "--z3rlimit 60"
+/// A major write step meets `write_frame`.
+let major_step_frame (r: real_state) (x: obj_addr) (i: nat) (v: U64.t) (r': real_state)
+  : Lemma (requires step r (Write (Major x) i v) r' /\ is_allocated r.memory (Major x) /\
+                    i < U64.v (wosize_of_object x r.memory.major))
+          (ensures write_frame r r' (Major x) i v)
+  = let g = r.memory.major in
+    eliminate exists (a: hp_addr). U64.v a == U64.v x + 8 * i /\
+      (if scannable g x then
+         GB.modify_ok r.phase r.memory.nursery g r.scan_pos x a v /\
+         (is_young v ==> storable_value r v) /\
+         r' == { r with memory = { r.memory with major = GB.modify_heap r.phase g a v };
+                        ref_table = if GB.modify_records g a v then Seq.snoc r.ref_table (a <: U64.t)
+                                    else r.ref_table }
+       else
+         in_use (GC.Gen.Incremental.phase_free r.phase) g x /\ SPM.in_body g x a /\
+         r' == { r with memory = { r.memory with major = write_word g a v } })
+    with begin
+      major_write_frame r r' x i a v
+    end
+#pop-options
+
+#push-options "--z3rlimit 60"
 /// **`write_keeps_sim_inv` for a major write**: a raw store into a no-scan
 /// block, or the barrier (while marking it first darkens the old value's
-/// target, which changes only a colour) -- given `infix_exact` (see
-/// `GC.Gen.Run.Simulation.Enabled`).
+/// target, which changes only a colour).
 let major_write_keeps_given (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (x: obj_addr) (i: nat) (v: U64.t) (obj: I.obj_id) (v': I.value) (r': real_state)
   : Lemma (requires sim_inv_parts r h im ids /\ I.wf_event im (I.Write obj i v') /\
-                    translates ids (Write (Major x) i v) (I.Write obj i v') /\
-                    step r (Write (Major x) i v) r' /\ infix_exact im v')
+                    translates r.memory ids (Write (Major x) i v) (I.Write obj i v') /\
+                    step r (Write (Major x) i v) r')
           (ensures sim_inv_parts r' (update_history h r (Write (Major x) i v) r')
                      (I.ideal_step im (I.Write obj i v'))
                      (update_block_ids ids (Seq.length im.I.objects) r (Write (Major x) i v) r'))
@@ -209,28 +253,7 @@ let major_write_keeps_given (r: real_state) (h: cycle_history) (im: I.ideal_memo
     copies_faithful_elim r.memory h im ids (Major x) obj;
     assert (is_allocated r.memory (Major x));
     assert (i < U64.v (wosize_of_object x g));
-    eliminate exists (a: hp_addr). U64.v a == U64.v x + 8 * i /\
-      (if scannable g x then
-         GB.modify_ok r.phase r.memory.nursery g r.scan_pos x a v /\
-         (is_young v ==> storable_value r v) /\
-         r' == { r with memory = { r.memory with major = GB.modify_heap r.phase g a v };
-                        ref_table = if GB.modify_records g a v then Seq.snoc r.ref_table (a <: U64.t)
-                                    else r.ref_table }
-       else
-         in_use (GC.Gen.Incremental.phase_free r.phase) g x /\ SPM.in_body g x a /\
-         r' == { r with memory = { r.memory with major = write_word g a v } })
-    with begin
-      let r1 = if scannable g x && Ph.Marking? r.phase
-               then with_major r (MM.darken g (read_word g a)) else r in
-      darken_same_blocks r (read_word g a);
-      assert (same_blocks r r1);
-      assert (is_allocated r1.memory (Major x));
-      assert (i < U64.v (wosize_of_object x r1.memory.major));
-      major_body_write_frame r1 x i a v;
-      assert (r'.memory == (with_major_word r1 a v).memory);
-      same_then_write r r1 r' (Major x) i v;
-      assert (write_frame r r' (Major x) i v);
-      write_represents r r' h im ids (Major x) i v obj v'
-    end
+    major_step_frame r x i v r';
+    write_represents r r' h im ids (Major x) i v obj v'
 #pop-options
 

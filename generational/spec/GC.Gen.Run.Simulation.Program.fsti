@@ -97,7 +97,7 @@ val initial_sim_inv (_: unit)
 /// `GC.Gen.Run.Simulation.read_roots_keep_sim_inv`.
 val read_roots_keep_sim_inv (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (e: event) (pe: I.program_event) (r': real_state)
-  : Lemma (requires sim_inv_parts r h im ids /\ I.wf_event im pe /\ translates ids e pe /\ step r e r' /\
+  : Lemma (requires sim_inv_parts r h im ids /\ I.wf_event im pe /\ translates r.memory ids e pe /\ step r e r' /\
                     (Read? e \/ SetRoots? e))
           (ensures sim_inv_parts r' (update_history h r e r') (I.ideal_step im pe)
                      (update_block_ids ids (Seq.length im.I.objects) r e r'))
@@ -114,7 +114,7 @@ val reads_agree_state (r: real_state) (h: cycle_history) (im: I.ideal_memory) (i
 /// step that carries out `pe` adds one object exactly when it allocates.
 val step_alloc_count (ids: block_id_map) (r: real_state) (e: event) (r': real_state)
                      (im: I.ideal_memory) (pe: I.program_event)
-  : Lemma (requires translates ids e pe /\ step r e r')
+  : Lemma (requires translates r.memory ids e pe /\ step r e r')
           (ensures Seq.length (I.ideal_step im pe).I.objects ==
                    Seq.length im.I.objects + (if Alloc? e then 1 else 0))
 
@@ -138,6 +138,12 @@ let write_frame (r r': real_state) (b: block_addr) (i: nat) (v: U64.t) : prop =
      block_field r'.memory b' j == block_field r.memory b' j) /\
   block_field r'.memory b i == v
 
+/// The word a write stores holds the value written: translated into a
+/// scannable block, the raw word into a no-scan one (`translates`).
+let written_rep (m: real_memory) (ids: block_id_map) (b: block_addr) (v': I.value) (v: U64.t) : prop =
+  if block_tag m b < 251 then value_rep ids v' v
+  else (match v' with I.Word w -> v == w | I.Ptr _ -> False)
+
 /// A write keeps reachability or shrinks it: the value written is usable.
 val write_reachable (im: I.ideal_memory) (obj: I.obj_id) (i: nat) (v: I.value) (id: I.obj_id)
   : Lemma (requires I.wf_event im (I.Write obj i v) /\ I.reachable (I.ideal_step im (I.Write obj i v)) id)
@@ -149,7 +155,7 @@ val write_reachable (im: I.ideal_memory) (obj: I.obj_id) (i: nat) (v: I.value) (
 val write_represents (r r': real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (b: block_addr) (i: nat) (v: U64.t) (obj: I.obj_id) (v': I.value)
   : Lemma (requires represents r h im ids /\ reachable_in_kept h im ids /\
-                    I.wf_event im (I.Write obj i v') /\ ids b == Some obj /\ value_rep ids v' v /\
-                    write_frame r r' b i v /\ r'.phase == r.phase)
+                    I.wf_objects im /\ I.wf_event im (I.Write obj i v') /\ ids b == Some obj /\
+                    written_rep r.memory ids b v' v /\ write_frame r r' b i v /\ r'.phase == r.phase)
           (ensures represents r' h (I.ideal_step im (I.Write obj i v')) (restrict r'.memory ids) /\
                    reachable_in_kept h (I.ideal_step im (I.Write obj i v')) (restrict r'.memory ids))

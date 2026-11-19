@@ -110,7 +110,9 @@ let target (v: value) : option obj_id =
 /// with an infix offset `k > 0` points into a closure whose field `k - 1` is
 /// an infix header (OCaml's mutually recursive closures) whose size is `k`:
 /// the header gives the offset back to the closure (`Infix_offset_hd`), which
-/// is how the real heap resolves the pointer.
+/// is how the real heap resolves the pointer.  The offset is at least 2: a
+/// closure's first field is its code pointer, so OCaml never builds offset 1
+/// (and the real heap's `infix_addr_conds` asks for it).
 let valid_value (m: ideal_memory) (v: value) : prop =
   match v with
   | Word _ -> True
@@ -118,7 +120,7 @@ let valid_value (m: ideal_memory) (v: value) : prop =
       valid_id m head /\
       (infix_offset > 0 ==>
         (let o = Seq.index m.objects head in
-         o.tag == O.closure_tag /\ infix_offset < o.size /\
+         o.tag == O.closure_tag /\ 2 <= infix_offset /\ infix_offset < o.size /\
          (match field_at o (infix_offset - 1) with
           | FValue (Word w) -> O.getTag w == O.infix_tag /\ U64.v (O.getWosize w) == infix_offset
           | _ -> False)))
