@@ -62,6 +62,13 @@ val reachable_root (m: I.ideal_memory) (v: I.obj_id)
 /// The map
 /// ---------------------------------------------------------------------------
 
+/// `copies_faithful` at one block.  (The SMT solver's own trigger for the
+/// quantifier of `copies_faithful` is its `block_rep` term, which few goals
+/// contain; this is the way in.)
+val copies_faithful_elim (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) (b: block_addr) (id: I.obj_id)
+  : Lemma (requires copies_faithful m im ids /\ ids b == Some id)
+          (ensures I.valid_id im id /\ block_rep m ids b (Seq.index im.I.objects id))
+
 /// `represents` and `reachable_in_kept` depend on the map only through its
 /// values.
 val represents_ext (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids ids': block_id_map)
@@ -75,6 +82,11 @@ val restrict_keyed (m: real_memory) (ids: block_id_map) (b: block_addr)
 /// ---------------------------------------------------------------------------
 /// The lemmas of `GC.Gen.Run.Simulation`
 /// ---------------------------------------------------------------------------
+
+/// Nothing is allocated in the initial state (from the run invariant).
+val initial_nothing_allocated (b: block_addr)
+  : Lemma (requires run_invariant (initial_state ()) (initial_history ()))
+          (ensures ~(is_allocated (initial_state ()).memory b))
 
 /// `GC.Gen.Run.Simulation.initial_sim_inv`.
 val initial_sim_inv (_: unit)

@@ -91,6 +91,10 @@ let reads_agree #es #r rn ps obj i =
   simulation rn ps;
   reads_agree_state r (history_of_run rn) (I.ideal_run ps) (ids_of_run rn) obj i
 
+/// Blocked: the statement is false for infix pointers (see
+/// `GC.Gen.Run.Simulation.Enabled`, `infix_exact`).  With `infix_exact` of
+/// the event's values as a hypothesis it is
+/// `GC.Gen.Run.Simulation.Enabled.program_step_enabled_given`.
 let program_step_enabled r h im ids e pe = admit ()
 
 let full_gc_collects #es0 #rs #rs' #r rn ps = admit ()

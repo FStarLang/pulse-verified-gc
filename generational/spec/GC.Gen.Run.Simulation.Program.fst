@@ -94,10 +94,8 @@ let cf_all (m: real_memory) (im: I.ideal_memory) (ids: block_id_map)
           T.norm [delta_only [`%cf_at]];
           T.exact h2)
 
-let copies_faithful_elim (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) (b: block_addr) (id: I.obj_id)
-  : Lemma (requires copies_faithful m im ids /\ ids b == Some id)
-          (ensures I.valid_id im id /\ block_rep m ids b (Seq.index im.I.objects id))
-  = cf_all m im ids; assert (cf_at m im ids b id)
+let copies_faithful_elim m im ids b id =
+  cf_all m im ids; assert (cf_at m im ids b id)
 
 let copies_faithful_ext (m: real_memory) (im: I.ideal_memory) (ids ids': block_id_map)
   : Lemma (requires copies_faithful m im ids /\ (forall (b: block_addr). ids' b == ids b))
@@ -131,10 +129,8 @@ let restrict_keyed m ids b = ()
 /// Nothing is allocated at the start: the nursery is empty, and in the
 /// major heap the run invariant leaves only the snapshot of a cycle with no
 /// roots.
-let initial_nothing_allocated (b: block_addr)
-  : Lemma (requires run_invariant (initial_state ()) (initial_history ()))
-          (ensures ~(is_allocated (initial_state ()).memory b))
-  = let r = initial_state () in
+let initial_nothing_allocated b =
+    let r = initial_state () in
     let h = initial_history () in
     match b with
     | Nursery o ->
