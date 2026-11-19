@@ -33,6 +33,8 @@ open GC.Model.Represents
 module U64 = FStar.UInt64
 module Ph = GC.Spec.Phase
 module I = GC.Model.Ideal
+module SPI = GC.Spec.SweepPhase.Intrinsic
+module SL = GC.Spec.SweepPhase.Slice
 
 /// **The start of a cycle keeps the joint invariant** (`sim_inv`, spelled
 /// out; nothing is needed of the program's reach before the step: idle,
@@ -73,3 +75,29 @@ val full_gc_end (r1 r2 r3 r: real_state) (rs': seq U64.t) (h1 h: cycle_history) 
 val full_gc_events_snoc (es0: list event) (rs rs': seq U64.t)
   : Lemma (es0 @ full_gc_events rs rs' ==
            (((es0 @ [Minor rs]) @ [StartCycle rs']) @ [Slice unbounded_budget]) @ [Slice unbounded_budget])
+
+/// **The frame of the sweep**: a slice leaves the heap from its new cursor on
+/// unchanged, so the blocks still pending free keep their headers and
+/// fields.  A fact of `GC.Spec.FusedSweep.Step`'s steps (`step_frame`, in its
+/// .fst) that its interface does not export yet; a hypothesis of
+/// `slice_keeps` until it does.
+let sweep_frame : prop =
+  forall (g: heap) (fp: U64.t) (c: U64.t) (budget: nat).
+    SPI.sweep_inv_incremental g fp c ==>
+    (let (g', _, st') = SL.sweep_slice g fp (SPI.state_at g c) budget in
+     forall (a: hp_addr). U64.v a >= U64.v st'.GC.Spec.FusedSweep.cursor ==> read_word g' a == read_word g a)
+
+/// **A slice keeps the joint invariant** (`sim_inv`, spelled out), given the
+/// sweep's frame: mark moves recolour; a sweep slice frees only blocks that
+/// are not kept, whose entries go; what kept blocks and the nursery point at
+/// is kept, so not freed.
+val slice_keeps (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+    (budget: nat) (r': real_state)
+  : Lemma (requires run_invariant r h /\ represents r h im ids /\ I.wf_memory im /\ I.wf_objects im /\
+                    (forall (x: obj_addr) (id: I.obj_id). ids (Major x) == Some id /\ I.reachable im id ==> kept h x) /\
+                    step r (Slice budget) r' /\ sweep_frame)
+          (ensures (let h' = update_history h r (Slice budget) r' in
+                    let ids' = update_block_ids ids (Seq.length im.I.objects) r (Slice budget) r' in
+                    run_invariant r' h' /\ represents r' h' im ids' /\
+                    (forall (x: obj_addr) (id: I.obj_id).
+                       ids' (Major x) == Some id /\ I.reachable im id ==> kept h' x)))

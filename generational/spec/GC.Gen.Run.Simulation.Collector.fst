@@ -662,16 +662,6 @@ let slice_blocks_marking (r: real_state) (h: cycle_history) (budget: nat) (r': r
     MPC.mark_steps_keep_blocks g r'.memory.major r.scan_pos r'.scan_pos
 #pop-options
 
-/// **The frame of the sweep**: a slice leaves the heap from its new cursor on
-/// unchanged, so the blocks still pending free keep their headers and
-/// fields.  (A fact of `GC.Spec.FusedSweep.Step`'s steps -- `step_frame` --
-/// not yet exported; taken as a hypothesis here.)
-let sweep_frame : prop =
-  forall (g: heap) (fp: U64.t) (c: U64.t) (budget: nat).
-    SPI.sweep_inv_incremental g fp c ==>
-    (let (g', _, st') = SL.sweep_slice g fp (SPI.state_at g c) budget in
-     forall (a: hp_addr). U64.v a >= U64.v st'.GC.Spec.FusedSweep.cursor ==> read_word g' a == read_word g a)
-
 #push-options "--ifuel 1 --z3rlimit 40"
 let slice_blocks_sweeping (r: real_state) (h: cycle_history) (budget: nat) (r': real_state) (c: U64.t)
   : Lemma (requires run_invariant r h /\ slice_step r budget r' /\ r.phase == Ph.Sweeping c /\ sweep_frame)
@@ -891,4 +881,169 @@ let kept_nursery_target (m: real_memory) (h: cycle_history) (im: I.ideal_memory)
       ptr_in_block g y k;
       GenInv.minor_major_fields_not_free_elim (MPC.outside_snapshot (kept h)) ms g o i
     end
+#pop-options
+
+/// Tag, size and fields of a major block, from `same_block`.
+#push-options "--z3rlimit 20"
+let same_block_rep (m m': real_memory) (x: obj_addr)
+  : Lemma (requires blocks_fit m.major /\ no_infix_block m.major /\ Seq.mem x (objects zero_addr m.major) /\
+                    SPI.same_block m.major m'.major (hd_address x))
+          (ensures block_tag m' (Major x) == block_tag m (Major x) /\
+                   block_size m' (Major x) == block_size m (Major x) /\
+                   (forall (i: nat). i < block_size m (Major x) ==>
+                      block_field m' (Major x) i == block_field m (Major x) i))
+  = let g = m.major in
+    let g' = m'.major in
+    hd_address_spec x;
+    tag_of_object_spec x g; tag_of_object_spec x g';
+    wosize_of_object_spec x g; wosize_of_object_spec x g';
+    obj_bounds_with g x;
+    let f (i: nat)
+      : Lemma (requires i < block_size m (Major x))
+              (ensures block_field m' (Major x) i == block_field m (Major x) i)
+      = ()
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires f)
+#pop-options
+
+/// The map after a step that only frees: an entry stays exactly while its
+/// block stays allocated.
+#push-options "--ifuel 1"
+let restrict_at (m': real_memory) (ids: block_id_map) (b: block_addr)
+  : Lemma (restrict m' ids b == (if FStar.IndefiniteDescription.strong_excluded_middle (is_allocated m' b)
+                                 then ids b else None))
+  = ()
+#pop-options
+
+/// The context of a slice's representation proof.
+let slice_ctx (r r': real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) : prop =
+  run_invariant r h /\ keyed r.memory ids /\ copies_faithful r.memory h im ids /\
+  I.wf_memory im /\ I.wf_objects im /\ slice_blocks_post r r' h
+
+/// A faithful block's pointer names a block that stays allocated.
+#push-options "--ifuel 1 --z3rlimit 20"
+let target_survives (r r': real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+                    (b: block_addr) (id: I.obj_id) (i: nat) (b2: block_addr) (head: I.obj_id) (k: nat)
+  : Lemma (requires slice_ctx r r' h im ids /\ ids b == Some id /\ faithful_block h b /\
+                    I.valid_id im id /\ i < (Seq.index im.I.objects id).I.size /\
+                    I.field_at (Seq.index im.I.objects id) i == I.FValue (I.Ptr { head; infix_offset = k }) /\
+                    ids b2 == Some head /\ block_field r.memory b i == ptr_value b2 k)
+          (ensures is_allocated r'.memory b2)
+  = let m = r.memory in
+    assert (MPC.within_snapshot (kept h) m.major);
+    assert (GenInv.minor_major_fields_not_free (MPC.outside_snapshot (kept h)) m.nursery m.major);
+    match b2 with
+    | Nursery _ -> ()
+    | Major y ->
+        (match b with
+         | Major x -> kept_major_target m h im ids x id i y head k
+         | Nursery o -> kept_nursery_target m h im ids o id i y head k)
+#pop-options
+
+/// A faithful block's fields carry over to the map after the slice.
+#push-options "--ifuel 1 --z3rlimit 20"
+let content_survives (r r': real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+                     (b: block_addr) (id: I.obj_id) (i: nat)
+  : Lemma (requires slice_ctx r r' h im ids /\ ids b == Some id /\ faithful_block h b /\
+                    I.valid_id im id /\ i < (Seq.index im.I.objects id).I.size /\
+                    content_rep ids (I.field_at (Seq.index im.I.objects id) i) (block_field r.memory b i))
+          (ensures content_rep (restrict r'.memory ids) (I.field_at (Seq.index im.I.objects id) i)
+                     (block_field r.memory b i))
+  = let w = block_field r.memory b i in
+    match I.field_at (Seq.index im.I.objects id) i with
+    | I.FValue (I.Ptr { head; infix_offset }) ->
+        eliminate exists (b2: block_addr). ids b2 == Some head /\ w == ptr_value b2 infix_offset
+        with begin
+          target_survives r r' h im ids b id i b2 head infix_offset;
+          restrict_at r'.memory ids b2
+        end
+    | _ -> ()
+#pop-options
+
+/// Every block allocated after the slice keeps its header and fields.
+#push-options "--ifuel 1 --z3rlimit 20"
+let block_survives (r r': real_state) (h: cycle_history) (b: block_addr)
+  : Lemma (requires run_invariant r h /\ slice_blocks_post r r' h /\ is_allocated r'.memory b)
+          (ensures is_allocated r.memory b /\
+                   block_tag r'.memory b == block_tag r.memory b /\
+                   block_size r'.memory b == block_size r.memory b /\
+                   (forall (i: nat). i < block_size r.memory b ==>
+                      block_field r'.memory b i == block_field r.memory b i))
+  = match b with
+    | Nursery _ -> ()
+    | Major x ->
+        assert (MPC.within_snapshot (kept h) r.memory.major);
+        wf_parts_of (MPC.outside_snapshot (kept h)) r.memory.major;
+        same_block_rep r.memory r'.memory x
+#pop-options
+
+/// One block's clause of `copies_faithful` after the slice.
+#push-options "--ifuel 1 --z3rlimit 20"
+let faithful_after_slice (r r': real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+                         (b: block_addr) (id: I.obj_id)
+  : Lemma (requires slice_ctx r r' h im ids /\ restrict r'.memory ids b == Some id)
+          (ensures I.valid_id im id /\ block_header_rep r'.memory b (Seq.index im.I.objects id) /\
+                   (faithful_block h b ==> block_rep r'.memory (restrict r'.memory ids) b (Seq.index im.I.objects id)))
+  = restrict_at r'.memory ids b;
+    assert (is_allocated r'.memory b /\ ids b == Some id);
+    block_survives r r' h b;
+    header_at r.memory h im ids b id;
+    if FStar.IndefiniteDescription.strong_excluded_middle (faithful_block h b) then begin
+      faithful_at r.memory h im ids b id;
+      let o = Seq.index im.I.objects id in
+      let f (i: nat{i < o.I.size})
+        : Lemma (content_rep (restrict r'.memory ids) (I.field_at o i) (block_field r'.memory b i))
+        = content_survives r r' h im ids b id i
+      in
+      FStar.Classical.forall_intro f
+    end
+#pop-options
+
+/// **A slice keeps the representation**: entries of freed blocks go, the
+/// rest keep faithful copies (what they point at is kept, so not freed).
+#push-options "--ifuel 1 --z3rlimit 30"
+let slice_represents (r r': real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+  : Lemma (requires slice_ctx r r' h im ids /\ represents r h im ids /\ run_invariant r' h /\
+                    (forall (x: obj_addr) (id: I.obj_id). ids (Major x) == Some id /\ I.reachable im id ==> kept h x))
+          (ensures (let ids' = restrict r'.memory ids in
+                    represents r' h im ids' /\
+                    (forall (x: obj_addr) (id: I.obj_id). ids' (Major x) == Some id /\ I.reachable im id ==> kept h x)))
+  = let m' = r'.memory in
+    let ids' = restrict m' ids in
+    let back (b: block_addr) : Lemma (restrict m' ids b == (if FStar.IndefiniteDescription.strong_excluded_middle (is_allocated m' b) then ids b else None)) =
+      restrict_at m' ids b in
+    FStar.Classical.forall_intro back;
+    let alloc_back (b: block_addr) : Lemma (requires is_allocated m' b) (ensures is_allocated r.memory b) =
+      block_survives r r' h b in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires alloc_back);
+    assert (keyed m' ids');
+    introduce forall (b: block_addr) (id: I.obj_id).
+        ids' b == Some id ==>
+          I.valid_id im id /\ block_header_rep m' b (Seq.index im.I.objects id) /\
+          (faithful_block h b ==> block_rep m' ids' b (Seq.index im.I.objects id))
+    with introduce _ ==> _ with faithful_after_slice r r' h im ids b id;
+    assert (copies_faithful m' h im ids');
+    let cov (id: I.obj_id)
+      : Lemma (requires I.reachable im id) (ensures exists (b: block_addr). ids' b == Some id)
+      = eliminate exists (b: block_addr). ids b == Some id
+        with begin
+          match b with
+          | Nursery _ -> assert (ids' b == Some id)
+          | Major x -> assert (kept h x); assert (ids' b == Some id)
+        end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires cov);
+    assert (covers_reachable im ids');
+    assert (retains_snapshot r' h ids')
+#pop-options
+
+#push-options "--ifuel 1 --z3rlimit 20"
+let slice_keeps r h im ids budget r' =
+  slice_keeps_run_invariant r h budget r';
+  assert (slice_step r budget r');
+  (match r.phase with
+   | Ph.Idle -> slice_blocks_idle r h budget r'
+   | Ph.Marking -> slice_blocks_marking r h budget r'
+   | Ph.Sweeping c -> slice_blocks_sweeping r h budget r' c);
+  slice_represents r r' h im ids
 #pop-options
