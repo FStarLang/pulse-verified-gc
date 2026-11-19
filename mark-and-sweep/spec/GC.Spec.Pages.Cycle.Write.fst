@@ -76,6 +76,7 @@ module Wf = GC.Spec.Pages.Wf
 module MS = GC.Spec.Pages.MidSweep
 module CS = GC.Spec.Pages.Cycle.State
 module PM = GC.Spec.Pages.Cycle.Mark
+module FF = GC.Spec.Pages.FillFacts
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 
@@ -134,25 +135,13 @@ let write_idle (g: heap) (st: pstate) (x: obj_addr) (a: hp_addr) (v: U64.t)
 /// ---------------------------------------------------------------------------
 
 /// Whitening keeps the size, the closure tag and the no-scan tag of every
-/// object.
-#push-options "--fuel 1 --ifuel 1"
-let rec whiten_obj (g: heap) (ys: list obj_addr) (y: obj_addr)
+/// object (`GC.Spec.Pages.FillFacts`).
+let whiten_obj (g: heap) (ys: list obj_addr) (y: obj_addr)
   : Lemma (ensures (let gw = Rc.whiten g ys in
                     wosize_of_object y gw == wosize_of_object y g /\
                     is_closure y gw == is_closure y g /\
                     is_no_scan y gw == is_no_scan y g))
-          (decreases ys)
-  = match ys with
-    | [] -> ()
-    | x :: ys' ->
-      whiten_obj g ys' y;
-      let g' = Rc.whiten g ys' in
-      Rc.whiten_step_eq g' x;
-      color_change_preserves_wosize_any x y g' Header.White;
-      color_change_preserves_is_closure x y g' Header.White;
-      if x = y then color_preserves_is_no_scan y g' Header.White
-      else color_change_preserves_other_is_no_scan x y g' Header.White
-#pop-options
+  = FF.whiten_obj g ys y
 
 /// A value storable with free meaning blue is one `field_ok` allows.
 let storable_field_ok (g: heap) (v: U64.t)
@@ -288,33 +277,11 @@ let idle_modify_keeps (minor: minor_state) (g: heap) (st: pstate) (sp: MP.scan_p
 
 /// No grey block appears in an unswept page: the headers its clauses read
 /// are walk positions, kept by a write into the fields of a block that is
-/// not free.
+/// not free (`GC.Spec.Pages.FillFacts`).
 let no_grey_fill (g g': heap) (x: obj_addr) (st: pstate)
   : Lemma (requires F.fctx g g' x /\ ~(is_blue x g) /\ Sc.core g st /\ MS.no_grey_unswept g st.pm)
           (ensures MS.no_grey_unswept g' st.pm)
-  = let pm = st.pm in
-    Sc.core_shape g st;
-    let pool (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat)
-      : Lemma (requires (entry pm i).kind == Pool c /\ not (entry pm i).swept /\ k < n_slots c /\
-                        slot_used g' i c k)
-              (ensures color_at g' (slot_base i c k) =!= Header.Gray)
-      = assert (page_shape g pm i);
-        walk_pages_reached g pm i;
-        F.pool_fill_slots g g' x i c;
-        assert (F.slot_same g g' i c k)
-    in
-    FStar.Classical.forall_intro_3 (fun i c k -> FStar.Classical.move_requires (pool i c) k);
-    let run (h: nat{h < n_pages}) (a: nat)
-      : Lemma (requires LargeHead? (entry pm h).kind /\ not (entry pm h).swept /\
-                        run_block g' h (run_len (entry pm h).kind) a)
-              (ensures color_at g' a =!= Header.Gray)
-      = let n = run_len (entry pm h).kind in
-        assert (page_shape g pm h);
-        assert (run_shape g h n);
-        walk_pages_reached g pm h;
-        F.run_block_fill g g' x h n a
-    in
-    FStar.Classical.forall_intro_2 (fun h a -> FStar.Classical.move_requires (run h) a)
+  = FF.no_grey_fill g g' x st
 
 /// **A program write keeps the mid-sweep invariant**, free meaning
 /// `free_sw`.
