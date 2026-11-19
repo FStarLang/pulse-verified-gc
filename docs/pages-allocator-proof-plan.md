@@ -4237,3 +4237,187 @@ step's report.
 - The `Makefile` gains the root `Spec.Pages.IncrVacuity`; `Impl.Pages`
   includes the three new impl modules.
 - `make verify` with the Makefile's flags: `=== all modules verified ===`.
+
+## 29. The two model gaps closed, and the go/no-go for Pulse promotion (2026-11-19)
+
+Two gaps §28 left in the model, closed; and the check §28.5 named as the
+go/no-go point for promotion in Pulse, run on akhil's code as it is.
+
+### 29.1 A minor collection once the cycle is idle (`Spec.Pages.Promote.Idle`)
+
+**The `Idle` instance of the promotion's allocator** (`idle_tal`):
+- the invariant is the page `Idle` invariant (`PA.inv I.Idle`);
+- free means blue (`free_stw`);
+- new blocks are white (`I.new_colour I.Idle`);
+- the allocation is `AT.alloc_tag I.Idle`, which `alloc_ph` computes with
+  `marking = false`.
+
+**`idle_contract`: it meets `Promote.contract`.** The proof reuses the
+sweeping instance's lemmas:
+- in `Idle` every page is swept, so the mid-sweep invariant holds
+  (`idle_sw`: `PA.inv I.Idle ==> pages_ok_sw /\ all_swept`, the converse of
+  `MidSweepStep.sw_end`);
+- free mid-sweep is then blue (`swept_free`);
+- `Idle` and `Sweeping` allocate alike, white (`idle_is_sweeping`), so
+  `AllocTagOk.alloc_tag_sweeping` gives the allocation clause and
+  `AllocTagOk.sw_update` the pointer-update clause; `sw_end` brings both
+  back to `PA.inv I.Idle`;
+- the page state after an allocation is the one an allocation while
+  marking leaves (`idle_st`), so every page is still swept.
+
+**The minor collection in `Idle`** (`icollect`, `collect idle_tal`), from
+`ipre` (the `Idle` invariant, the nursery's shape, its major pointers to
+blocks in use). `i_facts`:
+- it keeps the `Idle` invariant and resets the nursery;
+- every block in use stays in use, at its size;
+- the blocks it makes are white.
+
+**The event.** `SIMinor` (page sweep run), `CSIMinor` (carried cycle): from
+a run that is idle, a minor collection, `since` growing by the blocks it
+made (`with_made`), the run still idle.
+- `Cycle.Sweep.idle_minor_acct`: it keeps akhil's idle account and its
+  converse (`SPC.idle_account`, `SPC.reclaimed_was_dead ... free_stw`), by
+  his transfer lemma.
+- `Carried.to_psweep` takes it to `SIMinor`; the carried invariant at `Idle`
+  is restored by `i_facts` and `idle_sw`.
+- **`ccycle_inv` and `ccycle_correct` are re-proved over the larger set of
+  runs, with their statements unchanged**, as are `Cycle.cycle_*`. Their
+  proofs needed only the new cases in `psweep_account`, `sweep_start_st`,
+  `cstart_st` and `to_psweep`.
+- akhil's sweep cycle has no minor event once idle (`Gen.SweepPhase.Cycle`
+  reaches `Idle` by its last slice and stops), so here the page cycle covers
+  more runs than his.
+
+### 29.2 The program's allocations with any tag (`Spec.Pages.Cycle.AllocTagged`)
+
+**New events, besides the tag-0 ones** (which stay as they were):
+- `PAllocT` / `CAllocT` while marking: `AT.alloc_tag I.Marking g st wz tag`
+  with `tag <> 249`, then akhil's `MC.init_writes` with values in the
+  snapshot (`SPM.fields_storable`), as his `MC.Alloc`;
+- `SAllocT` / `CSAllocT` mid-sweep: `AT.alloc_tag I.Sweeping g st wz tag`
+  with `tag <> 249`, then the caller's writes as `AT.fields_written_away`
+  allows.
+
+**What the caller's writes must meet.** The tag-0 events ask for values the
+caller may store (`fields_written_with`). With a tag, a scannable object's
+fields must also not point into its own body (`AT.away`): the same
+condition the minor collection's copies meet, under which the allocation
+facts of §27.1 give back the page invariant. A no-scan object's fields may
+hold anything. While marking, `CAllocT` asks this as `away_body` alongside
+akhil's obligations; `alloc_mark_tag_inv` derives `fields_written_away` from
+`init_writes`, `fields_storable` and `away_body`.
+
+So the tag-0 events are not replaced: with tag 0 their condition is weaker
+than `fields_written_away` (it does not ask `away`), so replacing them would
+cover fewer runs.
+
+**Proofs:**
+- `mark_alloc_tag_facts`: the heap facts `CS.mark_alloc_facts` gives at tag
+  0 (black, not in use before, every block in use kept, no infix block,
+  blocks fit), at any tag but 249, from `AllocTagOk.alloc_tag_marking` and
+  the object's field cleared (`cleared_away`);
+- `Cycle.Mark.alloc_inv_t`: akhil's account and snapshot-at-the-beginning,
+  from those facts, as `alloc_inv`;
+- `Cycle.Sweep.alloc_acct_t`: the sweep account, as `alloc_acct`;
+- `mark_tag_inv`, `sw_tag_inv`: the page invariants after the writes;
+- `Cycle.Incr.cyc_alloc_t`: a run mid-sweep extended by `alloc_ph` with any
+  tag but 249 and the caller's writes is a run.
+
+**So `alloc_ph` matches the program's allocation events at every tag but
+249**: its result is `AT.alloc_tag ph` (§28.1), the equation `CAllocT` and
+`CSAllocT` take. Tag 249 (infix) is not a tag the program allocates, and
+akhil's events exclude it too.
+
+### 29.3 Witnesses (`Spec.Pages.Cycle.IdleVacuity`)
+
+On the dark run (`Cycle.VacuityDark`) from the witness heap `W`, under
+`roomy`:
+
+1. **`run_idle`: a minor collection once idle, that promotes.** Root
+   darkening, the allocation while marking, the barrier write, the
+   hand-over, the sweep's start, the step that sweeps C's page, a step at
+   every unit, the end, then `CSIMinor` with `NurseryWitness`'s nursery (one
+   object, one root at it).
+   - `run_idle_promotes`: the collection forwards the object to a block not
+     in use before and in use after, made by it, white, and rewrites the
+     root to it.
+   - `run_idle_theorems`: `ccycle_correct` on the run: the page `Idle`
+     invariant at the end, A and B survive, not handed out, and the heap's
+     last word is covered both ways.
+   - The promotion's allocation succeeds because C's page, once swept, is
+     free or has a free slot of the two-word class, and no later sweep step
+     changes a swept page's kind or free slots (`step_room`,
+     `sweep_from_room`); so the allocator's "no room" is false at the end
+     (`fit_of_room`, `idle_alloc_some`).
+2. **`run_tagged`: an allocation with tag 1 mid-sweep.** The dark run to the
+   step that sweeps C's page, then `CSAllocT` of one word with tag 1, its
+   field cleared, a step at every unit, the end.
+   - `run_tagged_nontrivial`: the object has tag 1, is white, and is new.
+   - `run_tagged_theorems`: `ccycle_correct` on the run, as above.
+3. **`run_mark_tagged`: an allocation with tag 252 while marking.** Root
+   darkening, then `CAllocT` of one word with tag 252 (raw data), no
+   initialising write.
+   - `run_mark_tagged_inv`: `ccycle_inv` on the run: the `Marking` page
+     invariant and akhil's account at its end; the object is black, of
+     tag 252.
+   - This run ends while marking, as §27.9's minor-collection witnesses
+     while marking do. A run with `CAllocT` that reaches `Idle` would need
+     the dark run's mark moves re-proved on a heap with a tagged object;
+     `ccycle_correct` reaches `CAllocT`'s case only through `to_pmarking`,
+     which `ccycle_inv` exercises here.
+
+### 29.4 Go/no-go for Pulse promotion: akhil's `forward_if_minor`, unchanged
+
+`GC.Gen.Impl.Cheney` (which holds `forward_if_minor`,
+`forward_if_minor_infix` and the scan loop), unchanged, checked with
+`RETRY=" "` (no `--retry`) at `--z3seed 0`, `1` and `2`, with
+`--query_stats`. The module's own settings stay: local `--z3rlimit 40`,
+`fuel 0`/`ifuel 0`, and eager quantifier instantiation (in the file for
+`forward_if_minor`, and the Makefile's `EAGER_QI` for the module).
+
+**All three seeds pass** (245 s, 236 s, 221 s for the module; 1,501
+queries each, none failed).
+
+Used rlimit, the largest per function, of the local 40:
+
+| Function | Queries | Seed 0 | Seed 1 | Seed 2 |
+|---|---|---|---|---|
+| `forward_if_minor` | 472 | 26.2 | 21.0 | 13.2 |
+| `forward_if_minor_infix` | 315 | 26.1 | 37.2 | 22.6 |
+| `scan_loop` | 508 | 39.4 | 36.2 | 34.9 |
+
+The slowest query of `forward_if_minor` took 12.7 s; of
+`forward_if_minor_infix`, 22.5 s (seed 1).
+
+**Verdict: go, with two functions to watch.**
+- `forward_if_minor` itself has about a third of its rlimit to spare at
+  every seed. A copy for the page allocator changes its context (`pages_st`
+  and `alloc_tag` in place of `fp_ref`, the free-list facts dropped), which
+  may cost or save; with that margin it can meet the rule.
+- `forward_if_minor_infix` (37.2 of 40 at seed 1) and the scan loop (34.9
+  to 39.4 of 40 at every seed) have little margin. A copy should split them (the
+  success and out-of-memory branches apart; the loop body out of the loop)
+  and keep the allocator's predicates abstract behind an `.fsti`, and be
+  checked at seeds 0–2 as soon as each is written.
+- The copy would keep the eager-instantiation setting (a Z3 option, not an
+  rlimit or a retry). Without it akhil's module hangs at Z3 4.15.3 (the
+  Makefile's note on `EAGER_QI`).
+- Correction to §28.5: the generational Makefile no longer sets an rlimit of
+  160 (the blanket overrides were removed as dead); the local 40 is the one
+  in force.
+
+### 29.5 Checked
+
+- **Seeds:** the new and changed modules, each checked without `--retry`
+  at `--z3seed 0`, `1` and `2` (`Promote.Idle`, `Cycle.AllocTagged`,
+  `Cycle.Mark`, `Cycle.Sweep`, `Cycle`, `Cycle.Carried`, `Cycle.Incr`,
+  `Cycle.IdleVacuity`, `Impl.Pages.AllocInc`): 27 of 27 pass.
+- Local rlimits at most 40; no admits, no `assume`.
+- No theorem's statement changed: `ccycle_inv`, `ccycle_correct` and the
+  `Cycle.cycle_*` theorems now quantify over runs with the new events.
+  The tag-0 events are unchanged.
+- `gmake verify`: `=== all modules verified ===` (the witnesses of §24–§28
+  rechecked against the changed run types).
+- **C:** re-extracted, and identical to the committed C, every file byte
+  for byte (the changes are to the specification and to a comment).
+  `pages_test`: all 924 checks pass.

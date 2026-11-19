@@ -9,9 +9,11 @@
 /// and `pages_ok_sw` mid-sweep, whose pages are some swept and some not,
 /// told apart in the Pulse state by the sweep epoch) it computes exactly:
 ///   - the model's tagged allocation of the phase, `AllocTag.alloc_tag ph`,
-///     which a minor collection uses for its copies;
+///     which a minor collection uses for its copies and the page cycle's
+///     allocation events with a tag use (`CAllocT`, `CSAllocT`; plan §29.2);
 ///   - with tag 0, the model's allocation of the phase, `Allocator.alloc ph`,
-///     which the page cycle's allocation events use (`CAlloc`, `CSAlloc`);
+///     which the page cycle's allocation events with tag 0 use (`CAlloc`,
+///     `CSAlloc`);
 /// and the new object's colour is the interface's `colour_at`: white in a
 /// swept page mid-sweep (`Incr.alloc_tag_phase`).
 ///
