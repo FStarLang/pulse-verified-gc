@@ -24,6 +24,8 @@ module HG = GC.Spec.HeapGraph
 module SPI = GC.Spec.SweepPhase.Intrinsic
 module SL = GC.Spec.SweepPhase.Slice
 module W = GC.Spec.Walk
+module LL = GC.Spec.FusedSweep.Lossless
+module SPC = GC.Spec.SweepPhase.Completeness
 module GW = GC.Spec.Graph.Within
 module I = GC.Model.Ideal
 
@@ -40,6 +42,15 @@ let obj_bounds (g: heap) (y: obj_addr)
                    ~(is_infix y g))
   = wf_with_parts ();
     objects_addresses_gt_start zero_addr g y;
+    hd_address_spec y
+
+/// The same, for a heap well formed for any definition of free.
+let obj_bounds_with (g: heap) (y: obj_addr)
+  : Lemma (requires blocks_fit g /\ no_infix_block g /\ Seq.mem y (objects zero_addr g))
+          (ensures U64.v y >= U64.v zero_addr + 8 /\
+                   U64.v y + 8 * U64.v (wosize_of_object y g) <= heap_size /\
+                   ~(is_infix y g))
+  = objects_addresses_gt_start zero_addr g y;
     hd_address_spec y
 
 /// A pointer `k` words into the allocated major block `y`, which holds the
@@ -696,4 +707,188 @@ let slice_blocks_sweeping (r: real_state) (h: cycle_history) (budget: nat) (r': 
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires alloc);
     FStar.Classical.forall_intro (FStar.Classical.move_requires keep)
+#pop-options
+
+/// A field holding a heap pointer is an edge of the raw graph (`points_to`).
+#push-options "--z3rlimit 20"
+let field_points_to (g: heap) (x: obj_addr) (i: nat)
+  : Lemma (requires blocks_fit g /\ Seq.mem x (objects zero_addr g) /\ i < U64.v (wosize_of_object x g) /\
+                    is_pointer_field (major_field g x i))
+          (ensures points_to g x (major_field g x i))
+  = let fv = major_field g x i in
+    let wz = wosize_of_object x g in
+    wosize_of_object_bound x g;
+    hd_address_spec x;
+    assert (U64.v x + 8 * i + 8 <= heap_size);
+    FStar.Math.Lemmas.pow2_lt_compat 61 54;
+    FStar.Math.Lemmas.pow2_lt_compat 64 58;
+    FStar.Math.Lemmas.pow2_lt_compat 58 57;
+    let k = U64.uint_to_t i in
+    assert (U64.v (U64.mul_mod k mword) == 8 * i);
+    assert (U64.v (U64.add_mod x (U64.mul_mod k mword)) == U64.v x + 8 * i);
+    field_read_implies_exists_pointing g x wz k fv
+#pop-options
+
+/// Two blocks of the walk whose extents share a word are the same block.
+let same_extent (g: heap) (x y: obj_addr) (p: nat)
+  : Lemma (requires Seq.mem x (objects zero_addr g) /\ Seq.mem y (objects zero_addr g) /\
+                    LL.in_extent g x p /\ LL.in_extent g y p)
+          (ensures x == y)
+  = if x <> y then SPC.extents_disjoint g x y p
+
+/// What a word `ptr_value (Major y) k` of a valid pointer may be in a heap
+/// whose blocks fit: if it is not `y` itself (k > 0), it is no block, and if
+/// it is infix, its parent -- when that is a block whose extent holds it --
+/// is `y`.
+#push-options "--z3rlimit 20"
+let ptr_in_block (g: heap) (y: obj_addr) (k: nat)
+  : Lemma (requires blocks_fit g /\ Seq.mem y (objects zero_addr g) /\ 2 <= k /\
+                    k < U64.v (wosize_of_object y g))
+          (ensures (let fv = ptr_value (Major y) k in
+                    is_pointer_field fv /\
+                    ~(Seq.mem (fv <: obj_addr) (objects zero_addr g)) /\
+                    (forall (p: obj_addr). Seq.mem p (objects zero_addr g) /\ LL.in_extent g p (U64.v fv) ==> p == y)))
+  = wf_with_parts ();
+    objects_addresses_gt_start zero_addr g y;
+    hd_address_spec y;
+    let fv = ptr_value (Major y) k in
+    assert (U64.v fv == U64.v y + 8 * k);
+    hd_address_spec (fv <: obj_addr);
+    assert (LL.in_extent g y (U64.v fv));
+    assert (LL.in_extent g y (U64.v fv - 8));
+    let not_block () : Lemma (~(Seq.mem (fv <: obj_addr) (objects zero_addr g))) =
+      if Seq.mem (fv <: obj_addr) (objects zero_addr g) then begin
+        assert (LL.in_extent g (fv <: obj_addr) (U64.v fv - 8));
+        same_extent g y (fv <: obj_addr) (U64.v fv - 8)
+      end
+    in
+    not_block ();
+    let par (p: obj_addr) : Lemma (requires Seq.mem p (objects zero_addr g) /\ LL.in_extent g p (U64.v fv))
+                                  (ensures p == y)
+      = same_extent g y p (U64.v fv)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires par)
+#pop-options
+
+/// A block in use for the account (`outside_snapshot kept`) is kept.
+#push-options "--ifuel 1"
+let in_use_kept (h: cycle_history) (g: heap) (y: obj_addr)
+  : Lemma (requires MPC.within_snapshot (kept h) g /\ in_use (MPC.outside_snapshot (kept h)) g y)
+          (ensures kept h y)
+  = MPC.in_use_outside_snapshot (kept h) g y;
+    is_white_iff y g; is_black_iff y g; is_gray_iff y g; is_blue_iff y g
+#pop-options
+
+/// **A pointer field of a kept block names a kept block** (B1, read through
+/// the map): the target of `Ptr { head; k }` in a faithful major block.
+#push-options "--ifuel 1 --z3rlimit 40"
+let kept_major_target (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+                      (x: obj_addr) (id: I.obj_id) (i: nat) (y: obj_addr) (head: I.obj_id) (k: nat)
+  : Lemma (requires MPC.within_snapshot (kept h) m.major /\ keyed m ids /\ copies_faithful m h im ids /\
+                    I.wf_memory im /\ I.wf_objects im /\
+                    ids (Major x) == Some id /\ kept h x /\
+                    I.valid_id im id /\ i < (Seq.index im.I.objects id).I.size /\
+                    I.field_at (Seq.index im.I.objects id) i == I.FValue (I.Ptr { head; infix_offset = k }) /\
+                    ids (Major y) == Some head /\
+                    major_field m.major x i == ptr_value (Major y) k)
+          (ensures kept h y)
+  = let g = m.major in
+    let free = MPC.outside_snapshot (kept h) in
+    wf_with_parts ();
+    MPC.in_use_outside_snapshot (kept h) g x;
+    scannable_iff m h im ids x id;
+    faithful_at m h im ids (Major x) id;
+    let o = Seq.index im.I.objects id in
+    let I.Scannable vs = o.I.fields in
+    assert (Seq.index vs i == I.Ptr { head; infix_offset = k });
+    field_value_ok im id i;
+    header_at m h im ids (Major y) head;
+    obj_bounds_with g y;
+    let fv = ptr_value (Major y) k in
+    if k = 0 then begin
+      assert (fv == y);
+      assert (is_pointer_field fv);
+      field_points_to g x i;
+      points_to_target_not_free free g x fv;
+      resolve_non_infix y g;
+      in_use_kept h g y
+    end else begin
+      ptr_in_block g y k;
+      field_points_to g x i;
+      points_to_target_not_free free g x fv;
+      if is_infix (fv <: obj_addr) g then begin
+        infix_addr_wf_elim g (objects zero_addr g) (fv <: obj_addr);
+        resolve_infix_spec (fv <: obj_addr) g;
+        parent_closure_addr_nat_spec (fv <: obj_addr) g;
+        let p : obj_addr = resolve_object (fv <: obj_addr) g in
+        hd_address_spec p;
+        assert (LL.in_extent g p (U64.v fv));
+        assert (p == y);
+        in_use_kept h g y
+      end else begin
+        resolve_non_infix (fv <: obj_addr) g
+      end
+    end
+#pop-options
+
+let ptr_value_zero (y: obj_addr) : Lemma (ptr_value (Major y) 0 == y) = ()
+
+let wf_parts_of (free: free_def) (g: heap)
+  : Lemma (requires well_formed_heap_with free g) (ensures blocks_fit g /\ no_infix_block g)
+  = wf_with_parts ()
+
+/// The scan window of a nursery block holding a scannable object covers its
+/// fields.
+#push-options "--ifuel 1"
+let nursery_scanned (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+                    (o: U64.t) (id: I.obj_id) (i: nat)
+  : Lemma (requires copies_faithful m h im ids /\ I.wf_objects im /\ ids (Nursery o) == Some id /\
+                    I.valid_id im id /\ i < (Seq.index im.I.objects id).I.size /\
+                    I.Scannable? (Seq.index im.I.objects id).I.fields)
+          (ensures i < minor_scan_wosize m.nursery o)
+  = header_at m h im ids (Nursery o) id;
+    let ob = Seq.index im.I.objects id in
+    assert (minor_tag m.nursery o == U64.v ob.I.tag);
+    assert (minor_wosize m.nursery o == ob.I.size);
+    assert (I.tag_scannable ob.I.tag);
+    no_scan_tag_val ();
+    minor_scan_wosize_cases m.nursery o
+#pop-options
+
+/// ... and so does a pointer field of a nursery block (B1's nursery half).
+#push-options "--ifuel 1 --z3rlimit 20"
+let kept_nursery_target (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+                        (o: U64.t) (id: I.obj_id) (i: nat) (y: obj_addr) (head: I.obj_id) (k: nat)
+  : Lemma (requires MPC.within_snapshot (kept h) m.major /\
+                    GenInv.minor_major_fields_not_free (MPC.outside_snapshot (kept h)) m.nursery m.major /\
+                    keyed m ids /\ copies_faithful m h im ids /\
+                    I.wf_memory im /\ I.wf_objects im /\
+                    ids (Nursery o) == Some id /\
+                    I.valid_id im id /\ i < (Seq.index im.I.objects id).I.size /\
+                    I.field_at (Seq.index im.I.objects id) i == I.FValue (I.Ptr { head; infix_offset = k }) /\
+                    ids (Major y) == Some head /\
+                    block_field m (Nursery o) i == ptr_value (Major y) k)
+          (ensures kept h y)
+  = let g = m.major in
+    let ms = m.nursery in
+    let ob = Seq.index im.I.objects id in
+    let I.Scannable vs = ob.I.fields in
+    assert (Seq.index vs i == I.Ptr { head; infix_offset = k });
+    field_value_ok im id i;
+    header_at m h im ids (Major y) head;
+    assert (k = 0 \/ (2 <= k /\ k < U64.v (wosize_of_object y g)));
+    nursery_scanned m h im ids o id i;
+    assert (is_allocated m (Major y));
+    wf_parts_of (MPC.outside_snapshot (kept h)) g;
+    obj_bounds_with g y;
+    let fv = ptr_value (Major y) k in
+    assert (minor_read_field ms o i == fv);
+    if k = 0 then begin
+      ptr_value_zero y;
+      GenInv.minor_major_fields_not_free_elim (MPC.outside_snapshot (kept h)) ms g o i;
+      in_use_kept h g y
+    end else begin
+      ptr_in_block g y k;
+      GenInv.minor_major_fields_not_free_elim (MPC.outside_snapshot (kept h)) ms g o i
+    end
 #pop-options
