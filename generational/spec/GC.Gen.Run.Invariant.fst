@@ -7,7 +7,7 @@ open GC.Gen.Run.History
 /// induction over a run, and the run forms of losslessness are proved from
 /// them.
 
-let initial_run_invariant _ = admit ()
+let initial_run_invariant _ = GC.Gen.Run.Invariant.Initial.initial_run_invariant ()
 
 let alloc_keeps_run_invariant r h site tag size init r' = admit ()
 
