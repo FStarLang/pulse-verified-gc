@@ -2,7 +2,7 @@ module GC.Gen.Run.Simulation
 
 /// The per-step lemmas, the allocation count, enabledness, the
 /// stop-the-world case, the case splits, the induction over a run and the
-/// read corollary are proved; only the hoisted run is still admitted.
+/// read corollary.  The hoisted-run corollary is in `GC.Gen.Run.Hoisted`.
 
 open FStar.Seq
 open FStar.List.Tot
@@ -139,5 +139,3 @@ let full_gc_collects #es0 #rs #rs' #r rn ps =
         FStar.Classical.forall_intro_2 (fun b -> FStar.Classical.move_requires (sub b));
         C.full_gc_end r1 r2 r3 r rs' (history_of_run rn1) h im ids1 (ids_of_run rn)
 #pop-options
-
-let hoisted_isomorphic #es #r rn #es_h #r_h rn_h ps = admit ()

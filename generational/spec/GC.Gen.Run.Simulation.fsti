@@ -38,7 +38,9 @@
 /// Corollaries: a stop-the-world collection leaves exactly the reachable
 /// objects (`full_gc_collects`); and the incremental run is isomorphic, on
 /// every allocated block, to its **hoisted** run -- the same program with
-/// each cycle's slices moved to right after its start (`hoisted_isomorphic`).
+/// each cycle's slices moved to right after its start
+/// (`GC.Gen.Run.Hoisted.hoisted_isomorphic`, over `isomorphic` below and
+/// `GC.Gen.Run.Step.hoist`).
 
 module GC.Gen.Run.Simulation
 
@@ -312,20 +314,9 @@ let isomorphic (m1 m2: real_memory) : prop =
            then word_corresponds m1 m2 f (block_field m1 b i) (block_field m2 b' i)
            else block_field m1 b i == block_field m2 b' i)))
 
-/// **The incremental run and its hoisted run are isomorphic** on every
-/// allocated block, whenever the incremental collector is idle.  The hoisted
-/// run carries out the same program, with the same allocation sites and the
-/// same minor collections, but each cycle collects stop-the-world right
-/// after its start (`hoist`: its slices moved there, run to the end).  So
-/// snapshot-at-the-beginning is a theorem: once a cycle has ended, the
-/// incremental collector has left exactly what collecting at the cycle's
-/// start would have, plus nothing else.
-val hoisted_isomorphic (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
-                       (#es_h: list event) (#r_h: real_state) (rn_h: run (initial_state ()) es_h r_h)
-                       (ps: list I.program_event)
-  : Lemma (requires I.wf_program ps /\ executes rn ps /\ executes rn_h ps /\
-                    kinds es_h == hoist (kinds es) /\ r.phase == Ph.Idle)
-          (ensures isomorphic r.memory r_h.memory)
+/// The corollary itself, that the incremental run and its hoisted run are
+/// isomorphic once the collector is idle, is `GC.Gen.Run.Hoisted.hoisted_isomorphic`
+/// (stated there, since its proof goes through the simulation).
 
 /// ---------------------------------------------------------------------------
 /// Later (not stated)

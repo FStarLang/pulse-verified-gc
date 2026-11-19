@@ -32,7 +32,7 @@
 /// promotes exactly `GC.Gen.Run.IdAccounting.promoted` and the kept blocks
 /// keep their ids (`GC.Gen.Run.Hoisted.MinorPromotes`, from
 /// `GC.Gen.Cheney.Soundness` and `GC.Gen.Run.Hoisted.Minor`).  The result is
-/// `hoisted_isomorphic_proved`.
+/// `hoisted_isomorphic`.
 module GC.Gen.Run.Hoisted
 
 open FStar.Seq
@@ -480,13 +480,13 @@ let hoisted_isomorphic_given (#es: list event) (#r: real_state) (rn: run (initia
     iso_from_ids r.memory r_h.memory h h_h (I.ideal_run ps) (ids_of_run rn) (ids_of_run rn_h)
 
 /// **The incremental run is isomorphic to its hoisted run**
-/// (`GC.Gen.Run.Simulation.hoisted_isomorphic`): the minor hypothesis holds
+/// (`hoisted_isomorphic`, the interface's statement): the minor hypothesis holds
 /// (`GC.Gen.Run.Hoisted.MinorPromotes.minor_promotes_holds`, from the Cheney
 /// soundness of `GC.Gen.Cheney.Soundness` and the graph correspondence of
 /// `GC.Gen.Run.Hoisted.Minor`).
-let hoisted_isomorphic_proved (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
-                              (#es_h: list event) (#r_h: real_state) (rn_h: run (initial_state ()) es_h r_h)
-                              (ps: list I.program_event)
+let hoisted_isomorphic (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
+                       (#es_h: list event) (#r_h: real_state) (rn_h: run (initial_state ()) es_h r_h)
+                       (ps: list I.program_event)
   : Lemma (requires I.wf_program ps /\ executes rn ps /\ executes rn_h ps /\
                     kinds es_h == hoist (kinds es) /\ r.phase == Ph.Idle)
           (ensures isomorphic r.memory r_h.memory)
