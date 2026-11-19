@@ -7,9 +7,8 @@
 ///
 /// Proved here: the start of a cycle, idle slices, mark slices (staying
 /// marking, and the hand-over to the sweep), and `idle_survives`;
-/// `idle_lossless` given `snapshot_in_start` (the snapshot's objects were
-/// allocated blocks of the start memory), which the invariant does not yet
-/// carry.  The sweep's slices are in `GC.Gen.Run.Invariant.SweepSlice`, the
+/// `idle_lossless` (`idle_lossless_with`, whose `snapshot_in_start` is a
+/// clause of B2).  The sweep's slices are in `GC.Gen.Run.Invariant.SweepSlice`, the
 /// initial state in `GC.Gen.Run.Invariant.Initial`.
 
 module GC.Gen.Run.Invariant.Collector
@@ -68,9 +67,8 @@ val slice_keeps_handover (r: real_state) (h: cycle_history) (budget: nat) (r': r
                     r.phase == Ph.Marking /\ Ph.Sweeping? r'.phase)
           (ensures run_invariant r' (update_history h r (Slice budget) r'))
 
-/// The snapshot's objects are allocated blocks of the start memory (true at every
-/// start of a cycle -- `MC.start_inv` -- but not yet a clause of the
-/// invariant).
+/// The snapshot's objects are allocated blocks of the start memory (a
+/// clause of B2).
 let snapshot_in_start (h: cycle_history) : prop =
   forall (x: obj_addr). snapshot h x ==> is_allocated h.start_memory (Major x)
 

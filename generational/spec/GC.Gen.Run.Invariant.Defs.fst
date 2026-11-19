@@ -70,6 +70,7 @@ let snapshot_accounting (r: real_state) (h: cycle_history) : prop =
   // B2
   (forall (x: obj_addr). snapshot h x ==>
      Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\ wosize_of_object x g == wosize_of_object x g0) /\
+  (forall (x: obj_addr). snapshot h x ==> is_allocated h.start_memory (Major x)) /\
   (forall (x: obj_addr). garbage_at_start h x /\ is_allocated r.memory (Major x) /\ ~(h.allocated_during_cycle x) ==>
      wosize_of_object x g == wosize_of_object x g0) /\
   W.walk_end g zero_addr == W.walk_end g0 zero_addr /\

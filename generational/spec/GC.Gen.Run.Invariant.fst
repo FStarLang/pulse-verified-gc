@@ -55,7 +55,7 @@ let rec run_invariant_along h0 #r0 #es #r1 rn =
 
 let alloc_phase_major_alloc_step r tag size init = admit ()
 
-let idle_lossless r h = admit ()
+let idle_lossless r h = GC.Gen.Run.Invariant.Collector.idle_lossless_with r h
 
 let idle_survives r h = GC.Gen.Run.Invariant.Collector.idle_survives r h
 
