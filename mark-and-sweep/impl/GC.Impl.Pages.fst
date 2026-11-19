@@ -9,7 +9,11 @@
 ///   - `GC.Impl.Pages.Sweep.start_sweep`, `sweep_all` and `sweep`: exactly
 ///     `StartSweep.start_sweep`, `SweepAll.sweep_all`, and the two together;
 ///   - `GC.Impl.Pages.SweepPage.pool_step` and `GC.Impl.Pages.SweepRun.run_step`,
-///     one unit of the sweep.
+///     one unit of the sweep;
+///   - incremental mode (plan §28): `GC.Impl.Pages.AllocInc.alloc_ph`, the
+///     allocator of each phase, exactly `AllocTag.alloc_tag ph`; and
+///     `GC.Impl.Pages.SweepInc.sweep_unit` and `sweep_slice`, exactly
+///     `SweepAll.step` and `Incr.slice_from`.
 /// `GC.Impl.Pages.Vacuity` checks that the lemmas' hypotheses can hold.
 /// This module gathers them, for the build and for extraction to C
 /// (mark-and-sweep/pages-c).
@@ -20,3 +24,6 @@ include GC.Impl.Pages.Init
 include GC.Impl.Pages.Alloc
 include GC.Impl.Pages.Sweep
 include GC.Impl.Pages.Vacuity
+include GC.Impl.Pages.AllocInc
+include GC.Impl.Pages.SweepInc
+include GC.Impl.Pages.IncVacuity

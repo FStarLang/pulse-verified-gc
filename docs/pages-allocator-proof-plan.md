@@ -3938,3 +3938,302 @@ The tagged allocator is within the A/A spread of the untagged one.
   different; the root is rewritten to A's copy, and **A's copy's field is
   rewritten from the nursery pointer to B's copy**.
   `run_mark_minor2_theorems` applies `ccycle_inv`.
+
+## 28. Step 6: incremental mode in Pulse (2026-11-19)
+
+The Pulse code for incremental mode, each function proved equal to the F*
+model, at the prototype's speed. New modules only. Every existing theorem,
+and every existing function's C, is unchanged.
+
+### 28.1 Allocation in every phase (`Impl.Pages.AllocInc`, `Spec.Pages.Incr`)
+
+`alloc_ph heap t wz tag marking` is the tagged allocator (`Alloc.alloc_tag`)
+with the colour rule: black when `marking`, white otherwise. Its
+precondition is the page invariant of a ghost phase `ph`
+(`Incr.phase_inv ph = MidSweepAlloc.inv_sw ph`):
+- `Idle`: `PA.inv Idle`;
+- `Marking`: `pages_ok_mc` with every page swept, which is the carried
+  cycle's `PMP.mark_inv`;
+- `Sweeping`: `pages_ok_sw`, with some pages swept and some not.
+
+In the Pulse state, swept and unswept pages are told apart by the sweep
+epoch (`State.to_pinfo`): a page is swept when it is free or its record
+carries the current epoch. `marking == I.Marking? ph` ties the flag to the
+phase. Its postcondition:
+- `(g', st', o) == AT.alloc_tag ph g st wz tag`: the model's allocation of
+  the phase, the one a minor collection uses;
+- with tag 0, `(g', st', o) == PA.alloc ph g st wz`: the model's allocation
+  event (`CAlloc`, `CSAlloc`). This uses `AllocInc.alloc_tag_zero`: with
+  tag 0 the tagged allocator is the coloured one (`tag0_hdr`, through
+  `Impl.Object`'s header lemmas);
+- on failure nothing changes;
+- on success, **the colour rule**:
+  `color_of_object o g' == I.colour_at MSA.pages_allocator_sw st ph o`. That
+  is black while marking, white in a swept page while sweeping, and white
+  in `Idle` (`Incr.alloc_tag_phase`, from `MidSweepAlloc.sweeping_post` and
+  `other_post`).
+
+The fast path needs only `Ready.heads_ready`, and every phase's invariant
+gives it (`AllocInc.phase_ready`). Mid-sweep this is the new
+`AllocInc.sw_ready`: `pages_ok_sw` contains `Scrub.core`, whose class lists
+hold swept pages with their free slots.
+
+### 28.2 The incremental sweep (`Impl.Pages.SweepInc`, `Spec.Pages.Incr`)
+
+- **`sweep_unit heap t p`** sweeps the unit at page `p` and returns the
+  page after it. It is exactly `SweepAll.step g st p`, the cycle's event
+  `CSStep p`, for every `p`. A swept unit, a free page or a continuation
+  page is left as it is. Precondition: `map_ok`.
+- **`sweep_slice heap t c budget`** sweeps from cursor `c` until `budget`
+  units are swept or the pages end, and returns the new cursor. It is
+  exactly `Incr.slice_from g st c budget`. Precondition: `map_ok` and
+  `c <= n_pages`.
+  - `slice_from` passes over a swept unit, a free page or a continuation
+    page at no cost, as the prototype's `incr_step` does.
+  - The loop is `Sweep.sweep_all`'s, with a budget, and its step lemmas are
+    reused.
+- **The start** is `Sweep.start_sweep` (`StartSweep.start_sweep`: a new
+  epoch, so every page in use reads as unswept), with the cursor at 0.
+- **The end**:
+  - `swept_below pm c` says every page below `c` is swept;
+  - `Incr.cursor_end`: once `c >= n_pages` every page is swept, which is
+    `CSEnd`'s hypothesis;
+  - `slice_ok`: a slice keeps `pages_ok_sw` and `swept_below`, and moves
+    the cursor forward;
+  - `cursor_step`: a step at the cursor moves it past its unit. A
+    continuation page past a swept prefix is swept (`cont_swept`, by
+    `map_ok`);
+  - `step_cursor` and `alloc_cursor`: a step anywhere and an allocation
+    keep `swept_below`;
+  - `slice_full`: a budget of one unit per remaining page reaches the end.
+
+**The sweep events of the page cycle** (`Spec.Pages.Cycle.Incr`):
+- `run_pre`: every state of a run of the carried cycle meets the Pulse
+  code's preconditions. That is the phase's invariant and, mid-sweep,
+  `map_ok`, by `ccycle_inv`.
+- `slice_events`: a slice is one `CSStep` per page it visits, from the same
+  sweep start.
+- `cyc_unit`, `cyc_slice`, `cyc_alloc` (with tag 0 and the caller's
+  writes), `cyc_end`: a run of the cycle extended by any of them, in any
+  order, is a run of the cycle. So `ccycle_inv` and `ccycle_correct` hold
+  of it.
+- At the Pulse level the functions share one state (`is_heap ** pages_st`)
+  and need nothing that the others do not keep. So allocations and sweep
+  steps interleave in any order, as in the model.
+
+**Not covered here**:
+- `CSMinor`, whose Pulse code is §28.5;
+- the program's writes, which are not allocator code.
+
+### 28.3 Vacuity (`Spec.Pages.IncrVacuity`, `Impl.Pages.IncVacuity`)
+
+All on the dark run's states (§25.3, `V.roomy`):
+- `mixed_state`: after A's page is swept, that page is swept and B's run
+  is not. `phase_inv Sweeping` holds there, and so do `heads_ready` and
+  `map_ok` (`IncVacuity.pulse_pre_mixed`).
+- `alloc_mixed`: from that state an allocation with any tag succeeds, white,
+  and its colour is `colour_at`.
+- `alloc_other_phases`: `W`'s `Idle` and `Marking` invariants meet
+  `phase_inv`.
+- `run_incr`: a run of the carried cycle finished by the Pulse operations:
+  1. `run_carried`'s events up to its write mid-sweep (`run_sw`);
+  2. B's run swept as one unit (`cyc_unit`);
+  3. one slice from cursor 0 with a budget of every page (`cyc_slice`),
+     which reaches the end (`slice_end`);
+  4. `cyc_end`.
+- `run_incr_nontrivial`:
+  - before the unit step, the Pulse preconditions hold, and B's run is an
+    unswept run head;
+  - the unit step sweeps it;
+  - the slice ends with every page swept.
+- `run_incr_theorems`: `ccycle_correct` gives the `Idle` invariant at the
+  end, and every object reachable at the start survives.
+- `cursor_witness`: the hypotheses of `cursor_step`, `alloc_cursor` and
+  `step_cursor` hold at the run's states, `slice_ok`'s with the cursor at
+  the end of the pages.
+
+### 28.4 Speed (`pages-c/bench`, `make bench-inc`)
+
+**The workloads**:
+- `inc`: a mixed heap (as `sweep`) is filled to 40%, and 50% is marked.
+  The incremental sweep starts. Half the heap's requests are allocated,
+  with a one-unit slice after every 8. The sweep is finished at the end.
+  The timed figure is ns per allocation, including the sweep's start, the
+  slices and the finish.
+- `incL`: the same, with a slice every 64 allocations.
+- `incS`: the same from a heap of small objects only.
+
+**The two sides**:
+- The prototype runs in its own incremental mode (`SW_INCR`): `incr_start`,
+  `impl_slice`, and allocation that sweeps when it finds no room.
+- The verified build runs `start_sweep`, `sweep_slice(.., 1)` and `alloc_ph`
+  (white, tag `wz & 7`). An allocation that finds no room mid-sweep slices
+  and retries, on a slow path out of line, as the prototype's `refill` is.
+- `bench_inc.sh` alternates the prototype, the verified build and a second
+  copy of it (A/A).
+
+Results: 15 rounds × 7 repetitions, medians.
+
+| Workload | Prototype (ns/alloc) | Verified | A/A copy |
+|---|---|---|---|
+| inc | 75.39 | 58.16 (−22.9%) | 57.94 (−23.1%) |
+| incL | 68.15 | 53.10 (−22.1%) | 53.08 (−22.1%) |
+| incS | 34.05 | 34.71 (+1.9%) | 34.62 (+1.7%) |
+
+The existing workloads, rerun in the same session (`bench.sh 5 9`):
+- small −17.4%, mixed −44.1%, large −40.3%;
+- sweep10/50/90 +0.2/−0.5/−1.3%;
+- realloc −18.5%, reallocS −21.2%.
+
+Absolute times are higher than §17's: the machine ran slower in this
+session. Compare rows only within a table.
+
+**What was found on the way**:
+- **First measurement:** `incS` was +7–8%, and the A/A copy agreed, so it
+  was not noise. Two hypotheses were ruled out:
+  - the prototype's `pool_find`: emulating it in a scratch driver changed
+    nothing (see below);
+  - the sweep of small-object pages: an eager-sweep benchmark on a
+    small-only heap was at parity.
+- **The cause was the bench driver:**
+  - Split at the moment the sweep ended, nearly all of the gap was in
+    allocation after the sweep. From the same heap, the verified allocator
+    was 19% faster than the prototype inside `run_allocs`, and at parity
+    inside the incremental loop in `main`.
+  - Inlined into `main`, the allocator's fast path was compiled around
+    `main`'s register pressure, as §17 found for the slot loop.
+- **The fix, for both builds:**
+  - the timed loop moved to a function of its own (`run_inc`), as
+    `run_allocs` is;
+  - the slow path moved out of line.
+- **A difference that remains:** mid-sweep, when a class's list is empty,
+  the prototype first sweeps an unswept page of that class that had free
+  slots at the cycle's start (OCaml 5's `pool_find`). The verified
+  allocator takes a free page.
+  - In `incS` that is 27 fresh pages against 0, out of about 1,700 in use.
+  - Emulating `pool_find` in the driver (with the verified `sweep_unit`)
+    did not make `incS` faster.
+  - It is a memory difference, not a speed one. It is not built: it would
+    need per-class lists of unswept pages kept beside the state, as the
+    prototype's `ua_next`.
+
+### 28.5 Promotion at the Pulse level: assessment (read-only, not built)
+
+**akhil's Pulse promotion hard-wires the first-fit allocator:**
+- `Gen.Impl.Promote.promote_one` calls `Impl.Allocator.allocate` and threads
+  `fp_ref`, `Alloc.is_phase` and the free-list facts (`fl_ascending` and
+  others) through `Promote` and `Cheney`.
+- Its postconditions are stated against his free-list specification
+  (`Gen.Promote.promote_object`, `Gen.Cheney.cheney_*`).
+- So it cannot be reused unchanged. Its top, `Promote`, `Cheney` and
+  `minor_collect_with` (about 1,300 lines), would be copied into our
+  modules:
+  - parametric in a ghost `a: tal pstate` and a runtime colour,
+    instantiated at `mark_tal`/Black and `sw_tal`/White;
+  - calling `Pages.Alloc.alloc_tag`;
+  - threading `pages_st` in place of `fp_ref`/`phase`.
+- **Reused unchanged**: his `MinorHeap` and `UpdatePtrs` Pulse code, and the
+  allocator-free lemmas of `Gen.Cheney.Sim`, `ForwardingArray`,
+  `TwoPassEquiv.promoted_plus_slots_eq_walk` and `RefTable`.
+
+**Our side:**
+- `Spec.Pages.Promote` follows his `Gen.Cheney` statement for statement:
+  - the same `forward_one` (with its infix guard), `forward_fields`,
+    `forward_roots`, `scan` and fuel;
+  - so a copied Pulse loop keeps his equational invariants.
+- **Missing:**
+  - unfold lemmas behind an `.fsti`, with `linv` abstract in Pulse
+    proofs (about 150 lines);
+  - the BFS/queue invariant over our `gstate`, re-proved (his `SimOne` is
+    private and tied to his state; about 400–500 lines);
+  - the two-pass pointer update proved equal to our
+    `update_pointers_with a.free` at `promote a` (about 500–800 lines). It
+    needs injectivity of forwarding and disjoint copies, which `linv` does
+    not carry yet. This is the largest new proof.
+- **`heads_ready`** is not a problem:
+  - `linv` gives the allocator invariant after every copy;
+  - while marking, `Ready.mc_ready` gives `heads_ready`;
+  - mid-sweep, `AllocInc.sw_ready` (§28.1) does.
+
+**Gaps and risks:**
+- No `Idle` instance of `tal` exists. Most minor collections run idle
+  (about 100–200 lines).
+- The pages-c bundle must take in `Gen.Impl.MinorHeap` and `UpdatePtrs`.
+  His three minor-header readers are copied, since importing his `Promote`
+  pulls in his allocator.
+- The runtime bridge (`alloc_gen.c`'s `fp_ref`/`phase_ref`) is stage 5b.
+  The proof does not need it.
+- **Stability:** his `Cheney` runs with eager QI, local rlimit 40, the
+  generational Makefile's rlimit 160 and `--retry 3`. Copying
+  `forward_if_minor` (185 lines in one function) under our rule (no retry,
+  seeds 0–2, rlimit ≤ 40) is the main risk. Mitigations:
+  - abstract predicates behind an `.fsti`;
+  - the free-list conjuncts dropped;
+  - the success and out-of-memory branches split into separate functions.
+
+**Estimate:** 8–10 new modules, about 2,700–3,300 lines (about 1,300 Pulse
+and 1,500–2,000 spec), with no change to akhil's modules or any theorem.
+
+**Order of work:**
+1. Unfold lemmas.
+2. The BFS invariant, then the simulation predicates.
+3. `promote_one`.
+4. `forward_if_minor` alone, checked at seeds 0–2 as the go/no-go point.
+5. The rest of the Cheney loop.
+6. The two-pass proof.
+7. The minor collection.
+8. Extraction, C test and bench, then the `Idle` instance.
+
+The full assessment, with file and line references, was given with this
+step's report.
+
+### 28.6 Extraction and tests (`pages-c`)
+
+**Extraction:**
+- `AllocInc` and `SweepInc` are entry modules of the `GC_Pages` bundle.
+- New C functions: `alloc_ph`, `sweep_unit` and `sweep_slice`.
+- **Every one of the 104 existing functions of `GC_Pages.c` is
+  byte-identical**, compared function by function; KaRaMeL only moved some
+  of them in the file. The other generated files differ only in the
+  KaRaMeL invocation line and in the position of two declarations.
+
+**`pages_test.c`: 924 checks, all passing** (474 before):
+- `test_slices`:
+  - on `test_sweep`'s heap, slices of one unit return the cursors 1, 2, 4,
+    5, 6 and 8 (the free page is passed over);
+  - after each slice exactly the pages below the cursor are swept;
+  - together the slices leave **the eager sweep's heap, page map and lists
+    byte for byte**;
+  - one slice with a large budget does the same;
+  - a budget of 0 sweeps nothing.
+- `test_mid_sweep_alloc`:
+  - after one slice, page 0 is swept and page 1 is not;
+  - `alloc_ph` takes page 0's free slot, white with tag 5, and then a
+    fresh page that is swept; black when marking;
+  - the unswept page is untouched, byte for byte;
+  - `sweep_unit` then sweeps it, and a slice ends the sweep;
+  - the objects allocated mid-sweep are kept;
+  - the swept page joined its class's list after page 0;
+  - `sweep_unit` on a swept unit changes nothing.
+- `test_mid_sweep_large`:
+  - a large allocation mid-sweep takes a fresh swept run beside an unswept
+    one, and leaves that run untouched;
+  - `sweep_unit` sweeps that run, and the new object is kept.
+
+**Mutants**, in a scratch copy of the C, each rejected:
+- `alloc_ph` always white: 2 checks fail;
+- the slice re-sweeping swept units: 1 check fails;
+- the slice not counting runs against its budget: 3 checks fail.
+
+### 28.7 Checked
+
+- The new and changed modules all verify without `--retry` at Z3 seeds 0,
+  1 and 2: 21 checks, all passing. They are `Spec.Pages.Incr`,
+  `Spec.Pages.Cycle.Incr`, `Spec.Pages.IncrVacuity`, `Impl.Pages.AllocInc`,
+  `Impl.Pages.SweepInc`, `Impl.Pages.IncVacuity` and the root
+  `Impl.Pages`.
+- Local rlimits are at most 30.
+- No admits, no assumes.
+- The `Makefile` gains the root `Spec.Pages.IncrVacuity`; `Impl.Pages`
+  includes the three new impl modules.
+- `make verify` with the Makefile's flags: `=== all modules verified ===`.
