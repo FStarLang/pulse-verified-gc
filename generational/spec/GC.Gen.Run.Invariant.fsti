@@ -1,0 +1,271 @@
+/// ---------------------------------------------------------------------------
+/// GC.Gen.Run.Invariant - what every state of a run carries
+/// ---------------------------------------------------------------------------
+///
+/// `run_invariant r h` = `phase_shape r` /\ `snapshot_accounting r h`
+/// (mutator-equivalence-plan.md, section 3.3).  Every step keeps it
+/// (`step_keeps_run_invariant`, one lemma per kind of step), so by induction
+/// it holds at every state of a run (`run_invariant_along`).  Nothing happens
+/// between steps: every change is a step.
+///
+///   * **`phase_shape r`**, about the real state alone: the collector's
+///     state at its phase (`GI.phase_shape`: well-formedness, what the colours
+///     mean in each phase, the generational shape), the remembered set
+///     covering every nursery pointer of a block not free at the phase and
+///     naming only such blocks' fields (`RT.ref_table_covers_with`,
+///     `RT.ref_table_sound_with`), and the heap walk reaching the end of the
+///     heap.  What the Pulse code maintains; proved here by the steps rather
+///     than assumed at each call.
+///   * **`snapshot_accounting r h`**, how the state relates to the cycle's
+///     start (`GC.Gen.Run.History`), with `kept` the snapshot and the blocks
+///     allocated since:
+///       - B1 (closed): what is dark is kept, and a kept block points only at
+///         kept blocks (`MPC.within_snapshot`); the nursery points only at
+///         kept blocks;
+///       - B2 (kept): every snapshot object is still an allocated block, at
+///         its size in the start memory;
+///       - B3 (new objects): the blocks allocated since are allocated, and
+///         not in the snapshot;
+///       - B4 (nothing else): every allocated block is kept or garbage at
+///         the start;
+///       - B5 (only dead memory reclaimed): every word now free, or in a
+///         block allocated since, was in a free or garbage block at the start;
+///       - while marking: every white snapshot object is one the marker will
+///         reach, and the blocks allocated since are black;
+///       - mid-sweep: every block not free at the cursor is kept;
+///       - idle: no allocated block is garbage at the start.
+///
+/// The program's events keep it only if what they store points at kept
+/// blocks (`stores_in_kept`): OCaml's type safety, which
+/// `GC.Gen.Run.Simulation` derives from the program's well-formedness.
+///
+/// At idle, the invariant is the incremental cycle's losslessness, per word
+/// (`idle_lossless`) and per object (`idle_survives`); over runs,
+/// `cycle_lossless` and `cycle_survives`.
+
+module GC.Gen.Run.Invariant
+
+open FStar.Seq
+open FStar.List.Tot
+open GC.Spec.Base
+open GC.Spec.Heap
+open GC.Spec.Object
+open GC.Spec.Fields
+open GC.Gen.MinorHeap
+open GC.Gen.Run.Step
+open GC.Gen.Run.History
+
+module U64 = FStar.UInt64
+module Ph = GC.Spec.Phase
+module MP = GC.Spec.MarkPhase
+module MPC = GC.Spec.MarkPhase.Completeness
+module SPC = GC.Spec.SweepPhase.Completeness
+module SA = GC.Spec.Allocator
+module AC = GC.Spec.Allocator.Cursor
+module LL = GC.Spec.FusedSweep.Lossless
+module W = GC.Spec.Walk
+module GI = GC.Gen.Incremental
+module RT = GC.Gen.RefTable
+module GenInv = GC.Gen.HeapInvariant
+module I = GC.Model.Ideal
+
+/// ---------------------------------------------------------------------------
+/// The invariant
+/// ---------------------------------------------------------------------------
+
+/// **The shape of the real state**, at its phase.
+let phase_shape (r: real_state) : prop =
+  let g = r.memory.major in
+  let free = GI.phase_free r.phase in
+  GI.phase_shape r.memory.nursery g r.free_list r.phase r.scan_pos /\
+  RT.ref_table_covers_with free g r.ref_table (Seq.length r.ref_table) /\
+  RT.ref_table_sound_with free g r.ref_table (Seq.length r.ref_table) /\
+  W.walk_end g zero_addr + 8 >= heap_size
+
+/// **The snapshot accounting** (B1-B5, and the phase's additions).
+let snapshot_accounting (r: real_state) (h: cycle_history) : prop =
+  let g = r.memory.major in
+  let g0 = h.start_memory.major in
+  // B1
+  MPC.within_snapshot (kept h) g /\
+  GenInv.minor_major_fields_not_free (MPC.outside_snapshot (kept h)) r.memory.nursery g /\
+  // B2
+  (forall (x: obj_addr). snapshot h x ==>
+     Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\ wosize_of_object x g == wosize_of_object x g0) /\
+  // B3
+  (forall (x: obj_addr). h.allocated_during_cycle x ==> is_allocated r.memory (Major x) /\ ~(snapshot h x)) /\
+  // B4
+  (forall (x: obj_addr). is_allocated r.memory (Major x) ==>
+     snapshot h x \/ h.allocated_during_cycle x \/ garbage_at_start h x) /\
+  // B5
+  (forall (p: nat). LL.blue_covered g p \/ SPC.new_covered h.allocated_during_cycle g p ==>
+     reclaimable_at_start h p) /\
+  (match r.phase with
+   | Ph.Marking ->
+       MP.outside_refs_reached g r.scan_pos (snapshot h) /\
+       (forall (x: obj_addr). h.allocated_during_cycle x ==> is_black x g)
+   | Ph.Sweeping c -> MPC.sweep_in_snapshot (kept h) g c
+   | Ph.Idle -> forall (x: obj_addr). is_allocated r.memory (Major x) ==> ~(garbage_at_start h x))
+
+/// **The run invariant.**
+let run_invariant (r: real_state) (h: cycle_history) : prop =
+  phase_shape r /\ snapshot_accounting r h
+
+/// ---------------------------------------------------------------------------
+/// What the program's events owe
+/// ---------------------------------------------------------------------------
+
+/// A stored word that is a major pointer points (resolved) at a kept block.
+let in_kept (r: real_state) (h: cycle_history) (v: U64.t) : prop =
+  is_pointer v ==> kept h (resolve_object (v <: obj_addr) r.memory.major)
+
+/// **What a program event stores points at kept blocks** (into scannable
+/// blocks; a no-scan block holds raw words).
+let stores_in_kept (r: real_state) (h: cycle_history) (e: event) : prop =
+  match e with
+  | Alloc _ tag _ init ->
+      I.tag_scannable tag ==> (forall (i: nat). i < Seq.length init ==> in_kept r h (Seq.index init i))
+  | Write (Major x) _ v -> scannable r.memory.major x ==> in_kept r h v
+  | Write (Nursery o) _ v -> minor_tag r.memory.nursery o < 251 ==> in_kept r h v
+  | _ -> True
+
+/// The same at every step of a run, from the history `h0`.
+let rec stores_in_kept_along (h0: cycle_history) (#r0: real_state) (#es: list event) (#r1: real_state)
+                             (rn: run r0 es r1)
+  : GTot prop (decreases rn) =
+  match rn with
+  | Done _ -> True
+  | Step #_ #_ #r1' rn' e _ _ -> stores_in_kept_along h0 rn' /\ stores_in_kept r1' (history_along h0 rn') e
+
+/// ---------------------------------------------------------------------------
+/// The initial state, and every step
+/// ---------------------------------------------------------------------------
+
+/// **The initial state carries it**, with the initial history.
+val initial_run_invariant (_: unit)
+  : Lemma (run_invariant (initial_state ()) (initial_history ()))
+
+/// **An allocation keeps it** (nursery or major), the new major block among
+/// the blocks allocated since.
+val alloc_keeps_run_invariant (r: real_state) (h: cycle_history)
+    (site: alloc_site) (tag: I.tag_t) (size: nat) (init: seq U64.t) (r': real_state)
+  : Lemma (requires run_invariant r h /\ stores_in_kept r h (Alloc site tag size init) /\
+                    step r (Alloc site tag size init) r')
+          (ensures run_invariant r' (update_history h r (Alloc site tag size init) r'))
+
+/// **A write keeps it** (the barrier, a raw no-scan store, or a nursery
+/// store).
+val write_keeps_run_invariant (r: real_state) (h: cycle_history)
+    (b: block_addr) (i: nat) (v: U64.t) (r': real_state)
+  : Lemma (requires run_invariant r h /\ stores_in_kept r h (Write b i v) /\ step r (Write b i v) r')
+          (ensures run_invariant r' (update_history h r (Write b i v) r'))
+
+/// **A minor collection keeps it**, its promoted copies among the blocks
+/// allocated since.
+val minor_keeps_run_invariant (r: real_state) (h: cycle_history) (roots: seq U64.t) (r': real_state)
+  : Lemma (requires run_invariant r h /\ step r (Minor roots) r')
+          (ensures run_invariant r' (update_history h r (Minor roots) r'))
+
+/// **The start of a cycle establishes it** for the new cycle.
+val start_keeps_run_invariant (r: real_state) (h: cycle_history) (roots: seq U64.t) (r': real_state)
+  : Lemma (requires run_invariant r h /\ step r (StartCycle roots) r')
+          (ensures run_invariant r' (update_history h r (StartCycle roots) r'))
+
+/// **A slice keeps it**, at whatever phase it leaves (marking, the
+/// hand-over to the sweep, the sweep, its end).
+val slice_keeps_run_invariant (r: real_state) (h: cycle_history) (budget: nat) (r': real_state)
+  : Lemma (requires run_invariant r h /\ step r (Slice budget) r')
+          (ensures run_invariant r' (update_history h r (Slice budget) r'))
+
+/// **Every step keeps it.**  (Reads and new roots change nothing.)
+val step_keeps_run_invariant (r: real_state) (h: cycle_history) (e: event) (r': real_state)
+  : Lemma (requires run_invariant r h /\ stores_in_kept r h e /\ step r e r')
+          (ensures run_invariant r' (update_history h r e r'))
+
+/// **It holds at every state of a run** whose program events store only
+/// pointers to kept blocks.
+val run_invariant_along (h0: cycle_history) (#r0: real_state) (#es: list event) (#r1: real_state)
+                        (rn: run r0 es r1)
+  : Lemma (requires run_invariant r0 h0 /\ stores_in_kept_along h0 rn)
+          (ensures run_invariant r1 (history_along h0 rn))
+          (decreases rn)
+
+/// ---------------------------------------------------------------------------
+/// The allocator meets the relational step
+/// ---------------------------------------------------------------------------
+
+/// Write the initial words of the new major object `a`.
+let rec write_major_fields (g: heap) (a: U64.t) (init: seq U64.t) (i: nat)
+  : GTot heap (decreases (Seq.length init - i)) =
+  if i >= Seq.length init then g
+  else
+    let p = U64.v a + 8 * i in
+    let g' = if p + 8 <= heap_size && p % 8 = 0 then write_word g (U64.uint_to_t p) (Seq.index init i) else g in
+    write_major_fields g' a init (i + 1)
+
+/// The state after the allocator (`AC.alloc_phase`, first fit at the phase)
+/// and the initialising writes (`caml_initialize`: young values remembered).
+let alloc_then_init (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t) : GTot real_state =
+  let res = AC.alloc_phase r.memory.major r.free_list r.phase size tag in
+  let a = res.SA.obj_out in
+  { r with memory = { r.memory with major = write_major_fields res.SA.heap_out a init 0 };
+           free_list = res.SA.fp_out;
+           ref_table = if U64.v a >= U64.v mword && U64.v a < heap_size && U64.v a % 8 = 0
+                       then Seq.append r.ref_table (young_slots (a <: obj_addr) init)
+                       else r.ref_table }
+
+/// **`alloc_phase` is a direct major allocation**: when the allocator finds a
+/// block, the allocation followed by the initialising writes of storable
+/// values is a `major_alloc_step` -- properties (1)-(4).  So every run of
+/// the real allocator is a run of `step`; a change of policy only needs to
+/// meet (1)-(4).
+val alloc_phase_major_alloc_step (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t)
+  : Lemma (requires phase_shape r /\ size >= 1 /\ Seq.length init == size /\ tag <> infix_tag /\
+                    init_storable r tag init /\
+                    (AC.alloc_phase r.memory.major r.free_list r.phase size tag).SA.obj_out <> 0UL)
+          (ensures major_alloc_step r tag size init (alloc_then_init r tag size init))
+
+/// ---------------------------------------------------------------------------
+/// At idle: the cycle is lossless
+/// ---------------------------------------------------------------------------
+
+/// **Lossless, word by word**: idle, a word was in a free or garbage block of
+/// the start memory exactly when it is in a free block now or in a block
+/// allocated since.
+val idle_lossless (r: real_state) (h: cycle_history)
+  : Lemma (requires run_invariant r h /\ r.phase == Ph.Idle)
+          (ensures forall (p: nat). p < heap_size ==>
+                     (reclaimable_at_start h p <==>
+                      LL.blue_covered r.memory.major p \/ SPC.new_covered h.allocated_during_cycle r.memory.major p))
+
+/// **What was reachable survives**: idle, every snapshot object is an
+/// allocated block at the address and size it had, never handed out again.
+val idle_survives (r: real_state) (h: cycle_history)
+  : Lemma (requires run_invariant r h /\ r.phase == Ph.Idle)
+          (ensures forall (x: obj_addr). snapshot h x ==>
+                     is_allocated r.memory (Major x) /\
+                     wosize_of_object x r.memory.major == wosize_of_object x h.start_memory.major /\
+                     ~(h.allocated_during_cycle x))
+
+/// **The incremental cycle is lossless, up to what it handed out** (today's
+/// `GC.Gen.Cycle.cycle_lossless`, over runs of `step`): once a run is idle,
+/// a word of the major heap lay in a block unreachable from the roots when
+/// the last cycle started (dead, or free) exactly when it lies in a free
+/// block, or in a block allocated or promoted since.
+val cycle_lossless (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
+  : Lemma (requires r.phase == Ph.Idle /\ stores_in_kept_along (initial_history ()) rn)
+          (ensures (let h = history_of_run rn in
+                    forall (p: nat). p < heap_size ==>
+                      (reclaimable_at_start h p <==>
+                       LL.blue_covered r.memory.major p \/
+                       SPC.new_covered h.allocated_during_cycle r.memory.major p)))
+
+/// **What was reachable when the cycle started survives it** (today's
+/// `GC.Gen.Cycle.cycle_survives`, over runs of `step`).
+val cycle_survives (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
+  : Lemma (requires r.phase == Ph.Idle /\ stores_in_kept_along (initial_history ()) rn)
+          (ensures (let h = history_of_run rn in
+                    forall (x: obj_addr). snapshot h x ==>
+                      is_allocated r.memory (Major x) /\
+                      wosize_of_object x r.memory.major == wosize_of_object x h.start_memory.major /\
+                      ~(h.allocated_during_cycle x)))
