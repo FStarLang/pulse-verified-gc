@@ -134,12 +134,15 @@ let write_body_keeps_objects ms o s v =
   let ms' = { ms with data = minor_write_word_t ms.data s v } in
   assert (ms'.data == minor_write_word ms.data s v);
   let wz (x: U64.t) : Lemma (U64.v x <= U64.v s ==> minor_wosize ms' x == minor_wosize ms x) =
-    if U64.v x >= 8 && U64.v x < minor_heap_size && U64.v x <= U64.v s && (U64.v x - 8) % 8 = 0 then
-      minor_read_write_different ms.data s (U64.uint_to_t (U64.v x - 8)) v in
+    if U64.v x >= 8 && U64.v x < minor_heap_size && U64.v x <= U64.v s && (U64.v x - 8) % 8 = 0 then begin
+      assert (U64.v x - 8 <> U64.v s);
+      minor_read_write_different ms.data s (U64.uint_to_t (U64.v x - 8)) v
+    end in
   FStar.Classical.forall_intro wz;
   if U64.v ms.bump > minor_heap_size || U64.v ms.bump % 8 <> 0 then ()
   else begin
     minor_objects_valid ms o;
+    FStar.Math.Lemmas.lemma_mod_sub (U64.v o) 8 1;
     assert (U64.v o - 8 + 8 <= minor_heap_size /\ (U64.v o - 8) % 8 == 0);
     assert (minor_wosize ms o == U64.v (U64.shift_right (minor_read_word ms.data (U64.uint_to_t (U64.v o - 8))) 10ul));
     body_not_header ms.data 0 (U64.v ms.bump) o (U64.v s);

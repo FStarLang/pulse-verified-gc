@@ -29,11 +29,12 @@
 /// The result (`hoisted_isomorphic_given`) is conditional on
 ///   * `program_no_young ps`: no new no-scan object has a raw word that looks
 ///     like a nursery address (`major_alloc_step` would remember its slot);
-///   * `start_snapshot` and `minor_promotes` (`GC.Gen.Run.Hoisted.Steps`):
-///     the snapshot of a cycle start holds only ideal-reachable objects, and
-///     a minor collection promotes exactly `GC.Gen.Run.IdAccounting.promoted`.
-///     (The other two step hypotheses, the nursery frames, are proved:
-///     `GC.Gen.Run.Hoisted.Nursery`.)
+///   * `minor_promotes` (`GC.Gen.Run.Hoisted.Steps`): a minor collection
+///     promotes exactly `GC.Gen.Run.IdAccounting.promoted`, and the kept
+///     major blocks keep their ids.
+///     (The other step hypotheses are proved: the nursery frames,
+///     `GC.Gen.Run.Hoisted.Nursery`; the snapshot of a cycle start holds only
+///     ideal-reachable objects, `GC.Gen.Run.Hoisted.Start`.)
 module GC.Gen.Run.Hoisted
 
 open FStar.Seq
@@ -440,17 +441,18 @@ let iso_from_ids (m1 m2: real_memory) (h1 h2: cycle_history) (im: I.ideal_memory
 /// The corollary
 /// ---------------------------------------------------------------------------
 
-/// **The incremental run is isomorphic to its hoisted run**, given that the
-/// program stores no young-looking word and the step hypotheses
-/// (`GC.Gen.Run.Hoisted.Steps.step_hyps`).
+/// **The incremental run is isomorphic to its hoisted run**, given that no
+/// new no-scan object has a young-looking raw word and that a minor
+/// collection promotes what `GC.Gen.Run.IdAccounting.promoted` says.
 let hoisted_isomorphic_given (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
                              (#es_h: list event) (#r_h: real_state) (rn_h: run (initial_state ()) es_h r_h)
                              (ps: list I.program_event)
   : Lemma (requires I.wf_program ps /\ executes rn ps /\ executes rn_h ps /\
                     kinds es_h == hoist (kinds es) /\ r.phase == Ph.Idle /\
-                    program_no_young ps /\ start_snapshot /\ minor_promotes)
+                    program_no_young ps /\ minor_promotes)
           (ensures isomorphic r.memory r_h.memory)
   = GC.Gen.Run.Hoisted.Nursery.nursery_frames ();
+    GC.Gen.Run.Hoisted.Start.start_snapshot_holds ();
     hoisted_idle rn_h ps (kinds es);
     ids_at_idle rn ps;
     ids_at_idle rn_h ps;
