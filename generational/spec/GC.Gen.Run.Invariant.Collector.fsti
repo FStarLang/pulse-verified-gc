@@ -76,6 +76,26 @@ val slice_keeps_marking (r: real_state) (h: cycle_history) (budget: nat) (r': re
                     r.phase == Ph.Marking /\ r'.phase == Ph.Marking)
           (ensures run_invariant r' (update_history h r (Slice budget) r'))
 
+/// **The slice that hands over to the sweep keeps it.**
+val slice_keeps_handover (r: real_state) (h: cycle_history) (budget: nat) (r': real_state)
+  : Lemma (requires run_invariant r h /\ step r (Slice budget) r' /\
+                    r.phase == Ph.Marking /\ Ph.Sweeping? r'.phase)
+          (ensures run_invariant r' (update_history h r (Slice budget) r'))
+
+/// The snapshot's objects are allocated blocks of the start memory (true at every
+/// start of a cycle -- `MC.start_inv` -- but not yet a clause of the
+/// invariant).
+let snapshot_in_start (h: cycle_history) : prop =
+  forall (x: obj_addr). snapshot h x ==> is_allocated h.start_memory (Major x)
+
+/// **At idle the cycle is lossless, word by word**, given the snapshot's
+/// objects are blocks of the start memory.
+val idle_lossless_with (r: real_state) (h: cycle_history)
+  : Lemma (requires run_invariant r h /\ r.phase == Ph.Idle /\ snapshot_in_start h)
+          (ensures forall (p: nat). p < heap_size ==>
+                     (reclaimable_at_start h p <==>
+                      LL.blue_covered r.memory.major p \/ SPC.new_covered h.allocated_during_cycle r.memory.major p))
+
 /// **At idle, what was reachable survives** (from B2, B3).
 val idle_survives (r: real_state) (h: cycle_history)
   : Lemma (requires run_invariant r h /\ r.phase == Ph.Idle)

@@ -21,8 +21,8 @@ let slice_keeps_run_invariant r h budget r' =
   match r.phase, r'.phase with
   | GC.Spec.Phase.Idle, _ -> GC.Gen.Run.Invariant.Collector.slice_keeps_idle r h budget r'
   | GC.Spec.Phase.Marking, GC.Spec.Phase.Marking -> GC.Gen.Run.Invariant.Collector.slice_keeps_marking r h budget r'
-  // Blocked (false as stated): the hand-over to the sweep and the sweep's
-  // slices -- see GC.Gen.Run.Invariant.Collector.fsti.
+  | GC.Spec.Phase.Marking, GC.Spec.Phase.Sweeping _ -> GC.Gen.Run.Invariant.Collector.slice_keeps_handover r h budget r'
+  // The sweep's slices: not yet proved.
   | _ -> admit ()
 
 let step_keeps_run_invariant r h e r' =
