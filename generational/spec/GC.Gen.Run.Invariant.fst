@@ -16,7 +16,7 @@ let same_defs (r: real_state) (h: cycle_history) (e: event)
 /// induction over a run, and the run forms of losslessness are proved from
 /// them.
 
-let initial_run_invariant _ = admit ()
+let initial_run_invariant _ = GC.Gen.Run.Invariant.Initial.initial_run_invariant ()
 
 let alloc_keeps_run_invariant r h site tag size init r' = admit ()
 
@@ -32,11 +32,17 @@ let write_keeps_run_invariant r h b i v r' =
   | Major _ -> GC.Gen.Run.Invariant.Write.write_keeps r h b i v r'
   | Nursery _ -> admit ()
 
-let minor_keeps_run_invariant r h roots r' = admit ()
+let minor_keeps_run_invariant r h roots r' = GC.Gen.Run.Invariant.Minor.minor_keeps r h roots r'
 
-let start_keeps_run_invariant r h roots r' = admit ()
+let start_keeps_run_invariant r h roots r' = GC.Gen.Run.Invariant.Collector.start_keeps r h roots r'
 
-let slice_keeps_run_invariant r h budget r' = admit ()
+let slice_keeps_run_invariant r h budget r' =
+  match r.phase, r'.phase with
+  | GC.Spec.Phase.Idle, _ -> GC.Gen.Run.Invariant.Collector.slice_keeps_idle r h budget r'
+  | GC.Spec.Phase.Marking, GC.Spec.Phase.Marking -> GC.Gen.Run.Invariant.Collector.slice_keeps_marking r h budget r'
+  | GC.Spec.Phase.Marking, GC.Spec.Phase.Sweeping _ -> GC.Gen.Run.Invariant.Collector.slice_keeps_handover r h budget r'
+  | GC.Spec.Phase.Sweeping _, _ -> GC.Gen.Run.Invariant.SweepSlice.slice_keeps_sweeping r h budget r'
+  | GC.Spec.Phase.Marking, GC.Spec.Phase.Idle -> ()  // a mark slice never ends idle
 
 let step_keeps_run_invariant r h e r' =
   match e with
@@ -86,9 +92,9 @@ let alloc_phase_major_alloc_step r tag size init =
   same_defs r (initial_history ()) (SetRoots FStar.Seq.empty);
   GC.Gen.Run.Invariant.Allocator.alloc_phase_step r tag size init
 
-let idle_lossless r h = admit ()
+let idle_lossless r h = GC.Gen.Run.Invariant.Collector.idle_lossless_with r h
 
-let idle_survives r h = admit ()
+let idle_survives r h = GC.Gen.Run.Invariant.Collector.idle_survives r h
 
 let cycle_lossless #es #r rn =
   initial_run_invariant ();
