@@ -74,6 +74,8 @@ module MinorFwd = GC.Gen.MinorCollectForwarding
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module Promote = GC.Gen.Promote
 module LL = GC.Spec.FusedSweep.Lossless
+module W = GC.Spec.Walk
+module GenInv = GC.Gen.HeapInvariant
 module I = GC.Model.Ideal
 module Header = GC.Lib.Header
 
@@ -239,9 +241,11 @@ let same_block (g g': heap) (x: obj_addr) : prop =
 ///   (3) every other block is unchanged, and no other block became or
 ///       stopped being allocated;
 ///   (4) the collector's state holds afterwards (`GI.phase_shape`).
-/// The nursery, phase and scan position are untouched, and the slots of the
-/// young initial values are appended to the remembered set
-/// (`caml_initialize`).  The free list afterwards is any that (4) admits.
+/// The nursery, phase and scan position are untouched; for a scannable tag
+/// the slots of the young initial values are appended to the remembered set
+/// (`caml_initialize`; a no-scan block's words are raw, and
+/// `caml_alloc_string` remembers nothing); the walk ends where it did.  The
+/// free list afterwards is any that (4) admits.
 let major_alloc_step (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t) (r': real_state) : prop =
   size >= 1 /\ Seq.length init == size /\ tag <> infix_tag /\ init_storable r tag init /\
   r'.memory.nursery == r.memory.nursery /\ r'.phase == r.phase /\ r'.scan_pos == r.scan_pos /\
@@ -257,9 +261,52 @@ let major_alloc_step (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t
      (forall (x: obj_addr). x <> a ==>
         (is_allocated r.memory (Major x) <==> is_allocated r'.memory (Major x)) /\
         (is_allocated r.memory (Major x) ==> same_block r.memory.major r'.memory.major x)) /\
-     r'.ref_table == Seq.append r.ref_table (young_slots a init)) /\
+     r'.ref_table == (if I.tag_scannable tag then Seq.append r.ref_table (young_slots a init)
+                      else r.ref_table)) /\
+  // the walk ends where it did (the new block is carved out of free memory)
+  W.walk_end r'.memory.major zero_addr == W.walk_end r.memory.major zero_addr /\
   // (4)
   GI.phase_shape r'.memory.nursery r'.memory.major r'.free_list r'.phase r'.scan_pos
+
+/// ---------------------------------------------------------------------------
+/// The nursery after a program store (trusted)
+/// ---------------------------------------------------------------------------
+
+/// **A value the program may store into the nursery**: a storable value that,
+/// if it is a major pointer, points at a block's start.  This is a *known
+/// modelling restriction*: real OCaml may store an interior (infix) pointer,
+/// to one of several mutually recursive closures, into a young object, but
+/// the nursery clauses of `GC.Gen.HeapInvariant` (`minor_major_fields_not_free`,
+/// `minor_major_fields_no_blue`) are stated on the raw field value; lifting it
+/// means stating them on resolved values.
+let nursery_storable (r: real_state) (v: U64.t) : prop =
+  storable_value r v /\ (is_pointer v ==> ~(is_infix (v <: obj_addr) r.memory.major))
+
+/// What a store of `v` into field `i` of the nursery object `o` leaves: the
+/// nursery keeps its shape (`GenInv.minor_heap_shape`), its objects, their
+/// headers, and every other field.  The shape is the **trusted mutator
+/// obligation** of `GC.Gen.MinorHeap` (a stored word must not read as a
+/// nursery header, which the guards and infix clauses of the shape forbid
+/// for anything that is not an object); the rest is what a body store does.
+let nursery_store_frame (ms ms': minor_state) (o: U64.t) (i: nat) (v: U64.t) : prop =
+  GenInv.minor_heap_shape ms' /\
+  minor_objects ms' == minor_objects ms /\
+  (forall (y: U64.t). Seq.mem y (minor_objects ms) ==>
+     minor_wosize ms' y == minor_wosize ms y /\ minor_tag ms' y == minor_tag ms y /\
+     (forall (j: nat). j < minor_wosize ms y ==>
+        minor_read_field ms' y j == (if y = o && j = i then v else minor_read_field ms y j)))
+
+/// What a nursery allocation of `a` with tag `tag` and fields `init` leaves:
+/// the shape (trusted, as above), the objects and `a`, `a`'s header and
+/// fields, and every other object's header and fields.
+let nursery_alloc_frame (ms ms': minor_state) (a: U64.t) (tag: nat) (init: seq U64.t) : prop =
+  GenInv.minor_heap_shape ms' /\
+  (forall (y: U64.t). Seq.mem y (minor_objects ms') <==> Seq.mem y (minor_objects ms) \/ y == a) /\
+  minor_tag ms' a == tag /\ minor_wosize ms' a == Seq.length init /\
+  (forall (j: nat). j < Seq.length init ==> minor_read_field ms' a j == Seq.index init j) /\
+  (forall (y: U64.t). Seq.mem y (minor_objects ms) ==>
+     y <> a /\ minor_wosize ms' y == minor_wosize ms y /\ minor_tag ms' y == minor_tag ms y /\
+     (forall (j: nat). j < minor_wosize ms y ==> minor_read_field ms' y j == minor_read_field ms y j))
 
 /// Write the initial words of the nursery object `o`.
 let rec write_nursery_fields (d: GBase.minor_heap) (o: U64.t) (init: seq U64.t) (i: nat)
@@ -269,14 +316,19 @@ let rec write_nursery_fields (d: GBase.minor_heap) (o: U64.t) (init: seq U64.t) 
 
 /// **Nursery allocation** (modelled): bump-allocate (`minor_alloc_spec`),
 /// then write the initial words.  The object must fit in the nursery (no
-/// out of memory: a full nursery is a minor collection first).
+/// out of memory: a full nursery is a minor collection first).  The initial
+/// values, if the tag is scannable, are ones the program may store into the
+/// nursery (`nursery_storable`), and the nursery after is the frame
+/// (`nursery_alloc_frame`, the trusted shape).
 let nursery_alloc_step (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t) (r': real_state) : prop =
   size >= 1 /\ size <= GBase.max_young_wosize /\ U64.v tag <> 249 /\
   Seq.length init == size /\ init_storable r tag init /\
+  (I.tag_scannable tag ==> (forall (j: nat). j < Seq.length init ==> nursery_storable r (Seq.index init j))) /\
   minor_can_alloc r.memory.nursery size /\
   (let res = minor_alloc_spec r.memory.nursery size (U64.v tag) in
    r' == { r with memory = { r.memory with nursery =
-             { res.ms_out with data = write_nursery_fields res.ms_out.data res.obj_addr init 0 } } })
+             { res.ms_out with data = write_nursery_fields res.ms_out.data res.obj_addr init 0 } } } /\
+   nursery_alloc_frame r.memory.nursery r'.memory.nursery res.obj_addr (U64.v tag) init)
 
 /// **A major write**: into a scannable block, `caml_modify` -- what the
 /// program owes (`GB.modify_ok`, with a young value naming a nursery
@@ -298,13 +350,15 @@ let major_write_step (r: real_state) (x: obj_addr) (i: nat) (v: U64.t) (r': real
 
 /// **A nursery write** (modelled): a plain store into field `i` of a
 /// nursery object that is not a closure; the value is one the program may
-/// store, if the object is scannable.
+/// store into the nursery (`nursery_storable`), if the object is scannable;
+/// the nursery after is the frame (`nursery_store_frame`, the trusted shape).
 let nursery_write_step (r: real_state) (o: U64.t) (i: nat) (v: U64.t) (r': real_state) : prop =
   let ms = r.memory.nursery in
   Seq.mem o (minor_objects ms) /\ i < minor_wosize ms o /\ minor_tag ms o <> 247 /\
-  (minor_tag ms o < 251 ==> storable_value r v) /\
+  (minor_tag ms o < 251 ==> nursery_storable r v) /\
   r' == { r with memory = { r.memory with nursery =
-            { ms with data = minor_write_word_t ms.data (nursery_slot o i) v } } }
+            { ms with data = minor_write_word_t ms.data (nursery_slot o i) v } } } /\
+  nursery_store_frame ms r'.memory.nursery o i v
 
 /// ---------------------------------------------------------------------------
 /// Collector steps

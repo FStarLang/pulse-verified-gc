@@ -1489,3 +1489,22 @@ let rec steps_walk_end (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
 let sweep_steps_walk_end g fp c k =
   sweep_inv_incremental_elim g fp c;
   steps_walk_end g fp (state_at g c) k
+
+let rec steps_front (g: heap) (fp: U64.t) (st: sweep_state) (k: nat)
+  : Lemma (requires inv_st g fp st)
+          (ensures (let (g', _, st') = sweep_steps g fp st k in
+                    forall (a: hp_addr). U64.v a >= U64.v st'.cursor ==> read_word g' a == read_word g a))
+          (decreases k)
+  = sweep_steps_unfold g fp st k;
+    if k = 0 || sweep_done st.cursor || not (can_sweep g st) then ()
+    else begin
+      step_inv g fp st;
+      sweep_inv_incremental_elim g fp st.cursor;
+      let c : hp_addr = st.cursor in
+      step_st g fp c;
+      let (g1, fp1, st1) = sweep_step g fp st in
+      steps_front g1 fp1 st1 (k - 1);
+      steps_aux g1 fp1 st1 (k - 1)
+    end
+
+let sweep_steps_front g fp c k = steps_front g fp (state_at g c) k
