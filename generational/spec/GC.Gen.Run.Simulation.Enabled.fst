@@ -333,3 +333,29 @@ let program_step_enabled_given r h im ids e pe =
       assert (step r e r)
   | SetRoots _, I.SetRoots _ -> assert (step r e r)
 #pop-options
+
+#push-options "--z3rlimit 40"
+let stores_in_kept_given r h im ids e pe =
+  match e, pe with
+  | Alloc _ tag _ init, I.Alloc _ _ f ->
+      (match f with
+       | I.Scannable vs ->
+           introduce forall (i: nat). i < Seq.length init ==> in_kept r h (Seq.index init i)
+           with introduce _ ==> _ with usable_storable r h im ids (Seq.index vs i) (Seq.index init i)
+       | I.NoScan _ -> ())
+  | Write (Major x) _ v, I.Write obj _ v' ->
+      assert (kept h x);
+      if scannable r.memory.major x then begin
+        copies_faithful_elim r.memory im ids (Major x) obj;
+        no_scan_tag_val ();
+        is_no_scan_spec x r.memory.major;
+        usable_storable r h im ids v' v
+      end
+  | Write (Nursery n) _ v, I.Write obj _ v' ->
+      if minor_tag r.memory.nursery n < 251 then begin
+        copies_faithful_elim r.memory im ids (Nursery n) obj;
+        no_scan_tag_val ();
+        usable_storable r h im ids v' v
+      end
+  | _ -> ()
+#pop-options

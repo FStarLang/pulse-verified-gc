@@ -220,3 +220,78 @@ let rec alloc_count_snoc es e =
   match es with
   | [] -> ()
   | _ :: rest -> alloc_count_snoc rest e
+
+/// ---------------------------------------------------------------------------
+/// A write
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 40"
+let write_points_to (im: I.ideal_memory) (obj: I.obj_id) (i: nat) (v: I.value) (u w: I.obj_id)
+  : Lemma (requires I.wf_event im (I.Write obj i v) /\ I.reachable im u /\
+                    I.points_to (I.ideal_step im (I.Write obj i v)) u w)
+          (ensures I.reachable im w)
+  = let im' = I.ideal_step im (I.Write obj i v) in
+    let o = Seq.index im.I.objects obj in
+    if u = obj then begin
+      let vs' = I.field_values (Seq.index im'.I.objects u) in
+      eliminate exists (j: nat). j < Seq.length vs' /\ I.target (Seq.index vs' j) == Some w
+      with begin
+        if j = i then ()
+        else begin
+          assert (Seq.index vs' j == Seq.index (I.field_values o) j);
+          reachable_step im u w
+        end
+      end
+    end else begin
+      assert (Seq.index im'.I.objects u == Seq.index im.I.objects u);
+      reachable_step im u w
+    end
+#pop-options
+
+let write_reachable im obj i v id =
+  let im' = I.ideal_step im (I.Write obj i v) in
+  let c (x: I.obj_id) : prop = I.reachable im x in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires (reachable_root im));
+  let aux (u w: I.obj_id) : Lemma (requires c u /\ I.points_to im' u w) (ensures c w) =
+    write_points_to im obj i v u w in
+  FStar.Classical.forall_intro_2 (fun u -> FStar.Classical.move_requires (aux u));
+  reachable_closed im' c id
+
+#push-options "--z3rlimit 60"
+let write_block_rep (r r': real_state) (im: I.ideal_memory) (ids: block_id_map)
+    (b: block_addr) (i: nat) (v: U64.t) (obj: I.obj_id) (v': I.value) (b': block_addr) (id: I.obj_id)
+  : Lemma (requires keyed r.memory ids /\ copies_faithful r.memory im ids /\
+                    I.wf_event im (I.Write obj i v') /\ ids b == Some obj /\ value_rep ids v' v /\
+                    write_frame r r' b i v /\ ids b' == Some id)
+          (ensures I.valid_id (I.ideal_step im (I.Write obj i v')) id /\
+                   block_rep r'.memory ids b' (Seq.index (I.ideal_step im (I.Write obj i v')).I.objects id))
+  = copies_faithful_elim r.memory im ids b' id;
+    let im' = I.ideal_step im (I.Write obj i v') in
+    let o = Seq.index im.I.objects id in
+    let o' = Seq.index im'.I.objects id in
+    if id = obj then begin
+      assert (b' == b);
+      assert (o' == I.update_field o i v');
+      introduce forall (j: nat). j < o'.I.size ==> content_rep ids (I.field_at o' j) (block_field r'.memory b' j)
+      with introduce _ ==> _ with begin
+        if j = i then () else assert (I.field_at o' j == I.field_at o j)
+      end
+    end else begin
+      assert (b' =!= b);
+      assert (o' == o)
+    end
+#pop-options
+
+let write_represents r r' h im ids b i v obj v' =
+  let im' = I.ideal_step im (I.Write obj i v') in
+  assert (keyed r'.memory ids);
+  introduce forall (b': block_addr) (id: I.obj_id).
+      ids b' == Some id ==> I.valid_id im' id /\ block_rep r'.memory ids b' (Seq.index im'.I.objects id)
+  with introduce _ ==> _ with write_block_rep r r' im ids b i v obj v' b' id;
+  assert (copies_faithful r'.memory im' ids);
+  FStar.Classical.forall_intro (FStar.Classical.move_requires (write_reachable im obj i v'));
+  assert (covers_reachable im' ids);
+  assert (retains_snapshot r' h ids);
+  assert (reachable_in_kept h im' ids);
+  FStar.Classical.forall_intro (FStar.Classical.move_requires (restrict_keyed r'.memory ids));
+  represents_ext r' h im' ids (restrict r'.memory ids)

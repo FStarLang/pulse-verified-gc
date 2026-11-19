@@ -104,3 +104,12 @@ val program_step_enabled_given (r: real_state) (h: cycle_history) (im: I.ideal_m
   : Lemma (requires sim_inv_parts r h im ids /\ I.wf_event im pe /\ translates ids e pe /\ room_for r e /\
                     event_infix_exact im pe)
           (ensures exists (r': real_state). step r e r')
+
+/// **What a well-formed program's step stores points at kept blocks**
+/// (`stores_in_kept`, the hypothesis of the run invariant's program-step
+/// lemmas), given `infix_exact`.
+val stores_in_kept_given (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+    (e: event) (pe: I.program_event)
+  : Lemma (requires sim_inv_parts r h im ids /\ I.wf_event im pe /\ translates ids e pe /\
+                    event_infix_exact im pe)
+          (ensures stores_in_kept r h e)

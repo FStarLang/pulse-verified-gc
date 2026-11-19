@@ -118,3 +118,36 @@ val step_alloc_count (ids: block_id_map) (r: real_state) (e: event) (r': real_st
 
 val alloc_count_snoc (es: list event) (e: event)
   : Lemma (alloc_count (es @ [e]) == alloc_count es + (if Alloc? e then 1 else 0))
+
+/// ---------------------------------------------------------------------------
+/// A write, given what it does to the real memory
+/// ---------------------------------------------------------------------------
+
+/// What a write of `v` into field `i` of block `b` does to the real memory:
+/// the same blocks allocated, with their tags and sizes, every other field
+/// kept, field `i` of `b` now `v`.  (Each kind of real write -- the barrier,
+/// a raw no-scan store, a nursery store -- has to be shown to meet it.)
+let write_frame (r r': real_state) (b: block_addr) (i: nat) (v: U64.t) : prop =
+  (forall (b': block_addr). is_allocated r'.memory b' <==> is_allocated r.memory b') /\
+  (forall (b': block_addr). is_allocated r.memory b' ==>
+     block_tag r'.memory b' == block_tag r.memory b' /\ block_size r'.memory b' == block_size r.memory b') /\
+  (forall (b': block_addr) (j: nat).
+     is_allocated r.memory b' /\ j < block_size r.memory b' /\ ~(b' == b /\ j == i) ==>
+     block_field r'.memory b' j == block_field r.memory b' j) /\
+  block_field r'.memory b i == v
+
+/// A write keeps reachability or shrinks it: the value written is usable.
+val write_reachable (im: I.ideal_memory) (obj: I.obj_id) (i: nat) (v: I.value) (id: I.obj_id)
+  : Lemma (requires I.wf_event im (I.Write obj i v) /\ I.reachable (I.ideal_step im (I.Write obj i v)) id)
+          (ensures I.reachable im id)
+
+/// **The ideal half of `write_keeps_sim_inv`**: a write that meets
+/// `write_frame` keeps `represents` (the map restricted to what is still
+/// allocated, `update_block_ids`) and `reachable_in_kept`.
+val write_represents (r r': real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+    (b: block_addr) (i: nat) (v: U64.t) (obj: I.obj_id) (v': I.value)
+  : Lemma (requires represents r h im ids /\ reachable_in_kept h im ids /\
+                    I.wf_event im (I.Write obj i v') /\ ids b == Some obj /\ value_rep ids v' v /\
+                    write_frame r r' b i v /\ r'.phase == r.phase)
+          (ensures represents r' h (I.ideal_step im (I.Write obj i v')) (restrict r'.memory ids) /\
+                   reachable_in_kept h (I.ideal_step im (I.Write obj i v')) (restrict r'.memory ids))
