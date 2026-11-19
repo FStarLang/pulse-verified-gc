@@ -115,7 +115,6 @@ SPOT_SRC = \
   GC.SPOT.FusedSweepSteps.fst \
   GC.SPOT.SweepPhasePendingFree.fst \
   GC.SPOT.SweepPhaseFreedByEnd.fst \
-  GC.SPOT.SweepPhaseCycleAlloc.fst \
   GC.SPOT.IncrementalCycle.fst \
   GC.SPOT.MarkPhaseHeap.fsti \
   GC.SPOT.MarkPhaseHeap.fst \
@@ -126,7 +125,6 @@ SPOT_SRC = \
   GC.SPOT.WriteBarrier.fst \
   GC.SPOT.CycleHeap.fst \
   GC.SPOT.IncrementalCycleTheorems.fst \
-  GC.SPOT.MarkPhaseCycleAlloc.fst \
   GC.SPOT.GcCorrect.fsti \
   GC.SPOT.GcCorrect.fst \
   GC.SPOT.MutatorRun.fst

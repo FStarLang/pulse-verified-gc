@@ -993,7 +993,7 @@ word finishes the sweep).
 
 **Completeness over the phase** (`GC.Spec.SweepPhase.Completeness`,
 `GC.Gen.SweepPhase.Completeness` for the minor collection, and
-`GC.Gen.SweepPhase.Cycle` for a whole run) is the incremental counterpart of
+`GC.Gen.Run.Invariant` for a whole run of the cycle) is the incremental counterpart of
 `major_gc_unreachable_final_blue` and of the lossless sweep: *when the sweep
 ends, every word of a block that was dead when marking ended lies in a free
 block*, unless an allocation or a promotion since handed out a block over it,
@@ -1065,19 +1065,16 @@ directly.
 `since` is an argument of these lemmas.  Completeness alone is vacuous for a
 large `since` (the set of every address satisfies it); the converse alone is
 weak for a small one (the empty set satisfies it as long as nothing was
-handed out).  Stating both for one `since` bounds it from both sides, and
-`GC.Gen.SweepPhase.Cycle` fixes it outright: `cycle g0 g fp ph since` is a run
-of the sweep phase from `g0`, an inductive relation with one constructor per
-event (`Start`, `Slice`, `Alloc`, `Write`, `Minor`), each carrying that
-event's preconditions and fixing how `since` changes -- unchanged by a slice
-or a write, plus exactly the address `alloc_phase` returned for an
+handed out).  Stating both for one `since` bounds it from both sides, and a
+run fixes it outright: in `GC.Gen.Run.Invariant` a run of `GC.Gen.Run.Step`
+records, in its history (`GC.Gen.Run.History`), the addresses allocated or
+promoted since the cycle started (`allocated_during_cycle`) -- unchanged by a
+slice or a write, plus exactly the address the allocator returned for an
 allocation, plus exactly the blocks a minor collection made (its promoted
-copies).  `since` is an index of the run, so it cannot be chosen.  Every
-state of a run carries the account and its converse (`cycle_account`), and
-once the run is idle the equivalence holds with the run's `since`
-(`cycle_lossless`; its completeness half alone is `cycle_covered`, and
-`cycle_unreachable_covered` reads dead as unreachable).  The run lives with
-the generational spec because the minor collection is one of its events.
+copies).  It is a function of the run, so it cannot be chosen.  Every state
+of a run carries the account and its converse (`run_invariant_along`), and
+once the run is idle the equivalence holds with that set (`cycle_lossless`,
+per word; `cycle_survives`, per object).
 
 The "survivor or new" form was chosen over a per-object "dead ones are
 pending free or freed" invariant because every event already states what it
@@ -1840,54 +1837,36 @@ idle, every block that is not blue is in `snapshot`.  At the entry points:
 (`SPC.freed`: no block there, or a free block).
 
 **The run pins the snapshot.**  Stated of a set given as an argument,
-completeness is weak: the set of every address satisfies it.  As the sweep's
-run does for its `since` (`GC.Gen.SweepPhase.Cycle`), two runs fix it:
-
-- `GC.Gen.MarkPhase.Cycle.marking g0 rs g fp sp since`: a run of the
-  marking phase from the heap `start_cycle` was called on (`g0`, roots `rs`,
-  idle, nursery empty), with one constructor per event -- `Start` (root
-  darkening), `Slice` (a mark slice that stays marking), `Write` (the
-  barrier), `Alloc` (an allocation and the writes that initialise the new
-  object, `init_writes`), `Minor` -- each with the collector's state
-  (`GI.phase_shape`) as hypothesis and `since` fixed by the event.  The
-  snapshot is `MC.snapshot g0 rs since`.  Every state carries
-  (`mark_run_account`) the account and **snapshot-at-the-beginning**
-  (`MC.satb`): every object reachable at the start is a block in use, at its
-  size, and, if white, one the marker will reach (`MP.outside_refs_reached`
-  with the reachable objects as a fixed set of outside references -- the
-  marking invariant's lemmas keep that for any fixed set, the minor
-  collection's through `GMM.minor_keeps_marking_inv_with`; the deletion
-  barrier is what makes a write keep it; at the start the set of such blocks
-  contains the roots and is closed under the edges, which root darkening
-  keeps).  So at the hand-over (`MC.handover`) the black objects are the
-  snapshot's: everything reachable at the start is black, and everything
-  black is in the snapshot.
-- `GC.Gen.Cycle.major_cycle g0 rs g fp ph since`: the whole cycle -- a
-  marking run, the slice that hands over to the sweep, and a sweep run
-  (`GC.Gen.SweepPhase.Cycle.cycle`) from the heap and free list it handed
-  over; `since` is what both runs handed out.  Every state carries
-  `MPC.cycle_account` of the snapshot (`cycle_account`), and once idle:
+completeness is weak: the set of every address satisfies it.  A run of the
+collector and the program (`GC.Gen.Run.Step`: allocations, writes, minor
+collections, `start_cycle`, slices) fixes it: its history
+(`GC.Gen.Run.History`) records the heap and roots the cycle started from and
+the addresses allocated or promoted since, and the snapshot is what the
+roots reached at the start (`GMC.reachable_at_start`) and those addresses
+(`GC.Gen.MarkPhase.RunStart.snapshot`).  `GC.Gen.Run.Invariant` proves that
+every state of a run carries the run invariant (`run_invariant_along`): the
+account and its converse, and while marking **snapshot-at-the-beginning**
+(every object reachable at the start is a block in use, at its size, and,
+if white, one the marker will reach -- `MP.outside_refs_reached` with the
+reachable objects as a fixed set of outside references; the marking
+invariant's lemmas keep that for any fixed set, the minor collection's
+through `GMM.minor_keeps_marking_inv_with`; the deletion barrier is what
+makes a write keep it; root darkening establishes it,
+`GC.Gen.MarkPhase.RunStart.start_inv`).  Once the run is idle:
 
   **The incremental cycle is lossless, up to what it handed out**
   (`cycle_lossless`): a word of the heap lay in a block unreachable from the
-  roots when the cycle started (`unreachable_covered`: dead, or already
-  free) exactly when it lies in a free block at the end, or in a block the
-  run allocated or promoted -- the sweep run's per-word `cycle_lossless`
-  with the marked heap replaced by the start heap and dead at mark by
-  unreachable at the start; with nothing handed out, the stop-the-world
-  clause of `LL.sweep_lossless`.  It is per word because an address alone
-  does not show the space was reclaimed (a freed header may just be merged
-  into a free block).  Its proof composes the sweep run's with the hand-over
-  (`MC.handover`): the black blocks there are exactly the objects reachable
-  at the start, at their sizes, and the blocks marking handed out (black),
-  and the walk ends where it did at the start (`GC.Gen.MarkPhase.Walk`:
-  allocation at any phase and a minor collection while marking keep a
-  position of the walk).  Completeness alone is `cycle_covered`.  By
-  address: `cycle_complete` / `cycle_frees_unreachable` (every address
-  outside the snapshot is freed), the converse `cycle_survives` (every
-  object reachable at the start is a block in use at the end, at its size,
-  and not handed out again; from SATB at the hand-over and
-  `SPC.survived_at_idle`), and the two together `cycle_addresses_lossless`.
+  roots when the cycle started (dead, or already free) exactly when it lies
+  in a free block at the end, or in a block the cycle allocated or promoted;
+  with nothing handed out, the stop-the-world clause of `LL.sweep_lossless`.
+  It is per word because an address alone does not show the space was
+  reclaimed (a freed header may just be merged into a free block).  The
+  walk ends where it did at the start (`GC.Gen.MarkPhase.Walk`: allocation
+  at any phase and a minor collection while marking keep a position of the
+  walk).  Per object, `cycle_survives`: every object reachable at the start
+  is a block in use at the end, at its size, and not handed out again.
+  `idle_lossless` and `idle_survives` state both of any idle state that
+  carries the run invariant.
 
 **The trusted obligations.**  The account needs the program's writes to
 stay inside the snapshot: `MPC.cycle_write snapshot g x a v` --
@@ -1898,12 +1877,11 @@ roots obligation (the plan's option (a)) read against the cycle's start:
 OCaml's type safety -- the program obtains pointers only from its roots, by
 loading fields of objects it holds (`MPC.account_load`: a field of an object
 in the snapshot is in it), and by allocating (added to the snapshot).  It is
-not in `GB.modify_ok`: the runs take it as a hypothesis of the events it
-covers -- `Write`, the initialisation of a fresh object (`Alloc`:
-`SPM.fields_storable` at `outside_snapshot`), and the nursery half for a
-minor collection while marking (`Minor`: `minor_major_fields_not_free
-(outside_snapshot snapshot)`, what the nursery holds is in the snapshot) --
-as the sweep run takes the sweep's.  Nothing at runtime depends on it.
+not in `GB.modify_ok`: the run theorems take it as a hypothesis of the
+program's events (`stores_in_kept_along`: what an allocation's
+initialisation and a write store, and what they write into, is kept), which
+`GC.Gen.Run.Simulation` derives from the program's well-formedness.
+Nothing at runtime depends on it.
 SATB adds no obligation: it uses only the safety obligations the entry
 points already state (`MM.target_ok` in `GB.modify_ok`, and the roots
 reached at a minor collection, `GI.minor_keeps_marking_shape`'s).
@@ -1942,17 +1920,8 @@ immediate into `A`'s field (cutting `A -> B`), and two unbounded slices to
 `Idle`; then `U`, unreachable at the start, is freed, and `C` survives with
 its size, tag and field.
 
-**The runs' SPOT** (`GC.SPOT.MarkPhaseCycleAlloc`, on the same heap): a
-marking run that starts the cycle, allocates a one-field object while
-marking and initialises it with an immediate.  `since` is the new object,
-so the snapshot is `A`, `B`, `C` and the new object, not `U`; the run's
-invariants give that `U` is still a white block (never greyed) and that
-`A`, `B` and `C` are blocks in use that the marker will reach if white.
-
-**Not done**: the nursery's own events (allocation and writes into nursery
-objects) are not modelled, so the minor collection's obligation is a
-hypothesis of `Minor` rather than derived; and no SPOT builds a whole
-`major_cycle` to `Idle` (that needs concrete mark steps to the hand-over).
+**Not done**: no SPOT builds a whole run of the cycle to `Idle` and applies
+`cycle_lossless` (that needs concrete mark steps to the hand-over).
 
 ## The minor collector
 

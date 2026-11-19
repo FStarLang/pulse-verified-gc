@@ -182,8 +182,8 @@ val idle_survives (r: real_state) (h: cycle_history)
                      wosize_of_object x r.memory.major == wosize_of_object x h.start_memory.major /\
                      ~(h.allocated_during_cycle x))
 
-/// **The incremental cycle is lossless, up to what it handed out** (today's
-/// `GC.Gen.Cycle.cycle_lossless`, over runs of `step`): once a run is idle,
+/// **The incremental cycle is lossless, up to what it handed out** (over runs
+/// of `step`): once a run is idle,
 /// a word of the major heap lay in a block unreachable from the roots when
 /// the last cycle started (dead, or free) exactly when it lies in a free
 /// block, or in a block allocated or promoted since.
@@ -195,8 +195,8 @@ val cycle_lossless (#es: list event) (#r: real_state) (rn: run (initial_state ()
                        LL.blue_covered r.memory.major p \/
                        SPC.new_covered h.allocated_during_cycle r.memory.major p)))
 
-/// **What was reachable when the cycle started survives it** (today's
-/// `GC.Gen.Cycle.cycle_survives`, over runs of `step`).
+/// **What was reachable when the cycle started survives it** (over runs of
+/// `step`).
 val cycle_survives (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
   : Lemma (requires r.phase == Ph.Idle /\ stores_in_kept_along (initial_history ()) rn)
           (ensures (let h = history_of_run rn in

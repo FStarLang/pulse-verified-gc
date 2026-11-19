@@ -23,7 +23,7 @@ module RT = GC.Gen.RefTable
 module GenInv = GC.Gen.HeapInvariant
 module GMC = GC.Gen.MarkPhase.Completeness
 module GMS = GC.Gen.MarkPhase.Safety
-module MC = GC.Gen.MarkPhase.Cycle
+module MRS = GC.Gen.MarkPhase.RunStart
 module MStart = GC.Gen.MarkPhase.Start
 module S = GC.Spec.MarkPhase.Slice
 module Mark = GC.Spec.Mark
@@ -157,10 +157,10 @@ let start_accounting (r: real_state) (h: cycle_history) (roots: seq U64.t) (r': 
     assert (h'.start_memory == r.memory /\ h'.start_roots == roots /\
             h'.allocated_during_cycle == SPC.nothing_new);
     idle_parts m g r.free_list r.scan_pos;
-    MC.start_inv m g r.free_list roots;
+    MRS.start_inv m g r.free_list roots;
     recoloured_blocks g gd;
     // B1
-    MPC.within_snapshot_ext (MC.snapshot g roots SPC.nothing_new) (kept h') gd;
+    MPC.within_snapshot_ext (MRS.snapshot g roots SPC.nothing_new) (kept h') gd;
     reset_points_nowhere (MPC.outside_snapshot (kept h')) r'.memory.nursery gd;
     // the remembered set is empty (the nursery is), the walk
     minor_reset_objects_empty m;

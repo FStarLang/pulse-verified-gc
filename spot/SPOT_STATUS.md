@@ -532,24 +532,6 @@ white, so dead at mark):
 is the finishing sweep that frees it.  No allocation runs, so no address is
 new and the conclusion is unconditional.
 
-The same file builds a run of the sweep phase (`GC.Gen.SweepPhase.Cycle`):
-`Start` at the marked heap, `Minor` of an empty nursery, and a `Slice` with a
-budget of more words than the heap has, which ends the sweep (`run`).  The run
-fixes `since` to the blocks the minor collection made (its promoted copies),
-which are none (`nothing_made`), so `cycle_lossless` gives `lossless_spot`: at
-the end a word lies in a blue block exactly when it lay in a non-black block
-of the marked heap -- the stop-the-world `sweep_lossless` clause -- and
-`covered_spot`: every word of `G` and `P` lies in a blue block.
-
-`GC.SPOT.SweepPhaseCycleAlloc` is a run with a non-empty `since`: from the
-same marked heap, `Start`, an `Alloc` of a one-field object (it succeeds: the
-free block at the start is big enough), a `Write` initialising its field, a
-one-word `Slice`, and, unless that ended the sweep, a finishing `Slice`.  The
-run's `since` is the allocated object.  `cycle_alloc_spot`: at the end the
-object is a non-blue block, its header word was in a non-black block of the
-marked heap (`cycle_lossless`), and every word of `G` lies in a blue block or
-in the new object (`cycle_covered`).
-
 `GC.SPOT.IncrementalCycle` composes the Pulse entry points `minor_collect`,
 `start_cycle` (darken the roots, enter `Marking`), a 64-word `major_slice`
 (a mark slice: it leaves `Marking`, or `Sweeping zero_addr` once nothing is
@@ -692,21 +674,3 @@ carries the cycle's account (`MPC.cycle_account`, from `GMC.cycle_start`,
   reachable then (`MPC.cycle_complete`);
 - `C` is a non-free block with the size, tag and field it had before the
   cycle (`SPI.same_block`).
-
-## A run of the marking phase that allocates
-
-`GC.SPOT.MarkPhaseCycleAlloc` builds a run of the marking phase
-(`GC.Gen.MarkPhase.Cycle.marking`) on the same heap and roots, with a
-non-empty `since`: `Start` (root darkening, from `CycleHeap.shape` and the
-roots' validity), and an `Alloc` of a one-field object while marking (it
-succeeds: the free block has a word, `Oom.alloc_spec_oom_no_fit` on the
-darkened heap) initialised with an immediate (`init_writes`, one write; the
-field is in the snapshot trivially).  The run's `since` is the new object, so
-the cycle's snapshot (`MC.snapshot`) is `A`, `B`, `C` and the new object, and
-not `U` (`u_unreachable`; the new object was not a block in use, so it is not
-`U`).  `mark_alloc_spot`, from the run's invariants (`MC.mark_run_account`):
-
-- `U` is still a white block: nothing outside the snapshot is greyed
-  (`MPC.within_snapshot`);
-- `A`, `B` and `C` are blocks in use and, if white, ones the marker will
-  reach (`MC.satb`) -- `B`, named by no root, through `A`.

@@ -109,7 +109,6 @@ ROOT_MODULES = \
   generational/spec/GC.Gen.SweepPhase.Minor.fst \
   generational/spec/GC.Gen.SweepPhase.Safety.fst \
   generational/spec/GC.Gen.SweepPhase.Completeness.fst \
-  generational/spec/GC.Gen.SweepPhase.Cycle.fst \
   mark-and-sweep/spec/GC.Spec.SweepPhase.Completeness.fst \
   mark-and-sweep/spec/GC.Spec.SweepPhase.Intrinsic.End.fst \
   mark-and-sweep/spec/GC.Spec.MarkPhase.fst \
@@ -121,8 +120,6 @@ ROOT_MODULES = \
   generational/spec/GC.Gen.MarkPhase.Completeness.fst \
   generational/spec/GC.Gen.MarkPhase.Safety.fst \
   generational/spec/GC.Gen.MarkPhase.Walk.fst \
-  generational/spec/GC.Gen.MarkPhase.Cycle.fst \
-  generational/spec/GC.Gen.Cycle.fst \
   generational/spec/GC.Gen.Run.Simulation.fsti \
   generational/spec/GC.Gen.Run.Simulation.fst \
   generational/spec/GC.Gen.Run.Simulation.Enabled.fsti \

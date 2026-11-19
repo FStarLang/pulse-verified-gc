@@ -97,7 +97,7 @@ val minor_keeps_marking_inv (minor: minor_state) (g: heap) (fp: U64.t) (roots: s
 /// `extra` that are outside references before (besides the roots and the
 /// nursery's fields) still are after (besides the rewritten roots).  The
 /// completeness of the cycle uses it with `extra` the objects reachable when
-/// the cycle started (`GC.Gen.MarkPhase.Cycle`).
+/// the cycle started (`GC.Gen.Run.Invariant`).
 val minor_keeps_marking_inv_with (extra: obj_addr -> prop)
     (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t) (sp: MP.scan_pos)
   : Lemma (requires GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\

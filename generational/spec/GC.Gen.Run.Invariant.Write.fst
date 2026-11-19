@@ -367,8 +367,7 @@ let write_blocks (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
     FStar.Classical.forall_intro (FStar.Classical.move_requires (size_of_header g (write_word g a v)))
 
 /// The barrier while marking (darken the old value, then write) keeps every
-/// block, and every black block black (after `barrier_blocks` in
-/// `GC.Gen.MarkPhase.Cycle`).
+/// block, and every black block black.
 #push-options "--z3rlimit 20"
 let marking_blocks (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
   : Lemma (requires well_formed_heap g /\ Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\
