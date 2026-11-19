@@ -15,7 +15,11 @@
  *     lowest one up, appends each swept page with a free slot to its class's
  *     list (address order, with the list's tail kept), gives back pool pages with no survivor and whole free
  *     pages of runs, merges dead stretches of runs, and lists every merged
- *     block of at least lg_min words, in address order, in front of list 0.
+ *     block of at least lg_min words, in address order, in front of list 0;
+ *   - incremental mode (plan section 28): slices of the sweep, one unit at a
+ *     time, leave exactly what the eager sweep leaves; allocation mid-sweep
+ *     takes swept pages only, in the phase's colour with its tag, leaves
+ *     unswept pages untouched, and its objects survive the rest of the sweep.
  */
 
 #include <stdio.h>
@@ -373,6 +377,122 @@ static void test_list_order(void) {
     CHECK("order empty", avail[0] == 0 && atail[0] == 0);
 }
 
+/* ---- incremental mode (plan section 28) --------------------------------- */
+
+/* test_sweep's heap, for the incremental tests. */
+static void sweep_layout(void) {
+    fresh(8);
+    { int col[] = { BLACK, WHITE }; pool_page(0, 2, col); }
+    { int col[] = { WHITE, WHITE, WHITE }; pool_page(1, 3, col); }
+    { uint64_t w[] = { 100, 50, 2 * PW - 150 }; int col[] = { BLACK, WHITE, WHITE };
+      run_pages(2, 2, 3, w, col); }
+    { uint64_t w[] = { PW }; int col[] = { WHITE }; run_pages(4, 1, 1, w, col); }
+    { uint64_t w[] = { 200, 100, 300, 50, 40, 100, PW - 790 };
+      int col[] = { WHITE, BLACK, WHITE, BLUE, BLACK, WHITE, BLACK };
+      run_pages(5, 1, 7, w, col); }
+    { uint64_t w[] = { PW - 20, 20 }; int col[] = { BLACK, WHITE }; run_pages(7, 1, 2, w, col); }
+    avail[0] = 1;
+    large[0] = pg(6) + 8;
+}
+
+/* Slices of one unit each sweep the units in address order, skipping the
+ * free page; together they leave exactly the heap, page map and lists the
+ * eager sweep leaves. */
+static void test_slices(void) {
+    static uint8_t m1[MEMB]; static prec p1[MAXP]; static uint64_t w1[W_LEN];
+    sweep_layout();
+    sweep(heap, st);
+    memcpy(m1, mem, (size_t)MEMB); memcpy(p1, pm, sizeof pm); memcpy(w1, tw, sizeof tw);
+
+    sweep_layout();
+    start_sweep(st);
+    for (uint64_t i = 0; i < 8; i++) CHECK("slice start", V(i).swept == (V(i).code == FREE));
+    uint64_t want[] = { 1, 2, 4, 5, 6, 8 };   /* pages 0, 1; runs 2-3, 4, 5; page 6 skipped, run 7 */
+    uint64_t c = 0;
+    for (int k = 0; k < 6; k++) {
+        c = sweep_slice(heap, st, c, 1);
+        CHECK("slice cursor", c == want[k]);
+        for (uint64_t i = 0; i < 8; i++)
+            if (V(i).code != FREE) CHECK("slice swept", V(i).swept == (i < c));
+    }
+    CHECK("slice end", sweep_slice(heap, st, c, 1) == 8);
+    CHECK("slices = eager sweep: heap", memcmp(m1, mem, (size_t)MEMB) == 0);
+    CHECK("slices = eager sweep: map", memcmp(p1, pm, sizeof pm) == 0);
+    CHECK("slices = eager sweep: lists", memcmp(w1, tw, sizeof tw) == 0);
+
+    /* a budget larger than the units left ends the sweep in one slice */
+    sweep_layout();
+    start_sweep(st);
+    CHECK("one slice", sweep_slice(heap, st, 0, 100) == 8);
+    CHECK("one slice = eager sweep", memcmp(m1, mem, (size_t)MEMB) == 0 && memcmp(p1, pm, sizeof pm) == 0 &&
+                                     memcmp(w1, tw, sizeof tw) == 0);
+    /* a budget of 0 sweeps nothing */
+    sweep_layout();
+    start_sweep(st);
+    CHECK("budget 0", sweep_slice(heap, st, 0, 0) == 0 && !V(0).swept);
+}
+
+/* Allocation mid-sweep: from swept pages only, white (black while marking),
+ * with its tag; unswept pages are not touched, and are told apart from the
+ * swept ones by the epoch.  The later sweep keeps the new objects. */
+static void test_mid_sweep_alloc(void) {
+    static uint8_t page1[PB];
+    fresh(4);
+    { int col[] = { BLACK, WHITE }; pool_page(0, 2, col); }
+    { int col[] = { BLACK, BLACK, WHITE }; pool_page(1, 3, col); }
+    start_sweep(st);
+    uint64_t c = sweep_slice(heap, st, 0, 1);         /* page 0 swept, page 1 not */
+    CHECK("mixed", c == 1 && V(0).swept && !V(1).swept && V(1).code == POOL);
+    CHECK("mixed", same_rec(V(0), rec(POOL, 0, true, 24, 2047, 0)) && avail[0] == 1);
+    memcpy(page1, mem + pg(1), (size_t)PB);
+
+    /* wosize 1, tag 5, sweeping: slot 1 of page 0, white */
+    uint64_t r = alloc_ph(heap, st, 1, 5, false);
+    CHECK("mid-sweep small", r == 24 && rd(16) == (hdr(1, WHITE) | 5));
+    CHECK("mid-sweep small", same_rec(V(0), rec(POOL, 0, true, 40, 2046, 0)));
+    /* wosize 8: no page of class 7 on its list; the first free page, swept */
+    r = alloc_ph(heap, st, 8, 0, false);
+    CHECK("mid-sweep new page", r == pg(2) + 8 && rd(pg(2)) == hdr(8, WHITE));
+    CHECK("mid-sweep new page", V(2).code == POOL && V(2).arg == 7 && V(2).swept);
+    /* black while marking (the same allocator, the colour of the phase) */
+    r = alloc_ph(heap, st, 1, 0, true);
+    CHECK("black", r == 40 && rd(32) == hdr(1, BLACK));
+    /* page 1, unswept, untouched by the allocations */
+    CHECK("unswept untouched", memcmp(page1, mem + pg(1), (size_t)PB) == 0 && !V(1).swept);
+
+    /* the rest of the sweep: page 1 as one unit, then a slice to the end */
+    CHECK("unit", sweep_unit(heap, st, 1) == 2 && V(1).swept);
+    CHECK("unit", rd(pg(1)) == hdr(1, WHITE) && rd(pg(1) + 16) == hdr(1, WHITE) && rd(pg(1) + 32) == hdr(1, BLUE));
+    c = sweep_slice(heap, st, c, 10);
+    CHECK("rest", c == 4);
+    for (uint64_t i = 0; i < 4; i++) CHECK("rest", V(i).swept);
+    /* the objects allocated mid-sweep are in swept pages: kept as they are */
+    CHECK("kept", rd(16) == (hdr(1, WHITE) | 5) && rd(pg(2)) == hdr(8, WHITE) && rd(32) == hdr(1, BLACK));
+    /* page 1, swept with free slots, joined class 0's list after page 0 */
+    CHECK("kept", same_rec(V(0), rec(POOL, 0, true, 56, 2045, 2)) && avail[0] == 1 && atail[0] == 2);
+    /* a unit already swept is left as it is */
+    memcpy(page1, mem + pg(1), (size_t)PB);
+    CHECK("swept unit", sweep_unit(heap, st, 1) == 2 && memcmp(page1, mem + pg(1), (size_t)PB) == 0);
+}
+
+/* A large allocation mid-sweep takes free pages, swept, beside an unswept
+ * run, which a later unit step sweeps. */
+static void test_mid_sweep_large(void) {
+    static uint8_t run0[PB];
+    fresh(4);
+    { uint64_t w[] = { 100, PW - 100 }; int col[] = { BLACK, WHITE }; run_pages(0, 1, 2, w, col); }
+    start_sweep(st);
+    memcpy(run0, mem, (size_t)PB);
+    uint64_t r = alloc_ph(heap, st, 1000, 3, false);
+    CHECK("mid-sweep large", r != 0 && r >= pg(1) && V(1).code == HEAD && V(1).swept && !V(0).swept);
+    CHECK("mid-sweep large", rd(r - 8) == (hdr(1000, WHITE) | 3));
+    CHECK("mid-sweep large", memcmp(run0, mem, (size_t)PB) == 0);
+    CHECK("run unit", sweep_unit(heap, st, 0) == 1 && V(0).swept);
+    CHECK("run unit", rd(0) == hdr(99, WHITE) && rd(800) == hdr(PW - 101, BLUE));
+    CHECK("run unit", rd(r - 8) == (hdr(1000, WHITE) | 3));
+    CHECK("run unit", sweep_slice(heap, st, 1, 5) == 4);
+}
+
 int main(void) {
     mem = calloc((size_t)MEMB, 1);
     if (!mem) { perror("calloc"); return 1; }
@@ -383,6 +503,9 @@ int main(void) {
     test_sweep();
     test_sweep_then_alloc();
     test_list_order();
+    test_slices();
+    test_mid_sweep_alloc();
+    test_mid_sweep_large();
     free(mem);
     if (failures) { printf("pages: %d of %d checks FAILED\n", failures, checks); return 1; }
     printf("pages: all %d checks passed\n", checks);

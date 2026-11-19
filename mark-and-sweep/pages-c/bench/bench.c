@@ -20,6 +20,11 @@
  *   reallocS as realloc, from a heap filled with small objects only, so
  *            that both allocators start from pool pages alone
  *
+ *   inc      incremental mode: after a mixed heap with 50% marked, the
+ *            sweep starts; allocations alternate with one-unit slices (one
+ *            per 8 allocations; incL one per 64; incS from a small-only
+ *            heap), the sweep finished at the end: ns per allocation
+ *
  * Usage: bench_proto|bench_verified [reps [workload]]   prints one line per
  * workload run: <workload> <median> <unit>.  With a workload name (small,
  * mixed, large, sweep, realloc, reallocS) only that one runs, so that each
@@ -59,6 +64,12 @@ static void a_init(void) {
 static inline uint64_t a_alloc(uint64_t wz) { return vergc_proto_allocate(heap, NULL, NULL, wz); }
 static inline uint64_t *a_hdr(uint64_t o) { return (uint64_t *)(uintptr_t)(o - 8); }
 static void a_sweep(void) { vergc_proto_sweep(heap, NULL, NULL); }
+/* Incremental mode: the prototype's own (SW_INCR): the cycle start, a unit
+ * per slice, and allocation that sweeps when it finds no room. */
+static void a_start_inc(void) { proto_mode = SW_INCR; vergc_proto_sweep(heap, NULL, NULL); }
+static int a_sweeping(void) { return impl_sweeping(); }
+static void a_slice(void) { impl_slice(); }
+static inline uint64_t a_alloc_inc(uint64_t wz) { return vergc_proto_allocate(heap, NULL, NULL, wz); }
 static const char *a_name = "proto-B2";
 #else
 static pstate_t st;
@@ -83,6 +94,28 @@ static inline uint64_t a_alloc(uint64_t wz) { return alloc_white(heap, st, wz); 
 #endif
 static inline uint64_t *a_hdr(uint64_t o) { return (uint64_t *)(mem + o - 8); }
 static void a_sweep(void) { sweep(heap, st); }
+/* Incremental mode (plan section 28): start_sweep, then slices of one unit
+ * (sweep_slice) from a cursor, between allocations of the phase's
+ * allocator (alloc_ph, white, with a tag); an allocation that finds no room
+ * mid-sweep sweeps a unit and tries again, as the prototype's does, on a
+ * slow path out of line (as the prototype's refill). */
+static uint64_t cur;
+static int swp;
+static void a_start_inc(void) { start_sweep(st); cur = 0; swp = 1; }
+static int a_sweeping(void) { return swp; }
+static void a_slice(void) {
+    if (swp) { cur = sweep_slice(heap, st, cur, 1); if (cur >= NPAGES) swp = 0; }
+}
+__attribute__((noinline)) static uint64_t a_alloc_retry(uint64_t wz) {
+    uint64_t o = 0;
+    while (!o && swp) { a_slice(); o = alloc_ph(heap, st, wz, wz & 7, false); }
+    return o;
+}
+static inline uint64_t a_alloc_inc(uint64_t wz) {
+    uint64_t o = alloc_ph(heap, st, wz, wz & 7, false);
+    if (__builtin_expect(!o, 0)) o = a_alloc_retry(wz);
+    return o;
+}
 #ifdef TAGGED
 static const char *a_name = "verified-tag";
 #else
@@ -142,6 +175,24 @@ static uint64_t run_allocs(size_t n) {
         if (!o) { fprintf(stderr, "%s: out of memory at request %zu\n", a_name, i); exit(1); }
         objs[i] = o;
     }
+    return now() - t0;
+}
+
+/* The timed part of the incremental workloads, in a function of its own as
+ * run_allocs is: inlined into main, the allocator's fast path was compiled
+ * with main's register pressure, which cost the verified build 2.7 ns per
+ * allocation in this loop and not elsewhere (plan section 28.4). */
+__attribute__((noinline)) static uint64_t run_inc(size_t n, unsigned k) {
+    uint64_t t0 = now();
+    a_start_inc();
+    unsigned j = 0;
+    for (size_t i = 0; i < n; i++) {
+        uint64_t o = a_alloc_inc(req[i]);
+        if (!o) { fprintf(stderr, "%s: out of memory at request %zu\n", a_name, i); exit(1); }
+        objs[i] = o;
+        if (++j == k) { j = 0; a_slice(); }
+    }
+    while (a_sweeping()) a_slice();
     return now() - t0;
 }
 
@@ -222,6 +273,31 @@ int main(int argc, char **argv) {
         }
         qsort(t, reps, sizeof(uint64_t), cmp_u64);
         printf("reallocS %8.2f ns/alloc  (%s, %zu allocs)\n", (double)t[reps / 2] / nreq, a_name, nreq);
+    }
+    /* incremental: after a mixed (inc, incL) or small-only (incS) heap with
+     * 50% marked, the sweep starts and allocations of half the heap's
+     * requests alternate with slices of one unit, one per K allocations;
+     * the sweep is finished at the end.  ns per allocation, slices and the
+     * sweep's start included. */
+    struct { const char *name; int fill, again; unsigned k; } incs[] = {
+        { "inc", 1, 1, 8 }, { "incL", 1, 1, 64 }, { "incS", 0, 0, 8 } };
+    for (int w = 0; w < 3; w++) {
+        if (!RUN(incs[w].name)) continue;
+        make_reqs(incs[w].fill, target);
+        size_t n1 = nreq;
+        size_t n2 = 0;
+        for (int r = 0; r < reps; r++) {
+            make_reqs(incs[w].fill, target);
+            a_init();
+            run_allocs(n1);
+            mark(n1, 50, 777);
+            make_reqs(incs[w].again, target / 2);
+            n2 = nreq;
+            t[r] = run_inc(n2, incs[w].k);
+        }
+        qsort(t, reps, sizeof(uint64_t), cmp_u64);
+        printf("%-8s %8.2f ns/alloc  (%s, %zu allocs, a slice per %u)\n", incs[w].name,
+               (double)t[reps / 2] / n2, a_name, n2, incs[w].k);
     }
     return 0;
 }

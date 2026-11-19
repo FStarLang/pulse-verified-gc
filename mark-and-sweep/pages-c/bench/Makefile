@@ -40,10 +40,15 @@ bench_tagged: bench.c $(VSRC) ../GC_Pages.h
 bench: all
 	@./bench.sh $(ROUNDS) $(REPS)
 
+# Incremental mode (plan section 28): allocations interleaved with sweep
+# slices, against the prototype's incremental sweep, with an A/A control.
+bench-inc: bench_proto bench_verified
+	@./bench_inc.sh $(ROUNDS) $(REPS)
+
 bench-tagged: bench_proto bench_tagged
 	@VERIFIED=bench_tagged ./bench.sh $(ROUNDS) $(REPS)
 
 clean:
 	rm -rf _proto bench_proto bench_verified bench_tagged
 
-.PHONY: all bench clean
+.PHONY: all bench bench-inc bench-tagged clean
