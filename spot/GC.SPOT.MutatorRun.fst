@@ -29,6 +29,7 @@
 module GC.SPOT.MutatorRun
 
 open FStar.Seq
+open FStar.List.Tot
 open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
@@ -285,16 +286,16 @@ let step4 () : Lemma (step (r3_ ()) read_e (r3_ ())) = ms3_facts ()
 /// The run
 /// ---------------------------------------------------------------------------
 
-let rn1 : run (r0_ ()) ([] @ [alloc_e]) (r1_ ()) =
+let rn1_ (_: unit) : GTot (run (r0_ ()) ([] @ [alloc_e]) (r1_ ())) =
   step1 (); Step (Done (r0_ ())) alloc_e (r1_ ()) ()
 
-let rn2 : run (r0_ ()) (([] @ [alloc_e]) @ [alloc_e]) (r2_ ()) =
-  step2 (); Step rn1 alloc_e (r2_ ()) ()
+let rn2_ (_: unit) : GTot (run (r0_ ()) (([] @ [alloc_e]) @ [alloc_e]) (r2_ ())) =
+  step2 (); Step (rn1_ ()) alloc_e (r2_ ()) ()
 
-let rn3 (lay: squash layout_ok) : run (r0_ ()) ((([] @ [alloc_e]) @ [alloc_e]) @ [write_e]) (r3_ ()) =
-  step3 lay; Step rn2 write_e (r3_ ()) ()
+let rn3 (lay: squash layout_ok) : GTot (run (r0_ ()) ((([] @ [alloc_e]) @ [alloc_e]) @ [write_e]) (r3_ ())) =
+  step3 lay; Step (rn2_ ()) write_e (r3_ ()) ()
 
-let rn4 (lay: squash layout_ok) : run (r0_ ()) (((([] @ [alloc_e]) @ [alloc_e]) @ [write_e]) @ [read_e]) (r3_ ()) =
+let rn4 (lay: squash layout_ok) : GTot (run (r0_ ()) (((([] @ [alloc_e]) @ [alloc_e]) @ [write_e]) @ [read_e]) (r3_ ())) =
   step4 (); Step (rn3 lay) read_e (r3_ ()) ()
 
 /// ---------------------------------------------------------------------------
@@ -323,7 +324,7 @@ let no_major (x: obj_addr) (r: real_state)
 
 #push-options "--z3rlimit 40"
 let ids1_facts (b: block_addr)
-  : Lemma (ids_of_run rn1 b == (if b = Nursery 8UL then Some 0 else None))
+  : Lemma (ids_of_run (rn1_ ()) b == (if b = Nursery 8UL then Some 0 else None))
   = ms1_facts ();
     minor_objects_from_zero (r0_ ()).memory.nursery;
     minor_chain_walk_stop (r0_ ()).memory.nursery.data 0 0;
@@ -332,11 +333,11 @@ let ids1_facts (b: block_addr)
     | Nursery _ -> ()
 
 let ids2_facts (b: block_addr)
-  : Lemma (ids_of_run rn2 b == (if b = Nursery 8UL then Some 0 else if b = Nursery 24UL then Some 1 else None))
+  : Lemma (ids_of_run (rn2_ ()) b == (if b = Nursery 8UL then Some 0 else if b = Nursery 24UL then Some 1 else None))
   = ms1_facts ();
     ms2_facts ();
     ids1_facts b;
-    assert (ids_of_run rn2 b == update_block_ids (ids_of_run rn1) 1 (r1_ ()) alloc_e (r2_ ()) b);
+    assert (ids_of_run (rn2_ ()) b == update_block_ids (ids_of_run (rn1_ ())) 1 (r1_ ()) alloc_e (r2_ ()) b);
     match b with
     | Major x -> no_major x (r1_ ()); no_major x (r2_ ())
     | Nursery _ -> ()
@@ -345,7 +346,7 @@ let ids3_facts (lay: squash layout_ok) (b: block_addr)
   : Lemma (ids_of_run (rn3 lay) b == (if b = Nursery 8UL then Some 0 else if b = Nursery 24UL then Some 1 else None))
   = ms3_facts ();
     ids2_facts b;
-    assert (ids_of_run (rn3 lay) b == update_block_ids (ids_of_run rn2) 2 (r2_ ()) write_e (r3_ ()) b);
+    assert (ids_of_run (rn3 lay) b == update_block_ids (ids_of_run (rn2_ ())) 2 (r2_ ()) write_e (r3_ ()) b);
     match b with
     | Major x -> no_major x (r3_ ())
     | Nursery _ -> ()
@@ -359,45 +360,53 @@ let alloc_translates (ids: block_id_map) : Lemma (translates ids alloc_e p_alloc
   assert (GBase.to_minor_offset one == one)
 
 #push-options "--z3rlimit 40"
-let write_translates (lay: squash layout_ok) : Lemma (translates (ids_of_run rn2) write_e p_write) =
+let write_translates (lay: squash layout_ok) : Lemma (translates (ids_of_run (rn2_ ())) write_e p_write) =
   FStar.Classical.forall_intro ids2_facts;
-  assert (ids_of_run rn2 (Nursery 8UL) == Some 0)
+  assert (ids_of_run (rn2_ ()) (Nursery 8UL) == Some 0)
 #pop-options
 
 let read_translates (lay: squash layout_ok) : Lemma (translates (ids_of_run (rn3 lay)) read_e p_read) =
   ids3_facts lay (Nursery 24UL)
 
 #push-options "--z3rlimit 40"
-let executes_1 () : Lemma (executes rn1 ps1) =
+let executes_1 () : Lemma (executes (rn1_ ()) ps1) =
   alloc_translates (ids_of_run (Done (r0_ ())));
-  assert (ps1 == [] @ [p_alloc])
+  assert_norm (ps1 == [] @ [p_alloc])
 
-let executes_2 () : Lemma (executes rn2 ps2) =
+let executes_2 () : Lemma (executes (rn2_ ()) ps2) =
   executes_1 ();
-  alloc_translates (ids_of_run rn1);
-  assert (ps2 == ps1 @ [p_alloc])
+  alloc_translates (ids_of_run (rn1_ ()));
+  assert_norm (ps2 == ps1 @ [p_alloc])
 
 let executes_3 (lay: squash layout_ok) : Lemma (executes (rn3 lay) ps3) =
   executes_2 ();
   write_translates lay;
-  assert (ps3 == ps2 @ [p_write])
+  assert_norm (ps3 == ps2 @ [p_write])
 
 let executes_4 (lay: squash layout_ok) : Lemma (executes (rn4 lay) ps4) =
   executes_3 lay;
   read_translates lay;
-  assert (ps4 == ps3 @ [p_read])
+  assert_norm (ps4 == ps3 @ [p_read])
 #pop-options
 
 /// ---------------------------------------------------------------------------
 /// The program is well formed
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 40"
+let wf_alloc (m: I.ideal_memory) : Lemma (I.wf_event m p_alloc) =
+  infix_tag_val ();
+  no_scan_tag_val ();
+  assert_norm (1 < pow2 54);
+  assert (Seq.index (Seq.create 1 word1) 0 == word1)
+
+#push-options "--z3rlimit 40 --fuel 5"
 let wf_ps4 () : Lemma (I.wf_program ps4) =
+  closure_tag_val ();
+  wf_alloc I.empty_ideal;
   let m1 = I.ideal_step I.empty_ideal p_alloc in
+  wf_alloc m1;
   let m2 = I.ideal_step m1 p_alloc in
   let m3 = I.ideal_step m2 p_write in
-  assert (I.wf_event I.empty_ideal p_alloc);
   assert (Seq.length m2.I.objects == 2);
   assert (Seq.index m2.I.roots 0 == I.Ptr { head = 0; infix_offset = 0 });
   assert (Seq.index m2.I.roots 1 == I.Ptr { head = 1; infix_offset = 0 });
@@ -405,7 +414,9 @@ let wf_ps4 () : Lemma (I.wf_program ps4) =
   assert (I.root_names m2 1);
   P.reachable_root m2 0;
   P.reachable_root m2 1;
-  assert (I.wf_event m1 p_alloc);
+  assert (I.valid_value m2 (I.Ptr { head = 0; infix_offset = 0 }));
+  assert (I.usable m2 (I.Ptr { head = 0; infix_offset = 0 }));
+  assert ((Seq.index m2.I.objects 1).I.tag == 0UL);
   assert (I.wf_event m2 p_write);
   assert (m3.I.roots == m2.I.roots);
   assert (Seq.length m3.I.objects == 2);

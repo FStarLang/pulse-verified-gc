@@ -131,7 +131,7 @@ let arith_k (o a k: nat)
 let nursery_ptr_resolves (ms: minor_state) (o: U64.t) (k: nat) (a: U64.t) (hw: U64.t)
   : Lemma (requires minor_wf ms /\ Seq.mem o (minor_objects ms) /\ k < minor_wosize ms o /\
                     U64.v a == U64.v o + 8 * k /\
-                    (k > 0 ==> k >= 2 /\ minor_read_field ms o (k - 1) == hw /\
+                    (k > 0 ==> minor_read_field ms o (k - 1) == hw /\
                                getTag hw == infix_tag /\ U64.v (getWosize hw) == k))
           (ensures Seq.mem (resolve_minor ms a) (minor_objects ms))
   = minor_objects_valid ms o;
@@ -176,6 +176,8 @@ let kept_target_ok (r: real_state) (h: cycle_history) (x: obj_addr)
   = is_white_iff x r.memory.major;
     is_black_iff x r.memory.major
 
+let ge2 (k: nat) : Lemma (requires k <> 1 /\ k > 0) (ensures k >= 2) = ()
+
 #push-options "--z3rlimit 60"
 let usable_storable r h im ids v w =
   let g = r.memory.major in
@@ -184,14 +186,22 @@ let usable_storable r h im ids v w =
   match v with
   | I.Word w' -> ()
   | I.Ptr { head; infix_offset = k } ->
+      assert (k <> 1);
       eliminate exists (b: block_addr). ids b == Some head /\ w == ptr_value b k
       with begin
-        copies_faithful_elim r.memory im ids b head;
+        copies_faithful_elim r.memory h im ids b head;
         let o = Seq.index im.I.objects head in
         assert (I.reachable im head);
+        (match b with Major x -> assert (kept h x) | Nursery _ -> ());
+        assert (faithful_block h b);
         let hw : U64.t =
           if k > 0 then (match I.field_at o (k - 1) with I.FValue (I.Word hw) -> hw | _ -> 0UL) else 0UL in
         assert (k > 0 ==> content_rep ids (I.field_at o (k - 1)) (block_field r.memory b (k - 1)));
+        assert (I.valid_value im v);
+        if k > 0 then begin
+          ge2 k;
+          assert (getTag hw == infix_tag /\ U64.v (getWosize hw) == k)
+        end;
         infix_tag_val ();
         closure_tag_val ();
         match b with
@@ -237,7 +247,7 @@ let target_block (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: b
           (ensures (let o = Seq.index im.I.objects obj in
                     is_allocated r.memory b /\ i < block_size r.memory b /\
                     block_tag r.memory b == U64.v o.I.tag /\ block_size r.memory b == o.I.size))
-  = copies_faithful_elim r.memory im ids b obj
+  = copies_faithful_elim r.memory h im ids b obj
 
 let slot_addr (x: obj_addr) (i: nat) (wz: nat)
   : Pure hp_addr (requires U64.v x + 8 * wz <= heap_size /\ i < wz)
@@ -346,14 +356,14 @@ let stores_in_kept_given r h im ids e pe =
   | Write (Major x) _ v, I.Write obj _ v' ->
       assert (kept h x);
       if scannable r.memory.major x then begin
-        copies_faithful_elim r.memory im ids (Major x) obj;
+        copies_faithful_elim r.memory h im ids (Major x) obj;
         no_scan_tag_val ();
         is_no_scan_spec x r.memory.major;
         usable_storable r h im ids v' v
       end
   | Write (Nursery n) _ v, I.Write obj _ v' ->
       if minor_tag r.memory.nursery n < 251 then begin
-        copies_faithful_elim r.memory im ids (Nursery n) obj;
+        copies_faithful_elim r.memory h im ids (Nursery n) obj;
         no_scan_tag_val ();
         usable_storable r h im ids v' v
       end

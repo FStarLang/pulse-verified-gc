@@ -75,47 +75,55 @@ let block_rep_ext (m: real_memory) (ids ids': block_id_map) (b: block_addr) (o: 
     with introduce _ ==> _ with content_rep_ext ids ids' (I.field_at o i) (block_field m b i)
 
 /// `copies_faithful` at one block.  The SMT solver's own trigger for the
-/// quantifier of `copies_faithful` is the `block_rep` term, which a goal
+/// quantifier of `copies_faithful` is a `block_rep` term, which a goal
 /// about `valid_id` does not contain; `cf_all` restates it with this one.
-let cf_at (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) (b: block_addr) (id: I.obj_id) : prop =
-  ids b == Some id ==> I.valid_id im id /\ block_rep m ids b (Seq.index im.I.objects id)
+let cf_at (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+          (b: block_addr) (id: I.obj_id) : prop =
+  ids b == Some id ==>
+    I.valid_id im id /\ block_header_rep m b (Seq.index im.I.objects id) /\
+    (faithful_block h b ==> block_rep m ids b (Seq.index im.I.objects id))
 
-let cf_all (m: real_memory) (im: I.ideal_memory) (ids: block_id_map)
-  : Lemma (requires copies_faithful m im ids)
-          (ensures forall (b: block_addr) (id: I.obj_id). {:pattern (cf_at m im ids b id)} cf_at m im ids b id)
-  = assert (copies_faithful m im ids ==>
-            (forall (b: block_addr) (id: I.obj_id). cf_at m im ids b id))
-      by (let h = T.implies_intro () in
+let cf_all (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+  : Lemma (requires copies_faithful m h im ids)
+          (ensures forall (b: block_addr) (id: I.obj_id). {:pattern (cf_at m h im ids b id)} cf_at m h im ids b id)
+  = assert (copies_faithful m h im ids ==>
+            (forall (b: block_addr) (id: I.obj_id). cf_at m h im ids b id))
+      by (let hy = T.implies_intro () in
           let b = T.forall_intro () in
           let id = T.forall_intro () in
-          T.norm_binding_type [delta_only [`%copies_faithful]] h;
-          let h1 = T.instantiate h (T.binding_to_term b) in
+          T.norm_binding_type [delta_only [`%copies_faithful]] hy;
+          let h1 = T.instantiate hy (T.binding_to_term b) in
           let h2 = T.instantiate h1 (T.binding_to_term id) in
           T.norm [delta_only [`%cf_at]];
           T.exact h2)
 
-let copies_faithful_elim m im ids b id =
-  cf_all m im ids; assert (cf_at m im ids b id)
+let copies_faithful_elim m h im ids b id =
+  cf_all m h im ids; assert (cf_at m h im ids b id)
 
-let copies_faithful_ext (m: real_memory) (im: I.ideal_memory) (ids ids': block_id_map)
-  : Lemma (requires copies_faithful m im ids /\ (forall (b: block_addr). ids' b == ids b))
-          (ensures copies_faithful m im ids')
+let copies_faithful_ext (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids ids': block_id_map)
+  : Lemma (requires copies_faithful m h im ids /\ (forall (b: block_addr). ids' b == ids b))
+          (ensures copies_faithful m h im ids')
   = introduce forall (b: block_addr) (id: I.obj_id).
-      ids' b == Some id ==> I.valid_id im id /\ block_rep m ids' b (Seq.index im.I.objects id)
+      ids' b == Some id ==>
+        I.valid_id im id /\ block_header_rep m b (Seq.index im.I.objects id) /\
+        (faithful_block h b ==> block_rep m ids' b (Seq.index im.I.objects id))
     with introduce _ ==> _ with begin
-      copies_faithful_elim m im ids b id;
-      block_rep_ext m ids ids' b (Seq.index im.I.objects id)
+      copies_faithful_elim m h im ids b id;
+      introduce faithful_block h b ==> block_rep m ids' b (Seq.index im.I.objects id)
+      with block_rep_ext m ids ids' b (Seq.index im.I.objects id)
     end
 
-let copies_faithful_objects (m: real_memory) (im im': I.ideal_memory) (ids: block_id_map)
-  : Lemma (requires copies_faithful m im ids /\ im'.I.objects == im.I.objects)
-          (ensures copies_faithful m im' ids)
+let copies_faithful_objects (m: real_memory) (h: cycle_history) (im im': I.ideal_memory) (ids: block_id_map)
+  : Lemma (requires copies_faithful m h im ids /\ im'.I.objects == im.I.objects)
+          (ensures copies_faithful m h im' ids)
   = introduce forall (b: block_addr) (id: I.obj_id).
-      ids b == Some id ==> I.valid_id im' id /\ block_rep m ids b (Seq.index im'.I.objects id)
-    with introduce _ ==> _ with copies_faithful_elim m im ids b id
+      ids b == Some id ==>
+        I.valid_id im' id /\ block_header_rep m b (Seq.index im'.I.objects id) /\
+        (faithful_block h b ==> block_rep m ids b (Seq.index im'.I.objects id))
+    with introduce _ ==> _ with copies_faithful_elim m h im ids b id
 
 let represents_ext r h im ids ids' =
-  copies_faithful_ext r.memory im ids ids';
+  copies_faithful_ext r.memory h im ids ids';
   assert (keyed r.memory ids');
   assert (covers_reachable im ids');
   assert (retains_snapshot r h ids')
@@ -188,7 +196,7 @@ let read_roots_keep_sim_inv r h im ids e pe r' =
       represents_ext r h im ids ids'
   | SetRoots _, I.SetRoots rs ->
       FStar.Classical.forall_intro (FStar.Classical.move_requires (set_roots_reachable im rs));
-      copies_faithful_objects r.memory im im' ids;
+      copies_faithful_objects r.memory h im im' ids;
       assert (covers_reachable im' ids);
       assert (reachable_in_kept h im' ids);
       assert (represents r h im' ids);
@@ -203,8 +211,9 @@ let reads_agree_state r h im ids obj i =
   assert (I.reachable im obj);
   eliminate exists (b: block_addr). ids b == Some obj
   with begin
-    copies_faithful_elim r.memory im ids b obj;
+    copies_faithful_elim r.memory h im ids b obj;
     let o = Seq.index im.I.objects obj in
+    (match b with Major x -> assert (kept h x) | Nursery _ -> ());
     assert (is_allocated r.memory b);
     assert (i < o.I.size);
     assert (content_rep ids (I.field_at o i) (block_field r.memory b i))
@@ -258,23 +267,28 @@ let write_reachable im obj i v id =
   reachable_closed im' c id
 
 #push-options "--z3rlimit 60"
-let write_block_rep (r r': real_state) (im: I.ideal_memory) (ids: block_id_map)
+let write_block_rep (r r': real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (b: block_addr) (i: nat) (v: U64.t) (obj: I.obj_id) (v': I.value) (b': block_addr) (id: I.obj_id)
-  : Lemma (requires keyed r.memory ids /\ copies_faithful r.memory im ids /\
+  : Lemma (requires keyed r.memory ids /\ copies_faithful r.memory h im ids /\
                     I.wf_event im (I.Write obj i v') /\ ids b == Some obj /\ value_rep ids v' v /\
                     write_frame r r' b i v /\ ids b' == Some id)
           (ensures I.valid_id (I.ideal_step im (I.Write obj i v')) id /\
-                   block_rep r'.memory ids b' (Seq.index (I.ideal_step im (I.Write obj i v')).I.objects id))
-  = copies_faithful_elim r.memory im ids b' id;
+                   (let o' = Seq.index (I.ideal_step im (I.Write obj i v')).I.objects id in
+                    block_header_rep r'.memory b' o' /\
+                    (faithful_block h b' /\ faithful_block h b ==> block_rep r'.memory ids b' o')))
+  = copies_faithful_elim r.memory h im ids b' id;
     let im' = I.ideal_step im (I.Write obj i v') in
     let o = Seq.index im.I.objects id in
     let o' = Seq.index im'.I.objects id in
     if id = obj then begin
       assert (b' == b);
       assert (o' == I.update_field o i v');
-      introduce forall (j: nat). j < o'.I.size ==> content_rep ids (I.field_at o' j) (block_field r'.memory b' j)
-      with introduce _ ==> _ with begin
-        if j = i then () else assert (I.field_at o' j == I.field_at o j)
+      introduce faithful_block h b' /\ faithful_block h b ==> block_rep r'.memory ids b' o'
+      with begin
+        introduce forall (j: nat). j < o'.I.size ==> content_rep ids (I.field_at o' j) (block_field r'.memory b' j)
+        with introduce _ ==> _ with begin
+          if j = i then () else assert (I.field_at o' j == I.field_at o j)
+        end
       end
     end else begin
       assert (b' =!= b);
@@ -285,10 +299,14 @@ let write_block_rep (r r': real_state) (im: I.ideal_memory) (ids: block_id_map)
 let write_represents r r' h im ids b i v obj v' =
   let im' = I.ideal_step im (I.Write obj i v') in
   assert (keyed r'.memory ids);
+  (match b with Major x -> assert (kept h x) | Nursery _ -> ());
+  assert (faithful_block h b);
   introduce forall (b': block_addr) (id: I.obj_id).
-      ids b' == Some id ==> I.valid_id im' id /\ block_rep r'.memory ids b' (Seq.index im'.I.objects id)
-  with introduce _ ==> _ with write_block_rep r r' im ids b i v obj v' b' id;
-  assert (copies_faithful r'.memory im' ids);
+      ids b' == Some id ==>
+        I.valid_id im' id /\ block_header_rep r'.memory b' (Seq.index im'.I.objects id) /\
+        (faithful_block h b' ==> block_rep r'.memory ids b' (Seq.index im'.I.objects id))
+  with introduce _ ==> _ with write_block_rep r r' h im ids b i v obj v' b' id;
+  assert (copies_faithful r'.memory h im' ids);
   FStar.Classical.forall_intro (FStar.Classical.move_requires (write_reachable im obj i v'));
   assert (covers_reachable im' ids);
   assert (retains_snapshot r' h ids);

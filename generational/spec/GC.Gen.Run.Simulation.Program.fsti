@@ -65,9 +65,11 @@ val reachable_root (m: I.ideal_memory) (v: I.obj_id)
 /// `copies_faithful` at one block.  (The SMT solver's own trigger for the
 /// quantifier of `copies_faithful` is its `block_rep` term, which few goals
 /// contain; this is the way in.)
-val copies_faithful_elim (m: real_memory) (im: I.ideal_memory) (ids: block_id_map) (b: block_addr) (id: I.obj_id)
-  : Lemma (requires copies_faithful m im ids /\ ids b == Some id)
-          (ensures I.valid_id im id /\ block_rep m ids b (Seq.index im.I.objects id))
+val copies_faithful_elim (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+    (b: block_addr) (id: I.obj_id)
+  : Lemma (requires copies_faithful m h im ids /\ ids b == Some id)
+          (ensures I.valid_id im id /\ block_header_rep m b (Seq.index im.I.objects id) /\
+                   (faithful_block h b ==> block_rep m ids b (Seq.index im.I.objects id)))
 
 /// `represents` and `reachable_in_kept` depend on the map only through its
 /// values.
@@ -103,7 +105,7 @@ val read_roots_keep_sim_inv (r: real_state) (h: cycle_history) (im: I.ideal_memo
 /// `GC.Gen.Run.Simulation.reads_agree_state`.
 val reads_agree_state (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
                       (obj: I.obj_id) (i: nat)
-  : Lemma (requires represents r h im ids /\ I.wf_event im (I.Read obj i))
+  : Lemma (requires represents r h im ids /\ reachable_in_kept h im ids /\ I.wf_event im (I.Read obj i))
           (ensures exists (b: block_addr). ids b == Some obj /\ is_allocated r.memory b /\
                      i < block_size r.memory b /\
                      content_rep ids (I.field_at (Seq.index im.I.objects obj) i) (block_field r.memory b i))

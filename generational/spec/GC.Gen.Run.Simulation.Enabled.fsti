@@ -8,17 +8,23 @@
 /// barrier, the initialising writes and the nursery trust today) and that it
 /// points at a kept block (`in_kept`).  Both follow from the invariant,
 /// `represents`, the value being usable, and the trusted layout of the
-/// event's words (`GC.Model.Represents.word_layout`) -- plus two facts the
-/// stage-0 statement does not provide, made an explicit hypothesis here:
+/// event's words (`GC.Model.Represents.word_layout`) -- plus one fact the
+/// stage-0c statement still does not provide, made an explicit hypothesis
+/// here:
 ///
-///   * **`infix_exact`** (missing from `GC.Model.Ideal.valid_value`): an
-///     infix pointer `Ptr { head; k }`, `k > 0`, goes through an infix
-///     header whose size field is `k` (OCaml's `Infix_offset_hd`) and
-///     `k >= 2`.  Without it the real word resolves (`resolve_object`,
-///     `resolve_minor`) to some other address: with a closure whose field 0
-///     is an infix header of size 5, `Ptr { head; 1 }` is a valid ideal value
-///     but its real word resolves 4 words before the closure, not to a block,
-///     so no barrier step can store it.
+///   * **`infix_exact`**: an infix pointer `Ptr { head; k }` has `k <> 1`,
+///     i.e. `k >= 2`.  Stage 0c's `GC.Model.Ideal.valid_value` makes the
+///     infix header's size `k` (so the real word resolves to the closure),
+///     but still allows `k = 1`: field 0 of a closure an infix header of
+///     size 1.  The real heap's well-formedness rejects that
+///     (`GC.Spec.Object.infix_addr_conds`: `w >= 2`; the nursery's
+///     `minor_infix_wf` likewise), so the barrier cannot store such a
+///     pointer (`SPI.storable` asks `infix_addr_wf`): with a closure
+///     `[Word (infix header, size 1); ...]` reachable and a scannable major
+///     object reachable, `Write obj 0 (Ptr { head = closure; infix_offset = 1 })`
+///     is well formed but no `step` carries it out.  OCaml never builds it
+///     (`Infix_offset_val >= 3` words, `runtime/interp.c`).  The fix is
+///     `infix_offset >= 2` in `valid_value`.
 ///
 /// (Stage 0 also lacked "mid-sweep, a kept block is not pending free";
 /// stage 0b's sweeping clause -- kept blocks past the cursor are black --
@@ -46,17 +52,11 @@ module AC = GC.Spec.Allocator.Cursor
 module GBase = GC.Gen.Base
 module I = GC.Model.Ideal
 
-/// The infix header an infix pointer goes through names its offset, of at
-/// least two words.
+/// An infix pointer is at least two words into its closure.
 let infix_exact (im: I.ideal_memory) (v: I.value) : prop =
   match v with
   | I.Word _ -> True
-  | I.Ptr { head; infix_offset } ->
-      infix_offset > 0 /\ I.valid_id im head /\ infix_offset <= (Seq.index im.I.objects head).I.size ==>
-      infix_offset >= 2 /\
-      (match I.field_at (Seq.index im.I.objects head) (infix_offset - 1) with
-       | I.FValue (I.Word hw) -> U64.v (getWosize hw) == infix_offset
-       | _ -> False)
+  | I.Ptr { infix_offset } -> infix_offset <> 1
 
 /// The values an event stores are `infix_exact`.
 let event_infix_exact (im: I.ideal_memory) (pe: I.program_event) : prop =

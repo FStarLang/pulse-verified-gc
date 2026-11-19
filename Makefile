@@ -127,6 +127,7 @@ ROOT_MODULES = \
   generational/spec/GC.Gen.Run.Simulation.fst \
   generational/spec/GC.Gen.Run.Simulation.Enabled.fsti \
   generational/spec/GC.Gen.Run.Simulation.Enabled.fst \
+  generational/spec/GC.Gen.Run.Simulation.Frame.fst \
   mark-and-sweep/impl/GC.Impl.Correct.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst \
@@ -380,7 +381,7 @@ DEPGRAPH_THEOREM_ROOTS = \
   GC.Spec.Correctness GC.Spec.MarkBoundedCorrectness GC.Gen.CheneyCorrectness \
   GC.Impl.MarkBoundedRootLemmas GC.Spec.FusedSweep.Facts \
   GC.Gen.SweepPhase GC.Gen.SweepPhase.Minor GC.Gen.SweepPhase.Safety GC.Spec.SweepPhase.Intrinsic.End \
-  GC.Impl.Correct GC.Gen.Run.Simulation GC.Gen.Run.Simulation.Enabled
+  GC.Impl.Correct GC.Gen.Run.Simulation GC.Gen.Run.Simulation.Enabled GC.Gen.Run.Simulation.Frame
 
 DEPGRAPH_SPOT_ROOTS = $(sort $(basename $(notdir $(wildcard spot/GC.SPOT.*.fst))))
 

@@ -171,24 +171,18 @@ let represents (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: blo
 /// The real events that carry out the program's
 /// ---------------------------------------------------------------------------
 
-/// **Trusted: the address layout, at the words a program event stores.**
-/// The spec cannot see where the nursery lies (`GC.Gen.Base.minor_base_addr`
-/// is abstract) nor that static data lies outside it, so the real word that
-/// carries a value is assumed to be classified the way the runtime
-/// classifies it:
-///   * a `Word` (an int, a pointer to static data or code, a raw word) does
-///     not look like a nursery pointer: static data never lies in the
-///     nursery.  (The ideal `Word` already excludes major-heap addresses, so
-///     this restricts a raw word written into a no-scan block the same way.)
-///   * a pointer to a nursery block does not look like a major-heap pointer,
-///     and is the nursery's base plus its offset, without wrapping: the
-///     nursery lies apart from the major heap, at an aligned address.
-/// (That a pointer into the major heap does not look like a nursery pointer
-/// follows from `GC.Gen.Base.zero_addr_above_minor`.)  It is a fact about the
-/// process's address space, not about the program.
+/// **Trusted: where a pointer to a nursery block lies**, at the words a
+/// program event stores.  The spec cannot see where the nursery lies
+/// (`GC.Gen.Base.minor_base_addr` is abstract), so the word of a pointer to
+/// a nursery block is assumed to be laid out as the runtime lays it out: not
+/// a major-heap address, and the nursery's base plus the object's offset
+/// plus the infix offset, without wrapping (the nursery lies apart from the
+/// major heap, at an aligned address).  (A `Word` lies outside both heaps:
+/// `outside_heaps`, in `value_rep`.  A pointer into the major heap is not a
+/// nursery address: that follows from `GC.Gen.Base.zero_addr_above_minor`.)
 let word_layout (ids: block_id_map) (v: I.value) (w: U64.t) : prop =
   match v with
-  | I.Word _ -> ~(is_young w)
+  | I.Word _ -> True
   | I.Ptr { head; infix_offset } ->
       forall (o: U64.t). ids (Nursery o) == Some head ==>
         ~(is_pointer w) /\ U64.v (GC.Gen.Base.to_minor_offset w) == U64.v o + 8 * infix_offset

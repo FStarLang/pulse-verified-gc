@@ -112,7 +112,7 @@ let major_write_keeps_given (r: real_state) (h: cycle_history) (im: I.ideal_memo
     stores_in_kept_given r h im ids e pe;
     write_keeps_run_invariant r h (Major x) i v r';
     I.ideal_step_wf im pe;
-    copies_faithful_elim r.memory im ids (Major x) obj;
+    copies_faithful_elim r.memory h im ids (Major x) obj;
     assert (is_allocated r.memory (Major x));
     assert (i < U64.v (wosize_of_object x g));
     eliminate exists (a: hp_addr). U64.v a == U64.v x + 8 * i /\
