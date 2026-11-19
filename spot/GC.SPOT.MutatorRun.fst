@@ -8,18 +8,21 @@
 ///
 ///   p1. `Alloc` an object (tag 0, one field, the int 0, as `1UL`);
 ///   p2. `Alloc` another;
-///   p3. `Write` into field 0 of the second a pointer to the first;
+///   p3. `Write` the int 1 (`3UL`) into field 0 of the second;
 ///   p4. `Read` it back.
 ///
 /// The real run allocates both in the nursery (at offsets 8 and 24), stores
-/// the pointer with a nursery write, and reads it.  No collection runs.
+/// with a nursery write, and reads.  No collection runs.  Stage 0d's nursery
+/// steps carry the nursery's frame and shape (`nursery_alloc_frame`,
+/// `nursery_store_frame`, with `GenInv.minor_heap_shape`), which are shown
+/// here for these concrete nurseries: every word is an object's header or
+/// reads as no header (`words_ok`).  No hypothesis.
 ///
-/// One hypothesis: the trusted address layout of the stored pointer
-/// (`GC.Model.Represents.word_layout`), which the spec cannot see because
-/// `GC.Gen.Base.minor_base_addr` is abstract: the word of a pointer to the
-/// nursery object at offset 8 is not a major-heap address and is the
-/// nursery's base plus 8.  (With the bridge's layout -- the nursery below
-/// `zero_addr` -- it holds.)
+/// (A pointer stored into the nursery would need, besides the trusted
+/// layout of its word -- `GC.Model.Represents.word_layout`, since
+/// `GC.Gen.Base.minor_base_addr` is abstract -- that the word not read as a
+/// nursery header, which the abstract layout does not give: so the stored
+/// value here is an int.)
 ///
 /// The major heap is untouched, and that nothing in it is allocated at the
 /// start comes from the run invariant at the initial state
@@ -46,6 +49,7 @@ module GBase = GC.Gen.Base
 module I = GC.Model.Ideal
 module P = GC.Gen.Run.Simulation.Program
 module SpecHeap = GC.Spec.Heap
+module GenInv = GC.Gen.HeapInvariant
 
 #set-options "--fuel 2 --ifuel 1 --z3rlimit 20"
 
@@ -73,6 +77,15 @@ let read_write_different
     assert (Seq.index h' (a2v + 7) == Seq.index h (a2v + 7))
 #pop-options
 
+#push-options "--z3rlimit 15 --fuel 0 --ifuel 0"
+let read_write_same
+      (h: GBase.minor_heap)
+      (a: U64.t{U64.v a + 8 <= GBase.minor_heap_size /\ U64.v a % 8 == 0})
+      (v: U64.t)
+  : Lemma (ensures minor_read_word (minor_write_word h a v) a == v)
+  = SpecHeap.combine_decompose_identity v
+#pop-options
+
 let room () : Lemma (32 <= GBase.minor_heap_size) =
   GBase.minor_heap_size_at_least_two_one_field_objects ()
 
@@ -96,8 +109,8 @@ let after_alloc (r: real_state) : GTot real_state =
 let r1_ (_: unit) : GTot real_state = after_alloc (r0_ ())
 let r2_ (_: unit) : GTot real_state = after_alloc (r1_ ())
 
-/// The word of a pointer to the first object.
-let w : U64.t = ptr_value (Nursery 8UL) 0
+/// The word written: the int 1.
+let w : U64.t = 3UL
 
 let write_e : event = Write (Nursery 24UL) 0 w
 
@@ -107,9 +120,6 @@ let r3_ (_: unit) : GTot real_state =
       { ms with data = minor_write_word_t ms.data (nursery_slot 24UL 0) w } } }
 
 let read_e : event = Read (Nursery 24UL) 0
-
-/// The trusted layout of the stored word.
-let layout_ok : prop = ~(is_pointer w) /\ U64.v (GBase.to_minor_offset w) == 8
 
 /// ---------------------------------------------------------------------------
 /// The nursery after each step
@@ -252,33 +262,254 @@ let ms3_facts () : Lemma (nursery_two (r3_ ()).memory.nursery) =
 #pop-options
 
 /// ---------------------------------------------------------------------------
+/// The nursery's shape (`GenInv.minor_heap_shape`)
+/// ---------------------------------------------------------------------------
+
+/// A word that does not read as a header: wosize 0, not the infix tag.
+let small_word (x: U64.t) : prop =
+  U64.v (U64.shift_right x 10ul) == 0 /\ U64.v (U64.logand x 0xFFUL) <> 249
+
+let small_consts () : Lemma (small_word 0UL /\ small_word 1UL /\ small_word 3UL) =
+  assert_norm (small_word 0UL /\ small_word 1UL /\ small_word 3UL)
+
+/// Every word of the nursery is an object's header (tag 0) or reads as no
+/// header.
+let words_ok (ms: minor_state) : prop =
+  forall (q: U64.t). U64.v q + 8 <= GBase.minor_heap_size /\ U64.v q % 8 == 0 ==>
+    (Seq.mem (U64.uint_to_t (U64.v q + 8)) (minor_objects ms) /\ minor_tag ms (U64.uint_to_t (U64.v q + 8)) == 0) \/
+    small_word (minor_read_word ms.data q)
+
+#push-options "--z3rlimit 40"
+let shape_of_words (ms: minor_state)
+  : Lemma (requires minor_wf ms /\ words_ok ms) (ensures GenInv.minor_heap_shape ms)
+  = reveal_opaque (`%minor_guards_complete) (minor_guards_complete ms);
+    reveal_opaque (`%minor_infix_wf) (minor_infix_wf ms);
+    let at (addr: U64.t)
+      : Lemma (U64.v addr >= 8 /\ U64.v addr < GBase.minor_heap_size /\ U64.v addr % 8 == 0 ==>
+               ((minor_wosize ms addr > 0 ==> Seq.mem addr (minor_objects ms) /\ minor_tag ms addr == 0) /\
+                minor_tag ms addr <> 249))
+      = if U64.v addr >= 8 && U64.v addr < GBase.minor_heap_size && U64.v addr % 8 = 0 then begin
+          let q : U64.t = U64.uint_to_t (U64.v addr - 8) in
+          assert (U64.uint_to_t (U64.v q + 8) == addr)
+        end in
+    FStar.Classical.forall_intro at;
+    GenInv.minor_heap_shape_intro ms
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// The words of each nursery
+/// ---------------------------------------------------------------------------
+
+let data1 (_: unit) : GTot GBase.minor_heap = (r1_ ()).memory.nursery.data
+let data2 (_: unit) : GTot GBase.minor_heap = (r2_ ()).memory.nursery.data
+let data3 (_: unit) : GTot GBase.minor_heap = (r3_ ()).memory.nursery.data
+
+#push-options "--z3rlimit 40"
+let data1_word (q: U64.t)
+  : Lemma (requires U64.v q + 8 <= GBase.minor_heap_size /\ U64.v q % 8 == 0 /\ U64.v q <> 0)
+          (ensures minor_read_word (data1 ()) q == (if U64.v q = 8 then one else 0UL))
+  = room ();
+    ms1_facts ();
+    let ms0 = (r0_ ()).memory.nursery in
+    let res = minor_alloc_spec ms0 1 0 in
+    minor_alloc_success_layout ms0 1 0;
+    let d = res.ms_out.data in
+    nursery_fields_one d res.obj_addr 8UL;
+    assert (data1 () == minor_write_word d 8UL one);
+    if U64.v q = 8 then begin
+      assert (q == 8UL);
+      read_write_same d 8UL one
+    end else begin
+      read_write_different d 8UL q one;
+      minor_alloc_preserves_word_outside_header ms0 1 0 q;
+      minor_read_word_zero_heap q
+    end
+
+let data2_word (q: U64.t)
+  : Lemma (requires U64.v q + 8 <= GBase.minor_heap_size /\ U64.v q % 8 == 0 /\ U64.v q <> 0 /\ U64.v q <> 16)
+          (ensures minor_read_word (data2 ()) q == (if U64.v q = 8 || U64.v q = 24 then one else 0UL))
+  = room ();
+    ms1_facts ();
+    let ms1 = (r1_ ()).memory.nursery in
+    let res = minor_alloc_spec ms1 1 0 in
+    assert (U64.v ms1.bump == 16 /\ minor_wf ms1);
+    minor_alloc_success_layout ms1 1 0;
+    assert (U64.v res.obj_addr == 24);
+    let d = res.ms_out.data in
+    nursery_fields_one d res.obj_addr 24UL;
+    assert (data2 () == minor_write_word d 24UL one);
+    if U64.v q = 24 then begin
+      assert (q == 24UL);
+      read_write_same d 24UL one
+    end else begin
+      read_write_different d 24UL q one;
+      minor_alloc_preserves_word_outside_header ms1 1 0 q;
+      data1_word q
+    end
+
+let data3_word (q: U64.t)
+  : Lemma (requires U64.v q + 8 <= GBase.minor_heap_size /\ U64.v q % 8 == 0)
+          (ensures minor_read_word (data3 ()) q ==
+                   (if U64.v q = 24 then w else minor_read_word (data2 ()) q))
+  = room ();
+    ms3_data ();
+    write_t_24 (data2 ()) w;
+    assert (data3 () == minor_write_word (data2 ()) 24UL w);
+    if U64.v q = 24 then begin
+      assert (q == 24UL);
+      read_write_same (data2 ()) 24UL w
+    end else
+      read_write_different (data2 ()) 24UL q w
+#pop-options
+
+#push-options "--z3rlimit 40"
+let ms1_shape () : Lemma (GenInv.minor_heap_shape (r1_ ()).memory.nursery) =
+  ms1_facts ();
+  small_consts ();
+  let aux (q: U64.t) : Lemma (U64.v q + 8 <= GBase.minor_heap_size /\ U64.v q % 8 == 0 ==>
+      (Seq.mem (U64.uint_to_t (U64.v q + 8)) (minor_objects (r1_ ()).memory.nursery) /\
+       minor_tag (r1_ ()).memory.nursery (U64.uint_to_t (U64.v q + 8)) == 0) \/
+      small_word (minor_read_word (r1_ ()).memory.nursery.data q)) =
+    if U64.v q + 8 <= GBase.minor_heap_size && U64.v q % 8 = 0 then begin
+      if U64.v q = 0 then assert (U64.uint_to_t (U64.v q + 8) == 8UL) else data1_word q
+    end in
+  FStar.Classical.forall_intro aux;
+  shape_of_words (r1_ ()).memory.nursery
+
+let ms2_shape () : Lemma (GenInv.minor_heap_shape (r2_ ()).memory.nursery) =
+  ms2_facts ();
+  small_consts ();
+  let aux (q: U64.t) : Lemma (U64.v q + 8 <= GBase.minor_heap_size /\ U64.v q % 8 == 0 ==>
+      (Seq.mem (U64.uint_to_t (U64.v q + 8)) (minor_objects (r2_ ()).memory.nursery) /\
+       minor_tag (r2_ ()).memory.nursery (U64.uint_to_t (U64.v q + 8)) == 0) \/
+      small_word (minor_read_word (r2_ ()).memory.nursery.data q)) =
+    if U64.v q + 8 <= GBase.minor_heap_size && U64.v q % 8 = 0 then begin
+      if U64.v q = 0 then assert (U64.uint_to_t (U64.v q + 8) == 8UL)
+      else if U64.v q = 16 then assert (U64.uint_to_t (U64.v q + 8) == 24UL)
+      else data2_word q
+    end in
+  FStar.Classical.forall_intro aux;
+  shape_of_words (r2_ ()).memory.nursery
+
+let ms3_shape () : Lemma (GenInv.minor_heap_shape (r3_ ()).memory.nursery) =
+  ms3_facts ();
+  small_consts ();
+  let aux (q: U64.t) : Lemma (U64.v q + 8 <= GBase.minor_heap_size /\ U64.v q % 8 == 0 ==>
+      (Seq.mem (U64.uint_to_t (U64.v q + 8)) (minor_objects (r3_ ()).memory.nursery) /\
+       minor_tag (r3_ ()).memory.nursery (U64.uint_to_t (U64.v q + 8)) == 0) \/
+      small_word (minor_read_word (r3_ ()).memory.nursery.data q)) =
+    if U64.v q + 8 <= GBase.minor_heap_size && U64.v q % 8 = 0 then begin
+      data3_word q;
+      if U64.v q = 0 then assert (U64.uint_to_t (U64.v q + 8) == 8UL)
+      else if U64.v q = 16 then assert (U64.uint_to_t (U64.v q + 8) == 24UL)
+      else if U64.v q = 24 then ()
+      else data2_word q
+    end in
+  FStar.Classical.forall_intro aux;
+  shape_of_words (r3_ ()).memory.nursery
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// Each step
 /// ---------------------------------------------------------------------------
 
-/// `1UL` (the int 0) is no pointer, major or young.
-let one_storable (r: real_state) : Lemma (r.phase == GC.Spec.Phase.Idle ==> storable_value r one) =
-  assert (~(is_pointer one));
-  assert (GBase.to_minor_offset one == one)
+let field0 (ms: minor_state) (o: U64.t)
+  : Lemma (requires U64.v o + 8 <= GBase.minor_heap_size /\ U64.v o % 8 == 0)
+          (ensures minor_read_field ms o 0 == minor_read_word ms.data o)
+  = assert (U64.uint_to_t (U64.v o + 0 * 8) == o)
 
+/// The ints 0 and 1 (`1UL`, `3UL`) are no pointers, major or young.
+let small_storable (r: real_state) (x: U64.t)
+  : Lemma (requires r.phase == GC.Spec.Phase.Idle /\ (x == one \/ x == w))
+          (ensures nursery_storable r x)
+  = assert (~(is_pointer x));
+    assert (GBase.to_minor_offset x == x)
+
+#push-options "--z3rlimit 60"
 let step1 () : Lemma (step (r0_ ()) alloc_e (r1_ ())) =
   room ();
-  one_storable (r0_ ())
+  ms1_facts ();
+  ms1_shape ();
+  small_storable (r0_ ()) one;
+  minor_objects_from_zero (r0_ ()).memory.nursery;
+  minor_chain_walk_stop (r0_ ()).memory.nursery.data 0 0;
+  let ms0 = (r0_ ()).memory.nursery in
+  minor_alloc_success_layout ms0 1 0;
+  data1_word 8UL;
+  field0 (r1_ ()).memory.nursery 8UL
+
+let init1_facts () : Lemma (Seq.length init1 == 1 /\ Seq.index init1 0 == one) = ()
+let lt1 (j: nat) : Lemma (requires j < 1) (ensures j == 0) = ()
+
+let frame2 () : Lemma (nursery_alloc_frame (r1_ ()).memory.nursery (r2_ ()).memory.nursery 24UL 0 init1) =
+  room ();
+  ms1_facts ();
+  ms2_facts ();
+  ms2_shape ();
+  data2_word 24UL;
+  data2_word 8UL;
+  data1_word 8UL;
+  field0 (r2_ ()).memory.nursery 24UL;
+  field0 (r2_ ()).memory.nursery 8UL;
+  field0 (r1_ ()).memory.nursery 8UL;
+  let ms1 = (r1_ ()).memory.nursery in
+  let ms2 = (r2_ ()).memory.nursery in
+  introduce forall (y: U64.t). Seq.mem y (minor_objects ms1) ==>
+      y <> 24UL /\ minor_wosize ms2 y == minor_wosize ms1 y /\ minor_tag ms2 y == minor_tag ms1 y /\
+      (forall (j: nat). j < minor_wosize ms1 y ==> minor_read_field ms2 y j == minor_read_field ms1 y j)
+  with introduce _ ==> _ with begin
+    assert (y == 8UL);
+    introduce forall (j: nat). j < minor_wosize ms1 y ==> minor_read_field ms2 y j == minor_read_field ms1 y j
+    with introduce _ ==> _ with lt1 j
+  end;
+  assert (GenInv.minor_heap_shape ms2);
+  assert (forall (y: U64.t). Seq.mem y (minor_objects ms2) <==> Seq.mem y (minor_objects ms1) \/ y == 24UL);
+  assert (minor_tag ms2 24UL == 0);
+  init1_facts ();
+  assert (minor_wosize ms2 24UL == Seq.length init1);
+  introduce forall (j: nat). j < Seq.length init1 ==> minor_read_field ms2 24UL j == Seq.index init1 j
+  with introduce _ ==> _ with lt1 j
 
 let step2 () : Lemma (step (r1_ ()) alloc_e (r2_ ())) =
   room ();
   ms1_facts ();
-  one_storable (r1_ ())
+  frame2 ();
+  small_storable (r1_ ()) one;
+  let ms1 = (r1_ ()).memory.nursery in
+  minor_alloc_success_layout ms1 1 0;
+  assert (U64.v (minor_alloc_spec ms1 1 0).obj_addr == 24);
+  assert ((minor_alloc_spec ms1 1 0).obj_addr == 24UL)
 
-#push-options "--z3rlimit 40"
-let step3 (lay: squash layout_ok) : Lemma (step (r2_ ()) write_e (r3_ ())) =
+let frame3 () : Lemma (nursery_store_frame (r2_ ()).memory.nursery (r3_ ()).memory.nursery 24UL 0 w) =
+  room ();
   ms2_facts ();
-  let ms = (r2_ ()).memory.nursery in
-  let a = GBase.to_minor_offset w in
-  assert (a == 8UL);
-  assert (~(is_infix_in_minor ms a));
-  assert (resolve_minor ms a == 8UL);
-  assert (storable_value (r2_ ()) w)
-#pop-options
+  ms3_facts ();
+  ms3_shape ();
+  walk_two_objs (r2_ ()).memory.nursery;
+  walk_two_objs (r3_ ()).memory.nursery;
+  data3_word 24UL;
+  data3_word 8UL;
+  field0 (r3_ ()).memory.nursery 24UL;
+  field0 (r3_ ()).memory.nursery 8UL;
+  field0 (r2_ ()).memory.nursery 8UL;
+  let ms2 = (r2_ ()).memory.nursery in
+  let ms3 = (r3_ ()).memory.nursery in
+  introduce forall (y: U64.t). Seq.mem y (minor_objects ms2) ==>
+      minor_wosize ms3 y == minor_wosize ms2 y /\ minor_tag ms3 y == minor_tag ms2 y /\
+      (forall (j: nat). j < minor_wosize ms2 y ==>
+         minor_read_field ms3 y j == (if y = 24UL && j = 0 then w else minor_read_field ms2 y j))
+  with introduce _ ==> _ with begin
+    introduce forall (j: nat). j < minor_wosize ms2 y ==>
+         minor_read_field ms3 y j == (if y = 24UL && j = 0 then w else minor_read_field ms2 y j)
+    with introduce _ ==> _ with lt1 j
+  end
+
+let step3 (_: unit) : Lemma (step (r2_ ()) write_e (r3_ ())) =
+  room ();
+  ms2_facts ();
+  frame3 ();
+  small_storable (r2_ ()) w;
+  ms3_data ()
 
 let step4 () : Lemma (step (r3_ ()) read_e (r3_ ())) = ms3_facts ()
 
@@ -292,11 +523,11 @@ let rn1_ (_: unit) : GTot (run (r0_ ()) ([] @ [alloc_e]) (r1_ ())) =
 let rn2_ (_: unit) : GTot (run (r0_ ()) (([] @ [alloc_e]) @ [alloc_e]) (r2_ ())) =
   step2 (); Step (rn1_ ()) alloc_e (r2_ ()) ()
 
-let rn3 (lay: squash layout_ok) : GTot (run (r0_ ()) ((([] @ [alloc_e]) @ [alloc_e]) @ [write_e]) (r3_ ())) =
-  step3 lay; Step (rn2_ ()) write_e (r3_ ()) ()
+let rn3 (_: unit) : GTot (run (r0_ ()) ((([] @ [alloc_e]) @ [alloc_e]) @ [write_e]) (r3_ ())) =
+  step3 (); Step (rn2_ ()) write_e (r3_ ()) ()
 
-let rn4 (lay: squash layout_ok) : GTot (run (r0_ ()) (((([] @ [alloc_e]) @ [alloc_e]) @ [write_e]) @ [read_e]) (r3_ ())) =
-  step4 (); Step (rn3 lay) read_e (r3_ ()) ()
+let rn4 (_: unit) : GTot (run (r0_ ()) (((([] @ [alloc_e]) @ [alloc_e]) @ [write_e]) @ [read_e]) (r3_ ())) =
+  step4 (); Step (rn3 ()) read_e (r3_ ()) ()
 
 /// ---------------------------------------------------------------------------
 /// The program
@@ -305,7 +536,7 @@ let rn4 (lay: squash layout_ok) : GTot (run (r0_ ()) (((([] @ [alloc_e]) @ [allo
 let word1 : I.value = I.Word one
 
 let p_alloc : I.program_event = I.Alloc 0UL 1 (I.Scannable (Seq.create 1 word1))
-let p_write : I.program_event = I.Write 1 0 (I.Ptr { head = 0; infix_offset = 0 })
+let p_write : I.program_event = I.Write 1 0 (I.Word w)
 let p_read : I.program_event = I.Read 1 0
 
 let ps1 = [p_alloc]
@@ -342,11 +573,11 @@ let ids2_facts (b: block_addr)
     | Major x -> no_major x (r1_ ()); no_major x (r2_ ())
     | Nursery _ -> ()
 
-let ids3_facts (lay: squash layout_ok) (b: block_addr)
-  : Lemma (ids_of_run (rn3 lay) b == (if b = Nursery 8UL then Some 0 else if b = Nursery 24UL then Some 1 else None))
+let ids3_facts (_: unit) (b: block_addr)
+  : Lemma (ids_of_run (rn3 ()) b == (if b = Nursery 8UL then Some 0 else if b = Nursery 24UL then Some 1 else None))
   = ms3_facts ();
     ids2_facts b;
-    assert (ids_of_run (rn3 lay) b == update_block_ids (ids_of_run (rn2_ ())) 2 (r2_ ()) write_e (r3_ ()) b);
+    assert (ids_of_run (rn3 ()) b == update_block_ids (ids_of_run (rn2_ ())) 2 (r2_ ()) write_e (r3_ ()) b);
     match b with
     | Major x -> no_major x (r3_ ())
     | Nursery _ -> ()
@@ -356,36 +587,41 @@ let ids3_facts (lay: squash layout_ok) (b: block_addr)
 /// The run carries out the program
 /// ---------------------------------------------------------------------------
 
-let alloc_translates (ids: block_id_map) : Lemma (translates ids alloc_e p_alloc) =
+let w_outside () : Lemma (outside_heaps w) =
+  assert (GBase.to_minor_offset w == w)
+
+let alloc_translates (m: real_memory) (ids: block_id_map) : Lemma (translates m ids alloc_e p_alloc) =
   assert (GBase.to_minor_offset one == one)
 
 #push-options "--z3rlimit 40"
-let write_translates (lay: squash layout_ok) : Lemma (translates (ids_of_run (rn2_ ())) write_e p_write) =
-  FStar.Classical.forall_intro ids2_facts;
-  assert (ids_of_run (rn2_ ()) (Nursery 8UL) == Some 0)
+let write_translates (_: unit) : Lemma (translates (r2_ ()).memory (ids_of_run (rn2_ ())) write_e p_write) =
+  ids2_facts (Nursery 24UL);
+  ms2_facts ();
+  assert (block_tag (r2_ ()).memory (Nursery 24UL) == 0);
+  w_outside ()
 #pop-options
 
-let read_translates (lay: squash layout_ok) : Lemma (translates (ids_of_run (rn3 lay)) read_e p_read) =
-  ids3_facts lay (Nursery 24UL)
+let read_translates (_: unit) : Lemma (translates (r3_ ()).memory (ids_of_run (rn3 ())) read_e p_read) =
+  ids3_facts () (Nursery 24UL)
 
 #push-options "--z3rlimit 40"
 let executes_1 () : Lemma (executes (rn1_ ()) ps1) =
-  alloc_translates (ids_of_run (Done (r0_ ())));
+  alloc_translates (r0_ ()).memory (ids_of_run (Done (r0_ ())));
   assert_norm (ps1 == [] @ [p_alloc])
 
 let executes_2 () : Lemma (executes (rn2_ ()) ps2) =
   executes_1 ();
-  alloc_translates (ids_of_run (rn1_ ()));
+  alloc_translates (r1_ ()).memory (ids_of_run (rn1_ ()));
   assert_norm (ps2 == ps1 @ [p_alloc])
 
-let executes_3 (lay: squash layout_ok) : Lemma (executes (rn3 lay) ps3) =
+let executes_3 (_: unit) : Lemma (executes (rn3 ()) ps3) =
   executes_2 ();
-  write_translates lay;
+  write_translates ();
   assert_norm (ps3 == ps2 @ [p_write])
 
-let executes_4 (lay: squash layout_ok) : Lemma (executes (rn4 lay) ps4) =
-  executes_3 lay;
-  read_translates lay;
+let executes_4 (_: unit) : Lemma (executes (rn4 ()) ps4) =
+  executes_3 ();
+  read_translates ();
   assert_norm (ps4 == ps3 @ [p_read])
 #pop-options
 
@@ -414,8 +650,6 @@ let wf_ps4 () : Lemma (I.wf_program ps4) =
   assert (I.root_names m2 1);
   P.reachable_root m2 0;
   P.reachable_root m2 1;
-  assert (I.valid_value m2 (I.Ptr { head = 0; infix_offset = 0 }));
-  assert (I.usable m2 (I.Ptr { head = 0; infix_offset = 0 }));
   assert ((Seq.index m2.I.objects 1).I.tag == 0UL);
   assert (I.wf_event m2 p_write);
   assert (m3.I.roots == m2.I.roots);
@@ -430,11 +664,10 @@ let wf_ps4 () : Lemma (I.wf_program ps4) =
 /// ---------------------------------------------------------------------------
 
 /// **A well-formed program and a legal run of `step` from the initial
-/// state that carries it out** (given the trusted layout of the stored
-/// pointer word): `executes` and the program cases of `step` -- nursery
-/// allocation, nursery write, read -- are satisfiable.
-let mutator_run_exists (lay: squash layout_ok)
+/// state that carries it out**: `executes` and the program cases of `step`
+/// -- nursery allocation, nursery write, read -- are satisfiable.
+let mutator_run_exists (_: unit)
   : Lemma (exists (es: list event) (r: real_state) (rn: run (initial_state ()) es r).
              I.wf_program ps4 /\ executes rn ps4)
   = wf_ps4 ();
-    executes_4 lay
+    executes_4 ()
