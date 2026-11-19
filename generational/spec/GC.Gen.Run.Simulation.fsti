@@ -68,16 +68,17 @@ module I = GC.Model.Ideal
 /// **The run `rn` carries out the program `ps`.**  Each program event of the
 /// run translates the next event of `ps` through the map at that point
 /// (`ids_of_run`); each `Minor` and `StartCycle` is handed the ideal roots
-/// at that point, translated (trusted, at those two calls only).
+/// that are pointers at that point, translated (`ptr_values`; trusted, at
+/// those two calls only).
 let rec executes (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
                  (ps: list I.program_event)
   : GTot prop (decreases rn) =
   match rn with
   | Done _ -> ps == []
-  | Step #_ #_ #_ rn' e _ _ ->
+  | Step #_ #_ #r1 rn' e _ _ ->
       if is_program_event e
       then exists (ps': list I.program_event) (pe: I.program_event).
-             ps == ps' @ [pe] /\ executes rn' ps' /\ translates (ids_of_run rn') e pe
+             ps == ps' @ [pe] /\ executes rn' ps' /\ translates r1.memory (ids_of_run rn') e pe
       else executes rn' ps /\ collector_roots_represented (ids_of_run rn') (I.ideal_run ps).I.roots e
 
 /// ---------------------------------------------------------------------------
@@ -113,7 +114,7 @@ let program_post (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: b
 /// the program, carried out by `e`, and a step.
 let program_pre (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
                 (e: event) (pe: I.program_event) (r': real_state) : prop =
-  sim_inv r h im ids /\ I.wf_event im pe /\ translates ids e pe /\ step r e r'
+  sim_inv r h im ids /\ I.wf_event im pe /\ translates r.memory ids e pe /\ step r e r'
 
 /// **An allocation**: the new block (nursery or major) holds the new object,
 /// with the next id.
@@ -144,14 +145,15 @@ let collector_post (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids:
 /// promoted copy (the forwarding map), a dead one's goes.
 val minor_keeps_sim_inv (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (roots: seq U64.t) (r': real_state)
-  : Lemma (requires sim_inv r h im ids /\ roots_represented ids im.I.roots roots /\ step r (Minor roots) r')
+  : Lemma (requires sim_inv r h im ids /\ roots_represented ids (ptr_values im.I.roots) roots /\
+                    step r (Minor roots) r')
           (ensures collector_post r h im ids (Minor roots) r')
 
 /// **The start of a cycle**: colours only; the snapshot is what the ideal
 /// roots reach.
 val start_keeps_sim_inv (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (roots: seq U64.t) (r': real_state)
-  : Lemma (requires sim_inv r h im ids /\ roots_represented ids im.I.roots roots /\
+  : Lemma (requires sim_inv r h im ids /\ roots_represented ids (ptr_values im.I.roots) roots /\
                     step r (StartCycle roots) r')
           (ensures collector_post r h im ids (StartCycle roots) r')
 
@@ -242,7 +244,7 @@ let room_for (r: real_state) (e: event) : prop =
 /// well-formedness and the invariant.
 val program_step_enabled (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (e: event) (pe: I.program_event)
-  : Lemma (requires sim_inv r h im ids /\ I.wf_event im pe /\ translates ids e pe /\ room_for r e)
+  : Lemma (requires sim_inv r h im ids /\ I.wf_event im pe /\ translates r.memory ids e pe /\ room_for r e)
           (ensures exists (r': real_state). step r e r')
 
 /// ---------------------------------------------------------------------------

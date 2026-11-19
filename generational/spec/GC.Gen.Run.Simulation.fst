@@ -49,7 +49,7 @@ let rec simulation #es #r rn ps =
   | Step #_ #es' #r1 rn' e r2 _ ->
       if is_program_event e then begin
         eliminate exists (ps': list I.program_event) (pe: I.program_event).
-            ps == ps' @ [pe] /\ executes rn' ps' /\ translates (ids_of_run rn') e pe
+            ps == ps' @ [pe] /\ executes rn' ps' /\ translates r1.memory (ids_of_run rn') e pe
         with begin
           I.ideal_run_snoc ps' pe;
           simulation rn' ps';
