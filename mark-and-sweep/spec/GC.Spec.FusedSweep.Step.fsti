@@ -185,3 +185,9 @@ val sweep_steps_walk_end (g: heap) (fp: U64.t) (c: U64.t) (k: nat)
   : Lemma (requires sweep_inv_incremental g fp c)
           (ensures (let (g', _, _) = sweep_steps g fp (state_at g c) k in
                     GC.Spec.Walk.walk_end g' zero_addr == GC.Spec.Walk.walk_end g zero_addr))
+
+/// **`k` steps leave the heap from the new cursor on unchanged.**
+val sweep_steps_front (g: heap) (fp: U64.t) (c: U64.t) (k: nat)
+  : Lemma (requires sweep_inv_incremental g fp c)
+          (ensures (let (g', _, st') = sweep_steps g fp (state_at g c) k in
+                    forall (a: hp_addr). U64.v a >= U64.v st'.cursor ==> read_word g' a == read_word g a))

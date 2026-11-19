@@ -2,22 +2,37 @@ module GC.Gen.Run.Invariant
 
 open GC.Gen.Run.Step
 open GC.Gen.Run.History
+open GC.Gen.Run.Invariant.Defs
 
-/// Stage 0: the per-step lemmas are admitted; the general step lemma, the
-/// induction over a run, and the run forms of losslessness are proved from
-/// them.
+/// The per-step lemmas are proved in `GC.Gen.Run.Invariant.*`; the general
+/// step lemma, the induction over a run, and the run forms of losslessness
+/// are proved from them.
 
-let initial_run_invariant _ = admit ()
+let initial_run_invariant _ = GC.Gen.Run.Invariant.Initial.initial_run_invariant ()
 
-let alloc_keeps_run_invariant r h site tag size init r' = admit ()
+/// A nursery allocation: `GC.Gen.Run.Invariant.Write`; a major one:
+/// `GC.Gen.Run.Invariant.MajorAlloc`.
+let alloc_keeps_run_invariant r h site tag size init r' =
+  match site with
+  | InNursery -> GC.Gen.Run.Invariant.Write.nursery_alloc_keeps r h tag size init r'
+  | InMajor -> GC.Gen.Run.Invariant.MajorAlloc.major_alloc_keeps r h tag size init r'
 
-let write_keeps_run_invariant r h b i v r' = admit ()
+/// A write (the barrier, a raw no-scan store, a nursery store):
+/// `GC.Gen.Run.Invariant.Write`.
+let write_keeps_run_invariant r h b i v r' =
+  GC.Gen.Run.Invariant.Write.write_keeps r h b i v r'
 
-let minor_keeps_run_invariant r h roots r' = admit ()
+let minor_keeps_run_invariant r h roots r' = GC.Gen.Run.Invariant.Minor.minor_keeps r h roots r'
 
-let start_keeps_run_invariant r h roots r' = admit ()
+let start_keeps_run_invariant r h roots r' = GC.Gen.Run.Invariant.Collector.start_keeps r h roots r'
 
-let slice_keeps_run_invariant r h budget r' = admit ()
+let slice_keeps_run_invariant r h budget r' =
+  match r.phase, r'.phase with
+  | GC.Spec.Phase.Idle, _ -> GC.Gen.Run.Invariant.Collector.slice_keeps_idle r h budget r'
+  | GC.Spec.Phase.Marking, GC.Spec.Phase.Marking -> GC.Gen.Run.Invariant.Collector.slice_keeps_marking r h budget r'
+  | GC.Spec.Phase.Marking, GC.Spec.Phase.Sweeping _ -> GC.Gen.Run.Invariant.Collector.slice_keeps_handover r h budget r'
+  | GC.Spec.Phase.Sweeping _, _ -> GC.Gen.Run.Invariant.SweepSlice.slice_keeps_sweeping r h budget r'
+  | GC.Spec.Phase.Marking, GC.Spec.Phase.Idle -> ()  // a mark slice never ends idle
 
 let step_keeps_run_invariant r h e r' =
   match e with
@@ -47,11 +62,12 @@ let rec run_invariant_along h0 #r0 #es #r1 rn =
       run_invariant_along h0 rn';
       step_keeps_run_invariant r1' (history_along h0 rn') e r2
 
-let alloc_phase_major_alloc_step r tag size init = admit ()
+let alloc_phase_major_alloc_step r tag size init =
+  GC.Gen.Run.Invariant.Allocator.alloc_phase_step r tag size init
 
-let idle_lossless r h = admit ()
+let idle_lossless r h = GC.Gen.Run.Invariant.Collector.idle_lossless_with r h
 
-let idle_survives r h = admit ()
+let idle_survives r h = GC.Gen.Run.Invariant.Collector.idle_survives r h
 
 let cycle_lossless #es #r rn =
   initial_run_invariant ();
