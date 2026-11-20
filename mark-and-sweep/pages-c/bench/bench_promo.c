@@ -1,9 +1,13 @@
-/* Promotion benchmark (plan section 30): the minor collection with the page
- * allocator (GC_Pages.c, minor_collect_idle) against main's, with akhil's
- * first-fit free list (generational/snapshot/GC_Gen_Impl.c, minor_collect),
- * both Idle.
+/* Promotion benchmark (plan section 30): the verified minor collection with
+ * the page allocator (GC_Pages.c, minor_collect_idle), all Idle, against
+ *   redirect  the same algorithm unverified: akhil's extracted Cheney
+ *             (generational/snapshot/GC_Gen_Impl.c, minor_collect) with its
+ *             `allocate` sent to the same page allocator (alloc_ph), as on
+ *             sheera/pages-runtime (hook_allocate.py; pages_redirect.c);
+ *             -DWHITE: alloc_white with the tag ORed in, that branch's glue;
+ *   main      main's design: the same Cheney with akhil's first-fit free list.
  *
- * Built twice from this file: -DMAIN for main's, otherwise ours.  Both run
+ * Built from this file: -DMAIN, -DREDIRECT, otherwise ours.  All run
  * the same collections: the nursery (2048 bytes, GC.Gen.Base) filled with
  * one shape of objects, the forwarding array zeroed (a precondition of
  * both), then one collection, timed alone.  A rep is COLLS collections from
@@ -30,7 +34,7 @@
  *           the dead objects' holes in address order, ours the pools' dead
  *           slots.  A rep is then COLLS_S collections.
  *
- * Usage: bench_promo_main|bench_promo_pages [reps [workload [steady]]]
+ * Usage: bench_promo_{main,redirect,redirect_white,pages} [reps [workload [steady]]]
  * prints one line per workload: <workload> <ns per promoted object>, the
  * workload suffixed -s on the steady heap.
  */
@@ -40,7 +44,7 @@
 #include <string.h>
 #include <time.h>
 
-#ifdef MAIN
+#if defined(MAIN) || defined(REDIRECT)
 #include "GC_Gen_Impl.h"
 #include "krmlinit.h"
 #else
@@ -106,6 +110,48 @@ static void a_sweep(void) {
     gray_stack_rec gs = { .storage = storage, .top = &top, .cap = 16 };
     fp_cell = collect(heap, gs, fp_cell);
 }
+#elif defined(REDIRECT)
+static const char *a_name = "redirect";
+static uint64_t fp_cell;
+static phase_state phase;
+static gen_heap_t gh;
+static uint64_t no_slots[1];
+void rp_init(uint8_t *mem, size_t bytes);
+uint64_t rp_alloc(uint64_t wz, uint64_t tag);
+uint64_t rp_alloc_white(uint64_t wz, uint64_t tag);
+void rp_sweep(void);
+
+/* The hook of hook_allocate.py: every `allocate` of the promotion comes here. */
+int vergc_alloc_pages = 1;
+uint64_t vergc_pages_allocate(phase_state *ph, uint64_t wosize, uint64_t tag) {
+#ifdef WHITE
+    return rp_alloc_white(wosize, tag);
+#else
+    return rp_alloc(wosize, tag);
+#endif
+}
+
+/* The heap of free pages, as ours. */
+static void a_init(void) {
+    zero_addr = ZA;
+    heap_size_u64 = BYTES;
+    krmlinit_globals();
+    heap.data = mem; heap.size = (size_t)BYTES;
+    rp_init(mem, (size_t)BYTES);
+    fp_cell = 0;
+    memset(&phase, 0, sizeof phase);
+    minor_heap_t mh = { .data = nursery, .size = (size_t)MHS, .bump_ref = &nbump };
+    memset(&gh, 0, sizeof gh);
+    gh.minor = mh; gh.major = heap; gh.fp_ref = &fp_cell; gh.phase_ref = &phase;
+}
+
+static bool a_collect(void) {
+    return minor_collect(gh, roots, 1, fwd, queue, no_slots, 0);
+}
+
+static uint64_t a_alloc(uint64_t wz) { return rp_alloc(wz, 0); }
+
+static void a_sweep(void) { rp_sweep(); }
 #else
 static const char *a_name = "pages";
 #define NCLS 31
@@ -247,6 +293,15 @@ static __attribute__((noinline)) double rep(const char *w) {
     return (double)t / (double)objs;
 }
 
+/* PROMO_DIGEST set: one rep's collections, then a hash of the major heap
+ * and the last root (the redirect build and ours must agree). */
+static void digest(const char *w) {
+    rep(w);
+    uint64_t h = 1469598103934665603ULL;
+    for (uint64_t i = 0; i < BYTES; i++) h = (h ^ mem[i]) * 1099511628211ULL;
+    printf("%s %016llx root %llu\n", w, (unsigned long long)h, (unsigned long long)roots[0]);
+}
+
 int main(int argc, char **argv) {
     int reps = argc > 1 ? atoi(argv[1]) : 7;
     const char *only = argc > 2 ? argv[2] : NULL;
@@ -256,6 +311,7 @@ int main(int argc, char **argv) {
     if (!mem) { perror("calloc"); return 1; }
     for (unsigned k = 0; k < sizeof ws / sizeof ws[0]; k++) {
         if (only && strcmp(only, ws[k])) continue;
+        if (getenv("PROMO_DIGEST")) { memset(mem, 0, (size_t)BYTES); digest(ws[k]); continue; }
         double t[64];
         if (reps > 64) reps = 64;
         for (int r = 0; r < reps; r++) t[r] = rep(ws[k]);

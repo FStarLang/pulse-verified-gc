@@ -62,10 +62,34 @@ bench_promo_main: bench_promo.c $(MSRC)
 bench_promo_pages: bench_promo.c $(VSRC) ../GC_Pages.h
 	$(CC) $(OPT) $(VINC) -Wno-everything bench_promo.c $(VSRC) -o $@
 
-bench-promo: bench_promo_main bench_promo_pages
+# The same algorithm unverified (the 5% reference): akhil's extracted Cheney
+# with `allocate` sent to the page allocator, as on sheera/pages-runtime, whose
+# hook_allocate.py writes the hooked copy (the snapshot is unchanged).
+RUNTIME_BRANCH ?= sheera/pages-runtime
+_redirect/hook_allocate.py:
+	@mkdir -p _redirect
+	git show $(RUNTIME_BRANCH):generational/ocaml-integration/verified_gc/pages/hook_allocate.py > $@
+
+_redirect/GC_Gen_Impl_hooked.c: $(SNAP)/GC_Gen_Impl.c _redirect/hook_allocate.py
+	python3 _redirect/hook_allocate.py $< $@
+
+RSRC = _redirect/GC_Gen_Impl_hooked.c $(SNAP)/GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.c \
+       $(SNAP)/krmlinit.c $(SNAP)/compat.c
+
+bench_promo_redirect: bench_promo.c pages_redirect.c $(RSRC) ../GC_Pages.c
+	$(CC) $(OPT) -I.. -I../internal $(MINC) -Wno-everything -c pages_redirect.c -o _redirect/pages_redirect.o
+	$(CC) $(OPT) $(MINC) -Wno-everything -DREDIRECT bench_promo.c $(RSRC) _redirect/pages_redirect.o -o $@
+
+bench_promo_redirect_white: bench_promo.c pages_redirect.c $(RSRC) ../GC_Pages.c
+	$(CC) $(OPT) -I.. -I../internal $(MINC) -Wno-everything -c pages_redirect.c -o _redirect/pages_redirect.o
+	$(CC) $(OPT) $(MINC) -Wno-everything -DREDIRECT -DWHITE bench_promo.c $(RSRC) _redirect/pages_redirect.o -o $@
+
+PROMO_BINS = bench_promo_main bench_promo_redirect bench_promo_redirect_white bench_promo_pages
+
+bench-promo: $(PROMO_BINS)
 	@./bench_promo.sh $(ROUNDS) $(REPS)
 
 clean:
-	rm -rf _proto bench_proto bench_verified bench_tagged bench_promo_main bench_promo_pages
+	rm -rf _proto _redirect bench_proto bench_verified bench_tagged $(PROMO_BINS)
 
 .PHONY: all bench bench-inc bench-tagged bench-promo clean
