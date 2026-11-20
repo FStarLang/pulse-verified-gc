@@ -259,7 +259,8 @@ let minor_fields0 (free: free_def)
       : Lemma (requires Seq.mem obj (minor_objects nursery0) /\
                         j < minor_scan_wosize nursery0 obj /\
                         is_pointer_field (minor_read_field nursery0 obj j))
-              (ensures in_use free g0 ((minor_read_field nursery0 obj j) <: obj_addr))
+              (ensures in_use free g0 (resolve_object ((minor_read_field nursery0 obj j) <: obj_addr) g0) /\
+                       infix_addr_wf g0 (objects zero_addr g0) ((minor_read_field nursery0 obj j) <: obj_addr))
       = empty_mem obj
     in
     GenInv.minor_major_fields_not_free_intro free nursery0 g0 h

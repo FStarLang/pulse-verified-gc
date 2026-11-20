@@ -271,6 +271,25 @@ let update_preserves_major_target_field
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
+let update_preserves_major_named_field
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (src dst: obj_addr) (j: nat)
+  =
+    RBridge.resolved_in_objects_is_pointer major dst;
+    RBridge.major_object_not_minor_pointer major (resolve_object dst major);
+    to_minor_offset_stable_above_minor dst;
+    if upd src
+    then PromUpdate.update_walk_field_effect major upd fwd src j
+    else PromUpdate.update_walk_preserves_skipped_field major upd fwd src j;
+    let field_addr = U64.uint_to_t (U64.v src + j * 8) in
+    let old_raw = read_word major field_addr in
+    let old_val = to_minor_offset old_raw in
+    assert (old_raw == dst);
+    assert (old_val == dst);
+    assert (~(is_minor_pointer old_val));
+    assert (~(is_minor_pointer old_val /\ fwd old_val <> 0UL))
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let heap_field_points_to_graph_edge
   (g: heap) (free: free_def) (src: obj_addr) (dst: U64.t) (j: nat)
   =

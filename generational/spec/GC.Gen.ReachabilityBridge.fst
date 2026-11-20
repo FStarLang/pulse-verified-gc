@@ -55,8 +55,8 @@ let resolved_in_objects_is_pointer (g: heap) (r: obj_addr)
     end else resolve_non_infix r g
 #pop-options
 
-/// A nursery field that holds a major object's address targets a non-free
-/// block.
+/// A nursery field that names a major object (possibly through an interior
+/// pointer) names a non-free block.
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 private let minor_field_major_not_free
   (free: free_def) (minor: minor_state) (major: heap) (obj: U64.t) (j: nat)
@@ -65,12 +65,10 @@ private let minor_field_major_not_free
               Seq.mem obj (minor_objects minor) /\
               j < minor_scan_wosize minor obj /\
               (let v = minor_read_field minor obj j in
-               is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major)))
-    (ensures in_use free major ((minor_read_field minor obj j) <: obj_addr))
+               is_val_addr v /\ Seq.mem (resolve_object (v <: obj_addr) major) (objects zero_addr major)))
+    (ensures in_use free major (resolve_object ((minor_read_field minor obj j) <: obj_addr) major))
   = let v = minor_read_field minor obj j in
-    is_val_addr_spec v;
-    objects_addresses_gt_start zero_addr major (v <: obj_addr);
-    aligned_gt_ge_plus_mword (U64.v v) (U64.v zero_addr);
+    resolved_in_objects_is_pointer major (v <: obj_addr);
     assert (is_pointer_field v);
     GenInv.minor_major_fields_not_free_elim free minor major obj j
 #pop-options
@@ -174,7 +172,7 @@ let reachable_not_free
           let inv_aux (i:nat) : Lemma
             (requires i < minor_scan_wosize minor src /\
                       classify_minor_field minor major (minor_read_field minor src i) == Some (MajorV dst))
-            (ensures minor_read_field minor src i == dst /\ is_val_addr dst /\
+            (ensures is_val_addr dst /\
                      Seq.mem (dst <: obj_addr) (objects zero_addr major) /\
                      in_use free major (dst <: obj_addr))
           = classify_minor_field_inv_major minor major (minor_read_field minor src i) dst;

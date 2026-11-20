@@ -300,7 +300,18 @@ let cc_move_darker (g: heap) (t: obj_addr) (c: color)
       HG.get_field g' y k == HG.get_field g y k
     with introduce _ ==> _ with cc_move_field g t c y k;
     introduce forall (v: obj_addr). resolve_object v g' == resolve_object v g
-    with color_change_preserves_resolve t v g c
+    with color_change_preserves_resolve t v g c;
+    let objs = objects zero_addr g in
+    introduce forall (v: obj_addr).
+      infix_addr_wf g objs v ==> infix_addr_wf g' (objects zero_addr g') v
+    with introduce _ ==> _
+    with begin
+      color_change_preserves_is_infix t v g c;
+      color_change_preserves_wosize_any t v g c;
+      FStar.Classical.forall_intro (fun (o: obj_addr) -> color_change_preserves_is_closure t o g c);
+      FStar.Classical.forall_intro (fun (o: obj_addr) -> color_change_preserves_wosize_any t o g c);
+      infix_addr_wf_congr g g' objs v
+    end
 
 let scan_field_darker (g g': heap) (x: obj_addr) (k: U64.t{U64.v k >= 1})
   : Lemma (requires well_formed_heap g /\ scan_target g x /\ U64.v k <= U64.v (wosize_of_object x g) /\

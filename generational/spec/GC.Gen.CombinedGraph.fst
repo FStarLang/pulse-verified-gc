@@ -35,8 +35,8 @@ let classify_minor_field (ms: minor_state) (major: heap) (v: U64.t)
   = let vr = resolve_minor ms (to_minor_offset v) in
     if is_minor_addr vr && Seq.mem vr (minor_objects ms) then
       Some (MinorV vr)
-    else if is_val_addr v && Seq.mem v (objects zero_addr major) then
-      Some (MajorV v)
+    else if is_val_addr v && Seq.mem (resolve_object v major) (objects zero_addr major) then
+      Some (MajorV (resolve_object v major))
     else
       None
 
@@ -48,6 +48,9 @@ let classify_minor_field_minor_raw (ms: minor_state) (major: heap) (v: U64.t)
 
 let classify_minor_field_major (ms: minor_state) (major: heap) (v: U64.t)
   = ()
+
+let classify_minor_field_major_raw (ms: minor_state) (major: heap) (v: U64.t)
+  = resolve_non_infix (v <: obj_addr) major
 
 /// From a major object's field: normalize potential minor pointers first,
 /// matching remembered-set scanning and pointer updates.
@@ -85,6 +88,10 @@ let classify_minor_field_inv_minor_raw (ms: minor_state) (major: heap) (v: U64.t
 let classify_minor_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
   = is_val_addr_spec v
 #pop-options
+
+let classify_minor_field_inv_major_raw (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
+  = classify_minor_field_inv_major ms major v x;
+    resolve_non_infix (v <: obj_addr) major
 
 let classify_major_field_inv_minor (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
   = minor_objects_valid ms x
@@ -334,10 +341,10 @@ private let classify_minor_in_graph (ms: minor_state) (major: heap) (free: free_
       tag_minor_mem minor_objs 0 vr;
       Seq.lemma_mem_append (tag_minor minor_objs 0) (tag_major major_objs 0)
     end
-    else if is_val_addr v && Seq.mem v major_objs then begin
-      // classify returns MajorV v; is_val_addr gives us obj_addr refinement
+    else if is_val_addr v && Seq.mem (resolve_object v major) major_objs then begin
+      // classify returns MajorV (resolve_object v major)
       is_val_addr_spec v;
-      let v' : obj_addr = v in
+      let v' : obj_addr = resolve_object v major in
       Classical.move_requires (Seq.mem_index v') major_objs;
       tag_major_mem major_objs 0 v';
       Seq.lemma_mem_append (tag_minor minor_objs 0) (tag_major major_objs 0)

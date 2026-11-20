@@ -127,7 +127,9 @@ private let promoted_old_field (ph: gc_phase)
 #pop-options
 
 /// A field of a promoted object: it is its nursery source's field, which
-/// points to a non-free block (or into the nursery, not a major pointer).
+/// resolves to a non-free block, possibly through an interior pointer (or
+/// points into the nursery, not a major pointer).  Promotion keeps the target's
+/// header and its closure, as for an old field.
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 private let promoted_new_field (ph: gc_phase)
   (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
@@ -161,12 +163,10 @@ private let promoted_new_field (ph: gc_phase)
     let w = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
     assert (w == minor_read_field minor x j);
     GenInv.minor_major_fields_not_free_elim free minor major x j;
-    cheney_promote_keeps_in_use ph free minor major fp roots (w <: obj_addr);
-    in_use_not_blue free major (w <: obj_addr);
-    assert (Seq.mem (w <: obj_addr) (objects zero_addr g));
-    assert (~(is_infix (w <: obj_addr) g));
-    resolve_non_infix (w <: obj_addr) g;
-    infix_addr_wf_non_infix g (objects zero_addr g) (w <: obj_addr)
+    let w : obj_addr = w in
+    in_use_not_blue free major (resolve_object w major);
+    Frame.cheney_promote_frame_target_header ph minor major fp roots w;
+    cheney_promote_keeps_in_use ph free minor major fp roots (resolve_object w major)
 #pop-options
 
 /// Every non-free block is on the walk.

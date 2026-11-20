@@ -15,6 +15,7 @@ module Promote = GC.Gen.Promote
 module MP = GC.Spec.MarkPhase
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module SPI = GC.Spec.SweepPhase.Intrinsic
+module SPM = GC.Spec.SweepPhase.Mutator
 module MM = GC.Spec.MarkPhase.Mutator
 module AP = GC.Spec.Allocator.Phase
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -31,7 +32,83 @@ module SA = GC.Spec.Allocator
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 
-let nursery_refs_reset minor w =
+let nursery_refs_transfer minor g g' = ()
+
+let nursery_refs_transfer_storable free free' minor g g' =
+  let same (obj: U64.t) (j: nat)
+    : Lemma (requires Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
+                      is_pointer_field (minor_read_field minor obj j))
+            (ensures resolve_object ((minor_read_field minor obj j) <: obj_addr) g' ==
+                     resolve_object ((minor_read_field minor obj j) <: obj_addr) g)
+    = GenInv.minor_major_fields_not_free_storable free minor g obj j;
+      SPI.storable_transfer g g' free free' (minor_read_field minor obj j)
+  in
+  introduce forall (obj: U64.t) (j: nat).
+      Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
+      is_pointer_field (minor_read_field minor obj j) ==>
+      resolve_object ((minor_read_field minor obj j) <: obj_addr) g' ==
+      resolve_object ((minor_read_field minor obj j) <: obj_addr) g
+  with introduce _ ==> _ with same obj j;
+  nursery_refs_transfer minor g g'
+
+let nursery_refs_transfer_blocks free free' minor g g' =
+  let same (obj: U64.t) (j: nat)
+    : Lemma (requires Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
+                      is_pointer_field (minor_read_field minor obj j))
+            (ensures resolve_object ((minor_read_field minor obj j) <: obj_addr) g' ==
+                     resolve_object ((minor_read_field minor obj j) <: obj_addr) g)
+    = GenInv.minor_major_fields_not_free_storable free minor g obj j;
+      SPI.storable_transfer_blocks g g' free free' (minor_read_field minor obj j)
+  in
+  introduce forall (obj: U64.t) (j: nat).
+      Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
+      is_pointer_field (minor_read_field minor obj j) ==>
+      resolve_object ((minor_read_field minor obj j) <: obj_addr) g' ==
+      resolve_object ((minor_read_field minor obj j) <: obj_addr) g
+  with introduce _ ==> _ with same obj j;
+  nursery_refs_transfer minor g g'
+
+let nursery_refs_colour minor x g c =
+  FStar.Classical.forall_intro (fun (a: obj_addr) -> color_change_preserves_resolve x a g c);
+  nursery_refs_transfer minor g (set_object_color x g c)
+
+#push-options "--z3rlimit 20"
+let write_keeps_nursery free minor g x a v =
+  let g' = write_word g a v in
+  free_def_ok_elim free;
+  MM.write_heads g x a v;
+  SPI.same_heads_facts g g';
+  SPM.same_heads_part4 g g';
+  let kept (y: obj_addr)
+    : Lemma (requires in_use free g y)
+            (ensures read_word g' (hd_address y) == read_word g (hd_address y) /\
+                     (is_closure y g ==> SPI.same_block g g' (hd_address y)))
+    = if is_closure y g then begin
+        SPM.other_body g x y a;
+        SPI.obj_pos g y;
+        SPI.colour_of g y; SPI.colour_of g' y;
+        let body (b: hp_addr)
+          : Lemma (requires U64.v (hd_address y) < U64.v b /\ U64.v b < W.bnext g (hd_address y))
+                  (ensures read_word g' b == read_word g b)
+          = read_write_different g a b v
+        in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires body)
+      end
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires kept);
+  assert (SPI.heads_kept free g g');
+  GenInv.minor_major_fields_not_free_transfer free free minor g g';
+  nursery_refs_transfer_storable free free minor g g'
+#pop-options
+
+let nursery_refs_in_use free minor g w =
+  eliminate exists (obj: U64.t) (j: nat).
+    Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
+    is_pointer_field (minor_read_field minor obj j) /\
+    resolve_object ((minor_read_field minor obj j) <: obj_addr) g == w
+  with GenInv.minor_major_fields_not_free_elim free minor g obj j
+
+let nursery_refs_reset minor g w =
   FStar.Classical.forall_intro (minor_reset_objects_not_mem minor)
 
 /// An element of a sequence is a member of it.
@@ -271,11 +348,12 @@ let nursery_not_unreached (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq
     let h (obj: U64.t) (j: nat)
       : Lemma (requires Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
                         is_pointer_field (minor_read_field minor obj j))
-              (ensures in_use (MP.unreached g sp) g ((minor_read_field minor obj j) <: obj_addr))
+              (ensures in_use (MP.unreached g sp) g (resolve_object ((minor_read_field minor obj j) <: obj_addr) g) /\
+                       infix_addr_wf g (objects zero_addr g) ((minor_read_field minor obj j) <: obj_addr))
       = GenInv.minor_major_fields_not_free_elim free_stw minor g obj j;
         let v : obj_addr = minor_read_field minor obj j in
-        assert (nursery_refs minor v);
-        assert (outside_refs_of minor g roots v)
+        assert (nursery_refs minor g (resolve_object v g));
+        assert (outside_refs_of minor g roots (resolve_object v g))
     in
     GenInv.minor_major_fields_not_free_intro (MP.unreached g sp) minor g h
 #pop-options

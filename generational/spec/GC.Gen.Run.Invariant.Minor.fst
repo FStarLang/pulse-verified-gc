@@ -349,7 +349,8 @@ let reset_points_nowhere (free: free_def) (m: minor_state) (g: heap)
   = let f (obj: U64.t) (j: nat)
       : Lemma (requires Seq.mem obj (minor_objects (minor_reset m)) /\ j < minor_scan_wosize (minor_reset m) obj /\
                         is_pointer_field (minor_read_field (minor_reset m) obj j))
-              (ensures in_use free g ((minor_read_field (minor_reset m) obj j) <: obj_addr))
+              (ensures in_use free g (resolve_object ((minor_read_field (minor_reset m) obj j) <: obj_addr) g) /\
+                       infix_addr_wf g (objects zero_addr g) ((minor_read_field (minor_reset m) obj j) <: obj_addr))
       = minor_reset_objects_not_mem m obj
     in
     GenInv.minor_major_fields_not_free_intro free (minor_reset m) g f

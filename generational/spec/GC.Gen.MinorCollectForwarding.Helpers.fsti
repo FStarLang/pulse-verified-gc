@@ -356,6 +356,24 @@ val update_preserves_major_target_field
       read_word (update_walk major upd fwd)
         (U64.uint_to_t (U64.v src + j * 8)) == dst)
 
+/// ... and so is a field that *names* a major object through an interior
+/// pointer: it lies above the object it resolves to, so above the nursery.
+val update_preserves_major_named_field
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (src dst: obj_addr) (j: nat)
+  : Lemma
+    (requires
+      blocks_fit major /\
+      Seq.mem src (objects zero_addr major) /\
+      Seq.mem (resolve_object dst major) (objects zero_addr major) /\
+      j < U64.v (wosize_of_object src major) /\
+      U64.v src + j * 8 + 8 <= heap_size /\
+      (U64.v src + j * 8) % 8 == 0 /\
+      is_no_scan src major = false /\
+      read_word major (U64.uint_to_t (U64.v src + j * 8)) == dst)
+    (ensures
+      read_word (update_walk major upd fwd)
+        (U64.uint_to_t (U64.v src + j * 8)) == dst)
+
 /// Turn a concrete field value in a non-free heap block into a graph edge in
 /// `HeapModel.create_graph_with`.
 val heap_field_points_to_graph_edge

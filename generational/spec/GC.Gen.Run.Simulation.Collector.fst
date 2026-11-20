@@ -827,6 +827,24 @@ let wf_parts_of (free: free_def) (g: heap)
   : Lemma (requires well_formed_heap_with free g) (ensures blocks_fit g /\ no_infix_block g)
   = wf_with_parts ()
 
+/// A well-formed interior pointer into the block `y` names `y`.
+#push-options "--z3rlimit 20"
+let interior_names_block (g: heap) (y: obj_addr) (k: nat) (fv: obj_addr)
+  : Lemma (requires blocks_fit g /\ no_infix_block g /\ Seq.mem y (objects zero_addr g) /\
+                    2 <= k /\ k < U64.v (wosize_of_object y g) /\
+                    (fv <: U64.t) == ptr_value (Major y) k /\
+                    is_infix fv g /\ infix_addr_wf g (objects zero_addr g) fv)
+          (ensures resolve_object fv g == y)
+  = ptr_in_block g y k;
+    infix_addr_wf_elim g (objects zero_addr g) fv;
+    resolve_infix_spec fv g;
+    parent_closure_addr_nat_spec fv g;
+    let p : obj_addr = resolve_object fv g in
+    hd_address_spec p;
+    assert (LL.in_extent g p (U64.v fv));
+    assert (p == y)
+#pop-options
+
 /// The scan window of a nursery block holding a scannable object covers its
 /// fields.
 #push-options "--ifuel 1"
@@ -875,11 +893,19 @@ let kept_nursery_target (m: real_memory) (h: cycle_history) (im: I.ideal_memory)
     assert (minor_read_field ms o i == fv);
     if k = 0 then begin
       ptr_value_zero y;
+      assert (is_pointer_field fv);
       GenInv.minor_major_fields_not_free_elim (MPC.outside_snapshot (kept h)) ms g o i;
+      resolve_non_infix y g;
       in_use_kept h g y
     end else begin
+      // an interior pointer into `y`: it names `y`
       ptr_in_block g y k;
-      GenInv.minor_major_fields_not_free_elim (MPC.outside_snapshot (kept h)) ms g o i
+      GenInv.minor_major_fields_not_free_elim (MPC.outside_snapshot (kept h)) ms g o i;
+      if is_infix (fv <: obj_addr) g then begin
+        interior_names_block g y k (fv <: obj_addr);
+        in_use_kept h g y
+      end else
+        resolve_non_infix (fv <: obj_addr) g
     end
 #pop-options
 

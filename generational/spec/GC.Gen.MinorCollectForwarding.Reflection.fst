@@ -137,6 +137,33 @@ private let resolve_field_resolve (g: heap) (v: obj_addr)
   = ()
 #pop-options
 
+/// A nursery field that is a major pointer is not rewritten by the collection
+/// and names, before and after it, the same old non-free object (it may be an
+/// interior pointer into that object).
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+private let unforwarded_major_field_names (ph: gc_phase)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
+  (src: U64.t) (j: nat)
+  : Lemma
+    (requires GenInv.collection_shape_with ph free minor major fp /\
+              Seq.mem src (minor_objects minor) /\ j < minor_scan_wosize minor src /\
+              HeapGraph.is_pointer_field (minor_read_field minor src j))
+    (ensures (let ov : obj_addr = minor_read_field minor src j in
+              let t = resolve_object ov major in
+              let res = cheney_collect_spec_with ph free minor major fp roots in
+              Seq.mem t (objects zero_addr major) /\ ~(is_blue t major) /\
+              HeapGraph.resolve_field res.mc_major ov == t))
+  = let ov : obj_addr = minor_read_field minor src j in
+    let res = cheney_collect_spec_with ph free minor major fp roots in
+    GenInv.collection_shape_with_elim ph free minor major fp;
+    GenInv.major_shape_with_elim ph free major fp;
+    GenInv.minor_heap_shape_elim minor;
+    GenInv.minor_major_fields_not_free_elim free minor major src j;
+    in_use_not_blue free major (resolve_object ov major);
+    MCFE.cheney_collect_frame_target_header ph minor major fp free roots ov;
+    resolve_field_resolve res.mc_major ov
+#pop-options
+
 private let normal_src_image_is_val_addr (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
   (roots: seq U64.t) (u: CG.combined_vertex)
@@ -338,23 +365,11 @@ let post_edge_from_minor_image_reflects_mem_ce (ph: gc_phase)
         end else begin
           assert (old_raw == minor_read_field minor src j);
           assert (HeapGraph.is_pointer_field old_raw);
-          GenInv.minor_major_fields_not_free_elim free minor major src j;
-          assert (Seq.mem (old_raw <: obj_addr) (objects zero_addr major));
-          assert (~(is_blue (old_raw <: obj_addr) major));
-          assert (is_val_addr old_raw);
-          // an unforwarded major target is an object start, hence non-infix,
-          // and its header survives both collection passes
-          MCFH.part4_non_infix major (old_raw <: obj_addr);
-          Frame.cheney_promote_frame_old_header ph minor major fp roots
-            (old_raw <: obj_addr);
-          header_eq_preserves_infix major prom.major_final (old_raw <: obj_addr);
-          CheneySteps.cheney_promote_preserves_objects ph minor major fp roots;
-          PromUpdate.update_walk_preserves_header
-            prom.major_final (in_use free prom.major_final) prom.fwd_map (old_raw <: obj_addr);
-          header_eq_preserves_infix prom.major_final updated (old_raw <: obj_addr);
-          resolve_field_id updated (old_raw <: obj_addr);
-          assert (target_img == old_raw);
-          assert (HeapGraph.is_pointer_field target_img);
+          // an unforwarded major field may be interior; it names the same
+          // old non-free object before and after the collection
+          unforwarded_major_field_names ph minor major fp free roots src j;
+          let t = resolve_object (old_raw <: obj_addr) major in
+          assert (target_img == t);
           if is_minor_addr old_val && Seq.mem old_val (minor_objects minor) then begin
             minor_objects_valid minor old_val;
             assert (is_minor_pointer old_val);
@@ -365,21 +380,21 @@ let post_edge_from_minor_image_reflects_mem_ce (ph: gc_phase)
           resolve_minor_non_infix minor old_val;
           CG.classify_minor_field_major minor major (minor_read_field minor src j);
           assert (CG.classify_minor_field minor major (minor_read_field minor src j) ==
-            Some (CG.MajorV old_raw));
-          CG.minor_field_edge_intro minor major free src j (CG.MajorV old_raw);
+            Some (CG.MajorV t));
+          CG.minor_field_edge_intro minor major free src j (CG.MajorV t);
           match w with
           | CG.MajorV dst ->
-            assert (old_raw == dst)
+            assert (t == dst)
           | CG.MinorV dst ->
             assert (target_img == prom.fwd_map dst);
-            assert (old_raw == prom.fwd_map dst);
+            assert (t == prom.fwd_map dst);
             CheneyInj.cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue ph
               minor major fp roots;
             assert (CheneyInj.fwd_normal_targets_disjoint_from_old_nonblue
               prom.fwd_map prom.major_final major);
             assert (is_val_addr (prom.fwd_map dst));
             assert (is_infix (prom.fwd_map dst) prom.major_final = false);
-            assert (prom.fwd_map dst <> (old_raw <: obj_addr));
+            assert (prom.fwd_map dst <> t);
             assert False
         end
       end
@@ -504,23 +519,11 @@ let post_edge_from_minor_image_reflects_target (ph: gc_phase)
         end else begin
           assert (old_raw == minor_read_field minor src j);
           assert (HeapGraph.is_pointer_field old_raw);
-          GenInv.minor_major_fields_not_free_elim free minor major src j;
-          assert (Seq.mem (old_raw <: obj_addr) (objects zero_addr major));
-          assert (~(is_blue (old_raw <: obj_addr) major));
-          assert (is_val_addr old_raw);
-          // an unforwarded major target is an object start, hence non-infix,
-          // and its header survives both collection passes
-          MCFH.part4_non_infix major (old_raw <: obj_addr);
-          Frame.cheney_promote_frame_old_header ph minor major fp roots
-            (old_raw <: obj_addr);
-          header_eq_preserves_infix major prom.major_final (old_raw <: obj_addr);
-          CheneySteps.cheney_promote_preserves_objects ph minor major fp roots;
-          PromUpdate.update_walk_preserves_header
-            prom.major_final (in_use free prom.major_final) prom.fwd_map (old_raw <: obj_addr);
-          header_eq_preserves_infix prom.major_final updated (old_raw <: obj_addr);
-          resolve_field_id updated (old_raw <: obj_addr);
-          assert (y == old_raw);
-          assert (HeapGraph.is_pointer_field y);
+          // an unforwarded major field may be interior; it names the same
+          // old non-free object before and after the collection
+          unforwarded_major_field_names ph minor major fp free roots src j;
+          let t = resolve_object (old_raw <: obj_addr) major in
+          assert (y == t);
           if is_minor_addr old_val && Seq.mem old_val (minor_objects minor) then begin
             minor_objects_valid minor old_val;
             assert (is_minor_pointer old_val);
@@ -531,15 +534,15 @@ let post_edge_from_minor_image_reflects_target (ph: gc_phase)
           resolve_minor_non_infix minor old_val;
           CG.classify_minor_field_major minor major (minor_read_field minor src j);
           assert (CG.classify_minor_field minor major (minor_read_field minor src j) ==
-            Some (CG.MajorV old_raw));
-          CG.minor_field_edge_intro minor major free src j (CG.MajorV old_raw);
-          CG.combined_reachable_step cg combined_roots (CG.MinorV src) (CG.MajorV old_raw);
-          assert (MCFH.normal_src_reachable ph minor major fp free roots (CG.MajorV old_raw));
+            Some (CG.MajorV t));
+          CG.minor_field_edge_intro minor major free src j (CG.MajorV t);
+          CG.combined_reachable_step cg combined_roots (CG.MinorV src) (CG.MajorV t);
+          assert (MCFH.normal_src_reachable ph minor major fp free roots (CG.MajorV t));
           FStar.Classical.exists_intro
             (fun (u: CG.combined_vertex) ->
               MCFH.normal_src_reachable ph minor major fp free roots u /\
               CG.fwd_morphism prom.fwd_map u == y)
-            (CG.MajorV old_raw)
+            (CG.MajorV t)
         end
       end
     end

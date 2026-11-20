@@ -74,7 +74,7 @@ let phase_shape (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.gc_phase) (sp
   | Ph.Idle -> GenInv.collection_heap_shape minor g fp
   | Ph.Marking ->
       GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\
-      MP.marking_inv g (GMM.nursery_refs minor) sp
+      MP.marking_inv g (GMM.nursery_refs minor g) sp
   | Ph.Sweeping c ->
       sweep_inv_incremental g fp c /\ GenInv.minor_heap_shape minor /\
       GenInv.minor_major_fields_not_free (free_incremental c) minor g
@@ -85,7 +85,7 @@ val phase_shape_idle (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos
 val phase_shape_marking (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
   : Lemma (phase_shape minor g fp Ph.Marking sp <==>
            (GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\
-            MP.marking_inv g (GMM.nursery_refs minor) sp))
+            MP.marking_inv g (GMM.nursery_refs minor g) sp))
 
 val phase_shape_sweeping (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t) (sp: MP.scan_pos)
   : Lemma (phase_shape minor g fp (Ph.Sweeping c) sp <==>

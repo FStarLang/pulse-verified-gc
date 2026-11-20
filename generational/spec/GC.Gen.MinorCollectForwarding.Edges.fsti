@@ -226,8 +226,11 @@ val combined_major_minor_edge_forwarded (ph: gc_phase)
       mem_graph_edge (HeapModel.create_graph_with free res.mc_major) src (prom.fwd_map dst)))
 
 /// Field-level MinorV -> MajorV edge-forwarding slice: for a promoted normal
-/// minor source, a field that points to an old major object remains that major
-/// object in the post-minor heap.
+/// minor source, a field that names an old major object is left as it is by
+/// the collection, and still names that object in the post-minor heap.  The
+/// stored word may be an interior pointer into the major closure `dst`, so the
+/// statement is about the raw word `minor_read_field minor src j` and its
+/// resolution.
 val promoted_minor_major_field_preserved (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
@@ -253,7 +256,10 @@ val promoted_minor_major_field_preserved (ph: gc_phase)
     (ensures (
       let prom = cheney_promote ph minor major fp roots in
       let res = cheney_collect_spec_with ph free minor major fp roots in
-      read_word res.mc_major (U64.uint_to_t (U64.v (prom.fwd_map src) + j * 8)) == dst))
+      let ov = minor_read_field minor src j in
+      is_val_addr ov /\ HeapGraph.is_pointer_field ov /\
+      read_word res.mc_major (U64.uint_to_t (U64.v (prom.fwd_map src) + j * 8)) == ov /\
+      resolve_object (ov <: obj_addr) res.mc_major == dst))
 
 val promoted_minor_major_edge_forwarded (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)

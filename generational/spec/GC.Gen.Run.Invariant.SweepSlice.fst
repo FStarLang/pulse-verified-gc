@@ -254,13 +254,8 @@ let b1_after (r: real_state) (h: cycle_history) (r': real_state) (c c': U64.t)
     no_infix_after r';
     MPC.outside_snapshot_ok k;
     SPI.wf_transport g g' (MPC.outside_snapshot k) (MPC.outside_snapshot k);
-    let nf (obj: U64.t) (j: nat)
-      : Lemma (requires Seq.mem obj (minor_objects m) /\ j < minor_scan_wosize m obj /\
-                        is_pointer_field (minor_read_field m obj j))
-              (ensures in_use (MPC.outside_snapshot k) g' ((minor_read_field m obj j) <: obj_addr))
-      = GenInv.minor_major_fields_not_free_elim (MPC.outside_snapshot k) m g obj j
-    in
-    GenInv.minor_major_fields_not_free_intro (MPC.outside_snapshot k) m g' nf;
+    wf_with_parts ();
+    GenInv.minor_major_fields_not_free_transfer_blocks (MPC.outside_snapshot k) (MPC.outside_snapshot k) m g g';
     FStar.Classical.forall_intro (FStar.Classical.move_requires (kept_in_use r h r' c c'))
 #pop-options
 

@@ -29,19 +29,10 @@ module W = GC.Spec.Walk
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 
-/// The cross-generation condition depends only on the non-free blocks: it
-/// survives a change that keeps every one non-free.
-let mmf_keep (minor: minor_state) (g g': heap)
-  : Lemma (requires GenInv.minor_major_fields_not_free free_stw minor g /\
-                    (forall (y: obj_addr). in_use free_stw g y ==> in_use free_stw g' y))
-          (ensures GenInv.minor_major_fields_not_free free_stw minor g')
-  = GenInv.minor_major_fields_not_free_intro free_stw minor g'
-      (fun obj j -> GenInv.minor_major_fields_not_free_elim free_stw minor g obj j)
-
 /// The collector's state at `Marking`, taken apart.
 let marking_parts (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
   : Lemma (requires GI.phase_shape minor g fp Ph.Marking sp)
-          (ensures MP.marking_inv g (GMM.nursery_refs minor) sp /\
+          (ensures MP.marking_inv g (GMM.nursery_refs minor g) sp /\
                    GenInv.minor_heap_shape minor /\
                    GenInv.minor_major_fields_not_free free_stw minor g /\
                    AP.alloc_ok g fp /\ no_infix_block g /\
@@ -57,7 +48,7 @@ let marking_parts (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
 
 let marking_alloc_shape minor g fp sp wz tag =
   let ph = Ph.Marking in
-  let outside_refs = GMM.nursery_refs minor in
+  let outside_refs = GMM.nursery_refs minor g in
   marking_parts minor g fp sp;
   MPA.marking_alloc g outside_refs sp fp wz tag;
   let r = AC.alloc_phase g fp ph wz tag in
@@ -69,14 +60,17 @@ let marking_alloc_shape minor g fp sp wz tag =
     AP.recoloured_facts (SA.alloc_spec g fp wz tag).SA.heap_out g';
     FStar.Seq.Properties.mem_index (r.SA.obj_out <: obj_addr) (objects zero_addr g');
     assert (heap_objects_dense g' /\ Seq.length (objects zero_addr g') > 0);
-    // what the nursery points at stays non-free
+    // what the nursery names stays non-free (and is not the new block), with
+    // the same resolution: every non-free block is kept
+    let obj : obj_addr = r.SA.obj_out in
     free_stw_ok ();
     free_def_ok_elim free_stw;
-    let keep (y: obj_addr) : Lemma (requires in_use free_stw g y) (ensures in_use free_stw g' y)
-      = MM.header_kept_facts g g' y
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires keep);
-    mmf_keep minor g g';
+    MPA.free_or_new_ok obj;
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (MPA.alloc_in_use g fp wz tag obj));
+    wf_with_parts ();
+    assert (no_infix_block g');
+    GenInv.minor_major_fields_not_free_transfer_blocks free_stw (MPA.free_or_new obj) minor g g';
+    GMM.nursery_refs_transfer_blocks free_stw (MPA.free_or_new obj) minor g g';
     assert (fresh_shape minor g' r.SA.fp_out sp r.SA.obj_out)
   end
 
@@ -94,24 +88,55 @@ let dense_transport (g g': heap)
     W.reaches_refl g zero_addr;
     W.dense_of_reaches_end g' (W.walk_end g zero_addr)
 
+/// A write into the body of `obj` keeps every other block, with its header.
+let write_keeps_others (g: heap) (obj: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires SPM.in_body g obj a /\ Seq.mem obj (objects zero_addr g) /\
+                    SPI.same_heads g (write_word g a v))
+          (ensures SPI.heads_kept (MPA.free_or_new obj) g (write_word g a v))
+  = let g' = write_word g a v in
+    SPI.same_heads_facts g g';
+    let kept (y: obj_addr)
+      : Lemma (requires in_use (MPA.free_or_new obj) g y)
+              (ensures read_word g' (hd_address y) == read_word g (hd_address y) /\
+                       (is_closure y g ==> SPI.same_block g g' (hd_address y)))
+      = SPM.other_body g obj y a;
+        SPI.obj_pos g y;
+        SPI.colour_of g y; SPI.colour_of g' y;
+        let body (b: hp_addr)
+          : Lemma (requires U64.v (hd_address y) < U64.v b /\ U64.v b < W.bnext g (hd_address y))
+                  (ensures read_word g' b == read_word g b)
+          = read_write_different g a b v
+        in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires body)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires kept)
+
+#push-options "--z3rlimit 20"
 let fresh_shape_write minor g fp sp obj a v =
   let g' = write_word g a v in
-  MPA.marking_fresh_write g (GMM.nursery_refs minor) sp obj a v;
+  MPA.marking_fresh_write g (GMM.nursery_refs minor g) sp obj a v;
   SPI.same_heads_facts g g';
   Mark.colors_exclusive obj g;
   SPM.in_body_block g obj a;
   SPI.colour_of g obj;
   SPI.body_write g fp (hd_address obj) a v;
   dense_transport g g';
-  mmf_keep minor g g'
+  // what the nursery names keeps its block and its resolution
+  MPA.free_or_new_ok obj;
+  wf_with_parts ();
+  write_keeps_others g obj a v;
+  GenInv.minor_major_fields_not_free_transfer (MPA.free_or_new obj) (MPA.free_or_new obj) minor g g';
+  GMM.nursery_refs_transfer_storable (MPA.free_or_new obj) (MPA.free_or_new obj) minor g g'
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// Closing
 /// ---------------------------------------------------------------------------
 
 let fresh_shape_close minor g fp sp obj =
-  MPA.marking_fresh_close g (GMM.nursery_refs minor) sp obj;
+  MPA.marking_fresh_close g (GMM.nursery_refs minor g) sp obj;
   free_stw_ok ();
+  GenInv.minor_major_fields_not_free_weaken (MPA.free_or_new obj) free_stw minor g;
   Promote.free_stw_allocations_not_free Ph.Marking;
   PCS.free_list_shape_of_ascending g fp;
   GenInv.major_shape_with_intro Ph.Marking free_stw g fp;
@@ -139,7 +164,7 @@ let alloc_grey (g: heap) (fp: U64.t) (wz: nat) (tag: SPM.tag_t) (obj y: obj_addr
     MM.header_kept_facts g g' y
 
 let alloc_mark_cache minor g fp sp wz tag st ov p =
-  let outside_refs = GMM.nursery_refs minor in
+  let outside_refs = GMM.nursery_refs minor g in
   marking_parts minor g fp sp;
   MPA.marking_alloc g outside_refs sp fp wz tag;
   let r = AC.alloc_phase g fp Ph.Marking wz tag in

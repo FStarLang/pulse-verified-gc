@@ -188,7 +188,7 @@ let start_satb (minor: minor_state) (g0: heap) (fp0: U64.t) (rs: seq U64.t)
 /// The collector's state while marking, taken apart.
 let marking_parts (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
   : Lemma (requires GI.phase_shape minor g fp Ph.Marking sp)
-          (ensures MP.marking_inv g (GMM.nursery_refs minor) sp /\ FLA.fl_ascending g fp /\
+          (ensures MP.marking_inv g (GMM.nursery_refs minor g) sp /\ FLA.fl_ascending g fp /\
                    AP.alloc_ok g fp /\ heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0)
   = GI.phase_shape_marking minor g fp sp;
     GenInv.collection_shape_with_elim Ph.Marking free_stw minor g fp;

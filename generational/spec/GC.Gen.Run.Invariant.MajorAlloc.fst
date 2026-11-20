@@ -436,24 +436,26 @@ let base_after (h h': cycle_history) (m m': real_memory) (a: obj_addr)
   : Lemma (requires WR.base_ok h m /\ hist_ok h h' a /\ AL.frame m.major m'.major a /\
                     m'.nursery == m.nursery /\ was_free m.major m'.major a /\
                     W.walk_end m'.major zero_addr == W.walk_end m.major zero_addr /\
-                    W.walk_end m.major zero_addr + 8 >= heap_size)
+                    W.walk_end m.major zero_addr + 8 >= heap_size /\
+                    no_infix_block m.major /\ no_infix_block m'.major)
           (ensures WR.base_ok h' m')
   = let g = m.major in
     let g' = m'.major in
     hist_facts h h' a;
-    // the nursery points at kept blocks
-    let mmf (obj: U64.t) (j: nat)
-      : Lemma (requires Seq.mem obj (minor_objects m'.nursery) /\
-                        j < minor_scan_wosize m'.nursery obj /\
-                        is_pointer_field (minor_read_field m'.nursery obj j))
-              (ensures in_use (MPC.outside_snapshot (kept h')) g' ((minor_read_field m'.nursery obj j) <: obj_addr))
-      = GenInv.minor_major_fields_not_free_elim (MPC.outside_snapshot (kept h)) m.nursery g obj j;
-        let y : obj_addr = minor_read_field m'.nursery obj j in
-        MPC.in_use_outside_snapshot (kept h) g y;
+    // the nursery points at kept blocks, through the same resolutions
+    let free = MPC.outside_snapshot (kept h) in
+    let free' = MPC.outside_snapshot (kept h') in
+    MPC.outside_snapshot_ok (kept h);
+    MPC.outside_snapshot_ok (kept h');
+    AL.frame_keeps free g g' a;
+    let iu (y: obj_addr)
+      : Lemma (requires in_use free g y) (ensures in_use free' g' y)
+      = MPC.in_use_outside_snapshot (kept h) g y;
         MPC.in_use_outside_snapshot (kept h') g' y;
         same_header_facts g g' y
     in
-    GenInv.minor_major_fields_not_free_intro (MPC.outside_snapshot (kept h')) m'.nursery g' mmf;
+    FStar.Classical.forall_intro (FStar.Classical.move_requires iu);
+    GenInv.minor_major_fields_not_free_transfer free free' m.nursery g g';
     // B2
     let b2 (x: obj_addr)
       : Lemma (requires snapshot h x)

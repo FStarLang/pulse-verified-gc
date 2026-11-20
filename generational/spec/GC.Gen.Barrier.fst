@@ -101,13 +101,23 @@ let body_write_facts (g: heap) (fp: U64.t) (x: obj_addr) (a: hp_addr) (v: U64.t)
     dense_transport g g'
 #pop-options
 
-/// The cross-generation condition depends only on the non-free blocks.
-let mmf_transport (free: free_def) (minor: minor_state) (g g': heap)
-  : Lemma (requires GenInv.minor_major_fields_not_free free minor g /\
-                    (forall (y: obj_addr). in_use free g' y == in_use free g y))
-          (ensures GenInv.minor_major_fields_not_free free minor g')
-  = GenInv.minor_major_fields_not_free_intro free minor g'
-      (fun obj j -> GenInv.minor_major_fields_not_free_elim free minor g obj j)
+/// Darkening recolours at most one block, and keeps the non-free ones.
+let darken_keeps_minor (minor: minor_state) (g: heap) (fp: U64.t) (w: U64.t)
+  : Lemma (requires walk_ok g fp /\ GenInv.minor_major_fields_not_free free_stw minor g /\
+                    objects zero_addr (MM.darken g w) == objects zero_addr g /\
+                    (forall (y: obj_addr). in_use free_stw (MM.darken g w) y == in_use free_stw g y))
+          (ensures GenInv.minor_major_fields_not_free free_stw minor (MM.darken g w) /\
+                   (forall (u: obj_addr).
+                      GMM.nursery_refs minor (MM.darken g w) u <==> GMM.nursery_refs minor g u))
+  = if is_pointer w &&
+       Seq.mem (resolve_object (w <: obj_addr) g) (objects zero_addr g) &&
+       is_white (resolve_object (w <: obj_addr) g) g
+    then begin
+      let t = resolve_object (w <: obj_addr) g in
+      makeGray_eq t g;
+      GenInv.minor_major_fields_not_free_recolour free_stw minor t g Header.Gray;
+      GMM.nursery_refs_colour minor t g Header.Gray
+    end
 
 /// ---------------------------------------------------------------------------
 /// Darkening
@@ -223,7 +233,8 @@ let modify_idle (minor: minor_state) (g: heap) (fp: U64.t) (x: obj_addr) (a: hp_
     GenInv.major_heap_shape_intro g' fp;
     GenInv.minor_major_fields_not_free_stw minor g;
     GenInv.minor_major_fields_not_free_stw minor g';
-    mmf_transport free_stw minor g g';
+    wf_parts ();
+    GMM.write_keeps_nursery free_stw minor g x a v;
     GenInv.collection_heap_shape_intro minor g' fp
 #pop-options
 
@@ -243,7 +254,8 @@ let modify_sweeping (minor: minor_state) (g: heap) (fp: U64.t) (c: U64.t) (sp: M
     SPI.sweep_inv_incremental_iff g fp c;
     SPI.sweep_shape_elim g fp c;
     body_write_facts g fp x a v;
-    mmf_transport (SPI.free_incremental c) minor g g'
+    wf_with_parts ();
+    GMM.write_keeps_nursery (SPI.free_incremental c) minor g x a v
 #pop-options
 
 /// While marking: the deletion barrier (`MM.marking_write_barrier`) and the
@@ -253,9 +265,9 @@ let modify_marking (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
   (x: obj_addr) (a: hp_addr) (v: U64.t)
   : Lemma (requires GI.phase_shape minor g fp Ph.Marking sp /\
                     SPM.program_write free_stw g x a v /\
-                    (~(is_no_scan x g) ==> MM.target_ok g (GMM.nursery_refs minor) sp v))
+                    (~(is_no_scan x g) ==> MM.target_ok g (GMM.nursery_refs minor g) sp v))
           (ensures GI.phase_shape minor (write_word (MM.darken g (read_word g a)) a v) fp Ph.Marking sp)
-  = let outside_refs = GMM.nursery_refs minor in
+  = let outside_refs = GMM.nursery_refs minor g in
     let g1 = MM.darken g (read_word g a) in
     let g' = write_word g1 a v in
     GI.phase_shape_marking minor g fp sp;
@@ -269,8 +281,11 @@ let modify_marking (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
     body_write_facts g1 fp x a v;
     PCS.free_list_shape_of_ascending g' fp;
     GenInv.major_shape_with_intro Ph.Marking free_stw g' fp;
-    mmf_transport free_stw minor g g1;
-    mmf_transport free_stw minor g1 g';
+    darken_keeps_minor minor g fp (read_word g a);
+    // the write is into the same block of `g1`, which is still not a closure
+    MM.darken_inv g outside_refs sp (read_word g a);
+    wf_parts ();
+    GMM.write_keeps_nursery free_stw minor g1 x a v;
     GenInv.collection_shape_with_intro Ph.Marking free_stw minor g' fp
 #pop-options
 
@@ -331,7 +346,7 @@ let modify_mark_cache ph minor g fp sp x a v st ov p cap =
     shape_facts ph minor g fp sp;
     GI.phase_shape_marking minor g fp sp;
     let g1 = MM.darken g old in
-    MM.darken_inv g (GMM.nursery_refs minor) sp old;
+    MM.darken_inv g (GMM.nursery_refs minor g) sp old;
     MS.mark_cache_darken g st ov p old cap;
     darken_facts g fp old;
     let st' = if MS.darken_target g old && Seq.length st < cap

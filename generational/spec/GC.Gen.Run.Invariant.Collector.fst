@@ -120,7 +120,8 @@ let reset_points_nowhere (free: free_def) (m: minor_state) (g: heap)
   = let h (obj: U64.t) (j: nat)
       : Lemma (requires Seq.mem obj (minor_objects m) /\ j < minor_scan_wosize m obj /\
                         is_pointer_field (minor_read_field m obj j))
-              (ensures in_use free g ((minor_read_field m obj j) <: obj_addr))
+              (ensures in_use free g (resolve_object ((minor_read_field m obj j) <: obj_addr) g) /\
+                       infix_addr_wf g (objects zero_addr g) ((minor_read_field m obj j) <: obj_addr))
       = minor_reset_objects_not_mem m obj
     in
     GenInv.minor_major_fields_not_free_intro free m g h
@@ -195,9 +196,12 @@ let darker_nursery (k: obj_addr -> prop) (m: minor_state) (g g': heap)
   = let f (obj: U64.t) (j: nat)
       : Lemma (requires Seq.mem obj (minor_objects m) /\ j < minor_scan_wosize m obj /\
                         is_pointer_field (minor_read_field m obj j))
-              (ensures in_use (MPC.outside_snapshot k) g' ((minor_read_field m obj j) <: obj_addr))
-      = let y : obj_addr = minor_read_field m obj j in
+              (ensures in_use (MPC.outside_snapshot k) g' (resolve_object ((minor_read_field m obj j) <: obj_addr) g') /\
+                       infix_addr_wf g' (objects zero_addr g') ((minor_read_field m obj j) <: obj_addr))
+      = let v : obj_addr = minor_read_field m obj j in
         GenInv.minor_major_fields_not_free_elim (MPC.outside_snapshot k) m g obj j;
+        let y = resolve_object v g in
+        assert (resolve_object v g' == y);
         MPC.in_use_outside_snapshot k g y;
         MPC.in_use_outside_snapshot k g' y
     in

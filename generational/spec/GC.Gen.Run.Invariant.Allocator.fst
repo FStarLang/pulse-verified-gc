@@ -623,11 +623,11 @@ let fields_storable_after (free: free_def) (g gx: heap) (a: obj_addr) (tag: I.ta
 
 /// What the nursery points at stays not free.
 let mmf_after (free: free_def) (minor: minor_state) (g g': heap) (a: obj_addr)
-  : Lemma (requires GenInv.minor_major_fields_not_free free minor g /\ frame g g' a /\ free_def_ok free)
+  : Lemma (requires GenInv.minor_major_fields_not_free free minor g /\ frame g g' a /\ free_def_ok free /\
+                    no_infix_block g /\ no_infix_block g')
           (ensures GenInv.minor_major_fields_not_free free minor g')
   = frame_keeps free g g' a;
-    GenInv.minor_major_fields_not_free_intro free minor g'
-      (fun obj j -> GenInv.minor_major_fields_not_free_elim free minor g obj j)
+    GenInv.minor_major_fields_not_free_transfer free free minor g g'
 
 /// The new block in the allocation's heap, by its address alone.
 #push-options "--z3rlimit 30"
@@ -783,8 +783,8 @@ let marking_shape (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t)
     MPA.free_or_new_ok a;
     fields_storable_after free_stw g gx a tag init;
     frame_keeps free_stw g g' a;
-    fields_ok_after g gx a tag init sp (GMM.nursery_refs minor);
-    assert (MPA.fields_ok g' (GMM.nursery_refs minor) sp a);
+    fields_ok_after g gx a tag init sp (GMM.nursery_refs minor g');
+    assert (MPA.fields_ok g' (GMM.nursery_refs minor g') sp a);
     GMA.fresh_shape_close minor g' fp1 sp a
 #pop-options
 

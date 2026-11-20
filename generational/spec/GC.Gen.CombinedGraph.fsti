@@ -70,7 +70,10 @@ let combined_graph_wf (g: combined_graph) : prop =
 
 /// Classify a field value read from a minor-heap object.
 /// Minor targets are normalized with `to_minor_offset` and then resolved;
-/// major targets use the raw value.
+/// major targets are resolved with `resolve_object`, as in
+/// `classify_major_field`: a nursery field may hold an interior pointer into a
+/// major closure (`GC.Gen.HeapInvariant.minor_major_fields_not_free` is stated
+/// on the resolved target), and the edge is to the closure.
 val classify_minor_field (ms: minor_state) (major: heap) (v: U64.t)
   : GTot (option combined_vertex)
 
@@ -93,16 +96,20 @@ val classify_minor_field_minor_raw (ms: minor_state) (major: heap) (v: U64.t)
              is_minor_addr vo /\ Seq.mem vo (minor_objects ms)))
           (ensures classify_minor_field ms major v == Some (MinorV (to_minor_offset v)))
 
-/// Characterization: classify_minor_field returns MajorV v when v is a major object
-/// and not a minor object (used by edge backward proofs).
-///
-/// Unlike `classify_major_field`, the *major* branch of this classifier is still
-/// raw: a minor object's field holding an interior pointer into a major closure
-/// is ruled out by `GC.Gen.HeapInvariant.minor_major_fields_not_free`, which
-/// requires every pointer-valued minor field to name an enumerated major object
-/// outright.
+/// Characterization: classify_minor_field returns `MajorV (resolve_object v major)`
+/// when the *resolved* value is a major object and the value is not a minor
+/// object (used by edge backward proofs).
 val classify_minor_field_major (ms: minor_state) (major: heap) (v: U64.t)
+  : Lemma (requires is_val_addr v /\ Seq.mem (resolve_object v major) (objects zero_addr major) /\
+                    (let vr = resolve_minor ms (to_minor_offset v) in
+                     ~(is_minor_addr vr /\ Seq.mem vr (minor_objects ms))))
+          (ensures classify_minor_field ms major v == Some (MajorV (resolve_object v major)))
+
+/// Specialization to a non-interior major target, where resolution is the
+/// identity.
+val classify_minor_field_major_raw (ms: minor_state) (major: heap) (v: U64.t)
   : Lemma (requires is_val_addr v /\ Seq.mem v (objects zero_addr major) /\
+                    ~(is_infix (v <: obj_addr) major) /\
                     (let vr = resolve_minor ms (to_minor_offset v) in
                      ~(is_minor_addr vr /\ Seq.mem vr (minor_objects ms))))
           (ensures classify_minor_field ms major v == Some (MajorV v))
@@ -164,9 +171,20 @@ val classify_minor_field_inv_minor_raw (ms: minor_state) (major: heap) (v: U64.t
                     ~(is_infix_in_minor ms (to_minor_offset v)))
           (ensures to_minor_offset v == x /\ is_minor_addr x /\ Seq.mem x (minor_objects ms))
 
-/// Inversion: classify_minor_field == Some (MajorV x) implies v == x and v is major
+/// Inversion: classify_minor_field == Some (MajorV x) implies x is the resolved
+/// form of v, and x is a major object.  Note x == v only when v is not
+/// interior; use `classify_minor_field_inv_major_raw` when that is known.
 val classify_minor_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
   : Lemma (requires classify_minor_field ms major v == Some (MajorV x))
+          (ensures is_val_addr v /\ x == resolve_object v major /\
+                   Seq.mem (x <: obj_addr) (objects zero_addr major) /\
+                   (let vr = resolve_minor ms (to_minor_offset v) in
+                    ~(is_minor_addr vr /\ Seq.mem vr (minor_objects ms))))
+
+/// Inversion specialized to a non-interior target.
+val classify_minor_field_inv_major_raw (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
+  : Lemma (requires classify_minor_field ms major v == Some (MajorV x) /\
+                    (is_val_addr v ==> ~(is_infix (v <: obj_addr) major)))
           (ensures v == x /\ is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) /\
                    (let vr = resolve_minor ms (to_minor_offset v) in
                     ~(is_minor_addr vr /\ Seq.mem vr (minor_objects ms))))

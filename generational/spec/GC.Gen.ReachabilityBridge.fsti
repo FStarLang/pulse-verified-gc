@@ -86,7 +86,7 @@ val major_object_not_minor_pointer
           (ensures ~(is_minor_pointer obj) /\ to_minor_offset obj == obj)
 
 /// Every reachable major vertex is a non-free block: the roots are, a
-/// nursery field into the major heap targets one
+/// nursery field into the major heap names one, possibly through an interior pointer
 /// (`minor_major_fields_not_free`), and so does a field of a non-free block
 /// (`well_formed_heap_with`).  So a block that is free is never reachable.
 /// (Its fields are never read either way: in the graph it has no edges.)
