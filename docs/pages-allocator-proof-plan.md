@@ -4562,84 +4562,12 @@ object with one root at it (`NurseryWitness`), the empty remembered set:
     copy;
   - mid-sweep: the copies in swept pages, white, kept by the rest of the
     sweep, which frees the unswept page's dead block.
+- `forward_if_minor` carries `[@@CPrologue "KRML_MUSTINLINE"]` (KaRaMeL's
+  `inline __attribute__((always_inline))`, as the sweep's `sweep_slots`
+  carries `KRML_NOINLINE`): the only difference it makes to the C is that
+  line before the function (§30.6).
 
-### 30.5 Benchmark: promotion against main's first-fit (`make bench-promo`)
-
-`bench/bench_promo.c`, built twice: ours (`minor_collect_idle`) and main's
-(`minor_collect` of `generational/snapshot`, which is `origin/main`'s C,
-first-fit, Idle), with an A/A copy of ours; both at `zero_addr = 2048`, the
-same 32 MB heap; only the collection is timed; ns per promoted object,
-medians.  Nursery shapes: `list` (127 one-field objects), `tree` (85
-two-field), `mixed` (1 to 6 fields), `half` (half the list reachable),
-`infix` (51 closures linked through infix pointers).
-
-**Fresh heap** (main: one free block; ours: free pages), 5 rounds of 5 reps:
-
-| workload | main | ours | diff | A/A | diff |
-|---|---|---|---|---|---|
-| list | 14.60 | 16.86 | +15.5% | 16.86 | +15.5% |
-| tree | 16.89 | 22.26 | +31.8% | 22.62 | +33.9% |
-| mixed | 21.80 | 30.77 | +41.1% | 31.38 | +43.9% |
-| half | 16.71 | 19.12 | +14.4% | 19.63 | +17.5% |
-| infix | 22.66 | 37.62 | +66.0% | 37.35 | +64.8% |
-
-**Steady heap** (filled with objects of 2 to 7 words, every other one
-live, swept; main's `collect`, ours `sweep_all`), 3 rounds of 3 reps:
-
-| workload | main | ours | diff | A/A | diff |
-|---|---|---|---|---|---|
-| list | 14.79 | 16.03 | +8.4% | 16.39 | +10.8% |
-| tree | 27978 | 21.25 | -99.9% | 22.26 | -99.9% |
-| mixed | 27.61 | 31.02 | +12.4% | 30.35 | +9.9% |
-| half | 16.56 | 18.09 | +9.2% | 17.62 | +6.4% |
-| infix | 73470 | 36.59 | -100% | 36.20 | -100% |
-
-**The rule (at most 5% slower) is not met**: on a fresh heap ours is 14%
-to 66% slower, on the steady heap 8% to 12% slower where main's first-fit
-finds a fit at once (one-word objects fit every hole).  Where it does not
-(3- and 5-word copies among holes of 2 to 7 words), main's first-fit scans
-the free list for every copy: 28 µs and 73 µs per object.
-
-**Where the time goes** (throwaway builds, not in the tree):
-- the copies placed by a bump pointer instead of the page allocator: ours
-  10.2–10.6 (list), 13.5–13.9 (tree), 19.3–21.7 (mixed), 11.1–12.6
-  (half), 20.7–25.0 (infix), against main's 13.5–14.8, 15.0–16.8,
-  20.2–22.8, 15.4–16.9, 22.4–25.6: **the Cheney loop and the two passes
-  are as fast as main's or faster**;
-- the copies placed by a bump pointer but `alloc_ph` called as well: the
-  same as ours.  So the whole gap is the page allocator's call;
-- of it, the fresh page's initialisation (`pool_init`: a blue header and a
-  link for every slot, 32 KB written per page, two thirds of this
-  machine's 48 KB L1) is 1.5–3.4 ns per promoted object;
-- allocation and copy alone, outside a collection: ours 7.9 against 7.7 ns
-  (one size), 8.6 against 6.2 ns (sizes 1 to 6).  Inside a collection the
-  page allocator costs about 7 ns (list) to 15 ns (infix) per copy.  The
-  rest of that was not pinned down without a profiler: prefetching the
-  next free slot, and moving the page records off static storage, changed
-  nothing.
-
-**Options** (a decision for the user):
-1. Fresh pool pages handed out by bumping through them, their slots linked
-   only when swept: no `pool_init`, no free-slot reads in a fresh page.
-   This changes the page allocator's representation, so the proofs of
-   §10–§29 (page map, `pages_ok`, the sweep).
-2. Keep the allocator and take the steady heap as the reference, where
-   first-fit's search dominates; on its fast cases ours is still 8–12%
-   slower.
-
-Machine: Intel Core i5-1038NG7 (48 KB L1D, 512 KB L2), `cc -O2 -flto`.
-
-**An observation on main's C** (akhil's code, untouched): `init_heap`
-(spec `GC.Spec.Allocator.init_heap_spec`) writes the free block's header
-at `zero_addr` but its list end and the free pointer at 8, with the block
-spanning the whole heap: consistent only when `zero_addr = 0`, whereas
-`GC.Spec.ZeroAddr` assumes `zero_addr >= 2048`.  main's own C test runs at
-`zero_addr = 0`; there, once a sweep has left holes low in the heap,
-first-fit hands out addresses below 2048, which the minor collection then
-takes for nursery pointers (seen in this benchmark before it laid out main's
-free block at `zero_addr` itself).
-
-### 30.6 Checked
+### 30.5 Checked
 
 - **Seeds:** every new module checked without `--retry` at `--z3seed 0`,
   `1` and `2` (`Promote.Sim` interface and implementation,
@@ -4650,3 +4578,96 @@ free block at `zero_addr` itself).
   which akhil's code uses too).
 - No theorem's statement changed; akhil's modules untouched.
 - `gmake verify`: `=== all modules verified ===`.
+- After `KRML_MUSTINLINE` on `forward_if_minor` (§30.6): `Forward` again at
+  seeds 0, 1 and 2, all pass, highest used rlimit unchanged (6.9 of 30);
+  `Cheney`, `Minor` and `Impl.Pages` re-checked; re-extracted, the C
+  differs only by that line; `pages_test` 947 checks pass.
+
+
+### 30.6 Benchmark: promotion (`make bench-promo`)
+
+`bench/bench_promo.c`, the same nursery shapes and heaps for every build,
+only the collection timed, at `zero_addr = 2048`, the same 32 MB heap, all
+Idle; ns per promoted object, medians of 9 rounds of 5 reps, the builds
+interleaved within each round (`bench_promo.sh`).  Shapes: `list` (127
+one-field objects), `tree` (85 two-field), `mixed` (1 to 6 fields), `half`
+(half the list reachable), `infix` (51 closures linked through infix
+pointers).  Heaps: **fresh** (free pages; main: one free block) and
+**steady** (`-s`: filled with objects of 2 to 7 words, every other one
+live, swept).
+
+**The 5% rule: the same algorithm on the same page allocator.**  The
+reference is the unverified promotion: akhil's extracted Cheney
+(`generational/snapshot`) with its `allocate` sent to our page allocator,
+as on `sheera/pages-runtime` (its `hook_allocate.py`, fetched by the
+Makefile; `bench/pages_redirect.c` links the extracted allocator beside
+it), calling `alloc_ph` as ours does.  On every shape and heap it leaves
+**byte-identical major heaps and roots** to ours (`PROMO_DIGEST=1`).  A/A:
+a second copy of the reference.  `white`: the reference with that
+branch's own glue (`alloc_white`, the tag ORed in).
+
+| workload | reference | verified | diff | A/A | diff | white | diff |
+|---|---|---|---|---|---|---|---|
+| list | 25.58 | 20.24 | **-20.9%** | 25.53 | -0.2% | 26.51 | +3.6% |
+| tree | 27.26 | 23.27 | **-14.6%** | 26.92 | -1.2% | 29.09 | +6.7% |
+| mixed | 36.78 | 32.96 | **-10.4%** | 36.09 | -1.9% | 38.14 | +3.7% |
+| half | 28.65 | 21.92 | **-23.5%** | 27.81 | -2.9% | 29.91 | +4.4% |
+| infix | 44.47 | 36.88 | **-17.1%** | 43.10 | -3.1% | 43.00 | -3.3% |
+| list-s | 23.43 | 18.47 | **-21.2%** | 23.29 | -0.6% | 24.72 | +5.5% |
+| tree-s | 25.01 | 21.91 | **-12.4%** | 24.94 | -0.3% | 27.15 | +8.6% |
+| mixed-s | 32.77 | 31.54 | **-3.8%** | 32.70 | -0.2% | 34.21 | +4.4% |
+| half-s | 27.00 | 20.34 | **-24.7%** | 26.12 | -3.3% | 26.66 | -1.3% |
+| infix-s | 38.20 | 36.08 | **-5.5%** | 38.51 | +0.8% | 37.41 | -2.1% |
+
+**The rule is met: the verified promotion is 4% to 25% faster than the
+unverified one**, beyond the A/A spread (at most 3.3%).
+
+Before `KRML_MUSTINLINE`, the verified promotion was 20–34% slower on
+`tree`, `mixed` and `infix` (and 4–8% faster on `list` and `half`): clang
+kept `forward_if_minor` out of line, so every field of a scanned object,
+its non-pointers too, paid a 9-argument call, where akhil's C has the same
+checks written inline in its scan loop.  Found on throwaway builds:
+`always_inline` on that one function, or `-mllvm -inline-threshold=400`
+on the unmodified C, made it 7–23% faster than the reference (the flag
+moved the reference itself by at most 1.4%); plain `static inline`, all
+that `CInline` emits, did not inline it.  The attribute is the targeted
+form of the first.
+
+**Design level: against main's first-fit** (main's `minor_collect`,
+`origin/main`'s C, first-fit; same run):
+
+| workload | main | verified | diff | reference | diff |
+|---|---|---|---|---|---|
+| list | 22.77 | 20.24 | -11.1% | 25.58 | +12.3% |
+| tree | 25.00 | 23.27 | -6.9% | 27.26 | +9.0% |
+| mixed | 34.25 | 32.96 | -3.8% | 36.78 | +7.4% |
+| half | 25.88 | 21.92 | -15.3% | 28.65 | +10.7% |
+| infix | 38.71 | 36.88 | -4.7% | 44.47 | +14.9% |
+| list-s | 21.91 | 18.47 | -15.7% | 23.43 | +6.9% |
+| tree-s | 48471 | 21.91 | -100% | 25.01 | -99.9% |
+| mixed-s | 38.28 | 31.54 | -17.6% | 32.77 | -14.4% |
+| half-s | 24.03 | 20.34 | -15.4% | 27.00 | +12.4% |
+| infix-s | 117085 | 36.08 | -100% | 38.20 | -100% |
+
+The reference column is the design's own cost: the same Cheney on pages
+is 7–15% slower than on first-fit wherever first-fit finds a fit at once,
+the page allocator's call costing more than first-fit's (on a fresh heap,
+partly the fresh page's initialisation, `pool_init`).  The verified
+promotion, with its inlined forwarding, is faster than main's on every
+shape.  Where first-fit does not find a fit at once (3- and 5-word copies
+among holes of 2 to 7 words) it scans the free list for every copy: 48 µs
+and 117 µs per object.
+
+Machine: Intel Core i5-1038NG7 (48 KB L1D, 512 KB L2), `cc -O2 -flto`.
+
+**An observation on main's C** (akhil's code, untouched): `init_heap`
+(spec `GC.Spec.Allocator.init_heap_spec`) writes the free block's header
+at `zero_addr` but its list end and the free pointer at 8, and sizes the
+block as if the heap began at 0: consistent only when `zero_addr = 0`,
+whereas `GC.Spec.ZeroAddr` assumes `zero_addr >= 2048`.  The runtime never
+calls it: `alloc_gen.c` lays out its free block at `zero_addr = major_base`
+itself, with the free pointer at `zero_addr + 8`, and its nursery is a
+separate allocation, so no first-fit address there can look like a nursery
+one.  Only the snapshot's test (`main.c`, `zero_addr = 0`) calls it.  So
+the benchmark lays out main's free block at `zero_addr` itself, as the
+runtime does.
