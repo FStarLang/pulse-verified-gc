@@ -50,23 +50,18 @@ let nursery_after_store (r: real_state) (o: U64.t) (i: nat) (v: U64.t) : minor_s
 
 /// **What stage 0d's nursery steps trust**, which a well-formed program does
 /// not give: the nursery after the step has the frame -- in particular its
-/// shape, `GenInv.minor_heap_shape`, the trusted mutator obligation -- and
-/// no major interior (infix) pointer is stored into a scannable nursery
-/// object (`nursery_storable`, a known provisional restriction of 0d,
-/// pending the decision on lifting it).  A hypothesis of
-/// `GC.Gen.Run.Simulation.program_step_enabled`: the nursery steps are on
-/// the trusted boundary.
+/// shape, `GenInv.minor_heap_shape`, the trusted mutator obligation.  A
+/// hypothesis of `GC.Gen.Run.Simulation.program_step_enabled`: the nursery
+/// steps are on the trusted boundary.  (A major interior pointer may be
+/// stored into a scannable nursery object; Phase H.4 of
+/// `docs/minor-infix-support-plan.md` lifted that restriction.)
 let nursery_trusted (r: real_state) (e: event) : prop =
   match e with
   | Alloc InNursery tag size init ->
-      (I.tag_scannable tag ==>
-         (forall (j: nat). j < Seq.length init ==>
-            (is_pointer (Seq.index init j) ==> ~(is_infix (Seq.index init j <: obj_addr) r.memory.major)))) /\
       (size > 0 /\ size <= GBase.max_young_wosize /\ U64.v tag <> 249 ==>
          nursery_alloc_frame r.memory.nursery (nursery_after_alloc r tag size init)
            (minor_alloc_spec r.memory.nursery size (U64.v tag)).obj_addr (U64.v tag) init)
   | Write (Nursery o) i v ->
-      (minor_tag r.memory.nursery o < 251 ==> (is_pointer v ==> ~(is_infix (v <: obj_addr) r.memory.major))) /\
       nursery_store_frame r.memory.nursery (nursery_after_store r o i v) o i v
   | _ -> True
 

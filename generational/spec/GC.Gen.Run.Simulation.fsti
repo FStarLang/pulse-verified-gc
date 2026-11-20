@@ -250,11 +250,10 @@ let room_for (r: real_state) (e: event) : prop =
 /// boundary, so what they leave is assumed rather than derived: the
 /// nursery's frame and shape (`GenInv.minor_heap_shape`: a stored word does
 /// not read as a nursery header -- the mutator obligation of
-/// `GC.Gen.MinorHeap`), and -- a **known provisional restriction**, pending
-/// the decision on lifting it -- that no major interior (infix) pointer is
-/// stored into a scannable nursery object (`Step.nursery_storable`; real
-/// OCaml may store one, e.g. a pointer to one of several mutually recursive
-/// closures).  It says nothing about the other steps.
+/// `GC.Gen.MinorHeap`).  A value stored into a scannable nursery object may
+/// be a major interior (infix) pointer, as in real OCaml (a pointer to one of
+/// several mutually recursive closures): `Step.nursery_storable` is
+/// `storable_value`.  It says nothing about the other steps.
 val program_step_enabled (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (e: event) (pe: I.program_event)
   : Lemma (requires sim_inv r h im ids /\ I.wf_event im pe /\ translates r.memory ids e pe /\ room_for r e /\

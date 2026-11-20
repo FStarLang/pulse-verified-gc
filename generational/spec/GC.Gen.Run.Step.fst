@@ -272,15 +272,15 @@ let major_alloc_step (r: real_state) (tag: I.tag_t) (size: nat) (init: seq U64.t
 /// The nursery after a program store (trusted)
 /// ---------------------------------------------------------------------------
 
-/// **A value the program may store into the nursery**: a storable value that,
-/// if it is a major pointer, points at a block's start.  This is a *known
-/// modelling restriction*: real OCaml may store an interior (infix) pointer,
-/// to one of several mutually recursive closures, into a young object, but
-/// the nursery clauses of `GC.Gen.HeapInvariant` (`minor_major_fields_not_free`,
-/// `minor_major_fields_no_blue`) are stated on the raw field value; lifting it
-/// means stating them on resolved values.
+/// **A value the program may store into the nursery**: a storable value
+/// (`storable_value`).  A major pointer may be an interior (infix) pointer, to
+/// one of several mutually recursive closures, as real OCaml stores into a
+/// young object: the nursery clauses of `GC.Gen.HeapInvariant`
+/// (`minor_major_fields_not_free`, `minor_major_fields_no_blue`) are stated on
+/// the resolved target, exactly as `storable_value` is (Phase H.4 of
+/// `docs/minor-infix-support-plan.md`).
 let nursery_storable (r: real_state) (v: U64.t) : prop =
-  storable_value r v /\ (is_pointer v ==> ~(is_infix (v <: obj_addr) r.memory.major))
+  storable_value r v
 
 /// What a store of `v` into field `i` of the nursery object `o` leaves: the
 /// nursery keeps its shape (`GenInv.minor_heap_shape`), its objects, their
