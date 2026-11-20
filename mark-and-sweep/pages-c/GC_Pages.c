@@ -2263,6 +2263,8 @@ fwd_normal(
   }
 }
 
+KRML_MUSTINLINE
+
 static void
 forward_if_minor(
   minor_heap_t minor,

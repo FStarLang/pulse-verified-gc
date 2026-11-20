@@ -288,7 +288,14 @@ fn fwd_infix (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: bool)
 #pop-options
 
 /// **Forward `addr`**: exactly the model's `forward_one`.
+///
+/// Always inlined in C (`KRML_MUSTINLINE`, through `CPrologue`, as the
+/// sweep's `KRML_NOINLINE`).  Out of line, every field of a scanned object
+/// paid a 9-argument call, its non-pointers too: 18-34% slower than akhil's
+/// Cheney on the same page allocator for objects of several fields, whose
+/// checks are inline (measured, `pages-c/bench`, plan §30.6).
 #push-options "--z3rlimit 30"
+[@@FStar.Attributes.CPrologue "KRML_MUSTINLINE"]
 fn forward_if_minor (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: bool)
   (fwd_arr queue: array U64.t) (back: R.ref SZ.t) (oom_ref: R.ref bool) (addr: U64.t)
   (#a: erased (tal pstate)) (#ph: erased I.phase) (#g0: erased heap) (#cs: erased (gstate pstate))
