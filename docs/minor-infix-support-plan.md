@@ -635,7 +635,7 @@ The two entry obligations discharge as follows:
 `MCFH.resolve_roots result.mc_major roots_out`, and
 `GC.Gen.Impl.gen_gc_named_root_in_stack` reads the ordinary case back out: a
 root that resolves to itself is on the stack *literally*.  That is the shape the
-SPOTs consume, via `MajorPre.post_minor_major_root_valid` (for a major root) and
+SPOTs consume, via `MajorPre.post_minor_major_root_names_itself` (for a major root) and
 `MCFH.fwd_image_resolves` (for the promoted image of a non-interior nursery
 root).
 
@@ -693,6 +693,45 @@ byte-identical; the OCaml integration suite passes 2514 checks under both
 runtimes, including groups 8-12 (major->minor interior pointers, minor->minor
 interior pointers promoted together, 200 nursery groups anchored only by
 interior pointers, and 24 simultaneous interior-pointer roots).
+
+### Phase H.3 — interior major roots at a minor collection  ✅ **done**
+
+Phase H.2 left one raw clause behind: the *major* branch of
+`MCFH.roots_valid_for_minor_collection` (and of `roots_valid_with`, and
+`RBridge.roots_not_free`) still asked a non-nursery root to *be* a non-blue
+enumerated object.  Real OCaml violates that the moment a mutually recursive
+closure group is promoted: `g`'s entry point is still on the stack at the next
+minor collection, and it is an interior pointer into a major closure.  The C
+bridge (`scan_minor_root`) passes such a root straight to `minor_collect`, and
+`forward_if_minor` ignores it, so only the specification had to change; the
+extracted C is byte-identical.
+
+| Predicate | Before | After |
+|---|---|---|
+| `MCFH.roots_valid_for_minor_collection`, major branch | `is_val_addr r`, `r` enumerated, `~is_blue r` | `is_val_addr r`, `infix_addr_wf major objs r`, `resolve_object r major` enumerated and not blue |
+| `MCFH.roots_valid_with`, extra clause | `is_block major r /\ not (free major r)` | the same of `resolve_object r major` |
+| `RBridge.roots_not_free` | of `r` | of `resolve_object r major` |
+| `CG.classify_root` / `classify_roots` | `MajorV r` (no heap argument) | `MajorV (resolve_major_root major r)` (takes the major heap) |
+| `CG.classify_roots_inv_major` | `v` is a root | some non-nursery root names `v` |
+| `MajorPre.post_minor_major_root_valid` | the root names itself afterwards | the root names the same object afterwards (`post_minor_major_root_names_itself` keeps the old statement for an enumerated root) |
+
+`infix_addr_wf` is genuinely needed, not a convenience: it puts the root's infix
+header inside the live closure it names, which is what keeps the collection
+(promotion allocates into free blocks) from overwriting it.  For an ordinary
+pointer it is vacuous, and `MCFH.roots_valid_of_ordinary` derives the new form
+from the old one under the heap shape.
+
+The minor-collection theorems needed one new hypothesis on the image
+direction, `MCFH.major_roots_named` (implied by `roots_valid_with`), and one new
+lemma, `major_root_still_names` in `GC.Gen.MinorCollectForwarding`, built on
+`MCFE.cheney_collect_frame_target_header`.  `gen_gc`'s published postcondition
+did not change: it was already stated over the resolved roots.
+
+`spot/GC.SPOT.MajorInfixRoot` audits it on `GC.SPOT.InfixMajor`'s heap with
+the root set `[H]`, `H` an interior pointer into the closure `P`: the old
+predicate rejects it, the new one and `gen_gc_pre` accept it, it classifies as
+`MajorV P`, and after the minor collection it is unchanged, still names `P` and
+is darkenable.
 
 ### Phase E — delete the restrictions  ✅ **done**
 
