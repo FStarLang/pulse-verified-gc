@@ -4421,3 +4421,232 @@ The slowest query of `forward_if_minor` took 12.7 s; of
 - **C:** re-extracted, and identical to the committed C, every file byte
   for byte (the changes are to the specification and to a comment).
   `pages_test`: all 924 checks pass.
+
+## 30. Promotion in Pulse with the page allocator (2026-11-20)
+
+The plan of §28.5 and §29.4, built: akhil's Pulse minor collection (his
+`Promote`, `Cheney` and `minor_collect_with`), with every copy allocated by
+the tagged page allocator of the phase, in our own modules; his
+`MinorHeap` and `UpdatePtrs` Pulse code and his allocator-free lemmas
+reused unchanged.  It is proved equal to the model's minor collection
+(`Spec.Pages.Promote.collect`), in every phase.
+
+### 30.1 Modules
+
+**Spec:**
+- `Spec.Pages.Promote.Sim` (`.fsti` and `.fst`): what the Pulse loop needs
+  of the model, stated so that the Pulse proofs see no definition of the
+  loop.
+  - `at_phase a ph`: the allocator `a` is the page allocator of phase `ph`
+    (its allocation is `AllocTag.alloc_tag ph`, which `AllocInc.alloc_ph`
+    computes; its invariant gives `Incr.phase_inv ph`; it meets
+    `Promote.contract`).  Instances: `mark_at` (`mark_tal`), `sw_at pm0`
+    (`sw_tal pm0`), `idle_at` (`idle_tal`).
+  - `sim a minor g0 cs`, the loop invariant, abstract: the model's
+    `Loop.linv`; the queue's facts (akhil's `Cheney.SimOne.cheney_bfs_inv`
+    over our state: the queue holds forwarded nursery objects, every
+    forwarded nursery object is in it, and a count of the unforwarded ones
+    bounds it); and **injective forwarding** (`fwd_injective`: two nursery
+    objects are copied to two blocks).  Kept by every step
+    (`sim_forward_one`), hence by promotion (`promote_sim`).
+  - `matches cs g st farr q bk`: the Pulse state (heap, page state,
+    forwarding array, queue and its back) is the model state `cs`, akhil's
+    `Cheney.Sim.impl_matches_spec` with the allocator's state in place of
+    his free-list head; its core abstract.
+  - one lemma per branch of the Pulse step (`step_skip`, `step_normal_ok`,
+    `step_normal_oom`, `step_infix_fwd`, `step_infix_new`,
+    `step_infix_oom`): the state the branch leaves matches `forward_one`;
+    and the unfolding of the loops (`fields_step`, `roots_step`,
+    `scan_step`, and their bases).
+- `Spec.Pages.Promote.TwoPass`: **akhil's two-pass pointer update is the
+  model's** (`two_pass`).  At the end of `promote a`, with the forwarding
+  array and a remembered set sound and covering for what `a` counts as
+  free, his `rewrite_slots_iter (update_promoted_iter ...)` equals
+  `update_pointers_with a.free`.  The proof is his allocator-free
+  `TwoPassEquiv.promoted_plus_slots_eq_walk`; its hypotheses come from the
+  loop invariant at the end, as his `TwoPassEquiv.Collect.derive_*` take
+  them from his free list:
+  - every non-infix entry of the array is a copy, a block in use; an infix
+    entry an infix address of its closure's copy (`valid_from`, `walked`);
+  - **disjoint copies**: two entries are two blocks, by injective
+    forwarding, so the heap walk keeps their bodies apart (`disjoint`);
+  - every slot is a field of an old block in use, kept with its header
+    (`slots_walked`);
+  - a forwarded nursery pointer in a field of a block in use is in a copy
+    or at a slot (`classified`);
+  - every target is a major address, above the nursery's (`stable`).
+- `Spec.Pages.Promote.PulseVacuity`: the witnesses (§30.3).
+
+**Pulse** (`mark-and-sweep/impl`):
+- `Impl.Pages.Promote`: akhil's nursery readers and field copy, copied
+  (his module also holds his allocator's promotion); `promote_one`, for any
+  `a` with `at_phase a ph`, calls `AllocInc.alloc_ph` with the nursery
+  object's tag and computes exactly `promote_object a`.
+- `Impl.Pages.Forward`: the forwarding step, `forward_if_minor`, exactly
+  `forward_one a`, split by branch: `fwd_normal`, `fwd_infix`,
+  `fwd_infix_done`, `fwd_infix_new` (success and out-of-memory branches in
+  each), and a ghost `skip`; the dispatcher only tests and calls.  The state
+  is one predicate, `cst ... cs`.
+- `Impl.Pages.Cheney`: the loops, each body its own function: `fwd_fields`
+  (one object's fields), `scan_one` (one queue entry), `scan_loop`,
+  `fwd_roots`; `promote_all` is exactly `promote a` and ends in `sim`.
+- `Impl.Pages.Minor`: `minor_collect`, exactly `collect a` (major heap,
+  page state, nursery, roots): `promote_all`, then akhil's
+  `update_promoted_objects`, `rewrite_heap_slots` and `rewrite_roots_impl`,
+  then `minor_heap_reset` (his, unchanged).  Instances:
+  `minor_collect_idle` (exactly `Promote.Idle.icollect`, from `ipre`),
+  `minor_collect_marking` (`Promote.Mark.mcollect`, from `mpre_mark`),
+  `minor_collect_sweeping` (`Promote.Sweep.scollect`, from `spre`); each
+  also asks the write barrier's remembered set to be sound and covering for
+  the phase's definition of free.
+
+**Differences from akhil's code:**
+- No run-time check that the queue has room, or that an infix target stays
+  in the heap: both are proved (`sim_strict_room`; `step_infix_fwd`,
+  `step_infix_new`).  Nor is the queue zeroed on entry: only the entries
+  below its back are read.
+- The `ok` result is false when an allocation failed; the collection is
+  then still the model's, which skips that object.  Unlike akhil's, `ok` is
+  not characterised further (his `cheney_no_oom`).
+
+### 30.2 Proof shape and stability
+
+The split of §29.4 was applied, and every predicate the Pulse code sees is
+abstract (`sim`, `matches_core`, `at_phase`).  Largest used rlimit per
+module, of the local limit, at seeds 0, 1 and 2:
+
+| Module | limit | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|---|
+| `Impl.Pages.Promote` | 5 | 1.9 | 2.1 | 2.1 |
+| `Impl.Pages.Forward` | 30 | 5.7 | 5.9 | 6.9 |
+| `Impl.Pages.Cheney` | 30 | 5.0 | 4.2 | 4.0 |
+| `Impl.Pages.Minor` | 30 | 0.1 | 0.1 | 0.1 |
+| `Spec.Pages.Promote.TwoPass` | 40 | 26.0 | 18.2 | 25.3 |
+
+So the Pulse forwarding step that was the risk (akhil's
+`forward_if_minor_infix` at 37.2 of 40, the scan loop at 39.4) needs at
+most 6.9 here.  No eager-instantiation setting is needed.
+
+### 30.3 Witnesses (`Spec.Pages.Promote.PulseVacuity`)
+
+The heap of free pages (`Init.init_heap`, `init_state`), the nursery of one
+object with one root at it (`NurseryWitness`), the empty remembered set:
+- the heap is in the invariant of every phase (`w_inv`), and no block is
+  in use, so the empty remembered set is sound and covers, for any
+  definition of free (`w_table`);
+- so the preconditions of `minor_collect_idle`, `_marking` and
+  `_sweeping` hold (`w_idle`, `w_marking`, `w_sweeping`), and those of
+  `promote_sim` and `two_pass`, with the forwarding array of the promotion
+  (`w_two_pass`);
+- and each collection **promotes**: it forwards the nursery object and
+  rewrites the root to its copy (`w_promotes_idle`, `_marking`,
+  `_sweeping`), under `n_pages > 0`.
+
+### 30.4 C (`pages-c`)
+
+- `Impl.Pages.Minor` is an entry module of the `GC_Pages` bundle, with
+  akhil's `MinorHeap` and `UpdatePtrs`.  New C functions: 22, among them
+  `minor_collect` and its three instances.  **Every one of the 106 existing
+  functions of `GC_Pages.c` is byte-identical**; the other generated files
+  differ in the KaRaMeL invocation line, the position of two declarations,
+  and two new constants (`minor_heap_size_u64`, `minor_base_addr`).
+- `pages_test.c`: **947 checks, all passing** (924 before).  New, with the
+  major heap above the nursery's addresses (`zero_addr = 2048`):
+  - Idle: an object pointing at another nursery object, an unreachable one,
+    and a major block whose field points into the nursery, in the
+    remembered set: both copied, white, with their tags and fields, the
+    root and the slot rewritten, the unreachable object not forwarded;
+  - Marking: a closure (tag 247, an infix header at offset 3) reached
+    through its infix pointer from a field of another object and from a
+    root: copied black, the field and the root at the same offset in the
+    copy;
+  - mid-sweep: the copies in swept pages, white, kept by the rest of the
+    sweep, which frees the unswept page's dead block.
+
+### 30.5 Benchmark: promotion against main's first-fit (`make bench-promo`)
+
+`bench/bench_promo.c`, built twice: ours (`minor_collect_idle`) and main's
+(`minor_collect` of `generational/snapshot`, which is `origin/main`'s C,
+first-fit, Idle), with an A/A copy of ours; both at `zero_addr = 2048`, the
+same 32 MB heap; only the collection is timed; ns per promoted object,
+medians.  Nursery shapes: `list` (127 one-field objects), `tree` (85
+two-field), `mixed` (1 to 6 fields), `half` (half the list reachable),
+`infix` (51 closures linked through infix pointers).
+
+**Fresh heap** (main: one free block; ours: free pages), 5 rounds of 5 reps:
+
+| workload | main | ours | diff | A/A | diff |
+|---|---|---|---|---|---|
+| list | 14.60 | 16.86 | +15.5% | 16.86 | +15.5% |
+| tree | 16.89 | 22.26 | +31.8% | 22.62 | +33.9% |
+| mixed | 21.80 | 30.77 | +41.1% | 31.38 | +43.9% |
+| half | 16.71 | 19.12 | +14.4% | 19.63 | +17.5% |
+| infix | 22.66 | 37.62 | +66.0% | 37.35 | +64.8% |
+
+**Steady heap** (filled with objects of 2 to 7 words, every other one
+live, swept; main's `collect`, ours `sweep_all`), 3 rounds of 3 reps:
+
+| workload | main | ours | diff | A/A | diff |
+|---|---|---|---|---|---|
+| list | 14.79 | 16.03 | +8.4% | 16.39 | +10.8% |
+| tree | 27978 | 21.25 | -99.9% | 22.26 | -99.9% |
+| mixed | 27.61 | 31.02 | +12.4% | 30.35 | +9.9% |
+| half | 16.56 | 18.09 | +9.2% | 17.62 | +6.4% |
+| infix | 73470 | 36.59 | -100% | 36.20 | -100% |
+
+**The rule (at most 5% slower) is not met**: on a fresh heap ours is 14%
+to 66% slower, on the steady heap 8% to 12% slower where main's first-fit
+finds a fit at once (one-word objects fit every hole).  Where it does not
+(3- and 5-word copies among holes of 2 to 7 words), main's first-fit scans
+the free list for every copy: 28 µs and 73 µs per object.
+
+**Where the time goes** (throwaway builds, not in the tree):
+- the copies placed by a bump pointer instead of the page allocator: ours
+  10.2–10.6 (list), 13.5–13.9 (tree), 19.3–21.7 (mixed), 11.1–12.6
+  (half), 20.7–25.0 (infix), against main's 13.5–14.8, 15.0–16.8,
+  20.2–22.8, 15.4–16.9, 22.4–25.6: **the Cheney loop and the two passes
+  are as fast as main's or faster**;
+- the copies placed by a bump pointer but `alloc_ph` called as well: the
+  same as ours.  So the whole gap is the page allocator's call;
+- of it, the fresh page's initialisation (`pool_init`: a blue header and a
+  link for every slot, 32 KB written per page, two thirds of this
+  machine's 48 KB L1) is 1.5–3.4 ns per promoted object;
+- allocation and copy alone, outside a collection: ours 7.9 against 7.7 ns
+  (one size), 8.6 against 6.2 ns (sizes 1 to 6).  Inside a collection the
+  page allocator costs about 7 ns (list) to 15 ns (infix) per copy.  The
+  rest of that was not pinned down without a profiler: prefetching the
+  next free slot, and moving the page records off static storage, changed
+  nothing.
+
+**Options** (a decision for the user):
+1. Fresh pool pages handed out by bumping through them, their slots linked
+   only when swept: no `pool_init`, no free-slot reads in a fresh page.
+   This changes the page allocator's representation, so the proofs of
+   §10–§29 (page map, `pages_ok`, the sweep).
+2. Keep the allocator and take the steady heap as the reference, where
+   first-fit's search dominates; on its fast cases ours is still 8–12%
+   slower.
+
+Machine: Intel Core i5-1038NG7 (48 KB L1D, 512 KB L2), `cc -O2 -flto`.
+
+**An observation on main's C** (akhil's code, untouched): `init_heap`
+(spec `GC.Spec.Allocator.init_heap_spec`) writes the free block's header
+at `zero_addr` but its list end and the free pointer at 8, with the block
+spanning the whole heap: consistent only when `zero_addr = 0`, whereas
+`GC.Spec.ZeroAddr` assumes `zero_addr >= 2048`.  main's own C test runs at
+`zero_addr = 0`; there, once a sweep has left holes low in the heap,
+first-fit hands out addresses below 2048, which the minor collection then
+takes for nursery pointers (seen in this benchmark before it laid out main's
+free block at `zero_addr` itself).
+
+### 30.6 Checked
+
+- **Seeds:** every new module checked without `--retry` at `--z3seed 0`,
+  `1` and `2` (`Promote.Sim` interface and implementation,
+  `Promote.TwoPass`, `Promote.PulseVacuity`, `Impl.Pages.Promote`,
+  `Forward`, `Cheney`, `Minor`, and `Impl.Pages`): 27 of 27 pass.
+- Local rlimits at most 40; no admits, no `assume` (the one `assume val` in
+  scope is the existing platform assumption `GC.Impl.Heap.platform_fits_u64`,
+  which akhil's code uses too).
+- No theorem's statement changed; akhil's modules untouched.
+- `gmake verify`: `=== all modules verified ===`.
