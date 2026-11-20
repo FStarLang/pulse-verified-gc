@@ -1,6 +1,7 @@
 # Plug-and-play verified GC components: interfaces and generic theorems
 
-Design only. Nothing here is built. It is written against branch
+Sections 1–6 are design only. Section 7 is built: the top-level
+specification in F* (`GC.Spec.Top.*`), and its validation. They are written against branch
 `sheera/pages-incremental` at `94441bb4` (plan §30 committed), with main
 at `5623c7f6`. Module names without a directory are in
 `mark-and-sweep/spec/`; `GC.Gen.*` modules are in `generational/spec/`.
@@ -33,6 +34,7 @@ Contents:
 4. The page results as an instance; first-fit as an instance
 5. Staged plan and estimates
 6. Open questions
+7. The top-level specification, formalised (`GC.Spec.Top.*`)
 
 ---
 
@@ -617,3 +619,451 @@ computes the spec functions the pages instance is built from (`AllocInc`,
   `Carried`. Carrying it (making the run prove it from M and the mark
   steps) would leave M as the only premise. That is worth doing, but it
   is a stage of its own (about 3 days), not in the plan above.
+
+---
+
+## 7. The top-level specification, formalised (`GC.Spec.Top.*`)
+
+Specification stage. The top-level theorem `gc_correct` is a **proposition**:
+it is stated and type-checked, not proved. Everything else listed below is
+proved, with no admit and no assume, rlimit at most 40, and checked
+without `--retry` at Z3 seeds 0, 1 and 2. akhil's modules are untouched.
+
+### 7.1 Modules
+
+| Module | Content | Proof status |
+|---|---|---|
+| `GC.Spec.Top.Heap` | The heap model: words, blocks (header wosize/tag/colour), values (bytes, major/young pointers, infix headers), `resolve`, `fields`, `outside_ref`, `reachable` (major), `yreachable` and `minor_live` (young), `fill`, `well_formed` (the walk tiles the heap) | definitions, plus `fields_of_spec` |
+| `GC.Spec.Top.Iface` | Shared types (`phase`, `result`, `size_t`), the colour rule, and the components with their contracts: allocator, sweep, mark, minor collection, barrier | definitions |
+| `GC.Spec.Top.Run` | Collector = `comps`; events; the semantics `step`; `mutator_ok`; runs; the conclusions (0)–(6); `gc_correct`, `gc_correct_local` | definitions; `hyps_of_ok`, `gc_correct_local_implies` proved |
+| `GC.Spec.Top.Toy` | Bump allocator `toy` and its sweep `tsweep` | `toy_allocator_ok`, `toy_nontrivial`, `toy_room_capacity`, `toy_sweep_ok` |
+| `GC.Spec.Top.ToyMark` | Mark `tmark` (grey outside refs; scan lowest grey) and barrier `tbarrier` | `toy_mark_ok`, `toy_barrier_ok` |
+| `GC.Spec.Top.ToyMinor` | Minor collection `tminor`: promotes through `toy.alloc`, then forwards | `toy_minor_ok` |
+| `GC.Spec.Top.ToyComps` | The toy collector `tc`; `reach_within`, an unreachability rule (reachability stays inside any set that holds outside_refs and is closed under edges) | `toy_components_ok : components_ok tc` |
+| `GC.Spec.Top.Broken` | Nine broken components | each proved rejected (§7.5) |
+| `GC.Spec.Top.Vacuity` | One run per style | every hypothesis proved (§7.6) |
+
+### 7.2 The model
+
+The specification is stated over an **abstract heap**, not the byte-level
+heap of `GC.Spec.Base`. In it:
+
+- A block at `o` has its header at word `o` and its fields at
+  `o+1 .. o+wz`.
+- The blocks tile `[0, size)`. This is "the heap walk reaches heap_size".
+- Allocation status is not in the heap. It is the allocator's
+  `free : state -> heap -> addr -> bool`.
+- A pointer to an infix object is the address of its infix header inside
+  the closure. `resolve` maps it to the closure.
+- The nursery has the same shape and its own address space.
+
+An instance over the byte-level heap (pages, first-fit) needs an
+abstraction function, read from the heap walk. That function is not built
+(gap G17).
+
+### 7.3 The specification
+
+**Shared types.**
+- `phase pr = Idle | Marking | Sweeping of pr`, where `pr` is the sweep's
+  progress.
+- `result = Ok of addr | NoRoom`.
+- `size_t`: wosize at least 1.
+- A Fill is a `list value`.
+- `colour_at`: Marking gives black; `Sweeping p` gives black if
+  `unswept p o`, otherwise white; Idle gives white.
+
+**Allocator** `{ state; init; inv; free; room; alloc }`.
+`allocator_ok a` is the conjunction of:
+
+| Clause | Statement |
+|---|---|
+| `init_at` (0) | The initial heap of `n` words is well formed, satisfies `inv Idle`, and has nothing in use |
+| `alloc_at` / `alloc_post` | Given `inv ph h st`, `well_formed h` and `tag <> 249`. **NoRoom**: nothing changed, and `room = false`. **Ok o**: `room = true`; `o` is a block with header `(sz, tag, colour_at ph o)`; o's words were free; exactly `o` comes into use; every other in-use block is unchanged; `well_formed h'`; `inv` holds after Fill with any values of length `sz` |
+| `free_hd_at` | Allocation status is read from the headers only (G4) |
+| `inv_frame_at` | Writes to fields of in-use blocks, and recolouring in-use blocks while marking, keep `inv` and `free` (G4) |
+| `inv_start_at` | `inv Idle` implies `inv Marking` |
+| `free_white_at` | Free blocks are white, the model's blue (G5) |
+
+`nontrivial a`: on some initial heap, some request has room. Each
+allocator adds its own capacity lemma. The toy's is `toy_room_capacity`:
+room holds exactly when the tail has `sz + 1` words.
+
+**Sweep** `{ start; step; done }`, over a `sweep_kind = { progress;
+unswept }` that it shares with the allocator. `sweep_ok` is:
+
+- **start**: given `inv Marking`, well formed and nothing grey, it moves
+  `inv` to `Sweeping p`, frees nothing, and every in-use block is unswept
+  (G6).
+- **step**: when not done:
+  - `unswept` only shrinks, and strictly (a finite measure);
+  - in the region swept, white becomes free and black becomes white with
+    its contents unchanged;
+  - outside the region nothing changes;
+  - nothing comes into use and nothing free leaves it;
+  - the free words grow by exactly the words of the white blocks swept,
+    and `freed_words` is their count, `sum size (swept_words …)`;
+  - `inv` holds at the new progress.
+- **done**: `inv Idle`, no in-use block is unswept (pending is empty), and
+  every block is white (G7).
+
+**Mark** `{ mstart; mslice }`. It is allocator-free; its state is the
+colours. `mark_ok` is:
+
+- **start**: from an all-white well-formed heap, it changes only colours,
+  darkens every `outside_ref`, and establishes `tricolour h (reachable w) ∅`.
+- **slice**: when something is grey, it keeps `tricolour` (given `closed`)
+  and changes only colours. It strictly decreases the measure: the
+  white-live, then grey-live, objects below `size`, ordered
+  lexicographically (G9).
+
+`tricolour h snap allocd` is the snapshot invariant:
+- every non-white block is in `snap ∪ allocd`;
+- every `allocd` block is black;
+- every white `snap` object is reached from a grey object through white
+  objects (`grey_reached`).
+
+From it, `mark_done` (nothing grey) gives black = `snap ∪ allocd` exactly.
+The barrier, allocation and minor collections keep `tricolour`. That is a
+conclusion of the theorem (6), not a clause of the mark.
+
+**Minor collection** `{ collect }`, which returns `Done h st roots fwd` or
+`OutOfRoom`. `minor_ok` says, under the allocator's invariant, a
+well-formed heap, a well-formed nursery and `rem_covers` (every
+old-to-young pointer is a remembered slot):
+
+- **Done**:
+  - `fwd` is defined on exactly the young blocks that are `minor_live`
+    (reachable from the roots and the remembered slots), and is injective;
+  - each copy lies on words that were free, has header
+    `(wz, tag, colour_at)`, and holds the forwarded young fields;
+  - in-use becomes old in-use plus the copies;
+  - every old in-use block keeps its header, and its fields are equal up
+    to `fwdv` (no-scan fields are not forwarded);
+  - the roots are forwarded;
+  - `inv` and `well_formed` hold.
+- **OutOfRoom**: `oor_justified`. Some order of live young objects makes
+  `A.alloc` refuse one (G3).
+
+**Barrier** `{ bwrite; binit }`. `barrier_ok`:
+
+- **write**: stores the value; blocks and other words are unchanged.
+  While marking, the overwritten target goes from white to grey and no
+  other colour changes; otherwise nothing is recoloured (G12). `rem` only
+  grows, and an old-to-young store is remembered.
+- **init** (Fill of a new major block): `fill`, with every young pointer
+  of the Fill remembered (G10).
+
+**Mutator** (trusted, `mutator_ok`):
+- Every pointer value stored, used as a root, or put in a Fill resolves to
+  an object **reachable now**: a major object in `reachable`, or a young
+  one in `yreachable` (G1).
+- Write targets are reachable blocks, with the field in range and not an
+  infix header (G11).
+- No infix header is stored, except a closure's own infix headers in its
+  Fill.
+- No-scan fields hold any bytes.
+- Weak references, ephemerons, finalisers and `Obj.truncate` are not
+  events of the model. There is one mutator thread: a run is one
+  sequence.
+
+**Runs.** A configuration holds:
+- the world (major heap, nursery, roots, remembered set);
+- the phase and the allocator's state;
+- ghost bookkeeping kept by the semantics: `hs` (the heap at the cycle's
+  start), `snap = reachable(s)`, `allocd` (allocated, or promoted, since
+  `s`);
+- `stopped`, set by OutOfRoom.
+
+The events are:
+- `EAlloc` (Alloc;Fill, atomic: the new object is pushed as a root, the
+  register);
+- `EYoungAlloc`, `EWrite`, `ERoots`, `EMinor`;
+- `EStart`, `ESlice`, `EHandover`, `ESweep`, `EEnd`.
+
+`enabled` makes:
+- `ESlice` possible only when something is grey (G8);
+- `EHandover` possible only at mark_done;
+- `ESweep` possible only when not done, and `EEnd` only when done.
+
+`Sequential` style forbids mutator events while a cycle runs.
+
+**The theorem** (`conclusions`), for every run:
+
+| | Clause | Where |
+|---|---|---|
+| (0) | Nothing is in use initially; the partition and `inv Idle` hold at 0 | `conclusions`, `concl_point` |
+| (1a) | Every kept object (in use, and in `snap ∪ allocd`, or all of in use while idle) stays in use; its contents change only by the program's write to it, and up to `fwd` at a minor collection | `concl_step`, `contents_step` |
+| (1b) | `reachable ⊆ kept`; no held pointer dangles; the heap and nursery are well formed; `inv` holds at every point | `concl_point` |
+| (2) | `EAlloc` succeeds iff `room`; on success: a new block in use with header `(sz, tag, colour_at)` and fields `vs`, and nothing else comes into use; on failure: nothing changes | `alloc_step` |
+| (3a) | At the end of cycle k, the words of every object in use at `s` and not in `snap_k` are free, or covered by an object of `allocd_k` | `concl_cycle` |
+| (3b) | The survivors are exactly `snap_k ∪ allocd_k` | `concl_cycle` |
+| (3c) | An object unreachable at any point of cycle k is not in use at some later point, by the end of cycle k+1 | `concl_two_cycles` |
+| (3d) | A minor collection promotes only `minor_live` young objects (G2) | `concl_step` |
+| (4) | The set freed in cycle k is `in_use(h_s) \ reachable(s)`, which is what a stop-the-world collection at `s` frees | `concl_cycle`, `stw_freed` |
+| (5) | The partition (kept / pending / free, exactly one per word) holds at every point; words move from in use to free only by `ESweep`, and from free to in use only by `EAlloc` or `EMinor` | `partition`, `concl_step` |
+| (6) | While marking, a slice strictly decreases the mark measure, and no other event increases it. While sweeping, a step strictly shrinks the unswept set, and no other event changes the progress. With `enabled` this gives: if slices keep being scheduled, the cycle completes, and it ends in `inv Idle` | `concl_step` |
+
+`gc_correct c sty` is `components_ok c ==> forall runs. run_ok ==> conclusions`.
+`components_ok` is `allocator_ok ∧ nontrivial ∧ sweep_ok ∧ mark_ok ∧
+minor_ok ∧ barrier_ok`.
+
+`gc_correct_local` needs the contracts only at the steps the run takes
+(`run_hyps`). It is the stronger statement:
+`gc_correct_local_implies : gc_correct_local c sty ==> gc_correct c sty`
+is proved.
+
+### 7.4 Satisfiable
+
+**The toy instance.** Every contract is proved for a toy component, for
+all inputs, not only on a run:
+
+- **Allocator** (`toy`): bump allocation from a free tail; the sweep frees
+  blocks by marking them dead.
+  - `toy_allocator_ok`, `toy_nontrivial`, `toy_room_capacity`.
+- **Sweep** (`tsweep`): progress `(p, e)` with `e` the cursor at the
+  hand-over.
+  - Objects allocated mid-sweep lie at or above `e`. So they are swept
+    memory, and white.
+  - `toy_sweep_ok`.
+- **Mark** (`tmark`): `toy_mark_ok`. This is the full snapshot argument for
+  the start and every slice.
+- **Minor** (`tminor`): live set chosen classically, promotion through
+  `toy.alloc`, then forwarding of every in-use pointer field. `toy_minor_ok`
+  includes the OutOfRoom justification.
+- **Barrier** (`tbarrier`): `toy_barrier_ok`.
+
+**Pages and first-fit.** The table below records, per clause, the existing
+lemmas that discharge it, or the nearest statement and what differs. All
+are read-only; the names were checked with grep.
+
+These gaps apply to many rows of both tables. The "close" notes in the
+rows assume them.
+
+- **Free is blue, not white.** Both allocators mark a free block **blue**.
+  `free_white_at` reads the model's white as blue.
+- **Unswept white blocks already count as free.** Both sweeps use a free
+  predicate that includes them: pages `MidSweep.free_sw` (:68), first-fit
+  `SweepPhase.Intrinsic.free_incremental` (:161). So their step lemmas say
+  "the in-use set is unchanged", and this specification says "a step
+  frees". This is gap G16, the largest.
+- **No tag and no `room` in the old interface.** v2 (`AllocIface.alloc_post_with`)
+  is stated per object (`~(live g x)`), not in words, and the tag is
+  proved outside it.
+
+**Pages** (`GC.Spec.Pages.*`):
+
+| Clause | Existing lemma(s) | Status |
+|---|---|---|
+| `init_at` | `Allocator.init_inv` (:187), `Alloc.init_alloc_pre` (:408), `Init.init_pages_ok` (:296), `Init.init_all_blue` (:217) | close: "nothing in use" only through all-blue |
+| NoRoom: nothing changed | `pages_allocator_ok` (Allocator.fsti:102), `alloc_post_with`'s `obj == 0` | exact |
+| NoRoom: room false | `Allocator.alloc_no_fit` (fsti:114) to `Th.no_fit` | close: needs `wz+1 < pow2 54` |
+| Ok: room true | only `RoomAfter.room_after` (one case) | **missing** |
+| header (wz, tag, colour_at) | `pages_allocator_ok`, `alloc_post_new_old` (fsti:107); tag: `AllocTagOk.alloc_tag_marking` (:422), `alloc_tag_sweeping` (:469), `AllocTag.alloc_col_tag_wz` (:125) | exact, split across modules |
+| o's words were free | `alloc_post_with` (`~live`); `Replace.replace_ok`/`replaces` (:418/:121) | close: per header, not per word |
+| only o comes into use | `NewOnly.alloc_new_only` (:354, Idle), `MidSweepAlloc.use_eq` (:367), `AllocTagOk.r_in_use` (:96) | close: one lemma per phase |
+| others unchanged | `others_unchanged` (AllocIface:81), `Th.alloc_ok` (:247) | exact |
+| well formed after | `Replace.replace_ok`, `TailWalk.shape_walk_end` (:70) | close: walk end at Marking missing |
+| inv after Fill | `alloc_post_with` (`fields_written_with`), `pages_allocator_sw_ok` (MidSweepAlloc:609) | exact (storable values) |
+| `free_hd` | `MidSweep.free_sw_ok` (:71) | close |
+| `inv_frame` | `phase_ok` (AllocIface:232); `Cycle.Write.write_idle` (:128), `write_mark_inv` (:185), `write_sw` (:288); `AllocTagOk.mark_inv_update` (:604), `sw_update` (:622) | close: per write, not relational |
+| `inv_start` | `phase_ok` clause 1 (AllocIface:231) | exact |
+| `free_white` | blue by construction | **missing** as a lemma |
+| nontrivial / capacity | `Alloc.init_alloc_succeeds` (:436), `init_alloc_large_succeeds` (:447); capacity is the contrapositive of `alloc_no_fit` | close |
+| sweep start | `StartSweep.start_ready` (:202), `SweepingStart.sweeping_at_start` (:101), `MidSweepStep.sw_start` (:586) | close: "frees nothing" false under `free_sw` (G16) |
+| step: progress | `Allocator.sweep_step_inv` (fsti:172), `MidSweepStep.step_sw` (:450) | exact |
+| step: white freed, black whitened | `SweepUnits.unit_ok` (:44), `Survive.black_survives` (:95), `dead_covered` (:266) | close: per unit, or at the end |
+| step: outside unchanged | `step_sw` `use_kept` (:248), `Cycle.Sweep.step_acct` (:202) | close (`free_sw` form) |
+| step: free words exactly, `freed_words` | `SweepPage.dead_count` (:123) counts slots only | **missing** |
+| step: inv kept | `step_sw`, `Cycle.Sweep.step_acct` | exact |
+| done | `MidSweepStep.sw_end` (:484), `Allocator.sweep_end` (fsti:181), `sweep_all_correct` (:189) | close: "all white" not stated |
+| minor: promoted set | `Pages.Promote.collect` (:202) over `GC.Gen.CheneyBFS.cheney_promotes_all_reachable` | close: ⊇ only, not in the remembered-set form |
+| minor: copies' colour | `Promote.Collect.collect_blocks` (:399), `Promote.Mark.m_new_black` (:113) | exact per `tal` |
+| minor: others, inv | `Promote.Collect.collect_inv` (:362), `PromoteInst.mark_contract` (:69), `sw_contract` (:148), `Promote.Idle.idle_contract` (:167) | exact per phase |
+| minor: OutOfRoom justified | — | **missing** |
+| barrier: SATB | `Cycle.Write.barrier_mark_inv` (:245), `Cycle.State.darken_mark_inv` (:112) | exact |
+
+**First-fit** (akhil's modules, read-only):
+
+| Clause | Existing lemma(s) | Status |
+|---|---|---|
+| `init_at` | only the definition `Allocator.init_heap_spec` (fsti:295) | **missing** |
+| NoRoom: nothing changed | `MarkPhase.Alloc.marking_alloc` (fsti:132), `SweepPhase.Mutator.alloc_sweep_phase` (:111) | exact |
+| NoRoom: room false | `Allocator.Oom.alloc_spec_oom_no_fit` (:136), `sweep_inv_incremental_oom_no_fit` (:197), `fused_oom_no_fit` (:169) | exact |
+| Ok: room true | `Allocator.Phase.alloc_at_obj_valid` (:174), `Exact.reachable_valid_cell` (:117) | close: derivable from `alloc_carved` |
+| header | `Allocator.Phase.alloc_at_recoloured` (:152), `alloc_at_obj_wosize` (:208), `Mutator.alloc_phase_new_block` (:81) | exact |
+| o's words were free | `Mutator.alloc_carved` / `carved_from` (:133) | exact while sweeping; other phases through `alloc_at_recoloured` |
+| only o comes into use | `Mutator.alloc_in_use` (:239), `MarkPhase.Alloc.alloc_in_use` (:121) | exact |
+| others unchanged | `Mutator.alloc_keeps` (:227), `Allocator.Phase.alloc_at_preserves_objects` (:181) | exact |
+| well formed after | `Mutator.alloc_walk_end` (:257), `GC.Gen.MarkPhase.Walk.alloc_reaches` (:40) | exact |
+| inv after Fill | `Mutator.fresh_write`/`fresh_close` (:181/:199), `MarkPhase.Alloc.marking_fresh_write`/`_close` | close: storable values only |
+| `free_hd` | `SweepPhase.Intrinsic.free_incremental_ok` (:165) | close |
+| `inv_frame` | `Mutator.write_sweep_phase` (:217), `MarkPhase.Mutator.marking_write` (:173), `Allocator.Phase.recoloured_*`, `GC.Gen.Barrier.modify_phase_shape` (:91) | close: storable values |
+| `inv_start` | `GC.Gen.MarkPhase.Start.mark_start_shape` (:42) | close: after the roots are darkened |
+| `free_white` | blue by definition | **missing** as a lemma |
+| capacity | `Allocator.Exact.alloc_spec_fits_succeeds` (:824), `alloc_succeeds_when_a_block_fits` (:1053) | exact at Idle; other phases missing |
+| sweep start | `Intrinsic.sweep_inv_incremental_start` (:475), `MarkPhase.marking_done_sweep_start` (:287), `Completeness.phase_account_start` (:409) | close (G16) |
+| step: progress | `SweepPhase.Slice.sweep_slice_phase` (:89), `GC.Gen.Incremental.phase_slice_finishes` (:190) | close: strict only with a positive budget |
+| step: black whitened | `Intrinsic.marked_survive`, `sweep_inv_stw` (:298/:312), `behind_swept` (:175) | close: stop-the-world relation |
+| step: outside unchanged | `sweep_slice_phase` | close (G16) |
+| step: free words exactly, `freed_words` | `Slice.swept_words` (:39) counts words visited | **missing** |
+| step: inv kept | `sweep_slice_phase`, `Completeness.phase_account_slice` (:415), `GC.Gen.Incremental.phase_slice_shape` (:183) | exact |
+| done | `Intrinsic.End.sweep_inv_incremental_end` (:34), `GC.Gen.Incremental.sweep_end_shape` (:115), `Completeness.freed_by_end` (:332) | exact (white or blue) |
+| mark start | `GC.Gen.MarkPhase.Start.mark_start_shape` (:42), `darkened_roots_dark` (:50), `MarkPhase.Completeness.account_start` (:156) | exact |
+| slice keeps inv, colours only | `MarkPhase.Slice.mark_steps_inv` (:176), `mark_steps_darker` (:213), `Completeness.account_steps` (:190) | exact |
+| slice decreases the measure | `MarkPhase.Slice.mark_weight` (:228), `GC.Gen.MarkSlice.slice_measure_lt` (:234) | close: weight over all blocks, not live ones |
+| done: black = snap ∪ allocd | `Completeness.account_marked` (:292), `cycle_complete` (:347); ⊇ via `GC.Gen.MarkPhase.Safety` | close |
+| minor: promoted set | `GC.Gen.CheneyBFS.cheney_promotes_all_reachable` (:415), `MinorCollectForwarding.Edges.combined_reachable_minor_has_fwd` (:64) | close: ⊇ only |
+| minor: copies' colour | `GC.Gen.MarkPhase.Minor.minor_new_block_black` (:140), `GC.Gen.Promote.promote_object_recoloured` (:164) | close: mid-sweep colour depends on position |
+| minor: others, inv | `MarkPhase.Minor.minor_keeps_block` (:123), `minor_keeps_marking_inv_with` (:101), `Incremental.minor_keeps_phase_shape` (:198) | exact per phase |
+| minor: OutOfRoom | `GC.Gen.Promote.promote_object_oom` (:134) | close |
+| barrier: SATB | `MarkPhase.Mutator.marking_write_barrier` (:206) | exact (storable values) |
+| barrier: remembered set | `GC.Gen.Barrier.write_ref_table` (:139), `modify_ref_table` (:153), `initialize_ref_table` (:176) | exact |
+
+**Missing in both:**
+- `freed_words`, and "the free words grow exactly";
+- `free_white` as a lemma;
+- the minor's "promoted ⊆ `minor_live`" in this form;
+- "o's words were free", per word.
+
+### 7.5 Strong enough: broken components
+
+Each is proved to violate the specification (`GC.Spec.Top.Broken`), on a
+concrete heap:
+
+| Broken component | Rejected by | Lemma |
+|---|---|---|
+| Allocator handing out a block in use | `alloc_ok` (o's words were free) | `bad_inuse_rejected` |
+| Allocator whose room is always false | `nontrivial` only: it **meets** `allocator_ok` (`bad_noroom_meets_allocator_ok`), so without `nontrivial` it would be accepted | `bad_noroom_rejected` |
+| Sweep freeing a black object | `sweep_ok` (black stays in use) | `bad_black_rejected` |
+| Sweep re-sweeping swept memory (frees the white survivors behind it) | `sweep_ok` (outside the region unchanged) | `bad_resweep_rejected` |
+| Mutator setting a root to a garbage object | `mutator_ok` (`value_ok`: not reachable). The prompt's snapshot reading **accepts** it (`bad_root_accepted_by_snapshot_reading`, the garbage object being in the snapshot): gap G1 | `bad_root_rejected` |
+| Minor collection skipping the remembered slots | `minor_ok` (exactly the live young objects) | `bad_norem_rejected` |
+| Mark not greying old objects held only by young objects | `mark_ok` (outside_refs darkened) | `bad_roots_only_rejected` |
+| Minor collection always reporting OutOfRoom | `minor_ok` (`oor_justified`): accepted by the prompt's "OutOfRoom: the run stops", gap G3 | `bad_oor_rejected` |
+| Barrier not remembering a Fill's young pointers | `barrier_ok` (`binit`): gap G10 | `bad_init_rejected` |
+
+### 7.6 Non-vacuity
+
+`GC.Spec.Top.Vacuity` proves two concrete runs of the toy collector (heap of
+12 words, nursery of 4), one per style. For each run it proves every
+hypothesis of `gc_correct` and of `gc_correct_local`:
+
+- `vacuity_sequential`: `components_ok tc ∧ run_ok tc Sequential … ∧ run_hyps …`.
+- `vacuity_incremental`: the same for `Incremental`.
+
+The two runs:
+- **Shared prefix.**
+  - A (root), B (A.0 = B) and C are allocated.
+  - Young Y is allocated (Y.0 = A, then Y.0 = B).
+  - The roots are cut to {A}.
+- **Sequential.** A full cycle:
+  - start;
+  - two slices;
+  - hand-over;
+  - three sweep steps, in which C is freed;
+  - end.
+
+  Then a minor collection.
+- **Incremental.** The same, with mutator events interleaved:
+  - while marking: an allocation (D, black), and an overwrite of A.0 that
+    goes through the barrier;
+  - while sweeping: an allocation (E, white, at or above the hand-over
+    cursor), a write, and a root change.
+
+Each event's obligations (enabled, style, `mutator_ok`) are checked on the
+concrete configurations with `assert_nbe`, which is normalisation by
+evaluation. Plain `assert_norm` re-evaluates the heap closures once per use,
+which is exponential in the number of mark slices (37 s for the hand-over,
+then worse). Reachability witnesses are built as terms (`RBase`, `YRoot`).
+The step contracts follow from `toy_components_ok` (`hyps_of_ok`).
+
+The non-triviality lemmas are:
+- `every_event_occurs`: all ten events occur in each run.
+- `incremental_interleaves`: the mutator events of the incremental run
+  happen during marking and during sweeping.
+- `c_unreachable_at_start`: at the cycle's start there is a root; A and B
+  are reachable (B only through a field and the young object); C is in use
+  and unreachable.
+
+**Pages.** No run, because there is no abstraction function from the
+byte-level heap (G17). The existing page witnesses (`Cycle.CarriedVacuity`,
+`MinorVacuity{,2}`, `IncrVacuity`) are runs of the byte-level cycle, not of
+this specification.
+
+### 7.7 Gaps found, and how the specification was changed
+
+| | Gap in the specification as first written | Found by | Fix |
+|---|---|---|---|
+| G1 | `mutator_ok` allowed values in `snapshot_k ∪ allocated_k`. A program could then resurrect an object that was dropped during cycle k: it is unreachable at some point, but reachable at `s_{k+1}`, so (3c) is false. In Idle the clause was undefined (no snapshot). | broken mutator (5): the snapshot reading accepts it | Values, roots and targets must be **reachable now** (`value_ok`). This is what OCaml's type safety gives: a program holds no pointer to an unreachable object. |
+| G2 | (3d) "never promotes an unreachable young object" is false for any remembered-set minor collection. A stale slot of a garbage major object keeps its young target alive. | writing (3d) against `minor_ok` | (3d) states: promotes only `minor_live` objects (reachable from roots ∪ remembered slots). Exact reachability would need the remembered set restricted to live objects, which no OCaml runtime does. |
+| G3 | "OutOfRoom: the run stops" accepts a minor collection that always gives up | broken minor (8) | `oor_justified`: some order of live young objects makes `A.alloc` refuse one |
+| G4 | `alloc_post` gives `inv` after the Fill, but nothing kept `inv` (or the in-use set) across the program's writes, the mark's recolouring or the minor collection's pointer rewrites | checking (1b)/(5) by hand | `inv_frame_at`, `inv_start_at`, `free_hd_at` |
+| G5 | The mark is allocator-free. If a free block could be grey or black, `mark_done` would not give black = `snap ∪ allocd` | checking the mark's exactness | `free_white_at` (pages and first-fit: blue) |
+| G6 | `sweep start` did not require every in-use object to be unswept. A pending object in "already swept" memory would never be freed, so (3a)/(3b) fail | checking (3b) | Clause added to `sweep_start_at` |
+| G7 | `done ⇒ pending empty` does not give an all-white heap, which the next `mark_start` needs | checking cycle k+1 | `sweep_done_at` adds: every block white |
+| G8 | A slice when nothing is grey, and a sweep step when done, were unconstrained | writing `enabled` | Only enabled when not done |
+| G9 | "Each slice decreases a measure": a component-chosen measure says nothing if other events may increase it | writing (6) | Spec-defined measure (white-live, then grey-live, sets); (6) says no other event increases it |
+| G10 | `barrier_ok` named only writes. The Fill of a new major object with young pointers (OCaml's `caml_initialize`) must also be remembered, or `rem_covers` fails at the next minor collection | broken barrier (9) | `binit` clause |
+| G11 | `mutator_ok` did not stop a write over a closure's infix header, or the storing of one; either breaks `resolve` | writing `value_ok` | Excluded |
+| G12 | "the overwritten value is darkened": blackening without scanning breaks the snapshot invariant | proving the toy mark | `darkened`: exactly white → grey |
+| G13 | `alloc_ok`'s precondition "the partition" cannot be stated by the allocator, which does not see the snapshot | writing `alloc_at` | Dropped. The allocator's view of the partition (in use / free) is total by definition. |
+| G14 | The prompt's "(6) if slices keep being scheduled" is a liveness property of infinite runs | writing (6) | Stated as strict decrease of finite measures plus non-increase by other events, plus `enabled` |
+| G15 | The minor collection must not forward no-scan fields (bytes) | writing `minor_post` | `fwd_field` |
+
+**Residual gaps** (not fixed in this stage):
+
+- **G16. Allocation status mid-sweep.** Pages' `free_sw` and first-fit's
+  `free_incremental` count unswept white blocks as free. Their step lemmas
+  then say "the in-use set is unchanged". This specification's `free` is
+  allocation status: a sweep step frees, and `freed_words` counts. To
+  instantiate it, `free` must be "blue" for both, with their step lemmas
+  restated. `freed_words`, and "free words grow exactly", are missing in
+  both (§7.4 tables).
+- **G17. No abstraction function** from the byte-level heap to this
+  model. So neither pages nor first-fit is an instance yet, and there is no
+  pages run here. The tables of §7.4 are the per-clause plan for those
+  instances.
+- **G18. `nontrivial` is weak.** It is one initial request. An allocator
+  whose room holds only on the initial heap passes it. Only the
+  per-allocator capacity lemma, which is not a generic clause, rules it
+  out. A generic form would need "free space of its kind", which is per
+  allocator by design.
+- **G19. The mark and minor contracts are proved only for the toy.**
+  akhil's mark and `Pages.Promote` meet them only "close" (§7.4: the ⊇
+  direction of the promoted set, the measure over all blocks rather than
+  live ones). The toy minor chooses its live set classically; it is a
+  specification of Cheney's result, not of its scan.
+- **G20. The theorem is not proved.** Clauses (1a)–(6) were checked by
+  hand against the contracts while writing them; that check found G1–G15.
+  The proof is the next stage.
+
+### 7.8 How to check
+
+**Trust.**
+- No admit and no assume.
+- The toy minor and some proofs use ulib's classical choice,
+  `FStar.IndefiniteDescription`: `strong_excluded_middle` and
+  `indefinite_description_ghost`. These are ghost functions.
+- `assert_nbe` trusts F*'s normaliser, as `assert_norm` does.
+
+The modules depend only on ulib. Each was checked from an empty cache,
+without `--retry`, at `--z3seed 0`, `1` and `2`:
+
+```
+fstar.exe --cache_checked_modules --cache_dir <empty> --z3version 5.3.0 --z3seed N \
+  --include mark-and-sweep/spec mark-and-sweep/spec/GC.Spec.Top.<M>.fst
+```
+
+| Module | Seed 0 | Seed 1 | Seed 2 |
+|---|---|---|---|
+| Heap, Iface, Run | 8 s | 7 s | 7 s |
+| Toy | 101 s | 123 s | 99 s |
+| ToyMark | 6 s | 6 s | 5 s |
+| ToyMinor | 39 s | 35 s | 39 s |
+| ToyComps | 1 s | 1 s | 1 s |
+| Broken | 11 s | 12 s | 12 s |
+| Vacuity | 8 s | 8 s | 9 s |
+
+`GC.Spec.Top.Vacuity` and `GC.Spec.Top.Broken` are in `ROOT_MODULES`, so
+`gmake verify` checks all nine. That is the only change outside the new
+modules and this document.

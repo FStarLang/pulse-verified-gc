@@ -1,0 +1,372 @@
+/// ---------------------------------------------------------------------------
+/// GC.Spec.Top.ToyMark - a toy mark and write barrier meeting the contracts
+/// ---------------------------------------------------------------------------
+///
+/// Satisfiability of `mark_ok` and `barrier_ok` (GC.Spec.Top.Iface).
+///
+/// The mark keeps its state in the colours: `tmstart` greys every white
+/// object in outside_refs; `tmslice` takes the lowest grey block, greys its
+/// white children and blackens it.  The barrier greys the overwritten
+/// target while marking, then stores, and remembers every field of a
+/// scannable block that receives a young pointer.
+///
+/// Proved: `toy_mark_ok` (the snapshot invariant is established by the start
+/// and kept by every slice, and a slice decreases the measure),
+/// `toy_barrier_ok`.
+
+module GC.Spec.Top.ToyMark
+
+open GC.Spec.Top.Heap
+open GC.Spec.Top.Iface
+module L = FStar.List.Tot
+module Seq = FStar.Seq
+
+#set-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+
+/// ---------------------------------------------------------------------------
+/// Bounded searches
+/// ---------------------------------------------------------------------------
+
+let rec exists_below (n: nat) (f: nat -> bool) : bool =
+  if n = 0 then false else f (n - 1) || exists_below (n - 1) f
+
+let rec exists_below_iff (n: nat) (f: nat -> bool)
+  : Lemma (exists_below n f == true <==> (exists (i: nat). i < n /\ f i == true))
+  = if n = 0 then () else exists_below_iff (n - 1) f
+
+let points_major (h: mheap) (v: value) (x: nat) : bool =
+  match v with
+  | VPtr (Major a) -> resolve h a = Some x
+  | _ -> false
+
+let points_major_iff (h: mheap) (v: value) (x: nat)
+  : Lemma (points_major h v x == true <==> (exists (a: nat). v == VPtr (Major a) /\ resolve h a == Some x))
+  = match v with
+    | VPtr (Major a) -> ()
+    | _ -> ()
+
+let rec root_b (h: mheap) (rs: list value) (x: nat) : bool =
+  match rs with
+  | [] -> false
+  | v :: tl -> points_major h v x || root_b h tl x
+
+let rec root_b_iff (h: mheap) (rs: list value) (x: nat)
+  : Lemma (root_b h rs x == true <==> (exists (a: nat). L.memP (VPtr (Major a)) rs /\ resolve h a == Some x))
+  = match rs with
+    | [] -> ()
+    | v :: tl ->
+      root_b_iff h tl x;
+      match v with
+      | VPtr (Major a) -> if resolve h a = Some x then assert (L.memP (VPtr (Major a)) rs)
+      | _ -> ()
+
+let young_field_b (w: world) (x: nat) (y: nat) : bool =
+  exists_below (wz_of w.yng y) (fun i -> ptr_field w.yng y i && points_major w.maj (field w.yng y i) x)
+
+let young_b (w: world) (x: nat) : bool =
+  exists_below w.yng.size (young_field_b w x)
+
+let young_b_iff (w: world) (x: nat)
+  : Lemma (young_b w x == true <==> young_ref w x)
+  = exists_below_iff w.yng.size (young_field_b w x);
+    let aux (y: nat) : Lemma (young_field_b w x y == true <==>
+                              (exists (i a: nat). ptr_field w.yng y i /\ field w.yng y i == VPtr (Major a) /\
+                                                  resolve w.maj a == Some x))
+      = exists_below_iff (wz_of w.yng y)
+          (fun i -> ptr_field w.yng y i && points_major w.maj (field w.yng y i) x);
+        let pm (i: nat) : Lemma (points_major w.maj (field w.yng y i) x == true <==>
+                                 (exists (a: nat). field w.yng y i == VPtr (Major a) /\ resolve w.maj a == Some x))
+          = points_major_iff w.maj (field w.yng y i) x in
+        FStar.Classical.forall_intro pm in
+    FStar.Classical.forall_intro aux
+
+let outside_b (w: world) (x: nat) : bool = root_b w.maj w.roots x || young_b w x
+
+let outside_b_iff (w: world) (x: nat) : Lemma (outside_b w x == true <==> outside_ref w x)
+  = root_b_iff w.maj w.roots x; young_b_iff w x
+
+let edge_b (h: mheap) (g x: nat) : bool =
+  exists_below (wz_of h g) (fun i -> ptr_field h g i && points_major h (field h g i) x)
+
+let edge_b_iff (h: mheap) (g x: nat) : Lemma (edge_b h g x == true <==> major_edge h g x)
+  = exists_below_iff (wz_of h g) (fun i -> ptr_field h g i && points_major h (field h g i) x);
+    let pm (i: nat) : Lemma (points_major h (field h g i) x == true <==>
+                             (exists (a: nat). field h g i == VPtr (Major a) /\ resolve h a == Some x))
+      = points_major_iff h (field h g i) x in
+    FStar.Classical.forall_intro pm
+
+let rec find_grey (h: mheap) (n: nat) : option nat =
+  if n = 0 then None
+  else match find_grey h (n - 1) with
+    | Some g -> Some g
+    | None -> if is_block h (n - 1) && col_of h (n - 1) = Grey then Some (n - 1) else None
+
+let rec find_grey_spec (h: mheap) (n: nat)
+  : Lemma (match find_grey h n with
+           | Some g -> is_block h g /\ col_of h g == Grey
+           | None -> (forall (o: nat). o < n /\ is_block h o ==> col_of h o <> Grey))
+  = if n = 0 then () else find_grey_spec h (n - 1)
+
+/// ---------------------------------------------------------------------------
+/// The mark
+/// ---------------------------------------------------------------------------
+
+let resolve_resolves (h: mheap) (a o: nat) : Lemma (resolve h a == Some o ==> is_block h o) = ()
+
+let tmstart (w: world) : GTot mheap =
+  { w.maj with hd = (fun (x: nat) ->
+      match w.maj.hd x with
+      | Some hx -> if outside_b w x && hx.col = White then Some ({ hx with col = Grey }) else Some hx
+      | None -> None) }
+
+let tmslice_with (h: mheap) (g: nat) : mheap =
+  { h with hd = (fun (x: nat) ->
+      match h.hd x with
+      | Some hx ->
+        if x = g then Some ({ hx with col = Black })
+        else if hx.col = White && edge_b h g x then Some ({ hx with col = Grey })
+        else Some hx
+      | None -> None) }
+
+let tmslice (h: mheap) : GTot mheap =
+  match find_grey h h.size with
+  | None -> h
+  | Some g -> tmslice_with h g
+
+let tmark : mark = { mstart = tmstart; mslice = tmslice }
+
+/// Recolouring keeps resolve, pointer fields and edges.
+let colours_only_edges (h h': mheap)
+  : Lemma (requires colours_only h h')
+          (ensures (forall (a: nat). resolve h' a == resolve h a) /\
+                   (forall (o i: nat). ptr_field h' o i == ptr_field h o i /\ field h' o i == field h o i) /\
+                   (forall (o o': nat). major_edge h' o o' <==> major_edge h o o'))
+  = ()
+
+let start_colour (w: world) (x: nat)
+  : Lemma (col_of (tmstart w) x ==
+           (if Some? (w.maj.hd x) && outside_b w x && col_of w.maj x = White then Grey else col_of w.maj x))
+  = ()
+
+let tmstart_colours_only (w: world) : Lemma (colours_only w.maj (tmstart w))
+  = let h' = tmstart w in
+    let a (o: nat) : Lemma (is_block h' o == is_block w.maj o /\ wz_of h' o == wz_of w.maj o /\
+                            tag_of h' o == tag_of w.maj o) = () in
+    FStar.Classical.forall_intro a
+
+/// Every reachable object is grey, or reached from a grey one through white
+/// ones, right after the start.
+let rec start_path (w: world) (o: nat) (r: reach w o)
+  : Ghost (wpath (tmstart w) o)
+          (requires well_formed w.maj /\ all_white w.maj /\ (forall (x: nat). reachable w x ==> is_block w.maj x))
+          (ensures fun _ -> True)
+          (decreases r)
+  = let h' = tmstart w in
+    assert (reachable w o);
+    start_colour w o;
+    match r with
+    | RBase _ _ ->
+      outside_b_iff w o;
+      WGrey o ()
+    | RStep p _ r' _ ->
+      if col_of h' o = Grey then WGrey o ()
+      else begin
+        let pp = start_path w p r' in
+        tmstart_colours_only w;
+        colours_only_edges w.maj h';
+        WStep p o pp ()
+      end
+
+let tmstart_ok (w: world) : Lemma (mark_start_at tmark w)
+  = let pre () : Lemma (requires well_formed w.maj /\ all_white w.maj /\
+                                 (forall (o: nat). reachable w o ==> is_block w.maj o))
+                       (ensures (let h' = tmark.mstart w in
+                                 colours_only w.maj h' /\
+                                 (forall (o: nat). outside_ref w o ==> col_of h' o <> White) /\
+                                 tricolour h' (reachable w) (fun _ -> False)))
+      = let h' = tmstart w in
+        tmstart_colours_only w;
+        let c (x: nat) : Lemma ((outside_ref w x ==> col_of h' x <> White) /\
+                                (is_block h' x /\ col_of h' x <> White ==> reachable w x))
+          = start_colour w x; outside_b_iff w x;
+            if outside_b w x then begin
+              assert (outside_ref w x);
+              let rb : reach w x = RBase x () in
+              assert (reachable w x)
+            end
+        in
+        FStar.Classical.forall_intro c;
+        let t3 (o: nat) : Lemma (reachable w o /\ col_of h' o == White ==> grey_reached h' o)
+          = if FStar.IndefiniteDescription.strong_excluded_middle (reachable w o) then begin
+              let r = FStar.IndefiniteDescription.indefinite_description_ghost (reach w o) (fun _ -> True) in
+              let p = start_path w o r in
+              assert (grey_reached h' o)
+            end
+        in
+        FStar.Classical.forall_intro t3;
+        assert (tmark.mstart w == h');
+        assert (forall (o: nat). reachable w o ==> is_block h' o);
+        assert (forall (o: nat). is_block h' o /\ col_of h' o <> White ==> reachable w o \/ False);
+        assert (forall (o: nat). reachable w o /\ col_of h' o == White ==> grey_reached h' o);
+        assert (tricolour h' (reachable w) (fun _ -> False))
+    in
+    FStar.Classical.move_requires pre ()
+
+let tmslice_colours_only (h: mheap) (g: nat) : Lemma (colours_only h (tmslice_with h g))
+  = let h' = tmslice_with h g in
+    let a (o: nat) : Lemma (is_block h' o == is_block h o /\ wz_of h' o == wz_of h o /\
+                            tag_of h' o == tag_of h o) = () in
+    FStar.Classical.forall_intro a
+
+/// The colours after a slice at grey `g`.
+let slice_colour (h: mheap) (g x: nat)
+  : Lemma (col_of (tmslice_with h g) x ==
+           (if Some? (h.hd x) && x = g then Black
+            else if Some? (h.hd x) && col_of h x = White && edge_b h g x then Grey
+            else col_of h x))
+  = ()
+
+let wpath_not_black (#h: mheap) (#x: nat) (p: wpath h x)
+  : Lemma (is_block h x /\ col_of h x <> Black)
+  = match p with
+    | WGrey _ _ -> ()
+    | WStep _ _ _ _ -> ()
+
+let rec slice_path (h: mheap) (g: nat) (x: nat) (p: wpath h x)
+  : Ghost (wpath (tmslice_with h g) x)
+          (requires is_block h g /\ col_of h g == Grey /\ col_of (tmslice_with h g) x <> Black)
+          (ensures fun _ -> True)
+          (decreases p)
+  = let h' = tmslice_with h g in
+    slice_colour h g x;
+    match p with
+    | WGrey _ _ -> WGrey x ()
+    | WStep o _ p' _ ->
+      if col_of h' x = Grey then WGrey x ()
+      else begin
+        slice_colour h g o;
+        wpath_not_black p';
+        if o = g then begin
+          edge_b_iff h g x;
+          assert False
+        end;
+        let q = slice_path h g o p' in
+        tmslice_colours_only h g;
+        colours_only_edges h h';
+        WStep o x q ()
+      end
+
+let slice_measure (h: mheap) (g: nat) (live: nat -> prop)
+  : Lemma (requires is_block h g /\ col_of h g == Grey /\ live g)
+          (ensures mark_decreases h (tmslice_with h g) live)
+  = let h' = tmslice_with h g in
+    let wsub (x: nat) : Lemma (white_live h' live x ==> white_live h live x) = slice_colour h g x in
+    FStar.Classical.forall_intro wsub;
+    let some_greyed : prop = exists (x: nat). white_live h live x /\ col_of h' x == Grey in
+    if FStar.IndefiniteDescription.strong_excluded_middle some_greyed then begin
+      let x = FStar.IndefiniteDescription.indefinite_description_ghost nat
+                (fun x -> white_live h live x /\ col_of h' x == Grey) in
+      assert (white_live h live x /\ ~(white_live h' live x))
+    end
+    else begin
+      let w (x: nat) : Lemma (requires ~some_greyed)
+                             (ensures (white_live h' live x <==> white_live h live x) /\
+                                      (grey_live h' live x ==> grey_live h live x))
+        = slice_colour h g x;
+          assert (~(white_live h live x /\ col_of h' x == Grey)) in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires w);
+      slice_colour h g g;
+      assert (grey_live h live g /\ ~(grey_live h' live g))
+    end
+
+#push-options "--z3rlimit 40"
+let tmslice_ok (h: mheap) (snap allocd: nat -> prop) : Lemma (mark_slice_at tmark h snap allocd)
+  = let live = union snap allocd in
+    let pre () : Lemma (requires well_formed h /\ tricolour h snap allocd /\ closed h live /\ ~(mark_done h))
+                       (ensures (let h' = tmark.mslice h in
+                                 colours_only h h' /\ tricolour h' snap allocd /\ mark_decreases h h' live))
+      = find_grey_spec h h.size;
+        let Some g = find_grey h h.size in
+        let h' = tmslice_with h g in
+        assert (tmark.mslice h == h');
+        tmslice_colours_only h g;
+        assert (live g);
+        let c (x: nat) : Lemma ((is_block h' x /\ col_of h' x <> White ==> snap x \/ allocd x) /\
+                                (allocd x ==> col_of h' x == Black) /\
+                                (col_of h' x == White ==> col_of h x == White))
+          = slice_colour h g x;
+            if Some? (h.hd x) && x <> g && col_of h x = White && edge_b h g x then begin
+              edge_b_iff h g x;
+              assert (exists (o' a: nat). resolve h a == Some o' /\ live o' /\ resolve h a == Some x)
+            end
+        in
+        FStar.Classical.forall_intro c;
+        let t3 (o: nat) : Lemma (snap o /\ col_of h' o == White ==> grey_reached h' o)
+          = if FStar.IndefiniteDescription.strong_excluded_middle (snap o /\ col_of h' o == White) then begin
+              let p = FStar.IndefiniteDescription.indefinite_description_ghost (wpath h o) (fun _ -> True) in
+              let q = slice_path h g o p in
+              assert (grey_reached h' o)
+            end
+        in
+        FStar.Classical.forall_intro t3;
+        assert (tricolour h' snap allocd);
+        (* the measure *)
+        assert (live g);
+        slice_measure h g live
+    in
+    FStar.Classical.move_requires pre ()
+#pop-options
+
+let toy_mark_ok () : Lemma (mark_ok tmark)
+  = FStar.Classical.forall_intro tmstart_ok;
+    FStar.Classical.forall_intro_3 tmslice_ok
+
+/// ---------------------------------------------------------------------------
+/// The barrier
+/// ---------------------------------------------------------------------------
+
+let rec slots (o: nat) (n: nat) : list slot =
+  if n = 0 then [] else (o, n - 1) :: slots o (n - 1)
+
+let rec slots_mem (o n i: nat) : Lemma (i < n ==> L.memP (o, i) (slots o n))
+  = if n = 0 then () else slots_mem o (n - 1) i
+
+let tbwrite (marking: bool) (h: mheap) (rem: list slot) (o i: nat) (v: value) : GTot (mheap & list slot) =
+  let h1 =
+    if marking then
+      (match old_target h o i with
+       | Some t -> if col_of h t = White then set_col h t Grey else h
+       | None -> h)
+    else h in
+  let rem' = if young_slot h o i v then (o, i) :: rem else rem in
+  (set_field h1 o i v, rem')
+
+let tbinit (h: mheap) (rem: list slot) (o: nat) (vs: list value) : GTot (mheap & list slot) =
+  (fill h o vs, L.append (slots o (L.length vs)) rem)
+
+let tbarrier : barrier = { bwrite = tbwrite; binit = tbinit }
+
+let tbwrite_ok (marking: bool) (h: mheap) (rem: list slot) (o i: nat) (v: value)
+  : Lemma (barrier_write_at tbarrier marking h rem o i v)
+  = ()
+
+let tbinit_ok (h: mheap) (rem: list slot) (o: nat) (vs: list value)
+  : Lemma (barrier_init_at tbarrier h rem o vs)
+  = let m (sl: slot) : Lemma (L.memP sl rem ==> L.memP sl (L.append (slots o (L.length vs)) rem))
+      = L.append_memP (slots o (L.length vs)) rem sl in
+    FStar.Classical.forall_intro m;
+    let n (i: nat) : Lemma (i < L.length vs ==> L.memP (o, i) (L.append (slots o (L.length vs)) rem))
+      = slots_mem o (L.length vs) i;
+        L.append_memP (slots o (L.length vs)) rem (o, i) in
+    FStar.Classical.forall_intro n
+
+let toy_barrier_ok () : Lemma (barrier_ok tbarrier)
+  = let w (marking: bool) (h: mheap) (rem: list slot)
+      : Lemma (forall o i v. barrier_write_at tbarrier marking h rem o i v)
+      = let w1 (o: nat) : Lemma (forall i v. barrier_write_at tbarrier marking h rem o i v)
+          = FStar.Classical.forall_intro_2 (tbwrite_ok marking h rem o) in
+        FStar.Classical.forall_intro w1 in
+    FStar.Classical.forall_intro_3 w;
+    let i (h: mheap) (rem: list slot) : Lemma (forall o vs. barrier_init_at tbarrier h rem o vs)
+      = FStar.Classical.forall_intro_2 (tbinit_ok h rem) in
+    FStar.Classical.forall_intro_2 i

@@ -1,0 +1,447 @@
+/// ---------------------------------------------------------------------------
+/// GC.Spec.Top.Run - runs of a collector built from components, and the
+/// top-level theorem `gc_correct` (stated, not proved)
+/// ---------------------------------------------------------------------------
+///
+/// A collector is a record of components `comps` (allocator, sweep, mark,
+/// minor collection, barrier) and a style (`Sequential` | `Incremental`).
+/// A run is a list of events from the initial configuration; `step` is the
+/// specification's semantics of one event, and keeps the ghost bookkeeping
+/// of the cycle (snapshot, allocated set, heap at the start).
+///
+/// `gc_correct c sty` is the top-level theorem as a proposition: under the
+/// components' contracts and the mutator's obligations, every run satisfies
+/// `conclusions` (clauses (0)-(6)).  `gc_correct_local` takes the contracts
+/// only at the steps the run takes; it implies `gc_correct`
+/// (`gc_correct_local_implies`), so it is the stronger statement, and its
+/// hypotheses are the ones a concrete run can discharge (GC.Spec.Top.Vacuity).
+
+module GC.Spec.Top.Run
+
+open GC.Spec.Top.Heap
+open GC.Spec.Top.Iface
+module L = FStar.List.Tot
+module Seq = FStar.Seq
+
+noeq type comps = {
+  k : sweep_kind;
+  a : allocator k;
+  s : sweep k a;
+  m : mark;
+  n : minor k a;
+  b : barrier;
+}
+
+type style = | Sequential | Incremental
+
+noeq type config (c: comps) = {
+  w       : world;
+  ph      : phase c.k.progress;
+  ast     : c.a.state;
+  (* ghost bookkeeping, kept by the specification *)
+  hs      : mheap;              (* the major heap at the cycle's start s *)
+  snap    : nat -> prop;        (* snapshot_k = reachable(s) *)
+  allocd  : nat -> prop;        (* allocated_k: allocated, or promoted copies, since s *)
+  stopped : bool;               (* a minor collection ran out of room *)
+}
+
+noeq type event =
+  | EAlloc      : sz:size_t -> tag:tag_t -> vs:list value -> event    (* Alloc;Fill *)
+  | EYoungAlloc : y:nat -> sz:size_t -> tag:tag_t -> vs:list value -> event   (* YoungAlloc;Fill *)
+  | EWrite      : p:ptr -> i:nat -> v:value -> event
+  | ERoots      : roots:list value -> event
+  | EMinor      : event
+  | EStart      : event
+  | ESlice      : event
+  | EHandover   : event
+  | ESweep      : event
+  | EEnd        : event
+
+let is_mutator_event (e: event) : bool =
+  EAlloc? e || EYoungAlloc? e || EWrite? e || ERoots? e
+
+/// ---------------------------------------------------------------------------
+/// The semantics
+/// ---------------------------------------------------------------------------
+
+let init_config (c: comps) (n ny: nat) : GTot (config c) =
+  let (h, st) = c.a.init n in
+  { w = { maj = h; yng = empty_heap ny; roots = []; rem = [] };
+    ph = Idle; ast = st; hs = h;
+    snap = (fun _ -> False); allocd = (fun _ -> False); stopped = false }
+
+let young_alloc (y: mheap) (o: nat) (sz: size_t) (tag: tag_t) (vs: list value) : mheap =
+  fill ({ y with hd = (fun (x: nat) -> if x = o then Some ({ wz = sz; tag = tag; col = White }) else y.hd x) })
+       o vs
+
+let step (c: comps) (x: config c) (e: event) : GTot (config c) =
+  match e with
+  | EAlloc sz tag vs ->
+    let (h', st', r) = c.a.alloc x.ph x.w.maj x.ast sz tag in
+    (match r with
+     | NoRoom -> x
+     | Ok o ->
+       let (h'', rem') = c.b.binit h' x.w.rem o vs in
+       { x with w = { x.w with maj = h''; rem = rem'; roots = VPtr (Major o) :: x.w.roots };
+                ast = st'; allocd = (fun p -> x.allocd p \/ p == o) })
+  | EYoungAlloc o sz tag vs ->
+    { x with w = { x.w with yng = young_alloc x.w.yng o sz tag vs;
+                            roots = VPtr (Young o) :: x.w.roots } }
+  | EWrite (Major o) i v ->
+    let (h', rem') = c.b.bwrite (is_marking x.ph) x.w.maj x.w.rem o i v in
+    { x with w = { x.w with maj = h'; rem = rem' } }
+  | EWrite (Young o) i v ->
+    { x with w = { x.w with yng = set_field x.w.yng o i v } }
+  | ERoots rs ->
+    { x with w = { x.w with roots = rs } }
+  | EMinor ->
+    (match c.n.collect x.ph x.ast x.w with
+     | OutOfRoom -> { x with stopped = true }
+     | Done h' st' roots' fwd ->
+       { x with w = { maj = h'; yng = empty_heap x.w.yng.size; roots = roots'; rem = [] };
+                ast = st';
+                allocd = (fun p -> x.allocd p \/ (exists (o: nat). fwd o == Some p)) })
+  | EStart ->
+    { x with w = { x.w with maj = c.m.mstart x.w }; ph = Marking; hs = x.w.maj;
+             snap = reachable x.w; allocd = (fun _ -> False) }
+  | ESlice ->
+    { x with w = { x.w with maj = c.m.mslice x.w.maj } }
+  | EHandover ->
+    let (p, st') = c.s.start x.w.maj x.ast in
+    { x with ph = Sweeping p; ast = st' }
+  | ESweep ->
+    (match x.ph with
+     | Sweeping p ->
+       let (p', h', st', _) = c.s.step p x.w.maj x.ast in
+       { x with w = { x.w with maj = h' }; ph = Sweeping p'; ast = st' }
+     | _ -> x)
+  | EEnd -> { x with ph = Idle }
+
+/// The nursery has room at `o` for `sz` fields.
+let young_free (y: mheap) (o: nat) (sz: size_t) : prop =
+  o + sz < y.size /\ (forall (x w: nat). covers y x w ==> ~(o <= w /\ w <= o + sz))
+
+let enabled (c: comps) (x: config c) (e: event) : prop =
+  x.stopped == false /\
+  (match e with
+   | EYoungAlloc o sz _ _ -> young_free x.w.yng o sz
+   | EStart -> Idle? x.ph
+   | ESlice -> Marking? x.ph /\ ~(mark_done x.w.maj)
+   | EHandover -> Marking? x.ph /\ mark_done x.w.maj
+   | ESweep -> Sweeping? x.ph /\ c.s.done (Sweeping?._0 x.ph) == false
+   | EEnd -> Sweeping? x.ph /\ c.s.done (Sweeping?._0 x.ph) == true
+   | _ -> True)
+
+/// Sequential: no mutator event while a cycle runs.
+let style_ok (#c: comps) (sty: style) (x: config c) (e: event) : prop =
+  Sequential? sty ==> (is_mutator_event e ==> Idle? x.ph)
+
+/// ---------------------------------------------------------------------------
+/// The mutator's obligations (trusted)
+/// ---------------------------------------------------------------------------
+
+/// A value the program may hold: bytes, or a pointer resolving to a
+/// reachable object (major or young).  An infix header is not a value.
+let value_ok (w: world) (v: value) : prop =
+  match v with
+  | VInt _ -> True
+  | VInfix _ -> False
+  | VPtr (Major a) -> exists (o: nat). resolve w.maj a == Some o /\ reachable w o
+  | VPtr (Young a) -> exists (o: nat). resolve w.yng a == Some o /\ yreachable w o
+
+/// The Fill of a new object: no-scan fields hold any bytes; a closure may
+/// hold its own infix headers.
+let fill_ok (w: world) (tag: tag_t) (vs: list value) : prop =
+  scannable tag ==>
+  (forall (i: nat). i < L.length vs ==>
+     value_ok w (L.index vs i) \/ (tag == closure_tag /\ L.index vs i == VInfix (i + 1)))
+
+let mutator_ok (#c: comps) (x: config c) (e: event) : prop =
+  let w = x.w in
+  match e with
+  | EAlloc sz tag vs -> tag <> infix_tag /\ L.length vs == sz /\ fill_ok w tag vs
+  | EYoungAlloc _ sz tag vs -> tag <> infix_tag /\ L.length vs == sz /\ fill_ok w tag vs
+  | EWrite (Major o) i v ->
+    is_block w.maj o /\ reachable w o /\ i < wz_of w.maj o /\ ~(VInfix? (field w.maj o i)) /\
+    (scannable (tag_of w.maj o) ==> value_ok w v)
+  | EWrite (Young o) i v ->
+    is_block w.yng o /\ yreachable w o /\ i < wz_of w.yng o /\ ~(VInfix? (field w.yng o i)) /\
+    (scannable (tag_of w.yng o) ==> value_ok w v)
+  | ERoots rs -> (forall (v: value). L.memP v rs ==> value_ok w v)
+  | _ -> True
+
+/// ---------------------------------------------------------------------------
+/// Runs
+/// ---------------------------------------------------------------------------
+
+let rec exec (c: comps) (x: config c) (es: list event) : GTot (config c) (decreases es) =
+  match es with
+  | [] -> x
+  | e :: tl -> exec c (step c x e) tl
+
+let rec take (#t: Type) (n: nat) (l: list t) : list t =
+  match l with
+  | [] -> []
+  | h :: tl -> if n = 0 then [] else h :: take (n - 1) tl
+
+/// The configuration after the first `i` events.
+let at (c: comps) (n ny: nat) (es: list event) (i: nat) : GTot (config c) =
+  exec c (init_config c n ny) (take i es)
+
+let ev (es: list event) (i: nat{i < L.length es}) : event = L.index es i
+
+/// The run is allowed: every event enabled, in the style, and meeting the
+/// mutator's obligations.
+let run_ok (c: comps) (sty: style) (n ny: nat) (es: list event) : prop =
+  forall (i: nat). i < L.length es ==>
+    (let x = at c n ny es i in
+     let e = ev es i in
+     enabled c x e /\ style_ok sty x e /\ mutator_ok x e)
+
+/// The components' contracts at one step.
+let hyps_at (c: comps) (x: config c) (e: event) : prop =
+  let h = x.w.maj in
+  free_white_at c.a x.ph h x.ast /\
+  (forall (h': mheap). free_hd_at c.a x.ast h h') /\
+  (match e with
+   | EAlloc sz tag vs ->
+     alloc_at c.a x.ph h x.ast sz tag /\
+     (let (h', _, r) = c.a.alloc x.ph h x.ast sz tag in
+      match r with
+      | Ok o -> barrier_init_at c.b h' x.w.rem o vs
+      | NoRoom -> True)
+   | EWrite (Major o) i v ->
+     barrier_write_at c.b (is_marking x.ph) h x.w.rem o i v /\
+     inv_frame_at c.a x.ph h x.ast (fst (c.b.bwrite (is_marking x.ph) h x.w.rem o i v))
+   | EMinor -> minor_at c.n x.ph x.ast x.w
+   | EStart ->
+     mark_start_at c.m x.w /\ inv_start_at c.a h x.ast /\
+     inv_frame_at c.a Marking h x.ast (c.m.mstart x.w)
+   | ESlice ->
+     mark_slice_at c.m h x.snap x.allocd /\ inv_frame_at c.a x.ph h x.ast (c.m.mslice h)
+   | EHandover -> sweep_start_at c.s h x.ast
+   | ESweep -> (match x.ph with Sweeping p -> sweep_step_at c.s p h x.ast | _ -> True)
+   | EEnd -> (match x.ph with Sweeping p -> sweep_done_at c.s p h x.ast | _ -> True)
+   | _ -> True)
+
+let run_hyps (c: comps) (n ny: nat) (es: list event) : prop =
+  init_at c.a n /\ nontrivial c.a /\
+  (forall (i: nat). i < L.length es ==> hyps_at c (at c n ny es i) (ev es i))
+
+/// ---------------------------------------------------------------------------
+/// The partition
+/// ---------------------------------------------------------------------------
+
+let live (#c: comps) (x: config c) (o: nat) : prop = x.snap o \/ x.allocd o
+
+let in_use_c (#c: comps) (x: config c) (o: nat) : GTot bool = in_use c.a x.ast x.w.maj o
+
+/// kept: in use and in snapshot_k U allocated_k; while idle, all in use.
+let kept (#c: comps) (x: config c) (o: nat) : prop =
+  in_use_c x o == true /\ (Idle? x.ph \/ live x o)
+
+let unswept_now (#c: comps) (x: config c) (o: nat) : bool =
+  match x.ph with
+  | Idle -> false
+  | Marking -> true
+  | Sweeping p -> c.k.unswept p o
+
+/// pending: in use, not kept, not yet swept.
+let pending (#c: comps) (x: config c) (o: nat) : prop =
+  in_use_c x o == true /\ ~(Idle? x.ph) /\ ~(live x o) /\ unswept_now x o == true
+
+let exactly_one (p q r: prop) : prop =
+  (p \/ q \/ r) /\ ~(p /\ q) /\ ~(p /\ r) /\ ~(q /\ r)
+
+let partition (#c: comps) (x: config c) : prop =
+  forall (w: nat). w < x.w.maj.size ==>
+    exactly_one (exists (o: nat). covers x.w.maj o w /\ kept x o)
+                (exists (o: nat). covers x.w.maj o w /\ pending x o)
+                (free_word c.a x.ast x.w.maj w)
+
+/// ---------------------------------------------------------------------------
+/// The conclusions
+/// ---------------------------------------------------------------------------
+
+/// A pointer the program or a reachable object holds resolves to an object
+/// in use (major) or a young block.
+let resolves_ok (#c: comps) (x: config c) (v: value) : prop =
+  match v with
+  | VPtr (Major a) -> exists (o: nat). resolve x.w.maj a == Some o /\ in_use_c x o == true
+  | VPtr (Young a) -> exists (o: nat). resolve x.w.yng a == Some o
+  | _ -> True
+
+let held (#c: comps) (x: config c) (v: value) : prop =
+  L.memP v x.w.roots \/
+  (exists (o i: nat). reachable x.w o /\ ptr_field x.w.maj o i /\ field x.w.maj o i == v) \/
+  (exists (o i: nat). yreachable x.w o /\ ptr_field x.w.yng o i /\ field x.w.yng o i == v)
+
+/// At every point: (1b) reachable is within snapshot U allocated (all of in
+/// use while idle), no dangling pointer, the heap well formed, the
+/// allocator's invariant, (5) the partition.
+let concl_point (#c: comps) (x: config c) : prop =
+  (forall (o: nat). reachable x.w o ==> kept x o) /\
+  (forall (v: value). held x v /\ VPtr? v ==> resolves_ok x v) /\
+  well_formed x.w.maj /\ young_ok x.w.yng /\
+  c.a.inv x.ph x.w.maj x.ast /\
+  partition x
+
+/// (1a) The contents of a kept object after one step: unchanged except by
+/// the program's write, up to fwd at a minor collection.
+let contents_step (#c: comps) (x: config c) (e: event) (x': config c) (o: nat) : prop =
+  let h = x.w.maj in
+  let h' = x'.w.maj in
+  wz_of h' o == wz_of h o /\ tag_of h' o == tag_of h o /\
+  (match e with
+   | EWrite (Major t) i v ->
+     (forall (j: nat). j < wz_of h o ==> field h' o j == (if o = t && j = i then v else field h o j))
+   | EMinor ->
+     (match c.n.collect x.ph x.ast x.w with
+      | Done _ _ _ fwd -> (forall (j: nat). j < wz_of h o ==> field h' o j == fwd_field h o j x.w.yng fwd)
+      | OutOfRoom -> (forall (j: nat). j < wz_of h o ==> field h' o j == field h o j))
+   | _ -> (forall (j: nat). j < wz_of h o ==> field h' o j == field h o j))
+
+/// (2) Allocation as specified, succeeding exactly when room holds.
+let alloc_step (#c: comps) (x: config c) (sz: size_t) (tag: tag_t) (vs: list value) (x': config c) : prop =
+  let (_, _, r) = c.a.alloc x.ph x.w.maj x.ast sz tag in
+  (Ok? r <==> c.a.room x.ph x.ast x.w.maj sz == true) /\
+  (match r with
+   | NoRoom -> x' == x
+   | Ok o ->
+     in_use_c x o == false /\ in_use_c x' o == true /\ kept x' o /\
+     x'.w.maj.hd o == Some ({ wz = sz; tag = tag; col = colour_at c.k x.ph o }) /\
+     (forall (i: nat). i < sz /\ i < L.length vs ==> field x'.w.maj o i == L.index vs i) /\
+     (forall (y: nat). y <> o ==> (in_use_c x' y == in_use_c x y)))
+
+let concl_step (#c: comps) (x: config c) (e: event) (x': config c) : prop =
+  (* (1a) *)
+  (forall (o: nat). kept x o ==> in_use_c x' o == true /\ contents_step x e x' o) /\
+  (* (2) *)
+  (match e with EAlloc sz tag vs -> alloc_step x sz tag vs x' | _ -> True) /\
+  (* (3d) a minor collection promotes only young objects reachable from roots and remembered slots *)
+  (match e with
+   | EMinor -> (match c.n.collect x.ph x.ast x.w with
+               | Done _ _ _ fwd -> (forall (o: nat). Some? (fwd o) ==> minor_live x.w o)
+               | OutOfRoom -> True)
+   | _ -> True) /\
+  (* (5) words move only from in use to free (sweep) and free to in use (allocation) *)
+  (forall (w: nat). w < x.w.maj.size ==>
+     (in_use_word c.a x.ast x.w.maj w /\ free_word c.a x'.ast x'.w.maj w ==> ESweep? e) /\
+     (free_word c.a x.ast x.w.maj w /\ in_use_word c.a x'.ast x'.w.maj w ==> EAlloc? e \/ EMinor? e)) /\
+  (* (6) the measures: a slice decreases the mark's, no other event while marking increases it;
+         a sweep step strictly shrinks the unswept set, which nothing else changes *)
+  (Marking? x.ph /\ Marking? x'.ph ==>
+     (ESlice? e ==> mark_decreases x.w.maj x'.w.maj (live x')) /\
+     (~(ESlice? e) ==> mark_no_increase x.w.maj x'.w.maj (live x'))) /\
+  (match x.ph, x'.ph with
+   | Sweeping p, Sweeping p' ->
+     (ESweep? e ==> (forall (o: nat). c.k.unswept p' o ==> c.k.unswept p o) /\
+                    (exists (o: nat). o < x.w.maj.size /\ region c.k p p' o)) /\
+     (~(ESweep? e) ==> p' == p)
+   | _ -> True)
+
+/// Cycle k: started by event s, ended by event j.
+let is_cycle (es: list event) (s j: nat) : prop =
+  s < j /\ j < L.length es /\ ev es s == EStart /\ ev es j == EEnd /\
+  (forall (t: nat). s < t /\ t < j ==> ~(ev es t == EStart) /\ ~(ev es t == EEnd))
+
+let freed_in (c: comps) (n ny: nat) (es: list event) (s j: nat) (o: nat) : prop =
+  in_use_c (at c n ny es s) o == true /\
+  (exists (t: nat). s <= t /\ t <= j /\ in_use_c (at c n ny es (t + 1)) o == false)
+
+/// What a stop-the-world collection at s from outside_refs(s) frees.
+let stw_freed (#c: comps) (x: config c) (o: nat) : prop =
+  in_use_c x o == true /\ ~(reachable x.w o)
+
+let concl_cycle (c: comps) (n ny: nat) (es: list event) (s j: nat) : prop =
+  let x0 = at c n ny es s in          (* before Start *)
+  let xs = at c n ny es (s + 1) in    (* after Start: snapshot_k *)
+  let xe = at c n ny es j in          (* before End *)
+  let xf = at c n ny es (j + 1) in    (* after End *)
+  (* (3a) the words of every object in use at s and not in the snapshot are
+     free, or handed out to an object allocated during the cycle *)
+  (forall (o: nat). in_use_c x0 o == true /\ ~(xs.snap o) ==>
+     (forall (w: nat). covers x0.w.maj o w ==>
+        free_word c.a xf.ast xf.w.maj w \/
+        (exists (y: nat). xe.allocd y /\ in_use_c xf y == true /\ covers xf.w.maj y w))) /\
+  (* (3b) the survivors are exactly snapshot_k U allocated_k *)
+  (forall (o: nat). in_use_c xf o == true <==> (xe.snap o \/ xe.allocd o)) /\
+  (* (4) the freed set is in_use(h_s) minus snapshot_k, the STW set at s *)
+  (forall (o: nat). freed_in c n ny es s j o <==> stw_freed x0 o)
+
+/// (3c) An object unreachable at some point of cycle k is freed by the end
+/// of cycle k+1, when that cycle is triggered and completes.
+let concl_two_cycles (c: comps) (n ny: nat) (es: list event) (s1 j1 s2 j2: nat) : prop =
+  forall (t: nat) (o: nat). s1 <= t /\ t <= j1 /\
+    in_use_c (at c n ny es t) o == true /\ ~(reachable (at c n ny es t).w o) ==>
+    (exists (t': nat). t < t' /\ t' <= j2 + 1 /\ in_use_c (at c n ny es t') o == false)
+
+let conclusions (c: comps) (n ny: nat) (es: list event) : prop =
+  (* (0) the initial heap has no objects *)
+  (forall (o: nat). in_use_c (at c n ny es 0) o == false) /\
+  (forall (i: nat). i <= L.length es ==> concl_point (at c n ny es i)) /\
+  (forall (i: nat). i < L.length es ==> concl_step (at c n ny es i) (ev es i) (at c n ny es (i + 1))) /\
+  (forall (s j: nat). is_cycle es s j ==> concl_cycle c n ny es s j) /\
+  (forall (s1 j1 s2 j2: nat). is_cycle es s1 j1 /\ is_cycle es s2 j2 /\ j1 < s2 /\
+     (forall (t: nat). j1 < t /\ t < s2 ==> ~(ev es t == EStart)) ==>
+     concl_two_cycles c n ny es s1 j1 s2 j2)
+
+/// ---------------------------------------------------------------------------
+/// The top-level theorem, as propositions
+/// ---------------------------------------------------------------------------
+
+let components_ok (c: comps) : prop =
+  allocator_ok c.a /\ nontrivial c.a /\ sweep_ok c.s /\ mark_ok c.m /\ minor_ok c.n /\ barrier_ok c.b
+
+/// gc_correct (A, S, C): under the contracts and the mutator's obligations,
+/// every run meets (0)-(6).
+let gc_correct (c: comps) (sty: style) : prop =
+  components_ok c ==>
+  (forall (n ny: nat) (es: list event). run_ok c sty n ny es ==> conclusions c n ny es)
+
+/// The same, with the contracts required only at the steps taken.
+let gc_correct_local (c: comps) (sty: style) : prop =
+  forall (n ny: nat) (es: list event). run_ok c sty n ny es /\ run_hyps c n ny es ==> conclusions c n ny es
+
+/// The contracts give the hypotheses of every step.
+let hyps_of_ok (c: comps) (x: config c) (e: event)
+  : Lemma (requires components_ok c) (ensures hyps_at c x e)
+  = assert (free_white_at c.a x.ph x.w.maj x.ast);
+    assert (forall (h': mheap). free_hd_at c.a x.ast x.w.maj h');
+    match e with
+    | EAlloc sz tag vs ->
+      let (h', _, r) = c.a.alloc x.ph x.w.maj x.ast sz tag in
+      (match r with
+       | Ok o -> assert (barrier_init_at c.b h' x.w.rem o vs)
+       | NoRoom -> ());
+      assert (alloc_at c.a x.ph x.w.maj x.ast sz tag)
+    | EWrite (Major o) i v ->
+      assert (barrier_write_at c.b (is_marking x.ph) x.w.maj x.w.rem o i v);
+      assert (inv_frame_at c.a x.ph x.w.maj x.ast (fst (c.b.bwrite (is_marking x.ph) x.w.maj x.w.rem o i v)))
+    | EMinor -> assert (minor_at c.n x.ph x.ast x.w)
+    | EStart ->
+      assert (mark_start_at c.m x.w);
+      assert (inv_start_at c.a x.w.maj x.ast);
+      assert (inv_frame_at c.a Marking x.w.maj x.ast (c.m.mstart x.w))
+    | ESlice ->
+      assert (mark_slice_at c.m x.w.maj x.snap x.allocd);
+      assert (inv_frame_at c.a x.ph x.w.maj x.ast (c.m.mslice x.w.maj))
+    | EHandover -> assert (sweep_start_at c.s x.w.maj x.ast)
+    | ESweep -> (match x.ph with Sweeping p -> assert (sweep_step_at c.s p x.w.maj x.ast) | _ -> ())
+    | EEnd -> (match x.ph with Sweeping p -> assert (sweep_done_at c.s p x.w.maj x.ast) | _ -> ())
+    | _ -> ()
+
+let gc_correct_local_implies (c: comps) (sty: style)
+  : Lemma (gc_correct_local c sty ==> gc_correct c sty)
+  = let aux (n ny: nat) (es: list event)
+      : Lemma (requires components_ok c /\ gc_correct_local c sty /\ run_ok c sty n ny es)
+              (ensures conclusions c n ny es)
+      = let f (i: nat) : Lemma (i < L.length es ==> hyps_at c (at c n ny es i) (ev es i))
+          = if i < L.length es then hyps_of_ok c (at c n ny es i) (ev es i) in
+        FStar.Classical.forall_intro f;
+        assert (init_at c.a n)
+    in
+    let aux' (n ny: nat) (es: list event)
+      : Lemma ((components_ok c /\ gc_correct_local c sty /\ run_ok c sty n ny es) ==> conclusions c n ny es)
+      = FStar.Classical.move_requires (aux n ny) es in
+    FStar.Classical.forall_intro_3 aux'
