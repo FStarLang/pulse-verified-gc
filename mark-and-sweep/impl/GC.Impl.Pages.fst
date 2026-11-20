@@ -13,7 +13,11 @@
 ///   - incremental mode (plan §28): `GC.Impl.Pages.AllocInc.alloc_ph`, the
 ///     allocator of each phase, exactly `AllocTag.alloc_tag ph`; and
 ///     `GC.Impl.Pages.SweepInc.sweep_unit` and `sweep_slice`, exactly
-///     `SweepAll.step` and `Incr.slice_from`.
+///     `SweepAll.step` and `Incr.slice_from`;
+///   - the minor collection (plan §30): `GC.Impl.Pages.Minor.minor_collect`,
+///     akhil's Cheney promotion and two-pass pointer update with every copy
+///     allocated by `alloc_ph`, exactly the model's `Promote.collect a`, with
+///     its instances `minor_collect_idle`, `_marking` and `_sweeping`.
 /// `GC.Impl.Pages.Vacuity` checks that the lemmas' hypotheses can hold.
 /// This module gathers them, for the build and for extraction to C
 /// (mark-and-sweep/pages-c).
@@ -27,3 +31,4 @@ include GC.Impl.Pages.Vacuity
 include GC.Impl.Pages.AllocInc
 include GC.Impl.Pages.SweepInc
 include GC.Impl.Pages.IncVacuity
+include GC.Impl.Pages.Minor
