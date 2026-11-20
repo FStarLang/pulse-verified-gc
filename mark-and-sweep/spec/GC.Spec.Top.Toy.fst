@@ -53,6 +53,7 @@ let tglob (ph: phase tprog) (h: mheap) (st: tstate) : prop =
 let tlocal (ph: phase tprog) (h: mheap) (st: tstate) (o: nat) : prop =
   (st.dead o ==> is_block h o /\ o < st.cur) /\
   (is_block h o /\ tfree st h o ==> col_of h o == White) /\
+  (is_block h o ==> col_of h o <> Blue) /\
   (match ph with
    | Idle -> (is_block h o ==> col_of h o == White)
    | Marking -> True
@@ -363,11 +364,20 @@ let tframe_ok (ph: phase tprog) (h: mheap) (st: tstate) (h': mheap)
         tiled_hd h h';
         let l (o: nat) : Lemma (tlocal ph h' st o)
           = assert (tlocal ph h st o);
-            assert (col_of h' o =!= col_of h o ==> in_use toy st h o /\ Marking? ph) in
+            if col_of h' o = col_of h o then ()
+            else assert (in_use toy st h o /\ Marking? ph /\ dark (col_of h' o)) in
         FStar.Classical.forall_intro l;
         tinv_intro ph h' st
     in
     FStar.Classical.move_requires pre ()
+
+let toy_free_white_o (ph: phase tprog) (h: mheap) (st: tstate) (o: nat)
+  : Lemma (requires tinv ph h st)
+          (ensures is_block h o ==>
+                   (tfree st h o == true ==> not (dark (col_of h o))) /\
+                   (col_of h o == Blue ==> tfree st h o == true))
+  = tinv_elim ph h st o;
+    assert (dark White == false)
 
 let toy_allocator_ok () : Lemma (allocator_ok toy)
   = FStar.Classical.forall_intro tinit_ok;
@@ -391,15 +401,28 @@ let toy_allocator_ok () : Lemma (allocator_ok toy)
     FStar.Classical.forall_intro_2 ist;
     let fw (ph: phase tprog) (h: mheap) (st: tstate) : Lemma (free_white_at toy ph h st)
       = let pre2 () : Lemma (requires tinv ph h st)
-                            (ensures forall (o: nat). is_block h o /\ tfree st h o ==> col_of h o == White)
-          = tinv_elim_all ph h st in
+                            (ensures forall (o: nat). is_block h o ==>
+                                       (tfree st h o == true ==> not (dark (col_of h o))) /\
+                                       (col_of h o == Blue ==> tfree st h o == true))
+          = FStar.Classical.forall_intro (FStar.Classical.move_requires (toy_free_white_o ph h st)) in
         FStar.Classical.move_requires pre2 () in
     FStar.Classical.forall_intro_3 fw;
     let fh (st: tstate) (h h': mheap) : Lemma (free_hd_at toy st h h') = () in
     FStar.Classical.forall_intro_3 fh
 
-let toy_nontrivial () : Lemma (nontrivial toy)
-  = assert (let (h, st) = toy.init 2 in toy.room Idle st h 1 == true)
+/// The toy's capacity condition: a free block at the cursor that reaches the
+/// end of the heap (the tail), with at least `sz + 1` words.
+let toy_fits : capacity tk tstate = fun ph st h sz ->
+  st.cur < h.size /\ is_block h st.cur /\ st.cur + wz_of h st.cur + 1 == h.size /\ wz_of h st.cur + 1 >= sz + 1
+
+/// Room holds whenever the condition does, in every state (a fortiori in
+/// every state a run reaches).
+let toy_fits_room (ph: phase tprog) (st: tstate) (h: mheap) (sz: size_t)
+  : Lemma (toy_fits ph st h sz ==> toy.room ph st h sz == true)
+  = ()
+
+let toy_fits_init () : Lemma (fits_init toy toy_fits)
+  = assert (let (h, st) = toy.init 2 in toy_fits Idle st h 1)
 
 /// Capacity: room holds exactly when the free tail has at least `sz + 1`
 /// words.

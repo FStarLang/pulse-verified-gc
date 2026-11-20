@@ -1012,18 +1012,18 @@ this specification.
 
 **Residual gaps** (not fixed in this stage):
 
-- **G16. Allocation status mid-sweep.** Pages' `free_sw` and first-fit's
+- **G16 (partly fixed in §8.3). Allocation status mid-sweep.** Pages' `free_sw` and first-fit's
   `free_incremental` count unswept white blocks as free. Their step lemmas
   then say "the in-use set is unchanged". This specification's `free` is
   allocation status: a sweep step frees, and `freed_words` counts. To
   instantiate it, `free` must be "blue" for both, with their step lemmas
   restated. `freed_words`, and "free words grow exactly", are missing in
   both (§7.4 tables).
-- **G17. No abstraction function** from the byte-level heap to this
+- **G17 (partly fixed in §8.2). No abstraction function** from the byte-level heap to this
   model. So neither pages nor first-fit is an instance yet, and there is no
   pages run here. The tables of §7.4 are the per-clause plan for those
   instances.
-- **G18. `nontrivial` is weak.** It is one initial request. An allocator
+- **G18 (fixed in §8.1). `nontrivial` is weak.** It is one initial request. An allocator
   whose room holds only on the initial heap passes it. Only the
   per-allocator capacity lemma, which is not a generic clause, rules it
   out. A generic form would need "free space of its kind", which is per
@@ -1067,3 +1067,190 @@ fstar.exe --cache_checked_modules --cache_dir <empty> --z3version 5.3.0 --z3seed
 `GC.Spec.Top.Vacuity` and `GC.Spec.Top.Broken` are in `ROOT_MODULES`, so
 `gmake verify` checks all nine. That is the only change outside the new
 modules and this document.
+
+---
+
+## 8. G18, and the bridge to the byte-level heap (G17, G16): stage 2a
+
+Specification work again: `gc_correct` is still not proved. The rules are
+the same as in §7: no admit, no assume, rlimit at most 40, no `--retry`,
+seeds 0–2 from empty caches. akhil's and the page modules are read-only.
+Nothing is committed.
+
+### 8.1 G18: non-triviality over every reachable state
+
+**The change.**
+- **A capacity condition per collector.** A collector `comps` now carries
+  `fits : capacity k a.state`: the allocator's "enough free space of its
+  kind" for a request of `sz` fields.
+  - It is part of the specification, fixed per allocator, not chosen by
+    the component:
+    - first-fit: a free-list block of at least `sz + 1` words;
+    - pages: a swept page of the class with a free slot, or an empty page,
+      or a run of empty pages;
+    - the toy: the free tail.
+  - If each component chose its own condition, an allocator could declare
+    "the initial heap" as its condition and pass.
+- **`nontrivial c = fits_init c.a c.fits ∧ room_complete c`**:
+  - `fits_init`: the condition holds on some initial heap, so it is not
+    vacuous;
+  - `room_complete`: for every style, every run allowed by `run_ok`, and
+    every state of that run (through every event: allocations, the
+    program's writes and root changes, mark slices, minor collections,
+    sweep steps), room holds whenever the condition does.
+- **Where it sits.** `nontrivial c` is a conjunct of `components_ok`. It is
+  no longer in `run_hyps`, because it is not a correctness hypothesis.
+
+**Validation.**
+
+| | Result | Lemma |
+|---|---|---|
+| Toy | meets it: `toy_fits` is "a free block at the cursor reaching the end of the heap, with at least `sz + 1` words", and room holds whenever it does | `toy_collector_nontrivial`, `toy_fits_room`, `toy_fits_init` |
+| Allocator with room only on the initial heap (`bad_once`) | meets `allocator_ok` (`bad_once_meets_allocator_ok`); passes the old check, room on some initial heap (`bad_once_initial_room`); **rejected**: a one-allocation run reaches a state where the tail has room for one field and the allocator refuses | `bad_once_rejected` |
+| Allocator with room always false (`bad_noroom`) | rejected at the initial state of the empty run | `bad_noroom_rejected` |
+
+**Residual.** The capacity condition is per allocator, so its adequacy is
+reviewed, not checked. A collector could still declare a narrow condition.
+What is checked is that room never fails while the declared condition
+holds, in any reachable state.
+
+### 8.2 The model gains `Blue`; the abstraction function (G17, 2a)
+
+**Blue in the model.** The byte heap marks free blocks blue, and pages and
+first-fit read free status from the header. The model's colours are now
+`White | Grey | Black | Blue`, and the abstraction keeps blue. Clauses that
+said "white" for free blocks now say "not grey or black" (`dark`):
+
+- `free_white_at`: a free block is not dark, and a blue block is free.
+- `inv_frame_rel`: a colour change is to a dark colour, while marking, on a
+  block in use.
+- `tricolour`: every dark block is in the snapshot or allocated.
+- `mark_start_at`:
+  - requires: no dark block, and every reachable object is a white block;
+  - ensures: outside_refs become dark.
+- `sweep_done_at`: no block is dark.
+
+The toy keeps white free blocks; its invariant adds "never blue". Every
+earlier result is re-proved unchanged, including the vacuity runs and all
+the broken components.
+
+**`GC.Spec.Top.Abs`** (`abs : heap -> mheap`):
+
+- **Words and blocks.**
+  - Model word `m` is the byte word at `zero_addr + 8m`. The model has
+    `(heap_size - zero_addr)/8` words.
+  - A block starts at `m` exactly when the heap walk from `zero_addr` lands
+    there and can step (`GC.Spec.Walk.reaches`, `can_step`). These are
+    total, so the model's header function is total.
+- **Headers.** The decoded header: wosize, tag, colour (blue kept).
+- **Values.**
+  - an `is_pointer` word becomes a major pointer to the model address of
+    that object's header;
+  - a word whose low byte is the infix tag becomes `VInfix (wosize)`, its
+    offset in words from the closure, as in OCaml's `Infix_offset`;
+  - any other word becomes bytes.
+
+The lemmas, all proved:
+
+| Lemma | Statement |
+|---|---|
+| `abs_is_block` | a model block at `m` ⇔ `obj_of m ∈ objects zero_addr g` |
+| `abs_header` | the model's wosize, tag and colour are the object's `wosize_of_object`, `tag_of_object`, `color_of_object` |
+| `abs_blue` | model blue ⇔ `is_blue` |
+| `abs_field` | field `i` of the model block is the abstraction of the byte word `i` past the object |
+| `abs_tiled` | if the walk reaches `heap_size`, the model is tiled (blocks in bounds, every word covered, no overlap) |
+| `abs_well_formed` | tiled, plus `no_infix_block`, gives `well_formed` |
+
+For pages, the walk reaches `heap_size` in every page state
+(`TailWalk.shape_walk_end`, from `pages_ok_sw`).
+
+### 8.3 The page sweep with "free" meaning blue (G16, 2a)
+
+**`GC.Spec.Top.PagesFree`**:
+
+- `free_true = free_stw`: blue.
+- **`step_frees_white`**:
+  - **requires:** `pages_ok_sw g st`, and page `p` heads an unswept pool
+    page or large run.
+  - **ensures:** after `SweepAll.step g st p`, a block is in use (not blue)
+    exactly when it was in use and was not a white block of the step's unit
+    `[page_base p, page_base (p + span))`. Nothing else changes status.
+  - This is the restatement. The page modules' `step_sw` says "the in-use
+    set is unchanged" because `free_sw` counts unswept white blocks as free.
+- **`freed_words_of g pm p`**: the words, headers included, of the white
+  in-use blocks of the unit before the step. `freed_words_counts`: those
+  blocks are exactly the ones the step frees.
+- **`abs_in_use`**: through the abstraction, a model block is in use
+  exactly when it is not blue.
+
+The unit's facts (`MidSweepStep.swept_unit`) were needed and are not
+exported by `step_sw`; they are only asserted inside `pool_step_sw` and
+`run_step_sw`. `pool_unit` and `run_unit` derive them again with the same
+steps from the same exported lemmas. The page modules are not edited.
+
+**Facts learned from the page sweep:**
+- **A step re-lays out free space inside its unit.** A dead slot merges
+  with its filler, an empty page becomes one blue block, and a run's dead
+  stretches coalesce. Its free-list links overwrite the first field of free
+  blocks.
+  - The sweep contract allows this: it constrains blocks in use and free
+    words, not the shape of free blocks.
+  - A word-level "free words grow exactly" lemma has to go through the
+    tiling of both heaps (both walks reach `heap_size`). It is not done.
+    Only the block-level form, `step_frees_white`, is.
+- **Unswept is page-level** (`G.uw`). For pages, the model's
+  `unswept p o` is "the page of `o` is unswept", with the page map as the
+  sweep's progress.
+
+### 8.4 Open for 2b, with a decision needed
+
+**The instance shape (decision).** The specification's components act on
+model heaps. The page functions act on byte heaps, and `abs` is not
+invertible: it drops the non-offset bits of infix headers. Two ways
+forward:
+
+- **(a) Recommended. Make the specification generic in the heap type.**
+  - A collector carries its own heap type `H` and `abs : H -> mheap`.
+  - Its components act on `H`, and the mutator's writes and Fill are
+    functions on `H` that commute with `abs`.
+  - The contracts are stated through `abs`.
+  - The toy instance is `H = mheap`, `abs = id`. Pages is `H = heap`, with
+    the page functions as they are.
+  - Cost: a refactor of `Iface` and `Run` and the toy proofs (about one
+    day). Then the pages clauses follow §7.4's table.
+- **(b) Keep the model heap and prove a simulation.** Byte-level page runs
+  abstract to model runs that meet the contracts. The components on the
+  model would only be relations, so the instance is not a component
+  record. That is heavier, and it does not give a reusable pages
+  component.
+
+**Also open for 2b:**
+- The pointer and edge correspondence through `abs` (`resolve` against
+  `resolve_object`, `major_edge` against `points_to`). It needs
+  `interior_pointers_valid`.
+- The abstraction of the nursery and young pointers.
+- The word-level freed-words lemma.
+- The clause-by-clause pages instance.
+- A pages run.
+
+### 8.5 Files and checks (stage 2a)
+
+- **New modules:**
+  - `mark-and-sweep/spec/GC.Spec.Top.Abs.fst`
+  - `mark-and-sweep/spec/GC.Spec.Top.PagesFree.fst`
+- **Changed modules:** `GC.Spec.Top.{Heap,Iface,Run,Toy,ToyMark,ToyComps,Broken,Vacuity}`.
+- **Checks:** every module checked from fresh caches at seeds 0, 1 and 2
+  without `--retry`. The byte-level dependencies' `.checked` files were
+  copied from the repository's `_cache`.
+
+| Module | Seed 0 | Seed 1 | Seed 2 |
+|---|---|---|---|
+| Heap, Iface, Run | 5 s | 4 s | 5 s |
+| Toy | 118 s | 119 s | 105 s |
+| ToyMark, ToyMinor | 40 s | 43 s | 44 s |
+| ToyComps, Broken | 25 s | 24 s | 24 s |
+| Vacuity | 8 s | 7 s | 10 s |
+| Abs | 6 s | 7 s | 7 s |
+| PagesFree | 21 s | 20 s | 21 s |
+
+`GC.Spec.Top.PagesFree`, which pulls in `Abs`, is added to `ROOT_MODULES`.

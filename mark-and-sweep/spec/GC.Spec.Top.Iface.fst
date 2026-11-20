@@ -118,7 +118,7 @@ let inv_frame_rel (#k: sweep_kind) (a: allocator k) (ph: phase k.progress) (st: 
   h'.size == h.size /\
   (forall (o: nat). is_block h' o == is_block h o) /\
   (forall (o: nat). wz_of h' o == wz_of h o /\ tag_of h' o == tag_of h o) /\
-  (forall (o: nat). col_of h' o =!= col_of h o ==> in_use a st h o /\ Marking? ph) /\
+  (forall (o: nat). col_of h' o =!= col_of h o ==> in_use a st h o /\ Marking? ph /\ dark (col_of h' o)) /\
   (forall (w: nat). h'.body w =!= h.body w ==>
      (exists (o: nat). in_use a st h o /\ o < w /\ w <= o + wz_of h o))
 
@@ -133,9 +133,12 @@ let inv_frame_at (#k: sweep_kind) (a: allocator k) (ph: phase k.progress) (h: mh
 let inv_start_at (#k: sweep_kind) (a: allocator k) (h: mheap) (st: a.state) : prop =
   a.inv Idle h st ==> a.inv Marking h st
 
-/// Free blocks are white (the model's "blue"): the mark never sees them.
+/// Free blocks are never grey or black (the mark never sees them), and a
+/// blue block is free.
 let free_white_at (#k: sweep_kind) (a: allocator k) (ph: phase k.progress) (h: mheap) (st: a.state) : prop =
-  a.inv ph h st ==> (forall (o: nat). is_block h o /\ a.free st h o ==> col_of h o == White)
+  a.inv ph h st ==>
+  (forall (o: nat). is_block h o ==>
+     (a.free st h o == true ==> not (dark (col_of h o))) /\ (col_of h o == Blue ==> a.free st h o == true))
 
 /// Allocation status is read from the headers alone: Fill and the program's
 /// writes do not change it.
@@ -151,11 +154,19 @@ let allocator_ok (#k: sweep_kind) (a: allocator k) : prop =
   (forall h st. inv_start_at a h st) /\
   (forall ph h st. free_white_at a ph h st)
 
-/// Non-triviality, generic part: on some initial heap some request has room.
-/// Each allocator adds its own capacity lemma (room holds given enough free
-/// space of its kind).
-let nontrivial (#k: sweep_kind) (a: allocator k) : prop =
-  exists (n: nat) (sz: size_t). (let (h, st) = a.init n in a.room Idle st h sz == true)
+/// The allocator's capacity condition: "enough free space of its kind" for
+/// a request of `sz` fields.  It is fixed by the specification, per
+/// allocator (first-fit: a free-list block of at least `sz + 1` words;
+/// pages: a swept page of the class with a free slot, or an empty page, or a
+/// run of empty pages; the toy: the free tail), not chosen by the
+/// component; `nontrivial` (GC.Spec.Top.Run) says room holds whenever it
+/// does, in every state a run reaches.
+let capacity (k: sweep_kind) (state: Type0) =
+  phase k.progress -> state -> mheap -> size_t -> prop
+
+/// The capacity condition is not vacuous: it holds on some initial heap.
+let fits_init (#k: sweep_kind) (a: allocator k) (fits: capacity k a.state) : prop =
+  exists (n: nat) (sz: size_t). (let (h, st) = a.init n in fits Idle st h sz)
 
 /// ---------------------------------------------------------------------------
 /// The sweep S
@@ -227,7 +238,7 @@ let sweep_done_at (#k: sweep_kind) (#a: allocator k) (s: sweep k a) (p: k.progre
   a.inv (Sweeping p) h st /\ well_formed h /\ s.done p == true ==>
   a.inv Idle h st /\
   (forall (o: nat). in_use a st h o ==> k.unswept p o == false) /\     (* pending empty *)
-  (forall (o: nat). is_block h o ==> col_of h o == White)
+  (forall (o: nat). is_block h o ==> not (dark (col_of h o)))
 
 let sweep_ok (#k: sweep_kind) (#a: allocator k) (s: sweep k a) : prop =
   (forall h st. sweep_start_at s h st) /\
@@ -258,7 +269,7 @@ let grey_reached (h: mheap) (o: nat) : prop = exists (_: wpath h o). True
 /// allocated since the cycle started (snapshot-at-the-beginning).
 let tricolour (h: mheap) (snap allocd: nat -> prop) : prop =
   (forall (o: nat). snap o \/ allocd o ==> is_block h o) /\
-  (forall (o: nat). is_block h o /\ col_of h o <> White ==> snap o \/ allocd o) /\
+  (forall (o: nat). is_block h o /\ dark (col_of h o) ==> snap o \/ allocd o) /\
   (forall (o: nat). allocd o ==> col_of h o == Black) /\
   (forall (o: nat). snap o /\ col_of h o == White ==> grey_reached h o)
 
@@ -287,14 +298,14 @@ let mark_no_increase (h h': mheap) (live: nat -> prop) : prop =
   ((exists (o: nat). white_live h live o /\ ~(white_live h' live o)) \/
    (forall (o: nat). grey_live h' live o ==> grey_live h live o))
 
-let all_white (h: mheap) : prop = forall (o: nat). is_block h o ==> col_of h o == White
+let no_dark (h: mheap) : prop = forall (o: nat). is_block h o ==> not (dark (col_of h o))
 
 /// mark_start greys every object in outside_refs(s).
 let mark_start_at (m: mark) (w: world) : prop =
-  well_formed w.maj /\ all_white w.maj /\ (forall (o: nat). reachable w o ==> is_block w.maj o) ==>
+  well_formed w.maj /\ no_dark w.maj /\ (forall (o: nat). reachable w o ==> is_block w.maj o /\ col_of w.maj o == White) ==>
   (let h' = m.mstart w in
    colours_only w.maj h' /\
-   (forall (o: nat). outside_ref w o ==> col_of h' o <> White) /\
+   (forall (o: nat). outside_ref w o ==> dark (col_of h' o)) /\
    tricolour h' (reachable w) (fun _ -> False))
 
 let union (s1 s2: nat -> prop) (o: nat) : prop = s1 o \/ s2 o

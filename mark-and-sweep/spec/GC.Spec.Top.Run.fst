@@ -30,6 +30,7 @@ noeq type comps = {
   m : mark;
   n : minor k a;
   b : barrier;
+  fits : capacity k a.state;     (* the allocator's capacity condition *)
 }
 
 type style = | Sequential | Incremental
@@ -225,7 +226,7 @@ let hyps_at (c: comps) (x: config c) (e: event) : prop =
    | _ -> True)
 
 let run_hyps (c: comps) (n ny: nat) (es: list event) : prop =
-  init_at c.a n /\ nontrivial c.a /\
+  init_at c.a n /\
   (forall (i: nat). i < L.length es ==> hyps_at c (at c n ny es i) (ev es i))
 
 /// ---------------------------------------------------------------------------
@@ -390,8 +391,20 @@ let conclusions (c: comps) (n ny: nat) (es: list event) : prop =
 /// The top-level theorem, as propositions
 /// ---------------------------------------------------------------------------
 
+/// Non-triviality: in every state any run reaches (through every event:
+/// allocations, the program's writes and root changes, mark slices, minor
+/// collections, sweep steps), room holds whenever the capacity condition
+/// does; and the condition is not vacuous.
+let room_complete (c: comps) : prop =
+  forall (sty: style) (n ny: nat) (es: list event) (i: nat).
+    run_ok c sty n ny es /\ i <= L.length es ==>
+    (let x = at c n ny es i in
+     forall (sz: size_t). c.fits x.ph x.ast x.w.maj sz ==> c.a.room x.ph x.ast x.w.maj sz == true)
+
+let nontrivial (c: comps) : prop = fits_init c.a c.fits /\ room_complete c
+
 let components_ok (c: comps) : prop =
-  allocator_ok c.a /\ nontrivial c.a /\ sweep_ok c.s /\ mark_ok c.m /\ minor_ok c.n /\ barrier_ok c.b
+  allocator_ok c.a /\ nontrivial c /\ sweep_ok c.s /\ mark_ok c.m /\ minor_ok c.n /\ barrier_ok c.b
 
 /// gc_correct (A, S, C): under the contracts and the mutator's obligations,
 /// every run meets (0)-(6).

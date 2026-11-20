@@ -158,7 +158,7 @@ let tmstart_colours_only (w: world) : Lemma (colours_only w.maj (tmstart w))
 /// ones, right after the start.
 let rec start_path (w: world) (o: nat) (r: reach w o)
   : Ghost (wpath (tmstart w) o)
-          (requires well_formed w.maj /\ all_white w.maj /\ (forall (x: nat). reachable w x ==> is_block w.maj x))
+          (requires well_formed w.maj /\ no_dark w.maj /\ (forall (x: nat). reachable w x ==> is_block w.maj x /\ col_of w.maj x == White))
           (ensures fun _ -> True)
           (decreases r)
   = let h' = tmstart w in
@@ -178,16 +178,16 @@ let rec start_path (w: world) (o: nat) (r: reach w o)
       end
 
 let tmstart_ok (w: world) : Lemma (mark_start_at tmark w)
-  = let pre () : Lemma (requires well_formed w.maj /\ all_white w.maj /\
-                                 (forall (o: nat). reachable w o ==> is_block w.maj o))
+  = let pre () : Lemma (requires well_formed w.maj /\ no_dark w.maj /\
+                                 (forall (o: nat). reachable w o ==> is_block w.maj o /\ col_of w.maj o == White))
                        (ensures (let h' = tmark.mstart w in
                                  colours_only w.maj h' /\
-                                 (forall (o: nat). outside_ref w o ==> col_of h' o <> White) /\
+                                 (forall (o: nat). outside_ref w o ==> dark (col_of h' o)) /\
                                  tricolour h' (reachable w) (fun _ -> False)))
       = let h' = tmstart w in
         tmstart_colours_only w;
-        let c (x: nat) : Lemma ((outside_ref w x ==> col_of h' x <> White) /\
-                                (is_block h' x /\ col_of h' x <> White ==> reachable w x))
+        let c (x: nat) : Lemma ((outside_ref w x ==> dark (col_of h' x)) /\
+                                (is_block h' x /\ dark (col_of h' x) ==> reachable w x))
           = start_colour w x; outside_b_iff w x;
             if outside_b w x then begin
               assert (outside_ref w x);
@@ -206,7 +206,7 @@ let tmstart_ok (w: world) : Lemma (mark_start_at tmark w)
         FStar.Classical.forall_intro t3;
         assert (tmark.mstart w == h');
         assert (forall (o: nat). reachable w o ==> is_block h' o);
-        assert (forall (o: nat). is_block h' o /\ col_of h' o <> White ==> reachable w o \/ False);
+        assert (forall (o: nat). is_block h' o /\ dark (col_of h' o) ==> reachable w o \/ False);
         assert (forall (o: nat). reachable w o /\ col_of h' o == White ==> grey_reached h' o);
         assert (tricolour h' (reachable w) (fun _ -> False))
     in
@@ -291,7 +291,7 @@ let tmslice_ok (h: mheap) (snap allocd: nat -> prop) : Lemma (mark_slice_at tmar
         assert (tmark.mslice h == h');
         tmslice_colours_only h g;
         assert (live g);
-        let c (x: nat) : Lemma ((is_block h' x /\ col_of h' x <> White ==> snap x \/ allocd x) /\
+        let c (x: nat) : Lemma ((is_block h' x /\ dark (col_of h' x) ==> snap x \/ allocd x) /\
                                 (allocd x ==> col_of h' x == Black) /\
                                 (col_of h' x == White ==> col_of h x == White))
           = slice_colour h g x;

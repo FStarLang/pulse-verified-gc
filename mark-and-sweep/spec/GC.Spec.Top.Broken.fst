@@ -141,7 +141,111 @@ let bad_noroom_meets_allocator_ok () : Lemma (allocator_ok bad_noroom)
         FStar.Classical.forall_intro_2 a1 in
     FStar.Classical.forall_intro_3 a
 
-let bad_noroom_rejected () : Lemma (~(nontrivial bad_noroom)) = ()
+/// The same allocator plugged into a collector, with the toy's capacity
+/// condition (the free tail).
+let c_noroom : comps =
+  { k = tk; a = bad_noroom; s = { start = tstart; step = tstep; done = tdone }; m = tmark;
+    n = { collect = (fun _ _ _ -> OutOfRoom) }; b = tbarrier; fits = toy_fits }
+
+/// Rejected at the initial state of the empty run: the tail has room, the
+/// allocator says no.
+let bad_noroom_rejected () : Lemma (~(nontrivial c_noroom))
+  = let aux () : Lemma (requires nontrivial c_noroom) (ensures False)
+      = assert (run_ok c_noroom Sequential 2 2 []);
+        assert_nbe (c_noroom.fits (at c_noroom 2 2 [] 0).ph (at c_noroom 2 2 [] 0).ast (at c_noroom 2 2 [] 0).w.maj 1);
+        assert_nbe (c_noroom.a.room (at c_noroom 2 2 [] 0).ph (at c_noroom 2 2 [] 0).ast (at c_noroom 2 2 [] 0).w.maj 1 == false)
+    in
+    FStar.Classical.move_requires aux ()
+
+/// ---------------------------------------------------------------------------
+/// 2b. An allocator with room only on the initial heap (G18): it meets
+///     allocator_ok and the old, initial-heap-only non-triviality; the
+///     run-reachable `nontrivial` rejects it
+/// ---------------------------------------------------------------------------
+
+let once_alloc (ph: phase tprog) (h: mheap) (st: tstate) (sz: size_t) (tag: tag_t)
+  : GTot (mheap & tstate & result) =
+  if st.cur = 0 then talloc ph h st sz tag else (h, st, NoRoom)
+
+/// alloc_post reads only `room`, `free` and `inv`: an allocator updated in
+/// `room` and `alloc` keeps the post of an allocation where the rooms agree.
+let alloc_post_with_room (#k: sweep_kind) (a: allocator k)
+    (room2: phase k.progress -> a.state -> mheap -> size_t -> GTot bool)
+    (alloc2: phase k.progress -> mheap -> a.state -> size_t -> tag_t -> GTot (mheap & a.state & result))
+    (ph: phase k.progress) (h: mheap) (st: a.state) (sz: size_t) (tag: tag_t) (h': mheap) (st': a.state) (r: result)
+  : Lemma (requires alloc_post a ph h st sz tag h' st' r /\ room2 ph st h sz == a.room ph st h sz)
+          (ensures alloc_post ({ a with room = room2; alloc = alloc2 }) ph h st sz tag h' st' r)
+  = ()
+
+let bad_once : allocator tk =
+  { toy with room = (fun ph st h sz -> st.cur = 0 && troom ph st h sz); alloc = once_alloc }
+
+let bad_once_meets_allocator_ok () : Lemma (allocator_ok bad_once)
+  = toy_allocator_ok ();
+    let i (n: nat) : Lemma (init_at bad_once n) = assert (init_at toy n) in
+    FStar.Classical.forall_intro i;
+    let f (ph: phase tprog) (h: mheap) (st: tstate) (h': mheap) : Lemma (inv_frame_at bad_once ph h st h')
+      = assert (inv_frame_at toy ph h st h') in
+    let f3 (ph: phase tprog) (h: mheap) (st: tstate) : Lemma (forall h'. inv_frame_at bad_once ph h st h')
+      = FStar.Classical.forall_intro (f ph h st) in
+    FStar.Classical.forall_intro_3 f3;
+    let w (ph: phase tprog) (h: mheap) (st: tstate) : Lemma (free_white_at bad_once ph h st)
+      = assert (free_white_at toy ph h st) in
+    FStar.Classical.forall_intro_3 w;
+    let s (h: mheap) (st: tstate) : Lemma (inv_start_at bad_once h st)
+      = assert (inv_start_at toy h st) in
+    FStar.Classical.forall_intro_2 s;
+    let fh (st: tstate) (h h': mheap) : Lemma (free_hd_at bad_once st h h') = () in
+    FStar.Classical.forall_intro_3 fh;
+    let a (ph: phase tprog) (h: mheap) (st: tstate) : Lemma (forall sz tag. alloc_at bad_once ph h st sz tag)
+      = let a1 (sz: size_t) (tag: tag_t) : Lemma (alloc_at bad_once ph h st sz tag)
+          = if st.cur = 0 then begin
+              talloc_ok ph h st sz tag;
+              let pre () : Lemma (requires bad_once.inv ph h st /\ well_formed h /\ tag <> infix_tag)
+                                 (ensures (let (h', st', r) = bad_once.alloc ph h st sz tag in
+                                           alloc_post bad_once ph h st sz tag h' st' r))
+                = let (h', st', r) = toy.alloc ph h st sz tag in
+                  assert (alloc_post toy ph h st sz tag h' st' r);
+                  alloc_post_with_room toy (fun ph st h sz -> st.cur = 0 && troom ph st h sz) once_alloc
+                    ph h st sz tag h' st' r in
+              FStar.Classical.move_requires pre ()
+            end in
+        FStar.Classical.forall_intro_2 a1 in
+    FStar.Classical.forall_intro_3 a
+
+/// The old non-triviality (room on some initial heap) accepts it.
+let bad_once_initial_room () : Lemma (exists (n: nat) (sz: size_t). (let (h, st) = bad_once.init n in bad_once.room Idle st h sz == true))
+  = assert_nbe (let (h, st) = bad_once.init 2 in bad_once.room Idle st h 1 == true)
+
+let c_once : comps =
+  { k = tk; a = bad_once; s = { start = tstart; step = tstep; done = tdone }; m = tmark;
+    n = { collect = (fun _ _ _ -> OutOfRoom) }; b = tbarrier; fits = toy_fits }
+
+let es_once : list event = [EAlloc 1 0 [VInt 0]]
+
+#push-options "--fuel 2"
+let once_run_ok () : Lemma (run_ok c_once Sequential 4 4 es_once)
+  = let f (i: nat) : Lemma (i < L.length es_once ==>
+                            (let x = at c_once 4 4 es_once i in
+                             let e = ev es_once i in
+                             enabled c_once x e /\ style_ok Sequential x e /\ mutator_ok x e))
+      = if i = 0 then begin
+          assert_nbe ((at c_once 4 4 es_once 0).stopped == false /\ Idle? (at c_once 4 4 es_once 0).ph /\
+                      ev es_once 0 == EAlloc 1 0 [VInt 0])
+        end in
+    FStar.Classical.forall_intro f
+#pop-options
+
+/// After one allocation the tail still has room for a one-field object; the
+/// allocator refuses.
+let bad_once_rejected () : Lemma (~(nontrivial c_once))
+  = once_run_ok ();
+    let aux () : Lemma (requires nontrivial c_once) (ensures False)
+      = assert_nbe (c_once.fits (at c_once 4 4 es_once 1).ph (at c_once 4 4 es_once 1).ast (at c_once 4 4 es_once 1).w.maj 1);
+        assert_nbe (c_once.a.room (at c_once 4 4 es_once 1).ph (at c_once 4 4 es_once 1).ast (at c_once 4 4 es_once 1).w.maj 1 == false);
+        assert (1 <= L.length es_once)
+    in
+    FStar.Classical.move_requires aux ()
 
 /// ---------------------------------------------------------------------------
 /// 3. A sweep that frees a black object
@@ -365,8 +469,8 @@ let w_young_held : world =
     roots = []; rem = [] }
 
 let young_held_facts ()
-  : Lemma (well_formed w_young_held.maj /\ all_white w_young_held.maj /\
-           (forall (o: nat). reachable w_young_held o ==> is_block w_young_held.maj o) /\
+  : Lemma (well_formed w_young_held.maj /\ no_dark w_young_held.maj /\
+           (forall (o: nat). reachable w_young_held o ==> is_block w_young_held.maj o /\ col_of w_young_held.maj o == White) /\
            outside_ref w_young_held 0)
   = let w = w_young_held in
     heap2_wf 1 White 1 White zero_body;
@@ -374,7 +478,7 @@ let young_held_facts ()
     let out (x: nat) : Lemma (outside_ref w x ==> s x)
       = root_b_iff w.maj w.roots x; young_b_iff w x in
     FStar.Classical.forall_intro out;
-    let r (o: nat) : Lemma (reachable w o ==> is_block w.maj o)
+    let r (o: nat) : Lemma (reachable w o ==> is_block w.maj o /\ col_of w.maj o == White)
       = if FStar.IndefiniteDescription.strong_excluded_middle (reachable w o) then begin
           let rr = FStar.IndefiniteDescription.indefinite_description_ghost (reach w o) (fun _ -> True) in
           reach_within w s o rr
@@ -385,7 +489,8 @@ let young_held_facts ()
 
 let bad_roots_only_fails () : Lemma (~(mark_start_at bad_roots_only w_young_held))
   = young_held_facts ();
-    assert (col_of (bad_roots_only_start w_young_held) 0 == White)
+    assert (col_of (bad_roots_only_start w_young_held) 0 == White);
+    assert (~(dark (col_of (bad_roots_only_start w_young_held) 0)))
 
 let bad_roots_only_rejected () : Lemma (~(mark_ok bad_roots_only)) = bad_roots_only_fails ()
 

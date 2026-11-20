@@ -15,11 +15,31 @@ open GC.Spec.Top.Toy
 open GC.Spec.Top.ToyMark
 open GC.Spec.Top.ToyMinor
 
-let tc : comps = { k = tk; a = toy; s = tsweep; m = tmark; n = tminor; b = tbarrier }
+/// Normalisation by evaluation: it computes the configurations of a run
+/// with sharing (plain normalisation re-evaluates each heap once per use,
+/// exponentially in the number of mark slices).
+let assert_nbe (p: prop) : Pure unit (requires norm [nbe; iota; zeta; delta; primops] p) (ensures fun _ -> p)
+  = norm_spec [nbe; iota; zeta; delta; primops] p
+
+let tc : comps = { k = tk; a = toy; s = tsweep; m = tmark; n = tminor; b = tbarrier; fits = toy_fits }
+
+let toy_collector_nontrivial () : Lemma (nontrivial tc)
+  = toy_fits_init ();
+    let f (sty: style) (n ny: nat) (es: list event) (i: nat)
+      : Lemma (run_ok tc sty n ny es /\ i <= FStar.List.Tot.length es ==>
+               (let x = at tc n ny es i in
+                forall (sz: size_t). tc.fits x.ph x.ast x.w.maj sz ==> tc.a.room x.ph x.ast x.w.maj sz == true))
+      = let x = at tc n ny es i in
+        FStar.Classical.forall_intro (toy_fits_room x.ph x.ast x.w.maj) in
+    let f2 (sty: style) (n: nat) : Lemma (forall ny es i. run_ok tc sty n ny es /\ i <= FStar.List.Tot.length es ==>
+               (let x = at tc n ny es i in
+                forall (sz: size_t). tc.fits x.ph x.ast x.w.maj sz ==> tc.a.room x.ph x.ast x.w.maj sz == true))
+      = FStar.Classical.forall_intro_3 (f sty n) in
+    FStar.Classical.forall_intro_2 f2
 
 let toy_components_ok () : Lemma (components_ok tc)
   = toy_allocator_ok ();
-    toy_nontrivial ();
+    toy_collector_nontrivial ();
     toy_sweep_ok ();
     toy_mark_ok ();
     toy_minor_ok ();

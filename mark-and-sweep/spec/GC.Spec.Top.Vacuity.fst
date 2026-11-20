@@ -102,12 +102,6 @@ let young_free_of_b (y: mheap) (o: nat) (sz: size_t)
   : Lemma (requires young_free_b y o sz == true) (ensures young_free y o sz)
   = exists_below_iff y.size (overlaps y o sz)
 
-/// Normalisation by evaluation: it computes the configurations of a run
-/// with sharing (plain normalisation re-evaluates each heap once per use,
-/// exponentially in the number of mark slices).
-let assert_nbe (p: prop) : Pure unit (requires norm [nbe; iota; zeta; delta; primops] p) (ensures fun _ -> p)
-  = norm_spec [nbe; iota; zeta; delta; primops] p
-
 /// ---------------------------------------------------------------------------
 /// The runs
 /// ---------------------------------------------------------------------------

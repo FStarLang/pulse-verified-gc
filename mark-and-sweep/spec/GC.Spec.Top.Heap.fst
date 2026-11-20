@@ -26,7 +26,13 @@ module GC.Spec.Top.Heap
 module L = FStar.List.Tot
 module Seq = FStar.Seq
 
-type colour = | White | Grey | Black
+/// Blue is OCaml's colour of a free block.  Whether a block is free is the
+/// allocator's (`allocator.free`); the allocators of this repository mark
+/// their free blocks blue, the toy marks them white.
+type colour = | White | Grey | Black | Blue
+
+/// Grey or black: what the mark makes.
+let dark (c: colour) : bool = c = Grey || c = Black
 
 let tag_t = n:nat{n < 256}
 let closure_tag : tag_t = 247
