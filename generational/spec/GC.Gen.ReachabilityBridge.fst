@@ -42,6 +42,19 @@ let aligned_gt_ge_plus_mword (x z: nat)
       assert False
     end
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let resolved_in_objects_is_pointer (g: heap) (r: obj_addr)
+  = let p = resolve_object r g in
+    objects_addresses_gt_start zero_addr g p;
+    aligned_gt_ge_plus_mword (U64.v p) (U64.v zero_addr);
+    parent_closure_addr_nat_spec r g;
+    if is_infix r g then begin
+      let pn = parent_closure_addr_nat r g in
+      if pn >= 8 && pn < heap_size && pn % 8 = 0 then resolve_infix_spec r g
+      else resolve_infix_invalid_parent r g
+    end else resolve_non_infix r g
+#pop-options
+
 /// A nursery field that holds a major object's address targets a non-free
 /// block.
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
@@ -98,7 +111,7 @@ let major_object_not_minor_pointer
 let reachable_not_free
   (free: free_def) (minor: minor_state) (major: heap) (roots: seq U64.t)
   = let cg = build_combined_graph minor major free in
-    let combined_roots = classify_roots minor roots in
+    let combined_roots = classify_roots minor major roots in
     let p (cv: combined_vertex) : prop =
       match cv with
       | MajorV v ->
@@ -115,7 +128,13 @@ let reachable_not_free
       | MinorV _ -> ()
       | MajorV v ->
         major_vertex_valid minor major free v;
-        classify_roots_inv_major minor roots v
+        classify_roots_inv_major minor major roots v;
+        let r0 = FStar.IndefiniteDescription.indefinite_description_ghost U64.t
+          (fun r0 -> Seq.mem r0 roots /\ ~(is_minor_pointer r0) /\
+                     resolve_major_root major r0 == v) in
+        is_val_addr_spec v;
+        is_val_addr_spec r0;
+        assert (is_val_addr r0)
       | _ -> combined_vertex_cases r; assert False
     in
     let edge (u w: combined_vertex) : Lemma
@@ -177,7 +196,7 @@ let reachable_not_free
 let reachable_major_valid
   (minor: minor_state) (major: heap) (free: free_def) (roots: seq U64.t)
   = let cg = build_combined_graph minor major free in
-    let combined_roots = classify_roots minor roots in
+    let combined_roots = classify_roots minor major roots in
     let p (cv: combined_vertex) : prop =
       match cv with
       | MajorV v ->
@@ -216,7 +235,7 @@ let reachable_major_valid
 let reachability_bridge
   (minor: minor_state) (major: heap) (free: free_def) (roots: seq U64.t)
   = let cg = build_combined_graph minor major free in
-    let combined_roots = classify_roots minor roots in
+    let combined_roots = classify_roots minor major roots in
     let p (cv: combined_vertex) : prop =
       match cv with
       | MinorV v -> Seq.mem v (minor_reachable minor roots)
@@ -232,7 +251,7 @@ let reachability_bridge
         // closure it points into, and `classify_root` records that closure.
         // `minor_reachable_roots` is stated over the resolution, so the
         // witness feeds it directly.
-        classify_roots_inv_minor minor roots v;
+        classify_roots_inv_minor minor major roots v;
         minor_vertex_char minor major free v;
         minor_reachable_roots minor roots
       | MajorV v ->

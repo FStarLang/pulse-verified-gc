@@ -33,12 +33,23 @@ val aligned_gt_ge_plus_mword (x z: nat)
   : Lemma (requires x > z /\ x % U64.v mword == 0 /\ z % U64.v mword == 0)
           (ensures x >= z + U64.v mword)
 
-/// Major roots are not free when they classify as `MajorV`.
+/// A value that *names* an enumerated object --- its resolution is one --- is
+/// itself a pointer: resolution never moves an address upwards, and enumerated
+/// objects lie above `zero_addr`.
+val resolved_in_objects_is_pointer (g: heap) (r: obj_addr)
+  : Lemma (requires Seq.mem (resolve_object r g) (objects zero_addr g))
+          (ensures is_pointer r /\ U64.v (resolve_object r g) <= U64.v r)
+
+/// Major roots are not free: the block a non-nursery root *names* --- its
+/// resolution, which `classify_root` puts in the root set as `MajorV` --- is
+/// not free when it is a block.  The root itself may be an interior pointer
+/// into a major closure; for an ordinary pointer the resolution is the
+/// identity.
 let roots_not_free (free: free_def) (roots: seq U64.t) (major: heap) : prop =
   forall (r: U64.t).
     Seq.mem r roots /\ ~(is_minor_pointer r) /\
-    is_val_addr r /\ is_block major (r <: obj_addr) ==>
-    not (free major (r <: obj_addr))
+    is_val_addr r /\ is_block major (resolve_object (r <: obj_addr) major) ==>
+    not (free major (resolve_object (r <: obj_addr) major))
 
 /// Convert a `MajorV -> MajorV` combined-graph edge witness into the concrete
 /// `points_to` relation used by `GC.Spec.Fields.points_to_target_not_free`.
@@ -89,7 +100,7 @@ val reachable_not_free
       roots_not_free free roots major)
     (ensures (
       let cg = build_combined_graph minor major free in
-      let combined_roots = classify_roots minor roots in
+      let combined_roots = classify_roots minor major roots in
       forall (a: U64.t).
         combined_reachable cg combined_roots (MajorV a) ==>
         U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword == 0 /\
@@ -104,7 +115,7 @@ val reachable_major_valid
     (requires minor_wf minor)
     (ensures (
       let cg = build_combined_graph minor major free in
-      let combined_roots = classify_roots minor roots in
+      let combined_roots = classify_roots minor major roots in
       forall (a: U64.t).
         combined_reachable cg combined_roots (MajorV a) ==>
         U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword == 0 /\
@@ -141,7 +152,7 @@ val reachability_bridge
     (requires minor_wf minor /\ major_fields_covered minor major free roots)
     (ensures (
       let cg = build_combined_graph minor major free in
-      let combined_roots = classify_roots minor roots in
+      let combined_roots = classify_roots minor major roots in
       forall (a: U64.t).
         combined_reachable cg combined_roots (MinorV a) ==>
         Seq.mem a (minor_reachable minor roots)))

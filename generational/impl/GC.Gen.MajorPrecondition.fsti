@@ -45,13 +45,15 @@ module MBP = GC.Impl.MarkBoundedPrecondition
 module SpecGCPost = GC.Spec.Correctness
 
 /// A root that was already a major pointer is left alone by root rewriting and
-/// still names itself after the minor collection.
+/// still names the same object after the minor collection.
 ///
-/// The self-resolution conjunct is what distinguishes a major root from a
-/// nursery one: an interior *nursery* root is rewritten to an interior *major*
-/// pointer, so it names the promoted closure rather than itself.  An interior
-/// major root is ruled out by `roots_valid_for_minor_collection`, which asks a
-/// non-nursery root to be an enumerated object.
+/// The root may be an interior pointer into a major closure --- the entry
+/// point of a non-first function of a mutually recursive group that has
+/// already been promoted.  `roots_valid_for_minor_collection` asks only that
+/// it be a well-formed one naming a non-blue enumerated object, and the
+/// collection leaves that closure's headers alone, so the root names the same
+/// object before and after.  For an ordinary root that object is the root
+/// itself (`post_minor_major_root_names_itself`).
 val post_minor_major_root_valid
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (r: U64.t)
   : Lemma
@@ -59,6 +61,24 @@ val post_minor_major_root_valid
       GenInv.collection_heap_shape minor major fp /\
       MinorFwd.roots_valid_for_minor_collection minor major roots /\
       Seq.mem r roots /\ ~(Promote.is_minor_pointer r))
+    (ensures (
+      let prom = Cheney.cheney_promote Idle minor major fp roots in
+      let result = Cheney.cheney_collect_spec minor major fp roots in
+      Promote.rewrite_root r prom.fwd_map == r /\
+      MBP.root_valid_for_darkening result.mc_major r /\
+      SpecObj.resolve_object (r <: obj_addr) result.mc_major ==
+        SpecObj.resolve_object (r <: obj_addr) major))
+
+/// The ordinary case: a major root that is an enumerated object names itself
+/// after the minor collection.
+val post_minor_major_root_names_itself
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (r: U64.t)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      MinorFwd.roots_valid_for_minor_collection minor major roots /\
+      Seq.mem r roots /\ ~(Promote.is_minor_pointer r) /\
+      is_val_addr r /\ Seq.mem (r <: obj_addr) (SpecFields.objects zero_addr major))
     (ensures (
       let prom = Cheney.cheney_promote Idle minor major fp roots in
       let result = Cheney.cheney_collect_spec minor major fp roots in

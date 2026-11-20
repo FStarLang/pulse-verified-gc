@@ -157,6 +157,35 @@ let roots_valid_with_stw minor major roots = ()
 
 let roots_valid_with_implies_not_free free minor major roots = ()
 
+let roots_valid_with_implies_named free minor major roots = ()
+
+let major_root_valid_of_object (major: heap) (r: obj_addr)
+  = assert (~(is_infix r major));
+    resolve_non_infix r major;
+    infix_addr_wf_non_infix major (objects zero_addr major) r
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let roots_valid_of_ordinary minor major fp roots
+  = GenInv.collection_heap_shape_elim minor major fp;
+    GenInv.major_heap_shape_elim major fp;
+    let aux (r: U64.t)
+      : Lemma (requires Seq.mem r roots /\ ~(is_minor_pointer r))
+              (ensures is_val_addr r /\
+                       infix_addr_wf major (objects zero_addr major) (r <: obj_addr) /\
+                       Seq.mem (resolve_object (r <: obj_addr) major) (objects zero_addr major) /\
+                       ~(is_blue (resolve_object (r <: obj_addr) major) major))
+      = wf_objects_non_infix major (r <: obj_addr);
+        resolve_non_infix (r <: obj_addr) major;
+        infix_addr_wf_non_infix major (objects zero_addr major) (r <: obj_addr)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let named_root_is_pointer_field (g: heap) (r: obj_addr)
+  = RBridge.resolved_in_objects_is_pointer g r
+#pop-options
+
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 let rec resolve_roots_length h rts =
   if Seq.length rts = 0 then ()

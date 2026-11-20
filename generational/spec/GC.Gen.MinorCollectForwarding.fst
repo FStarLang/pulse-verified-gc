@@ -224,6 +224,54 @@ private let rec rewrite_roots_mem_inv
     end
 #pop-options
 
+/// A non-nursery root survives the collection unrewritten, and still names the
+/// same major object afterwards.
+///
+/// The root may be an interior pointer into a major closure.  Its infix header
+/// lies inside that live closure (`infix_addr_wf`), and the collection leaves a
+/// live closure's headers and non-pointer words alone
+/// (`MCFE.cheney_collect_frame_target_header`), so its resolution is unchanged.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+private let major_root_still_names (ph: gc_phase)
+  (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
+  (roots: seq U64.t) (r: U64.t)
+  : Lemma
+    (requires
+      GenInv.collection_shape_with ph free minor major fp /\
+      MCFH.major_roots_named major roots /\
+      Seq.mem r roots /\ ~(is_minor_pointer r))
+    (ensures (
+      let prom = cheney_promote ph minor major fp roots in
+      let res = cheney_collect_spec_with ph free minor major fp roots in
+      Seq.mem r (rewrite_roots roots prom.fwd_map) /\
+      HeapGraph.resolve_field res.mc_major r == CG.resolve_major_root major r /\
+      (is_val_addr r ==>
+        Seq.mem (CG.resolve_major_root major r <: obj_addr) (objects zero_addr major) /\
+        Seq.mem (CG.resolve_major_root major r <: obj_addr) (objects zero_addr res.mc_major))))
+  =
+    let prom = cheney_promote ph minor major fp roots in
+    let res = cheney_collect_spec_with ph free minor major fp roots in
+    assert (rewrite_root r prom.fwd_map == r);
+    rewrite_roots_mem_image roots prom.fwd_map r;
+    if is_val_addr r then begin
+      let ro : obj_addr = r in
+      GenInv.collection_shape_with_elim ph free minor major fp;
+      GenInv.major_shape_with_elim ph free major fp;
+      GenInv.minor_heap_shape_elim minor;
+      assert (infix_addr_wf major (objects zero_addr major) ro);
+      assert (Seq.mem (resolve_object ro major) (objects zero_addr major));
+      assert (is_blue (resolve_object ro major) major = false);
+      MCFE.cheney_collect_frame_target_header ph minor major fp free roots ro;
+      wf_with_parts ();
+      CheneyCorr.cheney_collect_preserves_objects ph minor major fp free roots;
+      assert (Seq.mem (resolve_object ro res.mc_major) (objects zero_addr res.mc_major));
+      MCFH.named_root_is_pointer_field res.mc_major ro
+    end else begin
+      is_val_addr_spec r;
+      assert (~(HeapGraph.is_pointer_field r))
+    end
+#pop-options
+
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let normal_classified_root_image_in_rewrite_roots (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def)
@@ -235,18 +283,26 @@ let normal_classified_root_image_in_rewrite_roots (ph: gc_phase)
     GenInv.minor_heap_shape_elim minor;
     match u with
     | CG.MajorV a ->
-      assert (Seq.mem (CG.MajorV a) (CG.classify_roots minor roots));
-      CG.classify_roots_inv_major minor roots a;
-      assert (Seq.mem a roots);
-      assert (~(is_minor_pointer a));
-      assert (rewrite_root a prom.fwd_map == a);
-      rewrite_roots_mem_image roots prom.fwd_map a;
-      assert (CG.fwd_morphism prom.fwd_map u == rewrite_root a prom.fwd_map)
+      assert (Seq.mem (CG.MajorV a) (CG.classify_roots minor major roots));
+      // The root need not be `a`: it may be an interior pointer into the major
+      // closure `a`.  It is not rewritten, and still names `a` afterwards.
+      CG.classify_roots_inv_major minor major roots a;
+      let r = FStar.IndefiniteDescription.indefinite_description_ghost U64.t
+        (fun r -> Seq.mem r roots /\ ~(is_minor_pointer r) /\
+                  CG.resolve_major_root major r == a) in
+      major_root_still_names ph minor major fp free roots r;
+      assert (CG.fwd_morphism prom.fwd_map u == a);
+      FStar.Classical.exists_intro
+        (fun (rr: U64.t) ->
+           Seq.mem rr (rewrite_roots roots prom.fwd_map) /\
+           HeapGraph.resolve_field res.mc_major rr
+             == CG.fwd_morphism prom.fwd_map u)
+        r
     | CG.MinorV a ->
-      assert (Seq.mem (CG.MinorV a) (CG.classify_roots minor roots));
+      assert (Seq.mem (CG.MinorV a) (CG.classify_roots minor major roots));
       // The root need not be `a`: `classify_root` resolves, so an interior
       // root is recorded as the closure it points into.
-      CG.classify_roots_inv_minor minor roots a;
+      CG.classify_roots_inv_minor minor major roots a;
       let r = FStar.IndefiniteDescription.indefinite_description_ghost U64.t
         (fun r -> Seq.mem r roots /\ is_minor_pointer r /\ resolve_minor minor r == a) in
       assert (Seq.mem r roots);
@@ -308,7 +364,7 @@ let normal_image_vertex_is_post_vertex (ph: gc_phase)
       match u with
       | CG.MajorV a ->
         let cg = CG.build_combined_graph minor major free in
-        let combined_roots = CG.classify_roots minor roots in
+        let combined_roots = CG.classify_roots minor major roots in
         assert (CG.combined_reachable cg combined_roots (CG.MajorV a));
         RBridge.reachable_major_valid minor major free roots;
         assert (Seq.mem (a <: obj_addr) (objects zero_addr major));
@@ -371,6 +427,7 @@ private let post_root_image_is_normal_image (ph: gc_phase)
     (ensures normal_image_reachable ph minor major fp free roots r)
   =
     MCFH.roots_valid_with_implies_not_free free minor major roots;
+    MCFH.roots_valid_with_implies_named free minor major roots;
     let prom = cheney_promote ph minor major fp roots in
     let res = cheney_collect_spec_with ph free minor major fp roots in
     let post_g = HeapModel.create_graph_with free res.mc_major in
@@ -399,12 +456,12 @@ private let post_root_image_is_normal_image (ph: gc_phase)
       let rv = resolve_minor minor r0 in
       assert (Seq.mem rv (minor_objects minor));
       assert (minor_wosize minor rv > 0);
-      CG.classify_roots_minor_mem minor roots r0;
+      CG.classify_roots_minor_mem minor major roots r0;
       CG.minor_vertex_char minor major free rv;
       assert (CG.mem_cv (CG.MinorV rv) (CG.build_combined_graph minor major free));
       CG.combined_reachable_root
         (CG.build_combined_graph minor major free)
-        (CG.classify_roots minor roots)
+        (CG.classify_roots minor major roots)
         (CG.MinorV rv);
       MCFE.combined_reachable_minor_has_fwd ph minor major fp free roots;
       assert (prom.fwd_map rv <> 0UL);
@@ -429,29 +486,31 @@ private let post_root_image_is_normal_image (ph: gc_phase)
         (CG.MinorV rv)
     end else begin
       assert (rr == r0);
+      // `r0` may be an interior pointer into a major closure; either way it
+      // names the same object before and after, and `r` is that object
+      // (a vertex is not interior, so it is its own resolution).
+      MCFH.roots_valid_with_implies_named free minor major roots;
+      major_root_still_names ph minor major fp free roots r0;
+      let a = CG.resolve_major_root major r0 in
+      assert (HeapGraph.resolve_field res.mc_major rr == a);
+      MCFH.vertex_resolves_to_itself res.mc_major free r;
+      assert (r == a);
+      is_val_addr_spec r;
+      is_val_addr_spec r0;
       assert (is_val_addr r0);
-      assert (Seq.mem (r0 <: obj_addr) (objects zero_addr major));
-      CheneyCorr.cheney_collect_preserves_objects ph minor major fp free roots;
-      assert (Seq.mem (r0 <: obj_addr) (objects zero_addr res.mc_major));
-      assert (~(is_infix (r0 <: obj_addr) res.mc_major));
-      if HeapGraph.is_pointer_field rr then begin
-        HeapGraph.is_pointer_field_is_obj_addr rr;
-        resolve_non_infix (rr <: obj_addr) res.mc_major
-      end;
-      assert (HeapGraph.resolve_field res.mc_major rr == rr);
-      assert (r == r0);
-      CG.classify_roots_major_mem minor roots r0;
-      CG.major_vertex_char minor major free (r0 <: obj_addr);
-      assert (CG.mem_cv (CG.MajorV r0) (CG.build_combined_graph minor major free));
+      assert (Seq.mem (a <: obj_addr) (objects zero_addr major));
+      CG.classify_roots_major_mem minor major roots r0;
+      CG.major_vertex_char minor major free (a <: obj_addr);
+      assert (CG.mem_cv (CG.MajorV a) (CG.build_combined_graph minor major free));
       CG.combined_reachable_root
         (CG.build_combined_graph minor major free)
-        (CG.classify_roots minor roots)
-        (CG.MajorV r0);
+        (CG.classify_roots minor major roots)
+        (CG.MajorV a);
       FStar.Classical.exists_intro
         (fun (u: CG.combined_vertex) ->
           normal_src_reachable ph minor major fp free roots u /\
           CG.fwd_morphism prom.fwd_map u == r)
-        (CG.MajorV r0)
+        (CG.MajorV a)
     end
 #pop-options
 
@@ -515,7 +574,7 @@ private let post_edge_from_major_image_reflects_mem_ce (ph: gc_phase)
     let res = cheney_collect_spec_with ph free minor major fp roots in
     let updated = res.mc_major in
     let cg = CG.build_combined_graph minor major free in
-    let combined_roots = CG.classify_roots minor roots in
+    let combined_roots = CG.classify_roots minor major roots in
     let target_img = CG.fwd_morphism prom.fwd_map w in
     GenInv.collection_shape_with_elim ph free minor major fp;
     GenInv.major_shape_with_elim ph free major fp;
@@ -713,7 +772,7 @@ private let post_edge_from_major_image_reflects_target (ph: gc_phase)
     let res = cheney_collect_spec_with ph free minor major fp roots in
     let updated = res.mc_major in
     let cg = CG.build_combined_graph minor major free in
-    let combined_roots = CG.classify_roots minor roots in
+    let combined_roots = CG.classify_roots minor major roots in
     GenInv.collection_shape_with_elim ph free minor major fp;
     GenInv.major_shape_with_elim ph free major fp;
     GenInv.minor_heap_shape_elim minor;
@@ -1047,6 +1106,7 @@ private let rec post_reach_witness_is_normal_image (ph: gc_phase)
     (decreases rx)
   =
     MCFH.roots_valid_with_implies_not_free free minor major roots;
+    MCFH.roots_valid_with_implies_named free minor major roots;
     let prom = cheney_promote ph minor major fp roots in
     let res = cheney_collect_spec_with ph free minor major fp roots in
     let post_g = HeapModel.create_graph_with free res.mc_major in
@@ -1206,6 +1266,7 @@ let rec ready_src_reach_image_post_reachable (ph: gc_phase)
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
+      MCFH.major_roots_named major roots /\
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom ph minor major fp roots)
     (ensures (
@@ -1217,7 +1278,7 @@ let rec ready_src_reach_image_post_reachable (ph: gc_phase)
     match r with
     | ReadyRoot root facts ->
       let cg = CG.build_combined_graph minor major free in
-      let combined_roots = CG.classify_roots minor roots in
+      let combined_roots = CG.classify_roots minor major roots in
       assert (Seq.mem root combined_roots);
       assert (CG.mem_cv root cg);
       assert (normal_vertex_ready ph minor major fp roots root);
@@ -1275,7 +1336,7 @@ private let edge_source_normal_vertex_ready (ph: gc_phase)
       remembered_targets_in_roots major roots slots n /\
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom ph minor major fp roots /\
-      CG.combined_reachable (CG.build_combined_graph minor major free) (CG.classify_roots minor roots) u /\
+      CG.combined_reachable (CG.build_combined_graph minor major free) (CG.classify_roots minor major roots) u /\
       CG.mem_ce (u, w) (CG.build_combined_graph minor major free))
     (ensures normal_vertex_ready ph minor major fp roots u)
   =
@@ -1318,7 +1379,7 @@ let normal_src_reachable_is_ready_src_reachable (ph: gc_phase)
   (u: CG.combined_vertex)
   =
     let cg = CG.build_combined_graph minor major free in
-    let combined_roots = CG.classify_roots minor roots in
+    let combined_roots = CG.classify_roots minor major roots in
     let p (x: CG.combined_vertex) : prop =
       normal_vertex_ready ph minor major fp roots x ==>
       ready_src_reachable ph minor major fp free roots x in
@@ -1428,6 +1489,7 @@ let post_minor_reachable_is_normal_image_reachable_all (ph: gc_phase)
   (roots slots: seq U64.t) (n: nat)
   =
     MCFH.roots_valid_with_implies_not_free free minor major roots;
+    MCFH.roots_valid_with_implies_named free minor major roots;
     let prom = cheney_promote ph minor major fp roots in
     let res = cheney_collect_spec_with ph free minor major fp roots in
     let post_g = HeapModel.create_graph_with free res.mc_major in
@@ -1468,6 +1530,7 @@ let normal_post_reachable_subgraph_isomorphism (ph: gc_phase)
   (roots slots: seq U64.t) (n: nat)
   =
     MCFH.roots_valid_with_implies_not_free free minor major roots;
+    MCFH.roots_valid_with_implies_named free minor major roots;
     let prom = cheney_promote ph minor major fp roots in
     GenInv.collection_shape_with_elim ph free minor major fp;
     GenInv.minor_heap_shape_elim minor;

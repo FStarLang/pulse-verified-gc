@@ -335,7 +335,11 @@ let spot_mi_roots_valid r =
       assert (minor_wosize spot_mi_minor Layout.a_minor == 3)
     end
   in
-  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+  // The major root is an ordinary pointer, so the resolved form follows.
+  assert (MCFH.roots_valid_ordinary spot_mi_minor major (spot_mi_roots r));
+  spot_mi_collection_heap_shape r;
+  MCFH.roots_valid_of_ordinary spot_mi_minor major (Major.spot_major_fp r) (spot_mi_roots r)
 #pop-options
 
 let spot_mi_minor_collect_full_pre r =

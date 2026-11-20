@@ -201,7 +201,7 @@ let post_edge_from_minor_image_reflects_mem_ce (ph: gc_phase)
     let res = cheney_collect_spec_with ph free minor major fp roots in
     let updated = res.mc_major in
     let cg = CG.build_combined_graph minor major free in
-    let combined_roots = CG.classify_roots minor roots in
+    let combined_roots = CG.classify_roots minor major roots in
     let fwd_src = prom.fwd_map src in
     let target_img = CG.fwd_morphism prom.fwd_map w in
     GenInv.collection_shape_with_elim ph free minor major fp;
@@ -396,7 +396,7 @@ let post_edge_from_minor_image_reflects_target (ph: gc_phase)
     let res = cheney_collect_spec_with ph free minor major fp roots in
     let updated = res.mc_major in
     let cg = CG.build_combined_graph minor major free in
-    let combined_roots = CG.classify_roots minor roots in
+    let combined_roots = CG.classify_roots minor major roots in
     let fwd_src = prom.fwd_map src in
     GenInv.collection_shape_with_elim ph free minor major fp;
     GenInv.major_shape_with_elim ph free major fp;

@@ -177,12 +177,19 @@ let spot_c_reachable_root
   (farr: seq U64.t)
   =
   spot_roots_mem_c c;
-  CG.classify_roots_major_mem minor (spot_roots c) (c <: U64.t);
+  // `classify_root` resolves interior pointers; `c` is an enumerated major
+  // *object*, so here the resolution is the identity.
+  Preconditions.minor_collect_full_pre_elim minor major fp (spot_roots c) farr
+    (spot_slots c) 1;
+  GenInv.collection_heap_shape_elim minor major fp;
+  GenInv.major_heap_shape_elim major fp;
+  SpecFields.wf_objects_non_infix major c;
+  CG.classify_roots_major_mem_raw minor major (spot_roots c) (c <: U64.t);
   CG.major_vertex_char minor major GC.Spec.Fields.free_stw c;
   assert (CG.mem_cv (CG.MajorV c) (CG.build_combined_graph minor major GC.Spec.Fields.free_stw));
   CG.combined_reachable_root
     (CG.build_combined_graph minor major GC.Spec.Fields.free_stw)
-    (CG.classify_roots minor (spot_roots c))
+    (CG.classify_roots minor major (spot_roots c))
     (CG.MajorV c)
 
 let spot_a_reachable_root
@@ -199,13 +206,13 @@ let spot_a_reachable_root
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.minor_heap_shape_elim minor;
   minor_objects_not_infix minor Layout.a_minor;
-  CG.classify_roots_minor_mem_raw minor (spot_roots c) Layout.a_minor;
+  CG.classify_roots_minor_mem_raw minor major (spot_roots c) Layout.a_minor;
   CG.minor_vertex_char minor major GC.Spec.Fields.free_stw Layout.a_minor;
   assert (CG.mem_cv (CG.MinorV Layout.a_minor)
     (CG.build_combined_graph minor major GC.Spec.Fields.free_stw));
   CG.combined_reachable_root
     (CG.build_combined_graph minor major GC.Spec.Fields.free_stw)
-    (CG.classify_roots minor (spot_roots c))
+    (CG.classify_roots minor major (spot_roots c))
     (CG.MinorV Layout.a_minor)
 
 let spot_a_promoted

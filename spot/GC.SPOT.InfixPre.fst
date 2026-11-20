@@ -191,7 +191,13 @@ let spot_infix_roots_valid (r: unit{InfixMajor.spot_infix_room})
     assert ((root <: obj_addr) == InfixMajor.spot_q r);
     RBridge.major_object_not_minor_pointer g (InfixMajor.spot_q r)
   in
-  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+  // The root is an ordinary pointer, so the resolved form follows.
+  assert (GC.Gen.MinorCollectForwarding.Helpers.roots_valid_ordinary
+            spot_infix_minor g (spot_infix_roots r));
+  spot_infix_collection_heap_shape r;
+  GC.Gen.MinorCollectForwarding.Helpers.roots_valid_of_ordinary
+    spot_infix_minor g (InfixMajor.spot_infix_fp r) (spot_infix_roots r)
 #pop-options
 
 let spot_infix_minor_collect_full_pre (r: unit{InfixMajor.spot_infix_room})

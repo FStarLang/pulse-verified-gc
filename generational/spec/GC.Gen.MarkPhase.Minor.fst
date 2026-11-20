@@ -388,10 +388,11 @@ let rewritten_root (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
       MM.header_kept_facts pm g' t;
       Mark.colors_exclusive t g'
     end else begin
-      // an old root, a major block
+      // an old root: it names a non-blue major block, possibly through an
+      // interior pointer, and still names it afterwards
       assert (r == r');
-      resolve_non_infix (r <: obj_addr) g;
-      infix_addr_wf_non_infix g (objects zero_addr g) (r <: obj_addr);
+      assert (infix_addr_wf g (objects zero_addr g) (r <: obj_addr));
+      assert (Seq.mem (resolve_object (r <: obj_addr) g) (objects zero_addr g));
       free_stw_ok ();
       old_target minor g fp roots r
     end
