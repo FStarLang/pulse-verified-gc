@@ -19,7 +19,12 @@
  *   - incremental mode (plan section 28): slices of the sweep, one unit at a
  *     time, leave exactly what the eager sweep leaves; allocation mid-sweep
  *     takes swept pages only, in the phase's colour with its tag, leaves
- *     unswept pages untouched, and its objects survive the rest of the sweep.
+ *     unswept pages untouched, and its objects survive the rest of the sweep;
+ *   - the minor collection (plan section 30), idle, while marking and
+ *     mid-sweep: every object reachable from the roots copied with its size
+ *     and tag, in the phase's colour; an object pointing at another nursery
+ *     object, a closure reached through an infix pointer, a remembered slot;
+ *     the roots and slots rewritten, the nursery reset.
  */
 
 #include <stdio.h>
@@ -493,6 +498,126 @@ static void test_mid_sweep_large(void) {
     CHECK("run unit", sweep_slice(heap, st, 1, 5) == 4);
 }
 
+/* ---------------------------------------------------------------------------
+ * The minor collection (plan section 30): `minor_collect_idle`, `_marking`
+ * and `_sweeping`, akhil's Cheney promotion and two-pass pointer update with
+ * every copy allocated by `alloc_ph`.  The nursery is 2048 bytes
+ * (GC.Gen.Base.minor_heap_size); the major heap starts above it
+ * (zero_addr = 2048, as GC.Spec.ZeroAddr assumes), so no major address
+ * looks like a nursery one.  Each test checks the copies' headers (size,
+ * the phase's colour, the nursery object's tag) and fields, the rewritten
+ * roots and remembered slots, the forwarding array, and the reset nursery.
+ * ------------------------------------------------------------------------- */
+
+#define MHS 2048ULL
+#define ZA 2048ULL
+static uint8_t nursery[MHS];
+static uint64_t nbump;
+static minor_heap_t mh;
+static uint64_t fwd[MHS / 8];
+static uint64_t mq[MHS / 8];
+
+static void nwr(uint64_t a, uint64_t v) { memcpy(nursery + a, &v, 8); }
+static uint64_t zpg(uint64_t i) { return ZA + i * PB; }
+static uint64_t thdr(uint64_t wz, uint64_t col, uint64_t tag) { return hdr(wz, col) | tag; }
+static int is_major(uint64_t v) { return v >= ZA + 8 && v < heap_size_u64 && v % 8 == 0; }
+
+/* A nursery object of `wz` fields and tag `tag`, at the bump. */
+static uint64_t nalloc(uint64_t wz, uint64_t tag) {
+    uint64_t h = nbump;
+    nwr(h, (wz << 10) | tag);
+    nbump = h + (wz + 1) * 8;
+    return h + 8;
+}
+
+static int nursery_empty(void) {
+    for (uint64_t i = 0; i < MHS; i++) if (nursery[i]) return 0;
+    return nbump == 0;
+}
+
+/* `n` free pages above the nursery's addresses, an empty nursery, a zero
+ * forwarding array. */
+static void fresh_minor(uint64_t n) {
+    np = n;
+    heap_size_u64 = ZA + n * PB + TAILB;
+    zero_addr = ZA;
+    krmlinit_globals();
+    memset(mem, 0, (size_t)MEMB);
+    heap.data = mem;
+    heap.size = (size_t)heap_size_u64;
+    st.tpm = pm; st.tw = tw;
+    init(heap, st);
+    memset(nursery, 0, sizeof nursery);
+    nbump = 0;
+    mh.data = nursery; mh.size = (size_t)MHS; mh.bump_ref = &nbump;
+    memset(fwd, 0, sizeof fwd);
+}
+
+/* Idle: an object A pointing at another nursery object B, an unreachable
+ * object C, and a major block M whose field points at B, in the remembered
+ * set. */
+static void test_minor_idle(void) {
+    fresh_minor(4);
+    uint64_t a = nalloc(2, 0), b = nalloc(1, 3), c = nalloc(1, 0);
+    nwr(a, b); nwr(a + 8, 7); nwr(b, 11); nwr(c, a);
+    uint64_t m = alloc_ph(heap, st, 1, 0, false);
+    CHECK("minor idle", is_major(m));
+    wr(m, b);
+    uint64_t roots[1] = { a };
+    uint64_t slots[1] = { m };
+    bool ok = minor_collect_idle(mh, heap, st, roots, 1, fwd, mq, slots, 1);
+    uint64_t a2 = roots[0], b2 = rd(a2);
+    CHECK("minor idle", ok && is_major(a2) && is_major(b2) && a2 != b2 && a2 != m && b2 != m);
+    CHECK("minor idle: A copied", rd(a2 - 8) == thdr(2, WHITE, 0) && rd(a2 + 8) == 7);
+    CHECK("minor idle: B copied", rd(b2 - 8) == thdr(1, WHITE, 3) && rd(b2) == 11);
+    CHECK("minor idle: slot rewritten", rd(m) == b2 && rd(m - 8) == thdr(1, WHITE, 0));
+    CHECK("minor idle: forwarding", fwd[a / 8] == a2 && fwd[b / 8] == b2 && fwd[c / 8] == 0);
+    CHECK("minor idle: nursery reset", nursery_empty());
+}
+
+/* Marking: a closure P with an infix pointer Q into it, reached from a
+ * field of an object R and from a root. */
+static void test_minor_infix(void) {
+    fresh_minor(4);
+    uint64_t p = nalloc(4, 247);
+    uint64_t q = p + 24;                       /* its header at p + 16: offset 3 words */
+    nwr(p, 1); nwr(p + 8, 5); nwr(p + 16, (3ULL << 10) | 249); nwr(p + 24, 9);
+    uint64_t r = nalloc(1, 0);
+    nwr(r, q);
+    uint64_t roots[2] = { r, q };
+    bool ok = minor_collect_marking(mh, heap, st, roots, 2, fwd, mq, NULL, 0);
+    uint64_t r2 = roots[0], q2 = roots[1], p2 = q2 - 24;
+    CHECK("minor infix", ok && is_major(r2) && is_major(p2));
+    CHECK("minor infix: P copied black", rd(p2 - 8) == thdr(4, BLACK, 247));
+    CHECK("minor infix: P's fields", rd(p2) == 1 && rd(p2 + 8) == 5 && rd(p2 + 16) == ((3ULL << 10) | 249) && rd(p2 + 24) == 9);
+    CHECK("minor infix: R copied black", rd(r2 - 8) == thdr(1, BLACK, 0));
+    CHECK("minor infix: R's field at the same offset in P's copy", rd(r2) == q2);
+    CHECK("minor infix: forwarding", fwd[p / 8] == p2 && fwd[q / 8] == q2 && fwd[r / 8] == r2);
+    CHECK("minor infix: nursery reset", nursery_empty());
+}
+
+/* Mid-sweep: a white block X, then the sweep started; the copy goes to a
+ * swept page, white, and survives the rest of the sweep, which frees X. */
+static void test_minor_sweeping(void) {
+    fresh_minor(4);
+    uint64_t x = alloc_ph(heap, st, 1, 0, false);
+    CHECK("minor mid-sweep", x == zpg(0) + 8);
+    start_sweep(st);
+    CHECK("minor mid-sweep", !V(0).swept);
+    uint64_t a = nalloc(1, 2), b = nalloc(2, 0);
+    nwr(a, b); nwr(b, 13); nwr(b + 8, a);
+    uint64_t roots[1] = { a };
+    bool ok = minor_collect_sweeping(mh, heap, st, roots, 1, fwd, mq, NULL, 0);
+    uint64_t a2 = roots[0], b2 = rd(a2);
+    CHECK("minor mid-sweep", ok && a2 >= zpg(1) && b2 >= zpg(1) && !V(0).swept);
+    CHECK("minor mid-sweep: copies white", rd(a2 - 8) == thdr(1, WHITE, 2) && rd(b2 - 8) == thdr(2, WHITE, 0));
+    CHECK("minor mid-sweep: cycle", rd(b2) == 13 && rd(b2 + 8) == a2);
+    CHECK("minor mid-sweep: nursery reset", nursery_empty());
+    CHECK("minor mid-sweep: rest", sweep_slice(heap, st, 0, 10) == 4);
+    CHECK("minor mid-sweep: copies kept", rd(a2 - 8) == thdr(1, WHITE, 2) && rd(b2 - 8) == thdr(2, WHITE, 0) && rd(b2 + 8) == a2);
+    CHECK("minor mid-sweep: X freed", ((rd(x - 8) >> 8) & 3) == BLUE);
+}
+
 int main(void) {
     mem = calloc((size_t)MEMB, 1);
     if (!mem) { perror("calloc"); return 1; }
@@ -506,6 +631,9 @@ int main(void) {
     test_slices();
     test_mid_sweep_alloc();
     test_mid_sweep_large();
+    test_minor_idle();
+    test_minor_infix();
+    test_minor_sweeping();
     free(mem);
     if (failures) { printf("pages: %d of %d checks FAILED\n", failures, checks); return 1; }
     printf("pages: all %d checks passed\n", checks);

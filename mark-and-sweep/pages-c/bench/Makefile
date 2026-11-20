@@ -48,7 +48,24 @@ bench-inc: bench_proto bench_verified
 bench-tagged: bench_proto bench_tagged
 	@VERIFIED=bench_tagged ./bench.sh $(ROUNDS) $(REPS)
 
-clean:
-	rm -rf _proto bench_proto bench_verified bench_tagged
+# Promotion (plan section 30): the minor collection with the page allocator
+# against main's, with the first-fit free list (generational/snapshot, the C
+# of origin/main), both Idle, with an A/A control (bench_promo.c).
+MSRC = $(SNAP)/GC_Gen_Impl.c $(SNAP)/GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.c \
+       $(SNAP)/krmlinit.c $(SNAP)/compat.c
+MINC = -I$(SNAP) -I$(SNAP)/internal -I$(SNAP)/krmllib -I$(SNAP)/krmllib/krml -I$(SNAP)/krmllib/krml/internal \
+       -include $(SNAP)/compat.h
 
-.PHONY: all bench bench-inc bench-tagged clean
+bench_promo_main: bench_promo.c $(MSRC)
+	$(CC) $(OPT) $(MINC) -Wno-everything -DMAIN bench_promo.c $(MSRC) -o $@
+
+bench_promo_pages: bench_promo.c $(VSRC) ../GC_Pages.h
+	$(CC) $(OPT) $(VINC) -Wno-everything bench_promo.c $(VSRC) -o $@
+
+bench-promo: bench_promo_main bench_promo_pages
+	@./bench_promo.sh $(ROUNDS) $(REPS)
+
+clean:
+	rm -rf _proto bench_proto bench_verified bench_tagged bench_promo_main bench_promo_pages
+
+.PHONY: all bench bench-inc bench-tagged bench-promo clean

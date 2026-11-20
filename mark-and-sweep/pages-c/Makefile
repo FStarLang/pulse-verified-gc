@@ -1,6 +1,6 @@
 # The page allocator (GC.Impl.Pages.*), extracted to C, and its test.
 #
-#   make extract   Extract GC.Impl.Pages.{Init,Alloc,Sweep,AllocInc,SweepInc} from
+#   make extract   Extract GC.Impl.Pages.{Init,Alloc,Sweep,AllocInc,SweepInc,Minor} from
 #                  their checked files (verify first: `make verify` at the
 #                  root) into GC_Pages.{c,h} here.
 #   make test      Build and run pages_test.c against the extracted C.  Needs
@@ -26,12 +26,15 @@ FSTAR = $(FSTAR_EXE) \
   --warn_error -321 \
   --include $(ROOT)/common/spec --include $(ROOT)/common/lib --include $(ROOT)/common/impl \
   --include $(ROOT)/mark-and-sweep/spec --include $(ROOT)/mark-and-sweep/impl \
-  --include $(ROOT)/generational/spec
+  --include $(ROOT)/generational/spec --include $(ROOT)/generational/impl
 
-ENTRY_MODS = GC.Impl.Pages.Init GC.Impl.Pages.Alloc GC.Impl.Pages.Sweep GC.Impl.Pages.AllocInc GC.Impl.Pages.SweepInc
+ENTRY_MODS = GC.Impl.Pages.Init GC.Impl.Pages.Alloc GC.Impl.Pages.Sweep GC.Impl.Pages.AllocInc GC.Impl.Pages.SweepInc \
+  GC.Impl.Pages.Minor
 
 KRML_MODS = \
   GC.Impl.Pages.Init GC.Impl.Pages.Alloc GC.Impl.Pages.Sweep GC.Impl.Pages.AllocInc GC.Impl.Pages.SweepInc GC.Impl.Pages.SweepRun GC.Impl.Pages.SweepPage \
+  GC.Impl.Pages.Minor GC.Impl.Pages.Cheney GC.Impl.Pages.Forward GC.Impl.Pages.Promote \
+  GC.Gen.Impl.MinorHeap GC.Gen.Impl.UpdatePtrs \
   GC.Impl.Pages.Large GC.Impl.Pages.Pool GC.Impl.Pages.AllocTagged GC.Impl.Pages.Heap GC.Impl.Pages.State \
   GC.Impl.Pages.Params GC.Impl.Heap GC.Impl.Object GC.Impl.ArrayWord \
   GC.Spec.ZeroAddr GC.Spec.Base GC.Spec.Heap GC.Spec.Object GC.Lib.Header GC.Lib.Address
@@ -39,7 +42,7 @@ KRML_MODS = \
 KRML_FLAGS = \
   -tmpdir $(EXTRACT_DIR) \
   -skip-compilation -skip-linking \
-  -bundle 'GC.Impl.Pages.Init+GC.Impl.Pages.Alloc+GC.Impl.Pages.Sweep+GC.Impl.Pages.AllocInc+GC.Impl.Pages.SweepInc=GC.Impl.Pages.*,GC.Impl.Heap,GC.Impl.Object,GC.Impl.ArrayWord,Pulse.Lib.Array[rename=GC_Pages]' \
+  -bundle 'GC.Impl.Pages.Init+GC.Impl.Pages.Alloc+GC.Impl.Pages.Sweep+GC.Impl.Pages.AllocInc+GC.Impl.Pages.SweepInc+GC.Impl.Pages.Minor=GC.Impl.Pages.*,GC.Gen.Impl.MinorHeap,GC.Gen.Impl.UpdatePtrs,GC.Impl.Heap,GC.Impl.Object,GC.Impl.ArrayWord,Pulse.Lib.Array[rename=GC_Pages]' \
   -bundle 'GC.Spec.ZeroAddr=GC.Spec.ZeroAddr' \
   -bundle 'GC.Spec.*,GC.Lib.Header,GC.Lib.Address,GC.Gen.*[rename=GC_Pages_Spec]' \
   $(foreach m,$(KRML_MODS),-no-prefix $(m)) \
