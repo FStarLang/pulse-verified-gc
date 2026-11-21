@@ -20,7 +20,10 @@
 module GC.Spec.Top.Toy
 
 open GC.Spec.Top.Heap
+open GC.Spec.Top.Rep
 open GC.Spec.Top.Iface
+open GC.Spec.Top.IdRep
+open GC.Spec.Top.ToyRep
 module L = FStar.List.Tot
 module Seq = FStar.Seq
 
@@ -104,7 +107,7 @@ let tinit_heap (n: nat) : mheap =
 let tinit (n: nat) : GTot (mheap & tstate) =
   (tinit_heap n, { cur = 0; dead = (fun _ -> false) })
 
-let toy : allocator tk = {
+let toy : allocator mheap tk = {
   state = tstate;
   init = tinit;
   inv = tinv;
@@ -312,64 +315,81 @@ let talloc_inv (ph: phase tprog) (h: mheap) (st: tstate) (sz: size_t) (tag: tag_
 
 let talloc_use (ph: phase tprog) (h: mheap) (st: tstate) (sz: size_t) (tag: tag_t) (x: nat)
   : Lemma (requires tinv ph h st /\ st.cur + sz + 1 <= h.size)
-          (ensures in_use toy ({ st with cur = st.cur + sz + 1 }) (talloc_heap ph h st.cur sz tag) x <==>
-                   (in_use toy st h x \/ x == st.cur))
+          (ensures in_use toy ({ st with cur = st.cur + sz + 1 }) (talloc_heap ph h st.cur sz tag) (talloc_heap ph h st.cur sz tag) x <==>
+                   (in_use toy st h h x \/ x == st.cur))
   = tinv_elim ph h st x;
     tinv_elim ph h st st.cur;
     talloc_heap_hd ph h st sz tag x;
     if is_block h x && x <> st.cur then tail_x h st.cur x
 
-let talloc_ok (ph: phase tprog) (h: mheap) (st: tstate) (sz: size_t) (tag: tag_t)
-  : Lemma (alloc_at toy ph h st sz tag)
+let talloc_ok_m (ph: phase tprog) (h: mheap) (st: tstate) (sz: size_t) (tag: tag_t)
+  : Lemma (alloc_pre toy ph h st tag h ==>
+           (let (h', st', r) = toy.alloc ph h st sz tag in alloc_post toy_rep toy ph h st sz tag h' st' r h h'))
   = if st.cur + sz + 1 <= h.size then begin
       let introduce_pre () : Lemma (requires toy.inv ph h st /\ well_formed h /\ tag <> infix_tag)
                                    (ensures (let (h', st', r) = toy.alloc ph h st sz tag in
-                                             alloc_post toy ph h st sz tag h' st' r))
+                                             alloc_post toy_rep toy ph h st sz tag h' st' r h h'))
         = let cur = st.cur in
           let r = cur + sz + 1 in
           let h' = talloc_heap ph h cur sz tag in
           let st' = { st with cur = r } in
           tinv_elim ph h st cur;
           talloc_tiled ph h st sz tag;
-          let words (w: nat) : Lemma (covers h' cur w ==> free_word toy st h w)
+          let words (w: nat) : Lemma (covers h' cur w ==> free_word toy st h h w)
             = if covers h' cur w then assert (covers h cur w) in
           FStar.Classical.forall_intro words;
           FStar.Classical.forall_intro (talloc_use ph h st sz tag);
-          let same (x: nat) : Lemma (in_use toy st h x ==> same_block h h' x)
+          let same (x: nat) : Lemma (in_use toy st h h x ==> same_block h h' x)
             = talloc_heap_hd ph h st sz tag x;
               if is_block h x && x <> cur then tail_x h cur x in
           FStar.Classical.forall_intro same;
-          let fill_inv (vs: list value) : Lemma (L.length vs == sz ==> toy.inv ph (fill h' cur vs) st')
+          let fill_inv (vs: list value) (h'': mheap)
+            : Lemma (L.length vs == sz /\ toy_rep.repr (fill h' cur vs) h'' ==> toy.inv ph h'' st')
             = talloc_inv ph h st sz tag vs in
-          FStar.Classical.forall_intro fill_inv
+          FStar.Classical.forall_intro_2 fill_inv
       in
       FStar.Classical.move_requires introduce_pre ()
     end
 
-let tinit_ok (n: nat) : Lemma (init_at toy n)
-  = let h = tinit_heap n in
+let talloc_ok (ph: phase tprog) (h: mheap) (st: tstate) (sz: size_t) (tag: tag_t)
+  : Lemma (alloc_at toy_rep toy ph h st sz tag)
+  = talloc_ok_m ph h st sz tag;
+    toy_rep_id ();
+    let (h', st', r) = toy.alloc ph h st sz tag in
+    lifted_id toy_rep (alloc_pre toy ph h st tag) h h' (alloc_post toy_rep toy ph h st sz tag h' st' r)
+
+let tinit_ok (n: nat) : Lemma (init_at toy_rep toy n)
+  = toy_rep_id ();
+    let h = tinit_heap n in
     let st = { cur = 0; dead = (fun (_: nat) -> false) } in
     let cov (w: nat) : Lemma (w < n ==> covers h 0 w) = () in
     FStar.Classical.forall_intro cov;
     assert (tiled h);
     let l (o: nat) : Lemma (tlocal Idle h st o) = () in
     FStar.Classical.forall_intro l;
-    tinv_intro Idle h st
+    tinv_intro Idle h st;
+    some_repr_id toy_rep h (init_post toy n h st)
 
-let tframe_ok (ph: phase tprog) (h: mheap) (st: tstate) (h': mheap)
-  : Lemma (inv_frame_at toy ph h st h')
-  = let pre () : Lemma (requires toy.inv ph h st /\ inv_frame_rel toy ph st h h')
+let tframe_m (ph: phase tprog) (h: mheap) (st: tstate) (h': mheap)
+  : Lemma (inv_frame_m toy ph h st h' h h')
+  = let pre () : Lemma (requires toy.inv ph h st /\ inv_frame_rel toy ph st h h h')
                        (ensures toy.inv ph h' st)
       = tinv_elim_all ph h st;
         tiled_hd h h';
         let l (o: nat) : Lemma (tlocal ph h' st o)
           = assert (tlocal ph h st o);
             if col_of h' o = col_of h o then ()
-            else assert (in_use toy st h o /\ Marking? ph /\ dark (col_of h' o)) in
+            else assert (in_use toy st h h o /\ Marking? ph /\ dark (col_of h' o)) in
         FStar.Classical.forall_intro l;
         tinv_intro ph h' st
     in
     FStar.Classical.move_requires pre ()
+
+let tframe_ok (ph: phase tprog) (h: mheap) (st: tstate) (h': mheap)
+  : Lemma (inv_frame_at toy_rep toy ph h st h')
+  = tframe_m ph h st h';
+    toy_rep_id ();
+    forall_repr2_id toy_rep h h' (inv_frame_m toy ph h st h')
 
 let toy_free_white_o (ph: phase tprog) (h: mheap) (st: tstate) (o: nat)
   : Lemma (requires tinv ph h st)
@@ -379,16 +399,17 @@ let toy_free_white_o (ph: phase tprog) (h: mheap) (st: tstate) (o: nat)
   = tinv_elim ph h st o;
     assert (dark White == false)
 
-let toy_allocator_ok () : Lemma (allocator_ok toy)
-  = FStar.Classical.forall_intro tinit_ok;
+let toy_allocator_ok () : Lemma (allocator_ok toy_rep toy)
+  = toy_rep_id ();
+    FStar.Classical.forall_intro tinit_ok;
     let a1 (ph: phase tprog) (h: mheap) (st: tstate) (sz: size_t) (tag: tag_t)
-      : Lemma (alloc_at toy ph h st sz tag) = talloc_ok ph h st sz tag in
+      : Lemma (alloc_at toy_rep toy ph h st sz tag) = talloc_ok ph h st sz tag in
     let a1' (ph: phase tprog) (h: mheap) (st: tstate) (sz: size_t)
-      : Lemma (forall tag. alloc_at toy ph h st sz tag) = FStar.Classical.forall_intro (a1 ph h st sz) in
+      : Lemma (forall tag. alloc_at toy_rep toy ph h st sz tag) = FStar.Classical.forall_intro (a1 ph h st sz) in
     let a1'' (ph: phase tprog) (h: mheap) (st: tstate)
-      : Lemma (forall sz tag. alloc_at toy ph h st sz tag) = FStar.Classical.forall_intro (a1' ph h st) in
+      : Lemma (forall sz tag. alloc_at toy_rep toy ph h st sz tag) = FStar.Classical.forall_intro (a1' ph h st) in
     FStar.Classical.forall_intro_3 a1'';
-    let f (ph: phase tprog) (h: mheap) (st: tstate) : Lemma (forall h'. inv_frame_at toy ph h st h')
+    let f (ph: phase tprog) (h: mheap) (st: tstate) : Lemma (forall h'. inv_frame_at toy_rep toy ph h st h')
       = FStar.Classical.forall_intro (tframe_ok ph h st) in
     FStar.Classical.forall_intro_3 f;
     let ist (h: mheap) (st: tstate) : Lemma (inv_start_at toy h st)
@@ -399,20 +420,23 @@ let toy_allocator_ok () : Lemma (allocator_ok toy)
             tinv_intro Marking h st in
         FStar.Classical.move_requires pre () in
     FStar.Classical.forall_intro_2 ist;
-    let fw (ph: phase tprog) (h: mheap) (st: tstate) : Lemma (free_white_at toy ph h st)
+    let fw (ph: phase tprog) (h: mheap) (st: tstate) : Lemma (free_white_at toy_rep toy ph h st)
       = let pre2 () : Lemma (requires tinv ph h st)
                             (ensures forall (o: nat). is_block h o ==>
                                        (tfree st h o == true ==> not (dark (col_of h o))) /\
                                        (col_of h o == Blue ==> tfree st h o == true))
           = FStar.Classical.forall_intro (FStar.Classical.move_requires (toy_free_white_o ph h st)) in
-        FStar.Classical.move_requires pre2 () in
+        FStar.Classical.move_requires pre2 ();
+        forall_repr_id toy_rep h (free_white_m toy ph h st) in
     FStar.Classical.forall_intro_3 fw;
-    let fh (st: tstate) (h h': mheap) : Lemma (free_hd_at toy st h h') = () in
+    let fh (st: tstate) (h h': mheap) : Lemma (free_hd_at toy_rep toy st h h')
+      = assert (free_hd_m toy st h h' h h');
+        forall_repr2_id toy_rep h h' (free_hd_m toy st h h') in
     FStar.Classical.forall_intro_3 fh
 
 /// The toy's capacity condition: a free block at the cursor that reaches the
 /// end of the heap (the tail), with at least `sz + 1` words.
-let toy_fits : capacity tk tstate = fun ph st h sz ->
+let toy_fits : capacity mheap tk tstate = fun ph st h sz ->
   st.cur < h.size /\ is_block h st.cur /\ st.cur + wz_of h st.cur + 1 == h.size /\ wz_of h st.cur + 1 >= sz + 1
 
 /// Room holds whenever the condition does, in every state (a fortiori in
@@ -421,8 +445,9 @@ let toy_fits_room (ph: phase tprog) (st: tstate) (h: mheap) (sz: size_t)
   : Lemma (toy_fits ph st h sz ==> toy.room ph st h sz == true)
   = ()
 
-let toy_fits_init () : Lemma (fits_init toy toy_fits)
-  = assert (let (h, st) = toy.init 2 in toy_fits Idle st h 1)
+let toy_fits_init () : Lemma (fits_init toy_rep toy toy_fits)
+  = assert (toy_rep.size_ok 2);
+    assert (let (h, st) = toy.init 2 in toy_fits Idle st h 1)
 
 /// Capacity: room holds exactly when the free tail has at least `sz + 1`
 /// words.
@@ -453,7 +478,7 @@ let tstep (pe: tprog) (h: mheap) (st: tstate) : GTot (tprog & mheap & tstate & s
   end
   else (pe, h, st, { units = 0; freed_words = 0 })
 
-let tsweep : sweep tk toy = { start = tstart; step = tstep; done = tdone }
+let tsweep : sweep mheap tk toy = { start = tstart; step = tstep; done = tdone }
 
 let rec sum_single (n: nat) (f: nat -> GTot nat) (p: nat)
   : Lemma (requires forall (o: nat). o <> p ==> f o == 0)
@@ -461,18 +486,20 @@ let rec sum_single (n: nat) (f: nat -> GTot nat) (p: nat)
           (decreases n)
   = if n = 0 then () else sum_single (n - 1) f p
 
-let tstart_ok (h: mheap) (st: tstate) : Lemma (sweep_start_at tsweep h st)
-  = let pre () : Lemma (requires toy.inv Marking h st /\ well_formed h /\ no_grey h)
+let tstart_ok (h: mheap) (st: tstate) : Lemma (sweep_start_at toy_rep tsweep h st)
+  = toy_rep_id ();
+    forall_repr_id toy_rep h (sweep_start_m tsweep h st);
+    let pre () : Lemma (requires toy.inv Marking h st /\ well_formed h /\ no_grey h)
                        (ensures (let (p, st') = tsweep.start h st in
                                  toy.inv (Sweeping p) h st' /\
                                  (forall (o: nat). toy.free st' h o == toy.free st h o) /\
-                                 (forall (o: nat). in_use toy st h o ==> tk.unswept p o == true)))
+                                 (forall (o: nat). in_use toy st h h o ==> tk.unswept p o == true)))
       = tinv_elim_all Marking h st;
         if 0 < st.cur then first_block h;
         let l (o: nat) : Lemma (tlocal (Sweeping (0, st.cur)) h st o) = assert (tlocal Marking h st o) in
         FStar.Classical.forall_intro l;
         tinv_intro (Sweeping (0, st.cur)) h st;
-        let u (o: nat) : Lemma (in_use toy st h o ==> tk.unswept (0, st.cur) o == true) = () in
+        let u (o: nat) : Lemma (in_use toy st h h o ==> tk.unswept (0, st.cur) o == true) = () in
         FStar.Classical.forall_intro u
     in
     FStar.Classical.move_requires pre ()
@@ -512,8 +539,8 @@ let step_shape (pe: tprog) (h: mheap) (st: tstate) (o: nat)
                     h'.size == h.size /\ h'.body == h.body /\
                     is_block h' o == is_block h o /\ wz_of h' o == wz_of h o /\ tag_of h' o == tag_of h o /\
                     (o <> p ==> h'.hd o == h.hd o /\ st'.dead o == st.dead o) /\
-                    in_use toy st' h' o == (in_use toy st h o && not (o = p && col_of h o = White)) /\
-                    (in_use toy st h o /\ o = p /\ col_of h o == Black ==> col_of h' o == White) /\
+                    in_use toy st' h' h' o == (in_use toy st h h o && not (o = p && col_of h o = White)) /\
+                    (in_use toy st h h o /\ o = p /\ col_of h o == Black ==> col_of h' o == White) /\
                     (o = p ==> (tfree st' h' p == (tfree st h p || col_of h p = White)))))
   = ()
 
@@ -522,15 +549,15 @@ let step_words (pe: tprog) (h: mheap) (st: tstate) (w: nat)
           (ensures (let h' = s_heap pe h st in
                     let st' = s_st pe h st in
                     let pe' = s_next pe h in
-                    (free_word toy st h w ==> free_word toy st' h' w) /\
-                    (free_word toy st' h' w ==>
-                       free_word toy st h w \/ (exists (o: nat). covers h o w /\ swept_white toy st h pe pe' o))))
+                    (free_word toy st h h w ==> free_word toy st' h' h' w) /\
+                    (free_word toy st' h' h' w ==>
+                       free_word toy st h h w \/ (exists (o: nat). covers h o w /\ swept_white toy st h h pe pe' o))))
   = let p = fst pe in
     let h' = s_heap pe h st in
     let st' = s_st pe h st in
     let c (b: nat) : Lemma ((covers h b w /\ toy.free st h b ==> covers h' b w /\ toy.free st' h' b) /\
                             (covers h' b w /\ toy.free st' h' b ==>
-                               (covers h b w /\ toy.free st h b) \/ (covers h b w /\ swept_white toy st h pe (s_next pe h) b)))
+                               (covers h b w /\ toy.free st h b) \/ (covers h b w /\ swept_white toy st h h pe (s_next pe h) b)))
       = step_shape pe h st b;
         if b = p then assert (region tk pe (s_next pe h) p) in
     FStar.Classical.forall_intro c
@@ -540,48 +567,54 @@ let step_blocks (pe: tprog) (h: mheap) (st: tstate) (o: nat)
           (ensures (let h' = s_heap pe h st in
                     let st' = s_st pe h st in
                     let pe' = s_next pe h in
-                    (swept_white toy st h pe pe' o ==>
-                       in_use toy st' h' o == false /\ (forall (w: nat). covers h o w ==> free_word toy st' h' w)) /\
-                    (in_use toy st h o /\ region tk pe pe' o /\ col_of h o == Black ==>
-                       in_use toy st' h' o /\ col_of h' o == White /\ same_contents h h' o) /\
-                    (in_use toy st h o /\ not (region tk pe pe' o) ==> in_use toy st' h' o /\ same_block h h' o) /\
-                    (in_use toy st' h' o ==> in_use toy st h o) /\
-                    swept_words toy st h pe pe' o == (if o = fst pe then swept_words toy st h pe pe' (fst pe) else 0)))
+                    (swept_white toy st h h pe pe' o ==>
+                       in_use toy st' h' h' o == false /\ (forall (w: nat). covers h o w ==> free_word toy st' h' h' w)) /\
+                    (in_use toy st h h o /\ region tk pe pe' o /\ col_of h o == Black ==>
+                       in_use toy st' h' h' o /\ col_of h' o == White /\ same_contents h h' o) /\
+                    (in_use toy st h h o /\ not (region tk pe pe' o) ==> in_use toy st' h' h' o /\ same_block h h' o) /\
+                    (in_use toy st' h' h' o ==> in_use toy st h h o) /\
+                    swept_words toy st h h pe pe' o == (if o = fst pe then swept_words toy st h h pe pe' (fst pe) else 0)))
   = step_shape pe h st o;
     let p = fst pe in
     let h' = s_heap pe h st in
     let st' = s_st pe h st in
     if o = p then begin
-      let ww (w: nat) : Lemma (covers h o w /\ swept_white toy st h pe (s_next pe h) o ==> free_word toy st' h' w)
+      let ww (w: nat) : Lemma (covers h o w /\ swept_white toy st h h pe (s_next pe h) o ==> free_word toy st' h' h' w)
         = step_shape pe h st o in
       FStar.Classical.forall_intro ww
     end
     else assert (region tk pe (s_next pe h) p)
+
+/// The step's guarantee, at the model heap itself.
+let tstep_post (pe: tprog) (h: mheap) (st: tstate) : prop =
+  let (pe', h', st', r) = tsweep.step pe h st in
+  sweep_step_post toy pe h st pe' h' st' r h h'
 
 let step_post_intro (pe: tprog) (h: mheap) (st: tstate)
   : Lemma (requires (let (pe', h', st', r) = tsweep.step pe h st in
                      (forall (o: nat). tk.unswept pe' o ==> tk.unswept pe o) /\
                      (exists (o: nat). o < h.size /\ region tk pe pe' o) /\
                      h'.size == h.size /\
-                     (forall (o: nat). swept_white toy st h pe pe' o ==>
-                        in_use toy st' h' o == false /\ (forall (w: nat). covers h o w ==> free_word toy st' h' w)) /\
-                     (forall (o: nat). in_use toy st h o /\ region tk pe pe' o /\ col_of h o == Black ==>
-                        in_use toy st' h' o /\ col_of h' o == White /\ same_contents h h' o) /\
-                     (forall (o: nat). in_use toy st h o /\ not (region tk pe pe' o) ==>
-                        in_use toy st' h' o /\ same_block h h' o) /\
-                     (forall (o: nat). in_use toy st' h' o ==> in_use toy st h o) /\
-                     (forall (w: nat). free_word toy st h w ==> free_word toy st' h' w) /\
-                     (forall (w: nat). free_word toy st' h' w ==>
-                        free_word toy st h w \/ (exists (o: nat). covers h o w /\ swept_white toy st h pe pe' o)) /\
-                     r.freed_words == sum h.size (swept_words toy st h pe pe') /\
+                     (forall (o: nat). swept_white toy st h h pe pe' o ==>
+                        in_use toy st' h' h' o == false /\ (forall (w: nat). covers h o w ==> free_word toy st' h' h' w)) /\
+                     (forall (o: nat). in_use toy st h h o /\ region tk pe pe' o /\ col_of h o == Black ==>
+                        in_use toy st' h' h' o /\ col_of h' o == White /\ same_contents h h' o) /\
+                     (forall (o: nat). in_use toy st h h o /\ not (region tk pe pe' o) ==>
+                        in_use toy st' h' h' o /\ same_block h h' o) /\
+                     (forall (o: nat). in_use toy st' h' h' o ==> in_use toy st h h o) /\
+                     (forall (w: nat). free_word toy st h h w ==> free_word toy st' h' h' w) /\
+                     (forall (w: nat). free_word toy st' h' h' w ==>
+                        free_word toy st h h w \/ (exists (o: nat). covers h o w /\ swept_white toy st h h pe pe' o)) /\
+                     r.freed_words == sum h.size (swept_words toy st h h pe pe') /\
                      toy.inv (Sweeping pe') h' st' /\ well_formed h'))
-          (ensures sweep_step_post tsweep pe h st)
+          (ensures tstep_post pe h st)
   = ()
 
 #push-options "--z3rlimit 40"
-let tstep_ok (pe: tprog) (h: mheap) (st: tstate) : Lemma (sweep_step_at tsweep pe h st)
+let tstep_m (pe: tprog) (h: mheap) (st: tstate)
+  : Lemma (toy.inv (Sweeping pe) h st /\ well_formed h /\ no_grey h /\ tsweep.done pe == false ==> tstep_post pe h st)
   = let pre () : Lemma (requires toy.inv (Sweeping pe) h st /\ well_formed h /\ no_grey h /\ tsweep.done pe == false)
-                       (ensures sweep_step_post tsweep pe h st)
+                       (ensures tstep_post pe h st)
       = let p = fst pe in
         let e = snd pe in
         let p' = p + wz_of h p + 1 in
@@ -606,18 +639,26 @@ let tstep_ok (pe: tprog) (h: mheap) (st: tstate) : Lemma (sweep_step_at tsweep p
         tinv_intro (Sweeping pe') h' st';
         FStar.Classical.forall_intro (step_words pe h st);
         FStar.Classical.forall_intro (step_blocks pe h st);
-        sum_single h.size (swept_words toy st h pe pe') p;
+        sum_single h.size (swept_words toy st h h pe pe') p;
         assert (region tk pe pe' p);
-        assert (r.freed_words == swept_words toy st h pe pe' p);
+        assert (r.freed_words == swept_words toy st h h pe pe' p);
         step_post_intro pe h st
     in
     FStar.Classical.move_requires pre ()
 #pop-options
 
-let tdone_ok (pe: tprog) (h: mheap) (st: tstate) : Lemma (sweep_done_at tsweep pe h st)
-  = let pre () : Lemma (requires toy.inv (Sweeping pe) h st /\ well_formed h /\ tsweep.done pe == true)
+let tstep_ok (pe: tprog) (h: mheap) (st: tstate) : Lemma (sweep_step_at toy_rep tsweep pe h st)
+  = tstep_m pe h st;
+    toy_rep_id ();
+    let (pe', h', st', r) = tsweep.step pe h st in
+    lifted_id toy_rep (sweep_step_pre tsweep pe h st) h h' (sweep_step_post toy pe h st pe' h' st' r)
+
+let tdone_ok (pe: tprog) (h: mheap) (st: tstate) : Lemma (sweep_done_at toy_rep tsweep pe h st)
+  = toy_rep_id ();
+    forall_repr_id toy_rep h (sweep_done_m tsweep pe h st);
+    let pre () : Lemma (requires toy.inv (Sweeping pe) h st /\ well_formed h /\ tsweep.done pe == true)
                        (ensures toy.inv Idle h st /\
-                                (forall (o: nat). in_use toy st h o ==> tk.unswept pe o == false) /\
+                                (forall (o: nat). in_use toy st h h o ==> tk.unswept pe o == false) /\
                                 (forall (o: nat). is_block h o ==> col_of h o == White))
       = tinv_elim_all (Sweeping pe) h st;
         let l (o: nat) : Lemma (tlocal Idle h st o) = assert (tlocal (Sweeping pe) h st o) in
@@ -626,7 +667,7 @@ let tdone_ok (pe: tprog) (h: mheap) (st: tstate) : Lemma (sweep_done_at tsweep p
     in
     FStar.Classical.move_requires pre ()
 
-let toy_sweep_ok () : Lemma (sweep_ok tsweep)
+let toy_sweep_ok () : Lemma (sweep_ok toy_rep tsweep)
   = FStar.Classical.forall_intro_2 tstart_ok;
     FStar.Classical.forall_intro_3 tstep_ok;
     FStar.Classical.forall_intro_3 tdone_ok

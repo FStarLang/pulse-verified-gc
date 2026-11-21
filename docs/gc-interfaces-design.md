@@ -1012,14 +1012,14 @@ this specification.
 
 **Residual gaps** (not fixed in this stage):
 
-- **G16 (partly fixed in §8.3). Allocation status mid-sweep.** Pages' `free_sw` and first-fit's
+- **G16 (partly fixed in §8.3; word level in §9.6). Allocation status mid-sweep.** Pages' `free_sw` and first-fit's
   `free_incremental` count unswept white blocks as free. Their step lemmas
   then say "the in-use set is unchanged". This specification's `free` is
   allocation status: a sweep step frees, and `freed_words` counts. To
   instantiate it, `free` must be "blue" for both, with their step lemmas
   restated. `freed_words`, and "free words grow exactly", are missing in
   both (§7.4 tables).
-- **G17 (partly fixed in §8.2). No abstraction function** from the byte-level heap to this
+- **G17 (partly fixed in §8.2; the representation and its faithfulness in §9). No abstraction function** from the byte-level heap to this
   model. So neither pages nor first-fit is an instance yet, and there is no
   pages run here. The tables of §7.4 are the per-clause plan for those
   instances.
@@ -1254,3 +1254,292 @@ forward:
 | PagesFree | 21 s | 20 s | 21 s |
 
 `GC.Spec.Top.PagesFree`, which pulls in `Abs`, is added to `ROOT_MODULES`.
+
+## 9. Generic in the heap: representation relations and faithfulness (stage 2b, first part)
+
+The decision of §8.4 was option (a), adjusted to follow McCreight, Shao,
+Lin and Li, "A General Framework for Certifying Garbage Collectors and
+Their Mutators" (PLDI 2007). Each collector brings its own heap type. Its
+link to the model is a **representation relation**, not a function, and
+every contract is lifted through that relation. This section covers the
+refactor and the faithfulness conditions. It stops at the checkpoint before
+the clause-by-clause pages proofs.
+
+### 9.1 The shape
+
+- **`GC.Spec.Top.Rep`.** A collector's heaps are a major heap type `t` and a
+  nursery type `yt`. Their `rep t yt` holds:
+  - `repr m h`: model heap `m` represents concrete heap `h`; likewise
+    `yrepr` for the nursery;
+  - the instance's own **reads**: `rsize`, `rhd h o` (the header at `o`, if a
+    block starts there) and `read h o i` (field `i` of the block at `o`);
+    the same for the nursery;
+  - its sizes (`size_ok`, `ysize_ok`), the words a field can hold
+    (`storable`), and the largest young object (`ymax`);
+  - the program's nursery operations `yinit`, `yalloc`, `ywrite` and
+    `yreset`.
+- **Lifting** (`lifted`, `forall_repr`, `forall_repr2`, `some_repr`, and
+  `forall_views` in `Iface`). Each contract is a named model contract (a
+  precondition on the model heap, a guarantee relating it to the next one)
+  wrapped in one of these:
+  - a **precondition** holds of `h` when some model heap representing it
+    satisfies it;
+  - a **guarantee** holds when every model heap that represents the input
+    and satisfies the precondition has a represented successor related to
+    it by the guarantee;
+  - where the model step is a function (the Fill, a store into the
+    nursery), the guarantee is that its result represents the output:
+    `r.repr (fill m o vs) h'`.
+- **`GC.Spec.Top.Iface`.** The components act on `t` (and the minor
+  collection and mark on `cworld t yt`).
+  - The allocator's `free`, `inv` and `room` read the concrete heap.
+  - `in_use a st h m o` takes the model heap that represents `h`.
+- **`GC.Spec.Top.Run`.** A configuration holds the concrete heaps.
+  - `views x w`: a model world represents it.
+  - The conclusions read one of them, `vw x` (chosen classically), and
+    `concl_point` says one exists. By faithfulness all of them agree on
+    blocks, headers and fields (`repr_agree`), and reachability reads
+    nothing else.
+  - The mutator's obligations hold of `vw x`: a precondition holds when
+    some represented state satisfies it.
+  - `components_ok` adds `faithful c.r`. `gc_correct_local` assumes it.
+
+### 9.2 Faithfulness
+
+`faithful r = rich r /\ faithful_major r /\ faithful_young r`. The
+specification fixes it; the instance does not choose it.
+
+- **What is read is the model.** If `repr m h`, then `m` has an admissible
+  size and the instance's reads of `h` are those of `m` (`reads_model`):
+  - the same size;
+  - the same header at every address (so the same blocks);
+  - the same value in every field.
+
+  So two model heaps that represent one concrete heap agree on blocks,
+  headers and fields (`repr_agree`). A relation can hide only what the
+  instance's reads never show.
+- **Nothing missing.** Every `representable` model heap represents some
+  concrete heap. Such a heap is well formed, of an admissible size, with
+  every block having a field and every field storable.
+- **The nursery.** The reads condition holds for the nursery too, and the
+  program's operations are the model's, lifted:
+  - `yinit` represents `empty_heap n`;
+  - `ywrite` represents `set_field`;
+  - `yreset` represents the empty nursery;
+  - `yalloc` returns an address with room (`young_free`) and a nursery
+    represented by `young_alloc`. It fails only when `sz > ymax` or no
+    address has room.
+- **`rich`.** The instance stores at least what OCaml puts in a field:
+  - every odd word (immediates, and infix headers);
+  - a pointer to every block of the major heap and of the nursery;
+  - at least one size of each heap, and `ymax ≥ 1`.
+
+**Rejected.** Each of these representation relations relates every heap to
+the empty heap:
+- `Broken.bad_rep_rejected`, on the toy's heaps;
+- `ByteRep.bad_byte_rep_rejected`, on the byte heap.
+
+Both fail "nothing missing": a well-formed heap with one block is
+represented by no heap. Under such a relation every lifted contract would
+be about a heap with no block, and so would say nothing.
+
+### 9.3 Instances
+
+**The toy (`GC.Spec.Top.ToyRep`, `GC.Spec.Top.IdRep`).**
+- The relation is equality, and the reads are the model's.
+- The nursery allocates at the first address with room (`yfind`, which
+  the runs compute).
+- `toy_rep_faithful`.
+- `IdRep`: for an equality relation, each lifted form is the model
+  contract at the heap itself: `lifted_id`, `forall_repr_id`,
+  `forall_repr2_id`, `some_repr_id`, `forall_views_id`, `alloc_fold_id`.
+  The toy components keep their proofs on model heaps and are lifted by
+  these lemmas. The broken components are rejected through them.
+
+**The byte heap (`GC.Spec.Top.{Word,Abs,Young,ByteRep}`): `byte_rep_faithful`.**
+
+- **Words (`Word`).** A 64-bit word is read as follows:
+  - a major pointer when `is_pointer`; its model address is that of the
+    object's header;
+  - a young pointer when it is an aligned nursery offset past a header.
+    `GC.Gen.Base` reads such words the same way (`to_minor_offset`,
+    `is_minor_addr`; `absv_young`, `young_is_minor`);
+  - otherwise a word of bytes, kept whole.
+
+  On the words it produces, the reading has an inverse (`absv_concv`).
+  Headers decode and encode exactly (`abs_hdr_enc`).
+- **The major heap (`Abs`).**
+  - `brepr m g`: `m` agrees with the heap read by the walk from
+    `zero_addr`. Bytes below `zero_addr`, and the body of a header word,
+    are not described.
+  - Blocks are `objects zero_addr g` (`abs_is_block`).
+  - Headers are `wosize_of_object`, `tag_of_object` and `color_of_object`
+    (`abs_header`), and blue is `is_blue` (`abs_blue`).
+  - Field `i` is the word at `obj + 8 i` (`abs_field`), and the reads are
+    those of every represented heap (`brepr_reads`).
+  - A model major pointer is exactly an `is_pointer` word (`absv_major`).
+  - A pointer resolves the same way in both readings:
+    `resolve_block_bytes` for a block, and `resolve_infix_bytes` for an
+    infix header, which gives the same closure as
+    `GC.Spec.Object.resolve_object`.
+  - **Nothing missing.** `conc m` is the byte heap whose words are the
+    model's (`Seq.init` over bytes), and `conc_repr` shows it represents
+    `m`. The proof shows the walk lands exactly on the model's blocks
+    (`rep_walk`, `rep_on_walk`).
+- **The nursery (`Young`)** is GC.Gen.MinorHeap's `minor_state`.
+  - A block starts where the walk from 0 to the bump pointer lands (`yat`).
+  - `yrepr m ms`: that walk is well formed, and `m` agrees with the
+    nursery's reading.
+  - The operations:
+    - `yinit` is `minor_init` of a zeroed nursery;
+    - `yreset` is `minor_reset`;
+    - `ywrite` is `minor_write_word` at the field;
+    - `yalloc` bump-allocates a white header and the fields, for objects
+      up to `max_young_wosize`.
+  - Each operation is proved lifted (`yinit_ok'`, `ywrite_ok'`,
+    `yalloc_free`, `yalloc_repr`, `yalloc_none`, `yreset_ok'`).
+  - The walk's positions are exactly GC.Gen.MinorHeap's `minor_objects`,
+    and the walk gives `minor_wf` (`young_objects`).
+  - A young pointer resolves as `resolve_minor` does, through infix
+    headers included (`young_resolve`).
+
+### 9.4 Infix headers are words
+
+Gap **G21** (fixed). The model had a value `VInfix k`, which was wrong in
+two ways:
+- the abstraction dropped the infix header's colour bits;
+- reading a word by its bits misread OCaml integers whose low byte is 249
+  (for example, the integer 124 is the word 249) as infix headers.
+
+The fix: `value` is now `VInt | VPtr`, and an infix header is a word of
+bytes (`VInt`). `resolve` reads a word as an infix header only when a
+pointer points at it (`infix_hdr`), which is how OCaml reads it.
+- `fill_ok` needs no closure clause.
+- The write obligation is "not over a word that reads as an infix header".
+- Nothing is dropped, so the byte reading is lossless on what it produces.
+
+### 9.5 The mutator reads
+
+`ERead p i` loads field `i` of the object `p` points to (major or young)
+into a new root, through the instance's own `read` or `yread`.
+- Obligation: the object is a block, reachable, and `i` is in range.
+- Conclusion (`concl_step`): the value read is the model's field.
+- Both vacuity runs contain a read (events 15 and 21), and
+  `every_event_occurs` checks for it.
+
+### 9.6 The word-level freed-words lemma
+
+`PagesFree.step_frees_words`: `SweepAll.step` on an unswept pool page or
+large run.
+- Inside its unit, a byte is covered by a blue block after the step
+  exactly when, before it, it was covered by a blue block (free) or a
+  white block (freed).
+- Outside the unit, the words are unchanged (`unit_step`).
+- The proof uses, inside the unit:
+  - the walk's covering and uniqueness (`cover_exists`, `cover_unique`);
+  - every non-blue block after the step is a black block whitened in
+    place;
+  - every black block survives;
+  - nothing is grey.
+
+So the free words grow by exactly the words of the white blocks.
+`freed_words_of` is the sum of the sizes of those blocks.
+
+What remains for the instance (2b) is reindexing that sum. It must become
+the model's `sum size (swept_words …)`, which is a sum over model
+addresses rather than over the `objects` sequence.
+
+### 9.7 Gaps found by the refactor
+
+| | Gap | Fix |
+|---|---|---|
+| G21 | Infix headers as a separate value: lossy, and misreads integers (§9.4) | Infix headers are words |
+| G22 | `EYoungAlloc o …` let the program choose the address. A bump nursery (OCaml's, GC.Gen.MinorHeap's) cannot place an object anywhere | The representation's `yalloc` chooses; it fails only without room |
+| G23 | Contracts used model-heap equality (`h' == fill h o vs`, and the store fixing every word, header bodies included) | Functional steps: `repr (op m) h'`. The store fixes field words only |
+| G24 | `init_at` for every size `n`; a byte heap has one size | `size_ok`/`ysize_ok`; `run_ok` requires them |
+| G25 | The program could store any value, but a concrete heap holds words | `storable` in the mutator's obligations, with the `rich` lower bound |
+| G26 | `oor_justified` folded `fill` on the model; with concrete heaps that is not a heap | `alloc_fold` goes through the relation (`some_model`, `some_heap`) |
+| G27 | Nothing tied the model to the concrete heap a component returns | Every guarantee gives a represented successor; faithfulness ties the representation to the instance's reads |
+
+**Residual.**
+- GC.Gen.MinorHeap's `minor_alloc_spec` writes its header with
+  `make_minor_header`, which its interface does not expose. `yalloc`
+  writes the white header itself. That the two words are equal is not
+  proved.
+- The instance's reads are its own declaration. That they are the reads
+  the verified implementation performs holds by construction for the byte
+  heap (`read_word` at `obj + 8 i`; GC.Gen.MinorHeap's `minor_read_word`).
+  It is not a theorem of the generic specification.
+
+### 9.8 How this relates to McCreight et al. (PLDI 2007)
+
+**Adopted:**
+- **A representation relation** between the abstract state and each
+  implementation's concrete state, which need not be a function (§9.1).
+- **Abstract specifications of the operations.** The mutator's
+  operations (allocate, read, write, root changes) and every collector
+  component are specified on the abstract heap.
+- **Lifting the contracts through the relation.** A precondition holds if
+  some represented abstract state satisfies it. A guarantee holds if every
+  represented abstract state has a represented successor related to it.
+- **gcStep-style coercion.** A collector step (mark slice, sweep step,
+  minor collection) may change the concrete heap freely. It is constrained
+  only by a represented successor and the step's guarantee. The program
+  sees the abstract state only (its reads are the model's).
+
+**Beyond the paper's framework:**
+- **Liveness.** The conclusions go past safety:
+  - the partition of words (5);
+  - what a cycle frees: exactly what a stop-the-world collection at its
+    start frees (3a), (3b), (4);
+  - anything unreachable during cycle k is freed by the end of cycle k+1
+    (3c);
+  - strictly decreasing measures for marking and sweeping (6);
+  - non-triviality of allocation: room holds wherever the allocator's
+    capacity condition does, in every state a run reaches.
+- **A pluggable allocator.**
+  - The allocator is a component with its own state and invariant.
+  - Allocation status belongs to the allocator.
+  - The sweep frees, and counts what it frees (`freed_words`).
+  - The specification fixes a capacity condition per allocator.
+- **Generational collection.** It has a nursery with its own
+  representation and operations, a remembered set, and a write barrier
+  (including the Fill of a new object). Promotion goes through the
+  allocator, forwarding infix pointers, with `OutOfRoom` justified.
+- **Incremental collection.** Snapshot-at-the-beginning marking with an
+  allocation colour rule, and incremental sweeping. Allocation runs
+  during both.
+- **Faithfulness.** The paper takes the representation as given. Here
+  every instance proves that its reads are the model's, that nothing
+  representable is missing, and that its nursery operations are the
+  model's. A degenerate relation is rejected (§9.2).
+
+### 9.9 Files and checks
+
+- **New modules** (`mark-and-sweep/spec/`): `GC.Spec.Top.Rep`, `IdRep`,
+  `ToyRep`, `Word`, `Young`, `ByteRep`.
+- **Rewritten:** `Abs` (the byte relation, reads, pointer correspondence,
+  surjectivity).
+- **Changed:** `Heap`, `Iface`, `Run`, `Toy`, `ToyMark`, `ToyMinor`,
+  `ToyComps`, `Broken`, `Vacuity`, `PagesFree`.
+- `ByteRep` is added to `ROOT_MODULES`.
+- **Rules:** no admits and no `assume`; local rlimits ≤ 40.
+- **Checks:** every module checked from a fresh cache (copied from the
+  repository's `_cache`, without `GC.Spec.Top.*`) at seeds 0, 1 and 2,
+  without `--retry`:
+
+| Module | Seed 0 | Seed 1 | Seed 2 |
+|---|---|---|---|
+| Heap, Rep, Iface, Run, IdRep, ToyRep | 13 s | 13 s | 12 s |
+| Toy | 87 s | 89 s | 88 s |
+| ToyMark, ToyMinor, ToyComps | 40 s | 48 s | 39 s |
+| Broken | 58 s | 56 s | 57 s |
+| Vacuity | 11 s | 12 s | 11 s |
+| Word, Abs | 24 s | 26 s | 23 s |
+| Young | 49 s | 72 s | 54 s |
+| ByteRep | 2 s | 2 s | 2 s |
+| PagesFree | 22 s | 16 s | 22 s |
+
+One seed-1 timeout, in `ToyMinor.ps_use` (a chain of equivalences made
+heavier by the refactor), was found by these runs and fixed by stating the
+links one by one.

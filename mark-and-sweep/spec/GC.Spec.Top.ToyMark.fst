@@ -17,7 +17,10 @@
 module GC.Spec.Top.ToyMark
 
 open GC.Spec.Top.Heap
+open GC.Spec.Top.Rep
 open GC.Spec.Top.Iface
+open GC.Spec.Top.IdRep
+open GC.Spec.Top.ToyRep
 module L = FStar.List.Tot
 module Seq = FStar.Seq
 
@@ -133,7 +136,9 @@ let tmslice (h: mheap) : GTot mheap =
   | None -> h
   | Some g -> tmslice_with h g
 
-let tmark : mark = { mstart = tmstart; mslice = tmslice }
+let tmstart_c (cw: cworld mheap mheap) : GTot mheap = tmstart (tview cw)
+
+let tmark : mark mheap mheap = { mstart = tmstart_c; mslice = tmslice }
 
 /// Recolouring keeps resolve, pointer fields and edges.
 let colours_only_edges (h h': mheap)
@@ -177,10 +182,10 @@ let rec start_path (w: world) (o: nat) (r: reach w o)
         WStep p o pp ()
       end
 
-let tmstart_ok (w: world) : Lemma (mark_start_at tmark w)
+let tmstart_m (w: world) : Lemma (mark_start_pre w ==> mark_start_post w (tmstart w))
   = let pre () : Lemma (requires well_formed w.maj /\ no_dark w.maj /\
                                  (forall (o: nat). reachable w o ==> is_block w.maj o /\ col_of w.maj o == White))
-                       (ensures (let h' = tmark.mstart w in
+                       (ensures (let h' = tmstart w in
                                  colours_only w.maj h' /\
                                  (forall (o: nat). outside_ref w o ==> dark (col_of h' o)) /\
                                  tricolour h' (reachable w) (fun _ -> False)))
@@ -204,13 +209,20 @@ let tmstart_ok (w: world) : Lemma (mark_start_at tmark w)
             end
         in
         FStar.Classical.forall_intro t3;
-        assert (tmark.mstart w == h');
         assert (forall (o: nat). reachable w o ==> is_block h' o);
         assert (forall (o: nat). is_block h' o /\ dark (col_of h' o) ==> reachable w o \/ False);
         assert (forall (o: nat). reachable w o /\ col_of h' o == White ==> grey_reached h' o);
         assert (tricolour h' (reachable w) (fun _ -> False))
     in
     FStar.Classical.move_requires pre ()
+
+let tmstart_ok (cw: cworld mheap mheap) : Lemma (mark_start_at toy_rep tmark cw)
+  = toy_rep_id ();
+    let w = tview cw in
+    tmstart_m w;
+    id_repr toy_rep (tmstart w) (tmstart w);
+    assert (mark_start_m toy_rep tmark cw w);
+    forall_views_id toy_rep cw (mark_start_m toy_rep tmark cw)
 
 let tmslice_colours_only (h: mheap) (g: nat) : Lemma (colours_only h (tmslice_with h g))
   = let h' = tmslice_with h g in
@@ -280,15 +292,16 @@ let slice_measure (h: mheap) (g: nat) (live: nat -> prop)
     end
 
 #push-options "--z3rlimit 40"
-let tmslice_ok (h: mheap) (snap allocd: nat -> prop) : Lemma (mark_slice_at tmark h snap allocd)
+let tmslice_m (h: mheap) (snap allocd: nat -> prop)
+  : Lemma (mark_slice_pre snap allocd h ==> mark_slice_post snap allocd h (tmslice h))
   = let live = union snap allocd in
     let pre () : Lemma (requires well_formed h /\ tricolour h snap allocd /\ closed h live /\ ~(mark_done h))
-                       (ensures (let h' = tmark.mslice h in
+                       (ensures (let h' = tmslice h in
                                  colours_only h h' /\ tricolour h' snap allocd /\ mark_decreases h h' live))
       = find_grey_spec h h.size;
         let Some g = find_grey h h.size in
         let h' = tmslice_with h g in
-        assert (tmark.mslice h == h');
+        assert (tmslice h == h');
         tmslice_colours_only h g;
         assert (live g);
         let c (x: nat) : Lemma ((is_block h' x /\ dark (col_of h' x) ==> snap x \/ allocd x) /\
@@ -317,7 +330,12 @@ let tmslice_ok (h: mheap) (snap allocd: nat -> prop) : Lemma (mark_slice_at tmar
     FStar.Classical.move_requires pre ()
 #pop-options
 
-let toy_mark_ok () : Lemma (mark_ok tmark)
+let tmslice_ok (h: mheap) (snap allocd: nat -> prop) : Lemma (mark_slice_at toy_rep tmark h snap allocd)
+  = tmslice_m h snap allocd;
+    toy_rep_id ();
+    lifted_id toy_rep (mark_slice_pre snap allocd) h (tmslice h) (mark_slice_post snap allocd)
+
+let toy_mark_ok () : Lemma (mark_ok toy_rep tmark)
   = FStar.Classical.forall_intro tmstart_ok;
     FStar.Classical.forall_intro_3 tmslice_ok
 
@@ -344,15 +362,26 @@ let tbwrite (marking: bool) (h: mheap) (rem: list slot) (o i: nat) (v: value) : 
 let tbinit (h: mheap) (rem: list slot) (o: nat) (vs: list value) : GTot (mheap & list slot) =
   (fill h o vs, L.append (slots o (L.length vs)) rem)
 
-let tbarrier : barrier = { bwrite = tbwrite; binit = tbinit }
+let tbarrier : barrier mheap = { bwrite = tbwrite; binit = tbinit }
 
-let tbwrite_ok (marking: bool) (h: mheap) (rem: list slot) (o i: nat) (v: value)
-  : Lemma (barrier_write_at tbarrier marking h rem o i v)
+let tbwrite_m (marking: bool) (h: mheap) (rem: list slot) (o i: nat) (v: value)
+  : Lemma (let (h', rem') = tbwrite marking h rem o i v in
+           write_pre o i v (toy_rep.storable v) h ==> write_post marking rem rem' o i v h h')
   = ()
 
+let tbwrite_ok (marking: bool) (h: mheap) (rem: list slot) (o i: nat) (v: value)
+  : Lemma (barrier_write_at toy_rep tbarrier marking h rem o i v)
+  = tbwrite_m marking h rem o i v;
+    toy_rep_id ();
+    let (h', rem') = tbwrite marking h rem o i v in
+    lifted_id toy_rep (write_pre o i v (toy_rep.storable v)) h h' (write_post marking rem rem' o i v)
+
 let tbinit_ok (h: mheap) (rem: list slot) (o: nat) (vs: list value)
-  : Lemma (barrier_init_at tbarrier h rem o vs)
-  = let m (sl: slot) : Lemma (L.memP sl rem ==> L.memP sl (L.append (slots o (L.length vs)) rem))
+  : Lemma (barrier_init_at toy_rep tbarrier h rem o vs)
+  = toy_rep_id ();
+    id_repr toy_rep (fill h o vs) (fill h o vs);
+    forall_repr_id toy_rep h (binit_m toy_rep tbarrier h rem o vs);
+    let m (sl: slot) : Lemma (L.memP sl rem ==> L.memP sl (L.append (slots o (L.length vs)) rem))
       = L.append_memP (slots o (L.length vs)) rem sl in
     FStar.Classical.forall_intro m;
     let n (i: nat) : Lemma (i < L.length vs ==> L.memP (o, i) (L.append (slots o (L.length vs)) rem))
@@ -360,13 +389,13 @@ let tbinit_ok (h: mheap) (rem: list slot) (o: nat) (vs: list value)
         L.append_memP (slots o (L.length vs)) rem (o, i) in
     FStar.Classical.forall_intro n
 
-let toy_barrier_ok () : Lemma (barrier_ok tbarrier)
+let toy_barrier_ok () : Lemma (barrier_ok toy_rep tbarrier)
   = let w (marking: bool) (h: mheap) (rem: list slot)
-      : Lemma (forall o i v. barrier_write_at tbarrier marking h rem o i v)
-      = let w1 (o: nat) : Lemma (forall i v. barrier_write_at tbarrier marking h rem o i v)
+      : Lemma (forall o i v. barrier_write_at toy_rep tbarrier marking h rem o i v)
+      = let w1 (o: nat) : Lemma (forall i v. barrier_write_at toy_rep tbarrier marking h rem o i v)
           = FStar.Classical.forall_intro_2 (tbwrite_ok marking h rem o) in
         FStar.Classical.forall_intro w1 in
     FStar.Classical.forall_intro_3 w;
-    let i (h: mheap) (rem: list slot) : Lemma (forall o vs. barrier_init_at tbarrier h rem o vs)
+    let i (h: mheap) (rem: list slot) : Lemma (forall o vs. barrier_init_at toy_rep tbarrier h rem o vs)
       = FStar.Classical.forall_intro_2 (tbinit_ok h rem) in
     FStar.Classical.forall_intro_2 i

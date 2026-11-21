@@ -11,21 +11,28 @@
 ///     concrete configurations;
 ///   - the contracts at every step (`run_hyps`), from the contracts.
 ///
+/// The toy works on model heaps, its representation equality
+/// (GC.Spec.Top.ToyRep); a configuration's one model world is `wo x`.
+///
 /// The runs (heap of 12 words, nursery of 4):
 ///   - A at 0 (root), B at 2 (A.0 = B), C at 4 (dropped: unreachable),
-///     young Y (Y.0 = B, then dropped), then a full cycle, then a minor
-///     collection;
+///     young Y (Y.0 = B, then dropped), then a full cycle, a read of A.0
+///     into a root, then a minor collection;
 ///   - incremental: the same start, then during marking an allocation (D,
 ///     black) and an overwrite of A.0 (the barrier), during sweeping an
-///     allocation (E, white), a write and a root change.
+///     allocation (E, white), a write and a root change; then the read and
+///     the minor collection.
 /// At the cycle's start, A and B are reachable and C is not
 /// (`c_unreachable_at_start`).
 
 module GC.Spec.Top.Vacuity
 
 open GC.Spec.Top.Heap
+open GC.Spec.Top.Rep
 open GC.Spec.Top.Iface
 open GC.Spec.Top.Run
+open GC.Spec.Top.IdRep
+open GC.Spec.Top.ToyRep
 open GC.Spec.Top.Toy
 open GC.Spec.Top.ToyMark
 open GC.Spec.Top.ToyMinor
@@ -33,6 +40,10 @@ open GC.Spec.Top.ToyComps
 module L = FStar.List.Tot
 
 #set-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+
+/// The world of a toy configuration (the one model world representing it).
+let wo (x: config tc) : world = tview x.w
+
 
 /// ---------------------------------------------------------------------------
 /// Decidable sufficient conditions
@@ -114,7 +125,7 @@ let prefix : list event = [
   EAlloc 1 0 [VInt 0];                    (* 1: B at 2 *)
   EWrite (Major 0) 0 (VPtr (Major 2));    (* 2: A.0 := B *)
   EAlloc 1 0 [VInt 1];                    (* 3: C at 4 *)
-  EYoungAlloc 0 1 0 [VPtr (Major 0)];     (* 4: young Y, Y.0 = A *)
+  EYoungAlloc 1 0 [VPtr (Major 0)];     (* 4: young Y, Y.0 = A *)
   EWrite (Young 0) 0 (VPtr (Major 2));    (* 5: Y.0 := B *)
   ERoots [VPtr (Major 0)]                 (* 6: only A is a root *)
 ]
@@ -128,7 +139,8 @@ let es_seq : list event = L.append prefix [
   ESweep;                                 (* 12: B black -> white *)
   ESweep;                                 (* 13: C white -> free *)
   EEnd;                                   (* 14 *)
-  EMinor                                  (* 15 *)
+  ERead (Major 0) 0;                      (* 15: read A.0 into a root *)
+  EMinor                                  (* 16 *)
 ]
 
 let es_inc : list event = L.append prefix [
@@ -146,7 +158,8 @@ let es_inc : list event = L.append prefix [
   ESweep;                                 (* 18: C freed *)
   ESweep;                                 (* 19: D *)
   EEnd;                                   (* 20 *)
-  EMinor                                  (* 21 *)
+  ERead (Major 0) 0;                      (* 21: read A.0 into a root *)
+  EMinor                                  (* 22 *)
 ]
 
 let cs (i: nat) : GTot (config tc) = at tc n_heap n_young es_seq i
@@ -169,8 +182,8 @@ let simple_b (sty: style) (x: config tc) (e: event) : GTot bool =
    | EAlloc sz tag vs -> tag <> infix_tag && L.length vs = sz && L.for_all VInt? vs &&
                          (not (Sequential? sty) || Idle? x.ph)
    | EStart -> Idle? x.ph
-   | ESlice -> Marking? x.ph && not (no_grey_b x.w.maj)
-   | EHandover -> Marking? x.ph && no_grey_b x.w.maj
+   | ESlice -> Marking? x.ph && not (no_grey_b (wo x).maj)
+   | EHandover -> Marking? x.ph && no_grey_b (wo x).maj
    | ESweep -> Sweeping? x.ph && not (tsweep.done (Sweeping?._0 x.ph))
    | EEnd -> Sweeping? x.ph && tsweep.done (Sweeping?._0 x.ph)
    | EMinor -> true
@@ -183,17 +196,19 @@ let rec for_all_vint (vs: list value) (i: nat)
 
 let simple_ok (sty: style) (x: config tc) (e: event)
   : Lemma (requires simple_b sty x e == true) (ensures enabled tc x e /\ style_ok sty x e /\ mutator_ok x e)
-  = match e with
+  = tc_vw x;
+    match e with
     | EAlloc sz tag vs ->
-      let f (i: nat) : Lemma (i < L.length vs ==> value_ok x.w (L.index vs i))
+      let f (i: nat) : Lemma (i < L.length vs ==> value_ok (wo x) (L.index vs i))
         = if i < L.length vs then for_all_vint vs i in
-      FStar.Classical.forall_intro f
+      FStar.Classical.forall_intro f;
+      tc_storable vs; mutator_of x e
     | ESlice ->
-      exists_below_iff x.w.maj.size (grey_at x.w.maj);
+      exists_below_iff (wo x).maj.size (grey_at (wo x).maj);
       let g = FStar.IndefiniteDescription.indefinite_description_ghost nat
-                (fun o -> o < x.w.maj.size /\ is_block x.w.maj o /\ col_of x.w.maj o == Grey) in
-      assert (~(no_grey x.w.maj))
-    | EHandover -> no_grey_of_b x.w.maj
+                (fun o -> o < (wo x).maj.size /\ is_block (wo x).maj o /\ col_of (wo x).maj o == Grey) in
+      assert (~(no_grey (wo x).maj))
+    | EHandover -> no_grey_of_b (wo x).maj
     | _ -> ()
 
 let simple_step (es: list event) (sty: style) (i: nat{i < L.length es})
@@ -203,9 +218,10 @@ let simple_step (es: list event) (sty: style) (i: nat{i < L.length es})
 
 /// ESlice: something is grey.
 let slice_enabled (x: config tc)
-  : Lemma (requires Marking? x.ph /\ x.stopped == false /\ no_grey_b x.w.maj == false)
+  : Lemma (requires Marking? x.ph /\ x.stopped == false /\ no_grey_b (wo x).maj == false)
           (ensures enabled tc x ESlice)
-  = exists_below_iff x.w.maj.size (grey_at x.w.maj)
+  = tc_vw x;
+    exists_below_iff (wo x).maj.size (grey_at (wo x).maj)
 
 #push-options "--fuel 2"
 let single_fill (w: world) (v: value)
@@ -216,34 +232,38 @@ let single_fill (w: world) (v: value)
 
 /// An allocation filled with one pointer the program holds.
 let alloc_ptr_ok (sty: style) (x: config tc) (a: nat)
-  : Lemma (requires x.stopped == false /\ major_ok_b x.w a == true /\ (Sequential? sty ==> Idle? x.ph))
+  : Lemma (requires x.stopped == false /\ major_ok_b (wo x) a == true /\ (Sequential? sty ==> Idle? x.ph))
           (ensures (let e = EAlloc 1 0 [VPtr (Major a)] in enabled tc x e /\ style_ok sty x e /\ mutator_ok x e))
-  = major_ok x.w a; single_fill x.w (VPtr (Major a))
+  = major_ok (wo x) a; single_fill (wo x) (VPtr (Major a));
+    tc_storable [VPtr (Major a)]; mutator_of x (EAlloc 1 0 [VPtr (Major a)])
 
-let young_alloc_ok (sty: style) (x: config tc) (o: nat) (a: nat)
-  : Lemma (requires x.stopped == false /\ young_free_b x.w.yng o 1 == true /\ major_ok_b x.w a == true /\
+let young_alloc_ok (sty: style) (x: config tc) (a: nat)
+  : Lemma (requires x.stopped == false /\ Some? (tyalloc x.w.cyng 1 0 [VPtr (Major a)]) /\ major_ok_b (wo x) a == true /\
                     (Sequential? sty ==> Idle? x.ph))
-          (ensures (let e = EYoungAlloc o 1 0 [VPtr (Major a)] in enabled tc x e /\ style_ok sty x e /\ mutator_ok x e))
-  = major_ok x.w a; young_free_of_b x.w.yng o 1; single_fill x.w (VPtr (Major a))
+          (ensures (let e = EYoungAlloc 1 0 [VPtr (Major a)] in enabled tc x e /\ style_ok sty x e /\ mutator_ok x e))
+  = major_ok (wo x) a; single_fill (wo x) (VPtr (Major a));
+    tc_storable [VPtr (Major a)]; mutator_of x (EYoungAlloc 1 0 [VPtr (Major a)])
 
 /// A write to a major block through a root.
 let write_major_ok (sty: style) (x: config tc) (o i: nat) (v: value)
   : Lemma (requires x.stopped == false /\ (Sequential? sty ==> Idle? x.ph) /\
-                    is_block x.w.maj o /\ root_b x.w.maj x.w.roots o == true /\ i < wz_of x.w.maj o /\
-                    not (VInfix? (field x.w.maj o i)) /\
-                    (match v with VInt _ -> True | VPtr (Major a) -> major_ok_b x.w a == true | _ -> False))
+                    is_block (wo x).maj o /\ root_b (wo x).maj (wo x).roots o == true /\ i < wz_of (wo x).maj o /\
+                    None? (infix_hdr (field (wo x).maj o i)) /\
+                    (match v with VInt _ -> True | VPtr (Major a) -> major_ok_b (wo x) a == true | _ -> False))
           (ensures (let e = EWrite (Major o) i v in enabled tc x e /\ style_ok sty x e /\ mutator_ok x e))
-  = reach_by_root x.w o;
-    match v with
-    | VPtr (Major a) -> major_ok x.w a
-    | _ -> ()
+  = reach_by_root (wo x) o;
+    (match v with
+     | VPtr (Major a) -> major_ok (wo x) a
+     | _ -> ());
+    tc_store v; mutator_of x (EWrite (Major o) i v)
 
 let write_young_ok (sty: style) (x: config tc) (o i: nat) (a: nat)
   : Lemma (requires x.stopped == false /\ (Sequential? sty ==> Idle? x.ph) /\
-                    is_block x.w.yng o /\ yroot_b x.w.yng x.w.roots o == true /\ i < wz_of x.w.yng o /\
-                    not (VInfix? (field x.w.yng o i)) /\ major_ok_b x.w a == true)
+                    is_block (wo x).yng o /\ yroot_b (wo x).yng (wo x).roots o == true /\ i < wz_of (wo x).yng o /\
+                    None? (infix_hdr (field (wo x).yng o i)) /\ major_ok_b (wo x) a == true)
           (ensures (let e = EWrite (Young o) i (VPtr (Major a)) in enabled tc x e /\ style_ok sty x e /\ mutator_ok x e))
-  = yreach_by_root x.w o; major_ok x.w a
+  = yreach_by_root (wo x) o; major_ok (wo x) a;
+    tc_store (VPtr (Major a)); mutator_of x (EWrite (Young o) i (VPtr (Major a)))
 
 let rec roots_ok_b (w: world) (rs: list value) : bool =
   match rs with
@@ -260,45 +280,52 @@ let rec roots_ok (w: world) (rs: list value)
     | VInt _ :: tl -> roots_ok w tl
 
 let roots_step_ok (sty: style) (x: config tc) (rs: list value)
-  : Lemma (requires x.stopped == false /\ (Sequential? sty ==> Idle? x.ph) /\ roots_ok_b x.w rs == true)
+  : Lemma (requires x.stopped == false /\ (Sequential? sty ==> Idle? x.ph) /\ roots_ok_b (wo x) rs == true)
           (ensures (let e = ERoots rs in enabled tc x e /\ style_ok sty x e /\ mutator_ok x e))
-  = roots_ok x.w rs
+  = roots_ok (wo x) rs; tc_storable rs; mutator_of x (ERoots rs)
+
+/// A read of a field of a major block through a root.
+let read_major_ok (sty: style) (x: config tc) (o i: nat)
+  : Lemma (requires x.stopped == false /\ (Sequential? sty ==> Idle? x.ph) /\
+                    is_block (wo x).maj o /\ root_b (wo x).maj (wo x).roots o == true /\ i < wz_of (wo x).maj o)
+          (ensures (let e = ERead (Major o) i in enabled tc x e /\ style_ok sty x e /\ mutator_ok x e))
+  = reach_by_root (wo x) o; mutator_of x (ERead (Major o) i)
 
 /// ---------------------------------------------------------------------------
 /// The sequential run
 /// ---------------------------------------------------------------------------
 
-let len_seq () : Lemma (L.length es_seq == 16) = assert_nbe (L.length es_seq == 16)
+let len_seq () : Lemma (L.length es_seq == 17) = assert_nbe (L.length es_seq == 17)
 
 #push-options "--z3rlimit 40"
 
 let seq_step_2 () : Lemma (step_ok es_seq Sequential 2)
   = len_seq ();
     assert_nbe (ev es_seq 2 == EWrite (Major 0) 0 (VPtr (Major 2)));
-    assert_nbe ((cs 2).stopped == false /\ Idle? (cs 2).ph /\ is_block (cs 2).w.maj 0 /\
-                 root_b (cs 2).w.maj (cs 2).w.roots 0 == true /\ 0 < wz_of (cs 2).w.maj 0 /\
-                 not (VInfix? (field (cs 2).w.maj 0 0)) /\ major_ok_b (cs 2).w 2 == true);
+    assert_nbe ((cs 2).stopped == false /\ Idle? (cs 2).ph /\ is_block (wo (cs 2)).maj 0 /\
+                 root_b (wo (cs 2)).maj (wo (cs 2)).roots 0 == true /\ 0 < wz_of (wo (cs 2)).maj 0 /\
+                 None? (infix_hdr (field (wo (cs 2)).maj 0 0)) /\ major_ok_b (wo (cs 2)) 2 == true);
     write_major_ok Sequential (cs 2) 0 0 (VPtr (Major 2))
 
 let seq_step_4 () : Lemma (step_ok es_seq Sequential 4)
   = len_seq ();
-    assert_nbe (ev es_seq 4 == EYoungAlloc 0 1 0 [VPtr (Major 0)]);
-    assert_nbe ((cs 4).stopped == false /\ Idle? (cs 4).ph /\ young_free_b (cs 4).w.yng 0 1 == true /\
-                 major_ok_b (cs 4).w 0 == true);
-    young_alloc_ok Sequential (cs 4) 0 0
+    assert_nbe (ev es_seq 4 == EYoungAlloc 1 0 [VPtr (Major 0)]);
+    assert_nbe ((cs 4).stopped == false /\ Idle? (cs 4).ph /\ Some? (tyalloc (cs 4).w.cyng 1 0 [VPtr (Major 0)]) /\
+                 major_ok_b (wo (cs 4)) 0 == true);
+    young_alloc_ok Sequential (cs 4) 0
 
 let seq_step_5 () : Lemma (step_ok es_seq Sequential 5)
   = len_seq ();
     assert_nbe (ev es_seq 5 == EWrite (Young 0) 0 (VPtr (Major 2)));
-    assert_nbe ((cs 5).stopped == false /\ Idle? (cs 5).ph /\ is_block (cs 5).w.yng 0 /\
-                 yroot_b (cs 5).w.yng (cs 5).w.roots 0 == true /\ 0 < wz_of (cs 5).w.yng 0 /\
-                 not (VInfix? (field (cs 5).w.yng 0 0)) /\ major_ok_b (cs 5).w 2 == true);
+    assert_nbe ((cs 5).stopped == false /\ Idle? (cs 5).ph /\ is_block (wo (cs 5)).yng 0 /\
+                 yroot_b (wo (cs 5)).yng (wo (cs 5)).roots 0 == true /\ 0 < wz_of (wo (cs 5)).yng 0 /\
+                 None? (infix_hdr (field (wo (cs 5)).yng 0 0)) /\ major_ok_b (wo (cs 5)) 2 == true);
     write_young_ok Sequential (cs 5) 0 0 2
 
 let seq_step_6 () : Lemma (step_ok es_seq Sequential 6)
   = len_seq ();
     assert_nbe (ev es_seq 6 == ERoots [VPtr (Major 0)]);
-    assert_nbe ((cs 6).stopped == false /\ Idle? (cs 6).ph /\ roots_ok_b (cs 6).w [VPtr (Major 0)] == true);
+    assert_nbe ((cs 6).stopped == false /\ Idle? (cs 6).ph /\ roots_ok_b (wo (cs 6)) [VPtr (Major 0)] == true);
     roots_step_ok Sequential (cs 6) [VPtr (Major 0)]
 
 let seq_step_0 () : Lemma (step_ok es_seq Sequential 0)
@@ -358,12 +385,19 @@ let seq_step_14 () : Lemma (step_ok es_seq Sequential 14)
 
 let seq_step_15 () : Lemma (step_ok es_seq Sequential 15)
   = len_seq ();
-    assert_nbe (simple_b Sequential (cs 15) (ev es_seq 15) == true);
-    simple_step es_seq Sequential 15
+    assert_nbe (ev es_seq 15 == ERead (Major 0) 0);
+    assert_nbe ((cs 15).stopped == false /\ Idle? (cs 15).ph /\ is_block (wo (cs 15)).maj 0 /\
+                 root_b (wo (cs 15)).maj (wo (cs 15)).roots 0 == true /\ 0 < wz_of (wo (cs 15)).maj 0);
+    read_major_ok Sequential (cs 15) 0 0
 
 #pop-options
 
-let seq_step (i: nat{i < 16}) : Lemma (step_ok es_seq Sequential i)
+let seq_step_16 () : Lemma (step_ok es_seq Sequential 16)
+  = len_seq ();
+    assert_nbe (simple_b Sequential (cs 16) (ev es_seq 16) == true);
+    simple_step es_seq Sequential 16
+
+let seq_step (i: nat{i < 17}) : Lemma (step_ok es_seq Sequential i)
   = match i with
     | 2 -> seq_step_2 ()
     | 4 -> seq_step_4 ()
@@ -381,82 +415,84 @@ let seq_step (i: nat{i < 16}) : Lemma (step_ok es_seq Sequential i)
     | 13 -> seq_step_13 ()
     | 14 -> seq_step_14 ()
     | 15 -> seq_step_15 ()
+    | 16 -> seq_step_16 ()
 
 let seq_run_ok () : Lemma (run_ok tc Sequential n_heap n_young es_seq)
   = len_seq ();
     let f (i: nat) : Lemma (i < L.length es_seq ==> step_ok es_seq Sequential i)
-      = if i < 16 then seq_step i in
-    FStar.Classical.forall_intro f
+      = if i < 17 then seq_step i in
+    FStar.Classical.forall_intro f;
+    tc_sizes n_heap n_young
 
 /// ---------------------------------------------------------------------------
 /// The incremental run
 /// ---------------------------------------------------------------------------
 
-let len_inc () : Lemma (L.length es_inc == 22) = assert_nbe (L.length es_inc == 22)
+let len_inc () : Lemma (L.length es_inc == 23) = assert_nbe (L.length es_inc == 23)
 
 #push-options "--z3rlimit 40"
 
 let inc_step_2 () : Lemma (step_ok es_inc Incremental 2)
   = len_inc ();
     assert_nbe (ev es_inc 2 == EWrite (Major 0) 0 (VPtr (Major 2)));
-    assert_nbe ((ci 2).stopped == false /\ is_block (ci 2).w.maj 0 /\
-                 root_b (ci 2).w.maj (ci 2).w.roots 0 == true /\ 0 < wz_of (ci 2).w.maj 0 /\
-                 not (VInfix? (field (ci 2).w.maj 0 0)) /\ major_ok_b (ci 2).w 2 == true);
+    assert_nbe ((ci 2).stopped == false /\ is_block (wo (ci 2)).maj 0 /\
+                 root_b (wo (ci 2)).maj (wo (ci 2)).roots 0 == true /\ 0 < wz_of (wo (ci 2)).maj 0 /\
+                 None? (infix_hdr (field (wo (ci 2)).maj 0 0)) /\ major_ok_b (wo (ci 2)) 2 == true);
     write_major_ok Incremental (ci 2) 0 0 (VPtr (Major 2))
 
 let inc_step_4 () : Lemma (step_ok es_inc Incremental 4)
   = len_inc ();
-    assert_nbe (ev es_inc 4 == EYoungAlloc 0 1 0 [VPtr (Major 0)]);
-    assert_nbe ((ci 4).stopped == false /\ young_free_b (ci 4).w.yng 0 1 == true /\
-                 major_ok_b (ci 4).w 0 == true);
-    young_alloc_ok Incremental (ci 4) 0 0
+    assert_nbe (ev es_inc 4 == EYoungAlloc 1 0 [VPtr (Major 0)]);
+    assert_nbe ((ci 4).stopped == false /\ Some? (tyalloc (ci 4).w.cyng 1 0 [VPtr (Major 0)]) /\
+                 major_ok_b (wo (ci 4)) 0 == true);
+    young_alloc_ok Incremental (ci 4) 0
 
 let inc_step_5 () : Lemma (step_ok es_inc Incremental 5)
   = len_inc ();
     assert_nbe (ev es_inc 5 == EWrite (Young 0) 0 (VPtr (Major 2)));
-    assert_nbe ((ci 5).stopped == false /\ is_block (ci 5).w.yng 0 /\
-                 yroot_b (ci 5).w.yng (ci 5).w.roots 0 == true /\ 0 < wz_of (ci 5).w.yng 0 /\
-                 not (VInfix? (field (ci 5).w.yng 0 0)) /\ major_ok_b (ci 5).w 2 == true);
+    assert_nbe ((ci 5).stopped == false /\ is_block (wo (ci 5)).yng 0 /\
+                 yroot_b (wo (ci 5)).yng (wo (ci 5)).roots 0 == true /\ 0 < wz_of (wo (ci 5)).yng 0 /\
+                 None? (infix_hdr (field (wo (ci 5)).yng 0 0)) /\ major_ok_b (wo (ci 5)) 2 == true);
     write_young_ok Incremental (ci 5) 0 0 2
 
 let inc_step_6 () : Lemma (step_ok es_inc Incremental 6)
   = len_inc ();
     assert_nbe (ev es_inc 6 == ERoots [VPtr (Major 0)]);
-    assert_nbe ((ci 6).stopped == false /\ roots_ok_b (ci 6).w [VPtr (Major 0)] == true);
+    assert_nbe ((ci 6).stopped == false /\ roots_ok_b (wo (ci 6)) [VPtr (Major 0)] == true);
     roots_step_ok Incremental (ci 6) [VPtr (Major 0)]
 
 let inc_step_8 () : Lemma (step_ok es_inc Incremental 8)
   = len_inc ();
     assert_nbe (ev es_inc 8 == EAlloc 1 0 [VPtr (Major 2)]);
-    assert_nbe ((ci 8).stopped == false /\ major_ok_b (ci 8).w 2 == true);
+    assert_nbe ((ci 8).stopped == false /\ major_ok_b (wo (ci 8)) 2 == true);
     alloc_ptr_ok Incremental (ci 8) 2
 
 let inc_step_9 () : Lemma (step_ok es_inc Incremental 9)
   = len_inc ();
     assert_nbe (ev es_inc 9 == EWrite (Major 0) 0 (VInt 5));
-    assert_nbe ((ci 9).stopped == false /\ is_block (ci 9).w.maj 0 /\
-                 root_b (ci 9).w.maj (ci 9).w.roots 0 == true /\ 0 < wz_of (ci 9).w.maj 0 /\
-                 not (VInfix? (field (ci 9).w.maj 0 0)));
+    assert_nbe ((ci 9).stopped == false /\ is_block (wo (ci 9)).maj 0 /\
+                 root_b (wo (ci 9)).maj (wo (ci 9)).roots 0 == true /\ 0 < wz_of (wo (ci 9)).maj 0 /\
+                 None? (infix_hdr (field (wo (ci 9)).maj 0 0)));
     write_major_ok Incremental (ci 9) 0 0 (VInt 5)
 
 let inc_step_13 () : Lemma (step_ok es_inc Incremental 13)
   = len_inc ();
     assert_nbe (ev es_inc 13 == EAlloc 1 0 [VPtr (Major 6)]);
-    assert_nbe ((ci 13).stopped == false /\ major_ok_b (ci 13).w 6 == true);
+    assert_nbe ((ci 13).stopped == false /\ major_ok_b (wo (ci 13)) 6 == true);
     alloc_ptr_ok Incremental (ci 13) 6
 
 let inc_step_14 () : Lemma (step_ok es_inc Incremental 14)
   = len_inc ();
     assert_nbe (ev es_inc 14 == EWrite (Major 6) 0 (VPtr (Major 0)));
-    assert_nbe ((ci 14).stopped == false /\ is_block (ci 14).w.maj 6 /\
-                 root_b (ci 14).w.maj (ci 14).w.roots 6 == true /\ 0 < wz_of (ci 14).w.maj 6 /\
-                 not (VInfix? (field (ci 14).w.maj 6 0)) /\ major_ok_b (ci 14).w 0 == true);
+    assert_nbe ((ci 14).stopped == false /\ is_block (wo (ci 14)).maj 6 /\
+                 root_b (wo (ci 14)).maj (wo (ci 14)).roots 6 == true /\ 0 < wz_of (wo (ci 14)).maj 6 /\
+                 None? (infix_hdr (field (wo (ci 14)).maj 6 0)) /\ major_ok_b (wo (ci 14)) 0 == true);
     write_major_ok Incremental (ci 14) 6 0 (VPtr (Major 0))
 
 let inc_step_15 () : Lemma (step_ok es_inc Incremental 15)
   = len_inc ();
     assert_nbe (ev es_inc 15 == ERoots [VPtr (Major 8); VPtr (Major 0)]);
-    assert_nbe ((ci 15).stopped == false /\ roots_ok_b (ci 15).w [VPtr (Major 8); VPtr (Major 0)] == true);
+    assert_nbe ((ci 15).stopped == false /\ roots_ok_b (wo (ci 15)) [VPtr (Major 8); VPtr (Major 0)] == true);
     roots_step_ok Incremental (ci 15) [VPtr (Major 8); VPtr (Major 0)]
 
 let inc_step_0 () : Lemma (step_ok es_inc Incremental 0)
@@ -521,12 +557,19 @@ let inc_step_20 () : Lemma (step_ok es_inc Incremental 20)
 
 let inc_step_21 () : Lemma (step_ok es_inc Incremental 21)
   = len_inc ();
-    assert_nbe (simple_b Incremental (ci 21) (ev es_inc 21) == true);
-    simple_step es_inc Incremental 21
+    assert_nbe (ev es_inc 21 == ERead (Major 0) 0);
+    assert_nbe ((ci 21).stopped == false /\ is_block (wo (ci 21)).maj 0 /\
+                 root_b (wo (ci 21)).maj (wo (ci 21)).roots 0 == true /\ 0 < wz_of (wo (ci 21)).maj 0);
+    read_major_ok Incremental (ci 21) 0 0
+
+let inc_step_22 () : Lemma (step_ok es_inc Incremental 22)
+  = len_inc ();
+    assert_nbe (simple_b Incremental (ci 22) (ev es_inc 22) == true);
+    simple_step es_inc Incremental 22
 
 #pop-options
 
-let inc_step (i: nat{i < 22}) : Lemma (step_ok es_inc Incremental i)
+let inc_step (i: nat{i < 23}) : Lemma (step_ok es_inc Incremental i)
   = match i with
     | 2 -> inc_step_2 ()
     | 4 -> inc_step_4 ()
@@ -550,12 +593,14 @@ let inc_step (i: nat{i < 22}) : Lemma (step_ok es_inc Incremental i)
     | 19 -> inc_step_19 ()
     | 20 -> inc_step_20 ()
     | 21 -> inc_step_21 ()
+    | 22 -> inc_step_22 ()
 
 let inc_run_ok () : Lemma (run_ok tc Incremental n_heap n_young es_inc)
   = len_inc ();
     let f (i: nat) : Lemma (i < L.length es_inc ==> step_ok es_inc Incremental i)
-      = if i < 22 then inc_step i in
-    FStar.Classical.forall_intro f
+      = if i < 23 then inc_step i in
+    FStar.Classical.forall_intro f;
+    tc_sizes n_heap n_young
 
 /// ---------------------------------------------------------------------------
 /// Every hypothesis holds
@@ -566,7 +611,8 @@ let run_hyps_of_ok (n ny: nat) (es: list event)
   = let f (i: nat) : Lemma (i < L.length es ==> hyps_at tc (at tc n ny es i) (ev es i))
       = if i < L.length es then hyps_of_ok tc (at tc n ny es i) (ev es i) in
     FStar.Classical.forall_intro f;
-    assert (init_at tc.a n)
+    assert (init_at tc.r tc.a n);
+    assert (yinit_ok tc.r ny)
 
 /// The hypotheses of gc_correct and gc_correct_local, for both styles.
 let vacuity_sequential ()
@@ -581,7 +627,8 @@ let vacuity_incremental ()
 
 /// Every event occurs in each run.
 let every_event (es: list event) : bool =
-  L.existsb EAlloc? es && L.existsb EYoungAlloc? es && L.existsb EWrite? es && L.existsb ERoots? es &&
+  L.existsb EAlloc? es && L.existsb EYoungAlloc? es && L.existsb EWrite? es && L.existsb ERead? es &&
+  L.existsb ERoots? es &&
   L.existsb EMinor? es && L.existsb EStart? es && L.existsb ESlice? es && L.existsb EHandover? es &&
   L.existsb ESweep? es && L.existsb EEnd? es
 
@@ -614,23 +661,23 @@ let resolve_block (h: mheap) (a o: nat) : Lemma (resolve h a == Some o ==> o < h
 let in02 (b: nat -> bool) (x: nat) : bool = not (b x) || x = 0 || x = 2
 
 let c_unreachable_at_start ()
-  : Lemma (let w = (cs 7).w in
+  : Lemma (let w = (wo (cs 7)) in
            L.memP (VPtr (Major 0)) w.roots /\ reachable w 0 /\ reachable w 2 /\
-           in_use toy (cs 7).ast w.maj 4 == true /\ ~(reachable w 4))
-  = let w = (cs 7).w in
-    assert_nbe (root_b (cs 7).w.maj (cs 7).w.roots 0 == true /\ young_b (cs 7).w 2 == true /\ L.memP (VPtr (Major 0)) (cs 7).w.roots /\
-                 in_use toy (cs 7).ast (cs 7).w.maj 4 == true);
+           in_use toy (cs 7).ast w.maj w.maj 4 == true /\ ~(reachable w 4))
+  = let w = (wo (cs 7)) in
+    assert_nbe (root_b (wo (cs 7)).maj (wo (cs 7)).roots 0 == true /\ young_b (wo (cs 7)) 2 == true /\ L.memP (VPtr (Major 0)) (wo (cs 7)).roots /\
+                 in_use toy (cs 7).ast (wo (cs 7)).maj (wo (cs 7)).maj 4 == true);
     reach_by_root w 0;
     reach_by_young w 2;
     (* reachable is within {0, 2}: outside_refs are, and so are their fields *)
     let s (o: nat) : prop = o == 0 \/ o == 2 in
-    assert_nbe (all_below 12 (in02 (outside_b (cs 7).w)) == true);
-    assert_nbe (all_below 12 (in02 (edge_b (cs 7).w.maj 0)) == true);
-    assert_nbe (all_below 12 (in02 (edge_b (cs 7).w.maj 2)) == true);
-    assert_nbe ((cs 7).w.maj.size == 12);
-    all_below_elim 12 (in02 (outside_b (cs 7).w));
-    all_below_elim 12 (in02 (edge_b (cs 7).w.maj 0));
-    all_below_elim 12 (in02 (edge_b (cs 7).w.maj 2));
+    assert_nbe (all_below 12 (in02 (outside_b (wo (cs 7)))) == true);
+    assert_nbe (all_below 12 (in02 (edge_b (wo (cs 7)).maj 0)) == true);
+    assert_nbe (all_below 12 (in02 (edge_b (wo (cs 7)).maj 2)) == true);
+    assert_nbe ((wo (cs 7)).maj.size == 12);
+    all_below_elim 12 (in02 (outside_b (wo (cs 7))));
+    all_below_elim 12 (in02 (edge_b (wo (cs 7)).maj 0));
+    all_below_elim 12 (in02 (edge_b (wo (cs 7)).maj 2));
     let out (x: nat) : Lemma (outside_ref w x ==> s x)
       = outside_b_iff w x;
         if FStar.IndefiniteDescription.strong_excluded_middle (outside_ref w x) then begin

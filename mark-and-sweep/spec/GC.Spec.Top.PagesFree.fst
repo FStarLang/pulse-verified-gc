@@ -16,7 +16,11 @@
 ///   - `freed_words_of`: the words a step frees, the size (header included)
 ///     of the white blocks of the unit before the step; it is what the
 ///     specification's `freed_words` counts (`swept_words`), read at the byte
-///     level.
+///     level;
+///   - `step_frees_words`, word by word: inside the unit, a byte is in a blue
+///     block after the step exactly when it was in a blue (free) or white
+///     (freed) block before; outside it nothing moves.  Free words grow by
+///     exactly the words of the white blocks.
 ///
 /// The unit's facts (`MidSweepStep.swept_unit`: the stretch rewritten in
 /// place, survivors whitened, the unit's pages turned swept and no other
@@ -51,6 +55,7 @@ module SP = GC.Spec.Pages.SweepPage
 module SR = GC.Spec.Pages.SweepRun
 module ST = GC.Spec.Pages.SweepTags
 module Cells = GC.Spec.Pages.Cells
+module Rp = GC.Spec.Pages.Replace
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
@@ -215,3 +220,112 @@ let abs_in_use (g: heap) (m: nat)
                     in_use free_true g (GC.Spec.Top.Abs.obj_of m)))
   = GC.Spec.Top.Abs.abs_is_block g m;
     GC.Spec.Top.Abs.abs_blue g m
+
+/// ---------------------------------------------------------------------------
+/// Free words grow exactly
+/// ---------------------------------------------------------------------------
+
+/// The block of the walk from `s` (to `e`) that covers byte `w`.
+let covering (g: heap) (s e: nat) (b w: nat) : prop =
+  steps_to g s b /\ b < e /\ b <= w /\ w < b + words_at g b * 8
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 40"
+let rec cover_exists (g: heap) (s e w: nat)
+  : Lemma (requires steps_to g s e /\ s <= w /\ w < e)
+          (ensures exists (b: nat). covering g s e b w)
+          (decreases (e - s))
+  = steps_to_le g s e;
+    let sa = mk_hp_addr s in
+    steps_to_next g sa e;
+    let n = s + block_bytes g sa in
+    Rp.block_bytes_words g s;
+    steps_to_refl g s;
+    if w < n then assert (covering g s e s w)
+    else begin
+      cover_exists g n e w;
+      let b = FStar.IndefiniteDescription.indefinite_description_ghost nat (fun b -> covering g n e b w) in
+      steps_to_one g sa n;
+      steps_to_trans g s n b;
+      assert (covering g s e b w)
+    end
+#pop-options
+
+let cover_unique (g: heap) (s e b1 b2 w: nat)
+  : Lemma (requires covering g s e b1 w /\ covering g s e b2 w) (ensures b1 == b2)
+  = if b1 < b2 then Rp.block_before g s b1 b2
+    else if b2 < b1 then Rp.block_before g s b2 b1
+
+/// The bytes of the unit covered by a block of colour `c` (of a set).
+let covered_by (g: heap) (s e w: nat) (ok: color_sem -> bool) : prop =
+  exists (b: nat). covering g s e b w /\ ok (color_at g b)
+
+let is_blue_c (c: color_sem) : bool = c = Blue
+let is_free_or_freed (c: color_sem) : bool = c = Blue || c = White
+
+/// One step of the page sweep, word by word: inside its unit, a byte is in
+/// a blue block after the step exactly when it was in a blue block (free) or
+/// a white one (freed) before.  Outside it nothing moves (`unit_step`).
+#push-options "--z3rlimit 40"
+let unit_words (g g': heap) (pm pm': page_map) (p k: nat) (w: nat)
+  : Lemma (requires swept_unit g g' pm pm' p k /\ page_base p <= w /\ w < page_base (p + k))
+          (ensures covered_by g' (page_base p) (page_base (p + k)) w is_blue_c <==>
+                   covered_by g (page_base p) (page_base (p + k)) w is_free_or_freed)
+  = let s = page_base p in
+    let e = page_base (p + k) in
+    assert (steps_to g s e /\ steps_to g' s e);
+    assert (SU.unit_ok g g' p k);
+    cover_exists g s e w;
+    cover_exists g' s e w;
+    let b = FStar.IndefiniteDescription.indefinite_description_ghost nat (fun b -> covering g s e b w) in
+    let b' = FStar.IndefiniteDescription.indefinite_description_ghost nat (fun b -> covering g' s e b w) in
+    (* the block covering w before: not grey *)
+    assert (color_at g b =!= Gray);
+    (* a black block survives, whitened, same size *)
+    if color_at g b = Black then begin
+      assert (steps_to g' s b /\ Th.whitened_at g g' b);
+      whitened_colour g g' b;
+      assert (covering g' s e b w);
+      cover_unique g' s e b b' w;
+      let no (x: nat) : Lemma (covering g s e x w ==> x == b) = FStar.Classical.move_requires (cover_unique g s e x b) w in
+      FStar.Classical.forall_intro no;
+      let no' (x: nat) : Lemma (covering g' s e x w ==> x == b) = FStar.Classical.move_requires (cover_unique g' s e x b) w in
+      FStar.Classical.forall_intro no'
+    end
+    else begin
+      (* a block not blue after was a black block before *)
+      if color_at g' b' <> Blue then begin
+        assert (steps_to g s b' /\ color_at g b' == Black /\ Th.whitened_at g g' b');
+        whitened_colour g g' b';
+        assert (covering g s e b' w);
+        cover_unique g s e b b' w
+      end;
+      let no (x: nat) : Lemma (covering g s e x w ==> x == b) = FStar.Classical.move_requires (cover_unique g s e x b) w in
+      FStar.Classical.forall_intro no;
+      let no' (x: nat) : Lemma (covering g' s e x w ==> x == b') = FStar.Classical.move_requires (cover_unique g' s e x b') w in
+      FStar.Classical.forall_intro no'
+    end
+#pop-options
+
+/// The restated step, word by word (G16): `SweepAll.step` on an unswept pool
+/// page or large run makes free exactly the words that were free or in a
+/// white block of its unit.
+let step_frees_words (g: heap) (st: pstate) (p: nat{p < n_pages}) (w: nat)
+  : Lemma (requires pages_ok_sw g st /\ not (entry st.pm p).swept /\
+                    (Pool? (entry st.pm p).kind \/ LargeHead? (entry st.pm p).kind) /\
+                    page_base p <= w /\ w < page_base (p + span st.pm p))
+          (ensures (let (g', st') = SA.step g st p in
+                    covered_by g' (page_base p) (page_base (p + span st.pm p)) w is_blue_c <==>
+                    covered_by g (page_base p) (page_base (p + span st.pm p)) w is_free_or_freed))
+  = let pm = st.pm in
+    let (g', st') = SA.step g st p in
+    pages_ok_sw_elim g st;
+    assert (run_ok pm p /\ free_ok pm p);
+    match (entry pm p).kind with
+    | Pool c ->
+      pool_unit g st p c;
+      assert (span pm p == 1);
+      unit_words g g' pm st'.pm p 1 w
+    | LargeHead n ->
+      run_unit g st p n;
+      assert (span pm p == n);
+      unit_words g g' pm st'.pm p n w

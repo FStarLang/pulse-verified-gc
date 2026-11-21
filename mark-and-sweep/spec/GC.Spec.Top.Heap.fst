@@ -8,14 +8,16 @@
 ///   - the major heap is a sequence of `size` words, tiled by blocks; a block
 ///     at `o` has a header (wosize, tag, colour) at word `o` and its fields at
 ///     words `o+1 .. o+wz`;
-///   - a field holds a `value`: bytes, a pointer (into the major heap or the
-///     nursery), or an infix header (only inside a closure);
+///   - a field holds a `value`: a word of bytes, or a pointer (into the major
+///     heap or the nursery); an infix header is a word of bytes inside a
+///     closure, read as one only when a pointer points at it (`infix_hdr`);
 ///   - whether a block is free is not in the heap: it is the allocator's
 ///     (`allocator.free`), as the specification says ("allocation status").
 ///
-/// An instance over the byte-level heap (pages, first-fit) is related to this
-/// model by an abstraction function that reads the heap walk; see
-/// docs/gc-interfaces-design.md, section 7.
+/// A collector's own heap (the byte-level heap of pages and first-fit, or
+/// this model itself for the toy) is related to this model by a
+/// representation relation (GC.Spec.Top.Rep); see
+/// docs/gc-interfaces-design.md, section 9.
 ///
 /// Addresses are word indices.  A pointer to an object is its header's
 /// address; a pointer to an infix object is the address of its infix header
@@ -47,7 +49,21 @@ type ptr =
 type value =
   | VInt   : int -> value
   | VPtr   : ptr -> value
-  | VInfix : nat -> value     (* an infix header at offset k of its closure *)
+
+/// An infix header is a word, as in OCaml: low byte the infix tag, wosize
+/// (from bit 10) its offset from the closure, in words; bits 8-9 are its
+/// colour, which nothing reads.  Any word of that shape is read as one when a
+/// pointer points at it (`resolve`), and only then: OCaml's own reading.
+let infix_hdr (v: value) : option nat =
+  match v with
+  | VInt n -> if n >= 0 && n % 256 = 249 then Some (n / 1024) else None
+  | _ -> None
+
+/// The infix header at offset `k` (white).
+let infix_word (k: nat) : value = VInt (k * 1024 + 249)
+
+/// A request's wosize.
+let size_t = sz:nat{sz >= 1}
 
 type header = { wz: nat; tag: tag_t; col: colour }
 
@@ -92,11 +108,11 @@ let young_ok (y: mheap) : prop =
   (forall (o1 o2 w: nat). covers y o1 w /\ covers y o2 w ==> o1 == o2)
 
 /// resolve(p): the object `a` points into.  Either `a` is a block, or `a`
-/// holds an infix header `VInfix k` at offset `k` of a closure.
+/// holds an infix header at offset `k` of a closure.
 let resolve (h: mheap) (a: nat) : option nat =
   if is_block h a then Some a
-  else match h.body a with
-    | VInfix k ->
+  else match infix_hdr (h.body a) with
+    | Some k ->
       if k >= 1 && k <= a && is_block h (a - k) && tag_of h (a - k) = closure_tag
          && k <= wz_of h (a - k)
       then Some (a - k) else None
@@ -193,6 +209,15 @@ let set_col (h: mheap) (o: nat) (c: colour) : mheap =
 /// The empty nursery of a given capacity.
 let empty_heap (n: nat) : mheap =
   { size = n; hd = (fun _ -> None); body = (fun _ -> VInt 0) }
+
+/// The nursery has room at `o` for `sz` fields.
+let young_free (y: mheap) (o: nat) (sz: size_t) : prop =
+  o + sz < y.size /\ (forall (x w: nat). covers y x w ==> ~(o <= w /\ w <= o + sz))
+
+/// A young allocation at `o`, filled with `vs`.
+let young_alloc (y: mheap) (o: nat) (sz: size_t) (tag: tag_t) (vs: list value) : mheap =
+  fill ({ y with hd = (fun (x: nat) -> if x = o then Some ({ wz = sz; tag = tag; col = White }) else y.hd x) })
+       o vs
 
 /// The fields of a block, as a list.
 let rec fields_from (h: mheap) (o i n: nat) : Tot (list value) (decreases n) =

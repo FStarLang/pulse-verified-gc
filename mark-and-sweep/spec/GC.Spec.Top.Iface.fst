@@ -14,10 +14,20 @@
 /// Each also has a pointwise form `*_at` (the same implication at one input),
 /// which is what a run uses (`GC.Spec.Top.Run`); `*_ok ==> *_at` is
 /// instantiation.
+///
+/// The components work on the collector's own heap (`t`, and the nursery
+/// `yt`).  Each contract is a model contract (a precondition on the model
+/// heap, a guarantee relating it to the next one) lifted through the
+/// representation relation `r.repr` (GC.Spec.Top.Rep.lifted), as in McCreight
+/// et al. (PLDI 2007): for every model heap that represents the input and
+/// satisfies the precondition, some model heap represents the output and is
+/// related to it by the guarantee.  Where the model step is a function (the
+/// Fill, a store) the guarantee is that its result represents the output.
 
 module GC.Spec.Top.Iface
 
 open GC.Spec.Top.Heap
+open GC.Spec.Top.Rep
 module L = FStar.List.Tot
 module Seq = FStar.Seq
 
@@ -33,9 +43,6 @@ type phase (pr: Type0) =
 type result =
   | Ok     : nat -> result
   | NoRoom : result
-
-/// A request's wosize.
-let size_t = sz:nat{sz >= 1}
 
 /// What the allocator needs to know of the sweep: its progress, and which
 /// addresses it has yet to visit.
@@ -58,101 +65,126 @@ let colour_at (k: sweep_kind) (ph: phase k.progress) (o: nat) : colour =
 /// The allocator A
 /// ---------------------------------------------------------------------------
 
-noeq type allocator (k: sweep_kind) = {
+noeq type allocator (t: Type0) (k: sweep_kind) = {
   state : Type0;
-  init  : nat -> GTot (mheap & state);                          (* empty heap of n words *)
-  inv   : phase k.progress -> mheap -> state -> prop;
-  free  : state -> mheap -> nat -> GTot bool;                   (* allocation status of a block *)
-  room  : phase k.progress -> state -> mheap -> size_t -> GTot bool;
-  alloc : phase k.progress -> mheap -> state -> size_t -> tag_t -> GTot (mheap & state & result);
+  init  : nat -> GTot (t & state);                              (* empty heap of n words *)
+  inv   : phase k.progress -> t -> state -> prop;
+  free  : state -> t -> nat -> GTot bool;                       (* allocation status of a block *)
+  room  : phase k.progress -> state -> t -> size_t -> GTot bool;
+  alloc : phase k.progress -> t -> state -> size_t -> tag_t -> GTot (t & state & result);
 }
 
-/// in_use(h): major blocks not free.
-let in_use (#k: sweep_kind) (a: allocator k) (st: a.state) (h: mheap) (o: nat) : GTot bool =
-  is_block h o && not (a.free st h o)
+/// in_use(h): major blocks (of the model heap `m` representing `h`) not free.
+let in_use (#t: Type0) (#k: sweep_kind) (a: allocator t k) (st: a.state) (h: t) (m: mheap) (o: nat)
+  : GTot bool =
+  is_block m o && not (a.free st h o)
 
-let free_word (#k: sweep_kind) (a: allocator k) (st: a.state) (h: mheap) (w: nat) : prop =
-  exists (o: nat). covers h o w /\ a.free st h o
+let free_word (#t: Type0) (#k: sweep_kind) (a: allocator t k) (st: a.state) (h: t) (m: mheap) (w: nat)
+  : prop =
+  exists (o: nat). covers m o w /\ a.free st h o
 
-let in_use_word (#k: sweep_kind) (a: allocator k) (st: a.state) (h: mheap) (w: nat) : prop =
-  exists (o: nat). covers h o w /\ in_use a st h o
+let in_use_word (#t: Type0) (#k: sweep_kind) (a: allocator t k) (st: a.state) (h: t) (m: mheap) (w: nat)
+  : prop =
+  exists (o: nat). covers m o w /\ in_use a st h m o
+
+let alloc_pre (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (h: t) (st: a.state)
+    (tag: tag_t) (m: mheap) : prop =
+  a.inv ph h st /\ well_formed m /\ tag <> infix_tag
 
 /// What one allocation guarantees.
-let alloc_post (#k: sweep_kind) (a: allocator k) (ph: phase k.progress) (h: mheap) (st: a.state)
-    (sz: size_t) (tag: tag_t) (h': mheap) (st': a.state) (r: result) : prop =
-  match r with
+let alloc_post (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress)
+    (h: t) (st: a.state) (sz: size_t) (tag: tag_t) (h': t) (st': a.state) (res: result) (m m': mheap)
+  : prop =
+  match res with
   | NoRoom -> h' == h /\ st' == st /\ a.room ph st h sz == false
   | Ok o ->
     a.room ph st h sz == true /\
-    h'.size == h.size /\
-    is_block h' o /\ h'.hd o == Some ({ wz = sz; tag = tag; col = colour_at k ph o }) /\
+    m'.size == m.size /\
+    is_block m' o /\ m'.hd o == Some ({ wz = sz; tag = tag; col = colour_at k ph o }) /\
     (* o's words were free *)
-    (forall (w: nat). covers h' o w ==> free_word a st h w) /\
+    (forall (w: nat). covers m' o w ==> free_word a st h m w) /\
     (* only o comes into use *)
-    (forall (x: nat). in_use a st' h' x <==> (in_use a st h x \/ x == o)) /\
+    (forall (x: nat). in_use a st' h' m' x <==> (in_use a st h m x \/ x == o)) /\
     (* every other in-use object unchanged *)
-    (forall (x: nat). in_use a st h x ==> same_block h h' x) /\
+    (forall (x: nat). in_use a st h m x ==> same_block m m' x) /\
     (* the walk reaches size *)
-    well_formed h' /\
+    well_formed m' /\
     (* the invariant again after Fill *)
-    (forall (vs: list value). L.length vs == sz ==> a.inv ph (fill h' o vs) st')
+    (forall (vs: list value) (h'': t). L.length vs == sz /\ r.repr (fill m' o vs) h'' ==> a.inv ph h'' st')
 
-let alloc_at (#k: sweep_kind) (a: allocator k) (ph: phase k.progress) (h: mheap) (st: a.state)
-    (sz: size_t) (tag: tag_t) : prop =
-  a.inv ph h st /\ well_formed h /\ tag <> infix_tag ==>
-  (let (h', st', r) = a.alloc ph h st sz tag in alloc_post a ph h st sz tag h' st' r)
+let alloc_at (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress)
+    (h: t) (st: a.state) (sz: size_t) (tag: tag_t) : prop =
+  let (h', st', res) = a.alloc ph h st sz tag in
+  lifted r (alloc_pre a ph h st tag) h h' (alloc_post r a ph h st sz tag h' st' res)
 
-let alloc_ok (#k: sweep_kind) (a: allocator k) : prop =
-  forall ph h st sz tag. alloc_at a ph h st sz tag
+let alloc_ok (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t k) : prop =
+  forall ph h st sz tag. alloc_at r a ph h st sz tag
 
-/// (0) The initial heap: no object, the walk reaches size, inv Idle.
-let init_at (#k: sweep_kind) (a: allocator k) (n: nat) : prop =
-  (let (h, st) = a.init n in
-   h.size == n /\ well_formed h /\ a.inv Idle h st /\ (forall (o: nat). in_use a st h o == false))
+let init_post (#t: Type0) (#k: sweep_kind) (a: allocator t k) (n: nat) (h: t) (st: a.state) (m: mheap)
+  : prop =
+  m.size == n /\ well_formed m /\ a.inv Idle h st /\ (forall (o: nat). in_use a st h m o == false)
+
+/// (0) The initial heap: represented, no object, the walk reaches size, inv Idle.
+let init_at (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t k) (n: nat) : prop =
+  r.size_ok n ==>
+  (let (h, st) = a.init n in some_repr r h (init_post a n h st))
 
 /// The heaps the program and the collector make without the allocator:
 /// writes to fields of blocks in use, and recolouring blocks in use while
 /// marking.  Blocks, sizes, tags and every other word are unchanged.
-let inv_frame_rel (#k: sweep_kind) (a: allocator k) (ph: phase k.progress) (st: a.state)
-    (h h': mheap) : prop =
-  h'.size == h.size /\
-  (forall (o: nat). is_block h' o == is_block h o) /\
-  (forall (o: nat). wz_of h' o == wz_of h o /\ tag_of h' o == tag_of h o) /\
-  (forall (o: nat). col_of h' o =!= col_of h o ==> in_use a st h o /\ Marking? ph /\ dark (col_of h' o)) /\
-  (forall (w: nat). h'.body w =!= h.body w ==>
-     (exists (o: nat). in_use a st h o /\ o < w /\ w <= o + wz_of h o))
+let inv_frame_rel (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (st: a.state)
+    (h: t) (m m': mheap) : prop =
+  m'.size == m.size /\
+  (forall (o: nat). is_block m' o == is_block m o) /\
+  (forall (o: nat). wz_of m' o == wz_of m o /\ tag_of m' o == tag_of m o) /\
+  (forall (o: nat). col_of m' o =!= col_of m o ==> in_use a st h m o /\ Marking? ph /\ dark (col_of m' o)) /\
+  (forall (w: nat). m'.body w =!= m.body w ==>
+     (exists (o: nat). in_use a st h m o /\ o < w /\ w <= o + wz_of m o))
 
 /// The allocator's invariant reads no field of a block in use, nor (while
 /// marking) its colour.
-let inv_frame_at (#k: sweep_kind) (a: allocator k) (ph: phase k.progress) (h: mheap) (st: a.state)
-    (h': mheap) : prop =
-  a.inv ph h st /\ inv_frame_rel a ph st h h' ==>
+let inv_frame_m (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (h: t) (st: a.state)
+    (h': t) (m m': mheap) : prop =
+  a.inv ph h st /\ inv_frame_rel a ph st h m m' ==>
   a.inv ph h' st /\ (forall (o: nat). a.free st h' o == a.free st h o)
 
+let inv_frame_at (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress)
+    (h: t) (st: a.state) (h': t) : prop =
+  forall_repr2 r h h' (inv_frame_m a ph h st h')
+
 /// Starting a cycle: the invariant moves from Idle to Marking.
-let inv_start_at (#k: sweep_kind) (a: allocator k) (h: mheap) (st: a.state) : prop =
+let inv_start_at (#t: Type0) (#k: sweep_kind) (a: allocator t k) (h: t) (st: a.state) : prop =
   a.inv Idle h st ==> a.inv Marking h st
 
 /// Free blocks are never grey or black (the mark never sees them), and a
 /// blue block is free.
-let free_white_at (#k: sweep_kind) (a: allocator k) (ph: phase k.progress) (h: mheap) (st: a.state) : prop =
+let free_white_m (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (h: t) (st: a.state)
+    (m: mheap) : prop =
   a.inv ph h st ==>
-  (forall (o: nat). is_block h o ==>
-     (a.free st h o == true ==> not (dark (col_of h o))) /\ (col_of h o == Blue ==> a.free st h o == true))
+  (forall (o: nat). is_block m o ==>
+     (a.free st h o == true ==> not (dark (col_of m o))) /\ (col_of m o == Blue ==> a.free st h o == true))
+
+let free_white_at (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress)
+    (h: t) (st: a.state) : prop =
+  forall_repr r h (free_white_m a ph h st)
 
 /// Allocation status is read from the headers alone: Fill and the program's
 /// writes do not change it.
-let free_hd_at (#k: sweep_kind) (a: allocator k) (st: a.state) (h h': mheap) : prop =
-  h'.size == h.size /\ (forall (x: nat). h'.hd x == h.hd x) ==>
+let free_hd_m (#t: Type0) (#k: sweep_kind) (a: allocator t k) (st: a.state) (h h': t) (m m': mheap) : prop =
+  m'.size == m.size /\ (forall (x: nat). m'.hd x == m.hd x) ==>
   (forall (o: nat). a.free st h' o == a.free st h o)
 
-let allocator_ok (#k: sweep_kind) (a: allocator k) : prop =
-  (forall n. init_at a n) /\
-  (forall st h h'. free_hd_at a st h h') /\
-  alloc_ok a /\
-  (forall ph h st h'. inv_frame_at a ph h st h') /\
+let free_hd_at (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t k) (st: a.state) (h h': t)
+  : prop =
+  forall_repr2 r h h' (free_hd_m a st h h')
+
+let allocator_ok (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t k) : prop =
+  (forall n. init_at r a n) /\
+  (forall st h h'. free_hd_at r a st h h') /\
+  alloc_ok r a /\
+  (forall ph h st h'. inv_frame_at r a ph h st h') /\
   (forall h st. inv_start_at a h st) /\
-  (forall ph h st. free_white_at a ph h st)
+  (forall ph h st. free_white_at r a ph h st)
 
 /// The allocator's capacity condition: "enough free space of its kind" for
 /// a request of `sz` fields.  It is fixed by the specification, per
@@ -161,12 +193,13 @@ let allocator_ok (#k: sweep_kind) (a: allocator k) : prop =
 /// run of empty pages; the toy: the free tail), not chosen by the
 /// component; `nontrivial` (GC.Spec.Top.Run) says room holds whenever it
 /// does, in every state a run reaches.
-let capacity (k: sweep_kind) (state: Type0) =
-  phase k.progress -> state -> mheap -> size_t -> prop
+let capacity (t: Type0) (k: sweep_kind) (state: Type0) =
+  phase k.progress -> state -> t -> size_t -> prop
 
 /// The capacity condition is not vacuous: it holds on some initial heap.
-let fits_init (#k: sweep_kind) (a: allocator k) (fits: capacity k a.state) : prop =
-  exists (n: nat) (sz: size_t). (let (h, st) = a.init n in fits Idle st h sz)
+let fits_init (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t k) (fits: capacity t k a.state)
+  : prop =
+  exists (n: nat) (sz: size_t). r.size_ok n /\ (let (h, st) = a.init n in fits Idle st h sz)
 
 /// ---------------------------------------------------------------------------
 /// The sweep S
@@ -174,9 +207,9 @@ let fits_init (#k: sweep_kind) (a: allocator k) (fits: capacity k a.state) : pro
 
 type step_result = { units: nat; freed_words: nat }
 
-noeq type sweep (k: sweep_kind) (a: allocator k) = {
-  start : mheap -> a.state -> GTot (k.progress & a.state);
-  step  : k.progress -> mheap -> a.state -> GTot (k.progress & mheap & a.state & step_result);
+noeq type sweep (t: Type0) (k: sweep_kind) (a: allocator t k) = {
+  start : t -> a.state -> GTot (k.progress & a.state);
+  step  : k.progress -> t -> a.state -> GTot (k.progress & t & a.state & step_result);
   done  : k.progress -> bool;
 }
 
@@ -187,71 +220,102 @@ let region (k: sweep_kind) (p p': k.progress) (o: nat) : bool =
   k.unswept p o && not (k.unswept p' o)
 
 /// A white block in use in the region: what the step frees.
-let swept_white (#k: sweep_kind) (a: allocator k) (st: a.state) (h: mheap) (p p': k.progress) (o: nat)
-  : GTot bool =
-  in_use a st h o && region k p p' o && col_of h o = White
+let swept_white (#t: Type0) (#k: sweep_kind) (a: allocator t k) (st: a.state) (h: t) (m: mheap)
+    (p p': k.progress) (o: nat) : GTot bool =
+  in_use a st h m o && region k p p' o && col_of m o = White
 
-let sweep_start_at (#k: sweep_kind) (#a: allocator k) (s: sweep k a) (h: mheap) (st: a.state) : prop =
-  a.inv Marking h st /\ well_formed h /\ no_grey h ==>
+let sweep_start_m (#t: Type0) (#k: sweep_kind) (#a: allocator t k) (s: sweep t k a) (h: t) (st: a.state)
+    (m: mheap) : prop =
+  a.inv Marking h st /\ well_formed m /\ no_grey m ==>
   (let (p, st') = s.start h st in
    a.inv (Sweeping p) h st' /\
    (forall (o: nat). a.free st' h o == a.free st h o) /\       (* frees nothing *)
-   (forall (o: nat). in_use a st h o ==> k.unswept p o == true))
+   (forall (o: nat). in_use a st h m o ==> k.unswept p o == true))
+
+let sweep_start_at (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (#a: allocator t k) (s: sweep t k a)
+    (h: t) (st: a.state) : prop =
+  forall_repr r h (sweep_start_m s h st)
 
 /// The words a step frees, per block.
-let swept_words (#k: sweep_kind) (a: allocator k) (st: a.state) (h: mheap) (p p': k.progress) (o: nat)
-  : GTot nat =
-  if swept_white a st h p p' o then wz_of h o + 1 else 0
+let swept_words (#t: Type0) (#k: sweep_kind) (a: allocator t k) (st: a.state) (h: t) (m: mheap)
+    (p p': k.progress) (o: nat) : GTot nat =
+  if swept_white a st h m p p' o then wz_of m o + 1 else 0
 
-let sweep_step_post (#k: sweep_kind) (#a: allocator k) (s: sweep k a) (p: k.progress) (h: mheap)
-    (st: a.state) : prop =
-  (let (p', h', st', r) = s.step p h st in
-   (* unswept only shrinks, and strictly: the measure decreases *)
-   (forall (o: nat). k.unswept p' o ==> k.unswept p o) /\
-   (exists (o: nat). o < h.size /\ region k p p' o) /\
-   h'.size == h.size /\
-   (* white becomes free *)
-   (forall (o: nat). swept_white a st h p p' o ==>
-      in_use a st' h' o == false /\ (forall (w: nat). covers h o w ==> free_word a st' h' w)) /\
-   (* black becomes white, contents unchanged *)
-   (forall (o: nat). in_use a st h o /\ region k p p' o /\ col_of h o == Black ==>
-      in_use a st' h' o /\ col_of h' o == White /\ same_contents h h' o) /\
-   (* outside the region unchanged *)
-   (forall (o: nat). in_use a st h o /\ not (region k p p' o) ==>
-      in_use a st' h' o /\ same_block h h' o) /\
-   (* nothing comes into use, nothing free leaves it *)
-   (forall (o: nat). in_use a st' h' o ==> in_use a st h o) /\
-   (forall (w: nat). free_word a st h w ==> free_word a st' h' w) /\
-   (* freed_words moves exactly those words from pending to free *)
-   (forall (w: nat). free_word a st' h' w ==>
-      free_word a st h w \/ (exists (o: nat). covers h o w /\ swept_white a st h p p' o)) /\
-   r.freed_words == sum h.size (swept_words a st h p p') /\
-   a.inv (Sweeping p') h' st' /\ well_formed h')
+let sweep_step_pre (#t: Type0) (#k: sweep_kind) (#a: allocator t k) (s: sweep t k a) (p: k.progress)
+    (h: t) (st: a.state) (m: mheap) : prop =
+  a.inv (Sweeping p) h st /\ well_formed m /\ no_grey m /\ s.done p == false
 
-let sweep_step_at (#k: sweep_kind) (#a: allocator k) (s: sweep k a) (p: k.progress) (h: mheap)
-    (st: a.state) : prop =
-  a.inv (Sweeping p) h st /\ well_formed h /\ no_grey h /\ s.done p == false ==>
-  sweep_step_post s p h st
+let sweep_step_post (#t: Type0) (#k: sweep_kind) (a: allocator t k) (p: k.progress) (h: t) (st: a.state)
+    (p': k.progress) (h': t) (st': a.state) (res: step_result) (m m': mheap) : prop =
+  (* unswept only shrinks, and strictly: the measure decreases *)
+  (forall (o: nat). k.unswept p' o ==> k.unswept p o) /\
+  (exists (o: nat). o < m.size /\ region k p p' o) /\
+  m'.size == m.size /\
+  (* white becomes free *)
+  (forall (o: nat). swept_white a st h m p p' o ==>
+     in_use a st' h' m' o == false /\ (forall (w: nat). covers m o w ==> free_word a st' h' m' w)) /\
+  (* black becomes white, contents unchanged *)
+  (forall (o: nat). in_use a st h m o /\ region k p p' o /\ col_of m o == Black ==>
+     in_use a st' h' m' o /\ col_of m' o == White /\ same_contents m m' o) /\
+  (* outside the region unchanged *)
+  (forall (o: nat). in_use a st h m o /\ not (region k p p' o) ==>
+     in_use a st' h' m' o /\ same_block m m' o) /\
+  (* nothing comes into use, nothing free leaves it *)
+  (forall (o: nat). in_use a st' h' m' o ==> in_use a st h m o) /\
+  (forall (w: nat). free_word a st h m w ==> free_word a st' h' m' w) /\
+  (* freed_words moves exactly those words from pending to free *)
+  (forall (w: nat). free_word a st' h' m' w ==>
+     free_word a st h m w \/ (exists (o: nat). covers m o w /\ swept_white a st h m p p' o)) /\
+  res.freed_words == sum m.size (swept_words a st h m p p') /\
+  a.inv (Sweeping p') h' st' /\ well_formed m'
 
-let sweep_done_at (#k: sweep_kind) (#a: allocator k) (s: sweep k a) (p: k.progress) (h: mheap)
-    (st: a.state) : prop =
-  a.inv (Sweeping p) h st /\ well_formed h /\ s.done p == true ==>
+let sweep_step_at (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (#a: allocator t k) (s: sweep t k a)
+    (p: k.progress) (h: t) (st: a.state) : prop =
+  let (p', h', st', res) = s.step p h st in
+  lifted r (sweep_step_pre s p h st) h h' (sweep_step_post a p h st p' h' st' res)
+
+let sweep_done_m (#t: Type0) (#k: sweep_kind) (#a: allocator t k) (s: sweep t k a) (p: k.progress) (h: t)
+    (st: a.state) (m: mheap) : prop =
+  a.inv (Sweeping p) h st /\ well_formed m /\ s.done p == true ==>
   a.inv Idle h st /\
-  (forall (o: nat). in_use a st h o ==> k.unswept p o == false) /\     (* pending empty *)
-  (forall (o: nat). is_block h o ==> not (dark (col_of h o)))
+  (forall (o: nat). in_use a st h m o ==> k.unswept p o == false) /\     (* pending empty *)
+  (forall (o: nat). is_block m o ==> not (dark (col_of m o)))
 
-let sweep_ok (#k: sweep_kind) (#a: allocator k) (s: sweep k a) : prop =
-  (forall h st. sweep_start_at s h st) /\
-  (forall p h st. sweep_step_at s p h st) /\
-  (forall p h st. sweep_done_at s p h st)
+let sweep_done_at (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (#a: allocator t k) (s: sweep t k a)
+    (p: k.progress) (h: t) (st: a.state) : prop =
+  forall_repr r h (sweep_done_m s p h st)
+
+let sweep_ok (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (#a: allocator t k) (s: sweep t k a) : prop =
+  (forall h st. sweep_start_at r s h st) /\
+  (forall p h st. sweep_step_at r s p h st) /\
+  (forall p h st. sweep_done_at r s p h st)
+
+/// ---------------------------------------------------------------------------
+/// The world the collector sees, on its own heaps
+/// ---------------------------------------------------------------------------
+
+noeq type cworld (t yt: Type0) = {
+  cmaj   : t;
+  cyng   : yt;
+  croots : list value;
+  crem   : list slot;
+}
+
+/// `w` is a model world representing `cw`.
+let cviews (#t #yt: Type0) (r: rep t yt) (cw: cworld t yt) (w: world) : prop =
+  r.repr w.maj cw.cmaj /\ r.yrepr w.yng cw.cyng /\ w.roots == cw.croots /\ w.rem == cw.crem
+
+/// A model statement about the world, for every model world representing it.
+let forall_views (#t #yt: Type0) (r: rep t yt) (cw: cworld t yt) (f: world -> prop) : prop =
+  forall (w: world). cviews r cw w ==> f w
 
 /// ---------------------------------------------------------------------------
 /// The mark: fixed, allocator-free
 /// ---------------------------------------------------------------------------
 
-noeq type mark = {
-  mstart : world -> GTot mheap;
-  mslice : mheap -> GTot mheap;
+noeq type mark (t yt: Type0) = {
+  mstart : cworld t yt -> GTot t;
+  mslice : t -> GTot t;
 }
 
 let mark_done (h: mheap) : prop = no_grey h
@@ -300,36 +364,48 @@ let mark_no_increase (h h': mheap) (live: nat -> prop) : prop =
 
 let no_dark (h: mheap) : prop = forall (o: nat). is_block h o ==> not (dark (col_of h o))
 
+let mark_start_pre (w: world) : prop =
+  well_formed w.maj /\ no_dark w.maj /\
+  (forall (o: nat). reachable w o ==> is_block w.maj o /\ col_of w.maj o == White)
+
 /// mark_start greys every object in outside_refs(s).
-let mark_start_at (m: mark) (w: world) : prop =
-  well_formed w.maj /\ no_dark w.maj /\ (forall (o: nat). reachable w o ==> is_block w.maj o /\ col_of w.maj o == White) ==>
-  (let h' = m.mstart w in
-   colours_only w.maj h' /\
-   (forall (o: nat). outside_ref w o ==> dark (col_of h' o)) /\
-   tricolour h' (reachable w) (fun _ -> False))
+let mark_start_post (w: world) (m': mheap) : prop =
+  colours_only w.maj m' /\
+  (forall (o: nat). outside_ref w o ==> dark (col_of m' o)) /\
+  tricolour m' (reachable w) (fun _ -> False)
+
+let mark_start_m (#t #yt: Type0) (r: rep t yt) (mk: mark t yt) (cw: cworld t yt) (w: world) : prop =
+  mark_start_pre w ==> (exists (m': mheap). r.repr m' (mk.mstart cw) /\ mark_start_post w m')
+
+let mark_start_at (#t #yt: Type0) (r: rep t yt) (mk: mark t yt) (cw: cworld t yt) : prop =
+  forall_views r cw (mark_start_m r mk cw)
 
 let union (s1 s2: nat -> prop) (o: nat) : prop = s1 o \/ s2 o
 
+let mark_slice_pre (snap allocd: nat -> prop) (m: mheap) : prop =
+  well_formed m /\ tricolour m snap allocd /\ closed m (union snap allocd) /\ ~(mark_done m)
+
 /// A slice (when something is grey) changes colours only, keeps the
 /// invariant and decreases the measure.
-let mark_slice_at (m: mark) (h: mheap) (snap allocd: nat -> prop) : prop =
-  well_formed h /\ tricolour h snap allocd /\ closed h (union snap allocd) /\ ~(mark_done h) ==>
-  (let h' = m.mslice h in
-   colours_only h h' /\ tricolour h' snap allocd /\ mark_decreases h h' (union snap allocd))
+let mark_slice_post (snap allocd: nat -> prop) (m m': mheap) : prop =
+  colours_only m m' /\ tricolour m' snap allocd /\ mark_decreases m m' (union snap allocd)
 
-let mark_ok (m: mark) : prop =
-  (forall w. mark_start_at m w) /\ (forall h snap allocd. mark_slice_at m h snap allocd)
+let mark_slice_at (#t #yt: Type0) (r: rep t yt) (mk: mark t yt) (h: t) (snap allocd: nat -> prop) : prop =
+  lifted r (mark_slice_pre snap allocd) h (mk.mslice h) (mark_slice_post snap allocd)
+
+let mark_ok (#t #yt: Type0) (r: rep t yt) (mk: mark t yt) : prop =
+  (forall w. mark_start_at r mk w) /\ (forall h snap allocd. mark_slice_at r mk h snap allocd)
 
 /// ---------------------------------------------------------------------------
 /// The minor collection
 /// ---------------------------------------------------------------------------
 
-noeq type minor_result (k: sweep_kind) (a: allocator k) =
-  | Done      : maj:mheap -> st:a.state -> roots:list value -> fwd:(nat -> option nat) -> minor_result k a
-  | OutOfRoom : minor_result k a
+noeq type minor_result (t: Type0) (k: sweep_kind) (a: allocator t k) =
+  | Done      : maj:t -> st:a.state -> roots:list value -> fwd:(nat -> option nat) -> minor_result t k a
+  | OutOfRoom : minor_result t k a
 
-noeq type minor (k: sweep_kind) (a: allocator k) = {
-  collect : phase k.progress -> a.state -> world -> GTot (minor_result k a);
+noeq type minor (t yt: Type0) (k: sweep_kind) (a: allocator t k) = {
+  collect : phase k.progress -> a.state -> cworld t yt -> GTot (minor_result t k a);
 }
 
 /// The forwarding of a value: a pointer into a promoted young object is
@@ -347,73 +423,100 @@ let fwd_field (src: mheap) (o i: nat) (y: mheap) (fwd: nat -> option nat) : valu
   if scannable (tag_of src o) then fwdv y fwd (field src o i) else field src o i
 
 /// Every old-to-young pointer in a block in use is a remembered slot.
-let rem_covers (#k: sweep_kind) (a: allocator k) (st: a.state) (w: world) : prop =
-  forall (o i b: nat). in_use a st w.maj o /\ ptr_field w.maj o i /\ field w.maj o i == VPtr (Young b) ==>
+let rem_covers (#t: Type0) (#k: sweep_kind) (a: allocator t k) (st: a.state) (h: t) (w: world) : prop =
+  forall (o i b: nat). in_use a st h w.maj o /\ ptr_field w.maj o i /\ field w.maj o i == VPtr (Young b) ==>
     L.memP (o, i) w.rem
 
+/// A heap that `m` represents, if there is one.
+let some_heap (#t #yt: Type0) (r: rep t yt) (m: mheap) : GTot (option t) =
+  if FStar.IndefiniteDescription.strong_excluded_middle (exists (h: t). r.repr m h)
+  then Some (FStar.IndefiniteDescription.indefinite_description_ghost t (fun h -> r.repr m h))
+  else None
+
+/// A model heap that represents `h`, if there is one.
+let some_model (#t #yt: Type0) (r: rep t yt) (h: t) : GTot (option mheap) =
+  if FStar.IndefiniteDescription.strong_excluded_middle (exists (m: mheap). r.repr m h)
+  then Some (FStar.IndefiniteDescription.indefinite_description_ghost mheap (fun m -> r.repr m h))
+  else None
+
 /// Promoting `ys` one by one through A.alloc, each copy filled with its
-/// young fields: `None` if the allocator refuses one.
-let rec alloc_fold (#k: sweep_kind) (a: allocator k) (ph: phase k.progress) (h: mheap) (st: a.state)
-    (y: mheap) (ys: list nat) : GTot (option (mheap & a.state)) (decreases ys) =
+/// young fields (a heap that the Fill represents): `None` if the allocator
+/// refuses one.
+let rec alloc_fold (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress)
+    (h: t) (st: a.state) (y: mheap) (ys: list nat) : GTot (option (t & a.state)) (decreases ys) =
   match ys with
   | [] -> Some (h, st)
   | o :: tl ->
     if wz_of y o >= 1 && tag_of y o <> infix_tag then
-      (let (h', st', r) = a.alloc ph h st (wz_of y o) (tag_of y o) in
-       match r with
+      (let (h', st', res) = a.alloc ph h st (wz_of y o) (tag_of y o) in
+       match res with
        | NoRoom -> None
-       | Ok c -> alloc_fold a ph (fill h' c (fields_of y o)) st' y tl)
+       | Ok c ->
+         (match some_model r h' with
+          | None -> None
+          | Some m' ->
+            (match some_heap r (fill m' c (fields_of y o)) with
+             | None -> None
+             | Some h'' -> alloc_fold r a ph h'' st' y tl)))
     else None
 
 /// OutOfRoom is justified: some promotion order of live young objects makes
 /// the allocator refuse.
-let oor_justified (#k: sweep_kind) (a: allocator k) (ph: phase k.progress) (st: a.state) (w: world) : prop =
+let oor_justified (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress)
+    (st: a.state) (cw: cworld t yt) (w: world) : prop =
   exists (ys: list nat). L.noRepeats ys /\
     (forall (o: nat). L.memP o ys ==> is_block w.yng o /\ minor_live w o) /\
-    alloc_fold a ph w.maj st w.yng ys == None
+    alloc_fold r a ph cw.cmaj st w.yng ys == None
 
-let minor_pre (#k: sweep_kind) (a: allocator k) (ph: phase k.progress) (st: a.state) (w: world) : prop =
-  a.inv ph w.maj st /\ well_formed w.maj /\ young_ok w.yng /\ rem_covers a st w
+let minor_pre (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (st: a.state)
+    (h: t) (w: world) : prop =
+  a.inv ph h st /\ well_formed w.maj /\ young_ok w.yng /\ rem_covers a st h w
 
-let minor_post (#k: sweep_kind) (a: allocator k) (ph: phase k.progress) (st: a.state) (w: world)
-    (r: minor_result k a) : prop =
-  match r with
-  | OutOfRoom -> oor_justified a ph st w
-  | Done h' st' roots' fwd ->
-    let h = w.maj in
-    let y = w.yng in
-    h'.size == h.size /\
-    (* exactly the young objects reachable from roots and remembered slots, each once *)
-    (forall (o: nat). Some? (fwd o) <==> (is_block y o /\ minor_live w o)) /\
-    (forall (o1 o2 c: nat). fwd o1 == Some c /\ fwd o2 == Some c ==> o1 == o2) /\
-    (* the copies: on free words, in use, colour by colour_at, fields forwarded *)
-    (forall (o c: nat). fwd o == Some c ==>
-       (forall (w': nat). covers h' c w' ==> free_word a st h w') /\
-       h'.hd c == Some ({ wz = wz_of y o; tag = tag_of y o; col = colour_at k ph c }) /\
-       (forall (i: nat). i < wz_of y o ==> field h' c i == fwd_field y o i y fwd)) /\
-    (forall (x: nat). in_use a st' h' x <==> (in_use a st h x \/ (exists (o: nat). fwd o == Some x))) /\
-    (* other in-use objects unchanged except young pointers rewritten *)
-    (forall (x: nat). in_use a st h x ==>
-       h'.hd x == h.hd x /\ (forall (i: nat). i < wz_of h x ==> field h' x i == fwd_field h x i y fwd)) /\
-    roots' == L.map (fwdv y fwd) w.roots /\
-    a.inv ph h' st' /\ well_formed h'
+let minor_post_done (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (st: a.state)
+    (hc: t) (w: world) (hc': t) (st': a.state) (roots': list value) (fwd: nat -> option nat) (h': mheap)
+  : prop =
+  let h = w.maj in
+  let y = w.yng in
+  h'.size == h.size /\
+  (* exactly the young objects reachable from roots and remembered slots, each once *)
+  (forall (o: nat). Some? (fwd o) <==> (is_block y o /\ minor_live w o)) /\
+  (forall (o1 o2 c: nat). fwd o1 == Some c /\ fwd o2 == Some c ==> o1 == o2) /\
+  (* the copies: on free words, in use, colour by colour_at, fields forwarded *)
+  (forall (o c: nat). fwd o == Some c ==>
+     (forall (w': nat). covers h' c w' ==> free_word a st hc h w') /\
+     h'.hd c == Some ({ wz = wz_of y o; tag = tag_of y o; col = colour_at k ph c }) /\
+     (forall (i: nat). i < wz_of y o ==> field h' c i == fwd_field y o i y fwd)) /\
+  (forall (x: nat). in_use a st' hc' h' x <==> (in_use a st hc h x \/ (exists (o: nat). fwd o == Some x))) /\
+  (* other in-use objects unchanged except young pointers rewritten *)
+  (forall (x: nat). in_use a st hc h x ==>
+     h'.hd x == h.hd x /\ (forall (i: nat). i < wz_of h x ==> field h' x i == fwd_field h x i y fwd)) /\
+  roots' == L.map (fwdv y fwd) w.roots /\
+  a.inv ph hc' st' /\ well_formed h'
 
-let minor_at (#k: sweep_kind) (#a: allocator k) (n: minor k a) (ph: phase k.progress) (st: a.state)
-    (w: world) : prop =
-  minor_pre a ph st w ==> minor_post a ph st w (n.collect ph st w)
+let minor_m (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (#a: allocator t k) (n: minor t yt k a)
+    (ph: phase k.progress) (st: a.state) (cw: cworld t yt) (w: world) : prop =
+  minor_pre a ph st cw.cmaj w ==>
+  (match n.collect ph st cw with
+   | OutOfRoom -> oor_justified r a ph st cw w
+   | Done hc' st' roots' fwd ->
+     exists (h': mheap). r.repr h' hc' /\ minor_post_done a ph st cw.cmaj w hc' st' roots' fwd h')
 
-let minor_ok (#k: sweep_kind) (#a: allocator k) (n: minor k a) : prop =
-  forall ph st w. minor_at n ph st w
+let minor_at (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (#a: allocator t k) (n: minor t yt k a)
+    (ph: phase k.progress) (st: a.state) (cw: cworld t yt) : prop =
+  forall_views r cw (minor_m r n ph st cw)
+
+let minor_ok (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (#a: allocator t k) (n: minor t yt k a) : prop =
+  forall ph st w. minor_at r n ph st w
 
 /// ---------------------------------------------------------------------------
 /// The write barrier
 /// ---------------------------------------------------------------------------
 
-noeq type barrier = {
+noeq type barrier (t: Type0) = {
   (* a store `v` into field `i` of major block `o`, `marking` or not *)
-  bwrite : bool -> mheap -> list slot -> nat -> nat -> value -> GTot (mheap & list slot);
+  bwrite : bool -> t -> list slot -> nat -> nat -> value -> GTot (t & list slot);
   (* the Fill of a new major block *)
-  binit  : mheap -> list slot -> nat -> list value -> GTot (mheap & list slot);
+  binit  : t -> list slot -> nat -> list value -> GTot (t & list slot);
 }
 
 /// Darken: a white block becomes grey; nothing else changes colour.
@@ -429,25 +532,37 @@ let old_target (h: mheap) (o i: nat) : option nat =
 let young_slot (h: mheap) (o i: nat) (v: value) : bool =
   is_block h o && scannable (tag_of h o) && VPtr? v && Young? (VPtr?._0 v)
 
-let barrier_write_at (b: barrier) (marking: bool) (h: mheap) (rem: list slot) (o i: nat) (v: value) : prop =
-  is_block h o /\ i < wz_of h o ==>
-  (let (h', rem') = b.bwrite marking h rem o i v in
-   h'.size == h.size /\
-   (forall (x: nat). is_block h' x == is_block h x /\ wz_of h' x == wz_of h x /\ tag_of h' x == tag_of h x) /\
-   (forall (w: nat). h'.body w == (if w = o + 1 + i then v else h.body w)) /\
-   (* while marking the overwritten value is darkened; otherwise no colour changes *)
-   darkened h h' (if marking then old_target h o i else None) /\
-   (* every old-to-young pointer written is remembered *)
-   (forall (sl: slot). L.memP sl rem ==> L.memP sl rem') /\
-   (young_slot h o i v ==> L.memP (o, i) rem'))
+let write_pre (o i: nat) (v: value) (sv: bool) (h: mheap) : prop =
+  is_block h o /\ i < wz_of h o /\ sv == true
 
-let barrier_init_at (b: barrier) (h: mheap) (rem: list slot) (o: nat) (vs: list value) : prop =
-  is_block h o /\ L.length vs == wz_of h o ==>
-  (let (h', rem') = b.binit h rem o vs in
-   h' == fill h o vs /\
+let write_post (marking: bool) (rem rem': list slot) (o i: nat) (v: value) (h h': mheap) : prop =
+  h'.size == h.size /\
+  (forall (x: nat). is_block h' x == is_block h x /\ wz_of h' x == wz_of h x /\ tag_of h' x == tag_of h x) /\
+  (forall (w: nat). field_word h w ==> h'.body w == (if w = o + 1 + i then v else h.body w)) /\
+  (* while marking the overwritten value is darkened; otherwise no colour changes *)
+  darkened h h' (if marking then old_target h o i else None) /\
+  (* every old-to-young pointer written is remembered *)
+  (forall (sl: slot). L.memP sl rem ==> L.memP sl rem') /\
+  (young_slot h o i v ==> L.memP (o, i) rem')
+
+let barrier_write_at (#t #yt: Type0) (r: rep t yt) (b: barrier t) (marking: bool) (hc: t) (rem: list slot)
+    (o i: nat) (v: value) : prop =
+  let (hc', rem') = b.bwrite marking hc rem o i v in
+  lifted r (write_pre o i v (r.storable v)) hc hc' (write_post marking rem rem' o i v)
+
+/// The Fill is a function of the model: its result represents the new heap.
+let binit_m (#t #yt: Type0) (r: rep t yt) (b: barrier t) (hc: t) (rem: list slot) (o: nat) (vs: list value)
+    (h: mheap) : prop =
+  is_block h o /\ L.length vs == wz_of h o /\ storable_all r vs ==>
+  (let (hc', rem') = b.binit hc rem o vs in
+   r.repr (fill h o vs) hc' /\
    (forall (sl: slot). L.memP sl rem ==> L.memP sl rem') /\
    (forall (i: nat). i < L.length vs /\ young_slot h o i (L.index vs i) ==> L.memP (o, i) rem'))
 
-let barrier_ok (b: barrier) : prop =
-  (forall marking h rem o i v. barrier_write_at b marking h rem o i v) /\
-  (forall h rem o vs. barrier_init_at b h rem o vs)
+let barrier_init_at (#t #yt: Type0) (r: rep t yt) (b: barrier t) (hc: t) (rem: list slot) (o: nat)
+    (vs: list value) : prop =
+  forall_repr r hc (binit_m r b hc rem o vs)
+
+let barrier_ok (#t #yt: Type0) (r: rep t yt) (b: barrier t) : prop =
+  (forall marking h rem o i v. barrier_write_at r b marking h rem o i v) /\
+  (forall h rem o vs. barrier_init_at r b h rem o vs)
