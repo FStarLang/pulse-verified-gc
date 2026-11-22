@@ -425,21 +425,69 @@ let small_storable (r: real_state) (x: U64.t)
   = assert (~(is_pointer x));
     assert (GBase.to_minor_offset x == x)
 
-#push-options "--z3rlimit 60"
-let step1 () : Lemma (step (r0_ ()) alloc_e (r1_ ())) =
-  room ();
-  ms1_facts ();
-  ms1_shape ();
-  small_storable (r0_ ()) one;
-  minor_objects_from_zero (r0_ ()).memory.nursery;
-  minor_chain_walk_stop (r0_ ()).memory.nursery.data 0 0;
-  let ms0 = (r0_ ()).memory.nursery in
-  minor_alloc_success_layout ms0 1 0;
-  data1_word 8UL;
-  field0 (r1_ ()).memory.nursery 8UL
-
 let init1_facts () : Lemma (Seq.length init1 == 1 /\ Seq.index init1 0 == one) = ()
 let lt1 (j: nat) : Lemma (requires j < 1) (ensures j == 0) = ()
+
+/// The empty nursery has no objects.
+let ms0_empty () : Lemma (forall (y: U64.t). ~(Seq.mem y (minor_objects (r0_ ()).memory.nursery))) =
+  room ();
+  minor_objects_from_zero (r0_ ()).memory.nursery;
+  minor_chain_walk_stop (r0_ ()).memory.nursery.data 0 0
+
+/// The new block's field: the word at 8 of the nursery after.
+let field1 () : Lemma (minor_read_field (r1_ ()).memory.nursery 8UL 0 == one) =
+  room ();
+  data1_word 8UL;
+  assert (data1 () == (r1_ ()).memory.nursery.data);
+  field0 (r1_ ()).memory.nursery 8UL
+
+/// The first allocation's frame, clause by clause (it was one query, which
+/// was close to its budget and timed out in CI).
+let frame1 () : Lemma (nursery_alloc_frame (r0_ ()).memory.nursery (r1_ ()).memory.nursery 8UL 0 init1) =
+  ms1_facts ();
+  ms1_shape ();
+  ms0_empty ();
+  field1 ();
+  init1_facts ();
+  let ms1 = (r1_ ()).memory.nursery in
+  assert (minor_wosize ms1 8UL == Seq.length init1);
+  introduce forall (j: nat). j < Seq.length init1 ==> minor_read_field ms1 8UL j == Seq.index init1 j
+  with introduce _ ==> _ with lt1 j
+
+let alloc1_addr () : Lemma ((minor_alloc_spec (r0_ ()).memory.nursery 1 0).obj_addr == 8UL) =
+  room ();
+  let ms0 = (r0_ ()).memory.nursery in
+  minor_alloc_success_layout ms0 1 0;
+  assert (U64.v (minor_alloc_spec ms0 1 0).obj_addr == 8)
+
+/// The state after the first allocation is the one the step describes.
+let r1_shape () : Lemma
+  (let ms0 = (r0_ ()).memory.nursery in
+   let res = minor_alloc_spec ms0 1 (U64.v 0UL) in
+   r1_ () == { (r0_ ()) with memory = { (r0_ ()).memory with nursery =
+                 { res.ms_out with data = write_nursery_fields res.ms_out.data res.obj_addr init1 0 } } })
+  = assert_norm (U64.v 0UL == 0)
+
+/// What the program owes: the initial word is storable, and can go in the
+/// nursery; and there is room.
+let alloc1_owed () : Lemma
+  (init_storable (r0_ ()) 0UL init1 /\
+   (I.tag_scannable 0UL ==> (forall (j: nat). j < Seq.length init1 ==> nursery_storable (r0_ ()) (Seq.index init1 j))) /\
+   minor_can_alloc (r0_ ()).memory.nursery 1)
+  = room ();
+    init1_facts ();
+    small_storable (r0_ ()) one;
+    introduce forall (j: nat). j < Seq.length init1 ==> nursery_storable (r0_ ()) (Seq.index init1 j)
+    with introduce _ ==> _ with lt1 j
+
+let step1 () : Lemma (step (r0_ ()) alloc_e (r1_ ())) =
+  room ();
+  init1_facts ();
+  frame1 ();
+  alloc1_addr ();
+  alloc1_owed ();
+  r1_shape ();
+  assert (nursery_alloc_step (r0_ ()) 0UL 1 init1 (r1_ ()))
 
 let frame2 () : Lemma (nursery_alloc_frame (r1_ ()).memory.nursery (r2_ ()).memory.nursery 24UL 0 init1) =
   room ();
@@ -470,15 +518,43 @@ let frame2 () : Lemma (nursery_alloc_frame (r1_ ()).memory.nursery (r2_ ()).memo
   introduce forall (j: nat). j < Seq.length init1 ==> minor_read_field ms2 24UL j == Seq.index init1 j
   with introduce _ ==> _ with lt1 j
 
-let step2 () : Lemma (step (r1_ ()) alloc_e (r2_ ())) =
+let r2_shape () : Lemma
+  (let ms1 = (r1_ ()).memory.nursery in
+   let res = minor_alloc_spec ms1 1 (U64.v 0UL) in
+   r2_ () == { (r1_ ()) with memory = { (r1_ ()).memory with nursery =
+                 { res.ms_out with data = write_nursery_fields res.ms_out.data res.obj_addr init1 0 } } })
+  = assert_norm (U64.v 0UL == 0)
+
+let alloc2_owed () : Lemma
+  (init_storable (r1_ ()) 0UL init1 /\
+   (I.tag_scannable 0UL ==> (forall (j: nat). j < Seq.length init1 ==> nursery_storable (r1_ ()) (Seq.index init1 j))) /\
+   minor_can_alloc (r1_ ()).memory.nursery 1)
+  = room ();
+    ms1_facts ();
+    init1_facts ();
+    small_storable (r1_ ()) one;
+    introduce forall (j: nat). j < Seq.length init1 ==> nursery_storable (r1_ ()) (Seq.index init1 j)
+    with introduce _ ==> _ with lt1 j
+
+#push-options "--fuel 0 --ifuel 0"
+let alloc2_addr () : Lemma ((minor_alloc_spec (r1_ ()).memory.nursery 1 0).obj_addr == 24UL) =
   room ();
   ms1_facts ();
-  frame2 ();
-  small_storable (r1_ ()) one;
   let ms1 = (r1_ ()).memory.nursery in
+  assert (minor_wf ms1 /\ U64.v ms1.bump == 16);
+  assert (minor_can_alloc ms1 1);
   minor_alloc_success_layout ms1 1 0;
-  assert (U64.v (minor_alloc_spec ms1 1 0).obj_addr == 24);
-  assert ((minor_alloc_spec ms1 1 0).obj_addr == 24UL)
+  assert (U64.v (minor_alloc_spec ms1 1 0).obj_addr == 24)
+#pop-options
+
+let step2 () : Lemma (step (r1_ ()) alloc_e (r2_ ())) =
+  room ();
+  init1_facts ();
+  frame2 ();
+  alloc2_addr ();
+  alloc2_owed ();
+  r2_shape ();
+  assert (nursery_alloc_step (r1_ ()) 0UL 1 init1 (r2_ ()))
 
 let frame3 () : Lemma (nursery_store_frame (r2_ ()).memory.nursery (r3_ ()).memory.nursery 24UL 0 w) =
   room ();
