@@ -42,6 +42,16 @@ let slot_fits (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat{k < n_slots c})
     cls_bounds c;
     page_base_mono (i + 1) n_pages
 
+/// Slot `k`'s list entry fits in a machine word.  The pattern lets the
+/// statement of `pool_init_chain`, which converts `slot_obj i c k` with
+/// `U64.uint_to_t`, use this bound instead of having Z3 rediscover it from the
+/// page layout (a fragile query on CI).
+let slot_obj_fits (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat{k < n_slots c})
+  : Lemma (ensures 0 <= slot_obj i c k /\ slot_obj i c k < heap_size /\
+                   FStar.UInt.size (slot_obj i c k) 64)
+          [SMTPat (slot_obj i c k)]
+  = slot_fits i c k
+
 let slot_hd (i: nat{i < n_pages}) (c: nat{c < n_cls}) (k: nat{k < n_slots c})
   : a: hp_addr{U64.v a == slot_base i c k} =
   slot_fits i c k; mk_hp_addr (slot_base i c k)
