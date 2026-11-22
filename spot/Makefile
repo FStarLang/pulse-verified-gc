@@ -96,6 +96,7 @@ SPOT_SRC = \
   GC.SPOT.InfixPost.fsti \
   GC.SPOT.InfixPost.fst \
   GC.SPOT.MajorInfixRoot.fst \
+  GC.SPOT.NurseryInfixField.fst \
   GC.SPOT.InfixCall.fsti \
   GC.SPOT.InfixCall.fst \
   GC.SPOT.MinorInfix.fsti \
