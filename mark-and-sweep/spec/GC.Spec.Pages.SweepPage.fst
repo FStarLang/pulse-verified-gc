@@ -115,9 +115,14 @@ let page_freed (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls}) : GTot (heap 
 let rec any_live (g: heap) (i: nat) (c: nat{c < n_cls}) (k: nat) : Tot bool (decreases k) =
   if k = 0 then false else live g i c (k - 1) || any_live g i c (k - 1)
 
+/// The proof never looks inside `live`; hiding its definition (a colour read
+/// from the heap) keeps Z3 from unfolding it, which made this query fragile
+/// (it came within 1% of its rlimit).
+#push-options "--using_facts_from '* -GC.Spec.Pages.SweepPage.live'"
 let rec any_live_spec (g: heap) (i: nat) (c: nat{c < n_cls}) (k: nat)
   : Lemma (ensures any_live g i c k <==> (exists (j: nat). j < k /\ live g i c j)) (decreases k)
   = if k > 0 then any_live_spec g i c (k - 1)
+#pop-options
 
 /// Some slot holds a survivor exactly when fewer slots than all are freed.
 let rec dead_count (g: heap) (i: nat) (c: nat{c < n_cls}) (k: nat)
@@ -405,6 +410,15 @@ let pool_swept_ok (g: heap) (pm: page_map) (i: nat{i < n_pages}) (c: nat{c < n_c
                     pool_list_ok g' pm' i /\ pool_white g' pm' i))
   = let (g', e) = pool_swept g pm i c in
     let pm' = Seq.upd pm i e in
+    (* Definitional facts first, before the slot lemmas' quantified facts
+       enter the context (they made these fragile). *)
+    assert (entry pm' i == e);
+    assert (e.free_head == nd_from g i c 0);
+    assert (e.nfree == L.length (dead_list g i c (n_slots c)));
+    dead_len g i c (n_slots c);
+    dead_from_end g i c;
+    assert_norm (L.length ([] <: list nat) == 0);
+    assert (e.nfree == L.length (dead_from g i c 0));
     pool_swept_frame g pm i c;
     pool_swept_slots g pm i c;
     slots_fill_page i c;
@@ -413,13 +427,7 @@ let pool_swept_ok (g: heap) (pm: page_map) (i: nat{i < n_pages}) (c: nat{c < n_c
     dead_chain g i c 0;
     dead_from_norep g i c 0;
     FStar.Classical.forall_intro (dead_from_mem g i c 0);
-    dead_len g i c (n_slots c);
-    dead_from_end g i c;
     let ks = dead_from g i c 0 in
-    assert_norm (L.length ([] <: list nat) == 0);
-    assert (entry pm' i == e);
-    assert (e.free_head == nd_from g i c 0);
-    assert (e.nfree == L.length ks);
     assert (forall (k: nat). k < n_slots c ==> (L.mem k ks <==> slot_free g' i c k));
     assert (slot_chain g' i c (entry pm' i).free_head ks /\ L.noRepeats ks);
     assert (pool_list_ok g' pm' i);
