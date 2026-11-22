@@ -501,30 +501,30 @@ let oor_justified (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t
     alloc_fold r a ph cw.cmaj st w.yng ys == None
 
 /// The nursery's major pointers are values the program may store (G36: a
-/// copy is a Fill of the allocator, whose invariant reads pointer fields),
-/// each to the start of a block (G39: the promotion's
-/// `minor_major_fields_not_free` takes the pointer itself to be a block in
-/// use, so no interior pointer into a major closure).
+/// copy is a Fill of the allocator, whose invariant reads pointer fields).
+/// An infix pointer into a major closure is one (G39, design doc §12: the
+/// promotion asks only that it resolve to a block in use).
 let young_sound (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (st: a.state)
     (h: t) (w: world) : prop =
   forall (y i b: nat). ptr_field w.yng y i /\ field w.yng y i == VPtr (Major b) ==>
-    sound_value a ph st h w.maj (VPtr (Major b)) /\ is_block w.maj b
+    sound_value a ph st h w.maj (VPtr (Major b))
 
-/// A word of a young field that reads as an infix header is one: in a
-/// closure, at its own offset, past the code pointer and before the end
-/// (G38: the promotion's `minor_infix_wf`, akhil's trust assumption on the
-/// nursery, as a model condition; ordinary data can break it, e.g. a field
-/// holding the word 249).
-let young_infix_ok (y: mheap) : prop =
-  forall (o i: nat). is_block y o /\ i < wz_of y o ==>
-    (match infix_hdr (field y o i) with
-     | Some k -> tag_of y o == closure_tag /\ k == i + 1 /\ k >= 2 /\ k < wz_of y o
-     | None -> True)
+/// A young pointer to `a` is followed safely: if `a` is a field word that
+/// reads as an infix header, `a` is an address the model resolves (G38,
+/// design doc §12: the collection reads an infix header only below an
+/// address it follows; ordinary data that looks like one, e.g. a field
+/// holding the word 249, is never read so).
+let follow_at (y: mheap) (a: nat) : prop =
+  (exists (o: nat). covers y o a /\ o < a) /\ Some? (infix_hdr (y.body a)) ==> Some? (resolve y a)
+
+/// Every young pointer a young block's fields hold is followed safely.
+let young_follow_ok (y: mheap) : prop =
+  forall (o i a: nat). ptr_field y o i /\ field y o i == VPtr (Young a) ==> follow_at y a
 
 let minor_pre (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (st: a.state)
     (h: t) (w: world) : prop =
   a.inv ph h st /\ well_formed w.maj /\ young_ok w.yng /\ rem_covers a st h w /\ young_sound a ph st h w /\
-  young_infix_ok w.yng
+  young_follow_ok w.yng
 
 let minor_post_done (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (st: a.state)
     (hc: t) (w: world) (hc': t) (st': a.state) (roots': list value) (fwd: nat -> option nat) (h': mheap)

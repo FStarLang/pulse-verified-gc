@@ -312,6 +312,21 @@ let field_cov (y: M.mheap) (ms: minor_state) (cs: P.gstate pstate) (j: nat) (o i
     assert (PR.covered ms cs (PR.fld ms (PC.yobj o) i))
 #pop-options
 
+/// A word of the roots' part, or of the remembered slots' part, is a root.
+let roots_mem_l (wc: M.world) (a: nat)
+  : Lemma (requires 8 * a + 16 <= minor_heap_size /\
+                    (Y.msz (); Seq.mem (U64.uint_to_t (8 * a + 8)) (LV.yroots wc.M.yng wc.M.roots)))
+          (ensures (Y.msz (); Seq.mem (U64.uint_to_t (8 * a + 8)) (LV.roots_of wc)))
+  = Y.msz ();
+    FStar.Seq.Properties.lemma_mem_append (LV.yroots wc.M.yng wc.M.roots) (LV.yrem wc.M.maj wc.M.yng wc.M.rem)
+
+let roots_mem_r (wc: M.world) (a: nat)
+  : Lemma (requires 8 * a + 16 <= minor_heap_size /\
+                    (Y.msz (); Seq.mem (U64.uint_to_t (8 * a + 8)) (LV.yrem wc.M.maj wc.M.yng wc.M.rem)))
+          (ensures (Y.msz (); Seq.mem (U64.uint_to_t (8 * a + 8)) (LV.roots_of wc)))
+  = Y.msz ();
+    FStar.Seq.Properties.lemma_mem_append (LV.yroots wc.M.yng wc.M.roots) (LV.yrem wc.M.maj wc.M.yng wc.M.rem)
+
 /// What the induction carries: the closure of the end of promotion.
 [@@"opaque_to_smt"]
 let closure (cw: T.cworld heap minor_state) (cs: P.gstate pstate) (live: U64.t -> prop) (g0: heap) (s0: pstate)
@@ -338,13 +353,13 @@ let rec live_fwd (cw: T.cworld heap minor_state) (cs: P.gstate pstate) (live: U6
     | M.LRoot _ a' _ ->
       res_bound y a' o;
       yroots_mem y wc.M.roots a';
-      FStar.Seq.Properties.lemma_mem_append (LV.yroots y wc.M.roots) (LV.yrem wc.M.maj y wc.M.rem);
+      roots_mem_l wc a';
       root_cov_at ms cs (LV.roots_of wc) a';
       cov_fwd y ms cs a' o
     | M.LRem _ x i a' _ ->
       res_bound y a' o;
       yrem_mem wc.M.maj y wc.M.rem x i a';
-      FStar.Seq.Properties.lemma_mem_append (LV.yroots y wc.M.roots) (LV.yrem wc.M.maj y wc.M.rem);
+      roots_mem_r wc a';
       root_cov_at ms cs (LV.roots_of wc) a';
       cov_fwd y ms cs a' o
     | M.LStep p _ l' _ ->

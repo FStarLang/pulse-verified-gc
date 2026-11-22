@@ -54,6 +54,7 @@ module LV = GC.Spec.Top.PagesLive
 module BM = GC.Spec.Top.ByteMark
 module F = GC.Spec.Top.PagesFwd
 module GenInv = GC.Gen.HeapInvariant
+module FW = GC.Spec.Pages.Promote.Follow
 module MS = GC.Spec.Pages.MidSweep
 module PA = GC.Spec.Pages.Allocator
 module PMP = GC.Spec.Pages.MarkPhase
@@ -135,14 +136,35 @@ let views (cw: T.cworld heap minor_state) (w: M.world)
     R.heq_refl (Y.ycabs cw.T.cyng);
     Y.yrepr_intro (Y.ycabs cw.T.cyng) cw.T.cyng
 
-/// One major field of a nursery object: a block in use for the instance.
+/// A block the program may use is in use for the instance.
 #push-options "--z3rlimit 40"
-let mmf_one (ph: T.phase pprog) (st: pst) (h0: heap) (w: M.world) (ms: minor_state) (obj: U64.t) (j: nat)
+let live_in_use (ph: T.phase pprog) (st: pst) (h0: heap) (m: M.mheap) (x: nat)
+  : Lemma (requires pa.T.inv ph h0 st /\ R.heq m (cabs h0) /\ T.live_target pa ph st h0 m x)
+          (ensures pos x + 8 < heap_size /\ in_use (ptal ph st).P.free (gl h0 st) (obj_of x))
+  = let g0 = gl h0 st in
+    cabs_set_low h0 st.lo;
+    assert (M.is_block (cabs g0) x);
+    abs_is_block g0 x;
+    abs_header g0 x;
+    is_white_iff (obj_of x) g0;
+    is_blue_iff (obj_of x) g0;
+    match ph with
+    | T.Sweeping p -> MS.uw_same p.ppm st.ps.pm (pos x)
+    | _ -> ()
+#pop-options
+
+/// One major field of a nursery object: it resolves to a block in use for
+/// the instance, through a well-formed infix address (G39: an infix pointer
+/// into a major closure is one).
+#push-options "--z3rlimit 40"
+let mt_one (ph: T.phase pprog) (st: pst) (h0: heap) (w: M.world) (ms: minor_state) (obj: U64.t) (j: nat)
   : Lemma (requires pa.T.inv ph h0 st /\ R.heq w.M.maj (cabs h0) /\ Y.yrepr w.M.yng ms /\
                     T.young_sound pa ph st h0 w /\
                     Seq.mem obj (minor_objects ms) /\ j < minor_scan_wosize ms obj /\
                     is_pointer_field (minor_read_field ms obj j))
-          (ensures in_use (ptal ph st).P.free (gl h0 st) ((minor_read_field ms obj j) <: obj_addr))
+          (ensures (let v : obj_addr = minor_read_field ms obj j in
+                    in_use (ptal ph st).P.free (gl h0 st) (resolve_object v (gl h0 st)) /\
+                    infix_addr_wf (gl h0 st) (objects zero_addr (gl h0 st)) v))
   = let y = w.M.yng in
     Q.obj_young y ms obj;
     let o = Q.yof obj in
@@ -153,18 +175,19 @@ let mmf_one (ph: T.phase pprog) (st: pst) (h0: heap) (w: M.world) (ms: minor_sta
     ptr_decode f;
     let b = ptr_b f in
     assert (M.ptr_field y o j);
-    assert (M.is_block w.M.maj b);
+    assert (T.sound_value pa ph st h0 w.M.maj (M.VPtr (M.Major b)));
+    let x = FStar.IndefiniteDescription.indefinite_description_ghost nat
+              (fun x -> M.resolve w.M.maj b == Some x /\ T.live_target pa ph st h0 w.M.maj x) in
     let g0 = gl h0 st in
     cabs_set_low h0 st.lo;
-    assert (M.is_block (cabs g0) b);
-    abs_is_block g0 b;
-    abs_header g0 b;
-    is_white_iff f g0;
-    is_blue_iff f g0;
-    assert (T.live_target pa ph st h0 w.M.maj b);
-    match ph with
-    | T.Sweeping p -> MS.uw_same p.ppm st.ps.pm (pos b)
-    | _ -> ()
+    assert (M.resolve (cabs g0) b == Some x);
+    GC.Spec.Top.ByteWrite.resolve_abs_of_cabs g0 b x;
+    tal_start ph st h0;
+    P.contract_wf (ptal ph st) g0 st.ps;
+    wf_with_parts ();
+    ptr_resolve g0 b x;
+    live_in_use ph st h0 w.M.maj x;
+    assert (resolve_object f g0 == obj_of x)
 #pop-options
 
 let young_ok_heq (y y': M.mheap) : Lemma (requires M.young_ok y /\ R.heq y y') (ensures M.young_ok y')
@@ -172,24 +195,50 @@ let young_ok_heq (y y': M.mheap) : Lemma (requires M.young_ok y /\ R.heq y y') (
     assert (forall (o: nat). M.hdr_of y' o == M.hdr_of y o);
     assert (forall (o w: nat). M.covers y' o w == M.covers y o w)
 
-let yinfix_heq (y y': M.mheap) : Lemma (requires T.young_infix_ok y /\ R.heq y y') (ensures T.young_infix_ok y')
+let follow_at_heq (y y': M.mheap) (a: nat) : Lemma (requires T.follow_at y a /\ R.heq y y') (ensures T.follow_at y' a)
   = assert (forall (o: nat). M.is_block y' o == M.is_block y o);
     assert (forall (o: nat). M.hdr_of y' o == M.hdr_of y o);
-    assert (forall (o i: nat). M.field y' o i == M.field y o i)
+    assert (forall (o w: nat). M.covers y' o w == M.covers y o w);
+    if FStar.IndefiniteDescription.strong_excluded_middle (exists (o: nat). M.covers y' o a /\ o < a) then begin
+      assert (R.field_word y' a);
+      assert (y'.M.body a == y.M.body a);
+      assert (M.resolve y' a == M.resolve y a)
+    end
+
+let yfollow_heq (y y': M.mheap) : Lemma (requires T.young_follow_ok y /\ R.heq y y') (ensures T.young_follow_ok y')
+  = let one (o i a: nat)
+      : Lemma (M.ptr_field y' o i /\ M.field y' o i == M.VPtr (M.Young a) ==> T.follow_at y' a)
+      = if M.ptr_field y' o i && M.field y' o i = M.VPtr (M.Young a) then begin
+          assert (M.is_block y' o == M.is_block y o);
+          assert (M.hdr_of y' o == M.hdr_of y o);
+          assert (M.field y' o i == M.field y o i);
+          assert (M.ptr_field y o i);
+          assert (M.field y o i == M.VPtr (M.Young a));
+          assert (T.follow_at y a);
+          follow_at_heq y y' a
+        end in
+    FStar.Classical.forall_intro_3 one
 
 /// **What the promotion needs**, from the minor collection's precondition.
+#push-options "--z3rlimit 40"
 let ctx_start (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M.world)
   : Lemma (requires T.cviews byte_rep cw w /\ T.minor_pre pa ph st cw.T.cmaj w)
-          (ensures PL.ctx (ptal ph st) cw.T.cyng (gl cw.T.cmaj st) /\
+          (ensures PL.ctx_w (ptal ph st) cw.T.cyng (gl cw.T.cmaj st) /\
+                   PL.cpre_w (ptal ph st) cw.T.cyng (gl cw.T.cmaj st) st.ps (LV.roots_of (BM.cview cw)) /\
                    (ptal ph st).P.inv (gl cw.T.cmaj st) st.ps)
   = let ms = cw.T.cyng in
     let h0 = cw.T.cmaj in
+    let wc = BM.cview cw in
     views cw w;
     tal_start ph st h0;
-    YI.young_infix_wf w.M.yng ms;
+    YI.young_minor_wf w.M.yng ms;
+    LV.fields_follow_of w.M.yng ms;
+    young_ok_heq w.M.yng wc.M.yng;
+    LV.roots_follow_of wc ms;
     P.contract_wf (ptal ph st) (gl h0 st) st.ps;
-    GenInv.minor_major_fields_not_free_intro (ptal ph st).P.free ms (gl h0 st)
-      (fun obj j -> mmf_one ph st h0 w ms obj j)
+    FW.major_targets_intro (ptal ph st).P.free ms (gl h0 st)
+      (fun obj j -> mt_one ph st h0 w ms obj j)
+#pop-options
 
 /// **The promotion's outcome**, on the collector's world.
 let run_done (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M.world)
@@ -209,7 +258,7 @@ let run_done (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M
     views cw w;
     ctx_start ph st cw w;
     young_ok_heq w.M.yng wc.M.yng;
-    yinfix_heq w.M.yng wc.M.yng;
+    yfollow_heq w.M.yng wc.M.yng;
     LV.live_closed wc ms;
     LV.roots_just wc ms;
     PR.promote_done (ptal ph st) ms (LV.live wc ms) (gl cw.T.cmaj st) st.ps (LV.roots_of wc)

@@ -28,6 +28,7 @@ open GC.Spec.Pages.Inv
 open GC.Spec.Pages.Promote
 open GC.Spec.Pages.Promote.Loop
 open GC.Spec.Pages.Promote.Collect
+open GC.Spec.Pages.Promote.Follow
 
 module U64 = FStar.UInt64
 module GenInv = GC.Gen.HeapInvariant
@@ -48,6 +49,11 @@ let spre (minor: minor_state) (g: heap) (st: pstate) : prop =
   MS.pages_ok_sw g st /\ GenInv.minor_heap_shape minor /\
   GenInv.minor_major_fields_not_free (MS.free_sw st.pm) minor g
 
+/// ... read only where it follows a pointer (design doc §12).
+let spre_w (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t) : prop =
+  MS.pages_ok_sw g st /\ minor_wf minor /\ fields_follow minor /\ roots_follow minor roots /\
+  major_targets (MS.free_sw st.pm) minor g
+
 /// The blocks a change made: in use after, not before.
 let made (pm: page_map) (g g': heap) (x: obj_addr) : prop =
   in_use (MS.free_sw pm) g' x /\ ~(in_use (MS.free_sw pm) g x)
@@ -55,6 +61,39 @@ let made (pm: page_map) (g g': heap) (x: obj_addr) : prop =
 /// `since`, and the blocks the collection made.
 let with_made (pm: page_map) (since: obj_addr -> prop) (g g': heap) : obj_addr -> prop =
   fun x -> since x \/ made pm g g' x
+
+/// **What the collection keeps**, read only where it follows a pointer.
+#push-options "--z3rlimit 30"
+let s_facts_w (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t)
+  : Lemma (requires spre_w minor g st roots)
+          (ensures (let r = scollect minor g st roots in
+                    let pm = st.pm in
+                    MS.pages_ok_sw r.rmajor r.rst /\ r.rminor == minor_reset minor /\
+                    (forall (y: obj_addr). MS.unswept_at r.rst.pm y == MS.unswept_at pm y) /\
+                    (forall (y: obj_addr). in_use (MS.free_sw r.rst.pm) r.rmajor y ==
+                                      in_use (MS.free_sw pm) r.rmajor y) /\
+                    (forall (y: obj_addr). in_use (MS.free_sw pm) g y ==>
+                       in_use (MS.free_sw pm) r.rmajor y /\
+                       wosize_of_object y r.rmajor == wosize_of_object y g)))
+  = let a = PI.sw_tal st.pm in
+    PI.sw_contract st.pm;
+    assert (cpre_w a minor g st roots);
+    collect_inv_w a minor g st roots;
+    let r = scollect minor g st roots in
+    let iu (y: obj_addr)
+      : Lemma (in_use (MS.free_sw r.rst.pm) r.rmajor y == in_use (MS.free_sw st.pm) r.rmajor y)
+      = PI.sw_in_use st.pm r.rst.pm r.rmajor y
+    in
+    FStar.Classical.forall_intro iu;
+    let old (y: obj_addr)
+      : Lemma (requires in_use (MS.free_sw st.pm) g y)
+              (ensures in_use (MS.free_sw st.pm) r.rmajor y /\ wosize_of_object y r.rmajor == wosize_of_object y g)
+      = collect_blocks_w a minor g st roots y;
+        wosize_of_object_spec y g;
+        wosize_of_object_spec y r.rmajor
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires old)
+#pop-options
 
 /// **What the collection keeps.**
 #push-options "--z3rlimit 30"
@@ -69,23 +108,11 @@ let s_facts (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t)
                     (forall (y: obj_addr). in_use (MS.free_sw pm) g y ==>
                        in_use (MS.free_sw pm) r.rmajor y /\
                        wosize_of_object y r.rmajor == wosize_of_object y g)))
-  = let a = PI.sw_tal st.pm in
+  = GenInv.minor_heap_shape_elim minor;
+    fields_of_infix_wf minor;
+    roots_of_infix_wf minor roots;
     PI.sw_contract st.pm;
-    GenInv.minor_heap_shape_elim minor;
-    assert (cpre a minor g st);
-    collect_inv a minor g st roots;
-    let r = scollect minor g st roots in
-    let iu (y: obj_addr)
-      : Lemma (in_use (MS.free_sw r.rst.pm) r.rmajor y == in_use (MS.free_sw st.pm) r.rmajor y)
-      = PI.sw_in_use st.pm r.rst.pm r.rmajor y
-    in
-    FStar.Classical.forall_intro iu;
-    let old (y: obj_addr)
-      : Lemma (requires in_use (MS.free_sw st.pm) g y)
-              (ensures in_use (MS.free_sw st.pm) r.rmajor y /\ wosize_of_object y r.rmajor == wosize_of_object y g)
-      = collect_blocks a minor g st roots y;
-        wosize_of_object_spec y g;
-        wosize_of_object_spec y r.rmajor
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires old)
+    contract_wf (PI.sw_tal st.pm) g st;
+    targets_of_not_free (MS.free_sw st.pm) minor g;
+    s_facts_w minor g st roots
 #pop-options

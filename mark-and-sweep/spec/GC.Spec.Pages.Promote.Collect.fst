@@ -31,6 +31,7 @@ open GC.Gen.MinorHeap
 open GC.Gen.Promote
 open GC.Spec.Pages.Promote
 open GC.Spec.Pages.Promote.Loop
+open GC.Spec.Pages.Promote.Follow
 
 module U64 = FStar.UInt64
 module I = GC.Spec.AllocIface
@@ -69,7 +70,8 @@ let minor_hdr_field (minor: minor_state) (m p: U64.t) (k: nat)
 /// copy of its closure.
 #push-options "--z3rlimit 40"
 let infix_word (#s: Type0) (a: tal s) (minor: minor_state) (g0 g: heap) (fwd: forwarding_map) (m: U64.t)
-  : Lemma (requires mpre minor /\ is_infix_in_minor minor m /\ fwd m <> 0UL /\ entry a minor g0 g fwd m)
+  : Lemma (requires minor_wf minor /\ infix_at minor m /\ is_infix_in_minor minor m /\ fwd m <> 0UL /\
+                    entry a minor g0 g fwd m)
           (ensures (let p = infix_parent minor m in
                     let xp = U64.v (fwd p) in
                     let wm = minor_wosize minor m in
@@ -82,8 +84,7 @@ let infix_word (#s: Type0) (a: tal s) (minor: minor_state) (g0 g: heap) (fwd: fo
                      U64.v (U64.logand w 0xFFUL) == 249 /\
                      U64.v (U64.shift_right w 10ul) == wm)))
   = let p = infix_parent minor m in
-    infix_parent_in_minor_objects minor m;
-    infix_parent_value minor m;
+    infix_parent_value_at minor m;
     let wm = minor_wosize minor m in
     let k = wm - 1 in
     assert (copy_of a minor g0 g p (fwd p));
@@ -130,8 +131,9 @@ let t_bounds (xp wm wp tv: nat)
 /// An infix forwarding target is a valid interior pointer into its
 /// closure's copy, and resolves to it.
 #push-options "--z3rlimit 30"
-let infix_target (#s: Type0) (a: tal s) (minor: minor_state) (g0 g: heap) (fwd: forwarding_map) (m: U64.t)
-  : Lemma (requires mpre minor /\ is_infix_in_minor minor m /\ fwd m <> 0UL /\ entry a minor g0 g fwd m)
+let infix_target_w (#s: Type0) (a: tal s) (minor: minor_state) (g0 g: heap) (fwd: forwarding_map) (m: U64.t)
+  : Lemma (requires minor_wf minor /\ infix_at minor m /\ is_infix_in_minor minor m /\ fwd m <> 0UL /\
+                    entry a minor g0 g fwd m)
           (ensures (let p = infix_parent minor m in
                     U64.v (fwd m) >= 8 /\ U64.v (fwd m) < heap_size /\ U64.v (fwd m) % 8 == 0 /\
                     copy_of a minor g0 g p (fwd p) /\
@@ -149,12 +151,24 @@ let infix_target (#s: Type0) (a: tal s) (minor: minor_state) (g0 g: heap) (fwd: 
     infix_target_core g xp (minor_wosize minor m) (minor_wosize minor p) t
 #pop-options
 
+let infix_target (#s: Type0) (a: tal s) (minor: minor_state) (g0 g: heap) (fwd: forwarding_map) (m: U64.t)
+  : Lemma (requires mpre minor /\ is_infix_in_minor minor m /\ fwd m <> 0UL /\ entry a minor g0 g fwd m)
+          (ensures (let p = infix_parent minor m in
+                    U64.v (fwd m) >= 8 /\ U64.v (fwd m) < heap_size /\ U64.v (fwd m) % 8 == 0 /\
+                    copy_of a minor g0 g p (fwd p) /\
+                    (let t : obj_addr = fwd m in
+                     is_infix t g /\
+                     resolve_object t g == (fwd p <: U64.t) /\
+                     infix_addr_wf g (objects zero_addr g) t)))
+  = follow_of_infix_wf minor m;
+    infix_target_w a minor g0 g fwd m
+
 /// **Every forwarding target is in use** for any definition of free under
 /// which the copies are.
 #push-options "--z3rlimit 40"
-let fwd_targets (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g: heap) (fwd: forwarding_map)
-  : Lemma (requires mpre minor /\ free_def_ok a.free /\ no_infix_block g /\ copies_in_use a un /\
-                    entries a minor g0 g fwd)
+let fwd_targets_w (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g: heap) (fwd: forwarding_map)
+  : Lemma (requires minor_wf minor /\ entries_follow minor fwd /\ free_def_ok a.free /\ no_infix_block g /\
+                    copies_in_use a un /\ entries a minor g0 g fwd)
           (ensures CV.fwd_targets_not_free un g fwd)
   = let one (m: U64.t)
       : Lemma (requires fwd m <> 0UL)
@@ -164,7 +178,7 @@ let fwd_targets (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g
                        infix_addr_wf g (objects zero_addr g) ((fwd m) <: obj_addr))
       = assert (entry a minor g0 g fwd m);
         if is_infix_in_minor minor m then begin
-          infix_target a minor g0 g fwd m;
+          infix_target_w a minor g0 g fwd m;
           assert (copy_of a minor g0 g (infix_parent minor m) (fwd (infix_parent minor m)))
         end else begin
           let x : obj_addr = fwd m in
@@ -177,6 +191,13 @@ let fwd_targets (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires one)
 #pop-options
+
+let fwd_targets (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g: heap) (fwd: forwarding_map)
+  : Lemma (requires mpre minor /\ free_def_ok a.free /\ no_infix_block g /\ copies_in_use a un /\
+                    entries a minor g0 g fwd)
+          (ensures CV.fwd_targets_not_free un g fwd)
+  = entries_of_infix_wf minor fwd;
+    fwd_targets_w a un minor g0 g fwd
 
 /// ---------------------------------------------------------------------------
 /// Well-formedness after promotion
@@ -222,37 +243,6 @@ let points_to_field (g: heap) (src dst: obj_addr)
   = wosize_of_object_bound src g;
     efptu_field g src (wosize_of_object src g) dst
 
-/// A target of an old block, in use for `un` before, stays so.
-#push-options "--z3rlimit 40"
-let old_target_wf (#s: Type0) (a: tal s) (un: free_def) (g0 g: heap) (dst: obj_addr)
-  : Lemma (requires free_def_ok a.free /\ free_def_ok un /\
-                    (forall (h: heap) (y: obj_addr). in_use un h y ==> in_use a.free h y) /\
-                    olds a g0 g /\ (forall (y: obj_addr). in_use a.free g y ==> Seq.mem y (objects zero_addr g)) /\
-                    in_use un g0 (resolve_object dst g0) /\ infix_addr_wf g0 (objects zero_addr g0) dst)
-          (ensures in_use un g (resolve_object dst g) /\ infix_addr_wf g (objects zero_addr g) dst /\
-                   resolve_object dst g == resolve_object dst g0)
-  = let t = resolve_object dst g0 in
-    assert (in_use a.free g0 t /\ in_use a.free g t /\ kept g0 g t);
-    free_def_ok_elim a.free;
-    if is_infix dst g0 then begin
-      infix_addr_wf_elim g0 (objects zero_addr g0) dst;
-      parent_closure_addr_nat_spec dst g0;
-      resolve_infix_spec dst g0;
-      hd_address_spec dst;
-      wosize_of_object_spec t g0;
-      assert (read_word g (hd_address dst) == read_word g0 (hd_address dst));
-      resolve_object_locality dst g0 g;
-      resolve_object_locality t g0 g;
-      infix_addr_wf_transfer g0 g (objects zero_addr g0) (objects zero_addr g) dst
-    end else begin
-      resolve_non_infix dst g0;
-      resolve_object_locality dst g0 g;
-      resolve_non_infix dst g;
-      infix_addr_wf_non_infix g (objects zero_addr g) dst
-    end;
-    in_use_is_determined_from_header un g0 g t
-#pop-options
-
 /// An old source keeps its edges.
 #push-options "--z3rlimit 40"
 let old_src (#s: Type0) (a: tal s) (un: free_def) (g0 g: heap) (src dst: obj_addr)
@@ -277,7 +267,7 @@ let old_src (#s: Type0) (a: tal s) (un: free_def) (g0 g: heap) (src dst: obj_add
 #push-options "--z3rlimit 40"
 let new_src (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g: heap) (m: U64.t) (src dst: obj_addr)
   : Lemma (requires free_def_ok a.free /\ free_def_ok un /\ well_formed_heap_with un g0 /\
-                    GenInv.minor_major_fields_not_free un minor g0 /\
+                    major_targets un minor g0 /\
                     (forall (h: heap) (y: obj_addr). in_use un h y ==> in_use a.free h y) /\
                     olds a g0 g /\ copy_of a minor g0 g m (src <: U64.t) /\
                     scannable g src /\ points_to g src dst)
@@ -292,13 +282,8 @@ let new_src (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g: he
     with begin
       assert (j < minor_scan_wosize minor m);
       assert (minor_read_field minor m j == (dst <: U64.t));
-      GenInv.minor_major_fields_not_free_elim un minor g0 m j;
-      assert (in_use un g0 dst);
-      wf_with_parts ();
-      free_def_ok_elim un;
-      assert (~(is_infix dst g0));
-      resolve_non_infix dst g0;
-      infix_addr_wf_non_infix g0 (objects zero_addr g0) dst;
+      major_targets_elim un minor g0 m j;
+      free_def_ok_elim a.free;
       old_target_wf a un g0 g dst
     end
 #pop-options
@@ -308,10 +293,10 @@ let new_src (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g: he
 /// in use, and every block in use is in use for the allocator.  akhil's
 /// `GC.Gen.CheneyGeneric.cheney_promote_preserves_wf_with`.
 #push-options "--z3rlimit 40"
-let promoted_wf (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g: heap) (fwd: forwarding_map)
+let promoted_wf_w (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g: heap) (fwd: forwarding_map)
   : Lemma (requires free_def_ok a.free /\ free_def_ok un /\ well_formed_heap_with un g0 /\
                     well_formed_heap_with a.free g /\
-                    GenInv.minor_major_fields_not_free un minor g0 /\
+                    major_targets un minor g0 /\
                     (forall (h: heap) (y: obj_addr). in_use un h y ==> in_use a.free h y) /\
                     olds a g0 g /\ news a minor g0 g fwd)
           (ensures well_formed_heap_with un g)
@@ -331,6 +316,16 @@ let promoted_wf (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g
     interior_pointers_valid_intro un g (fun src dst -> tgt src dst)
 #pop-options
 
+let promoted_wf (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g: heap) (fwd: forwarding_map)
+  : Lemma (requires free_def_ok a.free /\ free_def_ok un /\ well_formed_heap_with un g0 /\
+                    well_formed_heap_with a.free g /\
+                    GenInv.minor_major_fields_not_free un minor g0 /\
+                    (forall (h: heap) (y: obj_addr). in_use un h y ==> in_use a.free h y) /\
+                    olds a g0 g /\ news a minor g0 g fwd)
+          (ensures well_formed_heap_with un g)
+  = targets_of_not_free un minor g0;
+    promoted_wf_w a un minor g0 g fwd
+
 /// ---------------------------------------------------------------------------
 /// The whole collection
 /// ---------------------------------------------------------------------------
@@ -341,26 +336,26 @@ let pm (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: s
 
 /// What promotion ends in.
 #push-options "--z3rlimit 30"
-let promoted (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
-  : Lemma (requires cpre a minor g0 st0)
+let promoted_w (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
+  : Lemma (requires cpre_w a minor g0 st0 roots)
           (ensures (let cs = promote a minor g0 st0 roots in
-                    ctx a minor g0 /\ linv a minor g0 cs /\
+                    ctx_w a minor g0 /\ linv a minor g0 cs /\ finv minor cs /\
                     free_def_ok a.free /\ well_formed_heap_with a.free cs.major /\
                     blocks_fit cs.major /\ no_infix_block cs.major /\
                     CV.fwd_targets_not_free a.free cs.major cs.fwd))
-  = promote_linv a minor g0 st0 roots;
+  = promote_linv_w a minor g0 st0 roots;
     let cs = promote a minor g0 st0 roots in
     contract_wf a cs.major cs.st;
     wf_with_parts ();
     copies_in_use_self a;
-    fwd_targets a a.free minor g0 cs.major cs.fwd
+    fwd_targets_w a a.free minor g0 cs.major cs.fwd
 #pop-options
 
 /// **The minor collection keeps the allocator's invariant and
 /// well-formedness**, and the walk and every header of the promoted heap.
 #push-options "--z3rlimit 30"
-let collect_inv (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
-  : Lemma (requires cpre a minor g0 st0)
+let collect_inv_w (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
+  : Lemma (requires cpre_w a minor g0 st0 roots)
           (ensures (let cs = promote a minor g0 st0 roots in
                     let r = collect a minor g0 st0 roots in
                     r.rminor == minor_reset minor /\ r.rst == cs.st /\
@@ -369,7 +364,7 @@ let collect_inv (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) 
                     (forall (y: obj_addr). Seq.mem y (objects zero_addr cs.major) ==>
                        read_word r.rmajor (hd_address y) == read_word cs.major (hd_address y)) /\
                     (forall (y: obj_addr). in_use a.free r.rmajor y == in_use a.free cs.major y)))
-  = promoted a minor g0 st0 roots;
+  = promoted_w a minor g0 st0 roots;
     let cs = promote a minor g0 st0 roots in
     let upd = in_use a.free cs.major in
     CV.update_pointers_with_preserves_wf a.free cs.major cs.fwd;
@@ -396,9 +391,9 @@ let collect_inv (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) 
 /// header; every other one is a copy, in the allocator's colour, of a
 /// nursery object the forwarding map sends to it.
 #push-options "--z3rlimit 30"
-let collect_blocks (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
+let collect_blocks_w (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
                    (y: obj_addr)
-  : Lemma (requires cpre a minor g0 st0)
+  : Lemma (requires cpre_w a minor g0 st0 roots)
           (ensures (let r = collect a minor g0 st0 roots in
                     (in_use a.free g0 y ==>
                        in_use a.free r.rmajor y /\ read_word r.rmajor (hd_address y) == read_word g0 (hd_address y)) /\
@@ -406,8 +401,8 @@ let collect_blocks (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: 
                        color_of_object y r.rmajor == a.col /\
                        (exists (m: U64.t). r.rfwd m == (y <: U64.t) /\ Seq.mem m (minor_objects minor) /\
                                       ~(is_infix_in_minor minor m)))))
-  = promoted a minor g0 st0 roots;
-    collect_inv a minor g0 st0 roots;
+  = promoted_w a minor g0 st0 roots;
+    collect_inv_w a minor g0 st0 roots;
     let cs = promote a minor g0 st0 roots in
     let r = collect a minor g0 st0 roots in
     free_def_ok_elim a.free;
@@ -423,14 +418,14 @@ let collect_blocks (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: 
 /// **A major pointer of a block in use before stays**: the update rewrites
 /// only nursery pointers, and a major pointer never looks like one.
 #push-options "--z3rlimit 30"
-let collect_major_field (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
+let collect_major_field_w (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
                         (y: obj_addr) (j: nat)
-  : Lemma (requires cpre a minor g0 st0 /\ in_use a.free g0 y /\
+  : Lemma (requires cpre_w a minor g0 st0 roots /\ in_use a.free g0 y /\
                     j < U64.v (wosize_of_object y g0) /\ U64.v y + j * 8 + 8 <= heap_size /\
                     is_pointer (read_word g0 (U64.uint_to_t (U64.v y + j * 8))))
           (ensures read_word (collect a minor g0 st0 roots).rmajor (U64.uint_to_t (U64.v y + j * 8)) ==
                    read_word g0 (U64.uint_to_t (U64.v y + j * 8)))
-  = promoted a minor g0 st0 roots;
+  = promoted_w a minor g0 st0 roots;
     let cs = promote a minor g0 st0 roots in
     let upd = in_use a.free cs.major in
     let fa = U64.uint_to_t (U64.v y + j * 8) in
@@ -452,14 +447,14 @@ let collect_major_field (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (
 
 /// **What a block in use stores keeps its resolution.**
 #push-options "--z3rlimit 40"
-let collect_target (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
+let collect_target_w (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
                    (w: U64.t)
-  : Lemma (requires cpre a minor g0 st0 /\ is_pointer w /\ GC.Spec.SweepPhase.Intrinsic.storable a.free g0 w)
+  : Lemma (requires cpre_w a minor g0 st0 roots /\ is_pointer w /\ GC.Spec.SweepPhase.Intrinsic.storable a.free g0 w)
           (ensures resolve_object (w <: obj_addr) (collect a minor g0 st0 roots).rmajor ==
                    resolve_object (w <: obj_addr) g0 /\
                    in_use a.free (collect a minor g0 st0 roots).rmajor (resolve_object (w <: obj_addr) g0))
-  = promoted a minor g0 st0 roots;
-    collect_inv a minor g0 st0 roots;
+  = promoted_w a minor g0 st0 roots;
+    collect_inv_w a minor g0 st0 roots;
     let cs = promote a minor g0 st0 roots in
     let upd = in_use a.free cs.major in
     let h : obj_addr = w in
@@ -472,3 +467,65 @@ let collect_target (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: 
     CV.update_walk_frame_target_header cs.major upd cs.fwd h;
     resolve_object_locality h cs.major (collect a minor g0 st0 roots).rmajor
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// From akhil's conditions
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 30"
+let promoted (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
+  : Lemma (requires cpre a minor g0 st0)
+          (ensures (let cs = promote a minor g0 st0 roots in
+                    ctx a minor g0 /\ linv a minor g0 cs /\
+                    free_def_ok a.free /\ well_formed_heap_with a.free cs.major /\
+                    blocks_fit cs.major /\ no_infix_block cs.major /\
+                    CV.fwd_targets_not_free a.free cs.major cs.fwd))
+  = contract_wf a g0 st0;
+    cpre_weaken a minor g0 st0 roots;
+    promoted_w a minor g0 st0 roots
+#pop-options
+
+let collect_inv (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
+  : Lemma (requires cpre a minor g0 st0)
+          (ensures (let cs = promote a minor g0 st0 roots in
+                    let r = collect a minor g0 st0 roots in
+                    r.rminor == minor_reset minor /\ r.rst == cs.st /\
+                    a.inv r.rmajor r.rst /\ well_formed_heap_with a.free r.rmajor /\
+                    objects zero_addr r.rmajor == objects zero_addr cs.major /\
+                    (forall (y: obj_addr). Seq.mem y (objects zero_addr cs.major) ==>
+                       read_word r.rmajor (hd_address y) == read_word cs.major (hd_address y)) /\
+                    (forall (y: obj_addr). in_use a.free r.rmajor y == in_use a.free cs.major y)))
+  = cpre_weaken a minor g0 st0 roots;
+    collect_inv_w a minor g0 st0 roots
+
+let collect_blocks (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
+                   (y: obj_addr)
+  : Lemma (requires cpre a minor g0 st0)
+          (ensures (let r = collect a minor g0 st0 roots in
+                    (in_use a.free g0 y ==>
+                       in_use a.free r.rmajor y /\ read_word r.rmajor (hd_address y) == read_word g0 (hd_address y)) /\
+                    (in_use a.free r.rmajor y /\ ~(in_use a.free g0 y) ==>
+                       color_of_object y r.rmajor == a.col /\
+                       (exists (m: U64.t). r.rfwd m == (y <: U64.t) /\ Seq.mem m (minor_objects minor) /\
+                                      ~(is_infix_in_minor minor m)))))
+  = cpre_weaken a minor g0 st0 roots;
+    collect_blocks_w a minor g0 st0 roots y
+
+let collect_major_field (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
+                        (y: obj_addr) (j: nat)
+  : Lemma (requires cpre a minor g0 st0 /\ in_use a.free g0 y /\
+                    j < U64.v (wosize_of_object y g0) /\ U64.v y + j * 8 + 8 <= heap_size /\
+                    is_pointer (read_word g0 (U64.uint_to_t (U64.v y + j * 8))))
+          (ensures read_word (collect a minor g0 st0 roots).rmajor (U64.uint_to_t (U64.v y + j * 8)) ==
+                   read_word g0 (U64.uint_to_t (U64.v y + j * 8)))
+  = cpre_weaken a minor g0 st0 roots;
+    collect_major_field_w a minor g0 st0 roots y j
+
+let collect_target (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
+                   (w: U64.t)
+  : Lemma (requires cpre a minor g0 st0 /\ is_pointer w /\ GC.Spec.SweepPhase.Intrinsic.storable a.free g0 w)
+          (ensures resolve_object (w <: obj_addr) (collect a minor g0 st0 roots).rmajor ==
+                   resolve_object (w <: obj_addr) g0 /\
+                   in_use a.free (collect a minor g0 st0 roots).rmajor (resolve_object (w <: obj_addr) g0))
+  = cpre_weaken a minor g0 st0 roots;
+    collect_target_w a minor g0 st0 roots w

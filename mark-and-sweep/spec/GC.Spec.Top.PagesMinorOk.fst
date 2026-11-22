@@ -89,7 +89,7 @@ let inv_after (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: 
     let r = D.r_of ph st cw in
     D.dpre_elim ph st cw w;
     PM.ctx_start ph st cw w;
-    PCo.collect_inv (ptal ph st) cw.T.cyng (gl cw.T.cmaj st) st.ps (LV.roots_of (BM.cview cw));
+    PCo.collect_inv_w (ptal ph st) cw.T.cyng (gl cw.T.cmaj st) st.ps (LV.roots_of (BM.cview cw));
     tal_back ph st r.P.rmajor r.P.rst;
     set_low_self r.P.rmajor;
     D.end_ri ph st cw w;

@@ -29,6 +29,7 @@ module PC = GC.Spec.Top.PromoteCopy
 module Y = GC.Spec.Top.Young
 module YI = GC.Spec.Top.YoungInfix
 module Q = GC.Spec.Top.PagesQueue
+module F = GC.Spec.Pages.Promote.Follow
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
@@ -230,7 +231,7 @@ let field_young (y: M.mheap) (ms: minor_state) (f: U64.t)
 /// One field of a live object is justified.
 #push-options "--z3rlimit 40"
 let field_just (w: M.world) (ms: minor_state) (x: U64.t) (i: nat)
-  : Lemma (requires Y.yrepr w.M.yng ms /\ M.young_ok w.M.yng /\ T.young_infix_ok w.M.yng /\
+  : Lemma (requires Y.yrepr w.M.yng ms /\ M.young_ok w.M.yng /\ T.young_follow_ok w.M.yng /\
                     live w ms x /\ i < minor_scan_wosize ms x)
           (ensures PR.justified ms (live w ms) (to_minor_offset (minor_read_field ms x i)))
   = let y = w.M.yng in
@@ -245,9 +246,9 @@ let field_just (w: M.world) (ms: minor_state) (x: U64.t) (i: nat)
     if Seq.mem r (minor_objects ms) && minor_wosize ms r > 0 then begin
       field_young y ms f;
       let a = (U64.v f - 8) / 8 in
-      YI.young_resolve_back y ms a;
       assert (M.ptr_field y o i);
       assert (M.field y o i == M.VPtr (M.Young a));
+      YI.young_resolve_back y ms a;
       assert (M.young_edge y o (Q.yof r));
       let l : M.mlive w o = FStar.IndefiniteDescription.indefinite_description_ghost (M.mlive w o) (fun _ -> True) in
       let l' : M.mlive w (Q.yof r) = M.LStep o (Q.yof r) l () in
@@ -257,7 +258,7 @@ let field_just (w: M.world) (ms: minor_state) (x: U64.t) (i: nat)
 
 /// **Liveness is closed under the fields the scan reads.**
 let live_closed (w: M.world) (ms: minor_state)
-  : Lemma (requires Y.yrepr w.M.yng ms /\ M.young_ok w.M.yng /\ T.young_infix_ok w.M.yng)
+  : Lemma (requires Y.yrepr w.M.yng ms /\ M.young_ok w.M.yng /\ T.young_follow_ok w.M.yng)
           (ensures PR.live_ok ms (live w ms))
   = let one (x: U64.t) (i: nat)
       : Lemma (live w ms x /\ Seq.mem x (minor_objects ms) /\ i < minor_scan_wosize ms x ==>
@@ -265,3 +266,59 @@ let live_closed (w: M.world) (ms: minor_state)
       = if FStar.IndefiniteDescription.strong_excluded_middle (live w ms x /\ i < minor_scan_wosize ms x)
         then field_just w ms x i in
     FStar.Classical.forall_intro_2 one
+
+/// ---------------------------------------------------------------------------
+/// What the promotion follows, it follows safely (design doc §12)
+/// ---------------------------------------------------------------------------
+
+/// One field of a nursery object.
+#push-options "--z3rlimit 40"
+let field_follow (y: M.mheap) (ms: minor_state) (x: U64.t) (i: nat)
+  : Lemma (requires Y.yrepr y ms /\ M.young_ok y /\ T.young_follow_ok y /\
+                    Seq.mem x (minor_objects ms) /\ i < minor_scan_wosize ms x)
+          (ensures F.follow_ok ms (to_minor_offset (minor_read_field ms x i)))
+  = Q.obj_young y ms x;
+    let o = Q.yof x in
+    PC.young_obj y ms o;
+    minor_scan_wosize_cases ms x;
+    let f = minor_read_field ms x i in
+    tmo_id f;
+    PC.young_field y ms o i;
+    if is_infix_in_minor ms f then begin
+      YI.addr_facts ms f;
+      let a = (U64.v f - 8) / 8 in
+      young_word a;
+      assert (M.ptr_field y o i);
+      assert (M.field y o i == M.VPtr (M.Young a));
+      YI.follow_one y ms f
+    end
+#pop-options
+
+/// **The nursery's fields are followed safely.**
+let fields_follow_of (y: M.mheap) (ms: minor_state)
+  : Lemma (requires Y.yrepr y ms /\ M.young_ok y /\ T.young_follow_ok y) (ensures F.fields_follow ms)
+  = F.fields_follow_intro ms (fun x i -> field_follow y ms x i)
+
+let div_back (a: nat) (r: nat) : Lemma (requires r == 8 * a + 8) (ensures (r - 8) / 8 == a)
+  = FStar.Math.Lemmas.cancel_mul_div a 8
+
+/// A root word: the model resolves it.
+let root_follow (w: M.world) (ms: minor_state) (r: U64.t)
+  : Lemma (requires Y.yrepr w.M.yng ms /\ M.young_ok w.M.yng /\ root_ok w r) (ensures F.follow_ok ms r)
+  = eliminate exists (a o: nat). 8 * a + 16 <= minor_heap_size /\ U64.v r == 8 * a + 8 /\
+                                M.resolve w.M.yng a == Some o /\ M.minor_live w o
+    with begin
+      div_back a (U64.v r);
+      YI.follow_one w.M.yng ms r
+    end
+
+/// **The roots are followed safely.**
+let roots_follow_of (w: M.world) (ms: minor_state)
+  : Lemma (requires Y.yrepr w.M.yng ms /\ M.young_ok w.M.yng) (ensures F.roots_follow ms (roots_of w))
+  = let one (i: nat) : Lemma (i < Seq.length (roots_of w) ==> F.follow_ok ms (Seq.index (roots_of w) i))
+      = if i < Seq.length (roots_of w) then begin
+          GC.Spec.Top.ByteMark.mem_of_index (roots_of w) i;
+          roots_ok w (Seq.index (roots_of w) i);
+          root_follow w ms (Seq.index (roots_of w) i)
+        end in
+    FStar.Classical.forall_intro one

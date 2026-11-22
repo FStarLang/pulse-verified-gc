@@ -44,6 +44,7 @@ module BM = GC.Spec.Top.ByteMark
 module PM = GC.Spec.Top.PagesMinor
 module F = GC.Spec.Top.PagesFwd
 module D = GC.Spec.Top.PagesDone
+module FW = GC.Spec.Pages.Promote.Follow
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
@@ -76,6 +77,7 @@ let entries_of (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w:
   : Lemma (requires D.dpre ph st cw w)
           (ensures (let cs = D.cs_of ph st cw in
                     PL.entries (ptal ph st) cw.T.cyng (gl cw.T.cmaj st) cs.P.major cs.P.fwd /\
+                    FW.entries_follow cw.T.cyng cs.P.fwd /\
                     PR.qok (ptal ph st) cw.T.cyng (gl cw.T.cmaj st) st.ps cs))
   = D.end_sok ph st cw w
 
@@ -95,11 +97,12 @@ let dangling (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M
     if cs.P.fwd f <> 0UL then begin
       assert (PL.entry (ptal ph st) ms (gl cw.T.cmaj st) cs.P.major cs.P.fwd f);
       let r = resolve_minor ms f in
-      if is_infix_in_minor ms f then PL.parent_facts ms f;
+      if is_infix_in_minor ms f then FW.parent_facts_at ms f;
       assert (Seq.mem r (minor_objects ms));
       U64.v_inj f (U64.uint_to_t (8 * a + 8));
       LV.field_young w.M.yng ms f;
-      YI.young_resolve_back w.M.yng ms a
+      assert (FW.follow_ok ms f);
+      YI.young_resolve_follow w.M.yng ms a
     end
 #pop-options
 
@@ -171,7 +174,7 @@ let live_setup (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w:
                      F.fwd_of (D.cps_of ph st cw) o == Some (maddr ob) /\
                      U64.v ob + minor_wosize ms (PC.yobj o) * 8 <= heap_size) /\
                     PL.entries (ptal ph st) ms (gl cw.T.cmaj st) cs.P.major cs.P.fwd /\
-                    minor_infix_wf ms))
+                    FW.entries_follow ms cs.P.fwd))
   = let cs = D.cs_of ph st cw in
     let ms = cw.T.cyng in
     let y = w.M.yng in
@@ -202,7 +205,7 @@ let live_setup (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w:
     assert (is_minor_pointer f);
     assert (cs.P.fwd (PC.yobj o) <> 0UL);
     assert (PR.covered ms cs f);
-    assert (minor_infix_wf ms)
+    assert (FW.entries_follow ms cs.P.fwd)
 #pop-options
 
 /// **A covered young pointer to a block is rewritten to the same offset in
@@ -223,7 +226,7 @@ let rw_live (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M.
       assert (cs.P.fwd f <> 0UL);
       entry_infix (ptal ph st) ms (gl cw.T.cmaj st) cs.P.major cs.P.fwd f;
       assert (infix_parent ms f == p);
-      infix_parent_in_minor_objects ms f;
+      assert (FW.infix_at ms f);
       infix_rewrite ob f p (cs.P.fwd f) a o (minor_wosize ms p)
     end
     else begin

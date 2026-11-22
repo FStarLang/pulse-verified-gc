@@ -33,6 +33,7 @@ open GC.Spec.Pages.Inv
 open GC.Spec.Pages.Promote
 open GC.Spec.Pages.Promote.Loop
 open GC.Spec.Pages.Promote.Collect
+open GC.Spec.Pages.Promote.Follow
 
 module U64 = FStar.UInt64
 module GenInv = GC.Gen.HeapInvariant
@@ -197,6 +198,11 @@ let ipre (minor: minor_state) (g: heap) (st: pstate) : prop =
   PA.inv I.Idle g st /\ GenInv.minor_heap_shape minor /\
   GenInv.minor_major_fields_not_free free_stw minor g
 
+/// ... read only where it follows a pointer (design doc §12).
+let ipre_w (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t) : prop =
+  PA.inv I.Idle g st /\ minor_wf minor /\ fields_follow minor /\ roots_follow minor roots /\
+  major_targets free_stw minor g
+
 /// The blocks a change made: in use after, not before.
 let made (g g': heap) (x: obj_addr) : prop =
   in_use free_stw g' x /\ ~(in_use free_stw g x)
@@ -204,6 +210,36 @@ let made (g g': heap) (x: obj_addr) : prop =
 /// `since`, and the blocks the collection made.
 let with_made (since: obj_addr -> prop) (g g': heap) : obj_addr -> prop =
   fun x -> since x \/ made g g' x
+
+/// **What the collection keeps**, read only where it follows a pointer.
+#push-options "--z3rlimit 30"
+let i_facts_w (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t)
+  : Lemma (requires ipre_w minor g st roots)
+          (ensures (let r = icollect minor g st roots in
+                    PA.inv I.Idle r.rmajor r.rst /\ r.rminor == minor_reset minor /\
+                    (forall (y: obj_addr). in_use free_stw g y ==>
+                       in_use free_stw r.rmajor y /\
+                       wosize_of_object y r.rmajor == wosize_of_object y g) /\
+                    (forall (y: obj_addr). made g r.rmajor y ==> color_of_object y r.rmajor == White)))
+  = let a = idle_tal in
+    idle_contract ();
+    assert (cpre_w a minor g st roots);
+    collect_inv_w a minor g st roots;
+    let r = icollect minor g st roots in
+    let old (y: obj_addr)
+      : Lemma (requires in_use free_stw g y)
+              (ensures in_use free_stw r.rmajor y /\ wosize_of_object y r.rmajor == wosize_of_object y g)
+      = collect_blocks_w a minor g st roots y;
+        wosize_of_object_spec y g;
+        wosize_of_object_spec y r.rmajor
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires old);
+    let nw (y: obj_addr)
+      : Lemma (requires made g r.rmajor y) (ensures color_of_object y r.rmajor == White)
+      = collect_blocks_w a minor g st roots y
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires nw)
+#pop-options
 
 /// **What the collection keeps.**
 #push-options "--z3rlimit 30"
@@ -215,23 +251,11 @@ let i_facts (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t)
                        in_use free_stw r.rmajor y /\
                        wosize_of_object y r.rmajor == wosize_of_object y g) /\
                     (forall (y: obj_addr). made g r.rmajor y ==> color_of_object y r.rmajor == White)))
-  = let a = idle_tal in
+  = GenInv.minor_heap_shape_elim minor;
+    fields_of_infix_wf minor;
+    roots_of_infix_wf minor roots;
     idle_contract ();
-    GenInv.minor_heap_shape_elim minor;
-    assert (cpre a minor g st);
-    collect_inv a minor g st roots;
-    let r = icollect minor g st roots in
-    let old (y: obj_addr)
-      : Lemma (requires in_use free_stw g y)
-              (ensures in_use free_stw r.rmajor y /\ wosize_of_object y r.rmajor == wosize_of_object y g)
-      = collect_blocks a minor g st roots y;
-        wosize_of_object_spec y g;
-        wosize_of_object_spec y r.rmajor
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires old);
-    let nw (y: obj_addr)
-      : Lemma (requires made g r.rmajor y) (ensures color_of_object y r.rmajor == White)
-      = collect_blocks a minor g st roots y
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires nw)
+    contract_wf idle_tal g st;
+    targets_of_not_free free_stw minor g;
+    i_facts_w minor g st roots
 #pop-options

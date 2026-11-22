@@ -1820,16 +1820,15 @@ allocator's instance of the promotion.
   (b) is akhil's assumption stated in the model; OCaml programs violate it,
   so the minor collection is proved only for nurseries without such words.
   Removing it needs a promotion and a pointer update that resolve only the
-  addresses they follow, a rework of akhil's update lemmas.  **For the
-  user's decision.**
+  addresses they follow.  **Decided (2026-11-22): removed, §12.**
 - **G39 (minor, young pointers into major closures).** The promotion's
   precondition (akhil's `minor_major_fields_not_free`) takes each major
   pointer in a young field to be a block in use itself, not an interior
   pointer into a closure.  The model lets a young object point into a major
   closure (OCaml's mutually recursive closures do).  `young_sound` now also
   requires such pointers to be block starts.  Like G38(b), this is a
-  restriction of the promotion, stated in the model.  **For the user's
-  decision.**
+  restriction of the promotion, stated in the model.  **Decided
+  (2026-11-22): removed, §12.**
 
 ### 11.3 Not done
 
@@ -1843,8 +1842,7 @@ allocator's instance of the promotion.
   over `byte_rep`, the minor collection with akhil's free-list allocator as
   a promotion allocator (`Promote.tal`, its `contract`), the same mark and
   barrier.
-- The decisions G38(b) and G39 (assumptions of the promotion, now
-  preconditions of the minor contract) are the user's.
+- G38(b) and G39: done in §12.
 
 ### 11.4 Checking
 
@@ -1870,3 +1868,147 @@ cache, without `--retry`, rlimits at most 40, no admits or assumes:
   (`resolve_cabs`, `field_to`, `field_model`, `target_model` moved to
   `ByteWrite`), `PagesStep` (opens `ByteWrite`), `Makefile`
   (`PagesComps` added to `ROOT_MODULES`).
+
+## 12. Stage 2b, part 4: the promotion reads only what it follows
+
+The user's decision (2026-11-22) on G38(b) and G39: replace akhil's two
+assumptions on the nursery, in my promotion modules (akhil's read-only), by
+conditions on what the collection follows; prove his imply mine; drop
+`is_block` from `young_sound`; write the marking-phase lemma with the
+nursery's references resolved; and witness both new cases.
+
+### 12.1 What the collection reads
+
+- It reads the word below an address only where it forwards that address:
+  a root, or a value in a scanned field of a nursery object
+  (`forward_one`).  An int is never aligned, so never forwarded; a major
+  pointer is above the nursery, so never read as one of its addresses.
+- It copies a major pointer, never follows it.  A copy is a Fill of the
+  allocator, whose invariant asks of a field only what well-formedness
+  does: the block it resolves to is in use, through a well-formed infix
+  address (`I.field_ok_with`).
+
+### 12.2 The conditions (`GC.Spec.Pages.Promote.Follow`)
+
+- `infix_at ms a`: akhil's `minor_infix_wf` at one address.
+- `follow_ok ms a`: if `a` reads as infix, `infix_at ms a`.
+- `fields_follow ms`: every scanned field value of a nursery object is
+  `follow_ok`; `roots_follow ms roots`: every root is.
+- `major_targets un ms g`: every major pointer in a scanned nursery field
+  resolves to a block in use for `un`, with a well-formed infix address.
+- Bridges: `minor_infix_wf` gives `follow_ok` everywhere
+  (`fields_of_infix_wf`, `roots_of_infix_wf`, `entries_of_infix_wf`);
+  `minor_major_fields_not_free un` with well-formedness for `un` gives
+  `major_targets un` (`targets_of_not_free`: a block in use is not infix,
+  so resolves to itself).
+
+### 12.3 The promotion
+
+- `Loop`: `cpre_w a ms g0 st0 roots` and `ctx_w`, with the weak conditions.
+  The loop keeps its own `finv`: the infix addresses it forwarded were
+  followed safely (`entries_follow`, so the `entry` facts about an infix
+  address need no global assumption), and its queue holds nursery objects.
+  `copied_field_ok` shows a copied major pointer is `field_ok_with` and
+  away from the new block through the block it resolves to
+  (`old_target_wf`, `target_range`).  The loop lemmas take `follow_ok` of
+  the address forwarded.
+- `Collect`: `promoted_w`, `collect_inv_w`, `collect_blocks_w`,
+  `collect_major_field_w`, `collect_target_w` from `cpre_w`; `new_src`,
+  `promoted_wf_w`, `fwd_targets_w`, `infix_target_w` from the weak
+  conditions.
+- `Mark`: `mpre_mark_w` and the `_w` lemmas.  The marking invariant's
+  lemma is one core, `m_keeps_marking_inv_core refs extra`, for any
+  outside references `refs` holding the roots, `extra`, and what the
+  nursery's major pointers resolve to (`nursery_in`).  Its instances:
+  `m_keeps_marking_inv_r`, with `outside_refs_r` (the nursery's references
+  resolved: an infix pointer into a major closure refers to the closure),
+  and akhil's `m_keeps_marking_inv_with`, with his `outside_refs_of`
+  (`nursery_in_raw`: under his condition a nursery major pointer is a
+  block, so resolves to itself).
+- `Idle`, `Sweep`: `ipre_w`/`i_facts_w`, `spre_w`/`s_facts_w`.
+- Every earlier statement is kept with its signature, proved from the weak
+  one through the bridges: `cpre`, `ctx`, `promote_step`,
+  `forward_normal_keeps`, `forward_one_keeps`, `promote_linv`, `promoted`,
+  `collect_*`, `infix_target`, `fwd_targets`, `promoted_wf`, `mpre_mark`,
+  `m_*`, `i_facts`, `s_facts`.  The pages Pulse code and the cycle modules
+  that use them (23 modules: `Promote.Sim`, `TwoPass`, `PulseVacuity`,
+  `Cycle.*`, `GC.Impl.Pages.*`) are unchanged and verify.
+
+### 12.4 The contract (`GC.Spec.Top.Iface`)
+
+- `young_sound`: a major pointer in a young field is a value the program
+  may store (resolves to a block it may use); `is_block` dropped (G39).
+- `young_infix_ok` is gone.  In its place `young_follow_ok`: a young
+  pointer in a young field whose target is a field word reading as an
+  infix header is one the model resolves (`follow_at`).  It is about
+  pointers only, and holds of every OCaml nursery: young pointers are never
+  dangling.  A dangling young pointer to a word that is not infix-looking
+  stays allowed, as before.  Stated at field words, so it is the same for
+  every view of the nursery (`PagesMinor.yfollow_heq`).
+- `minor_pre`: `... /\ young_sound /\ young_follow_ok` (was
+  `young_infix_ok`).
+
+### 12.5 The pages minor collection
+
+- `YoungInfix.follow_one`: an address the model follows safely is one the
+  bytes follow safely; `young_resolve_follow`: an address the bytes read
+  as a genuine infix one (`infix_at`) is one the model resolves, to the
+  block of its closure (`infix_closure`, `infix_model`).  The second is
+  what `PagesRw.dangling` needs: a young pointer in an old block's
+  remembered slot the model does not resolve has no entry, since an entry
+  is only made for a followed address.
+- `PagesLive.fields_follow_of`, `roots_follow_of`; `PagesMinor.mt_one`:
+  a young field's major pointer resolves to a block in use for the
+  instance (`ptr_resolve`, `live_in_use`); `ctx_start` gives `cpre_w`.
+- `PromoteRun`: its state `sok` carries `entries_follow`; the loop lemmas
+  take `follow_ok` of what they forward.
+- `pages_minor_ok` and `pages_components_ok` verify under the new
+  `minor_pre`.
+
+### 12.6 Witnesses
+
+- `GC.Spec.Pages.Promote.FollowWitness.accepted` (bytes, under
+  `n_pages > 0`): a major heap with a closure `C` (wosize 3, tag 247) whose
+  field 1 is an infix header of offset 2; a nursery with one object `A`
+  (root) whose fields are the infix pointer `C + 16` and the word 249.
+  `minor_wf`, `fields_follow`, `roots_follow` and
+  `major_targets free_stw` hold; `minor_infix_wf` fails (at `A + 16`, which
+  reads as infix with offset 0) and `minor_major_fields_not_free free_stw`
+  fails (`C + 16` is infix, not in use).  The allocator's invariant is not
+  part of it: the heap is built directly, not by the page allocator.
+- `GC.Spec.Top.FollowWitness.accepted` (model): a world whose live young
+  block holds `Major 2` (an infix pointer into the closure at 0) and
+  `VInt 249`; `minor_pre` holds with the toy allocator; `Major 2` is not a
+  block and `VInt 249` reads as an infix header outside a closure (what
+  the earlier conditions rejected).
+
+### 12.7 Checking
+
+From a fresh cache per seed: the changed promotion modules (`Follow`,
+`Loop`, `Collect`, `Mark`, `Sweep`, `Idle`), the byte witness, and all 49
+`GC.Spec.Top` modules without `--retry` at the seed; the 23 unchanged
+downstream modules (`Promote.Sim`, `TwoPass`, `PulseVacuity`, `Cycle.*`,
+`GC.Impl.Pages.*`) with the repository's flags (`--retry 3`,
+`--z3refresh` for the Pulse code).  Rlimits at most 40, no admits or
+assumes.
+
+| Z3 seed | modules | errors | warnings | total time | slowest |
+|---|---|---|---|---|---|
+| 0 | 78 | 0 | 0 | 2490 s | `ByteMark`, 185 s |
+| 1 | 78 | 0 | 0 | 2558 s | `Promote.Loop`, 188 s |
+| 2 | 78 | 0 | 0 | 2535 s | `ByteMark`, 189 s |
+
+Two fixes came from the seeds: `Mark.cut_edge` (a lemma of the marking
+invariant's proof moved to the top level: an address bound timed out in
+the larger context at seed 1) and `PagesDone.roots_mem_l`/`roots_mem_r`
+(the word built inside the helper); each module and its dependents were
+rechecked at the three seeds.
+
+### 12.8 Files
+
+- **New**: `GC.Spec.Pages.Promote.Follow`, `GC.Spec.Pages.Promote.FollowWitness`,
+  `GC.Spec.Top.FollowWitness`.
+- **Changed**: `GC.Spec.Pages.Promote.Loop`, `Collect`, `Mark`, `Idle`,
+  `Sweep`; `GC.Spec.Top.Iface`, `YoungInfix`, `PromoteRun`, `PagesLive`,
+  `PagesMinor`, `PagesRw`, `PagesDone`, `PagesMinorOk`, `Broken`;
+  `Makefile` (the two witnesses added to `ROOT_MODULES`).

@@ -40,6 +40,7 @@ open GC.Gen.MinorHeap
 open GC.Gen.Promote
 open GC.Spec.Pages.Promote
 open GC.Spec.Pages.Promote.Loop
+open GC.Spec.Pages.Promote.Follow
 
 module U64 = FStar.UInt64
 
@@ -187,7 +188,7 @@ let wit_follows (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop
 
 /// The state of the loop: Loop's invariant, the queue, liveness.
 let sok (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) (g0: heap) (st0: s) (cs: gstate s) : prop =
-  linv a minor g0 cs /\ qok a minor g0 st0 cs /\ lv live cs
+  linv a minor g0 cs /\ qok a minor g0 st0 cs /\ lv live cs /\ entries_follow minor cs.fwd
 
 /// The state after a successful promotion of `addr`.
 let pushed (#s: Type0) (a: tal s) (minor: minor_state) (cs: gstate s) (addr: U64.t) : GTot (gstate s) =
@@ -310,17 +311,24 @@ let fn_failure (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop)
     FStar.Classical.forall_intro notin;
     assert (fails_at a minor g0 st0 cs.queue (Seq.length cs.queue) addr)
 
+/// An entry for an address that is not infix keeps `entries_follow`.
+let ef_extend (minor: minor_state) (fwd fwd': forwarding_map) (addr: U64.t)
+  : Lemma (requires entries_follow minor fwd /\ ~(is_infix_in_minor minor addr) /\
+                    (forall (m: U64.t). m <> addr ==> fwd' m == fwd m))
+          (ensures entries_follow minor fwd')
+  = ()
+
 /// **Forwarding an object that is not infix.**
 #push-options "--z3rlimit 40"
 let fn_ok (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) (g0: heap) (st0: s)
           (cs: gstate s) (addr: U64.t)
-  : Lemma (requires ctx a minor g0 /\ sok a minor live g0 st0 cs /\ ~(is_infix_in_minor minor addr) /\
+  : Lemma (requires ctx_w a minor g0 /\ sok a minor live g0 st0 cs /\ ~(is_infix_in_minor minor addr) /\
                     (Seq.mem addr (minor_objects minor) /\ minor_wosize minor addr > 0 ==> live addr))
           (ensures (let cs' = forward_normal a minor cs addr in
                     sok a minor live g0 st0 cs' /\ follows cs cs' /\
                     ((Seq.mem addr (minor_objects minor) /\ minor_wosize minor addr > 0 ==> cs'.fwd addr <> 0UL) \/
                      wit a minor live g0 st0 cs'.queue)))
-  = forward_normal_keeps a minor g0 cs addr;
+  = forward_normal_keeps_w a minor g0 cs addr;
     if not (Seq.mem addr (minor_objects minor)) || cs.fwd addr <> 0UL then ()
     else begin
       let wz = minor_wosize minor addr in
@@ -330,7 +338,8 @@ let fn_ok (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) (g0:
         if o = 0UL then fn_failure a minor live g0 st0 cs addr
         else begin
           fn_success a minor live g0 st0 cs addr;
-          assert (forward_normal a minor cs addr == pushed a minor cs addr)
+          assert (forward_normal a minor cs addr == pushed a minor cs addr);
+          ef_extend minor cs.fwd (pushed a minor cs addr).fwd addr
         end
       end
     end
@@ -342,26 +351,26 @@ let fn_ok (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) (g0:
 
 /// An address already forwarded is covered.
 let fwd_covered (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (cs: gstate s) (addr: U64.t)
-  : Lemma (requires ctx a minor g0 /\ linv a minor g0 cs /\ cs.fwd addr <> 0UL) (ensures covered minor cs addr)
+  : Lemma (requires ctx_w a minor g0 /\ linv a minor g0 cs /\ entries_follow minor cs.fwd /\ cs.fwd addr <> 0UL)
+          (ensures covered minor cs addr)
   = assert (entry a minor g0 cs.major cs.fwd addr);
     covered_def minor cs addr;
     if is_infix_in_minor minor addr then begin
-      parent_facts minor addr;
-      reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor)
+      assert (infix_at minor addr);
+      parent_facts_at minor addr
     end
     else resolve_minor_non_infix minor addr
 
 /// The infix address's entry, at the same offset in its closure's copy.
 #push-options "--z3rlimit 40"
 let infix_bound (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (cs: gstate s) (addr: U64.t)
-  : Lemma (requires ctx a minor g0 /\ linv a minor g0 cs /\ is_infix_in_minor minor addr /\
+  : Lemma (requires ctx_w a minor g0 /\ linv a minor g0 cs /\ is_infix_in_minor minor addr /\ infix_at minor addr /\
                     cs.fwd (infix_parent minor addr) <> 0UL)
           (ensures (let p = infix_parent minor addr in
                     U64.v addr >= U64.v p /\ U64.v (cs.fwd p) + (U64.v addr - U64.v p) < heap_size /\
                     U64.v (cs.fwd p) >= 8))
   = let p = infix_parent minor addr in
-    parent_facts minor addr;
-    infix_parent_in_minor_objects minor addr;
+    parent_facts_at minor addr;
     assert (entry a minor g0 cs.major cs.fwd p);
     assert (copy_of a minor g0 cs.major p (cs.fwd p))
 #pop-options
@@ -370,8 +379,8 @@ let infix_bound (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (cs: gsta
 #push-options "--z3rlimit 40"
 let infix_extend (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) (g0: heap) (st0: s)
                  (cs: gstate s) (addr: U64.t) (v: U64.t)
-  : Lemma (requires ctx a minor g0 /\ sok a minor live g0 st0 cs /\ is_infix_in_minor minor addr /\
-                    cs.fwd addr == 0UL /\
+  : Lemma (requires ctx_w a minor g0 /\ sok a minor live g0 st0 cs /\ is_infix_in_minor minor addr /\
+                    infix_at minor addr /\ cs.fwd addr == 0UL /\
                     (let p = infix_parent minor addr in
                      cs.fwd p <> 0UL /\ U64.v addr >= U64.v p /\
                      U64.v v == U64.v (cs.fwd p) + (U64.v addr - U64.v p) /\ U64.v v >= 8))
@@ -380,8 +389,7 @@ let infix_extend (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> pro
   = let cs' = { cs with fwd = extend_forwarding cs.fwd addr v } in
     infix_step a minor g0 cs.major cs.fwd addr v;
     covered_def minor cs' addr;
-    parent_facts minor addr;
-    reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
+    parent_facts_at minor addr;
     let en (j: nat) : Lemma (j < Seq.length cs.queue ==> qentry a minor g0 st0 cs' j)
       = if j < Seq.length cs.queue then assert (qentry a minor g0 st0 cs j) in
     FStar.Classical.forall_intro en;
@@ -389,10 +397,10 @@ let infix_extend (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> pro
 #pop-options
 
 let parent_wz (minor: minor_state) (addr: U64.t)
-  : Lemma (requires minor_infix_wf minor /\ is_infix_in_minor minor addr)
+  : Lemma (requires infix_at minor addr /\ is_infix_in_minor minor addr)
           (ensures Seq.mem (infix_parent minor addr) (minor_objects minor) /\
                    minor_wosize minor (infix_parent minor addr) > 0)
-  = infix_parent_in_minor_objects minor addr
+  = ()
 
 let fo_unfold (#s: Type0) (a: tal s) (minor: minor_state) (cs: gstate s) (addr: U64.t)
   : Lemma (requires cs.fwd addr == 0UL /\ is_infix_in_minor minor addr)
@@ -429,19 +437,18 @@ let fo_miss (#s: Type0) (a: tal s) (minor: minor_state) (cs: gstate s) (addr: U6
 #push-options "--z3rlimit 40"
 let fo_infix (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) (g0: heap) (st0: s)
              (cs: gstate s) (addr: U64.t)
-  : Lemma (requires ctx a minor g0 /\ sok a minor live g0 st0 cs /\ justified minor live addr /\
-                    cs.fwd addr == 0UL /\ is_infix_in_minor minor addr)
+  : Lemma (requires ctx_w a minor g0 /\ sok a minor live g0 st0 cs /\ justified minor live addr /\
+                    follow_ok minor addr /\ cs.fwd addr == 0UL /\ is_infix_in_minor minor addr)
           (ensures (let cs' = forward_one a minor cs addr in
                     sok a minor live g0 st0 cs' /\ follows cs cs' /\
                     (covered minor cs' addr \/ wit a minor live g0 st0 cs'.queue)))
   = let p = infix_parent minor addr in
-    parent_facts minor addr;
-    infix_parent_in_minor_objects minor addr;
-    reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
+    assert (infix_at minor addr);
+    parent_facts_at minor addr;
     assert (resolve_minor minor addr == p);
     fn_ok a minor live g0 st0 cs p;
     let cs' = forward_normal a minor cs p in
-    forward_normal_keeps a minor g0 cs p;
+    forward_normal_keeps_w a minor g0 cs p;
     assert (cs'.fwd addr == 0UL);
     if cs'.fwd p <> 0UL then begin
       infix_bound a minor g0 cs' addr;
@@ -461,7 +468,8 @@ let fo_infix (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) (
 /// **Forwarding an address**: covered after, or a witness.
 let fo_ok (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) (g0: heap) (st0: s)
           (cs: gstate s) (addr: U64.t)
-  : Lemma (requires ctx a minor g0 /\ sok a minor live g0 st0 cs /\ justified minor live addr)
+  : Lemma (requires ctx_w a minor g0 /\ sok a minor live g0 st0 cs /\ justified minor live addr /\
+                    follow_ok minor addr)
           (ensures (let cs' = forward_one a minor cs addr in
                     sok a minor live g0 st0 cs' /\ follows cs cs' /\
                     (covered minor cs' addr \/ wit a minor live g0 st0 cs'.queue)))
@@ -504,8 +512,9 @@ let combine_roots (#s: Type0) (minor: minor_state) (cs: gstate s) (roots: seq U6
 #push-options "--fuel 1 --ifuel 0 --z3rlimit 40"
 let rec ff_ok (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) (g0: heap) (st0: s)
               (cs: gstate s) (parent: U64.t) (idx: nat) (wz: nat)
-  : Lemma (requires ctx a minor g0 /\ sok a minor live g0 st0 cs /\
-                    (forall (i: nat). idx <= i /\ i < wz ==> justified minor live (fld minor parent i)))
+  : Lemma (requires ctx_w a minor g0 /\ sok a minor live g0 st0 cs /\
+                    (forall (i: nat). idx <= i /\ i < wz ==> justified minor live (fld minor parent i)) /\
+                    (forall (i: nat). idx <= i /\ i < wz ==> follow_ok minor (fld minor parent i)))
           (ensures (let cs' = forward_fields a minor cs parent idx wz in
                     sok a minor live g0 st0 cs' /\ follows cs cs' /\
                     (wit a minor live g0 st0 cs'.queue \/
@@ -531,7 +540,7 @@ let rec ff_ok (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) 
 
 let rec fr_ok (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) (g0: heap) (st0: s)
               (cs: gstate s) (roots: seq U64.t) (idx: nat)
-  : Lemma (requires ctx a minor g0 /\ sok a minor live g0 st0 cs /\
+  : Lemma (requires ctx_w a minor g0 /\ sok a minor live g0 st0 cs /\ roots_follow minor roots /\
                     (forall (i: nat). idx <= i /\ i < Seq.length roots ==> justified minor live (Seq.index roots i)))
           (ensures (let cs' = forward_roots a minor cs roots idx in
                     sok a minor live g0 st0 cs' /\ follows cs cs' /\
@@ -642,6 +651,21 @@ let scan_one_just (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> pr
   = assert (qentry a minor g0 st0 cs sc);
     FStar.Classical.forall_intro (fld_def minor (Seq.index cs.queue sc))
 
+/// ... and the scan follows them safely.
+let scan_one_follow (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) (g0: heap) (st0: s)
+                    (cs: gstate s) (sc: nat)
+  : Lemma (requires ctx_w a minor g0 /\ sok a minor live g0 st0 cs /\ sc < Seq.length cs.queue)
+          (ensures (let x = Seq.index cs.queue sc in
+                    forall (i: nat). 0 <= i /\ i < minor_scan_wosize minor x ==> follow_ok minor (fld minor x i)))
+  = assert (qentry a minor g0 st0 cs sc);
+    let x = Seq.index cs.queue sc in
+    let one (i: nat) : Lemma (0 <= i /\ i < minor_scan_wosize minor x ==> follow_ok minor (fld minor x i))
+      = if i < minor_scan_wosize minor x then begin
+          fld_def minor x i;
+          fields_follow_elim minor x i
+        end in
+    FStar.Classical.forall_intro one
+
 #push-options "--ifuel 0 --z3rlimit 40"
 let scanned_step (#s: Type0) (minor: minor_state) (cs cs1: gstate s) (sc: nat) (x: U64.t)
   : Lemma (requires scanned minor cs sc /\ follows cs cs1 /\ sc < Seq.length cs.queue /\
@@ -664,7 +688,7 @@ let scanned_step (#s: Type0) (minor: minor_state) (cs cs1: gstate s) (sc: nat) (
 #push-options "--z3rlimit 40"
 let scan_step (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) (g0: heap) (st0: s)
               (cs: gstate s) (sc: nat)
-  : Lemma (requires ctx a minor g0 /\ sok a minor live g0 st0 cs /\ live_ok minor live /\ sc < Seq.length cs.queue /\
+  : Lemma (requires ctx_w a minor g0 /\ sok a minor live g0 st0 cs /\ live_ok minor live /\ sc < Seq.length cs.queue /\
                     (wit a minor live g0 st0 cs.queue \/ scanned minor cs sc))
           (ensures (let x = Seq.index cs.queue sc in
                     let cs1 = forward_fields a minor cs x 0 (minor_scan_wosize minor x) in
@@ -672,6 +696,7 @@ let scan_step (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) 
                     (wit a minor live g0 st0 cs1.queue \/ scanned minor cs1 (sc + 1))))
   = let x = Seq.index cs.queue sc in
     scan_one_just a minor live g0 st0 cs sc;
+    scan_one_follow a minor live g0 st0 cs sc;
     ff_ok a minor live g0 st0 cs x 0 (minor_scan_wosize minor x);
     let cs1 = forward_fields a minor cs x 0 (minor_scan_wosize minor x) in
     if FStar.IndefiniteDescription.strong_excluded_middle (wit a minor live g0 st0 cs.queue)
@@ -695,7 +720,7 @@ let scan_unfold (#s: Type0) (a: tal s) (minor: minor_state) (cs: gstate s) (sc: 
 #push-options "--fuel 1 --ifuel 0 --z3rlimit 40"
 let rec scan_ok (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) (g0: heap) (st0: s)
                 (cs: gstate s) (sc: nat) (fuel: nat)
-  : Lemma (requires ctx a minor g0 /\ sok a minor live g0 st0 cs /\ live_ok minor live /\
+  : Lemma (requires ctx_w a minor g0 /\ sok a minor live g0 st0 cs /\ live_ok minor live /\
                     sc <= Seq.length cs.queue /\ Seq.length (minor_objects minor) <= sc + fuel /\
                     (wit a minor live g0 st0 cs.queue \/ scanned minor cs sc))
           (ensures (let cs' = scan a minor cs sc fuel in
@@ -737,7 +762,7 @@ let start_ok (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) (
 #push-options "--z3rlimit 40"
 let promote_done (#s: Type0) (a: tal s) (minor: minor_state) (live: U64.t -> prop) (g0: heap) (st0: s)
                  (roots: seq U64.t)
-  : Lemma (requires ctx a minor g0 /\ a.inv g0 st0 /\ live_ok minor live /\
+  : Lemma (requires ctx_w a minor g0 /\ a.inv g0 st0 /\ live_ok minor live /\ roots_follow minor roots /\
                     (forall (i: nat). i < Seq.length roots ==> justified minor live (Seq.index roots i)))
           (ensures (let cs = promote a minor g0 st0 roots in
                     sok a minor live g0 st0 cs /\

@@ -18,6 +18,13 @@
 /// `GC.Gen.Cheney.Steps` prove of his loop from his free list; here it
 /// comes from the contract alone.  The step is `step_ok`: one allocation
 /// and the copy of the fields.
+///
+/// Design doc §12: the loop reads only what it follows.  `cpre_w`/`ctx_w`
+/// replace akhil's `minor_infix_wf` and `minor_major_fields_not_free` with
+/// `Promote.Follow`'s `fields_follow`, `roots_follow` and `major_targets`;
+/// the loop keeps its own `finv` (the infix addresses it forwarded were
+/// followed safely; the queue holds nursery objects).  `cpre`, `ctx` and
+/// their lemmas are kept, from `cpre_weaken`/`ctx_weaken`.
 
 module GC.Spec.Pages.Promote.Loop
 
@@ -31,6 +38,7 @@ open GC.Gen.MinorHeap
 open GC.Gen.Promote
 open GC.Gen.WriteBodyLemmas
 open GC.Spec.Pages.Promote
+open GC.Spec.Pages.Promote.Follow
 
 module U64 = FStar.UInt64
 module I = GC.Spec.AllocIface
@@ -51,6 +59,21 @@ let mpre (minor: minor_state) : prop = minor_wf minor /\ minor_infix_wf minor
 /// What the collection starts from.
 let cpre (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) : prop =
   contract a /\ a.inv g0 st0 /\ mpre minor /\ GenInv.minor_major_fields_not_free a.free minor g0
+
+/// What the collection starts from, read only where it follows a pointer
+/// (design doc §12): the nursery's shape, its fields and the roots followed
+/// safely, and its major pointers resolving to blocks in use.
+let cpre_w (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t) : prop =
+  contract a /\ a.inv g0 st0 /\ minor_wf minor /\ fields_follow minor /\ roots_follow minor roots /\
+  major_targets a.free minor g0
+
+/// akhil's conditions give these.
+let cpre_weaken (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
+  : Lemma (requires cpre a minor g0 st0) (ensures cpre_w a minor g0 st0 roots)
+  = contract_wf a g0 st0;
+    fields_of_infix_wf minor;
+    roots_of_infix_wf minor roots;
+    targets_of_not_free a.free minor g0
 
 /// The block of `y` in `g'` is its block in `g`: header and fields.
 let kept (g g': heap) (y: obj_addr) : prop =
@@ -203,7 +226,7 @@ let entries_step (#s: Type0) (a: tal s) (minor: minor_state) (g0 g g2: heap) (fw
 
 /// The tag a nursery object is copied with is not infix.
 let tag_not_infix (minor: minor_state) (addr: U64.t)
-  : Lemma (requires mpre minor /\ Seq.mem addr (minor_objects minor))
+  : Lemma (requires minor_wf minor /\ Seq.mem addr (minor_objects minor))
           (ensures U64.v (promoted_tag minor addr) <> 249 /\ ~(is_infix_in_minor minor addr) /\
                    U64.v (promoted_tag minor addr) == minor_tag minor addr)
   = minor_objects_not_infix minor addr;
@@ -242,13 +265,51 @@ let copy_words (minor: minor_state) (g1: heap) (addr: U64.t) (x: obj_addr) (wz: 
     assert (mk_hp_addr b == U64.uint_to_t b)
 #pop-options
 
+/// A target of an old block, in use for `un` before, stays so.
+#push-options "--z3rlimit 40"
+let old_target_wf (#s: Type0) (a: tal s) (un: free_def) (g0 g: heap) (dst: obj_addr)
+  : Lemma (requires free_def_ok a.free /\ free_def_ok un /\
+                    (forall (h: heap) (y: obj_addr). in_use un h y ==> in_use a.free h y) /\
+                    olds a g0 g /\ (forall (y: obj_addr). in_use a.free g y ==> Seq.mem y (objects zero_addr g)) /\
+                    in_use un g0 (resolve_object dst g0) /\ infix_addr_wf g0 (objects zero_addr g0) dst)
+          (ensures in_use un g (resolve_object dst g) /\ infix_addr_wf g (objects zero_addr g) dst /\
+                   resolve_object dst g == resolve_object dst g0)
+  = let t = resolve_object dst g0 in
+    assert (in_use a.free g0 t /\ in_use a.free g t /\ kept g0 g t);
+    free_def_ok_elim a.free;
+    if is_infix dst g0 then begin
+      infix_addr_wf_elim g0 (objects zero_addr g0) dst;
+      parent_closure_addr_nat_spec dst g0;
+      resolve_infix_spec dst g0;
+      hd_address_spec dst;
+      wosize_of_object_spec t g0;
+      assert (read_word g (hd_address dst) == read_word g0 (hd_address dst));
+      resolve_object_locality dst g0 g;
+      resolve_object_locality t g0 g;
+      infix_addr_wf_transfer g0 g (objects zero_addr g0) (objects zero_addr g) dst
+    end else begin
+      resolve_non_infix dst g0;
+      resolve_object_locality dst g0 g;
+      resolve_non_infix dst g;
+      infix_addr_wf_non_infix g (objects zero_addr g) dst
+    end;
+    in_use_is_determined_from_header un g0 g t
+#pop-options
+
+/// A pointer into a block apart from `x`'s fields is away from them.
+let away_of_apart (x t w: nat) (wz wt: nat)
+  : Lemma (requires (t + wt * 8 <= x - 8 \/ t - 8 >= x + wz * 8) /\ t <= w /\ (w == t \/ w < t + wt * 8))
+          (ensures w <= x \/ w >= x + wz * 8)
+  = ()
+
 /// A field written in a scannable copy: a nursery value that is not a major
-/// pointer, or a pointer to an old block, in use and away from `x`.
+/// pointer, or a pointer resolving to an old block, in use and away from
+/// `x`.
 #push-options "--z3rlimit 40"
 let copied_field_ok (#s: Type0) (a: tal s) (minor: minor_state) (g0 g g1 g2: heap) (addr: U64.t)
                     (x: obj_addr) (wz: pos) (j: nat)
   : Lemma (requires free_def_ok a.free /\ well_formed_heap_with a.free g0 /\
-                    GenInv.minor_major_fields_not_free a.free minor g0 /\
+                    major_targets a.free minor g0 /\
                     Seq.mem addr (minor_objects minor) /\ j < minor_scan_wosize minor addr /\
                     olds a g0 g /\ step_rel a g g2 x /\ Seq.mem x (objects zero_addr g1) /\
                     (forall (y: obj_addr). in_use a.free g1 y ==> Seq.mem y (objects zero_addr g1)) /\
@@ -262,23 +323,20 @@ let copied_field_ok (#s: Type0) (a: tal s) (minor: minor_state) (g0 g g1 g2: hea
   = let v = minor_read_field minor addr j in
     if is_pointer v then begin
       let w : obj_addr = v in
-      GenInv.minor_major_fields_not_free_elim a.free minor g0 addr j;
-      assert (in_use a.free g0 w);
-      assert (in_use a.free g w /\ kept g0 g w);
-      assert (in_use a.free g2 w /\ kept g g2 w);
-      // not infix: a block of the walk of g0, with its header
-      wf_with_parts ();
+      major_targets_elim a.free minor g0 addr j;
       free_def_ok_elim a.free;
-      assert (~(is_infix w g0));
-      resolve_object_locality w g0 g;
-      resolve_object_locality w g g2;
-      resolve_non_infix w g2;
-      infix_addr_wf_non_infix g2 (objects zero_addr g2) w;
-      // away from x
-      assert (w <> x);
-      F.other_apart g1 x w;
-      wosize_of_object_spec w g1;
-      wosize_of_object_spec w g
+      olds_step a g0 g g2 x;
+      old_target_wf a a.free g0 g2 w;
+      // where it lands: in the old block it resolves to, away from x
+      let t = resolve_object w g0 in
+      target_range g0 w;
+      assert (in_use a.free g t /\ kept g0 g t);
+      assert (t <> x);
+      F.other_apart g1 x t;
+      wosize_of_object_spec t g0;
+      wosize_of_object_spec t g;
+      wosize_of_object_spec t g1;
+      away_of_apart (U64.v x) (U64.v t) (U64.v w) wz (U64.v (wosize_of_object t g0))
     end
 #pop-options
 
@@ -311,7 +369,7 @@ let kept_one (#s: Type0) (a: tal s) (minor: minor_state) (g g1: heap) (addr: U64
 #push-options "--z3rlimit 40"
 let written_away (#s: Type0) (a: tal s) (minor: minor_state) (g0 g g1: heap) (addr: U64.t) (x: obj_addr) (wz: pos)
   : Lemma (requires free_def_ok a.free /\ well_formed_heap_with a.free g0 /\
-                    GenInv.minor_major_fields_not_free a.free minor g0 /\
+                    major_targets a.free minor g0 /\
                     Seq.mem addr (minor_objects minor) /\ wz == minor_wosize minor addr /\
                     olds a g0 g /\ step_rel a g (copy_fields minor g1 addr x 0 wz) x /\
                     Seq.mem x (objects zero_addr g1) /\ U64.v x + wz * 8 <= heap_size /\
@@ -349,8 +407,8 @@ let written_away (#s: Type0) (a: tal s) (minor: minor_state) (g0 g g1: heap) (ad
 /// on success the allocator's invariant holds, the step makes one block,
 /// the copy of `addr`, and keeps every other block in use.
 #push-options "--z3rlimit 40"
-let promote_step (#s: Type0) (a: tal s) (minor: minor_state) (g0 g: heap) (st: s) (addr: U64.t)
-  : Lemma (requires contract a /\ mpre minor /\ GenInv.minor_major_fields_not_free a.free minor g0 /\
+let promote_step_w (#s: Type0) (a: tal s) (minor: minor_state) (g0 g: heap) (st: s) (addr: U64.t)
+  : Lemma (requires contract a /\ minor_wf minor /\ major_targets a.free minor g0 /\
                     well_formed_heap_with a.free g0 /\ a.inv g st /\ olds a g0 g /\
                     Seq.mem addr (minor_objects minor) /\ minor_wosize minor addr > 0)
           (ensures (let (g2, s2, o) = promote_object a minor g addr st (minor_wosize minor addr) in
@@ -392,6 +450,19 @@ let promote_step (#s: Type0) (a: tal s) (minor: minor_state) (g0 g: heap) (st: s
     end
 #pop-options
 
+let promote_step (#s: Type0) (a: tal s) (minor: minor_state) (g0 g: heap) (st: s) (addr: U64.t)
+  : Lemma (requires contract a /\ mpre minor /\ GenInv.minor_major_fields_not_free a.free minor g0 /\
+                    well_formed_heap_with a.free g0 /\ a.inv g st /\ olds a g0 g /\
+                    Seq.mem addr (minor_objects minor) /\ minor_wosize minor addr > 0)
+          (ensures (let (g2, s2, o) = promote_object a minor g addr st (minor_wosize minor addr) in
+                    (o == 0UL ==> g2 == g /\ s2 == st) /\
+                    (o =!= 0UL ==>
+                       U64.v o >= 8 /\ U64.v o < heap_size /\ U64.v o % 8 == 0 /\
+                       a.inv g2 s2 /\ step_rel a g g2 (o <: obj_addr) /\ copy_of a minor g0 g2 addr o)))
+  = contract_wf a g st;
+    targets_of_not_free a.free minor g0;
+    promote_step_w a minor g0 g st addr
+
 /// ---------------------------------------------------------------------------
 /// The loop keeps the invariant
 /// ---------------------------------------------------------------------------
@@ -401,16 +472,46 @@ let ctx (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) : prop =
   contract a /\ mpre minor /\ GenInv.minor_major_fields_not_free a.free minor g0 /\
   well_formed_heap_with a.free g0
 
-let forward_normal_keeps (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (cs: gstate s) (addr: U64.t)
-  : Lemma (requires ctx a minor g0 /\ linv a minor g0 cs)
+/// ... reading only what it follows (design doc §12).
+let ctx_w (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) : prop =
+  contract a /\ minor_wf minor /\ fields_follow minor /\ major_targets a.free minor g0 /\
+  well_formed_heap_with a.free g0
+
+let ctx_weaken (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap)
+  : Lemma (requires ctx a minor g0) (ensures ctx_w a minor g0)
+  = fields_of_infix_wf minor;
+    targets_of_not_free a.free minor g0
+
+/// The loop's own invariant: the infix addresses it forwarded were followed
+/// safely, and its queue holds nursery objects.
+let finv (#s: Type0) (minor: minor_state) (cs: gstate s) : prop =
+  entries_follow minor cs.fwd /\ qmem minor cs.queue
+
+let qmem_snoc (minor: minor_state) (q: seq U64.t) (addr: U64.t)
+  : Lemma (requires qmem minor q /\ Seq.mem addr (minor_objects minor))
+          (ensures qmem minor (Seq.append q (Seq.create 1 addr)))
+  = let q' = Seq.append q (Seq.create 1 addr) in
+    let one (i: nat) : Lemma (i < Seq.length q' ==> Seq.mem (Seq.index q' i) (minor_objects minor))
+      = if i < Seq.length q' then begin
+          if i < Seq.length q then assert (Seq.index q' i == Seq.index q i)
+          else assert (Seq.index q' i == addr)
+        end
+    in
+    FStar.Classical.forall_intro one
+
+#push-options "--z3rlimit 30"
+let forward_normal_keeps_w (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (cs: gstate s) (addr: U64.t)
+  : Lemma (requires ctx_w a minor g0 /\ linv a minor g0 cs)
           (ensures linv a minor g0 (forward_normal a minor cs addr) /\
-                   (forall (m: U64.t). m <> addr ==> (forward_normal a minor cs addr).fwd m == cs.fwd m))
+                   (forall (m: U64.t). m <> addr ==> (forward_normal a minor cs addr).fwd m == cs.fwd m) /\
+                   (finv minor cs ==> finv minor (forward_normal a minor cs addr)))
   = if not (Seq.mem addr (minor_objects minor)) || cs.fwd addr <> 0UL then ()
     else begin
       let wz = minor_wosize minor addr in
       if wz = 0 then ()
       else begin
-        promote_step a minor g0 cs.major cs.st addr;
+        contract_wf a cs.major cs.st;
+        promote_step_w a minor g0 cs.major cs.st addr;
         let (g2, s2, o) = promote_object a minor cs.major addr cs.st wz in
         if o = 0UL then ()
         else begin
@@ -418,10 +519,20 @@ let forward_normal_keeps (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) 
           tag_not_infix minor addr;
           olds_step a g0 cs.major g2 x;
           news_step a minor g0 cs.major g2 cs.fwd addr x;
-          entries_step a minor g0 cs.major g2 cs.fwd addr x
+          entries_step a minor g0 cs.major g2 cs.fwd addr x;
+          if FStar.IndefiniteDescription.strong_excluded_middle (finv minor cs) then
+            qmem_snoc minor cs.queue addr
         end
       end
     end
+#pop-options
+
+let forward_normal_keeps (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (cs: gstate s) (addr: U64.t)
+  : Lemma (requires ctx a minor g0 /\ linv a minor g0 cs)
+          (ensures linv a minor g0 (forward_normal a minor cs addr) /\
+                   (forall (m: U64.t). m <> addr ==> (forward_normal a minor cs addr).fwd m == cs.fwd m))
+  = ctx_weaken a minor g0;
+    forward_normal_keeps_w a minor g0 cs addr
 
 /// The parent of an infix nursery address is a nursery object, not infix.
 let parent_facts (minor: minor_state) (addr: U64.t)
@@ -435,15 +546,17 @@ let parent_facts (minor: minor_state) (addr: U64.t)
 #push-options "--z3rlimit 30"
 let infix_step (#s: Type0) (a: tal s) (minor: minor_state) (g0 g: heap) (fwd: forwarding_map) (addr: U64.t)
                (v: U64.t)
-  : Lemma (requires mpre minor /\ news a minor g0 g fwd /\ entries a minor g0 g fwd /\
+  : Lemma (requires minor_wf minor /\ infix_at minor addr /\ entries_follow minor fwd /\
+                    news a minor g0 g fwd /\ entries a minor g0 g fwd /\
                     is_infix_in_minor minor addr /\
                     (let p = infix_parent minor addr in
                      fwd p <> 0UL /\ U64.v addr >= U64.v p /\
                      U64.v v == U64.v (fwd p) + (U64.v addr - U64.v p)))
           (ensures news a minor g0 g (extend_forwarding fwd addr v) /\
-                   entries a minor g0 g (extend_forwarding fwd addr v))
+                   entries a minor g0 g (extend_forwarding fwd addr v) /\
+                   entries_follow minor (extend_forwarding fwd addr v))
   = let fwd' = extend_forwarding fwd addr v in
-    parent_facts minor addr;
+    parent_facts_at minor addr;
     let nw (y: obj_addr)
       : Lemma (requires in_use a.free g y /\ ~(in_use a.free g0 y))
               (ensures exists (m: U64.t). fwd' m == (y <: U64.t) /\ copy_of a minor g0 g m (y <: U64.t))
@@ -456,21 +569,22 @@ let infix_step (#s: Type0) (a: tal s) (minor: minor_state) (g0 g: heap) (fwd: fo
       = if m = addr then assert (entry a minor g0 g fwd (infix_parent minor addr))
         else begin
           assert (entry a minor g0 g fwd m);
-          if is_infix_in_minor minor m then parent_facts minor m
+          if is_infix_in_minor minor m then parent_facts_at minor m
         end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires en)
 #pop-options
 
+/// A forwarding of an infix address adds no queue entry.
 #push-options "--z3rlimit 30"
-let forward_one_keeps (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (cs: gstate s) (addr: U64.t)
-  : Lemma (requires ctx a minor g0 /\ linv a minor g0 cs)
-          (ensures linv a minor g0 (forward_one a minor cs addr))
+let forward_one_keeps_w (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (cs: gstate s) (addr: U64.t)
+  : Lemma (requires ctx_w a minor g0 /\ linv a minor g0 cs /\ finv minor cs /\ follow_ok minor addr)
+          (ensures linv a minor g0 (forward_one a minor cs addr) /\ finv minor (forward_one a minor cs addr))
   = if cs.fwd addr <> 0UL then ()
     else if is_infix_in_minor minor addr then begin
       let parent = infix_parent minor addr in
-      parent_facts minor addr;
-      forward_normal_keeps a minor g0 cs parent;
+      parent_facts_at minor addr;
+      forward_normal_keeps_w a minor g0 cs parent;
       let cs' = forward_normal a minor cs parent in
       if cs'.fwd parent <> 0UL &&
          U64.v addr >= U64.v parent &&
@@ -480,36 +594,72 @@ let forward_one_keeps (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (cs
         infix_step a minor g0 cs'.major cs'.fwd addr v
       end
     end
-    else forward_normal_keeps a minor g0 cs addr
+    else forward_normal_keeps_w a minor g0 cs addr
+#pop-options
+
+/// akhil's conditions give the loop's own invariant.
+let finv_of_infix_wf (#s: Type0) (minor: minor_state) (cs: gstate s)
+  : Lemma (requires minor_infix_wf minor) (ensures entries_follow minor cs.fwd)
+  = entries_of_infix_wf minor cs.fwd
+
+/// The forwarding of an infix address only adds an entry for it; of any
+/// other, it is `forward_normal`.
+#push-options "--z3rlimit 30"
+let forward_one_keeps (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (cs: gstate s) (addr: U64.t)
+  : Lemma (requires ctx a minor g0 /\ linv a minor g0 cs)
+          (ensures linv a minor g0 (forward_one a minor cs addr))
+  = ctx_weaken a minor g0;
+    if cs.fwd addr <> 0UL then ()
+    else if is_infix_in_minor minor addr then begin
+      let parent = infix_parent minor addr in
+      follow_of_infix_wf minor addr;
+      entries_of_infix_wf minor cs.fwd;
+      parent_facts_at minor addr;
+      forward_normal_keeps_w a minor g0 cs parent;
+      let cs' = forward_normal a minor cs parent in
+      entries_of_infix_wf minor cs'.fwd;
+      if cs'.fwd parent <> 0UL &&
+         U64.v addr >= U64.v parent &&
+         U64.v (cs'.fwd parent) + (U64.v addr - U64.v parent) < heap_size
+      then begin
+        let v = U64.uint_to_t (U64.v (cs'.fwd parent) + (U64.v addr - U64.v parent)) in
+        infix_step a minor g0 cs'.major cs'.fwd addr v
+      end
+    end
+    else forward_normal_keeps_w a minor g0 cs addr
 #pop-options
 
 #push-options "--fuel 1 --ifuel 0"
 let rec forward_fields_keeps (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (cs: gstate s)
                              (parent: U64.t) (idx: nat) (wz: nat)
-  : Lemma (requires ctx a minor g0 /\ linv a minor g0 cs)
-          (ensures linv a minor g0 (forward_fields a minor cs parent idx wz))
+  : Lemma (requires ctx_w a minor g0 /\ linv a minor g0 cs /\ finv minor cs /\
+                    Seq.mem parent (minor_objects minor) /\ wz <= minor_scan_wosize minor parent)
+          (ensures linv a minor g0 (forward_fields a minor cs parent idx wz) /\
+                   finv minor (forward_fields a minor cs parent idx wz))
           (decreases (if idx >= wz then 0 else wz - idx))
   = if idx >= wz then ()
     else begin
       let fv = to_minor_offset (minor_read_field minor parent idx) in
-      forward_one_keeps a minor g0 cs fv;
+      fields_follow_elim minor parent idx;
+      forward_one_keeps_w a minor g0 cs fv;
       forward_fields_keeps a minor g0 (forward_one a minor cs fv) parent (idx + 1) wz
     end
 
 let rec forward_roots_keeps (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (cs: gstate s)
                             (roots: seq U64.t) (idx: nat)
-  : Lemma (requires ctx a minor g0 /\ linv a minor g0 cs)
-          (ensures linv a minor g0 (forward_roots a minor cs roots idx))
+  : Lemma (requires ctx_w a minor g0 /\ linv a minor g0 cs /\ finv minor cs /\ roots_follow minor roots)
+          (ensures linv a minor g0 (forward_roots a minor cs roots idx) /\
+                   finv minor (forward_roots a minor cs roots idx))
           (decreases (if idx >= Seq.length roots then 0 else Seq.length roots - idx))
   = if idx >= Seq.length roots then ()
     else begin
-      forward_one_keeps a minor g0 cs (Seq.index roots idx);
+      forward_one_keeps_w a minor g0 cs (Seq.index roots idx);
       forward_roots_keeps a minor g0 (forward_one a minor cs (Seq.index roots idx)) roots (idx + 1)
     end
 
 let rec scan_keeps (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (cs: gstate s) (sc: nat) (fuel: nat)
-  : Lemma (requires ctx a minor g0 /\ linv a minor g0 cs)
-          (ensures linv a minor g0 (scan a minor cs sc fuel))
+  : Lemma (requires ctx_w a minor g0 /\ linv a minor g0 cs /\ finv minor cs)
+          (ensures linv a minor g0 (scan a minor cs sc fuel) /\ finv minor (scan a minor cs sc fuel))
           (decreases fuel)
   = if fuel = 0 then ()
     else if sc >= Seq.length cs.queue then ()
@@ -523,15 +673,25 @@ let rec scan_keeps (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (cs: g
     end
 #pop-options
 
+/// **Promotion keeps the invariant**, reading only what it follows.
+let promote_linv_w (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
+  : Lemma (requires cpre_w a minor g0 st0 roots)
+          (ensures ctx_w a minor g0 /\ linv a minor g0 (promote a minor g0 st0 roots) /\
+                   finv minor (promote a minor g0 st0 roots))
+  = contract_wf a g0 st0;
+    let cs0 : gstate s = { major = g0; st = st0; fwd = empty_forwarding; queue = Seq.empty } in
+    assert (olds a g0 g0);
+    assert (linv a minor g0 cs0);
+    assert (finv minor cs0);
+    forward_roots_keeps a minor g0 cs0 roots 0;
+    let cs1 = forward_roots a minor cs0 roots 0 in
+    scan_keeps a minor g0 cs1 0 (Seq.length (minor_objects minor))
+
 /// **Promotion keeps the invariant**: from the heap `g0` in the allocator's
 /// invariant, the loop ends in a state of `linv`.
 let promote_linv (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
   : Lemma (requires cpre a minor g0 st0)
           (ensures ctx a minor g0 /\ linv a minor g0 (promote a minor g0 st0 roots))
   = contract_wf a g0 st0;
-    let cs0 : gstate s = { major = g0; st = st0; fwd = empty_forwarding; queue = Seq.empty } in
-    assert (olds a g0 g0);
-    assert (linv a minor g0 cs0);
-    forward_roots_keeps a minor g0 cs0 roots 0;
-    let cs1 = forward_roots a minor cs0 roots 0 in
-    scan_keeps a minor g0 cs1 0 (Seq.length (minor_objects minor))
+    cpre_weaken a minor g0 st0 roots;
+    promote_linv_w a minor g0 st0 roots
