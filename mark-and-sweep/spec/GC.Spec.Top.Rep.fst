@@ -103,12 +103,21 @@ let rich (#t #yt: Type0) (r: rep t yt) : prop =
   (forall (n a: nat). r.size_ok n /\ a + 1 < n ==> r.storable (VPtr (Major a))) /\
   (forall (n a: nat). r.ysize_ok n /\ a + 1 < n ==> r.storable (VPtr (Young a)))
 
+/// A model heap whose words outside fields are 0 and with no header past
+/// its end.  Every model heap agrees with a canonical one (`agree`): only the
+/// fields and headers carry meaning.
+let canonical (m: mheap) : prop =
+  (forall (o: nat). o >= m.size ==> m.hd o == None) /\
+  (forall (w: nat). ~(field_word m w) ==> m.body w == VInt 0)
+
 /// The model heaps an instance must be able to represent: well formed, of
-/// one of its sizes, every block with a field, every field storable.
+/// one of its sizes, every block with a field, every field storable,
+/// canonical.
 let representable (#t #yt: Type0) (r: rep t yt) (m: mheap) : prop =
   well_formed m /\ r.size_ok m.size /\
   (forall (o: nat). is_block m o ==> wz_of m o >= 1) /\
-  (forall (w: nat). field_word m w ==> r.storable (m.body w))
+  (forall (w: nat). field_word m w ==> r.storable (m.body w)) /\
+  canonical m
 
 /// The reads of a concrete heap are those of every model heap it represents.
 let reads_model (sz: nat) (rhd: nat -> GTot (option header)) (read: nat -> nat -> GTot value) (m: mheap) : prop =
@@ -210,7 +219,64 @@ let agree_young_alloc (m m': mheap) (o: nat) (sz: size_t) (tag: tag_t) (vs: list
       = FStar.Classical.forall_intro (FStar.Classical.move_requires (bd w)) in
     FStar.Classical.forall_intro bd'
 
+/// ---------------------------------------------------------------------------
+/// Pointwise equality
+/// ---------------------------------------------------------------------------
+
+/// The same heap, word by word (F* cannot equate two records of functions
+/// from pointwise equality; every model statement reads a heap through `hd`
+/// and `body`).
+let heq (m m': mheap) : prop =
+  m.size == m'.size /\ (forall (o: nat). m.hd o == m'.hd o) /\ (forall (w: nat). m.body w == m'.body w)
+
+let heq_refl (m: mheap) : Lemma (heq m m) = ()
+
+let heq_sym (m m': mheap) : Lemma (requires heq m m') (ensures heq m' m) = ()
+
+let heq_trans (m1 m2 m3: mheap) : Lemma (requires heq m1 m2 /\ heq m2 m3) (ensures heq m1 m3) = ()
+
+let heq_agree (m m': mheap) : Lemma (requires heq m m') (ensures agree m m') = ()
+
+/// Agreeing canonical heaps are the same heap.
+let agree_canonical (m m': mheap)
+  : Lemma (requires agree m m' /\ canonical m /\ canonical m') (ensures heq m m')
+  = let bd (w: nat) : Lemma (m.body w == m'.body w)
+      = agree_field_word m m' w in
+    FStar.Classical.forall_intro bd
+
+let canonical_heq (m m': mheap) : Lemma (requires heq m m' /\ canonical m) (ensures canonical m')
+  = let bd (w: nat) : Lemma (~(field_word m' w) ==> m'.body w == VInt 0)
+      = assert (forall (o: nat). covers m o w == covers m' o w) in
+    FStar.Classical.forall_intro bd
+
 let agree_blocks (m m': mheap) (o: nat)
   : Lemma (requires agree m m')
           (ensures is_block m o == is_block m' o /\ (is_block m o ==> hdr_of m o == hdr_of m' o))
   = ()
+
+/// The program's operations keep a heap canonical.
+let canonical_empty (n: nat) : Lemma (canonical (empty_heap n)) = ()
+
+let canonical_set_field (m: mheap) (o i: nat) (v: value)
+  : Lemma (requires canonical m /\ is_block m o /\ i < wz_of m o) (ensures canonical (set_field m o i v))
+  = let m' = set_field m o i v in
+    let bd (w: nat) : Lemma (~(field_word m' w) ==> m'.body w == VInt 0)
+      = assert (forall (x: nat). covers m' x w == covers m x w);
+        if w = o + 1 + i then assert (covers m o w) in
+    FStar.Classical.forall_intro bd
+
+#push-options "--z3rlimit 40"
+let canonical_young_alloc (m: mheap) (o: nat) (sz: size_t) (tag: tag_t) (vs: list value)
+  : Lemma (requires canonical m /\ young_free m o sz /\ L.length vs == sz)
+          (ensures canonical (young_alloc m o sz tag vs))
+  = let m' = young_alloc m o sz tag vs in
+    let bd (w: nat) : Lemma (~(field_word m' w) ==> m'.body w == VInt 0)
+      = if o < w && w <= o + sz then assert (covers m' o w)
+        else begin
+          let cv (x: nat) : Lemma (covers m x w ==> covers m' x w)
+            = if covers m x w && x = o then assert (covers m o o) in
+          FStar.Classical.forall_intro cv;
+          if w = o then assert (forall (x: nat). ~(covers m x o))
+        end in
+    FStar.Classical.forall_intro bd
+#pop-options

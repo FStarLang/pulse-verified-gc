@@ -8,8 +8,9 @@
 /// starts at `j` exactly when the walk from 0 to the bump pointer lands on
 /// `8 j` (`yat`); headers and words are read as in the major heap
 /// (GC.Spec.Top.Word).  The representation relation is `yrepr m ms`: the
-/// walk runs from 0 to the bump pointer (`yok`) and `m` agrees with
-/// `yabs ms`; the bytes past the bump pointer are not described.
+/// walk runs from 0 to the bump pointer (`yok`) and `m` is, word by word, the
+/// canonical reading `ycabs ms` (`yabs ms` with the words outside fields read
+/// as 0); the bytes past the bump pointer are not read.
 ///
 /// The program's operations: `yinit` and `yreset` are GC.Gen.MinorHeap's
 /// `minor_init` (of a zeroed nursery) and `minor_reset`; `ywrite` is
@@ -252,16 +253,72 @@ let yok_intro (ms: minor_state)
           (ensures yok ms)
   = reveal_opaque (`%yok) (yok ms)
 
+/// The canonical reading: the words outside fields read as 0.
+let rec yfw_below (ms: minor_state) (w n: nat) : bool =
+  if n = 0 then false
+  else (let x = n - 1 in
+        x < w && x < ywords && yat ms.data 0 (U64.v ms.bump) (8 * x) && w <= x + wz_at ms.data (8 * x)) ||
+       yfw_below ms w (n - 1)
+
+let ycabs_body (ms: minor_state) (w: nat) : M.value = if yfw_below ms w w then ybody ms w else M.VInt 0
+
+let ycabs_hd (ms: minor_state) (j: nat) : option M.header = if j < ywords then yhd_of ms j else None
+
+let ycabs (ms: minor_state) : M.mheap = { M.size = ywords; M.hd = ycabs_hd ms; M.body = ycabs_body ms }
+
+let yfw_one (ms: minor_state) (w x: nat)
+  : Lemma ((x < w && x < ywords && yat ms.data 0 (U64.v ms.bump) (8 * x) && w <= x + wz_at ms.data (8 * x)) <==>
+           (x < w /\ M.covers (yabs ms) x w))
+  = ()
+
+#push-options "--fuel 1"
+let rec yfw_intro (ms: minor_state) (w n x: nat)
+  : Lemma (requires x < n /\ x < w /\ M.covers (yabs ms) x w) (ensures yfw_below ms w n) (decreases n)
+  = yfw_one ms w x;
+    if x = n - 1 then () else yfw_intro ms w (n - 1) x
+
+let rec yfw_elim (ms: minor_state) (w n: nat)
+  : Lemma (requires yfw_below ms w n) (ensures exists (x: nat). x < n /\ x < w /\ M.covers (yabs ms) x w)
+          (decreases n)
+  = let x = n - 1 in
+    yfw_one ms w x;
+    if x < w && x < ywords && yat ms.data 0 (U64.v ms.bump) (8 * x) && w <= x + wz_at ms.data (8 * x) then ()
+    else yfw_elim ms w (n - 1)
+
+#pop-options
+
+let yfw_iff (ms: minor_state) (w: nat) : Lemma (yfw_below ms w w <==> R.field_word (yabs ms) w)
+  = FStar.Classical.move_requires (yfw_elim ms w) w;
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (yfw_intro ms w w))
+
+let ycabs_facts (ms: minor_state)
+  : Lemma (R.agree (ycabs ms) (yabs ms) /\ R.agree (yabs ms) (ycabs ms) /\ R.canonical (ycabs ms))
+  = FStar.Classical.forall_intro (yfw_iff ms);
+    R.agree_sym (ycabs ms) (yabs ms);
+    let bd (w: nat) : Lemma (~(R.field_word (ycabs ms) w) ==> ycabs_body ms w == M.VInt 0)
+      = R.agree_field_word (ycabs ms) (yabs ms) w in
+    FStar.Classical.forall_intro bd
+
+/// The representation: the walk runs from 0 to the bump pointer, and `m` is
+/// the canonical reading, word by word.
 [@@"opaque_to_smt"]
-let yrepr (m: M.mheap) (ms: minor_state) : prop = yok ms /\ R.agree m (yabs ms)
+let yrepr (m: M.mheap) (ms: minor_state) : prop = yok ms /\ R.heq m (ycabs ms)
 
 let yrepr_elim (m: M.mheap) (ms: minor_state)
-  : Lemma (requires yrepr m ms) (ensures yok ms /\ R.agree m (yabs ms))
-  = reveal_opaque (`%yrepr) (yrepr m ms)
+  : Lemma (requires yrepr m ms) (ensures yok ms /\ R.agree m (yabs ms) /\ R.canonical m)
+  = reveal_opaque (`%yrepr) (yrepr m ms);
+    ycabs_facts ms;
+    R.heq_agree m (ycabs ms);
+    R.agree_trans m (ycabs ms) (yabs ms);
+    R.heq_sym m (ycabs ms);
+    R.canonical_heq (ycabs ms) m
 
 let yrepr_intro (m: M.mheap) (ms: minor_state)
-  : Lemma (requires yok ms /\ R.agree m (yabs ms)) (ensures yrepr m ms)
-  = reveal_opaque (`%yrepr) (yrepr m ms)
+  : Lemma (requires yok ms /\ R.agree m (yabs ms) /\ R.canonical m) (ensures yrepr m ms)
+  = ycabs_facts ms;
+    R.agree_trans m (yabs ms) (ycabs ms);
+    R.agree_canonical m (ycabs ms);
+    reveal_opaque (`%yrepr) (yrepr m ms)
 
 let yread (ms: minor_state) (o i: nat) : GTot M.value = absv (ymw ms (o + 1 + i))
 
@@ -324,6 +381,7 @@ let empty_agree (ms: minor_state) (n: nat)
     FStar.Classical.forall_intro nb;
     let f (w: nat) : Lemma (~(R.field_word (yabs ms) w)) = () in
     FStar.Classical.forall_intro f;
+    R.canonical_empty n;
     yrepr_intro (M.empty_heap n) ms
 
 let yinit (n: nat) : GTot minor_state = minor_init (Seq.create minor_heap_size 0uy)
@@ -391,6 +449,7 @@ let ywrite_ok' (m: M.mheap) (ms: minor_state) (o i: nat) (v: M.value)
     ywrite_abs ms o i v;
     R.agree_set_field m (yabs ms) o i v;
     R.agree_trans (M.set_field m o i v) (M.set_field (yabs ms) o i v) (yabs (ywrite ms o i v));
+    R.canonical_set_field m o i v;
     yrepr_intro (M.set_field m o i v) (ywrite ms o i v)
 
 /// ---------------------------------------------------------------------------
@@ -595,6 +654,8 @@ let yalloc_repr (m: M.mheap) (ms: minor_state) (sz: M.size_t) (tag: M.tag_t) (vs
     yalloc_abs ms sz tag vs;
     R.agree_young_alloc m (yabs ms) o sz tag vs;
     R.agree_trans (M.young_alloc m o sz tag vs) (M.young_alloc (yabs ms) o sz tag vs) (yabs ms');
+    yalloc_free m ms sz tag vs;
+    R.canonical_young_alloc m o sz tag vs;
     yrepr_intro (M.young_alloc m o sz tag vs) ms'
 
 /// ---------------------------------------------------------------------------

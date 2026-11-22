@@ -153,6 +153,9 @@ ROOT_MODULES = \
   mark-and-sweep/spec/GC.Spec.Top.Broken.fst \
   mark-and-sweep/spec/GC.Spec.Top.PagesFree.fst \
   mark-and-sweep/spec/GC.Spec.Top.ByteRep.fst \
+  mark-and-sweep/spec/GC.Spec.Top.PagesFrame.fst \
+  mark-and-sweep/spec/GC.Spec.Top.PagesStepOk.fst \
+  mark-and-sweep/spec/GC.Spec.Top.PagesFits.fst \
   mark-and-sweep/impl/GC.Impl.Pages.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst \

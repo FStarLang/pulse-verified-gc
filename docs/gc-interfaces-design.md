@@ -1543,3 +1543,165 @@ addresses rather than over the `objects` sequence.
 One seed-1 timeout, in `ToyMinor.ps_use` (a chain of equivalences made
 heavier by the refactor), was found by these runs and fixed by stating the
 links one by one.
+
+## 10. The page allocator and sweep as an instance (stage 2b, second part)
+
+The page allocator and page sweep of `GC.Spec.Pages.*` (incremental mode,
+plan §28) are proved to meet every clause of the allocator and sweep
+contracts, over the byte representation. The page modules are called
+unchanged, and akhil's modules are not touched. Worktree `pgc-plug`, branch
+`sheera/gc-plug`.
+
+### 10.1 The components
+
+- **Allocator** `PagesAlloc.pa`:
+  - `alloc` is `AllocTag.alloc_tag` in the phase's colour, from the phase's
+    page invariant `MidSweepAlloc.inv_sw`;
+  - `free` is "blue", read from the header;
+  - `room` is "`Alloc.alloc` succeeds";
+  - the state is the page state plus the bytes below `zero_addr`;
+  - the progress of the sweep is the page map and a cursor, and a model
+    word is unswept when its page is (`Graft.uw`).
+- **Bytes below `zero_addr`.** The representation does not read them, but
+  the page invariants are stated on the whole heap. So the allocator keeps
+  them in its state and runs on `set_low g lo` (`Top.Low`). The clauses
+  that quantify over every represented heap (the invariant after the Fill,
+  the frame) then need no byte-frame lemma for the page operations.
+- **Sweep** `PagesSweep.psweep`:
+  - `start` is `StartSweep.start_sweep`, with the cursor at 0;
+  - a step sweeps the next unswept unit (pool page or large run) at or
+    after the cursor, with `SweepAll.step`. This is `Incr.slice_from` with
+    a budget of one unit;
+  - `done` means every page is swept.
+
+### 10.2 Clause by clause
+
+| Clause | Proof | Page lemmas used |
+|---|---|---|
+| `init_at` | `PagesInst.init_ok` | `Alloc.init_alloc_pre`, `Init.init_all_blue`, `Cycle.State.ok_walk` |
+| `free_hd_at` | `free_hd_ok` | (blue is read from the header) |
+| `alloc_at`: room, header, colour | `PagesInst.alloc_m`, `PagesAllocOk.new_block`, `colour_ok` | `AllocTagOk.alloc_tag_marking`/`_sweeping`, `Promote.Idle.idle_sw`/`idle_is_sweeping`, `AllocTag.alloc_col_tag_wz` |
+| o's words were free (per word) | `PagesAllocOk.words_free` | from tiling and `others_unchanged` |
+| only o comes into use | `use_rel` | `NewOnly.new_only` (via `MidSweep.alloc_facts` mid-sweep), header rewrite at the same size |
+| other blocks unchanged | `kept_block` | `others_unchanged` |
+| well formed after | `wf_after` | the heap with the new fields cleared meets the invariant; `Fill.obj_same`, `Cycle.State.fill_back` |
+| invariant after the Fill | `PagesAllocOk.fill_inv`, `PagesInst.fill_m` | `AllocTag.fields_written_away` of every phase |
+| `inv_frame_at` | `PagesFrame.frame_ok` | `Cycle.Write.write_idle`/`write_mark_inv`/`write_sw`, `MarkPhase.mark_inv_recolour`, word by word |
+| `inv_start_at`, `free_white_at` | `inv_start_ok`, `free_white_ok` | `AllocPhase.mc_of_ok` |
+| sweep start | `PagesSweep.start_m` | `Allocator.start_ready`, `MidSweepStep.sw_start`/`start_unswept`, `Wf.wfh_old_parts_one`; tricolour from the model (`tri_of_dark`) |
+| step: progress | `PagesStepOk.clause_progress` | `MidSweepStep.swept_unit` (`PagesFree.pool_unit`/`run_unit`) |
+| step: white freed, black whitened, outside kept | `clause_blocks` | `PagesFree.step_frees_white`, `SweepUnits.unit_ok`, `MidSweepStep.unit_obj_out` |
+| step: free words exactly | `clause_words` | `PagesFree.step_frees_words`, read in the model (`PagesStep.covered_iff`) |
+| step: `freed_words` | `clause_freed` | `PagesFree.freed_words_of`, reindexed (`PagesFreed.freed_reindex`) |
+| step: invariant, cursor | `clause_inv` | `MidSweepStep.step_sw`, `Incr.cursor_step` |
+| sweep done | `PagesSweep.done_m` | `MidSweepStep.sw_end`, `Darken.idle_white` |
+| capacity | `PagesFits.pfits_room`, `pfits_init` | `Allocator.alloc_no_fit`, `MidSweepAlloc.alloc_sw_ok` |
+
+The results are `PagesFrame.pages_allocator_ok : allocator_ok byte_rep pa`,
+`PagesStepOk.pages_sweep_ok : sweep_ok byte_rep psweep`, and
+`PagesFits.pfits_room` / `pfits_init` (the two halves of `nontrivial` for
+the allocator).
+
+**The freed-words sum.** The page sweep counts freed words over the objects
+of the walk, a sequence. The model counts them over addresses.
+`PagesFreed.freed_reindex` proves the two are equal. The walk's objects are
+distinct (`HeapModel.objects_is_vertex_set`), and each object is the block
+at its model address. Summing over a distinct sequence equals summing an
+indicator over addresses.
+
+### 10.3 Gaps found, and how the specification was changed
+
+| # | Gap | How it showed | Change |
+|---|---|---|---|
+| G28 | The frame relation and the Fill let the program store **any** value in a block in use. The pages invariant reads pointer fields (`no_pointer_to_blue`, `well_formed_heap`), so storing a pointer to a free block breaks it. `inv_frame` was false for pages. | `Cycle.Write` needs `program_write` (`storable` values) | `Iface.sound_value`: a stored major pointer resolves to a block the program may use (`live_target`). This is required in `inv_frame_rel` and for the Fill's values. The mutator's `value_ok` (reachable) implies it. |
+| G29 | The program could write the fields of a closure. Pages forbids this (`program_write`: `~is_closure`). Infix headers live there. | `Cycle.Write` precondition | `Run.mutator_ok_w`: no write into a closure (OCaml closures are immutable). This replaces "the field written is not an infix header". `inv_frame_rel` asks the same. |
+| G30 | Mid-sweep, the frame let the program write into a white block of an unswept page, which the sweep will free. Pages counts such a block as free (`free_sw`). | `Cycle.Write.write_sw` precondition | `live_target`: while sweeping, written blocks and pointer targets are not "white and unswept". `gc_correct` must show reachable objects are never such blocks. |
+| G31 | The model's `resolve` accepted infix offsets `k = 1` and `k = wz`. The byte heap's `infix_addr_conds` rejects them: `k >= 2`, and the pointer is inside the closure. | pointer correspondence (`ByteFacts.ptr_resolve`) | `Heap.resolve`: `2 <= k < wz`. |
+| G32 | The sweep's start assumed only "no grey block". The page sweep's mid-sweep invariant needs the mark's safety (`Mark.tri_color_invariant`: no black-to-white pointer). | `MidSweepStep.sw_start` precondition | `Iface.dark_closed` is added to `sweep_start_m`. It follows from tricolour plus closure at the end of marking. |
+| G33 | The byte relation related many model heaps to one byte heap (`agree`), differing in words that are neither headers nor fields. Every lifted contract then had to be proved for each of them. | design of the run's components | `byte_rep` is now functional, model from concrete: `brepr m g = heq m (cabs g)`, with `cabs` the canonical reading, in which words outside fields read as 0. `Rep.representable` requires canonical heaps (`Rep.canonical`). The nursery is likewise (`Young.ycabs`). It is still a relation, and not invertible: the bytes below `zero_addr` are free. |
+| G34 | The capacity condition is not vacuous only if there is a page. `n_pages` is a function of the abstract `heap_size`. | `pfits_init` | Stated under `n_pages > 0`, as the page modules' own witnesses assume their sizes (`big_enough`, `roomy`). |
+
+### 10.4 Residuals
+
+- **One unit per step.** A step sweeps one unit. Larger budgets (`Incr.slice_from` with `n > 1`) would need the clauses composed across units. That is not done.
+- **The pages run is not built** (see 10.5).
+- `gc_correct` is not proved (stage 3).
+
+### 10.5 The pages run: what it needs
+
+A run of `Run` needs a full `comps` record. For pages, the mark, the minor
+collection and the barrier on the byte heap are not yet components.
+Allocator and sweep are done. The run also needs every hypothesis at each
+of its steps. What is missing:
+
+- **Barrier on bytes.** A field write (plus darkening while marking, plus
+  the remembered slot) and the Fill as byte writes, with
+  `cabs (write g) = set_field (cabs g)` pointwise. Moderate.
+- **Mark on bytes.** Recolour the headers to the colours the model mark
+  chooses on the canonical reading. Its contract is then the toy's
+  (`ToyMark`) moved through `heq`. The inductive predicates (`reach`,
+  `wpath`) need transfer lemmas across pointwise-equal heaps.
+  Alternatively: the page modules' own mark (`Pages.Cycle.Mark`), proved
+  against the model tricolour. This is the user's choice.
+- **Minor collection.** The page modules' promotion (`Pages.Promote.*`) as
+  a component is a large instance of its own. The toy run collects with no
+  young object reachable from roots or remembered slots. A minor collection
+  that promotes nothing meets the contract at such a step, but that is a
+  weak witness.
+- **The run itself.** Page parameters and `heap_size` are abstract, so
+  addresses and unit counts are not computable. Every event needs lemmas,
+  under a size assumption like the page witnesses' `big_enough`. Because a
+  step sweeps one unit, the number of `ESweep` events equals the number of
+  units in use at hand-over. The run must fix it, for example by keeping
+  every object in one pool page, which needs a class with enough slots: a
+  further parameter assumption.
+
+### 10.6 Files and checks
+
+- **New modules** (`mark-and-sweep/spec/`): `GC.Spec.Top.Low`, `ByteFacts`,
+  `PagesAlloc`, `PagesAllocOk`, `PagesInst`, `PagesFrame`, `PagesSweep`,
+  `PagesStep`, `PagesFreed`, `PagesStepOk`, `PagesFits`.
+- **Changed:** `Heap` (G31), `Rep` (`heq`, `canonical`, G33), `Abs` (`cabs`,
+  functional `brepr`), `Young` (`ycabs`), `ByteRep` (canonical witness),
+  `Iface` (G28, G30, G32), `Run` (G29), `Toy` (`tframe_gen`), `ToyMinor`,
+  `Broken`, `Vacuity`.
+- `PagesFrame`, `PagesStepOk` and `PagesFits` are added to `ROOT_MODULES`.
+- **Rules:** no admits, no `assume`, local rlimits ≤ 40, akhil's modules
+  untouched.
+- **Checks:** fresh cache, seeds 0, 1 and 2, without `--retry`. See the
+  table below.
+
+| Module | Seed 0 | Seed 1 | Seed 2 |
+|---|---|---|---|
+| Heap | 2 s | 2 s | 2 s |
+| Rep | 2 s | 2 s | 3 s |
+| Word | 1 s | 2 s | 1 s |
+| Abs | 23 s | 23 s | 23 s |
+| Low | 3 s | 2 s | 2 s |
+| ByteFacts | 8 s | 9 s | 9 s |
+| Young | 50 s | 44 s | 55 s |
+| ByteRep | 5 s | 5 s | 5 s |
+| Iface | 2 s | 2 s | 2 s |
+| IdRep | 1 s | 1 s | 1 s |
+| ToyRep | 4 s | 5 s | 4 s |
+| Toy | 93 s | 100 s | 87 s |
+| ToyMark | 6 s | 6 s | 5 s |
+| ToyMinor | 32 s | 35 s | 29 s |
+| Run | 5 s | 5 s | 5 s |
+| ToyComps | 2 s | 2 s | 2 s |
+| Broken | 22 s | 22 s | 22 s |
+| Vacuity | 12 s | 12 s | 11 s |
+| PagesFree | 22 s | 22 s | 23 s |
+| PagesAlloc | 4 s | 4 s | 3 s |
+| PagesAllocOk | 32 s | 46 s | 70 s |
+| PagesInst | 20 s | 24 s | 29 s |
+| PagesFrame | 83 s | 79 s | 77 s |
+| PagesSweep | 23 s | 24 s | 22 s |
+| PagesStep | 34 s | 30 s | 29 s |
+| PagesFreed | 3 s | 3 s | 3 s |
+| PagesStepOk | 18 s | 16 s | 11 s |
+| PagesFits | 2 s | 1 s | 2 s |
+
+One seed-1 timeout (`PagesAllocOk.fill_written`) and one seed-2 timeout
+(`PagesFreed.reindex`) were found by these runs and fixed by splitting the
+steps; the table gives the times after the fix.

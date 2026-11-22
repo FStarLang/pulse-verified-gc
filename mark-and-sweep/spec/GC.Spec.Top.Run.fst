@@ -182,7 +182,9 @@ let value_ok (w: world) (v: value) : prop =
 let fill_ok (w: world) (tag: tag_t) (vs: list value) : prop =
   scannable tag ==> (forall (i: nat). i < L.length vs ==> value_ok w (L.index vs i))
 
-/// Every word the program stores is one the collector's heap can hold.
+/// Every word the program stores is one the collector's heap can hold.  The
+/// program writes no closure (OCaml's closures are immutable after their
+/// Fill; G29), so it never overwrites an infix header.
 let mutator_ok_w (c: comps) (w: world) (e: event) : prop =
   match e with
   | EAlloc sz tag vs ->
@@ -190,10 +192,10 @@ let mutator_ok_w (c: comps) (w: world) (e: event) : prop =
   | EYoungAlloc sz tag vs ->
     tag <> infix_tag /\ L.length vs == sz /\ fill_ok w tag vs /\ storable_all c.r vs
   | EWrite (Major o) i v ->
-    is_block w.maj o /\ reachable w o /\ i < wz_of w.maj o /\ infix_hdr (field w.maj o i) == None /\
+    is_block w.maj o /\ reachable w o /\ i < wz_of w.maj o /\ tag_of w.maj o <> closure_tag /\
     (scannable (tag_of w.maj o) ==> value_ok w v) /\ c.r.storable v
   | EWrite (Young o) i v ->
-    is_block w.yng o /\ yreachable w o /\ i < wz_of w.yng o /\ infix_hdr (field w.yng o i) == None /\
+    is_block w.yng o /\ yreachable w o /\ i < wz_of w.yng o /\ tag_of w.yng o <> closure_tag /\
     (scannable (tag_of w.yng o) ==> value_ok w v) /\ c.r.storable v
   | ERead (Major o) i -> is_block w.maj o /\ reachable w o /\ i < wz_of w.maj o
   | ERead (Young o) i -> is_block w.yng o /\ yreachable w o /\ i < wz_of w.yng o

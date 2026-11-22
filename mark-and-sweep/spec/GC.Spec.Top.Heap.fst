@@ -108,13 +108,16 @@ let young_ok (y: mheap) : prop =
   (forall (o1 o2 w: nat). covers y o1 w /\ covers y o2 w ==> o1 == o2)
 
 /// resolve(p): the object `a` points into.  Either `a` is a block, or `a`
-/// holds an infix header at offset `k` of a closure.
+/// holds an infix header at offset `k` of a closure.  As in OCaml (and the
+/// byte heap's `GC.Spec.Object.infix_addr_conds`), an infix header is at
+/// least the closure's second field (`k >= 2`: the first field is a code
+/// pointer) and is followed by a field of the closure (`k < wz`).
 let resolve (h: mheap) (a: nat) : option nat =
   if is_block h a then Some a
   else match infix_hdr (h.body a) with
     | Some k ->
-      if k >= 1 && k <= a && is_block h (a - k) && tag_of h (a - k) = closure_tag
-         && k <= wz_of h (a - k)
+      if k >= 2 && k <= a && is_block h (a - k) && tag_of h (a - k) = closure_tag
+         && k < wz_of h (a - k)
       then Some (a - k) else None
     | _ -> None
 

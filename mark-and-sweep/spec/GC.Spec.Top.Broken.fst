@@ -152,7 +152,10 @@ let bad_noroom_inv_ok () : Lemma ((forall n. init_at toy_rep bad_noroom n) /\
       = forall_repr2_id toy_rep h h' (free_hd_m bad_noroom st h h') in
     FStar.Classical.forall_intro_3 fh;
     let f (ph: phase tprog) (h: mheap) (st: tstate) (h': mheap) : Lemma (inv_frame_at toy_rep bad_noroom ph h st h')
-      = tframe_m ph h st h';
+      = let pre () : Lemma (requires bad_noroom.inv ph h st /\ inv_frame_rel bad_noroom ph st h h h')
+                           (ensures bad_noroom.inv ph h' st /\ (forall (o: nat). bad_noroom.free st h' o == bad_noroom.free st h o))
+          = tframe_gen ph h st h' in
+        FStar.Classical.move_requires pre ();
         forall_repr2_id toy_rep h h' (inv_frame_m bad_noroom ph h st h') in
     let f3 (ph: phase tprog) (h: mheap) (st: tstate) : Lemma (forall h'. inv_frame_at toy_rep bad_noroom ph h st h')
       = FStar.Classical.forall_intro (f ph h st) in
@@ -242,7 +245,10 @@ let bad_once_inv_ok () : Lemma ((forall n. init_at toy_rep bad_once n) /\
       = forall_repr2_id toy_rep h h' (free_hd_m bad_once st h h') in
     FStar.Classical.forall_intro_3 fh;
     let f (ph: phase tprog) (h: mheap) (st: tstate) (h': mheap) : Lemma (inv_frame_at toy_rep bad_once ph h st h')
-      = tframe_m ph h st h';
+      = let pre () : Lemma (requires bad_once.inv ph h st /\ inv_frame_rel bad_once ph st h h h')
+                           (ensures bad_once.inv ph h' st /\ (forall (o: nat). bad_once.free st h' o == bad_once.free st h o))
+          = tframe_gen ph h st h' in
+        FStar.Classical.move_requires pre ();
         forall_repr2_id toy_rep h h' (inv_frame_m bad_once ph h st h') in
     let f3 (ph: phase tprog) (h: mheap) (st: tstate) : Lemma (forall h'. inv_frame_at toy_rep bad_once ph h st h')
       = FStar.Classical.forall_intro (f ph h st) in

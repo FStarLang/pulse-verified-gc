@@ -115,7 +115,9 @@ let bad_byte_rep : R.rep heap minor_state = { byte_rep with R.repr = empty_rel }
 let one_hd (j: nat) : option M.header =
   if j = 0 then Some ({ M.wz = msize - 1; M.tag = 0; M.col = M.Blue }) else None
 
-let one_block : M.mheap = { M.size = msize; M.hd = one_hd; M.body = (fun (_: nat) -> M.VInt 1) }
+let one_body (w: nat) : M.value = if 0 < w && w < msize then M.VInt 1 else M.VInt 0
+
+let one_block : M.mheap = { M.size = msize; M.hd = one_hd; M.body = one_body }
 
 #push-options "--fuel 1"
 let one_block_representable () : Lemma (R.representable bad_byte_rep one_block)
@@ -126,6 +128,10 @@ let one_block_representable () : Lemma (R.representable bad_byte_rep one_block)
     let blk (o: nat) : Lemma (M.is_block m o <==> o == 0) = () in
     FStar.Classical.forall_intro blk;
     assert (M.tiled m);
+    let fw (w: nat) : Lemma (R.field_word m w <==> (0 < w /\ w < msize))
+      = if 0 < w && w < msize then assert (M.covers m 0 w) in
+    FStar.Classical.forall_intro fw;
+    assert (R.canonical m);
     odd_storable 1;
     assert (bad_byte_rep.R.size_ok msize)
 #pop-options

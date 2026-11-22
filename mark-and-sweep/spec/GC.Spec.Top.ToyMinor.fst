@@ -527,8 +527,7 @@ let forward_facts (ph: phase tprog) (st: tstate) (h: mheap) (y: mheap) (fwd: nat
         | Some o -> owner_spec h o w
         | None -> () in
     FStar.Classical.forall_intro b;
-    assert (inv_frame_rel toy ph st h h h2);
-    tframe_m ph h st h2
+    tframe_gen ph h st h2
 
 /// ---------------------------------------------------------------------------
 /// The contract

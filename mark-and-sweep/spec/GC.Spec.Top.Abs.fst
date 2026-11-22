@@ -13,9 +13,9 @@
 ///     tag, colour; blue stays blue);
 ///   - every word is read by `GC.Spec.Top.Word.absv`: a major pointer, a young
 ///     pointer, or a word of bytes (infix headers included, whole).
-/// The representation relation of the byte heap is `brepr m g`: `m` agrees
-/// with `abs g` (blocks, headers, fields); bytes below `zero_addr`, and the
-/// body of a header word, are not described.
+/// The representation relation of the byte heap is `brepr m g`: `m` is,
+/// word by word, the canonical reading `cabs g` (`abs g` with the words
+/// outside fields read as 0); the bytes below `zero_addr` are not read.
 ///
 /// Proved:
 ///   - blocks, headers, colours and fields correspond to GC.Spec.Object's
@@ -277,10 +277,73 @@ let abs_well_formed (g: heap)
 /// The representation, and its reads
 /// ---------------------------------------------------------------------------
 
-let brepr (m: M.mheap) (g: heap) : prop = R.agree m (abs g)
+/// The canonical reading: `abs g` with the words outside fields read as 0
+/// (header words, and the bytes of no block).  It agrees with `abs g`.
+let rec fw_below (g: heap) (w n: nat) : bool =
+  if n = 0 then false
+  else (let o = n - 1 in o < w && on_walk g o && w <= o + U64.v (getWosize (word g o))) || fw_below g w (n - 1)
+
+let is_fw (g: heap) (w: nat) : bool = fw_below g w w
+
+let cabs_body (g: heap) (w: nat) : M.value = if is_fw g w then abs_body g w else M.VInt 0
+
+let cabs (g: heap) : M.mheap = { M.size = msize; M.hd = abs_hd g; M.body = cabs_body g }
+
+let fw_one (g: heap) (w o: nat)
+  : Lemma ((o < w && on_walk g o && w <= o + U64.v (getWosize (word g o))) <==> (o < w /\ M.covers (abs g) o w))
+  = msize_pos o
+
+let rec fw_below_intro (g: heap) (w n o: nat)
+  : Lemma (requires o < n /\ o < w /\ M.covers (abs g) o w) (ensures fw_below g w n) (decreases n)
+  = fw_one g w o;
+    if o = n - 1 then () else fw_below_intro g w (n - 1) o
+
+let rec fw_below_elim (g: heap) (w n: nat)
+  : Lemma (requires fw_below g w n) (ensures exists (o: nat). o < n /\ o < w /\ M.covers (abs g) o w)
+          (decreases n)
+  = let o = n - 1 in
+    fw_one g w o;
+    if o < w && on_walk g o && w <= o + U64.v (getWosize (word g o)) then ()
+    else fw_below_elim g w (n - 1)
+
+let fw_below_iff (g: heap) (w n: nat)
+  : Lemma (fw_below g w n <==> (exists (o: nat). o < n /\ o < w /\ M.covers (abs g) o w))
+  = FStar.Classical.move_requires (fw_below_elim g w) n;
+    FStar.Classical.forall_intro (FStar.Classical.move_requires (fw_below_intro g w n))
+
+let is_fw_iff (g: heap) (w: nat) : Lemma (is_fw g w <==> R.field_word (abs g) w)
+  = fw_below_iff g w w
+
+let cabs_agree (g: heap) : Lemma (R.agree (cabs g) (abs g) /\ R.agree (abs g) (cabs g))
+  = FStar.Classical.forall_intro (is_fw_iff g);
+    R.agree_sym (cabs g) (abs g)
+
+let cabs_canonical (g: heap) : Lemma (R.canonical (cabs g))
+  = FStar.Classical.forall_intro (is_fw_iff g);
+    let hd (o: nat) : Lemma (o >= msize ==> abs_hd g o == None) = msize_pos o in
+    FStar.Classical.forall_intro hd;
+    let bd (w: nat) : Lemma (~(R.field_word (cabs g) w) ==> cabs_body g w == M.VInt 0)
+      = R.agree_field_word (cabs g) (abs g) w in
+    FStar.Classical.forall_intro bd
+
+/// The representation: `m` is the canonical reading of `g`, word by word.
+/// Many byte heaps have one reading (the bytes below `zero_addr`, and the
+/// bytes after the walk's end, are not read).
+let brepr (m: M.mheap) (g: heap) : prop = R.heq m (cabs g)
+
+let brepr_cabs (g: heap) : Lemma (brepr (cabs g) g) = ()
+
+let brepr_agree (m: M.mheap) (g: heap)
+  : Lemma (requires brepr m g) (ensures R.agree m (abs g) /\ R.canonical m)
+  = cabs_agree g;
+    cabs_canonical g;
+    R.heq_agree m (cabs g);
+    R.agree_trans m (cabs g) (abs g);
+    R.heq_sym m (cabs g);
+    R.canonical_heq (cabs g) m
 
 let brepr_field (m: M.mheap) (g: heap) (o i: nat)
-  : Lemma (requires brepr m g /\ M.is_block m o /\ i < M.wz_of m o)
+  : Lemma (requires R.agree m (abs g) /\ M.is_block m o /\ i < M.wz_of m o)
           (ensures read_field g o i == M.field m o i)
   = let w = o + 1 + i in
     assert (m.M.hd o == (abs g).M.hd o);
@@ -293,7 +356,8 @@ let brepr_field (m: M.mheap) (g: heap) (o i: nat)
 let brepr_reads (m: M.mheap) (g: heap)
   : Lemma (requires brepr m g)
           (ensures R.reads_model msize (read_hd g) (read_field g) m)
-  = let f (o i: nat) : Lemma (M.is_block m o /\ i < M.wz_of m o ==> read_field g o i == M.field m o i)
+  = brepr_agree m g;
+    let f (o i: nat) : Lemma (M.is_block m o /\ i < M.wz_of m o ==> read_field g o i == M.field m o i)
       = if M.is_block m o && i < M.wz_of m o then brepr_field m g o i in
     FStar.Classical.forall_intro_2 f;
     let h (o: nat) : Lemma (o < m.M.size ==> read_hd g o == m.M.hd o) = () in
@@ -486,8 +550,8 @@ let rep_on_walk (m: M.mheap) (q: nat)
       assert (pos (o + M.wz_of m o + 1) <= pos q)
     end
 
-let conc_repr (m: M.mheap)
-  : Lemma (requires brep_ok m) (ensures brepr m (conc m))
+let conc_agree (m: M.mheap)
+  : Lemma (requires brep_ok m) (ensures R.agree m (abs (conc m)))
   = let g = conc m in
     brep_size m;
     let hd (o: nat) : Lemma (o < msize ==> m.M.hd o == abs_hd g o)
@@ -508,3 +572,13 @@ let conc_repr (m: M.mheap)
           absv_concv (m.M.body w)
         end in
     FStar.Classical.forall_intro bd
+
+let conc_repr (m: M.mheap)
+  : Lemma (requires brep_ok m /\ R.canonical m) (ensures brepr m (conc m))
+  = let g = conc m in
+    conc_agree m;
+    cabs_agree g;
+    cabs_canonical g;
+    R.agree_sym (cabs g) (abs g);
+    R.agree_trans m (abs g) (cabs g);
+    R.agree_canonical m (cabs g)

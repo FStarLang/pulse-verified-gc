@@ -370,6 +370,23 @@ let tinit_ok (n: nat) : Lemma (init_at toy_rep toy n)
     tinv_intro Idle h st;
     some_repr_id toy_rep h (init_post toy n h st)
 
+/// The toy's invariant reads no field: only blocks, sizes, tags and the
+/// colours (changed only on blocks in use, to dark, while marking).
+let tframe_gen (ph: phase tprog) (h: mheap) (st: tstate) (h': mheap)
+  : Lemma (requires toy.inv ph h st /\ h'.size == h.size /\
+                    (forall (o: nat). is_block h' o == is_block h o) /\
+                    (forall (o: nat). wz_of h' o == wz_of h o /\ tag_of h' o == tag_of h o) /\
+                    (forall (o: nat). col_of h' o =!= col_of h o ==> in_use toy st h h o /\ Marking? ph /\ dark (col_of h' o)))
+          (ensures toy.inv ph h' st)
+  = tinv_elim_all ph h st;
+    tiled_hd h h';
+    let l (o: nat) : Lemma (tlocal ph h' st o)
+      = assert (tlocal ph h st o);
+        if col_of h' o = col_of h o then ()
+        else assert (in_use toy st h h o /\ Marking? ph /\ dark (col_of h' o)) in
+    FStar.Classical.forall_intro l;
+    tinv_intro ph h' st
+
 let tframe_m (ph: phase tprog) (h: mheap) (st: tstate) (h': mheap)
   : Lemma (inv_frame_m toy ph h st h' h h')
   = let pre () : Lemma (requires toy.inv ph h st /\ inv_frame_rel toy ph st h h h')

@@ -87,6 +87,23 @@ let in_use_word (#t: Type0) (#k: sweep_kind) (a: allocator t k) (st: a.state) (h
   : prop =
   exists (o: nat). covers m o w /\ in_use a st h m o
 
+/// A block the program may use: in use and, while sweeping, not a white
+/// block the sweep has yet to free.
+let live_target (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (st: a.state)
+    (h: t) (m: mheap) (x: nat) : prop =
+  in_use a st h m x == true /\
+  (match ph with Sweeping p -> ~(col_of m x == White /\ k.unswept p x == true) | _ -> True)
+
+/// A value the program may store in a scannable field: a word of bytes, a
+/// young pointer, or a pointer resolving to a block it may use.  (G28: the
+/// allocators' invariants read pointer fields: pages' `no_pointer_to_blue`
+/// and `well_formed_heap`.)
+let sound_value (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (st: a.state)
+    (h: t) (m: mheap) (v: value) : prop =
+  match v with
+  | VPtr (Major b) -> exists (x: nat). resolve m b == Some x /\ live_target a ph st h m x
+  | _ -> True
+
 let alloc_pre (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (h: t) (st: a.state)
     (tag: tag_t) (m: mheap) : prop =
   a.inv ph h st /\ well_formed m /\ tag <> infix_tag
@@ -109,8 +126,10 @@ let alloc_post (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t k)
     (forall (x: nat). in_use a st h m x ==> same_block m m' x) /\
     (* the walk reaches size *)
     well_formed m' /\
-    (* the invariant again after Fill *)
-    (forall (vs: list value) (h'': t). L.length vs == sz /\ r.repr (fill m' o vs) h'' ==> a.inv ph h'' st')
+    (* the invariant again after Fill, with values the program may store *)
+    (forall (vs: list value) (h'': t).
+       L.length vs == sz /\ (scannable tag ==> (forall (v: value). L.memP v vs ==> sound_value a ph st h m v)) /\
+       r.repr (fill m' o vs) h'' ==> a.inv ph h'' st')
 
 let alloc_at (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress)
     (h: t) (st: a.state) (sz: size_t) (tag: tag_t) : prop =
@@ -130,8 +149,10 @@ let init_at (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t k) (n
   (let (h, st) = a.init n in some_repr r h (init_post a n h st))
 
 /// The heaps the program and the collector make without the allocator:
-/// writes to fields of blocks in use, and recolouring blocks in use while
-/// marking.  Blocks, sizes, tags and every other word are unchanged.
+/// writes to fields of blocks the program may use (not closures, which
+/// OCaml never writes after their Fill), of values it may store, and
+/// recolouring blocks in use while marking.  Blocks, sizes, tags and every
+/// other word are unchanged.
 let inv_frame_rel (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (st: a.state)
     (h: t) (m m': mheap) : prop =
   m'.size == m.size /\
@@ -139,7 +160,9 @@ let inv_frame_rel (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.p
   (forall (o: nat). wz_of m' o == wz_of m o /\ tag_of m' o == tag_of m o) /\
   (forall (o: nat). col_of m' o =!= col_of m o ==> in_use a st h m o /\ Marking? ph /\ dark (col_of m' o)) /\
   (forall (w: nat). m'.body w =!= m.body w ==>
-     (exists (o: nat). in_use a st h m o /\ o < w /\ w <= o + wz_of m o))
+     (exists (o: nat). live_target a ph st h m o /\ o < w /\ w <= o + wz_of m o /\
+        tag_of m o <> closure_tag /\
+        (scannable (tag_of m o) ==> sound_value a ph st h m' (m'.body w))))
 
 /// The allocator's invariant reads no field of a block in use, nor (while
 /// marking) its colour.
@@ -224,9 +247,18 @@ let swept_white (#t: Type0) (#k: sweep_kind) (a: allocator t k) (st: a.state) (h
     (p p': k.progress) (o: nat) : GTot bool =
   in_use a st h m o && region k p p' o && col_of m o = White
 
+/// No block the mark has darkened points to a white block: the mark's
+/// safety at its end (G31; with no grey block, every block of the snapshot
+/// or allocated since is black, and they are closed under pointers).  A
+/// sweep frees white blocks: without it, it could free the target of a
+/// survivor (the page sweep's mid-sweep invariant needs it).
+let dark_closed (m: mheap) : prop =
+  forall (o i a x: nat). is_block m o /\ dark (col_of m o) /\ ptr_field m o i /\ field m o i == VPtr (Major a) /\
+    resolve m a == Some x ==> col_of m x =!= White
+
 let sweep_start_m (#t: Type0) (#k: sweep_kind) (#a: allocator t k) (s: sweep t k a) (h: t) (st: a.state)
     (m: mheap) : prop =
-  a.inv Marking h st /\ well_formed m /\ no_grey m ==>
+  a.inv Marking h st /\ well_formed m /\ no_grey m /\ dark_closed m ==>
   (let (p, st') = s.start h st in
    a.inv (Sweeping p) h st' /\
    (forall (o: nat). a.free st' h o == a.free st h o) /\       (* frees nothing *)

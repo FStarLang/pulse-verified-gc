@@ -248,7 +248,7 @@ let young_alloc_ok (sty: style) (x: config tc) (a: nat)
 let write_major_ok (sty: style) (x: config tc) (o i: nat) (v: value)
   : Lemma (requires x.stopped == false /\ (Sequential? sty ==> Idle? x.ph) /\
                     is_block (wo x).maj o /\ root_b (wo x).maj (wo x).roots o == true /\ i < wz_of (wo x).maj o /\
-                    None? (infix_hdr (field (wo x).maj o i)) /\
+                    tag_of (wo x).maj o <> closure_tag /\
                     (match v with VInt _ -> True | VPtr (Major a) -> major_ok_b (wo x) a == true | _ -> False))
           (ensures (let e = EWrite (Major o) i v in enabled tc x e /\ style_ok sty x e /\ mutator_ok x e))
   = reach_by_root (wo x) o;
@@ -260,7 +260,7 @@ let write_major_ok (sty: style) (x: config tc) (o i: nat) (v: value)
 let write_young_ok (sty: style) (x: config tc) (o i: nat) (a: nat)
   : Lemma (requires x.stopped == false /\ (Sequential? sty ==> Idle? x.ph) /\
                     is_block (wo x).yng o /\ yroot_b (wo x).yng (wo x).roots o == true /\ i < wz_of (wo x).yng o /\
-                    None? (infix_hdr (field (wo x).yng o i)) /\ major_ok_b (wo x) a == true)
+                    tag_of (wo x).yng o <> closure_tag /\ major_ok_b (wo x) a == true)
           (ensures (let e = EWrite (Young o) i (VPtr (Major a)) in enabled tc x e /\ style_ok sty x e /\ mutator_ok x e))
   = yreach_by_root (wo x) o; major_ok (wo x) a;
     tc_store (VPtr (Major a)); mutator_of x (EWrite (Young o) i (VPtr (Major a)))
@@ -304,7 +304,7 @@ let seq_step_2 () : Lemma (step_ok es_seq Sequential 2)
     assert_nbe (ev es_seq 2 == EWrite (Major 0) 0 (VPtr (Major 2)));
     assert_nbe ((cs 2).stopped == false /\ Idle? (cs 2).ph /\ is_block (wo (cs 2)).maj 0 /\
                  root_b (wo (cs 2)).maj (wo (cs 2)).roots 0 == true /\ 0 < wz_of (wo (cs 2)).maj 0 /\
-                 None? (infix_hdr (field (wo (cs 2)).maj 0 0)) /\ major_ok_b (wo (cs 2)) 2 == true);
+                 tag_of (wo (cs 2)).maj 0 <> closure_tag /\ major_ok_b (wo (cs 2)) 2 == true);
     write_major_ok Sequential (cs 2) 0 0 (VPtr (Major 2))
 
 let seq_step_4 () : Lemma (step_ok es_seq Sequential 4)
@@ -319,7 +319,7 @@ let seq_step_5 () : Lemma (step_ok es_seq Sequential 5)
     assert_nbe (ev es_seq 5 == EWrite (Young 0) 0 (VPtr (Major 2)));
     assert_nbe ((cs 5).stopped == false /\ Idle? (cs 5).ph /\ is_block (wo (cs 5)).yng 0 /\
                  yroot_b (wo (cs 5)).yng (wo (cs 5)).roots 0 == true /\ 0 < wz_of (wo (cs 5)).yng 0 /\
-                 None? (infix_hdr (field (wo (cs 5)).yng 0 0)) /\ major_ok_b (wo (cs 5)) 2 == true);
+                 tag_of (wo (cs 5)).yng 0 <> closure_tag /\ major_ok_b (wo (cs 5)) 2 == true);
     write_young_ok Sequential (cs 5) 0 0 2
 
 let seq_step_6 () : Lemma (step_ok es_seq Sequential 6)
@@ -437,7 +437,7 @@ let inc_step_2 () : Lemma (step_ok es_inc Incremental 2)
     assert_nbe (ev es_inc 2 == EWrite (Major 0) 0 (VPtr (Major 2)));
     assert_nbe ((ci 2).stopped == false /\ is_block (wo (ci 2)).maj 0 /\
                  root_b (wo (ci 2)).maj (wo (ci 2)).roots 0 == true /\ 0 < wz_of (wo (ci 2)).maj 0 /\
-                 None? (infix_hdr (field (wo (ci 2)).maj 0 0)) /\ major_ok_b (wo (ci 2)) 2 == true);
+                 tag_of (wo (ci 2)).maj 0 <> closure_tag /\ major_ok_b (wo (ci 2)) 2 == true);
     write_major_ok Incremental (ci 2) 0 0 (VPtr (Major 2))
 
 let inc_step_4 () : Lemma (step_ok es_inc Incremental 4)
@@ -452,7 +452,7 @@ let inc_step_5 () : Lemma (step_ok es_inc Incremental 5)
     assert_nbe (ev es_inc 5 == EWrite (Young 0) 0 (VPtr (Major 2)));
     assert_nbe ((ci 5).stopped == false /\ is_block (wo (ci 5)).yng 0 /\
                  yroot_b (wo (ci 5)).yng (wo (ci 5)).roots 0 == true /\ 0 < wz_of (wo (ci 5)).yng 0 /\
-                 None? (infix_hdr (field (wo (ci 5)).yng 0 0)) /\ major_ok_b (wo (ci 5)) 2 == true);
+                 tag_of (wo (ci 5)).yng 0 <> closure_tag /\ major_ok_b (wo (ci 5)) 2 == true);
     write_young_ok Incremental (ci 5) 0 0 2
 
 let inc_step_6 () : Lemma (step_ok es_inc Incremental 6)
@@ -472,7 +472,7 @@ let inc_step_9 () : Lemma (step_ok es_inc Incremental 9)
     assert_nbe (ev es_inc 9 == EWrite (Major 0) 0 (VInt 5));
     assert_nbe ((ci 9).stopped == false /\ is_block (wo (ci 9)).maj 0 /\
                  root_b (wo (ci 9)).maj (wo (ci 9)).roots 0 == true /\ 0 < wz_of (wo (ci 9)).maj 0 /\
-                 None? (infix_hdr (field (wo (ci 9)).maj 0 0)));
+                 tag_of (wo (ci 9)).maj 0 <> closure_tag);
     write_major_ok Incremental (ci 9) 0 0 (VInt 5)
 
 let inc_step_13 () : Lemma (step_ok es_inc Incremental 13)
@@ -486,7 +486,7 @@ let inc_step_14 () : Lemma (step_ok es_inc Incremental 14)
     assert_nbe (ev es_inc 14 == EWrite (Major 6) 0 (VPtr (Major 0)));
     assert_nbe ((ci 14).stopped == false /\ is_block (wo (ci 14)).maj 6 /\
                  root_b (wo (ci 14)).maj (wo (ci 14)).roots 6 == true /\ 0 < wz_of (wo (ci 14)).maj 6 /\
-                 None? (infix_hdr (field (wo (ci 14)).maj 6 0)) /\ major_ok_b (wo (ci 14)) 0 == true);
+                 tag_of (wo (ci 14)).maj 6 <> closure_tag /\ major_ok_b (wo (ci 14)) 0 == true);
     write_major_ok Incremental (ci 14) 6 0 (VPtr (Major 0))
 
 let inc_step_15 () : Lemma (step_ok es_inc Incremental 15)
